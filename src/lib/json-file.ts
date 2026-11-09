@@ -1,3 +1,4 @@
+import * as asyncFs from 'node:fs/promises'
 /**
  * JSON 状态文件只有一种写法(第三批 3e,2026-10-22 盘点)。
  *
@@ -152,4 +153,22 @@ export function updateJsonFile(path: string, mutate: (raw: Record<string, unknow
     return
   }
   throw new ConcurrentJsonUpdateError(path)
+}
+
+
+/** Async preparation paths use the same atomic, fsynced JSON convention. */
+export async function writeJsonAtomicAsync(path: string, value: unknown, opts: Pick<AtomicWriteOptions, 'mode' | 'platform' | 'retryDelayMs'> = {}): Promise<void> {
+  const dir=dirname(path)
+  await asyncFs.mkdir(dir,{recursive:true,mode:0o700})
+  const mode=opts.mode ?? await asyncFs.stat(path).then(s=>s.mode & 0o777,()=>0o600)
+  const tmp=join(dir, `.${basename(path)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`)
+  try {
+    const file=await asyncFs.open(tmp,'wx',mode)
+    try { await file.writeFile(JSON.stringify(value,null,2)+'\n');await file.sync() } finally { await file.close() }
+    const attempts=(opts.platform??process.platform)==='win32'?4:1
+    for(let i=0;;i++)try {await asyncFs.rename(tmp,path);break} catch(error) {
+      if(i+1>=attempts || !RENAME_RETRY_CODES.has((error as NodeJS.ErrnoException).code??''))throw error
+      await new Promise(r=>setTimeout(r,opts.retryDelayMs??50))
+    }
+  } finally { await asyncFs.rm(tmp,{force:true}) }
 }

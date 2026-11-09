@@ -76,6 +76,7 @@ export function classify(fromRel: string, spec: string | null): Classified {
 
 function walk(dir: string, out: string[]): string[] {
   for (const name of readdirSync(dir)) {
+    if(name.toLowerCase()==='.cc-tasks')continue
     const p = join(dir, name)
     if (statSync(p).isDirectory()) { if (!SKIP_DIRS.has(name)) walk(p, out) }
     else if (CODE.test(name) && !name.endsWith('.d.ts')) out.push(p)

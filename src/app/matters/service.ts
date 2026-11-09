@@ -17,7 +17,7 @@ import type {ChatAttachmentT,MatterEventT} from '@wechat-cc/protocol'
  * (工作台任务从 workbench 详情取),这里不复制数据。`say` 按 kind 路由:
  * task → 工作台续接;chat → 现有的 app 对话通道(只对主人的 chat)。
  */
-export interface MatterTaskView {networkSuspended?:{since:number};id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string}&PhoneScripts;until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
+export interface MatterTaskView {networkSuspended?:{since:number};id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{base?:string;baseSha?:string;branch:string;removed:boolean;merged?:boolean;projectId?:string}&PhoneScripts;until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
 // activity(2026-10-17):工具那一步在跑还是做完了 —— 手机看着它跑要知道「正在」哪一步。只给 type/status/label,不给命令输出。
 /**
  * 详情 events 的一条(线上旧形状,M6c 起 src 不再手写):任务 = 时间线的步投影成 WorkbenchTaskEvent 再收窄到这里;
@@ -66,7 +66,7 @@ export interface MattersServiceDeps {
     /** 独立工作区:提交到分支 / 删除工作区(2026-10-07,手机也能做)。没接 ⇒ 手机没有这两个按钮。 */
     /** 手机「另做一份」要源项目编号(只给编号,不给路径);没接 ⇒ 手机没有这个按钮。 */
     projects?():ReadonlyArray<{id:string;path:string}>
-    worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}
+    worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}|Promise<{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}>
     /** 工作区脚本(2026-10-20):运行 / 停下。批准只在电脑上(没批 ⇒ script_approval_required)。没接 ⇒ 手机没有这个按钮。 */
     scriptAction?(id:string,action:'run'|'stop'):Promise<{branch:string;scripts:unknown;port:number|null}>
     resolveAnswer?(id:string,requestId:string,answers:unknown):void
@@ -126,7 +126,7 @@ export interface MattersService {
   /** 手机上停下正在跑的这一轮(2026-10-06)。runId 必须是手机看到的那一轮;已经换了一轮 / 没在跑 ⇒ input_stale。 */
   stop(id:string,runId:string):Promise<void>
   /** 独立工作区的提交 / 删除(2026-10-07):手机看不到合并命令(在电脑上合并),只回分支和结果。 */
-  worktree(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;reopened?:boolean}
+  worktree(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;reopened?:boolean}|Promise<{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;reopened?:boolean}>
   /** 工作区脚本的运行 / 停下(2026-10-20):回分支 + 状态 + 端口,不带脚本原文、不带路径。 */
   worktreeScript(id:string,action:'run'|'stop'):Promise<{branch:string}&Omit<PhoneScripts,'lastLines'>>
   artifactChunk(id:string,input:MatterArtifactInput):MatterArtifactChunk
@@ -312,7 +312,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       if(matter.kind==='task'&&deps.workbench){
         try{
-          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{branch:string;projectPath?:string;removed:boolean;merged?:boolean;port?:number;scripts?:unknown}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{}),...(wt.removed?{}:phoneScripts(wt.scripts as never,wt.port,d.events as never,[d.task.path,wt.projectPath??'']))}}:{}),...(d.rewind?.blocked?{rewind:{blocked:true}}:{})};events=d.events.slice(-50).map(publicEvent)
+          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{base?:string;baseSha?:string;branch:string;projectPath?:string;removed:boolean;merged?:boolean;port?:number;scripts?:unknown}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{...(wt.base&&wt.baseSha?{base:wt.base,baseSha:wt.baseSha}:{}),branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{}),...(wt.removed?{}:phoneScripts(wt.scripts as never,wt.port,d.events as never,[d.task.path,wt.projectPath??'']))}}:{}),...(d.rewind?.blocked?{rewind:{blocked:true}}:{})};events=d.events.slice(-50).map(publicEvent)
           controls={...(d.runId?{runId:d.runId}:{}),...(d.inputMode?{inputMode:d.inputMode}:{}),
             permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt})=>({id,taskId,tool,description,createdAt})),
             questions:(d.questions??[]).filter(q=>q.taskId===id).map(({id,taskId,createdAt,questions})=>({id,taskId,createdAt,questions:questions.map(({id,header,question,options,multiSelect,allowOther})=>({id,header,question,options:options.map(({label,description})=>({label,description})),multiSelect,allowOther}))})),
@@ -428,10 +428,10 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(!deps.workbench?.resolvePermission)throw Error('workbench_not_wired')
       deps.workbench.resolvePermission(id,requestId,decision)
     },
-    worktree(id,action){
+    async worktree(id,action){
       require(id)
       if(!deps.workbench?.worktreeAction)throw Error('workbench_not_wired')
-      const r=deps.workbench.worktreeAction(id,action)
+      const r=await deps.workbench.worktreeAction(id,action)
       return {branch:r.branch,...(r.committed!==undefined?{committed:r.committed}:{}),...(r.removed?{removed:true}:{}),...(r.removing?{removing:true}:{}),...(r.merged!==undefined?{merged:r.merged}:{}),...(r.reopened?{reopened:true}:{})}
     },
     async worktreeScript(id,action){

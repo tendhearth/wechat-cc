@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, parse } from 'node:path'
 import { classifyCall } from '../../../lib/call-classifier'
 import { providerErrorCodeOf } from '../../../lib/provider-error-code'
 import { createCodexChatProvider, codexChatToolCall, codexChatThreadConfig, CODEX_CAPABILITIES, type CodexChatProviderOptions } from './codex-chat-provider'
@@ -332,8 +332,11 @@ describe('守护:对话侧 Codex 的实际端点(2026-10-03 规矩,B1 起会话�
       const home = join(root, 'codex-home')
       mkdirSync(home, { recursive: true })
       writeFileSync(join(home, 'config.toml'), configToml)
+      // This fixture only predicts endpoints: no command or temp file is run.
+      // Keep the prediction cwd away from real ancestor .codex configuration.
+      for(const key of ['TMPDIR','TEMP','TMP'])vi.stubEnv(key,parse(root).root)
       await fn({ env: { HOME: root, CODEX_HOME: home, OPENAI_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }, systemDir: null })
-    } finally { rmSync(root, { recursive: true, force: true }) }
+    } finally { vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }) }
   }
 
   it('OPENAI_BASE_URL 指到国内网关、config 默认 ⇒ 起会话前的预测与 cheapEval 都按官方,需要保护', withHome('model = "gpt-5.5"\n', (o) => {

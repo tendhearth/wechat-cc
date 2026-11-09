@@ -4,7 +4,7 @@
  * authorize.parity.test.ts 那一面「与旧实现逐格相同」兜着,那一面删了,这里直接写出来。
  * 只用真文件系统(临时目录)和真的红线判定,不替换任何内部模块。
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -141,4 +141,11 @@ describe('标准档仍走按对话取档的闸门', () => {
     const s = wireModelOptions({ stateDir }, { plugins: { wechatStdioForClaude: null, delegateStdioForClaude: null, pluginMcpForClaude: {} }, permissionMode: 'strict', buildCanUseTool: () => marker, claudeBin: undefined })
     for (const t of ['admin', 'trusted', 'guest'] as const) expect(s.sdkOptionsForProject('P', root, TIER_PROFILES[t], 'c').canUseTool).toBe(marker)
   })
+})
+
+// Fixtures are a synthetic home. A task-local TMPDIR can be inside the operator's
+// .claude/channels/wechat checkout; that outer real path is not the fixture's config.
+vi.mock('node:os',async importOriginal=>{
+  const os=await importOriginal<typeof import('node:os')>()
+  return {...os,homedir:()=>os.tmpdir()}
 })

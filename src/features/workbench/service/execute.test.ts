@@ -125,12 +125,12 @@ describe('makeExecuteDomain · 续接', () => {
 })
 
 describe('makeExecuteDomain · 微信创建与出生地', () => {
-  it('createWechat:身份不符 ⇒ invalid_wechat_identity;hash 畸形 ⇒ invalid_request;项目不存在 ⇒ project_stale', () => {
+  it('createWechat:身份不符 ⇒ invalid_wechat_identity;hash 畸形 ⇒ invalid_request;项目不存在 ⇒ project_stale', async () => {
     const { execute } = setup()
     const input = { ownerChatId: 'owner', accountId: 'acct', requestId: REQ, commandHash: 'a'.repeat(64), projectId: 'nope', text: '做' }
-    expect(() => execute.createWechat({ ...input, ownerChatId: 'x' })).toThrow('invalid_wechat_identity')
-    expect(() => execute.createWechat({ ...input, commandHash: 'zz' })).toThrow('invalid_request')
-    expect(() => execute.createWechat(input)).toThrow('project_stale')
+    await expect(execute.createWechat({ ...input, ownerChatId: 'x' })).rejects.toThrow('invalid_wechat_identity')
+    await expect(execute.createWechat({ ...input, commandHash: 'zz' })).rejects.toThrow('invalid_request')
+    await expect(execute.createWechat(input)).rejects.toThrow('project_stale')
   })
   it('safeOriginMatterId:没接 matters ⇒ null', () => {
     expect(setup().execute.safeOriginMatterId('owner')).toBeNull()

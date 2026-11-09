@@ -29,7 +29,7 @@ it('does not inherit companion memory, MCP servers or daemon permission bypass i
   // 生产里 permit 带着这件事的登记表(没有原生 MCP ⇒ 空表);没登记的 MCP 在 permit 里按登记表拒(C2:原来是 workbenchClaudeOptions 外面手包的一层)。
   const permit = makeWorkbenchClaudeCanUseTool(vi.fn(async () => true), undefined, [], [])
   const base = { cwd:'/project',model:'existing-model',permissionMode:'bypassPermissions' as const,mcpServers:{ private:{ command:'private-memory' } },systemPrompt:'private life memory',canUseTool:vi.fn(async () => ({ behavior: 'allow' as const })),settingSources:['project' as const,'local' as const] }
-  const options=workbenchClaudeOptions(base,'task-only instructions',permit)
+  const options=(await workbenchClaudeOptions(base,'task-only instructions',permit))
   expect(options.permissionMode).toBe('default')
   expect(options.mcpServers).toEqual({})
   expect(options.settingSources).toEqual(['project','local'])
@@ -42,8 +42,8 @@ it('does not inherit companion memory, MCP servers or daemon permission bypass i
   expect(decision).toEqual({ behavior: 'deny', message: 'This tool is not registered for the task.' })
 })
 
-it('inherits native tools through exact server asks but never inherits companion execution settings', () => {
-  const options = workbenchClaudeOptions({ cwd:'/project', model:'native-model', allowedTools:['*'], agents:{ personal:{ description:'private',prompt:'private memory' } }, env:{ PATH:'/bin', ANTHROPIC_API_KEY:'native-auth', WECHAT_SESSION_TOKEN:'private' }, settings:{ permissions:{ defaultMode:'bypassPermissions' } } }, 'task instructions', vi.fn(), { servers:{ catalog:{ command:'catalog-server' } }, omitted:[] })
+it('inherits native tools through exact server asks but never inherits companion execution settings', async () => {
+  const options = (await workbenchClaudeOptions({ cwd:'/project', model:'native-model', allowedTools:['*'], agents:{ personal:{ description:'private',prompt:'private memory' } }, env:{ PATH:'/bin', ANTHROPIC_API_KEY:'native-auth', WECHAT_SESSION_TOKEN:'private' }, settings:{ permissions:{ defaultMode:'bypassPermissions' } } }, 'task instructions', vi.fn(), { servers:{ catalog:{ command:'catalog-server' } }, omitted:[] }))
   expect(options.mcpServers).toEqual({ catalog:{ command:'catalog-server' } })
   expect(options.settings).toMatchObject({ disableAllHooks:true, disableSkillShellExecution:true, permissions:{ defaultMode:'default',disableBypassPermissionsMode:'disable',ask:expect.arrayContaining(['mcp__catalog__*','Bash']) } })
   expect(options.allowedTools).toEqual([])
@@ -52,11 +52,11 @@ it('inherits native tools through exact server asks but never inherits companion
   expect(options.env?.ANTHROPIC_API_KEY === 'native-auth').toBe(true)
 })
 
-it('neutralizes private disk settings environment names at flag scope without overriding ordinary native auth', () => {
-  const options=workbenchClaudeOptions({cwd:'/project',env:{CATALOG_API_KEY:'native-tool-auth'}},'',vi.fn(),{
+it('neutralizes private disk settings environment names at flag scope without overriding ordinary native auth', async () => {
+  const options=(await workbenchClaudeOptions({cwd:'/project',env:{CATALOG_API_KEY:'native-tool-auth'}},'',vi.fn(),{
     servers:{catalog:{command:'catalog-server'}},omitted:[],
     privateEnvironmentKeys:['WECHAT_SETTINGS_PROOF','hearth_settings_proof','WXVAULT_SETTINGS_PROOF','WxGraph_SETTINGS_PROOF'],
-  })
+  }))
   expect(options.settings).toMatchObject({env:{
     WECHAT_SETTINGS_PROOF:'',hearth_settings_proof:'',WXVAULT_SETTINGS_PROOF:'',WxGraph_SETTINGS_PROOF:'',
   }})
@@ -64,14 +64,14 @@ it('neutralizes private disk settings environment names at flag scope without ov
   expect(options.settings).not.toHaveProperty('env.CATALOG_API_KEY')
 })
 
-it('passes merged native MCP allow and deny policy at flag scope', () => {
+it('passes merged native MCP allow and deny policy at flag scope', async () => {
   const nativeMcpPolicy={allowedMcpServers:[{serverName:'catalog'},{serverName:'extra'}],deniedMcpServers:[{serverUrl:'https://blocked.example/*'}]}
-  const options=workbenchClaudeOptions({cwd:'/project'},'',vi.fn(),{servers:{catalog:{command:'catalog-server'}},omitted:[],nativeMcpPolicy})
+  const options=(await workbenchClaudeOptions({cwd:'/project'},'',vi.fn(),{servers:{catalog:{command:'catalog-server'}},omitted:[],nativeMcpPolicy}))
   expect(options.settings).toMatchObject(nativeMcpPolicy)
 })
 
-it('retains provider reasoning defaults for a fresh task while excluding unrelated companion options',()=>{
-  const options=workbenchClaudeOptions({cwd:'/project',model:'configured-model',effort:'low',thinking:{type:'adaptive'},fallbackModel:'companion-fallback'},'',vi.fn())
+it('retains provider reasoning defaults for a fresh task while excluding unrelated companion options',async ()=>{
+  const options=(await workbenchClaudeOptions({cwd:'/project',model:'configured-model',effort:'low',thinking:{type:'adaptive'},fallbackModel:'companion-fallback'},'',vi.fn()))
   expect(options.effort).toBe('low')
   expect(options.thinking).toEqual({type:'adaptive'})
   expect(options.fallbackModel).toBeUndefined()
@@ -297,11 +297,11 @@ it('从微信交办的事,答复静下来那一拍真的把回报写进 matter_r
       log: () => {},
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     await expect.poll(() => matters.sessions(receipt.taskId)).not.toHaveLength(0)
     runtime.finishTurn()
     await expect.poll(() => matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
@@ -351,11 +351,11 @@ it('notificationsEnabled 默认值:没有订阅记录时按"没静音过"处理,
       log: () => {},
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     // 正常创建流程会一并写一条订阅记录(enabled=true)——手动删掉,精确模拟
     // "有出生地但没有订阅记录"这个边界状态,只测 notificationsEnabled 的默认值。
     db.query('DELETE FROM workbench_wechat_subscriptions WHERE task_id=?').run(receipt.taskId)
@@ -429,11 +429,11 @@ it('从微信交办的事(真 agy 形状:非 retained、无 workbenchRuntime),�
       log: () => {},
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     // 非 retained:永不经过 settleQuiet,直接终态 done(跟 service-report.test.ts
     // 的「非 retained 执行者」用例、service-recollect.test.ts 的同类用例一致)。
     await expect.poll(() => matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
@@ -506,11 +506,11 @@ it('回忆的便宜模型来源是 opts.boot.registry(带 cheapEvalProvider 钉�
       log: () => {},
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     await expect.poll(() => matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
     const journal = makeJournal(db)
     await expect.poll(() => journal.list().length).toBe(1)
@@ -559,11 +559,11 @@ it('便宜模型的回复其实是认证失效(401/登出):当成真的调用失
       log: (tag, line) => logs.push([tag, line]),
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     await expect.poll(() => matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
     await expect.poll(() => logs.some(([tag]) => tag === 'MATTER_RECOLLECT')).toBe(true)
     expect(logs.some(([tag, line]) => tag === 'MATTER_RECOLLECT' && line.includes('auth_failed'))).toBe(true)
@@ -594,4 +594,14 @@ it('custom ACP executors (2026-10-07): valid ones register with ACP capabilities
   expect((create.mock.calls[0] as unknown as [object])[0]).not.toHaveProperty('targetProvider')
   expect(target.get('gemini-cli')?.opts.workbench).toMatchObject({ permissions: 'task' })
   expect(log.mock.calls.map(c => c[1]).join('\n')).toMatch(/claude skipped[\s\S]*ghost: command ghost-cli not found[\s\S]*Bad skipped/)
+})
+
+it('pins the Claude task temp/cache in both process and settings environments',async ()=>{
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-claude-env-')))
+  try {
+    const options=(await workbenchClaudeOptions({cwd:path,env:{TMPDIR:'/tmp',BUN_INSTALL_CACHE_DIR:'/outside'}},'instructions',vi.fn(),{servers:{},omitted:[]},'abcd1234'))
+    const temp=join(path,'.cc-tasks/abcd1234/tmp')
+    expect(options.env).toMatchObject({TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')})
+    expect(options.settings).toMatchObject({env:{TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')},permissions:{defaultMode:'default',disableBypassPermissionsMode:'disable'}})
+  }finally{removeTempDir(path)}
 })

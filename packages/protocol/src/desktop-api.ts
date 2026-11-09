@@ -816,6 +816,7 @@ export const WorkbenchDesktopTaskView = z.object({
   canArchive: z.boolean(),
   writerExit: z.enum(['alive', 'unconfirmed']).optional(),
   worktree: z.object({
+    base: z.string().optional(), baseSha: z.string().optional(),
     branch: z.string(), projectPath: z.string(), removed: z.boolean(), merged: z.boolean(),
     port: z.number().optional(), scripts: WorkbenchScriptsView.optional(),
   }).optional(),

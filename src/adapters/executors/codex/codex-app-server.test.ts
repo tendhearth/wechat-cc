@@ -1,3 +1,7 @@
+import { mkdtempSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { removeTempDir } from '../../../lib/test-temp'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,7 +10,10 @@ import { TIER_PROFILES } from '../../../domain/user-tier'
 import { createWorkbenchCodexProvider } from './codex-app-server'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }))
-vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
+vi.mock('node:child_process', async importOriginal => {
+  const actual=await importOriginal<typeof import('node:child_process')>()
+  return {...actual,spawn:(command:string,...args:unknown[])=>command==='git'?(actual.spawn as Function)(command,...args):mocks.spawn(command,...args)}
+})
 
 type Rpc = { id?: string | number; method?: string; params?: any; result?: any; error?: any }
 class FakeProcess extends EventEmitter {
@@ -26,7 +33,7 @@ class FakeProcess extends EventEmitter {
         if (message.method === 'initialize') queueMicrotask(() => this.send({ id: message.id, result: initializeResponse }))
         if (message.method === 'config/read') queueMicrotask(() => this.send({ id: message.id, result: { config: nativeConfig } }))
         if (message.method === 'model/list') queueMicrotask(() => this.send({ id: message.id, result: { data: [{id:modelPresetId,model:'native-model',displayName:'Native model',description:'Native',isDefault:true,defaultReasoningEffort:'deep-native',supportedReasoningEfforts:[{reasoningEffort:'deep-native',description:'Native'}],inputModalities:modelModalities}],nextCursor:null } }))
-        if (message.method === 'thread/start' || message.method === 'thread/resume') queueMicrotask(() => this.send({ id: message.id, result: { thread: { id: message.params.threadId ?? 'thread-1' }, cwd: '/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }, ...threadResponse } }))
+        if (message.method === 'thread/start' || message.method === 'thread/resume') queueMicrotask(() => this.send({ id: message.id, result: { thread: { id: message.params.threadId ?? 'thread-1' }, cwd: message.params.cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: message.params.config?.sandbox_workspace_write?.writable_roots ?? [], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }, ...threadResponse } }))
         if (message.method === 'turn/start' && this.autoTurnStart) queueMicrotask(() => this.send({ id: message.id, result: { turn: { id: `turn-${this.sent.filter(m => m.method === 'turn/start').length}` } } }))
         if (message.method === 'thread/read') queueMicrotask(() => this.send({ id: message.id, result: { thread: nativeThreads[message.params.threadId] } }))
         if (message.method === 'thread/backgroundTerminals/clean') queueMicrotask(() => this.send(terminalCleanup === 'unavailable' ? {id:message.id,error:{message:'unsupported terminal API'}} : {id:message.id,result:{}}))
@@ -1369,4 +1376,27 @@ describe('网络守护:暂停在跑的任务(2026-10-03)—— 冻住期间自�
     expect(signals).toContainEqual([-4343, 'SIGKILL'])
     expect(child.sent.slice(before).some(m => m.method === 'turn/interrupt' || m.method === 'thread/backgroundTerminals/clean')).toBe(false)
   })
+})
+
+it.each([false,true])('pins task temp/cache in child and shell environments and writable roots (resume=%s)', async resume => {
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-codex-env-')))
+  try {
+    const session=await createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234',...(resume?{resumeSessionId:'old-thread'}:{})}))
+    sessions.push(session)
+    const request=children.at(-1)!.sent.find(m=>m.method===(resume?'thread/resume':'thread/start'))!
+    const env=mocks.spawn.mock.calls.at(-1)![2].env
+    const temp=join(path,'.cc-tasks/abcd1234/tmp')
+    expect(env).toMatchObject({TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')})
+    expect(request.params.config.sandbox_workspace_write).toEqual({writable_roots:[temp],network_access:false,exclude_tmpdir_env_var:true,exclude_slash_tmp:true})
+    expect(request.params.config.shell_environment_policy).toMatchObject({set:{TMPDIR:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:env.BUN_INSTALL_CACHE_DIR},include_only:expect.arrayContaining(['BUN_TMPDIR','BUN_INSTALL_CACHE_DIR'])})
+    await session.close()
+  } finally {removeTempDir(path)}
+})
+
+it('still rejects a task thread with writable roots outside its workspace',async()=>{
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-codex-env-')))
+  try {
+    threadResponse={sandbox:{type:'workspaceWrite',writableRoots:['/tmp'],networkAccess:false,excludeTmpdirEnvVar:true,excludeSlashTmp:true}}
+    await expect(createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234'}))).rejects.toThrow('codex_unverified_thread_policy')
+  }finally{removeTempDir(path)}
 })

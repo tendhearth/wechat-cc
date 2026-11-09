@@ -168,7 +168,7 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
       if (!b || Object.keys(b).some(k => k !== 'id' && k !== 'action') || typeof b.id !== 'string' || !ID.test(b.id) || (b.action !== 'commit' && b.action !== 'remove' && b.action !== 'merge' && b.action !== 'reopen' && b.action !== 'run' && b.action !== 'stop')) return phoneInvalid('invalid_request')
       try {
         if (b.action === 'run' || b.action === 'stop') return { status: 200, body: { ok: true, ...await m.worktreeScript(b.id, b.action) } }
-        return { status: 200, body: { ok: true, ...m.worktree(b.id, b.action) } }
+        return { status: 200, body: { ok: true, ...await m.worktree(b.id, b.action) } }
       } catch (err) { return phoneError(err) }
     }, async (m, _q, body) => {
       const value = objectBody(body)
@@ -330,12 +330,12 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
     // 交办一件新事(parseEntryInput 验正文)。手机:手机表面,出生地按传输(App / 浏览器),202 回 {ok, …结果};
     // 桌面(原 /v1/workbench/create-entry):桌面表面,只有 operator 令牌记出生地 desktop,错误码是交办入口那一列(desktopEntry)。
     'POST /v1/matter/create': action(async (m, _q, body, caller) => {
-      try { return { status: 202, body: { ok: true, ...m.createEntry(parseEntryInput(body), { surface: 'phone', origin: caller?.client ?? null }) as object } } } catch (err) { return phoneError(err, true) }
+      try { return { status: 202, body: { ok: true, ...await m.createEntry(parseEntryInput(body), { surface: 'phone', origin: caller?.client ?? null }) as object } } } catch (err) { return phoneError(err, true) }
     }, async (m, query, body, caller) => {
       if (query.size) return invalid()
       try {
         const input = parseEntryInput(body)
-        return { status: 202, body: m.createEntry(input, { surface: 'desktop', ownerKey: ownerKey(), ...desktopOrigin(caller) }) }
+        return { status: 202, body: await m.createEntry(input, { surface: 'desktop', ownerKey: ownerKey(), ...desktopOrigin(caller) }) }
       } catch (err) { return mappedError(err, true) }
     }),
 

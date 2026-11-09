@@ -25,7 +25,7 @@ export interface GitReview {version:1;scope:'working-tree-before-after';startedA
 export function gitEnv() {
   const env:NodeJS.ProcessEnv={...process.env}
   for(const key of Object.keys(env))if(key.startsWith('GIT_'))delete env[key]
-  return {...env,LC_ALL:'C',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_PAGER:'cat',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1'}
+  return {...env,LC_ALL:'C',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_PAGER:'cat',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_CEILING_DIRECTORIES:tmpdir()}
 }
 /** 每个阶段(基线 / 收尾)各自的总期限;缺省 15 秒。只给测试放宽(负载下 100 个文件读不完 ⇒ 快照变 partial)。 */
 export const REVIEW_DEADLINE_MS=15_000
@@ -58,7 +58,7 @@ export async function filterOverrides(run:(args:string[])=>Promise<Buffer>):Prom
   return out
 }
 function paths(bytes:Buffer){return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes).split('\0').filter(Boolean)}
-function inScope(path:string){return !isAbsolute(path) && !path.split('/').some(p=>p==='..'||p==='.git'||p==='.cc-workbench'||p==='.cc-workbench-inputs') && !path.includes('\0') && !path.includes('\\')}
+function inScope(path:string){return !isAbsolute(path) && !path.split('/').some(p=>p==='..'||p==='.git'||p==='.cc-workbench'||p==='.cc-workbench-inputs'||p.toLowerCase()==='.cc-tasks') && !path.includes('\0') && !path.includes('\\')}
 function reviewable(path:string){return !path.split('/').some(p=>
   (p.startsWith('.')&&!['.gitignore','.gitattributes','.editorconfig'].includes(p)) || /^(id_(rsa|dsa|ecdsa|ed25519)|credentials(?:\..*)?|private[-_]key(?:\..*)?)$/i.test(p) || /\.(pem|p12|pfx|key)$/i.test(p)
 )}

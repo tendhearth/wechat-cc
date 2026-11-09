@@ -30,7 +30,7 @@ export interface ClaudeAgentProviderOptions {
    * `lastActiveChatId` ref, which under concurrent dispatch could read
    * another chat's id mid-call and cross-resolve the tier.
    */
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: SpawnContext) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: SpawnContext) => Options | Promise<Options>
   /**
    * Path to the `claude` binary, threaded into cheapEval's query() call.
    * Optional — when omitted the SDK's bundled discovery runs. Used in
@@ -330,9 +330,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     return text.trim().length > 0 ? text : resultText
   }
   return {
-    modelCatalog(project) {
+    async modelCatalog(project) {
       const deadline=Date.now()+15_000
-      const options=opts.sdkOptionsForProject(project.alias,project.path,TIER_PROFILES.trusted,'workbench:catalog')
+      const options=await opts.sdkOptionsForProject(project.alias,project.path,TIER_PROFILES.trusted,'workbench:catalog')
       return discoverClaudeModels(options,Math.max(0,deadline-Date.now()))
     },
     // One-shot haiku-class eval. Used by chatroom convergence check +
@@ -358,7 +358,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // chatId is threaded into sdkOptionsForProject so the builder can
       // produce a canUseTool whose tier/mode closures are bound to THIS
       // session — see bootstrap/index.ts:buildCanUseTool().
-      const options = {...opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
+      const options = {...await opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
       const execution = spawnOpts.execution ? {...spawnOpts.execution} : undefined
       if (execution) {
         if (execution.model) options.model=execution.model

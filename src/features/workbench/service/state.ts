@@ -97,6 +97,8 @@ export interface Active extends PathReservation {
 }
 
 export interface WorkbenchRuntimeState {
+  preparations: Set<Promise<unknown>>
+  preparationAbort: AbortController
   runsByTask: Map<string, Active>
   /** 文件夹的占用:派发时写入,会话关闭(结算 / 隔离)时删除 —— 中间从不释放。 */
   reservations: Map<string, Active>
@@ -123,6 +125,7 @@ export interface WorkbenchRuntimeState {
 
 export function makeRuntimeState(): WorkbenchRuntimeState {
   return {
+    preparationAbort: new AbortController(), preparations: new Set(),
     runsByTask: new Map(), reservations: new Map(), queue: [], runningText: new Map(), collections: new Set(),
     nativeDecisions: new Map(), handoffDecisions: new Map(),
     order: 0, stopping: false, shutdownComplete: false, shutdownPromise: undefined,
@@ -130,4 +133,12 @@ export function makeRuntimeState(): WorkbenchRuntimeState {
     autoContinueBlocked: new Set(),
     writerOrphans: new Map(), writerWatch: undefined,
   }
+}
+
+
+/** Shutdown drains these before the store or process can disappear. */
+export function trackPreparation<T>(state: WorkbenchRuntimeState, operation: Promise<T>): Promise<T> {
+  const pending=operation.finally(()=>state.preparations.delete(pending))
+  state.preparations.add(pending)
+  return pending
 }

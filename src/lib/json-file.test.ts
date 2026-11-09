@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ConcurrentJsonUpdateError, UnreadableJsonError, updateJsonFile, writeFileAtomic, writeJsonAtomic, writeJsonExclusive } from './json-file'
+import { ConcurrentJsonUpdateError, UnreadableJsonError, updateJsonFile, writeFileAtomic, writeJsonAtomic, writeJsonAtomicAsync, writeJsonExclusive } from './json-file'
 
 const dirs: string[] = []
 const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'json-file-')); dirs.push(d); return d }
@@ -134,4 +134,15 @@ describe('followSymlink', () => {
     expect(lstatSync(link).isSymbolicLink()).toBe(false)
     expect(readFileSync(outside, 'utf8')).toBe('{"untouched":true}\n')
   })
+})
+
+
+it('async atomic writes keep complete JSON, modes and unique scratch files under concurrent writers', async () => {
+  const dir=fresh(),path=join(dir,'state.json')
+  await Promise.all([writeJsonAtomicAsync(path,{writer:1}),writeJsonAtomicAsync(path,{writer:2})])
+  expect([1,2]).toContain(JSON.parse(readFileSync(path,'utf8')).writer)
+  expect(readdirSync(dir)).toEqual(['state.json'])
+  if(process.platform!=='win32')expect(statSync(path).mode&0o777).toBe(0o600)
+  await writeJsonAtomicAsync(path,{done:true})
+  expect(JSON.parse(readFileSync(path,'utf8'))).toEqual({done:true})
 })

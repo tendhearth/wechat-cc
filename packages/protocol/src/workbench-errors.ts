@@ -79,7 +79,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   project_detached: {desktop: 409, phone: 409, wechatWorktree: '项目目录现在不在任何分支上，请在电脑上自己合并。'},
   project_dirty: {desktop: 409, phone: 409, wechatWorktree: '项目目录里有没提交的改动，CC 不替你合并。请处理那些改动，或在电脑上自己合并。'},
   worktree_project_missing: {desktop: 409, phone: 409},
-  worktree_base_missing: {desktop: 422, phone: 422, wechat: '项目里没有这个分支，没有开始工作。请核对分支名（本地分支），或去掉 @<分支> 从最新提交开始。'},
+  worktree_base_missing: {desktop: 422, phone: 422, wechat: '项目里没有这个分支，没有开始工作。请核对分支名（本地或远端跟踪分支，如 origin/dev），或去掉 @<分支> 从最新提交开始。'},
   worktree_branch_exists: {desktop: 409, phone: 409},
   worktree_branch_missing: {desktop: 409, phone: 409, wechatWorktree: '分支已经不在项目里了，没法重开。请重新交办一件。'},
   worktree_conflict: {desktop: 409, phone: 409, wechatWorktree: '原来的工作区位置被占了，没法重开。请在桌面上看看。'},

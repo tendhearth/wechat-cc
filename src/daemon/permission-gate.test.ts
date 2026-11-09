@@ -241,3 +241,10 @@ describe('beforeAllow:留痕只记最后真发生的事(对话的放行提醒)',
     expect(hook).not.toHaveBeenCalled()
   })
 })
+
+// Fixtures are a synthetic home. A task-local TMPDIR can be inside the operator's
+// .claude/channels/wechat checkout; that outer real path is not the fixture's config.
+vi.mock('node:os',async importOriginal=>{
+  const os=await importOriginal<typeof import('node:os')>()
+  return {...os,homedir:()=>os.tmpdir()}
+})

@@ -9,7 +9,8 @@
  *  - **登记过的文件次数只许降**:多一处红;少了也红,提示你把数字调下来(棘轮),降到 0 的行删掉。
  */
 import { describe, expect, it } from 'vitest'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BOUNDARY_FILES, ROOT, classify, findMocks, scanInternalMocks } from './mock-internal-lib'
 
@@ -85,4 +86,14 @@ describe('判法本身', () => {
   it('真仓库里也认得出(活体抽查:登记过的一个文件确实有内部 mock)', () => {
     expect(scanInternalMocks()['src/daemon/bootstrap.test.ts']).toEqual(['src/daemon/bootstrap/wire-self-restart'])
   })
+})
+
+
+it('does not scan task runtime files as repository tests', () => {
+  const root=mkdtempSync(join(tmpdir(),'cc-mock-scan-'))
+  try {
+    mkdirSync(join(root,'.cc-tasks','abcd1234'),{recursive:true})
+    writeFileSync(join(root,'.cc-tasks','abcd1234','scratch.test.ts'),`${VM}('../../domain/private')`)
+    expect(scanInternalMocks(root)).toEqual({})
+  } finally {rmSync(root,{recursive:true,force:true})}
 })

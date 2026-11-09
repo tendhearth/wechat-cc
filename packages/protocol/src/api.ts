@@ -153,6 +153,7 @@ export const MatterTaskView = z.object({
   // 不用 enum:以后多一种,老 App 当「不确定」而不是整页解析失败);approved = 这份内容主人在电脑上批过;
   // lastLines = 最近那条脚本输出的最后几行(已打码、去路径);脚本原文与路径永远不到手机。
   worktree: z.object({
+    base: z.string().optional(), baseSha: z.string().optional(),
     branch: z.string(), removed: z.boolean(), merged: z.boolean().optional(), projectId: z.string().optional(),
     port: z.number().int().optional(), setup: z.string().optional(), run: z.string().optional(), approved: z.boolean().optional(),
     lastLines: z.array(z.string()).max(20).optional(),

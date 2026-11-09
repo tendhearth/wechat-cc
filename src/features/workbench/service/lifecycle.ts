@@ -449,6 +449,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
   function shutdown():Promise<void> {
     if (state.shutdownPromise) return state.shutdownPromise
     state.stopping=true
+    state.preparationAbort.abort()
     if (state.writerWatch) { clearInterval(state.writerWatch); state.writerWatch=undefined }
     state.shutdownPromise=(async () => {
       const snapshot=[...state.runsByTask.values()]
@@ -462,6 +463,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
         }
       }
       await Promise.allSettled(snapshot.map(running => running.done))
+      while(state.preparations.size)await Promise.allSettled([...state.preparations])
       while(state.collections.size)await Promise.allSettled([...state.collections])
       state.shutdownComplete=true
       for (const running of [...state.runsByTask.values()]) releaseReservation(running)

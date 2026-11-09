@@ -253,6 +253,10 @@ export interface AgentMcpTools {
 }
 
 export interface SpawnContext {
+  /** Cancels pre-executor task environment preparation on stop/shutdown. */
+  preparationSignal?: AbortSignal
+  /** Task-local temporary directories; never set for companion chat. */
+  workbenchTaskId?: string
   /** Workbench-only ordered activity updates. Normal chat consumers keep legacy events. */
   workbenchTimeline?: boolean
   /** Enable retained native background execution only for the workbench consumer. */
