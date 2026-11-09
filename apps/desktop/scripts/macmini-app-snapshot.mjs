@@ -50,6 +50,8 @@ export async function receiveAppSnapshot({mini,sha,lifecycle=jobLifecycle(),inpu
   }
 }
 
+export const supportsAppSnapshot = ref => ['origin/dev', 'app-maestro-build3', 'design-unify-b1-fixes', 'codex-hook-trust-ux', 'topics-are-projects'].includes(ref)
+
 export async function main() {
  if (process.argv[2] === '--receive' || process.argv[2] === '--receive-verified') {
   const mini = miniConfiguration({ computerName: execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { encoding: 'utf8' }).trim(), homeDir: homedir(), platformName: process.platform })
@@ -59,7 +61,7 @@ export async function main() {
   else await receiveAppSnapshot({mini,sha})
  } else {
   const ref = process.argv[2] ?? 'origin/dev'
-  if (!['origin/dev', 'app-maestro-build3', 'design-unify-b1-fixes', 'codex-hook-trust-ux'].includes(ref)) throw Error('Snapshot ref must be an explicitly authorized UI branch')
+  if (!supportsAppSnapshot(ref)) throw Error('Snapshot ref must be an explicitly authorized UI branch')
   const repo = fileURLToPath(new URL('../../..', import.meta.url))
   const sha = execFileSync('/usr/bin/git', ['-C', repo, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8' }).trim()
   const transport = sshInvocation('app-status', process.argv[3] ?? 'home', process.env.CC_UI_SSH_CONFIG, undefined, process.env)

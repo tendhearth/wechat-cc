@@ -111,6 +111,12 @@
   --th-topic-padding-y: 8px;
   --th-topic-min-height: 36px;
   --th-topic-pressed-opacity: 0.7;
+  --th-topic-activity-dot-size: 5px;
+  --th-topic-activity-line-width: 10px;
+  --th-topic-activity-line-height: 1px;
+  --th-topic-activity-gap: 4px;
+  --th-topic-activity-attention: var(--th-accent);
+  --th-topic-activity-passive: var(--th-ink-soft);
   --th-message-user-role: var(--th-size-bubble);
   --th-message-reply-role: var(--th-size-body);
   --th-message-user-background: var(--th-rail);

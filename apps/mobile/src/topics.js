@@ -1,5 +1,7 @@
+function tActivityLabel(t){var a=t.activity;return [t.title,a&&a.waiting?a.waiting+' 个等你':'',a&&a.running?a.running+' 个在跑':'',a&&a.unread?a.unread+' 个做完未看':''].filter(Boolean).join('，')}
+function tActivityMark(t){var a=t.activity,k=a&&a.waiting?'waiting':a&&a.running?'running':a&&a.unread?'unread':'';return k?'<span data-topic-activity="'+k+'" aria-hidden="true"><i></i>'+a[k]+'</span>':''}
 function tNotice(text){document.getElementById('topic-notice').textContent=text;document.getElementById('topic-retry').hidden=!text}
-var tOpenFailed=false,tSearchTimer=null,tUnsubscribe=null,tListSeq={recent:0,all:0},tReady=false,tRecent=[],tAll=[],tCursor=null,tSelected=null,tDetail=null,tReadSeq=0,tRevision=null,tPolling=false
+var tOpenFailed=false,tSearchTimer=null,tUnsubscribe=null,tListSeq={recent:0,all:0},tReady=false,tRecent=[],tAll=[],tCursor=null,tSelected=null,tDetail=null,tReadSeq=0,tRevision=null,tPolling=false,tMatterTarget=0
 async function tList(all,more){
  if(!isDevice||!tReady)return
  var lane=all?'all':'recent',listSeq=++tListSeq[lane],identity=T
@@ -7,13 +9,14 @@ async function tList(all,more){
   var r=await /* link-scan: device-only */ api('/v1/memory/topics?view='+(all?'all':'recent')+'&limit='+(all?'20':'6')+(more&&tCursor?'&cursor='+encodeURIComponent(tCursor):'')+(all&&/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value.trim()?'&q='+encodeURIComponent(/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value.trim()):''))
   if(r.status===401){onUnauthorized(identity);return}if(r.status!==200)throw Error('unavailable')
   var b=await r.json();if(!isDevice||identity!==T||listSeq!==tListSeq[lane])return
-  if(all){tAll=more?tAll.concat(b.topics):b.topics;tCursor=b.nextCursor;tRenderAll();tNotice('')}else{tRecent=b.topics;var row=document.getElementById('topic-row');row.hidden=!tRecent.length;row.innerHTML=tRecent.map(function(t){return '<button type="button" data-topic="'+esc(t.id)+'" aria-pressed="'+(t.id===tSelected)+'">'+esc(t.title)+'</button>'}).join('')+(tRecent.length?'<button type="button" data-topic-more>更多话题</button>':'')}
+  if(all){tAll=more?tAll.concat(b.topics):b.topics;tCursor=b.nextCursor;tRenderAll();tNotice('')}else{tRecent=b.topics;var row=document.getElementById('topic-row');row.hidden=!tRecent.length;row.innerHTML=tRecent.map(function(t){return '<button type="button" data-topic="'+esc(t.id)+'" aria-label="'+esc(tActivityLabel(t))+'" aria-pressed="'+(t.id===tSelected)+'">'+esc(t.title)+tActivityMark(t)+'</button>'}).join('')+(tRecent.length?'<button type="button" data-topic-more>更多话题</button>':'')}
  }catch(e){tNotice('暂时读不到，重试')}
 }
 function tRenderAll(){var query=/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value.toLowerCase();document.getElementById('topic-list').innerHTML=tAll.map(function(t){return '<button type="button" data-topic="'+esc(t.id)+'">'+esc(t.title)+'</button>'}).join('');document.getElementById('topic-list-more').hidden=!tCursor}
 async function tOpen(id){
  if(typeof cPushLayer==='function')cPushLayer({kind:'topic',id:id})
  if(!isDevice||!tReady)return
+ if(tSelected!==id)tMatterTarget=0
  document.body.classList.add('topic-open');tOpenFailed=false;tSelected=id;tDetail=null;var seq=++tReadSeq
  document.getElementById('topic-panel').hidden=false;document.getElementById('topic-all').hidden=true;document.getElementById('topic-body').textContent='正在读…';document.getElementById('topic-close').focus()
  try{
@@ -26,21 +29,46 @@ async function tRead(section,cursor){
  if(!isDevice||!tSelected)return
  var id=tSelected,seq=++tReadSeq,identity=T
  try{
-  var r=await /* link-scan: device-only */ api('/v1/memory/topics/detail?id='+encodeURIComponent(id)+(section?'&section='+section+'&cursor='+encodeURIComponent(cursor):''))
+  var r=await /* link-scan: device-only */ api('/v1/memory/topics/detail?id='+encodeURIComponent(id)+(section?'&section='+section+'&limit=20&cursor='+encodeURIComponent(cursor):''))
   if(r.status===401){onUnauthorized(identity);return}
   if(id!==tSelected||seq!==tReadSeq||identity!==T||!isDevice||!tReady)return
   if(r.status===404){tDetail=null;tRecent=[];tAll=[];document.getElementById('topic-body').replaceChildren();document.getElementById('topic-list').replaceChildren();document.getElementById('topic-row').replaceChildren();tClose();tList(false,false);return}if(r.status!==200)throw Error('unavailable')
   var b=await r.json();if(id!==tSelected||seq!==tReadSeq||identity!==T||!isDevice||!tReady)return
-  if(b.topic.mergedInto&&b.topic.id===b.topic.mergedInto&&b.topic.mergedInto!==id){tSelected=b.topic.mergedInto;tDetail=null;await tRead();tList(false,false);return}
+  if(b.topic.mergedInto&&b.topic.id===b.topic.mergedInto&&b.topic.mergedInto!==id){tSelected=b.topic.mergedInto;tMatterTarget=0;tDetail=null;await tRead();tList(false,false);return}
   if(b.topic.id!==id)throw Error('unavailable')
   if(b.topic.bubbleState==='closed'){tDetail=null;document.getElementById('topic-body').replaceChildren();tClose();tList(false,false);return}
-  if(section&&tDetail){tDetail[section]=tDetail[section].concat(b[section]);tDetail.pages[section]=b.pages[section]}else tDetail=b
+  if(section&&tDetail){
+   if(b.revision!==tDetail.revision){await tRead();return}
+   tDetail[section]=Array.from(new Map(tDetail[section].concat(b[section]).map(function(item){return [item.id,item]})).values());tDetail.pages[section]=b.pages[section]
+  }else{
+   var cursors=new Set()
+   while(b.matters.length<tMatterTarget&&b.pages.matters.nextCursor){
+    var nextCursor=b.pages.matters.nextCursor
+    if(cursors.has(nextCursor))throw Error('repeated_cursor')
+    cursors.add(nextCursor)
+    var nextResponse=await /* link-scan: device-only */ api('/v1/memory/topics/detail?id='+encodeURIComponent(id)+'&section=matters&limit=20&cursor='+encodeURIComponent(nextCursor))
+    if(nextResponse.status===401){onUnauthorized(identity);return}
+    if(id!==tSelected||seq!==tReadSeq||identity!==T||!isDevice||!tReady)return
+    if(nextResponse.status===403||nextResponse.status===404){tClear();return}
+    if(nextResponse.status!==200)throw Error('unavailable')
+    var next=await nextResponse.json()
+    if(id!==tSelected||seq!==tReadSeq||identity!==T||!isDevice||!tReady)return
+    if(next.topic.id!==b.topic.id||next.revision!==b.revision)throw Error('topic_revision_changed')
+    var merged=Array.from(new Map(b.matters.concat(next.matters).map(function(item){return [item.id,item]})).values())
+    if(merged.length<=b.matters.length)throw Error('invalid_page')
+    b.matters=merged;b.pages.matters=next.pages.matters
+   }
+   tDetail=b
+  }
+  tMatterTarget=Math.max(tMatterTarget,tDetail.matters.length)
   tRenderDetail();tNotice('')
  }catch(e){if(seq===tReadSeq)tNotice('尚未同步 · 暂时读不到，重试')}
 }
 function tRenderDetail(){
  var d=tDetail,t=d.topic,html='<h2 id="topic-title">'+esc(t.title)+'</h2>'+(t.description?'<p>'+esc(t.description)+'</p>':'')+(t.summary?'<p>'+esc(t.summary)+'</p>':'')
- if(d.matters.length)html+='<h3>相关事项</h3>'+d.matters.map(function(m){return '<button type="button" data-mid="'+esc(m.id)+'">'+esc(m.title)+' · '+esc(CCP.STATUS_WORDS[m.state==='open'?'working':m.state==='cancelled'?'stopped':m.state]||m.state)+'</button>'}).join('')
+ var sessions=d.matters.filter(function(m){return m.session}),related=d.matters.filter(function(m){return !m.session})
+ html+='<h3>这个项目的会话</h3>'+(sessions.length?sessions.map(function(m){var s=m.session;return '<button type="button" data-mid="'+esc(m.id)+'" data-project-session="'+esc(m.id)+'">'+mAgents.agentAvatarsHtml([s.executor])+'<span>'+esc(s.title)+'<small>'+esc(s.executor)+' · '+esc(s.latestStep)+'</small><small>'+esc(new Date(s.updatedAt).toLocaleString())+'</small></span></button>'}).join(''):'<p>这个项目还没有会话</p>')
+ if(related.length)html+='<h3>相关事项</h3>'+related.map(function(m){return '<button type="button" data-mid="'+esc(m.id)+'">'+esc(m.title)+' · '+esc(CCP.STATUS_WORDS[m.state==='open'?'working':m.state==='cancelled'?'stopped':m.state]||m.state)+'</button>'}).join('')
  if(d.entries.length)html+='<h3>CC 记得</h3>'+d.entries.map(function(e){return '<details><summary>'+esc(e.line)+(e.status==='superseded'?' · 不再采用':'')+(e.recalled?' · 这次想起':'')+'</summary><p>'+esc(e.body)+'</p><small>'+esc(e.source)+' · '+esc(e.createdTs)+'</small>'+(e.status==='live'?'<button type="button" data-topic-wrong="'+esc(e.id)+'">这条不对</button>':'')+'</details>'}).join('')
  if(d.messages.length)html+='<h3>最近聊到</h3>'+d.messages.map(function(m){return '<button type="button" data-message="'+esc(m.id)+'" data-at="'+esc(m.ts)+'">'+(m.speaker==='owner'?'你':'CC')+' · '+esc(m.excerpt)+' · '+esc(m.ts)+(m.source==='episode'?' · 相关记录':'')+' · 回看</button>'}).join('')
  ;['matters','entries','messages'].forEach(function(section){var p=d.pages[section];if(p.nextCursor)html+='<button type="button" data-topic-section="'+section+'" data-cursor="'+esc(p.nextCursor)+'">更多'+({matters:'相关事项',entries:'记忆',messages:'消息'}[section])+' · 共 '+p.total+'</button>'})
@@ -48,7 +76,7 @@ function tRenderDetail(){
  document.getElementById('topic-body').innerHTML=html+'<details><summary>管理话题</summary><label>话题名称<input id="topic-name" maxlength="120" value="'+esc(t.title)+'"></label><button type="button" data-topic-edit="rename">改名</button><label>并到…<select id="topic-target"><option value="">选择话题</option></select></label><button type="button" data-topic-edit="merge">并到…</button><details><summary>删话题</summary><p>删除这个话题和记下的内容？</p><button type="button" data-topic-edit="delete">确认删除</button></details></details>'
  tLoadTargets(t.id)
 }
-function tClose(){if(typeof cBackLayer==='function'&&!cHandlingPop&&history.state&&history.state.ccLayer&&history.state.ccLayer.kind==='topic'){cBackLayer();return};document.body.classList.remove('topic-open');tSelected=null;tDetail=null;tReadSeq++;document.getElementById('topic-panel').hidden=true;document.getElementById('topic-body').replaceChildren();document.getElementById('chat-input').focus();tList(false,false)}
+function tClose(){if(typeof cBackLayer==='function'&&!cHandlingPop&&history.state&&history.state.ccLayer&&history.state.ccLayer.kind==='topic'){cBackLayer();return};document.body.classList.remove('topic-open');tSelected=null;tDetail=null;tMatterTarget=0;tReadSeq++;document.getElementById('topic-panel').hidden=true;document.getElementById('topic-body').replaceChildren();document.getElementById('chat-input').focus();tList(false,false)}
 function tStart(){if(tReady)return;tReady=true;tList(false,false);tWatch()}
 async function tWatch(){
  if(tPolling||!isDevice||!tReady)return;
@@ -85,7 +113,7 @@ async function cLocateMessage(id,at){
  var node=document.getElementById('message-'+id);if(node){node.tabIndex=-1;node.scrollIntoView({block:'center'});node.focus({preventScroll:true})}else cNotice('找不到原消息了，请返回对话。')
 }
 
-function tClear(){tOpenFailed=false;tNotice('');if(tUnsubscribe)tUnsubscribe();tUnsubscribe=null;clearTimeout(tSearchTimer);tListSeq.recent++;tListSeq.all++;tReady=false;tSelected=null;tDetail=null;tRecent=[];tAll=[];tRevision=null;tReadSeq++;document.getElementById('topic-row').replaceChildren();document.getElementById('topic-row').hidden=true;document.getElementById('topic-panel').hidden=true;document.getElementById('topic-body').replaceChildren();document.getElementById('topic-list').replaceChildren();document.body.classList.remove('topic-open')}
+function tClear(){tOpenFailed=false;tNotice('');if(tUnsubscribe)tUnsubscribe();tUnsubscribe=null;clearTimeout(tSearchTimer);tListSeq.recent++;tListSeq.all++;tReady=false;tSelected=null;tDetail=null;tMatterTarget=0;tRecent=[];tAll=[];tRevision=null;tReadSeq++;document.getElementById('topic-row').replaceChildren();document.getElementById('topic-row').hidden=true;document.getElementById('topic-panel').hidden=true;document.getElementById('topic-body').replaceChildren();document.getElementById('topic-list').replaceChildren();document.body.classList.remove('topic-open')}
 
 async function tLoadTargets(id){
  var cursor=null,identity=T

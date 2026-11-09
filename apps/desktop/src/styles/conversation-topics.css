@@ -18,3 +18,11 @@
 
 .conversation-topics button:active,.conversation-topic-panel button:active { opacity:var(--th-topic-pressed-opacity); }
 .conversation-topics button:disabled,.conversation-topic-panel button:disabled { opacity:var(--th-button-disabled-opacity); cursor:default; }
+
+.conversation-topics [data-topic-activity] { display:inline-flex; align-items:center; gap:var(--th-topic-activity-gap); margin-left:var(--th-topic-activity-gap); color:var(--th-topic-activity-passive); }
+.conversation-topics [data-topic-activity="waiting"] { color:var(--th-topic-activity-attention); }
+.conversation-topics [data-topic-activity] i { width:var(--th-topic-activity-dot-size); height:var(--th-topic-activity-dot-size); border-radius:50%; background:currentColor; }
+.conversation-topics [data-topic-activity="unread"] i { width:var(--th-topic-activity-line-width); height:var(--th-topic-activity-line-height); border-radius:0; }
+.conversation-topic-panel [data-project-session] { display:flex; align-items:flex-start; gap:var(--th-space-s); width:100%; border:0; border-radius:0; padding:var(--th-space-s) 0; }
+.topic-session-copy { display:flex; min-width:0; flex-direction:column; gap:var(--th-space-xs); overflow-wrap:anywhere; }
+.topic-session-copy small,.topic-session-copy time { color:var(--th-ink-soft); font-size:var(--th-size-caption); }

@@ -99,7 +99,7 @@ export interface Backend {
   onConnection(cb: (c: Connection) => void): Unsubscribe
   subscribe<T>(topic: 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`, cb: (data: T) => void): Unsubscribe
   topics(p: { view?: 'recent' | 'all'; limit?: number; cursor?: string }): Promise<TopicsListT>
-  topicDetail(p: { id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string }): Promise<TopicDetailT>
+  topicDetail(p: { id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }): Promise<TopicDetailT>
   topicEdit(action: 'rename' | 'merge' | 'delete' | 'wrong', input: { id: string; title?: string; into?: string }): Promise<void>
   topicOpen(id: string, requestId: string): Promise<TopicOpenT>
   matterHistory(lang: Lang): Promise<MatterT[]>

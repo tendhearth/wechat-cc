@@ -1,0 +1,28 @@
+# 话题行就是项目（2026-11-09）
+
+目的：让主人一眼知道哪个项目需要自己，点开沿用原会话处理。负责人 Codex，工作区 `wt-topics-projects-codex`、分支 `topics-are-projects`；只提交，不集成、推送或部署。此次主人的任务授权覆盖下述界面增补。
+
+## 数据与边界
+
+复用 #881 的真实 git common dir、仓库/origin 名与话题 title/aliases、历史 cwd 产出条目的证据；所有证据合并后只有一个候选才挂。终端与工作台以 matter 为单位去重，worktree 与项目路径共同判定；歧义、远端来源、临时自检、其他 owner 均不挂。不持久化猜测，不新增迁移、轮询或模型调用。
+
+Daemon 一处生成 `activity`（running / waiting / unread / lastActiveAt）及分页会话行，协议定义一次，桌面、App、网页共用。未结束的权限/提问始终算 waiting；已答复、闲置且未看算 waiting；终态未看算 unread；执行中算 running。计数互斥，归档和已看结果不计。看过使用 S3c `/v1/matter/seen` 与既有 MatterSeen，不因打开话题消掉会话未读。topics 原有 revision/推送在事项变化与 seen 时更新；列表不读消息或记忆正文。
+
+| 优先级 / 状态 | 标签记号 | 颜色 | 读屏例子 |
+|---|---|---|---|
+| 等你 > 0 | 实心小点 + 数字 | 唯一强调色 accent | bx，1 个等你，2 个在跑 |
+| 无等待，在跑 > 0 | 实心小点 + 数字 | inkSoft | bx，2 个在跑 |
+| 只有做完未看 > 0 | 细线 + 数字 | inkSoft | bx，1 个做完未看 |
+| 全部 0 | 无记号 | 标题原色 | bx |
+
+排序：有等待、有运行、最近活跃，最后 id 稳定兜底；先排全体再截最近 8 / 标签 6。选中仍用 ink 边，透明细线胶囊，App 至少 44 触区；不加色块、不引入深色。记号由 componentAppearance.topic 管形状；App 等待点使用 Dot。
+
+## 泡泡与回合
+
+泡泡顶部「这个项目的会话」：执行者头像、标题、最近一步/在等什么、时间；等待优先，再运行，再新近。沿用 matters 分页，每行进入原终端/事项详情；工作台待批/待答可直达现有 decide，终端沿用详情里的批/回。旧记忆、相关对话保留。无会话显示「这个项目还没有会话」，无记忆仍显示原空态；断线沿用「尚未同步」，不将缓存伪装为即时状态。
+
+主人问「bx 那边怎么样了」时，topic recall 在原有上限内追加同源摘要与最多 3 条最近一步；只给主人，索引与活动均 bodies:false，不把会话消息正文塞进回合。新增 topic eval 样本及离线断言。
+
+## 验收
+
+测试只增不减，新增映射、状态/seen、排序截断、推送、召回与读屏/导航回归，记录撤掉实现的红与恢复后的绿。主 Mac 先 uptime 与 CivilizationVII 检查，负载 < 8 且无游戏才跑 `bun run verify`（含 App 配置）；UI 仅 mini lab browser + App Maestro，共享 `~/ci/lock`。同一合成 fixture 产前后图与 README 索引；收尾在锁内只清自己非 active 快照。报告记录全部回执与未完成项。

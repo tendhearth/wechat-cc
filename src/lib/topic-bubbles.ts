@@ -12,7 +12,7 @@ export interface BubbleRow {
 export interface TopicMatter { id: string; title: string; state: string; archived_at: number | null; kind: string; project_path: string | null; owner_chat_id: string | null }
 
 /** 临时目录里的实验 / 自检不是主人事项。看结构化来源,不按标题猜。 */
-function temporary(path: string | null): boolean {
+export function temporary(path: string | null): boolean {
   if (!path) return false
   return [tmpdir(), '/tmp', '/private/tmp', '/var/tmp'].some(root => {
     const canonical = (s: string) => resolve(s).replace(/^\/private\/(tmp|var)(?=\/|$)/, '/$1')
@@ -60,11 +60,11 @@ export function makeTopicBubbles(db: Db) {
     beginSleep(owner: string, sleepId: string) {
       return { owner, sleepId, candidates: db.query<{ thread_id: string; activity_revision: number }, [string]>(`SELECT b.thread_id,b.activity_revision FROM topic_bubbles b JOIN threads t ON t.id=b.thread_id WHERE t.chat_id=? AND b.state='open'`).all(owner) }
     },
-    closeAfterSleep(snapshot: { owner: string; sleepId: string; candidates: Array<{ thread_id: string; activity_revision: number }> }) {
+    closeAfterSleep(snapshot: { owner: string; sleepId: string; candidates: Array<{ thread_id: string; activity_revision: number }> }, blocked: ReadonlySet<string> = new Set()) {
       return db.transaction(() => {
         let closed = 0
         for (const c of snapshot.candidates) {
-          if (!owned(snapshot.owner, c.thread_id) || topicMatters(db, snapshot.owner, c.thread_id).some(blocksBubble)) continue
+          if (blocked.has(c.thread_id) || !owned(snapshot.owner, c.thread_id) || topicMatters(db, snapshot.owner, c.thread_id).some(blocksBubble)) continue
           closed += db.query("UPDATE topic_bubbles SET state='closed',closed_sleep_id=? WHERE thread_id=? AND activity_revision=? AND state='open' AND closed_sleep_id IS NOT ? RETURNING thread_id")
             .all(snapshot.sleepId, c.thread_id, c.activity_revision, snapshot.sleepId).length
         }

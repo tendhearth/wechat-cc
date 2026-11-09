@@ -2,6 +2,10 @@
 import { V1, v1 } from '../daemon-client.js'
 import { STATUS_WORDS } from '../generated/status-table.js'
 import { escapeHtml } from '../view.js'
+import { createAgentAvatars } from '../shared/agent-avatars.js'
+const agents = createAgentAvatars()
+/** @param {any} t */
+const activityLabel = t => [t.title, t.activity?.waiting ? `${t.activity.waiting} 个等你` : '', t.activity?.running ? `${t.activity.running} 个在跑` : '', t.activity?.unread ? `${t.activity.unread} 个做完未看` : ''].filter(Boolean).join('，')
 
 /** T4 reads never open a bubble. Only a deliberate owner selection writes.
  * @param {{root:HTMLElement,call:(method:any,path:string,body?:any)=>Promise<any>,openMatter:(id:string)=>unknown,locateMessage:(id:string,excerpt?:string)=>unknown,manage:()=>unknown,onTopics?:(ids:string[])=>void}} deps */
@@ -12,7 +16,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   root.append(panel)
   /** @type {HTMLElement|null} */ let returnFocus = null
   let editing = false
-  let alive = true, selected = '', revision = '', ticket = 0, listTicket = 0, all = false, cursor = '', stale = false
+  let alive = true, selected = '', revision = '', ticket = 0, listTicket = 0, all = false, cursor = '', stale = false, matterTarget = 0
   /** @type {boolean|null} */ let supported=null
   /** @type {any[]} */ let topics = []
   /** @type {any} */ let detail = null
@@ -27,13 +31,16 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   }
   const visibility=new MutationObserver(syncPanel);visibility.observe(panel,{attributes:true,attributeFilter:['hidden']})
   narrow.addEventListener('change',syncPanel)
-  const close = () => { const id=selected; pendingOpen=null; all = false; selected = ''; ticket++; panel.hidden = true; root.classList.remove('has-topic'); syncPanel(); drawRow(); const target=id?row.querySelector(`[data-topic-id="${CSS.escape(id)}"]`):returnFocus; if(target instanceof HTMLElement)target.focus() }
+  const close = () => { const id=selected; pendingOpen=null; all = false; selected = ''; matterTarget=0; ticket++; panel.hidden = true; root.classList.remove('has-topic'); syncPanel(); drawRow(); const target=id?row.querySelector(`[data-topic-id="${CSS.escape(id)}"]`):returnFocus; if(target instanceof HTMLElement)target.focus() }
   const button = (/** @type {string} */ label, /** @type {()=>unknown} */ action) => {
     const el = document.createElement('button'); el.type = 'button'; el.textContent = label; el.dataset.topicFocusKey=label; el.onclick = action; return el
   }
   function drawRow() {
     row.replaceChildren(...topics.slice(0,6).map(t => {
-      const b = button(t.title, () => { void open(t.id) }); b.dataset.topicId=t.id; b.setAttribute('aria-pressed', String(selected === t.id)); return b
+      const b = button(t.title, () => { void open(t.id) }); b.dataset.topicId=t.id; b.setAttribute('aria-pressed', String(selected === t.id)); b.setAttribute('aria-label',activityLabel(t))
+      const activity=t.activity, kind=activity?.waiting?'waiting':activity?.running?'running':activity?.unread?'unread':''
+      if(kind){const mark=document.createElement('span');mark.dataset.topicActivity=kind;mark.setAttribute('aria-hidden','true');mark.innerHTML=`<i></i>${activity[kind]}`;b.append(mark)}
+      return b
     }))
     if (topics.length) row.append(button('更多话题', () => { all = true; selected = ''; cursor = ''; panel.hidden = false; root.classList.add('has-topic'); void listAll() }))
     row.hidden = !topics.length
@@ -60,9 +67,22 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   async function readDetail(/** @type {string} */ id) {
     const generation = ++ticket
     try {
-      const data = await v1(call,V1.topics.detail,{query:{id}})
+      let data = await v1(call,V1.topics.detail,{query:{id}})
       if (!alive || generation !== ticket || selected !== id) return
-      if(data.topic?.mergedInto&&data.topic.mergedInto!==id){selected=data.topic.mergedInto;pendingOpen=null;void refresh();await readDetail(selected);return}
+      if(data.topic?.mergedInto&&data.topic.mergedInto!==id){selected=data.topic.mergedInto;matterTarget=0;pendingOpen=null;void refresh();await readDetail(selected);return}
+      const cursors=new Set()
+      while((data.matters?.length??0)<matterTarget&&data.pages?.matters?.nextCursor){
+        const cursor=data.pages.matters.nextCursor
+        if(cursors.has(cursor))throw Error('repeated_cursor')
+        cursors.add(cursor)
+        const next=await v1(call,V1.topics.detail,{query:{id,section:'matters',cursor,limit:20}})
+        if(!alive||generation!==ticket||selected!==id)return
+        if(next.topic?.id!==data.topic.id||next.revision!==data.revision)throw Error('topic_revision_changed')
+        const merged=[...new Map([...data.matters,...next.matters].map((/** @type {any} */ item)=>[item.id,item])).values()]
+        if(merged.length<=data.matters.length)throw Error('invalid_page')
+        data={...data,matters:merged,pages:{...data.pages,matters:next.pages.matters}}
+      }
+      matterTarget=Math.max(matterTarget,data.matters?.length??0)
       detail = data; stale = false; drawDetail()
     } catch (error) {
       if (!alive || generation !== ticket) return
@@ -72,6 +92,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   }
   async function open(/** @type {string} */ id, /** @type {string|undefined} */ retryRequestId=undefined) {
     returnFocus = /** @type {HTMLElement|null} */ (document.activeElement)
+    if(selected!==id)matterTarget=0
     all = false; selected = id; detail = null; cursor = ''; panel.hidden = false; root.classList.add('has-topic'); drawRow(); drawDetail(); panel.focus()
     const generation = ++ticket
     const requestId=retryRequestId??crypto.randomUUID();pendingOpen={id,requestId}
@@ -124,9 +145,18 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
     if (stale) { const note = document.createElement('p'); note.role = 'status'; note.textContent = '尚未同步 · 暂时读不到'; panel.append(note, button('重试', () => { if(pendingOpen?.id===selected)void open(selected,pendingOpen.requestId);else void readDetail(selected) })) }
     if (!detail) { if (!stale) panel.append(document.createTextNode('正在读取…')); restore(); return }
     for (const text of [detail.topic.description, detail.topic.summary]) if (text) { const p = document.createElement('p'); p.textContent = text; panel.append(p) }
-    let count = 0
+    const sessions=(detail.matters??[]).filter((/** @type {any} */ item)=>item.session)
+    const heading=document.createElement('h3');heading.textContent='这个项目的会话';panel.append(heading)
+    if(!sessions.length){const empty=document.createElement('p');empty.textContent='这个项目还没有会话';panel.append(empty)}
+    for(const item of sessions){
+      const session=item.session, el=button('',()=>openMatter(item.id));el.dataset.projectSession=item.id;el.dataset.topicFocusKey=`session:${item.id}`
+      el.ariaLabel=[session.title,session.executor,session.latestStep,new Date(session.updatedAt).toLocaleString()].filter(Boolean).join('，')
+      el.innerHTML=agents.agentAvatarsHtml([session.executor])+`<span class="topic-session-copy"><span>${escapeHtml(session.title)}</span><small>${escapeHtml(session.executor)} · ${escapeHtml(session.latestStep)}</small><time datetime="${new Date(session.updatedAt).toISOString()}">${escapeHtml(new Date(session.updatedAt).toLocaleString())}</time></span>`
+      panel.append(el)
+    }
+    let count = sessions.length
     for (const [key,title] of /** @type {[string,string][]} */ ([['matters','相关事项'],['entries','CC 记得'],['messages','最近聊到']])) {
-      const items = detail[key] ?? []; if (!items.length) continue
+      const items = (detail[key] ?? []).filter((/** @type {any} */ item)=>key!=='matters'||!item.session); if (!items.length) { const page=detail.pages?.[key];if(page?.nextCursor)panel.append(button(`更多${key==='matters'?'这个项目的会话':title}（${page.total}）`,()=>{void more(key,page.nextCursor)}));continue }
       count += items.length
       const heading = document.createElement('h3'); heading.textContent = title; panel.append(heading)
       for (const item of items) {
@@ -150,11 +180,12 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   async function more(/** @type {string} */ section, /** @type {string} */ nextCursor) {
     const id = selected, generation = ticket
     try {
-      const data = await v1(call,V1.topics.detail,{query:{id,section,cursor:nextCursor}})
+      const data = await v1(call,V1.topics.detail,{query:{id,section,cursor:nextCursor,limit:20}})
       if (!alive || selected !== id || generation !== ticket) return
+      if(data.revision!==detail.revision){await readDetail(id);return}
       const seen = new Set(detail[section].map((/** @type {any} */ item) => item.id))
       detail[section].push(...data[section].filter((/** @type {any} */ item) => !seen.has(item.id)))
-      detail.pages[section] = data.pages[section]; drawDetail()
+      detail.pages[section] = data.pages[section]; if(section==='matters')matterTarget=Math.max(matterTarget,detail.matters.length); drawDetail()
     } catch(error) { if(!alive||selected!==id||generation!==ticket)return; if(/401|403|404|unauthorized|forbidden/.test(String(error))){topics=[];detail=null;close();drawRow()}else{stale = true; drawDetail()} }
   }
   async function listAll() {

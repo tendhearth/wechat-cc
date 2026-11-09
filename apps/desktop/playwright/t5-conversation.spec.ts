@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { test, expect } from './fixtures'
 const task={id:'aabbccdd',title:'检查备份',path:'/offline/backup',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:1,pendingQuestionCount:0}
-const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,matterSummary:{waiting:1,running:0,total:1}})
+const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,activity:id==='backup'?{waiting:1,running:2,unread:1,lastActiveAt:1793923200000}:id==='travel'?{waiting:0,running:1,unread:0,lastActiveAt:1793923100000}:id==='food'?{waiting:0,running:0,unread:1,lastActiveAt:1793923000000}:{waiting:0,running:0,unread:0,lastActiveAt:null},matterSummary:{waiting:1,running:0,total:1}})
 test.beforeEach(async({page,shim})=>{
   await shim.invoke('demo.unseed');await shim.invoke('demo.seed',{})
   await page.route('**/v1/protocol/capabilities',r=>r.fulfill({json:{routes:'v1',topics:'v1'}}))
@@ -16,7 +16,7 @@ test.beforeEach(async({page,shim})=>{
   await page.route('**/v1/workbench/task?*',r=>r.fulfill({json:{task,runId:'run1',events:[{id:'1',taskId:task.id,kind:'text',text:'正在核对文件。',createdAt:2}],artifacts:[],permissions:[],questions:[]}}))
   await page.route('**/v1/memory/topics?*',r=>r.fulfill({json:{topics:['backup','travel','food','books','garden','letters'].map(topic),nextCursor:null,revision:'1'}}))
   await page.route('**/v1/memory/topics/open',r=>r.fulfill({json:{id:r.request().postDataJSON().id,bubbleState:'open',revision:'2'}}))
-  await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting'}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:1,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
+  await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting',session:{id:task.id,kind:'task',title:task.title,executor:'codex',activity:'waiting',latestStep:'需要读取备份文件夹',updatedAt:1793923200000,requestId:'permission-backup'}}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:1,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
   await page.route('**/v1/subscribe/topics?*',r=>r.fulfill({json:{revision:'2',recentIds:['backup'],openIds:['backup'],hasMoreOpen:false}}))
 })
 test('one conversation, six topics, original task tools and drafts survive wide and narrow layers',async({page,shimUrl},info)=>{
@@ -34,7 +34,7 @@ test('one conversation, six topics, original task tools and drafts survive wide 
   await page.locator('#converse-input').fill('还没发出的草稿')
   await page.locator('#now-waiting-title').click()
   await expect(page.locator('[data-matter-id="aabbccdd"]')).toContainText('等你决定')
-  await page.locator('.conversation-topics').getByRole('button',{name:'服务器',exact:true}).click()
+  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
   const panel=page.locator('.conversation-topic-panel')
   await expect(panel).toContainText('这次想起')
   await expect(page.locator('.conversation-topics button[aria-pressed="true"]')).toHaveCSS('border-top-color','rgb(42, 38, 34)')
@@ -55,7 +55,7 @@ test('one conversation, six topics, original task tools and drafts survive wide 
   await expect(page.locator('#wb-filter-status')).toBeVisible()
   await page.locator('#workbench-home').click()
   await page.setViewportSize({width:390,height:844})
-  await page.locator('.conversation-topics').getByRole('button',{name:'服务器',exact:true}).click()
+  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
   await expect(panel).toBeVisible()
   await page.screenshot({path:join(info.outputDir,'narrow-topic.png')})
   await panel.getByRole('button',{name:'收起',exact:true}).click()
@@ -154,7 +154,7 @@ test('T6: owner manages topics and marks a recalled entry wrong inside the exist
   })
   await page.goto(shimUrl)
   const panel=page.locator('.conversation-topic-panel')
-  const open=async()=>{await page.locator('.conversation-topics').getByRole('button',{name:'服务器',exact:true}).click();await expect(panel).toBeVisible()}
+  const open=async()=>{await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click();await expect(panel).toBeVisible()}
   await open()
   await panel.locator('details[data-entry-id="e1"] summary').click()
   await panel.getByRole('button',{name:'这条不对',exact:true}).click()
@@ -178,4 +178,28 @@ test('T6: owner manages topics and marks a recalled entry wrong inside the exist
   await expect.poll(()=>writes.at(-1)).toEqual({action:'delete',body:{id:'backup'}})
   await expect(panel).toBeHidden()
   await expect(page.locator('#converse-input')).toBeVisible()
+})
+
+
+test('project topics show one priority mark, complete reader counts, and original session details',async({page,shimUrl})=>{
+ let allowed=false
+ await page.route('**/v1/workbench/task?*',r=>r.fulfill({json:{task,runId:'run1',events:[],artifacts:[],permissions:allowed?[]:[{id:'permission-backup',taskId:task.id,tool:'Read',description:'需要读取备份文件夹',createdAt:1}],questions:[]}}))
+ await page.route('**/v1/matter/permission',r=>{expect(r.request().postDataJSON()).toMatchObject({id:task.id,requestId:'permission-backup',decision:'allow'});allowed=true;return r.fulfill({json:{ok:true}})})
+
+ await page.goto(shimUrl)
+ const topics=page.locator('.conversation-topics')
+ const backup=topics.getByRole('button',{name:'服务器，1 个等你，2 个在跑，1 个做完未看',exact:true})
+ await expect(backup.locator('[data-topic-activity="waiting"]')).toHaveText('1')
+ await expect(topics.locator('[data-topic-id="travel"] [data-topic-activity="running"]')).toHaveText('1')
+ await expect(topics.locator('[data-topic-id="food"] [data-topic-activity="unread"]')).toHaveText('1')
+ await expect(topics.locator('[data-topic-id="books"] [data-topic-activity]')).toHaveCount(0)
+ await backup.click()
+ const panel=page.locator('.conversation-topic-panel')
+ await expect(panel).toContainText('这个项目的会话')
+ await expect(panel.locator('[data-project-session="aabbccdd"]')).toContainText('需要读取备份文件夹')
+ await expect(panel.locator('[data-agent="codex"]')).toBeVisible()
+ await panel.locator('[data-project-session="aabbccdd"]').click()
+ await expect(page.locator('.wb-task-head h2')).toHaveText('检查备份')
+ await page.locator('[data-action="allow-permission"][data-request-id="permission-backup"]').click()
+ await expect.poll(()=>allowed).toBe(true)
 })

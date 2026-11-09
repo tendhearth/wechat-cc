@@ -6,6 +6,7 @@
  * `makeTopicRecall`:生产那一份 —— 只在主人自己的对话里,从库里读话题。失败一律当没碰到,绝不拖垮这一轮。
  */
 import { TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
+import type { ProjectActivity } from '../../ports/topic-activity'
 import type { ThreadsStore, TopicEntry, ThreadRecord } from '../../lib/threads-store'
 import { isSubstantiveTopicQuery, matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, searchTopics, topicJudgePrompt, withoutRoutineTopicNoise, MAX_TOPICS, MAX_ENTRIES, TOPIC_FALLBACK_MAX_CANDIDATES, type MatchTopic, type TopicJudgeSelection, type TopicSearchHit } from '../../domain/topic-match'
 
@@ -25,6 +26,7 @@ export interface TopicRecallResult {
 }
 
 export interface ResolveOpts {
+  activity?: ReadonlyMap<string, ProjectActivity>
   /** 分不开 / 零候选兜底的快模型;没有 ⇒ 只用索引。 */
   cheapEval?: ((prompt: string) => Promise<string>) | null
   timeoutMs?: number
@@ -54,7 +56,7 @@ async function judge(text: string, cands: MatchTopic[], reason: 'ambiguous' | 'z
 }
 
 export async function resolveTopicRecall(text: string, topics: readonly MatchTopic[], o: ResolveOpts = {}): Promise<TopicRecallResult | null> {
-  topics = topics.map(withoutRoutineTopicNoise).filter(t => t.entries.length > 0 || t.summary)
+  topics = topics.map(withoutRoutineTopicNoise).filter(t => t.entries.length > 0 || t.summary || o.activity?.has(t.id))
   if (text.trim().length < TOPIC_RECALL_MIN_CHARS || topics.length === 0) return null
   const m = matchTopics(text, topics)
   let ids = m.hits.map(h => h.id)
@@ -75,9 +77,16 @@ export async function resolveTopicRecall(text: string, topics: readonly MatchTop
     }
   }
   if (ids.length === 0) return null
-  const picked = ids.slice(0, MAX_TOPICS).map(id => topics.find(t => t.id === id)!).filter(t => t && (t.entries.length > 0 || t.summary))
+  const picked = ids.slice(0, MAX_TOPICS).map(id => topics.find(t => t.id === id)!).filter(t => t && (t.entries.length > 0 || t.summary || o.activity?.has(t.id)))
   if (picked.length === 0) return null
-  const block = renderTopicsBlock(text, picked, undefined, { bodies: o.bodies ?? true, preferredEntryIds })
+  const live = picked.flatMap(t => {
+    const value = o.activity?.get(t.id)
+    if (!value) return []
+    const a = value.activity
+    return [`项目「${t.title}」此刻：${a.waiting} 个等你，${a.running} 个在跑，${a.unread} 个做完未看。`,
+      ...value.sessions.slice(0,3).map(s => `- ${s.executor} · ${s.title}：${s.latestStep}（${new Date(s.updatedAt).toISOString()}）`)]
+  }).join('\n').slice(0,600)
+  const block = [renderTopicsBlock(text, picked, live ? 600 : undefined, { bodies: o.bodies ?? true, preferredEntryIds }),live].filter(Boolean).join('\n')
   // 渲染里挑了哪几条,跟 renderTopicsBlock 用同一个挑法
   const entryIds = picked.flatMap(t => pickEntries(text, t, MAX_ENTRIES, preferredEntryIds.get(t.id)).map(e => e.id))
   return { block, topicIds: picked.map(t => t.id), entryIds, via }
@@ -97,6 +106,7 @@ export async function loadMatchTopics(threads: ThreadsStore, chatId: string): Pr
 }
 
 export interface TopicRecallDeps {
+  activity?: (chatId:string) => Promise<Map<string, ProjectActivity>>
   onAdopt?: (chatId: string, requestId: string, result: TopicRecallResult, messageIds: string[]) => void
   threads: ThreadsStore
   /** 主人自己的对话才调(现问:配置改了不用重启)。 */
@@ -115,7 +125,8 @@ export function makeTopicRecall(d: TopicRecallDeps): TopicRecall {
     try {
       const started = Date.now()
       const topics = await loadMatchTopics(d.threads, chatId)
-      const r = await resolveTopicRecall(text, topics, { cheapEval: d.cheapEval(), ...(d.timeoutMs !== undefined ? { timeoutMs: d.timeoutMs } : {}), log: d.log })
+      const activity = await d.activity?.(chatId)
+      const r = await resolveTopicRecall(text, topics, { activity, bodies:false, cheapEval: d.cheapEval(), ...(d.timeoutMs !== undefined ? { timeoutMs: d.timeoutMs } : {}), log: d.log })
       d.log('TOPICS', `recall chat=${chatId} via=${r?.via ?? 'index-none'} elapsedMs=${Date.now() - started} topics=${r?.topicIds.join(',') ?? ''}`)
       if (r && d.onAdopt) r.adopt = (requestId, messageIds = []) => {
         try { if (d.isOwner(chatId)) d.onAdopt!(chatId, requestId, r, messageIds) }

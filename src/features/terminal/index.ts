@@ -29,6 +29,7 @@ export { PHONE_CLI_SAY_MAX, type CliPhoneActions } from './phone-actions'
 export { terminalOwnerRoutes } from './routes'
 export { terminalOwnerHandlers, type TerminalPhoneRoutesDeps } from './phone-routes'
 export type { TerminalHooksService } from './hooks'
+export { makeProjectTopicResolver, projectIdentity } from './project-memory'
 // 起进程、收输出、到点掐掉(进程组):日历读 JXA 也用这一个
 export { defaultRunner, type Runner } from './reply-handler'
 

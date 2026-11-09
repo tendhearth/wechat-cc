@@ -85,19 +85,9 @@ export function renderProjectMemory(topic: MatchTopic): string {
   return header + block
 }
 
-export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; owner: string | null }; identity?: typeof projectIdentity; timeoutMs?: number; log(line: string): void }) {
-  const threads = makeThreadsStore(d.db)
-  return async (request: ProjectMemoryRequest): Promise<{ context: string; reason: string }> => {
-    const compute = async () => {
-      let context = '', reason = 'error', topicId: string | null = null
-      try {
-        const cfg = d.config()
-        if (!cfg.enabled) reason = 'disabled'
-        else if (!cfg.owner) reason = 'no_owner'
-        else {
-          const list = (await threads.list(cfg.owner)).filter(t => !t.private && t.status !== 'done')
-          const entries = await threads.entriesByThread(cfg.owner, { live: true })
-          const topics = list.map(t => toMatchTopic(t, entries.get(t.id) ?? []))
+/** Shared #881 evidence resolver. Each projection owns its bounded filesystem caches. */
+export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly MatchTopic[], identify = projectIdentity) {
+  const d = { db }
           // Walk consolidation backwards from valid endpoints. Wrong/missing/cyclic/cross-topic replacement chains provide no evidence.
           // Matter paths and turn policy survive cli_sessions pruning; unknown or remote origins fail closed.
           const rows = d.db.query<{ topicId: string; cwd: string | null; projectPath: string | null }, [string, string, string]>(`
@@ -122,7 +112,7 @@ export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; own
               ))
               AND (c.session_id IS NOT NULL OR EXISTS (SELECT 1 FROM matter_turns mt
                 WHERE mt.matter_id=m.id AND json_type(mt.policy_json,'$.cwd')='text'))
-          `).all(cfg.owner, hostname(), hostname())
+          `).all(owner, hostname(), hostname())
           const canonical = new Map<string, Promise<string>>()
           const pathOf = (p: string) => {
             if (!canonical.has(p)) canonical.set(p, realpath(p).catch(() => p))
@@ -130,18 +120,36 @@ export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; own
           }
           const identities = new Map<string, Promise<ProjectIdentity | null>>()
           const identityOf = (p: string) => {
-            if (!identities.has(p)) identities.set(p, (d.identity ?? projectIdentity)(p))
+            if (!identities.has(p)) identities.set(p, identify(p))
             return identities.get(p)!
           }
-          const identity = await identityOf(request.cwd)
-          const candidates = await Promise.all(rows.flatMap(r => [r.projectPath, r.cwd].filter((p): p is string => !!p).map(async cwd => ({ topicId: r.topicId, cwd: await pathOf(cwd) }))))
-          const history = (await Promise.all(candidates.map(async h => {
+          const candidates = Promise.all(rows.flatMap(r => [r.projectPath, r.cwd].filter((p): p is string => !!p).map(async cwd => ({ topicId: r.topicId, cwd: await pathOf(cwd) }))))
+  return async (cwd: string) => {
+          const identity = await identityOf(cwd)
+          const history = (await Promise.all((await candidates).map(async h => {
             if (!identity) return h
             if (!identity.roots.some(r => within(h.cwd, r))) return null
             // A nested repository has its own identity even when its directory is inside this repository.
             return (await identityOf(h.cwd))?.key === identity.key ? h : null
           }))).filter((h): h is History => h !== null)
-          const mapped = resolveProjectTopic(await pathOf(request.cwd), identity, topics, history)
+          return resolveProjectTopic(await pathOf(cwd), identity, topics, history)
+  }
+}
+
+export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; owner: string | null }; identity?: typeof projectIdentity; timeoutMs?: number; log(line: string): void }) {
+  const threads = makeThreadsStore(d.db)
+  return async (request: ProjectMemoryRequest): Promise<{ context: string; reason: string }> => {
+    const compute = async () => {
+      let context = '', reason = 'error', topicId: string | null = null
+      try {
+        const cfg = d.config()
+        if (!cfg.enabled) reason = 'disabled'
+        else if (!cfg.owner) reason = 'no_owner'
+        else {
+          const list = (await threads.list(cfg.owner)).filter(t => !t.private && t.status !== 'done')
+          const entries = await threads.entriesByThread(cfg.owner, { live: true })
+          const topics = list.map(t => toMatchTopic(t, entries.get(t.id) ?? []))
+          const mapped = await makeProjectTopicResolver(d.db, cfg.owner, topics, d.identity)(request.cwd)
           reason = mapped.reason; topicId = mapped.topicId
           const topic = topics.find(t => t.id === topicId)
           if (topic?.entries.length) context = renderProjectMemory(topic)

@@ -117,3 +117,53 @@ it('a selected merged topic follows the authorized surviving id',async()=>{
   expect(detailReads).toBeGreaterThanOrEqual(2)
   expect(document.querySelector('h2')?.textContent).toBe('话题survivor')
 })
+
+it('shows one priority activity mark with full counts for readers and opens original project sessions',async()=>{
+  const activity={waiting:1,running:2,unread:1,lastActiveAt:100}
+  const session={id:'task',kind:'task',title:'检查文件',executor:'codex',activity:'waiting',latestStep:'需要读取文件',updatedAt:100,requestId:'permission'}
+  const {openMatter}=setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST')return{id:'project'}
+    if(path.includes('/detail'))return{topic:{...topic('project'),activity},entries:[],matters:[{id:'task',title:'检查文件',state:'waiting',session}],messages:[],pages:{}}
+    return{topics:[{...topic('project'),title:'bx',activity},{...topic('quiet'),activity:{waiting:0,running:0,unread:0,lastActiveAt:null}},{...topic('done'),activity:{waiting:0,running:0,unread:1,lastActiveAt:50}}],revision:'1'}
+  })
+  await settle()
+  const project=document.querySelector('[data-topic-id="project"]')!
+  expect(project.getAttribute('aria-label')).toBe('bx，1 个等你，2 个在跑，1 个做完未看')
+  expect(project.querySelector('[data-topic-activity]')?.getAttribute('data-topic-activity')).toBe('waiting')
+  expect(project.querySelector('[data-topic-activity]')?.textContent).toContain('1')
+  expect(document.querySelector('[data-topic-id="quiet"] [data-topic-activity]')).toBeNull()
+  expect(document.querySelector('[data-topic-id="done"] [data-topic-activity]')?.getAttribute('data-topic-activity')).toBe('unread')
+  ;(project as HTMLButtonElement).click();await settle()
+  const panel=document.querySelector('.conversation-topic-panel')!
+  expect(panel.textContent).toContain('这个项目的会话')
+  expect(panel.textContent).toContain('需要读取文件')
+  expect(panel.querySelector('[data-agent="codex"]')).not.toBeNull()
+  ;(panel.querySelector('[data-project-session="task"]') as HTMLButtonElement).click()
+  expect(openMatter).toHaveBeenCalledWith('task')
+})
+
+it('keeps expanded project sessions across activity revisions using fresh cursors and bounded pages',async()=>{
+  let revision='r1'
+  const reads:string[]=[]
+  const rows=Array.from({length:26},(_,i)=>({id:`session-${i+1}`,title:`会话 ${i+1}`,state:'running',session:{id:`session-${i+1}`,kind:'task',title:`会话 ${i+1}`,executor:'codex',activity:'running',latestStep:'正在核对',updatedAt:100,requestId:null}}))
+  setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST')return{id:'project'}
+    if(path.includes('/detail')){
+      reads.push(path)
+      const p=new URL(path,'https://fixture.test').searchParams,offset=Number(p.get('cursor')?.split(':')[1]??0),size=p.has('section')?20:3
+      if(p.has('cursor'))expect(p.get('cursor')!.startsWith(revision+':')).toBe(true)
+      return{topic:topic('project'),revision,entries:[],messages:[],matters:rows.slice(offset,offset+size),pages:{matters:{total:26,nextCursor:offset+size<26?`${revision}:${offset+size}`:null}}}
+    }
+    return{topics:[topic('project')],revision}
+  })
+  await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  for(let i=0;i<2;i++){const more=[...document.querySelectorAll('.conversation-topic-panel button')].find(b=>b.textContent?.startsWith('更多这个项目的会话')) as HTMLButtonElement;more.click();await settle()}
+  expect(document.querySelector('[data-project-session="session-26"]')).not.toBeNull()
+  revision='r2';reads.length=0;await current!.refresh()
+  expect(document.querySelector('[data-project-session="session-4"]')).not.toBeNull()
+  expect(document.querySelector('[data-project-session="session-26"]')).not.toBeNull()
+  expect(reads).toHaveLength(3)
+  expect(reads.slice(1).every(path=>new URL(path,'https://fixture.test').searchParams.get('limit')==='20')).toBe(true)
+})

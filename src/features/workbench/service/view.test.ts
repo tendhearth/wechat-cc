@@ -12,6 +12,8 @@ import { makeRuntimeState, type Active } from './state'
 import { makeViewDomain, ATTENTION_TEXT_MAX } from './view'
 import type { ServiceCtx } from './ctx'
 import { safePetTurn } from '../../../domain/pet-turn'
+import { makeRunPermissions } from '../../../adapters/workbench/permissions'
+import { makeRunUserInput } from '../../../adapters/workbench/user-input'
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -40,6 +42,29 @@ function setup(over: { defaultProvider?: string; owner?: string | null } = {}) {
 }
 
 describe('makeViewDomain · 进度', () => {
+  it('projectActivity reads real pending brokers without detail or audit bodies and authorizes the stored owner first', async () => {
+    const { domain, store, state, task, running, snapshot, db, project } = setup()
+    store.update(task.id, 'running')
+    const permissions = makeRunPermissions({ taskId: task.id, audit: event => { store.addEvent(task.id, 'system', event.type === 'request' ? '权限请求审计正文' : '权限已处理') } })
+    const questions = makeRunUserInput({ taskId: task.id, audit: () => { store.addEvent(task.id, 'system', '执行者提问审计正文') } })
+    state.runsByTask.set(task.id, running({ permissions, questions, snap: snapshot() }))
+    const permission = permissions.request({ tool: 'Bash', description: '运行本地检查' })
+    const question = questions.request({ questions: [{ id: 'format', header: '格式', question: '要哪种报告？', options: [], allowOther: true }] })
+    const permissionId = permissions.pending()[0]!.id, questionId = questions.pending()[0]!.id
+    const detail = vi.spyOn(store, 'detail').mockImplementation(() => { throw new Error('detail must not run') })
+    expect(db.query("SELECT id FROM matter_items WHERE kind IN ('permission','question')").all()).toEqual([])
+    expect(domain.projectActivity(task.id)).toEqual({ phase: 'working', requestId: permissionId, waitingFor: 'Bash: 运行本地检查' })
+    permissions.resolve(permissionId, 'allow'); await permission
+    expect(domain.projectActivity(task.id)).toEqual({ phase: 'working', requestId: questionId, waitingFor: '要哪种报告？' })
+    questions.close(); await question
+    expect(domain.projectActivity(task.id)).toEqual({ phase: 'replied', requestId: null, waitingFor: null })
+    const foreign = store.create({ title: '外人的任务', path: project, providerId: 'claude', ownerChatId: 'guest' })
+    const forbidden = vi.fn(() => { throw new Error('foreign pending must not be read') })
+    state.runsByTask.set(foreign.id, running({ permissions: { pending: forbidden } } as never))
+    expect(domain.projectActivity(foreign.id)).toBeNull()
+    expect(domain.projectActivity('missing')).toBeNull()
+    expect(forbidden).not.toHaveBeenCalled(); expect(detail).not.toHaveBeenCalled()
+  })
   it('isReplied:retained + idle + 无后台 + 无待决 ⇒ true;取消/在写/有待决 ⇒ false', () => {
     const { domain, running, snapshot } = setup()
     expect(domain.isReplied(running({ snap: snapshot() }))).toBe(true)

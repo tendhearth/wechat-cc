@@ -9,7 +9,7 @@ import { withProviders } from './providers.test-support'
 import { TopicRow } from '../ui/TopicRow'
 import { TopicBubble as Topic } from '../app/topic'
 const host = vi.hoisted(() => ({ params: {} as { id?: string; open?: string }, push: vi.fn(), back: vi.fn() }))
-vi.mock('react-native', async () => (await import('../ui/native-motion.test-support')).nativeBoundary())
+vi.mock('react-native', async () => {const native=(await import('../ui/native-motion.test-support')).nativeBoundary();return {...native,ActivityIndicator:native.View}})
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('react-native-safe-area-context', async () => { const { createElement } = await import('react'); return { SafeAreaView: ({ children }: any) => createElement('main', null, children) } })
 vi.mock('expo-router', async () => ({ ...(await (await import('../ui/native-motion.test-support')).routerBoundary()), useLocalSearchParams: () => host.params, useRouter: () => ({ push: host.push, back: host.back, canGoBack: () => true }) }))
@@ -90,4 +90,59 @@ describe('native topic surfaces', () => {
     expect(ui.container.textContent).not.toContain('新的话题'); expect(ui.container.textContent).toContain('这个话题已不可用')
     await act(() => ui.byId('topbar-back').click()); expect(host.back).toHaveBeenCalledOnce(); expect(open).toHaveBeenCalledOnce()
   })
+})
+
+it('reads all activity counts, shows only the priority mark, and leaves zero activity unmarked',async()=>{
+  const demo=makeDemoBackend(), data=await demo.topics({})
+  const backend:Backend={...demo,topics:async()=>({...data,topics:data.topics.map((topic,i)=>({...topic,activity:i===0?{waiting:1,running:2,unread:1,lastActiveAt:100}:{waiting:0,running:0,unread:0,lastActiveAt:null}}))})}
+  const ui=await mount(withProviders(createElement(TopicRow),{backend,lang:'zh-Hans'}));await flush()
+  expect(ui.byId('topic-demo-backup').getAttribute('aria-label')).toBe('服务器，1 个等你，2 个在跑，1 个做完未看')
+  expect(ui.byId('topic-activity-demo-backup').textContent).toContain('1')
+  expect(ui.byId('topic-activity-demo-trip')).toBeNull()
+})
+
+it('lists project sessions before memory and reuses original detail and decision routes',async()=>{
+  const demo=makeDemoBackend(), backend:Backend={...demo,topicDetail:async p=>{
+    const detail=await demo.topicDetail(p)
+    return{...detail,matters:[...detail.matters,{id:'project-task',title:'检查文件',state:'waiting',archivedAt:null,session:{id:'project-task',kind:'task',title:'检查文件',executor:'codex',activity:'waiting',latestStep:'需要读取文件',updatedAt:100,requestId:'permission'}},{id:'project-terminal',title:'终端备份',state:'running',archivedAt:null,session:{id:'shell',kind:'terminal',title:'终端备份',executor:'claude',activity:'running',latestStep:'正在核对文件',updatedAt:90,requestId:null}}]}
+  }}
+  host.params={id:'demo-backup'}
+  const ui=await mount(withProviders(createElement(Topic),{backend,lang:'zh-Hans'}));await flush();await flush()
+  expect(ui.container.textContent).toContain('这个项目的会话')
+  expect(ui.container.textContent).toContain('需要读取文件')
+  await act(()=>ui.byId('topic-session-project-task').click())
+  expect(host.push).toHaveBeenCalledWith('/matter/project-task')
+  await act(()=>ui.byId('topic-session-respond-project-task').click())
+  expect(host.push).toHaveBeenCalledWith('/matter/project-task/decide?request=permission')
+  await act(()=>ui.byId('topic-session-project-terminal').click())
+  expect(host.push).toHaveBeenCalledWith('/matter/project-terminal')
+})
+
+it('keeps expanded project sessions when an activity revision reloads the default page',async()=>{
+  const demo=makeDemoBackend(), base=await demo.topicDetail({id:'demo-backup'})
+  let revision='r1', failPage=false, update:((data:unknown)=>void)|undefined
+  const reads:Array<{cursor?:string;limit?:number}>=[]
+  const rows=Array.from({length:26},(_,i)=>({id:`session-${i+1}`,title:`会话 ${i+1}`,state:'running',archivedAt:null,session:{id:`session-${i+1}`,kind:'task' as const,title:`会话 ${i+1}`,executor:'codex',activity:'running' as const,latestStep:'正在核对',updatedAt:100,requestId:null}}))
+  const backend:Backend={...demo,topicDetail:async p=>{
+    reads.push(p)
+    if(p.cursor&&failPage)throw Error('offline')
+    const offset=Number(p.cursor?.split(':')[1]??0),size=p.section?20:3
+    if(p.cursor)expect(p.cursor.startsWith(revision+':')).toBe(true)
+    return{...base,revision,matters:rows.slice(offset,offset+size),pages:{...base.pages,matters:{total:26,nextCursor:offset+size<26?`${revision}:${offset+size}`:null}}}
+  },subscribe:(name,cb)=>{if(name!=='topics')return demo.subscribe(name,cb);update=cb as (data:unknown)=>void;return()=>{update=undefined}}}
+  host.params={id:'demo-backup'}
+  const ui=await mount(withProviders(createElement(Topic),{backend,lang:'zh-Hans'}));await flush();await flush()
+  for(let i=0;i<2;i++){await act(()=>ui.byId('topic-more-matters').click());await flush()}
+  expect(ui.byId('topic-session-session-26')).not.toBeNull()
+  revision='r2';reads.length=0;await act(()=>update?.({revision}));await flush();await flush();await flush()
+  expect(ui.byId('topic-session-session-4')).not.toBeNull()
+  expect(ui.byId('topic-session-session-26')).not.toBeNull()
+  expect(reads).toHaveLength(3)
+  expect(reads.slice(1).every(p=>p.limit===20)).toBe(true)
+  revision='r3';failPage=true;await act(()=>update?.({revision}));await flush();await flush()
+  expect(ui.byId('topic-session-session-26')).not.toBeNull()
+  expect(ui.byId('topic-retry')).not.toBeNull()
+  failPage=false;await act(()=>ui.byId('topic-retry').click());await flush();await flush();await flush()
+  expect(ui.byId('topic-session-session-26')).not.toBeNull()
+  expect(ui.byId('topic-retry')).toBeNull()
 })

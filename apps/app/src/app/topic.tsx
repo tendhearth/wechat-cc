@@ -3,16 +3,16 @@ import { BusyIndicator } from '../ui/motion'
 import { t } from '../i18n'
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ScrollView, View } from 'react-native'
+import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import type { TopicDetailT } from '../backend/types'
+import { BackendError, type TopicDetailT } from '../backend/types'
 import { useBackendCtx } from '../state/BackendProvider'
 import { isFresh } from '../state/store'
 import { useConnection, useQuery } from '../state/hooks'
 import { useTopicsRevision } from '../state/useTopics'
 import { useLang } from '../i18n/useLang'
 import { uuid } from '../net/uuid'
-import { appendTopicPage, topicStatus } from '../view/topic-bubble'
+import { appendTopicPage, retainTopicMatters, topicStatus } from '../view/topic-bubble'
 import { rememberReference } from '../state/conversation-references'
 import { TopBar } from '../ui/TopBar'
 import { LinkRow } from '../ui/Rows'
@@ -20,7 +20,8 @@ import { Button } from '../ui/Button'
 import { Sheet } from '../ui/Sheet'
 import { Txt } from '../ui/Txt'
 import { TextField } from '../ui/TextField'
-import { space } from '../ui/tokens'
+import { componentAppearance, space } from '../ui/tokens'
+import { AgentAvatar } from '../ui/AgentAvatars'
 import { useTheme } from '../ui/useTheme'
 
 export default function Topic() { return <WelcomeGate><TopicBubble /></WelcomeGate> }
@@ -29,16 +30,20 @@ export function TopicBubble() {
   const { id = '', open } = useLocalSearchParams<{ id?: string; open?: string }>()
   const router = useRouter(), { c } = useTheme(), lang = useLang(), zh = lang === 'zh-Hans'
   const { backend, store } = useBackendCtx(), conn = useConnection()
+  const revoked=conn.state==='revoked'
   const enabled = conn.topics === 'v1' && conn.state === 'online'
+  const matterRange=useRef({backend,id,target:0})
+  if(matterRange.current.backend!==backend||matterRange.current.id!==id)matterRange.current={backend,id,target:0}
   const query = useQuery(`topic:${id}`, () => backend.topicDetail({ id }), { enabled, refreshOnMount: true })
   useTopicsRevision(enabled, query.refresh)
   const [stored, setData] = useState<TopicDetailT>()
   const dataBackend = useRef(backend)
-  const data = conn.topics === 'v1' && query.error !== 'not_found' && stored?.topic.id === id && dataBackend.current === backend ? stored : undefined
+  const data = !revoked && conn.topics === 'v1' && query.error !== 'not_found' && stored?.topic.id === id && dataBackend.current === backend ? stored : undefined
   useEffect(() => { const into=query.data?.topic.mergedInto; if(into && into!==id)router.replace({pathname:'/topic',params:{id:into,open:'1'}}) },[query.data?.topic.mergedInto,id,router])
   const folded = useRef(false)
   const [opened, setOpened] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  const [rangeError, setRangeError] = useState(false)
   const [editing, setEditing] = useState(false), [name, setName] = useState(''), [targets, setTargets] = useState<Array<{id:string;title:string}>>([]), [deleting, setDeleting] = useState(false)
   const edit = async (action: 'rename'|'merge'|'delete'|'wrong', input: {id:string;title?:string;into?:string}) => {
     if (!enabled || lock.current) return
@@ -53,7 +58,28 @@ export function TopicBubble() {
   const generation = useRef(0), lock = useRef(false)
   useEffect(()=>{setEditing(false);setTargets([]);setDeleting(false);setName('')},[backend,id])
   const request = useRef({ id, requestId: uuid() })
-  useEffect(() => { generation.current++; dataBackend.current = backend; setData(query.error === 'not_found' ? undefined : query.data) }, [backend, query.data, query.error])
+  useEffect(() => {
+    const gen=++generation.current, range=matterRange.current
+    setRangeError(false)
+    const sameBackend=dataBackend.current===backend
+    dataBackend.current=backend
+    if(!sameBackend)setData(undefined)
+    if(revoked||['not_found','forbidden','unauthorized','revoked'].includes(query.error??'')){range.target=0;setData(undefined);return}
+    if(query.error){setData(old=>sameBackend&&old?.topic.id===id?old:undefined);return}
+    const initial=query.data
+    if(!initial){setData(undefined);return}
+    if(initial.topic.id!==id||initial.topic.mergedInto){range.target=0;setData(initial);return}
+    let active=true
+    void retainTopicMatters(initial,p=>backend.topicDetail(p),range.target,()=>active&&gen===generation.current&&matterRange.current===range).then(next=>{
+      if(!next)return
+      range.target=Math.max(range.target,next.matters.length);setData(next);setRangeError(false);setNote(null)
+    }).catch(error=>{
+      if(!active||gen!==generation.current)return
+      if(error instanceof BackendError&&['not_found','forbidden','unauthorized','revoked'].includes(error.code)){range.target=0;setData(undefined)}
+      setRangeError(true);setNote(zh?'尚未同步 · 暂时读不到，重试':'Not synced. Retry')
+    })
+    return()=>{active=false}
+  }, [backend,id,query.data,query.error,zh,revoked])
   useEffect(() => {
     if (!enabled || open !== '1') return
     let active = true
@@ -80,10 +106,15 @@ export function TopicBubble() {
     lock.current = true; setBusy(true); setNote(null)
     const gen = generation.current
     try {
-      const next = await backend.topicDetail({ id, section, cursor })
+      const next = await backend.topicDetail({ id, section, cursor, limit:20 })
       if (gen !== generation.current) return
       if (next.revision !== data?.revision) { await query.refresh(); return }
-      setData(old => old ? appendTopicPage(old, next, section) ?? old : next)
+      setData(old => {
+        const merged=old?appendTopicPage(old,next,section):next
+        if(!merged)return old
+        if(section==='matters')matterRange.current.target=Math.max(matterRange.current.target,merged.matters.length)
+        return merged
+      })
     } catch { setNote(zh ? '暂时读不到，重试' : 'Cannot read right now. Retry') }
     finally { lock.current = false; setBusy(false) }
   }
@@ -93,6 +124,7 @@ export function TopicBubble() {
     // this sheet. Fold only when this selection itself is focused again.
     if (opened && !folded.current && !query.error && data?.topic.bubbleState === 'closed') {
       folded.current = true
+      matterRange.current.target=0
       if (router.canGoBack()) router.back(); else router.replace('/')
     }
   }, [opened, query.error, data?.topic.bubbleState, data?.revision, router]))
@@ -101,7 +133,7 @@ export function TopicBubble() {
     <ScrollView testID="topic-sheet" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
       {!data && query.loading ? <BusyIndicator testID="topic-loading" label={zh ? '正在读取' : 'Loading'} /> : null}
       {!enabled || query.error || note ? <Txt testID="topic-note" role="meta" tone="inkSoft">{query.error === 'not_found' ? (zh ? '这个话题已不可用' : 'This topic is unavailable') : note ?? (zh ? '尚未同步' : 'Not synced')}</Txt> : null}
-      {query.error ? <Button testID="topic-retry" kind="secondary" label={zh ? '暂时读不到，重试' : 'Cannot read right now. Retry'} onPress={() => void query.refresh()} /> : null}
+      {query.error || rangeError ? <Button testID="topic-retry" kind="secondary" label={zh ? '暂时读不到，重试' : 'Cannot read right now. Retry'} onPress={() => void query.refresh()} /> : null}
       {data && conn.topics === 'v1' ? <>
         <Button kind="secondary" label={zh?'管理话题':'Manage topic'} disabled={!enabled||busy} onPress={() => {setEditing(!editing);setName(data.topic.title);void loadTargets().catch(()=>setNote(zh?'暂时读不到，重试':'Cannot read right now'))}} />
         {editing ? <View style={{gap:space.m}}>
@@ -114,8 +146,18 @@ export function TopicBubble() {
         </View>:null}
         {data.topic.description ? <Txt content="user">{data.topic.description}</Txt> : null}
         {data.topic.summary ? <Txt content="user">{data.topic.summary}</Txt> : null}
-        {data.matters.length ? <View><Txt accessibilityRole="header">{zh ? '相关事项' : 'Related work'}</Txt>
-          {data.matters.map(m => <LinkRow key={m.id} testID={`topic-matter-${m.id}`} label={m.title} detail={topicStatus(m.state) ? t(lang, `status.${topicStatus(m.state)!}`) : (zh ? '尚未同步' : 'Not synced')} onPress={() => { rememberReference(backend, m.id); router.push(`/matter/${encodeURIComponent(m.id)}`) }} />)}
+        <View><Txt accessibilityRole="header">{zh?'这个项目的会话':'Sessions in this project'}</Txt>
+          {!data.matters.some(m=>m.session)?<Txt role="small" tone="inkSoft">{zh?'这个项目还没有会话':'No sessions in this project yet'}</Txt>:null}
+          {data.matters.filter(m=>m.session).map(m=>{const s=m.session!;return <View key={m.id} testID={`topic-matter-${m.id}`}>
+            <Pressable testID={`topic-session-${m.id}`} accessibilityRole="button" accessibilityLabel={[s.title,s.executor,s.latestStep,new Date(s.updatedAt).toLocaleString()].filter(Boolean).join(', ')} onPress={()=>{rememberReference(backend,m.id);router.push(`/matter/${encodeURIComponent(m.id)}`)}} style={({pressed})=>({flexDirection:'row',alignItems:'center',gap:space.m,minHeight:componentAppearance.matterRow.minHeight.phone,paddingVertical:space.m,opacity:pressed?0.7:1})}>
+              <AgentAvatar id={s.executor} size={componentAppearance.identity.agentSize.phone} />
+              <View style={{flex:1,gap:space.xs}}><Txt role="body" content="user">{s.title}</Txt><Txt role="small" tone="inkSoft" content="user">{s.executor} · {s.latestStep}</Txt><Txt role="caption" tone="inkSoft">{new Date(s.updatedAt).toLocaleString()}</Txt></View>
+            </Pressable>
+            {s.kind==='task'&&s.activity==='waiting'&&s.requestId?<Button testID={`topic-session-respond-${m.id}`} kind="secondary" label={zh?'回应':'Respond'} disabled={!enabled} onPress={()=>router.push(`/matter/${encodeURIComponent(m.id)}/decide?request=${encodeURIComponent(s.requestId!)}`)} />:null}
+          </View>})}
+        </View>
+        {data.matters.some(m=>!m.session) ? <View><Txt accessibilityRole="header">{zh ? '相关事项' : 'Related work'}</Txt>
+          {data.matters.filter(m=>!m.session).map(m => <LinkRow key={m.id} testID={`topic-matter-${m.id}`} label={m.title} detail={topicStatus(m.state) ? t(lang, `status.${topicStatus(m.state)!}`) : (zh ? '尚未同步' : 'Not synced')} onPress={() => { rememberReference(backend, m.id); router.push(`/matter/${encodeURIComponent(m.id)}`) }} />)}
         </View> : null}
         {data.entries.length ? <View><Txt accessibilityRole="header">{zh ? 'CC 记得' : 'CC remembers'}</Txt>
           {data.entries.map(e => <Sheet key={e.id} testID={`topic-entry-${e.id}`} title={`${e.line}${e.status==='superseded'?(zh?' · 不再采用':' · No longer used'):''}${e.recalled ? (zh ? ' · 这次想起' : ' · Recalled this time') : ''}`}><Txt content="user">{e.body}</Txt><Txt role="caption" tone="inkSoft">{e.source} · {e.createdTs}</Txt>{e.status==='live'?<Button kind="secondary" label={zh?'这条不对':'This is wrong'} disabled={!enabled||busy} onPress={()=>void edit('wrong',{id:e.id})} />:null}</Sheet>)}

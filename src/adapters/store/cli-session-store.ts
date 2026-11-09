@@ -27,6 +27,7 @@
  */
 import type { Db } from '../../lib/db'
 import type { CliSessionRow, CliSessionStore } from '../../ports/cli-session'
+import { hintWrite } from '../../lib/write-hints'
 
 /** 已结束的会话留多久。 */
 export const CLI_SESSION_ENDED_RETAIN_MS = 7 * 24 * 3600_000
@@ -59,6 +60,10 @@ const DERIVED = `SELECT c.session_id, c.source, c.cwd, c.machine, c.transcript_p
 export function makeCliSessionStore(db: Db, now: () => number = () => Date.now()): CliSessionStore {
   let writes = 0
   const afterWrite = (at: number) => { if (++writes % PRUNE_EVERY === 0) prune(at) }
+  const changed = (sessionId:string) => {
+    const matter=db.query<{matter_id:string},[string]>("SELECT matter_id FROM matter_bindings WHERE surface='cli' AND surface_key=? LIMIT 1").get(sessionId)
+    if(matter)hintWrite(db,{kind:'matter',matterId:matter.matter_id})
+  }
 
   function prune(t: number): void {
     db.query(`DELETE FROM cli_sessions WHERE last_event_at < ? AND session_id IN (SELECT session_id FROM (${DERIVED}) WHERE status = 'ended')`).run(t - CLI_SESSION_ENDED_RETAIN_MS)
@@ -79,10 +84,12 @@ export function makeCliSessionStore(db: Db, now: () => number = () => Date.now()
           last_event_at=MAX(last_event_at, excluded.last_event_at)`)
         .run(id.session_id, id.source, id.cwd, id.machine || null, id.transcript_path || null, id.origin_agent || null, at, at)
       afterWrite(at)
+      changed(id.session_id)
     },
     seen(sessionId, at, extra = {}) {
       db.query('UPDATE cli_sessions SET last_event_at=MAX(last_event_at, ?), last_prompt_at=COALESCE(?, last_prompt_at) WHERE session_id=?')
         .run(at, extra.promptAt ?? null, sessionId)
+      changed(sessionId)
     },
     get(sessionId) {
       return db.query<CliSessionRow, [string]>(`SELECT ${COLS} FROM (${DERIVED}) WHERE session_id=?`).get(sessionId) ?? null

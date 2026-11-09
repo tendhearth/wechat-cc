@@ -21,6 +21,28 @@ async function fixture() {
   return { db, threads, id, routes, call, setOwner: (value: string | null) => { owner = value } }
 }
 describe('T4 owner routes and topics projection', () => {
+  it('list and detail reuse one activity snapshot for their returned revision and page', async () => {
+    const db=openTestDb(),threads=makeThreadsStore(db),matters=makeMatterStore(db),log=makeMatterLog(db)
+    try {
+      const id=await threads.create({chatId:'owner',title:'进度项目',summary:'',facets:[],tags:[],private:false,episodes:[]})
+      const terminal=matters.create({kind:'terminal',title:'来源',projectPath:'/projects/snapshot',ownerChatId:'owner'})
+      matters.bind(terminal.id,'cli','snapshot-origin')
+      log.startTurn({matterId:terminal.id,executor:'claude',policy:{cwd:'/projects/snapshot'}})
+      await threads.addEntry({threadId:id,kind:'progress',line:'项目来源',source:'work',matterId:terminal.id})
+      const task=matters.create({kind:'task',title:'待决检查',projectPath:'/projects/snapshot',ownerChatId:'owner'})
+      log.startTurn({matterId:task.id,executor:'codex'})
+      let calls=0
+      const routes=bubbleRoutes({db,ownerChatId:()=> 'owner',taskActivity:()=>++calls===1?{phase:'working',requestId:'p',waitingFor:'运行检查'}:{phase:'working',requestId:null,waitingFor:null}})
+      const list=TopicsListResponse.parse((await routes['GET /v1/memory/topics']!(new URLSearchParams(),null,operator)).body)
+      expect(list.topics[0]!.activity?.waiting).toBe(1)
+      expect(calls).toBe(1)
+      calls=0
+      const detail=TopicDetailResponse.parse((await routes['GET /v1/memory/topics/detail']!(new URLSearchParams({id}),null,operator)).body)
+      expect(detail.topic.activity?.waiting).toBe(1)
+      expect(detail.matters.find(m=>m.id===task.id)?.session).toMatchObject({activity:'waiting',requestId:'p'})
+      expect(calls).toBe(1)
+    } finally {db.close()}
+  })
   it('列表/详情/订阅只读;只有 owner 表面可看 private,不同 owner id 同为404', async () => {
     const { db, threads, id, call, setOwner } = await fixture()
     const other = await threads.create({ chatId: 'guest', title: '他人的秘密', summary: '', facets: [], tags: [], private: true, episodes: [] })
