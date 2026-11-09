@@ -9,6 +9,9 @@ import { mkdirAnchored, verifyFromFilesystemRoot } from '../workbench/anchored-f
 
 export interface DependencyCacheOptions extends DependencyOptions { baseSha?: string; maxCacheBytes?: number; canPublish?: () => boolean }
 const MAX_CACHE_BYTES = 4 * 1024 ** 3
+// Bind both the completion receipt and its location to the archive policy.
+// Old entries must neither restore unvalidated trees nor block a new publish.
+const CACHE_POLICY = 'committed-public-registry-portable-v2'
 const operations = new Map<string, Promise<unknown>>()
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
 const installed = async (root: string, paths: string[]) => {
@@ -79,7 +82,7 @@ async function cacheRoot(stateDir: string) {
 }
 async function scope(root: string, budget: Preparation) {
   const common = await fs.realpath(resolve(root, (await budget.git(root, ['rev-parse', '--git-common-dir'])).trim()))
-  return hash(`${common}\0${process.platform}\0${process.arch}\0${process.versions.modules}`)
+  return hash(`${common}\0${process.platform}\0${process.arch}\0${process.versions.modules}\0${CACHE_POLICY}`)
 }
 async function sizeOf(root: string, budget: Preparation): Promise<number> {
   let bytes = 0, entries = 0
@@ -119,7 +122,7 @@ async function prune(root: string, limit: number, budget: Preparation, incoming 
   for (const entry of entries.sort((a, b) => a.used - b.used)) { if (total <= limit) break; budget.check(); await fs.rm(entry.path, { recursive: true, force: true }); total -= entry.bytes }
   if (total > limit) throw Error('dependency_cache_budget')
 }
-const completion = (key: string) => JSON.stringify({ key, installer: 'cc-registry', frozen: true, scripts: false, version: 2, sourcePolicy: 'committed-public-registry-v1' })
+const completion = (key: string) => JSON.stringify({ key, installer: 'cc-registry', frozen: true, scripts: false, version: 2, sourcePolicy: CACHE_POLICY })
 function supportsCleanInstall(files: Map<string, Buffer>): boolean {
   try { dependencyInstallPlan(files); return true } catch { return false }
 }

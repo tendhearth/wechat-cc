@@ -1,9 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import * as fsPromises from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, symlinkSync, writeFileSync, utimesSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { cacheWorkspaceDependencies as cacheRaw, restoreWorkspaceDependencies as restoreRaw, recoverDependencyStages, type DependencyCacheOptions } from './worktree-dependency-cache'
 import { DEPENDENCY_NOTICE } from './worktree-dependencies'
 import { removeTempDir } from '../../lib/test-temp'
@@ -192,6 +193,20 @@ it('never restores old v1 snapshots or incomplete entries',async()=>{
   writeFileSync(join(f.state,'dependency-cache/v1/poison/node_modules/tool/index.js'),'poison')
   expect(await restoreWorkspaceDependencies(f.source,f.target,f.state)).toContain(DEPENDENCY_NOTICE)
   expect(existsSync(join(f.target,'node_modules'))).toBe(false)
+})
+it('reinstalls under a new namespace policy instead of restoring or colliding with a pre-fix cache', async () => {
+  const f = fixture(); await cacheWorkspaceDependencies(f.source, f.state)
+  const entry = f.entries()[0]!, common = realpathSync(resolve(f.source, f.git('rev-parse', '--git-common-dir')))
+  const oldScope = createHash('sha256').update(`${common}\0${process.platform}\0${process.arch}\0${process.versions.modules}`).digest('hex')
+  const legacyKey = oldScope + basename(entry).slice(64), legacy = join(f.state, 'dependency-cache/v2', legacyKey)
+  if (entry !== legacy) renameSync(entry, legacy)
+  const record = JSON.parse(readFileSync(join(legacy, '.complete.json'), 'utf8'))
+  writeFileSync(join(legacy, '.complete.json'), JSON.stringify({ ...record, key: legacyKey, sourcePolicy: 'committed-public-registry-v1' }))
+  writeFileSync(join(legacy, 'node_modules/tool/index.js'), 'legacy aliased payload')
+  rmSync(join(f.source, 'node_modules'), { recursive: true })
+  expect(await restoreWorkspaceDependencies(f.source, f.target, f.state)).not.toContain(DEPENDENCY_NOTICE)
+  expect(readFileSync(join(f.target, 'node_modules/tool/index.js'), 'utf8')).toBe('installed')
+  expect(readFileSync(join(legacy, 'node_modules/tool/index.js'), 'utf8')).toBe('legacy aliased payload')
 })
 it('accepts ordinary bin paths inside a valid JSONC Bun lock',async()=>{
   const f=fixture()

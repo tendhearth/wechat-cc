@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises'
 import { dirname, join, relative, sep, isAbsolute } from 'node:path'
 import { createGunzip } from 'node:zlib'
 import { Readable } from 'node:stream'
-import { dependencySafePart } from './worktree-dependency-policy'
+import { DependencyPathNamespace, dependencyPathIdentity, dependencySafePart } from './worktree-dependency-policy'
 import type { Preparation } from './worktree-preparation'
 import type { DependencyOptions } from './worktree-dependencies'
 
@@ -72,8 +72,12 @@ export async function extractPackage(archive: Buffer, root: string, quota: Insta
   } finally { input.destroy(); gunzip.destroy() }
   const tar = Buffer.concat(chunks), files: { path: string; data: Buffer; executable: boolean }[] = []
   let offset = 0, bytes = 0, entries = 0, ended = false
-  const names = new Set<string>()
+  const namespace = new DependencyPathNamespace()
   const string = (b: Buffer) => b.toString('utf8').replace(/\0.*$/s, '')
+  const pathString = (b: Buffer) => {
+    try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(b.subarray(0, b.indexOf(0) < 0 ? b.length : b.indexOf(0))) }
+    catch { throw Error('dependency_archive_path') }
+  }
   const octal = (b: Buffer) => { const s = string(b).trim(); if (!/^[0-7]+$/.test(s)) throw Error('dependency_archive_header'); return parseInt(s, 8) }
   while (offset + 512 <= tar.length) {
     quota.budget.check()
@@ -82,19 +86,19 @@ export async function extractPackage(archive: Buffer, root: string, quota: Insta
     const expected = octal(header.subarray(148, 156))
     let sum = 0; for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 32 : header[i]!
     if (expected !== sum) throw Error('dependency_archive_checksum')
-    const prefix = string(header.subarray(345, 500)), name = (prefix ? prefix + '/' : '') + string(header.subarray(0, 100))
+    const prefix = pathString(header.subarray(345, 500)), name = (prefix ? prefix + '/' : '') + pathString(header.subarray(0, 100))
     const path = name.replace(/\/$/, '')
     if (!path.startsWith('package/') && path !== 'package') throw Error('dependency_archive_path')
     const relative = path.slice(8)
-    if (relative && relative.split('/').some(p => !dependencySafePart(p) || p === 'node_modules')) throw Error('dependency_archive_path')
+    if (relative && relative.split('/').some(p => dependencyPathIdentity(p) === 'NODE_MODULES')) throw Error('dependency_archive_path')
     const size = octal(header.subarray(124, 136)), type = header[156]
     if (!Number.isSafeInteger(size) || offset + size > tar.length || ![0,48,53].includes(type!)) throw Error('dependency_archive_type')
     entries += 1 + (relative.match(/\//g)?.length ?? 0)
     bytes += size; quota.preflight(bytes, entries)
     if (type === 53 && size !== 0) throw Error('dependency_archive_header')
+    if (type !== 53 && !relative) throw Error('dependency_archive_path')
+    namespace.add(relative, type === 53)
     if (type !== 53) {
-      if (!relative || names.has(relative)) throw Error('dependency_archive_path')
-      names.add(relative)
       files.push({ path: join(root, relative), data: tar.subarray(offset, offset + size), executable: !!(octal(header.subarray(100,108)) & 0o111) })
     }
     offset += Math.ceil(size / 512) * 512

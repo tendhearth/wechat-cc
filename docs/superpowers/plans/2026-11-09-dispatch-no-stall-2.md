@@ -34,3 +34,12 @@
 - CC 有界下载/解包替代 Bun 宿主安装，消除 SSH/用户配置发现；按块与目录条目执行预算，超限清理。
 - mkdir 前 owner journal、rename 后再删 owner，daemon 开机回收死亡 stage。
 - 当前入口递归守卫及 start/resume、对话重建/评估的联网与缺失回执负测；不宣称覆盖任意未来语法。
+
+## 复审修复 3
+
+基线 `da7e18e87`；唯一写入者仍为 Codex，在指定 worktree / 分支追加提交，不 push。
+
+1. 收入第三轮审查的七条路径别名夹具，先在基线实现上记录红测。
+2. 解包完整预检时，按统一保守 Unicode / 大小写身份登记每级隐式目录、显式目录与文件；别名、重复声明、类型冲突在落盘前整包拒绝。Windows 设备名、尾点/空格、ADS 及内嵌 node_modules 同用这套分量规则。
+3. 补文件/目录冲突与正常 Unicode 目录复用的行为回归；设计稿记明源码守卫误报、静态漏报和语法范围。
+4. 独立只读评审，负载 < 8 且无 CivilizationVII 时在同一命令内启动相关测试与 bun run verify；追加外部报告后提交 Co-Authored-By，不使用 mini / UI / 真实 daemon。

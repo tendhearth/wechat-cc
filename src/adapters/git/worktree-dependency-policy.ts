@@ -24,9 +24,41 @@ function registry(value: unknown): string {
       !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(url.hostname) || /\.(?:localhost|local|internal|lan|home|test|invalid)$/i.test(url.hostname))) throw Error('dependency_registry_policy')
   return url.href.replace(/\/?$/, '/')
 }
-/** Portable components: also reject Win32 aliases and device filenames on POSIX. */
+/** Conservative caseless identity, independent of the host filesystem/locale.
+ * Decompose first; map each code point to avoid contextual final-sigma casing.
+ * Lower then upper also unifies sharp-s/SS, sigma variants and ligatures. This
+ * intentionally folds more than Unicode default casefold (e.g. dotless i/I).
+ * Win32 suffix aliases share a key, but unsafe original spellings stay rejected.
+ */
+export function dependencyPathIdentity(part: string): string {
+  return Array.from(part.normalize('NFD'), c => c.toLowerCase().toUpperCase()).join('').normalize('NFC').replace(/[. ]+$/, '')
+}
+/** Portable components: reject Win32 and HFS+ aliases even on other hosts. */
 export function dependencySafePart(part: string): boolean {
-  return !!part && !['.','..','.git'].includes(part.toLowerCase()) && !/[\\/\x00-\x1f:]/.test(part) && !/[. ]$/.test(part) && !/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part)
+  const identity = dependencyPathIdentity(part), base = identity.split('.')[0]!.replace(/ +$/, '')
+  // '~' may name a generated Win32 8.3 alias of another directory.
+  return !!identity && identity !== '.GIT' && !/[\\/\x00-\x1f:<>"|?*~]/.test(part) && !/[. ]$/.test(part) &&
+    !/\p{Default_Ignorable_Code_Point}/u.test(part) &&
+    !/^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|CLOCK\$|COM[0-9¹²³]|LPT[0-9¹²³])$/.test(base)
+}
+/** Register explicit entries and every implicit parent before any writes.
+ * Exact parent reuse is allowed; aliases, duplicate declarations and type
+ * conflicts are rejected, including an explicit directory followed by a file.
+ */
+export class DependencyPathNamespace {
+  private names = new Map<string, { path: string; directory: boolean; declared: boolean }>()
+  constructor(private error = 'dependency_archive_path') {}
+  add(path: string, directory: boolean): void {
+    const parts = path ? path.split('/') : []
+    if (parts.some(p => !dependencySafePart(p))) throw Error(this.error)
+    const identities = parts.map(dependencyPathIdentity)
+    for (let depth = 0; depth <= parts.length; depth++) {
+      const original = parts.slice(0, depth).join('/'), identity = identities.slice(0, depth).join('/')
+      const declared = depth === parts.length, isDirectory = !declared || directory, previous = this.names.get(identity)
+      if (previous && (previous.path !== original || previous.directory !== isDirectory || declared && previous.declared)) throw Error(this.error)
+      this.names.set(identity, { path: original, directory: isDirectory, declared: declared || !!previous?.declared })
+    }
+  }
 }
 function platformMatches(value: unknown, platform: string): boolean {
   if (value === undefined) return true
@@ -37,7 +69,7 @@ function platformMatches(value: unknown, platform: string): boolean {
 const packageName = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i
 function location(key: string): string {
   const parts = key.match(/(?:@[^/]+\/)?[^/]+/g) ?? []
-  if (parts.join('/') !== key || !parts.length || parts.some(p => !packageName.test(p) || p === 'node_modules' || p.split('/').some(p => !dependencySafePart(p)))) throw Error('dependency_lock_layout')
+  if (parts.join('/') !== key || !parts.length || parts.some(p => !packageName.test(p) || dependencyPathIdentity(p) === 'NODE_MODULES' || p.split('/').some(p => !dependencySafePart(p)))) throw Error('dependency_lock_layout')
   return parts.map(p => `node_modules/${p}`).join('/')
 }
 const fields = ['dependencies','devDependencies','optionalDependencies','peerDependencies','overrides','resolutions','patchedDependencies','catalog','catalogs']
@@ -67,7 +99,7 @@ export function dependencyInstallPlan(files: Map<string, Buffer>): InstallPlan {
   if (!lock || lock.lockfileVersion !== 1 || !lock.packages || typeof lock.packages !== 'object' || Array.isArray(lock.packages)) throw Error('dependency_lock_unsupported')
   for (const field of fields) if (lock[field]) sources(lock[field])
   for (const [path, manifest] of Object.entries(lock.workspaces ?? {}) as [string, any][]) {
-    if (path && (!files.has(path + '/package.json') || path.split('/').some(p => !dependencySafePart(p) || p === 'node_modules'))) throw Error('dependency_workspace_policy')
+    if (path && (!files.has(path + '/package.json') || path.split('/').some(p => !dependencySafePart(p) || dependencyPathIdentity(p) === 'NODE_MODULES'))) throw Error('dependency_workspace_policy')
     for (const field of fields) if (manifest[field]) sources(manifest[field])
   }
   if ([...files.keys()].some(path => /(?:^|\/)(?:bun\.lockb|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(path) || path.endsWith('/bun.lock'))) throw Error('dependency_lock_unsupported')
@@ -88,7 +120,7 @@ export function dependencyInstallPlan(files: Map<string, Buffer>): InstallPlan {
     if (workspace) {
       if (tuple.length !== 1) throw Error('dependency_lock_unsupported')
       const target = workspace[2]!
-      if (target.split('/').some(p => !dependencySafePart(p) || p === 'node_modules') || !files.has(target + '/package.json') || !packageName.test(workspace[1]!)) throw Error('dependency_workspace_policy')
+      if (target.split('/').some(p => !dependencySafePart(p) || dependencyPathIdentity(p) === 'NODE_MODULES') || !files.has(target + '/package.json') || !packageName.test(workspace[1]!)) throw Error('dependency_workspace_policy')
       plan.workspaces.push({ path, target }); selected.add(key); continue
     }
     const match = /^((?:@[^/]+\/)?[^@]+)@(\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?(?:\+[a-z0-9.-]+)?)$/i.exec(tuple[0])
@@ -133,6 +165,7 @@ export function dependencyInstallPlan(files: Map<string, Buffer>): InstallPlan {
   }
   for (const pkg of plan.packages) pkg.path = relocate(pkg.path)
   for (const workspace of plan.workspaces) workspace.path = relocate(workspace.path)
-  if (new Set([...plan.packages, ...plan.workspaces].map(pkg => pkg.path)).size !== plan.packages.length + plan.workspaces.length) throw Error('dependency_lock_layout')
+  const namespace = new DependencyPathNamespace('dependency_lock_layout')
+  for (const pkg of [...plan.packages, ...plan.workspaces]) namespace.add(pkg.path, true)
   return plan
 }

@@ -16,9 +16,13 @@
 
 CC 自己执行有界下载和 ustar 解包，不再启动 Bun/Git/SSH 安装进程。这样没有 SSH 配置、身份、known_hosts、agent、npmrc/bunfig 用户目录发现或子进程环境继承路径；不读主人配置，也不执行 package scripts。所有写入都在私有 stage，没有用户 HOME/XDG/缓存写入。宿主设置了代理环境时外部安装安全 miss，保留已有网络守护。只有工作区链接的离线安装仍可用。tar 的 PAX、稀疏、链接、特殊文件及 bundled/binDir 等未实现形状整次 miss；支持的 bin 链接只指向已校验的包内文件；workspace bin 只建立逻辑占位端点，恢复时使用新 checkout 的真实文件。先验证所有来源，再按 os/cpu 筛掉不适用的可选包，并检查物理布局中仍有全部必需依赖；libc 专属布局暂不支持，整次 miss。Windows 尾点/空格别名、设备名及 ADS 在所有平台一致拒绝。
 
+解包路径采用统一的保守命名空间身份，与宿主是否区分大小写无关：路径字段严格解码 UTF-8，损坏字节直接拒绝；每个分量先 NFD 分解，逐码点 lower → upper，再 NFC 合成；这覆盖规范等价、大小写与展开折叠（如 ß/SS、sigma、连字），并保守合并 dotless i/I。身份键去除 Win32 尾点/空格，但原名含这些后缀、ADS/禁字符或保留设备基名即拒绝，不改写后落盘。设备基名取首点前且去尾空格，包含 COM/LPT 的 ¹²³ 及 CONIN$/CONOUT$；另拒绝 Default_Ignorable_Code_Point，避免 HFS+ 忽略字符造成别名；拒绝 `~` 分量，避免 Win32 生成的 8.3 短名与长目录合并。规则依据 [Unicode 大小写映射](https://www.unicode.org/Public/17.0.0/ucd/CaseFolding.txt)、[Win32 文件命名](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)与 [HFS+ 比较规则](https://developer.apple.com/library/archive/technotes/tn/tn1150.html)。
+
+完整 tar 预检登记每级隐式父目录、显式目录、普通文件的身份、原拼写和类型。不同原名撞身份、重复显式声明或目录/文件冲突，均在包根创建前拒绝整包；相同原拼写父目录可复用，隐式父目录可补一次显式声明。node_modules / .git 禁令按同一身份判断，不能以大写或 Unicode 别名绕过。安装计划的包根也逐级登记，防止 Tool/tool 或 @Scope/a/@scope/b 在多个包之间合并父目录。正常 Unicode 路径保留原拼写。
+
 磁盘预算前置：写元数据前检查其双份大小、条目和剩余空间；按锁内包数及可选 unpackedSize/fileCount 做安装预检（普通 Bun 锁不声明体积，不能假装已有体积证明）。下载逐块计数，单包压缩数据最多 32 MiB；解压逐块有界，单包展开内存最多 128 MiB。tar 先校验完整 header、声明体积/条目和路径，再创建包文件。所有目录逐层计数，文件每 64 KiB 写入前检查共享字节预算、条目、剩余空间、取消与截止时间，超限立即停止，finally 清理整次 stage。默认安装数据预算 1 GiB，并受 maxCacheBytes 一半约束，为 snapshot 留出对应空间；条目也给 snapshot 留一半。完成缓存仍默认 4 GiB、LRU；在建 stage 另有上述硬上限，不把运行期计数替换为写完后扫描。
 
-安装成功后复核起点元数据与任务工作区，再经过原复制器的链接/容量/条目/时间/剩余空间预算，才写绑定完整 key 和 `committed-public-registry-v1` 策略的完成记录并原子 rename。旧 v2 记录没有新策略标记，不会命中。owner 一直保留到 rename 后；stage 在 mkdir 前先写外部 owner journal，避免第二次创建失败或崩溃留下不可追踪目录。daemon 启动扫尾和准备阶段共用串行锁，按死亡 PID 的记录回收 stage/journal；活跃或不明 owner 不删除。取消、失败、超时、元数据变化均不入缓存。workspace / .bin 端点仍仅保存逻辑位置，恢复使用新 checkout 的代码。
+安装成功后复核起点元数据与任务工作区，再经过原复制器的链接/容量/条目/时间/剩余空间预算，才写绑定完整 key 和 `committed-public-registry-portable-v2` 策略的完成记录并原子 rename。策略同时进入 scope 哈希，修复前的缓存树不会命中，也不会占据新缓存的发布路径；旧条目仍按原 LRU 预算回收。owner 一直保留到 rename 后；stage 在 mkdir 前先写外部 owner journal，避免第二次创建失败或崩溃留下不可追踪目录。daemon 启动扫尾和准备阶段共用串行锁，按死亡 PID 的记录回收 stage/journal；活跃或不明 owner 不删除。取消、失败、超时、元数据变化均不入缓存。workspace / .bin 端点仍仅保存逻辑位置，恢复使用新 checkout 的代码。
 
 ## 任务内 uptime
 
@@ -38,7 +42,7 @@ Bun 1.3.14 忽略环境预加载，因此任务 PATH 使用固定 Node/Bun wrapp
 
 原因：当前 sandbox 的广泛可读权限可读同用户的 discovery/operator 凭据；全机回环会把这些文件变成可用的主人 API 与审批权限。域名 deny、NO_PROXY、0700/0600、随机端口及任务端口约定都不能提供这条隔离；stock local-binding 也不能限制为某个任务的 TCP 端口。因此需要 listen 的测试仍走原生显式审批，交给「本任务同命令放行」降低重复打扰。
 
-将来若做，必须先有显式安全设计并以真实沙箱验证：例如凭据对执行者确实不可读的强保证、独立 OS 身份或私有网络隔离、不桥接宿主管理服务；daemon 拒绝执行者进程树请求亦须有可信内核身份而非自报 PID / 轮询父进程。只截断某份 token 不足以保护宿主其他回环服务。守卫测试写明此攻击链，任何放开先更新设计与隔离证据。离线启动守卫覆盖当前入口；新增执行者入口必须加入守卫。递归扫描 src 的已识别 app-server / thread start、resume / session 启动语法并精确登记入口；目录外、子目录或已有模块增加未登记入口都会红。它不证明任意未来动态构造语法都可被识别，仍须给新入口补实际离线配置和恶意/缺失回执负测。
+将来若做，必须先有显式安全设计并以真实沙箱验证：例如凭据对执行者确实不可读的强保证、独立 OS 身份或私有网络隔离、不桥接宿主管理服务；daemon 拒绝执行者进程树请求亦须有可信内核身份而非自报 PID / 轮询父进程。只截断某份 token 不足以保护宿主其他回环服务。守卫测试写明此攻击链，任何放开先更新设计与隔离证据。离线启动守卫覆盖当前入口；新增执行者入口必须加入守卫。递归扫描 src 的已识别 app-server / thread start、resume / session 启动语法并精确登记入口；已识别语法在目录外、子目录或已有模块增加未登记入口会红。新增入口仍须补实际离线配置和恶意/缺失回执负测，静态范围见下文「已知局限」。
 
 ## 协议缓冲
 
@@ -47,3 +51,9 @@ Bun 1.3.14 忽略环境预加载，因此任务 PATH 使用固定 Node/Bun wrapp
 ## 验证与评审重点
 
 四条分别留红/绿；大输出覆盖父轮确认前和子线程核验前。缓存覆盖可信安装后源删除、任务投毒、半成品 sibling、安装失败/中断、嵌套锁/清单变化、链接逃逸、LRU/容量、取消与受限复制。环境覆盖 Node/Bun 子进程继承、ESM 命名导出和宿主不加载任务 preload；大输出逐一枚举 7 类预览，单帧及未结束尾帧超限仍拒绝。相关 Bun 与 Node 测试，随后在无游戏且负载低于 8 时运行 bun run verify。无 UI 改动，不使用 mini；不 push。
+
+## 已知局限
+
+- 离线启动源码守卫无上下文统计 `thread/start`、`thread/resume`、`app-server` 字符串，类型声明或普通常量也可能误报。维护者应辨别调用语境，不能为压掉误报机械扩充入口白名单；将来可收窄到进程参数 / RPC 调用语境，本轮不改扫描器。
+- 静态漏报包含常见 namespace import（`import * as codex` 后调用 session factory）；只扫描 `.ts`，不扫描 `.tsx/.mts/.cts/.js`，并排除 `.d.ts`、测试、test-support、__e2e__。process factory 只登记 named import，不统计每次调用；同一已导入 factory 新增调用未必变红。动态构造也没有通用识别保证。复用现有 session factory 仍受运行时网络回执约束，源码守卫不能代替新入口的行为负测。
+- 路径身份有意比单一文件系统更保守；包含不可见 Unicode 字符、保留设备别名或大小写身份碰撞的包安全 miss。Unicode 映射来自运行时，无 Windows/HFS+ 真机设备 I/O 验证；夹具只证明在当前平台同样提前拒绝，不声称测试了各系统设备行为。
