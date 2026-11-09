@@ -162,3 +162,9 @@ describe('custom ACP auth failure keeps the agent\'s own reason (2026-10-07)', (
     expect(executionFailureMessage('acp_auth_required')).toContain('cursor-agent login')
   })
 })
+
+it('explains a refused sandbox policy instead of exposing an internal code', () => {
+  const message=executionFailureMessage('codex_unverified_thread_policy')
+  expect(message).not.toBe('codex_unverified_thread_policy')
+  expect(message).toContain('这一轮没有开始')
+})

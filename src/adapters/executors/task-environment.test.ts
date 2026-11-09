@@ -18,13 +18,24 @@ it('isolates task temp and Bun cache, reuses them on resume, and real child tool
   const root = area()
   execFileSync('git',['init','-q'],{cwd:root})
   const env = (await taskEnvironment(root, 'abcd1234'))
-  expect(env).toEqual({ TMPDIR: join(root,'.cc-tasks/abcd1234/tmp'), TEMP: env.TMPDIR, TMP: env.TMPDIR, BUN_TMPDIR: env.TMPDIR, BUN_INSTALL_CACHE_DIR: join(root,'.cc-tasks/abcd1234/cache'), npm_config_cache: env.BUN_INSTALL_CACHE_DIR, GIT_CEILING_DIRECTORIES: env.TMPDIR })
+  expect(env).toEqual({ TMPDIR: join(root,'.cc-tasks/abcd1234/tmp'), TEMP: env.TMPDIR, TMP: env.TMPDIR, BUN_TMPDIR: env.TMPDIR, BUN_INSTALL_CACHE_DIR: join(root,'.cc-tasks/abcd1234/cache'), npm_config_cache: env.BUN_INSTALL_CACHE_DIR, GIT_CEILING_DIRECTORIES: env.TMPDIR, NODE_OPTIONS: env.NODE_OPTIONS, CC_TASK_SYSTEM_BOOT_MS: env.CC_TASK_SYSTEM_BOOT_MS, PATH: env.PATH })
   expect((await taskEnvironment(root,'abcd1234'))).toEqual(env)
   expect((await taskEnvironment(root,'abcd1235')).TMPDIR).not.toBe(env.TMPDIR)
   const path = execFileSync(process.execPath, ['-e', "process.stdout.write(require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'test-')))"], { env: {...process.env,...env}, encoding: 'utf8' })
   expect(path.startsWith(env.TMPDIR!)).toBe(true)
   expect(existsSync(path)).toBe(true)
   expect(() => execFileSync('git',['rev-parse','--show-toplevel'],{cwd:path,env:{...process.env,...env},stdio:'pipe'})).toThrow()
+})
+
+it.skipIf(process.platform !== 'darwin').each(['node', 'bun'])('task preload recovers real sandbox uv_uptime EPERM for %s including named ESM imports', async runtime => {
+  const root = area(), env = await taskEnvironment(root, 'abcd1234')
+  const profile = '(version 1)(allow default)(deny sysctl-read (sysctl-name "kern.boottime"))'
+  const code = "import {uptime} from 'node:os';import {spawnSync} from 'node:child_process';const n=uptime();if(!(n>60&&Number.isFinite(n)))throw Error('invalid fallback');const child=spawnSync(process.execPath,['-e',\"if(!(require('node:os').uptime()>60))process.exit(9)\"],{encoding:'utf8'});if(child.status!==0)throw Error('absolute child failed: '+child.status+child.stderr);console.log('fallback')"
+  expect(() => execFileSync('/usr/bin/sandbox-exec', ['-p', profile, runtime, '--input-type=module', '-e', code], { env: process.env, stdio: 'pipe' })).toThrow()
+  const output = execFileSync('/usr/bin/sandbox-exec', ['-p', profile, runtime, '--input-type=module', '-e', code], { env: { ...process.env, ...env }, encoding: 'utf8' })
+  expect(output.trim()).toBe('fallback')
+  // The parent process and all unrelated processes keep their own os module.
+  expect(execFileSync(runtime, ['-e', "console.log(require('node:os').uptime()>0)"], { encoding: 'utf8' }).trim()).toBe('true')
 })
 
 it('refuses invalid task ids and repository symlinks before writing any external directory', async () => {
@@ -122,4 +133,18 @@ it.each(['abcd1234','abcd1234/tmp','abcd1234/cache','.gitignore'])('rejects pre-
   symlinkSync(outside,join(root,'.cc-tasks',part),'dir')
   await expect(taskEnvironment(root,'abcd1234')).rejects.toThrow('invalid_task_environment')
   expect(existsSync(join(outside,'tmp'))).toBe(false)
+})
+
+it.skipIf(process.platform!=='darwin')('security: sandbox task cannot rewrite, replace or hardlink the trusted runtime',async()=>{
+  const root=area(),env=await taskEnvironment(root,'abcd1234')
+  const preload=JSON.parse(env.NODE_OPTIONS!.slice('--require '.length)) as string
+  expect(preload.startsWith(root+'/')).toBe(false)
+  const original=readFileSync(preload,'utf8')
+  // Mirrors Codex workspace-write with /tmp excluded: only task root is writable.
+  const profile=`(version 1)(deny default)(allow process*)(allow sysctl-read)(allow mach-lookup)(allow file-read*)(allow file-write* (subpath ${JSON.stringify(root)}))`
+  const code=`const fs=require('node:fs');const p=${JSON.stringify(preload)};fs.writeFileSync(${JSON.stringify(join(root,'ordinary'))},'ok');for(const action of [()=>fs.writeFileSync(p,'poison'),()=>fs.renameSync(p,p+'.old'),()=>{fs.linkSync(p,${JSON.stringify(join(root,'link'))});fs.chmodSync(${JSON.stringify(join(root,'link'))},0o600);fs.writeFileSync(${JSON.stringify(join(root,'link'))},'poison')}]){try{action();process.exit(9)}catch{}}`
+  execFileSync('/usr/bin/sandbox-exec',['-p',profile,'node','-e',code],{env:{...process.env,...env},stdio:'pipe'})
+  expect(readFileSync(preload,'utf8')).toBe(original)
+  writeFileSync(join(root,'.cc-tasks/abcd1234/uptime.cjs'),'throw Error("task poison")')
+  expect(execFileSync('node',['-e',"console.log(require('node:os').uptime()>0)"],{env:{...process.env,...env},encoding:'utf8'}).trim()).toBe('true')
 })

@@ -240,15 +240,15 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       const discovery = chat ? undefined : await discoverWorkbenchCodexConfig(binary, project.path)
       // Startup has no turn. Keep MCPs disabled while reading the native layers,
       // without overwriting the user's web-search mode before config/read.
-      // 对话侧启动参数里什么都不带:工具与策略都在线程配置里(令牌不进 argv)。
+      // 对话侧启动只钉离线开关:工具与完整策略在线程配置里(令牌不进 argv)。
       const taskEnv = !chat && context.workbenchTaskId ? await taskEnvironment(project.path, context.workbenchTaskId,{signal:context.preparationSignal}) : {}
-      const taskConfig = context.workbenchTaskId && !chat ? {
+      const taskConfig: ObjectValue = context.workbenchTaskId && !chat ? {
         sandbox_workspace_write: { ...discovery!.config.sandbox_workspace_write, writable_roots: [taskEnv.TMPDIR!] },
         shell_environment_policy: { ...discovery!.config.shell_environment_policy, set: taskEnv, include_only: [...discovery!.config.shell_environment_policy.include_only, ...Object.keys(taskEnv)] },
       } : {}
-      const { web_search: _startupSearch, ...startupConfig } = { ...discovery?.config, ...taskConfig }
+      const { web_search: _startupSearch, ...startupConfig } = { ...discovery?.config, ...taskConfig, ...(chat ? {features:{network_proxy:false},sandbox_workspace_write:{network_access:false}} : {}) }
       const enabledMcp = new Set<string>()
-      const childEnv = chat ? chat.env : { ...workbenchCodexEnv(), ...taskEnv }
+      const childEnv = chat ? chat.env : workbenchCodexEnv()
       // 守护(评审 #193 P1-1 + 2026-10-03):app-server 是常驻子进程,端点在它起来那一刻按配置定下。
       // 先按配置层预测;initialize 之后问 codex 自己(config/read),用它报的有效配置覆盖。
       let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: chat ? chat.config : startupConfig })
@@ -301,10 +301,30 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         return true
       }
       const retainUnknown = (key: string) => { if (!unknownBackground.has(key) && runtimeCapacity()) { unknownBackground.add(key); writerRevision++ } }
-      const bufferCapacity = (incoming?: Message) => {
-        const messages = [...candidates.values()].flat().concat(active?.early ?? [])
-        if (messages.length >= 1000 || messages.reduce((size, message) => size + JSON.stringify(message).length, incoming ? JSON.stringify(incoming).length : 0) > 4_000_000) { fatal('codex_protocol_buffer_limit'); return false }
-        return true
+      let bufferCompacted = false
+      let omittedPreviews = 0, omittedPreviewBytes = 0
+      const previews = new Set(['item/commandExecution/outputDelta', 'item/fileChange/outputDelta', 'item/agentMessage/delta', 'item/reasoning/textDelta', 'item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded', 'item/plan/delta'])
+      const reconstructible = (message: Message) => message.id === undefined && previews.has(message.method ?? '')
+      const bufferCapacity = (incoming: Message) => {
+        // Quarantined previews have no visible consumer until lineage/start is
+        // verified. Drop them immediately instead of repeatedly serializing MB
+        // of output just to discover it will never be rendered.
+        if (reconstructible(incoming)) {
+          omittedPreviews++; omittedPreviewBytes += JSON.stringify(incoming).length
+          if (!bufferCompacted && (omittedPreviews >= 1000 || omittedPreviewBytes >= 4_000_000)) {
+            bufferCompacted = true
+            context.reportNotice?.('输出较多，已省略部分实时预览；任务继续，最终结果仍会保留。')
+          }
+          return false
+        }
+        const queues = [...candidates.values(), ...(active ? [active.early] : [])]
+        const fits = () => {
+          let count = 1, bytes = JSON.stringify(incoming).length
+          for (const queue of queues) for (const message of queue) { count++; bytes += JSON.stringify(message).length }
+          return count <= 1000 && bytes <= 4_000_000
+        }
+        if (fits()) return true
+        fatal('codex_protocol_buffer_limit'); return false
       }
       const pruneFinishedTurn = (turn: Turn) => {
         for (const [id, item] of turn.items) if (item.type !== 'commandExecution' || (turn.completedItems.has(id) && item.status !== 'inProgress')) turn.items.delete(id)
@@ -749,7 +769,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             // Native notifications can precede turn/start's response. Keep their
             // wire order until the acknowledged root turn can establish lineage.
             if (active && !active.id && params.threadId !== threadId && params.threadId && !descendants.has(params.threadId) && !candidates.has(params.threadId)) {
-              if (!bufferCapacity(message)) { fatal('codex_protocol_buffer_limit'); return }
+              if (!bufferCapacity(message)) return
               active.early.push(message); return
             }
             if (message.method === 'thread/started' && object(params.thread)) { verifyChild(params.thread); return }
@@ -757,7 +777,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             if (senderOwned) registerBackground(message)
             if (params.threadId !== threadId && candidates.has(params.threadId)) {
               const waiting = candidates.get(params.threadId)!
-              if (!bufferCapacity(message)) { fatal('codex_protocol_buffer_limit'); return }
+              if (!bufferCapacity(message)) return
               waiting.push(message); return
             }
             if (message.method === 'turn/started' && descendants.has(params.threadId) && codexItemId(params.turn?.id)) {
@@ -806,7 +826,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             return
           }
           if (!turn.id) {
-            if (lifetime && !bufferCapacity(message)) return
+            if (!bufferCapacity(message)) return
             if (turn.early.length > 1_000) { fatal('codex_protocol_buffer_limit'); return }
             turn.early.push(message); return
           }
@@ -930,9 +950,9 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       child.stdout.on('data', chunk => {
         if (closing) return
         buffer += String(chunk)
-        if (buffer.length > 4_000_000) { fatal('codex_protocol_buffer_limit'); return }
         while (buffer.includes('\n') && !closing) {
           const end = buffer.indexOf('\n'), line = buffer.slice(0, end); buffer = buffer.slice(end + 1)
+          if (line.length > 4_000_000) { fatal('codex_protocol_buffer_limit'); return }
           if (!line.trim()) continue
           try {
             const message: unknown = JSON.parse(line)
@@ -940,6 +960,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             route(message)
           } catch { fatal('codex_invalid_protocol_message') }
         }
+        if (buffer.length > 4_000_000) fatal('codex_protocol_buffer_limit')
       })
       // 对话侧留住 stderr 的最后一段:app-server 自己退出时(登录失效、配置坏了)真因常在这里,用来给错误补码。
       let stderrTail = ''
@@ -960,6 +981,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (lifetime && !registrationVerified) retained = true
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
+        const proxy = native.config?.features?.network_proxy
+        if (proxy != null && proxy !== false) throw Error('codex_unverified_thread_policy')
         // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
         spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? null)
         const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
@@ -986,7 +1009,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
             ...resumeParams,
             cwd: project.path, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
-            developerInstructions: context.appendInstructions ?? '', config: {...config,...taskConfig,...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
+            developerInstructions: context.appendInstructions ?? '', config: {...config,...taskConfig,features:{...config.features,...taskConfig.features},...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
             ...(model ? {model} : {}),
           })
           if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
@@ -998,7 +1021,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (chat) {
           // 起出来的线程必须就是 compilePolicy 要的那一档;codex 报回来的对不上(配置层盖掉了、版本不认)⇒ 不开。
           if (response.approvalPolicy !== chat.approvalPolicy || sandbox?.type !== SANDBOX_TYPE[chat.sandbox] ||
-              (chat.approve && response.approvalsReviewer !== 'user')) throw new Error('codex_unverified_thread_policy')
+              (chat.approve && response.approvalsReviewer !== 'user') ||
+              (chat.sandbox !== 'danger-full-access' && sandbox.networkAccess !== false)) throw new Error('codex_unverified_thread_policy')
         } else if (response.approvalPolicy !== 'on-request' || response.approvalsReviewer !== 'user' ||
             sandbox?.type !== 'workspaceWrite' || sandbox.networkAccess !== false ||
             sandbox.excludeTmpdirEnvVar !== true || sandbox.excludeSlashTmp !== true ||

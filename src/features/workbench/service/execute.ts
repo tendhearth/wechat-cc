@@ -399,7 +399,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           if (closePromise) void closePromise.then(() => confirmLateClose(running,true),() => {})
         } finally { if (closeTimer) clearTimeout(closeTimer) }
       }
-      if (!running.uncertain) await collect(running)
+      if (!running.uncertain) { await collect(running) }
       revokeCredentials(running)
       if (running.uncertain) { finalStatus='interrupted'; finalError='writer_not_closed' }
       let terminalCommitted=false

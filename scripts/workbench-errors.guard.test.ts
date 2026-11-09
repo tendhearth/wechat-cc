@@ -134,7 +134,7 @@ const INTERNAL_ONLY = new Set([
     'codex_resume_thread_mismatch', 'codex_runtime_already_started', 'codex_runtime_record_limit', 'codex_runtime_requires_lifetime_stream',
     'codex_session_closed', 'codex_steer_no_longer_active', 'codex_steer_turn_mismatch', 'codex_terminal_cleanup_unverified',
     'codex_turn_already_running', 'codex_turn_cancelled', 'codex_turn_start_mismatch', 'codex_unverified_thread_cwd',
-    'codex_unverified_thread_policy', 'control_conflict', 'control_stale', 'diff_limit', 'entry_already_accepted', 'entry_matter_link_failed',
+    'control_conflict', 'control_stale', 'diff_limit', 'entry_already_accepted', 'entry_matter_link_failed',
     'entry_not_accepted', 'input_not_delivered', 'matters_not_wired', 'missing_finish_reason',
     'notification_conflict', 'question_limit', 'review_cancelled', 'review_deadline', 'review_size_limit', 'rewind_backup_exists',
     'rewind_git_failed', 'rewind_verify_tree', 'runtime_closed_before_input_acknowledgement', 'session_start_timeout', 'subscription_conflict',

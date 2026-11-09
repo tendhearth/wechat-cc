@@ -31,6 +31,7 @@ export function taskErrorForProviderCode(code:string|undefined,raw:string):strin
 /** Keep task.error as the diagnostic code; the conversation also reaches phone users. */
 export function executionFailureMessage(code:string):string {
   const messages:Record<string,string>={
+    codex_unverified_thread_policy:'无法核实 Codex 的本机测试网络限制，这一轮没有开始。请检查 Codex 配置后重试。',
     execution_model_unsupported:'当前模型不可用。请为这件事选择可用的模型后继续；自动会沿用原设置。',
     execution_effort_unsupported:'这个模型不支持所选思考强度，请重新选择，或使用自动。',
     execution_model_unknown:'暂时无法确认当前模型，请明确选择一个模型后重试。',

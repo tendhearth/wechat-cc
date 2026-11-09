@@ -110,7 +110,7 @@ const SANDBOX: Record<string, string> = { 'read-only': 'readOnly', 'workspace-wr
  */
 function sandboxOf(p: Record<string, any>): Record<string, unknown> {
   const type = SANDBOX[p.sandbox] ?? p.sandbox
-  if (type !== 'workspaceWrite') return { type }
+  if (type !== 'workspaceWrite') return { type, ...(type === 'readOnly' ? {networkAccess:false} : {}) }
   const w = p.config?.sandbox_workspace_write ?? {}
   return { type, writableRoots: Array.isArray(w.writable_roots) ? w.writable_roots : [], networkAccess: w.network_access === true, excludeTmpdirEnvVar: w.exclude_tmpdir_env_var === true, excludeSlashTmp: w.exclude_slash_tmp === true }
 }
@@ -257,7 +257,7 @@ export function createScriptedCodex(opts: ScriptedCodexOptions): ScriptedCodex {
         case 'initialized': return
         case 'config/read': return reply(m, { config: {} })
         case 'thread/start': case 'thread/resume': {
-          cheap = p.sandbox === 'read-only' && p.config?.sandbox_workspace_write?.network_access === false
+          cheap = p.sandbox === 'read-only' && p.config?.sandbox_workspace_write?.network_access === false && p.config?.model_reasoning_effort === 'low'
           threadStarts.push({ method: m.method, params: p })
           opts.onThreadStart?.(m.method, p, cheap)
           if (m.method === 'thread/resume' && opts.resumeFails) return send({ id: m.id, error: { code: -32600, message: `no rollout found for thread id ${p.threadId}` } })

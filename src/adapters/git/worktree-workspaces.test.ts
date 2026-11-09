@@ -24,6 +24,23 @@ function repo() {
 }
 
 describe('worktree workspaces (2026-10-07)', () => {
+  it('refuses task-installed dependencies when the owner is old, including after task removal', async () => {
+    const { project, state } = repo()
+    git(project,['checkout','-b','new-dependencies'])
+    writeFileSync(join(project,'package.json'),'{"name":"fixture","dependencies":{"tool":"1"}}')
+    writeFileSync(join(project,'bun.lock'),'invalid frozen lock');writeFileSync(join(project,'.gitignore'),'node_modules/\n')
+    git(project,['add','.']);git(project,['commit','-m','new dependencies']);git(project,['checkout','main'])
+    const plan=(id:string)=>planWorktree({stateDir:state,projectId:PID,projectPath:project,repoRoot:project,id,base:'new-dependencies'})
+    const first=plan('aa000001');await ensureWorktree(first)
+    mkdirSync(join(first.root,'node_modules/tool'),{recursive:true});writeFileSync(join(first.root,'node_modules/tool/index.js'),'untrusted task')
+    const second=plan('aa000002');await ensureWorktree(second)
+    expect(existsSync(join(second.root,'node_modules'))).toBe(false)
+    expect(readFileSync(join(first.root,'node_modules/tool/index.js'),'utf8')).toBe('untrusted task')
+    expect(second.start!.notices).toContain('未能完整复用项目依赖，请在此工作区运行锁定安装；临时目录和缓存已限制在任务工作区内。')
+    removeWorktree(project,first.root);removeWorktree(project,second.root)
+    const third=plan('aa000003');await ensureWorktree(third)
+    expect(existsSync(join(third.root,'node_modules'))).toBe(false)
+  })
   it('plans, creates idempotently from HEAD (uncommitted changes stay behind), commits, and removes', async () => {
     const { project, state } = repo()
     writeFileSync(join(project, 'a.txt'), 'uncommitted\n')
