@@ -33,8 +33,11 @@ export function inspectPermissionExecutable(head: string, cwd: string, environme
   }
   if (!candidate || !PERMISSION_SYSTEM_DIRS.has(dirname(resolve(candidate)))) return null
   try {
+    // The lookup entry must be a system directory; its link target may live elsewhere
+    // (Ubuntu: /bin/ls → /usr/lib/cargo/bin/coreutils/ls). What makes the target
+    // trustworthy is ownership, not a path list: the file and every ancestor must be
+    // root-owned and not writable by this user (checked below).
     const path = realpathSync.native(candidate)
-    if (!PERMISSION_SYSTEM_DIRS.has(dirname(path))) return null
     for (let parent = dirname(path);; parent = dirname(parent)) {
       const info = statSync(parent)
       if (info.uid !== 0 || writable(parent)) return null
