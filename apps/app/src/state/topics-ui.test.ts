@@ -151,7 +151,7 @@ it.each(['zh-Hans','en'] as const)('polishes sheet order, names, dates, manageme
   const zh=lang==='zh-Hans', demo=makeDemoBackend({lang}), ts=Date.now()-7_200_000, iso=new Date(ts).toISOString()
   const backend:Backend={...demo,topicDetail:async p=>{
     const base=await demo.topicDetail(p)
-    return{...base,topic:{...base.topic,description:'项目说明',summary:'项目摘要'},matters:(['idle','running','waiting'] as const).map(activity=>({id:activity,title:`会话${activity}`,state:activity,archivedAt:null,session:{id:activity,kind:'task' as const,title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}})),messages:[{id:'msg',speaker:'cc' as const,ts:iso,excerpt:'最近的消息',source:'recall' as const}]}
+    return{...base,topic:{...base.topic,description:'项目说明',summary:'项目摘要'},matters:(['idle','running','waiting'] as const).map(activity=>({id:activity,title:`会话${activity}`,state:activity,archivedAt:null,session:{id:activity,kind:activity==='idle'?'terminal' as const:'task' as const,title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:activity==='idle'?'答完了':'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}})),messages:[{id:'msg',speaker:'cc' as const,ts:iso,excerpt:'最近的消息',source:'recall' as const}]}
   }}
   host.params={id:'demo-backup'}
   const ui=await mount(withProviders(createElement(Topic),{backend,lang}));await flush();await flush()
@@ -161,6 +161,8 @@ it.each(['zh-Hans','en'] as const)('polishes sheet order, names, dates, manageme
   expect.soft(text.indexOf(zh?'回应':'Respond')).toBeLessThan(text.indexOf('会话running'))
   expect.soft(text.indexOf('会话running')).toBeLessThan(text.indexOf('项目说明'))
   expect.soft(text.indexOf('项目摘要')).toBeLessThan(text.indexOf('会话idle'))
+  expect.soft(ui.byId('topic-session-idle').textContent).toContain('答完了')
+  expect.soft(ui.byId('topic-session-respond-idle')).toBeNull()
   expect.soft(ui.byId('topic-session-waiting').textContent).toContain('Codex')
   expect.soft(ui.byId('topic-session-waiting').getAttribute('aria-label')).toContain('Codex')
   expect.soft(text).toContain(zh?'2 小时前':'2 h ago')

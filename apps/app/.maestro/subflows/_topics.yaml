@@ -57,6 +57,14 @@ appId: com.tendhearth.app
 - assertVisible: "上次：备份留在本地"
 - scrollUntilVisible:
     element:
+      id: topic-session-b0b0cafe
+    direction: DOWN
+- assertVisible: ".*Codex.*(答完了|Replied).*"
+- assertNotVisible:
+    id: topic-session-respond-b0b0cafe
+- takeScreenshot: topics-waiting-terminal-replied
+- scrollUntilVisible:
+    element:
       id: topic-entry-demo-entry
     centerElement: true
     direction: DOWN

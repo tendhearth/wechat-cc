@@ -171,7 +171,7 @@ it('keeps expanded project sessions across activity revisions using fresh cursor
 
 it('polishes project sessions: waiting and response then running precede summary; localized dates and names reach readers',async()=>{
   const ts=Date.now()-7_200_000, iso=new Date(ts).toISOString()
-  const sessions=['idle','running','waiting'].map(activity=>({id:activity,title:`会话${activity}`,state:activity,session:{id:activity,kind:'task',title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}}))
+  const sessions=['idle','running','waiting'].map(activity=>({id:activity,title:`会话${activity}`,state:activity,session:{id:activity,kind:activity==='idle'?'terminal':'task',title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:activity==='idle'?'答完了':'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}}))
   const {openMatter}=setup(async(method:string,path:string)=>{
     if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
     if(method==='POST')return{id:'polish'}
@@ -184,6 +184,8 @@ it('polishes project sessions: waiting and response then running precede summary
   expect.soft(text.indexOf('会话waiting')).toBeLessThan(text.indexOf('说明'))
   expect.soft(text.indexOf('会话running')).toBeLessThan(text.indexOf('说明'))
   expect.soft(text.indexOf('说明')).toBeLessThan(text.indexOf('会话idle'))
+  expect.soft(panel.querySelector('[data-project-session="idle"]')?.textContent).toContain('答完了')
+  expect.soft(panel.querySelector('[data-project-respond="idle"]')).toBeNull()
   const respond=panel.querySelector('[data-project-respond="waiting"]') as HTMLButtonElement
   expect.soft(respond?.textContent).toBe('回应')
   expect.soft(text.indexOf('回应')).toBeLessThan(text.indexOf('会话running'))

@@ -28,10 +28,10 @@ const META = `json_object('kind',kind,'tool',COALESCE(json_extract(payload_json,
   'file',CASE WHEN json_extract(payload_json,'$.verb') IN ('read','edit','write','delete') THEN json_extract(payload_json,'$.target') END,
   'key',item_key,'at',updated_at)`
 type Meta = {kind:string;tool:string|null;verb:string|null;type:string|null;status:string;file:string|null;key:string|null;at:number}
-type Row = {id:string;kind:'task'|'terminal';title:string;state:string;updated_at:number;project_path:string|null;cwd:string|null;last_event_at:number|null;executor:string|null;project:string|null;repo:string|null;root:string|null;ended_at:number|null;policy_cwd:string|null;pending:string|null;last:string|null;response_at:number|null}
+type Row = {id:string;kind:'task'|'terminal';title:string;state:string;updated_at:number;project_path:string|null;cwd:string|null;last_event_at:number|null;executor:string|null;project:string|null;repo:string|null;root:string|null;turn_status:string|null;ended_at:number|null;policy_cwd:string|null;pending:string|null;last:string|null;response_at:number|null}
 function readRows(db:Db,owner:string,ids?:string[]):Row[] {
   return db.query<Row,[string,string,string,string]>(`SELECT m.id,m.kind,m.title,m.state,m.updated_at,m.project_path,
-    c.cwd,c.last_event_at,COALESCE(t.executor,c.source,w.provider_id) AS executor,t.ended_at,
+    c.cwd,c.last_event_at,COALESCE(t.executor,c.source,w.provider_id) AS executor,t.status AS turn_status,t.ended_at,
     json_extract(t.policy_json,'$.cwd') AS policy_cwd,wt.project_path AS project,wt.repo_root AS repo,wt.root,
     (SELECT ${META} FROM matter_items WHERE matter_id=m.id AND kind IN ('permission','question') AND status='started' ORDER BY seq DESC LIMIT 1) AS pending,
     (SELECT ${META} FROM matter_items WHERE matter_id=m.id AND kind IN ('tool_call','system','error') AND COALESCE(item_key,'') NOT LIKE 'ready:%' ORDER BY seq DESC LIMIT 1) AS last,
@@ -149,14 +149,18 @@ function createCache(db:Db,owner:string,seen:MatterSeen,identify:typeof projectI
       const pending:Meta|null=m.pending?JSON.parse(m.pending):null,last:Meta|null=m.last?JSON.parse(m.last):null
       const runtime=m.kind==='task'?source?.(id):null
       const terminal=['done','failed','cancelled'].includes(m.state),answeredAt=Math.max(m.ended_at??0,m.response_at??0)
-      const unseen=!seen(id,terminal?Math.max(answeredAt,m.updated_at):answeredAt)
-      const waiting=!!(runtime?.requestId||pending||m.state==='waiting')
+      const unseen=m.kind==='task'&&!seen(id,terminal?Math.max(answeredAt,m.updated_at):answeredAt)
+      // Attention requires an actual unresolved request. A reply in the owner's
+      // terminal is already visible there; only CC task results use seen.
+      const waiting=!!(runtime?.requestId||pending)
       const stale=m.kind==='terminal'&&m.state==='working'&&!waiting&&now-(m.last_event_at??m.updated_at)>CLI_SESSION_STALE_MS
-      const activity:TopicSessionT['activity']=waiting?'waiting':stale?'idle':terminal&&unseen?'unread':runtime?.phase==='queued'?'idle':runtime?.phase==='replied'?(unseen?'waiting':'idle')
-        :runtime?(runtime.phase==='working'?'running':answeredAt>0&&unseen?'waiting':'idle'):m.state==='working'?'running':answeredAt>0&&unseen?'waiting':'idle'
+      const running=runtime?runtime.phase==='working':m.state==='working'&&m.turn_status==='running'
+      const activity:TopicSessionT['activity']=waiting?'waiting':stale||runtime?.phase==='queued'?'idle':running?'running'
+        :m.kind==='task'&&unseen&&(terminal||runtime?.phase==='replied'||answeredAt>0)?'unread':'idle'
       const requestKind=runtime?.requestKind??pending?.kind,tool=toolName(runtime?.tool??pending?.tool)
       const latestStep=waiting?(requestKind==='permission'?`等你批准${tool?` · ${tool}`:''}`:requestKind==='question'?'等你回答':'等你回应')
-        :stale?'会话久未更新':runtime?.phase==='queued'?'排队中':activity==='waiting'?'已答复，等你看':activity==='unread'?'做完未看':stepLabel(last)||(activity==='running'?'正在执行':'已看过')
+        :stale?'会话久未更新':runtime?.phase==='queued'?'排队中':activity==='unread'?'做完未看'
+        :m.kind==='terminal'&&activity==='idle'&&(m.turn_status==='completed'||!m.turn_status&&m.response_at)?'答完了':stepLabel(last)||(activity==='running'?'正在执行':'暂无新步骤')
       const session:TopicSessionT={id,kind:m.kind,title:m.title.slice(0,160),executor:m.executor??'',displayName:name(m.executor??''),activity,latestStep,updatedAt:Math.max(m.updated_at,pending?.at??0,last?.at??0),requestId:m.kind==='task'?runtime?.requestId??pending?.key??null:null}
       const members=groups.get(topic)??new Map();members.set(id,session);groups.set(topic,members);membership.set(id,topic);affected.add(topic)
       if(m.kind==='terminal'&&!waiting&&!stale&&m.state==='working'){const at=(m.last_event_at??m.updated_at)+CLI_SESSION_STALE_MS;expiry.set(id,at);minExpiry=Math.min(minExpiry,at)}
