@@ -8,6 +8,7 @@ import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock as defaultAcquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
 import {removeInactiveSnapshot} from './macmini-source-manifest.mjs'
 import { miniConfiguration, sshInvocation } from './macmini-ui-protocol.mjs'
+import { receiveBrowserSnapshot, verifiedSourcePayload } from './macmini-browser-snapshot.mjs'
 
 const finished = child => new Promise((resolve, reject) => {
   child.once('error', reject)
@@ -50,22 +51,26 @@ export async function receiveAppSnapshot({mini,sha,lifecycle=jobLifecycle(),inpu
 }
 
 export async function main() {
- if (process.argv[2] === '--receive') {
+ if (process.argv[2] === '--receive' || process.argv[2] === '--receive-verified') {
   const mini = miniConfiguration({ computerName: execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { encoding: 'utf8' }).trim(), homeDir: homedir(), platformName: process.platform })
   const sha = process.argv[3]
   if (!/^[a-f0-9]{40}$/.test(sha ?? '')) throw Error('Expected immutable source commit')
-  await receiveAppSnapshot({mini,sha})
+  if(process.argv[2] === '--receive-verified')await receiveBrowserSnapshot({mini,sha,target:'app',selectActiveRoot:(config,root)=>({...config,appRoot:root})})
+  else await receiveAppSnapshot({mini,sha})
  } else {
   const ref = process.argv[2] ?? 'origin/dev'
-  if (!['origin/dev', 'app-maestro-build3', 'design-unify-b1-fixes'].includes(ref)) throw Error('Snapshot ref must be origin/dev, app-maestro-build3 or design-unify-b1-fixes')
+  if (!['origin/dev', 'app-maestro-build3', 'design-unify-b1-fixes', 'codex-hook-trust-ux'].includes(ref)) throw Error('Snapshot ref must be an explicitly authorized UI branch')
   const repo = fileURLToPath(new URL('../../..', import.meta.url))
   const sha = execFileSync('/usr/bin/git', ['-C', repo, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8' }).trim()
   const transport = sshInvocation('app-status', process.argv[3] ?? 'home', process.env.CC_UI_SSH_CONFIG, undefined, process.env)
   const args = [...transport.args]
   // The receiver is installed beside the trusted desktop executor by the integrator.
-  const receiver = args.at(-1).replace(/app-run\.mjs$/, `app-snapshot.mjs --receive ${sha}`)
+  const verified=ref==='codex-hook-trust-ux'
+  const payload=verified?verifiedSourcePayload({repo,sha}):undefined
+  const receiver = args.at(-1).replace(/app-run\.mjs$/, `app-snapshot.mjs --receive${verified?'-verified':''} ${sha}`)
   args[args.length - 1] = receiver
   const remote = spawn(transport.file, args, { stdio: ['pipe', 'inherit', 'inherit'] })
+  if(verified){remote.stdin.on('error',()=>{});const done=finished(remote);remote.stdin.end(payload);await done;return}
   const archive = spawn('/usr/bin/git', ['-C', repo, 'archive', '--format=tar', sha], { stdio: ['ignore', 'pipe', 'inherit'] })
   remote.stdin.on('error', () => {})
   const done = Promise.all([finished(remote), finished(archive)])

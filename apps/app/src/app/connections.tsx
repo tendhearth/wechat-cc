@@ -5,7 +5,8 @@ import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { secondaryText as st } from '../i18n/minimal-secondary'
 import { useBackendCtx } from '../state/BackendProvider'
-import { useConnection, useQuery } from '../state/hooks'
+import { useConnection } from '../state/hooks'
+import { useConnections } from '../state/useConnections'
 import { Button } from '../ui/Button'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Icon } from '../ui/Icon'
@@ -26,7 +27,7 @@ export default function Connections() {
   const router = useRouter()
   const conn = useConnection()
   const { backend } = useBackendCtx()
-  const q = useQuery('connections', () => backend.connections(), { refreshOnMount: true })
+  const q = useConnections()
   // stale 或演示 ⇒ 所有圆点灰(演示没有电脑,不画绿);顶上一行与桌面连接卡同义
   const { trust, view: v, headline } = connectionsPage(q, conn.state, Date.now(), lang, { demo: backend.mode === 'demo' })
   const heading = (k: Parameters<typeof t>[1]) => <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.m }}>{t(lang, k)}</Txt>

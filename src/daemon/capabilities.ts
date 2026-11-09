@@ -13,6 +13,8 @@
  * 原始错误只进 detail(admin 才有;手机经 redactConnections 去掉),reason 只放人话。
  */
 
+import { codexTrustMessage, type CodexHookTrust } from '../domain/codex-hook-trust'
+
 export type CapabilityState = 'ok' | 'fallback' | 'needs_you' | 'off'
 /** 桌面按钮直接能跑的动作。cli_hooks_install = POST /v1/cli/hooks/install(接上终端里的 Claude Code / Codex)。 */
 export type CapabilityRun = 'cli_hooks_install'
@@ -52,7 +54,7 @@ export interface CapabilityInputs {
    * sources 只列这台机上有的那几家(CLI 找得到或已装过 hook);空 / null ⇒ 不出现。
    * sessions7d = 登记处里最近 7 天有动静的终端会话数。
    */
-  terminal?: { sources: Array<{ source: 'claude' | 'codex' | 'cursor'; health: 'missing' | 'stale' | 'ok' }>; sessions7d: number } | null
+  terminal?: { sources: Array<{ source: 'claude' | 'codex' | 'cursor'; health: 'missing' | 'stale' | 'ok'; trust?: CodexHookTrust }>; sessions7d: number } | null
   subsystems: Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
 }
 
@@ -134,6 +136,8 @@ function terminalCapability(t: NonNullable<CapabilityInputs['terminal']>): Capab
   const missing = t.sources.filter(s => s.health === 'missing')
   const base = { id: 'terminal', name }
   if (stale.length > 0) return { ...base, state: 'needs_you', code: 'terminal.stale', params: { names: names(stale) }, reason: `${names(stale)} 的接线指向一个已经不在的位置（多半是 CC 换过位置），终端里的会话报不到 CC。`, action: { label: '修复', where: 'desktop', run: TERMINAL_RUN } }
+  const codex = t.sources.find(s => s.source === 'codex' && s.health === 'ok')
+  if (codex?.trust && codex.trust.state !== 'trusted') return { ...base, state: 'needs_you', code: codex.trust.disabled ? 'terminal.codex_disabled' : `terminal.codex_${codex.trust.state}`, reason: codexTrustMessage(codex.trust) }
   if (missing.length === t.sources.length) return { ...base, state: 'off', code: 'terminal.not_connected', params: { names: names(missing) }, reason: `装了 ${names(missing)}，还没接上：终端里的会话 CC 看不到，做完、等你批准也不会通知你。`, action: { label: '接上', where: 'desktop', run: TERMINAL_RUN } }
   if (missing.length > 0) return { ...base, state: 'ok', code: 'terminal.partial', params: { n: t.sessions7d, names: names(missing) }, reason: `已接上，最近 7 天 ${t.sessions7d} 个终端会话；${names(missing)} 还没接上。`, action: { label: '接上', where: 'desktop', run: TERMINAL_RUN } }
   return { ...base, state: 'ok', code: 'terminal.ok', params: { n: t.sessions7d }, reason: `已接上，最近 7 天 ${t.sessions7d} 个终端会话。` }

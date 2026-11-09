@@ -14,6 +14,13 @@ import { matterInputState } from './matter-inputs'
 type Ctx = { backend: Backend; store: Store; resetDemo(): void; boundPairing: PairingRecord | null; boundEpoch: number }
 const BackendCtx = createContext<Ctx | null>(null)
 
+/** Offline review only: no pairing scope changes, input journal, storage, or live wiring. */
+export function OfflineReviewProvider({ children, backend, lang }: { children: ReactNode; backend: Backend; lang: Lang }) {
+  const value = useMemo<Ctx>(() => ({ backend, store: makeStore(backend, { lang }), boundPairing: null, boundEpoch: 0, resetDemo() {} }), [backend, lang])
+  useEffect(() => () => backend.dispose(), [backend])
+  return <BackendCtx.Provider value={value}>{children}</BackendCtx.Provider>
+}
+
 const devLog = (l: string) => { if (__DEV__) console.log(`[live] ${l}`) } // 只有错误码与路由键,没有令牌
 
 // 有配对记录 ⇒ 真连接后端;没有 ⇒ 演示后端。换配对(配上 / 解除)就整个换掉后端与 store。

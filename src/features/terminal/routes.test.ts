@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { terminalRoutes, CLI_PERMISSION_POLL_CAP_MS, type TerminalRoutesDeps } from './routes'
 import { minTierFor } from '../../daemon/internal-api/route-tiers'
 import { REQUEST_SCHEMAS, RESPONSE_SCHEMAS } from '../../daemon/internal-api/schema'
+import { hostname } from 'node:os'
 
 const qs = () => new URLSearchParams()
 // 只给用到的那一项:没接线的分支已经没有了(模块门在 internal-api 那一层回 module_starting,见 say-route.test.ts)
@@ -9,6 +10,22 @@ const deps = (cliEvents?: Partial<TerminalRoutesDeps['cliEvents']>, cliPermissio
 const body = { source: 'claude', kind: 'stop', session_id: 'abc123', cwd: '/w/p', text: 'done' }
 
 describe('SessionStart project memory route', () => {
+  it('observes validated local FILE invocations, excluding other machines and caller origins', async () => {
+    const recordInvocation = vi.fn()
+    const routes = terminalRoutes({ ...deps({ ingest: () => 'noop' }, { open: async () => ({ status: 'owner_present' }) } as never),
+      projectMemory: async () => ({ context: '', reason: 'disabled' }), cliHooks: { recordInvocation } as never,
+    })
+    const file = { origin: 'file', tier: 'trusted' } as never
+    await routes['POST /v1/cli/project-memory']!(qs(), { source: 'codex', session_id: 's', cwd: '/repo' }, file)
+    await routes['POST /v1/cli/event']!(qs(), { ...body, source: 'codex', machine: hostname() }, file)
+    await routes['POST /v1/cli/permission']!(qs(), { source: 'codex', machine: hostname() }, file)
+    expect(recordInvocation).toHaveBeenCalledTimes(3)
+    for (const path of ['POST /v1/cli/event', 'POST /v1/cli/permission']) {
+      await routes[path]!(qs(), { ...body, source: 'codex', machine: 'another-computer' }, file)
+      await routes[path]!(qs(), { ...body, source: 'codex' }, { origin: 'operator', tier: 'admin' } as never)
+    }
+    expect(recordInvocation).toHaveBeenCalledTimes(3)
+  })
   it('only FILE callers can ask for context; request is bounded and trusted', async () => {
     const projectMemory = async () => ({ context: '项目近况', reason: 'name' })
     const on = terminalRoutes({ ...deps(), projectMemory })['POST /v1/cli/project-memory']!

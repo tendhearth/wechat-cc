@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { stringify } from 'smol-toml'
+import { codexHookDefinitions } from '../../cli/codex-hook-trust'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { installHooks } from '../../cli/hook'
 import { makeTerminalHooksService, LOCATE_TTL_MS, SESSIONS_WINDOW_MS } from './hooks'
 import { terminalRoutes, type TerminalRoutesDeps } from './routes'
 import { minTierFor } from '../../daemon/internal-api/route-tiers'
-import { REQUEST_SCHEMAS } from '../../daemon/internal-api/schema'
+import { REQUEST_SCHEMAS, RESPONSE_SCHEMAS } from '../../daemon/internal-api/schema'
 import type { TerminalHooksDeps } from '../../cli/terminal-hooks'
 
 // 临时 HOME / CODEX_HOME:绝不碰主人真的配置。
@@ -26,6 +28,27 @@ const make = (locate: TerminalHooksDeps['locate'], sessions: Array<{ last_event_
 })
 
 describe('makeTerminalHooksService', () => {
+  it('hook ingress uses cached version evidence without spawning a blocking version probe', () => {
+    const probe = vi.fn(() => { throw Error('must not probe during SessionStart') })
+    const svc = makeTerminalHooksService({ deps: () => ({ home, env: { CODEX_HOME: join(home, 'cx') }, self: { execPath: sidecar, compiled: true, cliEntry: '' }, locate: () => null, exists: existsSync, codexVersion: probe, cachedCodexVersion: () => null, evidenceFile: join(home, 'evidence.json') }), sessions: () => [] })
+    installHooks(join(home, 'cx', 'hooks.json'), 'codex', 'cc hook codex')
+    svc.recordInvocation('codex')
+    expect(probe).not.toHaveBeenCalled()
+    expect(existsSync(join(home, 'evidence.json'))).toBe(true)
+  })
+  it('rereads Codex trust without reinstalling, and marks future definition changes for confirmation', () => {
+    const d: TerminalHooksDeps = { home, env: { CODEX_HOME: join(home, 'cx') }, self: { execPath: sidecar, compiled: true, cliEntry: '' }, locate: s => s === 'codex' ? '/bin/codex' : null, exists: existsSync, codexVersion: () => 'codex-cli 0.167.0', evidenceFile: join(home, 'cc-evidence.json') }
+    const svc = makeTerminalHooksService({ deps: () => d, sessions: () => [] })
+    svc.install()
+    expect(svc.capabilityInput()!.sources[0]!.trust?.state).toBe('untrusted')
+    const file = join(home, 'cx', 'hooks.json')
+    const state = Object.fromEntries(codexHookDefinitions(file, '0.167.0').map(h => [h.key, { trusted_hash: h.hash }]))
+    writeFileSync(join(home, 'cx', 'config.toml'), stringify({ hooks: { state } }))
+    expect(svc.capabilityInput()!.sources[0]!.trust?.state).toBe('trusted')
+    d.self = { ...d.self, execPath: join(home, 'new-cli') }; writeFileSync(d.self.execPath, '')
+    expect(svc.install(['codex']).results[0]).toMatchObject({ reconfirmationRequired: true })
+    expect(svc.capabilityInput()!.sources[0]!.trust?.state).toBe('changed')
+  })
   it('一家都没有 ⇒ capabilityInput null(那一行不出现)', () => {
     expect(make(() => null).capabilityInput()).toBeNull()
   })
@@ -61,6 +84,10 @@ describe('makeTerminalHooksService', () => {
 })
 
 describe('POST /v1/cli/hooks/install|uninstall', () => {
+  it('response contracts preserve confirmation states and reconfirmation notices', () => {
+    const response = { ok: true, results: [{ source: 'codex', ok: true, file: '/test/hooks.json', reconfirmationRequired: true }], status: [{ source: 'codex', cli: '/test/codex', file: '/test/hooks.json', installed: true, command: 'cc hook codex', health: 'ok', matchesSelf: true, trust: { state: 'changed', evidence: 'config' } }] }
+    expect(RESPONSE_SCHEMAS['POST /v1/cli/hooks/install']!.parse(response)).toEqual(response)
+  })
   const routes = (svc?: TerminalRoutesDeps['cliHooks']) => terminalRoutes({ cliHooks: svc } as unknown as TerminalRoutesDeps)
   type Res = { status: number; body: { ok: boolean; results: Array<{ source: string; changed?: boolean }>; status: Array<{ health: string }> } }
   it('接上 → 再接一次什么都不改 → 撤掉 → 再撤一次什么都不改(临时文件上)', async () => {

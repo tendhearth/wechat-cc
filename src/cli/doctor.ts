@@ -18,6 +18,8 @@ import { makeSessionStateStore } from '../adapters/store/session-state'
 import { makeHeartbeatStore } from '../adapters/store/connection-heartbeat'
 import { scanSatelliteRepos, type SatelliteRepo } from './satellite-repos'
 import { readJsonFile } from '../lib/read-json-file'
+import { defaultTerminalHooksDeps, readTerminalHooks, type HookSourceState } from './terminal-hooks'
+import { codexTrustMessage } from '../domain/codex-hook-trust'
 
 export interface BoundAccount {
   id: string
@@ -53,6 +55,7 @@ export interface ServiceSnapshot {
 export type Runtime = 'compiled-bundle' | 'source'
 
 export interface DoctorDeps {
+  terminalHooks?: () => HookSourceState[]
   stateDir: string
   findOnPath: (cmd: string) => string | null
   /** 找 codex:真接线用 daemon 同一个 findCodexBinary(PATH + ~/.nvm);缺省只看 PATH(测试注入 findOnPath 时不碰真机)。 */
@@ -130,6 +133,7 @@ export interface DoctorCheckBase {
 }
 
 export interface DoctorReport {
+  terminalHooks?: HookSourceState[]
   ready: boolean
   stateDir: string
   // Source vs compiled-bundle. The GUI uses this to drop bun/git rows from
@@ -411,6 +415,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
     expiredBots: deps.readExpiredBots(),
     heartbeats: deps.readHeartbeats ? deps.readHeartbeats() : {},
     nextActions,
+    ...(deps.terminalHooks ? { terminalHooks: deps.terminalHooks() } : {}),
     // 开发期检查:打包版用户没有这些仓库,连扫都不该扫。
     ...(!isBundle && deps.scanSatellites ? { satelliteRepos: deps.scanSatellites() } : {}),
   }
@@ -538,6 +543,7 @@ export function defaultScanSatellites(): SatelliteRepo[] {
 export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
   return {
     stateDir,
+    terminalHooks: () => readTerminalHooks({ ...defaultTerminalHooksDeps(), evidenceFile: join(stateDir, 'codex-hook-evidence.json') }),
     findOnPath,
     findCodex: () => findCodexBinary(),
     probeBinaryVersion,
@@ -818,6 +824,8 @@ export function printDoctor(report: DoctorReport): void {
   }
   console.log(`claude: ${fmtWithVersion(report.checks.claude)}`)
   console.log(`codex: ${fmtWithVersion(report.checks.codex)}`)
+  const codexTrust = report.terminalHooks?.find(s => s.source === 'codex')?.trust
+  if (codexTrust) console.log(codexTrustMessage(codexTrust))
   console.log(`cursor: ${fmtCursor(report.checks.cursor)}`)
   console.log(`gemini: ${fmtCursor(report.checks.gemini)}`)
   console.log(`provider: ${report.checks.provider.provider}${report.checks.provider.model ? ` (${report.checks.provider.model})` : ''}`)

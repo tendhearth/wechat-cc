@@ -99,26 +99,28 @@ export function mountOnboardTerminal(deps) {
   host.hidden = true
   let started = false
   let seq = 0
-  /** @type {{ name: string, reason: string, label: string } | null} */ let row = null
+  /** @type {{ name: string, reason: string, label: string | null, pending: boolean } | null} */ let row = null
   let done = false
   let failures = 0
-  const action = makeHooksAction({ call: deps.call, rerender: () => render(), onDone: () => { done = true; render() } })
+  const action = makeHooksAction({ call: deps.call, rerender: () => render(), onDone: () => { done = true; void load() } })
   function render() {
     if (!started || (!row && !done)) { host.hidden = true; return }
     /** @type {HTMLElement[]} */
     const parts = [el('h3', 'onboard-terminal-title', '也接上终端里的会话（可选）')]
-    if (done) parts.push(el('p', 'onboard-terminal-note', '接上了。之后终端里的会话做完、等你批准，CC 都会告诉你。'))
-    else if (row) parts.push(el('p', 'onboard-terminal-note', row.reason), action.node(row.label))
+    if (row?.pending) parts.push(el('p', 'onboard-terminal-note', row.reason))
+    else if (done) parts.push(el('p', 'onboard-terminal-note', '接上了。之后终端里的会话做完、等你批准，CC 都会告诉你。'))
+    else if (row) parts.push(el('p', 'onboard-terminal-note', row.reason), ...(row.label ? [action.node(row.label)] : []))
     host.replaceChildren(...parts)
     host.hidden = false
   }
   async function load() {
     const mine = ++seq
     try {
-      const r = /** @type {{ capabilities?: Array<{ id: string, name: string, reason: string, state: string, action?: { label: string, run?: string } }> } | null} */ (await v1(deps.call, V1.connections.get))
+      const r = /** @type {{ capabilities?: Array<{ id: string, name: string, reason: string, state: string, code?: string, action?: { label: string, run?: string } }> } | null} */ (await v1(deps.call, V1.connections.get))
       if (mine !== seq || !started) return
       const cap = (r?.capabilities ?? []).find(c => c.id === 'terminal')
-      row = cap?.action?.run === HOOKS_RUN ? { name: cap.name, reason: cap.reason, label: cap.action.label } : null
+      const pending = !!cap?.code?.startsWith('terminal.codex_')
+      row = cap && (pending || cap.action?.run === HOOKS_RUN) ? { name: cap.name, reason: cap.reason, label: cap.action?.label ?? null, pending } : null
     } catch {
       if (mine !== seq) return
       row = null
@@ -131,7 +133,7 @@ export function mountOnboardTerminal(deps) {
     /** @param {{ active: boolean, alive: boolean }} s */
     sync(s) {
       if (!s.active) { if (started) { started = false; seq++ } host.hidden = true; return }
-      if (s.alive && !started) { started = true; void load() }
+      if (s.alive && (!started || row?.pending)) { started = true; void load() }
     },
   }
 }

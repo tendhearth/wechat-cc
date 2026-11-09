@@ -7,7 +7,7 @@ import {PUBLIC_CACHE_COMMIT,gitObject,manifestTree,sha256} from './macmini-sourc
 // 夹具按 POSIX 路径比对;Windows 上 path.join 给反斜杠,先统一再比(接收器本身只在 mini 上跑)。
 const n=path=>String(path).replaceAll('\\','/')
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve}}
-for(const stage of ['materialize','home']) test(`cancel during ${stage} await stops receiver before later spawn and lock release`,async()=>{
+for(const target of ['browser','app'])for(const stage of ['materialize','home']) test(`${target==='app'?'App ':''}cancel during ${stage} await stops receiver before later spawn and lock release`,async()=>{
  const processRef=new EventEmitter(),events=[],entered=deferred(),gate=deferred()
  processRef.kill=()=>{};processRef.exit=code=>events.push(`exit:${code}`)
  const lifecycle=jobLifecycle({processRef})
@@ -23,7 +23,7 @@ for(const stage of ['materialize','home']) test(`cancel during ${stage} await st
   writeFile:async path=>{if(stage==='materialize'&&n(path).endsWith('/README.md'))await pause()},
   readFile:async path=>n(path).endsWith('/lab/active.json')?JSON.stringify(config):n(path).endsWith('/lab/cache/snapshot.json')?JSON.stringify({commit:PUBLIC_CACHE_COMMIT}):n(path).endsWith('README.md')?Buffer.from('public'):Buffer.from('fixture'),
  }
- const run=receiveBrowserSnapshot({mini:{labHome:'/lab',homeDir:'/home/test',bun:'/bun'},sha,lifecycle,input:Readable.from([Buffer.concat([length,bytes,delta])]),fs,
+ const run=receiveBrowserSnapshot({mini:{labHome:'/lab',homeDir:'/home/test',bun:'/bun'},sha,target,...(target==='app'?{selectActiveRoot:(config,root)=>({...config,appRoot:root})}:{}),lifecycle,input:Readable.from([Buffer.concat([length,bytes,delta])]),fs,
   acquire:async options=>options.onAcquired(async()=>events.push('release')),
   exec:(_file,args)=>args[0]==='-tvzf'?'-':'',log:()=>{},removeSnapshot:async()=>events.push('cleanup'),
   spawnProcess:(_file,args)=>{events.push(args.includes('install')?'install':'tar');const child=new EventEmitter();child.pid=123;setImmediate(()=>child.emit('close',0));return child},
@@ -42,13 +42,13 @@ for(const stage of ['materialize','home']) test(`cancel during ${stage} await st
  expect(events.indexOf('cleanup')).toBeLessThan(events.indexOf('release'))
 })
 
-for(const stage of ['lock-wait','stdin'])test(`cancels ${stage} without an unhandled stdin error or premature release`,async()=>{
+for(const target of ['browser','app'])for(const stage of ['lock-wait','stdin'])test(`${target==='app'?'App ':''}cancels ${stage} without an unhandled stdin error or premature release`,async()=>{
  const processRef=new EventEmitter(),events=[],entered=deferred(),gate=deferred()
  processRef.kill=()=>{};processRef.exit=code=>events.push(`exit:${code}`)
  const lifecycle=jobLifecycle({processRef})
  const input=new Readable({read(){entered.resolve()}})
  input.on('error',()=>events.push('stdin-error'))
- const run=receiveBrowserSnapshot({mini:{labHome:'/lab',homeDir:'/home/test'},sha:'a'.repeat(40),input,lifecycle,
+ const run=receiveBrowserSnapshot({mini:{labHome:'/lab',homeDir:'/home/test'},sha:'a'.repeat(40),target,...(target==='app'?{selectActiveRoot:(config,root)=>({...config,appRoot:root})}:{}),input,lifecycle,
   acquire:async options=>{options.onAcquired(async()=>events.push('release'));if(stage==='lock-wait'){entered.resolve();await gate.promise}},
   removeSnapshot:async()=>{},spawnProcess:()=>{throw Error('Unexpected spawn')},
  }).catch(e=>e)

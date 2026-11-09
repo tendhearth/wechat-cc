@@ -11,6 +11,17 @@ const base = (over: Partial<CapabilityInputs> = {}): CapabilityInputs => ({
 })
 
 describe('buildCapabilities (2026-10-06)', () => {
+  it('installed Codex must be confirmed, then automatically connected; changes need another review', () => {
+    const row = (state: 'untrusted' | 'trusted' | 'changed') => buildCapabilities(base({ terminal: { sources: [{ source: 'codex', health: 'ok', trust: { state, evidence: 'config' } }], sessions7d: 0 } })).find(c => c.id === 'terminal')!
+    expect(row('untrusted')).toMatchObject({ state: 'needs_you', code: 'terminal.codex_untrusted' })
+    expect(row('untrusted').reason).toContain('Codex 还差一步')
+    expect(row('untrusted').reason).toContain('/hooks')
+    expect(row('untrusted').action).toBeUndefined()
+    expect(row('trusted')).toMatchObject({ state: 'ok', code: 'terminal.ok' })
+    expect(row('changed')).toMatchObject({ state: 'needs_you', code: 'terminal.codex_changed' })
+    expect(row('changed').reason).toContain('重新确认一次')
+    expect(row('changed').reason.replace('/hooks', '')).not.toMatch(/hooks|SessionStart/)
+  })
   it('all good: only applicable rows, all ok, no worst', () => {
     const rows = buildCapabilities(base())
     expect(rows.map(r => [r.id, r.state])).toEqual([['wechat', 'ok'], ['brain', 'ok'], ['phone', 'ok']])

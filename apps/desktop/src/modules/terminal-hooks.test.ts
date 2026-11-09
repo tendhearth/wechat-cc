@@ -91,6 +91,19 @@ describe('「CC 现在怎么样」里的终端那一行', () => {
 })
 
 describe('mountOnboardTerminal(引导页最后一步,可选)', () => {
+  it('pending Codex review stays visible and updates on the existing doctor poll', async () => {
+    const h = host()
+    const call = vi.fn().mockResolvedValueOnce(snap([termCap({ state: 'needs_you', code: 'terminal.codex_untrusted', reason: 'Codex 还差一步：输入 /hooks，信任 wechat-cc。', action: undefined })]))
+      .mockResolvedValue(snap([termCap({ state: 'ok', code: 'terminal.ok', action: undefined })]))
+    const m = mountOnboardTerminal({ host: h, call })
+    m.sync({ active: true, alive: true }); await settle()
+    expect(h.hidden).toBe(false)
+    expect(h.textContent).toContain('/hooks')
+    expect(h.textContent).not.toContain('接上了')
+    expect(h.querySelector('button')).toBeNull()
+    m.sync({ active: true, alive: true }); await settle()
+    expect(h.hidden).toBe(true)
+  })
   it('不在这一步 / daemon 没活 ⇒ 不问;有没接上的 ⇒ 出现;接上后说一句', async () => {
     const h = host()
     const call = vi.fn(async (method: string) => method === 'POST' ? { ok: true, results: [], status: [] } : snap([termCap()]))

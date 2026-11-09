@@ -17,6 +17,9 @@ import { isAbsolute, join } from 'node:path'
 import { CLI_ENTRY } from './repo-root'
 import { isCompiledBundle } from '../lib/runtime-info'
 import { defaultLocate } from '../adapters/cli-upgrade/locate'
+import { probeBinaryVersion } from '../lib/util'
+import { STATE_DIR } from '../lib/config'
+import { codexEvidencePath, readCodexHookTrust, recordCodexHookDefinitionChange, type CodexHookTrust } from './codex-hook-trust'
 import { claudeSettingsPath, codexHooksPath, cursorHooksPath, hookCommandLine, hookStatus, hasSessionStartHook, installHooks, uninstallHooks, type HookSource } from './hook'
 
 export const HOOK_SOURCES: readonly HookSource[] = ['claude', 'codex', 'cursor']
@@ -44,10 +47,22 @@ export interface TerminalHooksDeps {
   /** 主人装的 CLI 在哪(与 provider 注册、CLI 自动升级找的是同一个);没装 ⇒ null。 */
   locate: (source: HookSource) => string | null
   exists: (p: string) => boolean
+  codexVersion?: () => string | null
+  /** Hot hook ingress must never spawn a version probe inside SessionStart's one-second budget. */
+  cachedCodexVersion?: () => string | null
+  evidenceFile?: string
 }
 
+let codexVersionCache: { at: number; version: string | null } | undefined
 export function defaultTerminalHooksDeps(): TerminalHooksDeps {
-  return { home: homedir(), env: process.env, self: defaultHookSelf(), locate: (s) => defaultLocate(s), exists: existsSync }
+  return { home: homedir(), env: process.env, self: defaultHookSelf(), locate: (s) => defaultLocate(s), exists: existsSync,
+    evidenceFile: codexEvidencePath(STATE_DIR), cachedCodexVersion: () => codexVersionCache?.version ?? null, codexVersion: () => {
+      if (!codexVersionCache || Date.now() - codexVersionCache.at > 300_000) {
+        const path = defaultLocate('codex')
+        codexVersionCache = { at: Date.now(), version: path ? probeBinaryVersion(path) : null }
+      }
+      return codexVersionCache.version
+    } }
 }
 
 /**
@@ -66,6 +81,7 @@ export interface HookSourceState {
   health: HookHealth
   /** 命令行和这份进程会写的一模一样。 */
   matchesSelf: boolean
+  trust?: CodexHookTrust
 }
 
 /** 命令行里带引号的绝对路径(程序本身,源码模式还有 cli.ts)。 */
@@ -90,7 +106,8 @@ export function readTerminalHooks(deps: TerminalHooksDeps): HookSourceState[] {
     // Cursor 的 IDE 自己也触发 ~/.cursor/hooks.json:没装 cursor-agent、只有 IDE 也算「有」(cli 记成那个目录)。
     if (!cli && source === 'cursor') { const dir = join(deps.home, '.cursor'); if (deps.exists(dir)) cli = dir }
     const health = hookHealth(st, deps.exists)
-    return { source, cli, file, installed: st.installed, command: st.command, health: health === 'ok' && !hasSessionStartHook(file, source) ? 'stale' : health, matchesSelf: st.command === selfHookCommand(source, deps.self) }
+    return { source, cli, file, installed: st.installed, command: st.command, health: health === 'ok' && !hasSessionStartHook(file, source) ? 'stale' : health, matchesSelf: st.command === selfHookCommand(source, deps.self),
+      ...(source === 'codex' && st.installed ? { trust: readCodexHookTrust(file, { evidenceFile: deps.evidenceFile, version: deps.codexVersion?.() }) } : {}) }
   })
 }
 
@@ -109,6 +126,7 @@ export interface HookChange {
   error?: string
   /** 没装这个 CLI,所以没动它的配置。 */
   skipped?: 'cli_not_found'
+  reconfirmationRequired?: boolean
 }
 
 /**
@@ -124,8 +142,9 @@ export function connectTerminalHooks(deps: TerminalHooksDeps, sources?: readonly
     if (!isPresent(s)) return { source: s.source, ok: false, file: s.file, skipped: 'cli_not_found' }
     const command = selfHookCommand(s.source, deps.self)
     try {
-      const { changed } = installHooks(s.file, s.source, command)
-      return { source: s.source, ok: true, file: s.file, changed, command }
+      const result = installHooks(s.file, s.source, command)
+      if (result.reconfirmationRequired && deps.evidenceFile) recordCodexHookDefinitionChange(deps.evidenceFile)
+      return { source: s.source, ok: true, file: s.file, ...result, command }
     } catch (err) {
       return { source: s.source, ok: false, file: s.file, error: err instanceof Error ? err.message : String(err) }
     }
