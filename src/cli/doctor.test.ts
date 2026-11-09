@@ -14,10 +14,14 @@ describe('doctor installer JSON', () => {
   it('preserves Codex confirmation states in doctor JSON without gating daemon readiness', () => {
     for (const state of ['untrusted', 'trusted', 'changed'] as const) {
       const report = analyzeDoctor({ stateDir: '/test', findOnPath: () => '/bin/test',
+        probeBinaryVersion: () => '0.167.0',
         readAccounts: () => [{ id: 'a', botId: 'b', userId: 'u', baseUrl: 'https://example.test' }], readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['u'], admins: ['u'] }),
         readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
         readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: true, pid: 1 }), service: installedSystemd,
-        terminalHooks: () => [{ source: 'codex', cli: '/bin/test', file: '/test/hooks.json', installed: true, command: 'cc hook codex', health: 'ok', matchesSelf: true, trust: { state, evidence: 'config' } }],
+        terminalHooks: version => {
+          expect(version).toBe('0.167.0')
+          return [{ source: 'codex', cli: '/bin/test', file: '/test/hooks.json', installed: true, command: 'cc hook codex', health: 'ok', matchesSelf: true, trust: { state, evidence: 'config' } }]
+        },
       })
       expect(DoctorOutput.parse(report).terminalHooks?.[0]?.trust?.state).toBe(state)
       expect(report.ready).toBe(true)

@@ -46,16 +46,6 @@ export function recordCodexHookDefinitionChange(evidenceFile: string): void {
   } catch { /* Install succeeds even when optional local evidence is unwritable. */ }
 }
 
-/** Called only after a validated local Codex request reaches the daemon. CC's file, not Codex's trust store. */
-export function recordCodexHookInvocation(file: string, evidenceFile: string, version?: string | null): void {
-  try {
-    const definitions = ownedHookDefinitions(file, 'codex')
-    if (!definitions.length) return
-    mkdirSync(dirname(evidenceFile), { recursive: true })
-    writeFileAtomic(evidenceFile, JSON.stringify({ fingerprint: fingerprint(file), version: versionKey(version), observedAt: Date.now() }) + '\n')
-  } catch { /* Optional evidence must never delay or fail the hook. */ }
-}
-
 export function readCodexHookTrust(file: string, options: Options = {}): CodexHookTrust {
   const result = (state: CodexTrustState, evidence: CodexHookTrust['evidence'], disabled = false): CodexHookTrust => ({ state, evidence, ...(disabled ? { disabled: true } : {}), version: options.version ?? null })
   let observed: string | undefined
@@ -73,7 +63,7 @@ export function readCodexHookTrust(file: string, options: Options = {}): CodexHo
     const path = join(dirname(file), 'config.toml'), st = statSync(path)
     if (!st.isFile() || st.size > 2 * 1024 * 1024) throw Error('not_small_config')
     config = parse(readFileSync(path, 'utf8'))
-  } catch { /* Missing, inaccessible or future config: use local invocation evidence only. */ }
+  } catch { /* Missing or inaccessible config cannot prove approval of the current definitions. */ }
   if ((config?.features?.hooks ?? config?.features?.codex_hooks) === false) return result('untrusted', 'config', true)
   const states = config?.hooks?.state ?? {}
   const defs = codexHookDefinitions(file, options.version)
@@ -84,6 +74,7 @@ export function readCodexHookTrust(file: string, options: Options = {}): CodexHo
       || Object.entries(states).some(([key, state]: [string, any]) => key.startsWith(`${file}:`) && defs.some(d => d.hash === state?.trusted_hash && d.key !== key))
     return result(changed || (!!observed && observed !== current) ? 'changed' : 'untrusted', 'config')
   }
-  if (observed === current && observedVersion === versionKey(options.version)) return result('trusted', 'invocation')
-  return result(observed ? 'changed' : 'untrusted', 'none')
+  // Legacy invocation receipts cannot prove the loaded definition, position, process version,
+  // or approval after invalidation. A fresh request must never relabel an old session as trusted.
+  return result(observed && (observed !== current || observedVersion !== versionKey(options.version)) ? 'changed' : 'untrusted', 'none')
 }

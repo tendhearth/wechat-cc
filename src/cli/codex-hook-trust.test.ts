@@ -3,11 +3,19 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { stringify } from 'smol-toml'
-import { installHooks } from './hook'
-import { codexHookDefinitions, readCodexHookTrust, recordCodexHookInvocation } from './codex-hook-trust'
+import { createHash } from 'node:crypto'
+import { installHooks, ownedHookDefinitions } from './hook'
+import { codexHookDefinitions, readCodexHookTrust } from './codex-hook-trust'
 
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })))
+// Reproduce receipts persisted by the pre-review implementation, without a production writer.
+function legacyReceipt(file: string, evidenceFile: string, version?: string) {
+  const sorted = (v: any): any => Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sorted(v[k])])) : v
+  const fingerprint = `sha256:${createHash('sha256').update(JSON.stringify(sorted({ file, definitions: ownedHookDefinitions(file, 'codex') }))).digest('hex')}`
+  mkdirSync(join(evidenceFile, '..'), { recursive: true })
+  writeFileSync(evidenceFile, JSON.stringify({ fingerprint, version: version?.match(/\d+\.\d+\.\d+/)?.[0], observedAt: Date.now() }))
+}
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'cc-codex-trust-')); dirs.push(home)
   const file = join(home, 'codex', 'hooks.json'), evidenceFile = join(home, 'cc', 'codex-hook-evidence.json')
@@ -44,7 +52,7 @@ describe('Codex trust, isolated CODEX_HOME; only Codex writes trust', () => {
     f.save(f.states()); expect(f.trust().state).toBe('trusted')
   })
   it('partial trust, disabled hooks and global switch never become connected from old invocations', () => {
-    const f = fixture(); recordCodexHookInvocation(f.file, f.evidenceFile, f.options.version)
+    const f = fixture(); legacyReceipt(f.file, f.evidenceFile, f.options.version)
     const s = f.states(); delete s[Object.keys(s)[0]!]; f.save(s)
     expect(f.trust().state).toBe('untrusted')
     f.save({ ...f.states(), [Object.keys(f.states())[0]!]: { enabled: false, trusted_hash: codexHookDefinitions(f.file, '0.167.0')[0]!.hash } })
@@ -52,11 +60,11 @@ describe('Codex trust, isolated CODEX_HOME; only Codex writes trust', () => {
     f.save(f.states(), { features: { hooks: false } })
     expect(f.trust()).toMatchObject({ state: 'untrusted', disabled: true })
   })
-  it('unreadable records use definition-bound invocation evidence; changed definitions invalidate it', () => {
+  it('unreadable records cannot be trusted from legacy invocation receipts; changed definitions invalidate them', () => {
     const f = fixture(); writeFileSync(f.config, 'invalid [')
     expect(f.trust().state).toBe('untrusted')
-    recordCodexHookInvocation(f.file, f.evidenceFile, f.options.version)
-    expect(f.trust()).toMatchObject({ state: 'trusted', evidence: 'invocation' })
+    legacyReceipt(f.file, f.evidenceFile, f.options.version)
+    expect(f.trust()).toMatchObject({ state: 'untrusted', evidence: 'none' })
     installHooks(f.file, 'codex', '/another/cc hook codex')
     expect(f.trust().state).toBe('changed')
     expect(readFileSync(f.config, 'utf8')).toBe('invalid [')
@@ -93,10 +101,10 @@ describe('Codex trust, isolated CODEX_HOME; only Codex writes trust', () => {
     expect(codexHookDefinitions(f.file, '0.167.0').find(d => d.event === 'SessionEnd')!.hash).not.toBe(absent)
   })
   it('an upgrade cannot reuse invocation evidence from an earlier Codex version', () => {
-    const f = fixture(); recordCodexHookInvocation(f.file, f.evidenceFile, 'codex-cli 0.167.0')
-    expect(f.trust().state).toBe('trusted')
+    const f = fixture(); legacyReceipt(f.file, f.evidenceFile, 'codex-cli 0.167.0')
+    expect(f.trust().state).toBe('untrusted')
     expect(readCodexHookTrust(f.file, { evidenceFile: f.evidenceFile, version: 'codex-cli 0.168.0' }).state).toBe('changed')
-    recordCodexHookInvocation(f.file, f.evidenceFile, 'codex-cli 0.168.0')
-    expect(readCodexHookTrust(f.file, { evidenceFile: f.evidenceFile, version: '0.168.0' }).state).toBe('trusted')
+    legacyReceipt(f.file, f.evidenceFile, 'codex-cli 0.168.0')
+    expect(readCodexHookTrust(f.file, { evidenceFile: f.evidenceFile, version: '0.168.0' }).state).toBe('untrusted')
   })
 })

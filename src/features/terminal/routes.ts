@@ -21,7 +21,6 @@ import { workbenchErrorHttp } from '@wechat-cc/protocol'
 import { TERMINAL_SAY_POLL_CAP_MS, type TerminalSay } from './terminal-say'
 import type { TerminalHooksService } from './hooks'
 import type { ProjectMemoryRequest } from './project-memory'
-import { hostname } from 'node:os'
 
 /** 这几条路由要的(以前是 InternalApiDeps 的 cliEvents / cliPermissions / terminalSay / cliHooks / overseerToday)。 */
 export interface TerminalRoutesDeps {
@@ -42,7 +41,7 @@ export interface TerminalRoutesDeps {
   /** CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24);只给主人自己那条聊天的 admin 会话(isOwnerChat)。 */
   terminalSay: Pick<TerminalSay, 'say' | 'wait' | 'claim'> & { isOwnerChat(chatId: string): boolean }
   /** 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14)。只在主人点了确认时调,绝不自动装。 */
-  cliHooks: Pick<TerminalHooksService, 'install' | 'uninstall'> & Partial<Pick<TerminalHooksService, 'recordInvocation'>>
+  cliHooks: Pick<TerminalHooksService, 'install' | 'uninstall'>
   /** 「今天」一眼看完(core/overseer-today.ts,2026-10-14):终端 + 一起做,过去 24 小时。只读,只在被问时算。 */
   overseerToday: () => OverseerToday
   /**
@@ -84,20 +83,15 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
     ...terminalOwnerRoutes(deps.ownerActions),
     'POST /v1/cli/project-memory': async (_q, body, caller) => {
       if (caller?.origin !== 'file') return { status: 403, body: { error: 'forbidden' } }
-      deps.cliHooks?.recordInvocation?.((body as ProjectMemoryRequest).source)
       return { status: 200, body: await deps.projectMemory(body as ProjectMemoryRequest) }
     },
     'POST /v1/cli/event': async (_q, body, caller) => {
       const action = await deps.cliEvents.ingest(body as CliEvent)
-      const event = body as CliEvent
-      if (caller?.origin === 'file' && !event.origin_agent && (!event.machine || event.machine === hostname())) deps.cliHooks?.recordInvocation?.(event.source)
       return { status: 200, body: { ok: true, action } }
     },
     // 权限中继(§6.3):PermissionRequest hook 先 POST 登记(主人在场就直接回
     // owner_present,终端自己问),再 GET 轮询到 y/n 或过期。
     'POST /v1/cli/permission': async (_q, body, caller) => {
-      const request = body as CliPermissionRequest
-      if (caller?.origin === 'file' && (!request.machine || request.machine === hostname())) deps.cliHooks?.recordInvocation?.(request.source)
       return { status: 200, body: await deps.cliPermissions.open(body as CliPermissionRequest) }
     },
     'GET /v1/cli/permission': async (q) => {

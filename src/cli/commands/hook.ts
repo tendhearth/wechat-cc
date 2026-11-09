@@ -44,7 +44,7 @@ const hookInstallCmd = defineCommand({
   async run({ args }) {
     const { installHooks } = await import('../hook.ts')
     // 命令行与 daemon 的 POST /v1/cli/hooks/install(桌面「接上」)同一个出处:terminal-hooks.ts selfHookCommand。
-    const { selfHookCommand, defaultTerminalHooksDeps, readTerminalHooks } = await import('../terminal-hooks.ts')
+    const { selfHookCommand, defaultTerminalHooksDeps, readTerminalHooksForCli } = await import('../terminal-hooks.ts')
     const { codexTrustMessage, recordCodexHookDefinitionChange } = await import('../codex-hook-trust')
     const out: Record<string, unknown> = {}
     for (const source of hookTargets(args)) {
@@ -55,7 +55,7 @@ const hookInstallCmd = defineCommand({
         const { changed } = result
         const deps = defaultTerminalHooksDeps()
         if (result.reconfirmationRequired && deps.evidenceFile) recordCodexHookDefinitionChange(deps.evidenceFile)
-        const trust = source === 'codex' ? readTerminalHooks(deps).find(s => s.source === 'codex')?.trust : undefined
+        const trust = source === 'codex' ? (await readTerminalHooksForCli(deps)).find(s => s.source === 'codex')?.trust : undefined
         out[source] = { ok: true, file, ...result, command, ...(trust ? { trust } : {}) }
         if (!args.json) console.log(`${changed ? '✅' : '✔'} ${source}: ${changed ? '已写入' : '已是最新'} ${file}`)
         if (!args.json && source === 'codex') {
@@ -107,10 +107,10 @@ const hookStatusCmd = defineCommand({
   meta: { name: 'status', description: '三家(Claude Code / Codex / Cursor)的 hook 装没装、命令行是什么' },
   args: { json: { type: 'boolean', description: 'JSON envelope' } },
   async run({ args }) {
-    const { defaultTerminalHooksDeps, readTerminalHooks } = await import('../terminal-hooks.ts')
+    const { defaultTerminalHooksDeps, readTerminalHooksForCli } = await import('../terminal-hooks.ts')
     const { codexTrustMessage } = await import('../codex-hook-trust')
     const out: Record<string, unknown> = {}
-    for (const st of readTerminalHooks(defaultTerminalHooksDeps())) {
+    for (const st of await readTerminalHooksForCli(defaultTerminalHooksDeps())) {
       const { source, file } = st
       out[source] = st
       if (!args.json) console.log(`${st.installed ? '✅' : '—'} ${source}: ${st.installed ? st.command : '未安装'}(${file})`)

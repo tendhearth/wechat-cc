@@ -55,7 +55,7 @@ export interface ServiceSnapshot {
 export type Runtime = 'compiled-bundle' | 'source'
 
 export interface DoctorDeps {
-  terminalHooks?: () => HookSourceState[]
+  terminalHooks?: (codexVersion: string | null) => HookSourceState[]
   stateDir: string
   findOnPath: (cmd: string) => string | null
   /** 找 codex:真接线用 daemon 同一个 findCodexBinary(PATH + ~/.nvm);缺省只看 PATH(测试注入 findOnPath 时不碰真机)。 */
@@ -415,7 +415,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
     expiredBots: deps.readExpiredBots(),
     heartbeats: deps.readHeartbeats ? deps.readHeartbeats() : {},
     nextActions,
-    ...(deps.terminalHooks ? { terminalHooks: deps.terminalHooks() } : {}),
+    ...(deps.terminalHooks ? { terminalHooks: deps.terminalHooks(codexVersion) } : {}),
     // 开发期检查:打包版用户没有这些仓库,连扫都不该扫。
     ...(!isBundle && deps.scanSatellites ? { satelliteRepos: deps.scanSatellites() } : {}),
   }
@@ -543,7 +543,7 @@ export function defaultScanSatellites(): SatelliteRepo[] {
 export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
   return {
     stateDir,
-    terminalHooks: () => readTerminalHooks({ ...defaultTerminalHooksDeps(), evidenceFile: join(stateDir, 'codex-hook-evidence.json') }),
+    terminalHooks: version => readTerminalHooks({ ...defaultTerminalHooksDeps(), codexVersion: () => version, evidenceFile: join(stateDir, 'codex-hook-evidence.json') }),
     findOnPath,
     findCodex: () => findCodexBinary(),
     probeBinaryVersion,

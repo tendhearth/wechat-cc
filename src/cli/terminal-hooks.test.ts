@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { installHooks, hookStatus } from './hook'
@@ -13,7 +13,7 @@ const tmpDirs: string[] = []
 let home: string
 let sidecar: string
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'wechat-cc-term-hooks-')); tmpDirs.push(home)
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'wechat-cc-term-hooks-'))); tmpDirs.push(home)
   sidecar = join(home, 'App', 'tendhearth-cc-cli')
   mkdirSync(join(home, 'App'), { recursive: true }); writeFileSync(sidecar, '')
 })

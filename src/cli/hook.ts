@@ -21,8 +21,8 @@
  */
 import { writeFileAtomic } from '../lib/json-file'
 import { toolInputFacts } from '../domain/permission-rules/facts'
-import { existsSync, readFileSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync, mkdirSync, statSync, realpathSync, openSync, readSync, closeSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { hostname } from 'node:os'
 import { readJsonFile } from '../lib/read-json-file'
 import { machineIdleSeconds } from '../lib/machine-idle'
@@ -363,7 +363,13 @@ export function claudeSettingsPath(home: string): string {
 }
 
 export function codexHooksPath(home: string, env: Record<string, string | undefined>): string {
-  return join(env['CODEX_HOME'] || join(home, '.codex'), 'hooks.json')
+  const explicit = env['CODEX_HOME']
+  if (!explicit) return join(home, '.codex', 'hooks.json')
+  // Codex home-dir canonicalizes only an explicit, existing directory. Discovery
+  // then joins hooks.json; resolving the file itself would change its trust key.
+  let dir = resolve(explicit)
+  try { if (statSync(dir).isDirectory()) dir = realpathSync(dir) } catch { /* Installer may create a missing home; no trust can exist there yet. */ }
+  return join(dir, 'hooks.json')
 }
 
 /** Cursor 的用户级 hooks(IDE 与 cursor-agent 共用)。 */

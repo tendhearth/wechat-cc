@@ -13,8 +13,6 @@ import {
 } from '../../cli/terminal-hooks'
 import type { HookSource } from '../../cli/hook'
 import type { CapabilityInputs } from '../../daemon/capabilities'
-import { recordCodexHookInvocation } from '../../cli/codex-hook-trust'
-import { hookFileFor } from '../../cli/terminal-hooks'
 
 export const LOCATE_TTL_MS = 5 * 60_000
 export const SESSIONS_WINDOW_MS = 7 * 24 * 3600_000
@@ -27,7 +25,6 @@ export interface TerminalHooksService {
   capabilityInput(): NonNullable<CapabilityInputs['terminal']> | null
   install(sources?: readonly HookSource[]): TerminalHooksResult
   uninstall(sources?: readonly HookSource[]): TerminalHooksResult
-  recordInvocation(source: HookSource): void
 }
 
 export function makeTerminalHooksService(opts: {
@@ -56,11 +53,6 @@ export function makeTerminalHooksService(opts: {
   const done = (results: HookChange[]): TerminalHooksResult => { located.clear(); return { ok: results.every(r => r.ok), results, status: status() } }
   return {
     status,
-    recordInvocation(source) {
-      if (source !== 'codex') return
-      const d = deps()
-      if (d.evidenceFile) recordCodexHookInvocation(hookFileFor('codex', d.home, d.env), d.evidenceFile, d.cachedCodexVersion ? d.cachedCodexVersion() : d.codexVersion?.())
-    },
     capabilityInput() {
       const present = status().filter(isPresent)
       if (present.length === 0) return null

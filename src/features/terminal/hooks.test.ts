@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { stringify } from 'smol-toml'
 import { codexHookDefinitions } from '../../cli/codex-hook-trust'
 import { tmpdir } from 'node:os'
@@ -16,7 +16,7 @@ const tmpDirs: string[] = []
 let home: string
 let sidecar: string
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'wechat-cc-term-svc-')); tmpDirs.push(home)
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'wechat-cc-term-svc-'))); tmpDirs.push(home)
   sidecar = join(home, 'tendhearth-cc-cli'); writeFileSync(sidecar, '')
 })
 afterAll(() => { for (const d of tmpDirs) { try { rmSync(d, { recursive: true, force: true }) } catch {} } })
@@ -28,13 +28,14 @@ const make = (locate: TerminalHooksDeps['locate'], sessions: Array<{ last_event_
 })
 
 describe('makeTerminalHooksService', () => {
-  it('hook ingress uses cached version evidence without spawning a blocking version probe', () => {
+  it('hook ingress neither probes versions nor persists unverified invocation evidence', async () => {
     const probe = vi.fn(() => { throw Error('must not probe during SessionStart') })
-    const svc = makeTerminalHooksService({ deps: () => ({ home, env: { CODEX_HOME: join(home, 'cx') }, self: { execPath: sidecar, compiled: true, cliEntry: '' }, locate: () => null, exists: existsSync, codexVersion: probe, cachedCodexVersion: () => null, evidenceFile: join(home, 'evidence.json') }), sessions: () => [] })
+    const svc = makeTerminalHooksService({ deps: () => ({ home, env: { CODEX_HOME: join(home, 'cx') }, self: { execPath: sidecar, compiled: true, cliEntry: '' }, locate: () => null, exists: existsSync, codexVersion: probe, evidenceFile: join(home, 'evidence.json') }), sessions: () => [] })
     installHooks(join(home, 'cx', 'hooks.json'), 'codex', 'cc hook codex')
-    svc.recordInvocation('codex')
+    const routes = terminalRoutes({ cliHooks: svc, projectMemory: async () => ({ context: '', reason: 'disabled' }) } as unknown as TerminalRoutesDeps)
+    await routes['POST /v1/cli/project-memory']!(new URLSearchParams(), { source: 'codex' }, { origin: 'file', tier: 'trusted' })
     expect(probe).not.toHaveBeenCalled()
-    expect(existsSync(join(home, 'evidence.json'))).toBe(true)
+    expect(existsSync(join(home, 'evidence.json'))).toBe(false)
   })
   it('rereads Codex trust without reinstalling, and marks future definition changes for confirmation', () => {
     const d: TerminalHooksDeps = { home, env: { CODEX_HOME: join(home, 'cx') }, self: { execPath: sidecar, compiled: true, cliEntry: '' }, locate: s => s === 'codex' ? '/bin/codex' : null, exists: existsSync, codexVersion: () => 'codex-cli 0.167.0', evidenceFile: join(home, 'cc-evidence.json') }
