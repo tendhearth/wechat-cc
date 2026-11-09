@@ -16,7 +16,7 @@ test.beforeEach(async({page,shim})=>{
   await page.route('**/v1/workbench/task?*',r=>r.fulfill({json:{task,runId:'run1',events:[{id:'1',taskId:task.id,kind:'text',text:'正在核对文件。',createdAt:2}],artifacts:[],permissions:[],questions:[]}}))
   await page.route('**/v1/memory/topics?*',r=>r.fulfill({json:{topics:['backup','travel','food','books','garden','letters'].map(topic),nextCursor:null,revision:'1'}}))
   await page.route('**/v1/memory/topics/open',r=>r.fulfill({json:{id:r.request().postDataJSON().id,bubbleState:'open',revision:'2'}}))
-  await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting',session:{id:task.id,kind:'task',title:task.title,executor:'codex',displayName:'Codex',activity:'waiting',latestStep:'需要读取备份文件夹',updatedAt:1793923200000,requestId:'permission-backup'}}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:1,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
+  await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting',session:{id:task.id,kind:'task',title:task.title,executor:'codex',displayName:'Codex',activity:'waiting',latestStep:'等你批准 · Read',updatedAt:1793923200000,requestId:'permission-backup'}}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:1,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
   await page.route('**/v1/subscribe/topics?*',r=>r.fulfill({json:{revision:'2',recentIds:['backup'],openIds:['backup'],hasMoreOpen:false}}))
 })
 test('one conversation, six topics, original task tools and drafts survive wide and narrow layers',async({page,shimUrl},info)=>{
@@ -213,4 +213,21 @@ test('project topics show one priority mark, complete reader counts, and origina
  await expect(page.locator('.wb-task-head h2')).toHaveText('检查备份')
  await page.locator('[data-action="allow-permission"][data-request-id="permission-backup"]').click()
  await expect.poll(()=>allowed).toBe(true)
+})
+
+
+test('topic-only subscription failure hides old counts before opening a panel',async({page,shimUrl},info)=>{
+  let subscription:import('@playwright/test').Route|undefined
+  await page.route('**/v1/subscribe/topics?*',route=>{subscription=route})
+  await page.goto(shimUrl)
+  const row=page.locator('[data-topic-id="backup"]')
+  await expect(row).toHaveAttribute('aria-label',/1 个等你，2 个在跑/)
+  await expect.poll(()=>!!subscription).toBe(true)
+  await subscription!.fulfill({status:503,json:{error:'topics_unavailable'}})
+  await expect(row).toContainText('未同步')
+  await expect(row).toHaveAttribute('aria-label','服务器，尚未同步')
+  await expect(page.locator('.conversation-topics [data-topic-activity]')).toHaveCount(0)
+  await expect(page.locator('.conversation-topic-panel')).toBeHidden()
+  await expect(page.locator('#converse-input')).toBeVisible()
+  await page.screenshot({path:join(info.outputDir,'topics-unsynced.png')})
 })

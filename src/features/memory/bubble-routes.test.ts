@@ -40,7 +40,7 @@ describe('T4 owner routes and topics projection', () => {
       const detail=TopicDetailResponse.parse((await routes['GET /v1/memory/topics/detail']!(new URLSearchParams({id}),null,operator)).body)
       expect(detail.topic.activity?.waiting).toBe(1)
       expect(detail.matters.find(m=>m.id===task.id)?.session).toMatchObject({activity:'waiting',requestId:'p'})
-      expect(calls).toBe(1)
+      expect(calls).toBe(0) // detail reuses the already-authorized cached activity
     } finally {db.close()}
   })
   it('列表/详情/订阅只读;只有 owner 表面可看 private,不同 owner id 同为404', async () => {
@@ -221,4 +221,18 @@ it('主人改名/合并/删/这条不对;link与其他owner均不能写,合并�
     expect(await threads.getEntry(entry)).toBeNull()
     expect(db.query('SELECT * FROM topic_merge_aliases WHERE old_id=?').all(id)).toEqual([])
   } finally {db.close()}
+})
+
+it('linked acts invalidate metadata and cursor revision even without project sessions',async()=>{
+ const f=await fixture(),matters=makeMatterStore(f.db)
+ try{
+  const act=matters.create({kind:'act',title:'旧名字',ownerChatId:'owner'})
+  f.db.query('INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES(?,?,?)').run(act.id,f.id,'2026-11-09')
+  const first=TopicDetailResponse.parse((await f.call('GET /v1/memory/topics/detail',`id=${f.id}`)).body)
+  expect(first.matters.find(m=>m.id===act.id)!.title).toBe('旧名字')
+  matters.rename(act.id,'新名字')
+  const next=TopicDetailResponse.parse((await f.call('GET /v1/memory/topics/detail',`id=${f.id}`)).body)
+  expect(next.matters.find(m=>m.id===act.id)!.title).toBe('新名字')
+  expect(next.revision).not.toBe(first.revision)
+ }finally{f.db.close()}
 })

@@ -8,6 +8,12 @@ import { renderTopicsBlock, type MatchTopic } from '../../domain/topic-match'
 import { toMatchTopic } from '../../daemon/threads/recall'
 
 export interface ProjectIdentity { key: string; roots: string[]; names: string[] }
+/** One unreadable/mounted path cannot hold every project row hostage. */
+export async function boundedProjectIdentity(identify:typeof projectIdentity,path:string):Promise<ProjectIdentity|null> {
+  let timer:ReturnType<typeof setTimeout>|undefined
+  try{return await Promise.race([Promise.resolve().then(()=>identify(path)).catch(()=>null),new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),250)})])}
+  finally{clearTimeout(timer)}
+}
 interface History { topicId: string; cwd: string }
 export interface ProjectMemoryRequest { source: 'claude' | 'codex'; session_id: string; cwd: string }
 const norm = (s: string) => s.normalize('NFKC').trim().toLowerCase()
@@ -85,54 +91,72 @@ export function renderProjectMemory(topic: MatchTopic): string {
   return header + block
 }
 
-/** Shared #881 evidence resolver. Each projection owns its bounded filesystem caches. */
-export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly MatchTopic[], identify = projectIdentity) {
-  const d = { db }
-          // Walk consolidation backwards from valid endpoints. Wrong/missing/cyclic/cross-topic replacement chains provide no evidence.
-          // Matter paths and turn policy survive cli_sessions pruning; unknown or remote origins fail closed.
-          const rows = d.db.query<{ topicId: string; cwd: string | null; projectPath: string | null }, [string, string, string]>(`
-            WITH RECURSIVE valid_entry(id,thread_id,depth) AS (
-              SELECT id,thread_id,0 FROM topic_entries WHERE status IN ('live','done')
-              UNION ALL
-              SELECT e.id,e.thread_id,v.depth+1 FROM topic_entries e
-                JOIN valid_entry v ON e.superseded_by=v.id AND e.thread_id=v.thread_id
-                WHERE e.status='superseded' AND v.depth<32
-            )
-            SELECT DISTINCT e.thread_id AS topicId, c.cwd, m.project_path AS projectPath
-            FROM topic_entries e JOIN valid_entry v ON v.id=e.id JOIN threads t ON t.id=e.thread_id
-            JOIN matters m ON m.id=e.matter_id AND m.kind='terminal' AND (m.owner_chat_id IS NULL OR m.owner_chat_id=t.chat_id)
-            JOIN matter_bindings b ON b.matter_id=m.id AND b.surface='cli'
-            LEFT JOIN cli_sessions c ON c.session_id=b.surface_key
-            WHERE t.chat_id=? AND t.private=0 AND t.status!='done' AND e.source='work'
-              AND (c.origin_agent IS NULL OR c.origin_agent='')
-              AND (c.machine IS NULL OR c.machine='' OR c.machine=?)
-              AND NOT EXISTS (SELECT 1 FROM matter_turns mt WHERE mt.matter_id=m.id AND (
-                COALESCE(json_extract(mt.policy_json,'$.originAgent'),'')!='' OR
-                COALESCE(json_extract(mt.policy_json,'$.machine'),'') NOT IN ('',?)
-              ))
-              AND (c.session_id IS NOT NULL OR EXISTS (SELECT 1 FROM matter_turns mt
-                WHERE mt.matter_id=m.id AND json_type(mt.policy_json,'$.cwd')='text'))
-          `).all(owner, hostname(), hostname())
-          const canonical = new Map<string, Promise<string>>()
-          const pathOf = (p: string) => {
-            if (!canonical.has(p)) canonical.set(p, realpath(p).catch(() => p))
-            return canonical.get(p)!
-          }
-          const identities = new Map<string, Promise<ProjectIdentity | null>>()
-          const identityOf = (p: string) => {
-            if (!identities.has(p)) identities.set(p, identify(p))
-            return identities.get(p)!
-          }
-          const candidates = Promise.all(rows.flatMap(r => [r.projectPath, r.cwd].filter((p): p is string => !!p).map(async cwd => ({ topicId: r.topicId, cwd: await pathOf(cwd) }))))
-  return async (cwd: string) => {
-          const identity = await identityOf(cwd)
-          const history = (await Promise.all((await candidates).map(async h => {
-            if (!identity) return h
-            if (!identity.roots.some(r => within(h.cwd, r))) return null
-            // A nested repository has its own identity even when its directory is inside this repository.
-            return (await identityOf(h.cwd))?.key === identity.key ? h : null
-          }))).filter((h): h is History => h !== null)
-          return resolveProjectTopic(await pathOf(cwd), identity, topics, history)
+/** Shared evidence resolver. Provenance is anchored to the original matter project,
+ * never to a terminal's later cwd. Name collisions between independent common dirs abstain. */
+export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly MatchTopic[], identify = projectIdentity, knownPaths: readonly string[] = []) {
+  const rows = db.query<{topicId:string; kind:string; projectPath:string|null; cwd:string|null; turnPaths:string; currentCwd:string|null; project:string|null; repo:string|null; root:string|null},[string,string,string]>(`
+    WITH RECURSIVE valid_entry(id,thread_id,depth) AS (
+      SELECT id,thread_id,0 FROM topic_entries WHERE status IN ('live','done')
+      UNION ALL
+      SELECT e.id,e.thread_id,v.depth+1 FROM topic_entries e JOIN valid_entry v ON e.superseded_by=v.id AND e.thread_id=v.thread_id
+        WHERE e.status='superseded' AND v.depth<32
+    )
+    SELECT DISTINCT e.thread_id AS topicId,m.kind,m.project_path AS projectPath,
+      (SELECT json_extract(policy_json,'$.cwd') FROM matter_turns WHERE matter_id=m.id ORDER BY seq LIMIT 1) AS cwd,
+      (SELECT json_group_array(json_extract(policy_json,'$.cwd')) FROM matter_turns WHERE matter_id=m.id AND json_type(policy_json,'$.cwd')='text') AS turnPaths,c.cwd AS currentCwd,
+      wt.project_path AS project,wt.repo_root AS repo,wt.root
+    FROM topic_entries e JOIN valid_entry v ON v.id=e.id JOIN threads t ON t.id=e.thread_id
+    JOIN matters m ON m.id=e.matter_id
+    LEFT JOIN matter_bindings b ON b.matter_id=m.id AND b.surface='cli'
+    LEFT JOIN cli_sessions c ON c.session_id=b.surface_key
+    LEFT JOIN workbench_worktrees wt ON wt.task_id=m.id
+    WHERE t.chat_id=? AND t.private=0 AND t.status!='done' AND e.source='work'
+      AND ((m.kind='task' AND m.owner_chat_id=t.chat_id) OR (m.kind='terminal'
+        AND (m.owner_chat_id IS NULL OR m.owner_chat_id=t.chat_id) AND b.matter_id IS NOT NULL
+        AND (c.origin_agent IS NULL OR c.origin_agent='') AND (c.machine IS NULL OR c.machine='' OR c.machine=?)
+        AND NOT EXISTS (SELECT 1 FROM matter_turns mt WHERE mt.matter_id=m.id AND (
+          COALESCE(json_extract(mt.policy_json,'$.originAgent'),'')!='' OR COALESCE(json_extract(mt.policy_json,'$.machine'),'') NOT IN ('',?)))
+        AND (c.session_id IS NOT NULL OR EXISTS(SELECT 1 FROM matter_turns mt WHERE mt.matter_id=m.id AND json_type(mt.policy_json,'$.cwd')='text'))))
+  `).all(owner,hostname(),hostname())
+  const identities = new Map<string,Promise<ProjectIdentity|null>>()
+  const canonical = new Map<string,Promise<string>>()
+  const identityOf = (p:string) => {
+    if(!identities.has(p))identities.set(p,boundedProjectIdentity(identify,p))
+    return identities.get(p)!
+  }
+  const pathOf = (p:string) => {
+    if(!canonical.has(p))canonical.set(p,(async()=>{let timer:ReturnType<typeof setTimeout>|undefined;try{return await Promise.race([realpath(p).catch(()=>p),new Promise<string>(resolve=>{timer=setTimeout(()=>resolve(p),250)})])}finally{clearTimeout(timer)}})())
+    return canonical.get(p)!
+  }
+  const pathsOf = (r:typeof rows[number]) => [...new Set((r.kind==='terminal'?[r.projectPath||r.cwd,r.currentCwd,...JSON.parse(r.turnPaths) as string[]]:[r.projectPath,r.project,r.repo,r.root]).filter((p):p is string=>!!p))]
+  const known = [...knownPaths,...db.query<{path:string|null},[string,string]>(`
+    SELECT project_path AS path FROM matters WHERE owner_chat_id=?1 OR (kind='terminal' AND owner_chat_id IS NULL)
+    UNION SELECT cwd FROM cli_sessions WHERE COALESCE(origin_agent,'')='' AND COALESCE(machine,'') IN ('',?2)
+  `).all(owner,hostname()).map(r=>r.path).filter((p):p is string=>!!p)]
+  const names = new Map<string,Set<string>>()
+  const byIdentity = new Map<string,History[]>(), exact = new Map<string,History[]>()
+  const ready = (async()=>{
+    await Promise.all([...new Set([...known,...rows.flatMap(pathsOf)])].map(async path=>{
+      const identity=await identityOf(path)
+      if(identity)for(const name of identity.names){const key=norm(name),keys=names.get(key)??new Set<string>();keys.add(identity.key);names.set(key,keys)}
+    }))
+    await Promise.all(rows.map(async r=>{
+      const paths=pathsOf(r), ids=await Promise.all(paths.map(identityOf))
+      // Worktree evidence from different repositories must never bridge them.
+      if(new Set(ids.filter(i=>!!i).map(i=>i!.key)).size>1 || (r.kind==='terminal'&&paths.length>1&&ids.some(i=>!i)))return
+      for(let i=0;i<paths.length;i++){
+        const h={topicId:r.topicId,cwd:await pathOf(paths[i]!)},key=ids[i]?.key
+        const map=key?byIdentity:exact,bucket=key??h.cwd
+        const list=map.get(bucket)??[];list.push(h);map.set(bucket,list)
+      }
+    }))
+  })()
+  return async(cwd:string)=>{
+    await ready
+    const identity=await identityOf(cwd),path=await pathOf(cwd)
+    if(identity)for(const name of identity.names){const key=norm(name),keys=names.get(key)??new Set<string>();keys.add(identity.key);names.set(key,keys)}
+    const safeIdentity=identity?{...identity,names:identity.names.filter(name=>(names.get(norm(name))?.size??1)<=1)}:null
+    return resolveProjectTopic(path,safeIdentity,topics,identity?byIdentity.get(identity.key)??[]:exact.get(path)??[])
   }
 }
 

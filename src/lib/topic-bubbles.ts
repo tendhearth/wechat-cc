@@ -53,7 +53,7 @@ export function makeTopicBubbles(db: Db) {
             db.query('DELETE FROM topic_recall_refs WHERE thread_id=? AND rowid NOT IN (SELECT rowid FROM topic_recall_refs WHERE thread_id=? ORDER BY created_at DESC,rowid DESC LIMIT 8)').run(ref.id, ref.id)
           }
         }
-        hintWrite(db, { kind: 'topics', chatId: owner })
+        hintWrite(db, { kind: 'topics', chatId: owner, mapping:false })
         return true
       })()
     },
@@ -68,7 +68,7 @@ export function makeTopicBubbles(db: Db) {
           closed += db.query("UPDATE topic_bubbles SET state='closed',closed_sleep_id=? WHERE thread_id=? AND activity_revision=? AND state='open' AND closed_sleep_id IS NOT ? RETURNING thread_id")
             .all(snapshot.sleepId, c.thread_id, c.activity_revision, snapshot.sleepId).length
         }
-        if (closed) hintWrite(db, { kind: 'topics', chatId: snapshot.owner })
+        if (closed) hintWrite(db, { kind: 'topics', chatId: snapshot.owner, mapping:false })
         return closed
       })()
     },
@@ -85,7 +85,7 @@ export function makeTopicBubbles(db: Db) {
           // 睡眠期间刚收工也要先留结论到下一觉;心跳不算新的活动。
           db.query('UPDATE topic_bubbles SET activity_revision=activity_revision+1 WHERE thread_id=?').run(l.id)
         }
-        hintWrite(db, { kind: 'topics', chatId: l.chat_id })
+        hintWrite(db, { kind: 'topics', chatId: l.chat_id, mapping:false,topicId:l.id })
       }
     },
   }

@@ -11,7 +11,7 @@ import { makeMatterSeen } from '../../adapters/store/matter-seen'
 import { makeDesktopSurface } from '../../daemon/desktop-surface'
 import { CLI_SESSION_STALE_MS } from '../../domain/cli-session-view'
 import { projectActivities } from './project-activity'
-import { topicsProjection } from './topic-projection'
+import { topicsProjection, topicDetailPage } from './topic-projection'
 import { makeTopicBubbles } from '../../lib/topic-bubbles'
 import { makeProjectTopicResolver } from '../terminal/project-memory'
 import { resolveTopicRecall } from '../../daemon/threads/recall'
@@ -20,7 +20,7 @@ import { matterFeed } from '../../adapters/store/matter-feed'
 import { hintWrite, onWriteHint } from '../../lib/write-hints'
 
 const dbs: Db[] = []
-afterEach(() => { for (const db of dbs.splice(0)) db.close() })
+afterEach(() => { vi.restoreAllMocks(); for (const db of dbs.splice(0)) db.close() })
 const root = '/projects/bx', worktree = '/worktrees/bx'
 const identity = { key: `${root}/.git`, roots: [root,worktree], names: ['bx'] }
 async function fixture() {
@@ -31,18 +31,18 @@ async function fixture() {
   const turns = makeTerminalTurnLog({ db,log,matters }), cli = makeCliSessionStore(db,now)
   const terminal = (sid:string,age=0) => { cli.touch({session_id:sid,source:'claude',cwd:root},at-age); turns.event({session_id:sid,source:'claude',cwd:root,kind:'prompt'},at-age); return matters.findBySurface('cli',sid)! }
   const identify = vi.fn(async (_path:string) => identity)
-  return { db,threads,matters,log,id,turns,terminal,identify,now,tick:() => {at++} }
+  return { db,threads,matters,log,id,turns,cli,terminal,identify,now,tick:() => {at++} }
 }
 describe('project activity from existing session and task facts', () => {
-  it('terminal permissions retain the requested tool/summary; stale terminal turns do not count as live', async () => {
+  it('terminal permissions retain tool metadata and unresolved requests remain waiting after stale', async () => {
     const f = await fixture(), fresh = f.terminal('fresh'), old = f.terminal('old',CLI_SESSION_STALE_MS+1000)
     f.turns.permissionAsked({session_id:'fresh',source:'claude',cwd:root,tool_name:'Bash',summary:'检查迁移'},f.now())
     f.turns.permissionAsked({session_id:'old',source:'claude',cwd:root,tool_name:'Bash',summary:'过期请求'},f.now()-CLI_SESSION_STALE_MS-1000)
     const value = (await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!
-    expect(value.activity).toMatchObject({waiting:1,running:0,unread:0})
+    expect(value.activity).toMatchObject({waiting:2,running:0,unread:0})
     expect(value.sessions.find(s=>s.id===fresh.id)).toMatchObject({activity:'waiting',latestStep:expect.stringContaining('Bash')})
-    expect(value.sessions.find(s=>s.id===fresh.id)!.latestStep).toContain('检查迁移')
-    expect(value.sessions.find(s=>s.id===old.id)).toMatchObject({activity:'idle'})
+    expect(value.sessions.find(s=>s.id===fresh.id)!.latestStep).toBe('等你批准 · Bash')
+    expect(value.sessions.find(s=>s.id===old.id)).toMatchObject({activity:'waiting',latestStep:'等你批准 · Bash'})
   })
   it('task pending/runtime phase comes from the narrow source and nested tool labels show the actual latest step', async () => {
     const f = await fixture(), task = f.matters.create({kind:'task',title:'检查项目',projectPath:root,ownerChatId:'owner'})
@@ -51,9 +51,9 @@ describe('project activity from existing session and task facts', () => {
     let fact = {phase:'working',requestId:'permission-id' as string|null,waitingFor:'Bash: 运行本地检查' as string|null}
     const source = vi.fn(() => fact)
     const read = async () => (await projectActivities(f.db,'owner',()=>null,f.identify,source)).get(f.id)!
-    expect((await read()).sessions[0]).toMatchObject({activity:'waiting',requestId:'permission-id',latestStep:expect.stringContaining('运行本地检查')})
+    expect((await read()).sessions[0]).toMatchObject({activity:'waiting',requestId:'permission-id',latestStep:'等你回应'})
     fact = {phase:'working',requestId:null,waitingFor:null}
-    expect((await read()).sessions[0]).toMatchObject({activity:'running',latestStep:'核验迁移'})
+    expect((await read()).sessions[0]).toMatchObject({activity:'running',latestStep:'工具步骤'})
     f.log.writeItem({matterId:task.id,turnId:turn.id,kind:'agent_message',status:'completed',payload:{text:'这段正文不能进入话题活动'}})
     fact = {phase:'replied',requestId:null,waitingFor:null}
     expect((await read()).activity.waiting).toBe(1)
@@ -147,7 +147,8 @@ it('uses the actual terminal transcript step summary without tool output or assi
  const steps=makeTerminalSteps({store:makeTerminalStepStore({db:f.db,log:f.log,matters:f.matters}),turns:f.turns,size:()=>bytes.length,read:(_p,from,to)=>bytes.subarray(from,to)})
  steps.ingest('transcript-step','/offline/transcript.jsonl','claude')
  const value=(await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!
- expect(value.sessions.find(s=>s.id===m.id)?.latestStep).toContain('bun test')
+ expect(value.sessions.find(s=>s.id===m.id)?.latestStep).toBe('运行命令')
+ expect(JSON.stringify(value)).not.toContain('bun test')
  expect(JSON.stringify(value)).not.toContain('PRIVATE_ASSISTANT_BODY')
 })
 
@@ -170,4 +171,196 @@ it('preserves registered executor names, including the two Gemini connections',a
   }
   const sessions=(await projectActivities(f.db,'owner',()=>null,f.identify,undefined,id=>executorNames(id,['agy','gemini']).name)).get(f.id)!.sessions
   expect(Object.fromEntries(sessions.map(s=>[s.executor,s.displayName]))).toEqual({agy:'Gemini(账号)',gemini:'Gemini'})
+})
+
+
+describe('independent review regressions',()=>{
+  it('permission arguments, questions, diffs and tool output never enter activity or bodies:false recall',async()=>{
+    const f=await fixture(), terminal=f.terminal('secret-permission')
+    const secrets=['ordinary-secret','url-password','FAKE_TOKEN_123','- old-private\n+ new-private','PRIVATE_OUTPUT']
+    const body=`curl --password=${secrets[0]} https://user:${secrets[1]}@example.invalid; TOKEN=${secrets[2]}\n${secrets[3]}\n${secrets[4]}`
+    f.turns.permissionAsked({session_id:'secret-permission',source:'claude',cwd:root,tool_name:'Bash',summary:body},f.now())
+    const task=f.matters.create({kind:'task',title:'审批文件',projectPath:root,ownerChatId:'owner'})
+    const turn=f.log.startTurn({matterId:task.id,executor:'codex'})
+    f.log.writeItem({matterId:task.id,turnId:turn.id,kind:'permission',status:'started',payload:{tool:'apply_patch',description:body}})
+    const activity=await projectActivities(f.db,'owner',()=>null,f.identify,()=>({phase:'working',requestId:'p',waitingFor:body,requestKind:'permission',tool:'apply_patch'}))
+    const recall=await resolveTopicRecall('bx 那边怎么样了',[{id:f.id,title:'bx',aliases:[],tags:[],summary:'',lastActive:'',entries:[]}],{activity,bodies:false})
+    for(const secret of secrets){expect(JSON.stringify(activity.get(f.id))).not.toContain(secret);expect(recall!.block).not.toContain(secret)}
+    expect(activity.get(f.id)!.sessions.find(s=>s.id===terminal.id)!.latestStep).toBe('等你批准 · Bash')
+    expect(activity.get(f.id)!.sessions.find(s=>s.id===task.id)!.latestStep).toBe('等你批准 · apply_patch')
+    f.log.writeItem({matterId:task.id,turnId:turn.id,kind:'tool_call',status:'completed',payload:{tool:'Bash',activity:{type:'command',label:body,output:body},text:body}})
+    f.turns.event({session_id:'secret-permission',source:'claude',cwd:root,kind:'permission',decision:'allow'} as never,f.now())
+    const steps=await projectActivities(f.db,'owner',()=>null,f.identify,()=>({phase:'working',requestId:null,waitingFor:null}))
+    for(const secret of secrets)expect(JSON.stringify(steps.get(f.id))).not.toContain(secret)
+  })
+  it.each(['no-topic','private','done'])('current cwd %s cannot fall back to the old project, even with old work evidence',async(shape)=>{
+    const f=await fixture(),m=f.terminal('moved')
+    await f.threads.addEntry({threadId:f.id,kind:'progress',line:'旧项目产出',source:'work',matterId:m.id})
+    f.turns.event({session_id:'moved',source:'claude',cwd:root,kind:'stop'},f.now());f.tick()
+    if(shape!=='no-topic')await f.threads.create({chatId:'owner',title:'other',private:shape==='private',status:shape==='done'?'done':'active',summary:'',facets:[],tags:[],episodes:[]})
+    f.cli.touch({session_id:'moved',source:'claude',cwd:'/projects/other'},f.now())
+    f.turns.event({session_id:'moved',source:'claude',cwd:'/projects/other',kind:'prompt'},f.now())
+    const identify=async(path:string)=>path==='/projects/other'?{key:'/projects/other/.git',roots:['/projects/other'],names:['other']}:identity
+    expect(await projectActivities(f.db,'owner',()=>null,identify)).toEqual(new Map())
+  })
+  it('independent common dirs with the same repo/origin basename never merge by name',async()=>{
+    const f=await fixture();await f.threads.update(f.id,{title:'app'})
+    for(const path of ['/clients/one/app','/clients/two/app'])f.turns.event({session_id:path,source:'claude',cwd:path,kind:'prompt'},f.now())
+    const identify=async(path:string)=>({key:path+'/.git',roots:[path],names:['app']})
+    expect(await projectActivities(f.db,'owner',()=>null,identify)).toEqual(new Map())
+  })
+  it('unresolved old permission stays waiting while an old running turn expires',async()=>{
+    const f=await fixture(),age=CLI_SESSION_STALE_MS+1000
+    const pending=f.terminal('old-pending',age),running=f.terminal('old-running',age)
+    f.turns.permissionAsked({session_id:'old-pending',source:'claude',cwd:root,tool_name:'Read',summary:'ignored'},f.now()-age)
+    const value=(await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!
+    expect(value.sessions.find(s=>s.id===pending.id)).toMatchObject({activity:'waiting',latestStep:'等你批准 · Read'})
+    expect(value.sessions.find(s=>s.id===running.id)).toMatchObject({activity:'idle'})
+    expect(value.activity).toMatchObject({waiting:1,running:0})
+  })
+  it('queued task runtime overrides the already-open working matter turn',async()=>{
+    const f=await fixture(),m=f.matters.create({kind:'task',title:'路径被占，排队',projectPath:root,ownerChatId:'owner'})
+    f.log.startTurn({matterId:m.id,executor:'codex'})
+    const value=(await projectActivities(f.db,'owner',()=>null,f.identify,()=>({phase:'queued',requestId:null,waitingFor:null}))).get(f.id)!
+    expect(value.activity.running).toBe(0)
+    expect(value.sessions[0]).toMatchObject({activity:'idle',latestStep:'排队中'})
+  })
+  it('owner-checked workbench output establishes a renamed project association',async()=>{
+    const f=await fixture();await f.threads.update(f.id,{title:'家庭服务器'})
+    const m=f.matters.create({kind:'task',title:'配置服务器',projectPath:root,ownerChatId:'owner'})
+    f.log.startTurn({matterId:m.id,executor:'codex'})
+    const entry=await f.threads.addEntry({threadId:f.id,kind:'progress',line:'已整理配置',source:'work',matterId:m.id})
+    expect((await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!.sessions[0]!.id).toBe(m.id)
+    await f.threads.updateEntry(entry,{status:'superseded'})
+    expect(await projectActivities(f.db,'owner',()=>null,f.identify)).toEqual(new Map())
+  })
+  it('warm projections, pushes and detail pages reuse activity; one changed matter does not reread unrelated history',async()=>{
+    const f=await fixture(),seen=()=>null
+    for(let i=0;i<120;i++)f.terminal(`cache-${i}`)
+    for(let i=0;i<600;i++)await f.threads.addEntry({threadId:f.id,kind:'fact',line:`无关历史 ${i}`})
+    const read=()=>projectActivities(f.db,'owner',seen,f.identify)
+    await read();f.identify.mockClear()
+    const query=vi.spyOn(f.db,'query')
+    const first=await read()
+    for(let i=0;i<10;i++)expect(await read()).toBe(first)
+    expect(f.identify).not.toHaveBeenCalled()
+    expect(query.mock.calls.length).toBeLessThanOrEqual(15)
+    query.mockClear();f.tick()
+    const m=f.matters.findBySurface('cli','cache-0')!
+    f.log.writeItem({matterId:m.id,kind:'tool_call',status:'completed',payload:{tool:'Read'}})
+    query.mockClear()
+    const next=await read()
+    expect(next).not.toBe(first)
+    expect(f.identify).not.toHaveBeenCalled()
+    expect(query.mock.calls.filter(([sql])=>/matter_items/.test(sql)).length).toBeLessThanOrEqual(2)
+    expect(next.get(f.id)!.sessions).toHaveLength(120)
+  })
+  it('a failed identity path cannot suppress a healthy project',async()=>{
+    const f=await fixture();f.terminal('healthy')
+    f.turns.event({session_id:'broken',source:'claude',cwd:'/broken',kind:'prompt'},f.now())
+    const identify=async(path:string)=>{if(path==='/broken')throw Error('unreadable');return identity}
+    expect((await projectActivities(f.db,'owner',()=>null,identify)).get(f.id)!.sessions).toHaveLength(1)
+  })
+})
+
+
+it('reuses cached small summaries and the same merged session list across pushes and detail pages',async()=>{
+ const f=await fixture(),seen=()=>null
+ for(let i=0;i<30;i++)f.terminal(`page-${i}`)
+ const first=f.matters.findBySurface('cli','page-0')!
+ await f.threads.addEntry({threadId:f.id,kind:'progress',line:'明确来源',source:'work',matterId:first.id})
+ for(let i=0;i<800;i++)await f.threads.addEntry({threadId:f.id,kind:'fact',line:`不相关的历史 ${i}`})
+ const initial=await topicsProjection(f.db,'owner',undefined,seen)
+ const offsets={entries:0,matters:0,messages:0},limits={entries:1,matters:3,messages:1}
+ await topicDetailPage(f.db,'owner',f.id,offsets,limits,seen,initial)
+ const query=vi.spyOn(f.db,'query')
+ for(let i=0;i<6;i++){
+   const next=await topicsProjection(f.db,'owner',undefined,seen)
+   expect(next.all).toBe(initial.all);expect(next.activities).toBe(initial.activities)
+   const page=await topicDetailPage(f.db,'owner',f.id,{...offsets,matters:i*3},limits,seen,next)
+   expect(page!.matters).toHaveLength(3)
+ }
+ expect(query.mock.calls.filter(([sql])=>/FROM matters m|WITH RECURSIVE valid_entry|FROM matter_topics l/.test(sql))).toHaveLength(0)
+ expect(query.mock.calls.filter(([sql])=>/FROM topic_entries/.test(sql)).every(([sql])=>/COUNT|LIMIT/.test(sql))).toBe(true)
+})
+
+it('expires running activity without a write and invalidates cached association on privacy, provenance and cwd changes',async()=>{
+ const f=await fixture(),m=f.terminal('cached-changes'),seen=()=>null
+ let clock=Date.now();vi.spyOn(Date,'now').mockImplementation(()=>clock)
+ const read=()=>projectActivities(f.db,'owner',seen,f.identify)
+ expect((await read()).get(f.id)!.activity.running).toBe(1)
+ clock+=CLI_SESSION_STALE_MS+1
+ expect((await read()).get(f.id)!.activity.running).toBe(0)
+ await f.threads.update(f.id,{private:true});expect(await read()).toEqual(new Map())
+ await f.threads.update(f.id,{private:false});expect((await read()).get(f.id)!.sessions[0]!.id).toBe(m.id)
+ vi.restoreAllMocks()
+})
+
+
+it.each(['stop','session_end'] as const)('old unseen %s results retain attention after thirty minutes',async(kind)=>{
+ const f=await fixture();f.terminal('old-result',CLI_SESSION_STALE_MS+1000)
+ f.turns.event({session_id:'old-result',source:'claude',cwd:root,kind},f.now()-CLI_SESSION_STALE_MS-1000)
+ expect((await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!.sessions[0]!.activity).toBe(kind==='stop'?'waiting':'unread')
+})
+
+it('a terminal moved across repositories cannot backfill new output into its original repository',async()=>{
+ const f=await fixture(),m=f.terminal('new-output')
+ await f.threads.update(f.id,{title:'改名项目'})
+ f.turns.event({session_id:'new-output',source:'claude',cwd:root,kind:'stop'},f.now());f.tick()
+ f.cli.touch({session_id:'new-output',source:'claude',cwd:'/projects/new'},f.now())
+ f.turns.event({session_id:'new-output',source:'claude',cwd:'/projects/new',kind:'prompt'},f.now())
+ await f.threads.addEntry({threadId:f.id,kind:'progress',line:'新仓库的产出',source:'work',matterId:m.id})
+ const identify=async(path:string)=>path==='/projects/new'?{key:'/projects/new/.git',roots:['/projects/new'],names:['new']}:identity
+ const resolve=makeProjectTopicResolver(f.db,'owner',[{id:f.id,title:'改名项目',aliases:[],tags:[],summary:'',lastActive:'',entries:[]}],identify)
+ expect((await resolve(root)).topicId).toBeNull()
+})
+
+it('a not-yet-registered session cannot claim the name of a known independent repository',async()=>{
+ const f=await fixture();f.terminal('known-name')
+ const identify=async(path:string)=>path===root?identity:{key:'/other/bx/.git',roots:['/other/bx'],names:['bx']}
+ const resolve=makeProjectTopicResolver(f.db,'owner',[{id:f.id,title:'bx',aliases:[],tags:[],summary:'',lastActive:'',entries:[]}],identify)
+ expect((await resolve('/other/bx')).topicId).toBeNull()
+})
+
+it('a nonresponding identity path is bounded independently of healthy projects',async()=>{
+ const f=await fixture();f.terminal('healthy-timeout')
+ f.turns.event({session_id:'unresponsive',source:'claude',cwd:'/unresponsive',kind:'prompt'},f.now())
+ const identify=async(path:string)=>path==='/unresponsive'?new Promise<never>(()=>{}):identity
+ const start=performance.now()
+ const value=await projectActivities(f.db,'owner',()=>null,identify)
+ expect(value.get(f.id)!.sessions).toHaveLength(1)
+ expect(performance.now()-start).toBeLessThan(2000)
+},3000)
+
+
+it('one step and repeated pages avoid scanning 1500 unrelated linked historical matters',async()=>{
+ const f=await fixture(),m=f.terminal('live-linked'),seen=()=>null
+ await f.threads.addEntry({threadId:f.id,kind:'progress',line:'来源',source:'work',matterId:m.id})
+ const history=await f.threads.create({chatId:'owner',title:'历史项目',private:false,summary:'',facets:[],tags:[],episodes:[]})
+ f.db.transaction(()=>{
+  const link=f.db.query('INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES(?,?,?)')
+  link.run(m.id,f.id,'2026-11-09')
+  for(let i=0;i<1500;i++){
+   const old=f.matters.create({kind:'task',title:'已归档的历史',projectPath:'/projects/archive',ownerChatId:'owner'})
+   f.db.query('UPDATE matters SET archived_at=1 WHERE id=?').run(old.id)
+   link.run(old.id,history,'2026-11-09')
+  }
+ })()
+ const coldStart=performance.now(),initial=await topicsProjection(f.db,'owner',undefined,seen),coldMs=performance.now()-coldStart
+ expect(initial.all.find(t=>t.id===history)!.matterSummary.total).toBe(1500)
+ f.tick();f.log.writeItem({matterId:m.id,kind:'tool_call',status:'completed',payload:{tool:'Read'}})
+ const query=vi.spyOn(f.db,'query'),stepStart=performance.now(),updated=await topicsProjection(f.db,'owner',undefined,seen),stepMs=performance.now()-stepStart
+ const stepQueries=query.mock.calls.length
+ expect(query.mock.calls.filter(([sql])=>/FROM matter_topics l/.test(sql)).every(([sql])=>/m.id IN/.test(sql))).toBe(true)
+ expect(query.mock.calls.filter(([sql])=>/WITH RECURSIVE valid_entry/.test(sql))).toHaveLength(0)
+ expect(updated.all.find(t=>t.id===history)!.matterSummary.total).toBe(1500)
+ query.mockClear();const warmStart=performance.now()
+ for(let i=0;i<10;i++){
+  const snapshot=await topicsProjection(f.db,'owner',undefined,seen)
+  expect(snapshot.all).toBe(updated.all)
+  await topicDetailPage(f.db,'owner',f.id,{entries:0,matters:0,messages:0},{entries:1,matters:1,messages:1},seen,snapshot)
+ }
+ const warmMs=performance.now()-warmStart,warmQueries=query.mock.calls.length
+ expect(query.mock.calls.filter(([sql])=>/FROM matters m|WITH RECURSIVE valid_entry|FROM matter_topics l/.test(sql))).toHaveLength(0)
+ process.stdout.write('TOPICS_REVIEW_MEASURE '+JSON.stringify({historicalLinks:1500,coldMs,stepMs,stepQueries,warmTenPagesMs:warmMs,warmQueries})+'\n')
 })

@@ -7,10 +7,10 @@
  */
 import type { Db } from '../../lib/db'
 
-export type MatterSeen = (matterId: string, sinceMs: number) => string | null
+export type MatterSeen = ((matterId: string, sinceMs: number) => string | null) & { version?: () => number }
 
-export function makeMatterSeen(db: Db, desktop?: { seenSince(matterId: string, sinceMs: number): boolean }): MatterSeen {
-  return (matterId, sinceMs) => {
+export function makeMatterSeen(db: Db, desktop?: { seenSince(matterId: string, sinceMs: number): boolean; seenVersion?():number }): MatterSeen {
+  const seen:MatterSeen = (matterId, sinceMs) => {
     try { if (desktop?.seenSince(matterId, sinceMs)) return 'desktop' } catch { /* 当没看过 */ }
     try {
       return db.query<{ surface: string }, [string, number]>("SELECT surface FROM matter_bindings WHERE matter_id = ? AND surface = 'phone' AND last_seen_at >= ? LIMIT 1")
@@ -19,4 +19,6 @@ export function makeMatterSeen(db: Db, desktop?: { seenSince(matterId: string, s
       return null
     }
   }
+  seen.version=()=>desktop?.seenVersion?.()??0
+  return seen
 }

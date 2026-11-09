@@ -196,6 +196,7 @@ describe('persistent workbench', () => {
     const queued = create('第二件事')
     expect(service.detail(queued.id).task.status).toBe('queued')
     expect(service.detail(queued.id).task.waitingFor).toMatchObject({ taskId: task.id, reason: 'same_path' })
+    expect(service.projectActivity(queued.id)).toMatchObject({phase:'queued',requestId:null,waitingFor:null})
     const cancellation = service.cancel(task.id)
     release(); await cancellation; await settle(task.id); await settle(queued.id)
     expect(dispatched).toBe(true)

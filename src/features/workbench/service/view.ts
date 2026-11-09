@@ -89,7 +89,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     }
   }
   /** Owner-authorized runtime facts for project topics; no detail, history or seen side effects. */
-  function projectActivity(id:string):{phase:WorkbenchPhase;requestId:string|null;waitingFor:string|null}|null {
+  function projectActivity(id:string):{phase:WorkbenchPhase;requestId:string|null;waitingFor:string|null;requestKind?:'permission'|'question';tool?:string|null}|null {
     const owner=ctx.deps.ownerChatId()
     if(!owner)return null
     let task:ReturnType<typeof store.get>
@@ -98,7 +98,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     const running=state.runsByTask.get(id)
     const permissions=running?.permissions.pending()??[],questions=running?.questions.pending()??[]
     const first=[...permissions].sort((a,b)=>a.createdAt-b.createdAt)[0]??[...questions].sort((a,b)=>a.createdAt-b.createdAt)[0]
-    return {phase:phaseOf(task,running),requestId:first?.id??null,waitingFor:firstPending(permissions,questions)?.text??null}
+    return {phase:phaseOf(task,running),requestId:first?.id??null,waitingFor:first ? ('tool' in first ? '等你批准' : '等你回答') : null,...(first?{requestKind:'tool' in first?'permission' as const:'question' as const,tool:'tool' in first?first.tool:null}:{})}
   }
   function taskView(task:Task, includePermissions=false):WorkbenchTaskView {
     const running=state.runsByTask.get(task.id)

@@ -208,3 +208,24 @@ it('keeps topic summary first when no waiting or running session needs attention
   const text=document.querySelector('.conversation-topic-panel')!.textContent!
   expect.soft(text.indexOf('说明')).toBeLessThan(text.indexOf('这个项目的会话'))
 })
+
+
+it.each(['refresh','subscribe'])('hides cached activity after %s failure while the panel is closed and restores it on sync',async(mode)=>{
+ let fail=false,rejectSubscribe:(e:Error)=>void=()=>{}
+ setup(async(_method:string,path:string)=>{
+   if(path.startsWith('/v1/subscribe'))return new Promise((_resolve,reject)=>{rejectSubscribe=reject})
+   if(fail)throw Error('503 topics unavailable')
+   return {topics:[{...topic('cached'),activity:{running:2,waiting:0,unread:0}}],revision:'1'}
+ });await settle()
+ expect(document.querySelector('[data-topic-activity]')).not.toBeNull()
+ fail=true
+ if(mode==='refresh')await current!.refresh();else{rejectSubscribe(Error('503'));await settle()}
+ const row=document.querySelector('[data-topic-id="cached"]')!
+ expect((document.querySelector('.conversation-topic-panel') as HTMLElement).hidden).toBe(true)
+ expect(row.querySelector('[data-topic-activity]')).toBeNull()
+ expect(row.getAttribute('aria-label')).not.toContain('2 个在跑')
+ expect(row.textContent).toContain('未同步')
+ fail=false;await current!.refresh()
+ expect(document.querySelector('[data-topic-activity]')).not.toBeNull()
+ expect(document.querySelector('[data-topic-id="cached"]')!.getAttribute('aria-label')).toContain('2 个在跑')
+})

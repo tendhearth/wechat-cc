@@ -48,14 +48,15 @@ describe('makeViewDomain · 进度', () => {
     const permissions = makeRunPermissions({ taskId: task.id, audit: event => { store.addEvent(task.id, 'system', event.type === 'request' ? '权限请求审计正文' : '权限已处理') } })
     const questions = makeRunUserInput({ taskId: task.id, audit: () => { store.addEvent(task.id, 'system', '执行者提问审计正文') } })
     state.runsByTask.set(task.id, running({ permissions, questions, snap: snapshot() }))
-    const permission = permissions.request({ tool: 'Bash', description: '运行本地检查' })
+    const permission = permissions.request({ tool: 'Bash', description: 'curl --password=ordinary-secret https://user:url-password@example.invalid\n- old-private\n+ new-private FAKE_TOKEN' })
     const question = questions.request({ questions: [{ id: 'format', header: '格式', question: '要哪种报告？', options: [], allowOther: true }] })
     const permissionId = permissions.pending()[0]!.id, questionId = questions.pending()[0]!.id
     const detail = vi.spyOn(store, 'detail').mockImplementation(() => { throw new Error('detail must not run') })
     expect(db.query("SELECT id FROM matter_items WHERE kind IN ('permission','question')").all()).toEqual([])
-    expect(domain.projectActivity(task.id)).toEqual({ phase: 'working', requestId: permissionId, waitingFor: 'Bash: 运行本地检查' })
+    expect(domain.projectActivity(task.id)).toEqual({ phase: 'working', requestId: permissionId, waitingFor: '等你批准', requestKind:'permission', tool:'Bash' })
+    expect(JSON.stringify(domain.projectActivity(task.id))).not.toMatch(/ordinary-secret|url-password|old-private|new-private|FAKE_TOKEN/)
     permissions.resolve(permissionId, 'allow'); await permission
-    expect(domain.projectActivity(task.id)).toEqual({ phase: 'working', requestId: questionId, waitingFor: '要哪种报告？' })
+    expect(domain.projectActivity(task.id)).toEqual({ phase: 'working', requestId: questionId, waitingFor: '等你回答', requestKind:'question', tool:null })
     questions.close(); await question
     expect(domain.projectActivity(task.id)).toEqual({ phase: 'replied', requestId: null, waitingFor: null })
     const foreign = store.create({ title: '外人的任务', path: project, providerId: 'claude', ownerChatId: 'guest' })

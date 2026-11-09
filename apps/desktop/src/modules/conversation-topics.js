@@ -16,7 +16,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   root.append(panel)
   /** @type {HTMLElement|null} */ let returnFocus = null
   let editing = false
-  let alive = true, selected = '', revision = '', ticket = 0, listTicket = 0, all = false, cursor = '', stale = false, matterTarget = 0
+  let alive = true, selected = '', revision = '', ticket = 0, listTicket = 0, all = false, cursor = '', stale = false, rowStale = false, matterTarget = 0
   /** @type {boolean|null} */ let supported=null
   /** @type {any[]} */ let topics = []
   /** @type {any} */ let detail = null
@@ -37,8 +37,9 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   }
   function drawRow() {
     row.replaceChildren(...topics.slice(0,6).map(t => {
-      const b = button(t.title, () => { void open(t.id) }); b.dataset.topicId=t.id; b.setAttribute('aria-pressed', String(selected === t.id)); b.setAttribute('aria-label',activityLabel(t))
-      const activity=t.activity, kind=activity?.waiting?'waiting':activity?.running?'running':activity?.unread?'unread':''
+      const b = button(t.title, () => { void open(t.id) }); b.dataset.topicId=t.id; b.setAttribute('aria-pressed', String(selected === t.id)); b.setAttribute('aria-label',rowStale?`${t.title}，尚未同步`:activityLabel(t))
+      if(rowStale){const note=document.createElement('span');note.textContent=' · 未同步';b.append(note)}
+      const activity=rowStale?null:t.activity, kind=activity?.waiting?'waiting':activity?.running?'running':activity?.unread?'unread':''
       if(kind){const mark=document.createElement('span');mark.dataset.topicActivity=kind;mark.setAttribute('aria-hidden','true');mark.innerHTML=`<i></i>${activity[kind]}`;b.append(mark)}
       return b
     }))
@@ -54,11 +55,11 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       const data = await v1(call,V1.topics.list,{query:{view:'recent',limit:6}})
       if (!alive || generation !== listTicket) return
       if (!Array.isArray(data.topics) || typeof data.revision !== 'string') throw Error('invalid_topics')
-      supported=true; topics = data.topics; stale = false; drawRow(); onTopics?.(topics.slice(0,6).map(t=>t.id))
+      supported=true; topics = data.topics; stale = false; rowStale = false; drawRow(); onTopics?.(topics.slice(0,6).map(t=>t.id))
       if (selected && pendingOpen?.id!==selected) await readDetail(selected)
     } catch (error) {
       if (!alive || generation !== listTicket) return
-      stale = true
+      stale = true; rowStale = true; drawRow()
       if (/401|403|404|unauthorized|forbidden/.test(String(error))) { supported=false;topics = []; detail = null; close(); drawRow(); return }
       // No data on an older daemon: conversation remains usable and no dead entry is advertised.
       if (detail && selected) drawDetail()
@@ -244,7 +245,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       if (!alive) return
       if (data.revision !== revision) { revision = data.revision; await refresh() }
       timer = setTimeout(() => { void subscribe() }, 250)
-    } catch (error) { if (alive) { if (/401|403|unauthorized|forbidden/.test(String(error))) { topics=[];detail=null;close();drawRow() }; stale = true; if (selected) drawDetail(); timer = setTimeout(() => { void refresh(); void subscribe() },10000) } }
+    } catch (error) { if (alive) { if (/401|403|unauthorized|forbidden/.test(String(error))) { topics=[];detail=null;close();drawRow() }; stale = true; rowStale = true; drawRow(); if (selected) drawDetail(); timer = setTimeout(() => { void refresh(); void subscribe() },10000) } }
   }
   const escape = (/** @type {KeyboardEvent} */ event) => {
     if(panel.hidden)return

@@ -169,13 +169,14 @@ late.panel = settingsPanel
 if (relay) {
   // 手机协议 v2 的订阅(第 11 步):四路来源(home / matter/<id> / approvals / agents)+ 集线器;
   // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。关机时由 phoneLc 退订。
+  const topicSeen=makeMatterSeen(db,proposalDeps?.desktop),topicExecutorName=(id:string)=>boot.registry.namesOf(id).name
   const phone = makePhoneEventsWiring({
     ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
     ...(opts.matters ? { matters: opts.matters } : {}),
     topics: async () => {
       const owner = ownerChatId()
       if (!owner) throw new Error('no_owner')
-      const projection = await topicsProjection(db, owner, undefined, makeMatterSeen(db, proposalDeps?.desktop), opts.workbench?.projectActivity, id=>boot.registry.namesOf(id).name)
+      const projection = await topicsProjection(db, owner, undefined, topicSeen, opts.workbench?.projectActivity, topicExecutorName)
       if (ownerChatId() !== owner) throw new Error('owner_changed')
       return projection.summary
     },

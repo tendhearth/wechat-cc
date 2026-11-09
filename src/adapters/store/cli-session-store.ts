@@ -66,9 +66,11 @@ export function makeCliSessionStore(db: Db, now: () => number = () => Date.now()
   }
 
   function prune(t: number): void {
-    db.query(`DELETE FROM cli_sessions WHERE last_event_at < ? AND session_id IN (SELECT session_id FROM (${DERIVED}) WHERE status = 'ended')`).run(t - CLI_SESSION_ENDED_RETAIN_MS)
-    db.query('DELETE FROM cli_sessions WHERE last_event_at < ?').run(t - CLI_SESSION_ABANDONED_RETAIN_MS)
-    db.query(`DELETE FROM cli_sessions WHERE session_id NOT IN (SELECT session_id FROM cli_sessions ORDER BY last_event_at DESC LIMIT ?)`).run(CLI_SESSION_MAX_ROWS)
+    const removed:string[]=[]
+    removed.push(...db.query<{session_id:string},[number]>(`DELETE FROM cli_sessions WHERE last_event_at < ? AND session_id IN (SELECT session_id FROM (${DERIVED}) WHERE status = 'ended') RETURNING session_id`).all(t - CLI_SESSION_ENDED_RETAIN_MS).map(r=>r.session_id))
+    removed.push(...db.query<{session_id:string},[number]>('DELETE FROM cli_sessions WHERE last_event_at < ? RETURNING session_id').all(t - CLI_SESSION_ABANDONED_RETAIN_MS).map(r=>r.session_id))
+    removed.push(...db.query<{session_id:string},[number]>(`DELETE FROM cli_sessions WHERE session_id NOT IN (SELECT session_id FROM cli_sessions ORDER BY last_event_at DESC LIMIT ?) RETURNING session_id`).all(CLI_SESSION_MAX_ROWS).map(r=>r.session_id))
+    for(const id of removed)changed(id)
   }
 
   const store: CliSessionStore = {

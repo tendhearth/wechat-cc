@@ -44,6 +44,7 @@ export interface WireMemoryDeps {
 
 export function wireMemory(d: WireMemoryDeps) {
   const { stateDir, db, boot, chatPrefs, careLedger, speech, log } = d
+  const topicExecutorName=(id:string)=>boot.registry.namesOf(id).name
   // Shared LLM-backed memory ops (overview synthesis + profile generation),
   // wired with the daemon's OWN provider registry/coordinator so both the
   // WeChat admin-command path (below) and the internal-api routes the
@@ -102,7 +103,7 @@ export function wireMemory(d: WireMemoryDeps) {
         const consolidated = await consolidateTopics({ chatId: o, threads: makeThreadsStore(db), sdkEval: boot.registry.getCheapEval(), log })
         if (consolidated.failed === 0 && bubbleSleep && bubbleSleep.owner === o && nightlyOwner() === o) {
           const cursor = () => db.query<{value:number},[]>('SELECT value FROM matter_log_cursor WHERE id=1').get()?.value
-          const before = cursor(), activity = await projectActivities(db,o,d.seen,undefined,d.taskActivity,id=>boot.registry.namesOf(id).name)
+          const before = cursor(), activity = await projectActivities(db,o,d.seen,undefined,d.taskActivity,topicExecutorName)
           // A new turn during asynchronous identity resolution postpones closing to the next sleep.
           if (before === cursor() && nightlyOwner() === o) bubbles.closeAfterSleep(bubbleSleep, new Set([...activity].filter(([,v]) => v.activity.running || v.activity.waiting).map(([id]) => id)))
         }

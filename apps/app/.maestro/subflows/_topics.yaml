@@ -20,10 +20,10 @@ appId: com.tendhearth.app
 - assertVisible:
     id: topic-matter-a1b2c3d4
 - assertVisible: "这个项目的会话|Sessions in this project"
-- assertVisible: ".*Claude.*(需要批准 npm install sharp|Approve npm install sharp).*"
+- assertVisible: ".*Claude.*(等你批准 · Bash|Approval needed · Bash).*"
 - assertVisible:
     id: topic-session-a1b2c3d4
-- assertVisible: ".*(需要批准 npm install sharp|Approve npm install sharp).*"
+- assertVisible: ".*(等你批准 · Bash|Approval needed · Bash).*"
 - takeScreenshot: topics-projects-sessions
 - scrollUntilVisible:
     element:

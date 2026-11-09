@@ -595,6 +595,19 @@ it('first topic read carries the registered demo executor name without a prior m
   const backend=makeDemoBackend()
   try{
     const detail=await backend.topicDetail({id:'demo-backup'})
-    expect(detail.matters.find(m=>m.session)?.session).toMatchObject({executor:'claude',displayName:'Claude'})
+    expect(detail.matters.find(m=>m.session)?.session).toMatchObject({executor:'claude',displayName:'Claude',latestStep:'Approval needed · Bash'})
   }finally{backend.dispose()}
+})
+
+
+it('topic demo activity uses approval metadata while original matter keeps the actionable permission',async()=>{
+ const backend=makeDemoBackend()
+ try{
+  const topic=await backend.topicDetail({id:'demo-backup'})
+  const session=topic.matters.find(m=>m.session)!.session!
+  expect(session.latestStep).toBe('Approval needed · Bash')
+  expect(session.latestStep).not.toContain('npm install sharp')
+  const original=await backend.matter(session.id,'en')
+  expect(original.permissions[0]?.description).toBe('npm install sharp')
+ }finally{backend.dispose()}
 })

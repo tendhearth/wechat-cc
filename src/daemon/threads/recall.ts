@@ -84,7 +84,7 @@ export async function resolveTopicRecall(text: string, topics: readonly MatchTop
     if (!value) return []
     const a = value.activity
     return [`项目「${t.title}」此刻：${a.waiting} 个等你，${a.running} 个在跑，${a.unread} 个做完未看。`,
-      ...value.sessions.slice(0,3).map(s => `- ${s.executor} · ${s.title}：${s.latestStep}（${new Date(s.updatedAt).toISOString()}）`)]
+      ...value.sessions.slice(0,3).map(s => `- ${s.executor}：${s.latestStep}（${new Date(s.updatedAt).toISOString()}）`)]
   }).join('\n').slice(0,600)
   const block = [renderTopicsBlock(text, picked, live ? 600 : undefined, { bodies: o.bodies ?? true, preferredEntryIds }),live].filter(Boolean).join('\n')
   // 渲染里挑了哪几条,跟 renderTopicsBlock 用同一个挑法
