@@ -12,7 +12,7 @@
 
 安装输入只来自任务起点提交的 Git 对象。创建时传 `plan.start.sha`，重新打开时传持久化的 `worktree.start.sha`；缺少旧任务起点就安全 miss，不用任务分支 HEAD 替代。沿用 #883 的 SAFE_GIT、禁 hooks/filter/fsmonitor/lazy fetch/replace objects 参数，通过 ls-tree + cat-file 读取有界 blob。工作区字节仅用于比对；清单/锁增加、删除、未提交或已提交修改都不能改变安装输入，出现变化即退回执行者锁定安装提示。owner 复制快路也先做起点比对。
 
-暂只支持 root 文本 bun.lock 的保守子集。全量检查来源后才允许任何下载：外部包必须是固定 npm 包名/版本、带 sha512 integrity、锁内无显式 tarball URL；git/git+ssh/github/file/link/http/私网等任一来源使整次 miss。混合锁、嵌套锁和不支持的布局也整次 miss。默认 registry.npmjs.org；仅解析同一起点提交内的 .npmrc/bunfig 明确 registry 配置（不接受 token、身份、环境替换或可执行配置）。只接受公共 https registry，无用户名、密码、查询、fragment 或非默认端口。下载前将 DNS 限定为公共 IPv4 并把验证过的地址固定到 TLS 请求；拒绝重定向，防止解析变化或跳转到内网。
+暂只支持 root 文本 bun.lock 的保守子集。全量检查来源后才允许任何下载：外部包必须是固定 npm 包名/版本、带 sha512 integrity、锁内无显式 tarball URL；git/git+ssh/github/file/link/http/私网等任一来源使整次 miss。根或根 workspace 成员中出现其他种类锁文件（bun.lockb / package-lock / shrinkwrap / yarn / pnpm）仍整次 miss。根 package.json 的 workspaces 决定成员，只按根 bun.lock 安装；非成员项目（docs/spike、tools/mutation 等）的清单与嵌套锁不参与安装、缓存键或变更比较。成员遗留 bun.lock 不解析、不安装，但其起点 blob 纳入键与未改动比较，变化即 miss。锁声明的 workspace 必须属于根清单成员。默认 registry.npmjs.org；仅解析同一起点提交内的 .npmrc/bunfig 明确 registry 配置（不接受 token、身份、环境替换或可执行配置）。只接受公共 https registry，无用户名、密码、查询、fragment 或非默认端口。下载前将 DNS 限定为公共 IPv4 并把验证过的地址固定到 TLS 请求；拒绝重定向，防止解析变化或跳转到内网。
 
 CC 自己执行有界下载和 ustar 解包，不再启动 Bun/Git/SSH 安装进程。这样没有 SSH 配置、身份、known_hosts、agent、npmrc/bunfig 用户目录发现或子进程环境继承路径；不读主人配置，也不执行 package scripts。所有写入都在私有 stage，没有用户 HOME/XDG/缓存写入。宿主设置了代理环境时外部安装安全 miss，保留已有网络守护。只有工作区链接的离线安装仍可用。tar 的 PAX、稀疏、链接、特殊文件及 bundled/binDir 等未实现形状整次 miss；支持的 bin 链接只指向已校验的包内文件；workspace bin 只建立逻辑占位端点，恢复时使用新 checkout 的真实文件。先验证所有来源，再按 os/cpu 筛掉不适用的可选包，并检查物理布局中仍有全部必需依赖；libc 专属布局暂不支持，整次 miss。Windows 尾点/空格别名、设备名及 ADS 在所有平台一致拒绝。
 
@@ -20,7 +20,7 @@ CC 自己执行有界下载和 ustar 解包，不再启动 Bun/Git/SSH 安装进
 
 完整 tar 预检登记每级隐式父目录、显式目录、普通文件的身份、原拼写和类型。不同原名撞身份、重复显式声明或目录/文件冲突，均在包根创建前拒绝整包；相同原拼写父目录可复用，隐式父目录可补一次显式声明。node_modules / .git 禁令按同一身份判断，不能以大写或 Unicode 别名绕过。安装计划的包根也逐级登记，防止 Tool/tool 或 @Scope/a/@scope/b 在多个包之间合并父目录。正常 Unicode 路径保留原拼写。
 
-磁盘预算前置：写元数据前检查其双份大小、条目和剩余空间；按锁内包数及可选 unpackedSize/fileCount 做安装预检（普通 Bun 锁不声明体积，不能假装已有体积证明）。下载逐块计数，单包压缩数据最多 32 MiB；解压逐块有界，单包展开内存最多 128 MiB。tar 先校验完整 header、声明体积/条目和路径，再创建包文件。所有目录逐层计数，文件每 64 KiB 写入前检查共享字节预算、条目、剩余空间、取消与截止时间，超限立即停止，finally 清理整次 stage。默认安装数据预算 1 GiB，并受 maxCacheBytes 一半约束，为 snapshot 留出对应空间；条目也给 snapshot 留一半。完成缓存仍默认 4 GiB、LRU；在建 stage 另有上述硬上限，不把运行期计数替换为写完后扫描。
+磁盘预算前置：写元数据前检查其双份大小、条目和剩余空间；按锁内包数及可选 unpackedSize/fileCount 做安装预检（普通 Bun 锁不声明体积，不能假装已有体积证明）。下载逐块计数，单包压缩数据最多 32 MiB；解压逐块有界，单包展开内存最多 128 MiB。tar 先校验完整 header、声明体积/条目和路径，再创建包文件。所有目录逐层计数，文件每 64 KiB 写入前检查共享字节预算、条目、剩余空间、取消与截止时间，超限立即停止，finally 清理整次 stage。同步显式安装默认数据预算 1 GiB。后台安装使用 15 分钟、4 GiB 数据上限与 20 万条目总预算，仍受 4 GiB 缓存上限的一半约束（安装展开最多 2 GiB、10 万条目），为 snapshot 留出对应空间；真实仓库约 1.8 GiB / 7.5 万条在此范围内。完成缓存仍默认 4 GiB、LRU；在建 stage 另有上述硬上限，不把运行期计数替换为写完后扫描。
 
 安装成功后复核起点元数据与任务工作区，再经过原复制器的链接/容量/条目/时间/剩余空间预算，才写绑定完整 key 和 `committed-public-registry-portable-v2` 策略的完成记录并原子 rename。策略同时进入 scope 哈希，修复前的缓存树不会命中，也不会占据新缓存的发布路径；旧条目仍按原 LRU 预算回收。owner 一直保留到 rename 后；stage 在 mkdir 前先写外部 owner journal，避免第二次创建失败或崩溃留下不可追踪目录。daemon 启动扫尾和准备阶段共用串行锁，按死亡 PID 的记录回收 stage/journal；活跃或不明 owner 不删除。取消、失败、超时、元数据变化均不入缓存。workspace / .bin 端点仍仅保存逻辑位置，恢复使用新 checkout 的代码。
 
@@ -29,6 +29,14 @@ Windows 的 Git autocrlf 会让未修改的检出文本使用 CRLF、Git blob �
 真实 Bun 锁夹具与产品准备路径一致，使用 native realpath 后再运行 Bun。Windows Bun 1.3.14 在仍含 8.3 别名的 cwd 下会生成 `../../.../pkg` workspace 锁位置；这类已提交锁仍按越界策略拒绝并退回安装提示，不能为让夹具通过而接受它。
 
 同步 Git 的过滤器配置探测和实际命令共用原有 30 秒总期限，不再让健康的 Windows 操作提前撞上独立 5 秒探测上限；配置探测失败仍拒绝执行，错误标记 filters/command 阶段以便定位。
+
+## 真仓库依赖缓存修正（11-09 实测）
+
+建任务仍给 owner 独立复制 / 完成缓存恢复 15 秒；miss 立即返回现有锁定安装提示，同时入 daemon 持有的后台队列。全局每个 stateDir 串行安装，同仓库 common-dir、平台/架构/ABI、锁与清单完整 key 只保留一个在途作业；前台恢复不等待后台安装锁，也不做整缓存扫描。后台从固定起点 Git blob 安装，不接任务的取消信号或 15 秒截止时间；任务元数据安装前后变化仍不发布。开始、完成或失败原因各记一行。daemon 模块停机时先 abort 队列并等待自有 stage 清理，排队作业不再启动。
+
+启动就绪后每分钟检查空闲（无在途对话、busy 登记为空）与一分钟负载；负载 ≥ 逻辑核数 × 1.5 时保留候选等待。只取最近 14 天交办过 project 任务的项目（普通任务创建、执行轮开始或原生接手后首次交办；只导入未交办的会话不算），独立 worktree 解析回原仓库，不受任务列表 200 条限制。每个仓库按本地 origin/dev、缺失时 HEAD 的固定提交预热一次，不 fetch、不读 owner node_modules；这条路径只用 Git blob，owner 检出与默认分支不同不妨碍预热。在读取 blob 后、队列实际开工时重查负载和空闲，推迟的候选下次再试。预热、普通 miss 和 stage recovery 共用后台发布锁，停机一并取消。
+
+验收使用仓库自身 HEAD Git blob（含 6 个嵌套 bun.lock）及本地 HTTP 假 registry；仅在测试的 HTTPS/DNS 系统边界把公共规范 URL 路由到回环夹具，生产来源策略不放宽。覆盖非阻塞 miss、去重/串行、下一件命中、任务取消独立、后台失败/预算/停机清理、预热默认分支与负载推迟。无真实包下载或真实 daemon 操作。
 
 ## 任务内 uptime
 

@@ -72,7 +72,7 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
     const tracked = new Set(lists.flatMap(list => list.split('\0').filter(Boolean)))
     const manifests = [...tracked].filter(p => p === 'package.json' || p.endsWith('/package.json'))
     if (!manifests.length) return []
-    for (const manifest of manifests) {
+    if (!options.metadataPaths) for (const manifest of manifests) {
       let dir = dirname(manifest)
       for (;;) {
         for (const name of LOCKS) tracked.add(join(dir, name))
