@@ -7,6 +7,7 @@
  * 零基线:新加的 .js 不写 `// @ts-check` 就红。
  * 不扫:测试(`*.test.js`)、生成物 `src/generated/`、第三方压缩包 `src/vendor/`(压缩过的 marked / fflate,不是我们写的)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, relative } from 'node:path'
@@ -30,6 +31,7 @@ function hasTsCheck(text: string): boolean {
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (!SKIP_DIRS.includes(name)) walk(p, out) }
     else if (name.endsWith('.js') && !name.endsWith('.test.js')) out.push(p)
   }

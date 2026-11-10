@@ -89,6 +89,7 @@ import { makeExecuteDomain } from './service/execute'
 import { makeEntryDomain } from './service/entry'
 import { makeQuotaHandoffDomain, makeQuotaHandoffView } from './service/quota-handoff'
 import type { ServiceCtx } from './service/ctx'
+import { recoverRestartContinuations, quarantineRestartContinuations } from './service/restart-resume'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
 
@@ -254,10 +255,14 @@ export function makeWorkbenchService(opts: Options) {
   // 开机对账:全部建好之后再做(顺序同改造前)
   store.recover()
   store.liveInputs.recover()
+  quarantineRestartContinuations(ctx)
   lifecycleDomain.adoptWriters()
   scriptsDomain.recover()
   void rewindDomain.recover()
   quotaResumeDomain.recover()
+  // 构造完成后才开续接，仍经过原生会话准入、网络门和文件夹写者租约。
+  queueMicrotask(()=>recoverRestartContinuations(ctx,executeDomain))
+  unsubscribes.add(opts.registry.onRegister(()=>recoverRestartContinuations(ctx,executeDomain)))
 
   function ensureAccepting() {
     if (state.stopping) throw new Error('workbench_stopping')

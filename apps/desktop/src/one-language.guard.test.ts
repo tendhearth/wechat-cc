@@ -1,3 +1,4 @@
+import { isTaskCachePath } from '../../../scripts/task-cache-paths'
 import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -11,6 +12,7 @@ const SKIP = /(^|\/)(vendor|pdfjs|node_modules|generated)(\/|$)|\.test\.|\.spec\
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap(name => {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) return []
     if (SKIP.test(relative(ROOT, p).replaceAll('\\', '/'))) return []
     return statSync(p).isDirectory() ? files(p) : /\.(js|html)$/.test(name) ? [p] : []
   })

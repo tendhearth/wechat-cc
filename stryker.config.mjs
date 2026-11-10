@@ -51,7 +51,7 @@ export default {
   // 沙箱不复制手机原生 app、桌面的 Rust 壳、本工具目录(src/ 有 import apps/desktop/src/shared 的,docs 有测试在读)。
   ignorePatterns: [
     // gitignore 写法,一律从仓库根锚定(不锚的 'reports' 会顺手把 src/features/reports 也扔了)。
-    '/apps/app', '/apps/desktop/src-tauri', '/tools', '/.claude', '/reports', '*.log',
+    '/apps/app', '/apps/desktop/src-tauri', '/tools', '/.claude', '/reports', '*.log', '**/.cc-tasks/**', '**/node_modules/.cache/cc-tasks/**',
   ],
   reporters: ['clear-text', 'progress', 'html', 'json'],
   // 终端里只要分数表;哪一行哪个变异活下来看 HTML 报告(逐条列出来上千行)。

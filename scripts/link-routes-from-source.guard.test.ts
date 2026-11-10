@@ -9,6 +9,7 @@
  *
  * 给链接页面加一条新调用:先写进页面,这里会红着告诉你去 routes.ts 开哪一行(并写理由)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -63,6 +64,7 @@ function linkTokenUsers(): string[] {
   const walk = (dir: string) => {
     for (const e of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
       const rel = `${dir}/${e.name}`
+      if (isTaskCachePath(rel)) continue
       if (e.isDirectory()) { if (e.name !== 'node_modules') walk(rel) }
       else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) && /\.linkToken\b/.test(read(...rel.split('/')))) out.push(rel)
     }

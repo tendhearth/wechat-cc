@@ -4,5 +4,5 @@
     "strict": true
   },
   "include": ["**/*.ts", "**/*.tsx", "expo-env.d.ts"],
-  "exclude": ["node_modules", ".expo-export-check"]
+  "exclude": ["**/.cc-tasks/**", "**/node_modules/.cache/cc-tasks/**", "node_modules", ".expo-export-check"]
 }

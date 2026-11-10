@@ -1,4 +1,5 @@
 // @repo-guard 这份测试里有扫整个仓库的守卫:bun run verify 不管改了什么都跑它(import 图看不见它守的文件)。
+import { isTaskCachePath } from '../../scripts/task-cache-paths'
 import { expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -44,6 +45,7 @@ function* walkTestFiles(dir: string): Generator<string> {
   for (const ent of entries) {
     if (ent === 'node_modules' || ent === '.git' || ent === 'dist' || ent === 'target') continue
     const p = join(dir, ent)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) {
       yield* walkTestFiles(p)
       continue

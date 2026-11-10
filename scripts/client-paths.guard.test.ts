@@ -13,6 +13,7 @@
  * 桌面那份拼请求的小实现(webview 引不到协议包)和协议包的 `callRequest` 逐个样例比,两边拼出来的路径必须一样。
  * 注释里不带引号的路径不算(扫的是引号起头的字面量)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -32,6 +33,7 @@ function walk(dir: string, exts: string[], out: string[] = [], skipDirs: string[
   for (const name of readdirSync(dir)) {
     if (name === 'node_modules' || name.startsWith('.') || skipDirs.includes(name)) continue
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) walk(p, exts, out, skipDirs)
     else if (exts.some(e => name.endsWith(e)) && !/\.test\.[jt]sx?$/.test(name)) out.push(p)
   }

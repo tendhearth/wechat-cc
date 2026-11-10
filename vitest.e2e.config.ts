@@ -1,7 +1,9 @@
-import { defineConfig } from 'vitest/config'
+import { TASK_CACHE_GLOBS } from './scripts/task-cache-paths'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
+    exclude: [...configDefaults.exclude, ...TASK_CACHE_GLOBS],
     include: ['src/daemon/__e2e__/**/*.e2e.test.ts'],
     fileParallelism: false,
     // 每个文件第一次 startTestDaemon 都要冷启动 import 整个 daemon(harness 故意动态 import,好让各文件的 vi.mock 先登记,

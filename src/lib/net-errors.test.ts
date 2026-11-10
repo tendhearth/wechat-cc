@@ -1,9 +1,11 @@
 // @repo-guard 这份测试里有扫整个仓库的守卫:bun run verify 不管改了什么都跑它(import 图看不见它守的文件)。
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { readdirSync, readFileSync, statSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { join, dirname, relative } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { isConnectFailure } from './net-errors'
+import { isTaskCachePath } from '../../scripts/task-cache-paths'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -46,6 +48,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     if (['node_modules', '.git', 'dist', 'target'].includes(name)) continue
     const full = join(dir, name)
+    if (isTaskCachePath(full)) continue
     if (statSync(full).isDirectory()) walk(full, out)
     else if (/\.ts$/.test(name) && !/\.test\.ts$/.test(name) && !/\.d\.ts$/.test(name)) out.push(full)
   }
@@ -53,6 +56,16 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe('仓库守卫 —— 连接失败的判定只能有一处', () => {
+  it('扫描正式源码时跳过两种任务缓存', () => {
+    const root = mkdtempSync(join(tmpdir(), 'net-error-guard-'))
+    try {
+      for (const file of ['src/ordinary.ts', 'src/.cc-tasks/task/cache/copy.ts', 'src/node_modules/.cache/cc-tasks/task/copy.ts']) {
+        mkdirSync(dirname(join(root, file)), { recursive: true })
+        writeFileSync(join(root, file), 'export const value = 1')
+      }
+      expect(walk(root).map(file => relative(root, file).replaceAll('\\', '/'))).toEqual(['src/ordinary.ts'])
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
   it('没有别的文件自己手写 ECONNREFUSED 之类的匹配', () => {
     const offenders: string[] = []
     for (const file of walk(join(REPO_ROOT, 'src'))) {

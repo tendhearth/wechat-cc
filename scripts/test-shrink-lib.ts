@@ -18,6 +18,7 @@
  * 不管的:Rust / Swift / Kotlin 测试;it.each 表格少了几行;把断言挪进 helper(会被当成 expect 变少 —— 写一句理由即可)。
  */
 
+import { isTaskCachePath } from './task-cache-paths'
 import { spawnSync } from 'node:child_process'
 
 // ───────────────────────── 词法:只够数括号、认字符串 ─────────────────────────
@@ -241,9 +242,9 @@ export function excludeEntries(src: string): number {
 
 // ───────────────────────── 两版对比 ─────────────────────────
 
-export const isTestFile = (p: string) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(p) && !p.includes('node_modules/')
-export const isSnapFile = (p: string) => p.endsWith('.snap')
-export const isVitestConfig = (p: string) => /(^|\/)vitest[^/]*\.config\.[cm]?[jt]s$/.test(p)
+export const isTestFile = (p: string) => !isTaskCachePath(p) && /\.(test|spec)\.[cm]?[jt]sx?$/.test(p) && !/(^|\/)node_modules\//.test(p.replaceAll('\\', '/'))
+export const isSnapFile = (p: string) => !isTaskCachePath(p) && p.endsWith('.snap')
+export const isVitestConfig = (p: string) => !isTaskCachePath(p) && /(^|\/)vitest[^/]*\.config\.[cm]?[jt]s$/.test(p.replaceAll('\\', '/'))
 
 /** 一个改动过的文件:base 那边的路径/内容、head 那边的路径/内容(新增 / 删除时一边为 null)。 */
 export type FileChange = { basePath: string | null; headPath: string | null; base: string | null; head: string | null }
@@ -270,7 +271,9 @@ export function collectChanges(base: string, head: string, cwd?: string): FileCh
       const from = parts[i++]!
       const to = parts[i++]!
       if (!relevant(from) && !relevant(to)) continue
-      changes.push({ basePath: code === 'R' ? from : null, headPath: to, base: code === 'R' ? show(base, from) : null, head: show(head, to) })
+      const basePath = code === 'R' && relevant(from) ? from : null
+      const headPath = relevant(to) ? to : null
+      changes.push({ basePath, headPath, base: basePath ? show(base, basePath) : null, head: headPath ? show(head, headPath) : null })
       continue
     }
     const path = parts[i++]!
@@ -301,6 +304,12 @@ function pairUp<T>(base: Entry<T>[], head: Entry<T>[]): Entry<T>[] {
 }
 
 export function findShrinks(changes: FileChange[]): Finding[] {
+  changes = changes.map(change => ({
+    basePath: change.basePath && !isTaskCachePath(change.basePath) ? change.basePath : null,
+    headPath: change.headPath && !isTaskCachePath(change.headPath) ? change.headPath : null,
+    base: change.basePath && !isTaskCachePath(change.basePath) ? change.base : null,
+    head: change.headPath && !isTaskCachePath(change.headPath) ? change.head : null,
+  })).filter(change => change.basePath !== null || change.headPath !== null)
   const findings: Finding[] = []
   const shown = (c: FileChange) => (c.headPath ?? c.basePath)!
 

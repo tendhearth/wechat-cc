@@ -32,6 +32,7 @@ import { basename, dirname, resolve } from 'node:path'
 import { readApiInfo } from '../lib/api-info'
 import { dirHasPlugins, readPluginsSourcePointer, writePluginsSourcePointer } from '../lib/plugins-source'
 import { SIDECAR_NAMES } from '../lib/app-identity'
+import { defaultDeployTaskGate, type DeployTaskOptions } from './deploy-task-gate'
 
 export interface LaunchAgentInfo {
   programArguments: string[]
@@ -346,6 +347,8 @@ function isMacosDir(dir: string): boolean {
 // ── execute ──────────────────────────────────────────────────────────
 
 export interface SelfDeployDeps {
+  /** 任何改文件之前检查交办；回滚到已知备份时不等待，保留修复能力。 */
+  taskGate?: (stateDir: string) => Promise<string | null>
   spawnSync: (cmd: string, args: string[], opts?: { timeoutMs?: number; windowsHide?: boolean }) => { status: number | null; stdout: string; stderr: string }
   fs: {
     exists(p: string): boolean
@@ -374,6 +377,7 @@ export interface SelfDeployStep {
 }
 
 export interface SelfDeployResult {
+  blocked?: 'tasks'
   ok: boolean
   exitCode: 0 | 1 | 3
   steps: SelfDeployStep[]
@@ -396,6 +400,12 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
 
 async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promise<SelfDeployResult> {
   const steps: SelfDeployStep[] = []
+  if (!samePath(plan.newBinaryPath,plan.prevPath) && deps.taskGate) {
+    let reason:string|null
+    try { reason=await deps.taskGate(dirname(plan.infoPath)) }
+    catch (err) { reason=`读取交办任务失败：${err instanceof Error?err.message:err}` }
+    if(reason)return {ok:false,exitCode:1,blocked:'tasks',steps:[{name:'tasks',ok:false,detail:reason}]}
+  }
 
   // 1. preflight — new binary exists and `--version` exits 0. Nothing on
   // disk is touched yet, so a preflight failure just returns — no rollback
@@ -878,8 +888,9 @@ function errMsg(err: unknown): string {
 
 // ── real deps (used by cli.ts) ──────────────────────────────────────
 
-export function defaultSelfDeployDeps(): SelfDeployDeps {
+export function defaultSelfDeployDeps(taskOptions: DeployTaskOptions = {}): SelfDeployDeps {
   return {
+    taskGate: stateDir => defaultDeployTaskGate(stateDir,taskOptions),
     spawnSync(cmd, args, opts) {
       const r = nodeSpawnSync(cmd, args, { encoding: 'utf8', timeout: opts?.timeoutMs, windowsHide: true })
       return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }

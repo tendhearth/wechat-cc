@@ -16,6 +16,10 @@ wechat-cc ci triage --wait --rerun
 
 ## 测试只增不减
 
+`bun run verify` 显式排除工作区各层的 `.cc-tasks/` 和 `node_modules/.cache/cc-tasks/`，不依赖 gitignore；Vitest、TypeScript、依赖检查、守卫及测试缩水检查使用同一排除边界。正式测试搬进缓存仍算删除，不能靠缓存目录藏掉测试。
+
+测试阶段由独立进程监督：单文件从 worker 接手、尚未 import 时开始计时，默认上限 120 秒；阶段连续 300 秒无新输出也算超时。最后一个模块结束后的收尾同样有 120 秒上限，持续打印不会延长单文件或收尾期限。可用 `CC_VERIFY_FILE_TIMEOUT_MS`、`CC_VERIFY_SILENCE_TIMEOUT_MS` 设置正整数毫秒值。超时会打印阶段、正在跑或最近结束的文件及耗时，清理本次启动的进程树并非零退出；测试自身的断言及超时保持原样。POSIX 的根与后代都绑定不可覆盖的 PID + 启动时间，每次发信号前重新核验；身份缺失或变化只报告，不向该 PID 或进程组发信号。Windows 必须通过已有 `cc-jobspawn --require-job` 启动，Job Object 在 launcher 退出或监督终止时清理后代；缺 helper 就拒绝启动，不能用原根 PID 的 `taskkill /T` 冒充孤儿清理。原生 Windows 回归覆盖 launcher 先退出和超时两条路径，本机 macOS 不把它算作已运行。Node 定向复验脚本组用 `node node_modules/vitest/vitest.mjs run -c vitest.verify.config.ts`（`test:node` 的默认 include 只收 src/apps/packages）。
+
 AI 写代码有两个老毛病(Kent Beck 说过):为了变绿把测试删掉、跳过、改松;事后补一条「没有修复也会过」的测试。前一个在 diff 里看得见,只是评审时没人去数 —— 所以让机器数(2026-10-27 主人定)。
 
 `scripts/test-shrink-check.ts` 比 PR 头和它跟 base 的 merge-base,逐个测试文件看(判法写在 `scripts/test-shrink-lib.ts` 开头):

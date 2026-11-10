@@ -26,6 +26,9 @@ import type { ArtifactsDomain } from './artifacts'
 import type { NoticesDomain } from './notices'
 import type { UntilDomain } from './until'
 import type { PendingInputs } from './pending-inputs'
+import { peekPlannedRestart } from '../../../lib/restart-markers'
+import { saveRestartContinuations, dropRestartContinuation, confirmRestartWriterExited } from '../../../adapters/workbench/restart-continuations'
+import { timelineKind } from '../../../adapters/store/workbench/store'
 
 /** 桌面 / 手机 / 微信同一句状态(主人 2026-10-03)。 */
 export const NETWORK_SUSPENDED_LABEL='已暂停(网络未受保护)'
@@ -331,7 +334,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       const index=state.queue.indexOf(running); if (index>=0) state.queue.splice(index,1)
       state.runningText.delete(running.identity)
       try {
-        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};store.update(running.taskId,'cancelled');stageFinishedNotice(running,'cancelled')})
+        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};store.update(running.taskId,'cancelled',running.restartInterrupted?'daemon_restarted':null);stageFinishedNotice(running,'cancelled')})
         matterSync(m=>m.setLifecycle(running.taskId,'done'))
         publishFinishedNotices()
       } catch { /* in-memory cancellation still must settle */ }
@@ -438,6 +441,11 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
   async function cancel(id:string,expectedRunId?:string):Promise<WorkbenchTaskView> {
     const running=state.runsByTask.get(id)
     if(expectedRunId!==undefined&&running?.identity!==expectedRunId)throw new Error('control_stale')
+    // 主人停止优先于部署续接，连正在等 close 的那条 run 也要撤销。
+    if(running)running.restartInterrupted=false
+    try { dropRestartContinuation(ctx.stateDir,id) } catch (err) { ctx.log?.('WORKBENCH_RESTART',`cannot revoke ${id}: ${err instanceof Error?err.message:err}`) }
+    const persisted=store.get(id)
+    if(persisted.error==='daemon_restarted')store.update(id,persisted.status,null)
     // cancelRun 落库时自己 touched;没有 running(任务不在跑)时这里兜底一下,
     // 停止请求本身也算一次「详情可能变了」。
     // 主人亲手停 ⇒「直到检查通过」也停,不再自己接着改(写清原因)。
@@ -453,6 +461,23 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     if (state.writerWatch) { clearInterval(state.writerWatch); state.writerWatch=undefined }
     state.shutdownPromise=(async () => {
       const snapshot=[...state.runsByTask.values()]
+      const restart=peekPlannedRestart(ctx.stateDir,ctx.now())
+      if (restart && ['self-deploy','self-deploy-rollback'].includes(restart.reason)) {
+        const interrupted=snapshot.filter(r=>!r.cancelled&&!r.finishing&&!r.uncertain&&!quiet(r))
+        try {
+          // Persist known groups before the preparation record. A crash at any
+          // later point must retain the existing writer confirmation path.
+          for(const r of interrupted) {
+            const groups=writerGroupsOf(r)
+            store.setWriterGroups(r.taskId,groups,bootTimeMs(ctx))
+          }
+          saveRestartContinuations(ctx.stateDir,interrupted.map(r=>({taskId:r.taskId,runId:r.identity,
+            lastUserId:store.steps(r.taskId).filter(step=>timelineKind(step)==='user').at(-1)?.id??null,
+            pendingDecision:r.permissions.pending().length>0||r.questions.pending().length>0,
+            writerExited:false,directoryIdentity:r.directoryIdentity,unstarted:r.spawnAttempted===false&&r.continuation.mode==='new'&&!r.task.sessionId})))
+          for (const running of interrupted) running.restartInterrupted=true
+        } catch (err) { ctx.log?.('WORKBENCH_RESTART',`cannot save continuations: ${err instanceof Error?err.message:err}`) }
+      }
       for (const running of snapshot) {
         try { cancelRun(running) }
         catch {
@@ -463,6 +488,12 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
         }
       }
       await Promise.allSettled(snapshot.map(running => running.done))
+      for(const running of snapshot) {
+        // done alone is not exit evidence (a spawn may still be in flight).
+        if(!running.restartInterrupted||(!running.writerExited&&running.spawnAttempted!==false))continue
+        try {confirmRestartWriterExited(ctx.stateDir,running.taskId,running.identity)}
+        catch(err){ctx.log?.('WORKBENCH_RESTART',`cannot confirm writer exit: ${err instanceof Error?err.message:err}`)}
+      }
       while(state.preparations.size)await Promise.allSettled([...state.preparations])
       while(state.collections.size)await Promise.allSettled([...state.collections])
       state.shutdownComplete=true

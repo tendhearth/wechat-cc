@@ -21,6 +21,8 @@ import { makeNoticesDomain } from './notices'
 import { makeArtifactsDomain } from './artifacts'
 import { makeExecuteDomain } from './execute'
 import type { ServiceCtx } from './ctx'
+import { makeWorkbenchService } from '../service'
+import { markPlannedRestart } from '../../../lib/restart-markers'
 
 const dbs: Db[] = []; const dirs: string[] = []; const shutdowns: Array<() => Promise<void>> = []
 afterEach(async () => { for (const s of shutdowns.splice(0)) await s(); for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -38,7 +40,7 @@ function fakeProvider(): AgentProvider {
 }
 
 /** 迷你组装:和 service.ts 同一套接线,只是没有 public 对象与 wechatControl。 */
-function setup(over: { executionConflict?: NonNullable<ServiceCtx['deps']['executionConflict']>; owner?: string | null } = {}) {
+function setup(over: { executionConflict?: NonNullable<ServiceCtx['deps']['executionConflict']>; owner?: string | null; ready?: Promise<void> } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'wb-execute-domain-'))); dirs.push(root)
   const stateDir = join(root, 'state'), project = join(root, 'project')
   mkdirSync(stateDir, { recursive: true }); mkdirSync(project, { recursive: true })
@@ -54,13 +56,54 @@ function setup(over: { executionConflict?: NonNullable<ServiceCtx['deps']['execu
   const until = { afterTurn: () => {}, stop: () => {} }   // 这里不测「直到检查通过」
   const lifecycle = makeLifecycleDomain(ctx, { view, artifacts, notices, pending, until })
   const inputs = makeInputsDomain(ctx, { admission, attachments, view, lifecycle, pending })
-  const execute = makeExecuteDomain(ctx, { admission, attachments, quota, view, native, inputs, lifecycle, notices, artifacts, until })
+  const execute = makeExecuteDomain(ctx, { admission, attachments, quota, view, native, inputs, lifecycle, notices, artifacts, until, ...(over.ready ? { rewind: { ready: () => over.ready!, notice: () => null, markNoticed: () => {} } } : {}) })
   shutdowns.push(lifecycle.shutdown)
   const settled = async (id: string) => { await vi.waitFor(() => expect(store.get(id).status).not.toMatch(/^(queued|running|cancelling)$/), { timeout: 5000 }) }
-  return { store, state, execute, view, project, settled }
+  return { store, state, execute, view, project, settled, ctx, registry, lifecycle }
 }
 
 describe('makeExecuteDomain · 创建与派发', () => {
+  it('does not classify an invoked spawn without a session id as an unstarted request', async () => {
+    const s = setup()
+    let release!: () => void
+    const hold = new Promise<void>(resolve => { release = resolve })
+    const spawn = vi.spyOn(s.registry.get('claude')!.provider, 'spawn').mockImplementation(async () => ({
+      async *dispatch() { await hold },
+      async close() { release() },
+    }))
+    const task = s.execute.create({ path: s.project, providerId: 'claude', text: '执行者已经开始但尚未报会话号' })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1))
+    expect(s.store.get(task.id).sessionId).toBeNull()
+    markPlannedRestart(s.ctx.stateDir, 'self-deploy')
+    await s.lifecycle.shutdown()
+    const resumed = makeWorkbenchService({ store: s.store, registry: s.registry, stateDir: s.ctx.stateDir, ownerChatId: () => 'owner' })
+    shutdowns.push(() => resumed.shutdown())
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(s.store.events(task.id).at(-1)?.text).toContain('restart_confirmation_required')
+  })
+
+  it('deployment resumes a first request interrupted during rewind readiness before provider.spawn', async () => {
+    let release!: () => void
+    const ready = new Promise<void>(resolve => { release = resolve })
+    const s = setup({ ready })
+    const spawn = vi.spyOn(s.registry.get('claude')!.provider, 'spawn')
+    const task = s.execute.create({ path: s.project, providerId: 'claude', text: '尚未开始的原请求' })
+    await Promise.resolve()
+    expect(s.state.runsByTask.get(task.id)?.state).toBe('active')
+    expect(spawn).not.toHaveBeenCalled()
+    markPlannedRestart(s.ctx.stateDir, 'self-deploy')
+    const stopping = s.lifecycle.shutdown()
+    release()
+    await stopping
+    const resumed = makeWorkbenchService({ store: s.store, registry: s.registry, stateDir: s.ctx.stateDir, ownerChatId: () => 'owner' })
+    shutdowns.push(() => resumed.shutdown())
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1), { timeout: 5000 })
+    await s.settled(task.id)
+    expect(s.store.events(task.id).filter(e => e.kind === 'user').at(-1)?.text).toContain('尚未开始的原请求')
+    expect(s.store.events(task.id).filter(e => e.kind === 'user').at(-1)?.text).toContain('CC 重启打断了上一轮')
+  })
+
   it('create ⇒ 排队视图、runsByTask 有它;经 lifecycle.pump → run.launch 真派发,fakeProvider 跑到 completed,事件里有回答', async () => {
     const { execute, store, state, project, settled } = setup()
     const view = execute.create({ path: project, providerId: 'claude', text: '做点事' })

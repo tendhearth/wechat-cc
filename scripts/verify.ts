@@ -23,7 +23,9 @@
  *     起整台照真机配置的 daemon(知识库、社交、配对、手机中继 …… 全开),替身只在系统边界。import 图判不出
  *     「这个改动会不会让某个可选子系统开着时开不了机」—— #729 就是这么漏的:单测全绿、真机开机三连败。
  */
+import { repositorySourcePaths } from './task-cache-paths'
 import { spawnSync } from 'node:child_process'
+import { runVerifyStep } from './verify-runner'
 import { recordVerified, workingTree } from './verify-stamp'
 
 const argv = process.argv.slice(2)
@@ -37,12 +39,14 @@ const failed: string[] = []
 const verifiedTree = (() => { try { return workingTree(process.cwd()) } catch { return null } })()
 const stamp = () => { if (verifiedTree) try { recordVerified(process.cwd(), verifiedTree) } catch { /* 记不下只是推的时候要重跑 */ } }
 
-function step(label: string, cmd: string, args: string[], cwd?: string): void {
+async function step(label: string, cmd: string, args: string[], cwd?: string): Promise<void> {
   console.log(`\n▶ ${label}`)
   const t0 = Date.now()
-  const r = spawnSync(cmd, args, { stdio: 'inherit', cwd })
+  const tests = /测试|单测|沙盒/.test(label)
+  const r = await runVerifyStep(label, cmd, args, cwd, tests)
   console.log(`  ${r.status === 0 ? '✓' : '✗'} ${label}(${Math.round((Date.now() - t0) / 1000)}s)`)
   if (r.status !== 0) failed.push(label)
+  if (r.timedOut || r.status === 130) finish()
 }
 
 function finish(): never {
@@ -56,12 +60,12 @@ function finish(): never {
 }
 
 if (full) {
-  step('typecheck', 'bun', ['run', 'typecheck'])
-  step('depcheck', 'bun', ['run', 'depcheck'])
-  step('测试(bun)', 'bun', ['run', 'test'])
-  step('测试(node)', 'npm', ['run', 'test:node'])
-  step('App 单测', 'bun', ['run', 'test'], 'apps/app')
-  step('真实形状沙盒', 'bun', ['run', 'test:sandbox'])
+  await step('typecheck', 'bun', ['run', 'typecheck'])
+  await step('depcheck', 'bun', ['run', 'depcheck'])
+  await step('测试(bun)', 'bun', ['run', 'test'])
+  await step('测试(node)', 'npm', ['run', 'test:node'])
+  await step('App 单测', 'bun', ['run', 'test'], 'apps/app')
+  await step('真实形状沙盒', 'bun', ['run', 'test:sandbox'])
   finish()
 }
 
@@ -72,10 +76,10 @@ if (mb.status !== 0) {
 }
 const base = mb.stdout.trim()
 const lines = (s: string) => s.split('\n').map(l => l.trim()).filter(Boolean)
-const changed = [...new Set([
+const changed = repositorySourcePaths([...new Set([
   ...lines(git(['diff', '--name-only', base]).stdout),
   ...lines(git(['ls-files', '--others', '--exclude-standard']).stdout),
-])]
+])])
 
 if (changed.length === 0) {
   console.log(`相对 ${BASE} 没有改动,不用跑。`)
@@ -91,13 +95,13 @@ if (changed.every(f => f.endsWith('.md'))) {
 const touched = (...prefixes: string[]) => changed.some(f => prefixes.some(p => f.startsWith(p)))
 console.log(`相对 ${BASE}(${base.slice(0, 8)})改了 ${changed.length} 个文件。`)
 
-step('typecheck · 根项目', 'bun', ['x', 'tsc', '--noEmit'])
+await step('typecheck · 根项目', 'bun', ['x', 'tsc', '--noEmit'])
 for (const app of ['apps/mobile', 'apps/relay', 'apps/app']) {
-  if (touched(`${app}/`, 'packages/protocol/')) step(`typecheck · ${app}`, 'bun', ['x', 'tsc', '--noEmit', '-p', app])
+  if (touched(`${app}/`, 'packages/protocol/')) await step(`typecheck · ${app}`, 'bun', ['x', 'tsc', '--noEmit', '-p', app])
 }
-step('depcheck', 'bun', ['run', 'depcheck'])
-step('测试 · 改动牵连到的', 'bun', ['--bun', 'vitest', 'run', '--changed', base, '--passWithNoTests'])
-if (touched('apps/app/', 'packages/protocol/')) step('App 单测', 'bun', ['run', 'test'], 'apps/app')
+await step('depcheck', 'bun', ['run', 'depcheck'])
+await step('测试 · 改动牵连到的', 'bun', ['--bun', 'vitest', 'run', '--changed', base, '--passWithNoTests'])
+if (touched('apps/app/', 'packages/protocol/')) await step('App 单测', 'bun', ['run', 'test'], 'apps/app')
 
 const CODE = /\.(ts|tsx|js|mjs|cjs|jsx)$/
 const nonImport = changed.filter(f => !CODE.test(f) && !f.endsWith('.md') && !['package.json', 'bun.lock'].includes(f))
@@ -105,13 +109,13 @@ if (nonImport.length) {
   console.log(`\nimport 图看不见这些文件:${nonImport.join('、')}`)
   const names = [...new Set(nonImport.map(f => f.split('/').pop()!))]
   const grep = git(['grep', '-lF', ...names.flatMap(n => ['-e', n]), '--', '*.test.ts', '*.test.tsx'])
-  const tests = lines(grep.stdout).filter(f => !f.startsWith('apps/app/') && !f.startsWith('apps/relay/'))
-  if (tests.length) step(`测试 · 提到这些文件名的(${tests.length})`, 'bun', ['--bun', 'vitest', 'run', ...tests])
+  const tests = repositorySourcePaths(lines(grep.stdout)).filter(f => !f.startsWith('apps/app/') && !f.startsWith('apps/relay/'))
+  if (tests.length) await step(`测试 · 提到这些文件名的(${tests.length})`, 'bun', ['--bun', 'vitest', 'run', ...tests])
   if (touched('apps/desktop/')) console.log('  改了桌面:Playwright 本地不跑,看 CI 的 desktop-e2e(本地要跑:cd apps/desktop && bun x playwright test)。')
 }
-const marked = lines(git(['grep', '-l', '@repo-guard', '--', 'src/**/*.test.ts']).stdout)
-step('测试 · 守卫', 'bun', ['--bun', 'vitest', 'run', 'scripts/', 'guard.test', 'no-bun-globals', ...marked])
-step('真实形状沙盒', 'bun', ['run', 'test:sandbox'])
-if (touched('apps/app/', 'packages/design-tokens/', 'packages/protocol/')) step('App 单测', 'bun', ['run', 'test'], 'apps/app')
-if (touched('apps/relay/', 'packages/protocol/')) step('中继单测', 'bun', ['run', 'test'], 'apps/relay')
+const marked = repositorySourcePaths(lines(git(['grep', '-l', '@repo-guard', '--', 'src/**/*.test.ts']).stdout))
+await step('测试 · 守卫', 'bun', ['--bun', 'vitest', 'run', 'scripts/', 'guard.test', 'no-bun-globals', ...marked])
+await step('真实形状沙盒', 'bun', ['run', 'test:sandbox'])
+if (touched('apps/app/', 'packages/design-tokens/', 'packages/protocol/')) await step('App 单测', 'bun', ['run', 'test'], 'apps/app')
+if (touched('apps/relay/', 'packages/protocol/')) await step('中继单测', 'bun', ['run', 'test'], 'apps/relay')
 finish()

@@ -271,3 +271,7 @@ daemon 收到之后 spawn 一个 detached 的 `wechat-cc self change --from wech
 - **执行者只有 `claude`。** Codex / Cursor / agy 的口子留着(`ImplementRunner`),v1 没接。
 - **桌面工作台面板看不到这个会话**(`claude -p` 是流水线自己起的进程)。补偿是 `~/.claude/settings.json` 里装的 `wechat-cc hook` 照常把会话完成推到微信,`看 <码>` 也能用。
 - **微信外发不通时拍板卡送不到**(`ilink/sendmessage errcode=-2`)。登记项不会被撤掉,用桌面权限卡或终端 `wechat-cc self change --approve <id>` 都能拍板 —— 2026-09-19 真机验证过。详见「微信不通时怎么拍板」。
+
+## 部署被交办任务挡住
+
+非交互自改明确使用等待策略：部署前及底层改文件前的任务门每次最多等 20 分钟，不提示终端输入。任务忙超时、任务状态查询失败均报告 `deploy_tasks_blocked`（退出 2、未部署），停在 deploy 供 `self change --resume <id>` 继续；查询失败说明状态未知，不推断任务忙。两种都不增加 `fail_streak`，也不触发两次部署故障停机。实际构建、部署或自检故障仍走原有故障预算，`.prev` 回滚保留救援旁路。

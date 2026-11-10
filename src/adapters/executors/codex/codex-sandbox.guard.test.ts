@@ -1,3 +1,4 @@
+import { isTaskCachePath } from '../../../../scripts/task-cache-paths'
 import { expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -28,6 +29,7 @@ function productionSources(root: string): string[] {
   return readdirSync(root, { withFileTypes: true }).flatMap(entry => {
     if (entry.name === 'test-support' || entry.name === '__e2e__') return []
     const path = join(root, entry.name)
+    if (isTaskCachePath(path)) return []
     return entry.isDirectory() ? productionSources(path) : entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts') && !entry.name.endsWith('.d.ts') ? [path] : []
   })
 }

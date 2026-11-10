@@ -48,7 +48,9 @@ Bun 1.3.14 忽略 NODE_OPTIONS 环境预加载，因此任务 PATH 使用固定 
 
 固定 shim 和 wrapper 位于 CC 创建的独立随机只读 runtime 目录，处于所有任务工作区 / TMPDIR 可写根之外；文件名带 SHA256，每次使用均经锚定读取和固定内容指纹校验。权限位不是同 UID 隔离保证，真正边界是 Codex deny-default + workspace-write 且排除全局 /tmp。真实沙箱回归同时验证任务正常写入成功、外部 shim 的改写/替换/硬链接失败。宿主 Node/Bun 路径变化时建立新 bundle，旧 bundle 保留给运行中任务；进程正常退出时统一清理。
 
-宿主 app-server 仅使用干净 workbenchCodexEnv；任务 TMP / cache / preload / PATH 只通过 shell_environment_policy.set 进入沙箱 shell。宿主通知、MCP、helper 不继承任务环境；回归用真实绝对 Node helper 和任务改写的 preload 验证。Claude 的宿主及 settings 也不接任务 preload/PATH，只保留临时目录和包缓存位置，避免把 Codex 的兼容 shim 用到沙箱外。
+宿主进程永不加载任务 preload，包括已批准的沙箱外命令。Codex 的 `shell_environment_policy.set` 同时用于沙箱内外，当前仓库没有可信的沙箱专属命令包装入口；因此生产 start/resume 只传 TMP / cache，移除任务 NODE_OPTIONS / wrapper PATH / 开机基线，宿主 app-server 使用干净 workbenchCodexEnv。批准命令的真实 Node/Bun 回归检查模块根本没有加载，而非加载后空操作。Claude 同样只保留临时目录和包缓存位置。
+
+固定 preload 与 runtime wrapper 保留给显式沙箱兼容层及其离线 Seatbelt 测试，但不再自动注入 Codex 生产任务。当前 Codex 沙箱 uptime 兜底暂不可用；在有可信的沙箱专属注入层前，任务遇到 EPERM 必须由调用方捕获，不能为兼容性让沙箱外宿主加载代码。
 
 ## 本机回环：不做
 

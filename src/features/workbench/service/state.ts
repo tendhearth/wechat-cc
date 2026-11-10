@@ -42,6 +42,11 @@ export interface Active extends PathReservation {
   task: StoredTask
   directoryIdentity: string
   cancelled: boolean
+  /** 派发准备与执行者调用分开：只有明确尚未调用 spawn 的首请求可在重启后重新派发。 */
+  spawnAttempted: boolean
+  /** 部署关停打断，区别于主人亲手停止；安全续接凭据已在 cancel 前落盘。 */
+  restartInterrupted?: boolean
+  writerExited?: boolean
   session?: AgentSession
   done: Promise<void>
   resolveDone: () => void

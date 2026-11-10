@@ -11,6 +11,7 @@
  * **写**(writeFileAtomic / writeFileSync / appendFileSync / renameSync 的那一行提到这三份文件)只许在导出器 memory-export.ts,基线 0。
  * 只扫生产代码(排除 *.test.ts);注释行按行跳(块注释正则会吞代码)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -32,6 +33,7 @@ export function mentionsOwnerFile(src: string): boolean {
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) walk(p, out)
     else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) out.push(p)
   }

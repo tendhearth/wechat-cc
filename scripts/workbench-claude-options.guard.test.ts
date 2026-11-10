@@ -1,3 +1,4 @@
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, expect, it } from 'vitest'
 import ts from 'typescript'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -49,6 +50,7 @@ describe('workbench Claude option preparation is awaited',()=>{
     const scan=(dir: string)=>{
       for(const entry of readdirSync(dir,{withFileTypes:true})) {
         const path=join(dir,entry.name)
+        if(isTaskCachePath(path)) continue
         if(entry.isDirectory()) scan(path)
         else if(/\.[cm]?[jt]sx?$/.test(entry.name)&&path!==join('scripts','workbench-claude-options.guard.test.ts')) {
           const source=readFileSync(path,'utf8')

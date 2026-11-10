@@ -6,6 +6,7 @@
  * `detect`),生产代码里再出现这几种手写 ⇒ 红,改成调 executorBinary / executorCredential / executorMissingConfig。
  * 只扫生产代码(排除 *.test.ts);注释行不算。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -24,6 +25,7 @@ const HAND_WRITTEN: Record<string, RegExp> = {
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (name !== 'node_modules') walk(p, out) }
     else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p)
   }

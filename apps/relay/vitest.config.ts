@@ -1,3 +1,4 @@
+import { TASK_CACHE_GLOBS } from '../../scripts/task-cache-paths'
 import { cloudflareTest } from '@cloudflare/vitest-plugin'
 import { defineConfig } from 'vitest/config'
 
@@ -23,5 +24,5 @@ export default defineConfig({
       },
     }),
   ],
-  test: { testTimeout: 20_000, include: ['test/**/*.test.ts'], exclude: ['test/e2e/**'] },
+  test: { testTimeout: 20_000, include: ['test/**/*.test.ts'], exclude: [...TASK_CACHE_GLOBS,'test/e2e/**'] },
 })

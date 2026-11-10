@@ -242,7 +242,9 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       // Startup has no turn. Keep MCPs disabled while reading the native layers,
       // without overwriting the user's web-search mode before config/read.
       // 对话侧启动只钉离线开关:工具与完整策略在线程配置里(令牌不进 argv)。
-      const taskEnv = !chat && context.workbenchTaskId ? await taskEnvironment(project.path, context.workbenchTaskId,{signal:context.preparationSignal}) : {}
+      // Codex applies shell policy to approved host commands too. Until there
+      // is a sandbox-only hook, task preloads and runtime wrappers cannot enter it.
+      const {NODE_OPTIONS:_taskPreload,PATH:_taskWrappers,CC_TASK_SYSTEM_BOOT_MS:_taskBoot,...taskEnv} = !chat && context.workbenchTaskId ? await taskEnvironment(project.path, context.workbenchTaskId,{signal:context.preparationSignal}) : {}
       const taskConfig: ObjectValue = context.workbenchTaskId && !chat ? {
         sandbox_workspace_write: { ...discovery!.config.sandbox_workspace_write, writable_roots: [taskEnv.TMPDIR!] },
         shell_environment_policy: { ...discovery!.config.shell_environment_policy, set: taskEnv, include_only: [...discovery!.config.shell_environment_policy.include_only, ...Object.keys(taskEnv)] },

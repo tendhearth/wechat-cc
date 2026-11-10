@@ -13,6 +13,7 @@
  * 全仓有 54 处同形状的 `JSON.parse(readFileSync(...))`;这个 helper 是给它们
  * 准备的统一入口,本次先接最要命的两处(账号加载 / agent-config)。
  */
+import { isTaskCachePath } from '../../scripts/task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -80,6 +81,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     if (name === 'node_modules' || name === '.git' || name === 'dist' || name === 'target') continue
     const full = pjoin(dir, name)
+    if (isTaskCachePath(full)) continue
     const st = statSync(full)
     if (st.isDirectory()) walk(full, out)
     else if (/\.(ts|js|mjs)$/.test(name) && !/\.test\.ts$/.test(name) && !/\.d\.ts$/.test(name)) out.push(full)
