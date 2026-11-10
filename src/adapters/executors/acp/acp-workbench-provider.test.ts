@@ -98,6 +98,22 @@ beforeEach(() => {
 afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); Object.defineProperty(process, 'platform', platform); vi.restoreAllMocks() })
 
 describe('ACP workbench provider', () => {
+  it('delivers the rejection reason once through the same ACP session after rejecting only this operation', async () => {
+    const { session, child } = await start({requestPermission:async request=>{request.onDenied?.('不要访问其他机器');return false}})
+    const run=collect(session);await prompted(child)
+    permission(child,'reason')
+    await prompted(child,2)
+    expect(child.sent.find(m=>m.id==='reason')?.result).toEqual({outcome:{outcome:'selected',optionId:'reject-once'}})
+    expect(child.sent.findIndex(m=>m.id==='reason')).toBeLessThan(child.sent.findIndex(m=>m.method==='session/cancel'))
+    const next=child.sent.filter(m=>m.method==='session/prompt')[1]!
+    expect(next.params.sessionId).toBe('sess-1')
+    expect(next.params.prompt[0].text).toContain('不要访问其他机器')
+    expect(next.params.prompt[0].text).toContain('uname -a')
+    expect(run.events.some(e=>e.kind==='result'||e.kind==='error')).toBe(false)
+    child.finishPrompt();await run.done
+    expect(run.events.filter(e=>e.kind==='result')).toHaveLength(1)
+    expect(child.sent.filter(m=>m.method==='session/new')).toHaveLength(1)
+  })
   it('initializes without fs/terminal capabilities, opens a session and reports the edit-unattended notice', async () => {
     const reportNotice = vi.fn()
     const { child } = await start({ reportNotice })
@@ -216,7 +232,7 @@ describe('ACP workbench provider', () => {
     await prompted(child)
     permission(child, 'perm-1')
     await expect.poll(() => child.sent.some(m => m.id === 'perm-1')).toBe(true)
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'execute', description: 'uname -a', command: 'uname -a' }, expect.any(AbortSignal))
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'execute', description: 'uname -a', command: 'uname -a', onDenied: expect.any(Function) }, expect.any(AbortSignal))
     expect(child.sent.find(m => m.id === 'perm-1')).toEqual({ jsonrpc: '2.0', id: 'perm-1', result: { outcome: { outcome: 'selected', optionId: 'allow-once' } } })
     permission(child, 'perm-2', { toolCall: { toolCallId: 'c2', title: '`rm x`', kind: 'execute', status: 'pending', rawInput: { command: 'rm x' } } })
     await expect.poll(() => child.sent.some(m => m.id === 'perm-2')).toBe(true)

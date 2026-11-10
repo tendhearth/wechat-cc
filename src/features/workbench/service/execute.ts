@@ -244,7 +244,20 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
         // 结束在这里补一次评估:请求**自己超时**(权限 5 分钟)那一下既没有事件、也不走
         // resolvePermission —— 会话早就静下来的话,没有人会回来起空闲收工的计时(终审 I4)。
-        requestPermission:(request,signal) => {running.interactionAt=Date.now();ctx.hub.bumped(task.id);return running.permissions.request({...request,cwd:request.cwd??running.path},signal).finally(()=>{running.interactionAt=Date.now();ctx.hub.bumped(task.id);settleAfterDecision(running)})},
+        requestPermission:(request,signal) => {
+          if(running.permissionDenialLimit)return Promise.resolve(false)
+          running.interactionAt=Date.now();ctx.hub.bumped(task.id)
+          return running.permissions.request({...request,cwd:request.cwd??running.path},signal).then(allowed=>{
+            if(running.permissions.denialLimitReached()&&!running.permissionDenialLimit) {
+              running.permissionDenialLimit=true
+              running.stopNotice='已连续拒绝三次，任务已停下等待你的下一步说明。原会话和记录已保留。'
+              store.addEvent(task.id,'system',running.stopNotice,null,running.identity)
+              try { untilStop(task.id,'已连续拒绝三次，等待主人说明') } catch { /* Stopping the run must still proceed. */ }
+              running.signalStop()
+            }
+            return allowed
+          }).finally(()=>{running.interactionAt=Date.now();ctx.hub.bumped(task.id);settleAfterDecision(running)})
+        },
         requestUserInput:(request,signal) => {running.interactionAt=Date.now();ctx.hub.bumped(task.id);return running.questions.request(request,signal).finally(()=>{running.interactionAt=Date.now();ctx.hub.bumped(task.id);settleAfterDecision(running)})},
       }).catch(error => { spawnRejected=true; throw error })
       let spawnTimer:ReturnType<typeof setTimeout>|undefined
@@ -357,6 +370,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)
           },()=>running.interactionAt,runtime?()=>runtime.start(request,material):undefined)
       } finally { coalescer.dispose() }
+      if (running.permissionDenialLimit) { finalStatus='interrupted'; return }
       if (!summary) { finalStatus='cancelled'; return }
       if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,summary.result.sessionId)}
       if (running.cancelled) finalStatus='cancelled'
@@ -490,7 +504,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
 
 
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     assertNotRewindBlocked(store.rewinds,task.id)
     if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
@@ -530,14 +544,15 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const ruleDecide=ctx.deps.permissionDecide
     const permissionPrompts=new Map<string,()=>void>()
     const permissions=makeRunPermissions({
+      initialDenials,
       taskId:task.id,root:task.path,provider:task.providerId,stateDir:ctx.stateDir,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
       audit:event => {
         if(event.type==='request'){
           addRunEvent('system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
           let replyLine=''
           if(ctx.deps.permissionPrompt){
-            const close=ctx.deps.permissionPrompt(task.title,event.permission,decision=>{
-              const resolved=permissions.resolve(event.permission.id,decision)
+            const close=ctx.deps.permissionPrompt(task.title,event.permission,(decision,reason)=>{
+              const resolved=permissions.resolve(event.permission.id,decision,reason)
               if(resolved)ctx.hub.bumped(task.id)
               return resolved
             },()=>permissions.deadline(event.permission.id))
@@ -546,7 +561,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'))
         }else {
           permissionPrompts.get(event.permission.id)?.();permissionPrompts.delete(event.permission.id)
-          addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}`)
+          addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}${event.reason?`\n拒绝理由：${event.reason}`:''}`)
         }
       },
       ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),firstUserText(task.id)??null,facts))}:{}),
@@ -678,7 +693,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
   function create(input:CreateTask):WorkbenchTaskView {
     return createTask(input)
   }
-  function continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView {
+  function continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
     ctx.ensureAccepting()
     const attachments=selectAttachments(options,id,attachmentPolicy)
     const inputRequestId=options?.inputRequestId===undefined?undefined:normalizeInputRequestId(options.inputRequestId)
@@ -710,7 +725,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const accepted:AcceptedContinuation=decision.mode==='restart_required'
       ? {mode:'restart',preview:decision.restart}
       : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
-    try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy)}
+    try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy,initialDenials)}
     catch(error){
       if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');ctx.hub.bumped(id)}catch{state.autoContinueBlocked.add(id)}
       throw error

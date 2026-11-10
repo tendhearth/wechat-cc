@@ -9,6 +9,7 @@ import { wrapForProcessTree } from '../../../lib/jobspawn'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from '../../workbench/user-input'
 import { needsBoundExecution } from '../../workbench/permission-command'
+import { permissionDenialMessage } from '../../../domain/permission-denial'
 import { codexActivityEvent, codexItemId } from './codex-activity'
 import { codexMcpApproval, supportsCodexMcpApproval } from './codex-mcp-approval'
 import { codexNativeCapabilityNotice } from '../../workbench/native-capability-notice'
@@ -111,7 +112,7 @@ const samePath = (a: unknown, b: string): boolean => {
 
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel'; mcp?: boolean }
 interface UserQuestion { controller: AbortController; turn: Turn }
-interface Turn { toolItems?: Set<string>; terminal?: boolean; watchdog?: PausableTimer; watchdogKind?: 'first_event' | 'connect'; lastRetry?: ObjectValue; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number; usage?: TurnUsage }
+interface Turn { denialFeedback?: string[]; denialDelivery?: Promise<void>; resumingDenial?: boolean; toolItems?: Set<string>; terminal?: boolean; watchdog?: PausableTimer; watchdogKind?: 'first_event' | 'connect'; lastRetry?: ObjectValue; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number; usage?: TurnUsage }
 
 function turnInput(text: string, attachments: readonly AgentAttachment[] = []) {
   const input: Array<{ type: 'text'; text: string; text_elements: [] } | { type: 'image'; url: string; detail: 'high' }> = text || !attachments.length ? [{ type: 'text', text, text_elements: [] }] : []
@@ -256,6 +257,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       const launcher = chat ? wrapForProcessTree(binary, launchArgs) : { command: binary, args: launchArgs }
       const child = (options.spawnProcess ?? spawnCodexAppServerProcess)(launcher.command, launcher.args, { cwd: project.path, env: childEnv, detached: process.platform !== 'win32' })
       const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; clear: () => void }>()
+      const rejectedRpcs = new WeakSet<Error>()
       // 网络守护「暂停在跑的任务」(2026-10-03):冻住整棵树时,这个会话自己的计时器(连接 / 首个事件
       // 超时、RPC 请求超时)一起停,放开时按剩下的时间接着走 —— 不然冻住期间到点,会把只是在等网络的
       // 一轮判成失败。收尾路上的 cleanupRequest 用自己的截止时间,不在此列。
@@ -619,9 +621,11 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           fatal('无法核实或完整显示本次 Codex 权限请求，工作台已停止任务。')
           return
         }
+        let feedback: string | undefined
+        const onDenied = (reason: string) => { feedback = permissionDenialMessage(description, reason); (turn.denialFeedback ??= []).push(feedback) }
         const ask = chat ? chat.approve : context.requestPermission
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && ask
-          ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts,
+          ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts, ...(!chat ? { onDenied } : {}),
               ...(!chat && !file && typeof command === 'string' && needsBoundExecution(command) ? { requiresBoundExecution: true as const } : {}),
             }, controller.signal)
           : false,
@@ -630,7 +634,23 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           if (allow !== true && entry.rejection === 'cancel') turn.rejectedOperation = true
           send({ id, result: { decision: allow === true ? 'accept' : entry.rejection } }, () => {
             if (approvals.get(id) === entry) approvals.delete(id)
+            if (allow !== true && feedback && entry.rejection === 'decline') steerDenial(turn, feedback)
           })
+        })
+      }
+      // Approval replies have no reason field. Append feedback to the exact
+      // native turn; a terminal-turn race is handled by the continuation below.
+      const steerDenial = (turn: Turn, feedback: string) => {
+        turn.denialDelivery = (turn.denialDelivery ?? Promise.resolve()).then(async () => {
+          if (!current(turn) || turn.cancelled || turn.terminal || !turn.id) return
+          const response = await request('turn/steer', { threadId: turn.threadId, expectedTurnId: turn.id, input: turnInput(feedback) })
+          if (response.turnId !== turn.id) throw Error('codex_steer_turn_mismatch')
+          turn.denialFeedback = turn.denialFeedback?.filter(text => text !== feedback)
+        }).catch(error => {
+          if (!current(turn)) return
+          if (error instanceof Error && rejectedRpcs.has(error)) {
+            if (!turn.terminal && turn.id) void request('turn/interrupt', { threadId: turn.threadId, turnId: turn.id }).catch(() => {})
+          } else finish(turn, codexErrorEvent(error instanceof Error ? error.message : String(error)))
         })
       }
       const onQuestion = (message: Message, turn: Turn) => {
@@ -685,12 +705,15 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         const controller = new AbortController(), entry: Approval = { controller, turn, rejection: 'decline', mcp: true }
         approvals.set(id, entry)
         const { input, ...request } = permission
+        let feedback: string | undefined
+        const onDenied = (reason: string) => { feedback = permissionDenialMessage(request.description, reason); (turn.denialFeedback ??= []).push(feedback) }
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && (chat ? chat.approve : context.requestPermission)
-          ? chat ? chat.approve!({ ...request, input }, controller.signal) : context.requestPermission!(request, controller.signal) : false,
+          ? chat ? chat.approve!({ ...request, input }, controller.signal) : context.requestPermission!({ ...request, onDenied }, controller.signal) : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
           send({ id, result: { action: allow === true ? 'accept' : 'decline', content: null, _meta: null } }, () => {
             if (approvals.get(id) === entry) approvals.delete(id)
+            if (allow !== true && feedback) steerDenial(turn, feedback)
           })
         })
       }
@@ -923,9 +946,51 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           } else if (message.method === 'turn/completed') {
             turn.terminal = true
             if (turn.occurrence) {
+              if (!chat && !turn.cancelled && turn.denialFeedback?.length && ['completed','interrupted'].includes(params.turn?.status)) {
+                if (turn.resumingDenial) return
+                turn.resumingDenial = true
+                void (async()=>{
+                  await turn.denialDelivery
+                  if (!current(turn) || stopped || closing || runtimeEnded || broken) return
+                  const feedback=turn.denialFeedback?.splice(0).join('\n\n')
+                  if (feedback) {
+                    const text=`子执行者 ${turn.threadId} 的操作被拒绝。请在拥有此任务的原会话中继续处理：\n\n${feedback}`
+                    if (active) {
+                      (active.denialFeedback??=[]).push(text)
+                      steerDenial(active,text)
+                    } else {
+                      const next=launch(text)
+                      void next.accepted.catch(error=>{if(active===next.turn)finish(next.turn,codexErrorEvent(error instanceof Error?error.message:String(error)))})
+                    }
+                  }
+                  // Finalize the child only after the owning parent holds the
+                  // feedback; duplicate terminal notifications cannot redeliver it.
+                  turn.resumingDenial=false
+                  route(message)
+                })().catch(error=>{if(current(turn))finish(turn,codexErrorEvent(error instanceof Error?error.message:String(error)))})
+                return
+              }
               for (const item of Array.isArray(params.turn?.items) ? params.turn.items : []) if (item.type === 'agentMessage' && codexItemId(item.id) && typeof item.text === 'string') turn.occurrence.text(item.id, item.text, true)
               dropPendingRequests(turn); retainUnfinishedCommands(turn); turn.occurrence.finish(params.turn?.status)
               turn.events.push(turn.occurrence.event(), reconcileUnstartedCommands()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn); return
+            }
+            if (!chat && !turn.cancelled && turn.denialFeedback?.length && ['completed', 'interrupted'].includes(params.turn?.status)) {
+              if (turn.resumingDenial) return
+              turn.resumingDenial = true; clearWatchdog(turn)
+              void (async () => {
+                await turn.denialDelivery
+                if (!current(turn) || turn.cancelled || closing || stopped) return
+                if (!turn.denialFeedback?.length) { turn.resumingDenial = false; route(message); return }
+                const feedback = turn.denialFeedback.join('\n\n')
+                turn.denialFeedback = []
+                dropPendingRequests(turn); retainUnfinishedCommands(turn); pruneFinishedTurn(turn)
+                active = undefined
+                context.reportNotice?.('这一步已拒绝，正在同一会话中换一种做法继续。')
+                const next = launch(feedback, undefined, turn.events)
+                if (turn.usage) next.turn.usage = sumTurnUsage(next.turn.usage, turn.usage)
+                await next.accepted
+              })().catch(error => { if (active) finish(active, codexErrorEvent(error instanceof Error ? error.message : String(error))) })
+              return
             }
             if (params.turn?.status === 'completed' && !turn.cancelled) finish(turn, { kind: 'result', sessionId: threadId, numTurns: 1, durationMs: typeof params.turn.durationMs === 'number' ? params.turn.durationMs : Date.now() - turn.startedAt, ...(turn.usage ? { usage: turn.usage } : {}) })
             else if (params.turn?.status === 'interrupted') finish(turn, { kind: 'error', message: turn.cancelled ? 'Codex 本轮已停止。' : turn.rejectedOperation ? '这次操作已被拒绝，Codex 已结束本轮。可以补充要求后继续。' : 'Codex 本轮已中断，未能确认完成。可以补充要求后继续。' })
@@ -941,7 +1006,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           const rpc = rpcs.get(message.id)
           if (!rpc) return // A timed-out or cancelled client's late response.
           rpcs.delete(message.id); rpc.clear()
-          if (message.error) rpc.reject(codexRpcError(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'))
+          if (message.error) { const error=codexRpcError(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'); rejectedRpcs.add(error); rpc.reject(error) }
           else if (object(message.result)) rpc.resolve(message.result)
           else { rpc.reject(new Error('codex_invalid_rpc_response')); fatal('codex_invalid_rpc_response') }
         } else fatal('codex_invalid_protocol_message')
@@ -1033,11 +1098,12 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         threadId = response.thread.id
         if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
       } catch (error) { await close(); throw error }
-      const launch = (text: string, attachments?: readonly AgentAttachment[]) => {
+      const launch = (text: string, attachments?: readonly AgentAttachment[], sharedEvents?: EventQueue) => {
         if (active) throw new Error('codex_turn_already_running')
         if (closing || exited || broken || stopped || runtimeEnded) throw broken ?? new Error('codex_session_closed')
         validateAttachments(attachments)
         const input = turnInput(text, attachments), turn = makeTurn()
+        if (sharedEvents) turn.events = sharedEvents
         writerRevision++; active = turn; if (lifetime) pendingStarts.add(turn); turn.events.push({ kind: 'init', sessionId: threadId })
         armWatchdog(turn, 'first_event')
         const accepted = request('turn/start', { threadId, input }).then(response => {

@@ -94,6 +94,7 @@ export interface Active extends PathReservation {
   networkSuspended?: { since: number }
   /** 停下这条 run 时交给终态微信通知的正文(暂停到顶:「网络一直没恢复，任务已停止，可以接着做」)。 */
   stopNotice?: string
+  permissionDenialLimit?: boolean
 }
 
 export interface WorkbenchRuntimeState {

@@ -430,7 +430,7 @@ export function makeIlinkAdapter(opts: {
         if (hash) {
           const approver = pending.approverOf(hash)
           if (approver !== null && approver !== fromChatId) return false
-          return pending.consume(hash, parsed.decision)
+          return pending.consume(hash, parsed.decision, parsed.reason)
         }
         // 引用的不是待批卡片(或已经过期):按没引用处理,下面看待批条数。
       }
@@ -439,7 +439,7 @@ export function makeIlinkAdapter(opts: {
       if (!parsed.ref) {
         const mine = pending.list().filter(p => p.chatId === fromChatId)
         if (mine.length === 0) return false
-        if (mine.length === 1) return pending.consume(mine[0]!.hash, parsed.decision)
+        if (mine.length === 1) return pending.consume(mine[0]!.hash, parsed.decision, parsed.reason)
         const lines = mine.map(p => `${p.code}:${(p.prompt.split('\n')[0] ?? '').slice(0, 40)}`)
         void adapter.sendMessage(fromChatId ?? mine[0]!.chatId, `有 ${mine.length} 条在等你,带上码回:\n${lines.join('\n')}\n例如「y ${mine[0]!.code}」`)
         log('PERMISSION', `bare reply with ${mine.length} pending for chat=${fromChatId}: asked for a code`)
@@ -451,11 +451,11 @@ export function makeIlinkAdapter(opts: {
       // 或 hash 根本不存在)⇒ 走旧路径:不存在的 hash 由 consume 报 false。
       const approver = pending.approverOf(hash)
       if (approver !== null && approver !== fromChatId) return false
-      return pending.consume(hash, parsed.decision)
+      return pending.consume(hash, parsed.decision, parsed.reason)
     },
 
     listPendingPermissions() { return pending.list() },
-    resolvePermission(hash, decision) { return pending.consume(hash, decision) },
+    resolvePermission(hash, decision, reason) { return pending.consume(hash, decision, reason) },
     pendingPermissionCodeOf(hash) { return pending.codeOf(hash) },
     registerPendingPermission(hash, timeoutMs, meta, options) { return pending.register(hash, timeoutMs, meta, options?.onAllowTask, options?.deadline, options?.onDecision) },
     sweepPendingPermissions() { pending.sweep() },

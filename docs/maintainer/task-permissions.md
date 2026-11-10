@@ -1,5 +1,7 @@
 # 任务内的同命令批准
 
+拒绝单次操作后如何携带理由并继续、连续三次拒绝的等待边界及协议出处，见[拒绝一步后继续任务](permission-denial.md)。
+
 工作台权限卡可选「本任务同命令都允许」；微信同一张卡回 `yt <两位码>`。普通允许只批原请求、原 run、完整命令/cwd 与该次申请范围的一次调用，不生成任务、session 或 execpolicy 规则。只有服务端确认可复用时才显示任务选项，不能由客户端自行指定范围。
 
 临时许可沿用 `Rule`、`RuleWhen` 和 `matchRule`：`surface=workbench`、任务 `scope`、执行者、工具与 `commandHash` 必须相符。建立与复用都必须满足 `EDIT_REPORTING_PROVIDERS`；Cursor、自定义 ACP、未知执行者不能使用。规则只存在于当前运行的 `RunPermissions`，结束、取消、归档或重启后不继承，也不改全局 permission-rules.json。现有规则的拒绝、要求询问以及固定红线优先，规则服务失败时也不提供任务许可。

@@ -1629,7 +1629,7 @@ async fn launch_url_with_initial_status(mut command: tokio::process::Command) ->
 // the full security rationale. Doing it in Rust keeps that token out of the
 // webview entirely; the page only ever names a hash and a decision.
 #[tauri::command]
-async fn pet_permission_resolve(hash: String, decision: String) -> Result<bool, String> {
+async fn pet_permission_resolve(hash: String, decision: String, reason: Option<String>) -> Result<bool, String> {
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -1649,7 +1649,7 @@ async fn pet_permission_resolve(hash: String, decision: String) -> Result<bool, 
     let url = format!("{base_url}/v1/permissions/resolve");
     // reqwest's `json` feature is off in this crate (Cargo.toml) — serialize
     // by hand, same as the other commands here.
-    let payload = serde_json::to_string(&serde_json::json!({ "hash": hash, "decision": decision }))
+    let payload = serde_json::to_string(&serde_json::json!({ "hash": hash, "decision": decision, "reason": reason.unwrap_or_default() }))
         .map_err(|e| format!("failed to serialize request body: {e}"))?;
 
     // The route only flips an in-memory pending entry and returns; 10s is

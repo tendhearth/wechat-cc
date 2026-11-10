@@ -19,6 +19,22 @@ function find(el: any, sel: string): any { const cls = sel.replace(/^\./, ''); i
 const item = { hash: 'abcde', prompt: 'Bash: rm -rf ./tmp', since: 's', expires_at: 'e' }
 
 describe('createPermissionCard', () => {
+  it('review P2 capability: a plain conversation or terminal card has no reason field',()=>{
+    const root=makeEl(),card=createPermissionCard({el:root,makeEl},{canResolve:true,onResolve:vi.fn(async()=> 'resolved' as const)})
+    card.show(item,1)
+    expect(root.querySelector('.pet-card-denial-reason')).toBeNull()
+  })
+  it('preserves optional denial feedback across polling and sends it only with a rejection',async()=>{
+    const root=makeEl(),onResolve=vi.fn(async()=> 'failed' as const),card=createPermissionCard({el:root,makeEl},{canResolve:true,onResolve})
+    card.show({...item,canDenyWithReason:true},1)
+    const reason=root.querySelector('.pet-card-denial-reason');reason.value=' 不要 SSH '
+    card.show({...item,canDenyWithReason:true},2);expect(root.querySelector('.pet-card-denial-reason')).toBe(reason)
+    root.querySelector('.pet-card-deny').fire('click');await Promise.resolve();await Promise.resolve()
+    expect(onResolve).toHaveBeenLastCalledWith('abcde','deny','不要 SSH')
+    root.querySelector('.pet-card-allow').fire('click');await Promise.resolve();await Promise.resolve()
+    expect(onResolve).toHaveBeenLastCalledWith('abcde','allow')
+    expect(root.querySelector('.pet-card-denial-reason').value).toBe(' 不要 SSH ')
+  })
   it('shows the task option only when eligible, attaches script text and locks all decisions during submit', async () => {
     const root=makeEl(),onResolve=vi.fn(async()=> 'resolved' as const)
     const card=createPermissionCard({el:root,makeEl},{canResolve:true,onResolve})

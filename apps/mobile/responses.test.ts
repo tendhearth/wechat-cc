@@ -3,11 +3,31 @@ import {Window} from 'happy-dom'
 import {readMobileSource} from './sources'
 import {assembleMobilePage} from './assemble'
 const windows:Window[]=[]
+it('review P2 capability: unknown and unsupported cards have no rejection reason input',()=>{
+ const h=fixture()
+ for(const capability of [undefined,false]){
+  h.cRenderResponses({...h.detail,permissions:[{...h.detail.permissions[0],canDenyWithReason:capability}]})
+  expect(h.w.document.querySelector('[data-denial-reason]')).toBeNull()
+ }
+})
+it('keeps an optional denial reason through polling and sends it only with the exact rejection',async()=>{
+ const h=fixture(),field=h.w.document.querySelector('[data-denial-reason]') as unknown as HTMLTextAreaElement
+ field.value='只在本机验证 <script>reason</script>'
+ h.cRenderResponses({...h.detail,events:[{text:'progress'}]})
+ expect((h.w.document.querySelector('[data-denial-reason]') as unknown as HTMLTextAreaElement).value).toBe(field.value)
+ h.cRenderResponses({...h.detail,permissions:[...h.detail.permissions,{...h.detail.permissions[0],id:'another'}]})
+ expect((h.w.document.querySelector('[data-denial-reason]') as unknown as HTMLTextAreaElement).value).toBe(field.value)
+ await h.cRespond(h.request,'deny',null)
+ expect(h.posts[0].body).toEqual({id:'deadbeef',runId:h.run,requestId:h.request,decision:'deny',reason:field.value})
+ expect(h.w.document.querySelector('#m-response script')).toBeNull()
+ const other=fixture();(other.w.document.querySelector('[data-denial-reason]') as unknown as HTMLTextAreaElement).value='ignored'
+ await other.cRespond(other.request,'allow',null);expect(other.posts[0].body).not.toHaveProperty('reason')
+})
 afterEach(async()=>{await Promise.all(windows.splice(0).map(w=>w.happyDOM.abort()))})
 function fixture(device=true,fail=false,scriptReader?:(path:string)=>Promise<{content:string;nextOffset:number|null}>){
  const w=new Window({url:'https://fixture.test/m'});windows.push(w);w.document.body.innerHTML=assembleMobilePage(readMobileSource).phone
  const request='11111111-1111-4111-8111-111111111111',run='22222222-2222-4222-8222-222222222222',posts:any[]=[],reads:string[]=[]
- const detail={matter:{id:'deadbeef'},runId:run,permissions:[{id:request,taskId:'deadbeef',tool:'read',description:'<script>unsafe</script>',createdAt:1}],questions:[{id:'33333333-3333-4333-8333-333333333333',taskId:'deadbeef',questions:[{id:'q',header:'方案',question:'选哪个',multiSelect:false,allowOther:true,options:[{label:'A',description:'第一个'}]}]}]}
+ const detail={matter:{id:'deadbeef'},runId:run,permissions:[{id:request,taskId:'deadbeef',tool:'read',canDenyWithReason:true,description:'<script>unsafe</script>',createdAt:1}],questions:[{id:'33333333-3333-4333-8333-333333333333',taskId:'deadbeef',questions:[{id:'q',header:'方案',question:'选哪个',multiSelect:false,allowOther:true,options:[{label:'A',description:'第一个'}]}]}]}
  const env={document:w.document,isDevice:device,cReady:true,mDetail:detail,mCurrent:'deadbeef',mDetailFresh:true,mOffline:false,esc:(s:any)=>String(s).replace(/</g,'&lt;').replace(/"/g,'&quot;'),mNotice:()=>{},mRefresh:async()=>{},onUnauthorized:()=>{},T:'dTEST',mApi:async(path:string)=>{reads.push(path);if(scriptReader)return await scriptReader(path);return {content:'full snapshot <script>literal</script>',nextOffset:null}},mPostOnce:async(p:string,o:any)=>{posts.push({p,body:JSON.parse(o.body)});if(fail)throw Error('lost reply');return {status:200,json:async()=>({ok:true})}}}
  const f=new Function(...Object.keys(env),readMobileSource('responses.js')+'\nreturn {cRenderResponses,cRespond,cExpandScript}')(...Object.values(env));f.cRenderResponses(detail)
  return {w,posts,reads,detail,request,run,...f}

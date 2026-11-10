@@ -222,6 +222,12 @@ describe('LiveBackend 提交', () => {
     await expect(b.decide(p)).rejects.toMatchObject({ code: 'stale' })
     expect(reqs[0]).toMatchObject({ body: p, retry: undefined })
   })
+  it('拒绝理由随原任务和请求发送一次，返回丢失不重发',async()=>{
+    const {b,reqs}=harness({'POST /m/api/matter/permission':new Error('timeout')})
+    const p={id:ID,runId:RUN,requestId:REQ,decision:'deny' as const,reason:'不要 SSH'}
+    await expect(b.decide(p)).rejects.toBeDefined()
+    expect(reqs).toHaveLength(1);expect(reqs[0]!.body).toEqual(p);expect(reqs[0]!.retry).toBeUndefined()
+  })
   it('回答:JSON 超过 20 000 字 ⇒ invalid,请求根本不发', async () => {
     const { b, reqs } = harness({ 'POST /m/api/matter/answer': ok({ ok: true }) })
     await expect(b.answer({ id: ID, runId: RUN, requestId: REQ, answers: { q: ['x'.repeat(20_000)] } })).rejects.toMatchObject({ code: 'invalid' })

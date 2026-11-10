@@ -13,6 +13,7 @@
  *  - 不声明 fs/terminal,agent 自己落盘。
  */
 import { compilePolicy } from '../../../domain/policy'
+import { permissionDenialMessage } from '../../../domain/permission-denial'
 import { acpSupportedOn } from './platform'
 import { spawn as nodeSpawn } from 'node:child_process'
 import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnContext } from '../../../ports/agent-provider'
@@ -157,7 +158,7 @@ const object = (value: unknown): value is Record<string, unknown> => !!value && 
 // 换行会破坏 stdio 上的换行分隔协议(把一个 session id 拆成两条消息),因此当作"缺失"处理。
 const sessionIdOk = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 500 && !/[\r\n]/.test(value)
 
-interface Turn { queue: AsyncQueue<AgentEvent>; cancelled: boolean; startedAt: number }
+interface Turn { queue: AsyncQueue<AgentEvent>; cancelled: boolean; startedAt: number; denialFeedback?: string[]; promptGeneration?: number }
 interface PendingPermission { controller: AbortController; respond: (outcome: unknown) => void }
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/g
 /** agent 给的 sessionId 直接进日志行会把控制字符/超长串带进 daemon 日志,先收敛。 */
@@ -259,9 +260,13 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           return new Promise<unknown>(resolve => {
             const controller = new AbortController()
             const key = id
+            const promptGeneration = turn.promptGeneration
             const entry: PendingPermission = { controller, respond: resolve }
             permissions.set(key, entry)
-            void Promise.resolve().then(() => context.requestPermission ? context.requestPermission({ tool, description, ...acpRuleFacts(toolCall, true) }, controller.signal) : false)
+            let feedback: string | undefined
+            void Promise.resolve().then(() => context.requestPermission ? context.requestPermission({ tool, description, ...acpRuleFacts(toolCall, true), onDenied: reason => {
+              if (reason) { feedback = permissionDenialMessage(description, reason); (turn.denialFeedback ??= []).push(feedback) }
+            } }, controller.signal) : false)
               .catch(() => false)
               .then(allow => {
                 if (permissions.get(key) !== entry) return
@@ -269,6 +274,11 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
                 if (controller.signal.aborted || active !== turn) { resolve({ outcome: { outcome: 'cancelled' } }); return }
                 const optionId = acpPermissionOption(params.options, allow === true)
                 resolve(optionId ? { outcome: { outcome: 'selected', optionId } } : { outcome: { outcome: 'cancelled' } })
+                // v1 permission outcomes have no reason field or steering API.
+                // Finish this prompt before sending feedback to the same session.
+                if (allow !== true && feedback) setTimeout(() => {
+                  if (active === turn && !turn.cancelled && turn.promptGeneration === promptGeneration && turn.denialFeedback?.includes(feedback!)) connection.notify('session/cancel', { sessionId })
+                }, 0)
               })
           })
         },
@@ -427,7 +437,9 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           // messages 模式攒着的助理文本吐出来 —— 取消路径(下面的 acp_turn_cancelled)故意绕过它:
           // 半截话不该在"用户主动打断"时还发出去。
           const settle = (event: AgentEvent) => { if (active !== turn) return; for (const e of translator.endTurn()) turn.queue.push(e); finish(turn, event) }
-          void connection.request('session/prompt', { sessionId, prompt: blocks }, 0).then(
+          const promptTurn = (prompt: AcpPromptBlock[]): void => {
+            turn.promptGeneration = (turn.promptGeneration ?? 0) + 1
+            void connection.request('session/prompt', { sessionId, prompt }, 0).then(
             result => {
               const inband = translator.turnError()
               const reason = object(result) && typeof result.stopReason === 'string' ? result.stopReason : 'end_turn'
@@ -437,11 +449,19 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
               // Cursor 的带内错误(额度催升级、要登录、Agent Looping Detected …):回合照常 end_turn、报错写在助理消息里
               // ⇒ 当带码的错误收尾(#190 红线:错误不许当回复发),额度登记 / 管家 / 工作台按码接,主人只收到老实的通知。
               else if (inband) settle(em.errorText(inband.message, { code: inband.code }))
+              else if ((reason === 'end_turn' || reason === 'cancelled') && turn.denialFeedback?.length) {
+                const feedback = turn.denialFeedback.join('\n\n'); turn.denialFeedback = []
+                for (const event of translator.endTurn()) turn.queue.push(event)
+                translator.beginTurn()
+                context.reportNotice?.('这一步已拒绝，正在同一会话中按你的说明继续。')
+                promptTurn([{ type: 'text', text: feedback }])
+              }
               else if (reason === 'end_turn' || reason === 'cancelled') settle(em.finish({ sessionId, numTurns: 1, durationMs: Date.now() - turn.startedAt }))
               else settle({ kind: 'error', message: `acp_stop_${reason}` })
             },
             (error: unknown) => { if (active === turn) settle(em.errorText(error instanceof Error ? error.message : String(error), { code: acpErrorCode(error) })) },
-          )
+          ) }
+          promptTurn(blocks)
           const iterable = turn.queue.iterable()
           return {
             [Symbol.asyncIterator]() {

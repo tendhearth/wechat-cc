@@ -1,7 +1,9 @@
+import { permissionReason } from '../domain/permission-denial'
+
 export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 
 /** Desktop-facing description of a pending permission ask (CC 桌宠 Phase B). */
-export interface PendingPermissionMeta { chatId: string; prompt: string; taskId?: string; canAllowTask?: boolean; scripts?: import('../ports/workbench').PermissionScript[] }
+export interface PendingPermissionMeta { chatId: string; prompt: string; taskId?: string; canAllowTask?: boolean; canDenyWithReason?: boolean; scripts?: import('../ports/workbench').PermissionScript[] }
 
 /** 登记处的留痕口(构造参数):开卡写一行、了结删一行 —— 实现在 pending-cards.ts(v91 pending_cards)。 */
 export interface PendingCardJournal {
@@ -17,7 +19,7 @@ interface Entry {
   /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
   deadline?: () => number | null
   onAllowTask?: () => boolean
-  onDecision?: (decision: 'allow' | 'deny' | 'allow_task') => boolean
+  onDecision?: (decision: 'allow' | 'deny' | 'allow_task', reason?: string) => boolean
   consuming?: boolean
   resolve: (d: PermissionDecision) => void
   expiresAt: number
@@ -126,7 +128,7 @@ export class PendingPermissions {
    */
   list(): PendingPermissionView[] {
     return Array.from(this.entries.entries())
-      .map(([hash, e]) => ({ hash, code: e.code, chatId: e.meta?.chatId ?? '', prompt: e.meta?.prompt ?? '', since: new Date(e.registeredAt).toISOString(), expires_at: new Date(e.expiresAt).toISOString(), ...(e.meta?.taskId?{taskId:e.meta.taskId}:{}), ...(e.meta?.canAllowTask?{canAllowTask:true}:{}), ...(e.meta?.scripts?{scripts:e.meta.scripts}:{}) }))
+      .map(([hash, e]) => ({ hash, code: e.code, chatId: e.meta?.chatId ?? '', prompt: e.meta?.prompt ?? '', since: new Date(e.registeredAt).toISOString(), expires_at: new Date(e.expiresAt).toISOString(), ...(e.meta?.taskId?{taskId:e.meta.taskId}:{}), ...(e.meta?.canAllowTask?{canAllowTask:true}:{}), ...(e.meta?.canDenyWithReason&&e.onDecision?{canDenyWithReason:true}:{}), ...(e.meta?.scripts?{scripts:e.meta.scripts}:{}) }))
       .sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))
   }
 
@@ -144,16 +146,18 @@ export class PendingPermissions {
     return this.entries.get(hash)?.meta?.chatId ?? null
   }
 
-  consume(hash: string, decision: 'allow' | 'deny' | 'allow_task'): boolean {
+  consume(hash: string, decision: 'allow' | 'deny' | 'allow_task', rawReason?: string): boolean {
+    const reason = permissionReason(rawReason, decision)
     const entry = this.entries.get(hash)
     if (!entry || entry.consuming) return false
+    if (reason && (!entry.meta?.canDenyWithReason || !entry.onDecision)) return false
     const expiresAt = entry.deadline ? entry.deadline() : entry.expiresAt
     if (expiresAt !== null && Date.now() >= expiresAt) { this.settle(hash, entry, 'timeout'); return false }
     if (decision === 'allow_task' && !entry.meta?.canAllowTask) return false
     if (entry.onDecision) {
       entry.consuming = true
       let accepted = false
-      try { accepted = entry.onDecision(decision) } catch { /* server did not acknowledge */ }
+      try { accepted = entry.onDecision(decision, reason) } catch { /* server did not acknowledge */ }
       entry.consuming = false
       if (!accepted) {
         if (entry.deadline?.() === 0) this.settle(hash, entry, 'deny')
@@ -212,7 +216,15 @@ const PERMISSION_REPLY_RE = new RegExp(`^(yt|${[...ALLOW_WORDS, ...DENY_WORDS].j
 
 export type PermissionReplyRef = { kind: 'code'; value: string } | { kind: 'hash'; value: string }
 
-export function parsePermissionReply(text: string): { decision: 'allow' | 'deny' | 'allow_task'; ref: PermissionReplyRef | null } | null {
+export function parsePermissionReply(text: string): { decision: 'allow' | 'deny' | 'allow_task'; ref: PermissionReplyRef | null; reason?: string } | null {
+  const refusal = /^n[ \t]+(0[1-9]|[1-9][0-9]|[a-z0-9]{5})[ \t]+(\S[\s\S]*)$/i.exec(text.trim())
+  if (refusal) {
+    try {
+      const reason = permissionReason(refusal[2], 'deny')
+      const raw = refusal[1]!
+      return { decision: 'deny', ref: /^[0-9]{1,2}$/.test(raw) ? { kind: 'code', value: raw.padStart(2, '0') } : { kind: 'hash', value: raw }, ...(reason ? { reason } : {}) }
+    } catch { return null }
+  }
   const m = PERMISSION_REPLY_RE.exec(text.trim())
   if (!m) return null
   const word = m[1]!.toLowerCase()

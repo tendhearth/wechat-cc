@@ -193,6 +193,7 @@ const zh: Record<keyof typeof en, string> = {
   'approval.rawCommand': '命令',
   'approval.workingDir': '执行位置',
   'approval.viewExact': '查看具体操作',
+  'approval.denialReason': '拒绝理由（选填）',
   'approval.deny': '先不做',
   'approval.allowTask': '本任务同命令都允许',
   'approval.taskExpires': '任务结束即失效，脚本变化会重新问你。',

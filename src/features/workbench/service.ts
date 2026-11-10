@@ -175,9 +175,9 @@ export function makeWorkbenchService(opts: Options) {
 
   // ---- 3 层:until。检查没过之后怎么接着改,由下面这一个具名回调给出(见文件顶部「剩一条真环」)。
   // 它引用的 inputsDomain / executeDomain 在后面才建 —— 这是整个组装里唯一一处;它只在检查脚本跑完后才被调,那时都已建好。
-  const resumeAfterCheck: UntilResume = (id, text, requestId, current) => {
-    if (current) return inputsDomain.submitInput(id, { runId: current.identity, requestId, text })
-    executeDomain.continueTask(id, text, { inputRequestId: requestId })
+  const resumeAfterCheck: UntilResume = (id, text, requestId, current, denials) => {
+    if (current) return inputsDomain.submitInput(id, { runId: current.identity, requestId, text }, undefined, 'automatic')
+    executeDomain.continueTask(id, text, { inputRequestId: requestId }, undefined, denials)
     return undefined
   }
   const untilDomain = makeUntilDomain(ctx, { view: viewDomain, resume: resumeAfterCheck }, opts.until)

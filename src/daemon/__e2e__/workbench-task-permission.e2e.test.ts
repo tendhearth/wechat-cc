@@ -11,6 +11,63 @@ import { makeWorkbenchService } from '../../features/workbench/service'
 import { makeWorkbenchPermissionPrompt } from '../../features/workbench/permission-prompt'
 import { makeIlinkAdapter } from '../ilink-glue'
 
+it('review P1 result: executor results cannot erase owner rejection decisions',async()=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-denial-result-'))),project=join(root,'project');mkdirSync(project)
+  const db=openTestDb(),registry=createProviderRegistry()
+  registry.register('codex',{async spawn(_project,ctx){return {
+    async *dispatch(){
+      yield {kind:'init' as const,sessionId:'same-session'}
+      for(let i=0;i<3;i++){
+        await ctx.requestPermission!({tool:'commandExecution',description:`attempt ${i}`,onDenied:()=>{}})
+        yield {kind:'result' as const,sessionId:'same-session',numTurns:i+1,durationMs:1}
+      }
+    },async close(){},
+  }}},{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  const service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:root,ownerChatId:()=> 'owner'})
+  try{
+    const task=service.create({path:project,providerId:'codex',text:'检查'})
+    for(let i=0;i<3;i++){
+      await expect.poll(()=>service.detail(task.id).permissions).toHaveLength(1)
+      service.resolvePermission(task.id,service.detail(task.id).permissions[0]!.id,'deny')
+    }
+    await expect.poll(()=>service.detail(task.id).task.status).not.toBe('running')
+    expect(service.detail(task.id).task.status).toBe('interrupted')
+  }finally{await service.shutdown();db.close();rmSync(root,{recursive:true,force:true})}
+})
+
+it.each([false,true])('owner rejection carries its reason through WeChat and the real task service; stop at three: %s',async limit=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-denial-e2e-'))),project=join(root,'project');mkdirSync(project)
+  const db=openTestDb(),store=makeWorkbenchStore(db),registry=createProviderRegistry(),feedback:string[]=[],answers:boolean[]=[]
+  const ilink=makeIlinkAdapter({stateDir:root,db,conversationStore:makeConversationStore(db),accounts:[]})
+  registry.register('codex',{async spawn(_project,ctx){return {
+    async *dispatch(){
+      yield {kind:'init' as const,sessionId:'same-session'}
+      for(let i=0;i<(limit?4:3);i++)answers.push(await ctx.requestPermission!({tool:'commandExecution',description:`attempt ${i}`,onDenied:reason=>feedback.push(reason)}))
+      yield {kind:'result' as const,sessionId:'same-session',numTurns:1,durationMs:1}
+    },async close(){},
+  }}},{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  const service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=> 'owner',permissionPrompt:makeWorkbenchPermissionPrompt(ilink,()=> 'owner')})
+  try{
+    const task=service.create({path:project,providerId:'codex',text:'只在本机验证'})
+    for(let i=0;i<3;i++){
+      await expect.poll(()=>ilink.listPendingPermissions()).toHaveLength(1)
+      const card=ilink.listPendingPermissions()[0]!
+      const reject=limit||i<2
+      expect(ilink.handlePermissionReply(`n ${card.code} 不要 SSH`,'stranger')).toBe(false)
+      expect(ilink.handlePermissionReply(`${reject?'n':'y'} ${card.code}${reject?' 不要 SSH':''}`,'owner')).toBe(true)
+      if(i<2)await expect.poll(()=>answers.length).toBe(i+1)
+      if(i<2)expect(service.detail(task.id).task.status).toBe('running')
+    }
+    await expect.poll(()=>service.detail(task.id).task.status).toBe(limit?'interrupted':'completed')
+    expect(feedback).toEqual(Array(limit?3:2).fill('不要 SSH'))
+    expect(service.detail(task.id).events.filter(e=>e.kind==='system'&&e.text.includes('拒绝理由：不要 SSH'))).toHaveLength(limit?3:2)
+    expect(ilink.listPendingPermissions()).toEqual([])
+    expect(service.detail(task.id).task.error).toBeNull()
+    expect(service.detail(task.id).continuation?.mode).toBe('resume')
+    if(limit)expect(service.detail(task.id).events.some(e=>e.text.includes('已连续拒绝三次'))).toBe(true)
+  }finally{await service.shutdown();await ilink.flush();db.close();rmSync(root,{recursive:true,force:true})}
+})
+
 // Real service → permission manager → shared WeChat registry → owner reply →
 // executor. Only the executor process and WeChat delivery are system substitutes.
 it('task card: uncertified CLI commands and scripts allow once, desktop settlement removes its code, cancellation clears everything', async () => {

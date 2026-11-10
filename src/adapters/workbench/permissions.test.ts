@@ -2,6 +2,32 @@ import { describe, expect, it, vi } from 'vitest'
 import { makeRunPermissions } from './permissions'
 
 describe('run-bound Workbench permissions', () => {
+  it('delivers only audited owner denials, counts consecutive rejections and resets after approval', async () => {
+    const audit=vi.fn(), onDenied=vi.fn(), p=makeRunPermissions({taskId:'deadbeef',audit})
+    const ask=()=>p.request({tool:'Bash',description:'ssh elsewhere',onDenied})
+    for(let i=0;i<2;i++){
+      const result=ask();expect(p.resolve(p.pending()[0]!.id,'deny',' 本机验证 ')).toBe(true)
+      expect(await result).toBe(false);expect(p.denialLimitReached()).toBe(false)
+    }
+    const approved=ask();p.resolve(p.pending()[0]!.id,'allow');expect(await approved).toBe(true)
+    for(let i=0;i<3;i++){const result=ask();p.resolve(p.pending()[0]!.id,'deny');expect(await result).toBe(false);expect(p.denialLimitReached()).toBe(i===2)}
+    expect(onDenied.mock.calls).toEqual([['本机验证'],['本机验证'],[''],[''],['']])
+    expect(audit.mock.calls[1]![0]).toMatchObject({type:'outcome',outcome:'deny',reason:'本机验证'})
+    const failed=makeRunPermissions({taskId:'deadbeef',audit:event=>{if(event.type==='outcome')throw Error('disk')}})
+    const result=failed.request({tool:'Bash',description:'x',onDenied});expect(failed.resolve(failed.pending()[0]!.id,'deny','reason')).toBe(false)
+    expect(await result).toBe(false);expect(onDenied).toHaveBeenCalledTimes(5);expect(failed.denialLimitReached()).toBe(false)
+    const aborted=new AbortController(),pending=p.request({tool:'Bash',description:'x',onDenied},aborted.signal)
+    aborted.abort();expect(await pending).toBe(false);expect(onDenied).toHaveBeenCalledTimes(5)
+  })
+
+  it('validates denial reasons without consuming or changing the approval scope', async () => {
+    const p=makeRunPermissions({taskId:'deadbeef'}),answer=p.request({tool:'Bash',description:'x',onDenied:()=>{}})
+    const id=p.pending()[0]!.id
+    expect(()=>p.resolve(id,'allow','reason')).toThrow('invalid_request')
+    expect(()=>p.resolve(id,'deny','x'.repeat(2001))).toThrow('invalid_request')
+    expect(p.pending()).toHaveLength(1)
+    expect(p.resolve(id,'deny','x'.repeat(2000))).toBe(true);expect(await answer).toBe(false)
+  })
   it('publishes a bounded request and resolves it exactly once', async () => {
     const audit = vi.fn()
     const permissions = makeRunPermissions({ taskId: 'deadbeef', timeoutMs: 1000, audit })
