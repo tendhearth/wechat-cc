@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline/promises'
 import { readApiInfo, type ApiInfo } from '../lib/api-info'
 
 export interface DeployTask { id: string; title: string; status: string; phase: string }
-export interface DeployTaskOptions { waitTasks?: boolean; force?: boolean; timeoutMs?: number }
+export interface DeployTaskOptions { waitTasks?: boolean; force?: boolean; timeoutMs?: number; nonInteractive?: boolean }
 export const DEPLOY_TASK_WAIT_MS = 20 * 60_000
 export interface DeployTaskGateDeps {
   tasks(): Promise<DeployTask[] | null>
@@ -84,7 +84,7 @@ export async function readDeployTasks(deps: { readInfo(): ApiInfo | null; fetch:
 export function defaultDeployTaskGate(stateDir: string, opts: DeployTaskOptions = {}): Promise<string | null> {
   return waitForDeployTasks({
     tasks: () => readDeployTasks({ readInfo: () => readApiInfo(stateDir), fetch }),
-    interactive: !!process.stdin.isTTY && !!process.stderr.isTTY,
+    interactive: !opts.nonInteractive && !!process.stdin.isTTY && !!process.stderr.isTTY,
     async choose(message) {
       const rl = createInterface({ input: process.stdin, output: process.stderr })
       try {

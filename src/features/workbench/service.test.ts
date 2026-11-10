@@ -45,6 +45,29 @@ beforeEach(() => {
 afterEach(async () => { await service?.shutdown(); db.close(); removeTempDir(root) })
 
 describe('persistent workbench', () => {
+  it.each([true, false])('crash during deployment close never resumes an unproven writer (groups=%s)', async groups => {
+    const close=deferred(),entered=deferred();let spawns=0
+    const provider:AgentProvider={async spawn(){spawns++;return {
+      async *dispatch(){yield {kind:'init' as const,sessionId:'still-writing'};await new Promise(()=>{})},
+      ...(groups?{processGroups:()=>[4246]}:{}),
+      async close(){entered.resolve();await close.promise},
+    }}}
+    setup(provider,()=> 'owner',undefined,{writerGroupAlive:g=>g===4246})
+    const task=create();await expect.poll(()=>testStore.get(task.id).sessionId).toBe('still-writing')
+    if(!groups)testStore.setWriterGroups(task.id,[8888]) // a dead group left by a previous run
+    markPlannedRestart(root,'self-deploy')
+    const shutdown=service.shutdown();await entered.promise
+    try {
+      // Reconstruct at the persisted crash boundary: close has not acknowledged exit.
+      setup(provider,()=> 'owner',undefined,{writerGroupAlive:g=>g===4246})
+      await new Promise(r=>setTimeout(r,40))
+      expect(spawns).toBe(1)
+      expect(testStore.get(task.id).error).toBe('writer_not_closed')
+      expect(()=>service.continueTask(task.id,'继续')).toThrow('writer_not_closed')
+      if(groups)await expect(service.confirmWriterExited(task.id)).rejects.toThrow('writer_alive')
+    } finally {close.resolve();await shutdown}
+  })
+
   it('waits for a late provider registration before consuming deployment continuation', async () => {
     const stop=deferred();let spawns=0
     const provider:AgentProvider={async spawn(_p,ctx){spawns++;return {async *dispatch(){yield {kind:'init' as const,sessionId:ctx.resumeSessionId??'late-native'};if(spawns===1)await stop.promise;else yield {kind:'result' as const,sessionId:'late-native',numTurns:1,durationMs:1}},async close(){stop.resolve()}}}}

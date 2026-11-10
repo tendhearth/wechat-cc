@@ -46,6 +46,7 @@ export interface Active extends PathReservation {
   spawnAttempted: boolean
   /** 部署关停打断，区别于主人亲手停止；安全续接凭据已在 cancel 前落盘。 */
   restartInterrupted?: boolean
+  writerExited?: boolean
   session?: AgentSession
   done: Promise<void>
   resolveDone: () => void

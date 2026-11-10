@@ -89,7 +89,7 @@ import { makeExecuteDomain } from './service/execute'
 import { makeEntryDomain } from './service/entry'
 import { makeQuotaHandoffDomain, makeQuotaHandoffView } from './service/quota-handoff'
 import type { ServiceCtx } from './service/ctx'
-import { recoverRestartContinuations } from './service/restart-resume'
+import { recoverRestartContinuations, quarantineRestartContinuations } from './service/restart-resume'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
 
@@ -255,6 +255,7 @@ export function makeWorkbenchService(opts: Options) {
   // 开机对账:全部建好之后再做(顺序同改造前)
   store.recover()
   store.liveInputs.recover()
+  quarantineRestartContinuations(ctx)
   lifecycleDomain.adoptWriters()
   scriptsDomain.recover()
   void rewindDomain.recover()

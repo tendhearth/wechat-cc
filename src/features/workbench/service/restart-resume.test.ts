@@ -19,7 +19,7 @@ function setup() {
   store.execution.accept(task.id,'before',{defaults:'provider',model:null,reasoningEffort:null})
   const lastUserId=store.addEvent(task.id,'user','原要求',null,'before')
   store.update(task.id,'cancelled','daemon_restarted')
-  const entry:RestartContinuation={taskId:task.id,runId:'before',lastUserId,pendingDecision:false,directoryIdentity:directoryIdentity(stateDir),unstarted:false}
+  const entry:RestartContinuation={taskId:task.id,runId:'before',lastUserId,pendingDecision:false,directoryIdentity:directoryIdentity(stateDir),unstarted:false,writerExited:true}
   const registry=createProviderRegistry();registry.register('claude',{spawn:async()=>{throw Error('not used')}},{canResume:()=>true})
   const ctx={store,stateDir,state:{runsByTask:new Map(),stopping:false},deps:{registry},log:vi.fn()} as unknown as ServiceCtx
   const continueTask=vi.fn(()=>({}) as never)
@@ -28,6 +28,11 @@ function setup() {
   return {task,store,ctx,save,recover,continueTask,entry,stateDir}
 }
 describe('部署重启的一次续接',()=>{
+  it('legacy records without writer exit proof require owner confirmation',()=>{
+    const s=setup();s.save({writerExited:undefined});s.recover()
+    expect(s.continueTask).not.toHaveBeenCalled()
+    expect(s.store.get(s.task.id).error).toBe('writer_not_closed')
+  })
   it('同一份凭据只消费一次；使用稳定request id及中断说明',()=>{
     const s=setup();s.save();s.recover();s.recover()
     expect(s.continueTask).toHaveBeenCalledTimes(1)

@@ -377,6 +377,7 @@ export interface SelfDeployStep {
 }
 
 export interface SelfDeployResult {
+  blocked?: 'tasks'
   ok: boolean
   exitCode: 0 | 1 | 3
   steps: SelfDeployStep[]
@@ -403,7 +404,7 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
     let reason:string|null
     try { reason=await deps.taskGate(dirname(plan.infoPath)) }
     catch (err) { reason=`读取交办任务失败：${err instanceof Error?err.message:err}` }
-    if(reason)return {ok:false,exitCode:1,steps:[{name:'tasks',ok:false,detail:reason}]}
+    if(reason)return {ok:false,exitCode:1,blocked:'tasks',steps:[{name:'tasks',ok:false,detail:reason}]}
   }
 
   // 1. preflight — new binary exists and `--version` exits 0. Nothing on

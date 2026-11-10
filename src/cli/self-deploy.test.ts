@@ -500,6 +500,7 @@ describe('executeSelfDeploy', () => {
     Object.assign(h.deps, { taskGate: async () => '有 1 件在跑；请用 --wait-tasks 或 --force。' })
     const result = await executeSelfDeploy(h.plan, h.deps)
     expect(result.ok).toBe(false)
+    expect(result.blocked).toBe('tasks')
     expect(result.steps).toEqual([{ name: 'tasks', ok: false, detail: expect.stringContaining('有 1 件在跑') }])
     expect(h.kickstartCalls).toBe(0)
     expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')

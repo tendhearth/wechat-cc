@@ -191,3 +191,8 @@ describe('记忆编辑回的 code 字面量都在表里(10-23:原来的扫描只
   it('扫到了', () => { expect(codes.sort()).toEqual(['memory_changed', 'memory_edit_bulk', 'memory_edit_failed', 'memory_edit_stale_key', 'memory_edit_too_large', 'memory_no_owner']) })
   it.each(codes)('%s', code => { expect(WORKBENCH_ERRORS[code]?.desktop, code).toBeDefined() })
 })
+
+it('unconfirmed writer continuation is a conflict on desktop and phone, never an internal failure',()=>{
+  expect(workbenchErrorHttp('writer_not_closed','desktop')).toEqual({status:409,error:'writer_not_closed'})
+  expect(workbenchErrorHttp('writer_not_closed','phone')).toEqual({status:409,error:'workbench_busy'})
+})

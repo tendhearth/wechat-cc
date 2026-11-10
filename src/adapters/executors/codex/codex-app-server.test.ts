@@ -1598,6 +1598,17 @@ it.each([false,true])('pins task temp/cache only in sandbox shell environment an
     expect(JSON.stringify(env)).not.toContain(join(path,'.cc-tasks'))
     expect(request.params.config.sandbox_workspace_write).toEqual({writable_roots:[temp],network_access:false,exclude_tmpdir_env_var:true,exclude_slash_tmp:true})
     expect(request.params.config.shell_environment_policy).toMatchObject({set:{TMPDIR:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')},include_only:expect.arrayContaining(['BUN_TMPDIR','BUN_INSTALL_CACHE_DIR'])})
+    const taskEnv=request.params.config.shell_environment_policy.set
+    for(const key of ['NODE_OPTIONS','PATH','CC_TASK_SYSTEM_BOOT_MS'])expect(taskEnv).not.toHaveProperty(key)
+    // Approved host commands receive this very same policy. Detect actual loading,
+    // including no-op preloads, in both supported runtimes.
+    for(const runtime of ['node','bun']) {
+      const output=execFileSync(realpathSync(findOnPath(runtime)!),['-e',
+        "console.log(JSON.stringify({loaded:Object.keys(require.cache).filter(p=>p.includes('cc-trusted-runtime')),argv:process.execArgv}))"],
+        {env:{...env,...taskEnv},encoding:'utf8'})
+      expect(JSON.parse(output).loaded).toEqual([])
+      expect(JSON.parse(output).argv.some((arg:string)=>arg.startsWith('--require'))).toBe(false)
+    }
     await session.close()
   } finally {removeTempDir(path)}
 })
@@ -1670,7 +1681,8 @@ it('security: task-writable preload and bin never enter host helpers', async()=>
     expect(existsSync(marker)).toBe(false)
     expect(host.NODE_OPTIONS ?? '').not.toContain(task)
     expect(host.PATH).not.toContain(task)
-    expect(config.shell_environment_policy.set.NODE_OPTIONS).toContain('--require')
+    expect(config.shell_environment_policy.set).not.toHaveProperty('NODE_OPTIONS')
+    expect(config.shell_environment_policy.set).not.toHaveProperty('PATH')
   } finally {removeTempDir(path)}
 })
 

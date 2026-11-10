@@ -2,7 +2,9 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { makeProcessTreeFreezer } from '../src/lib/process-tree-freeze'
+import { createVerifyProcessTree, type VerifyProcess } from './verify-process-tree'
+import { resolveJobspawn } from '../src/lib/jobspawn'
+import { existsSync } from 'node:fs'
 
 export interface VerifyStepResult { status: number; timedOut: boolean }
 const deadline = (name: string, fallback: number) => {
@@ -13,43 +15,44 @@ const deadline = (name: string, fallback: number) => {
   return value
 }
 
+export function verifyLaunchTarget(command:string,args:string[],platform:NodeJS.Platform=process.platform,resolve=()=>resolveJobspawn({platform,arch:process.arch,execPath:process.execPath,env:process.env,exists:existsSync})) {
+  if(platform!=='win32')return {command,args}
+  const job=resolve()
+  if(job.kind!=='found')throw Error('verify: cc-jobspawn Job Object unavailable; command not started')
+  return {command:job.path,args:['--require-job',command,...args]}
+}
+
 export async function runVerifyStep(label: string, command: string, args: string[], cwd?: string, tests = false): Promise<VerifyStepResult> {
   const fileMs = deadline('CC_VERIFY_FILE_TIMEOUT_MS', 120_000)
   const silenceMs = deadline('CC_VERIFY_SILENCE_TIMEOUT_MS', 300_000)
   const token = randomUUID(), prefix = `\x1eCC_VERIFY:${token}:`
   const reporter = fileURLToPath(new URL('./verify-reporter.ts', import.meta.url))
   const argv = tests ? [...args, ...(command === 'npm' ? ['--'] : []), '--reporter=default', `--reporter=${reporter}`] : args
-  const child = spawn(command, argv, {cwd, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], windowsHide:true,
+  let target
+  try{target=verifyLaunchTarget(command,argv)}catch(err){console.error(String(err));return {status:1,timedOut:false}}
+  const child = spawn(target.command, target.args, {cwd, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], windowsHide:true,
     env: {...process.env, ...(tests ? {CC_VERIFY_PROGRESS_TOKEN: token} : {})}})
   const started = performance.now(), active = new Map<string, {file: string; at: number}>()
-  // Retain observed descendants across reparenting, binding PIDs to their start time.
-  const owned = new Map<number, string>()
-  const snapshotOwned = () => {
-    if (process.platform === 'win32') return []
+  const table=():VerifyProcess[]|null=>{
+    if(process.platform==='win32')return []
     try {
-      const result = spawnSync('/bin/ps', ['-axo', 'pid=,ppid=,lstart='], {encoding:'utf8',timeout:2_000,maxBuffer:4_000_000,windowsHide:true})
-      if (result.status !== 0) return []
-      const rows = result.stdout.trim().split('\n').flatMap(line => {
-        const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)
-        return match ? [{pid:Number(match[1]),parent:Number(match[2]),birth:match[3]!}] : []
+      const result=spawnSync('/bin/ps',['-axo','pid=,ppid=,lstart='],{encoding:'utf8',timeout:2_000,maxBuffer:4_000_000,windowsHide:true})
+      if(result.status!==0)return null
+      return result.stdout.trim().split('\n').flatMap(line=>{
+        const match=line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)
+        return match?[{pid:Number(match[1]),parent:Number(match[2]),birth:match[3]!}]:[]
       })
-      const live = new Set(rows.filter(row => row.pid === child.pid || owned.get(row.pid) === row.birth).map(row => row.pid))
-      let changed = true
-      while (changed) {
-        changed = false
-        for (const row of rows) if (!live.has(row.pid) && live.has(row.parent)) { live.add(row.pid); changed = true }
-      }
-      const descendants = rows.filter(row => live.has(row.pid))
-      for (const row of descendants) owned.set(row.pid, row.birth)
-      return descendants
-    } catch { return [] }
+    } catch{return null}
   }
+  const tree=createVerifyProcessTree(child.pid,{table,signal:(pid,signal)=>process.kill(pid,signal),report:line=>console.error(line)})
+  const snapshotOwned=()=>process.platform==='win32'?[]:tree.snapshot()
   let forceFinish: (() => void) | undefined, cleanupTimer: ReturnType<typeof setTimeout> | undefined
   let finishingAt: number | undefined
   let lastOutput = started, lastFile: {file: string; at: number} | undefined, timedOut = false, stopped = false, interrupted = false
   let complete!: (result: VerifyStepResult) => void
   const completion = new Promise<VerifyStepResult>(resolve => { complete = resolve })
   forceFinish = () => complete({status:interrupted ? 130 : 1,timedOut})
+  child.once('exit',()=>tree.rootExited())
   child.once('error', error => { console.error(`✗ ${label}: ${error.message}`); complete({status:1,timedOut:false}) })
   child.once('close', code => complete({status:interrupted ? 130 : stopped ? 1 : code ?? 1,timedOut}))
   const seconds = (since: number) => `${((performance.now() - since) / 1000).toFixed(1)}s`
@@ -57,17 +60,12 @@ export async function runVerifyStep(label: string, command: string, args: string
     if (stopped) return
     stopped = true
     if (process.platform === 'win32') {
-      if (child.pid) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {stdio:'ignore',timeout:10_000,windowsHide:true})
+      // libuv retains the wrapper process HANDLE, so this cannot hit a reused
+      // PID. Closing the strict Job kills its members even after launcher exit.
+      child.kill('SIGKILL')
     } else {
-      const observed = snapshotOwned()
-      const tree = makeProcessTreeFreezer(() => child.pid)
-      tree.freeze()
-      for (const row of observed) try { process.kill(row.pid, 'SIGSTOP') } catch { /* exited */ }
-      tree.kill()
-      for (const row of observed.reverse()) try { process.kill(row.pid, 'SIGKILL') } catch { /* exited */ }
-      if (child.pid) try { process.kill(-child.pid, 'SIGKILL') } catch { /* already exited */ }
+      tree.stop()
     }
-    child.kill('SIGKILL')
     // A daemonized descendant can retain pipes after its parent exits. Never
     // let failed cleanup turn the timeout handler itself into another hang.
     cleanupTimer = setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); child.unref(); forceFinish?.() }, 1000)

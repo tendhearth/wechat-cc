@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { makeSelftest, selfDeployPlanFor } from './index'
-import { okSelftest, testConfig } from './pipeline.fixture'
+import { defaultPipelineDeps, makeSelftest, selfDeployPlanFor } from './index'
+import { fakeState, makeFakeDeps, okDeploy, okSelftest, testConfig } from './pipeline.fixture'
 
 // 这个文件只钉住 defaultPipelineDeps 里**两处真件容易接错、接错了又只有真机
 // 才看得出来**的地方。其余注入口(git / runner / daemon / exec)在各自的
@@ -100,4 +100,52 @@ describe('makeSelftest', () => {
     expect(r.workbench.ok).toBe(false)
     expect(r.chat.ok).toBe(true)
   })
+})
+
+
+describe('noninteractive self-change deployment task gate wiring',()=>{
+  it.each(['busy','unknown','query-error'] as const)('%s blocks without using deployment failure budget',async kind=>{
+    const {runSelfChange}=await import('./run')
+    let now=0,calls=0,replacements=0
+    const {deps,rec}=makeFakeDeps({config:{failStreak:1},exists:()=>true,git:(args)=>({code:0,stdout:args.join(' ')==='rev-parse HEAD'?'abc123':'',stderr:''})})
+    const production=defaultPipelineDeps('/offline-state',deps.config,{
+      repoRoot:'/offline-repo',runId:'aa11bb22',
+      deployFromRepo:async()=>{replacements++;return okDeploy(false)},
+      deployTasks:{interactive:true,choose:async()=>{throw Error('must not prompt')},
+        tasks:async()=>{calls++;if(kind==='query-error')throw Error('offline');return kind==='unknown'?null:[{id:'busy',title:'正在做',status:'running',phase:'working'}]},
+        now:()=>now,sleep:async(ms:number)=>{now+=ms},log:()=>{}},
+    })
+    deps.deploy=production.deploy
+    const s=fakeState({id:'aa11bb22',step:'deploy',merge:{sha:'abc123',rebased:false}})
+    const result=await runSelfChange(s,deps)
+    expect(result.state.result).toBe('deploy_tasks_blocked')
+    expect(result.exitCode).toBe(2)
+    expect(result.state.step).toBe('deploy')
+    expect(replacements).toBe(0)
+    expect(deps.config.failStreak).toBe(1)
+    expect(rec.patches).toEqual([])
+    expect(rec.notices.join('\n')).toContain('未部署')
+    if(kind==='busy') {
+      expect(now).toBe(20*60_000)
+      expect(calls).toBeGreaterThan(1)
+      expect(result.state.error).toContain('超时')
+    } else {expect(now).toBe(0);expect(result.state.error).toContain('读不到')}
+  })
+})
+
+it('self-change preserves bounded task policy at the second deployment gate',async()=>{
+  const {runSelfChange}=await import('./run')
+  const {deps,rec}=makeFakeDeps({config:{failStreak:1},exists:()=>true,git:args=>({stdout:args.join(' ')==='rev-parse HEAD'?'approved':''})})
+  let options:unknown
+  deps.deploy=defaultPipelineDeps('/offline-state',deps.config,{
+    repoRoot:'/offline-repo',runId:'aa11bb22',
+    deployTasks:{tasks:async()=>[],interactive:false,now:()=>0,sleep:async()=>{},log:()=>{}},
+    deployFromRepo:async(_state,_repo,_mode,opts)=>{options=opts;return {ok:false,exitCode:1,blocked:'tasks',steps:[{name:'tasks',ok:false,detail:'读不到交办任务状态，未部署。'}]}},
+  }).deploy
+  const result=await runSelfChange(fakeState({id:'aa11bb22',step:'deploy',merge:{sha:'approved',rebased:false}}),deps)
+  expect(options).toEqual({waitTasks:true,timeoutMs:20*60_000,nonInteractive:true})
+  expect(result.state.result).toBe('deploy_tasks_blocked')
+  expect(result.exitCode).toBe(2)
+  expect(deps.config.failStreak).toBe(1)
+  expect(rec.patches).toEqual([])
 })

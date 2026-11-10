@@ -5,7 +5,7 @@ import { readJsonFile } from '../../lib/read-json-file'
 import { writeFileAtomic } from '../../lib/json-file'
 
 export const RESTART_CONTINUATIONS_FILE = 'workbench-restart-continuations.json'
-export interface RestartContinuation { taskId: string; runId: string; lastUserId: number | null; pendingDecision: boolean; directoryIdentity: string; unstarted: boolean }
+export interface RestartContinuation { taskId: string; runId: string; lastUserId: number | null; pendingDecision: boolean; directoryIdentity: string; unstarted: boolean; writerExited?: boolean }
 export function saveRestartContinuations(stateDir: string, entries: RestartContinuation[]): void {
   const all=new Map(readRestartContinuations(stateDir).map(e=>[e.taskId,e]))
   for(const entry of entries)all.set(entry.taskId,entry)
@@ -26,4 +26,11 @@ export function dropRestartContinuation(stateDir:string,taskId:string,runId?:str
   const file=join(stateDir,RESTART_CONTINUATIONS_FILE)
   if(!existsSync(file))return
   writeEntries(stateDir,readRestartContinuations(stateDir).filter(e=>e.taskId!==taskId||(runId!==undefined&&e.runId!==runId)))
+}
+
+/** Only upgrade a still-present record for this exact run; owner cancellation wins. */
+export function confirmRestartWriterExited(stateDir:string,taskId:string,runId:string):void {
+  const entries=readRestartContinuations(stateDir)
+  if(!entries.some(e=>e.taskId===taskId&&e.runId===runId))return
+  writeEntries(stateDir,entries.map(e=>e.taskId===taskId&&e.runId===runId?{...e,writerExited:true}:e))
 }

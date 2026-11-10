@@ -408,6 +408,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         try {
           closePromise=Promise.resolve(running.session.close())
           await Promise.race([closePromise,new Promise<never>((_resolve,reject) => { closeTimer=setTimeout(() => reject(new Error('close_timeout')),ctx.deps.closeTimeoutMs ?? 3000) })])
+          running.writerExited=true
         } catch {
           markUncertain(running); finalStatus='interrupted'; finalError='writer_not_closed'
           try { store.addEvent(task.id,'system','执行程序未确认退出，此文件夹内的新任务将等待。请检查后台进程或重启服务。');} catch { /* final status write below may still succeed */ }
@@ -714,6 +715,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const execution=normalizeExecutionChoice(options?.execution,store.execution.choice(id))
     if(store.source(id)?.firstDispatchedAt===null)throw new Error('external_close_confirmation_required')
     if(task.archivedAt!==null)throw new Error('workbench_archived')
+    if(task.error==='writer_not_closed')throw new Error('writer_not_closed')
     // 独立工作区已删(手动或归档时收拾):目录不在了,别让执行者对着空位置跑(2026-10-08 评审)
     if(store.worktrees.get(id)?.removedAt!=null)throw new Error('worktree_removed')
     provider(task.providerId)

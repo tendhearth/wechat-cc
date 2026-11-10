@@ -32,7 +32,7 @@ export type SelfChangeExitCode = 0 | 1 | 2 | 3 | 4
  */
 const BLOCKED: readonly string[] = [
   'self_change_halted', 'self_change_quota', 'daemon_not_running', 'owner_chat_unknown',
-  'self_change_busy', 'self_change_unsupported_platform', 'repo_url_unknown',
+  'self_change_busy', 'self_change_unsupported_platform', 'repo_url_unknown', 'deploy_tasks_blocked',
 ]
 
 export function exitCodeFor(result: string | null): SelfChangeExitCode {
@@ -59,6 +59,7 @@ function noticeFor(s: SelfChangeState, result: string, detail: string): string {
   const head = `自改 #${s.id}`
   // 分支保留:v1 没有清理器(spec 的「24 小时后由下次运行清理」推到 v1.1),
   // 所以话要说清楚 —— 远端多出来的这条分支是留给人看的,不是漏删的。
+  if(result==='deploy_tasks_blocked')return `${head} 未部署：${detail.slice(0,DETAIL_IN_NOTICE)}\nwechat-cc self change --resume ${s.id} 接着来`
   if (result === 'declined') return `${head} 你回了 n,已放弃。分支 ${s.branch} 留在远端给人看(要清理得手工删)。`
   if (result === 'approval_timeout') return `${head} 没等到拍板,先停在这儿了(wechat-cc self change --resume ${s.id} 可以重发卡)`
   // 这一种**既不停机也不会自动重来**(装错东西不是机器坏了),所以话里必须带上

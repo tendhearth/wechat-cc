@@ -27,7 +27,7 @@ import type { NoticesDomain } from './notices'
 import type { UntilDomain } from './until'
 import type { PendingInputs } from './pending-inputs'
 import { peekPlannedRestart } from '../../../lib/restart-markers'
-import { saveRestartContinuations, dropRestartContinuation } from '../../../adapters/workbench/restart-continuations'
+import { saveRestartContinuations, dropRestartContinuation, confirmRestartWriterExited } from '../../../adapters/workbench/restart-continuations'
 import { timelineKind } from '../../../adapters/store/workbench/store'
 
 /** 桌面 / 手机 / 微信同一句状态(主人 2026-10-03)。 */
@@ -465,10 +465,16 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       if (restart && ['self-deploy','self-deploy-rollback'].includes(restart.reason)) {
         const interrupted=snapshot.filter(r=>!r.cancelled&&!r.finishing&&!r.uncertain&&!quiet(r))
         try {
+          // Persist known groups before the preparation record. A crash at any
+          // later point must retain the existing writer confirmation path.
+          for(const r of interrupted) {
+            const groups=writerGroupsOf(r)
+            store.setWriterGroups(r.taskId,groups,bootTimeMs(ctx))
+          }
           saveRestartContinuations(ctx.stateDir,interrupted.map(r=>({taskId:r.taskId,runId:r.identity,
             lastUserId:store.steps(r.taskId).filter(step=>timelineKind(step)==='user').at(-1)?.id??null,
             pendingDecision:r.permissions.pending().length>0||r.questions.pending().length>0,
-            directoryIdentity:r.directoryIdentity,unstarted:r.spawnAttempted===false&&r.continuation.mode==='new'&&!r.task.sessionId})))
+            writerExited:false,directoryIdentity:r.directoryIdentity,unstarted:r.spawnAttempted===false&&r.continuation.mode==='new'&&!r.task.sessionId})))
           for (const running of interrupted) running.restartInterrupted=true
         } catch (err) { ctx.log?.('WORKBENCH_RESTART',`cannot save continuations: ${err instanceof Error?err.message:err}`) }
       }
@@ -482,6 +488,12 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
         }
       }
       await Promise.allSettled(snapshot.map(running => running.done))
+      for(const running of snapshot) {
+        // done alone is not exit evidence (a spawn may still be in flight).
+        if(!running.restartInterrupted||(!running.writerExited&&running.spawnAttempted!==false))continue
+        try {confirmRestartWriterExited(ctx.stateDir,running.taskId,running.identity)}
+        catch(err){ctx.log?.('WORKBENCH_RESTART',`cannot confirm writer exit: ${err instanceof Error?err.message:err}`)}
+      }
       while(state.preparations.size)await Promise.allSettled([...state.preparations])
       while(state.collections.size)await Promise.allSettled([...state.collections])
       state.shutdownComplete=true

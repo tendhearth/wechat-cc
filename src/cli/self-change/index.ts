@@ -34,7 +34,7 @@ import { spawnSync } from 'node:child_process'
 import type { SelfChangeState } from './state'
 import { makeStateStore } from './state'
 import { runPath, type PipelineDeps } from './steps'
-import type { DeployTaskOptions } from '../deploy-task-gate'
+import { defaultDeployTaskGate, waitForDeployTasks, DEPLOY_TASK_WAIT_MS, type DeployTaskOptions, type DeployTaskGateDeps } from '../deploy-task-gate'
 
 /** `launchctl` 那份 plist 的固定位置(和 cli.ts 的 `self deploy` 同一条路径)。 */
 export function launchAgentPlistPath(homeDir: string): string {
@@ -148,6 +148,9 @@ export interface PipelineDepsOpts {
    * 一个「忘了是哪条运行」的缺省迟早把一条 git 打到别人的树上去。
    */
   runId: string
+  /** External deployment boundary; offline wiring tests must never replace files. */
+  deployFromRepo?: typeof deployFromRepo
+  deployTasks?: DeployTaskGateDeps
 }
 
 /**
@@ -159,7 +162,16 @@ export interface PipelineDepsOpts {
 export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, opts: PipelineDepsOpts): PipelineDeps {
   const homeDir = homedir()
 
-  const runDeploy = (repoRoot: string, mode: 'deploy' | 'rollback') => deployFromRepo(stateDir, repoRoot, mode)
+  const taskOptions={waitTasks:true,timeoutMs:DEPLOY_TASK_WAIT_MS,nonInteractive:true}
+  const runDeploy = async (repoRoot: string, mode: 'deploy' | 'rollback'):Promise<SelfDeployResult> => {
+    if(mode==='deploy') {
+      const reason=opts.deployTasks
+        ? await waitForDeployTasks({...opts.deployTasks,interactive:false},taskOptions)
+        : await defaultDeployTaskGate(stateDir,taskOptions)
+      if(reason)return {ok:false,exitCode:1,blocked:'tasks',steps:[{name:'tasks',ok:false,detail:reason}]}
+    }
+    return (opts.deployFromRepo ?? deployFromRepo)(stateDir,repoRoot,mode,taskOptions)
+  }
 
   const runTree = runPath(config, opts.runId)
   const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(stateDir), fetch })
