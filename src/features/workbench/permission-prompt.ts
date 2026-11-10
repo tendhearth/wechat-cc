@@ -12,12 +12,13 @@ export function makeWorkbenchPermissionPrompt(registry: Pick<WechatPermissions,'
     void registry.registerPendingPermission(permission.id, WORKBENCH_PERMISSION_TIMEOUT_MS, {
       chatId,prompt:`${title} · ${permission.taskId}\n${permission.tool}\n${permission.description}`,taskId:permission.taskId,
       ...(permission.canAllowTask?{canAllowTask:true}:{}),...(permission.scripts?{scripts:permission.scripts}:{}),
+      ...(permission.canDenyWithReason?{canDenyWithReason:true}:{}),
     },{
       deadline,
       onDecision: (decision,reason) => closed ? decision === 'deny' : reason ? answer(decision,reason) : answer(decision),
     }).catch(() => {}) // Explicit decisions run through onDecision; expiry is not an owner rejection.
     const code=registry.pendingPermissionCodeOf(permission.id)
-    const replyLine=code?`回「y ${code}」允许这一步、「n ${code}」拒绝，可在码后补充理由。${permission.canAllowTask?`回「yt ${code}」本任务同命令都允许，任务结束失效。`:''}`:''
+    const replyLine=code?`回「y ${code}」允许这一步、「n ${code}」拒绝。${permission.canDenyWithReason?`拒绝理由选填：「n ${code} 理由」。`:''}${permission.canAllowTask?`回「yt ${code}」本任务同命令都允许，任务结束失效。`:''}`:''
     return Object.assign(()=>{closed=true;registry.resolvePermission(permission.id,'deny')},{replyLine})
   }
 }

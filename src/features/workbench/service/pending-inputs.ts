@@ -42,7 +42,7 @@ export function makePendingInputs(ctx:ServiceCtx) {
   function hasUndeliveredInput(running:Active):boolean {
     try { return store.liveInputs.count(running.taskId)>0 } catch { return true }
   }
-  function settleRuntimeInput(running:Active,saved:LiveInput,error?:unknown,submittedTurn?:{id:string;open:boolean;mode:'send'|'steer'|'queue'},accepted?:void|AgentInputAcceptance) {
+  function settleRuntimeInput(running:Active,saved:LiveInput,error?:unknown,submittedTurn?:{id:string;open:boolean;mode:'send'|'steer'|'queue'},accepted?:void|AgentInputAcceptance,ownerInput=true) {
     if(state.shutdownComplete){running.runtimeInputs?.delete(saved.id);return}
     try {
       // held-only 落库不会自己 bump(store.addEvent 才会);两条分支分别记账,没写就不吵。
@@ -76,6 +76,7 @@ export function makePendingInputs(ctx:ServiceCtx) {
       if(acceptedTurn&&accepted?.turnId)(running.acceptedInputTurns??=new Map()).set(accepted.turnId,acceptedTurn)
       if(openedTurn)running.turn={id:openedTurn,open:true}
       if(changed==='held')ctx.hub.bumped(saved.taskId)
+      if(changed==='delivered'&&ownerInput)running.permissions.resetDenials()
       // Keep delivery uncertainty tracked if the durable transition failed.
       running.runtimeInputs?.delete(saved.id)
       if(state.runsByTask.get(saved.taskId)===running&&!running.cancelled&&!running.finishing)running.interactionAt=Date.now()

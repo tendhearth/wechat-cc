@@ -17,6 +17,14 @@ afterEach(() => {
 })
 
 describe('workbench rendering', () => {
+  it('review P2 capability: only server-advertised cards offer a rejection reason',async()=>{
+    const {renderWorkbench}=await import('./workbench.js')
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const permission={id:'request',taskId:task.id,tool:'Bash',description:'read',createdAt:1}
+    const state={tasks:[task],providers:[],defaultProvider:'codex',selectedId:task.id,detail:{task,events:[],artifacts:[],permissions:[permission]},selectedArtifactId:null,error:'',preview:null,canWechat:false}
+    expect(renderWorkbench(state)).not.toContain('data-denial-reason=')
+    expect(renderWorkbench({...state,detail:{...state.detail,permissions:[{...permission,canDenyWithReason:true}]}})).toContain('data-denial-reason="request"')
+  })
   it('renders an eligible task decision and an escaped script disclosure without widening other cards',async()=>{
     const {renderWorkbench}=await import('./workbench.js')
     const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}

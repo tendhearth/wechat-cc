@@ -21,7 +21,7 @@ describe('run-bound Workbench permissions', () => {
   })
 
   it('validates denial reasons without consuming or changing the approval scope', async () => {
-    const p=makeRunPermissions({taskId:'deadbeef'}),answer=p.request({tool:'Bash',description:'x'})
+    const p=makeRunPermissions({taskId:'deadbeef'}),answer=p.request({tool:'Bash',description:'x',onDenied:()=>{}})
     const id=p.pending()[0]!.id
     expect(()=>p.resolve(id,'allow','reason')).toThrow('invalid_request')
     expect(()=>p.resolve(id,'deny','x'.repeat(2001))).toThrow('invalid_request')

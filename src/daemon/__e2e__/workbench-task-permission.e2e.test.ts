@@ -11,6 +11,30 @@ import { makeWorkbenchService } from '../../features/workbench/service'
 import { makeWorkbenchPermissionPrompt } from '../../features/workbench/permission-prompt'
 import { makeIlinkAdapter } from '../ilink-glue'
 
+it('review P1 result: executor results cannot erase owner rejection decisions',async()=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-denial-result-'))),project=join(root,'project');mkdirSync(project)
+  const db=openTestDb(),registry=createProviderRegistry()
+  registry.register('codex',{async spawn(_project,ctx){return {
+    async *dispatch(){
+      yield {kind:'init' as const,sessionId:'same-session'}
+      for(let i=0;i<3;i++){
+        await ctx.requestPermission!({tool:'commandExecution',description:`attempt ${i}`,onDenied:()=>{}})
+        yield {kind:'result' as const,sessionId:'same-session',numTurns:i+1,durationMs:1}
+      }
+    },async close(){},
+  }}},{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  const service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:root,ownerChatId:()=> 'owner'})
+  try{
+    const task=service.create({path:project,providerId:'codex',text:'检查'})
+    for(let i=0;i<3;i++){
+      await expect.poll(()=>service.detail(task.id).permissions).toHaveLength(1)
+      service.resolvePermission(task.id,service.detail(task.id).permissions[0]!.id,'deny')
+    }
+    await expect.poll(()=>service.detail(task.id).task.status).not.toBe('running')
+    expect(service.detail(task.id).task.status).toBe('interrupted')
+  }finally{await service.shutdown();db.close();rmSync(root,{recursive:true,force:true})}
+})
+
 it.each([false,true])('owner rejection carries its reason through WeChat and the real task service; stop at three: %s',async limit=>{
   const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-denial-e2e-'))),project=join(root,'project');mkdirSync(project)
   const db=openTestDb(),store=makeWorkbenchStore(db),registry=createProviderRegistry(),feedback:string[]=[],answers:boolean[]=[]

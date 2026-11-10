@@ -6,6 +6,7 @@ import { untilRequestId } from '../../../adapters/workbench/until'
 import type { ScriptExit } from '../script-runner'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
+import { makeRunPermissions } from '../../../adapters/workbench/permissions'
 
 // 做到条件成立为止(spec 2026-10-20-workbench-until-design §跑的时候)
 const exit = (code: number | null, tail = ''): ScriptExit => ({ code, signal: null, timedOut: false, stopped: false, error: null, tail })
@@ -17,18 +18,18 @@ function setup(o: { exit?: ScriptExit; maxRounds?: number; retained?: boolean; c
   store.worktrees.record({ taskId: t.id, projectPath: '/tmp/p', repoRoot: '/tmp/p', root: '/tmp/wt/abc', branch: 'cc/abc' })
   store.goals.create(t.id, { command: 'bun run test', maxRounds: o.maxRounds ?? 3 })
   const runsByTask = new Map<string, Active>()
-  const running = { identity: 'run-1', taskId: t.id, turnSeq: 1, cancelled: false, task: t } as unknown as Active
+  const running = { identity: 'run-1', taskId: t.id, turnSeq: 1, cancelled: false, task: t, permissions: makeRunPermissions({taskId:t.id}) } as unknown as Active
   if (o.retained !== false) runsByTask.set(t.id, running)
   const submitInput = vi.fn(async (_id: string, _input: { runId: string; requestId: string; text: string }) => ({}) as never)
   const continueTask = vi.fn((_id: string, _text: string, _options: { inputRequestId: string }) => ({}) as never)
   // 同 service.ts 的 resumeAfterCheck:会话还开着 ⇒ 投补充;收工了 ⇒ 续一轮
   const domains: UntilDomains = {
     view: { isReplied: () => true },
-    resume: (id, text, requestId, current) => {
+    resume: vi.fn((id, text, requestId, current) => {
       if (current) return submitInput(id, { runId: current.identity, requestId, text })
       continueTask(id, text, { inputRequestId: requestId })
       return undefined
-    },
+    }),
   }
   const released: string[] = []
   const ctx = {
@@ -46,6 +47,19 @@ function setup(o: { exit?: ScriptExit; maxRounds?: number; retained?: boolean; c
 }
 
 describe('until domain', () => {
+  it.each([true,false])('automatic continuation preserves owner rejection count (retained=%s)',async retained=>{
+    const s=setup({exit:exit(1),retained})
+    s.running.permissions=makeRunPermissions({taskId:s.t.id})
+    for(let i=0;i<2;i++){
+      const answer=s.running.permissions.request({tool:'Bash',description:'ask owner'})
+      s.running.permissions.resolve(s.running.permissions.pending()[0]!.id,'deny')
+      expect(await answer).toBe(false)
+    }
+    s.until.afterTurn(s.running)
+    await s.until.idle(s.t.id)
+    expect(s.domains.resume).toHaveBeenCalledWith(s.t.id,expect.any(String),expect.any(String),retained?s.running:undefined,2)
+    s.running.permissions.rejectAll()
+  })
   it('passes ⇒ goal passed, one event, no continuation; ran in the worktree root with the 10-minute timeout', async () => {
     const s = setup()
     s.until.afterTurn(s.running)

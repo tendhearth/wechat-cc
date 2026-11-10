@@ -4,12 +4,12 @@ import { PendingPermissions, parsePermissionReply } from './pending-permissions'
 describe('PendingPermissions', () => {
   it('parses only rejection replies with an optional reason and forwards it to the acknowledged card', async () => {
     expect(parsePermissionReply('n 07 不要 SSH\n只在本机')).toEqual({decision:'deny',ref:{kind:'code',value:'07'},reason:'不要 SSH\n只在本机'})
-    expect(parsePermissionReply('n07 原因')).toEqual({decision:'deny',ref:{kind:'code',value:'07'},reason:'原因'})
+    expect(parsePermissionReply('N 07 原因')).toEqual({decision:'deny',ref:{kind:'code',value:'07'},reason:'原因'})
     expect(parsePermissionReply('y 07 原因')).toBeNull()
     expect(parsePermissionReply('yt 07 原因')).toBeNull()
     expect(parsePermissionReply('n 07 '+'x'.repeat(2001))).toBeNull()
     const reg=new PendingPermissions(),decide=vi.fn(()=>true)
-    const answer=reg.register('reason',1000,{chatId:'owner',prompt:'p'},undefined,undefined,decide)
+    const answer=reg.register('reason',1000,{chatId:'owner',prompt:'p',canDenyWithReason:true},undefined,undefined,decide)
     expect(reg.consume('reason','deny',' 不要 SSH ')).toBe(true)
     expect(decide).toHaveBeenCalledExactlyOnceWith('deny','不要 SSH')
     expect(await answer).toBe('deny');expect(reg.consume('reason','deny','again')).toBe(false)

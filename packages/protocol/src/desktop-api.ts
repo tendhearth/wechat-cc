@@ -2134,7 +2134,7 @@ const PetPendingPermissionShape = z.object({
   prompt: z.string(),
   since: z.string(),
   expires_at: z.string(),
-  canAllowTask: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
+  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
   taskId: z.string().optional(),
 })
 const PetTaskActivityShape = z.object({
@@ -2289,7 +2289,7 @@ const PermissionsPendingItemShape = z.object({
   since: z.string(),
   expires_at: z.string(),
   taskId: z.string().optional(),
-  canAllowTask: z.boolean().optional(),
+  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(),
   scripts: z.array(PermissionScript).optional(),
 })
 export const PermissionsPendingResponse = z.object({ items: z.array(PermissionsPendingItemShape) })

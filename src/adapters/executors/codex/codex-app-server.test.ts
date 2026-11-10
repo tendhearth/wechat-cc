@@ -1203,6 +1203,46 @@ describe('Codex retained workbench runtime', () => {
     expect(run.child.sent.find(m => m.id === 'late')?.result.decision).toBe('decline')
     expect(run.child.sent.some(m => m.method === 'turn/interrupt' && m.params.threadId === 'child-1')).toBe(true)
   })
+  it('review P2 child: rejection feedback returns once to the owning parent after the child is interrupted',async()=>{
+    const run=await runtime({requestPermission:async(request:Parameters<NonNullable<SpawnContext['requestPermission']>>[0])=>{request.onDenied?.('不要 SSH');return false}})
+    launch(run.child);await expect.poll(()=>run.api.snapshot().backgroundCount).toBe(1)
+    completed(run.child)
+    approval(run.child,'denied-child',undefined,{threadId:'child-1',turnId:'child-turn-1',command:'ssh other-host',availableDecisions:['accept','cancel']})
+    await expect.poll(()=>run.child.sent.find(m=>m.id==='denied-child')?.result).toEqual({decision:'cancel'})
+    childEnd(run.child,'interrupted');childEnd(run.child,'interrupted')
+    await begun(run.child,2)
+    const next=run.child.sent.filter(m=>m.method==='turn/start')[1]!
+    expect(next.params.threadId).toBe('thread-1')
+    expect(next.params.input[0].text).toContain('不要 SSH')
+    expect(next.params.input[0].text).toContain('ssh other-host')
+    expect(next.params.input[0].text).toContain('child-1')
+    expect(run.child.sent.filter(m=>m.method==='turn/start')).toHaveLength(2)
+    expect(run.events.some(e=>e.kind==='error')).toBe(false)
+    completed(run.child,'completed','turn-2');await run.session.close();await run.done
+  })
+  it.each([false,true])('review P2 child: parent-active and task-cancel terminal races preserve ownership (cancelled=%s)',async cancelled=>{
+    const run=await runtime({requestPermission:async(request:Parameters<NonNullable<SpawnContext['requestPermission']>>[0])=>{request.onDenied?.('不要 SSH');return false}})
+    launch(run.child);await expect.poll(()=>run.api.snapshot().backgroundCount).toBe(1)
+    approval(run.child,'child-race',undefined,{threadId:'child-1',turnId:'child-turn-1',command:'ssh other-host',availableDecisions:['accept','cancel']})
+    await expect.poll(()=>run.child.sent.find(m=>m.id==='child-race')?.result).toEqual({decision:'cancel'})
+    if(cancelled)await run.session.cancel!()
+    childEnd(run.child,'interrupted');childEnd(run.child,'interrupted')
+    if(cancelled){
+      await run.session.close();await run.done
+      expect(run.child.sent.filter(m=>m.method==='turn/start')).toHaveLength(1)
+      expect(run.child.sent.filter(m=>m.method==='turn/steer')).toHaveLength(0)
+    }else{
+      await expect.poll(()=>run.child.sent.find(m=>m.method==='turn/steer')).toBeDefined()
+      const steer=run.child.sent.find(m=>m.method==='turn/steer')!
+      expect(steer.params).toMatchObject({threadId:'thread-1',expectedTurnId:'turn-1'})
+      expect(steer.params.input[0].text).toContain('不要 SSH')
+      run.child.send({id:steer.id,result:{turnId:'turn-1'}})
+      await expect.poll(()=>run.api.snapshot().backgroundCount).toBe(0)
+      expect(run.child.sent.filter(m=>m.method==='turn/steer')).toHaveLength(1)
+      completed(run.child);await run.session.close();await run.done
+    }
+    expect(run.events.some(e=>e.kind==='error')).toBe(false)
+  })
   it('requires native acknowledgements for steer and same-parent followup; submitted input retains epoch', async () => {
     const run = await runtime(); const accepted = run.api.submit('input-1', 'followup')
     await expect.poll(() => run.child.sent.some(m => m.method === 'turn/steer')).toBe(true)

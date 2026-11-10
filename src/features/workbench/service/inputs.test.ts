@@ -15,6 +15,7 @@ import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
 import { makePendingInputs } from './pending-inputs'
 import { randomUUID } from 'node:crypto'
+import { makeRunPermissions } from '../../../adapters/workbench/permissions'
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -42,7 +43,7 @@ function setup(over: { owner?: string | null; networkGate?: ServiceCtx['deps']['
     pending: makePendingInputs(ctx),
   })
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
-  const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1', taskId: task.id, title: task.title, task, path: project, directoryIdentity: directoryIdentity(project), execution: PROVIDER_EXECUTION_CHOICE, cancelled: false, finishing: false, uncertain: false, delivering: false, permissions: { pending: () => [], resolve: () => true }, questions: { pending: () => [], resolve: () => true }, ...over } as unknown as Active)
+  const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1', taskId: task.id, title: task.title, task, path: project, directoryIdentity: directoryIdentity(project), execution: PROVIDER_EXECUTION_CHOICE, cancelled: false, finishing: false, uncertain: false, delivering: false, permissions: { pending: () => [], resolve: () => true, resetDenials: vi.fn() }, questions: { pending: () => [], resolve: () => true }, ...over } as unknown as Active)
   const pending = (text = '补一句') => store.liveInputs.add({ id: REQ, taskId: task.id, runId: 'run-1', text, attachments: [], execution: PROVIDER_EXECUTION_CHOICE })
   return { store, state, hub, domain, task, project, running, spies, pending, db }
 }
@@ -67,6 +68,19 @@ describe('makeInputsDomain · 拍板与撤回', () => {
 })
 
 describe('makeInputsDomain · 补充的投递', () => {
+  it.each([false,true].flatMap(runtime=>['owner','automatic'].flatMap(origin=>[false,true].map(delivered=>({runtime,origin:origin as 'owner'|'automatic',delivered})))))('only a delivered owner input clears rejections: $runtime / $origin / $delivered',async({runtime,origin,delivered})=>{
+    const s=setup(),permissions=makeRunPermissions({taskId:s.task.id,initialDenials:2})
+    const turnId=s.store.execution.accept(s.task.id,'run-1',PROVIDER_EXECUTION_CHOICE)
+    const send=async()=>{if(!delivered)throw Error('not accepted')}
+    s.spies.inputMode.mockReturnValue('steer')
+    const session=runtime?{workbenchRuntime:{snapshot:()=>({retained:true,foreground:'active',backgroundCount:0,input:'steer'}),submit:send}}:{steer:send}
+    const r=s.running({permissions,session,reviewBaseline:{},turn:{id:turnId,open:true}} as never)
+    s.state.runsByTask.set(s.task.id,r)
+    await s.domain.submitInput(s.task.id,{runId:r.identity,requestId:REQ,text:'next instruction'},undefined,origin)
+    await expect.poll(()=>s.store.liveInputs.get(REQ)?.status).toBe(delivered?'delivered':'held')
+    expect(permissions.denialCount()).toBe(origin==='owner'&&delivered?0:2)
+    expect(s.state.autoContinueBlocked.has(s.task.id)).toBe(false)
+  })
   it('submitInput:带 execution ⇒ invalid_execution;被 hold 中 ⇒ input_storage_unavailable;没 run ⇒ input_stale;stopping ⇒ workbench_stopping', async () => {
     const { domain, task, state } = setup()
     await expect(domain.submitInput(task.id, { runId: 'run-1', requestId: REQ, text: 'x', execution: {} } as never)).rejects.toThrow('invalid_execution')

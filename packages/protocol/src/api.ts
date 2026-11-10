@@ -190,7 +190,7 @@ export const PermissionScript = z.object({ path: z.string(), content: z.string()
 export const PermissionScriptChunk = z.object({ content: z.string(), nextOffset: z.number().nullable() })
 export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
-  canAllowTask: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
+  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
 })
 
 const QuestionOption = z.object({ label: z.string(), description: z.string() })

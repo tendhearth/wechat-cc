@@ -352,7 +352,6 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             // 任何一个成功回合(result)即视为这家恢复。
             if (ev.kind==='error') quota.note(task.providerId,ev.message,ev.code)
             if (ev.kind==='result') quota.clear(task.providerId)
-            if (ev.kind==='result') running.permissions.resetDenials()
             // 这件事的轮(M2b):result 收一轮、带执行者报的用量(每件事花了多少额度从这里加);别的动静接着开下一轮。
             if (ev.kind === 'result') noteTurn(running,ev)
             if (ev.kind==='result') settleQuiet(running)
@@ -505,7 +504,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
 
 
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     assertNotRewindBlocked(store.rewinds,task.id)
     if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
@@ -545,6 +544,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const ruleDecide=ctx.deps.permissionDecide
     const permissionPrompts=new Map<string,()=>void>()
     const permissions=makeRunPermissions({
+      initialDenials,
       taskId:task.id,root:task.path,provider:task.providerId,stateDir:ctx.stateDir,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
       audit:event => {
         if(event.type==='request'){
@@ -693,7 +693,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
   function create(input:CreateTask):WorkbenchTaskView {
     return createTask(input)
   }
-  function continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView {
+  function continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
     ctx.ensureAccepting()
     const attachments=selectAttachments(options,id,attachmentPolicy)
     const inputRequestId=options?.inputRequestId===undefined?undefined:normalizeInputRequestId(options.inputRequestId)
@@ -725,7 +725,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const accepted:AcceptedContinuation=decision.mode==='restart_required'
       ? {mode:'restart',preview:decision.restart}
       : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
-    try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy)}
+    try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy,initialDenials)}
     catch(error){
       if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');ctx.hub.bumped(id)}catch{state.autoContinueBlocked.add(id)}
       throw error

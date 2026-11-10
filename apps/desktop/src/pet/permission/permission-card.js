@@ -7,7 +7,7 @@
 //   「微信里有一条等你确认」;真要点的人去微信点,别给一个按下去必然 403 的按钮。
 // - 全部节点走注入的 makeEl,不用 innerHTML(prompt 是不可信文本)。
 
-/** @typedef {{ hash: string, prompt: string, since: string, expires_at: string, taskId?:string, canAllowTask?:boolean, scripts?:Array<{path:string,content:string,error?:string,sha256?:string,truncated?:boolean}> }} PermissionItem */
+/** @typedef {{ hash: string, prompt: string, since: string, expires_at: string, taskId?:string, canAllowTask?:boolean, canDenyWithReason?:boolean, scripts?:Array<{path:string,content:string,error?:string,sha256?:string,truncated?:boolean}> }} PermissionItem */
 
 const TITLE = '这个要你看一下'
 const FAIL_NOTE = ' 没送出去,再试一次'
@@ -122,11 +122,13 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
       }
       if(item.scripts?.length)card.appendChild(scriptList)
 
-      denialReason = make('textarea', 'pet-card-denial-reason')
-      denialReason.setAttribute('placeholder', '拒绝理由（选填）')
-      denialReason.setAttribute('aria-label', '拒绝理由（选填）')
-      denialReason.setAttribute('maxlength', '2000')
-      card.appendChild(denialReason)
+      if (item.canDenyWithReason === true) {
+        denialReason = make('textarea', 'pet-card-denial-reason')
+        denialReason.setAttribute('placeholder', '拒绝理由（选填）')
+        denialReason.setAttribute('aria-label', '拒绝理由（选填）')
+        denialReason.setAttribute('maxlength', '2000')
+        card.appendChild(denialReason)
+      }
       const actions = make('div', 'pet-card-actions')
       allow = make('button', 'pet-card-allow', '允许')
       allow.setAttribute('type', 'button')

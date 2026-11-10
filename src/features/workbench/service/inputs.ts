@@ -105,7 +105,7 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
     store.liveInputs.set(requestId,'withdrawn')
     ctx.hub.bumped(id)
   }
-  async function submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner'){
+  async function submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner',origin:'owner'|'automatic'='owner'){
     assertNotRewindBlocked(store.rewinds,id)   // 回退停住的事不收补充(评审 #433-4)
     ctx.ensureAccepting()
     if(Object.hasOwn(input,'execution'))throw Error('invalid_execution')
@@ -169,7 +169,7 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
         // Replay acknowledgement may wait behind an autonomous native turn.
         // The HTTP receipt is already durable; never wait here or auto-resend.
         void runtime.submit(saved.id,text,material).then(
-          accepted=>settleRuntimeInput(running,saved,undefined,submittedTurn,accepted),
+          accepted=>settleRuntimeInput(running,saved,undefined,submittedTurn,accepted,origin==='owner'),
           error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'),submittedTurn);armIdleClose(running)},
         )
       }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'),submittedTurn);armIdleClose(running)}
@@ -185,6 +185,7 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
       running.interactionAt=Date.now()
       store.liveInputs.set(saved.id,'delivered');ctx.hub.bumped(id)
       store.addEvent(id,'user',text,null,running.identity,attachments,submittedTurnId);
+      if(origin==='owner')running.permissions.resetDenials()
     }catch(error){store.liveInputs.set(saved.id,'held',`未确认执行者收到，请检查当前对话后再决定是否重发。${error instanceof Error?' '+error.message:''}`);ctx.hub.bumped(id)}
     finally{running.delivering=false}
     return store.liveInputs.get(saved.id)!

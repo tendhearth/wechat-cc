@@ -946,6 +946,30 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           } else if (message.method === 'turn/completed') {
             turn.terminal = true
             if (turn.occurrence) {
+              if (!chat && !turn.cancelled && turn.denialFeedback?.length && ['completed','interrupted'].includes(params.turn?.status)) {
+                if (turn.resumingDenial) return
+                turn.resumingDenial = true
+                void (async()=>{
+                  await turn.denialDelivery
+                  if (!current(turn) || stopped || closing || runtimeEnded || broken) return
+                  const feedback=turn.denialFeedback?.splice(0).join('\n\n')
+                  if (feedback) {
+                    const text=`子执行者 ${turn.threadId} 的操作被拒绝。请在拥有此任务的原会话中继续处理：\n\n${feedback}`
+                    if (active) {
+                      (active.denialFeedback??=[]).push(text)
+                      steerDenial(active,text)
+                    } else {
+                      const next=launch(text)
+                      void next.accepted.catch(error=>{if(active===next.turn)finish(next.turn,codexErrorEvent(error instanceof Error?error.message:String(error)))})
+                    }
+                  }
+                  // Finalize the child only after the owning parent holds the
+                  // feedback; duplicate terminal notifications cannot redeliver it.
+                  turn.resumingDenial=false
+                  route(message)
+                })().catch(error=>{if(current(turn))finish(turn,codexErrorEvent(error instanceof Error?error.message:String(error)))})
+                return
+              }
               for (const item of Array.isArray(params.turn?.items) ? params.turn.items : []) if (item.type === 'agentMessage' && codexItemId(item.id) && typeof item.text === 'string') turn.occurrence.text(item.id, item.text, true)
               dropPendingRequests(turn); retainUnfinishedCommands(turn); turn.occurrence.finish(params.turn?.status)
               turn.events.push(turn.occurrence.event(), reconcileUnstartedCommands()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn); return

@@ -227,16 +227,16 @@ export default function Approval() {
   }
 
   const decide = (decision: 'allow' | 'deny' | 'allow_task') =>
-    void send(v.requestId, `approve:${v.requestId}`, decision, () => backend.decide({ id, runId: v.runId, requestId: v.requestId, decision, ...(decision === 'deny' && denialDraft.requestId === v.requestId && denialDraft.reason.trim() ? { reason: denialDraft.reason.trim() } : {}) }))
+    void send(v.requestId, `approve:${v.requestId}`, decision, () => backend.decide({ id, runId: v.runId, requestId: v.requestId, decision, ...(decision === 'deny' && v.canDenyWithReason && denialDraft.requestId === v.requestId && denialDraft.reason.trim() ? { reason: denialDraft.reason.trim() } : {}) }))
 
   return shell(
     <PermissionCard key={v.requestId} v={v} taskId={id} matterTitle={matterTitle} />,
     <View key={v.requestId} style={{ gap: space.s }}>
       {status}
-      <TextField testID="approval-denial-reason" variant="comment" multiline maxLength={2000}
+      {v.canDenyWithReason ? <TextField testID="approval-denial-reason" variant="comment" multiline maxLength={2000}
         accessibilityLabel={t(lang, 'approval.denialReason')} placeholder={t(lang, 'approval.denialReason')}
         value={denialDraft.requestId === v.requestId ? denialDraft.reason : ''} editable={!editing}
-        onChangeText={reason => setDenialDraft({ requestId: v.requestId, reason })} />
+        onChangeText={reason => setDenialDraft({ requestId: v.requestId, reason })} /> : null}
       <View style={{ flexDirection: 'row', gap: space.m }}>
         <View style={{ flex: 1 }}>
           <Button kind="secondary" testID="approval-deny" label={t(lang, 'approval.deny')} onPress={() => decide('deny')} disabled={locked} busy={pending === 'deny'} />

@@ -12,6 +12,10 @@ const base = {
 const model = { title: '可以清理旧文件吗?', what: '清理临时缓存', scope: '作品集', effect: '删除一些文件', source: 'model' as const }
 
 describe('approvalView', () => {
+  it('advertises rejection reasons only when the server supports delivery',()=>{
+    expect(approvalView(base,{})).toMatchObject({kind:'card',canDenyWithReason:false})
+    expect(approvalView({...base,permissions:[{...base.permissions[0],canDenyWithReason:true}]},{p1:model})).toMatchObject({kind:'card',canDenyWithReason:true})
+  })
   it('preserves server eligibility and the exact script snapshot independently of model summaries', () => {
     const scripts=[{path:'check.py',content:'print("review me")\n',sha256:'a'.repeat(64)}]
     const detail={...base,permissions:[{...base.permissions[0],canAllowTask:true,scripts}]}

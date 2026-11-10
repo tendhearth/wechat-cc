@@ -19,6 +19,36 @@ vi.mock('../../adapters/executors/codex/codex-config', async original => ({
 const cleanup: (() => Promise<void>)[] = []
 afterEach(async () => { for (const fn of cleanup.splice(0)) await fn() })
 describe.skipIf(process.platform === 'win32')('native Codex task service',()=>{
+it('review P1 input: a delivered new owner instruction resets earlier rejections within the same native turn',async()=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-denial-direction-'))),project=join(root,'project');mkdirSync(project)
+  const db=openDb({path:join(root,'state.db')});let service:WorkbenchService|undefined
+  cleanup.push(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
+  const params={itemId:'command',kind:'command',command:'ssh other-host',cwd:project,availableDecisions:['accept','decline']}
+  let third=false
+  const native=createScriptedCodex({threadId:'owned-session',turns:[{steps:[{request:{method:'item/commandExecution/requestApproval',params}},{request:{method:'item/commandExecution/requestApproval',params}},{delayMs:60000}]}],rewrite:message=>{
+    if(!third&&message.result?.turnId&&native.steers.at(-1)==='换个方向做本地检查'){
+      third=true;return [message,{id:'third-after-input',method:'item/commandExecution/requestApproval',params:{...params,threadId:'owned-session',turnId:'turn-1'}}]
+    }
+    return message
+  }})
+  const registry=createProviderRegistry()
+  registry.register('codex',createWorkbenchCodexProvider({codexPathOverride:'/unused-codex',spawnProcess:native.spawn}),{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:root,ownerChatId:()=>null})
+  const task=service.create({path:project,providerId:'codex',text:'检查'})
+  for(let i=0;i<2;i++){
+    await expect.poll(()=>service!.detail(task.id).permissions).toHaveLength(1)
+    service.resolvePermission(task.id,service.detail(task.id).permissions[0]!.id,'deny')
+  }
+  const inputId=randomUUID()
+  await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:inputId,text:'换个方向做本地检查'})
+  await expect.poll(()=>service!.detail(task.id).inputs?.find(i=>i.id===inputId)?.status).toBe('delivered')
+  await expect.poll(()=>service!.detail(task.id).permissions).toHaveLength(1)
+  service.resolvePermission(task.id,service.detail(task.id).permissions[0]!.id,'deny')
+  await expect.poll(()=>native.responses.some(r=>r.result&&JSON.stringify(r.result)==='{"decision":"decline"}')).toBe(true)
+  await new Promise(resolve=>setTimeout(resolve,20))
+  expect(service.detail(task.id).task.status).toBe('running')
+  expect(service.detail(task.id).events.some(e=>e.text.includes('已连续拒绝三次'))).toBe(false)
+})
 it('native rejection keeps the real task running and delivers an immediate followup in the same session',async()=>{
   const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-native-denial-'))),project=join(root,'project');mkdirSync(project)
   const db=openDb({path:join(root,'state.db')});let service:WorkbenchService|undefined

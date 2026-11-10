@@ -55,6 +55,8 @@ export function makeRunPermissions(opts: {
    * CLI boolean bridges do not supply it; even absolute names may be functions. */
   executionEnvironment?: () => PermissionExecutionEnvironment | undefined
   timeoutMs?: number
+  /** 检查失败后的自动续轮沿用上一轮拒绝次数；新的主人输入不传。 */
+  initialDenials?: number
   audit?: (event: WorkbenchPermissionAudit) => void
   /** 放行规则:登记之前先问。allow / deny ⇒ 不登记、不发 request 审计(主人收不到通知),只记 outcome 带 by。 */
   decide?: PermissionDecide
@@ -62,7 +64,7 @@ export function makeRunPermissions(opts: {
   const entries = new Map<string, Entry>()
   const rules: Rule[] = []
   let closed = false
-  let consecutiveDenials = 0
+  let consecutiveDenials = opts.initialDenials ?? 0
   /** 暂停时刻(网络守护把执行者冻住时):期间不算进五分钟的批准期限。null = 没暂停。 */
   let pausedAt: number | null = null
   const audit = (event: WorkbenchPermissionAudit): boolean => {
@@ -91,7 +93,6 @@ export function makeRunPermissions(opts: {
       if (reuse && snapshot.hash && matchRule(rules, snapshot.ask)?.then === 'allow') {
         const permission: PendingWorkbenchPermission = { id: randomUUID(), taskId: opts.taskId, tool, description, createdAt: Date.now() }
         const allowed = audit({ type: 'outcome', permission, outcome: 'allow', by: 'rule' })
-        if (allowed) consecutiveDenials = 0
         return Promise.resolve(allowed)
       }
       return register(facts, reuse ? snapshot : { ...snapshot, hash: undefined }, signal, raw.onDenied)
@@ -105,7 +106,6 @@ export function makeRunPermissions(opts: {
       if (ruled.verdict !== 'ask' && ruled.by) {
         const permission: PendingWorkbenchPermission = { id: randomUUID(), taskId: opts.taskId, tool, description, createdAt: Date.now() }
         const audited = audit({ type: 'outcome', permission, outcome: ruled.verdict, by: ruled.by })
-        if (audited && ruled.verdict === 'allow') consecutiveDenials = 0
         return audited && ruled.verdict === 'allow'
       }
       // Explicit deny/ask and red lines from the shared gate take precedence.
@@ -121,6 +121,7 @@ export function makeRunPermissions(opts: {
       tool,
       description: snapshot.scripts.length || snapshot.requiresBoundExecution ? `${description}\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。` : description,
       createdAt: Date.now(),
+      ...(onDenied ? { canDenyWithReason: true } : {}),
       ...(snapshot.hash ? { canAllowTask: true } : {}),
       ...(snapshot.scripts.length ? { scripts: snapshot.scripts.map(s => s.content.length > 2000 ? { ...s, content: s.content.slice(0, 2000), truncated: true } : { ...s }) } : {}),
     }
@@ -156,6 +157,7 @@ export function makeRunPermissions(opts: {
 
   return {
     request,
+    denialCount: () => consecutiveDenials,
     denialLimitReached: () => consecutiveDenials >= 3,
     resetDenials: () => { if (consecutiveDenials < 3) consecutiveDenials = 0 },
     /** Initial and late-subscription notifications share this projection.
@@ -197,6 +199,7 @@ export function makeRunPermissions(opts: {
       const reason = permissionReason(rawReason, decision)
       const entry = entries.get(id)
       if (!entry) return false
+      if (reason && !entry.permission.canDenyWithReason) return false
       if (pausedAt === null && Date.now() >= entry.expiresAt) {
         entry.finish(false,'expired')
         return false

@@ -17,6 +17,7 @@ export interface PendingWorkbenchPermission {
   description: string
   createdAt: number
   canAllowTask?: boolean
+  canDenyWithReason?: boolean
   scripts?: PermissionScript[]
 }
 
