@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { realpathSync } from 'node:fs'
 import { readAnchoredFile } from './anchored-fs'
 import { floorReason, isLowRisk, toolClass } from '../permission-rules/floor'
 import { EDIT_REPORTING_PROVIDERS } from '../permission-rules/decide'
-import { inspectPermissionExecutable, PERMISSION_SYSTEM_DIRS, type PermissionExecutable, type PermissionExecutionEnvironment } from './permission-executable'
+import { inspectPermissionExecutable, type PermissionExecutable, type PermissionExecutionEnvironment } from './permission-executable'
 import type { PermissionAsk } from '../../domain/permission-rules/types'
 import type { PermissionScript } from '../../ports/workbench'
 
@@ -44,6 +44,28 @@ export function literalCommand(command: string, assignments: boolean[] = []): st
 // Unknown programs, shell syntax, wrappers and build tools require an explicit
 // one-shot decision. They never create automatic task grants.
 const NATIVE_COMMANDS = new Set(['echo', 'pwd', 'true', 'false', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'rm', 'mkdir', 'touch', 'cp', 'mv', 'chmod', 'diff', 'uniq', 'date', 'uname', 'sleep'])
+const SCRIPT_EXTENSION = /\.(?:py|[cm]?js|tsx?|sh|bash|zsh|rb|pl)$/i
+const INTERPRETER = /^(?:python[\d.]*|node|bash|sh|zsh|ruby|perl)$/
+function interpreterEntryIndex(program: string, operands: string[]): number | undefined {
+  const shell = /^(?:bash|sh|zsh)$/.test(program)
+  const nodeValues = ['-C', '--conditions', '--input-type', '--title', '--inspect-port', '--env-file', '--env-file-if-exists', '--loader', '--experimental-loader', '--openssl-config', '--icu-data-dir', '-r',
+    '--test-name-pattern', '--test-skip-pattern', '--test-reporter', '--test-reporter-destination', '--test-concurrency', '--test-timeout', '--test-shard', '--test-coverage-branches', '--test-coverage-functions', '--test-coverage-lines', '--test-coverage-exclude', '--test-coverage-include']
+  const values = /^python/.test(program) ? ['-W', '-X', '--check-hash-based-pycs']
+    : program === 'node' ? nodeValues
+    : program === 'bun' ? [...nodeValues, '--port', '--config', '--cwd', '-F', '--filter', '--shell', '--elide-lines', '--install', '--console-depth', '--env-file', '--dns-result-order', '--user-agent']
+    : shell ? ['-o', '+o', '-O', '+O', '--rcfile', '--init-file']
+    : program === 'ruby' ? ['-C', '-I', '-r', '-F', '-E', '--encoding', '--external-encoding', '--internal-encoding']
+    : ['-I', '-M', '-m', '-F']
+  for (let i = 0; i < operands.length; i++) {
+    const word = operands[i]!
+    if (word === '--') return i + 1 < operands.length ? i + 1 : undefined
+    if (word === '-' || (shell && /^-[^-]*c/.test(word))) return undefined
+    if (values.includes(word)) { i++; continue }
+    if (program === 'bun' && word === 'run') continue
+    if (!word.startsWith('-') && !(shell && word.startsWith('+'))) return i
+  }
+  return undefined
+}
 export function needsBoundExecution(command: string): boolean {
   const assignments: boolean[] = [], argv = literalCommand(command, assignments)
   if (!argv) return true
@@ -85,26 +107,53 @@ export function inspectPermissionCommand(facts: { tool: string; command?: string
   if(argv.some(word=>/^(?:--cwd|--prefix|--directory|--dir)(?:=|$)/.test(word)||word==='-C'))eligible=false
   if(argv.slice(0,start).some(word=>/^(?:PATH|BASH_ENV|ENV|NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONSTARTUP)=/.test(word)))eligible=false
   if (['env', 'command', 'exec', 'time', 'nice', 'nohup', 'timeout', 'xargs', 'parallel', 'cmd', 'cmd.exe', 'powershell', 'pwsh'].includes(program)) eligible = false
+  // Preview classification must not broaden the old conservative task-grant
+  // gate for source-looking data operands or interpreter names in arguments.
+  if (argv.some(w => SCRIPT_EXTENSION.test(w)) || argv.slice(start + 1).some(w => INTERPRETER.test(w.split(/[\\/]/).at(-1)!))) eligible = false
   // Inline programs / modules may load mutable code invisible in the card.
   if (argv.some(w => /^(?:-[cem]|--eval|--require|--import|--preload)(?:=|$)/.test(w))) return snapshot
   const runtime = /^(?:python[\d.]*|node|bun|deno|bash|sh|zsh|ruby|perl)$/.test(head.split(/[\\/]/).at(-1)!)
-  const systemNativeHead = isAbsolute(head) && NATIVE_COMMANDS.has(program) && PERMISSION_SYSTEM_DIRS.has(dirname(resolve(head)))
-  const candidates = argv.filter((w, i) => /\.(?:py|[cm]?js|tsx?|sh|bash|zsh|rb|pl)$/i.test(w) || (i === start && !runtime && !executable && !systemNativeHead && /[\\/]/.test(w)))
+  const candidates: string[] = []
+  const add = (name: string | undefined) => {
+    // Only workspace files can be previewed. Check before generating a display
+    // path so an outside executable never becomes a script with a ../ chain.
+    if (name && inside(resolve(cwd, name)) && !candidates.includes(name)) candidates.push(name)
+  }
+  if (/[\\/]/.test(head)) add(head)
   if (program === 'source' || program === '.') {
     const entry = argv[start + 1]
-    if (entry && !entry.startsWith('-') && !candidates.includes(entry)) candidates.push(entry)
+    if (entry && !entry.startsWith('-')) add(entry)
   }
-  // Also show extensionless interpreter scripts behind a wrapper, without granting
-  // the wrapper a reusable permission.
-  for (let i = start; i < argv.length; i++) {
-    if (!/^(?:python[\d.]*|node|bash|sh|zsh|ruby|perl)$/.test(argv[i]!.split(/[\\/]/).at(-1)!)) continue
-    const entry = argv.slice(i + 1).find(w => !w.startsWith('-'))
-    if (entry && !candidates.includes(entry)) candidates.push(entry)
+  // Inspect execution positions only, never data operands such as `echo node x.py`.
+  // env may prefix the real interpreter, but does not gain reusable permission.
+  let interpreter = start
+  if (program === 'env') {
+    interpreter++
+    while (interpreter < argv.length) {
+      const word = argv[interpreter]!
+      if (word === '--') { interpreter++; break }
+      if (word === '-u' || word === '--unset') { interpreter += 2; continue }
+      if (word === '-i' || word === '--ignore-environment' || word.startsWith('--unset=') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { interpreter++; continue }
+      break
+    }
+  }
+  const interpreterName = argv[interpreter]?.split(/[\\/]/).at(-1) ?? ''
+  const operands = argv.slice(interpreter + 1)
+  if (INTERPRETER.test(interpreterName)) {
+    const entry = interpreterEntryIndex(interpreterName, operands)
+    if (entry !== undefined) add(operands[entry])
+  }
+  // Bun accepts multiple source operands; package-manager operands aren't source.
+  if (interpreterName === 'bun') {
+    let index = interpreterEntryIndex('bun', operands)
+    // Retain the existing conservative multi-source preview, stopping before
+    // command names, option values and explicit script-argument separators.
+    while (index !== undefined && /\.(?:[cm]?js|tsx?)$/i.test(operands[index] ?? '') && !operands[index]!.startsWith('-')) add(operands[index++])
   }
   if (program === 'deno' && argv[start + 1] === 'run') {
     const entry = argv[start + 2]
     if (!entry || entry.startsWith('-')) eligible = false
-    else if (!candidates.includes(entry)) candidates.push(entry)
+    else add(entry)
   }
   // Package aliases execute mutable files too: bind both the package definition
   // and the literal script it resolves to. Unresolved or compound aliases ask again.

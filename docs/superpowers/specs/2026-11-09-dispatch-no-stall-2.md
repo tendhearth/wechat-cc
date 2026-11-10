@@ -44,7 +44,7 @@ Windows 的 Git autocrlf 会让未修改的检出文本使用 CRLF、Git blob �
 
 CC 生成固定任务 preload，仅 `uv_uptime` 的 EPERM/EACCES（包含 Node `ERR_SYSTEM_ERROR.info`）回落；其余异常原样抛出。真实沙箱发现 Bun 1.3.14 会返回 0，因此也处理该无效结果。正常 uptime 保持原值。父进程提供系统开机基线，子进程按单调时钟推进，不用进程存活时间代替系统开机时间。同步 builtin ESM 命名导出。
 
-Bun 1.3.14 忽略环境预加载，因此任务 PATH 使用固定 Node/Bun wrapper 显式附加 `--require`，Node 同时用 NODE_OPTIONS。preload 只在沙箱任务及其直接运行时子进程中继承；主动清空环境或另写绝对 shell 命令不改写。
+Bun 1.3.14 忽略 NODE_OPTIONS 环境预加载，因此任务 PATH 使用固定 Node/Bun wrapper 显式附加单个 `--require=<path>` 参数，Node 同时用 NODE_OPTIONS。不能拆成 `--require <path>`：Bun 会把后面的 `install` 当成脚本入口，破坏子命令解析；绝对运行时子进程注入也使用同一单参数形式。preload 只在沙箱任务及其直接运行时子进程中继承；主动清空环境或另写绝对 shell 命令不改写。
 
 固定 shim 和 wrapper 位于 CC 创建的独立随机只读 runtime 目录，处于所有任务工作区 / TMPDIR 可写根之外；文件名带 SHA256，每次使用均经锚定读取和固定内容指纹校验。权限位不是同 UID 隔离保证，真正边界是 Codex deny-default + workspace-write 且排除全局 /tmp。真实沙箱回归同时验证任务正常写入成功、外部 shim 的改写/替换/硬链接失败。宿主 Node/Bun 路径变化时建立新 bundle，旧 bundle 保留给运行中任务；进程正常退出时统一清理。
 
