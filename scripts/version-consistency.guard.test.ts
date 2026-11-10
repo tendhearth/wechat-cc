@@ -13,6 +13,7 @@
  *
  * 这些断言不测逻辑,测的是「这几处还对得上同一个数」。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -62,6 +63,7 @@ describe('版本号的两种用法别混', () => {
     const walk = (dir: string) => {
       for (const e of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
         const rel = `${dir}/${e.name}`
+        if (isTaskCachePath(rel)) continue
         if (e.isDirectory()) { if (e.name !== 'node_modules') walk(rel); continue }
         if (!e.name.endsWith('.ts') || e.name.endsWith('.test.ts')) continue
         const body = readFileSync(join(ROOT, rel), 'utf8')

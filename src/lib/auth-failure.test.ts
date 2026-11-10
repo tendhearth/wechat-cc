@@ -1,4 +1,5 @@
 // @repo-guard 这份测试里有扫整个仓库的守卫:bun run verify 不管改了什么都跑它(import 图看不见它守的文件)。
+import { isTaskCachePath } from '../../scripts/task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { AUTH_CODE, classifyProviderFailure, hasAuthCode, looksLikeAuthFailure } from './auth-failure'
 import { isConnectFailure } from './net-errors'
@@ -79,6 +80,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     if (['node_modules', '.git', 'dist', 'target'].includes(name)) continue
     const full = join(dir, name)
+    if (isTaskCachePath(full)) continue
     if (statSync(full).isDirectory()) walk(full, out)
     else if (/\.ts$/.test(name) && !/\.test\.ts$/.test(name) && !/\.d\.ts$/.test(name)) out.push(full)
   }

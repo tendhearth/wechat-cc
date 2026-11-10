@@ -1,3 +1,4 @@
+import { TASK_CACHE_GLOBS } from './scripts/task-cache-paths'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
@@ -5,7 +6,7 @@ export default defineConfig({
     // Never collect tests from Claude's nested worktrees: doing so runs a
     // second copy of the suite concurrently and makes every ephemeral-port
     // test contend with its duplicate.
-    exclude: [
+    exclude: [...TASK_CACHE_GLOBS,
       // .stryker-tmp:变异测试(bun run test:mutation)跑着或中途被打断时留下的整仓沙箱副本。
       '**/node_modules/**', '**/.claude/worktrees/**', '**/.stryker-tmp/**', 'apps/relay/**', 'apps/app/**', '**/__e2e__/**', '**/playwright/**', '**/eval/**',
       // win32 上不跑的(2026-09-16 起工作台的文件层已是纯 JS,大部分工作台测试在 Windows 也跑):

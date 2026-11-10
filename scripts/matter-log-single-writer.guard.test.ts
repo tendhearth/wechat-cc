@@ -4,6 +4,7 @@
  * (建表在迁移里,另有 schema-ddl 守卫管)。基线 0。只扫生产代码(排除 *.test.ts 与 __e2e__/);注释行按行跳。
  * 状态也一样:matters.state 只有 matter-log.ts 推 working / waiting;setLifecycle(以前的 setStatus)只碰做完 / 重开那半边(matters-store.ts)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -19,6 +20,7 @@ export const writesMatterLog = (src: string) => src.split('\n').some(l => !/^\s*
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (name !== '__e2e__' && name !== 'migrations') walk(p, out) }
     else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) out.push(p)
   }

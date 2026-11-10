@@ -1,3 +1,4 @@
+import { TASK_CACHE_GLOBS } from './scripts/task-cache-paths'
 import { defineConfig } from 'vitest/config'
 
 // Local-only config for running the eval harness's own unit tests.
@@ -6,6 +7,6 @@ import { defineConfig } from 'vitest/config'
 // Not invoked by CI — used during eval-harness development only.
 export default defineConfig({
   test: {
-    exclude: ['**/node_modules/**'],
+    exclude: [...TASK_CACHE_GLOBS,'**/node_modules/**'],
   },
 })

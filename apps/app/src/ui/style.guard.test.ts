@@ -1,11 +1,12 @@
 // 手机样式守卫(spec 2026-10-01 §5):没有深色、不设字重、不写字面色值、文字都走 Txt / TextField。
+import { isTaskCachePath } from '../../../../scripts/task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const SRC = join(__dirname, '..')
 const walk = (d: string, out: string[] = []): string[] => {
-  for (const n of readdirSync(d)) { const f = join(d, n); statSync(f).isDirectory() ? walk(f, out) : out.push(f) }
+  for (const n of readdirSync(d)) { const f = join(d, n); if (isTaskCachePath(f)) continue; statSync(f).isDirectory() ? walk(f, out) : out.push(f) }
   return out
 }
 const TSX = walk(SRC).filter(f => f.endsWith('.tsx'))

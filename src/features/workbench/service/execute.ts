@@ -224,6 +224,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if (running.cancelled) { finalStatus='cancelled'; return }
       const preparationAbort=new AbortController()
       void running.stop.then(()=>preparationAbort.abort())
+      running.spawnAttempted=true
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
         workbenchTimeline:true,
         workbenchLifecycle:true,
@@ -419,6 +420,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       let terminalCommitted=false
       try {
         const status=running.cancelled&&!running.uncertain?(running.closedWhileReplied?'completed':'cancelled'):finalStatus
+        if (status==='cancelled'&&running.restartInterrupted) finalError='daemon_restarted'
         // 会不会真的在这一拍入队回报,两个条件都要成立(终审后修复第二轮
         // Important②a,判据比"这一轮有没有出生地"更紧):①这一轮有出生地
         // (跟 renderReport 自己的判据同一条)②reportOnce 这一拍真的会执
@@ -580,7 +582,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       execution,
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
-      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
+      cancelled:false,spawnAttempted:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
       ...(firstTurn?{turn:{id:firstTurn,open:true}}:{}),
     }
     const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
@@ -732,6 +734,20 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     }
   }
 
-  return { execute,start,matterSync,safeOriginMatterId,createTask, create,continueTask,createWechat }
+  /** 只有部署凭据证明从未派发的首请求才能走这里；没有原生历史可恢复，也没有重开确认可绕过。 */
+  function resumeUnstartedTask(id:string,runId:string,note:string,inputRequestId:string):WorkbenchTaskView {
+    ctx.ensureAccepting()
+    const task=store.get(id),users=store.steps(id).filter(step=>timelineKind(step)==='user')
+    if(task.sessionId||task.archivedAt!==null||task.error!=='daemon_restarted'||!['cancelled','interrupted'].includes(task.status)||
+      store.source(id)||store.execution.last(id)?.runId!==runId||users.length!==1||stepPayload(users[0]!).runId!==runId)throw Error('restart_confirmation_required')
+    if(store.worktrees.get(id)?.removedAt!=null)throw Error('worktree_removed')
+    provider(task.providerId)
+    if(canonicalProject(task.path)!==task.path)throw Error('invalid_path')
+    const original=stepPayload(users[0]!),attachments=selectAttachments({attachmentIds:(original.attachments??[]).map(a=>a.id)},id)
+    const text=`${note}\n\n原请求：\n${checkedText(original.text,attachments)}`
+    return start(task,text,directoryIdentity(task.path),{mode:'new'},undefined,undefined,undefined,inputRequestId,attachments)
+  }
+
+  return { execute,start,matterSync,safeOriginMatterId,createTask, create,continueTask,createWechat,resumeUnstartedTask }
 }
 export type ExecuteDomain = ReturnType<typeof makeExecuteDomain>

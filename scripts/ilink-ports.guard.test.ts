@@ -11,6 +11,7 @@
  * 零例外:下面的 EXCEPTIONS 是空的。真有一处这一步迁不了,写进去并写明为什么。
  * 注释行不算(按行跳:块注释的正则会被字符串里的 `/*` 吞代码)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -35,6 +36,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     if (name === 'node_modules') continue
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) walk(p, out)
     else if (p.endsWith('.ts') && !p.endsWith('.d.ts')) out.push(p)
   }

@@ -4,6 +4,22 @@ const original = os.uptime;
 const boot = Number(process.env.CC_TASK_SYSTEM_BOOT_MS);
 const initial = (Date.now() - boot) / 1000;
 const started = process.hrtime.bigint();
+const validBaseline = Number.isFinite(boot) && boot > 0 && initial >= 0;
+const deniedUptime = error => {
+  const native = error?.code === 'ERR_SYSTEM_ERROR' ? error.info : error;
+  return ['EPERM', 'EACCES'].includes(native?.code) && native?.syscall === 'uv_uptime';
+};
+// Codex applies shell_environment_policy to approved unsandboxed commands too.
+// Probe the native operation, not a self-reported sandbox environment marker:
+// healthy runtimes retain every builtin function and subprocess argument.
+let taskUptimeRestricted = false;
+try {
+  const value = original();
+  taskUptimeRestricted = validBaseline && !(Number.isFinite(value) && (value > 0 || (value === 0 && initial < 1)));
+} catch (error) {
+  taskUptimeRestricted = validBaseline && deniedUptime(error);
+}
+if (taskUptimeRestricted) {
 os.uptime = function () {
   try {
     const value = original();
@@ -19,11 +35,13 @@ os.uptime = function () {
   }
 };
 require('node:module').syncBuiltinESMExports();
+}
 `
 
 /** Bun ignores NODE_OPTIONS in direct absolute-path subprocesses. Keep the
  * compatibility hook within this task process tree, including worker helpers. */
 export const TASK_SUBPROCESS_PRELOAD = `
+if (taskUptimeRestricted) {
 const cp = require('node:child_process');
 const fs = require('node:fs');
 const runtime = fs.realpathSync(process.execPath);
@@ -61,4 +79,5 @@ if (bun) for (const name of ['spawn', 'spawnSync']) {
   };
 }
 require('node:module').syncBuiltinESMExports();
+}
 `

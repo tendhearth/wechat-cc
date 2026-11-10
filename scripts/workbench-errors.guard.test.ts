@@ -8,6 +8,7 @@
  *   要么是任务记录里的失败码(core executionFailureMessage 认得的,不走 HTTP)。daemon 改名 / 删码 ⇒ 这里红。
  * App 那半在 apps/app/src/net/errors.test.ts。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -165,7 +166,7 @@ describe('工作台抛出的码都归了类(反向守卫)', () => {
     const { join } = await import('node:path')
     const { statSync } = await import('node:fs')
     const files: string[] = []
-    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts') && !p.includes('.test.')) files.push(p) } }
+    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (isTaskCachePath(p)) continue; if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts') && !p.includes('.test.')) files.push(p) } }
     // 工作台的 store 与执行者 / 协调器 / 「一件事」共用的零件(以前在 src/core/workbench,架构终态 E3 分进 adapters / domain)
     walk('src/adapters/store/workbench')
     walk('src/adapters/workbench')

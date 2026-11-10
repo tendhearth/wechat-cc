@@ -25,6 +25,7 @@
  *       的 settings.json」「安装 Antigravity CLI」)不算。
  *  - 演示后端(apps/app/src/backend/demo*.ts)扮的是 daemon,名字用 demoName(id) 现算,也照样受守。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -41,6 +42,7 @@ function files(dir: string): string[] {
   const out: string[] = []
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (!SKIP_DIR.has(name)) out.push(...files(p)); continue }
     if (!/\.(js|ts|tsx)$/.test(name) || /\.(test|spec)\.|generated/.test(name)) continue
     if (SINGLE_SOURCES.has(relative(ROOT, p).split('\\').join('/'))) continue

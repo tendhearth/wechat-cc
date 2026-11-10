@@ -5,6 +5,7 @@
  * 半年后读的人(包括 CC 自己)不知道是谁。写角色:「整合者」「审查者」,要追溯就写 PR 号(「整合者评审 #541」)。
  * 一次清掉 50 个文件后上的守卫;以后换了会话名,把新名字加进下面的表。
  */
+import { TASK_CACHE_GIT_EXCLUDES } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { join, dirname } from 'node:path'
@@ -17,7 +18,7 @@ const SELF = 'scripts/no-session-names.guard.test.ts'
 
 describe('仓库里不写协作会话的名字', () => {
   it('docs / src / scripts / AGENTS.md 里没有', () => {
-    const r = spawnSync('git', ['grep', '-nE', SESSION_NAMES, '--', 'docs/*.md', 'src/*', 'scripts/*', 'AGENTS.md', `:!${SELF}`], { cwd: ROOT, encoding: 'utf8' })
+    const r = spawnSync('git', ['grep', '-nE', SESSION_NAMES, '--', 'docs/*.md', 'src/*', 'scripts/*', 'AGENTS.md', `:!${SELF}`, ...TASK_CACHE_GIT_EXCLUDES], { cwd: ROOT, encoding: 'utf8' })
     // git grep:0 = 有命中,1 = 没有,其余 = 出错(出错不能当成「没有」)。
     expect(r.status === 0 || r.status === 1, r.stderr).toBe(true)
     expect(r.stdout.trim(), '写角色(整合者 / 审查者)+ PR 号,别写会话名').toBe('')

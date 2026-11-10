@@ -11,6 +11,7 @@
  *    不许先登记个「以后再迁」(整合者评审)。
  * 数的是调用,不是行数(复查 10-21 理念 5:数违规,不数症状)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -104,6 +105,7 @@ const BASELINE: Record<string, [Tag, number]> = {
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (name !== '__e2e__' && name !== 'node_modules') walk(p, out) }
     else if (p.endsWith('.ts') && !p.endsWith('.test.ts') && !p.endsWith('.d.ts')) out.push(p)
   }

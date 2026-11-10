@@ -25,6 +25,8 @@ const selfDeployCmd = defineCommand({
     'no-sign': { type: 'boolean', description: '不用本机钥匙串里的 Developer ID 重签 sidecar 与 .app(缺省:有证书就签)' },
     'allow-unsigned': { type: 'boolean', description: '.app 是 Developer ID 封的、这次却不签,也照样换(缺省拒绝:ad-hoc sidecar 会让 daemon 卡在 TCC 框)' },
     'health-timeout-ms': { type: 'string', description: '健康门超时,毫秒(缺省 60000)' },
+    'wait-tasks': { type: 'boolean', description: '非交互时等待交办任务到可中断点，最多 20 分钟' },
+    force: { type: 'boolean', description: '列出交办任务后强制部署；重启打断的轮尝试续接一次' },
     json: { type: 'boolean', description: 'JSON 输出（SelfDeployResult）' },
   },
   async run({ args }) {
@@ -67,7 +69,7 @@ const selfDeployCmd = defineCommand({
     // 签名:本机钥匙串里有 Developer ID 就用它重签(见 self-deploy.ts 文件头);
     // `--no-sign` 关掉。citty/mri 对 `--no-sign` 的处理与 `--no-rollback` 同一套
     // (boolean 取反落到 `sign:false`),两种拼法都认。
-    const deps = defaultSelfDeployDeps()
+    const deps = defaultSelfDeployDeps({ waitTasks: Boolean(args['wait-tasks']), force: Boolean(args.force) })
     const noSign = (args as Record<string, unknown>)['no-sign'] === true || (args as Record<string, unknown>).sign === false
     const signing = resolveSigningInputs({ repoRoot, disabled: noSign, binaryPath: args.binary ?? null, spawnSync: deps.spawnSync, exists: existsSync })
 
@@ -470,6 +472,8 @@ const selfShipCmd = defineCommand({
     'max-load': { type: 'string', description: '1 分钟负载 / 核数的上限(缺省 1.0)' },
     'skip-build': { type: 'boolean', description: '不构建,直接部署已经构建好的 sidecar' },
     'allow-off-dev': { type: 'boolean', description: 'HEAD 不是 origin/dev 也装(试一条分支);脏树永远不装' },
+    'wait-tasks': { type: 'boolean', description: '非交互时等待交办任务到可中断点，最多 20 分钟' },
+    force: { type: 'boolean', description: '列出交办任务后强制部署；重启打断的轮尝试续接一次' },
   },
   async run({ args }) {
     const { runShip, SHIP_EXIT, DEFAULT_MAX_LOAD_PER_CPU } = await import('../self-ship')
@@ -496,6 +500,8 @@ const selfShipCmd = defineCommand({
     const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
     const agent = loadAgentConfig(STATE_DIR).self_change
     const { spawnSync } = await import('node:child_process')
+    const { defaultDeployTaskGate } = await import('../deploy-task-gate')
+    const taskOptions = { waitTasks: Boolean(args['wait-tasks']), force: Boolean(args.force) }
     const git = (...a: string[]) => spawnSync('git', a, { cwd: SOURCE_REPO_ROOT, encoding: 'utf8', timeout: 60_000, windowsHide: true })
     const res = await runShip({
       tree: () => {
@@ -506,11 +512,12 @@ const selfShipCmd = defineCommand({
       },
       load: () => ({ load1: loadavg()[0] ?? 0, cpus: cpus().length }),
       guard: () => daemon.guard(),
+      taskGate: () => defaultDeployTaskGate(STATE_DIR, taskOptions),
       build: async () => {
         const r = await spawnCollect('bun', ['run', 'build-sidecar'], { cwd: join(SOURCE_REPO_ROOT, 'apps', 'desktop'), env: process.env, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
         return { ok: r.code === 0, detail: (r.stderr || r.stdout).trim().split('\n').slice(-20).join('\n') }
       },
-      deploy: mode => deployFromRepo(STATE_DIR, SOURCE_REPO_ROOT, mode),
+      deploy: mode => deployFromRepo(STATE_DIR, SOURCE_REPO_ROOT, mode, taskOptions),
       // 跟自改同一套自检、同一份配置(agent-config 的 self_change.selftest_executor / selftest_provider)。
       selftest: makeSelftest({
         selftestExecutor: agent?.selftest_executor ?? SELF_CHANGE_DEFAULTS.selftest_executor,

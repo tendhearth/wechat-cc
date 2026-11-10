@@ -104,6 +104,13 @@ export function peekCleanShutdown(stateDir: string): CleanShutdownMark | null {
     : null
 }
 
+/** 关停时只读部署意图；留给下次开机继续消费，不延长有效期。 */
+export function peekPlannedRestart(stateDir: string, now: number = Date.now()): PlannedRestartMark | null {
+  const p = readJson(join(stateDir, PLANNED_RESTART_FILE))
+  return p && typeof p.reason === 'string' && typeof p.ts === 'number' && now - p.ts >= 0 && now - p.ts <= PLANNED_RESTART_TTL_MS
+    ? { reason: p.reason, ts: p.ts } : null
+}
+
 export function consumePreviousRunEvidence(stateDir: string, now: number = Date.now()): PreviousRunEvidence {
   const lastHeartbeatAt = readHeartbeat(stateDir)
   const p = consume(join(stateDir, PLANNED_RESTART_FILE))

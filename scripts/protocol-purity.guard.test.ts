@@ -11,6 +11,7 @@
  * 随机数只许走 `globalThis.crypto.getRandomValues`(Web Crypto 的这一小块是三端
  * 通用的,`crypto.subtle` 不是 —— 后者在 React Native 里没有)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -44,6 +45,7 @@ function listSourceFiles(dir: string, base = dir): string[] {
   const out: string[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name)
+    if (isTaskCachePath(full)) continue
     if (entry.isDirectory()) {
       out.push(...listSourceFiles(full, base))
     } else if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {

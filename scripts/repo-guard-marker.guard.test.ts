@@ -6,6 +6,7 @@
  * 认法跟 verify 一样简单:测试里既扫目录(readdirSync)、又从测试文件往上找仓库根(`import.meta.url` 往上走 / ROOT 拼 'src')。
  * 认错了(只是读自己的夹具目录)就标上也无妨 —— 多跑一份小测试,比安静地少一道闸便宜。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, relative } from 'node:path'
@@ -19,6 +20,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     if (name === 'node_modules') continue
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) walk(p, out)
     else if (name.endsWith('.test.ts')) out.push(p)
   }

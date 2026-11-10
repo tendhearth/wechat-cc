@@ -9,6 +9,7 @@ import { takeCheckpoint } from '../../features/workbench/checkpoints'
 import { captureGitBaseline, finishGitReview } from '../../features/workbench/git-review'
 import { taskEnvironment } from './task-environment'
 import { removeTempDir } from '../../lib/test-temp'
+import { findOnPath } from '../../lib/util'
 
 const dirs: string[] = []
 const area = () => { const path = realpathSync(mkdtempSync(join(tmpdir(), 'cc-task-env-'))); dirs.push(path); return path }
@@ -147,4 +148,56 @@ it.skipIf(process.platform!=='darwin')('security: sandbox task cannot rewrite, r
   expect(readFileSync(preload,'utf8')).toBe(original)
   writeFileSync(join(root,'.cc-tasks/abcd1234/uptime.cjs'),'throw Error("task poison")')
   expect(execFileSync('node',['-e',"console.log(require('node:os').uptime()>0)"],{env:{...process.env,...env},encoding:'utf8'}).trim()).toBe('true')
+})
+
+
+it.each(['node', 'bun'])('approved unsandboxed %s preserves native builtins when the task preload is loaded', async runtime => {
+  const root = area(), task = await taskEnvironment(root, 'abcd1234')
+  const preload = JSON.parse(task.NODE_OPTIONS!.slice('--require '.length)) as string
+  const binary = realpathSync(findOnPath(runtime)!)
+  const script = join(root, 'native-builtins.cjs')
+  writeFileSync(script, `const assert = require('node:assert/strict');
+const os = require('node:os'), cp = require('node:child_process');
+const names = ['spawn', 'spawnSync', 'execFile', 'execFileSync'];
+const before = names.map(name => cp[name]), uptime = os.uptime;
+const bun = globalThis.Bun, bunBefore = bun && [bun.spawn, bun.spawnSync];
+require(${JSON.stringify(preload)});
+assert.strictEqual(os.uptime, uptime, 'healthy host uptime must retain its native identity');
+names.forEach((name, index) => assert.strictEqual(cp[name], before[index], name + ' must remain native'));
+if (bun) { assert.strictEqual(bun.spawn, bunBefore[0]); assert.strictEqual(bun.spawnSync, bunBefore[1]); }
+console.log('native-builtins-ok');
+`)
+  // Capture the real builtin identities before explicitly requiring the same
+  // immutable preload. Automatic NODE_OPTIONS loading would precede capture.
+  const output = execFileSync(binary, [script], {
+    cwd: root, env: { ...process.env, ...task, NODE_OPTIONS: '' }, encoding: 'utf8', timeout: 10_000,
+  })
+  expect(output.trim()).toBe('native-builtins-ok')
+})
+
+it.each(['node', 'bun'])('approved unsandboxed %s keeps clean child argv and native execFile results under the full task environment', async runtime => {
+  const root = area(), task = await taskEnvironment(root, 'abcd1234')
+  const script = join(root, 'host-child.cjs')
+  writeFileSync(script, `const assert = require('node:assert/strict');
+const cp = require('node:child_process'), {promisify} = require('node:util');
+(async () => {
+  const probe = 'process.stdout.write(JSON.stringify(process.execArgv))';
+  const child = cp.spawnSync(process.execPath, ['-e', probe], {env: {}, encoding: 'utf8', timeout: 10_000});
+  assert.strictEqual(child.status, 0, child.stderr);
+  assert.ok(!JSON.parse(child.stdout).some(arg => arg.startsWith('--require')), 'preload must not be injected into clean child argv');
+  const run = promisify(cp.execFile);
+  const pending = run(process.execPath, ['-e', 'process.stdout.write(Buffer.from([0, 255, 42]))'], {env: {}, encoding: 'buffer', timeout: 10_000});
+  if (!globalThis.Bun) assert.ok(pending.child && pending.child.pid > 0, 'native promisified execFile must retain its child');
+  const result = await pending;
+  assert.ok(Buffer.isBuffer(result.stdout));
+  assert.deepEqual([...result.stdout], [0, 255, 42]);
+  console.log('native-children-ok');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+`)
+  // Resolve through the actual task PATH wrappers, just as Codex's escalated
+  // shell does. Node also receives its task NODE_OPTIONS unchanged.
+  const output = execFileSync(runtime, [script], {
+    cwd: root, env: { ...process.env, ...task }, encoding: 'utf8', timeout: 15_000,
+  })
+  expect(output.trim()).toBe('native-children-ok')
 })

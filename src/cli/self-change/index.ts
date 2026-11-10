@@ -34,6 +34,7 @@ import { spawnSync } from 'node:child_process'
 import type { SelfChangeState } from './state'
 import { makeStateStore } from './state'
 import { runPath, type PipelineDeps } from './steps'
+import type { DeployTaskOptions } from '../deploy-task-gate'
 
 /** `launchctl` 那份 plist 的固定位置(和 cli.ts 的 `self deploy` 同一条路径)。 */
 export function launchAgentPlistPath(homeDir: string): string {
@@ -91,10 +92,10 @@ export function selfDeployPlanFor(input: SelfDeployPlanInput): SelfDeployPlan {
  * 用 repoRoot 里构建好的 sidecar 部署(或回滚到 .prev)。自改的 deploy 步和 `self ship` 共用这一份。
  * entitlements.plist 从 repoRoot 拿(自改时就是这条运行自己的工作树);签名身份从本机钥匙串探。
  */
-export async function deployFromRepo(stateDir: string, repoRoot: string, mode: 'deploy' | 'rollback'): Promise<SelfDeployResult> {
+export async function deployFromRepo(stateDir: string, repoRoot: string, mode: 'deploy' | 'rollback', taskOptions: DeployTaskOptions = {}): Promise<SelfDeployResult> {
   const homeDir = homedir()
   const p = launchAgentPlistPath(homeDir)
-  const deps = defaultSelfDeployDeps()
+  const deps = defaultSelfDeployDeps(taskOptions)
   const signing = resolveSigningInputs({ repoRoot, disabled: false, spawnSync: deps.spawnSync, exists: existsSync })
   const plan = selfDeployPlanFor({
     platform: process.platform,

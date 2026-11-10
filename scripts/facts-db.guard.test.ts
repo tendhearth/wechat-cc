@@ -4,6 +4,7 @@
  * 旧文件只读、不删、不改名(主人 10-26 第 5 条)。基线 0。只扫生产代码(排除 *.test.ts 和 __e2e__/ 的测试支撑:真实形状沙盒
  * 要照真机的样子造一份旧 facts.db 让开机导入去搬);注释行按行跳。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -17,6 +18,7 @@ export const namesFactsDb = (src: string) => src.split('\n').some(l => !/^\s*(\/
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (name !== '__e2e__') walk(p, out) }
     else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) out.push(p)
   }

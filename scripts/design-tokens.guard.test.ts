@@ -1,4 +1,5 @@
 // 桌面 tokens.css 是生成物:与 packages/design-tokens 渲染结果逐字一致;手机色板就是同一个对象。
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, statSync, existsSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -120,6 +121,7 @@ describe('bundled fonts (spec §3)', () => {
     const cssFiles: URL[] = []
     const walk = (dir: URL) => {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (isTaskCachePath(new URL(e.name, dir).pathname)) continue
         if (e.isDirectory()) { if (e.name !== 'node_modules') walk(new URL(e.name + '/', dir)); continue }
         if (/\.(css|html|js|ts)$/.test(e.name)) cssFiles.push(new URL(e.name, dir))
       }

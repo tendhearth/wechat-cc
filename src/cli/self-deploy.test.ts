@@ -387,6 +387,7 @@ function makeHarness(): Harness {
 
   const deps: SelfDeployDeps = {
     ...real,
+    taskGate: async () => null,
     log: () => {},
     sleep: () => new Promise((resolve) => setTimeout(resolve, 3)),
     spawnSync(cmd, args, opts) {
@@ -494,6 +495,17 @@ function harness(): Harness {
 }
 
 describe('executeSelfDeploy', () => {
+  it('refuses busy tasks before changing the app or restarting the daemon', async () => {
+    const h = harness()
+    Object.assign(h.deps, { taskGate: async () => '有 1 件在跑；请用 --wait-tasks 或 --force。' })
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(false)
+    expect(result.steps).toEqual([{ name: 'tasks', ok: false, detail: expect.stringContaining('有 1 件在跑') }])
+    expect(h.kickstartCalls).toBe(0)
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(existsSync(h.plan.prevPath)).toBe(false)
+  })
+
   it('succeeds: backs up, swaps to a new inode, kickstarts once, passes health', async () => {
     const h = harness()
     // inode isn't a meaningful concept on Windows (no real self-deploy

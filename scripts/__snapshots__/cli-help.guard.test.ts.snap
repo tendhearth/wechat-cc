@@ -2380,6 +2380,8 @@ OPTIONS
                                 --no-sign    不用本机钥匙串里的 Developer ID 重签 sidecar 与 .app(缺省:有证书就签)                       
                          --allow-unsigned    .app 是 Developer ID 封的、这次却不签,也照样换(缺省拒绝:ad-hoc sidecar 会让 daemon 卡在 TCC 框)
   --health-timeout-ms=<health_timeout_ms>    健康门超时,毫秒(缺省 60000)                                                       
+                             --wait-tasks    非交互时等待交办任务到可中断点，最多 20 分钟                                                 
+                                  --force    列出交办任务后强制部署；重启打断的轮尝试续接一次                                                 
                                    --json    JSON 输出（SelfDeployResult）                                                
 
 
@@ -2434,6 +2436,8 @@ OPTIONS
   --max-load=<max_load>    1 分钟负载 / 核数的上限(缺省 1.0)             
            --skip-build    不构建,直接部署已经构建好的 sidecar             
         --allow-off-dev    HEAD 不是 origin/dev 也装(试一条分支);脏树永远不装
+           --wait-tasks    非交互时等待交办任务到可中断点，最多 20 分钟           
+                --force    列出交办任务后强制部署；重启打断的轮尝试续接一次           
 
 
 "

@@ -1,3 +1,4 @@
+import { isTaskCachePath } from '../../../scripts/task-cache-paths'
 import {describe, expect, it} from 'vitest'
 import {readFileSync, readdirSync, statSync} from 'node:fs'
 import {join, relative, resolve} from 'node:path'
@@ -14,6 +15,7 @@ const ALLOW: Record<string, string> = {
 function* sources(dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name)
+    if (isTaskCachePath(path)) continue
     if (statSync(path).isDirectory()) { if (name !== 'runtime' && name !== '__e2e__') yield* sources(path); continue }
     if (name.endsWith('.ts') && !name.endsWith('.test.ts') && !name.endsWith('.d.ts')) yield path
   }

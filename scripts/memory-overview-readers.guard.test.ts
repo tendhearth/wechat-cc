@@ -7,6 +7,7 @@
  *  - outward:会带到别人那里 ⇒ 文件里必须调 overviewForOthers(。
  * 新文件提到它 ⇒ 红:先想清楚是哪一类。只扫生产代码;注释行按行跳。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -40,6 +41,7 @@ export function mentionsOverview(src: string): boolean {
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) walk(p, out)
     else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) out.push(p)
   }

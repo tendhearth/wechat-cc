@@ -214,7 +214,7 @@ module.exports = {
   options: {
     doNotFollow: { path: 'node_modules' },
     exclude: {
-      path: '(node_modules|docs/spike|apps/desktop/src-tauri|dist)',
+      path: '((^|/)\\.cc-tasks(/|$)|(^|/)node_modules/\\.cache/cc-tasks(/|$)|node_modules|docs/spike|apps/desktop/src-tauri|dist)',
     },
     tsConfig: { fileName: 'tsconfig.json' },
     tsPreCompilationDeps: true,

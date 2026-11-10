@@ -7,6 +7,7 @@
  *    一个版本)和记忆目录的分类表(lib/memory-artifacts.ts)里出现。名单从表里来,没人再解析它。基线 0(除这三处)。
  * 只扫生产代码(排除 *.test.ts);注释行按行跳。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -29,6 +30,7 @@ export const namesCorrectionsFile = (src: string) => codeLines(src).some(l => CO
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) walk(p, out)
     else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) out.push(p)
   }

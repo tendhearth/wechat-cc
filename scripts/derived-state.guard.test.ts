@@ -3,6 +3,7 @@
  * `lib/memory-derived-state.ts` 删掉了,`'.derived-state.json'` 这个文件名只许出现在开机导入(把旧文件读进表)里。基线 0。
  * 只扫生产代码(排除 *.test.ts);注释行按行跳。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -16,6 +17,7 @@ export const namesDerivedState = (src: string) => src.split('\n').some(l => !/^\
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) walk(p, out)
     else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) out.push(p)
   }

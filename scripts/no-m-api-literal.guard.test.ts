@@ -10,6 +10,7 @@
  * 注释**按行**跳过(去掉行首空白后以 `//`、`*`、`/*` 开头的行):不用跨行的块注释正则 —— 那种正则见过把字符串里的
  * `/*` 当成注释开头、吞掉后面的代码、静默少报。行尾注释里写的那一行照算(宁可多算)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,6 +46,7 @@ function literalLines(text: string): number {
 function walk(dir: string, out: string[]): void {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (name === 'node_modules') continue
     if (statSync(p).isDirectory()) walk(p, out)
     else out.push(p)

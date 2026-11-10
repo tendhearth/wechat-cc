@@ -16,7 +16,21 @@ wechat-cc self deploy --json     # 机器可读
 
 > 1.7.5 起 macOS 的包叫 `Tendhearth CC.app`,主二进制 `Tendhearth CC`,sidecar `tendhearth-cc-cli`;老安装 / 回滚后还是 `wechat-cc.app` / `wechat_cc_desktop` / `wechat-cc-cli`。下文的 `<sidecar>` 指包里实际那个名字,`self deploy` 自己会挑。改名迁移见 [app-rename-migration.md](app-rename-migration.md)。
 
-可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/tendhearth-cc-cli-<arch>-apple-darwin`,老 checkout 回落 `wechat-cc-cli-…`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推;它指的文件已经不在 ⇒ `launchagent_stale`,先打开一次 app 或跑 `<sidecar> service repair`)、`--no-rollback`、`--no-sign`(见下「签名」)、`--allow-unsigned`、`--allow-missing-plugins`(插件门红了也放行,记 detail + 日志;给本来就没插件的机器,不必永久 `plugin disable`)、`--health-timeout-ms N`(缺省 60000)、`--json`。
+可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/tendhearth-cc-cli-<arch>-apple-darwin`,老 checkout 回落 `wechat-cc-cli-…`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推;它指的文件已经不在 ⇒ `launchagent_stale`,先打开一次 app 或跑 `<sidecar> service repair`)、`--no-rollback`、`--no-sign`(见下「签名」)、`--allow-unsigned`、`--allow-missing-plugins`(插件门红了也放行,记 detail + 日志;给本来就没插件的机器,不必永久 `plugin disable`)、`--health-timeout-ms N`(缺省 60000)、`--wait-tasks`、`--force`(见下)、`--json`。
+
+### 在跑的交办任务（2026-11-09）
+
+`self deploy` 改文件之前、`self ship` 构建之前都会查询交办任务；构建后进入底层部署时再检查一次。使用 operator token 读取完整分页，列出仍在工作的任务 id、标题与阶段。已答复且没有后台工作或待决问题的保留会话，是可中断点，不阻挡部署。
+
+- 交互运行：有任务在跑时选择「等它们到可中断点 / 强制继续」，回车默认等待。每轮最多等 20 分钟，到点再问；输入 `force` 强制继续，输入「取消」或 `q` 结束部署。
+- 非交互运行：有任务在跑时必须明确加 `--wait-tasks` 或 `--force`。前者最多等 20 分钟，超时非零退出，任务仍继续运行；后者列出任务后继续。两个选项互斥。
+- 读不到任务状态会拒绝部署；修复未运行的 daemon 时可明确用 `--force`。从 `<sidecar>.prev` 回滚始终保留救援通道，不被任务等待阻挡。
+
+这道门不关闭任务，也不封住新任务入口。若检查后又来了任务或选择强制部署，部署的优雅关停会把被打断的原运行身份写进状态目录的 `workbench-restart-continuations.json`，任务错误记为 `daemon_restarted`。新 daemon 读取消费一次，沿原生会话发一轮「CC 重启打断了上一轮。先检查停在哪里，再接着完成原任务。」；请求 id 由原运行身份生成，重复投递不会开第二轮。
+
+主人已经停止（包括关停等待 close 时停止）、归档、有新输入或新运行的任务不会被旧凭据唤醒。续接绑定原目录的设备/inode 身份，路径被替换时不派发。执行程序尚未确认退出、或重启时仍有待批准/待回答事项时不自动续接；原生会话无法恢复也不擅自新开，时间线说明需要确认后继续。明确仍在排队、从未开始执行的首请求保留原要求和材料重新派发，不使用历史重开令牌。执行者开机探测尚未成功时，凭据留盘，等它登记后再试一次。
+
+只有有新鲜部署重启标记的关停会留下续接凭据，普通关机/取消及无凭据的开机对账仍不重跑。已经运行着旧版本 daemon 的首次升级，没有这份关停凭据时无法补造自动续接。
 
 它按顺序做六件事(钥匙串里有 Developer ID 时再多两步,见「签名」):
 
@@ -40,7 +54,7 @@ wechat-cc self deploy --json     # 机器可读
 0. **装的是哪棵树**:工作区有未提交的改动 ⇒ 不装,退 6(没有开关能放行);HEAD 不是 `origin/dev`(先 fetch)⇒ 退 6,真要试一条分支加 `--allow-off-dev`,会照实打出 HEAD 和 origin/dev。不查的话 soak 会把一条功能分支的版本当 dev 报。在整合者自己那棵 detached、站在 origin/dev 上的树里跑。
 1. **负载**:1 分钟负载 / 核数 > 1.0(`--max-load` 改)⇒ 不动,退 3。`--wait-min N` 每分钟再看一次,最多等 N 分钟。满载下自检超时会被当成真红、白白回滚(2026-10-22 主人玩游戏 + Xcode,load 328)。它看的是「机器给不给得出公正的判决」,不是「主人在不在」。
 2. **网络守护**:读不到、或开着但不安全 ⇒ 不动,退 5。自检要调模型,直连会封号;部署完才发现跑不了自检,只能回滚。
-3. **构建 sidecar**(`--skip-build` 跳过)⇒ 红退 4。
+3. **交办任务**：按上述等待规则处理，没到可中断点或状态未知 ⇒ 构建前退 3。随后**构建 sidecar**(`--skip-build` 跳过)⇒ 红退 4。
 4. **`self deploy`**(上面六步,它自己红了自己回滚)⇒ 红退 1。
 5. **自检**:工作台 + 对话,跟自改同一套,执行者 / 供应商取 agent-config 的 `self_change.selftest_executor` / `selftest_provider`(缺省 claude)。红 ⇒ 回滚到 `.prev`,退 2。
 6. 绿 ⇒ 退 0,提示过几个小时看 `self soak`。
