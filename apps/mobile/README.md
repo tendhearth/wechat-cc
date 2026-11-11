@@ -31,6 +31,8 @@ daemon 在 `/m` 服务的 PWA。T5 设备入口直接进入唯一主人对话；
 
 忘了第 2 步,`apps/mobile/build.test.ts` 会红。
 
+`build:mobile` 用仓库 CI 固定版本的 Bun 对 `/m` 主脚本做构建期空白/注释压缩，不改全局名字，不加运行时解压。`assembleMobilePage` 仍提供可读的原始组装页给 device-only 路由扫描；生成物同步守卫比较压缩后的完整字节。令牌声明保持独占原行，兼容已安装 PWA 的脱敏缓存；压缩器若输出 HTML script 结束标签或注释起始符，构建会拒绝它，避免破坏内联脚本边界。
+
 ## 规矩(都有测试或 depcheck 盯着)
 
 - **整份内联。** 公网壳页 `relay/pset.html` 通过隧道取到页面后 `document.write` 整份写入,没有可用的相对路径 —— 不许外链脚本 / 样式表。
@@ -40,7 +42,7 @@ daemon 在 `/m` 服务的 PWA。T5 设备入口直接进入唯一主人对话；
 - **行首不许是 `(` 或 `[`。** 脚本不写分号,行首括号会被 ASI 接到上一行当调用 —— 类型转换 `/** @type {X} */ (el)` 放行首就中招,先绑到局部变量。
 - **两种标记。** `{{>file}}` 构建期包含;`{{UPPER_KEY}}` 运行时键,只认 `assemble.ts` 的 `RUNTIME_VARS`,由 `src/features/phone/mobile-page.ts` 单趟填。
 - **只走 HTTP。** 本目录不 import `src/`,daemon 不 import 本目录(depcheck)。
-- **512KB。** 整页 base64 后加信封要塞进中继一帧(`src/features/phone/mobile-page-presence.test.ts`,预算 420KB)。
+- **传输预算。** 中继硬限 512 KiB；`build.test.ts` 将真实页面装入 v2 密封信封，要求 wire < 256 KiB，并输出实际字节与余量。
 
 ## 短链接后备页的事项详情
 

@@ -13,7 +13,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { assembleMobilePage, serializeMobilePage } from './assemble'
+import { assembleMobilePage, serializeMobilePage, type MobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT, CCP_PLACEHOLDER } from './sources'
 
 export const PROTOCOL_ENTRY = new URL('../../packages/protocol/src/browser.ts', import.meta.url)
@@ -21,6 +21,33 @@ export const PROTOCOL_JS_OUT = new URL('./src/protocol-generated.js', import.met
 export const ACTIVITY_JS_OUT = new URL('./src/activity-generated.js', import.meta.url)
 export const PSET_SHELL_SRC = new URL('../../relay/pset.src.html', import.meta.url)
 export const PSET_SHELL_OUT = new URL('../../relay/pset.html', import.meta.url)
+
+/**
+ * Compact only the shipped /m classic script. Source assembly stays readable for
+ * the device-only route scanner; /set's separately embedded scripts stay intact.
+ * Keep the credential declarations verbatim: even an older PWA service worker
+ * must be able to strip the token before caching its public offline shell.
+ */
+export function compactMobilePage(page: MobilePage): MobilePage {
+  const prologue = '\nvar T = {{TOKEN_JSON}}\nvar REMOTE = {{REMOTE_JSON}}'
+  const scripts = [...page.phone.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+  if (scripts.length !== 1 || !scripts[0]![1]!.startsWith(prologue) || !/^;?\n/.test(scripts[0]![1]!.slice(prologue.length))) {
+    throw new Error('compactMobilePage: expected one classic script with the T/REMOTE prologue')
+  }
+  const transpiler = new Bun.Transpiler({
+    loader: 'js', target: 'browser', minifyWhitespace: true,
+    treeShaking: false, deadCodeElimination: false, inline: false, trimUnusedImports: false,
+  })
+  const script = transpiler.transformSync(scripts[0]![1]!.slice(prologue.length))
+  // A JS printer may unescape a string's end tag, or join `< /script/` into
+  // `</script/`. Reject unsafe HTML raw text rather than rewriting JS tokens.
+  if (/<\/script|<!--/i.test(script)) throw new Error('compactMobilePage: unsafe HTML raw text in compact script')
+  return { ...page, phone: page.phone.replace(/<script>[\s\S]*?<\/script>/, () => `<script>${prologue};\n${script}</script>`) }
+}
+
+export function buildMobilePage(): MobilePage {
+  return compactMobilePage(assembleMobilePage(readMobileSource))
+}
 
 /**
  * 打包 packages/protocol 的经典脚本入口成一份自包含 IIFE(挂
@@ -83,7 +110,7 @@ async function main() {
 
   // 手机页生成物依赖 protocol-generated.js 已经落盘(transport.js 顶部的占位
   // 注释要能读到它,见 sources.ts 的 readMobileSource),所以放在最后一步。
-  writeFileSync(MOBILE_PAGE_OUT, serializeMobilePage(assembleMobilePage(readMobileSource)))
+  writeFileSync(MOBILE_PAGE_OUT, serializeMobilePage(buildMobilePage()))
   console.log(`wrote ${MOBILE_PAGE_OUT.pathname}`)
 }
 

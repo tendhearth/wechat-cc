@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 import { assembleMobilePage, serializeMobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT, MOBILE_SRC } from './sources'
-import { buildProtocolJs, buildActivityJs, ACTIVITY_JS_OUT, assembleRelayShell, PROTOCOL_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
+import { buildMobilePage, compactMobilePage, buildProtocolJs, buildActivityJs, ACTIVITY_JS_OUT, assembleRelayShell, PROTOCOL_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
 import { makeFakeV2Relay } from './fake-v2-relay'
 import { makeV2Channel } from '../../packages/protocol/src/index'
 import { mobilePhoneHtml } from '../../src/features/phone/mobile-page'
@@ -22,7 +22,68 @@ describe('apps/mobile → src/features/phone/mobile-page.generated.json', () => 
 
   it('generated page is in sync with apps/mobile/src (fix: bun run build:mobile)', () => {
     // 比整份文本:手改生成物、或源文件被编辑器动过,都会在这里红。
-    expect(readFileSync(MOBILE_PAGE_OUT, 'utf8')).toBe(serializeMobilePage(page))
+    // Node CI uses the same Bun builder, never a second minifier implementation.
+    const fresh = typeof Bun !== 'undefined' ? serializeMobilePage(buildMobilePage()) : execFileSync('bun', [
+      '--eval', "import {buildMobilePage} from './apps/mobile/build.ts'; import {serializeMobilePage} from './apps/mobile/assemble.ts'; process.stdout.write(serializeMobilePage(buildMobilePage()))",
+    ], { cwd: fileURLToPath(new URL('../../', import.meta.url)), encoding: 'utf8' })
+    expect(readFileSync(MOBILE_PAGE_OUT, 'utf8')).toBe(fresh)
+  })
+
+  it('recovers daily wire headroom by compacting the shipped script, while keeping readable sources', () => {
+    const shipped = JSON.parse(readFileSync(MOBILE_PAGE_OUT, 'utf8'))
+    // 12 KiB of HTML becomes at least 16 KiB after the sealed frame's base64.
+    // This guards compression itself; the existing 256 KiB wire limit stays unchanged.
+    expect(Buffer.byteLength(page.phone) - Buffer.byteLength(shipped.phone)).toBeGreaterThanOrEqual(12 * 1024)
+  })
+
+  it.skipIf(typeof Bun === 'undefined')('repeats the same build bytes without changing styles or standalone /set scripts', () => {
+    const first = buildMobilePage()
+    expect(serializeMobilePage(buildMobilePage())).toBe(serializeMobilePage(first))
+    expect({ ...first, phone: page.phone }).toEqual(page)
+    expect(first.phone.match(/<style>[\s\S]*?<\/style>/g)).toEqual(page.phone.match(/<style>[\s\S]*?<\/style>/g))
+    const license = /\/\*!\n\s+\* Agent glyphs[\s\S]*?\*\//.exec(readMobileSource('workbench.js'))![0]
+    expect(first.phone).toContain(license)
+    expect(first.phone).toContain('globalThis.CCP')
+    expect(first.phone).toContain('window.mobileCC=')
+  })
+
+  it('ships one syntax-valid classic script whose token can still be removed by an older service worker', () => {
+    const token = 'd' + 'credential-fixture'.repeat(3)
+    const html = mobilePhoneHtml(token, null)
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    expect(scripts).toHaveLength(1)
+    expect(() => new Function(scripts[0]![1]!)).not.toThrow()
+    const sw = { self: { addEventListener() {} } }
+    vm.createContext(sw)
+    vm.runInContext(page.sw.replace('{{BRAND_ICON_VERSION}}', 'fixture'), sw)
+    const clean = (sw as any).publicShell(html)
+    expect(typeof clean).toBe('string')
+    expect(clean).not.toContain(token)
+    expect(clean).toContain('T=localStorage.getItem("deviceToken")')
+    expect(() => new Function(/<script>([\s\S]*?)<\/script>/.exec(clean)![1]!)).not.toThrow()
+  })
+
+  it.skipIf(typeof Bun === 'undefined')('keeps cross-module globals and template/comment-like string values', () => {
+    const body = 'var shared = `// literal\\n${"/* value */"}`;\nfunction ccRead() { return shared }\nvar result = ccRead();'
+    const fixture = { ...page, phone: '<script>\nvar T = {{TOKEN_JSON}}\nvar REMOTE = {{REMOTE_JSON}};\n' + body + '</script>' }
+    const compact = compactMobilePage(fixture).phone.replace('{{TOKEN_JSON}}', '"dTEST"').replace('{{REMOTE_JSON}}', 'null')
+    const env = {}
+    vm.createContext(env)
+    vm.runInContext(/<script>([\s\S]*?)<\/script>/.exec(compact)![1]!, env)
+    expect((env as any).ccRead()).toBe('// literal\n/* value */')
+    expect((env as any).result).toBe('// literal\n/* value */')
+  })
+
+  it.skipIf(typeof Bun === 'undefined').each([
+    String.raw`var text = "<\/ScRiPt>";`,
+    'var match = 1 < /script/.test("script");',
+    'var comment = "<!--";',
+  ])('rejects unsafe HTML raw text after JS printing: %s', body => {
+    expect(() => compactMobilePage({ ...page, phone: '<script>\nvar T = {{TOKEN_JSON}}\nvar REMOTE = {{REMOTE_JSON}};\n' + body + '</script>' })).toThrow('unsafe HTML raw text')
+  })
+
+  it.skipIf(typeof Bun === 'undefined')('fails closed if the credential prologue gains a continuation', () => {
+    expect(() => compactMobilePage({ ...page, phone: page.phone.replace('{{REMOTE_JSON}}', '{{REMOTE_JSON}} || null') })).toThrow('T/REMOTE prologue')
   })
 
   it('sources and the generated JSON check out with LF on every platform (Windows autocrlf would desync the sync test)', () => {
@@ -126,7 +187,10 @@ describe('apps/mobile/src/protocol-generated.js', () => {
     const msg = JSON.stringify({ t: 'res', rid: 'r'.repeat(36), status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: html, bodyEncoding: 'utf8' })
     const wire = JSON.stringify({ stream: 's'.repeat(64), frame: makeV2Channel({ c2s: key, s2c: key }, 'server').seal(new TextEncoder().encode(msg)) })
     // 中继一帧 512 KiB(apps/relay/src/limits.ts);留一半余量给页面以后长大
-    expect(Buffer.byteLength(wire, 'utf8')).toBeLessThan(256 * 1024)
+    const actual = Buffer.byteLength(wire, 'utf8'), limit = 256 * 1024
+    const budget = `mobile sealed wire: ${actual} B / ${limit} B; headroom: ${limit - actual} B`
+    process.stdout.write(budget + '\n')
+    expect(actual, budget).toBeLessThan(limit)
   })
 })
 

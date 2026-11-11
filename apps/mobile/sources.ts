@@ -31,6 +31,8 @@ export function readMobileSource(name: string): string {
     const factory = /^export (function createAgentAvatars\(\) \{[\s\S]*?^\})/m.exec(readFileSync(AGENT_AVATARS_JS, 'utf8'))?.[1]
     if (!factory) throw Error('mobile page: shared agent avatars factory shape changed')
     const lean = factory.replace(/\/\*\*[\s\S]*?\*\/[ \t]*/g, '').replace(/^[ \t]*\/\/.*\n/gm, '').replace(/^[ \t]*\n/gm, '')
+      // Mark the existing full MIT attribution as legal text for Bun's printer.
+      .replace('/*\n   * Agent glyphs', '/*!\n   * Agent glyphs')
     return `var mAgents = (${lean})()\n${source}`
   }
   if (name === 'tokens.css') return renderTokensCss() + source
