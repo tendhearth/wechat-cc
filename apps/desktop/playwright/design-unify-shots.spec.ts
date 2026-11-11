@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { mkdir } from 'node:fs/promises'
-import { test, expect } from './fixtures'
+import { test, expect, clickNav, reveal } from './fixtures'
+import { secondaryFixtures } from './secondary-fixtures'
 const task={id:'aabbccdd',title:'检查备份',path:'/offline/backup',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:1,pendingQuestionCount:0}
 const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,activity:id==='backup'?{waiting:1,running:2,unread:1,lastActiveAt:1793923200000}:id==='travel'?{waiting:0,running:1,unread:0,lastActiveAt:1793923100000}:id==='food'?{waiting:0,running:0,unread:1,lastActiveAt:1793923000000}:{waiting:0,running:0,unread:0,lastActiveAt:null},matterSummary:{waiting:1,running:0,total:1}})
 test.beforeEach(async({page,shim})=>{
@@ -81,4 +82,33 @@ test('design fixes keep toolbar semantics, final identity dimensions and current
  await page.locator('.conversation-topic-panel').getByRole('button',{name:/检查备份/}).click()
  await expect(page.locator('.wb-dialogue')).toContainText('正在核对文件')
  await expect(page.locator('.wb-activity-now')).toHaveText('核对本地文件')
+})
+
+
+test('B3 captures settings, connections, facts and the existing correction editor',async({page,shimUrl})=>{
+ const out=process.env.WECHAT_CC_DESIGN_SHOTS
+ test.skip(!out,'Only the mini browser lab sets the output directory')
+ await mkdir(out!,{recursive:true})
+ const phase=process.env.CC_UI_CAPTURE_PHASE
+ await secondaryFixtures(page)
+ await page.route('**/v1/connections',r=>r.fulfill({json:{generatedAt:Date.now(),computers:[{id:'home',label:'家里的电脑（合成示例）',online:true,since:null,version:null}],sources:[{id:'knowledge',kind:'knowledge',name:'知识库',state:'ready',latestAt:null,syncedAt:null}],capabilities:[{id:'a',name:'读本机文件',state:'ok',code:'test',reason:'可用'},{id:'b',name:'图片',state:'fallback',code:'test',reason:'暂时用备用方式'},{id:'c',name:'终端会话',state:'needs_you',code:'test',reason:'需要在电脑上接上'},{id:'d',name:'语音',state:'off',code:'test',reason:'没有开启'}],recent:[],outputs:[]}}))
+ await page.setViewportSize({width:1280,height:900})
+ await page.goto(shimUrl)
+ await reveal(page,'#autostart-toggle')
+ await expect(page.locator('#hero-headline')).not.toBeEmpty()
+ await page.screenshot({path:join(out!,`desktop-settings-${phase}.png`)})
+ await page.locator('#projects-admin-list').scrollIntoViewIfNeeded()
+ await page.screenshot({path:join(out!,`desktop-settings-bottom-${phase}.png`)})
+ await page.locator('#settings-close').click()
+ await page.locator('.cc-home-details > summary').click()
+ await expect(page.locator('.nc-capability')).toHaveCount(4)
+ await page.screenshot({path:join(out!,`desktop-connections-${phase}.png`)})
+ await page.locator('.cc-home-details > summary').click()
+ await clickNav(page,'memory')
+ await expect(page.locator('#memory-facts-records')).toContainText('我喜欢在窗边看书')
+ await page.screenshot({path:join(out!,`desktop-memory-${phase}.png`)})
+ await page.locator('#memory-facts-edit').click()
+ await expect(page.locator('#memory-line-editor')).toBeVisible()
+ await page.locator('#memory-content-head').scrollIntoViewIfNeeded()
+ await page.screenshot({path:join(out!,`desktop-memory-edit-${phase}.png`)})
 })

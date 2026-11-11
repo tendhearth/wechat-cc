@@ -91,7 +91,7 @@ export function verifiedSourcePayload({repo,sha,phase='after'}) {
  const header=Buffer.from(JSON.stringify(meta)),length=Buffer.alloc(4);length.writeUInt32BE(header.length)
  return Buffer.concat([length,header,delta])
 }
-export const supportsBrowserSnapshot = branch => ['design-unify-b1','design-unify-b1-fixes','codex-hook-trust-ux','topics-are-projects','topics-waiting-honest'].includes(branch)
+export const supportsBrowserSnapshot = branch => ['design-unify-b1','design-unify-b1-fixes','codex-hook-trust-ux','topics-are-projects','topics-waiting-honest','design-b3'].includes(branch)
 
 export async function main() {
  if(process.argv[2]==='--receive') {

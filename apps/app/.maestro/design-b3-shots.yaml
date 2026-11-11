@@ -1,0 +1,67 @@
+# Same synthetic scene and steps in both B3 source snapshots. No pairing or live calls.
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: topbar-settings
+    timeout: 10000
+- tapOn:
+    id: topbar-settings
+- extendedWaitUntil:
+    visible:
+      id: settings-memory
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: app-settings
+- tapOn:
+    id: settings-memory
+- extendedWaitUntil:
+    visible:
+      id: memory-item-a1b2c3
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: app-memory
+- tapOn:
+    id: memory-item-a1b2c3
+- assertVisible:
+    id: memory-fix
+- takeScreenshot: app-memory-edit
+- tapOn:
+    id: memory-fix-cancel
+- assertVisible:
+    id: memory-item-a1b2c3
+- tapOn:
+    id: topbar-back
+- scrollUntilVisible:
+    element:
+      id: settings-connections
+    direction: DOWN
+- tapOn:
+    id: settings-connections
+- extendedWaitUntil:
+    visible:
+      id: connections-computer-home
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: app-connections
+- scrollUntilVisible:
+    element:
+      id: connections-source-wechat_history
+    direction: DOWN
+- takeScreenshot: app-connections-sources
+- tapOn:
+    id: topbar-back
+- scrollUntilVisible:
+    element:
+      id: settings-about-toggle
+    direction: DOWN
+- tapOn:
+    id: settings-about-toggle
+- scrollUntilVisible:
+    element:
+      id: settings-font-licences
+    direction: DOWN
+- takeScreenshot: app-settings-bottom
