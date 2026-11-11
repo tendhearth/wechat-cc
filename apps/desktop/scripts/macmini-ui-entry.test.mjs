@@ -124,4 +124,6 @@ test('attention UI evidence uses the locked browser lane and a test-only baselin
  expect(receiver).toContain("['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts']")
  expect(supportsBrowserSnapshot('cc-alive-2;echo x')).toBe(false)
  expect(supportsAppSnapshot('../cc-alive-2')).toBe(false)
+ expect(remote).toContain("selected.appRoot !== config.appRoot")
+ expect(remote.indexOf('assertExpectedSource(process.env.CC_UI_EXPECTED_SOURCE, actual)')).toBeLessThan(remote.indexOf('await mkdir(run'))
 })

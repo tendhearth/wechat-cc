@@ -5,13 +5,20 @@ import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 import { assembleMobilePage, serializeMobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT, MOBILE_SRC } from './sources'
-import { buildProtocolJs, assembleRelayShell, PROTOCOL_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
+import { buildProtocolJs, buildActivityJs, ACTIVITY_JS_OUT, assembleRelayShell, PROTOCOL_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
 import { makeFakeV2Relay } from './fake-v2-relay'
 import { makeV2Channel } from '../../packages/protocol/src/index'
 import { mobilePhoneHtml } from '../../src/features/phone/mobile-page'
 
 describe('apps/mobile → src/features/phone/mobile-page.generated.json', () => {
   const page = assembleMobilePage(readMobileSource)
+
+  it.skipIf(typeof Bun === 'undefined')('keeps the compact activity reader in sync, globally reachable and device-only', async () => {
+    const generated = await buildActivityJs()
+    expect(readFileSync(ACTIVITY_JS_OUT, 'utf8')).toBe(generated)
+    expect(generated).toContain('window.mobileCC=')
+    expect(generated).toContain('/* link-scan: device-only */api("/v1/matter/owner-chat/events?since="')
+  })
 
   it('generated page is in sync with apps/mobile/src (fix: bun run build:mobile)', () => {
     // 比整份文本:手改生成物、或源文件被编辑器动过,都会在这里红。

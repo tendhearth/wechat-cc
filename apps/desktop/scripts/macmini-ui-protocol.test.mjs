@@ -141,6 +141,14 @@ test('App commands share the strict SSH transport and reject arbitrary flows and
   }
 })
 
+test('a task can pin its immutable UI source before any queued mutation or test', () => {
+  const sha = 'a'.repeat(40)
+  expect(sshInvocation('browser', 'home', undefined, undefined, { CC_UI_EXPECTED_SOURCE: sha }).args.at(-1)).toContain(`CC_UI_EXPECTED_SOURCE=${sha}`)
+  expect(() => protocol.assertExpectedSource(sha, 'b'.repeat(40))).toThrow('does not match requested source')
+  expect(() => protocol.assertExpectedSource(sha, sha)).not.toThrow()
+  for (const value of ['', '../a', 'a; touch /tmp/x', 'a'.repeat(41)]) expect(() => sshInvocation('browser', 'home', undefined, undefined, { CC_UI_EXPECTED_SOURCE: value })).toThrow('Invalid expected UI source')
+})
+
 for (const [flavour, paths, root, cases] of [
   ['posix', posix, '/tmp/lab', [
     ['/tmp/lab/snapshot', true], ['/tmp/lab/./snapshot/../build', true],

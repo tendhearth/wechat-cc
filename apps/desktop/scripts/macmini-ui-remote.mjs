@@ -7,7 +7,7 @@ import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
-import { isInsideLab, miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest } from './macmini-ui-protocol.mjs'
+import { isInsideLab, miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest, assertExpectedSource } from './macmini-ui-protocol.mjs'
 
 const textCommand = (file, args) => execFileSync(file, args, { encoding: 'utf8' }).trim()
 const identity = { computerName: textCommand('/usr/sbin/scutil', ['--get', 'ComputerName']),
@@ -101,6 +101,11 @@ await acquireMachineLock({ path: join(mini.homeDir, 'ci/lock'), lane: request.co
 try {
   const selected = JSON.parse(await readFile(configPath, 'utf8'))
   if (request.command === 'browser' && selected.browserRoot !== config.browserRoot) throw Error('Browser snapshot changed while queued; retry the lab entry')
+  if (request.command.startsWith('app-') && selected.appRoot !== config.appRoot) throw Error('App snapshot changed while queued; retry the lab entry')
+  if (process.env.CC_UI_EXPECTED_SOURCE !== undefined) {
+    const actual = request.command.startsWith('app-') ? JSON.parse(await readFile(join(executionRoot, 'snapshot.json'), 'utf8')).commit : browserSnapshot?.commit
+    assertExpectedSource(process.env.CC_UI_EXPECTED_SOURCE, actual)
+  }
 } catch (error) { await releaseLocks(); throw error }
 const run = join(executionRoot, 'artifacts', new Date().toISOString().replaceAll(':', '-') + '-' + request.command)
 const temporaryRoot = join(run, 'tmp')

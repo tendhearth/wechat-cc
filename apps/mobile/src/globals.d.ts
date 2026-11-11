@@ -1,7 +1,7 @@
 /** phone.html 首个 <script> 里由 daemon 填的两个全局,和公网壳页(relay/pset.html)注入的 __CC_SHELL__。 */
 declare var T: string
 declare var REMOTE: { relay: string; id: string } | null
-interface Window { __CC_SHELL__?: { relay: string; id: string } }
+interface Window { __CC_SHELL__?: { relay: string; id: string }; mobileCC?: { refresh(): void; stop(): void } }
 
 /**
  * packages/protocol 打包出的 IIFE(apps/mobile/src/protocol-generated.js,
@@ -24,6 +24,10 @@ interface CCPClient {
   close(): void
 }
 declare var CCP: {
+  CC_ACTIVITY: typeof import('../../../packages/protocol/src/cc-activity.js').CC_ACTIVITY
+  CC_RESPONSE: typeof import('../../../packages/protocol/src/cc-activity.js').CC_RESPONSE
+  createCCActivity: typeof import('../../../packages/protocol/src/cc-activity.js').createCCActivity
+  createCCResponsePerformance: typeof import('../../../packages/protocol/src/cc-activity.js').createCCResponsePerformance
   b64u: { encode(bytes: Uint8Array): string; decode(s: string): Uint8Array }
   makeProtocolClient(opts: {
     open: () => CCPSocket
