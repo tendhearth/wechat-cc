@@ -124,15 +124,16 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
     const head = el('p', 'nc-headline')
     head.append(dot(v ? v.headline.dot : 'unknown'), el('span', 'nc-headline-text', v ? v.headline.text : '暂时不知道连接情况'))
     /** @type {HTMLElement[]} */
-    const parts = [el('h2', 'nc-title', 'CC 现在怎么样'), head]
+    const parts = [el('h2', 'nc-title', 'CC 的连接'), head]
     if (stale && fetchedAt !== null) {
       const d = new Date(fetchedAt)
       const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
       parts.push(el('p', 'nc-stale', failed ? `现在读不到连接情况，下面是 ${hm} 时的情况` : `正在更新，下面是 ${hm} 时的情况`))
     }
     if (v) {
+      if (v.computers.length) parts.push(section('家里的电脑', v.computers.map(x => row('nc-computer', x.dot, x.label, x.detail))))
       // 能力行就在大标题「CC 现在怎么样」下面,不再重复一遍同名小标题(2026-10-16)。
-      if (v.capabilities.length) parts.push(section('', v.capabilities.map(x => {
+      if (v.capabilities.length) parts.push(section('CC 现在怎么样', v.capabilities.map(x => {
         const li = row('nc-capability', x.dot, x.name, x.label)
         // 能当场打开的(系统设置)给按钮;别的动作在桌面别处做,写成一句提示。
         if (x.action?.run === HOOKS_RUN && !stale) li.append(hooks.node(x.action.label))
@@ -147,7 +148,6 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
         return li
       })))
       if (v.sources.length) parts.push(section('来源', v.sources.map(x => row('nc-source', x.dot, x.name, x.label))))
-      if (v.computers.length) parts.push(section('家里的电脑', v.computers.map(x => row('nc-computer', x.dot, x.label, x.detail))))
       if (v.recent.length) parts.push(section('最近在做', v.recent.map(x => row('nc-recent', null, x.title, x.when))))
       if (v.outputs.length) parts.push(section('成果', v.outputs.map(x => row('nc-output', null, x.name, x.when))))
     }

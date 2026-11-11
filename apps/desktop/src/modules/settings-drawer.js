@@ -152,6 +152,10 @@ export function wireSettingsDrawer(opts) {
   }
 
   document.getElementById("settings-close")?.addEventListener("click", closeSettingsDrawer)
+  document.getElementById("dash-stop-cancel")?.addEventListener("click", () => {
+    const options = document.getElementById("dash-connection-options")
+    if (options instanceof HTMLDetailsElement) options.open = false
+  })
 
   // ESC closes drawer when open.
   document.addEventListener("keydown", (e) => {

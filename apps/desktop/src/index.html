@@ -24,6 +24,7 @@
     <link rel="stylesheet" href="./styles/record-reader.css" />
     <link rel="stylesheet" href="./styles/todos.css" />
     <link rel="stylesheet" href="./styles/forage.css" />
+    <link rel="stylesheet" href="./styles/settings-memory.css" />
   </head>
   <body data-pane="overview">
 
@@ -264,8 +265,8 @@
         <button id="settings-close" class="drawer-close" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
       </header>
       <div class="drawer-body">
-        <section class="drawer-section drawer-connection" aria-label="连接">
-          <h3>连接</h3>
+        <section class="drawer-section drawer-connection" aria-label="家里的电脑">
+          <h3>家里的电脑</h3>
           <div id="hero-card" class="conn-verdict" aria-live="polite">
             <p id="hero-headline"></p>
             <p id="hero-meta"></p>
@@ -304,7 +305,7 @@
             <div id="accounts-current" class="current-user-card"></div>
             <details id="dash-connection-options" class="connection-options" hidden>
               <summary>连接选项</summary>
-              <button id="dash-stop" class="btn ghost" type="button">断开连接</button>
+              <div class="settings-confirm"><p>断开会停止这台电脑上的 CC；重新连接后才能继续收消息。</p><div class="settings-confirm-actions"><button class="btn ghost" type="button" id="dash-stop-cancel">取消</button><button id="dash-stop" class="btn ghost" type="button">断开连接</button></div></div>
             </details>
             <details id="dash-health-history" class="connection-history" hidden>
               <summary>上次连接中断已恢复</summary>
@@ -321,20 +322,7 @@
           </aside>
         </section>
         <section class="drawer-section">
-          <h3>Pro 会员</h3>
-          <div id="license-status" class="license-status">加载中…</div>
-          <div class="license-row">
-            <input id="license-key-input" type="text" placeholder="粘贴 license key（试用填 DEV-）" autocomplete="off" spellcheck="false">
-            <button id="license-activate-btn" class="btn" type="button">激活</button>
-          </div>
-          <div class="license-actions">
-            <a id="license-upgrade-link" class="btn ghost" href="#" target="_blank" rel="noreferrer">升级到 Pro →</a>
-            <button id="license-deactivate-btn" class="btn ghost" type="button" hidden>移除</button>
-          </div>
-          <p class="drawer-section-help">插件给 CC 加能力；装好后重启 CC 生效。</p>
-        </section>
-        <section class="drawer-section">
-          <h3>后台服务</h3>
+          <h3>偏好</h3>
           <div class="toggle-row">
             <div>
               <div class="lab">开机自启</div>
@@ -343,9 +331,6 @@
             <button class="toggle" id="autostart-toggle" type="button" data-toggle aria-pressed="false" aria-label="开机自启" aria-describedby="autostart-toggle-feedback"></button><span class="setting-feedback" id="autostart-toggle-feedback" role="status"></span>
           </div>
           <p class="drawer-section-help">默认随系统启动，关掉窗口也照样收消息。</p>
-        </section>
-        <section class="drawer-section">
-          <h3>行为</h3>
           <div class="toggle-row toggle-row--danger">
             <div>
               <div class="lab">自动同意工具调用</div>
@@ -377,6 +362,19 @@
             <p class="empty-state">加载中…</p>
           </div>
           <p class="drawer-section-help">收藏置顶，或删除不再需要的项目会话（删除不可撤销）。</p>
+        </section>
+        <section class="drawer-section">
+          <h3>Pro 会员</h3>
+          <div id="license-status" class="license-status">加载中…</div>
+          <div class="license-row">
+            <input id="license-key-input" type="text" placeholder="粘贴 license key（试用填 DEV-）" autocomplete="off" spellcheck="false">
+            <button id="license-activate-btn" class="btn" type="button">激活</button>
+          </div>
+          <div class="license-actions">
+            <a id="license-upgrade-link" class="btn ghost" href="#" target="_blank" rel="noreferrer">升级到 Pro →</a>
+            <button id="license-deactivate-btn" class="btn ghost" type="button" hidden>移除</button>
+          </div>
+          <p class="drawer-section-help">插件给 CC 加能力；装好后重启 CC 生效。</p>
         </section>
       </div>
     </aside>
@@ -489,22 +487,36 @@
           <article class="dash-pane" data-pane="memory" hidden>
             <section class="memory-profile-overview" id="memory-profile-overview">
               <section class="memory-facts" id="memory-facts" aria-labelledby="memory-facts-title">
-                <header class="memory-facts-head"><h1 id="memory-facts-title">记忆</h1><button id="memory-facts-edit" class="btn" type="button" aria-label="查看并纠正记忆" disabled>纠正</button></header>
+                <header class="memory-facts-head"><div><h1 id="memory-facts-title">记忆</h1><p>记住的</p></div><button id="memory-facts-edit" class="btn" type="button" aria-label="查看并纠正记忆" disabled>纠正</button></header>
                 <input id="memory-facts-search" type="search" aria-label="查找记忆" placeholder="查找记忆" autocomplete="off" />
                 <p id="memory-facts-source" class="memory-facts-source"></p>
                 <div id="memory-facts-records" aria-live="polite"><p role="status">正在读取记下的事…</p></div>
               </section>
-              <button class="memory-library-trigger" id="memory-sources-toggle" aria-expanded="false">
-                <span>记忆库</span>
-                <span class="meta" id="memory-meta">—</span>
-                <span class="chev">▾</span>
-              </button>
+                <section class="memory-fold">
+                  <button class="memory-fold-toggle" id="memory-retractions-toggle" aria-expanded="false" aria-controls="memory-retractions-body">
+                    <span>收回的话</span>
+                    <span class="chev">▾</span>
+                  </button>
+                  <div class="memory-fold-body" id="memory-retractions-body" hidden>
+                    <p class="memory-fold-description">你说过不对、过时或不用记的话。恢复后，当初从笔记中删掉的行不会回来。</p>
+                    <div class="memory-retractions" id="memory-retractions">
+                      <p class="empty-state">展开后读取…</p>
+                    </div>
+                    <p class="memory-retractions-note" id="memory-retractions-note" role="status"></p>
+                  </div>
+                </section>
+
               <details class="memory-profile-disclosure">
                 <summary>CC 眼中的你 · 推测画像</summary>
                 <div id="memory-profile-content">
                   <p class="empty-state">正在整理 CC 眼中的你…</p>
                 </div>
               </details>
+              <button class="memory-library-trigger" id="memory-sources-toggle" aria-expanded="false">
+                <span>记忆库</span>
+                <span class="meta" id="memory-meta">—</span>
+                <span class="chev">▾</span>
+              </button>
 
               <aside class="memory-sources-panel" id="memory-sources-panel" hidden>
                 <div class="memory-sources-head">
@@ -549,20 +561,6 @@
                       </div>
                       <div class="memory-milestones" id="memory-milestones"></div>
                     </section>
-                  </div>
-                </section>
-
-                <section class="memory-fold">
-                  <button class="memory-fold-toggle" id="memory-retractions-toggle" aria-expanded="false" aria-controls="memory-retractions-body">
-                    <span>收回的话</span>
-                    <span class="chev">▾</span>
-                  </button>
-                  <div class="memory-fold-body" id="memory-retractions-body" hidden>
-                    <p class="memory-fold-description">你说过不对、过时或不用记的话。恢复后，当初从笔记中删掉的行不会回来。</p>
-                    <div class="memory-retractions" id="memory-retractions">
-                      <p class="empty-state">展开后读取…</p>
-                    </div>
-                    <p class="memory-retractions-note" id="memory-retractions-note" role="status"></p>
                   </div>
                 </section>
 

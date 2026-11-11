@@ -5,6 +5,7 @@ import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend } from '../backend/types'
 import Memory from '../app/memory'
 import { withProviders, type TestCtx } from '../state/providers.test-support'
+import { componentAppearance, typeScale } from '@wechat-cc/design-tokens'
 import { cleanup, mount } from '../ui/native-motion.test-support'
 
 vi.mock('react-native', async () => (await import('../ui/native-motion.test-support')).nativeBoundary())
@@ -22,6 +23,23 @@ async function screen(backend: Backend) {
 }
 
 describe('memory correction and withdrawal recovery', () => {
+  it('B3 keeps the selected record above explicit consequences, cancel first and deletion last without submitting on cancel', async () => {
+    const backend = makeDemoBackend({ lang: 'zh-Hans' })
+    const correct = vi.spyOn(backend, 'correctMemory')
+    const ui = await screen(backend)
+    expect(ui.style('memory-item-a1b2c3')).toMatchObject({ minHeight: componentAppearance.matterRow.minHeight.phone, paddingVertical: componentAppearance.matterRow.paddingY })
+    const text = ui.byId('memory-item-a1b2c3').querySelector('span')!
+    expect(JSON.parse(text.getAttribute('data-style')!).fontSize).toBe(typeScale.body.phone)
+    await ui.click('memory-item-a1b2c3')
+    expect(ui.byId('memory-fix').textContent).toContain('从记忆里拿掉这条')
+    expect([...ui.byId('memory-fix').querySelectorAll('button')].map(node => node.dataset.testid)).toEqual(['memory-fix-cancel', 'memory-fix-wrong', 'memory-fix-outdated', 'memory-fix-delete'])
+    expect(ui.style('memory-fix-delete').minHeight).toBeGreaterThanOrEqual(44)
+    await ui.click('memory-fix-cancel')
+    expect(correct).not.toHaveBeenCalled()
+    expect(ui.byId('memory-fix')).toBeNull()
+    expect(ui.byId('memory-item-a1b2c3')).not.toBeNull()
+  })
+
   it('waits for correction success, then exposes the new withdrawn record and restores it without remounting', async () => {
     const backend = makeDemoBackend({ lang: 'zh-Hans' })
     const correct = backend.correctMemory

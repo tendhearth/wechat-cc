@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { componentAppearance } from '@wechat-cc/design-tokens'
 import { act, createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, mount } from '../ui/native-motion.test-support'
@@ -86,6 +87,8 @@ it('settings keeps language, full privacy disclosure, and licences behind short 
   const ui = await mount(node); await flush()
   const click = async (id: string) => { await act(() => ui.byId(id).click()); await flush() }
   expect(ui.byId('settings-memory').textContent).toContain('记忆')
+  for (const id of ['settings-memory', 'settings-connections', 'settings-language-toggle', 'settings-about-toggle']) expect(ui.style(id)).toMatchObject({ minHeight: componentAppearance.matterRow.minHeight.phone, paddingVertical: componentAppearance.matterRow.paddingY, gap: componentAppearance.matterRow.gap })
+  expect(ui.byId('settings-connections').textContent).toContain('CC 的连接')
   expect(ui.byId('settings-language')).toBeNull()
   expect(ui.byId('settings-privacy')).toBeNull()
   await click('settings-language-toggle')

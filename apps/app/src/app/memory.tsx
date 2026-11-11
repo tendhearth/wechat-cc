@@ -15,7 +15,7 @@ import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Icon } from '../ui/Icon'
 import { Portrait } from '../ui/Portrait'
 import { TopBar } from '../ui/TopBar'
-import { space } from '../ui/tokens'
+import { componentAppearance, radius, space } from '../ui/tokens'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 
@@ -28,6 +28,7 @@ const VERDICTS: MemoryVerdict[] = ['wrong', 'outdated', 'delete']
 export default function Memory() {
   const { c } = useTheme()
   const lang = useLang()
+  const row = componentAppearance.matterRow
   const router = useRouter()
   const { backend, store } = useBackendCtx()
   const online = canSubmit(useConnection())
@@ -132,26 +133,30 @@ export default function Memory() {
           {v?.mood === 'first' ? <Txt role="bubble" tone="inkSoft">{t(lang, 'memory.first')}</Txt> : null}
           {v?.sections.map(s => (
             <View key={s.name} style={{ gap: space.s }}>
-              <Txt role="caption" tone="inkSoft" accessibilityRole="header">{s.name}</Txt>
+              <Txt role="meta" tone="inkSoft" accessibilityRole="header">{s.name}</Txt>
               {s.items.map(it => (
                 <View key={it.id ?? it.text} style={{ paddingVertical: space.s, gap: space.s }}>
                   <Pressable testID={`memory-item-${it.id ?? 'x'}`} accessibilityRole="button" accessibilityState={{ expanded: open === it.id }} disabled={!it.id}
-                    onPress={() => { setOpen(open === it.id ? null : it.id); setNote(null) }} style={{ minHeight: 44, justifyContent: 'center' }}>
-                    <Txt role="bubble" content="user">{it.person ? `${it.person.name} · ${it.person.rel}` : it.display}{it.due_label ? `  ${it.due_label}` : ''}</Txt>
+                    onPress={() => { setOpen(open === it.id ? null : it.id); setNote(null) }} style={({ pressed }) => ({ minHeight: row.minHeight.phone, paddingVertical: row.paddingY, gap: row.gap, flexDirection: 'row', alignItems: 'center', opacity: pressed ? componentAppearance.iconButton.pressedOpacity : 1 })}>
+                    <Txt role="body" content="user" style={{ flex: 1 }}>{it.person ? `${it.person.name} · ${it.person.rel}` : it.display}{it.due_label ? `  ${it.due_label}` : ''}</Txt>
+                    {it.id ? <Icon name={open === it.id ? 'chevronDown' : 'chevronRight'} size={16} color={c.inkSoft} /> : null}
                   </Pressable>
                   {/* 从别的助手导入的(PR 440):点开才显示出处 */}
                   {open !== null && open === it.id && memoryImportLine(it.sources, lang) ? <Txt testID="memory-source" role="caption" tone="inkSoft">{memoryImportLine(it.sources, lang)}</Txt> : null}
                   {it.id && open === it.id ? (
-                    <View testID="memory-fix" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
-                      {VERDICTS.map(vd => (
-                        <Pressable key={vd} testID={`memory-fix-${vd}`} accessibilityRole="button" disabled={busy || !online} onPress={() => void correct(it.id!, vd)}
-                          style={({ pressed }) => ({ minHeight: 44, justifyContent: 'center', paddingHorizontal: space.m, opacity: busy || !online ? 0.55 : pressed ? 0.7 : 1 })}>
-                          <Txt role="meta">{t(lang, `memory.verdict.${vd}`)}</Txt>
+                    <View testID="memory-fix" style={{ padding: space.l, gap: space.m, borderWidth: 1, borderColor: c.hair, borderRadius: radius.sheet }}>
+                      <Txt role="small" tone="inkSoft">{st(lang, 'correctionNote')}</Txt>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
+                        <Pressable testID="memory-fix-cancel" accessibilityRole="button" onPress={() => setOpen(null)} style={{ minHeight: componentAppearance.button.minHeight.phone, justifyContent: 'center', paddingHorizontal: space.m }}>
+                          <Txt role="body" tone="inkSoft">{t(lang, 'memory.cancel')}</Txt>
                         </Pressable>
-                      ))}
-                      <Pressable testID="memory-fix-cancel" accessibilityRole="button" onPress={() => setOpen(null)} style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: space.m }}>
-                        <Txt role="meta" tone="inkSoft">{t(lang, 'memory.cancel')}</Txt>
-                      </Pressable>
+                        {VERDICTS.map(vd => (
+                          <Pressable key={vd} testID={`memory-fix-${vd}`} accessibilityRole="button" disabled={busy || !online} onPress={() => void correct(it.id!, vd)}
+                            style={({ pressed }) => ({ minHeight: componentAppearance.button.minHeight.phone, justifyContent: 'center', paddingHorizontal: componentAppearance.button.paddingX.phone, paddingVertical: componentAppearance.button.paddingY.phone, borderWidth: componentAppearance.button.borderWidth, borderColor: c.hair, borderRadius: componentAppearance.button.radius, opacity: busy || !online ? componentAppearance.button.disabledOpacity : pressed ? componentAppearance.button.pressedOpacity : 1 })}>
+                            <Txt role="body">{t(lang, `memory.verdict.${vd}`)}</Txt>
+                          </Pressable>
+                        ))}
+                      </View>
                     </View>
                   ) : null}
                 </View>
@@ -162,7 +167,7 @@ export default function Memory() {
           {memory.error && v ? <Txt role="meta" tone="inkSoft">{t(lang, 'feedback.stale')}</Txt> : null}
           {v && v.mood !== 'first' ? <Txt role="meta" tone="inkSoft">{t(lang, 'memory.hint')}</Txt> : null}
           {retractions.data?.length ? <Pressable testID="memory-retractions-toggle" accessibilityRole="button" accessibilityState={{ expanded: showRetractions }} onPress={() => setShowRetractions(!showRetractions)}
-            style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+            style={{ minHeight: row.minHeight.phone, paddingVertical: row.paddingY, flexDirection: 'row', alignItems: 'center', gap: row.gap }}>
             <Txt role="body" tone="inkSoft" style={{ flex: 1 }}>{st(lang, 'withdrawn', { n: retractions.data.length })}</Txt>
             <Icon name={showRetractions ? 'chevronDown' : 'chevronRight'} />
           </Pressable> : null}
@@ -187,7 +192,7 @@ export default function Memory() {
           {restoreNote ? <Txt testID="memory-restore-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{restoreNote}</Txt> : null}
           {pocket.data?.portraitPng ? <>
             <Pressable testID="memory-portrait-toggle" accessibilityRole="button" accessibilityState={{ expanded: showPortrait }} onPress={() => setShowPortrait(!showPortrait)}
-              style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+              style={{ minHeight: row.minHeight.phone, paddingVertical: row.paddingY, flexDirection: 'row', alignItems: 'center', gap: row.gap }}>
               <Txt role="body" tone="inkSoft" style={{ flex: 1 }}>{st(lang, 'portrait')}</Txt>
               <Icon name={showPortrait ? 'chevronDown' : 'chevronRight'} />
             </Pressable>
