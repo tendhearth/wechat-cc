@@ -1,3 +1,5 @@
+import { taskDetailLabel } from '../../../view/status'
+import { STATUS_TABLE } from '@wechat-cc/protocol'
 import { rememberReference } from '../../../state/conversation-references'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
@@ -23,7 +25,7 @@ import { InputReceipts } from '../../../ui/InputReceipts'
 import { SayBar } from '../../../ui/SayBar'
 import { Expansion } from '../../../ui/Sheet'
 import { StatusPill } from '../../../ui/StatusPill'
-import { radius, space } from '../../../ui/tokens'
+import { componentAppearance, radius, space } from '../../../ui/tokens'
 import { TopBar } from '../../../ui/TopBar'
 import { AgentAvatars } from '../../../ui/AgentAvatars'
 import { agentsLabel, matterAgents } from '../../../view/agents'
@@ -259,7 +261,7 @@ export default function Matter() {
       {header}
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
-        <View testID="progress-status"><StatusPill status={v.status} /></View>
+        <View testID="progress-status"><StatusPill status={v.status} label={taskDetailLabel(d.task,v.pendingCount,lang,v.status)} /></View>
         {untilRow ? (
           // 直到…通过(10-20):状态在前、不截(命令再长也看得见结果);命令等宽,这里不是确认处,可以截;整句给读屏
           <View testID="progress-until" accessible accessibilityLabel={untilRow.accessibilityLabel} style={{ gap: 2 }}>
@@ -325,8 +327,8 @@ export default function Matter() {
             {v.steps.map((s, i) => (
               <View key={i} accessible accessibilityLabel={`${s.done ? t(lang, 'progress.stepDone') : t(lang, 'progress.stepWaiting')}: ${s.title}${s.detail ? `, ${s.detail}` : ''}`}
                 style={{ flexDirection: 'row', gap: space.m, alignItems: 'flex-start', paddingTop: space.m }}>
-                {/* 状态色只上点:做完 = 绿点,等你 = 琥珀点 */}
-                <View style={{ paddingTop: space.s }}><Dot kind={s.done ? 'ok' : 'warn'} size={8} /></View>
+                {/* 步骤也使用事项状态表的记号。 */}
+                <View style={{ paddingTop: space.s }}><Icon name={STATUS_TABLE[s.done ? 'done' : 'waiting'].icon!} size={14} color={c[STATUS_TABLE[s.done ? 'done' : 'waiting'].tone]} /></View>
                 <View style={{ flex: 1 }}>
                   <Txt role="bubble" content="user">{s.title}</Txt>
                   {s.detail ? <Txt role="meta" tone="inkSoft" content="user">{s.detail}</Txt> : null}
@@ -380,6 +382,7 @@ export default function Matter() {
             {stopNote ? <Txt testID="progress-stop-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{stopNote}</Txt> : null}
             {d.task?.worktree ? (
               <View testID="progress-worktree" style={{ gap: space.s }}>
+                {d.task.worktree.base && d.task.worktree.baseSha ? <Txt testID="progress-wt-base" role="meta" tone="inkSoft">{t(lang, 'progress.wtBase', { base: d.task.worktree.base, sha: d.task.worktree.baseSha.slice(0, 7) })}</Txt> : null}
                 <Txt role="meta" tone="inkSoft">{t(lang, d.task.worktree.removed ? 'progress.wtGone' : d.task.worktree.merged ? 'progress.wtOnMerged' : 'progress.wtOn', { branch: d.task.worktree.branch })}</Txt>
                 {scripts ? (
                   <View testID="progress-scripts" style={{ gap: space.s }}>
@@ -537,8 +540,10 @@ function DetailSection({ title, testID, children, keepMounted = false }: { title
 
 function ConversationMessage({ event }: { event: ConvItem }) {
   const lang = useLang()
-  return <View style={{ gap: space.xs, alignSelf: event.kind === 'me' ? 'flex-end' : 'stretch', maxWidth: '100%' }}>
+  const { c } = useTheme()
+  const appearance = componentAppearance.message
+  return <View style={{ paddingVertical: event.kind === 'me' ? appearance.paddingY : 0, paddingHorizontal: event.kind === 'me' ? appearance.paddingX : 0, borderRadius: appearance.radius, backgroundColor: event.kind === 'me' ? c[appearance.userBackground] : appearance.replyBackground, gap: space.xs, alignSelf: event.kind === 'me' ? 'flex-end' : 'stretch', maxWidth: '100%' }}>
     <Txt role="caption" tone="inkSoft" style={{ textAlign: event.kind === 'me' ? 'right' : 'left' }}>{t(lang, event.kind === 'me' ? 'chat.me' : 'cc.label')}</Txt>
-    <MessageText role={event.kind === 'me' ? 'user' : 'assistant'} text={event.text} userAlign="right" />
+    <MessageText typeRole={event.kind === 'me' ? appearance.userRole : appearance.replyRole} role={event.kind === 'me' ? 'user' : 'assistant'} text={event.text} userAlign="right" />
   </View>
 }

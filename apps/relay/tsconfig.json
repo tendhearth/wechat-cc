@@ -13,5 +13,5 @@
     "allowImportingTsExtensions": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "exclude": ["test/e2e/**"]
+  "exclude": ["**/.cc-tasks/**", "**/node_modules/.cache/cc-tasks/**", "test/e2e/**"]
 }

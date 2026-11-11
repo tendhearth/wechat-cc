@@ -47,14 +47,14 @@ beforeEach(async()=>{
     return {async *dispatch(){
       yield {kind:'init' as const,sessionId:'phone-native'}
       if(project.path.endsWith('terminal')){if(ctx.resumeSessionId)await gate;yield {kind:'text' as const,text:'完成当前轮'};yield {kind:'result' as const,sessionId:'phone-native',numTurns:1,durationMs:1};return}
-      receipt.permission=await ctx.requestPermission!({tool:'Bash',description:'Remove the one scratch probe file'})
+      receipt.permission=await ctx.requestPermission!({tool:'Bash',command:'rm cc-permission-probe.txt',description:'Remove the one scratch probe file'})
       receipt.answers=await ctx.requestUserInput!({questions:[{id:'format',header:'格式',question:'保存成哪种？',options:[{label:'文字',description:'纯文本'}],allowOther:true}]})
       yield {kind:'text' as const,text:'已保存'};await gate
     },async steer(text){receipt.inputs.push(text)},async close(){finish()}}
   }},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   workbench=makeWorkbenchService({store,registry,stateDir:root,managedWorkspaceRoot:managedRoot,ownerChatId:()=>'owner',defaultProvider:'claude',matters})
   const service=makeMattersService({store:matters,workbench})
-  panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},uploads:{chunk:input=>workbench.uploadAttachmentChunk(input,{ownerKey:'owner',surface:'phone'}),status:input=>workbench.attachmentUploadStatus(input,{ownerKey:'owner',surface:'phone'}),discard:input=>workbench.discardAttachmentUpload(input,{ownerKey:'owner',surface:'phone'})},entry:{entryOptions:()=>workbench.entryOptions({ownerKey:'owner',surface:'phone'}),createEntry:input=>workbench.createEntry(input,{ownerKey:'owner',surface:'phone',origin:currentPhoneClient()}),entryReceipt:id=>workbench.entryReceipt(id,{ownerKey:'owner',surface:'phone'})},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
+  panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},uploads:{chunk:input=>workbench.uploadAttachmentChunk(input,{ownerKey:'owner',surface:'phone'}),status:input=>workbench.attachmentUploadStatus(input,{ownerKey:'owner',surface:'phone'}),discard:input=>workbench.discardAttachmentUpload(input,{ownerKey:'owner',surface:'phone'})},entry:{entryOptions:()=>workbench.entryOptions({ownerKey:'owner',surface:'phone'}),createEntry:async input=>(await workbench.createEntry(input,{ownerKey:'owner',surface:'phone',origin:currentPhoneClient()})),entryReceipt:id=>workbench.entryReceipt(id,{ownerKey:'owner',surface:'phone'})},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
   const {port}=await panel.start(0);base=`http://127.0.0.1:${port}`;token=panel.issueToken();device=null
 })
 // 用 removeTempDir 而不是裸 rmSync:Windows 上 daemon 刚关、句柄还没落地时

@@ -8,6 +8,7 @@
  *  - 失败:稳定的 api_task_* 码(workbench-errors 表、任务失败记录认它们),请求本身失败时 code 换成边界分好的 provider 码。
  */
 import {createHash} from 'node:crypto'
+import {permissionDenialMessage} from '../../../domain/permission-denial'
 import {lstatSync} from 'node:fs'
 import {relative,sep} from 'node:path'
 import type {AgentAttachment,AgentProvider,SpawnContext} from '../../../ports/agent-provider'
@@ -150,8 +151,10 @@ function workbenchPurpose(args:{ctx:SpawnContext;sessionId:()=>string;ensureScop
       try{
         // 不在文件工具里的名字(Shell、wechat 工具 …)在这里就以 unsupported_api_tool 失败,不问主人、不执行。
         const tool=prepareApiFileTool(binding.path,binding.taskId,call.name,call.input)
-        const accepted=ctx.requestPermission?await withAbort(ctx.requestPermission({tool:call.name,description:tool.description},signal),signal):false
+        let feedback:string|undefined
+        const accepted=ctx.requestPermission?await withAbort(ctx.requestPermission({tool:call.name,description:tool.description,onDenied:reason=>{feedback=permissionDenialMessage(tool.description,reason)}},signal),signal):false
         check(signal);ensureScope()
+        if(!accepted&&feedback)return {output:JSON.stringify({error:'permission_denied',message:feedback}),after:{kind:'tool_call',tool:call.name,activity:{...activity,status:'failed'}}}
         if(!accepted)fail('permission_denied')
         output=tool.execute()
       }catch(error){

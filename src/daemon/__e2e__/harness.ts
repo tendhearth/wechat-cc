@@ -85,6 +85,9 @@ export interface TestDaemonOpts {
   recordCursorSpawnOptions?: (options: Record<string, unknown>) => void
   /** 「待说」补说那一拍的间隔(ms;缺省生产的 5 分钟)。看补说 / 退避的场景设成几百毫秒。 */
   speechFlushIntervalMs?: number
+  /** 定时任务 / 提醒仍走真实调度器,只缩短检查间隔(生产一分钟)。 */
+  scheduledJobsIntervalMs?: number
+  reminderIntervalMs?: number
   /**
    * 本机空闲秒数(S3b 一件事的提议判「人在不在电脑前」)。缺省 = 探不到(null ⇒ 当作不在)—— 测试从不去探跑测试那台机器的
    * 真键鼠,结果不随谁在用电脑变。
@@ -306,7 +309,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   // NOTE: import is dynamic so vi.mock has time to register before SDK loads.
   const { bootDaemon } = await import('../main')
   // 一件事的提议(S3b)判「人在不在电脑前」、自己弹桌面通知:测试里不去探跑测试那台机器的真键鼠、也不真弹系统通知
-  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
+  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
 
   // Give polling loop a moment to spin up.
   await new Promise(r => setTimeout(r, 50))

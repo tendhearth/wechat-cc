@@ -222,6 +222,12 @@ describe('LiveBackend 提交', () => {
     await expect(b.decide(p)).rejects.toMatchObject({ code: 'stale' })
     expect(reqs[0]).toMatchObject({ body: p, retry: undefined })
   })
+  it('拒绝理由随原任务和请求发送一次，返回丢失不重发',async()=>{
+    const {b,reqs}=harness({'POST /m/api/matter/permission':new Error('timeout')})
+    const p={id:ID,runId:RUN,requestId:REQ,decision:'deny' as const,reason:'不要 SSH'}
+    await expect(b.decide(p)).rejects.toBeDefined()
+    expect(reqs).toHaveLength(1);expect(reqs[0]!.body).toEqual(p);expect(reqs[0]!.retry).toBeUndefined()
+  })
   it('回答:JSON 超过 20 000 字 ⇒ invalid,请求根本不发', async () => {
     const { b, reqs } = harness({ 'POST /m/api/matter/answer': ok({ ok: true }) })
     await expect(b.answer({ id: ID, runId: RUN, requestId: REQ, answers: { q: ['x'.repeat(20_000)] } })).rejects.toMatchObject({ code: 'invalid' })
@@ -941,4 +947,18 @@ it('T5d reads capabilities through protocol and uses shared owner window/work/ev
   expect(h.reqs.map(r=>r.path)).toEqual(['/v1/matter/owner-chat/window?anchor=old','/v1/matter/owner-chat/work','/v1/matter/owner-chat/events?since=10','/v1/matter/owner-chat/stop'])
   expect(h.reqs.at(-1)?.body).toEqual({turnId:'turn'})
   h.b.dispose()
+})
+
+describe('task network pause is separate from phone connectivity',()=>{
+ it.each(['m','v1'] as const)('%s preserves the narrow optional pause projection and recovery',async family=>{
+  const task={id:ID,title:'work',status:'running',phase:'working',providerId:'codex',path:'',error:null,updatedAt:1,networkSuspended:{since:42,privateDetail:'never projected'}}
+  let paused=true
+  const h=harness({[family==='v1'?'GET /v1/matter':'GET /m/api/matter']:()=>ok({ok:true,...DETAIL,task:{...task,networkSuspended:paused?task.networkSuspended:undefined}})},family==='v1'?'v1':undefined)
+  h.status('ready')
+  expect((await h.b.matter(ID,'en')).task?.networkSuspended).toEqual({since:42})
+  expect(h.b.connection().state).toBe('online')
+  paused=false
+  expect((await h.b.matter(ID,'en')).task?.networkSuspended).toBeUndefined()
+  expect(h.b.connection().state).toBe('online')
+ })
 })

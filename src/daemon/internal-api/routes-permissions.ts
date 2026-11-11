@@ -9,6 +9,7 @@
  * 校验内联(不进 schema.ts),照 wish / intro 的先例。
  */
 import type { InternalApiDeps, RouteTable } from './types'
+import { permissionReason } from '../../domain/permission-denial'
 
 export function permissionRoutes(deps: InternalApiDeps): RouteTable {
   return {
@@ -18,12 +19,14 @@ export function permissionRoutes(deps: InternalApiDeps): RouteTable {
     },
     'POST /v1/permissions/resolve': async (_query, body) => {
       if (!deps.permissions) return { status: 503, body: { error: 'permissions_not_wired' } }
-      const b = (body ?? {}) as { hash?: unknown; decision?: unknown }
-      if (typeof b.hash !== 'string' || b.hash === '' || (b.decision !== 'allow' && b.decision !== 'deny')) {
+      const b = (body ?? {}) as { hash?: unknown; decision?: unknown; reason?: unknown }
+      if (typeof b.hash !== 'string' || b.hash === '' || (b.decision !== 'allow' && b.decision !== 'deny' && b.decision !== 'allow_task')) {
         return { status: 400, body: { error: 'bad_request' } }
       }
       // ok=false 不是错误:hash 过期 / 已经被微信那边拍过了。桌面据此收掉卡片。
-      return { status: 200, body: { ok: deps.permissions.resolve(b.hash, b.decision) } }
+      let reason: string | undefined
+      try { reason = permissionReason(b.reason, b.decision) } catch { return { status: 400, body: { error: 'bad_request' } } }
+      return { status: 200, body: { ok: reason ? deps.permissions.resolve(b.hash, b.decision, reason) : deps.permissions.resolve(b.hash, b.decision) } }
     },
   }
 }

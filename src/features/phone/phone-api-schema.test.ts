@@ -111,7 +111,7 @@ describe('真实返回校验 — workbench + matters', () => {
       },
       entry: {
         entryOptions: () => workbench.entryOptions({ ownerKey: 'owner', surface: 'phone' }),
-        createEntry: input => workbench.createEntry(input, { ownerKey: 'owner', surface: 'phone' }),
+        createEntry: async input => (await workbench.createEntry(input, { ownerKey: 'owner', surface: 'phone' })),
         entryReceipt: id => workbench.entryReceipt(id, { ownerKey: 'owner', surface: 'phone' }),
       },
       insight: makePhoneInsight({ detail: id => service.detail(id), explainer: makeApprovalExplainer({ cheapEval: () => null, budgetMs: () => 1000, log: () => {} }), summarizer: makeProgressSummarizer({ cheapEval: () => null, budgetMs: () => 1000, now: () => Date.now(), log: () => {} }) }),

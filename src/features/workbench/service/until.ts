@@ -33,7 +33,7 @@ const succeeded = (e: ScriptExit) => e.code === 0 && !e.error && !e.timedOut && 
  * afterTurn 被很多低层路径调到(收尾、拍板后的 settleAfterDecision、网络恢复),没法让调用方每次把它当参数带下来,
  * 所以留这一条。它只在检查脚本跑完之后(异步、远在构造完成之后)才会被调。
  */
-export type UntilResume = (id: string, text: string, requestId: string, current: Active | undefined) => Promise<unknown> | void
+export type UntilResume = (id: string, text: string, requestId: string, current: Active | undefined, denials: number) => Promise<unknown> | void
 
 export interface UntilDomains {
   /** 跑完核对「这条会话是不是还安静」。 */
@@ -142,7 +142,7 @@ export function makeUntilDomain(ctx: ServiceCtx, domains: UntilDomains, opts: Un
       const requestId = untilRequestId(id, n)
       try {
         // 投补充那条路要等它落地(原来就是 await);续一轮那条是同步的,不多等一拍。
-        const sent = resume(id, text, requestId, current)
+        const sent = resume(id, text, requestId, current, r.permissions.denialCount())
         if (sent) await sent
         note(id, `检查没过(第 ${n}/${g.maxRounds} 轮,退出码 ${exit.code ?? '无'}),已让执行者接着改。`)
       } catch (err) {

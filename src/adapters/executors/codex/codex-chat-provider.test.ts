@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, parse } from 'node:path'
 import { classifyCall } from '../../../lib/call-classifier'
 import { providerErrorCodeOf } from '../../../lib/provider-error-code'
 import { createCodexChatProvider, codexChatToolCall, codexChatThreadConfig, CODEX_CAPABILITIES, type CodexChatProviderOptions } from './codex-chat-provider'
@@ -27,6 +27,11 @@ function rig(script: Partial<ScriptedCodexOptions> = {}, opts: CodexChatProvider
   return { scripted, provider, spawn }
 }
 const lastStart = (r: ReturnType<typeof rig>) => r.scripted.threadStarts.at(-1)!
+const corruptNetworkReceipt = (networkAccess: boolean | undefined): NonNullable<ScriptedCodexOptions['rewrite']> => message => {
+  if (!message.result?.sandbox) return message
+  const sandbox = { ...message.result.sandbox, networkAccess }
+  return { ...message, result: { ...message.result, sandbox } }
+}
 
 describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)', () => {
   it('dangerously ⇒ danger-full-access + never(不看档位),且 MCP 免审', async () => {
@@ -49,10 +54,22 @@ describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)
     expect(lastStart(r).params).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'untrusted', config: { web_search: 'disabled' } })
   })
 
-  it('会话线程从不设 network_access(只有一次性评估设;e2e 假 codex 靠它认出 cheapEval)', async () => {
+  // Full-disk reads plus loopback expose owner approval credentials; any change
+  // requires an explicit security design before opening sandbox networking.
+  it.each([false,true])('会话线程始终关闭 sandbox 网络和 managed proxy (resume=%s)', async resume => {
     const r = rig()
-    await r.spawn()
-    expect(JSON.stringify(lastStart(r).params)).not.toContain('network_access')
+    await r.spawn({permissionMode:'strict',...(resume?{resumeSessionId:'old'}:{})})
+    expect(lastStart(r).params.config).toMatchObject({sandbox_workspace_write:{network_access:false},features:{network_proxy:false}})
+  })
+
+  it.each((['admin', 'guest'] as const).flatMap(tier => [false, true].flatMap(resume => [true, undefined].map(networkAccess => ({ tier, resume, networkAccess })))) )('rejects enabled or missing network receipts for $tier (resume=$resume, networkAccess=$networkAccess)', async ({ tier, resume, networkAccess }) => {
+    // Resume rejection also triggers the fresh-thread fallback. Both replies
+    // stay malicious, so a failed resume cannot hide a missing receipt check.
+    const r = rig({ rewrite: corruptNetworkReceipt(networkAccess) })
+    await expect(r.spawn({ permissionMode: 'strict', tierProfile: TIER_PROFILES[tier], ...(resume ? { resumeSessionId: 'old' } : {}) })).rejects.toThrow('codex_unverified_thread_policy')
+    expect(r.scripted.threadStarts.map(call => call.method)).toEqual(resume ? ['thread/resume', 'thread/start'] : ['thread/start'])
+    expect(r.scripted.inputs).toEqual([])
+    expect(r.scripted.alive()).toBe(0)
   })
 
   it('模型:每次 spawn 钉的优先,其次构造时的,都没有就不传', async () => {
@@ -92,7 +109,7 @@ describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)
     expect(servers.wechat.env).toEqual({ A: '1', WECHAT_SESSION_TOKEN: 'tok-secret', WECHAT_SESSION_TIER: 'trusted' })
     expect(servers.plugin.env).toBeUndefined()
     expect(JSON.stringify(r.scripted.spawned)).not.toContain('tok-secret')
-    expect(r.scripted.spawned.at(-1)!.args).toEqual(['app-server', '--listen', 'stdio://'])
+    expect(r.scripted.spawned.at(-1)!.args).toEqual(['-c','features.network_proxy=false','-c','sandbox_workspace_write.network_access=false','app-server', '--listen', 'stdio://'])
   })
 
   it('delegate 的工具超时放宽;admin 会话的 wechat 放宽到 terminal_say 要等的时长,trusted 照旧', () => {
@@ -307,13 +324,36 @@ describe('Codex 对话 provider —— 错误码 / 超时 / 取消 / 插话 / �
   })
 })
 
+it.each([true, undefined])('rechecks offline network receipts after a crashed dialogue process (networkAccess=%s)', async networkAccess => {
+  let receipts = 0
+  const rewrite = corruptNetworkReceipt(networkAccess)
+  const r = rig({
+    turns: [{ steps: [{ crash: 'unexpected status 401 Unauthorized: Missing bearer or basic authentication' }] }],
+    rewrite: message => message.result?.sandbox && ++receipts > 1 ? rewrite(message) : message,
+  })
+  const session = await r.spawn({ permissionMode: 'strict' })
+  await drain(session.dispatch('first'))
+  const events = await drain(session.dispatch('again'))
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'error', message: expect.stringContaining('codex_unverified_thread_policy') }))
+  expect(r.scripted.threadStarts.map(call => call.method)).toEqual(['thread/start', 'thread/resume'])
+  expect(r.scripted.inputs).toEqual(['first'])
+  expect(r.scripted.alive()).toBe(0)
+})
+
 describe('Codex 对话 provider —— 一次性评估', () => {
   it('只读、不给网、低推理、cheap 模型、临时目录;拼起所有助理消息;用完就关', async () => {
     const r = rig({ cheapAnswer: p => `答:${p}` })
     expect(await r.provider.cheapEval!('一加一')).toBe('答:一加一')
-    expect(lastStart(r).params).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'never', config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false } } })
+    expect(lastStart(r).params).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'never', config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } } })
     expect(r.scripted.cheapPrompts).toEqual(['一加一'])
     expect(r.scripted.inputs).toEqual([])
+    expect(r.scripted.alive()).toBe(0)
+  })
+
+  it.each([true, undefined])('rejects enabled or missing network receipts for cheap evaluation (networkAccess=%s)', async networkAccess => {
+    const r = rig({ rewrite: corruptNetworkReceipt(networkAccess) })
+    await expect(r.provider.cheapEval!('must stay offline')).rejects.toThrow('codex_unverified_thread_policy')
+    expect(r.scripted.cheapPrompts).toEqual([])
     expect(r.scripted.alive()).toBe(0)
   })
 
@@ -332,8 +372,11 @@ describe('守护:对话侧 Codex 的实际端点(2026-10-03 规矩,B1 起会话�
       const home = join(root, 'codex-home')
       mkdirSync(home, { recursive: true })
       writeFileSync(join(home, 'config.toml'), configToml)
+      // This fixture only predicts endpoints: no command or temp file is run.
+      // Keep the prediction cwd away from real ancestor .codex configuration.
+      for(const key of ['TMPDIR','TEMP','TMP'])vi.stubEnv(key,parse(root).root)
       await fn({ env: { HOME: root, CODEX_HOME: home, OPENAI_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }, systemDir: null })
-    } finally { rmSync(root, { recursive: true, force: true }) }
+    } finally { vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }) }
   }
 
   it('OPENAI_BASE_URL 指到国内网关、config 默认 ⇒ 起会话前的预测与 cheapEval 都按官方,需要保护', withHome('model = "gpt-5.5"\n', (o) => {

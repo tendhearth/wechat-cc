@@ -35,6 +35,15 @@ function harness(over: Partial<ShipDeps> & { loads?: number[]; selftestOk?: [boo
 }
 
 describe('runShip', () => {
+  it('checks tasks before building and refuses busy work without deployment', async () => {
+    const { deps, calls } = harness()
+    Object.assign(deps, { taskGate: async () => { calls.push('tasks'); return '有 2 件在跑' } })
+    const result = await runShip(deps)
+    expect(result.exitCode).not.toBe(SHIP_EXIT.shipped)
+    expect(result.message).toContain('有 2 件在跑')
+    expect(calls).toEqual(['tasks'])
+  })
+
   it('闲着、守护安全 ⇒ 构建 → 部署 → 自检,退 0,并指向 self soak', async () => {
     const { deps, calls } = harness()
     const r = await runShip(deps)

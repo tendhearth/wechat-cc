@@ -11,6 +11,8 @@ import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {readArtifactSnapshot} from '../../adapters/workbench/artifacts'
+import {Window} from 'happy-dom'
+import {renderWorkbench} from '../../../apps/desktop/src/modules/workbench.js'
 import {removeTempDir} from '../../lib/test-temp'
 
 /**
@@ -492,4 +494,131 @@ it('超界的旋钮被封顶,不再钳成 1ms 立刻收工',async()=>{
   await pause(300)
   expect(status(a.id)).toBe('running')
   expect(closedEvent(a.id)).toBe(false)
+})
+
+it.each(['ack-before-text','text-before-ack'] as const)('projects the first answer of a retained new turn with its true turn: %s',async order=>{
+ setup({retainedIdleCloseMs:()=>120_000})
+ const task=create('第一轮')
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.kind==='text'),POLL).toBe(true)
+ const r=runtimes[0]!,first=service.detail(task.id).events.find(e=>e.kind==='text')!
+ r.finish();await expect.poll(()=>service.detail(task.id).task.phase,POLL).toBe('replied')
+ const emit=()=>{r.state={...r.state,foreground:'running'};r.say('第二轮首条答复')}
+ r.runtime.submit=async()=>{
+  if(order==='text-before-ack'){
+   emit();await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='第二轮首条答复'),POLL).toBe(true)
+  }
+ }
+ const runId=service.detail(task.id).runId!
+ await service.submitInput(task.id,{runId,requestId:'99999999-1111-4111-8111-111111111111',text:'第二轮请求'})
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='第二轮请求'),POLL).toBe(true)
+ if(order==='ack-before-text')emit()
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='第二轮首条答复'),POLL).toBe(true)
+ const answer=service.detail(task.id).events.find(e=>e.text==='第二轮首条答复')!
+ expect(first.turnId).toEqual(expect.any(String))
+ expect(answer.turnId).toEqual(expect.any(String))
+ expect(answer.turnId).not.toBe(first.turnId)
+ r.finish();await expect.poll(()=>service.detail(task.id).task.phase,POLL).toBe('replied')
+ expect(service.detail(task.id).events.find(e=>e.id===answer.id)?.turnId).toBe(answer.turnId)
+})
+
+it('keeps a steer acknowledgement arriving after result attached to its original turn',async()=>{
+ setup({retainedIdleCloseMs:()=>120_000})
+ const task=create('原请求')
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.kind==='text'),POLL).toBe(true)
+ const r=runtimes[0]!;r.state={...r.state,input:'steer'}
+ const turnId=service.detail(task.id).events.find(e=>e.kind==='text')!.turnId
+ let accept!:()=>void
+ r.runtime.submit=()=>new Promise<void>(resolve=>{accept=resolve})
+ await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:'99999999-2222-4222-8222-222222222222',text:'执行中补充'})
+ await expect.poll(()=>typeof accept,POLL).toBe('function')
+ r.finish();await expect.poll(()=>service.detail(task.id).task.phase,POLL).toBe('replied')
+ accept()
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='执行中补充'),POLL).toBe(true)
+ expect(service.detail(task.id).events.find(e=>e.text==='执行中补充')!.turnId).toBe(turnId)
+})
+
+it('append → steer acknowledgement → same-item replace → replied keeps the real service answer in the current area',async()=>{
+ setup({retainedIdleCloseMs:()=>120_000})
+ const task=create('检查文件')
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.kind==='text'),POLL).toBe(true)
+ const r=runtimes[0]!
+ r.state={...r.state,input:'steer'}
+ r.queue.push({kind:'text',itemId:'t0',textMode:'append',text:'正在核对'})
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.text.includes('正在核对')),POLL).toBe(true)
+ r.runtime.submit=async()=>{}
+ await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:'99999999-3333-4333-8333-333333333333',text:'补充核对附件'})
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='补充核对附件'),POLL).toBe(true)
+ const w=new Window()
+ const visible=(answer:string)=>{
+  const detail=service.detail(task.id)
+  w.document.body.innerHTML=renderWorkbench({tasks:[],providers:[],defaultProvider:null,canWechat:false,selectedArtifactId:null,error:'',preview:null,selectedId:task.id,detail:{...detail,events:detail.events.map(e=>({...e,id:String(e.id)}))}})
+  expect(w.document.querySelector('.wb-dialogue')!.textContent).toContain(answer)
+  expect(w.document.querySelector('#wb-earlier-dialogue')?.textContent??'').not.toContain(answer)
+  expect(w.document.querySelector('.wb-dialogue')!.textContent).not.toContain('正在处理')
+ }
+ try {
+  visible('正在核对')
+  r.queue.push({kind:'text',itemId:'t0',textMode:'replace',text:'最终答复：文件与附件已核对'})
+  await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='最终答复：文件与附件已核对'),POLL).toBe(true)
+  visible('最终答复：文件与附件已核对')
+  r.finish();await expect.poll(()=>service.detail(task.id).task.phase,POLL).toBe('replied')
+  visible('最终答复：文件与附件已核对')
+ }finally{w.close()}
+})
+
+it('a running send acknowledged after result starts the next turn instead of pinning the old reply',async()=>{
+ setup({retainedIdleCloseMs:()=>120_000})
+ const task=create('原请求')
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.kind==='text'),POLL).toBe(true)
+ const r=runtimes[0]!,old=service.detail(task.id).events.find(e=>e.kind==='text')!
+ let accept!:()=>void
+ r.runtime.submit=()=>new Promise<void>(resolve=>{accept=resolve})
+ await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:'99999999-4444-4444-8444-444444444444',text:'下一轮要求'})
+ await expect.poll(()=>typeof accept,POLL).toBe('function')
+ r.finish();await expect.poll(()=>service.detail(task.id).task.phase,POLL).toBe('replied')
+ accept();await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='下一轮要求'),POLL).toBe(true)
+ const request=service.detail(task.id).events.find(e=>e.text==='下一轮要求')!
+ expect(request.turnId).toEqual(expect.any(String));expect(request.turnId).not.toBe(old.turnId)
+ r.state={...r.state,foreground:'running'};r.say('下一轮答复')
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='下一轮答复'),POLL).toBe(true)
+ expect(service.detail(task.id).events.find(e=>e.text==='下一轮答复')!.turnId).toBe(request.turnId)
+})
+
+it('uses accepted send mode when a serialized native submit outlives the earlier steer turn',async()=>{
+ setup({retainedIdleCloseMs:()=>120_000})
+ const task=create('原请求')
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.kind==='text'),POLL).toBe(true)
+ const r=runtimes[0]!,old=service.detail(task.id).events.find(e=>e.kind==='text')!
+ r.state={...r.state,input:'steer'}
+ let accept!:(value:{mode:'send'})=>void
+ r.runtime.submit=(()=>new Promise<{mode:'send'}>(resolve=>{accept=resolve})) as typeof r.runtime.submit
+ await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:'99999999-5555-4555-8555-555555555555',text:'串行投递后新开轮'})
+ await expect.poll(()=>typeof accept,POLL).toBe('function')
+ r.finish();await expect.poll(()=>service.detail(task.id).task.phase,POLL).toBe('replied')
+ accept({mode:'send'});await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='串行投递后新开轮'),POLL).toBe(true)
+ expect(service.detail(task.id).events.find(e=>e.text==='串行投递后新开轮')!.turnId).not.toBe(old.turnId)
+})
+
+it('maps later serialized steers to the accepted new native target rather than the turn at enqueue',async()=>{
+ setup({retainedIdleCloseMs:()=>120_000})
+ const task=create('原请求')
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.kind==='text'),POLL).toBe(true)
+ const r=runtimes[0]!,old=service.detail(task.id).events.find(e=>e.kind==='text')!
+ r.state={...r.state,input:'steer'}
+ const accepts=new Map<string,(value:{mode:'steer'|'send';turnId:string})=>void>()
+ r.runtime.submit=(id)=>new Promise(resolve=>accepts.set(id,resolve))
+ const ids=['99999999-6666-4666-8666-666666666666','99999999-7777-4777-8777-777777777777','99999999-8888-4888-8888-888888888888']
+ for(const [i,requestId] of ids.entries())await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId,text:`补充${i}`})
+ await expect.poll(()=>accepts.size,POLL).toBe(3)
+ r.finish();await expect.poll(()=>service.detail(task.id).task.phase,POLL).toBe('replied')
+ accepts.get(ids[0]!)!({mode:'steer',turnId:'native-first'})
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='补充0'),POLL).toBe(true)
+ accepts.get(ids[1]!)!({mode:'send',turnId:'native-second'})
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='补充1'),POLL).toBe(true)
+ accepts.get(ids[2]!)!({mode:'steer',turnId:'native-second'})
+ await expect.poll(()=>service.detail(task.id).events.some(e=>e.text==='补充2'),POLL).toBe(true)
+ const rows=service.detail(task.id).events
+ expect(rows.find(e=>e.text==='补充0')!.turnId).toBe(old.turnId)
+ expect(rows.find(e=>e.text==='补充1')!.turnId).not.toBe(old.turnId)
+ expect(rows.find(e=>e.text==='补充2')!.turnId).toBe(rows.find(e=>e.text==='补充1')!.turnId)
 })

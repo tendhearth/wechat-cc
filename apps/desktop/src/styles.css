@@ -172,24 +172,25 @@ input { font: inherit; color: inherit; }
 
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 14px;
-  border-radius: 7px;
-  border: 1px solid var(--hair-2);
-  background: var(--th-paper);
-  color: var(--ink-2);
-  font-size: 12.5px;
-  font-weight: 500;
+  min-height: var(--th-button-min-height); padding: var(--th-button-padding-y) var(--th-button-padding-x);
+  border-radius: var(--th-button-radius);
+  border: var(--th-button-border-width) solid var(--th-button-secondary-border);
+  background: var(--th-button-secondary-background);
+  color: var(--th-button-secondary-text);
+  font-size: var(--th-button-role);
+  font-weight: var(--th-weight-small);
   transition: background .12s, border-color .12s, color .12s;
 }
 .btn:hover { color: var(--ink); border-color: var(--ink-4); }
-.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn:active { opacity: var(--th-button-pressed-opacity); }
+.btn:disabled { opacity: var(--th-button-disabled-opacity); cursor: not-allowed; }
 .btn:disabled:hover { color: var(--ink-2); border-color: var(--hair-2); }
 
 .btn.primary {
-  background: var(--green); color: var(--th-paper); border-color: var(--green-2);
+  background: var(--th-button-primary-background); color: var(--th-button-primary-text); border-color: var(--th-button-primary-border);
 }
 .btn.primary:hover { background: var(--green-2); color: var(--th-paper); }
-.btn.primary:disabled { background: var(--ink-4); border-color: var(--ink-4); color: var(--th-paper); opacity: .55; }
+.btn.primary:disabled { background: var(--th-button-primary-background); border-color: var(--th-button-primary-border); color: var(--th-button-primary-text); opacity: var(--th-button-disabled-opacity); }
 
 .btn.danger {
   color: var(--rouge); border-color: transparent; background: transparent; padding: 0 8px;
@@ -1335,7 +1336,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .toggle[disabled] { opacity: .6; cursor: progress; }
 .settings-drawer .btn {
   border-color: color-mix(in srgb, var(--th-hair) 24%, transparent);
-  border-radius: 8px;
+  border-radius: var(--th-button-radius);
   background: var(--th-paper);
   color: var(--th-ink);
 }
@@ -5012,3 +5013,6 @@ b, strong { font-weight: 500; }
 .wb-task-agents > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now-waiting-row.now-terminal-row { grid-template-columns: minmax(0, 1fr) auto auto; }
 .now-terminal-agent { display: inline-flex; }
+
+/* Desktop identity contract; shared avatar CSS also serves the unchanged PWA. */
+body .th-agents { --th-agent-size:var(--th-identity-agent-size); }

@@ -142,6 +142,8 @@ export const MatterSession = z.object({
 /** `matters/service.ts` 的 `MatterTaskView`(手机详情/say 结果里的任务投影)——
  * 跟 workbench 内部的 `WorkbenchTaskView`(见下面 entry 一节)不是同一个类型。 */
 export const MatterTaskView = z.object({
+  // Task pause, independent of the phone transport connection. Older daemons omit it.
+  networkSuspended: z.object({ since: z.number() }).optional(),
   id: z.string(), title: z.string(), status: z.string(), phase: z.string().optional(),
   providerId: z.string(), path: z.string(), error: z.string().nullable(), updatedAt: z.number(),
   archivedAt: z.number().nullable().optional(),
@@ -151,6 +153,7 @@ export const MatterTaskView = z.object({
   // 不用 enum:以后多一种,老 App 当「不确定」而不是整页解析失败);approved = 这份内容主人在电脑上批过;
   // lastLines = 最近那条脚本输出的最后几行(已打码、去路径);脚本原文与路径永远不到手机。
   worktree: z.object({
+    base: z.string().optional(), baseSha: z.string().optional(),
     branch: z.string(), removed: z.boolean(), merged: z.boolean().optional(), projectId: z.string().optional(),
     port: z.number().int().optional(), setup: z.string().optional(), run: z.string().optional(), approved: z.boolean().optional(),
     lastLines: z.array(z.string()).max(20).optional(),
@@ -183,8 +186,11 @@ export const MatterInput = z.object({
 export const MatterInputReceiptResult = z.object({ ok: z.literal(true), input: MatterInput })
 export type MatterInputReceiptResultT = z.infer<typeof MatterInputReceiptResult>
 
+export const PermissionScript = z.object({ path: z.string(), content: z.string(), sha256: z.string().optional(), error: z.string().optional(), truncated: z.boolean().optional() })
+export const PermissionScriptChunk = z.object({ content: z.string(), nextOffset: z.number().nullable() })
 export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
+  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
 })
 
 const QuestionOption = z.object({ label: z.string(), description: z.string() })
@@ -733,6 +739,7 @@ const PHONE_API = {
   'POST /m/api/matter/worktree': z.union([PhoneWorktreeResult, PhoneErrorResponse]),
   'POST /m/api/matter/answer': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/matter/artifact': z.union([z.object({ ok: z.literal(true) }).extend(MatterArtifactChunk.shape), PhoneErrorResponse]),
+  'GET /v1/matter/permission-script': PermissionScriptChunk,
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),
   'POST /m/api/push/register': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/push/test': z.union([z.object({ ok: z.literal(true), result: z.object({ ok: z.boolean(), code: z.string() }) }), PhoneErrorResponse]),

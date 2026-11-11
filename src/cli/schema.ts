@@ -115,6 +115,11 @@ export const DoctorOutput = z.object({
   expiredBots: z.array(ExpiredBotEntry),
   heartbeats: z.record(z.string(), z.string().nullable()),
   nextActions: z.array(z.string()),
+  terminalHooks: z.array(z.object({
+    source: z.enum(['claude', 'codex', 'cursor']), cli: z.string().nullable(), file: z.string(), installed: z.boolean(), command: z.string().nullable(),
+    health: z.enum(['missing', 'stale', 'ok']), matchesSelf: z.boolean(),
+    trust: z.object({ state: z.enum(['untrusted', 'trusted', 'changed']), evidence: z.enum(['config', 'invocation', 'none']), disabled: z.boolean().optional(), version: z.string().nullable().optional() }).optional(),
+  })).optional(),
   satelliteRepos: z.array(z.object({
     name: z.string(), path: z.string(), branch: z.string(), ahead: z.number(),
   })).optional(),

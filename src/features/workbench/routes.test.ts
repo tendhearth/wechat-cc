@@ -557,6 +557,8 @@ describe('Workbench internal HTTP API', () => {
     expect(workbench.continueTask).toHaveBeenCalledWith('deadbeef', 'revise')
     expect(workbench.approve).toHaveBeenCalledWith('deadbeef', '123e4567-e89b-12d3-a456-426614174000', 'a'.repeat(64))
     expect(workbench.resolvePermission).toHaveBeenCalledWith('deadbeef', '123e4567-e89b-42d3-a456-426614174000', 'deny')
+    expect((await request('/v1/workbench/permission',{method:'POST',body:JSON.stringify({id:'deadbeef',requestId:'123e4567-e89b-42d3-a456-426614174000',decision:'deny',reason:'不要 SSH'})})).status).toBe(200)
+    expect(workbench.resolvePermission).toHaveBeenCalledWith('deadbeef','123e4567-e89b-42d3-a456-426614174000','deny','不要 SSH')
   })
 
   it('keeps per-task waiting and permission information intact through list and detail', async () => {

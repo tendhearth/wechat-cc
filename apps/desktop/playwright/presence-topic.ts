@@ -54,6 +54,25 @@ export async function routePresenceTopic(page: Page, o: { presence?: Source; pet
       await route.abort().catch(() => { /* spec 已经结束 / 页面已经走了:这一份没人要了 */ })
     }
   })
+  // 卡片正文只走授权接口 GET /v1/permissions/pending(presence 只给标识)。浏览器 shim 下桌面把它包成
+  // POST /__invoke {command:'daemon_request', args:{method,path}};spec 给了 pet.pending_permissions 就按同一份应答,
+  // 其余调用原样放行(fallback)。
+  const pendingItems = async () => {
+    const pet = o.pet ? await o.pet() as { pending_permissions?: unknown[] } | null : null
+    return { items: Array.isArray(pet?.pending_permissions) ? pet.pending_permissions : [] }
+  }
+  await page.route('**/__invoke', async route => {
+    try {
+      const body = route.request().postDataJSON() as { command?: string; args?: { method?: string; path?: string } } | null
+      if (body?.command === 'daemon_request' && body.args?.method === 'GET' && body.args.path?.startsWith('/v1/permissions/pending')) {
+        await route.fulfill({ json: { result: JSON.stringify(await pendingItems()) } }); return
+      }
+      await route.fallback()
+    } catch { await route.fallback().catch(() => { /* spec 已经结束 */ }) }
+  })
+  await page.route('**/v1/permissions/pending**', async route => {
+    try { await route.fulfill({ json: await pendingItems() }) } catch { await route.abort().catch(() => { /* spec 已经结束 */ }) }
+  })
   return { parked: request => parked.has(request) }
 }
 

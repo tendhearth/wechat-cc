@@ -9,6 +9,7 @@
  *
  * 给链接页面加一条新调用:先写进页面,这里会红着告诉你去 routes.ts 开哪一行(并写理由)。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -63,6 +64,7 @@ function linkTokenUsers(): string[] {
   const walk = (dir: string) => {
     for (const e of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
       const rel = `${dir}/${e.name}`
+      if (isTaskCachePath(rel)) continue
       if (e.isDirectory()) { if (e.name !== 'node_modules') walk(rel) }
       else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) && /\.linkToken\b/.test(read(...rel.split('/')))) out.push(rel)
     }
@@ -107,7 +109,7 @@ describe('链接令牌的范围 = 链接页面调用的路由(理念 2)', () => 
       'app pairing': ['POST /set/api/pair'],
       'selftest phone': ['POST /set/api/pair'],
     })
-    expect([...new Set(scanAll().filter(c => c.deviceOnly).map(c => c.key))].sort()).toEqual(['GET /v1/matter/artifact', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'GET /v1/subscribe/topics', 'POST /v1/matter/answer', 'POST /v1/matter/owner-chat/say', 'POST /v1/matter/permission', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename'])
+    expect([...new Set(scanAll().filter(c => c.deviceOnly).map(c => c.key))].sort()).toEqual(['GET /v1/matter/artifact', 'GET /v1/matter/owner-chat/events', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/search', 'GET /v1/matter/permission-script', 'GET /v1/matters', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'GET /v1/subscribe/topics', 'POST /v1/matter/answer', 'POST /v1/matter/owner-chat/say', 'POST /v1/matter/permission', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename'])
   })
 })
 

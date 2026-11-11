@@ -1,7 +1,5 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
 import { defineCommand } from 'citty'
-import { STATE_DIR } from '../../lib/config'
-import { readStdin } from '../stdin'
 // ── hook — 终端 claude / codex / cursor 会话的事件推到微信(spec 2026-09-09-cli-hook-push)──
 // 三家的 hooks 各拉起一个 `wechat-cc hook <source>` 子进程,stdin 是 hook JSON。
 // Cursor 的 hook 一律同步等 stdout:权限类回 {permission},beforeSubmitPrompt 回 {continue:true}。
@@ -14,39 +12,8 @@ function hookRelayCmd(source: Src) {
   return defineCommand({
     meta: { name: source, description: `${source} 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)` },
     async run() {
-      const { shouldSkipHook, normalizeHookPayload, postCliEvent, parsePermissionRequest, relayPermission, permissionDecisionOutput, withMachineContext, cursorPermissionOutput, cursorEventOutput, withCursorStopText } = await import('../hook.ts')
-      const debug = process.env['WECHAT_CC_HOOK_DEBUG'] === '1'
-      try {
-        // 回环守卫:daemon 自己拉起的 claude / codex / cursor-agent(ACP)也会触发同一份 hooks。
-        // Cursor 这里什么都不写 ⇒ 按 Cursor 自己的规则走(ACP 会话有自己的权限卡)。
-        if (shouldSkipHook(process.env)) { if (debug) console.error('hook: skipped (daemon child)'); return }
-        const raw = await readStdin()
-        let parsed: unknown = null
-        try { parsed = JSON.parse(raw) } catch { if (debug) console.error('hook: stdin is not JSON'); return }
-        // PermissionRequest:去微信问主人;拿到 y/n 就往 stdout 写答复(两家同形状)。
-        // 主人在场 / 没答 / daemon 没跑 → 什么都不写,终端自己弹提示;顺手按老规矩
-        // 压一条「等你批准」提醒(刚发过卡片的话 daemon 那头会压掉)。
-        // Cursor:没拿到主人的决定就回 ask(Cursor 自己问),绝不放行。
-        const perm = parsePermissionRequest(source, parsed)
-        if (perm) {
-          const r = await relayPermission(STATE_DIR, await withMachineContext(perm))
-          if (debug) console.error(`hook: permission ${JSON.stringify(r)}`)
-          if (source === 'cursor') process.stdout.write(cursorPermissionOutput(r.decision) + '\n')
-          if (r.decision) { if (source !== 'cursor') process.stdout.write(permissionDecisionOutput(r.decision) + '\n'); return }
-          await postCliEvent(STATE_DIR, await withMachineContext({ source, kind: 'permission' as const, session_id: perm.session_id, cwd: perm.cwd, text: perm.summary ? `${perm.tool_name}: ${perm.summary}` : perm.tool_name }))
-          return
-        }
-        // Cursor 的其余事件先回放行,再报 daemon(不让主人的提交卡在 daemon 上)。
-        if (source === 'cursor') process.stdout.write(cursorEventOutput(parsed) + '\n')
-        const norm = normalizeHookPayload(source, parsed)
-        if (!norm) { if (debug) console.error('hook: event ignored'); return }
-        const ev = withCursorStopText(norm)
-        // prompt / session_end 不用探空闲(它们本身就说明有人在);stop / permission 要。
-        const r = await postCliEvent(STATE_DIR, ev.kind === 'stop' || ev.kind === 'permission' ? await withMachineContext(ev) : ev)
-        if (debug) console.error(`hook: ${JSON.stringify(r)}`)
-      } catch (err) {
-        if (debug) console.error(`hook: ${err instanceof Error ? err.message : String(err)}`)
-      }
+      const { runHookEntry } = await import('../hook-entry')
+      await runHookEntry(source)
     },
   })
 }
@@ -77,15 +44,24 @@ const hookInstallCmd = defineCommand({
   async run({ args }) {
     const { installHooks } = await import('../hook.ts')
     // 命令行与 daemon 的 POST /v1/cli/hooks/install(桌面「接上」)同一个出处:terminal-hooks.ts selfHookCommand。
-    const { selfHookCommand } = await import('../terminal-hooks.ts')
+    const { selfHookCommand, defaultTerminalHooksDeps, readTerminalHooksForCli } = await import('../terminal-hooks.ts')
+    const { codexTrustMessage, recordCodexHookDefinitionChange } = await import('../codex-hook-trust')
     const out: Record<string, unknown> = {}
     for (const source of hookTargets(args)) {
       const file = await hookFileFor(source)
       const command = selfHookCommand(source)
       try {
-        const { changed } = installHooks(file, source, command)
-        out[source] = { ok: true, file, changed, command }
+        const result = installHooks(file, source, command)
+        const { changed } = result
+        const deps = defaultTerminalHooksDeps()
+        if (result.reconfirmationRequired && deps.evidenceFile) recordCodexHookDefinitionChange(deps.evidenceFile)
+        const trust = source === 'codex' ? (await readTerminalHooksForCli(deps)).find(s => s.source === 'codex')?.trust : undefined
+        out[source] = { ok: true, file, ...result, command, ...(trust ? { trust } : {}) }
         if (!args.json) console.log(`${changed ? '✅' : '✔'} ${source}: ${changed ? '已写入' : '已是最新'} ${file}`)
+        if (!args.json && source === 'codex') {
+          if (result.reconfirmationRequired) console.log('Codex 需要重新确认一次。')
+          if (trust) console.log(codexTrustMessage(trust))
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         out[source] = { ok: false, file, error: msg }
@@ -96,6 +72,7 @@ const hookInstallCmd = defineCommand({
     console.log('之后终端里的 claude / codex(装了 --cursor 的话还有 Cursor)跑完一个长回合,主人微信会收到一条(压 45s;期间你再敲一句就不发;一次提问最多推一条)。')
     console.log('停下来等批准时:你最近 3 分钟没在终端敲过字 ⇒ 微信里收到卡片,回「y 码」/「n 码」就替终端拍板(120s 内);否则终端自己问。')
     console.log('daemon 自己拉起的会话不会推(回环守卫)。查看:wechat-cc hook status;撤掉:wechat-cc hook uninstall。')
+    console.log('连接完成后，新会话会收到 CC 记下的项目近况；设置中可关闭。')
   },
 })
 
@@ -130,13 +107,14 @@ const hookStatusCmd = defineCommand({
   meta: { name: 'status', description: '三家(Claude Code / Codex / Cursor)的 hook 装没装、命令行是什么' },
   args: { json: { type: 'boolean', description: 'JSON envelope' } },
   async run({ args }) {
-    const { hookStatus } = await import('../hook.ts')
+    const { defaultTerminalHooksDeps, readTerminalHooksForCli } = await import('../terminal-hooks.ts')
+    const { codexTrustMessage } = await import('../codex-hook-trust')
     const out: Record<string, unknown> = {}
-    for (const source of ALL_SOURCES) {
-      const file = await hookFileFor(source)
-      const st = hookStatus(file, source)
-      out[source] = { file, ...st }
+    for (const st of await readTerminalHooksForCli(defaultTerminalHooksDeps())) {
+      const { source, file } = st
+      out[source] = st
       if (!args.json) console.log(`${st.installed ? '✅' : '—'} ${source}: ${st.installed ? st.command : '未安装'}(${file})`)
+      if (!args.json && st.trust) console.log(codexTrustMessage(st.trust))
     }
     if (args.json) console.log(JSON.stringify(out))
   },

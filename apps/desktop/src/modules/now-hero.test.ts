@@ -44,7 +44,7 @@ describe('home hero consumes independent true-state streams', () => {
   })
   it('local pending can produce receive only when followed by a new real reply, not removal or history', () => {
     const f = fresh(); f.converse([]); f.converse([cc(1)])
-    expect(f.converse([cc(1), cc(2, true)]).intent.behavior).toBe('thinking')
+    expect(f.converse([cc(1), cc(2, true)]).intent.behavior).toBe('idle') // local pending is not runtime evidence
     expect(f.converse([cc(1), cc(3)]).intent.oneShots).toEqual(['receive'])
     expect(f.converse([cc(1), cc(3)]).intent.oneShots).toEqual([])
     f.converse([cc(1), cc(3), cc(4, true)])
@@ -98,7 +98,7 @@ describe('home hero consumes independent true-state streams', () => {
     const f = fresh(); f.attention(attention(null, [task()]))
     expect(f.current().intent.behavior).toBe('permission')
     f.attention(attention(null)); f.converse([cc(1, true)])
-    expect(f.current().intent.behavior).toBe('thinking')
+    expect(f.current().intent.behavior).toBe('idle') // an old daemon supplies no true thinking signal
   })
 })
 
@@ -109,6 +109,24 @@ function dom() {
 }
 const fetchManifest = async () => new Response(JSON.stringify(manifest))
 describe('home hero uses the real pet lifecycle', () => {
+  it('looks toward the actual visible new topic and drops hidden, repeated or cooling-down topics', async () => {
+    vi.useFakeTimers(); const { root, button } = dom()
+    const row = document.createElement('nav'); row.className = 'conversation-topics'; root.append(row)
+    const rect = (x: number, width = 40) => ({ left: x, right: x + width, top: 0, bottom: 40, width, height: 40 }) as DOMRect
+    row.getBoundingClientRect = () => rect(0, 400); button.getBoundingClientRect = () => rect(100)
+    const add = (id: string, x: number) => { const el = document.createElement('button'); el.dataset.topicId = id; el.getBoundingClientRect = () => rect(x); row.append(el); return el }
+    const hero = mountNowHero({ root, button, petOptions: { fetchImpl: fetchManifest as any, preload: () => {} } })
+    hero.setPresence(connected as any); await hero.ready
+    const src = () => root.querySelector<HTMLImageElement>('.now-pet-sprite')!.src
+    hero.setTopics(['old']); add('left', 10); hero.setTopics(['old', 'left'])
+    expect(src()).toContain('/attention/lit/left/')
+    await vi.advanceTimersByTimeAsync(520); expect(src()).not.toContain('/attention/')
+    add('cooling', 250); hero.setTopics(['old', 'left', 'cooling']); expect(src()).not.toContain('/attention/')
+    await vi.advanceTimersByTimeAsync(12000)
+    const hidden = add('hidden', 10); hidden.hidden = true
+    hero.setTopics(['hidden']); expect(src()).not.toContain('/attention/')
+    add('right', 250); hero.setTopics(['right']); expect(src()).toContain('/attention/lit/right/')
+  })
   it('keeps two canonical fallbacks until a sprite loads and stops picture timers in chat and hidden panes', async () => {
     vi.useFakeTimers(); const { root, button } = dom()
     const hero = mountNowHero({ root, button, petOptions: { fetchImpl: fetchManifest as any, preload: () => {} } })

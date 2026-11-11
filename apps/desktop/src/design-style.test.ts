@@ -1,11 +1,13 @@
+import { isTaskCachePath } from '../../../scripts/task-cache-paths'
+import { tmpdir } from 'node:os'
 // 桌面样式守卫(spec 2026-10-01 §6.1)。
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { readFileSync, readdirSync, statSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { join, relative, dirname } from 'node:path'
 
 const ROOT = __dirname
 const walk = (d: string, out: string[] = []): string[] => {
-  for (const n of readdirSync(d)) { const f = join(d, n); statSync(f).isDirectory() ? (n === 'vendor' ? 0 : walk(f, out)) : out.push(f) }
+  for (const n of readdirSync(d)) { const f = join(d, n); if (isTaskCachePath(f)) continue; statSync(f).isDirectory() ? (n === 'vendor' ? 0 : walk(f, out)) : out.push(f) }
   return out
 }
 const CSS = walk(ROOT).filter(f => f.endsWith('.css') && !f.endsWith('tokens.css'))
@@ -63,4 +65,15 @@ describe('desktop design style', () => {
       expect(hexCount(readFileSync(f, 'utf8')), r).toBeLessThanOrEqual(budget)
     }
   })
+})
+
+it('source discovery excludes both task cache trees', () => {
+  const root = mkdtempSync(join(tmpdir(), 'desktop-source-guard-'))
+  try {
+    for (const file of ['ordinary.css', '.cc-tasks/task/cache/copy.css', 'node_modules/.cache/cc-tasks/task/copy.css']) {
+      mkdirSync(dirname(join(root, file)), { recursive: true })
+      writeFileSync(join(root, file), 'body {}')
+    }
+    expect(walk(root).map(file => relative(root, file).replaceAll('\\', '/'))).toEqual(['ordinary.css'])
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })

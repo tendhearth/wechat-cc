@@ -24,6 +24,7 @@ export function jobsModule(f: Foundation): DaemonModule<JobsFeature> {
       const activity = ctx.get<Activity>('activity')
       return {
         stateDir, db, ilink: ctx.get<WechatSend>(W.send), boot: ctx.get<Bootstrap>('bootstrap'), jobsStore: f.jobsStore,
+        intervalMs: f.scheduledJobsIntervalMs,
         activityLog: activity.activityLog, activity: activity.activity, calendar: ctx.get<CalendarFeature>('calendar').calendar,
         overseerToday: ctx.get<TerminalFeature>('terminal').overseerToday, careLedger: f.careLedger,
         quietWindow: () => { const o = ownerChatIdOf(stateDir); return o ? f.chatPrefs.get(o).quiet : undefined },

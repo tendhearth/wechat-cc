@@ -15,6 +15,7 @@
  *
  * 注释按行跳过(`//`、`*`、`/*` 开头的行),不用块注释正则 —— 字符串里的 `/*`(glob)会把后面的真代码吞掉、静默少报。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { dirname, join, posix, relative } from 'node:path'
@@ -77,6 +78,7 @@ export function classify(fromRel: string, spec: string | null): Classified {
 function walk(dir: string, out: string[]): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (!SKIP_DIRS.has(name)) walk(p, out) }
     else if (CODE.test(name) && !name.endsWith('.d.ts')) out.push(p)
   }

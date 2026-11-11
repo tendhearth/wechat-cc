@@ -8,13 +8,17 @@ import type { AgentExecutionChoice, AgentUserInputRequest } from './agent-provid
 export interface Attachment {id:string;name:string;mime:string;size:number;sha256:string}
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 
-export type PermissionDecision = 'allow' | 'deny'
+export type PermissionDecision = 'allow' | 'deny' | 'allow_task'
+export interface PermissionScript { path: string; content: string; sha256?: string; error?: string; truncated?: boolean }
 export interface PendingWorkbenchPermission {
   id: string
   taskId: string
   tool: string
   description: string
   createdAt: number
+  canAllowTask?: boolean
+  canDenyWithReason?: boolean
+  scripts?: PermissionScript[]
 }
 
 export interface PendingUserInput extends AgentUserInputRequest {id:string;taskId:string;createdAt:number}

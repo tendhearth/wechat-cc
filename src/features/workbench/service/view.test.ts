@@ -11,6 +11,9 @@ import type { AgentProvider, AgentRuntimeSnapshot } from '../../../ports/agent-p
 import { makeRuntimeState, type Active } from './state'
 import { makeViewDomain, ATTENTION_TEXT_MAX } from './view'
 import type { ServiceCtx } from './ctx'
+import { safePetTurn } from '../../../domain/pet-turn'
+import { makeRunPermissions } from '../../../adapters/workbench/permissions'
+import { makeRunUserInput } from '../../../adapters/workbench/user-input'
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -39,6 +42,30 @@ function setup(over: { defaultProvider?: string; owner?: string | null } = {}) {
 }
 
 describe('makeViewDomain · 进度', () => {
+  it('projectActivity reads real pending brokers without detail or audit bodies and authorizes the stored owner first', async () => {
+    const { domain, store, state, task, running, snapshot, db, project } = setup()
+    store.update(task.id, 'running')
+    const permissions = makeRunPermissions({ taskId: task.id, audit: event => { store.addEvent(task.id, 'system', event.type === 'request' ? '权限请求审计正文' : '权限已处理') } })
+    const questions = makeRunUserInput({ taskId: task.id, audit: () => { store.addEvent(task.id, 'system', '执行者提问审计正文') } })
+    state.runsByTask.set(task.id, running({ permissions, questions, snap: snapshot() }))
+    const permission = permissions.request({ tool: 'Bash', description: 'curl --password=ordinary-secret https://user:url-password@example.invalid\n- old-private\n+ new-private FAKE_TOKEN' })
+    const question = questions.request({ questions: [{ id: 'format', header: '格式', question: '要哪种报告？', options: [], allowOther: true }] })
+    const permissionId = permissions.pending()[0]!.id, questionId = questions.pending()[0]!.id
+    const detail = vi.spyOn(store, 'detail').mockImplementation(() => { throw new Error('detail must not run') })
+    expect(db.query("SELECT id FROM matter_items WHERE kind IN ('permission','question')").all()).toEqual([])
+    expect(domain.projectActivity(task.id)).toEqual({ phase: 'working', requestId: permissionId, waitingFor: '等你批准', requestKind:'permission', tool:'Bash' })
+    expect(JSON.stringify(domain.projectActivity(task.id))).not.toMatch(/ordinary-secret|url-password|old-private|new-private|FAKE_TOKEN/)
+    permissions.resolve(permissionId, 'allow'); await permission
+    expect(domain.projectActivity(task.id)).toEqual({ phase: 'working', requestId: questionId, waitingFor: '等你回答', requestKind:'question', tool:null })
+    questions.close(); await question
+    expect(domain.projectActivity(task.id)).toEqual({ phase: 'replied', requestId: null, waitingFor: null })
+    const foreign = store.create({ title: '外人的任务', path: project, providerId: 'claude', ownerChatId: 'guest' })
+    const forbidden = vi.fn(() => { throw new Error('foreign pending must not be read') })
+    state.runsByTask.set(foreign.id, running({ permissions: { pending: forbidden } } as never))
+    expect(domain.projectActivity(foreign.id)).toBeNull()
+    expect(domain.projectActivity('missing')).toBeNull()
+    expect(forbidden).not.toHaveBeenCalled(); expect(detail).not.toHaveBeenCalled()
+  })
   it('isReplied:retained + idle + 无后台 + 无待决 ⇒ true;取消/在写/有待决 ⇒ false', () => {
     const { domain, running, snapshot } = setup()
     expect(domain.isReplied(running({ snap: snapshot() }))).toBe(true)
@@ -123,6 +150,17 @@ describe('makeViewDomain · 列表与详情', () => {
 
 
 describe('pet owner activity projection',()=>{
+ it('P2-5: real pending script input never enters pet activity details or the trusted projection',()=>{
+  const {domain,state,running,task,store}=setup();store.update(task.id,'running')
+  state.runsByTask.set(task.id,running({permissions:{pending:()=>[{id:'p',taskId:task.id,tool:'Bash',description:'python3 -c "private-inline-source API_KEY=private-credential"',createdAt:1}]}} as never))
+  const activities=domain.petActivities()
+  expect(JSON.stringify(activities)).not.toContain('private-inline-source')
+  expect(JSON.stringify(activities)).not.toContain('private-credential')
+  const pet=safePetTurn({owner_last_contact_at:null,turn:{phase:'permission',since:null},last_done_at:null,pending_permissions:[],activities})
+  expect(JSON.stringify(pet)).not.toContain('private-inline-source')
+  expect(JSON.stringify(pet)).not.toContain('private-credential')
+  expect(pet.activities?.[0]?.phase).toBe('needs_input')
+ })
  it('includes older live owner decisions before truncation, excludes foreign and archived tasks, and stays read-only',()=>{
   const {store,state,domain,task,project,running,db,hub}=setup()
   store.update(task.id,'running')
@@ -136,7 +174,7 @@ describe('pet owner activity projection',()=>{
   const before=db.query<{n:number},[]>('SELECT total_changes() AS n').get()!.n
   const result=domain.petActivities()
   expect(result).toHaveLength(8)
-  expect(result[0]).toEqual({taskId:task.id,title:'事',phase:'needs_input',detail:'Bash: 运行本地检查',updatedAt:store.get(task.id).updatedAt})
+  expect(result[0]).toEqual({taskId:task.id,title:'事',phase:'needs_input',detail:'需要你决定',updatedAt:store.get(task.id).updatedAt})
   expect(result.some((a:any)=>a.taskId===foreign.id||a.taskId===archived.id||a.title==='他人的私事')).toBe(false)
   expect(db.query<{n:number},[]>('SELECT total_changes() AS n').get()!.n).toBe(before)
   expect(hub.bumped).not.toHaveBeenCalled()
@@ -154,7 +192,7 @@ describe('pet owner activity projection',()=>{
   const old=store.create({title:'旧答复',path:project,providerId:'claude',ownerChatId:'owner'});store.update(old.id,'completed');db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(Date.now()-600001,old.id)
   const cancel=store.create({title:'已取消',path:project,providerId:'claude',ownerChatId:'owner'});store.update(cancel.id,'cancelled')
   const result=domain.petActivities()
-  expect(result.find((x:any)=>x.taskId===task.id)).toMatchObject({phase:'needs_input',detail:'选择 哪一种?'})
+  expect(result.find((x:any)=>x.taskId===task.id)).toMatchObject({phase:'needs_input',detail:'需要你决定'})
   expect(result.find((x:any)=>x.taskId===paused.id)).toMatchObject({phase:'paused'})
   expect(result.find((x:any)=>x.taskId===stopping.id)).toMatchObject({phase:'stopping'})
   expect(result.find((x:any)=>x.taskId===reply.id)).toMatchObject({phase:'replied'})

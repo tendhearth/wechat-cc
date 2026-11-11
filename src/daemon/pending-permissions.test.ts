@@ -2,6 +2,41 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { PendingPermissions, parsePermissionReply } from './pending-permissions'
 
 describe('PendingPermissions', () => {
+  it('parses only rejection replies with an optional reason and forwards it to the acknowledged card', async () => {
+    expect(parsePermissionReply('n 07 不要 SSH\n只在本机')).toEqual({decision:'deny',ref:{kind:'code',value:'07'},reason:'不要 SSH\n只在本机'})
+    expect(parsePermissionReply('N 07 原因')).toEqual({decision:'deny',ref:{kind:'code',value:'07'},reason:'原因'})
+    expect(parsePermissionReply('y 07 原因')).toBeNull()
+    expect(parsePermissionReply('yt 07 原因')).toBeNull()
+    expect(parsePermissionReply('n 07 '+'x'.repeat(2001))).toBeNull()
+    const reg=new PendingPermissions(),decide=vi.fn(()=>true)
+    const answer=reg.register('reason',1000,{chatId:'owner',prompt:'p',canDenyWithReason:true},undefined,undefined,decide)
+    expect(reg.consume('reason','deny',' 不要 SSH ')).toBe(true)
+    expect(decide).toHaveBeenCalledExactlyOnceWith('deny','不要 SSH')
+    expect(await answer).toBe('deny');expect(reg.consume('reason','deny','again')).toBe(false)
+  })
+  it('uses the workbench deadline so network pause freezes both expiry and code consumption', async () => {
+    const reg=new PendingPermissions();let deadline:number|null=Date.now()+1000
+    const task=reg.register('paused',1000,{chatId:'owner',prompt:'p'},undefined,()=>deadline)
+    deadline=null;vi.advanceTimersByTime(5000);reg.sweep();expect(reg.size()).toBe(1)
+    deadline=Date.now()+500;expect(reg.consume('paused','allow')).toBe(true);expect(await task).toBe('allow')
+    const expired=reg.register('expired',1000,{chatId:'owner',prompt:'p'},undefined,()=>Date.now()-1)
+    expect(reg.consume('expired','allow')).toBe(false);expect(await expired).toBe('timeout')
+  })
+  it('yt codes are explicit task permission; ordinary cards cannot acquire it', async () => {
+    expect(parsePermissionReply('yt 07')).toEqual({ decision: 'allow_task', ref: { kind: 'code', value: '07' } })
+    expect(parsePermissionReply('yt')).toEqual({ decision: 'allow_task', ref: null })
+    const reg = new PendingPermissions(), approved = vi.fn(() => true)
+    const plain = reg.register('plain', 10_000, { chatId: 'owner', prompt: 'p' })
+    expect(reg.consume('plain', 'allow_task')).toBe(false)
+    reg.consume('plain', 'deny'); expect(await plain).toBe('deny')
+    const task = reg.register('task', 10_000, { chatId: 'owner', prompt: 'p', canAllowTask: true }, approved)
+    expect(reg.list()[0]?.canAllowTask).toBe(true)
+    expect(reg.consume('task', 'allow_task')).toBe(true)
+    expect(approved).toHaveBeenCalledTimes(1); expect(await task).toBe('allow')
+    expect(reg.consume('task', 'allow_task')).toBe(false)
+    const changed = reg.register('changed', 10_000, { chatId: 'owner', prompt: 'p', canAllowTask: true }, () => false)
+    expect(reg.consume('changed', 'allow_task')).toBe(false); expect(await changed).toBe('deny')
+  })
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 

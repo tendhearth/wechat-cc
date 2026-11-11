@@ -29,7 +29,7 @@ import { SendTalkButton, TalkStatus, useHoldToTalk } from '../ui/HoldToTalk'
 import { mergeTranscript } from '../view/hold-to-talk'
 import type { PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES } from '@wechat-cc/protocol'
-import { radius, space } from '../ui/tokens'
+import { componentAppearance, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
@@ -67,6 +67,11 @@ export default function Chat() {
   const [locateNote, setLocateNote] = useState(false)
   const inputRef = useRef<import('react-native').TextInput>(null)
   const [text, setTextState] = useState(() => getDraft('chat'))
+  const [typing, setTyping] = useState(false)
+  const [topicIds, setTopicIds] = useState<string[]>()
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const endTyping = () => { clearTimeout(typingTimer.current); setTyping(false) }
+  useEffect(() => () => clearTimeout(typingTimer.current), [])
   // 发送是异步的:成功回来时比的是「现在」输入框里的字,不是点发送时闭包里的那份
   const textRef = useRef(text)
   const setText = (v: string) => { setDraft('chat', v); textRef.current = v; setTextState(v) }
@@ -99,6 +104,7 @@ export default function Chat() {
     if (lock.current || !online) return
     lock.current = true
     setSending(true); setOutcome(null)
+    endTyping()
     try {
       const r = await go()
       if (r === 'ok') {
@@ -193,7 +199,7 @@ export default function Chat() {
       <TopBar
         title="CC" showStatus onAvatar={() => router.push('/settings')}
         onConnection={() => router.push('/connections')} connectionTestID="now-connections"
-        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} />}
+        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused} topics={topicIds} />}
         actions={<View style={{ flexDirection: 'row' }}><IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />
           <ConversationMore /></View>}
       />
@@ -250,7 +256,7 @@ export default function Chat() {
             router.push(row.href)
           }} style={{ minHeight: 44, justifyContent: 'center' }}><Txt role="meta" tone="accent">{lang === 'zh-Hans' ? `${waiting.length} 件事等你` : `${waiting.length} waiting for you`}</Txt></Pressable> : null}
           {locateNote ? <Txt testID="chat-locate-gone" role="meta" tone="inkSoft">{lang === 'zh-Hans' ? '暂时找不到这句，仍可继续对话' : 'Cannot locate this message. You can continue talking.'}</Txt> : null}
-          <TopicRow />
+          <TopicRow onTopics={setTopicIds} />
           {outcome ? (
             <View style={{ alignItems: 'flex-end' }}><StatusHint testID={`chat-outcome-${outcome}`} label={t(lang, outcome === 'uncertain' ? 'feedback.unconfirmed' : 'feedback.notSent')}
               icon={outcome === 'uncertain' ? 'help' : 'alert'} description={t(lang, OUTCOME_KEY[outcome])}>
@@ -278,10 +284,12 @@ export default function Chat() {
               testID="chat-input"
               accessibilityLabel={t(lang, 'chat.placeholder')}
               value={text}
-              onChangeText={v => { setText(v); talk.ctl.clearNote() }}
+              onBlur={endTyping}
+              onChangeText={v => { setText(v); talk.ctl.clearNote(); clearTimeout(typingTimer.current); setTyping(!!v.trim()); typingTimer.current = setTimeout(() => setTyping(false), 1600) }}
               multiline
+              variant="chat"
               placeholder={t(lang, 'chat.placeholder')}
-              style={{ flex: 1, minHeight: 48, maxHeight: 140, paddingHorizontal: space.l, paddingTop: space.m, paddingBottom: space.m, borderRadius: radius.sheet, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper }}
+              style={{ flex: 1, maxHeight: 140 }}
             />
             <SendTalkButton ctl={talk.ctl} view={talk.view} elapsedMs={talk.elapsedMs} lang={lang} sendable={canSend} talkable={online && !sending} sending={sending} onTap={send} testID="chat-send" />
           </View>
@@ -291,8 +299,10 @@ export default function Chat() {
   )
 }
 
-// 对话用左右与留白区分说话人,文件先于可展开的执行过程。
+// 用户消息用浅底，CC 回复为透明正文；左右与留白区分说话人,文件先于可展开的执行过程。
 function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
+  const { c } = useTheme()
+  const appearance = componentAppearance.message
   const me = b.side === 'me'
   if (b.state === 'thinking') return <Thinking lang={lang} />
   const from = b.projection==='result'?(lang==='zh-Hans'?'CC 的结果':'CC result'):b.projection==='stream'?'CC':t(lang, `chat.from.${b.source}`)
@@ -302,12 +312,13 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkErro
       {hasBubbleText(b) ? <View
         testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'}
         style={{
-          maxWidth: '88%', paddingVertical: space.m, gap: space.s,
+          maxWidth: '88%', paddingVertical: appearance.paddingY, paddingHorizontal: me ? appearance.paddingX : 0, gap: space.s,
+          borderRadius: appearance.radius, backgroundColor: me ? c[appearance.userBackground] : appearance.replyBackground,
           opacity: b.state === 'failed' ? 0.8 : 1,
         }}
       >
         <Txt role="caption" tone="inkSoft">{t(lang, me ? 'chat.me' : 'cc.label')}</Txt>
-        <MessageText role={me ? 'user' : 'assistant'} text={b.text} />
+        <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} text={b.text} />
         {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
       </View> : null}
       {b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}

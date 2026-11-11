@@ -5,6 +5,8 @@ import { createPet } from './pet/pet.js'
 import { createPresenceFeed } from './pet/bridge/presence-feed.js'
 import { createPetBridge } from './pet/bridge/pet-bridge.js'
 import { createPermissionCard } from './pet/permission/permission-card.js'
+import { createPermissionLoader } from './pet/permission/permission-loader.js'
+import { readPermissionScript } from './modules/permission-script.js'
 import { invokeApi, invokeWorkbenchApi } from './api.js'
 import { openSeenMatter } from './matter-seen.js'
 import { invoke } from './ipc.js'
@@ -13,6 +15,8 @@ import { formatCompanionStatus } from './companion-status.js'
 import { createCompanionDrag } from './companion-drag.js'
 import { createCompanionMotion } from './companion-motion.js'
 import { mountPetActivities, normalizePetActivities } from './pet-activities.js'
+import { mountCCActivity, createCCActivityFeed } from './cc-activity.js'
+import { V1, v1 } from './daemon-client.js'
 
 const $ = (/** @type {string} */ id) => document.getElementById(id)
 // 浏览器预览(没有 Tauri 运行时)里窗口命令无处可去 —— 用它决定要不要发。
@@ -30,8 +34,15 @@ const pet = await createPet({ stage, img, props, hint, body:$('pet-body') }, { m
   onLifeAction:pose=>{const travel=pose.action==='walk'&&pose.authored!==true&&!document.hidden;if(travel)void motion?.play(pose.direction);else if(walking)void motion?.stop();walking=travel},
 })
 if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window).__pet = pet
+const ccActivity = stage ? mountCCActivity({ stage, onPhase: phase => pet.setActivity(phase) }) : null
+const activityFeed = createCCActivityFeed({ read: since => v1(invokeWorkbenchApi, V1.conversation.events, { query: { since } }), observe: stream => ccActivity?.observe(stream) })
 
-let quiet = false, reducedMotion = false
+let quiet = false, reducedMotion = false, activityConnected = false
+function syncActivityAvailability() {
+  const available = activityConnected && !holding && !quiet && !reducedMotion && !document.hidden
+  ccActivity?.setEnabled(available)
+  if (available) activityFeed.start(); else activityFeed.stop()
+}
 function syncLifeAvailability(){
   const settings=document.querySelector('.pet-settings')
   const available=lifeFactsAvailable&&!pointerInShell&&!focusInShell&&!holding&&!quiet&&!reducedMotion&&!document.hidden&&!(settings instanceof HTMLDetailsElement&&settings.open)
@@ -52,6 +63,7 @@ const applyPreferences = s => {
   quiet = s.quiet; reducedMotion = s.reducedMotion
   pet.setReducedMotion(s.reducedMotion)
   pet.setQuiet(s.quiet)
+  syncActivityAvailability()
   syncLifeAvailability()
   const checkbox = /** @type {HTMLInputElement | null} */ ($('pet-reduced-motion'))
   if (checkbox) { checkbox.checked = s.reducedMotion; checkbox.disabled = s.systemReduced }
@@ -77,13 +89,13 @@ function observeNow() { if (!document.hidden) void feed.refresh() }
 // 不能看 invoke 的返回 —— 浏览器预览的 mockInvoke 对任何未知命令都回 {}。
 const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {string} */ t) => document.createElement(t) }, {
   canResolve: !mock,
-  // 三种结局要分清楚(spec §6):真的拍板了 = resolved;请求通了但这条已经不在了
-  // (微信那端刚点过 / 过期)= gone —— 卡片直接收掉,别说「没送出去」;只有请求
-  // 本身挂了(没凭据、超时、403)才是 failed,那才该留下重试提示。
-  onResolve: async (hash, decision) => {
+  readScript: query => readPermissionScript(invokeWorkbenchApi,query),
+  // Only the server's true result acknowledges a decision. A false result may
+  // mean rejection rather than disappearance; the next feed clears stale cards.
+  onResolve: async (hash, decision, reason) => {
     try {
-      const r = /** @type {any} */ (await invoke('pet_permission_resolve', { hash, decision }))
-      return r === true ? 'resolved' : 'gone'
+      const r = /** @type {any} */ (await invoke('pet_permission_resolve', { hash, decision, ...(reason ? { reason } : {}) }))
+      return r === true ? 'resolved' : 'failed'
     } catch (err) { console.warn('pet_permission_resolve failed', err); return 'failed' }
     // 不管成没成:立刻要一份,让卡片的去留由 daemon 的列表说了算(微信那端也可能刚点过)。
     finally { void feed.refresh() }
@@ -91,6 +103,12 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
 })
 
 const tasksHost=$('pet-tasks'),taskPrimary=$('pet-task-primary'),taskToggle=$('pet-task-toggle'),taskList=$('pet-task-list')
+const permissionLoader = createPermissionLoader({
+  // 浏览器 shim 下也走同一个授权接口(由测试替身应答);别在 mock 里返回空 —— 那样卡片永远出不来、测不到。
+  read: async () => /** @type {{items:import('./pet/permission/permission-card.js').PermissionItem[]}} */ (await v1(invokeWorkbenchApi, V1.permissions.pending)).items,
+  show: (item, count) => { if (!document.hidden) card.show(item, count) },
+  hide: () => card.hide(),
+})
 const taskView=tasksHost&&taskPrimary&&taskToggle&&taskList?mountPetActivities({host:tasksHost,primary:taskPrimary,toggle:taskToggle,list:taskList,onOpen:target=>openDestination(target),onExpand:()=>closeSettings()}):null
 const closeSettings=()=>{const settings=document.querySelector('.pet-settings');if(settings instanceof HTMLDetailsElement)settings.open=false}
 document.querySelector('.pet-settings')?.addEventListener('toggle',event=>{if(event.target instanceof HTMLDetailsElement&&event.target.open)taskView?.closeList();syncLifeAvailability()})
@@ -113,6 +131,9 @@ const apply = (freshTurn = false) => {
   lifeFactsAvailable=tasksAvailable&&taskRows.length===0&&['idle','companion'].includes(r.intent.behavior)&&r.intent.badge===0
   syncLifeAvailability()
   const activity = formatCompanionStatus(r.intent, r.permissionCount)
+  ccActivity?.update({ connected: r.intent.form === 'lit', waiting: r.intent.behavior === 'permission', blocked: r.intent.props.includes('exclamation'), enabled: !holding && !quiet && !reducedMotion && !document.hidden })
+  activityConnected = r.intent.form === 'lit'
+  syncActivityAvailability()
   if(selected)activity.ariaLabel=`CC，${taskPrimary?.getAttribute('aria-label')??selected.title}，打开任务`
   if (stage && stage.getAttribute('aria-label') !== activity.ariaLabel) stage.setAttribute('aria-label', activity.ariaLabel)
   const status = $('pet-connection')
@@ -129,7 +150,7 @@ const apply = (freshTurn = false) => {
   // 状态机直接落到目标形态 —— 省掉那 8 帧点火,而不用改 Phase A 的接口。
   // 哪一拍算「初次」由 bridge 说(开窗第一拍 + 第一次拿到端点回答那拍,见 pet-bridge.js)。
   if (r.first && pet.machine.snapshot().transition) pet.machine.notifyAnimationEnded()
-  if (r.permission) card.show(r.permission, r.permissionCount); else card.hide()
+  permissionLoader.update(r.permission, r.permissionCount)
   // Consume this snapshot under the previous quiet flag before wake-time expiry
   // enables motion; completion during suspend must not become a celebration.
   preferences.refresh()
@@ -145,7 +166,8 @@ if (!document.hidden) feed.start()
 // start() 自己会先要一份,这里不用再补 refresh()。
 // 窗口不可见 → 停订(spec §5.3);回来时 start() 先补一份。
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { drag.cancel(); pet.setLifeAvailable(false);void motion?.stop();pet.setPaused(true); feed.stop(); return }
+  syncActivityAvailability()
+  if (document.hidden) { activityFeed.stop(); drag.cancel(); pet.setLifeAvailable(false);void motion?.stop();pet.setPaused(true); feed.stop(); return }
   preferences.refresh()
   bridge.resume()
   pet.setPaused(false)
@@ -157,7 +179,7 @@ const drag = createCompanionDrag({
   start: async () => {await motion?.stop();return mock?null:invoke('start_companion_drag')},
   move: position => invoke('move_companion_window', position),
   finish: () => invoke('finish_companion_drag'),
-  onBegin: () => {holding=true;syncLifeAvailability();pet.beginDrag()}, onEnd: () => {holding=false;pet.endDrag();syncLifeAvailability()},
+  onBegin: () => {holding=true;syncActivityAvailability();syncLifeAvailability();pet.beginDrag()}, onEnd: () => {holding=false;pet.endDrag();syncActivityAvailability();syncLifeAvailability()},
   onVelocity:speed=>pet.setDragVelocity(speed),onLanding:()=>pet.land(),
   onClick: () => { void openCharacter() },
   onError: error => console.warn('companion drag failed', error),
@@ -223,7 +245,7 @@ stage?.addEventListener('pointerleave', () => { pointerNear = false; releaseNear
 stage?.addEventListener('focus', () => { keyboardNear = true; pet.acknowledgeAttention() })
 stage?.addEventListener('blur', () => { keyboardNear = false; releaseNearby() })
 window.addEventListener('blur', () => { pointerNear = false; keyboardNear = false;pointerInShell=false;focusInShell=false;pet.setLifeAvailable(false);void motion?.stop();syncLifeAvailability();pet.releaseAttention(); taskView?.closeList(); closeSettings() })
-window.addEventListener('pagehide',()=>{pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();feed.stop();clearInterval(quietWatch);preferences.destroy()})
+window.addEventListener('pagehide',()=>{permissionLoader.update(null,0);activityFeed.stop();ccActivity?.destroy();pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();feed.stop();clearInterval(quietWatch);preferences.destroy()})
 
 $('pet-reset-position')?.addEventListener('click', async () => {
   await motion?.stop()

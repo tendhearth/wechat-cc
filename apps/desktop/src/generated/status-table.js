@@ -43,6 +43,14 @@ export const STATUS_TABLE = /** @type {const} */ ({
 
 export const HOME_GROUP_ORDER = /** @type {const} */ (["waiting","working","back"])
 
+export const TASK_DETAIL_WORDS = /** @type {const} */ ({
+  "queued": "等待中",
+  "cancelling": "正在停止",
+  "imported": "尚未执行",
+  "networkPaused": "已暂停(网络未受保护)",
+  "background": "后台执行中 · {n}",
+  "retained": "会话保留中"
+})
 export const STATUS_WORDS = /** @type {const} */ ({
   "working": "在做",
   "waiting": "等你决定",

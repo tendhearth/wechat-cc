@@ -13,13 +13,41 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { assembleMobilePage, serializeMobilePage } from './assemble'
+import { assembleMobilePage, serializeMobilePage, type MobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT, CCP_PLACEHOLDER } from './sources'
 
 export const PROTOCOL_ENTRY = new URL('../../packages/protocol/src/browser.ts', import.meta.url)
 export const PROTOCOL_JS_OUT = new URL('./src/protocol-generated.js', import.meta.url)
+export const ACTIVITY_JS_OUT = new URL('./src/activity-generated.js', import.meta.url)
 export const PSET_SHELL_SRC = new URL('../../relay/pset.src.html', import.meta.url)
 export const PSET_SHELL_OUT = new URL('../../relay/pset.html', import.meta.url)
+
+/**
+ * Compact only the shipped /m classic script. Source assembly stays readable for
+ * the device-only route scanner; /set's separately embedded scripts stay intact.
+ * Keep the credential declarations verbatim: even an older PWA service worker
+ * must be able to strip the token before caching its public offline shell.
+ */
+export function compactMobilePage(page: MobilePage): MobilePage {
+  const prologue = '\nvar T = {{TOKEN_JSON}}\nvar REMOTE = {{REMOTE_JSON}}'
+  const scripts = [...page.phone.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+  if (scripts.length !== 1 || !scripts[0]![1]!.startsWith(prologue) || !/^;?\n/.test(scripts[0]![1]!.slice(prologue.length))) {
+    throw new Error('compactMobilePage: expected one classic script with the T/REMOTE prologue')
+  }
+  const transpiler = new Bun.Transpiler({
+    loader: 'js', target: 'browser', minifyWhitespace: true,
+    treeShaking: false, deadCodeElimination: false, inline: false, trimUnusedImports: false,
+  })
+  const script = transpiler.transformSync(scripts[0]![1]!.slice(prologue.length))
+  // A JS printer may unescape a string's end tag, or join `< /script/` into
+  // `</script/`. Reject unsafe HTML raw text rather than rewriting JS tokens.
+  if (/<\/script|<!--/i.test(script)) throw new Error('compactMobilePage: unsafe HTML raw text in compact script')
+  return { ...page, phone: page.phone.replace(/<script>[\s\S]*?<\/script>/, () => `<script>${prologue};\n${script}</script>`) }
+}
+
+export function buildMobilePage(): MobilePage {
+  return compactMobilePage(assembleMobilePage(readMobileSource))
+}
 
 /**
  * 打包 packages/protocol 的经典脚本入口成一份自包含 IIFE(挂
@@ -41,6 +69,18 @@ export async function buildProtocolJs(): Promise<string> {
   return text.endsWith('\n') ? text : `${text}\n`
 }
 
+/** Keep the device reader readable/typechecked in source and inside the existing relay budget on the wire. */
+export async function buildActivityJs(): Promise<string> {
+  const result = await Bun.build({ entrypoints: [fileURLToPath(new URL('./src/activity.js', import.meta.url))], format: 'iife', minify: true })
+  if (!result.success) throw new Error(`buildActivityJs: ${result.logs.map(l => String(l.message)).join('; ')}`)
+  const text = await result.outputs[0]!.text()
+  // Minification removes the scanner's comment. Restore that annotation at the
+  // one device-only API call; fail closed if the generated call shape changes.
+  const call = 'api("/v1/matter/owner-chat/events?since="'
+  if (text.split(call).length !== 2) throw new Error('Activity device-only API shape changed')
+  return ';' + text.replace(call, '/* link-scan: device-only */' + call).trimEnd() + '\n'
+}
+
 /**
  * relay/pset.src.html 的占位注释(CCP_PLACEHOLDER,跟 transport.js 顶部那行
  * 是同一个标记,定义在 sources.ts)换成协议 IIFE 源码 —— 纯字符串操作,不用
@@ -60,6 +100,7 @@ export function assembleRelayShell(srcHtml: string, protocolJs: string): string 
 }
 
 async function main() {
+  writeFileSync(ACTIVITY_JS_OUT, await buildActivityJs())
   const protocolJs = await buildProtocolJs()
   writeFileSync(PROTOCOL_JS_OUT, protocolJs)
   console.log(`wrote ${PROTOCOL_JS_OUT.pathname}`)
@@ -69,7 +110,7 @@ async function main() {
 
   // 手机页生成物依赖 protocol-generated.js 已经落盘(transport.js 顶部的占位
   // 注释要能读到它,见 sources.ts 的 readMobileSource),所以放在最后一步。
-  writeFileSync(MOBILE_PAGE_OUT, serializeMobilePage(assembleMobilePage(readMobileSource)))
+  writeFileSync(MOBILE_PAGE_OUT, serializeMobilePage(buildMobilePage()))
   console.log(`wrote ${MOBILE_PAGE_OUT.pathname}`)
 }
 

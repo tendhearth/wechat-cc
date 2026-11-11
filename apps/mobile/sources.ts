@@ -22,13 +22,17 @@ const AGENT_AVATARS_CSS = new URL('../desktop/src/shared/agent-avatars.css', imp
 
 export function readMobileSource(name: string): string {
   if (name === 'agent-avatars.css') return readFileSync(AGENT_AVATARS_CSS, 'utf8')
+  if (name === 'activity.js') return readFileSync(new URL('activity-generated.js', MOBILE_SRC), 'utf8')
   const source = readFileSync(new URL(name, MOBILE_SRC), 'utf8')
+  if (name === 'activity.css') return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ').replace(/\s*([{}:;,])\s*/g, '$1').trim()
   if (name === 'workbench.js') {
     // 读源码字节(不用 Function.toString():Bun 与 Vitest 排版不同,会让生成物漂移),只取工厂本身,在经典脚本里调一次。页面要塞进中继一帧,
     // 工厂里的 JSDoc 与行注释不随页面走(源码里都在);LobeHub 的 MIT 声明是 /* */ 块,原样带上。
     const factory = /^export (function createAgentAvatars\(\) \{[\s\S]*?^\})/m.exec(readFileSync(AGENT_AVATARS_JS, 'utf8'))?.[1]
     if (!factory) throw Error('mobile page: shared agent avatars factory shape changed')
     const lean = factory.replace(/\/\*\*[\s\S]*?\*\/[ \t]*/g, '').replace(/^[ \t]*\/\/.*\n/gm, '').replace(/^[ \t]*\n/gm, '')
+      // Mark the existing full MIT attribution as legal text for Bun's printer.
+      .replace('/*\n   * Agent glyphs', '/*!\n   * Agent glyphs')
     return `var mAgents = (${lean})()\n${source}`
   }
   if (name === 'tokens.css') return renderTokensCss() + source

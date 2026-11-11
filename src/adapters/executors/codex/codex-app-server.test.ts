@@ -1,18 +1,28 @@
+import { execFileSync } from 'node:child_process'
+import { findOnPath } from '../../../lib/util'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { removeTempDir } from '../../../lib/test-temp'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentAttachment, AgentEvent, AgentSession, SpawnContext } from '../../../ports/agent-provider'
 import { TIER_PROFILES } from '../../../domain/user-tier'
 import { createWorkbenchCodexProvider } from './codex-app-server'
+import { makeRunPermissions } from '../../workbench/permissions'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }))
-vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
+vi.mock('node:child_process', async importOriginal => {
+  const actual=await importOriginal<typeof import('node:child_process')>()
+  return {...actual,spawn:(command:string,...args:unknown[])=>command==='git'?(actual.spawn as Function)(command,...args):mocks.spawn(command,...args)}
+})
 
 type Rpc = { id?: string | number; method?: string; params?: any; result?: any; error?: any }
 class FakeProcess extends EventEmitter {
   stdin = new PassThrough(); stdout = new PassThrough(); stderr = new PassThrough()
   exitCode: number | null = null; signalCode: string | null = null
-  sent: Rpc[] = []; autoExit = true; autoTurnStart = true; autoInterrupt = true
+  sent: Rpc[] = []; autoExit = true; autoTurnStart = true; autoInterrupt = true; autoTerminalList = true; autoThreadRead = true
   kill = vi.fn((signal = 'SIGTERM') => { if (this.autoExit) queueMicrotask(() => this.exit(null, signal)); return true })
   constructor(readonly probe: boolean) {
     super()
@@ -25,12 +35,14 @@ class FakeProcess extends EventEmitter {
         this.sent.push(message)
         if (message.method === 'initialize') queueMicrotask(() => this.send({ id: message.id, result: initializeResponse }))
         if (message.method === 'config/read') queueMicrotask(() => this.send({ id: message.id, result: { config: nativeConfig } }))
+        if (message.method === 'experimentalFeature/list') queueMicrotask(() => this.send({ id: message.id, result: { data: [{ name: 'network_proxy', enabled: message.params?.threadId ? threadProxyEnabled : proxyEnabled }], nextCursor: null } }))
+        if (message.method === 'configRequirements/read') queueMicrotask(() => this.send({ id: message.id, result: { requirements: managedRequirements } }))
         if (message.method === 'model/list') queueMicrotask(() => this.send({ id: message.id, result: { data: [{id:modelPresetId,model:'native-model',displayName:'Native model',description:'Native',isDefault:true,defaultReasoningEffort:'deep-native',supportedReasoningEfforts:[{reasoningEffort:'deep-native',description:'Native'}],inputModalities:modelModalities}],nextCursor:null } }))
-        if (message.method === 'thread/start' || message.method === 'thread/resume') queueMicrotask(() => this.send({ id: message.id, result: { thread: { id: message.params.threadId ?? 'thread-1' }, cwd: '/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }, ...threadResponse } }))
+        if (message.method === 'thread/start' || message.method === 'thread/resume') queueMicrotask(() => this.send({ id: message.id, result: { thread: { id: message.params.threadId ?? 'thread-1' }, cwd: message.params.cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: message.params.config?.sandbox_workspace_write?.writable_roots ?? [], networkAccess: message.params.config?.sandbox_workspace_write?.network_access ?? false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }, ...threadResponse } }))
         if (message.method === 'turn/start' && this.autoTurnStart) queueMicrotask(() => this.send({ id: message.id, result: { turn: { id: `turn-${this.sent.filter(m => m.method === 'turn/start').length}` } } }))
-        if (message.method === 'thread/read') queueMicrotask(() => this.send({ id: message.id, result: { thread: nativeThreads[message.params.threadId] } }))
+        if (message.method === 'thread/read' && this.autoThreadRead) queueMicrotask(() => this.send({ id: message.id, result: { thread: nativeThreads[message.params.threadId] } }))
         if (message.method === 'thread/backgroundTerminals/clean') queueMicrotask(() => this.send(terminalCleanup === 'unavailable' ? {id:message.id,error:{message:'unsupported terminal API'}} : {id:message.id,result:{}}))
-        if (message.method === 'thread/backgroundTerminals/list') queueMicrotask(() => this.send({id:message.id,result:{data:terminalCleanup === 'running' ? [{processId:'owned-running'}] : [],nextCursor:null}}))
+        if (message.method === 'thread/backgroundTerminals/list' && this.autoTerminalList) queueMicrotask(() => this.send(terminalCleanup === 'unavailable' ? {id:message.id,error:{message:'unsupported terminal API'}} : {id:message.id,result:{data:terminalCleanup === 'running' ? [{processId:'owned-running'}] : [],nextCursor:null}}))
         if (message.method === 'turn/interrupt' && this.autoInterrupt) queueMicrotask(() => this.send({ id: message.id, result: {} }))
       }
     })
@@ -48,6 +60,7 @@ let nativeConfig: Record<string, unknown>, initializeResponse: Record<string, un
 let modelModalities: string[]
 let modelPresetId: string
 let nativeThreads: Record<string, any>
+let proxyEnabled = true, threadProxyEnabled = true, managedRequirements: unknown = null
 let terminalCleanup: 'normal' | 'unavailable' | 'running'
 const context = (extra = {}): SpawnContext => ({ tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'workbench:task', appendInstructions: 'task instructions', ...extra })
 async function start(extra = {}, options = {}) {
@@ -79,6 +92,7 @@ function enableExternal() {
   nativeConfig = { mcp_servers: { external: { command: '/tools/external', tools: { create_note: { approval_mode: 'approve' } } } } }
 }
 beforeEach(() => {
+  proxyEnabled = true; threadProxyEnabled = true; managedRequirements = null
   terminalCleanup = 'normal'
   nativeThreads = {}
   modelModalities=['text','image']
@@ -238,7 +252,7 @@ describe('workbench Codex app-server', () => {
     await expect.poll(() => permit.mock.calls.length).toBe(1)
     expect(child.sent.some(m => m.id === 0)).toBe(false)
     const request = permit.mock.calls[0]![0]
-    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me') })
+    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me'), onDenied: expect.any(Function) })
     expect(JSON.stringify(request)).not.toContain('credential-value')
     decide(allowed)
     await expect.poll(() => child.sent.find(m => m.id === 0)?.result).toEqual({ action: allowed ? 'accept' : 'decline', content: null, _meta: null })
@@ -595,8 +609,48 @@ describe('workbench Codex app-server', () => {
     const { session, child } = await start({ requestPermission })
     const run = collect(session); await begun(child); approval(child, 42)
     await expect.poll(() => child.sent.find(m => m.id === 42)?.result).toEqual({ decision: allow ? 'accept' : 'decline' })
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'commandExecution', description: expect.stringContaining('rm report.txt'), command: 'rm report.txt', cwd: '/project' }, expect.any(AbortSignal))
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'commandExecution', description: expect.stringContaining('rm report.txt'), command: 'rm report.txt', cwd: '/project', onDenied: expect.any(Function) }, expect.any(AbortSignal))
     completed(child); await run.done
+  })
+
+  it('R2: the one-shot command/cwd stay complete and only the original RPC id receives accept', async () => {
+    const command = `echo ${'x'.repeat(2500)}; git status`, requestPermission = vi.fn(async () => true)
+    const { session, child } = await start({ requestPermission }), run = collect(session); await begun(child)
+    approval(child, 'full-command', undefined, { command, cwd: '/project/full' })
+    await expect.poll(() => child.sent.find(m => m.id === 'full-command')?.result).toEqual({ decision: 'accept' })
+    expect(requestPermission).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command, cwd: '/project/full' }), expect.any(AbortSignal))
+    expect(child.sent.filter(m => m.id === 'full-command')).toHaveLength(1)
+    completed(child); await run.done
+  })
+
+  it.each([false, true].flatMap(extraGrant => ['replace', 'symlink'].map(change => ({ extraGrant, change }))))('P1-4: sends exactly one accept for the owner-approved invocation ($change, extraGrant=$extraGrant)', async ({ change, extraGrant }) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-script-barrier-')))
+    const permissions = makeRunPermissions({ taskId: 'task', root, provider: 'codex' })
+    let release!: () => void
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    writeFileSync(join(root, 'check.py'), 'print("reviewed")\n')
+    try {
+      const { session, child } = await start({ requestPermission: async (request: Parameters<typeof permissions.request>[0], signal: AbortSignal) => {
+        const allowed = await permissions.request(request, signal)
+        await barrier // approval returned, before the external process can open it
+        return allowed
+      } })
+      const run = collect(session); await begun(child)
+      approval(child, 'script-barrier', undefined, { command: 'python3 check.py', cwd: root, ...(extraGrant ? { additionalPermissions: { network: { enabled: true } } } : {}) })
+      await expect.poll(() => permissions.pending().length).toBe(1)
+      const card = permissions.pending()[0]!
+      if (!extraGrant) expect(card.scripts?.[0]?.content).toBe('print("reviewed")\n')
+      expect(card.canAllowTask).not.toBe(true)
+      expect(permissions.resolve(card.id, 'allow')).toBe(true)
+      if (change === 'replace') writeFileSync(join(root, 'check.py'), 'print("replaced")\n')
+      else { writeFileSync(join(root, 'other.py'), 'print("replacement")\n'); unlinkSync(join(root, 'check.py')); symlinkSync('other.py', join(root, 'check.py')) }
+      expect(child.sent.some(m => m.id === 'script-barrier')).toBe(false)
+      release()
+      await expect.poll(() => child.sent.find(m => m.id === 'script-barrier')?.result).toEqual({ decision: 'accept' })
+      expect(child.sent.filter(m => m.id === 'script-barrier')).toHaveLength(1)
+      expect(permissions.resolve(card.id, 'allow')).toBe(false)
+      completed(child); await run.done
+    } finally { release(); permissions.rejectAll(); removeTempDir(root) }
   })
 
   it.each([true, false])('routes captured native local approval id zero using an offered one-shot decision: %s', async allow => {
@@ -609,6 +663,50 @@ describe('workbench Codex app-server', () => {
     expect(requestPermission.mock.calls[0]![0].description).toContain('Execution environment: local')
     expect(requestPermission.mock.calls[0]![0].description).toContain(command)
     completed(child); await run.done
+  })
+
+  it('continues the same session after an owner rejection ends a native turn', async () => {
+    const requestPermission: NonNullable<SpawnContext['requestPermission']> = async request => { request.onDenied?.('只在本机验证，不要 SSH'); return false }
+    const { session, child } = await start({ requestPermission })
+    const run = collect(session); await begun(child)
+    child.notify('thread/tokenUsage/updated',{threadId:'thread-1',turnId:'turn-1',tokenUsage:{last:{inputTokens:10,outputTokens:2}}})
+    approval(child, 'deny-with-reason', undefined, { command: 'ssh other-host test', availableDecisions: ['accept', 'cancel'] })
+    await expect.poll(() => child.sent.find(m => m.id === 'deny-with-reason')?.result).toEqual({ decision: 'cancel' })
+    completed(child, 'interrupted'); completed(child, 'interrupted')
+    await begun(child, 2)
+    const next = child.sent.filter(m => m.method === 'turn/start')[1]!
+    expect(next.params.threadId).toBe('thread-1')
+    expect(next.params.input[0].text).toContain('ssh other-host test')
+    expect(next.params.input[0].text).toContain('只在本机验证，不要 SSH')
+    expect(run.events.some(e => e.kind === 'error' || e.kind === 'result')).toBe(false)
+    child.notify('thread/tokenUsage/updated',{threadId:'thread-1',turnId:'turn-2',tokenUsage:{last:{inputTokens:20,outputTokens:3}}})
+    completed(child, 'completed', 'turn-2'); await run.done
+    expect(run.events.filter(e => e.kind === 'result')).toHaveLength(1)
+    expect(run.events.find(e=>e.kind==='result')).toMatchObject({usage:{input:30,output:5}})
+    expect(child.sent.filter(m=>m.method==='turn/start')).toHaveLength(2)
+    expect(run.events.some(e => e.kind === 'error')).toBe(false)
+  })
+
+  it('never continues rejection feedback after the owner cancels the task',async()=>{
+    const {session,child}=await start({requestPermission:async(request:Parameters<NonNullable<SpawnContext['requestPermission']>>[0])=>{request.onDenied?.('不要 SSH');return false}})
+    const run=collect(session);await begun(child);approval(child,'cancel-race',undefined,{availableDecisions:['accept','cancel']})
+    await expect.poll(()=>child.sent.find(m=>m.id==='cancel-race')?.result).toEqual({decision:'cancel'})
+    await session.cancel!();completed(child,'interrupted');await run.done
+    expect(child.sent.filter(m=>m.method==='turn/start')).toHaveLength(1)
+    expect(run.events).toContainEqual({kind:'error',message:'Codex 本轮已停止。'})
+  })
+
+  it('steers denial feedback into the current native turn when decline is available',async()=>{
+    const {session,child}=await start({requestPermission:async(request:Parameters<NonNullable<SpawnContext['requestPermission']>>[0])=>{request.onDenied?.('改用本地检查');return false}})
+    const run=collect(session);await begun(child);approval(child)
+    await expect.poll(()=>child.sent.find(m=>m.method==='turn/steer')).toBeDefined()
+    const steer=child.sent.find(m=>m.method==='turn/steer')!
+    expect(steer.params.expectedTurnId).toBe('turn-1');expect(steer.params.input[0].text).toContain('改用本地检查')
+    expect(child.sent.find(m=>m.id==='approve-1')?.result).toEqual({decision:'decline'})
+    child.send({id:steer.id,result:{turnId:'turn-1'}});await Promise.resolve();await Promise.resolve()
+    completed(child);await run.done
+    expect(child.sent.filter(m=>m.method==='turn/start')).toHaveLength(1)
+    expect(run.events.some(e=>e.kind==='error')).toBe(false)
   })
 
   it('explains native interruption after a denied operation without carrying that cause into the next turn', async () => {
@@ -728,6 +826,15 @@ describe('workbench Codex app-server', () => {
     threadResponse = returned
     await expect(start()).rejects.toThrow('codex_unverified_thread_policy')
     expect(children.at(-1)!.kill).toHaveBeenCalled()
+  })
+
+  it.each([false, true].flatMap(resume => [true, undefined].map(networkAccess => ({ resume, networkAccess }))))('rejects enabled or missing offline network receipts (resume=$resume, networkAccess=$networkAccess)', async ({ resume, networkAccess }) => {
+    // Every other field is valid: removing only the network check must turn
+    // this regression red, rather than failing for a different policy field.
+    threadResponse = { sandbox: { type: 'workspaceWrite', writableRoots: [], networkAccess, excludeTmpdirEnvVar: true, excludeSlashTmp: true } }
+    await expect(start(resume ? { resumeSessionId: 'old-thread' } : {})).rejects.toThrow('codex_unverified_thread_policy')
+    expect(children.at(-1)!.kill).toHaveBeenCalled()
+    expect(children.every(child => !child.sent.some(message => message.method === 'turn/start'))).toBe(true)
   })
 
   it.each(['cancel', 'resolved', 'completed', 'exit'])('aborts pending approvals on %s and cannot apply a late allow', async action => {
@@ -945,12 +1052,112 @@ describe('Codex retained workbench runtime', () => {
   function childEnd(child: FakeProcess, status = 'completed', turn = 'child-turn-1') {
     child.notify('turn/completed', { threadId: 'child-1', turn: { id: turn, status, items: [{ id: 'public', type: 'agentMessage', text: 'child public reply' }] } })
   }
+  it('keeps its lifetime stream and accepts the immediate owner followup after a denied operation',async()=>{
+    const run=await runtime({requestPermission:async(request:Parameters<NonNullable<SpawnContext['requestPermission']>>[0])=>{request.onDenied?.('不用 SSH');return false}})
+    approval(run.child,'denial',undefined,{availableDecisions:['accept','cancel']})
+    await expect.poll(()=>run.child.sent.find(m=>m.id==='denial')?.result).toEqual({decision:'cancel'})
+    completed(run.child,'interrupted');await begun(run.child,2)
+    expect(run.ended()).toBe(false)
+    const followup=run.api.submit('owner-followup','只在这个工作区继续')
+    await expect.poll(()=>run.child.sent.find(m=>m.method==='turn/steer')).toBeDefined()
+    const steer=run.child.sent.find(m=>m.method==='turn/steer')!
+    expect(steer.params.expectedTurnId).toBe('turn-2')
+    run.child.send({id:steer.id,result:{turnId:'turn-2'}})
+    expect(await followup).toEqual({mode:'steer',turnId:'turn-2'})
+    completed(run.child,'completed','turn-2')
+    await expect.poll(()=>run.events.filter(e=>e.kind==='result')).toHaveLength(1)
+    expect(run.events.some(e=>e.kind==='error')).toBe(false)
+    await run.session.close();await run.done
+  })
   it('is opt-in and ordinary no-background completion ends the lifetime', async () => {
     expect((await start()).session.workbenchRuntime).toBeUndefined()
     const run = await runtime(); completed(run.child); await run.done
     expect(run.api.snapshot()).toMatchObject({ retained: false, foreground: 'idle', backgroundCount: 0 })
     expect(() => run.api.start('again')).toThrow()
     await expect(run.api.submit('later', 'again')).rejects.toThrow()
+  })
+  it.each(['cc_workbench/0.153.4 (fixture)', 'future-native/9.0.0 (fixture)'])('reconciles an approved command whose native launch failed before canonical completion (%s)', async userAgent => {
+    initializeResponse.userAgent = userAgent
+    const requestPermission = vi.fn(async () => true), run = await runtime({ requestPermission })
+    // app-server publishes a synthetic start before approval. A spawn failure
+    // after acceptance returns a tool error without the canonical item/completed.
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'item-1', command: 'pwd', status: 'inProgress', processId: null } })
+    approval(run.child)
+    await expect.poll(() => run.child.sent.find(m => m.id === 'approve-1')?.result.decision).toBe('accept')
+    completed(run.child)
+    await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ retained: true, foreground: 'idle', backgroundCount: 0 })
+    expect(run.child.sent.some(m => m.method === 'thread/backgroundTerminals/list')).toBe(true)
+    expect(run.ended()).toBe(false)
+    await run.session.close(); await run.done
+    expect(run.child.sent.some(m => m.method === 'thread/backgroundTerminals/clean')).toBe(userAgent.startsWith('future-native/'))
+  })
+  it('does not apply stale empty-registry evidence after a new turn has started', async () => {
+    const run = await runtime(); run.child.autoTerminalList = false
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'unconfirmed', command: 'work', status: 'inProgress', processId: null } })
+    completed(run.child)
+    await expect.poll(() => run.child.sent.some(m => m.method === 'thread/backgroundTerminals/list')).toBe(true)
+    const check = run.child.sent.find(m => m.method === 'thread/backgroundTerminals/list')!
+    await run.api.submit('next', 'new work'); await begun(run.child, 2)
+    run.child.send({ id: check.id, result: { data: [], nextCursor: null } })
+    await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ foreground: 'running', backgroundCount: 1 })
+    run.child.autoTerminalList = true; completed(run.child, 'completed', 'turn-2')
+    await expect.poll(() => run.events.filter(e => e.kind === 'result').length).toBe(2)
+    expect(run.api.snapshot()).toMatchObject({ foreground: 'idle', backgroundCount: 0 })
+    await run.session.close(); await run.done
+  })
+  it('still requires terminal cleanup after an unknown background launch even with no counted children', async () => {
+    const run = await runtime()
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'collabToolCall', id: 'future-launch', tool: 'futureBackground' } })
+    completed(run.child); await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    terminalCleanup = 'unavailable'
+    await expect(run.session.close()).rejects.toThrow('codex_terminal_cleanup_unverified'); await run.done
+  })
+  it('does not skip detached terminal cleanup after cancelling a command before its completion notification', async () => {
+    const run = await runtime()
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'running-command', command: 'work', status: 'inProgress', processId: '123' } })
+    await run.session.cancel!(); terminalCleanup = 'unavailable'
+    await expect(run.session.close()).rejects.toThrow('codex_terminal_cleanup_unverified'); await run.done
+    expect(run.child.sent.some(m => m.method === 'thread/backgroundTerminals/clean')).toBe(true)
+  })
+  it.each(['command', 'collab', 'replayed_start'] as const)('does not strand another orphan on a late %s notification with no new writer', async kind => {
+    const run = await runtime(); run.child.autoTerminalList = false
+    for (const id of ['late', 'orphan']) run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id, command: 'work', status: 'inProgress', processId: null } })
+    completed(run.child)
+    await expect.poll(() => run.child.sent.some(m => m.method === 'thread/backgroundTerminals/list')).toBe(true)
+    const check = run.child.sent.find(m => m.method === 'thread/backgroundTerminals/list')!
+    run.child.notify(kind === 'replayed_start' ? 'item/started' : 'item/completed', { threadId: 'thread-1', turnId: 'turn-1', item: kind === 'command' ? { type: 'commandExecution', id: 'late', status: 'completed', exitCode: 0 } : kind === 'replayed_start' ? { type: 'commandExecution', id: 'late', command: 'work', status: 'inProgress', processId: null } : { type: 'collabToolCall', id: 'finished-wait', tool: 'wait', status: 'completed', receiverThreadIds: [] } })
+    run.child.send({ id: check.id, result: { data: [], nextCursor: null } })
+    await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ foreground: 'idle', backgroundCount: 0 })
+    run.child.autoTerminalList = true; await run.session.close(); await run.done
+  })
+  it('reconciles an orphaned command when the last child producer completes', async () => {
+    const run = await runtime(); launch(run.child)
+    await expect.poll(() => run.api.snapshot().backgroundCount).toBe(1)
+    completed(run.child)
+    run.child.notify('item/started', { threadId: 'child-1', turnId: 'child-turn-1', item: { type: 'commandExecution', id: 'child-command', command: 'work', status: 'inProgress', processId: null } })
+    childEnd(run.child)
+    await expect.poll(() => run.events.some(e => e.kind === 'tool_call' && e.activity?.id === 'codex-child:child-1:child-turn-1' && e.activity.status === 'completed')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ foreground: 'idle', backgroundCount: 0 })
+    await run.session.close(); await run.done
+  })
+  it('closes a verified completed no-background turn without requiring optional terminal cleanup RPCs', async () => {
+    const run = await runtime(); completed(run.child); await run.done
+    terminalCleanup = 'unavailable'
+    await expect(run.session.close()).resolves.toBeUndefined()
+    expect(run.child.exitCode !== null || run.child.signalCode !== null).toBe(true)
+    expect(run.child.sent.some(m => m.method === 'thread/backgroundTerminals/clean')).toBe(false)
+  })
+  it.each(['unavailable', 'running'] as const)('keeps an unconfirmed command isolated when native terminal evidence is %s', async state => {
+    const run = await runtime()
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'unconfirmed', command: 'work', status: 'inProgress', processId: null } })
+    terminalCleanup = state; completed(run.child)
+    await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ retained: true, foreground: 'idle', backgroundCount: 1 })
+    await expect(run.session.close()).rejects.toThrow('codex_terminal_cleanup_unverified')
+    await run.done
   })
   it.each(['v1', 'v2'])('retains %s children, scopes late output, and deduplicates occurrence lifecycle', async mode => {
     const reportExecution = vi.fn(); const run = await runtime({ reportExecution })
@@ -995,6 +1202,46 @@ describe('Codex retained workbench runtime', () => {
     await run.session.cancel!(); decide(true); await run.session.close(); await run.done
     expect(run.child.sent.find(m => m.id === 'late')?.result.decision).toBe('decline')
     expect(run.child.sent.some(m => m.method === 'turn/interrupt' && m.params.threadId === 'child-1')).toBe(true)
+  })
+  it('review P2 child: rejection feedback returns once to the owning parent after the child is interrupted',async()=>{
+    const run=await runtime({requestPermission:async(request:Parameters<NonNullable<SpawnContext['requestPermission']>>[0])=>{request.onDenied?.('不要 SSH');return false}})
+    launch(run.child);await expect.poll(()=>run.api.snapshot().backgroundCount).toBe(1)
+    completed(run.child)
+    approval(run.child,'denied-child',undefined,{threadId:'child-1',turnId:'child-turn-1',command:'ssh other-host',availableDecisions:['accept','cancel']})
+    await expect.poll(()=>run.child.sent.find(m=>m.id==='denied-child')?.result).toEqual({decision:'cancel'})
+    childEnd(run.child,'interrupted');childEnd(run.child,'interrupted')
+    await begun(run.child,2)
+    const next=run.child.sent.filter(m=>m.method==='turn/start')[1]!
+    expect(next.params.threadId).toBe('thread-1')
+    expect(next.params.input[0].text).toContain('不要 SSH')
+    expect(next.params.input[0].text).toContain('ssh other-host')
+    expect(next.params.input[0].text).toContain('child-1')
+    expect(run.child.sent.filter(m=>m.method==='turn/start')).toHaveLength(2)
+    expect(run.events.some(e=>e.kind==='error')).toBe(false)
+    completed(run.child,'completed','turn-2');await run.session.close();await run.done
+  })
+  it.each([false,true])('review P2 child: parent-active and task-cancel terminal races preserve ownership (cancelled=%s)',async cancelled=>{
+    const run=await runtime({requestPermission:async(request:Parameters<NonNullable<SpawnContext['requestPermission']>>[0])=>{request.onDenied?.('不要 SSH');return false}})
+    launch(run.child);await expect.poll(()=>run.api.snapshot().backgroundCount).toBe(1)
+    approval(run.child,'child-race',undefined,{threadId:'child-1',turnId:'child-turn-1',command:'ssh other-host',availableDecisions:['accept','cancel']})
+    await expect.poll(()=>run.child.sent.find(m=>m.id==='child-race')?.result).toEqual({decision:'cancel'})
+    if(cancelled)await run.session.cancel!()
+    childEnd(run.child,'interrupted');childEnd(run.child,'interrupted')
+    if(cancelled){
+      await run.session.close();await run.done
+      expect(run.child.sent.filter(m=>m.method==='turn/start')).toHaveLength(1)
+      expect(run.child.sent.filter(m=>m.method==='turn/steer')).toHaveLength(0)
+    }else{
+      await expect.poll(()=>run.child.sent.find(m=>m.method==='turn/steer')).toBeDefined()
+      const steer=run.child.sent.find(m=>m.method==='turn/steer')!
+      expect(steer.params).toMatchObject({threadId:'thread-1',expectedTurnId:'turn-1'})
+      expect(steer.params.input[0].text).toContain('不要 SSH')
+      run.child.send({id:steer.id,result:{turnId:'turn-1'}})
+      await expect.poll(()=>run.api.snapshot().backgroundCount).toBe(0)
+      expect(run.child.sent.filter(m=>m.method==='turn/steer')).toHaveLength(1)
+      completed(run.child);await run.session.close();await run.done
+    }
+    expect(run.events.some(e=>e.kind==='error')).toBe(false)
   })
   it('requires native acknowledgements for steer and same-parent followup; submitted input retains epoch', async () => {
     const run = await runtime(); const accepted = run.api.submit('input-1', 'followup')
@@ -1050,6 +1297,58 @@ describe('Codex retained workbench runtime', () => {
     await expect.poll(() => permit.mock.calls.length).toBe(1)
     completed(child); await expect.poll(() => api.snapshot().backgroundCount).toBe(1)
     await session.close(); await done
+  })
+  it.each(['lineage', 'parent acknowledgement'])('survives large child output while waiting for %s without granting early authority', async boundary => {
+    const permit = vi.fn(async () => true), reportNotice = vi.fn()
+    const { session, child } = await start({ workbenchLifecycle: true, requestPermission: permit, reportNotice })
+    child.autoThreadRead = false; child.autoTurnStart = boundary !== 'parent acknowledgement'
+    const api = session.workbenchRuntime!, events: AgentEvent[] = []
+    const done = (async () => { for await (const event of api.events) events.push(event) })()
+    api.start('parent'); await begun(child); launch(child)
+    approval(child, 'buffered-approval', undefined, { threadId: 'child-1', turnId: 'child-turn-1' })
+    for (let i = 0; i < 1200; i++) child.notify('item/commandExecution/outputDelta', { threadId: 'child-1', turnId: 'child-turn-1', itemId: 'noisy-command', delta: 'private command output\n'.repeat(400) })
+    expect(child.kill).not.toHaveBeenCalled(); expect(permit).not.toHaveBeenCalled()
+    if (!child.autoTurnStart) {
+      const request = child.sent.find(m => m.method === 'turn/start')!
+      child.send({ id: request.id, result: { turn: { id: 'turn-1' } } })
+    }
+    await expect.poll(() => child.sent.some(m => m.method === 'thread/read')).toBe(true)
+    const read = child.sent.find(m => m.method === 'thread/read')!
+    child.send({ id: read.id, result: { thread: nativeThreads['child-1'] } })
+    await expect.poll(() => permit.mock.calls.length).toBe(1)
+    childEnd(child); completed(child)
+    await expect.poll(() => events.some(e => e.kind === 'result')).toBe(true)
+    expect(events.filter(e => e.kind === 'error')).toEqual([])
+    expect(reportNotice).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(reportNotice.mock.calls)).not.toContain('private command output')
+    await session.close(); await done
+  })
+  it('accepts a stdout chunk above 4MB when every JSONL frame is bounded', async () => {
+    const run = await runtime()
+    const frame = JSON.stringify({method:'item/commandExecution/outputDelta',params:{threadId:'thread-1',turnId:'turn-1',itemId:'output',delta:'x'.repeat(4096)}})+'\n'
+    run.child.stdout.write(frame.repeat(1100))
+    completed(run.child)
+    await expect.poll(()=>run.events.some(e=>e.kind==='result')).toBe(true)
+    expect(run.events.filter(e=>e.kind==='error')).toEqual([])
+    await run.session.close();await run.done
+  })
+  it.each(['item/commandExecution/outputDelta','item/fileChange/outputDelta','item/agentMessage/delta','item/reasoning/textDelta','item/reasoning/summaryTextDelta','item/reasoning/summaryPartAdded','item/plan/delta'])('drops reconstructible root preview %s before acknowledgement outside a retained runtime too', async method => {
+    const {session,child}=await start();child.autoTurnStart=false
+    const turn=collect(session);await begun(child)
+    for(let i=0;i<1200;i++)child.notify(method,{threadId:'thread-1',turnId:'turn-1',itemId:'answer',delta:'preview'})
+    const request=child.sent.find(m=>m.method==='turn/start')!
+    child.send({id:request.id,result:{turn:{id:'turn-1'}}})
+    child.notify('item/completed',{threadId:'thread-1',turnId:'turn-1',item:{type:'agentMessage',id:'answer',text:'final answer'}})
+    completed(child);await turn.done
+    expect(turn.events.filter(e=>e.kind==='error')).toEqual([])
+    expect(turn.events).toContainEqual(expect.objectContaining({kind:'text',text:'final answer'}))
+  })
+  it('still fails closed when unknown structural notifications exhaust early capacity', async () => {
+    const {session,child}=await start();child.autoTurnStart=false
+    const turn=collect(session);await begun(child)
+    for(let i=0;i<1002;i++)child.notify('item/futureAuthority/delta',{threadId:'thread-1',turnId:'turn-1',payload:'structural'})
+    await turn.done
+    expect(turn.events).toContainEqual(expect.objectContaining({kind:'error',message:expect.stringContaining('codex_protocol_buffer_limit')}))
   })
   it('freezes submitted image bytes while waiting on the initial native start acknowledgement', async () => {
     const {session, child} = await start({workbenchLifecycle:true}); child.autoTurnStart = false
@@ -1176,6 +1475,24 @@ describe('Codex retained workbench runtime', () => {
       await run.session.close(); await run.done
     }
   })
+it('observes actual accepted target after serialized steer becomes send then steer on the new turn',async()=>{
+ const run=await runtime()
+ const a=run.api.submit('serial-a','first'),b=run.api.submit('serial-b','next'),c=run.api.submit('serial-c','last')
+ await expect.poll(()=>run.child.sent.some(m=>m.method==='turn/steer')).toBe(true)
+ const first=run.child.sent.find(m=>m.method==='turn/steer')!
+ run.child.autoTurnStart=false
+ completed(run.child);await expect.poll(()=>run.api.snapshot().foreground).toBe('idle')
+ run.child.send({id:first.id,result:{turnId:'turn-1'}})
+ await begun(run.child,2)
+ const start=run.child.sent.filter(m=>m.method==='turn/start').at(-1)!
+ run.child.send({id:start.id,result:{turn:{id:'turn-2'}}})
+ await expect.poll(()=>run.child.sent.filter(m=>m.method==='turn/steer').length).toBe(2)
+ const last=run.child.sent.filter(m=>m.method==='turn/steer').at(-1)!
+ run.child.send({id:last.id,result:{turnId:'turn-2'}})
+ expect(await Promise.all([a,b,c])).toEqual([{mode:'steer',turnId:'turn-1'},{mode:'send',turnId:'turn-2'},{mode:'steer',turnId:'turn-2'}])
+ await run.session.close();await run.done
+})
+
 })
 
 describe('守护:工作台 Codex 的实际端点问 codex 自己(config/read,2026-10-03)', () => {
@@ -1268,4 +1585,111 @@ describe('网络守护:暂停在跑的任务(2026-10-03)—— 冻住期间自�
     expect(signals).toContainEqual([-4343, 'SIGKILL'])
     expect(child.sent.slice(before).some(m => m.method === 'turn/interrupt' || m.method === 'thread/backgroundTerminals/clean')).toBe(false)
   })
+})
+
+it.each([false,true])('pins task temp/cache only in sandbox shell environment and writable roots (resume=%s)', async resume => {
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-codex-env-')))
+  try {
+    const session=await createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234',...(resume?{resumeSessionId:'old-thread'}:{})}))
+    sessions.push(session)
+    const request=children.at(-1)!.sent.find(m=>m.method===(resume?'thread/resume':'thread/start'))!
+    const env=mocks.spawn.mock.calls.at(-1)![2].env
+    const temp=join(path,'.cc-tasks/abcd1234/tmp')
+    expect(JSON.stringify(env)).not.toContain(join(path,'.cc-tasks'))
+    expect(request.params.config.sandbox_workspace_write).toEqual({writable_roots:[temp],network_access:false,exclude_tmpdir_env_var:true,exclude_slash_tmp:true})
+    expect(request.params.config.shell_environment_policy).toMatchObject({set:{TMPDIR:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')},include_only:expect.arrayContaining(['BUN_TMPDIR','BUN_INSTALL_CACHE_DIR'])})
+    const taskEnv=request.params.config.shell_environment_policy.set
+    for(const key of ['NODE_OPTIONS','PATH','CC_TASK_SYSTEM_BOOT_MS'])expect(taskEnv).not.toHaveProperty(key)
+    // Approved host commands receive this very same policy. Detect actual loading,
+    // including no-op preloads, in both supported runtimes.
+    for(const runtime of ['node','bun']) {
+      const output=execFileSync(realpathSync(findOnPath(runtime)!),['-e',
+        "console.log(JSON.stringify({loaded:Object.keys(require.cache).filter(p=>p.includes('cc-trusted-runtime')),argv:process.execArgv}))"],
+        {env:{...env,...taskEnv},encoding:'utf8'})
+      expect(JSON.parse(output).loaded).toEqual([])
+      expect(JSON.parse(output).argv.some((arg:string)=>arg.startsWith('--require'))).toBe(false)
+    }
+    await session.close()
+  } finally {removeTempDir(path)}
+})
+
+it('still rejects a task thread with writable roots outside its workspace',async()=>{
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-codex-env-')))
+  try {
+    threadResponse={sandbox:{type:'workspaceWrite',writableRoots:['/tmp'],networkAccess:false,excludeTmpdirEnvVar:true,excludeSlashTmp:true}}
+    await expect(createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234'}))).rejects.toThrow('codex_unverified_thread_policy')
+  }finally{removeTempDir(path)}
+})
+
+it('rejects an effective managed proxy before opening a task thread', async () => {
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-proxy-denied-')))
+  try {
+    initializeResponse.userAgent='cc_workbench/0.167.0 (Mac OS; arm64)'
+    nativeConfig.features={network_proxy:{enabled:true,allow_local_binding:true}}
+    await expect(createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234'}))).rejects.toThrow('codex_unverified_thread_policy')
+    expect(children.every(child=>!child.sent.some(m=>m.method==='thread/start'))).toBe(true)
+  } finally {removeTempDir(path)}
+})
+
+it.each(['feature disabled', 'thread feature disabled', 'managed network', 'managed feature', 'managed profile', 'inherited unix socket', 'missing deny', 'upstream proxy'] as const)('rejects inherited managed proxy configuration with %s', async defect => {
+  const path = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-loopback-denied-')))
+  try {
+    initializeResponse.userAgent = 'cc_workbench/0.167.0 (Mac OS; arm64)'
+    const proxy = { enabled: true, allow_local_binding: true, allow_upstream_proxy: false, enable_socks5: false, enable_socks5_udp: false,
+      dangerously_allow_non_loopback_proxy: false, dangerously_allow_all_unix_sockets: false, credential_broker: false,
+      mode: 'full', domains: { '?*': 'deny' } }
+    if (defect === 'feature disabled') proxyEnabled = false
+    if (defect === 'thread feature disabled') threadProxyEnabled = false
+    if (defect === 'managed network') managedRequirements = { network: { enabled: false } }
+    if (defect === 'managed feature') managedRequirements = { featureRequirements: { network_proxy: false } }
+    if (defect === 'managed profile') managedRequirements = { allowedPermissionProfiles: ['default'], defaultPermissions: 'default' }
+    if (defect === 'inherited unix socket') Object.assign(proxy, { unix_sockets: { '/var/run/docker.sock': 'allow' } })
+    if (defect === 'missing deny') proxy.domains['?*'] = 'allow'
+    if (defect === 'upstream proxy') proxy.allow_upstream_proxy = true
+    nativeConfig.features = { network_proxy: proxy }
+    await expect(createWorkbenchCodexProvider({ codexPathOverride: '/codex', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
+      .spawn({ alias: 'workbench:abcd1234', path }, context({ workbenchTaskId: 'abcd1234' }))).rejects.toThrow('codex_unverified_thread_policy')
+    expect(children.every(child => !child.sent.some(m => m.method === 'turn/start'))).toBe(true)
+    expect(children.filter(child => !child.probe).every(child => child.exitCode !== null || child.signalCode !== null)).toBe(true)
+  } finally { removeTempDir(path) }
+})
+
+// Full-disk reads + loopback would turn readable owner tokens into approvals.
+// Opening either network/proxy binding requires a new explicit security design.
+it.each([false,true])('security: task network stays offline even on verified 0.167 (resume=%s)', async resume => {
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-offline-')))
+  try {
+    initializeResponse.userAgent='cc_workbench/0.167.0 (Mac OS; arm64)'
+    const session=await createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234',...(resume?{resumeSessionId:'old'}:{})}));sessions.push(session)
+    const config=children.at(-1)!.sent.find(m=>m.method===(resume?'thread/resume':'thread/start'))!.params.config
+    expect(config.sandbox_workspace_write.network_access).toBe(false)
+    expect(config.features.network_proxy).toBe(false)
+    expect(mocks.spawn.mock.calls.at(-1)![1]).toContain('features.network_proxy=false')
+  } finally {removeTempDir(path)}
+})
+
+it('security: task-writable preload and bin never enter host helpers', async()=>{
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-host-env-')))
+  try {
+    const session=await createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234'}));sessions.push(session)
+    const host=mocks.spawn.mock.calls.at(-1)![2].env
+    const config=children.at(-1)!.sent.find(m=>m.method==='thread/start')!.params.config
+    const marker=join(path,'host-marker'), task=join(path,'.cc-tasks/abcd1234')
+    writeFileSync(join(task,'uptime.cjs'),`require('node:fs').writeFileSync(${JSON.stringify(marker)},'escaped')`)
+    mkdirSync(join(task,'bin'),{recursive:true});writeFileSync(join(task,'bin/node'),'task code')
+    execFileSync(realpathSync(findOnPath('node')!),['-e','void 0'],{env:host})
+    expect(existsSync(marker)).toBe(false)
+    expect(host.NODE_OPTIONS ?? '').not.toContain(task)
+    expect(host.PATH).not.toContain(task)
+    expect(config.shell_environment_policy.set).not.toHaveProperty('NODE_OPTIONS')
+    expect(config.shell_environment_policy.set).not.toHaveProperty('PATH')
+  } finally {removeTempDir(path)}
+})
+
+it.each(['complete frame','unfinished tail'])('fails closed for an oversized %s',async kind=>{
+  const {session,child}=await start();const run=collect(session);await begun(child)
+  child.stdout.write(kind==='complete frame'?JSON.stringify({method:'item/agentMessage/delta',params:{delta:'x'.repeat(4_000_001)}})+'\n':'x'.repeat(4_000_001))
+  completed(child)
+  await run.done
+  expect(run.events).toContainEqual(expect.objectContaining({kind:'error',message:expect.stringContaining('codex_protocol_buffer_limit')}))
 })

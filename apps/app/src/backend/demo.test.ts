@@ -590,3 +590,32 @@ it('demo topic corrections persist across detail/list reads and reset',async()=>
     expect((await backend.topicDetail({id:'demo-backup'})).entries[0]?.status).toBe('live')
   }finally{backend.dispose()}
 })
+
+it('first topic read carries the registered demo executor name without a prior matter read',async()=>{
+  const backend=makeDemoBackend()
+  try{
+    const detail=await backend.topicDetail({id:'demo-backup'})
+    expect(detail.matters.find(m=>m.session)?.session).toMatchObject({executor:'claude',displayName:'Claude',latestStep:'Approval needed · Bash'})
+  }finally{backend.dispose()}
+})
+
+
+it('topic demo activity uses approval metadata while original matter keeps the actionable permission',async()=>{
+ const backend=makeDemoBackend()
+ try{
+  const topic=await backend.topicDetail({id:'demo-backup'})
+  const session=topic.matters.find(m=>m.session)!.session!
+  expect(session.latestStep).toBe('Approval needed · Bash')
+  expect(session.latestStep).not.toContain('npm install sharp')
+  const original=await backend.matter(session.id,'en')
+  expect(original.permissions[0]?.description).toBe('npm install sharp')
+ }finally{backend.dispose()}
+})
+
+it('topic demo includes an idle replied terminal without another waiting or unread count and can open its original matter',async()=>{
+  const backend=makeDemoBackend({lang:'zh-Hans'})
+  const detail=await backend.topicDetail({id:'demo-backup'})
+  expect(detail.matters.find(m=>m.id==='b0b0cafe')?.session).toMatchObject({kind:'terminal',activity:'idle',latestStep:'答完了',requestId:null})
+  expect(detail.topic.activity).toMatchObject({waiting:1,unread:1})
+  expect((await backend.matter('b0b0cafe','zh-Hans')).matter).toMatchObject({kind:'terminal',state:'open'})
+})

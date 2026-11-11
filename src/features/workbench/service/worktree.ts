@@ -1,3 +1,4 @@
+import { trackPreparation } from './state'
 /**
  * 独立工作区的动作(2026-10-07):提交到分支、删工作区目录;10-08 加「合回项目」(只快进,别的交给主人,给一行可复制的命令)。
  * 都要求没有会话占着这个目录(执行者随时可能再写),和逐文件撤销同一道门;合回还要求源项目目录没被别的任务占着。
@@ -5,7 +6,7 @@
  */
 import { existsSync } from 'node:fs'
 import { pathsConflict } from '../../../lib/claim-paths'
-import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree, worktreeDirty } from '../../../adapters/git/worktree-workspaces'
+import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree, discardCheckoutAsync, worktreeDirty } from '../../../adapters/git/worktree-workspaces'
 import type { ServiceCtx } from './ctx'
 import type { ScriptsDomain } from './scripts'
 import type { ViewDomain } from './view'
@@ -47,22 +48,27 @@ export function makeWorktreeDomain(ctx: ServiceCtx, domains: WorktreeDomains) {
     return { task, wt }
   }
   const domain = {
-    worktreeAction(id: string, action: Action): WorktreeActionResult {
+    async worktreeAction(id: string, action: Action): Promise<WorktreeActionResult> {
       if (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen') throw new Error('invalid_request')
       // 回退停住 / 开机还没对完账:工作区可能是半切换的,提交 / 合回 / 删都不做(评审 #433-4)
       assertNotRewindBlocked(store.rewinds, id)
       // 重新打开(10-08):删掉的工作区从保留的分支重新检出到原位置,任务路径不变,可以接着做
-      if (action === 'reopen') {
+      if (action === 'reopen') return trackPreparation(state, (async (): Promise<WorktreeActionResult> => {
         const task = store.get(id), wt = store.worktrees.get(id)
         if (!wt) throw new Error('not_worktree')
         if (wt.removedAt === null) throw new Error('worktree_open')
         if (task.archivedAt !== null) throw new Error('workbench_archived')
-        reopenWorktree(wt.repoRoot, wt.root, wt.branch, task.path)
+        await reopenWorktree(wt.repoRoot, wt.root, wt.branch, task.path,{signal:state.preparationAbort.signal,stateDir:ctx.stateDir,baseSha:wt.start?.sha})
+        try {
+          ctx.ensureAccepting()
+          if(store.get(id).archivedAt!==null)throw Error('workbench_archived')
+          if(store.worktrees.get(id)?.removedAt===null)throw Error('worktree_open')
+        } catch(error) { await discardCheckoutAsync(wt.repoRoot,wt.root); throw error }
         store.worktrees.markReopened(id)
         store.addEvent(id, 'system', `已从分支 ${wt.branch} 重新打开独立工作区，可以接着做了。`)
         domains.scripts?.afterCheckout(id)
         return { branch: wt.branch, reopened: true }
-      }
+      })())
       const { task, wt } = target(id, action as Exclude<Action, 'reopen'>)
       if (action === 'commit') {
         const result = commitWorktree(wt.root, task.title)
@@ -97,12 +103,12 @@ export function makeWorktreeDomain(ctx: ServiceCtx, domains: WorktreeDomains) {
      * 归档时顺手收拾(2026-10-08,设计稿第 6 条):工作区干净 ⇒ 删目录(提交过的都在分支上,分支保留);
      * 有没提交的改动 / 会话还开着 / git 出错 ⇒ 留着,时间线说一句,不拦归档 —— 宁可多占盘也不丢东西。
      */
-    tidyOnArchive(id: string): void {
+    async tidyOnArchive(id: string): Promise<void> {
       const wt = store.worktrees.get(id)
       if (!wt || wt.removedAt !== null) return
       // 归档了 ⇒ 开发服务也停掉(删不掉工作区时它不该接着跑)
       void domains.scripts?.stopRun(id)
-      try { domain.worktreeAction(id, 'remove') }
+      try { await domain.worktreeAction(id, 'remove') }
       catch (error) {
         const code = error instanceof Error ? error.message : ''
         try { store.addEvent(id, 'system', code === 'worktree_dirty' ? `已归档。独立工作区里还有没提交的改动，先保留着；需要时恢复任务再提交或删除。` : `已归档。独立工作区暂时删不掉（${code === 'workbench_busy' ? '会话还开着' : '出了点问题'}），先保留着；需要时恢复任务再删除。`); } catch { /* 归档已经成了,说不上这句也不回滚 */ }

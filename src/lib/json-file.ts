@@ -1,3 +1,4 @@
+import * as asyncFs from 'node:fs/promises'
 /**
  * JSON 状态文件只有一种写法(第三批 3e,2026-10-22 盘点)。
  *
@@ -18,7 +19,7 @@
  * `updateJsonFile` 做了一步乐观检查:写之前看一眼 mtime / size,读完以后被人改过就重读、重算一次;
  * 两次都被抢就照实抛 `ConcurrentJsonUpdateError`,不悄悄覆盖。真要强一致,要上锁,不在这一步。
  */
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { readJsonFile } from './read-json-file'
@@ -110,6 +111,20 @@ export function writeJsonAtomic(path: string, value: unknown, opts: AtomicWriteO
   writeFileAtomic(path, JSON.stringify(value, null, 2) + '\n', opts)
 }
 
+/** Durable create-only journal. Never replace an existing rollback receipt; caller supplies an existing directory. */
+export function writeJsonExclusive(path: string, value: unknown): void {
+  const fd = openSync(path, 'wx', 0o600)
+  try {
+    writeFileSync(fd, JSON.stringify(value, null, 2) + '\n')
+    fsyncSync(fd)
+  } finally { closeSync(fd) }
+  // A committed DB transaction must not outlive the new journal name. Windows cannot open directories this way.
+  if (process.platform !== 'win32') {
+    const directory = openSync(dirname(path), 'r')
+    try { fsyncSync(directory) } finally { closeSync(directory) }
+  }
+}
+
 function stamp(path: string): string | null {
   try { const s = statSync(path); return `${s.mtimeMs}:${s.size}` } catch { return null }
 }
@@ -138,4 +153,22 @@ export function updateJsonFile(path: string, mutate: (raw: Record<string, unknow
     return
   }
   throw new ConcurrentJsonUpdateError(path)
+}
+
+
+/** Async preparation paths use the same atomic, fsynced JSON convention. */
+export async function writeJsonAtomicAsync(path: string, value: unknown, opts: Pick<AtomicWriteOptions, 'mode' | 'platform' | 'retryDelayMs'> = {}): Promise<void> {
+  const dir=dirname(path)
+  await asyncFs.mkdir(dir,{recursive:true,mode:0o700})
+  const mode=opts.mode ?? await asyncFs.stat(path).then(s=>s.mode & 0o777,()=>0o600)
+  const tmp=join(dir, `.${basename(path)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`)
+  try {
+    const file=await asyncFs.open(tmp,'wx',mode)
+    try { await file.writeFile(JSON.stringify(value,null,2)+'\n');await file.sync() } finally { await file.close() }
+    const attempts=(opts.platform??process.platform)==='win32'?4:1
+    for(let i=0;;i++)try {await asyncFs.rename(tmp,path);break} catch(error) {
+      if(i+1>=attempts || !RENAME_RETRY_CODES.has((error as NodeJS.ErrnoException).code??''))throw error
+      await new Promise(r=>setTimeout(r,opts.retryDelayMs??50))
+    }
+  } finally { await asyncFs.rm(tmp,{force:true}) }
 }

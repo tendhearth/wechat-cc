@@ -12,6 +12,7 @@
  * 以前这一种整个没核(2026-10-26 各功能的接线搬进 `src/features/<名>/module.ts` 时补上)。规则同上:字面量里第一个参数
  * 是标识符的函数(方法 / 箭头 / function 表达式),里面 `<参数>.late|lazy('x')` 的 x 必须在这个字面量的 `lazy` 里。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, relative } from 'node:path'
@@ -23,6 +24,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (name !== 'node_modules' && name !== '__e2e__') walk(p, out) }
     else if (p.endsWith('.ts') && !p.endsWith('.test.ts') && !p.endsWith('.d.ts')) out.push(p)
   }

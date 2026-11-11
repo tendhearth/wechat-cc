@@ -1,3 +1,4 @@
+import { trackPreparation } from './state'
 /**
  * execute 域:一条 run 的完整生命周期(派发 → 事件流 → 结算 → 终态),以及创建入口 create / continueTask / createWechat。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 10 项);spec §4:execute 跨九个域是事实,不再往下切。
@@ -9,8 +10,7 @@
  *   这里要的原生会话核对(validateNativeDecision)在 native-check.ts,不依赖 native 域。
  */
 import {isIssueIntent} from '../issue-intake'
-import { ensureWorktree, planWorktree, repoRootOrFail } from '../../../adapters/git/worktree-workspaces'
-import { pinnedScriptSha } from '../worktree-scripts'
+import { ensureWorktree, headShaAsync, planWorktree, repoRootOrFailAsync } from '../../../adapters/git/worktree-workspaces'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../../ports/agent-provider'
 import type { MatterOrigin, MatterStore } from '../../../ports/matters'
@@ -222,6 +222,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if (running.cancelled) revokeCredentials(running)
       store.update(task.id,running.cancelled ? 'cancelling' : 'running');
       if (running.cancelled) { finalStatus='cancelled'; return }
+      const preparationAbort=new AbortController()
+      void running.stop.then(()=>preparationAbort.abort())
+      running.spawnAttempted=true
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
         workbenchTimeline:true,
         workbenchLifecycle:true,
@@ -237,11 +240,25 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           const notice=message.trim().slice(0,2000)
           if(notice){store.addEvent(task.id,'system',notice,null,running.identity);}
         },
-        tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
+        preparationSignal:AbortSignal.any([state.preparationAbort.signal,preparationAbort.signal]),
+        workbenchTaskId:task.id,tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
         // 结束在这里补一次评估:请求**自己超时**(权限 5 分钟)那一下既没有事件、也不走
         // resolvePermission —— 会话早就静下来的话,没有人会回来起空闲收工的计时(终审 I4)。
-        requestPermission:(request,signal) => {running.interactionAt=Date.now();ctx.hub.bumped(task.id);return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now();ctx.hub.bumped(task.id);settleAfterDecision(running)})},
+        requestPermission:(request,signal) => {
+          if(running.permissionDenialLimit)return Promise.resolve(false)
+          running.interactionAt=Date.now();ctx.hub.bumped(task.id)
+          return running.permissions.request({...request,cwd:request.cwd??running.path},signal).then(allowed=>{
+            if(running.permissions.denialLimitReached()&&!running.permissionDenialLimit) {
+              running.permissionDenialLimit=true
+              running.stopNotice='已连续拒绝三次，任务已停下等待你的下一步说明。原会话和记录已保留。'
+              store.addEvent(task.id,'system',running.stopNotice,null,running.identity)
+              try { untilStop(task.id,'已连续拒绝三次，等待主人说明') } catch { /* Stopping the run must still proceed. */ }
+              running.signalStop()
+            }
+            return allowed
+          }).finally(()=>{running.interactionAt=Date.now();ctx.hub.bumped(task.id);settleAfterDecision(running)})
+        },
         requestUserInput:(request,signal) => {running.interactionAt=Date.now();ctx.hub.bumped(task.id);return running.questions.request(request,signal).finally(()=>{running.interactionAt=Date.now();ctx.hub.bumped(task.id);settleAfterDecision(running)})},
       }).catch(error => { spawnRejected=true; throw error })
       let spawnTimer:ReturnType<typeof setTimeout>|undefined
@@ -303,7 +320,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 静下来就交给 settleQuiet 判:它自己会因为「还在等主人拍板」而只收成果、不起计时。
         // 这里若因为有待决请求而跳过,这一次转移就被吃掉了 —— 之后 wasQuiet 一直是 true,
         // 再没有人回来收尾(评审 2026-09-21 #6 续:后台问题活过了父回合的答复)。
-        if (nowQuiet&&!wasQuiet) { quietTurn(running); settleQuiet(running); return }
+        if (nowQuiet&&!wasQuiet) { coalescer.flush(); quietTurn(running); settleQuiet(running); return }
         // 又动起来了(自己被后台通知唤醒也算):不再安静就不再计时。文件夹本来就是它的,
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
@@ -328,13 +345,16 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');ctx.hub.bumped(task.id)}
             if(rewound&&!rewoundNoticed&&['text','tool_call','result'].includes(ev.kind)){rewoundNoticed=true;domains.rewind?.markNoticed(task.id,rewound.ids)}
             if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
+            // Open the stored turn before its first row is persisted. For result,
+            // flush pending text first, while that same turn is still open.
+            if (ev.kind !== 'result') noteTurn(running,ev)
             coalescer.push(ev)
             // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
             // 任何一个成功回合(result)即视为这家恢复。
             if (ev.kind==='error') quota.note(task.providerId,ev.message,ev.code)
             if (ev.kind==='result') quota.clear(task.providerId)
             // 这件事的轮(M2b):result 收一轮、带执行者报的用量(每件事花了多少额度从这里加);别的动静接着开下一轮。
-            noteTurn(running,ev)
+            if (ev.kind === 'result') noteTurn(running,ev)
             if (ev.kind==='result') settleQuiet(running)
             // observe 是**故意**会往外抛的(身份不符那条),所以探测器自己抛出会把整轮带走。
             // 落定漏一次会被下一个事件补上,抛出去却不可逆 —— 吞掉,只记一次(终审 M5)。
@@ -351,6 +371,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)
           },()=>running.interactionAt,runtime?()=>runtime.start(request,material):undefined)
       } finally { coalescer.dispose() }
+      if (running.permissionDenialLimit) { finalStatus='interrupted'; return }
       if (!summary) { finalStatus='cancelled'; return }
       if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,summary.result.sessionId)}
       if (running.cancelled) finalStatus='cancelled'
@@ -387,18 +408,20 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         try {
           closePromise=Promise.resolve(running.session.close())
           await Promise.race([closePromise,new Promise<never>((_resolve,reject) => { closeTimer=setTimeout(() => reject(new Error('close_timeout')),ctx.deps.closeTimeoutMs ?? 3000) })])
+          running.writerExited=true
         } catch {
           markUncertain(running); finalStatus='interrupted'; finalError='writer_not_closed'
           try { store.addEvent(task.id,'system','执行程序未确认退出，此文件夹内的新任务将等待。请检查后台进程或重启服务。');} catch { /* final status write below may still succeed */ }
           if (closePromise) void closePromise.then(() => confirmLateClose(running,true),() => {})
         } finally { if (closeTimer) clearTimeout(closeTimer) }
       }
-      if (!running.uncertain) await collect(running)
+      if (!running.uncertain) { await collect(running) }
       revokeCredentials(running)
       if (running.uncertain) { finalStatus='interrupted'; finalError='writer_not_closed' }
       let terminalCommitted=false
       try {
         const status=running.cancelled&&!running.uncertain?(running.closedWhileReplied?'completed':'cancelled'):finalStatus
+        if (status==='cancelled'&&running.restartInterrupted) finalError='daemon_restarted'
         // 会不会真的在这一拍入队回报,两个条件都要成立(终审后修复第二轮
         // Important②a,判据比"这一轮有没有出生地"更紧):①这一轮有出生地
         // (跟 renderReport 自己的判据同一条)②reportOnce 这一拍真的会执
@@ -484,7 +507,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
 
 
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     assertNotRewindBlocked(store.rewinds,task.id)
     if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
@@ -522,13 +545,27 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const done=new Promise<void>(resolve => { resolveDone=resolve })
     // 放行规则(2026-10-19):问主人之前先问它;规则拿了主意的那条不发通知,时间线里写明是谁批的。
     const ruleDecide=ctx.deps.permissionDecide
+    const permissionPrompts=new Map<string,()=>void>()
     const permissions=makeRunPermissions({
-      taskId:task.id,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
+      initialDenials,
+      taskId:task.id,root:task.path,provider:task.providerId,stateDir:ctx.stateDir,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
       audit:event => {
         if(event.type==='request'){
           addRunEvent('system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
-          requestNotice(task,runId,'permission',event.permission.id,`${event.permission.tool} · ${event.permission.description}`)
-        }else addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}`)
+          let replyLine=''
+          if(ctx.deps.permissionPrompt){
+            const close=ctx.deps.permissionPrompt(task.title,event.permission,(decision,reason)=>{
+              const resolved=permissions.resolve(event.permission.id,decision,reason)
+              if(resolved)ctx.hub.bumped(task.id)
+              return resolved
+            },()=>permissions.deadline(event.permission.id))
+            permissionPrompts.set(event.permission.id,close);replyLine=close.replyLine??''
+          }
+          requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'))
+        }else {
+          permissionPrompts.get(event.permission.id)?.();permissionPrompts.delete(event.permission.id)
+          addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}${event.reason?`\n拒绝理由：${event.reason}`:''}`)
+        }
       },
       ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),firstUserText(task.id)??null,facts))}:{}),
     })
@@ -546,7 +583,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       execution,
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
-      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
+      cancelled:false,spawnAttempted:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
       ...(firstTurn?{turn:{id:firstTurn,open:true}}:{}),
     }
     const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
@@ -606,7 +643,15 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     activate()
     return accepted
   }
-  function createWechat(input:CreateWechatTask):CreationReceipt {
+  const pendingWechat = new Map<string, { identity: string; promise: Promise<CreationReceipt> }>()
+  async function createWechat(input:CreateWechatTask):Promise<CreationReceipt> {
+    const identity=JSON.stringify([input.ownerChatId,input.accountId,input.commandHash]),prior=pendingWechat.get(input.requestId)
+    if(prior){if(prior.identity!==identity)throw Error('creation_conflict');return prior.promise}
+    const promise=trackPreparation(ctx.state,createWechatImpl(input)).finally(()=>pendingWechat.delete(input.requestId))
+    pendingWechat.set(input.requestId,{identity,promise})
+    return promise
+  }
+  async function createWechatImpl(input:CreateWechatTask):Promise<CreationReceipt> {
     ctx.ensureAccepting()
     if(!input.ownerChatId||ctx.deps.ownerChatId()!==input.ownerChatId||!input.accountId?.trim())throw Error('invalid_wechat_identity')
     const id=normalizeInputRequestId(input.requestId)
@@ -623,17 +668,20 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const providerId=input.providerId??project.providerId
     if(!providerId)throw Error('unavailable_provider')
     // 独立工作区:编号从请求编号派生,重试 ⇒ 同一个工作区同一个分支(建好了没接下也不会多建一个)。
-    const tree=input.isolation?(()=>{
-      const repoRoot=repoRootOrFail(project.path)
+    const tree=input.isolation?await (async()=>{
+      const repoRoot=await repoRootOrFailAsync(project.path,{signal:state.preparationAbort.signal})
       if(!repoRoot)throw Error('worktree_not_git')
       const plan=planWorktree({stateDir:ctx.stateDir,projectId:project.id,projectPath:project.path,repoRoot,id:createHash('sha256').update(id).digest('hex').slice(0,8),...(input.base!==undefined?{base:input.base}:{})})
-      return {plan,path:ensureWorktree(plan)}
+      const path=await ensureWorktree(plan,{signal:state.preparationAbort.signal})
+      ctx.ensureAccepting()
+      return {plan,path,scriptSha:plan.start?.sha??await headShaAsync(plan.root,{signal:state.preparationAbort.signal})}
     })():null
+    if(ctx.deps.ownerChatId()!==input.ownerChatId||!input.accountId?.trim())throw Error('invalid_wechat_identity')
     let receipt!:CreationReceipt
     // 出生地:微信入站省略 ⇒ wechat;App 一轮里的「任务」命令由 daemon 填(不知道 ⇒ null)。
     const origin=input.origin===undefined?'wechat':input.origin
     createTask({path:tree?.path??project.path,providerId,text:input.text,origin,...(input.title!==undefined?{title:input.title}:{}),...(tree?{registerProject:false}:{})},(task,runId)=>{
-      if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root)})
+      if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:tree.scriptSha,start:tree.plan.start})
       store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
       receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
         reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音${tree?`\n\n在独立分支 ${tree.plan.branch} 上做。做完：任务 ${task.id} 提交 → 任务 ${task.id} 合回`:''}`,
@@ -648,7 +696,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
   function create(input:CreateTask):WorkbenchTaskView {
     return createTask(input)
   }
-  function continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView {
+  function continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
     ctx.ensureAccepting()
     const attachments=selectAttachments(options,id,attachmentPolicy)
     const inputRequestId=options?.inputRequestId===undefined?undefined:normalizeInputRequestId(options.inputRequestId)
@@ -667,6 +715,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const execution=normalizeExecutionChoice(options?.execution,store.execution.choice(id))
     if(store.source(id)?.firstDispatchedAt===null)throw new Error('external_close_confirmation_required')
     if(task.archivedAt!==null)throw new Error('workbench_archived')
+    if(task.error==='writer_not_closed')throw new Error('writer_not_closed')
     // 独立工作区已删(手动或归档时收拾):目录不在了,别让执行者对着空位置跑(2026-10-08 评审)
     if(store.worktrees.get(id)?.removedAt!=null)throw new Error('worktree_removed')
     provider(task.providerId)
@@ -680,13 +729,27 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const accepted:AcceptedContinuation=decision.mode==='restart_required'
       ? {mode:'restart',preview:decision.restart}
       : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
-    try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy)}
+    try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy,initialDenials)}
     catch(error){
       if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');ctx.hub.bumped(id)}catch{state.autoContinueBlocked.add(id)}
       throw error
     }
   }
 
-  return { execute,start,matterSync,safeOriginMatterId,createTask, create,continueTask,createWechat }
+  /** 只有部署凭据证明从未派发的首请求才能走这里；没有原生历史可恢复，也没有重开确认可绕过。 */
+  function resumeUnstartedTask(id:string,runId:string,note:string,inputRequestId:string):WorkbenchTaskView {
+    ctx.ensureAccepting()
+    const task=store.get(id),users=store.steps(id).filter(step=>timelineKind(step)==='user')
+    if(task.sessionId||task.archivedAt!==null||task.error!=='daemon_restarted'||!['cancelled','interrupted'].includes(task.status)||
+      store.source(id)||store.execution.last(id)?.runId!==runId||users.length!==1||stepPayload(users[0]!).runId!==runId)throw Error('restart_confirmation_required')
+    if(store.worktrees.get(id)?.removedAt!=null)throw Error('worktree_removed')
+    provider(task.providerId)
+    if(canonicalProject(task.path)!==task.path)throw Error('invalid_path')
+    const original=stepPayload(users[0]!),attachments=selectAttachments({attachmentIds:(original.attachments??[]).map(a=>a.id)},id)
+    const text=`${note}\n\n原请求：\n${checkedText(original.text,attachments)}`
+    return start(task,text,directoryIdentity(task.path),{mode:'new'},undefined,undefined,undefined,inputRequestId,attachments)
+  }
+
+  return { execute,start,matterSync,safeOriginMatterId,createTask, create,continueTask,createWechat,resumeUnstartedTask }
 }
 export type ExecuteDomain = ReturnType<typeof makeExecuteDomain>

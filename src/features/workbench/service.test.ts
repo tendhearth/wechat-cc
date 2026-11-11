@@ -9,6 +9,7 @@ import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
+import { markPlannedRestart } from '../../lib/restart-markers'
 
 let root: string, project: string, db: Db, service: WorkbenchService
 let testStore:ReturnType<typeof makeWorkbenchStore>
@@ -44,6 +45,109 @@ beforeEach(() => {
 afterEach(async () => { await service?.shutdown(); db.close(); removeTempDir(root) })
 
 describe('persistent workbench', () => {
+  it.each([true, false])('crash during deployment close never resumes an unproven writer (groups=%s)', async groups => {
+    const close=deferred(),entered=deferred();let spawns=0
+    const provider:AgentProvider={async spawn(){spawns++;return {
+      async *dispatch(){yield {kind:'init' as const,sessionId:'still-writing'};await new Promise(()=>{})},
+      ...(groups?{processGroups:()=>[4246]}:{}),
+      async close(){entered.resolve();await close.promise},
+    }}}
+    setup(provider,()=> 'owner',undefined,{writerGroupAlive:g=>g===4246})
+    const task=create();await expect.poll(()=>testStore.get(task.id).sessionId).toBe('still-writing')
+    if(!groups)testStore.setWriterGroups(task.id,[8888]) // a dead group left by a previous run
+    markPlannedRestart(root,'self-deploy')
+    const shutdown=service.shutdown();await entered.promise
+    try {
+      // Reconstruct at the persisted crash boundary: close has not acknowledged exit.
+      setup(provider,()=> 'owner',undefined,{writerGroupAlive:g=>g===4246})
+      await new Promise(r=>setTimeout(r,40))
+      expect(spawns).toBe(1)
+      expect(testStore.get(task.id).error).toBe('writer_not_closed')
+      expect(()=>service.continueTask(task.id,'继续')).toThrow('writer_not_closed')
+      if(groups)await expect(service.confirmWriterExited(task.id)).rejects.toThrow('writer_alive')
+    } finally {close.resolve();await shutdown}
+  })
+
+  it('waits for a late provider registration before consuming deployment continuation', async () => {
+    const stop=deferred();let spawns=0
+    const provider:AgentProvider={async spawn(_p,ctx){spawns++;return {async *dispatch(){yield {kind:'init' as const,sessionId:ctx.resumeSessionId??'late-native'};if(spawns===1)await stop.promise;else yield {kind:'result' as const,sessionId:'late-native',numTurns:1,durationMs:1}},async close(){stop.resolve()}}}}
+    setup(provider);const task=create();await expect.poll(()=>testStore.get(task.id).sessionId).toBe('late-native')
+    markPlannedRestart(root,'self-deploy');await service.shutdown()
+    const registry=createProviderRegistry()
+    testStore=makeWorkbenchStore(db)
+    service=makeWorkbenchService({store:testStore,registry,stateDir:root,ownerChatId:()=> 'owner'})
+    await new Promise(r=>setTimeout(r,30));expect(spawns).toBe(1)
+    registry.register('claude',provider,{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+    await expect.poll(()=>spawns).toBe(2);await settle(task.id)
+  })
+
+  it('does not resume a deployment continuation into a replacement directory at the same path', async () => {
+    const stop=deferred();let spawns=0
+    const provider:AgentProvider={async spawn(_p,ctx){spawns++;return {async *dispatch(){yield {kind:'init' as const,sessionId:ctx.resumeSessionId??'path-native'};await stop.promise;yield {kind:'result' as const,sessionId:'path-native',numTurns:1,durationMs:1}},async close(){stop.resolve()}}}}
+    setup(provider);const task=create();await expect.poll(()=>testStore.get(task.id).sessionId).toBe('path-native')
+    markPlannedRestart(root,'self-deploy');await service.shutdown()
+    renameSync(project,project+'-before');mkdirSync(project)
+    setup(provider);await new Promise(r=>setTimeout(r,40))
+    expect(spawns).toBe(1)
+    expect(service.detail(task.id).events.at(-1)?.text).toContain('文件夹')
+  })
+
+  it('dispatches the original queued request that deployment stopped before its first spawn', async () => {
+    const stop=deferred(),prompts:string[]=[],resumes:Array<string|undefined>=[]
+    const provider:AgentProvider={async spawn(_p,ctx){resumes.push(ctx.resumeSessionId);return {
+      async *dispatch(text){prompts.push(text);yield {kind:'init' as const,sessionId:ctx.resumeSessionId??'queued-native'};if(text==='占住目录')await stop.promise;else yield {kind:'result' as const,sessionId:ctx.resumeSessionId??'queued-native',numTurns:1,durationMs:1}},async close(){stop.resolve()},
+    }}}
+    setup(provider)
+    create('占住目录');await expect.poll(()=>prompts.length).toBe(1)
+    const queued=create('排队的原请求')
+    expect(queued.status).toBe('queued');expect(testStore.get(queued.id).sessionId).toBeNull()
+    markPlannedRestart(root,'self-deploy');await service.shutdown();setup(provider)
+    await expect.poll(()=>prompts.some(p=>p.includes('排队的原请求'))).toBe(true)
+    await settle(queued.id)
+    expect(prompts.filter(p=>p.includes('排队的原请求'))).toHaveLength(1)
+    expect(prompts.at(-1)).toContain('CC 重启打断了上一轮')
+    expect(resumes.at(-1)).toBeUndefined()
+  })
+
+  it('owner cancellation during deployment close revokes automatic restart continuation', async () => {
+    const close=deferred(),entered=deferred();let spawns=0
+    const provider:AgentProvider={async spawn(){spawns++;return {async *dispatch(){yield {kind:'init' as const,sessionId:'cancel-native'};await new Promise(()=>{})},async close(){entered.resolve();await close.promise}}}}
+    setup(provider)
+    const task=create();await expect.poll(()=>testStore.get(task.id).sessionId).toBe('cancel-native')
+    markPlannedRestart(root,'self-deploy')
+    const shutdown=service.shutdown();await entered.promise
+    await service.cancel(task.id);close.resolve();await shutdown
+    setup(provider);await new Promise(r=>setTimeout(r,50))
+    expect(spawns).toBe(1)
+    expect(testStore.get(task.id).error).toBeNull()
+  })
+
+  it('continues a deployment-interrupted run once, preserving its native session and explaining the interruption', async () => {
+    const stopped=deferred(), prompts:string[]=[], resumes:Array<string|undefined>=[]
+    let first=true
+    const provider:AgentProvider={async spawn(_p,ctx){resumes.push(ctx.resumeSessionId);return {
+      async *dispatch(text){prompts.push(text);yield {kind:'init' as const,sessionId:ctx.resumeSessionId??'native-before-restart'};if(first){first=false;await stopped.promise}else yield {kind:'result' as const,sessionId:ctx.resumeSessionId??'native-before-restart',numTurns:1,durationMs:1}},
+      async close(){stopped.resolve()},
+    }}}
+    setup(provider)
+    const task=create()
+    await expect.poll(()=>testStore.get(task.id).sessionId).toBe('native-before-restart')
+    markPlannedRestart(root,'self-deploy')
+    await service.shutdown()
+    expect(testStore.get(task.id).error).toBe('daemon_restarted')
+    setup(provider)
+    await new Promise(r=>setTimeout(r,20))
+    expect(service.detail(task.id).events.map(e=>e.text).join('\n')).not.toContain('自动续接没有接上')
+    await expect.poll(()=>prompts.length).toBe(2)
+    await settle(task.id)
+    expect(prompts[1]).toContain('CC 重启打断了上一轮')
+    expect(resumes).toEqual([undefined,'native-before-restart'])
+    await service.shutdown()
+    setup(provider)
+    await new Promise(r=>setTimeout(r,30))
+    expect(prompts).toHaveLength(2)
+  })
+
   it('adds projects without starting an executor and canonicalizes duplicate folder aliases',()=>{
     let spawned=0
     setup({spawn:()=>{spawned++;throw Error('must not execute')}})
@@ -196,6 +300,7 @@ describe('persistent workbench', () => {
     const queued = create('第二件事')
     expect(service.detail(queued.id).task.status).toBe('queued')
     expect(service.detail(queued.id).task.waitingFor).toMatchObject({ taskId: task.id, reason: 'same_path' })
+    expect(service.projectActivity(queued.id)).toMatchObject({phase:'queued',requestId:null,waitingFor:null})
     const cancellation = service.cancel(task.id)
     release(); await cancellation; await settle(task.id); await settle(queued.id)
     expect(dispatched).toBe(true)
@@ -362,7 +467,7 @@ describe('persistent workbench', () => {
     const other=join(root,'permission-other');mkdirSync(other)
     const answers=new Map<string,boolean>(); const cancelled:string[]=[],closed:string[]=[]
     setup({async spawn(p,ctx){return{async *dispatch(){
-      const answer=await ctx.requestPermission!({tool:'Bash',description:`permission:${p.path}`})
+      const answer=await ctx.requestPermission!({tool:'Bash',command: 'rm build', description:`permission:${p.path}`})
       answers.set(p.path,answer);yield {kind:'result',sessionId:`session:${p.path}`,numTurns:1,durationMs:1} as AgentEvent
     },async cancel(){cancelled.push(p.path)},async close(){closed.push(p.path)}}}})
     const one=createAt(project,'one'),two=createAt(other,'two')
@@ -532,7 +637,7 @@ describe('persistent workbench', () => {
     expect(contexts.map(c => c.resumeSessionId)).toEqual([undefined, 'session-one', undefined])
     expect(contexts.every(c => c.permissionMode === 'strict')).toBe(true)
     expect(contexts[0]!.requestPermission).not.toBe(contexts[1]!.requestPermission)
-    await expect(contexts[0]!.requestPermission!({tool:'Bash',description:'stale run'})).resolves.toBe(false)
+    await expect(contexts[0]!.requestPermission!({tool:'Bash',command: 'rm build', description:'stale run'})).resolves.toBe(false)
     expect(contexts[0]!.appendInstructions).toContain(one.id)
     expect(contexts[2]!.appendInstructions).not.toContain(one.id)
   })
@@ -541,7 +646,7 @@ describe('persistent workbench', () => {
     let requestPermission: NonNullable<SpawnContext['requestPermission']> | undefined
     setup({ async spawn(_p, ctx) { requestPermission=ctx.requestPermission; return {
       async *dispatch() {
-        const allowed = await requestPermission!({ tool:'Bash', description:'remove generated output' })
+        const allowed = await requestPermission!({ tool:'Bash', command: 'rm build', description:'remove generated output' })
         yield { kind:'text', text:allowed ? 'allowed' : 'denied' }
         yield result
       }, async close() {},
@@ -558,7 +663,7 @@ describe('persistent workbench', () => {
   it('shows only the active task permission count in the list and clears it after resolve or cancel', async () => {
     setup({ async spawn(_p, ctx) { return {
       async *dispatch() {
-        await ctx.requestPermission!({ tool:'Bash', description:'remove generated output' })
+        await ctx.requestPermission!({ tool:'Bash', command: 'rm build', description:'remove generated output' })
         yield result
       }, async cancel() {}, async close() {},
     } } }, () => null)
@@ -580,7 +685,7 @@ describe('persistent workbench', () => {
 
   it('denies, audits, and clears a pending request on explicit denial and expiry', async () => {
     setup({ async spawn(_p, ctx) { return { async *dispatch() {
-      const allowed=await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      const allowed=await ctx.requestPermission!({tool:'Bash',command: 'rm build', description:'remove output'})
       yield {kind:'text',text:allowed?'allowed':'denied'}; yield result
     },async close(){} } } }, () => null, 5)
     const task=create()
@@ -593,7 +698,7 @@ describe('persistent workbench', () => {
 
   it('records an explicit denial and never persists the pending card', async () => {
     setup({ async spawn(_p, ctx) { return { async *dispatch() {
-      const allowed=await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      const allowed=await ctx.requestPermission!({tool:'Bash',command: 'rm build', description:'remove output'})
       yield {kind:'text',text:allowed?'allowed':'denied'}; yield result
     },async close(){} } } }, () => null)
     const task=create()
@@ -616,7 +721,7 @@ describe('persistent workbench', () => {
   it('denies a detached pending callback when the provider finishes', async () => {
     let answer: Promise<boolean> | undefined
     setup({ async spawn(_p, ctx) { return { async *dispatch() {
-      answer=ctx.requestPermission!({tool:'Bash',description:'late request'})
+      answer=ctx.requestPermission!({tool:'Bash',command: 'rm build', description:'late request'})
       yield result
     },async close(){} } } }, () => null)
     const task=create(); await settle(task.id)
@@ -628,7 +733,7 @@ describe('persistent workbench', () => {
   it('rejects cross-task, stale-run, and cancelled permission responses', async () => {
     let firstRequest: string | undefined
     setup({ async spawn(_p, ctx) { return { async *dispatch() {
-      await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      await ctx.requestPermission!({tool:'Bash',command: 'rm build', description:'remove output'})
       yield result
     },async cancel(){},async close(){} } } }, () => null)
     const one=create()
@@ -984,7 +1089,7 @@ describe('persistent workbench', () => {
     registry.register('claude',{async spawn(p,ctx){return{
       async *dispatch(){
         started.push(p.path)
-        permissionAnswers.push(ctx.requestPermission!({tool:'Bash',description:`approve ${p.path}`}))
+        permissionAnswers.push(ctx.requestPermission!({tool:'Bash',command: 'rm build', description:`approve ${p.path}`}))
         await gates.get(p.path)!.promise;yield result
       },
       async cancel(){cancelled.push(p.path)},async close(){closed.push(p.path)},

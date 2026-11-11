@@ -42,6 +42,11 @@ export interface Active extends PathReservation {
   task: StoredTask
   directoryIdentity: string
   cancelled: boolean
+  /** 派发准备与执行者调用分开：只有明确尚未调用 spawn 的首请求可在重启后重新派发。 */
+  spawnAttempted: boolean
+  /** 部署关停打断，区别于主人亲手停止；安全续接凭据已在 cancel 前落盘。 */
+  restartInterrupted?: boolean
+  writerExited?: boolean
   session?: AgentSession
   done: Promise<void>
   resolveDone: () => void
@@ -53,6 +58,7 @@ export interface Active extends PathReservation {
   finishing?:boolean
   delivering?:boolean
   runtimeInputs?:Map<string,LiveInput>
+  acceptedInputTurns?:Map<string,string>
   interactionAt:number
   releaseBusy?: () => void
   publicFinished: boolean
@@ -93,9 +99,12 @@ export interface Active extends PathReservation {
   networkSuspended?: { since: number }
   /** 停下这条 run 时交给终态微信通知的正文(暂停到顶:「网络一直没恢复，任务已停止，可以接着做」)。 */
   stopNotice?: string
+  permissionDenialLimit?: boolean
 }
 
 export interface WorkbenchRuntimeState {
+  preparations: Set<Promise<unknown>>
+  preparationAbort: AbortController
   runsByTask: Map<string, Active>
   /** 文件夹的占用:派发时写入,会话关闭(结算 / 隔离)时删除 —— 中间从不释放。 */
   reservations: Map<string, Active>
@@ -122,6 +131,7 @@ export interface WorkbenchRuntimeState {
 
 export function makeRuntimeState(): WorkbenchRuntimeState {
   return {
+    preparationAbort: new AbortController(), preparations: new Set(),
     runsByTask: new Map(), reservations: new Map(), queue: [], runningText: new Map(), collections: new Set(),
     nativeDecisions: new Map(), handoffDecisions: new Map(),
     order: 0, stopping: false, shutdownComplete: false, shutdownPromise: undefined,
@@ -129,4 +139,12 @@ export function makeRuntimeState(): WorkbenchRuntimeState {
     autoContinueBlocked: new Set(),
     writerOrphans: new Map(), writerWatch: undefined,
   }
+}
+
+
+/** Shutdown drains these before the store or process can disappear. */
+export function trackPreparation<T>(state: WorkbenchRuntimeState, operation: Promise<T>): Promise<T> {
+  const pending=operation.finally(()=>state.preparations.delete(pending))
+  state.preparations.add(pending)
+  return pending
 }

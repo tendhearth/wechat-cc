@@ -6,6 +6,8 @@ import { makeMatterStore } from '../adapters/store/matters-store'
 import { makeMatterLog } from '../adapters/store/matter-log'
 import { makeTerminalTurnLog } from '../adapters/store/terminal-turns'
 import type { TerminalTurnLog } from '../ports/terminal-turns'
+import { onWriteHint } from '../lib/write-hints'
+import { matterFeed } from '../adapters/store/matter-feed'
 
 /** 终端会话的钩子事件经登记处同时写进这件事(M4a):并行写,登记处照旧;写轮出错不影响登记处与推送。 */
 function rig(turnsOverride?: TerminalTurnLog) {
@@ -19,6 +21,22 @@ function rig(turnsOverride?: TerminalTurnLog) {
 const base = { source: 'claude' as const, session_id: 'sess-1', cwd: '/w/blog' }
 
 describe('cli-events × 终端的轮与步(M4a)', () => {
+  it('an idle session ending or changing identity wakes topics through the existing matter hint', async () => {
+    const r=rig()
+    r.hub.observe({...base,kind:'prompt'})
+    r.hub.observe({...base,kind:'stop',text:'完成'})
+    await Promise.resolve()
+    const id=r.matters.findBySurface('cli',base.session_id)!.id
+    const hints:string[]=[],feed:number[]=[]
+    const off=onWriteHint(r.db,h=>{if(h.kind==='matter')hints.push(h.matterId)}),offFeed=matterFeed(r.db).onChange((_id,cursor)=>feed.push(cursor))
+    r.hub.observe({...base,cwd:'/w/renamed',kind:'session_end'})
+    await Promise.resolve()
+    expect(r.log.state(id)?.state).toBe('done')
+    expect(r.store.get(base.session_id)?.cwd).toBe('/w/renamed')
+    expect(hints).toContain(id)
+    expect(feed).toEqual([]) // setState has no new MatterLog cursor; the hint is essential.
+    off();offFeed();r.db.close()
+  })
   it('发问 → 要权限 → 放行 → 答完:登记处与这件事的轮 / 步一路对得上', () => {
     const r = rig()
     r.hub.observe({ ...base, kind: 'prompt' })

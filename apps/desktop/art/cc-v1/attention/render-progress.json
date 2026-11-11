@@ -1,0 +1,319 @@
+{
+  "identity": {
+    "sourceSha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+    "rendererSha256": "2b8806b1ae15e676fa2037ee00c559788b638eceaf5fd714fb3c5e9a4d35b84f",
+    "baseRendererSha256": "5d5946732a406d5d47064c62fe4744b5fc2b16dae1b02d06acef9c7735aafc54",
+    "planSha256": "0790ccef5143d44eb8bca8ce8a0b7837cfe89252c519ce58eace563bd348b11c",
+    "geometrySha256": "d26db56b5699b524db792b12187747f1451128dca019ea188d1e64053992e17d",
+    "performanceGeometrySha256": "72656f5a9c4144a00e59d52545f7ddc243cfc7eaf7e3207309b310ad2840a845",
+    "blender": "5.2.1 LTS",
+    "samples": 96,
+    "seed": 11
+  },
+  "samples": {
+    "left/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "attention/lit/left/000.png",
+        "attention/unlit/left/000.png",
+        "masks/attention/left/000.png"
+      ],
+      "files": {
+        "attention/lit/left/000.png": "3106926d927132f486725e475c59a0f455cb7a2199117ed809824497625079dd",
+        "attention/unlit/left/000.png": "836f4285d3ee30ced7054b977f57653ece3932e328c99c00735443d4fd92947b",
+        "masks/attention/left/000.png": "cf0b6154fcadf863fe0fd8df00deb6fef3f09f0ac62d437b11d759c676899007"
+      }
+    },
+    "right/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "attention/lit/right/000.png",
+        "attention/unlit/right/000.png",
+        "masks/attention/right/000.png"
+      ],
+      "files": {
+        "attention/lit/right/000.png": "54ef8a169ff9f25b1a748c8624871009fc25878e6e6880d64905ebd0857a4e67",
+        "attention/unlit/right/000.png": "842e3dc90cd08cbc2b5a097c5ea197428d51a66dfedbeca14fddf35baf18c986",
+        "masks/attention/right/000.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      }
+    },
+    "input-up/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0.12,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "attention/lit/input-up/000.png",
+        "attention/unlit/input-up/000.png",
+        "masks/attention/input-up/000.png"
+      ],
+      "files": {
+        "attention/lit/input-up/000.png": "26a785e0cfe839b00f94bd8ec56c540fef0564765c0032a046c0170f1387fead",
+        "attention/unlit/input-up/000.png": "b4d475f67cc02e9131c591479512f4f6c8277d13c656f969fa8149290c3751ed",
+        "masks/attention/input-up/000.png": "20239bc814b1142e2cbb65a3d105bd6a0f5395b7faa9106fdfa2cb81bd2577a4"
+      }
+    },
+    "read-down/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 0.9,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.04,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "attention/lit/read-down/000.png",
+        "attention/unlit/read-down/000.png",
+        "masks/attention/read-down/000.png"
+      ],
+      "files": {
+        "attention/lit/read-down/000.png": "aabc716c2639bc77f67bcf1247e6c4fd479ea3aebcbd52653e0839914fcb369c",
+        "attention/unlit/read-down/000.png": "049cb4efe3452acd0ef2eafddab89670c1a9efc1fddd40b5ffe0247f840f4e56",
+        "masks/attention/read-down/000.png": "a648c226d49ce15753b021cff37004e2e36413fafdd4ef94ee33149b98b9aebb"
+      }
+    },
+    "speaking/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "attention/lit/speaking/000.png",
+        "attention/unlit/speaking/000.png",
+        "masks/attention/speaking/000.png"
+      ],
+      "files": {
+        "attention/lit/speaking/000.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "attention/unlit/speaking/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/attention/speaking/000.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      }
+    },
+    "speaking/001": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.02,
+        "gazeUp": 0.025,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.012,
+          "squash": 0.995,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "attention/lit/speaking/001.png",
+        "attention/unlit/speaking/001.png",
+        "masks/attention/speaking/001.png"
+      ],
+      "files": {
+        "attention/lit/speaking/001.png": "6cf70a016f2960437a8219c6b4a1ab2ce85df1b1350f2d858f1acebbe5bd4684",
+        "attention/unlit/speaking/001.png": "ec51aca4025008a36d09b9b90893725204f999543d4e62b7a03deed73ace215c",
+        "masks/attention/speaking/001.png": "0c9468227d3c3e9543a286e6ceed6f56ef9b98fbe2ffcae8186021d4fccd90b8"
+      }
+    },
+    "speaking/002": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.015,
+        "gazeUp": 0.02,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.01,
+          "squash": 1.006,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "attention/lit/speaking/002.png",
+        "attention/unlit/speaking/002.png",
+        "masks/attention/speaking/002.png"
+      ],
+      "files": {
+        "attention/lit/speaking/002.png": "18f2368e3055bcc1b493db7f2499a2db9f187fac2441a77644b2e3c99a124ca8",
+        "attention/unlit/speaking/002.png": "6f3257e3ac3270cb6851f8b04091c2a53c4dec52545321e1ec768c2c8c9e0727",
+        "masks/attention/speaking/002.png": "1f1caa100dfc82557a3cd10d3937ae34ca8624b3802c40cd4b3bc68de3b76908"
+      }
+    },
+    "speaking/003": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "attention/lit/speaking/003.png",
+        "attention/unlit/speaking/003.png",
+        "masks/attention/speaking/003.png"
+      ],
+      "files": {
+        "attention/lit/speaking/003.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "attention/unlit/speaking/003.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/attention/speaking/003.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      }
+    }
+  }
+}

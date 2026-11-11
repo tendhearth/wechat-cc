@@ -4,7 +4,7 @@ import { workbenchTaskStatusKey, taskStatusKey, statusGlyphHtml } from './matter
 import { V1, v1 } from '../daemon-client.js'
 import { workbenchRuntimePresentation } from './workbench-runtime.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
-import { STATUS_WORDS } from '../generated/status-table.js'
+import { STATUS_WORDS, TASK_DETAIL_WORDS } from '../generated/status-table.js'
 
 /** @typedef {import('./workbench.js').Task} Task */
 /** @type {Map<string, Task>} */
@@ -33,12 +33,12 @@ export function updateConversationMatters(values, disconnected = stale) {
     if (state) {
       const key = task ? attention ? (attention.has(task.id)?'waiting':taskStatusKey(task)) : workbenchTaskStatusKey(task) : id&&attention?.has(id)?'waiting':null
       const waitingConfirmed=!!id&&!!attention?.has(id)&&!attentionStale
-      state.innerHTML = (stale&&!waitingConfirmed) || attentionStale || (id && detailStale.has(id)) || !key ? '尚未同步' : `${statusGlyphHtml(key)}${escapeHtml(key === 'waiting' ? '等你决定' : task?.status==='queued' ? '排队中' : task ? workbenchRuntimePresentation(task.status,task.runtime,task.phase,task.networkSuspended)?.label ?? STATUS_WORDS[key] : STATUS_WORDS[key])}`
+      state.innerHTML = (stale&&!waitingConfirmed) || attentionStale || (id && detailStale.has(id)) || !key ? '尚未同步' : `${statusGlyphHtml(key)}${escapeHtml(key === 'waiting' ? STATUS_WORDS.waiting : task?.status==='queued' ? TASK_DETAIL_WORDS.queued : task ? workbenchRuntimePresentation(task.status,task.runtime,task.phase,task.networkSuspended)?.label ?? STATUS_WORDS[key] : STATUS_WORDS[key])}`
     }
     const progress = node.querySelector('[data-matter-progress]')
     if(progress&&!task&&id)progress.textContent=attention?.get(id)?.first?.text??''
     const origin=node.querySelector('[data-matter-origin]');if(origin&&task)origin.textContent=`${task.origin==='cc'||task.origin==='companion'?'CC 自己做的事':'以前交办的事'} · ${new Date(task.createdAt).toLocaleString()}`
-    if (progress && task) { progress.textContent = [task.providerId, new Date(task.updatedAt).toLocaleString(), task.error, attention?.get(task.id)?.first?.text, results.get(task.id)?.at === task.updatedAt ? results.get(task.id)?.text : null].filter(Boolean).join(' · '); progress.insertAdjacentHTML('afterbegin',agents.agentAvatarsHtml(task.providerId?[task.providerId]:[],{cls:'converse-agents'})) }
+    if (progress && task) { progress.textContent = [ new Date(task.updatedAt).toLocaleString(), task.error, attention?.get(task.id)?.first?.text, results.get(task.id)?.at === task.updatedAt ? results.get(task.id)?.text : null].filter(Boolean).join(' · '); progress.insertAdjacentHTML('afterbegin',agents.agentAvatarsHtml(task.providerId?[task.providerId]:[],{cls:'converse-agents'}) + `<span class="converse-agent-name">${escapeHtml(agents.agentsLabel(task.providerId?[task.providerId]:[]))}</span> · `) }
   }
 }
 

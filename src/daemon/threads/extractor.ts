@@ -10,6 +10,8 @@ import type { MessagesStore, MessageRecord } from '../../lib/messages-store'
 import type { ThreadsStore, Facet } from '../../lib/threads-store'
 import { buildExtractPrompt, parseExtractResponse, renderMessage, renderWork, ENTRIES_PER_TOPIC, type ExtractOp } from './extract-prompt'
 import type { WorkResult } from './work-results'
+import { isTopicMessage, isRoutineTopicEntry } from '../../domain/topic-noise'
+import { withoutRoutineTopicNoise } from '../../domain/topic-match'
 
 const FETCH_LIMIT = 500          // 一批最多从库里拿这么多条消息
 const CONTEXT_TAIL = 30          // 水位之前的几条,只用来判断「又聊到了」
@@ -48,7 +50,7 @@ function takeMessages(rows: MessageRecord[], budget: number): { taken: MessageRe
   const taken: MessageRecord[] = []
   let used = 0
   for (const m of rows) {
-    const len = m.source === 'workbench' ? 0 : renderMessage({ ts: m.ts, direction: m.direction, text: m.text }).length
+    const len = isTopicMessage(m) ? renderMessage({ ts: m.ts, direction: m.direction, text: m.text }).length : 0
     const prev = taken[taken.length - 1]
     if (taken.length > 0 && used + len > budget && prev && prev.ts !== m.ts) break
     taken.push(m)
@@ -65,7 +67,7 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
     const recorded = await deps.messages.listSince(deps.chatId, since, FETCH_LIMIT)
     const { taken, used } = takeMessages(recorded, BATCH_CHARS)
     // CC 发的「任务 xxx 已答复」通知是 MatterLog 结论的复印件 ⇒ 不进(结论从 work 来);水位照样越过它们。
-    const batch = taken.filter(m => m.source !== 'workbench' && m.text.trim().length > 0)
+    const batch = taken.filter(isTopicMessage)
     const lastTs = taken.length > 0 ? taken[taken.length - 1]!.ts : null
 
     let work: WorkResult[] = []
@@ -93,7 +95,7 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
     }
 
     const tail = batch.length > 0
-      ? (await deps.messages.listRange(deps.chatId, { limit: CONTEXT_TAIL, beforeTs: batch[0]!.ts })).filter(m => m.source !== 'workbench')
+      ? (await deps.messages.listRange(deps.chatId, { limit: CONTEXT_TAIL, beforeTs: batch[0]!.ts })).filter(isTopicMessage)
       : []
     const existing = await deps.threads.list(deps.chatId)
     const entries = await deps.threads.entriesByThread(deps.chatId, { live: true })
@@ -101,8 +103,8 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
       newMessages: batch.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })),
       ...(tail.length > 0 ? { contextTail: tail.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })) } : {}),
       existingThreads: existing.map(t => ({
-        id: t.id, title: t.title, facets: t.facets, tags: t.tags, aliases: t.aliases, summary: t.summary, description: t.description,
-        entries: (entries.get(t.id) ?? []).slice(0, ENTRIES_PER_TOPIC).map(e => ({ id: e.id, kind: e.kind, line: e.line, due: e.due })),
+        id: t.id, title: t.title, facets: t.facets, tags: t.tags, aliases: t.aliases, summary: withoutRoutineTopicNoise({ ...t, entries: [] }).summary, description: t.description,
+        entries: (entries.get(t.id) ?? []).filter(e => !isRoutineTopicEntry(e)).slice(0, ENTRIES_PER_TOPIC).map(e => ({ id: e.id, kind: e.kind, line: e.line, due: e.due })),
       })),
       tagVocabulary: await deps.threads.tagVocabulary(30),
       ...(work.length > 0 ? { workResults: work.map(w => ({ matterId: w.matterId, title: w.title, project: w.project, state: w.state, ask: w.ask, result: w.result, at: w.at })) } : {}),
@@ -140,6 +142,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       })
       known.add(id)
       for (const e of op.entries) {
+        if (isRoutineTopicEntry(e)) { skipped++; continue }
         await deps.threads.addEntry({ threadId: id, kind: e.kind, line: e.line, ...(e.body ? { body: e.body } : {}), ...(e.due ? { due: e.due } : {}), source: sourceOf(e.matter), matterId: matterOf(e.matter) })
       }
       applied++
@@ -155,6 +158,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       applied++
     } else if (op.op === 'add_entry') {
       if (!known.has(op.topic)) { skipped++; continue }
+      if (isRoutineTopicEntry({ line: op.line ?? '', body: op.body })) { skipped++; continue }
       await deps.threads.addEntry({ threadId: op.topic, kind: op.kind, line: op.line, ...(op.body ? { body: op.body } : {}), ...(op.due ? { due: op.due } : {}), source: sourceOf(op.matter), matterId: matterOf(op.matter) })
       const t = await deps.threads.get(op.topic)
       if (t && activeTs > t.lastActive) await deps.threads.update(op.topic, { lastActive: activeTs })
@@ -163,6 +167,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       const e = await deps.threads.getEntry(op.id)
       if (!e || !known.has(e.threadId)) { skipped++; continue }
       const { op: _op, id: _id, ...patch } = op
+      if ((patch.line !== undefined || patch.body !== undefined) && isRoutineTopicEntry({ line: patch.line ?? e.line, body: patch.body ?? e.body })) { skipped++; continue }
       await deps.threads.updateEntry(op.id, patch)
       applied++
     }

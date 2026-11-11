@@ -20,9 +20,11 @@ import type { OverseerToday } from '../../domain/overseer-today'
 import { workbenchErrorHttp } from '@wechat-cc/protocol'
 import { TERMINAL_SAY_POLL_CAP_MS, type TerminalSay } from './terminal-say'
 import type { TerminalHooksService } from './hooks'
+import type { ProjectMemoryRequest } from './project-memory'
 
 /** 这几条路由要的(以前是 InternalApiDeps 的 cliEvents / cliPermissions / terminalSay / cliHooks / overseerToday)。 */
 export interface TerminalRoutesDeps {
+  projectMemory(request: ProjectMemoryRequest): Promise<{ context: string; reason: string }>
   /** 终端 claude / codex 会话的 hook 事件入口 + 登记处(v76)。 */
   cliEvents: {
     ingest(ev: CliEvent): CliEventAction | Promise<CliEventAction>
@@ -79,13 +81,17 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
   const sayError = (code: string) => { const h = workbenchErrorHttp(code, 'desktop'); return { status: h.status, body: { ok: false, error: h.error } } }
   return {
     ...terminalOwnerRoutes(deps.ownerActions),
-    'POST /v1/cli/event': async (_q, body) => {
+    'POST /v1/cli/project-memory': async (_q, body, caller) => {
+      if (caller?.origin !== 'file') return { status: 403, body: { error: 'forbidden' } }
+      return { status: 200, body: await deps.projectMemory(body as ProjectMemoryRequest) }
+    },
+    'POST /v1/cli/event': async (_q, body, caller) => {
       const action = await deps.cliEvents.ingest(body as CliEvent)
       return { status: 200, body: { ok: true, action } }
     },
     // 权限中继(§6.3):PermissionRequest hook 先 POST 登记(主人在场就直接回
     // owner_present,终端自己问),再 GET 轮询到 y/n 或过期。
-    'POST /v1/cli/permission': async (_q, body) => {
+    'POST /v1/cli/permission': async (_q, body, caller) => {
       return { status: 200, body: await deps.cliPermissions.open(body as CliPermissionRequest) }
     },
     'GET /v1/cli/permission': async (q) => {

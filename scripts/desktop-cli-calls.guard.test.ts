@@ -8,6 +8,7 @@
  * 不扫:测试、生成物 `src/generated/`、`src/vendor/`;注释按行跳过(别用块注释正则,会吞掉字符串里的 `/*`)。
  * mock.js 是浏览器里没有 Tauri 时的假 invoke,只比较命令名、不调用,正则不匹配它。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, relative } from 'node:path'
@@ -56,6 +57,7 @@ const LITERAL_HEAD_RE = /^\[\s*(['"])([\w-]+)\1(?:\s*,\s*(['"])([\w-]+)\3)?/
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (!SKIP_DIRS.includes(name)) walk(p, out) }
     else if (name.endsWith('.js') && !name.endsWith('.test.js')) out.push(p)
   }

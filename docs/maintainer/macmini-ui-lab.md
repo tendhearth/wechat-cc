@@ -4,6 +4,10 @@
 
 ## 所有 job 共用机器锁（2026-11-06）
 
+`cc-alive-2` 的第二批动作验收使用同一受控快照入口：桌面 browser 对 before/after 都运行 `cc-alive-shots.spec.ts`，只覆盖同一份测试 harness，不覆盖产品代码；App 用已登记的 `app-maestro cc-motion`，进入现有 `dev-e2e?op=cc-motion` 离线检查页。截图均为合成信号，不能作为真实模型、配对或音频证据。App 使用核验过的增量源码传输，避免重复完整 archive。
+
+并行任务可设置 `CC_UI_EXPECTED_SOURCE=<40位提交>` 固定本轮期望源码；本地严格校验并经 SSH 传递，远端持锁后、创建输出/运行任何测试前核对。App 与 browser 都拒绝排队期间换掉的快照，避免把另一任务的界面误记为本轮验收。
+
 所有 mini 上的 job 必须走本仓库入口、拿 `~/ci/lock`；禁止 SSH 直接运行临时 `/private/tmp/*.mjs`、单独 vitest/Playwright、构建或另开 verify。桌面 `run.mjs`、App `app-run.mjs` 和快照接收器必须一起更新到本仓库版本及锁模块；只更新本地 SSH 客户端不能保护旧远端执行器。`status` / `app-status` 只读，不占锁。
 
 锁用原子 mkdir，`info` 为 `pid=/since=/owner=`，owner 是 `wechat-cc <lane> <sha7>`，pid 是远端执行 job 的进程。过期规则与家族 runner 一致：无 pid 过期；pid=0 预留超过 900 秒过期；其余 pid 不存在过期。排队打印「家族 check 在跑 <owner>,等它」。拿锁后等 1 分钟负载 ≤ 核数 × 1.5 才开始，等待期间保持锁。完成、失败、INT/TERM/HUP 或超时均停止自有子进程并核对拥有权释放；SIGKILL/断电无法执行清理，下次按死 pid 回收。
@@ -97,9 +101,9 @@ node apps/desktop/scripts/macmini-ui.mjs capture
 
 ## App / Maestro lane
 
-App 与桌面共用 mini 身份校验、BatchMode SSH、两端命令白名单、执行锁和每轮日志；没有主工作 Mac 回退。App 源码独立登记在 `active.json.appRoot`，不覆盖桌面的 `root`。快照必须来自已审阅的 `origin/dev` 或 `app-maestro-build3`，仅传 Git archive，不复制 node_modules、忽略文件、账号或原生签名材料。
+App 与桌面共用 mini 身份校验、BatchMode SSH、两端命令白名单、执行锁和每轮日志；没有主工作 Mac 回退。App 源码独立登记在 `active.json.appRoot`，不覆盖桌面的 `root`。快照必须来自已审阅的 `origin/dev`、`app-maestro-build3` 或主人指定验收的 `design-unify-b1-fixes`，仅传 Git archive，不复制 node_modules、忽略文件、账号或原生签名材料。
 
-整合者把本仓库 `apps/desktop/scripts/macmini-ui-{protocol,remote,app}.mjs`、`macmini-machine-lock.mjs`、`macmini-job-lifecycle.mjs` 与 `macmini-app-snapshot.mjs` 安装到 mini 的 `labHome/app-executor/` 目录。在 lab 根创建两个固定包装器：`app-run.mjs` import `./app-executor/macmini-ui-remote.mjs`，`app-snapshot.mjs` import `./app-executor/macmini-app-snapshot.mjs`。App 的 SSH 目标固定为 `app-run.mjs`，因此桌面整合者切换 `run.mjs` 不影响 App 入口。这是更新可信工具的维护操作，不是向测试协议添加任意 shell 命令；仍与桌面共享 `active.json` 和执行锁。
+整合者把本仓库 `apps/desktop/scripts/macmini-ui-{protocol,remote,app}.mjs`、`macmini-machine-lock.mjs`、`macmini-job-lifecycle.mjs` 与 `macmini-app-snapshot.mjs` 安装到 mini 的 `labHome/app-executor/` 目录。在 lab 根创建两个固定包装器：`app-run.mjs` import `./app-executor/macmini-ui-remote.mjs`，`app-snapshot.mjs` 显式 `import { main } from './app-executor/macmini-app-snapshot.mjs'; await main()`。App 的 SSH 目标固定为 `app-run.mjs`，因此桌面整合者切换 `run.mjs` 不影响 App 入口。这是更新可信工具的维护操作，不是向测试协议添加任意 shell 命令；仍与桌面共享 `active.json` 和执行锁。
 
 ```sh
 # 在主机调用；只传源码，接收器在 mini 持锁创建新目录并原子更新 appRoot。
@@ -182,3 +186,15 @@ push-open 首轮在 `2026-11-06T02-00-27.575Z-app-maestro` 失败：已回此刻
 执行结束关闭自有设备 `8963040A-943E-4A1B-9593-CF9B28B15F6E`，释放执行锁。构建和流程都只在 mini，未触碰主工作 Mac 的模拟器、浏览器、后台、状态或已安装 App。
 
 本轮 mini 验证：`bun run verify --base HEAD` 退出 0（`app-executor/verification/macro-verify.log`）；执行器/协议 26/26 通过（`macro-green.log`）。新增 flag 断言在撤掉本次修复时失败（`macro-red.log`），恢复后全绿。外层 profile SHA256 仍为 `3a89b1451ca096f59b53abd7d5e0e8b6d9c183cd469af7d6cb882188c71bdcdc`。没有推送、发布或主机部署。
+
+### 2026-11-08 桌面浏览器独立快照
+
+`browser` 使用独立 `browser-run.mjs` 包装器和 `active.json.browserRoot`，不切换原生桌面的 `root` 或 App 的 `appRoot`。可在持锁维护时以 `browserRuntimeRoot` 固定已核验的公开浏览器/profile根、以 `browserSourceRoot` 固定下述486f6547源码缓存；两者均须realpath后在lab内并保留commit/blob核验，避免其他通道换快照后失去公共缓存。包装器与接收器的安装仍是持 `~/ci/lock` 的可信工具维护操作；`browser-executor/` 放本仓库 remote/protocol/机器锁/lifecycle/browser-snapshot/source-manifest 模块及 `design-unify-shots.spec.ts` / `playwright.config.ts`，browser-run 包装器 import remote；browser-snapshot 包装器显式 `import { main } from './browser-executor/macmini-browser-snapshot.mjs'; await main()`。不得把任意脚本路径或 shell 命令加入请求协议。
+
+本批 `macmini-browser-snapshot.mjs before|after` 仅在 `design-unify-b1` / `design-unify-b1-fixes` 工作区使用：before取HEAD与origin/dev共同基线，after取已验证提交HEAD；传Git archive差异包与完整目标tree清单。接收器拿家族锁后创建空的 `browser-<sha>-<time>/project`；本批仅复用active App快照486f6547中的公共tracked源码，逐文件核对Git blob哈希后复制普通文件，变化文件来自差异archive。完整清单重建的Git tree、commit对象、最终每个blob与可执行mode都必须匹配目标，缺失/不匹配即失败；拒绝路径逃逸、链接与额外archive路径。记录源码commit/tree、manifest、差异archive/lockfile/profile摘要。只读公共源码缓存不运行任何App通道，不复制node_modules、原生生成物、账号或其他忽略文件。之后离线安装该快照自己的依赖，核对workspace包仍解析到该快照；公开Bun/Chromium缓存可复用，不链接其他快照的node_modules。
+
+before/after覆盖同一个合成截图harness；白名单只覆盖 `playwright/design-unify-shots.spec.ts` 与测试配置 `playwright.config.ts`，不覆盖产品代码、shim或协议包，harness摘要单独记在snapshot.json。before只产四页对照，不拿旧外观去跑新合同断言；after再跑T5、详情、工作台布局、行审阅及原陪伴浏览器回归。配置使用仓库的playwright.config.ts，经校验的Home缓存浏览器固定为原root下browser-1228，不下载/升级浏览器；每轮结果和 `design-shots/desktop-<page>-before|after.png` 在该快照artifacts下。主页行取当前唯一对话主页中的待决事项引用行。
+
+2026-11-09：主人指定的 `codex-hook-trust-ux`、`topics-waiting-honest` 也允许这两个源码入口。这两条分支的 App 快照通过固定 `--receive-verified` 入口复用上述差异 archive 与完整 Git manifest 校验，避免不稳定 SSH 中传输约 208 MiB 的完整 archive。App target 由接收入口固定传入，不能由 manifest 选择；仅接受 after，只更新 appRoot，不覆盖浏览器 harness。仍固定 486f… 公共源码缓存，核验 commit/tree、每个 blob/mode、差异包摘要、路径和容量边界，离线安装自己的 JS 依赖并核对 workspace 解析；不复制 node_modules、Pods、构建物、账号或凭据。两端应一起更新 app/browser snapshot、source-manifest、remote/protocol 与 lock/lifecycle 模块。其它既有 App 分支继续保留原完整 Git archive 入口。
+
+入口拿锁后核对快照未在排队期间切换，预检4198空闲（占用即失败，不杀未知进程），测试HOME、TMP、daemon/workbench状态与输出均在本轮目录。用 `node apps/desktop/scripts/macmini-ui.mjs browser` 执行；全程headless与拒绝外连，不启动Xcode/模拟器或真实daemon。取回证据后，持同一锁只删除自己创建且没有被active的root/appRoot/browserRoot指向的目录；保留active的after快照，不清理他人的App快照。

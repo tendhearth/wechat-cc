@@ -79,7 +79,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   project_detached: {desktop: 409, phone: 409, wechatWorktree: '项目目录现在不在任何分支上，请在电脑上自己合并。'},
   project_dirty: {desktop: 409, phone: 409, wechatWorktree: '项目目录里有没提交的改动，CC 不替你合并。请处理那些改动，或在电脑上自己合并。'},
   worktree_project_missing: {desktop: 409, phone: 409},
-  worktree_base_missing: {desktop: 422, phone: 422, wechat: '项目里没有这个分支，没有开始工作。请核对分支名（本地分支），或去掉 @<分支> 从最新提交开始。'},
+  worktree_base_missing: {desktop: 422, phone: 422, wechat: '项目里没有这个分支，没有开始工作。请核对分支名（本地或远端跟踪分支，如 origin/dev），或去掉 @<分支> 从最新提交开始。'},
   worktree_branch_exists: {desktop: 409, phone: 409},
   worktree_branch_missing: {desktop: 409, phone: 409, wechatWorktree: '分支已经不在项目里了，没法重开。请重新交办一件。'},
   worktree_conflict: {desktop: 409, phone: 409, wechatWorktree: '原来的工作区位置被占了，没法重开。请在桌面上看看。'},
@@ -200,6 +200,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   workbench_archived: {desktop: 409, phone: 409, wechat: '这项任务已归档。请在桌面工作台恢复任务后再继续。', wechatWorktree: '这项任务已归档，请先在桌面恢复任务。'},
   workbench_busy: {desktop: 409, phone: 409, wechat: '任务轮次已变化或正在停止，这条补充没有发送。请重新查询任务后再提交。', wechatWorktree: '这个工作区还有会话开着，先「停止」或等它收工再操作。'},
   writer_alive: {desktop: 409},
+  writer_not_closed: {desktop: 409, phone: [409, 'workbench_busy'], wechat: '原执行程序没确认退出，补充要求没有发送。请先在任务页确认它已经结束。'},
   // ── CC 代主人对终端会话说一句(terminal_say,2026-10-24;features/terminal/routes.ts 的 /v1/cli/say,调用方只有 CC 的 MCP 工具)。
   // 业务上的拒绝回 409 + detail(登记处里的原状态,工具照实转给模型,不说成「它忙」);一句都没送出去。
   terminal_say_not_owner: {desktop: 403},

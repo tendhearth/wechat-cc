@@ -1,3 +1,4 @@
+import { STATUS_KEYS, STATUS_TABLE } from '@wechat-cc/protocol'
 import { useRouter } from 'expo-router'
 import { View } from 'react-native'
 import { useState } from 'react'
@@ -33,7 +34,7 @@ export function WorkSearchResults({ query = '', prefix = 'all', share = false }:
   return <View style={{ gap: space.s }}>
     <Sheet title={zh ? '筛选事项' : 'Filter work'} testID="search-work-filters">
       <TextField testID="search-project" accessibilityLabel={zh ? '项目' : 'Project'} placeholder={zh ? '项目或文件夹' : 'Project or folder'} value={project} onChangeText={setProject} />
-      {[['', zh ? '所有状态' : 'Any state'], ['waiting', zh ? '等你' : 'Waiting for you'], ['working', zh ? '在做' : 'Working'], ['done', zh ? '做完了' : 'Done'], ['replied', zh ? '带回来了' : 'Returned'], ['failed', zh ? '没做成' : 'Failed'], ['stopped', zh ? '停下了' : 'Stopped']].map(([value, label]) => <Button key={value} testID={`search-state-${value || 'all'}`} kind="secondary" label={`${state === value ? '✓ ' : ''}${label}`} onPress={() => setState(value!)} />)}
+      {[['', zh ? '所有状态' : 'Any state'], ...STATUS_KEYS.map(key => [key, t(lang, STATUS_TABLE[key].word)])].map(([value, label]) => <Button key={value} testID={`search-state-${value || 'all'}`} kind="secondary" label={`${state === value ? '✓ ' : ''}${label}`} onPress={() => setState(value!)} />)}
       <Button testID="search-archived" kind="secondary" label={archived ? (zh ? '含归档' : 'Including archived') : (zh ? '查看归档' : 'Include archived')} onPress={() => setArchived(v => !v)} />
     </Sheet>
     <Txt role="caption" tone="inkSoft">{zh ? '以前交办的事 · 按原时间保留' : 'Previously delegated · Original dates retained'}</Txt>

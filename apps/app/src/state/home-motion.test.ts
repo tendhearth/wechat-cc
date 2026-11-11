@@ -3,7 +3,7 @@ import { act, createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeDemoBackend } from '../backend/demo'
 import type { Backend, ChatPageT } from '../backend/types'
-import { advance, cleanup, mount, resetHost } from '../ui/native-motion.test-support'
+import { advance, background, cleanup, focus, host, mount, reduce, resetHost } from '../ui/native-motion.test-support'
 import { withProviders } from './providers.test-support'
 vi.mock('react-native', async () => (await import('../ui/native-motion.test-support')).nativeBoundary())
 vi.mock('react-native-safe-area-context', async () => { const { createElement } = await import('react'); return { SafeAreaView: ({ children }: any) => createElement('main', null, children) } })
@@ -19,6 +19,40 @@ const translateY = (container: Element) => JSON.parse(container.querySelector('[
   .transform.find((entry: any) => entry.translateY !== undefined).translateY
 
 describe('home follows live chat evidence', () => {
+  it('keeps live activity accessible and static under reduced motion, with expiry and lifecycle baselines', async () => {
+    host.reduced = true
+    const demo = makeDemoBackend({ lang: 'zh-Hans' })
+    const backend: Backend = { ...demo, mode: 'live', cliSessions: async () => [],
+      connection: () => ({ state: 'online', lastSyncedAt: 1, epoch: 1 }),
+      onConnection: cb => { cb({ state: 'online', lastSyncedAt: 1, epoch: 1 }); return () => {} },
+      subscribe: (name, cb) => name === 'approvals' ? (cb([] as any), () => {}) : name === 'agents' ? (cb({ running: 0, waiting: 0, tasks: [] } as any), () => {}) : demo.subscribe(name, cb),
+    }
+    const stream = (text: string) => ({ running: { turnId: 't' }, events: [{ id: 'fragment', turnId: 't', kind: 'agent_message', text }] })
+    const node = (text: string) => withProviders(createElement(Now, { stream: stream(text) }), { backend })
+    const ui = await mount(node('history')); await advance(0)
+    await ui.render(node('history')) // First fresh read after the screen has become active.
+    const still = (phase: string) => {
+      expect(ui.style(`cc-phase-${phase}`).transform).toEqual([{ translateY: 0 }, { scale: 1 }, { rotate: '0deg' }])
+    }
+    expect(ui.byId('now-cc').getAttribute('aria-label')).toBe('跟 CC 说，正在处理回复'); still('thinking')
+    await reduce(false)
+    expect(ui.byId('now-cc').getAttribute('aria-label')).toBe('跟 CC 说，正在处理回复')
+    await reduce(true); still('thinking')
+    await ui.render(node('new text'))
+    expect(ui.byId('now-cc').getAttribute('aria-label')).toBe('跟 CC 说，新回复正在到来'); still('speaking')
+    await advance(900)
+    expect(ui.byId('now-cc').getAttribute('aria-label')).toBe('跟 CC 说，正在处理回复'); still('thinking')
+    await advance(1600)
+    expect(ui.byId('now-cc').getAttribute('aria-label')).toBe('跟 CC 说'); still('idle')
+    await ui.render(node('fresh')); still('speaking')
+    await background('background'); still('idle')
+    await ui.render(node('while away')); await background('active'); still('idle')
+    await ui.render(node('return baseline')); still('thinking')
+    await focus(false); still('idle')
+    await focus(true); await ui.render(node('focus baseline')); still('thinking')
+    await reduce(false); await advance(2500)
+    expect(ui.byId('now-cc').getAttribute('aria-label')).toBe('跟 CC 说')
+  })
   it('stays on home, refreshes on chat version changes, and animates only each genuinely new reply once', async () => {
     const message = (id: string, at: number) => ({ id, at, text: 'CC 的回复', role: 'cc' as const, source: 'phone' as const, kind: 'text', truncated: false })
     let page: ChatPageT = { matterId: 'owner', title: 'CC', messages: [message('history', 100)], pending: null, failed: null, hasMore: false, nextBefore: null }
@@ -26,10 +60,11 @@ describe('home follows live chat evidence', () => {
     const read = vi.fn(async () => page), chatSay = vi.fn()
     const demo = makeDemoBackend({ lang: 'zh-Hans' })
     // 只有「真连着电脑」CC 才亮、才动(演示是暗的),所以假后端报 live + 在线。
-    const backend: Backend = { ...demo, mode: 'live', chat: read, chatSay,
+    const backend: Backend = { ...demo, mode: 'live', chat: read, chatSay, cliSessions: async () => [],
       connection: () => ({ state: 'online', lastSyncedAt: 1, epoch: 1 }),
       onConnection: cb => { cb({ state: 'online', lastSyncedAt: 1, epoch: 1 }); return () => {} },
       subscribe: <T,>(name: Parameters<Backend['subscribe']>[0], callback: (data: T) => void) => {
+        if (name === 'approvals') { callback([] as T); return () => {} } // this test observes replies with no permission blocking them
         if (!name.startsWith('matter/')) return demo.subscribe(name, callback)
         callbacks.set(name, callback as (data: unknown) => void); callback({ version: 1 } as T); return () => { callbacks.delete(name) }
       },

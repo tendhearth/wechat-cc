@@ -51,7 +51,7 @@ describe('phoneRouteAllowed', () => {
       'GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop','POST /v1/cli/session-stop',
       'POST /v1/cli/decide', 'POST /v1/cli/session-say',
       // P3e-1:一件事上的动作与交办的新键(/v1/matter/*)—— 别名行都是 link: none(停下除外,见下),新键同
-      'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree',
+      'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact','GET /v1/matter/permission-script', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree',
       'POST /v1/matter/create', 'GET /v1/matter/create-receipt',
       // P3e-2:撤掉这一轮、改动与逐文件审阅的新键 —— 别名行都是 link: none,新键同
       'GET /v1/matter/rewind', 'POST /v1/matter/rewind', 'GET /v1/matter/changes', 'POST /v1/matter/review-mark', 'POST /v1/matter/review-return', 'POST /v1/matter/review-comment', 'POST /v1/matter/review-comments-send']

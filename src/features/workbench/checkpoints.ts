@@ -36,7 +36,7 @@ export const REWIND_REF_PREFIX = 'refs/tendhearth/rewind/'
 // hooksPath 指向空设备:git 在那下面找不到任何钩子(Windows 同 self-change/git.ts 用 NUL)
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
 export const SAFE = ['--no-pager', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${NULL_DEVICE}`, '-c', 'core.autocrlf=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false']
-export const EXCLUDE = [':(exclude,glob)**/.cc-workbench/**', ':(exclude,glob)**/.cc-workbench-inputs/**']
+export const EXCLUDE = [':(exclude,icase,glob)**/.cc-tasks/**', ':(exclude,glob)**/.cc-workbench/**', ':(exclude,glob)**/.cc-workbench-inputs/**']
 const IDENTITY = ['-c', 'user.name=Tendhearth CC', '-c', 'user.email=cc@localhost', '-c', 'commit.gpgSign=false']
 const TASK = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 const OID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
@@ -199,6 +199,8 @@ async function checkpoint(input: CheckpointInput, signal: AbortSignal): Promise<
       if (!copied || error instanceof Cancelled) throw error
       await seedFresh(); await add()
     }
+    // Also remove runtime files inherited from a forced/stale index seed.
+    await run(['rm','--cached','-r','--ignore-unmatch','--',':(icase,glob)**/.cc-tasks/**'], { index })
     const tree = line(await run(['write-tree'], { index }))
     if (!OID.test(tree)) return { skipped: 'git_error' }
     let sameTree = false

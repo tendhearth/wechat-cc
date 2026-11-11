@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   normalizeHookPayload, shouldSkipHook, postCliEvent, hookCommandLine,
   installHooks, uninstallHooks, hookStatus, claudeSettingsPath, codexHooksPath, summarizeToolInput,
@@ -177,11 +177,12 @@ describe('hookCommandLine', () => {
 
 describe('installHooks / uninstallHooks / hookStatus', () => {
   const cmd = '"/opt/bun" "/r/cli.ts" hook claude'
-  it('claude:文件不存在 → 建;四个事件各一组;PermissionRequest 同步 + 150s,其余 async + 5s', () => {
+  it('claude:文件不存在 → 建;五个事件各一组;PermissionRequest 同步 + 150s,SessionStart 同步 + 1s,其余 async + 5s', () => {
     const file = join(dir, 'settings.json')
     expect(installHooks(file, 'claude', cmd)).toEqual({ changed: true })
     const cfg = JSON.parse(readFileSync(file, 'utf8'))
-    expect(Object.keys(cfg.hooks).sort()).toEqual(['PermissionRequest', 'SessionEnd', 'Stop', 'UserPromptSubmit'])
+    expect(Object.keys(cfg.hooks).sort()).toEqual(['PermissionRequest', 'SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit'])
+    expect(cfg.hooks.SessionStart[0].hooks[0]).toMatchObject({ type: 'command', command: cmd, async: false, timeout: 1 })
     expect(cfg.hooks.PermissionRequest[0].hooks[0]).toMatchObject({ type: 'command', command: cmd, async: false, timeout: 150 })
     expect(cfg.hooks.Stop[0].matcher).toBeUndefined()
     expect(cfg.hooks.Stop[0].hooks[0]).toMatchObject({ type: 'command', command: cmd, async: true, timeout: 5 })
@@ -205,12 +206,13 @@ describe('installHooks / uninstallHooks / hookStatus', () => {
     expect(cfg2.hooks.Stop.map((g: { hooks: { command: string }[] }) => g.hooks[0]!.command)).toEqual(['ntfy send done', cmd2])
     expect(cfg2.hooks.Stop).toHaveLength(2)
   })
-  it('codex:hooks.json 形状同款,事件是 Stop / PermissionRequest / UserPromptSubmit / SessionEnd,没有 matcher', () => {
+  it('codex:hooks.json 形状同款,包含同步 SessionStart,没有 matcher', () => {
     const file = join(dir, '.codex', 'hooks.json')
     const c = '"/opt/bun" "/r/cli.ts" hook codex'
     installHooks(file, 'codex', c)
     const cfg = JSON.parse(readFileSync(file, 'utf8'))
-    expect(Object.keys(cfg.hooks).sort()).toEqual(['PermissionRequest', 'SessionEnd', 'Stop', 'UserPromptSubmit'])
+    expect(Object.keys(cfg.hooks).sort()).toEqual(['PermissionRequest', 'SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit'])
+    expect(cfg.hooks.SessionStart[0].hooks[0]).toMatchObject({ command: c, async: false, timeout: 1 })
     expect(cfg.hooks.PermissionRequest[0].matcher).toBeUndefined()
     expect(cfg.hooks.PermissionRequest[0].hooks[0].command).toBe(c)
   })
@@ -218,7 +220,7 @@ describe('installHooks / uninstallHooks / hookStatus', () => {
     const file = join(dir, 'settings.json')
     writeFileSync(file, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'ntfy send done' }] }] } }))
     installHooks(file, 'claude', cmd)
-    expect(uninstallHooks(file, 'claude')).toEqual({ changed: true, removed: 4 })
+    expect(uninstallHooks(file, 'claude')).toEqual({ changed: true, removed: 5 })
     const cfg = JSON.parse(readFileSync(file, 'utf8'))
     expect(cfg.hooks).toEqual({ Stop: [{ hooks: [{ type: 'command', command: 'ntfy send done' }] }] })
     expect(uninstallHooks(file, 'claude')).toEqual({ changed: false, removed: 0 })
@@ -234,7 +236,7 @@ describe('installHooks / uninstallHooks / hookStatus', () => {
   it('路径:claude 在 ~/.claude/settings.json;codex 认 CODEX_HOME,缺省 ~/.codex/hooks.json', () => {
     expect(claudeSettingsPath('/home/u')).toBe(join('/home/u', '.claude', 'settings.json'))
     expect(codexHooksPath('/home/u', {})).toBe(join('/home/u', '.codex', 'hooks.json'))
-    expect(codexHooksPath('/home/u', { CODEX_HOME: '/x/codex' })).toBe(join('/x/codex', 'hooks.json'))
+    expect(codexHooksPath('/home/u', { CODEX_HOME: '/x/codex' })).toBe(join(resolve('/x/codex'), 'hooks.json')) // 与 Codex 一样先绝对化(Windows 上带盘符)
     expect(existsSync(dir)).toBe(true); mkdirSync(join(dir, 'z'))
   })
 })

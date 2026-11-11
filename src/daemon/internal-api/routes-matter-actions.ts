@@ -13,6 +13,7 @@
  * 路由表这几行标 `module: 'workbench'`:工作台此刻不是 ok ⇒ 模块门原样回 503 workbench_not_wired(同搬来之前)。
  */
 import { isWorkbenchProviderId } from '../../domain/workbench/executor-capabilities'
+import { permissionReason } from '../../domain/permission-denial'
 import { parseEntryInput } from '../../adapters/workbench/task-entry'
 import { PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, workbenchErrorHttp, workbenchErrorSpec } from '@wechat-cc/protocol'
 import type { MattersService } from '../../app/matters/service'
@@ -113,15 +114,19 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
     'POST /v1/matter/permission': action(async (m, _q, body) => {
       const b = objectBody(body)
       if (!b || typeof b.id !== 'string' || !ID.test(b.id) || typeof b.runId !== 'string' || !UUID.test(b.runId) || typeof b.requestId !== 'string' || !UUID.test(b.requestId)) return phoneInvalid('invalid_request')
-      if (b.decision !== 'allow' && b.decision !== 'deny') return phoneInvalid('invalid_decision')
-      try { m.permission(b.id, b.runId, b.requestId, b.decision); return { status: 200, body: { ok: true } } } catch (err) { return phoneError(err) }
+      if (b.decision !== 'allow' && b.decision !== 'deny' && b.decision !== 'allow_task') return phoneInvalid('invalid_decision')
+      let reason: string | undefined
+      try { reason = permissionReason(b.reason, b.decision) } catch { return phoneInvalid('invalid_request') }
+      try { reason ? m.permission(b.id, b.runId, b.requestId, b.decision, reason) : m.permission(b.id, b.runId, b.requestId, b.decision); return { status: 200, body: { ok: true } } } catch (err) { return phoneError(err) }
     }, async (m, _q, body) => {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
       const requestId = typeof value?.requestId === 'string' ? value.requestId : ''
       const decision = value?.decision
-      if (!TASK_ID.test(id) || !UUID.test(requestId) || (decision !== 'allow' && decision !== 'deny')) return invalid()
-      try { await m.desktop.resolvePermission(id, requestId, decision); return { status: 200, body: { ok: true } } } catch (err) { return mappedError(err) }
+      if (!TASK_ID.test(id) || !UUID.test(requestId) || (decision !== 'allow' && decision !== 'deny' && decision !== 'allow_task')) return invalid()
+      let reason: string | undefined
+      try { reason = permissionReason(value?.reason, decision) } catch { return invalid() }
+      try { await (reason ? m.desktop.resolvePermission(id, requestId, decision, reason) : m.desktop.resolvePermission(id, requestId, decision)); return { status: 200, body: { ok: true } } } catch (err) { return mappedError(err) }
     }),
 
     // 回答提问。手机:带 runId(换了 ⇒ question_stale),answers 至多 PHONE_ANSWER_MAX_JSON。桌面(原 /v1/workbench/answer):没有 runId,至多 20000。
@@ -168,7 +173,7 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
       if (!b || Object.keys(b).some(k => k !== 'id' && k !== 'action') || typeof b.id !== 'string' || !ID.test(b.id) || (b.action !== 'commit' && b.action !== 'remove' && b.action !== 'merge' && b.action !== 'reopen' && b.action !== 'run' && b.action !== 'stop')) return phoneInvalid('invalid_request')
       try {
         if (b.action === 'run' || b.action === 'stop') return { status: 200, body: { ok: true, ...await m.worktreeScript(b.id, b.action) } }
-        return { status: 200, body: { ok: true, ...m.worktree(b.id, b.action) } }
+        return { status: 200, body: { ok: true, ...await m.worktree(b.id, b.action) } }
       } catch (err) { return phoneError(err) }
     }, async (m, _q, body) => {
       const value = objectBody(body)
@@ -330,12 +335,12 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
     // 交办一件新事(parseEntryInput 验正文)。手机:手机表面,出生地按传输(App / 浏览器),202 回 {ok, …结果};
     // 桌面(原 /v1/workbench/create-entry):桌面表面,只有 operator 令牌记出生地 desktop,错误码是交办入口那一列(desktopEntry)。
     'POST /v1/matter/create': action(async (m, _q, body, caller) => {
-      try { return { status: 202, body: { ok: true, ...m.createEntry(parseEntryInput(body), { surface: 'phone', origin: caller?.client ?? null }) as object } } } catch (err) { return phoneError(err, true) }
+      try { return { status: 202, body: { ok: true, ...await m.createEntry(parseEntryInput(body), { surface: 'phone', origin: caller?.client ?? null }) as object } } } catch (err) { return phoneError(err, true) }
     }, async (m, query, body, caller) => {
       if (query.size) return invalid()
       try {
         const input = parseEntryInput(body)
-        return { status: 202, body: m.createEntry(input, { surface: 'desktop', ownerKey: ownerKey(), ...desktopOrigin(caller) }) }
+        return { status: 202, body: await m.createEntry(input, { surface: 'desktop', ownerKey: ownerKey(), ...desktopOrigin(caller) }) }
       } catch (err) { return mappedError(err, true) }
     }),
 

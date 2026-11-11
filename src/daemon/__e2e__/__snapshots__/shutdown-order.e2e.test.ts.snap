@@ -2,6 +2,8 @@
 
 exports[`daemon shutdown order (snapshot) > stops every subsystem in the recorded order 1`] = `
 [
+  "module startup-sweeps/dependency-prewarm",
+  "module startup-sweeps/dependency-cache",
   "module reports/stop",
   "module scheduled-jobs/stop",
   "module reminders/stop",

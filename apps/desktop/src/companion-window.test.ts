@@ -25,6 +25,70 @@ afterEach(() => {
 })
 
 describe('companion placement recovery control', () => {
+  it('R2: a false server approval result keeps the pet card visible for retry', async () => {
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    const item = { hash: 'approval-one', prompt: 'python3 check.py', since: '2026-11-09T00:00:00Z', expires_at: '2099-01-01T00:00:00Z' }
+    const presence = { cursor: 1, presence: { presence: 'online', activity: { kind: 'idle' }, news: { unread: 0 } }, pet: { owner_last_contact_at: null, turn: { phase: 'permission', since: null }, last_done_at: null, pending_permissions: [{ ...item, prompt: '有操作需要批准' }] } }
+    invoke.mockImplementation(async (cmd: unknown, args: any) => {
+      if (cmd === 'wechat_cli_json') return { ok: true, baseUrl: 'http://127.0.0.1:19999', token: 'test-only' } as any
+      if (cmd === 'daemon_request' && args.path.includes('permissions/pending')) return { items: [item] } as any
+      if (cmd === 'pet_permission_resolve') return false as any
+    })
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('subscribe')) return url.includes('since=1') ? new Promise(() => {}) : { ok: true, json: async () => presence }
+      return { ok: true, json: async () => manifest }
+    }))
+    await mount(true); await vi.advanceTimersByTimeAsync(0)
+    const allow = document.querySelector<HTMLButtonElement>('.pet-card-allow')!
+    expect(allow).not.toBeNull()
+    expect(document.querySelector('.pet-card-allow-task')).toBeNull()
+    allow.click(); await vi.advanceTimersByTimeAsync(0)
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'pet_permission_resolve')).toHaveLength(1)
+    expect(document.getElementById('pet-card')!.hidden).toBe(false)
+    expect(document.querySelector('.pet-card-title')!.textContent).toContain('没送出去')
+    expect(allow.disabled).toBe(false)
+    window.dispatchEvent(new Event('pagehide'))
+  })
+  it.each(['reduced', 'quiet', 'drag'])('stops the activity reader immediately during %s and baselines on return', async mode => {
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    const presence = { cursor: 1, presence: { presence: 'online', activity: { kind: 'idle' }, news: { unread: 0 } }, pet: { owner_last_contact_at: null, turn: { phase: 'idle', since: null }, last_done_at: null, pending_permissions: [] } }
+    invoke.mockImplementation(async (cmd: unknown, args: any) => {
+      if (cmd === 'wechat_cli_json') return { ok: true, baseUrl: 'http://127.0.0.1:19999', token: 'test-only' } as any
+      if (cmd === 'daemon_request') {
+        if (args.path.includes('subscribe')) return args.path.includes('since=1') ? new Promise(() => {}) : presence as any
+        return { cursor: 1, running: { turnId: 't' }, events: args.path.includes('since=0') ? [{ id: 'x', turnId: 't', kind: 'agent_message', text: 'history' }] : [] } as any
+      }
+      if (cmd === 'start_companion_drag') return { x: 100, y: 100 } as any
+    })
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('subscribe')) {
+        if (url.includes('since=1')) return new Promise(() => {}) // unchanged presence long poll
+        return { ok: true, json: async () => presence }
+      }
+      return { ok: true, json: async () => manifest }
+    }))
+    await mount(true); await vi.advanceTimersByTimeAsync(2100)
+    const reads = () => invoke.mock.calls.filter(([cmd, args]) => cmd === 'daemon_request' && (args as any).path.includes('/events'))
+    expect(reads().length, JSON.stringify(invoke.mock.calls)).toBeGreaterThan(1)
+    const stage = document.getElementById('pet-stage')!, reduced = document.getElementById('pet-reduced-motion') as HTMLInputElement
+    if (mode === 'reduced') { reduced.checked = true; reduced.dispatchEvent(new Event('change')) }
+    if (mode === 'quiet') document.getElementById('pet-quiet')!.click()
+    if (mode === 'drag') {
+      stage.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, screenX: 100, screenY: 100 }))
+      window.dispatchEvent(new MouseEvent('mousemove', { buttons: 1, screenX: 120, screenY: 100 }))
+    }
+    const count = reads().length
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(reads()).toHaveLength(count); expect(stage.dataset.ccPhase).toBe('idle')
+    if (mode === 'reduced') { reduced.checked = false; reduced.dispatchEvent(new Event('change')) }
+    if (mode === 'quiet') document.getElementById('pet-quiet')!.click()
+    if (mode === 'drag') window.dispatchEvent(new MouseEvent('mouseup', { button: 0, screenX: 120, screenY: 100 }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(reads()).toHaveLength(count + 1)
+    expect((reads().at(-1)![1] as any).path).toContain('since=0')
+    expect(stage.dataset.ccPhase).toBe('thinking')
+    window.dispatchEvent(new Event('pagehide'))
+  })
   it.each([true,false])('keeps planted-foot artwork in place and retains native travel only for fallback (authored:%s)',async authored=>{
     const kit=structuredClone(manifest)
     if(!authored)for(const form of ['lit','unlit'])delete kit.forms[form].states['life-walk']

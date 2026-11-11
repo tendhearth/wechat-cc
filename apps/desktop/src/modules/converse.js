@@ -60,6 +60,8 @@ const IMAGE_MAX_BYTES = 10 * 1024 * 1024
 // 「此刻」页的气泡要显示 CC 最近一句真话:订阅者每次渲染都拿到当前消息表。
 /** @type {Set<(msgs: ConverseMsg[]) => void>} */
 const listeners = new Set()
+/** @type {Set<(stream:import('../generated/cc-activity.js').CCStream|null)=>void>} */ const activityListeners = new Set()
+/** @type {import('../generated/cc-activity.js').CCStream|null} */ let currentActivity = null
 
 /** @type {ReturnType<typeof mountOwnerConversation>|null} */ let ownerReader=null
 let sharedSupported=false,earlierCursor='',laterCursor='',reconcileAfter=0,ownerScope=''
@@ -100,6 +102,8 @@ function acceptWork(data){
 }
 /** @param {any} data */
 function acceptStream(data){
+  currentActivity = data
+  for (const cb of activityListeners) cb(data)
   for(const event of data.events??[]){const previous=streamRows.get(event.id);streamRows.set(event.id,{...event,localId:previous?.localId??nextId++})}
   messages=messages.filter(m=>!m.contractKey?.startsWith('stream:'))
   for(const [id,event] of streamRows){
@@ -279,8 +283,7 @@ function messageHtml(m) {
   const body = extras
     ? `<div class="converse-cc-body">${m.role === "cc" ? narrationHtml(m) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m)}</div>`
     : bubble
-  return `<div class="converse-msg ${roleCls}${pendingCls}">
-    ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
+  return `<div class="converse-msg ${roleCls}${pendingCls}" role="group" aria-label="${m.role === "user" ? "你" : "CC"}">
     ${userImages ? `<div class="converse-user-body">${userImages}${m.text.trim() ? body : ""}</div>` : body}
     ${m.legacyMedia ? '<small class="converse-legacy-media">这条记录只保存了附件数量，原附件未保存在对话中。</small>' : ""}
     ${extras || !m.text.trim() ? "" : replayBtn}
@@ -582,6 +585,8 @@ export function subscribeConverse(cb) {
   cb(messages)
   return () => { listeners.delete(cb) }
 }
+/** @param {(stream:import('../generated/cc-activity.js').CCStream|null)=>void} cb */
+export function subscribeConverseActivity(cb) { activityListeners.add(cb); cb(currentActivity); return () => { activityListeners.delete(cb) } }
 
 /** home 只露输入框与发送;chat 是完整对话。 @param {'home'|'chat'} mode */
 export function setConverseMode(mode) {

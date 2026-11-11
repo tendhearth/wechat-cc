@@ -30,7 +30,8 @@
         "text": "跑一下数据库迁移",
         "createdAt": 1793412600000,
         "sourceId": null,
-        "runId": "<uuid:6>"
+        "runId": "<uuid:6>",
+        "turnId": "<turn:3>"
       },
       {
         "id": 11,
@@ -40,6 +41,7 @@
         "createdAt": 1793412600000,
         "sourceId": null,
         "runId": "<uuid:6>",
+        "turnId": "<turn:3>",
         "activity": {
           "id": "call-1",
           "type": "read",
@@ -51,10 +53,11 @@
         "id": 12,
         "taskId": "<task:permission>",
         "kind": "system",
-        "text": "权限请求：Bash · Run the migration against the local db · <uuid:7>",
+        "text": "权限请求：Bash · Run the migration against the local db\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。 · <uuid:7>",
         "createdAt": 1793412600000,
         "sourceId": null,
-        "runId": "<uuid:6>"
+        "runId": "<uuid:6>",
+        "turnId": "<turn:3>"
       }
     ],
     "artifacts": [],
@@ -95,7 +98,7 @@
         "id": "<uuid:7>",
         "taskId": "<task:permission>",
         "tool": "Bash",
-        "description": "Run the migration against the local db",
+        "description": "Run the migration against the local db\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。",
         "createdAt": 1793412600000
       }
     ]

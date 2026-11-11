@@ -8,6 +8,7 @@
  *   要么是任务记录里的失败码(core executionFailureMessage 认得的,不走 HTTP)。daemon 改名 / 删码 ⇒ 这里红。
  * App 那半在 apps/app/src/net/errors.test.ts。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -134,7 +135,7 @@ const INTERNAL_ONLY = new Set([
     'codex_resume_thread_mismatch', 'codex_runtime_already_started', 'codex_runtime_record_limit', 'codex_runtime_requires_lifetime_stream',
     'codex_session_closed', 'codex_steer_no_longer_active', 'codex_steer_turn_mismatch', 'codex_terminal_cleanup_unverified',
     'codex_turn_already_running', 'codex_turn_cancelled', 'codex_turn_start_mismatch', 'codex_unverified_thread_cwd',
-    'codex_unverified_thread_policy', 'control_conflict', 'control_stale', 'diff_limit', 'entry_already_accepted', 'entry_matter_link_failed',
+    'control_conflict', 'control_stale', 'diff_limit', 'entry_already_accepted', 'entry_matter_link_failed',
     'entry_not_accepted', 'input_not_delivered', 'matters_not_wired', 'missing_finish_reason',
     'notification_conflict', 'question_limit', 'review_cancelled', 'review_deadline', 'review_size_limit', 'rewind_backup_exists',
     'rewind_git_failed', 'rewind_verify_tree', 'runtime_closed_before_input_acknowledgement', 'session_start_timeout', 'subscription_conflict',
@@ -165,7 +166,7 @@ describe('工作台抛出的码都归了类(反向守卫)', () => {
     const { join } = await import('node:path')
     const { statSync } = await import('node:fs')
     const files: string[] = []
-    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts') && !p.includes('.test.')) files.push(p) } }
+    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (isTaskCachePath(p)) continue; if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts') && !p.includes('.test.')) files.push(p) } }
     // 工作台的 store 与执行者 / 协调器 / 「一件事」共用的零件(以前在 src/core/workbench,架构终态 E3 分进 adapters / domain)
     walk('src/adapters/store/workbench')
     walk('src/adapters/workbench')
@@ -189,4 +190,9 @@ describe('记忆编辑回的 code 字面量都在表里(10-23:原来的扫描只
   // 记忆编辑这一族:memory_changed / memory_no_owner / memory_edit_*(别的 memory_* 是老路由的 error 字段,不归这张表)
   it('扫到了', () => { expect(codes.sort()).toEqual(['memory_changed', 'memory_edit_bulk', 'memory_edit_failed', 'memory_edit_stale_key', 'memory_edit_too_large', 'memory_no_owner']) })
   it.each(codes)('%s', code => { expect(WORKBENCH_ERRORS[code]?.desktop, code).toBeDefined() })
+})
+
+it('unconfirmed writer continuation is a conflict on desktop and phone, never an internal failure',()=>{
+  expect(workbenchErrorHttp('writer_not_closed','desktop')).toEqual({status:409,error:'writer_not_closed'})
+  expect(workbenchErrorHttp('writer_not_closed','phone')).toEqual({status:409,error:'workbench_busy'})
 })

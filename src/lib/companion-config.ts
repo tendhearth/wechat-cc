@@ -48,6 +48,8 @@ export interface CompanionConfig {
   import_local_history: boolean
   /** 每晚整理长期记忆 memory.md(2026-09-25,memory/nightly.ts)。 */
   memory_nightly_enabled: boolean
+  /** Give terminal SessionStart the matching project's public topic index. */
+  project_memory_into_sessions?: boolean
   /** 每晚整理的时间点,主人时区的 HH:MM。 */
   memory_nightly_at: string
   /** CC 不定期给主人写信(2026-10-16,letters/runtime.ts)。默认关:主人说要才开。 */
@@ -87,6 +89,7 @@ export function defaultCompanionConfig(): CompanionConfig {
     last_introspect_at: null,
     import_local_history: false,
     memory_nightly_enabled: true,
+    project_memory_into_sessions: true,
     memory_nightly_at: '04:00',
     letters_enabled: false,
     hearth_enabled: false,
@@ -115,6 +118,7 @@ export function loadCompanionConfig(stateDir: string): CompanionConfig {
       last_introspect_at: typeof parsed.last_introspect_at === 'string' ? parsed.last_introspect_at : null,
       import_local_history: typeof parsed.import_local_history === 'boolean' ? parsed.import_local_history : d.import_local_history,
       memory_nightly_enabled: typeof parsed.memory_nightly_enabled === 'boolean' ? parsed.memory_nightly_enabled : d.memory_nightly_enabled,
+      project_memory_into_sessions: typeof parsed.project_memory_into_sessions === 'boolean' ? parsed.project_memory_into_sessions : true,
       memory_nightly_at: typeof parsed.memory_nightly_at === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(parsed.memory_nightly_at) ? parsed.memory_nightly_at : d.memory_nightly_at,
       letters_enabled: typeof parsed.letters_enabled === 'boolean' ? parsed.letters_enabled : d.letters_enabled,
       ingest_enabled: typeof parsed.ingest_enabled === 'boolean' ? parsed.ingest_enabled : undefined,

@@ -99,7 +99,7 @@ export interface Backend {
   onConnection(cb: (c: Connection) => void): Unsubscribe
   subscribe<T>(topic: 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`, cb: (data: T) => void): Unsubscribe
   topics(p: { view?: 'recent' | 'all'; limit?: number; cursor?: string }): Promise<TopicsListT>
-  topicDetail(p: { id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string }): Promise<TopicDetailT>
+  topicDetail(p: { id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }): Promise<TopicDetailT>
   topicEdit(action: 'rename' | 'merge' | 'delete' | 'wrong', input: { id: string; title?: string; into?: string }): Promise<void>
   topicOpen(id: string, requestId: string): Promise<TopicOpenT>
   matterHistory(lang: Lang): Promise<MatterT[]>
@@ -118,7 +118,8 @@ export interface Backend {
   reviewCommentDelete(p: { id: string; commentId: string }): Promise<void>
   /** 把这件事所有草稿一起发给执行者;requestId 同一批重点沿用。不自动重发:超时 ⇒ 不确定。 */
   reviewCommentsSend(p: { id: string; requestId: string; summary?: string }): Promise<{ sent: number; remaining: number; skippedDiscarded: number }>
-  decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' }): Promise<void>
+  decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' | 'allow_task'; reason?: string }): Promise<void>
+  permissionScript(p: { id: string; requestId: string; path: string; sha256: string; offset: number }): Promise<{content:string;nextOffset:number|null}>
   /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>
   /** 撤掉这一轮的预览(GET /m/api/matter/rewind,回退切片 4):固定回到最新那一轮开始之前;artifactId = changes 那一轮的。只给配过对的手机。 */

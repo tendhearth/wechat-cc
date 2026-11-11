@@ -1,5 +1,6 @@
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { toolInputFacts } from '../../../domain/permission-rules/facts'
+import { permissionDenialMessage } from '../../../domain/permission-denial'
 import type { AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from '../../../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from '../../../domain/user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from '../../workbench/permissions'
@@ -30,7 +31,7 @@ export interface ClaudeAgentProviderOptions {
    * `lastActiveChatId` ref, which under concurrent dispatch could read
    * another chat's id mid-call and cross-resolve the tier.
    */
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: SpawnContext) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: SpawnContext) => Options | Promise<Options>
   /**
    * Path to the `claude` binary, threaded into cheapEval's query() call.
    * Optional — when omitted the SDK's bundled discovery runs. Used in
@@ -130,8 +131,9 @@ export function makeWorkbenchClaudeCanUseTool(
       const inputPreview = nativeMcpInputPreview(input)
       if (!inputPreview || inputPreview.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX - 256) return denied
       try {
-        const allowed = await requestPermission({tool:toolName,description:`${toolName}\n${inputPreview}`}, options.signal)
-        return allowed && !options.signal.aborted ? {behavior:'allow'} : denied
+        let feedback: string | undefined
+        const allowed = await requestPermission({tool:toolName,description:`${toolName}\n${inputPreview}`,onDenied:reason=>{feedback=permissionDenialMessage(`${toolName}\n${inputPreview}`,reason)}}, options.signal)
+        return allowed && !options.signal.aborted ? {behavior:'allow'} : feedback ? {behavior:'deny',message:feedback} : denied
       } catch { return denied }
     }
     const kind = classifyToolUse(toolName, input)
@@ -153,12 +155,14 @@ export function makeWorkbenchClaudeCanUseTool(
       return { behavior:'deny', message:'The complete permission detail is too large to review safely.' } satisfies PermissionResult
     }
     let allowed = false
+    let feedback: string | undefined
     try {
       // 放行规则(2026-10-19)要原文:命令、文件路径(拿不到就不给)。
-      const facts = toolInputFacts(input)
+      const facts = toolInputFacts(input, true)
       allowed = await requestPermission({
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,
+        onDenied: reason => { feedback = permissionDenialMessage(`${toolName}\n${description}`, reason) },
         ...(facts.command ? { command: facts.command } : {}),
         ...(facts.paths.length ? { paths: facts.paths } : {}),
       }, options.signal)
@@ -167,7 +171,7 @@ export function makeWorkbenchClaudeCanUseTool(
     }
     return allowed && !options.signal.aborted
       ? { behavior: 'allow' } satisfies PermissionResult
-      : { behavior: 'deny', message: 'The task permission request was denied or expired.' } satisfies PermissionResult
+      : { behavior: 'deny', message: feedback ?? 'The task permission request was denied or expired.' } satisfies PermissionResult
   }
 }
 
@@ -330,9 +334,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     return text.trim().length > 0 ? text : resultText
   }
   return {
-    modelCatalog(project) {
+    async modelCatalog(project) {
       const deadline=Date.now()+15_000
-      const options=opts.sdkOptionsForProject(project.alias,project.path,TIER_PROFILES.trusted,'workbench:catalog')
+      const options=await opts.sdkOptionsForProject(project.alias,project.path,TIER_PROFILES.trusted,'workbench:catalog')
       return discoverClaudeModels(options,Math.max(0,deadline-Date.now()))
     },
     // One-shot haiku-class eval. Used by chatroom convergence check +
@@ -358,7 +362,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // chatId is threaded into sdkOptionsForProject so the builder can
       // produce a canUseTool whose tier/mode closures are bound to THIS
       // session — see bootstrap/index.ts:buildCanUseTool().
-      const options = {...opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
+      const options = {...await opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
       const execution = spawnOpts.execution ? {...spawnOpts.execution} : undefined
       if (execution) {
         if (execution.model) options.model=execution.model

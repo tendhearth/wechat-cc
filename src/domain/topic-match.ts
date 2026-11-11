@@ -7,10 +7,19 @@
  * 选好话题以后,每个话题挑几条最相关的条目、渲染成信封里的 `<topics>` 那一段。
  */
 
+import { isRoutineTopicEntry, isRoutineTopicText } from './topic-noise'
+
 export type TopicEntryKind = 'fact' | 'decision' | 'commitment' | 'progress' | 'conclusion'
 
 export interface MatchEntry { id: string; kind: TopicEntryKind; line: string; body: string; due: string | null; updatedTs: string }
 export interface MatchTopic { id: string; title: string; summary: string; aliases: string[]; tags: string[]; lastActive: string; entries: MatchEntry[] }
+
+/** Legacy receipts must not influence matching, model candidates, summaries or selected entries. */
+export function withoutRoutineTopicNoise(t: MatchTopic): MatchTopic {
+  const state = t.summary.match(/^(.*?)。?现状[:：]([\s\S]*)$/)
+  const summary = isRoutineTopicText(t.summary) ? '' : state && isRoutineTopicText(state[2]!) ? state[1]!.replace(/[。.;；]+$/, '') : t.summary
+  return { ...t, summary, entries: t.entries.filter(e => !isRoutineTopicEntry(e)) }
+}
 
 export interface TopicMatch {
   /** 定了的话题(按分数从高到低)。 */
@@ -140,13 +149,26 @@ export function parseTopicJudge(answer: string, candidates: readonly Pick<MatchT
 
 const KIND_LABEL: Record<TopicEntryKind, string> = { fact: '事实', decision: '决定', commitment: '承诺', progress: '进展', conclusion: '结论' }
 
-/** 一个话题里挑几条:模型点名优先,再按字面重合、还没兑现的承诺和新近。 */
-export function pickEntries(text: string, t: MatchTopic, max = MAX_ENTRIES, preferredEntryId?: string): MatchEntry[] {
+/** 没有独立 unfinished 字段;只把明确写着欠项的 live progress 提前,不把已完成成果当待办。 */
+function entryPriority(e: MatchEntry): number {
+  if (e.kind === 'commitment') return 5
+  const unfinished = `${e.line}\n${e.body}`.split(/[\n;；,，。]/).some(clause => {
+    // “已完成全部待办” is completed progress; “已完成桌面;仍待手机验收” still has an obligation.
+    if (/(?:已完成|已解决|已处理|已兑现|验收通过|已上线|已交付|\b(?:completed|resolved|finished)\b)/i.test(clause) && !/尚未|未完成|仍|还|但|\b(?:still|remaining|but|not yet)\b/i.test(clause)) return false
+    return /尚未|未完成|尚待|仍需|还需|(?:^|\s)待|待(?:补|验收|确认|处理|办|完成|定)|欠|卡在|阻塞|等待|\b(?:pending|blocked|incomplete|remaining|not yet)\b/i.test(clause)
+  })
+  if (e.kind === 'progress' && unfinished) return 4
+  return e.kind === 'decision' ? 3 : e.kind === 'conclusion' ? 2 : e.kind === 'progress' ? 1 : 0
+}
+
+/** 模型点名 / 明确相关度优先;同等相关按承诺、未完成进展、决定、结论、一般进展、新近。开场注入直接按优先级。 */
+export function pickEntries(text: string, t: MatchTopic, max = MAX_ENTRIES, preferredEntryId?: string, ongoingFirst = false): MatchEntry[] {
   const q = tokens(text)
   const overlap = (e: MatchEntry) => { let n = 0; for (const tok of tokens(`${e.line} ${e.body}`)) if (q.has(tok)) n++; return n }
   return t.entries
+    .filter(e => !isRoutineTopicEntry(e))
     .map(e => ({ e, o: overlap(e) }))
-    .sort((a, b) => Number(b.e.id === preferredEntryId) - Number(a.e.id === preferredEntryId) || b.o - a.o || Number(b.e.kind === 'commitment') - Number(a.e.kind === 'commitment') || (a.e.updatedTs < b.e.updatedTs ? 1 : a.e.updatedTs > b.e.updatedTs ? -1 : 0))
+    .sort((a, b) => Number(b.e.id === preferredEntryId) - Number(a.e.id === preferredEntryId) || (ongoingFirst ? entryPriority(b.e) - entryPriority(a.e) : 0) || b.o - a.o || entryPriority(b.e) - entryPriority(a.e) || (a.e.updatedTs < b.e.updatedTs ? 1 : a.e.updatedTs > b.e.updatedTs ? -1 : 0))
     .slice(0, max)
     .map(x => x.e)
 }
@@ -155,11 +177,12 @@ export function pickEntries(text: string, t: MatchTopic, max = MAX_ENTRIES, pref
  * 信封里 `<topics>` 的正文(不含标签本身)。最相关的两条带细节;`bodies: false` ⇒ 只有索引行
  * (交给执行者的简报:细节里常有账号、地址这类,执行者用不着 —— 整合者 2026-11-05 第 2 条)。
  */
-export function renderTopicsBlock(text: string, picked: readonly MatchTopic[], max = BLOCK_MAX, opts: { bodies?: boolean; preferredEntryIds?: ReadonlyMap<string, string> } = {}): string {
+export function renderTopicsBlock(text: string, picked: readonly MatchTopic[], max = BLOCK_MAX, opts: { bodies?: boolean; preferredEntryIds?: ReadonlyMap<string, string>; ongoingFirst?: boolean } = {}): string {
   const bodies = opts.bodies ?? true
   const parts: string[] = []
-  for (const t of picked) {
-    const es = pickEntries(text, t, MAX_ENTRIES, opts.preferredEntryIds?.get(t.id))
+  for (const raw of picked) {
+    const t = withoutRoutineTopicNoise(raw)
+    const es = pickEntries(text, t, MAX_ENTRIES, opts.preferredEntryIds?.get(t.id), opts.ongoingFirst)
     const lines = es.map((e, i) => {
       const body = bodies && i < 2 && e.body ? `:${e.body.slice(0, 160)}` : ''
       return `- [${KIND_LABEL[e.kind] ?? e.kind}] ${e.line}${e.due ? `(期限 ${e.due})` : ''}${body}`
@@ -183,6 +206,7 @@ export interface TopicSearchHit {
  * 词表比每轮匹配宽:条目的细节也算,查询按空格切开的每一段原样出现也算(「Meet」「UDP」)。
  */
 export function searchTopics(query: string, topics: readonly MatchTopic[], limit = 3, entriesPer = MAX_ENTRIES): TopicSearchHit[] {
+  topics = topics.map(withoutRoutineTopicNoise).filter(t => t.entries.length > 0 || t.summary)
   const q = tokens(query)
   const parts = norm(query).split(/[\s,，、;；]+/).map(p => p.trim()).filter(p => [...p].length >= 2)
   const hits = topics.map(t => {

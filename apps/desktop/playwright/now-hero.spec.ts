@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { test, expect, clickNav } from './fixtures'
+import { routePresenceTopic, PRESENCE_OK } from './presence-topic'
 const shots = join(process.cwd(), '../../.superpowers/now-hero-shots')
 const pane = '.cc-now-pane', stage = '#now-cc .now-pet-stage', sprite = '#now-cc .now-pet-sprite'
 async function openHome(page: import('@playwright/test').Page, url: string) {
@@ -11,6 +12,63 @@ async function openHome(page: import('@playwright/test').Page, url: string) {
 test.beforeEach(async ({ page, shim }) => {
   await page.route('**/__dev_reload.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }))
   await shim.invoke('demo.unseed'); await shim.invoke('demo.seed', {})
+})
+
+test('CC listens only to input and responds only to fresh running output, including the companion', async ({ page, shimUrl }) => {
+  let running = false, text = '', cursor = 0
+  const context = page.context()
+  await context.route('**/v1/protocol/capabilities', r => r.fulfill({ json: { routes: 'v1', topics: 'v1' } }))
+  await context.route('**/v1/matter/owner-chat/window**', r => r.fulfill({ json: { messages: [], earlier: null, later: null } }))
+  await context.route('**/v1/matter/owner-chat/work**', r => r.fulfill({ json: { references: [], results: [] } }))
+  await context.route('**/v1/matter/owner-chat/events**', r => r.fulfill({ json: { running: running ? { turnId: 'actual', runId: null } : null, events: text ? [{ id: 'fragment', turnId: 'actual', kind: 'agent_message', text, createdAt: Date.now(), cursor: ++cursor }] : [], cursor } }))
+  await context.route('**/v1/workbench/attention', r => r.fulfill({ json: { tasks: [], progress: [] } }))
+  await openHome(page, shimUrl)
+  const companion = await context.newPage()
+  await companion.route('**/__dev_reload.js', r => r.fulfill({ contentType: 'application/javascript', body: '' }))
+  await companion.addInitScript(() => {
+    ;(window as any).__TAURI__ = { core: { invoke: async (command: string, args: any) => {
+      if (command === 'companion_motion_context') return null
+      if (command === 'stop_companion_motion') return null
+      if (command === 'daemon_request') {
+        const response = await fetch(args.path, { method: args.method })
+        if (!response.ok) throw Error(`mock route ${response.status}`)
+        return response.text()
+      }
+      const response = await fetch('/__invoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ command, args }) })
+      const value = await response.json(); if (value.error) throw Error(value.error); return value.result
+    } } }
+  })
+  await routePresenceTopic(companion, { presence: () => PRESENCE_OK, pet: () => ({ owner_last_contact_at: null, turn: { phase: 'idle', since: null }, last_done_at: null, pending_permissions: [], activities: [] }) })
+  await companion.goto(`${shimUrl}/companion-window.html?lab`)
+  const petStage = companion.locator('#pet-stage')
+  await expect(petStage).toHaveAttribute('aria-label', 'CC，已连接')
+  await expect(petStage).toHaveAttribute('data-cc-phase', 'idle')
+  await expect(page.locator(stage)).toHaveAttribute('data-cc-phase', 'idle')
+  await petStage.screenshot({ path: join(shots, 'cc-alive-before-idle.png') })
+  await page.bringToFront()
+  await page.locator('#converse-input').fill('正在输入')
+  await expect(page.locator(stage)).toHaveAttribute('data-cc-phase', 'listening')
+  await expect(petStage).toHaveAttribute('data-cc-phase', 'listening')
+  await petStage.screenshot({ path: join(shots, 'cc-alive-after-listening.png') })
+  await page.locator('#converse-input').blur()
+  running = true
+  await expect(petStage).toHaveAttribute('data-cc-phase', 'thinking')
+  await expect(page.locator(stage)).toHaveAttribute('data-cc-phase', 'thinking')
+  await petStage.screenshot({ path: join(shots, 'cc-alive-after-thinking.png') })
+  text = '真实新片段'
+  await expect(petStage).toHaveAttribute('data-cc-phase', 'speaking')
+  await petStage.screenshot({ path: join(shots, 'cc-alive-after-speaking-000.png') })
+  await companion.waitForTimeout(300)
+  await petStage.screenshot({ path: join(shots, 'cc-alive-after-speaking-300.png') })
+  await expect(petStage).toHaveAttribute('data-cc-phase', 'thinking')
+  await companion.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(petStage).toHaveAttribute('data-cc-phase', 'idle')
+  await petStage.screenshot({ path: join(shots, 'cc-alive-after-reduced.png') })
+  await companion.emulateMedia({ reducedMotion: 'no-preference' })
+  await expect(petStage).not.toHaveAttribute('data-cc-phase', 'speaking')
+  running = false; text = ''
+  await expect(petStage).toHaveAttribute('data-cc-phase', 'idle')
+  await companion.close()
 })
 
 test('home uses Light/Dark connection forms, one breathing layer and stable keyboard navigation', async ({ page, shimUrl }) => {
@@ -116,7 +174,7 @@ test('late shared history only updates the bubble; visible local pending can rec
   await clickNav(page,'recollections')
   await expect(page.locator(stage)).toHaveClass(/pet-paused/)
   await clickNav(page,'overview')
-  await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'thinking')
+  await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'idle') // only local pending, no running turn evidence
   await expect.poll(() => typeof deliver).toBe('function'); deliver()
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'receive')
   await expect(page.locator('#converse-scroll')).toContainText('这轮实际回复')

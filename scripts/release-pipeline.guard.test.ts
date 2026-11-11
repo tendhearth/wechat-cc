@@ -13,14 +13,17 @@
  * 这些断言不测逻辑,测的是「两份文件里的约定还对得上」。
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { join, dirname, delimiter } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
+import { parse } from 'yaml'
 
 // import.meta.dir 是 Bun 的扩展,vitest 转译后是 undefined —— 测试跑在
 // vitest 上(见 CLAUDE.md 的标准测试命令),所以这里用标准写法。
 const HERE = dirname(fileURLToPath(import.meta.url))
-const wf = (name: string) => readFileSync(join(HERE, '..', '.github', 'workflows', name), 'utf8')
+const wf = (name: string) => readFileSync(join(HERE, '..', '.github', 'workflows', name), 'utf8').replace(/\r\n/g, '\n')
 
 describe('desktop.yml —— 上传到 release 的产物必须带签名', () => {
   const yml = wf('desktop.yml')
@@ -71,6 +74,110 @@ describe('desktop.yml —— 没有 Developer ID 时,公证的三个环境变量
 
   it('公证变量由证书 import 之后的一步按 DEVELOPER_ID_READY 写进 GITHUB_ENV', () => {
     expect(yml).toMatch(/DEVELOPER_ID_READY == '1'[\s\S]*APPLE_TEAM_ID=[\s\S]*GITHUB_ENV/)
+  })
+})
+
+describe('desktop.yml —— DMG 外壳必须在上传前单独公证并 staple', () => {
+  // .app / updater 公证不覆盖 DMG 外壳;没把 ticket staple 进 DMG,新用户断网首次打开仍会被拦。
+  const build = (parse(wf('desktop.yml')) as {
+    jobs: { build: { 'continue-on-error'?: boolean; steps: Array<{
+      id?: string; name?: string; if?: string; run?: string; shell?: string
+      env?: Record<string, string>; 'continue-on-error'?: boolean
+    }> } }
+  }).jobs.build
+  const steps = build.steps
+  const index = steps.findIndex(s => s.id === 'notarize-dmg')
+  const dmg = steps[index]
+  const uploadIndex = steps.findIndex(s => s.name === 'Upload bundle artefacts')
+  const script = dmg?.run ?? ''
+
+  it('Tauri 打包之后、上传之前有独立 DMG 公证步骤', () => {
+    expect(index).toBeGreaterThan(steps.findIndex(s => s.name === 'Tauri build'))
+    expect(index).toBeLessThan(uploadIndex)
+    expect(script).toContain('xcrun notarytool submit')
+    expect(script).toContain('--wait')
+    expect(script).toContain('xcrun stapler staple')
+  })
+
+  it('只在 macOS 且三项公证凭据齐全时运行,不在 step if 直接读 secrets 或声明空串公证变量', () => {
+    expect(dmg?.if?.split(/\s*&&\s*/)).toEqual([
+      "matrix.os == 'macos-latest'",
+      "env.APPLE_ID != ''", "env.APPLE_PASSWORD != ''", "env.APPLE_TEAM_ID != ''",
+    ])
+    expect(dmg?.env).toBeUndefined()
+    for (const step of steps) expect(step.if ?? '').not.toContain('secrets.')
+  })
+
+  it('公证/staple 失败不被忽略,失败产物也不上传', () => {
+    expect(build['continue-on-error']).not.toBe(true)
+    expect(dmg?.['continue-on-error']).not.toBe(true)
+    expect(dmg?.shell).toBe('bash')
+    expect(steps[uploadIndex]?.if).toBe('success()')
+  })
+
+  // 执行 workflow 的真实脚本,仅替换 xcrun;不访问 Apple,也不使用本机签名凭据。
+  function runDmgStep(fail = '', names = ['Tendhearth CC_1.7.9_aarch64.dmg']) {
+    expect(script).not.toBe('')
+    const dir = mkdtempSync(join(tmpdir(), 'dmg-notarization-guard-'))
+    try {
+      const bin = join(dir, 'bin')
+      const bundle = join(dir, 'apps/desktop/src-tauri/target/release/bundle/dmg')
+      const log = join(dir, 'xcrun.log')
+      mkdirSync(bin)
+      mkdirSync(bundle, { recursive: true })
+      for (const name of names) writeFileSync(join(bundle, name), 'fixture')
+      writeFileSync(log, '')
+      writeFileSync(join(bin, 'xcrun'), `#!/usr/bin/env bash
+printf '<%s>' "$@" >> "$XCRUN_LOG"
+printf '\\n' >> "$XCRUN_LOG"
+if [[ "$1 $2" == "$XCRUN_FAIL" ]]; then exit 42; fi
+`, { mode: 0o755 })
+      const result = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script], {
+        cwd: dir, encoding: 'utf8', env: {
+          ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`,
+          APPLE_ID: 'ci@example.invalid', APPLE_PASSWORD: 'test-notary-password', APPLE_TEAM_ID: 'TESTTEAM123',
+          XCRUN_LOG: log, XCRUN_FAIL: fail,
+        },
+      })
+      expect(result.error).toBeUndefined()
+      return { status: result.status, calls: readFileSync(log, 'utf8').trim().split('\n').filter(Boolean) }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it.skipIf(process.platform === 'win32')('逐个 submit --wait 后 staple 同一个 DMG,兼容文件名空格且不提交其他文件', () => {
+    const names = ['Tendhearth CC_1.7.9_aarch64.dmg', 'Tendhearth CC_1.7.9_x64.dmg']
+    const result = runDmgStep('', [...names, 'other.txt'])
+    expect(result.status).toBe(0)
+    expect(result.calls).toHaveLength(4)
+    for (const [i, name] of names.entries()) {
+      const path = `apps/desktop/src-tauri/target/release/bundle/dmg/${name}`
+      expect(result.calls[i * 2]).toContain(`<notarytool><submit><${path}>`)
+      expect(result.calls[i * 2]).toContain('<--wait>')
+      expect(result.calls[i * 2]).toContain('<--apple-id><ci@example.invalid>')
+      expect(result.calls[i * 2]).toContain('<--password><test-notary-password>')
+      expect(result.calls[i * 2]).toContain('<--team-id><TESTTEAM123>')
+      expect(result.calls[i * 2 + 1]).toBe(`<stapler><staple><${path}>`)
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('submit 失败立即退出,不继续 staple', () => {
+    const result = runDmgStep('notarytool submit')
+    expect(result.status).toBe(42)
+    expect(result.calls).toHaveLength(1)
+  })
+
+  it.skipIf(process.platform === 'win32')('staple 失败同样让步骤失败', () => {
+    const result = runDmgStep('stapler staple')
+    expect(result.status).toBe(42)
+    expect(result.calls).toHaveLength(2)
+  })
+
+  it.skipIf(process.platform === 'win32')('有凭据却没有 DMG 时失败,不把空 glob 当成已公证', () => {
+    const result = runDmgStep('', [])
+    expect(result.status).not.toBe(0)
+    expect(result.calls).toEqual([])
   })
 })
 

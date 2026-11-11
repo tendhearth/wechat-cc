@@ -44,7 +44,7 @@ export const WECHAT_PORTS = {
 
 /** 往微信发东西。 */
 export interface WechatSend {
-  sendMessage(chatId: string, text: string, metadata?: { source: 'workbench' }): Promise<{ msgId: string; error?: string }>
+  sendMessage(chatId: string, text: string, metadata?: { source: 'workbench' | `speech:${string}` }): Promise<{ msgId: string; error?: string }>
   /** `mirror: false` ⇒ 成功之后不报给媒体镜像(调用方自己记,如一封信的几页记成一行)。 */
   sendFile(chatId: string, path: string, opts?: { mirror?: boolean }): Promise<void>
   /** ilink 没有真的编辑:发一条带「(编辑后)」前缀的新消息。 */
@@ -193,11 +193,11 @@ export interface WechatPermissions {
   /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */
   listPendingPermissions(): PendingPermissionView[]
   /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
-  resolvePermission(hash: string, decision: 'allow' | 'deny'): boolean
+  resolvePermission(hash: string, decision: 'allow' | 'deny' | 'allow_task', reason?: string): boolean
   /** 这条待批在微信里的两位数码(自改流水线要把它一起回给 CLI)。= pending.codeOf. */
   pendingPermissionCodeOf(hash: string): string | null
   /** 只登记一条待批,**不发卡**(外发不通时条目留着,主人换个面拍板)。= pending.register. */
-  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta): Promise<PermissionDecision>
+  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta, opts?: {onAllowTask?:()=>boolean;deadline?:()=>number|null;onDecision?:(decision:'allow'|'deny'|'allow_task',reason?:string)=>boolean}): Promise<PermissionDecision>
   /** 到点扫一遍待批(把过期的 resolve 成 timeout)。= pending.sweep. */
   sweepPendingPermissions(): void
 }

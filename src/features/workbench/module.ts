@@ -1,3 +1,4 @@
+import { hintWrite } from '../../lib/write-hints'
 /**
  * 工作台(「一起做」)接进 daemon 的那一份(模块清单在 index.ts):`workbench` + 微信通知 / 成果两个模块。
  * 只有 daemon-modules.ts import 这个文件。
@@ -27,7 +28,7 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
     lazy: ['cli-upgrade'],
     resolveAdminChatId: () => ownerChatIdOf(stateDir),
     // 桌面 app 开着没有 / 在电脑上看过哪件(S3b):一件事的提议读
-    desktop: { notePoll: (progress) => f.desktopSurface.notePoll(progress), seen: (id) => f.desktopSurface.noteSeen(id) },
+    desktop: { notePoll: (progress) => f.desktopSurface.notePoll(progress), seen: (id) => { f.desktopSurface.noteSeen(id); hintWrite(f.db, { kind: 'matter', matterId: id }) } },
     deps: (ctx) => {
       const boot = ctx.get<Bootstrap>('bootstrap')
       const cli = ctx.get<TerminalFeature>('terminal')
@@ -54,7 +55,7 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
           (!!nativeId && Object.values(boot.sessionStore.all()).some(s => s.provider === providerId && s.session_id === nativeId)) ||
           cli.legacyClaims.conflicts({ owner: 'workbench', path, providerId, nativeId }) ||
           (!!nativeId && cli.cliEvents.sessions().some(s => s.source === providerId && s.session_id === nativeId && !!s.origin_agent)),
-        askUser: wxPerm.askUser, log: (t, l) => log(t, l),
+        askUser: wxPerm.askUser, permissionRegistry:wxPerm, log: (t, l) => log(t, l),
       }
     },
   })

@@ -1,0 +1,13 @@
+{
+  "id": "topic-project-alias-status",
+  "kind": "topic",
+  "note": "虚构项目别名进度问句，必须仍命中同一个项目。",
+  "input": {
+    "text": "网络工具这个项目现在需要我做什么",
+    "topics": [
+      { "id": "bx", "title": "bx", "aliases": ["网络工具"], "entries": [{ "id": "bx-check", "kind": "progress", "line": "bx 的本地检查等主人确认" }] },
+      { "id": "garden", "title": "花园", "entries": [{ "id": "garden-plan", "kind": "progress", "line": "花园浇水安排已记下" }] }
+    ]
+  },
+  "rules": [{ "recalls": { "topic": "bx", "entry": "bx-check" } }]
+}

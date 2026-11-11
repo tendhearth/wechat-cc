@@ -31,11 +31,39 @@ function setup(owner: string | null = 'owner', permissionTimeoutMs?: number) {
   const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1', taskId: task.id, title: task.title, task, cancelled: false, finishing: false, uncertain: false, permissions: { pending: () => [] }, questions: { pending: () => [] }, ...over } as unknown as Active)
   /** 真种一份成果(artifact_deliveries.reserve 有外键指向它)。 */
   const plantArtifact = () => { saveArtifactSnapshot(store, task.id, { name: 'a.txt', mime: 'text/plain', bytes: Buffer.from('a') }, stateDir); return store.artifacts(task.id)[0]!.id }
-  return { store, state, domain, task, noticeWake, running, plantArtifact }
+  return { db, store, state, domain, task, noticeWake, running, plantArtifact }
 }
 const tick = () => new Promise<void>(r => queueMicrotask(r))
 
 describe('makeNoticesDomain · 入队与唤醒', () => {
+  it.each(['permission', 'terminal'] as const)('P2-6: redacts %s secrets before any preview-length truncation', kind => {
+    const { domain, task, store, running } = setup()
+    store.wechatNotifications.watch(task.id, 'owner', 'acct', true)
+    const cap = kind === 'permission' ? 3500 : 1800
+    const source = 'x'.repeat(cap - 7) + ' ' + 'sk-' + 's'.repeat(32)
+    if (kind === 'permission') domain.requestNotice(task, 'run-1', 'permission', 'edge', source)
+    else {
+      store.addEvent(task.id, 'text', source, null, 'run-1')
+      domain.stageFinishedNotice(running(), 'completed'); domain.publishFinishedNotices()
+      expect(domain.terminalReportBody(running())).not.toContain('sk-sss')
+    }
+    const text = store.wechatNotifications.list(task.id)[0]!.text
+    expect(text).not.toContain('sk-sss')
+    expect(text).toContain('[已打码]')
+  })
+  it('P2-6: redacts secrets before notification persistence and before exposing the row to delivery', async () => {
+    const { domain, task, store, noticeWake } = setup()
+    store.wechatNotifications.watch(task.id, 'owner', 'acct', true)
+    const secrets = ['key-secret-value', 'token-secret-value', 'password-secret-value', 'bearer-secret-value', 'sk-abcdefghijklmnopqrstuv', 'ghp_abcdefghijklmnopqrstuvwxyz']
+    let delivered = ''
+    noticeWake.mockImplementation(async () => { delivered = store.wechatNotifications.list(task.id)[0]!.text })
+    domain.requestNotice(task, 'run-1', 'permission', 'p-secrets', `API_KEY="${secrets[0]}"\nAPI_TOKEN=${secrets[1]}\nPASSWORD=${secrets[2]}\nAuthorization: Bearer ${secrets[3]}\n${secrets[4]}\n${secrets[5]}`)
+    await tick()
+    const text = store.wechatNotifications.list(task.id)[0]!.text
+    expect(text).toContain('[已打码]')
+    expect(delivered).toBe(text)
+    for (const secret of secrets) { expect(text).not.toContain(secret); expect(delivered).not.toContain(secret) }
+  })
   it('没订阅 ⇒ requestNotice 不入队、不唤醒', async () => {
     const { domain, task, store, noticeWake } = setup()
     domain.requestNotice(task, 'run-1', 'permission', 'p1', 'rm -rf')
@@ -70,6 +98,21 @@ describe('makeNoticesDomain · 入队与唤醒', () => {
 })
 
 describe('makeNoticesDomain · 终态通知', () => {
+  it('P2-6: terminal notification intents and their materialized rows are also redacted', () => {
+    const { db, domain, task, store, running } = setup()
+    store.wechatNotifications.watch(task.id, 'owner', 'acct', true)
+    store.addEvent(task.id, 'text', 'API_TOKEN=terminal-private-token\nBearer terminal-bearer-secret', null, 'run-1')
+    domain.stageFinishedNotice(running(), 'completed')
+    const intent = db.query<{ text: string }, [string]>('SELECT text FROM workbench_wechat_notice_intents WHERE task_id=?').get(task.id)!
+    expect(intent.text).toContain('[已打码]')
+    expect(intent.text).not.toContain('terminal-private-token')
+    expect(intent.text).not.toContain('terminal-bearer-secret')
+    domain.publishFinishedNotices()
+    const text = store.wechatNotifications.list(task.id)[0]!.text
+    expect(text).toContain('[已打码]')
+    expect(text).not.toContain('terminal-private-token')
+    expect(text).not.toContain('terminal-bearer-secret')
+  })
   it('非终态 / completed 且被压 ⇒ 什么都不 stage', () => {
     const { domain, task, store, running } = setup()
     store.wechatNotifications.watch(task.id, 'owner', 'acct', true)

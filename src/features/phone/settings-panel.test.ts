@@ -163,6 +163,14 @@ describe('settings panel', () => {
     expect((await panel.apply({ op: 'nonsense' })).ok).toBe(false)
   })
 
+  it('project memory switch is visible, writable and retained by settings state', async () => {
+    const key = 'companion.project_memory_into_sessions'
+    expect((panel.state() as { config: Record<string, unknown> }).config[key]).toBe(true)
+    expect(await panel.apply({ op: 'set_config', key, value: 'false' })).toMatchObject({ ok: true })
+    expect((panel.state() as { config: Record<string, unknown> }).config[key]).toBe(false)
+    expect(JSON.parse(readFileSync(join(stateDir, 'companion', 'config.json'), 'utf8')).project_memory_into_sessions).toBe(false)
+  })
+
   it('HTTP: everything without a valid token is 401; with token the API round-trips', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`

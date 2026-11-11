@@ -35,7 +35,7 @@ export function TopicsList() {
   return <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
     <TopBar title={zh ? '更多话题' : 'More topics'} onBack={() => router.canGoBack() ? router.back() : router.replace('/')} />
     <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.m }}>
-      <TextField testID="topics-search" value={q} onChangeText={setQ} placeholder={zh ? '搜索话题' : 'Search topics'} accessibilityLabel={zh ? '搜索话题' : 'Search topics'} />
+      <TextField variant="search" testID="topics-search" value={q} onChangeText={setQ} placeholder={zh ? '搜索话题' : 'Search topics'} accessibilityLabel={zh ? '搜索话题' : 'Search topics'} />
       {!rows.length && page.loading ? <BusyIndicator testID="topics-loading" label={zh ? '正在读取' : 'Loading'} /> : null}
       {page.error || !page.online ? <Button testID="topics-retry" kind="secondary" label={zh ? '暂时读不到，重试' : 'Cannot read right now. Retry'} onPress={() => void page.refresh()} /> : null}
       {page.supported ? rows.filter(t => t.title.toLocaleLowerCase().includes(q.toLocaleLowerCase())).map(t => <LinkRow key={t.id} testID={`topic-${t.id}`} label={t.title} detail={t.summary || undefined} onPress={() => router.push(`/topic?id=${encodeURIComponent(t.id)}&open=1`)} />) : <Txt>{zh ? '这台电脑暂不支持话题' : 'Topics are not available on this computer'}</Txt>}

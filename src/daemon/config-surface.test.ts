@@ -7,6 +7,13 @@ import { loadAgentConfig } from '../lib/agent-config'
 import { loadCompanionConfig } from '../lib/companion-config'
 
 describe('config surface', () => {
+  it('project memory defaults on, switches off immediately and persists', async () => {
+    const key = 'companion.project_memory_into_sessions'
+    expect(readConfigSurface(stateDir).find(r => r.key === key)).toMatchObject({ value: true, effect: 'immediate', writable: true })
+    expect((await writeConfigKey(stateDir, key, 'false')).ok).toBe(true)
+    expect(loadCompanionConfig(stateDir).project_memory_into_sessions).toBe(false)
+    expect(readConfigSurface(stateDir).find(r => r.key === key)?.value).toBe(false)
+  })
   let stateDir: string
   beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'cfg-surface-')) })
   afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })

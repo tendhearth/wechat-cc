@@ -76,3 +76,13 @@ test('publishes cleanup before waiting on load, so interruption can release imme
     sleep: async () => { await cleanup(); throw Error('interrupted') } })).rejects.toThrow('interrupted')
   await expect(readFile(join(path, 'info'))).rejects.toThrow()
 }))
+
+for (const stage of ['queue','load']) test(`cancels ${stage} wait without acquiring or retaining ownership`,()=>fixture(async({path,options})=>{
+ let stopping=false
+ if(stage==='queue'){await mkdir(path);await writeFile(join(path,'info'),'pid=8\nowner=family full\n')}
+ await expect(acquireMachineLock({...options,assertRunning:()=>{if(stopping)throw Error('stopping')},isAlive:()=>true,load:()=>99,waitMs:20,loadWaitMs:20,
+  sleep:async()=>{stopping=true},now:(()=>{let n=1000;return()=>n++})(),
+ })).rejects.toThrow('stopping')
+ if(stage==='queue')expect(await readFile(join(path,'info'),'utf8')).toContain('family full')
+ else await expect(readFile(join(path,'info'))).rejects.toThrow()
+}))

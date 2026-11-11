@@ -281,7 +281,7 @@ describe('authorize 逐格对照:一起做 · 放行规则(makeRunPermissions)',
     const audits: unknown[] = []
     const perms = factory({ taskId: 't', timeoutMs: 60_000, audit: e => audits.push({ type: e.type, tool: e.permission.tool, description: e.permission.description, ...(e.type === 'outcome' ? { outcome: e.outcome, by: e.by } : {}) }), ...(decide ? { decide } : {}) })
     const c = new AbortController(); if (aborted) c.abort()
-    const p = perms.request({ tool: 'Bash', description: 'run', command: 'git status', paths: ['/p/a'], cwd: '/p' }, c.signal)
+    const p = perms.request({ tool: 'Bash', description: 'run', command: 'ls', paths: ['/p/a'], cwd: '/p' }, c.signal)
     const syncPending = perms.pending().length
     for (let i = 0; i < 5; i++) await Promise.resolve()
     const pending = perms.pending()

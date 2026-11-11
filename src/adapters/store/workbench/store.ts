@@ -1,3 +1,4 @@
+import type { WorktreeStart } from '../../git/worktree-workspaces'
 import { makeMessagesStore } from '../../../lib/messages-store'
 import { existsSync } from 'node:fs'
 import { sumUsage, type TurnUsage, type UsageTotals } from '../../../domain/turn-usage'
@@ -28,6 +29,17 @@ import {makeReviewHunkLog} from './review-hunk-log'
 import {makeMatterStore} from '../matters-store'
 import type {MatterOrigin,MatterStore} from '../../../ports/matters'
 
+/** Projects with an actual dispatch in the rolling window; no list() row limit. */
+export function recentDependencyProjects(db: Db, since: number): string[] {
+  return db.query<{path:string},[number,number]>(`SELECT DISTINCT COALESCE(w.repo_root,t.path) AS path
+    FROM workbench_tasks t LEFT JOIN workbench_worktrees w ON w.task_id=t.id
+    LEFT JOIN workbench_sources s ON s.task_id=t.id
+    WHERE t.workspace_kind='project' AND (
+      COALESCE(s.first_dispatched_at,CASE WHEN s.task_id IS NULL THEN t.created_at END)>=?
+      OR EXISTS (SELECT 1 FROM matter_turns mt WHERE mt.matter_id=t.matter_id AND mt.started_at>=?)
+    )`).all(since,since).map(row => row.path)
+}
+
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
   id: string; title: string; path: string; providerId: string; status: TaskStatus
@@ -35,7 +47,7 @@ export interface Task {
   createdAt: number; updatedAt: number; error: string | null; archivedAt: number | null
 }
 /** 独立工作区一行(v74;scriptSha / port / setupAt 是 v79)。 */
-export interface WorktreeRecord { taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null;mergedAt:number|null;scriptSha:string|null;port:number|null;setupAt:number|null }
+export interface WorktreeRecord { taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null;mergedAt:number|null;scriptSha:string|null;port:number|null;setupAt:number|null;start?:WorktreeStart }
 export interface WorkbenchProject { id:string; path:string; name:string; providerId:string; createdAt:number }
 const PROJECT_SELECT='SELECT id,path,name,provider_id AS providerId,created_at AS createdAt FROM workbench_projects'
 const projectName=(project:WorkbenchProject):WorkbenchProject=>({...project,name:project.name||basename(project.path)||project.path})
@@ -128,7 +140,7 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
   }
   const version=(id:string)=>db.query<{seq:number},[string]>('SELECT seq FROM workbench_tasks WHERE id=?').get(id)?.seq??0
   const marks=makeReviewMarkStore(db)
-  const addEvent=(id:Parameters<typeof insertEvent>[0],kind:Parameters<typeof insertEvent>[1],text:Parameters<typeof insertEvent>[2],sourceId:Parameters<typeof insertEvent>[3]=null,runId:Parameters<typeof insertEvent>[4]=null,attachments:Parameters<typeof insertEvent>[5]=[])=>db.transaction(()=>insertEvent(id,kind,text,sourceId,runId,attachments,bump(id)))()
+  const addEvent=(id:Parameters<typeof insertEvent>[0],kind:Parameters<typeof insertEvent>[1],text:Parameters<typeof insertEvent>[2],sourceId:Parameters<typeof insertEvent>[3]=null,runId:Parameters<typeof insertEvent>[4]=null,attachments:Parameters<typeof insertEvent>[5]=[],turnId?:string|null)=>db.transaction(()=>insertEvent(id,kind,text,sourceId,runId,attachments,bump(id),turnId))()
   const recordAgentEvent=(taskId:Parameters<typeof upsertAgentEvent>[0],runId:Parameters<typeof upsertAgentEvent>[1],event:Parameters<typeof upsertAgentEvent>[2])=>db.transaction(()=>upsertAgentEvent(taskId,runId,event,bump(taskId)))()
   const finishRunActivities=(taskId:Parameters<typeof finishActivities>[0],runId:Parameters<typeof finishActivities>[1],status:Parameters<typeof finishActivities>[2])=>db.transaction(()=>{finishActivities(taskId,runId,status,bump(taskId))})()
   const sourceRow=(row:StoredNativeSource|null)=>row?{...row,truncated:!!row.truncated}:null
@@ -282,11 +294,17 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     /** 独立工作区(v74,2026-10-07):这件事在哪个 worktree、源项目、分支;removedAt 非空 = 目录已删(分支保留)。 */
     worktrees: {
       /** scriptSha = 建工作区时的 HEAD(v79):脚本从这个提交读;git 读不出来 ⇒ null(这个工作区就没有脚本)。 */
-      record(input:{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;scriptSha?:string|null}) {
+      record(input:{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;scriptSha?:string|null;start?:WorktreeStart}) {
         db.query('INSERT OR IGNORE INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at,script_sha) VALUES(?,?,?,?,?,?,?)').run(input.taskId,input.projectPath,input.repoRoot,input.root,input.branch,Date.now(),input.scriptSha??null)
+        if(input.start&&!matterLog.item(input.taskId,'worktree-origin')) {
+          const text=`从 ${input.start.base} @ ${input.start.sha.slice(0,7)} 开始。\n起点提交：${input.start.sha}${input.start.notices.length?'\n'+input.start.notices.join('\n'):''}`
+          matterLog.writeItem({matterId:input.taskId,kind:'system',status:'completed',key:'worktree-origin',payload:{text,v:bump(input.taskId),worktreeStart:input.start}})
+        }
       },
       get(taskId:string):WorktreeRecord|null {
-        return db.query<WorktreeRecord,[string]>('SELECT task_id AS taskId,project_path AS projectPath,repo_root AS repoRoot,root,branch,created_at AS createdAt,removed_at AS removedAt,merged_at AS mergedAt,script_sha AS scriptSha,port,setup_at AS setupAt FROM workbench_worktrees WHERE task_id=?').get(taskId)??null
+        const row = db.query<WorktreeRecord,[string]>('SELECT task_id AS taskId,project_path AS projectPath,repo_root AS repoRoot,root,branch,created_at AS createdAt,removed_at AS removedAt,merged_at AS mergedAt,script_sha AS scriptSha,port,setup_at AS setupAt FROM workbench_worktrees WHERE task_id=?').get(taskId)??null
+        const start=matterLog.item(taskId,'worktree-origin')?.payload.worktreeStart as WorktreeStart|undefined
+        return row&&start?{...row,start}:row
       },
       /** 端口(v79,部分唯一索引):别的工作区已经占了这个端口 ⇒ false(allocatePort 接着找下一个)。null = 放掉。 */
       setPort(taskId:string,port:number|null):boolean {

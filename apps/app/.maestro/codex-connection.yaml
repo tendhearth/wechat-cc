@@ -1,0 +1,27 @@
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- openLink: "tendhearth://dev-e2e?op=codex-connection"
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    visible: ".*(Codex 还差一步|Codex needs one more step).*"
+    timeout: 10000
+- assertVisible: ".*/hooks.*wechat-cc.*"
+# Only time passes: the actual connection page must poll, without a refresh tap.
+- extendedWaitUntil:
+    visible: ".*(已接上，最近 7 天|Connected: 0 terminal sessions).*"
+    timeout: 40000
+- takeScreenshot: codex-connection-connected
+# Maestro 2.12 subtracts time since the last interaction from each wait.
+# Record this milestone in the runner only, giving the next poll its own budget.
+- evalScript: ${output.codexConnectedAt = Date.now()}
+- extendedWaitUntil:
+    visible: ".*(Codex 需要重新确认一次|Codex needs your confirmation again).*"
+    timeout: 40000
+- takeScreenshot: codex-connection-changed

@@ -1,3 +1,4 @@
+import { trackPreparation } from './state'
 /**
  * entry 域:桌面 / 手机「交办」入口 —— 受管工作目录、主人校验、创建回执,以及 entryOptions / entryReceipt / createEntry。
  * 从 service.ts 逐字搬来(Codex #129 加的域,按 spec §6「直接建 service/<domain>.ts」);只认 ctx。
@@ -18,8 +19,7 @@ import { createManagedWorkspaces, type ManagedWorkspaces } from '../managed-work
 import { publicTask } from '../../../adapters/store/workbench/store'
 import { canonicalEntryHash, composeEntryPrompt, entryOrigin, parseEntryInput, type EntryContext, type EntryInput, type EntryOptions } from '../../../adapters/workbench/task-entry'
 import { directoryIdentity } from './directory-identity'
-import { baseBranchExists, ensureWorktree, planWorktree, repoRootOrFail, type WorktreePlan } from '../../../adapters/git/worktree-workspaces'
-import { pinnedScriptSha } from '../worktree-scripts'
+import { prepareWorktreeStart, ensureWorktree, headShaAsync, planWorktree, repoRootOrFailAsync, type WorktreePlan } from '../../../adapters/git/worktree-workspaces'
 import type { ServiceCtx } from './ctx'
 import type { EntryResult } from './types'
 import type { AdmissionDomain } from './admission'
@@ -64,8 +64,8 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     return{status:defaultProviderId?'ready':'needs_connection',...(!defaultProviderId?{reason:{code:'unavailable_provider',message:'请在电脑上连接默认执行者，或在更多选项中选择已连接的执行者。'}}:{}),defaultProviderId,providers,projects:projects()}
   }
   /** 独立工作区的位置:状态目录下,按项目编号 + 预约里的随机编号(前 8 位)。 */
-  function worktreePlan(workspaceId:string,project:{id:string;path:string},base?:string):WorktreePlan {
-    const repoRoot=repoRootOrFail(project.path)
+  async function worktreePlan(workspaceId:string,project:{id:string;path:string},base?:string):Promise<WorktreePlan> {
+    const repoRoot=await repoRootOrFailAsync(project.path,{signal:ctx.state.preparationAbort.signal})
     if(!repoRoot)throw Error('worktree_not_git')
     return planWorktree({stateDir:ctx.stateDir,projectId:project.id,projectPath:project.path,repoRoot,id:workspaceId.replace(/-/g,'').slice(0,8),...(base!==undefined?{base}:{})})
   }
@@ -74,7 +74,17 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     const record=store.entryRequests.get(context.ownerKey,normalizeInputRequestId(requestId))
     return record?.phase==='accepted'?entryResult(record):null
   }
-  function createEntry(value:EntryInput,context:EntryContext):EntryResult {
+  const pendingEntries = new Map<string, { hash: string; promise: Promise<EntryResult> }>()
+  async function createEntry(value:EntryInput,context:EntryContext):Promise<EntryResult> {
+    requireEntryOwner(context)
+    const input=parseEntryInput(value),hash=canonicalEntryHash(input),key=JSON.stringify([context.ownerKey,input.requestId])
+    const prior=pendingEntries.get(key)
+    if(prior){if(prior.hash!==hash)throw Error('creation_conflict');return prior.promise}
+    const promise=trackPreparation(ctx.state,createEntryImpl(value,context)).finally(()=>pendingEntries.delete(key))
+    pendingEntries.set(key,{hash,promise})
+    return promise
+  }
+  async function createEntryImpl(value:EntryInput,context:EntryContext):Promise<EntryResult> {
     requireEntryOwner(context)
     const input=parseEntryInput(value),hash=canonicalEntryHash(input)
     let record=store.entryRequests.get(context.ownerKey,input.requestId)
@@ -83,6 +93,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     ctx.ensureAccepting()
     if(!ctx.deps.matters)throw Error('entry_not_wired')
     const text=composeEntryPrompt(input)
+    let start: WorktreePlan['start']
     try{
       if(record&&record.createdAt<Date.now()-7*86400_000)throw Error('entry_expired')
       const prepared=store.attachments.prepareAcceptance(input.attachmentIds??[],undefined,input.draftId,ctx.stateDir,context)
@@ -100,10 +111,12 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       const isolated=input.target.kind==='project'&&input.target.isolation==='worktree'
       // 独立工作区(2026-10-07):不是 git 仓库就当场拒绝,不留一条半截的预约。路径留空到建好工作区再定:
       // 预约时算出的路径和建好后的真实路径在 Windows 上写法可能不同(8.3 短名 / 长名),先写死会被当成冲突。
-      if(isolated&&!repoRootOrFail(project!.path))throw Error('worktree_not_git')
+      const repoRoot=isolated?await repoRootOrFailAsync(project!.path,{signal:ctx.state.preparationAbort.signal}):null
+      if(isolated&&!repoRoot)throw Error('worktree_not_git')
       // 指定了起点分支 ⇒ 预约前就核对它在不在,不留半截预约(10-08)
       const base=input.target.kind==='project'?input.target.base:undefined
-      if(isolated&&base!==undefined&&!baseBranchExists(repoRootOrFail(project!.path)!,base))throw Error('worktree_base_missing')
+      if(isolated)start=await prepareWorktreeStart(repoRoot!,base,{signal:ctx.state.preparationAbort.signal})
+      ctx.ensureAccepting()
       const workspaceId=input.target.kind==='managed'||isolated?randomUUID():null
       record=store.entryRequests.reserve({ownerKey:context.ownerKey,requestId:input.requestId,canonicalRequestHash:hash,target:input.target,
         workspaceId,resolvedPath:input.target.kind==='managed'?managed().resolvePath(workspaceId!):isolated?null:project?.path??null,directoryIdentity:project&&!isolated?directoryIdentity(project.path):null,
@@ -117,12 +130,14 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       if(!sameAttachments(current,record.materialSnapshot))throw Error('attachment_changed')
       const workspace=record.target.kind==='managed'?managed().ensure(record):null
       // 独立工作区:在派发前建好(幂等:同一个预约重试 ⇒ 同一个目录同一个分支)。
-      const tree=record.target.kind==='project'&&record.target.isolation==='worktree'?(()=>{
+      const tree=record.target.kind==='project'&&record.target.isolation==='worktree'?await (async()=>{
         const p=projects().find(x=>x.id===(record!.target as {projectId:string}).projectId)
         if(!p)throw Error('project_stale')
-        const plan=worktreePlan(record!.workspaceId!,p,(record!.target as {base?:string}).base)
-        const path=ensureWorktree(plan)
-        return {plan,path,directoryIdentity:directoryIdentity(path)}
+        const plan=await worktreePlan(record!.workspaceId!,p,(record!.target as {base?:string}).base)
+        if(start)plan.start=start
+        const path=await ensureWorktree(plan,{signal:ctx.state.preparationAbort.signal})
+        ctx.ensureAccepting()
+        return {plan,path,scriptSha:plan.start?.sha??await headShaAsync(plan.root,{signal:ctx.state.preparationAbort.signal}),directoryIdentity:directoryIdentity(path)}
       })():null
       const path=workspace?.path??tree?.path??record.resolvedPath!,identity=workspace?.directoryIdentity??tree?.directoryIdentity??record.directoryIdentity!
       if(!path||!identity||canonicalProject(path)!==path||directoryIdentity(path)!==identity)throw Error('invalid_path')
@@ -143,7 +158,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
         verify()
         if(tree)createdId=task.id
         store.entryRequests.accept(context.ownerKey,input.requestId,{taskId:task.id,matterId:task.id,runId,acceptedAt:Date.now(),resolvedPath:path,directoryIdentity:identity})
-        if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root)})
+        if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:tree.scriptSha,start:tree.plan.start})
         // 做到条件成立为止(v80):命令在这里写一次就定死(parseEntryInput 已保证只在独立工作区上出现)。
         if(input.until)store.goals.create(task.id,input.until)
       },undefined,{

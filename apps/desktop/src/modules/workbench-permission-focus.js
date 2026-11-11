@@ -7,7 +7,7 @@ export function permissionControlId(taskId,requestId,action){return `wb-permissi
 /** @param {HTMLElement} root @returns {PermissionFocus|null} */
 export function capturePermissionFocus(root){
   const active=/** @type {HTMLElement|null} */(root.ownerDocument?.activeElement)
-  if(!active||!root.contains(active)||!['allow-permission','deny-permission'].includes(active.dataset.action??'')||!active.dataset.ownerTask||!active.dataset.requestId)return null
+  if(!active||!root.contains(active)||!['allow-permission','deny-permission','allow-task-permission'].includes(active.dataset.action??'')||!active.dataset.ownerTask||!active.dataset.requestId)return null
   const action=active.dataset.action??'',taskId=active.dataset.ownerTask
   const controls=Array.from(/** @type {NodeListOf<HTMLElement>} */(root.querySelectorAll(`[data-action="${action}"]`))).filter(control=>control.dataset.ownerTask===taskId)
   return{taskId,requestId:active.dataset.requestId,action,index:controls.indexOf(active),requests:controls.map(control=>control.dataset.requestId??'')}

@@ -182,6 +182,9 @@ export type Foundation = Awaited<ReturnType<typeof openFoundation>> & {
   schedulerIntervalMs?: number
   /** 测试缝:「待说」补说那一拍的间隔(main.ts BootDaemonOpts.speechFlushIntervalMs)。 */
   speechFlushIntervalMs?: number
+  /** 测试缝:定时任务 / 提醒的调度间隔(main.ts BootDaemonOpts)。 */
+  scheduledJobsIntervalMs?: number
+  reminderIntervalMs?: number
   /** 测试缝(S3b):本机空闲秒数的探针(缺省 lib/machine-idle)与「先只在桌面提示」之后推 App 的等待(缺省 10 分钟)。 */
   machineIdle?: () => Promise<number | null>
   escalateAfterMs?: number

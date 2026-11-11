@@ -5,20 +5,24 @@ import { Icon } from './Icon'
 import { useTheme } from './useTheme'
 
 /** Motion needs affirmative permission from all three lifecycle signals. Unknown reads stay static. */
-export function useMotionEnabled(): boolean {
+export function useMotionState(): { active: boolean; enabled: boolean } {
   const [reduced, setReduced] = useState(true)
   const [foreground, setForeground] = useState(false)
   const [focused, setFocused] = useState(false)
   const [generation, setGeneration] = useState(0)
   const [armed, setArmed] = useState(-1)
+  const [pageGeneration, setPageGeneration] = useState(0)
+  const [pageArmed, setPageArmed] = useState(-1)
   const rearm = useCallback(() => setGeneration(value => value + 1), [])
+  const rearmPage = useCallback(() => { rearm(); setPageGeneration(value => value + 1) }, [rearm])
   // Commit one static frame before enabling a resumed/frozen screen. Consumers consume queued IDs there.
   useEffect(() => { setArmed(generation) }, [generation])
+  useEffect(() => { setPageArmed(pageGeneration) }, [pageGeneration])
   useFocusEffect(useCallback(() => {
-    rearm()
+    rearmPage()
     setFocused(true)
     return () => setFocused(false)
-  }, [rearm]))
+  }, [rearmPage]))
   useEffect(() => {
     let alive = true, changed = false
     let subscription: { remove(): void } | undefined
@@ -38,14 +42,17 @@ export function useMotionEnabled(): boolean {
   useEffect(() => {
     let subscription: { remove(): void } | undefined
     try {
-      subscription = AppState.addEventListener('change', state => { if (state === 'active') rearm(); setForeground(state === 'active') })
+      subscription = AppState.addEventListener('change', state => { if (state === 'active') rearmPage(); setForeground(state === 'active') })
       if (!subscription || typeof subscription.remove !== 'function') return
       setForeground(AppState.currentState === 'active')
     } catch { setForeground(false) }
     return () => subscription?.remove()
-  }, [rearm])
-  return !reduced && foreground && focused && armed === generation
+  }, [rearmPage])
+  const active = foreground && focused && pageArmed === pageGeneration
+  return { active, enabled: !reduced && active && armed === generation }
 }
+
+export function useMotionEnabled(): boolean { return useMotionState().enabled }
 
 /** Continuous progress retains a complete accessible status even while the visual is static. */
 export function BusyIndicator({ label, size = 18, color, testID }: { label: string; size?: number; color?: string; testID?: string }) {

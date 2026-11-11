@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Backend } from '../backend/types'
 
-type Stream = Awaited<ReturnType<NonNullable<Backend['conversationEvents']>>>
+type Stream = Awaited<ReturnType<NonNullable<Backend['conversationEvents']>>> & { activityReady?: boolean }
 
 /** Scope both cached text and in-flight polls to the paired backend. */
 export function useConversationStream(backend: Backend, online: boolean): Stream | undefined {
@@ -9,7 +9,7 @@ export function useConversationStream(backend: Backend, online: boolean): Stream
   useEffect(() => {
     setSnapshot(undefined)
     if (!online || !backend.conversationEvents) return
-    let active = true, busy = false, cursor = 0, scope: string | undefined
+    let active = true, busy = false, cursor = 0, primed = false, scope: string | undefined
     const events = new Map<string, Stream['events'][number]>()
     const poll = async () => {
       if (busy) return
@@ -17,14 +17,15 @@ export function useConversationStream(backend: Backend, online: boolean): Stream
       try {
         const next = await backend.conversationEvents!(cursor)
         if (!active) return
-        if(next.scope && scope && next.scope !== scope){events.clear();cursor=0;scope=next.scope;setSnapshot(undefined);return}
+        if(next.scope && scope && next.scope !== scope){events.clear();cursor=0;primed=false;scope=next.scope;setSnapshot(undefined);return}
         scope=next.scope??scope
         cursor = next.cursor
         for (const event of next.events) events.set(event.id, event)
         // Old turns are already in the durable conversation; do not retain their text in memory.
         for (const [id, event] of events) if (event.turnId !== next.running?.turnId) events.delete(id)
-        setSnapshot({ backend, data: { ...next, events: [...events.values()] } })
-      } catch { /* The next poll or reconnect retries this read. */ }
+        setSnapshot({ backend, data: { ...next, activityReady: primed, events: [...events.values()] } })
+        if (!next.events.length) primed = true
+      } catch { primed = false; if (active) setSnapshot(undefined) /* A failed read cannot keep claiming current activity. */ }
       finally { busy = false }
     }
     void poll()

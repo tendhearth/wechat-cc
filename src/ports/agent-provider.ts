@@ -112,6 +112,9 @@ export interface AgentRuntimeSnapshot {
   input: 'steer' | 'send' | 'queue'
 }
 
+/** Native acceptance observation, independent of the transport receipt. */
+export interface AgentInputAcceptance { mode:'steer'|'send'; turnId?:string }
+
 /** Workbench-only stream: parent results are milestones, not runtime closure. */
 export interface AgentWorkbenchRuntime {
   /** One consumer, installed before start; ends only on safe no-background completion or close/failure. */
@@ -119,7 +122,7 @@ export interface AgentWorkbenchRuntime {
   /** Exactly one initial request per owned runtime epoch. */
   start(text: string, attachments?: readonly AgentAttachment[]): void
   /** Same epoch. Resolves only on native acceptance evidence; local enqueue is insufficient. */
-  submit(requestId: string, text: string, attachments?: readonly AgentAttachment[]): Promise<void>
+  submit(requestId: string, text: string, attachments?: readonly AgentAttachment[]): Promise<void|AgentInputAcceptance>
   /** Synchronous, non-throwing copy; retained is sticky after observed background work. */
   snapshot(): AgentRuntimeSnapshot
 }
@@ -250,6 +253,10 @@ export interface AgentMcpTools {
 }
 
 export interface SpawnContext {
+  /** Cancels pre-executor task environment preparation on stop/shutdown. */
+  preparationSignal?: AbortSignal
+  /** Task-local temporary directories; never set for companion chat. */
+  workbenchTaskId?: string
   /** Workbench-only ordered activity updates. Normal chat consumers keep legacy events. */
   workbenchTimeline?: boolean
   /** Enable retained native background execution only for the workbench consumer. */
@@ -299,7 +306,13 @@ export interface SpawnContext {
    * closed after that run is cancelled, completed, or restarted. */
   requestPermission?: (
     /** command / paths / cwd:放行规则要的原文(2026-10-19),执行者拿得到就给,拿不到就不给。 */
-    request: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string },
+    request: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string;
+      /** Requires an owner one-shot decision when execution is dynamic, even
+       * when extra grants withhold command facts from automatic allow rules. */
+      requiresBoundExecution?: true;
+      /** Only an explicit, audited owner rejection calls this. Expiry, rules,
+       * cancellation and unavailable approval channels are not owner feedback. */
+      onDenied?: (reason: string) => void },
     signal?: AbortSignal,
   ) => Promise<boolean>
   requestUserInput?: (request: AgentUserInputRequest, signal?: AbortSignal) => Promise<AgentUserInputAnswers | null>

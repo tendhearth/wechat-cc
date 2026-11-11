@@ -1,11 +1,14 @@
 /**
  * 记忆接进 daemon 的那一份(模块清单在 index.ts):路由那个模块 + 每晚整理那一拍。只有 daemon-modules.ts import 这个文件。
  */
+import { executorNames } from '../../domain/provider-display-names'
+import { makeMatterSeen } from '../../adapters/store/matter-seen'
 import { log } from '../../lib/log'
 import type { DaemonModule } from '../../daemon/modules/container'
 import type { Foundation } from '../../daemon/foundation'
 import type { Bootstrap } from '../../daemon/bootstrap'
 import type { WiredDeps } from '../../daemon/wiring'
+import type { WorkbenchService } from '../workbench'
 import { ownerChatIdOf } from '../../daemon/owner-chat'
 import { memoryFeature, memoryNightlyFeature, makeMemoryLlmOps, type MemoryFeature, type MemoryLlmOps } from './index'
 
@@ -17,14 +20,17 @@ export function memoryModule(f: Foundation): DaemonModule<MemoryFeature> {
   const { stateDir, db } = f
   return memoryFeature({
     needs: [],
-    lazy: ['bootstrap', 'wired'],
+    lazy: ['bootstrap', 'wired', 'workbench'],
     deps: (ctx) => {
       const boot = ctx.late<Bootstrap>('bootstrap')
       const wired = ctx.late<WiredDeps>('wired')
+      const workbench = ctx.late<WorkbenchService>('workbench')
       // daemon 自己跑的 LLM 记忆操作(spec 2026-07-23):桌面 / CLI 的路由走这一份(不在编译出来的 CLI 里)。
       let llm: MemoryLlmOps | null = null
       return {
-        stateDir, db, memory: f.memoryFS, log: (t, l) => log(t, l),
+        stateDir, db, seen: makeMatterSeen(db, f.desktopSurface), memory: f.memoryFS, log: (t, l) => log(t, l),
+        executorName: id => boot()?.registry.namesOf(id).name ?? executorNames(id).name,
+        taskActivity: id => workbench()?.projectActivity(id)??null,
         memoryLlm: () => {
           const b = boot()
           if (!b) return null

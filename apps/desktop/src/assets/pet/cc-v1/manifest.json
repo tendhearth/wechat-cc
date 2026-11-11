@@ -496,6 +496,54 @@
           "loop": false,
           "next": "idle",
           "artStatus": "production-candidate"
+        },
+        "attention-left": {
+          "frames": [
+            "attention/lit/left/000.png"
+          ],
+          "fps": 6,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "attention-right": {
+          "frames": [
+            "attention/lit/right/000.png"
+          ],
+          "fps": 6,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "attention-input-up": {
+          "frames": [
+            "attention/lit/input-up/000.png"
+          ],
+          "fps": 6,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "attention-read-down": {
+          "frames": [
+            "attention/lit/read-down/000.png"
+          ],
+          "fps": 6,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "attention-speaking": {
+          "frames": [
+            "attention/lit/speaking/000.png",
+            "attention/lit/speaking/001.png",
+            "attention/lit/speaking/002.png",
+            "attention/lit/speaking/003.png"
+          ],
+          "fps": 6,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
         }
       }
     },
@@ -954,6 +1002,54 @@
             "performance/unlit/curiosity/035.png"
           ],
           "fps": 12,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
+        },
+        "attention-left": {
+          "frames": [
+            "attention/unlit/left/000.png"
+          ],
+          "fps": 6,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "attention-right": {
+          "frames": [
+            "attention/unlit/right/000.png"
+          ],
+          "fps": 6,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "attention-input-up": {
+          "frames": [
+            "attention/unlit/input-up/000.png"
+          ],
+          "fps": 6,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "attention-read-down": {
+          "frames": [
+            "attention/unlit/read-down/000.png"
+          ],
+          "fps": 6,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "attention-speaking": {
+          "frames": [
+            "attention/unlit/speaking/000.png",
+            "attention/unlit/speaking/001.png",
+            "attention/unlit/speaking/002.png",
+            "attention/unlit/speaking/003.png"
+          ],
+          "fps": 6,
           "loop": false,
           "next": "idle",
           "artStatus": "production-candidate"
@@ -13730,6 +13826,934 @@
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
         "method": "paired motion review and pixel-contract checks"
       }
+    },
+    "attention/lit/left/000.png": {
+      "sha256": "3106926d927132f486725e475c59a0f455cb7a2199117ed809824497625079dd",
+      "view": "three-quarter",
+      "expression": "attention-left",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/left/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "attention/unlit/left/000.png": {
+      "sha256": "836f4285d3ee30ced7054b977f57653ece3932e328c99c00735443d4fd92947b",
+      "view": "three-quarter",
+      "expression": "attention-left",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/left/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "masks/attention/left/000.png": {
+      "sha256": "cf0b6154fcadf863fe0fd8df00deb6fef3f09f0ac62d437b11d759c676899007",
+      "view": "three-quarter",
+      "expression": "attention-left",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      }
+    },
+    "attention/lit/right/000.png": {
+      "sha256": "54ef8a169ff9f25b1a748c8624871009fc25878e6e6880d64905ebd0857a4e67",
+      "view": "three-quarter",
+      "expression": "attention-right",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/right/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "attention/unlit/right/000.png": {
+      "sha256": "842e3dc90cd08cbc2b5a097c5ea197428d51a66dfedbeca14fddf35baf18c986",
+      "view": "three-quarter",
+      "expression": "attention-right",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/right/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "masks/attention/right/000.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "attention-right",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      }
+    },
+    "attention/lit/input-up/000.png": {
+      "sha256": "26a785e0cfe839b00f94bd8ec56c540fef0564765c0032a046c0170f1387fead",
+      "view": "three-quarter",
+      "expression": "attention-input-up",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0.12,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/input-up/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "attention/unlit/input-up/000.png": {
+      "sha256": "b4d475f67cc02e9131c591479512f4f6c8277d13c656f969fa8149290c3751ed",
+      "view": "three-quarter",
+      "expression": "attention-input-up",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0.12,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/input-up/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "masks/attention/input-up/000.png": {
+      "sha256": "20239bc814b1142e2cbb65a3d105bd6a0f5395b7faa9106fdfa2cb81bd2577a4",
+      "view": "three-quarter",
+      "expression": "attention-input-up",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0.12,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      }
+    },
+    "attention/lit/read-down/000.png": {
+      "sha256": "aabc716c2639bc77f67bcf1247e6c4fd479ea3aebcbd52653e0839914fcb369c",
+      "view": "three-quarter",
+      "expression": "attention-read-down",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 0.9,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.04,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/read-down/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "attention/unlit/read-down/000.png": {
+      "sha256": "049cb4efe3452acd0ef2eafddab89670c1a9efc1fddd40b5ffe0247f840f4e56",
+      "view": "three-quarter",
+      "expression": "attention-read-down",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 0.9,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.04,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/read-down/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "masks/attention/read-down/000.png": {
+      "sha256": "a648c226d49ce15753b021cff37004e2e36413fafdd4ef94ee33149b98b9aebb",
+      "view": "three-quarter",
+      "expression": "attention-read-down",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 0.9,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.04,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      }
+    },
+    "attention/lit/speaking/000.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/speaking/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "attention/unlit/speaking/000.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/speaking/000.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "masks/attention/speaking/000.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 0,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      }
+    },
+    "attention/lit/speaking/001.png": {
+      "sha256": "6cf70a016f2960437a8219c6b4a1ab2ce85df1b1350f2d858f1acebbe5bd4684",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 1,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.02,
+        "gazeUp": 0.025,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.012,
+          "squash": 0.995,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/speaking/001.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "attention/unlit/speaking/001.png": {
+      "sha256": "ec51aca4025008a36d09b9b90893725204f999543d4e62b7a03deed73ace215c",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 1,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.02,
+        "gazeUp": 0.025,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.012,
+          "squash": 0.995,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/speaking/001.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "masks/attention/speaking/001.png": {
+      "sha256": "0c9468227d3c3e9543a286e6ceed6f56ef9b98fbe2ffcae8186021d4fccd90b8",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 1,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.02,
+        "gazeUp": 0.025,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.012,
+          "squash": 0.995,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      }
+    },
+    "attention/lit/speaking/002.png": {
+      "sha256": "18f2368e3055bcc1b493db7f2499a2db9f187fac2441a77644b2e3c99a124ca8",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 2,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.015,
+        "gazeUp": 0.02,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.01,
+          "squash": 1.006,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/speaking/002.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "attention/unlit/speaking/002.png": {
+      "sha256": "6f3257e3ac3270cb6851f8b04091c2a53c4dec52545321e1ec768c2c8c9e0727",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 2,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.015,
+        "gazeUp": 0.02,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.01,
+          "squash": 1.006,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/speaking/002.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "masks/attention/speaking/002.png": {
+      "sha256": "1f1caa100dfc82557a3cd10d3937ae34ca8624b3802c40cd4b3bc68de3b76908",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 2,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.015,
+        "gazeUp": 0.02,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.01,
+          "squash": 1.006,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      }
+    },
+    "attention/lit/speaking/003.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 3,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/speaking/003.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "attention/unlit/speaking/003.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 3,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "geometryMask": "masks/attention/speaking/003.png",
+      "visualReview": {
+        "reviewer": "Codex implementation visual self-review; owner review pending",
+        "reviewedAt": "2026-11-11T00:50:46.884271+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "PIL paired canonical comparisons at 48/96/256px; entity-mask validation"
+      }
+    },
+    "masks/attention/speaking/003.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "attention-speaking",
+      "artStatus": "production-candidate",
+      "source": "frozen-blender-rig",
+      "attentionSample": 3,
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      }
     }
   },
   "designSheets": [
@@ -13970,5 +14994,20 @@
       "seed": 11
     },
     "catalog": "art/cc-v1/performance/catalog.json"
+  },
+  "attention": {
+    "source": {
+      "sourceSha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+      "rendererSha256": "2b8806b1ae15e676fa2037ee00c559788b638eceaf5fd714fb3c5e9a4d35b84f",
+      "baseRendererSha256": "5d5946732a406d5d47064c62fe4744b5fc2b16dae1b02d06acef9c7735aafc54",
+      "planSha256": "0790ccef5143d44eb8bca8ce8a0b7837cfe89252c519ce58eace563bd348b11c",
+      "geometrySha256": "d26db56b5699b524db792b12187747f1451128dca019ea188d1e64053992e17d",
+      "performanceGeometrySha256": "72656f5a9c4144a00e59d52545f7ddc243cfc7eaf7e3207309b310ad2840a845",
+      "blender": "5.2.1 LTS",
+      "samples": 96,
+      "seed": 11
+    },
+    "catalog": "art/cc-v1/attention/recipes.json",
+    "blink": "reuse-existing-reviewed-production"
   }
 }

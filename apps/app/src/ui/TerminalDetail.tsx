@@ -13,7 +13,7 @@ import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { StatusWord } from '../ui/MatterRow'
 import { terminalStatusKey } from '../view/status'
 import { TextField } from '../ui/TextField'
-import { radius, space } from '../ui/tokens'
+import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
@@ -181,7 +181,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
             {!canSayTo(row.status, row.live) ? <Txt testID="terminal-say-busy" role="meta" tone="inkSoft">{t(lang, row.status === 'waiting' ? 'terminal.sayWaiting' : 'terminal.sayBusy')}</Txt> : null}
             <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.s }}>
             <TextField
-              testID="terminal-say-input"
+              testID="terminal-say-input" variant="chat"
               accessibilityLabel={t(lang, 'terminal.sayPlaceholder')}
               placeholder={t(lang, 'terminal.sayPlaceholder')}
               value={text}
@@ -189,7 +189,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
               editable={sayOpen}
               multiline
               maxLength={SAY_MAX}
-              style={{ flex: 1, minHeight: 48, maxHeight: 160, paddingHorizontal: space.l, paddingVertical: space.m, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, opacity: sayOpen ? 1 : 0.55 }}
+              style={{ flex: 1, maxHeight: 160 }}
             />
             <IconButton name="arrowUp" testID="terminal-say-send" label={t(lang, 'terminal.send')} busy={sending} disabled={!sayOpen || !text.trim()} onPress={() => void send()} />
             </View>

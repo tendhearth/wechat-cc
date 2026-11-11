@@ -12,12 +12,16 @@
  * 绝不自动装:只有 CLI 命令或主人在桌面上点了确认才调 connectTerminalHooks。
  */
 import { existsSync } from 'node:fs'
+import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { CLI_ENTRY } from './repo-root'
 import { isCompiledBundle } from '../lib/runtime-info'
 import { defaultLocate } from '../adapters/cli-upgrade/locate'
-import { claudeSettingsPath, codexHooksPath, cursorHooksPath, hookCommandLine, hookStatus, installHooks, uninstallHooks, type HookSource } from './hook'
+import { augmentedPathEnv } from '../lib/util'
+import { STATE_DIR } from '../lib/config'
+import { codexEvidencePath, readCodexHookTrust, recordCodexHookDefinitionChange, type CodexHookTrust } from './codex-hook-trust'
+import { claudeSettingsPath, codexHooksPath, cursorHooksPath, hookCommandLine, hookStatus, hasSessionStartHook, installHooks, uninstallHooks, type HookSource } from './hook'
 
 export const HOOK_SOURCES: readonly HookSource[] = ['claude', 'codex', 'cursor']
 
@@ -44,10 +48,41 @@ export interface TerminalHooksDeps {
   /** 主人装的 CLI 在哪(与 provider 注册、CLI 自动升级找的是同一个);没装 ⇒ null。 */
   locate: (source: HookSource) => string | null
   exists: (p: string) => boolean
+  /** Cached value only; an absent/expired value starts one asynchronous background refresh. */
+  codexVersion?: (binary: string | null) => string | null
+  evidenceFile?: string
 }
 
+export const CODEX_VERSION_TTL_MS = 300_000
+function probeCodexVersion(binary: string): Promise<string | null> {
+  return new Promise(resolve => {
+    execFile(binary, ['--version'], { windowsHide: true, timeout: 3000, maxBuffer: 64 * 1024, env: { ...process.env, PATH: augmentedPathEnv() } }, (error, stdout) => {
+      resolve(error ? null : stdout.split(/\r?\n/).find(line => line.trim())?.trim() ?? null)
+    })
+  })
+}
+
+/** One in-flight probe and one cached result; even a failed probe is throttled. */
+export function makeCodexVersionReader(opts: { probe?: (binary: string) => Promise<string | null>; now?: () => number } = {}): (binary: string | null) => string | null {
+  const probe = opts.probe ?? probeCodexVersion, now = opts.now ?? Date.now
+  let cached: { binary: string; at: number; version: string | null } | undefined
+  let pending: Promise<void> | undefined
+  return binary => {
+    if (!binary) return null
+    const hit = cached?.binary === binary ? cached : undefined
+    if (!pending && (!hit || now() - hit.at >= CODEX_VERSION_TTL_MS)) {
+      pending = Promise.resolve().then(() => probe(binary)).then(
+        version => { cached = { binary, at: now(), version } },
+        () => { cached = { binary, at: now(), version: null } },
+      ).finally(() => { pending = undefined })
+    }
+    return hit?.version ?? null
+  }
+}
+const codexVersion = makeCodexVersionReader()
 export function defaultTerminalHooksDeps(): TerminalHooksDeps {
-  return { home: homedir(), env: process.env, self: defaultHookSelf(), locate: (s) => defaultLocate(s), exists: existsSync }
+  return { home: homedir(), env: process.env, self: defaultHookSelf(), locate: (s) => defaultLocate(s), exists: existsSync,
+    evidenceFile: codexEvidencePath(STATE_DIR), codexVersion }
 }
 
 /**
@@ -66,6 +101,7 @@ export interface HookSourceState {
   health: HookHealth
   /** 命令行和这份进程会写的一模一样。 */
   matchesSelf: boolean
+  trust?: CodexHookTrust
 }
 
 /** 命令行里带引号的绝对路径(程序本身,源码模式还有 cli.ts)。 */
@@ -89,8 +125,20 @@ export function readTerminalHooks(deps: TerminalHooksDeps): HookSourceState[] {
     try { cli = deps.locate(source) } catch { cli = null }
     // Cursor 的 IDE 自己也触发 ~/.cursor/hooks.json:没装 cursor-agent、只有 IDE 也算「有」(cli 记成那个目录)。
     if (!cli && source === 'cursor') { const dir = join(deps.home, '.cursor'); if (deps.exists(dir)) cli = dir }
-    return { source, cli, file, installed: st.installed, command: st.command, health: hookHealth(st, deps.exists), matchesSelf: st.command === selfHookCommand(source, deps.self) }
+    const health = hookHealth(st, deps.exists)
+    return { source, cli, file, installed: st.installed, command: st.command, health: health === 'ok' && !hasSessionStartHook(file, source) ? 'stale' : health, matchesSelf: st.command === selfHookCommand(source, deps.self),
+      ...(source === 'codex' && st.installed ? { trust: readCodexHookTrust(file, { evidenceFile: deps.evidenceFile, version: deps.codexVersion?.(cli) }) } : {}) }
   })
+}
+
+/** Short-lived CLI commands must await their one snapshot; daemon polling uses the cached reader above. */
+export async function readTerminalHooksForCli(deps: TerminalHooksDeps, probe = probeCodexVersion): Promise<HookSourceState[]> {
+  const initial = readTerminalHooks({ ...deps, codexVersion: undefined })
+  const codex = initial.find(s => s.source === 'codex')
+  if (!codex?.installed || !codex.cli) return initial
+  let version: string | null = null
+  try { version = await probe(codex.cli) } catch { /* Failed probes leave confirmation unknown. */ }
+  return readTerminalHooks({ ...deps, codexVersion: binary => binary === codex.cli ? version : null })
 }
 
 /** 这台机上「有」这一家:CLI 找得到,或者已经装过 hook(daemon 的 PATH 可能比终端窄)。 */
@@ -108,6 +156,7 @@ export interface HookChange {
   error?: string
   /** 没装这个 CLI,所以没动它的配置。 */
   skipped?: 'cli_not_found'
+  reconfirmationRequired?: boolean
 }
 
 /**
@@ -123,8 +172,9 @@ export function connectTerminalHooks(deps: TerminalHooksDeps, sources?: readonly
     if (!isPresent(s)) return { source: s.source, ok: false, file: s.file, skipped: 'cli_not_found' }
     const command = selfHookCommand(s.source, deps.self)
     try {
-      const { changed } = installHooks(s.file, s.source, command)
-      return { source: s.source, ok: true, file: s.file, changed, command }
+      const result = installHooks(s.file, s.source, command)
+      if (result.reconfirmationRequired && deps.evidenceFile) recordCodexHookDefinitionChange(deps.evidenceFile)
+      return { source: s.source, ok: true, file: s.file, ...result, command }
     } catch (err) {
       return { source: s.source, ok: false, file: s.file, error: err instanceof Error ? err.message : String(err) }
     }

@@ -88,6 +88,18 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
       case 'failed': case 'cancelled': case 'interrupted': return task.status
     }
   }
+  /** Owner-authorized runtime facts for project topics; no detail, history or seen side effects. */
+  function projectActivity(id:string):{phase:WorkbenchPhase;requestId:string|null;waitingFor:string|null;requestKind?:'permission'|'question';tool?:string|null}|null {
+    const owner=ctx.deps.ownerChatId()
+    if(!owner)return null
+    let task:ReturnType<typeof store.get>
+    try {task=store.get(id)}catch{return null}
+    if(task.ownerChatId!==owner||task.archivedAt!==null)return null
+    const running=state.runsByTask.get(id)
+    const permissions=running?.permissions.pending()??[],questions=running?.questions.pending()??[]
+    const first=[...permissions].sort((a,b)=>a.createdAt-b.createdAt)[0]??[...questions].sort((a,b)=>a.createdAt-b.createdAt)[0]
+    return {phase:phaseOf(task,running),requestId:first?.id??null,waitingFor:first ? ('tool' in first ? '等你批准' : '等你回答') : null,...(first?{requestKind:'tool' in first?'permission' as const:'question' as const,tool:'tool' in first?first.tool:null}:{})}
+  }
   function taskView(task:Task, includePermissions=false):WorkbenchTaskView {
     const running=state.runsByTask.get(task.id)
     const runtime=runtimeSnapshot(running)
@@ -101,7 +113,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
       // port(2026-10-20):脚本拿到的 TENDHEARTH_PORT,用到时才分配。
       ...(()=>{const u=store.usage.totals(task.id);return u.turns?{usage:u}:{}})(),
       ...(()=>{const g=store.goals.get(task.id);return g?{until:{command:g.command,maxRounds:g.maxRounds,rounds:g.rounds,status:g.status,lastExit:g.lastExit,stopReason:g.stopReason}}:{}})(),
-      ...(()=>{const wt=store.worktrees.get(task.id);return wt?{worktree:{branch:wt.branch,projectPath:wt.projectPath,removed:wt.removedAt!==null,merged:wt.mergedAt!==null,...(wt.port!==null?{port:wt.port}:{})}}:{}})(),
+      ...(()=>{const wt=store.worktrees.get(task.id);return wt?{worktree:{...(wt.start?{base:wt.start.base,baseSha:wt.start.sha}:{}),branch:wt.branch,projectPath:wt.projectPath,removed:wt.removedAt!==null,merged:wt.mergedAt!==null,...(wt.port!==null?{port:wt.port}:{})}}:{}})(),
       // 「没确认退出」:进程组还活着 ⇒ 'alive'(先结束它);没有相反证据 ⇒ 'unconfirmed'(主人可以确认已经结束)。
       ...(task.error==='writer_not_closed'?{writerExit:writerAlive(ctx,task.id)?'alive' as const:'unconfirmed' as const}:{}),
       waitingFor:running ? waitingFor(running) : null,
@@ -144,7 +156,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
       else if(run?.networkSuspended)phase='paused'
       else {
         const permissions=run?.permissions.pending()??[],questions=run?.questions.pending()??[]
-        if(permissions.length||questions.length){phase='needs_input';detail=firstPending(permissions,questions)?.text??null}
+        if(permissions.length||questions.length){phase='needs_input';detail='需要你决定'}
         else {const fact=phaseOf(task,run);if(fact==='cancelled')continue;phase=fact}
       }
       if(phase==='replied'&&task.updatedAt<recent)continue
@@ -214,6 +226,6 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     return result
   }
 
-  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,taskView,attention,petActivities,projects,addProject,list,detail }
+  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,projectActivity,taskView,attention,petActivities,projects,addProject,list,detail }
 }
 export type ViewDomain = ReturnType<typeof makeViewDomain>

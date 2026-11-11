@@ -31,6 +31,8 @@ describe('statusOf', () => {
 
 describe('M6f new fields with legacy fallback', () => {
   it('uses new state, while task phases and pending decisions keep their priority', () => {
+    expect(statusOfMatter({ state: 'failed', kind: 'task', archivedAt: null }, null, 0)).toBe('failed')
+    expect(statusOfMatter({ state: 'cancelled', kind: 'task', archivedAt: null }, null, 0)).toBe('stopped')
     expect(statusOfMatter({ status: 'open', state: 'done', kind: 'task', archivedAt: null }, null, 0)).toBe('done')
     expect(statusOfMatter({ status: 'done', state: 'working', kind: 'task' }, null, 0)).toBe('working')
     expect(statusOfMatter({ state: 'done', kind: 'act' }, null, 0)).toBe('working')
@@ -45,4 +47,10 @@ describe('M6f new fields with legacy fallback', () => {
     expect(isMatterArchived({ status: 'archived' })).toBe(true)
     expect(isMatterArchived({ status: 'open' })).toBe(false)
   })
+})
+
+it('a task pause takes precedence over replied, and recovery restores replied without changing phone connectivity',()=>{
+ expect(statusOf({status:'running',phase:'replied',networkSuspended:{since:1}},0)).toBe('working')
+ expect(statusOf({status:'running',phase:'replied'},0)).toBe('replied')
+ expect(statusOf({status:'running',phase:'replied',networkSuspended:{since:1}},1)).toBe('waiting')
 })

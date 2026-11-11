@@ -1,3 +1,5 @@
+import { taskEnvironment } from '../../adapters/executors/task-environment'
+import { makeWorkbenchPermissionPrompt } from './permission-prompt'
 import {createClaudeHistoryReader} from '../../adapters/executors/claude/native-claude-history'
 import { makeIssueFetcher } from './issue-fetch'
 import { lessonsBlock, makeProjectLessons } from './project-lessons'
@@ -38,12 +40,14 @@ import { acpAgentProblem, resolveAcpAgent, resolveCustomAcpAgent } from '../../a
 import { findOnPath } from '../../lib/util'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
-export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}): Options {
+export async function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}, taskId?: string, preparationSignal?: AbortSignal): Promise<Options> {
   const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
+  const taskEnv = taskId ? await taskEnvironment(base.cwd!, taskId,{signal:preparationSignal}) : {}
+  const {NODE_OPTIONS: _preload, PATH: _taskPath, CC_TASK_SYSTEM_BOOT_MS: _boot, ...scratchEnv} = taskEnv
   return {
     cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
     executable:base.executable, executableArgs:base.executableArgs,
-    env:workbenchClaudeEnvironment(base.env),
+    env:{...workbenchClaudeEnvironment(base.env),...scratchEnv},
     ...tier,
     allowDangerouslySkipPermissions:false,
     allowedTools:[],
@@ -56,7 +60,7 @@ export function workbenchClaudeOptions(base: Options, instructions: string, perm
       ...native.nativeMcpPolicy,
       // Flag settings override disk env values. Empty values neutralize these
       // automatic companion pointers; this is not filesystem/process isolation.
-      env:Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),
+      env:{...Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),...scratchEnv},
       disableAllHooks:true, disableSkillShellExecution:true,
       enabledPlugins:native.disabledPlugins ?? {},
       permissions:{defaultMode:'default',disableBypassPermissionsMode:'disable',
@@ -140,7 +144,8 @@ export function makeUnattendedAckStore(stateDir: string): { get(): number | null
 export function wireWorkbench(opts: {
   db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
-  askUser: PermissionRelayDeps['askUser']; log: PermissionRelayDeps['log']
+  permissionRegistry?: Pick<import('../../ports/wechat').WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'>
+  askUser: import('../../ports/wechat').WechatPermissions['askUser']; log: PermissionRelayDeps['log']
   /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
   matters?: import('../../ports/matters').MatterStore
   /** 回报(task-3,2026-09-23;功能目录 src/features/reports 造好交进来):与 matters 一起有才接得上,单传一个不够。 */
@@ -188,13 +193,13 @@ export function wireWorkbench(opts: {
     claude:()=>{
       const claude=opts.boot.registry.get('claude')
       if (claude) registry.register('claude',createClaudeAgentProvider({
-        sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
+        async sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
           const base=opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
           const native=readNativeClaudeTools(path)
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)
           const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers))
-          return workbenchClaudeOptions(base,instructions ?? '',permit,native)
+          return await workbenchClaudeOptions(base,instructions ?? '',permit,native,context?.workbenchTaskId,context?.preparationSignal)
         },
       }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
     },
@@ -266,6 +271,7 @@ export function wireWorkbench(opts: {
     holdBusy:opts.boot.holdBusy,
   }):undefined
   return makeWorkbenchService({
+    ...(opts.permissionRegistry?{permissionPrompt:makeWorkbenchPermissionPrompt(opts.permissionRegistry,ownerChatId)}:{}),
     managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
     ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
     // 项目经验(第二轮对标 ★2):主人在微信「经验 <项目> …」写的,每家执行者的指令里都带上

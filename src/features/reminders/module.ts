@@ -11,6 +11,7 @@ import { remindersFeature } from './index'
 export function remindersModule(f: Foundation): DaemonModule<void> {
   const { db } = f
   return remindersFeature({
+    intervalMs: f.reminderIntervalMs,
     db, isOwner: isOwnerOf(f.stateDir), needs: ['wired', 'activity'],
     speech: (c) => c.get<WiredDeps>('wired').speech,
     activityLog: (c) => c.get<Activity>('activity').activityLog,

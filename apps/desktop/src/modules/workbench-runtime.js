@@ -1,11 +1,11 @@
 // @ts-check
 
-import { STATUS_WORDS } from '../generated/status-table.js'
+import { STATUS_WORDS, TASK_DETAIL_WORDS } from '../generated/status-table.js'
 
 /** @typedef {import('../../../../src/ports/agent-provider').AgentRuntimeSnapshot} RuntimeSnapshot */
 
 /** 网络守护冻住了这条 run(主人 2026-10-03):桌面 / 手机 / 微信同一句。 */
-export const NETWORK_SUSPENDED_LABEL = '已暂停(网络未受保护)'
+export const NETWORK_SUSPENDED_LABEL = TASK_DETAIL_WORDS.networkPaused
 
 /** Presentation only; retained idle is not proof that native queues are empty.
  * @param {string} status @param {RuntimeSnapshot} [runtime] @param {string} [phase] @param {{since:number}|null} [networkSuspended] */
@@ -16,7 +16,7 @@ export function workbenchRuntimePresentation(status, runtime, phase, networkSusp
   // 回合与会话一节);没有 phase 的旧后台仍从运行时快照推。
   if (phase === 'replied') return { status:'retained', label:STATUS_WORDS.replied }
   if (status !== 'running' || !runtime?.retained) return null
-  if (runtime.backgroundCount > 0) return { status:'running', label:`后台执行中 · ${runtime.backgroundCount}` }
-  if (runtime.foreground === 'idle') return { status:'retained', label:'会话保留中' }
+  if (runtime.backgroundCount > 0) return { status:'running', label:TASK_DETAIL_WORDS.background.replace('{n}', String(runtime.backgroundCount)) }
+  if (runtime.foreground === 'idle') return { status:'retained', label:TASK_DETAIL_WORDS.retained }
   return null
 }

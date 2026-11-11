@@ -24,6 +24,29 @@ export function mergeEvents(existing, incoming) {
   return [...out, ...fresh].sort((a, b) => Number(a.id) - Number(b.id))
 }
 
+/** Latest real activity only; used by both rendering and structural invalidation.
+ * @param {Detail|null|undefined} detail */
+export function currentActivityLabel(detail) {
+  if (detail?.task.status !== 'running' || detail.task.phase === 'replied' || detail.task.networkSuspended) return null
+  const events = detail.events ?? []
+  const latestTurnIndex = events.findLastIndex(event => event.turnId && (!detail.runId || event.runId === detail.runId))
+  const requestIndex = events.findLastIndex(event => event.kind === 'user')
+  if (latestTurnIndex >= 0 && requestIndex > latestTurnIndex && !events[requestIndex]?.turnId) return null
+  const turnId = events[latestTurnIndex]?.turnId
+  const seen = new Set()
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]
+    if (!event) continue
+    const activity = event.activity
+    if (!activity || (detail.runId && event.runId !== detail.runId) || (turnId && event.turnId !== turnId)) continue
+    const key = JSON.stringify([event.runId, activity.id])
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (activity.status === 'running') return activity.label
+  }
+  return null
+}
+
 /** 整页重画的判据:事件之外的一切。事件只改时间线,交给增量补丁。
  * `waitingFor.closeInMs` 是后端按 `Date.now()` 现算的,不摘掉的话:主人正看着排队任务(这个
  * 功能的目标场景)时,只要长轮询在计时武装期间收一轮,签名就变,`applyLiveDetail` 判定
@@ -35,7 +58,7 @@ export function structuralSignature(detail) {
   if (!detail) return ''
   const task = detail.task ?? {}
   return JSON.stringify([
-    task.status ?? null, task.phase ?? null, task.error ?? null, task.archivedAt ?? null,
+    task.status ?? null, task.phase ?? null, task.error ?? null, task.archivedAt ?? null, task.networkSuspended ?? null,
     // null(没有计时器)与非 null(已武装)是两种不同的状态,抹平成同一个 0 会把这个真转变
     // 去重吞掉(终审 M1);0 只代表「已武装、数字不重要」,null 保留 null。
     task.waitingFor ? { ...task.waitingFor, closeInMs: task.waitingFor.closeInMs == null ? null : 0 } : null,
@@ -49,6 +72,7 @@ export function structuralSignature(detail) {
     detail.execution ?? null, detail.lastExecution ?? null, detail.continuation ?? null,
     (detail.handoffs ?? []).length,
     detail.requiresExternalClose ?? null,
+    currentActivityLabel(detail),
   ])
 }
 
@@ -61,13 +85,13 @@ const hoisted = (/** @type {WorkbenchEvent} */ event) => event.kind === 'error' 
 
 /** 正在跑的那一组的操作列表 —— 必须是对话区的最后一个孩子,否则追加会把新操作
  * 塞到上面那一组里(渲染器每遇到一条消息就断开一组,同一轮可以有好几个 live 组)。
- * @param {{querySelector:(selector:string)=>any}} root */
-function liveOperationList(root) {
+ * @param {{querySelector:(selector:string)=>any}} root @param {string|undefined} runId */
+function liveOperationList(root, runId) {
   const dialogue = root.querySelector('.wb-dialogue')
   if (!dialogue) return null
-  const groups = Array.from(dialogue.querySelectorAll?.('[data-timeline-group]:not(details)') ?? [])
+  const groups = Array.from(dialogue.querySelectorAll?.('[data-timeline-group][data-timeline-live]') ?? [])
   const group = groups.at(-1)
-  if (!group || dialogue.lastElementChild !== group) return null
+  if (!group || dialogue.lastElementChild !== group || group.getAttribute?.('data-run-id') !== String(runId ?? '')) return null
   return group.querySelector?.('.wb-operation-list') ?? null
 }
 
@@ -76,6 +100,7 @@ function liveOperationList(root) {
  * 调用方退回整页重画。
  * @param {{querySelector:(selector:string)=>any}} root @param {WorkbenchEvent[]} changed @param {PatchRenderers} render @returns {PatchResult} */
 export function patchLiveTimeline(root, changed, render) {
+  if ((changed ?? []).some(event => event.kind === 'user' && !root.querySelector(`#${render.eventId(event)}`))) return { patched:0, appended:0, missing:changed.length }
   let patched = 0, appended = 0, missing = 0, deferred = 0
   for (const event of changed ?? []) {
     if (hoisted(event)) { missing++; continue }
@@ -87,8 +112,10 @@ export function patchLiveTimeline(root, changed, render) {
       else {existing.outerHTML = html;patched++}
       continue
     }
+    // 新请求改变当前轮的边界，完整重画才能将上一轮收进历史。
+    if (event.kind === 'user') { missing++; continue }
     // 每条都重新找一次:上一条刚追加的消息会把 live 组从末尾挤走。
-    const host = isMessage(event) ? root.querySelector('.wb-dialogue') : liveOperationList(root)
+    const host = isMessage(event) ? root.querySelector('.wb-dialogue') : liveOperationList(root, event.runId)
     if (host) { host.insertAdjacentHTML('beforeend', html); appended++ } else missing++
   }
   return { patched, appended, missing, ...(deferred?{deferred}:{}) }

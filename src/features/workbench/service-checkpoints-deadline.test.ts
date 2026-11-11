@@ -42,13 +42,13 @@ beforeEach(()=>{
   service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t'})
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
-const create=(isolation?:'worktree')=>service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,...(isolation?{isolation}:{})}} as EntryInput,context).receipt.taskId
+const create=async (isolation?:'worktree')=>(await service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,...(isolation?{isolation}:{})}} as EntryInput,context)).receipt.taskId
 const settle=(id:string)=>expect.poll(()=>service.detail(id).task.status,{timeout:20_000}).toBe('completed')
 const reviews=(id:string)=>service.detail(id).artifacts.filter(a=>a.name.startsWith('代码变更')).map(a=>parseGitReviewSnapshot(readArtifactSnapshot(store.artifact(id,a.id).storagePath,stateDir,a.sha256))!)
 
 it('checkpoint timing out: the worktree round still completes and its review is saved without checkpoints',async()=>{
   fake.mode='timeout';fake.signals=[]
-  const id=create('worktree');await settle(id)
+  const id=await create('worktree');await settle(id)
   const [review]=reviews(id)
   expect(review?.files.map(f=>f.path)).toEqual(['out.txt'])
   expect('checkpointBefore' in review!).toBe(false);expect('checkpointAfter' in review!).toBe(false)
@@ -58,7 +58,7 @@ it('checkpoint timing out: the worktree round still completes and its review is 
 
 it('a checkpoint stuck at round start is stopped by cancel',async()=>{
   fake.mode='hang';fake.signals=[]
-  const id=create('worktree')
+  const id=await create('worktree')
   await expect.poll(()=>fake.signals.length,{timeout:20_000}).toBe(1)
   await service.cancel(id)
   await expect.poll(()=>service.detail(id).task.status,{timeout:5_000}).toBe('cancelled')

@@ -74,7 +74,7 @@ export function codexChatThreadConfig(
   askEachMcpCall = false,
 ): Record<string, unknown> {
   const tierOpts = compilePolicy('codex', ctx.tierProfile, ctx.permissionMode)
-  const config: Record<string, unknown> = {}
+  const config: Record<string, unknown> = { sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } }
   if (mcpServers && Object.keys(mcpServers).length) {
     const sessionEnv = ctx.mcpEnv ?? {}
     // 只并进 CORE_MCP_SERVER_NAMES(wechat / delegate):第三方插件拿到令牌就能冒充 agent 调回环 API。
@@ -125,7 +125,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
   const cheapProfile = (): CodexChatProfile => ({
     // 一次性评估:不给工具、不给网、不给写;`low` 是 codex 在工具目录里带 image_gen 时还肯接的最低推理档。
     sandbox: 'read-only', approvalPolicy: 'never', env: process.env, log,
-    config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false } },
+    config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } },
   })
 
   return {

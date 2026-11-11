@@ -27,6 +27,8 @@ export interface MachineLoad { load1: number; cpus: number }
 export interface ShipTree { dirty: string; head: string; devHead: string | null }
 
 export interface ShipDeps {
+  /** 构建前先等在跑的交办；底层 self deploy 在改文件前再核对。 */
+  taskGate?: () => Promise<string | null>
   tree: () => ShipTree
   load: () => MachineLoad
   /** /v1/health.guard;null = 读不到。 */
@@ -99,6 +101,9 @@ export async function runShip(deps: ShipDeps, opts: ShipOpts = {}): Promise<Ship
     const why = !g ? '读不到网络守护的状态(daemon 不通?)' : `网络守护说现在不安全:${g.detail}`
     return { exitCode: SHIP_EXIT.unguarded, message: `${why}。自检要调模型,不部署(部署完跑不了自检只能回滚)。什么都没动。` }
   }
+
+  const tasks=await deps.taskGate?.().catch(err=>`读取交办任务失败：${err instanceof Error?err.message:err}`)
+  if(tasks)return {exitCode:SHIP_EXIT.busy,message:tasks}
 
   if (!opts.skipBuild) {
     deps.log('构建 sidecar…')

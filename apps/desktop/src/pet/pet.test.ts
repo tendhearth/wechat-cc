@@ -24,14 +24,79 @@ function clock() {
     tick(ms: number) { const until = now + ms; while (true) { q.sort((a, b) => a.at - b.at); const n = q[0]; if (!n || n.at > until) break; q.shift(); now = n.at; n.fn() } now = until },
     pending: () => q.length, now: () => now }
 }
-const boot = async (fetchImpl = fetchReal, reducedMotion = false, manifestUrl = './assets/pet/manifest.json') => {
+const boot = async (fetchImpl = fetchReal, reducedMotion = false, manifestUrl = './assets/pet/manifest.json', life = false) => {
   const c = clock(); const root = { stage: el(), img: el('img'), props: el(), hint: el('p') }
   // random: () => 0 —— 随机小动作取区间下界,时间线就是确定的(blink 6000ms、look 25000ms)。
-  const pet = await createPet(root, { manifestUrl, fetchImpl, reducedMotion, makeEl: el, schedule: c.schedule, cancel: c.cancel, preload: () => {}, random: () => 0, now: c.now })
+  const pet = await createPet(root, { manifestUrl, fetchImpl, reducedMotion, makeEl: el, schedule: c.schedule, cancel: c.cancel, preload: () => {}, random: () => 0, now: c.now, life })
   return { c, root, pet }
 }
 
 describe('createPet(组装)', () => {
+  it('keeps Dark still when a new topic arrives, and ignores activity after destruction', async () => {
+    const raw = readFileSync(join(__dirname, '../assets/pet/cc-v1/manifest.json'), 'utf8')
+    const { c, root, pet } = await boot((async () => new Response(raw)) as unknown as typeof fetch)
+    const before = root.img.src
+    expect(pet.acknowledgeAttention('left')).toBe(false)
+    expect(pet.machine.snapshot().behavior).toBe('idle'); expect(root.img.src).toBe(before)
+    pet.destroy(); pet.setActivity('listening'); expect(c.pending()).toBe(0)
+  })
+  it('topic gaze interrupts doze and its body deformation, then restarts the calm deadline', async () => {
+    const raw = readFileSync(join(__dirname, '../assets/pet/cc-v1/manifest.json'), 'utf8')
+    const { c, root, pet } = await boot((async () => new Response(raw)) as unknown as typeof fetch, false, './assets/pet/cc-v1/manifest.json', true)
+    pet.setForm('lit'); c.tick(1100); pet.setLifeAvailable(true); c.tick(180001)
+    expect(root.props.getAttribute('data-pet-action')).toBe('doze')
+    expect(pet.acknowledgeAttention('left')).toBe(true)
+    expect(root.img.src).toContain('/attention/lit/left/'); expect(root.props.getAttribute('data-pet-action')).toBe('still')
+    c.tick(520); c.tick(179999); expect(root.props.getAttribute('data-pet-action')).not.toBe('doze')
+    c.tick(2); expect(root.props.getAttribute('data-pet-action')).toBe('doze')
+    pet.destroy()
+  })
+  it('real activity interrupts doze and starts a fresh calm deadline when it ends', async () => {
+    const raw = readFileSync(join(__dirname, '../assets/pet/cc-v1/manifest.json'), 'utf8')
+    const { c, root, pet } = await boot((async () => new Response(raw)) as unknown as typeof fetch, false, './assets/pet/cc-v1/manifest.json', true)
+    pet.setForm('lit'); c.tick(1100); pet.setLifeAvailable(true); c.tick(180001)
+    expect(root.props.getAttribute('data-pet-action')).toBe('doze')
+    pet.setActivity('listening'); expect(root.img.src).toContain('/attention/lit/input-up/')
+    expect(root.props.getAttribute('data-pet-action')).toBe('still')
+    pet.setActivity('idle'); c.tick(179999)
+    expect(root.props.getAttribute('data-pet-action')).not.toBe('doze')
+    c.tick(2); expect(root.props.getAttribute('data-pet-action')).toBe('doze')
+    pet.destroy()
+  })
+
+  it('uses authored input and bounded speech only on actual activity, cancelling priority and reduced motion immediately', async () => {
+    const raw = readFileSync(join(__dirname, '../assets/pet/cc-v1/manifest.json'), 'utf8')
+    const { c, root, pet } = await boot((async () => new Response(raw)) as unknown as typeof fetch)
+    pet.setForm('lit'); c.tick(1100)
+    expect(root.img.src).not.toContain('/attention/')
+    pet.setActivity('listening'); expect(root.img.src).toContain('/attention/lit/input-up/')
+    pet.setActivity('speaking'); c.tick(167); pet.setActivity('speaking')
+    expect(root.img.src).toContain('/attention/lit/speaking/001.png')
+    c.tick(501); pet.setActivity('speaking'); expect(root.img.src).not.toContain('/attention/')
+    pet.setActivity('thinking'); pet.setActivity('speaking')
+    expect(root.img.src).not.toContain('/attention/') // Within the 2.4s budget.
+    c.tick(3000); pet.setActivity('speaking'); expect(root.img.src).not.toContain('/attention/')
+    pet.setActivity('idle'); pet.setActivity('listening'); pet.setState('permission')
+    expect(root.img.src).not.toContain('/attention/')
+    pet.setState('idle'); pet.setReducedMotion(true); pet.setActivity('listening')
+    expect(root.img.src).not.toContain('/attention/')
+    pet.setActivity('idle'); pet.setReducedMotion(false); pet.destroy()
+    expect(c.pending()).toBe(0)
+  })
+  it('looks toward a new bubble once, drops attention during activity and does not repeat inside cooldown', async () => {
+    const raw = readFileSync(join(__dirname, '../assets/pet/cc-v1/manifest.json'), 'utf8')
+    const { c, root, pet } = await boot((async () => new Response(raw)) as unknown as typeof fetch)
+    pet.setForm('lit'); c.tick(1100)
+    expect(pet.acknowledgeAttention('left')).toBe(true)
+    expect(root.img.src).toContain('/attention/lit/left/')
+    c.tick(520); expect(root.img.src).not.toContain('/attention/')
+    expect(pet.acknowledgeAttention('right')).toBe(false)
+    c.tick(12000); expect(pet.acknowledgeAttention('right')).toBe(true)
+    expect(root.img.src).toContain('/attention/lit/right/')
+    pet.setActivity('listening'); expect(root.img.src).toContain('/attention/lit/input-up/')
+    pet.setActivity('idle'); expect(root.img.src).not.toContain('/attention/')
+    pet.destroy()
+  })
 
   it('leaving local attention returns to the latest resting state without changing facts or cooldown', async () => {
     const { c, pet } = await boot()

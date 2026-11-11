@@ -61,7 +61,7 @@ const ROUTE_CODES: Record<string, RouteCodes> = {
   },
   'GET /v1/matter': {
     direct: ['invalid_request', 'matters_not_wired', 'matter_not_found', 'internal', 'detail_too_large'],
-    slices: [{ file: 'src/daemon/internal-api/routes-matters.ts', from: "'GET /v1/matter':", to: "'POST /v1/matter/say':" },
+    slices: [{ file: 'src/daemon/internal-api/routes-matters.ts', from: "'GET /v1/matter':", to: "'GET /v1/matter/permission-script':" },
       { file: 'src/daemon/internal-api/routes-matters.ts', from: 'const invalid=', to: 'const known=' }],
   },
   'POST /v1/matter/stop': {
@@ -159,11 +159,15 @@ describe('手机网页调的路由 = 这里登记了码的路由', () => {
 })
 
 describe('T5 设备对话调用的权限', () => {
+  it('脚本全文设备路由的错误码与公开详情切片分别登记',()=>{
+    const text=slice({file:'src/daemon/internal-api/routes-matters.ts',from:"'GET /v1/matter/permission-script':",to:"'POST /v1/matter/say':"})+slice({file:'src/daemon/internal-api/routes-matters.ts',from:'const invalid=',to:'const known='})
+    expect(uniq([...text.matchAll(DIRECT_RE)].map(m=>m[1]!))).toEqual(['invalid_request','matter_not_found','matters_not_wired','permission_stale'])
+  })
   it('新增私人调用逐项登记为设备专用，链接路径仍由上面的完整集合约束', () => {
     const page = assembleMobilePage(readMobileSource).phone.split(read('apps', 'mobile', 'src', 'protocol-generated.js')).join('')
     const calls = scanSource('phone /m', page, PHONE_ROUTES).calls
     expect(uniq(calls.filter(c => c.deviceOnly).map(c => c.key))).toEqual([
-      'GET /v1/matter/artifact', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'GET /v1/subscribe/topics', 'POST /v1/matter/answer', 'POST /v1/matter/owner-chat/say', 'POST /v1/matter/permission', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename',
+      'GET /v1/matter/artifact', 'GET /v1/matter/owner-chat/events', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/search', 'GET /v1/matter/permission-script', 'GET /v1/matters', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'GET /v1/subscribe/topics', 'POST /v1/matter/answer', 'POST /v1/matter/owner-chat/say', 'POST /v1/matter/permission', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename',
     ])
   })
 })

@@ -50,6 +50,7 @@ interface Options {
   writerWatchMs?: number
   timeoutMs?: number
   closeTimeoutMs?: number
+  permissionPrompt?: ServiceCtx['deps']['permissionPrompt']
   permissionTimeoutMs?: number; permissionDecide?: ServiceCtx['deps']['permissionDecide']   // 放行规则(2026-10-19);不传 ⇒ 每条权限都问主人
   /** 保留会话安静下来、**没人等这个文件夹**时的空闲自动收工时长(ms;缺省 10 分钟)。
    *  纯粹是别让一个闲着的原生进程占着资源。允许 0(=立刻关)与很大的数(封顶约 24.8 天,即
@@ -88,6 +89,7 @@ import { makeExecuteDomain } from './service/execute'
 import { makeEntryDomain } from './service/entry'
 import { makeQuotaHandoffDomain, makeQuotaHandoffView } from './service/quota-handoff'
 import type { ServiceCtx } from './service/ctx'
+import { recoverRestartContinuations, quarantineRestartContinuations } from './service/restart-resume'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
 
@@ -174,9 +176,9 @@ export function makeWorkbenchService(opts: Options) {
 
   // ---- 3 层:until。检查没过之后怎么接着改,由下面这一个具名回调给出(见文件顶部「剩一条真环」)。
   // 它引用的 inputsDomain / executeDomain 在后面才建 —— 这是整个组装里唯一一处;它只在检查脚本跑完后才被调,那时都已建好。
-  const resumeAfterCheck: UntilResume = (id, text, requestId, current) => {
-    if (current) return inputsDomain.submitInput(id, { runId: current.identity, requestId, text })
-    executeDomain.continueTask(id, text, { inputRequestId: requestId })
+  const resumeAfterCheck: UntilResume = (id, text, requestId, current, denials) => {
+    if (current) return inputsDomain.submitInput(id, { runId: current.identity, requestId, text }, undefined, 'automatic')
+    executeDomain.continueTask(id, text, { inputRequestId: requestId }, undefined, denials)
     return undefined
   }
   const untilDomain = makeUntilDomain(ctx, { view: viewDomain, resume: resumeAfterCheck }, opts.until)
@@ -253,10 +255,14 @@ export function makeWorkbenchService(opts: Options) {
   // 开机对账:全部建好之后再做(顺序同改造前)
   store.recover()
   store.liveInputs.recover()
+  quarantineRestartContinuations(ctx)
   lifecycleDomain.adoptWriters()
   scriptsDomain.recover()
   void rewindDomain.recover()
   quotaResumeDomain.recover()
+  // 构造完成后才开续接，仍经过原生会话准入、网络门和文件夹写者租约。
+  queueMicrotask(()=>recoverRestartContinuations(ctx,executeDomain))
+  unsubscribes.add(opts.registry.onRegister(()=>recoverRestartContinuations(ctx,executeDomain)))
 
   function ensureAccepting() {
     if (state.stopping) throw new Error('workbench_stopping')
@@ -287,6 +293,7 @@ export function makeWorkbenchService(opts: Options) {
     createWechat:executeDomain.createWechat,
     attention:viewDomain.attention,
     petActivities:viewDomain.petActivities,
+    projectActivity:viewDomain.projectActivity,
     resolveAnswer:inputsDomain.resolveAnswer,
     withdrawInput:inputsDomain.withdrawInput,
     submitInput:inputsDomain.submitInput,inputReceipt:inputsDomain.inputReceipt,
@@ -313,6 +320,10 @@ export function makeWorkbenchService(opts: Options) {
     stopSuspendedForNetwork:lifecycleDomain.stopSuspendedForNetwork,
     networkSuspended:lifecycleDomain.networkSuspended,
     artifact:artifactsDomain.artifact,
+    permissionScript:(id:string,requestId:string,path:string,sha256:string,offset:number)=>{
+      const running=state.runsByTask.get(id);if(!running)throw Error('permission_stale')
+      return running.permissions.script(requestId,path,sha256,offset)
+    },
     approve:artifactsDomain.approve,
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
     reviewList:review.reviewList,

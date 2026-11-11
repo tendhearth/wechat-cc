@@ -17,6 +17,25 @@ afterEach(() => {
 })
 
 describe('workbench rendering', () => {
+  it('review P2 capability: only server-advertised cards offer a rejection reason',async()=>{
+    const {renderWorkbench}=await import('./workbench.js')
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const permission={id:'request',taskId:task.id,tool:'Bash',description:'read',createdAt:1}
+    const state={tasks:[task],providers:[],defaultProvider:'codex',selectedId:task.id,detail:{task,events:[],artifacts:[],permissions:[permission]},selectedArtifactId:null,error:'',preview:null,canWechat:false}
+    expect(renderWorkbench(state)).not.toContain('data-denial-reason=')
+    expect(renderWorkbench({...state,detail:{...state.detail,permissions:[{...permission,canDenyWithReason:true}]}})).toContain('data-denial-reason="request"')
+  })
+  it('renders an eligible task decision and an escaped script disclosure without widening other cards',async()=>{
+    const {renderWorkbench}=await import('./workbench.js')
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const permission={id:'request',taskId:task.id,tool:'Bash',description:'python3 check.py',createdAt:1,canAllowTask:true,scripts:[{path:'check.py',content:'<script>literal</script>'+'x'.repeat(2200)}]}
+    const state={tasks:[task],providers:[],defaultProvider:'codex',selectedId:task.id,detail:{task,events:[],artifacts:[],permissions:[permission]},selectedArtifactId:null,error:'',preview:null,canWechat:false}
+    const html=renderWorkbench(state)
+    expect(html).toContain('data-action="allow-task-permission"');expect(html).toContain('本任务同命令都允许')
+    expect(html).toContain('<summary>展开全文</summary>');expect(html).toContain('&lt;script&gt;literal&lt;/script&gt;')
+    expect(html).not.toContain('<script>literal</script>')
+    expect(renderWorkbench({...state,detail:{...state.detail,permissions:[{...permission,canAllowTask:false}]}})).not.toContain('data-action="allow-task-permission"')
+  })
   it('keeps model controls in the existing disclosures and distinguishes observations from next-run choices',async()=>{
     const {renderWorkbench}=await import('./workbench.js')
     const execution={defaults:'native' as const,model:'requested-model',reasoningEffort:'deep'},task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
@@ -123,7 +142,7 @@ describe('workbench rendering', () => {
     expect(renderTaskControls('running',continuation)).not.toContain('data-action="restart"')
   })
 
-  it('renders every user and provider message in arrival order with finished tools folded in place', async () => {
+  it('renders the current request and reply first, preserving arrival order within the folded history', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const html = renderWorkbench({tasks:[], providers:[{id:'codex',displayName:'Codex'}], defaultProvider:'codex',canWechat:false,selectedId:'A', selectedArtifactId:null,error:'',preview:null,
       detail:{task:{id:'A',title:'整理资料',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null},artifacts:[],events:[
@@ -134,10 +153,11 @@ describe('workbench rendering', () => {
         {id:'5',taskId:'A',kind:'text',text:'Codex 第二轮回复。',createdAt:5}
       ]}})
     expect(html.indexOf('先整理访谈。')).toBeLessThan(html.indexOf('Codex 第一轮回复。'))
-    expect(html.indexOf('Codex 第一轮回复。')).toBeLessThan(html.indexOf('再补充引用。'))
+    expect(html.indexOf('再补充引用。')).toBeLessThan(html.indexOf('先整理访谈。'))
+    expect(html.indexOf('id="wb-earlier-dialogue"')).toBeLessThan(html.indexOf('先整理访谈。'))
     expect(html.indexOf('再补充引用。')).toBeLessThan(html.indexOf('Codex 第二轮回复。'))
     expect(html.indexOf('Codex 第一轮回复。')).toBeLessThan(html.indexOf('读取文件'))
-    expect(html.indexOf('读取文件')).toBeLessThan(html.indexOf('再补充引用。'))
+    expect(html.indexOf('Codex 第二轮回复。')).toBeLessThan(html.indexOf('读取文件'))
     expect(html).toMatch(/<details[^>]*data-timeline-group[^>]*>/)
     expect(html).not.toMatch(/<details[^>]*data-timeline-group[^>]* open/)
     expect(html).toContain('读取文件')
@@ -1883,7 +1903,8 @@ describe('workbench mutations', () => {
     const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
     const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs:60_000 })!
     for (let i = 0; i < 8; i++) await Promise.resolve()
-    expect(disclosures.size).toBe(0)
+    expect(disclosures.size).toBe(1)
+    expect([...disclosures.values()].every(node => !node.hasAttribute('open'))).toBe(true)
     field.value = 'Keep my draft'
     task.status = 'completed'; await controller.refresh()
     const groupId = [...disclosures.keys()][0]!
@@ -1922,7 +1943,8 @@ describe('workbench mutations', () => {
     Object.defineProperty(page, 'innerHTML', { get:() => markup, set:(value:string) => {
       markup = value; content.scrollTop = 0
       currentTask = value.includes('A reading target') ? 'A' : 'B'
-      const folded = /<details\b[^>]*data-timeline-group/.test(value)
+      // The reader explicitly opens the running group before inspecting it. Completion folds it unless the anchor keeps it readable.
+      const folded = /<details\b[^>]*data-timeline-group/.test(value) && !value.includes('data-timeline-live')
       // A completed group above the reply removes 300 px from its document
       // position. An operation remains at its old position only if its group
       // is kept open while that operation is being read.

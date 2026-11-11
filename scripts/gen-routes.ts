@@ -24,12 +24,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '../packages/protocol/src/routes'
 import { DESKTOP_CALLS } from '../packages/protocol/src/desktop-calls'
-import { HOME_GROUP_ORDER, HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, STATUS_WORDS } from '../packages/protocol/src/status-table'
+import { HOME_GROUP_ORDER, HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, TASK_DETAIL_WORDS, STATUS_TABLE, STATUS_WORDS } from '../packages/protocol/src/status-table'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 export const WORKBENCH_ROUTES_JSON = join(ROOT, 'apps', 'desktop', 'src-tauri', 'generated', 'workbench-routes.json')
 export const DAEMON_CALLS_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'daemon-calls.js')
 export const STATUS_TABLE_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'status-table.js')
+export const CC_ACTIVITY_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'cc-activity.js')
+export const renderCCActivity = () => '// Generated from packages/protocol/src/cc-activity.js; bun run gen:routes\n' + readFileSync(join(ROOT, 'packages/protocol/src/cc-activity.js'), 'utf8')
 
 export interface WorkbenchRoutesFile {
   _comment: string
@@ -93,6 +95,7 @@ export function renderStatusTable(): string {
     '',
     `export const HOME_GROUP_ORDER = /** @type {const} */ (${JSON.stringify(HOME_GROUP_ORDER)})`,
     '',
+    `export const TASK_DETAIL_WORDS = /** @type {const} */ (${JSON.stringify(TASK_DETAIL_WORDS['zh-Hans'], null, 2)})`,
     `export const STATUS_WORDS = /** @type {const} */ (${JSON.stringify(STATUS_WORDS['zh-Hans'], null, 2)})`,
     '',
     `export const HOME_GROUP_WORDS = /** @type {const} */ (${JSON.stringify(HOME_GROUP_WORDS['zh-Hans'], null, 2)})`,
@@ -128,6 +131,8 @@ export function writeWorkbenchRoutes(path = WORKBENCH_ROUTES_JSON): boolean {
     const prevStatus = existsSync(STATUS_TABLE_JS) ? readFileSync(STATUS_TABLE_JS, 'utf8') : undefined
     const status = renderStatusTable()
     if (status !== prevStatus) { writeFileSync(STATUS_TABLE_JS, status); changed = true }
+    const activity = renderCCActivity()
+    if (!existsSync(CC_ACTIVITY_JS) || readFileSync(CC_ACTIVITY_JS, 'utf8') !== activity) { writeFileSync(CC_ACTIVITY_JS, activity); changed = true }
   }
   return changed
 }
@@ -137,7 +142,7 @@ if (import.meta.main) {
     const previous = existsSync(WORKBENCH_ROUTES_JSON) ? readFileSync(WORKBENCH_ROUTES_JSON, 'utf8') : undefined
     const calls = existsSync(DAEMON_CALLS_JS) ? readFileSync(DAEMON_CALLS_JS, 'utf8') : undefined
     const status = existsSync(STATUS_TABLE_JS) ? readFileSync(STATUS_TABLE_JS, 'utf8') : undefined
-    if (renderWorkbenchRoutes(previous) !== previous || renderDaemonCalls() !== calls || renderStatusTable() !== status) {
+    if (renderWorkbenchRoutes(previous) !== previous || renderDaemonCalls() !== calls || renderStatusTable() !== status || !existsSync(CC_ACTIVITY_JS) || readFileSync(CC_ACTIVITY_JS, 'utf8') !== renderCCActivity()) {
       console.error(`${WORKBENCH_ROUTES_JSON} / ${DAEMON_CALLS_JS} 和路由表不一致:跑 bun run gen:routes`)
       process.exit(1)
     }

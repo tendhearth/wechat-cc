@@ -21,26 +21,24 @@
  */
 import { writeFileAtomic } from '../lib/json-file'
 import { toolInputFacts } from '../domain/permission-rules/facts'
-import { existsSync, readFileSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync, mkdirSync, statSync, realpathSync, openSync, readSync, closeSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { hostname } from 'node:os'
 import { readJsonFile } from '../lib/read-json-file'
 import { machineIdleSeconds } from '../lib/machine-idle'
 import type { CliEvent, CliSource } from '../app/cli-events'
 import { lastAssistantText } from '../domain/cli-transcript'
 import type { CliPermissionRequest, CliPermissionStatus } from '../app/cli-permission-relay'
+import { readApiInfo } from './hook-api'
 
 export type HookSource = CliSource
 
-export const DAEMON_CHILD_ENV = 'WECHAT_CC_DAEMON_CHILD'
+export { readApiInfo, shouldSkipHook, DAEMON_CHILD_ENV } from './hook-api'
+
 /** 写进 hook 条目的 statusMessage,和 `hook <source>` 的命令尾巴一起当自家标记。 */
 export const HOOK_STATUS_MESSAGE = 'wechat-cc → 微信'
 const HOOK_TIMEOUT_SEC = 5
 const TOOL_SUMMARY_MAX = 200
-
-export function shouldSkipHook(env: Record<string, string | undefined>): boolean {
-  return env[DAEMON_CHILD_ENV] === '1'
-}
 
 // ── 1. payload 归一化 ─────────────────────────────────────────────────────────
 
@@ -131,7 +129,6 @@ export function parsePermissionRequest(source: HookSource, raw: unknown): CliPer
   if (facts.paths.length) req.paths = facts.paths
   return req
 }
-
 
 // ── 1b. Cursor ────────────────────────────────────────────────────────────────
 
@@ -249,16 +246,6 @@ export type PostCliEventResult =
   | { ok: true; action?: string }
   | { ok: false; reason: string }
 
-/** 读 `<stateDir>/internal-api-info.json`(与 `wechat-cc agent` 同源)拿 baseUrl + FILE token。 */
-function readApiInfo(stateDir: string): { baseUrl: string; token: string } | { reason: string } {
-  const infoPath = join(stateDir, 'internal-api-info.json')
-  if (!existsSync(infoPath)) return { reason: 'daemon_not_running' }
-  let info: { baseUrl?: string; tokenFilePath?: string }
-  try { info = readJsonFile(infoPath) } catch { return { reason: 'info_malformed' } }
-  if (!info.baseUrl || !info.tokenFilePath) return { reason: 'info_incomplete' }
-  try { return { baseUrl: info.baseUrl, token: readFileSync(info.tokenFilePath, 'utf8').trim() } }
-  catch { return { reason: 'token_unreadable' } }
-}
 
 /**
  * POST /v1/cli/event。永远不抛:daemon 没跑、超时、非 2xx 都只是 ok:false。
@@ -376,7 +363,13 @@ export function claudeSettingsPath(home: string): string {
 }
 
 export function codexHooksPath(home: string, env: Record<string, string | undefined>): string {
-  return join(env['CODEX_HOME'] || join(home, '.codex'), 'hooks.json')
+  const explicit = env['CODEX_HOME']
+  if (!explicit) return join(home, '.codex', 'hooks.json')
+  // Codex home-dir canonicalizes only an explicit, existing directory. Discovery
+  // then joins hooks.json; resolving the file itself would change its trust key.
+  let dir = resolve(explicit)
+  try { if (statSync(dir).isDirectory()) dir = realpathSync(dir) } catch { /* Installer may create a missing home; no trust can exist there yet. */ }
+  return join(dir, 'hooks.json')
 }
 
 /** Cursor 的用户级 hooks(IDE 与 cursor-agent 共用)。 */
@@ -384,7 +377,7 @@ export function cursorHooksPath(home: string): string {
   return join(home, '.cursor', 'hooks.json')
 }
 
-interface HookHandler { type: string; command?: string; statusMessage?: string; [k: string]: unknown }
+export interface HookHandler { type: string; command?: string; statusMessage?: string; [k: string]: unknown }
 interface MatcherGroup { matcher?: string; hooks: HookHandler[]; [k: string]: unknown }
 interface HooksFile { hooks?: Record<string, MatcherGroup[]>; [k: string]: unknown }
 
@@ -397,12 +390,14 @@ const PERMISSION_HOOK_TIMEOUT_SEC = 150
  */
 const EVENTS: Record<Exclude<HookSource, 'cursor'>, { event: string; matcher?: string; sync?: boolean }[]> = {
   claude: [
+    { event: 'SessionStart', sync: true },
     { event: 'Stop' },
     { event: 'PermissionRequest', sync: true },
     { event: 'UserPromptSubmit' },
     { event: 'SessionEnd' },
   ],
   codex: [
+    { event: 'SessionStart', sync: true },
     { event: 'Stop' },
     { event: 'PermissionRequest', sync: true },
     { event: 'UserPromptSubmit' },
@@ -414,6 +409,18 @@ function isOurs(h: HookHandler, source: HookSource): boolean {
   if (h.type !== 'command') return false
   if (h.statusMessage === HOOK_STATUS_MESSAGE) return true
   return typeof h.command === 'string' && new RegExp(`(^|\\s)hook ${source}\\s*$`).test(h.command)
+}
+
+/** Includes positions: Codex persists trust by source path + event + group/handler index. */
+export function ownedHookDefinitions(file: string, source: HookSource): Array<{ event: string; groupIndex: number; handlerIndex: number; matcher?: string; handler: HookHandler }> {
+  const out: ReturnType<typeof ownedHookDefinitions> = []
+  for (const [event, groups] of Object.entries(readHooksFile(file).hooks ?? {})) {
+    if (!Array.isArray(groups)) continue
+    groups.forEach((g, groupIndex) => (g.hooks ?? []).forEach((handler, handlerIndex) => {
+      if (isOurs(handler, source)) out.push({ event, groupIndex, handlerIndex, ...(g.matcher === undefined ? {} : { matcher: g.matcher }), handler })
+    }))
+  }
+  return out
 }
 
 function readHooksFile(file: string): HooksFile {
@@ -455,15 +462,23 @@ function stripOurs(cfg: HooksFile, source: HookSource): number {
   return removed
 }
 
-export function installHooks(file: string, source: HookSource, command: string): { changed: boolean } {
+export function installHooks(file: string, source: HookSource, command: string): { changed: boolean; reconfirmationRequired?: boolean } {
   if (source === 'cursor') return installCursorHooks(file, command)
   const cfg = readHooksFile(file)
   const before = JSON.stringify(cfg)
+  const oldDefinitions = source === 'codex' ? ownedHookDefinitions(file, source) : []
+  // Freeze Codex's existing trust identities, including their array positions. Unrelated
+  // handlers added later must not make an idempotent install strip-and-append ours.
+  if (source === 'codex' && oldDefinitions.length === EVENTS.codex.length && EVENTS.codex.every(({ event, sync }) => {
+    const defs = oldDefinitions.filter(d => d.event === event)
+    const expected = codexHandler(command, event, !!sync), actual = defs[0]?.handler
+    return defs.length === 1 && defs[0]!.matcher === undefined && !!actual && Object.keys(actual).length === Object.keys(expected).length && Object.entries(expected).every(([key, value]) => actual[key] === value)
+  })) return { changed: false }
   stripOurs(cfg, source)
   cfg.hooks ??= {}
   for (const { event, matcher, sync } of EVENTS[source]) {
-    const handler: HookHandler = sync
-      ? { type: 'command', command, timeout: PERMISSION_HOOK_TIMEOUT_SEC, async: false, statusMessage: HOOK_STATUS_MESSAGE }
+    const handler: HookHandler = source === 'codex' ? codexHandler(command, event, !!sync) : sync
+      ? { type: 'command', command, timeout: event === 'SessionStart' ? 1 : PERMISSION_HOOK_TIMEOUT_SEC, async: false, statusMessage: HOOK_STATUS_MESSAGE }
       : { type: 'command', command, timeout: HOOK_TIMEOUT_SEC, async: true, statusMessage: HOOK_STATUS_MESSAGE }
     const group: MatcherGroup = matcher ? { matcher, hooks: [handler] } : { hooks: [handler] }
     ;(cfg.hooks[event] ??= []).push(group)
@@ -471,7 +486,12 @@ export function installHooks(file: string, source: HookSource, command: string):
   const after = JSON.stringify(cfg)
   if (after === before) return { changed: false }
   writeHooksFile(file, cfg)
-  return { changed: true }
+  return { changed: true, ...(source === 'codex' && oldDefinitions.length > 0 ? { reconfirmationRequired: true } : {}) }
+}
+
+/** Trust contract: keep these bytes independent of Claude timeouts, branding and CC version. */
+function codexHandler(command: string, event: string, sync: boolean): HookHandler {
+  return { type: 'command', command, timeout: event === 'SessionStart' ? 1 : event === 'PermissionRequest' ? 150 : 5, async: !sync, statusMessage: 'wechat-cc → 微信' }
 }
 
 export function uninstallHooks(file: string, source: HookSource): { changed: boolean; removed: number } {
@@ -504,6 +524,15 @@ export function hookStatus(file: string, source: HookSource): { installed: boole
     }
   }
   return { installed: false, command: null }
+}
+
+/** Old installations still count as installed, but need reconciliation to gain SessionStart. */
+export function hasSessionStartHook(file: string, source: HookSource): boolean {
+  if (source === 'cursor') return true
+  try {
+    return (readHooksFile(file).hooks?.['SessionStart'] ?? []).some(g =>
+      g.hooks?.some(h => isOurs(h, source) && h.async === false && h.timeout === 1))
+  } catch { return false }
 }
 
 // ── 3b. Cursor 的 hooks.json ─────────────────────────────────────────────────

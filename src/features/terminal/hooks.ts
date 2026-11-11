@@ -58,7 +58,7 @@ export function makeTerminalHooksService(opts: {
       if (present.length === 0) return null
       let sessions7d = 0
       try { const since = now() - SESSIONS_WINDOW_MS; sessions7d = opts.sessions().filter(s => s.last_event_at >= since).length } catch { sessions7d = 0 }
-      return { sources: present.map(s => ({ source: s.source, health: s.health })), sessions7d }
+      return { sources: present.map(s => ({ source: s.source, health: s.health, ...(s.trust ? { trust: s.trust } : {}) })), sessions7d }
     },
     install: (sources) => done(connectTerminalHooks(deps(), sources)),
     uninstall: (sources) => done(disconnectTerminalHooks(deps(), sources)),

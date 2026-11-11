@@ -3,15 +3,15 @@ import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { secondaryText as st } from '../i18n/minimal-secondary'
 import { useBackendCtx } from '../state/BackendProvider'
-import { useConnection, useQuery } from '../state/hooks'
+import { useConnection } from '../state/hooks'
+import { useConnections } from '../state/useConnections'
 import { Button } from '../ui/Button'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Icon } from '../ui/Icon'
 import { IconButton } from '../ui/IconButton'
 import { Dot } from '../ui/Dot'
-import { space } from '../ui/tokens'
+import { componentAppearance, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
@@ -26,10 +26,11 @@ export default function Connections() {
   const router = useRouter()
   const conn = useConnection()
   const { backend } = useBackendCtx()
-  const q = useQuery('connections', () => backend.connections(), { refreshOnMount: true })
+  const q = useConnections()
   // stale 或演示 ⇒ 所有圆点灰(演示没有电脑,不画绿);顶上一行与桌面连接卡同义
   const { trust, view: v, headline } = connectionsPage(q, conn.state, Date.now(), lang, { demo: backend.mode === 'demo' })
-  const heading = (k: Parameters<typeof t>[1]) => <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.m }}>{t(lang, k)}</Txt>
+  const appearance = componentAppearance.matterRow
+  const heading = (k: Parameters<typeof t>[1]) => <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.xl, marginBottom: space.s }}>{t(lang, k)}</Txt>
   const row = (testID: string, key: string, dot: Parameters<typeof Dot>[0]['kind'] | null, name: string, label: string, onPress?: () => void, user = false) => (
     <Pressable
       key={key}
@@ -38,11 +39,11 @@ export default function Connections() {
       accessibilityRole={onPress ? 'button' : 'text'}
       accessibilityLabel={`${name}, ${label}`}
       onPress={onPress}
-      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 56, paddingVertical: space.s, opacity: pressed ? 0.7 : 1 })}
+      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: appearance.gap, minHeight: appearance.minHeight.phone, paddingVertical: appearance.paddingY, opacity: pressed ? componentAppearance.iconButton.pressedOpacity : 1 })}
     >
       {dot ? <Dot kind={dot} size={8} /> : null}
       <View style={{ flex: 1, gap: 2 }}>
-        <Txt role="body" content={user ? 'user' : 'ui'} numberOfLines={1}>{name}</Txt>
+        <Txt role="body" content={user ? 'user' : 'ui'}>{name}</Txt>
         <Txt role="small" tone="inkSoft">{label}</Txt>
       </View>
       {onPress ? <Icon name="chevronRight" size={16} color={c.inkSoft} /> : null}
@@ -50,7 +51,7 @@ export default function Connections() {
   )
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={st(lang, 'connections')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} actions={<IconButton name="refresh" testID="connections-refresh" label={t(lang, 'sessions.refreshRecords')} busy={q.loading} onPress={() => void q.refresh()} />} />
+      <TopBar title={t(lang, 'links.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} actions={<IconButton name="refresh" testID="connections-refresh" label={t(lang, 'sessions.refreshRecords')} busy={q.loading} onPress={() => void q.refresh()} />} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.s }}>
         {!v ? (
@@ -72,19 +73,19 @@ export default function Connections() {
               </Txt>
             ) : null}
             {heading('links.computers')}
-            <View style={{ gap: space.s }}>
+            <View>
               {v.computers.map(x => row(x.id === 'home' ? 'connections-computer-home' : `connections-computer-${x.id}`, x.id, x.dot, x.label, x.detail))}
             </View>
             {v.capabilities.length > 0 ? (
               <>
                 {heading('links.capabilities')}
-                <View testID="connections-capabilities" style={{ gap: space.s }}>
+                <View testID="connections-capabilities">
                   {v.capabilities.map(x => row(`connections-cap-${x.id}`, `cap:${x.id}`, x.dot, x.name, x.action ? `${x.label}\n${x.action}` : x.label))}
                 </View>
               </>
             ) : null}
             {heading('links.sources')}
-            <View style={{ gap: space.s }}>
+            <View>
               {v.sources.map(s => row(`connections-source-${s.id}`, s.id, s.dot, s.name, s.label))}
             </View>
             {v.recent.length > 0 ? (

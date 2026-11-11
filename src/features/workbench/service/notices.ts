@@ -9,6 +9,7 @@ import { executionFailureMessage } from '../../../adapters/store/workbench/execu
 import { normalizeInputRequestId } from '../../../domain/workbench/input-request-id'
 import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../../../adapters/workbench/permissions'
 import { providerDisplayName } from '../../../domain/provider-display-names'
+import { redactSecrets } from '../../../domain/cli-transcript'
 import { stepPayload, TERMINAL_TASK_STATUSES, timelineKind, type StoredTask, type TaskStatus } from '../../../adapters/store/workbench/store'
 import type { WechatNoticeKind, WechatNotificationNotice, WechatNotificationSubscription } from '../../../adapters/store/workbench/wechat-notifications'
 import type { ArtifactDeliveryReceipt } from '../../../adapters/store/workbench/artifact-deliveries'
@@ -53,7 +54,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
     try{
       const watch=store.wechatNotifications.subscription(task.id)
       if(!watch?.enabled||watch.ownerChatId!==task.ownerChatId||watch.ownerChatId!==ctx.deps.ownerChatId())return
-      store.wechatNotifications.enqueue({taskId:task.id,runId,ownerChatId:watch.ownerChatId,accountId:watch.accountId,kind,requestId,text:text.slice(0,4000)})
+      store.wechatNotifications.enqueue({taskId:task.id,runId,ownerChatId:watch.ownerChatId,accountId:watch.accountId,kind,requestId,text:redactSecrets(text).slice(0,4000)})
       wakeNotices()
     }catch{
       // A notification failure must not deny a valid permission or terminate execution.
@@ -61,7 +62,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
     }
   }
   function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){
-    enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${label.slice(0,600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
+    enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${redactSecrets(label).slice(0,kind==='permission'?3500:600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
   }
   /**
    * 终审后修复第二轮 Important②b:非 retained 执行者 completed 终态时,
@@ -76,7 +77,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
   function terminalReportBody(running:Active):string|undefined {
     const reply=lastRunText(running.taskId,running.identity)
     const artifacts=store.artifacts(running.taskId).slice(0,5)
-    const parts=[reply?reply.slice(0,1800):undefined,artifacts.length?'已保存成果：'+artifacts.map(a=>a.name).join('、').slice(0,500):undefined].filter((s):s is string=>!!s)
+    const parts=[reply?redactSecrets(reply).slice(0,1800):undefined,artifacts.length?'已保存成果：'+redactSecrets(artifacts.map(a=>a.name).join('、')).slice(0,500):undefined].filter((s):s is string=>!!s)
     return parts.length?parts.join('\n\n'):undefined
   }
   /**
@@ -123,9 +124,9 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
       reply=executionFailureMessage(error)
     }
     const artifacts=store.artifacts(running.taskId).slice(0,5)
-    const text=`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${label}\n\n${reply?reply.slice(0,1800)+'\n\n':''}${artifacts.length?'已保存成果：'+artifacts.map(a=>a.name).join('、').slice(0,500)+'\n\n':''}查看：任务 ${running.taskId}\n结果：任务 ${running.taskId} 结果`
+    const text=`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${label}\n\n${reply?redactSecrets(reply).slice(0,1800)+'\n\n':''}${artifacts.length?'已保存成果：'+redactSecrets(artifacts.map(a=>a.name).join('、')).slice(0,500)+'\n\n':''}查看：任务 ${running.taskId}\n结果：任务 ${running.taskId} 结果`
     // Persist the frozen result in the same transaction as the terminal task status.
-    store.wechatNotifications.stage({taskId:running.taskId,runId:running.identity,ownerChatId:watch.ownerChatId,accountId:watch.accountId,kind:status as WechatNoticeKind,text:text.slice(0,4000)})
+    store.wechatNotifications.stage({taskId:running.taskId,runId:running.identity,ownerChatId:watch.ownerChatId,accountId:watch.accountId,kind:status as WechatNoticeKind,text:redactSecrets(text).slice(0,4000)})
   }
   function publishFinishedNotices(){
     try{store.wechatNotifications.materializeIntents()}catch{/* The durable intent remains available to the worker or next startup. */}
@@ -174,7 +175,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
       const watch=store.wechatNotifications.watch(id,task.ownerChatId,accountId,enabled)
       const run=ctx.state.runsByTask.get(id)
       if(enabled&&run){
-        for(const p of run.permissions.pending())requestNotice(task,run.identity,'permission',p.id,`${p.tool} · ${p.description}`)
+        for(const p of run.permissions.pending())requestNotice(task,run.identity,'permission',p.id,run.permissions.notice?.(p.id)??`${p.tool} · 详情请在批准卡查看。`)
         for(const q of run.questions.pending())requestNotice(task,run.identity,'question',q.id,q.questions.map(q=>q.question).join('\n'))
       }
       wakeNotices();return watch

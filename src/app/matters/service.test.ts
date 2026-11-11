@@ -120,10 +120,10 @@ describe('worktree on the phone (2026-10-07)',()=>{
     const worktreeAction=vi.fn(()=>({branch:'cc/abcd1234',committed:true,sha:'s',mergeHint:'cd /Users/me/secret && git merge cc/abcd1234'}))
     const service=makeMattersService({store,workbench:{detail:()=>({task,events:[]}),continueTask:vi.fn(),worktreeAction} as never})
     expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:false})
-    expect(service.worktree('deadbeef','commit')).toEqual({branch:'cc/abcd1234',committed:true})
+    expect((await service.worktree('deadbeef','commit'))).toEqual({branch:'cc/abcd1234',committed:true})
     expect(worktreeAction).toHaveBeenCalledWith('deadbeef','commit')
     worktreeAction.mockReturnValueOnce({branch:'cc/abcd1234',merged:true,into:'main'} as never)
-    expect(service.worktree('deadbeef','merge')).toEqual({branch:'cc/abcd1234',merged:true})
+    expect((await service.worktree('deadbeef','merge'))).toEqual({branch:'cc/abcd1234',merged:true})
     task.worktree={...task.worktree,merged:true} as never
     expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:false,merged:true})
     // 另做一份(10-08):源项目只给编号
@@ -215,4 +215,13 @@ it('owner history preserves durable attachment-only replies through the public s
   expect((await service.ownerChat('desktop'))?.events).toEqual([event])
   expect(await service.ownerChatFile({id:'saved',i:0,offset:0})).toEqual({status:200,body:{ok:true}})
   expect(file).toHaveBeenCalledWith({id:'saved',i:0,offset:0})
+})
+
+it('phone task details preserve the starting branch and SHA without exposing the source path',async()=>{
+  store.create({id:'deadbeef',kind:'task',title:'fresh',projectPath:'/work',ownerChatId:'owner'})
+  const task={...TASK,worktree:{branch:'cc/task',base:'origin/dev',baseSha:'a'.repeat(40),projectPath:'/Users/private/source',removed:false}}
+  const service=makeMattersService({store,workbench:{detail:()=>({task,events:[]})} as never})
+  const wt=(await service.detail('deadbeef')).task?.worktree
+  expect(wt).toEqual({branch:'cc/task',base:'origin/dev',baseSha:'a'.repeat(40),removed:false})
+  expect(JSON.stringify(wt)).not.toContain('/Users/private')
 })

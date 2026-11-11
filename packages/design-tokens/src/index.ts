@@ -30,6 +30,57 @@ export const fontWeight = { regular: 400, medium: 500 } as const
 export const radius = { nav: 8, bubble: 14, sheet: 14, control: 28 } as const
 export const space = { xs: 4, s: 8, m: 12, l: 16, xl: 24, xxl: 36 } as const
 
+/** 2026-11-08 组件外观合同。CSS / RN 各自渲染，值与语义只在这里定义。
+ * role 指 typeScale；颜色名指 color；桌面 compact 不缩小手机触区。
+ * 内容分组无框，事项引用至多一层 hair 边；过程不再包一层卡。
+ */
+export const componentAppearance = {
+  button: {
+    role: { desktop: 'small', phone: 'body' }, radius: radius.control, borderWidth: 1,
+    paddingX: { desktop: 14, phone: space.xl }, paddingY: { desktop: space.s, phone: space.s },
+    minHeight: { desktop: 36, phone: 48 }, compactHeight: 28, compactPaddingX: space.m, compactPaddingY: space.xs,
+    primary: { background: 'accent', text: 'onAccent', border: 'accent' },
+    secondary: { background: 'transparent', text: 'ink', border: 'hair' },
+    pressedOpacity: 0.85, disabledOpacity: 0.55,
+  },
+  iconButton: { size: { desktop: 36, phone: 44 }, radius: radius.control, pressedOpacity: 0.7, disabledOpacity: 0.55 },
+  textField: {
+    role: 'body', border: 'hair', focusBorder: 'accent', disabledOpacity: 0.55,
+    chat: { radius: radius.sheet, borderWidth: 1, paddingX: space.l, paddingY: space.m, minHeight: { desktop: 48, phone: 48 } },
+    search: { radius: radius.control, borderWidth: 1, paddingX: space.l, paddingY: space.s, minHeight: { desktop: 36, phone: 44 } },
+    comment: { radius: 0, borderWidth: 0, borderBottomWidth: 1, paddingX: 0, paddingY: space.s, minHeight: { desktop: 48, phone: 48 } },
+  },
+  topic: { role: 'small', radius: radius.control, borderWidth: 1, border: 'hair', selectedBorder: 'ink', background: 'transparent', paddingX: space.m, paddingY: space.s, minHeight: { desktop: 36, phone: 44 }, pressedOpacity: 0.7, activity: { attentionDotSize: 7, dotSize: 5, lineWidth: 10, lineHeight: 1, gap: space.xs, attention: 'accent', passive: 'inkSoft' } },
+  message: { userRole: 'bubble', replyRole: 'body', userBackground: 'rail', replyBackground: 'transparent', radius: radius.bubble, paddingX: space.l, paddingY: space.m },
+  content: { borderWidth: 0, paddingY: space.l, referenceBorderWidth: 1, referenceRadius: radius.sheet, referencePadding: space.l, processBorderWidth: 0 },
+  matterRow: { role: 'item', captionRole: 'caption', detailRole: 'small', minHeight: { desktop: 64, phone: 64 }, paddingY: space.m, gap: space.m },
+  identity: { headerTarget: 44, headerImage: { desktop: 44, phone: 36 }, agentSize: { desktop: 24, phone: 24 }, order: 'avatar-name', replyAvatar: false },
+  status: { source: 'protocol/status-table', mark: 'glyph', text: 'inkSoft', attention: 'accent' },
+} as const
+
+/** 桌面合同变量也由本文件生成，不能在 CSS 再抄一份数字。 */
+function appearanceCss(): string[] {
+  const out: string[] = []
+  const unitless = /opacity$/
+  const walk = (value: unknown, path: string[]) => {
+    if (typeof value === 'number') { const key = path.map(kebab).join('-'); out.push(`  --th-${key}: ${value}${unitless.test(key) ? '' : 'px'};`); return }
+    if (typeof value === 'string') {
+      const key = path.map(kebab).join('-')
+      if (Object.hasOwn(color, value)) out.push(`  --th-${key}: var(--th-${kebab(value)});`)
+      else if (Object.hasOwn(typeScale, value)) out.push(`  --th-${key}: var(--th-size-${value});`)
+      else if (value === 'transparent') out.push(`  --th-${key}: transparent;`)
+      return
+    }
+    if (value && typeof value === 'object') {
+      const values = value as Record<string, unknown>
+      if ('desktop' in values && 'phone' in values) walk(values.desktop, path)
+      else for (const [key, child] of Object.entries(values)) walk(child, [...path, key])
+    }
+  }
+  walk(componentAppearance, [])
+  return out
+}
+
 const lum = (hex: string): number => {
   const ch = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
   return 0.2126 * ch[0]! + 0.7152 * ch[1]! + 0.0722 * ch[2]!
@@ -48,6 +99,7 @@ export function renderTokensCss(): string {
   }
   for (const [k, v] of Object.entries(radius)) lines.push(`  --th-radius-${k}: ${v}px;`)
   for (const [k, v] of Object.entries(space)) lines.push(`  --th-space-${k}: ${v}px;`)
+  lines.push(...appearanceCss())
   lines.push(
     // 桌面英文优先引用本机 Anthropic Sans;缺失时回退系统,中文保留本地 CJK 回退。
     '  --th-font-sans: "CC Anthropic Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Helvetica Neue", Arial, sans-serif;',

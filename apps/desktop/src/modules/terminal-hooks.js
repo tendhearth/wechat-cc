@@ -78,7 +78,10 @@ export function makeHooksAction(o) {
         const row = el('div', 'hooks-buttons')
         row.append(btn('nc-action hooks-confirm-yes', `确定${label}`, () => { void confirmInstall() }), btn('nc-action hooks-confirm-no', '取消', () => set({ phase: 'idle' })))
         const more = el('details', 'hooks-detail')
-        more.append(el('summary', '', '详细'), el('p', '', HOOKS_DETAIL))
+        const summary = el('summary', 'b3-disclosure')
+        const chevron = el('span', 'b3-disclosure-chevron'); chevron.setAttribute('aria-hidden', 'true')
+        summary.append(el('span', 'b3-disclosure-label', '详细'), chevron)
+        more.append(summary, el('p', '', HOOKS_DETAIL))
         box.append(el('p', 'hooks-confirm', HOOKS_CONFIRM), more, row)
       } else if (ui.phase === 'busy') box.append(el('p', 'hooks-status', '正在接上…'))
       else {
@@ -99,26 +102,28 @@ export function mountOnboardTerminal(deps) {
   host.hidden = true
   let started = false
   let seq = 0
-  /** @type {{ name: string, reason: string, label: string } | null} */ let row = null
+  /** @type {{ name: string, reason: string, label: string | null, pending: boolean } | null} */ let row = null
   let done = false
   let failures = 0
-  const action = makeHooksAction({ call: deps.call, rerender: () => render(), onDone: () => { done = true; render() } })
+  const action = makeHooksAction({ call: deps.call, rerender: () => render(), onDone: () => { done = true; void load() } })
   function render() {
     if (!started || (!row && !done)) { host.hidden = true; return }
     /** @type {HTMLElement[]} */
     const parts = [el('h3', 'onboard-terminal-title', '也接上终端里的会话（可选）')]
-    if (done) parts.push(el('p', 'onboard-terminal-note', '接上了。之后终端里的会话做完、等你批准，CC 都会告诉你。'))
-    else if (row) parts.push(el('p', 'onboard-terminal-note', row.reason), action.node(row.label))
+    if (row?.pending) parts.push(el('p', 'onboard-terminal-note', row.reason))
+    else if (done) parts.push(el('p', 'onboard-terminal-note', '接上了。之后终端里的会话做完、等你批准，CC 都会告诉你。'))
+    else if (row) parts.push(el('p', 'onboard-terminal-note', row.reason), ...(row.label ? [action.node(row.label)] : []))
     host.replaceChildren(...parts)
     host.hidden = false
   }
   async function load() {
     const mine = ++seq
     try {
-      const r = /** @type {{ capabilities?: Array<{ id: string, name: string, reason: string, state: string, action?: { label: string, run?: string } }> } | null} */ (await v1(deps.call, V1.connections.get))
+      const r = /** @type {{ capabilities?: Array<{ id: string, name: string, reason: string, state: string, code?: string, action?: { label: string, run?: string } }> } | null} */ (await v1(deps.call, V1.connections.get))
       if (mine !== seq || !started) return
       const cap = (r?.capabilities ?? []).find(c => c.id === 'terminal')
-      row = cap?.action?.run === HOOKS_RUN ? { name: cap.name, reason: cap.reason, label: cap.action.label } : null
+      const pending = !!cap?.code?.startsWith('terminal.codex_')
+      row = cap && (pending || cap.action?.run === HOOKS_RUN) ? { name: cap.name, reason: cap.reason, label: cap.action?.label ?? null, pending } : null
     } catch {
       if (mine !== seq) return
       row = null
@@ -131,7 +136,7 @@ export function mountOnboardTerminal(deps) {
     /** @param {{ active: boolean, alive: boolean }} s */
     sync(s) {
       if (!s.active) { if (started) { started = false; seq++ } host.hidden = true; return }
-      if (s.alive && !started) { started = true; void load() }
+      if (s.alive && (!started || row?.pending)) { started = true; void load() }
     },
   }
 }

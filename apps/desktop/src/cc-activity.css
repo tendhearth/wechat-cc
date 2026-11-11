@@ -1,0 +1,8 @@
+/* Only the picture acts. The button, anchor, light and functional content remain stable. */
+[data-cc-phase="listening"] .pet-sprite:not(.pet-ghost) { rotate: -2deg; transition: rotate 180ms ease-in-out; }
+[data-cc-phase="thinking"] .pet-sprite:not(.pet-ghost) { animation: cc-alive-think 9200ms ease-in-out infinite !important; }
+@keyframes cc-alive-think { 0%,13%,100% { rotate: 0deg; } 6.5% { rotate: 1deg; } }
+.pet-motion-reduced .pet-sprite, .pet-paused .pet-sprite { rotate: none !important; translate: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  [data-cc-phase] .pet-sprite { animation: none !important; rotate: none !important; translate: none !important; transition: none !important; }
+}

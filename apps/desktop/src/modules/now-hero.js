@@ -4,6 +4,7 @@ import { createPet } from '../pet/pet.js'
 import { presenceToPet } from '../pet/bridge/presence-map.js'
 import { progressTransitions } from './workbench-attention.js'
 import { createCompanionPreferences, MOTION_STORAGE_KEY } from '../companion-preferences.js'
+import { mountCCActivity } from '../cc-activity.js'
 
 /** @typedef {import('../pet/bridge/presence-map.js').PetIntent} PetIntent */
 /** @typedef {{intent:PetIntent,align:boolean}} HeroUpdate */
@@ -28,7 +29,7 @@ export function createNowHeroFacts() {
     /** @type {PetIntent['behavior']} */ let behavior = presenceIntent.behavior
     if (connected()) {
       if (waiting) behavior = 'permission'
-      else if (pending) behavior = 'thinking'
+      // Local pending proves a request is waiting, not that a model has started thinking.
       else if (phases.includes('working')) behavior = 'working'
     }
     return { align, intent: { ...presenceIntent, behavior, props, oneShots: active && !quiet && !reducedMotion && connected() && !waiting ? [...new Set(events)] : [] } }
@@ -100,6 +101,9 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   const img = doc.createElement('img'); img.className = 'pet-sprite now-pet-sprite'; img.alt = ''; img.draggable = false
   const props = doc.createElement('span'); props.className = 'now-pet-props'
   stage.append(img, props); button.append(stage)
+  const activity = mountCCActivity({ stage, onPhase: phase => pet?.setActivity(phase) })
+  let topicsKnown = false
+  const seenTopics = new Set()
   const isActive = () => !doc.hidden && !root.hidden && (root.dataset.conversation === 'single' || root.dataset.now !== 'chat') && !root.closest('[hidden]') && (!root.closest('.dashboard') || doc.documentElement.dataset.mode === 'dashboard')
   let active = isActive()
   facts.setActive(active)
@@ -108,6 +112,7 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   const apply = ({ intent, align }) => {
     if (destroyed) return
     button.dataset.motion = motion.reducedMotion || motion.quiet ? 'reduced' : 'full'
+    activity.update({ connected: intent.form === 'lit', waiting: intent.behavior === 'permission', blocked: intent.props.includes('exclamation'), enabled: active && !motion.reducedMotion && !motion.quiet })
     if (!pet) return
     // An inactive or reduced view observes facts without retaining any performance.
     pet.setPaused(!active)
@@ -122,6 +127,7 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   }
   /** @param {import('../companion-preferences.js').MotionPreferences} s */
   const applyMotion = s => {
+    if (s.quiet || s.reducedMotion) topicsKnown = false
     if ((motion?.quiet && !s.quiet) || (motion?.reducedMotion && !s.reducedMotion)) for (const stream of ['presence', 'attention', 'terminal', 'converse']) reobserve.add(stream)
     motion = s; apply(facts.setMotion(s))
   }
@@ -133,6 +139,7 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   const syncVisibility = () => {
     const next = isActive()
     if (active === next) return
+    topicsKnown = false
     if (next) for (const stream of ['presence', 'attention', 'terminal', 'converse']) reobserve.add(stream)
     active = next
     preferences.refresh()
@@ -182,8 +189,23 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
     setTerminal(rows) { observe('terminal', () => facts.terminal(rows)) },
     /** @param {Array<{id:number,role:string,pending?:boolean}>} msgs */
     setConverse(msgs) { observe('converse', () => facts.converse(msgs)) },
+    /** @param {import('../generated/cc-activity.js').CCStream|null} stream */
+    setActivity(stream) { activity.observe(stream) },
+    attentionToContent() { if (active && !motion.reducedMotion && !motion.quiet && stage.dataset.ccPhase === 'idle') pet?.acknowledgeAttention() },
+    /** @param {string[]} ids */
+    setTopics(ids) {
+      syncVisibility()
+      if (topicsKnown && active && !motion.reducedMotion && !motion.quiet && stage.dataset.ccPhase === 'idle') {
+        const id = ids.find(id => !seenTopics.has(id))
+        const bubble = id ? [...root.querySelectorAll('[data-topic-id]')].find(el => /** @type {HTMLElement} */ (el).dataset.topicId === id) : null
+        const b = bubble?.getBoundingClientRect(), cc = button.getBoundingClientRect()
+        const row = bubble?.closest('.conversation-topics')?.getBoundingClientRect()
+        if (b && row && b.width > 0 && b.height > 0 && cc.width > 0 && b.right > row.left && b.left < row.right && b.bottom > 0 && b.top < (view?.innerHeight ?? Infinity) && b.right > 0 && b.left < (view?.innerWidth ?? Infinity) && !bubble?.closest('[hidden]')) pet?.acknowledgeAttention(b.left + b.width / 2 < cc.left + cc.width / 2 ? 'left' : 'right')
+      }
+      ids.forEach(id => seenTopics.add(id)); topicsKnown = active && !motion.reducedMotion && !motion.quiet
+    },
     destroy() {
-      destroyed = true; offMachine?.(); pet?.destroy(); preferences.destroy(); observer.disconnect()
+      destroyed = true; activity.destroy(); offMachine?.(); pet?.destroy(); preferences.destroy(); observer.disconnect()
       doc.removeEventListener('visibilitychange', syncVisibility); motionQuery?.removeEventListener('change', systemChanged)
       view?.removeEventListener('storage', storageChanged); img.removeEventListener('load', reveal)
       stage.remove(); delete button.dataset.runtime; delete button.dataset.motion

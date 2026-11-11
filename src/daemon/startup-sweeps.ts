@@ -1,3 +1,4 @@
+import { recoverDependencyStages } from '../adapters/git/worktree-dependency-cache'
 import { join } from 'node:path'
 import type { Db } from '../lib/db'
 import { cleanupOldInbox } from './media'
@@ -36,6 +37,7 @@ export interface StartupSweepDeps {
  * logged but never thrown. Does NOT block daemon ready.
  */
 export function runStartupSweeps(deps: StartupSweepDeps): void {
+  void recoverDependencyStages(deps.stateDir).catch(err => deps.log('DEPENDENCIES', `stage recovery failed: ${err instanceof Error ? err.message : String(err)}`))
   void runMilestoneSweep(deps)
   void runInboxCleanup(deps)
   void runStartupNotify(deps)

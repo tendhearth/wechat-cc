@@ -9,6 +9,7 @@
  *  - 全部降到 0 ⇒ 删掉 LifecycleSet、Ref、SubsystemSupervisor、收尾清单这四样。
  * 只扫生产代码(排除 *.test.ts,整合者评审 #541);注释行不算。
  */
+import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
@@ -60,6 +61,7 @@ const BASELINE: Record<string, Partial<Record<Kind, number>>> = {
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (isTaskCachePath(p)) continue
     if (statSync(p).isDirectory()) { if (name !== '__e2e__' && name !== 'node_modules') walk(p, out) }
     else if (p.endsWith('.ts') && !p.endsWith('.test.ts') && !p.endsWith('.d.ts')) out.push(p)
   }

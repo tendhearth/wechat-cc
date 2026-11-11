@@ -4,6 +4,7 @@ import type { Lang } from './index'
 const en = {
   memory: 'Memory',
   facts: 'Remembered',
+  correctionNote: 'Choose an option to take this record out of memory and tell CC what changed.',
   portrait: 'CC’s view of you',
   portraitNote: 'CC’s interpretation, separate from the factual records above.',
   withdrawn: 'Taken back ({n})',
@@ -25,6 +26,7 @@ const en = {
 const zh: Record<keyof typeof en, string> = {
   memory: '记忆',
   facts: '记住的',
+  correctionNote: '选择下面一项，会从记忆里拿掉这条，并记下你的纠正。',
   portrait: 'CC 眼中的你',
   portraitNote: 'CC 的推测，与上面的事实记录分开。',
   withdrawn: '收回的话（{n}）',

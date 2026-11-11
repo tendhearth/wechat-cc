@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runCommand } from 'citty'
-import { cittyRoot } from './cli'
+import { cittyRoot } from './src/cli/main'
 import { computeProviderSetOutcome } from './src/cli/commands/provider'
 import { parseBudgetUsdFlag, parseTimeoutMsFlag } from './src/cli/flags'
 import { activeModel, type AgentConfig } from './src/lib/agent-config'
@@ -108,6 +108,15 @@ describe('citty migrated commands', () => {
       'status',
       'update',
     ])
+  })
+
+  it('dialogue cleanup defaults to dry-run and requires explicit DB/chat scope', async () => {
+    const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
+    expect(Object.keys(subs.dialogue?.subCommands ?? {}).sort()).toEqual(['backfill', 'cleanup-topic-noise', 'lock', 'search', 'thread-detail', 'threads', 'timeline', 'unlock'])
+    const preview = await runWithNestedStub(['dialogue', 'cleanup-topic-noise', '--db', '/fixture/test.db', '--chat-id', 'owner'], ['dialogue', 'cleanup-topic-noise'])
+    expect(preview?.args).toMatchObject({ db: '/fixture/test.db', 'chat-id': 'owner', apply: false, rollback: false })
+    const apply = await runWithNestedStub(['dialogue', 'cleanup-topic-noise', '--db', '/fixture/test.db', '--chat-id', 'owner', '--apply', '--journal', '/fixture/undo.json'], ['dialogue', 'cleanup-topic-noise'])
+    expect(apply?.args).toMatchObject({ apply: true, journal: '/fixture/undo.json' })
   })
 
   // 自维护三件套(spec 2026-09-18-self-maintenance)——子命令面也要钉住:

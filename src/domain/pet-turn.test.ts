@@ -44,7 +44,8 @@ describe('derivePetTurn', () => {
     ]
     const t = derivePetTurn({ ...base, inFlight: true, inFlightSinceMs: T0, lastToolCallAtMs: T0, pending: p })
     expect(t.turn).toEqual({ phase: 'permission', since: '2026-09-05T09:59:40.000Z' })
-    expect(t.pending_permissions).toEqual(p)
+    expect(t.pending_permissions).toEqual(p.map(item => ({ ...item, prompt: '有操作需要批准，请到工作台查看。' })))
+    expect(JSON.stringify(t.pending_permissions)).not.toContain('"prompt":"x"')
   })
 
   it('last_done_at / owner_last_contact_at 是 ISO', () => {

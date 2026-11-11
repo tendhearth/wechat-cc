@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { removeTempDir } from '../../lib/test-temp'
 import { deviceIdOf } from '../../features/phone/device-store'
 import { SANDBOX_OWNER, startRealShapedDaemon, type RealShapedDaemon, type RealShapedOpts } from './real-shaped'
@@ -60,7 +60,10 @@ const RULES = JSON.stringify({
 const project = realpathSync(mkdtempSync(join(tmpdir(), 'wechat-cc-sandbox-project-')))
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=sandbox@example.invalid', '-c', 'user.name=sandbox', ...args], { cwd: project, stdio: 'pipe' })
 git('init', '-q'); writeFileSync(join(project, 'README.md'), 'sandbox project\n'); git('add', '.'); git('commit', '-qm', 'init')
-const PROJECTS = JSON.stringify({ projects: { demo: { path: project, last_active: '2026-10-27T00:00:00.000Z' } }, current: null })
+// Chat and delegated work must have separate directories even when TMPDIR is
+// nested inside this checkout; otherwise the real session conflict gate is right to refuse.
+const chatProject = realpathSync(mkdtempSync(join(tmpdir(), 'wechat-cc-sandbox-chat-')))
+const PROJECTS = JSON.stringify({ projects: { demo: { path: project, last_active: '2026-10-27T00:00:00.000Z' }, chat: { path: chatProject, last_active: '2026-10-27T00:00:00.000Z' } }, current: 'chat' })
 
 /** 这一句主人在记忆页上删掉(记忆夹具 memory.md 里「关于你」那一栏生成的一行)。 */
 const RETRACTED = '每天早上七点起床跑步'
@@ -75,6 +78,9 @@ const PHONE_ID = deviceIdOf(PHONE_TOKEN)
 const QUIET_NOTE = '自改进展:免打扰里做完的那一步'
 /** 主人时区(Asia/Shanghai)的 HH:MM,给「/set 免打扰」用。 */
 const shanghaiHHMM = (ms: number): string => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(ms))
+const FIXED_BRIEF_REPLY = 'S4 fixed brief delivered'
+/** 配合固定的 Date 使用:任务就在当前本地分钟到期,不把昨天的 23:59 误写成今天的定时。 */
+const fixedBriefJobs = (now: number): string => JSON.stringify({ version: 1, jobs: [{ id: 'j991', schedule: { kind: 'daily', at: shanghaiHHMM(now) }, text: 'S4 fixed brief', brief: true, paused: false, createdAt: new Date(now).toISOString() }] })
 /** 中继收到的、给那件事的 App 推送(collapseId = 任务编号)。 */
 const pushesFor = (taskId: string) => d.phoneRelay.controls().filter(c => (c.push as { collapseId?: string } | undefined)?.collapseId === taskId)
 
@@ -84,7 +90,7 @@ const codexThreads: Array<Record<string, unknown>> = []
 const decisions = new Map<string, unknown>()
 let codexDecision: unknown
 let topicJudgeAttempts=0,topicRoundDispatches=0
-const claudeScript: FakeSdkScript = { async onDispatch(text) { if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
+const claudeScript: FakeSdkScript = { async onDispatch(text) { if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
 const approval = (command: string, finalText: string) => ({
   toolCalls: [], finalText,
   codexSteps: [{
@@ -108,7 +114,7 @@ const codexScript: FakeSdkScript = {
     return { toolCalls: [], finalText: 'Codex 在。' }
   },
 }
-const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'machineIdleS' | 'escalateAfterMs'> = {}) => startRealShapedDaemon({
+const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs'> = {}) => startRealShapedDaemon({
   ...more,
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
@@ -135,7 +141,7 @@ let d: RealShapedDaemon
  * S2 那几条的起点(关机时写死,不靠上一条留下的):主人的免打扰开(盖住此刻,主人时区)/ 关、配没配一台手机、
  * 待发队列清空(keepPending 的除外 —— 「压着时重启」要的就是它)。然后照真机重启,「待说」那一拍 200ms。
  */
-async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: boolean; beforeBoot?: (stateDir: string) => void; atDesk?: boolean }): Promise<string> {
+async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: boolean; beforeBoot?: (stateDir: string) => void; atDesk?: boolean; timedJobs?: boolean }): Promise<string> {
   const stateDir = d.stateDir
   await d.stop({ keepState: true })
   // 免打扰:chat_prefs.json 一个对话一行(值是 JSON 字符串),daemon 开机读一次
@@ -158,14 +164,14 @@ async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: bo
   }
   o.beforeBoot?.(stateDir)
   // 人在不在电脑前(S3b):缺省探不到 = 不在;atDesk ⇒ 本机 5 秒前刚有键鼠输入,「先只在桌面提示」之后 2 秒就推 App(生产 10 分钟)
-  d = await boot({ stateDir, speechFlushIntervalMs: 200, ...(o.atDesk ? { machineIdleS: 5, escalateAfterMs: 2_000 } : {}) })
+  d = await boot({ stateDir, speechFlushIntervalMs: 200, ...(o.timedJobs ? { scheduledJobsIntervalMs: 200 } : {}), ...(o.atDesk ? { machineIdleS: 5, escalateAfterMs: 2_000 } : {}) })
   expect(await d.moduleProblems()).toEqual([])
   if (o.phone) await expect.poll(() => d.phoneRelay.controls().some(c => (c.push_reg as { device?: string } | undefined)?.device === PHONE_ID), { timeout: 15_000 }).toBe(true)
   return stateDir
 }
 // 冷启动要 import 整个 daemon,满载下可以超过 15s 的缺省 hook 上限
 beforeAll(async () => { d = await boot() }, 60_000)
-afterAll(async () => { try { await d?.stop() } finally { removeTempDir(project) } }, 30_000)
+afterAll(async () => { try { await d?.stop() } finally { removeTempDir(project); removeTempDir(chatProject) } }, 30_000)
 
 describe('real-shaped sandbox: the full daemon, configured like the owner\'s machine', { timeout: 60_000 }, () => {
   it('boot: every module came up ok, health is green, nothing tried to reach the internet', async () => {
@@ -333,7 +339,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
     const listing = texts(list, d.owner).find(t => t.includes('选择要工作的项目'))!
     expect(listing).toContain(project)
-    const projectId = listing.match(/p-[a-f0-9]{20}/)?.[0]
+    const projectId = listing.match(/demo · (p-[a-f0-9]{20})/)?.[1]
     expect(projectId).toBeTruthy()
 
     d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 写一份笔记`)
@@ -547,7 +553,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await rebootForS2({ quiet: true, phone: true })
     d.sendText(d.owner, '任务 项目')
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)   // 每次开机是新的假 ilink,外发箱从这次开机算
-    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/p-[a-f0-9]{20}/)![0]
+    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/demo · (p-[a-f0-9]{20})/)![1]
     d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 再写一份笔记`)
     const ack = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.startsWith('已接下这件事')), 15_000)
     const taskId = texts(ack, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
@@ -630,34 +636,47 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
   })
 
   it('S4: a due fixed-time brief sends inside the occupied interval, is counted, and keeps ordinary initiatives waiting', async () => {
-    const prior = d.query<{ at: number }>("SELECT MAX(spoken_at) AS at FROM speech_log WHERE origin='initiative'")[0]!.at
-    expect(Date.now() - prior).toBeLessThan(20 * 3600_000)
-    await rebootForS2({ quiet: false, phone: false, beforeBoot(dir) {
-      writeFileSync(join(dir, 'scheduled-jobs.json'), JSON.stringify({ version: 1, jobs: [{ id: 'j991', schedule: { kind: 'daily', at: shanghaiHHMM(Date.now() - 60_000) }, text: 'S4 fixed brief', brief: true, paused: false, createdAt: new Date().toISOString() }] }))
-      const db = openSqlite(join(dir, 'wechat-cc.db'))
-      try {
-        db.query("INSERT INTO speech_pending(id,lane,chat_id,kind,body,created_at,next_at,expires_at,status) VALUES('s4-after-brief','say',?,'social_story','S4 after brief',?,0,?,'pending')").run(SANDBOX_OWNER, Date.now(), Date.now() + 24 * 3600_000)
-      } finally { db.close() }
-    } })
-    // Production jobs tick every minute; there is no accelerated private send path.
-    await expect.poll(() => d.query<{ spoken_at: number }>("SELECT spoken_at FROM speech_log WHERE kind='brief' AND spoken_at IS NOT NULL"), { timeout: 80_000, interval: 500 }).toHaveLength(1)
-    const briefAt = d.query<{ spoken_at: number }>("SELECT spoken_at FROM speech_log WHERE kind='brief'")[0]!.spoken_at
-    expect(briefAt).toBeGreaterThan(prior)
-    expect(d.query("SELECT 1 FROM speech_log WHERE origin='initiative' AND spoken_at IS NOT NULL")).toHaveLength(2)
-    expect(d.query("SELECT id,attempts FROM speech_pending WHERE id='s4-after-brief'")).toEqual([{ id: 's4-after-brief', attempts: 0 }])
-    expect(texts(d.ilink.outbox(), d.owner)).not.toContain('S4 after brief')
-  }, 100_000)
+    // 只固定墙钟,HTTP / 模型替身 / 轮询都用真实计时器。生产 runner 仍自行调度,仅把一分钟缩成 200ms。
+    // CI #878 恰在上海 00:00:31:旧夹具 now-1min 得到 23:59,当天尚未到点;等再久也不会在这一拍发。
+    vi.setSystemTime(new Date())
+    try {
+      const prior = d.query<{ at: number }>("SELECT MAX(spoken_at) AS at FROM speech_log WHERE origin='initiative'")[0]!.at
+      expect(Date.now() - prior).toBeLessThan(20 * 3600_000)
+      await rebootForS2({ quiet: false, phone: false, timedJobs: true, beforeBoot(dir) {
+        writeFileSync(join(dir, 'scheduled-jobs.json'), fixedBriefJobs(Date.now()))
+        const db = openSqlite(join(dir, 'wechat-cc.db'))
+        try {
+          db.query("INSERT INTO speech_pending(id,lane,chat_id,kind,body,created_at,next_at,expires_at,status) VALUES('s4-after-brief','say',?,'social_story','S4 after brief',?,0,?,'pending')").run(SANDBOX_OWNER, Date.now(), Date.now() + 24 * 3600_000)
+        } finally { db.close() }
+      } })
+      await expect.poll(() => d.query<{ spoken_at: number }>("SELECT spoken_at FROM speech_log WHERE kind='brief' AND spoken_at IS NOT NULL"), { timeout: 15_000 }).toHaveLength(1)
+      await expect.poll(() => JSON.parse(readFileSync(join(d.stateDir, 'scheduled-jobs-state.json'), 'utf8')).jobs.j991.lastStatus, { timeout: 5_000 }).toBe('sent')
+      expect(texts(d.ilink.outbox(), d.owner).filter(t => t === FIXED_BRIEF_REPLY)).toHaveLength(1)
+      const briefAt = d.query<{ spoken_at: number }>("SELECT spoken_at FROM speech_log WHERE kind='brief'")[0]!.spoken_at
+      expect(briefAt).toBeGreaterThan(prior)
+      expect(d.query("SELECT 1 FROM speech_log WHERE origin='initiative' AND spoken_at IS NOT NULL")).toHaveLength(2)
+      expect(d.query("SELECT id,attempts FROM speech_pending WHERE id='s4-after-brief'")).toEqual([{ id: 's4-after-brief', attempts: 0 }])
+      expect(texts(d.ilink.outbox(), d.owner)).not.toContain('S4 after brief')
+    } finally {
+      // SpeechPolicy 等组件会捕获 Date.now;还原后立即停掉这次开机,下一条重新开机,不复用冻结的函数。
+      // 关机自己也有 Date.now 截止时间,因此先还原。
+      vi.useRealTimers()
+      await d.stop({ keepState: true })
+    }
+  })
 
   it('S4: requested reminder, report and blocking still deliver inside the initiative interval without moving its fact', async () => {
+    // 上一条保留了同一份状态;用真实墙钟重新开机,提醒仍由生产 sweeper 自行投递。
+    d = await boot({ stateDir: d.stateDir, speechFlushIntervalMs: 200, reminderIntervalMs: 200 })
     const initiativeAt = d.query<{ at: number }>("SELECT MAX(spoken_at) AS at FROM speech_log WHERE origin='initiative'")[0]!.at
     expect(await desktop('POST', '/v1/self-change/notice', { text: 'S4 report during interval' })).toMatchObject({ status: 200 })
     expect(await desktop('POST', '/v1/self-change/ask', { prompt: 'S4 approval during interval', timeoutMs: 60_000 })).toMatchObject({ status: 200, body: { delivered: true } })
     expect(await desktop('POST', '/v1/reminders/schedule', { chat_id: d.owner, text: 'S4 requested reminder', due_at: new Date(Date.now() - 1_000).toISOString() })).toMatchObject({ status: 200, body: { ok: true } })
-    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(t => t.includes('S4 requested reminder')), { timeout: 80_000, interval: 500 }).toBe(true)
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(t => t.includes('S4 requested reminder')), { timeout: 15_000 }).toBe(true)
     await expect.poll(() => d.query("SELECT DISTINCT origin FROM speech_log WHERE kind IN ('self_change_progress','self_change_ask','reminder') AND spoken_at IS NOT NULL ORDER BY origin"), { timeout: 5_000 }).toEqual([{ origin: 'blocking' }, { origin: 'report' }, { origin: 'requested' }])
     expect(d.query<{ at: number }>("SELECT MAX(spoken_at) AS at FROM speech_log WHERE origin='initiative'")[0]!.at).toBe(initiativeAt)
     expect(texts(d.ilink.outbox(), d.owner)).not.toContain('S4 after brief')
-  }, 100_000)
+  })
 
   it('offline: WeChat is down ⇒ a report that cannot go out is kept to say later, and the pending flush backs off on the shared backoff (first retry after 1 min) instead of hitting the link every tick', async () => {
     // 没配手机:有能收的 App 时,微信发不出去会落到 App(那是另一条路);这里只看微信断了的时候
@@ -691,7 +710,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const since = Date.now()
     d.sendText(d.owner, '任务 项目')
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
-    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/p-[a-f0-9]{20}/)![0]
+    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/demo · (p-[a-f0-9]{20})/)![1]
     d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 再写一份笔记`)
     const ack = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.startsWith('已接下这件事')), 15_000)
     const taskId = texts(ack, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
@@ -727,7 +746,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const phaseOf = async (taskId: string) => (await desktop<{ progress?: Array<{ id: string; phase: string }> }>('GET', '/v1/workbench/attention')).body.progress?.find(p => p.id === taskId)?.phase
     d.sendText(d.owner, '任务 项目')
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
-    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/p-[a-f0-9]{20}/)![0]
+    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/demo · (p-[a-f0-9]{20})/)![1]
     const dispatch = async (n: number, what: string) => {
       d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex ${what}`)
       const ack = await d.waitForOutbound(m => texts(m, d.owner).filter(t => t.startsWith('已接下这件事')).length >= n, 15_000)
@@ -766,5 +785,29 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(pushesFor(foreground)).toEqual([])
     expect(row(foreground).map(r => r.channel)).toEqual(['desktop'])
     expect(d.query("SELECT 1 FROM speech_pending WHERE lane = 'push'")).toEqual([])
+  })
+
+  it('S4 clock: the due brief fixture sends once at the exact Shanghai midnight that failed in CI', async () => {
+    // 独立于上面那条时间线,可单独 -t 复现。不能只缩短 tick:旧 now-60s 夹具在这个时刻永远等不到当天早报。
+    await d.stop()
+    const at = Date.parse('2026-11-08T16:00:31.912Z') // 上海 11-09 00:00:31.912,CI #878 的开机时刻
+    vi.setSystemTime(at)
+    try {
+      d = await startRealShapedDaemon({
+        claudeScript,
+        scheduledJobsIntervalMs: 200,
+        seedFiles: { 'scheduled-jobs.json': fixedBriefJobs(at) },
+      })
+      await expect.poll(() => d.query("SELECT spoken_at FROM speech_log WHERE kind='brief' AND spoken_at IS NOT NULL"), { timeout: 15_000 }).toEqual([{ spoken_at: at }])
+      await expect.poll(() => JSON.parse(readFileSync(join(d.stateDir, 'scheduled-jobs-state.json'), 'utf8')).jobs.j991, { timeout: 5_000 }).toMatchObject({ lastRunDay: '2026-11-09', lastStatus: 'sent', failStreak: 0 })
+      expect(texts(d.ilink.outbox(), d.owner).filter(t => t === FIXED_BRIEF_REPLY)).toHaveLength(1)
+      await new Promise(r => setTimeout(r, 600)) // 再过三拍:同一日只发一次
+      expect(d.query("SELECT spoken_at FROM speech_log WHERE kind='brief' AND spoken_at IS NOT NULL")).toEqual([{ spoken_at: at }])
+      expect(texts(d.ilink.outbox(), d.owner).filter(t => t === FIXED_BRIEF_REPLY)).toHaveLength(1)
+      expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+    } finally {
+      vi.useRealTimers()
+      await d.stop()
+    }
   })
 })

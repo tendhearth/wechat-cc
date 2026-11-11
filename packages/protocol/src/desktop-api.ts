@@ -1,3 +1,4 @@
+import { CliProjectMemoryRequest } from './cli-project-memory'
 import { TopicOpenRequest, TopicRenameRequest, TopicMergeRequest, TopicDeleteRequest, TopicWrongRequest } from './topic-bubbles'
 import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
@@ -17,7 +18,7 @@ import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 import z from 'zod'
 import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import {
-  PHONE_API_SCHEMAS, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent,
+  PHONE_API_SCHEMAS, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent, MatterPermission, PermissionScript, PermissionScriptChunk,
   MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
@@ -727,6 +728,8 @@ export const CliEventRequest = z.object({
 })
 export type CliEventRequestT = z.infer<typeof CliEventRequest>
 
+export { CliProjectMemoryRequest } from './cli-project-memory'
+
 export const CliPermissionRequest = z.object({
   source: z.enum(['claude', 'codex', 'cursor']),
   session_id: z.string().min(1).max(200),
@@ -813,6 +816,7 @@ export const WorkbenchDesktopTaskView = z.object({
   canArchive: z.boolean(),
   writerExit: z.enum(['alive', 'unconfirmed']).optional(),
   worktree: z.object({
+    base: z.string().optional(), baseSha: z.string().optional(),
     branch: z.string(), projectPath: z.string(), removed: z.boolean(), merged: z.boolean(),
     port: z.number().optional(), scripts: WorkbenchScriptsView.optional(),
   }).optional(),
@@ -958,7 +962,7 @@ export const WorkbenchSessionResponse = z.union([z.object({ ok: z.literal(true) 
 // ── GET /v1/workbench/task(详情;带 since / wait_ms 时长轮询)──
 const WorkbenchTaskEvent = z.object({
   id: z.number(), taskId: z.string(), kind: z.enum(['user', 'text', 'tool_call', 'error', 'system']), text: z.string(), createdAt: z.number(),
-  sourceId: z.string().nullable().optional(), runId: z.string().optional(),
+  sourceId: z.string().nullable().optional(), runId: z.string().optional(), turnId: z.string().optional(),
   activity: z.object({
     id: z.string(), type: z.enum(['search', 'command', 'read', 'edit', 'tool', 'agent']),
     status: z.enum(['running', 'completed', 'failed', 'cancelled', 'interrupted']), label: z.string(),
@@ -1033,7 +1037,7 @@ export const WorkbenchTaskDetailResponse = z.object({
     undo: z.object({ rewindId: z.string(), createdAt: z.number() }).nullable(),
     blocked: z.object({ rewindId: z.string(), backupRef: z.string(), reason: z.string().nullable() }).nullable(),
   }).optional(),
-  permissions: z.array(z.object({ id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number() })),
+  permissions: z.array(MatterPermission),
   continuation: WorkbenchContinuation,
   requiresExternalClose: z.boolean(),
 }).partial().shape)
@@ -1332,6 +1336,7 @@ const CliD2Source = z.enum(['claude', 'codex', 'cursor'])
 
 // ── POST /v1/cli/event ──
 export const CliEventResponse = z.object({ ok: z.literal(true), action: z.enum(['scheduled', 'cancelled', 'cleared', 'noop']) })
+export const CliProjectMemoryResponse = z.object({ context: z.string().refine(s => [...s].length <= 1200), reason: z.string() })
 
 // ── POST /v1/cli/permission ──
 // CliPermissionOpen:主人在场 ⇒ owner_present(终端自己问);否则 pending + hash。
@@ -1425,6 +1430,7 @@ const CliHooksChangeShape = z.object({
   command: z.string().optional(),
   error: z.string().optional(),
   skipped: z.literal('cli_not_found').optional(),
+  reconfirmationRequired: z.boolean().optional(),
 })
 const CliHooksSourceStateShape = z.object({
   source: CliD2Source,
@@ -1434,6 +1440,10 @@ const CliHooksSourceStateShape = z.object({
   command: z.string().nullable(),
   health: z.enum(['missing', 'stale', 'ok']),
   matchesSelf: z.boolean(),
+  trust: z.object({
+    state: z.enum(['untrusted', 'trusted', 'changed']), evidence: z.enum(['config', 'invocation', 'none']),
+    disabled: z.boolean().optional(), version: z.string().nullable().optional(),
+  }).optional(),
 })
 export const CliHooksResponse = z.object({
   ok: z.boolean(), results: z.array(CliHooksChangeShape), status: z.array(CliHooksSourceStateShape),
@@ -2124,6 +2134,8 @@ const PetPendingPermissionShape = z.object({
   prompt: z.string(),
   since: z.string(),
   expires_at: z.string(),
+  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
+  taskId: z.string().optional(),
 })
 const PetTaskActivityShape = z.object({
   taskId:z.string().regex(/^[a-f0-9]{8}$/),
@@ -2276,6 +2288,9 @@ const PermissionsPendingItemShape = z.object({
   prompt: z.string(),
   since: z.string(),
   expires_at: z.string(),
+  taskId: z.string().optional(),
+  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(),
+  scripts: z.array(PermissionScript).optional(),
 })
 export const PermissionsPendingResponse = z.object({ items: z.array(PermissionsPendingItemShape) })
 export type PermissionsPendingResponseT = z.infer<typeof PermissionsPendingResponse>
@@ -2470,6 +2485,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
   // cli hook events
   'POST /v1/cli/event': CliEventRequest,
+  'POST /v1/cli/project-memory': CliProjectMemoryRequest,
   'POST /v1/cli/permission': CliPermissionRequest,
   'GET /v1/cli/permission': CliPermissionQuery,
   'GET /v1/cli/sessions': CliSessionsQuery,
@@ -2507,6 +2523,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  'GET /v1/matter/permission-script': PermissionScriptChunk,
   ...TOPIC_BUBBLE_RESPONSES,
   ...OWNER_CONVERSATION_RESPONSES,
   'POST /v1/cli/session-stop': z.object({ok:z.literal(true)}),
@@ -2634,6 +2651,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/license/activate': LicenseActivateResponse,
   'POST /v1/license/deactivate': LicenseDeactivateResponse,
   'POST /v1/cli/event': CliEventResponse,
+  'POST /v1/cli/project-memory': CliProjectMemoryResponse,
   'POST /v1/cli/permission': CliPermissionOpenResponse,
   'GET /v1/cli/permission': CliPermissionStatusResponse,
   'GET /v1/cli/sessions': CliSessionsResponse,

@@ -1,4 +1,5 @@
 node_modules/
+.cc-workbench/
 
 # Editor / OS
 .DS_Store
@@ -81,3 +82,7 @@ reports/mutation/
 .superpowers/
 __pycache__/
 apps/desktop/art/cc-v1/native-motion-qa/dist/
+
+# Per-task workspaces and dependency caches are runtime copies, never repository inputs.
+.cc-tasks/
+node_modules/.cache/cc-tasks/

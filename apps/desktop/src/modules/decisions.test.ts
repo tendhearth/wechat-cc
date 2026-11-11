@@ -1,5 +1,6 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
-import { decisionRow, decisionGlyph, decisionSummary } from './decisions.js'
+import { decisionRow, decisionGlyph, decisionSummary, toggleDecisionDisclosure } from './decisions.js'
 
 describe('decisionGlyph', () => {
   it.each(['cron_eval_pushed', 'cron_eval_skipped', 'observation_written', 'milestone', 'cron_eval_failed', 'unknown'])(
@@ -48,4 +49,19 @@ describe('decisionRow', () => {
     expect(decisionRow({ id: 'evt_emoji', ts: new Date().toISOString(), kind: 'cron_eval_pushed', push_text: '庆祝一下 🎉' }))
       .toContain('主动找你：「庆祝一下 🎉」')
   })
+})
+
+
+it.each(['svg', 'svg path', '.summary', '.b3-disclosure-chevron'])('the whole decision disclosure responds to clicks on %s', target => {
+  const host = document.createElement('div')
+  host.innerHTML = decisionRow({ id: 'd', kind: 'observation_written', ts: new Date().toISOString(), reasoning: '记录原因' })
+  host.addEventListener('click', toggleDecisionDisclosure)
+  const button = host.querySelector('button')!
+  const click = () => host.querySelector(target)!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  click()
+  expect(button.classList.contains('expanded')).toBe(true)
+  expect(button.getAttribute('aria-expanded')).toBe('true')
+  click()
+  expect(button.classList.contains('expanded')).toBe(false)
+  expect(button.getAttribute('aria-expanded')).toBe('false')
 })

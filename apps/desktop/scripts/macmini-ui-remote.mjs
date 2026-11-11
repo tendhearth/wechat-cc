@@ -5,8 +5,9 @@ import { createWriteStream } from 'node:fs'
 import { homedir } from 'node:os'
 import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
+import { createServer } from 'node:net'
 import { join } from 'node:path'
-import { isInsideLab, miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest } from './macmini-ui-protocol.mjs'
+import { isInsideLab, miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest, assertExpectedSource } from './macmini-ui-protocol.mjs'
 
 const textCommand = (file, args) => execFileSync(file, args, { encoding: 'utf8' }).trim()
 const identity = { computerName: textCommand('/usr/sbin/scutil', ['--get', 'ComputerName']),
@@ -32,7 +33,8 @@ async function insideLab(path) {
   if (!isInsideLab(await realpath(labHome), resolved)) throw Error('Configured path leaves the dedicated UI lab')
   return resolved
 }
-const root = await insideLab(config.root)
+const root = await insideLab(request.command === 'browser' ? config.browserRoot ?? config.root : config.root)
+const browserSnapshot = request.command === 'browser' && config.browserRoot ? JSON.parse(await readFile(join(root, 'snapshot.json'), 'utf8')) : null
 const project = await insideLab(join(root, 'project'))
 const runtime = await insideLab(config.runtime)
 const environment = {}
@@ -77,7 +79,7 @@ if (request.command === 'app-status') {
 if (request.command === 'status') {
   let controller
   try { controller = await api('/status') } catch (error) { controller = { ready: false, message: error.message } }
-  console.log(JSON.stringify({ identity, root, sourceCommit: textCommand('/usr/bin/git', ['-C', project, 'rev-parse', 'HEAD']),
+  console.log(JSON.stringify({ identity, root, sourceCommit: browserSnapshot?.commit ?? textCommand('/usr/bin/git', ['-C', project, 'rev-parse', 'HEAD']),
     console: consoleState(), endpoint, controller,
     nativeAcceptance: 'requires an unlocked mini and its system UI Automation authorization; status does not prove either',
     productionAccess: false, localDesktopFallback: false }, null, 2))
@@ -93,8 +95,18 @@ const releaseLocks = () => lifecycle.finish()
 await acquireMachineLock({ path: join(mini.homeDir, 'ci/lock'), lane: request.command,
   sha: request.command.startsWith('app-')
     ? JSON.parse(await readFile(join(executionRoot, 'snapshot.json'), 'utf8')).commit
-    : textCommand('/usr/bin/git', ['-C', project, 'rev-parse', 'HEAD']),
+    : browserSnapshot?.commit ?? textCommand('/usr/bin/git', ['-C', project, 'rev-parse', 'HEAD']),
   ...machineGateOptions(), onAcquired: lifecycle.acquired })
+// A queued job must never execute a snapshot superseded while it waited.
+try {
+  const selected = JSON.parse(await readFile(configPath, 'utf8'))
+  if (request.command === 'browser' && selected.browserRoot !== config.browserRoot) throw Error('Browser snapshot changed while queued; retry the lab entry')
+  if (request.command.startsWith('app-') && selected.appRoot !== config.appRoot) throw Error('App snapshot changed while queued; retry the lab entry')
+  if (process.env.CC_UI_EXPECTED_SOURCE !== undefined) {
+    const actual = request.command.startsWith('app-') ? JSON.parse(await readFile(join(executionRoot, 'snapshot.json'), 'utf8')).commit : browserSnapshot?.commit
+    assertExpectedSource(process.env.CC_UI_EXPECTED_SOURCE, actual)
+  }
+} catch (error) { await releaseLocks(); throw error }
 const run = join(executionRoot, 'artifacts', new Date().toISOString().replaceAll(':', '-') + '-' + request.command)
 const temporaryRoot = join(run, 'tmp')
 try {
@@ -143,10 +155,19 @@ async function unit() {
 }
 
 async function browser() {
-  return command('browser', mini.bun, ['x', '--no-install', 'playwright', 'test', '-c', '.superpowers/macmini.config.ts',
-    'companion-controls.spec.ts', 'companion-entry.spec.ts', 'companion-life.spec.ts', 'now-hero.spec.ts', 'companion-status.spec.ts', 'pet-lab.spec.ts'], {
-      cwd: join(project, 'apps/desktop'), extraEnv: { WECHAT_CC_INJECT_CSP: '1' },
-    })
+  // Reject an occupied port rather than accidentally reading an older shim.
+  await new Promise((resolve, reject) => { const probe=createServer(); probe.once('error',reject);probe.listen(4198,'127.0.0.1',()=>probe.close(resolve)) })
+  const phase=browserSnapshot?.phase ?? 'after'
+  const specs=phase==='before' ? ['design-unify-shots.spec.ts','cc-alive-shots.spec.ts'] : [
+    'cc-alive-shots.spec.ts','companion-controls.spec.ts','companion-entry.spec.ts','companion-life.spec.ts','now-hero.spec.ts','companion-status.spec.ts','pet-lab.spec.ts',
+    't5-conversation.spec.ts','workbench-layout.spec.ts','task-detail-minimal.spec.ts','workbench-line-review.spec.ts','design-unify-shots.spec.ts','hook-trust.spec.ts','memory.spec.ts','settings-projects.spec.ts']
+  const home=join(run,'home');await mkdir(home,{mode:0o700})
+  const browserExecutable=mini.rustc?undefined:await insideLab(join(config.browserRuntimeRoot??config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'))
+  const result=await command('browser',mini.bun,['x','--no-install','playwright','test','-c','playwright.config.ts',...specs],{
+    cwd:join(project,'apps/desktop'),extraEnv:{...(browserExecutable?{CC_UI_BROWSER_EXECUTABLE:browserExecutable}:{}),HOME:home,WECHAT_CC_INJECT_CSP:'1',WECHAT_CC_DESIGN_SHOTS:join(run,'design-shots'),CC_UI_CAPTURE_PHASE:phase,
+      PLAYWRIGHT_BROWSERS_PATH:mini.rustc?join(config.root,'cache/browser'):join(mini.homeDir,'Library/Caches/ms-playwright')},
+  })
+  return {...result,snapshot:browserSnapshot,browserExecutable}
 }
 
 async function native() {

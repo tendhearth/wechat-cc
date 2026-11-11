@@ -10,7 +10,7 @@ export type ApprovalView =
   | { kind: 'card'; requestId: string; runId: string; title: string; what: string; scope: string; effect: string
       aiSummary: boolean; rawFirstLine: string; rawFull: string; workingDir: string; showRawInline: boolean
       /** 首行之后还有几行(结尾空行不算);首行是否被截到 120 字。 */
-      rawMoreLines: number; rawFirstLineCut: boolean }
+      rawMoreLines: number; rawFirstLineCut: boolean; canAllowTask?: boolean; canDenyWithReason: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
 
 const firstLine = (s: string, max: number) => (s.split('\n')[0] ?? '').slice(0, max)
 
@@ -34,6 +34,7 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
       title: ex?.title ?? p.tool, what: ex?.what ?? p.description, scope: ex?.scope ?? workingDir, effect: ex?.effect ?? '',
       aiSummary, rawFirstLine: firstLine(p.description, 120), rawFull: p.description, workingDir, showRawInline: aiSummary,
       rawMoreLines: lines.length - 1, rawFirstLineCut: (lines[0] ?? '').length > 120,
+      canDenyWithReason: p.canDenyWithReason === true, ...(p.canAllowTask ? { canAllowTask: true } : {}), ...(p.scripts ? { scripts: p.scripts } : {}),
     }
   }
 

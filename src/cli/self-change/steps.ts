@@ -932,6 +932,7 @@ async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
     bumpFailStreak(d)
     return { ok: false, fail: 'deploy_failed', detail: `部署没跑起来:${errText(err)}` }
   }
+  if(result.blocked==='tasks')return {ok:false,fail:'deploy_tasks_blocked',detail:`${result.steps.filter(x=>!x.ok).map(x=>x.detail??'').join('\n')} 未部署；wechat-cc self change --resume ${s.id} 接着来`}
   s.deploy.ok = result.ok
   s.deploy.version = result.version ?? null
   if (result.ok) {

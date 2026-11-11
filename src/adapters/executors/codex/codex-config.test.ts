@@ -4,7 +4,7 @@ import { workbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchC
 it('overrides inherited approval, sandbox, network, features and every discovered MCP', () => {
   const config = workbenchCodexConfig([{ name: 'personal', enabled: true, env: { SECRET: 'private' } }])
   expect(config).toMatchObject({
-    features: { plugins: false, apps: false, hooks: false },
+    features: { plugins: false, apps: false, hooks: false, network_proxy: false },
     approval_policy: 'on-request', approvals_reviewer: 'user', sandbox_mode: 'workspace-write',
     sandbox_workspace_write: { network_access: false, writable_roots: [], exclude_tmpdir_env_var: true, exclude_slash_tmp: true },
     shell_environment_policy: { inherit: 'core', ignore_default_excludes: false, experimental_use_profile: false, include_only: ['PATH', 'SHELL', 'TMPDIR', 'TEMP', 'TMP', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'USER'] },

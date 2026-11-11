@@ -354,6 +354,7 @@ describe('preserved second-batch authored performances', () => {
       expect(raw.motion.active).toBe(true)
       const states = { ...raw.forms[form].states, ...raw.motion.staticStates[form] }
       expect(Object.keys(states).filter(name=>!name.startsWith('life-')).sort()).toEqual([
+        'attention-input-up','attention-left','attention-read-down','attention-right','attention-speaking',
         'blink','companion','done','drag','error','idle','look','permission','receive','sleep','thinking','wake','working',
       ])
       expect(Object.keys(states).filter(name=>name.startsWith('life-')).sort()).toEqual([
@@ -487,12 +488,12 @@ it('rejects standalone prop dimensions and missing registration independently of
 it('preserves prior owner acceptance while keeping all new motion as candidates and SVGs as placeholders', () => {
   expect(raw.artStatus).toBe('production-candidate')
   for (const [name, form] of Object.entries(raw.forms) as [string, any][]) {
-    for (const [behavior, state] of Object.entries(form.states) as [string, any][]) expect(state.artStatus).toBe(raw.motion.staticStates[name][behavior]||behavior.startsWith('life-') ? 'production-candidate' : 'reviewed-production')
+    for (const [behavior, state] of Object.entries(form.states) as [string, any][]) expect(state.artStatus).toBe(raw.motion.staticStates[name][behavior]||behavior.startsWith('life-')||behavior.startsWith('attention-') ? 'production-candidate' : 'reviewed-production')
     for (const state of Object.values(raw.motion.staticStates[name]) as any[]) expect(state.artStatus).toBe('reviewed-production')
   }
   for (const [path, asset] of Object.entries(raw.assets) as [string, any][]) {
     if (path.endsWith('.svg')) expect(asset.artStatus).toBe('normative-placeholder')
-    else expect(asset.artStatus).toBe((path === '../props/micro-light.png' || path.startsWith('motion/') || path.startsWith('masks/motion/') || path.startsWith('performance/') || path.startsWith('masks/performance/') || path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
+    else expect(asset.artStatus).toBe((path === '../props/micro-light.png' || path.startsWith('motion/') || path.startsWith('masks/motion/') || path.startsWith('performance/') || path.startsWith('masks/performance/') || path.startsWith('attention/') || path.startsWith('masks/attention/') || path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
   }
 })
 
