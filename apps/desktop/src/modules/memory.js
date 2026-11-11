@@ -239,7 +239,7 @@ function renderMemorySidebar(deps) {
   if (!sidebar) return
   const userNames = deps.doctorPoller.current?.userNames || {}
   if (memoryState.users.length === 0) {
-    sidebar.innerHTML = `<div class="empty"><div class="h">空</div><div class="sub">memory/ 还没文件——Claude 还没写过笔记。</div></div>`
+    sidebar.innerHTML = `<div class="empty"><div class="h">空</div><div class="sub">memory/ 还没文件——CC 还没写过笔记。</div></div>`
     return
   }
   sidebar.innerHTML = memoryState.users.map(u => {
@@ -1342,7 +1342,7 @@ export async function loadMemoryTopZone(deps) {
     renderMemoryProfileOverview(deps)
     if (observations.length === 0) {
       // Keep design-language §1.3 #5 — empty states have narrative, not "暂无数据"
-      obsBox.innerHTML = `<p class="empty-state">Claude 还没注意到什么——这是它的安静日子。</p>`
+      obsBox.innerHTML = `<p class="empty-state">CC 还没注意到什么——这是它的安静日子。</p>`
     } else {
       obsBox.innerHTML = observations.map(observationRow).join("")
     }
