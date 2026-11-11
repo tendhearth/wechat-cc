@@ -7,6 +7,7 @@ apps/desktop/art/** -text
 apps/desktop/scripts/render-cc-props.py text eol=lf
 apps/desktop/scripts/cc_prop_glow.py text eol=lf
 apps/desktop/scripts/render-cc.py text eol=lf
+apps/desktop/scripts/render-cc-attention.py text eol=lf
 apps/desktop/scripts/cc_motion_geometry.py text eol=lf
 apps/desktop/scripts/cc_performance_geometry.py text eol=lf
 
