@@ -9,7 +9,7 @@ import { makeProcessTreeFreezer } from '../src/lib/process-tree-freeze'
 const roots: string[] = []
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })))
 
-async function verify(mode: 'silent' | 'noisy' | 'teardown' | 'real-import' | 'orphan' | 'worker-teardown' | 'success') {
+async function verify(mode: 'silent' | 'noisy' | 'teardown' | 'real-import' | 'orphan' | 'worker-teardown' | 'success' | 'fast-orphan') {
   const root = mkdtempSync(join(tmpdir(), 'verify-timeout-')); roots.push(root)
   const bin = join(root, 'bin'); mkdirSync(bin); mkdirSync(join(root, 'apps/app'), { recursive: true })
   const node = findOnPath('node')!, bun = findOnPath('bun')!
@@ -22,6 +22,12 @@ async function verify(mode: 'silent' | 'noisy' | 'teardown' | 'real-import' | 'o
 const {spawn} = require('node:child_process');
 const {writeFileSync} = require('node:fs');
 if (process.argv[3] !== 'test') process.exit(0);
+if (${JSON.stringify(mode)} === 'fast-orphan') {
+  // The launcher stays alive; an intermediate detached worker spawns and exits
+  // between polling ticks, leaving no observed ppid chain to the grandchild.
+  const middle = spawn(process.execPath, ['-e', ${JSON.stringify(`const {spawn}=require('node:child_process');const {writeFileSync}=require('node:fs');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});writeFileSync('child.pid',String(child.pid));child.unref();process.exit(0);`)}], {detached:true,stdio:'ignore'});
+  middle.unref();setInterval(()=>{},1000);return;
+}
 if (${JSON.stringify(mode)} === 'real-import') {
   const result = require('node:child_process').spawnSync(${JSON.stringify(bun)}, ['--bun', ${JSON.stringify(resolve('node_modules/vitest/vitest.mjs'))}, 'run', '--config', 'fixture.config.mjs', ...process.argv.slice(4)], {stdio:'inherit'});
   process.exit(result.status ?? 1);
@@ -79,7 +85,7 @@ it.skipIf(process.platform === 'win32')('verify ends a silent test stage, names 
   expect(result.status, result.output).toBe(1)
   expect(result.output).toMatch(/超时|timeout/i)
   expect(result.output).toContain('测试(bun)')
-  expect(result.alive).toBe(false)
+  expect(result.alive, result.output).toBe(false)
 })
 it.skipIf(process.platform === 'win32')('verify expires a single hanging file even while it keeps printing', async () => {
   const result = await verify('noisy')
@@ -130,4 +136,11 @@ it.skipIf(process.platform === 'win32')('verify times out after the test launche
   expect(result.output).toContain('超时')
   expect(result.output).toContain('fixture/hanging.test.ts')
   expect(result.alive).toBe(false)
+})
+
+it.skipIf(process.platform === 'win32')('verify finds a detached grandchild adopted before any ancestry snapshot', async () => {
+  const result = await verify('fast-orphan')
+  expect(result.guardFired, result.output).toBe(false)
+  expect(result.status, result.output).toBe(1)
+  expect(result.alive, result.output).toBe(false)
 })

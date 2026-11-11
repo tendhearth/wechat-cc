@@ -20,6 +20,10 @@ wechat-cc ci triage --wait --rerun
 
 测试阶段由独立进程监督：单文件从 worker 接手、尚未 import 时开始计时，默认上限 120 秒；阶段连续 300 秒无新输出也算超时。最后一个模块结束后的收尾同样有 120 秒上限，持续打印不会延长单文件或收尾期限。可用 `CC_VERIFY_FILE_TIMEOUT_MS`、`CC_VERIFY_SILENCE_TIMEOUT_MS` 设置正整数毫秒值。超时会打印阶段、正在跑或最近结束的文件及耗时，清理本次启动的进程树并非零退出；测试自身的断言及超时保持原样。POSIX 的根与后代都绑定不可覆盖的 PID + 启动时间，每次发信号前重新核验；身份缺失或变化只报告，不向该 PID 或进程组发信号。Windows 必须通过已有 `cc-jobspawn --require-job` 启动，Job Object 在 launcher 退出或监督终止时清理后代；缺 helper 就拒绝启动，不能用原根 PID 的 `taskkill /T` 冒充孤儿清理。原生 Windows 回归覆盖 launcher 先退出和超时两条路径，本机 macOS 不把它算作已运行。Node 定向复验脚本组用 `node node_modules/vitest/vitest.mjs run -c vitest.verify.config.ts`（`test:node` 的默认 include 只收 src/apps/packages）。
 
+POSIX 清理会记录每次有效进程表读取（包括信号前的身份复核），按父到子冻结、再终止，给重复发现和确认死亡 3 秒预算；预算耗尽仍会对已冻结 PID 完成一次有身份核验的终止尝试，这一有限收尾可能超出预算。launcher 的 `close` 不能提前结束清理。Linux 身份用 `/proc/<pid>/stat` 的启动 tick，macOS 继续用 `ps lstart`；消失过的 PID 永不重新认领。每阶段另传随机 `CC_VERIFY_OWNER_TOKEN`，清理时用它找回尚未观察到父子关系就被收养的同用户后代；标记认领前后核对启动身份，每次发信号和认领新后代前还会复核标记。只读取本阶段开始后出现的候选进程的环境，环境内容不记录、不输出。启动前的基线读取失败时明确报告并禁用孤儿标记扫描，只允许核验刚启动的根；根的首份快照失败也只能凭这个独立标记恢复身份，不能凭后来同号的 PID 猜。
+
+这仍是普通测试进程的协作式清理：主动清空环境且在两次快照间被收养的后代没有可验证的归属，无法跨 Linux/macOS 无条件保证整棵树消失；这种未观察到的 PID 也无法准确列出。Linux subreaper 需要额外常驻监督者，macOS 没有同等接口，本脚本不引入原生 helper，也不退回进程组群杀。超时输出会说明这个范围；已识别但仍活着的进程逐个打印 `residual PID …; cleanup unconfirmed`，读表、身份核验失败或强制关闭管道也明确报告，最终始终非零退出。现有普通后代、另起进程组和被收养后代的回归继续断言真正死亡，不以报告替代。
+
 AI 写代码有两个老毛病(Kent Beck 说过):为了变绿把测试删掉、跳过、改松;事后补一条「没有修复也会过」的测试。前一个在 diff 里看得见,只是评审时没人去数 —— 所以让机器数(2026-10-27 主人定)。
 
 `scripts/test-shrink-check.ts` 比 PR 头和它跟 base 的 merge-base,逐个测试文件看(判法写在 `scripts/test-shrink-lib.ts` 开头):
