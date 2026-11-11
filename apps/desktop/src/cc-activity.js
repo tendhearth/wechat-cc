@@ -2,8 +2,8 @@
 import { CC_ACTIVITY, createCCActivity } from './generated/cc-activity.js'
 
 /** Local UI evidence only: no draft text leaves the input, and a lease cannot survive a lost window.
- * @param {{stage:HTMLElement,doc?:Document,now?:()=>number}} o */
-export function mountCCActivity({ stage, doc = stage.ownerDocument, now = Date.now }) {
+ * @param {{stage:HTMLElement,doc?:Document,now?:()=>number,onPhase?:(phase:import('./generated/cc-activity.js').CCPhase)=>void}} o */
+export function mountCCActivity({ stage, doc = stage.ownerDocument, now = Date.now, onPhase }) {
   const tracker = createCCActivity()
   let connected = false, waiting = false, blocked = false, enabled = true, disposed = false
   let typingUntil = -Infinity
@@ -13,6 +13,7 @@ export function mountCCActivity({ stage, doc = stage.ownerDocument, now = Date.n
     clearTimeout(timer)
     const phase = !doc.hidden && enabled ? tracker.phase({ connected, waiting, blocked, typing: now() < typingUntil, now: now() }) : 'idle'
     stage.dataset.ccPhase = phase
+    onPhase?.(phase)
     if (!disposed && phase !== 'idle') timer = setTimeout(render, 100)
   }
   const stopTyping = () => { typingUntil = -Infinity; channel?.postMessage({ typing: false }); render() }
@@ -42,7 +43,7 @@ export function mountCCActivity({ stage, doc = stage.ownerDocument, now = Date.n
     },
     /** @param {boolean} on */
     setEnabled(on) { enabled = on; if (!on) { tracker.observe(null, now(), false); typingUntil = -Infinity }; render() },
-    destroy() { disposed = true; clearTimeout(timer); channel?.close(); doc.removeEventListener('input', input); doc.removeEventListener('focusout', blur); doc.removeEventListener('visibilitychange', visibility); doc.defaultView?.removeEventListener('blur', stopTyping); delete stage.dataset.ccPhase },
+    destroy() { disposed = true; clearTimeout(timer); onPhase?.('idle'); channel?.close(); doc.removeEventListener('input', input); doc.removeEventListener('focusout', blur); doc.removeEventListener('visibilitychange', visibility); doc.defaultView?.removeEventListener('blur', stopTyping); delete stage.dataset.ccPhase },
   }
 }
 

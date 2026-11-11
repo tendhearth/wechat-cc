@@ -19,7 +19,8 @@ describe('CC native motion lifecycle', () => {
     await ui.render(node({ phase: 'thinking' })); await advance(600)
     expect(value(ui.container, 'rotate')).toBe('1deg')
     await ui.render(node({ phase: 'speaking' })); await advance(300)
-    expect(value(ui.container, 'translateY')).toBe(-1)
+    expect(value(ui.container, 'translateY')).toBe(0) // Authored torso frames keep the feet planted.
+    expect(ui.container.querySelector('[data-testid="cc-authored-pose"]')?.getAttribute('src')).toContain('speaking-1.png')
     await ui.render(node({ phase: 'idle' })); expect(value(ui.container, 'translateY')).toBe(0)
     expect(value(ui.container, 'rotate')).toBe('0deg')
   })
@@ -54,6 +55,24 @@ const pose = (container: Element) => JSON.parse(container.firstElementChild!.get
 const value = (container: Element, key: string) => pose(container).find((entry: any) => entry[key] !== undefined)[key]
 
 describe('CC event identities and connection evidence', () => {
+  it('holds the input gaze, looks down toward App topics once and consumes suppressed looks', async () => {
+    const src = (el: Element) => el.querySelector('[data-testid="cc-authored-pose"]')!.getAttribute('src')
+    const ui = await mount(node({ phase: 'listening' })); expect(src(ui.container)).toContain('input-up.png')
+    await ui.render(node({ behavior: 'look', eventKey: 'topic-a' })); expect(src(ui.container)).toContain('read-down.png')
+    await advance(520); expect(src(ui.container)).not.toContain('/attention/')
+    await ui.render(node({ behavior: 'look', eventKey: 'topic-a' })); expect(src(ui.container)).not.toContain('/attention/')
+    await reduce(true); await ui.render(node({ behavior: 'look', eventKey: 'topic-b' })); expect(src(ui.container)).not.toContain('/attention/')
+    await reduce(false); expect(src(ui.container)).not.toContain('/attention/')
+  })
+  it('ends its short speech burst without replaying sustained output, and consumes output during suppression', async () => {
+    const src = (el: Element) => el.querySelector('[data-testid="cc-authored-pose"]')!.getAttribute('src')
+    const ui = await mount(node()); await ui.render(node({ phase: 'speaking' })); await advance(334)
+    expect(src(ui.container)).toContain('speaking-2.png')
+    await advance(334); expect(src(ui.container)).not.toContain('/attention/')
+    await advance(4000); expect(src(ui.container)).not.toContain('/attention/')
+    await background('background'); await ui.render(node({ phase: 'thinking' })); await ui.render(node({ phase: 'speaking' }))
+    await background('active'); await advance(334); expect(src(ui.container)).not.toContain('/attention/')
+  })
   it('receives once per stable event, including an old ID seen again after a newer event', async () => {
     const ui = await mount(node())
     await ui.render(node({ behavior: 'receive', eventKey: 'chat-1' }))

@@ -1,0 +1,36 @@
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- openLink: "tendhearth://dev-e2e?op=cc-motion"
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    visible:
+      id: review-idle
+    timeout: 15000
+- takeScreenshot: cc-idle-before
+- startRecording: cc-motion
+- tapOn:
+    id: review-listening
+- takeScreenshot: cc-input-up-after
+- tapOn:
+    id: review-thinking
+- takeScreenshot: cc-thinking-after
+- tapOn:
+    id: review-speaking
+- takeScreenshot: cc-speaking-after-000
+- takeScreenshot: cc-speaking-after-001
+- tapOn:
+    id: review-idle
+- tapOn:
+    id: review-look
+- takeScreenshot: cc-topic-down-after
+- tapOn:
+    id: review-away
+- takeScreenshot: cc-away-static
+- stopRecording

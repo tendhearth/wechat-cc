@@ -40,3 +40,22 @@ export function createCCActivity() {
 /** A result group also contains failure and cancellation. It is never success evidence.
  * @template {{status:string}} T @param {readonly T[]} rows @returns {T[]} */
 export const successfulCCResults = rows => rows.filter(row => row.status === 'replied' || row.status === 'done')
+
+// Both renderers use one bounded text-response performance, never an audio/mouth loop.
+export const CC_RESPONSE = Object.freeze({ frameMs: 167, frames: 4, cooldownMs: 2400 })
+export function createCCResponsePerformance() {
+  /** @type {CCPhase} */ let previous = 'idle'
+  let started = -Infinity, last = -Infinity
+  return {
+    /** Suppression consumes the current edge, including one first seen while hidden.
+     * @param {CCPhase} phase @param {number} now @param {boolean} [active] @returns {number|null} */
+    frame(phase, now, active = true) {
+      const entering = phase === 'speaking' && previous !== 'speaking'
+      previous = phase
+      if (!active || phase !== 'speaking') { started = -Infinity; return null }
+      if (entering && now - last >= CC_RESPONSE.cooldownMs) { started = now; last = now }
+      const index = Math.floor((now - started) / CC_RESPONSE.frameMs)
+      return index >= 0 && index < CC_RESPONSE.frames ? index : null
+    },
+  }
+}

@@ -127,7 +127,7 @@ test('App commands share the strict SSH transport and reject arbitrary flows and
   expect(sshInvocation('app-status').args.at(-1)).toContain('/cc-ui-lab/app-run.mjs')
   expect(JSON.parse(sshInvocation('app-status').input)).toEqual({ command: 'app-status' })
   expect(JSON.parse(sshInvocation('app-build').input)).toEqual({ command: 'app-build' })
-  for (const flow of ['all', 'terminal-sessions', 'push-open', 'cc-acts']) {
+  for (const flow of ['all', 'terminal-sessions', 'push-open', 'cc-acts', 'cc-motion']) {
     const request = { command: 'app-maestro', flow }
     expect(JSON.parse(sshInvocation('app-maestro', 'home', undefined, flow).input)).toEqual(request)
     expect(protocol.validateRequest(request)).toEqual(request)

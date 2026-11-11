@@ -4,6 +4,8 @@
 
 ## 所有 job 共用机器锁（2026-11-06）
 
+`cc-alive-2` 的第二批动作验收使用同一受控快照入口：桌面 browser 对 before/after 都运行 `cc-alive-shots.spec.ts`，只覆盖同一份测试 harness，不覆盖产品代码；App 用已登记的 `app-maestro cc-motion`，进入现有 `dev-e2e?op=cc-motion` 离线检查页。截图均为合成信号，不能作为真实模型、配对或音频证据。App 使用核验过的增量源码传输，避免重复完整 archive。
+
 所有 mini 上的 job 必须走本仓库入口、拿 `~/ci/lock`；禁止 SSH 直接运行临时 `/private/tmp/*.mjs`、单独 vitest/Playwright、构建或另开 verify。桌面 `run.mjs`、App `app-run.mjs` 和快照接收器必须一起更新到本仓库版本及锁模块；只更新本地 SSH 客户端不能保护旧远端执行器。`status` / `app-status` 只读，不占锁。
 
 锁用原子 mkdir，`info` 为 `pid=/since=/owner=`，owner 是 `wechat-cc <lane> <sha7>`，pid 是远端执行 job 的进程。过期规则与家族 runner 一致：无 pid 过期；pid=0 预留超过 900 秒过期；其余 pid 不存在过期。排队打印「家族 check 在跑 <owner>,等它」。拿锁后等 1 分钟负载 ≤ 核数 × 1.5 才开始，等待期间保持锁。完成、失败、INT/TERM/HUP 或超时均停止自有子进程并核对拥有权释放；SIGKILL/断电无法执行清理，下次按死 pid 回收。

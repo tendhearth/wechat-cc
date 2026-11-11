@@ -11,6 +11,7 @@ import { emergencyManifest, fallbackFrame } from '../assets/pet/cc-v1/placeholde
 import { createLifeDirector } from './life/life-director.js'
 import { createBodyMotion } from './life/body-motion.js'
 import { resolvePerformance } from './life/performance.js'
+import { createCCResponsePerformance } from '../generated/cc-activity.js'
 
 /** @typedef {import('./bridge/presence-map.js').PetIntent} PetIntent */
 /** @typedef {import('./domain/types.js').PetForm} PetForm */
@@ -39,6 +40,10 @@ export async function createPet(root, opts) {
   const now = opts.now ?? Date.now
   let lastAttention = -Infinity
   let ownsAttention = false
+  /** @type {'left'|'right'|null} */ let attentionDirection = null
+  /** @type {import('../generated/cc-activity.js').CCPhase} */ let activityPhase = 'idle'
+  /** @type {number|null} */ let responseFrame = null
+  const response = createCCResponsePerformance()
   let reducedMotion = opts.reducedMotion === true
   let quiet = false
   let paused = false
@@ -80,6 +85,7 @@ export async function createPet(root, opts) {
   }
   // 坏帧要就地从帧表里摘掉,所以拿一份深拷贝,不动 loader 的返回值。
   const manifest = structuredClone(loaded.ok ? loaded.manifest : emergencyManifest())
+  const canAct = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => !disposed && !suppressDecoration() && s.form === 'lit' && !s.transition && ['idle','companion','thinking','working','blink','look'].includes(s.behavior)
   warn(...manifest.warnings)
   renderer.applyAnchor(manifest.canvas.anchor)
   const propRenderer = createPropRenderer({ container: root.props, manifest, makeEl, schedule, cancel })
@@ -98,11 +104,14 @@ export async function createPet(root, opts) {
     if(action==='work-exit'&&!visibleProps.includes('laptop'))visibleProps.push('laptop')
     const propsKey = `${s.badge}|${visibleProps.join(',')}`
     if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; propRenderer.render(visibleProps, s.badge) }
-    const performance=opts.life&&!s.transition&&!suppressDecoration()?resolvePerformance(manifest,s.form,action,s.behavior,pose?.direction):null
-    renderedPerformance=Boolean(performance)
+    const states = manifest.forms[s.form].states
+    const activityName = canAct(s) && activityPhase === 'listening' ? 'attention-input-up' : canAct(s) && activityPhase === 'speaking' && responseFrame !== null ? 'attention-speaking' : null
+    const authored = activityName ? states[activityName] : s.behavior === 'look' && attentionDirection && canAct(s) ? states[`attention-${attentionDirection}`] : null
+    const performance=opts.life&&activityPhase==='idle'&&!authored&&!s.transition&&!suppressDecoration()?resolvePerformance(manifest,s.form,action,s.behavior,pose?.direction):null
+    renderedPerformance=Boolean(performance || authored)
     bodyMotion?.setAuthored(renderedPerformance)
     const visual=action==='doze'?'sleep':action==='peek'?'look':action==='wake'?'wake':s.behavior
-    const key = s.transition ? `t:${s.transition}` : performance ? `p:${s.form}/${performance.id}/${performance.hold}` : `b:${s.form}/${visual}/${action}`
+    const key = s.transition ? `t:${s.transition}` : authored ? `a:${activityName ?? attentionDirection}` : performance ? `p:${s.form}/${performance.id}/${performance.hold}` : `b:${s.form}/${visual}/${action}`
     if (paused) return
     if (key === lastKey) return
     lastKey = key
@@ -115,6 +124,13 @@ export async function createPet(root, opts) {
       warn(...t.warnings)
       if (t.kind === 'frames') renderer.play(t.animation, { onEnd: () => machine.notifyAnimationEnded() })
       else renderer.fadeTo(t.to, { onEnd: () => machine.notifyAnimationEnded() })
+      return
+    }
+    if (authored) {
+      renderer.setBreathing(false)
+      if (activityName === 'attention-speaking') renderer.play({ ...authored, loop: false })
+      else if (authored.frames[0]) renderer.play({ ...authored, frames: [authored.frames[0]], loop: true, next: null })
+      if (!activityName) oneShotTimer = schedule(() => { oneShotTimer = null; machine.notifyAnimationEnded() }, 520)
       return
     }
     if(performance){
@@ -184,7 +200,7 @@ export async function createPet(root, opts) {
     if (lookTimer !== null) { cancel(lookTimer); lookTimer = null }
   }
   const armIdleMoves = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
-    if (suppressDecoration()||(life&&life.current().action!=='still')) { cancelIdleMoves(); return }
+    if (activityPhase !== 'idle'||suppressDecoration()||(life&&life.current().action!=='still')) { cancelIdleMoves(); return }
     if (s.transition !== null || !CALM_BEHAVIORS.has(s.behavior)) {
       // 正在播的是我们自己排的 blink / look:另一个的倒计时照走。否则 6–12 s 的眨眼
       // 每次都把 25–60 s 的张望清零,look 永远轮不到(实测 10 分钟 62 次眨眼、0 次张望)。
@@ -203,8 +219,10 @@ export async function createPet(root, opts) {
     if (machine.setState(b) === 'ignored' && !heldOneShots.includes(b)) heldOneShots.push(b)
   }
   const onSnapshot = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
+    if (s.transition || s.behavior !== 'look') { ownsAttention = false; attentionDirection = null }
+    life?.setSuppressed(suppressDecoration() || activityPhase !== 'idle' || attentionDirection !== null)
     life?.observe(s)
-    if (s.transition || s.behavior !== 'look') ownsAttention = false
+    if (!canAct(s)) { response.frame(activityPhase, now(), false); responseFrame = null }
     if (suppressDecoration() && s.props.includes('micro-light')) { machine.setProps(s.props.filter(p => p !== 'micro-light'), s.badge); return }
     if ((quiet || paused) && (s.transition || decorative.has(s.behavior))) { machine.notifyAnimationEnded(); return }
     render(s)
@@ -226,7 +244,7 @@ export async function createPet(root, opts) {
 
   // A control change consumes decoration immediately; it never creates a deferred celebration.
   const syncMotion = () => {
-    life?.setSuppressed(suppressDecoration())
+    life?.setSuppressed(suppressDecoration() || activityPhase !== 'idle' || attentionDirection !== null)
     propRenderer.setMotionSuppressed(suppressDecoration())
     lastPropsKey = ''
     const current = machine.snapshot()
@@ -248,18 +266,35 @@ export async function createPet(root, opts) {
 
   return {
     machine, warnings,
+    /** A presentation of the same activity evidence; never a new pet/business fact.
+     * @param {import('../generated/cc-activity.js').CCPhase} phase */
+    setActivity(phase) {
+      if (disposed) return
+      const frame = response.frame(phase, now(), canAct(machine.snapshot()))
+      if (activityPhase === phase && responseFrame === frame) return
+      activityPhase = phase; responseFrame = frame
+      if (phase !== 'idle') {
+        attentionDirection = null; ownsAttention = false; cancelIdleMoves()
+        if (IDLE_MOVES.has(machine.snapshot().behavior)) machine.notifyAnimationEnded()
+      }
+      // Suppression cancels and restarts the actual calm deadline, including a doze in progress.
+      life?.setSuppressed(suppressDecoration() || phase !== 'idle')
+      render(machine.snapshot()); armIdleMoves(machine.snapshot())
+    },
     /** @param {boolean} on */
     setLifeAvailable(on){life?.setAvailable(on)},
     /** @param {number} speed */
     setDragVelocity(speed){bodyMotion?.velocity(speed)},
     land(){life?.land()},
-    acknowledgeAttention() {
+    /** @param {'left'|'right'} [direction] */
+    acknowledgeAttention(direction) {
       if (disposed || suppressDecoration()) return false
       const current = machine.snapshot()
-      if (current.transition || !CALM_BEHAVIORS.has(current.behavior) || !manifest.forms[current.form]?.states.look) return false
+      if (current.form !== 'lit' || activityPhase !== 'idle' || current.transition || !CALM_BEHAVIORS.has(current.behavior) || !manifest.forms[current.form]?.states.look) return false
       const time = now()
       if (!Number.isFinite(time) || time - lastAttention < 12_000) return false
       // Local attention is disposable decoration; never enqueue it as a fact.
+      attentionDirection = direction ?? null
       if (machine.setState('look') !== 'applied') return false
       lastAttention = time
       ownsAttention = true
