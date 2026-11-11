@@ -14,6 +14,7 @@ describe('B3 setting and memory contract', () => {
     const root = doc.querySelector('#memory-profile-overview')!
     expect(doc.querySelector('#memory-retractions-toggle')!.closest('.memory-sources-panel')).toBeNull()
     for (const id of ['memory-facts-edit', 'memory-retractions-toggle', 'memory-profile-content', 'memory-sources-toggle', 'memory-save-btn', 'memory-cancel-btn']) expect(root.querySelector(`#${id}`)).not.toBeNull()
+    expect([...root.children].map(node => node.id || node.className)).toEqual(['memory-facts', 'memory-fold', 'memory-profile-disclosure', 'memory-sources-toggle', 'memory-sources-panel'])
     const drawer = doc.querySelector('#settings-drawer')!
     expect([...drawer.querySelectorAll('.drawer-section > h3')].map(node => node.textContent)).toEqual(['家里的电脑', '偏好', '实验', '项目管理', 'Pro 会员'])
     const confirm = drawer.querySelector('.settings-confirm')!

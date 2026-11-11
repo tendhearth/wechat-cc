@@ -98,6 +98,13 @@ test('B3 captures settings, connections, facts and the existing correction edito
  await expect(page.locator('#hero-headline')).not.toBeEmpty()
  await expect(page.locator('#settings-drawer')).toHaveCSS('transform','matrix(1, 0, 0, 1, 0, 0)')
  await page.screenshot({path:join(out!,`desktop-settings-${phase}.png`)})
+ await reveal(page,'#dash-stop')
+ await page.locator('#dash-stop').scrollIntoViewIfNeeded()
+ await page.screenshot({path:join(out!,`desktop-disconnect-confirm-${phase}.png`)})
+ if(phase==='after') {
+  await page.locator('#dash-stop-cancel').click()
+  await expect(page.locator('#dash-connection-options')).not.toHaveAttribute('open','')
+ } else await page.locator('#dash-connection-options > summary').click()
  await reveal(page,'#projects-admin-list')
  await page.locator('#projects-admin-list').scrollIntoViewIfNeeded()
  await page.screenshot({path:join(out!,`desktop-settings-bottom-${phase}.png`)})
