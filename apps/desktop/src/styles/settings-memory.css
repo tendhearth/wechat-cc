@@ -80,3 +80,26 @@
   .memory-sources-panel .mem-doc { padding-inline: 0; }
   .memory-sources-panel .memory-maintenance-item { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* One summary anatomy for native details and the existing scripted folds. */
+:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--th-matter-row-gap);
+  width: 100%; min-height: var(--th-matter-row-min-height); box-sizing: border-box;
+  margin: 0; padding: var(--th-matter-row-padding-y) 0; border: 0; border-radius: 0;
+  background: transparent; color: var(--th-ink-soft); text-align: left; list-style: none;
+  font: 400 var(--th-size-body)/var(--th-lh-body) var(--th-font-sans); cursor: pointer;
+}
+:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure::-webkit-details-marker { display: none; }
+:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure::before,
+:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure::after { content: none; }
+:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure-label { min-width: 0; flex: 1; font-size: inherit; overflow-wrap: anywhere; }
+:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure-chevron { display: inline-block; flex: none; font-size: inherit; transition: transform 150ms ease-out; }
+:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure-chevron::after { content: '›'; }
+:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) :is(details[open] > .b3-disclosure, .b3-disclosure[aria-expanded="true"]) > .b3-disclosure-chevron { transform: rotate(90deg); }
+:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 3px; }
+.memory-profile-overview > .memory-library-trigger { align-self: stretch; }
+.memory-profile-overview .decision-row > .b3-disclosure-label { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: var(--th-matter-row-gap); }
+.memory-facts-head h1 { margin-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .b3-disclosure-chevron { transition: none; } }
+
+.settings-drawer :is(.connection-options, .connection-history) { width: 100%; }

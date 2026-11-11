@@ -1126,7 +1126,7 @@ export async function runTroubleshoot(deps) {
   const rawNetRows = net && net.ok
     ? net.results.map((/** @type {any} */ x) => `<div class="brain-net-row ${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"} ${escapeHtml(x.label)}${x.ok ? ` <span class="brain-when">${x.latency_ms}ms</span>` : " 不通"}</div>`).join("")
     : `<div class="brain-net-row bad">✗ 网络检查没跑起来</div>`
-  const netRows = `<details class="service-details"><summary>查看网络详细结果</summary>${rawNetRows}</details>`
+  const netRows = `<details class="service-details"><summary class="b3-disclosure"><span class="b3-disclosure-label">查看网络详细结果</span><span class="b3-disclosure-chevron" aria-hidden="true"></span></summary>${rawNetRows}</details>`
   const verdict = net && net.ok ? net.verdict : "offline"
   // 国际通 → 照旧真拨(不回归国际大脑的常见路径)。国际不通时,只要有一个
   // 已注册大脑的端点可达(dial_advisable)也真拨 —— 救国内/本地自配大脑,
@@ -1175,7 +1175,7 @@ export async function runBrainDial(deps) {
   const label = r?.default_provider ? executorSettingsLabel(r.default_provider) : "当前 AI 服务"
   const message = result?.ok === true ? `${label} 可以回复` : result?.ok === false ? `${label} 暂时无法回复` : "尚未验证回复，请稍后重试"
   steps.innerHTML = `${netRows}<div class="brain-net-row ${result?.ok === true ? "ok" : "bad"}">${escapeHtml(message)}</div>
-    ${result?.ok === false ? `<details><summary>查看原因</summary>${escapeHtml(result.hint || result.error || "连接失败")}</details>` : ""}
+    ${result?.ok === false ? `<details><summary class="b3-disclosure"><span class="b3-disclosure-label">查看原因</span><span class="b3-disclosure-chevron" aria-hidden="true"></span></summary>${escapeHtml(result.hint || result.error || "连接失败")}</details>` : ""}
     <button class="brain-recheck" type="button" data-action="brain-dial">再测一次</button>
     <button class="brain-recheck" type="button" data-action="connect-ai">连接其他 AI 服务</button>`
 
@@ -1232,7 +1232,7 @@ export function openBrainSetup(_deps, provider) {
       <div class="brain-setup-title">连接 ${escapeHtml(executorSettingsLabel(provider))}</div>
       <div class="brain-setup-form">
         <input type="password" id="brain-key" placeholder="服务密钥" aria-label="服务密钥" autocomplete="off" />
-        ${isOpenai ? `<details open><summary>高级连接：服务地址与模型</summary><input type="text" id="brain-baseurl" placeholder="接口地址,如 https://api.openai.com/v1" autocomplete="off" />
+        ${isOpenai ? `<details open><summary class="b3-disclosure"><span class="b3-disclosure-label">高级连接：服务地址与模型</span><span class="b3-disclosure-chevron" aria-hidden="true"></span></summary><input type="text" id="brain-baseurl" placeholder="接口地址,如 https://api.openai.com/v1" autocomplete="off" />
         <input type="text" id="brain-model" placeholder="模型名（由服务商提供）" autocomplete="off" /></details>` : `<input type="text" id="brain-model" placeholder="模型名,可留空" autocomplete="off" />`}
         <button class="brain-recheck" type="button" data-action="brain-save-key" data-provider="${provider}">保存</button>
         <span class="brain-setup-status" id="brain-setup-status"></span>

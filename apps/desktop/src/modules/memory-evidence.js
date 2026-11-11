@@ -133,7 +133,7 @@ export function mountMemoryEvidenceDialog(options) {
   dialog.innerHTML=`<div class="memory-evidence-head"><div><p class="memory-evidence-eyebrow">画像依据</p><h2 id="memory-evidence-title"></h2></div><button type="button" data-evidence-close aria-label="关闭依据">×</button></div>
     <p class="memory-evidence-intro">查看画像所引用来源的当前原文。这里没有保存生成画像时的原文快照。</p>
     <div class="memory-evidence-layout"><nav class="memory-evidence-sources" aria-label="依据来源"></nav><section class="memory-evidence-reader">
-    <details class="memory-evidence-original"><summary>查看当前来源原文</summary><pre id="memory-evidence-original" tabindex="0"></pre></details>
+    <details class="memory-evidence-original"><summary class="b3-disclosure"><span class="b3-disclosure-label">查看当前来源原文</span><span class="b3-disclosure-chevron" aria-hidden="true"></span></summary><pre id="memory-evidence-original" tabindex="0"></pre></details>
     <label for="memory-evidence-text" class="memory-evidence-label">就地改正</label><textarea id="memory-evidence-text" spellcheck="false"></textarea>
     <p class="memory-evidence-notice" role="status" aria-live="polite"></p><p class="memory-evidence-error" role="alert"></p>
     <div class="memory-evidence-recovery"><button type="button" data-evidence-refresh>重新读取来源</button><button type="button" data-evidence-rebase>按最新来源继续编辑</button></div>

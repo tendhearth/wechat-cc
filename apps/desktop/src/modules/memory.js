@@ -184,7 +184,7 @@ async function loadStoredFacts(deps) {
   if (!user || !file) {
     storedFactsFailed = false; storedFacts = null; paintStoredFacts()
     if (edit) edit.disabled = true
-    if (source) source.textContent = ''
+    if (source) { source.textContent = ''; source.hidden = true }
     return
   }
   try {
@@ -198,7 +198,7 @@ async function loadStoredFacts(deps) {
     if (mine !== storedFactsGeneration) return
     storedFactsFailed = false
     storedFacts = { userId: user.userId, path: file.path, mtime: file.mtime, lines: view ? view.lines.map(line => line.text) : null, content }
-    if (source) source.textContent = file.path
+    if (source) { source.textContent = ''; source.hidden = true }
     if (edit) edit.disabled = false
     paintStoredFacts()
   } catch { if (mine === storedFactsGeneration) showStoredFactsError() }
@@ -834,7 +834,7 @@ export function renderMemoryProfileOverview(deps) {
           const more = paras.slice(1)
           return `<p>${escapeHtml(lead)}</p>` + (more.length ? `
             <div class="memory-summary-more" id="memory-summary-more" hidden>${more.map(pp => `<p>${escapeHtml(pp)}</p>`).join("")}</div>
-            <button class="memory-summary-toggle" id="memory-summary-toggle" type="button" aria-expanded="false" aria-controls="memory-summary-more">展开全文 ▾</button>` : "")
+            <button class="memory-summary-toggle b3-disclosure" id="memory-summary-toggle" type="button" aria-expanded="false" aria-controls="memory-summary-more"><span class="b3-disclosure-label">展开全文</span><span class="b3-disclosure-chevron" aria-hidden="true"></span></button>` : "")
         })()}
         <div class="memory-profile-tags">
           ${profile.tags.map(tag => `<span title="${escapeHtml(tag)}">${escapeHtml(tidyProfileTag(tag))}</span>`).join("")}
@@ -916,7 +916,8 @@ export function renderMemoryProfileOverview(deps) {
     const btn = document.getElementById("memory-summary-toggle")
     if (!more || !btn) return
     more.hidden = !more.hidden
-    btn.textContent = more.hidden ? "展开全文 ▾" : "收起 ▴"
+    const label = btn.querySelector(".b3-disclosure-label")
+    if (label) label.textContent = more.hidden ? "展开全文" : "收起"
     btn.setAttribute("aria-expanded", String(!more.hidden))
   })
 }
@@ -1413,7 +1414,7 @@ export async function loadProjectMemory(deps) {
         <div class="mem-proj-head"><span>${escapeHtml(p.name)}</span><span class="count">${files.length}</span></div>
         ${files.map(f => `
           <details class="mem-proj-file">
-            <summary>${escapeHtml(f.path)}</summary>
+            <summary class="b3-disclosure"><span class="b3-disclosure-label">${escapeHtml(f.path)}</span><span class="b3-disclosure-chevron" aria-hidden="true"></span></summary>
             <div class="mem-proj-rendered">${marked.parse(f.content || "")}</div>
           </details>
         `).join("")}
