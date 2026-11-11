@@ -127,3 +127,9 @@ test('attention UI evidence uses the locked browser lane and a test-only baselin
  expect(remote).toContain("selected.appRoot !== config.appRoot")
  expect(remote.indexOf('assertExpectedSource(process.env.CC_UI_EXPECTED_SOURCE, actual)')).toBeLessThan(remote.indexOf('await mkdir(run'))
 })
+
+test('mobile budget snapshots accept only the assigned branch and keep App snapshots separate',()=>{
+ expect(supportsBrowserSnapshot('mobile-budget')).toBe(true)
+ expect(supportsAppSnapshot('mobile-budget')).toBe(false)
+ for(const ref of ['mobile-budget-other','mobile-budget;echo x','../mobile-budget'])expect(supportsBrowserSnapshot(ref)).toBe(false)
+})
