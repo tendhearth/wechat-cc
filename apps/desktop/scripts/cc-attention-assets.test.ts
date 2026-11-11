@@ -34,4 +34,4 @@ it('adds paired gaze and one planted-foot response from the frozen scene without
   }
   expect(manifest.forms.lit.states.blink.artStatus).toBe('reviewed-production')
   expect(validateAssetKit(kit).errors).toEqual([])
-}, 20_000)
+}, 60_000) // 逐个哈希 + 全包 validator(900+ 资产):本机 ~4s,Windows 慢 runner 曾 > 20s

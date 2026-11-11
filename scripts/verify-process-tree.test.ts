@@ -46,11 +46,12 @@ it('Windows refuses to start without Job ownership rather than claiming tree cle
 
 // These execute on Windows CI; no taskkill or shell shim is involved.
 import {afterEach,vi} from 'vitest'
-import {mkdtempSync,readFileSync,rmSync} from 'node:fs'
+import {mkdtempSync,readFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {preparationJobspawnFixture} from '../src/test-support/preparation-jobspawn'
 import {findOnPath} from '../src/lib/util'
+import {removeTempDir} from '../src/lib/test-temp'
 import {runVerifyStep} from './verify-runner'
 preparationJobspawnFixture()
 afterEach(()=>vi.unstubAllEnvs())
@@ -65,7 +66,7 @@ it.runIf(process.platform==='win32').each([true,false])('Windows Job clears desc
     expect(result).toEqual({status:exit?0:1,timedOut:!exit})
     await expect.poll(()=>{try{process.kill(pid,0);return true}catch{return false}}).toBe(false)
   } finally {
-    rmSync(root,{recursive:true,force:true})
+    removeTempDir(root) // Windows 上 Job 刚结束时句柄可能还没释放(EBUSY),用仓库统一的重试删除
   }
 })
 it('a failed final snapshot cannot forget processes it already froze',()=>{
