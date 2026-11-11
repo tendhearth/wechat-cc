@@ -63,7 +63,7 @@ export async function receiveBrowserSnapshot({mini,sha,target='browser',selectAc
   const tar=spawnProcess('/usr/bin/tar',['-xzf',archive,'-C',project],{detached:true,stdio:'inherit'});lifecycle.track(tar);await finished(tar);lifecycle.assertRunning()
   for(const file of meta.files){const target=join(project,file.path);await chmod(target,file.mode==='100755'?0o755:0o644);const stat=await lstat(target);if(!stat.isFile()||gitObject('blob',await readFile(target))!==file.blob||(stat.mode&0o111)!==(file.mode==='100755'?0o111:0))throw Error(`Target source mismatch: ${file.path}`)}
   const harnessFiles=[]
-  for(const [name,path] of target==='browser'?[['design-unify-shots.spec.ts','apps/desktop/playwright/design-unify-shots.spec.ts'],['playwright.config.ts','apps/desktop/playwright.config.ts']]:[]){const harness=join(mini.labHome,'browser-executor',name),bytes=await readFile(harness);await copyFile(harness,join(project,path));harnessFiles.push({path,sha256:sha256(bytes)})}
+  for(const [name,path] of target==='browser'?[['design-unify-shots.spec.ts','apps/desktop/playwright/design-unify-shots.spec.ts'],['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts'],['playwright.config.ts','apps/desktop/playwright.config.ts']]:[]){const harness=join(mini.labHome,'browser-executor',name),bytes=await readFile(harness);await copyFile(harness,join(project,path));harnessFiles.push({path,sha256:sha256(bytes)})}
   const profile=await readFile(join(base,'offline-tests.sb'));await writeFile(join(root,'offline-tests.sb'),profile)
   const env={PATH:`${mini.homeDir}/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin`,HOME:join(root,'home'),BUN_INSTALL_CACHE_DIR:join(mini.homeDir,'.bun/install/cache')};await mkdir(env.HOME,{mode:0o700})
   lifecycle.assertRunning()
@@ -91,7 +91,7 @@ export function verifiedSourcePayload({repo,sha,phase='after'}) {
  const header=Buffer.from(JSON.stringify(meta)),length=Buffer.alloc(4);length.writeUInt32BE(header.length)
  return Buffer.concat([length,header,delta])
 }
-export const supportsBrowserSnapshot = branch => ['design-unify-b1','design-unify-b1-fixes','codex-hook-trust-ux','topics-are-projects','topics-waiting-honest','design-b3'].includes(branch)
+export const supportsBrowserSnapshot = branch => ['cc-alive-2','design-unify-b1','design-unify-b1-fixes','codex-hook-trust-ux','topics-are-projects','topics-waiting-honest','design-b3'].includes(branch)
 
 export async function main() {
  if(process.argv[2]==='--receive') {

@@ -43,6 +43,7 @@ function renderPresenceHome(s,stale) {
 // 以前这里 800ms 后不看连接就点亮(手机端盘点 10-20);渐亮仍走 CSS 的 0.8s 过渡。
 function setPresenceLit(on) {
   var small=document.getElementById('small-cc');if(small){if(on)small.classList.add('lit');else small.classList.remove('lit')}
+  if(typeof mobileCC!=='undefined')mobileCC.refresh()
   var scene = document.querySelector('.home-scene')
   if (!scene) return
   if (on) scene.classList.add('home-arrived'); else scene.classList.remove('home-arrived')

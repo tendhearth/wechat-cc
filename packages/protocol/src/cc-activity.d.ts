@@ -7,3 +7,5 @@ export function createCCActivity(): {
   nextChangeAt(now: number): number
 }
 export function successfulCCResults<T extends { status: string }>(rows: readonly T[]): T[]
+export const CC_RESPONSE: Readonly<{ frameMs: 167; frames: 4; cooldownMs: 2400 }>
+export function createCCResponsePerformance(): { frame(phase: CCPhase, now: number, active?: boolean): number | null }

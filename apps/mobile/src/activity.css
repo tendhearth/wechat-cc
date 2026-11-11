@@ -1,0 +1,10 @@
+/* Only CC stages carry these evidence-owned attributes; presence owns light. */
+[data-cc-phase] img { transform-origin: 50% 91.796875%; }
+[data-cc-phase="listening"] img { rotate: -2deg; transition: rotate 180ms ease-in-out; }
+[data-cc-phase="thinking"] img { animation: cc-mt 9200ms ease-in-out infinite; }
+[data-cc-response="acting"] img { animation: cc-mr 668ms ease-in-out; }
+@keyframes cc-mt { 0%,13%,100% { rotate: 0deg; } 6.5% { rotate: 1deg; } }
+@keyframes cc-mr { 0%,100% { scale: 1; } 25% { scale: 1.006 .995; } 50% { scale: .995 1.006; } }
+@media (prefers-reduced-motion: reduce) {
+  [data-cc-phase] img { animation: none !important; rotate: none !important; scale: none !important; transition: none !important; }
+}

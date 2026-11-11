@@ -67,10 +67,19 @@ function runTunnel(relay: ReturnType<typeof makeFakeV2Relay>, o: { T?: string; r
     document: o.document,
   }
   return new Function(...Object.keys(env), `${readMobileSource('transport.js')}\nreturn { api, resetTunnel }`)(...Object.values(env)) as
-    { api(path: string, opts?: object): Promise<{ status: number; json(): Promise<unknown>; text(): Promise<string> }>; resetTunnel(): void }
+    { api(path: string, opts?: object): Promise<{ status: number; headers: Headers; json(): Promise<unknown>; text(): Promise<string> }>; resetTunnel(): void }
 }
 
 describe('transport over relay v2 (F4:跟 App 同一个协议客户端)', () => {
+  it('preserves Retry-After response headers for tunnel readers', async () => {
+    const relay = makeFakeV2Relay({ tokens: () => ['tLINK'], handler: () => ({ status: 429, body: '{}', headers: { 'retry-after': '120' } }) })
+    const t = runTunnel(relay)
+    try {
+      const r = await t.api('/m/api/home')
+      expect(r.status).toBe(429)
+      expect(r.headers?.get('Retry-After')).toBe('120')
+    } finally { t.resetTunnel() }
+  })
   it('handshakes v2 as the web client, sends method / headers / body, resolves a fetch-like response', async () => {
     const relay = makeFakeV2Relay({ tokens: () => ['tLINK'], handler: r => ({ status: 200, body: JSON.stringify({ ok: true, device_token: 'dNEW', echo: r.body }) }) })
     const t = runTunnel(relay)

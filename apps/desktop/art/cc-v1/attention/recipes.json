@@ -1,0 +1,258 @@
+{
+  "schemaVersion": 4,
+  "artStatus": "production-candidate",
+  "forms": [
+    "lit",
+    "unlit"
+  ],
+  "clips": [
+    {
+      "id": "left",
+      "title": "\u770b\u5de6",
+      "fps": 6,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.07,
+          "gazeUp": 0,
+          "crestTilt": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "right",
+      "title": "\u770b\u53f3",
+      "fps": 6,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.07,
+          "gazeUp": 0,
+          "crestTilt": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "input-up",
+      "title": "\u62ac\u773c\u770b\u8f93\u5165\u6846",
+      "fps": 6,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "gazeUp": 0.12,
+          "crestTilt": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "read-down",
+      "title": "\u4f4e\u5934\u8bfb",
+      "fps": 6,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 0.9,
+          "crescent": 0,
+          "gaze": 0,
+          "gazeUp": -0.04,
+          "crestTilt": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "speaking",
+      "title": "\u6587\u5b57\u56de\u5e94 \u00b7 \u56fa\u5b9a\u811a\u5e95\u7684\u5c0f\u5e45\u8eaf\u5e72\u56de\u5e94",
+      "fps": 6,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "gazeUp": 0,
+          "crestTilt": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.02,
+          "gazeUp": 0.025,
+          "crestTilt": 0,
+          "body": {
+            "lean": -0.012,
+            "squash": 0.995,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.015,
+          "gazeUp": 0.02,
+          "crestTilt": 0,
+          "body": {
+            "lean": 0.01,
+            "squash": 1.006,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "gazeUp": 0,
+          "crestTilt": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -18,6 +18,7 @@ import { readMobileSource, MOBILE_PAGE_OUT, CCP_PLACEHOLDER } from './sources'
 
 export const PROTOCOL_ENTRY = new URL('../../packages/protocol/src/browser.ts', import.meta.url)
 export const PROTOCOL_JS_OUT = new URL('./src/protocol-generated.js', import.meta.url)
+export const ACTIVITY_JS_OUT = new URL('./src/activity-generated.js', import.meta.url)
 export const PSET_SHELL_SRC = new URL('../../relay/pset.src.html', import.meta.url)
 export const PSET_SHELL_OUT = new URL('../../relay/pset.html', import.meta.url)
 
@@ -41,6 +42,18 @@ export async function buildProtocolJs(): Promise<string> {
   return text.endsWith('\n') ? text : `${text}\n`
 }
 
+/** Keep the device reader readable/typechecked in source and inside the existing relay budget on the wire. */
+export async function buildActivityJs(): Promise<string> {
+  const result = await Bun.build({ entrypoints: [fileURLToPath(new URL('./src/activity.js', import.meta.url))], format: 'iife', minify: true })
+  if (!result.success) throw new Error(`buildActivityJs: ${result.logs.map(l => String(l.message)).join('; ')}`)
+  const text = await result.outputs[0]!.text()
+  // Minification removes the scanner's comment. Restore that annotation at the
+  // one device-only API call; fail closed if the generated call shape changes.
+  const call = 'api("/v1/matter/owner-chat/events?since="'
+  if (text.split(call).length !== 2) throw new Error('Activity device-only API shape changed')
+  return ';' + text.replace(call, '/* link-scan: device-only */' + call).trimEnd() + '\n'
+}
+
 /**
  * relay/pset.src.html 的占位注释(CCP_PLACEHOLDER,跟 transport.js 顶部那行
  * 是同一个标记,定义在 sources.ts)换成协议 IIFE 源码 —— 纯字符串操作,不用
@@ -60,6 +73,7 @@ export function assembleRelayShell(srcHtml: string, protocolJs: string): string 
 }
 
 async function main() {
+  writeFileSync(ACTIVITY_JS_OUT, await buildActivityJs())
   const protocolJs = await buildProtocolJs()
   writeFileSync(PROTOCOL_JS_OUT, protocolJs)
   console.log(`wrote ${PROTOCOL_JS_OUT.pathname}`)

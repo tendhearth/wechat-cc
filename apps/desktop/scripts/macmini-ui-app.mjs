@@ -6,6 +6,18 @@ import { join, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import { APP_FLOWS, appFlow } from './macmini-ui-protocol.mjs'
 
+/** Native pixels for sub-second poses. execute remains the parent's offline, tracked lab command. */
+export async function captureSimulatorFrames({ execute, sim, udid, directory, signal, delay = ms => new Promise(resolve => setTimeout(resolve, ms)), maxFrames = 300 }) {
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  let frames = 0
+  while (!signal.aborted && frames < maxFrames) {
+    const name = String(frames++).padStart(3, '0')
+    await execute(`cc-motion-frame-${name}`, '/usr/bin/xcrun', [...sim, 'io', udid, 'screenshot', '--type=png', join(directory, `${name}.png`)])
+    if (!signal.aborted) await delay(50)
+  }
+  return { frames, directory }
+}
+
 // Maestro 2.12 chooses a free port before waiting for a manually managed runner.
 // Starting the runner first either selects a different port or fails its free-port check.
 export async function waitForMaestroPort(directory, udid, signal) {
@@ -188,6 +200,7 @@ process.exit(result.status ?? 1);
       try {
         const controller = new AbortController()
         const debug = join(run, name, 'debug')
+        const capture = name === 'cc-motion' ? captureSimulatorFrames({ execute, sim, udid, directory: join(run, 'native-keyframes'), signal: controller.signal }) : Promise.resolve()
         const maestro = execute(`maestro-${name}`, join(tools, 'maestro/bin/maestro'), ['--device', udid, 'test',
           '--test-output-dir', join(run, name), '--debug-output', debug, `.maestro/${name}.yaml`])
           .finally(() => controller.abort())
@@ -196,7 +209,7 @@ process.exit(result.status ?? 1);
             extraEnv: { ...extraEnv, SIMCTL_CHILD_PORT: String(port) },
           }))
         // Never shut down the device while either child is still using it.
-        const settled = await Promise.allSettled([maestro, runner])
+        const settled = await Promise.allSettled([maestro, runner, capture])
         const failed = settled.find(result => result.status === 'rejected')
         if (failed) throw failed.reason
         results.push({ flow: name, ok: true })

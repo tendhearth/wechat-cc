@@ -93,6 +93,8 @@ test('snapshot modules expose an explicit entry for trusted import wrappers and 
 })
 
 test('project topic snapshots accept only the explicit task branch and preserve source ref boundaries',()=>{
+ expect(supportsBrowserSnapshot('cc-alive-2')).toBe(true)
+ expect(supportsAppSnapshot('cc-alive-2')).toBe(true)
  expect(supportsBrowserSnapshot('topics-are-projects')).toBe(true)
  expect(supportsAppSnapshot('topics-are-projects')).toBe(true)
  expect(supportsBrowserSnapshot('topics-waiting-honest')).toBe(true)
@@ -113,4 +115,15 @@ test('B3 accepts only the assigned immutable source branch and includes its page
  }
  const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
  for(const spec of ['memory.spec.ts','settings-projects.spec.ts'])expect(remote).toContain("'"+spec+"'")
+})
+
+test('attention UI evidence uses the locked browser lane and a test-only baseline harness',()=>{
+ const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
+ const receiver=readFileSync(new URL('./macmini-browser-snapshot.mjs',import.meta.url),'utf8')
+ expect(remote).toContain("['design-unify-shots.spec.ts','cc-alive-shots.spec.ts']")
+ expect(receiver).toContain("['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts']")
+ expect(supportsBrowserSnapshot('cc-alive-2;echo x')).toBe(false)
+ expect(supportsAppSnapshot('../cc-alive-2')).toBe(false)
+ expect(remote).toContain("selected.appRoot !== config.appRoot")
+ expect(remote.indexOf('assertExpectedSource(process.env.CC_UI_EXPECTED_SOURCE, actual)')).toBeLessThan(remote.indexOf('await mkdir(run'))
 })

@@ -91,7 +91,7 @@ function tunnel() {
   }
   return tun
 }
-/** 经中继发一个请求;回 {status, json(), text()}(跟 fetch 的 Response 用法一样,json/text 是 Promise)。 */
+// 经中继发一个请求;保留响应头，json/text 是 Promise。
 function viaTunnel(/** @type {string} */ path, /** @type {any} */ opts) {
   if (ccLegacyRemote(REMOTE)) { ccNeedsRepair(); return Promise.reject(new Error("upgrade_required")) }
   var o = opts || {}, identity = T
@@ -102,7 +102,7 @@ function viaTunnel(/** @type {string} */ path, /** @type {any} */ opts) {
   if (typeof o.body === "string") req.body = o.body
   return tunnel().request(req).then(function(/** @type {any} */ r) {
     ccClearNotice("cc-tamper")
-    return { status: r.status, text: function() { return Promise.resolve(r.text()) }, json: function() { return Promise.resolve(r.json()) } }
+    return { status: r.status, headers: new Headers(r.headers), text: function() { return Promise.resolve(r.text()) }, json: function() { return Promise.resolve(r.json()) } }
   }, function(/** @type {Error} */ err) {
     if (err && err.message === "auth_failed" && identity===T && typeof cClearPrivate === "function") { cClearPrivate(); if(typeof cShowReconnect === "function")cShowReconnect() }
     if (err && err.message === "upgrade_required") ccNeedsRepair()

@@ -63,7 +63,7 @@ export function createOfflineSession({ bundleId, appPath, stateRoot }) {
   } } }
 }
 
-export const APP_FLOWS = Object.freeze(['agent-avatars', 'approve', 'chat', 'chat-extras', 'connections', 'compose', 'worktree', 'quota-handoff', 'demo-walkthrough', 'pair-invalid', 'pair-link', 'terminal-sessions', 'push-open', 'cc-acts', 'continue-session', 'design-shots', 'codex-connection', 'design-b3-shots'])
+export const APP_FLOWS = Object.freeze(['cc-motion', 'agent-avatars', 'approve', 'chat', 'chat-extras', 'connections', 'compose', 'worktree', 'quota-handoff', 'demo-walkthrough', 'pair-invalid', 'pair-link', 'terminal-sessions', 'push-open', 'cc-acts', 'continue-session', 'design-shots', 'codex-connection', 'design-b3-shots'])
 
 export function appFlow(value = 'all') {
   if (value !== 'all' && !APP_FLOWS.includes(value)) throw Error('Unsupported App flow')
@@ -83,6 +83,10 @@ export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv
   if (!Object.hasOwn(MINIS, target)) throw Error('Unsupported UI lab target')
   if (sshConfig !== undefined && (typeof sshConfig !== 'string' || !posix.isAbsolute(sshConfig) || sshConfig.includes('\0'))) throw Error('SSH config must be an absolute local path')
   const settings = []
+  if (gateEnv.CC_UI_EXPECTED_SOURCE !== undefined) {
+    assertExpectedSource(gateEnv.CC_UI_EXPECTED_SOURCE, gateEnv.CC_UI_EXPECTED_SOURCE)
+    settings.push(`CC_UI_EXPECTED_SOURCE=${gateEnv.CC_UI_EXPECTED_SOURCE}`)
+  }
   for (const key of ['CC_UI_LOCK_WAIT_MS', 'CC_UI_LOAD_WAIT_MS', 'CC_UI_JOB_TIMEOUT_MS']) {
     if (gateEnv[key] === undefined) continue
     const value = Number(gateEnv[key])
@@ -94,6 +98,12 @@ export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv
     '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
     mini.host, `env ${settings.length ? settings.join(' ') + ' ' : ''}PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/${command.startsWith('app-') ? 'app-run.mjs' : command === 'browser' ? 'browser-run.mjs' : 'run.mjs'}`],
   input: JSON.stringify(validateRequest({ command, ...(flow !== undefined ? { flow } : {}) })) + '\n' }
+}
+
+export function assertExpectedSource(expected, actual) {
+  if (expected === undefined) return
+  if (typeof expected !== 'string' || !/^[a-f0-9]{40}$/.test(expected)) throw Error('Invalid expected UI source')
+  if (expected !== actual) throw Error('UI snapshot does not match requested source; retry the lab entry')
 }
 
 // Strict descendants only. Callers must realpath filesystem paths first so

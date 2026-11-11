@@ -34,7 +34,7 @@ const pet = await createPet({ stage, img, props, hint, body:$('pet-body') }, { m
   onLifeAction:pose=>{const travel=pose.action==='walk'&&pose.authored!==true&&!document.hidden;if(travel)void motion?.play(pose.direction);else if(walking)void motion?.stop();walking=travel},
 })
 if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window).__pet = pet
-const ccActivity = stage ? mountCCActivity({ stage }) : null
+const ccActivity = stage ? mountCCActivity({ stage, onPhase: phase => pet.setActivity(phase) }) : null
 const activityFeed = createCCActivityFeed({ read: since => v1(invokeWorkbenchApi, V1.conversation.events, { query: { since } }), observe: stream => ccActivity?.observe(stream) })
 
 let quiet = false, reducedMotion = false, activityConnected = false

@@ -101,7 +101,7 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   const img = doc.createElement('img'); img.className = 'pet-sprite now-pet-sprite'; img.alt = ''; img.draggable = false
   const props = doc.createElement('span'); props.className = 'now-pet-props'
   stage.append(img, props); button.append(stage)
-  const activity = mountCCActivity({ stage })
+  const activity = mountCCActivity({ stage, onPhase: phase => pet?.setActivity(phase) })
   let topicsKnown = false
   const seenTopics = new Set()
   const isActive = () => !doc.hidden && !root.hidden && (root.dataset.conversation === 'single' || root.dataset.now !== 'chat') && !root.closest('[hidden]') && (!root.closest('.dashboard') || doc.documentElement.dataset.mode === 'dashboard')
@@ -195,7 +195,13 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
     /** @param {string[]} ids */
     setTopics(ids) {
       syncVisibility()
-      if (topicsKnown && active && !motion.reducedMotion && !motion.quiet && stage.dataset.ccPhase === 'idle' && ids.some(id => !seenTopics.has(id))) pet?.acknowledgeAttention()
+      if (topicsKnown && active && !motion.reducedMotion && !motion.quiet && stage.dataset.ccPhase === 'idle') {
+        const id = ids.find(id => !seenTopics.has(id))
+        const bubble = id ? [...root.querySelectorAll('[data-topic-id]')].find(el => /** @type {HTMLElement} */ (el).dataset.topicId === id) : null
+        const b = bubble?.getBoundingClientRect(), cc = button.getBoundingClientRect()
+        const row = bubble?.closest('.conversation-topics')?.getBoundingClientRect()
+        if (b && row && b.width > 0 && b.height > 0 && cc.width > 0 && b.right > row.left && b.left < row.right && b.bottom > 0 && b.top < (view?.innerHeight ?? Infinity) && b.right > 0 && b.left < (view?.innerWidth ?? Infinity) && !bubble?.closest('[hidden]')) pet?.acknowledgeAttention(b.left + b.width / 2 < cc.left + cc.width / 2 ? 'left' : 'right')
+      }
       ids.forEach(id => seenTopics.add(id)); topicsKnown = active && !motion.reducedMotion && !motion.quiet
     },
     destroy() {

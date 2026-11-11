@@ -127,7 +127,7 @@ test('App commands share the strict SSH transport and reject arbitrary flows and
   expect(sshInvocation('app-status').args.at(-1)).toContain('/cc-ui-lab/app-run.mjs')
   expect(JSON.parse(sshInvocation('app-status').input)).toEqual({ command: 'app-status' })
   expect(JSON.parse(sshInvocation('app-build').input)).toEqual({ command: 'app-build' })
-  for (const flow of ['all', 'terminal-sessions', 'push-open', 'cc-acts']) {
+  for (const flow of ['all', 'terminal-sessions', 'push-open', 'cc-acts', 'cc-motion']) {
     const request = { command: 'app-maestro', flow }
     expect(JSON.parse(sshInvocation('app-maestro', 'home', undefined, flow).input)).toEqual(request)
     expect(protocol.validateRequest(request)).toEqual(request)
@@ -139,6 +139,14 @@ test('App commands share the strict SSH transport and reject arbitrary flows and
   for (const request of [{ command: 'app-status', flow: 'all' }, { command: 'app-maestro', file: '/tmp/x' }, { command: 'shell' }, null]) {
     expect(() => protocol.validateRequest(request)).toThrow()
   }
+})
+
+test('a task can pin its immutable UI source before any queued mutation or test', () => {
+  const sha = 'a'.repeat(40)
+  expect(sshInvocation('browser', 'home', undefined, undefined, { CC_UI_EXPECTED_SOURCE: sha }).args.at(-1)).toContain(`CC_UI_EXPECTED_SOURCE=${sha}`)
+  expect(() => protocol.assertExpectedSource(sha, 'b'.repeat(40))).toThrow('does not match requested source')
+  expect(() => protocol.assertExpectedSource(sha, sha)).not.toThrow()
+  for (const value of ['', '../a', 'a; touch /tmp/x', 'a'.repeat(41)]) expect(() => sshInvocation('browser', 'home', undefined, undefined, { CC_UI_EXPECTED_SOURCE: value })).toThrow('Invalid expected UI source')
 })
 
 for (const [flavour, paths, root, cases] of [
