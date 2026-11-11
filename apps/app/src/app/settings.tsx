@@ -14,7 +14,7 @@ import { useSession } from '../state/session'
 import { Icon, type IconName } from '../ui/Icon'
 import { Button } from '../ui/Button'
 import { ChoiceRow, LinkRow } from '../ui/Rows'
-import { space } from '../ui/tokens'
+import { componentAppearance, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
@@ -79,13 +79,15 @@ export default function Settings() {
       { text: t(lang, 'settings.unpair'), style: 'destructive', onPress: () => void unpair() },
     ])
   const showNotif = !demo && conn.state !== 'revoked'
-  const heading = (label: string) => <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.l, marginBottom: space.s }}>{label}</Txt>
+  const row = componentAppearance.matterRow
+  const rowStyle = { minHeight: row.minHeight.phone, paddingVertical: row.paddingY, gap: row.gap }
+  const heading = (label: string) => <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.xl, marginBottom: space.s }}>{label}</Txt>
   const disclosure = (value: Exclude<typeof panel, null>, label: string, icon: IconName, detail?: string) => <Pressable testID={`settings-${value}-toggle`} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ expanded: panel === value }}
-    onPress={() => setPanel(panel === value ? null : value)} style={{ minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: space.m }}>
-    <Icon name={icon} size={20} />
+    onPress={() => setPanel(panel === value ? null : value)} style={({ pressed }) => ({ ...rowStyle, flexDirection: 'row', alignItems: 'center', opacity: pressed ? componentAppearance.iconButton.pressedOpacity : 1 })}>
+    <Icon name={icon} size={20} color={c.inkSoft} />
     <Txt role="body" style={{ flex: 1 }}>{label}</Txt>
-    {detail ? <Txt role="small" tone="inkSoft">{detail}</Txt> : null}
-    <Icon name={panel === value ? 'chevronDown' : 'chevronRight'} size={16} />
+    {detail ? <Txt role="small" tone="inkSoft" style={{ flexShrink: 1, maxWidth: '45%', textAlign: 'right' }}>{detail}</Txt> : null}
+    <Icon name={panel === value ? 'chevronDown' : 'chevronRight'} size={16} color={c.inkSoft} />
   </Pressable>
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
@@ -93,15 +95,15 @@ export default function Settings() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xxl }}>
         {demo || conn.state !== 'revoked' ? <>
           {heading(st(lang, 'withCC'))}
-          <LinkRow icon="book" testID="settings-memory" label={st(lang, 'memory')} onPress={() => router.push('/memory')} />
-          <LinkRow icon="mail" testID="settings-letters" label={t(lang, 'letters.title')} onPress={() => router.push('/letters')} />
-          <LinkRow icon="calendar" testID="settings-jobs" label={st(lang, 'jobs')} onPress={() => router.push('/jobs')} />
-          <LinkRow icon="clock" testID="settings-activity" label={st(lang, 'activity')} onPress={() => router.push('/activity')} />
+          <LinkRow style={rowStyle} icon="book" testID="settings-memory" label={st(lang, 'memory')} onPress={() => router.push('/memory')} />
+          <LinkRow style={rowStyle} icon="mail" testID="settings-letters" label={t(lang, 'letters.title')} onPress={() => router.push('/letters')} />
+          <LinkRow style={rowStyle} icon="calendar" testID="settings-jobs" label={st(lang, 'jobs')} onPress={() => router.push('/jobs')} />
+          <LinkRow style={rowStyle} icon="clock" testID="settings-activity" label={st(lang, 'activity')} onPress={() => router.push('/activity')} />
           {heading(st(lang, 'computer'))}
-          <LinkRow icon="monitor" testID="settings-connections" label={st(lang, 'connections')} onPress={() => router.push('/connections')} />
-          <LinkRow icon="terminal" testID="settings-sessions" label={st(lang, 'sessions')} onPress={() => router.push('/sessions')} />
+          <LinkRow style={rowStyle} icon="monitor" testID="settings-connections" label={t(lang, 'links.title')} onPress={() => router.push('/connections')} />
+          <LinkRow style={rowStyle} icon="terminal" testID="settings-sessions" label={st(lang, 'sessions')} onPress={() => router.push('/sessions')} />
         </> : null}
-        {!demo ? <LinkRow icon="device" testID="settings-devices" label={st(lang, 'devices')} onPress={() => router.push('/devices')} /> : null}
+        {!demo ? <LinkRow style={rowStyle} icon="device" testID="settings-devices" label={st(lang, 'devices')} onPress={() => router.push('/devices')} /> : null}
         {heading(st(lang, 'preferences'))}
         {disclosure('language', t(lang, 'settings.language'), 'book', choices.find(choice => choice.v === langOverride)?.label)}
         {panel === 'language' ? <View testID="settings-language" accessibilityRole="radiogroup" style={{ paddingLeft: space.xl }}>
@@ -117,11 +119,13 @@ export default function Settings() {
         </> : null}
         {disclosure('privacy', t(lang, 'settings.privacy'), 'shield')}
         {panel === 'privacy' ? <Txt testID="settings-privacy" role="bubble" style={{ paddingVertical: space.m }}>{t(lang, 'settings.privacyBody')}</Txt> : null}
+        <View style={{ marginTop: space.xl }}>
         {disclosure('about', st(lang, 'about'), 'info')}
         {panel === 'about' ? <View testID="settings-about" style={{ gap: space.m, paddingVertical: space.s }}>
-          <LinkRow testID="settings-font-licences" label={st(lang, 'licences')} onPress={() => router.push('/licences')} />
+          <LinkRow style={rowStyle} testID="settings-font-licences" label={st(lang, 'licences')} onPress={() => router.push('/licences')} />
           <Txt role="small" tone="inkSoft">{t(lang, 'settings.version')} {Constants.expoConfig?.version ?? '—'} · {t(lang, 'settings.copyright')}</Txt>
         </View> : null}
+        </View>
         {!demo ? <View style={{ marginTop: space.xl }}>
           <Button kind="secondary" testID="settings-unpair" label={t(lang, 'settings.unpair')} busy={unpairing} onPress={confirmUnpair} />
         </View> : null}

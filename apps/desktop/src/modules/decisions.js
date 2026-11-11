@@ -52,10 +52,17 @@ export function decisionRow(ev) {
   // not parents).
   const reasoningEsc = escapeHtml(reasoning)
   return `
-    <button class="decision-row" data-id="${escapeHtml(ev.id)}" data-action="toggle-decision" data-reasoning="${reasoningEsc}">
-      <span class="glyph">${glyph}</span>
+    <button class="decision-row b3-disclosure" aria-expanded="false" data-id="${escapeHtml(ev.id)}" data-action="toggle-decision" data-reasoning="${reasoningEsc}">
+      <span class="b3-disclosure-label"><span class="glyph">${glyph}</span>
       <span class="ts">${escapeHtml(ts)}</span>
-      <span class="summary" data-reasoning="${reasoningEsc}">${escapeHtml(summary)}</span>
+      <span class="summary" data-reasoning="${reasoningEsc}">${escapeHtml(summary)}</span></span>
+      <span class="b3-disclosure-chevron" aria-hidden="true"></span>
     </button>
   `
+}
+
+/** The delegated row click includes nested icon elements. @param {MouseEvent} event */
+export function toggleDecisionDisclosure(event) {
+  const row = event.target instanceof Element ? event.target.closest('[data-action="toggle-decision"]') : null
+  if (row) row.setAttribute('aria-expanded', String(row.classList.toggle('expanded')))
 }

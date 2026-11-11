@@ -62,7 +62,7 @@ test('memory top zone renders observations from seeded data', async ({ page, shi
   const obsBox = page.locator('#memory-observations')
   await expect(obsBox).toBeVisible()
   // Wait for the load to settle (renders happen async after pane switch).
-  await expect(obsBox).not.toContainText('Claude 还没注意到', { timeout: 5_000 })
+  await expect(obsBox).not.toContainText('CC 还没注意到', { timeout: 5_000 })
   // Demo observation bodies — at least one should be rendered.
   await expect(obsBox).toContainText(/demo observation/)
 })
@@ -135,8 +135,8 @@ test('memory sidebar empty-state when no chats', async ({ page, shimUrl, shim })
   await openMemoryArchive(page)
   const sidebar = page.locator('#memory-sidebar')
   await expect(sidebar).toBeVisible()
-  // The narrative empty-state from renderMemorySidebar uses "Claude 还没".
-  await expect(sidebar).toContainText(/Claude 还没/, { timeout: 5_000 })
+  // The narrative empty-state from renderMemorySidebar uses "CC 还没".
+  await expect(sidebar).toContainText(/CC 还没/, { timeout: 5_000 })
 })
 
 // ── refresh button ──────────────────────────────────────────────────────

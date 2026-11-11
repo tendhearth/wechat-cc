@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { mkdir } from 'node:fs/promises'
-import { test, expect } from './fixtures'
+import { test, expect, clickNav, reveal } from './fixtures'
+import { secondaryFixtures } from './secondary-fixtures'
 const task={id:'aabbccdd',title:'检查备份',path:'/offline/backup',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:1,pendingQuestionCount:0}
 const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,activity:id==='backup'?{waiting:1,running:2,unread:1,lastActiveAt:1793923200000}:id==='travel'?{waiting:0,running:1,unread:0,lastActiveAt:1793923100000}:id==='food'?{waiting:0,running:0,unread:1,lastActiveAt:1793923000000}:{waiting:0,running:0,unread:0,lastActiveAt:null},matterSummary:{waiting:1,running:0,total:1}})
 test.beforeEach(async({page,shim})=>{
@@ -81,4 +82,122 @@ test('design fixes keep toolbar semantics, final identity dimensions and current
  await page.locator('.conversation-topic-panel').getByRole('button',{name:/检查备份/}).click()
  await expect(page.locator('.wb-dialogue')).toContainText('正在核对文件')
  await expect(page.locator('.wb-activity-now')).toHaveText('核对本地文件')
+})
+
+
+test('B3 captures settings, connections, facts and the existing correction editor',async({page,shimUrl})=>{
+ const out=process.env.WECHAT_CC_DESIGN_SHOTS
+ test.skip(!out,'Only the mini browser lab sets the output directory')
+ await mkdir(out!,{recursive:true})
+ const phase=process.env.CC_UI_CAPTURE_PHASE
+ await secondaryFixtures(page)
+ await page.route('**/v1/connections',r=>r.fulfill({json:{generatedAt:Date.now(),computers:[{id:'home',label:'家里的电脑（合成示例）',online:true,since:null,version:null}],sources:[{id:'knowledge',kind:'knowledge',name:'知识库',state:'ready',latestAt:null,syncedAt:null}],capabilities:[{id:'a',name:'读本机文件',state:'ok',code:'test',reason:'可用'},{id:'b',name:'图片',state:'fallback',code:'test',reason:'暂时用备用方式'},{id:'c',name:'终端会话',state:'needs_you',code:'test',reason:'需要在电脑上接上'},{id:'d',name:'语音',state:'off',code:'test',reason:'没有开启'}],recent:[],outputs:[]}}))
+ await page.setViewportSize({width:1280,height:900})
+ await page.goto(shimUrl)
+ await reveal(page,'#autostart-toggle')
+ await expect(page.locator('#hero-headline')).not.toBeEmpty()
+ await expect(page.locator('#settings-drawer')).toHaveCSS('transform','matrix(1, 0, 0, 1, 0, 0)')
+ await page.screenshot({path:join(out!,`desktop-settings-${phase}.png`)})
+ await reveal(page,'#dash-stop')
+ await page.locator('#dash-stop').scrollIntoViewIfNeeded()
+ if (phase==='after') await expect(page.locator('#dash-connection-options > summary .b3-disclosure-chevron')).toHaveCSS('transform','matrix(0, 1, -1, 0, 0, 0)')
+ await page.screenshot({path:join(out!,`desktop-disconnect-confirm-${phase}.png`)})
+ if(phase==='after') {
+  await page.locator('#dash-stop-cancel').click()
+  await expect(page.locator('#dash-connection-options')).not.toHaveAttribute('open','')
+ } else await page.locator('#dash-connection-options > summary').click()
+ await reveal(page,'#projects-admin-list')
+ await page.locator('#projects-admin-list').scrollIntoViewIfNeeded()
+ await page.screenshot({path:join(out!,`desktop-settings-bottom-${phase}.png`)})
+ const project=page.locator('.project-admin-row').first()
+ await project.locator('.project-admin-del').click()
+ await expect(project).toContainText('再点确认')
+ if(phase==='after') {
+  const geometry=await project.evaluate(el=>({row:el.getBoundingClientRect().right,button:el.querySelector('.project-admin-del')!.getBoundingClientRect().right}))
+  expect(geometry.button).toBeLessThanOrEqual(geometry.row)
+  await expect(page.locator('#autostart-toggle').locator('..')).toHaveCSS('min-height','64px')
+ }
+ await page.screenshot({path:join(out!,`desktop-settings-confirm-${phase}.png`)})
+ await page.locator('#settings-close').click()
+ await page.locator('.cc-home-details > summary').click()
+ await expect(page.locator('.nc-capability')).toHaveCount(4)
+ await page.screenshot({path:join(out!,`desktop-connections-${phase}.png`)})
+ await page.locator('.cc-home-details > summary').click()
+ await clickNav(page,'memory')
+ await expect(page.locator('#memory-facts-records')).toContainText('我喜欢在窗边看书')
+ if(phase==='after') {
+  await expect(page.locator('#memory-facts-search')).toHaveCSS('border-radius','28px')
+  expect(await page.locator('#memory-retractions-toggle').evaluate(el=>!!el.closest('.memory-sources-panel'))).toBe(false)
+ }
+ await page.screenshot({path:join(out!,`desktop-memory-${phase}.png`)})
+ await page.locator('#memory-facts-edit').click()
+ await expect(page.locator('#memory-line-editor')).toBeVisible()
+ await page.locator('#memory-line-editor .memory-line-input').first().scrollIntoViewIfNeeded()
+ await page.screenshot({path:join(out!,`desktop-memory-edit-${phase}.png`)})
+})
+
+
+test('B3 closeout keeps one full-row disclosure and the group hierarchy', async ({page, shimUrl}) => {
+ test.skip(process.env.CC_UI_CAPTURE_PHASE !== 'after', 'Candidate closeout contract only')
+ await secondaryFixtures(page)
+ await page.route('**/v1/events/list?*', r => r.fulfill({json:{events:[{id:'d',kind:'observation_written',ts:'2026-11-10T00:00:00Z',reasoning:'记录原因'}]}}))
+ await page.route('**/v1/memory/profile?*', r => r.fulfill({json:{ok:true,content:JSON.stringify({version:1,chatId:'secondary_completion',generatedAt:'2026-11-10T00:00:00Z',summary:'第一段。\n\n第二段。',traits:[],preferences:[],rememberedEvents:[]})}}))
+ await page.setViewportSize({width:1280,height:900})
+ await page.goto(shimUrl)
+ await reveal(page, '#autostart-toggle')
+ const groups = page.locator('#settings-drawer .drawer-section > h3')
+ const account = page.locator('.moment-users h3')
+ for (const property of ['font-size', 'line-height', 'font-weight']) {
+  await expect(account).toHaveCSS(property, await groups.first().evaluate((el, name) => getComputedStyle(el).getPropertyValue(name), property))
+ }
+ const check = page.locator('.connection-checks > summary')
+ await expect(check).toHaveCSS('list-style-type', 'none')
+ await check.focus(); await page.keyboard.press('Enter')
+ await expect(check.locator('..')).toHaveAttribute('open', '')
+ await expect(check.locator('.b3-disclosure-chevron')).toHaveCSS('transform', 'matrix(0, 1, -1, 0, 0, 0)')
+ await page.keyboard.press('Space')
+ await expect(check.locator('..')).not.toHaveAttribute('open', '')
+ await page.locator('#settings-close').click()
+ await clickNav(page, 'memory')
+ await expect(page.locator('#memory-facts-records')).toContainText('我喜欢在窗边看书')
+ await expect(page.locator('.memory-facts-head p')).toHaveCount(0)
+ await expect(page.locator('#memory-facts-source')).not.toContainText('memory.md')
+ const rows = ['#memory-retractions-toggle', '.memory-profile-disclosure > summary', '#memory-sources-toggle']
+ const rightEdges = []
+ for (const selector of rows) {
+  const row = page.locator(selector)
+  await expect(row).toHaveCSS('min-height','64px')
+  await expect(row).toHaveCSS('list-style-type','none')
+  expect(await row.evaluate(el => getComputedStyle(el, '::before').content)).toBe('none')
+  expect(await row.locator('.b3-disclosure-chevron').evaluate(el => getComputedStyle(el, '::after').content)).toBe('"›"')
+  rightEdges.push(await row.locator('.b3-disclosure-chevron').evaluate(el => el.getBoundingClientRect().right))
+ }
+ expect(Math.max(...rightEdges) - Math.min(...rightEdges)).toBeLessThan(1)
+ const withdrawals = page.locator(rows[0]!)
+ await withdrawals.click({position:{x:400,y:32}}) // blank row area, not the label or arrow
+ await expect(withdrawals).toHaveAttribute('aria-expanded','true')
+ await expect(withdrawals.locator('.b3-disclosure-chevron')).toHaveCSS('transform','matrix(0, 1, -1, 0, 0, 0)')
+ await expect(page.locator('#memory-retractions-body')).toBeVisible()
+ await withdrawals.click()
+ const profile = page.locator(rows[1]!)
+ await profile.focus(); await page.keyboard.press('Enter')
+ await expect(profile.locator('..')).toHaveAttribute('open','')
+ await expect(profile.locator('.b3-disclosure-chevron')).toHaveCSS('transform','matrix(0, 1, -1, 0, 0, 0)')
+ await page.locator('#memory-summary-toggle').click()
+ await expect(page.locator('#memory-summary-toggle .b3-disclosure-label')).toHaveText('收起')
+ await expect(page.locator('#memory-summary-toggle > .b3-disclosure-chevron')).toHaveCount(1)
+ await profile.click()
+ await page.locator('#memory-sources-toggle').click()
+ await page.locator('#memory-projects-toggle').click()
+ const file = page.locator('.mem-proj-file > summary').first()
+ await expect(file).toBeVisible()
+ await file.click()
+ await expect(file.locator('.b3-disclosure-chevron')).toHaveCSS('transform','matrix(0, 1, -1, 0, 0, 0)')
+ await page.locator('#memory-decisions-toggle').click()
+ const decision = page.locator('#memory-decisions-body .decision-row').first()
+ await decision.locator('svg path').click()
+ await expect(decision).toHaveAttribute('aria-expanded','true')
+ await expect(decision.locator('.b3-disclosure-chevron')).toHaveCSS('transform','matrix(0, 1, -1, 0, 0, 0)')
+ const out = process.env.WECHAT_CC_DESIGN_SHOTS
+ if (out) await page.screenshot({path:join(out, 'desktop-memory-folds-after.png')})
 })

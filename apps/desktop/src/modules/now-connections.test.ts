@@ -144,3 +144,15 @@ describe('capabilities (2026-10-06)', () => {
     expect([...h.querySelectorAll('h2, h3')].filter(x => x.textContent === 'CC 现在怎么样').length).toBe(1)
   })
 })
+
+
+it('B3 names the connection overview and reads computer, capabilities, sources, recent work, outputs in order', async () => {
+  document.body.innerHTML = '<div id="b3"></div>'
+  const h = document.getElementById('b3')!
+  const data = snap([src('wechat', 'ready')], { capabilities: [{ id: 'brain', name: '大脑', state: 'off', code: 'off', reason: '没有开启' }], recent: [{ matterId: 'r', title: '检查备份', phase: 'running', at: NOW }], outputs: [{ matterId: 'r', name: '备份记录', mime: 'text/plain', at: NOW }] })
+  await mountNowConnections({ host: h, call: vi.fn().mockResolvedValue(data), now: () => NOW }).refresh()
+  expect(h.querySelector('h2')!.textContent).toBe('CC 的连接')
+  expect([...h.querySelectorAll('h3')].map(node => node.textContent)).toEqual(['家里的电脑', 'CC 现在怎么样', '来源', '最近在做', '成果'])
+  expect(h.querySelector('.nc-capability .dot')!.className).toContain('unknown')
+  expect(h.querySelector('.nc-capability')!.textContent).toContain('没有开启')
+})

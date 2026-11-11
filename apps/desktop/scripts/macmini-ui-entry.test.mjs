@@ -102,3 +102,15 @@ test('project topic snapshots accept only the explicit task branch and preserve 
   expect(supportsAppSnapshot(ref)).toBe(false)
  }
 })
+
+
+test('B3 accepts only the assigned immutable source branch and includes its page regressions',()=>{
+ expect(supportsBrowserSnapshot('design-b3')).toBe(true)
+ expect(supportsAppSnapshot('design-b3')).toBe(true)
+ for(const ref of ['design-b3-other','design-b3;echo x','../design-b3']){
+  expect(supportsBrowserSnapshot(ref)).toBe(false)
+  expect(supportsAppSnapshot(ref)).toBe(false)
+ }
+ const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
+ for(const spec of ['memory.spec.ts','settings-projects.spec.ts'])expect(remote).toContain("'"+spec+"'")
+})

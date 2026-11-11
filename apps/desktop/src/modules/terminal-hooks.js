@@ -78,7 +78,10 @@ export function makeHooksAction(o) {
         const row = el('div', 'hooks-buttons')
         row.append(btn('nc-action hooks-confirm-yes', `确定${label}`, () => { void confirmInstall() }), btn('nc-action hooks-confirm-no', '取消', () => set({ phase: 'idle' })))
         const more = el('details', 'hooks-detail')
-        more.append(el('summary', '', '详细'), el('p', '', HOOKS_DETAIL))
+        const summary = el('summary', 'b3-disclosure')
+        const chevron = el('span', 'b3-disclosure-chevron'); chevron.setAttribute('aria-hidden', 'true')
+        summary.append(el('span', 'b3-disclosure-label', '详细'), chevron)
+        more.append(summary, el('p', '', HOOKS_DETAIL))
         box.append(el('p', 'hooks-confirm', HOOKS_CONFIRM), more, row)
       } else if (ui.phase === 'busy') box.append(el('p', 'hooks-status', '正在接上…'))
       else {

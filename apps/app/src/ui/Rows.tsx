@@ -1,4 +1,4 @@
-import { Pressable, View } from 'react-native'
+import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native'
 import { space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
@@ -24,7 +24,7 @@ export function ChoiceRow({ label, on, onPress, testID, content = 'ui' }: { labe
 }
 
 // 进下一页的一行:文字 + 行尾 ›(设置里的「CC 的连接」「电脑上的会话」等)。
-export function LinkRow({ label, onPress, testID, icon, detail }: { label: string; onPress: () => void; testID?: string; icon?: IconName; detail?: string }) {
+export function LinkRow({ label, onPress, testID, icon, detail, style }: { label: string; onPress: () => void; testID?: string; icon?: IconName; detail?: string; style?: StyleProp<ViewStyle> }) {
   const { c } = useTheme()
   return (
     <Pressable
@@ -32,7 +32,7 @@ export function LinkRow({ label, onPress, testID, icon, detail }: { label: strin
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
-      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 56, paddingVertical: space.s, opacity: pressed ? 0.7 : 1 })}
+      style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 56, paddingVertical: space.s, opacity: pressed ? 0.7 : 1 }, style]}
     >
       {icon ? <Icon name={icon} color={c.inkSoft} /> : null}
       <View style={{ flex: 1 }}><Txt role="body">{label}</Txt>{detail ? <Txt role="meta" tone="inkSoft">{detail}</Txt> : null}</View>

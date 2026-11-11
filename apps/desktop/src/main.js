@@ -31,6 +31,7 @@ import {
 import { refreshQr, stopQr } from "./modules/qr.js"
 import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js"
 import { mountOnboardTerminal } from "./modules/terminal-hooks.js"
+import { toggleDecisionDisclosure } from "./modules/decisions.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkGuardOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { executorName, haveExecutorNames, loadExecutorNames } from "./modules/executor-names.js"
@@ -1319,10 +1320,7 @@ function wireEvents() {
   })
 
   // Memory decisions — click row to expand reasoning (CSS handles the visual via .expanded class)
-  document.getElementById("memory-decisions-body")?.addEventListener("click", (e) => {
-    const row = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='toggle-decision']") : null)
-    if (row) row.classList.toggle("expanded")
-  })
+  document.getElementById("memory-decisions-body")?.addEventListener("click", toggleDecisionDisclosure)
   document.getElementById("logs-refresh")?.addEventListener("click", (e) =>
     withRefreshFeedback(/** @type {HTMLButtonElement} */ (e.currentTarget), () => loadLogsPane(deps)),
   )
