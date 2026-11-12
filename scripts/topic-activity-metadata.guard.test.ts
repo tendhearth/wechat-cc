@@ -5,6 +5,7 @@ import { makeThreadsStore } from '../src/lib/threads-store'
 import { makeMatterStore } from '../src/adapters/store/matters-store'
 import { makeMatterLog } from '../src/adapters/store/matter-log'
 import { makeTerminalTurnLog } from '../src/adapters/store/terminal-turns'
+import { readProjectsActivity } from '../src/features/memory/projects-activity'
 import { projectActivities } from '../src/features/memory/project-activity'
 import { resolveTopicRecall } from '../src/daemon/threads/recall'
 
@@ -30,9 +31,12 @@ it.each(['terminal','task'] as const)('%s approval body cannot propagate through
   expect(session.latestStep).toBe(kind==='terminal'?'等你批准 · Bash':'等你批准 · apply_patch')
   const recall=await resolveTopicRecall('metadata-guard 那边怎么样了',[{id,title:'metadata-guard',aliases:[],tags:[],summary:'',lastActive:'',entries:[]}],{activity,bodies:false})
   expect(recall).not.toBeNull()
+  const cross=await readProjectsActivity({db,owner:'owner',identify:async()=>({key:path+'/.git',roots:[path],names:['metadata-guard']})},{})
+  expect(cross.projects).toHaveLength(1)
   for(const marker of ['FAKE_TOKEN_FOR_GUARD','ordinary-secret','private-password','private-old','private-new','PRIVATE_OUTPUT']){
    expect(JSON.stringify(activity.get(id))).not.toContain(marker)
    expect(recall!.block).not.toContain(marker)
+   expect(JSON.stringify(cross)).not.toContain(marker)
   }
  }finally{db.close()}
 })

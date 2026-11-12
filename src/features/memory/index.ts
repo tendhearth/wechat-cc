@@ -26,6 +26,7 @@ import { memoryOwnerRoutes } from './owner-routes'
 import { makeMemoryPromptReads, type MemoryPromptReads } from './prompt-reads'
 import { bubbleRoutes } from './bubble-routes'
 import { topicRoutes } from './topic-routes'
+import { projectsActivityRoutes } from './projects-activity-routes'
 import { registerMemoryNightly } from './nightly-lifecycle'
 import type { MemoryLlmOps } from './llm-ops'
 import type { MemoryNightlyRuntime } from './nightly-runtime'
@@ -102,6 +103,7 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
         ...memoryOwnerRoutes({ stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId }),
         // 话题(T2 后续 ①):topic_search 工具搜主人那条对话的话题
         ...topicRoutes({ db: d.db, ownerChatId: d.resolveAdminChatId }),
+        ...projectsActivityRoutes({ db:d.db, ownerChatId:d.resolveAdminChatId, seen:d.seen, taskActivity:d.taskActivity, executorName:d.executorName }),
         ...bubbleRoutes({ db: d.db, ownerChatId: d.resolveAdminChatId, seen: d.seen, taskActivity:d.taskActivity, executorName:d.executorName }),
       })
       return { promptReads: makeMemoryPromptReads({ stateDir: d.stateDir, memory: d.memory, facts: makeMemoryWriter({ store: makeMemoryFactsStore(d.db), stateDir: d.stateDir }) }) }

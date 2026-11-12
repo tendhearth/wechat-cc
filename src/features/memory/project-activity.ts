@@ -55,7 +55,7 @@ function readRows(db:Db,owner:string,ids?:string[]):Row[] {
 // Fixed vocabulary + a validated tool identifier. Free-form descriptions never cross this boundary.
 const toolName = (tool:string|null|undefined) => tool && /^[\w.:-]{1,80}$/.test(tool) ? tool : ''
 const verbs:Record<string,string>={run:'运行命令',read:'读取文件',edit:'修改文件',write:'写入文件',delete:'删除文件',search:'搜索',find:'查找文件',subtask:'子任务',web:'浏览网页',websearch:'搜索网页',todo:'更新清单',todos:'更新清单',plan:'更新计划',tend:'照看子任务',tool:'使用工具',bgoutput:'读取命令结果',command:'运行命令',file_change:'修改文件',agent:'子任务'}
-function stepLabel(last:Meta|null):string {
+export function stepLabel(last:Meta|null):string {
   if(!last)return ''
   if(last.kind==='error')return '步骤失败'
   const verb=last.verb??last.type??'',tool=toolName(last.tool)

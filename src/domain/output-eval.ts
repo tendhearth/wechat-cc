@@ -10,8 +10,8 @@
  * 纯函数、零 I/O:CLI(src/cli/output-eval.ts)读样本、调路由、写报告。
  */
 
-export type EvalKind = 'reply' | 'brief' | 'reference' | 'topic' | 'topic-recall'
-export const EVAL_KINDS: readonly EvalKind[] = ['reply', 'brief', 'reference', 'topic', 'topic-recall']
+export type EvalKind = 'reply' | 'brief' | 'reference' | 'topic' | 'topic-recall' | 'projects-activity'
+export const EVAL_KINDS: readonly EvalKind[] = ['reply', 'brief', 'reference', 'topic', 'topic-recall', 'projects-activity']
 
 /** 话题 T2:这一轮调出了哪些(null = 什么都没调)。 */
 export type TopicRecallOutput = { topicIds: string[]; entryIds: string[]; via: string } | null
@@ -47,6 +47,7 @@ export interface EvalSample {
 /** daemon 跑完交回来、规则要看的那部分。 */
 export type EvalOutput =
   | { kind: 'reply' | 'brief'; finalText: string; bubbles: string[]; silent: boolean; toolCalls?: string[] }
+  | { kind: 'projects-activity'; finalText: string; bubbles: string[]; silent: boolean; toolCalls?: string[] }
   | { kind: 'reference'; resolution: { kind: string; taskId?: string; via?: string } }
   | { kind: 'topic'; recall: TopicRecallOutput }
   | { kind: 'topic-recall'; recall: TopicRecallOutput }
@@ -146,6 +147,10 @@ function parseRule(raw: unknown, n: number): Parsed<EvalRule> {
 }
 
 function inputError(kind: EvalKind, input: Record<string, unknown>): string | null {
+  if (kind === 'projects-activity') {
+    if (!isNonEmptyStr(input.text) || !isNonEmptyStr(input.now) || !Array.isArray(input.evidence)) return 'projects-activity 要有 text / now / evidence'
+    return null
+  }
   if (kind === 'reply') {
     if (!isNonEmptyStr(input.text)) return 'reply 的 input.text 要是非空字符串'
     if (input.tier !== undefined && input.tier !== 'admin' && input.tier !== 'trusted') return 'reply 的 input.tier 只能是 admin / trusted'
@@ -173,7 +178,7 @@ export function parseSample(raw: unknown, fileId: string): { ok: true; sample: E
   if (typeof id !== 'string' || !SAFE_ID.test(id)) return { ok: false, error: 'id 只能是字母、数字、- 和 _' }
   // 回归比较按 id 对,id 必须唯一:跟文件名走(同一目录里文件名不会重)
   if (id !== fileId) return { ok: false, error: `id 要和文件名一致(${fileId})` }
-  if (typeof raw.kind !== 'string' || !(EVAL_KINDS as readonly string[]).includes(raw.kind)) return { ok: false, error: 'kind 只能是 reply / brief / reference / topic / topic-recall' }
+  if (typeof raw.kind !== 'string' || !(EVAL_KINDS as readonly string[]).includes(raw.kind)) return { ok: false, error: 'kind 只能是 reply / brief / reference / topic / topic-recall / projects-activity' }
   const kind = raw.kind as EvalKind
   if (!isObj(raw.input)) return { ok: false, error: 'input 要是对象' }
   const ie = inputError(kind, raw.input)

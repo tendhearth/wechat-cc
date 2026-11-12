@@ -106,7 +106,7 @@ describe('wechat-mcp stdio integration', () => {
   }
 
   const DAEMON_TOOLS = [
-    'diagnostic_turns', 'diagnostic_sessions', 'diagnostic_health', 'terminal_sessions', 'today_digest', 'calendar_agenda',
+    'diagnostic_turns', 'diagnostic_sessions', 'diagnostic_health', 'terminal_sessions', 'today_digest', 'projects_activity', 'calendar_agenda',
     'session_release', 'model_get', 'model_set', 'daemon_restart',
     // terminal_say(2026-10-24):代主人往终端会话里送话 —— 只给 admin
     'terminal_say', 'terminal_say_result',
