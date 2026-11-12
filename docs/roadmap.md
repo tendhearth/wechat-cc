@@ -126,7 +126,7 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 - `@码 resume` 与「脑手转发」全链(CLI hook)。
 - 配对体验真机(计划 7a Task 12 Step 3),其中 iOS 备份恢复与安卓指纹是主人的:
   1. staging Worker 与 AASA 已部署核对(10-01，200 `application/json`)；生产 Worker 按[中继手册](maintainer/relay.md)另验，`ANDROID_CERT_SHA256` 等安卓时再设。
-  2. 本机 `relay_v2_url` 已设为 staging(10-01)；未开通的安装应显示「手机连接服务还没开通」。
+  2. 10-01 验收用 staging；11-11 定稿改为未开通时在桌面点「连接手机」即可开通，等待重启后出码，新装不自动开通。
   3. iPhone 系统相机扫码(通用链接)⇒ 直进确认卡(主机名对、有核对码)⇒「连接」⇒ 回此刻、CC 变 Light、桌面弹层变「已连上」。
   4. (e2e:device 已自动化)同一个码再扫 ⇒「这个码已经用过或过期了…」。
   5. 安卓 App Link(设了指纹后);没设时打开网页壳属预期。

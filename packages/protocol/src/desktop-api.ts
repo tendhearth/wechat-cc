@@ -2641,6 +2641,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/matter/say': MatterSayResponse,
   'GET /v1/connections': ConnectionsResponse,
   'POST /v1/phone/link': PhoneLinkResponse,
+  'POST /v1/phone/enable-relay': PhoneLinkResponse,
   'GET /v1/phone/devices': PhoneDevicesResponse,
   'GET /v1/plugins/list': PluginsListResponse,
   'POST /v1/plugins/toggle': PluginToggleResponse,

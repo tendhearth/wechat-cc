@@ -159,7 +159,7 @@ async function browser() {
   await new Promise((resolve, reject) => { const probe=createServer(); probe.once('error',reject);probe.listen(4198,'127.0.0.1',()=>probe.close(resolve)) })
   const phase=browserSnapshot?.phase ?? 'after'
   const specs=phase==='before' ? ['design-unify-shots.spec.ts','cc-alive-shots.spec.ts'] : [
-    'cc-alive-shots.spec.ts','companion-controls.spec.ts','companion-entry.spec.ts','companion-life.spec.ts','now-hero.spec.ts','companion-status.spec.ts','pet-lab.spec.ts',
+    'phone-connect.spec.ts','cc-alive-shots.spec.ts','companion-controls.spec.ts','companion-entry.spec.ts','companion-life.spec.ts','now-hero.spec.ts','companion-status.spec.ts','pet-lab.spec.ts',
     't5-conversation.spec.ts','workbench-layout.spec.ts','task-detail-minimal.spec.ts','workbench-line-review.spec.ts','design-unify-shots.spec.ts','hook-trust.spec.ts','memory.spec.ts','settings-projects.spec.ts']
   const home=join(run,'home');await mkdir(home,{mode:0o700})
   const browserExecutable=mini.rustc?undefined:await insideLab(join(config.browserRuntimeRoot??config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'))

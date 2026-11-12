@@ -13,7 +13,7 @@ import { V1, v1 } from '../daemon-client.js'
 /** @typedef {{ id: string, label?: string, created_at: string, last_seen_at: string }} Device */
 /** @typedef {{ kind: 'loading' } | { kind: 'qr', url: string, expiresAt: number, checkCode: string | null } | { kind: 'starting' } | { kind: 'notice', title: string, body: string } | { kind: 'expired' } | { kind: 'paired', line: string } | { kind: 'error', text: string }} View */
 /** @typedef {(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>} Call */
-/** @typedef {{ now?: () => number, sleep?: (ms: number) => Promise<void>, pollMs?: number, startTimeoutMs?: number, labelWaits?: number }} FlowTuning */
+/** @typedef {{ now?: () => number, sleep?: (ms: number) => Promise<void>, pollMs?: number, startTimeoutMs?: number, labelWaits?: number, enableRelay?: boolean, enableRemote?: boolean }} FlowTuning */
 
 /** @param {LinkResult} r @returns {View} */
 export function linkView(r) {
@@ -86,11 +86,12 @@ export function makePhoneLinkFlow(deps) {
     let ready = null
     // 只有每轮 start() 的第一次 POST 带 enable_remote:之后的轮询只是问状态,不能每 2 秒再要求一次开隧道 / 重启(I1)。
     let firstPost = true
+    let enableAttempted = false
     while (alive()) {
       /** @type {LinkResult} */
       let r
       try {
-        const body = firstPost ? { enable_remote: true } : {}
+        const body = firstPost ? { enable_remote: deps.enableRemote !== false } : {}
         firstPost = false
         r = /** @type {LinkResult} */ (await v1(deps.call, V1.phone.link, { body }))
       } catch (err) {
@@ -98,6 +99,12 @@ export function makePhoneLinkFlow(deps) {
         r = { ok: false, state: 'starting' }   // daemon 正在重启:连不上是预期的(Review Focus 2)
       }
       if (!alive()) return
+      if (r.state === 'relay_not_configured' && deps.enableRelay && !enableAttempted) {
+        enableAttempted = true
+        try { r = /** @type {LinkResult} */ (await v1(deps.call, V1.phone.enableRelay)) }
+        catch (err) { show({ kind: 'error', text: c.error.replace('{why}', why(err)) }); return }
+        if (!alive()) return
+      }
       if (r.ok) { ready = r; break }
       if (r.state !== 'starting') { show(linkView(r)); return }
       sawStarting = true
@@ -199,7 +206,8 @@ export function mountPhoneConnect(deps) {
         try { await (deps.writeClipboard ?? (t => navigator.clipboard.writeText(t)))(v.url); copy.textContent = c.copied } catch { /* 复制不了就不改字 */ }
       })
       const check = v.checkCode ? [el(doc, 'p', { class: 'qr-check', id: 'phone-connect-check' }, c.checkCode.replace('{code}', v.checkCode))] : []
-      replaceBody(qr, ...check, el(doc, 'p', { class: 'qr-note', id: 'phone-connect-note' }, c.readyNote), el(doc, 'p', { class: 'qr-sub' }, c.readySub), copy)
+      const privacy = el(doc, 'a', { href: 'https://cc.tendhearth.com/privacy/', class: 'qr-sub', id: 'phone-connect-privacy' }, c.privacy)
+      replaceBody(qr, ...check, el(doc, 'p', { class: 'qr-note', id: 'phone-connect-note' }, c.readyNote), el(doc, 'p', { class: 'qr-sub' }, c.readySub), copy, privacy)
       return
     }
     if (v.kind === 'loading') replaceBody(el(doc, 'p', { class: 'qr-note' }, c.loading))
@@ -233,7 +241,7 @@ export function mountPhoneConnect(deps) {
       doc.addEventListener('focusin', onFocus)
       doc.body.append(modal)
       closeBtn.focus()
-      flow = makePhoneLinkFlow({ ...(deps.flowDeps ?? {}), call: deps.call, onView: v => { void render(v) } })
+      flow = makePhoneLinkFlow({ ...(deps.flowDeps ?? {}), call: deps.call, enableRelay: true, onView: v => { void render(v) } })
       void flow.start()
     },
     close,
@@ -255,6 +263,8 @@ export function mountOnboardPhone(deps) {
   $('onboard-phone-later').textContent = c.later
   const renew = $('onboard-phone-renew')
   renew.textContent = c.renew
+  const privacy = /** @type {HTMLElement | null} */ (host.querySelector('#onboard-phone-privacy'))
+  if (privacy) privacy.textContent = c.privacy
   const check = /** @type {HTMLElement | null} */ (host.querySelector('#onboard-phone-check'))
   /** @param {string | null} code */
   const setCheck = code => { if (!check) return; check.textContent = code ? c.checkCode.replace('{code}', code) : ''; check.hidden = !code }
@@ -271,6 +281,7 @@ export function mountOnboardPhone(deps) {
     else delete host.dataset.phase
     needsRetry = v.kind === 'error' || v.kind === 'notice'
     if (v.kind === 'loading') return   // 还不知道有没有码:藏着,不闪
+    if (privacy) privacy.hidden = v.kind !== 'qr'
     if (v.kind !== 'qr') setCheck(null)
     if (v.kind === 'starting') {       // 自动打开手机连接会让 CC 重启一次:说出来(D4)
       $('onboard-phone-qr').replaceChildren(); $('onboard-phone-status').textContent = c.preparing
@@ -293,7 +304,7 @@ export function mountOnboardPhone(deps) {
     if (v.kind === 'expired') { $('onboard-phone-qr').replaceChildren(); $('onboard-phone-status').textContent = c.expired; renew.hidden = false; host.hidden = false; return }
     host.hidden = true
   }
-  const flow = makePhoneLinkFlow({ ...(deps.flowDeps ?? {}), call: deps.call, onView: v => { void show(v) } })
+  const flow = makePhoneLinkFlow({ ...(deps.flowDeps ?? {}), call: deps.call, enableRelay: false, enableRemote: false, onView: v => { void show(v) } })
   renew.addEventListener('click', () => { void flow.start() })
   const retry = () => { if (started && needsRetry) { needsRetry = false; void flow.start() } }
   return {

@@ -50,7 +50,7 @@ export interface AgentConfig {
   /** 老 VPS 中继的地址。2026-10-25 随协议 v1 退休:还读进来(老配置文件不报错),但 daemon 不再用它。 */
   remote_relay_url?: string
   /** 官方中继 v2 的地址(wss 源,不带路径)。**不设(或空串)⇒ 远程关**(老中继已退休);没有隐式缺省。
-   *  上线步骤:生产中继 /healthz 正常后设 `"relay_v2_url": "wss://relay.tendhearth.com"`(docs/maintainer/relay.md)。 */
+   *  桌面点「连接手机」时显式写入官方地址；仍允许维护者保留手动配置。 */
   relay_v2_url?: string
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
    *  该 provider,openai 注册不再静默劫持。 */

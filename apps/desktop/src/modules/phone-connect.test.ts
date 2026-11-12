@@ -225,7 +225,7 @@ describe('mountOnboardPhone(引导页,裁决 3)', () => {
     const t = harness({ link: [{ ok: false, state: 'relay_not_configured' }], devices: [[]] })
     const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: fast, retryMs: 100_000 })
     m.sync({ active: true, alive: true })
-    await vi.waitFor(() => expect(t.call).toHaveBeenCalledWith('POST', '/v1/phone/link', { enable_remote: true }))
+    await vi.waitFor(() => expect(t.call).toHaveBeenCalledWith('POST', '/v1/phone/link', { enable_remote: false }))
     await new Promise(r => setTimeout(r, 10))
     expect(h.hidden).toBe(true)
     m.sync({ active: false, alive: true })
@@ -326,5 +326,54 @@ describe('核对码(Task 9 fix round 1:共用中继上分清「我的电脑」)'
   })
   it('index.html 引导块里有核对码那一行(默认藏着)', () => {
     expect(readFileSync(join(SRC, 'index.html'), 'utf8')).toMatch(/<p id="onboard-phone-check" class="qr-check" hidden><\/p>/)
+  })
+})
+
+
+describe('11-11 explicit relay consent', () => {
+  it('unconfigured modal enables once, follows starting to code, offers only a privacy link', async () => {
+    document.body.innerHTML = ''
+    let links = 0
+    const call = vi.fn(async (_method: string, path: string) => {
+      if (path.endsWith('/devices')) return { ok: true, devices: [] }
+      if (path.endsWith('/enable-relay')) return { ok: false, state: 'starting' }
+      return ++links === 1 ? { ok: false, state: 'relay_not_configured' } : ready()
+    })
+    let resume: (() => void) | undefined
+    const m = mountPhoneConnect({ call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise<void>(r => { resume = r }) } })
+    try {
+      m.open()
+      await vi.waitFor(() => expect(document.querySelector('#phone-connect-starting')).not.toBeNull())
+      resume!()
+      await vi.waitFor(() => expect(document.querySelector('#phone-connect-privacy')).not.toBeNull())
+      expect(call.mock.calls.filter(c => c[1].endsWith('/enable-relay'))).toHaveLength(1)
+      expect(document.querySelector('#phone-connect-privacy')?.getAttribute('href')).toBe('https://cc.tendhearth.com/privacy/')
+      expect(document.querySelector('#phone-connect-body')?.textContent).toBe('核对码 USZ-YAY用手机相机扫一下。10 分钟内有效，只能用一次。没装 Tendhearth 的手机会打开网页版设置。复制链接隐私说明')
+    } finally { m.close(); resume?.() }
+  })
+  it('automatic onboarding never enables an already-configured but disabled tunnel', async () => {
+    document.body.innerHTML = '<div id="onboard-test"><h3 id="onboard-phone-title"></h3><div id="onboard-phone-qr"></div><p id="onboard-phone-status"></p><p id="onboard-phone-later"></p><button id="onboard-phone-renew"></button></div>'
+    const call = vi.fn(async (_method: string, path: string) => path.endsWith('/devices') ? { ok: true, devices: [] } : { ok: false, state: 'remote_off' })
+    const m = mountOnboardPhone({ host: document.getElementById('onboard-test')!, call, renderQr: async () => '<svg></svg>' })
+    m.sync({ active: true, alive: true })
+    await vi.waitFor(() => expect(call).toHaveBeenCalledWith('POST', '/v1/phone/link', { enable_remote: false }))
+    m.sync({ active: false, alive: true })
+    expect(call.mock.calls.some(c => c[1].endsWith('/enable-relay'))).toBe(false)
+  })
+  it('closing before the unconfigured result arrives never enables relay', async () => {
+    document.body.innerHTML = ''
+    let reply: ((r: object) => void) | undefined
+    const call = vi.fn(async (_method: string, path: string) => {
+      if (path.endsWith('/devices')) return { ok: true, devices: [] }
+      return new Promise<object>(r => { reply = r })
+    })
+    const m = mountPhoneConnect({ call, renderQr: async () => '<svg></svg>' })
+    m.open()
+    await vi.waitFor(() => expect(reply).toBeDefined())
+    m.close()
+    reply!({ ok: false, state: 'relay_not_configured' })
+    await Promise.resolve(); await Promise.resolve()
+    expect(call.mock.calls.some(c => c[1].endsWith('/enable-relay'))).toBe(false)
+    expect(document.querySelector('#phone-settings-modal')).toBeNull()
   })
 })

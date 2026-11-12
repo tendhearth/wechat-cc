@@ -161,6 +161,7 @@ export const DESKTOP_CALLS = {
   phone: {
     devices: call('GET /v1/phone/devices'),
     link: call('POST /v1/phone/link', body()),
+    enableRelay: call('POST /v1/phone/enable-relay'),
   },
   plugins: {
     list: call('GET /v1/plugins/list'),

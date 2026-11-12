@@ -55,6 +55,7 @@ describe('token-registry', () => {
       'GET /v1/matter/rewind','POST /v1/matter/rewind','GET /v1/matter/changes','POST /v1/matter/review-mark','POST /v1/matter/review-return','POST /v1/matter/review-comment','POST /v1/matter/review-comments-send',
       'GET /v1/connections',
       'POST /v1/phone/link',
+      'POST /v1/phone/enable-relay',
       'GET /v1/phone/devices',
       'GET /v1/workbench/models',
       'GET /v1/workbench/sessions',
