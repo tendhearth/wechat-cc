@@ -49,7 +49,7 @@ describe('token-registry', () => {
       'GET /v1/workbench/attachment',
       'POST /v1/workbench/discard-attachment',
       'GET /v1/workbench',
-      'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','GET /v1/matter/owner-chat/file','GET /v1/matter/owner-chat/search','POST /v1/matter/say','POST /v1/matter/seen',
+      'GET /v1/matters','GET /v1/matter','GET /v1/matter/notes','GET /v1/matter/owner-chat','GET /v1/matter/owner-chat/file','GET /v1/matter/owner-chat/search','POST /v1/matter/say','POST /v1/matter/seen',
       // P3e 一件事上的动作(/v1/matter/*):operator 本来就能走它们的 /v1/workbench/* 双胞胎,新键是同一个处理器
       'POST /v1/matter/stop','POST /v1/matter/permission','POST /v1/matter/answer','GET /v1/matter/artifact','GET /v1/matter/permission-script','POST /v1/matter/handoff','POST /v1/matter/worktree','POST /v1/matter/create','GET /v1/matter/create-receipt',
       'GET /v1/matter/rewind','POST /v1/matter/rewind','GET /v1/matter/changes','POST /v1/matter/review-mark','POST /v1/matter/review-return','POST /v1/matter/review-comment','POST /v1/matter/review-comments-send',

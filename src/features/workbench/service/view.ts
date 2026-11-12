@@ -215,7 +215,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     // 工作区脚本(2026-10-20)只进详情:读 tendhearth.json 要跑 git,列表不背这个;原文给桌面的确认框。
     const view=taskView(detail.task,true),scripts=view.worktree?domains.scripts?.(id)??null:null
     const detailMarks=agentsOf([id]),quotaHandoff=domains.quotaHandoff?.(id)??null
-    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(scripts&&view.worktree?{...view,worktree:{...view.worktree,scripts}}:view,detailMarks),agentNames:agentNamesOf([view.providerId,...(detailMarks.agents.get(id)??[]),...handoffIds(quotaHandoff)]),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+    const result={...detail,...(store.ledger.agents(id).length?{agentRuns:store.ledger.agents(id),notes:store.ledger.notes(id)}:{}),events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(scripts&&view.worktree?{...view,worktree:{...view.worktree,scripts}}:view,detailMarks),agentNames:agentNamesOf([view.providerId,...(detailMarks.agents.get(id)??[]),...handoffIds(quotaHandoff)]),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
       // The timeline stays live through cancellation and process cleanup;
       // accepting supplemental input is a separate, narrower capability.
       ...(running?{runId:running.identity}:{}),

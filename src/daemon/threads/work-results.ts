@@ -82,11 +82,22 @@ function segments(db: Db, matterId: string, upTo: number): Segment[] {
   return segs
 }
 
-function toResult(id: string, m: MatterRow, s: Segment): WorkResult {
+function hasLedger(db:Db,id:string):boolean {return !!db.query('SELECT 1 FROM matter_agents WHERE matter_id=? LIMIT 1').get(id)}
+function ledgerResult(db:Db,id:string):string {
+  const rows=db.query<{runId:string;author:string;kind:string;text:string},[string]>("SELECT run_id AS runId,author,kind,text FROM matter_notes WHERE matter_id=? AND kind IN ('note','artifact') ORDER BY id").all(id)
+  const runs=[...new Set(rows.map(r=>r.runId))].slice(-3)
+  const budget=Math.floor((RESULT_MAX-40)/Math.max(1,runs.length))
+  const text=runs.map(run=>{
+    const own=rows.filter(r=>r.runId===run),note=own.filter(r=>r.kind==='note').at(-1),artifact=own.filter(r=>r.kind==='artifact').at(-1)
+    return [note?`${note.author}: ${cap(note.text,Math.floor(budget/3))}`:'',artifact?`${artifact.author} · artifact: ${cap(artifact.text,Math.floor(budget*2/3)-30)}`:''].filter(Boolean).join('\n')
+  }).join('\n')
+  return text+(rows.length>runs.length*2||new Set(rows.map(r=>r.runId)).size>runs.length?'\n[记录已截断]':'')
+}
+function toResult(db:Db,id: string, m: MatterRow, s: Segment): WorkResult {
   return {
     matterId: id, kind: m.kind, title: m.title,
     project: m.project_path ? m.project_path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? null : null,
-    state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, result: cap(s.last!.text, RESULT_MAX),
+    state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, result: cap(hasLedger(db,id)?ledgerResult(db,id):s.last!.text,RESULT_MAX),
     at: new Date(s.last!.at).toISOString(), cursor: s.last!.cursor,
   }
 }
@@ -97,7 +108,7 @@ export function readMatterConclusion(db: Db, matterId: string, afterCursor: numb
   if (!m || !eligible(m) || !topicMatterAccess(db, context, [matterId]).entryAllowed.has(matterId)) return null
   const segs = segments(db, matterId, Number.MAX_SAFE_INTEGER).filter(s => s.last && s.last.cursor > afterCursor)
   const s = segs[segs.length - 1]
-  return s && !isRoutineTopicText(s.last!.text) ? toResult(matterId, m, s) : null
+  return s && !isRoutineTopicText(s.last!.text) ? toResult(db,matterId, m, s) : null
 }
 
 /**
@@ -122,13 +133,15 @@ export function readWorkResults(db: Db, afterCursor: number, context: TopicSourc
     // T3 已经写回过话题的那几段不再交(不重复记)
     const writtenBack = db.query<{ c: number | null }, [string]>('SELECT MAX(written_back_cursor) AS c FROM matter_topics WHERE matter_id = ?').get(id)?.c ?? 0
     const matterDone = DONE_STATES.has(m.state)
-    for (const s of segments(db, id, scanTop)) {
+    const allSegments=segments(db,id,scanTop)
+    const selected=hasLedger(db,id)?allSegments.filter(s=>s.last).slice(-1):allSegments
+    for (const s of selected) {
       if (!s.last || s.last.cursor <= afterCursor) continue
       if (isRoutineTopicText(s.last.text)) continue
       const settled = s.closed || matterDone || now - s.last.at >= SETTLE_MS
       if (!settled) { holdAt = Math.min(holdAt, s.firstCursor); continue }
       if (s.last.cursor <= writtenBack) continue
-      results.push(toResult(id, m, s))
+      results.push(toResult(db,id, m, s))
     }
   }
   results.sort((a, b) => a.cursor - b.cursor)

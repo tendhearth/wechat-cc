@@ -8,7 +8,7 @@ const privateIdentity = /(?:wechat[-_]cc|wechat-mcp|wxvault|wxgraph|(?:^|\/)hear
 /** Match known companion identities, including aliases; ordinary local and
  * third-party memory servers remain eligible for explicit tool approval. */
 export function isCompanionMcp(name: string, config: unknown = {}): boolean {
-  if (/^(wechat|delegate|hearth|wxvault|wxgraph)(?:[_-]|$)/i.test(name)) return true
+  if (/^(wechat|delegate|matter|hearth|wxvault|wxgraph)(?:[_-]|$)/i.test(name)) return true
   const server = map(config), transport = object(server.transport) ? server.transport : server
   if (Object.keys(map(transport.env)).some(key => privateEnvironment.test(key))) return true
   const references = [

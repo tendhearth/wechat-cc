@@ -19,7 +19,7 @@ import z from 'zod'
 import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import {
   PHONE_API_SCHEMAS, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent, MatterPermission, PermissionScript, PermissionScriptChunk,
-  MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
+  MatterAgent,MatterNote,MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
 // ── GET /v1/health ───────────────────────────────────────────────────────────
@@ -987,6 +987,7 @@ const WorkbenchHandoffView = z.object({
   sourceStatus: z.string(), targetStatus: z.string(),
 })
 export const WorkbenchTaskDetailResponse = z.object({
+  agentRuns:z.array(MatterAgent).optional(),notes:z.array(MatterNote).optional(),
   task: WorkbenchDesktopTaskView,
   events: z.array(WorkbenchTaskEvent),
   artifacts: z.array(WorkbenchTaskArtifact),
@@ -2434,6 +2435,8 @@ export const PenpalMarkReadResponse = z.object({ ok: z.literal(true) })
 // against it (assertResponseContract).
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  'POST /v1/matter/note':z.object({text:z.string().trim().min(1).max(1000)}).strict(),
+  'POST /v1/matter/relay':z.object({matter:z.string().regex(/^[a-f0-9]{8}$/),executor:z.string().min(1),brief:z.string().trim().min(1).max(20_000)}).strict(),
   'POST /v1/memory/topics/rename': TopicRenameRequest,
   'POST /v1/memory/topics/merge': TopicMergeRequest,
   'POST /v1/memory/topics/delete': TopicDeleteRequest,
@@ -2523,6 +2526,9 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  'GET /v1/matter/notes':z.object({notes:z.array(MatterNote),agentRuns:z.array(MatterAgent).optional()}),
+  'POST /v1/matter/note':z.object({ok:z.literal(true)}),
+  'POST /v1/matter/relay':z.object({task:WorkbenchDesktopTaskView}),
   'GET /v1/matter/permission-script': PermissionScriptChunk,
   ...TOPIC_BUBBLE_RESPONSES,
   ...OWNER_CONVERSATION_RESPONSES,

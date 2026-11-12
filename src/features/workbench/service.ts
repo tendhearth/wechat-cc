@@ -1,3 +1,4 @@
+import {makeLedgerDomain} from './service/ledger'
 import {makeWechatWorkbenchControl,type WechatMessageIdentity,type WechatWorkbenchReply} from './wechat-control'
 import type { ProviderRegistry } from '../../app/provider-registry'
 import type { NativeHistoryReader, NativeHistoryProvider } from '../../adapters/workbench/native-history'
@@ -237,6 +238,7 @@ export function makeWorkbenchService(opts: Options) {
     quota: quotaDomain,
     scripts: scriptsDomain,
   })
+  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain})
   const quotaHandoffDomain = makeQuotaHandoffDomain(ctx, { execute: executeDomain, quota: quotaDomain })
   const review = makeReviewDomain(ctx, {
     scripts: scriptsDomain,
@@ -270,6 +272,7 @@ export function makeWorkbenchService(opts: Options) {
 
 
   const service={
+    ...ledgerDomain,
     artifactDeliveryStore:store.artifactDeliveries,
     setArtifactDelivery:noticesDomain.setArtifactDelivery,
     artifactDeliveryEligible:noticesDomain.artifactDeliveryEligible,

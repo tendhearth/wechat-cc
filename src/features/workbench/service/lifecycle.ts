@@ -11,6 +11,7 @@
  *   排队的那件活自己带着做法 —— 环就断在数据上,而不是藏在一个晚绑定的引用后面。
  * quiet 是 isReplied 的别名(原文 `const quiet=isReplied`)。
  */
+import {finishLedger} from './ledger-completion'
 import { findPathBlocker } from '../../../adapters/workbench/scheduler'
 import { publicTask } from '../../../adapters/store/workbench/store'
 import { taskLifecycle } from '../../../domain/matters/legacy-status'
@@ -189,7 +190,14 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     // 钟级),接受。
     // 差异边界 = 回合边界:这一轮的代码变更现在就截(以前这一步挂在「答复即释放」后面,
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
-    void captureCodeChanges(running).catch(()=>{})
+    const ledgerTurn=running.turnSeq
+    const codeCapture=captureCodeChanges(running)
+    void (async()=>{
+      await running.turnCollection
+      await codeCapture
+      if(state.shutdownComplete||running.finishing||running.cancelled||running.uncertain||running.turnSeq!==ledgerTurn||!quiet(running))return
+      store.atomic(()=>{finishLedger(ctx,running,'completed');store.bump(running.taskId)})
+    })().catch(error=>ctx.log?.('MATTER_LEDGER',`completion failed: ${error instanceof Error?error.message:String(error)}`))
     armIdleClose(running)
     // 做到条件成立为止(v80):这一轮安静了 ⇒ 排一次检查(按 run+turnSeq 去重,不阻塞)。
     try { untilAfterTurn(running) } catch (err) { ctx.log?.('WORKBENCH_UNTIL',`afterTurn failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
@@ -334,7 +342,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       const index=state.queue.indexOf(running); if (index>=0) state.queue.splice(index,1)
       state.runningText.delete(running.identity)
       try {
-        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};store.update(running.taskId,'cancelled',running.restartInterrupted?'daemon_restarted':null);stageFinishedNotice(running,'cancelled')})
+        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};finishLedger(ctx,running,'cancelled');store.update(running.taskId,'cancelled',running.restartInterrupted?'daemon_restarted':null);stageFinishedNotice(running,'cancelled')})
         matterSync(m=>m.setLifecycle(running.taskId,'done'))
         publishFinishedNotices()
       } catch { /* in-memory cancellation still must settle */ }

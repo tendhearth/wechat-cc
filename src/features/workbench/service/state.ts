@@ -23,6 +23,7 @@ export interface Active extends PathReservation {
   handoffArtifacts?:ArtifactSelection[]
   nativeResume?:AcceptedNativeResume
   reviewBaseline?: GitBaseline
+  ledgerArtifact?:{files:string[];fileCount:number;commit:string|null}
   /** 已截取的代码变更快照数;第一份沿用旧名,之后带 -2/-3。 */
   reviewSeq?: number
   reviewCapture?: Promise<void>

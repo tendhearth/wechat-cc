@@ -1,3 +1,5 @@
+import {ledgerRoutes} from './ledger-routes'
+import {ownerLedgerCaller,scopeMatterLedger} from '../../lib/matter-ledger-access'
 /**
  * 工作台的桌面路由 `/v1/workbench/*`(架构终态 A5 从 daemon/internal-api/routes-workbench.ts 搬来)。
  * 由 workbench 模块自己挂(internalApi.mount;路由表标了 module: 'workbench')。服务还没挂上 / 没起来时,
@@ -103,6 +105,7 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
   // 出生地(2026-10-19):只有桌面 app 的 operator 令牌才算「从电脑来的」;别的 admin 令牌(会话 / 未来的调用方)不知道 ⇒ 不写。
   const desktopOrigin=(caller?:{origin:string})=>caller?.origin==='operator'?{origin:'desktop' as const}:{}
   return {
+    ...ledgerRoutes(deps),
     'GET /v1/workbench/entry-options':async(query,_body,caller)=>{
       if(query.size)return invalid()
       // 手机令牌(P3c-4,原 /m/api/entry/options):同一份选项,按手机表面问
@@ -244,23 +247,28 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       if (since === null || sinceCursor === null || waitMs === null) return invalid()
       // 桌面打开这件事(不带 since / since_cursor 的那一次读)= 在电脑上看过了(S3b)。之后挂着的长轮询不算:窗口在后台时它照样在拉
       if (!fromPhone(caller) && since === undefined && sinceCursor === undefined) try { deps.desktop?.seen(id) } catch { /* 只是记一笔 */ }
+      const readDetail=async(options:{since?:number;sinceCursor?:number})=>{
+        const detail=await deps.workbench.detail(id,options)
+        const owner=deps.resolveAdminChatId?.()??null
+        return scopeMatterLedger(detail,ownerLedgerCaller(owner,caller)&&deps.workbench.ledgerOwned(id,owner))
+      }
       try {
         // 按游标(P1b,桌面新版):这件事的游标超过 since_cursor 就回;不然挂着等它前进。
         if (sinceCursor !== undefined) {
-          const first = await deps.workbench.detail(id, { sinceCursor })
+          const first = await readDetail({ sinceCursor })
           if (first.cursor > sinceCursor || waitMs === 0) return { status: 200, body: first }
           await deps.workbench.changes.waitCursor(id, sinceCursor, Math.min(waitMs, WAIT_MAX_MS))
-          return { status: 200, body: await deps.workbench.detail(id, { sinceCursor }) }
+          return { status: 200, body: await readDetail({ sinceCursor }) }
         }
         if (since !== undefined && waitMs > 0) {
           // 先探一次:数据已经比 since 新(或任务压根不存在,detail 直接抛 not_found)就地返回,
           // 不然一个已下线的 id 会在 wait 里空耗满 20 秒才等到 detail 去报 404。
-          const first = await deps.workbench.detail(id, { since })
+          const first = await readDetail({ since })
           if (first.version > since) return { status: 200, body: first }
           await deps.workbench.changes.wait(id, since, Math.min(waitMs, WAIT_MAX_MS))
-          return { status: 200, body: await deps.workbench.detail(id, { since }) }
+          return { status: 200, body: await readDetail({ since }) }
         }
-        return { status: 200, body: await deps.workbench.detail(id, since === undefined ? {} : { since }) }
+        return { status: 200, body: await readDetail(since === undefined ? {} : { since }) }
       } catch (err) {
         return mappedError(err)
       }

@@ -142,6 +142,8 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
         if(state.shutdownComplete)return
         if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
         if(!report)return
+        const paths=[...new Set([...(running.ledgerArtifact?.files??[]),...report.files.map(f=>f.path)])]
+        running.ledgerArtifact={files:paths,fileCount:paths.length,commit:report.headAfter}
         // 起点单独也有用(回退「撤掉这一轮」只要它);终点打不成(超时 / 被取消)就只缺终点
         if(baseline.checkpoint)report.checkpointBefore=baseline.checkpoint
         if(after&&'skipped' in after)ctx.log?.('workbench',`checkpoint skipped task=${running.taskId} reason=${after.skipped}`)

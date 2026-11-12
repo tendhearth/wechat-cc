@@ -23,6 +23,7 @@ import { isAuthFail } from '../../../domain/auth-fail'
 import { APP_VERSION } from '../../../lib/app-version'
 import { codexCallTarget, codexTargetFromConfig, codexTargetToCall, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import type { CallTarget } from '../../../lib/call-classifier'
+import {MATTER_TOOL_NAMES,type MatterMcpFactory} from '../matter-mcp'
 
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
@@ -40,6 +41,7 @@ interface Options {
   timeouts?: CodexTimeouts
   /** 测试接缝:起子进程的那一下(缺省 codex-app-server-process.ts)。对话侧的剧本替身从这里接进来。 */
   spawnProcess?: CodexAppServerSpawn
+  matterMcp?: MatterMcpFactory
 }
 export type CodexAppServerOptions = Options
 /**
@@ -1067,6 +1069,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           })
         } else {
           const config = workbenchCodexNativeConfig(discovery!.servers, native.config)
+          const matter=options.matterMcp?.(context)
+          const mcpServers:Record<string,unknown>={...config.mcp_servers,...(matter?{matter:{...matter,enabled:true,enabled_tools:[...MATTER_TOOL_NAMES],default_tools_approval_mode:'approve'}}:{})}
           const catalog = execution && (execution.model || execution.reasoningEffort) ? await readCodexModelCatalog(request, project.path) : undefined
           if (catalog && execution?.model) selectedModel = executionModel(catalog, execution)
           for (const [name, server] of Object.entries(config.mcp_servers)) if (server.enabled) enabledMcp.add(name)
@@ -1076,7 +1080,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
             ...resumeParams,
             cwd: project.path, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
-            developerInstructions: context.appendInstructions ?? '', config: {...config,...taskConfig,features:{...config.features,...taskConfig.features},...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
+            developerInstructions: context.appendInstructions ?? '', config: {...config,...taskConfig,mcp_servers:mcpServers,features:{...config.features,...taskConfig.features},...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
             ...(model ? {model} : {}),
           })
           if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)

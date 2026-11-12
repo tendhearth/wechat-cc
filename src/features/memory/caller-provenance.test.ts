@@ -1,3 +1,4 @@
+import {makeMatterLedger} from '../../adapters/store/matter-ledger'
 import { afterEach, expect, it } from 'vitest'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
@@ -19,12 +20,15 @@ it.each(['other-admin', 'owner', 'operator'] as const)('caller provenance: %s re
     await raw.addEntry({ threadId: id, kind: 'conclusion', line: title, body: `${title}_BODY`, source: work ? 'work' : 'chat', matterId: work ? m.id : null })
     return id
   }
+  const ledger=makeMatterLedger(db);ledger.start(m.id,'caller-ledger','codex','work');ledger.note(m.id,'caller-ledger','codex','LEDGER_CALLER_CANARY')
   const publicWork = await topic('OWNER_WORK_CONCLUSION', false, true), privateId = await topic('PRIVATE_CANARY', true, true)
   await topic('CHAT_CANARY', false, false)
+  await raw.addEntry({threadId:publicWork,kind:'conclusion',line:'LEDGER_CALLER_CANARY',body:ledger.notes(m.id).at(-1)!.text,source:'work',matterId:m.id})
   const caller: Parameters<RouteHandler>[2] = who === 'operator' ? { tier: 'admin', origin: 'operator' } : { tier: 'admin', origin: 'session', chatId: who }
   const search = topicRoutes({ db, ownerChatId: () => 'owner' })['POST /v1/memory/topics/search']!
-  const results = await search(new URLSearchParams(), { query: 'OWNER_WORK_CONCLUSION PRIVATE_CANARY CHAT_CANARY', limit: 5 }, caller)
+  const results = await search(new URLSearchParams(), { query: 'OWNER_WORK_CONCLUSION PRIVATE_CANARY CHAT_CANARY LEDGER_CALLER_CANARY', limit: 5 }, caller)
   const text = JSON.stringify(results.body)
+  expect(text.includes('LEDGER_CALLER_CANARY')).toBe(who !== 'other-admin')
   expect(text.includes('CHAT_CANARY')).toBe(true)
   expect(text.includes('OWNER_WORK_CONCLUSION')).toBe(who !== 'other-admin')
   expect(text.includes('PRIVATE_CANARY')).toBe(who !== 'other-admin')

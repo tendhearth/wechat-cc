@@ -63,6 +63,7 @@ export function structuralSignature(detail) {
     // 去重吞掉(终审 M1);0 只代表「已武装、数字不重要」,null 保留 null。
     task.waitingFor ? { ...task.waitingFor, closeInMs: task.waitingFor.closeInMs == null ? null : 0 } : null,
     detail.runId ?? null, detail.inputMode ?? null,
+    detail.agentRuns??null,detail.notes??null,
     (detail.permissions ?? []).map(p => p.id),
     (detail.questions ?? []).map(q => q.id),
     (detail.artifacts ?? []).map(a => [a.id, a.sha256]),

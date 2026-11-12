@@ -597,3 +597,12 @@
 
 .wb-create-form :is(input,select) { border-radius:var(--th-text-field-search-radius); padding:var(--th-text-field-search-padding-y) var(--th-text-field-search-padding-x); }
 .wb-create-form :is(input,select,textarea),.wb-history-search input { font-size:var(--th-text-field-role); }
+
+/* Same quiet rows as the task details; notebook text is user content. */
+.wb-ledger { margin:20px 0; }
+.wb-ledger h3 { margin:0 0 12px; color:var(--wb-muted); font-size:12px; font-weight:400; }
+.wb-ledger dl { display:grid; gap:12px; margin:12px 0; }
+.wb-ledger dl>div { display:grid; grid-template-columns:minmax(48px,80px) minmax(0,1fr); gap:12px; }
+.wb-ledger dt { color:var(--wb-muted); font-size:12px; overflow-wrap:anywhere; }
+.wb-ledger dd { margin:0; font-size:13px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
+.wb-ledger small { color:var(--wb-muted); }

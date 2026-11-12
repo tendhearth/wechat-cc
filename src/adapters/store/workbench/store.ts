@@ -1,3 +1,4 @@
+import {makeMatterLedger} from '../matter-ledger'
 import type { WorktreeStart } from '../../git/worktree-workspaces'
 import { makeMessagesStore } from '../../../lib/messages-store'
 import { existsSync } from 'node:fs'
@@ -167,6 +168,11 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     controlReceipts:makeControlReceiptStore(db),
     creationReceipts:makeCreationReceiptStore(db),
     entryRequests:createEntryStore(db),
+    ledger:makeMatterLedger(db),
+    switchExecutor(id:string,providerId:string){
+      get(id)
+      db.query("UPDATE workbench_tasks SET provider_id=?,session_id=NULL,execution_choice_json=? WHERE id=?").run(providerId,JSON.stringify({defaults:'provider',model:null,reasoningEffort:null}),id)
+    },
     taskMatterId:(id:string)=>db.query<{id:string|null},[string]>('SELECT matter_id AS id FROM workbench_tasks WHERE id=?').get(id)?.id??null,
     wechatNotifications:makeWechatNotificationStore(db),
     artifactDeliveries:makeArtifactDeliveryStore(db),
@@ -419,6 +425,7 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     },
     session(id: string, sessionId: string | null) { db.transaction(()=>{db.query('UPDATE workbench_tasks SET session_id=? WHERE id=?').run(sessionId,id);bump(id)})() },
     recover() {
+      this.ledger.interrupt()
       const rows = db.query<{ id: string; path: string; status: TaskStatus }, []>("SELECT id,path,status FROM workbench_tasks WHERE status IN ('queued','running','cancelling')").all()
       db.transaction(() => {
         // 轮记不上不挡开机对账(任务自己的中断照记)。
