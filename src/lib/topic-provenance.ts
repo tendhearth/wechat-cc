@@ -3,6 +3,9 @@ import { hostname, tmpdir } from 'node:os'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { Db } from './db'
 export interface TopicSourceContext { owner: string; machine: string; allowWork?: boolean; allowDelegate?: boolean }
+/** macOS may append .local / collision numbers without changing the computer. */
+export const normalizeTopicMachine = (machine: string): string => machine.trim().toLowerCase().replace(/\.local$/, '').replace(/-\d+$/, '')
+export const sameTopicMachine = (machine: string | null | undefined, local: string): boolean => !machine || normalizeTopicMachine(machine) === normalizeTopicMachine(local)
 export const localTopicContext = (owner: string): TopicSourceContext => ({ owner, machine: hostname() })
 /** Identity comes from the authenticated caller, never the requested chat id. */
 export function ownerTopicCaller(owner: string | null, caller?: { tier: string; origin: string; chatId?: string }): boolean {
@@ -26,25 +29,34 @@ export function isScratchMatter(title: string, projectPath: string | null): bool
 }
 
 function uncachedTopicMatterAccess(db: Db, context: TopicSourceContext, referenced: readonly string[]) {
- const permitted=db.query<{id:string;kind:string;title:string;archived_at:number|null;path:string|null;turnPaths:string;workPaths:string|null;currentCwd:string|null},[string,string,string]>(`SELECT m.id,m.kind,m.title,m.archived_at,m.project_path AS path,
-   (SELECT json_group_array(json_extract(mt.policy_json,'$.cwd')) FROM matter_turns mt WHERE mt.matter_id=m.id) AS turnPaths,
-   (SELECT json_array(w.project_path,w.repo_root,w.root) FROM workbench_worktrees w WHERE w.task_id=m.id) AS workPaths,
-   (SELECT c.cwd FROM matter_bindings b JOIN cli_sessions c ON c.session_id=b.surface_key WHERE b.matter_id=m.id AND b.surface='cli') AS currentCwd
-   FROM matters m
-  WHERE m.id IN (SELECT value FROM json_each(?1)) AND m.kind IN ('task','terminal','act')
-   AND (m.owner_chat_id=?2 OR (m.kind='terminal' AND m.owner_chat_id IS NULL))
-   AND (
-    NOT EXISTS(SELECT 1 FROM matter_bindings b JOIN cli_sessions c ON c.session_id=b.surface_key WHERE b.matter_id=m.id AND b.surface='cli'
-     AND (COALESCE(c.origin_agent,'')!='' OR COALESCE(c.machine,'') NOT IN ('',?3)))
-    AND NOT EXISTS(SELECT 1 FROM matter_turns mt WHERE mt.matter_id=m.id AND (
-     COALESCE(json_extract(mt.policy_json,'$.originAgent'),'')!='' OR COALESCE(json_extract(mt.policy_json,'$.machine'),'') NOT IN ('',?3))))`).all(JSON.stringify(referenced),context.owner,context.machine)
- const allowed=new Set(permitted.map(m=>m.id)),active=new Set(permitted.filter(m=>m.archived_at===null).map(m=>m.id))
- // Work summaries inherit their linked matter's privacy/provenance boundary too.
- const entryAllowed=new Set(permitted.filter(m=>{
-  const paths=[m.path,m.currentCwd,...JSON.parse(m.turnPaths),...JSON.parse(m.workPaths??'[]')].filter((p):p is string=>typeof p==='string'&&!!p)
-  return (paths.length>0||m.kind==='act')&&!paths.some(temporary)&&!isScratchMatter(m.title,null)
- }).map(m=>m.id))
- return { allowed, active, entryAllowed }
+  const rows = db.query<{
+    id: string; kind: string; title: string; archived_at: number | null; path: string | null
+    turnFacts: string; workPaths: string | null; cliFacts: string
+  }, [string, string]>(`SELECT m.id,m.kind,m.title,m.archived_at,m.project_path AS path,
+    (SELECT json_group_array(json_object('cwd',json_extract(mt.policy_json,'$.cwd'),
+      'machine',json_extract(mt.policy_json,'$.machine'),'agent',json_extract(mt.policy_json,'$.originAgent')))
+      FROM matter_turns mt WHERE mt.matter_id=m.id) AS turnFacts,
+    (SELECT json_array(w.project_path,w.repo_root,w.root) FROM workbench_worktrees w WHERE w.task_id=m.id) AS workPaths,
+    (SELECT json_group_array(json_object('cwd',c.cwd,'machine',c.machine,'agent',c.origin_agent))
+      FROM matter_bindings b JOIN cli_sessions c ON c.session_id=b.surface_key
+      WHERE b.matter_id=m.id AND b.surface='cli') AS cliFacts
+    FROM matters m WHERE m.id IN (SELECT value FROM json_each(?1)) AND m.kind IN ('task','terminal','act')
+    AND (m.owner_chat_id=?2 OR (m.kind='terminal' AND m.owner_chat_id IS NULL))`).all(JSON.stringify(referenced), context.owner)
+  const permitted = rows.filter(m => {
+    const facts: {machine?: string; agent?: string}[] = [...JSON.parse(m.turnFacts), ...JSON.parse(m.cliFacts)]
+    return facts.every(f => !f.agent && sameTopicMachine(f.machine, context.machine))
+  })
+  const allowed = new Set(permitted.map(m => m.id))
+  const active = new Set(permitted.filter(m => m.archived_at === null).map(m => m.id))
+  const entryAllowed = new Set(permitted.filter(m => {
+    const facts: {cwd?: string}[] = [...JSON.parse(m.turnFacts), ...JSON.parse(m.cliFacts)]
+    const paths = [m.path, ...facts.map(f => f.cwd), ...JSON.parse(m.workPaths ?? '[]')]
+      .filter((p): p is string => typeof p === 'string' && !!p)
+    // Owner-created task/act may use a scratch workspace with no project path.
+    // A terminal with no path still has no project identity; temporary/selftest paths stay excluded.
+    return (paths.length > 0 || m.kind === 'act' || m.kind === 'task') && !paths.some(temporary) && !isScratchMatter(m.title, null)
+  }).map(m => m.id))
+  return { allowed, active, entryAllowed }
 }
 
 type EntryOrigin={entryId:string;id:string;topicId:string;source:string;matterId:string|null;status:string;supersededBy:string|null;derived:number;owner:string|null}
@@ -61,16 +73,30 @@ function uncachedAllowedTopicEntryIds(db: Db, context: TopicSourceContext, entry
  for(const o of origins){const group=byEntry.get(o.entryId)??[];group.push(o);byEntry.set(o.entryId,group)}
  const referenced=[...new Set(origins.flatMap(e=>e.matterId?[e.matterId]:[]))]
  const { entryAllowed } = topicMatterAccess(db, context, referenced)
- return new Set(origins.filter(e=>e.entryId===e.id).filter(e=>{
-  const lineage=byEntry.get(e.id)??[],merged=new Set(lineage.flatMap(o=>o.supersededBy?[o.supersededBy]:[]))
-  // Only synthetic nodes may lack a work matter. Any unprovable original hides
-  // the whole group; chat/work mixtures inherit the same intersection of access.
-  if(!lineage.some(o=>!merged.has(o.id))||lineage.some(o=>
-   o.owner!==context.owner||(!o.derived&&o.topicId!==e.topicId)||(context.allowWork===false&&(o.source!=='chat'||!!o.matterId))||(o.id===e.id?!includeSuperseded&&o.supersededBy!==null:!o.derived&&o.status!=='superseded')||
-   (o.source!=='chat'&&o.source!=='work'&&o.source!=='delegate')||(context.allowDelegate===false&&o.source==='delegate')||
-   (o.matterId?!entryAllowed.has(o.matterId):o.source==='work'&&!merged.has(o.id))))return false
-  return true
- }).map(e=>e.id))
+ return new Set(origins.filter(e => e.entryId === e.id).filter(root => {
+  const lineage = byEntry.get(root.id) ?? []
+  const merged = new Set(lineage.flatMap(o => o.supersededBy ? [o.supersededBy] : []))
+  // A cycle without an original cannot prove any lineage.
+  if (!lineage.some(o => !merged.has(o.id))) return false
+  return lineage.every(origin => {
+   // Only owner-derived memories can survive an explicitly deleted source entry.
+   // Missing matter records are different: the original entry itself stays hidden.
+   const ownerTombstone = context.allowWork !== false && origin.derived && origin.topicId === null
+   if (ownerTombstone) return true
+   const sameOwner = origin.owner === context.owner // No cross-owner evidence.
+   const sameTopic = !!origin.derived || origin.topicId === root.topicId // Only explicit derivation crosses topics.
+   const readerAllowsWork = context.allowWork !== false || (origin.source === 'chat' && !origin.matterId) // Restricted readers get pure chat only.
+   const lifecycleAllowed = origin.id === root.id
+    ? includeSuperseded || origin.supersededBy === null
+    : !!origin.derived || origin.status === 'superseded' // Implicit ancestors must really be merged history.
+   const knownSource = ['chat', 'work', 'delegate'].includes(origin.source) // Unknown origins fail closed.
+   const delegateAllowed = context.allowDelegate !== false || origin.source !== 'delegate' // Project readers exclude consultations.
+   const matterAllowed = origin.matterId
+    ? entryAllowed.has(origin.matterId)
+    : origin.source !== 'work' || merged.has(origin.id) // Synthetic merged work is supported by its originals.
+   return sameOwner && sameTopic && readerAllowsWork && lifecycleAllowed && knownSource && delegateAllowed && matterAllowed
+  })
+ }).map(e => e.id))
 }
 
 /** Invalidated by local writes and commits from other SQLite connections. */
@@ -84,51 +110,75 @@ function provenanceCache(db:Db):ProvenanceCache {
  if(!cache||cache.token!==token){cache={token,matters:new Map(),entries:new Map(),restricted:new Map(),live:new Map()};caches.set(db,cache)}
  return cache
 }
+/** Never retain transaction grants across rollback/savepoint boundaries. Nested,
+ * synchronous reads share one cache; no write or await occurs inside this scope.
+ * Persistent caches remain conservatively invalidated by any database write.
+ * Cold reads must therefore stay batched rather than rely on cache hit rates. */
+const reading = new WeakMap<Db, ProvenanceCache>()
+function provenanceRead<T>(db: Db, read: (cache: ProvenanceCache) => T): T {
+ const current = reading.get(db)
+ if (current) return read(current)
+ const cache = provenanceCache(db)
+ reading.set(db, cache)
+ try { return read(cache) } finally { reading.delete(db) }
+}
 const scopeKey=(context:TopicSourceContext,id:string)=>JSON.stringify([context.owner,context.machine,context.allowWork!==false,context.allowDelegate!==false,id])
 
 export function topicMatterAccess(db:Db,context:TopicSourceContext,ids:readonly string[]) {
- const cache=provenanceCache(db),missing=[...new Set(ids)].filter(id=>!cache.matters.has(scopeKey(context,id)))
+ return provenanceRead(db, cache => {
+ const missing=[...new Set(ids)].filter(id=>!cache.matters.has(scopeKey(context,id)))
  if(missing.length){
   const result=uncachedTopicMatterAccess(db,context,missing)
   for(const id of missing)cache.matters.set(scopeKey(context,id),{allowed:result.allowed.has(id),active:result.active.has(id),entry:result.entryAllowed.has(id)})
  }
  return {allowed:new Set(ids.filter(id=>cache.matters.get(scopeKey(context,id))?.allowed)),active:new Set(ids.filter(id=>cache.matters.get(scopeKey(context,id))?.active)),entryAllowed:new Set(ids.filter(id=>cache.matters.get(scopeKey(context,id))?.entry))}
+ })
 }
 export function allowedTopicEntryIds(db:Db,context:TopicSourceContext,ids:readonly string[],includeSuperseded=false):Set<string> {
- const cache=provenanceCache(db),key=(id:string)=>JSON.stringify([context.owner,context.machine,context.allowWork!==false,context.allowDelegate!==false,id,includeSuperseded]),missing=[...new Set(ids)].filter(id=>!cache.entries.has(key(id)))
+ return provenanceRead(db, cache => {
+ const key=(id:string)=>JSON.stringify([context.owner,context.machine,context.allowWork!==false,context.allowDelegate!==false,id,includeSuperseded]),missing=[...new Set(ids)].filter(id=>!cache.entries.has(key(id)))
  if(missing.length){
   const allowed=uncachedAllowedTopicEntryIds(db,context,missing,includeSuperseded)
   for(const id of missing)cache.entries.set(key(id),allowed.has(id))
  }
  return new Set(ids.filter(id=>cache.entries.get(key(id))))
+ })
 }
-/** Cached text inherits all originals, including superseded rows without successors. */
+/** Current roots inherit their full lineage; superseded history is not a separate root. */
 export function restrictedTopicIds(db:Db,context:TopicSourceContext,ids:readonly string[]):Set<string> {
- const cache=provenanceCache(db),missing=[...new Set(ids)].filter(id=>!cache.restricted.has(scopeKey(context,id)))
+ return provenanceRead(db, cache => {
+ const missing=[...new Set(ids)].filter(id=>!cache.restricted.has(scopeKey(context,id)))
  if(missing.length){
-  const rows=db.query<{id:string;topicId:string;status:string},[string,string]>(`SELECT e.id,e.thread_id AS topicId,e.status FROM topic_entries e JOIN threads t ON t.id=e.thread_id WHERE t.chat_id=? AND t.id IN (SELECT value FROM json_each(?))`).all(context.owner,JSON.stringify(missing))
+  const rows=db.query<{id:string;topicId:string;status:string},[string,string]>(`SELECT e.id,e.thread_id AS topicId,e.status FROM topic_entries e JOIN threads t ON t.id=e.thread_id WHERE t.chat_id=? AND t.id IN (SELECT value FROM json_each(?)) AND e.status!='superseded'`).all(context.owner,JSON.stringify(missing))
   const allowed=allowedTopicEntryIds(db,context,rows.map(e=>e.id),true)
+  const byTopic=new Map<string,typeof rows>()
+  for(const row of rows){const entries=byTopic.get(row.topicId)??[];entries.push(row);byTopic.set(row.topicId,entries)}
   for(const id of missing){
-   const entries=rows.filter(e=>e.topicId===id)
+   const entries=byTopic.get(id)??[]
    cache.restricted.set(scopeKey(context,id),entries.some(e=>!allowed.has(e.id)))
    cache.live.set(scopeKey(context,id),entries.filter(e=>e.status==='live').map(e=>e.id))
   }
  }
  return new Set(ids.filter(id=>cache.restricted.get(scopeKey(context,id))))
+ })
 }
 export function visibleTopicEntryIds(db:Db,context:TopicSourceContext,topic:string):Set<string> {
- const cache=provenanceCache(db),key=scopeKey(context,topic)
+ return provenanceRead(db, cache => {
+ const key=scopeKey(context,topic)
  if(!cache.live.has(key))cache.live.set(key,db.query<{id:string},[string]>("SELECT id FROM topic_entries WHERE thread_id=? AND status='live'").all(topic).map(e=>e.id))
  return allowedTopicEntryIds(db,context,cache.live.get(key)!)
+ })
 }
 
-/** Cached fields have no independent lineage: hide them if any original is restricted.
- * A topic supported only by restricted originals has no visible existence either.
- * Raw records are left untouched; mixed topics retain their authorized entries. */
+/** Restricted readers inherit current entries for cached metadata/existence.
+ * Owner metadata stays available; entry authorization still applies separately.
+ * Raw records are never changed by this filtered view. */
 export function readableTopicMetadata<T extends {id:string;title:string;summary:string;description?:string}>(db:Db,context:TopicSourceContext,rows:T[]):T[] {
+ // Owner names and aliases remain usable even when one work entry cannot be proven.
+ if (context.allowWork !== false) return rows
  const restricted=restrictedTopicIds(db,context,rows.map(t=>t.id))
  if(!restricted.size)return rows
- const originals=db.query<{id:string;topicId:string},[string]>('SELECT id,thread_id AS topicId FROM topic_entries WHERE thread_id IN (SELECT value FROM json_each(?))').all(JSON.stringify([...restricted]))
+ const originals=db.query<{id:string;topicId:string},[string]>(`SELECT id,thread_id AS topicId FROM topic_entries WHERE thread_id IN (SELECT value FROM json_each(?)) AND status!='superseded'`).all(JSON.stringify([...restricted]))
  const allowed=allowedTopicEntryIds(db,context,originals.map(e=>e.id),true)
  const visible=new Set(originals.filter(e=>allowed.has(e.id)).map(e=>e.topicId))
  return rows.filter(t=>!restricted.has(t.id)||visible.has(t.id)).map(t=>restricted.has(t.id)?{...t,title:'',summary:'',description:'',aliases:[],tags:[],facets:[],episodes:[]}:t)

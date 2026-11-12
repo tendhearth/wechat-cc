@@ -329,16 +329,16 @@ export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean; allow
       const allowed=allowedTopicEntryIds(db,context,entryIds)
       if(entryIds.some(id=>!allowed.has(id)))return false
       const owned=new Set(db.query<{id:string},[string]>('SELECT id FROM threads WHERE chat_id=?').all(owner).map(t=>t.id))
-      const restricted=restrictedTopicIds(db,context,topics.map(t=>t.id))
+      const restricted=context.allowWork===false?restrictedTopicIds(db,context,topics.map(t=>t.id)):new Set<string>()
       return topics.every(t=>owned.has(t.id)&&(!(t.summary||t.description||t.title||t.tags?.length||t.aliases?.length)||!restricted.has(t.id)))
     },
     topicHistoryAllowed(owner,topic) { return entryOwner(topic)===owner&&!restrictedTopicIds(db,contextFor(owner),[topic]).has(topic) },
-    contextSources(owner, topics, entryIds) {
-      const cachedTopics=topics.filter(t=>t.title||t.summary||t.description).map(t=>t.id)
-      const cached=db.query<{id:string},[string]>('SELECT id FROM topic_entries WHERE thread_id IN (SELECT value FROM json_each(?))').all(JSON.stringify(cachedTopics)).map(e=>e.id)
-      const ids=[...new Set([...entryIds,...cached])]
-      const chat=allowedTopicEntryIds(db,{...localTopicContext(owner),allowWork:false},ids,true)
-      return ids.filter(id=>!chat.has(id))
+    contextSources(owner, _topics, entryIds) {
+      // Identify work-bearing context for rewrite guards; callers select only
+      // direct work rows for fallback edges so derived chat never compounds.
+      return db.query<{id:string},[string,string]>(`SELECT e.id FROM topic_entries e JOIN threads t ON t.id=e.thread_id
+        WHERE t.chat_id=? AND e.id IN (SELECT value FROM json_each(?)) AND (e.source!='chat' OR e.matter_id IS NOT NULL OR EXISTS(SELECT 1 FROM topic_entry_sources s WHERE s.entry_id=e.id))`)
+        .all(owner,JSON.stringify(entryIds)).map(e=>e.id)
     },
     createExtractedTopic(input, entries, authorized) {
       return db.transaction(() => {

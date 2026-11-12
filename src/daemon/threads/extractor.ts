@@ -104,7 +104,11 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
       : []
     const existing = await deps.threads.list(deps.chatId)
     const entries = await deps.threads.entriesByThread(deps.chatId, { live: true })
-    const sourceIds = deps.threads.contextSources?.(deps.chatId, existing, [...entries.values()].flatMap(es=>es.map(e=>e.id))) ?? []
+    // Persist only evidence used by this operation, not every fact in the prompt.
+    const shownEntries = new Map(existing.map(t => [t.id, (entries.get(t.id) ?? []).filter(e => !isRoutineTopicEntry(e)).slice(0, ENTRIES_PER_TOPIC)]))
+    const shownIds = new Set([...shownEntries.values()].flatMap(es => es.map(e => e.id)))
+    const topicSources = new Map([...shownEntries].map(([topic, es]) => [topic, deps.threads.contextSources?.(deps.chatId, [], es.filter(e => e.source !== 'chat' || e.matterId).map(e => e.id)) ?? []]))
+    const hasWorkContext = (deps.threads.contextSources?.(deps.chatId, existing, [...shownIds]) ?? []).length > 0
     const contextAllowed = () => deps.threads.contextAllowed?.(deps.chatId, existing, [...entries.values()].flatMap(es=>es.map(e=>e.id))) ?? true
     const prompt = buildExtractPrompt({
       newMessages: batch.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })),
@@ -135,7 +139,7 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
       continue
     }
     const activeTs = lastTs ?? work[work.length - 1]?.at ?? new Date().toISOString()
-    const r = await applyOps(deps, parsed.ops, activeTs, new Set(work.map(w => w.matterId)), contextAllowed, sourceIds)
+    const r = await applyOps(deps, parsed.ops, activeTs, new Set(work.map(w => w.matterId)), contextAllowed, shownIds, topicSources, hasWorkContext)
     applied += r.applied; skipped += r.skipped + parsed.dropped
     if (r.contextChanged) {
       deps.log('THREADS', `extract context changed while applying for ${deps.chatId}; watermark held`)
@@ -150,12 +154,18 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
   return { applied, skipped, rounds }
 }
 
-async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string, workMatters: Set<string>, contextAllowed: () => boolean, sourceIds: readonly string[]): Promise<{ applied: number; skipped: number; contextChanged: boolean }> {
+async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string, workMatters: Set<string>, contextAllowed: () => boolean, shownIds: ReadonlySet<string>, topicSources: ReadonlyMap<string, readonly string[]>, hasWorkContext: boolean): Promise<{ applied: number; skipped: number; contextChanged: boolean }> {
   let applied = 0, skipped = 0, contextChanged = false
   const known = new Set((await deps.threads.list(deps.chatId)).map(t => t.id))
   /** 结论条目:指回的那件事必须是这一批交给它的;编的编号不认。 */
   const matterOf = (m?: string) => (m && workMatters.has(m) ? m : null)
   const sourceOf = (m?: string) => (matterOf(m) ? 'work' as const : 'chat' as const)
+  const sourcesOf = (entry: { derivedFrom?: string[] }, topic?: string): readonly string[] | null => {
+    if (entry.derivedFrom !== undefined) return entry.derivedFrom.every(id => shownIds.has(id)) ? [...new Set(entry.derivedFrom)] : null
+    // Backwards-compatible model output: only direct work entries of this topic.
+    // Derived chat is never reattached, preventing compounding dependencies.
+    return topic ? topicSources.get(topic) ?? [] : []
+  }
   const entryAllowed = (m?: string) => m ? !!matterOf(m) && !!deps.workAllowed?.(m) : workMatters.size === 0
   const canPersist = () => {
     if (!contextAllowed()) { contextChanged = true; return false }
@@ -165,14 +175,14 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
     if (!canPersist()) { skipped++; continue }
     if (op.op === 'create_topic') {
       // A work-derived topic needs durable entry lineage for all cached text.
-      if ((workMatters.size || sourceIds.length) && (!op.entries.length || op.entries.some(e => !entryAllowed(e.matter) || isRoutineTopicEntry(e)))) { skipped++; continue }
+      if (op.entries.some(e => sourcesOf(e) === null) || (workMatters.size && (!op.entries.length || op.entries.some(e => !entryAllowed(e.matter) || isRoutineTopicEntry(e))))) { skipped++; continue }
       const input = {
         chatId: deps.chatId, title: op.title, summary: op.summary, ...(op.description?.trim() ? { description: op.description.trim() } : {}), facets: op.facets as [Facet, ...Facet[]], tags: op.tags.slice(0, 3),
         aliases: op.aliases, private: op.private, episodes: op.episode ? [op.episode] : [], lastActive: activeTs,
       }
       const validEntries = op.entries.filter(e => entryAllowed(e.matter) && !isRoutineTopicEntry(e))
       skipped += op.entries.length - validEntries.length
-      const id = deps.threads.createExtractedTopic(input, validEntries.map(e => ({ kind:e.kind, line:e.line, body:e.body, due:e.due, source:sourceOf(e.matter), matterId:matterOf(e.matter), derivedFrom:sourceIds })), canPersist)
+      const id = deps.threads.createExtractedTopic(input, validEntries.map(e => ({ kind:e.kind, line:e.line, body:e.body, due:e.due, source:sourceOf(e.matter), matterId:matterOf(e.matter), derivedFrom:sourcesOf(e)! })), canPersist)
       if (!id) { skipped++; continue }
       known.add(id)
       applied++
@@ -180,7 +190,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       const t = known.has(op.id) ? await deps.threads.get(op.id) : null
       if (!t || t.chatId !== deps.chatId || !canPersist()) { skipped++; continue }
       // Work has its own linked entries; metadata edits cannot retain a source.
-      if (op.op === 'update_topic' && (workMatters.size || sourceIds.length) && Object.entries(op).some(([key,value])=>key!=='op'&&key!=='id'&&key!=='status'&&!(key==='private'&&value===true))) { skipped++; continue }
+      if (op.op === 'update_topic' && (workMatters.size || hasWorkContext) && Object.entries(op).some(([key,value])=>key!=='op'&&key!=='id'&&key!=='status'&&!(key==='private'&&value===true))) { skipped++; continue }
       if (op.op === 'touch') {
         await deps.threads.update(op.id, { episodes: [...t.episodes, op.episode], lastActive: activeTs > t.lastActive ? activeTs : t.lastActive })
       } else {
@@ -189,16 +199,17 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       }
       applied++
     } else if (op.op === 'add_entry') {
-      if (!known.has(op.topic) || !entryAllowed(op.matter)) { skipped++; continue }
+      const sources = sourcesOf(op, op.topic)
+      if (sources === null || !known.has(op.topic) || !entryAllowed(op.matter)) { skipped++; continue }
       if (isRoutineTopicEntry({ line: op.line ?? '', body: op.body })) { skipped++; continue }
-      await deps.threads.addEntry({ threadId: op.topic, kind: op.kind, line: op.line, ...(op.body ? { body: op.body } : {}), ...(op.due ? { due: op.due } : {}), source: sourceOf(op.matter), matterId: matterOf(op.matter), derivedFrom:sourceIds })
+      await deps.threads.addEntry({ threadId: op.topic, kind: op.kind, line: op.line, ...(op.body ? { body: op.body } : {}), ...(op.due ? { due: op.due } : {}), source: sourceOf(op.matter), matterId: matterOf(op.matter), derivedFrom:sources })
       const t = await deps.threads.get(op.topic)
       if (t && canPersist() && activeTs > t.lastActive) await deps.threads.update(op.topic, { lastActive: activeTs })
       applied++
     } else {
       // State-only updates carry no new text. Rewrites need provable lineage.
-      if(sourceIds.length&&(op.line!==undefined||op.body!==undefined||op.due!==undefined)){skipped++;continue}
       const e = await deps.threads.getEntry(op.id)
+      if(hasWorkContext && (op.line!==undefined||op.body!==undefined||op.due!==undefined)){skipped++;continue}
       if (!e || !known.has(e.threadId) || !canPersist() || (workMatters.size > 0 && (!e.matterId || !entryAllowed(e.matterId)))) { skipped++; continue }
       const { op: _op, id: _id, ...patch } = op
       if ((patch.line !== undefined || patch.body !== undefined) && isRoutineTopicEntry({ line: patch.line ?? e.line, body: patch.body ?? e.body })) { skipped++; continue }

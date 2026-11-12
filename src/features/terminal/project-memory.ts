@@ -1,8 +1,7 @@
-import { allowedTopicEntryIds, localTopicContext, restrictedTopicIds } from '../../lib/topic-provenance'
+import { allowedTopicEntryIds, localTopicContext, sameTopicMachine, readableTopicMetadata } from '../../lib/topic-provenance'
 /** SessionStart memory: local evidence only, no model calls or production-state reads in the hook. */
 import { readFile, realpath, stat, readdir } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { hostname } from 'node:os'
 import type { Db } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { renderTopicsBlock, type MatchTopic } from '../../domain/topic-match'
@@ -96,7 +95,7 @@ export function renderProjectMemory(topic: MatchTopic): string {
  * never to a terminal's later cwd. Name collisions between independent common dirs abstain. */
 export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly MatchTopic[], identify = projectIdentity, knownPaths: readonly string[] = [], options: { includeDoneHistory?: boolean; allowDelegate?: boolean } = {}) {
   const context={...localTopicContext(owner),allowDelegate:options.allowDelegate}
-  const rows = db.query<{topicId:string; seedId:string; kind:string; projectPath:string|null; cwd:string|null; turnPaths:string; currentCwd:string|null; project:string|null; repo:string|null; root:string|null},[string,string,string]>(`
+  const rows = db.query<{topicId:string; seedId:string; kind:string; projectPath:string|null; cwd:string|null; turnPaths:string; currentCwd:string|null; project:string|null; repo:string|null; root:string|null},[string]>(`
     WITH RECURSIVE valid_entry(seedId,id,thread_id) AS (
       SELECT id,id,thread_id FROM topic_entries WHERE status IN ('live','done')
       UNION
@@ -117,11 +116,8 @@ export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly
     WHERE t.chat_id=? AND t.private=0 ${options.includeDoneHistory ? '' : "AND t.status!='done'"} AND e.source='work'
       AND ((m.kind='task' AND m.owner_chat_id=t.chat_id) OR (m.kind='terminal'
         AND (m.owner_chat_id IS NULL OR m.owner_chat_id=t.chat_id) AND b.matter_id IS NOT NULL
-        AND (c.origin_agent IS NULL OR c.origin_agent='') AND (c.machine IS NULL OR c.machine='' OR c.machine=?)
-        AND NOT EXISTS (SELECT 1 FROM matter_turns mt WHERE mt.matter_id=m.id AND (
-          COALESCE(json_extract(mt.policy_json,'$.originAgent'),'')!='' OR COALESCE(json_extract(mt.policy_json,'$.machine'),'') NOT IN ('',?)))
         AND (c.session_id IS NOT NULL OR EXISTS(SELECT 1 FROM matter_turns mt WHERE mt.matter_id=m.id AND json_type(mt.policy_json,'$.cwd')='text'))))
-  `).all(owner,hostname(),hostname())
+  `).all(owner)
   const identities = new Map<string,Promise<ProjectIdentity|null>>()
   const canonical = new Map<string,Promise<string>>()
   const identityOf = (p:string) => {
@@ -133,10 +129,10 @@ export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly
     return canonical.get(p)!
   }
   const pathsOf = (r:typeof rows[number]) => [...new Set((r.kind==='terminal'?[r.projectPath||r.cwd,r.currentCwd,...JSON.parse(r.turnPaths) as string[]]:[r.projectPath,r.project,r.repo,r.root]).filter((p):p is string=>!!p))]
-  const known = [...knownPaths,...db.query<{path:string|null},[string,string]>(`
-    SELECT project_path AS path FROM matters WHERE owner_chat_id=?1 OR (kind='terminal' AND owner_chat_id IS NULL)
-    UNION SELECT cwd FROM cli_sessions WHERE COALESCE(origin_agent,'')='' AND COALESCE(machine,'') IN ('',?2)
-  `).all(owner,hostname()).map(r=>r.path).filter((p):p is string=>!!p)]
+  const known = [...knownPaths,...db.query<{path:string|null;machine:string|null},[string]>(`
+    SELECT project_path AS path,NULL AS machine FROM matters WHERE owner_chat_id=?1 OR (kind='terminal' AND owner_chat_id IS NULL)
+    UNION SELECT cwd,machine FROM cli_sessions WHERE COALESCE(origin_agent,'')=''
+  `).all(owner).filter(r=>sameTopicMachine(r.machine,context.machine)).map(r=>r.path).filter((p):p is string=>!!p)]
   const names = new Map<string,Set<string>>()
   type Evidence=History&{seedId:string}
   const byIdentity = new Map<string,Evidence[]>(), exact = new Map<string,Evidence[]>()
@@ -166,11 +162,11 @@ export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly
     const history=identity?byIdentity.get(identity.key)??[]:exact.get(path)??[]
     const allowed=allowedTopicEntryIds(db,context,history.map(h=>h.seedId))
     const fresh=db.query<{id:string;title:string;aliases:string},[string]>(`SELECT id,title,aliases FROM threads WHERE chat_id=? AND private=0 ${options.includeDoneHistory?'':"AND status!='done'"}`).all(owner)
-    const restricted=restrictedTopicIds(db,context,fresh.map(t=>t.id))
-    const byId=new Map(fresh.map(t=>[t.id,t]))
+    const metadata=readableTopicMetadata(db,context,fresh.map(t=>({...t,summary:''})))
+    const byId=new Map(metadata.map(t=>[t.id,t]))
     const visible=topics.filter(t=>byId.has(t.id)).map(t=>{
       const row=byId.get(t.id)!
-      return {...t,title:restricted.has(t.id)?'':row.title,aliases:restricted.has(t.id)?[]:JSON.parse(row.aliases) as string[]}
+      return {...t,title:row.title,aliases:JSON.parse(row.aliases) as string[]}
     })
     return resolveProjectTopic(path,safeIdentity,visible,history.filter(h=>allowed.has(h.seedId)))
   }

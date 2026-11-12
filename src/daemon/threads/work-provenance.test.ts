@@ -51,9 +51,9 @@ function fixture() {
   return { db, threads, messages, matters, log, task, terminal, extract, response }
 }
 
-it.each(['visitor', 'remote', 'subagent', 'temporary', 'unknown-path'] as const)('real reader rejects %s before the model and advances its cursor', async shape => {
+it.each(['visitor', 'remote', 'subagent', 'temporary', 'unknown-owner-path'] as const)('real reader rejects %s before the model and advances its cursor', async shape => {
   const f = fixture()
-  const id = shape === 'remote' ? f.terminal({ machine: 'remote-host' }) : shape === 'subagent' ? f.terminal({ origin_agent: 'child-agent' }) : f.task(shape === 'visitor' ? 'visitor' : 'owner', shape === 'temporary' ? '/tmp/probe' : shape === 'unknown-path' ? null : '/projects/bx')
+  const id = shape === 'remote' ? f.terminal({ machine: 'remote-host' }) : shape === 'subagent' ? f.terminal({ origin_agent: 'child-agent' }) : f.task(shape === 'visitor' || shape === 'unknown-owner-path' ? 'visitor' : 'owner', shape === 'temporary' ? '/tmp/probe' : shape === 'unknown-owner-path' ? null : '/projects/bx')
   let calls = 0
   await f.extract(async () => { calls++; return f.response(id) })
   expect(calls).toBe(0)
@@ -112,12 +112,13 @@ it('authorized recall and paginated detail hide restricted history and derived s
   const before = f.db.query<{ n: number }, []>('SELECT total_changes() AS n').get()!.n
   const readable = makeThreadsStore(f.db, { filterSources: true })
   const recall = await loadMatchTopics(readable, 'owner')
-  expect(JSON.stringify(recall)).not.toContain('SECRET_')
+  expect(JSON.stringify(recall[0]!.entries)).not.toContain('SECRET_')
+  expect(recall[0]!.title).toBe('bx')
   expect(recall[0]!.entries.map(e => e.line).sort()).toEqual(['ALLOWED', 'ALLOWED_DELEGATE'])
   const detail = await topicDetailPage(f.db, 'owner', topic, { entries: 0, matters: 0, messages: 0 }, { entries: 1, matters: 1, messages: 1 })
   expect(detail!.entries.map(e => e.line)).toEqual(['ALLOWED'])
   expect(detail!.totals.entries).toBe(2)
-  expect(JSON.stringify(detail)).not.toContain('SECRET_')
+  expect(JSON.stringify(detail!.entries)).not.toContain('SECRET_')
   expect(f.db.query<{ n: number }, []>('SELECT total_changes() AS n').get()!.n).toBe(before)
   expect(await f.threads.entries(topic)).toHaveLength(6)
 })
@@ -151,14 +152,15 @@ it.each(['update_topic', 'update_entry'] as const)('rechecks before %s after an 
   expect(JSON.stringify(await f.threads.entries(topic))).not.toContain('STALE_RESULT')
 })
 
-it('hides cached text derived from a restricted superseded original with no successor', async () => {
+it('owner keeps metadata after a restricted original was superseded without a successor', async () => {
   const f = fixture(), id = f.task('visitor')
   const topic = await f.threads.create({ chatId: 'owner', title: 'bx', summary: 'SECRET_OLD', description: 'SECRET_OLD', facets: ['task'], tags: [], aliases: [], private: false, episodes: [] })
   const entry = await f.threads.addEntry({ threadId: topic, kind: 'progress', line: 'SECRET_OLD', source: 'work', matterId: id })
   await f.threads.updateEntry(entry, { status: 'superseded' })
   await f.threads.addEntry({ threadId: topic, kind: 'fact', line: 'safe' })
   const topics = await loadMatchTopics(makeThreadsStore(f.db, { filterSources: true }), 'owner')
-  expect(JSON.stringify(topics)).not.toContain('SECRET_')
+  expect(topics[0]!.summary).toBe('SECRET_OLD')
+  expect(JSON.stringify(topics[0]!.entries)).not.toContain('SECRET_')
 })
 
 it.each(['missing', 'forged'] as const)('does not leave unlinked topic metadata from a %s work reference', async reference => {
@@ -175,7 +177,7 @@ it('rechecks cached topic metadata when detail receives an older projection', as
   const snapshot = await topicsProjection(f.db, 'owner')
   f.db.query('UPDATE matters SET owner_chat_id=? WHERE id=?').run('visitor', id)
   const detail = await topicDetailPage(f.db, 'owner', topic, { entries: 0, matters: 0, messages: 0 }, { entries: 1, matters: 1, messages: 1 }, undefined, snapshot)
-  expect(JSON.stringify(detail)).not.toContain('SECRET_')
+  expect(JSON.stringify(detail!.entries)).not.toContain('SECRET_')
 })
 
 it('retains independent chat memories when completed work is waiting in the same tick', async () => {
@@ -307,14 +309,14 @@ it.each(['work-only', 'mixed'] as const)('restricted metadata canaries stay out 
   if (shape === 'mixed') await f.threads.addEntry({ threadId: topic!.id, kind: 'fact', line: 'SAFE_CHAT' })
   f.db.query('UPDATE matters SET owner_chat_id=? WHERE id=?').run('visitor', matter)
   await f.messages.append({ id: 'later', chatId: 'owner', ts: '2026-11-11T00:00:00Z', direction: 'in', text: '今天吃什么', kind: 'text', source: 'live' })
-  const filtered = makeThreadsStore(f.db, { filterSources: true })
+  const filtered = makeThreadsStore(f.db, { filterSources: true, allowWork: false })
   let prompt = ''
   await runThreadsExtraction({ chatId: 'owner', threads: filtered, messages: f.messages, sdkEval: async p => { prompt = p; return '{"ops":[]}' }, recordEvent: async () => {}, log: () => {} })
   expect(prompt).not.toContain('SECRET_')
   expect(JSON.stringify(await filtered.list('owner'))).not.toContain('SECRET_')
-  expect(JSON.stringify(await topicsProjection(f.db, 'owner'))).not.toContain('SECRET_')
+  expect((await topicsProjection(f.db, 'owner')).byId.get(topic!.id)?.title).toBe('SECRET_TITLE')
   const detail = await topicDetailPage(f.db, 'owner', topic!.id, { entries: 0, matters: 0, messages: 0 }, { entries: 10, matters: 10, messages: 10 })
-  expect(JSON.stringify(detail)).not.toContain('SECRET_')
+  expect(JSON.stringify(detail!.entries)).not.toContain('SECRET_')
   expect(await filtered.get(topic!.id)).toEqual(shape === 'work-only' ? null : expect.objectContaining({ title: '', aliases: [], tags: [] }))
   expect((await f.threads.get(topic!.id))!.title).toBe('SECRET_TITLE')
 })
@@ -423,7 +425,7 @@ it('owner extraction vocabulary never reads another conversation work metadata',
 })
 
 
-it('deleting a source topic preserves dependent evidence as a fail-closed tombstone',async()=>{
+it('deleting a source topic preserves owner memory and a fail-closed tombstone for restricted readers',async()=>{
   const f=fixture(),matter=f.task()
   const input={chatId:'owner',title:'bx',summary:'',facets:['task'] as const,tags:[],private:false,episodes:[]}
   const a=await f.threads.create({...input,facets:['task']}),b=await f.threads.create({...input,facets:['task'],title:'derived'})
@@ -433,7 +435,8 @@ it('deleting a source topic preserves dependent evidence as a fail-closed tombst
   expect(result.status).toBe(200)
   expect(await f.threads.get(a)).toBeNull()
   expect(await f.threads.getEntry(copy)).not.toBeNull()
-  expect(await makeThreadsStore(f.db,{filterSources:true}).getEntry(copy)).toBeNull()
+  expect(await makeThreadsStore(f.db,{filterSources:true}).getEntry(copy)).toMatchObject({line:'WORK_CANARY_DNS'})
+  expect(await makeThreadsStore(f.db,{filterSources:true,allowWork:false}).getEntry(copy)).toBeNull()
   expect(f.db.query('SELECT source_id FROM topic_entry_sources WHERE entry_id=?').get(copy)).toEqual({source_id:source})
 })
 
@@ -452,18 +455,73 @@ it('work context does not prevent completing unrelated chat commitments or topic
 })
 
 
-it.each(['first','second'] as const)('new chat topics inherit every work context source: revoke %s',async which=>{
+it.each(['first','second'] as const)('new chat topics inherit every explicitly referenced work source: revoke %s',async which=>{
   const f=fixture(),first=f.task(),second=f.task()
   const existing=await f.threads.create({chatId:'owner',title:'bx',summary:'WORK_CONTEXT',facets:['task'],tags:[],private:false,episodes:[]})
-  for(const matter of [first,second])await f.threads.addEntry({threadId:existing,kind:'conclusion',line:'WORK_CONTEXT',source:'work',matterId:matter})
+  const sources:string[]=[]
+  for(const matter of [first,second])sources.push(await f.threads.addEntry({threadId:existing,kind:'conclusion',line:'WORK_CONTEXT',source:'work',matterId:matter}))
   await f.messages.append({id:'derived-chat',chatId:'owner',ts:'2026-11-11T00:00:00Z',direction:'in',kind:'text',source:'live',text:'诊断还要记得'})
   const readable=makeThreadsStore(f.db,{filterSources:true})
-  await runThreadsExtraction({chatId:'owner',threads:readable,messages:f.messages,sdkEval:async()=>JSON.stringify({ops:[{op:'create_topic',title:'DERIVED_CANARY',summary:'DERIVED_CANARY',aliases:['DERIVED_CANARY'],tags:['DERIVED_CANARY'],facets:['task'],private:false,entries:[{kind:'conclusion',line:'DERIVED_CANARY'}]}]}),recordEvent:async()=>{},log:()=>{}})
+  await runThreadsExtraction({chatId:'owner',threads:readable,messages:f.messages,sdkEval:async()=>JSON.stringify({ops:[{op:'create_topic',title:'DERIVED_CANARY',summary:'DERIVED_CANARY',aliases:['DERIVED_CANARY'],tags:['DERIVED_CANARY'],facets:['task'],private:false,entries:[{kind:'conclusion',line:'DERIVED_CANARY',derivedFrom:sources}]}]}),recordEvent:async()=>{},log:()=>{}})
   const derived=(await f.threads.list('owner')).find(t=>t.title==='DERIVED_CANARY')!
   expect(await readable.get(derived.id)).not.toBeNull()
   expect(await readable.entries(derived.id)).toHaveLength(1)
   f.db.query('UPDATE matters SET owner_chat_id=? WHERE id=?').run('visitor',which==='first'?first:second)
-  expect(await readable.get(derived.id)).toBeNull()
+  expect(await readable.get(derived.id)).toMatchObject({title:'DERIVED_CANARY'})
+  expect(await makeThreadsStore(f.db,{filterSources:true,allowWork:false}).get(derived.id)).toBeNull()
   expect(await readable.entries(derived.id)).toEqual([])
   expect(await f.threads.get(derived.id)).not.toBeNull()
+})
+
+it('ordinary owner chat never compounds unrelated work dependencies across extraction rounds', async () => {
+  const f = fixture(), matter = f.task()
+  const work = await f.threads.create({ chatId: 'owner', title: '旧工作', summary: '旧结论', facets: ['task'], tags: [], private: false, episodes: [] })
+  const source = await f.threads.addEntry({ threadId: work, kind: 'conclusion', line: '旧工作结论', source: 'work', matterId: matter })
+  const chat = await f.threads.create({ chatId: 'owner', title: '家人', summary: '日常约定', facets: ['life'], tags: [], private: false, episodes: [] })
+  const readable = makeThreadsStore(f.db, { filterSources: true })
+  for (let n = 0; n < 5; n++) {
+    await f.messages.append({ id: `ordinary-${n}`, chatId: 'owner', ts: `2026-11-11T0${n}:00:00Z`, direction: 'in', kind: 'text', source: 'live', text: `家人周末安排 ${n}` })
+    await runThreadsExtraction({ chatId: 'owner', threads: readable, messages: f.messages,
+      sdkEval: async () => JSON.stringify({ ops: [
+        { op: 'add_entry', topic: chat, kind: 'decision', line: `家人周末安排 ${n}` },
+        { op: 'add_entry', topic: work, kind: 'decision', line: `参考工作结论 ${n}`, derivedFrom: [source] },
+      ] }), recordEvent: async () => {}, log: () => {} })
+    // Exactly one explicit edge per round; prior derived chat is never reattached.
+    expect(f.db.query('SELECT COUNT(*) AS n FROM topic_entry_sources').get()).toEqual({ n: n + 1 })
+  }
+  f.db.exec('PRAGMA foreign_keys=OFF'); f.db.query('DELETE FROM matters WHERE id=?').run(matter)
+  expect(await readable.entries(chat)).toHaveLength(5)
+  expect(await readable.entries(work)).toEqual([])
+  await f.messages.append({ id: 'after-delete', chatId: 'owner', ts: '2026-11-12T00:00:00Z', direction: 'in', kind: 'text', source: 'live', text: '家人周末去公园' })
+  await runThreadsExtraction({ chatId: 'owner', threads: readable, messages: f.messages,
+    sdkEval: async () => JSON.stringify({ ops: [{ op: 'create_topic', title: '公园', summary: '周末安排', facets: ['life'], tags: [], private: false, entries: [{ kind: 'decision', line: '周末去公园' }] }] }), recordEvent: async () => {}, log: () => {} })
+  const park = (await readable.list('owner')).find(t => t.title === '公园')!
+  expect(await readable.entries(park.id)).toMatchObject([{ line: '周末去公园', source: 'chat' }])
+})
+
+it('extractor rejects invented derivation references while preserving independent owner chat', async () => {
+  const f = fixture()
+  const topic = await f.threads.create({ chatId: 'owner', title: '家人', summary: '', facets: ['life'], tags: [], private: false, episodes: [] })
+  await f.messages.append({ id: 'refs', chatId: 'owner', ts: '2026-11-11T00:00:00Z', direction: 'in', kind: 'text', source: 'live', text: '周末去公园' })
+  const result = await runThreadsExtraction({ chatId: 'owner', threads: makeThreadsStore(f.db, { filterSources: true }), messages: f.messages,
+    sdkEval: async () => JSON.stringify({ ops: [
+      { op: 'add_entry', topic, kind: 'fact', line: '不可信引用', derivedFrom: ['invented-entry'] },
+      { op: 'add_entry', topic, kind: 'decision', line: '周末去公园' },
+    ] }), recordEvent: async () => {}, log: () => {} })
+  expect(result.skipped).toBe(1)
+  expect(await f.threads.entries(topic)).toMatchObject([{ line: '周末去公园' }])
+})
+
+it.each(['update_topic', 'update_entry'] as const)('unlinked %s rewrites cannot copy other work context into owner chat', async operation => {
+  const f = fixture(), matter = f.task()
+  const work = await f.threads.create({ chatId: 'owner', title: '工作', summary: '工作结论', facets: ['task'], tags: [], private: false, episodes: [] })
+  await f.threads.addEntry({ threadId: work, kind: 'conclusion', line: 'WORK_CANARY_DNS', source: 'work', matterId: matter })
+  const chat = await f.threads.create({ chatId: 'owner', title: '家人', summary: '日常约定', facets: ['life'], tags: [], private: false, episodes: [] })
+  const entry = await f.threads.addEntry({ threadId: chat, kind: 'decision', line: '主人周末去公园' })
+  await f.messages.append({ id: 'rewrite', chatId: 'owner', ts: '2026-11-11T00:00:00Z', direction: 'in', kind: 'text', source: 'live', text: '周末的安排还要记得' })
+  const result = await runThreadsExtraction({ chatId: 'owner', threads: makeThreadsStore(f.db, { filterSources: true }), messages: f.messages,
+    sdkEval: async () => JSON.stringify({ ops: [operation === 'update_topic' ? { op: operation, id: chat, summary: 'WORK_CANARY_DNS' } : { op: operation, id: entry, line: 'WORK_CANARY_DNS' }] }), recordEvent: async () => {}, log: () => {} })
+  expect(result.skipped).toBe(1)
+  expect((await f.threads.get(chat))!.summary).toBe('日常约定')
+  expect((await f.threads.entries(chat))[0]!.line).toBe('主人周末去公园')
 })

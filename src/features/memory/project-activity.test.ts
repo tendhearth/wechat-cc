@@ -452,3 +452,15 @@ it.each(['remote','subagent','temporary','visitor'] as const)('task activity exc
   expect(JSON.stringify(recalled)).not.toContain('SECRET_REMOTE_FILE.txt')
   expect(JSON.stringify(recalled)).not.toContain('1 个在跑')
 })
+
+it('owner current terminal stays visible after local hostname collision drift', async () => {
+  const f = await fixture(), m = f.terminal('rename-current')
+  const { hostname } = await import('node:os')
+  const machine = hostname().replace(/\.local$/i, '').replace(/-\d+$/, '').toUpperCase() + '-2.local'
+  f.db.query('UPDATE cli_sessions SET machine=?').run(machine)
+  f.db.query('UPDATE matter_turns SET policy_json=? WHERE matter_id=?').run(JSON.stringify({ cwd: root, machine }), m.id)
+  const activity = (await projectActivities(f.db, 'owner', () => null, f.identify)).get(f.id)!
+  expect(activity).toBeDefined()
+  expect(activity.sessions.map(s => s.id)).toContain(m.id)
+  expect(activity.activity.running).toBe(1)
+})

@@ -218,3 +218,29 @@ it.each(['remote','subagent','mixed-ancestor','revoke-await','reuse'] as const)(
     expect(log.turns(task.id)[0]!.id).toBe(turn.id)
   } finally {db.close()}
 })
+
+it('owner terminal history still maps after local hostname collision drift', async () => {
+  const db = openTestDb(), threads = makeThreadsStore(db), matters = makeMatterStore(db)
+  try {
+    const { hostname } = await import('node:os')
+    const machine = hostname().replace(/\.local$/i, '').replace(/-\d+$/, '').toUpperCase() + '-2.local'
+    const turns = makeTerminalTurnLog({ db, matters, log: makeMatterLog(db) })
+    turns.event({ source: 'claude', session_id: 'rename-history', cwd: repo.roots[0]!, machine, kind: 'prompt' }, 1000)
+    const matter = matters.findBySurface('cli', 'rename-history')!
+    const id = await threads.create({ chatId: 'owner', title: '主人项目', aliases: [], summary: '', facets: [], tags: [], private: false, episodes: [] })
+    await threads.addEntry({ threadId: id, kind: 'conclusion', line: '主人记得的历史配置', source: 'work', matterId: matter.id })
+    const get = makeProjectMemory({ db, config: () => ({ enabled: true, owner: 'owner' }), identity: async () => repo, log: () => {} })
+    expect(await get({ source: 'codex', session_id: 'current', cwd: repo.roots[1]! })).toMatchObject({ reason: 'history', context: expect.stringContaining('主人记得的历史配置') })
+  } finally { db.close() }
+})
+
+it('owner maps topic names and recalls chat despite a deleted-matter work entry', async () => {
+  const db = openTestDb(), threads = makeThreadsStore(db)
+  try {
+    const id = await threads.create({ chatId: 'owner', title: '主人项目', aliases: ['wechat-cc'], summary: '项目约定', facets: [], tags: [], private: false, episodes: [] })
+    await threads.addEntry({ threadId: id, kind: 'conclusion', line: '旧工作结论', source: 'work', matterId: 'deleted-matter' })
+    await threads.addEntry({ threadId: id, kind: 'decision', line: '主人决定保留离线模式' })
+    const get = makeProjectMemory({ db, config: () => ({ enabled: true, owner: 'owner' }), identity: async () => repo, log: () => {} })
+    expect(await get({ source: 'codex', session_id: 'owner-project', cwd: repo.roots[0]! })).toMatchObject({ reason: 'name', context: expect.stringContaining('主人决定保留离线模式') })
+  } finally { db.close() }
+})

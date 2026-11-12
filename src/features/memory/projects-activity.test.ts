@@ -130,7 +130,7 @@ it('filters linked work index lines by the original matter owner, local provenan
  expect(JSON.stringify(r)).not.toContain('FORBIDDEN_')
 })
 
-it('rechecks derived project names after an awaited source revocation',async()=>{
+it('owner keeps project names but rechecks entries after an awaited source revocation',async()=>{
  const f=await fixture()
  await f.threads.update(f.ids.bx!,{title:'SECRET_PROJECT_TITLE',aliases:['bx']})
  const matter=f.matters.create({kind:'task',title:'检查',projectPath:'/projects/bx',ownerChatId:'owner'})
@@ -139,7 +139,8 @@ it('rechecks derived project names after an awaited source revocation',async()=>
  await f.threads.addEntry({threadId:f.ids.bx!,kind:'conclusion',line:'SECRET_RESULT',source:'work',matterId:matter.id,ts:new Date(at).toISOString()})
  await f.threads.addEntry({threadId:f.ids.bx!,kind:'progress',line:'可读聊天进展',ts:new Date(at).toISOString()})
  const result=await readProjectsActivity({db:f.db,owner:'owner',now:()=>now,identify:async path=>{f.db.query('UPDATE matters SET owner_chat_id=? WHERE id=?').run('visitor',matter.id);return {key:path+'/.git',roots:[path],names:['bx']}}},{projects:[f.ids.bx!]})
- expect(JSON.stringify(result)).not.toContain('SECRET_')
+ expect(result.projects[0]!.project).toBe('SECRET_PROJECT_TITLE')
+ expect(JSON.stringify(result)).not.toContain('SECRET_RESULT')
  expect(result.projects[0]!.entries.map(e=>e.line)).toEqual(['可读聊天进展'])
 })
 
@@ -185,4 +186,14 @@ it('current task activity is rechecked after later historical identity work',asy
  expect(calls).toBeGreaterThanOrEqual(2)
  expect(JSON.stringify(result)).not.toContain('CANARY_CURRENT_FILE.txt')
  expect(result.projects[0]!.current.sessions).toEqual([])
+})
+
+it('owner historical project turns survive local hostname collision drift', async () => {
+  const f = await fixture(), { hostname } = await import('node:os')
+  const machine = hostname().replace(/\.local$/i, '').replace(/-\d+$/, '').toUpperCase() + '-2.local'
+  f.turns.event({ session_id: 'rename-history', source: 'claude', cwd: '/projects/bx', machine, kind: 'prompt' }, at)
+  f.turns.event({ session_id: 'rename-history', source: 'claude', cwd: '/projects/bx', machine, kind: 'stop', text: '主人历史结果' }, at + 1)
+  const result = await f.read()
+  expect(result.projects.map(p => p.project)).toEqual(['bx'])
+  expect(result.projects[0]!.history).toHaveLength(1)
 })

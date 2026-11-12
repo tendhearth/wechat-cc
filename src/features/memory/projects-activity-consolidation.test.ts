@@ -79,10 +79,11 @@ it.each(['all-work', 'mixed-chat', 'all-chat'] as const)('retains legal owner %s
   expect(f.db.query<{ n: number }, []>('SELECT total_changes() AS n').get()!.n).toBe(before)
 })
 
-it.each(['temporary', 'missing', 'unknown'] as const)('rejects mixed consolidation with an original %s matter', async shape => {
+it.each(['temporary', 'missing', 'unknown'] as const)('applies source authorization to mixed consolidation with an original %s matter', async shape => {
   const f = await fixture('mixed-chat', shape)
   await f.merge([f.old, f.latest])
-  expect(JSON.stringify(await f.read())).not.toContain('CANARY_')
+  if (shape === 'unknown') expect(JSON.stringify(await f.read())).toContain('CANARY_unknown') // Owner local pathless task.
+  else expect(JSON.stringify(await f.read())).not.toContain('CANARY_')
 })
 
 it.each(['unlinked', 'delegated', 'wrong-kind'] as const)('rejects %s original sources even when consolidated into chat', async shape => {

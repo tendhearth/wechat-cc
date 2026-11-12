@@ -1,5 +1,4 @@
 /** Read only. SQL selects metadata and existing topic index lines, never message/permission bodies. */
-import { hostname } from 'node:os'
 import type { Db } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { temporary, topicMatterAccess, allowedTopicEntryIds, readableTopicMetadata, localTopicContext } from '../../lib/topic-provenance'
@@ -16,26 +15,23 @@ export async function readProjectsActivity(d:Deps,query:ProjectsActivityQueryT){
  const topics=await makeThreadsStore(db, { filterSources: true, allowDelegate: false }).list(owner)
  const evidence=new Map<string,ProjectActivityEvidenceT>(topics.filter(t=>!t.private).map(t=>[t.id,{id:t.id,title:t.title,aliases:t.aliases,private:false,entries:[],history:[],current:[]}]))
  const codes=new Map(db.query<{id:string;code:string},[]>("SELECT matter_id AS id,substr(surface_key,1,6) AS code FROM matter_bindings WHERE surface='cli'").all().map(r=>[r.id,r.code]))
- const rows=db.query<Turn,[string,string,number,number]>(`SELECT t.id,t.matter_id AS matterId,m.kind,t.executor,t.status,t.started_at AS started,t.ended_at AS ended,
+ const rows=db.query<Turn,[string,number,number]>(`SELECT t.id,t.matter_id AS matterId,m.kind,t.executor,t.status,t.started_at AS started,t.ended_at AS ended,
    CASE WHEN m.kind='terminal' THEN json_extract(t.policy_json,'$.cwd') ELSE COALESCE(json_extract(t.policy_json,'$.cwd'),m.project_path) END AS cwd,
    wt.project_path AS project,wt.repo_root AS repo,wt.root,substr(b.surface_key,1,6) AS code,
-   (SELECT MAX(i.updated_at) FROM matter_items i WHERE i.turn_id=t.id AND i.updated_at>=?3 AND i.updated_at<?4) AS eventAt,
+   (SELECT MAX(i.updated_at) FROM matter_items i WHERE i.turn_id=t.id AND i.updated_at>=?2 AND i.updated_at<?3) AS eventAt,
    (SELECT json_object('kind',i.kind,'tool',COALESCE(json_extract(i.payload_json,'$.tool'),json_extract(i.payload_json,'$.toolName')),
     'verb',json_extract(i.payload_json,'$.verb'),'type',json_extract(i.payload_json,'$.activity.type'),'status',i.status,
     'file',CASE WHEN json_extract(i.payload_json,'$.verb') IN ('read','edit','write','delete') THEN json_extract(i.payload_json,'$.target') END,
     'at',i.updated_at) FROM matter_items i WHERE i.turn_id=t.id AND i.kind IN ('tool_call','system','error')
-      AND i.updated_at>=?3 AND i.updated_at<?4 ORDER BY i.updated_at DESC,i.seq DESC LIMIT 1) AS last
+      AND i.updated_at>=?2 AND i.updated_at<?3 ORDER BY i.updated_at DESC,i.seq DESC LIMIT 1) AS last
   FROM matter_turns t JOIN matters m ON m.id=t.matter_id
   LEFT JOIN matter_bindings b ON b.matter_id=m.id AND b.surface='cli'
   LEFT JOIN cli_sessions c ON c.session_id=b.surface_key
   LEFT JOIN workbench_worktrees wt ON wt.task_id=m.id
   WHERE m.kind IN ('task','terminal') AND (m.owner_chat_id=?1 OR (m.kind='terminal' AND m.owner_chat_id IS NULL))
-   AND (m.kind!='terminal' OR (COALESCE(c.origin_agent,'')='' AND COALESCE(c.machine,'') IN ('',?2)
-    AND NOT EXISTS(SELECT 1 FROM matter_turns mt WHERE mt.matter_id=m.id AND (
-     COALESCE(json_extract(mt.policy_json,'$.originAgent'),'')!='' OR COALESCE(json_extract(mt.policy_json,'$.machine'),'') NOT IN ('',?2)))))
-   AND ((t.started_at>=?3 AND t.started_at<?4) OR (t.ended_at>=?3 AND t.ended_at<?4)
-    OR EXISTS(SELECT 1 FROM matter_items i WHERE i.turn_id=t.id AND i.updated_at>=?3 AND i.updated_at<?4))
-  ORDER BY MAX(t.started_at,COALESCE(t.ended_at,0)) DESC,t.id`).all(owner,hostname(),start,window.end)
+   AND ((t.started_at>=?2 AND t.started_at<?3) OR (t.ended_at>=?2 AND t.ended_at<?3)
+    OR EXISTS(SELECT 1 FROM matter_items i WHERE i.turn_id=t.id AND i.updated_at>=?2 AND i.updated_at<?3))
+  ORDER BY MAX(t.started_at,COALESCE(t.ended_at,0)) DESC,t.id`).all(owner,start,window.end)
  const resolve=makeProjectTopicResolver(db,owner,topics.map(t=>({id:t.id,title:t.title,aliases:t.aliases,tags:[],summary:'',lastActive:t.lastActive,entries:[]})),d.identify,rows.map(r=>r.cwd).filter((p):p is string=>!!p),{includeDoneHistory:true,allowDelegate:false})
  const historicalMatters=new Map<string,string>(),historicalPaths=new Map<string,string[]>()
  for(const r of rows){
