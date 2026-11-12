@@ -12,6 +12,7 @@
 - 历史从owner的task/terminal轮次及安全步骤元数据读取（包括归档）；终端按该轮policy.cwd归属，不用当前cwd替过去补归属。复用真实common-dir与唯一话题证据；无可靠公开话题归属不猜。公开done话题历史允许使用有效work归属证据；跨仓库迁移且仅有matter级work证据时继续弃用该证据，不能假定条目属于哪轮。远端、子agent、临时目录、private排除，done公开话题可查历史。输出说明此覆盖范围，不能将缺记录说成没工作。
 - 当前计数复用projectActivities：只未决审批/提问等你；真执行才在跑；终端答完不算等你/未读。会话只返回码/类型/执行者/固定步骤/时间/状态，不取原始标题或消息。
 - topic_entries仅decision/progress/conclusion的已有line，live/done，按updated_ts筛窗，明确是条目更新时间而非工作发生时间；不读body/命令参数/diff/输出/问题或审批正文。带matter_id的work索引行继承事项的owner、本机和非临时来源限制；读取后的同步阶段再核对话题与事项权限。
+- 整理合并后仍继承全部原始条目的来源授权：沿superseded_by反向追溯所有层级，不受原始条目时间窗限制，work与混合后source=chat的组一视同仁；任一原始来源为非主人、远端、子agent、临时任务，或work的matter缺失/来源无法判定，整组不返回。主人本机工作与主人聊天组成的合法组照常返回，最终同步复核沿用同一判定。
 - 最多12项目，各3历史、3条目、3当前入口，整体12000字符；截断明确标记，可用projects缩小。projects按话题id/title/alias精确匹配，缺数据明确返回空，不虚构项目。只admin且主人当前聊天（含已绑定shared turn）；拒访客/其他chat，读完复核owner。不adopt、不seen、不写库、不调用模型。
 
 ## 验证
