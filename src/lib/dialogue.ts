@@ -424,7 +424,7 @@ export interface ThreadsResult {
  * (simpler than json_each SQL, per task spec).
  */
 export async function dialogueThreads(db: Db, chatId: string, opts: ThreadsOpts): Promise<ThreadsResult> {
-  const store = makeThreadsStore(db)
+  const store = makeThreadsStore(db, { filterSources: true })
   let threads = await store.list(chatId)
   if (!opts.includePrivate) {
     threads = threads.filter(t => !t.private)
@@ -467,7 +467,7 @@ export interface ThreadDetailResult {
  * capped at 200 rows per episode.
  */
 export async function dialogueThreadDetail(db: Db, id: string): Promise<ThreadDetailResult | null> {
-  const tStore = makeThreadsStore(db)
+  const tStore = makeThreadsStore(db, { filterSources: true })
   const thread = await tStore.get(id)
   if (!thread) return null
 

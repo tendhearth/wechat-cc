@@ -1,3 +1,4 @@
+import { visibleTopicEntryIds, topicMatterAccess, localTopicContext } from '../../lib/topic-provenance'
 import type { Db } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { type MatterSeen } from '../../adapters/store/matter-seen'
@@ -13,7 +14,7 @@ export function topicsRevision(db: Db, owner: string): string {
 const RECENT_ORDER = "MAX(COALESCE(b.last_recalled_at,''),COALESCE(b.last_opened_by_owner_at,'')) DESC,t.id"
 const FROM = 'FROM threads t LEFT JOIN topic_bubbles b ON b.thread_id=t.id WHERE t.chat_id=?'
 export async function topicSummary(db: Db, owner: string, id: string, activities?: Map<string, ProjectActivity>) {
-  const t = await makeThreadsStore(db).get(id)
+  const t = await makeThreadsStore(db, { filterSources: true }).get(id)
   if (!t || t.chatId !== owner) return null
   const bubble = makeTopicBubbles(db).get(id), matters = topicMatters(db, owner, id)
   return {
@@ -62,14 +63,17 @@ export type TopicSection = 'entries' | 'matters' | 'messages'
 export async function topicDetailPage(db: Db, owner: string, id: string, offsets: Record<TopicSection, number>, limits: Record<TopicSection, number>, seen: MatterSeen = projectSeen(db), snapshot?: Awaited<ReturnType<typeof topicsProjection>>) {
   snapshot??=await topicsProjection(db,owner,undefined,seen)
   const activities=snapshot.activities
-  const topic=snapshot.byId.get(id)
+  let topic=snapshot.byId.get(id)
   if (!topic) return null
-  const store = makeThreadsStore(db), t = (await store.get(id))!
+  const store = makeThreadsStore(db, { filterSources: true }), t = await store.get(id)
+  if (!t || t.chatId !== owner) return null
+  topic = { ...topic, title: t.title.slice(0,160), summary: t.summary.slice(0,600), description: t.description.slice(0,600) }
   const ref = db.query<{ entry_ids: string }, [string, string]>('SELECT entry_ids FROM topic_recall_refs WHERE thread_id=? AND chat_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(id, owner)
   const recalled = ref?.entry_ids ?? '[]'
-  const entries = db.query<Record<string, unknown>, [string, string, number, number]>(`SELECT id,thread_id AS threadId,kind,line,body,due,status,source,matter_id AS matterId,superseded_by AS supersededBy,created_ts AS createdTs,updated_ts AS updatedTs,
-    id IN (SELECT value FROM json_each(?1)) AS recalled FROM topic_entries WHERE thread_id=?2 AND status='live'
-    ORDER BY kind='commitment' DESC,recalled DESC,updated_ts DESC,id LIMIT ?3 OFFSET ?4`).all(recalled, id, limits.entries, offsets.entries)
+  const allowedEntries = JSON.stringify([...visibleTopicEntryIds(db, localTopicContext(owner), id)])
+  const entries = db.query<Record<string, unknown>, [string, string, number, number, string]>(`SELECT id,thread_id AS threadId,kind,line,body,due,status,source,matter_id AS matterId,superseded_by AS supersededBy,created_ts AS createdTs,updated_ts AS updatedTs,
+    id IN (SELECT value FROM json_each(?1)) AS recalled FROM topic_entries WHERE thread_id=?2 AND status='live' AND id IN (SELECT value FROM json_each(?5))
+    ORDER BY kind='commitment' DESC,recalled DESC,updated_ts DESC,id LIMIT ?3 OFFSET ?4`).all(recalled, id, limits.entries, offsets.entries, allowedEntries)
     .map(e => TopicBubbleEntry.parse({ ...e, recalled: !!e.recalled }))
   let allMatters=snapshot.matterRows.get(id)
   if(!allMatters){
@@ -79,6 +83,8 @@ export async function topicDetailPage(db: Db, owner: string, id: string, offsets
     allMatters=[...sessions.map(session=>({id:session.id,kind:session.kind,detailRoute:`/v1/matter?id=${encodeURIComponent(session.id)}`,title:session.title,state:session.activity,archivedAt:null,session})),...linkedMatters.filter(m=>!sessionIds.has(m.id))]
     snapshot.matterRows.set(id,allMatters)
   }
+  const permittedMatters=topicMatterAccess(db,localTopicContext(owner),allMatters.map(m=>m.id)).allowed
+  allMatters=allMatters.filter(m=>permittedMatters.has(m.id))
   const related = `FROM messages m WHERE m.chat_id=?1 AND (
     EXISTS(SELECT 1 FROM topic_recall_refs r,json_each(r.message_ids) j WHERE r.chat_id=?1 AND r.thread_id=?2 AND j.value=m.id)
     OR EXISTS(SELECT 1 FROM json_each(?3) ep WHERE m.ts>=json_extract(ep.value,'$.from_ts') AND m.ts<=json_extract(ep.value,'$.to_ts')))`
@@ -87,7 +93,7 @@ export async function topicDetailPage(db: Db, owner: string, id: string, offsets
     ${related} ORDER BY m.ts DESC,m.id LIMIT ?4 OFFSET ?5`).all(owner, id, JSON.stringify(t.episodes), limits.messages, offsets.messages)
     .map(m => ({ id: m.id, ts: m.ts, speaker: m.direction === 'in' ? 'owner' : 'cc', excerpt: m.text.replace(/\s+/g, ' ').slice(0, 240), source: m.recalled ? 'recall' : 'episode' }))
   const totals = {
-    entries: db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM topic_entries WHERE thread_id=? AND status='live'").get(id)!.n,
+    entries: JSON.parse(allowedEntries).length,
     matters: allMatters.length,
     messages: db.query<{ n: number }, [string, string, string]>(`SELECT COUNT(*) AS n ${related}`).get(owner, id, JSON.stringify(t.episodes))!.n,
   }

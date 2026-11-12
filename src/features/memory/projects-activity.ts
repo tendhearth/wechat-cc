@@ -2,7 +2,7 @@
 import { hostname } from 'node:os'
 import type { Db } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
-import { temporary } from '../../lib/topic-bubbles'
+import { temporary, topicMatterAccess, allowedTopicEntryIds, localTopicContext } from '../../lib/topic-provenance'
 import { makeProjectTopicResolver, projectIdentity } from '../terminal'
 import { projectActivities, stepLabel } from './project-activity'
 import type { MatterSeen } from '../../adapters/store/matter-seen'
@@ -11,10 +11,9 @@ import { activityWindow, summarizeProjectsActivity, type ProjectsActivityQueryT,
 
 type Deps={db:Db;owner:string;now?:()=>number;identify?:typeof projectIdentity;seen?:MatterSeen;taskActivity?:ProjectTaskActivitySource;executorName?:(id:string)=>string}
 type Turn={id:string;matterId:string;kind:'task'|'terminal';cwd:string|null;executor:string;status:string;started:number;ended:number|null;code:string|null;eventAt:number|null;last:string|null;project:string|null;repo:string|null;root:string|null}
-type EntryOrigin={entryId:string;id:string;topicId:string;source:string;matterId:string|null;status:string;supersededBy:string|null}
 export async function readProjectsActivity(d:Deps,query:ProjectsActivityQueryT){
  const {db,owner}=d,now=d.now?.()??Date.now(),window=activityWindow(query,now),start=Number.isFinite(window.start)?window.start:0
- const topics=await makeThreadsStore(db).list(owner)
+ const topics=await makeThreadsStore(db, { filterSources: true }).list(owner)
  const evidence=new Map<string,ProjectActivityEvidenceT>(topics.filter(t=>!t.private).map(t=>[t.id,{id:t.id,title:t.title,aliases:t.aliases,private:false,entries:[],history:[],current:[]}]))
  const current=await projectActivities(db,owner,d.seen,d.identify,d.taskActivity,d.executorName)
  const codes=new Map(db.query<{id:string;code:string},[]>("SELECT matter_id AS id,substr(surface_key,1,6) AS code FROM matter_bindings WHERE surface='cli'").all().map(r=>[r.id,r.code]))
@@ -67,41 +66,11 @@ export async function readProjectsActivity(d:Deps,query:ProjectsActivityQueryT){
  const visible=new Set(db.query<{id:string},[string]>('SELECT id FROM threads WHERE chat_id=? AND private=0').all(owner).map(t=>t.id))
  // Consolidation drops matter_id and mixed groups become chat. Walk every original,
  // including superseded rows outside the requested window, in this same final snapshot.
- const origins=db.query<EntryOrigin,[string]>(`WITH RECURSIVE provenance(entryId,id) AS (
-   SELECT value,value FROM json_each(?1)
-   UNION
-   SELECT p.entryId,e.id FROM provenance p JOIN topic_entries e ON e.superseded_by=p.id
-  ) SELECT p.entryId,e.id,e.thread_id AS topicId,e.source,e.matter_id AS matterId,e.status,e.superseded_by AS supersededBy
-   FROM provenance p JOIN topic_entries e ON e.id=p.id`).all(JSON.stringify(entries.map(e=>e.id)))
- const byEntry=new Map<string,EntryOrigin[]>()
- for(const o of origins){const group=byEntry.get(o.entryId)??[];group.push(o);byEntry.set(o.entryId,group)}
- const referenced=[...new Set([...origins.flatMap(e=>e.matterId?[e.matterId]:[]),...historicalMatters.values(),...[...evidence.values()].flatMap(p=>p.current?.map(s=>s.id)??[])])]
- const permitted=db.query<{id:string;archived_at:number|null;path:string|null;turnPaths:string;workPaths:string|null;currentCwd:string|null},[string,string,string]>(`SELECT m.id,m.archived_at,m.project_path AS path,
-   (SELECT json_group_array(json_extract(mt.policy_json,'$.cwd')) FROM matter_turns mt WHERE mt.matter_id=m.id) AS turnPaths,
-   (SELECT json_array(w.project_path,w.repo_root,w.root) FROM workbench_worktrees w WHERE w.task_id=m.id) AS workPaths,
-   (SELECT c.cwd FROM matter_bindings b JOIN cli_sessions c ON c.session_id=b.surface_key WHERE b.matter_id=m.id AND b.surface='cli') AS currentCwd
-   FROM matters m
-  WHERE m.id IN (SELECT value FROM json_each(?1)) AND m.kind IN ('task','terminal')
-   AND (m.owner_chat_id=?2 OR (m.kind='terminal' AND m.owner_chat_id IS NULL))
-   AND (
-    NOT EXISTS(SELECT 1 FROM matter_bindings b JOIN cli_sessions c ON c.session_id=b.surface_key WHERE b.matter_id=m.id AND b.surface='cli'
-     AND (COALESCE(c.origin_agent,'')!='' OR COALESCE(c.machine,'') NOT IN ('',?3)))
-    AND NOT EXISTS(SELECT 1 FROM matter_turns mt WHERE mt.matter_id=m.id AND (
-     COALESCE(json_extract(mt.policy_json,'$.originAgent'),'')!='' OR COALESCE(json_extract(mt.policy_json,'$.machine'),'') NOT IN ('',?3))))`).all(JSON.stringify(referenced),owner,hostname())
- const allowed=new Set(permitted.map(m=>m.id)),active=new Set(permitted.filter(m=>m.archived_at===null).map(m=>m.id))
- // Work summaries inherit their linked matter's privacy/provenance boundary too.
- const entryAllowed=new Set(permitted.filter(m=>{
-  const paths=[m.path,m.currentCwd,...JSON.parse(m.turnPaths),...JSON.parse(m.workPaths??'[]')].filter((p):p is string=>typeof p==='string'&&!!p)
-  return paths.length>0&&!paths.some(temporary)
- }).map(m=>m.id))
+ const referenced=[...new Set([...entries.flatMap(e=>e.matterId?[e.matterId]:[]),...historicalMatters.values(),...[...evidence.values()].flatMap(p=>p.current?.map(s=>s.id)??[])])]
+ const {allowed,active}=topicMatterAccess(db,localTopicContext(owner),referenced)
+ const entryIds=allowedTopicEntryIds(db,localTopicContext(owner),entries.map(e=>e.id))
  for(const e of entries){
-  const lineage=byEntry.get(e.id)??[],merged=new Set(lineage.flatMap(o=>o.supersededBy?[o.supersededBy]:[]))
-  // Only synthetic nodes may lack a work matter. Any unprovable original hides
-  // the whole group; chat/work mixtures inherit the same intersection of access.
-  if(!lineage.some(o=>!merged.has(o.id))||lineage.some(o=>
-   o.topicId!==e.topicId||(o.id===e.id?o.supersededBy!==null:o.status!=='superseded')||
-   (o.source!=='chat'&&o.source!=='work')||
-   (o.matterId?!entryAllowed.has(o.matterId):o.source==='work'&&!merged.has(o.id))))continue
+  if(!entryIds.has(e.id))continue
   evidence.get(e.topicId)?.entries!.push({id:e.id,kind:e.kind,line:e.line,status:e.status,updatedAt:e.at})
  }
  const safe=[...evidence.values()].filter(p=>visible.has(p.id)).map(p=>({...p,

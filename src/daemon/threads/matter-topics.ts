@@ -6,6 +6,7 @@
  *  - delegate 那一路没有 matter:writeDelegate 直接给碰到的话题记一条。
  * 只给主人自己的对话做;一切失败只记一行,不影响派活 / 收尾。
  */
+import { localTopicContext, topicMatterAccess } from '../../lib/topic-provenance'
 import { makeTopicBubbles } from '../../lib/topic-bubbles'
 import type { Db } from '../../lib/db'
 import type { ThreadsStore } from '../../lib/threads-store'
@@ -44,6 +45,7 @@ export function makeMatterTopics(d: MatterTopicsDeps) {
     const topics = (await loadMatchTopics(d.threads, owner)).filter(t => open.has(t.id))
     // 只用索引、不叫模型;简报只带索引行,不带细节(细节里常有账号、地址,执行者用不着)
     const r = await resolveTopicRecall(text, topics, { cheapEval: null, bodies: false })
+    if (d.ownerChatId() !== owner || d.threads.contextAllowed?.(owner, topics, topics.flatMap(t=>t.entries.map(e=>e.id))) === false) return null
     return r ? { text: `${BRIEF_HEAD}\n${r.block}`, topicIds: r.topicIds } : null
   }
 
@@ -71,14 +73,18 @@ export function makeMatterTopics(d: MatterTopicsDeps) {
     /** 一轮真的做完了:把结论写回这件事挂着的每个话题。返回写了几条。 */
     async writeBack(matterId: string): Promise<number> {
       try {
+        const owner = d.ownerChatId()
+        if (!owner) return 0
         const links = d.db.query<{ thread_id: string; written_back_cursor: number }, [string]>(
           'SELECT thread_id, written_back_cursor FROM matter_topics WHERE matter_id = ?',
         ).all(matterId)
         if (links.length === 0) return 0
         let n = 0
         for (const l of links) {
-          const c = readMatterConclusion(d.db, matterId, l.written_back_cursor)
+          const c = readMatterConclusion(d.db, matterId, l.written_back_cursor, localTopicContext(owner))
           if (!c) continue
+          const target = await d.threads.get(l.thread_id)
+          if (!target || target.chatId !== owner || d.ownerChatId() !== owner || !d.db.query('SELECT id FROM threads WHERE id=? AND chat_id=?').get(l.thread_id,owner) || !topicMatterAccess(d.db, localTopicContext(owner), [matterId]).entryAllowed.has(matterId)) continue
           await d.threads.addEntry({ threadId: l.thread_id, kind: 'conclusion', line: firstLine(`${c.title}:${firstLine(c.result, LINE_MAX)}`, LINE_MAX + 20),
             body: c.result.slice(0, BODY_MAX), source: 'work', matterId, ts: c.at })
           d.db.query('UPDATE matter_topics SET written_back_cursor = ? WHERE matter_id = ? AND thread_id = ?').run(c.cursor, matterId, l.thread_id)

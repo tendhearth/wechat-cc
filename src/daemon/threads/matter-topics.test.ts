@@ -13,7 +13,7 @@ async function setup() {
   const mom = await threads.create({ chatId: 'owner', title: '妈妈', summary: '家里的事', facets: ['life'], tags: [], private: true, episodes: [] })
   await threads.addEntry({ threadId: mom, kind: 'fact', line: '妈妈下周体检' })
   let cursor = 0, seq = 0
-  db.query(`INSERT INTO matters(id, kind, title, project_path, state, created_at, updated_at) VALUES ('m1','task','修 bx 的 UDP','/Users/o/bx','open',?,?)`).run(T0, T0)
+  db.query(`INSERT INTO matters(id, kind, title, project_path, state, owner_chat_id, created_at, updated_at) VALUES ('m1','task','修 bx 的 UDP','/Users/o/bx','open','owner',?,?)`).run(T0, T0)
   const item = (kind: string, text: string) => { seq++; cursor++; db.query(`INSERT INTO matter_items(matter_id, seq, kind, status, payload_json, created_at, updated_at, cursor) VALUES ('m1', ?, ?, 'completed', ?, ?, ?, ?)`).run(seq, kind, JSON.stringify({ text }), T0 + seq, T0 + seq, cursor) }
   const logs: string[] = []
   const mt = makeMatterTopics({ db, threads, ownerChatId: () => 'owner', log: (_t, l) => logs.push(l), now: () => new Date(T0) })
@@ -58,7 +58,7 @@ describe('makeMatterTopics (话题 T3)', () => {
     expect(e.body).toContain('Meet 延迟 80ms')
     expect(await mt.writeBack('m1')).toBe(0)
     db.query("UPDATE matters SET state = 'done' WHERE id = 'm1'").run()
-    expect(readWorkResults(db, 0, T0 + 10).results).toEqual([])
+    expect(readWorkResults(db, 0, { owner: 'owner', machine: 'local' }, T0 + 10).results).toEqual([])
     expect(await mt.writeBack('nope')).toBe(0)
   })
 

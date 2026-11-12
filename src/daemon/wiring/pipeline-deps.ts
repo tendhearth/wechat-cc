@@ -453,7 +453,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const topicRecall = makeTopicRecall({
     activity: chatId => projectActivities(db, chatId, topicSeen, undefined, opts.workbench?.projectActivity, topicExecutorName),
     onAdopt: (chatId, requestId, r, messageIds) => makeTopicBubbles(db).adopt(chatId, requestId, 'recall', r.topicIds.map(id => ({ id, entryIds: r.entryIds, messageIds }))),
-    threads: makeThreadsStore(db),
+    threads: makeThreadsStore(db, { filterSources: true }),
     isOwner: (chatId) => chatId === ownerChatId(),
     cheapEval: () => turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log),
     log,

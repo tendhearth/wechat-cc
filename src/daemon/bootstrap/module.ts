@@ -104,7 +104,7 @@ export function bootApiModule(f: Foundation): DaemonModule<BootApi> {
       const boot = ctx.get<Bootstrap>('bootstrap')
       const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
       // 话题 T3:主人自己的会话发起的咨询带话题简报、回答写回话题(daemon/threads/matter-topics)
-      const matterTopics = makeMatterTopics({ db: f.db, threads: makeThreadsStore(f.db), ownerChatId, log: (t, l) => log(t, l) })
+      const matterTopics = makeMatterTopics({ db: f.db, threads: makeThreadsStore(f.db, { filterSources: true }), ownerChatId, log: (t, l) => log(t, l) })
       internalApi.provide({ delegate: {
         recordOwnerWork:makeOwnerDelegationRecorder({db:f.db,ownerChatId,name:peer=>boot.registry.namesOf(peer).name}),
         dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list(),

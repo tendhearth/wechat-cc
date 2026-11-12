@@ -16,6 +16,7 @@
  * House pattern: src/daemon/observations/store.ts
  */
 import type { Db } from './db'
+import { allowedTopicEntryIds, restrictedTopicIds, topicMatterAccess, localTopicContext } from './topic-provenance'
 import { hintWrite } from './write-hints'
 import { redactIdentifiers } from './redact-identifiers'
 
@@ -121,6 +122,10 @@ export interface ThreadsStore {
   /** Owner-scoped atomic merge; old ids survive as aliases, including chains. */
   merge(owner:string,from:string,into:string):Promise<boolean>
 
+  /** Synchronous recheck of a previously read model context. */
+  contextAllowed?(owner: string, topics: readonly { id: string; summary: string; description?: string }[], entryIds: readonly string[]): boolean
+  /** Source check + topic/entry insertion in one synchronous SQLite transaction. */
+  createExtractedTopic(input: CreateThreadInput, entries: Array<Omit<CreateEntryInput, 'threadId'>>, authorized: () => boolean): string | null
   create(input: CreateThreadInput): Promise<string>
   update(id: string, partial: UpdateThreadInput): Promise<void>
   list(chatId: string): Promise<ThreadRecord[]>
@@ -205,7 +210,20 @@ const UPDATABLE_COLS: Record<keyof UpdateThreadInput, string> = {
   lastActive: 'last_active',
 }
 
-export function makeThreadsStore(db: Db): ThreadsStore {
+/** Raw by default for maintenance; user/model readers opt into source filtering. */
+export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean }): ThreadsStore {
+  const readableEntries = (owner: string, rows: EntryRow[]) => {
+    if (!opts?.filterSources) return rows
+    const allowed = allowedTopicEntryIds(db, localTopicContext(owner), rows.map(e => e.id))
+    return rows.filter(e => allowed.has(e.id))
+  }
+  const readableTopics = (owner: string, rows: ThreadRecord[]) => {
+    if (!opts?.filterSources) return rows
+    const restricted = restrictedTopicIds(db, localTopicContext(owner), rows.map(t => t.id))
+    return rows.map(t => restricted.has(t.id) ? { ...t, summary: '', description: '' } : t)
+  }
+  const entryOwner = (thread: string) => db.query<{chat_id:string},[string]>('SELECT chat_id FROM threads WHERE id=?').get(thread)?.chat_id ?? ''
+
   const changed = (id: string) => {
     const t = db.query<{ chat_id: string }, [string]>('SELECT chat_id FROM threads WHERE id=?').get(id)
     if (t) hintWrite(db, { kind: 'topics', chatId: t.chat_id })
@@ -239,7 +257,59 @@ export function makeThreadsStore(db: Db): ThreadsStore {
      ON CONFLICT(chat_id) DO UPDATE SET extracted_to_ts = excluded.extracted_to_ts`,
   )
 
+  function insertThread(input: CreateThreadInput): string {
+    const id = newThreadId()
+    const now = new Date().toISOString()
+    stmtInsert.run(
+      id,
+      input.chatId,
+      input.title,
+      redactIdentifiers(input.summary),
+      redactIdentifiers(input.description ?? input.summary),
+      JSON.stringify(input.facets),
+      JSON.stringify(input.tags),
+      JSON.stringify(input.aliases ?? []),
+      input.private ? 1 : 0,
+      input.status ?? 'active',
+      JSON.stringify(mergeEpisodes(input.episodes)),
+      now,
+      input.lastActive ?? now,
+    )
+    changed(id)
+    return id
+  }
+
+  function insertEntry(input: CreateEntryInput): string {
+    const id = newEntryId()
+    const ts = input.ts ?? new Date().toISOString()
+    // 身份号 / 尾号 / 密钥位置 / 令牌写进去之前就去掉(lib/redact-identifiers)
+    stmtEntryInsert.run(id, input.threadId, input.kind, oneLine(redactIdentifiers(input.line), LINE_MAX), redactIdentifiers((input.body ?? '').trim()).slice(0, BODY_MAX),
+      input.kind === 'commitment' ? input.due ?? null : null, input.source ?? 'chat', input.matterId ?? null, ts, ts)
+    changed(id)
+    changed(input.threadId)
+    return id
+  }
+
   return {
+    contextAllowed(owner, topics, entryIds) {
+      const context=localTopicContext(owner)
+      const allowed=allowedTopicEntryIds(db,context,entryIds)
+      if(entryIds.some(id=>!allowed.has(id)))return false
+      const owned=new Set(db.query<{id:string},[string]>('SELECT id FROM threads WHERE chat_id=?').all(owner).map(t=>t.id))
+      const restricted=restrictedTopicIds(db,context,topics.map(t=>t.id))
+      return topics.every(t=>owned.has(t.id)&&(!(t.summary||t.description)||!restricted.has(t.id)))
+    },
+    createExtractedTopic(input, entries, authorized) {
+      return db.transaction(() => {
+        if(!authorized())return null
+        const work=entries.filter(e=>e.source==='work')
+        const allowed=topicMatterAccess(db,localTopicContext(input.chatId),work.flatMap(e=>e.matterId?[e.matterId]:[])).entryAllowed
+        if(work.some(e=>!e.matterId||!allowed.has(e.matterId)))return null
+        const id=insertThread(input)
+        for(const entry of entries)insertEntry({...entry,threadId:id})
+        return id
+      })()
+    },
     async merge(owner,from,into) {
       if(from===into)return false
       return db.transaction(() => {
@@ -275,27 +345,7 @@ export function makeThreadsStore(db: Db): ThreadsStore {
         return true
       })()
     },
-    async create(input) {
-      const id = newThreadId()
-      const now = new Date().toISOString()
-      stmtInsert.run(
-        id,
-        input.chatId,
-        input.title,
-        redactIdentifiers(input.summary),
-        redactIdentifiers(input.description ?? input.summary),
-        JSON.stringify(input.facets),
-        JSON.stringify(input.tags),
-        JSON.stringify(input.aliases ?? []),
-        input.private ? 1 : 0,
-        input.status ?? 'active',
-        JSON.stringify(mergeEpisodes(input.episodes)),
-        now,
-        input.lastActive ?? now,
-      )
-      changed(id)
-      return id
-    },
+    async create(input) { return insertThread(input) },
 
     async update(id, partial) {
       const keys = Object.keys(partial) as (keyof UpdateThreadInput)[]
@@ -333,12 +383,12 @@ export function makeThreadsStore(db: Db): ThreadsStore {
     },
 
     async list(chatId) {
-      return stmtList.all(chatId).map(rowToRecord)
+      return readableTopics(chatId, stmtList.all(chatId).map(rowToRecord))
     },
 
     async get(id) {
       const row = stmtGet.get(id)
-      return row ? rowToRecord(row) : null
+      return row ? readableTopics(row.chat_id, [rowToRecord(row)])[0]! : null
     },
 
     async tagVocabulary(n) {
@@ -358,16 +408,7 @@ export function makeThreadsStore(db: Db): ThreadsStore {
       stmtSetWatermark.run(chatId, ts)
     },
 
-    async addEntry(input) {
-      const id = newEntryId()
-      const ts = input.ts ?? new Date().toISOString()
-      // 身份号 / 尾号 / 密钥位置 / 令牌写进去之前就去掉(lib/redact-identifiers)
-      stmtEntryInsert.run(id, input.threadId, input.kind, oneLine(redactIdentifiers(input.line), LINE_MAX), redactIdentifiers((input.body ?? '').trim()).slice(0, BODY_MAX),
-        input.kind === 'commitment' ? input.due ?? null : null, input.source ?? 'chat', input.matterId ?? null, ts, ts)
-      changed(id)
-      changed(input.threadId)
-      return id
-    },
+    async addEntry(input) { return insertEntry(input) },
 
     async updateEntry(id, patch) {
       const sets: string[] = [], vals: (string | null)[] = []
@@ -385,13 +426,14 @@ export function makeThreadsStore(db: Db): ThreadsStore {
 
     async getEntry(id) {
       const r = db.query<EntryRow, [string]>(`SELECT ${ENTRY_COLS} FROM topic_entries WHERE id = ?`).get(id)
-      return r ? rowToEntry(r) : null
+      return r && readableEntries(entryOwner(r.thread_id), [r]).length ? rowToEntry(r) : null
     },
 
     async entries(threadId, opts) {
-      return db.query<EntryRow, [string]>(
+      const rows = db.query<EntryRow, [string]>(
         `SELECT ${ENTRY_COLS} FROM topic_entries WHERE thread_id = ?${opts?.live ? " AND status = 'live'" : ''} ORDER BY updated_ts DESC, id`,
-      ).all(threadId).map(rowToEntry)
+      ).all(threadId)
+      return readableEntries(entryOwner(threadId), rows).map(rowToEntry)
     },
 
     async entriesByThread(chatId, opts) {
@@ -400,7 +442,7 @@ export function makeThreadsStore(db: Db): ThreadsStore {
          WHERE t.chat_id = ?${opts?.live ? " AND e.status = 'live'" : ''} ORDER BY e.updated_ts DESC, e.id`,
       ).all(chatId)
       const out = new Map<string, TopicEntry[]>()
-      for (const r of rows) { const e = rowToEntry(r); const l = out.get(e.threadId); if (l) l.push(e); else out.set(e.threadId, [e]) }
+      for (const r of readableEntries(chatId, rows)) { const e = rowToEntry(r); const l = out.get(e.threadId); if (l) l.push(e); else out.set(e.threadId, [e]) }
       return out
     },
 

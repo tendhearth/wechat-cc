@@ -9,6 +9,7 @@
  * 那时还没做完),所以每件被碰到的 matter 都从头切段,只交出结论 cursor > 水位的那几段。
  */
 import type { Db } from '../../lib/db'
+import { isScratchMatter, topicMatterAccess, type TopicSourceContext } from '../../lib/topic-provenance'
 import { isRoutineTopicText } from '../../domain/topic-noise'
 
 export const SETTLE_MS = 30 * 60_000
@@ -34,14 +35,7 @@ export interface WorkResult {
   cursor: number
 }
 
-/** 自检 / 草稿目录里跑的不算主人的活。 */
-export function isScratchMatter(title: string, projectPath: string | null): boolean {
-  // These are generated selftest titles. A user task such as “selftest 手机验收的回滚漏洞修复” is real project work.
-  if (/^selftest(?:[- :：]*(?:phone|chat|workbench))?$/i.test(title.trim())) return true
-  if (!projectPath) return false
-  const p = projectPath.replace(/\\/g, '/')
-  return /^\/(private\/)?(tmp|var\/folders)\//.test(p) || /\/wechat-cc-selftest\//.test(p) || /\/wechat-cc-eval\//.test(p) || /\/AppData\/Local\/Temp\//i.test(p)
-}
+export { isScratchMatter } from '../../lib/topic-provenance'
 
 function textOf(payloadJson: string): string {
   try {
@@ -98,9 +92,9 @@ function toResult(id: string, m: MatterRow, s: Segment): WorkResult {
 }
 
 /** T3:这件事刚做完的那一轮的结论(水位之后最后那段的最后一条 agent 回话);没有 ⇒ null。调用方知道这一轮已经结束,不看 SETTLE_MS。 */
-export function readMatterConclusion(db: Db, matterId: string, afterCursor: number): WorkResult | null {
+export function readMatterConclusion(db: Db, matterId: string, afterCursor: number, context: TopicSourceContext): WorkResult | null {
   const m = matterRow(db, matterId)
-  if (!m || !eligible(m)) return null
+  if (!m || !eligible(m) || !topicMatterAccess(db, context, [matterId]).entryAllowed.has(matterId)) return null
   const segs = segments(db, matterId, Number.MAX_SAFE_INTEGER).filter(s => s.last && s.last.cursor > afterCursor)
   const s = segs[segs.length - 1]
   return s && !isRoutineTopicText(s.last!.text) ? toResult(matterId, m, s) : null
@@ -109,21 +103,22 @@ export function readMatterConclusion(db: Db, matterId: string, afterCursor: numb
 /**
  * 读水位之后做完了的结论。`nextCursor`:下一拍的水位 —— 有没做完的段 ⇒ 停在最早那段的第一条之前;否则 = 这次看到的最大 cursor。
  */
-export function readWorkResults(db: Db, afterCursor: number, now: number = Date.now()): { results: WorkResult[]; nextCursor: number } {
+export function readWorkResults(db: Db, afterCursor: number, context: TopicSourceContext, now: number = Date.now()): { results: WorkResult[]; nextCursor: number } {
   const fresh = db.query<{ matter_id: string; cursor: number }, [number, number]>(
-    `SELECT i.matter_id, i.cursor FROM matter_items i JOIN matters m ON m.id = i.matter_id
-     WHERE i.cursor > ? AND m.kind IN ('task','terminal','act') AND i.kind IN ('user_message','agent_message')
+    `SELECT i.matter_id, i.cursor FROM matter_items i
+     WHERE i.cursor > ? AND i.kind IN ('user_message','agent_message')
      ORDER BY i.cursor LIMIT ?`,
   ).all(afterCursor, SCAN_LIMIT)
   if (fresh.length === 0) return { results: [], nextCursor: afterCursor }
   const scanTop = fresh[fresh.length - 1]!.cursor
   const matterIds = [...new Set(fresh.map(r => r.matter_id))]
 
+  const allowed = topicMatterAccess(db, context, matterIds).entryAllowed
   const results: WorkResult[] = []
   let holdAt = Infinity
   for (const id of matterIds) {
     const m = matterRow(db, id)
-    if (!m || !eligible(m)) continue
+    if (!m || !eligible(m) || !allowed.has(id)) continue
     // T3 已经写回过话题的那几段不再交(不重复记)
     const writtenBack = db.query<{ c: number | null }, [string]>('SELECT MAX(written_back_cursor) AS c FROM matter_topics WHERE matter_id = ?').get(id)?.c ?? 0
     const matterDone = DONE_STATES.has(m.state)

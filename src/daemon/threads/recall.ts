@@ -125,11 +125,14 @@ export function makeTopicRecall(d: TopicRecallDeps): TopicRecall {
     try {
       const started = Date.now()
       const topics = await loadMatchTopics(d.threads, chatId)
+      const contextAllowed = () => d.isOwner(chatId) && (d.threads.contextAllowed?.(chatId, topics, topics.flatMap(t=>t.entries.map(e=>e.id))) ?? true)
       const activity = await d.activity?.(chatId)
+      if (!contextAllowed()) return null
       const r = await resolveTopicRecall(text, topics, { activity, bodies:false, cheapEval: d.cheapEval(), ...(d.timeoutMs !== undefined ? { timeoutMs: d.timeoutMs } : {}), log: d.log })
+      if (!contextAllowed()) return null
       d.log('TOPICS', `recall chat=${chatId} via=${r?.via ?? 'index-none'} elapsedMs=${Date.now() - started} topics=${r?.topicIds.join(',') ?? ''}`)
       if (r && d.onAdopt) r.adopt = (requestId, messageIds = []) => {
-        try { if (d.isOwner(chatId)) d.onAdopt!(chatId, requestId, r, messageIds) }
+        try { if (contextAllowed()) d.onAdopt!(chatId, requestId, r, messageIds) }
         catch (err) { d.log('TOPICS', `bubble recall failed: ${err instanceof Error ? err.message : String(err)}`) }
       }
       return r
@@ -151,6 +154,7 @@ export function makeTopicSearch(d: { threads: ThreadsStore; ownerChatId: () => s
     const list = await d.threads.list(owner)
     const hidden = new Set(callerChatId === owner ? [] : list.filter(t => t.private).map(t => t.id))
     const topics = (await loadMatchTopics(d.threads, owner)).filter(t => !hidden.has(t.id))
+    if (d.ownerChatId() !== owner || d.threads.contextAllowed?.(owner, topics, topics.flatMap(t=>t.entries.map(e=>e.id))) === false) return []
     return searchTopics(query, topics, Math.min(Math.max(1, limit), 5))
   }
 }

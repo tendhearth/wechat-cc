@@ -114,7 +114,7 @@ function createCache(db:Db,owner:string,seen:MatterSeen,identify:typeof projectI
     let changed=ids??[...new Set([...previous.keys(),...rows.keys()])]
     if(full||mappingDirty){
       mappingDirty=false
-      const topics:MatchTopic[]=(await makeThreadsStore(db).list(owner)).filter(t=>!t.private&&t.status!=='done').map(t=>({id:t.id,title:t.title,aliases:t.aliases,tags:[],summary:'',lastActive:t.lastActive,entries:[]}))
+      const topics:MatchTopic[]=(await makeThreadsStore(db, { filterSources: true }).list(owner)).filter(t=>!t.private&&t.status!=='done').map(t=>({id:t.id,title:t.title,aliases:t.aliases,tags:[],summary:'',lastActive:t.lastActive,entries:[]}))
       // Filesystem facts are cached across ordinary pushes/pages. A new cwd or
       // changed provenance re-registers all names before any mapping is accepted.
       const identities=new Map<string,ReturnType<typeof identify>>()

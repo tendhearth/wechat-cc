@@ -161,7 +161,7 @@ export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly
 }
 
 export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; owner: string | null }; identity?: typeof projectIdentity; timeoutMs?: number; log(line: string): void }) {
-  const threads = makeThreadsStore(d.db)
+  const threads = makeThreadsStore(d.db, { filterSources: true })
   return async (request: ProjectMemoryRequest): Promise<{ context: string; reason: string }> => {
     const compute = async () => {
       let context = '', reason = 'error', topicId: string | null = null
@@ -175,7 +175,9 @@ export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; own
           const topics = list.map(t => toMatchTopic(t, entries.get(t.id) ?? []))
           const mapped = await makeProjectTopicResolver(d.db, cfg.owner, topics, d.identity)(request.cwd)
           reason = mapped.reason; topicId = mapped.topicId
-          const topic = topics.find(t => t.id === topicId)
+          const fresh = topicId ? await threads.get(topicId) : null
+          const entriesNow = fresh ? await threads.entries(fresh.id, { live: true }) : []
+          const topic = fresh && !fresh.private && fresh.chatId === cfg.owner && d.config().owner === cfg.owner && threads.contextAllowed?.(cfg.owner, [fresh], entriesNow.map(e=>e.id)) !== false ? toMatchTopic(fresh, entriesNow) : null
           if (topic?.entries.length) context = renderProjectMemory(topic)
           else if (topic) reason = 'no_live_entries'
         }
