@@ -1,3 +1,4 @@
+import { allowedTopicEntryIds, localTopicContext, restrictedTopicIds } from '../../lib/topic-provenance'
 /** SessionStart memory: local evidence only, no model calls or production-state reads in the hook. */
 import { readFile, realpath, stat, readdir } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
@@ -93,19 +94,22 @@ export function renderProjectMemory(topic: MatchTopic): string {
 
 /** Shared evidence resolver. Provenance is anchored to the original matter project,
  * never to a terminal's later cwd. Name collisions between independent common dirs abstain. */
-export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly MatchTopic[], identify = projectIdentity, knownPaths: readonly string[] = [], options: { includeDoneHistory?: boolean } = {}) {
-  const rows = db.query<{topicId:string; kind:string; projectPath:string|null; cwd:string|null; turnPaths:string; currentCwd:string|null; project:string|null; repo:string|null; root:string|null},[string,string,string]>(`
-    WITH RECURSIVE valid_entry(id,thread_id,depth) AS (
-      SELECT id,thread_id,0 FROM topic_entries WHERE status IN ('live','done')
-      UNION ALL
-      SELECT e.id,e.thread_id,v.depth+1 FROM topic_entries e JOIN valid_entry v ON e.superseded_by=v.id AND e.thread_id=v.thread_id
-        WHERE e.status='superseded' AND v.depth<32
+export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly MatchTopic[], identify = projectIdentity, knownPaths: readonly string[] = [], options: { includeDoneHistory?: boolean; allowDelegate?: boolean } = {}) {
+  const context={...localTopicContext(owner),allowDelegate:options.allowDelegate}
+  const rows = db.query<{topicId:string; seedId:string; kind:string; projectPath:string|null; cwd:string|null; turnPaths:string; currentCwd:string|null; project:string|null; repo:string|null; root:string|null},[string,string,string]>(`
+    WITH RECURSIVE valid_entry(seedId,id,thread_id) AS (
+      SELECT id,id,thread_id FROM topic_entries WHERE status IN ('live','done')
+      UNION
+      SELECT v.seedId,e.id,v.thread_id FROM topic_entries e JOIN valid_entry v ON e.superseded_by=v.id
+        JOIN topic_entries parent ON parent.id=v.id AND e.thread_id=parent.thread_id WHERE e.status='superseded'
+      UNION
+      SELECT v.seedId,s.source_id,v.thread_id FROM valid_entry v JOIN topic_entry_sources s ON s.entry_id=v.id
     )
-    SELECT DISTINCT e.thread_id AS topicId,m.kind,m.project_path AS projectPath,
+    SELECT DISTINCT v.thread_id AS topicId,v.seedId,m.kind,m.project_path AS projectPath,
       (SELECT json_extract(policy_json,'$.cwd') FROM matter_turns WHERE matter_id=m.id ORDER BY seq LIMIT 1) AS cwd,
       (SELECT json_group_array(json_extract(policy_json,'$.cwd')) FROM matter_turns WHERE matter_id=m.id AND json_type(policy_json,'$.cwd')='text') AS turnPaths,c.cwd AS currentCwd,
       wt.project_path AS project,wt.repo_root AS repo,wt.root
-    FROM topic_entries e JOIN valid_entry v ON v.id=e.id JOIN threads t ON t.id=e.thread_id
+    FROM topic_entries e JOIN valid_entry v ON v.id=e.id JOIN threads t ON t.id=v.thread_id
     JOIN matters m ON m.id=e.matter_id
     LEFT JOIN matter_bindings b ON b.matter_id=m.id AND b.surface='cli'
     LEFT JOIN cli_sessions c ON c.session_id=b.surface_key
@@ -134,30 +138,49 @@ export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly
     UNION SELECT cwd FROM cli_sessions WHERE COALESCE(origin_agent,'')='' AND COALESCE(machine,'') IN ('',?2)
   `).all(owner,hostname()).map(r=>r.path).filter((p):p is string=>!!p)]
   const names = new Map<string,Set<string>>()
-  const byIdentity = new Map<string,History[]>(), exact = new Map<string,History[]>()
+  type Evidence=History&{seedId:string}
+  const byIdentity = new Map<string,Evidence[]>(), exact = new Map<string,Evidence[]>()
+  const initialAllowed=allowedTopicEntryIds(db,context,rows.map(r=>r.seedId))
   const ready = (async()=>{
     await Promise.all([...new Set([...known,...rows.flatMap(pathsOf)])].map(async path=>{
       const identity=await identityOf(path)
       if(identity)for(const name of identity.names){const key=norm(name),keys=names.get(key)??new Set<string>();keys.add(identity.key);names.set(key,keys)}
     }))
-    await Promise.all(rows.map(async r=>{
+    await Promise.all(rows.filter(r=>initialAllowed.has(r.seedId)).map(async r=>{
       const paths=pathsOf(r), ids=await Promise.all(paths.map(identityOf))
       // Worktree evidence from different repositories must never bridge them.
       if(new Set(ids.filter(i=>!!i).map(i=>i!.key)).size>1 || (r.kind==='terminal'&&paths.length>1&&ids.some(i=>!i)))return
       for(let i=0;i<paths.length;i++){
-        const h={topicId:r.topicId,cwd:await pathOf(paths[i]!)},key=ids[i]?.key
+        const h={topicId:r.topicId,seedId:r.seedId,cwd:await pathOf(paths[i]!)},key=ids[i]?.key
         const map=key?byIdentity:exact,bucket=key??h.cwd
         const list=map.get(bucket)??[];list.push(h);map.set(bucket,list)
       }
     }))
   })()
-  return async(cwd:string)=>{
+  const resolvedInputs=new Map<string,{path:string;identity:ProjectIdentity|null}>()
+  const current=(cwd:string)=>{
+    const input=resolvedInputs.get(cwd)
+    if(!input)return null
+    const {path,identity}=input
+    const safeIdentity=identity?{...identity,names:identity.names.filter(name=>(names.get(norm(name))?.size??1)<=1)}:null
+    const history=identity?byIdentity.get(identity.key)??[]:exact.get(path)??[]
+    const allowed=allowedTopicEntryIds(db,context,history.map(h=>h.seedId))
+    const fresh=db.query<{id:string;title:string;aliases:string},[string]>(`SELECT id,title,aliases FROM threads WHERE chat_id=? AND private=0 ${options.includeDoneHistory?'':"AND status!='done'"}`).all(owner)
+    const restricted=restrictedTopicIds(db,context,fresh.map(t=>t.id))
+    const byId=new Map(fresh.map(t=>[t.id,t]))
+    const visible=topics.filter(t=>byId.has(t.id)).map(t=>{
+      const row=byId.get(t.id)!
+      return {...t,title:restricted.has(t.id)?'':row.title,aliases:restricted.has(t.id)?[]:JSON.parse(row.aliases) as string[]}
+    })
+    return resolveProjectTopic(path,safeIdentity,visible,history.filter(h=>allowed.has(h.seedId)))
+  }
+  return Object.assign(async(cwd:string)=>{
     await ready
     const identity=await identityOf(cwd),path=await pathOf(cwd)
     if(identity)for(const name of identity.names){const key=norm(name),keys=names.get(key)??new Set<string>();keys.add(identity.key);names.set(key,keys)}
-    const safeIdentity=identity?{...identity,names:identity.names.filter(name=>(names.get(norm(name))?.size??1)<=1)}:null
-    return resolveProjectTopic(path,safeIdentity,topics,identity?byIdentity.get(identity.key)??[]:exact.get(path)??[])
-  }
+    resolvedInputs.set(cwd,{path,identity})
+    return current(cwd)!
+  },{current})
 }
 
 export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; owner: string | null }; identity?: typeof projectIdentity; timeoutMs?: number; log(line: string): void }) {
@@ -173,12 +196,14 @@ export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; own
           const list = (await threads.list(cfg.owner)).filter(t => !t.private && t.status !== 'done')
           const entries = await threads.entriesByThread(cfg.owner, { live: true })
           const topics = list.map(t => toMatchTopic(t, entries.get(t.id) ?? []))
-          const mapped = await makeProjectTopicResolver(d.db, cfg.owner, topics, d.identity)(request.cwd)
+          const resolver=makeProjectTopicResolver(d.db, cfg.owner, topics, d.identity)
+          const mapped = await resolver(request.cwd)
           reason = mapped.reason; topicId = mapped.topicId
           const fresh = topicId ? await threads.get(topicId) : null
           const entriesNow = fresh ? await threads.entries(fresh.id, { live: true }) : []
           const topic = fresh && !fresh.private && fresh.chatId === cfg.owner && d.config().owner === cfg.owner && threads.contextAllowed?.(cfg.owner, [fresh], entriesNow.map(e=>e.id)) !== false ? toMatchTopic(fresh, entriesNow) : null
-          if (topic?.entries.length) context = renderProjectMemory(topic)
+          if(resolver.current(request.cwd)?.topicId!==topicId){topicId=null;reason='no_match'}
+          else if (topic?.entries.length) context = renderProjectMemory(topic)
           else if (topic) reason = 'no_live_entries'
         }
       } catch { reason = 'error' }

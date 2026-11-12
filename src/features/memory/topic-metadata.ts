@@ -1,4 +1,4 @@
-import { temporary, topicMatterAccess, restrictedTopicIds, localTopicContext } from '../../lib/topic-provenance'
+import { temporary, topicMatterAccess, readableTopicMetadata, localTopicContext } from '../../lib/topic-provenance'
 /** Cached topic/link metadata. A tool step refreshes one matter, not all linked history. */
 import type { Db } from '../../lib/db'
 import { topicRevision, type TopicMatter } from '../../lib/topic-bubbles'
@@ -31,8 +31,8 @@ function makeReader(db:Db,owner:string) {
         b.last_recalled_at AS lastRecalledAt,b.last_opened_by_owner_at AS lastOpenedByOwnerAt,COALESCE(b.activity_revision,0) AS activityRevision
         FROM threads t LEFT JOIN topic_bubbles b ON b.thread_id=t.id WHERE t.chat_id=?1 ${full||allTopics?'AND ?2 IS NOT NULL':'AND t.id IN (SELECT value FROM json_each(?2))'}`).all(owner,JSON.stringify(topicIds))
       if(allTopics)next.topics.clear()
-      const restricted=restrictedTopicIds(db,localTopicContext(owner),rows.map(t=>t.id))
-      for(const t of rows)next.topics.set(t.id,restricted.has(t.id)?{...t,summary:'',description:''}:t)
+      for(const t of rows)next.topics.delete(t.id)
+      for(const t of readableTopicMetadata(db,localTopicContext(owner),rows))next.topics.set(t.id,t)
     }
     const touched=new Set<string>()
     const bucket=(id:string)=>{

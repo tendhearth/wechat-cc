@@ -100,7 +100,7 @@ export function wireMemory(d: WireMemoryDeps) {
     afterSleep: async () => {
       const o = nightlyOwner()
       if (o) {
-        const consolidated = await consolidateTopics({ chatId: o, threads: makeThreadsStore(db, { filterSources: true }), sdkEval: boot.registry.getCheapEval(), log })
+        const consolidated = await consolidateTopics({ chatId: o, isOwner: id => nightlyOwner() === id, threads: makeThreadsStore(db, { filterSources: true }), sdkEval: boot.registry.getCheapEval(), log })
         if (consolidated.failed === 0 && bubbleSleep && bubbleSleep.owner === o && nightlyOwner() === o) {
           const cursor = () => db.query<{value:number},[]>('SELECT value FROM matter_log_cursor WHERE id=1').get()?.value
           const before = cursor(), activity = await projectActivities(db,o,d.seen,undefined,d.taskActivity,topicExecutorName)

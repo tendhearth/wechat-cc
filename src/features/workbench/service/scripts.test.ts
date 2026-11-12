@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -228,9 +229,23 @@ describe('workbench scripts recover (after a crash)', () => {
     crashed({ groups: [4242], boot: 1_000_000, starts: [5_000_000] }, { kill, processStartMs: () => null }, { writerGroupAlive: () => true })
     expect(kill).not.toHaveBeenCalled()
   })
-  it.skipIf(process.platform === 'win32')('psStartMs reads this process start time (UTC, seconds)', () => {
-    const started = Date.now() - process.uptime() * 1000
-    expect(Math.abs((psStartMs(process.pid) ?? 0) - started)).toBeLessThan(5_000)
-    expect(psStartMs(2 ** 22 + 12345)).toBeNull()
+  it.skipIf(process.platform === 'win32')('psStartMs reads a known process start time (UTC, seconds)', async () => {
+    // Bun workers share process.pid but have their own process.uptime(). Anchor
+    // the real ps/UTC check to a child whose creation this thread observes.
+    const before = Date.now()
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(0), 10000)'], { stdio: 'ignore' })
+    const closed = once(child, 'close')
+    try {
+      await once(child, 'spawn')
+      const after = Date.now(), started = psStartMs(child.pid!)
+      expect(started).not.toBeNull()
+      expect(started!).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000)
+      expect(started!).toBeLessThanOrEqual(after)
+      expect(Math.abs((started ?? 0) - before)).toBeLessThan(5_000)
+      expect(psStartMs(2 ** 22 + 12345)).toBeNull()
+    } finally {
+      child.kill()
+      await closed
+    }
   })
 })

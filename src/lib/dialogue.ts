@@ -411,6 +411,7 @@ export async function dialogueTimeline(db: Db, chatId: string, opts: TimelineOpt
 export interface ThreadsOpts {
   facet?: Facet
   includePrivate: boolean
+  allowWork?: boolean
 }
 
 export interface ThreadsResult {
@@ -424,7 +425,7 @@ export interface ThreadsResult {
  * (simpler than json_each SQL, per task spec).
  */
 export async function dialogueThreads(db: Db, chatId: string, opts: ThreadsOpts): Promise<ThreadsResult> {
-  const store = makeThreadsStore(db, { filterSources: true })
+  const store = makeThreadsStore(db, { filterSources: true, allowWork: opts.allowWork })
   let threads = await store.list(chatId)
   if (!opts.includePrivate) {
     threads = threads.filter(t => !t.private)
@@ -466,10 +467,10 @@ export interface ThreadDetailResult {
  * Each episode's messages are fetched using a range query (ts BETWEEN from_ts AND to_ts),
  * capped at 200 rows per episode.
  */
-export async function dialogueThreadDetail(db: Db, id: string): Promise<ThreadDetailResult | null> {
-  const tStore = makeThreadsStore(db, { filterSources: true })
+export async function dialogueThreadDetail(db: Db, id: string, access?: { owner: string | null; allowWork: boolean }): Promise<ThreadDetailResult | null> {
+  const tStore = makeThreadsStore(db, { filterSources: true, allowWork: access?.allowWork })
   const thread = await tStore.get(id)
-  if (!thread) return null
+  if (!thread || (access && (thread.chatId !== access.owner || (thread.private && !access.allowWork)))) return null
 
   const mStore = makeMessagesStore(db)
   const MAX_PER_EPISODE = 200

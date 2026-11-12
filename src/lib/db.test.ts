@@ -1,3 +1,4 @@
+import { makeThreadsStore } from './threads-store'
 import { describe, expect, it } from 'vitest'
 import { openSqlite } from './runtime/sqlite'
 import { migrations, openTestDb, openDb, openWechatDb, renameMigrated, runMigrations, withLockRetry } from './db'
@@ -1565,4 +1566,23 @@ it('v110 upgrades v109 without changing speech history and replay preserves audi
     expect(db.query('SELECT COUNT(*) AS n FROM speech_audit_events').get()).toEqual({ n: 1 })
     expect(db.query('SELECT started_at FROM speech_audit_coverage').get()).toEqual({ started_at: 1 })
   } finally { db.close() }
+})
+
+
+it('v111 preserves v110 topic history and replay preserves derived evidence',async()=>{
+  const db=migratedTo(110)
+  try {
+    const raw=makeThreadsStore(db)
+    const topic=await raw.create({chatId:'owner',title:'保留',summary:'原摘要',facets:['task'],tags:[],private:false,episodes:[]})
+    const original=await raw.addEntry({threadId:topic,kind:'fact',line:'原条目'})
+    const before={threads:db.query('SELECT * FROM threads').all(),entries:db.query('SELECT * FROM topic_entries').all()}
+    runMigrations(db,migrations)
+    expect(db.query('SELECT * FROM threads').all()).toEqual(before.threads)
+    expect(db.query('SELECT * FROM topic_entries').all()).toEqual(before.entries)
+    expect(db.query('SELECT * FROM topic_entry_sources').all()).toEqual([])
+    const derived=await raw.addEntry({threadId:topic,kind:'fact',line:'派生条目',derivedFrom:[original]})
+    migrations[110]!(db)
+    expect(db.query('SELECT * FROM topic_entry_sources').all()).toEqual([{entry_id:derived,source_id:original}])
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+  } finally {db.close()}
 })

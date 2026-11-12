@@ -1,3 +1,4 @@
+import { topicMatterAccess, localTopicContext } from '../../lib/topic-provenance'
 /** Owner-scoped metadata only. Never select permission bodies, commands, diffs or output. */
 import { hostname } from 'node:os'
 import { executorNames } from '../../domain/provider-display-names'
@@ -30,7 +31,7 @@ const META = `json_object('kind',kind,'tool',COALESCE(json_extract(payload_json,
 type Meta = {kind:string;tool:string|null;verb:string|null;type:string|null;status:string;file:string|null;key:string|null;at:number}
 type Row = {id:string;kind:'task'|'terminal';title:string;state:string;updated_at:number;project_path:string|null;cwd:string|null;last_event_at:number|null;executor:string|null;project:string|null;repo:string|null;root:string|null;turn_status:string|null;ended_at:number|null;policy_cwd:string|null;pending:string|null;last:string|null;response_at:number|null}
 function readRows(db:Db,owner:string,ids?:string[]):Row[] {
-  return db.query<Row,[string,string,string,string]>(`SELECT m.id,m.kind,m.title,m.state,m.updated_at,m.project_path,
+  const rows=db.query<Row,[string,string,string,string]>(`SELECT m.id,m.kind,m.title,m.state,m.updated_at,m.project_path,
     c.cwd,c.last_event_at,COALESCE(t.executor,c.source,w.provider_id) AS executor,t.status AS turn_status,t.ended_at,
     json_extract(t.policy_json,'$.cwd') AS policy_cwd,wt.project_path AS project,wt.repo_root AS repo,wt.root,
     (SELECT ${META} FROM matter_items WHERE matter_id=m.id AND kind IN ('permission','question') AND status='started' ORDER BY seq DESC LIMIT 1) AS pending,
@@ -51,6 +52,8 @@ function readRows(db:Db,owner:string,ids?:string[]):Row[] {
         AND (c.session_id IS NOT NULL OR json_type(t.policy_json,'$.cwd')='text')))
       ${ids?'AND m.id IN (SELECT value FROM json_each(?4))':'AND ?4 IS NOT NULL'}
     ORDER BY m.updated_at DESC,m.id`).all(owner,hostname(),hostname(),JSON.stringify(ids??[]))
+  const allowed=topicMatterAccess(db,localTopicContext(owner),rows.map(m=>m.id)).entryAllowed
+  return rows.filter(m=>allowed.has(m.id))
 }
 // Fixed vocabulary + a validated tool identifier. Free-form descriptions never cross this boundary.
 const toolName = (tool:string|null|undefined) => tool && /^[\w.:-]{1,80}$/.test(tool) ? tool : ''

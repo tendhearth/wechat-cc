@@ -34,7 +34,22 @@ async function fixture(source: Source, shape: Shape) {
   await threads.addEntry({ threadId: topic, kind: 'decision', line: '乙决定', ts: new Date(at + 1).toISOString() })
   const read = () => readProjectsActivity({ db, owner: 'owner', identify, now: () => now }, { projects: ['bx'] })
   const merge = async (ids: string[], time = at + 2000) => {
-    const result = await consolidateTopics({ chatId: 'owner', threads, sdkEval: async () => JSON.stringify({ groups: [ids] }), log: () => {}, now: () => new Date(time).toISOString() })
+    // Historical fixture: consolidate while authorized, then revoke the original
+    // facts. The production consolidator now correctly refuses restricted input.
+    const savedMatter=db.query<{kind:string;owner_chat_id:string|null;project_path:string|null},[string]>('SELECT kind,owner_chat_id,project_path FROM matters WHERE id=?').get(matter.id)!
+    const savedTurns=db.query<{id:string;policy_json:string},[string]>('SELECT id,policy_json FROM matter_turns WHERE matter_id=?').all(matter.id)
+    const savedEntries=db.query<{id:string;source:string;matter_id:string|null},[string]>('SELECT id,source,matter_id FROM topic_entries WHERE thread_id=?').all(topic)
+    db.query("UPDATE matters SET kind='task',owner_chat_id='owner',project_path='/projects/bx' WHERE id=?").run(matter.id)
+    for(const t of savedTurns)db.query('UPDATE matter_turns SET policy_json=? WHERE id=?').run(JSON.stringify({cwd:'/projects/bx'}),t.id)
+    for(const e of savedEntries)if(e.source!=='chat')db.query("UPDATE topic_entries SET source='work',matter_id=? WHERE id=?").run(matter.id,e.id)
+    let result
+    try {
+      result = await consolidateTopics({ chatId: 'owner', threads, sdkEval: async () => JSON.stringify({ groups: [ids] }), log: () => {}, now: () => new Date(time).toISOString() })
+    } finally {
+      db.query('UPDATE matters SET kind=?,owner_chat_id=?,project_path=? WHERE id=?').run(savedMatter.kind,savedMatter.owner_chat_id,savedMatter.project_path,matter.id)
+      for(const t of savedTurns)db.query('UPDATE matter_turns SET policy_json=? WHERE id=?').run(t.policy_json,t.id)
+      for(const e of savedEntries)db.query('UPDATE topic_entries SET source=?,matter_id=? WHERE id=?').run(e.source,e.matter_id,e.id)
+    }
     expect(result).toMatchObject({ merged: 2, failed: 0 })
     const progress = (await threads.entries(topic, { live: true })).filter(e => e.kind === 'progress')
     expect(progress).toHaveLength(1)

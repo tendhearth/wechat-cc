@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
-import { makeProjectMemory, projectIdentity, resolveProjectTopic, renderProjectMemory, type ProjectIdentity } from './project-memory'
+import { makeProjectMemory, makeProjectTopicResolver, projectIdentity, resolveProjectTopic, renderProjectMemory, type ProjectIdentity } from './project-memory'
 import type { MatchTopic } from '../../domain/topic-match'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
@@ -188,4 +188,33 @@ it('independent repositories with identical basenames and different full origins
   const get=makeProjectMemory({db,config:()=>({enabled:true,owner:'owner'}),log:()=>{}})
   for(const cwd of [a,b])expect(await get({source:'claude',session_id:'new',cwd})).toEqual({context:'',reason:'no_match'})
  }finally{db.close()}
+})
+
+
+it.each(['remote','subagent','mixed-ancestor','revoke-await','reuse'] as const)('project mapping authorizes its complete evidence chain: %s',async shape=>{
+  const db=openTestDb(),threads=makeThreadsStore(db),matters=makeMatterStore(db),log=makeMatterLog(db)
+  try {
+    const id=await threads.create({chatId:'owner',title:'个人账务',summary:'',aliases:[],facets:[],tags:[],private:false,episodes:[]})
+    await threads.addEntry({threadId:id,kind:'fact',line:'SAFE_CHAT_CANARY'})
+    const task=matters.create({kind:'task',title:'任务',ownerChatId:'owner',projectPath:repo.roots[0]!})
+    const turn=log.startTurn({matterId:task.id,executor:'codex',policy:{cwd:repo.roots[0],...(shape==='remote'?{machine:'remote-host'}:shape==='subagent'?{originAgent:'child-agent'}:{})}})
+    const root=await threads.addEntry({threadId:id,kind:'conclusion',line:'关联证据',source:'work',matterId:task.id})
+    if(shape==='mixed-ancestor'){
+      const remote=matters.create({kind:'task',title:'远端',ownerChatId:'owner',projectPath:repo.roots[0]!})
+      log.startTurn({matterId:remote.id,executor:'codex',policy:{machine:'remote-host',cwd:repo.roots[0]}})
+      const original=await threads.addEntry({threadId:id,kind:'conclusion',line:'受限祖先',source:'work',matterId:remote.id})
+      await threads.updateEntry(original,{status:'superseded',supersededBy:root})
+    }
+    const identify=async()=>{if(shape==='revoke-await')db.query('UPDATE matters SET owner_chat_id=? WHERE id=?').run('visitor',task.id);return repo}
+    const request={source:'codex' as const,session_id:'local',cwd:repo.roots[0]!}
+    if(shape==='reuse'){
+      const resolve=makeProjectTopicResolver(db,'owner',[topic(id,'个人账务',[])],identify)
+      expect(await resolve(request.cwd)).toMatchObject({topicId:id,reason:'history'})
+      db.query('UPDATE matters SET owner_chat_id=? WHERE id=?').run('visitor',task.id)
+      expect(await resolve(request.cwd)).toEqual({topicId:null,reason:'no_match'})
+    }
+    const memory=makeProjectMemory({db,config:()=>({enabled:true,owner:'owner'}),identity:identify,log:()=>{}})
+    expect(await memory(request)).toEqual({context:'',reason:'no_match'})
+    expect(log.turns(task.id)[0]!.id).toBe(turn.id)
+  } finally {db.close()}
 })

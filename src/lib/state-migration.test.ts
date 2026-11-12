@@ -128,7 +128,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
       'milestones', 'observations', 'openai_chat_sessions', 'pending_cards', 'penpal_channel', 'penpal_letter', 'permission_decisions', 'reminders', 'session_fts_state', 'session_state',
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',
-      'sessions', 'speech_audit_coverage', 'speech_audit_events', 'speech_log', 'speech_pending', 'sqlite_sequence', 'terminal_reads', 'thread_extract_state', 'threads', 'topic_bubble_requests', 'topic_bubble_revisions', 'topic_bubbles', 'topic_entries', 'topic_merge_aliases', 'topic_recall_refs',
+      'sessions', 'speech_audit_coverage', 'speech_audit_events', 'speech_log', 'speech_pending', 'sqlite_sequence', 'terminal_reads', 'thread_extract_state', 'threads', 'topic_bubble_requests', 'topic_bubble_revisions', 'topic_bubbles', 'topic_entries', 'topic_entry_sources', 'topic_merge_aliases', 'topic_recall_refs',
       'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachment_uploads', 'workbench_attachments', 'workbench_control_receipts',
       'workbench_creation_receipts', 'workbench_entry_requests', 'workbench_goals', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_comments', 'workbench_review_hunks', 'workbench_review_marks', 'workbench_rewinds', 'workbench_script_approvals',
       'workbench_sources', 'workbench_tasks', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions', 'workbench_worktrees',

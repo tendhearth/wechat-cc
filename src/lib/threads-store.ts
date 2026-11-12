@@ -16,7 +16,7 @@
  * House pattern: src/daemon/observations/store.ts
  */
 import type { Db } from './db'
-import { allowedTopicEntryIds, restrictedTopicIds, topicMatterAccess, localTopicContext } from './topic-provenance'
+import { readableTopicMetadata, allowedTopicEntryIds, restrictedTopicIds, topicMatterAccess, localTopicContext } from './topic-provenance'
 import { hintWrite } from './write-hints'
 import { redactIdentifiers } from './redact-identifiers'
 
@@ -53,7 +53,7 @@ export interface TopicEntry {
   updatedTs: string
 }
 
-export type CreateEntryInput = Pick<TopicEntry, 'threadId' | 'kind' | 'line'> & Partial<Pick<TopicEntry, 'body' | 'due' | 'source' | 'matterId'>> & { ts?: string }
+export type CreateEntryInput = Pick<TopicEntry, 'threadId' | 'kind' | 'line'> & Partial<Pick<TopicEntry, 'body' | 'due' | 'source' | 'matterId'>> & { ts?: string; derivedFrom?: readonly string[] }
 export type UpdateEntryInput = Partial<Pick<TopicEntry, 'line' | 'body' | 'due' | 'status' | 'supersededBy'>> & { ts?: string }
 
 /** 抽取到哪了(v104 的两列新水位)。 */
@@ -118,19 +118,33 @@ export type UpdateThreadInput = {
   lastActive?: string
 }
 
+export interface ConsolidationPlan {
+  groups: Array<{entry: Omit<CreateEntryInput,'threadId'>; originals: string[]}>
+  strips: Array<{id:string;line:string;body:string;ts:string}>
+  summary?: string
+  ts: string
+}
+
 export interface ThreadsStore {
+  /** One synchronous authorization + merge/strip/summary transaction. */
+  applyConsolidation(owner:string,topic:string,plan:ConsolidationPlan,authorized:()=>boolean):boolean
+
   /** Owner-scoped atomic merge; old ids survive as aliases, including chains. */
   merge(owner:string,from:string,into:string):Promise<boolean>
 
   /** Synchronous recheck of a previously read model context. */
-  contextAllowed?(owner: string, topics: readonly { id: string; summary: string; description?: string }[], entryIds: readonly string[]): boolean
+  contextAllowed?(owner: string, topics: readonly { id: string; summary: string; description?: string; title?: string; tags?: readonly string[]; aliases?: readonly string[] }[], entryIds: readonly string[]): boolean
+  /** Whether a summary rewrite can use the complete raw history. */
+  topicHistoryAllowed?(owner:string,topic:string):boolean
+  /** Work-bearing dependencies actually available to this model context. */
+  contextSources?(owner: string, topics: readonly {id:string;title:string;summary:string;description?:string}[], entryIds: readonly string[]): string[]
   /** Source check + topic/entry insertion in one synchronous SQLite transaction. */
   createExtractedTopic(input: CreateThreadInput, entries: Array<Omit<CreateEntryInput, 'threadId'>>, authorized: () => boolean): string | null
   create(input: CreateThreadInput): Promise<string>
   update(id: string, partial: UpdateThreadInput): Promise<void>
   list(chatId: string): Promise<ThreadRecord[]>
   get(id: string): Promise<ThreadRecord | null>
-  tagVocabulary(n: number): Promise<string[]>
+  tagVocabulary(n: number, chatId?: string): Promise<string[]>
   getWatermark(chatId: string): Promise<string | null>
   setWatermark(chatId: string, ts: string): Promise<void>
   // ── v104:条目与新水位 ──
@@ -211,16 +225,16 @@ const UPDATABLE_COLS: Record<keyof UpdateThreadInput, string> = {
 }
 
 /** Raw by default for maintenance; user/model readers opt into source filtering. */
-export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean }): ThreadsStore {
+export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean; allowWork?: boolean; allowDelegate?: boolean }): ThreadsStore {
+  const contextFor = (owner: string) => ({ ...localTopicContext(owner), allowWork: opts?.allowWork, allowDelegate: opts?.allowDelegate })
   const readableEntries = (owner: string, rows: EntryRow[]) => {
     if (!opts?.filterSources) return rows
-    const allowed = allowedTopicEntryIds(db, localTopicContext(owner), rows.map(e => e.id))
+    const allowed = allowedTopicEntryIds(db, contextFor(owner), rows.map(e => e.id))
     return rows.filter(e => allowed.has(e.id))
   }
   const readableTopics = (owner: string, rows: ThreadRecord[]) => {
     if (!opts?.filterSources) return rows
-    const restricted = restrictedTopicIds(db, localTopicContext(owner), rows.map(t => t.id))
-    return rows.map(t => restricted.has(t.id) ? { ...t, summary: '', description: '' } : t)
+    return readableTopicMetadata(db, contextFor(owner), rows)
   }
   const entryOwner = (thread: string) => db.query<{chat_id:string},[string]>('SELECT chat_id FROM threads WHERE id=?').get(thread)?.chat_id ?? ''
 
@@ -279,25 +293,52 @@ export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean }): Th
     return id
   }
 
+  function sourcesAllowed(owner:string,ids:readonly string[]=[]):boolean {
+    const allowed=allowedTopicEntryIds(db,localTopicContext(owner),ids,true)
+    return ids.every(id=>allowed.has(id))
+  }
+
   function insertEntry(input: CreateEntryInput): string {
     const id = newEntryId()
     const ts = input.ts ?? new Date().toISOString()
     // 身份号 / 尾号 / 密钥位置 / 令牌写进去之前就去掉(lib/redact-identifiers)
     stmtEntryInsert.run(id, input.threadId, input.kind, oneLine(redactIdentifiers(input.line), LINE_MAX), redactIdentifiers((input.body ?? '').trim()).slice(0, BODY_MAX),
       input.kind === 'commitment' ? input.due ?? null : null, input.source ?? 'chat', input.matterId ?? null, ts, ts)
+    for(const source of input.derivedFrom ?? [])db.query('INSERT INTO topic_entry_sources(entry_id,source_id) VALUES(?,?)').run(id,source)
     changed(id)
     changed(input.threadId)
     return id
   }
 
   return {
+    applyConsolidation(owner,topic,plan,authorized) {
+      return db.transaction(()=>{
+        if(entryOwner(topic)!==owner||!authorized())return false
+        for(const g of plan.groups){
+          const id=insertEntry({...g.entry,threadId:topic,derivedFrom:g.originals})
+          for(const original of g.originals)db.query("UPDATE topic_entries SET status='superseded',superseded_by=?,updated_ts=? WHERE id=? AND thread_id=?").run(id,plan.ts,original,topic)
+        }
+        for(const e of plan.strips)db.query('UPDATE topic_entries SET line=?,body=?,updated_ts=? WHERE id=? AND thread_id=?').run(e.line,e.body,e.ts,e.id,topic)
+        if(plan.summary!==undefined)db.query('UPDATE threads SET summary=? WHERE id=?').run(redactIdentifiers(plan.summary),topic)
+        changed(topic)
+        return true
+      })()
+    },
     contextAllowed(owner, topics, entryIds) {
-      const context=localTopicContext(owner)
+      const context=contextFor(owner)
       const allowed=allowedTopicEntryIds(db,context,entryIds)
       if(entryIds.some(id=>!allowed.has(id)))return false
       const owned=new Set(db.query<{id:string},[string]>('SELECT id FROM threads WHERE chat_id=?').all(owner).map(t=>t.id))
       const restricted=restrictedTopicIds(db,context,topics.map(t=>t.id))
-      return topics.every(t=>owned.has(t.id)&&(!(t.summary||t.description)||!restricted.has(t.id)))
+      return topics.every(t=>owned.has(t.id)&&(!(t.summary||t.description||t.title||t.tags?.length||t.aliases?.length)||!restricted.has(t.id)))
+    },
+    topicHistoryAllowed(owner,topic) { return entryOwner(topic)===owner&&!restrictedTopicIds(db,contextFor(owner),[topic]).has(topic) },
+    contextSources(owner, topics, entryIds) {
+      const cachedTopics=topics.filter(t=>t.title||t.summary||t.description).map(t=>t.id)
+      const cached=db.query<{id:string},[string]>('SELECT id FROM topic_entries WHERE thread_id IN (SELECT value FROM json_each(?))').all(JSON.stringify(cachedTopics)).map(e=>e.id)
+      const ids=[...new Set([...entryIds,...cached])]
+      const chat=allowedTopicEntryIds(db,{...localTopicContext(owner),allowWork:false},ids,true)
+      return ids.filter(id=>!chat.has(id))
     },
     createExtractedTopic(input, entries, authorized) {
       return db.transaction(() => {
@@ -305,6 +346,7 @@ export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean }): Th
         const work=entries.filter(e=>e.source==='work')
         const allowed=topicMatterAccess(db,localTopicContext(input.chatId),work.flatMap(e=>e.matterId?[e.matterId]:[])).entryAllowed
         if(work.some(e=>!e.matterId||!allowed.has(e.matterId)))return null
+        if(entries.some(e=>!sourcesAllowed(input.chatId,e.derivedFrom)))return null
         const id=insertThread(input)
         for(const entry of entries)insertEntry({...entry,threadId:id})
         return id
@@ -388,15 +430,15 @@ export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean }): Th
 
     async get(id) {
       const row = stmtGet.get(id)
-      return row ? readableTopics(row.chat_id, [rowToRecord(row)])[0]! : null
+      return row ? readableTopics(row.chat_id, [rowToRecord(row)])[0] ?? null : null
     },
 
-    async tagVocabulary(n) {
-      // json_each is available in bun:sqlite (compiled with JSON1 extension)
-      const rows = db.query<{ value: string }, [number]>(
-        `SELECT value FROM threads, json_each(threads.tags) GROUP BY value ORDER BY COUNT(*) DESC LIMIT ?`,
-      ).all(n)
-      return rows.map((r) => r.value)
+    async tagVocabulary(n, chatId) {
+      const topics = db.query<ThreadRow,[string|null]>('SELECT * FROM threads WHERE ?1 IS NULL OR chat_id=?1').all(chatId??null).map(rowToRecord)
+      const visible = [...new Set(topics.map(t=>t.chatId))].flatMap(owner=>readableTopics(owner,topics.filter(t=>t.chatId===owner)))
+      const counts = new Map<string,number>()
+      for(const t of visible)for(const tag of t.tags)counts.set(tag,(counts.get(tag)??0)+1)
+      return [...counts].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).slice(0,n).map(([tag])=>tag)
     },
 
     async getWatermark(chatId) {
@@ -408,7 +450,12 @@ export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean }): Th
       stmtSetWatermark.run(chatId, ts)
     },
 
-    async addEntry(input) { return insertEntry(input) },
+    async addEntry(input) {
+      return db.transaction(()=>{
+        if(!sourcesAllowed(entryOwner(input.threadId),input.derivedFrom))throw new Error('topic entry sources changed')
+        return insertEntry(input)
+      })()
+    },
 
     async updateEntry(id, patch) {
       const sets: string[] = [], vals: (string | null)[] = []

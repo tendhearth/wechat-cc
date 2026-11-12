@@ -1,3 +1,4 @@
+import { ownerTopicCaller } from '../../lib/topic-provenance'
 import { makeTopicBubbles, topicRevision } from '../../lib/topic-bubbles'
 /**
  * topic_search 工具的路由(话题 T2 后续 ①):主模型自己搜主人那条对话的话题(索引 + 条目)。只读、只给 admin 会话;
@@ -9,7 +10,6 @@ import { makeThreadsStore } from '../../lib/threads-store'
 import { makeTopicSearch } from '../../daemon/threads/recall'
 
 export function topicRoutes(d: { db: Db; ownerChatId: () => string | null }): RouteTable {
-  const search = makeTopicSearch({ threads: makeThreadsStore(d.db, { filterSources: true }), ownerChatId: d.ownerChatId })
   return {
     'POST /v1/memory/topics/search': async (_q, body, caller, ctx) => {
       // 路由表已经把门设在 admin;这里再兜一层(直连本机端口的调用也一样)
@@ -17,7 +17,9 @@ export function topicRoutes(d: { db: Db; ownerChatId: () => string | null }): Ro
       const b = (body ?? {}) as { query?: unknown; limit?: unknown }
       if (typeof b.query !== 'string' || !b.query.trim() || b.query.length > 500) return { status: 400, body: { ok: false, error: 'query 要是 1–500 字的字符串' } }
       const limit = typeof b.limit === 'number' && Number.isInteger(b.limit) ? b.limit : 3
-      const topics = await search(caller?.chatId, b.query, limit)
+      const allowed = ownerTopicCaller(d.ownerChatId(), caller)
+      const search = makeTopicSearch({ threads: makeThreadsStore(d.db, { filterSources: true, allowWork: allowed }), ownerChatId: d.ownerChatId })
+      const topics = await search(allowed ? d.ownerChatId() ?? undefined : caller?.chatId, b.query, limit)
       const owner = d.ownerChatId()
       // 只有主人当前对话里正在跑的轮,且 HTTP 成功交回后才算采用;file/operator/后台检索不算。
       const key = caller?.sessionKey?.split('/')
