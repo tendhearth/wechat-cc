@@ -335,6 +335,10 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 
 到点都以 `network` 码收尾(codex 若最后一条重连通知里认得出别的码,比如 401,就用那个)。用户自己 /stop 不是超时,不挂码。
 
+**OpenAI 兼容网关的请求内重试(2026-11-12)**:对话 / delegate 与一次性评估在本回合尚无输出时,遇到 401 / 404 / 408 / 409 / 410 / 429 / 5xx 或瞬时网络错误,总共最多尝试三次,等待 2s、4s(各加 0–200ms 抖动)。策略在 `adapters/executors/openai/api-model.ts` / `openai-retry.ts`,SDK 内层重试固定为 0;工作台流式请求保持原来的缺省不重试。每次实际重试只记 `[OPENAI_RETRY] attempt=n status=… model=…`,不记请求/响应正文。最终失败才交给上面的产码与既有外层冷却;401 耗尽后仍判 `auth_rejected`,403 直接沿用鉴权失败判定。
+
+任意正文、思考或工具输入分块都关掉本回合的重试,工具后的后续步骤也不重试。重试等待可取消,失败的旧流先中止再发下一次。守护拒绝与明确离线(`ENETDOWN` / `ENETUNREACH` / `EHOSTUNREACH`)直接停止;生产对话 / delegate 在等待后重核原目标的守护,拒绝保留 `network_unprotected`,不另开探测或后台重发任务。验证用注入 fetch / sleep,不调用真实模型。
+
 **下游怎么收**
 
 - `health/classify`(要不要通知主人):有码只看码(§6 起就是)。

@@ -11,6 +11,7 @@
  * because these are throwaway one-shot consultations.
  */
 import { withNetworkGate } from '../../app/provider-registry'
+import { assertCallAllowed } from '../../lib/network-gate'
 import { DEFAULT_CLAUDE_MODEL, createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
 import { createCodexChatProvider } from '../../adapters/executors/codex/codex-chat-provider'
 import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
@@ -167,9 +168,10 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
           const defaultModel = configuredAgent.openaiModel
           return createOpenAiAgentProvider({
             endpoint: { baseUrl: baseURL, model: defaultModel },
-            // 和对话侧同一种会话(B2):不设每步输出上限、AI SDK 重试 2 次;不给 sessions ⇒ 内存,不续接(委派每次都是新的)。
+            // 和对话侧同一种会话(B2):首个输出前有界重试;不给 sessions ⇒ 内存,不续接(委派每次都是新的)。
             makeChatModel: (model) =>
-              createApiModel({ baseURL, apiKey: openaiKey, model: model ?? defaultModel, maxOutputTokens: null, maxRetries: 2, providerName: 'wechat-openai' }),
+              createApiModel({ baseURL, apiKey: openaiKey, model: model ?? defaultModel, maxOutputTokens: null, maxRetries: 2, providerName: 'wechat-openai', log: deps.log,
+                beforeRetry: () => assertCallAllowed(deps.networkGate, { provider: 'openai', baseUrl: baseURL, model: model ?? defaultModel, exact: true }) }),
             // Empty spec set → bridge with zero MCP tools (bare-bones).
             makeMcpBridge: async () => createMcpToolBridge({}),
           })

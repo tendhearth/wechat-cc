@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, statSync, mkdtempSync, mkdirSync, writeFileS
 import { join, dirname, relative } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { isConnectFailure } from './net-errors'
+import { isConnectFailure, isOfflineErrorCode } from './net-errors'
 import { isTaskCachePath } from '../../scripts/task-cache-paths'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -36,6 +36,17 @@ describe('isConnectFailure', () => {
     expect(isConnectFailure(undefined)).toBe(false)
     expect(isConnectFailure(null)).toBe(false)
     expect(isConnectFailure(new Error('x'))).toBe(false)
+  })
+})
+
+describe('isOfflineErrorCode',()=>{
+  it.each(['ENETDOWN','ENETUNREACH','EHOSTUNREACH'])('%s 表示明确离线或无可达路由',code=>{
+    expect(isOfflineErrorCode(code)).toBe(true)
+  })
+  it('socket 抖动、拒连、解析失败和无结构的错误仍交给原有连接错误策略',()=>{
+    for(const code of ['ECONNRESET','ECONNREFUSED','ETIMEDOUT','EAI_AGAIN','ENOTFOUND',undefined,null,401]){
+      expect(isOfflineErrorCode(code)).toBe(false)
+    }
   })
 })
 
