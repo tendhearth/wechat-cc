@@ -135,7 +135,7 @@ const textModel=(chunks:string[],capture?:Record<string,unknown>)=>streamModel([
   {type:'text-start',id:'1'},...chunks.map(delta=>({type:'text-delta',id:'1',delta})),{type:'text-end',id:'1'},
   {type:'finish',finishReason:'stop',usage:{inputTokens:1,outputTokens:1,totalTokens:2}},
 ],capture)
-const api=(model:unknown,extra:Record<string,unknown>={})=>createApiModel({baseURL:'http://unused.test/v1',apiKey:'k',model:'m',...extra},()=>model as LanguageModel)
+const api=(model:unknown,extra:Record<string,unknown>={})=>createApiModel({baseURL:'http://unused.test/v1',apiKey:'k',model:'m',retrySleep:async()=>{},...extra},()=>model as LanguageModel)
 
 describe('APIModel —— 对话用的选项与一次性评估',()=>{
   it('maxOutputTokens:null ⇒ 不设上限(对话:交给上游默认);maxRetries 照传',async()=>{

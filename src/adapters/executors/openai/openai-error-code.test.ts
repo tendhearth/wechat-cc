@@ -20,7 +20,7 @@ const TIMEOUTS = { connectTimeoutMs: 60, idleTimeoutMs: 60 }
 
 function provider(fetch: FetchLike, timeouts = TIMEOUTS) {
   return createOpenAiAgentProvider({
-    makeChatModel: () => createApiModel({ baseURL: 'http://gateway.test/v1', apiKey: 'SANDBOXBOGUS', model: 'm', fetch, timeouts, maxOutputTokens: null, maxRetries: 2 }),
+    makeChatModel: () => createApiModel({ baseURL: 'http://gateway.test/v1', apiKey: 'SANDBOXBOGUS', model: 'm', fetch, timeouts, maxOutputTokens: null, maxRetries: 2, retrySleep: async () => {} }),
     makeMcpBridge: async () => bridge,
   })
 }

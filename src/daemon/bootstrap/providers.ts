@@ -33,6 +33,7 @@ import { setupAgyGlobalMcp } from './agy-mcp-config'
 import { probeVersion, describeProbeFailure, createProbeRetrier, type VersionProbeResult, type ProbeRetrierOptions, type ProbeRetryStatus, type ProbeAttempt } from './provider-probe'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import { makeCheapEvalPreflight } from './cheap-eval-preflight'
+import { assertCallAllowed } from '../../lib/network-gate'
 import type { BootstrapDeps } from './types'
 import { AGY_STATIC_SESSION_KEY } from '../internal-api/token-registry'
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
@@ -608,7 +609,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         // config reader through currentModelFor → SpawnContext.model — takes effect on the NEXT session without a daemon
         // restart. `model` is undefined for background evals (cheapEval/strongEval) and for spawns before any pin
         // exists; both fall back to the boot-time configured model. Building one is cheap (SDK client wiring, no network).
-        // 对话:不设每步输出上限(交给上游默认)、AI SDK 重试 2 次(和统一之前一样)。
+        // 对话:不设每步输出上限;首个输出前有界重试,下一次出发前再核守护。
         makeChatModel: (model) => createApiModel({
           baseURL: openaiBaseUrl,
           apiKey: openaiKey,
@@ -616,6 +617,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           maxOutputTokens: null,
           maxRetries: 2,
           providerName: 'wechat-openai',
+          log: deps.log,
+          beforeRetry: () => assertCallAllowed(deps.networkGate, { provider: 'openai', baseUrl: openaiBaseUrl, model: model ?? defaultOpenaiModel, exact: true }),
         }),
         // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see sessionEnv (WECHAT_SESSION_TOKEN) — third-party
         // plugin MCP specs must never receive the daemon's loopback bearer token. See mcp-specs.ts buildOpenaiMcpSpecs.

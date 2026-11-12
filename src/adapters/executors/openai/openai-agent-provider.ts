@@ -18,6 +18,7 @@ import {
   assertNotAuthFailed,
 } from '../../../ports/agent-provider'
 import { isAuthErrorCode, withProviderCode } from '../../../lib/provider-error-code'
+import { isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import { EvalOutputExhaustedError, systemMessage, userMessage, type APIModel, type ChatMessage, type ToolSpec } from './api-model'
 import { builtinTools, type BuiltinTool } from './openai-tools'
@@ -199,6 +200,7 @@ function chatPurpose(args: {
       // /stop:说一句「停了」,这一轮照常收尾(result 照发,历史留着下一轮用)。
       if (aborted || reason === 'api_task_cancelled') return { events: [em.errorText('cancelled', { code: 'cancelled' })], state: 'ready', finish: true }
       if (reason === 'api_task_step_limit') return { events: [em.errorText(`step budget ${maxSteps} exhausted`, { code: 'step_budget' })], state: 'ready', finish: true }
+      if (isNetworkUnprotectedError(error)) return { events: [em.error(error, { code: 'network_unprotected' })], state: 'ready', finish: false }
       // 边界产码(arch backlog #4 第 2 步):HTTP status / 重试链里最后一次的 status / 连接层系统码 / 我们自己的超时 ⇒ 码;
       // 消息里把 RetryError 吃掉的真实 status 拼回来。分不出 ⇒ 旧的回退(按文字认 auth)。
       const code = openaiErrorCode(error)

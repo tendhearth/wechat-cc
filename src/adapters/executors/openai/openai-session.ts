@@ -132,7 +132,8 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         check(signal);purpose.check?.()
         const itemId=`${history.id}:${history.revision()}:${step}`
         steps++
-        const turn=model.stream(structuredClone(history.messages()),purpose.tools(),signal)
+        // 后续步骤说明本轮已经发起过工具调用;即使下一次请求还没输出,也不能再重试这一轮。
+        const turn=model.stream(structuredClone(history.messages()),purpose.tools(),signal,step===0)
         void turn.finished.catch(()=>undefined)
         let buffered=''
         const flush=()=>{if(buffered){push({kind:'text',text:buffered});buffered=''}}

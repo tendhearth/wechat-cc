@@ -34,6 +34,8 @@ const statusOf = (e: unknown): number | undefined => {
 const bodyOf = (e: unknown): string => (obj(e) && typeof e.responseBody === 'string' ? e.responseBody : '')
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e ?? ''))
 
+export const openaiErrorStatus = (err: unknown): number | undefined => statusOf(lastAttempt(err)) ?? statusOf(err)
+
 /** Bun / Node fetch 的「连不上」系统码(放在 err.code 或 err.cause.code)。 */
 const NET_CODES = /^(ConnectionRefused|ConnectionClosed|FailedToOpenSocket|ECONNRESET|ETIMEDOUT|EPIPE|EAI_AGAIN|UND_ERR_[A-Z_]+|UNKNOWN_CERTIFICATE_VERIFICATION_ERROR|CERT_[A-Z_]+|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_[A-Z_]+)$/
 
