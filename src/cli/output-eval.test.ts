@@ -97,7 +97,7 @@ describe('runEval', () => {
       ['a', 'error', 'turn timed out (turn_timeout)'],
       ['b', 'error', 'http_404 eval_unknown_provider'],
       ['c', 'error', expect.stringContaining('样本文件读不了')],
-      ['d', 'error', '样本写错了:kind 只能是 reply / brief / reference / topic / topic-recall'],
+      ['d', 'error', '样本写错了:kind 只能是 reply / brief / reference / topic / topic-recall / projects-activity'],
     ])
     expect(d.calls).toHaveLength(2)
   })
@@ -167,7 +167,7 @@ describe('仓库里的示例样本(eval/output/examples/)', () => {
       expect(p, f).toMatchObject({ ok: true, sample: { id } })
       return p.ok ? p.sample.kind : null
     })
-    expect([...new Set(kinds)].sort()).toEqual(['brief', 'reference', 'reply', 'topic', 'topic-recall'])
+    expect([...new Set(kinds)].sort()).toEqual(['brief', 'projects-activity', 'reference', 'reply', 'topic', 'topic-recall'])
   })
 })
 
@@ -185,4 +185,26 @@ it('topic-recall 四份样本走 CLI → 真路由 → 生产召回，三种说�
   expect(result.report.results.map(r=>r.status)).toEqual(['pass','pass','pass','pass'])
   expect(d.calls).toHaveLength(4)
   expect(d.calls.every(c=>c.body.kind==='topic-recall'&&c.body.providerId===undefined)).toBe(true)
+})
+
+it('五个跨项目问法用合成夹具走CLI→真eval路由→生产聚合，无daemon/模型/生产库',async()=>{
+ const {makeEvalRunner}=await import('../features/output-eval/runner')
+ const {outputEvalRoutes}=await import('../features/output-eval/routes')
+ const forbidden=()=>{throw Error('cross-project fixtures must not call a model or mint tokens')}
+ const runner=makeEvalRunner({registry:{get:forbidden,getCheapEval:forbidden,getCheapEvalBudgetMs:forbidden},defaultProviderId:forbidden,buildInstructions:forbidden,mintSessionToken:forbidden,invalidateSession:forbidden,log:()=>{}})
+ const routes=outputEvalRoutes(runner),dir=join(__dirname,'..','..','eval','output','examples')
+ for(const file of readdirSync(dir).filter(f=>f.startsWith('projects-activity-'))){const raw=JSON.parse(readFileSync(join(dir,file),'utf8'));sample(raw.id,raw)}
+ const d=deps(async(_path,body)=>{const r=await routes['POST /v1/eval/run']!(new URLSearchParams(),body);return {status:r.status,json:r.body}})
+ const result=await runEval(d,{providerId:'agy'})
+ expect(result.report.summary).toMatchObject({total:5,pass:5,fail:0,error:0})
+ const expected:Record<string,string[]>={last:['rici'],two:['bx','1in8b'],week:['bx','1in8b'],yesterday:['bx'],waiting:['bx','1in8b','rici']}
+ for(const r of result.report.results){
+  expect(r.output?.kind).toBe('projects-activity')
+  const out=r.output as {finalText:string}
+  const data=JSON.parse(out.finalText)
+  expect(data.projects.map((p:{project:string})=>p.project)).toEqual(expected[r.id.replace('projects-activity-','')])
+  expect(out.finalText).not.toMatch(/PRIVATE_|invented-project/)
+ }
+ expect(d.calls).toHaveLength(5)
+ expect(d.calls.every(c=>c.body.kind==='projects-activity'&&c.body.providerId===undefined)).toBe(true)
 })

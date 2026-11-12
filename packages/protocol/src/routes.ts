@@ -324,6 +324,7 @@ const ROUTE_TABLE = {
   'POST /v1/memory/topics/entry/wrong': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/memory/topics/open': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/subscribe/topics': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/projects/activity': { module: 'memory', desktop: { tier: 'admin' } },
   'POST /v1/memory/topics/search': { module: 'memory', desktop: { tier: 'admin' } },
   'GET /v1/memory/list': { module: 'memory', desktop: { tier: 'guest' } },
   'POST /v1/share/page': { desktop: { tier: 'guest' } },

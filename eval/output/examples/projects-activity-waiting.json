@@ -1,0 +1,175 @@
+{
+  "id": "projects-activity-waiting",
+  "kind": "projects-activity",
+  "note": "合成证据→生产只读聚合；验证取数，不调用或声称验证真实模型回答。",
+  "input": {
+    "text": "哪些项目卡着 / 在等我",
+    "query": {},
+    "now": "2026-11-11T12:00:00-08:00",
+    "evidence": [
+      {
+        "id": "bx",
+        "title": "bx",
+        "aliases": [
+          "bx项目"
+        ],
+        "private": false,
+        "entries": [
+          {
+            "id": "bx-entry",
+            "kind": "progress",
+            "line": "连接检查已完成，待你批准下一步",
+            "status": "live",
+            "updatedAt": 1794351600000,
+            "body": "PRIVATE_BODY"
+          }
+        ],
+        "history": [
+          {
+            "id": "bx-turn",
+            "kind": "terminal",
+            "code": "abcdef",
+            "executor": "claude",
+            "at": 1794351600000,
+            "step": "答完了",
+            "command": "curl --password=PRIVATE_ARGS",
+            "diff": "PRIVATE_DIFF",
+            "output": "PRIVATE_OUTPUT"
+          }
+        ],
+        "current": [
+          {
+            "id": "bx-session",
+            "kind": "terminal",
+            "executor": "claude",
+            "code": "abcdef",
+            "activity": "waiting",
+            "latestStep": "等你批准 · Bash",
+            "updatedAt": 1794427200000,
+            "question": "PRIVATE_QUESTION"
+          }
+        ]
+      },
+      {
+        "id": "1in8b",
+        "title": "1in8b",
+        "aliases": [
+          "1in8b项目"
+        ],
+        "private": false,
+        "entries": [
+          {
+            "id": "1in8b-entry",
+            "kind": "progress",
+            "line": "离线回归已通过",
+            "status": "live",
+            "updatedAt": 1794294000000,
+            "body": "PRIVATE_BODY"
+          }
+        ],
+        "history": [
+          {
+            "id": "1in8b-turn",
+            "kind": "terminal",
+            "code": "123abc",
+            "executor": "claude",
+            "at": 1794294000000,
+            "step": "答完了",
+            "command": "curl --password=PRIVATE_ARGS",
+            "diff": "PRIVATE_DIFF",
+            "output": "PRIVATE_OUTPUT"
+          }
+        ],
+        "current": [
+          {
+            "id": "1in8b-session",
+            "kind": "terminal",
+            "executor": "claude",
+            "code": "123abc",
+            "activity": "running",
+            "latestStep": "读取文件",
+            "updatedAt": 1794427200000,
+            "question": "PRIVATE_QUESTION"
+          }
+        ]
+      },
+      {
+        "id": "rici",
+        "title": "rici",
+        "aliases": [
+          "rici项目"
+        ],
+        "private": false,
+        "entries": [
+          {
+            "id": "rici-entry",
+            "kind": "progress",
+            "line": "菜谱导入已接通，待离线校验",
+            "status": "live",
+            "updatedAt": 1793466000000,
+            "body": "PRIVATE_BODY"
+          }
+        ],
+        "history": [
+          {
+            "id": "rici-turn",
+            "kind": "terminal",
+            "code": "aa11bb",
+            "executor": "claude",
+            "at": 1793466000000,
+            "step": "答完了",
+            "command": "curl --password=PRIVATE_ARGS",
+            "diff": "PRIVATE_DIFF",
+            "output": "PRIVATE_OUTPUT"
+          }
+        ],
+        "current": [
+          {
+            "id": "rici-session",
+            "kind": "terminal",
+            "executor": "claude",
+            "code": "aa11bb",
+            "activity": "idle",
+            "latestStep": "答完了",
+            "updatedAt": 1794427200000,
+            "question": "PRIVATE_QUESTION"
+          }
+        ]
+      },
+      {
+        "id": "private",
+        "title": "PRIVATE_TOPIC",
+        "private": true,
+        "entries": [
+          {
+            "id": "private-e",
+            "kind": "progress",
+            "line": "PRIVATE_LINE",
+            "status": "live",
+            "updatedAt": 1794427200000
+          }
+        ]
+      }
+    ]
+  },
+  "rules": [
+    {
+      "contains": "等你批准"
+    },
+    {
+      "contains": "abcdef"
+    },
+    {
+      "notContains": "PRIVATE_"
+    },
+    {
+      "notContains": "invented-project"
+    },
+    {
+      "notContains": "curl --password"
+    },
+    {
+      "maxChars": 12000
+    }
+  ]
+}

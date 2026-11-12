@@ -93,7 +93,7 @@ export function renderProjectMemory(topic: MatchTopic): string {
 
 /** Shared evidence resolver. Provenance is anchored to the original matter project,
  * never to a terminal's later cwd. Name collisions between independent common dirs abstain. */
-export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly MatchTopic[], identify = projectIdentity, knownPaths: readonly string[] = []) {
+export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly MatchTopic[], identify = projectIdentity, knownPaths: readonly string[] = [], options: { includeDoneHistory?: boolean } = {}) {
   const rows = db.query<{topicId:string; kind:string; projectPath:string|null; cwd:string|null; turnPaths:string; currentCwd:string|null; project:string|null; repo:string|null; root:string|null},[string,string,string]>(`
     WITH RECURSIVE valid_entry(id,thread_id,depth) AS (
       SELECT id,thread_id,0 FROM topic_entries WHERE status IN ('live','done')
@@ -110,7 +110,7 @@ export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly
     LEFT JOIN matter_bindings b ON b.matter_id=m.id AND b.surface='cli'
     LEFT JOIN cli_sessions c ON c.session_id=b.surface_key
     LEFT JOIN workbench_worktrees wt ON wt.task_id=m.id
-    WHERE t.chat_id=? AND t.private=0 AND t.status!='done' AND e.source='work'
+    WHERE t.chat_id=? AND t.private=0 ${options.includeDoneHistory ? '' : "AND t.status!='done'"} AND e.source='work'
       AND ((m.kind='task' AND m.owner_chat_id=t.chat_id) OR (m.kind='terminal'
         AND (m.owner_chat_id IS NULL OR m.owner_chat_id=t.chat_id) AND b.matter_id IS NOT NULL
         AND (c.origin_agent IS NULL OR c.origin_agent='') AND (c.machine IS NULL OR c.machine='' OR c.machine=?)
