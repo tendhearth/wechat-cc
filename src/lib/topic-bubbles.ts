@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto'
-import { tmpdir } from 'node:os'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { Db } from './db'
 import { hintWrite } from './write-hints'
 
@@ -11,19 +9,12 @@ export interface BubbleRow {
 }
 export interface TopicMatter { id: string; title: string; state: string; archived_at: number | null; kind: string; project_path: string | null; owner_chat_id: string | null }
 
-/** 临时目录里的实验 / 自检不是主人事项。看结构化来源,不按标题猜。 */
-export function temporary(path: string | null): boolean {
-  if (!path) return false
-  return [tmpdir(), '/tmp', '/private/tmp', '/var/tmp'].some(root => {
-    const canonical = (s: string) => resolve(s).replace(/^\/private\/(tmp|var)(?=\/|$)/, '/$1')
-    const rel = relative(canonical(root), canonical(path))
-    return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
-  })
-}
+export { temporary } from './topic-provenance'
+import { temporary, topicMatterAccess, localTopicContext } from './topic-provenance'
 export function topicMatters(db: Db, owner: string, id: string, includeActs=false): TopicMatter[] {
   return db.query<TopicMatter, [string, string]>(`SELECT m.id,m.title,m.state,m.archived_at,m.kind,m.project_path,m.owner_chat_id
     FROM matters m JOIN matter_topics l ON l.matter_id=m.id WHERE l.thread_id=? AND m.owner_chat_id=? AND ${includeActs?"m.kind IN ('task','terminal','act')":"m.kind!='act'"} ORDER BY m.id`).all(id, owner)
-    .filter(m => !temporary(m.project_path))
+    .filter(m => topicMatterAccess(db, localTopicContext(owner), [m.id]).allowed.has(m.id) && !temporary(m.project_path))
 }
 export const blocksBubble = (m: TopicMatter) => m.archived_at === null && (m.state === 'working' || m.state === 'waiting')
 

@@ -3,6 +3,7 @@
  * (ports/companion-contributions.ts 的 IntrospectStep,登记表在 daemon/wiring/tick-bodies.ts)。
  * 反思要的记忆快照由记忆功能做(`memorySnapshot`,组装的地方交进来):陪伴不 import 别的功能。
  */
+import { localTopicContext, topicMatterAccess } from '../../lib/topic-provenance'
 import { join } from 'node:path'
 import { loadCompanionConfig, saveCompanionConfig } from '../../lib/companion-config'
 import { makeEventsStore } from '../../daemon/events/store'
@@ -85,7 +86,7 @@ export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectSte
     // also accumulate threads, not just the companion default_chat_id.
     // Parse failure per-chat is swallowed: watermark stays, retried next tick.
     // One-chat failure does not abort extraction for the remaining chats.
-    const threadsStore = makeThreadsStore(deps.db)
+    const threadsStore = makeThreadsStore(deps.db, { filterSources: true })
     let allChatIds: string[]
     try {
       allChatIds = await messagesStore.listChatIds()
@@ -102,7 +103,7 @@ export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectSte
           threads: threadsStore,
           sdkEval,
           // 话题 T1:agent 做完的活的结论只进主人的对话(那些活都是主人的)
-          ...(extractChatId === chatId ? { work: (after: number) => readWorkResults(deps.db, after) } : {}),
+          ...(extractChatId === chatId ? { work: (after: number) => readWorkResults(deps.db, after, localTopicContext(chatId)), workAllowed: (id: string) => topicMatterAccess(deps.db, localTopicContext(chatId), [id]).entryAllowed.has(id) } : {}),
           recordEvent: async (reasoning) => {
             await chatEvents.append({ kind: 'threads_extracted', trigger: 'introspect', reasoning })
           },

@@ -124,7 +124,76 @@ it('filters linked work index lines by the original matter owner, local provenan
   f.log.startTurn({matterId:m.id,executor:'codex',policy:{cwd:m.projectPath,...(shape==='remote'?{machine:'remote'}:{})}})
   await f.threads.addEntry({threadId:f.ids.bx!,kind:'conclusion',line:shape==='allowed'?'已完成合法检查':`FORBIDDEN_${shape}`,source:'work',matterId:m.id,ts:new Date(at).toISOString()})
  }
- const r=await f.read({projects:['bx']})
+ // Restricted cached names are hidden; stable ids still address authorized entries.
+ const r=await f.read({projects:[f.ids.bx!]})
  expect(r.projects[0]!.entries.map(e=>e.line)).toEqual(['已完成合法检查'])
  expect(JSON.stringify(r)).not.toContain('FORBIDDEN_')
+})
+
+it('owner keeps project names but rechecks entries after an awaited source revocation',async()=>{
+ const f=await fixture()
+ await f.threads.update(f.ids.bx!,{title:'SECRET_PROJECT_TITLE',aliases:['bx']})
+ const matter=f.matters.create({kind:'task',title:'检查',projectPath:'/projects/bx',ownerChatId:'owner'})
+ const turn=f.log.startTurn({matterId:matter.id,executor:'codex',policy:{cwd:'/projects/bx'}})
+ f.log.finishTurn(turn.id,{status:'completed'})
+ await f.threads.addEntry({threadId:f.ids.bx!,kind:'conclusion',line:'SECRET_RESULT',source:'work',matterId:matter.id,ts:new Date(at).toISOString()})
+ await f.threads.addEntry({threadId:f.ids.bx!,kind:'progress',line:'可读聊天进展',ts:new Date(at).toISOString()})
+ const result=await readProjectsActivity({db:f.db,owner:'owner',now:()=>now,identify:async path=>{f.db.query('UPDATE matters SET owner_chat_id=? WHERE id=?').run('visitor',matter.id);return {key:path+'/.git',roots:[path],names:['bx']}}},{projects:[f.ids.bx!]})
+ expect(result.projects[0]!.project).toBe('SECRET_PROJECT_TITLE')
+ expect(JSON.stringify(result)).not.toContain('SECRET_RESULT')
+ expect(result.projects[0]!.entries.map(e=>e.line)).toEqual(['可读聊天进展'])
+})
+
+it.each(['project-path','old-turn','selftest'] as const)('historical tasks obey the complete %s source boundary',async shape=>{
+ const f=await fixture(),m=f.matters.create({kind:'task',title:shape==='selftest'?'selftest':'检查',projectPath:shape==='project-path'?'/tmp/restricted':'/projects/bx',ownerChatId:'owner'})
+ if(shape==='old-turn'){
+  const old=f.log.startTurn({matterId:m.id,executor:'codex',policy:{cwd:'/tmp/old'}})
+  f.log.finishTurn(old.id,{status:'completed'})
+ }
+ const t=f.log.startTurn({matterId:m.id,executor:'codex',policy:{cwd:'/projects/bx'}})
+ f.log.writeItem({matterId:m.id,turnId:t.id,kind:'tool_call',status:'completed',payload:{verb:'read',target:'CANARY_RESTRICTED_FILE.txt',tool:'Read'}})
+ f.log.finishTurn(t.id,{status:'completed'})
+ f.db.query('UPDATE matters SET archived_at=? WHERE id=?').run(now,m.id)
+ await f.threads.addEntry({threadId:f.ids.bx!,kind:'progress',line:'安全进展',ts:new Date(at).toISOString()})
+ const result=await f.read({projects:[f.ids.bx!]})
+ expect(JSON.stringify(result)).not.toContain('CANARY_RESTRICTED_FILE.txt')
+ expect(result.projects[0]!.history).toEqual([])
+})
+
+it('project history cannot map through a delegated ancestor excluded by its reader',async()=>{
+ const f=await fixture()
+ await f.threads.update(f.ids.bx!,{title:'个人账务',aliases:[]})
+ const m=f.matters.create({kind:'task',title:'检查',projectPath:'/projects/bx',ownerChatId:'owner'})
+ const t=f.log.startTurn({matterId:m.id,executor:'codex',policy:{cwd:'/projects/bx'}})
+ f.log.writeItem({matterId:m.id,turnId:t.id,kind:'tool_call',status:'completed',payload:{verb:'read',target:'CANARY_DELEGATED_FILE.txt',tool:'Read'}})
+ f.log.finishTurn(t.id,{status:'completed'})
+ f.db.query('UPDATE matters SET archived_at=? WHERE id=?').run(now,m.id)
+ const delegated=await f.threads.addEntry({threadId:f.ids.bx!,kind:'fact',line:'咨询来源',source:'delegate',ts:new Date(at).toISOString()})
+ await f.threads.addEntry({threadId:f.ids.bx!,kind:'conclusion',line:'来源映射',source:'work',matterId:m.id,derivedFrom:[delegated],ts:new Date(at).toISOString()})
+ await f.threads.addEntry({threadId:f.ids.bx!,kind:'progress',line:'安全进展',ts:new Date(at).toISOString()})
+ const result=await f.read({projects:[f.ids.bx!]})
+ expect(JSON.stringify(result)).not.toContain('CANARY_DELEGATED_FILE.txt')
+ expect(result.projects[0]!.history).toEqual([])
+})
+
+it('current task activity is rechecked after later historical identity work',async()=>{
+ const f=await fixture(),m=f.matters.create({kind:'task',title:'检查',projectPath:'/projects/bx',ownerChatId:'owner'})
+ const t=f.log.startTurn({matterId:m.id,executor:'codex',policy:{cwd:'/projects/bx'}})
+ f.log.writeItem({matterId:m.id,turnId:t.id,kind:'tool_call',status:'started',payload:{verb:'read',target:'CANARY_CURRENT_FILE.txt',tool:'Read'}})
+ await f.threads.addEntry({threadId:f.ids.bx!,kind:'progress',line:'安全进展',ts:new Date(at).toISOString()})
+ let calls=0
+ const result=await readProjectsActivity({db:f.db,owner:'owner',now:()=>now,identify:async path=>{if(++calls===2)f.db.query('UPDATE matters SET project_path=? WHERE id=?').run('/tmp/revoked',m.id);return {key:path+'/.git',roots:[path],names:['bx']}}},{projects:[f.ids.bx!]})
+ expect(calls).toBeGreaterThanOrEqual(2)
+ expect(JSON.stringify(result)).not.toContain('CANARY_CURRENT_FILE.txt')
+ expect(result.projects[0]!.current.sessions).toEqual([])
+})
+
+it('owner historical project turns survive local hostname collision drift', async () => {
+  const f = await fixture(), { hostname } = await import('node:os')
+  const machine = hostname().replace(/\.local$/i, '').replace(/-\d+$/, '').toUpperCase() + '-2.local'
+  f.turns.event({ session_id: 'rename-history', source: 'claude', cwd: '/projects/bx', machine, kind: 'prompt' }, at)
+  f.turns.event({ session_id: 'rename-history', source: 'claude', cwd: '/projects/bx', machine, kind: 'stop', text: '主人历史结果' }, at + 1)
+  const result = await f.read()
+  expect(result.projects.map(p => p.project)).toEqual(['bx'])
+  expect(result.projects[0]!.history).toHaveLength(1)
 })

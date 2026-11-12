@@ -1,5 +1,5 @@
+import { topicMatterAccess, localTopicContext } from '../../lib/topic-provenance'
 /** Owner-scoped metadata only. Never select permission bodies, commands, diffs or output. */
-import { hostname } from 'node:os'
 import { executorNames } from '../../domain/provider-display-names'
 import type { Db } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
@@ -30,7 +30,7 @@ const META = `json_object('kind',kind,'tool',COALESCE(json_extract(payload_json,
 type Meta = {kind:string;tool:string|null;verb:string|null;type:string|null;status:string;file:string|null;key:string|null;at:number}
 type Row = {id:string;kind:'task'|'terminal';title:string;state:string;updated_at:number;project_path:string|null;cwd:string|null;last_event_at:number|null;executor:string|null;project:string|null;repo:string|null;root:string|null;turn_status:string|null;ended_at:number|null;policy_cwd:string|null;pending:string|null;last:string|null;response_at:number|null}
 function readRows(db:Db,owner:string,ids?:string[]):Row[] {
-  return db.query<Row,[string,string,string,string]>(`SELECT m.id,m.kind,m.title,m.state,m.updated_at,m.project_path,
+  const rows=db.query<Row,[string,string]>(`SELECT m.id,m.kind,m.title,m.state,m.updated_at,m.project_path,
     c.cwd,c.last_event_at,COALESCE(t.executor,c.source,w.provider_id) AS executor,t.status AS turn_status,t.ended_at,
     json_extract(t.policy_json,'$.cwd') AS policy_cwd,wt.project_path AS project,wt.repo_root AS repo,wt.root,
     (SELECT ${META} FROM matter_items WHERE matter_id=m.id AND kind IN ('permission','question') AND status='started' ORDER BY seq DESC LIMIT 1) AS pending,
@@ -44,13 +44,11 @@ function readRows(db:Db,owner:string,ids?:string[]):Row[] {
     LEFT JOIN matter_turns t ON t.id=(SELECT id FROM matter_turns WHERE matter_id=m.id ORDER BY seq DESC LIMIT 1)
     WHERE m.kind IN ('task','terminal') AND m.archived_at IS NULL
       AND (m.owner_chat_id=?1 OR (m.kind='terminal' AND m.owner_chat_id IS NULL))
-      AND (m.kind!='terminal' OR (
-        COALESCE(c.origin_agent,'')='' AND COALESCE(c.machine,'') IN ('',?2)
-        AND NOT EXISTS(SELECT 1 FROM matter_turns mt WHERE mt.matter_id=m.id AND (
-          COALESCE(json_extract(mt.policy_json,'$.originAgent'),'')!='' OR COALESCE(json_extract(mt.policy_json,'$.machine'),'') NOT IN ('',?3)))
-        AND (c.session_id IS NOT NULL OR json_type(t.policy_json,'$.cwd')='text')))
-      ${ids?'AND m.id IN (SELECT value FROM json_each(?4))':'AND ?4 IS NOT NULL'}
-    ORDER BY m.updated_at DESC,m.id`).all(owner,hostname(),hostname(),JSON.stringify(ids??[]))
+      AND (m.kind!='terminal' OR c.session_id IS NOT NULL OR json_type(t.policy_json,'$.cwd')='text')
+      ${ids?'AND m.id IN (SELECT value FROM json_each(?2))':'AND ?2 IS NOT NULL'}
+    ORDER BY m.updated_at DESC,m.id`).all(owner,JSON.stringify(ids??[]))
+  const allowed=topicMatterAccess(db,localTopicContext(owner),rows.map(m=>m.id)).entryAllowed
+  return rows.filter(m=>allowed.has(m.id))
 }
 // Fixed vocabulary + a validated tool identifier. Free-form descriptions never cross this boundary.
 const toolName = (tool:string|null|undefined) => tool && /^[\w.:-]{1,80}$/.test(tool) ? tool : ''
@@ -114,7 +112,7 @@ function createCache(db:Db,owner:string,seen:MatterSeen,identify:typeof projectI
     let changed=ids??[...new Set([...previous.keys(),...rows.keys()])]
     if(full||mappingDirty){
       mappingDirty=false
-      const topics:MatchTopic[]=(await makeThreadsStore(db).list(owner)).filter(t=>!t.private&&t.status!=='done').map(t=>({id:t.id,title:t.title,aliases:t.aliases,tags:[],summary:'',lastActive:t.lastActive,entries:[]}))
+      const topics:MatchTopic[]=(await makeThreadsStore(db, { filterSources: true }).list(owner)).filter(t=>!t.private&&t.status!=='done').map(t=>({id:t.id,title:t.title,aliases:t.aliases,tags:[],summary:'',lastActive:t.lastActive,entries:[]}))
       // Filesystem facts are cached across ordinary pushes/pages. A new cwd or
       // changed provenance re-registers all names before any mapping is accepted.
       const identities=new Map<string,ReturnType<typeof identify>>()

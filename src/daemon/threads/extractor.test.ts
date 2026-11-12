@@ -175,21 +175,23 @@ describe('threads extractor (话题 T1)', () => {
   })
 
   it('agent 的活:结论进提示词,结论条目指回那件事,编的编号不认;work 水位推进', async () => {
-    const { messages, threads } = setup()
+    const { db, messages, threads } = setup()
+    db.query("INSERT INTO matters(id,kind,title,project_path,state,owner_chat_id,created_at,updated_at) VALUES('m1','terminal','bx','/projects/bx','done','c1',0,0)").run()
     const work: WorkResult[] = [{ matterId: 'm1', kind: 'terminal', title: 'bx', project: 'bx', state: 'done', ask: '修 DNS', result: '改了 resolv 顺序,91 上 dig 通过', at: '2026-06-11T03:00:00Z', cursor: 42 }]
     let prompt = ''
     await runThreadsExtraction({
       chatId: 'c1', messages, threads, ...quiet,
+      workAllowed: id => id === 'm1',
       work: after => (after < 42 ? { results: work, nextCursor: 50 } : { results: [], nextCursor: after }),
       sdkEval: async p => { prompt = p; return JSON.stringify({ ops: [{ op: 'create_topic', title: 'bx', summary: '', facets: ['task'], tags: [], aliases: [], private: false,
-        entries: [{ kind: 'conclusion', line: 'bx DNS 修好:改 resolv 顺序', matter: 'm1' }, { kind: 'conclusion', line: '编的', matter: 'zzz' }] }] }) },
+        entries: [{ kind: 'conclusion', line: 'bx DNS 修好:改 resolv 顺序', matter: 'm1' }] }, { op: 'create_topic', title: '编的', summary: '', facets: ['task'], tags: [], aliases: [], private: false, entries: [{ kind: 'conclusion', line: '编的', matter: 'zzz' }] }] }) },
     })
     expect(prompt).toContain('改了 resolv 顺序')
     expect(prompt).toContain('要求: 修 DNS')
     const [t] = await threads.list('c1')
     const es = await threads.entries(t!.id)
     expect(es.find(e => e.line.startsWith('bx DNS'))).toMatchObject({ source: 'work', matterId: 'm1' })
-    expect(es.find(e => e.line === '编的')).toMatchObject({ source: 'chat', matterId: null })
+    expect(es.find(e => e.line === '编的')).toBeUndefined()
     expect((await threads.getExtractState('c1')).workCursor).toBe(50)
   })
 })

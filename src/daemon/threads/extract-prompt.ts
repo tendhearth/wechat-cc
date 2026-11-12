@@ -13,7 +13,7 @@ import type { Facet, Episode, ThreadStatus, EntryKind } from '../../lib/threads-
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export interface NewEntry { kind: EntryKind; line: string; body?: string; due?: string; /** 结论来自哪件事(agent 的活)。 */ matter?: string }
+export interface NewEntry { kind: EntryKind; line: string; body?: string; due?: string; /** 结论来自哪件事(agent 的活)。 */ matter?: string; /** 本条实际依据的已有条目 id;纯新对话可省略。 */ derivedFrom?: string[] }
 
 export type ExtractOp =
   | { op: 'create_topic'; title: string; summary: string; description?: string; facets: [Facet, ...Facet[]]; tags: string[]; aliases: string[]; private: boolean; episode?: Episode; entries: NewEntry[] }
@@ -112,6 +112,7 @@ const TASK = `你是 CC,在整理和主人聊过的「话题」。话题是记�
 - 已经记过的事不要重复记(看已有话题下的条目)。
 - 不记密码、密钥、令牌原文;写「密码在 X 处」。
 - agent 的活只记结论(改了什么、结果是什么、卡在哪、下一步),不记过程;结论条目写 "matter":"事的编号"。
+- 新条目依据已有条目时,用 "derivedFrom":["ent_xxx"] 列出实际引用的条目 id(只能引用下方展示的 id)。纯新增聊天事实写 derivedFrom:[],不要继承无关话题或整段上下文。
 
 ## 时间戳
 episode 的时间戳必须原样复制消息里的 ts(UTC、以 Z 结尾),不要改写时区。没有对话、只有 agent 的活时不写 episode。
@@ -168,7 +169,7 @@ const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const Line = z.string().trim().min(1)
 const Words = z.array(z.string().trim().min(1))
 
-const EntryShape = { kind: KindEnum, line: Line, body: z.string().optional(), due: Day.optional(), matter: z.string().optional() }
+const EntryShape = { kind: KindEnum, line: Line, body: z.string().optional(), due: Day.optional(), matter: z.string().optional(), derivedFrom: Words.optional() }
 
 const ExtractOpSchema = z.discriminatedUnion('op', [
   z.object({

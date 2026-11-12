@@ -1,6 +1,7 @@
+import { temporary, topicMatterAccess, readableTopicMetadata, localTopicContext } from '../../lib/topic-provenance'
 /** Cached topic/link metadata. A tool step refreshes one matter, not all linked history. */
 import type { Db } from '../../lib/db'
-import { temporary, topicRevision, type TopicMatter } from '../../lib/topic-bubbles'
+import { topicRevision, type TopicMatter } from '../../lib/topic-bubbles'
 import { onWriteHint } from '../../lib/write-hints'
 import { matterFeed } from '../../adapters/store/matter-feed'
 export type TopicRow={id:string;title:string;description:string;summary:string;lastActive:string;bubbleState:'open'|'closed';lastRecalledAt:string|null;lastOpenedByOwnerAt:string|null;activityRevision:number}
@@ -24,12 +25,14 @@ function makeReader(db:Db,owner:string) {
     if(!full&&!allTopics&&!topics.size&&!matters.size){stamp=current;return value}
     const next:TopicMetadata={topics:full?new Map():new Map(value.topics),links:full?new Map():new Map(value.links),counts:full?new Map():new Map(value.counts),linkRevisions:full?new Map():new Map(value.linkRevisions)}
     const ids=[...matters],topicIds=[...topics]
+    if(ids.length)allTopics=true
     if(full||allTopics||topicIds.length){
       const rows=db.query<TopicRow,[string,string]>(`SELECT t.id,t.title,t.description,t.summary,t.last_active AS lastActive,COALESCE(b.state,'closed') AS bubbleState,
         b.last_recalled_at AS lastRecalledAt,b.last_opened_by_owner_at AS lastOpenedByOwnerAt,COALESCE(b.activity_revision,0) AS activityRevision
         FROM threads t LEFT JOIN topic_bubbles b ON b.thread_id=t.id WHERE t.chat_id=?1 ${full||allTopics?'AND ?2 IS NOT NULL':'AND t.id IN (SELECT value FROM json_each(?2))'}`).all(owner,JSON.stringify(topicIds))
       if(allTopics)next.topics.clear()
-      for(const t of rows)next.topics.set(t.id,t)
+      for(const t of rows)next.topics.delete(t.id)
+      for(const t of readableTopicMetadata(db,localTopicContext(owner),rows))next.topics.set(t.id,t)
     }
     const touched=new Set<string>()
     const bucket=(id:string)=>{
@@ -44,9 +47,10 @@ function makeReader(db:Db,owner:string) {
     if(full)reverse.clear()
     const found=full||ids.length?db.query<TopicMatter&{topicId:string},[string,string]>(`SELECT l.thread_id AS topicId,m.id,m.title,m.state,m.archived_at,m.kind,m.project_path,m.owner_chat_id
       FROM matter_topics l JOIN matters m ON m.id=l.matter_id JOIN threads t ON t.id=l.thread_id
-      WHERE t.chat_id=?1 AND m.owner_chat_id=t.chat_id AND m.kind IN ('task','terminal','act') ${full?'AND ?2 IS NOT NULL':'AND m.id IN (SELECT value FROM json_each(?2))'} ORDER BY m.id`).all(owner,JSON.stringify(ids)).filter(m=>!temporary(m.project_path)):[]
+      WHERE t.chat_id=?1 AND m.owner_chat_id=t.chat_id AND m.kind IN ('task','terminal','act') ${full?'AND ?2 IS NOT NULL':'AND m.id IN (SELECT value FROM json_each(?2))'} ORDER BY m.id`).all(owner,JSON.stringify(ids)):[]
+    const allowed=topicMatterAccess(db,localTopicContext(owner),found.map(m=>m.id)).allowed
     const incoming=new Map<string,Map<string,TopicMatter>>()
-    for(const m of found){const links=incoming.get(m.id)??new Map();links.set(m.topicId,m);incoming.set(m.id,links)}
+    for(const m of found.filter(m=>allowed.has(m.id)&&!temporary(m.project_path))){const links=incoming.get(m.id)??new Map();links.set(m.topicId,m);incoming.set(m.id,links)}
     for(const id of full?[...incoming.keys()]:ids){
       const before=reverse.get(id)??new Set<string>(),after=incoming.get(id)??new Map<string,TopicMatter>()
       for(const topic of new Set([...before,...after.keys()])){
