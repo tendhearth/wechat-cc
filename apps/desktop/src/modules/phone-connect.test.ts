@@ -44,7 +44,7 @@ describe('linkView', () => {
   it('每个 state 一种画法;中继没开通不出码', () => {
     expect(linkView(ready() as never)).toEqual({ kind: 'qr', url: URL1, expiresAt: 1_600_000, checkCode: 'USZ-YAY' })
     expect(linkView({ ok: false, state: 'starting' })).toEqual({ kind: 'starting' })
-    expect(linkView({ ok: false, state: 'relay_not_configured' })).toEqual({ kind: 'notice', title: '手机连接服务还没开通', body: '开通之后，这里会出现二维码。' })
+    expect(linkView({ ok: false, state: 'relay_not_configured' })).toEqual({ kind: 'notice', title: '手机连接服务还没开通', body: '开通之后，这里会出现二维码。', needsConnect: true })
     expect(linkView({ ok: false, state: 'relay_unavailable' })).toMatchObject({ kind: 'notice', title: '手机连接服务这次没启动起来' })
     expect(linkView({ ok: false, state: 'remote_off' })).toMatchObject({ kind: 'notice', title: '手机连接没打开' })
     expect(linkView({ ok: false, state: 'no_owner' })).toEqual({ kind: 'notice', title: '先用微信扫码登录，再来连接手机。', body: '' })
@@ -166,7 +166,7 @@ describe('mountPhoneConnect(弹层)', () => {
 
 describe('mountOnboardPhone(引导页,裁决 3)', () => {
   function host() {
-    document.body.innerHTML = `<div id="onboard-phone" hidden><h3 id="onboard-phone-title"></h3><div id="onboard-phone-qr"></div><p id="onboard-phone-status"></p><p id="onboard-phone-check" hidden></p><button id="onboard-phone-renew" hidden></button><p id="onboard-phone-later"></p></div>`
+    document.body.innerHTML = `<div id="onboard-phone" hidden><h3 id="onboard-phone-title"></h3><div id="onboard-phone-qr"></div><p id="onboard-phone-status"></p><p id="onboard-phone-check" hidden></p><button id="onboard-phone-connect" hidden></button><button id="onboard-phone-renew" hidden></button><p id="onboard-phone-later"></p></div>`
     return document.getElementById('onboard-phone')!
   }
   const fast = { now: () => 1_000_000, sleep: async () => {} }
@@ -220,15 +220,82 @@ describe('mountOnboardPhone(引导页,裁决 3)', () => {
     expect(btn.disabled).toBe(true)
     m.sync({ active: false, alive: true })
   })
-  it('中继没开通 ⇒ 整块一直藏着', async () => {
+  it('中继没开通 ⇒ 显示连接手机,不自动开通', async () => {
     const h = host()
     const t = harness({ link: [{ ok: false, state: 'relay_not_configured' }], devices: [[]] })
     const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: fast, retryMs: 100_000 })
     m.sync({ active: true, alive: true })
-    await vi.waitFor(() => expect(t.call).toHaveBeenCalledWith('POST', '/v1/phone/link', { enable_remote: true }))
+    await vi.waitFor(() => expect(t.call).toHaveBeenCalledWith('POST', '/v1/phone/link', { enable_remote: false }))
     await new Promise(r => setTimeout(r, 10))
-    expect(h.hidden).toBe(true)
+    expect(h.hidden).toBe(false)
+    expect(document.getElementById('onboard-phone-connect')!.hidden).toBe(false)
+    expect(document.getElementById('onboard-phone-connect')!.textContent).toBe('连接手机')
+    expect(t.call.mock.calls.some(c => c[1].endsWith('/enable-relay'))).toBe(false)
     m.sync({ active: false, alive: true })
+  })
+  it.each(['relay_not_configured', 'remote_off'])('%s: 不点击时聚焦和定时查询都不写入', async state => {
+    const h = host()
+    const t = harness({ link: [{ ok: false, state }], devices: [[]] })
+    const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', retryMs: 20 })
+    try {
+      m.sync({ active: true, alive: true })
+      await vi.waitFor(() => expect(document.getElementById('onboard-phone-connect')!.hidden).toBe(false))
+      window.dispatchEvent(new Event('focus'))
+      await vi.waitFor(() => expect(posts(t)).toBeGreaterThan(2))
+      expect(h.hidden).toBe(false)
+      expect(t.call.mock.calls.filter(c => c[0] === 'POST').every(c => c[1] === '/v1/phone/link' && JSON.stringify(c[2]) === '{"enable_remote":false}')).toBe(true)
+      expect(t.call.mock.calls.some(c => c[1].endsWith('/enable-relay'))).toBe(false)
+    } finally { m.sync({ active: false, alive: true }) }
+  })
+  it('引导页点击才开通 ⇒ 会重启一次 ⇒ 出码和隐私链接', async () => {
+    const h = host()
+    h.insertAdjacentHTML('beforeend', '<a id="onboard-phone-privacy" href="https://cc.tendhearth.com/privacy/" hidden></a>')
+    let enabled = false
+    const call = vi.fn(async (_method: string, path: string, _body?: unknown) => {
+      if (path.endsWith('/devices')) return { ok: true, devices: [] }
+      if (path.endsWith('/enable-relay')) { enabled = true; return { ok: false, state: 'starting' } }
+      return enabled ? ready() : { ok: false, state: 'relay_not_configured' }
+    })
+    let resume: (() => void) | undefined
+    const m = mountOnboardPhone({ host: h, call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise<void>(r => { resume = r }) } })
+    try {
+      m.sync({ active: true, alive: true })
+      const connect = document.getElementById('onboard-phone-connect')!
+      await vi.waitFor(() => expect(h.hidden).toBe(false))
+      expect(call.mock.calls.filter(c => c[1].endsWith('/enable-relay'))).toHaveLength(0)
+      connect.click()
+      await vi.waitFor(() => expect(h.dataset.phase).toBe('preparing'))
+      expect(document.getElementById('onboard-phone-status')!.textContent).toBe('正在准备连接手机的二维码，CC 会重启一下……')
+      expect(connect.hidden).toBe(true)
+      expect(call).toHaveBeenCalledWith('POST', '/v1/phone/link', { enable_remote: true })
+      expect(call.mock.calls.filter(c => c[1].endsWith('/enable-relay'))).toHaveLength(1)
+      resume!()
+      await vi.waitFor(() => expect(h.querySelector('svg')).not.toBeNull())
+      expect(document.getElementById('onboard-phone-check')!.textContent).toBe('核对码 USZ-YAY')
+      expect(document.getElementById('onboard-phone-privacy')!.hidden).toBe(false)
+      expect(document.getElementById('onboard-phone-privacy')!.textContent).toBe('隐私说明')
+      expect(connect.hidden).toBe(true)
+      expect(h.dataset.phase).toBeUndefined()
+    } finally { m.sync({ active: false, alive: true }); resume?.() }
+  })
+  it('主动 flow 再次需要开通 ⇒ 仍显示连接手机;离开后点击不调用', async () => {
+    const h = host()
+    const call = vi.fn(async (_method: string, path: string, _body?: unknown) => path.endsWith('/devices') ? { ok: true, devices: [] } : { ok: false, state: 'relay_not_configured' })
+    const m = mountOnboardPhone({ host: h, call, renderQr: async () => '<svg></svg>' })
+    try {
+      m.sync({ active: true, alive: true })
+      const connect = document.getElementById('onboard-phone-connect')!
+      await vi.waitFor(() => expect(h.hidden).toBe(false))
+      connect.click()
+      await vi.waitFor(() => expect(call.mock.calls.filter(c => c[1].endsWith('/enable-relay'))).toHaveLength(1))
+      await vi.waitFor(() => expect(connect.hidden).toBe(false))
+      expect(h.hidden).toBe(false)
+      m.sync({ active: false, alive: true })
+      const count = call.mock.calls.length
+      connect.click()
+      await Promise.resolve()
+      expect(call.mock.calls).toHaveLength(count)
+    } finally { m.sync({ active: false, alive: true }) }
   })
   it('daemon 没活 ⇒ 不请求;离开这一步 ⇒ 停、藏;同一步里重复 sync 不重开;出码后只轮询设备、不再 POST', async () => {
     const h = host()
@@ -312,7 +379,7 @@ describe('核对码(Task 9 fix round 1:共用中继上分清「我的电脑」)'
     m2.close()
   })
   it('引导页:出码时显示核对码,连上 / 过期后藏起来', async () => {
-    document.body.innerHTML = `<div id="onboard-phone" hidden><h3 id="onboard-phone-title"></h3><div id="onboard-phone-qr"></div><p id="onboard-phone-status"></p><p id="onboard-phone-check" hidden></p><button id="onboard-phone-renew" hidden></button><p id="onboard-phone-later"></p></div>`
+    document.body.innerHTML = `<div id="onboard-phone" hidden><h3 id="onboard-phone-title"></h3><div id="onboard-phone-qr"></div><p id="onboard-phone-status"></p><p id="onboard-phone-check" hidden></p><button id="onboard-phone-connect" hidden></button><button id="onboard-phone-renew" hidden></button><p id="onboard-phone-later"></p></div>`
     const host = document.getElementById('onboard-phone')!
     const t = harness({ link: [ready()], devices: [[], [], [dev('n', 'Tendhearth · iPhone')]] })
     const m = mountOnboardPhone({ host, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise(r => setTimeout(r, 30)) } })
@@ -326,5 +393,54 @@ describe('核对码(Task 9 fix round 1:共用中继上分清「我的电脑」)'
   })
   it('index.html 引导块里有核对码那一行(默认藏着)', () => {
     expect(readFileSync(join(SRC, 'index.html'), 'utf8')).toMatch(/<p id="onboard-phone-check" class="qr-check" hidden><\/p>/)
+  })
+})
+
+
+describe('11-11 explicit relay consent', () => {
+  it('unconfigured modal enables once, follows starting to code, offers only a privacy link', async () => {
+    document.body.innerHTML = ''
+    let links = 0
+    const call = vi.fn(async (_method: string, path: string) => {
+      if (path.endsWith('/devices')) return { ok: true, devices: [] }
+      if (path.endsWith('/enable-relay')) return { ok: false, state: 'starting' }
+      return ++links === 1 ? { ok: false, state: 'relay_not_configured' } : ready()
+    })
+    let resume: (() => void) | undefined
+    const m = mountPhoneConnect({ call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise<void>(r => { resume = r }) } })
+    try {
+      m.open()
+      await vi.waitFor(() => expect(document.querySelector('#phone-connect-starting')).not.toBeNull())
+      resume!()
+      await vi.waitFor(() => expect(document.querySelector('#phone-connect-privacy')).not.toBeNull())
+      expect(call.mock.calls.filter(c => c[1].endsWith('/enable-relay'))).toHaveLength(1)
+      expect(document.querySelector('#phone-connect-privacy')?.getAttribute('href')).toBe('https://cc.tendhearth.com/privacy/')
+      expect(document.querySelector('#phone-connect-body')?.textContent).toBe('核对码 USZ-YAY用手机相机扫一下。10 分钟内有效，只能用一次。没装 Tendhearth 的手机会打开网页版设置。复制链接隐私说明')
+    } finally { m.close(); resume?.() }
+  })
+  it('automatic onboarding never enables an already-configured but disabled tunnel', async () => {
+    document.body.innerHTML = '<div id="onboard-test"><h3 id="onboard-phone-title"></h3><div id="onboard-phone-qr"></div><p id="onboard-phone-status"></p><p id="onboard-phone-later"></p><button id="onboard-phone-connect" hidden></button><button id="onboard-phone-renew"></button></div>'
+    const call = vi.fn(async (_method: string, path: string) => path.endsWith('/devices') ? { ok: true, devices: [] } : { ok: false, state: 'remote_off' })
+    const m = mountOnboardPhone({ host: document.getElementById('onboard-test')!, call, renderQr: async () => '<svg></svg>' })
+    m.sync({ active: true, alive: true })
+    await vi.waitFor(() => expect(call).toHaveBeenCalledWith('POST', '/v1/phone/link', { enable_remote: false }))
+    m.sync({ active: false, alive: true })
+    expect(call.mock.calls.some(c => c[1].endsWith('/enable-relay'))).toBe(false)
+  })
+  it('closing before the unconfigured result arrives never enables relay', async () => {
+    document.body.innerHTML = ''
+    let reply: ((r: object) => void) | undefined
+    const call = vi.fn(async (_method: string, path: string) => {
+      if (path.endsWith('/devices')) return { ok: true, devices: [] }
+      return new Promise<object>(r => { reply = r })
+    })
+    const m = mountPhoneConnect({ call, renderQr: async () => '<svg></svg>' })
+    m.open()
+    await vi.waitFor(() => expect(reply).toBeDefined())
+    m.close()
+    reply!({ ok: false, state: 'relay_not_configured' })
+    await Promise.resolve(); await Promise.resolve()
+    expect(call.mock.calls.some(c => c[1].endsWith('/enable-relay'))).toBe(false)
+    expect(document.querySelector('#phone-settings-modal')).toBeNull()
   })
 })

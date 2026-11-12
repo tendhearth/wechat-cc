@@ -45,12 +45,40 @@ test('出码 → 手机配上 → 「已连上 Tendhearth · iPhone」;请求带
   await expect(page.locator('#phone-settings-modal')).toHaveCount(0)
 })
 
-test('中继没开通 ⇒ 说明,不出码', async ({ page, shimUrl, shim }) => {
-  await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { link: [{ ok: false, state: 'relay_not_configured' }], devices: [[]] } })
+test('未开通点连接 ⇒ enable-relay ⇒ starting ⇒ 出码;只有隐私链接', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { link: [{ ok: false, state: 'relay_not_configured' }, ready()], enableRelay: [{ ok: false, state: 'starting' }], devices: [[]] } })
+  const requests: string[] = []
+  page.on('request', req => { if (req.url().includes('/v1/phone/')) requests.push(new URL(req.url()).pathname) })
   await bootIntoDashboard(page, shimUrl)
   await openConnect(page)
-  await expect(page.locator('#phone-connect-notice')).toHaveText('手机连接服务还没开通')
-  await expect(page.locator('#phone-connect-qr')).toHaveCount(0)
+  await expect(page.locator('#phone-connect-starting')).toBeVisible()
+  await expect(page.locator('#phone-connect-qr')).toBeVisible({ timeout: 10_000 })
+  expect(requests.filter(p => p.endsWith('/enable-relay'))).toHaveLength(1)
+  expect(requests.indexOf('/v1/phone/enable-relay')).toBeGreaterThan(requests.indexOf('/v1/phone/link'))
+  const privacy = page.getByRole('link', { name: '隐私说明', exact: true })
+  await expect(privacy).toHaveAttribute('href', 'https://cc.tendhearth.com/privacy/')
+  await expect(privacy).toBeVisible()
+  await expect(page.locator('#phone-connect-notice')).toHaveCount(0)
+  await expect(page.locator('#phone-connect-body > :not(#phone-connect-qr)')).toHaveText(['核对码 USZ-YAY', '用手机相机扫一下。10 分钟内有效，只能用一次。', '没装 Tendhearth 的手机会打开网页版设置。', '复制链接', '隐私说明'])
+  await page.locator('#phone-connect-close').click()
+})
+
+test('关闭待返回的未开通流程 ⇒ 不调用 enable-relay;未点击连接也不调用', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { devices: [[]] } })
+  let enables = 0
+  page.on('request', req => { if (req.url().endsWith('/v1/phone/enable-relay')) enables++ })
+  await bootIntoDashboard(page, shimUrl)
+  await expect(page.locator('#phone-settings-modal')).toHaveCount(0)
+  expect(enables).toBe(0)
+  let pending: import('@playwright/test').Route | undefined
+  await page.route('**/v1/phone/link', route => { pending = route })
+  await openConnect(page)
+  await expect.poll(() => !!pending).toBe(true)
+  await page.locator('#phone-connect-close').click()
+  await pending!.fulfill({ json: { ok: false, state: 'relay_not_configured' } })
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 100)))
+  await expect(page.locator('#phone-settings-modal')).toHaveCount(0)
+  expect(enables).toBe(0)
 })
 
 test('正在打开隧道 ⇒ 等一下 ⇒ 出码', async ({ page, shimUrl, shim }) => {
@@ -99,14 +127,51 @@ test.describe('引导页最后一步', () => {
     await expect(page.locator('#onboard-phone-status')).toHaveText('用手机相机扫一下。10 分钟内有效，只能用一次。', { timeout: 15_000 })
   })
 
-  test('中继没开通 ⇒ 整块不出现', async ({ page, shimUrl, shim }) => {
+  test('中继没开通 ⇒ 显示连接手机,不点击不开通', async ({ page, shimUrl, shim }) => {
     await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { link: [{ ok: false, state: 'relay_not_configured' }], devices: [[]] } })
     await shim.invoke('mock.doctor', { report: SERVICE_STEP_REPORT })
+    let enables = 0
+    page.on('request', req => { if (req.url().endsWith('/v1/phone/enable-relay')) enables++ })
     await page.goto(shimUrl)
     await expect(page.locator('#screen-service')).toHaveClass(/active/, { timeout: 15_000 })
     await expect.poll(async () => ((await shim.invoke('mock.phone-calls')) as { result: { calls: unknown[] } }).result.calls.length).toBeGreaterThan(0)
-    await expect(page.locator('#onboard-phone')).toBeHidden()
+    await expect(page.locator('#onboard-phone')).toBeVisible()
+    await expect(page.getByRole('button', { name: '连接手机', exact: true })).toBeVisible()
     await expect(page.locator('#enter-dashboard')).toBeEnabled()
+    expect(enables).toBe(0)
     await shot(page, 'onboarding-not-configured')
   })
+  test('新装引导:不点不写,点连接手机 ⇒ 开通 ⇒ 重启提示 ⇒ 出码和隐私链接', async ({ page, shimUrl, shim }) => {
+    await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { devices: [[]], enableRelay: [{ ok: false, state: 'starting' }] } })
+    await shim.invoke('mock.doctor', { report: SERVICE_STEP_REPORT })
+    let consent = false
+    let enables = 0
+    const bodies: unknown[] = []
+    await page.route('**/v1/phone/link', async route => {
+      bodies.push(route.request().postDataJSON())
+      await route.fulfill({ json: enables ? ready() : { ok: false, state: 'relay_not_configured' } })
+    })
+    page.on('request', req => { if (req.url().endsWith('/v1/phone/enable-relay')) { expect(consent).toBe(true); enables++ } })
+    await page.goto(shimUrl)
+    await expect(page.locator('#screen-service')).toHaveClass(/active/, { timeout: 15_000 })
+    const connect = page.getByRole('button', { name: '连接手机', exact: true })
+    await expect(connect).toBeVisible()
+    expect(enables).toBe(0)
+    expect(bodies).toEqual([{ enable_remote: false }])
+    await expect(page.locator('#onboard-phone-privacy')).toBeHidden()
+    await expect(page.locator('#enter-dashboard')).toBeEnabled()
+    consent = true
+    await connect.click()
+    await expect(page.locator('#onboard-phone-status')).toHaveText('正在准备连接手机的二维码，CC 会重启一下……')
+    await expect(connect).toBeHidden()
+    await expect(page.locator('#onboard-phone-qr > *').first()).toBeVisible({ timeout: 10_000 })
+    expect(enables).toBe(1)
+    expect(bodies).toEqual([{ enable_remote: false }, { enable_remote: true }, {}])
+    await expect(page.locator('#onboard-phone-check')).toHaveText('核对码 USZ-YAY')
+    await expect(page.locator('#onboard-phone-privacy')).toBeVisible()
+    await expect(page.locator('#onboard-phone-privacy')).toHaveText('隐私说明')
+    await expect(page.locator('#onboard-phone-privacy')).toHaveAttribute('href', 'https://cc.tendhearth.com/privacy/')
+    await expect(page.locator('#enter-dashboard')).toBeEnabled()
+  })
+
 })

@@ -55,7 +55,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     journalModule(f),
     companionModule(f),
     voiceModule(),
-    phoneModule(),
+    phoneModule(f.stateDir),
     stickersModule(f),               // 表情库全 daemon 一份,bootstrap(提示词)和 wired 都要它
 
     // —— bootstrap:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙(一组模块)——

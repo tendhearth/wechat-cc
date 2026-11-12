@@ -11,6 +11,8 @@ export interface PhoneConnectDep {
 export interface PhoneRoutesDeps {
   /** 设置面板还没建好(wired 之前)⇒ null,两条路由照旧回 503 phone_not_wired。 */
   phoneConnect: () => PhoneConnectDep | null
+  /** Explicit consent only; returns true only when the relay was newly configured. */
+  enableRelay?: () => boolean
   log?: (tag: string, line: string) => void
 }
 
@@ -20,6 +22,23 @@ export interface PhoneRoutesDeps {
  */
 export function phoneRoutes(deps: PhoneRoutesDeps): RouteTable {
   return {
+    // This route has no phone/panel exposure; internal-api listens only on loopback.
+    'POST /v1/phone/enable-relay': async (_q, body, caller) => {
+      if (caller?.origin !== 'operator' || caller.tier !== 'admin') return { status: 403, body: { error: 'forbidden' } }
+      if (body != null && (typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0)) return { status: 400, body: { error: 'invalid_request' } }
+      const connect = deps.phoneConnect()
+      if (!connect || !deps.enableRelay) return { status: 503, body: { error: 'phone_not_wired' } }
+      try {
+        if (deps.enableRelay()) deps.log?.('AUDIT', `phone relay enabled by operator at ${new Date().toISOString()} — 桌面「连接手机」`)
+        // Reuse the existing startup/restart deduplication and ready-code path.
+        return { status: 200, body: await connect.link({ enableRemote: true }) }
+      } catch (e) {
+        const code = (e as { code?: string })?.code
+        if (code === 'config_unreadable' || code === 'config_busy') return { status: 409, body: { error: code } }
+        deps.log?.('INTERNAL_API', 'phone_relay_enable_failed')
+        return { status: 503, body: { error: 'phone_relay_enable_failed' } }
+      }
+    },
     'POST /v1/phone/link': async (_q, body) => {
       const connect = deps.phoneConnect()
       if (!connect) return { status: 503, body: { error: 'phone_not_wired' } }

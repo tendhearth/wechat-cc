@@ -256,6 +256,7 @@ const ROUTE_TABLE = {
   'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 桌面「连接手机」(plan 7a):铸 admin 链接令牌 / 打开远程隧道,只给 operator 凭据。
   // 桌面(原 lib.rs 注释):出码(必要时打开远程隧道)与轮询已配对设备。
+  'POST /v1/phone/enable-relay': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/phone/link': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/phone/devices': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // P3c-4(手机原 /m/api/entry/models):手机令牌也走这一条,处理器按 caller 收 —— 只认 providerId + 项目目录 id、不认 path;只给设备。

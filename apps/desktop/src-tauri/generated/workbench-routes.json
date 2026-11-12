@@ -1,6 +1,6 @@
 {
   "_comment": "生成物,别手改:改 packages/protocol/src/routes.ts 后跑 bun run gen:routes",
-  "version": 13,
+  "version": 14,
   "tauri": [
     "GET /v1/access/list",
     "GET /v1/avatar/info",
@@ -87,6 +87,7 @@
     "POST /v1/memory/topics/rename",
     "POST /v1/memory/view",
     "POST /v1/observations/archive",
+    "POST /v1/phone/enable-relay",
     "POST /v1/phone/link",
     "POST /v1/sessions/delete",
     "POST /v1/workbench/answer",
@@ -200,6 +201,7 @@
     "POST /v1/memory/topics/rename",
     "POST /v1/memory/view",
     "POST /v1/observations/archive",
+    "POST /v1/phone/enable-relay",
     "POST /v1/phone/link",
     "POST /v1/sessions/delete",
     "POST /v1/workbench/answer",

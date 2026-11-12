@@ -165,6 +165,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   module_starting: {desktop: 503, phone: [503, 'unavailable']},
   // 配置文件写不进去(第三批 3e,lib/json-file):旧文件读不出来就拒写,不拿 {} 覆盖;刚被别处改过两次就让你稍后再试。
   // daemon internal-api 统一回 409(index.ts 的路由 catch),带 detail(哪个文件、为什么)。
+  phone_relay_enable_failed: {desktop: 503},
   config_unreadable: {desktop: 409},
   config_busy: {desktop: 409},
   // 记忆编辑(2026-10-23,设计稿 memory-edits-stick;记忆功能 src/features/memory/routes.ts 的 POST /v1/memory/view|edit,桌面经 CLI `memory view|edit --json`)。

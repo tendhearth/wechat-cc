@@ -163,7 +163,7 @@ const __mockState: {
   connections?: unknown
   // 「连接手机」(plan 7a):POST /v1/phone/link 依次回 phone.link 的项、GET /v1/phone/devices 依次回 phone.devices 的项
   // (都是最后一项一直回);没 seed ⇒ ready 码 + 空列表。phoneCalls 记 link 的请求正文(mock.phone-calls 读)。
-  phone?: { link?: unknown[]; devices?: unknown[][] }
+  phone?: { link?: unknown[]; enableRelay?: unknown[]; devices?: unknown[][] }
   phoneCalls: unknown[]
   // 接上终端里的 Claude Code / Codex(POST /v1/cli/hooks/install,2026-10-14):dry-run 下记请求正文(mock.hook-calls 读),
   // 并把演示快照里 id=terminal 的那一行翻成「已接上」—— 下一次 GET /v1/connections 就和真 daemon 一样。
@@ -808,7 +808,7 @@ Bun.serve({
             presence?: typeof __mockState.presence
             presenceDown?: boolean
             connections?: unknown
-            phone?: { link?: unknown[]; devices?: unknown[][] }
+            phone?: { link?: unknown[]; enableRelay?: unknown[]; devices?: unknown[][] }
             cliSessions?: Array<Record<string, any>>
           } | undefined
           const chatId = args?.chat_id ?? 'test_chat'
@@ -1423,6 +1423,10 @@ Bun.serve({
     // and token=A2A_TOKEN, so api.js routes all fetch() here.
     // Companion presence (dry-run): the dashboard scene and the pet window both
     // poll this; serve the seeded state instead of 404 (= DOWN).
+    if (dryRun && url.pathname === '/v1/phone/enable-relay' && req.method === 'POST') {
+      const q = __mockState.phone?.enableRelay
+      return Response.json(q?.length ? (q.length > 1 ? q.shift() : q[0]) : { ok: false, state: 'starting' })
+    }
     if (dryRun && url.pathname === '/v1/phone/link' && req.method === 'POST') {
       let body: unknown = {}
       try { body = await req.json() } catch { body = {} }
