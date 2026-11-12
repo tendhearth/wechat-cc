@@ -127,7 +127,7 @@ test.describe('引导页最后一步', () => {
     await expect(page.locator('#onboard-phone-status')).toHaveText('用手机相机扫一下。10 分钟内有效，只能用一次。', { timeout: 15_000 })
   })
 
-  test('中继没开通 ⇒ 整块不出现', async ({ page, shimUrl, shim }) => {
+  test('中继没开通 ⇒ 显示连接手机,不点击不开通', async ({ page, shimUrl, shim }) => {
     await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { link: [{ ok: false, state: 'relay_not_configured' }], devices: [[]] } })
     await shim.invoke('mock.doctor', { report: SERVICE_STEP_REPORT })
     let enables = 0
@@ -135,9 +135,43 @@ test.describe('引导页最后一步', () => {
     await page.goto(shimUrl)
     await expect(page.locator('#screen-service')).toHaveClass(/active/, { timeout: 15_000 })
     await expect.poll(async () => ((await shim.invoke('mock.phone-calls')) as { result: { calls: unknown[] } }).result.calls.length).toBeGreaterThan(0)
-    await expect(page.locator('#onboard-phone')).toBeHidden()
+    await expect(page.locator('#onboard-phone')).toBeVisible()
+    await expect(page.getByRole('button', { name: '连接手机', exact: true })).toBeVisible()
     await expect(page.locator('#enter-dashboard')).toBeEnabled()
     expect(enables).toBe(0)
     await shot(page, 'onboarding-not-configured')
   })
+  test('新装引导:不点不写,点连接手机 ⇒ 开通 ⇒ 重启提示 ⇒ 出码和隐私链接', async ({ page, shimUrl, shim }) => {
+    await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { devices: [[]], enableRelay: [{ ok: false, state: 'starting' }] } })
+    await shim.invoke('mock.doctor', { report: SERVICE_STEP_REPORT })
+    let consent = false
+    let enables = 0
+    const bodies: unknown[] = []
+    await page.route('**/v1/phone/link', async route => {
+      bodies.push(route.request().postDataJSON())
+      await route.fulfill({ json: enables ? ready() : { ok: false, state: 'relay_not_configured' } })
+    })
+    page.on('request', req => { if (req.url().endsWith('/v1/phone/enable-relay')) { expect(consent).toBe(true); enables++ } })
+    await page.goto(shimUrl)
+    await expect(page.locator('#screen-service')).toHaveClass(/active/, { timeout: 15_000 })
+    const connect = page.getByRole('button', { name: '连接手机', exact: true })
+    await expect(connect).toBeVisible()
+    expect(enables).toBe(0)
+    expect(bodies).toEqual([{ enable_remote: false }])
+    await expect(page.locator('#onboard-phone-privacy')).toBeHidden()
+    await expect(page.locator('#enter-dashboard')).toBeEnabled()
+    consent = true
+    await connect.click()
+    await expect(page.locator('#onboard-phone-status')).toHaveText('正在准备连接手机的二维码，CC 会重启一下……')
+    await expect(connect).toBeHidden()
+    await expect(page.locator('#onboard-phone-qr > *').first()).toBeVisible({ timeout: 10_000 })
+    expect(enables).toBe(1)
+    expect(bodies).toEqual([{ enable_remote: false }, { enable_remote: true }, {}])
+    await expect(page.locator('#onboard-phone-check')).toHaveText('核对码 USZ-YAY')
+    await expect(page.locator('#onboard-phone-privacy')).toBeVisible()
+    await expect(page.locator('#onboard-phone-privacy')).toHaveText('隐私说明')
+    await expect(page.locator('#onboard-phone-privacy')).toHaveAttribute('href', 'https://cc.tendhearth.com/privacy/')
+    await expect(page.locator('#enter-dashboard')).toBeEnabled()
+  })
+
 })

@@ -11,7 +11,7 @@ import { V1, v1 } from '../daemon-client.js'
 /** @typedef {'ready'|'starting'|'remote_off'|'relay_not_configured'|'relay_unavailable'|'no_owner'} LinkState */
 /** @typedef {{ ok: true, state: 'ready', url: string, expires_at: number, check_code?: string } | { ok: false, state: Exclude<LinkState, 'ready'> }} LinkResult */
 /** @typedef {{ id: string, label?: string, created_at: string, last_seen_at: string }} Device */
-/** @typedef {{ kind: 'loading' } | { kind: 'qr', url: string, expiresAt: number, checkCode: string | null } | { kind: 'starting' } | { kind: 'notice', title: string, body: string } | { kind: 'expired' } | { kind: 'paired', line: string } | { kind: 'error', text: string }} View */
+/** @typedef {{ kind: 'loading' } | { kind: 'qr', url: string, expiresAt: number, checkCode: string | null } | { kind: 'starting' } | { kind: 'notice', title: string, body: string, needsConnect?: boolean } | { kind: 'expired' } | { kind: 'paired', line: string } | { kind: 'error', text: string }} View */
 /** @typedef {(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>} Call */
 /** @typedef {{ now?: () => number, sleep?: (ms: number) => Promise<void>, pollMs?: number, startTimeoutMs?: number, labelWaits?: number, enableRelay?: boolean, enableRemote?: boolean }} FlowTuning */
 
@@ -20,9 +20,9 @@ export function linkView(r) {
   if (r.ok) return { kind: 'qr', url: r.url, expiresAt: r.expires_at, checkCode: checkCodeOf(r.check_code) }
   switch (r.state) {
     case 'starting': return { kind: 'starting' }
-    case 'relay_not_configured': return { kind: 'notice', title: c.relayNotConfiguredTitle, body: c.relayNotConfiguredBody }
+    case 'relay_not_configured': return { kind: 'notice', title: c.relayNotConfiguredTitle, body: c.relayNotConfiguredBody, needsConnect: true }
     case 'relay_unavailable': return { kind: 'notice', title: c.relayUnavailableTitle, body: c.relayUnavailableBody }
-    case 'remote_off': return { kind: 'notice', title: c.remoteOffTitle, body: c.remoteOffBody }
+    case 'remote_off': return { kind: 'notice', title: c.remoteOffTitle, body: c.remoteOffBody, needsConnect: true }
     case 'no_owner': return { kind: 'notice', title: c.noOwnerTitle, body: '' }
     default: return { kind: 'error', text: c.error.replace('{why}', 'unknown_state') }
   }
@@ -249,7 +249,7 @@ export function mountPhoneConnect(deps) {
 }
 
 /**
- * 引导页最后一步(#screen-service)的码(spec §5):只有拿到 ready 的码才显示整块;别的状态整块藏着;永不挡「进入控制台」。
+ * 引导页最后一步(#screen-service):已开通直接出码;需要开通时显示「连接手机」,点击才启用;永不挡「进入控制台」。
  * sync({ active, alive }):在这一步且 daemon 活着 ⇒ 开始(只开一次);离开这一步 ⇒ 停、藏。
  * 第一次没拿到码(出错 / 中继没就绪 / 等超时)⇒ 在这一步里有界重试:窗口重新聚焦、以及每 retryMs 一次;
  * 码一旦在显示(或已连上 / 已过期等用户点「换一个」),就不再重试——每次 POST 都会作废上一个码,之后只轮询设备列表。
@@ -261,6 +261,8 @@ export function mountOnboardPhone(deps) {
   const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (host.querySelector(`#${id}`))
   $('onboard-phone-title').textContent = c.title
   $('onboard-phone-later').textContent = c.later
+  const connect = $('onboard-phone-connect')
+  connect.textContent = c.button
   const renew = $('onboard-phone-renew')
   renew.textContent = c.renew
   const privacy = /** @type {HTMLElement | null} */ (host.querySelector('#onboard-phone-privacy'))
@@ -280,10 +282,16 @@ export function mountOnboardPhone(deps) {
     if (v.kind === 'starting') host.dataset.phase = 'preparing'
     else delete host.dataset.phase
     needsRetry = v.kind === 'error' || v.kind === 'notice'
+    connect.hidden = true
     if (v.kind === 'loading') return   // 还不知道有没有码:藏着,不闪
     if (privacy) privacy.hidden = v.kind !== 'qr'
     if (v.kind !== 'qr') setCheck(null)
-    if (v.kind === 'starting') {       // 自动打开手机连接会让 CC 重启一次:说出来(D4)
+    if (v.kind === 'notice' && v.needsConnect) {
+      $('onboard-phone-qr').replaceChildren(); $('onboard-phone-status').textContent = ''
+      connect.hidden = false; renew.hidden = true; host.hidden = false
+      return
+    }
+    if (v.kind === 'starting') {       // 打开手机连接会让 CC 重启一次:说出来(D4)
       $('onboard-phone-qr').replaceChildren(); $('onboard-phone-status').textContent = c.preparing
       renew.hidden = true; host.hidden = false
       return
@@ -304,9 +312,18 @@ export function mountOnboardPhone(deps) {
     if (v.kind === 'expired') { $('onboard-phone-qr').replaceChildren(); $('onboard-phone-status').textContent = c.expired; renew.hidden = false; host.hidden = false; return }
     host.hidden = true
   }
-  const flow = makePhoneLinkFlow({ ...(deps.flowDeps ?? {}), call: deps.call, enableRelay: false, enableRemote: false, onView: v => { void show(v) } })
-  renew.addEventListener('click', () => { void flow.start() })
-  const retry = () => { if (started && needsRetry) { needsRetry = false; void flow.start() } }
+  /** @type {ReturnType<typeof makePhoneLinkFlow> | null} */
+  let flow = null
+  // 自动查询与重试永不开通;只有显式点击才走主界面同一个连接流程。
+  const start = (consent = false) => {
+    if (!started) return
+    flow?.stop()
+    flow = makePhoneLinkFlow({ ...(deps.flowDeps ?? {}), call: deps.call, enableRelay: consent, enableRemote: consent, onView: v => { void show(v) } })
+    void flow.start()
+  }
+  connect.addEventListener('click', () => { if (!connect.hidden) start(true) })
+  renew.addEventListener('click', () => { start(true) })
+  const retry = () => { if (started && needsRetry) { needsRetry = false; start() } }
   return {
     /** @param {{ active: boolean, alive: boolean }} s */
     sync(s) {
@@ -314,7 +331,7 @@ export function mountOnboardPhone(deps) {
         if (started) {
           started = false; needsRetry = false; seq++
           delete host.dataset.phase
-          flow.stop()
+          flow?.stop()
           window.removeEventListener('focus', retry)
           if (timer) clearInterval(timer)
           timer = null
@@ -326,7 +343,7 @@ export function mountOnboardPhone(deps) {
         started = true
         window.addEventListener('focus', retry)
         timer = setInterval(retry, retryMs)
-        void flow.start()
+        start()
       }
     },
   }
