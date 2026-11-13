@@ -37,15 +37,17 @@ mock.module('../../src/daemon/internal-api/token-registry',()=>({...auth,makeTok
 // Observe the real isolated runner and real scoring, without changing either.
 const runner=await import('../../src/features/checkup/runner')
 const makeTurn=runner.makeCheckupTurn
-const {scoreInterview}=await import('../../src/domain/checkup-interview')
+const {scoreInterview,buildInterviewPlan}=await import('../../src/domain/checkup-interview')
+let isolatedTurn:ReturnType<typeof makeTurn>|undefined
 mock.module('../../src/features/checkup/runner',()=>({...runner,makeCheckupTurn:(...args:Parameters<typeof runner.makeCheckupTurn>)=>{
  const real=makeTurn(...args)
+ isolatedTurn=real
  return async(...values:Parameters<typeof real>)=>{
   const result=await real(...values),sample=values[0]
   if(sample.kind==='interview'){
    const score=scoreInterview(sample,result,sample.persona)
    // Tool records contain only this test's fictional story. No request body.
-   appendFileSync(join(dir,'checkup-observations.jsonl'),JSON.stringify({id:sample.id,provider:values[1].provider,model:values[1].model,score,toolCalls:result.toolCalls,toolError:result.toolError??false,durationMs:result.durationMs})+'\n')
+   appendFileSync(join(dir,'checkup-observations.jsonl'),JSON.stringify({at:new Date().toISOString(),id:sample.id,provider:values[1].provider,model:values[1].model,score,toolCalls:result.toolCalls,toolError:result.toolError??false,durationMs:result.durationMs})+'\n')
   }
   return result
  }
@@ -58,6 +60,14 @@ const control=Bun.serve({hostname:'127.0.0.1',port:0,idleTimeout:255,async fetch
   return Response.json({sessionTokensObserved:sessionTokens.length,inspectWith:'run.py ps'})
  }
  if(u.pathname==='/outbox')return Response.json(ilink.outbox().map(m=>({endpoint:m.endpoint,chatId:m.chatId,text:m.text})))
+ if(req.method==='POST'&&u.pathname==='/checkup-sample'){
+  const b=await req.json() as any
+  if(!['0/0/clarify','0/0/handoff','0/0/ordinary-handoff'].includes(b.id)||!isolatedTurn)return new Response('sample unavailable',{status:400})
+  const persona={name:'验收CC',userTitle:'验收主人',selfTitle:'验收CC'},sample=buildInterviewPlan({windowTokens:8192,full:false,persona,executors:[]}).samples.find(s=>s.id===b.id)!
+  const target={provider:'openai',model:'GLM-FLASH',address:proxy+'/v1',windowTokens:8192,windowKnown:false}
+  try{const result=await isolatedTurn(sample,target,AbortSignal.timeout(90_000)),score=scoreInterview(sample,result,persona),row={at:new Date().toISOString(),manual:true,id:sample.id,provider:target.provider,model:target.model,score,toolCalls:result.toolCalls,toolError:result.toolError??false,durationMs:result.durationMs};appendFileSync(join(dir,'checkup-observations.jsonl'),JSON.stringify(row)+'\n');return Response.json({completed:true,...row})}
+  catch(error){return Response.json({completed:false,id:sample.id,errorCode:(error as any)?.code??'provider_error'})}
+ }
  if(req.method==='POST'&&u.pathname==='/tick'){const b=await req.json() as any;await handle?.fireTick(b.kind,new Date(b.at??Date.now()));return Response.json({ok:true})}
  if(req.method==='POST'&&u.pathname==='/inbound'){const b=await req.json() as any;ilink.enqueueInbound({message_id:Date.now(),from_user_id:b.chatId??'acc-owner',to_user_id:'acc-bot',create_time_ms:Date.now(),message_type:1,message_state:2,item_list:[{type:1,msg_id:String(Date.now()),text_item:{text:b.text}}],context_token:'synthetic-context'});return Response.json({ok:true})}
  return new Response('not found',{status:404})

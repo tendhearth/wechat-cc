@@ -34,12 +34,11 @@ def processes():
 
 
 def gate(wait=False):
-    deadline = time.monotonic() + (1800 if wait else 0)
+    deadline = time.monotonic() + (1200 if wait else 0)
     while True:
         load = os.getloadavg()[0]
-        game = any('civilizationvii' in row[2].lower() for row in processes())
-        allowed = load < 8 and not game
-        print(json.dumps({'event': 'load_gate', 'load1': load, 'civilizationPresent': game, 'allowed': allowed}), flush=True)
+        allowed = load < 12
+        print(json.dumps({'event': 'load_gate', 'load1': load, 'allowed': allowed}), flush=True)
         if allowed:
             return True
         if time.monotonic() >= deadline:
@@ -179,9 +178,9 @@ def start(state, resume=False):
     checked = subprocess.run(['/usr/bin/sandbox-exec', '-f', str(policy_file), '/usr/bin/true'], capture_output=True)
     if checked.returncode:
         raise SystemExit('refused: sandbox policy unavailable')
-    # Load/game gate and process spawn occur in this same command.
+    # Load gate and process spawn occur in this same command.
     if not gate(wait=True):
-        raise SystemExit('load gate timed out after 30 minutes; no daemon started')
+        raise SystemExit('load gate timed out after 20 minutes; no daemon started')
     base = {'PATH': str(state / 'bin') + ':' + os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(home), 'TMPDIR': str(state / 'tmp'), 'LANG': 'en_US.UTF-8', 'WECHAT_STATE_DIR': str(state), 'WECHAT_CC_STATE_DIR': str(state), 'ACCEPTANCE_SYNTHETIC': '1'}
     if resume:
         from urllib.parse import urlparse
@@ -261,6 +260,7 @@ def start(state, resume=False):
         env['CODEX_MODEL'] = 'Kimi-Code'
         env['WECHAT_CC_DISABLE_CODEX_AUTOFIX'] = '1'
         env['WECHAT_DISABLE_LOG_FILE'] = '1'
+        env['CLAUDE_CODE_TMPDIR'] = str(state / 'tmp' / 'claude-shell')
         daemon = subprocess.Popen(['/usr/bin/sandbox-exec', '-f', str(policy_file), 'bun', str(ROOT / 'scripts/acceptance/daemon.ts')], cwd=state / 'workspace', env=env, start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         remember_child(daemon)
         starts = {'supervisor': process_snapshot()[os.getpid()]['start'], 'daemon': root_starts.get(daemon.pid), 'gateway': root_starts.get(gateway.pid)}
