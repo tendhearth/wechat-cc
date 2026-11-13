@@ -249,9 +249,10 @@ test('two executor batons and their notebook render in the existing detail',asyn
 
 test('ordinary single-executor detail has no added executor or notebook sections',async({page},testInfo)=>{
  await page.setViewportSize({width:900,height:700})
+ const ordinary=`details.A.agentRuns=[{matterId:'A',runId:'only',executor:'codex',brief:'整理访谈',position:1,status:'running'}];details.A.notes=[{id:1,matterId:'A',author:'codex',text:'单棒记录也不增加详情栏'}];`
  await page.route('http://127.0.0.1:4211/**',async route=>{
   const path=new URL(route.request().url()).pathname
-  if(path==='/'){await route.fulfill({contentType:'text/html',body:fixture});return}
+  if(path==='/'){await route.fulfill({contentType:'text/html',body:fixture.replace('const controller=initWorkbenchPage',ordinary+'\nconst controller=initWorkbenchPage')});return}
   try{await route.fulfill({body:await readFile(source+path),contentType:/\.m?js$/.test(path)?'text/javascript':path.endsWith('.css')?'text/css':'application/octet-stream'})}catch{await route.fulfill({status:404,body:'missing fixture asset'})}
  })
  await page.goto('http://127.0.0.1:4211')
