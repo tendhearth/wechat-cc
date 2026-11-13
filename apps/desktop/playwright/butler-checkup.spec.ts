@@ -5,7 +5,7 @@ import { test, expect } from './fixtures'
 
 async function shot(page: import('@playwright/test').Page, name: string) {
   const out=process.env.WECHAT_CC_DESIGN_SHOTS
-  if(out){await mkdir(out,{recursive:true});await page.screenshot({path:join(out,`desktop-checkup-${name}.png`),fullPage:true})}
+  if(out){await mkdir(out,{recursive:true});await page.locator('.now-panel').screenshot({path:join(out,`desktop-checkup-${name}.png`)})}
 }
 
 // 和 dashboard.spec.ts 同一套进面板的办法:等壳子定下模式,再切到 dashboard(只 goto 会停在引导页,点不到「CC 的连接」)。
@@ -49,6 +49,7 @@ test('checkup shows cost before explicit start, can cancel, and keeps periodic c
   await panel.locator('[data-checkup="prepare"]').click()
   await expect(panel.locator('[data-checkup="estimate"]')).toContainText('预计用 8 万左右、最多不超过 35 万输出 token')
   expect(fake.mutations).toEqual(['/v1/checkup/estimate'])
+  await panel.locator('[data-checkup="start"]').scrollIntoViewIfNeeded()
   await shot(page,'estimate')
   await panel.locator('[data-checkup="start"]').click()
   await expect(panel).toContainText('正在体检')
@@ -72,6 +73,13 @@ test('measured weak memory has plain reassurance and a synthetic screenshot fixt
   await expect(panel).toContainText('小禾（现在用的是 synthetic）')
   for(const quality of ['记性','跟得上','诚实','分寸','立场','口风','办事','本色','快慢'])await expect(panel).toContainText(quality)
   await expect(panel).not.toContainText('管家')
+  await expect(panel.locator('.nc-row')).toHaveCount(9)
   const out = process.env.WECHAT_CC_DESIGN_SHOTS
-  if (out) { await mkdir(out, { recursive: true }); await panel.screenshot({ path: join(out, 'desktop-butler-checkup.png') }) }
+  if (out) {
+    await mkdir(out, { recursive: true })
+    await panel.locator('h3').evaluate(el=>el.scrollIntoView({block:'start'}))
+    await page.locator('.now-panel').screenshot({path:join(out,'desktop-butler-checkup.png')})
+    await panel.locator('[data-checkup="prepare"]').scrollIntoViewIfNeeded()
+    await shot(page,'interview-bottom')
+  }
 })
