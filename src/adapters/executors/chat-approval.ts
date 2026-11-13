@@ -1,3 +1,15 @@
+import { toolInputPreview } from '../../domain/workbench/tool-input-preview'
+import { redactSecrets } from '../../domain/cli-transcript'
+
+/** 三个对话通道用同一份预览；先打码，再截断。 */
+export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, title?: string): string {
+  const preview = toolInputPreview(input, true) ?? '[input omitted: too large or unreadable]'
+  const safeTitle = title ? toolInputPreview({ title }) : null
+  const text = redactSecrets(`${provider} wants to run ${tool}${safeTitle ? `\n${safeTitle}` : ''}\n${preview}`)
+  const suffix = '\n[preview truncated]'
+  return text.length <= 2000 ? text : text.slice(0, 2000 - suffix.length) + suffix
+}
+
 /** 对话审批的共同等待边界。取消不依赖主人回答，也不接受迟到的批准。 */
 export type ChatApprovalAnswer = 'allow' | 'deny' | 'timeout' | 'undelivered' | 'cancelled'
 export interface ChatApprovalChannel {

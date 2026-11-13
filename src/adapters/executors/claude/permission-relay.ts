@@ -5,6 +5,7 @@ import { isReplyToolName } from '../../../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type UserTier } from '../../../domain/user-tier'
 import { authorize } from '../../../domain/authorize'
 import { authorizeChatToolUse, type ChatOwnerRules } from '../../permission-rules/chat'
+import { renderChatApprovalPrompt } from '../chat-approval'
 
 export interface PermissionRelayDeps {
   askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
@@ -110,7 +111,7 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
       } satisfies PermissionResult
     }
     const hash = shortHash(opts.toolUseID ?? '')
-    const prompt = opts.title ?? `Claude wants to run ${toolName} ${compactInput(input)}`
+    const prompt = renderChatApprovalPrompt('Claude', toolName, input, opts.title)
     const answer = await deps.askUser(target, prompt, hash, DEFAULT_TIMEOUT_MS)
     if (answer === 'allow') return { behavior: 'allow' } satisfies PermissionResult
     deps.log('PERMISSION', `${answer}: tool=${toolName} hash=${hash}`)
@@ -133,11 +134,3 @@ function shortHash(s: string): string {
   return (h >>> 0).toString(36).padStart(5, '0').slice(-5)
 }
 
-function compactInput(input: Record<string, unknown>): string {
-  const keys = Object.keys(input)
-  if (keys.length === 0) return ''
-  const first = keys[0]
-  if (!first) return ''
-  const v = input[first]
-  return `${first}=${typeof v === 'string' ? v.slice(0, 40) : typeof v}`
-}

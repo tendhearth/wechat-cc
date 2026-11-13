@@ -25,6 +25,7 @@ import { makeTurnEmitter } from '../turn-emitter'
 import { openaiErrorCode } from '../openai/openai-error-code'
 import { withProviderCode } from '../../../lib/provider-error-code'
 import type { CheckupBudget } from '../../../domain/checkup-budget'
+import { renderChatApprovalPrompt } from '../chat-approval'
 
 export { GEMINI_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -310,7 +311,7 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
       if (!admin) return { allow: false, message: 'no admin configured to approve permission requests' }
       const seq = ++relaySeq
       const hash = shortHash(`${ctx.chatId}:${toolName}:${seq}`)
-      const answer = await deps.askUser(admin, `Gemini wants to run ${toolName}`, hash, GEMINI_RELAY_TIMEOUT_MS)
+      const answer = await deps.askUser(admin, renderChatApprovalPrompt('Gemini', `mcp__wechat__${toolName}`, input), hash, GEMINI_RELAY_TIMEOUT_MS)
       if (answer === 'allow') return { allow: true }
       const message = answer === 'undelivered'
         ? 'could not reach the owner for approval (their message window is likely closed) — tell the user to try again shortly or have the owner message first'
