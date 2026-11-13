@@ -51,3 +51,15 @@ it('actually presents a long original middle to extraction before advancing its 
   expect((await threads.getExtractState('c')).entriesToTs).toBe(ts)
  }finally{db.close()}
 })
+// 导入历史 / 补录的消息带着很久以前的时间戳:不回退水位,否则它之后的全部对话要重抽一遍。
+it('a message backdated by hours does not rewind the watermark',async()=>{
+  const db=openTestDb(),messages=makeMessagesStore(db),threads=makeThreadsStore(db),t=Date.UTC(2026,10,13)
+  try{
+    await messages.append({id:'seen',chatId:'c',ts:new Date(t).toISOString(),direction:'in',kind:'text',text:'seen',source:'live'})
+    await threads.setExtractState('c',{entriesToTs:new Date(t).toISOString()})
+    await messages.append({id:'imported-old',chatId:'c',ts:new Date(t-3*3600_000).toISOString(),direction:'in',kind:'text',text:'imported-old',source:'live'})
+    expect((await threads.getExtractState('c')).entriesToTs).toBe(new Date(t).toISOString())
+    await messages.append({id:'just-late',chatId:'c',ts:new Date(t-5_000).toISOString(),direction:'in',kind:'text',text:'just-late',source:'live'})
+    expect(Date.parse((await threads.getExtractState('c')).entriesToTs!)).toBeLessThan(t-5_000+1)
+  }finally{db.close()}
+})

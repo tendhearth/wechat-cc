@@ -71,10 +71,19 @@ function clip(text: string, n = TEXT_MAX): string {
   return text.length > n ? text.slice(0, n) + '…' : text
 }
 
+/** 新消息单条上限。足够放下正常的长回答 / 贴进来的一段日志;再长的(整份文件、几十万字的粘贴)留头留尾。
+ * 不设上限时,一条超出便宜模型窗口的消息会让抽取永远失败、水位永远不动——话题整理和上下文轮换一起卡死。
+ * 被略去的中段没有进话题记忆是有意的取舍:原文一直在 messages 里,可查可搜。 */
+export const NEW_TEXT_MAX = 20000
+function clipNew(text: string): string {
+  if (text.length <= NEW_TEXT_MAX) return text
+  const head = Math.floor(NEW_TEXT_MAX * 0.7), tail = NEW_TEXT_MAX - head
+  return `${text.slice(0, head)}\n…[中间略去 ${text.length - NEW_TEXT_MAX} 字]…\n${text.slice(-tail)}`
+}
 export function renderMessage(m: PromptMessage, contextOnly = false): string {
   // New originals must be presented in full before their timestamp can be
   // accounted. Only the already-accounted context tail may be abbreviated.
-  return `[${m.ts}] ${m.direction === 'in' ? '主人' : 'CC'}: ${contextOnly ? clip(m.text) : m.text}`
+  return `[${m.ts}] ${m.direction === 'in' ? '主人' : 'CC'}: ${contextOnly ? clip(m.text) : clipNew(m.text)}`
 }
 
 export function renderWork(w: PromptWork): string {

@@ -117,3 +117,19 @@ describe('parseExtractResponse · 原有用例', () => {
     expect(tailPos).toBeLessThan(newMsgPos)
   })
 })
+
+// 2026-11-13:新消息全文送去抽取,但单条有上限——不设上限时一条超出便宜模型窗口的消息会让水位永远不动。
+import { renderMessage as renderForCap, NEW_TEXT_MAX as CAP } from './extract-prompt'
+describe('new-message cap for extraction', () => {
+  it('sends an ordinary long message in full, including its middle', () => {
+    const text = 'a'.repeat(8000) + 'MIDDLE_FACT' + 'b'.repeat(8000)
+    expect(renderForCap({ ts: '2026-11-13T00:00:00Z', direction: 'in', text })).toContain('MIDDLE_FACT')
+  })
+  it('keeps head and tail of an oversized paste and says how much was left out', () => {
+    const text = 'HEAD_FACT' + 'x'.repeat(60000) + 'TAIL_FACT'
+    const out = renderForCap({ ts: '2026-11-13T00:00:00Z', direction: 'in', text })
+    expect(out).toContain('HEAD_FACT'); expect(out).toContain('TAIL_FACT')
+    expect(out).toContain(`中间略去 ${text.length - CAP} 字`)
+    expect(out.length).toBeLessThan(CAP + 200)
+  })
+})
