@@ -90,10 +90,11 @@ it('uses the real CC prompt builder with only projected persona and three fake e
   expect(sent).toContain('你')
 })
 
-it('does not tell an action-only interview to send final text or use unavailable memory tools',async()=>{
+it('allows final text and fake conversation actions without unavailable memory tools',async()=>{
   const {interviewInstructions}=await import('./instructions')
   const prompt=interviewInstructions('claude','synthetic')
-  expect(prompt).not.toMatch(/说话:不用工具|不需要调任何工具来「发送」|memory_read|memory_write|a2a_send|wxvault|Read\/Bash/)
+  expect(prompt).not.toMatch(/memory_read|memory_write|a2a_send|wxvault|Read\/Bash/)
+  expect(prompt).toContain('不需要调任何工具来「发送」')
   expect(prompt).toContain('reply')
   expect(prompt).toContain('ask_user')
 })

@@ -26,7 +26,7 @@ async function syntheticCheckup(page: import('@playwright/test').Page) {
   })
   return { mutations, weak() {
     const ratio=(v:number)=>({passed:2*v,total:2,ratio:v})
-    state = { ...state, profile: {provider:'fake',addressHash:'synthetic',model:'synthetic',windowTokens:8192,windowKnown:false,reliableFillRatio:.1,stages:[{fillRatio:.1,accuracy:1}],memory:'weak',tools:'flaky',toolAccuracy:.5,firstTextMedianMs:100,completionMedianMs:200,testedAt:'2026-11-12T00:00:00Z',short:true,seed:769906,ccVersion:'fixture',interview:{version:'interview-v1',name:'小禾',reliableDay:'一天',qualities:{memory:ratio(0),tracking:ratio(1),honesty:ratio(1),discretion:ratio(.5),stance:ratio(1),privacy:ratio(1),persona:ratio(1)},business:ratio(.5)}} }
+    state = { ...state, profile: {provider:'fake',addressHash:'synthetic',model:'synthetic',windowTokens:8192,windowKnown:false,reliableFillRatio:.1,stages:[{fillRatio:.1,accuracy:1}],memory:'weak',tools:'flaky',toolAccuracy:.5,firstTextMedianMs:100,completionMedianMs:200,testedAt:'2026-11-12T00:00:00Z',short:true,seed:769906,ccVersion:'fixture',interview:{version:'interview-v2',name:'小禾',reliableDay:'一天',qualities:{memory:ratio(0),tracking:ratio(1),honesty:ratio(1),discretion:ratio(.5),stance:ratio(1),privacy:ratio(1),persona:ratio(1)},business:ratio(.5)}} }
   } }
 
 }

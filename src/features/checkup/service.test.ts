@@ -58,8 +58,8 @@ describe('local checkup lifecycle', () => {
     expect(service.view().attempt?.status).toBe('completed')
     expect(service.view().profile).toMatchObject({ memory: 'good', tools: 'flaky', toolAccuracy: 0 })
   })
-  it('records an all-wrong model as weak, including real tool argument mistakes', async () => {
-    const { service } = setup(async () => ({ text: '', toolCalls: [{name:'reply',input:{text:'wrong'}}], firstTextMs: null, durationMs: 5 }))
+  it('records an all-wrong model as weak, including malformed tool arguments', async () => {
+    const { service } = setup(async () => ({ text: '', toolCalls: [{name:'reply',input:{text:123}}], firstTextMs: null, durationMs: 5 }))
     await service.start({}).done
     expect(service.view().profile).toMatchObject({ memory: 'weak', tools: 'flaky', reliableFillRatio: 0 })
   })
@@ -154,7 +154,7 @@ it('projects persona and never sends real memory/topic/conversation state, inclu
   expect(sent.length).toBeGreaterThan(2)
   expect(JSON.stringify(sent)).not.toContain(secret)
   expect(JSON.stringify(sent)).not.toContain(stateDir)
-  expect(service.view().profile?.interview).toMatchObject({version:'interview-v1',name:'小禾',qualities:{privacy:{total:0},persona:{ratio:1}}})
+  expect(service.view().profile?.interview).toMatchObject({version:'interview-v2',name:'小禾',qualities:{privacy:{total:0},persona:{ratio:1}}})
 })
 
 it('leaves every quality ungraded when the backend cannot isolate its native tools',async()=>{
@@ -190,8 +190,8 @@ it('does not compare a v1 probe with an earlier unversioned paper',async()=>{
   expect(service.view().suspectedChanged).toBe(false)
 })
 
-it('rejects an entirely unscorable run and preserves default context budget',async()=>{
-  const {service}=setup(async()=>({text:'direct speech',toolCalls:[],firstTextMs:1,durationMs:2}))
+it('rejects an entirely empty run and preserves default context budget',async()=>{
+  const {service}=setup(async()=>({text:'',toolCalls:[],firstTextMs:1,durationMs:2}))
   await service.start().done
   expect(service.view().attempt).toMatchObject({status:'failed',errorCode:'no_measurement'})
   expect(service.view().profile).toBeNull()
@@ -321,7 +321,7 @@ for(const dimension of ['output','requests'] as const) it(`stops at the whole-ru
   expect(view.review?.status).toContain('到了本次体检的用量上限')
   expect(view.profile?.interview?.qualities.honesty).toMatchObject({passed:1,total:1,unmeasured:3})
   expect(view.review?.rows.find(r=>r.key==='honesty')).toMatchObject({grade:'好',detail:'不知道的事会直说；这一项没测全'})
-  expect(view.profile?.interview?.business).toMatchObject({passed:1,total:2,unmeasured:18})
+  expect(view.profile?.interview?.business).toMatchObject({passed:2,total:2,unmeasured:18})
 })
 
 it('freezes the accepted allowance while config changes during a run',async()=>{

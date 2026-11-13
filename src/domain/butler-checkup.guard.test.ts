@@ -23,8 +23,8 @@ function pureViolations(path:URL,text=readFileSync(path,'utf8')):string[]{
 }
 function instructionViolations(text:string):string[]{
   const source=ts.createSourceFile('instructions.ts',text,ts.ScriptTarget.Latest,true),errors:string[]=[]
-  const imports=new Map([['../../domain/prompt-builder',new Set(['buildSystemPrompt'])],['../../domain/checkup-persona',new Set(['checkupPersonaText','CheckupPersona'])]])
-  const allowedKeys=new Set(['providerId','model','peerProviderId','companionEnabled','delegateAvailable','persona','personaCultivate','conversationActions'])
+  const imports=new Map([['../../domain/capability-matrix',new Set(['replyTextStrategyFor'])],['../../domain/prompt-builder',new Set(['buildSystemPrompt'])],['../../domain/checkup-persona',new Set(['checkupPersonaText','CheckupPersona'])]])
+  const allowedKeys=new Set(['providerId','model','peerProviderId','companionEnabled','delegateAvailable','persona','personaCultivate','conversationActions','replyText'])
   const visit=(node:ts.Node)=>{
     if(ts.isImportDeclaration(node)){
       const allowed=ts.isStringLiteral(node.moduleSpecifier)?imports.get(node.moduleSpecifier.text):undefined
@@ -32,7 +32,7 @@ function instructionViolations(text:string):string[]{
       if(!allowed||!names||!ts.isNamedImports(names)||names.elements.some(n=>!allowed.has(n.name.text)||n.propertyName))errors.push('unapproved import')
     }
     if(ts.isCallExpression(node)){
-      if(!ts.isIdentifier(node.expression)||!['buildSystemPrompt','checkupPersonaText'].includes(node.expression.text))errors.push('unapproved call')
+      if(!ts.isIdentifier(node.expression)||!['buildSystemPrompt','checkupPersonaText','replyTextStrategyFor'].includes(node.expression.text))errors.push('unapproved call')
       if(ts.isIdentifier(node.expression)&&node.expression.text==='buildSystemPrompt'){
         const arg=node.arguments[0]
         if(node.arguments.length!==1||!arg||!ts.isObjectLiteralExpression(arg))errors.push('unapproved inputs')
@@ -44,7 +44,7 @@ function instructionViolations(text:string):string[]{
   // The assembler may only use the four explicit arguments and approved pure imports.
   const body=source.statements.filter(s=>!ts.isImportDeclaration(s)).map(s=>s.getText(source)).join('\n')
   const projected=pureViolations(new URL('checkup-instructions-fixture.ts',import.meta.url),body)
-  return [...errors,...projected.filter(x=>!['CheckupPersona','buildSystemPrompt','checkupPersonaText'].includes(x))]
+  return [...errors,...projected.filter(x=>!['CheckupPersona','buildSystemPrompt','checkupPersonaText','replyTextStrategyFor'].includes(x))]
 }
 describe('synthetic checkup privacy boundary',()=>{
   it('allows only type imports and local computations over explicit story/persona inputs',()=>{

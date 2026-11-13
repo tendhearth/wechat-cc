@@ -100,6 +100,7 @@ async function extract(deps: ExtractorDeps): Promise<{ applied: number; skipped:
   let applied = 0, skipped = 0, rounds = 0
   for (; rounds < (deps.maxRounds ?? MAX_ROUNDS); ) {
     if(deps.authorized?.()===false)break
+    const messageRevision=deps.threads.extractRevision?.(deps.chatId)
     const state = await deps.threads.getExtractState(deps.chatId)
     const since = state.entriesToTs ?? EPOCH
     const within = (m: MessageRecord) => !deps.throughTs || Date.parse(m.ts) <= Date.parse(deps.throughTs)
@@ -122,6 +123,7 @@ async function extract(deps: ExtractorDeps): Promise<{ applied: number; skipped:
     // CC 发的「任务 xxx 已答复」通知是 MatterLog 结论的复印件 ⇒ 不进(结论从 work 来);水位照样越过它们。
     const batch = taken.filter(isTopicMessage)
     const lastTs = taken.length > 0 ? taken[taken.length - 1]!.ts : null
+    const guard=messageRevision===undefined?undefined:{entriesToTs:state.entriesToTs,messageRevision,...(lastTs?{throughTs:lastTs}:{})}
 
     let work: WorkResult[] = []
     let workCursor = state.workCursor
@@ -144,7 +146,7 @@ async function extract(deps: ExtractorDeps): Promise<{ applied: number; skipped:
       const patch: { entriesToTs?: string; workCursor?: number } = {}
       if (lastTs) patch.entriesToTs = lastTs
       if (workCursor !== state.workCursor) patch.workCursor = workCursor
-      if (deps.authorized?.()!==false && contiguous && (patch.entriesToTs !== undefined || patch.workCursor !== undefined)) await deps.threads.setExtractState(deps.chatId, patch)
+      if (deps.authorized?.()!==false && contiguous && (patch.entriesToTs !== undefined || patch.workCursor !== undefined)) await deps.threads.setExtractState(deps.chatId, patch, guard)
       if (recorded.length > taken.length) { rounds++; continue }
       break
     }
@@ -159,7 +161,7 @@ async function extract(deps: ExtractorDeps): Promise<{ applied: number; skipped:
     const shownIds = new Set([...shownEntries.values()].flatMap(es => es.map(e => e.id)))
     const topicSources = new Map([...shownEntries].map(([topic, es]) => [topic, deps.threads.contextSources?.(deps.chatId, [], es.filter(e => e.source !== 'chat' || e.matterId).map(e => e.id)) ?? []]))
     const hasWorkContext = (deps.threads.contextSources?.(deps.chatId, existing, [...shownIds]) ?? []).length > 0
-    const contextAllowed = () => deps.authorized?.()!==false && (deps.threads.contextAllowed?.(deps.chatId, existing, [...entries.values()].flatMap(es=>es.map(e=>e.id))) ?? true)
+    const contextAllowed = () => deps.authorized?.()!==false && (messageRevision===undefined||!lastTs||deps.threads.extractRevision!(deps.chatId,lastTs)<=messageRevision) && (deps.threads.contextAllowed?.(deps.chatId, existing, [...entries.values()].flatMap(es=>es.map(e=>e.id))) ?? true)
     const prompt = buildExtractPrompt({
       newMessages: batch.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })),
       ...(tail.length > 0 ? { contextTail: tail.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })) } : {}),
@@ -185,7 +187,7 @@ async function extract(deps: ExtractorDeps): Promise<{ applied: number; skipped:
     }
     if (work.some(w => !deps.workAllowed?.(w.matterId))) {
       skipped += parsed.ops.length
-      if (contiguous) await deps.threads.setExtractState(deps.chatId, { ...(lastTs ? { entriesToTs: lastTs } : {}), workCursor })
+      if (contiguous) await deps.threads.setExtractState(deps.chatId, { ...(lastTs ? { entriesToTs: lastTs } : {}), workCursor }, guard)
       continue
     }
     const activeTs = lastTs ?? work[work.length - 1]?.at ?? new Date().toISOString()
@@ -195,7 +197,7 @@ async function extract(deps: ExtractorDeps): Promise<{ applied: number; skipped:
       deps.log('THREADS', `extract context changed while applying for ${deps.chatId}; watermark held`)
       break
     }
-    if (contiguous) await deps.threads.setExtractState(deps.chatId, { ...(lastTs ? { entriesToTs: lastTs } : {}), workCursor })
+    if (contiguous) await deps.threads.setExtractState(deps.chatId, { ...(lastTs ? { entriesToTs: lastTs } : {}), workCursor }, guard)
     await deps.recordEvent(`batch=${batch.length} work=${work.length} ops=${parsed.ops.length} applied=${r.applied} skipped=${r.skipped + parsed.dropped}`)
     const moreChat = recorded.length > taken.length || fetched.length === FETCH_LIMIT
     const moreWork = deps.work ? batch.length > 0 || (workCursor !== state.workCursor && work.length > 0) : false

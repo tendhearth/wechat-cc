@@ -71,8 +71,10 @@ function clip(text: string, n = TEXT_MAX): string {
   return text.length > n ? text.slice(0, n) + '…' : text
 }
 
-export function renderMessage(m: PromptMessage): string {
-  return `[${m.ts}] ${m.direction === 'in' ? '主人' : 'CC'}: ${clip(m.text)}`
+export function renderMessage(m: PromptMessage, contextOnly = false): string {
+  // New originals must be presented in full before their timestamp can be
+  // accounted. Only the already-accounted context tail may be abbreviated.
+  return `[${m.ts}] ${m.direction === 'in' ? '主人' : 'CC'}: ${contextOnly ? clip(m.text) : m.text}`
 }
 
 export function renderWork(w: PromptWork): string {
@@ -136,9 +138,9 @@ export function buildExtractPrompt(input: ExtractPromptInput): string {
 
   const vocab = tagVocabulary.length > 0 ? tagVocabulary.join('、') : '(暂无)'
   const tail = contextTail && contextTail.length > 0
-    ? `\n=== 近期历史(只用来判断话题是不是又聊到了,不要为它们本身记条目) ===\n${contextTail.map(renderMessage).join('\n')}\n`
+    ? `\n=== 近期历史(只用来判断话题是不是又聊到了,不要为它们本身记条目) ===\n${contextTail.map(m=>renderMessage(m,true)).join('\n')}\n`
     : ''
-  const msgs = newMessages.length === 0 ? '(无新消息)' : newMessages.map(renderMessage).join('\n')
+  const msgs = newMessages.length === 0 ? '(无新消息)' : newMessages.map(m=>renderMessage(m)).join('\n')
   const work = workResults && workResults.length > 0
     ? `\n=== agent 做完的活(只记结论) ===\n${workResults.map(renderWork).join('\n')}\n`
     : ''

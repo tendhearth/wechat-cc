@@ -25,10 +25,10 @@ describe('buildExtractPrompt (话题 T1)', () => {
     expect(p.indexOf('旧话')).toBeLessThan(p.indexOf('服务器又挂了'))
   })
 
-  it('长消息截断', () => {
+  it('新消息完整送出，不能截断后仍宣告整条已记账', () => {
     const p = buildExtractPrompt({ ...base, newMessages: [{ ts: '2026-06-11T01:00:00Z', direction: 'in', text: 'y'.repeat(800) }], existingThreads: [] })
-    expect(p).toContain('y'.repeat(500) + '…')
-    expect(p).not.toContain('y'.repeat(501))
+    expect(p).toContain('y'.repeat(800))
+    expect(p).not.toContain('y'.repeat(800) + '…')
   })
 })
 

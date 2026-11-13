@@ -234,8 +234,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     } finally {writeFileSync(configPath,config);for(const id of ids)db.query('DELETE FROM threads WHERE id=?').run(id);db.close()}
   })
 
-  it('checkup: explicit owner trigger uses synthetic requests and keeps an unscorable run out of the archive', async () => {
-    type View = { target: { provider: string; model: string }; profile: { memory: string; short: boolean } | null; attempt: { status: string } | null; periodicProbe: boolean }
+  it('checkup: explicit owner trigger scores visible synthetic speech and preserves isolation', async () => {
+    type View = import('@wechat-cc/protocol').CheckupView
     const before = await desktop<View>('GET', '/v1/checkup')
     expect(before.status).toBe(200)
     expect(before.body.target.provider).toBe('claude')
@@ -253,12 +253,14 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect((await desktop('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey }, 'trusted')).status).toBe(403)
     const started = await desktop<View>('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey })
     expect(started.status).toBe(202)
-    await expect.poll(async () => (await desktop<View>('GET', '/v1/checkup')).body.attempt?.status, { timeout: 15000 }).toBe('failed')
+    await expect.poll(async () => (await desktop<View>('GET', '/v1/checkup')).body.attempt?.status, { timeout: 15000 }).toBe('completed')
     const result = await desktop<View>('GET', '/v1/checkup')
     // The boundary fake says only "好的。" and never calls the fictional tools.
-    // No legal actions means the measurement did not succeed; it cannot establish a budget.
-    expect(result.body.profile).toBeNull()
-    expect(result.body.attempt).toMatchObject({status:'failed',errorCode:'no_measurement'})
+    // Its visible speech is evidence. Wrong content fails the relevant qualities;
+    // lack of reply calls does not turn a completed interview into infrastructure failure.
+    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v2',qualities:{memory:{ratio:0}},business:{ratio:20/24}}})
+    expect(result.body.attempt).toMatchObject({status:'completed'})
+    expect(readFileSync(join(d.stateDir,'checkup','observations.json'),'utf8')).toContain('好的。')
     const interviewSpawns=spawnOptions.slice(spawnsBefore).filter(o=>o.strictMcpConfig===true)
     expect(interviewSpawns).toHaveLength(24)
     expect(interviewSpawns.every(o=>Array.isArray(o.allowedTools)&&o.allowedTools.includes('mcp__wechat__delegate'))).toBe(true)

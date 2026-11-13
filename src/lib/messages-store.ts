@@ -157,16 +157,20 @@ export function makeMessagesStore(db: Db): MessagesStore {
     return q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
   }
 
-  const appendSync = (rec:MessageRecord):number => {
+  const canRewind=db.query<{name:string},[]>('PRAGMA table_info(thread_extract_state)').all().some(c=>c.name==='entries_to_ts')
+  const appendSync = db.transaction((rec:MessageRecord):number => {
       rec.extras !== undefined
         ? insertExtras().run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source, rec.extras)
         : stmtInsert.run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source)
       // SQLite changes()只数顶层消息行;Bun.run().changes 也会计入版本触发器。
       const changes = db.query<{ n: number }, []>('SELECT changes() AS n').get()!.n
+      // A timestamp watermark is not an insertion cursor. Delayed inbound and
+      // same-millisecond bubbles must be replayed, including their full ts group.
+      if(changes>0&&canRewind&&Number.isFinite(Date.parse(rec.ts)))db.query(`UPDATE thread_extract_state SET entries_to_ts=? WHERE chat_id=? AND julianday(entries_to_ts)>=julianday(?)`).run(new Date(Date.parse(rec.ts)-1).toISOString(),rec.chatId,rec.ts)
       // 消息不进 MatterLog 的游标:新的一行给手机主题一声提示(聊天的 matter/<id>、home 的「在跟你聊」)
       if (changes > 0) hintWrite(db, { kind: 'messages', chatId: rec.chatId })
       return changes
-    }
+    })
   return {
     appendSync,
     async append(rec) { return appendSync(rec) },

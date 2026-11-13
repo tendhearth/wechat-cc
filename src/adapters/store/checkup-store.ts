@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { CheckupViewSchema, type CheckupAttempt, type CheckupProfile, type CheckupTarget, type ContextBudget } from '@wechat-cc/protocol'
 import { DEFAULT_CHECKUP_WINDOW, DEFAULT_RELIABLE_FILL } from '../../domain/butler-checkup'
+import type { CheckupTurn } from '../../domain/checkup-types'
 import { readJsonObject, updateJsonFile } from '../../lib/json-file'
 
 export function checkupAddress(address: string): string {
@@ -47,6 +48,14 @@ export function makeCheckupStore(stateDir: string, diagnostics: {log?(tag:string
       return validProfile(p) && p.provider === target.provider && p.model === target.model && p.addressHash === addressHash(target.address) ? p : null
     },
     save(target: CheckupTarget, profile: CheckupProfile) { updateJsonFile(profilesPath, raw => { raw[checkupKey(target)] = profile }) },
+    saveObservation(target:CheckupTarget,runId:string,observation:CheckupTurn&{version:'interview-v2';seed:number;id:string}) {
+      updateJsonFile(join(stateDir,'checkup','observations.json'),raw=>{
+        const key=checkupKey(target),previous=raw[key] as {runId?:string;samples?:Record<string,unknown>}|undefined
+        const samples=previous?.runId===runId?previous.samples??{}:{}
+        samples[observation.id]=observation
+        raw[key]={runId,samples}
+      })
+    },
     readSettings() { return readJsonObject(settingsPath) },
     settings(periodicProbe: boolean) { updateJsonFile(settingsPath, raw => { raw.periodicProbe = periodicProbe }) },
     probe(target: CheckupTarget): { testedAt: string; lastAttemptAt?:string; suspectedChanged: boolean } | null {
@@ -56,7 +65,8 @@ export function makeCheckupStore(stateDir: string, diagnostics: {log?(tag:string
     saveProbe(target: CheckupTarget, value: {testedAt:string;lastAttemptAt?:string;suspectedChanged:boolean}) { updateJsonFile(join(stateDir,'checkup','probes.json'), raw => { raw[checkupKey(target)] = value }) },
     contextBudgetFor(provider: string | CheckupTarget, model: string): ContextBudget {
       const t = typeof provider === 'string' ? null : { ...provider, model }
-      const p = t ? this.profile(t) : null
+      const stored = t ? this.profile(t) : null
+      const p=stored?.interview?.version==='interview-v2'?stored:null
       return p ? { windowTokens:p.windowTokens,reliableFillRatio:p.reliableFillRatio,source:'measured' } : { windowTokens:t?.windowTokens ?? DEFAULT_CHECKUP_WINDOW,reliableFillRatio:DEFAULT_RELIABLE_FILL,source:'default' }
     },
     recordContextOverflow(target:CheckupTarget,inputTokens:number) {
@@ -66,7 +76,8 @@ export function makeCheckupStore(stateDir: string, diagnostics: {log?(tag:string
     },
     rotationBudgetFor(provider: string | CheckupTarget, model: string, fallbackWindow=DEFAULT_ROTATION_WINDOW): ContextBudget {
       const t = typeof provider === 'string' ? null : { ...provider, model }
-      const p = t ? this.profile(t) : null
+      const stored = t ? this.profile(t) : null
+      const p=stored?.interview?.version==='interview-v2'?stored:null
       const windowsPath=join(stateDir,'checkup','context-windows.json')
       let budgetError:string|null=null
       let windowTokens=fallbackWindow,windowSource: 'measured'|'persisted'|'assumed'='assumed'
