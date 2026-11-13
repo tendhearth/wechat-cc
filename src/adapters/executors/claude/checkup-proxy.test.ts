@@ -1,11 +1,34 @@
 import {expect,it,vi} from 'vitest'
-import {makeCheckupProxy} from './checkup-proxy'
+import {makeCheckupProxy,isCheckupProxyEndpoint,usesCheckupProxy} from './checkup-proxy'
 import {makeCheckupBudget} from '../../../domain/checkup-budget'
 const sse=(events:unknown[])=>new Response(events.map(e=>'data: '+JSON.stringify(e)+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}})
 const post=async(url:string,thinking?:number)=>{
   const response=await fetch(url+'/v1/messages?beta=true',{method:'POST',headers:{authorization:'Bearer fictional','content-type':'application/json'},body:JSON.stringify({max_tokens:4096,...thinking?{thinking:{type:'enabled',budget_tokens:thinking}}:{}})})
   await response.text();return response.status
 }
+for(const [url,allowed] of [
+  [null,false],[undefined,false],['',false],['https://anthropic.com',false],
+  ['https://api.anthropic.com/v1',false],['https://nested.api.anthropic.com',false],
+  ['https://API.AnThRoPiC.CoM:8443/v1',false],['https://api.anthropic.com.:443',false],
+  ['https://api.openai.com',false],['https://generativelanguage.googleapis.com',false],
+  ['https://gateway.invalid:8443/anthropic',true],['http://localhost:8000',true],
+  ['https://anthropic.com.gateway.invalid',true],['invalid url',false],['file:///fictional',false],
+] as const)it(`classifies a checkup proxy endpoint: ${String(url)}`,()=>{
+  expect(isCheckupProxyEndpoint(url)).toBe(allowed)
+})
+it('only relays custom API-key transports, keeping OAuth and native transports direct',()=>{
+  const base={ANTHROPIC_BASE_URL:'https://gateway.invalid',ANTHROPIC_API_KEY:'fictional'}
+  expect(usesCheckupProxy(base)).toBe(true)
+  expect(usesCheckupProxy({ANTHROPIC_BASE_URL:base.ANTHROPIC_BASE_URL})).toBe(false)
+  expect(usesCheckupProxy({...base,CLAUDE_CODE_OAUTH_TOKEN:'fictional'})).toBe(false)
+  expect(usesCheckupProxy({...base,ANTHROPIC_UNIX_SOCKET:'/fictional/socket'})).toBe(false)
+  for(const key of ['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD','CLAUDE_CODE_USE_MANTLE'])expect(usesCheckupProxy({...base,[key]:'1'})).toBe(false)
+})
+it('refuses to create an official endpoint forwarder even if called directly',async()=>{
+  const send=vi.fn()
+  await expect(makeCheckupProxy({upstream:'https://api.anthropic.com',budget:makeCheckupBudget({maxOutputTokens:5000,maxRequests:5}),maxOutputTokens:4096,signal:new AbortController().signal,onLimit:()=>{},fetch:send as unknown as typeof fetch})).rejects.toThrow('custom endpoint')
+  expect(send).not.toHaveBeenCalled()
+})
 it('forwards only to the pinned endpoint, clamps thinking, and uses cumulative final SSE usage once',async()=>{
   const budget=makeCheckupBudget({maxOutputTokens:2000,maxRequests:3}),caps:number[]=[],thinking:number[]=[],onLimit=vi.fn()
   const proxy=await makeCheckupProxy({upstream:'https://fictional.invalid/api',budget,maxOutputTokens:4096,signal:new AbortController().signal,onLimit,fetch:(async(url:unknown,init?:RequestInit)=>{

@@ -20,7 +20,7 @@ import { claudeApiFailure, claudeAssistantFailure, claudeResultFailure, parseToo
 import { authorize, type AuthSubject } from '../../../domain/authorize'
 import { lookup } from '../../../domain/capability-matrix'
 import { sessionSubprocessEnv } from '../subprocess-env'
-import { makeCheckupProxy, checkupTransportSafe } from './checkup-proxy'
+import { makeCheckupProxy, checkupTransportSafe, usesCheckupProxy } from './checkup-proxy'
 
 export { CLAUDE_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -205,7 +205,7 @@ type AssistantBlock = { type?: string; text?: string; name?: string; id?: string
 type AssistantContent = string | Array<AssistantBlock>
 // `error`: the SDK's own label for a synthetic "this API call failed" assistant
 // message (SDKAssistantMessageError). See ./claude-api-error-code.
-type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; api_error_params?: {cut?:string}; message?: { id?: string; model?: string; stop_reason?:string|null; content?: AssistantContent; usage?: {input_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number} } }
+type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; api_error_params?: {cut?:string}; message?: { id?: string; model?: string; stop_reason?:string|null; content?: AssistantContent; usage?: {input_tokens?:number;output_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number} } }
 // SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
 // blocks correlate to tool_use.id through tool_use_id; result content can
 // contain private file or command output and is deliberately not read here.
@@ -369,6 +369,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     fallbackContextWindowTokens:200000,
     contextWindowTokens:model=>windows.get(windowKey(claudeBaseUrl(),model)),
     supportsIsolatedEvaluation: true,
+    isolatedEvaluationBudgetMode:()=>usesCheckupProxy(sessionSubprocessEnv())?'request':'question',
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
@@ -399,7 +400,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         cwd: project.path,
         model: spawnOpts.model ?? opts.strongModel?.() ?? DEFAULT_CLAUDE_MODEL,
         settingSources: [], tools: [], persistSession: false,
-        hooks: {}, plugins: [], settings: { disableAllHooks: true, disableSkillShellExecution: true, autoMemoryEnabled: false, env: { ANTHROPIC_UNIX_SOCKET: '' } },
+        hooks: {}, plugins: [], settings: { disableAllHooks: true, disableSkillShellExecution: true, autoMemoryEnabled: false },
         includePartialMessages: true,
         strictMcpConfig: true,
         mcpServers: { wechat: { type: 'http', url: evaluation.mcpServer.url } },
@@ -453,17 +454,33 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null
       let usageLimited=false
       let evaluationProxy:Awaited<ReturnType<typeof makeCheckupProxy>>|undefined
-      if(evaluation?.budget){
+      const proxyEnabled=!!evaluation?.budget&&usesCheckupProxy(options.env!)
+      // Reserve every possible step before opening the native SDK session.
+      // SDK usage settles the soft gate; no HTTP interception is involved.
+      const questionReservation=evaluation?.budget&&!proxyEnabled
+        ?evaluation.budget.reserve(evaluation.maxOutputTokens,evaluation.maxSteps,true):undefined
+      const assistantUsage=new Map<string,number|undefined>()
+      let unidentifiedUsage=false
+      const validCount=(n:unknown):n is number=>typeof n==='number'&&Number.isSafeInteger(n)&&n>=0
+      const settleQuestion=(result?:ResultMsg)=>{
+        const reported=claudeResultUsage(result?.usage)?.output
+        const complete=!!result&&assistantUsage.size>0&&!unidentifiedUsage
+          &&(!validCount(result.num_turns)||result.num_turns<=assistantUsage.size)
+          &&[...assistantUsage.values()].every(validCount)
+        const outputTokens=reported??(complete?[...assistantUsage.values()].reduce<number>((sum,n)=>sum+n!,0):undefined)
+        // num_turns is SDK steps, not an assertion about HTTP recovery calls.
+        const requests=outputTokens===undefined?undefined:Math.max(validCount(result?.num_turns)?result.num_turns:0,assistantUsage.size)||undefined
+        questionReservation?.settle({outputTokens,requests})
+      }
+      if(proxyEnabled&&evaluation?.budget){
         const env=options.env!
-        // These native transports ignore ANTHROPIC_BASE_URL, so they cannot
-        // promise this Messages allowance yet. Never silently bypass the gate.
-        if(env.ANTHROPIC_UNIX_SOCKET||['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_MANTLE','CLAUDE_CODE_USE_VERTEX'].some(key=>/^(1|true|yes|on)$/i.test(env[key]?.trim()??'')))throw Object.assign(Error('This Claude transport cannot enforce the checkup allowance.'),{code:'isolated_evaluation_unavailable'})
-        evaluationProxy=await makeCheckupProxy({upstream:spawnTarget.baseUrl??'https://api.anthropic.com',budget:evaluation.budget,maxOutputTokens:evaluation.maxOutputTokens,signal:aborter.signal,fetch:opts.checkupFetch,onLimit(){
+        evaluationProxy=await makeCheckupProxy({upstream:spawnTarget.baseUrl!,budget:evaluation.budget,maxOutputTokens:evaluation.maxOutputTokens,signal:aborter.signal,fetch:opts.checkupFetch,onLimit(){
           usageLimited=true
           activeEventQueue?.push({kind:'error',code:'checkup_usage_limit',message:'checkup_usage_limit'})
           activeEventQueue?.end();activeEventQueue=null
           aborter.abort()
         }})
+        options.settings={...options.settings as object,env:{ANTHROPIC_UNIX_SOCKET:''}}
         env.ANTHROPIC_UNIX_SOCKET=''
         env.ANTHROPIC_BASE_URL=evaluationProxy.url
         env.NO_PROXY=[env.NO_PROXY,'127.0.0.1','localhost'].filter(Boolean).join(',');env.no_proxy=env.NO_PROXY
@@ -482,7 +499,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
 
       let q: ReturnType<typeof query>
       try { q = runQuery({ prompt: sdkQueue.iterable(), options }) }
-      catch (error) { aborter.abort();await evaluationProxy?.close();throw error }
+      catch (error) { settleQuestion();aborter.abort();await evaluationProxy?.close();throw error }
       if(evaluationProxy){
         let timer:ReturnType<typeof setTimeout>|undefined
         try{
@@ -569,6 +586,12 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               log('SESSION_INIT', `alias=${project.alias} session_id=${msg.session_id ?? ''}`)
               aq.push({ kind: 'init', sessionId: msg.session_id ?? '' })
             } else if (msg.type === 'assistant') {
+              if(questionReservation&&!msg.parent_tool_use_id&&msg.message?.model!=='<synthetic>'){
+                const id=msg.message?.id??msg.uuid,value=msg.message?.usage?.output_tokens
+                if(!id)unidentifiedUsage=true
+                else if(validCount(value))assistantUsage.set(id,Math.max(assistantUsage.get(id)??0,value))
+                else if(!assistantUsage.has(id))assistantUsage.set(id,undefined)
+              }
               if (!msg.parent_tool_use_id && (!msg.error||msg.error==='max_output_tokens') && msg.message?.model!=='<synthetic>') {
                 const u=msg.message?.usage,id=msg.message?.id??msg.uuid
                 const same=!!id&&id===lastRequestId
@@ -619,6 +642,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               flushText()
             } else if (msg.type === 'result') {
+              settleQuestion(msg)
               firstRequestSeen=true
               if(evaluation && !turnErrored && !evaluationHasVisibleText && msg.stop_reason==='max_tokens'){
                 pendingApiError=null
@@ -680,6 +704,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             activeEventQueue = null
           }
         } finally {
+          settleQuestion()
           drainResolve?.()
         }
       })()

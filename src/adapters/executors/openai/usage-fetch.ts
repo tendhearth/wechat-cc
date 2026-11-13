@@ -1,4 +1,5 @@
 import type {FetchLike} from '../../../lib/timeout-fetch'
+import {isOfficialModelUrl} from '../../../lib/call-classifier'
 
 // Capability belongs to an endpoint, across sessions/models and all APIModel callers.
 const withoutStreamOptions=new Set<string>()
@@ -13,6 +14,13 @@ const unsupported=(text:string)=>/stream_options|include_usage/i.test(text)
 /** Observe only the serialized body actually sent. A parameter rejection permits one changed request. */
 export function usageFetch(fetch:FetchLike,observe:(bytes:number)=>void,beforeRetry?:(signal:AbortSignal)=>Promise<void>):FetchLike{
   return async(input,init)=>{
+    const url=typeof input==='string'?input:input instanceof URL?input.href:input.url
+    // Official clients retain the SDK's serialized request, including errors.
+    // Only a user-configured gateway may opt into the compatibility fallback.
+    if(isOfficialModelUrl(url)){
+      if(typeof init?.body==='string')observe(Buffer.byteLength(init.body))
+      return fetch(input,init)
+    }
     const key=endpointKey(input)
     const original=typeof init?.body==='string'?init.body:undefined
     const body=original?JSON.parse(original) as Record<string,unknown>:undefined

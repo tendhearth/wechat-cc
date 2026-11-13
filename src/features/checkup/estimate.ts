@@ -1,15 +1,15 @@
 /** Pricing composes the pure invented plan with this run's configured limits. */
 import {checkupEstimateSummary,type CheckupEstimate} from '@wechat-cc/protocol'
-import {buildInterviewPlan,type InterviewOptions} from '../../domain/checkup-interview'
+import {buildInterviewPlan,CHECKUP_MAX_QUESTION_OUTPUT,type InterviewOptions} from '../../domain/checkup-interview'
 import {buildCheckupPlan,type PlanOptions} from '../../domain/butler-checkup'
-import {checkupLimits,type CheckupLimits} from '../../domain/checkup-budget'
-export function estimateInterview(o:InterviewOptions&{windowKnown?:boolean;limits?:CheckupLimits}):Omit<CheckupEstimate,'targetKey'> {
+import {checkupLimits,type CheckupLimits,type CheckupBudgetMode} from '../../domain/checkup-budget'
+export function estimateInterview(o:InterviewOptions&{windowKnown?:boolean;limits?:CheckupLimits;budgetMode?:CheckupBudgetMode}):Omit<CheckupEstimate,'targetKey'> {
   const p=buildInterviewPlan(o),limits=o.limits??checkupLimits(o.full)
   // No per-model history yet: two typical steps, 250 visible tokens and
   // 1200 reasoning tokens per step. Realistic headroom for unknown models.
   const requests=Math.min(p.samples.length*2,limits.maxRequests)
   const quote={requests,...limits,inputTokens:p.samples.reduce((sum,s)=>sum+2*(s.estimatedTokens+(o.systemTokens??0)+1450),0),outputTokens:Math.min(requests*1450,limits.maxOutputTokens),windowKnown:o.windowKnown??false}
-  return {...quote,summary:checkupEstimateSummary(quote,o.full)}
+  return {...quote,summary:checkupEstimateSummary(quote,o.full,o.budgetMode==='question'?CHECKUP_MAX_QUESTION_OUTPUT:undefined)}
 }
 
 export function estimateCheckup(o: PlanOptions & { windowKnown?: boolean }): Omit<CheckupEstimate,'targetKey'> {

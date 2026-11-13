@@ -287,6 +287,19 @@ it('quotes realistic typical output and binds both hard limits to confirmation',
   expect(()=>service.start({expectedTargetKey:next.targetKey})).toThrow('checkup_target_changed')
 })
 
+it('quotes native question gates approximately, including a whole question retry, and binds the gate mode',()=>{
+  const {store}=setup()
+  let mode:'question'|'request'='question'
+  const service=makeCheckupService({store,resolveTarget:()=>({...target,provider:'claude',address:'default'}),run:correct,version:'test',executors:()=>['worker'],budgetMode:()=>mode})
+  const quote=service.estimate()
+  expect(quote.summary).toContain('预计用 7 万左右、最多约 34 万输出 token')
+  expect(quote.summary).toContain('题与题之间检查用量')
+  expect(service.estimate({full:true}).summary).toContain('最多约 104 万输出 token')
+  mode='request'
+  expect(()=>service.start({expectedTargetKey:quote.targetKey})).toThrow('checkup_target_changed')
+  expect(service.estimate().summary).toContain('最多不超过 30 万输出 token')
+})
+
 for(const dimension of ['output','requests'] as const) it(`stops at the whole-run ${dimension} gate and keeps measured reviews`,async()=>{
   const {makeCheckupTurn}=await import('./runner')
   let calls=0,output=0

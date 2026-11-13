@@ -3,6 +3,24 @@ import {createServer} from 'node:http'
 import {randomUUID} from 'node:crypto'
 import type {CheckupBudget} from '../../../domain/checkup-budget'
 import {checkupUsageLimit} from '../../../domain/checkup-budget'
+import {isOfficialModelUrl} from '../../../lib/call-classifier'
+
+/** Missing/invalid URLs and official hosts must keep the native transport. */
+export function isCheckupProxyEndpoint(baseUrl:string|null|undefined):boolean {
+  if(!baseUrl)return false
+  try{
+    const url=new URL(baseUrl)
+    return ['http:','https:'].includes(url.protocol)&&!isOfficialModelUrl(url.href)
+  }catch{return false}
+}
+
+/** Native cloud/socket transports and subscription credentials are never relayed. */
+export function usesCheckupProxy(env:Record<string,string|undefined>):boolean {
+  return isCheckupProxyEndpoint(env.ANTHROPIC_BASE_URL)
+    &&!env.ANTHROPIC_UNIX_SOCKET&&!env.CLAUDE_CODE_OAUTH_TOKEN
+    &&!!(env.ANTHROPIC_API_KEY?.trim()||env.ANTHROPIC_AUTH_TOKEN?.trim())
+    &&!['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD','CLAUDE_CODE_USE_MANTLE','CLAUDE_CODE_USE_VERTEX'].some(key=>/^(1|true|yes|on)$/i.test(env[key]?.trim()??''))
+}
 
 /** Native policy may override the flag's empty Unix socket setting. Inspect
  * only the transport decision; never log or return native settings. */
@@ -14,6 +32,7 @@ export function checkupTransportSafe(value:unknown):boolean {
 }
 
 export async function makeCheckupProxy(o:{upstream:string;budget:CheckupBudget;maxOutputTokens:number;signal:AbortSignal;onLimit():void;fetch?:typeof fetch}) {
+  if(!isCheckupProxyEndpoint(o.upstream))throw Error('Checkup forwarding requires a custom endpoint.')
   const prefix=`/${randomUUID()}`,controllers=new Set<AbortController>()
   const http=createServer(async(req,res)=>{
     if(!req.url?.startsWith(prefix+'/')){res.writeHead(404).end();return}

@@ -134,6 +134,12 @@ export function hostOf(url: string | null | undefined): string | null {
   } catch { return null }
 }
 
+/** Official service hosts never permit our compatibility layer to rewrite traffic. */
+export function isOfficialModelUrl(url: string): boolean {
+  const host = hostOf(url)
+  return host !== null && suffixMatch(host, OFFICIAL_HOSTS) !== null
+}
+
 /** localhost / 回环 / 私网 / 链路本地 / CGNAT(tailnet)/ .local .lan .internal / 不带点的主机名。 */
 export function isSelfHostedHost(host: string): boolean {
   const h = host.toLowerCase()

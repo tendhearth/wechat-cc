@@ -11,6 +11,9 @@ export interface InterviewSample {
 export interface InterviewOptions {windowTokens:number;full:boolean;seed?:number;persona?:CheckupPersona;executors?:string[];systemTokens?:number}
 // Visible reply allowance plus reasoning headroom; one bounded larger retry.
 export const CHECKUP_OUTPUT_BUDGETS = [512+3584, 8192] as const
+export const CHECKUP_MAX_STEPS = 3
+/** A question includes its one optional retry, each with fresh isolated state. */
+export const CHECKUP_MAX_QUESTION_OUTPUT = CHECKUP_MAX_STEPS * CHECKUP_OUTPUT_BUDGETS.reduce<number>((sum,n)=>sum+n,0)
 const qualities:CheckupQuality[]=['memory','tracking','honesty','discretion','stance','privacy','persona']
 const tokens=(text:string)=>Math.ceil(new TextEncoder().encode(text).length/3)
 export function buildInterviewPlan(o:InterviewOptions):{version:'interview-v1';seed:number;samples:InterviewSample[]} {

@@ -18,6 +18,7 @@ export function checkupModule(f:Foundation):DaemonModule<CheckupService> {
     return {
       holdBusy:boot.holdBusy,
       limits:full=>checkupLimits(full,config().checkup),
+      budgetMode:target=>boot.registry.get(target.provider)?.provider.isolatedEvaluationBudgetMode?.()??'request',
       store:makeCheckupStore(f.stateDir),version:APP_VERSION,
       persona:()=>ctx.get<MemoryFeature>('memory').promptReads.personaFor(ownerChatIdOf(f.stateDir)??'checkup').content??'',
       executors:()=>ctx.get<WorkbenchService>('workbench').availableExecutors(),

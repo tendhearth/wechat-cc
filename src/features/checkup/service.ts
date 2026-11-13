@@ -9,7 +9,7 @@ import { extractCheckupPersona } from '../../domain/checkup-persona'
 import { interviewInstructions } from './instructions'
 import { estimateTokens } from '../../domain/butler-checkup'
 import { providerErrorCodeOf } from '../../lib/provider-error-code'
-import { checkupLimits, makeCheckupBudget, type CheckupBudget, type CheckupLimits } from '../../domain/checkup-budget'
+import { checkupLimits, makeCheckupBudget, type CheckupBudget, type CheckupLimits, type CheckupBudgetMode } from '../../domain/checkup-budget'
 
 export interface CheckupOptions { full?: boolean; providerId?: string; model?: string; expectedTargetKey?: string; runKey?: string }
 export interface CheckupServiceDeps {
@@ -18,6 +18,7 @@ export interface CheckupServiceDeps {
   resolveTarget(options?: CheckupOptions): CheckupTarget
   run(sample: CheckupSample, target: CheckupTarget, signal: AbortSignal, budget?:CheckupBudget): Promise<CheckupTurn>
   limits?: (full:boolean) => CheckupLimits
+  budgetMode?: (target:CheckupTarget) => CheckupBudgetMode
   persona?: () => string
   executors?: () => string[]
   holdBusy?: (label:string) => () => void
@@ -58,9 +59,10 @@ export function makeCheckupService(d: CheckupServiceDeps) {
     return {windowTokens:target.windowTokens,full,persona,executors,systemTokens:estimateTokens(interviewInstructions(target.provider,target.model,persona,executors))}
   }
   const limitsFor=(full:boolean)=>({...((d.limits?.(full))??checkupLimits(full))})
-  const receipt=(t:CheckupTarget,options:ReturnType<typeof interviewOptions>,limits:CheckupLimits)=>createHash('sha256').update(JSON.stringify([checkupKey(t),t.windowKnown,options,limits])).digest('hex')
+  const budgetModeFor=(t:CheckupTarget)=>d.budgetMode?.(t)??'request'
+  const receipt=(t:CheckupTarget,options:ReturnType<typeof interviewOptions>,limits:CheckupLimits)=>createHash('sha256').update(JSON.stringify([checkupKey(t),t.windowKnown,options,limits,budgetModeFor(t)])).digest('hex')
   const hold=(label:string)=>{try{return d.holdBusy?.(label)??(()=>{})}catch{return()=>{}}}
-  const estimate = (o: CheckupOptions = {}) => { const t=d.resolveTarget(o),options=interviewOptions(t,!!o.full),limits=limitsFor(!!o.full);return {...estimateInterview({...options,limits,windowKnown:t.windowKnown}),targetKey:receipt(t,options,limits)} }
+  const estimate = (o: CheckupOptions = {}) => { const t=d.resolveTarget(o),options=interviewOptions(t,!!o.full),limits=limitsFor(!!o.full);return {...estimateInterview({...options,limits,budgetMode:budgetModeFor(t),windowKnown:t.windowKnown}),targetKey:receipt(t,options,limits)} }
   const runSample = async (s: CheckupSample,t:CheckupTarget,signal:AbortSignal,budget?:CheckupBudget) => {
     const deadline = AbortSignal.timeout(120_000)
     return abortable(d.run(s,t,AbortSignal.any([signal,deadline]),budget),AbortSignal.any([signal,deadline]))

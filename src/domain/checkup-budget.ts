@@ -1,5 +1,6 @@
 /** Run-owned allowance. Reserve before sending so even a full final response fits. */
 export interface CheckupLimits { maxOutputTokens:number; maxRequests:number }
+export type CheckupBudgetMode = 'request' | 'question'
 export const CHECKUP_LIMITS = {
   short:{maxOutputTokens:300_000,maxRequests:120},
   full:{maxOutputTokens:1_000_000,maxRequests:400},
@@ -19,7 +20,7 @@ export interface CheckupReservation {
 export interface CheckupBudget {
   readonly exhausted:boolean
   readonly usage:{requests:number;outputTokens:number}
-  reserve(maxOutputTokens:number,maxRequests?:number):CheckupReservation
+  reserve(maxOutputTokens:number,maxRequests?:number,exact?:boolean):CheckupReservation
 }
 export function makeCheckupBudget(limits:CheckupLimits):CheckupBudget {
   let requests=0,outputTokens=0,chargedTokens=0
@@ -27,7 +28,10 @@ export function makeCheckupBudget(limits:CheckupLimits):CheckupBudget {
   return {
     get exhausted(){return requests>=limits.maxRequests||chargedTokens>=limits.maxOutputTokens},
     get usage(){return {requests,outputTokens}},
-    reserve(cap,slots=1){
+    reserve(cap,slots=1,exact=false){
+      // Native Claude traffic stays untouched. A whole isolated attempt must
+      // fit before its subprocess opens; never shrink its turns or output cap.
+      if(exact&&(slots>limits.maxRequests-requests||cap*slots>limits.maxOutputTokens-chargedTokens))throw checkupUsageLimit()
       const count=Math.min(slots,limits.maxRequests-requests,limits.maxOutputTokens-chargedTokens)
       const allowed=Math.min(cap,Math.floor((limits.maxOutputTokens-chargedTokens)/count))
       if(count<1||allowed<1||!Number.isFinite(allowed))throw checkupUsageLimit()
@@ -43,7 +47,7 @@ export function makeCheckupBudget(limits:CheckupLimits):CheckupBudget {
         // A byte estimate cannot prove a tokenizer upper bound, especially for
         // private reasoning. Only complete provider usage refunds the hard gate.
         if(valid(u.outputTokens))chargedTokens+=used-allowed*count
-        if(valid(u.requests))requests+=Math.min(count,Math.ceil(u.requests))-count
+        if(valid(u.requests))requests+=(exact?Math.ceil(u.requests):Math.min(count,Math.ceil(u.requests)))-count
       }}
     },
   }

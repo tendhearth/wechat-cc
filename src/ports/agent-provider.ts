@@ -462,6 +462,8 @@ export interface AgentProvider {
   prepareContextWindow?(model:string):Promise<void>
   /** Explicitly verified tools-only, no-private-history evaluation boundary. */
   supportsIsolatedEvaluation?: true
+  /** Native transports reserve whole questions; API gateways can gate requests. */
+  isolatedEvaluationBudgetMode?(): import('../domain/checkup-budget').CheckupBudgetMode
   /** Discovery owns one bounded native deadline and subprocess cleanup; no model turn is sent. */
   modelCatalog?(project: AgentProject): Promise<AgentModelCatalog>
   /**

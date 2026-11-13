@@ -15,7 +15,7 @@ import { checkupAddress } from '../../adapters/store/checkup-store'
 import { errorWithProviderCode } from '../../lib/provider-error-code'
 import { abortable } from './service'
 import { interviewInstructions } from './instructions'
-import { CHECKUP_OUTPUT_BUDGETS, scoreInterview } from '../../domain/checkup-interview'
+import { CHECKUP_OUTPUT_BUDGETS, CHECKUP_MAX_STEPS, scoreInterview } from '../../domain/checkup-interview'
 import type { CheckupBudget } from '../../domain/checkup-budget'
 
 /** An unguessable loopback MCP endpoint. It can only echo invented parameters. */
@@ -77,7 +77,7 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
     try {
       bridge=await fakeCheckupTools(sample,(name,input)=>{if(sample.kind==='interview'&&firstActionMs===null&&['reply','ask_user'].includes(name)&&input&&typeof input==='object'&&Object.values(input).some(v=>typeof v==='string'&&v.trim()))firstActionMs=performance.now()-started})
       signal.throwIfAborted()
-      const pending=provider.spawn({alias:sample.kind==='interview'?'conversation':'synthetic-checkup',path:project},{tierProfile:JOB_PROFILE,permissionMode:'strict',chatId:`conversation-${randomUUID()}`,model:target.model,appendInstructions:sample.kind==='interview'?interviewInstructions(target.provider,target.model,sample.persona,sample.executors):'只根据本次完全编造的题目作答。禁止读取文件、记忆、项目或调用本次练习以外的工具。',evaluation:{tools:bridge.tools,mcpServer:{url:bridge.url},maxSteps:sample.kind==='memory'?1:sample.kind==='interview'?3:2,maxOutputTokens,budget}})
+      const pending=provider.spawn({alias:sample.kind==='interview'?'conversation':'synthetic-checkup',path:project},{tierProfile:JOB_PROFILE,permissionMode:'strict',chatId:`conversation-${randomUUID()}`,model:target.model,appendInstructions:sample.kind==='interview'?interviewInstructions(target.provider,target.model,sample.persona,sample.executors):'只根据本次完全编造的题目作答。禁止读取文件、记忆、项目或调用本次练习以外的工具。',evaluation:{tools:bridge.tools,mcpServer:{url:bridge.url},maxSteps:sample.kind==='memory'?1:sample.kind==='interview'?CHECKUP_MAX_STEPS:2,maxOutputTokens,budget}})
       void pending.then(s=>{if(signal.aborted)void closeSession(s)},()=>{})
       session=await abortable(pending,signal)
       const actual=session.callTarget?.()

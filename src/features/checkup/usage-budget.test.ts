@@ -1,4 +1,4 @@
-import {expect,it} from 'vitest'
+import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {MockLanguageModelV2} from 'ai/test'
 import {simulateReadableStream} from 'ai'
 import {makeCheckupBudget,checkupLimits} from '../../domain/checkup-budget'
@@ -16,6 +16,11 @@ const target={provider:'fake',address:'default',model:'invented',windowTokens:81
 const sample=buildInterviewPlan({windowTokens:8192,full:false}).samples[0]!
 const answer=interviewAnswer(sample).toolCalls[0]!
 const nativeSettings=<T extends object>(q:T)=>Object.assign(q,{getSettings:async()=>({effective:{},sources:[]})})
+beforeEach(()=>{
+  for(const key of ['ANTHROPIC_BASE_URL','ANTHROPIC_UNIX_SOCKET','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD','CLAUDE_CODE_USE_MANTLE'])vi.stubEnv(key,undefined)
+})
+afterEach(()=>vi.unstubAllEnvs())
+const gateway=()=>{vi.stubEnv('ANTHROPIC_BASE_URL','https://fictional.invalid');vi.stubEnv('ANTHROPIC_API_KEY','fictional')}
 
 it('defaults to short/full hard limits and never refunds unknown usage from a byte guess',()=>{
   expect(checkupLimits(false)).toEqual({maxOutputTokens:300000,maxRequests:120})
@@ -40,7 +45,7 @@ for(const backend of ['openai','gemini','claude'] as const) it(`${backend}: ever
     const cap=o.config!.maxOutputTokens!;caps.push(cap)
     return{functionCalls:[{name:answer.name,args:answer.input as Record<string,unknown>}],usageMetadata:{candidatesTokenCount:100,thoughtsTokenCount:cap-100}}
   }}}})
-  else provider=createClaudeAgentProvider({sdkOptionsForProject:()=>{throw Error('production')},checkupFetch:(async(_url:unknown,init?:RequestInit)=>{
+  else {gateway();provider=createClaudeAgentProvider({sdkOptionsForProject:()=>{throw Error('production')},checkupFetch:(async(_url:unknown,init?:RequestInit)=>{
     const body=JSON.parse(String(init!.body));caps.push(body.max_tokens)
     return Response.json({usage:{output_tokens:body.max_tokens}})
   }) as unknown as typeof fetch,queryImpl:((args:any)=>nativeSettings((async function*(){
@@ -58,16 +63,17 @@ for(const backend of ['openai','gemini','claude'] as const) it(`${backend}: ever
       }finally{await client.close()}
       return
     }
-  })())) as any})
+  })())) as any})}
   const turn=makeCheckupTurn(()=>provider)
   const results=[]
-  while(!budget.exhausted)results.push(await turn(sample,target,new AbortController().signal,budget))
+  const pinnedTarget=backend==='claude'?{...target,address:'https://fictional.invalid'}:target
+  while(!budget.exhausted)results.push(await turn(sample,pinnedTarget,new AbortController().signal,budget))
   expect(caps.reduce((sum,n)=>sum+n,0)).toBe(5000)
   expect(budget.usage).toEqual({requests:caps.length,outputTokens:5000})
   expect(results.every(r=>scoreInterview(sample,r).qualities.memory===true)).toBe(true)
   expect(results.at(-1)?.toolCalls.length).toBeGreaterThan(0)
   const before=caps.length
-  await expect(turn(sample,target,new AbortController().signal,budget)).rejects.toMatchObject({code:'checkup_usage_limit'})
+  await expect(turn(sample,pinnedTarget,new AbortController().signal,budget)).rejects.toMatchObject({code:'checkup_usage_limit'})
   expect(caps).toHaveLength(before)
 })
 
@@ -91,6 +97,7 @@ it('counts reasoning-only whole-question retries in the same output allowance',a
 })
 
 it('Claude native recovery requests cannot bypass the request gate, and a prior action survives',async()=>{
+  gateway()
   const budget=makeCheckupBudget({maxOutputTokens:50000,maxRequests:2})
   let sent=0
   const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>{throw Error('production')},checkupFetch:(async()=>{sent++;return Response.json({usage:{output_tokens:200}})}) as unknown as typeof fetch,queryImpl:((args:any)=>nativeSettings((async function*(){
@@ -108,7 +115,7 @@ it('Claude native recovery requests cannot bypass the request gate, and a prior 
       return
     }
   })())) as any})
-  const result=await makeCheckupTurn(()=>provider)(sample,target,new AbortController().signal,budget)
+  const result=await makeCheckupTurn(()=>provider)(sample,{...target,address:'https://fictional.invalid'},new AbortController().signal,budget)
   expect(sent).toBe(2)
   expect(budget.usage).toEqual({requests:2,outputTokens:400})
   expect(result.usageLimited).toBe(true)
@@ -116,6 +123,7 @@ it('Claude native recovery requests cannot bypass the request gate, and a prior 
 })
 
 it('refuses an unverified native transport before sending any model request',async()=>{
+  gateway()
   let requested=false
   const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>{throw Error('production')},checkupFetch:(async()=>{requested=true;return Response.json({})}) as unknown as typeof fetch,queryImpl:(()=>Object.assign((async function*(){})(),{getSettings:async()=>({effective:{env:{ANTHROPIC_UNIX_SOCKET:'/fictional/socket'}},sources:[]})})) as any})
   const budget=makeCheckupBudget({maxOutputTokens:5000,maxRequests:2})
