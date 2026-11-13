@@ -1,5 +1,5 @@
 import { estimateInterview } from './estimate'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { checkupReview } from '@wechat-cc/protocol'
 import type { CheckupAttempt, CheckupProfile, CheckupTarget, CheckupView } from '@wechat-cc/protocol'
 import { median, type CheckupSample, type CheckupTurn } from '../../domain/butler-checkup'
@@ -52,7 +52,7 @@ export function makeCheckupService(d: CheckupServiceDeps) {
     // A pin switch must not hide the cancel control for an already running test.
     const activeAttempt=!options.runKey && active?attempts.get(active.key):undefined
     const attempt=activeAttempt ?? attempts.get(checkupKey(target)) ?? (stored?.status==='running'?{...stored,status:'failed' as const,errorCode:'interrupted'}:stored)
-    const data:CheckupView={ target,name:extractCheckupPersona(d.persona?.()??'').name,profile,attempt,suspectedChanged:!!probe?.suspectedChanged && (!profile||Date.parse(probe.testedAt)>Date.parse(profile.testedAt)),periodicProbe:d.store.readSettings().periodicProbe === true };return {...data,review:checkupReview(data)}
+    const data:CheckupView={ target,name:extractCheckupPersona(d.persona?.()??'').name,profile,attempt,suspectedChanged:profile?.interview?.version==='interview-v2' && !!probe?.suspectedChanged && (!profile||Date.parse(probe.testedAt)>Date.parse(profile.testedAt)),periodicProbe:d.store.readSettings().periodicProbe === true };return {...data,review:checkupReview(data)}
   }
   const interviewOptions = (target:CheckupTarget,full:boolean) => {
     const persona=extractCheckupPersona(d.persona?.()??''),executors=(d.executors?.().length??0)>0?['阿禾']:[]
@@ -60,7 +60,7 @@ export function makeCheckupService(d: CheckupServiceDeps) {
   }
   const limitsFor=(full:boolean)=>({...((d.limits?.(full))??checkupLimits(full))})
   const budgetModeFor=(t:CheckupTarget)=>d.budgetMode?.(t)??'request'
-  const receipt=(t:CheckupTarget,options:ReturnType<typeof interviewOptions>,limits:CheckupLimits)=>createHash('sha256').update(JSON.stringify([checkupKey(t),t.windowKnown,options,limits,budgetModeFor(t)])).digest('hex')
+  const receipt=(t:CheckupTarget,options:ReturnType<typeof interviewOptions>,limits:CheckupLimits)=>createHash('sha256').update(JSON.stringify(['interview-v2',checkupKey(t),t.windowKnown,options,limits,budgetModeFor(t)])).digest('hex')
   const hold=(label:string)=>{try{return d.holdBusy?.(label)??(()=>{})}catch{return()=>{}}}
   const estimate = (o: CheckupOptions = {}) => { const t=d.resolveTarget(o),options=interviewOptions(t,!!o.full),limits=limitsFor(!!o.full);return {...estimateInterview({...options,limits,budgetMode:budgetModeFor(t),windowKnown:t.windowKnown}),targetKey:receipt(t,options,limits)} }
   const runSample = async (s: CheckupSample,t:CheckupTarget,signal:AbortSignal,budget?:CheckupBudget) => {
@@ -82,11 +82,15 @@ export function makeCheckupService(d: CheckupServiceDeps) {
     const release=hold('checkup')
     const run = async () => {
       try {
-        const results: Array<CheckupTurn|null> = []
+        const results: Array<CheckupTurn|null> = [],observationRun=randomUUID()
         for (const sample of samples) {
           abort.signal.throwIfAborted()
           if(budget.exhausted){attempt.errorCode='checkup_usage_limit';break}
-          try { results.push(await runSample(sample,target,abort.signal,budget)) }
+          try {
+            const turn=await runSample(sample,target,abort.signal,budget)
+            results.push(turn)
+            d.store.saveObservation(target,observationRun,{version:plan.version,seed:plan.seed,id:sample.id,...turn})
+          }
           catch(error) {
             abort.signal.throwIfAborted()
             if(error && typeof error==='object' && 'code' in error && error.code==='checkup_usage_limit'){attempt.errorCode='checkup_usage_limit';break}
@@ -129,7 +133,7 @@ export function makeCheckupService(d: CheckupServiceDeps) {
     async probeIfDue() {
       if (active || d.store.readSettings().periodicProbe !== true) return
       const target=d.resolveTarget(), profile=d.store.profile(target), previous=d.store.probe(target)
-      if (!profile || profile.interview?.version!=='interview-v1') return
+      if (!profile || profile.interview?.version!=='interview-v2') return
       const lastAttemptAt = previous?.lastAttemptAt ?? previous?.testedAt ?? profile.testedAt
       const lastAttemptMs = Date.parse(lastAttemptAt)
       if (Number.isFinite(lastAttemptMs) && now().getTime()-lastAttemptMs < 7*86400_000) return
@@ -143,7 +147,7 @@ export function makeCheckupService(d: CheckupServiceDeps) {
           const attemptedAt=now().toISOString()
           d.store.saveProbe(target,{testedAt:previous?.testedAt ?? profile.testedAt,lastAttemptAt:attemptedAt,suspectedChanged:!!previous?.suspectedChanged})
           const options=interviewOptions(target,false),plan=buildInterviewPlan(options)
-          // Three tiny checkpoints from the same v1 day: recall, ask and handoff.
+          // Three tiny checkpoints from the same v2 day: recall, ask and handoff.
           const samples=plan.samples.slice(0,3),turns:CheckupTurn[]=[],budget=makeCheckupBudget(limitsFor(false))
           for(const s of samples){abort.signal.throwIfAborted();const turn=await runSample(s,target,abort.signal,budget);if(turn.usageLimited)throw new Error('checkup_usage_limit');turns.push(turn)}
           const scores=samples.map((s,i)=>scoreInterview(s,turns[i]!,options.persona))

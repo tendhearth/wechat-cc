@@ -17,7 +17,7 @@ export function contextHistory(db:Db){
     // Outgoing remains unbounded: the preceding reply may be delivered after this inbound.
     const incoming=anchor?db.query<Row,[...typeof args,string,string,number]>(`SELECT rowid,* FROM messages WHERE ${filter} AND direction='in' AND (ts<? OR (ts=? AND rowid<?)) ORDER BY ts DESC,rowid DESC LIMIT 6`).all(...args,anchor.ts,anchor.ts,anchor.rowid)
       :db.query<Row,typeof args>(`SELECT rowid,* FROM messages WHERE ${filter} AND direction='in' ORDER BY ts DESC,rowid DESC LIMIT 6`).all(...args)
-    const outgoing=db.query<Row,typeof args>(`SELECT rowid,* FROM messages WHERE ${filter} AND direction='out' ORDER BY ts DESC,rowid DESC LIMIT 128`).all(...args)
+    const outgoing=db.query<Row,typeof args>(`SELECT rowid,* FROM messages WHERE ${filter} AND direction='out' ORDER BY ts DESC,rowid DESC LIMIT 129`).all(...args)
     const oldest=incoming.at(-1)
     return [...incoming,...outgoing.filter(r=>!oldest||r.ts>oldest.ts||(r.ts===oldest.ts&&r.rowid>oldest.rowid))].sort((a,b)=>a.ts.localeCompare(b.ts)||a.rowid-b.rowid)
   }
@@ -29,7 +29,10 @@ export function contextHistory(db:Db){
   return {
     latestTs(chatId:string,current?:ContextInput){return rows(chatId,current).filter(r=>!r.source.startsWith('speech:')).at(-1)?.ts??null},
     recent(chatId:string,current?:ContextInput){
-      const recent=rows(chatId,current).map(render)
+      const history=rows(chatId,current),outgoing=history.filter(r=>r.direction==='out')
+      const dropped=outgoing.length>128?outgoing[0]:undefined
+      const recent=history.filter(r=>r!==dropped).map(render)
+      if(dropped)recent.unshift({dir:'out',text:'',ts:dropped.ts,omitted:true})
       const toolRows=db.query<{payload:string;status:string;ts:number},[string]>(`SELECT i.payload_json AS payload,t.status,t.ended_at AS ts FROM matter_items i JOIN matter_turns t ON t.id=i.turn_id WHERE i.kind='tool_call' AND t.id=(SELECT t.id FROM matter_turns t JOIN matters m ON m.id=t.matter_id WHERE m.kind='chat' AND m.owner_chat_id=? AND t.ended_at IS NOT NULL ORDER BY t.ended_at DESC,t.cursor DESC LIMIT 1) ORDER BY i.seq LIMIT 16`).all(chatId)
       for(const r of toolRows){
         try{

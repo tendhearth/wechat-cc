@@ -40,7 +40,8 @@ it('workbench spawn options construct only its notebook MCP and never probe conv
   const constructing = vi.spyOn(mcp, 'claudeSdkMcp')
   const service = wireWorkbench({
     db, stateDir, boot: { ...options, registry, defaultProviderId: 'claude', holdBusy: () => () => {} } as unknown as Bootstrap,
-    internalApi: { port: () => 1, mintSessionToken: () => 'offline-token', invalidateSession: () => {} },
+    // 与生产同形:internal-api 的 lifecycle 外壳只有 baseUrl,没有 port()(只给 port 的替身曾掩盖 C.4 的接线遗漏)。
+    internalApi: { baseUrl: 'http://127.0.0.1:1', mintSessionToken: () => 'offline-token', invalidateSession: () => {} },
     askUser: async () => 'allow', log: () => {},
   })
   try {

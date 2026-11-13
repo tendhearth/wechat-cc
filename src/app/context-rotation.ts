@@ -34,6 +34,7 @@ export interface ContextRotationDeps {
   log(tag:string,line:string):void
 }
 const idOf=(k:ContextKey)=>JSON.stringify([k.providerId,k.alias,k.chatId])
+const validTs=(t:string|null|undefined):t is string=>typeof t==='string'&&Number.isFinite(Date.parse(t))
 
 /** Owner continuity takes precedence over freeing context: uncertain observations never force rotation. */
 export class ContextRotation {
@@ -72,6 +73,7 @@ export class ContextRotation {
   async beforeTurn(k:ContextKey,model:string,sessions:RotationSessions,current?:ContextInput,nightlyWindow=false):Promise<{block:string;carried:number}|null>{
     if(!this.owner(k)||this.d.active?.(k)===false)return null
     const s=this.segment(k,model);if(s.requestedModel!==undefined&&s.requestedModel!==model&&s.model!==model){s.model=model;s.requestedModel=model}else s.requestedModel??=model
+    if(!validTs(s.throughTs))s.throughTs=null
     try{
       const delivery=this.deliveries.get(k.chatId)
       if(delivery&&idOf(delivery.key)===idOf(k)){s.throughTs=delivery.throughTs??await this.d.latestTs(k.chatId,current);this.deliveries.delete(k.chatId)}
@@ -84,12 +86,17 @@ export class ContextRotation {
       if(!reason)return null
       if(sessions.isInFlight(k)||this.d.pending(k.chatId)){this.deferred(s,sessions.isInFlight(k)?'in_flight':'approval_pending');return null}
       const latest=await this.d.latestTs(k.chatId,current)
-      if(latest&&(!s.throughTs||Date.parse(latest)>Date.parse(s.throughTs)))s.throughTs=latest
+      if(validTs(latest)&&(!validTs(s.throughTs)||Date.parse(latest)>Date.parse(s.throughTs)))s.throughTs=latest
       if(s.turns>0&&!s.throughTs){this.deferred(s,'boundary_unknown');return null}
-      if(s.throughTs&&!await this.d.accounted(k.chatId,s.throughTs)){
-        s.catchupThrough=s.throughTs;this.deferred(s,'accounting_behind');return null
+      // 要先记过账的只是「换段后会掉出上下文的那部分」。最近一轮(最后一条主人的话起)原文带进新段,不必等它记完——
+      // 否则账永远落后刚答完的那一轮,换段被无限推迟(2026-11-13 真模型验收 B.4)。原文都在 canonical messages 里,抽取照常追。
+      const recent=await this.d.recent(k.chatId,current)
+      const continuation=continuationBlock(recent,await this.d.ongoing(k.chatId),12000,this.d.proactive?[]:this.chat(k.chatId).companion)
+      const gate=this.accountingGate(recent,continuation.omitted,s.throughTs)
+      if(gate===undefined){this.deferred(s,'boundary_unknown');return null}
+      if(gate&&!await this.d.accounted(k.chatId,gate)){
+        s.catchupThrough=s.throughTs&&Date.parse(s.throughTs)>Date.parse(gate)?s.throughTs:gate;this.deferred(s,'accounting_behind');return null
       }
-      const continuation=await this.continuation(k,current)
       if(!this.owner(k)||sessions.isInFlight(k)||this.d.pending(k.chatId)||!await sessions.rotate(k))return null
       const prevTurns=s.turns
       s.bytes=0;s.tokens=0;s.turns=0;s.source='unknown';delete s.fixedOverheadTokens;delete s.baselineUnknown
@@ -100,6 +107,17 @@ export class ContextRotation {
       this.d.log('CONTEXT_ROTATE',`reason=${reason} provider=${k.providerId} prevTurns=${prevTurns} carried=${continuation.carried}`)
       return continuation
     }catch{this.deferred(s,'accounting_or_context_unavailable');return null}
+  }
+  /** 换段前必须已经进话题记忆的最后时刻:最近一轮开始之前那条消息。认不出最近一轮(没有带时间的更早消息)时退回整段边界,宁可不换。 */
+  private accountingGate(recent:readonly HandoffTurn[],omitted:readonly HandoffTurn[],throughTs:string|null|undefined):string|null|undefined{
+    if(omitted.some(row=>!validTs(row.ts)))return undefined
+    let start=-1
+    for(let i=recent.length-1;i>=0;i--)if(recent[i]!.dir==='in'&&!recent[i]!.omitted){start=i;break}
+    // Even the latest round may lose its middle to the character cap. Query-stage
+    // omissions are included too. Only fully carried originals may bypass accounting.
+    const boundaries=[start>0?recent[start-1]!.ts:throughTs,...omitted.map(row=>row.ts)].filter((t):t is string=>t!==null&&t!==undefined)
+    if(boundaries.some(t=>!Number.isFinite(Date.parse(t))))return undefined
+    return boundaries.reduce<string|null>((latest,t)=>!latest||Date.parse(t)>Date.parse(latest)?t:latest,null)
   }
   async continuation(k:ContextKey,current?:ContextInput){return continuationBlock(await this.d.recent(k.chatId,current),await this.d.ongoing(k.chatId),12000,this.d.proactive?[]:this.chat(k.chatId).companion)}
   tracked(k:ContextKey){return this.owner(k)&&!!this.state.sessions[idOf(k)]}
@@ -142,9 +160,10 @@ export class ContextRotation {
     this.d.defer(async()=>{
       if(!this.owner(k))return
       const s=this.segment(k)
-      try{const throughTs=boundary.throughTs??await this.d.latestTs(k.chatId);if(throughTs&&(!s.throughTs||Date.parse(throughTs)>Date.parse(s.throughTs)))s.throughTs=throughTs;this.persist();if(this.deliveries.get(k.chatId)===boundary)this.deliveries.delete(k.chatId)}catch{return}
+      try{const throughTs=boundary.throughTs??await this.d.latestTs(k.chatId);if(validTs(throughTs)&&(!validTs(s.throughTs)||Date.parse(throughTs)>Date.parse(s.throughTs)))s.throughTs=throughTs;this.persist();if(this.deliveries.get(k.chatId)===boundary)this.deliveries.delete(k.chatId)}catch{return}
       if(s.catchupThrough){
-        try{const through=s.catchupThrough;if(await this.d.extract(k.chatId,'catchup',through)&&await this.d.accounted(k.chatId,through))delete s.catchupThrough}catch{/* keep pending */}
+        // 追到刚交付的这一轮为止,不是开轮前冻结的旧边界——否则每追一次又落后一轮。
+        try{const frozen=s.catchupThrough,through=s.throughTs&&Date.parse(s.throughTs)>Date.parse(frozen)?s.throughTs:frozen;if(await this.d.extract(k.chatId,'catchup',through)&&await this.d.accounted(k.chatId,through))delete s.catchupThrough}catch{/* keep pending */}
         this.persist();return
       }
       if(!worthAccounting(text,tools))return

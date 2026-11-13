@@ -158,7 +158,9 @@ export interface ThreadsStore {
   /** 一个对话里所有话题的条目(新的在前),按话题分好。 */
   entriesByThread(chatId: string, opts?: { live?: boolean }): Promise<Map<string, TopicEntry[]>>
   getExtractState(chatId: string): Promise<ExtractState>
-  setExtractState(chatId: string, patch: Partial<ExtractState>): Promise<void>
+  /** Synchronous insertion revision, used to hold the watermark across model latency. */
+  extractRevision?(chatId:string,throughTs?:string):number
+  setExtractState(chatId: string, patch: Partial<ExtractState>, guard?:{entriesToTs:string|null;messageRevision:number;throughTs?:string}): Promise<void>
 }
 
 interface ThreadRow {
@@ -517,12 +519,19 @@ export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean; allow
       return { entriesToTs: r?.entries_to_ts ?? null, workCursor: r?.work_cursor ?? 0, consolidatedToTs: r?.consolidated_to_ts ?? null }
     },
 
-    async setExtractState(chatId, patch) {
+    extractRevision(chatId,throughTs){return throughTs?db.query<{revision:number},[string,string]>('SELECT coalesce(max(rowid),0) AS revision FROM messages WHERE chat_id=? AND julianday(ts)<=julianday(?)').get(chatId,throughTs)!.revision:db.query<{revision:number},[string]>('SELECT coalesce(max(rowid),0) AS revision FROM messages WHERE chat_id=?').get(chatId)!.revision},
+    async setExtractState(chatId, patch, guard) {
+      db.transaction(()=>{
+      if(guard){
+        const current=db.query<{entries_to_ts:string|null},[string]>('SELECT entries_to_ts FROM thread_extract_state WHERE chat_id=?').get(chatId)?.entries_to_ts??null
+        if(current!==guard.entriesToTs||(guard.throughTs&&this.extractRevision!(chatId,guard.throughTs)>guard.messageRevision))return
+      }
       // 老列 extracted_to_ts 是 NOT NULL:新行给它一个占位(不再读它),已有的行不动它。
       db.query(`INSERT INTO thread_extract_state(chat_id, extracted_to_ts) VALUES (?, '1970-01-01T00:00:00Z') ON CONFLICT(chat_id) DO NOTHING`).run(chatId)
       if (patch.entriesToTs !== undefined) db.query('UPDATE thread_extract_state SET entries_to_ts = ? WHERE chat_id = ?').run(patch.entriesToTs, chatId)
       if (patch.workCursor !== undefined) db.query('UPDATE thread_extract_state SET work_cursor = ? WHERE chat_id = ?').run(patch.workCursor, chatId)
       if (patch.consolidatedToTs !== undefined) db.query('UPDATE thread_extract_state SET consolidated_to_ts = ? WHERE chat_id = ?').run(patch.consolidatedToTs, chatId)
+      })()
     },
   }
 }

@@ -36,7 +36,7 @@ export function checkupReview(view:CheckupView):CheckupReview {
     rows.push({key,label:names[key],detail,grade})
     if(!r.unmeasured&&r.ratio!==null&&r.ratio<.8)care.push(key==='business'&&p?.interview?.delegationAvailable===false?CHECKUP_CARE.business.withoutDelegates:CHECKUP_CARE[key].text)
   }
-  if(p?.interview){
+  if(p?.interview?.version==='interview-v2'){
     for(const key of ['memory','tracking','honesty','discretion','stance','privacy'] as const)add(key,p.interview.qualities[key])
     add('business',p.interview.business);add('persona',p.interview.qualities.persona)
     const memory=rows[0]!

@@ -9,6 +9,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import type { AgentMcpTools, AgentProvider, AgentSession } from '../../ports/agent-provider'
 import type { CheckupTarget } from '@wechat-cc/protocol'
+import { makeTurnTextCollector, parseSilence } from '../../domain/turn-reply'
+import { replyTextStrategyFor } from '../../domain/capability-matrix'
 import { JOB_PROFILE } from '../../domain/user-tier'
 import type { CheckupSample, CheckupTurn } from '../../domain/butler-checkup'
 import { checkupAddress } from '../../adapters/store/checkup-store'
@@ -72,10 +74,29 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
     let bridge: Awaited<ReturnType<typeof fakeCheckupTools>> | undefined, session:AgentSession|undefined
     const started=performance.now()
     let firstActionMs:number|null=null
+    const candidates:NonNullable<CheckupTurn['replyParts']>=[]
+    let segment:typeof candidates[number]|undefined,collector=makeTurnTextCollector()
+    const anonymousItem=`partial-${randomUUID()}`
+    let itemText=new Map<string,string>()
+    const strategy=replyTextStrategyFor(target.provider)
+    const orderedReply=()=>{
+      const last=candidates.filter(p=>p.kind==='text'&&p.text.trim()).at(-1)
+      return candidates.flatMap(p=>{
+        if(p.kind==='reply')return [p]
+        if(strategy==='last_segment'&&p!==last)return []
+        const text=parseSilence(p.text).text
+        return text.trim()&&(strategy!=='all_segments'||text.replace(/[\s\p{P}]/gu,'')!=='')?[{kind:'text' as const,text}]:[]
+      })
+    }
+    const visibleText=()=>orderedReply().filter(p=>p.kind==='text').map(p=>p.text).join('\n\n')
     const cancel=()=>{void session?.cancel?.().catch(()=>{});if(session)void closeSession(session)}
     signal.addEventListener('abort',cancel,{once:true})
     try {
-      bridge=await fakeCheckupTools(sample,(name,input)=>{if(sample.kind==='interview'&&firstActionMs===null&&['reply','ask_user'].includes(name)&&input&&typeof input==='object'&&Object.values(input).some(v=>typeof v==='string'&&v.trim()))firstActionMs=performance.now()-started})
+      bridge=await fakeCheckupTools(sample,(name,input)=>{
+        segment=undefined
+        if(name==='reply'&&input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).length===1&&'text' in input&&typeof input.text==='string')candidates.push({kind:'reply',text:input.text})
+        if(sample.kind==='interview'&&firstActionMs===null&&['reply','ask_user'].includes(name)&&input&&typeof input==='object'&&Object.values(input).some(v=>typeof v==='string'&&v.trim()))firstActionMs=performance.now()-started
+      })
       signal.throwIfAborted()
       const pending=provider.spawn({alias:sample.kind==='interview'?'conversation':'synthetic-checkup',path:project},{tierProfile:JOB_PROFILE,permissionMode:'strict',chatId:`conversation-${randomUUID()}`,model:target.model,appendInstructions:sample.kind==='interview'?interviewInstructions(target.provider,target.model,sample.persona,sample.executors):'只根据本次完全编造的题目作答。禁止读取文件、记忆、项目或调用本次练习以外的工具。',evaluation:{tools:bridge.tools,mcpServer:{url:bridge.url},maxSteps:sample.kind==='memory'?1:sample.kind==='interview'?CHECKUP_MAX_STEPS:2,maxOutputTokens,budget}})
       void pending.then(s=>{if(signal.aborted)void closeSession(s)},()=>{})
@@ -85,11 +106,25 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
       let text='',firstTextMs:number|null=null,completed=false,toolError=false,usageLimited=false
       for await(const ev of session.dispatch(sample.prompt)) {
         signal.throwIfAborted()
-        if(ev.kind==='text') { if(firstTextMs===null && ev.text.trim())firstTextMs=performance.now()-started;text=ev.textMode==='replace'?ev.text:text+ev.text }
+        if(ev.kind==='text') {
+          if(firstTextMs===null && ev.text.trim())firstTextMs=performance.now()-started
+          const item=ev.itemId??anonymousItem
+          if(!segment||ev.ownSegment&&segment.text.trim()&&!(ev.textMode==='replace'&&itemText.has(item))){segment={kind:'text',text:''};candidates.push(segment);collector=makeTurnTextCollector();itemText=new Map()}
+          // Isolated providers emit deltas, while the production collector takes
+          // complete messages. Normalize each item before applying its segmentation.
+          const assembled=ev.textMode==='replace'?ev.text:(itemText.get(item)??'')+ev.text
+          itemText.set(item,assembled)
+          collector.push({...ev,itemId:item,text:assembled,textMode:'replace'});segment.text=collector.parts().finalText
+          text=sample.kind==='interview'?visibleText():ev.textMode==='replace'?ev.text:text+ev.text
+        }
+        else if(ev.kind==='tool_call')segment=undefined
         else if(ev.kind==='error') {
-          if(sample.kind==='interview' && ['checkup_output_exhausted','checkup_usage_limit'].includes(ev.code??'') && scoreInterview(sample,{text,toolCalls:bridge.calls,firstTextMs:null,durationMs:0},sample.persona).observed) {
-            // The visible answer is the fake action, not the optional final
-            // prose. An exhausted sign-off cannot erase an observed reply.
+          if(ev.code==='checkup_output_exhausted'&&text.trimStart().startsWith('<think>')&&!text.includes('</think>')){
+            for(let i=candidates.length-1;i>=0;i--)if(candidates[i]!.kind==='text')candidates.splice(i,1)
+            text='';segment=undefined
+          }
+          if(sample.kind==='interview' && ['checkup_output_exhausted','checkup_usage_limit'].includes(ev.code??'') && scoreInterview(sample,{text,replyParts:orderedReply(),toolCalls:bridge.calls,firstTextMs:null,durationMs:0},sample.persona).observed) {
+            // Either visible prose or a fake action provides answer evidence.
             completed=true
             usageLimited ||= ev.code==='checkup_usage_limit'
           }
@@ -100,7 +135,8 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
         if(text.length>16_384)throw errorWithProviderCode('checkup output exceeded limit','invalid_request')
       }
       if(!completed)throw errorWithProviderCode('turn ended without completion','provider_error')
-      return {text,toolCalls:bridge.calls,firstTextMs:sample.kind==='interview'?(firstActionMs??firstTextMs):firstTextMs,durationMs:performance.now()-started,...(toolError?{toolError:true}:{}),...(usageLimited?{usageLimited:true}:{})}
+      const first=[firstActionMs,firstTextMs].filter((n):n is number=>n!==null)
+      return {text,...(sample.kind==='interview'?{replyParts:orderedReply()}:{}),toolCalls:bridge.calls,firstTextMs:first.length?Math.min(...first):null,durationMs:performance.now()-started,...(toolError?{toolError:true}:{}),...(usageLimited?{usageLimited:true}:{})}
     } finally {
       signal.removeEventListener('abort',cancel)
       if(session)await closeSession(session)

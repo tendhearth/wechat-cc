@@ -5,9 +5,9 @@ export const contextBytes = (text: string): number => new TextEncoder().encode(t
 export const tokensFromBytes = (bytes: number): number => Math.ceil(Math.max(0, bytes) / 2)
 
 /** Fixed character envelope: small model budgets must not erase recent conversation. */
-export function continuationBlock(recent: readonly HandoffTurn[], ongoing: readonly string[], _budgetTokens?: number, companion: readonly string[] = []): { block: string; carried: number } {
+export function continuationBlock(recent: readonly HandoffTurn[], ongoing: readonly string[], _budgetTokens?: number, companion: readonly string[] = []): { block: string; carried: number; omitted: HandoffTurn[] } {
   const rounds: HandoffTurn[][] = []
-  for (const row of recent) {
+  for (const row of recent.filter(row=>!row.omitted)) {
     if (row.dir === 'in' || !rounds.length) rounds.push([])
     rounds[rounds.length - 1]!.push(row)
   }
@@ -35,7 +35,8 @@ export function continuationBlock(recent: readonly HandoffTurn[], ongoing: reado
     }
   }
   const transcript=rows.map((t,i)=>labels[i]+clip(t.text,caps[i]!)).join('\n')
-  return {carried:selected.length,block:[prefix,transcript,extras].filter(Boolean).join('\n')+suffix}
+  const omitted=[...recent.filter(row=>row.omitted),...rounds.slice(0,-6).flat(),...rows.filter((t,i)=>t.text.length>caps[i]!)]
+  return {carried:selected.length,block:[prefix,transcript,extras].filter(Boolean).join('\n')+suffix,omitted}
 }
 
 /** Cheap admission signal only; the existing extractor decides what is durable. */

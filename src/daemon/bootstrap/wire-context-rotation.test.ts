@@ -14,6 +14,18 @@ beforeEach(()=>{db=openTestDb();dir=mkdtempSync(join(tmpdir(),'rotation-wire-'))
 afterEach(()=>{db.close();removeTempDir(dir)})
 const key={chatId:'owner',providerId:'claude',alias:'proj'}
 const sessions={isInFlight:()=>false,rotate:async()=>true}
+it('holds rotation for originals omitted by the 128-outgoing history query',async()=>{
+ const s=setup(),base=Date.UTC(2026,10,13)
+ await row('old','旧问',new Date(base).toISOString())
+ await row('old-out','旧答',new Date(base+1).toISOString(),'out')
+ await makeThreadsStore(db).setExtractState('owner',{entriesToTs:new Date(base+1).toISOString()})
+ await row('q','最近问题',new Date(base+2).toISOString())
+ for(let i=0;i<129;i++)await row(`bubble-${i}`,`气泡${i}`,new Date(base+3+i).toISOString(),'out','speech:agenda')
+ await s.rotation.beforeTurn(key,'m',sessions)
+ s.rotation.observe(key,{tokens:1000});s.rotation.observe(key,{tokens:20000,turns:8})
+ expect(await s.rotation.beforeTurn(key,'m',sessions)).toBeNull()
+ expect(s.rotation.status()[0]?.lastDeferredReason).toBe('accounting_behind')
+})
 const row=(id:string,text:string,ts:string,direction:'in'|'out'='in',source='live')=>makeMessagesStore(db).append({id,chatId:'owner',ts,direction,kind:'text',text,source})
 function setup(evalFn?: (prompt:string)=>Promise<string>){
  const jobs:(()=>Promise<void>)[]=[],registry=createProviderRegistry()

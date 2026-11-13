@@ -37,7 +37,7 @@ describe('synthetic checkup demo', () => {
 
 it('provides all interview rows and concrete care in the offline screenshot fixture',async()=>{
   const view=CheckupViewSchema.parse(await makeDemoBackend().checkup())
-  expect(view.profile?.interview?.version).toBe('interview-v1')
+  expect(view.profile?.interview?.version).toBe('interview-v2')
   expect(view.review?.rows.map(r=>r.label)).toEqual(['记性','跟得上','诚实','分寸','立场','口风','办事','本色','快慢'])
   expect(view.review?.title).toContain(view.target.model)
   expect(view.review?.care).toContain('更勤换新对话')
