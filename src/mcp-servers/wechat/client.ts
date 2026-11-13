@@ -1,7 +1,8 @@
 /**
  * Internal-api client used by the standalone wechat-mcp stdio server
- * (RFC 03 §5). This module is loaded *inside* the MCP subprocess; it
- * speaks HTTP over loopback to the daemon's internal-api.
+ * (RFC 03 §5) and the Claude parent-process SDK MCP. It speaks HTTP over
+ * loopback to the daemon internal-api. In-process callers pass sessionToken
+ * explicitly; stdio entrypoints may use their dedicated child env.
  *
  * Configuration is via env vars passed in the stdio MCP spec
  * (bootstrap.ts wires them when registering the server with each
@@ -21,8 +22,10 @@ export interface InternalApiClientOptions {
   baseUrl: string
   /** Path to the token file (mode 0600, written by daemon). */
   tokenFilePath: string
-  /** In-process task MCP: secret stays in the parent closure, never argv or child env. */
+  /** Explicit per-session credential for in-process MCP; never put it in process.env. */
   sessionToken?: string
+  /** Parent-process MCP lifetime; stdio clients are stopped by process teardown. */
+  signal?: AbortSignal
   /** Test injection: replace global fetch. Production omits this. */
   fetchImpl?: typeof fetch
   /** Optional logging hook (writes to stderr — stdout is the MCP transport). */
@@ -69,12 +72,14 @@ export function createInternalApiClient(opts: InternalApiClientOptions): Interna
   async function tryRequest(method: 'GET' | 'POST', path: string, body: unknown, token: string): Promise<Response> {
     const init: RequestInit = {
       method,
+      ...(opts.signal ? { signal: opts.signal } : {}),
       headers: {
         Authorization: `Bearer ${token}`,
         ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
       },
       ...(method === 'POST' ? { body: JSON.stringify(body ?? {}) } : {}),
     }
+    opts.signal?.throwIfAborted()
     return fetchFn(`${baseUrl}${path}`, init)
   }
 
@@ -85,7 +90,7 @@ export function createInternalApiClient(opts: InternalApiClientOptions): Interna
       // Rotation recovery: token file may have been rewritten between
       // cache and request. Re-read once and retry.
       if (resp.status === 401 && cachedToken !== null) {
-        opts.logger?.(`[wechat-mcp client] 401 from ${path}; re-reading token`)
+        opts.logger?.('internal-api 401; re-reading token')
         token = readToken()
         resp = await tryRequest(method, path, body, token)
       }

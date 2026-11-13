@@ -76,7 +76,7 @@ export interface ProviderDeps {
   configuredAgent: AgentConfig
   permissionMode: PermissionMode
   conversationStore: ConversationStore
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: import('../../domain/user-tier').TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode }) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: import('../../domain/user-tier').TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode }) => Options | Promise<Options>
   claudeBin: string | undefined
   currentClaudeModel: () => string
   resolveAdminChatId: (access: Access, companion: CompanionConfig, initiatingChatId?: string | null) => string | null

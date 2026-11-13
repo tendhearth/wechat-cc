@@ -10,7 +10,7 @@
  * TOOLS table) so agents that already know wxfacts need no relearning.
  * Mirrors tools-graph.ts's registerGraphTools shape.
  */
-import { z } from 'zod'
+import z from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'

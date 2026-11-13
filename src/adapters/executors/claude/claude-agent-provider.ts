@@ -18,6 +18,7 @@ import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
 import { claudeApiFailure, claudeAssistantFailure, claudeResultFailure, parseToolUseToEvent, userContent } from './claude-sdk-messages'
 import { authorize, type AuthSubject } from '../../../domain/authorize'
 import { lookup } from '../../../domain/capability-matrix'
+import { sessionSubprocessEnv } from '../subprocess-env'
 
 export { CLAUDE_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -290,7 +291,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
   // One-shot eval with no tools, no MCP, no session continuation — shared by
   // cheapEval (haiku-class) and strongEval (the verdict's main model). Both
   // pass an explicit model so the only difference is which model runs.
-  const runQuery = opts.queryImpl ?? query
+  const runQuery: typeof query = input => (opts.queryImpl ?? query)({ ...input, options: {
+    ...input.options, env: sessionSubprocessEnv(input.options?.env),
+  } })
   const oneShot = async (prompt: string, model: string): Promise<string> => {
     const q = runQuery({
       prompt,
@@ -345,7 +348,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     async modelCatalog(project) {
       const deadline=Date.now()+15_000
       const options=await opts.sdkOptionsForProject(project.alias,project.path,TIER_PROFILES.trusted,'workbench:catalog')
-      return discoverClaudeModels(options,Math.max(0,deadline-Date.now()))
+      try { return await discoverClaudeModels(options,Math.max(0,deadline-Date.now())) }
+      finally { options.abortController?.abort() }
     },
     contextWindowTokens:model=>windows.get(windowKey(claudeBaseUrl(),model)),
     supportsIsolatedEvaluation: true,
@@ -390,30 +394,32 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         // The SDK exposes its output cap through the documented subprocess env.
         // Internal retries are disabled: an isolated sample must stay bounded even
         // if the owner's interactive CLI normally enables an indefinite watchdog.
-        env: { ...process.env, CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(evaluation.maxOutputTokens), CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' },
+        env: { ...sessionSubprocessEnv(), CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(evaluation.maxOutputTokens), CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' },
         canUseTool: async (name, input) => evaluation.tools.tools.some(tool => name === `mcp__wechat__${tool.name}`)
           ? { behavior: 'allow', updatedInput: input }
           : { behavior: 'deny', message: 'Only the current conversation tools are available.' },
         ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
       } : {...await opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
-      const execution = spawnOpts.execution ? {...spawnOpts.execution} : undefined
-      if (execution) {
-        if (execution.model) options.model=execution.model
-        else if (execution.defaults === 'native' || spawnOpts.resumeSessionId) delete options.model
-        if (execution.reasoningEffort) {
-          // Validated below against this native model's advertised effort levels.
-          options.effort=execution.reasoningEffort as Options['effort']
-        } else if (execution.defaults === 'native' || spawnOpts.resumeSessionId) {
-          delete options.effort; delete options.thinking; delete options.maxThinkingTokens
+      try {
+        const execution = spawnOpts.execution ? {...spawnOpts.execution} : undefined
+        if (execution) {
+          if (execution.model) options.model=execution.model
+          else if (execution.defaults === 'native' || spawnOpts.resumeSessionId) delete options.model
+          if (execution.reasoningEffort) {
+            // Validated below against this native model's advertised effort levels.
+            options.effort=execution.reasoningEffort as Options['effort']
+          } else if (execution.defaults === 'native' || spawnOpts.resumeSessionId) {
+            delete options.effort; delete options.thinking; delete options.maxThinkingTokens
+          }
+          if (execution.model || execution.reasoningEffort) {
+            const catalog=await discoverClaudeModels(options)
+            executionModel(catalog,execution,options.model)
+          }
         }
-        if (execution.model || execution.reasoningEffort) {
-          const catalog=await discoverClaudeModels(options)
-          executionModel(catalog,execution,options.model)
+        if (spawnOpts.resumeSessionId) {
+          ;(options as Options & { resume?: string }).resume = spawnOpts.resumeSessionId
         }
-      }
-      if (spawnOpts.resumeSessionId) {
-        ;(options as Options & { resume?: string }).resume = spawnOpts.resumeSessionId
-      }
+      } catch (error) { options.abortController?.abort(); throw error }
 
       // Wire an AbortController so close() can tell the SDK to stop and tear
       // down the underlying claude subprocess. Per sdk.d.ts: "When aborted,
@@ -432,12 +438,16 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // 一起做 = 一整段一个事件流 + 自己拥有进程组(claude-workbench-runtime.ts);对话 = 下面一轮一个事件流。
       // 一起做的时间线(itemId / activity)只有那一边有 —— 对话侧原来那份按 workbenchTimeline 开的抄本已删(B1b)。
       if (spawnOpts.workbenchLifecycle) {
-        const workbenchSession = createClaudeWorkbenchSession(options, spawnOpts)
-        workbenchSession.callTarget = () => spawnTarget
-        return workbenchSession
+        try {
+          const workbenchSession = createClaudeWorkbenchSession(options, spawnOpts)
+          workbenchSession.callTarget = () => spawnTarget
+          return workbenchSession
+        } catch (error) { aborter.abort(); throw error }
       }
 
-      const q = runQuery({ prompt: sdkQueue.iterable(), options })
+      let q: ReturnType<typeof query>
+      try { q = runQuery({ prompt: sdkQueue.iterable(), options }) }
+      catch (error) { aborter.abort(); throw error }
       let observedSessionId=spawnOpts.resumeSessionId
 
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null

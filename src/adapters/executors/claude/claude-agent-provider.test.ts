@@ -104,11 +104,13 @@ describe('Claude native execution choice',()=>{
   const context={tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const,chatId:'task'}
   const options=()=> (sdk as unknown as {__test_last_options:()=>any}).__test_last_options()
   it('discovers a bounded native catalog without prompt, tool, hook or session persistence',async()=>{
-    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({mcpServers:{user:{command:'must-not-start'}},hooks:{},model:'cc-fallback'})})
+    const abortController=new AbortController()
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({abortController,mcpServers:{user:{command:'must-not-start'}},hooks:{},model:'cc-fallback'})})
     expect(typeof provider.modelCatalog).toBe('function')
     expect(await provider.modelCatalog!(project)).toEqual({source:'native',models:[{id:'native-a',displayName:'Native A',description:'Native',reasoningEfforts:['low','max']}]})
     expect(options()).toMatchObject({tools:[],mcpServers:{},strictMcpConfig:true,persistSession:false,hooks:{},plugins:[],settings:{disableAllHooks:true}})
     expect(options().abortController.signal.aborted).toBe(true)
+    expect(abortController.signal.aborted).toBe(true)
   })
   it.each(['provider','native'] as const)('omits global fallback on opted-in %s auto resume',async(defaults)=>{
     const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'cc-fallback',effort:'high',thinking:{type:'disabled'}})})
@@ -131,8 +133,12 @@ describe('Claude native execution choice',()=>{
     expect(reportExecution.mock.calls.map(call=>call[0])).toEqual([{model:'native-resolved',sessionId:'native-session',source:'native_message'},{model:'fallback-native',sessionId:'native-session',source:'native_message'}])
   })
   it('rejects unknown explicit models and model-specific effort before dispatch',async()=>{
-    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})})
-    for(const [model,reasoningEffort] of [['unknown',null],['native-a','medium']])await expect(provider.spawn(project,{...context,execution:{defaults:'native',model:model!,reasoningEffort:reasoningEffort??null}})).rejects.toThrow(/execution_(model|effort)_unsupported/)
+    for(const [model,reasoningEffort] of [['unknown',null],['native-a','medium']]){
+      const abortController=new AbortController()
+      const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({abortController})})
+      await expect(provider.spawn(project,{...context,execution:{defaults:'native',model:model!,reasoningEffort:reasoningEffort??null}})).rejects.toThrow(/execution_(model|effort)_unsupported/)
+      expect(abortController.signal.aborted).toBe(true)
+    }
   })
 })
 

@@ -6,7 +6,7 @@
  * history, same trust class as file_locate/social_seek. Mirrors
  * tools-social.ts's registerSocialSeekTool shape.
  */
-import { z } from 'zod'
+import z from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'

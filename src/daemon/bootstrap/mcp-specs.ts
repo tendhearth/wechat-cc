@@ -1,8 +1,9 @@
 /**
  * Stdio MCP server spec builders for the wechat + delegate MCP children.
- * Both providers (Claude and Codex) receive these specs in their respective
- * SDK options, then spawn the MCP child as a subprocess that talks back
- * to the daemon's internal-api over loopback HTTP (RFC 03 §5).
+ * Non-Claude providers spawn MCP children with these specs. Claude chat
+ * consumes their core metadata to build parent-process SDK MCP servers
+ * (mcp-servers/claude-sdk-mcp.ts), keeping bearer credentials out of --mcp-config argv.
+ * Both transports call the daemon internal-api over loopback HTTP (RFC 03 §5).
  *
  * The optional `participantTag` (RFC 03 P3) is the providerId baked into
  * the wechat-mcp child's env so tools that act on "this provider" (model_get,

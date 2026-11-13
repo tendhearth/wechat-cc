@@ -25,6 +25,7 @@ import { installFakeClaude, installClaudeSpawnRecorder, installFakeCodex, instal
 import './fake-media'
 import './fake-credentials'
 import type { RawUpdate } from '../poll-loop'
+import { installSessionAuthRecorder, type RecordedSessionAuth } from '../../test-support/session-auth-recorder'
 
 export interface TestDaemonAccount {
   id: string
@@ -50,6 +51,8 @@ export interface TestDaemonOpts {
   dangerously?: boolean
   /** preset access.json — default: allowFrom: ['*'], admins: ['testadmin'] */
   access?: { allowFrom?: string[]; admins?: string[]; trusted?: string[] }
+  /** Observe actual per-session token mints without reading SDK transport configuration. */
+  recordSessionAuth?: (auth: RecordedSessionAuth) => void
   /**
    * Optional callback fired with the SDK options passed to `query()` for
    * each streaming Claude spawn (AgentSession). Used by tier-permissions
@@ -243,6 +246,10 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
 
   // 5. Install fake SDKs (BEFORE importing daemon main)
   const cleanups: Array<() => void> = []
+  if (opts.recordSessionAuth) {
+    const { uninstall } = await installSessionAuthRecorder(opts.recordSessionAuth)
+    cleanups.push(uninstall)
+  }
   if (opts.claudeScript) {
     const { uninstall } = installFakeClaude(opts.claudeScript)
     cleanups.push(uninstall)

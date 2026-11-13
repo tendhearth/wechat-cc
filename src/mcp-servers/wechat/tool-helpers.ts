@@ -16,7 +16,7 @@ export function passthroughErrorResult(err: unknown, tool: string): { content: A
   // in-process versions enforced — agent sees a structured failure
   // result, not an MCP exception.
   //
-  // STDERR log gets the short, body-free form (status + endpoint only)
+  // STDERR log gets only status + a recognized error code.
   // — Phase 4 polish. The downstream JSON returned to the agent still
   // carries the full detail; we just don't spam channel-log readers
   // with redacted-feeling response bodies.
@@ -32,10 +32,18 @@ export function formatError(err: unknown): string {
 }
 
 export function formatErrorShort(err: unknown): string {
-  // Body-free form for stderr logging — omits response payload so
-  // sensitive content doesn't end up in operator log scrollback.
+  // Neither a body.error string nor a transport Error.message is trusted log
+  // content. Only known codes may cross into daemon stderr; paths may also
+  // contain private search terms or credentials in their query parameters.
   if (err instanceof InternalApiError) {
-    return `internal-api ${err.status} ${err.path}`
+    const code = err.body && typeof err.body === 'object' && 'error' in err.body ? err.body.error : undefined
+    return `internal-api ${err.status} ${typeof code === 'string' && LOG_ERROR_CODES.has(code) ? code : 'unknown_error'}`
   }
-  return err instanceof Error ? err.message : String(err)
+  return 'transport error'
 }
+
+const LOG_ERROR_CODES = new Set([
+  'unauthorized', 'route_not_allowed', 'not_found', 'invalid_request', 'malformed_json',
+  'internal_error', 'module_off', 'module_degraded', 'module_starting',
+  'social_not_wired', 'delegate_not_wired',
+])

@@ -3,6 +3,8 @@
  * 此前五份结构等同的定义(bootstrap/mcp-specs、openai-mcp-bridge、cursor、
  * gemini、codex)收敛于此;全部是结构赋值互通,调用点零改动。
  */
+import { sessionSubprocessEnv } from './subprocess-env'
+
 export interface McpStdioSpec {
   command: string
   args?: string[]
@@ -17,7 +19,7 @@ export interface McpStdioSpec {
  */
 export function childEnvFor(spec: McpStdioSpec, mcpEnv?: Record<string, string>): Record<string, string> {
   const base: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) {
+  for (const [k, v] of Object.entries(sessionSubprocessEnv())) {
     if (typeof v === 'string') base[k] = v
   }
   return { ...base, ...(spec.env ?? {}), ...(mcpEnv ?? {}) }

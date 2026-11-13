@@ -1,3 +1,4 @@
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -774,7 +775,7 @@ describe('wechat-mcp stdio integration', () => {
   describe('claude per-spawn MCP options → the daemon tool table', () => {
     const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
 
-    async function toolsForClaudeSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
+    async function toolsForClaudeSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; type: string }> {
       const { wireModelOptions } = await import('../../daemon/bootstrap/wire-model-options')
       const { TIER_PROFILES } = await import('../../domain/user-tier')
       const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'claude')
@@ -782,23 +783,23 @@ describe('wechat-mcp stdio integration', () => {
         plugins: { wechatStdioForClaude: spec, delegateStdioForClaude: null, pluginMcpForClaude: {} },
         permissionMode: 'dangerously', buildCanUseTool: () => (async () => ({ behavior: 'allow' as const })), claudeBin: undefined,
       })
-      const options = sdkOptionsForProject('a', stateDir, TIER_PROFILES.admin, 'o9owner@im.wechat', { WECHAT_SESSION_TOKEN: 'claude-session-tok', WECHAT_SESSION_TIER: 'admin' })
-      const entry = (options.mcpServers as Record<string, { command: string; args: string[]; env: Record<string, string> }>).wechat!
-      const baseEnv = { ...process.env as Record<string, string> }
-      delete baseEnv.WECHAT_SESSION_TIER
-      delete baseEnv.WECHAT_SESSION_TOKEN
-      const transport = new StdioClientTransport({ command: RUNTIME, args: entry.args, env: { ...baseEnv, ...entry.env }, stderr: 'pipe' })
+      const options = await sdkOptionsForProject('a', stateDir, TIER_PROFILES.admin, 'o9owner@im.wechat', { WECHAT_SESSION_TOKEN: 'claude-session-tok', WECHAT_SESSION_TIER: 'admin' })
+      const entry = options.mcpServers!.wechat!
+      if (entry.type !== 'sdk') throw new Error('expected parent-process SDK MCP')
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      await entry.instance.connect(serverTransport)
       const c = new Client({ name: 'claude-session-int', version: '0.0.1' }, { capabilities: {} })
-      await c.connect(transport)
-      try { return { tools: (await c.listTools()).tools.map(t => t.name), env: entry.env } } finally { await c.close() }
+      await c.connect(clientTransport)
+      try { return { tools: (await c.listTools()).tools.map(t => t.name), type: entry.type } } finally { await c.close() }
+
     }
 
-    it('会话的 mcpServers.wechat 带会话令牌,子进程不注册 reply 族(admin 有 message)', async () => {
+    it('会话的 mcpServers.wechat 用进程内 MCP,不注册 reply 族(admin 有 message)', async () => {
       api = createInternalApi({ stateDir, daemonPid: 7777 })
       const { port, tokenFilePath } = await api.start()
 
       const daemon = await toolsForClaudeSession(port, tokenFilePath)
-      expect(daemon.env).toMatchObject({ WECHAT_PARTICIPANT_TAG: 'claude', WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'claude-session-tok' })
+      expect(daemon.type).toBe('sdk')
       for (const t of REPLY_FAMILY) expect(daemon.tools).not.toContain(t)
       for (const t of ['voice', 'sticker', 'attach_file', 'message', 'sticker_feedback']) expect(daemon.tools).toContain(t)
     })

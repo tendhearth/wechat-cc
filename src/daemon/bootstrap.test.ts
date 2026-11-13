@@ -90,7 +90,7 @@ function makeIlinkStub() {
 afterEach(() => { vi.unstubAllEnvs() })
 
 describe('bootstrap', () => {
-  it('sdkOptionsForProject returns cwd, wechat stdio mcpServer, canUseTool, systemPrompt', async () => {
+  it('sdkOptionsForProject returns cwd, wechat SDK mcpServer, canUseTool, systemPrompt', async () => {
     const b = await buildBootstrap({
       supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
@@ -104,14 +104,13 @@ describe('bootstrap', () => {
       // expose any wechat tools — that's not a real production code path.
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
+    const opts = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.cwd).toBe('/p')
     expect(opts.mcpServers).toBeDefined()
     const wechatCfg = opts.mcpServers!['wechat']
     expect(wechatCfg).toBeDefined()
-    // Stdio MCP server (renamed from wechat_ipc back to wechat in B1
-    // when the legacy in-process server was deleted).
-    expect(wechatCfg!.type).toBe('stdio')
+    // SDK MCP keeps the canonical wechat namespace without putting auth in argv.
+    expect(wechatCfg!.type).toBe('sdk')
     expect(typeof opts.canUseTool).toBe('function')
     // systemPrompt is now the preset+append form (we switched from raw string
     // to avoid SDK ToolSearch deferring MCP tools). Accept string OR preset object.
@@ -157,7 +156,7 @@ describe('bootstrap', () => {
       log: () => {},
       dangerouslySkipPermissions: true,
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
+    const opts = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.permissionMode).toBe('bypassPermissions')
     // Task 13 — canUseTool wired even at admin tier; SDK won't fire it under
     // bypassPermissions, but production code paths should not rely on that.
@@ -175,7 +174,7 @@ describe('bootstrap', () => {
       log: () => {},
       dangerouslySkipPermissions: false,
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.trusted, '_test')
+    const opts = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.trusted, '_test')
     expect(opts.permissionMode).toBe('default')
     expect(typeof opts.canUseTool).toBe('function')
     // Trusted's relay set is shell_destructive/memory_delete — both gated
@@ -194,7 +193,7 @@ describe('bootstrap', () => {
       log: () => {},
       dangerouslySkipPermissions: false,
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, '_test')
+    const opts = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, '_test')
     expect(opts.permissionMode).toBe('default')
     expect(typeof opts.canUseTool).toBe('function')
     // Guest denies fs_write / shell / network / subagent — the SDK sees the
@@ -218,7 +217,7 @@ describe('bootstrap', () => {
     // RFC 05: when daemon was NOT launched --dangerously, sdkOptionsForProject
     // returns `default + canUseTool` regardless of tier — destructive ops
     // get gated via the relay inside canUseTool, not by SDK-level bypass.
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
+    const opts = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.permissionMode).toBe('default')
     expect(typeof opts.canUseTool).toBe('function')
   })
@@ -546,7 +545,7 @@ describe('bootstrap', () => {
     expect(b.coordinator.getMode('any-new-chat')).toEqual({ kind: 'solo', provider: 'codex' })
   })
 
-  it('sdkOptionsForProject wires BOTH wechat AND delegate stdio servers (RFC 03 P4)', async () => {
+  it('sdkOptionsForProject wires BOTH wechat AND delegate SDK servers (RFC 03 P4)', async () => {
     const b = await buildBootstrap({
       supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
@@ -557,14 +556,12 @@ describe('bootstrap', () => {
       log: () => {},
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
+    const opts = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.mcpServers!['wechat']).toBeDefined()
     expect(opts.mcpServers!['delegate']).toBeDefined()
-    // Delegate child env declares peer=codex (since this is the claude session config).
-    const delegate = opts.mcpServers!['delegate'] as { type: string; env?: Record<string, string> }
-    expect(delegate.env?.WECHAT_DELEGATE_PEER).toBe('codex')
-    expect(delegate.env?.WECHAT_INTERNAL_API).toBe('http://127.0.0.1:0')
-    expect(delegate.env?.WECHAT_INTERNAL_TOKEN_FILE).toBe('/tmp/token')
+    // Core servers live in the parent; tool routing/HTTP auth are exercised in chat-token-argv.test.ts.
+    expect(opts.mcpServers!.delegate).toMatchObject({ type: 'sdk', name: 'delegate' })
+    expect(opts.mcpServers!.delegate).not.toHaveProperty('env')
   })
 
   it('omits stdio mcpServers entirely when internalApi is not wired (no leaks)', async () => {
@@ -578,7 +575,7 @@ describe('bootstrap', () => {
       log: () => {},
       // No internalApi
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
+    const opts = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.mcpServers).toEqual({})  // Both wechat and delegate skipped.
   })
 
@@ -694,7 +691,7 @@ describe('bootstrap', () => {
 
     // sdkOptionsForProject just forwards whatever appendInstructions it's given
     // into the SDK preset+append slot — no assembly of its own.
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test', undefined, 'SEAM-PROMPT')
+    const opts = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test', undefined, 'SEAM-PROMPT')
     const sp = opts.systemPrompt as { type: 'preset'; preset: string; append?: string } | string
     if (typeof sp === 'string') throw new Error('expected preset+append form')
     expect(sp.type).toBe('preset')
@@ -1308,8 +1305,8 @@ describe('bootstrap', () => {
       dangerouslySkipPermissions: false,
     })
 
-    const optsA = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, 'chatA')
-    const optsB = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, 'chatB')
+    const optsA = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, 'chatA')
+    const optsB = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, 'chatB')
 
     // Each spawn gets its OWN canUseTool — not the same instance. Pre-fix
     // it was a single bootstrap-time closure shared across all sessions;
@@ -1343,7 +1340,7 @@ describe('bootstrap', () => {
       dangerouslySkipPermissions: false,
     })
 
-    const optsB = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, 'chatB')
+    const optsB = await b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, 'chatB')
 
     // Simulate the race: chatA's inbound flips lastActiveChatId mid-turn.
     lastActive = 'chatA'
