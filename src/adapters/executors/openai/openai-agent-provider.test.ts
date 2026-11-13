@@ -51,6 +51,30 @@ describe('openai provider loop(对话这一份用途)', () => {
       expect(tools.calls.map(c => c.name)).toEqual(['matter_handoff'])
     } finally { await session.close() }
   })
+  it('stop during approval completes the turn, revokes the card and preserves paired tool history for the next turn', async () => {
+    const tools = scriptedMcpTools({ tools: [{ name: 'matter_handoff', server: 'wechat' }] })
+    const m = scriptedOpenAiModel([{ calls: [{ id: 'stop-card', name: 'matter_handoff', input: {} }, { id: 'remaining', name: 'matter_handoff', input: {} }] }, { text: 'next turn' }])
+    const cards = new Set<string>()
+    let answer!: (a: 'allow') => void
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => m.model, makeMcpBridge: async () => tools.bridge,
+      approval: { adminFor: () => 'owner', revoke: h => { cards.delete(h) }, askUser: async (_to, _prompt, h) => { cards.add(h); return new Promise<'allow'>(r => { answer = r }) } },
+    })
+    const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' })
+    let finished = false
+    const work = collectTurn(session.dispatch('first')).then(r => { finished = true; return r })
+    try {
+      await expect.poll(() => cards.size).toBe(1)
+      await session.cancel!()
+      await expect.poll(() => finished, { timeout: 200 }).toBe(true)
+      expect((await work).errorCode).toBe('cancelled')
+      expect(cards.size).toBe(0)
+      answer('allow')
+      await collectTurn(session.dispatch('second'))
+      expect(tools.calls).toEqual([])
+      const results = m.seen[1]!.flatMap(msg => msg.role === 'tool' && Array.isArray(msg.content) ? msg.content.map(p => p.type === 'tool-result' ? p.toolCallId : '') : [])
+      expect(results).toEqual(['stop-card', 'remaining'])
+    } finally { answer?.('allow'); await work; await session.close() }
+  })
   it('view_image:工具结果是文字,图另起一条用户消息紧跟其后再进下一轮', async () => {
     const dir = tmp('oai-view-')
     const png = new Uint8Array(33); png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); const dv = new DataView(png.buffer)

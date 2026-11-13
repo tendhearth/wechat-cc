@@ -17,9 +17,9 @@ import { classifyToolUse, type TierProfile } from '../../../domain/user-tier'
 import type { PermissionMode } from '../../../ports/agent-provider'
 import { authorizeChatCall, type ChatOwnerRules } from '../../permission-rules/chat'
 import { randomUUID } from 'node:crypto'
+import { askForChatApproval, type ChatApprovalChannel } from '../chat-approval'
 
-export interface OpenAiApproval {
-  askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
+export interface OpenAiApproval extends ChatApprovalChannel {
   adminFor: (chatId: string) => string | null
 }
 
@@ -70,7 +70,7 @@ export async function gateTool(args: {
     if (!admin) return { decision: 'deny', message: 'no admin configured to approve permission requests' }
     try {
       const prompt = `OpenAI 想调用 ${sdkName}:\n${JSON.stringify(args.input)}`
-      const answer = await args.approval.askUser(admin, prompt, randomUUID().replace(/-/g, '').slice(0, 5), 10 * 60_000)
+      const answer = await askForChatApproval({ channel: args.approval, target: admin, prompt, hash: randomUUID().replace(/-/g, '').slice(0, 5), timeoutMs: 10 * 60_000, signal: args.signal })
       if (answer === 'allow' && !args.signal?.aborted) return { decision: 'allow' }
       return { decision: 'deny', message: answer === 'undelivered' ? 'Could not deliver the approval request to the owner; ask them to try again shortly.' : answer === 'timeout' ? 'User did not reply in time; request denied' : 'User denied the request' }
     } catch { return { decision: 'deny' } }

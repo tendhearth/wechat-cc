@@ -20,6 +20,22 @@ describe('gateTool', () => {
     expect(askUser).toHaveBeenCalledWith('owner', expect.stringContaining(toolName), expect.stringMatching(/^[a-z0-9]{5}$/), 600_000)
   })
 
+  it('pending owner card is revoked and immediately denied on stop; late allow stays denied', async () => {
+    const abort = new AbortController(), cards = new Set<string>()
+    let answer!: (v: 'allow') => void
+    let settled = false
+    const work = gateTool({ toolName: 'matter_handoff', mcpServer: 'wechat', input: {}, tierProfile: admin, permissionMode: 'strict', chatId: 'c', signal: abort.signal,
+      approval: { adminFor: () => 'owner', revoke: hash => { cards.delete(hash) }, askUser: async (_admin, _prompt, hash) => { cards.add(hash); return new Promise<'allow'>(r => { answer = r }) } },
+    }).then(result => { settled = true; return result })
+    await expect.poll(() => cards.size).toBe(1)
+    try {
+      abort.abort()
+      await expect.poll(() => settled, { timeout: 200 }).toBe(true)
+      expect(await work).toMatchObject({ decision: 'deny' })
+      expect(cards.size).toBe(0)
+    } finally { answer('allow'); await work }
+  })
+
   it.each(['deny', 'timeout', 'undelivered', 'no-admin', 'throw', 'cancelled'] as const)('approval failure stays denied: %s', async outcome => {
     const abort = new AbortController()
     const askUser = vi.fn(async () => {

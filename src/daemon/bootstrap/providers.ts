@@ -601,6 +601,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       const { makeChatSessionStore, openAiConnectionHash } = await import('../../adapters/executors/openai/api-sessions')
       const provider = createOpenAiAgentProvider({
         approval: {
+          revoke: hash => { deps.ilink.resolvePermission?.(hash, 'deny') },
           askUser: deps.ilink.askUser,
           adminFor: chatId => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         },
