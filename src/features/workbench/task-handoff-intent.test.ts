@@ -60,6 +60,19 @@ const NOT_HANDOFF = ['claude 跑了',
   'gemini 做的图不好看',
   '让 kimi 模型的温度固定为 1']
 
+const REVIEW_NOT_HANDOFF = [
+  '不是让 Codex 接手,你继续补测试。', '错误日志里出现:交给 Claude 接手。', 'README 示例改成:让 Codex 继续。',
+  '函数名保留 matter_handoff,别顺手重命名。', '别调用 matter_handoff,先把报错修掉。', '复现步骤最后一行是:交给 Codex 接手。',
+  'Rename the helper that wraps matter_handoff.', 'UI 提示改为:hand over to Codex。', '不要调用 matter_handoff',
+  'Don’t switch to Claude!', 'No need to switch to Claude!', "测试输入用 '交给 Claude 接手。'",
+  'The log line currently says: switch to Codex!', '不是交给 Claude', '日志原文是 foo.codex 来接手', '日志原文是 foo@codex 来接手',
+]
+const REVIEW_HANDOFF = [
+  'Claude 太慢了,接下来由 Codex 负责这个修复。', 'Please reassign this task to Codex.', 'Can Claude take over from here?',
+  '把当前任务的后半段交给Ｃｌａｕｄｅ。', 'Please switch to Codex.', '交给 ＠Claude 接手', '交给 Ｃｌａｕｄｅ 接手', 'switch to Claude.',
+  '我的意思是:交给 Claude 接着做',
+]
+
 const HANDOFF = ['Claude 来做',
   'codex 来接手吧',
   '交给 Claude 接着做',
@@ -91,6 +104,20 @@ const HANDOFF = ['Claude 来做',
 describe('isTaskHandoffRequest', () => {
   it.each(NOT_HANDOFF)('不是接力:%s', text => { expect(isTaskHandoffRequest(text, EXECUTORS)).toBe(false) })
   it.each(HANDOFF)('是接力:%s', text => { expect(isTaskHandoffRequest(text, EXECUTORS)).toBe(true) })
+  it.each(REVIEW_NOT_HANDOFF)('不是接力(复核):%s', text => { expect(isTaskHandoffRequest(text, EXECUTORS)).toBe(false) })
+  it.each(REVIEW_HANDOFF)('是接力(复核):%s', text => { expect(isTaskHandoffRequest(text, EXECUTORS)).toBe(true) })
+  it('名字里的空格必须有:Ops Team 不匹配 OpsTeam', () => {
+    expect(isTaskHandoffRequest('交给 OpsTeam 接手', ['Ops Team'])).toBe(false)
+    expect(isTaskHandoffRequest('交给 Ops Team 接手', ['Ops Team'])).toBe(true)
+  })
+  it('一大串空格或没闭合的引号不会拖慢', () => {
+    const started = performance.now()
+    expect(isTaskHandoffRequest('交给' + ' '.repeat(5000) + 'Claude' + ' '.repeat(5000) + 'x', EXECUTORS)).toBe(false)
+    // 只看开头 400 字:后面的请求被截掉,判「不是」(精确优先),关键是不卡。
+    expect(isTaskHandoffRequest('“'.repeat(3000) + '交给 Claude', EXECUTORS)).toBe(false)
+    expect(isTaskHandoffRequest('“'.repeat(100) + '交给 Claude', EXECUTORS)).toBe(true)
+    expect(performance.now() - started).toBeLessThan(200)
+  })
   it('没有登记的执行者时只认显式工具名', () => {
     expect(isTaskHandoffRequest('交给 Claude 接着做', [])).toBe(false)
     expect(isTaskHandoffRequest('请调用 matter_handoff 交接', [])).toBe(true)

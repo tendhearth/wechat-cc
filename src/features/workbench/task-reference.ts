@@ -73,41 +73,52 @@ const JUDGE_TIMEOUT_MS = 3000
  * 否定(别 / 不要 / 先不…)、引号里的文案、「文档里写:…」这类转述不算。显式写出 matter_handoff 按协议算。
  */
 const HANDOFF_GENERIC_NAMES = new Set(['api'])
-const HANDOFF_ACTION = '(?:来|去)?(?:(?:接着|继续|接手|接管)(?:做|处理|完成|干|弄|写|改|跑)?(?:下去|完)?|做|处理|完成|干|弄|写|改|跑|试试|看看)'
-const HANDOFF_OBJECT = '(?:(?:任务|事项)?\\s*[a-f0-9]{8}|这个|这件事?|这一?步|它|剩下的?(?:部分|活)?|后面的?(?:部分|活)?|后续|[前后上下]半段)'
-const HANDOFF_ENDING = '(?:吧|了|啊|呀|嘛|好了|一下|就行|即可|试试|看看|行吗|可以吗|好吗|好不好|行不行|怎么样|如何|(?:会不会|是不是|能不能)[^的]{0,6})'
-const HANDOFF_NEGATION = /(?:别|不要|不用|不必|无需|禁止|停止|取消|不再|不能|不该|先不|没有?|为什么不|不(?=交|转|换|让|给|改由)|\bdon't\b|\bdo not\b|\bnever\b|\bstop\b)/i
-const HANDOFF_REPORTED = /(?:写上?|写着|写道|文案|注释|提示|显示|叫做?|名为|标题|字样)\s*$/
+const HANDOFF_VERB = '(?:做|处理|完成|干|弄|写|改|跑|负责)'
+const HANDOFF_ACTION = `(?:来|去)?(?:(?:接着|继续|接手|接管)${HANDOFF_VERB}?(?:下去|完)?|${HANDOFF_VERB}|试试|看看)`
+const HANDOFF_OBJECT = '(?:(?:任务|事项)? ?[a-f0-9]{8}|这个(?:修复|任务|活)?|这件事?|这一?步|它|剩下的?(?:部分|活)?|后面的?(?:部分|活)?|后续|[前后上下]半段)'
+const HANDOFF_ENDING = '(?:吧|了|啊|呀|嘛|好了|一下|就行|即可|试试|看看|行吗|可以吗|好吗|好不好|行不行|怎么样|如何|(?:会不会|是不是|能不能)[^的 ]{0,6})'
+const HANDOFF_NEGATION = /(?:别|不要|不用|不必|无需|禁止|停止|取消|不再|不能|不该|不是|先不|没有?|为什么不|不(?=交|转|换|让|给|改由)|\bdon'?t\b|\bdo not\b|\bnever\b|\bstop\b|\bno need\b|\bnot\b)/i
+/** 冒号前以这些结尾 ⇒ 冒号后是被转述 / 被引用的文字,不是对 CC 说的话。 */
+const HANDOFF_REPORTED = /(?:写上?|写着|写道|文案|注释|提示|显示|出现|叫做?|名为|标题|字样|原文是?|改成|改为|(?<!意思)是|为|输入用?|says?|said|reads?|shows?|to|as)$/i
+const HANDOFF_QUOTED = /“[^”]{0,200}”|‘[^’]{0,200}’|「[^」]{0,200}」|『[^』]{0,200}』|`[^`]{0,200}`|"[^"]{0,200}"|'[^']{0,200}'/g
+/** 归一:全角转半角、弯引号的撇号转直的、连续空白并成一个空格(也去掉了正则回溯的空间)、过长的只看开头。 */
+const handoffNormalize = (text: string) => text.normalize('NFKC').replace(/[’ʼ]/g, "'").replace(/\s+/g, ' ').trim().slice(0, 400)
 export function isTaskHandoffRequest(text: string, executors: readonly string[] = []): boolean {
-  const names = [...new Set(executors.map(n => n.trim().toLowerCase()).filter(n => n && !HANDOFF_GENERIC_NAMES.has(n)))]
-    .sort((a, b) => b.length - a.length)
-    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*'))
-  if (/(?:^|[^a-z0-9_])matter_handoff(?![a-z0-9_])/i.test(text.replace(/“[^”]*”|「[^」]*」|『[^』]*』|`[^`]*`|"[^"]*"/g, ' '))) return true
-  if (!names.length) return false
-  const name = `@?(?:${names.join('|')})(?![a-z0-9_./-])`
-  const tail = (actionRequired: boolean) => `\\s*(?:${HANDOFF_ACTION})${actionRequired ? '' : '?'}\\s*(?:${HANDOFF_OBJECT})?\\s*(?:的\\s*(?:${HANDOFF_OBJECT}))?\\s*(?:${HANDOFF_ENDING})?\\s*$`
-  const forms = [
-    `(?<!提)(?:交给|转给|改由)\\s*${name}${tail(false)}`,
-    `换(?:成|个)?\\s*${name}${tail(false)}`,
-    `(?<![交转提])(?:让|给|由|请)\\s*${name}${tail(true)}`,
-    // 名字打头必须带「来」:「Claude 跑了」「Codex 继续」是在说现状或对当前执行者说话,不是换人。
-    `(?:^|[^a-z0-9_-])${name}\\s*来(?:(?:接着|继续|接手|接管)(?:做|处理|完成|干|弄|写|改|跑)?|做|处理|完成|干|弄|写|改|跑|试试)(?:下去|完)?\\s*(?:${HANDOFF_OBJECT})?\\s*(?:${HANDOFF_ENDING})?\\s*$`,
-    `\\b(?:switch|hand(?:\\s+(?:it|this))?\\s+off|hand\\s+over|pass(?:\\s+(?:it|this))?)\\s+to\\s+${name}\\s*(?:please|now)?\\s*$`,
-    `\\blet\\s+${name}\\s+(?:take\\s+(?:it\\s+)?over|continue|finish(?:\\s+(?:it|this))?)\\s*(?:please|now|from\\s+here)?\\s*$`,
-  ].map(f => new RegExp(f, 'i'))
-  const unquoted = text.replace(/“[^”]*”|「[^」]*」|『[^』]*』|`[^`]*`|"[^"]*"/g, ' ')
-  for (const sentence of unquoted.split(/[。！？!?；;\n]/)) {
-    // 「文档里写:交给 Claude 接着做」是转述:冒号前以「写 / 文案 / 注释…」结尾的,冒号后不看。
+  const normalized = handoffNormalize(text)
+  const unquoted = normalized.replace(HANDOFF_QUOTED, ' ')
+  const sentences = unquoted.split(/[。！？!?；;\n]|\.(?= |$)/).map(part => part.trim()).filter(Boolean)
+  const clausesOf = (sentence: string) => {
+    // 「文档里写:交给 Claude 接着做」是转述:冒号前以「写 / 文案 / 出现 / says…」结尾的,冒号后不看。
     const colon = sentence.search(/[:：]/)
-    const body = colon >= 0 && HANDOFF_REPORTED.test(sentence.slice(0, colon)) ? sentence.slice(0, colon) : sentence
-    for (const clause of body.split(/[,，:：]/)) {
-      for (const form of forms) {
-        const m = form.exec(clause)
-        if (!m) continue
-        const before = clause.slice(0, m.index).split(/而是|但是|不过/).at(-1) ?? ''
-        if (HANDOFF_NEGATION.test(before)) continue
-        return true
-      }
+    const body = colon >= 0 && HANDOFF_REPORTED.test(sentence.slice(0, colon).trim()) ? sentence.slice(0, colon) : sentence
+    return body.split(/[,，:：]/).map(part => part.trim()).filter(Boolean)
+  }
+  const negated = (clause: string, index: number) => HANDOFF_NEGATION.test(clause.slice(0, index).split(/而是|但是|不过/).at(-1) ?? '')
+  // 显式工具名:只有「调用 / 用 / call…」它才算请求;提到函数名、要改名、说别调用都不是。
+  const TOOL = /(?:调用|使用|用|执行|走|call|use|run|invoke) ?`?matter_handoff(?![a-z0-9_])/i
+  for (const sentence of sentences) for (const clause of clausesOf(sentence)) {
+    const m = TOOL.exec(clause)
+    if (m && !negated(clause, m.index)) return true
+  }
+  const names = [...new Set(executors.map(n => handoffNormalize(n).toLowerCase()).filter(n => n && !HANDOFF_GENERIC_NAMES.has(n)))]
+    .sort((a, b) => b.length - a.length)
+    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  if (!names.length) return false
+  const name = `@?(?:${names.join('|')})(?![a-z0-9_./@-])`
+  const rest = (actionRequired: boolean) => `(?: ?${HANDOFF_ACTION})${actionRequired ? '' : '?'}(?: ?${HANDOFF_OBJECT})?(?: ?的 ?${HANDOFF_OBJECT})?(?: ?${HANDOFF_ENDING})?$`
+  const forms = [
+    `(?<!提)(?:交给|转给|改由) ?${name}${rest(false)}`,
+    `换(?:成|个)? ?${name}${rest(false)}`,
+    `(?<![交转提])(?:让|给|由|请) ?${name}${rest(true)}`,
+    // 名字打头必须带「来」:「Claude 跑了」「Codex 继续」是在说现状或对当前执行者说话,不是换人。
+    `(?<![a-z0-9_.@/-])${name} ?来(?:(?:接着|继续|接手|接管)${HANDOFF_VERB}?|${HANDOFF_VERB}|试试)(?:下去|完)?(?: ?${HANDOFF_OBJECT})?(?: ?${HANDOFF_ENDING})?$`,
+    `\\b(?:switch|reassign(?: (?:it|this|this task|the task))?|hand(?: (?:it|this))? off|hand(?: (?:it|this))? over|pass(?: (?:it|this))?) to ${name}(?: (?:please|now))?$`,
+    `\\b(?:let|can|could) ${name} (?:take (?:it |this )?over|continue|finish(?: (?:it|this))?)(?: (?:please|now|from here))?$`,
+  ].map(f => new RegExp(f, 'i'))
+  for (const sentence of sentences) for (const clause of clausesOf(sentence)) {
+    for (const form of forms) {
+      const m = form.exec(clause)
+      if (m && !negated(clause, m.index)) return true
     }
   }
   return false
