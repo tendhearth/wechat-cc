@@ -39,5 +39,5 @@ export function seedLedger(ctx:ServiceCtx,task:Active['task'],prior?:Active):voi
   store.ledger.start(id,run.runId,task.providerId,first?stepPayload(first).text:task.title)
   const reply=steps.filter(s=>timelineKind(s)==='text').at(-1)
   store.ledger.artifact(id,run.runId,task.providerId,{workspace:task.path,...batonArtifacts(ctx,id,0,prior?.ledgerArtifact)})
-  store.ledger.finish(id,run.runId,task.status==='failed'?'failed':'completed',reply?stepPayload(reply).text:'')
+  store.ledger.finish(id,run.runId,task.status,reply?stepPayload(reply).text:'')
 }

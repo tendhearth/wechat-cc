@@ -5,8 +5,8 @@ export const migration: Migration = db=>{
   db.exec(`CREATE TABLE IF NOT EXISTS matter_agents (
     matter_id TEXT NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
     run_id TEXT NOT NULL UNIQUE, executor TEXT NOT NULL, brief TEXT NOT NULL,
-    position INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
-    created_at INTEGER NOT NULL, ended_at INTEGER,
+    position INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed','cancelled','interrupted')),
+    created_at INTEGER NOT NULL, ended_at INTEGER, injected_at INTEGER,
     PRIMARY KEY(matter_id,position)
   ) STRICT;
   CREATE TABLE IF NOT EXISTS matter_notes (

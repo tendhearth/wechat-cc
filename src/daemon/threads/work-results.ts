@@ -31,6 +31,8 @@ export interface WorkResult {
   ask: string | null
   /** 最后那条 agent 回话。 */
   result: string
+  /** Relay title summary, separate from the fenced untrusted body. */
+  summary?: string
   /** 结论那条的时刻(ISO)。 */
   at: string
   /** 结论那条的 cursor。 */
@@ -85,7 +87,7 @@ function segments(db: Db, matterId: string, upTo: number): Segment[] {
 }
 
 function hasLedger(db:Db,id:string):boolean {return !!db.query('SELECT 1 FROM matter_agents WHERE matter_id=? AND position=2 LIMIT 1').get(id)}
-function ledgerResult(db:Db,id:string):string {
+function ledgerResult(db:Db,id:string):Pick<WorkResult,'result'|'summary'> {
   const rows=db.query<MatterNote,[string]>("SELECT run_id AS runId,author,kind,text FROM matter_notes WHERE matter_id=? AND kind IN ('note','artifact') ORDER BY id").all(id)
   const runs=[...new Set(rows.map(r=>r.runId))].slice(-3)
   const budget=Math.floor((RESULT_MAX-LEDGER_DATA_HEAD.length-LEDGER_DATA_END.length-runs.length)/Math.max(1,runs.length))
@@ -106,13 +108,14 @@ function ledgerResult(db:Db,id:string):string {
     while(safe(value).length>budget&&room>0){room--;value={...base,note:cap(n,Math.floor(room/3)),artifact:cap(a,Math.floor(room*2/3))}}
     return safe(value)
   })
-  return LEDGER_DATA_HEAD+lines.join('\n')+LEDGER_DATA_END
+  const last=rows.filter(r=>r.runId===runs.at(-1)).filter(r=>r.kind==='note').at(-1)
+  return {result:LEDGER_DATA_HEAD+lines.join('\n')+LEDGER_DATA_END,summary:last?memoryText(last.text):'产出已记录'}
 }
 function toResult(db:Db,id: string, m: MatterRow, s: Segment): WorkResult {
   return {
     matterId: id, kind: m.kind, title: m.title,
     project: m.project_path ? m.project_path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? null : null,
-    state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, result: hasLedger(db,id)?ledgerResult(db,id):cap(s.last!.text,RESULT_MAX),
+    state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, ...(hasLedger(db,id)?ledgerResult(db,id):{result:cap(s.last!.text,RESULT_MAX)}),
     at: new Date(s.last!.at).toISOString(), cursor: s.last!.cursor,
   }
 }

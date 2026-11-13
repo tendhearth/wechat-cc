@@ -365,6 +365,8 @@ const zh: Record<keyof typeof en, string> = {
   'progress.agent.running': '在做',
   'progress.agent.completed': '这一轮做完了',
   'progress.agent.failed': '没做成',
+  'progress.agent.cancelled': '已取消',
+  'progress.agent.interrupted': '已中断',
   'progress.summaryUnavailable': "暂时拿不到概括，点一下重试。",
   'compose.ccArranges': 'CC 安排执行',
   'compose.adjustTitle': '在哪里做',

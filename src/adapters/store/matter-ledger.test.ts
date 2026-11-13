@@ -80,7 +80,7 @@ it('truncation keeps the plan and newest notes and artifacts, dropping the middl
   }finally{db.close()}
 })
 
-it('bounds each baton to 50 explicit notes and each matter to 200 records',()=>{
+it('bounds each baton to 50 explicit notes and each matter to 200 explicit notes',()=>{
   const db=openDb({path:':memory:'})
   try{
     const t=makeWorkbenchStore(db).create({title:'a',path:'/work',providerId:'codex',ownerChatId:'owner'}),l=makeMatterLedger(db)
@@ -91,7 +91,8 @@ it('bounds each baton to 50 explicit notes and each matter to 200 records',()=>{
       l.start(t.id,`r${r}`,'claude','plan')
       for(let i=0;i<50;i++){try{l.note(t.id,`r${r}`,'claude',`${i}`)}catch(e){expect((e as Error).message).toBe('matter_note_limit');break}}
     }
-    expect(l.notes(t.id).length).toBeLessThanOrEqual(200)
+    expect(l.notes(t.id).filter(n=>n.kind==='note')).toHaveLength(200)
+    expect(l.notes(t.id).length).toBeLessThanOrEqual(205)
   }finally{db.close()}
 })
 
@@ -104,5 +105,63 @@ it('detail reads are bounded to the latest 50 records plus a total count',()=>{
     const page=l.recent(t.id)
     expect(page.notesTotal).toBe(53);expect(page.notes).toHaveLength(50)
     expect(page.notes.at(-1)!.text).toBe('latest');expect(page.notes[0]!.id).toBe(l.notes(t.id)[3]!.id)
+  }finally{db.close()}
+})
+
+it('reserves all 200 explicit notes for executors and still saves plans, artifacts and completion notes',()=>{
+  const db=openDb({path:':memory:'})
+  try{
+    const t=makeWorkbenchStore(db).create({title:'full',path:'/work',providerId:'codex',ownerChatId:'owner'}),l=makeMatterLedger(db)
+    for(let r=0;r<4;r++){
+      l.start(t.id,`r${r}`,'codex',`PLAN_${r}`)
+      for(let i=0;i<50;i++)expect(()=>l.note(t.id,`r${r}`,'codex',`explicit ${r}/${i}`)).not.toThrow()
+    }
+    l.start(t.id,'next','claude','NEXT_PLAN')
+    expect(()=>l.note(t.id,'next','claude','201st')).toThrow('matter_note_limit')
+    l.artifact(t.id,'next','claude',{workspace:'/work',files:['latest.txt'],fileCount:1,commit:'HEAD'})
+    l.finish(t.id,'next','completed','LATEST_FALLBACK','next-turn')
+    const all=l.notes(t.id)
+    expect(all.filter(n=>n.text.startsWith('explicit '))).toHaveLength(200)
+    expect(all.find(n=>n.text.includes('NEXT_PLAN'))).toBeDefined()
+    expect(all.find(n=>n.kind==='artifact')?.text).toContain('latest.txt')
+    expect(all.at(-1)?.text).toBe('LATEST_FALLBACK')
+  }finally{db.close()}
+})
+
+it('bounds automatic records by rotating older fallbacks visibly while preserving plans and artifacts',()=>{
+  const db=openDb({path:':memory:'})
+  try{
+    const t=makeWorkbenchStore(db).create({title:'long',path:'/work',providerId:'codex',ownerChatId:'owner'}),l=makeMatterLedger(db)
+    l.start(t.id,'r','codex','KEEP_PLAN');l.note(t.id,'r','codex','KEEP_EXPLICIT')
+    l.artifact(t.id,'r','codex',{workspace:'/work',files:['KEEP_ARTIFACT'],fileCount:1,commit:'HEAD'})
+    for(let i=0;i<450;i++)l.finish(t.id,'r','completed',`fallback ${i}`,`turn-${i}`)
+    const all=l.notes(t.id)
+    expect(all.length).toBeLessThanOrEqual(401)
+    expect(all.find(n=>n.text==='KEEP_EXPLICIT')).toBeDefined()
+    expect(all.find(n=>n.text.includes('KEEP_PLAN'))).toBeDefined()
+    expect(all.find(n=>n.kind==='artifact')?.text).toContain('KEEP_ARTIFACT')
+    expect(all.at(-1)?.text).toBe('fallback 449')
+    expect(ledgerBrief(all)).toContain('较早的自动收尾备注已轮换')
+    const filtered=l.page(t.id,{runId:'missing',before:1})
+    expect(filtered.notes).toEqual([])
+    expect(filtered.retentionNotice).toContain('较早的自动收尾备注已轮换')
+    for(let i=1;i<100;i++)l.start(t.id,`r${i}`,'claude','next')
+    expect(()=>l.start(t.id,'overflow','claude','rejected')).toThrow('matter_baton_limit')
+    expect(l.agents(t.id)).toHaveLength(100)
+    expect(l.notes(t.id).length).toBeLessThanOrEqual(401)
+  }finally{db.close()}
+})
+
+it('retains cancelled and interrupted baton states, including daemon recovery',()=>{
+  const db=openDb({path:':memory:'})
+  try{
+    const t=makeWorkbenchStore(db).create({title:'endings',path:'/work',providerId:'codex',ownerChatId:'owner'}),l=makeMatterLedger(db)
+    for(const status of ['completed','failed','cancelled','interrupted']){
+      l.start(t.id,status,'codex','do it');l.finish(t.id,status,status,'')
+      expect(l.agents(t.id).at(-1)?.status).toBe(status)
+    }
+    l.start(t.id,'recovery','codex','recover');l.running('recovery');l.interrupt()
+    expect(l.agents(t.id).at(-1)?.status).toBe('interrupted')
+    expect(()=>db.query("UPDATE matter_agents SET status='invented' WHERE run_id='recovery'").run()).toThrow()
   }finally{db.close()}
 })

@@ -294,11 +294,12 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       // 回退之后的第一轮:前置一句告知(评审 8);送达(第一条事件)才 markNoticed,派发失败下次还带
       const rewound=domains.rewind?.notice(task.id)??null
       const body=rewound?`${rewound.text}\n\n${text}`:text
-      const records=running.ledgerOpening?ledgerBrief(store.ledger.notes(task.id)):''
+      const pendingLedger=!!running.ledgerRunId&&store.ledger.needsInjection(running.ledgerRunId)
+      const records=pendingLedger?ledgerBrief(store.ledger.notes(task.id)):''
       const opening=matterToolsAvailable?records:records.replace('；可用 matter_notes 查询完整记录','')
       const currentRequest=opening?`${opening}\n\n本轮要求：\n${body}`:body
-      const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${body}` : currentRequest
-      let rewoundNoticed=false
+      const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n${opening?`${opening}\n\n`:''}本轮要求：\n${body}` : currentRequest
+      let rewoundNoticed=false,ledgerNoticed=false
       const runtime=running.session.workbenchRuntime
       const stream=runtime?.events??running.session.dispatch(request,material)
       let flushErrorNoted=false
@@ -351,6 +352,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         summary=await collectWorkbenchTurn(stream,running.stop,ctx.deps.timeoutMs ?? 10*60_000,
           ev => {
             if (running.cancelled) return
+            if(pendingLedger&&!ledgerNoticed&&['text','tool_call','result'].includes(ev.kind)){store.ledger.injected(running.ledgerRunId!);ledgerNoticed=true}
             if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');ctx.hub.bumped(task.id)}
             if(rewound&&!rewoundNoticed&&['text','tool_call','result'].includes(ev.kind)){rewoundNoticed=true;domains.rewind?.markNoticed(task.id,rewound.ids)}
             if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,running.ledgerOpening?'handoff':'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}

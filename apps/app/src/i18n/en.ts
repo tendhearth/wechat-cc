@@ -363,6 +363,8 @@ const en = {
   'progress.agent.running': 'Working',
   'progress.agent.completed': 'This turn is done',
   'progress.agent.failed': 'Didn’t finish',
+  'progress.agent.cancelled': 'Cancelled',
+  'progress.agent.interrupted': 'Interrupted',
   'progress.summaryUnavailable': "Couldn’t get the summary right now. Tap to retry.",
   'compose.ccArranges': "CC picks the agent",
   'compose.adjustTitle': "Where to work",

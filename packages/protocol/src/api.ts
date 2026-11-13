@@ -224,7 +224,7 @@ export const MatterQuotaHandoff = z.discriminatedUnion('state', [
 ])
 export type MatterQuotaHandoffT = z.infer<typeof MatterQuotaHandoff>
 export const MatterHandoffResult = z.object({ matterId: z.string(), created: z.boolean() })
-export const MatterAgent = z.object({matterId:z.string(),runId:z.string(),executor:z.string(),brief:z.string(),position:z.number(),status:z.enum(['queued','running','completed','failed']),createdAt:z.number(),endedAt:z.number().nullable()})
+export const MatterAgent = z.object({matterId:z.string(),runId:z.string(),executor:z.string(),brief:z.string(),position:z.number(),status:z.enum(['queued','running','completed','failed','cancelled','interrupted']),createdAt:z.number(),endedAt:z.number().nullable()})
 export const MatterNote = z.object({id:z.number(),matterId:z.string(),runId:z.string().nullable(),author:z.string(),kind:z.enum(['plan','note','artifact']),text:z.string(),createdAt:z.number()})
 export const MatterDetail = z.object({
   agentRuns:z.array(MatterAgent).optional(),notes:z.array(MatterNote).optional(),notesTotal:z.number().int().nonnegative().optional(),

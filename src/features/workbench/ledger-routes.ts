@@ -13,11 +13,14 @@ export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:(
       const owner=d.resolveAdminChatId?.()??null
       const executor=c?.origin==='session'&&c.tier!=='guest'&&/^workbench\/[a-f0-9]{8}$/.test(c.sessionKey??'')
       if(!executor&&!ownerLedgerCaller(owner,c))return forbidden()
-      if([...q.keys()].some(k=>k!=='matter')||q.getAll('matter').length>1)return invalid()
+      const allowed=executor?['matter','runId','before','limit']:['matter']
+      if([...q.keys()].some(k=>!allowed.includes(k)||q.getAll(k).length>1))return invalid()
+      const runId=q.get('runId')??undefined,before=q.has('before')?Number(q.get('before')):undefined,limit=q.has('limit')?Number(q.get('limit')):undefined
+      if(runId!==undefined&&(!runId.trim()||runId.length>200)||before!==undefined&&(!/^\d+$/.test(q.get('before')!)||!Number.isSafeInteger(before)||before<1)||limit!==undefined&&(!/^\d+$/.test(q.get('limit')!)||!Number.isSafeInteger(limit)||limit<1||limit>50))return invalid()
       const id=q.get('matter')??undefined
       if(id!==undefined&&!ID.test(id))return invalid()
       try{
-        if(executor)return {status:200,body:{notes:d.workbench.matterNotes(c?.sessionKey,id)}}
+        if(executor)return {status:200,body:d.workbench.matterNotes(c?.sessionKey,id,{runId,before,limit})}
         if(!id||!d.workbench.ledgerOwned(id,owner))return forbidden()
         return {status:200,body:d.workbench.ledgerRead(id)}
       }catch{return forbidden()}

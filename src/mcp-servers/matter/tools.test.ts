@@ -22,3 +22,19 @@ it('exposes only the bound matter notebook and rejects caller-supplied matter or
     expect(calls).toHaveLength(2)
   }finally{await client.close();await server.close()}
 })
+
+it('passes bounded notebook pagination and baton filters while rejecting invalid cursors',async()=>{
+  const calls:string[]=[]
+  const server=new McpServer({name:'matter-page-test',version:'0'})
+  registerMatterTools(server,{async request(_method,path){calls.push(path);return {notes:[],notesTotal:10,nextBefore:8,truncated:true} as never}})
+  const [a,b]=InMemoryTransport.createLinkedPair(),client=new Client({name:'test',version:'0'})
+  await Promise.all([server.connect(a),client.connect(b)])
+  try{
+    const page=await client.callTool({name:'matter_notes',arguments:{runId:'baton-one',before:9,limit:5}})
+    expect(page.isError).not.toBe(true)
+    expect(calls).toEqual(['/v1/matter/notes?runId=baton-one&before=9&limit=5'])
+    expect(JSON.stringify(page)).toContain('nextBefore')
+    for(const args of [{before:0},{before:1.5},{limit:0},{limit:51},{runId:''}])expect((await client.callTool({name:'matter_notes',arguments:args})).isError).toBe(true)
+    expect(calls).toHaveLength(1)
+  }finally{await client.close();await server.close()}
+})

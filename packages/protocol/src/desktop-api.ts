@@ -2526,7 +2526,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
-  'GET /v1/matter/notes':z.object({notes:z.array(MatterNote).optional(),agentRuns:z.array(MatterAgent).optional(),notesTotal:z.number().int().nonnegative().optional()}),
+  'GET /v1/matter/notes':z.object({notes:z.array(MatterNote).optional(),agentRuns:z.array(MatterAgent).optional(),notesTotal:z.number().int().nonnegative().optional(),matchedTotal:z.number().int().nonnegative().optional(),nextBefore:z.number().int().positive().nullable().optional(),truncated:z.boolean().optional(),retentionNotice:z.string().optional()}),
   'POST /v1/matter/note':z.object({ok:z.literal(true)}),
   'POST /v1/matter/relay':z.object({task:WorkbenchDesktopTaskView}),
   'GET /v1/matter/permission-script': PermissionScriptChunk,

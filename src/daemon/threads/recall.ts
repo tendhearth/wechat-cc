@@ -5,6 +5,7 @@
  * 评测(eval 的 topic 类)用同一个函数跑样本自带的话题。
  * `makeTopicRecall`:生产那一份 —— 只在主人自己的对话里,从库里读话题。失败一律当没碰到,绝不拖垮这一轮。
  */
+import {LEDGER_DATA_HEAD,LEDGER_DATA_END} from '../../adapters/store/matter-ledger'
 import { TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
 import type { ProjectActivity } from '../../ports/topic-activity'
 import type { ThreadsStore, TopicEntry, ThreadRecord } from '../../lib/threads-store'
@@ -86,9 +87,13 @@ export async function resolveTopicRecall(text: string, topics: readonly MatchTop
     return [`项目「${t.title}」此刻：${a.waiting} 个等你，${a.running} 个在跑，${a.unread} 个做完未看。`,
       ...value.sessions.slice(0,3).map(s => `- ${s.executor}：${s.latestStep}（${new Date(s.updatedAt).toISOString()}）`)]
   }).join('\n').slice(0,600)
-  const block = [renderTopicsBlock(text, picked, live ? 600 : undefined, { bodies: o.bodies ?? true, preferredEntryIds }),live].filter(Boolean).join('\n')
+  const rendered = [renderTopicsBlock(text, picked, live ? 600 : undefined, { bodies: o.bodies ?? true, preferredEntryIds }),live].filter(Boolean).join('\n')
   // 渲染里挑了哪几条,跟 renderTopicsBlock 用同一个挑法
   const entryIds = picked.flatMap(t => pickEntries(text, t, MAX_ENTRIES, preferredEntryIds.get(t.id)).map(e => e.id))
+  // A readable relay title still contains executor data. Index-only recall must
+  // retain its data boundary even though it omits the fenced body.
+  const relayed=picked.some(t=>t.entries.some(e=>entryIds.includes(e.id)&&e.body?.startsWith(LEDGER_DATA_HEAD)))
+  const block=relayed?LEDGER_DATA_HEAD+JSON.stringify({source:'topic_index',text:rendered}).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')+LEDGER_DATA_END:rendered
   return { block, topicIds: picked.map(t => t.id), entryIds, via }
 }
 

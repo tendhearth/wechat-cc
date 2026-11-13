@@ -1,3 +1,4 @@
+import type {MatterNotesQuery} from '../../../ports/matters'
 import {canonicalProject} from '../../../adapters/workbench/artifacts'
 import {publicTask} from '../../../adapters/store/workbench/store'
 import {PROVIDER_EXECUTION_CHOICE} from '../../../adapters/store/workbench/execution-settings'
@@ -13,7 +14,7 @@ import {checkedText} from './checked-text'
 export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecycle:LifecycleDomain;admission:AdmissionDomain}){
   const {store,state}=ctx,inFlight=new Set<string>()
   return {
-    matterNotes:(key:string|undefined,requested?:string)=>store.ledger.notes(store.ledger.bound(key,requested)),
+    matterNotes:(key:string|undefined,requested?:string,q?:MatterNotesQuery)=>store.ledger.page(store.ledger.bound(key,requested),q),
     matterNote(key:string|undefined,text:string){
       const id=store.ledger.bound(key),run=state.runsByTask.get(id)
       if(!store.ledger.enabled(id)||!run||run.cancelled||run.finishing||run.uncertain)throw Error('matter_session_ended')

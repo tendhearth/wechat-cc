@@ -1,3 +1,4 @@
+import {ledgerRoutes} from './ledger-routes'
 import {makeMattersService} from '../../app/matters/service'
 import {beforeLedgerInstructions} from '../../test-support/fixtures/workbench-before-ledger'
 import {afterEach,expect,it} from 'vitest'
@@ -17,20 +18,22 @@ import {makeWorkbenchService,type WorkbenchService} from './service'
 
 const cleanups:Array<()=>Promise<void>>=[]
 afterEach(async()=>{for(const cleanup of cleanups.splice(0))await cleanup()})
-function setup(){
+function setup(failure?:'spawn'|'dispatch'){
   const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-ledger-'))),project=join(root,'project');mkdirSync(project)
   const git=(...args:string[])=>execFileSync('git',['-C',project,...args],{encoding:'utf8'})
   git('init');git('config','user.email','test@example.invalid');git('config','user.name','Test')
   writeFileSync(join(project,'seed.txt'),'before');git('add','.');git('commit','-m','seed')
   const db=openTestDb(),store=makeWorkbenchStore(db),matters=makeMatterStore(db),registry=createProviderRegistry()
   const starts:SpawnContext[]=[],requests:string[]=[]
-  let service:WorkbenchService
+  let service:WorkbenchService,failed=false
   for(const executor of ['codex','claude'])registry.register(executor,{async spawn(_p,ctx){
     starts.push(ctx)
+    if(executor==='claude'&&failure==='spawn'&&!failed){failed=true;throw Error('synthetic_spawn_failure')}
     const sessionId=ctx.resumeSessionId??`${executor}-session-${starts.length}`
     return {async *dispatch(text){
       requests.push(text)
       yield {kind:'init' as const,sessionId}
+      if(executor==='claude'&&failure==='dispatch'&&!failed){failed=true;throw Error('synthetic_dispatch_failure')}
       yield {kind:'text' as const,itemId:'raw',text:'RAW_TRANSCRIPT_CANARY private tool reasoning'}
       if(executor==='codex'){
         writeFileSync(join(project,`codex-${starts.length}.txt`),'baton file')
@@ -98,7 +101,7 @@ it('executor tools resolve the bound matter and reject another matter or forged 
   const b=f.store.create({title:'other',path:'/other',providerId:'claude',ownerChatId:'owner'})
   f.store.ledger.start(b.id,'other-run','claude','secret')
   expect(()=>f.service.matterNotes(`workbench/${a.id}`,b.id)).toThrow('matter_scope_mismatch')
-  expect(f.service.matterNotes(`workbench/${a.id}`).every(n=>n.matterId===a.id)).toBe(true)
+  expect(f.service.matterNotes(`workbench/${a.id}`).notes.every(n=>n.matterId===a.id)).toBe(true)
   expect(()=>f.service.matterNote('chat/owner','forged')).toThrow('matter_ledger_forbidden')
 })
 
@@ -236,4 +239,99 @@ it('first handoff after several ordinary runs keeps all frozen file pointers and
   const artifact=f.store.ledger.notes(task.id).find(n=>n.kind==='artifact'&&n.author==='codex')!.text
   expect(artifact).toContain(latest);expect(artifact).toContain('codex-1.txt');expect(artifact).toContain('codex-2.txt')
   expect(f.requests[2]).toContain(latest)
+})
+
+
+it.each(['spawn','dispatch'] as const)('an undelivered %s handoff injects the ledger on its next opening and only once',async failure=>{
+  const f=setup(failure),task=f.service.create({path:f.project,providerId:'codex',text:'出图'})
+  await expect.poll(()=>f.service.detail(task.id).task.status).toBe('completed')
+  await f.service.matterHandoff(task.id,'claude','接图')
+  await expect.poll(()=>f.service.detail(task.id).task.status).toBe('failed')
+  const continuation=f.service.detail(task.id).continuation!
+  const options=continuation.mode==='restart_required'?{restartToken:continuation.restart.token}:undefined
+  f.service.continueTask(task.id,'继续',options)
+  await expect.poll(()=>f.service.detail(task.id).task.status).toBe('completed')
+  const received=f.requests.at(-1)!
+  expect(received).toContain('深色图在 login-dark.webp')
+  expect(received).toContain('artifact')
+  expect(received).toContain('</matter_ledger_data>')
+  expect(received).toContain('继续')
+  if(failure==='spawn')expect(received).toContain('本任务此前记录')
+  f.service.continueTask(task.id,'再次继续')
+  await expect.poll(()=>f.service.detail(task.id).task.status).toBe('completed')
+  expect(f.requests.at(-1)).toBe('再次继续')
+  expect(f.store.ledger.agents(task.id)).toHaveLength(2)
+})
+
+it('executor notebook reads default to a plan and recent records, page backwards by baton and bound serialized characters',()=>{
+  const f=setup(),task=f.store.create({title:'paged',path:f.project,providerId:'codex',ownerChatId:'owner'}),l=f.store.ledger
+  for(const [run,count]of [['r1',50],['r2',50],['r3',20]] as const){
+    l.start(task.id,run,'codex',`PLAN_${run}`)
+    for(let i=0;i<count;i++)l.note(task.id,run,'codex',`${run}/${i}`)
+  }
+  const key=`workbench/${task.id}`,page=f.service.matterNotes(key)
+  expect(page.notesTotal).toBe(123)
+  expect(page.notes.filter(n=>n.kind==='note')).toHaveLength(20)
+  expect(page.notes.find(n=>n.kind==='plan')?.text).toContain('PLAN_r3')
+  expect(page.truncated).toBe(true)
+  const collected:string[]=[];let before:number|undefined
+  do{
+    const p=f.service.matterNotes(key,undefined,{runId:'r1',before,limit:7})
+    expect(p.notesTotal).toBe(123)
+    expect(p.matchedTotal).toBe(51)
+    expect(p.notes.every(n=>n.runId==='r1')).toBe(true)
+    expect(JSON.stringify(p).length).toBeLessThanOrEqual(12000)
+    collected.push(...p.notes.filter(n=>n.kind!=='plan').map(n=>n.text))
+    before=p.nextBefore??undefined
+  }while(before!==undefined)
+  expect(collected).toHaveLength(50)
+  expect(new Set(collected).size).toBe(50)
+  expect(collected).toContain('r1/0');expect(collected).toContain('r1/49')
+  l.start(task.id,'escaped','claude','PLAN_ESCAPED')
+  for(let i=0;i<40;i++)l.note(task.id,'escaped','claude',`${i}:`+'"\\'.repeat(490))
+  const bounded=f.service.matterNotes(key,undefined,{runId:'escaped',limit:50})
+  expect(JSON.stringify(bounded).length).toBeLessThanOrEqual(12000)
+  expect(bounded.truncated).toBe(true)
+  expect(bounded.nextBefore).not.toBeNull()
+  expect(bounded.notes.some(n=>n.text.startsWith('39:'))).toBe(true)
+  expect(()=>f.service.matterNotes(key,undefined,{limit:0})).toThrow('invalid_matter_notes_query')
+})
+
+it.each(['cancelled','interrupted'] as const)('first handoff preserves the prior %s baton ending',async status=>{
+  const f=setup(),task=f.service.create({path:f.project,providerId:'codex',text:'先做'})
+  await expect.poll(()=>f.service.detail(task.id).task.status).toBe('completed')
+  f.store.update(task.id,status)
+  await f.service.matterHandoff(task.id,'claude','接着做')
+  await expect.poll(()=>f.service.detail(task.id).task.status).toBe('completed')
+  expect(f.store.ledger.agents(task.id).map(a=>a.status)).toEqual([status,'completed'])
+})
+
+
+it('executor pagination crosses the real ledger route, service and store without widening scope',async()=>{
+  const f=setup(),task=f.store.create({title:'routed',path:f.project,providerId:'codex',ownerChatId:'owner'})
+  f.store.ledger.start(task.id,'one','codex','first')
+  f.store.ledger.note(task.id,'one','codex','old')
+  f.store.ledger.start(task.id,'two','claude','second')
+  f.store.ledger.note(task.id,'two','claude','new')
+  const handler=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner'})['GET /v1/matter/notes']!
+  const caller={tier:'trusted',origin:'session',sessionKey:`workbench/${task.id}`} as const
+  const result=await handler(new URLSearchParams('runId=one&limit=1'),null,caller)
+  expect(result.status).toBe(200)
+  expect(result.body).toMatchObject({notesTotal:4,matchedTotal:2,nextBefore:null,truncated:false})
+  expect((result.body as {notes:Array<{text:string}>}).notes.map(n=>n.text)).toEqual(['codex: first','old'])
+  expect(await handler(new URLSearchParams('runId=two&before=0'),null,caller)).toMatchObject({status:400})
+  expect(await handler(new URLSearchParams('limit=1&limit=2'),null,caller)).toMatchObject({status:400})
+  expect(await handler(new URLSearchParams('matter=87654321&runId=two'),null,caller)).toMatchObject({status:403})
+})
+
+it('ordinary single executor history restarts preserve the current request heading',async()=>{
+  const f=setup(),task=f.service.create({path:f.project,providerId:'codex',text:'ordinary'})
+  await expect.poll(()=>f.service.detail(task.id).task.status).toBe('completed')
+  f.store.session(task.id,null)
+  const continuation=f.service.detail(task.id).continuation!
+  if(continuation.mode!=='restart_required')throw Error('missing restart preview')
+  f.service.continueTask(task.id,'SINGLE_RESTART',{restartToken:continuation.restart.token})
+  await expect.poll(()=>f.service.detail(task.id).task.status).toBe('completed')
+  expect(f.requests.at(-1)?.endsWith('\n\n本轮要求：\nSINGLE_RESTART')).toBe(true)
+  expect(f.requests.at(-1)).not.toContain('matter_ledger_data')
 })
