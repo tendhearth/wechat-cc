@@ -200,7 +200,7 @@ export function makeSpeechPolicy(deps: {
     async say(req, produce) {
       const { decision, base } = judge(req, deps.outbound.canDeliver(req.chatId))
       if (!('allow' in decision)) return decision
-      const rawTurn = (isRoutineSpeech(req.kind) ? deps.outbound.open(req.chatId, { source: `speech:${req.kind}` }) : deps.outbound.open(req.chatId))
+      const rawTurn = (isRoutineSpeech(req.kind) || req.kind === 'companion' ? deps.outbound.open(req.chatId, { source: `speech:${req.kind}` }) : deps.outbound.open(req.chatId))
       let spokenAt: number | undefined
       let receiptChannel: ProactiveChannel | null = null
       const confirmed = () => { spokenAt ??= now() }

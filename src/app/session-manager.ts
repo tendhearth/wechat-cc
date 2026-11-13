@@ -7,8 +7,11 @@ import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } 
 import type { PermissionMode } from '../domain/capability-matrix'
 import { pathsConflict, canonicalClaimPath } from '../lib/claim-paths'
 import { log } from '../lib/log'
+import { contextBytes, tokensFromBytes } from '../domain/context-continuation'
+import type { ContextRotation } from './context-rotation'
 
 export interface SessionManagerOptions {
+  contextRotation?: ContextRotation
   maxConcurrent: number
   idleEvictMs: number
   /**
@@ -285,6 +288,14 @@ export class SessionManager {
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
     const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req),networkGate=this.opts.networkGate
+    const rotation = this.opts.contextRotation
+    const contextKey = { alias: req.alias, providerId: req.providerId, chatId: req.chatId }
+    let historyBytes = contextBytes(appendInstructions ?? '')
+    let reportedTokens: number | undefined
+    rotation?.opened(contextKey, model ?? spawnTarget.model ?? 'default', historyBytes, session.resumedHistory ?? !!resumeSessionId)
+    if(rotation?.tracked(contextKey) && (session.resumedHistory ?? !!resumeSessionId)) {
+      const observed=rotation.observation(contextKey);historyBytes=observed.bytes;reportedTokens=observed.tokens
+    }
     const effectiveTarget = (): CallTarget => typeof session.callTarget === 'function' ? sessionCallTarget(session, req.providerId) : spawnTarget
     const handle: SessionHandle = {
       alias: req.alias,
@@ -292,7 +303,7 @@ export class SessionManager {
       providerId: req.providerId,
       ...(model !== undefined ? { model } : {}),
       callTarget: effectiveTarget,
-      ...(session.resumedHistory !== undefined ? { resumedHistory: session.resumedHistory } : {}),
+      ...(session.resumedHistory !== undefined ? {resumedHistory:session.resumedHistory} : rotation?.isOwnerChat(req.chatId) ? {resumedHistory:false} : {}),
       lastUsedAt: Date.now(),
       dispatch(text: string): AsyncIterable<AgentEvent> {
         checkExecution()
@@ -307,16 +318,43 @@ export class SessionManager {
             checkExecution()
             // 先过网络闸门再碰 provider:session.dispatch 本身可能就立刻发请求。按这条会话实际的目标判。
             await assertCallAllowed(networkGate, effectiveTarget())
-            const inner = session.dispatch(text)
             inFlight.set(k, (inFlight.get(k) ?? 0) + 1)
+            const inputBytes = contextBytes(text)
+            historyBytes += inputBytes
+            if (reportedTokens !== undefined) reportedTokens += tokensFromBytes(inputBytes)
+            rotation?.started(contextKey)
             try {
+              const inner = session.dispatch(text)
               for await (const ev of inner) {
+                if (ev.kind === 'tool_call') {
+                  // Native transports may not expose tool result bodies. Until usage or an
+                  // actual history snapshot arrives, reserve at least a whole safe budget.
+                  const reserve=Math.max(16_384,rotation?.tracked(contextKey)?rotation.budgetTokens(contextKey)*2:0)
+                  historyBytes+=reserve
+                  if(reportedTokens!==undefined)reportedTokens+=tokensFromBytes(reserve)
+                }
+                if (ev.kind === 'text') {
+                  const bytes = contextBytes(ev.text); historyBytes += bytes
+                  if (reportedTokens !== undefined) reportedTokens += tokensFromBytes(bytes)
+                }
+                // Native result usage may aggregate several requests. It is a conservative
+                // upper bound, never labelled as an exact context window measurement.
+                if (ev.kind === 'result' && ev.usage?.input !== undefined) {
+                  const u=ev.usage
+                  reportedTokens=(u.input??0)+(u.output??0)+(u.cacheRead??0)+(u.cacheWrite??0)
+                }
                 yield ev
                 if (ev.kind === 'result' && ev.sessionId && sessionStore) {
                   sessionStore.set({ alias: req.alias, provider: req.providerId, chatId: req.chatId, sessionId: ev.sessionId })
                 }
               }
             } finally {
+              try {
+                const observed = session.contextUsage?.()
+                if (observed) historyBytes = observed.historyBytes
+                const tokens = observed?.tokens ?? (observed ? undefined : reportedTokens)
+                rotation?.observe(contextKey, { bytes: historyBytes, ...(tokens !== undefined ? { tokens } : {}), turns: 1 })
+              } catch { /* Observation must never break reply delivery. */ }
               const n = inFlight.get(k) ?? 1
               if (n <= 1) inFlight.delete(k)
               else inFlight.set(k, n - 1)
@@ -341,6 +379,14 @@ export class SessionManager {
    * 释放并且忘掉:关会话、再删它的续接记录 —— 下一次同一个 key 是全新的对话(定时任务每次一轮,
    * 不该续上上一次的,2026-10-20)。普通 release 留着续接记录,给主人的对话下次接着聊。
    */
+  /** Called only by the shared owner policy at a serialized turn boundary. */
+  async rotate(k: InFlightKey): Promise<boolean> {
+    const key = sessionKey(k)
+    if (this.isInFlight(k) || this.pending.has(key) || this.closingPaths.has(key)) return false
+    await this.forget(k)
+    return true
+  }
+
   async forget(k: InFlightKey): Promise<void> {
     await this.release(k)
     this.opts.sessionStore?.deleteOne({ alias: k.alias, provider: k.providerId, chatId: k.chatId })

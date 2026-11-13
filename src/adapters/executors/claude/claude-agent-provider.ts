@@ -1,3 +1,4 @@
+import { claudeResultUsage } from '../../../domain/turn-usage'
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { toolInputFacts } from '../../../domain/permission-rules/facts'
 import { permissionDenialMessage } from '../../../domain/permission-denial'
@@ -207,6 +208,7 @@ type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: str
 // contain private file or command output and is deliberately not read here.
 type UserMsg = { type: 'user'; parent_tool_use_id?: string | null; message?: { content?: string | Array<{ type?: string; tool_use_id?: string; is_error?: boolean }> } }
 type ResultMsg = {
+  usage?: unknown
   modelUsage?: Record<string,{contextWindow:number}>
   type: 'result'
   subtype?: string
@@ -575,12 +577,14 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 const capacity=usage?.contextWindow
                 if(Number.isSafeInteger(capacity)&&capacity>=1024&&capacity<=10_000_000)windows.set(windowKey(spawnTarget.baseUrl,model),capacity)
               }
+              const usage = claudeResultUsage(msg.usage)
               const clean = !failed && msg.is_error !== true && !apiErrored && !turnErrored && typeof msg.result === 'string'
               aq.push({
                 kind: 'result',
                 sessionId: msg.session_id ?? '',
                 numTurns: msg.num_turns ?? 0,
                 durationMs: msg.duration_ms ?? 0,
+                ...(usage ? { usage } : {}),
                 ...(clean ? { finalText: msg.result as string } : {}),
               })
               aq.end()

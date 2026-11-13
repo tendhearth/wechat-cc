@@ -13,6 +13,7 @@ import { resolveTier } from '../../domain/user-tier'
 import { SUPERVISED_ENV } from '../../domain/supervised-env'
 import { capabilitiesFor } from '../../domain/capability-matrix'
 import { WECHAT_PORTS as W, type WechatAccounts, type WechatCompanionControls, type WechatPermissions, type WechatSend } from '../../ports/wechat'
+import type { CheckupService } from '../../features/checkup'
 import type { WorkbenchService } from '../../features/workbench'
 import { retractOnFactStatus, type MemoryFeature, type MemoryPromptReads } from '../../features/memory'
 import { careLevel, companionOfferEligible } from '../../features/companion'
@@ -31,6 +32,8 @@ import { ownerChatIdOf } from '../owner-chat'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterTopics } from '../threads/matter-topics'
 import { bootstrapModules, type Bootstrap } from './index'
+import { wireContextRotation } from './wire-context-rotation'
+import { providerCallTarget } from '../../app/provider-registry'
 
 /** boot-api 交出去的:靠 bootstrap 才有的 LLM 体检。 */
 export interface BootApi { llmHealth: LlmHealth }
@@ -39,13 +42,14 @@ export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
   const { stateDir, dangerously, db } = f
   return bootstrapModules({
     needs: [W.send, W.permissions, W.companion, W.accounts, 'reply-delivery', 'internal-api', 'network-gate', 'stickers', 'memory'],
-    lazy: ['cli-upgrade', 'workbench', 'wired', 'terminal'],
+    lazy: ['cli-upgrade', 'workbench', 'wired', 'terminal', 'checkup'],
     deps: (ctx) => {
       const wxSend = ctx.get<WechatSend>(W.send)
       const wxPerm = ctx.get<WechatPermissions>(W.permissions)
       const wxCompanion = ctx.get<WechatCompanionControls>(W.companion)
       const wxAccounts = ctx.get<WechatAccounts>(W.accounts)
       const terminal = ctx.late<TerminalFeature>('terminal')
+      const checkup = ctx.late<CheckupService>('checkup')
       const replyDelivery = ctx.get<ReturnType<typeof makeReplyDeliveryRuntime>>('reply-delivery')
       const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
       const guardRt = ctx.get<GuardRuntime>('network-gate')
@@ -53,6 +57,16 @@ export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
       const workbench = ctx.late<WorkbenchService>('workbench')
       const wired = ctx.late<WiredDeps>('wired')
       return {
+        makeContextRotation: parts => wireContextRotation({
+          ...parts, db, stateDir, log,
+          budgetFor: (provider, model, key) => {
+            const current=providerCallTarget(parts.registry.get(provider)?.provider,provider,'session',{model})
+            const actual=key?parts.effectiveTarget(key,model):current
+            if(actual.baseUrl!==current.baseUrl)return {windowTokens:8192,reliableFillRatio:.25}
+            return checkup()?.contextBudgetFor(provider, model) ?? {windowTokens:8192,reliableFillRatio:.25}
+          },
+          pending: chatId => wxPerm.listPendingPermissions().some(p => p.chatId === chatId),
+        }),
         stateDir, db, loadProjects: () => f.projects.load(), networkGate: guardRt.gate,
         ilink: { ...pick(wxSend, 'sendMessage', 'sendFile'), ...pick(wxPerm, 'askUser'), companion: wxCompanion },
         // CC 开口那道门在 wired 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 现取。

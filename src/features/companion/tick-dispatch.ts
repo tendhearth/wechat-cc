@@ -2,6 +2,7 @@
  * 主动外发的那一步(从 tick-bodies.ts 原样搬出):两道闸(微信断了 / 会话在跑)、会话解析、claim-before-dispatch。
  * 推送那一拍(tick-push)和定时那一轮(tick-job)共用这一份,所以单独成文件。
  */
+import { randomUUID } from 'node:crypto'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMode } from '../../domain/user-tier'
 import { providerDenialFor } from '../../domain/provider-policy'
@@ -120,8 +121,10 @@ export function makeTickDispatch(deps: TickDeps) {
     const nowMs = args.nowIso ? Date.parse(args.nowIso) : NaN
     const produce = async (outbound: import('../../daemon/companion/proactive-channel').ProactiveTurn) => {
     await deps.boot.coordinator.runExclusive(chatId, async () => {
+      const tickKey = { alias: `companion:${randomUUID()}`, providerId, chatId }
+      await deps.boot.sessionManager.forget?.(tickKey)
       const handle = await deps.boot.sessionManager.acquire({
-        alias: proj.alias,
+        alias: tickKey.alias,
         path: proj.path,
         providerId,
         chatId,
@@ -151,6 +154,7 @@ export function makeTickDispatch(deps: TickDeps) {
           const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
           // 「CC 做过的事」(B9):说出去了 / 想说没发出去 分开记;静默是一个决定,不算做了什么。只记主人。
           const said = report.bubbles > 0 || report.attachmentsSent > 0
+          if (said) deps.boot.contextRotation?.noteCompanion(chatId, `${args.summary ?? args.source ?? '主动陪伴'}：已送达`)
           if ((said || report.failures.length > 0) && chatId === loadCompanionConfig(deps.stateDir).default_chat_id) {
             try { deps.activityLog?.append({ kind: 'proactive', status: said ? 'sent' : 'deferred' }) } catch { /* 记不上不影响发 */ }
           }
@@ -176,6 +180,8 @@ export function makeTickDispatch(deps: TickDeps) {
           throw err
         }
         deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
+      } finally {
+        await deps.boot.sessionManager.forget?.(tickKey)
       }
     })
     }

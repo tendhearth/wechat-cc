@@ -91,3 +91,12 @@ describe('runStatus("list")', () => {
     expect(out.some(l => l.includes('bot1'))).toBe(true)
   })
 })
+
+it('status displays owner context estimate, budget, last rotation time and reason',async()=>{
+  vi.mocked(fs.existsSync).mockImplementation(p=>String(p).endsWith('server.pid'))
+  vi.mocked(fs.readFileSync).mockReturnValue(String(process.pid))
+  const out=await captureLog(()=>runStatus('status',{providerProbes:async()=>[],ownerContext:async()=>[{provider:'openai',model:'m',estimatedTokens:456,budgetTokens:2048,historyBytes:912,source:'bytes',turns:3,lastRotatedAt:'2026-11-12T20:00:00Z',reason:'nightly'}]}))
+  expect(out.join('\n')).toContain('456/2048')
+  expect(out.join('\n')).toContain('nightly')
+  expect(out.join('\n')).toContain('2026-11-12T20:00:00Z')
+})

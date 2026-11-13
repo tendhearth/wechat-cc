@@ -107,12 +107,12 @@ describe('chat session store',()=>{
     db.close();db=openDb({path})
     expect(makeChatSessionStore(db).get(s0.id)?.messages).toEqual(messages('two'))
   })
-  it('a new session for the same chat + project drops the older non-active ones; too long ⇒ not resumable',()=>{
+  it('a new session for the same chat + project preserves older non-active ones; too long ⇒ not resumable',()=>{
     const store=makeChatSessionStore(db)
     const old=store.create(chat(),messages());store.save(old.id,0,messages(),'ready')
     const other=store.create(chat({chatId:'b'}),messages());store.save(other.id,0,messages(),'ready')
     const next=store.create(chat(),messages())
-    expect(store.get(old.id)).toBeNull()
+    expect(store.get(old.id)?.messages).toEqual(messages())
     expect(store.get(other.id)).not.toBeNull()
     const big=store.save(next.id,0,messages('x'.repeat(CHAT_RESUME_MAX_BYTES)),'ready')
     expect(store.canResume(big.id,'/tmp/project','h')).toBe(false)
@@ -133,4 +133,14 @@ describe('chat session store',()=>{
     expect(a).not.toContain('secret')
     expect(()=>openAiConnectionHash({baseURL:'https://u:p@g.example',apiKey:'k'})).toThrow('invalid_api_model')
   })
+})
+
+it('rotation preserves every previous owner API transcript, including old ready records',()=>{
+  const store=makeChatSessionStore(db),b={chatId:'owner',alias:'proj',path:'/tmp/project',configHash:'h'}
+  const first=store.create(b,messages('first raw conversation'))
+  store.save(first.id,0,messages('first raw conversation'),'ready')
+  db.query('UPDATE openai_chat_sessions SET updated_at=0 WHERE id=?').run(first.id)
+  const second=store.create(b,messages('second'))
+  expect(store.get(first.id)?.messages).toEqual(messages('first raw conversation'))
+  expect(store.get(second.id)?.messages).toEqual(messages('second'))
 })

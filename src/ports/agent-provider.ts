@@ -128,8 +128,11 @@ export interface AgentWorkbenchRuntime {
 }
 
 export interface AgentSession {
+  /** Observation only, never a rotation policy. Bytes include serialized history/tool schemas; tokens are the last request, not billed step totals. */
+  contextUsage?(): { historyBytes: number; tokens?: number }
+
   /**
-   * 这条会话是不是接着上一次的历史起来的(续接成功)。provider 知道才填;不填 ⇒ 协调器按能力表的 supportsResume 猜。
+   * 这条会话是不是接着上一次的历史起来的(续接成功)。provider 知道才填；主人对话未确认时补共享接续块，旧嵌入仍可按能力表兜底。
    * 冷启动近况块据它决定加不加:续上了就不必再贴一遍最近的对话(B2,2026-10-25:OpenAI 兼容对话开始能续接)。
    */
   resumedHistory?: boolean

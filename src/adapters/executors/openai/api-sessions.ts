@@ -32,7 +32,6 @@ const MAX_MESSAGES=10_000,MAX_BYTES=16*1024*1024
  */
 export const CHAT_RESUME_MAX_BYTES=192*1024
 /** 不再续接的老对话会话留多久(session-manager 的续接期限是 7 天)。 */
-const CHAT_KEEP_MS=8*24*60*60_000
 const SELECT=`SELECT id,revision,messages_json AS messagesJson,state,task_id AS taskId,owner,path,directory_identity AS directoryIdentity,config_hash AS configHash FROM workbench_api_sessions WHERE id=?`
 const CHAT_SELECT=`SELECT id,revision,messages_json AS messagesJson,state,chat_id AS chatId,alias,path,config_hash AS configHash FROM openai_chat_sessions WHERE id=?`
 type Row={id:string;revision:number;messagesJson:string;state:string;taskId:string;owner:string;path:string;directoryIdentity:string;configHash:string}
@@ -139,8 +138,7 @@ export function makeChatSessionStore(db:Db):ChatSessionStore{
     create(binding,messages){
       validChatBinding(binding);const json=encode(messages),id=randomUUID(),now=Date.now()
       db.transaction(()=>{
-        // 同一个对话 + 项目只留正在用的那一份(一个文件夹一个活会话);过了续接期限的(含崩溃留下的 active)顺手清掉。
-        db.query("DELETE FROM openai_chat_sessions WHERE (state!='active' AND chat_id=? AND alias=?) OR updated_at<?").run(binding.chatId,binding.alias,now-CHAT_KEEP_MS)
+        // Resume pointers live in sessions; old transcripts remain available after context rotation.
         db.query('INSERT INTO openai_chat_sessions(id,chat_id,alias,path,config_hash,revision,messages_json,state,created_at,updated_at) VALUES(?,?,?,?,?,0,?,\'active\',?,?)').run(id,binding.chatId,binding.alias,binding.path,binding.configHash,json,now,now)
       })()
       return get(id)!

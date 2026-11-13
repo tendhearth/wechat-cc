@@ -32,7 +32,15 @@ export const SubsystemStatusSchema = z.object({
   sinceIso: z.string(),
 })
 
+export const OwnerContextStatus = z.object({
+  provider: z.string(), model: z.string(), estimatedTokens: z.number().nonnegative(), budgetTokens: z.number().nonnegative(),
+  historyBytes: z.number().nonnegative(), source: z.enum(['bytes', 'provider']), turns: z.number().nonnegative(),
+  lastRotatedAt: z.string().nullable(), reason: z.enum(['budget', 'nightly']).nullable(),
+})
+export type OwnerContextStatusT = z.infer<typeof OwnerContextStatus>
+
 export const HealthResponse = z.object({
+  owner_context: z.array(OwnerContextStatus).optional(),
   ok: z.boolean(),
   daemon_pid: z.number(),
   // Ops fields (added with the admin self-diagnosis tools). Optional so older

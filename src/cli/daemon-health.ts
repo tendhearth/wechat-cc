@@ -1,3 +1,4 @@
+import { OwnerContextStatus, type OwnerContextStatusT } from '@wechat-cc/protocol/desktop-api'
 /**
  * daemon-health — CLI 侧问在跑的 daemon 的 GET /v1/health(本机回环,不出门)。
  *
@@ -43,4 +44,13 @@ export function formatProviderProbes(rows: ProviderProbeRow[] | null): string[] 
   return rows.map(r => r.state === 'retrying'
     ? `providers: ${r.id} 探测失败,重试中(已重探 ${r.attempts} 次${r.next_attempt_at ? `,下次 ${r.next_attempt_at}` : ''})${r.last_error ? ` — ${r.last_error}` : ''}`
     : `providers: ${r.id} 开机探测失败,第 ${r.attempts} 次重探通过,已注册(${r.registered_at ?? '?'})`)
+}
+
+/** Older daemons omit this field; malformed telemetry never breaks status. */
+export function ownerContextFrom(health: Record<string, unknown> | null): OwnerContextStatusT[] | null {
+  const parsed = OwnerContextStatus.array().safeParse(health?.owner_context)
+  return parsed.success ? parsed.data : null
+}
+export function formatOwnerContext(rows: readonly OwnerContextStatusT[] | null): string[] {
+  return (rows ?? []).map(r => `context: ${r.provider}/${r.model} ${r.estimatedTokens}/${r.budgetTokens} tokens; last=${r.lastRotatedAt ?? '-'} reason=${r.reason ?? '-'}`)
 }

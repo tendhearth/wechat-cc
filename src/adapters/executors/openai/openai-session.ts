@@ -111,6 +111,8 @@ export function trimDanglingToolCalls(messages:ChatMessage[]):ChatMessage[]{
 
 export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;purpose:OpenAiPurpose}):AgentSession{
   const {model,history,purpose}=args
+  let lastContextTokens: number | undefined
+  let observedBytes = 0
   let closed=false,active:Promise<void>|null=null,controller:AbortController|null=null,dispatched=false,first=true,toolsClosed=false
   const closeTools=async()=>{if(toolsClosed)return;toolsClosed=true;await purpose.close?.().catch(()=>{})}
 
@@ -152,9 +154,12 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         flush()
         const result=await turn.finished;check(signal);purpose.check?.()
         if(result.usage)usage=sumTurnUsage(usage,result.usage)
+        // Keep the last request separate from per-turn billing totals (which repeat history).
+        lastContextTokens = result.usage?.input !== undefined ? result.usage.input + (result.usage.output ?? 0) : undefined
         if(purpose.strict)strictCheck(result,ids)
         const assistantMessages=result.messages.filter(m=>m.role==='assistant')
         history.save([...history.messages(),...assistantMessages])
+        observedBytes = Buffer.byteLength(JSON.stringify(history.messages()))
         if(result.model)purpose.observedModel?.(result.model,history.id)
         if(!result.toolCalls.length){
           history.save(history.messages(),'ready')
@@ -181,6 +186,13 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
   }
 
   return{
+    contextUsage() {
+      const transcriptBytes = Buffer.byteLength(JSON.stringify(history.messages()))
+      const historyBytes = transcriptBytes + Buffer.byteLength(JSON.stringify(purpose.tools()))
+      // A tool can finish after the last measured request, including on a failed turn.
+      const added = Math.ceil(Math.max(0, transcriptBytes - observedBytes) / 2)
+      return { historyBytes, ...(lastContextTokens !== undefined ? { tokens: lastContextTokens + added } : {}) }
+    },
     dispatch(text,attachments=[]){
       if(closed)fail('api_task_closed')
       if(purpose.singleDispatch&&(active||dispatched))fail('api_task_busy')

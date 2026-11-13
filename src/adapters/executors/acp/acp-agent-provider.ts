@@ -349,6 +349,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         if (broken && (error === broken || (error instanceof Error && error.message === 'acp_session_closed'))) return withTail(broken.message)
         return error instanceof Error ? error : new Error(String(error))
       }
+      let resumedHistory = false
       try {
         const initialized = await connection.request('initialize', { protocolVersion: 1, clientCapabilities: CLIENT_CAPABILITIES, clientInfo: CLIENT_INFO })
         if (!object(initialized) || initialized.protocolVersion !== 1) throw new Error('acp_protocol_version_unsupported')
@@ -373,6 +374,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             const loaded = await connection.request('session/load', { sessionId, cwd: project.path, mcpServers })
             if (object(loaded) && loaded.sessionId !== undefined && loaded.sessionId !== sessionId) throw new Error('acp_resume_session_mismatch')
             currentModel = acpCurrentModel(loaded)
+            resumedHistory = true
           } catch (error) {
             if (options.resume !== 'fallback') {
               // 上一轮被拒(额度)或从没落盘的会话,session/load 报 -32602 "Session … not found":给它自己的码,
@@ -415,6 +417,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       if (options.notice !== null) context.reportNotice?.(options.notice ?? acpNotice(options.displayName))
 
       return {
+        resumedHistory,
         processGroups: () => (child.pid ? [child.pid] : []),
         ...(targetProvider ? { callTarget: () => (currentModel ? { provider: targetProvider, model: currentModel } : null) } : {}),
         dispatch(text, attachments) {

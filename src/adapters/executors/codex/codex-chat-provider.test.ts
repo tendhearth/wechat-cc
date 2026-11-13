@@ -439,3 +439,10 @@ describe('能力表 / 工具判定', () => {
     expect(CODEX_CAPABILITIES.supportsResume).toBe(true)
   })
 })
+
+it('reports whether native history actually resumed, including fresh-thread fallback',async()=>{
+ const resumed=rig(),fallback=rig({resumeFails:true}),fresh=rig()
+ expect((await resumed.spawn({resumeSessionId:'th-old'})).resumedHistory).toBe(true)
+ expect((await fallback.spawn({resumeSessionId:'th-gone'})).resumedHistory).toBe(false)
+ expect((await fresh.spawn()).resumedHistory).toBe(false)
+})

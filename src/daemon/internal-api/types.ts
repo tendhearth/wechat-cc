@@ -361,6 +361,7 @@ export interface InternalApiDeps {
    * main.ts closes over the bootstrap ref. Returns null until bootstrap wired
    * it (route then 503s).
    */
+  ownerContext?: () => readonly import('@wechat-cc/protocol/desktop-api').OwnerContextStatusT[]
   listSessions?: () => readonly {
     alias: string; path: string; providerId: string; chatId: string; lastUsedAt: number
   }[] | null

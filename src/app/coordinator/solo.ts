@@ -78,6 +78,15 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       // Per-chat model pin lives on the solo mode row; only solo carries it.
       const cur = ctx.getMode(msg.chatId)
       const pinnedModel = cur.kind === 'solo' && cur.provider === providerId ? cur.model : undefined
+      const contextKey = { alias: proj.alias, providerId, chatId: msg.chatId }
+      const rotation = deps.contextRotation?.isOwnerChat(msg.chatId) ? deps.contextRotation : undefined
+      const rotateManager = deps.manager.rotate && deps.manager.isInFlight ? {
+        rotate: (k: typeof contextKey) => deps.manager.rotate!(k),
+        isInFlight: (k: typeof contextKey) => deps.manager.isInFlight!(k),
+      } : null
+      const actualModel = deps.manager.effectiveTarget?.(contextKey, pinnedModel).model ?? pinnedModel ?? 'default'
+      const currentInput = {id:`${msg.userId}:${msg.createTimeMs}`,at:msg.createTimeMs,text:msg.text,userId:msg.userId}
+      const rotated = rotateManager ? await rotation?.beforeTurn(contextKey, actualModel, rotateManager, currentInput) : null
       // 冷启动判定要在 acquire 之前看:acquire 之后缓存里一定有了。
       const coldSpawn = deps.manager.has ? !deps.manager.has({ alias: proj.alias, providerId, chatId: msg.chatId }) : false
       let handle: Awaited<ReturnType<typeof deps.manager.acquire>>
@@ -118,11 +127,20 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       let text = deps.format(msg)
       // 换 provider 后的第一条:前置交接块(近况原文 + chat_history 提示)。
       const handoff = ctx.handoffLedger.takeHandoff(msg.chatId)
-      if (handoff) {
+      let usedContinuation = false
+      if (handoff && rotation) {
+        const carry = rotated ?? await rotation.continuation(contextKey, currentInput)
+        text = `${carry.block}\n\n${text}`
+        usedContinuation = true
+      } else if (handoff) {
         let recent: HandoffTurn[] = []
         try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 交接是增强,拿不到就只给提示语 */ }
         text = `${buildHandoffBlock(handoff.from, handoff.to, recent)}\n\n${text}`
         deps.log?.('HANDOFF', `chat=${msg.chatId} ${handoff.from}→${handoff.to} recent=${recent.length}`)
+      } else if (rotation && (rotated || rotation.needsContinuation(contextKey) || (coldSpawn && handle.resumedHistory === false))) {
+        const carry = rotated ?? await rotation.continuation(contextKey, currentInput)
+        text = `${carry.block}\n\n${text}`
+        usedContinuation = true
       } else if (coldSpawn && !(handle.resumedHistory ?? capabilitiesFor(providerId).supportsResume)) {
         // 不能续线程的 provider(gemini;openai 续不上的那几次)刚被冷 spawn:daemon 重启 /
         // 空闲驱逐后它对「刚才聊到哪」一无所知,而 claude/agy 都接得上。
@@ -134,6 +152,10 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
           text = `${buildColdStartBlock(providerId, recent)}\n\n${text}`
           deps.log?.('HANDOFF', `chat=${msg.chatId} cold-start ${providerId} recent=${recent.length}`)
         }
+      }
+      if (rotation && !usedContinuation) {
+        const events = rotation.eventsBlock(contextKey)
+        if (events) text = `${events}\n\n${text}`
       }
       // 开轮(附件从此刻起登记到这一轮)。编码型执行者(last_segment)挂上长任务进度(已定 ①:
       // 一轮最多一次,有旁白用最近一段);聊天型模型(all_segments)每段都会交付,不发进度。
@@ -192,6 +214,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       }
       report = await d.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
       ctx.noteDelivery(providerId, report.delivery)
+      rotation?.delivered(contextKey, msg.text, summary.toolCalls.length > 0)
     } finally {
       unregisterCancel?.()
       if (delivery && !deliverySettled) { deliverySettled = true; try { delivery.abandon(outcome) } catch { /* 记账不影响回合 */ } }

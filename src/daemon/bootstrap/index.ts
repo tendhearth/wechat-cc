@@ -141,7 +141,9 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
   })
   // 系统提示组装 — ./wire-instructions.ts。社交在不在:每次起会话时现问(social 模块在后面)。
   const buildInstructions = wireInstructions(deps, { plugins: { delegateStdioByProvider: b.delegateStdioByProvider, knowledgePluginNames: b.knowledgePluginNames }, defaultProviderId, knowledge: parts.knowledge, socialWired: parts.socialWired })
-  const sessionManager = new SessionManager({
+  const contextRotation: import('../../app/context-rotation').ContextRotation | undefined = deps.makeContextRotation?.({registry, getMode:chatId=>b.conversationStore.get(chatId)?.mode, holdBusy:b.busyRegistry.hold, effectiveTarget:(key,model)=>sessionManager.effectiveTarget(key,model)})
+  const sessionManager: SessionManager = new SessionManager({
+    contextRotation,
     maxConcurrent: 6,
     idleEvictMs: 30 * 60_000,
     registry, networkGate: deps.networkGate,
@@ -163,7 +165,7 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
     })
   })
   // fallback 回复 / recordTurn / coordinator — ./wire-coordinator.ts。
-  const { anomalyNotes, sendAssistantText, coordinator } = wireCoordinator(deps, ctxBase, { health: b.health, resolve: b.resolve, sessionManager, conversationStore: b.conversationStore, registry, defaultProviderId, readAgentConfig, permissionMode: b.permissionMode, turnTimeoutMs })
+  const { anomalyNotes, sendAssistantText, coordinator } = wireCoordinator(deps, ctxBase, { health: b.health, resolve: b.resolve, sessionManager, conversationStore: b.conversationStore, registry, defaultProviderId, readAgentConfig, permissionMode: b.permissionMode, turnTimeoutMs, contextRotation })
   // RFC 03 P4 — bare delegate providers + one-shot dispatcher (./delegate.ts: no mcpServers — recursion prevention).
   const dispatchDelegate = buildDelegateDispatch({
     stateDir: deps.stateDir, networkGate: deps.networkGate,
@@ -182,7 +184,7 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
   })
   // A2A registry / client / events + resolveOperatorChatId — ./wire-a2a.ts。
   const a2a = wireA2a(ctxBase)
-  return { readAgentConfig, sdkOptionsForProject, sessionStore, registry, defaultProviderId, baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider, buildInstructions, currentModelFor, sessionManager, anomalyNotes, sendAssistantText, coordinator, dispatchDelegate, ...a2a }
+  return { contextRotation, readAgentConfig, sdkOptionsForProject, sessionStore, registry, defaultProviderId, baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider, buildInstructions, currentModelFor, sessionManager, anomalyNotes, sendAssistantText, coordinator, dispatchDelegate, ...a2a }
 }
 type BootCore = Awaited<ReturnType<typeof bootCore>>
 
@@ -345,6 +347,7 @@ function assemble(b: BootBase, c: BootCore, opt: {
   const marker = opt.selfRestart?.marker ?? null
   return {
     sessionManager: c.sessionManager,
+    contextRotation: c.contextRotation,
     sessionStore: c.sessionStore,
     conversationStore: b.conversationStore,
     registry: c.registry,
