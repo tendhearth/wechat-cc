@@ -35,7 +35,7 @@ export interface OpenAiAgentProviderOptions {
   // instance so `spawn` can honor `ctx.model` per-session (the operator's pinned model, hot-reloaded via the daemon's
   // mtime-cached config reader — see bootstrap currentModelFor) instead of the model baked in at provider construction.
   // `cheapEval`/`strongEval` are background calls with no per-chat pin, so they pass `evalModel()` (undefined ⇒ the default model).
-  makeChatModel: (model?: string, limits?: { maxOutputTokens: number; maxRetries: number }) => APIModel
+  makeChatModel: (model?: string, limits?: { maxOutputTokens: number; maxRetries: number; budget?:import('../../../domain/checkup-budget').CheckupBudget }) => APIModel
   makeMcpBridge: (mcpEnv: Record<string, string>) => Promise<AgentMcpTools>
   /**
    * 守护(评审 #193 P1-1):`makeChatModel` 实际连的 base URL 和它的默认模型 —— 与建模型用的是**同一份**值(bootstrap
@@ -266,9 +266,9 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
         const initial = ctx.appendInstructions ? [systemMessage(ctx.appendInstructions)] : []
         const saved = memory.create({ chatId: ctx.chatId, alias: project.alias, path: project.path, configHash: 'checkup' }, initial)
         const session = openOpenAiSession({
-          model: opts.makeChatModel(ctx.model, { maxOutputTokens: ctx.evaluation.maxOutputTokens, maxRetries: 2 }), history: chatHistory(memory, saved, () => {}),
+          model: opts.makeChatModel(ctx.model, { maxOutputTokens: ctx.evaluation.maxOutputTokens, maxRetries: 2, ...(ctx.evaluation.budget?{budget:ctx.evaluation.budget}:{}) }), history: chatHistory(memory, saved, () => {}),
           purpose: {
-            maxSteps: ctx.evaluation.maxSteps, strict: true, textEvents: 'streamed', singleDispatch: true,
+            maxSteps: ctx.evaluation.maxSteps, strict: true, emptyOutputCode:'checkup_output_exhausted', textEvents: 'streamed', singleDispatch: true,
             closeTimeoutMs: CLOSE_TIMEOUT_MS, closeMustConfirm: true, cancelWaits: true,
             tools: () => fake.tools,
             request: text => userMessage(text),
@@ -279,7 +279,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
               return { output: await fake.call(call.name, call.input) }
             },
             failure(error, aborted) {
-              return { events: [{ kind: 'error', message: aborted ? 'cancelled' : openaiErrorMessage(error), code: aborted ? 'cancelled' : error instanceof Error && error.message === 'api_task_step_limit' ? 'checkup_step_budget' : openaiErrorCode(error) ?? 'provider_error' }], state: 'interrupted', finish: false }
+              return { events: [{ kind: 'error', message: aborted ? 'cancelled' : openaiErrorMessage(error), code: aborted ? 'cancelled' : error instanceof Error && error.message === 'api_task_step_limit' ? 'checkup_step_budget' : error instanceof Error && error.message==='checkup_usage_limit' ? 'checkup_usage_limit' : error instanceof Error && error.message==='checkup_output_exhausted' ? 'checkup_output_exhausted' : openaiErrorCode(error) ?? 'provider_error' }], state: 'interrupted', finish: false }
             },
           },
         })

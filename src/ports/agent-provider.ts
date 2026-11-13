@@ -261,7 +261,7 @@ export interface AgentMcpTools {
 export interface SpawnContext {
   /** Isolated synthetic evaluation: only these run-owned tools, no private history or native tools.
    * Providers which cannot enforce isolation must refuse before opening any session. */
-  evaluation?: { tools: AgentMcpTools; mcpServer: { url: string }; maxSteps: number; maxOutputTokens: number }
+  evaluation?: { tools: AgentMcpTools; mcpServer: { url: string }; maxSteps: number; maxOutputTokens: number; budget?: import('../domain/checkup-budget').CheckupBudget }
   /** Cancels pre-executor task environment preparation on stop/shutdown. */
   preparationSignal?: AbortSignal
   /** Task-local temporary directories; never set for companion chat. */
@@ -462,6 +462,8 @@ export interface AgentProvider {
   prepareContextWindow?(model:string):Promise<void>
   /** Explicitly verified tools-only, no-private-history evaluation boundary. */
   supportsIsolatedEvaluation?: true
+  /** Native transports reserve whole questions; API gateways can gate requests. */
+  isolatedEvaluationBudgetMode?(): import('../domain/checkup-budget').CheckupBudgetMode
   /** Discovery owns one bounded native deadline and subprocess cleanup; no model turn is sent. */
   modelCatalog?(project: AgentProject): Promise<AgentModelCatalog>
   /**

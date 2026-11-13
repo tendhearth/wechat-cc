@@ -26,7 +26,17 @@ CLI 经已运行 daemon 的 operator 路由工作，不自己启动 daemon。默
 
 网络、限流、鉴权、超时是「没测成」。动作轮数耗尽记办事失败。首字/首次回话动作与完成时间取中位数，包括会话启动；纯派活无文字的轮次不伪造首字时间。窗口优先使用 provider 已观察到的真实模型元数据（Claude result.modelUsage.contextWindow），Gemini 在主人主动估价时可查询有界模型元数据（inputTokenLimit，不发生成请求）；其次使用本机 `agent-config.json` 的 `modelContextWindows` 精确匹配项（provider、address、model、windowTokens）；同名模型不同端点不串用。拿不到时明确标注「窗口未知」，按 **8192 token** 保守估算。评语只报实际测到的编造对话 token 估量，不把故事日历当真实可记住的时长。
 
-有执行者时短版 24 个时间点，预计最多 72 次请求、含重试上限 216 次；完整版 60 个时间点、预计最多 180 次、含重试上限 540 次。无执行者则分别 20/50 个时间点。用量包含故事、系统提示、工具和有界重试的保守估计，不是账单。每轮最多三步（派活、回话、结束）、每步最多 512 输出 token。OpenAI 兼容路径沿用输出前有界重试；工具调用之后不重试，Claude/Gemini 关闭隐藏重试。取消后已发请求仍可能计费。
+有执行者时短版 24 个时间点，完整版 60 个；无执行者分别 20/50 个。开跑前给出「预计」与「最多」：没有模型历史数据时，每题按典型两步、每步 250 可见回答 token + 1200 推理 token 估计，输入也按典型步骤估算。24 题短版预计用 7 万左右；请求级硬闸显示「最多不超过 30 万」，Claude 官方/原生传输的题间软闸显示「最多约 34 万输出 token，大约 3–6 分钟」。完整版约 8–15 分钟，软闸显示「最多约 104 万」。软闸数字是本次上限加一道题最大输出（含一次重试，`3 × (4096 + 8192) = 36,864`），向上取整到万。典型值和时长是计划常量，不冒充账单或实测历史。三端直接显示估价回包的同一份 `summary`，不展示所有题全部耗尽的理论乘积。
+
+整次手动体检与周探针共用运行预算：短版默认 **300,000 输出 token / 120 次请求**，完整版 **1,000,000 / 400**。常量在 `src/domain/checkup-budget.ts`，可在本机 `agent-config.json` 的 `checkup.short` / `checkup.full` 里分别设置 `maxOutputTokens`、`maxRequests`（正整数）。估价回执绑定两个上限与闸门类型；确认前改动必须重新估价，开跑后本次预算冻结。
+
+- **Claude 官方与原生传输用题间软闸。**未配置 base URL、`anthropic.com` 及其子域（不分大小写、端口），以及 Bedrock/Vertex/Foundry/AWS/Mantle、Unix socket、仅订阅/OAuth 鉴权，一律沿用 Claude Code 原生传输与机器原有网络保护。绝不启动本机转发器，不覆盖 `ANTHROPIC_BASE_URL`、`NO_PROXY/no_proxy` 或 `ANTHROPIC_UNIX_SOCKET`（包括 SDK settings.env），不截取凭据、换 HTTP 客户端或改写请求体。每次开题/重试的隔离会话前完整预留 `maxSteps × maxOutputTokens` 和 `maxSteps` 请求槽，预留不下就不开会话。结束优先按 SDK result usage 结算；没有 result usage 时按 assistant message.id 去重后的完整 usage 结算，仍缺任何 usage 就保留预留。请求数是 SDK 步数估量，不能把 `maxTurns/num_turns` 当成实际 HTTP 请求数。单题靠 `maxTurns`、`CLAUDE_CODE_MAX_OUTPUT_TOKENS` 和整题 120 秒期限限制；官方端点整次体检允许超出预算至多一道题最大用量。这是账号安全优先、有意不截流量的取舍，因此只给近似上限，不承诺硬上限。
+- **只有用户自配的非官方 Claude API-key 网关允许转发器。**须有 `ANTHROPIC_API_KEY` 或网关 `ANTHROPIC_AUTH_TOKEN`，且无 OAuth/native/socket 选择；缺失/非法 URL 不启用。代理自身也拒绝官方地址。此路径逐次 HTTP 请求预留，覆写输出 cap，最后一次 cap 缩到余量，包含 SDK 内部恢复请求。SSE 只有完整收流、最终累计 usage 和 message_stop 齐全才退回额度。送题前核验网关原生设置，不能确认代理边界时拒绝。认证仅透传，不记录。
+- **OpenAI / Gemini 沿用原 SDK 的请求级硬闸。**OpenAI 每次传输重试、Gemini 每次调用都计数。没有新增官方流量转发或代理注入；OpenAI 官方端点不使用删掉 `stream_options` 后重发的兼容降级，该降级只留给自定义网关。输出以 provider usage 为准（包含推理；Gemini 为 candidates + thoughts），缺 usage 时按响应字节 / 3 估量记录，但不退还硬闸预留。
+
+到了任一用量闸就停止；尝试标记 `checkup_usage_limit`，三端显示「到了本次体检的用量上限」。已测部分保留结论和评语，后续题记「没测全」，不当作失败；没有任何可评观察时保留旧档。
+
+每轮最多三步（派活、回话、结束）、每步默认最多 **4096 输出 token**（512 可见回答余量 + 3584 推理余量）。三家隔离路径统一识别输出耗尽：OpenAI `finish_reason=length`、Claude `stop_reason=max_tokens`、Gemini `MAX_TOKENS` 且可见回答/工具调用为空时，用 **8192** 上限重跑该道编造题一次，整题仍受 120 秒期限与同一总预算约束。每次使用独立假工具记录，不会重放真实动作。题目已有合法 `reply` / `ask_user` / `delegate` 可评动作时，随后收尾碰到输出或总预算上限不抹掉观察。OpenAI 兼容路径沿用输出前有界传输重试；单次请求工具调用之后不做传输重试，Claude/Gemini 关闭隐藏重试。取消后已发请求仍可能计费。
 
 **后端支持边界：** Claude、OpenAI 兼容、Gemini API 已有隔离适配。Codex、agy、ACP 当前原生接口无法证明只暴露假工具、完全隔离本机读写；本版明确记录 `isolated_evaluation_unavailable`（没测成），不会回落到普通会话，也不会改全局工具配置。新 provider 只有声明并实现 `supportsIsolatedEvaluation` 和 `SpawnContext.evaluation` 后才能运行。题库、评分、档案和预算逻辑没有按后端分支。三端显示「这个后端暂时没法体检」和原因：Codex 继承全局工具且没有关闭原生文件/命令与项目指令的已验证组合；agy 只有全局 MCP 配置；通用 ACP 不声明客户端文件/终端能力也挡不住 agent 自己落盘。没有改全局配置或回落普通 spawn。
 
@@ -34,9 +44,9 @@ CLI 经已运行 daemon 的 operator 路由工作，不自己启动 daemon。默
 
 `<stateDir>/checkup/` 下有 `profiles.json`（完整档案）、`attempts.json`（最近运行）、`settings.json`（探针开关）、`probes.json`（探针时间与疑似变化）。使用统一 JSON 原子写规矩，坏文件拒写。没有数据库表、没有迁移，不占用 v112 或 v113。
 
-新档案带 `interview.version`、种子、各项通过比例及日子可靠线；旧档案保持可读，只展示上一版记录并提示重新体检，不冒充 v1，探针也不跨版本比较；旧卷须先重新体检。坏的 v1 结构不加载为有效档案。
+新档案带 `interview.version`、种子、各项通过比例及日子可靠线；各项比例的可选 `unmeasured` 记录漏测/没法判次数，`total` 仅包含已判定次数。诚实答法无足够肯定或否定证据时记没法判，不记说谎。旧档案保持可读，只展示上一版记录并提示重新体检，不冒充 v1，探针也不跨版本比较；旧卷须先重新体检。坏的 v1 结构不加载为有效档案。
 
-档案按后端、去掉认证和查询参数后的端点、模型的散列键隔离；端点在档案里只存散列，不存凭据、原题、原答或真实对话。开跑前先按统一原子写规矩校验 profiles.json 可读且可写；完整测成才替换档案；失败或取消只更新最近运行。daemon 重启后遗留的 running 显示为中断、没测成，旧档案保留。
+档案按后端、去掉认证和查询参数后的端点、模型的散列键隔离；端点在档案里只存散列，不存凭据、原题、原答或真实对话。开跑前先按统一原子写规矩校验 profiles.json 可读且可写；至少有合法动作可评时保存档案；个别题在一次增额重试后仍输出耗尽，只记该题漏测并继续其它题，相应评语保留已测结论并附「这一项没测全」，不把漏测计为品质失败，也不凭漏测档提高可靠线。全部无可评观察时才记整次「没测成」。鉴权、网络、限流等整次基础设施失败或取消只更新最近运行。daemon 重启后遗留的 running 显示为中断、没测成，旧档案保留。
 
 功能模块交出 `CheckupService.contextBudgetFor(provider, model)`，返回：
 
@@ -51,9 +61,9 @@ CLI 经已运行 daemon 的 operator 路由工作，不自己启动 daemon。默
 
 ## API 与离线验证
 
-五条路由属于 `checkup` 模块：`GET /v1/checkup`、`POST /v1/checkup/estimate`、`POST /v1/checkup/run`、`POST /v1/checkup/cancel`、`POST /v1/checkup/settings`。只接受 admin operator 或已配对设备；配对设备只能对主人对话当前后端和模型发起，不能提交 providerId/model。每目标每天最多三次手动尝试，失败和取消也计数，持久记录按 UTC 日更新；本机 operator/CLI 可越过。体检及探针全程持有 busy token。故事与工具只含一个编造的手下名字，不含真实执行者 ID。file、所有模型会话令牌、共享令牌和链接令牌不能触发或查询。`run` 返回 202，查询最近运行直到终态；`settings` 正文为 `{ periodicProbe: boolean }`。
+五条路由属于 `checkup` 模块：`GET /v1/checkup`、`POST /v1/checkup/estimate`、`POST /v1/checkup/run`、`POST /v1/checkup/cancel`、`POST /v1/checkup/settings`。只接受 admin operator 或已配对设备；配对设备只能对主人对话当前后端和模型发起，不能提交 providerId/model。每目标每天最多三次手动尝试，失败和取消也计数，持久记录按 UTC 日更新；本机 operator/CLI 可越过。体检及探针全程持有 busy token。执行者可用性复用工作台交办入口的同一份登记、准入和额度判断；故事与工具只含一个编造的手下名字，不含真实执行者 ID。file、所有模型会话令牌、共享令牌和链接令牌不能触发或查询。`run` 返回 202，查询最近运行直到终态；`settings` 正文为 `{ periodicProbe: boolean }`。
 
-CLI 用估价回执的 `targetKey` 查询 `GET /v1/checkup?run=<targetKey>`，固定为这次已接受的后端、地址、模型，期间换模型不会提前宣告完成。daemon 重启后运行标识不再存在，返回 `checkup_run_unknown`，不伪装成功。普通状态查询仍显示当前模型档案；有其他已开始的体检时保留运行中与取消入口。
+CLI 用估价回执的 `targetKey` 查询 `GET /v1/checkup?run=<targetKey>`，固定为这次已接受的后端、地址、模型，期间换模型不会提前宣告完成。估价回执也绑定当时的派活可用性与投影人设；确认前题数或系统提示变化会要求重新估价。daemon 重启后运行标识不再存在，返回 `checkup_run_unknown`，不伪装成功。普通状态查询仍显示当前模型档案；有其他已开始的体检时保留运行中与取消入口。
 
 离线测试在 `src/domain/{butler-checkup,checkup-interview}*.test.ts`、`src/features/checkup/`、`src/adapters/executors/checkup-isolation.test.ts`、`src/cli/checkup.test.ts` 以及真实形状沙盒；不会调用真实模型。桌面 Playwright 编造夹具在 `apps/desktop/playwright/butler-checkup.spec.ts`，App 演示截图流程在 `apps/app/.maestro/butler-checkup.yaml`。UI 验收由整合者在 mini lab 最后统一进行。本轮不建 mini lab，不跑 UI、不改日常 app。
 

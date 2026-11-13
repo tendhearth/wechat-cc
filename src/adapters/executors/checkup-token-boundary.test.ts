@@ -47,7 +47,7 @@ it('checkup runner to real Claude SDK spawn excludes inherited token/tier from a
           credentialKeys: Object.keys(env).some(name => /^WECHAT_SESSION_(TOKEN|TIER)$/i.test(name)),
           benign: env.CC_CHECKUP_BENIGN === 'preserved',
           controls: env.CLAUDE_CODE_DISABLE_AUTO_MEMORY === '1' && env.CLAUDE_CODE_DISABLE_CLAUDE_MDS === '1'
-            && env.CLAUDE_CODE_MAX_OUTPUT_TOKENS === '512' && env.CLAUDE_CODE_MAX_RETRIES === '0' && env.CLAUDE_CODE_RETRY_WATCHDOG === '0',
+            && env.CLAUDE_CODE_MAX_OUTPUT_TOKENS === '4096' && env.CLAUDE_CODE_MAX_RETRIES === '0' && env.CLAUDE_CODE_RETRY_WATCHDOG === '0',
           fakeMcpOnly: JSON.stringify(mcp) === JSON.stringify({ mcpServers: { wechat: { type: 'http', url: bridgeUrl } } }),
         }
         throw Error('captured_offline_checkup_spawn')

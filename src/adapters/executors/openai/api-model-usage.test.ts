@@ -63,3 +63,13 @@ for(const message of ['Invalid API key','Invalid model Kimi-Code','stream_option
   await expect(stream(make(`usage-no-downgrade-${message.split(' ')[0]}`,async()=>{calls++;return rejected(message)}))).rejects.toThrow(message)
   expect(calls).toBe(1)
 })
+
+for(const baseURL of ['https://api.openai.com/v1','https://API.OpenAI.Com:8443/v1','https://api.anthropic.com/v1','https://generativelanguage.googleapis.com/v1beta/openai','https://aiplatform.googleapis.com/v1'])it(`preserves official SDK requests without a body rewrite: ${baseURL}`,async()=>{
+  const bodies:string[]=[]
+  const api=createApiModel({baseURL,apiKey:'offline-fixture',model:'fictional',maxRetries:0,fetch:async(_url,init)=>{bodies.push(String(init?.body));return rejected('Unsupported parameter: stream_options')}})
+  await expect(stream(api)).rejects.toThrow('Unsupported parameter')
+  await expect(stream(api)).rejects.toThrow('Unsupported parameter')
+  expect(bodies).toHaveLength(2)
+  expect(bodies[0]).toBe(bodies[1])
+  expect(JSON.parse(bodies[0]!)).toHaveProperty('stream_options.include_usage',true)
+})

@@ -51,15 +51,18 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     if(task.ownerChatId!==record.ownerKey)throw Error('invalid_entry_owner')
     return{receipt:{requestId:record.requestId,taskId:record.taskId,matterId:record.matterId,runId:record.runId,acceptedAt:record.acceptedAt},task:taskView(publicTask(task))}
   }
-  function entryOptions(context:EntryContext):EntryOptions {
-    if(!context.ownerKey||context.ownerKey!==ctx.deps.ownerChatId())return{status:'needs_connection',reason:{code:'invalid_entry_owner',message:'请先在电脑上配置主人身份。'},defaultProviderId:null,providers:[],projects:[]}
-    const providers=ctx.deps.registry.list().flatMap(id=>{
+  function entryProviders():EntryOptions['providers'] {
+    return ctx.deps.registry.list().flatMap(id=>{
       const p=ctx.deps.registry.get(id)
       if(!isWorkbenchProviderId(id)||!p||!isWorkbenchExecutorCapabilities(p.opts.workbench))return[]
       let reason:string|undefined
       try{requireInput(id,[],PROVIDER_EXECUTION_CHOICE);if(quota.exhausted(id))reason='provider_quota_exhausted'}catch(error){reason=error instanceof Error?error.message:'unavailable_provider'}
       return[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,available:!reason,...(reason?{unavailableReason:{code:reason,message:reason==='unattended_ack_required'?'请先在电脑上确认免审执行。':executionFailureMessage(reason)}}:{}),capabilities:structuredClone(p.opts.workbench)}]
     })
+  }
+  function entryOptions(context:EntryContext):EntryOptions {
+    if(!context.ownerKey||context.ownerKey!==ctx.deps.ownerChatId())return{status:'needs_connection',reason:{code:'invalid_entry_owner',message:'请先在电脑上配置主人身份。'},defaultProviderId:null,providers:[],projects:[]}
+    const providers=entryProviders()
     const defaultProviderId=providers.find(p=>p.id===ctx.deps.defaultProvider&&p.available)?.id??null
     return{status:defaultProviderId?'ready':'needs_connection',...(!defaultProviderId?{reason:{code:'unavailable_provider',message:'请在电脑上连接默认执行者，或在更多选项中选择已连接的执行者。'}}:{}),defaultProviderId,providers,projects:projects()}
   }
@@ -195,6 +198,6 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     if(!project)mkdirSync(path,{recursive:true,mode:0o700})
     return modelCatalog(input.providerId,path)
   }
-  return { managed,requireEntryOwner,entryResult, entryOptions,entryReceipt,createEntry,entryModels }
+  return { managed,requireEntryOwner,entryResult, entryOptions,availableExecutors:()=>entryProviders().filter(p=>p.available).map(p=>p.id),entryReceipt,createEntry,entryModels }
 }
 export type EntryDomain = ReturnType<typeof makeEntryDomain>

@@ -20,6 +20,7 @@ import { claudeApiFailure, claudeAssistantFailure, claudeResultFailure, parseToo
 import { authorize, type AuthSubject } from '../../../domain/authorize'
 import { lookup } from '../../../domain/capability-matrix'
 import { sessionSubprocessEnv } from '../subprocess-env'
+import { makeCheckupProxy, checkupTransportSafe, usesCheckupProxy } from './checkup-proxy'
 
 export { CLAUDE_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -54,6 +55,8 @@ export interface ClaudeAgentProviderOptions {
    * streams through it — the reply-once harness can't `vi.mock` a module). Production omits this.
    */
   queryImpl?: typeof query
+  /** Offline transport seam for the run-owned checkup boundary. */
+  checkupFetch?: typeof fetch
 }
 
 function taskInputPreview(input: Record<string, unknown>): string | null {
@@ -202,13 +205,14 @@ type AssistantBlock = { type?: string; text?: string; name?: string; id?: string
 type AssistantContent = string | Array<AssistantBlock>
 // `error`: the SDK's own label for a synthetic "this API call failed" assistant
 // message (SDKAssistantMessageError). See ./claude-api-error-code.
-type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; message?: { id?: string; model?: string; content?: AssistantContent; usage?: {input_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number} } }
+type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; api_error_params?: {cut?:string}; message?: { id?: string; model?: string; stop_reason?:string|null; content?: AssistantContent; usage?: {input_tokens?:number;output_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number} } }
 // SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
 // blocks correlate to tool_use.id through tool_use_id; result content can
 // contain private file or command output and is deliberately not read here.
 type UserMsg = { type: 'user'; parent_tool_use_id?: string | null; message?: { content?: string | Array<{ type?: string; tool_use_id?: string; is_error?: boolean }> } }
 type ResultMsg = {
   usage?: unknown
+  stop_reason?: string|null
   modelUsage?: Record<string,{contextWindow:number}>
   type: 'result'
   subtype?: string
@@ -365,6 +369,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     fallbackContextWindowTokens:200000,
     contextWindowTokens:model=>windows.get(windowKey(claudeBaseUrl(),model)),
     supportsIsolatedEvaluation: true,
+    isolatedEvaluationBudgetMode:()=>usesCheckupProxy(sessionSubprocessEnv())?'request':'question',
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
@@ -406,7 +411,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         // The SDK exposes its output cap through the documented subprocess env.
         // Internal retries are disabled: an isolated sample must stay bounded even
         // if the owner's interactive CLI normally enables an indefinite watchdog.
-        env: { ...sessionSubprocessEnv(), CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(evaluation.maxOutputTokens), CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' },
+        env: { ...sessionSubprocessEnv(), CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST:'1', DISABLE_COMPACT:'1', DISABLE_AUTO_COMPACT:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(evaluation.maxOutputTokens), CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' },
         canUseTool: async (name, input) => evaluation.tools.tools.some(tool => name === `mcp__wechat__${tool.name}`)
           ? { behavior: 'allow', updatedInput: input }
           : { behavior: 'deny', message: 'Only the current conversation tools are available.' },
@@ -446,6 +451,40 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // 守护(评审 #193 P1-1):子进程在这一刻拿到的端点 + 模型就是这条会话以后每一轮连的地方。
       // options.env 给了就是子进程的整份环境(工作台);没给 SDK 继承 process.env。
       const spawnTarget = { provider: 'claude', model: typeof options.model === 'string' ? options.model : null, baseUrl: claudeBaseUrl(options.env) }
+      let activeEventQueue: AsyncQueue<AgentEvent> | null = null
+      let usageLimited=false
+      let evaluationProxy:Awaited<ReturnType<typeof makeCheckupProxy>>|undefined
+      const proxyEnabled=!!evaluation?.budget&&usesCheckupProxy(options.env!)
+      // Reserve every possible step before opening the native SDK session.
+      // SDK usage settles the soft gate; no HTTP interception is involved.
+      const questionReservation=evaluation?.budget&&!proxyEnabled
+        ?evaluation.budget.reserve(evaluation.maxOutputTokens,evaluation.maxSteps,true):undefined
+      const assistantUsage=new Map<string,number|undefined>()
+      let unidentifiedUsage=false
+      const validCount=(n:unknown):n is number=>typeof n==='number'&&Number.isSafeInteger(n)&&n>=0
+      const settleQuestion=(result?:ResultMsg)=>{
+        const reported=claudeResultUsage(result?.usage)?.output
+        const complete=!!result&&assistantUsage.size>0&&!unidentifiedUsage
+          &&(!validCount(result.num_turns)||result.num_turns<=assistantUsage.size)
+          &&[...assistantUsage.values()].every(validCount)
+        const outputTokens=reported??(complete?[...assistantUsage.values()].reduce<number>((sum,n)=>sum+n!,0):undefined)
+        // num_turns is SDK steps, not an assertion about HTTP recovery calls.
+        const requests=outputTokens===undefined?undefined:Math.max(validCount(result?.num_turns)?result.num_turns:0,assistantUsage.size)||undefined
+        questionReservation?.settle({outputTokens,requests})
+      }
+      if(proxyEnabled&&evaluation?.budget){
+        const env=options.env!
+        evaluationProxy=await makeCheckupProxy({upstream:spawnTarget.baseUrl!,budget:evaluation.budget,maxOutputTokens:evaluation.maxOutputTokens,signal:aborter.signal,fetch:opts.checkupFetch,onLimit(){
+          usageLimited=true
+          activeEventQueue?.push({kind:'error',code:'checkup_usage_limit',message:'checkup_usage_limit'})
+          activeEventQueue?.end();activeEventQueue=null
+          aborter.abort()
+        }})
+        options.settings={...options.settings as object,env:{ANTHROPIC_UNIX_SOCKET:''}}
+        env.ANTHROPIC_UNIX_SOCKET=''
+        env.ANTHROPIC_BASE_URL=evaluationProxy.url
+        env.NO_PROXY=[env.NO_PROXY,'127.0.0.1','localhost'].filter(Boolean).join(',');env.no_proxy=env.NO_PROXY
+      }
 
       // 同一个 SDK、同一份 options(上面的执行选择 / 续接 / abort / 端点都已经定了),分两种会话:
       // 一起做 = 一整段一个事件流 + 自己拥有进程组(claude-workbench-runtime.ts);对话 = 下面一轮一个事件流。
@@ -460,11 +499,25 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
 
       let q: ReturnType<typeof query>
       try { q = runQuery({ prompt: sdkQueue.iterable(), options }) }
-      catch (error) { aborter.abort(); throw error }
+      catch (error) { settleQuestion();aborter.abort();await evaluationProxy?.close();throw error }
+      if(evaluationProxy){
+        let timer:ReturnType<typeof setTimeout>|undefined
+        try{
+          // SDK 0.2.116 implements this control query; its public Query type
+          // omits it. Unknown settings/SDK shapes fail closed before a prompt.
+          const control=q as unknown as {getSettings?:()=>Promise<unknown>}
+          if(!control.getSettings||!checkupTransportSafe(await Promise.race([control.getSettings(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Native settings could not be verified.')),10_000)})])))throw Error('Native settings could not be verified.')
+        }catch{
+          sdkQueue.end();aborter.abort()
+          const lifecycle=q as unknown as {close?:()=>unknown}
+          swallowSdkLifecycleError(lifecycle.close?.bind(lifecycle))
+          await evaluationProxy.close()
+          throw Object.assign(Error('This Claude transport cannot enforce the checkup allowance.'),{code:'isolated_evaluation_unavailable'})
+        }finally{clearTimeout(timer)}
+      }
       let lastInputTokens:number|undefined, firstInputTokens:number|undefined, contextModel:string|undefined,firstRequestSeen=false,lastRequestId:string|undefined,firstRequestId:string|undefined
       let observedSessionId=spawnOpts.resumeSessionId
 
-      let activeEventQueue: AsyncQueue<AgentEvent> | null = null
       let closed = false
       let droppedAssistantChunks = 0
       // A synthetic API-error assistant message (SDK `error` label) is held
@@ -474,6 +527,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // 这一轮已经发过带码的 error(没登录哨兵):result 不再补第二个 error,也不带 finalText。
       let turnErrored = false
       let evaluationHasPartialText = false
+      let evaluationHasVisibleText = false
       const flushApiError = (aq: AsyncQueue<AgentEvent>, apiErrorStatus?: number | null): void => {
         if (!pendingApiError) return
         const { sdkError, text } = pendingApiError
@@ -495,6 +549,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               const partial = raw as unknown as { type?: string; event?: { type?: string; delta?: { type?: string; text?: string } } }
               if (partial.type === 'stream_event' && partial.event?.type === 'content_block_delta' && partial.event.delta?.type === 'text_delta' && partial.event.delta.text) {
                 evaluationHasPartialText = true
+                evaluationHasVisibleText ||= !!partial.event.delta.text.trim()
                 ;(activeEventQueue as AsyncQueue<AgentEvent>).push({ kind: 'text', text: partial.event.delta.text })
                 continue
               }
@@ -531,6 +586,12 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               log('SESSION_INIT', `alias=${project.alias} session_id=${msg.session_id ?? ''}`)
               aq.push({ kind: 'init', sessionId: msg.session_id ?? '' })
             } else if (msg.type === 'assistant') {
+              if(questionReservation&&!msg.parent_tool_use_id&&msg.message?.model!=='<synthetic>'){
+                const id=msg.message?.id??msg.uuid,value=msg.message?.usage?.output_tokens
+                if(!id)unidentifiedUsage=true
+                else if(validCount(value))assistantUsage.set(id,Math.max(assistantUsage.get(id)??0,value))
+                else if(!assistantUsage.has(id))assistantUsage.set(id,undefined)
+              }
               if (!msg.parent_tool_use_id && (!msg.error||msg.error==='max_output_tokens') && msg.message?.model!=='<synthetic>') {
                 const u=msg.message?.usage,id=msg.message?.id??msg.uuid
                 const same=!!id&&id===lastRequestId
@@ -543,6 +604,11 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               if (!msg.parent_tool_use_id && !msg.error && msg.message?.model!=='<synthetic>' && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               const content = msg.message?.content
+              if(evaluation && !evaluationHasVisibleText && (msg.error==='max_output_tokens' && msg.api_error_params?.cut==='output_limit' || msg.message?.stop_reason==='max_tokens' && !extractText(content).trim() && !(Array.isArray(content)&&content.some(block=>block.type==='tool_use')))){
+                turnErrored=true
+                aq.push({kind:'error',code:'checkup_output_exhausted',message:'Output allowance exhausted without a visible answer.'})
+                continue
+              }
               // 对话路径。回复交付第 5 步(2026-10-03):事件**按块的顺序**发 —— 以前同一条消息里先发所有
               // tool_call、再发拼起来的文字,「我查一下」+ tool_use 的那条消息就把开场算进了工具**之后**的段,
               // 和下一条消息的结论粘成「最后的话」,旁白跟着交付(spec §4.2 Claude 行 ①)。现在相邻的文字块
@@ -562,6 +628,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
                 continue
               }
+              if(evaluation && !subagent && !msg.error && msg.message?.model!=='<synthetic>')evaluationHasVisibleText ||= !!text.trim()
               if (subagent && text.trim()) log('CLAUDE_SUBAGENT_TEXT', `alias=${project.alias} len=${text.length} (not part of the reply)`)
               const blocks: AssistantBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
               let pending = ''
@@ -575,7 +642,13 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               flushText()
             } else if (msg.type === 'result') {
+              settleQuestion(msg)
               firstRequestSeen=true
+              if(evaluation && !turnErrored && !evaluationHasVisibleText && msg.stop_reason==='max_tokens'){
+                pendingApiError=null
+                turnErrored=true
+                aq.push({kind:'error',code:'checkup_output_exhausted',message:'Output allowance exhausted without a visible answer.'})
+              }
               const apiErrored = pendingApiError !== null
               flushApiError(aq, msg.api_error_status)
               const failed = !!msg.subtype && msg.subtype !== 'success'
@@ -584,7 +657,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                   ? msg.result.slice(0, 400)
                   : JSON.stringify(msg).slice(0, 400)
                 log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
-                aq.push({ kind: 'error', message: msg.errors?.join('\n')||`subtype=${msg.subtype}`, ...(isContextOverflow(msg.errors)?{code:'context_overflow' as const}:{}), ...(evaluation && msg.subtype === 'error_max_turns' && !apiErrored && !turnErrored ? { code: 'checkup_step_budget' } : {}) })
+                aq.push({ kind: 'error', message: msg.errors?.join('\n')||`subtype=${msg.subtype}`, ...(isContextOverflow(msg.errors)?{code:'context_overflow' as const}:{}), ...(evaluation && msg.subtype === 'error_max_turns' && !apiErrored && !turnErrored ? { code: usageLimited?'checkup_usage_limit':'checkup_step_budget' } : {}) })
               } else if (!apiErrored && !turnErrored) {
                 // SDK 说这一轮是失败的(is_error),却没有带 error 标注的助理消息(上面那条路没接住):
                 // result.result 就是错误原文。带码收尾,coordinator 只发通知 —— 一个字都不进回复(#190 红线)。
@@ -631,6 +704,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             activeEventQueue = null
           }
         } finally {
+          settleQuestion()
           drainResolve?.()
         }
       })()
@@ -653,6 +727,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           pendingApiError = null
           turnErrored = false
           evaluationHasPartialText = false
+          evaluationHasVisibleText = false
           activeEventQueue = queue
           sdkQueue.push({
             type: 'user',
@@ -696,6 +771,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           // subprocess even when interrupt()/close() above no-op'd against a
           // dead transport. abort() itself never throws, but guard anyway.
           try { aborter.abort() } catch { /* never throws */ }
+          await evaluationProxy?.close()
           if (activeEventQueue) {
             activeEventQueue.end()
             activeEventQueue = null

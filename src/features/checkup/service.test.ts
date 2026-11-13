@@ -6,6 +6,7 @@ import { makeCheckupService } from './service'
 import { makeCheckupStore } from '../../adapters/store/checkup-store'
 import { interviewAnswer } from '../../test-support/checkup-model'
 import type { CheckupSample, CheckupTurn } from '../../domain/butler-checkup'
+import type { AgentProvider } from '../../ports/agent-provider'
 
 const dirs: string[] = []
 const temp = () => { const d = mkdtempSync(join(tmpdir(), 'cc-checkup-test-')); dirs.push(d); return d }
@@ -233,4 +234,123 @@ it('durably limits manual target attempts per UTC day and lets local operators b
   const tomorrow=makeCheckupService({store,resolveTarget:()=>target,run:correct,version:'test',now:()=>new Date('2026-11-13T00:00:00Z')})
   await tomorrow.start().done
   expect(tomorrow.view().attempt?.status).toBe('completed')
+})
+
+it('keeps other observations and marks only the affected qualities incomplete after exhausted reasoning',async()=>{
+  let n=0
+  const {service}=setup(async sample=>{if(++n===1)throw Object.assign(Error('only reasoning'),{code:'checkup_output_exhausted'});return correct(sample)})
+  await service.start().done
+  const view=service.view()
+  expect(n).toBe(24)
+  expect(view.attempt).toMatchObject({status:'completed',completedRequests:24})
+  expect(view.profile?.interview?.qualities.honesty).toEqual({passed:3,total:3,ratio:1,unmeasured:1})
+  expect(view.profile?.reliableFillRatio).toBe(0)
+  expect(view.review?.rows.find(r=>r.key==='honesty')).toMatchObject({grade:'好',detail:'不知道的事会直说；这一项没测全'})
+  expect(view.review?.rows.find(r=>r.key==='stance')?.grade).toBe('好')
+  expect(view.review?.status).not.toContain('这次没测成')
+})
+it('tries all questions but keeps the previous archive when every question exhausts reasoning',async()=>{
+  let exhausted=false,n=0
+  const {service}=setup(async sample=>{n++;if(exhausted)throw Object.assign(Error('only reasoning'),{code:'checkup_output_exhausted'});return correct(sample)})
+  await service.start().done
+  const before=service.view().profile
+  exhausted=true;n=0;await service.start().done
+  expect(n).toBe(24)
+  expect(service.view().attempt).toMatchObject({status:'failed',errorCode:'no_measurement',completedRequests:24})
+  expect(service.view().profile).toEqual(before)
+  expect(service.view().review?.status).toContain('这次没测成')
+})
+
+it('invalidates the cost receipt if real executor availability changes before confirmation',()=>{
+  const store=makeCheckupStore(temp());let available=false
+  const service=makeCheckupService({store,resolveTarget:()=>target,run:correct,version:'test',executors:()=>available?['private-worker']:[]})
+  const estimate=service.estimate()
+  available=true
+  expect(service.estimate().requests).toBe(48)
+  expect(service.estimate().targetKey).not.toBe(estimate.targetKey)
+  expect(()=>service.start({expectedTargetKey:estimate.targetKey})).toThrow('checkup_target_changed')
+  expect(service.view().attempt).toBeNull()
+})
+
+// Round two: the quote must describe an enforced whole-run allowance.
+it('quotes realistic typical output and binds both hard limits to confirmation',()=>{
+  const {store}=setup()
+  let limits={maxOutputTokens:300_000,maxRequests:120}
+  const service=makeCheckupService({store,resolveTarget:()=>target,run:correct,version:'test',executors:()=>['worker'],limits:()=>limits})
+  const quote=service.estimate()
+  expect(quote).toMatchObject({outputTokens:69_600,maxOutputTokens:300_000,maxRequests:120})
+  expect(quote.summary).toContain('预计用 7 万左右、最多不超过 30 万输出 token')
+  limits={...limits,maxOutputTokens:200_000}
+  expect(()=>service.start({expectedTargetKey:quote.targetKey})).toThrow('checkup_target_changed')
+  const next=service.estimate()
+  limits={...limits,maxRequests:80}
+  expect(()=>service.start({expectedTargetKey:next.targetKey})).toThrow('checkup_target_changed')
+})
+
+it('quotes native question gates approximately, including a whole question retry, and binds the gate mode',()=>{
+  const {store}=setup()
+  let mode:'question'|'request'='question'
+  const service=makeCheckupService({store,resolveTarget:()=>({...target,provider:'claude',address:'default'}),run:correct,version:'test',executors:()=>['worker'],budgetMode:()=>mode})
+  const quote=service.estimate()
+  expect(quote.summary).toContain('预计用 7 万左右、最多约 34 万输出 token')
+  expect(quote.summary).toContain('题与题之间检查用量')
+  expect(service.estimate({full:true}).summary).toContain('最多约 104 万输出 token')
+  mode='request'
+  expect(()=>service.start({expectedTargetKey:quote.targetKey})).toThrow('checkup_target_changed')
+  expect(service.estimate().summary).toContain('最多不超过 30 万输出 token')
+})
+
+for(const dimension of ['output','requests'] as const) it(`stops at the whole-run ${dimension} gate and keeps measured reviews`,async()=>{
+  const {makeCheckupTurn}=await import('./runner')
+  let calls=0,output=0
+  const provider:AgentProvider={supportsIsolatedEvaluation:true,async spawn(_p,ctx){return{async *dispatch(){
+    const lease=ctx.evaluation!.budget?.reserve(ctx.evaluation!.maxOutputTokens)
+    const cap=lease?.maxOutputTokens??ctx.evaluation!.maxOutputTokens
+    calls++;output+=cap
+    await ctx.evaluation!.tools.call('reply',{text:'不知道，我不能确认。'})
+    lease?.settle({outputTokens:cap})
+    yield{kind:'result',sessionId:'fake',numTurns:1,durationMs:1}
+  },close:async()=>{}}}}
+  const {store}=setup()
+  const service=makeCheckupService({store,resolveTarget:()=>target,version:'test',run:makeCheckupTurn(()=>provider),limits:()=>({maxOutputTokens:dimension==='output'?5000:100_000,maxRequests:dimension==='requests'?2:120})})
+  await service.start().done
+  expect(calls).toBe(2)
+  expect(output).toBe(dimension==='output'?5000:8192)
+  const view=service.view()
+  expect(view.attempt).toMatchObject({status:'completed',errorCode:'checkup_usage_limit',completedRequests:2,usage:{requests:2,outputTokens:output}})
+  expect(view.review?.status).toContain('到了本次体检的用量上限')
+  expect(view.profile?.interview?.qualities.honesty).toMatchObject({passed:1,total:1,unmeasured:3})
+  expect(view.review?.rows.find(r=>r.key==='honesty')).toMatchObject({grade:'好',detail:'不知道的事会直说；这一项没测全'})
+  expect(view.profile?.interview?.business).toMatchObject({passed:1,total:2,unmeasured:18})
+})
+
+it('freezes the accepted allowance while config changes during a run',async()=>{
+  const {store}=setup()
+  let limits={maxOutputTokens:5000,maxRequests:2},calls=0
+  const run:Parameters<typeof makeCheckupService>[0]['run']=async(s,_t,_signal,budget)=>{
+    const lease=budget!.reserve(4096);calls++;lease.settle({outputTokens:lease.maxOutputTokens})
+    limits.maxOutputTokens=100000;limits.maxRequests=120
+    return correct(s)
+  }
+  const service=makeCheckupService({store,resolveTarget:()=>target,version:'test',run,limits:()=>limits})
+  await service.start().done
+  expect(calls).toBe(2)
+  expect(service.view().attempt).toMatchObject({errorCode:'checkup_usage_limit',usage:{requests:2,outputTokens:5000}})
+})
+
+it('bounds the periodic probe too and does not turn an incomplete probe into model drift',async()=>{
+  const {store}=setup()
+  let clock=new Date('2026-11-12T12:00:00Z'),probing=false,calls=0
+  const run:Parameters<typeof makeCheckupService>[0]['run']=async(s,_t,_signal,budget)=>{
+    if(probing){const lease=budget!.reserve(4096);calls++;lease.settle({outputTokens:lease.maxOutputTokens})}
+    return correct(s)
+  }
+  const service=makeCheckupService({store,resolveTarget:()=>target,version:'test',run,now:()=>clock,limits:()=>({maxOutputTokens:5000,maxRequests:2})})
+  await service.start().done
+  const profile=service.view().profile
+  service.settings(true);probing=true;clock=new Date(clock.getTime()+7*86400000)
+  await service.probeIfDue()
+  expect(calls).toBe(2)
+  expect(service.view().profile).toEqual(profile)
+  expect(service.view().suspectedChanged).toBe(false)
 })

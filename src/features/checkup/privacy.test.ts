@@ -46,6 +46,7 @@ for(const backend of ['claude','openai','gemini'])it(`${backend}: no real-state 
   try{
     await service.start().done
     expect(outbound.length).toBeGreaterThanOrEqual(24)
+    if(backend==='claude')expect(service.view().attempt?.status).toBe('completed')
     const serialized=JSON.stringify(outbound)
     for(const secret of [...secrets,stateDir])expect(serialized.includes(secret),secret).toBe(false)
     expect(serialized).toContain('小禾')

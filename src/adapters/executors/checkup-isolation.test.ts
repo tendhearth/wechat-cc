@@ -66,7 +66,9 @@ describe('isolated checkup provider boundary', () => {
     const output = await events(session.dispatch('fictional prompt'))
     expect(output.filter(e => e.kind === 'text').map(e => e.text).join('')).toBe('ok')
     expect(builder).not.toHaveBeenCalled()
-    expect(options).toMatchObject({ maxTurns: 2, env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: '512', CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' }, model: 'pinned-model', tools: [], settingSources: [], strictMcpConfig: true, persistSession: false, hooks: {}, plugins: [], settings: { disableAllHooks: true, disableSkillShellExecution: true, autoMemoryEnabled: false }, systemPrompt: ctx.appendInstructions, mcpServers: { wechat: { type: 'http', url: ctx.evaluation!.mcpServer.url } } })
+    const {env,...safeOptions}=options
+    expect(safeOptions).toMatchObject({ maxTurns: 2, model: 'pinned-model', tools: [], settingSources: [], strictMcpConfig: true, persistSession: false, hooks: {}, plugins: [], settings: { disableAllHooks: true, disableSkillShellExecution: true, autoMemoryEnabled: false }, systemPrompt: ctx.appendInstructions, mcpServers: { wechat: { type: 'http', url: ctx.evaluation!.mcpServer.url } } })
+    for(const [key,value] of Object.entries({CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1',CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1',CLAUDE_CODE_MAX_OUTPUT_TOKENS:'512',CLAUDE_CODE_MAX_RETRIES:'0',CLAUDE_CODE_RETRY_WATCHDOG:'0'}))expect(env[key]===value).toBe(true)
     expect(await options.canUseTool('Read', { file_path: '/must-not-read' }, {})).toMatchObject({ behavior: 'deny' })
     expect(await options.canUseTool('mcp__wechat__checkup_lookup', { code: 'f17' }, {})).toMatchObject({ behavior: 'allow' })
     await session.close()

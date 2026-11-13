@@ -1,20 +1,24 @@
+import { estimateInterview } from './estimate'
 import { createHash } from 'node:crypto'
 import { checkupReview } from '@wechat-cc/protocol'
 import type { CheckupAttempt, CheckupProfile, CheckupTarget, CheckupView } from '@wechat-cc/protocol'
 import { median, type CheckupSample, type CheckupTurn } from '../../domain/butler-checkup'
 import { addressHash, checkupKey, type CheckupStore } from '../../adapters/store/checkup-store'
-import { buildInterviewPlan, estimateInterview, scoreInterview, summarizeInterview } from '../../domain/checkup-interview'
+import { buildInterviewPlan, scoreInterview, summarizeInterview } from '../../domain/checkup-interview'
 import { extractCheckupPersona } from '../../domain/checkup-persona'
 import { interviewInstructions } from './instructions'
 import { estimateTokens } from '../../domain/butler-checkup'
 import { providerErrorCodeOf } from '../../lib/provider-error-code'
+import { checkupLimits, makeCheckupBudget, type CheckupBudget, type CheckupLimits, type CheckupBudgetMode } from '../../domain/checkup-budget'
 
 export interface CheckupOptions { full?: boolean; providerId?: string; model?: string; expectedTargetKey?: string; runKey?: string }
 export interface CheckupServiceDeps {
   store: CheckupStore
   prepareTarget?(options?:CheckupOptions):Promise<void>
   resolveTarget(options?: CheckupOptions): CheckupTarget
-  run(sample: CheckupSample, target: CheckupTarget, signal: AbortSignal): Promise<CheckupTurn>
+  run(sample: CheckupSample, target: CheckupTarget, signal: AbortSignal, budget?:CheckupBudget): Promise<CheckupTurn>
+  limits?: (full:boolean) => CheckupLimits
+  budgetMode?: (target:CheckupTarget) => CheckupBudgetMode
   persona?: () => string
   executors?: () => string[]
   holdBusy?: (label:string) => () => void
@@ -33,7 +37,7 @@ export function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> 
 const errorCode = (e: unknown): string => {
   if(e instanceof Error && e.name==='TimeoutError')return 'turn_timeout'
   const code = providerErrorCodeOf(e) ?? (e && typeof e === 'object' && 'code' in e ? String(e.code) : '')
-  return ['rate_limited','auth_failed','auth_rejected','network','network_unprotected','server_error','turn_timeout','isolated_evaluation_unavailable','target_changed','config_unreadable','config_busy','no_measurement'].includes(code) ? code : 'provider_error'
+  return ['rate_limited','auth_failed','auth_rejected','network','network_unprotected','server_error','turn_timeout','isolated_evaluation_unavailable','target_changed','config_unreadable','config_busy','no_measurement','checkup_usage_limit'].includes(code) ? code : 'provider_error'
 }
 export function makeCheckupService(d: CheckupServiceDeps) {
   const now = d.now ?? (() => new Date())
@@ -54,43 +58,61 @@ export function makeCheckupService(d: CheckupServiceDeps) {
     const persona=extractCheckupPersona(d.persona?.()??''),executors=(d.executors?.().length??0)>0?['阿禾']:[]
     return {windowTokens:target.windowTokens,full,persona,executors,systemTokens:estimateTokens(interviewInstructions(target.provider,target.model,persona,executors))}
   }
-  const receipt=(t:CheckupTarget,full:boolean)=>createHash('sha256').update(JSON.stringify([checkupKey(t),full,t.windowTokens,t.windowKnown])).digest('hex')
+  const limitsFor=(full:boolean)=>({...((d.limits?.(full))??checkupLimits(full))})
+  const budgetModeFor=(t:CheckupTarget)=>d.budgetMode?.(t)??'request'
+  const receipt=(t:CheckupTarget,options:ReturnType<typeof interviewOptions>,limits:CheckupLimits)=>createHash('sha256').update(JSON.stringify([checkupKey(t),t.windowKnown,options,limits,budgetModeFor(t)])).digest('hex')
   const hold=(label:string)=>{try{return d.holdBusy?.(label)??(()=>{})}catch{return()=>{}}}
-  const estimate = (o: CheckupOptions = {}) => { const t=d.resolveTarget(o),options=interviewOptions(t,!!o.full);return {...estimateInterview({...options,windowKnown:t.windowKnown}),targetKey:receipt(t,!!o.full)} }
-  const runSample = async (s: CheckupSample,t:CheckupTarget,signal:AbortSignal) => {
+  const estimate = (o: CheckupOptions = {}) => { const t=d.resolveTarget(o),options=interviewOptions(t,!!o.full),limits=limitsFor(!!o.full);return {...estimateInterview({...options,limits,budgetMode:budgetModeFor(t),windowKnown:t.windowKnown}),targetKey:receipt(t,options,limits)} }
+  const runSample = async (s: CheckupSample,t:CheckupTarget,signal:AbortSignal,budget?:CheckupBudget) => {
     const deadline = AbortSignal.timeout(120_000)
-    return abortable(d.run(s,t,AbortSignal.any([signal,deadline])),AbortSignal.any([signal,deadline]))
+    return abortable(d.run(s,t,AbortSignal.any([signal,deadline]),budget),AbortSignal.any([signal,deadline]))
   }
   const start = (o: CheckupOptions = {}, caller:{operator?:boolean}={}) => {
     if (active) throw new Error('checkup_busy')
     const target = d.resolveTarget(o), key = checkupKey(target), abort = new AbortController()
-    if(o.expectedTargetKey && o.expectedTargetKey!==receipt(target,!!o.full))throw new Error('checkup_target_changed')
-    const options=interviewOptions(target,!!o.full),plan=buildInterviewPlan(options),samples=plan.samples
+    const options=interviewOptions(target,!!o.full),limits=limitsFor(!!o.full),targetKey=receipt(target,options,limits),budget=makeCheckupBudget(limits)
+    if(o.expectedTargetKey && o.expectedTargetKey!==targetKey)throw new Error('checkup_target_changed')
+    const plan=buildInterviewPlan(options),samples=plan.samples
     const attempt: CheckupAttempt = {status:'running',completedRequests:0,totalRequests:samples.length,startedAt:now().toISOString()}
     d.store.prepareProfileWrite()
     d.store.claimManual(target,now().toISOString().slice(0,10),caller.operator===true)
     d.store.saveAttempt(target,attempt)
     attempts.set(key,attempt)
-    targets.set(receipt(target,!!o.full),target)
+    targets.set(targetKey,target)
     const release=hold('checkup')
     const run = async () => {
       try {
-        const results: CheckupTurn[] = []
-        for (const sample of samples) { abort.signal.throwIfAborted(); results.push(await runSample(sample,target,abort.signal)); attempt.completedRequests++; d.store.saveAttempt(target,attempt) }
+        const results: Array<CheckupTurn|null> = []
+        for (const sample of samples) {
+          abort.signal.throwIfAborted()
+          if(budget.exhausted){attempt.errorCode='checkup_usage_limit';break}
+          try { results.push(await runSample(sample,target,abort.signal,budget)) }
+          catch(error) {
+            abort.signal.throwIfAborted()
+            if(error && typeof error==='object' && 'code' in error && error.code==='checkup_usage_limit'){attempt.errorCode='checkup_usage_limit';break}
+            // A bounded empty-output failure says nothing about this question's
+            // qualities. Keep testing the remaining independent questions.
+            if(!(error && typeof error==='object' && 'code' in error && error.code==='checkup_output_exhausted'))throw error
+            results.push(null)
+          }
+          attempt.completedRequests++;attempt.usage=budget.usage;d.store.saveAttempt(target,attempt)
+          if(results.at(-1)?.usageLimited){attempt.errorCode='checkup_usage_limit';break}
+        }
         abort.signal.throwIfAborted()
-        const scores=samples.map((sample,i)=>scoreInterview(sample,results[i]!,options.persona))
-        if(!scores.some(s=>s.observed))throw Object.assign(new Error('no measurement'),{code:'no_measurement'})
+        const scores=samples.map((sample,i)=>results[i]?scoreInterview(sample,results[i]!,options.persona):{qualities:{},business:null,observed:false,unmeasured:true})
+        if(!scores.some(s=>s.observed))throw Object.assign(new Error('no measurement'),{code:attempt.errorCode??'no_measurement'})
         const summary=summarizeInterview(samples,scores)
         const stages=summary.stages
         const toolAccuracy=summary.business.ratio??0
-        const textTimes = results.map(r=>r.firstTextMs).filter((n):n is number=>n!==null)
-        const profile: CheckupProfile = {provider:target.provider,addressHash:addressHash(target.address),model:target.model,windowTokens:target.windowTokens,windowKnown:target.windowKnown,reliableFillRatio:summary.reliableFillRatio,memory:(summary.qualities.memory.ratio??0)>=.8?'good':(summary.qualities.memory.ratio??0)>=.5?'fair':'weak',stages,interview:{version:plan.version,name:options.persona.name,delegationAvailable:options.executors.length>0,reliableDay:summary.reliableDay,reliableTokens:summary.reliableTokens,qualities:summary.qualities,business:summary.business},tools:toolAccuracy>=.8?'stable':'flaky',toolAccuracy,firstTextMedianMs:textTimes.length?median(textTimes):null,completionMedianMs:median(results.map(r=>r.durationMs)),testedAt:now().toISOString(),ccVersion:d.version,short:!o.full,seed:plan.seed}
+        const measuredResults=results.filter((r):r is CheckupTurn=>r!==null)
+        const textTimes = measuredResults.map(r=>r.firstTextMs).filter((n):n is number=>n!==null)
+        const profile: CheckupProfile = {provider:target.provider,addressHash:addressHash(target.address),model:target.model,windowTokens:target.windowTokens,windowKnown:target.windowKnown,reliableFillRatio:summary.reliableFillRatio,memory:(summary.qualities.memory.ratio??0)>=.8?'good':(summary.qualities.memory.ratio??0)>=.5?'fair':'weak',stages,interview:{version:plan.version,name:options.persona.name,delegationAvailable:options.executors.length>0,reliableDay:summary.reliableDay,reliableTokens:summary.reliableTokens,qualities:summary.qualities,business:summary.business},tools:toolAccuracy>=.8?'stable':'flaky',toolAccuracy,firstTextMedianMs:textTimes.length?median(textTimes):null,completionMedianMs:median(measuredResults.map(r=>r.durationMs)),testedAt:now().toISOString(),ccVersion:d.version,short:!o.full,seed:plan.seed}
         d.store.save(target,profile)
         try { d.store.saveProbe(target,{testedAt:profile.testedAt,lastAttemptAt:profile.testedAt,suspectedChanged:false}) }
         catch { /* The complete measurement was committed; optional probe bookkeeping cannot undo it. */ }
         attempt.status='completed'
       } catch(e) { attempt.status=abort.signal.aborted?'cancelled':'failed'; if(attempt.status==='failed')attempt.errorCode=errorCode(e) }
-      finally { attempt.finishedAt=now().toISOString(); active=null; try{d.store.saveAttempt(target,attempt)}catch{/* A storage failure must never overwrite the previous complete profile. */} try{release()}catch{} }
+      finally { attempt.usage=budget.usage;attempt.finishedAt=now().toISOString(); active=null; try{d.store.saveAttempt(target,attempt)}catch{/* A storage failure must never overwrite the previous complete profile. */} try{release()}catch{} }
     }
     // Defer so cancel() can win before the very first session is spawned.
     const done = Promise.resolve().then(run)
@@ -122,8 +144,8 @@ export function makeCheckupService(d: CheckupServiceDeps) {
           d.store.saveProbe(target,{testedAt:previous?.testedAt ?? profile.testedAt,lastAttemptAt:attemptedAt,suspectedChanged:!!previous?.suspectedChanged})
           const options=interviewOptions(target,false),plan=buildInterviewPlan(options)
           // Three tiny checkpoints from the same v1 day: recall, ask and handoff.
-          const samples=plan.samples.slice(0,3),turns:CheckupTurn[]=[]
-          for(const s of samples){abort.signal.throwIfAborted();turns.push(await runSample(s,target,abort.signal))}
+          const samples=plan.samples.slice(0,3),turns:CheckupTurn[]=[],budget=makeCheckupBudget(limitsFor(false))
+          for(const s of samples){abort.signal.throwIfAborted();const turn=await runSample(s,target,abort.signal,budget);if(turn.usageLimited)throw new Error('checkup_usage_limit');turns.push(turn)}
           const scores=samples.map((s,i)=>scoreInterview(s,turns[i]!,options.persona))
           const memoryAccuracy=scores[0]!.qualities.memory?1:0,toolAccuracy=scores.slice(1).filter(s=>s.business).length/2
           const expectedMemory=profile.stages[0]?.accuracy??0

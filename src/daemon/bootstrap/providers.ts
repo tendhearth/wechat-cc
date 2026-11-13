@@ -617,6 +617,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           model: model ?? defaultOpenaiModel,
           maxOutputTokens: limits?.maxOutputTokens ?? null,
           maxRetries: limits?.maxRetries ?? 2,
+          budget: limits?.budget,
           providerName: 'wechat-openai',
           log: deps.log,
           beforeRetry: () => assertCallAllowed(deps.networkGate, { provider: 'openai', baseUrl: openaiBaseUrl, model: model ?? defaultOpenaiModel, exact: true }),

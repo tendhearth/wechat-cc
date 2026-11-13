@@ -119,7 +119,8 @@ it('keeps exam labels out of the model-visible MCP server and tool namespace',as
 })
 
 it('allows a delegate then a reply then model completion without exhausting the interview budget',async()=>{
-  const {buildInterviewPlan,scoreInterview,estimateInterview}=await import('../../domain/checkup-interview')
+  const {buildInterviewPlan,scoreInterview}=await import('../../domain/checkup-interview')
+  const {estimateInterview}=await import('./estimate')
   const {createOpenAiAgentProvider}=await import('../../adapters/executors/openai/openai-agent-provider')
   const {scriptedOpenAiModel}=await import('../../test-support/executors/openai-scripted')
   const sample=buildInterviewPlan({windowTokens:8192,full:false,executors:['private-id']}).samples.find(s=>s.expected.action==='delegate')!
@@ -129,9 +130,9 @@ it('allows a delegate then a reply then model completion without exhausting the 
   expect(result.toolError).toBeUndefined()
   expect(scoreInterview(sample,result).business).toBe(true)
   const estimate=estimateInterview({windowTokens:8192,full:false,executors:['private-id']})
-  expect(estimate.requests).toBe(72)
-  expect(estimate.maxRequests).toBe(216)
-  expect(estimate.outputTokens).toBe(110592)
+  expect(estimate.requests).toBe(48)
+  expect(estimate.maxRequests).toBe(120)
+  expect(estimate.outputTokens).toBe(69600)
 })
 
 it('does not bypass the registry network guard when preparing model capacity',async()=>{
@@ -140,4 +141,100 @@ it('does not bypass the registry network guard when preparing model capacity',as
   const gated=withNetworkGate(provider,{check:async()=>({safe:false,source:'probe',detail:'offline'})},'gemini')
   await expect(gated.prepareContextWindow?.('m')).rejects.toMatchObject({code:'network_unprotected'})
   expect(calls).toBe(0)
+})
+
+// Acceptance 2026-11-13: HTTP 200, finish_reason=length, reasoning only.
+for(const backend of ['openai','openai-inline-think','openai-closed-think','claude','claude-whitespace','claude-warning','claude-result','gemini'] as const) for(const recovery of [true,false]) it(`${backend} reasoning-only exhaustion: larger retry ${recovery?'recovers':'stays unmeasured'}`,async()=>{
+  const {buildInterviewPlan}=await import('../../domain/checkup-interview')
+  const sample=buildInterviewPlan({windowTokens:8192,full:false}).samples[0]!
+  const budgets:number[]=[]
+  let provider:AgentProvider
+  if(backend.startsWith('openai')){
+    const {createApiModel}=await import('../../adapters/executors/openai/api-model')
+    const {createOpenAiAgentProvider}=await import('../../adapters/executors/openai/openai-agent-provider')
+    let requests=0
+    provider=createOpenAiAgentProvider({makeMcpBridge:async()=>{throw Error('production bridge')},makeChatModel:(_model,limits)=>{
+      budgets.push(limits!.maxOutputTokens)
+      return createApiModel({baseURL:'http://fictional.invalid/v1',apiKey:'fictional',model:'invented',...limits,fetch:async()=>{
+        const exhausted=++requests===1||!recovery
+        const chunks=[{delta:exhausted?(backend==='openai-inline-think'?{content:'<think>思考中'}:backend==='openai-closed-think'?{content:'<think>思考中</think>'}:{reasoning_content:'思考中'}):{content:'完成'},finish_reason:null},{delta:{},finish_reason:exhausted?'length':'stop'}]
+        return new Response(chunks.map(c=>'data: '+JSON.stringify({id:'fixture',object:'chat.completion.chunk',created:1,model:'invented',choices:[{index:0,...c}]})).join('\n\n')+'\n\ndata: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}})
+      }})
+    }})
+  }else if(backend.startsWith('claude')){
+    const {createClaudeAgentProvider}=await import('../../adapters/executors/claude/claude-agent-provider')
+    const {createScriptedClaude}=await import('../../test-support/executors/claude-scripted')
+    provider=createClaudeAgentProvider({sdkOptionsForProject:()=>{throw Error('production instructions')},queryImpl:((args:any)=>{
+      budgets.push(Number(args.options.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS))
+      const exhaustedReplay=backend==='claude-result'?[{type:'result',subtype:'success',stop_reason:'max_tokens',session_id:'fictional',result:''}]:backend==='claude-warning'?[{type:'assistant',error:'max_output_tokens',api_error_params:{cut:'output_limit'},message:{model:'<synthetic>',content:[{type:'text',text:'Claude response exceeded the 4096 output token maximum.'}]}},{type:'result',subtype:'success',session_id:'fictional',result:''}]:[
+        ...(backend==='claude-whitespace'?[{type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text:'\n'}}}]:[]),
+        {type:'assistant',message:{content:[{type:'thinking',thinking:'思考中'}],stop_reason:'max_tokens'}},
+        {type:'result',subtype:'success',session_id:'fictional',result:''},
+      ]
+      const replay=budgets.length===1||!recovery?exhaustedReplay:[{type:'assistant',message:{content:[{type:'text',text:'完成'}]}},{type:'result',subtype:'success',session_id:'fictional',result:'完成'}]
+      return createScriptedClaude({turns:[{steps:[],replay}]}).query(args)
+    }) as any})
+  }else{
+    const {createGeminiAgentProvider}=await import('../../adapters/executors/gemini/gemini-agent-provider')
+    provider=createGeminiAgentProvider({model:'invented',systemInstruction:'production',mcpConnect:async()=>{throw Error('production bridge')},buildGate:()=>{throw Error('production gate')},genai:{models:{generateContent:async(req:any)=>{
+      budgets.push(req.config.maxOutputTokens)
+      return budgets.length===1||!recovery?{candidates:[{finishReason:'MAX_TOKENS',content:{parts:[{thought:true,text:'思考中'}]}}]}:{text:'完成'}
+    }}}})
+  }
+  const pending=makeCheckupTurn(()=>provider)(sample,target,new AbortController().signal)
+  if(recovery)expect((await pending).text).toBe('完成')
+  else await expect(pending).rejects.toMatchObject({code:'checkup_output_exhausted'})
+  expect(budgets).toEqual([4096,8192])
+})
+it('bounds an exhausted question to two isolated attempts and reports it as unmeasured',async()=>{
+  const budgets:number[]=[],close=vi.fn(async()=>{})
+  const provider:AgentProvider={supportsIsolatedEvaluation:true,async spawn(_project,ctx){budgets.push(ctx.evaluation!.maxOutputTokens);return{async *dispatch(){yield{kind:'error',code:'checkup_output_exhausted',message:'reasoning only'}},close}}}
+  const sample=buildCheckupPlan({windowTokens:8192,full:false}).memory[0]!
+  await expect(makeCheckupTurn(()=>provider)(sample,target,new AbortController().signal)).rejects.toMatchObject({code:'checkup_output_exhausted'})
+  expect(budgets).toEqual([4096,8192]);expect(close).toHaveBeenCalledTimes(2)
+})
+
+it('does not retry Claude context-window warnings as output exhaustion',async()=>{
+  const {createClaudeAgentProvider}=await import('../../adapters/executors/claude/claude-agent-provider')
+  const {createScriptedClaude}=await import('../../test-support/executors/claude-scripted')
+  const {buildInterviewPlan}=await import('../../domain/checkup-interview')
+  let calls=0
+  const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>{throw Error('production')},queryImpl:((args:any)=>{
+    calls++
+    return createScriptedClaude({turns:[{steps:[],replay:[{type:'assistant',error:'max_output_tokens',api_error_params:{cut:'context_window'},message:{model:'<synthetic>',content:[{type:'text',text:'model_context_window_exceeded'}]}},{type:'result',subtype:'success',is_error:true,session_id:'fictional',result:''}]}]}).query(args)
+  }) as any})
+  await expect(makeCheckupTurn(()=>provider)(buildInterviewPlan({windowTokens:8192,full:false}).samples[0]!,target,new AbortController().signal)).rejects.toBeDefined()
+  expect(calls).toBe(1)
+})
+
+for(const backend of ['openai','claude','gemini'] as const) it(`${backend} retains a scored fake reply when only the sign-off exhausts reasoning`,async()=>{
+  const {buildInterviewPlan,scoreInterview}=await import('../../domain/checkup-interview')
+  const {interviewAnswer}=await import('../../test-support/checkup-model')
+  const sample=buildInterviewPlan({windowTokens:8192,full:false}).samples[0]!,answer=interviewAnswer(sample).toolCalls[0]!
+  let spawns=0
+  let provider:AgentProvider
+  if(backend==='openai'){
+    const {createOpenAiAgentProvider}=await import('../../adapters/executors/openai/openai-agent-provider')
+    const {scriptedOpenAiModel}=await import('../../test-support/executors/openai-scripted')
+    const {createApiModel}=await import('../../adapters/executors/openai/api-model')
+    const exhausted=createApiModel({baseURL:'http://fixture.invalid/v1',model:'invented',apiKey:'fictional'},()=>({specificationVersion:'v2',provider:'fixture',modelId:'invented',supportedUrls:{},async doStream(){return{stream:new ReadableStream({start(c){c.enqueue({type:'reasoning-start',id:'r'});c.enqueue({type:'reasoning-delta',id:'r',delta:'思考中'});c.enqueue({type:'reasoning-end',id:'r'});c.enqueue({type:'finish',finishReason:'length',usage:{inputTokens:1,outputTokens:4096,totalTokens:4097}});c.close()}})}},async doGenerate(){throw Error('unused')}} as any))
+    provider=createOpenAiAgentProvider({makeMcpBridge:async()=>{throw Error('production')},makeChatModel:()=>{spawns++;const first=scriptedOpenAiModel([{calls:[answer]}]).model;let requests=0;return{...first,stream:(...args)=>++requests===1?first.stream(...args):exhausted.stream(...args)}}})
+  }else if(backend==='claude'){
+    const {createClaudeAgentProvider}=await import('../../adapters/executors/claude/claude-agent-provider')
+    provider=createClaudeAgentProvider({sdkOptionsForProject:()=>{throw Error('production')},queryImpl:((args:any)=>{
+      spawns++
+      return(async function*(){
+        const client=new Client({name:'offline',version:'1'})
+        try{await client.connect(new StreamableHTTPClientTransport(new URL(args.options.mcpServers.wechat.url)));await client.callTool({name:answer.name,arguments:answer.input as Record<string,unknown>});yield{type:'result',subtype:'success',session_id:'fixture',result:'',stop_reason:'max_tokens'}}finally{await client.close()}
+      })()
+    }) as any})
+  }else{
+    const {createGeminiAgentProvider}=await import('../../adapters/executors/gemini/gemini-agent-provider')
+    let requests=0
+    provider=createGeminiAgentProvider({model:'invented',systemInstruction:'production',mcpConnect:async()=>{throw Error('production')},buildGate:()=>{throw Error('production')},genai:{models:{generateContent:async()=>{if(++requests===1){spawns++;return{functionCalls:[{name:answer.name,args:answer.input as Record<string,unknown>}]}}return{candidates:[{finishReason:'MAX_TOKENS'}]}}}}})
+  }
+  const turn=await makeCheckupTurn(()=>provider)(sample,target,new AbortController().signal)
+  expect(turn.toolCalls).toEqual([answer])
+  expect(scoreInterview(sample,turn)).toMatchObject({observed:true,business:true,qualities:{memory:true,tracking:true,honesty:true}})
+  expect(spawns).toBe(1)
 })

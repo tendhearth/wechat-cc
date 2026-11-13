@@ -9,6 +9,7 @@ import {makeTimeoutFetch,openaiFetchTimeoutsFromEnv,type FetchLike,type FetchTim
 import {jsonSchema,streamText,tool,type LanguageModel,type ModelMessage,type TextStreamPart,type ToolSet} from 'ai'
 import {makeOpenaiRetry,type OpenaiRetryOptions} from './openai-retry'
 import {usageFetch} from './usage-fetch'
+import type {CheckupBudget} from '../../../domain/checkup-budget'
 
 export type ChatMessage=ModelMessage
 export interface ToolSpec{name:string;description:string;parameters:Record<string,unknown>}
@@ -27,6 +28,7 @@ export interface APIModelOptions extends OpenaiRetryOptions{
   maxOutputTokens?:number|null
   /** 请求内的重试上限(最多 2)。流式缺省 0(工作台);对话给 2;generate 缺省 2。SDK 自己的重试一律关掉。 */
   maxRetries?:number
+  budget?:CheckupBudget
   /** generate() 的输出上限(思考型模型把思维链也算 completion token,缺省 4000)。 */
   evalMaxOutputTokens?:number
   timeouts?:FetchTimeouts
@@ -112,14 +114,18 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
             // 内联在 content 里的思维链不给主人看 —— 见 think-tags.ts(只剥开头那一段)。
             const think=makeThinkFilter()
             const attempt=new AbortController()
+            let lease:ReturnType<CheckupBudget['reserve']>|undefined,outputBytes=0
             try{
               signal.throwIfAborted()
+              lease=options.budget?.reserve(maxOutputTokens??DEFAULT_MAX_OUTPUT_TOKENS)
               // 错误只交给下面的结构化通道;SDK 缺省 onError 会把请求/响应正文打到 console。
               const abortSignal=maxRetries?AbortSignal.any([signal,attempt.signal]):signal
-              const result=streamText({model,system,messages:input,tools,...(maxOutputTokens!==undefined?{maxOutputTokens}:{}),maxRetries:0,abortSignal,onError:()=>{}})
+              const result=streamText({model,system,messages:input,tools,...(maxOutputTokens!==undefined?{maxOutputTokens:lease?.maxOutputTokens??maxOutputTokens}:{}),maxRetries:0,abortSignal,onError:()=>{}})
               const responsePromise=result.response
               void responsePromise.catch(()=>undefined)
               for await(const part of result.fullStream){
+                if(part.type==='text-delta'||part.type==='reasoning-delta')outputBytes+=new TextEncoder().encode(part.text).length
+                else if(part.type==='tool-call')outputBytes+=new TextEncoder().encode(JSON.stringify({name:part.toolName,input:part.input})).length
                 if(outputPart(part))outputStarted=true
                 if(part.type==='text-delta'){
                   const text=think.push(part.text)
@@ -157,7 +163,7 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
               completion.resolve({messages,toolCalls,finishReason,model:finishReason==='unknown'?null:responseModel,...(usage?{usage}:{})})
               return
             }catch(error){attempt.abort(error);if(!await retry(error,retries,outputStarted,signal,retryAllowed?maxRetries:0))throw error}
-            finally{attempt.abort()}
+            finally{lease?.settle({outputTokens:usage?.output,outputBytes,exhausted:finishReason==='length'});attempt.abort()}
           }
         }catch(error){complete=true;completion.reject(error);throw error}
         finally{if(!complete)completion.reject(Error('api_model_stream_incomplete'))}
