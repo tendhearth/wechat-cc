@@ -159,11 +159,13 @@ async function browser() {
   await new Promise((resolve, reject) => { const probe=createServer(); probe.once('error',reject);probe.listen(4198,'127.0.0.1',()=>probe.close(resolve)) })
   const phase=browserSnapshot?.phase ?? 'after'
   const specs=phase==='before' ? ['design-unify-shots.spec.ts','cc-alive-shots.spec.ts'] : [
-    'phone-connect.spec.ts','cc-alive-shots.spec.ts','companion-controls.spec.ts','companion-entry.spec.ts','companion-life.spec.ts','now-hero.spec.ts','companion-status.spec.ts','pet-lab.spec.ts',
+    'butler-checkup.spec.ts','phone-connect.spec.ts','cc-alive-shots.spec.ts','companion-controls.spec.ts','companion-entry.spec.ts','companion-life.spec.ts','now-hero.spec.ts','companion-status.spec.ts','pet-lab.spec.ts',
     't5-conversation.spec.ts','workbench-layout.spec.ts','task-detail-minimal.spec.ts','workbench-line-review.spec.ts','design-unify-shots.spec.ts','hook-trust.spec.ts','memory.spec.ts','settings-projects.spec.ts']
   const home=join(run,'home');await mkdir(home,{mode:0o700})
   const browserExecutable=mini.rustc?undefined:await insideLab(join(config.browserRuntimeRoot??config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'))
-  const result=await command('browser',mini.bun,['x','--no-install','playwright','test','-c','playwright.config.ts',...specs],{
+  const acceptance=process.env.CC_UI_BROWSER_SUITE==='mini-ui-acceptance'
+  const selectedSpecs=acceptance?(phase==='before'?['task-detail-minimal.spec.ts','--grep','ordinary single-executor']:['task-detail-minimal.spec.ts','butler-checkup.spec.ts']):specs
+  const result=await command('browser',mini.bun,['x','--no-install','playwright','test','-c','playwright.config.ts',...selectedSpecs],{
     cwd:join(project,'apps/desktop'),extraEnv:{...(browserExecutable?{CC_UI_BROWSER_EXECUTABLE:browserExecutable}:{}),HOME:home,WECHAT_CC_INJECT_CSP:'1',WECHAT_CC_DESIGN_SHOTS:join(run,'design-shots'),CC_UI_CAPTURE_PHASE:phase,
       PLAYWRIGHT_BROWSERS_PATH:mini.rustc?join(config.root,'cache/browser'):join(mini.homeDir,'Library/Caches/ms-playwright')},
   })

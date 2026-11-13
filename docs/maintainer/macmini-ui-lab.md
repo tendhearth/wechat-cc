@@ -200,3 +200,10 @@ before/after覆盖同一个合成截图harness；白名单只覆盖 `playwright/
 2026-11-09：主人指定的 `codex-hook-trust-ux`、`topics-waiting-honest` 也允许这两个源码入口。这两条分支的 App 快照通过固定 `--receive-verified` 入口复用上述差异 archive 与完整 Git manifest 校验，避免不稳定 SSH 中传输约 208 MiB 的完整 archive。App target 由接收入口固定传入，不能由 manifest 选择；仅接受 after，只更新 appRoot，不覆盖浏览器 harness。仍固定 486f… 公共源码缓存，核验 commit/tree、每个 blob/mode、差异包摘要、路径和容量边界，离线安装自己的 JS 依赖并核对 workspace 解析；不复制 node_modules、Pods、构建物、账号或凭据。两端应一起更新 app/browser snapshot、source-manifest、remote/protocol 与 lock/lifecycle 模块。其它既有 App 分支继续保留原完整 Git archive 入口。
 
 入口拿锁后核对快照未在排队期间切换，预检4198空闲（占用即失败，不杀未知进程），测试HOME、TMP、daemon/workbench状态与输出均在本轮目录。用 `node apps/desktop/scripts/macmini-ui.mjs browser` 执行；全程headless与拒绝外连，不启动Xcode/模拟器或真实daemon。取回证据后，持同一锁只删除自己创建且没有被active的root/appRoot/browserRoot指向的目录；保留active的after快照，不清理他人的App快照。
+
+
+### 2026-11-13 统一界面验收
+
+主人指定 `mini-ui-acceptance` 分支可使用 browser / verified App 快照入口。该分支的 browser `before` 固定取记录本 PR #915 的父提交（`9547a8c30^`），`after` 仍取已提交 HEAD；两端使用同一份 `task-detail-minimal.spec.ts` 测试夹具覆盖，摘要记录在 snapshot.json，产品源码仍按 Git manifest 核验。
+
+设置 `CC_UI_BROWSER_SUITE=mini-ui-acceptance` 后，标准 `browser` 入口仅运行详情与体检两份用例；before 只运行普通单执行者详情对照。此开关只接受该固定值，不接受路径或自定义命令。App 的 `butler-checkup` 流程也已登记。Homebot 若缺少 `app-tools`，须记录标准入口的实际阻塞，不能借用个人工具、默认设备或主机补跑。

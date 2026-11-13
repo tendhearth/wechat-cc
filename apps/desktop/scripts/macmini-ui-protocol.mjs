@@ -63,7 +63,7 @@ export function createOfflineSession({ bundleId, appPath, stateRoot }) {
   } } }
 }
 
-export const APP_FLOWS = Object.freeze(['cc-motion', 'agent-avatars', 'approve', 'chat', 'chat-extras', 'connections', 'compose', 'worktree', 'quota-handoff', 'demo-walkthrough', 'pair-invalid', 'pair-link', 'terminal-sessions', 'push-open', 'cc-acts', 'continue-session', 'design-shots', 'codex-connection', 'design-b3-shots'])
+export const APP_FLOWS = Object.freeze(['butler-checkup', 'cc-motion', 'agent-avatars', 'approve', 'chat', 'chat-extras', 'connections', 'compose', 'worktree', 'quota-handoff', 'demo-walkthrough', 'pair-invalid', 'pair-link', 'terminal-sessions', 'push-open', 'cc-acts', 'continue-session', 'design-shots', 'codex-connection', 'design-b3-shots'])
 
 export function appFlow(value = 'all') {
   if (value !== 'all' && !APP_FLOWS.includes(value)) throw Error('Unsupported App flow')
@@ -83,6 +83,10 @@ export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv
   if (!Object.hasOwn(MINIS, target)) throw Error('Unsupported UI lab target')
   if (sshConfig !== undefined && (typeof sshConfig !== 'string' || !posix.isAbsolute(sshConfig) || sshConfig.includes('\0'))) throw Error('SSH config must be an absolute local path')
   const settings = []
+  if (gateEnv.CC_UI_BROWSER_SUITE !== undefined) {
+    if (gateEnv.CC_UI_BROWSER_SUITE !== 'mini-ui-acceptance') throw Error('Invalid browser suite')
+    settings.push('CC_UI_BROWSER_SUITE=mini-ui-acceptance')
+  }
   if (gateEnv.CC_UI_EXPECTED_SOURCE !== undefined) {
     assertExpectedSource(gateEnv.CC_UI_EXPECTED_SOURCE, gateEnv.CC_UI_EXPECTED_SOURCE)
     settings.push(`CC_UI_EXPECTED_SOURCE=${gateEnv.CC_UI_EXPECTED_SOURCE}`)

@@ -1,6 +1,8 @@
 import {test,expect} from '@playwright/test'
 import {readFile} from 'node:fs/promises'
 import {execFileSync} from 'node:child_process'
+import {join} from 'node:path'
+import {mkdir} from 'node:fs/promises'
 import {fileURLToPath} from 'node:url'
 
 // Actual desktop renderer/controller/styles against isolated synthetic responses.
@@ -237,6 +239,28 @@ test('two executor batons and their notebook render in the existing detail',asyn
  await expect(page.locator('.wb-ledger')).toContainText('这一轮做完了')
  await expect(page.locator('.wb-ledger')).toContainText('在做')
  await expect(page.locator('#wb-ledger-notes')).toContainText('assets/login-dark.webp')
+ await expect(page.locator('#wb-ledger-notes')).toHaveAttribute('open','')
+ await page.locator('.wb-ledger').scrollIntoViewIfNeeded()
  await page.screenshot({path:testInfo.outputPath('two-batons-notebook.png')})
+ if(process.env.WECHAT_CC_DESIGN_SHOTS){await mkdir(process.env.WECHAT_CC_DESIGN_SHOTS,{recursive:true});await page.screenshot({path:join(process.env.WECHAT_CC_DESIGN_SHOTS,'desktop-two-batons-notebook.png')})}
+ await page.evaluate(()=>(window as any).qa.stop())
+})
+
+
+test('ordinary single-executor detail has no added executor or notebook sections',async({page},testInfo)=>{
+ await page.setViewportSize({width:900,height:700})
+ await page.route('http://127.0.0.1:4211/**',async route=>{
+  const path=new URL(route.request().url()).pathname
+  if(path==='/'){await route.fulfill({contentType:'text/html',body:fixture});return}
+  try{await route.fulfill({body:await readFile(source+path),contentType:/\.m?js$/.test(path)?'text/javascript':path.endsWith('.css')?'text/css':'application/octet-stream'})}catch{await route.fulfill({status:404,body:'missing fixture asset'})}
+ })
+ await page.goto('http://127.0.0.1:4211')
+ await expect(page.locator('#wb-followup-text')).toBeVisible()
+ await expect(page.locator('.wb-ledger')).toHaveCount(0)
+ await expect(page.locator('#wb-ledger-notes')).toHaveCount(0)
+ await expect(page.locator('.wb-content')).not.toContainText('执行者')
+ await expect(page.locator('.wb-message')).toHaveCount(18)
+ await page.screenshot({path:testInfo.outputPath('ordinary-task.png')})
+ if(process.env.WECHAT_CC_DESIGN_SHOTS){await mkdir(process.env.WECHAT_CC_DESIGN_SHOTS,{recursive:true});await page.screenshot({path:join(process.env.WECHAT_CC_DESIGN_SHOTS,`desktop-ordinary-task-${process.env.CC_UI_CAPTURE_PHASE??'after'}.png`)})}
  await page.evaluate(()=>(window as any).qa.stop())
 })

@@ -133,3 +133,20 @@ test('mobile budget snapshots accept only the assigned branch and keep App snaps
  expect(supportsAppSnapshot('mobile-budget')).toBe(false)
  for(const ref of ['mobile-budget-other','mobile-budget;echo x','../mobile-budget'])expect(supportsBrowserSnapshot(ref)).toBe(false)
 })
+
+
+test('unified acceptance uses bounded suite and only the assigned snapshot branch',()=>{
+ expect(supportsBrowserSnapshot('mini-ui-acceptance')).toBe(true)
+ expect(supportsAppSnapshot('mini-ui-acceptance')).toBe(true)
+ for(const ref of ['mini-ui-acceptance-other','mini-ui-acceptance;echo x','../mini-ui-acceptance']){
+  expect(supportsBrowserSnapshot(ref)).toBe(false)
+  expect(supportsAppSnapshot(ref)).toBe(false)
+ }
+ const calls=[]
+ main(['node','entry','browser','homebot'],{CC_UI_BROWSER_SUITE:'mini-ui-acceptance'},(...args)=>{calls.push(args);return{status:0}})
+ expect(calls[0][1].at(-1)).toContain('CC_UI_BROWSER_SUITE=mini-ui-acceptance')
+ expect(()=>main(['node','entry','browser'],{CC_UI_BROWSER_SUITE:'arbitrary.spec.ts'},()=>{throw Error('SSH called')})).toThrow('Invalid browser suite')
+ const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
+ expect(remote).toContain("'butler-checkup.spec.ts'")
+ expect(remote).toContain("['task-detail-minimal.spec.ts','--grep','ordinary single-executor']")
+})

@@ -3,6 +3,11 @@ import { join } from 'node:path'
 import { checkupReview, type CheckupView } from '../../../packages/protocol/src'
 import { test, expect } from './fixtures'
 
+async function shot(page: import('@playwright/test').Page, name: string) {
+  const out=process.env.WECHAT_CC_DESIGN_SHOTS
+  if(out){await mkdir(out,{recursive:true});await page.screenshot({path:join(out,`desktop-checkup-${name}.png`),fullPage:true})}
+}
+
 // 和 dashboard.spec.ts 同一套进面板的办法:等壳子定下模式,再切到 dashboard(只 goto 会停在引导页,点不到「CC 的连接」)。
 async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
@@ -39,13 +44,18 @@ test('checkup shows cost before explicit start, can cancel, and keeps periodic c
   const panel = page.locator('.nc-butler')
   await expect(panel).toContainText('还没体检')
   expect(fake.mutations).toEqual([])
+  await expect(panel.locator('[data-checkup="periodic"]')).not.toBeChecked()
+  await shot(page,'unmeasured')
   await panel.locator('[data-checkup="prepare"]').click()
   await expect(panel.locator('[data-checkup="estimate"]')).toContainText('预计用 8 万左右、最多不超过 35 万输出 token')
   expect(fake.mutations).toEqual(['/v1/checkup/estimate'])
+  await shot(page,'estimate')
   await panel.locator('[data-checkup="start"]').click()
   await expect(panel).toContainText('正在体检')
+  await shot(page,'running')
   await panel.locator('[data-checkup="cancel"]').click()
   await expect(panel).toContainText('已取消')
+  await shot(page,'cancelled')
   await expect(panel.locator('[data-checkup="periodic"]')).not.toBeChecked()
   await panel.locator('[data-checkup="periodic"]').check()
   await expect(panel.locator('[data-checkup="periodic"]')).toBeChecked()

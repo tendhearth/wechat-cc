@@ -63,7 +63,7 @@ export async function receiveBrowserSnapshot({mini,sha,target='browser',selectAc
   const tar=spawnProcess('/usr/bin/tar',['-xzf',archive,'-C',project],{detached:true,stdio:'inherit'});lifecycle.track(tar);await finished(tar);lifecycle.assertRunning()
   for(const file of meta.files){const target=join(project,file.path);await chmod(target,file.mode==='100755'?0o755:0o644);const stat=await lstat(target);if(!stat.isFile()||gitObject('blob',await readFile(target))!==file.blob||(stat.mode&0o111)!==(file.mode==='100755'?0o111:0))throw Error(`Target source mismatch: ${file.path}`)}
   const harnessFiles=[]
-  for(const [name,path] of target==='browser'?[['design-unify-shots.spec.ts','apps/desktop/playwright/design-unify-shots.spec.ts'],['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts'],['playwright.config.ts','apps/desktop/playwright.config.ts']]:[]){const harness=join(mini.labHome,'browser-executor',name),bytes=await readFile(harness);await copyFile(harness,join(project,path));harnessFiles.push({path,sha256:sha256(bytes)})}
+  for(const [name,path] of target==='browser'?[['design-unify-shots.spec.ts','apps/desktop/playwright/design-unify-shots.spec.ts'],['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts'],['task-detail-minimal.spec.ts','apps/desktop/playwright/task-detail-minimal.spec.ts'],['playwright.config.ts','apps/desktop/playwright.config.ts']]:[]){const harness=join(mini.labHome,'browser-executor',name),bytes=await readFile(harness);await copyFile(harness,join(project,path));harnessFiles.push({path,sha256:sha256(bytes)})}
   const profile=await readFile(join(base,'offline-tests.sb'));await writeFile(join(root,'offline-tests.sb'),profile)
   const env={PATH:`${mini.homeDir}/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin`,HOME:join(root,'home'),BUN_INSTALL_CACHE_DIR:join(mini.homeDir,'.bun/install/cache')};await mkdir(env.HOME,{mode:0o700})
   lifecycle.assertRunning()
@@ -91,7 +91,7 @@ export function verifiedSourcePayload({repo,sha,phase='after'}) {
  const header=Buffer.from(JSON.stringify(meta)),length=Buffer.alloc(4);length.writeUInt32BE(header.length)
  return Buffer.concat([length,header,delta])
 }
-export const supportsBrowserSnapshot = branch => ['phone-connect-relay','cc-alive-2','design-unify-b1','design-unify-b1-fixes','codex-hook-trust-ux','topics-are-projects','topics-waiting-honest','design-b3','mobile-budget'].includes(branch)
+export const supportsBrowserSnapshot = branch => ['mini-ui-acceptance','phone-connect-relay','cc-alive-2','design-unify-b1','design-unify-b1-fixes','codex-hook-trust-ux','topics-are-projects','topics-waiting-honest','design-b3','mobile-budget'].includes(branch)
 
 export async function main() {
  if(process.argv[2]==='--receive') {
@@ -102,7 +102,9 @@ export async function main() {
  const phase=process.argv[2]??'after';if(!['before','after'].includes(phase))throw Error('Use before or after')
  const repo=fileURLToPath(new URL('../../..',import.meta.url)),git=(...args)=>execFileSync('/usr/bin/git',['-C',repo,...args],{maxBuffer:128*1024*1024})
  if(!supportsBrowserSnapshot(git('branch','--show-current').toString().trim()))throw Error('This task transport requires an explicitly authorized UI branch')
- const sha=git(...(phase==='before'?['merge-base','HEAD','origin/dev']:['rev-parse','HEAD'])).toString().trim()
+ // The assigned acceptance baseline is the parent of the ledger PR (#915).
+ const baseline=git('branch','--show-current').toString().trim()==='mini-ui-acceptance'?['rev-parse','9547a8c30^']:['merge-base','HEAD','origin/dev']
+ const sha=git(...(phase==='before'?baseline:['rev-parse','HEAD'])).toString().trim()
  const payload=verifiedSourcePayload({repo,sha,phase})
  const transport=sshInvocation('browser',process.argv[3]??'home',process.env.CC_UI_SSH_CONFIG,undefined,process.env),args=[...transport.args]
  args[args.length-1]=args.at(-1).replace(/browser-run\.mjs$/,`browser-snapshot.mjs --receive ${sha}`)
