@@ -52,7 +52,7 @@ export function makeCheckupService(d: CheckupServiceDeps) {
     // A pin switch must not hide the cancel control for an already running test.
     const activeAttempt=!options.runKey && active?attempts.get(active.key):undefined
     const attempt=activeAttempt ?? attempts.get(checkupKey(target)) ?? (stored?.status==='running'?{...stored,status:'failed' as const,errorCode:'interrupted'}:stored)
-    const data:CheckupView={ target,name:extractCheckupPersona(d.persona?.()??'').name,profile,attempt,suspectedChanged:profile?.interview?.version==='interview-v2' && !!probe?.suspectedChanged && (!profile||Date.parse(probe.testedAt)>Date.parse(profile.testedAt)),periodicProbe:d.store.readSettings().periodicProbe === true };return {...data,review:checkupReview(data)}
+    const data:CheckupView={ target,name:extractCheckupPersona(d.persona?.()??'').name,profile,attempt,suspectedChanged:profile?.interview?.version==='interview-v3' && !!probe?.suspectedChanged && (!profile||Date.parse(probe.testedAt)>Date.parse(profile.testedAt)),periodicProbe:d.store.readSettings().periodicProbe === true };return {...data,review:checkupReview(data)}
   }
   const interviewOptions = (target:CheckupTarget,full:boolean) => {
     const persona=extractCheckupPersona(d.persona?.()??''),executors=(d.executors?.().length??0)>0?['阿禾']:[]
@@ -60,7 +60,7 @@ export function makeCheckupService(d: CheckupServiceDeps) {
   }
   const limitsFor=(full:boolean)=>({...((d.limits?.(full))??checkupLimits(full))})
   const budgetModeFor=(t:CheckupTarget)=>d.budgetMode?.(t)??'request'
-  const receipt=(t:CheckupTarget,options:ReturnType<typeof interviewOptions>,limits:CheckupLimits)=>createHash('sha256').update(JSON.stringify(['interview-v2',checkupKey(t),t.windowKnown,options,limits,budgetModeFor(t)])).digest('hex')
+  const receipt=(t:CheckupTarget,options:ReturnType<typeof interviewOptions>,limits:CheckupLimits)=>createHash('sha256').update(JSON.stringify(['interview-v3',checkupKey(t),t.windowKnown,options,limits,budgetModeFor(t)])).digest('hex')
   const hold=(label:string)=>{try{return d.holdBusy?.(label)??(()=>{})}catch{return()=>{}}}
   const estimate = (o: CheckupOptions = {}) => { const t=d.resolveTarget(o),options=interviewOptions(t,!!o.full),limits=limitsFor(!!o.full);return {...estimateInterview({...options,limits,budgetMode:budgetModeFor(t),windowKnown:t.windowKnown}),targetKey:receipt(t,options,limits)} }
   const runSample = async (s: CheckupSample,t:CheckupTarget,signal:AbortSignal,budget?:CheckupBudget) => {
@@ -110,7 +110,7 @@ export function makeCheckupService(d: CheckupServiceDeps) {
         const toolAccuracy=summary.business.ratio??0
         const measuredResults=results.filter((r):r is CheckupTurn=>r!==null)
         const textTimes = measuredResults.map(r=>r.firstTextMs).filter((n):n is number=>n!==null)
-        const profile: CheckupProfile = {provider:target.provider,addressHash:addressHash(target.address),model:target.model,windowTokens:target.windowTokens,windowKnown:target.windowKnown,reliableFillRatio:summary.reliableFillRatio,memory:(summary.qualities.memory.ratio??0)>=.8?'good':(summary.qualities.memory.ratio??0)>=.5?'fair':'weak',stages,interview:{version:plan.version,name:options.persona.name,delegationAvailable:options.executors.length>0,reliableDay:summary.reliableDay,reliableTokens:summary.reliableTokens,qualities:summary.qualities,business:summary.business},tools:toolAccuracy>=.8?'stable':'flaky',toolAccuracy,firstTextMedianMs:textTimes.length?median(textTimes):null,completionMedianMs:median(measuredResults.map(r=>r.durationMs)),testedAt:now().toISOString(),ccVersion:d.version,short:!o.full,seed:plan.seed}
+        const profile: CheckupProfile = {provider:target.provider,addressHash:addressHash(target.address),model:target.model,windowTokens:target.windowTokens,windowKnown:target.windowKnown,reliableFillRatio:summary.reliableFillRatio,memory:(summary.qualities.memory.ratio??0)>=.8?'good':(summary.qualities.memory.ratio??0)>=.5?'fair':'weak',stages,interview:{version:plan.version,name:options.persona.name,delegationAvailable:options.executors.length>0,reliableDay:summary.reliableDay,reliableTokens:summary.reliableTokens,qualities:summary.qualities,business:summary.business,stanceActions:summary.stanceActions},tools:toolAccuracy>=.8?'stable':'flaky',toolAccuracy,firstTextMedianMs:textTimes.length?median(textTimes):null,completionMedianMs:median(measuredResults.map(r=>r.durationMs)),testedAt:now().toISOString(),ccVersion:d.version,short:!o.full,seed:plan.seed}
         d.store.save(target,profile)
         try { d.store.saveProbe(target,{testedAt:profile.testedAt,lastAttemptAt:profile.testedAt,suspectedChanged:false}) }
         catch { /* The complete measurement was committed; optional probe bookkeeping cannot undo it. */ }
@@ -133,7 +133,7 @@ export function makeCheckupService(d: CheckupServiceDeps) {
     async probeIfDue() {
       if (active || d.store.readSettings().periodicProbe !== true) return
       const target=d.resolveTarget(), profile=d.store.profile(target), previous=d.store.probe(target)
-      if (!profile || profile.interview?.version!=='interview-v2') return
+      if (!profile || profile.interview?.version!=='interview-v3') return
       const lastAttemptAt = previous?.lastAttemptAt ?? previous?.testedAt ?? profile.testedAt
       const lastAttemptMs = Date.parse(lastAttemptAt)
       if (Number.isFinite(lastAttemptMs) && now().getTime()-lastAttemptMs < 7*86400_000) return
@@ -147,8 +147,8 @@ export function makeCheckupService(d: CheckupServiceDeps) {
           const attemptedAt=now().toISOString()
           d.store.saveProbe(target,{testedAt:previous?.testedAt ?? profile.testedAt,lastAttemptAt:attemptedAt,suspectedChanged:!!previous?.suspectedChanged})
           const options=interviewOptions(target,false),plan=buildInterviewPlan(options)
-          // Three tiny checkpoints from the same v2 day: recall, ask and handoff.
-          const samples=plan.samples.slice(0,3),turns:CheckupTurn[]=[],budget=makeCheckupBudget(limitsFor(false))
+          // Three tiny checkpoints from the same v3 day: recall, ask and handoff.
+          const samples=plan.samples.filter(s=>['0/0/recall','0/0/clarify',options.executors.length?'0/0/handoff':'0/0/ordinary-handoff'].includes(s.id)).slice(0,3),turns:CheckupTurn[]=[],budget=makeCheckupBudget(limitsFor(false))
           for(const s of samples){abort.signal.throwIfAborted();const turn=await runSample(s,target,abort.signal,budget);if(turn.usageLimited)throw new Error('checkup_usage_limit');turns.push(turn)}
           const scores=samples.map((s,i)=>scoreInterview(s,turns[i]!,options.persona))
           const memoryAccuracy=scores[0]!.qualities.memory?1:0,toolAccuracy=scores.slice(1).filter(s=>s.business).length/2

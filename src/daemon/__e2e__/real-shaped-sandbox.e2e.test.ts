@@ -249,7 +249,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const spawnsBefore=spawnOptions.length
     const estimate = await desktop<{ targetKey: string; requests: number }>('POST', '/v1/checkup/estimate', {})
     expect(estimate.status).toBe(200)
-    expect(estimate.body.requests).toBe(48)
+    expect(estimate.body.requests).toBe(56)
     expect((await desktop('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey }, 'trusted')).status).toBe(403)
     const started = await desktop<View>('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey })
     expect(started.status).toBe(202)
@@ -258,8 +258,11 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // The boundary fake says only "好的。" and never calls the fictional tools.
     // Its visible speech is evidence. Wrong content fails the relevant qualities;
     // lack of reply calls does not turn a completed interview into infrastructure failure.
-    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v2',qualities:{memory:{ratio:0}},business:{ratio:20/24}}})
-    expect(result.body.attempt).toMatchObject({status:'completed'})
+    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v3',qualities:{memory:{ratio:0}},business:{ratio:21/24}}})
+    // This SDK boundary deliberately omits usage: keep each 3 × 4096 reservation.
+    // The unchanged 300k gate fits 24 of 28 questions; the final four remain unmeasured.
+    expect(result.body.attempt).toMatchObject({status:'completed',completedRequests:24,totalRequests:28,errorCode:'checkup_usage_limit'})
+    expect(result.body.profile?.interview?.qualities.stance.unmeasured).toBe(2)
     expect(readFileSync(join(d.stateDir,'checkup','observations.json'),'utf8')).toContain('好的。')
     const interviewSpawns=spawnOptions.slice(spawnsBefore).filter(o=>o.strictMcpConfig===true)
     expect(interviewSpawns).toHaveLength(24)

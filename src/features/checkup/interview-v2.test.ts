@@ -26,7 +26,8 @@ it('records spoken text and legacy reply texts in their actual appearance order,
  expect(turn.replyParts).toEqual([{kind:'text',text:'第一句。'},{kind:'reply',text:'第二句。'},{kind:'text',text:'第三句。'}])
  expect(turn.text).toBe('第一句。\n\n第三句。')
 })
-it('uses production message segments and only treats provider finalText as a diagnostic',async()=>{
+for(const checkpoint of ['recall','honesty'])it(`uses production ${checkpoint} message segments and only treats provider finalText as a diagnostic`,async()=>{
+ const sample=buildInterviewPlan({windowTokens:8192,full:false}).samples.find(s=>s.id===`0/0/${checkpoint}`)!
  const answer=(interviewAnswer(sample).toolCalls[0]!.input as {text:string}).text
  const provider:AgentProvider={supportsIsolatedEvaluation:true,async spawn(){return {async *dispatch(){
   yield {kind:'text',text:'让我想想。'}
@@ -36,7 +37,7 @@ it('uses production message segments and only treats provider finalText as a dia
  },close:async()=>{}}}}
  const turn=await makeCheckupTurn(()=>provider)(sample,target,new AbortController().signal)
  expect(turn.text).toBe(answer)
- expect(scoreInterview(sample,turn)).toMatchObject({observed:true,business:true,qualities:{memory:true,tracking:true,honesty:true}})
+ expect(scoreInterview(sample,turn)).toMatchObject({observed:true,business:true,qualities:checkpoint==='honesty'?{honesty:true}:{memory:true,tracking:true}})
 })
 it('does not score last-segment narration as a remembered answer',async()=>{
  const answer=(interviewAnswer(sample).toolCalls[0]!.input as {text:string}).text
@@ -56,7 +57,8 @@ it('keeps production final-text delivery instructions on the isolated conversati
  expect(prompt).not.toMatch(/用动作接口完成对话|回话和询问通过本次对话的动作接口交付/)
  expect(interviewInstructions('openai','synthetic')).toContain('按顺序发给对方')
 })
-for(const providerId of ['openai','claude'])it(`keeps ${providerId} streamed canaries intact across deltas`,async()=>{
+for(const providerId of ['openai','claude'])for(const checkpoint of ['recall','honesty'])it(`keeps ${providerId} streamed ${checkpoint} canaries intact across deltas`,async()=>{
+ const sample=buildInterviewPlan({windowTokens:8192,full:false}).samples.find(s=>s.id===`0/0/${checkpoint}`)!
  const answer=(interviewAnswer(sample).toolCalls[0]!.input as {text:string}).text
  const provider:AgentProvider={supportsIsolatedEvaluation:true,async spawn(){return {async *dispatch(){
   for(const char of answer)yield {kind:'text',text:char,...(providerId==='openai'?{itemId:'step-0',textMode:'append' as const}:{})}
@@ -64,9 +66,9 @@ for(const providerId of ['openai','claude'])it(`keeps ${providerId} streamed can
  },close:async()=>{}}}}
  const turn=await makeCheckupTurn(()=>provider)(sample,{...target,provider:providerId},new AbortController().signal)
  expect(turn.text).toBe(answer)
- expect(scoreInterview(sample,turn)).toMatchObject({qualities:{memory:true,tracking:true,honesty:true},business:true})
+ expect(scoreInterview(sample,turn)).toMatchObject({qualities:checkpoint==='honesty'?{honesty:true}:{memory:true,tracking:true},business:true})
 })
-it('persists final visible speech in observations and never reuses v1 reliability or probes for v2',async()=>{
+it('persists final visible speech in observations and never reuses v1/v2 reliability or probes for v3',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'checkup-v2-'));dirs.push(dir)
  const store=makeCheckupStore(dir),persona={name:'小禾',selfTitle:'小禾'}
  let calls=0
@@ -80,12 +82,14 @@ it('persists final visible speech in observations and never reuses v1 reliabilit
  expect(service.contextBudgetFor('fake','synthetic')).toMatchObject({source:'measured',reliableFillRatio:.25})
  expect(store.rotationBudgetFor(target,target.model)).toMatchObject({ratioSource:'measured',reliableFillRatio:.25})
  const observations=readFileSync(join(dir,'checkup','observations.json'),'utf8')
- expect(observations).toContain('小禾在呢');expect(observations).toContain('interview-v2')
+ expect(observations).toContain('小禾在呢');expect(observations).toContain('interview-v3')
  const profile=service.view().profile!
- store.save(target,{...profile,interview:{...profile.interview!,version:'interview-v1'},reliableFillRatio:0})
- expect(service.view().profile?.interview?.version).toBe('interview-v1')
- expect(service.view().review?.rows[0]?.detail).toContain('上一版')
- expect(service.contextBudgetFor('fake','synthetic').source).toBe('default')
- expect(store.rotationBudgetFor(target,target.model)).toMatchObject({ratioSource:'default',reliableFillRatio:.6})
- service.settings(true);const before=calls;await service.probeIfDue();expect(calls).toBe(before)
+ for(const version of ['interview-v1','interview-v2'] as const){
+  store.save(target,{...profile,interview:{...profile.interview!,version},reliableFillRatio:0})
+  expect(service.view().profile?.interview?.version).toBe(version)
+  expect(service.view().review?.status).toContain('上一版')
+  expect(service.contextBudgetFor('fake','synthetic').source).toBe('default')
+  expect(store.rotationBudgetFor(target,target.model)).toMatchObject({ratioSource:'default',reliableFillRatio:.6})
+  service.settings(true);const before=calls;await service.probeIfDue();expect(calls).toBe(before)
+ }
 })

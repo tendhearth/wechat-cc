@@ -1,6 +1,6 @@
 /** Offline, synthetic observations only. Does not start daemon or call a provider. */
 import { readFileSync } from 'node:fs'
-import { buildInterviewPlan } from '../src/domain/checkup-interview'
+import { buildInterviewPlan } from '../src/domain/checkup-interview-legacy'
 import { replayInterviewObservations, type SavedInterviewObservation } from '../src/domain/checkup-replay'
 
 const path=process.argv[2]

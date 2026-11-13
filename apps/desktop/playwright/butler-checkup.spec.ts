@@ -17,16 +17,16 @@ async function syntheticCheckup(page: import('@playwright/test').Page) {
   await page.route('**/v1/checkup**', async route => {
     const path = new URL(route.request().url()).pathname
     if (route.request().method() !== 'GET') mutations.push(path)
-    if (path.endsWith('/estimate')) return route.fulfill({ json: { requests: 8, maxRequests: 16, inputTokens: 12000, outputTokens: 69600, maxOutputTokens: 300000, summary: '预计用 7 万左右、最多不超过 30 万输出 token，大约 3–6 分钟。', windowKnown: false, targetKey: 'synthetic-quote' } })
+    if (path.endsWith('/estimate')) return route.fulfill({ json: { requests: 56, maxRequests: 120, inputTokens: 12000, outputTokens: 81200, maxOutputTokens: 300000, summary: '预计用 8 万左右、最多不超过 30 万输出 token，大约 3–6 分钟。', windowKnown: false, targetKey: 'synthetic-quote' } })
     if (path.endsWith('/run')) { expect(route.request().postDataJSON().expectedTargetKey).toBe('synthetic-quote') }
-    if (path.endsWith('/run')) state = { ...state, attempt: { status: 'running', completedRequests: 0, totalRequests: 8 } }
-    if (path.endsWith('/cancel')) state = { ...state, attempt: { status: 'cancelled', completedRequests: 1, totalRequests: 8 } }
+    if (path.endsWith('/run')) state = { ...state, attempt: { status: 'running', completedRequests: 0, totalRequests: 28 } }
+    if (path.endsWith('/cancel')) state = { ...state, attempt: { status: 'cancelled', completedRequests: 1, totalRequests: 28 } }
     if (path.endsWith('/settings')) state = { ...state, periodicProbe: route.request().postDataJSON().periodicProbe }
     return route.fulfill({ json: {...state,review:checkupReview(state as CheckupView)} })
   })
   return { mutations, weak() {
     const ratio=(v:number)=>({passed:2*v,total:2,ratio:v})
-    state = { ...state, profile: {provider:'fake',addressHash:'synthetic',model:'synthetic',windowTokens:8192,windowKnown:false,reliableFillRatio:.1,stages:[{fillRatio:.1,accuracy:1}],memory:'weak',tools:'flaky',toolAccuracy:.5,firstTextMedianMs:100,completionMedianMs:200,testedAt:'2026-11-12T00:00:00Z',short:true,seed:769906,ccVersion:'fixture',interview:{version:'interview-v2',name:'小禾',reliableDay:'一天',qualities:{memory:ratio(0),tracking:ratio(1),honesty:ratio(1),discretion:ratio(.5),stance:ratio(1),privacy:ratio(1),persona:ratio(1)},business:ratio(.5)}} }
+    state = { ...state, profile: {provider:'fake',addressHash:'synthetic',model:'synthetic',windowTokens:8192,windowKnown:false,reliableFillRatio:.1,stages:[{fillRatio:.1,accuracy:1}],memory:'weak',tools:'flaky',toolAccuracy:.5,firstTextMedianMs:100,completionMedianMs:200,testedAt:'2026-11-12T00:00:00Z',short:true,seed:769906,ccVersion:'fixture',interview:{version:'interview-v3',name:'小禾',reliableDay:'一天',qualities:{memory:ratio(0),tracking:ratio(1),honesty:ratio(1),discretion:ratio(.5),stance:ratio(1),privacy:ratio(1),persona:ratio(1)},business:ratio(.5),stanceActions:{total:4,acted:0,reported:4}}} }
   } }
 
 }
@@ -40,7 +40,7 @@ test('checkup shows cost before explicit start, can cancel, and keeps periodic c
   await expect(panel).toContainText('还没体检')
   expect(fake.mutations).toEqual([])
   await panel.locator('[data-checkup="prepare"]').click()
-  await expect(panel.locator('[data-checkup="estimate"]')).toContainText('预计用 7 万左右、最多不超过 30 万输出 token')
+  await expect(panel.locator('[data-checkup="estimate"]')).toContainText('预计用 8 万左右、最多不超过 30 万输出 token')
   expect(fake.mutations).toEqual(['/v1/checkup/estimate'])
   await panel.locator('[data-checkup="start"]').click()
   await expect(panel).toContainText('正在体检')

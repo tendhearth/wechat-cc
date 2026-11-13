@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import observations from '../test-support/fixtures/checkup-round3-run15.json'
-import { buildInterviewPlan } from './checkup-interview'
+import { buildInterviewPlan } from './checkup-interview-legacy'
 import { replayInterviewObservations } from './checkup-replay'
 
 it('replays run-15 saved tool evidence and explicitly excludes the 14 lost prose answers',()=>{
