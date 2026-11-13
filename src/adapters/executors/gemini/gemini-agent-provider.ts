@@ -25,7 +25,7 @@ import { makeTurnEmitter } from '../turn-emitter'
 import { openaiErrorCode } from '../openai/openai-error-code'
 import { withProviderCode } from '../../../lib/provider-error-code'
 import type { CheckupBudget } from '../../../domain/checkup-budget'
-import { ChatApprovalTurn, type ChatApprovalChannel, renderChatApprovalPrompt } from '../chat-approval'
+import { ChatApprovalTurn, newChatApprovalId, type ChatApprovalChannel, renderChatApprovalPrompt } from '../chat-approval'
 
 export { GEMINI_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -270,27 +270,11 @@ export interface GeminiGateDeps extends ChatApprovalChannel {
 
 const GEMINI_RELAY_TIMEOUT_MS = 120_000
 
-/** Inlined (NOT imported from permission-relay.ts, which would recreate the
- *  gemini→permission-relay→capability-matrix→gemini import cycle) djb2-ish hash →
- *  5-char base36. The relay hash MUST be exactly 5 alphanumeric chars so the admin's
- *  WeChat reply matches pending-permissions.ts's PERMISSION_REPLY_RE
- *  (/^([yn])\s+([A-Za-z0-9]{5})$/i) — anything else can NEVER be approved. A base36
- *  uint32 is 1–7 chars, so padStart guarantees the low end and slice(-5) the high end:
- *  the result is ALWAYS exactly 5 alphanumeric chars. */
-function shortHash(s: string): string {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0
-  return (h >>> 0).toString(36).padStart(5, '0').slice(-5)
-}
-
 /** Build the per-spawn tool gate. Replicates makeCanUseTool's allow/relay/deny
  *  but returns ToolGateDecision and normalizes the wechat MCP server's BARE tool
  *  names (`reply`) into the `mcp__wechat__reply` form classifyToolUse expects. */
 export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) => ToolGate {
   return (ctx: SpawnContext): ToolGate => {
-    // Per-spawn relay counter — each session owns its own, so hashes don't couple
-    // across chats. Combined with chatId in the hash input → unique per relay.
-    let relaySeq = 0
     const turn = new ChatApprovalTurn(deps.maxCards)
     return async (toolName, input, signal) => {
       if (turn.denies(`mcp__wechat__${toolName}`)) return { allow: false, message: 'Tool already denied this turn' }
@@ -315,9 +299,8 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
       if (auth.verdict === 'deny') return { allow: false, message: `tool '${toolName}' (${kind}) not allowed for this tier` }
       const admin = deps.adminFor(ctx.chatId)
       if (!admin) return { allow: false, message: 'no admin configured to approve permission requests' }
-      const seq = ++relaySeq
-      const hash = shortHash(`${ctx.chatId}:${toolName}:${seq}`)
-      const answer = await turn.ask({ channel: deps, target: admin, prompt: renderChatApprovalPrompt('Gemini', `mcp__wechat__${toolName}`, input), hash, timeoutMs: GEMINI_RELAY_TIMEOUT_MS, signal, tool: `mcp__wechat__${toolName}` })
+      const hash = newChatApprovalId()
+      const answer = await turn.ask({ channel: deps, target: admin, prompt: renderChatApprovalPrompt('Gemini', `mcp__wechat__${toolName}`, input, hash), hash, timeoutMs: GEMINI_RELAY_TIMEOUT_MS, signal, tool: `mcp__wechat__${toolName}` })
       if (answer === 'allow' && !signal?.aborted) return { allow: true }
       const message = answer === 'undelivered'
         ? 'could not reach the owner for approval (their message window is likely closed) — tell the user to try again shortly or have the owner message first'

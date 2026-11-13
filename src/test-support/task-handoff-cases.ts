@@ -16,7 +16,7 @@ export const handoffCases: Array<[string, boolean]> = [
     '换 Claude 来做', '转给 Claude', '改由 Codex 继续', 'Claude 来接着做', '给 Codex 做吧',
     'switch to claude', 'let codex take over', 'hand it off to claude',
     '请调用 matter_handoff 把事项 a85aec02 交给 Claude', '让 Claude 接着做 a85aec02 的后半段',
-    '把事项 a85aec02 交给 Claude 接着做', '换成 GLM4 继续', '交给我的 ACP',
+    '把事项 a85aec02 交给 Claude 接着做', '任务 a85aec02 交给 Claude 接着做', '换成 GLM4 继续', '交给我的 ACP',
     '让 Gemini 接管', '让 agy 接手', 'hand off to Cursor', '交给克劳德', '别修改代码而是交给 Claude', '交给 @claude 接着做',
   ].map(text => [text, true] as [string, boolean]),
 ]

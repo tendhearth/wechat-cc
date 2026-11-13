@@ -99,30 +99,40 @@ describe('要问主人:给谁、什么话、哪个码、等多久', () => {
   it('问的是 admin 那个对话(不是发起的对话),等 10 分钟', async () => {
     const g = gate({ tier: 'trusted', initiating: 'trusted-chat', admin: 'owner-chat' })
     await g.call('Bash', DESTRUCTIVE, { toolUseID: 't1' })
-    expect(g.asks).toEqual([['owner-chat', 'Claude wants to run Bash command=rm -rf /tmp/x', '002t9', 600_000]])
+    expect(g.asks[0]?.[2]).toMatch(/^[a-z0-9]{5}$/)
+    expect(g.asks).toEqual([['owner-chat', `Claude wants to run Bash [approval:${g.asks[0]?.[2]}]\n{\n  \"command\": \"rm -rf /tmp/x\"\n}`, g.asks[0]?.[2], 600_000]])
   })
 
-  // 码必须正好 5 位(主人回「y xxxxx」的正则):短的补 0、长的取后 5 位;没有 toolUseID ⇒ 空串的码 00000。
-  const HASHES: [string | undefined, string][] = [[undefined, '00000'], ['', '00000'], ['a', '0002p'], ['t1', '002t9'], ['zz', '0030g'], ['tool-use-1', '7mdiu'], ['toolu_01ABCDEFGHIJKLMNOP', '97lpn']]
-  it.each(HASHES)('toolUseID %j ⇒ 码 %s', async (id, hash) => {
+  // 保留全部 SDK ID 形状；每次请求的新码都可回复，缺 ID / 相同 ID 不得复用旧卡身份。
+  const IDS = [undefined, '', 'a', 't1', 'zz', 'tool-use-1', 'toolu_01ABCDEFGHIJKLMNOP']
+  it.each(IDS)('toolUseID %j ⇒ 两次请求都是不同的 5 位码', async id => {
     const g = gate()
     await g.call('Bash', DESTRUCTIVE, id === undefined ? {} : { toolUseID: id })
-    expect(g.asks[0]?.[2]).toBe(hash)
+    await g.call('Bash', DESTRUCTIVE, id === undefined ? {} : { toolUseID: id })
+    expect(g.asks).toHaveLength(2)
+    for (const ask of g.asks) {
+      expect(ask[2]).toMatch(/^[a-z0-9]{5}$/)
+      expect(ask[1]).toContain(`[approval:${ask[2]}]`)
+    }
+    expect(g.asks[0]?.[2]).not.toBe(g.asks[1]?.[2])
   })
 
-  // 有 title 用 title;没有 ⇒「Claude wants to run <工具> <第一个参数>」,参数只取第一个键、字符串截 40、别的写类型名。
+  // title 和各参数形状都保留，展示文字使用与另外两家相同的安全有界预览。
   const PROMPTS: [string, Record<string, unknown>, string | undefined, string][] = [
-    ['Bash', DESTRUCTIVE, 'Run it', 'Run it'],
-    ['Bash', DESTRUCTIVE, undefined, 'Claude wants to run Bash command=rm -rf /tmp/x'],
-    ['Bash', { command: `rm -rf ${'y'.repeat(60)}`, description: 'z' }, undefined, `Claude wants to run Bash command=rm -rf ${'y'.repeat(33)}`],
-    ['mcp__wechat__memory_delete', {}, undefined, 'Claude wants to run mcp__wechat__memory_delete '],
-    ['mcp__wechat__memory_delete', { id: 7, path: 'a' }, undefined, 'Claude wants to run mcp__wechat__memory_delete id=number'],
-    ['mcp__wechat__memory_delete', { path: { a: 1 } }, undefined, 'Claude wants to run mcp__wechat__memory_delete path=object'],
+    ['Bash', DESTRUCTIVE, 'Run it', '{"title":"Run it"}\n{\n  "command": "rm -rf /tmp/x"\n}'],
+    ['Bash', DESTRUCTIVE, undefined, '{\n  "command": "rm -rf /tmp/x"\n}'],
+    ['Bash', { command: `rm -rf ${'y'.repeat(60)}`, description: 'z' }, undefined, `{\n  "command": "rm -rf ${'y'.repeat(60)}",\n  "description": "z"\n}`],
+    ['mcp__wechat__memory_delete', {}, undefined, '{}'],
+    ['mcp__wechat__memory_delete', { id: 7, path: 'a' }, undefined, '{\n  "id": 7,\n  "path": "a"\n}'],
+    ['mcp__wechat__memory_delete', { path: { a: 1 } }, undefined, '{\n  "path": {\n    "a": 1\n  }\n}'],
   ]
-  it.each(PROMPTS)('%s %j title=%j ⇒ %j', async (tool, input, title, prompt) => {
+  it.each(PROMPTS)('%s %j title=%j ⇒ %j', async (tool, input, title, body) => {
     const g = gate()
     await g.call(tool, input, { toolUseID: 't1', ...(title ? { title } : {}) })
-    expect(g.asks).toEqual([['owner-chat', prompt, '002t9', 600_000]])
+    const hash = g.asks[0]?.[2]
+    expect(hash).toMatch(/^[a-z0-9]{5}$/)
+    expect(g.asks).toEqual([['owner-chat', `Claude wants to run ${tool} [approval:${hash}]\n${body}`, hash, 600_000]])
+    expect((g.asks[0]?.[1] as string).length).toBeLessThanOrEqual(2000)
   })
 
   const ANSWERS: [Answer, { behavior: string; message?: string }, string[]][] = [
@@ -134,7 +144,7 @@ describe('要问主人:给谁、什么话、哪个码、等多久', () => {
   it.each(ANSWERS)('主人答 %s', async (answer, result, logs) => {
     const g = gate({ answer })
     expect(await g.call('Bash', DESTRUCTIVE, { toolUseID: 't1' })).toEqual(result)
-    expect(g.logs).toEqual(logs)
+    expect(g.logs).toEqual(logs.map(line => line.replace('002t9', String(g.asks[0]?.[2]))))
   })
 
   // 三档档案把每类工具都写满了,能力表那一行(按模式 / 权限模式取)在 Claude 这条路上看不出差别 ——

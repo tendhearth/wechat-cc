@@ -20,7 +20,7 @@ import { retractOnFactStatus, type MemoryFeature, type MemoryPromptReads } from 
 import { careLevel, companionOfferEligible } from '../../features/companion'
 import type { TerminalFeature } from '../../features/terminal'
 import type { StickersFeature } from '../../features/stickers'
-import type { DaemonModule } from '../modules/container'
+import type { DaemonModule, ModuleCtx } from '../modules/container'
 import type { Foundation } from '../foundation'
 import type { GuardRuntime } from '../guard/runtime'
 import type { InternalApiLifecycle } from '../internal-api/lifecycle'
@@ -32,7 +32,7 @@ import { makeLlmHealth, type LlmHealth } from '../llm-health'
 import { ownerChatIdOf } from '../owner-chat'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterTopics } from '../threads/matter-topics'
-import { bootstrapModules, type Bootstrap } from './index'
+import { bootstrapModules, type Bootstrap, type BootstrapDeps } from './index'
 import { wireContextRotation } from './wire-context-rotation'
 import { providerCallTarget } from '../../app/provider-registry'
 
@@ -40,81 +40,84 @@ import { providerCallTarget } from '../../app/provider-registry'
 export interface BootApi { llmHealth: LlmHealth }
 
 export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
-  const { stateDir, dangerously, db } = f
   return bootstrapModules({
     needs: [W.send, W.permissions, W.companion, W.accounts, 'reply-delivery', 'internal-api', 'network-gate', 'stickers', 'memory'],
     lazy: ['cli-upgrade', 'workbench', 'wired', 'terminal', 'checkup'],
-    deps: (ctx) => {
-      const wxSend = ctx.get<WechatSend>(W.send)
-      const wxPerm = ctx.get<WechatPermissions>(W.permissions)
-      const wxCompanion = ctx.get<WechatCompanionControls>(W.companion)
-      const wxAccounts = ctx.get<WechatAccounts>(W.accounts)
-      const terminal = ctx.late<TerminalFeature>('terminal')
-      const replyDelivery = ctx.get<ReturnType<typeof makeReplyDeliveryRuntime>>('reply-delivery')
-      const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
-      const guardRt = ctx.get<GuardRuntime>('network-gate')
-      const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
-      const workbench = ctx.late<WorkbenchService>('workbench')
-      const wired = ctx.late<WiredDeps>('wired')
-      return {
-        makeContextRotation: parts => wireContextRotation({
-          ...parts, db, stateDir, log,
-          active: key => {
-            const mode=parts.getMode(key.chatId),alias=parts.resolve(key.chatId)?.alias
-            return !!parts.registry.get(key.providerId)&&alias===key.alias&&(mode?.kind==='solo'?mode.provider===key.providerId:mode?.kind==='primary_tool'?mode.primary===key.providerId:false)
-          },
-          recordOverflow: (key,model,inputTokens) => {
-            const actual=parts.effectiveTarget(key,model)
-            makeCheckupStore(stateDir,{log}).recordContextOverflow({provider:key.providerId,address:actual.baseUrl??'default',model,windowTokens:32000,windowKnown:false},inputTokens)
-          },
-          budgetFor: (provider, model, key) => {
-            const entry=parts.registry.get(provider)
-            const current=providerCallTarget(entry?.provider,provider,'session',{model})
-            const actual=key?parts.effectiveTarget(key,model):current
-            const resolved=model!=='default'?model:actual.model??current.model??model
-            const configured=loadAgentConfig(stateDir).modelContextWindows?.find(w=>w.provider===provider&&w.model===resolved&&checkupAddress(w.address)===checkupAddress(actual.baseUrl??'default'))
-            const measured=(actual.baseUrl===current.baseUrl?entry?.provider.contextWindowTokens?.(resolved):undefined)??configured?.windowTokens
-            return makeCheckupStore(stateDir,{log}).rotationBudgetFor({provider,address:actual.baseUrl??'default',model:resolved,windowTokens:measured??32000,windowKnown:measured!==undefined},resolved,entry?.provider.fallbackContextWindowTokens)
-          },
-          pending: chatId => wxPerm.listPendingPermissions().some(p => p.chatId === chatId),
-        }),
-        stateDir, db, loadProjects: () => f.projects.load(), networkGate: guardRt.gate,
-        ilink: { ...pick(wxSend, 'sendMessage', 'sendFile'), ...pick(wxPerm, 'askUser'), companion: wxCompanion },
-        // CC 开口那道门在 wired 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 现取。
-        speech: () => wired()?.speech ?? null,
-        // 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire;工作台还没起 ⇒ 不冲突。
-        executionGuard: (path, providerId, nativeId) => workbench()?.conflictsExternal(path, providerId, nativeId) ?? false,
-        lastActiveChatId: wxAccounts.lastActiveChatId, log: (t, l, x) => log(t, l, x),
-        fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
-        dangerouslySkipPermissions: dangerously, conversationStore: f.conversationStore,
-        replySinks: f.replySinks,
-        outboundTaps: f.outboundTaps,
-        replyDelivery,
-        // 主人自己的对话走放行规则(2026-10-25 主人点头):规则那一层在终端会话功能里(比 bootstrap 晚起)⇒ 现取;
-        // 主人与否按 access.json 的 admins 现算(原始档位,不看 --dangerously)。
-        chatOwnerRules: () => {
-          const gate = terminal()?.permissionGate
-          return gate ? makeChatOwnerRules({ gate, replyDelivery, isOwnerChat: (c) => resolveTier(c, loadAccess()) === 'admin' }) : null
-        },
-        petSignals: f.petSignals,
-        onTurnRecord: (r) => {
-          // 回合记录本身由 runner 经 MatterLog 写进这件对话的轮(M3b);这里只剩它驱动的那几样
-          f.providerRefusals.onTurn(r)
-          // CLI 自动升级的报错触发(2026-10-04):错误通道像「CLI 太旧」⇒ 排一次版本检查。
-          if (r.outcome !== 'completed') cliUpgrade()?.upgrader()?.onTurnError(r.provider, r.errorCode, r.error)
-        },
-        mintSessionToken: internalApi.mintSessionToken,
-        invalidateSession: internalApi.invalidateSession,
-        internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
-        ...promptReads(f, ctx.get<StickersFeature>('stickers').lib, ctx.get<MemoryFeature>('memory').promptReads),
-        // self-restart(spec 2026-08-03):只在有 supervisor 拉起我们的地方开(`service install` 写进 launchd / systemd 的
-        // WECHAT_CC_SUPERVISED)—— 前台 `bun cli.ts run`、Windows 的登录任务里 exit(0) 就是死了,而这个功能是静默的。
-        ...(process.env[SUPERVISED_ENV] === '1'
-          ? { requestRestart: () => f.requestRestart('self-restart-stale-code') }
-          : {}),
-      }
-    },
+    deps: ctx => bootstrapDependencies(f, ctx),
   })
+}
+
+/** 同一份生产依赖装配可离线核对，不初始化 provider 或外部服务。 */
+export function bootstrapDependencies(f: Foundation, ctx: ModuleCtx): BootstrapDeps {
+  const { stateDir, dangerously, db } = f
+  const wxSend = ctx.get<WechatSend>(W.send)
+  const wxPerm = ctx.get<WechatPermissions>(W.permissions)
+  const wxCompanion = ctx.get<WechatCompanionControls>(W.companion)
+  const wxAccounts = ctx.get<WechatAccounts>(W.accounts)
+  const terminal = ctx.late<TerminalFeature>('terminal')
+  const replyDelivery = ctx.get<ReturnType<typeof makeReplyDeliveryRuntime>>('reply-delivery')
+  const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
+  const guardRt = ctx.get<GuardRuntime>('network-gate')
+  const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
+  const workbench = ctx.late<WorkbenchService>('workbench')
+  const wired = ctx.late<WiredDeps>('wired')
+  return {
+    makeContextRotation: parts => wireContextRotation({
+      ...parts, db, stateDir, log,
+      active: key => {
+        const mode=parts.getMode(key.chatId),alias=parts.resolve(key.chatId)?.alias
+        return !!parts.registry.get(key.providerId)&&alias===key.alias&&(mode?.kind==='solo'?mode.provider===key.providerId:mode?.kind==='primary_tool'?mode.primary===key.providerId:false)
+      },
+      recordOverflow: (key,model,inputTokens) => {
+        const actual=parts.effectiveTarget(key,model)
+        makeCheckupStore(stateDir,{log}).recordContextOverflow({provider:key.providerId,address:actual.baseUrl??'default',model,windowTokens:32000,windowKnown:false},inputTokens)
+      },
+      budgetFor: (provider, model, key) => {
+        const entry=parts.registry.get(provider)
+        const current=providerCallTarget(entry?.provider,provider,'session',{model})
+        const actual=key?parts.effectiveTarget(key,model):current
+        const resolved=model!=='default'?model:actual.model??current.model??model
+        const configured=loadAgentConfig(stateDir).modelContextWindows?.find(w=>w.provider===provider&&w.model===resolved&&checkupAddress(w.address)===checkupAddress(actual.baseUrl??'default'))
+        const measured=(actual.baseUrl===current.baseUrl?entry?.provider.contextWindowTokens?.(resolved):undefined)??configured?.windowTokens
+        return makeCheckupStore(stateDir,{log}).rotationBudgetFor({provider,address:actual.baseUrl??'default',model:resolved,windowTokens:measured??32000,windowKnown:measured!==undefined},resolved,entry?.provider.fallbackContextWindowTokens)
+      },
+      pending: chatId => wxPerm.listPendingPermissions().some(p => p.chatId === chatId),
+    }),
+    stateDir, db, loadProjects: () => f.projects.load(), networkGate: guardRt.gate,
+    ilink: { ...pick(wxSend, 'sendMessage', 'sendFile'), ...pick(wxPerm, 'askUser', 'resolvePermission'), companion: wxCompanion },
+    // CC 开口那道门在 wired 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 现取。
+    speech: () => wired()?.speech ?? null,
+    // 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire;工作台还没起 ⇒ 不冲突。
+    executionGuard: (path, providerId, nativeId) => workbench()?.conflictsExternal(path, providerId, nativeId) ?? false,
+    lastActiveChatId: wxAccounts.lastActiveChatId, log: (t, l, x) => log(t, l, x),
+    fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
+    dangerouslySkipPermissions: dangerously, conversationStore: f.conversationStore,
+    replySinks: f.replySinks,
+    outboundTaps: f.outboundTaps,
+    replyDelivery,
+    // 主人自己的对话走放行规则(2026-10-25 主人点头):规则那一层在终端会话功能里(比 bootstrap 晚起)⇒ 现取;
+    // 主人与否按 access.json 的 admins 现算(原始档位,不看 --dangerously)。
+    chatOwnerRules: () => {
+      const gate = terminal()?.permissionGate
+      return gate ? makeChatOwnerRules({ gate, replyDelivery, isOwnerChat: (c) => resolveTier(c, loadAccess()) === 'admin' }) : null
+    },
+    petSignals: f.petSignals,
+    onTurnRecord: (r) => {
+      // 回合记录本身由 runner 经 MatterLog 写进这件对话的轮(M3b);这里只剩它驱动的那几样
+      f.providerRefusals.onTurn(r)
+      // CLI 自动升级的报错触发(2026-10-04):错误通道像「CLI 太旧」⇒ 排一次版本检查。
+      if (r.outcome !== 'completed') cliUpgrade()?.upgrader()?.onTurnError(r.provider, r.errorCode, r.error)
+    },
+    mintSessionToken: internalApi.mintSessionToken,
+    invalidateSession: internalApi.invalidateSession,
+    internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
+    ...promptReads(f, ctx.get<StickersFeature>('stickers').lib, ctx.get<MemoryFeature>('memory').promptReads),
+    // self-restart(spec 2026-08-03):只在有 supervisor 拉起我们的地方开(`service install` 写进 launchd / systemd 的
+    // WECHAT_CC_SUPERVISED)—— 前台 `bun cli.ts run`、Windows 的登录任务里 exit(0) 就是死了,而这个功能是静默的。
+    ...(process.env[SUPERVISED_ENV] === '1'
+      ? { requestRestart: () => f.requestRestart('self-restart-stale-code') }
+      : {}),
+  }
 }
 
 /** 把 bootstrap 的产物交给 internal-api 的路由;LLM 通道体检。 */

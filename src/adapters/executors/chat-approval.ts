@@ -1,11 +1,12 @@
+import { randomBytes } from 'node:crypto'
 import { toolInputPreview } from '../../domain/workbench/tool-input-preview'
 import { redactSecrets } from '../../domain/cli-transcript'
 
 /** 三个对话通道用同一份预览；先打码，再截断。 */
-export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, title?: string): string {
+export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, requestId: string, title?: string): string {
   const preview = toolInputPreview(input, true) ?? '[input omitted: too large or unreadable]'
   const safeTitle = title ? toolInputPreview({ title }) : null
-  const text = redactSecrets(`${provider} wants to run ${tool}${safeTitle ? `\n${safeTitle}` : ''}\n${preview}`)
+  const text = redactSecrets(`${provider} wants to run ${tool} [approval:${requestId}]${safeTitle ? `\n${safeTitle}` : ''}\n${preview}`)
   const suffix = '\n[preview truncated]'
   return text.length <= 2000 ? text : text.slice(0, 2000 - suffix.length) + suffix
 }
@@ -63,4 +64,9 @@ export class ChatApprovalTurn {
 export interface ChatApprovalLifecycle {
   beginTurn(): void
   endTurn(): void
+}
+
+/** 不从轮内序号或可缺省的 SDK toolUseID 生成，旧卡不能命中新一轮。 */
+export function newChatApprovalId(): string {
+  return randomBytes(4).readUInt32BE(0).toString(36).padStart(5, '0').slice(-5)
 }

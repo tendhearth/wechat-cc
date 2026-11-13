@@ -438,6 +438,29 @@ describe('createGeminiAgentProvider', () => {
   })
 })
 
+it('stop during a real Gemini approval revokes the card and preserves tool responses before the next turn', async () => {
+  const cards = new Set<string>(), called: string[] = [], seen: any[] = []
+  let answer!: (a: 'allow') => void
+  const responses = [{ functionCalls: [{ name: 'matter_handoff', args: {} }, { name: 'matter_handoff', args: {} }] }, { text: 'next turn' }]
+  const provider = createGeminiAgentProvider({ model: 'offline', systemInstruction: '',
+    genai: { models: { generateContent: async (req: { contents: unknown }) => { seen.push(structuredClone(req.contents)); return responses.shift()! } } } as any,
+    mcpConnect: async () => ({ listTools: async () => [{ name: 'matter_handoff', inputSchema: {} }], callTool: async name => { called.push(name); return { content: [] } }, close: async () => {} }),
+    buildGate: makeGeminiToolGate({ askUser: async (_to, _prompt, hash) => { cards.add(hash); return new Promise<'allow'>(r => { answer = r }) }, revoke: hash => { cards.delete(hash) }, adminFor: () => 'owner', modeFor: () => 'solo', lookupBase: () => ({ askUser: 'per-tool' }) }),
+  })
+  const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'owner' })
+  let finished = false
+  const work = collectTurn(session.dispatch('first')).then(r => { finished = true; return r })
+  try {
+    await expect.poll(() => cards.size).toBe(1)
+    await session.cancel!()
+    await expect.poll(() => finished, { timeout: 200 }).toBe(true)
+    expect(cards.size).toBe(0); expect(called).toEqual([])
+    answer('allow'); await work
+    await collectTurn(session.dispatch('second'))
+    expect(seen[1].flatMap((m: any) => m.parts ?? []).filter((p: any) => p.functionResponse)).toHaveLength(2)
+  } finally { answer?.('allow'); await work; await session.close() }
+})
+
 describe('makeGeminiToolGate', () => {
   function deps(over: Partial<GeminiGateDeps> = {}): GeminiGateDeps {
     return {

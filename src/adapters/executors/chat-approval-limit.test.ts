@@ -71,15 +71,16 @@ it('OpenAI reused session resets its actual dispatch budget', async () => {
 })
 
 it('Gemini reused session resets its actual dispatch budget', async () => {
-  const cards: string[] = []
+  const cards: string[] = [], hashes: string[] = []
   const responses = [{ functionCalls: [{ name: 'matter_handoff', args: {} }] }, { functionCalls: [{ name: 'matter_handoff', args: { different: true } }] }, { text: 'done' }, { functionCalls: [{ name: 'matter_handoff', args: {} }] }, { text: 'done again' }]
   const provider = createGeminiAgentProvider({ model: 'offline', systemInstruction: '', genai: { models: { generateContent: async () => responses.shift()! } } as any,
     mcpConnect: async () => ({ listTools: async () => [{ name: 'matter_handoff', inputSchema: {} }], callTool: async () => { throw Error('denied tool ran') }, close: async () => {} }),
-    buildGate: makeGeminiToolGate({ askUser: async (_to, prompt) => { cards.push(prompt); return 'deny' }, adminFor: () => 'owner', modeFor: () => 'solo', lookupBase: () => ({ askUser: 'per-tool' }) }),
+    buildGate: makeGeminiToolGate({ askUser: async (_to, prompt, hash) => { cards.push(prompt); hashes.push(hash); return 'deny' }, adminFor: () => 'owner', modeFor: () => 'solo', lookupBase: () => ({ askUser: 'per-tool' }) }),
   })
   const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'owner' })
   try {
     await collectTurn(session.dispatch('first', undefined, { source: 'inbound' })); expect(cards).toHaveLength(1)
     await collectTurn(session.dispatch('second', undefined, { source: 'inbound' })); expect(cards).toHaveLength(2)
+    expect(new Set(hashes).size).toBe(2)
   } finally { await session.close() }
 })

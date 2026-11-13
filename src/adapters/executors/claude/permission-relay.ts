@@ -5,7 +5,7 @@ import { isReplyToolName } from '../../../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type UserTier } from '../../../domain/user-tier'
 import { authorize } from '../../../domain/authorize'
 import { authorizeChatToolUse, type ChatOwnerRules } from '../../permission-rules/chat'
-import { ChatApprovalTurn, type ChatApprovalChannel, type ChatApprovalLifecycle, renderChatApprovalPrompt } from '../chat-approval'
+import { ChatApprovalTurn, newChatApprovalId, type ChatApprovalChannel, type ChatApprovalLifecycle, renderChatApprovalPrompt } from '../chat-approval'
 
 export interface PermissionRelayDeps extends ChatApprovalChannel {
   /**
@@ -117,8 +117,8 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool & ChatAppr
         message: 'no admin configured to approve permission requests',
       } satisfies PermissionResult
     }
-    const hash = shortHash(opts.toolUseID ?? '')
-    const prompt = renderChatApprovalPrompt('Claude', toolName, input, opts.title)
+    const hash = newChatApprovalId()
+    const prompt = renderChatApprovalPrompt('Claude', toolName, input, hash, opts.title)
     const answer = await approvalTurn.ask({ channel: deps, target, prompt, hash, timeoutMs: DEFAULT_TIMEOUT_MS, signal, tool: toolName })
     if (answer === 'allow' && !signal.aborted) return { behavior: 'allow' } satisfies PermissionResult
     deps.log('PERMISSION', `${answer}: tool=${toolName} hash=${hash}`)
@@ -135,13 +135,5 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool & ChatAppr
     beginTurn() { controller.abort(); controller = new AbortController(); turn = new ChatApprovalTurn(deps.maxCards) },
     endTurn() { controller.abort() },
   })
-}
-
-function shortHash(s: string): string {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0
-  // A base36 uint32 is 1–7 chars; the admin reply regex (pending-permissions.ts
-  // PERMISSION_REPLY_RE) requires EXACTLY 5. padStart guards <5, slice(-5) guards >5.
-  return (h >>> 0).toString(36).padStart(5, '0').slice(-5)
 }
 

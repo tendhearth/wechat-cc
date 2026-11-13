@@ -252,15 +252,22 @@ describe('authorize 逐格对照:对话 · Gemini 闸门', () => {
         const ownerRules = wiredRules(tn === 'admin', counter)
         const run = async (build: (d: GeminiGateDeps) => (ctx: SpawnContext) => ToolGate) => {
           const trace: unknown[] = []
-          const gate = build({
-            ownerRules: () => ownerRules,
-            askUser: async (...a) => { trace.push(['ask', ...a]); return answer },
-            adminFor: (c) => { trace.push(['admin?', c]); return admin },
-            modeFor: (c) => { trace.push(['mode?', c]); return mode },
-            lookupBase: (m, p) => { trace.push(['base?', m, p]); return { askUser } as never },
-          })({ chatId: 'chat', tierProfile, permissionMode } as SpawnContext)
           const out: unknown[] = []
-          for (const name of BARE) out.push(await gate(name, { text: 'hi', command: 'rm -rf /' }))
+          // 逐格比较的是权限规则，每格是一轮；限流和卡身份由通道回归另测。
+          for (const name of BARE) {
+            const gate = build({
+              ownerRules: () => ownerRules,
+              askUser: async (admin, prompt, hash, timeout) => {
+                expect(prompt).toContain(name)
+                expect(hash).toMatch(/^[a-z0-9]{5}$/i)
+                trace.push(['ask', admin, timeout]); return answer
+              },
+              adminFor: (c) => { trace.push(['admin?', c]); return admin },
+              modeFor: (c) => { trace.push(['mode?', c]); return mode },
+              lookupBase: (m, p) => { trace.push(['base?', m, p]); return { askUser } as never },
+            })({ chatId: 'chat', tierProfile, permissionMode } as SpawnContext)
+            out.push(await gate(name, { text: 'hi', command: 'rm -rf /' }))
+          }
           return { out, trace }
         }
         expect(await run(makeGeminiToolGate), `${tn}/${permissionMode}/${mode}/${askUser}/${admin}/${answer}`).toEqual(await run(legacyGeminiGate))

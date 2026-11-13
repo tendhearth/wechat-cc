@@ -71,7 +71,7 @@ export function choiceTakes(text: string, open: OpenChoice | undefined, nowMs: n
 function acceptsOffer(text: string, providerId: string): boolean {
   if (BARE_ACK.test(text)) return true
   const names = [providerId, providerDisplayName(providerId)].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-  return new RegExp(`^(?:(?:好|好的|是)[,，]??\\s*)?(?:交给|换(?:成)?)\\s*(?:${names})(?:\\s*继续)?[。.!！]?$`, 'i').test(text)
+  return new RegExp(`^(?:(?:好|好的|是)[,，]?\\s*)?(?:交给|换(?:成)?)\\s*(?:${names})(?:\\s*继续)?[。.!！]?$`, 'i').test(text)
 }
 const NO = /^\s*(不用|不要|算了|不了|先不|先放着)\s*[。.!！]?\s*$/
 const BARE_ACK = /^\s*(是|是的|好|好的|可以|行|嗯)\s*[。.!！]?\s*$/

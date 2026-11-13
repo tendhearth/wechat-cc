@@ -27,7 +27,7 @@ export interface BootstrapDeps {
   /** 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire(SessionManagerOptions.executionGuard);缺省 = 不冲突。 */
   executionGuard?: (path: string, providerId: string, nativeId: string | null) => boolean
   /** 微信那一侧只用这几样(架构终态 A6 窄口,src/ports/wechat.ts):回复 / 通知、发文件、工具权限卡、提示词里「主动关心开没开」。 */
-  ilink: Pick<WechatSend, 'sendMessage' | 'sendFile'> & Pick<WechatPermissions, 'askUser'> & Partial<Pick<WechatPermissions, 'resolvePermission'>> & { companion: WechatCompanionControls }
+  ilink: Pick<WechatSend, 'sendMessage' | 'sendFile'> & Pick<WechatPermissions, 'askUser' | 'resolvePermission'> & { companion: WechatCompanionControls }
   loadProjects: () => { projects: Record<string, { path: string; last_active: number }>; current: string | null }
   lastActiveChatId: () => string | null
   /** Third `fields` arg lands in the JSONL sidecar (channel.log.jsonl) for
