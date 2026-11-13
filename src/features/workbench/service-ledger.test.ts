@@ -67,7 +67,8 @@ it('two fake executors share one matter and workspace; the second receives notes
   expect(f.starts[1]!.resumeSessionId).toBeUndefined()
   expect(f.requests[1]!).toContain('深色图在 login-dark.webp')
   expect(f.requests[1]!).toContain('artifact')
-  expect(f.requests[1]!).toContain(f.project)
+  // 记录是 JSON 值:Windows 路径里的反斜杠在记录本里是转义过的。
+  expect(f.requests[1]!).toContain(JSON.stringify(f.project).slice(1,-1))
   expect(f.requests[1]!).not.toContain('RAW_TRANSCRIPT_CANARY')
   await expect.poll(()=>f.service.detail(first.id).task.status).toBe('completed')
   expect(f.store.ledger.agents(first.id).map(a=>[a.executor,a.status])).toEqual([['codex','completed'],['claude','completed']])
