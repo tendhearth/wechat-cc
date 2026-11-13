@@ -21,6 +21,15 @@ function validProfile(v: unknown): v is CheckupProfile {
 export function makeCheckupStore(stateDir: string) {
   const profilesPath = join(stateDir,'checkup','profiles.json'), settingsPath = join(stateDir,'checkup','settings.json')
   return {
+    prepareProfileWrite() { updateJsonFile(profilesPath, () => {}) },
+    claimManual(target:CheckupTarget,day:string,operator:boolean) {
+      updateJsonFile(join(stateDir,'checkup','manual-usage.json'),raw=>{
+        const key=checkupKey(target),prior=raw[key] as {day?:string;count?:number}|undefined
+        const count=prior?.day===day&&Number.isInteger(prior.count)?prior.count!:0
+        if(!operator&&count>=3)throw new Error('checkup_rate_limited')
+        raw[key]={day,count:count+1}
+      })
+    },
     attempt(target:CheckupTarget):CheckupAttempt|null {
       const value=readJsonObject(join(stateDir,'checkup','attempts.json'))[checkupKey(target)]
       // Reuse the wire validator; no arbitrary error text survives this boundary.

@@ -473,6 +473,7 @@ const en = {
   'butler.stale': 'The latest status is unavailable. These are the last known results.',
   'butler.targetChanged': 'CC is using a different model or connection. Please review the checkup estimate again.',
   'butler.busy': 'A checkup is already running. Please wait, or cancel it first.',
+  'butler.rateLimited': 'This model’s daily checkup limit has been reached. Try again later.',
   'butler.invalidRequest': 'The checkup could not start. Open the checkup again and try once more.',
   'butler.actionFailed': 'That checkup action did not go through. Please try again.',
   'butler.title': 'CC status',

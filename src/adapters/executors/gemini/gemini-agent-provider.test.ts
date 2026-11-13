@@ -511,3 +511,26 @@ describe('makeGeminiToolGate', () => {
     for (const h of hashes) expect(h).toMatch(/^[A-Za-z0-9]{5}$/)
   })
 })
+
+it('keeps ordinary constructor model selection and boundary cancellation identical to production',async()=>{
+  let request:any,finish!:(value:any)=>void,started!:()=>void
+  const ready=new Promise<void>(r=>started=r)
+  const provider=createGeminiAgentProvider({model:'production-model',systemInstruction:'production',genai:{models:{generateContent:async req=>{
+    request=req;started()
+    return new Promise<any>((resolve,reject)=>{finish=resolve;req.config?.abortSignal?.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')))})
+  }}},mcpConnect:async()=>({listTools:async()=>[],callTool:async()=>({content:[]}),close:async()=>{}}),buildGate:()=>async()=>({allow:true})})
+  const ctx={tierProfile:TIER_PROFILES.admin,permissionMode:'strict' as const,chatId:'offline',model:'spawn-model'}
+  const session=await provider.spawn({alias:'offline',path:'/tmp'},ctx)
+  expect(provider.callTarget?.('session',ctx)?.model).toBe('production-model')
+  const pending=collectTurn(session.dispatch('hello'))
+  await ready
+  await session.cancel?.()
+  finish({functionCalls:[{name:'reply',args:{text:'never send'}}]})
+  const turn=await pending
+  expect(request.model).toBe('production-model')
+  expect(request.config.abortSignal).toBeUndefined()
+  expect(turn.error).toBeUndefined()
+  expect(turn.result).toBeDefined()
+  expect(request.contents).toContainEqual({role:'model',parts:[{text:'[cancelled]'}]})
+  await session.close()
+})

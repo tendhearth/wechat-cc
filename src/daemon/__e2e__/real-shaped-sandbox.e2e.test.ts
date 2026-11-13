@@ -234,7 +234,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     } finally {writeFileSync(configPath,config);for(const id of ids)db.query('DELETE FROM threads WHERE id=?').run(id);db.close()}
   })
 
-  it('checkup: explicit owner trigger uses synthetic model requests, records a local profile and keeps probes off', async () => {
+  it('checkup: explicit owner trigger uses synthetic requests and keeps an unscorable run out of the archive', async () => {
     type View = { target: { provider: string; model: string }; profile: { memory: string; short: boolean } | null; attempt: { status: string } | null; periodicProbe: boolean }
     const before = await desktop<View>('GET', '/v1/checkup')
     expect(before.status).toBe(200)
@@ -253,16 +253,17 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect((await desktop('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey }, 'trusted')).status).toBe(403)
     const started = await desktop<View>('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey })
     expect(started.status).toBe(202)
-    await expect.poll(async () => (await desktop<View>('GET', '/v1/checkup')).body.attempt?.status, { timeout: 15000 }).toBe('completed')
+    await expect.poll(async () => (await desktop<View>('GET', '/v1/checkup')).body.attempt?.status, { timeout: 15000 }).toBe('failed')
     const result = await desktop<View>('GET', '/v1/checkup')
     // The boundary fake says only "好的。" and never calls the fictional tools.
-    // A completed weak measurement proves failures and model quality are distinct.
-    expect(result.body.profile).toMatchObject({ memory: 'weak', short: true,interview:{version:'interview-v1',name:'小禾'} })
+    // No legal actions means the measurement did not succeed; it cannot establish a budget.
+    expect(result.body.profile).toBeNull()
+    expect(result.body.attempt).toMatchObject({status:'failed',errorCode:'no_measurement'})
     const interviewSpawns=spawnOptions.slice(spawnsBefore).filter(o=>o.strictMcpConfig===true)
     expect(interviewSpawns.length).toBeGreaterThan(0)
-    const sent=JSON.stringify(interviewSpawns)
+    const sent=JSON.stringify(interviewSpawns.map(o=>({system:o.systemPrompt,tools:o.tools,allowedTools:o.allowedTools,settings:o.settings})))
     expect(sent).toContain('小禾')
-    for(const secret of [privateCanary,'在杭州做独立开发','周三晚上固定打羽毛球',d.stateDir])expect(interviewSpawns.map(o=>String(o.systemPrompt)).join('\n')).not.toContain(secret)
+    for(const secret of [privateCanary,'在杭州做独立开发','周三晚上固定打羽毛球',d.stateDir])expect(sent).not.toContain(secret)
     if(priorPersona===null)rmSync(personaPath);else writeFileSync(personaPath,priorPersona)
     expect(result.body.periodicProbe).toBe(false)
     expect(existsSync(join(d.stateDir, 'checkup', 'profiles.json'))).toBe(true)

@@ -117,3 +117,27 @@ it('keeps exam labels out of the model-visible MCP server and tool namespace',as
     expect((await client.listTools()).tools.map(t=>t.name)).toEqual(['reply','ask_user'])
   }finally{await client.close();await bridge.close()}
 })
+
+it('allows a delegate then a reply then model completion without exhausting the interview budget',async()=>{
+  const {buildInterviewPlan,scoreInterview,estimateInterview}=await import('../../domain/checkup-interview')
+  const {createOpenAiAgentProvider}=await import('../../adapters/executors/openai/openai-agent-provider')
+  const {scriptedOpenAiModel}=await import('../../test-support/executors/openai-scripted')
+  const sample=buildInterviewPlan({windowTokens:8192,full:false,executors:['private-id']}).samples.find(s=>s.expected.action==='delegate')!
+  const model=scriptedOpenAiModel([{calls:[{name:'delegate',input:{executor:sample.expected.executor!,instruction:`整理 ${sample.expected.task}，交付清单。`}}]},{calls:[{name:'reply',input:{text:'交代好了。'}}]},{text:['done']}])
+  const provider=createOpenAiAgentProvider({makeChatModel:()=>model.model,makeMcpBridge:async()=>{throw Error('production tools')}})
+  const result=await makeCheckupTurn(()=>provider)(sample,target,new AbortController().signal)
+  expect(result.toolError).toBeUndefined()
+  expect(scoreInterview(sample,result).business).toBe(true)
+  const estimate=estimateInterview({windowTokens:8192,full:false,executors:['private-id']})
+  expect(estimate.requests).toBe(72)
+  expect(estimate.maxRequests).toBe(216)
+  expect(estimate.outputTokens).toBe(110592)
+})
+
+it('does not bypass the registry network guard when preparing model capacity',async()=>{
+  let calls=0
+  const provider:AgentProvider={spawn:async()=>{throw Error('no generation')},callTarget:()=>({provider:'gemini',model:'m'}),prepareContextWindow:async()=>{calls++}}
+  const gated=withNetworkGate(provider,{check:async()=>({safe:false,source:'probe',detail:'offline'})},'gemini')
+  await expect(gated.prepareContextWindow?.('m')).rejects.toMatchObject({code:'network_unprotected'})
+  expect(calls).toBe(0)
+})

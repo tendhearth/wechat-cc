@@ -19,11 +19,11 @@ export function checkupRoutes(service:CheckupService):RouteTable {
       const o=options({...q.has('provider')?{providerId:q.get('provider')!}:{},...q.has('model')?{model:q.get('model')!}:{}})
       return o?{status:200,body:service.view(o)}:{status:400,body:{error:'checkup_invalid_request'}}
     },
-    'POST /v1/checkup/estimate':(_q,b)=>{const o=options(b);return o?{status:200,body:service.estimate(o)}:{status:400,body:{error:'checkup_invalid_request'}}},
-    'POST /v1/checkup/run':(_q,b)=>{
+    'POST /v1/checkup/estimate':async(_q,b)=>{const o=options(b);return o?{status:200,body:await service.prepareEstimate(o)}:{status:400,body:{error:'checkup_invalid_request'}}},
+    'POST /v1/checkup/run':(_q,b,c)=>{
       const o=options(b);if(!o?.expectedTargetKey)return {status:400,body:{error:'checkup_invalid_request'}}
-      try { service.start(o);return {status:202,body:service.view(o)} }
-      catch(e){if(e instanceof Error && ['checkup_busy','checkup_target_changed'].includes(e.message))return {status:409,body:{error:e.message}};throw e}
+      try { service.start(o,{operator:c?.origin==='operator'});return {status:202,body:service.view(o)} }
+      catch(e){if(e instanceof Error&&e.message==='checkup_rate_limited')return {status:429,body:{error:e.message}};if(e instanceof Error && ['checkup_busy','checkup_target_changed'].includes(e.message))return {status:409,body:{error:e.message}};throw e}
     },
     'POST /v1/checkup/cancel':()=>{service.cancel();return {status:200,body:service.view()}},
     'POST /v1/checkup/settings':(_q,b)=>{
@@ -31,5 +31,5 @@ export function checkupRoutes(service:CheckupService):RouteTable {
       return {status:200,body:service.settings(b.periodicProbe)}
     },
   }
-  return Object.fromEntries(Object.entries(handlers).map(([key,handler])=>[key,async(q,b,c,ctx)=> owner(c) ? handler!(q,b,c,ctx) : {status:403,body:{error:'forbidden'}}]))
+  return Object.fromEntries(Object.entries(handlers).map(([key,handler])=>[key,async(q,b,c,ctx)=> owner(c) && !(c?.origin==='device'&&(q.has('provider')||q.has('model')||!!b&&typeof b==='object'&&('providerId' in b||'model' in b))) ? handler!(q,b,c,ctx) : {status:403,body:{error:'forbidden'}}]))
 }

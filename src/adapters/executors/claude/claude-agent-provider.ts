@@ -206,6 +206,7 @@ type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: str
 // contain private file or command output and is deliberately not read here.
 type UserMsg = { type: 'user'; parent_tool_use_id?: string | null; message?: { content?: string | Array<{ type?: string; tool_use_id?: string; is_error?: boolean }> } }
 type ResultMsg = {
+  modelUsage?: Record<string,{contextWindow:number}>
   type: 'result'
   subtype?: string
   session_id?: string
@@ -284,6 +285,8 @@ export function claudeBaseUrl(env?: Record<string, string | undefined>): string 
 }
 
 export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider {
+  const windows=new Map<string,number>()
+  const windowKey=(base:string|null,model:string)=>JSON.stringify([base,model])
   // One-shot eval with no tools, no MCP, no session continuation — shared by
   // cheapEval (haiku-class) and strongEval (the verdict's main model). Both
   // pass an explicit model so the only difference is which model runs.
@@ -344,6 +347,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       const options=await opts.sdkOptionsForProject(project.alias,project.path,TIER_PROFILES.trusted,'workbench:catalog')
       return discoverClaudeModels(options,Math.max(0,deadline-Date.now()))
     },
+    contextWindowTokens:model=>windows.get(windowKey(claudeBaseUrl(),model)),
     supportsIsolatedEvaluation: true,
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
@@ -557,6 +561,10 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               // SDK 自己的「最后的话」(result.result = 最后一条助理消息的文字):只在成功轮带,只用于核对
               // 分段的结果(回复交付第 5 步:交付用分段,见 AgentEvent.result 的注释)。
+              for(const [model,usage] of Object.entries(msg.modelUsage??{})){
+                const capacity=usage?.contextWindow
+                if(Number.isSafeInteger(capacity)&&capacity>=1024&&capacity<=10_000_000)windows.set(windowKey(spawnTarget.baseUrl,model),capacity)
+              }
               const clean = !failed && msg.is_error !== true && !apiErrored && !turnErrored && typeof msg.result === 'string'
               aq.push({
                 kind: 'result',

@@ -116,3 +116,24 @@ describe('isolated checkup provider boundary', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 })
+
+it('retains observed Claude model capacity for later estimates without a metadata request',async()=>{
+  const scripted=createScriptedClaude({turns:[{steps:[],replay:[{type:'result',subtype:'success',session_id:'fictional',result:'done',modelUsage:{'pinned-model':{contextWindow:65536}}} as any]}]})
+  const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({}),queryImpl:scripted.query})
+  const {ctx}=fixture(),session=await provider.spawn(project,ctx)
+  expect(provider.contextWindowTokens?.('pinned-model')).toBeUndefined()
+  await collectTurn(session.dispatch('invented'))
+  expect(provider.contextWindowTokens?.('pinned-model')).toBe(65536)
+  expect(provider.contextWindowTokens?.('other')).toBeUndefined()
+  await session.close()
+})
+
+it('uses Gemini model metadata for estimates without sending a generation',async()=>{
+  const generateContent=vi.fn(async()=>({text:'never'})),get=vi.fn(async(_request:any)=>({inputTokenLimit:1048576}))
+  const provider=createGeminiAgentProvider({genai:{models:{generateContent,get}},model:'m',systemInstruction:'production',mcpConnect:async()=>{throw Error('no tools')},buildGate:()=>async()=>({allow:true})})
+  await provider.prepareContextWindow?.('m')
+  expect(provider.contextWindowTokens?.('m')).toBe(1048576)
+  expect(provider.contextWindowTokens?.('other')).toBeUndefined()
+  expect(generateContent).not.toHaveBeenCalled()
+  expect(get.mock.calls[0]?.[0]).toMatchObject({model:'m',config:{httpOptions:{retryOptions:{attempts:1}}}})
+})

@@ -25,6 +25,7 @@ export interface WorkbenchErrorSpec {
 export type WorkbenchErrorSurface = 'desktop' | 'phone'
 
 export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Object.freeze({
+  checkup_rate_limited: { desktop:429, phone:429 },
   checkup_busy: { desktop:409, phone:[409,'busy'] },
   checkup_invalid_request: { desktop:400, phone:400 },
   checkup_target_changed: { desktop:409, phone:[409,'stale'] },

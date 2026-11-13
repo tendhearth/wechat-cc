@@ -38,7 +38,7 @@ export function checkupReview(view:CheckupView):CheckupReview {
     for(const key of ['memory','tracking','honesty','discretion','stance','privacy'] as const)add(key,p.interview.qualities[key])
     add('business',p.interview.business);add('persona',p.interview.qualities.persona)
     const memory=rows[0]!
-    if(p.interview.reliableDay)memory.detail=`${p.interview.reliableDay}内的事靠得住${p.short&&p.reliableFillRatio>=.25?'，更久还没测':p.reliableFillRatio<.8?'，再久需要多照应':''}`
+    if(p.interview.reliableTokens)memory.detail=`约 ${p.interview.reliableTokens} token 的编造对话内靠得住${p.short?'，更长还没测':''}`
     rows.push({key:'speed',label:'快慢',detail:`首字${p.firstTextMedianMs===null?'未测到':`约 ${Math.round(p.firstTextMedianMs)} 毫秒`}，完成约 ${Math.round(p.completionMedianMs)} 毫秒`,grade:''})
   } else if(p) {
     rows.push({key:'memory',label:'记性',detail:'上一版体检记录，重新体检可看完整评语',grade:{good:'好',fair:'一般',weak:'弱'}[p.memory]})

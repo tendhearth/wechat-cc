@@ -445,6 +445,10 @@ export interface ProviderCapabilities {
 }
 
 export interface AgentProvider {
+  /** Synchronous, previously observed model capacity; must not call a model. */
+  contextWindowTokens?(model:string):number|undefined
+  /** Optional bounded metadata lookup, only when explicitly preparing an estimate. */
+  prepareContextWindow?(model:string):Promise<void>
   /** Explicitly verified tools-only, no-private-history evaluation boundary. */
   supportsIsolatedEvaluation?: true
   /** Discovery owns one bounded native deadline and subprocess cleanup; no model turn is sent. */

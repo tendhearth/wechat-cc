@@ -475,6 +475,7 @@ const zh: Record<keyof typeof en, string> = {
   'butler.stale': '暂时读不到最新状态，下面是上次所知。',
   'butler.targetChanged': 'CC 用的模型或连接变了，请重新确认体检用量。',
   'butler.busy': '体检已经在做了，请稍等，或先取消这一轮。',
+  'butler.rateLimited': '这个模型的每日体检次数已用完，请稍后再试。',
   'butler.invalidRequest': '这次体检没能开始，请重新打开体检再试。',
   'butler.actionFailed': '这次体检操作没做成，请再试一次。',
   'butler.title': 'CC 状态',

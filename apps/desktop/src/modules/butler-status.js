@@ -64,7 +64,8 @@ export function mountButlerStatus({ host, call }) {
     try { await action(); failed = false } catch (e) {
       estimate = null; failed = true
       const code = e instanceof Error ? e.message : typeof e === 'string' ? e : ''
-      actionError = code.includes('checkup_target_changed') || code === 'stale' ? 'CC 用的模型或连接变了，请重新确认体检用量。'
+      actionError = code.includes('checkup_rate_limited') ? '这个模型的每日体检次数已用完，请稍后再试。'
+        : code.includes('checkup_target_changed') || code === 'stale' ? 'CC 用的模型或连接变了，请重新确认体检用量。'
         : code.includes('checkup_busy') || code === 'busy' ? '体检已经在做了，请稍等，或先取消这一轮。'
         : code.includes('checkup_invalid_request') ? '这次体检没能开始，请重新打开体检再试。'
         : '这次体检操作没做成，请再试一次。'

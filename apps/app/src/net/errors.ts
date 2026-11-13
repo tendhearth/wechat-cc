@@ -14,6 +14,7 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   // Notebook errors keep the device paired; only the executor session can have ended.
   ['matter_ledger_forbidden','unavailable'],['matter_session_ended','cli_ended'],['matter_note_limit','unavailable'],
   ['checkup_invalid_request', 'checkup_invalid'],
+  ['checkup_rate_limited', 'checkup_rate_limited'],
   ['input_stale', 'input_stale'], ['input_conflict', 'input_conflict'],
   ['native_session_busy', 'session_busy'], ['native_folder_busy', 'folder_busy'],
   ['unavailable_provider', 'provider_missing'], ['invalid_path', 'folder_missing'], ['provider_quota_exhausted', 'quota'], ['worktree_not_git', 'worktree_not_git'], ['worktree_dirty', 'worktree_dirty'],

@@ -32,3 +32,8 @@ it('uses the shared interview review verbatim',()=>{
   expect(result.note).toBe(review.care)
   expect(result.attempt).toBe(review.status)
 })
+
+it('explains the daily checkup limit instead of suggesting an immediate retry',()=>{
+  expect(butlerActionError('checkup_rate_limited','zh-Hans')).toContain('每日体检次数已用完')
+  expect(butlerActionError('checkup_rate_limited','en')).toContain('daily checkup limit')
+})

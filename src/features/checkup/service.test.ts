@@ -58,7 +58,7 @@ describe('local checkup lifecycle', () => {
     expect(service.view().profile).toMatchObject({ memory: 'good', tools: 'flaky', toolAccuracy: 0 })
   })
   it('records an all-wrong model as weak, including real tool argument mistakes', async () => {
-    const { service } = setup(async () => ({ text: '[]', toolCalls: [], firstTextMs: null, durationMs: 5 }))
+    const { service } = setup(async () => ({ text: '', toolCalls: [{name:'reply',input:{text:'wrong'}}], firstTextMs: null, durationMs: 5 }))
     await service.start({}).done
     expect(service.view().profile).toMatchObject({ memory: 'weak', tools: 'flaky', reliableFillRatio: 0 })
   })
@@ -94,7 +94,7 @@ describe('local checkup lifecycle', () => {
     wrong = true
     clock = new Date(clock.getTime() + 7*86400_000)
     await service.probeIfDue()
-    expect(calls).toBe(19)
+    expect(calls).toBe(27)
     expect(service.view().suspectedChanged).toBe(true)
     expect(service.view().profile?.memory).toBe('good')
   })
@@ -105,21 +105,21 @@ describe('local checkup lifecycle', () => {
     await service.start({}).done
     service.settings(true)
     await service.probeIfDue()
-    expect(calls).toBe(16)
+    expect(calls).toBe(24)
     clock = new Date(clock.getTime() + 7*86400_000)
     fail = true
     await service.probeIfDue()
-    expect(calls).toBe(17)
+    expect(calls).toBe(25)
     expect(service.view().suspectedChanged).toBe(false)
     // A fresh service reads the durable attempt timestamp after daemon restart.
     const restarted = makeCheckupService({ store, resolveTarget: () => target, run, version: 'test', now: () => clock, executors:()=>['worker'] })
     await restarted.probeIfDue()
     clock = new Date(clock.getTime() + 6*86400_000)
     await restarted.probeIfDue()
-    expect(calls).toBe(17)
+    expect(calls).toBe(25)
     clock = new Date(clock.getTime() + 86400_000)
     await restarted.probeIfDue()
-    expect(calls).toBe(18)
+    expect(calls).toBe(26)
   })
   it('keeps real state canaries out of every outgoing synthetic question', async () => {
     const sent: CheckupSample[] = []
@@ -127,7 +127,7 @@ describe('local checkup lifecycle', () => {
     const canary = 'PRIVATE_STATE_CANARY_never_send_894032'
     writeFileSync(join(stateDir, 'private-secret.txt'), canary)
     await service.start({ full: true }).done
-    expect(sent).toHaveLength(40)
+    expect(sent).toHaveLength(60)
     for (const sample of sent) {
       expect(sample.prompt).not.toContain(canary)
       expect(sample.prompt).not.toContain(stateDir)
@@ -187,4 +187,50 @@ it('does not compare a v1 probe with an earlier unversioned paper',async()=>{
   await service.probeIfDue()
   expect(calls).toBe(before)
   expect(service.view().suspectedChanged).toBe(false)
+})
+
+it('rejects an entirely unscorable run and preserves default context budget',async()=>{
+  const {service}=setup(async()=>({text:'direct speech',toolCalls:[],firstTextMs:1,durationMs:2}))
+  await service.start().done
+  expect(service.view().attempt).toMatchObject({status:'failed',errorCode:'no_measurement'})
+  expect(service.view().profile).toBeNull()
+  expect(service.contextBudgetFor('fake','fabricated').source).toBe('default')
+})
+it('detects corrupt profiles before any request or running attempt',async()=>{
+  const {service,stateDir}=setup(async()=>{throw Error('must not spend')})
+  const path=join(stateDir,'checkup','profiles.json')
+  const {mkdirSync}=await import('node:fs');mkdirSync(join(stateDir,'checkup'),{recursive:true})
+  for(const broken of ['{"truncated":','[]']){
+    writeFileSync(path,broken)
+    expect(()=>service.start()).toThrow(/读不出来/)
+    expect(readFileSync(path,'utf8')).toBe(broken)
+    expect(()=>readFileSync(join(stateDir,'checkup','attempts.json'))).toThrow()
+  }
+})
+it('holds busy through manual runs and weekly probes, releasing on completion, failure and stop',async()=>{
+  let held=0,calls=0,fail=false,clock=new Date('2026-11-12T12:00:00Z')
+  const store=makeCheckupStore(temp())
+  const service=makeCheckupService({store,resolveTarget:()=>target,version:'test',now:()=>clock,
+    holdBusy:()=>{held++;return()=>{held--}},run:async s=>{calls++;expect(held).toBe(1);if(fail)throw Object.assign(Error('offline'),{code:'network'});return correct(s)}})
+  const run=service.start();expect(held).toBe(1);await run.done;expect(held).toBe(0)
+  service.settings(true);clock=new Date(clock.getTime()+8*86400_000)
+  await service.probeIfDue();expect(calls).toBe(23);expect(held).toBe(0)
+  fail=true;await service.start().done;expect(held).toBe(0)
+  const cancelled=service.start();expect(held).toBe(1);await service.stop();await cancelled.done;expect(held).toBe(0)
+})
+it('binds a cost estimate to short versus full before spending',()=>{
+  const {service}=setup(),short=service.estimate(),full=service.estimate({full:true})
+  expect(short.targetKey).not.toBe(full.targetKey)
+  expect(()=>service.start({full:true,expectedTargetKey:short.targetKey})).toThrow('checkup_target_changed')
+  expect(service.view().attempt).toBeNull()
+})
+it('durably limits manual target attempts per UTC day and lets local operators bypass it',async()=>{
+  const {service,store}=setup()
+  for(let i=0;i<3;i++)await service.start().done
+  const restart=makeCheckupService({store,resolveTarget:()=>target,run:correct,version:'test',now:()=>new Date('2026-11-12T13:00:00Z')})
+  expect(()=>restart.start()).toThrow('checkup_rate_limited')
+  await restart.start({}, {operator:true}).done
+  const tomorrow=makeCheckupService({store,resolveTarget:()=>target,run:correct,version:'test',now:()=>new Date('2026-11-13T00:00:00Z')})
+  await tomorrow.start().done
+  expect(tomorrow.view().attempt?.status).toBe('completed')
 })

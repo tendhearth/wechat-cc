@@ -78,7 +78,7 @@ export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch:
 export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unavailable' | 'unknown'
   | 'session_busy' | 'folder_busy' | 'provider_missing' | 'folder_missing' | 'quota' | 'session_changed' | 'session_empty' | 'session_managed'
   | 'handoff_changed'
-  | 'checkup_invalid'
+  | 'checkup_invalid' | 'checkup_rate_limited'
   | 'worktree_not_git' | 'worktree_dirty' | 'worktree_uncommitted' | 'merge_manual' | 'project_busy' | 'worktree_branch_missing' | 'worktree_base_missing'
   | 'input_stale' | 'input_conflict'
   | 'too_large' | 'no_voice'

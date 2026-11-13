@@ -7,6 +7,7 @@ export type CheckupViewT = CheckupView
 export type CheckupEstimateT = CheckupEstimate
 
 export function butlerActionError(code: string, lang: Lang): string {
+  if (code === 'checkup_rate_limited') return t(lang, 'butler.rateLimited')
   if (code === 'stale' || code === 'checkup_target_changed') return t(lang, 'butler.targetChanged')
   if (code === 'busy' || code === 'checkup_busy') return t(lang, 'butler.busy')
   if (code === 'checkup_invalid' || code === 'checkup_invalid_request') return t(lang, 'butler.invalidRequest')

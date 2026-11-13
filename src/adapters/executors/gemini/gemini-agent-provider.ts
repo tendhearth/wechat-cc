@@ -74,6 +74,7 @@ export function mcpToolsToFunctionDeclarations(tools: McpToolDef[]): GeminiFunct
 
 /** Minimal genai surface the loop needs (real: ai.models). */
 export interface GenaiPort {
+  get?(args:{model:string;config:{abortSignal:AbortSignal;httpOptions:{retryOptions:{attempts:number}}}}):Promise<{inputTokenLimit?:number}>
   generateContent(req: {
     model: string
     contents: unknown[]
@@ -104,6 +105,7 @@ export interface DispatchLoopArgs {
    *  boundary, not instantly. Additive/optional so direct callers of
    *  runDispatchLoop that don't pass one are unaffected. */
   signal?: AbortSignal
+  abortSdkRequest?: boolean
   toolServer?: string
   stepBudgetCode?: string
   maxOutputTokens?: number
@@ -117,7 +119,7 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
   args.history.push({ role: 'user', parts: [{ text: args.userText }] })
   const config = {
     systemInstruction: args.systemInstruction,
-    ...(args.signal ? { abortSignal: args.signal } : {}),
+    ...(args.abortSdkRequest && args.signal ? { abortSignal: args.signal } : {}),
     ...(args.maxOutputTokens !== undefined ? { maxOutputTokens: args.maxOutputTokens } : {}),
     ...(args.httpRetryAttempts !== undefined ? { httpOptions: { retryOptions: { attempts: args.httpRetryAttempts } } } : {}),
     ...(args.functionDeclarations.length > 0 ? { tools: [{ functionDeclarations: args.functionDeclarations }] } : {}),
@@ -352,13 +354,23 @@ export async function connectWechatMcp(spec: McpStdioSpec, mcpEnv?: Record<strin
 }
 
 export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): AgentProvider {
+  const windows=new Map<string,number>()
   let uuidCounter = 0
   const newSessionId = () => `gemini-${Date.now()}-${++uuidCounter}`
 
   return {
+    contextWindowTokens:model=>windows.get(model),
+    async prepareContextWindow(model){
+      if(windows.has(model)||!opts.genai.models.get)return
+      try{
+        const info=await opts.genai.models.get({model,config:{abortSignal:AbortSignal.timeout(5000),httpOptions:{retryOptions:{attempts:1}}}})
+        const capacity=info.inputTokenLimit
+        if(Number.isSafeInteger(capacity)&&capacity!>=1024&&capacity!<=10_000_000)windows.set(model,capacity!)
+      }catch{/* Unavailable metadata stays explicitly unknown. */}
+    },
     supportsIsolatedEvaluation: true,
     // 守护(评审 #193 P1-1):API key 直连 Google;模型和 spawn / cheapEval 用的是同一份。
-    callTarget: (kind, ctx) => ({ provider: 'gemini', model: kind === 'cheapEval' ? opts.cheapModel ?? opts.model : ctx?.model ?? opts.model }),
+    callTarget: (kind, ctx) => ({ provider: 'gemini', model: kind === 'cheapEval' ? opts.cheapModel ?? opts.model : ctx?.evaluation ? ctx.model ?? opts.model : opts.model }),
     async spawn(_project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       const fake = ctx.evaluation?.tools
       const conn: McpConnection = fake ? {
@@ -398,7 +410,7 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
             genai: opts.genai.models,
             mcp: { callTool: (n, a) => conn.callTool(n, a) },
             gate,
-            model: ctx.model ?? opts.model,
+            model: ctx.evaluation ? ctx.model ?? opts.model : opts.model,
             // Per-spawn prompt from the daemon (persona / core memory / care /
             // sticker / knowledge sections + the model line — the SAME text
             // every other provider gets). The construction-time
@@ -412,7 +424,7 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
             sessionId,
             userText: text,
             signal: abort.signal,
-            ...(ctx.evaluation ? { toolServer: 'wechat', stepBudgetCode:'checkup_step_budget', maxRounds: ctx.evaluation.maxSteps, maxOutputTokens: ctx.evaluation.maxOutputTokens, httpRetryAttempts: 1 } : {}),
+            ...(ctx.evaluation ? { abortSdkRequest:true, toolServer: 'wechat', stepBudgetCode:'checkup_step_budget', maxRounds: ctx.evaluation.maxSteps, maxOutputTokens: ctx.evaluation.maxOutputTokens, httpRetryAttempts: 1 } : {}),
           })
         },
         async cancel() {

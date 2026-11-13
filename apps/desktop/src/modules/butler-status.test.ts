@@ -93,3 +93,14 @@ it('renders shared interview remarks, current identity and unsupported backend r
   expect(host.textContent).not.toContain('管家')
   ui.destroy()
 })
+
+it('keeps a daily limit rejection visible after refreshing',async()=>{
+  const host=document.createElement('section')
+  const call=async(_method:string,path:string)=>{if(path.endsWith('/estimate'))return quote;if(path.endsWith('/run'))throw Error('checkup_rate_limited');return view()}
+  const ui=mountButlerStatus({host,call});await ui.refresh()
+  host.querySelector<HTMLButtonElement>('[data-checkup="prepare"]')!.click();await flush()
+  host.querySelector<HTMLButtonElement>('[data-checkup="start"]')!.click();await flush();await ui.refresh()
+  expect(host.textContent).toContain('每日体检次数已用完')
+  expect(host.querySelector('[data-checkup="start"]')).toBeNull()
+  ui.destroy()
+})

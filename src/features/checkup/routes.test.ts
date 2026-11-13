@@ -138,3 +138,30 @@ describe('checkup: owner-only routes and real dispatch', () => {
     expect(h.service.view().attempt).toBeNull()
   })
 })
+
+it('paired devices cannot select a backend or model, while local operators can',async()=>{
+  const h=setup(),device={tier:'admin' as const,origin:'device' as const}
+  for(const field of [{providerId:'other'},{model:'other-model'}]){
+    for(const key of ['POST /v1/checkup/estimate','POST /v1/checkup/run']){
+      expect(await h.routes[key]!(params,{...field,expectedTargetKey:h.service.estimate().targetKey},device)).toEqual({status:403,body:{error:'forbidden'}})
+    }
+  }
+  expect(await h.routes['GET /v1/checkup']!(new URLSearchParams('provider=other'),undefined,device)).toEqual({status:403,body:{error:'forbidden'}})
+  expect((await h.routes['POST /v1/checkup/estimate']!(params,{providerId:'other',model:'other-model'},owner))?.status).toBe(200)
+  expect(h.run).not.toHaveBeenCalled()
+})
+it('paired manual requests are limited and operator requests can bypass the daily cap',async()=>{
+  const h=setup(),device={tier:'admin' as const,origin:'device' as const},body={expectedTargetKey:h.service.estimate().targetKey}
+  for(let i=0;i<3;i++){
+    expect((await h.routes['POST /v1/checkup/run']!(params,body,device))?.status).toBe(202)
+    await h.service.stop()
+  }
+  expect(await h.routes['POST /v1/checkup/run']!(params,body,device)).toEqual({status:429,body:{error:'checkup_rate_limited'}})
+  expect((await h.routes['POST /v1/checkup/run']!(params,body,owner))?.status).toBe(202)
+  await h.service.stop()
+})
+it('cannot upgrade a short estimate to a full run through the route',async()=>{
+  const h=setup()
+  expect(await h.routes['POST /v1/checkup/run']!(params,{expectedTargetKey:h.service.estimate().targetKey,full:true},owner)).toEqual({status:409,body:{error:'checkup_target_changed'}})
+  expect(h.run).not.toHaveBeenCalled()
+})
