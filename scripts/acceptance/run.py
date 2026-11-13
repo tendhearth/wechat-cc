@@ -143,6 +143,8 @@ def start(state, resume=False):
     elif resume:
         raise SystemExit('refused: resume requires an existing acceptance run')
     (state / '.acceptance-only').write_text('synthetic acceptance state; never production\n')
+    workspace = state.parents[1] / 'workspaces' / state.name
+    workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
     home = state / 'home'
     claude = home / '.claude'
     codex = home / '.codex'
@@ -172,7 +174,7 @@ def start(state, resume=False):
         policy += '(deny file-read* file-write* (subpath ' + json.dumps(forbidden) + '))'
     policy += '(deny mach-lookup (global-name "com.apple.securityd"))'
     # Restrict writes even if a model attempts an unintended tool action.
-    policy += '(deny file-write*)(allow file-write* (subpath ' + json.dumps(str(state)) + ')(literal "/dev/null")(literal "/dev/tty"))'
+    policy += '(deny file-write*)(allow file-write* (subpath ' + json.dumps(str(state)) + ')(subpath ' + json.dumps(str(workspace)) + ')(literal "/dev/null")(literal "/dev/tty"))'
     policy_file = state / 'sandbox.sb'
     policy_file.write_text(policy)
     checked = subprocess.run(['/usr/bin/sandbox-exec', '-f', str(policy_file), '/usr/bin/true'], capture_output=True)
