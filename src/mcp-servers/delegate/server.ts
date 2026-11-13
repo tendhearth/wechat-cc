@@ -1,7 +1,8 @@
 /** Shared delegate tool registration; credentials belong to the supplied client. */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import z from 'zod'
-import { InternalApiError, type InternalApiClient } from '../wechat/client'
+import type { InternalApiClient } from '../wechat/client'
+import { formatError, formatErrorShort } from '../wechat/tool-helpers'
 
 export function createDelegateMcpServer(client: InternalApiClient, peer: string, logErr: (line: string) => void = () => {}): McpServer {
   if (!/^[a-z][a-z0-9_-]{0,30}$/.test(peer)) throw new Error('Invalid delegate peer')
@@ -51,10 +52,8 @@ export function createDelegateMcpServer(client: InternalApiClient, peer: string,
         // distinguish success / failure cleanly.
         return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
       } catch (err) {
-        const detail = err instanceof InternalApiError
-          ? `internal-api ${err.status}: ${JSON.stringify(err.body).slice(0, 200)}`
-          : err instanceof Error ? err.message : String(err)
-        logErr(`delegate_${peer} failed: ${detail}`)
+        const detail = formatError(err)
+        logErr(`delegate_${peer} failed: ${formatErrorShort(err)}`)
         return { content: [{ type: 'text', text: JSON.stringify({ ok: false, reason: detail }) }] }
       }
     },

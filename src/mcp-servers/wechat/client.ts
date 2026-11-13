@@ -90,7 +90,7 @@ export function createInternalApiClient(opts: InternalApiClientOptions): Interna
       // Rotation recovery: token file may have been rewritten between
       // cache and request. Re-read once and retry.
       if (resp.status === 401 && cachedToken !== null) {
-        opts.logger?.(`[wechat-mcp client] 401 from ${path}; re-reading token`)
+        opts.logger?.('internal-api 401; re-reading token')
         token = readToken()
         resp = await tryRequest(method, path, body, token)
       }

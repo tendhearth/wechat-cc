@@ -1,8 +1,8 @@
 /** Shared tool registration for stdio and parent-process SDK MCP transports. */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import z from 'zod'
-import type { InternalApiClient } from './client'
-import { formatError } from './tool-helpers'
+import { InternalApiError, type InternalApiClient } from './client'
+import { formatError, formatErrorShort } from './tool-helpers'
 import { registerMemoryTools, registerTopicSearchTool } from './tools-memory'
 import { registerProjectTools, registerProjectsActivityTool, registerMatterHandoffTool } from './tools-projects'
 import { registerVoiceShareTools } from './tools-voice-share'
@@ -12,7 +12,7 @@ import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
 import { registerTerminalTools } from './tools-terminal'
 import { registerFileTools } from './tools-files'
-import { registerSocialTools, socialIsUp } from './tools-social'
+import { registerSocialTools, socialIsUp, socialUnavailable } from './tools-social'
 import { registerKnowledgeSearchTool } from './tools-knowledge'
 import { registerFederatedQueryTool } from './tools-federated'
 import { registerGraphTools } from './tools-graph'
@@ -22,7 +22,7 @@ import { registerPersonTools } from './tools-person'
 import { registerModeTools } from './tools-mode'
 import { registerTurnTools } from './tools-turn'
 
-export async function createWechatMcpServer(client: InternalApiClient, options: { tier?: string; participantTag?: string; logger?: (line: string) => void } = {}): Promise<McpServer> {
+export async function createWechatMcpServer(client: InternalApiClient, options: { tier?: string; participantTag?: string; logger?: (line: string) => void; parallelSocialProbe?: boolean } = {}): Promise<McpServer> {
   const logErr = options.logger ?? (() => {})
   const server = new McpServer(
     { name: 'wechat-mcp', version: '0.1.0' },
@@ -57,7 +57,7 @@ export async function createWechatMcpServer(client: InternalApiClient, options: 
           structuredContent: structured,
         }
       } catch (err) {
-        logErr(`ping failed: ${formatError(err)}`)
+        logErr(`ping failed: ${formatErrorShort(err)}`)
         return {
           content: [{ type: 'text', text: `ping failed: ${formatError(err)}` }],
           isError: true,
@@ -96,7 +96,7 @@ export async function createWechatMcpServer(client: InternalApiClient, options: 
         const r = await client.request<unknown>('POST', '/v1/reminders/schedule', payload)
         return { content: [{ type: 'text', text: JSON.stringify(r) }] }
       } catch (err) {
-        logErr(`schedule_reminder failed: ${formatError(err)}`)
+        logErr(`schedule_reminder failed: ${formatErrorShort(err)}`)
         return { content: [{ type: 'text', text: `schedule_reminder failed: ${formatError(err)}` }], isError: true }
       }
     },
@@ -114,7 +114,7 @@ export async function createWechatMcpServer(client: InternalApiClient, options: 
         const r = await client.request<unknown>('POST', '/v1/reminders/cancel', { chat_id, reminder_id })
         return { content: [{ type: 'text', text: JSON.stringify(r) }] }
       } catch (err) {
-        logErr(`cancel_reminder failed: ${formatError(err)}`)
+        logErr(`cancel_reminder failed: ${formatErrorShort(err)}`)
         return { content: [{ type: 'text', text: `cancel_reminder failed: ${formatError(err)}` }], isError: true }
       }
     },
@@ -132,7 +132,7 @@ export async function createWechatMcpServer(client: InternalApiClient, options: 
         const r = await client.request<unknown>('GET', `/v1/reminders/list?chat_id=${encodeURIComponent(chat_id)}`)
         return { content: [{ type: 'text', text: JSON.stringify(r) }] }
       } catch (err) {
-        logErr(`list_reminders failed: ${formatError(err)}`)
+        logErr(`list_reminders failed: ${formatErrorShort(err)}`)
         return { content: [{ type: 'text', text: `list_reminders failed: ${formatError(err)}` }], isError: true }
       }
     },
@@ -170,8 +170,19 @@ export async function createWechatMcpServer(client: InternalApiClient, options: 
     // 都在 ADMIN_ONLY);非 admin 会话根本看不到。路由层按 trusted 门拒
     // guest;trusted 会话由注册门(SESSION_IS_ADMIN)+ classify 门
     // (social_act ∈ ADMIN_ONLY)挡住。
-    // 社交没起(关着 / 坏了)⇒ 不挂这些工具(第三批 3b 第 3 步 3-2;读不到就照旧挂,见 socialIsUp)
-    if (await socialIsUp(client)) registerSocialTools(server, client)
+    // Parent-process MCP construction must not delay Claude startup. Register
+    // immediately; only social calls wait for the parallel, session-local probe.
+    // The stdio path still probes before exposing its tool list in the child.
+    if (options.parallelSocialProbe) {
+      const socialReady = socialUnavailable(client)
+      registerSocialTools(server, {
+        async request(method, path, body) {
+          const unavailable = await socialReady
+          if (unavailable) throw new InternalApiError('social is not running', 503, path, unavailable)
+          return client.request(method, path, body)
+        },
+      })
+    } else if (await socialIsUp(client)) registerSocialTools(server, client)
     else logErr('social is not running — social tools not registered for this session')
     // agent-facing search (AS T4): knowledge_search runs a semantic query
     // over the owner's WeChat message history — same private-data trust

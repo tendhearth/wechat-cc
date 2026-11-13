@@ -73,7 +73,7 @@ export function wireModelOptions(
     return undefined
   }
 
-  const sdkOptionsForProject = async (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: PermissionMode }): Promise<Options> => {
+  const sdkOptionsForProject: Bootstrap['sdkOptionsForProject'] = async (_alias, path, tierProfile, chatId, mcpEnv, appendInstructions, spawnContext) => {
     // The per-session system prompt is assembled by the daemon's
     // `buildInstructions` thunk (see SessionManager wiring below) and arrives
     // here via SpawnContext — this builder no longer calls buildSystemPrompt,
@@ -85,15 +85,28 @@ export function wireModelOptions(
     // 非标准档(目前只有定时任务的只读档 JOB_PROFILE):不挂第三方插件与 delegate,canUseTool 按这一档判 ——
     // buildCanUseTool 是按 chatId 取档的,对主人永远是 admin(定时任务 10-20 终审)。
     const standardTier = (Object.values(TIER_PROFILES) as TierProfile[]).includes(tierProfile)
+    const mcpServers: NonNullable<Options['mcpServers']> = {}
+    if (spawnContext?.conversationMcp !== false) {
+      for (const [name, spec] of [
+        ['wechat', parts.plugins.wechatStdioForClaude],
+        ['delegate', standardTier ? parts.plugins.delegateStdioForClaude : null],
+      ] as const) {
+        if (!spec) continue
+        try { mcpServers[name] = await claudeSdkMcp(name, spec, sessionEnv, abortController.signal) }
+        catch {
+          // Match optional stdio MCP failure: omit only this server. Its factory
+          // aborts partial HTTP work; successful siblings keep their lifetimes.
+          // Error text can contain credentials or user input, so do not log it.
+          process.stderr.write(`[${name}-mcp] server initialization failed; unavailable for this session\n`)
+        }
+      }
+      if (standardTier) Object.assign(mcpServers, parts.plugins.pluginMcpForClaude)
+    }
     const common: Options = {
       cwd: path,
       abortController,
       model: currentClaudeModel(),
-      mcpServers: {
-        ...(parts.plugins.wechatStdioForClaude ? { wechat: await claudeSdkMcp('wechat', parts.plugins.wechatStdioForClaude, sessionEnv, abortController.signal) } : {}),
-        ...(standardTier && parts.plugins.delegateStdioForClaude ? { delegate: await claudeSdkMcp('delegate', parts.plugins.delegateStdioForClaude, sessionEnv, abortController.signal) } : {}),
-        ...(standardTier ? parts.plugins.pluginMcpForClaude : {}),
-      },
+      mcpServers,
       // Using preset+append (instead of raw string) keeps MCP tools inline in
       // the system prompt — otherwise they're deferred behind ToolSearch,
       // which adds a round-trip every time Claude wants to call `reply`

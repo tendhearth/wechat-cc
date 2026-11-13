@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,8 +12,123 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk'
 import { claudeSdkMcp } from '../../mcp-servers/claude-sdk-mcp'
 import { createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
+import * as apiClients from '../../mcp-servers/wechat/client'
 
-afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals() })
+
+function startupOptions(delegatePeer: string | null = 'codex') {
+  const stateDir = mkdtempSync(join(tmpdir(), 'chat-mcp-startup-'))
+  const api = { baseUrl: 'http://offline.invalid', tokenFilePath: '/unused' }
+  const { sdkOptionsForProject } = wireModelOptions({ stateDir }, {
+    plugins: {
+      wechatStdioForClaude: wechatStdioMcpSpec(api, 'claude'),
+      delegateStdioForClaude: { ...delegateStdioMcpSpec(api, 'codex'), env: { WECHAT_INTERNAL_API: api.baseUrl, ...(delegatePeer === null ? {} : { WECHAT_DELEGATE_PEER: delegatePeer }) } },
+      pluginMcpForClaude: {},
+    },
+    permissionMode: 'strict', buildCanUseTool: () => async () => ({ behavior: 'allow' }), claudeBin: undefined,
+  })
+  return { sdkOptionsForProject, cleanup: () => rmSync(stateDir, { recursive: true, force: true }) }
+}
+
+// Only the model boundary is replaced; options, MCP registration and HTTP lifetimes are real.
+function offlineQuery() {
+  return vi.fn(() => Object.assign((async function* () {})(), { close() {}, interrupt: async () => {} })) as unknown as typeof query
+}
+
+const ownerSpawn = { chatId: 'owner', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const, mcpEnv: { WECHAT_SESSION_TOKEN: 'offline-token', WECHAT_SESSION_TIER: 'admin' } }
+
+it('admin spawn reaches the Claude query before a two-second health response', async () => {
+  vi.useFakeTimers()
+  let healthFinished = false
+  vi.stubGlobal('fetch', () => new Promise<Response>(resolve => {
+    setTimeout(() => { healthFinished = true; resolve(Response.json({ subsystems: [{ name: 'social', state: 'ok' }] })) }, 2_000)
+  }))
+  const fixture = startupOptions(), queryImpl = offlineQuery()
+  const spawning = createClaudeAgentProvider({ sdkOptionsForProject: fixture.sdkOptionsForProject, queryImpl }).spawn({ alias: 'p', path: '/offline' }, ownerSpawn)
+  try {
+    await vi.advanceTimersByTimeAsync(0)
+    expect(healthFinished).toBe(false)
+    expect(queryImpl).toHaveBeenCalledTimes(1)
+  } finally {
+    await vi.advanceTimersByTimeAsync(2_000)
+    await (await spawning).close()
+    fixture.cleanup()
+  }
+})
+
+it('social tools report module_off when the parallel health probe says social is off', async () => {
+  const paths: string[] = []
+  vi.stubGlobal('fetch', async (url: string) => {
+    paths.push(new URL(url).pathname)
+    return Response.json({ subsystems: [{ name: 'social', state: 'off' }] })
+  })
+  const fixture = startupOptions()
+  const options = await fixture.sdkOptionsForProject('p', '/offline', TIER_PROFILES.admin, 'owner', ownerSpawn.mcpEnv)
+  const client = await connect(options.mcpServers!.wechat as McpSdkServerConfigWithInstance)
+  try {
+    expect((await client.listTools()).tools.map(t => t.name)).toContain('wish_list')
+    const result = await client.callTool({ name: 'wish_list', arguments: {} })
+    expect(result.content).toEqual([{ type: 'text', text: JSON.stringify({ error: 'internal-api 503: {"error":"module_off","module":"social"}' }) }])
+    expect(paths).toEqual(['/v1/health'])
+  } finally { await client.close(); options.abortController?.abort(); fixture.cleanup() }
+})
+
+it('parallel social probing distinguishes a broken module from a disabled one and preserves its reason', async () => {
+  vi.stubGlobal('fetch', async () => Response.json({ subsystems: [{ name: 'social', state: 'degraded', error: 'no cheap model' }] }))
+  const fixture = startupOptions()
+  const options = await fixture.sdkOptionsForProject('p', '/offline', TIER_PROFILES.admin, 'owner', ownerSpawn.mcpEnv)
+  const client = await connect(options.mcpServers!.wechat as McpSdkServerConfigWithInstance)
+  try {
+    const result = await client.callTool({ name: 'wish_list', arguments: {} })
+    expect(result.content).toEqual([{ type: 'text', text: JSON.stringify({ error: 'internal-api 503: {"error":"module_degraded","module":"social","detail":"no cheap model"}' }) }])
+  } finally { await client.close(); options.abortController?.abort(); fixture.cleanup() }
+})
+
+it.each([null, '', 'INVALID PEER'])('delegate construction failure leaves wechat available and the conversation starts (%s)', async peer => {
+  vi.stubGlobal('fetch', async () => Response.json({ ok: true, daemon_pid: 42 }))
+  const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+  const clients = vi.spyOn(apiClients, 'createInternalApiClient')
+  const fixture = startupOptions(peer), queryImpl = offlineQuery()
+  try {
+    const session = await createClaudeAgentProvider({ sdkOptionsForProject: fixture.sdkOptionsForProject, queryImpl }).spawn({ alias: 'p', path: '/offline' }, ownerSpawn)
+    try {
+      const options = vi.mocked(queryImpl).mock.calls[0]![0].options!
+      expect(Object.keys(options.mcpServers!)).toEqual(['wechat'])
+      expect(options.abortController?.signal.aborted).toBe(false)
+      expect(clients.mock.calls.map(call => call[0].signal?.aborted)).toEqual([false, true])
+      const client = await connect(options.mcpServers!.wechat as McpSdkServerConfigWithInstance)
+      try {
+        expect((await client.listTools()).tools.map(t => t.name)).toContain('ping')
+        expect((await client.callTool({ name: 'ping', arguments: {} })).structuredContent).toEqual({ ok: true, daemon_pid: 42 })
+      }
+      finally { await client.close() }
+      expect(stderr.mock.calls).toHaveLength(1)
+      expect(String(stderr.mock.calls[0]![0])).toContain('[delegate-mcp]')
+    } finally { await session.close() }
+  } finally { fixture.cleanup() }
+})
+
+it('failed wechat registration aborts its partial health request and still starts with delegate', async () => {
+  let healthSignal: AbortSignal | undefined
+  vi.stubGlobal('fetch', (_url: string, init: RequestInit) => {
+    healthSignal = init.signal ?? undefined
+    return new Promise<Response>((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true }))
+  })
+  const register = McpServer.prototype.registerTool
+  vi.spyOn(McpServer.prototype, 'registerTool').mockImplementation(function (this: McpServer, ...args: Parameters<typeof register>) {
+    if (args[0] === 'knowledge_search') throw new Error('duplicate registration')
+    return Reflect.apply(register, this, args)
+  })
+  vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+  const fixture = startupOptions(), queryImpl = offlineQuery()
+  try {
+    const session = await createClaudeAgentProvider({ sdkOptionsForProject: fixture.sdkOptionsForProject, queryImpl }).spawn({ alias: 'p', path: '/offline' }, ownerSpawn)
+    try {
+      expect(Object.keys(vi.mocked(queryImpl).mock.calls[0]![0].options!.mcpServers!)).toEqual(['delegate'])
+      expect(healthSignal?.aborted).toBe(true)
+    } finally { await session.close() }
+  } finally { fixture.cleanup() }
+})
 
 it('Claude SDK spawn argv and general env exclude both core MCP session tokens', async () => {
   const stateDir = mkdtempSync(join(tmpdir(), 'chat-token-argv-'))

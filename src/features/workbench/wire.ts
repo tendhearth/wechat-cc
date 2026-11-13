@@ -45,7 +45,7 @@ import type {MatterMcpFactory} from '../../adapters/executors/matter-mcp'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
 export async function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}, taskId?: string, preparationSignal?: AbortSignal,matter?:McpStdioSpec|null): Promise<Options> {
-  // The base contains conversation MCP instances that this task does not use.
+  // Release the base options lifetime; the task owns its notebook lifetime.
   base.abortController?.abort()
   const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
   const taskEnv = taskId ? await taskEnvironment(base.cwd!, taskId,{signal:preparationSignal}) : {}
@@ -212,8 +212,7 @@ export function wireWorkbench(opts: {
       const claude=opts.boot.registry.get('claude')
       if (claude) registry.register('claude',createClaudeAgentProvider({
         async sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
-          const base=await opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
-          base.abortController?.abort()
+          const base=await opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions,{permissionMode:'strict',conversationMcp:false})
           const native=readNativeClaudeTools(path)
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)
