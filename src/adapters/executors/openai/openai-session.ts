@@ -43,6 +43,8 @@ export interface OpenAiPurpose{
   readonly maxSteps:number
   /** 工作台:finishReason 必须是 stop / tool-calls、最后一步要有字、响应形状逐项核,否则不算完成。对话:照收(半截也是回复)。 */
   readonly strict:boolean
+  /** Isolated evaluations distinguish empty reasoning exhaustion from invalid answers. */
+  readonly emptyOutputCode?:string
   /** 对话:一步的文字攒成一条 text 事件(AgentEvent 的契约:一条完整消息,消费方按条拼);工作台:逐字 append(带 itemId)。 */
   readonly textEvents:'per-step'|'streamed'
   /** 一轮最多吐多少字(端点不认输出上限时兜底)。 */
@@ -150,11 +152,12 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         const turn=model.stream(structuredClone(history.messages()),purpose.tools(),signal,step===0)
         lastRequest=turn
         void turn.finished.catch(()=>undefined)
-        let buffered=''
+        let buffered='',visibleText=''
         const flush=()=>{if(buffered){push({kind:'text',text:buffered});buffered=''}}
         for await(const delta of turn.deltas){
           check(signal)
           if(delta.kind==='text'){
+            if(purpose.emptyOutputCode)visibleText+=delta.text
             outputBytes+=Buffer.byteLength(delta.text)
             if(purpose.outputLimitBytes!==undefined&&outputBytes>purpose.outputLimitBytes)fail('api_task_output_limit')
             if(purpose.textEvents==='streamed')push({kind:'text',text:delta.text,itemId,textMode:'append'})
@@ -171,6 +174,7 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         lastContextTokens = result.usage?.input !== undefined ? result.usage.input : undefined
         if(firstRequest)firstInputTokens=lastContextTokens
         if(result.model)resolvedModel=result.model
+        if(purpose.emptyOutputCode && result.finishReason==='length' && !result.toolCalls.length && (!visibleText.trim() || visibleText.trimStart().startsWith('<think>')&&!visibleText.includes('</think>')))fail(purpose.emptyOutputCode)
         if(purpose.strict)strictCheck(result,ids)
         const assistantMessages=result.messages.filter(m=>m.role==='assistant')
         history.save([...history.messages(),...assistantMessages])

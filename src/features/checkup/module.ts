@@ -6,18 +6,19 @@ import { providerCallTarget } from '../../app/provider-registry'
 import { makeMtimeCachedConfigReader } from '../../lib/agent-config'
 import { APP_VERSION } from '../../lib/app-version'
 import { makeCheckupStore, checkupAddress } from '../../adapters/store/checkup-store'
+import type { WorkbenchService } from '../workbench'
 import type { MemoryFeature } from '../memory'
 import { DEFAULT_CHECKUP_WINDOW } from '../../domain/butler-checkup'
 import { checkupFeature, makeCheckupTurn, type CheckupService } from './index'
 
 export function checkupModule(f:Foundation):DaemonModule<CheckupService> {
-  return checkupFeature({needs:['bootstrap','memory'],deps(ctx){
+  return checkupFeature({needs:['bootstrap','memory','workbench'],deps(ctx){
     const boot=ctx.get<Bootstrap>('bootstrap'),config=makeMtimeCachedConfigReader(f.stateDir)
     return {
       holdBusy:boot.holdBusy,
       store:makeCheckupStore(f.stateDir),version:APP_VERSION,
       persona:()=>ctx.get<MemoryFeature>('memory').promptReads.personaFor(ownerChatIdOf(f.stateDir)??'checkup').content??'',
-      executors:()=>boot.registry.list().filter(id=>!!boot.registry.get(id)?.opts.workbench),
+      executors:()=>ctx.get<WorkbenchService>('workbench').availableExecutors(),
       resolveTarget(o={}) {
         const owner=ownerChatIdOf(f.stateDir), mode=owner?boot.conversationStore.get(owner)?.mode:null
         const provider=o.providerId ?? (mode?.kind==='solo'?mode.provider:mode?.kind==='primary_tool'?mode.primary:boot.defaultProviderId)

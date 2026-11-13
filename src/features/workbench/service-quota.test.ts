@@ -48,6 +48,8 @@ it('额度耗尽 ⇒ 任务 failed、错误码 provider_quota_exhausted、事件
   expect(errors.some(t=>t.includes('额度'))).toBe(true)
   expect(service.providerQuota()).toMatchObject({codex:{kind:'quota',message:expect.stringContaining('usage limit')}})
   expect(service.providerQuota().claude).toBeUndefined()
+  expect(service.availableExecutors()).toEqual(['claude'])
+  expect(service.entryOptions({ownerKey:'owner',surface:'desktop'}).providers.filter(p=>p.available).map(p=>p.id)).toEqual(['claude'])
   // 列表里的执行者项带上额度状态,桌面 / 管家都能看。
   const codex=service.list().providers.find(p=>p.id==='codex')!
   expect(codex.quota).toMatchObject({kind:'quota'})

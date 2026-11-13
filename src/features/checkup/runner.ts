@@ -15,6 +15,7 @@ import { checkupAddress } from '../../adapters/store/checkup-store'
 import { errorWithProviderCode } from '../../lib/provider-error-code'
 import { abortable } from './service'
 import { interviewInstructions } from './instructions'
+import { CHECKUP_OUTPUT_BUDGETS, scoreInterview } from '../../domain/checkup-interview'
 
 /** An unguessable loopback MCP endpoint. It can only echo invented parameters. */
 export async function fakeCheckupTools(sample: CheckupSample, onAction?:(name:string,input:unknown)=>void) {
@@ -61,7 +62,7 @@ const closeSession = async (session: AgentSession) => {
   finally { clearTimeout(timer) }
 }
 export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
-  return async(sample:CheckupSample,target:CheckupTarget,signal:AbortSignal):Promise<CheckupTurn> => {
+  const attempt = async(sample:CheckupSample,target:CheckupTarget,signal:AbortSignal,maxOutputTokens:number):Promise<CheckupTurn> => {
     signal.throwIfAborted()
     const provider=getProvider(target.provider)
     if(!provider)throw errorWithProviderCode('provider unavailable','provider_error')
@@ -75,7 +76,7 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
     try {
       bridge=await fakeCheckupTools(sample,(name,input)=>{if(sample.kind==='interview'&&firstActionMs===null&&['reply','ask_user'].includes(name)&&input&&typeof input==='object'&&Object.values(input).some(v=>typeof v==='string'&&v.trim()))firstActionMs=performance.now()-started})
       signal.throwIfAborted()
-      const pending=provider.spawn({alias:sample.kind==='interview'?'conversation':'synthetic-checkup',path:project},{tierProfile:JOB_PROFILE,permissionMode:'strict',chatId:`conversation-${randomUUID()}`,model:target.model,appendInstructions:sample.kind==='interview'?interviewInstructions(target.provider,target.model,sample.persona,sample.executors):'只根据本次完全编造的题目作答。禁止读取文件、记忆、项目或调用本次练习以外的工具。',evaluation:{tools:bridge.tools,mcpServer:{url:bridge.url},maxSteps:sample.kind==='memory'?1:sample.kind==='interview'?3:2,maxOutputTokens:512}})
+      const pending=provider.spawn({alias:sample.kind==='interview'?'conversation':'synthetic-checkup',path:project},{tierProfile:JOB_PROFILE,permissionMode:'strict',chatId:`conversation-${randomUUID()}`,model:target.model,appendInstructions:sample.kind==='interview'?interviewInstructions(target.provider,target.model,sample.persona,sample.executors):'只根据本次完全编造的题目作答。禁止读取文件、记忆、项目或调用本次练习以外的工具。',evaluation:{tools:bridge.tools,mcpServer:{url:bridge.url},maxSteps:sample.kind==='memory'?1:sample.kind==='interview'?3:2,maxOutputTokens}})
       void pending.then(s=>{if(signal.aborted)void closeSession(s)},()=>{})
       session=await abortable(pending,signal)
       const actual=session.callTarget?.()
@@ -85,7 +86,12 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
         signal.throwIfAborted()
         if(ev.kind==='text') { if(firstTextMs===null && ev.text.trim())firstTextMs=performance.now()-started;text=ev.textMode==='replace'?ev.text:text+ev.text }
         else if(ev.kind==='error') {
-          if(sample.kind!=='memory' && ev.code==='checkup_step_budget') { toolError=true;completed=true }
+          if(sample.kind==='interview' && ev.code==='checkup_output_exhausted' && scoreInterview(sample,{text,toolCalls:bridge.calls,firstTextMs:null,durationMs:0},sample.persona).observed) {
+            // The visible answer is the fake action, not the optional final
+            // prose. An exhausted sign-off cannot erase an observed reply.
+            completed=true
+          }
+          else if(sample.kind!=='memory' && ev.code==='checkup_step_budget') { toolError=true;completed=true }
           else throw Object.assign(errorWithProviderCode('model request did not complete',undefined),{code:ev.code??'provider_error'})
         }
         else if(ev.kind==='result')completed=true
@@ -99,5 +105,21 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
       await bridge?.close()
       rmSync(project,{recursive:true,force:true})
     }
+  }
+  return async(sample:CheckupSample,target:CheckupTarget,signal:AbortSignal):Promise<CheckupTurn> => {
+    const started=performance.now()
+    for(const [index,budget] of CHECKUP_OUTPUT_BUDGETS.entries()){
+      signal.throwIfAborted()
+      const elapsed=performance.now()-started
+      try {
+        const turn=await attempt(sample,target,signal,budget)
+        return {...turn,firstTextMs:turn.firstTextMs===null?null:turn.firstTextMs+elapsed,durationMs:performance.now()-started}
+      } catch(error) {
+        // Every attempt owns fresh fake tools and scratch state. Replaying this
+        // invented question cannot duplicate a real action; no provider fallback.
+        if(signal.aborted || index===CHECKUP_OUTPUT_BUDGETS.length-1 || !(error && typeof error==='object' && 'code' in error && error.code==='checkup_output_exhausted'))throw error
+      }
+    }
+    throw new Error('checkup_output_exhausted')
   }
 }

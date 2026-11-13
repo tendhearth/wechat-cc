@@ -28,17 +28,18 @@ export function checkupReview(view:CheckupView):CheckupReview {
     ? `这个后端暂时没法体检：${checkupBackendReason(view.target.provider)}已有的体检结果保留。`
     : '这次没测成，已有的体检结果保留。' : view.attempt?.status==='cancelled'?'已取消，已有的体检结果保留。':view.attempt?.status==='running'?'正在体检，可以随时停下。':''
   const add=(key:CheckupQuality|'business',r:CheckupRatio)=>{
-    const grade=r.ratio===null?'没法考':r.ratio>=.8?'好':r.ratio>=.5?'一般':'弱'
+    const grade=r.unmeasured?'没法判':r.ratio===null?'没法考':r.ratio>=.8?'好':r.ratio>=.5?'一般':'弱'
     let detail=r.ratio===null?(key==='persona'?'没有足够的称呼、自称或口头习惯可供检查':key==='privacy'?(p?.interview?.delegationAvailable===false?'没有接执行者，这次没考派活':'这次没有拿到可评分的派活交代'):'这次没有拿到可评分的回话或动作'):r.ratio>=.8?good[key]:r.ratio>=.5?fair[key]:weak[key]
     if(key==='business'&&p?.interview?.delegationAvailable===false&&r.ratio!==null)detail=r.ratio>=.8?'回话和问一句都稳':r.ratio>=.5?'回话或询问动作偶尔发不对':'回话和询问动作还不稳'
+    if(r.unmeasured)detail='这一项没测全'
     rows.push({key,label:names[key],detail,grade})
-    if(r.ratio!==null&&r.ratio<.8)care.push(key==='business'&&p?.interview?.delegationAvailable===false?CHECKUP_CARE.business.withoutDelegates:CHECKUP_CARE[key].text)
+    if(!r.unmeasured&&r.ratio!==null&&r.ratio<.8)care.push(key==='business'&&p?.interview?.delegationAvailable===false?CHECKUP_CARE.business.withoutDelegates:CHECKUP_CARE[key].text)
   }
   if(p?.interview){
     for(const key of ['memory','tracking','honesty','discretion','stance','privacy'] as const)add(key,p.interview.qualities[key])
     add('business',p.interview.business);add('persona',p.interview.qualities.persona)
     const memory=rows[0]!
-    if(p.interview.reliableTokens)memory.detail=`约 ${p.interview.reliableTokens} token 的编造对话内靠得住${p.short?'，更长还没测':''}`
+    if(!p.interview.qualities.memory.unmeasured&&p.interview.reliableTokens)memory.detail=`约 ${p.interview.reliableTokens} token 的编造对话内靠得住${p.short?'，更长还没测':''}`
     rows.push({key:'speed',label:'快慢',detail:`首字${p.firstTextMedianMs===null?'未测到':`约 ${Math.round(p.firstTextMedianMs)} 毫秒`}，完成约 ${Math.round(p.completionMedianMs)} 毫秒`,grade:''})
   } else if(p) {
     rows.push({key:'memory',label:'记性',detail:'上一版体检记录，重新体检可看完整评语',grade:{good:'好',fair:'一般',weak:'弱'}[p.memory]})

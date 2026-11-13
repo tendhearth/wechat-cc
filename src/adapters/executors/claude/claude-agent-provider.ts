@@ -202,13 +202,14 @@ type AssistantBlock = { type?: string; text?: string; name?: string; id?: string
 type AssistantContent = string | Array<AssistantBlock>
 // `error`: the SDK's own label for a synthetic "this API call failed" assistant
 // message (SDKAssistantMessageError). See ./claude-api-error-code.
-type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; message?: { id?: string; model?: string; content?: AssistantContent; usage?: {input_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number} } }
+type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; api_error_params?: {cut?:string}; message?: { id?: string; model?: string; stop_reason?:string|null; content?: AssistantContent; usage?: {input_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number} } }
 // SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
 // blocks correlate to tool_use.id through tool_use_id; result content can
 // contain private file or command output and is deliberately not read here.
 type UserMsg = { type: 'user'; parent_tool_use_id?: string | null; message?: { content?: string | Array<{ type?: string; tool_use_id?: string; is_error?: boolean }> } }
 type ResultMsg = {
   usage?: unknown
+  stop_reason?: string|null
   modelUsage?: Record<string,{contextWindow:number}>
   type: 'result'
   subtype?: string
@@ -474,6 +475,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // 这一轮已经发过带码的 error(没登录哨兵):result 不再补第二个 error,也不带 finalText。
       let turnErrored = false
       let evaluationHasPartialText = false
+      let evaluationHasVisibleText = false
       const flushApiError = (aq: AsyncQueue<AgentEvent>, apiErrorStatus?: number | null): void => {
         if (!pendingApiError) return
         const { sdkError, text } = pendingApiError
@@ -495,6 +497,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               const partial = raw as unknown as { type?: string; event?: { type?: string; delta?: { type?: string; text?: string } } }
               if (partial.type === 'stream_event' && partial.event?.type === 'content_block_delta' && partial.event.delta?.type === 'text_delta' && partial.event.delta.text) {
                 evaluationHasPartialText = true
+                evaluationHasVisibleText ||= !!partial.event.delta.text.trim()
                 ;(activeEventQueue as AsyncQueue<AgentEvent>).push({ kind: 'text', text: partial.event.delta.text })
                 continue
               }
@@ -543,6 +546,11 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               if (!msg.parent_tool_use_id && !msg.error && msg.message?.model!=='<synthetic>' && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               const content = msg.message?.content
+              if(evaluation && !evaluationHasVisibleText && (msg.error==='max_output_tokens' && msg.api_error_params?.cut==='output_limit' || msg.message?.stop_reason==='max_tokens' && !extractText(content).trim() && !(Array.isArray(content)&&content.some(block=>block.type==='tool_use')))){
+                turnErrored=true
+                aq.push({kind:'error',code:'checkup_output_exhausted',message:'Output allowance exhausted without a visible answer.'})
+                continue
+              }
               // 对话路径。回复交付第 5 步(2026-10-03):事件**按块的顺序**发 —— 以前同一条消息里先发所有
               // tool_call、再发拼起来的文字,「我查一下」+ tool_use 的那条消息就把开场算进了工具**之后**的段,
               // 和下一条消息的结论粘成「最后的话」,旁白跟着交付(spec §4.2 Claude 行 ①)。现在相邻的文字块
@@ -562,6 +570,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
                 continue
               }
+              if(evaluation && !subagent && !msg.error && msg.message?.model!=='<synthetic>')evaluationHasVisibleText ||= !!text.trim()
               if (subagent && text.trim()) log('CLAUDE_SUBAGENT_TEXT', `alias=${project.alias} len=${text.length} (not part of the reply)`)
               const blocks: AssistantBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
               let pending = ''
@@ -576,6 +585,11 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               flushText()
             } else if (msg.type === 'result') {
               firstRequestSeen=true
+              if(evaluation && !turnErrored && !evaluationHasVisibleText && msg.stop_reason==='max_tokens'){
+                pendingApiError=null
+                turnErrored=true
+                aq.push({kind:'error',code:'checkup_output_exhausted',message:'Output allowance exhausted without a visible answer.'})
+              }
               const apiErrored = pendingApiError !== null
               flushApiError(aq, msg.api_error_status)
               const failed = !!msg.subtype && msg.subtype !== 'success'
@@ -653,6 +667,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           pendingApiError = null
           turnErrored = false
           evaluationHasPartialText = false
+          evaluationHasVisibleText = false
           activeEventQueue = queue
           sdkQueue.push({
             type: 'user',

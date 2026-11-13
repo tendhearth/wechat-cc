@@ -54,9 +54,9 @@ export function makeCheckupService(d: CheckupServiceDeps) {
     const persona=extractCheckupPersona(d.persona?.()??''),executors=(d.executors?.().length??0)>0?['阿禾']:[]
     return {windowTokens:target.windowTokens,full,persona,executors,systemTokens:estimateTokens(interviewInstructions(target.provider,target.model,persona,executors))}
   }
-  const receipt=(t:CheckupTarget,full:boolean)=>createHash('sha256').update(JSON.stringify([checkupKey(t),full,t.windowTokens,t.windowKnown])).digest('hex')
+  const receipt=(t:CheckupTarget,options:ReturnType<typeof interviewOptions>)=>createHash('sha256').update(JSON.stringify([checkupKey(t),t.windowKnown,options])).digest('hex')
   const hold=(label:string)=>{try{return d.holdBusy?.(label)??(()=>{})}catch{return()=>{}}}
-  const estimate = (o: CheckupOptions = {}) => { const t=d.resolveTarget(o),options=interviewOptions(t,!!o.full);return {...estimateInterview({...options,windowKnown:t.windowKnown}),targetKey:receipt(t,!!o.full)} }
+  const estimate = (o: CheckupOptions = {}) => { const t=d.resolveTarget(o),options=interviewOptions(t,!!o.full);return {...estimateInterview({...options,windowKnown:t.windowKnown}),targetKey:receipt(t,options)} }
   const runSample = async (s: CheckupSample,t:CheckupTarget,signal:AbortSignal) => {
     const deadline = AbortSignal.timeout(120_000)
     return abortable(d.run(s,t,AbortSignal.any([signal,deadline])),AbortSignal.any([signal,deadline]))
@@ -64,27 +64,40 @@ export function makeCheckupService(d: CheckupServiceDeps) {
   const start = (o: CheckupOptions = {}, caller:{operator?:boolean}={}) => {
     if (active) throw new Error('checkup_busy')
     const target = d.resolveTarget(o), key = checkupKey(target), abort = new AbortController()
-    if(o.expectedTargetKey && o.expectedTargetKey!==receipt(target,!!o.full))throw new Error('checkup_target_changed')
-    const options=interviewOptions(target,!!o.full),plan=buildInterviewPlan(options),samples=plan.samples
+    const options=interviewOptions(target,!!o.full),targetKey=receipt(target,options)
+    if(o.expectedTargetKey && o.expectedTargetKey!==targetKey)throw new Error('checkup_target_changed')
+    const plan=buildInterviewPlan(options),samples=plan.samples
     const attempt: CheckupAttempt = {status:'running',completedRequests:0,totalRequests:samples.length,startedAt:now().toISOString()}
     d.store.prepareProfileWrite()
     d.store.claimManual(target,now().toISOString().slice(0,10),caller.operator===true)
     d.store.saveAttempt(target,attempt)
     attempts.set(key,attempt)
-    targets.set(receipt(target,!!o.full),target)
+    targets.set(targetKey,target)
     const release=hold('checkup')
     const run = async () => {
       try {
-        const results: CheckupTurn[] = []
-        for (const sample of samples) { abort.signal.throwIfAborted(); results.push(await runSample(sample,target,abort.signal)); attempt.completedRequests++; d.store.saveAttempt(target,attempt) }
+        const results: Array<CheckupTurn|null> = []
+        for (const sample of samples) {
+          abort.signal.throwIfAborted()
+          try { results.push(await runSample(sample,target,abort.signal)) }
+          catch(error) {
+            abort.signal.throwIfAborted()
+            // A bounded empty-output failure says nothing about this question's
+            // qualities. Keep testing the remaining independent questions.
+            if(!(error && typeof error==='object' && 'code' in error && error.code==='checkup_output_exhausted'))throw error
+            results.push(null)
+          }
+          attempt.completedRequests++; d.store.saveAttempt(target,attempt)
+        }
         abort.signal.throwIfAborted()
-        const scores=samples.map((sample,i)=>scoreInterview(sample,results[i]!,options.persona))
+        const scores=samples.map((sample,i)=>results[i]?scoreInterview(sample,results[i]!,options.persona):{qualities:{},business:null,observed:false,unmeasured:true})
         if(!scores.some(s=>s.observed))throw Object.assign(new Error('no measurement'),{code:'no_measurement'})
         const summary=summarizeInterview(samples,scores)
         const stages=summary.stages
         const toolAccuracy=summary.business.ratio??0
-        const textTimes = results.map(r=>r.firstTextMs).filter((n):n is number=>n!==null)
-        const profile: CheckupProfile = {provider:target.provider,addressHash:addressHash(target.address),model:target.model,windowTokens:target.windowTokens,windowKnown:target.windowKnown,reliableFillRatio:summary.reliableFillRatio,memory:(summary.qualities.memory.ratio??0)>=.8?'good':(summary.qualities.memory.ratio??0)>=.5?'fair':'weak',stages,interview:{version:plan.version,name:options.persona.name,delegationAvailable:options.executors.length>0,reliableDay:summary.reliableDay,reliableTokens:summary.reliableTokens,qualities:summary.qualities,business:summary.business},tools:toolAccuracy>=.8?'stable':'flaky',toolAccuracy,firstTextMedianMs:textTimes.length?median(textTimes):null,completionMedianMs:median(results.map(r=>r.durationMs)),testedAt:now().toISOString(),ccVersion:d.version,short:!o.full,seed:plan.seed}
+        const measuredResults=results.filter((r):r is CheckupTurn=>r!==null)
+        const textTimes = measuredResults.map(r=>r.firstTextMs).filter((n):n is number=>n!==null)
+        const profile: CheckupProfile = {provider:target.provider,addressHash:addressHash(target.address),model:target.model,windowTokens:target.windowTokens,windowKnown:target.windowKnown,reliableFillRatio:summary.reliableFillRatio,memory:(summary.qualities.memory.ratio??0)>=.8?'good':(summary.qualities.memory.ratio??0)>=.5?'fair':'weak',stages,interview:{version:plan.version,name:options.persona.name,delegationAvailable:options.executors.length>0,reliableDay:summary.reliableDay,reliableTokens:summary.reliableTokens,qualities:summary.qualities,business:summary.business},tools:toolAccuracy>=.8?'stable':'flaky',toolAccuracy,firstTextMedianMs:textTimes.length?median(textTimes):null,completionMedianMs:median(measuredResults.map(r=>r.durationMs)),testedAt:now().toISOString(),ccVersion:d.version,short:!o.full,seed:plan.seed}
         d.store.save(target,profile)
         try { d.store.saveProbe(target,{testedAt:profile.testedAt,lastAttemptAt:profile.testedAt,suspectedChanged:false}) }
         catch { /* The complete measurement was committed; optional probe bookkeeping cannot undo it. */ }

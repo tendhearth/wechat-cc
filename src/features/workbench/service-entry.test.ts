@@ -564,3 +564,11 @@ it('never publishes executor-installed dependency bytes after confirmed close an
   expect(readFileSync(join(second.task.path,'node_modules/tool/index.js'),'utf8')).toBe('installed once')
   expect(installs).toBe(2)
 })
+
+it('shares executor availability with checkup, excluding unacknowledged unattended workers',async()=>{
+  await service.shutdown();setup('codex',['codex','unattended'])
+  const available=service.entryOptions(context).providers.filter(p=>p.available).map(p=>p.id)
+  expect(service.availableExecutors()).toEqual(available)
+  expect(available).toEqual(['codex'])
+  expect(spawnCount).toBe(0)
+})

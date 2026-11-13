@@ -268,7 +268,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
         const session = openOpenAiSession({
           model: opts.makeChatModel(ctx.model, { maxOutputTokens: ctx.evaluation.maxOutputTokens, maxRetries: 2 }), history: chatHistory(memory, saved, () => {}),
           purpose: {
-            maxSteps: ctx.evaluation.maxSteps, strict: true, textEvents: 'streamed', singleDispatch: true,
+            maxSteps: ctx.evaluation.maxSteps, strict: true, emptyOutputCode:'checkup_output_exhausted', textEvents: 'streamed', singleDispatch: true,
             closeTimeoutMs: CLOSE_TIMEOUT_MS, closeMustConfirm: true, cancelWaits: true,
             tools: () => fake.tools,
             request: text => userMessage(text),
@@ -279,7 +279,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
               return { output: await fake.call(call.name, call.input) }
             },
             failure(error, aborted) {
-              return { events: [{ kind: 'error', message: aborted ? 'cancelled' : openaiErrorMessage(error), code: aborted ? 'cancelled' : error instanceof Error && error.message === 'api_task_step_limit' ? 'checkup_step_budget' : openaiErrorCode(error) ?? 'provider_error' }], state: 'interrupted', finish: false }
+              return { events: [{ kind: 'error', message: aborted ? 'cancelled' : openaiErrorMessage(error), code: aborted ? 'cancelled' : error instanceof Error && error.message === 'api_task_step_limit' ? 'checkup_step_budget' : error instanceof Error && error.message==='checkup_output_exhausted' ? 'checkup_output_exhausted' : openaiErrorCode(error) ?? 'provider_error' }], state: 'interrupted', finish: false }
             },
           },
         })

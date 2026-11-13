@@ -79,7 +79,7 @@ export interface GenaiPort {
     model: string
     contents: unknown[]
     config?: { systemInstruction?: string; tools?: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }>; abortSignal?: AbortSignal; maxOutputTokens?: number; httpOptions?: { retryOptions?: { attempts?: number } } }
-  }): Promise<{ text?: string; functionCalls?: Array<{ name?: string; args?: Record<string, unknown> }> }>
+  }): Promise<{ text?: string; functionCalls?: Array<{ name?: string; args?: Record<string, unknown> }>; candidates?: Array<{finishReason?:string}> }>
 }
 /** Minimal MCP surface the loop needs (real: @modelcontextprotocol/sdk Client). */
 export interface McpPort {
@@ -108,6 +108,7 @@ export interface DispatchLoopArgs {
   abortSdkRequest?: boolean
   toolServer?: string
   stepBudgetCode?: string
+  emptyOutputCode?: string
   maxOutputTokens?: number
   httpRetryAttempts?: number
 }
@@ -141,6 +142,10 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
       const resp = await args.genai.generateContent({ model: args.model, contents: args.history, config })
       const text = resp.text ?? ''
       const calls = resp.functionCalls ?? []
+      if(args.emptyOutputCode && !text.trim() && !calls.length && resp.candidates?.some(c=>c.finishReason==='MAX_TOKENS')){
+        yield {kind:'error',code:args.emptyOutputCode,message:'Output allowance exhausted without a visible answer.'}
+        return
+      }
 
       if (text) yield { kind: 'text', text }
 
@@ -424,7 +429,7 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
             sessionId,
             userText: text,
             signal: abort.signal,
-            ...(ctx.evaluation ? { abortSdkRequest:true, toolServer: 'wechat', stepBudgetCode:'checkup_step_budget', maxRounds: ctx.evaluation.maxSteps, maxOutputTokens: ctx.evaluation.maxOutputTokens, httpRetryAttempts: 1 } : {}),
+            ...(ctx.evaluation ? { abortSdkRequest:true, toolServer: 'wechat', stepBudgetCode:'checkup_step_budget', emptyOutputCode:'checkup_output_exhausted', maxRounds: ctx.evaluation.maxSteps, maxOutputTokens: ctx.evaluation.maxOutputTokens, httpRetryAttempts: 1 } : {}),
           })
         },
         async cancel() {

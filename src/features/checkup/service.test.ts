@@ -234,3 +234,39 @@ it('durably limits manual target attempts per UTC day and lets local operators b
   await tomorrow.start().done
   expect(tomorrow.view().attempt?.status).toBe('completed')
 })
+
+it('keeps other observations and marks only the affected qualities incomplete after exhausted reasoning',async()=>{
+  let n=0
+  const {service}=setup(async sample=>{if(++n===1)throw Object.assign(Error('only reasoning'),{code:'checkup_output_exhausted'});return correct(sample)})
+  await service.start().done
+  const view=service.view()
+  expect(n).toBe(24)
+  expect(view.attempt).toMatchObject({status:'completed',completedRequests:24})
+  expect(view.profile?.interview?.qualities.honesty).toEqual({passed:3,total:3,ratio:1,unmeasured:1})
+  expect(view.profile?.reliableFillRatio).toBe(0)
+  expect(view.review?.rows.find(r=>r.key==='honesty')).toMatchObject({grade:'没法判',detail:'这一项没测全'})
+  expect(view.review?.rows.find(r=>r.key==='stance')?.grade).toBe('好')
+  expect(view.review?.status).not.toContain('这次没测成')
+})
+it('tries all questions but keeps the previous archive when every question exhausts reasoning',async()=>{
+  let exhausted=false,n=0
+  const {service}=setup(async sample=>{n++;if(exhausted)throw Object.assign(Error('only reasoning'),{code:'checkup_output_exhausted'});return correct(sample)})
+  await service.start().done
+  const before=service.view().profile
+  exhausted=true;n=0;await service.start().done
+  expect(n).toBe(24)
+  expect(service.view().attempt).toMatchObject({status:'failed',errorCode:'no_measurement',completedRequests:24})
+  expect(service.view().profile).toEqual(before)
+  expect(service.view().review?.status).toContain('这次没测成')
+})
+
+it('invalidates the cost receipt if real executor availability changes before confirmation',()=>{
+  const store=makeCheckupStore(temp());let available=false
+  const service=makeCheckupService({store,resolveTarget:()=>target,run:correct,version:'test',executors:()=>available?['private-worker']:[]})
+  const estimate=service.estimate()
+  available=true
+  expect(service.estimate().requests).toBe(72)
+  expect(service.estimate().targetKey).not.toBe(estimate.targetKey)
+  expect(()=>service.start({expectedTargetKey:estimate.targetKey})).toThrow('checkup_target_changed')
+  expect(service.view().attempt).toBeNull()
+})
