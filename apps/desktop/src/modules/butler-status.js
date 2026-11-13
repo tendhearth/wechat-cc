@@ -2,7 +2,7 @@
 // Local checkup only. Preparing an estimate never starts model requests.
 import { V1, v1 } from '../daemon-client.js'
 
-/** @typedef {{target:unknown,profile:null|{memory:'good'|'fair'|'weak',tools:'stable'|'flaky',testedAt:string,short:boolean},attempt:null|{status:'running'|'completed'|'failed'|'cancelled'},suspectedChanged:boolean,periodicProbe:boolean}} CheckupView */
+/** @typedef {import('../../../../packages/protocol/src/checkup').CheckupView} CheckupView */
 /** @typedef {{requests:number,maxRequests:number,inputTokens:number,outputTokens:number,windowKnown:boolean,targetKey:string}} Estimate */
 /** @param {string} tag @param {string} text @param {string} [cls] */
 function el(tag, text, cls) { const n = document.createElement(tag); n.textContent = text; if (cls) n.className = cls; return n }
@@ -11,11 +11,13 @@ function el(tag, text, cls) { const n = document.createElement(tag); n.textConte
 export function butlerSummary(data) {
   const p = data.profile
   return {
+    title:data.review?.title??`CC（现在用的是 ${data.target.model??'当前模型'}）`,
+    rows:data.review?.rows??[],
     memory: p ? { good: '好', fair: '一般', weak: '弱' }[p.memory] : '还没体检',
     tools: p ? p.tools === 'stable' ? '稳' : '偶尔出错' : '还没体检',
-    note: p?.memory === 'weak' ? 'CC 会更常跟你确认。' : !p ? '体检后，CC 会更了解自己的记性和用工具的情况。' : '',
+    note: data.review?.care || (p?.memory === 'weak' ? 'CC 会更常跟你确认。' : !p ? '体检后，CC 会更了解自己的记性和用工具的情况。' : ''),
     tested: p ? `上次体检 ${new Date(p.testedAt).toLocaleString('zh-CN')}${p.short ? ' · 短版' : ''}` : '',
-    attempt: data.attempt?.status === 'running' ? '正在体检，可以随时停下。' : data.attempt?.status === 'failed' ? '这次没测成，已有的体检结果保留。' : data.attempt?.status === 'cancelled' ? '已取消，已有的体检结果保留。' : '',
+    attempt: data.review?.status || (data.attempt?.status === 'running' ? '正在体检，可以随时停下。' : data.attempt?.status === 'failed' ? '这次没测成，已有的体检结果保留。' : data.attempt?.status === 'cancelled' ? '已取消，已有的体检结果保留。' : ''),
   }
 }
 
@@ -34,14 +36,14 @@ export function mountButlerStatus({ host, call }) {
   }
   function render() {
     host.className = 'nc-section nc-butler'
-    const nodes = [el('h3', '管家状态', 'nc-section-title')]
+    const nodes = [el('h3', data?butlerSummary(data).title:'CC 状态', 'nc-section-title')]
     if (!data) {
-      nodes.push(el('p', failed ? '暂时读不到管家状态。' : '正在查看管家状态。', 'nc-detail'))
+      nodes.push(el('p', failed ? '暂时读不到 CC 状态。' : '正在查看 CC 状态。', 'nc-detail'))
       if (failed) nodes.push(button('再试一次', 'retry', () => { void refresh() }))
       host.replaceChildren(...nodes); return
     }
     const s = butlerSummary(data), running = data.attempt?.status === 'running'
-    const list = el('ul', '', 'nc-list'); list.append(line('记性', s.memory), line('用工具', s.tools)); nodes.push(list)
+    const list = el('ul', '', 'nc-list'); if(s.rows.length)for(const row of s.rows)list.append(line(row.label,`${row.detail}  ${row.grade}`));else list.append(line('记性', s.memory), line('用工具', s.tools)); nodes.push(list)
     for (const text of [actionError, s.note, s.tested, s.attempt, data.suspectedChanged ? '可能被换了，建议重新体检。' : '', failed ? '暂时读不到最新状态，下面是上次所知。' : '']) if (text) nodes.push(el('p', text, 'nc-detail'))
     if (failed) nodes.push(button('再试一次', 'retry', () => { void refresh() }))
     if (running) nodes.push(button('取消体检', 'cancel', () => { void perform(async () => { data = /** @type {CheckupView} */ (await v1(call, V1.checkup.cancel, { body: {} })); estimate = null }) }))

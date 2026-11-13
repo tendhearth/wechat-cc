@@ -6,17 +6,13 @@ export const DEFAULT_RELIABLE_FILL = .25
 export const CHECKUP_SEED = 769906
 export const CHECKUP_RATIOS = [.1, .25, .4, .6, .8] as const
 export const RELIABLE_ACCURACY = .8
+import type { InterviewSample } from './checkup-interview'
 export type CheckupSample =
+  | InterviewSample
   | { kind: 'memory'; prompt: string; answers: string[]; fillRatio: number; estimatedTokens: number }
   | { kind: 'tool'; prompt: string; tool: string; input: Record<string, string>; estimatedTokens: number }
-export interface CheckupTurn {
-  text: string
-  toolCalls: Array<{ name: string; input: unknown }>
-  /** A model exhausted its fake-tool loop; infrastructure failures never set this. */
-  toolError?: boolean
-  firstTextMs: number | null
-  durationMs: number
-}
+import type { CheckupTurn } from './checkup-types'
+export type { CheckupTurn } from './checkup-types'
 export interface PlanOptions { windowTokens: number; full: boolean; seed?: number }
 
 /** Conservative byte-based planning, not a provider tokenizer or billing receipt. */

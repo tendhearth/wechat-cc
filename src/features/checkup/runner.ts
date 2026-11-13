@@ -1,4 +1,4 @@
-/** Same one-turn lifecycle as output-eval: registry spawn, events, bounded close. No production instructions. */
+/** Same one-turn lifecycle as output-eval: registry spawn, events, bounded close. Projected identity only; no production memories. */
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,24 +14,29 @@ import type { CheckupSample, CheckupTurn } from '../../domain/butler-checkup'
 import { checkupAddress } from '../../adapters/store/checkup-store'
 import { errorWithProviderCode } from '../../lib/provider-error-code'
 import { abortable } from './service'
+import { interviewInstructions } from './instructions'
 
 /** An unguessable loopback MCP endpoint. It can only echo invented parameters. */
-export async function fakeCheckupTools(sample: CheckupSample) {
+export async function fakeCheckupTools(sample: CheckupSample, onAction?:(name:string,input:unknown)=>void) {
   const calls: CheckupTurn['toolCalls'] = []
   const tools: AgentMcpTools = {
-    tools: sample.kind === 'tool' ? [{name:sample.tool,description:'A fictional checkup tool. No real-world effects.',parameters:{type:'object',properties:{code:{type:'string'},place:{type:'string'}},required:['code','place'],additionalProperties:false}}] : [],
-    async call(name,input) { calls.push({name,input}); return '虚构操作已完成。' },
+    tools: sample.kind === 'interview' ? [
+      {name:'reply',description:'回用户的话。',parameters:{type:'object',properties:{text:{type:'string'}},required:['text'],additionalProperties:false}},
+      {name:'ask_user',description:'拿不准时，问用户一句。',parameters:{type:'object',properties:{question:{type:'string'}},required:['question'],additionalProperties:false}},
+      ...(sample.executors.length?[{name:'delegate',description:'把具体工作交给一个执行者。',parameters:{type:'object',properties:{executor:{type:'string',enum:sample.executors},instruction:{type:'string'}},required:['executor','instruction'],additionalProperties:false}}]:[]),
+    ] : sample.kind === 'tool' ? [{name:sample.tool,description:'A fictional checkup tool. No real-world effects.',parameters:{type:'object',properties:{code:{type:'string'},place:{type:'string'}},required:['code','place'],additionalProperties:false}}] : [],
+    async call(name,input) { calls.push({name,input});onAction?.(name,input); return sample.kind==='interview'?'已收到。':'虚构操作已完成。' },
     async close() {},
-    serverOf: () => 'checkup',
+    serverOf: () => 'wechat',
   }
-  const path = `/checkup-${randomUUID()}`
+  const path = `/conversation-${randomUUID()}`
   const transports = new Set<StreamableHTTPServerTransport>()
   const http = createServer(async(req,res) => {
     if (req.url !== path) { res.writeHead(404).end(); return }
     // Streamable HTTP clients probe GET for SSE; 405 is the protocol's
     // supported stateless/no-SSE response. 404 would report a broken server.
     if (req.method !== 'POST') { res.writeHead(405,{Allow:'POST'}).end(); return }
-    const server = new Server({name:'cc-synthetic-checkup',version:'1'},{capabilities:{tools:{}}})
+    const server = new Server({name:'wechat',version:'1'},{capabilities:{tools:{}}})
     server.setRequestHandler(ListToolsRequestSchema,async()=>({tools:tools.tools.map(t=>({name:t.name,description:t.description,inputSchema:t.parameters as {type:'object'}}))}))
     server.setRequestHandler(CallToolRequestSchema,async r=> {
       // Even an unknown tool has no effects. Keep it for the deterministic scorer.
@@ -61,15 +66,16 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
     const provider=getProvider(target.provider)
     if(!provider)throw errorWithProviderCode('provider unavailable','provider_error')
     if(provider.supportsIsolatedEvaluation!==true)throw Object.assign(new Error('isolated_evaluation_unavailable'),{code:'isolated_evaluation_unavailable'})
-    const project=mkdtempSync(join(tmpdir(),'cc-synthetic-checkup-'))
+    const project=mkdtempSync(join(tmpdir(),sample.kind==='interview'?'cc-conversation-':'cc-synthetic-checkup-'))
     let bridge: Awaited<ReturnType<typeof fakeCheckupTools>> | undefined, session:AgentSession|undefined
     const started=performance.now()
+    let firstActionMs:number|null=null
     const cancel=()=>{void session?.cancel?.().catch(()=>{});if(session)void closeSession(session)}
     signal.addEventListener('abort',cancel,{once:true})
     try {
-      bridge=await fakeCheckupTools(sample)
+      bridge=await fakeCheckupTools(sample,(name,input)=>{if(sample.kind==='interview'&&firstActionMs===null&&['reply','ask_user'].includes(name)&&input&&typeof input==='object'&&Object.values(input).some(v=>typeof v==='string'&&v.trim()))firstActionMs=performance.now()-started})
       signal.throwIfAborted()
-      const pending=provider.spawn({alias:'synthetic-checkup',path:project},{tierProfile:JOB_PROFILE,permissionMode:'strict',chatId:`checkup-${randomUUID()}`,model:target.model,appendInstructions:'只根据本次完全编造的题目作答。禁止读取文件、记忆、项目或调用本次练习以外的工具。',evaluation:{tools:bridge.tools,mcpServer:{url:bridge.url},maxSteps:sample.kind==='tool'?2:1,maxOutputTokens:512}})
+      const pending=provider.spawn({alias:sample.kind==='interview'?'conversation':'synthetic-checkup',path:project},{tierProfile:JOB_PROFILE,permissionMode:'strict',chatId:`conversation-${randomUUID()}`,model:target.model,appendInstructions:sample.kind==='interview'?interviewInstructions(target.provider,target.model,sample.persona,sample.executors):'只根据本次完全编造的题目作答。禁止读取文件、记忆、项目或调用本次练习以外的工具。',evaluation:{tools:bridge.tools,mcpServer:{url:bridge.url},maxSteps:sample.kind==='memory'?1:2,maxOutputTokens:512}})
       void pending.then(s=>{if(signal.aborted)void closeSession(s)},()=>{})
       session=await abortable(pending,signal)
       const actual=session.callTarget?.()
@@ -79,14 +85,14 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
         signal.throwIfAborted()
         if(ev.kind==='text') { if(firstTextMs===null && ev.text.trim())firstTextMs=performance.now()-started;text=ev.textMode==='replace'?ev.text:text+ev.text }
         else if(ev.kind==='error') {
-          if(sample.kind==='tool' && ev.code==='checkup_step_budget') { toolError=true;completed=true }
+          if(sample.kind!=='memory' && ev.code==='checkup_step_budget') { toolError=true;completed=true }
           else throw Object.assign(errorWithProviderCode('model request did not complete',undefined),{code:ev.code??'provider_error'})
         }
         else if(ev.kind==='result')completed=true
         if(text.length>16_384)throw errorWithProviderCode('checkup output exceeded limit','invalid_request')
       }
       if(!completed)throw errorWithProviderCode('turn ended without completion','provider_error')
-      return {text,toolCalls:bridge.calls,firstTextMs,durationMs:performance.now()-started,...(toolError?{toolError:true}:{})}
+      return {text,toolCalls:bridge.calls,firstTextMs:sample.kind==='interview'?(firstActionMs??firstTextMs):firstTextMs,durationMs:performance.now()-started,...(toolError?{toolError:true}:{})}
     } finally {
       signal.removeEventListener('abort',cancel)
       if(session)await closeSession(session)

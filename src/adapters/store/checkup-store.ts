@@ -29,7 +29,9 @@ export function makeCheckupStore(stateDir: string) {
     },
     saveAttempt(target:CheckupTarget,attempt:CheckupAttempt) { updateJsonFile(join(stateDir,'checkup','attempts.json'), raw=>{raw[checkupKey(target)]=attempt}) },
     profile(target: CheckupTarget): CheckupProfile | null {
-      const p = readJsonObject(profilesPath)[checkupKey(target)]
+      const value=readJsonObject(profilesPath)[checkupKey(target)]
+      const parsed=CheckupViewSchema.safeParse({target,profile:value,attempt:null,suspectedChanged:false,periodicProbe:false})
+      const p=parsed.success?parsed.data.profile:null
       return validProfile(p) && p.provider === target.provider && p.model === target.model && p.addressHash === addressHash(target.address) ? p : null
     },
     save(target: CheckupTarget, profile: CheckupProfile) { updateJsonFile(profilesPath, raw => { raw[checkupKey(target)] = profile }) },

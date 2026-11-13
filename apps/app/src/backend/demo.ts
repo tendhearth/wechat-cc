@@ -1,5 +1,5 @@
 import { demoTopics } from './demo-topics'
-import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, type CheckupView, type CheckupProfile, type CheckupAttempt } from '@wechat-cc/protocol'
+import { checkupReview, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, type CheckupView, type CheckupProfile, type CheckupAttempt } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_PORTRAIT_PNG, DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT, type TodoStatus } from './types'
@@ -59,10 +59,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const checkupTarget = () => ({ provider: demoChatModel.provider, address: 'https://synthetic.invalid', model: demoChatModel.model ?? demoChatModel.globalModel ?? 'synthetic-model', windowTokens: 8000, windowKnown: false })
   const checkupTargetKey = () => { const x = checkupTarget(); return `demo-checkup:${x.provider}:${x.model}` }
   const checkupProfile = (good = false): CheckupProfile => {
-    const x = checkupTarget()
-    return { provider: x.provider, addressHash: 'synthetic-only', model: x.model, windowTokens: x.windowTokens, windowKnown: false, reliableFillRatio: good ? .8 : .1, stages: [{ fillRatio: .1, accuracy: 1 }, { fillRatio: .25, accuracy: good ? 1 : 0 }], memory: good ? 'good' : 'weak', tools: good ? 'stable' : 'flaky', toolAccuracy: good ? 1 : .5, firstTextMedianMs: 250, completionMedianMs: 1000, testedAt: new Date(now()).toISOString(), ccVersion: 'demo', short: true, seed: 113 }
+    const x = checkupTarget(), ratio=(value:number)=>({passed:value*2,total:2,ratio:value}),qualities={memory:ratio(good?1:0),tracking:ratio(1),honesty:ratio(1),discretion:ratio(good?1:.5),stance:ratio(1),privacy:ratio(1),persona:{passed:0,total:0,ratio:null}}
+    return { provider: x.provider, addressHash: 'synthetic-only', model: x.model, windowTokens: x.windowTokens, windowKnown: false, interview:{version:'interview-v1',name:'CC',reliableDay:good?'一周':null,qualities,business:ratio(good?1:.5)}, reliableFillRatio: good ? .25 : 0, stages: [{ fillRatio: .1, accuracy: 1 }, { fillRatio: .25, accuracy: good ? 1 : 0 }], memory: good ? 'good' : 'weak', tools: good ? 'stable' : 'flaky', toolAccuracy: good ? 1 : .5, firstTextMedianMs: 250, completionMedianMs: 1000, testedAt: new Date(now()).toISOString(), ccVersion: 'demo', short: true, seed: 113 }
   }
-  const checkupView = (): CheckupView => JSON.parse(JSON.stringify({ target: checkupTarget(), profile: checkupProfiles.get(checkupTargetKey()) ?? null, attempt: checkupAttempts.get(checkupTargetKey()) ?? null, suspectedChanged: false, periodicProbe: checkupPeriodic })) as CheckupView
+  const checkupView = (): CheckupView => { const data:CheckupView=JSON.parse(JSON.stringify({ target: checkupTarget(), profile: checkupProfiles.get(checkupTargetKey()) ?? null, attempt: checkupAttempts.get(checkupTargetKey()) ?? null, suspectedChanged: false, periodicProbe: checkupPeriodic }));return {...data,review:checkupReview(data)} }
   function seedCheckup() { checkupProfiles.clear(); checkupAttempts.clear(); checkupPeriodic = false; checkupActive = null; ++checkupGeneration; checkupProfiles.set(checkupTargetKey(), checkupProfile()) }
   seedCheckup()
   // 演示用的几条记忆(只在内存里;纠错会真的拿掉)
@@ -483,19 +483,19 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async connections() { return demoConnections(lastLang, now()) },
     async checkup() { return checkupView() },
-    async checkupEstimate() { return { requests: 11, maxRequests: 27, inputTokens: 65068, outputTokens: 13824, windowKnown: false, targetKey: checkupTargetKey() } },
+    async checkupEstimate() { return { requests: 32, maxRequests: 64, inputTokens: 125000, outputTokens: 32768, windowKnown: false, targetKey: checkupTargetKey() } },
     async checkupRun(expectedTargetKey) {
       if (expectedTargetKey !== checkupTargetKey()) throw new BackendError('stale')
       if (checkupActive) throw new BackendError('busy')
       const key = checkupTargetKey(), generation = ++checkupGeneration, initialEpoch = epoch
       checkupActive = { key, generation }
-      checkupAttempts.set(key, { status: 'running', completedRequests: 0, totalRequests: 8, startedAt: new Date(now()).toISOString() })
+      checkupAttempts.set(key, { status: 'running', completedRequests: 0, totalRequests: 16, startedAt: new Date(now()).toISOString() })
       const result = checkupProfile(true)
       schedule(() => {
         if (epoch !== initialEpoch || checkupActive?.generation !== generation) return
         const attempt = checkupAttempts.get(key)!
         checkupProfiles.set(key, { ...result, testedAt: new Date(now()).toISOString() })
-        checkupAttempts.set(key, { ...attempt, status: 'completed', completedRequests: 8, finishedAt: new Date(now()).toISOString() })
+        checkupAttempts.set(key, { ...attempt, status: 'completed', completedRequests: 16, finishedAt: new Date(now()).toISOString() })
         checkupActive = null
       }, 6000)
       return checkupView()

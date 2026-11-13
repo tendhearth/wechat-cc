@@ -1,8 +1,9 @@
 import { defineCommand } from 'citty'
+import { checkupReview } from '@wechat-cc/protocol'
 import { STATE_DIR } from '../../lib/config'
 export const checkupCmd=defineCommand({
-  meta:{name:'checkup',description:'本机管家体检，只用编造题；不上传结果'},
-  args:{full:{type:'boolean',description:'完整版（更多编造题）'},provider:{type:'string',description:'后端，默认主人对话当前的后端'},model:{type:'string',description:'模型，默认主人对话当前的模型'},estimate:{type:'boolean',description:'只看请求与 token 估计，不发模型请求'},json:{type:'boolean',description:'JSON 结果'}},
+  meta:{name:'checkup',description:'本机 CC 体检，只用编造对话；不上传结果'},
+  args:{full:{type:'boolean',description:'完整版（更长的编造日常）'},provider:{type:'string',description:'后端，默认主人对话当前的后端'},model:{type:'string',description:'模型，默认主人对话当前的模型'},estimate:{type:'boolean',description:'只看请求与 token 估计，不发模型请求'},json:{type:'boolean',description:'JSON 结果'}},
   async run({args}) {
     const { readApiInfo }=await import('../../lib/api-info')
     const { runCheckupCli }=await import('../checkup')
@@ -23,8 +24,8 @@ export const checkupCmd=defineCommand({
       },{full:!!args.full,estimateOnly:!!args.estimate,...typeof args.provider==='string'?{providerId:args.provider}:{},...typeof args.model==='string'?{model:args.model}:{},signal:abort.signal})
       if(args.json)console.log(JSON.stringify(result,null,2))
       else if(result.view){
-        const v=result.view,p=v.profile
-        console.log(v.attempt?.status==='failed'?`没测成（${v.attempt.errorCode??'provider_error'}），原档案保留。`:v.attempt?.status==='cancelled'?'已取消，原档案保留。':`体检完成：记性 ${p?{good:'好',fair:'一般',weak:'弱'}[p.memory]:'还没体检'}，用工具 ${p?.tools==='stable'?'稳':'偶尔出错'}。`)
+        const v=result.view,review=v.review??checkupReview(v)
+        console.log([review.title,review.status,...review.rows.map(r=>`${r.label}  ${r.detail}  ${r.grade}`),review.care].filter(Boolean).join('\n'))
       }
       if(result.view?.attempt?.status==='failed')process.exitCode=1
       else if(result.view?.attempt?.status==='cancelled')process.exitCode=130

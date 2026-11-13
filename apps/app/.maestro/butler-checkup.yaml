@@ -19,12 +19,46 @@ appId: com.tendhearth.app
     timeout: 5000
 - scrollUntilVisible:
     element:
-      id: checkup-prepare
+      id: checkup-memory
 - assertVisible:
     id: checkup-memory
+- takeScreenshot: app-checkup-interview-start
+- scrollUntilVisible:
+    element:
+      id: checkup-tracking
 - assertVisible:
-    id: checkup-tools
+    id: checkup-tracking
+- scrollUntilVisible:
+    element:
+      id: checkup-honesty
+- scrollUntilVisible:
+    element:
+      id: checkup-discretion
+- scrollUntilVisible:
+    element:
+      id: checkup-stance
+- scrollUntilVisible:
+    element:
+      id: checkup-privacy
+- scrollUntilVisible:
+    element:
+      id: checkup-business
+- assertVisible:
+    id: checkup-business
+- scrollUntilVisible:
+    element:
+      id: checkup-persona
+- assertVisible:
+    id: checkup-persona
+- scrollUntilVisible:
+    element:
+      id: checkup-note
+- assertVisible:
+    text: '.*CC 会这样照顾它.*'
 - takeScreenshot: app-butler-checkup
+- scrollUntilVisible:
+    element:
+      id: checkup-prepare
 - tapOn:
     id: checkup-prepare
 - extendedWaitUntil:

@@ -267,7 +267,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
             closeTimeoutMs: CLOSE_TIMEOUT_MS, closeMustConfirm: true, cancelWaits: true,
             tools: () => fake.tools,
             request: text => userMessage(text),
-            toolCallEvent: call => ({ kind: 'tool_call', server: 'checkup', tool: call.name }),
+            toolCallEvent: call => ({ kind: 'tool_call', server: 'wechat', tool: call.name }),
             async runTool(call, signal) {
               signal.throwIfAborted()
               if (!fake.tools.some(tool => tool.name === call.name)) return { output: 'Unknown checkup tool.' }

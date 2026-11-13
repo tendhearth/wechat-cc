@@ -105,6 +105,7 @@ export interface DispatchLoopArgs {
    *  runDispatchLoop that don't pass one are unaffected. */
   signal?: AbortSignal
   toolServer?: string
+  stepBudgetCode?: string
   maxOutputTokens?: number
   httpRetryAttempts?: number
 }
@@ -205,7 +206,7 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
         // turn. Append a synthetic model turn so the NEXT dispatch (this session
         // reuses `history`) doesn't produce two consecutive user turns.
         args.history.push({ role: 'model', parts: [{ text: '[max tool rounds reached]' }] })
-        if (args.toolServer === 'checkup') yield { kind: 'error', message: 'checkup step budget reached', code: 'checkup_step_budget' }
+        if (args.stepBudgetCode) yield { kind: 'error', message: 'conversation step budget reached', code: args.stepBudgetCode }
         yield em.finish({ sessionId: args.sessionId, numTurns: rounds })
         return
       }
@@ -411,7 +412,7 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
             sessionId,
             userText: text,
             signal: abort.signal,
-            ...(ctx.evaluation ? { toolServer: 'checkup', maxRounds: ctx.evaluation.maxSteps, maxOutputTokens: ctx.evaluation.maxOutputTokens, httpRetryAttempts: 1 } : {}),
+            ...(ctx.evaluation ? { toolServer: 'wechat', stepBudgetCode:'checkup_step_budget', maxRounds: ctx.evaluation.maxSteps, maxOutputTokens: ctx.evaluation.maxOutputTokens, httpRetryAttempts: 1 } : {}),
           })
         },
         async cancel() {

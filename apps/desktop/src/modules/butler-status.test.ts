@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import { butlerSummary, mountButlerStatus } from './butler-status.js'
-const view = (extra = {}) => ({ target: { provider: 'fake', model: 'synthetic' }, profile: null, attempt: null, suspectedChanged: false, periodicProbe: false, ...extra })
+const view = (extra = {}) => ({ target: { provider: 'fake', model: 'synthetic',address:'default',windowTokens:8192,windowKnown:false }, profile: null, attempt: null, suspectedChanged: false, periodicProbe: false, ...extra })
 const quote = { requests: 8, maxRequests: 16, inputTokens: 12000, outputTokens: 1000, windowKnown: false, targetKey: 'synthetic-quote' }
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() }
 
@@ -48,7 +48,7 @@ describe('local butler status', () => {
     const ui = mountButlerStatus({ host, call }); await ui.refresh()
     host.querySelector<HTMLButtonElement>('[data-checkup="prepare"]')!.click(); await flush()
     expect(host.querySelector('[data-checkup="start"]')).not.toBeNull()
-    status = { ...status, target: { provider: 'fake', model: 'changed' } }
+    status = { ...status, target: { ...status.target, model: 'changed' } }
     await ui.refresh()
     expect(host.querySelector('[data-checkup="start"]')).toBeNull()
     expect(call.mock.calls.some(c => c[1].endsWith('/run'))).toBe(false)
@@ -80,4 +80,16 @@ describe('local butler status', () => {
     ui.destroy()
   })
 
+})
+
+it('renders shared interview remarks, current identity and unsupported backend reasons',async()=>{
+  const host=document.createElement('section')
+  const status={...view(),target:{provider:'codex',model:'m'},review:{title:'小禾（现在用的是 m）',rows:[{key:'memory',label:'记性',detail:'一周内的事靠得住',grade:'好'},{key:'persona',label:'本色',detail:'日子久了还是你设定的它',grade:'好'}],care:'CC 会这样照顾它：拿不准时多问你一句。',status:'这个后端暂时没法体检：全局工具尚不能隔离。'}}
+  const ui=mountButlerStatus({host,call:async()=>status});await ui.refresh()
+  expect(host.textContent).toContain(status.review.title)
+  for(const row of status.review.rows){expect(host.textContent).toContain(row.detail);expect(host.textContent).toContain(row.grade)}
+  expect(host.textContent).toContain(status.review.care)
+  expect(host.textContent).toContain(status.review.status)
+  expect(host.textContent).not.toContain('管家')
+  ui.destroy()
 })

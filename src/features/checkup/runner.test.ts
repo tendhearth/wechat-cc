@@ -71,3 +71,49 @@ describe('synthetic checkup provider lifecycle',()=>{
     await expect(result).rejects.toBeDefined();expect(cancel).toHaveBeenCalled();expect(close).toHaveBeenCalled()
   })
 })
+
+it('uses the real CC prompt builder with only projected persona and three fake everyday actions',async()=>{
+  const {buildInterviewPlan}=await import('../../domain/checkup-interview')
+  const {extractCheckupPersona}=await import('../../domain/checkup-persona')
+  const persona=extractCheckupPersona('名字：小禾\n称呼用户：阿青\n自称：小禾\n口头禅：慢慢来\n记忆：PRIVATE_REAL_MEMORY_555')
+  const sample=buildInterviewPlan({windowTokens:8192,full:false,persona,executors:['worker']}).samples[0]!
+  let sent=''
+  const provider:AgentProvider={supportsIsolatedEvaluation:true,async spawn(_project,ctx){
+    sent=ctx.appendInstructions!
+    expect(ctx.evaluation!.tools.tools.map(t=>t.name)).toEqual(['reply','ask_user','delegate'])
+    expect(sent).toContain('小禾');expect(sent).toContain('阿青')
+    expect(sent).not.toMatch(/PRIVATE_REAL_MEMORY|练习|考试|体检/)
+    return {async *dispatch(prompt){expect(prompt).not.toContain('PRIVATE_REAL_MEMORY');await ctx.evaluation!.tools.call('reply',{text:'阿青，小禾在呢，慢慢来。'});yield {kind:'result',sessionId:'invented',numTurns:1,durationMs:1}},close:async()=>{}}
+  }}
+  const result=await makeCheckupTurn(()=>provider)(sample,target,new AbortController().signal)
+  expect(result.toolCalls).toHaveLength(1)
+  expect(sent).toContain('你')
+})
+
+it('does not tell an action-only interview to send final text or use unavailable memory tools',async()=>{
+  const {interviewInstructions}=await import('./instructions')
+  const prompt=interviewInstructions('claude','synthetic')
+  expect(prompt).not.toMatch(/说话:不用工具|不需要调任何工具来「发送」|memory_read|memory_write|a2a_send|wxvault|Read\/Bash/)
+  expect(prompt).toContain('reply')
+  expect(prompt).toContain('ask_user')
+})
+
+it('measures the first reply action even when the model streams no final text',async()=>{
+  const {buildInterviewPlan}=await import('../../domain/checkup-interview')
+  const sample=buildInterviewPlan({windowTokens:8192,full:false}).samples[0]!
+  const provider:AgentProvider={supportsIsolatedEvaluation:true,async spawn(_project,ctx){return {async *dispatch(){await ctx.evaluation!.tools.call('reply',{text:'我记得。'});yield {kind:'result',sessionId:'invented',numTurns:1,durationMs:1}},close:async()=>{}}}}
+  const result=await makeCheckupTurn(()=>provider)(sample,target,new AbortController().signal)
+  expect(result.firstTextMs).not.toBeNull()
+  expect(result.firstTextMs).toBeGreaterThanOrEqual(0)
+})
+
+it('keeps exam labels out of the model-visible MCP server and tool namespace',async()=>{
+  const {buildInterviewPlan}=await import('../../domain/checkup-interview')
+  const bridge=await fakeCheckupTools(buildInterviewPlan({windowTokens:8192,full:false}).samples[0]!),client=new Client({name:'offline',version:'1'})
+  try{
+    await client.connect(new StreamableHTTPClientTransport(new URL(bridge.url)))
+    expect(client.getServerVersion()?.name).toBe('wechat')
+    expect(bridge.tools.serverOf('reply')).toBe('wechat')
+    expect((await client.listTools()).tools.map(t=>t.name)).toEqual(['reply','ask_user'])
+  }finally{await client.close();await bridge.close()}
+})

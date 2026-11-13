@@ -1,9 +1,10 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { checkupReview, type CheckupView } from '../../../packages/protocol/src'
 import { test, expect } from './fixtures'
 
 async function syntheticCheckup(page: import('@playwright/test').Page) {
-  let state = { target: { provider: 'fake', model: 'synthetic' }, profile: null as null | object, attempt: null as null | object, periodicProbe: false, suspectedChanged: false }
+  let state = { target: { provider: 'fake', model: 'synthetic', address:'default',windowTokens:8192,windowKnown:false }, profile: null as null | object, attempt: null as null | object, periodicProbe: false, suspectedChanged: false }
   const mutations: string[] = []
   await page.route('**/v1/checkup**', async route => {
     const path = new URL(route.request().url()).pathname
@@ -13,9 +14,13 @@ async function syntheticCheckup(page: import('@playwright/test').Page) {
     if (path.endsWith('/run')) state = { ...state, attempt: { status: 'running', completedRequests: 0, totalRequests: 8 } }
     if (path.endsWith('/cancel')) state = { ...state, attempt: { status: 'cancelled', completedRequests: 1, totalRequests: 8 } }
     if (path.endsWith('/settings')) state = { ...state, periodicProbe: route.request().postDataJSON().periodicProbe }
-    return route.fulfill({ json: state })
+    return route.fulfill({ json: {...state,review:checkupReview(state as CheckupView)} })
   })
-  return { mutations, weak() { state = { ...state, profile: { memory: 'weak', tools: 'flaky', testedAt: '2026-11-12T00:00:00Z', short: true } } } }
+  return { mutations, weak() {
+    const ratio=(v:number)=>({passed:2*v,total:2,ratio:v})
+    state = { ...state, profile: {provider:'fake',addressHash:'synthetic',model:'synthetic',windowTokens:8192,windowKnown:false,reliableFillRatio:.1,stages:[{fillRatio:.1,accuracy:1}],memory:'weak',tools:'flaky',toolAccuracy:.5,firstTextMedianMs:100,completionMedianMs:200,testedAt:'2026-11-12T00:00:00Z',short:true,seed:769906,ccVersion:'fixture',interview:{version:'interview-v1',name:'小禾',reliableDay:'一天',qualities:{memory:ratio(0),tracking:ratio(1),honesty:ratio(1),discretion:ratio(.5),stance:ratio(1),privacy:ratio(1),persona:ratio(1)},business:ratio(.5)}} }
+  } }
+
 }
 
 test('checkup shows cost before explicit start, can cancel, and keeps periodic checks opt-in', async ({ page, shimUrl }) => {
@@ -42,8 +47,11 @@ test('measured weak memory has plain reassurance and a synthetic screenshot fixt
   await page.goto(shimUrl)
   await page.locator('.cc-home-details > summary').click()
   const panel = page.locator('.nc-butler')
-  await expect(panel).toContainText('CC 会更常跟你确认。')
-  await expect(panel).toContainText('偶尔出错')
+  await expect(panel).toContainText('CC 会这样照顾它：更勤换新对话')
+  await expect(panel).toContainText('动作偶尔发不对')
+  await expect(panel).toContainText('小禾（现在用的是 synthetic）')
+  for(const quality of ['记性','跟得上','诚实','分寸','立场','口风','办事','本色','快慢'])await expect(panel).toContainText(quality)
+  await expect(panel).not.toContainText('管家')
   const out = process.env.WECHAT_CC_DESIGN_SHOTS
   if (out) { await mkdir(out, { recursive: true }); await panel.screenshot({ path: join(out, 'desktop-butler-checkup.png') }) }
 })

@@ -23,3 +23,12 @@ it('explains a stale cost confirmation, busy checkup and invalid checkup request
   expect(butlerActionError('checkup_invalid', 'zh-Hans')).toBe('这次体检没能开始，请重新打开体检再试。')
   expect(butlerActionError('checkup_invalid', 'en')).not.toMatch(/invalid|request|parameter/i)
 })
+
+it('uses the shared interview review verbatim',()=>{
+  const review={title:'小禾（现在用的是 synthetic）',rows:[{key:'memory',label:'记性',detail:'一周内的事靠得住',grade:'好'}],care:'CC 会这样照顾它：拿不准时多问你一句。',status:'这个后端暂时没法体检：全局工具尚不能隔离。'}
+  const result=butlerView({...base,review},'zh-Hans')
+  expect(result.title).toBe(review.title)
+  expect(result.rows).toEqual(review.rows)
+  expect(result.note).toBe(review.care)
+  expect(result.attempt).toBe(review.status)
+})

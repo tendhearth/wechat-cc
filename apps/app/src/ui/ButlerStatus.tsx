@@ -56,11 +56,12 @@ export function ButlerStatus() {
   }
   const s = data ? butlerView(data, lang) : null
   return <View testID="connections-butler" style={{ gap: space.s }}>
-    <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.xl, marginBottom: space.s }}>{t(lang, 'butler.title')}</Txt>
+    <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.xl, marginBottom: space.s }}>{s?.title??t(lang, 'butler.title')}</Txt>
     {!s ? <Txt role="small" tone="inkSoft">{t(lang, failed || !online ? 'butler.unavailable' : 'sessions.loading')}</Txt> : <>
       {!online || failed ? <Txt testID="checkup-stale" role="small" tone="inkSoft">{t(lang, 'butler.stale')}</Txt> : null}
+      {s.rows.length?s.rows.map(row=><Txt key={row.key} testID={`checkup-${row.key}`} role="body">{row.label}: {row.detail}  {row.grade}</Txt>):<>
       <Txt testID="checkup-memory" role="body">{t(lang, 'butler.memory')}: {s.memory}</Txt>
-      <Txt testID="checkup-tools" role="body">{t(lang, 'butler.tools')}: {s.tools}</Txt>
+      <Txt testID="checkup-tools" role="body">{t(lang, 'butler.tools')}: {s.tools}</Txt></>}
       {s.note ? <Txt testID="checkup-note" role="small" tone="inkSoft">{s.note}</Txt> : null}
       {s.tested ? <Txt role="small" tone="inkSoft">{s.tested}</Txt> : null}
       {s.attempt ? <Txt testID="checkup-attempt" role="small" tone="inkSoft" accessibilityLiveRegion="polite">{s.attempt}</Txt> : null}
