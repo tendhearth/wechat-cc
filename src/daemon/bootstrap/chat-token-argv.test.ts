@@ -9,7 +9,7 @@ import { TIER_PROFILES } from '../../domain/user-tier'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk'
-import { claudeChatMcp } from './claude-chat-mcp'
+import { claudeSdkMcp } from '../../mcp-servers/claude-sdk-mcp'
 import { createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
@@ -64,12 +64,13 @@ it('parent MCP sessions retain tier tool gates, provider routing and isolated we
   const clients: Client[] = []
   try {
     for (const tier of ['admin', 'trusted', 'guest'] as const) {
-      const config = await claudeChatMcp('wechat', spec, { WECHAT_SESSION_TOKEN: tier + '-token', WECHAT_SESSION_TIER: tier })
+      const config = await claudeSdkMcp('wechat', spec, { WECHAT_SESSION_TOKEN: tier + '-token', WECHAT_SESSION_TIER: tier })
       const client = await connect(config); clients.push(client)
       const names = (await client.listTools()).tools.map(t => t.name)
       expect(names).toContain('ping')
       expect(names.includes('model_set')).toBe(tier === 'admin')
       expect(names.includes('message')).toBe(tier === 'admin')
+      expect(names.includes('matter_handoff')).toBe(tier === 'admin')
       expect(names.includes('provider_switch')).toBe(tier !== 'guest')
       for (const old of ['reply', 'reply_voice', 'broadcast']) expect(names).not.toContain(old)
       await client.callTool({ name: 'ping', arguments: {} })
@@ -78,7 +79,7 @@ it('parent MCP sessions retain tier tool gates, provider routing and isolated we
         await client.callTool({ name: 'model_set', arguments: { model: 'fixture-model' } })
       }
     }
-    const delegate = await connect(await claudeChatMcp('delegate', spec, { WECHAT_SESSION_TOKEN: 'delegate-token' })); clients.push(delegate)
+    const delegate = await connect(await claudeSdkMcp('delegate', spec, { WECHAT_SESSION_TOKEN: 'delegate-token' })); clients.push(delegate)
     expect((await delegate.listTools()).tools.map(t => t.name)).toEqual(['delegate_codex'])
     await delegate.callTool({ name: 'delegate_codex', arguments: { prompt: 'offline opinion' } })
     // Reusing an earlier session after constructing others must keep its bearer.
@@ -100,7 +101,7 @@ it('closing a parent MCP transport aborts in-flight HTTP work instead of leaving
       init.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
     })
   })
-  const config = await claudeChatMcp('wechat', { command: 'unused', env: { WECHAT_INTERNAL_API: 'http://offline.invalid', WECHAT_INTERNAL_TOKEN_FILE: '/unused' } }, { WECHAT_SESSION_TOKEN: 'private-token', WECHAT_SESSION_TIER: 'trusted' })
+  const config = await claudeSdkMcp('wechat', { command: 'unused', env: { WECHAT_INTERNAL_API: 'http://offline.invalid', WECHAT_INTERNAL_TOKEN_FILE: '/unused' } }, { WECHAT_SESSION_TOKEN: 'private-token', WECHAT_SESSION_TIER: 'trusted' })
   const client = await connect(config)
   const work = client.callTool({ name: 'ping', arguments: {} }).catch(() => undefined)
   await expect.poll(() => started).toBe(true)

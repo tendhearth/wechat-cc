@@ -95,14 +95,22 @@ beforeEach(() => {
   })
   vi.spyOn(process, 'kill').mockImplementation(mocks.kill as never)
 })
-afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); Object.defineProperty(process, 'platform', platform); vi.restoreAllMocks() })
+afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); Object.defineProperty(process, 'platform', platform); vi.restoreAllMocks(); vi.unstubAllEnvs() })
 
 describe('ACP workbench provider', () => {
-  it('passes a daemon-owned matter server only through the session-scoped MCP configuration',async()=>{
+  it.each([false,true])('passes a daemon-owned matter server only through the session-scoped MCP configuration (resume=%s)',async resume=>{
+    vi.stubEnv('WECHAT_SESSION_TOKEN','inherited-chat-token')
+    vi.stubEnv('WECHAT_SESSION_TIER','admin')
     const spec={command:'/cc',args:['mcp-server','matter'],env:{WECHAT_INTERNAL_API:'http://127.0.0.1:1',WECHAT_SESSION_TOKEN:'bound-notebook'}}
-    const {child}=await start({mcpEnv:{WECHAT_SESSION_TOKEN:'bound-notebook'}},undefined,{matterMcp:()=>spec})
-    expect(child.sent.find(m=>m.method==='session/new')!.params.mcpServers).toEqual([{name:'wechat-cc-matter',command:spec.command,args:spec.args,env:Object.entries(spec.env).map(([name,value])=>({name,value}))}])
-    expect(JSON.stringify(mocks.spawn.mock.calls)).not.toContain('bound-notebook')
+    const {child}=await start({mcpEnv:{WECHAT_SESSION_TOKEN:'bound-notebook'},...(resume?{resumeSessionId:'sess-1'}:{})},undefined,{matterMcp:context=>({...spec,env:{...spec.env,WECHAT_SESSION_TOKEN:context.mcpEnv!.WECHAT_SESSION_TOKEN!}})})
+    const servers=child.sent.find(m=>m.method===(resume?'session/load':'session/new'))!.params.mcpServers
+    expect(servers).toEqual([{name:'wechat-cc-matter',command:spec.command,args:spec.args,env:Object.entries(spec.env).map(([name,value])=>({name,value}))}])
+    expect(servers[0].env.some((entry:{name:string;value:string})=>entry.name==='WECHAT_SESSION_TOKEN'&&entry.value==='bound-notebook')).toBe(true)
+    expect(servers[0].env.some((entry:{name:string})=>entry.name==='WECHAT_SESSION_TIER')).toBe(false)
+    expect(JSON.stringify(mocks.spawn.mock.calls).includes('bound-notebook')).toBe(false)
+    for(const call of mocks.spawn.mock.calls){
+      for(const key of ['WECHAT_SESSION_TOKEN','WECHAT_SESSION_TIER'])expect(Object.hasOwn(call[2].env,key)).toBe(false)
+    }
   })
   it('delivers the rejection reason once through the same ACP session after rejecting only this operation', async () => {
     const { session, child } = await start({requestPermission:async request=>{request.onDenied?.('不要访问其他机器');return false}})

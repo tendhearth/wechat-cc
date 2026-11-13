@@ -1,6 +1,4 @@
-import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js'
-import {registerMatterTools} from '../../mcp-servers/matter/tools'
-import {createInternalApiClient} from '../../mcp-servers/wechat/client'
+import {claudeSdkMcp} from '../../mcp-servers/claude-sdk-mcp'
 import { taskEnvironment } from '../../adapters/executors/task-environment'
 import { makeWorkbenchPermissionPrompt } from './permission-prompt'
 import {createClaudeHistoryReader} from '../../adapters/executors/claude/native-claude-history'
@@ -47,16 +45,17 @@ import type {MatterMcpFactory} from '../../adapters/executors/matter-mcp'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
 export async function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}, taskId?: string, preparationSignal?: AbortSignal,matter?:McpStdioSpec|null): Promise<Options> {
+  // The base contains conversation MCP instances that this task does not use.
+  base.abortController?.abort()
   const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
   const taskEnv = taskId ? await taskEnvironment(base.cwd!, taskId,{signal:preparationSignal}) : {}
   const {NODE_OPTIONS: _preload, PATH: _taskPath, CC_TASK_SYSTEM_BOOT_MS: _boot, ...scratchEnv} = taskEnv
-  let notebook:import('@anthropic-ai/claude-agent-sdk').McpSdkServerConfigWithInstance|undefined
-  if(matter?.env?.WECHAT_SESSION_TOKEN){
-    const instance=new McpServer({name:'wechat-cc-matter',version:'0.1.0'})
-    registerMatterTools(instance,createInternalApiClient({baseUrl:matter.env.WECHAT_INTERNAL_API!,tokenFilePath:'',sessionToken:matter.env.WECHAT_SESSION_TOKEN}))
-    notebook={type:'sdk',name:'wechat-cc-matter',instance}
-  }
+  const abortController=new AbortController()
+  const signal=preparationSignal?AbortSignal.any([abortController.signal,preparationSignal]):abortController.signal
+  const notebook=matter?.env?.WECHAT_SESSION_TOKEN
+    ?await claudeSdkMcp('wechat-cc-matter',matter,{},signal):undefined
   return {
+    abortController,
     cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
     executable:base.executable, executableArgs:base.executableArgs,
     env:{...workbenchClaudeEnvironment(base.env),...scratchEnv},
@@ -214,6 +213,7 @@ export function wireWorkbench(opts: {
       if (claude) registry.register('claude',createClaudeAgentProvider({
         async sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
           const base=await opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
+          base.abortController?.abort()
           const native=readNativeClaudeTools(path)
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)

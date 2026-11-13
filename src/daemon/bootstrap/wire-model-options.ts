@@ -23,7 +23,7 @@ import { makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-c
 import type { Bootstrap, BootstrapCtx } from './types'
 import type { PluginsSlice } from './wire-plugins'
 import type { PermissionsSlice } from './wire-permissions'
-import { claudeChatMcp } from './claude-chat-mcp'
+import { claudeSdkMcp } from '../../mcp-servers/claude-sdk-mcp'
 
 export interface ModelOptionsSlice {
   readAgentConfig: ReturnType<typeof makeMtimeCachedConfigReader>
@@ -90,8 +90,8 @@ export function wireModelOptions(
       abortController,
       model: currentClaudeModel(),
       mcpServers: {
-        ...(parts.plugins.wechatStdioForClaude ? { wechat: await claudeChatMcp('wechat', parts.plugins.wechatStdioForClaude, sessionEnv, abortController.signal) } : {}),
-        ...(standardTier && parts.plugins.delegateStdioForClaude ? { delegate: await claudeChatMcp('delegate', parts.plugins.delegateStdioForClaude, sessionEnv, abortController.signal) } : {}),
+        ...(parts.plugins.wechatStdioForClaude ? { wechat: await claudeSdkMcp('wechat', parts.plugins.wechatStdioForClaude, sessionEnv, abortController.signal) } : {}),
+        ...(standardTier && parts.plugins.delegateStdioForClaude ? { delegate: await claudeSdkMcp('delegate', parts.plugins.delegateStdioForClaude, sessionEnv, abortController.signal) } : {}),
         ...(standardTier ? parts.plugins.pluginMcpForClaude : {}),
       },
       // Using preset+append (instead of raw string) keeps MCP tools inline in

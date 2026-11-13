@@ -1,5 +1,5 @@
 import type {APIModel} from './api-model'
-import {expect,it} from 'vitest'
+import {afterEach,expect,it,vi} from 'vitest'
 import {createServer} from 'node:http'
 import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
@@ -13,14 +13,18 @@ import {createOpenAiWorkbenchProvider} from './openai-workbench-provider'
 import {scriptedOpenAiModel} from '../../../test-support/executors/openai-scripted'
 import {TIER_PROFILES} from '../../../domain/user-tier'
 
+afterEach(()=>{vi.unstubAllEnvs()})
+
 // 记录本入口是 TS 源文件,只有 Bun 能直接跑:Node 套件里用 PATH 上的 bun 起它(生产里 execPath 是 bun 或编译好的 cli)。
 it('API executors use the same task-only stdio notebook tools with their bound token',async()=>{
+  vi.stubEnv('WECHAT_SESSION_TOKEN','inherited-chat-token')
+  vi.stubEnv('WECHAT_SESSION_TIER','admin')
   const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-api-matter-'))),project=join(root,'project')
   mkdirSync(project)
   const db=openDb({path:join(root,'state.db')}),calls:unknown[]=[]
   const http=createServer(async(req,res)=>{
     let body='';for await(const part of req)body+=String(part)
-    calls.push([req.method,req.url,req.headers.authorization,body?JSON.parse(body):null])
+    calls.push([req.method,req.url,req.headers.authorization==='Bearer bound-api-token',req.headers.authorization==='Bearer inherited-chat-token',body?JSON.parse(body):null])
     res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({notes:[{text:'first agent note'}]}))
   })
   await new Promise<void>(resolve=>http.listen(0,'127.0.0.1',resolve))
@@ -37,7 +41,7 @@ it('API executors use the same task-only stdio notebook tools with their bound t
     session=await p.spawn({alias:`workbench:${task.id}`,path:project},{tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:'owner',mcpEnv:{WECHAT_SESSION_TOKEN:'bound-api-token'},requestPermission:async()=>{throw Error('notebook does not ask for file permission')}})
     const events=[];for await(const event of session.dispatch('read and note'))events.push(event)
     expect(events.at(-1)?.kind).toBe('result')
-    expect(calls).toEqual([['GET','/v1/matter/notes','Bearer bound-api-token',null],['POST','/v1/matter/note','Bearer bound-api-token',{text:'handoff verified'}]])
+    expect(calls).toEqual([['GET','/v1/matter/notes',true,false,null],['POST','/v1/matter/note',true,false,{text:'handoff verified'}]])
     expect(JSON.stringify(fixture.seen)).toContain('first agent note')
   }finally{await session?.close();await new Promise<void>(resolve=>http.close(()=>resolve()));db.close();removeTempDir(root)}
 })
