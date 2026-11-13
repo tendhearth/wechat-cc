@@ -73,6 +73,7 @@ export function wirePermissions(
   // of what arrived after.
   const buildCanUseTool = (chatId: string) => makeCanUseTool({
     askUser: deps.ilink.askUser,
+    revoke: hash => { deps.ilink.resolvePermission?.(hash, 'deny') },
     // initiatingChatId is the session's own chatId, baked in at spawn.
     // (The relay only uses this for log correlation; prompts always route
     // to adminChatId.)

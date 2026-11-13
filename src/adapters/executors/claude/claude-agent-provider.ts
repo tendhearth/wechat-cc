@@ -1,3 +1,4 @@
+import type { ChatApprovalLifecycle } from '../chat-approval'
 import { claudeResultUsage } from '../../../domain/turn-usage'
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { toolInputFacts } from '../../../domain/permission-rules/facts'
@@ -446,6 +447,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // (the TN-zombie source). The per-turn watchdog's release→close path
       // now actually reaps the subprocess through this.
       if(spawnOpts.ephemeral)options.persistSession=false
+      const approvalLifecycle = options.canUseTool as Partial<ChatApprovalLifecycle> | undefined
       const aborter = options.abortController ?? new AbortController()
       options.abortController = aborter
       // 守护(评审 #193 P1-1):子进程在这一刻拿到的端点 + 模型就是这条会话以后每一轮连的地方。
@@ -688,11 +690,13 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 ...(usage ? { usage } : {}),
                 ...(clean ? { finalText: msg.result as string } : {}),
               })
+              approvalLifecycle?.endTurn?.()
               aq.end()
               activeEventQueue = null
             }
           }
         } catch (e) {
+          approvalLifecycle?.endTurn?.()
           log('SESSION_ERROR', `alias=${project.alias} ${e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : String(e)}`)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const catchQueue = activeEventQueue as AsyncQueue<AgentEvent> | null
@@ -705,6 +709,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           }
         } finally {
           settleQuestion()
+          approvalLifecycle?.endTurn?.()
           drainResolve?.()
         }
       })()
@@ -721,6 +726,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           if (activeEventQueue) {
             throw new Error(`claude provider: previous dispatch still in flight (alias=${project.alias})`)
           }
+          approvalLifecycle?.beginTurn?.()
           lastInputTokens=undefined;lastRequestId=undefined
           const content = userContent(text, attachments)
           const queue = new AsyncQueue<AgentEvent>()
@@ -738,6 +744,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         },
         async cancel() {
           if (closed) return
+          approvalLifecycle?.endTurn?.()
           // Signal the SDK to interrupt the in-flight dispatch (if any).
           // Don't close, don't end the queue — we rely on the SDK to emit
           // a final `result` (or `error`) message in response to interrupt,
@@ -762,6 +769,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           swallowSdkLifecycleError(qIface.interrupt?.bind(q))
         },
         async close() {
+          approvalLifecycle?.endTurn?.()
           closed = true
           sdkQueue.end()
           const qIface = q as unknown as { close?: () => unknown; interrupt?: () => unknown }

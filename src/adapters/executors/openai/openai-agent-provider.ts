@@ -22,6 +22,7 @@ import { isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import { EvalOutputExhaustedError, systemMessage, userMessage, type APIModel, type ChatMessage, type ToolSpec } from './api-model'
 import { builtinTools, type BuiltinTool } from './openai-tools'
+import { ChatApprovalTurn } from '../chat-approval'
 import { gateTool, type OpenAiApproval } from './openai-gate'
 import type { ChatOwnerRules } from '../../permission-rules/chat'
 import { makeTurnEmitter } from '../turn-emitter'
@@ -145,6 +146,8 @@ function chatPurpose(args: {
   ownerRules?: () => ChatOwnerRules | null
   approval?: OpenAiApproval
 }): OpenAiPurpose {
+  let approvalSignal: AbortSignal | undefined
+  let approvalTurn = new ChatApprovalTurn(args.approval?.maxCards)
   const { ctx, bridge, maxSteps, ownerRules } = args
   const builtinByName = new Map<string, BuiltinTool>(args.builtins.map(b => [b.spec.name, b]))
   const toolSpecs: ToolSpec[] = [...bridge.tools, ...args.builtins.map(b => b.spec)]
@@ -174,7 +177,9 @@ function chatPurpose(args: {
       if (signal.aborted) return { output: CANCELLED_TOOL }
       const server = bridge.serverOf(call.name)
       const input = (call.input ?? {}) as Record<string, unknown>
+      if (approvalSignal !== signal) { approvalSignal = signal; approvalTurn = new ChatApprovalTurn(args.approval?.maxCards) }
       const gate = await gateTool({
+        approvalTurn,
         toolName: call.name,
         ...(server !== undefined ? { mcpServer: server } : {}),
         input,

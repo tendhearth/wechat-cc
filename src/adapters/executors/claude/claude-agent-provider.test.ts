@@ -1,3 +1,4 @@
+import { makeCanUseTool } from './permission-relay'
 import { describe, it, expect, vi } from 'vitest'
 import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
 import type { AgentEvent } from '../../../ports/agent-provider'
@@ -647,6 +648,38 @@ describe('claude-agent-provider', () => {
     expect(events2.some(e => e.kind === 'text' && e.text === 'still alive')).toBe(true)
 
     await session.close()
+  })
+
+  it('real permission relay resets denied tools on each dispatch and ends pending cards on cancel', async () => {
+    const cards = new Set<string>()
+    let asks = 0, pending = false, answer!: (v: 'allow') => void
+    const gate = makeCanUseTool({
+      askUser: async (_to, _prompt, hash) => { asks++; if (!pending) return 'deny'; cards.add(hash); return new Promise<'allow'>(r => { answer = r }) },
+      revoke: hash => { cards.delete(hash) }, initiatingChatId: () => 'owner', adminChatId: () => 'owner', resolveTier: () => 'admin', log: () => {}, mode: () => 'solo', provider: 'claude', permissionMode: 'strict',
+    })
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({ canUseTool: gate }) })
+    const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'owner' })
+    const invoke = (id: string) => gate('mcp__wechat__matter_handoff', {}, { signal: new AbortController().signal, toolUseID: id } as any)
+    const finish = () => (sdk as unknown as { __test_yield(m: unknown): void }).__test_yield({ type: 'result', subtype: 'success', session_id: 'offline', num_turns: 1, duration_ms: 0 })
+    let work = drain(session.dispatch('first'))
+    try {
+      expect((await invoke('first')).behavior).toBe('deny')
+      expect((await invoke('repeat')).behavior).toBe('deny')
+      expect(asks).toBe(1)
+      finish(); await work
+      work = drain(session.dispatch('second'))
+      pending = true
+      let settled = false
+      const permission = invoke('second').then(r => { settled = true; return r })
+      await expect.poll(() => cards.size).toBe(1)
+      expect(asks).toBe(2)
+      await session.cancel!()
+      await expect.poll(() => settled, { timeout: 200 }).toBe(true)
+      expect((await permission).behavior).toBe('deny')
+      expect(cards.size).toBe(0)
+      answer('allow')
+      finish(); await work
+    } finally { answer?.('allow'); await session.close(); await work }
   })
 
   it('close() survives a dead SDK ProcessTransport (sync throw)', async () => {

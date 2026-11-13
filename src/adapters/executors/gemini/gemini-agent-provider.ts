@@ -25,7 +25,7 @@ import { makeTurnEmitter } from '../turn-emitter'
 import { openaiErrorCode } from '../openai/openai-error-code'
 import { withProviderCode } from '../../../lib/provider-error-code'
 import type { CheckupBudget } from '../../../domain/checkup-budget'
-import { renderChatApprovalPrompt } from '../chat-approval'
+import { ChatApprovalTurn, type ChatApprovalChannel, renderChatApprovalPrompt } from '../chat-approval'
 
 export { GEMINI_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -35,7 +35,7 @@ export { tierProfileToGeminiSdkOpts, type GeminiTierSdkOpts } from '../../../dom
  *  functionResponse so the model sees the refusal. Phase B builds the real one
  *  from domain/authorize + askUser; tests inject a fake. */
 export type ToolGateDecision = { allow: true } | { allow: false; message: string }
-export type ToolGate = (toolName: string, input: Record<string, unknown>) => Promise<ToolGateDecision>
+export type ToolGate = (toolName: string, input: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolGateDecision>
 
 export interface McpToolDef {
   name: string
@@ -186,7 +186,11 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
           continue
         }
         yield { kind: 'tool_call', server: args.toolServer ?? 'wechat', tool: name }
-        const decision = await args.gate(name, callArgs)
+        const decision = await args.gate(name, callArgs, args.signal)
+        if (args.signal?.aborted) {
+          responseParts.push({ functionResponse: { name, response: { error: 'cancelled: the user stopped this turn before this tool ran' } } })
+          continue
+        }
         if (!decision.allow) {
           responseParts.push({ functionResponse: { name, response: { error: decision.message } } })
           continue
@@ -256,8 +260,7 @@ export interface GateBaseCapability {
 
 /** Injected deps for the gate — bootstrap supplies the real ones; tests fake them.
  *  Kept abstract so the provider module doesn't import bootstrap. */
-export interface GeminiGateDeps {
-  askUser: (adminChatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
+export interface GeminiGateDeps extends ChatApprovalChannel {
   adminFor: (chatId: string) => string | null
   modeFor: (chatId: string) => string
   lookupBase: (mode: string, permissionMode: PermissionMode) => GateBaseCapability
@@ -288,7 +291,9 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
     // Per-spawn relay counter — each session owns its own, so hashes don't couple
     // across chats. Combined with chatId in the hash input → unique per relay.
     let relaySeq = 0
-    return async (toolName, input) => {
+    const turn = new ChatApprovalTurn(deps.maxCards)
+    return async (toolName, input, signal) => {
+      if (turn.denies(`mcp__wechat__${toolName}`)) return { allow: false, message: 'Tool already denied this turn' }
       // 判定只在 domain/authorize.ts(架构终态 C2):旁路(dangerously ⇒ 闸门不判)→ 名字 → 档位 × 类别 × 能力表 →
       // 主人自己的对话里落到「问」的先过放行规则(2026-10-25,core/permission-rules/chat.ts)。
       // 规则看到的工具名是 SDK 形状的 `mcp__wechat__<名>`(和 Claude 一样,一条规则三家通用)。
@@ -303,6 +308,7 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
         { chatId: ctx.chatId, provider: 'gemini', tool: `mcp__wechat__${toolName}`, input: (input ?? {}) as Record<string, unknown> },
         malformed ? null : deps.ownerRules?.() ?? null,
       )
+      if (signal?.aborted) return { allow: false, message: 'Turn cancelled' }
       if (auth.verdict === 'allow') return { allow: true }
       if (auth.reason === 'malformed_name') return { allow: false, message: `invalid tool name '${toolName}'` }
       if (auth.denyMessage) return { allow: false, message: auth.denyMessage }
@@ -311,8 +317,8 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
       if (!admin) return { allow: false, message: 'no admin configured to approve permission requests' }
       const seq = ++relaySeq
       const hash = shortHash(`${ctx.chatId}:${toolName}:${seq}`)
-      const answer = await deps.askUser(admin, renderChatApprovalPrompt('Gemini', `mcp__wechat__${toolName}`, input), hash, GEMINI_RELAY_TIMEOUT_MS)
-      if (answer === 'allow') return { allow: true }
+      const answer = await turn.ask({ channel: deps, target: admin, prompt: renderChatApprovalPrompt('Gemini', `mcp__wechat__${toolName}`, input), hash, timeoutMs: GEMINI_RELAY_TIMEOUT_MS, signal, tool: `mcp__wechat__${toolName}` })
+      if (answer === 'allow' && !signal?.aborted) return { allow: true }
       const message = answer === 'undelivered'
         ? 'could not reach the owner for approval (their message window is likely closed) — tell the user to try again shortly or have the owner message first'
         : answer === 'timeout' ? 'no reply in time; denied' : 'denied by operator'
@@ -420,7 +426,7 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
           return runDispatchLoop({
             genai: opts.genai.models,
             mcp: { callTool: (n, a) => conn.callTool(n, a) },
-            gate,
+            gate: fake ? gate : opts.buildGate(ctx),
             model: ctx.evaluation ? ctx.model ?? opts.model : opts.model,
             // Per-spawn prompt from the daemon (persona / core memory / care /
             // sticker / knowledge sections + the model line — the SAME text

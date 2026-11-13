@@ -17,7 +17,7 @@ import { classifyToolUse, type TierProfile } from '../../../domain/user-tier'
 import type { PermissionMode } from '../../../ports/agent-provider'
 import { authorizeChatCall, type ChatOwnerRules } from '../../permission-rules/chat'
 import { randomUUID } from 'node:crypto'
-import { askForChatApproval, renderChatApprovalPrompt, type ChatApprovalChannel } from '../chat-approval'
+import { ChatApprovalTurn, renderChatApprovalPrompt, type ChatApprovalChannel } from '../chat-approval'
 
 export interface OpenAiApproval extends ChatApprovalChannel {
   adminFor: (chatId: string) => string | null
@@ -47,6 +47,7 @@ export async function gateTool(args: {
   /** 主人自己的对话走放行规则(2026-10-25,core/permission-rules/chat.ts)。不给 ⇒ 不看规则(问照旧落成拒)。 */
   ownerRules?: ChatOwnerRules | null
   approval?: OpenAiApproval
+  approvalTurn?: ChatApprovalTurn
   signal?: AbortSignal
 }): Promise<GateResult> {
   if (args.signal?.aborted) return { decision: 'deny' }
@@ -57,6 +58,7 @@ export async function gateTool(args: {
   // prefix, which classifyToolUse does NOT special-case — it falls through to
   // the fail-safe default ('subagent'), never the wechat tool's kind.
   const sdkName = args.mcpServer ? `mcp__${args.mcpServer}__${args.toolName}` : args.toolName
+  if (args.approvalTurn?.denies(sdkName)) return { decision: 'deny', message: 'Tool already denied this turn' }
   const kind = classifyToolUse(sdkName, args.input)
   const auth = await authorizeChatCall(
     { tier: args.tierProfile, permissionMode: args.permissionMode, executor: 'openai' },
@@ -70,7 +72,7 @@ export async function gateTool(args: {
     if (!admin) return { decision: 'deny', message: 'no admin configured to approve permission requests' }
     try {
       const prompt = renderChatApprovalPrompt('OpenAI', sdkName, args.input)
-      const answer = await askForChatApproval({ channel: args.approval, target: admin, prompt, hash: randomUUID().replace(/-/g, '').slice(0, 5), timeoutMs: 10 * 60_000, signal: args.signal })
+      const answer = await (args.approvalTurn ?? new ChatApprovalTurn(args.approval.maxCards)).ask({ tool: sdkName, channel: args.approval, target: admin, prompt, hash: randomUUID().replace(/-/g, '').slice(0, 5), timeoutMs: 10 * 60_000, signal: args.signal })
       if (answer === 'allow' && !args.signal?.aborted) return { decision: 'allow' }
       return { decision: 'deny', message: answer === 'undelivered' ? 'Could not deliver the approval request to the owner; ask them to try again shortly.' : answer === 'timeout' ? 'User did not reply in time; request denied' : 'User denied the request' }
     } catch { return { decision: 'deny' } }

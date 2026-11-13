@@ -5,10 +5,9 @@ import { isReplyToolName } from '../../../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type UserTier } from '../../../domain/user-tier'
 import { authorize } from '../../../domain/authorize'
 import { authorizeChatToolUse, type ChatOwnerRules } from '../../permission-rules/chat'
-import { renderChatApprovalPrompt } from '../chat-approval'
+import { ChatApprovalTurn, type ChatApprovalChannel, type ChatApprovalLifecycle, renderChatApprovalPrompt } from '../chat-approval'
 
-export interface PermissionRelayDeps {
-  askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
+export interface PermissionRelayDeps extends ChatApprovalChannel {
   /**
    * chatId of the chat that initiated this dispatch (for routing context
    * only — NOT the prompt target). Kept for log correlation; relay
@@ -41,8 +40,15 @@ export interface PermissionRelayDeps {
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 
-export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
-  return async (toolName, input, opts) => {
+export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool & ChatApprovalLifecycle {
+  let controller = new AbortController()
+  let turn = new ChatApprovalTurn(deps.maxCards)
+  const gate: CanUseTool = async (toolName, input, opts) => {
+    const approvalTurn = turn
+    const signal = opts.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal
+    if (signal.aborted) return { behavior: 'deny', message: 'Turn cancelled' }
+    if (approvalTurn.denies(toolName)) return { behavior: 'deny', message: 'Tool already denied this turn' }
+
     // Chatroom beats: the coordinator captures each agent's plain text and
     // re-emits it prefixed ([Claude]/[Codex]). A direct reply-tool call would
     // (a) send an UN-prefixed message straight to the chat and (b) lose its
@@ -86,6 +92,7 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
     )
     const decision = auth.verdict
 
+    if (signal.aborted) return { behavior: 'deny', message: 'Turn cancelled' }
     if (decision === 'allow') {
       if (auth.reason === 'owner_rules') deps.log('PERMISSION', `allow-by-owner-rule: tool=${toolName} kind=${kind}`)
       return { behavior: 'allow' } satisfies PermissionResult
@@ -112,8 +119,8 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
     }
     const hash = shortHash(opts.toolUseID ?? '')
     const prompt = renderChatApprovalPrompt('Claude', toolName, input, opts.title)
-    const answer = await deps.askUser(target, prompt, hash, DEFAULT_TIMEOUT_MS)
-    if (answer === 'allow') return { behavior: 'allow' } satisfies PermissionResult
+    const answer = await approvalTurn.ask({ channel: deps, target, prompt, hash, timeoutMs: DEFAULT_TIMEOUT_MS, signal, tool: toolName })
+    if (answer === 'allow' && !signal.aborted) return { behavior: 'allow' } satisfies PermissionResult
     deps.log('PERMISSION', `${answer}: tool=${toolName} hash=${hash}`)
     // 'undelivered' ≠ denied: the approver never saw the prompt (their push
     // window was closed). Tell the agent honestly so it can relay a useful
@@ -124,6 +131,10 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
       : 'User denied the request'
     return { behavior: 'deny', message } satisfies PermissionResult
   }
+  return Object.assign(gate, {
+    beginTurn() { controller.abort(); controller = new AbortController(); turn = new ChatApprovalTurn(deps.maxCards) },
+    endTurn() { controller.abort() },
+  })
 }
 
 function shortHash(s: string): string {

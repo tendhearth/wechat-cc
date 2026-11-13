@@ -13,6 +13,7 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
 /** 对话审批的共同等待边界。取消不依赖主人回答，也不接受迟到的批准。 */
 export type ChatApprovalAnswer = 'allow' | 'deny' | 'timeout' | 'undelivered' | 'cancelled'
 export interface ChatApprovalChannel {
+  maxCards?: number
   askUser(chatId: string, prompt: string, hash: string, timeoutMs: number): Promise<Exclude<ChatApprovalAnswer, 'cancelled'>>
   /** 删除 pending 登记并让旧卡失效。 */
   revoke?(hash: string): void
@@ -41,4 +42,25 @@ export async function askForChatApproval(args: {
   } finally {
     if (onAbort) signal?.removeEventListener('abort', onAbort)
   }
+}
+
+/** 一个 dispatch 一份；开卡前同步扣预算，Claude 并发调用也不能越过上限。 */
+export class ChatApprovalTurn {
+  private cards = 0
+  private readonly denied = new Set<string>()
+  constructor(private readonly maxCards = 3) {}
+  denies(tool: string): boolean { return this.denied.has(tool) }
+  async ask(args: Parameters<typeof askForChatApproval>[0] & { tool: string }): Promise<ChatApprovalAnswer> {
+    if (args.signal?.aborted) return 'cancelled'
+    if (this.denied.has(args.tool) || this.cards >= this.maxCards) return 'deny'
+    this.cards++
+    const answer = await askForChatApproval(args)
+    if (answer !== 'allow') this.denied.add(args.tool)
+    return answer
+  }
+}
+
+export interface ChatApprovalLifecycle {
+  beginTurn(): void
+  endTurn(): void
 }

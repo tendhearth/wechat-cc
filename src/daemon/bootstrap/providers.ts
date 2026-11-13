@@ -684,6 +684,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       const { lookup } = await import('../../domain/capability-matrix')
       const genaiClient = new GoogleGenAI({ apiKey: geminiKey }) as unknown as import('../../adapters/executors/gemini/gemini-agent-provider').GenaiClient
       const buildGate = makeGeminiToolGate({
+          revoke: hash => { deps.ilink.resolvePermission?.(hash, 'deny') },
         askUser: deps.ilink.askUser,
         adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         modeFor: (chatId) => conversationStore.get(chatId)?.mode.kind ?? 'solo',
