@@ -1,3 +1,6 @@
+import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js'
+import {registerMatterTools} from '../../mcp-servers/matter/tools'
+import {createInternalApiClient} from '../../mcp-servers/wechat/client'
 import { taskEnvironment } from '../../adapters/executors/task-environment'
 import { makeWorkbenchPermissionPrompt } from './permission-prompt'
 import {createClaudeHistoryReader} from '../../adapters/executors/claude/native-claude-history'
@@ -47,6 +50,12 @@ export async function workbenchClaudeOptions(base: Options, instructions: string
   const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
   const taskEnv = taskId ? await taskEnvironment(base.cwd!, taskId,{signal:preparationSignal}) : {}
   const {NODE_OPTIONS: _preload, PATH: _taskPath, CC_TASK_SYSTEM_BOOT_MS: _boot, ...scratchEnv} = taskEnv
+  let notebook:import('@anthropic-ai/claude-agent-sdk').McpSdkServerConfigWithInstance|undefined
+  if(matter?.env?.WECHAT_SESSION_TOKEN){
+    const instance=new McpServer({name:'wechat-cc-matter',version:'0.1.0'})
+    registerMatterTools(instance,createInternalApiClient({baseUrl:matter.env.WECHAT_INTERNAL_API!,tokenFilePath:'',sessionToken:matter.env.WECHAT_SESSION_TOKEN}))
+    notebook={type:'sdk',name:'wechat-cc-matter',instance}
+  }
   return {
     cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
     executable:base.executable, executableArgs:base.executableArgs,
@@ -56,12 +65,12 @@ export async function workbenchClaudeOptions(base: Options, instructions: string
     allowedTools:[],
     disallowedTools:[...(tier.disallowedTools ?? []),'mcp__wechat__*','mcp__delegate__*'],
     tools:{type:'preset',preset:'claude_code'},
-    mcpServers:{...native.servers,...(matter?{matter}:{})},
+    mcpServers:{...native.servers,...(notebook?{'wechat-cc-matter':notebook}:{})},
     strictMcpConfig:true,
     settingSources:['project','local'],
     settings:{
       ...native.nativeMcpPolicy,
-      ...(matter&&native.nativeMcpPolicy?.allowedMcpServers?{allowedMcpServers:[...native.nativeMcpPolicy.allowedMcpServers,{serverName:'matter'}]}:{}),
+      ...(notebook&&native.nativeMcpPolicy?.allowedMcpServers?{allowedMcpServers:[...native.nativeMcpPolicy.allowedMcpServers,{serverName:'wechat-cc-matter'}]}:{}),
       // Flag settings override disk env values. Empty values neutralize these
       // automatic companion pointers; this is not filesystem/process isolation.
       env:{...Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),...scratchEnv},
@@ -190,7 +199,7 @@ export function wireWorkbench(opts: {
   const registry=createProviderRegistry(opts.networkGate?{networkGate:opts.networkGate}:undefined)
   const matterMcp:MatterMcpFactory=context=>{
     const token=context.mcpEnv?.WECHAT_SESSION_TOKEN,port=opts.internalApi.port?.()
-    if(!token||!port)return null
+    if(!context.matterLedger||!token||!port)return null
     const spec=matterStdioMcpSpec({baseUrl:`http://127.0.0.1:${port}`})
     return {...spec,env:{...spec.env,WECHAT_SESSION_TOKEN:token}}
   }
@@ -208,7 +217,8 @@ export function wireWorkbench(opts: {
           const native=readNativeClaudeTools(path)
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)
-          const matter=matterMcp({mcpEnv:env})
+          const matter=matterMcp({mcpEnv:env,matterLedger:context?.matterLedger})
+          context?.reportMatterTools?.(!!matter)
           const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers),!!matter)
           return await workbenchClaudeOptions(base,instructions ?? '',permit,native,context?.workbenchTaskId,context?.preparationSignal,matter)
         },

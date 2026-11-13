@@ -227,7 +227,7 @@ export const MatterHandoffResult = z.object({ matterId: z.string(), created: z.b
 export const MatterAgent = z.object({matterId:z.string(),runId:z.string(),executor:z.string(),brief:z.string(),position:z.number(),status:z.enum(['queued','running','completed','failed']),createdAt:z.number(),endedAt:z.number().nullable()})
 export const MatterNote = z.object({id:z.number(),matterId:z.string(),runId:z.string().nullable(),author:z.string(),kind:z.enum(['plan','note','artifact']),text:z.string(),createdAt:z.number()})
 export const MatterDetail = z.object({
-  agentRuns:z.array(MatterAgent).optional(),notes:z.array(MatterNote).optional(),
+  agentRuns:z.array(MatterAgent).optional(),notes:z.array(MatterNote).optional(),notesTotal:z.number().int().nonnegative().optional(),
   matter: Matter, bindings: z.array(MatterBinding), sessions: z.array(MatterSession),
   task: MatterTaskView.nullable(), events: z.array(MatterEvent),
   runId: z.string().optional(), inputMode: z.enum(['steer', 'send', 'queue']).optional(),

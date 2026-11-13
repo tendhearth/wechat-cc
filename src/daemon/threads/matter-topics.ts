@@ -87,7 +87,8 @@ export function makeMatterTopics(d: MatterTopicsDeps) {
           if (!target || target.chatId !== owner || d.ownerChatId() !== owner || !d.db.query('SELECT id FROM threads WHERE id=? AND chat_id=?').get(l.thread_id,owner) || !topicMatterAccess(d.db, localTopicContext(owner), [matterId]).entryAllowed.has(matterId)) continue
           await d.threads.addEntry({ threadId: l.thread_id, kind: 'conclusion', line: firstLine(`${c.title}:${firstLine(c.result, LINE_MAX)}`, LINE_MAX + 20),
             body: c.result.slice(0, BODY_MAX),workCursor:c.cursor, source: 'work', matterId, ts: c.at })
-          d.db.query('UPDATE matter_topics SET written_back_cursor = MAX(written_back_cursor, ?) WHERE matter_id = ? AND thread_id = ?').run(c.cursor, matterId, l.thread_id)
+          const relayed=!!d.db.query('SELECT 1 FROM matter_agents WHERE matter_id=? AND position=2').get(matterId)
+          d.db.query(`UPDATE matter_topics SET written_back_cursor = ${relayed?'MAX(written_back_cursor, ?)':'?'} WHERE matter_id = ? AND thread_id = ?`).run(c.cursor, matterId, l.thread_id)
           const t = await d.threads.get(l.thread_id)
           if (t && c.at > t.lastActive) await d.threads.update(l.thread_id, { lastActive: c.at })
           n++

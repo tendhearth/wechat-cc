@@ -8,6 +8,7 @@ export { acpNotice } from './acp-agent-provider'
 export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions): AgentProvider {
   return createAcpProvider({ ...options, permissions: 'bridge', text: 'append', attachments: 'prompt',mcpServers:context=>{
     const spec=options.matterMcp?.(context)
-    return spec?[{name:'matter',command:spec.command,args:spec.args??[],env:Object.entries(spec.env??{}).map(([name,value])=>({name,value}))}]:[]
+    context.reportMatterTools?.(!!spec)
+    return spec?[{name:'wechat-cc-matter',command:spec.command,args:spec.args??[],env:Object.entries(spec.env??{}).map(([name,value])=>({name,value}))}]:[]
   } })
 }

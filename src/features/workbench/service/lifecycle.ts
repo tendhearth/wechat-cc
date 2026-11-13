@@ -192,7 +192,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
     const ledgerTurn=running.turnSeq
     const codeCapture=captureCodeChanges(running)
-    void (async()=>{
+    if(!store.ledger.enabled(running.taskId))void codeCapture.catch(()=>{})
+    else void (async()=>{
       await running.turnCollection
       await codeCapture
       if(state.shutdownComplete||running.finishing||running.cancelled||running.uncertain||running.turnSeq!==ledgerTurn||!quiet(running))return

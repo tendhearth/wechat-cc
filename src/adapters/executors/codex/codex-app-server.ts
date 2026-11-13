@@ -1070,7 +1070,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         } else {
           const config = workbenchCodexNativeConfig(discovery!.servers, native.config)
           const matter=options.matterMcp?.(context)
-          const mcpServers:Record<string,unknown>={...config.mcp_servers,...(matter?{matter:{...matter,enabled:true,enabled_tools:[...MATTER_TOOL_NAMES],default_tools_approval_mode:'approve'}}:{})}
+          context.reportMatterTools?.(!!matter)
+          const mcpServers:Record<string,unknown>={...config.mcp_servers,...(matter?{'wechat-cc-matter':{...matter,enabled:true,enabled_tools:[...MATTER_TOOL_NAMES],default_tools_approval_mode:'approve'}}:{})}
           const catalog = execution && (execution.model || execution.reasoningEffort) ? await readCodexModelCatalog(request, project.path) : undefined
           if (catalog && execution?.model) selectedModel = executionModel(catalog, execution)
           for (const [name, server] of Object.entries(config.mcp_servers)) if (server.enabled) enabledMcp.add(name)

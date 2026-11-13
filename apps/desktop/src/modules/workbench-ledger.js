@@ -5,7 +5,7 @@ import {escapeWorkbenchHtml as escape} from './workbench-markdown.js'
 export function renderWorkbenchLedger(detail,nameOf){
   const agents=(detail.agentRuns??[]).filter(a=>a.matterId===detail.task.id)
   const notes=(detail.notes??[]).filter(n=>n.matterId===detail.task.id)
-  if(!agents.length&&!notes.length)return ''
+  if(agents.length<2)return ''
   const label={queued:'排队',running:'在做',completed:'这一轮做完了',failed:'没做成'}
   /** @param {string} id */
   const name=id=>id==='cc'?'CC':id==='owner'?'你':nameOf(id)??id

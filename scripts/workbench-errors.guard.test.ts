@@ -159,8 +159,6 @@ const INTERNAL_ONLY = new Set([
     'abandoned',
     // 主人点名要的成果文件,送之前绑定变了(wire-artifacts.ts,随工作台从 daemon 搬进 features 才扫到):落进投递记录,不走桌面 HTTP
     'artifact_binding_changed',
-    // The notebook's narrow routes map these directly to 403; they never reach desktop mappedError.
-    'matter_session_ended','forbidden',
 ])
 describe('工作台抛出的码都归了类(反向守卫)', () => {
   it('every Error(\'code\') literal under the workbench store / parts (src/adapters/store/workbench, src/adapters/workbench, src/domain/workbench), src/features/workbench and src/adapters/executors is desktop-mapped, a task-failure code, or listed INTERNAL_ONLY; the list has no stale entries', async () => {

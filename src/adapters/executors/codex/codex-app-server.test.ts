@@ -96,7 +96,7 @@ it('injects only bound matter tools in thread config while keeping the token out
   const spec={command:'/cc',args:['mcp-server','matter'],env:{WECHAT_INTERNAL_API:'http://127.0.0.1:1',WECHAT_SESSION_TOKEN:token}}
   const {child}=await start({mcpEnv:{WECHAT_SESSION_TOKEN:token}},{matterMcp:()=>spec})
   const started=child.sent.find(m=>m.method==='thread/start')!
-  expect(started.params.config.mcp_servers.matter).toMatchObject({...spec,enabled:true,enabled_tools:['matter_notes','matter_note'],default_tools_approval_mode:'approve'})
+  expect(started.params.config.mcp_servers['wechat-cc-matter']).toMatchObject({...spec,enabled:true,enabled_tools:['matter_notes','matter_note'],default_tools_approval_mode:'approve'})
   expect(JSON.stringify(mocks.spawn.mock.calls)).not.toContain(token)
   expect(started.params.config.shell_environment_policy.set??{}).not.toHaveProperty('WECHAT_SESSION_TOKEN')
 })

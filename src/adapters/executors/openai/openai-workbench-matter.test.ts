@@ -1,3 +1,4 @@
+import type {APIModel} from './api-model'
 import {expect,it} from 'vitest'
 import {createServer} from 'node:http'
 import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
@@ -38,4 +39,33 @@ it('API executors use the same task-only stdio notebook tools with their bound t
     expect(calls).toEqual([['GET','/v1/matter/notes','Bearer bound-api-token',null],['POST','/v1/matter/note','Bearer bound-api-token',{text:'handoff verified'}]])
     expect(JSON.stringify(fixture.seen)).toContain('first agent note')
   }finally{await session?.close();await new Promise<void>(resolve=>http.close(()=>resolve()));db.close();removeTempDir(root)}
+})
+
+it('an unavailable notebook bridge degrades to a normal task without advertising matter tools',async()=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-api-no-matter-'))),db=openDb({path:':memory:'})
+  let session:Awaited<ReturnType<ReturnType<typeof createOpenAiWorkbenchProvider>['spawn']>>|undefined
+  try{
+    const fixture=scriptedOpenAiModel([{text:'done'}])
+    const p=createOpenAiWorkbenchProvider({sessions:makeApiSessionStore(db),model:fixture.model,configHash:'a'.repeat(64),configuredModel:'fixture',matterMcp:()=>({command:process.execPath,args:['-e','process.exit(1)']})})
+    const task=makeWorkbenchStore(db).create({title:'task',path:root,ownerChatId:'owner',providerId:'openai'})
+    session=await p.spawn({alias:`workbench:${task.id}`,path:root},{tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:'owner',matterLedger:true})
+    for await(const event of session.dispatch('do task'))void event
+    expect(JSON.stringify(fixture.seen)).not.toContain('matter_notes')
+    expect(JSON.stringify(fixture.seen)).not.toContain('matter_note')
+  }finally{await session?.close();db.close();removeTempDir(root)}
+})
+
+it('closes the notebook bridge when opening the executor session throws',async()=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-api-matter-close-'))),db=openDb({path:':memory:'}),marker=join(root,'closed')
+  try{
+    const p=createOpenAiWorkbenchProvider({sessions:makeApiSessionStore(db),get model():APIModel{throw Error('offline_open_failure')},configHash:'a'.repeat(64),configuredModel:'fixture',matterMcp:()=>({command:process.execPath,args:[fileURLToPath(new URL('../../../test-support/fixtures/matter-mcp-close-probe.ts',import.meta.url)),marker]})})
+    const task=makeWorkbenchStore(db).create({title:'task',path:root,ownerChatId:'owner',providerId:'openai'})
+    await expect(p.spawn({alias:`workbench:${task.id}`,path:root},{tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:'owner',matterLedger:true})).rejects.toThrow('offline_open_failure')
+    const {existsSync}=await import('node:fs')
+    await expect.poll(()=>existsSync(marker)).toBe(true)
+  }finally{
+    const {existsSync,readFileSync}=await import('node:fs')
+    if(existsSync(marker+'.pid')){try{process.kill(Number(readFileSync(marker+'.pid','utf8')),'SIGTERM')}catch{}}
+    db.close();removeTempDir(root)
+  }
 })

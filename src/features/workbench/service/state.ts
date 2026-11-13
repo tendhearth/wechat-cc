@@ -17,6 +17,8 @@ import type { ArtifactDeliveryReceipt } from '../../../adapters/store/workbench/
 
 export type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
 export interface Active extends PathReservation {
+  ledgerOpening?:boolean
+  ledgerRunId?:string
   execution:AgentExecutionChoice
   attachments:Attachment[]
   handoffId?:string

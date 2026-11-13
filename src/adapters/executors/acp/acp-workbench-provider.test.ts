@@ -101,7 +101,7 @@ describe('ACP workbench provider', () => {
   it('passes a daemon-owned matter server only through the session-scoped MCP configuration',async()=>{
     const spec={command:'/cc',args:['mcp-server','matter'],env:{WECHAT_INTERNAL_API:'http://127.0.0.1:1',WECHAT_SESSION_TOKEN:'bound-notebook'}}
     const {child}=await start({mcpEnv:{WECHAT_SESSION_TOKEN:'bound-notebook'}},undefined,{matterMcp:()=>spec})
-    expect(child.sent.find(m=>m.method==='session/new')!.params.mcpServers).toEqual([{name:'matter',command:spec.command,args:spec.args,env:Object.entries(spec.env).map(([name,value])=>({name,value}))}])
+    expect(child.sent.find(m=>m.method==='session/new')!.params.mcpServers).toEqual([{name:'wechat-cc-matter',command:spec.command,args:spec.args,env:Object.entries(spec.env).map(([name,value])=>({name,value}))}])
     expect(JSON.stringify(mocks.spawn.mock.calls)).not.toContain('bound-notebook')
   })
   it('delivers the rejection reason once through the same ACP session after rejecting only this operation', async () => {

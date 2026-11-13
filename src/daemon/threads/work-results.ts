@@ -8,6 +8,8 @@
  * 水位 = matter_items.cursor(全局单调)。只看 cursor > 水位的条目;一段的「要求」可能在水位之前(那句话上一拍已经读到、
  * 那时还没做完),所以每件被碰到的 matter 都从头切段,只交出结论 cursor > 水位的那几段。
  */
+import {ledgerText,LEDGER_DATA_HEAD,LEDGER_DATA_END} from '../../adapters/store/matter-ledger'
+import type {MatterNote} from '../../ports/matters'
 import type { Db } from '../../lib/db'
 import { isScratchMatter, topicMatterAccess, type TopicSourceContext } from '../../lib/topic-provenance'
 import { isRoutineTopicText } from '../../domain/topic-noise'
@@ -82,22 +84,35 @@ function segments(db: Db, matterId: string, upTo: number): Segment[] {
   return segs
 }
 
-function hasLedger(db:Db,id:string):boolean {return !!db.query('SELECT 1 FROM matter_agents WHERE matter_id=? LIMIT 1').get(id)}
+function hasLedger(db:Db,id:string):boolean {return !!db.query('SELECT 1 FROM matter_agents WHERE matter_id=? AND position=2 LIMIT 1').get(id)}
 function ledgerResult(db:Db,id:string):string {
-  const rows=db.query<{runId:string;author:string;kind:string;text:string},[string]>("SELECT run_id AS runId,author,kind,text FROM matter_notes WHERE matter_id=? AND kind IN ('note','artifact') ORDER BY id").all(id)
+  const rows=db.query<MatterNote,[string]>("SELECT run_id AS runId,author,kind,text FROM matter_notes WHERE matter_id=? AND kind IN ('note','artifact') ORDER BY id").all(id)
   const runs=[...new Set(rows.map(r=>r.runId))].slice(-3)
-  const budget=Math.floor((RESULT_MAX-40)/Math.max(1,runs.length))
-  const text=runs.map(run=>{
+  const budget=Math.floor((RESULT_MAX-LEDGER_DATA_HEAD.length-LEDGER_DATA_END.length-runs.length)/Math.max(1,runs.length))
+  const workspace=db.query<{path:string},[string]>('SELECT path FROM workbench_tasks WHERE id=?').get(id)?.path??db.query<{path:string|null},[string]>('SELECT project_path AS path FROM matters WHERE id=?').get(id)?.path
+  const memoryText=(text:string)=>{
+    let value=ledgerText(text).replace(/\s+工作区 [\s\S]*$/,'')
+    if(workspace)value=value.split(workspace.replace(/[\\/]$/,'')+'/').join('').split(workspace+'\\').join('').split(workspace).join('项目')
+    // Explicit executor notes/fallback may also quote absolute output paths outside the project.
+    return value.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s<>`"，、；。]+|(?<![A-Za-z0-9_\/])(?:[A-Za-z]:[\\/]|\/)[^\s<>`"，、；。]+/gi,path=>/^[a-z][a-z0-9+.-]*:\/\//i.test(path)&&!/^file:/i.test(path)?path:path.replace(/\\/g,'/').split('/').filter(Boolean).at(-1)??'')
+  }
+  const safe=(value:unknown)=>JSON.stringify(value).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')
+  const lines=runs.map(run=>{
     const own=rows.filter(r=>r.runId===run),note=own.filter(r=>r.kind==='note').at(-1),artifact=own.filter(r=>r.kind==='artifact').at(-1)
-    return [note?`${note.author}: ${cap(note.text,Math.floor(budget/3))}`:'',artifact?`${artifact.author} · artifact: ${cap(artifact.text,Math.floor(budget*2/3)-30)}`:''].filter(Boolean).join('\n')
-  }).join('\n')
-  return text+(rows.length>runs.length*2||new Set(rows.map(r=>r.runId)).size>runs.length?'\n[记录已截断]':'')
+    const base={author:`执行者 ${ledgerText((note??artifact)!.author)}`,note:'',artifact:''}
+    let room=Math.max(0,budget-safe(base).length)
+    const n=note?memoryText(note.text):'',a=artifact?memoryText(artifact.text):''
+    let value={...base,note:cap(n,Math.floor(room/3)),artifact:cap(a,Math.floor(room*2/3))}
+    while(safe(value).length>budget&&room>0){room--;value={...base,note:cap(n,Math.floor(room/3)),artifact:cap(a,Math.floor(room*2/3))}}
+    return safe(value)
+  })
+  return LEDGER_DATA_HEAD+lines.join('\n')+LEDGER_DATA_END
 }
 function toResult(db:Db,id: string, m: MatterRow, s: Segment): WorkResult {
   return {
     matterId: id, kind: m.kind, title: m.title,
     project: m.project_path ? m.project_path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? null : null,
-    state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, result: cap(hasLedger(db,id)?ledgerResult(db,id):s.last!.text,RESULT_MAX),
+    state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, result: hasLedger(db,id)?ledgerResult(db,id):cap(s.last!.text,RESULT_MAX),
     at: new Date(s.last!.at).toISOString(), cursor: s.last!.cursor,
   }
 }

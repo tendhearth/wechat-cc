@@ -3,7 +3,7 @@ import {ledgerRoutes} from './ledger-routes'
 import {scopeMatterLedger} from '../../lib/matter-ledger-access'
 import type {WorkbenchService} from './service'
 
-const secret={agentRuns:[{brief:'LEDGER_PLAN_CANARY'}],notes:[{text:'LEDGER_NOTE_CANARY'}]}
+const secret={agentRuns:[{brief:'LEDGER_PLAN_CANARY'}],notes:[{text:'LEDGER_NOTE_CANARY'}],notesTotal:73}
 const owner={tier:'admin',origin:'session',chatId:'owner'} as const
 const operator={tier:'admin',origin:'operator'} as const
 it('notebook sources are owner/operator/device only; other admins, visitors and A2A get neither records nor metadata',async()=>{
@@ -11,7 +11,7 @@ it('notebook sources are owner/operator/device only; other admins, visitors and 
   const routes=ledgerRoutes({workbench:service,resolveAdminChatId:()=>'owner'})
   for(const caller of [undefined,{tier:'admin',origin:'session',chatId:'other'}, {tier:'guest',origin:'session',chatId:'owner'}, {tier:'admin',origin:'federation'}, {tier:'admin',origin:'file'}, {tier:'admin',origin:'session',sharedTurn:'ambiguous',turnChatId:'owner'}]){
     expect(await routes['GET /v1/matter/notes']!(new URLSearchParams('matter=12345678'),null,caller as never)).toMatchObject({status:403})
-    expect(JSON.stringify(scopeMatterLedger(secret,false))).not.toContain('CANARY')
+    expect(scopeMatterLedger(secret,false)).toEqual({})
     expect(await routes['POST /v1/matter/relay']!(new URLSearchParams(),{matter:'12345678',executor:'claude',brief:'接着做'},caller as never)).toMatchObject({status:403})
   }
   for(const caller of [owner,{tier:'admin',origin:'session',sharedTurn:'bound',turnChatId:'owner'},operator,{tier:'admin',origin:'device'}] as const){

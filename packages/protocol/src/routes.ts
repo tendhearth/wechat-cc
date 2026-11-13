@@ -223,7 +223,8 @@ const ROUTE_TABLE = {
   'GET /v1/matter/owner-chat': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
   // 搜主人那条对话(2026-10-06;手机原 /m/api/chat/search)
   'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
-  'GET /v1/matter/notes': { module: 'workbench', desktop: { tier: 'trusted', tokens: ['operator'] } },
+  // Paired devices are the owner: allow notebook reads; short-lived link tokens are excluded.
+  'GET /v1/matter/notes': { module: 'workbench', desktop: { tier: 'trusted', tokens: ['operator'] }, phone:{link:'none'} },
   'POST /v1/matter/note': { module: 'workbench', desktop: { tier: 'trusted' } },
   'POST /v1/matter/relay': { module: 'workbench', desktop: { tier: 'admin' } },
   'POST /v1/matter/seen': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },

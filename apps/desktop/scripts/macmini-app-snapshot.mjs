@@ -50,7 +50,7 @@ export async function receiveAppSnapshot({mini,sha,lifecycle=jobLifecycle(),inpu
   }
 }
 
-export const supportsAppSnapshot = ref => ['matter-ledger-step1','cc-alive-2', 'origin/dev', 'app-maestro-build3', 'design-unify-b1-fixes', 'codex-hook-trust-ux', 'topics-are-projects', 'topics-waiting-honest', 'design-b3'].includes(ref)
+export const supportsAppSnapshot = ref => ['cc-alive-2', 'origin/dev', 'app-maestro-build3', 'design-unify-b1-fixes', 'codex-hook-trust-ux', 'topics-are-projects', 'topics-waiting-honest', 'design-b3'].includes(ref)
 
 export async function main() {
  if (process.argv[2] === '--receive' || process.argv[2] === '--receive-verified') {
@@ -67,7 +67,7 @@ export async function main() {
   const transport = sshInvocation('app-status', process.argv[3] ?? 'home', process.env.CC_UI_SSH_CONFIG, undefined, process.env)
   const args = [...transport.args]
   // The receiver is installed beside the trusted desktop executor by the integrator.
-  const verified=ref==='matter-ledger-step1'||ref==='cc-alive-2'||ref==='design-b3'||ref==='codex-hook-trust-ux'||ref==='topics-waiting-honest'
+  const verified=ref==='cc-alive-2'||ref==='design-b3'||ref==='codex-hook-trust-ux'||ref==='topics-waiting-honest'
   const payload=verified?verifiedSourcePayload({repo,sha}):undefined
   const receiver = args.at(-1).replace(/app-run\.mjs$/, `app-snapshot.mjs --receive${verified?'-verified':''} ${sha}`)
   args[args.length - 1] = receiver

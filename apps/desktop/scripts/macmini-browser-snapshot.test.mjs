@@ -58,3 +58,8 @@ for(const target of ['browser','app'])for(const stage of ['lock-wait','stdin'])t
  expect(events).not.toContain('stdin-error')
  expect(events).toContain('release');expect(events).toContain('exit:143')
 })
+
+test('ledger branch does not authorize browser or verified app snapshots',async()=>{
+ const {supportsBrowserSnapshot}=await import('./macmini-browser-snapshot.mjs')
+ expect(supportsBrowserSnapshot('matter-ledger-step1')).toBe(false)
+})
