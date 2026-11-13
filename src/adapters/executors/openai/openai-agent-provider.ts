@@ -45,6 +45,8 @@ export interface OpenAiAgentProviderOptions {
   /** 后台评估(cheapEval/strongEval)单独用的模型(agent-config `openaiEvalModel`,现取)。不给 / 回空 ⇒ 默认模型。
    *  对话不受影响:主人可以聊天用 Qwen、后台判断用 DeepSeek。 */
   evalModel?: () => string | undefined
+  /** 评估未单独配置或预算耗尽时回退的主模型；可现取，避免热切换后回到启动时旧模型。 */
+  evalFallbackModel?: () => string | undefined
   cwd?: string
   maxSteps?: number
   log?: (tag: string, line: string) => void
@@ -216,7 +218,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS
   const sessions = opts.sessions ?? makeMemoryChatSessionStore()
   const connection = opts.connectionHash ?? 'unbound'
-  const evalModel = (): string | undefined => opts.evalModel?.() || undefined
+  const evalModel = (): string | undefined => opts.evalModel?.() || opts.evalFallbackModel?.() || undefined
   const callTarget = (model?: string) => opts.endpoint ? { provider: 'openai', baseUrl: opts.endpoint.baseUrl, model: model ?? opts.endpoint.model } : null
 
   /** 续接的那条(绑定对得上才续);续不上 ⇒ 记一行、从头来(和续接之前一样),不让这一轮失败。 */
@@ -240,13 +242,14 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
    * 只换一次、只在设了别的评估模型时换(同一个模型重试只会再想满一次);同一网关同一 base URL,网络闸门判定不变。
    */
   async function evalWithFallback(prompt: string, source: string): Promise<string> {
-    const chosen = evalModel()
+    const fallback = opts.evalFallbackModel?.() || undefined
+    const chosen = opts.evalModel?.() || fallback
     try {
       return await runEval(opts.makeChatModel(chosen), prompt, log, source)
     } catch (err) {
-      if (!(err instanceof EvalOutputExhaustedError) || chosen === undefined || chosen === opts.endpoint?.model) throw err
+      if (!(err instanceof EvalOutputExhaustedError) || chosen === undefined || chosen === (fallback ?? opts.endpoint?.model)) throw err
       log('EVAL_FALLBACK', `${source}: ${err.message} — retrying once with the default model`)
-      return runEval(opts.makeChatModel(undefined), prompt, log, source)
+      return runEval(opts.makeChatModel(fallback), prompt, log, source)
     }
   }
 

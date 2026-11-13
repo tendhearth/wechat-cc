@@ -87,26 +87,27 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
       if (provider !== undefined && !KNOWN_PROVIDERS.has(provider)) {
         return { status: 400, body: { error: `unknown provider '${provider}'` } }
       }
+      const cfg = loadAgentConfig(deps.stateDir)
+      const effectiveProvider = provider ?? cfg.provider
       // Reject obvious bare aliases — a model id with no version digit (e.g.
       // 'opus', 'sonnet') gets mis-resolved by the CLI and 404s EVERY turn (the
       // 2026-05-08 incident this guard exists to prevent). DELIBERATELY
       // permissive on charset: real ids vary wildly across providers and
       // gateways — claude-opus-4-8[1m], anthropic/claude-opus-4, o3,
-      // gpt-5.3-codex, us.anthropic.claude-opus-4-8-v1:0 — so the only universal
-      // syntactic signal of a real id (vs a bare family alias) is a digit.
+      // gpt-5.3-codex, us.anthropic.claude-opus-4-8-v1:0.
+      // Native CLIs require a versioned id. OpenAI-compatible gateways own
+      // their ids (Kimi-Code / DeepSeek / GLM-FLASH can be complete model ids).
       // Whitespace is rejected too. An allowlist would rot as models ship.
-      if (/\s/.test(model) || !/[0-9]/.test(model)) {
+      if (/\s/.test(model) || (effectiveProvider !== 'openai' && !/[0-9]/.test(model))) {
         return {
           status: 400,
           body: { error: `invalid model id '${model}' — use a full versioned id (e.g. 'claude-opus-4-8'), not a bare alias` },
         }
       }
-      const cfg = loadAgentConfig(deps.stateDir)
       // Write the field the target provider reads — writing `model` for a
       // cursor daemon would be a silent no-op with a falsely-confirming read-back.
       const updated = provider !== undefined ? withModelForProvider(cfg, provider, model) : withActiveModel(cfg, model)
       saveAgentConfig(deps.stateDir, updated)
-      const effectiveProvider = provider ?? updated.provider
       // 主人说「切到 opus5」,期待的是下一句就在 opus5 上。session 缓存键是
       // (provider, alias, chat),不放掉旧 session 它就一直拿着旧模型 ——
       // 「改了但没生效」比「没改」更糟。把该 provider 的活 session 全释放,

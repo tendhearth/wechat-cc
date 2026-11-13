@@ -128,8 +128,9 @@ export interface AgentWorkbenchRuntime {
 }
 
 export interface AgentSession {
-  /** Observation only, never a rotation policy. Bytes include serialized history/tool schemas; tokens are the last request, not billed step totals. */
-  contextUsage?(): { historyBytes?: number; tokens?: number; firstInputTokens?: number|null; model?: string }
+  /** Observation only. requestBytes is the actual UTF-8 wire body; historyBytes may be a legacy estimate.
+   * Tokens describe the last request, not billed step totals. requestFailure contains only a normalized digest. */
+  contextUsage?(): { historyBytes?: number; requestBytes?: number; tokens?: number; firstInputTokens?: number|null; model?: string; requestFailure?: {status:number;signature:string}|null }
 
   /**
    * 这条会话是不是接着上一次的历史起来的(续接成功)。provider 知道才填；主人对话未确认时补共享接续块，旧嵌入仍可按能力表兜底。

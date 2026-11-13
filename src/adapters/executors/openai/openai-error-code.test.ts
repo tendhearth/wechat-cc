@@ -75,6 +75,12 @@ describe('openai 兼容 —— 会话与一次性评估都按对端的真实结�
 })
 
 describe('openaiErrorCode / openaiErrorMessage — RetryError 里的真实 status(§4.5)', () => {
+  it('a token rate/quota rejection never becomes context overflow even if it includes a requested token count',()=>{
+    for(const status of [402,429]){
+      const err=new APICallError({message:'Too many tokens requested; requested: 1200; tokens-per-minute limit reached',url:'https://offline.invalid',requestBodyValues:{},statusCode:status,isRetryable:false})
+      expect(openaiErrorCode(err)).toBe(status===402?'quota':'rate_limited')
+    }
+  })
   const attempt = (status: number) => new APICallError({ message: 'Gateway Timeout', url: 'u', requestBodyValues: {}, statusCode: status, responseBody: '<html>524: A timeout occurred</html>', isRetryable: true })
   it('网关 524 重试三次:码 server_error,消息带回 HTTP 524 而不是 `Last error: <none>`', () => {
     const err = new RetryError({ message: 'Failed after 3 attempts. Last error: <none>', reason: 'maxRetriesExceeded', errors: [attempt(524), attempt(524), attempt(524)] })

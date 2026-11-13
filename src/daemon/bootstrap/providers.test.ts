@@ -7,6 +7,7 @@ import { registerProviders, type ProviderDeps } from './providers'
 import { openTestDb } from '../../lib/db'
 import { makeConversationStore } from '../../adapters/store/conversation-store'
 import type { AgentConfig } from '../../lib/agent-config'
+import {saveAgentConfig} from '../../lib/agent-config'
 import type { McpStdioSpec } from '../../adapters/executors/mcp-stdio-spec'
 import { AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
 
@@ -200,6 +201,21 @@ describe('registerProviders — cursor ACP chat provider on Windows', () => {
 // B2(2026-10-25):OpenAI 兼容一份实现 —— 对话侧登记带着会话存档(有 DB 才续接);工作台不拿微信工具。
 describe('registerProviders — openai (one session type, B2)', () => {
   const openaiConfig = baseConfig({ openaiBaseUrl: 'https://gateway.example/v1', openaiModel: 'fixture-model' })
+  it('background evaluation targets the current main gateway model unless an eval model is configured',async()=>{
+    vi.stubEnv('WECHAT_OPENAI_API_KEY','offline-fixture')
+    const deps=baseDeps({configuredAgent:openaiConfig})
+    try{
+      saveAgentConfig(deps.stateDir,{...openaiConfig,openaiModel:'Kimi-Code'})
+      const {registry}=await registerProviders(deps)
+      const p=registry.get('openai')!.provider
+      expect(p.callTarget?.('cheapEval')?.model).toBe('Kimi-Code')
+      saveAgentConfig(deps.stateDir,{...openaiConfig,openaiModel:'DeepSeek',openaiEvalModel:'GLM-FLASH'})
+      expect(p.callTarget?.('cheapEval')?.model).toBe('GLM-FLASH')
+      expect(p.callTarget?.('strongEval')?.model).toBe('GLM-FLASH')
+      saveAgentConfig(deps.stateDir,{...openaiConfig,openaiModel:'DeepSeek'})
+      expect(p.callTarget?.('cheapEval')?.model).toBe('DeepSeek')
+    }finally{vi.unstubAllEnvs()}
+  })
   it('with a db: canResume reads the chat session store; the registration hands the workbench no wechat tools', async () => {
     vi.stubEnv('WECHAT_OPENAI_API_KEY', 'fixture-key')
     try {

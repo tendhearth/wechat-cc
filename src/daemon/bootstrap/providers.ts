@@ -604,11 +604,12 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
         // 后台评估单独的模型(现取:改了配置下一次评估就换,不用重启)。
         evalModel: () => readAgentConfig().openaiEvalModel,
+        evalFallbackModel: () => readAgentConfig().openaiModel || defaultOpenaiModel,
         ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
         // Built per-spawn (not once at construction) so an operator's `/api <model>` pin — re-read via the mtime-cached
         // config reader through currentModelFor → SpawnContext.model — takes effect on the NEXT session without a daemon
-        // restart. `model` is undefined for background evals (cheapEval/strongEval) and for spawns before any pin
-        // exists; both fall back to the boot-time configured model. Building one is cheap (SDK client wiring, no network).
+        // restart. Background evals pass their explicit eval model or the current main model through evalFallbackModel.
+        // Spawns before any pin exists fall back to the boot-time configured model. Building one is cheap (no network).
         // 对话:不设每步输出上限;首个输出前有界重试,下一次出发前再核守护。
         makeChatModel: (model, limits) => createApiModel({
           baseURL: openaiBaseUrl,
