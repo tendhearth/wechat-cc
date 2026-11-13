@@ -17,8 +17,9 @@ import type { TurnRecord } from '../../domain/turn-record'
 export type { TurnRecord }
 
 export interface ConversationCoordinatorDeps {
+  contextRotation?: import('../context-rotation').ContextRotation
   resolveProject(chatId: string): { alias: string; path: string } | null
-  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has' | 'effectiveTarget'>>
+  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has' | 'effectiveTarget' | 'rotate' | 'isInFlight'>>
   conversationStore: Pick<ConversationStore, 'get' | 'set' | 'setParticipants'>
   registry: Pick<ProviderRegistry, 'has' | 'list' | 'get'>
   /**

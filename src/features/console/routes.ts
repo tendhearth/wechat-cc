@@ -115,7 +115,7 @@ export function consoleRoutes(deps: ConsoleRoutesDeps): RouteTable {
     },
 
     'GET /v1/sessions/projects': (q) => {
-      const records = Object.values(sessions().all())
+      const records = Object.values(sessions().all()).filter(r=>!r.alias.startsWith('companion:'))
       const chat = q.get('chat')
       let projects
       if (chat) projects = filterProjectsByChat(records, chat)
@@ -134,7 +134,7 @@ export function consoleRoutes(deps: ConsoleRoutesDeps): RouteTable {
       return { status: 200, body: SessionsListProjectsOutput.parse({ ok: true, projects }) }
     },
     'GET /v1/sessions/chats': () => {
-      const records = Object.values(sessions().all())
+      const records = Object.values(sessions().all()).filter(r=>!r.alias.startsWith('companion:'))
       const convs = deps.conversationStore
       const chats = groupChats(records, id => convs.getIdentity(id)?.last_user_name ?? null, id => convs.getIdentity(id)?.account_id ?? null)
       return { status: 200, body: SessionsListChatsOutput.parse({ ok: true, chats }) }

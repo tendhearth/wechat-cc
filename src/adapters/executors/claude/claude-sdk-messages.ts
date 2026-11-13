@@ -1,7 +1,7 @@
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentActivity, AgentAttachment, AgentEvent } from '../../../ports/agent-provider'
 import { isAuthFail } from '../../../domain/auth-fail'
-import type { ProviderErrorCode } from '../../../lib/provider-error-code'
+import { isContextOverflow, type ProviderErrorCode } from '../../../lib/provider-error-code'
 import { claudeApiErrorCode } from './claude-api-error-code'
 
 // Claude 一家只有一条协议(Agent SDK 的 query(),流式输入)。对话会话(claude-agent-provider.ts 的 spawn)
@@ -106,14 +106,14 @@ export function claudeAssistantFailure(sdkError: string | undefined, text: strin
  * 对话和一起做用这同一个判法(主人 2026-10-26:一起做和对话对齐;以前一起做把这种回合算「完成」)。
  * 调用方先判掉 SDK 标注 / 哨兵(那两条带更准的码)和非 success 的 subtype(各自另有收法),再问这里。
  */
-export function claudeResultFailure(result: { subtype?: unknown; is_error?: unknown; result?: unknown }): { code: 'provider_error'; message: string } | null {
+export function claudeResultFailure(result: { subtype?: unknown; is_error?: unknown; result?: unknown }): { code: ProviderErrorCode; message: string } | null {
   if (result.is_error !== true) return null
   if (typeof result.subtype === 'string' && result.subtype !== 'success') return null
   const text = typeof result.result === 'string' ? result.result : ''
-  return { code: 'provider_error', message: text.trim() ? text.slice(0, 400) : 'claude result is_error' }
+  return { code: isContextOverflow(text)?'context_overflow':'provider_error', message: text.trim() ? text.slice(0, 400) : 'claude result is_error' }
 }
 
 /** 一次 API 失败的码和话:码按 SDK 标注 + HTTP 状态(没响应 = null);话取错误原文前 400 字,空了给一句兜底。 */
 export function claudeApiFailure(sdkError: string, text: string, status?: number | null): { code: ProviderErrorCode; message: string } {
-  return { code: claudeApiErrorCode(sdkError, status) ?? 'provider_error', message: text.trim().slice(0, 400) || `claude api error: ${sdkError}` }
+  return { code: isContextOverflow(text)?'context_overflow':claudeApiErrorCode(sdkError, status) ?? 'provider_error', message: text.trim().slice(0, 400) || `claude api error: ${sdkError}` }
 }

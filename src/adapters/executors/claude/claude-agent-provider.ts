@@ -1,3 +1,4 @@
+import { claudeResultUsage } from '../../../domain/turn-usage'
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { toolInputFacts } from '../../../domain/permission-rules/facts'
 import { permissionDenialMessage } from '../../../domain/permission-denial'
@@ -10,7 +11,7 @@ import { isMatterMcpTool } from '../matter-mcp'
 import { log } from '../../../lib/log'
 import { AsyncQueue } from '../../../lib/async-queue'
 import { isAuthFail } from '../../../domain/auth-fail'
-import { errorWithProviderCode, type ProviderErrorCode } from '../../../lib/provider-error-code'
+import { isContextOverflow, errorWithProviderCode, type ProviderErrorCode } from '../../../lib/provider-error-code'
 import { claudeApiErrorCode } from './claude-api-error-code'
 import { discoverClaudeModels } from './claude-model-catalog'
 import { executionModel, nativeModelId } from '../../../domain/workbench/native-model-catalog'
@@ -201,18 +202,20 @@ type AssistantBlock = { type?: string; text?: string; name?: string; id?: string
 type AssistantContent = string | Array<AssistantBlock>
 // `error`: the SDK's own label for a synthetic "this API call failed" assistant
 // message (SDKAssistantMessageError). See ./claude-api-error-code.
-type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; message?: { id?: string; model?: string; content?: AssistantContent } }
+type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; message?: { id?: string; model?: string; content?: AssistantContent; usage?: {input_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number} } }
 // SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
 // blocks correlate to tool_use.id through tool_use_id; result content can
 // contain private file or command output and is deliberately not read here.
 type UserMsg = { type: 'user'; parent_tool_use_id?: string | null; message?: { content?: string | Array<{ type?: string; tool_use_id?: string; is_error?: boolean }> } }
 type ResultMsg = {
+  usage?: unknown
   modelUsage?: Record<string,{contextWindow:number}>
   type: 'result'
   subtype?: string
   session_id?: string
   num_turns?: number
   duration_ms?: number
+  errors?: string[]
   result?: unknown
   is_error?: boolean
   /** HTTP status of the failed API call; null = no HTTP response (refused / reset / timeout). */
@@ -287,7 +290,14 @@ export function claudeBaseUrl(env?: Record<string, string | undefined>): string 
 
 export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider {
   const windows=new Map<string,number>()
-  const windowKey=(base:string|null,model:string)=>JSON.stringify([base,model])
+  const normalized=(model:string)=>model.replace(/\[[^\]]+\]$/,'').toLowerCase()
+  const family=(model:string)=>/^(?:claude-)?(opus|sonnet|haiku)(?:-|$)/.exec(normalized(model))?.[1]
+  const windowKey=(base:string|null,model:string)=>JSON.stringify([base,normalized(model)])
+  const remember=(base:string|null,model:string,capacity:number)=>{
+    // Suffix normalization must never promote an ordinary session into the 1M variant.
+    const safe=/\[1m\]$/i.test(model)?Math.min(capacity,200000):capacity,key=windowKey(base,model)
+    windows.set(key,Math.min(windows.get(key)??safe,safe))
+  }
   // One-shot eval with no tools, no MCP, no session continuation — shared by
   // cheapEval (haiku-class) and strongEval (the verdict's main model). Both
   // pass an explicit model so the only difference is which model runs.
@@ -319,7 +329,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     const coded = (message: string): Error => {
       const sentinelText = apiError?.text ?? message
       const code: ProviderErrorCode | undefined = isAuthFail('claude-sentinel', sentinelText) ? 'auth_failed'
-        : apiError ? claudeApiErrorCode(apiError.sdkError, apiErrorStatus) ?? 'provider_error'
+        : isContextOverflow(sentinelText)?'context_overflow':apiError ? claudeApiErrorCode(apiError.sdkError, apiErrorStatus) ?? 'provider_error'
         : undefined
       return errorWithProviderCode(message, code)
     }
@@ -351,6 +361,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       try { return await discoverClaudeModels(options,Math.max(0,deadline-Date.now())) }
       finally { options.abortController?.abort() }
     },
+    supportsEphemeralSessions:true,
+    fallbackContextWindowTokens:200000,
     contextWindowTokens:model=>windows.get(windowKey(claudeBaseUrl(),model)),
     supportsIsolatedEvaluation: true,
     // One-shot haiku-class eval. Used by chatroom convergence check +
@@ -428,6 +440,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // an already-dead/wedged ProcessTransport — leaving the child running
       // (the TN-zombie source). The per-turn watchdog's release→close path
       // now actually reaps the subprocess through this.
+      if(spawnOpts.ephemeral)options.persistSession=false
       const aborter = options.abortController ?? new AbortController()
       options.abortController = aborter
       // 守护(评审 #193 P1-1):子进程在这一刻拿到的端点 + 模型就是这条会话以后每一轮连的地方。
@@ -448,6 +461,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       let q: ReturnType<typeof query>
       try { q = runQuery({ prompt: sdkQueue.iterable(), options }) }
       catch (error) { aborter.abort(); throw error }
+      let lastInputTokens:number|undefined, firstInputTokens:number|undefined, contextModel:string|undefined,firstRequestSeen=false,lastRequestId:string|undefined,firstRequestId:string|undefined
       let observedSessionId=spawnOpts.resumeSessionId
 
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null
@@ -510,13 +524,24 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
 
             if (msg.type === 'system' && msg.subtype === 'init') {
               if (nativeModelId(msg.session_id)) observedSessionId=msg.session_id
+              if (nativeModelId(msg.model)&&msg.model!=='<synthetic>') contextModel=msg.model
               if (nativeModelId(msg.model)) spawnOpts.reportExecution?.({model:msg.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               // Routed via log() (info-level) so the line lands in
               // channel.log + dashboard, not just stderr.
               log('SESSION_INIT', `alias=${project.alias} session_id=${msg.session_id ?? ''}`)
               aq.push({ kind: 'init', sessionId: msg.session_id ?? '' })
             } else if (msg.type === 'assistant') {
-              if (!msg.parent_tool_use_id && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
+              if (!msg.parent_tool_use_id && (!msg.error||msg.error==='max_output_tokens') && msg.message?.model!=='<synthetic>') {
+                const u=msg.message?.usage,id=msg.message?.id??msg.uuid
+                const same=!!id&&id===lastRequestId
+                if(!same||u){
+                  lastInputTokens=typeof u?.input_tokens==='number'?u.input_tokens+(u.cache_read_input_tokens??0)+(u.cache_creation_input_tokens??0):undefined
+                }
+                if(!firstRequestSeen){firstRequestSeen=true;firstRequestId=id;firstInputTokens=lastInputTokens}else if(id&&id===firstRequestId)firstInputTokens??=lastInputTokens
+                lastRequestId=id
+                if(nativeModelId(msg.message?.model))contextModel=msg.message.model
+              }
+              if (!msg.parent_tool_use_id && !msg.error && msg.message?.model!=='<synthetic>' && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               const content = msg.message?.content
               // 对话路径。回复交付第 5 步(2026-10-03):事件**按块的顺序**发 —— 以前同一条消息里先发所有
               // tool_call、再发拼起来的文字,「我查一下」+ tool_use 的那条消息就把开场算进了工具**之后**的段,
@@ -550,6 +575,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               flushText()
             } else if (msg.type === 'result') {
+              firstRequestSeen=true
               const apiErrored = pendingApiError !== null
               flushApiError(aq, msg.api_error_status)
               const failed = !!msg.subtype && msg.subtype !== 'success'
@@ -558,7 +584,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                   ? msg.result.slice(0, 400)
                   : JSON.stringify(msg).slice(0, 400)
                 log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
-                aq.push({ kind: 'error', message: `subtype=${msg.subtype}`, ...(evaluation && msg.subtype === 'error_max_turns' && !apiErrored && !turnErrored ? { code: 'checkup_step_budget' } : {}) })
+                aq.push({ kind: 'error', message: msg.errors?.join('\n')||`subtype=${msg.subtype}`, ...(isContextOverflow(msg.errors)?{code:'context_overflow' as const}:{}), ...(evaluation && msg.subtype === 'error_max_turns' && !apiErrored && !turnErrored ? { code: 'checkup_step_budget' } : {}) })
               } else if (!apiErrored && !turnErrored) {
                 // SDK 说这一轮是失败的(is_error),却没有带 error 标注的助理消息(上面那条路没接住):
                 // result.result 就是错误原文。带码收尾,coordinator 只发通知 —— 一个字都不进回复(#190 红线)。
@@ -571,16 +597,22 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               // SDK 自己的「最后的话」(result.result = 最后一条助理消息的文字):只在成功轮带,只用于核对
               // 分段的结果(回复交付第 5 步:交付用分段,见 AgentEvent.result 的注释)。
-              for(const [model,usage] of Object.entries(msg.modelUsage??{})){
-                const capacity=usage?.contextWindow
-                if(Number.isSafeInteger(capacity)&&capacity>=1024&&capacity<=10_000_000)windows.set(windowKey(spawnTarget.baseUrl,model),capacity)
+              if(!contextModel&&Object.keys(msg.modelUsage??{}).length===1)contextModel=Object.keys(msg.modelUsage!)[0]
+              const capacities=Object.entries(msg.modelUsage??{}).filter(([,u])=>Number.isSafeInteger(u?.contextWindow)&&u.contextWindow>=1024&&u.contextWindow<=10_000_000)
+              for(const [model,usage] of capacities)remember(spawnTarget.baseUrl,model,usage.contextWindow)
+              if(contextModel){
+                const matches=capacities.filter(([model])=>normalized(model)===normalized(contextModel!)||(/^(opus|sonnet|haiku)$/.test(normalized(model))&&family(model)===family(contextModel!)))
+                if(matches.length)remember(spawnTarget.baseUrl,contextModel,Math.min(...matches.map(([,u])=>u.contextWindow),...matches.filter(([m])=>/\[1m\]$/i.test(m)).map(()=>200000)))
+                if(matches.length&&family(contextModel))remember(spawnTarget.baseUrl,family(contextModel)!,Math.min(...matches.map(([,u])=>u.contextWindow),200000))
               }
+              const usage = claudeResultUsage(msg.usage)
               const clean = !failed && msg.is_error !== true && !apiErrored && !turnErrored && typeof msg.result === 'string'
               aq.push({
                 kind: 'result',
                 sessionId: msg.session_id ?? '',
                 numTurns: msg.num_turns ?? 0,
                 durationMs: msg.duration_ms ?? 0,
+                ...(usage ? { usage } : {}),
                 ...(clean ? { finalText: msg.result as string } : {}),
               })
               aq.end()
@@ -594,7 +626,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           if (catchQueue) {
             flushApiError(catchQueue)
             const errMsg = e instanceof Error ? e.message : String(e)
-            catchQueue.push({ kind: 'error', message: errMsg })
+            catchQueue.push({ kind: 'error', message: errMsg, ...(isContextOverflow(e)?{code:'context_overflow' as const}:{}) })
             catchQueue.end()
             activeEventQueue = null
           }
@@ -604,7 +636,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       })()
 
       return {
-        callTarget: () => spawnTarget,
+        resumedHistory: !!spawnOpts.resumeSessionId, resumedHistoryOwnerOnly:true,
+        contextUsage: () => ({...(lastInputTokens!==undefined?{tokens:lastInputTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(contextModel?{model:contextModel}:{})}),
+        callTarget: () => ({...spawnTarget,...(contextModel?{model:contextModel}:{})}),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           if (closed) {
             // Already closed — return an iterable that yields nothing.
@@ -613,6 +647,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           if (activeEventQueue) {
             throw new Error(`claude provider: previous dispatch still in flight (alias=${project.alias})`)
           }
+          lastInputTokens=undefined;lastRequestId=undefined
           const content = userContent(text, attachments)
           const queue = new AsyncQueue<AgentEvent>()
           pendingApiError = null

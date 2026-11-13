@@ -1,3 +1,4 @@
+import {ownerContextFrom,formatOwnerContext} from './daemon-health'
 import { describe, expect, it } from 'vitest'
 import { formatProviderProbes, providerProbesFrom, type ProviderProbeRow } from './daemon-health'
 
@@ -24,4 +25,10 @@ describe('daemon-health —— 开机探测失败的 provider 在 CLI 里看得�
     expect(providerProbesFrom({ ok: true })).toBeNull()
     expect(providerProbesFrom({ provider_probes: [row()] })).toHaveLength(1)
   })
+})
+
+it('owner context status accepts overflow and unknown baseline and displays controlled budget diagnostics',()=>{
+ const rows=ownerContextFrom({owner_context:[{provider:'openai',model:'m',estimatedTokens:12000,budgetTokens:27200,historyBytes:0,source:'provider',turns:8,lastRotatedAt:null,reason:'overflow',fixedOverheadTokens:null,windowTokens:32000,windowTooSmall:true,budgetError:'window_write_failed'}]})
+ expect(rows?.[0]).toMatchObject({windowTooSmall:true,budgetError:'window_write_failed',fixedOverheadTokens:null})
+ expect(formatOwnerContext(rows).join('')).toContain('窗口偏小');expect(formatOwnerContext(rows).join('')).toContain('window_write_failed')
 })

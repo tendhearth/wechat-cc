@@ -1,3 +1,5 @@
+import { loadAgentConfig } from '../../lib/agent-config'
+import { makeCheckupStore,checkupAddress } from '../../adapters/store/checkup-store'
 import { makeOwnerDelegationRecorder } from '../wiring/owner-delegation'
 /**
  * bootstrap 那一组接进 daemon 的那一份:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙
@@ -31,6 +33,8 @@ import { ownerChatIdOf } from '../owner-chat'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterTopics } from '../threads/matter-topics'
 import { bootstrapModules, type Bootstrap } from './index'
+import { wireContextRotation } from './wire-context-rotation'
+import { providerCallTarget } from '../../app/provider-registry'
 
 /** boot-api 交出去的:靠 bootstrap 才有的 LLM 体检。 */
 export interface BootApi { llmHealth: LlmHealth }
@@ -39,7 +43,7 @@ export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
   const { stateDir, dangerously, db } = f
   return bootstrapModules({
     needs: [W.send, W.permissions, W.companion, W.accounts, 'reply-delivery', 'internal-api', 'network-gate', 'stickers', 'memory'],
-    lazy: ['cli-upgrade', 'workbench', 'wired', 'terminal'],
+    lazy: ['cli-upgrade', 'workbench', 'wired', 'terminal', 'checkup'],
     deps: (ctx) => {
       const wxSend = ctx.get<WechatSend>(W.send)
       const wxPerm = ctx.get<WechatPermissions>(W.permissions)
@@ -53,6 +57,27 @@ export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
       const workbench = ctx.late<WorkbenchService>('workbench')
       const wired = ctx.late<WiredDeps>('wired')
       return {
+        makeContextRotation: parts => wireContextRotation({
+          ...parts, db, stateDir, log,
+          active: key => {
+            const mode=parts.getMode(key.chatId),alias=parts.resolve(key.chatId)?.alias
+            return !!parts.registry.get(key.providerId)&&alias===key.alias&&(mode?.kind==='solo'?mode.provider===key.providerId:mode?.kind==='primary_tool'?mode.primary===key.providerId:false)
+          },
+          recordOverflow: (key,model,inputTokens) => {
+            const actual=parts.effectiveTarget(key,model)
+            makeCheckupStore(stateDir,{log}).recordContextOverflow({provider:key.providerId,address:actual.baseUrl??'default',model,windowTokens:32000,windowKnown:false},inputTokens)
+          },
+          budgetFor: (provider, model, key) => {
+            const entry=parts.registry.get(provider)
+            const current=providerCallTarget(entry?.provider,provider,'session',{model})
+            const actual=key?parts.effectiveTarget(key,model):current
+            const resolved=model!=='default'?model:actual.model??current.model??model
+            const configured=loadAgentConfig(stateDir).modelContextWindows?.find(w=>w.provider===provider&&w.model===resolved&&checkupAddress(w.address)===checkupAddress(actual.baseUrl??'default'))
+            const measured=(actual.baseUrl===current.baseUrl?entry?.provider.contextWindowTokens?.(resolved):undefined)??configured?.windowTokens
+            return makeCheckupStore(stateDir,{log}).rotationBudgetFor({provider,address:actual.baseUrl??'default',model:resolved,windowTokens:measured??32000,windowKnown:measured!==undefined},resolved,entry?.provider.fallbackContextWindowTokens)
+          },
+          pending: chatId => wxPerm.listPendingPermissions().some(p => p.chatId === chatId),
+        }),
         stateDir, db, loadProjects: () => f.projects.load(), networkGate: guardRt.gate,
         ilink: { ...pick(wxSend, 'sendMessage', 'sendFile'), ...pick(wxPerm, 'askUser'), companion: wxCompanion },
         // CC 开口那道门在 wired 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 现取。

@@ -155,7 +155,7 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
         ? Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS)
         : deps.turnTimeoutMs
       const observe = t.observe
-      const handle = t.turn === undefined || t.startedAt === undefined ? null : beginTurn(t.chatId, t.providerId, t.alias, t.startedAt)
+      const handle = t.turn === undefined || t.startedAt === undefined ? null : openTurns.get(t.turn)??beginTurn(t.chatId, t.providerId, t.alias, t.startedAt)
       if (handle) openTurns.set(t.turn!, handle)
       const log = handle ? (ev: AgentEvent) => { try { handle.event(ev) } catch { /* 只少一步 */ } } : undefined
       const onEvent = (ev: AgentEvent) => { observe?.(ev); log?.(ev); deps.onTurnEvent?.(t.chatId, ev) }

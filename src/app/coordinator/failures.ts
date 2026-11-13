@@ -43,6 +43,7 @@ function endpointHost(error: string | undefined): string | null {
 
 export function providerFailureReason(providerId: ProviderId, code: string | undefined, error?: string): string | undefined {
   switch (code) {
+    case 'context_overflow': return `${providerId} 的上下文仍然过长，这一轮没有完成。请缩短本次输入后再试。`
     case 'network': {
       // 2026-11-04:主人自己的网关(openai 兼容)110 秒没回,原来说「连不上 openai 的服务」,读起来像 OpenAI 出了事。
       // 原文里带着请求地址就说出是哪台服务;这只是**说是哪台**,原因照旧只按码说(不读原文猜原因)。

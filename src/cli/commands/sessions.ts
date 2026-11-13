@@ -24,7 +24,7 @@ const sessionsListProjectsCmd = defineCommand({
     const { openWechatDb } = await import('../../lib/db')
     const db = openWechatDb(STATE_DIR)
     const store = makeSessionStore(db, { migrateFromFile: join(STATE_DIR, 'sessions.json') })
-    const records = Object.values(store.all())
+    const records = Object.values(store.all()).filter(r=>!r.alias.startsWith('companion:'))
     let projects
     if (args.chat) {
       const { filterProjectsByChat } = await import('../sessions-helpers')
@@ -213,7 +213,7 @@ const sessionsListChatsCmd = defineCommand({
     const db = openWechatDb(STATE_DIR)
     const store = makeSessionStore(db, { migrateFromFile: join(STATE_DIR, 'sessions.json') })
     const convs = makeConversationStore(db)
-    const records = Object.values(store.all())
+    const records = Object.values(store.all()).filter(r=>!r.alias.startsWith('companion:'))
     const chats = groupChats(
       records,
       id => convs.getIdentity(id)?.last_user_name ?? null,

@@ -126,6 +126,8 @@ export interface ConsolidationPlan {
 }
 
 export interface ThreadsStore {
+  /** Shared DB identity for serializing extraction across independently constructed readers. */
+  readonly extractionKey?: object
   /** One synchronous authorization + merge/strip/summary transaction. */
   applyConsolidation(owner:string,topic:string,plan:ConsolidationPlan,authorized:()=>boolean):boolean
 
@@ -325,6 +327,7 @@ export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean; allow
   }
 
   return {
+    extractionKey: db,
     applyConsolidation(owner,topic,plan,authorized) {
       return db.transaction(()=>{
         if(entryOwner(topic)!==owner||!authorized())return false

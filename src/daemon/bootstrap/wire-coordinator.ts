@@ -61,6 +61,7 @@ export function wireCoordinator(
   deps: Pick<BootstrapDeps, 'ilink' | 'log' | 'onTurnRecord' | 'petSignals' | 'replySinks' | 'outboundTaps' | 'networkGate' | 'replyDelivery'>,
   ctx: Pick<BootstrapCtx, 'db'>,
   parts: {
+    contextRotation?: import('../../app/context-rotation').ContextRotation
     health: HealthRuntime
     resolve: Bootstrap['resolve']
     sessionManager: SessionManager
@@ -148,6 +149,7 @@ export function wireCoordinator(
   const coordinator = createConversationCoordinator({
     resolveProject: parts.resolve,
     manager: parts.sessionManager,
+    contextRotation: parts.contextRotation,
     conversationStore: parts.conversationStore,
     registry: parts.registry,
     defaultProviderId: parts.defaultProviderId,

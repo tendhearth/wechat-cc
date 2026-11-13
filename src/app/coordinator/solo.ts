@@ -9,7 +9,7 @@ import { describeProviderDenial, slashFor } from '../../domain/provider-policy'
 import { capabilitiesFor } from '../../domain/capability-matrix'
 import { makeTurnTextCollector, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
 import { TURN_TIMEOUT_CODE, type TurnSummary } from '../../ports/agent-provider'
-import { isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
+import { isContextOverflow, contextOverflowInputTokens, isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
 import type { CoordinatorCtx, ProjectRef } from './ctx'
 import type { TurnPlan } from './plan'
 import type { TurnRunner } from './runner'
@@ -78,6 +78,15 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       // Per-chat model pin lives on the solo mode row; only solo carries it.
       const cur = ctx.getMode(msg.chatId)
       const pinnedModel = cur.kind === 'solo' && cur.provider === providerId ? cur.model : undefined
+      const contextKey = { alias: proj.alias, providerId, chatId: msg.chatId }
+      const rotation = deps.contextRotation?.isOwnerChat(msg.chatId) ? deps.contextRotation : undefined
+      const rotateManager = deps.manager.rotate && deps.manager.isInFlight ? {
+        rotate: (k: typeof contextKey) => deps.manager.rotate!(k),
+        isInFlight: (k: typeof contextKey) => deps.manager.isInFlight!(k),
+      } : null
+      const actualModel = deps.manager.effectiveTarget?.(contextKey, pinnedModel).model ?? pinnedModel ?? 'default'
+      const currentInput = {id:`${msg.userId}:${msg.createTimeMs}`,at:msg.createTimeMs,text:msg.text,userId:msg.userId}
+      const rotated = rotateManager ? await rotation?.beforeTurn(contextKey, actualModel, rotateManager, currentInput) : null
       // 冷启动判定要在 acquire 之前看:acquire 之后缓存里一定有了。
       const coldSpawn = deps.manager.has ? !deps.manager.has({ alias: proj.alias, providerId, chatId: msg.chatId }) : false
       let handle: Awaited<ReturnType<typeof deps.manager.acquire>>
@@ -118,11 +127,20 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       let text = deps.format(msg)
       // 换 provider 后的第一条:前置交接块(近况原文 + chat_history 提示)。
       const handoff = ctx.handoffLedger.takeHandoff(msg.chatId)
-      if (handoff) {
+      let usedContinuation = false
+      if (handoff && rotation) {
+        const carry = rotated ?? await rotation.continuation(contextKey, currentInput)
+        text = `${carry.block}\n\n${text}`
+        usedContinuation = true
+      } else if (handoff) {
         let recent: HandoffTurn[] = []
         try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 交接是增强,拿不到就只给提示语 */ }
         text = `${buildHandoffBlock(handoff.from, handoff.to, recent)}\n\n${text}`
         deps.log?.('HANDOFF', `chat=${msg.chatId} ${handoff.from}→${handoff.to} recent=${recent.length}`)
+      } else if (rotation && (rotated || rotation.needsContinuation(contextKey) || (coldSpawn && handle.resumedHistory === false))) {
+        const carry = rotated ?? await rotation.continuation(contextKey, currentInput)
+        text = `${carry.block}\n\n${text}`
+        usedContinuation = true
       } else if (coldSpawn && !(handle.resumedHistory ?? capabilitiesFor(providerId).supportsResume)) {
         // 不能续线程的 provider(gemini;openai 续不上的那几次)刚被冷 spawn:daemon 重启 /
         // 空闲驱逐后它对「刚才聊到哪」一无所知,而 claude/agy 都接得上。
@@ -135,17 +153,33 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
           deps.log?.('HANDOFF', `chat=${msg.chatId} cold-start ${providerId} recent=${recent.length}`)
         }
       }
+      if (rotation && !usedContinuation) {
+        const events = await rotation.eventsBlock(contextKey, currentInput)
+        if (events) text = `${events}\n\n${text}`
+      }
       // 开轮(附件从此刻起登记到这一轮)。编码型执行者(last_segment)挂上长任务进度(已定 ①:
       // 一轮最多一次,有旁白用最近一段);聊天型模型(all_segments)每段都会交付,不发进度。
       const textStrategy = ctx.textStrategyFor(providerId)
-      const live = makeTurnTextCollector()
-      const d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId, textStrategy })
+      let live = makeTurnTextCollector()
+      let d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId, textStrategy })
       delivery = d
       summary = await runner.run({
         chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn', startedAt, turn,
         observe: (ev) => live.push(ev),
         ...(textStrategy === 'last_segment' ? { progress: () => { void d.progress(live.latestSegment() ?? LONG_TURN_PROGRESS).catch(() => {}) } } : {}),
       })
+      if (rotation && rotateManager && !stopped() && isContextOverflow({code:summary.errorCode,message:summary.error})) {
+        try {
+          const carry=await rotation.recoverOverflow(contextKey,rotateManager,currentInput,contextOverflowInputTokens(summary.error??''))
+          if(carry){
+            d.abandon('context_overflow')
+            handle=await deps.manager.acquire({alias:proj.alias,path:proj.path,providerId,chatId:msg.chatId,tierProfile:auth.tierProfile,permissionMode:auth.permissionMode,...(pinnedModel!==undefined?{model:pinnedModel}:{})})
+            live=makeTurnTextCollector()
+            d=deps.replyDelivery.begin(msg.chatId,{context:'dm',providerId,textStrategy});delivery=d
+            summary=await runner.run({chatId:msg.chatId,alias:proj.alias,providerId,handle,prompt:`${carry.block}\n\n${deps.format(msg)}`,budget:'turn',startedAt,turn,observe:ev=>live.push(ev),...(textStrategy==='last_segment'?{progress:()=>{void d.progress(live.latestSegment()??LONG_TURN_PROGRESS).catch(()=>{})}}:{})})
+          }
+        }catch(err){summary={assistantText:[],replyToolCalled:false,toolCalls:[],error:err instanceof Error?err.message:String(err),...(providerErrorCodeOf(err)?{errorCode:providerErrorCodeOf(err)}:{})}}
+      }
       const settle = (reason: string) => { if (!deliverySettled) { deliverySettled = true; d.abandon(reason) } }
 
       // Per-turn watchdog fired: the SDK stream went silent. Discard the
@@ -192,6 +226,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       }
       report = await d.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
       ctx.noteDelivery(providerId, report.delivery)
+      rotation?.delivered(contextKey, msg.text, summary.toolCalls.length > 0)
     } finally {
       unregisterCancel?.()
       if (delivery && !deliverySettled) { deliverySettled = true; try { delivery.abandon(outcome) } catch { /* 记账不影响回合 */ } }

@@ -45,6 +45,8 @@ export interface MessagesStore {
   latestInboundTs(chatId: string): Promise<string | null>
   /** Extractor input: all messages after a watermark, ascending. */
   listSince(chatId: string, sinceTs: string, limit: number): Promise<MessageRecord[]>
+  /** Full timestamp group, so an extraction watermark never bisects a fetch boundary. */
+  listAtTs?(chatId: string, ts: string): Promise<MessageRecord[]>
   /** List distinct chat_ids that have at least one message. */
   listChatIds(): Promise<string[]>
 }
@@ -189,6 +191,9 @@ export function makeMessagesStore(db: Db): MessagesStore {
     },
     async listSince(chatId, sinceTs, limit) {
       return stmtListSince.all(chatId, sinceTs, limit).map(rowToRecord)
+    },
+    async listAtTs(chatId, ts) {
+      return db.query<Row, [string, string]>('SELECT * FROM messages WHERE chat_id=? AND ts=? ORDER BY id').all(chatId, ts).map(rowToRecord)
     },
     async listChatIds() {
       return stmtListChatIds.all().map(r => r.chat_id)

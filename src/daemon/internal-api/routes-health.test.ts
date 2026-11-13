@@ -149,3 +149,9 @@ describe('GET /v1/llm/health · names(收敛清单 ⑥)', () => {
     expect((bare.body as { names?: unknown }).names).toBeUndefined()
   })
 })
+
+it('health exposes bounded owner context telemetry without identity or conversation content',async()=>{
+  const context=[{provider:'claude',model:'m',estimatedTokens:123,budgetTokens:2048,historyBytes:246,source:'bytes' as const,turns:2,lastRotatedAt:'2026-11-12T20:00:00Z',reason:'budget' as const}]
+  const result=await makeRoutesUnderTest({ownerContext:()=>context})['GET /v1/health']!({} as never,undefined,{tier:'guest'} as never)
+  expect((result.body as any).owner_context).toEqual(context)
+})

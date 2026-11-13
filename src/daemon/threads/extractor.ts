@@ -21,6 +21,13 @@ const EPOCH = '1970-01-01T00:00:00Z'
 
 export interface ExtractorDeps {
   chatId: string
+  authorized?: () => boolean
+  /** Bounded post-delivery replay; omitted backlog never advances the continuous watermark. */
+  recentLimit?: number
+  maxRounds?: number
+  batchChars?: number
+  tailLimit?: number
+  throughTs?: string
   messages: MessagesStore
   threads: ThreadsStore
   sdkEval: (prompt: string) => Promise<string>
@@ -62,13 +69,56 @@ function takeMessages(rows: MessageRecord[], budget: number): { taken: MessageRe
   return { taken, used }
 }
 
-export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ applied: number; skipped: number; rounds: number }> {
+/** A post-delivery trigger must include the NEW decision, even if older replies fill the window. */
+function takeRecentMessages(rows: MessageRecord[], budget: number): {taken: MessageRecord[]; used: number} {
+  const taken: MessageRecord[]=[]
+  let used=0
+  for(let i=rows.length-1;i>=0;i--){
+    const m=rows[i]!
+    const len=isTopicMessage(m)?renderMessage({ts:m.ts,direction:m.direction,text:m.text}).length:0
+    if(used+len>budget)break
+    taken.push(m);used+=len
+  }
+  return {taken:taken.reverse(),used}
+}
+
+const locks = new WeakMap<object, Map<string, Promise<unknown>>>()
+/** Every extractor entry point uses the same DB/chat queue. */
+export async function withExtractionLock<T>(threads: ThreadsStore, chatId: string, work: () => Promise<T>): Promise<T> {
+  const key = threads.extractionKey ?? threads
+  let chats = locks.get(key)
+  if (!chats) { chats = new Map(); locks.set(key, chats) }
+  const previous = chats.get(chatId) ?? Promise.resolve()
+  const next = previous.catch(() => {}).then(work)
+  chats.set(chatId, next)
+  try { return await next } finally { if (chats.get(chatId) === next) chats.delete(chatId) }
+}
+export function runThreadsExtraction(deps: ExtractorDeps): Promise<{ applied: number; skipped: number; rounds: number }> {
+  return withExtractionLock(deps.threads, deps.chatId, () => extract(deps))
+}
+async function extract(deps: ExtractorDeps): Promise<{ applied: number; skipped: number; rounds: number }> {
   let applied = 0, skipped = 0, rounds = 0
-  for (; rounds < MAX_ROUNDS; ) {
+  for (; rounds < (deps.maxRounds ?? MAX_ROUNDS); ) {
+    if(deps.authorized?.()===false)break
     const state = await deps.threads.getExtractState(deps.chatId)
     const since = state.entriesToTs ?? EPOCH
-    const recorded = await deps.messages.listSince(deps.chatId, since, FETCH_LIMIT)
-    const { taken, used } = takeMessages(recorded, BATCH_CHARS)
+    const within = (m: MessageRecord) => !deps.throughTs || Date.parse(m.ts) <= Date.parse(deps.throughTs)
+    const fetched = await deps.messages.listSince(deps.chatId, since, FETCH_LIMIT)
+    let pending = fetched.filter(within)
+    if(pending.length===FETCH_LIMIT){
+      const boundary=pending[pending.length-1]!.ts
+      // Preserve the entire boundary group even if it alone exceeds the character target.
+      const group=await deps.messages.listAtTs?.(deps.chatId,boundary)
+      pending=group?[...pending.filter(m=>m.ts!==boundary),...group.filter(within)]:pending.filter(m=>m.ts!==boundary)
+    }
+    const recorded = deps.recentLimit !== undefined
+      ? (await deps.messages.listRange(deps.chatId, { limit: deps.recentLimit, ...(deps.throughTs ? { beforeTs: new Date(Date.parse(deps.throughTs) + 1).toISOString() } : {}) })).filter(m => Date.parse(m.ts) > Date.parse(since) && within(m))
+      : pending
+    const { taken, used } = deps.recentLimit!==undefined
+      ? takeRecentMessages(recorded,deps.batchChars??BATCH_CHARS)
+      : takeMessages(recorded,deps.batchChars??BATCH_CHARS)
+    const selectedIds = new Set(taken.map(m=>m.id))
+    const contiguous = !pending.length || (taken.length>0 && pending.every(m => Date.parse(m.ts)>Date.parse(taken[taken.length-1]!.ts) || selectedIds.has(m.id)))
     // CC 发的「任务 xxx 已答复」通知是 MatterLog 结论的复印件 ⇒ 不进(结论从 work 来);水位照样越过它们。
     const batch = taken.filter(isTopicMessage)
     const lastTs = taken.length > 0 ? taken[taken.length - 1]!.ts : null
@@ -94,13 +144,13 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
       const patch: { entriesToTs?: string; workCursor?: number } = {}
       if (lastTs) patch.entriesToTs = lastTs
       if (workCursor !== state.workCursor) patch.workCursor = workCursor
-      if (patch.entriesToTs !== undefined || patch.workCursor !== undefined) await deps.threads.setExtractState(deps.chatId, patch)
+      if (deps.authorized?.()!==false && contiguous && (patch.entriesToTs !== undefined || patch.workCursor !== undefined)) await deps.threads.setExtractState(deps.chatId, patch)
       if (recorded.length > taken.length) { rounds++; continue }
       break
     }
 
     const tail = batch.length > 0
-      ? (await deps.messages.listRange(deps.chatId, { limit: CONTEXT_TAIL, beforeTs: batch[0]!.ts })).filter(isTopicMessage)
+      ? (await deps.messages.listRange(deps.chatId, { limit: deps.tailLimit ?? CONTEXT_TAIL, beforeTs: batch[0]!.ts })).filter(isTopicMessage)
       : []
     const existing = await deps.threads.list(deps.chatId)
     const entries = await deps.threads.entriesByThread(deps.chatId, { live: true })
@@ -109,7 +159,7 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
     const shownIds = new Set([...shownEntries.values()].flatMap(es => es.map(e => e.id)))
     const topicSources = new Map([...shownEntries].map(([topic, es]) => [topic, deps.threads.contextSources?.(deps.chatId, [], es.filter(e => e.source !== 'chat' || e.matterId).map(e => e.id)) ?? []]))
     const hasWorkContext = (deps.threads.contextSources?.(deps.chatId, existing, [...shownIds]) ?? []).length > 0
-    const contextAllowed = () => deps.threads.contextAllowed?.(deps.chatId, existing, [...entries.values()].flatMap(es=>es.map(e=>e.id))) ?? true
+    const contextAllowed = () => deps.authorized?.()!==false && (deps.threads.contextAllowed?.(deps.chatId, existing, [...entries.values()].flatMap(es=>es.map(e=>e.id))) ?? true)
     const prompt = buildExtractPrompt({
       newMessages: batch.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })),
       ...(tail.length > 0 ? { contextTail: tail.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })) } : {}),
@@ -135,7 +185,7 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
     }
     if (work.some(w => !deps.workAllowed?.(w.matterId))) {
       skipped += parsed.ops.length
-      await deps.threads.setExtractState(deps.chatId, { ...(lastTs ? { entriesToTs: lastTs } : {}), workCursor })
+      if (contiguous) await deps.threads.setExtractState(deps.chatId, { ...(lastTs ? { entriesToTs: lastTs } : {}), workCursor })
       continue
     }
     const activeTs = lastTs ?? work[work.length - 1]?.at ?? new Date().toISOString()
@@ -145,9 +195,9 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
       deps.log('THREADS', `extract context changed while applying for ${deps.chatId}; watermark held`)
       break
     }
-    await deps.threads.setExtractState(deps.chatId, { ...(lastTs ? { entriesToTs: lastTs } : {}), workCursor })
+    if (contiguous) await deps.threads.setExtractState(deps.chatId, { ...(lastTs ? { entriesToTs: lastTs } : {}), workCursor })
     await deps.recordEvent(`batch=${batch.length} work=${work.length} ops=${parsed.ops.length} applied=${r.applied} skipped=${r.skipped + parsed.dropped}`)
-    const moreChat = recorded.length > taken.length || recorded.length === FETCH_LIMIT
+    const moreChat = recorded.length > taken.length || fetched.length === FETCH_LIMIT
     const moreWork = deps.work ? batch.length > 0 || (workCursor !== state.workCursor && work.length > 0) : false
     if (!moreChat && !moreWork) break
   }

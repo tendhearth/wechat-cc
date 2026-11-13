@@ -277,3 +277,13 @@ describe('POST /v1/cli/upgrade|rollback + /v1/health cli_upgrade(外部 CLI 自�
     expect((without.body as { cli_upgrade?: unknown }).cli_upgrade).toBeUndefined()
   })
 })
+
+it('owner continuity: session UI hides internal companion aliases while preserving the safety lister',async()=>{
+ const sessions=[{alias:'owner-project',providerId:'claude',chatId:'owner',lastUsedAt:1},{alias:'companion:uuid',providerId:'claude',chatId:'owner',lastUsedAt:2}]
+ const routes=routesWith({stateDir:'/tmp/no-real-state',listSessions:()=>sessions,releaseSession:async()=>{}})
+ const listed=await routes['GET /v1/sessions']!(new URLSearchParams(),undefined)
+ expect((listed.body as any).sessions).toEqual([sessions[0]])
+ const released=await routes['POST /v1/sessions/release']!(new URLSearchParams(),{alias:'none',providerId:'claude',chatId:'owner'})
+ expect((released.body as any).sessions).toEqual([sessions[0]])
+ expect(sessions).toHaveLength(2)
+})

@@ -76,6 +76,7 @@ export async function searchAcrossSessions(
   const refs: SessionFileRef[] = []
   const seenPaths = new Set<string>()
   for (const rec of Object.values(all)) {
+    if(rec.alias.startsWith('companion:'))continue
     const path = resolveProjectJsonlPath(rec.alias, rec.session_id, opts.home ? { home: opts.home } : {})
     if (seenPaths.has(path)) continue
     seenPaths.add(path)

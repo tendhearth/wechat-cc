@@ -438,3 +438,26 @@ describe('trimDanglingToolCalls', () => {
     expect(trimDanglingToolCalls([user])).toEqual([user])
   })
 })
+
+it('owner continuity: tool-step billing and output do not inflate last prompt occupancy',async()=>{
+ const model=scriptedOpenAiModel([{calls:[{id:'t',name:'reply'}],usage:{input:1000,output:9000}},{text:'连着呢',usage:{input:1200,output:8000}}])
+ const provider=createOpenAiAgentProvider({makeChatModel:()=>model.model,makeMcpBridge:async()=>replyBridge().bridge,makeBuiltins:()=>[]})
+ const session=await provider.spawn({alias:'p',path:'/tmp'},guestSpawn)
+ try{
+  const events=await drain(session.dispatch('你刚才说的那个'))
+  expect(events.at(-1)).toMatchObject({kind:'result',usage:{input:2200,output:17000}})
+  expect(session.contextUsage?.()).toMatchObject({tokens:1200,firstInputTokens:1000})
+ }finally{await session.close()}
+})
+it('owner continuity: missing first prompt usage is not replaced by a later tool prompt',async()=>{
+ const model=scriptedOpenAiModel([{calls:[{id:'t',name:'reply'}]},{text:'在呢',usage:{input:90000,output:2}}])
+ const provider=createOpenAiAgentProvider({makeChatModel:()=>model.model,makeMcpBridge:async()=>replyBridge().bridge,makeBuiltins:()=>[]})
+ const session=await provider.spawn({alias:'p',path:'/tmp'},guestSpawn)
+ try{await drain(session.dispatch('你刚才说的那个'));expect(session.contextUsage?.()).toMatchObject({tokens:90000,firstInputTokens:null})}finally{await session.close()}
+})
+it('owner continuity: ephemeral proactive chats never create persistent API transcript segments',async()=>{
+ const db=openDb({path:':memory:'}),model=scriptedOpenAiModel([{text:'主动说的原文',usage:{input:1000,output:3}}])
+ const provider=createOpenAiAgentProvider({makeChatModel:()=>model.model,makeMcpBridge:async()=>replyBridge().bridge,makeBuiltins:()=>[],sessions:makeChatSessionStore(db)})
+ const session=await provider.spawn({alias:'companion:test',path:'/tmp'},{...guestSpawn,ephemeral:true})
+ try{await drain(session.dispatch('最近对话和在办事项'));expect(db.query('SELECT id FROM openai_chat_sessions').all()).toEqual([]);expect(session.resumedHistory).toBe(false)}finally{await session.close();db.close()}
+})

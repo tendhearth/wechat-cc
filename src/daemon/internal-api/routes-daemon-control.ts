@@ -30,7 +30,7 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
     'GET /v1/sessions': () => {
       const sessions = deps.listSessions?.()
       if (sessions == null) return { status: 503, body: { error: 'sessions_not_wired' } }
-      return { status: 200, body: { sessions } }
+      return { status: 200, body: { sessions:sessions.filter(s=>!s.alias.startsWith('companion:')) } }
     },
 
     // Admin remediation — force-release a (possibly wedged) session so the
@@ -49,7 +49,7 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
       const before = deps.listSessions?.() ?? []
       const released = before.some(s => s.alias === b.alias && s.providerId === b.providerId && s.chatId === b.chatId)
       await deps.releaseSession({ alias: b.alias, providerId: b.providerId, chatId: b.chatId })
-      return { status: 200, body: { ok: true, released, sessions: deps.listSessions?.() ?? null } }
+      return { status: 200, body: { ok: true, released, sessions: deps.listSessions?.()?.filter(s=>!s.alias.startsWith('companion:')) ?? null } }
     },
 
     // Current pinned agent model (read-back companion to POST /v1/model).

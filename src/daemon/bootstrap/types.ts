@@ -4,7 +4,7 @@ import type { ProviderRegistry } from '../../app/provider-registry'
 import type { ConversationCoordinator, TurnRecord } from '../../app/conversation-coordinator'
 import type { ConversationStore } from '../../ports/conversation-store'
 import { formatInbound } from '../../domain/prompt-format'
-import type { ProviderId } from '../../domain/conversation'
+import type { ProviderId, Mode } from '../../domain/conversation'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { WechatSend, WechatPermissions, WechatCompanionControls } from '../../ports/wechat'
 import type { Db } from '../../lib/db'
@@ -16,6 +16,8 @@ import type { SendAssistantText } from './fallback-reply'
 import type { HealthRuntime } from '../health'
 
 export interface BootstrapDeps {
+  makeContextRotation?: (parts: {resolve(chatId:string):{alias:string;path:string}|null;registry:ProviderRegistry; getMode(chatId:string):Mode|undefined;holdBusy(label:string):()=>void;effectiveTarget(key:import('../../app/session-manager').InFlightKey,model?:string):import('../../lib/network-gate').CallTarget}) => import('../../app/context-rotation').ContextRotation
+
   stateDir: string
   /**
    * 网络闸门(2026-10-02,main.ts 建):provider registry / SessionManager / 协调器都接它。
@@ -263,6 +265,7 @@ export interface BootstrapDeps {
 }
 
 export interface Bootstrap {
+  contextRotation?: import('../../app/context-rotation').ContextRotation
   sessionManager: SessionManager
   sessionStore: import('../../ports/session-store').SessionStore
   conversationStore: ConversationStore

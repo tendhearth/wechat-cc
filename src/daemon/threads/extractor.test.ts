@@ -261,3 +261,77 @@ describe('threads extractor · 原有用例', () => {
     expect((await threads.getExtractState('c1')).entriesToTs).toBe('2026-06-11T01:00:00Z')
   })
 })
+
+describe('bounded immediate extraction',()=>{
+  it('extracts the recent decision without claiming an omitted backlog was covered',async()=>{
+    const {db,messages,threads}=setup()
+    try {
+      for(let i=0;i<15;i++)await messages.append({id:`r${i}`,chatId:'c1',ts:`2026-11-12T20:00:${String(i).padStart(2,'0')}.000Z`,direction:'in',kind:'text',text:i===14?'决定以后周四开会':`old content marker ${i}`,source:'live'})
+      let prompt=''
+      await runThreadsExtraction({chatId:'c1',messages,threads,...quiet,recentLimit:2,maxRounds:1,tailLimit:0,sdkEval:async p=>{prompt=p;return JSON.stringify({ops:[{op:'create_topic',title:'开会',summary:'开会安排',facets:['task'],tags:[],private:false,entries:[{kind:'decision',line:'以后周四开会'}]}]})}})
+      expect(prompt).toContain('决定以后周四开会')
+      expect(prompt).not.toContain('old content marker 0')
+      expect((await threads.list('c1'))[0]?.title).toBe('开会')
+      expect((await threads.getExtractState('c1')).entriesToTs).toBeNull()
+      await runThreadsExtraction({chatId:'c1',messages,threads,...quiet,sdkEval:async()=>'{"ops":[]}'})
+      expect((await threads.getExtractState('c1')).entriesToTs).toBe('2026-11-12T20:00:14.000Z')
+    } finally {db.close()}
+  })
+  it('recent extraction advances the continuous watermark when no messages are omitted',async()=>{
+    const {db,messages,threads}=setup()
+    try {
+      await messages.append({id:'r',chatId:'c1',ts:'2026-11-12T20:00:00.000Z',direction:'in',kind:'text',text:'偏好周四开会',source:'live'})
+      await runThreadsExtraction({chatId:'c1',messages,threads,...quiet,recentLimit:12,maxRounds:1,sdkEval:async()=>'{"ops":[]}'})
+      expect((await threads.getExtractState('c1')).entriesToTs).toBe('2026-11-12T20:00:00.000Z')
+    } finally {db.close()}
+  })
+})
+
+it('a bounded tail cutting an equal-timestamp group never jumps the omitted row',async()=>{
+  const {db,messages,threads}=setup()
+  try{
+    for(let i=0;i<13;i++)await messages.append({id:`same${i}`,chatId:'c1',ts:'2026-11-12T20:00:00.000Z',direction:'in',kind:'text',text:`决定 ${i}`,source:'live'})
+    await runThreadsExtraction({chatId:'c1',messages,threads,...quiet,recentLimit:12,maxRounds:1,sdkEval:async()=>'{"ops":[]}'})
+    expect((await threads.getExtractState('c1')).entriesToTs).toBeNull()
+  }finally{db.close()}
+})
+
+it('a full fetch includes the entire final timestamp group before advancing its watermark',async()=>{
+  const {db,messages,threads}=setup()
+  try{
+    for(let i=0;i<501;i++)await messages.append({id:`group${i}`,chatId:'c1',ts:'2026-11-12T20:00:00.000Z',direction:'in',kind:'text',text:`同组决定序号${i}`,source:'live'})
+    let prompt=''
+    await runThreadsExtraction({chatId:'c1',messages,threads,...quiet,sdkEval:async p=>{prompt=p;return '{"ops":[]}'}})
+    expect(prompt).toContain('同组决定序号500')
+    expect((await threads.getExtractState('c1')).entriesToTs).toBe('2026-11-12T20:00:00.000Z')
+  }finally{db.close()}
+})
+
+it('independent extraction callers on one DB/chat serialize and cannot regress the continuous watermark',async()=>{
+ const {db,messages,threads}=setup()
+ try{
+  await messages.append({id:'first',chatId:'c1',ts:'2026-11-12T20:00:00.000Z',direction:'in',kind:'text',text:'决定先做相册',source:'live'})
+  let enter!:()=>void,release!:()=>void,secondCalls=0
+  const entered=new Promise<void>(r=>{enter=r}),gate=new Promise<void>(r=>{release=r})
+  const first=runThreadsExtraction({chatId:'c1',messages,threads,...quiet,sdkEval:async()=>{enter();await gate;return '{"ops":[]}'}})
+  await entered
+  const second=runThreadsExtraction({chatId:'c1',messages,threads:makeThreadsStore(db),...quiet,sdkEval:async()=>{secondCalls++;return '{"ops":[]}'}})
+  expect(secondCalls).toBe(0)
+  release();await Promise.all([first,second])
+  expect(secondCalls).toBe(0)
+  expect((await threads.getExtractState('c1')).entriesToTs).toBe('2026-11-12T20:00:00.000Z')
+ }finally{db.close()}
+})
+
+it('immediate extraction spends its small batch on the newest decision rather than older long replies',async()=>{
+ const {db,messages,threads}=setup()
+ try{
+  for(let i=0;i<11;i++)await messages.append({id:`long${i}`,chatId:'c1',ts:`2026-11-12T20:00:${String(i).padStart(2,'0')}.000Z`,direction:'out',kind:'text',text:`旧回答标记${i} `+'字'.repeat(500),source:'live'})
+  await messages.append({id:'decision',chatId:'c1',ts:'2026-11-12T20:00:12.000Z',direction:'in',kind:'text',text:'决定把每周例会固定到周四下午'+'，还要逐项落实会议安排'.repeat(80),source:'live'})
+  let prompt=''
+  await runThreadsExtraction({chatId:'c1',messages,threads,...quiet,recentLimit:12,maxRounds:1,batchChars:6000,tailLimit:0,sdkEval:async p=>{prompt=p;return '{"ops":[]}'}})
+  expect(prompt).toContain('决定把每周例会固定到周四下午')
+  expect(prompt).not.toContain('旧回答标记0 ')
+  expect((await threads.getExtractState('c1')).entriesToTs).toBeNull()
+ }finally{db.close()}
+})

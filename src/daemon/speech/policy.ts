@@ -112,6 +112,7 @@ export function makeSpeechPolicy(deps: {
   /** 这条对话此刻的主动关心档(没设过的主人 = low,见 companion/calibration careLevel)。 */
   care(chatId: string): CareSetting
   /** 在免打扰时段里 ⇒ 时段结束的时刻(毫秒,core/quiet-hours quietEndsAt);不在 ⇒ null。 */
+  isOwnerChat?(chatId:string):boolean
   quietEndsAt(chatId: string, nowMs: number): number | null
   outbound: ProactiveOutbound
   /** 外发账(第 1 步由调用方注入;speech_log 表另起一个 PR)。抛错只记日志。 */
@@ -200,7 +201,7 @@ export function makeSpeechPolicy(deps: {
     async say(req, produce) {
       const { decision, base } = judge(req, deps.outbound.canDeliver(req.chatId))
       if (!('allow' in decision)) return decision
-      const rawTurn = (isRoutineSpeech(req.kind) ? deps.outbound.open(req.chatId, { source: `speech:${req.kind}` }) : deps.outbound.open(req.chatId))
+      const rawTurn = (isRoutineSpeech(req.kind) || (req.kind === 'companion'&&deps.isOwnerChat?.(req.chatId)===true) ? deps.outbound.open(req.chatId, { source: `speech:${req.kind}` }) : deps.outbound.open(req.chatId))
       let spokenAt: number | undefined
       let receiptChannel: ProactiveChannel | null = null
       const confirmed = () => { spokenAt ??= now() }

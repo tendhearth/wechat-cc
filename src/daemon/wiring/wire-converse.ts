@@ -69,7 +69,9 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
     const incoming=synthetic.attachments?.length?encodeExtras({attachments:synthetic.attachments.map((a,i)=>({kind:'file',path:a.path,name:basename(uploads?.[i]?.name||a.path)})),narration:[]}):undefined
     void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? attachmentRecordText(text, synthetic.attachments) : text, source: origin, ...(incoming?{extras:incoming}:{}) }).catch(() => {})
     const encoded = encodeExtras(extras)
-    if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
+    const outTs = new Date(Date.now() + 1).toISOString()
+    if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: outTs, direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
+    boot.contextRotation?.persisted(ownerChatId, (reply || encoded) ? outTs : ts)
   }
   // 本地表情:解析一次(标签 → 表情库里随机一张),落库与桌面回包看到的是同一张。
   const stickerDir = join(stateDir, 'stickers')

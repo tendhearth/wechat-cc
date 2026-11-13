@@ -86,6 +86,7 @@ export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecy
         turns: f.turnRecordStore,
         // 下面这些读口在 bootstrap 起来之前回「还没有」(null / 空 / no-op),路由据此回 503 —— 跟以前一样。
         listSessions: () => boot()?.sessionManager?.list() ?? null,
+        ownerContext: () => boot()?.contextRotation?.status() ?? [],
         heartbeatFresh: () => isHeartbeatFresh(f.heartbeatPath),
         polling: () => polling()?.current()?.bootSummary() ?? null,
         // 后台在跑的版本(2026-09-16):head 只在「从 git 检出跑」时有值;打包产物里退回编译期钉进去的 BUILD_SHA。

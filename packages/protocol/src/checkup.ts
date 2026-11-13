@@ -68,6 +68,9 @@ export interface ContextBudget {
   windowTokens: number
   reliableFillRatio: number
   source: 'measured' | 'default'
+  windowSource?: 'measured'|'persisted'|'assumed'
+  budgetError?: string|null
+  ratioSource?: 'measured'|'default'
 }
 
 const Target = z.object({provider:z.string(),address:z.string(),model:z.string(),windowTokens:z.number().int().positive(),windowKnown:z.boolean()})

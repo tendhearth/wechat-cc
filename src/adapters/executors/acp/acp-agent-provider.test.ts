@@ -483,3 +483,12 @@ describe('ACP provider — reports the model the session actually runs (review #
     })
   })
 })
+
+it('reports actual history continuity when session/load falls back to a new ACP session',async()=>{
+ const resumed=await start({resumeSessionId:'sess-old'})
+ expect(resumed.session.resumedHistory).toBe(true)
+ const fallback=await start({resumeSessionId:'gone'},c=>{c.loadResult={error:{code:-32602,message:'unknown session'}}},{resume:'fallback'})
+ expect(fallback.session.resumedHistory).toBe(false)
+ const fresh=await start()
+ expect(fresh.session.resumedHistory).toBe(false)
+})

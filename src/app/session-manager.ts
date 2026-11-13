@@ -7,8 +7,12 @@ import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } 
 import type { PermissionMode } from '../domain/capability-matrix'
 import { pathsConflict, canonicalClaimPath } from '../lib/claim-paths'
 import { log } from '../lib/log'
+import { contextBytes } from '../domain/context-continuation'
+import { isContextOverflow } from '../lib/provider-error-code'
+import type { ContextRotation } from './context-rotation'
 
 export interface SessionManagerOptions {
+  contextRotation?: ContextRotation
   maxConcurrent: number
   idleEvictMs: number
   /**
@@ -85,6 +89,7 @@ export interface SessionManagerOptions {
  * this particular chat's caller.
  */
 export interface AcquireRequest {
+  ephemeral?: boolean
   alias: string
   path: string
   providerId: ProviderId
@@ -223,7 +228,7 @@ export class SessionManager {
 
     // Check for a recent session_id to resume — cut cold-start latency.
     const ttl = this.opts.resumeTTLMs ?? 7 * 24 * 60 * 60_000
-    const record = this.opts.sessionStore?.get({ alias: req.alias, provider: req.providerId, chatId: req.chatId }) ?? null
+    const record = req.ephemeral?null:this.opts.sessionStore?.get({ alias: req.alias, provider: req.providerId, chatId: req.chatId }) ?? null
     let resumeSessionId: string | undefined
     if (record) {
       const age = Date.now() - Date.parse(record.last_used_at)
@@ -265,6 +270,7 @@ export class SessionManager {
     try {
       session = await provider.spawn(project, {
         ...(resumeSessionId ? { resumeSessionId } : {}),
+        ...(req.ephemeral?{ephemeral:true}:{}),
         tierProfile: req.tierProfile,
         permissionMode: req.permissionMode,
         // Forward chatId so the Claude provider can bake it into a
@@ -285,6 +291,13 @@ export class SessionManager {
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
     const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req),networkGate=this.opts.networkGate
+    const rotation = this.opts.contextRotation
+    const contextKey = { alias: req.alias, providerId: req.providerId, chatId: req.chatId }
+    let historyBytes = contextBytes(appendInstructions ?? '')
+    rotation?.opened(contextKey, spawnTarget.model ?? model ?? 'default', historyBytes, session.resumedHistory ?? !!resumeSessionId)
+    if(rotation?.tracked(contextKey) && (session.resumedHistory ?? !!resumeSessionId)) {
+      const observed=rotation.observation(contextKey);historyBytes=observed.bytes
+    }
     const effectiveTarget = (): CallTarget => typeof session.callTarget === 'function' ? sessionCallTarget(session, req.providerId) : spawnTarget
     const handle: SessionHandle = {
       alias: req.alias,
@@ -292,7 +305,7 @@ export class SessionManager {
       providerId: req.providerId,
       ...(model !== undefined ? { model } : {}),
       callTarget: effectiveTarget,
-      ...(session.resumedHistory !== undefined ? { resumedHistory: session.resumedHistory } : {}),
+      ...(session.resumedHistory !== undefined && (!session.resumedHistoryOwnerOnly||rotation?.isOwnerChat(req.chatId)) ? {resumedHistory:session.resumedHistory} : rotation?.isOwnerChat(req.chatId) ? {resumedHistory:req.providerId==='claude' && !!resumeSessionId} : {}),
       lastUsedAt: Date.now(),
       dispatch(text: string): AsyncIterable<AgentEvent> {
         checkExecution()
@@ -307,16 +320,25 @@ export class SessionManager {
             checkExecution()
             // 先过网络闸门再碰 provider:session.dispatch 本身可能就立刻发请求。按这条会话实际的目标判。
             await assertCallAllowed(networkGate, effectiveTarget())
-            const inner = session.dispatch(text)
             inFlight.set(k, (inFlight.get(k) ?? 0) + 1)
+            const inputBytes = contextBytes(text)
+            historyBytes += inputBytes
+            rotation?.started(contextKey)
             try {
+              const inner = session.dispatch(text)
               for await (const ev of inner) {
-                yield ev
-                if (ev.kind === 'result' && ev.sessionId && sessionStore) {
+                yield ev.kind==='error'&&isContextOverflow(ev.message)?{...ev,code:'context_overflow'}:ev
+                if (ev.kind === 'result' && ev.sessionId && sessionStore && !req.ephemeral) {
                   sessionStore.set({ alias: req.alias, provider: req.providerId, chatId: req.chatId, sessionId: ev.sessionId })
                 }
               }
             } finally {
+              try {
+                const observed = session.contextUsage?.()
+                if (observed?.historyBytes!==undefined) historyBytes = observed.historyBytes
+                const tokens = observed?.tokens
+                rotation?.observe(contextKey, { bytes: historyBytes, ...(observed&&observed.tokens===undefined&&observed.historyBytes===undefined?{unknown:true}:{}), ...(tokens !== undefined ? { tokens } : {}), ...(observed?.firstInputTokens !== undefined ? {firstInputTokens:observed.firstInputTokens} : {}), ...(observed?.model ? {model:observed.model} : {}), turns: 1 })
+              } catch { /* Observation must never break reply delivery. */ }
               const n = inFlight.get(k) ?? 1
               if (n <= 1) inFlight.delete(k)
               else inFlight.set(k, n - 1)
@@ -341,6 +363,14 @@ export class SessionManager {
    * 释放并且忘掉:关会话、再删它的续接记录 —— 下一次同一个 key 是全新的对话(定时任务每次一轮,
    * 不该续上上一次的,2026-10-20)。普通 release 留着续接记录,给主人的对话下次接着聊。
    */
+  /** Called only by the shared owner policy at a serialized turn boundary. */
+  async rotate(k: InFlightKey): Promise<boolean> {
+    const key = sessionKey(k)
+    if (this.isInFlight(k) || this.pending.has(key) || this.closingPaths.has(key)) return false
+    await this.forget(k)
+    return true
+  }
+
   async forget(k: InFlightKey): Promise<void> {
     await this.release(k)
     this.opts.sessionStore?.deleteOne({ alias: k.alias, provider: k.providerId, chatId: k.chatId })
@@ -388,6 +418,8 @@ export class SessionManager {
 
   /** Is there a cached (live) session for this key right now? Coordinator uses
    *  it to know a dispatch is about to cold-spawn (→ cold-start context block). */
+  supportsEphemeral(providerId:ProviderId){return this.opts.registry.get(providerId)?.provider.supportsEphemeralSessions===true}
+
   has(k: InFlightKey): boolean {
     return this.sessions.has(sessionKey(k))
   }

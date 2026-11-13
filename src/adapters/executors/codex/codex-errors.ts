@@ -12,7 +12,7 @@
  * `httpStatusCode`)—— 见 codexAppServerErrorCode,优先用它,文本只作缺省。
  * 连不上时的边界超时(first_event / connect)在 codex-app-server.ts 的回合看门狗里。
  */
-import { codeForHttpStatus, type ProviderErrorCode } from '../../../lib/provider-error-code'
+import { isContextOverflow, codeForHttpStatus, type ProviderErrorCode } from '../../../lib/provider-error-code'
 import { isConnectFailure } from '../../../lib/net-errors'
 
 /**
@@ -31,6 +31,7 @@ import { isConnectFailure } from '../../../lib/net-errors'
 export function codexErrorCode(message: string): ProviderErrorCode | undefined {
   const m = message ?? ''
   if (!m.trim()) return undefined
+  if (isContextOverflow(m)) return 'context_overflow'
   if (/you'?ve hit your usage limit|usage limit reached|insufficient_quota|exceeded your current quota/i.test(m)) return 'quota'
   if (/Missing bearer or basic authentication/i.test(m)) return 'auth_failed'
   if (/auth error code:\s*[a-z_]+/i.test(m)) return 'auth_rejected'
@@ -61,7 +62,8 @@ export function codexAppServerErrorCode(error: { message?: unknown; codexErrorIn
       case 'usageLimitExceeded': case 'sessionBudgetExceeded': return 'quota'
       case 'rateLimitExceeded': return 'rate_limited'
       case 'serverOverloaded': case 'internalServerError': return 'server_error'
-      case 'contextWindowExceeded': case 'badRequest': return 'invalid_request'
+      case 'contextWindowExceeded': return 'context_overflow'
+      case 'badRequest': return 'invalid_request'
     }
   } else if (info && typeof info === 'object') {
     for (const variant of ['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts']) {

@@ -153,6 +153,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
         await session?.close().catch(() => {})
       }
     },
+    supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // read-only does not disable native read/shell tools or inherited project instructions.
       // Until the app-server verifies a fake-tools-only surface, do not bill an unsafe checkup.
@@ -169,14 +170,17 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       // 对话只把这几样交给协议客户端;工作台专用的(审批桥、时间线、后台生命周期)一律不带。
       const base: SpawnContext = {
         tierProfile: ctx.tierProfile, permissionMode: ctx.permissionMode, chatId: ctx.chatId,
+        ...(ctx.ephemeral?{ephemeral:true}:{}),
         ...(ctx.appendInstructions ? { appendInstructions: ctx.appendInstructions } : {}),
         ...(model ? { model } : {}),
       }
       const open = (resumeSessionId?: string) => spawnCodexAppServerSession(coreOptions(opts.model), project, { ...base, ...(resumeSessionId ? { resumeSessionId } : {}) }, profile)
       let core: CodexAppServerSession
+      let resumedHistory = false
       if (ctx.resumeSessionId) {
         try {
           core = await open(ctx.resumeSessionId)
+          resumedHistory = true
           log('SESSION_RESUME', `alias=${project.alias} thread_id=${ctx.resumeSessionId} provider=codex`)
         } catch (err) {
           // 续接不上(线程文件没了 / 不认):记下来,起一个新线程 —— 不让这个聊天每一轮都卡在同一个坏 id 上。
@@ -190,6 +194,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       let closed = false
 
       return {
+        resumedHistory, resumedHistoryOwnerOnly:true,
         callTarget: () => core.callTarget?.() ?? targetOf(model ?? null, project.path, config),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           return {

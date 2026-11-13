@@ -8,7 +8,7 @@
  * 唯一的例外是 Gemini 风格的「400 但正文明说 key 无效」,那是 codeForHttpStatus
  * 里的一条固定规则。
  */
-import { codeForHttpStatus, providerErrorCodeOf, type ProviderErrorCode } from '../../../lib/provider-error-code'
+import { isContextOverflow, codeForHttpStatus, providerErrorCodeOf, type ProviderErrorCode } from '../../../lib/provider-error-code'
 import { isConnectFailure } from '../../../lib/net-errors'
 
 type Obj = Record<string, unknown>
@@ -45,6 +45,7 @@ export function openaiErrorCode(err: unknown): ProviderErrorCode | undefined {
   const attempt = lastAttempt(err)
   const fromAttempt = providerErrorCodeOf(attempt)
   if (fromAttempt) return fromAttempt
+  if (isContextOverflow(err)) return 'context_overflow'
   const status = statusOf(attempt) ?? statusOf(err)
   const http = codeForHttpStatus(status, `${bodyOf(attempt)} ${messageOf(attempt)}`)
   if (http) return http
