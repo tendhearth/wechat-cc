@@ -66,7 +66,7 @@ export function isTaskHandoffRequest(text: string, executors: readonly string[] 
   const names = [...new Set(executors.map(n => n.trim()).filter(Boolean))]
     .sort((a, b) => b.length - a.length)
     .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*'))
-  const name = `(?:${names.join('|')})(?![a-z0-9_-]|\\s*(?:的)?(?:风格|命名|格式|变量|模型名))`
+  const name = `@?(?:${names.join('|')})(?![a-z0-9_-]|[./][a-z0-9_]|\\s*(?:的)?(?:风格|命名|格式|变量|模型名))`
   const patterns = names.length ? [
     `(?<!提)交给\\s*${name}`, `转给\\s*${name}`, `改由\\s*${name}`,
     `换(?:成)?\\s*${name}\\s*(?:来做|继续(?:做|处理|完成)?|接着做|接手|接管)`,
@@ -76,17 +76,21 @@ export function isTaskHandoffRequest(text: string, executors: readonly string[] 
     `\\bswitch\\s+to\\s+${name}`, `\\bhand\\s+(?:it\\s+)?off\\s+to\\s+${name}`,
     `\\blet\\s+${name}\\s+take\\s+over\\b`,
   ].map(p => new RegExp(p, 'i')) : []
-  for (const clause of text.split(/[,，。！？!?；;\n]/)) {
-    const matches = [/\bmatter_handoff\b/i, ...patterns]
-    for (const pattern of matches) {
-      const m = pattern.exec(clause)
-      if (!m) continue
-      const before = clause.slice(0, m.index)
-      if (/(?:别|不要|不用|不必|无需|禁止|停止|取消|\bdon't\b|\bdo not\b|\bnever\b|\bstop\b)/i.test(before)) continue
-      return true
+  const containsRequest = (source: string, matches: RegExp[]) => {
+    for (const clause of source.split(/[,，。！？!?；;\n]/)) {
+      for (const pattern of matches) {
+        const m = pattern.exec(clause)
+        if (!m) continue
+        const before = clause.slice(0, m.index).split(/而是|但是|不过/).at(-1) ?? ''
+        if (/(?:别|不要|不用|不必|无需|禁止|停止|取消|不再|不能|先不|不(?=交|转|换|让|给|改由)|\bdon't\b|\bdo not\b|\bnever\b|\bstop\b)/i.test(before)) continue
+        return true
+      }
     }
+    return false
   }
-  return false
+  // 显式工具名按协议算请求；普通引用里的文案不是转交动作。
+  const unquoted = text.replace(/“[^”]*”|「[^」]*」|『[^』]*』|`[^`]*`|"[^"]*"/g, ' ')
+  return containsRequest(text, [/\bmatter_handoff\b/i]) || containsRequest(unquoted, patterns)
 }
 
 /** 新建命令里的任务正文照旧处理；仅已有事项的显式接力让路。 */
