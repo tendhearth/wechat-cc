@@ -9,7 +9,7 @@
  *
  * 一轮(dispatch)是一个立即开跑的任务,事件进队列 —— 不靠消费方拉着走,所以 cancel / close 能等它真停下。
  */
-import type {AgentAttachment,AgentEvent,AgentSession} from '../../../ports/agent-provider'
+import type {AgentAttachment,AgentDispatchContext,AgentEvent,AgentSession} from '../../../ports/agent-provider'
 import {AsyncQueue} from '../../../lib/async-queue'
 import {sumTurnUsage,type TurnUsage} from '../../../domain/turn-usage'
 import {userMessage,type APIModel,type ChatMessage,type ToolSpec} from './api-model'
@@ -56,6 +56,7 @@ export interface OpenAiPurpose{
   readonly closeMustConfirm:boolean
   /** cancel() 要不要等这一轮停下(工作台要;对话照旧只掐,不等)。 */
   readonly cancelWaits:boolean
+  beginTurn?(signal:AbortSignal,context?:AgentDispatchContext):void
   tools():ToolSpec[]
   /** 模型一发起调用就报(对话:带真正所属的 MCP server)。不给 ⇒ 由 runTool 自己报(工作台的 activity)。 */
   toolCallEvent?(call:ToolCall):AgentEvent
@@ -126,7 +127,7 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
   let closed=false,active:Promise<void>|null=null,controller:AbortController|null=null,dispatched=false,first=true,toolsClosed=false
   const closeTools=async()=>{if(toolsClosed)return;toolsClosed=true;try{await purpose.close?.().catch(()=>{})}finally{history.release?.()}}
 
-  async function run(text:string,attachments:readonly AgentAttachment[],queue:AsyncQueue<AgentEvent>,signal:AbortSignal){
+  async function run(text:string,attachments:readonly AgentAttachment[],queue:AsyncQueue<AgentEvent>,signal:AbortSignal,context?:AgentDispatchContext){
     const started=Date.now()
     if(first){first=false;queue.push({kind:'init',sessionId:history.id})}
     let outputBytes=0,usage:TurnUsage|undefined,steps=0
@@ -134,6 +135,7 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
     const push=(event:AgentEvent)=>{queue.push(event)}
     try{
       check(signal);purpose.check?.()
+      purpose.beginTurn?.(signal,context)
       history.begin()
       // 同步给得出来就同步(工作台):这一轮一路同步走到第一个请求,和统一之前的时序一样。
       const pending=purpose.request(text,attachments)
@@ -216,14 +218,14 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
       const bytes=lastRequest&&'requestBytes' in lastRequest?lastRequest.requestBytes:requestBytes
       return {...(bytes!==undefined?{historyBytes:bytes}:{}),...(lastRequest?.requestBytes!==undefined?{requestBytes:lastRequest.requestBytes}:{}),requestFailure,...(lastContextTokens!==undefined?{tokens:lastContextTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(resolvedModel?{model:resolvedModel}:{})}
     },
-    dispatch(text,attachments=[]){
+    dispatch(text,attachments=[],context){
       if(closed)fail('api_task_closed')
       if(purpose.singleDispatch&&(active||dispatched))fail('api_task_busy')
       dispatched=true
       // 在 dispatch() 的同步体里建好:dispatch 返回之后、第一次 next() 之前的 cancel() 也够得着这一轮。
       const ctl=new AbortController();controller=ctl
       const queue=new AsyncQueue<AgentEvent>()
-      const work=run(text,attachments,queue,ctl.signal)
+      const work=run(text,attachments,queue,ctl.signal,context)
       active=work
       // Persistence errors must make close reject so task ownership remains held.
       void work.catch(()=>undefined).finally(()=>{ctl.abort();if(active===work)active=null;if(controller===ctl)controller=null})

@@ -1,3 +1,5 @@
+import { SessionManager } from '../../../app/session-manager'
+import { createProviderRegistry } from '../../../app/provider-registry'
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
 import { removeTempDir } from '../../../lib/test-temp'
@@ -41,7 +43,7 @@ describe('openai provider loop(对话这一份用途)', () => {
     })
     const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'initiator' })
     try {
-      const work = collectTurn(session.dispatch('接力'))
+      const work = collectTurn(session.dispatch('接力', undefined, { source: 'inbound' }))
       await expect.poll(() => requests.length).toBe(2)
       expect(requests[0]).toBe('owner')
       expect(requests[1]).toContain('matter_handoff')
@@ -61,7 +63,7 @@ describe('openai provider loop(对话这一份用途)', () => {
     })
     const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' })
     let finished = false
-    const work = collectTurn(session.dispatch('first')).then(r => { finished = true; return r })
+    const work = collectTurn(session.dispatch('first', undefined, { source: 'inbound' })).then(r => { finished = true; return r })
     try {
       await expect.poll(() => cards.size).toBe(1)
       await session.cancel!()
@@ -74,6 +76,32 @@ describe('openai provider loop(对话这一份用途)', () => {
       const results = m.seen[1]!.flatMap(msg => msg.role === 'tool' && Array.isArray(msg.content) ? msg.content.map(p => p.type === 'tool-result' ? p.toolCallId : '') : [])
       expect(results).toEqual(['stop-card', 'remaining'])
     } finally { answer?.('allow'); await work; await session.close() }
+  })
+  it('only inbound admin turns open cards, including user → background → user on a cached guarded session', async () => {
+    const tools = scriptedMcpTools({ tools: [{ name: 'matter_handoff', server: 'wechat' }] })
+    const steps = Array.from({ length: 4 }, (_, i) => [{ calls: [{ id: `source-${i}`, name: 'matter_handoff', input: {} }] }, { text: 'done' }]).flat()
+    const m = scriptedOpenAiModel(steps)
+    const cards: string[] = []
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => m.model, makeMcpBridge: async () => tools.bridge,
+      approval: { adminFor: () => 'owner', askUser: async (_to, prompt) => { cards.push(prompt); return 'allow' } },
+    })
+    const registry = createProviderRegistry({ networkGate: { check: async () => ({ safe: true, source: 'bx', detail: 'offline fixture' }) } })
+    registry.register('openai', provider, { canResume: () => false })
+    const manager = new SessionManager({ registry, maxConcurrent: 1, idleEvictMs: 60000 })
+    const req = { alias: 'offline', path: '/tmp', providerId: 'openai', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const, chatId: 'owner' }
+    try {
+      const handle = await manager.acquire(req)
+      await collectTurn(handle.dispatch('user', { source: 'inbound' }))
+      expect(cards).toHaveLength(1)
+      expect(await manager.acquire(req)).toBe(handle)
+      await collectTurn(handle.dispatch('initiative without inbound context'))
+      await collectTurn(handle.dispatch('scheduled agenda action', { source: 'background' }))
+      expect(cards).toHaveLength(1)
+      expect(tools.calls).toHaveLength(1)
+      await collectTurn(handle.dispatch('next user message', { source: 'inbound' }))
+      expect(cards).toHaveLength(2)
+      expect(tools.calls).toHaveLength(2)
+    } finally { await manager.shutdown() }
   })
   it('view_image:工具结果是文字,图另起一条用户消息紧跟其后再进下一轮', async () => {
     const dir = tmp('oai-view-')

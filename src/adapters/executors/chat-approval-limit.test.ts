@@ -62,9 +62,9 @@ it('OpenAI reused session resets its actual dispatch budget', async () => {
   const provider = createOpenAiAgentProvider({ makeChatModel: () => model.model, makeMcpBridge: async () => bridge.bridge, approval: { adminFor: () => 'owner', askUser: async (_to, prompt) => { cards.push(prompt); return 'deny' } } })
   const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'owner' })
   try {
-    await collectTurn(session.dispatch('first'))
+    await collectTurn(session.dispatch('first', undefined, { source: 'inbound' }))
     expect(cards).toHaveLength(1)
-    await collectTurn(session.dispatch('second'))
+    await collectTurn(session.dispatch('second', undefined, { source: 'inbound' }))
     expect(cards).toHaveLength(2)
     expect(bridge.calls).toEqual([])
   } finally { await session.close() }
@@ -79,7 +79,7 @@ it('Gemini reused session resets its actual dispatch budget', async () => {
   })
   const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'owner' })
   try {
-    await collectTurn(session.dispatch('first')); expect(cards).toHaveLength(1)
-    await collectTurn(session.dispatch('second')); expect(cards).toHaveLength(2)
+    await collectTurn(session.dispatch('first', undefined, { source: 'inbound' })); expect(cards).toHaveLength(1)
+    await collectTurn(session.dispatch('second', undefined, { source: 'inbound' })); expect(cards).toHaveLength(2)
   } finally { await session.close() }
 })

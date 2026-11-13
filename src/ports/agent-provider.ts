@@ -127,6 +127,9 @@ export interface AgentWorkbenchRuntime {
   snapshot(): AgentRuntimeSnapshot
 }
 
+/** daemon 给当前回合的来源；不从模型文本、chatId 或持久会话推断。 */
+export interface AgentDispatchContext { source: 'inbound' | 'background' }
+
 export interface AgentSession {
   /** Observation only. requestBytes is the actual UTF-8 wire body; historyBytes may be a legacy estimate.
    * Tokens describe the last request, not billed step totals. requestFailure contains only a normalized digest. */
@@ -151,7 +154,7 @@ export interface AgentSession {
    * dispatches. Claude provider serialises (one in-flight per session);
    * Codex provider runs each turn as a separate runStreamed.
    */
-  dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent>
+  dispatch(text: string, attachments?: readonly AgentAttachment[], context?: AgentDispatchContext): AsyncIterable<AgentEvent>
   /**
    * Interrupt the in-flight dispatch (if any) without closing the
    * session — future dispatches still work. Wired into the chatroom

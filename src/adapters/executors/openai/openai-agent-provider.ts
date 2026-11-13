@@ -146,8 +146,7 @@ function chatPurpose(args: {
   ownerRules?: () => ChatOwnerRules | null
   approval?: OpenAiApproval
 }): OpenAiPurpose {
-  let approvalSignal: AbortSignal | undefined
-  let approvalTurn = new ChatApprovalTurn(args.approval?.maxCards)
+  const turns = new WeakMap<AbortSignal, { budget: ChatApprovalTurn; inbound: boolean }>()
   const { ctx, bridge, maxSteps, ownerRules } = args
   const builtinByName = new Map<string, BuiltinTool>(args.builtins.map(b => [b.spec.name, b]))
   const toolSpecs: ToolSpec[] = [...bridge.tools, ...args.builtins.map(b => b.spec)]
@@ -159,6 +158,9 @@ function chatPurpose(args: {
     closeTimeoutMs: CLOSE_TIMEOUT_MS,
     closeMustConfirm: false,
     cancelWaits: false,
+    beginTurn(signal, context) {
+      turns.set(signal, { budget: new ChatApprovalTurn(args.approval?.maxCards), inbound: context?.source === 'inbound' })
+    },
     tools: () => toolSpecs,
     // Stamp `server` from the REAL owning MCP server (never assume `wechat` for every MCP tool) — isReplyToolCall keys on it.
     toolCallEvent(call): AgentEvent {
@@ -177,9 +179,9 @@ function chatPurpose(args: {
       if (signal.aborted) return { output: CANCELLED_TOOL }
       const server = bridge.serverOf(call.name)
       const input = (call.input ?? {}) as Record<string, unknown>
-      if (approvalSignal !== signal) { approvalSignal = signal; approvalTurn = new ChatApprovalTurn(args.approval?.maxCards) }
+      const turn = turns.get(signal)
       const gate = await gateTool({
-        approvalTurn,
+        approvalTurn: turn?.budget,
         toolName: call.name,
         ...(server !== undefined ? { mcpServer: server } : {}),
         input,
@@ -187,7 +189,8 @@ function chatPurpose(args: {
         permissionMode: ctx.permissionMode,
         chatId: ctx.chatId,
         ownerRules: ownerRules?.() ?? null,
-        approval: args.approval,
+        // 没有主人刚发起的入站轮，relay 保持 deny；缓存会话不携带这项资格。
+        approval: turn?.inbound ? args.approval : undefined,
         signal,
       })
       if (signal.aborted) return { output: CANCELLED_TOOL }
