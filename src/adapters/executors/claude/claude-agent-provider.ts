@@ -20,6 +20,7 @@ import { claudeApiFailure, claudeAssistantFailure, claudeResultFailure, parseToo
 import { authorize, type AuthSubject } from '../../../domain/authorize'
 import { lookup } from '../../../domain/capability-matrix'
 import { sessionSubprocessEnv } from '../subprocess-env'
+import { makeCheckupProxy, checkupTransportSafe } from './checkup-proxy'
 
 export { CLAUDE_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -54,6 +55,8 @@ export interface ClaudeAgentProviderOptions {
    * streams through it — the reply-once harness can't `vi.mock` a module). Production omits this.
    */
   queryImpl?: typeof query
+  /** Offline transport seam for the run-owned checkup boundary. */
+  checkupFetch?: typeof fetch
 }
 
 function taskInputPreview(input: Record<string, unknown>): string | null {
@@ -396,7 +399,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         cwd: project.path,
         model: spawnOpts.model ?? opts.strongModel?.() ?? DEFAULT_CLAUDE_MODEL,
         settingSources: [], tools: [], persistSession: false,
-        hooks: {}, plugins: [], settings: { disableAllHooks: true, disableSkillShellExecution: true, autoMemoryEnabled: false },
+        hooks: {}, plugins: [], settings: { disableAllHooks: true, disableSkillShellExecution: true, autoMemoryEnabled: false, env: { ANTHROPIC_UNIX_SOCKET: '' } },
         includePartialMessages: true,
         strictMcpConfig: true,
         mcpServers: { wechat: { type: 'http', url: evaluation.mcpServer.url } },
@@ -407,7 +410,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         // The SDK exposes its output cap through the documented subprocess env.
         // Internal retries are disabled: an isolated sample must stay bounded even
         // if the owner's interactive CLI normally enables an indefinite watchdog.
-        env: { ...sessionSubprocessEnv(), CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(evaluation.maxOutputTokens), CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' },
+        env: { ...sessionSubprocessEnv(), CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST:'1', DISABLE_COMPACT:'1', DISABLE_AUTO_COMPACT:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(evaluation.maxOutputTokens), CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' },
         canUseTool: async (name, input) => evaluation.tools.tools.some(tool => name === `mcp__wechat__${tool.name}`)
           ? { behavior: 'allow', updatedInput: input }
           : { behavior: 'deny', message: 'Only the current conversation tools are available.' },
@@ -447,6 +450,24 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // 守护(评审 #193 P1-1):子进程在这一刻拿到的端点 + 模型就是这条会话以后每一轮连的地方。
       // options.env 给了就是子进程的整份环境(工作台);没给 SDK 继承 process.env。
       const spawnTarget = { provider: 'claude', model: typeof options.model === 'string' ? options.model : null, baseUrl: claudeBaseUrl(options.env) }
+      let activeEventQueue: AsyncQueue<AgentEvent> | null = null
+      let usageLimited=false
+      let evaluationProxy:Awaited<ReturnType<typeof makeCheckupProxy>>|undefined
+      if(evaluation?.budget){
+        const env=options.env!
+        // These native transports ignore ANTHROPIC_BASE_URL, so they cannot
+        // promise this Messages allowance yet. Never silently bypass the gate.
+        if(env.ANTHROPIC_UNIX_SOCKET||['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_MANTLE','CLAUDE_CODE_USE_VERTEX'].some(key=>/^(1|true|yes|on)$/i.test(env[key]?.trim()??'')))throw Object.assign(Error('This Claude transport cannot enforce the checkup allowance.'),{code:'isolated_evaluation_unavailable'})
+        evaluationProxy=await makeCheckupProxy({upstream:spawnTarget.baseUrl??'https://api.anthropic.com',budget:evaluation.budget,maxOutputTokens:evaluation.maxOutputTokens,signal:aborter.signal,fetch:opts.checkupFetch,onLimit(){
+          usageLimited=true
+          activeEventQueue?.push({kind:'error',code:'checkup_usage_limit',message:'checkup_usage_limit'})
+          activeEventQueue?.end();activeEventQueue=null
+          aborter.abort()
+        }})
+        env.ANTHROPIC_UNIX_SOCKET=''
+        env.ANTHROPIC_BASE_URL=evaluationProxy.url
+        env.NO_PROXY=[env.NO_PROXY,'127.0.0.1','localhost'].filter(Boolean).join(',');env.no_proxy=env.NO_PROXY
+      }
 
       // 同一个 SDK、同一份 options(上面的执行选择 / 续接 / abort / 端点都已经定了),分两种会话:
       // 一起做 = 一整段一个事件流 + 自己拥有进程组(claude-workbench-runtime.ts);对话 = 下面一轮一个事件流。
@@ -461,11 +482,25 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
 
       let q: ReturnType<typeof query>
       try { q = runQuery({ prompt: sdkQueue.iterable(), options }) }
-      catch (error) { aborter.abort(); throw error }
+      catch (error) { aborter.abort();await evaluationProxy?.close();throw error }
+      if(evaluationProxy){
+        let timer:ReturnType<typeof setTimeout>|undefined
+        try{
+          // SDK 0.2.116 implements this control query; its public Query type
+          // omits it. Unknown settings/SDK shapes fail closed before a prompt.
+          const control=q as unknown as {getSettings?:()=>Promise<unknown>}
+          if(!control.getSettings||!checkupTransportSafe(await Promise.race([control.getSettings(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Native settings could not be verified.')),10_000)})])))throw Error('Native settings could not be verified.')
+        }catch{
+          sdkQueue.end();aborter.abort()
+          const lifecycle=q as unknown as {close?:()=>unknown}
+          swallowSdkLifecycleError(lifecycle.close?.bind(lifecycle))
+          await evaluationProxy.close()
+          throw Object.assign(Error('This Claude transport cannot enforce the checkup allowance.'),{code:'isolated_evaluation_unavailable'})
+        }finally{clearTimeout(timer)}
+      }
       let lastInputTokens:number|undefined, firstInputTokens:number|undefined, contextModel:string|undefined,firstRequestSeen=false,lastRequestId:string|undefined,firstRequestId:string|undefined
       let observedSessionId=spawnOpts.resumeSessionId
 
-      let activeEventQueue: AsyncQueue<AgentEvent> | null = null
       let closed = false
       let droppedAssistantChunks = 0
       // A synthetic API-error assistant message (SDK `error` label) is held
@@ -598,7 +633,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                   ? msg.result.slice(0, 400)
                   : JSON.stringify(msg).slice(0, 400)
                 log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
-                aq.push({ kind: 'error', message: msg.errors?.join('\n')||`subtype=${msg.subtype}`, ...(isContextOverflow(msg.errors)?{code:'context_overflow' as const}:{}), ...(evaluation && msg.subtype === 'error_max_turns' && !apiErrored && !turnErrored ? { code: 'checkup_step_budget' } : {}) })
+                aq.push({ kind: 'error', message: msg.errors?.join('\n')||`subtype=${msg.subtype}`, ...(isContextOverflow(msg.errors)?{code:'context_overflow' as const}:{}), ...(evaluation && msg.subtype === 'error_max_turns' && !apiErrored && !turnErrored ? { code: usageLimited?'checkup_usage_limit':'checkup_step_budget' } : {}) })
               } else if (!apiErrored && !turnErrored) {
                 // SDK 说这一轮是失败的(is_error),却没有带 error 标注的助理消息(上面那条路没接住):
                 // result.result 就是错误原文。带码收尾,coordinator 只发通知 —— 一个字都不进回复(#190 红线)。
@@ -711,6 +746,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           // subprocess even when interrupt()/close() above no-op'd against a
           // dead transport. abort() itself never throws, but guard anyway.
           try { aborter.abort() } catch { /* never throws */ }
+          await evaluationProxy?.close()
           if (activeEventQueue) {
             activeEventQueue.end()
             activeEventQueue = null

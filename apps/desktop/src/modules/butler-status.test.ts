@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { butlerSummary, mountButlerStatus } from './butler-status.js'
 const view = (extra = {}) => ({ target: { provider: 'fake', model: 'synthetic',address:'default',windowTokens:8192,windowKnown:false }, profile: null, attempt: null, suspectedChanged: false, periodicProbe: false, ...extra })
-const quote = { requests: 8, maxRequests: 16, inputTokens: 12000, outputTokens: 1000, windowKnown: false, targetKey: 'synthetic-quote' }
+const quote = { requests: 8, maxRequests: 16, inputTokens: 12000, outputTokens: 69600, maxOutputTokens: 300000, summary: '预计用 7 万左右、最多不超过 30 万输出 token，大约 3–6 分钟。', windowKnown: false, targetKey: 'synthetic-quote' }
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() }
 
 describe('local butler status', () => {
@@ -22,7 +22,7 @@ describe('local butler status', () => {
     const ui = mountButlerStatus({ host, call }); await ui.refresh()
     expect(call.mock.calls.map(c => c[1])).toEqual(['/v1/checkup'])
     host.querySelector<HTMLButtonElement>('[data-checkup="prepare"]')!.click(); await flush()
-    expect(host.querySelector('[data-checkup="estimate"]')!.textContent).toContain('12000')
+    expect(host.querySelector('[data-checkup="estimate"]')!.textContent).toContain('预计用 7 万左右、最多不超过 30 万输出 token')
     expect(host.textContent).toContain('窗口未知')
     expect(call.mock.calls.some(c => c[1].endsWith('/run'))).toBe(false)
     host.querySelector<HTMLButtonElement>('[data-checkup="start"]')!.click(); await flush()
@@ -75,7 +75,7 @@ describe('local butler status', () => {
     const ui = mountButlerStatus({ host, call }); await ui.refresh()
     host.querySelector<HTMLButtonElement>('[data-checkup="prepare"]')!.click(); await flush()
     host.querySelector<HTMLButtonElement>('[data-checkup="start"]')!.click(); await flush(); await ui.refresh()
-    expect(host.textContent).toContain('CC 用的模型或连接变了，请重新确认体检用量。')
+    expect(host.textContent).toContain('体检设置或用量上限变了，请重新确认体检用量。')
     expect(host.querySelector('[data-checkup="start"]')).toBeNull()
     ui.destroy()
   })

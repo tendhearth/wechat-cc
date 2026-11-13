@@ -4,6 +4,7 @@ export interface CheckupTurn {
   toolCalls: Array<{ name: string; input: unknown }>
   /** A model exhausted its fake-tool loop; infrastructure failures never set this. */
   toolError?: boolean
+  usageLimited?: boolean
   firstTextMs: number | null
   durationMs: number
 }

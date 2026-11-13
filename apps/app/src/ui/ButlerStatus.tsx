@@ -67,7 +67,7 @@ export function ButlerStatus() {
       {s.attempt ? <Txt testID="checkup-attempt" role="small" tone="inkSoft" accessibilityLiveRegion="polite">{s.attempt}</Txt> : null}
       {data?.suspectedChanged ? <Txt role="small" tone="inkSoft">{t(lang, 'butler.changed')}</Txt> : null}
       {running ? <Button kind="secondary" testID="checkup-cancel" label={t(lang, 'butler.cancel')} disabled={!online} busy={busy} onPress={() => void perform(() => backend.checkupCancel(), next => { setData(next); setEstimate(null) })} /> : estimate ? <>
-        <Txt testID="checkup-estimate" role="small" tone="inkSoft">{t(lang, 'butler.estimate', { requests: estimate.requests, maxRequests: estimate.maxRequests, inputTokens: estimate.inputTokens, outputTokens: estimate.outputTokens })} {estimate.windowKnown ? '' : t(lang, 'butler.windowUnknown')}</Txt>
+        <Txt testID="checkup-estimate" role="small" tone="inkSoft">{estimate.summary} {estimate.windowKnown ? '' : t(lang, 'butler.windowUnknown')}</Txt>
         <Button kind="primary" testID="checkup-start" label={t(lang, 'butler.start')} disabled={!online || failed} busy={busy} onPress={() => void perform(() => backend.checkupRun(estimate.targetKey), next => { setData(next); setEstimate(null) })} />
         <Button kind="secondary" testID="checkup-dismiss" label={t(lang, 'butler.dismiss')} disabled={busy} onPress={() => setEstimate(null)} />
       </> : <Button kind="secondary" testID="checkup-prepare" label={t(lang, data?.profile ? 'butler.recheck' : 'butler.check')} disabled={!online || failed} busy={busy} onPress={() => void perform(() => backend.checkupEstimate(), setEstimate)} />}

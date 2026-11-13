@@ -3,7 +3,7 @@
 import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {import('../../../../packages/protocol/src/checkup').CheckupView} CheckupView */
-/** @typedef {{requests:number,maxRequests:number,inputTokens:number,outputTokens:number,windowKnown:boolean,targetKey:string}} Estimate */
+/** @typedef {import('../../../../packages/protocol/src/checkup').CheckupEstimate} Estimate */
 /** @param {string} tag @param {string} text @param {string} [cls] */
 function el(tag, text, cls) { const n = document.createElement(tag); n.textContent = text; if (cls) n.className = cls; return n }
 
@@ -48,7 +48,7 @@ export function mountButlerStatus({ host, call }) {
     if (failed) nodes.push(button('再试一次', 'retry', () => { void refresh() }))
     if (running) nodes.push(button('取消体检', 'cancel', () => { void perform(async () => { data = /** @type {CheckupView} */ (await v1(call, V1.checkup.cancel, { body: {} })); estimate = null }) }))
     else if (estimate) {
-      const quote = el('p', `短版体检通常几分钟：约 ${estimate.requests} 次请求（含重试最多 ${estimate.maxRequests} 次），约 ${estimate.inputTokens} 输入、${estimate.outputTokens} 输出 token。只用编造的对话。${estimate.windowKnown ? '' : '窗口未知，按保守大小估算。'}`, 'nc-detail')
+      const quote = el('p', `${estimate.summary}${estimate.windowKnown ? '' : '窗口未知，按保守大小估算。'}`, 'nc-detail')
       quote.dataset.checkup = 'estimate'; nodes.push(quote)
       nodes.push(button('开始体检', 'start', () => { void perform(async () => { data = /** @type {CheckupView} */ (await v1(call, V1.checkup.run, { body: { full: false, expectedTargetKey: estimate?.targetKey } })); estimate = null }) }))
       nodes.push(button('先不测', 'dismiss', () => { estimate = null; render() }))
@@ -65,7 +65,7 @@ export function mountButlerStatus({ host, call }) {
       estimate = null; failed = true
       const code = e instanceof Error ? e.message : typeof e === 'string' ? e : ''
       actionError = code.includes('checkup_rate_limited') ? '这个模型的每日体检次数已用完，请稍后再试。'
-        : code.includes('checkup_target_changed') || code === 'stale' ? 'CC 用的模型或连接变了，请重新确认体检用量。'
+        : code.includes('checkup_target_changed') || code === 'stale' ? '体检设置或用量上限变了，请重新确认体检用量。'
         : code.includes('checkup_busy') || code === 'busy' ? '体检已经在做了，请稍等，或先取消这一轮。'
         : code.includes('checkup_invalid_request') ? '这次体检没能开始，请重新打开体检再试。'
         : '这次体检操作没做成，请再试一次。'

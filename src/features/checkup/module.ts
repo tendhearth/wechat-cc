@@ -9,6 +9,7 @@ import { makeCheckupStore, checkupAddress } from '../../adapters/store/checkup-s
 import type { WorkbenchService } from '../workbench'
 import type { MemoryFeature } from '../memory'
 import { DEFAULT_CHECKUP_WINDOW } from '../../domain/butler-checkup'
+import { checkupLimits } from '../../domain/checkup-budget'
 import { checkupFeature, makeCheckupTurn, type CheckupService } from './index'
 
 export function checkupModule(f:Foundation):DaemonModule<CheckupService> {
@@ -16,6 +17,7 @@ export function checkupModule(f:Foundation):DaemonModule<CheckupService> {
     const boot=ctx.get<Bootstrap>('bootstrap'),config=makeMtimeCachedConfigReader(f.stateDir)
     return {
       holdBusy:boot.holdBusy,
+      limits:full=>checkupLimits(full,config().checkup),
       store:makeCheckupStore(f.stateDir),version:APP_VERSION,
       persona:()=>ctx.get<MemoryFeature>('memory').promptReads.personaFor(ownerChatIdOf(f.stateDir)??'checkup').content??'',
       executors:()=>ctx.get<WorkbenchService>('workbench').availableExecutors(),

@@ -14,6 +14,7 @@ export type AgentProviderKind = KnownProviderId
 
 export interface AgentConfig {
   provider: AgentProviderKind
+  checkup?: Partial<Record<'short'|'full',{maxOutputTokens?:number;maxRequests?:number}>>
   model?: string
   /** Explicit capacity for this exact backend endpoint and model. */
   modelContextWindows?: Array<{provider:string;address:string;model:string;windowTokens:number}>
@@ -313,7 +314,10 @@ export type ForwardBudgetConfig = z.infer<typeof ForwardBudgetConfig>
 const AcpAgentEntry = z.object({ id: z.string(), name: z.string(), command: z.string(), args: z.array(z.string()).optional(), auth_method: z.string().max(64).optional() })
 
 const ModelContextWindow = z.object({provider:z.string().min(1).max(64),address:z.string().refine(s=>s==='default'||URL.canParse(s)),model:z.string().min(1).max(200),windowTokens:z.number().int().min(1024).max(10_000_000)}).strict()
+const CheckupLimits = z.object({maxOutputTokens:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),maxRequests:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()}).strict()
+const CheckupSettings = z.object({short:CheckupLimits.optional(),full:CheckupLimits.optional()}).strict()
 const AgentConfigSchema = z.object({
+  checkup:CheckupSettings.optional(),
   modelContextWindows:z.array(ModelContextWindow).max(200).optional(),
   provider: z.enum(PROVIDER_IDS).default('claude'),
   model: z.string().optional(),
@@ -458,6 +462,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
 
     return {
       provider,
+      ...(CheckupSettings.safeParse(parsed.checkup).success?{checkup:CheckupSettings.parse(parsed.checkup)}:{}),
       ...(modelContextWindows?.length?{modelContextWindows}:{}),
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),

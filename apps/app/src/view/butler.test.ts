@@ -18,7 +18,7 @@ describe('butler status words', () => {
 
 
 it('explains a stale cost confirmation, busy checkup and invalid checkup request in plain words', () => {
-  expect(butlerActionError('stale', 'zh-Hans')).toBe('CC 用的模型或连接变了，请重新确认体检用量。')
+  expect(butlerActionError('stale', 'zh-Hans')).toBe('体检设置或用量上限变了，请重新确认体检用量。')
   expect(butlerActionError('busy', 'zh-Hans')).toContain('体检已经在做了')
   expect(butlerActionError('checkup_invalid', 'zh-Hans')).toBe('这次体检没能开始，请重新打开体检再试。')
   expect(butlerActionError('checkup_invalid', 'en')).not.toMatch(/invalid|request|parameter/i)

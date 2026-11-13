@@ -24,6 +24,7 @@ import { childEnvFor } from '../mcp-stdio-spec'
 import { makeTurnEmitter } from '../turn-emitter'
 import { openaiErrorCode } from '../openai/openai-error-code'
 import { withProviderCode } from '../../../lib/provider-error-code'
+import type { CheckupBudget } from '../../../domain/checkup-budget'
 
 export { GEMINI_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -79,7 +80,7 @@ export interface GenaiPort {
     model: string
     contents: unknown[]
     config?: { systemInstruction?: string; tools?: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }>; abortSignal?: AbortSignal; maxOutputTokens?: number; httpOptions?: { retryOptions?: { attempts?: number } } }
-  }): Promise<{ text?: string; functionCalls?: Array<{ name?: string; args?: Record<string, unknown> }>; candidates?: Array<{finishReason?:string}> }>
+  }): Promise<{ text?: string; functionCalls?: Array<{ name?: string; args?: Record<string, unknown> }>; candidates?: Array<{finishReason?:string}>; usageMetadata?:{candidatesTokenCount?:number;thoughtsTokenCount?:number} }>
 }
 /** Minimal MCP surface the loop needs (real: @modelcontextprotocol/sdk Client). */
 export interface McpPort {
@@ -110,6 +111,7 @@ export interface DispatchLoopArgs {
   stepBudgetCode?: string
   emptyOutputCode?: string
   maxOutputTokens?: number
+  budget?: CheckupBudget
   httpRetryAttempts?: number
 }
 
@@ -139,7 +141,10 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
         return
       }
       rounds++
-      const resp = await args.genai.generateContent({ model: args.model, contents: args.history, config })
+      const lease=args.budget?.reserve(args.maxOutputTokens??4096)
+      const resp = await args.genai.generateContent({ model: args.model, contents: args.history, config:{...config,...(lease?{maxOutputTokens:lease.maxOutputTokens}:{})} })
+      const usage=resp.usageMetadata
+      lease?.settle({outputTokens:typeof usage?.candidatesTokenCount==='number'||typeof usage?.thoughtsTokenCount==='number'?(usage?.candidatesTokenCount??0)+(usage?.thoughtsTokenCount??0):undefined,outputBytes:new TextEncoder().encode(JSON.stringify(resp)).length,exhausted:resp.candidates?.some(c=>c.finishReason==='MAX_TOKENS')})
       const text = resp.text ?? ''
       const calls = resp.functionCalls ?? []
       if(args.emptyOutputCode && !text.trim() && !calls.length && resp.candidates?.some(c=>c.finishReason==='MAX_TOKENS')){
@@ -225,7 +230,7 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
     if ((args.history.at(-1) as any)?.role === 'user') args.history.pop()
     // 同一套 HTTP 边界分类(arch backlog #4 第 2 步):GoogleGenAI 的 ApiError 带 `status`;
     // 无效 key 是 400 + API_KEY_INVALID(§4.5)⇒ auth_rejected。分不出 ⇒ 旧回退。
-    const code = openaiErrorCode(err)
+    const code = err instanceof Error&&err.message==='checkup_usage_limit'?'checkup_usage_limit':openaiErrorCode(err)
     yield code ? em.error(err, { code }) : em.error(err)
   }
 }
@@ -429,7 +434,7 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
             sessionId,
             userText: text,
             signal: abort.signal,
-            ...(ctx.evaluation ? { abortSdkRequest:true, toolServer: 'wechat', stepBudgetCode:'checkup_step_budget', emptyOutputCode:'checkup_output_exhausted', maxRounds: ctx.evaluation.maxSteps, maxOutputTokens: ctx.evaluation.maxOutputTokens, httpRetryAttempts: 1 } : {}),
+            ...(ctx.evaluation ? { abortSdkRequest:true, toolServer: 'wechat', stepBudgetCode:'checkup_step_budget', emptyOutputCode:'checkup_output_exhausted', maxRounds: ctx.evaluation.maxSteps, maxOutputTokens: ctx.evaluation.maxOutputTokens, budget:ctx.evaluation.budget, httpRetryAttempts: 1 } : {}),
           })
         },
         async cancel() {

@@ -119,7 +119,8 @@ it('keeps exam labels out of the model-visible MCP server and tool namespace',as
 })
 
 it('allows a delegate then a reply then model completion without exhausting the interview budget',async()=>{
-  const {buildInterviewPlan,scoreInterview,estimateInterview}=await import('../../domain/checkup-interview')
+  const {buildInterviewPlan,scoreInterview}=await import('../../domain/checkup-interview')
+  const {estimateInterview}=await import('./estimate')
   const {createOpenAiAgentProvider}=await import('../../adapters/executors/openai/openai-agent-provider')
   const {scriptedOpenAiModel}=await import('../../test-support/executors/openai-scripted')
   const sample=buildInterviewPlan({windowTokens:8192,full:false,executors:['private-id']}).samples.find(s=>s.expected.action==='delegate')!
@@ -129,9 +130,9 @@ it('allows a delegate then a reply then model completion without exhausting the 
   expect(result.toolError).toBeUndefined()
   expect(scoreInterview(sample,result).business).toBe(true)
   const estimate=estimateInterview({windowTokens:8192,full:false,executors:['private-id']})
-  expect(estimate.requests).toBe(72)
-  expect(estimate.maxRequests).toBe(432)
-  expect(estimate.outputTokens).toBe(2654208)
+  expect(estimate.requests).toBe(48)
+  expect(estimate.maxRequests).toBe(120)
+  expect(estimate.outputTokens).toBe(69600)
 })
 
 it('does not bypass the registry network guard when preparing model capacity',async()=>{

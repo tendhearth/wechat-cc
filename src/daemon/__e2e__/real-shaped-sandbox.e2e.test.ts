@@ -249,7 +249,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const spawnsBefore=spawnOptions.length
     const estimate = await desktop<{ targetKey: string; requests: number }>('POST', '/v1/checkup/estimate', {})
     expect(estimate.status).toBe(200)
-    expect(estimate.body.requests).toBe(72)
+    expect(estimate.body.requests).toBe(48)
     expect((await desktop('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey }, 'trusted')).status).toBe(403)
     const started = await desktop<View>('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey })
     expect(started.status).toBe(202)

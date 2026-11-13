@@ -1,5 +1,5 @@
 /** Story v1 is pure invented data. Expected values never leave the scorer. */
-import type { CheckupEstimate, CheckupInterview, CheckupQuality, CheckupRatio } from '@wechat-cc/protocol'
+import type { CheckupInterview, CheckupQuality, CheckupRatio } from '@wechat-cc/protocol'
 import type { CheckupTurn } from './checkup-types'
 import type { CheckupPersona } from './checkup-persona'
 export interface InterviewSample {
@@ -134,11 +134,4 @@ export function summarizeInterview(samples:InterviewSample[],scores:InterviewSco
   let reliableFillRatio=0,reliableDay:string|null=null,reliableTokens:number|null=null
   for(const s of stages){if(s.accuracy<.8||s.trackingAccuracy<.8||aggregate('memory',indices.filter(i=>samples[i]!.fillRatio===s.fillRatio)).unmeasured||aggregate('tracking',indices.filter(i=>samples[i]!.fillRatio===s.fillRatio)).unmeasured)break;reliableFillRatio=s.fillRatio;reliableDay=samples.find(p=>p.fillRatio===s.fillRatio)!.day;reliableTokens=Math.min(...samples.filter(p=>p.fillRatio===s.fillRatio&&p.expected.memory).map(p=>p.estimatedTokens))}
   return {version:'interview-v1',name:'CC',reliableDay,reliableTokens,qualities:result,business:ratio(scores.map(s=>s.business)),reliableFillRatio,stages}
-}
-export function estimateInterview(o:InterviewOptions&{windowKnown?:boolean;systemTokens?:number}):Omit<CheckupEstimate,'targetKey'> {
-  const p=buildInterviewPlan(o),requests=p.samples.length*3,maxRequests=p.samples.length*18
-  // Up to three steps, up to three transport attempts per step, and one
-  // whole-question retry with a larger reasoning allowance. Count both caps.
-  const outputPerQuestion=9*(CHECKUP_OUTPUT_BUDGETS[0]+CHECKUP_OUTPUT_BUDGETS[1])
-  return {requests,maxRequests,inputTokens:p.samples.reduce((sum,s)=>sum+18*(s.estimatedTokens+(o.systemTokens??0)+CHECKUP_OUTPUT_BUDGETS[1]*3),0),outputTokens:p.samples.length*outputPerQuestion,windowKnown:o.windowKnown??false}
 }

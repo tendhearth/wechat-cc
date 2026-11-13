@@ -1,5 +1,6 @@
+import { estimateCheckup } from '../features/checkup/estimate'
 import { describe, expect, it } from 'vitest'
-import { buildCheckupPlan, gradeMemory, scoreMemory, estimateCheckup } from './butler-checkup'
+import { buildCheckupPlan, gradeMemory, scoreMemory } from './butler-checkup'
 
 describe('synthetic butler checkup', () => {
   it('reproduces only fabricated conversations from a fixed seed at each depth', () => {
@@ -24,8 +25,8 @@ describe('synthetic butler checkup', () => {
     const short = estimateCheckup({ windowTokens: 8192, full: false })
     const full = estimateCheckup({ windowTokens: 8192, full: true })
     expect(short.requests).toBe(11)
-    expect(short.maxRequests).toBe(54)
-    expect(short.outputTokens).toBe(27 * (4096 + 8192))
+    expect(short.maxRequests).toBe(120)
+    expect(short.outputTokens).toBe(11 * 1450)
     expect(full.requests).toBeGreaterThan(short.requests)
     expect(full.inputTokens).toBeGreaterThan(short.inputTokens)
   })

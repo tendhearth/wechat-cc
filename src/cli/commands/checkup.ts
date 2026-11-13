@@ -19,7 +19,7 @@ export const checkupCmd=defineCommand({
           if(!r.ok)throw new Error(value.error??'checkup_unavailable')
           return value
         },
-        estimate:q=>{if(!args.json)console.error(`${args.full?'完整版（比短版更久）':'短版（通常几分钟）'}：约 ${q.requests} 次请求，含重试最多 ${q.maxRequests} 次；输入约 ${q.inputTokens}、输出最多 ${q.outputTokens} token。${q.windowKnown?'':'窗口未知，按保守大小估算。'} Ctrl-C 可取消。`)},
+        estimate:q=>{if(!args.json)console.error(`${args.full?'完整版':'短版'}：${q.summary}${q.windowKnown?'':'窗口未知，按保守大小估算。'} Ctrl-C 可取消。`)},
         sleep:ms=>new Promise(r=>setTimeout(r,ms)),
       },{full:!!args.full,estimateOnly:!!args.estimate,...typeof args.provider==='string'?{providerId:args.provider}:{},...typeof args.model==='string'?{model:args.model}:{},signal:abort.signal})
       if(args.json)console.log(JSON.stringify(result,null,2))

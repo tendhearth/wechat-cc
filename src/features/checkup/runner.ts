@@ -16,6 +16,7 @@ import { errorWithProviderCode } from '../../lib/provider-error-code'
 import { abortable } from './service'
 import { interviewInstructions } from './instructions'
 import { CHECKUP_OUTPUT_BUDGETS, scoreInterview } from '../../domain/checkup-interview'
+import type { CheckupBudget } from '../../domain/checkup-budget'
 
 /** An unguessable loopback MCP endpoint. It can only echo invented parameters. */
 export async function fakeCheckupTools(sample: CheckupSample, onAction?:(name:string,input:unknown)=>void) {
@@ -62,7 +63,7 @@ const closeSession = async (session: AgentSession) => {
   finally { clearTimeout(timer) }
 }
 export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
-  const attempt = async(sample:CheckupSample,target:CheckupTarget,signal:AbortSignal,maxOutputTokens:number):Promise<CheckupTurn> => {
+  const attempt = async(sample:CheckupSample,target:CheckupTarget,signal:AbortSignal,maxOutputTokens:number,budget?:CheckupBudget):Promise<CheckupTurn> => {
     signal.throwIfAborted()
     const provider=getProvider(target.provider)
     if(!provider)throw errorWithProviderCode('provider unavailable','provider_error')
@@ -76,20 +77,21 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
     try {
       bridge=await fakeCheckupTools(sample,(name,input)=>{if(sample.kind==='interview'&&firstActionMs===null&&['reply','ask_user'].includes(name)&&input&&typeof input==='object'&&Object.values(input).some(v=>typeof v==='string'&&v.trim()))firstActionMs=performance.now()-started})
       signal.throwIfAborted()
-      const pending=provider.spawn({alias:sample.kind==='interview'?'conversation':'synthetic-checkup',path:project},{tierProfile:JOB_PROFILE,permissionMode:'strict',chatId:`conversation-${randomUUID()}`,model:target.model,appendInstructions:sample.kind==='interview'?interviewInstructions(target.provider,target.model,sample.persona,sample.executors):'只根据本次完全编造的题目作答。禁止读取文件、记忆、项目或调用本次练习以外的工具。',evaluation:{tools:bridge.tools,mcpServer:{url:bridge.url},maxSteps:sample.kind==='memory'?1:sample.kind==='interview'?3:2,maxOutputTokens}})
+      const pending=provider.spawn({alias:sample.kind==='interview'?'conversation':'synthetic-checkup',path:project},{tierProfile:JOB_PROFILE,permissionMode:'strict',chatId:`conversation-${randomUUID()}`,model:target.model,appendInstructions:sample.kind==='interview'?interviewInstructions(target.provider,target.model,sample.persona,sample.executors):'只根据本次完全编造的题目作答。禁止读取文件、记忆、项目或调用本次练习以外的工具。',evaluation:{tools:bridge.tools,mcpServer:{url:bridge.url},maxSteps:sample.kind==='memory'?1:sample.kind==='interview'?3:2,maxOutputTokens,budget}})
       void pending.then(s=>{if(signal.aborted)void closeSession(s)},()=>{})
       session=await abortable(pending,signal)
       const actual=session.callTarget?.()
       if(actual && ((actual.model && actual.model!==target.model) || checkupAddress(actual.baseUrl??'default')!==checkupAddress(target.address)))throw Object.assign(new Error('target changed'),{code:'target_changed'})
-      let text='',firstTextMs:number|null=null,completed=false,toolError=false
+      let text='',firstTextMs:number|null=null,completed=false,toolError=false,usageLimited=false
       for await(const ev of session.dispatch(sample.prompt)) {
         signal.throwIfAborted()
         if(ev.kind==='text') { if(firstTextMs===null && ev.text.trim())firstTextMs=performance.now()-started;text=ev.textMode==='replace'?ev.text:text+ev.text }
         else if(ev.kind==='error') {
-          if(sample.kind==='interview' && ev.code==='checkup_output_exhausted' && scoreInterview(sample,{text,toolCalls:bridge.calls,firstTextMs:null,durationMs:0},sample.persona).observed) {
+          if(sample.kind==='interview' && ['checkup_output_exhausted','checkup_usage_limit'].includes(ev.code??'') && scoreInterview(sample,{text,toolCalls:bridge.calls,firstTextMs:null,durationMs:0},sample.persona).observed) {
             // The visible answer is the fake action, not the optional final
             // prose. An exhausted sign-off cannot erase an observed reply.
             completed=true
+            usageLimited ||= ev.code==='checkup_usage_limit'
           }
           else if(sample.kind!=='memory' && ev.code==='checkup_step_budget') { toolError=true;completed=true }
           else throw Object.assign(errorWithProviderCode('model request did not complete',undefined),{code:ev.code??'provider_error'})
@@ -98,7 +100,7 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
         if(text.length>16_384)throw errorWithProviderCode('checkup output exceeded limit','invalid_request')
       }
       if(!completed)throw errorWithProviderCode('turn ended without completion','provider_error')
-      return {text,toolCalls:bridge.calls,firstTextMs:sample.kind==='interview'?(firstActionMs??firstTextMs):firstTextMs,durationMs:performance.now()-started,...(toolError?{toolError:true}:{})}
+      return {text,toolCalls:bridge.calls,firstTextMs:sample.kind==='interview'?(firstActionMs??firstTextMs):firstTextMs,durationMs:performance.now()-started,...(toolError?{toolError:true}:{}),...(usageLimited?{usageLimited:true}:{})}
     } finally {
       signal.removeEventListener('abort',cancel)
       if(session)await closeSession(session)
@@ -106,13 +108,13 @@ export function makeCheckupTurn(getProvider:(id:string)=>AgentProvider|null) {
       rmSync(project,{recursive:true,force:true})
     }
   }
-  return async(sample:CheckupSample,target:CheckupTarget,signal:AbortSignal):Promise<CheckupTurn> => {
+  return async(sample:CheckupSample,target:CheckupTarget,signal:AbortSignal,budget?:CheckupBudget):Promise<CheckupTurn> => {
     const started=performance.now()
-    for(const [index,budget] of CHECKUP_OUTPUT_BUDGETS.entries()){
+    for(const [index,outputCap] of CHECKUP_OUTPUT_BUDGETS.entries()){
       signal.throwIfAborted()
       const elapsed=performance.now()-started
       try {
-        const turn=await attempt(sample,target,signal,budget)
+        const turn=await attempt(sample,target,signal,outputCap,budget)
         return {...turn,firstTextMs:turn.firstTextMs===null?null:turn.firstTextMs+elapsed,durationMs:performance.now()-started}
       } catch(error) {
         // Every attempt owns fresh fake tools and scratch state. Replaying this

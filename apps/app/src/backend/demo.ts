@@ -1,3 +1,4 @@
+import { checkupEstimateSummary } from '@wechat-cc/protocol'
 import { demoTopics } from './demo-topics'
 import { checkupReview, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, type CheckupView, type CheckupProfile, type CheckupAttempt } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
@@ -483,7 +484,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async connections() { return demoConnections(lastLang, now()) },
     async checkup() { return checkupView() },
-    async checkupEstimate() { return { requests: 32, maxRequests: 64, inputTokens: 125000, outputTokens: 32768, windowKnown: false, targetKey: checkupTargetKey() } },
+    async checkupEstimate() { const quote={requests:48,maxRequests:120,inputTokens:125000,outputTokens:69600,maxOutputTokens:300000,windowKnown:false,targetKey:checkupTargetKey()}; return {...quote,summary:checkupEstimateSummary(quote)} },
     async checkupRun(expectedTargetKey) {
       if (expectedTargetKey !== checkupTargetKey()) throw new BackendError('stale')
       if (checkupActive) throw new BackendError('busy')

@@ -1,5 +1,5 @@
 /** Pure, seeded, invented conversations. This module must have no I/O imports. */
-import type { CheckupEstimate, CheckupProfile } from '@wechat-cc/protocol'
+import type { CheckupProfile } from '@wechat-cc/protocol'
 
 export const DEFAULT_CHECKUP_WINDOW = 8192
 export const DEFAULT_RELIABLE_FILL = .25
@@ -47,13 +47,7 @@ export function buildCheckupPlan(o: PlanOptions): { memory: Extract<CheckupSampl
   return { memory, tools }
 }
 
-export function estimateCheckup(o: PlanOptions & { windowKnown?: boolean }): Omit<CheckupEstimate,'targetKey'> {
-  const plan = buildCheckupPlan(o), samples = [...plan.memory, ...plan.tools]
-  const requests = plan.memory.length + plan.tools.length * 2
-  // #906 transport retries stay bounded; empty reasoning allows one fresh question at a larger cap.
-  const maxRequests = (plan.memory.length * 3 + plan.tools.length * 4) * 2
-  return { requests, maxRequests, inputTokens: samples.reduce((n, s) => n + (s.estimatedTokens + 8192) * 6, 0) + plan.tools.reduce((n,s)=>n+2*(s.estimatedTokens+16384),0), outputTokens: maxRequests / 2 * (4096 + 8192), windowKnown: o.windowKnown ?? false }
-}
+
 
 export function scoreMemory(text: string, answers: string[]): number {
   try {
