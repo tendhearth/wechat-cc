@@ -1,6 +1,9 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from 'vitest'
-import { connectionsView, mountNowConnections } from './now-connections.js'
+import { connectionsView, mountNowConnections as mountConnections } from './now-connections.js'
+
+// Existing fixtures belong to connections; checkup behavior has its own contract tests.
+const mountNowConnections = (o: Parameters<typeof mountConnections>[0]) => mountConnections({ ...o, call: (method, path, body) => path === '/v1/checkup' ? Promise.resolve({ target: {}, profile: null, attempt: null, periodicProbe: false, suspectedChanged: false }) : body===undefined?o.call(method,path):o.call(method, path, body) })
 
 const NOW = new Date(2026, 9, 1, 12).getTime()
 type St = 'ready' | 'behind' | 'not_loaded' | 'unknown'
@@ -129,12 +132,13 @@ describe('capabilities (2026-10-06)', () => {
       { id: 'guard', name: '网络守护', state: 'needs_you', code: 'guard.unsafe', reason: '没保护', action: { label: '连上 bx', where: 'desktop' } },
       { id: 'wechat', name: '微信', state: 'needs_you', code: 'wechat.window_closed', reason: 'x', action: { label: '在微信里随便回 CC 一句', where: 'wechat' } },
     ] })) }).refresh()
-    const buttons = [...h.querySelectorAll('button.nc-action')] as HTMLButtonElement[]
+    expect(h.querySelectorAll('[data-checkup="prepare"]')).toHaveLength(1)
+    const buttons = [...h.querySelectorAll('.nc-capability button.nc-action')] as HTMLButtonElement[]
     expect(buttons.map(b => b.textContent)).toEqual(['在电脑上连接手机', '在设置里换一个大脑', '连上 bx'])
     buttons[0]!.click(); buttons[1]!.click()
     expect(openPlace.mock.calls).toEqual([['phone', 'desktop'], ['brain', 'settings']])
     buttons[2]!.click()
-    expect(h.querySelectorAll('button.nc-action').length).toBe(2)
+    expect(h.querySelectorAll('.nc-capability button.nc-action').length).toBe(2)
     expect([...h.querySelectorAll('.nc-action-hint')].map(x => x.textContent)).toEqual(['连上 bx', '在微信里随便回 CC 一句'])
   })
   it('「CC 现在怎么样」只出现一次:能力行不再挂同名小标题', async () => {
@@ -152,7 +156,7 @@ it('B3 names the connection overview and reads computer, capabilities, sources, 
   const data = snap([src('wechat', 'ready')], { capabilities: [{ id: 'brain', name: '大脑', state: 'off', code: 'off', reason: '没有开启' }], recent: [{ matterId: 'r', title: '检查备份', phase: 'running', at: NOW }], outputs: [{ matterId: 'r', name: '备份记录', mime: 'text/plain', at: NOW }] })
   await mountNowConnections({ host: h, call: vi.fn().mockResolvedValue(data), now: () => NOW }).refresh()
   expect(h.querySelector('h2')!.textContent).toBe('CC 的连接')
-  expect([...h.querySelectorAll('h3')].map(node => node.textContent)).toEqual(['家里的电脑', 'CC 现在怎么样', '来源', '最近在做', '成果'])
+  expect([...h.querySelectorAll('h3')].map(node => node.textContent)).toEqual(['家里的电脑', '管家状态', 'CC 现在怎么样', '来源', '最近在做', '成果'])
   expect(h.querySelector('.nc-capability .dot')!.className).toContain('unknown')
   expect(h.querySelector('.nc-capability')!.textContent).toContain('没有开启')
 })

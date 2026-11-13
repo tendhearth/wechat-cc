@@ -253,6 +253,9 @@ export interface AgentMcpTools {
 }
 
 export interface SpawnContext {
+  /** Isolated synthetic evaluation: only these run-owned tools, no private history or native tools.
+   * Providers which cannot enforce isolation must refuse before opening any session. */
+  evaluation?: { tools: AgentMcpTools; mcpServer: { url: string }; maxSteps: number; maxOutputTokens: number }
   /** Cancels pre-executor task environment preparation on stop/shutdown. */
   preparationSignal?: AbortSignal
   /** Task-local temporary directories; never set for companion chat. */
@@ -442,6 +445,8 @@ export interface ProviderCapabilities {
 }
 
 export interface AgentProvider {
+  /** Explicitly verified tools-only, no-private-history evaluation boundary. */
+  supportsIsolatedEvaluation?: true
   /** Discovery owns one bounded native deadline and subprocess cleanup; no model turn is sent. */
   modelCatalog?(project: AgentProject): Promise<AgentModelCatalog>
   /**

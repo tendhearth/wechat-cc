@@ -142,6 +142,12 @@ describe('token-registry', () => {
       'POST /v1/dialogue/unlock',
       // AI 输出回归评测(2026-10-29):`wechat-cc eval run`
       'POST /v1/eval/run',
+      // 主人显式授权的本机管家体检：查询、估价、运行、取消、可选小探针开关。
+      'GET /v1/checkup',
+      'POST /v1/checkup/estimate',
+      'POST /v1/checkup/run',
+      'POST /v1/checkup/cancel',
+      'POST /v1/checkup/settings',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })

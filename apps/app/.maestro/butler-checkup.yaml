@@ -1,0 +1,40 @@
+# Synthetic demo only. Run through the mini lab app-maestro entry.
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-connections
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: now-connections
+- tapOn:
+    id: now-connections
+- extendedWaitUntil:
+    visible:
+      id: connections-butler
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: checkup-prepare
+- assertVisible:
+    id: checkup-memory
+- assertVisible:
+    id: checkup-tools
+- takeScreenshot: app-butler-checkup
+- tapOn:
+    id: checkup-prepare
+- extendedWaitUntil:
+    visible:
+      id: checkup-estimate
+    timeout: 5000
+- takeScreenshot: app-butler-checkup-estimate
+- assertVisible:
+    id: checkup-start
+- tapOn:
+    id: checkup-dismiss
+- assertNotVisible:
+    id: checkup-estimate

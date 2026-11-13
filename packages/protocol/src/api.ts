@@ -1,4 +1,5 @@
 import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
+import { CHECKUP_RESPONSES } from './checkup'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 /**
  * api.ts — `/m/api/*` 与 `/set/api/*` 每条真实路由的返回形状(zod v4)。
@@ -746,6 +747,7 @@ const PHONE_API = {
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),
   'POST /m/api/push/register': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/push/test': z.union([z.object({ ok: z.literal(true), result: z.object({ ok: z.boolean(), code: z.string() }) }), PhoneErrorResponse]),
+  ...CHECKUP_RESPONSES,
 } satisfies Partial<Record<PhoneSurfaceRouteKey, z.ZodTypeAny>>
 
 export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = PHONE_API

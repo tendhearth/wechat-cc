@@ -326,6 +326,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
     // 守护(评审 #193 P1-1):agy 永远连 Google;模型和下面 spawn / oneShotEval 用的是同一份。
     callTarget: (kind, ctx) => ({ provider: 'agy', model: kind === 'cheapEval' ? modelFor(CHEAP_EVAL_MODEL) : kind === 'strongEval' ? modelFor(opts.model) : ctx?.model ?? opts.model }),
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
+      if (ctx.evaluation) throw errorWithProviderCode('isolated_evaluation_unavailable', 'provider_error')
       // resumeSessionId-seeded spawns already have a handle — their first
       // dispatch uses `--conversation`, never `--new-project` (RULING 1).
       let conversationId: string | null = ctx.resumeSessionId ?? null

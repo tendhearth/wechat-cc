@@ -1,4 +1,5 @@
 import { CliProjectMemoryRequest } from './cli-project-memory'
+import { CHECKUP_RESPONSES } from './checkup'
 import { TopicOpenRequest, TopicRenameRequest, TopicMergeRequest, TopicDeleteRequest, TopicWrongRequest } from './topic-bubbles'
 import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
@@ -2777,4 +2778,5 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/penpal/letters': PenpalSendLetterResponse,
   'POST /v1/penpal/letters/read': PenpalMarkReadResponse,
   'POST /v1/penpal/letters/resend': PenpalResendLetterResponse,
+  ...CHECKUP_RESPONSES,
 }

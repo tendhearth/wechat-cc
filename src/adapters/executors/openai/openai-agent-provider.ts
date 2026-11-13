@@ -35,7 +35,7 @@ export interface OpenAiAgentProviderOptions {
   // instance so `spawn` can honor `ctx.model` per-session (the operator's pinned model, hot-reloaded via the daemon's
   // mtime-cached config reader — see bootstrap currentModelFor) instead of the model baked in at provider construction.
   // `cheapEval`/`strongEval` are background calls with no per-chat pin, so they pass `evalModel()` (undefined ⇒ the default model).
-  makeChatModel: (model?: string) => APIModel
+  makeChatModel: (model?: string, limits?: { maxOutputTokens: number; maxRetries: number }) => APIModel
   makeMcpBridge: (mcpEnv: Record<string, string>) => Promise<AgentMcpTools>
   /**
    * 守护(评审 #193 P1-1):`makeChatModel` 实际连的 base URL 和它的默认模型 —— 与建模型用的是**同一份**值(bootstrap
@@ -250,10 +250,37 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
   }
 
   return {
+    supportsIsolatedEvaluation: true,
     // 会话 / 评估都用 makeChatModel(构造时的 base URL);模型:会话钉的 ?? 默认,评估用 evalModel ?? 默认。
     callTarget: (kind, ctx) => callTarget(kind === 'cheapEval' || kind === 'strongEval' ? evalModel() : ctx?.model),
     canResume: (path, sessionId) => opts.sessions !== undefined && opts.connectionHash !== undefined && sessions.canResume(sessionId, path, connection),
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
+      if (ctx.evaluation) {
+        const fake = ctx.evaluation.tools
+        const memory = makeMemoryChatSessionStore()
+        const initial = ctx.appendInstructions ? [systemMessage(ctx.appendInstructions)] : []
+        const saved = memory.create({ chatId: ctx.chatId, alias: project.alias, path: project.path, configHash: 'checkup' }, initial)
+        const session = openOpenAiSession({
+          model: opts.makeChatModel(ctx.model, { maxOutputTokens: ctx.evaluation.maxOutputTokens, maxRetries: 2 }), history: chatHistory(memory, saved, () => {}),
+          purpose: {
+            maxSteps: ctx.evaluation.maxSteps, strict: true, textEvents: 'streamed', singleDispatch: true,
+            closeTimeoutMs: CLOSE_TIMEOUT_MS, closeMustConfirm: true, cancelWaits: true,
+            tools: () => fake.tools,
+            request: text => userMessage(text),
+            toolCallEvent: call => ({ kind: 'tool_call', server: 'checkup', tool: call.name }),
+            async runTool(call, signal) {
+              signal.throwIfAborted()
+              if (!fake.tools.some(tool => tool.name === call.name)) return { output: 'Unknown checkup tool.' }
+              return { output: await fake.call(call.name, call.input) }
+            },
+            failure(error, aborted) {
+              return { events: [{ kind: 'error', message: aborted ? 'cancelled' : openaiErrorMessage(error), code: aborted ? 'cancelled' : error instanceof Error && error.message === 'api_task_step_limit' ? 'checkup_step_budget' : openaiErrorCode(error) ?? 'provider_error' }], state: 'interrupted', finish: false }
+            },
+          },
+        })
+        session.callTarget = () => callTarget(ctx.model)
+        return session
+      }
       const cwd = opts.cwd ?? project.path
       const bridge = await opts.makeMcpBridge(ctx.mcpEnv ?? {})
       // Built once per spawn from ctx.model (the operator's per-chat pinned model, if any) — an in-flight session keeps

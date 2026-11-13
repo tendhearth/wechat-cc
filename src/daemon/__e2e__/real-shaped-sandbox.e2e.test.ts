@@ -234,6 +234,30 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     } finally {writeFileSync(configPath,config);for(const id of ids)db.query('DELETE FROM threads WHERE id=?').run(id);db.close()}
   })
 
+  it('checkup: explicit owner trigger uses synthetic model requests, records a local profile and keeps probes off', async () => {
+    type View = { target: { provider: string; model: string }; profile: { memory: string; short: boolean } | null; attempt: { status: string } | null; periodicProbe: boolean }
+    const before = await desktop<View>('GET', '/v1/checkup')
+    expect(before.status).toBe(200)
+    expect(before.body.target.provider).toBe('claude')
+    expect(before.body.profile).toBeNull()
+    expect(before.body.periodicProbe).toBe(false)
+    expect((await desktop('GET', '/v1/checkup', undefined, 'trusted')).status).toBe(403)
+    const estimate = await desktop<{ targetKey: string; requests: number }>('POST', '/v1/checkup/estimate', {})
+    expect(estimate.status).toBe(200)
+    expect(estimate.body.requests).toBeGreaterThan(0)
+    expect((await desktop('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey }, 'trusted')).status).toBe(403)
+    const started = await desktop<View>('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey })
+    expect(started.status).toBe(202)
+    await expect.poll(async () => (await desktop<View>('GET', '/v1/checkup')).body.attempt?.status, { timeout: 15000 }).toBe('completed')
+    const result = await desktop<View>('GET', '/v1/checkup')
+    // The boundary fake says only "好的。" and never calls the fictional tools.
+    // A completed weak measurement proves failures and model quality are distinct.
+    expect(result.body.profile).toMatchObject({ memory: 'weak', short: true })
+    expect(result.body.periodicProbe).toBe(false)
+    expect(existsSync(join(d.stateDir, 'checkup', 'profiles.json'))).toBe(true)
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
   it('T4: recall opens a private bubble; successful sleep closes it except for owner-visible running matters', async () => {
     const db = openSqlite(join(d.stateDir, 'wechat-cc.db')) as unknown as Db
     const threads = makeThreadsStore(db)

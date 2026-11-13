@@ -412,6 +412,23 @@ Use wechat-cc backup <command> --help for more information about a command.
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > checkup --help 1`] = `
+"本机管家体检，只用编造题；不上传结果 (wechat-cc checkup v1.8.0 (dev))
+
+USAGE wechat-cc checkup [OPTIONS] 
+
+OPTIONS
+
+                 --full    完整版（更多编造题）           
+  --provider=<provider>    后端，默认主人对话当前的后端       
+        --model=<model>    模型，默认主人对话当前的模型       
+             --estimate    只看请求与 token 估计，不发模型请求
+                 --json    JSON 结果              
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > ci --help > ci land --help 1`] = `
 "把叠起来的一串 PR 合进 dev:只等最上面那个的 CI,绿了从下往上 rebase / 改 base / squash 合(在整合者自己的 detached worktree 里跑) (ci land)
 
@@ -1972,6 +1989,8 @@ exports[`cli.ts --help 快照(逐字节) > root --help 1`] = `
 "wechat-cc — WeChat bridge for Claude Code (Agent SDK daemon)
 
 Usage:
+  wechat-cc checkup [--full] [--provider ID --model MODEL] [--estimate] [--json]
+                        本机管家体检，只用编造题；不上传，Ctrl-C 可取消。
   wechat-cc speech <backfill|audit> [--db PATH] [--days 7] [--json]
   wechat-cc setup [--qr-json] Scan QR + bind a WeChat bot
   wechat-cc setup-poll --qrcode TOKEN [--base-url URL] [--json]

@@ -1,5 +1,5 @@
 import { demoTopics } from './demo-topics'
-import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES } from '@wechat-cc/protocol'
+import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, type CheckupView, type CheckupProfile, type CheckupAttempt } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_PORTRAIT_PNG, DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT, type TodoStatus } from './types'
@@ -52,6 +52,19 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const uploads = new Map<string, UploadStateT>()
   // 演示:主人对话的后端 / 模型
   let demoChatModel: ChatModelViewT = { mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'openai', name: 'API' }] }
+  // Checkup demo: synthetic records only, with no model calls or persistence.
+  const checkupProfiles = new Map<string, CheckupProfile>(), checkupAttempts = new Map<string, CheckupAttempt>()
+  let checkupPeriodic = false, checkupGeneration = 0
+  let checkupActive: { key: string; generation: number } | null = null
+  const checkupTarget = () => ({ provider: demoChatModel.provider, address: 'https://synthetic.invalid', model: demoChatModel.model ?? demoChatModel.globalModel ?? 'synthetic-model', windowTokens: 8000, windowKnown: false })
+  const checkupTargetKey = () => { const x = checkupTarget(); return `demo-checkup:${x.provider}:${x.model}` }
+  const checkupProfile = (good = false): CheckupProfile => {
+    const x = checkupTarget()
+    return { provider: x.provider, addressHash: 'synthetic-only', model: x.model, windowTokens: x.windowTokens, windowKnown: false, reliableFillRatio: good ? .8 : .1, stages: [{ fillRatio: .1, accuracy: 1 }, { fillRatio: .25, accuracy: good ? 1 : 0 }], memory: good ? 'good' : 'weak', tools: good ? 'stable' : 'flaky', toolAccuracy: good ? 1 : .5, firstTextMedianMs: 250, completionMedianMs: 1000, testedAt: new Date(now()).toISOString(), ccVersion: 'demo', short: true, seed: 113 }
+  }
+  const checkupView = (): CheckupView => JSON.parse(JSON.stringify({ target: checkupTarget(), profile: checkupProfiles.get(checkupTargetKey()) ?? null, attempt: checkupAttempts.get(checkupTargetKey()) ?? null, suspectedChanged: false, periodicProbe: checkupPeriodic })) as CheckupView
+  function seedCheckup() { checkupProfiles.clear(); checkupAttempts.clear(); checkupPeriodic = false; checkupActive = null; ++checkupGeneration; checkupProfiles.set(checkupTargetKey(), checkupProfile()) }
+  seedCheckup()
   // 演示用的几条记忆(只在内存里;纠错会真的拿掉)
   const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
   // 收回的话(演示):逐条纠错拿掉的那句挪到这里;恢复就放回去
@@ -469,6 +482,33 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { ...DEMO_STICKER }
     },
     async connections() { return demoConnections(lastLang, now()) },
+    async checkup() { return checkupView() },
+    async checkupEstimate() { return { requests: 11, maxRequests: 27, inputTokens: 65068, outputTokens: 13824, windowKnown: false, targetKey: checkupTargetKey() } },
+    async checkupRun(expectedTargetKey) {
+      if (expectedTargetKey !== checkupTargetKey()) throw new BackendError('stale')
+      if (checkupActive) throw new BackendError('busy')
+      const key = checkupTargetKey(), generation = ++checkupGeneration, initialEpoch = epoch
+      checkupActive = { key, generation }
+      checkupAttempts.set(key, { status: 'running', completedRequests: 0, totalRequests: 8, startedAt: new Date(now()).toISOString() })
+      const result = checkupProfile(true)
+      schedule(() => {
+        if (epoch !== initialEpoch || checkupActive?.generation !== generation) return
+        const attempt = checkupAttempts.get(key)!
+        checkupProfiles.set(key, { ...result, testedAt: new Date(now()).toISOString() })
+        checkupAttempts.set(key, { ...attempt, status: 'completed', completedRequests: 8, finishedAt: new Date(now()).toISOString() })
+        checkupActive = null
+      }, 6000)
+      return checkupView()
+    },
+    async checkupCancel() {
+      if (checkupActive) {
+        const key = checkupActive.key, attempt = checkupAttempts.get(key)!
+        checkupAttempts.set(key, { ...attempt, status: 'cancelled', finishedAt: new Date(now()).toISOString() })
+        checkupActive = null; ++checkupGeneration
+      }
+      return checkupView()
+    },
+    async checkupSettings(periodicProbe) { checkupPeriodic = periodicProbe; return checkupView() },
     async sessions(provider, _cursor, q) {
       if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
       const needle = q?.trim().toLowerCase() ?? ''
@@ -791,6 +831,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { topicTitles.clear();topicDeleted.clear();topicMerged.clear();topicWrong=false;topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
+    reset() { seedCheckup(); topicTitles.clear();topicDeleted.clear();topicMerged.clear();topicWrong=false;topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }
