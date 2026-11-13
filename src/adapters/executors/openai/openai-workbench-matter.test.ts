@@ -13,6 +13,7 @@ import {createOpenAiWorkbenchProvider} from './openai-workbench-provider'
 import {scriptedOpenAiModel} from '../../../test-support/executors/openai-scripted'
 import {TIER_PROFILES} from '../../../domain/user-tier'
 
+// 记录本入口是 TS 源文件,只有 Bun 能直接跑:Node 套件里用 PATH 上的 bun 起它(生产里 execPath 是 bun 或编译好的 cli)。
 it('API executors use the same task-only stdio notebook tools with their bound token',async()=>{
   const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-api-matter-'))),project=join(root,'project')
   mkdirSync(project)
@@ -32,7 +33,7 @@ it('API executors use the same task-only stdio notebook tools with their bound t
       {calls:[{id:'write',name:'matter_note',input:{text:'handoff verified'}}]},
       {text:'Notebook updated.'},
     ])
-    const p=createOpenAiWorkbenchProvider({sessions:makeApiSessionStore(db),model:fixture.model,configHash:'a'.repeat(64),configuredModel:'fixture',matterMcp:ctx=>({command:process.execPath,args:[fileURLToPath(new URL('../../../mcp-servers/matter/main.ts',import.meta.url))],env:{WECHAT_INTERNAL_API:`http://127.0.0.1:${port}`,WECHAT_SESSION_TOKEN:ctx.mcpEnv!.WECHAT_SESSION_TOKEN!}})})
+    const p=createOpenAiWorkbenchProvider({sessions:makeApiSessionStore(db),model:fixture.model,configHash:'a'.repeat(64),configuredModel:'fixture',matterMcp:ctx=>({command:process.versions.bun?process.execPath:'bun',args:[fileURLToPath(new URL('../../../mcp-servers/matter/main.ts',import.meta.url))],env:{WECHAT_INTERNAL_API:`http://127.0.0.1:${port}`,WECHAT_SESSION_TOKEN:ctx.mcpEnv!.WECHAT_SESSION_TOKEN!}})})
     session=await p.spawn({alias:`workbench:${task.id}`,path:project},{tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:'owner',mcpEnv:{WECHAT_SESSION_TOKEN:'bound-api-token'},requestPermission:async()=>{throw Error('notebook does not ask for file permission')}})
     const events=[];for await(const event of session.dispatch('read and note'))events.push(event)
     expect(events.at(-1)?.kind).toBe('result')
