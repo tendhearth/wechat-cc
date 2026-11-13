@@ -102,7 +102,7 @@ export function makeCheckupService(d: CheckupServiceDeps) {
     async prepareEstimate(o:CheckupOptions={}){await d.prepareTarget?.(o);return estimate(o)},
     cancel() { active?.abort.abort(new Error('cancelled')) },
     settings(enabled:boolean) { d.store.settings(enabled); return view() },
-    contextBudgetFor(provider:string,model:string) { return d.store.contextBudgetFor(d.resolveTarget({providerId:provider,model}),model) },
+    contextBudgetFor(provider:string,model:string) { const target=d.resolveTarget({providerId:provider,model});return d.store.contextBudgetFor(target,target.model) },
     async stop() { active?.abort.abort(new Error('cancelled')); await active?.done },
     async probeIfDue() {
       if (active || d.store.readSettings().periodicProbe !== true) return

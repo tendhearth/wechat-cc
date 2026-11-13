@@ -135,12 +135,21 @@ describe('chat session store',()=>{
   })
 })
 
-it('rotation preserves every previous owner API transcript, including old ready records',()=>{
+it('owner continuity: expired retired API segments are swept while recent and current segments survive',()=>{
   const store=makeChatSessionStore(db),b={chatId:'owner',alias:'proj',path:'/tmp/project',configHash:'h'}
   const first=store.create(b,messages('first raw conversation'))
   store.save(first.id,0,messages('first raw conversation'),'ready')
-  db.query('UPDATE openai_chat_sessions SET updated_at=0 WHERE id=?').run(first.id)
+  const recent=store.create({...b,chatId:'visitor'},messages('recent visitor'));store.save(recent.id,0,messages('recent visitor'),'ready')
+  const current=store.create({...b,chatId:'current'},messages('current'));store.save(current.id,0,messages('current'),'ready')
+  db.query("INSERT INTO sessions(alias,provider,chat_id,session_id,last_used_at) VALUES('proj','openai','current',?,?)").run(current.id,new Date().toISOString())
+  db.query('UPDATE openai_chat_sessions SET updated_at=0 WHERE id IN (?,?)').run(first.id,current.id)
+  store.release?.(first.id)
+  const orphan=store.create({...b,chatId:'orphan'},messages('crashed'));store.release?.(orphan.id)
+  db.query('UPDATE openai_chat_sessions SET updated_at=0 WHERE id=?').run(orphan.id)
   const second=store.create(b,messages('second'))
-  expect(store.get(first.id)?.messages).toEqual(messages('first raw conversation'))
+  expect(store.get(first.id)).toBeNull()
+  expect(store.get(orphan.id)).toBeNull()
+  expect(store.get(recent.id)?.messages).toEqual(messages('recent visitor'))
+  expect(store.get(current.id)?.messages).toEqual(messages('current'))
   expect(store.get(second.id)?.messages).toEqual(messages('second'))
 })

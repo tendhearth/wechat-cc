@@ -1,3 +1,5 @@
+import { loadAgentConfig } from '../../lib/agent-config'
+import { makeCheckupStore,checkupAddress } from '../../adapters/store/checkup-store'
 import { makeOwnerDelegationRecorder } from '../wiring/owner-delegation'
 /**
  * bootstrap 那一组接进 daemon 的那一份:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙
@@ -13,7 +15,6 @@ import { resolveTier } from '../../domain/user-tier'
 import { SUPERVISED_ENV } from '../../domain/supervised-env'
 import { capabilitiesFor } from '../../domain/capability-matrix'
 import { WECHAT_PORTS as W, type WechatAccounts, type WechatCompanionControls, type WechatPermissions, type WechatSend } from '../../ports/wechat'
-import type { CheckupService } from '../../features/checkup'
 import type { WorkbenchService } from '../../features/workbench'
 import { retractOnFactStatus, type MemoryFeature, type MemoryPromptReads } from '../../features/memory'
 import { careLevel, companionOfferEligible } from '../../features/companion'
@@ -49,7 +50,6 @@ export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
       const wxCompanion = ctx.get<WechatCompanionControls>(W.companion)
       const wxAccounts = ctx.get<WechatAccounts>(W.accounts)
       const terminal = ctx.late<TerminalFeature>('terminal')
-      const checkup = ctx.late<CheckupService>('checkup')
       const replyDelivery = ctx.get<ReturnType<typeof makeReplyDeliveryRuntime>>('reply-delivery')
       const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
       const guardRt = ctx.get<GuardRuntime>('network-gate')
@@ -60,10 +60,13 @@ export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
         makeContextRotation: parts => wireContextRotation({
           ...parts, db, stateDir, log,
           budgetFor: (provider, model, key) => {
-            const current=providerCallTarget(parts.registry.get(provider)?.provider,provider,'session',{model})
+            const entry=parts.registry.get(provider)
+            const current=providerCallTarget(entry?.provider,provider,'session',{model})
             const actual=key?parts.effectiveTarget(key,model):current
-            if(actual.baseUrl!==current.baseUrl)return {windowTokens:8192,reliableFillRatio:.25}
-            return checkup()?.contextBudgetFor(provider, model) ?? {windowTokens:8192,reliableFillRatio:.25}
+            const resolved=model!=='default'?model:actual.model??current.model??model
+            const configured=loadAgentConfig(stateDir).modelContextWindows?.find(w=>w.provider===provider&&w.model===resolved&&checkupAddress(w.address)===checkupAddress(actual.baseUrl??'default'))
+            const measured=actual.baseUrl===current.baseUrl?entry?.provider.contextWindowTokens?.(resolved)??configured?.windowTokens:undefined
+            return makeCheckupStore(stateDir).contextBudgetFor({provider,address:actual.baseUrl??'default',model:resolved,windowTokens:measured??32000,windowKnown:measured!==undefined},resolved)
           },
           pending: chatId => wxPerm.listPendingPermissions().some(p => p.chatId === chatId),
         }),

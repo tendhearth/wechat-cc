@@ -917,3 +917,38 @@ describe('Claude call target is captured at spawn (review #193 P1)', () => {
     await session.close()
   })
 })
+
+it('owner continuity: occupancy is the last parent request input, first overhead stays fixed, and ephemeral resume is explicit',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})})
+ const session=await provider.spawn({alias:'companion:test',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner',resumeSessionId:'valid-native',ephemeral:true})
+ const events=drain(session.dispatch('接着聊'))
+ emitSdk({type:'assistant',message:{id:'one',model:'claude-actual',usage:{input_tokens:100,cache_read_input_tokens:900,cache_creation_input_tokens:20},content:[{type:'tool_use',id:'tool1',name:'Read'}]}})
+ emitSdk({type:'assistant',parent_tool_use_id:'child',message:{usage:{input_tokens:900000},content:[]}})
+ emitSdk({type:'assistant',message:{id:'two',model:'claude-actual',usage:{input_tokens:200,cache_read_input_tokens:1500,cache_creation_input_tokens:10},content:[{type:'text',text:'连着呢'}]}})
+ emitSdk({type:'result',subtype:'success',session_id:'valid-native',usage:{input_tokens:900000,output_tokens:100000},num_turns:3,duration_ms:1})
+ await events
+ expect(session.contextUsage?.()).toMatchObject({tokens:1710,firstInputTokens:1020,model:'claude-actual'})
+ expect(session.resumedHistory).toBe(true)
+ expect((sdk as unknown as {__test_last_options:()=>any}).__test_last_options().persistSession).toBe(false)
+ await session.close()
+})
+it('owner continuity: repeated request blocks retain usage, and a later failed turn does not reuse stale input',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{
+  const first=drain(session.dispatch('一'))
+  emitSdk({type:'assistant',message:{id:'same',usage:{input_tokens:1000},content:[]}})
+  emitSdk({type:'assistant',message:{id:'same',content:[{type:'text',text:'在呢'}]}});finishSdkTurn();await first
+  expect(session.contextUsage?.().tokens).toBe(1000)
+  const second=drain(session.dispatch('二'));emitSdk({type:'result',subtype:'error',session_id:'s'});await second
+  expect(session.contextUsage?.().tokens).toBeUndefined();expect(session.contextUsage?.().firstInputTokens).toBe(1000)
+ }finally{await session.close()}
+})
+it('owner continuity: an unmeasured first request never makes a later tool request the fixed overhead',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{
+  const turn=drain(session.dispatch('一'))
+  emitSdk({type:'assistant',message:{id:'first',content:[{type:'tool_use',id:'t',name:'Read'}]}})
+  emitSdk({type:'assistant',message:{id:'second',usage:{input_tokens:90000},content:[{type:'text',text:'在呢'}]}});finishSdkTurn();await turn
+  expect(session.contextUsage?.()).toMatchObject({tokens:90000,firstInputTokens:null})
+ }finally{await session.close()}
+})

@@ -49,6 +49,7 @@ export interface HandoffTurn {
   dir: 'in' | 'out'
   text: string
   ts: string
+  source?: string
 }
 
 const PER_MSG_CAP = 400      // chars — one runaway message must not eat the block

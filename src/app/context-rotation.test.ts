@@ -18,7 +18,8 @@ function setup(providerId: ProviderId = 'claude', overrides: Partial<ContextRota
   })
   const tasks: (()=>Promise<void>)[] = []
   const sessions = { isInFlight: () => busy, rotate: async () => { if(busy) return false; rotations++; return true } }
-  const prepare = () => context.beforeTurn(key, 'model', sessions)
+  let initialized=false
+  const prepare = async () => {const result=await context.beforeTurn(key, 'model', sessions);if(!initialized){initialized=true;context.observe(key,{tokens:1000})}return result}
   return { key, context, prepare, tasks, sessions, recent, setBusy:(v:boolean)=>{busy=v}, setPending:(v:boolean)=>{pending=v}, setAccounted:(v:boolean)=>{accounted=v}, advance:(ms:number)=>{now+=ms}, get rotations(){return rotations}, get extracted(){return extracted} }
 }
 
@@ -26,7 +27,7 @@ describe('owner context rotation, shared policy', () => {
   for(const provider of ['claude','openai','gemini'] as const) it(`${provider}: rotates only at an accounted boundary and carries the last six rounds`, async () => {
     const s=setup(provider)
     await s.prepare()
-    s.context.observe(s.key,{bytes:12_000,turns:1})
+    s.context.observe(s.key,{bytes:60_000,turns:8})
     s.context.delivered(s.key,'决定以后按这个颜色',false)
     await s.tasks.shift()!()
     const result=await s.prepare()
@@ -38,41 +39,41 @@ describe('owner context rotation, shared policy', () => {
     expect(s.context.status()[0]).toMatchObject({reason:'budget',lastRotatedAt:ts,estimatedTokens:0})
   })
   it('does not replace a running turn or an unresolved approval', async () => {
-    const s=setup();await s.prepare();s.context.observe(s.key,{bytes:20_000,turns:1})
+    const s=setup();await s.prepare();s.context.observe(s.key,{bytes:60_000,turns:8})
     s.setBusy(true);await s.prepare();s.setBusy(false);s.setPending(true);await s.prepare()
     expect(s.rotations).toBe(0)
     s.setPending(false);await s.prepare();expect(s.rotations).toBe(1)
   })
   it('keeps the old segment and retries when extraction cannot catch up', async () => {
-    const s=setup();await s.prepare();s.context.observe(s.key,{bytes:20_000,turns:1})
+    const s=setup();await s.prepare();s.context.observe(s.key,{bytes:60_000,turns:8})
     s.context.delivered(s.key,'决定使用新格式',false);await s.tasks.shift()!()
     s.setAccounted(false)
     expect(await s.prepare()).toBeNull();expect(s.rotations).toBe(0)
-    expect(s.context.status()[0]!.estimatedTokens).toBe(10_000)
+    expect(s.context.status()[0]!.estimatedTokens).toBe(30_000)
     s.setAccounted(true);await s.prepare();expect(s.rotations).toBe(1)
   })
   it('rechecks pending approvals after async extraction and leaves the request pending', async () => {
     const s=setup(undefined,{accounted:async()=>false,extract:async()=>{s.setPending(true);return true}})
-    await s.prepare();s.context.observe(s.key,{bytes:20_000,turns:1});s.context.delivered(s.key,'决定改成蓝色',false);await s.tasks.shift()!()
+    await s.prepare();s.context.observe(s.key,{bytes:60_000,turns:8});s.context.delivered(s.key,'决定改成蓝色',false);await s.tasks.shift()!()
     await s.prepare();expect(s.rotations).toBe(0)
   })
   it('retains the old session if continuation cannot be read', async()=>{
     const s=setup(undefined,{recent:async()=>{throw Error('offline read failed')}})
-    await s.prepare();s.context.observe(s.key,{bytes:20_000,turns:1})
+    await s.prepare();s.context.observe(s.key,{bytes:60_000,turns:8})
     expect(await s.prepare()).toBeNull();expect(s.rotations).toBe(0)
   })
   it('nightly success requests one rotation; failure does not request one',async()=>{
-    const s=setup();await s.prepare();s.context.observe(s.key,{bytes:10,turns:1})
+    const s=setup();await s.prepare();s.context.observe(s.key,{bytes:40_000,turns:1})
     s.context.nightly('owner',false);await s.prepare();expect(s.rotations).toBe(0)
     s.context.nightly('owner',true);await s.prepare();await s.prepare();expect(s.rotations).toBe(1)
   })
-  it('uses measured budgets, including zero, and conservative defaults',async()=>{
+  it('uses measured budgets with history floor, clamped zero and safe defaults',async()=>{
     const s=setup('openai',{budgetFor:()=>({windowTokens:1000,reliableFillRatio:.8})})
-    await s.prepare();s.context.observe(s.key,{bytes:1500,turns:1});await s.prepare();expect(s.rotations).toBe(0)
-    s.context.observe(s.key,{bytes:1700});await s.prepare();expect(s.rotations).toBe(1)
+    await s.prepare();s.context.observe(s.key,{bytes:1500,turns:8});await s.prepare();expect(s.rotations).toBe(0)
+    s.context.observe(s.key,{bytes:60000});await s.prepare();expect(s.rotations).toBe(1)
     const fallback=setup('claude',{budgetFor:()=>{throw Error('not ready')}});await fallback.prepare()
-    expect(fallback.context.status()[0]!.budgetTokens).toBe(2048)
-    const zero=setup('claude',{budgetFor:()=>({windowTokens:8192,reliableFillRatio:0})});await zero.prepare();zero.context.observe(zero.key,{bytes:1,turns:1});await zero.prepare();expect(zero.rotations).toBe(1)
+    expect(fallback.context.status()[0]!.budgetTokens).toBe(25000)
+    const zero=setup('claude',{budgetFor:()=>({windowTokens:8192,reliableFillRatio:0})});await zero.prepare();zero.context.observe(zero.key,{bytes:1,turns:8});await zero.prepare();expect(zero.rotations).toBe(0)
   })
   it('post-delivery extraction is deferred, bounded by cooldown and daily attempts, and silent if unavailable',async()=>{
     const s=setup();await s.prepare()
@@ -99,7 +100,7 @@ it('ephemeral owner sessions never register themselves as owner conversation seg
 
 it('a first failed turn must catch up its owner input before rotation',async()=>{
   const s=setup(undefined,{extract:async()=>false});await s.prepare()
-  s.context.observe(s.key,{bytes:50_000,turns:1});s.setAccounted(false)
+  s.context.observe(s.key,{bytes:100_000,turns:8});s.setAccounted(false)
   expect(await s.prepare()).toBeNull()
   expect(s.rotations).toBe(0)
 })

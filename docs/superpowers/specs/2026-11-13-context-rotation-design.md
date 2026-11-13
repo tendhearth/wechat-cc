@@ -1,24 +1,54 @@
-# 主人对话上下文轮换与当场记账（2026-11-13）
+# 主人对话上下文轮换与当场记账（2026-11-13，第二轮修订）
 
-目标：CC 自己控制主人对话的上下文；Claude、OpenAI 兼容及不能 resume 的后端同一规则，换段前账本追齐，主人无提示。依据 11-12 总纲「少给，要用再取」「不绑一家」「管家体检」「现状核实」及面试稿「评语→补法」。本稿的参数与落点由本次读代码确定。
+最高原则：轮换为了避免撑爆窗口和记忆掉线，不是为了省 token。拿不准宁可不换。没有体检的 Claude 主人继续自然聊天，正常一天只应有一两次必要轮换；绝不按每轮工具调用机械换段。
 
-## 核实与选择
+## 核实与范围
 
-基线 `origin/dev = 852ea4ec`，独立工作区 `wt-context-rotation` / `context-rotation`。`SessionManager` 回收只关进程、保留 resume；`solo.ts` 仅不能续接的冷启动补最近 12 条；OpenAI 每步重发完整历史，恢复有 192 KiB 门，新建还会清旧记录。App 在 coordinator 返回后才写 messages；抽取水位 `entriesToTs` 是连续覆盖线，不能跳过中间的消息。夜间成功落点是 `features/memory/wire.ts` 的 afterSleep / consolidateTopics.failed=0，具体整理及轮换边界抽到 `topic-sleep.ts`，测试执行真实链路，不 mock 内部模块。
+第一轮提交 d458ae5e2 在本轮 rebase 最新 origin/dev（530278c3a）后成为 5baf4578c。本轮只追加提交，不部署、不 push。维护约定见根 AGENTS.md 和 docs/maintainer/README.md。共享 app 策略负责主人对话，provider 只报观测；访客、群聊及工作台不参与主人轮换。只有主执行者写指定 worktree，代理只读核查和评审。
 
-采用共享 app 策略 + daemon 接线 + provider 只报占用。放在 provider 内裁剪会分叉行为并牵连工作台；只在夜里换挡不住白天积累，均不采用。现成独立 worktree 无需再建；只有主执行者写文件，代理只读检查。
+第一轮缺陷是把 2048 token 当默认预算、把累计计费用量当上下文、把工具未知结果预留整份预算，再叠入系统提示和历史估量，造成每轮换段。本轮取消这些语义。
 
-## 决定与落点
+## 预算与占用
 
-- **预算与占用**：共享策略经注入调用 `CheckupService.contextBudgetFor(provider, model)`，预算为 windowTokens × reliableFillRatio（保留实测 0）；未初始化/未测默认 8192 × .25，已知窗口仍经体检接口解析。模型用会话实际钉选/目标模型。OpenAI 提供最后一次请求 input+output（不是计费累计）及当前序列化历史字节；原生后端已有的整轮 usage 可能累计多次请求，因此只作为保守上界使用（缓存字段也计入，允许偏高）；没有回报就按 UTF-8 字节 / 2 向上估，含系统提示、接续块、输入、输出。原生工具不报结果大小时先保守预留一份完整预算；后续有 usage/真实历史快照再覆盖估计。OpenAI 的字节估计还含工具定义，并独立作为进程内硬触发线。恢复缺观测用消息历史的保守估量。估量是调度信号而非精确 tokenizer；单轮可越界，绝不半轮裁剪。
-- **轮换安全点**：`coordinator/solo.ts` acquire 之前，在已有每 chat 互斥锁内；共享策略检查预算/夜间待办。manager 新增安全轮换口，pending spawn / dispatch 在途均拒；外部未决审批按主人 chat 保守拒绝，提问/工具悬在 iterator 中同样挡住。抽取 await 后再查一次。/reset、换模型等原路径照旧。工作台/终端不接策略。
-- **先记账再换**：使用旧段最后已完成轮对应的消息上界；精确排除本轮微信已落库的入站 id，不以到达时间截断，保留上一轮较晚送达的回答；失败/取消轮在下一边界也重新检查尾部，目标未知时不换。连续水位未到先跑现有 threads extractor，校验来源授权、去重/supersede 路径不变。不可用/失败/批次上限后仍未追齐，保留旧会话和轮换请求，下轮重试并记日志。原始 messages、jsonl、OpenAI API records 均保留；只清 resume 指针，取消 OpenAI create 的历史删除。
-- **四样接续**：统一中性接续块供轮换及不能 resume 的冷启动。原文按入站分轮，默认最近 6 轮；预算给接续一小部分，超量先移除最旧的整轮，至少保留最后一轮（超大原文按每条分别保留末段并标截断，长回答不能挤掉同轮主人短句）；当前未答输入由 formatInbound 原样追加，不重复。在办事项读取现有 projects_activity/活动摘要，一件一行、无模型。每轮 topics/recall 与系统提示 owner memory 保持现状。陪伴全文不重新塞入近况，只带一行结果。主人换 provider 也走同一预算块，访客旧交接行为保留。Codex/ACP 明报实际 resume 成败；未确认的原生续接也补小块，不把提供了 id 当续接成功。
-- **持久化/可观测**：小型原子 JSON 状态保存各 owner key 的占用、轮数、最近轮换时间/原因、夜间请求、当场抽取频率及陪伴一行；不存原文/凭据。`/v1/health` 增加脱敏 owner context 状态（不含 chatId/path/sessionId），现有 status CLI 展示。轮换只写 `[CONTEXT_ROTATE] reason= provider= prevTurns= carried=`，不发用户提示。
-- **当场记账**：solo 成功交付之后安排下一 macrotask，确保 App 消息已落库，不 await 模型、不影响回复延迟。非模型信号：主人文本长度、决定/偏好/承诺措辞或工具结果；每对话至少间隔 5 分钟、每日最多 24 次（尝试也计数，跨重启保留）。仅最近 12 条中由新往旧选不超过 6000 字的一个后缀，确保包含触发决定；旧 backlog 存在时当场条目可写但连续水位保持；轮换补抽取及夜间抽取按同一 DB/chat 锁串行，避免倒退；同时间戳边界整组读取，受限尾窗漏了其中任何行就不推连续水位。模型不可用静默跳过。
-- **陪伴短会话**：`tick-dispatch.ts` 复用 tick-job 模式，独立 alias、真实 chatId（权限、人设、外发作用域不变），前后 forget；speech、claim、外发节流和可见消息记录原样。交付成功后记录一行结果供普通下一轮及轮换接续，开始派发才消费；外发 source 标为 speech:companion，近况和换 provider 交接均过滤其全文。短 alias 不进入主人轮换状态。
-- **体检补法**：记性接实际预算；读取 `CHECKUP_CARE.discretion.policy` 并保留 enabled=false 的开关位，不改提示词、不改变拿不准时的说话方式；其余映射留表。体检晚初始化通过 bootstrap/module 的工厂与 late 读口注入，避开 bootstrap 与记忆功能的依赖环；活会话端点与当前体检端点不同时退保守预算。夜间整理成功后用 coordinator 同一互斥锁立即尝试轮换；账未齐/审批中则保留请求到下一安全边界。
+- **占用**是最近一次模型请求的输入 token。Claude 读取最后一个父 assistant 请求的 input + cache read + cache creation；同一 message id 的重复块不累加，子 agent 与 result 的整轮累计 usage 不算。OpenAI 读取最后一步 prompt/input，不加 output、不加请求后产生的工具结果字节。计费用量照原样累计，二者独立。
+- 新段尚无 provider 回报时占用未知，不按量轮换。系统提示字节、全部 canonical 消息、每个工具的假定大小都不作轮换证据。已有首请求输入后，最新请求缺 usage 时才可用该请求真实字节作回退；没有可信首请求基线仍不按量换。未知工具结果不预留任何 token。
+- **固定开销**取新段第一次请求的输入，包含系统提示、工具定义及首次输入。保存首次请求证据，不把后来较大的工具请求误当首请求。第一请求未测得时保持未知；恢复原段保留原基线。
+- **历史下限**为 `max(24000, ceil(window × .15))`；**预算**为 `max(floor(window × ratio), fixedOverhead + historyFloor)`。只有固定开销不换，历史占用为 `max(0, occupancy - fixedOverhead)`。
+- 未体检比例 .6，实测使用值夹在 [.2,.8]，原始体检分数保留；实测 0 不会给出预算 0。窗口未知按 32000 假设；SDK/可信配置已知窗口优先，按 provider + 规范端点摘要 + 实际模型 id 写入原子 JSON。跨重启读取标为 persisted，新观测标为 measured，未知标为 assumed。模型 alias 不覆盖已解析的实际模型。
+- 按量换段至少相隔 8 个完成轮次，新段也至少保留 8 轮。夜间成功整理仍请求换段，但只有已知占用达到预算一半且已有历史才执行；低于一半保留原段。
 
-## 验证与边界
+## 安全边界与记账
 
-先写离线行为测试并记录红：三类 provider 假会话、预算与实测/默认、busy/审批拒换、抽取失败保留、最近轮原文/刚才那个/在办行、夜间成功与失败、交付之后异步记账/频率/不可用、陪伴隔离、API 旧历史保留和进程内预算。再实现跑绿，独立只读审查。主 Mac `bun run verify` 在同一命令先查 load<8 且无 CivilizationVII，否则稍后重试；不跑 UI、不上 mini、不启动真实 daemon/模型。不删/放松旧测试，不新增 skip。验证绿后带 Co-Authored-By 提交，不 push。报告写指定 scratchpad。
+在 coordinator 的每 chat 互斥锁内、下一次 acquire 前作判断；在途、pending spawn、未决审批不换。锁内只读本地状态、连续记账水位、接续资料，不同步调用抽取模型。
+
+记账落后时登记待追赶、保留旧会话，这轮直接正常回复。成功交付后的下一 macrotask（App canonical messages 落库后）异步追赶；后续轮间再判断是否可换。失败/取消轮的入站仍纳入下一次边界判断。边界按当前输入身份排除，不能按其到达时间截断，因此上一轮较晚送达的回答仍保留。
+
+追赶与当场/夜间使用同一 extractor、同库/chat 锁、水位与去重/supersede 路径。追赶补齐夜间相同的 `readWorkResults(localTopicContext)` 与 `topicMatterAccess(...).entryAllowed` 来源授权；owner 与来源在模型前后再次核验，撤权不落条目（#907）。
+
+当场记账仍是非模型信号准入、最近 12 条/6000 字一批、5 分钟冷却、每日最多 24 次尝试，跨重启保留；不可用不拖回复。待追赶优先于普通小批记账。
+
+状态记录推迟次数与最近受控原因，重复检查同一完成轮不重复计数；连续 20 轮或 24 小时未能轮换，通过已有 health owner_context 和事件记录给一次 accounting delayed 提示。不会把它报成 LLM 链路断线或暂停聊天。成功换段复位本次连续告警；更换主人不会向新主人报旧主人的故障。
+
+## 接续块与主动原文
+
+接续固定最近最多 **6 轮、整个块最多 12000 字符**，与模型预算无关。先分配主人原文，再分配 CC 回复、主动消息和辅助行；超长单条保留开头、结尾及“中间省略”标记，不只留尾巴。canonical 查询单独保留最近六条主人入站，主动气泡不能把它们挤出查询。附件只放占位与文件名，不放路径/文件数据；上一已完成 chat 轮的工具给名称及可证实状态，无结果记录时明确说未记录，不伪造成功。
+
+包含所有 `speech:*` 送达原文并标时间。普通 resume 下一轮也读取上次主人发言以来的主动原文，套同一字符上限；“你刚才说的那个”能看到 CC 实际说过的话。正在办事项取现有活动读口，一件一行；topics/recall 和 owner memory 不变。接续读失败不丢旧段。
+
+Claude 有效 resume 明报成功；重启/idle 后继续原段不重复注入接续。只有实际新段、resume 明确失败、不能 resume 的冷启动或换 provider 才补块。其他 native provider 未确认恢复仍保持保守接续。
+
+## 主动短会话与保留期
+
+只有主人定时动作使用独立 `companion:<uuid>`，真实 chatId、人设、权限、外发节流和 claim 保持原样；访客/群继续原项目会话。独立会话开场复用同一接续（近期对话 + 在办），保留主人钉选模型。准备接续在 acquire/claim 前完成，所有 acquire 后路径进入 finally 清理。下一轮送达资料使用原文，不再是“agenda:已送达”。
+
+短会话标记 ephemeral：Claude `persistSession:false` 防止产生原生项目 transcript，Codex thread/start ephemeral，OpenAI 使用仅内存历史且不保存 resume 指针；会后 forget。UI 会话列表、CLI 列项目/聊天、搜索和摘要过滤内部 companion 别名，网络守护/执行冲突等安全读口保留完整运行列表。
+
+OpenAI 恢复 **8 天**保留清扫，适用于所有对话：创建新段时只清过期、已退休且无真实 live handle/当前 resume 指针的旧段；近期旧段不删，当前段不动，崩溃遗留 active 不永久豁免。与原实现差别：不再新建就立即删除同 chat/alias 旧段，也不再无限保留所有旧段。canonical messages 不由此清扫。
+
+## 可观测与离线验收
+
+`/v1/health.owner_context` / status 同时展示窗口及来源、比例及来源、固定开销、历史占用、预算、已知/未知观测、完成轮数、最近轮换及推迟原因；不暴露 chatId、sessionId、原文或路径。
+
+每项补主人连贯性正向测试，包含真实 coordinator + SessionManager 的 40 轮/每轮三次工具/四万字系统提示场景（Claude 200k 不换、OpenAI 未知窗口轮换间隔≥8）、cold resume 不重复、provider 请求/计费分离、未知/比例零/持久窗口、6轮12000字符/长文头尾/主动原文/附件工具、可控追赶不阻塞、来源撤权、20轮/24h告警、八天回收和当前段保护、访客群旧行为、列表隐藏。
+
+测试先红后绿；独立只读审查仅报正确性。主 Mac 同命令检查 load<8 且无 CivilizationVII 再运行 bun run verify；不跑 UI、不上 mini、不触碰 daemon/模型/生产库/已安装 App。负载门禁最多等30分钟。报告写用户指定 scratchpad，验证绿后追加 Co-Authored-By 提交，不 push。

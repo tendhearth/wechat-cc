@@ -22,6 +22,7 @@ export interface ToolOutcome{output:string;images?:ImagePart[];/** 结果存进�
 
 /** 会话历史 + 它的存法(对话 / 工作台各有一份实现,都落在 api-sessions)。 */
 export interface SessionHistory{
+  release?():void
   readonly id:string
   /** 存了几次(只增):续接的会话也不会和上一次撞上逐字流的 itemId。 */
   revision():number
@@ -112,9 +113,12 @@ export function trimDanglingToolCalls(messages:ChatMessage[]):ChatMessage[]{
 export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;purpose:OpenAiPurpose}):AgentSession{
   const {model,history,purpose}=args
   let lastContextTokens: number | undefined
-  let observedBytes = 0
+  let requestBytes = 0
+  let firstInputTokens: number | undefined
+  let firstRequestSeen=false
+  let resolvedModel: string | undefined
   let closed=false,active:Promise<void>|null=null,controller:AbortController|null=null,dispatched=false,first=true,toolsClosed=false
-  const closeTools=async()=>{if(toolsClosed)return;toolsClosed=true;await purpose.close?.().catch(()=>{})}
+  const closeTools=async()=>{if(toolsClosed)return;toolsClosed=true;try{await purpose.close?.().catch(()=>{})}finally{history.release?.()}}
 
   async function run(text:string,attachments:readonly AgentAttachment[],queue:AsyncQueue<AgentEvent>,signal:AbortSignal){
     const started=Date.now()
@@ -135,6 +139,9 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         const itemId=`${history.id}:${history.revision()}:${step}`
         steps++
         // 后续步骤说明本轮已经发起过工具调用;即使下一次请求还没输出,也不能再重试这一轮。
+        const firstRequest=!firstRequestSeen;firstRequestSeen=true
+        requestBytes=Buffer.byteLength(JSON.stringify(history.messages()))+Buffer.byteLength(JSON.stringify(purpose.tools()))
+        lastContextTokens=undefined
         const turn=model.stream(structuredClone(history.messages()),purpose.tools(),signal,step===0)
         void turn.finished.catch(()=>undefined)
         let buffered=''
@@ -155,11 +162,12 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         const result=await turn.finished;check(signal);purpose.check?.()
         if(result.usage)usage=sumTurnUsage(usage,result.usage)
         // Keep the last request separate from per-turn billing totals (which repeat history).
-        lastContextTokens = result.usage?.input !== undefined ? result.usage.input + (result.usage.output ?? 0) : undefined
+        lastContextTokens = result.usage?.input !== undefined ? result.usage.input : undefined
+        if(firstRequest)firstInputTokens=lastContextTokens
+        if(result.model)resolvedModel=result.model
         if(purpose.strict)strictCheck(result,ids)
         const assistantMessages=result.messages.filter(m=>m.role==='assistant')
         history.save([...history.messages(),...assistantMessages])
-        observedBytes = Buffer.byteLength(JSON.stringify(history.messages()))
         if(result.model)purpose.observedModel?.(result.model,history.id)
         if(!result.toolCalls.length){
           history.save(history.messages(),'ready')
@@ -187,11 +195,7 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
 
   return{
     contextUsage() {
-      const transcriptBytes = Buffer.byteLength(JSON.stringify(history.messages()))
-      const historyBytes = transcriptBytes + Buffer.byteLength(JSON.stringify(purpose.tools()))
-      // A tool can finish after the last measured request, including on a failed turn.
-      const added = Math.ceil(Math.max(0, transcriptBytes - observedBytes) / 2)
-      return { historyBytes, ...(lastContextTokens !== undefined ? { tokens: lastContextTokens + added } : {}) }
+      return {historyBytes:requestBytes,...(lastContextTokens!==undefined?{tokens:lastContextTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(resolvedModel?{model:resolvedModel}:{})}
     },
     dispatch(text,attachments=[]){
       if(closed)fail('api_task_closed')

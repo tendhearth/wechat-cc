@@ -1,3 +1,6 @@
+import { contextHistory } from './context-history'
+import { localTopicContext, topicMatterAccess } from '../../lib/topic-provenance'
+import { readWorkResults } from '../threads/work-results'
 /** Owner-only wiring for shared rotation. No provider policy, model call or private history enters health. */
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -28,6 +31,7 @@ export function wireContextRotation(d: {
   holdBusy?(label:string):()=>void
   log(tag:string,line:string):void
 }) {
+  const history=contextHistory(d.db)
   const messages=makeMessagesStore(d.db),threads=makeThreadsStore(d.db,{filterSources:true})
   const owner=d.owner??(()=>ownerChatIdOf(d.stateDir)),path=join(d.stateDir,'context-rotation.json')
   const blank=():ContextState=>({sessions:{},chats:{}})
@@ -54,27 +58,22 @@ export function wireContextRotation(d: {
   return new ContextRotation({
     owner,load:()=>{try{return loadState()}catch{d.log('CONTEXT_STATE','unreadable_estimates_rebuilt');return blank()}},
     save:state=>{updateJsonFile(path,raw=>{raw.state=state})},
-    budgetFor:(p,m,key)=>d.budgetFor?.(p,m,key)??{windowTokens:8192,reliableFillRatio:.25},
+    budgetFor:(p,m,key)=>d.budgetFor?.(p,m,key)??{windowTokens:32000,reliableFillRatio:.6},
     pending:chatId=>d.pending?.(chatId)??false,
-    recent:async(chatId,current)=>(await recentRows(chatId,current)).filter(r=>r.text.trim()).map(r=>({dir:r.direction,text:r.text,ts:r.ts})),
+    recent:async(chatId,current)=>history.recent(chatId,current),
+    proactive:async(chatId,current)=>history.proactive(chatId,current),
     ongoing:async chatId=>{
       const activity=await projectActivities(d.db,chatId)
       if(chatId!==owner())return []
       return [...activity.values()].flatMap(v=>v.sessions.filter(s=>s.activity==='running'||s.activity==='waiting').map(s=>`${s.title}：${s.latestStep || (s.activity==='waiting'?'等主人答复':'正在办')}`))
     },
     latestTs:async(chatId,current)=> current===undefined ? messages.latestTs(chatId) : (await recentRows(chatId,current)).at(-1)?.ts??null,
-    seed:async(chatId,current)=>{
-      const rows=await recentRows(chatId,current)
-      // Older installations have no measurements. Count ALL preceding bytes, not just this tail.
-      const total=d.db.query<{bytes:number;turns:number},[string,string]>("SELECT COALESCE(SUM(length(CAST(text AS BLOB))),0) AS bytes,SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END) AS turns FROM messages WHERE chat_id=? AND id!=? AND source!='workbench' AND source NOT LIKE 'speech:%'").get(chatId,currentId(chatId,current))
-      return {bytes:total?.bytes??0,turns:total?.turns??0,throughTs:rows.at(-1)?.ts??null}
-    },
     accounted,
     extract:async(chatId,mode,throughTs)=>{
       if(chatId!==owner())return false
       const sdkEval=resolveCheapEval({getMode:d.getMode,registry:d.registry},chatId)
       if(!sdkEval)return false
-      await runThreadsExtraction({chatId,messages,threads,authorized:()=>chatId===owner(),sdkEval:async prompt=>{
+      await runThreadsExtraction({chatId,messages,threads,work:after=>readWorkResults(d.db,after,localTopicContext(chatId)),workAllowed:id=>chatId===owner()&&topicMatterAccess(d.db,localTopicContext(chatId),[id]).entryAllowed.has(id),authorized:()=>chatId===owner(),sdkEval:async prompt=>{
         if(chatId!==owner())throw Error('owner_changed')
         const result=await sdkEval(prompt)
         if(chatId!==owner())throw Error('owner_changed')
@@ -87,6 +86,7 @@ export function wireContextRotation(d: {
       const timer=setTimeout(()=>{const release=d.holdBusy?.('context-accounting')??(()=>{});void job().catch(()=>{}).finally(release)},0)
       timer.unref?.()
     }),
+    alert:(provider,reason)=>{const chatId=owner();if(chatId)void makeEventsStore(d.db,chatId).append({kind:'cron_eval_failed',trigger:'context-accounting',reasoning:`provider=${provider} reason=${reason}`}).catch(()=>{})},
     log:d.log,
   })
 }

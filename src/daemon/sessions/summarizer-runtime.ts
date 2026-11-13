@@ -63,6 +63,7 @@ export async function triggerStaleSummaryRefresh(deps: SummaryRefreshDeps): Prom
     // alias/provider/chatId off the record itself — they're echoed back
     // from the SQLite row.
     for (const rec of Object.values(all)) {
+    if(rec.alias.startsWith('companion:'))continue
       if (!needsRefresh(rec)) continue
       const { alias, provider, chat_id: chatId } = rec
       try {

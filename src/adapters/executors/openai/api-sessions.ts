@@ -22,6 +22,7 @@ export interface ChatSessionStore{
   canResume(id:string,path:string,configHash:string):boolean
   get(id:string):ChatSession|null
   /** 不落盘(没有 DB):会话的历史只在它自己的内存里,存取口什么都不留。 */
+  release?(id:string):void
   readonly ephemeral?:true
 }
 
@@ -132,21 +133,28 @@ export function makeApiSessionStore(db:Db){
 }
 
 export function makeChatSessionStore(db:Db):ChatSessionStore{
+  const live=new Set<string>()
   const raw=(id:string)=>db.query<ChatRow,[string]>(CHAT_SELECT).get(id)
   const get=(id:string):ChatSession|null=>{const row=raw(id);return row?chatSession(row):null}
   return{
+    release:id=>{live.delete(id)},
     create(binding,messages){
       validChatBinding(binding);const json=encode(messages),id=randomUUID(),now=Date.now()
       db.transaction(()=>{
-        // Resume pointers live in sessions; old transcripts remain available after context rotation.
+        // Eight-day retention for retired segments, across owner and visitor chats.
+        // Current live rows and persisted resume pointers must survive the sweep.
+        const liveIds=[...live]
+        db.query(`DELETE FROM openai_chat_sessions WHERE updated_at<? ${liveIds.length?`AND id NOT IN (${liveIds.map(()=>'?').join(',')})`:''} AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.provider='openai' AND s.session_id=openai_chat_sessions.id)`).run(now-8*24*60*60*1000,...liveIds)
         db.query('INSERT INTO openai_chat_sessions(id,chat_id,alias,path,config_hash,revision,messages_json,state,created_at,updated_at) VALUES(?,?,?,?,?,0,?,\'active\',?,?)').run(id,binding.chatId,binding.alias,binding.path,binding.configHash,json,now,now)
       })()
+      live.add(id)
       return get(id)!
     },
     acquire(id,binding){
       validChatBinding(binding)
       const result=db.query("UPDATE openai_chat_sessions SET state='active',revision=revision+1,updated_at=? WHERE id=? AND state='ready' AND chat_id=? AND alias=? AND path=? AND config_hash=?").run(Date.now(),id,binding.chatId,binding.alias,binding.path,binding.configHash)
       if(result.changes!==1)throw Error('api_session_conflict')
+      live.add(id)
       return get(id)!
     },
     save(id,revision,messages,state){

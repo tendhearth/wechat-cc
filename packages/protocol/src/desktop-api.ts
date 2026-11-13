@@ -34,8 +34,10 @@ export const SubsystemStatusSchema = z.object({
 
 export const OwnerContextStatus = z.object({
   provider: z.string(), model: z.string(), estimatedTokens: z.number().nonnegative(), budgetTokens: z.number().nonnegative(),
-  historyBytes: z.number().nonnegative(), source: z.enum(['bytes', 'provider']), turns: z.number().nonnegative(),
+  historyBytes: z.number().nonnegative(), source: z.enum(['unknown', 'bytes', 'provider']), turns: z.number().nonnegative(),
   lastRotatedAt: z.string().nullable(), reason: z.enum(['budget', 'nightly']).nullable(),
+  windowTokens:z.number().optional(),windowSource:z.enum(['measured','persisted','assumed']).optional(),reliableFillRatio:z.number().optional(),ratioSource:z.enum(['measured','default']).optional(),
+  fixedOverheadTokens:z.number().optional(),historyTokens:z.number().optional(),deferredRotations:z.number().optional(),lastDeferredReason:z.string().nullable().optional(),warning:z.string().nullable().optional(),
 })
 export type OwnerContextStatusT = z.infer<typeof OwnerContextStatus>
 

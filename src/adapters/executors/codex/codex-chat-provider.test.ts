@@ -446,3 +446,8 @@ it('reports whether native history actually resumed, including fresh-thread fall
  expect((await fallback.spawn({resumeSessionId:'th-gone'})).resumedHistory).toBe(false)
  expect((await fresh.spawn()).resumedHistory).toBe(false)
 })
+it('owner continuity: proactive short threads request native ephemeral storage while ordinary chats persist',async()=>{
+ const r=rig()
+ await r.spawn({ephemeral:true});expect(lastStart(r).params.ephemeral).toBe(true)
+ await r.spawn();expect(lastStart(r).params).not.toHaveProperty('ephemeral')
+})

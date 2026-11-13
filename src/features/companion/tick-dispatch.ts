@@ -121,10 +121,15 @@ export function makeTickDispatch(deps: TickDeps) {
     const nowMs = args.nowIso ? Date.parse(args.nowIso) : NaN
     const produce = async (outbound: import('../../daemon/companion/proactive-channel').ProactiveTurn) => {
     await deps.boot.coordinator.runExclusive(chatId, async () => {
-      const tickKey = { alias: `companion:${randomUUID()}`, providerId, chatId }
-      await deps.boot.sessionManager.forget?.(tickKey)
+      const isolated=deps.boot.contextRotation?.isOwnerChat(chatId)??false
+      const carry=isolated?await deps.boot.contextRotation?.continuation({alias:proj.alias,providerId,chatId}):null
+      const mode=deps.boot.coordinator.getMode(chatId)
+      const tickKey = { alias: isolated?`companion:${randomUUID()}`:proj.alias, providerId, chatId }
+      if(isolated)await deps.boot.sessionManager.forget?.(tickKey)
       const handle = await deps.boot.sessionManager.acquire({
         alias: tickKey.alias,
+        ...(isolated?{ephemeral:true}:{}),
+        ...(mode.kind==='solo'&&mode.provider===providerId&&mode.model?{model:mode.model}:{}),
         path: proj.path,
         providerId,
         chatId,
@@ -139,13 +144,15 @@ export function makeTickDispatch(deps: TickDeps) {
       // reported pain and a missed nudge is low-stakes (the agent can
       // re-author it, or the gap/agenda gate will surface it again later).
       // See docs/superpowers/specs/2026-06-25-companion-push-at-most-once-design.md
-      const undo = args.claim()
+      let undo:(()=>void)|void=undefined
+      let turn:ReturnType<typeof deps.replyDelivery.begin>|undefined
+      try {
+      undo = args.claim()
       // 回复交付(spec 2026-10-03,已定 ③):推送也是一轮,最后的话就是推送,`NO_REPLY` = 这次不发(撤回登记)。
       const allSegments = replyTextStrategyFor(providerId) === 'all_segments'
-      const tickText = args.buildText({ allSegments })
+      const tickText = [carry?.block,args.buildText({ allSegments })].filter(Boolean).join('\n\n')
       // 往哪儿送(微信能用走微信,不能用 / 发失败落到 App)由门开的那一轮(proactive-channel)定,一轮粘住一条路。
-      const turn = deps.replyDelivery.begin(chatId, { context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
-      try {
+      turn = deps.replyDelivery.begin(chatId, { context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
         const summary = await collectTurn(handle.dispatch(tickText))
         if (summary.error) {
           deps.log('SCHED', `companion tick dispatch error event: ${summary.errorCode ? `${summary.errorCode}: ` : ''}${summary.error}`)
@@ -154,7 +161,7 @@ export function makeTickDispatch(deps: TickDeps) {
           const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
           // 「CC 做过的事」(B9):说出去了 / 想说没发出去 分开记;静默是一个决定,不算做了什么。只记主人。
           const said = report.bubbles > 0 || report.attachmentsSent > 0
-          if (said) deps.boot.contextRotation?.noteCompanion(chatId, `${args.summary ?? args.source ?? '主动陪伴'}：已送达`)
+          if (said) deps.boot.contextRotation?.noteCompanion(chatId, summary.finalText ?? '')
           if ((said || report.failures.length > 0) && chatId === loadCompanionConfig(deps.stateDir).default_chat_id) {
             try { deps.activityLog?.append({ kind: 'proactive', status: said ? 'sent' : 'deferred' }) } catch { /* 记不上不影响发 */ }
           }
@@ -172,7 +179,7 @@ export function makeTickDispatch(deps: TickDeps) {
           }
         }
       } catch (err) {
-        turn.abandon('threw')
+        turn?.abandon('threw')
         // 评审 #193 P2-3:网络守护拒了这一轮 —— SessionManager 在碰 provider **之前**就拒,一个字都
         // 没发出去。这不是「发了一半」,at-most-once 不适用:撤回登记,整拍算跳过,下一拍再来。
         if (isNetworkUnprotectedError(err)) {
@@ -181,7 +188,7 @@ export function makeTickDispatch(deps: TickDeps) {
         }
         deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
       } finally {
-        await deps.boot.sessionManager.forget?.(tickKey)
+        if(isolated)await deps.boot.sessionManager.forget?.(tickKey)
       }
     })
     }

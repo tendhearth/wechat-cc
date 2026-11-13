@@ -88,6 +88,7 @@ function chatHistory(store: ChatSessionStore, initial: ChatSession, log: (tag: s
     log('SESSION_PERSIST', `openai session=${initial.id} 存不下历史,这条会话不再续接:${err instanceof Error ? err.message : String(err)}`)
   }
   return {
+    release:()=>store.release?.(initial.id),
     id: initial.id,
     revision: () => revision,
     messages: () => messages,
@@ -292,7 +293,8 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       let saved: ChatSession
       let store = sessions
       try {
-        saved = openHistory(binding, initial, ctx.resumeSessionId)
+        if(ctx.ephemeral){store=makeMemoryChatSessionStore();saved=store.create(binding,initial)}
+        else saved = openHistory(binding, initial, ctx.resumeSessionId)
       } catch (err) {
         // DB 出了问题不该让对话起不来:这条会话退回内存(不续接),照常聊。
         log('SESSION_PERSIST', `openai 会话存档不可用,这条会话只在内存里:${err instanceof Error ? err.message : String(err)}`)
@@ -306,7 +308,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
         purpose: chatPurpose({ ctx, bridge, builtins: (opts.makeBuiltins ?? builtinTools)(cwd), maxSteps, ...(opts.ownerRules ? { ownerRules: opts.ownerRules } : {}) }),
       })
       log('SESSION_SPAWN', `alias=${project.alias} provider=openai session=${saved.id}${resumed ? ' resumed' : ''}`)
-      session.callTarget = () => target
+      session.callTarget = () => target?({...target,...(session.contextUsage?.().model?{model:session.contextUsage!().model!}:{})}):null
       session.resumedHistory = resumed
       return session
     },

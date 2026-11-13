@@ -129,7 +129,7 @@ export interface AgentWorkbenchRuntime {
 
 export interface AgentSession {
   /** Observation only, never a rotation policy. Bytes include serialized history/tool schemas; tokens are the last request, not billed step totals. */
-  contextUsage?(): { historyBytes: number; tokens?: number }
+  contextUsage?(): { historyBytes?: number; tokens?: number; firstInputTokens?: number|null; model?: string }
 
   /**
    * 这条会话是不是接着上一次的历史起来的(续接成功)。provider 知道才填；主人对话未确认时补共享接续块，旧嵌入仍可按能力表兜底。
@@ -275,6 +275,7 @@ export interface SpawnContext {
   chatId: string
   /** When set, the provider should resume an existing session (claude
    *  jsonl, codex thread id, cursor agent id) instead of cold-starting. */
+  ephemeral?: boolean
   resumeSessionId?: string
   /** Per-spawn env overlay the provider merges into every stdio MCP child's
    *  env (via mergeEnvIntoMcpServers). Computed once by the daemon

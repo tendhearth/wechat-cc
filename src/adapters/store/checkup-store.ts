@@ -14,7 +14,7 @@ function validProfile(v: unknown): v is CheckupProfile {
   if (!v || typeof v !== 'object') return false
   const p = v as CheckupProfile
   return typeof p.provider === 'string' && typeof p.model === 'string' && typeof p.addressHash === 'string'
-    && Number.isInteger(p.windowTokens) && p.windowTokens >= 1024 && Number.isFinite(p.reliableFillRatio) && p.reliableFillRatio >= 0 && p.reliableFillRatio <= .8
+    && Number.isInteger(p.windowTokens) && p.windowTokens >= 1024 && Number.isFinite(p.reliableFillRatio) && p.reliableFillRatio >= 0 && p.reliableFillRatio <= 1
     && ['good','fair','weak'].includes(p.memory) && ['stable','flaky'].includes(p.tools)
     && Array.isArray(p.stages) && typeof p.testedAt === 'string' && Number.isFinite(Date.parse(p.testedAt))
 }
@@ -54,7 +54,18 @@ export function makeCheckupStore(stateDir: string) {
     contextBudgetFor(provider: string | CheckupTarget, model: string): ContextBudget {
       const t = typeof provider === 'string' ? null : { ...provider, model }
       const p = t ? this.profile(t) : null
-      return p ? { windowTokens:p.windowTokens,reliableFillRatio:p.reliableFillRatio,source:'measured' } : { windowTokens:t?.windowTokens ?? DEFAULT_CHECKUP_WINDOW,reliableFillRatio:DEFAULT_RELIABLE_FILL,source:'default' }
+      const windowsPath=join(stateDir,'checkup','context-windows.json')
+      let windowTokens=DEFAULT_CHECKUP_WINDOW,windowSource: 'measured'|'persisted'|'assumed'='assumed'
+      if(t){
+        const known=t.windowKnown&&Number.isSafeInteger(t.windowTokens)&&t.windowTokens>=1024&&t.windowTokens<=10_000_000
+        const saved=readJsonObject(windowsPath)[checkupKey(t)]
+        if(known){
+          windowTokens=t.windowTokens;windowSource='measured'
+          if(saved!==windowTokens)updateJsonFile(windowsPath,raw=>{raw[checkupKey(t)]=windowTokens})
+        }else if(typeof saved==='number'&&Number.isSafeInteger(saved)&&saved>=1024&&saved<=10_000_000){windowTokens=saved;windowSource='persisted'}
+        else if(p?.windowKnown){windowTokens=p.windowTokens;windowSource='persisted'}
+      }
+      return {windowTokens,reliableFillRatio:p?Math.max(.2,Math.min(.8,p.reliableFillRatio)):DEFAULT_RELIABLE_FILL,source:p?'measured':'default',windowSource,ratioSource:p?'measured':'default'}
     },
   }
 }

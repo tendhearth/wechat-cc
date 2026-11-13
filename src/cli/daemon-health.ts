@@ -52,5 +52,5 @@ export function ownerContextFrom(health: Record<string, unknown> | null): OwnerC
   return parsed.success ? parsed.data : null
 }
 export function formatOwnerContext(rows: readonly OwnerContextStatusT[] | null): string[] {
-  return (rows ?? []).map(r => `context: ${r.provider}/${r.model} ${r.estimatedTokens}/${r.budgetTokens} tokens; last=${r.lastRotatedAt ?? '-'} reason=${r.reason ?? '-'}`)
+  return (rows ?? []).map(r => `context: ${r.provider}/${r.model} ${r.estimatedTokens}/${r.budgetTokens} tokens; last=${r.lastRotatedAt ?? '-'} reason=${r.reason ?? '-'}${r.windowTokens!==undefined?`; window=${r.windowTokens}(${r.windowSource}) ratio=${r.reliableFillRatio}(${r.ratioSource}) fixed=${r.fixedOverheadTokens} history=${r.historyTokens} deferred=${r.deferredRotations}(${r.lastDeferredReason??'-'})`:''}${r.warning?`; warning=${r.warning}`:''}`)
 }

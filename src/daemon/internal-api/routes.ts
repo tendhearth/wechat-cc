@@ -89,7 +89,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
         // fresh (false ⇒ the daemon may be wedged / not serving).
         turns_store_wired: !!deps.turns,
         sessions_live: deps.listSessions?.()?.length ?? 0,
-        ...(deps.ownerContext ? { owner_context: deps.ownerContext().map(({provider,model,estimatedTokens,budgetTokens,historyBytes,source,turns,lastRotatedAt,reason}) => ({provider,model,estimatedTokens,budgetTokens,historyBytes,source,turns,lastRotatedAt,reason})) } : {}),
+        ...(deps.ownerContext ? { owner_context: deps.ownerContext().map(({provider,model,estimatedTokens,budgetTokens,historyBytes,source,turns,lastRotatedAt,reason,windowTokens,windowSource,reliableFillRatio,ratioSource,fixedOverheadTokens,historyTokens,deferredRotations,lastDeferredReason,warning}) => ({provider,model,estimatedTokens,budgetTokens,historyBytes,source,turns,lastRotatedAt,reason,...(windowTokens!==undefined?{windowTokens,windowSource,reliableFillRatio,ratioSource,fixedOverheadTokens,historyTokens,deferredRotations,lastDeferredReason,warning}:{})})) } : {}),
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
         // 只有两个计数,没有账号 id(这条路由是 guest 档)。null = 开机还没走到拉消息那一步。
         ...(deps.polling ? { polling: deps.polling() } : {}),

@@ -1062,7 +1062,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           // (主人自己 codex 配置里的 MCP 不认,照旧拒);版本太旧核实不了 MCP 审批 ⇒ MCP 审批照旧拒。
           if (chat.approve && object(chat.config.mcp_servers) && supportsCodexMcpApproval(initialized.userAgent)) for (const name of Object.keys(chat.config.mcp_servers)) enabledMcp.add(name)
           response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
-            ...resumeParams, cwd: project.path, approvalPolicy: chat.approvalPolicy, sandbox: chat.sandbox,
+            ...resumeParams, ...(context.ephemeral?{ephemeral:true}:{}), cwd: project.path, approvalPolicy: chat.approvalPolicy, sandbox: chat.sandbox,
             ...(chat.approve ? { approvalsReviewer: 'user' } : {}),
             ...(context.appendInstructions ? { developerInstructions: context.appendInstructions } : {}),
             config: chat.config, ...(model ? { model } : {}),

@@ -202,7 +202,7 @@ type AssistantBlock = { type?: string; text?: string; name?: string; id?: string
 type AssistantContent = string | Array<AssistantBlock>
 // `error`: the SDK's own label for a synthetic "this API call failed" assistant
 // message (SDKAssistantMessageError). See ./claude-api-error-code.
-type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; message?: { id?: string; model?: string; content?: AssistantContent } }
+type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; message?: { id?: string; model?: string; content?: AssistantContent; usage?: {input_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number} } }
 // SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
 // blocks correlate to tool_use.id through tool_use_id; result content can
 // contain private file or command output and is deliberately not read here.
@@ -430,6 +430,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // an already-dead/wedged ProcessTransport — leaving the child running
       // (the TN-zombie source). The per-turn watchdog's release→close path
       // now actually reaps the subprocess through this.
+      if(spawnOpts.ephemeral)options.persistSession=false
       const aborter = options.abortController ?? new AbortController()
       options.abortController = aborter
       // 守护(评审 #193 P1-1):子进程在这一刻拿到的端点 + 模型就是这条会话以后每一轮连的地方。
@@ -450,6 +451,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       let q: ReturnType<typeof query>
       try { q = runQuery({ prompt: sdkQueue.iterable(), options }) }
       catch (error) { aborter.abort(); throw error }
+      let lastInputTokens:number|undefined, firstInputTokens:number|undefined, contextModel:string|undefined,firstRequestSeen=false,lastRequestId:string|undefined,firstRequestId:string|undefined
       let observedSessionId=spawnOpts.resumeSessionId
 
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null
@@ -518,6 +520,16 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               log('SESSION_INIT', `alias=${project.alias} session_id=${msg.session_id ?? ''}`)
               aq.push({ kind: 'init', sessionId: msg.session_id ?? '' })
             } else if (msg.type === 'assistant') {
+              if (!msg.parent_tool_use_id) {
+                const u=msg.message?.usage,id=msg.message?.id??msg.uuid
+                const same=!!id&&id===lastRequestId
+                if(!same||u){
+                  lastInputTokens=typeof u?.input_tokens==='number'?u.input_tokens+(u.cache_read_input_tokens??0)+(u.cache_creation_input_tokens??0):undefined
+                }
+                if(!firstRequestSeen){firstRequestSeen=true;firstRequestId=id;firstInputTokens=lastInputTokens}else if(id&&id===firstRequestId)firstInputTokens??=lastInputTokens
+                lastRequestId=id
+                if(nativeModelId(msg.message?.model))contextModel=msg.message.model
+              }
               if (!msg.parent_tool_use_id && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               const content = msg.message?.content
               // 对话路径。回复交付第 5 步(2026-10-03):事件**按块的顺序**发 —— 以前同一条消息里先发所有
@@ -552,6 +564,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               flushText()
             } else if (msg.type === 'result') {
+              firstRequestSeen=true
               const apiErrored = pendingApiError !== null
               flushApiError(aq, msg.api_error_status)
               const failed = !!msg.subtype && msg.subtype !== 'success'
@@ -573,6 +586,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               // SDK 自己的「最后的话」(result.result = 最后一条助理消息的文字):只在成功轮带,只用于核对
               // 分段的结果(回复交付第 5 步:交付用分段,见 AgentEvent.result 的注释)。
+              if(!contextModel&&Object.keys(msg.modelUsage??{}).length===1)contextModel=Object.keys(msg.modelUsage!)[0]
               for(const [model,usage] of Object.entries(msg.modelUsage??{})){
                 const capacity=usage?.contextWindow
                 if(Number.isSafeInteger(capacity)&&capacity>=1024&&capacity<=10_000_000)windows.set(windowKey(spawnTarget.baseUrl,model),capacity)
@@ -608,7 +622,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       })()
 
       return {
-        callTarget: () => spawnTarget,
+        resumedHistory: !!spawnOpts.resumeSessionId,
+        contextUsage: () => ({...(lastInputTokens!==undefined?{tokens:lastInputTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(contextModel?{model:contextModel}:{})}),
+        callTarget: () => ({...spawnTarget,...(contextModel?{model:contextModel}:{})}),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           if (closed) {
             // Already closed — return an iterable that yields nothing.
@@ -617,6 +633,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           if (activeEventQueue) {
             throw new Error(`claude provider: previous dispatch still in flight (alias=${project.alias})`)
           }
+          lastInputTokens=undefined;lastRequestId=undefined
           const content = userContent(text, attachments)
           const queue = new AsyncQueue<AgentEvent>()
           pendingApiError = null

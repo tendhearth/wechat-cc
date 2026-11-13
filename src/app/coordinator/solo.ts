@@ -154,7 +154,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
         }
       }
       if (rotation && !usedContinuation) {
-        const events = rotation.eventsBlock(contextKey)
+        const events = await rotation.eventsBlock(contextKey, currentInput)
         if (events) text = `${events}\n\n${text}`
       }
       // 开轮(附件从此刻起登记到这一轮)。编码型执行者(last_segment)挂上长任务进度(已定 ①:

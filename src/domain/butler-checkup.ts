@@ -1,8 +1,8 @@
 /** Pure, seeded, invented conversations. This module must have no I/O imports. */
 import type { CheckupEstimate, CheckupProfile } from '@wechat-cc/protocol'
 
-export const DEFAULT_CHECKUP_WINDOW = 8192
-export const DEFAULT_RELIABLE_FILL = .25
+export const DEFAULT_CHECKUP_WINDOW = 32000
+export const DEFAULT_RELIABLE_FILL = .6
 export const CHECKUP_SEED = 769906
 export const CHECKUP_RATIOS = [.1, .25, .4, .6, .8] as const
 export const RELIABLE_ACCURACY = .8
