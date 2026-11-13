@@ -213,7 +213,7 @@ export function wireWorkbench(opts: {
       const claude=opts.boot.registry.get('claude')
       if (claude) registry.register('claude',createClaudeAgentProvider({
         async sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
-          const base=opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
+          const base=await opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
           const native=readNativeClaudeTools(path)
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)

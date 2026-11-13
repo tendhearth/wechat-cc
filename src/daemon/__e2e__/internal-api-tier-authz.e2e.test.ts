@@ -28,28 +28,20 @@ function readApiInfo(stateDir: string): ApiInfo {
   return info
 }
 
-/** Recover the per-session token + tier the daemon baked into a spawn's wechat
- *  MCP child env (the env-only secret each provider injects at spawn time). */
-function sessionAuthOf(opts: Record<string, unknown>): { token?: string; tier?: string } {
-  const mcp = opts.mcpServers as Record<string, { env?: Record<string, string> }> | undefined
-  const env = mcp?.wechat?.env
-  return { token: env?.WECHAT_SESSION_TOKEN, tier: env?.WECHAT_SESSION_TIER }
-}
-
 describe('e2e: internal-api enforces caller tier at the route layer', () => {
   it('rejects unauth (401), denies trusted from admin routes (403), allows trusted on guest+trusted, admin on admin', async () => {
     // One daemon for the whole matrix — access.ts freezes STATE_DIR at first
     // import, so a second it()+daemon would read the wrong stateDir. An admin
     // chat (the harness default `admins: ['testadmin']`) lets us recover a
     // real admin-tier token from its spawn's MCP env.
-    const spawns: Record<string, unknown>[] = []
+    const auths: import('../../test-support/session-auth-recorder').RecordedSessionAuth[] = []
     const daemon = await startTestDaemon({
       dangerously: false,
       // Mark testadmin as a known user so its first message dispatches (spawns
       // a session) instead of being consumed by the onboarding flow.
       knownUsers: { testadmin: 'admin_user' },
       claudeScript: { async onDispatch() { return { toolCalls: [], finalText: 'ok' } } },
-      recordClaudeSpawnOptions: o => { spawns.push(o) },
+      recordSessionAuth: auth => { auths.push(auth) },
     })
     try {
       const { baseUrl, tokenFilePath } = readApiInfo(daemon.stateDir)
@@ -103,7 +95,7 @@ describe('e2e: internal-api enforces caller tier at the route layer', () => {
       let adminAuth: { token?: string; tier?: string } | undefined
       const deadline = Date.now() + 8000
       while (Date.now() < deadline) {
-        adminAuth = spawns.map(sessionAuthOf).find(s => s.tier === 'admin')
+        adminAuth = auths.find(s => s.tier === 'admin')
         if (adminAuth?.token) break
         await new Promise(r => setTimeout(r, 25))
       }

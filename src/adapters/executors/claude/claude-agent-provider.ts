@@ -18,6 +18,7 @@ import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
 import { claudeApiFailure, claudeAssistantFailure, claudeResultFailure, parseToolUseToEvent, userContent } from './claude-sdk-messages'
 import { authorize, type AuthSubject } from '../../../domain/authorize'
 import { lookup } from '../../../domain/capability-matrix'
+import { sessionSubprocessEnv } from '../subprocess-env'
 
 export { CLAUDE_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -290,7 +291,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
   // One-shot eval with no tools, no MCP, no session continuation — shared by
   // cheapEval (haiku-class) and strongEval (the verdict's main model). Both
   // pass an explicit model so the only difference is which model runs.
-  const runQuery = opts.queryImpl ?? query
+  const runQuery: typeof query = input => (opts.queryImpl ?? query)({ ...input, options: {
+    ...input.options, env: sessionSubprocessEnv(input.options?.env),
+  } })
   const oneShot = async (prompt: string, model: string): Promise<string> => {
     const q = runQuery({
       prompt,
@@ -437,7 +440,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         return workbenchSession
       }
 
-      const q = runQuery({ prompt: sdkQueue.iterable(), options })
+      let q: ReturnType<typeof query>
+      try { q = runQuery({ prompt: sdkQueue.iterable(), options }) }
+      catch (error) { aborter.abort(); throw error }
       let observedSessionId=spawnOpts.resumeSessionId
 
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null

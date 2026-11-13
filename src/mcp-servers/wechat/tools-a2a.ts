@@ -3,7 +3,7 @@
  * notification from an external agent. Non-admin (any allow-listed session).
  * Split out of main.ts; behavior verbatim.
  */
-import { z } from 'zod'
+import z from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'

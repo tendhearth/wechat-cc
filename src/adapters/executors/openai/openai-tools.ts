@@ -4,6 +4,7 @@ import { resolve, isAbsolute } from 'node:path'
 import { promisify } from 'node:util'
 import { exec as execCb } from 'node:child_process'
 import type { ToolSpec } from './api-model'
+import { sessionSubprocessEnv } from '../subprocess-env'
 
 const exec = promisify(execCb)
 
@@ -103,7 +104,7 @@ export function builtinTools(cwd: string): BuiltinTool[] {
         parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
       },
       async execute(input) {
-        const { stdout, stderr } = await exec(str(input.command, 'command'), { cwd, timeout: 120_000 })
+        const { stdout, stderr } = await exec(str(input.command, 'command'), { cwd, env: sessionSubprocessEnv(), timeout: 120_000 })
         return [stdout, stderr].filter(Boolean).join('\n') || '(no output)'
       },
     },

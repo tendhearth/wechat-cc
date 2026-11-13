@@ -6,6 +6,7 @@ import { TIER_PROFILES } from '../../../domain/user-tier'
 import { classifyProviderError } from '../../../domain/provider-quota'
 import { acpPromptBlocks, createAcpProvider, type AcpProviderOptions } from './acp-agent-provider'
 import { APP_VERSION } from '../../../lib/app-version'
+import { createAcpCursorChatProvider } from './acp-cursor-chat'
 import { makeRunPermissions } from '../../workbench/permissions'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), kill: vi.fn() }))
@@ -103,9 +104,22 @@ beforeEach(() => {
   })
   vi.spyOn(process, 'kill').mockImplementation(mocks.kill as never)
 })
-afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); Object.defineProperty(process, 'platform', platform); vi.restoreAllMocks() })
+afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); Object.defineProperty(process, 'platform', platform); vi.restoreAllMocks(); vi.unstubAllEnvs() })
 
 describe('ACP provider — chat-side options', () => {
+  it.each([false, true])('Cursor chat spawn argv/general env exclude tokens; core MCP receives them via RPC (resume=%s)', async resume => {
+    vi.stubEnv('WECHAT_SESSION_TOKEN', 'AMBIENT_CURSOR_SECRET_CANARY')
+    const provider = createAcpCursorChatProvider({ bin: '/cursor-agent', model: 'auto', log: () => {},
+      mcpSpecs: { wechat: { command: 'w' }, delegate: { command: 'd' } } })
+    const session = await provider.spawn({ alias: 'p', path: '/project' }, context({ chatId: 'owner', workbenchTimeline: false,
+      ...(resume ? { resumeSessionId: 'old' } : {}), mcpEnv: { WECHAT_SESSION_TOKEN: 'SESSION_CURSOR_SECRET_CANARY' } }))
+    sessions.push(session)
+    const [command, args, options] = mocks.spawn.mock.calls[0]!
+    expect([command, ...args, ...Object.values(options.env) as string[]].some(v => v?.includes('SECRET_CANARY'))).toBe(false)
+    const request = children[0]!.sent.find(m => m.method === (resume ? 'session/load' : 'session/new'))!
+    expect(request.params.mcpServers).toHaveLength(2)
+    for (const server of request.params.mcpServers) expect(server.env).toContainEqual({ name: 'WECHAT_SESSION_TOKEN', value: 'SESSION_CURSOR_SECRET_CANARY' })
+  })
   it('R2: a bridged one-shot request preserves its full command and selects allow-once', async () => {
     const command = `echo ${'x'.repeat(2500)}; git status`, requestPermission = vi.fn(async () => true)
     const { session, child } = await start({ requestPermission }, undefined, { text: 'append', permissions: 'bridge' })

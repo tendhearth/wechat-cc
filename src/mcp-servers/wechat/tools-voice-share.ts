@@ -3,7 +3,7 @@
  * TTS config (reply_voice itself lives with the messaging family). Share tools
  * publish/resurface a one-time Markdown URL. Split out of main.ts; verbatim.
  */
-import { z } from 'zod'
+import z from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'

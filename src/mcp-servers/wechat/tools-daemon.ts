@@ -35,7 +35,7 @@ export function terminalAnnex(rows: readonly TerminalSessionRow[], max: number):
   return out.length ? `\n${out.join('\n')}` : ''
 }
 
-export function registerDaemonTools(server: McpServer, client: InternalApiClient): void {
+export function registerDaemonTools(server: McpServer, client: InternalApiClient, participantTag = OWN_PROVIDER): void {
   // These let the operator ask the bot "检查下为什么 X 不回消息了". Read-only.
 
   server.registerTool(
@@ -209,7 +209,7 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
     },
     async ({ provider }) => {
       try {
-        const target = provider ?? OWN_PROVIDER
+        const target = provider ?? participantTag
         const r = await client.request<unknown>('GET', target ? `/v1/model?provider=${encodeURIComponent(target)}` : '/v1/model')
         return { content: [{ type: 'text', text: JSON.stringify(r) }] }
       } catch (err) {
@@ -230,7 +230,7 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
     },
     async ({ model, provider }) => {
       try {
-        const target = provider ?? OWN_PROVIDER
+        const target = provider ?? participantTag
         const r = await client.request<unknown>('POST', '/v1/model', target ? { model, provider: target } : { model })
         return { content: [{ type: 'text', text: JSON.stringify(r) }] }
       } catch (err) {

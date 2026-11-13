@@ -16,7 +16,7 @@ import { createScriptedCodex, MCP_REJECTED, type ScriptedCodexOptions } from '..
  * (test-support/executors/codex-scripted.ts),不起真 codex、不连网。
  */
 const sessions: AgentSession[] = []
-afterEach(async () => { for (const s of sessions.splice(0)) await s.close().catch(() => {}) })
+afterEach(async () => { for (const s of sessions.splice(0)) await s.close().catch(() => {}); vi.unstubAllEnvs() })
 
 const drain = async (events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> => { const out: AgentEvent[] = []; for await (const ev of events) out.push(ev); return out }
 const ctx = (extra: Partial<SpawnContext> = {}): SpawnContext => ({ tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'c', ...extra })
@@ -34,6 +34,23 @@ const corruptNetworkReceipt = (networkAccess: boolean | undefined): NonNullable<
 }
 
 describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)', () => {
+  it('spawn argv and general env exclude ambient/session tokens on new, resumed and cheap sessions', async () => {
+    vi.stubEnv('WECHAT_SESSION_TOKEN', 'AMBIENT_CODEX_SECRET_CANARY')
+    const scripted = createScriptedCodex({ turns: [{ steps: [{ say: 'offline' }] }] })
+    const spawnProcess = vi.fn(scripted.spawn)
+    const r = rig({}, { spawnProcess, mcpServers: { wechat: { command: 'w' }, delegate: { command: 'd' }, plugin: { command: 'p' } } })
+    for (const resumeSessionId of [undefined, 'old']) await r.spawn({ resumeSessionId, mcpEnv: { WECHAT_SESSION_TOKEN: 'SESSION_CODEX_SECRET_CANARY' } })
+    await r.provider.cheapEval!('offline')
+    expect(spawnProcess.mock.calls.length).toBe(3)
+    for (const [command, args, options] of spawnProcess.mock.calls) {
+      expect([command, ...args, ...Object.values(options.env)].some(v => v?.includes('SECRET_CANARY'))).toBe(false)
+      expect(options.env.PATH).toBe(process.env.PATH)
+    }
+    const servers = (scripted.threadStarts[0]!.params.config as any).mcp_servers as any
+    expect(servers.wechat.env.WECHAT_SESSION_TOKEN).toBe('SESSION_CODEX_SECRET_CANARY')
+    expect(servers.delegate.env.WECHAT_SESSION_TOKEN).toBe('SESSION_CODEX_SECRET_CANARY')
+    expect(servers.plugin.env).toBeUndefined()
+  })
   it('dangerously ⇒ danger-full-access + never(不看档位),且 MCP 免审', async () => {
     const r = rig({}, { dangerouslyBypassApprovalsAndSandbox: true, mcpServers: { wechat: { command: 'bun', args: ['wechat.ts'] } } })
     for (const tier of ['admin', 'trusted', 'guest'] as const) {

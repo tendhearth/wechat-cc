@@ -1,5 +1,6 @@
 import { tmpdir } from 'node:os'
 import { compilePolicy } from '../../../domain/policy'
+import { sessionSubprocessEnv } from '../subprocess-env'
 import { TIER_PROFILES } from '../../../domain/user-tier'
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentAttachment, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type SpawnContext } from '../../../ports/agent-provider'
 import type { McpStdioSpec } from '../mcp-stdio-spec'
@@ -124,7 +125,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
 
   const cheapProfile = (): CodexChatProfile => ({
     // 一次性评估:不给工具、不给网、不给写;`low` 是 codex 在工具目录里带 image_gen 时还肯接的最低推理档。
-    sandbox: 'read-only', approvalPolicy: 'never', env: process.env, log,
+    sandbox: 'read-only', approvalPolicy: 'never', env: sessionSubprocessEnv(), log,
     config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } },
   })
 
@@ -164,7 +165,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       const config = codexChatThreadConfig(opts.mcpServers, ctx, bypass, !!approve)
       const model = ctx.model ?? opts.model
       const approvalPolicy = tierOpts.approvalPolicy === 'on-request' && !approve ? 'never' : tierOpts.approvalPolicy
-      const profile: CodexChatProfile = { sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: process.env, log, ...(approve ? { approve } : {}) }
+      const profile: CodexChatProfile = { sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: sessionSubprocessEnv(), log, ...(approve ? { approve } : {}) }
       // 对话只把这几样交给协议客户端;工作台专用的(审批桥、时间线、后台生命周期)一律不带。
       const base: SpawnContext = {
         tierProfile: ctx.tierProfile, permissionMode: ctx.permissionMode, chatId: ctx.chatId,

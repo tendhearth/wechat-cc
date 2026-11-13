@@ -11,9 +11,9 @@
  *
  * What this drives end-to-end (real wiring, no mocks beyond the harness's
  * fake ilink/fake SDK):
- *   - a real Claude dispatch spawn for FIXTURE_CHAT (to recover a genuine
+ *   - a real Claude dispatch spawn for FIXTURE_CHAT (to observe a genuine
  *     session-origin bearer token scoped to that chat — the same
- *     recovery technique internal-api-tier-authz.e2e.test.ts uses)
+ *     mint recorder internal-api-tier-authz.e2e.test.ts uses)
  *   - a real HTTP POST to the daemon's internal-api loopback server,
  *     through token-registry resolve + route-tiers + routes-reminders.ts's
  *     scope check, writing a row via the real reminders store/db
@@ -61,16 +61,9 @@ function readApiInfo(stateDir: string): ApiInfo {
   return JSON.parse(readFileSync(join(stateDir, 'internal-api-info.json'), 'utf8')) as ApiInfo
 }
 
-/** Recover the per-session token the daemon baked into a spawn's wechat MCP
- *  env (same technique as internal-api-tier-authz.e2e.test.ts's sessionAuthOf). */
-function sessionTokenOf(opts: Record<string, unknown>): string | undefined {
-  const mcp = opts.mcpServers as Record<string, { env?: Record<string, string> }> | undefined
-  return mcp?.wechat?.env?.WECHAT_SESSION_TOKEN
-}
-
 describe('e2e: reminders — schedule → sweep → deliver, then no double delivery', () => {
   it('POST /v1/reminders/schedule, one sweep delivers exactly once, a second sweep sends nothing', async () => {
-    const spawns: Record<string, unknown>[] = []
+    const auths: import('../../test-support/session-auth-recorder').RecordedSessionAuth[] = []
     // The harness imports media/config: load it only after the authorized fixture's state is set.
     const stateDir = mkdtempSync(join(tmpdir(), 'cc-reminders-e2e-'))
     const priorStateDir = process.env.WECHAT_STATE_DIR
@@ -82,19 +75,19 @@ describe('e2e: reminders — schedule → sweep → deliver, then no double deli
     const daemon = await startTestDaemon({
       stateDirOverride: stateDir,
       claudeScript: { async onDispatch() { return { toolCalls: [], finalText: 'ok' } } },
-      recordClaudeSpawnOptions: o => { spawns.push(o) },
+      recordSessionAuth: auth => { auths.push(auth) },
     })
     let db2: ReturnType<typeof openWechatDb> | undefined
     try {
       // 1. A real dispatch for FIXTURE_CHAT mints a session-origin token
-      // scoped to this chat (sessionKey = provider/alias/chatId, baked into
-      // the spawn's wechat MCP env). This is the ONLY kind of caller
+      // scoped to this chat (sessionKey = provider/alias/chatId, observed at
+      // the token-registry mint boundary). This is the ONLY kind of caller
       // routes-reminders.ts's scopeDenied lets touch this chat_id — a
       // session caller may only ever schedule for its own chat.
       daemon.sendText(FIXTURE_CHAT, 'hi')
       // 要盖住一次真 daemon 启动 + 一次派发:缺省 5s 在负载下不够(10-21 假红);e2e 目录里的同类等待都给 8s 以上
       await daemon.waitForReplyTo(FIXTURE_CHAT, 30_000)
-      const sessionToken = spawns.map(sessionTokenOf).find((t): t is string => !!t)
+      const sessionToken = auths.find(a => a.sessionKey.endsWith('/' + FIXTURE_CHAT))?.token
       expect(sessionToken, `${FIXTURE_CHAT} spawn must carry a session token`).toBeTruthy()
 
       const { baseUrl } = readApiInfo(daemon.stateDir)

@@ -23,6 +23,7 @@ import { makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-c
 import type { Bootstrap, BootstrapCtx } from './types'
 import type { PluginsSlice } from './wire-plugins'
 import type { PermissionsSlice } from './wire-permissions'
+import { claudeChatMcp } from './claude-chat-mcp'
 
 export interface ModelOptionsSlice {
   readAgentConfig: ReturnType<typeof makeMtimeCachedConfigReader>
@@ -72,30 +73,25 @@ export function wireModelOptions(
     return undefined
   }
 
-  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: PermissionMode }): Options => {
+  const sdkOptionsForProject = async (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: PermissionMode }): Promise<Options> => {
     // The per-session system prompt is assembled by the daemon's
     // `buildInstructions` thunk (see SessionManager wiring below) and arrives
     // here via SpawnContext — this builder no longer calls buildSystemPrompt,
     // so claude/codex share one provider-agnostic source.
     const systemPrompt = appendInstructions ?? ''
-    // Per-session internal-api auth: merge the daemon-computed env overlay
-    // (WECHAT_SESSION_TOKEN — the bearer the MCP children send — plus the
-    // non-secret WECHAT_SESSION_TIER the wechat child gates admin tools on)
-    // into the wechat + delegate children. session-manager builds this once;
-    // every provider merges the same overlay, so the route layer enforces a
-    // consistent tier across claude/codex/cursor.
+    // Only parent-process core MCP clients receive the session credential.
     const sessionEnv = mcpEnv ?? {}
+    const abortController = new AbortController()
     // 非标准档(目前只有定时任务的只读档 JOB_PROFILE):不挂第三方插件与 delegate,canUseTool 按这一档判 ——
     // buildCanUseTool 是按 chatId 取档的,对主人永远是 admin(定时任务 10-20 终审)。
     const standardTier = (Object.values(TIER_PROFILES) as TierProfile[]).includes(tierProfile)
-    const wechatEnv = parts.plugins.wechatStdioForClaude ? { ...parts.plugins.wechatStdioForClaude.env, ...sessionEnv } : undefined
-    const delegateEnv = parts.plugins.delegateStdioForClaude ? { ...parts.plugins.delegateStdioForClaude.env, ...sessionEnv } : undefined
     const common: Options = {
       cwd: path,
+      abortController,
       model: currentClaudeModel(),
       mcpServers: {
-        ...(parts.plugins.wechatStdioForClaude ? { wechat: { type: 'stdio' as const, ...parts.plugins.wechatStdioForClaude, env: wechatEnv! } } : {}),
-        ...(standardTier && parts.plugins.delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...parts.plugins.delegateStdioForClaude, env: delegateEnv! } } : {}),
+        ...(parts.plugins.wechatStdioForClaude ? { wechat: await claudeChatMcp('wechat', parts.plugins.wechatStdioForClaude, sessionEnv, abortController.signal) } : {}),
+        ...(standardTier && parts.plugins.delegateStdioForClaude ? { delegate: await claudeChatMcp('delegate', parts.plugins.delegateStdioForClaude, sessionEnv, abortController.signal) } : {}),
         ...(standardTier ? parts.plugins.pluginMcpForClaude : {}),
       },
       // Using preset+append (instead of raw string) keeps MCP tools inline in

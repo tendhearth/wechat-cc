@@ -205,7 +205,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(d.query<{ chat_id: string }>('SELECT chat_id FROM memory_import ORDER BY chat_id').map(r => r.chat_id)).toEqual(expect.arrayContaining([d.owner, d.guest]))
     expect(d.log().some(l => /\[FACTS_IMPORT\] imported facts\.db: \+7/.test(l))).toBe(true)
     // 上一条的会话起的时候,提示词是从表里读回来的:长期记忆(memory.md)和主人原话(owner.md)都在
-    const prompt = JSON.stringify(spawnOptions.at(-1) ?? {})
+    const prompt = JSON.stringify(spawnOptions.at(-1)?.systemPrompt ?? {})
     expect(prompt).toContain('在杭州做独立开发')
     expect(prompt).toContain('周三晚上固定打羽毛球')
     // 下一条场景要在记忆页上删掉的那一句,这时还在提示词里
@@ -448,7 +448,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // 访客档:能动手的工具全关(读写文件、跑命令、联网、派子任务)
     expect(spawn.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Write', 'Edit', 'Read', 'WebFetch', 'Task']))
     // 主人的长期记忆和原话不进访客的提示词
-    const prompt = JSON.stringify(spawn)
+    const prompt = JSON.stringify(spawn, (key, value) => key === 'instance' ? undefined : value)
     expect(prompt).not.toContain('在杭州做独立开发')
     expect(prompt).not.toContain('周三晚上固定打羽毛球')
   })
