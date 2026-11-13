@@ -1,11 +1,22 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { wechatStdioMcpSpec, delegateStdioMcpSpec, buildOpenaiMcpSpecs } from './mcp-specs'
+import { wechatStdioMcpSpec, delegateStdioMcpSpec, matterStdioMcpSpec, buildOpenaiMcpSpecs } from './mcp-specs'
 import * as runtimeInfo from '../../lib/runtime-info'
 
 const deps = {
   baseUrl: 'http://127.0.0.1:54321',
   tokenFilePath: '/some/abs/path/internal-token',
 }
+
+it('builds task-only matter entrypoints in source and compiled mode without a shared token file',()=>{
+  try{
+    vi.spyOn(runtimeInfo,'isCompiledBundle').mockReturnValue(false)
+    const source=matterStdioMcpSpec(deps)
+    expect(source.args![0]).toMatch(/[/\\]src[/\\]mcp-servers[/\\]matter[/\\]main\.ts$/)
+    expect(source.env).toEqual({WECHAT_INTERNAL_API:deps.baseUrl})
+    vi.spyOn(runtimeInfo,'isCompiledBundle').mockReturnValue(true)
+    expect(matterStdioMcpSpec(deps).args).toEqual(['mcp-server','matter'])
+  }finally{vi.restoreAllMocks()}
+})
 
 describe('wechatStdioMcpSpec', () => {
   afterEach(() => vi.restoreAllMocks())

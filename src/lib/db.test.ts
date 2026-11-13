@@ -1586,3 +1586,21 @@ it('v111 preserves v110 topic history and replay preserves derived evidence',asy
     expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
   } finally {db.close()}
 })
+
+
+it('v112 upgrades a real v110 database without changing old work or topic data',()=>{
+  const db=migratedTo(110)
+  try{
+    db.query("INSERT INTO matters(id,kind,title,owner_chat_id,created_at,updated_at) VALUES('12345678','task','旧事','owner',1,2)").run()
+    db.query("INSERT INTO matter_sessions VALUES('12345678','codex','old-session','main',1)").run()
+    const before=db.query('SELECT * FROM matters').all(),sessions=db.query('SELECT * FROM matter_sessions').all()
+    runMigrations(db,migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({user_version:112})
+    expect(db.query('SELECT * FROM matters').all()).toEqual(before)
+    expect(db.query('SELECT * FROM matter_sessions').all()).toEqual(sessions)
+    expect(db.query('SELECT * FROM matter_notes').all()).toEqual([])
+    expect(db.query('SELECT * FROM matter_agents').all()).toEqual([])
+    migrations[111]!(db)
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+  }finally{db.close()}
+})

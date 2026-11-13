@@ -15,13 +15,13 @@ import { join } from 'node:path'
 export const mcpServerCmd = defineCommand({
   meta: {
     name: 'mcp-server',
-    description: 'Internal — run a stdio MCP server entrypoint (wechat | delegate). Spawned by the daemon when running from the compiled binary.',
+    description: 'Internal — run a stdio MCP server entrypoint (wechat | delegate | matter). Spawned by the daemon when running from the compiled binary.',
   },
   args: {
     name: {
       type: 'positional',
       required: true,
-      description: 'Server name (wechat | delegate)',
+      description: 'Server name (wechat | delegate | matter)',
       valueHint: 'name',
     },
   },
@@ -30,8 +30,10 @@ export const mcpServerCmd = defineCommand({
       await import('../../mcp-servers/wechat/main')
     } else if (args.name === 'delegate') {
       await import('../../mcp-servers/delegate/main')
+    } else if (args.name === 'matter') {
+      await import('../../mcp-servers/matter/main')
     } else {
-      console.error(`mcp-server: unknown name "${args.name}" (expected wechat | delegate)`)
+      console.error(`mcp-server: unknown name "${args.name}" (expected wechat | delegate | matter)`)
       process.exit(2)
     }
   },

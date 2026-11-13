@@ -297,6 +297,19 @@ export default function Matter() {
             <Icon name="chevronRight" color={c.inkSoft} />
           </Pressable>
         )) : null}
+        {(d.agentRuns?.length??0)>1 ? <View testID="progress-agents" style={{ gap: space.m }}>
+          <Txt role="meta" tone="inkSoft">{t(lang,'progress.agents')}</Txt>
+          {(d.agentRuns??[]).filter(a=>a.matterId===id).map(a=><View key={a.runId} style={{ flexDirection:'row',gap:space.m,alignItems:'flex-start' }}>
+            <Txt role="meta" tone="inkSoft">{d.matter.agentNames?.[a.executor]??a.executor}</Txt>
+            <View style={{ flex:1,gap:space.xs }}><Txt role="bubble" content="user">{a.brief}</Txt><Txt role="meta" tone="inkSoft">{t(lang,`progress.agent.${a.status}`)}</Txt></View>
+          </View>)}
+        </View> : null}
+        {(d.agentRuns?.length??0)>1 && d.notes?.length ? <DetailSection key={`ledger:${id}`} testID="progress-ledger" title={t(lang,'progress.records')}>
+          {d.notes.filter(n=>n.matterId===id).map(n=><View key={n.id} style={{ gap:space.xs }}>
+            <Txt role="meta" tone="inkSoft">{n.author==='cc'?'CC':n.author==='owner'?t(lang,'chat.me'):d.matter.agentNames?.[n.author]??n.author}</Txt>
+            <Txt role="body" content="user" selectable>{n.text}</Txt>
+          </View>)}
+        </DetailSection> : null}
         <View testID="progress-latest-conversation" style={{ gap: space.l }}>
           {recent.filter(e => e.kind === 'me' || e.kind === 'cc').map((e, i) => <ConversationMessage key={i} event={e} />)}
         </View>

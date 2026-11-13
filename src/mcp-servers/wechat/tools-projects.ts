@@ -106,3 +106,15 @@ export function registerProjectsActivityTool(server:McpServer,client:InternalApi
     catch(err){return passthroughErrorResult(err,'projects_activity')}
   })
 }
+
+/** Scheduling remains in the owner's current conversation. */
+export function registerMatterHandoffTool(server:McpServer,client:InternalApiClient):void {
+  server.registerTool('matter_handoff',{
+    title:'Hand this matter to another executor',
+    description:'【主人当前对话】主人说“让 Claude 接着做…”时，在同一件事和工作区接下一棒。matter是这件事编号，executor是执行者id，brief是下一棒要求。只有上一棒停稳才接；新执行者只收到记录本，不收到前一位的原始对话。不安排自动接力或并行。',
+    inputSchema:{matter:z.string().regex(/^[a-f0-9]{8}$/),executor:z.string().min(1),brief:z.string().trim().min(1).max(20_000)},
+  },async args=>{
+    try{return {content:[{type:'text',text:JSON.stringify(await client.request('POST','/v1/matter/relay',args))}]}}
+    catch(err){return passthroughErrorResult(err,'matter_handoff')}
+  })
+}

@@ -1,3 +1,6 @@
+import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js'
+import {registerMatterTools} from '../../mcp-servers/matter/tools'
+import {createInternalApiClient} from '../../mcp-servers/wechat/client'
 import { taskEnvironment } from '../../adapters/executors/task-environment'
 import { makeWorkbenchPermissionPrompt } from './permission-prompt'
 import {createClaudeHistoryReader} from '../../adapters/executors/claude/native-claude-history'
@@ -38,12 +41,21 @@ import { homedir } from 'node:os'
 import { createAcpWorkbenchProvider } from '../../adapters/executors/acp/acp-workbench-provider'
 import { acpAgentProblem, resolveAcpAgent, resolveCustomAcpAgent } from '../../adapters/executors/acp/agents'
 import { findOnPath } from '../../lib/util'
+import {matterStdioMcpSpec} from '../../daemon/bootstrap/mcp-specs'
+import type {McpStdioSpec} from '../../adapters/executors/mcp-stdio-spec'
+import type {MatterMcpFactory} from '../../adapters/executors/matter-mcp'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
-export async function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}, taskId?: string, preparationSignal?: AbortSignal): Promise<Options> {
+export async function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}, taskId?: string, preparationSignal?: AbortSignal,matter?:McpStdioSpec|null): Promise<Options> {
   const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
   const taskEnv = taskId ? await taskEnvironment(base.cwd!, taskId,{signal:preparationSignal}) : {}
   const {NODE_OPTIONS: _preload, PATH: _taskPath, CC_TASK_SYSTEM_BOOT_MS: _boot, ...scratchEnv} = taskEnv
+  let notebook:import('@anthropic-ai/claude-agent-sdk').McpSdkServerConfigWithInstance|undefined
+  if(matter?.env?.WECHAT_SESSION_TOKEN){
+    const instance=new McpServer({name:'wechat-cc-matter',version:'0.1.0'})
+    registerMatterTools(instance,createInternalApiClient({baseUrl:matter.env.WECHAT_INTERNAL_API!,tokenFilePath:'',sessionToken:matter.env.WECHAT_SESSION_TOKEN}))
+    notebook={type:'sdk',name:'wechat-cc-matter',instance}
+  }
   return {
     cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
     executable:base.executable, executableArgs:base.executableArgs,
@@ -53,11 +65,12 @@ export async function workbenchClaudeOptions(base: Options, instructions: string
     allowedTools:[],
     disallowedTools:[...(tier.disallowedTools ?? []),'mcp__wechat__*','mcp__delegate__*'],
     tools:{type:'preset',preset:'claude_code'},
-    mcpServers:native.servers,
+    mcpServers:{...native.servers,...(notebook?{'wechat-cc-matter':notebook}:{})},
     strictMcpConfig:true,
     settingSources:['project','local'],
     settings:{
       ...native.nativeMcpPolicy,
+      ...(notebook&&native.nativeMcpPolicy?.allowedMcpServers?{allowedMcpServers:[...native.nativeMcpPolicy.allowedMcpServers,{serverName:'wechat-cc-matter'}]}:{}),
       // Flag settings override disk env values. Empty values neutralize these
       // automatic companion pointers; this is not filesystem/process isolation.
       env:{...Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),...scratchEnv},
@@ -96,13 +109,13 @@ export function registerUnattendedExecutors(target: ProviderRegistry, source: Pi
  * displayName/canResume 沿用 boot 的登记项。解析不到 ⇒ 不登记、不退回免审,记一行日志。
  */
 export function registerAcpExecutors(target: ProviderRegistry, source: Pick<ProviderRegistry, 'get'>, config: { cursorAgentBin?: string },
-  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void; platform?: NodeJS.Platform } = {}): string[] {
+  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void; platform?: NodeJS.Platform; matterMcp?:MatterMcpFactory } = {}): string[] {
   const entry = source.get('cursor')
   if (!entry) return []
   if (!acpSupportedOn(deps.platform)) { deps.log?.('WORKBENCH', 'cursor: ACP 执行者暂不支持 Windows(进程树清理没验证)— 不注册'); return [] }
   const launch = resolveAcpAgent('cursor', config, deps.findOnPath ?? findOnPath)
   if (!launch) { deps.log?.('WORKBENCH', 'cursor: cursor-agent binary not resolvable — ACP executor not registered'); return [] }
-  const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName, log: deps.log, targetProvider: 'cursor' })
+  const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName, log: deps.log, targetProvider: 'cursor',matterMcp:deps.matterMcp })
   target.register('cursor', provider, { ...entry.opts, workbench: ACP_CAPABILITIES })
   return ['cursor']
 }
@@ -113,7 +126,7 @@ export function registerAcpExecutors(target: ProviderRegistry, source: Pick<Prov
  * 不合格 / 命令找不到 / id 已被占 ⇒ 跳过并记一行,不影响别的。
  */
 export function registerCustomAcpExecutors(target: ProviderRegistry, agents: ReadonlyArray<{ id: string; name: string; command: string; args?: string[]; auth_method?: string }> | undefined,
-  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void; platform?: NodeJS.Platform } = {}): string[] {
+  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void; platform?: NodeJS.Platform; matterMcp?:MatterMcpFactory } = {}): string[] {
   const registered: string[] = []
   if ((agents?.length ?? 0) > 0 && !acpSupportedOn(deps.platform)) { deps.log?.('WORKBENCH', `自定义 ACP 执行者(${agents!.map(a => a.id).join('、')})暂不支持 Windows(进程树清理没验证)— 都不注册`); return registered }
   for (const agent of agents ?? []) {
@@ -122,7 +135,7 @@ export function registerCustomAcpExecutors(target: ProviderRegistry, agents: Rea
     if (target.has(agent.id)) { deps.log?.('WORKBENCH', `acp agent ${agent.id} skipped: id already registered`); continue }
     const launch = resolveCustomAcpAgent({ id: agent.id, name: agent.name, command: agent.command, args: agent.args ?? [] }, deps.findOnPath ?? findOnPath)
     if (!launch) { deps.log?.('WORKBENCH', `acp agent ${agent.id}: command ${agent.command} not found — not registered`); continue }
-    const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.name, log: deps.log, authErrorCode: 'acp_agent_auth_required', ...(agent.auth_method ? { authMethod: agent.auth_method } : {}) })
+    const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.name, log: deps.log, authErrorCode: 'acp_agent_auth_required',matterMcp:deps.matterMcp, ...(agent.auth_method ? { authMethod: agent.auth_method } : {}) })
     target.register(agent.id, provider, { displayName: launch.name, canResume: () => true, workbench: ACP_CAPABILITIES })
     registered.push(agent.id)
   }
@@ -142,7 +155,7 @@ export function makeUnattendedAckStore(stateDir: string): { get(): number | null
 }
 
 export function wireWorkbench(opts: {
-  db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'>
+  db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'> & Partial<Pick<InternalApi,'port'>>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   permissionRegistry?: Pick<import('../../ports/wechat').WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'>
   askUser: import('../../ports/wechat').WechatPermissions['askUser']; log: PermissionRelayDeps['log']
@@ -184,6 +197,12 @@ export function wireWorkbench(opts: {
 
   const ownerChatId=() => resolveAdminChatId(loadAccess(),loadCompanionConfig(opts.stateDir),null)
   const registry=createProviderRegistry(opts.networkGate?{networkGate:opts.networkGate}:undefined)
+  const matterMcp:MatterMcpFactory=context=>{
+    const token=context.mcpEnv?.WECHAT_SESSION_TOKEN,port=opts.internalApi.port?.()
+    if(!context.matterLedger||!token||!port)return null
+    const spec=matterStdioMcpSpec({baseUrl:`http://127.0.0.1:${port}`})
+    return {...spec,env:{...spec.env,WECHAT_SESSION_TOKEN:token}}
+  }
   const agentConfig=loadAgentConfig(opts.stateDir)
   // 工作台跟着对话侧的登记走(3c 第 1 步,2026-10-22):开机时已登记的先建,之后登记的(探测失败后重探成功、
   // CLI 升级后 reprobe)由 onRegister 补上 —— 以前只在这里抄一次,晚到的执行者要等重启才进「一起做」。
@@ -198,8 +217,10 @@ export function wireWorkbench(opts: {
           const native=readNativeClaudeTools(path)
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)
-          const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers))
-          return await workbenchClaudeOptions(base,instructions ?? '',permit,native,context?.workbenchTaskId,context?.preparationSignal)
+          const matter=matterMcp({mcpEnv:env,matterLedger:context?.matterLedger})
+          context?.reportMatterTools?.(!!matter)
+          const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers),!!matter)
+          return await workbenchClaudeOptions(base,instructions ?? '',permit,native,context?.workbenchTaskId,context?.preparationSignal,matter)
         },
       }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
     },
@@ -214,14 +235,15 @@ export function wireWorkbench(opts: {
       registry.register('codex',createWorkbenchCodexProvider({
         codexPathOverride:current,
         model:modelForProvider(loadAgentConfig(opts.stateDir),'codex'),
+        matterMcp,
         // The adapter discovers native tools, excludes companion services, and
         // routes admitted tool calls through this task's approval requests.
       }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
       nativeHistory.codex=createCodexHistoryReader({codexPathOverride:current})
     },
     // 同一种会话(B2),用途是工作台:只有文件工具 —— 和 Claude / Codex 的工作台一样不给 wechat MCP。
-    openai:()=>{ if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,loadAgentConfig(opts.stateDir),process.env,opts.log) },
-    cursor:()=>{ registerAcpExecutors(registry,opts.boot.registry,loadAgentConfig(opts.stateDir),{log:opts.log}) },
+    openai:()=>{ if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,loadAgentConfig(opts.stateDir),process.env,opts.log,matterMcp) },
+    cursor:()=>{ registerAcpExecutors(registry,opts.boot.registry,loadAgentConfig(opts.stateDir),{log:opts.log,matterMcp}) },
     agy:()=>{ registerUnattendedExecutors(registry,opts.boot.registry) },
   }
   const follow=(id:string)=>{
@@ -230,7 +252,7 @@ export function wireWorkbench(opts: {
     try{build()}catch(err){opts.log('WORKBENCH',`${id}: 接不上工作台 — ${err instanceof Error?err.message:String(err)}`)}
   }
   for(const id of ['claude','codex','openai','cursor'])follow(id)
-  registerCustomAcpExecutors(registry,agentConfig.acp_agents,{log:opts.log})
+  registerCustomAcpExecutors(registry,agentConfig.acp_agents,{log:opts.log,matterMcp})
   follow('agy')
   opts.boot.registry.onRegister(id=>{ follow(id); if(registry.has(id))opts.log('WORKBENCH',`${id}: 晚到的执行者已进工作台`) })
   const store=makeWorkbenchStore(opts.db,{matters:opts.matters})
@@ -293,9 +315,8 @@ export function wireWorkbench(opts: {
     ...(opts.onTurnCompleted?{onTurnCompleted:opts.onTurnCompleted}:{}),
     ...(opts.topics?{topicBrief:opts.topics.brief,onTaskTurnCompleted:opts.topics.turnCompleted}:{}),
     ...(opts.providerRefusal?{refusal:opts.providerRefusal}:{}),
-    // Empty allowlist is deliberate: office tasks never send messages or read
-    // personal memory through the daemon, even if a CLI discovers old config.
-    mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set()}),
+    // Task credentials reach only their bound notebook, never messaging or personal memory.
+    mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set(['GET /v1/matter/notes','POST /v1/matter/note'])}),
     revokeSessionToken:key => opts.internalApi.invalidateSession(key),
     unattendedAck:makeUnattendedAckStore(opts.stateDir),
     // 空闲自动收工的两档时长:用闭包读(同 ownerChatId),主人改了 agent-config.json 立刻生效;

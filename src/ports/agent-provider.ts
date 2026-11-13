@@ -290,6 +290,10 @@ export interface SpawnContext {
    * `mcpEnv`. Absent in tests/embeddings that don't wire the thunk — providers
    * then fall back to whatever prompt their construction opts carried (or none).
    */
+  /** Set only after an accepted matter_handoff. */
+  matterLedger?: boolean
+  /** Providers report actual notebook tool availability before returning from spawn. */
+  reportMatterTools?: (available:boolean)=>void
   appendInstructions?: string
   /**
    * The pinned model id for this spawn, read per-spawn by the daemon

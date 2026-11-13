@@ -144,6 +144,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     ], 'reportTitle')
     // 主人和 CC 的那条对话:也是一件 chat matter(daemon 的 /m/api/matters 也会列它),内容走 chat()。
     add(mkDetail({ ...mkMatter(CHAT_ID, 'chat', t(lastLang, 'chatTitle'), 'open', null, n - HOUR), ownerChatId: 'demo-owner' }, null), 'replied', [], 'chatTitle')
+    const portfolio=map.get(IDS.portfolio)!.detail
+    portfolio.agentRuns=[
+      {matterId:IDS.portfolio,runId:'demo-assets',executor:'codex',brief:lastLang==='zh-Hans'?'整理页面素材':'Prepare page assets',position:1,status:'completed',createdAt:n-600_000,endedAt:n-300_000},
+      {matterId:IDS.portfolio,runId:RUN_IDS[IDS.portfolio]!,executor:'claude',brief:lastLang==='zh-Hans'?'把素材接进页面':'Use the assets on the page',position:2,status:'running',createdAt:n-300_000,endedAt:null},
+    ]
+    portfolio.notes=[{id:1,matterId:IDS.portfolio,runId:'demo-assets',author:'codex',kind:'note',text:lastLang==='zh-Hans'?'素材在 assets/portfolio/，沿用浅色版。':'Assets are in assets/portfolio/. Use the light version.',createdAt:n-300_000},
+      {id:2,matterId:IDS.portfolio,runId:'demo-assets',author:'codex',kind:'artifact',text:'2 files · assets/portfolio/hero.webp · demo123 · ~/Projects/portfolio',createdAt:n-300_000}]
     return { map, ids }
   }
   function seedChat() {

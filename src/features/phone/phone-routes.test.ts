@@ -20,6 +20,8 @@ describe('phoneRouteAllowed', () => {
   it('链接令牌与设备令牌同一套(裁决 1),但终端会话的「接着说」「拍板」(评审 10-15 #3)与「CC 的信」(2026-10-18,私事;连同能读出信页的 chat/file)只给配好的设备;只允局域网的三条', () => {
     // chat/file:信的每一页也镜像进对话,链接令牌不能从这里读出信(评审 10-19 #1)
     const deviceOnly = [
+      // 配对手机就是主人：设备令牌可以读记录本，链接令牌不能。
+      'GET /v1/matter/notes',
       // T4:私密话题只给配对设备。
       'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics',
       'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/matter/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'POST /m/api/matter/handoff', 'POST /m/api/session/continue', 'POST /m/api/matter/worktree', 'POST /m/api/chat/say', 'POST /m/api/push/register', 'POST /m/api/push/test',
@@ -119,4 +121,10 @@ describe('链接令牌白名单(审计续,10-20):读也要显式归类,缺省只
     // /set 链接打开的那一版网页(配对前)要读的这几条必须留着
     for (const r of ['GET /m', 'GET /m/api/home', 'GET /m/api/matters', 'GET /m/api/matter', 'GET /v1/phone/art/presence']) expect(LINK_ROUTES.has(r), r).toBe(true)
   })
+})
+
+
+it('paired phones are the owner: device tokens may read notebooks while link tokens may not',()=>{
+  expect(PHONE_ROUTES.has('GET /v1/matter/notes')).toBe(true)
+  expect(LINK_ROUTES.has('GET /v1/matter/notes')).toBe(false)
 })

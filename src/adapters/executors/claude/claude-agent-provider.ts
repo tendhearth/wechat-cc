@@ -6,6 +6,7 @@ import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from 
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from '../../workbench/permissions'
 import { validateUserInputAnswers, validateUserInputRequest } from '../../workbench/user-input'
 import { isCompanionMcp, nativeMcpInputPreview } from './claude-native-config'
+import { isMatterMcpTool } from '../matter-mcp'
 import { log } from '../../../lib/log'
 import { AsyncQueue } from '../../../lib/async-queue'
 import { isAuthFail } from '../../../domain/auth-fail'
@@ -83,8 +84,12 @@ export function makeWorkbenchClaudeCanUseTool(
   requestUserInput: SpawnContext['requestUserInput'] | undefined,
   admittedMcpServers: readonly string[],
   registeredMcpServers: readonly string[] | null,
+  matterTools=false,
 ): CanUseTool {
   return async (toolName, input, options) => {
+    if(matterTools&&isMatterMcpTool(toolName))return options.signal.aborted
+      ? {behavior:'deny',message:'This task tool call was cancelled.'}
+      : {behavior:'allow',updatedInput:input}
     if (registeredMcpServers !== null && toolName.startsWith('mcp__') && !registeredMcpServers.some(name => toolName.startsWith(`mcp__${name}__`))) {
       const auth = authorize(WORKBENCH_SUBJECT, { name: toolName, kind: WORKBENCH_MCP_KIND, mcp: 'unregistered' })
       if (auth.verdict === 'deny') return { behavior:'deny', message:'This tool is not registered for the task.' } satisfies PermissionResult

@@ -22,6 +22,10 @@ export type MatterState='open'|'working'|'waiting'|'done'|'failed'|'cancelled'
 export type MatterLifecycle='archived'|'done'|'open'
 export type MatterSurface='wechat'|'desktop'|'phone'|'cli'
 export type MatterSessionRole='main'|'review'|'handoff'
+export interface MatterAgent {matterId:string;runId:string;executor:string;brief:string;position:number;status:'queued'|'running'|'completed'|'failed'|'cancelled'|'interrupted';createdAt:number;endedAt:number|null}
+export interface MatterNotesQuery {runId?:string;before?:number;limit?:number}
+export interface MatterNotesPage {notes:MatterNote[];notesTotal:number;matchedTotal:number;nextBefore:number|null;truncated:boolean;retentionNotice?:string}
+export interface MatterNote {id:number;matterId:string;runId:string|null;author:string;kind:'plan'|'note'|'artifact';text:string;createdAt:number}
 /**
  * 一件事从哪个表面来的(v77,2026-10-19):创建时写一次,此后永不更新(库里有触发器拦着)。
  * 与 MatterSurface(在哪露过面,matter_bindings)不是一回事:app = 原生手机 App(中继 v2 密封帧),

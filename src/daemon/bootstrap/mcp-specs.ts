@@ -52,10 +52,15 @@ export interface McpSpecDeps {
 // no MCP protocol bytes on stdio, no `mcp__wechat__*` tools registered,
 // every turn fell into FALLBACK_REPLY, and reply chunks never went through
 // the proper outbound recording path. Fixed in v0.5.5.
-function mcpServerArgs(name: 'wechat' | 'delegate'): string[] {
+function mcpServerArgs(name: 'wechat' | 'delegate' | 'matter'): string[] {
   if (isCompiledBundle()) return ['mcp-server', name]
   const here = dirname(fileURLToPath(import.meta.url))
   return [join(here, '..', '..', 'mcp-servers', name, 'main.ts')]
+}
+
+/** A task-only child: no shared credential file and no companion tool families. */
+export function matterStdioMcpSpec(internalApi:Pick<McpSpecDeps,'baseUrl'>):McpStdioSpec {
+  return {command:process.execPath,args:mcpServerArgs('matter'),env:{WECHAT_INTERNAL_API:internalApi.baseUrl}}
 }
 
 export function wechatStdioMcpSpec(

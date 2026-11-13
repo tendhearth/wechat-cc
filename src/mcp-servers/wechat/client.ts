@@ -21,6 +21,8 @@ export interface InternalApiClientOptions {
   baseUrl: string
   /** Path to the token file (mode 0600, written by daemon). */
   tokenFilePath: string
+  /** In-process task MCP: secret stays in the parent closure, never argv or child env. */
+  sessionToken?: string
   /** Test injection: replace global fetch. Production omits this. */
   fetchImpl?: typeof fetch
   /** Optional logging hook (writes to stderr — stdout is the MCP transport). */
@@ -54,7 +56,7 @@ export function createInternalApiClient(opts: InternalApiClientOptions): Interna
     // the route layer treats as `trusted`) for paths without a session token.
     // The 401-rotation retry re-runs this — a session token doesn't rotate, so
     // env keeps winning; only the file token might change on disk.
-    const fromEnv = process.env.WECHAT_SESSION_TOKEN
+    const fromEnv = opts.sessionToken ?? process.env.WECHAT_SESSION_TOKEN
     if (fromEnv && fromEnv.trim()) {
       cachedToken = fromEnv.trim()
       return cachedToken

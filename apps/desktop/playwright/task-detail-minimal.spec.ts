@@ -222,3 +222,21 @@ for(const result of ['deliverable','none'])test(`cold restored answered task wit
  await expect(page.locator('#wb-followup-text')).toHaveValue('恢复后保留的补充草稿')
  await page.evaluate(()=>(window as any).qa.stop())
 })
+
+
+test('two executor batons and their notebook render in the existing detail',async({page},testInfo)=>{
+ await page.setViewportSize({width:900,height:700})
+ const extra=`details.A.agentRuns=[{matterId:'A',runId:'first',executor:'codex',brief:'出插图',position:1,status:'completed'},{matterId:'A',runId:'second',executor:'claude',brief:'接进登录页',position:2,status:'running'}];details.A.notes=[{id:1,matterId:'A',author:'codex',text:'深色图在 assets/login-dark.webp'},{id:2,matterId:'A',author:'codex',text:'提交 abc123 · /synthetic/project'}];`
+ await page.route('http://127.0.0.1:4211/**',async route=>{
+  const path=new URL(route.request().url()).pathname
+  if(path==='/'){await route.fulfill({contentType:'text/html',body:fixture.replace('const controller=initWorkbenchPage',extra+'\nconst controller=initWorkbenchPage')});return}
+  try{await route.fulfill({body:await readFile(source+path),contentType:/\.m?js$/.test(path)?'text/javascript':path.endsWith('.css')?'text/css':'application/octet-stream'})}catch{await route.fulfill({status:404,body:'missing fixture asset'})}
+ })
+ await page.goto('http://127.0.0.1:4211')
+ await expect(page.locator('.wb-ledger [data-agent-position]')).toHaveCount(2)
+ await expect(page.locator('.wb-ledger')).toContainText('这一轮做完了')
+ await expect(page.locator('.wb-ledger')).toContainText('在做')
+ await expect(page.locator('#wb-ledger-notes')).toContainText('assets/login-dark.webp')
+ await page.screenshot({path:testInfo.outputPath('two-batons-notebook.png')})
+ await page.evaluate(()=>(window as any).qa.stop())
+})

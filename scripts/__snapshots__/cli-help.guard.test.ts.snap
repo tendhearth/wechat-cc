@@ -1394,13 +1394,13 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > mcp-server --help 1`] = `
-"Internal — run a stdio MCP server entrypoint (wechat | delegate). Spawned by the daemon when running from the compiled binary. (wechat-cc mcp-server v1.8.0 (dev))
+"Internal — run a stdio MCP server entrypoint (wechat | delegate | matter). Spawned by the daemon when running from the compiled binary. (wechat-cc mcp-server v1.8.0 (dev))
 
 USAGE wechat-cc mcp-server [OPTIONS] <NAME>
 
 ARGUMENTS
 
-  NAME=<name>    Server name (wechat | delegate) (Required)
+  NAME=<name>    Server name (wechat | delegate | matter) (Required)
 
 
 "

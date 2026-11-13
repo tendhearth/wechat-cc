@@ -1,4 +1,5 @@
 // @ts-check
+import {renderWorkbenchLedger} from './workbench-ledger.js'
 
 import {workbenchRuntimePresentation} from './workbench-runtime.js'
 import { HOME_GROUP_WORDS, ROW_HINT_WORDS, STATUS_WORDS, TASK_DETAIL_WORDS } from '../generated/status-table.js'
@@ -102,7 +103,7 @@ function providerLabel(p) {
 /** @typedef {import('../../../../src/adapters/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/adapters/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/features/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{agentNames?:Record<string,string>,quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
+/** @typedef {{agentRuns?:Array<{matterId:string,executor:string,brief:string,position:number,status:'queued'|'running'|'completed'|'failed'|'cancelled'|'interrupted'}>,notes?:Array<{matterId:string,author:string,text:string}>,agentNames?:Record<string,string>,quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],agentNames?:Record<string,string>,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
@@ -458,6 +459,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     ${rewindBlocked}
     ${related}
     ${requestHtml}
+    ${renderWorkbenchLedger(detail,providerNameOf(state))}
     ${currentActivity}
     ${promoteArtifacts ? artifactHtml : ''}
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>

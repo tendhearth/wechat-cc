@@ -1,4 +1,5 @@
 /** Permission bodies are intentionally available only inside the original decision surface. */
+import {makeMatterLedger} from '../src/adapters/store/matter-ledger'
 import { expect,it } from 'vitest'
 import { openTestDb } from '../src/lib/db'
 import { makeThreadsStore } from '../src/lib/threads-store'
@@ -26,6 +27,7 @@ it.each(['terminal','task'] as const)('%s approval body cannot propagate through
    log.startTurn({matterId,executor:'codex'})
    log.writeItem({matterId,kind:'permission',status:'started',payload:{tool:'apply_patch',description:secret,diff:secret,output:secret}})
   }
+  if(kind==='task'){const ledger=makeMatterLedger(db);ledger.start(matterId,'metadata-run','codex','metadata plan');ledger.note(matterId,'metadata-run','codex','LEDGER_METADATA_PRIVATE_CANARY')}
   const activity=await projectActivities(db,'owner',undefined,async()=>({key:path+'/.git',roots:[path],names:['metadata-guard']}),kind==='task'?()=>({phase:'working',requestId:'p',requestKind:'permission',tool:'apply_patch',waitingFor:secret}):undefined)
   const session=activity.get(id)!.sessions.find(s=>s.id===matterId)!
   expect(session.latestStep).toBe(kind==='terminal'?'等你批准 · Bash':'等你批准 · apply_patch')
@@ -33,7 +35,7 @@ it.each(['terminal','task'] as const)('%s approval body cannot propagate through
   expect(recall).not.toBeNull()
   const cross=await readProjectsActivity({db,owner:'owner',identify:async()=>({key:path+'/.git',roots:[path],names:['metadata-guard']})},{})
   expect(cross.projects).toHaveLength(1)
-  for(const marker of ['FAKE_TOKEN_FOR_GUARD','ordinary-secret','private-password','private-old','private-new','PRIVATE_OUTPUT']){
+  for(const marker of ['LEDGER_METADATA_PRIVATE_CANARY','FAKE_TOKEN_FOR_GUARD','ordinary-secret','private-password','private-old','private-new','PRIVATE_OUTPUT']){
    expect(JSON.stringify(activity.get(id))).not.toContain(marker)
    expect(recall!.block).not.toContain(marker)
    expect(JSON.stringify(cross)).not.toContain(marker)

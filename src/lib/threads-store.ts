@@ -53,7 +53,7 @@ export interface TopicEntry {
   updatedTs: string
 }
 
-export type CreateEntryInput = Pick<TopicEntry, 'threadId' | 'kind' | 'line'> & Partial<Pick<TopicEntry, 'body' | 'due' | 'source' | 'matterId'>> & { ts?: string; derivedFrom?: readonly string[] }
+export type CreateEntryInput = Pick<TopicEntry, 'threadId' | 'kind' | 'line'> & Partial<Pick<TopicEntry, 'body' | 'due' | 'source' | 'matterId'>> & { ts?: string; derivedFrom?: readonly string[]; workCursor?:number }
 export type UpdateEntryInput = Partial<Pick<TopicEntry, 'line' | 'body' | 'due' | 'status' | 'supersededBy'>> & { ts?: string }
 
 /** 抽取到哪了(v104 的两列新水位)。 */
@@ -299,14 +299,28 @@ export function makeThreadsStore(db: Db, opts?: { filterSources?: boolean; allow
   }
 
   function insertEntry(input: CreateEntryInput): string {
-    const id = newEntryId()
-    const ts = input.ts ?? new Date().toISOString()
-    // 身份号 / 尾号 / 密钥位置 / 令牌写进去之前就去掉(lib/redact-identifiers)
-    stmtEntryInsert.run(id, input.threadId, input.kind, oneLine(redactIdentifiers(input.line), LINE_MAX), redactIdentifiers((input.body ?? '').trim()).slice(0, BODY_MAX),
-      input.kind === 'commitment' ? input.due ?? null : null, input.source ?? 'chat', input.matterId ?? null, ts, ts)
-    for(const source of input.derivedFrom ?? [])db.query('INSERT INTO topic_entry_sources(entry_id,source_id) VALUES(?,?)').run(id,source)
-    changed(id)
-    changed(input.threadId)
+    const ledger= input.source==='work'&&input.matterId&&input.workCursor!==undefined&&db.query('SELECT 1 FROM matter_agents WHERE matter_id=? AND position=2 LIMIT 1').get(input.matterId)
+    const ts=input.ts??new Date().toISOString()
+    const prior=ledger?db.query<{id:string},[string,string]>("SELECT id FROM topic_entries WHERE thread_id=? AND matter_id=? AND source='work' AND status='live' ORDER BY created_ts,id LIMIT 1").get(input.threadId,input.matterId!):null
+    if(ledger){
+      const owner=entryOwner(input.threadId)
+      if(!topicMatterAccess(db,localTopicContext(owner),[input.matterId!]).entryAllowed.has(input.matterId!))throw Error('topic work source changed')
+      const cursor=db.query<{c:number},[string,string]>('SELECT written_back_cursor AS c FROM matter_topics WHERE matter_id=? AND thread_id=?').get(input.matterId!,input.threadId)?.c??-1
+      if(input.workCursor!<=cursor)return prior?.id??''
+    }
+    const id=newEntryId()
+    const line=oneLine(redactIdentifiers(input.line),LINE_MAX),body=redactIdentifiers((input.body??'').trim()).slice(0,BODY_MAX)
+    stmtEntryInsert.run(id,input.threadId,ledger?'conclusion':input.kind,line,body,input.kind==='commitment'?input.due??null:null,input.source??'chat',input.matterId??null,ts,ts)
+    if(ledger){
+      const previous=db.query<{id:string},[string,string,string]>("SELECT id FROM topic_entries WHERE thread_id=? AND matter_id=? AND source='work' AND status='live' AND id<>?").all(input.threadId,input.matterId!,id)
+      for(const old of previous){
+        db.query("UPDATE topic_entries SET status='superseded',superseded_by=?,updated_ts=? WHERE id=?").run(id,ts,old.id)
+        for(const source of db.query<{source_id:string},[string]>('SELECT source_id FROM topic_entry_sources WHERE entry_id=?').all(old.id))db.query('INSERT OR IGNORE INTO topic_entry_sources(entry_id,source_id) VALUES(?,?)').run(id,source.source_id)
+      }
+    }
+    for(const source of input.derivedFrom??[])if(source!==id)db.query('INSERT OR IGNORE INTO topic_entry_sources(entry_id,source_id) VALUES(?,?)').run(id,source)
+    if(ledger)db.query('INSERT INTO matter_topics(matter_id,thread_id,attached_ts,written_back_cursor) VALUES(?,?,?,?) ON CONFLICT(matter_id,thread_id) DO UPDATE SET written_back_cursor=MAX(written_back_cursor,excluded.written_back_cursor)').run(input.matterId!,input.threadId,ts,input.workCursor!)
+    changed(id);changed(input.threadId)
     return id
   }
 

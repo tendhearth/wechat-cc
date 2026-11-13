@@ -134,6 +134,16 @@ appId: com.tendhearth.app
     visible:
       id: progress-status
     timeout: 10000
+- assertVisible:
+    id: progress-agents
+- scrollUntilVisible:
+    element:
+      id: progress-ledger
+    direction: DOWN
+- tapOn:
+    id: progress-ledger
+- assertVisible: ".*assets/portfolio/.*"
+- takeScreenshot: p-ledger-two-batons
 - waitForAnimationToEnd
 - takeScreenshot: p10-matter
 - tapOn:

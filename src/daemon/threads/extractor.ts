@@ -139,7 +139,7 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
       continue
     }
     const activeTs = lastTs ?? work[work.length - 1]?.at ?? new Date().toISOString()
-    const r = await applyOps(deps, parsed.ops, activeTs, new Set(work.map(w => w.matterId)), contextAllowed, shownIds, topicSources, hasWorkContext)
+    const r = await applyOps(deps, parsed.ops, activeTs, new Set(work.map(w => w.matterId)), contextAllowed, shownIds, topicSources, hasWorkContext,new Map(work.map(w=>[w.matterId,w.cursor])))
     applied += r.applied; skipped += r.skipped + parsed.dropped
     if (r.contextChanged) {
       deps.log('THREADS', `extract context changed while applying for ${deps.chatId}; watermark held`)
@@ -154,7 +154,7 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
   return { applied, skipped, rounds }
 }
 
-async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string, workMatters: Set<string>, contextAllowed: () => boolean, shownIds: ReadonlySet<string>, topicSources: ReadonlyMap<string, readonly string[]>, hasWorkContext: boolean): Promise<{ applied: number; skipped: number; contextChanged: boolean }> {
+async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string, workMatters: Set<string>, contextAllowed: () => boolean, shownIds: ReadonlySet<string>, topicSources: ReadonlyMap<string, readonly string[]>, hasWorkContext: boolean, workCursors:ReadonlyMap<string,number>): Promise<{ applied: number; skipped: number; contextChanged: boolean }> {
   let applied = 0, skipped = 0, contextChanged = false
   const known = new Set((await deps.threads.list(deps.chatId)).map(t => t.id))
   /** 结论条目:指回的那件事必须是这一批交给它的;编的编号不认。 */
@@ -182,7 +182,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       }
       const validEntries = op.entries.filter(e => entryAllowed(e.matter) && !isRoutineTopicEntry(e))
       skipped += op.entries.length - validEntries.length
-      const id = deps.threads.createExtractedTopic(input, validEntries.map(e => ({ kind:e.kind, line:e.line, body:e.body, due:e.due, source:sourceOf(e.matter), matterId:matterOf(e.matter), derivedFrom:sourcesOf(e)! })), canPersist)
+      const id = deps.threads.createExtractedTopic(input, validEntries.map(e => ({ kind:e.kind, line:e.line, body:e.body, due:e.due, source:sourceOf(e.matter), matterId:matterOf(e.matter),workCursor:e.matter?workCursors.get(e.matter):undefined, derivedFrom:sourcesOf(e)! })), canPersist)
       if (!id) { skipped++; continue }
       known.add(id)
       applied++
@@ -202,7 +202,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       const sources = sourcesOf(op, op.topic)
       if (sources === null || !known.has(op.topic) || !entryAllowed(op.matter)) { skipped++; continue }
       if (isRoutineTopicEntry({ line: op.line ?? '', body: op.body })) { skipped++; continue }
-      await deps.threads.addEntry({ threadId: op.topic, kind: op.kind, line: op.line, ...(op.body ? { body: op.body } : {}), ...(op.due ? { due: op.due } : {}), source: sourceOf(op.matter), matterId: matterOf(op.matter), derivedFrom:sources })
+      await deps.threads.addEntry({ threadId: op.topic, kind: op.kind, line: op.line, ...(op.body ? { body: op.body } : {}), ...(op.due ? { due: op.due } : {}), source: sourceOf(op.matter), matterId: matterOf(op.matter),workCursor:op.matter?workCursors.get(op.matter):undefined, derivedFrom:sources })
       const t = await deps.threads.get(op.topic)
       if (t && canPersist() && activeTs > t.lastActive) await deps.threads.update(op.topic, { lastActive: activeTs })
       applied++

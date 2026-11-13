@@ -8,6 +8,8 @@
  * 水位 = matter_items.cursor(全局单调)。只看 cursor > 水位的条目;一段的「要求」可能在水位之前(那句话上一拍已经读到、
  * 那时还没做完),所以每件被碰到的 matter 都从头切段,只交出结论 cursor > 水位的那几段。
  */
+import {ledgerText,LEDGER_DATA_HEAD,LEDGER_DATA_END} from '../../adapters/store/matter-ledger'
+import type {MatterNote} from '../../ports/matters'
 import type { Db } from '../../lib/db'
 import { isScratchMatter, topicMatterAccess, type TopicSourceContext } from '../../lib/topic-provenance'
 import { isRoutineTopicText } from '../../domain/topic-noise'
@@ -29,6 +31,8 @@ export interface WorkResult {
   ask: string | null
   /** 最后那条 agent 回话。 */
   result: string
+  /** Relay title summary, separate from the fenced untrusted body. */
+  summary?: string
   /** 结论那条的时刻(ISO)。 */
   at: string
   /** 结论那条的 cursor。 */
@@ -82,11 +86,36 @@ function segments(db: Db, matterId: string, upTo: number): Segment[] {
   return segs
 }
 
-function toResult(id: string, m: MatterRow, s: Segment): WorkResult {
+function hasLedger(db:Db,id:string):boolean {return !!db.query('SELECT 1 FROM matter_agents WHERE matter_id=? AND position=2 LIMIT 1').get(id)}
+function ledgerResult(db:Db,id:string):Pick<WorkResult,'result'|'summary'> {
+  const rows=db.query<MatterNote,[string]>("SELECT run_id AS runId,author,kind,text FROM matter_notes WHERE matter_id=? AND kind IN ('note','artifact') ORDER BY id").all(id)
+  const runs=[...new Set(rows.map(r=>r.runId))].slice(-3)
+  const budget=Math.floor((RESULT_MAX-LEDGER_DATA_HEAD.length-LEDGER_DATA_END.length-runs.length)/Math.max(1,runs.length))
+  const workspace=db.query<{path:string},[string]>('SELECT path FROM workbench_tasks WHERE id=?').get(id)?.path??db.query<{path:string|null},[string]>('SELECT project_path AS path FROM matters WHERE id=?').get(id)?.path
+  const memoryText=(text:string)=>{
+    let value=ledgerText(text).replace(/\s+工作区 [\s\S]*$/,'')
+    if(workspace)value=value.split(workspace.replace(/[\\/]$/,'')+'/').join('').split(workspace+'\\').join('').split(workspace).join('项目')
+    // Explicit executor notes/fallback may also quote absolute output paths outside the project.
+    return value.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s<>`"，、；。]+|(?<![A-Za-z0-9_\/])(?:[A-Za-z]:[\\/]|\/)[^\s<>`"，、；。]+/gi,path=>/^[a-z][a-z0-9+.-]*:\/\//i.test(path)&&!/^file:/i.test(path)?path:path.replace(/\\/g,'/').split('/').filter(Boolean).at(-1)??'')
+  }
+  const safe=(value:unknown)=>JSON.stringify(value).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')
+  const lines=runs.map(run=>{
+    const own=rows.filter(r=>r.runId===run),note=own.filter(r=>r.kind==='note').at(-1),artifact=own.filter(r=>r.kind==='artifact').at(-1)
+    const base={author:`执行者 ${ledgerText((note??artifact)!.author)}`,note:'',artifact:''}
+    let room=Math.max(0,budget-safe(base).length)
+    const n=note?memoryText(note.text):'',a=artifact?memoryText(artifact.text):''
+    let value={...base,note:cap(n,Math.floor(room/3)),artifact:cap(a,Math.floor(room*2/3))}
+    while(safe(value).length>budget&&room>0){room--;value={...base,note:cap(n,Math.floor(room/3)),artifact:cap(a,Math.floor(room*2/3))}}
+    return safe(value)
+  })
+  const last=rows.filter(r=>r.runId===runs.at(-1)).filter(r=>r.kind==='note').at(-1)
+  return {result:LEDGER_DATA_HEAD+lines.join('\n')+LEDGER_DATA_END,summary:last?memoryText(last.text):'产出已记录'}
+}
+function toResult(db:Db,id: string, m: MatterRow, s: Segment): WorkResult {
   return {
     matterId: id, kind: m.kind, title: m.title,
     project: m.project_path ? m.project_path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? null : null,
-    state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, result: cap(s.last!.text, RESULT_MAX),
+    state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, ...(hasLedger(db,id)?ledgerResult(db,id):{result:cap(s.last!.text,RESULT_MAX)}),
     at: new Date(s.last!.at).toISOString(), cursor: s.last!.cursor,
   }
 }
@@ -97,7 +126,7 @@ export function readMatterConclusion(db: Db, matterId: string, afterCursor: numb
   if (!m || !eligible(m) || !topicMatterAccess(db, context, [matterId]).entryAllowed.has(matterId)) return null
   const segs = segments(db, matterId, Number.MAX_SAFE_INTEGER).filter(s => s.last && s.last.cursor > afterCursor)
   const s = segs[segs.length - 1]
-  return s && !isRoutineTopicText(s.last!.text) ? toResult(matterId, m, s) : null
+  return s && !isRoutineTopicText(s.last!.text) ? toResult(db,matterId, m, s) : null
 }
 
 /**
@@ -122,13 +151,15 @@ export function readWorkResults(db: Db, afterCursor: number, context: TopicSourc
     // T3 已经写回过话题的那几段不再交(不重复记)
     const writtenBack = db.query<{ c: number | null }, [string]>('SELECT MAX(written_back_cursor) AS c FROM matter_topics WHERE matter_id = ?').get(id)?.c ?? 0
     const matterDone = DONE_STATES.has(m.state)
-    for (const s of segments(db, id, scanTop)) {
+    const allSegments=segments(db,id,scanTop)
+    const selected=hasLedger(db,id)?allSegments.filter(s=>s.last).slice(-1):allSegments
+    for (const s of selected) {
       if (!s.last || s.last.cursor <= afterCursor) continue
       if (isRoutineTopicText(s.last.text)) continue
       const settled = s.closed || matterDone || now - s.last.at >= SETTLE_MS
       if (!settled) { holdAt = Math.min(holdAt, s.firstCursor); continue }
       if (s.last.cursor <= writtenBack) continue
-      results.push(toResult(id, m, s))
+      results.push(toResult(db,id, m, s))
     }
   }
   results.sort((a, b) => a.cursor - b.cursor)

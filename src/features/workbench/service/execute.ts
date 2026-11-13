@@ -1,3 +1,5 @@
+import {ledgerBrief} from '../../../adapters/store/matter-ledger'
+import {finishLedger} from './ledger-completion'
 import { trackPreparation } from './state'
 /**
  * execute 域:一条 run 的完整生命周期(派发 → 事件流 → 结算 → 终态),以及创建入口 create / continueTask / createWechat。
@@ -221,11 +223,14 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       running.credentialsMinted=!!ctx.deps.mintSessionToken
       if (running.cancelled) revokeCredentials(running)
       store.update(task.id,running.cancelled ? 'cancelling' : 'running');
+      store.ledger.running(running.ledgerRunId??running.identity)
       if (running.cancelled) { finalStatus='cancelled'; return }
       const preparationAbort=new AbortController()
       void running.stop.then(()=>preparationAbort.abort())
+      let matterToolsAvailable=false
       running.spawnAttempted=true
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
+        reportMatterTools:available=>{matterToolsAvailable=available},
         workbenchTimeline:true,
         workbenchLifecycle:true,
         execution:{...running.execution},
@@ -242,7 +247,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         },
         preparationSignal:AbortSignal.any([state.preparationAbort.signal,preparationAbort.signal]),
         workbenchTaskId:task.id,tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
-        ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
+        ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,...(store.ledger.enabled(task.id)?{matterLedger:true}:{}),
         // 结束在这里补一次评估:请求**自己超时**(权限 5 分钟)那一下既没有事件、也不走
         // resolvePermission —— 会话早就静下来的话,没有人会回来起空闲收工的计时(终审 I4)。
         requestPermission:(request,signal) => {
@@ -289,8 +294,12 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       // 回退之后的第一轮:前置一句告知(评审 8);送达(第一条事件)才 markNoticed,派发失败下次还带
       const rewound=domains.rewind?.notice(task.id)??null
       const body=rewound?`${rewound.text}\n\n${text}`:text
-      const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${body}` : body
-      let rewoundNoticed=false
+      const pendingLedger=!!running.ledgerRunId&&store.ledger.needsInjection(running.ledgerRunId)
+      const records=pendingLedger?ledgerBrief(store.ledger.notes(task.id)):''
+      const opening=matterToolsAvailable?records:records.replace('；可用 matter_notes 查询完整记录','')
+      const currentRequest=opening?`${opening}\n\n本轮要求：\n${body}`:body
+      const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n${opening?`${opening}\n\n`:''}本轮要求：\n${body}` : currentRequest
+      let rewoundNoticed=false,ledgerNoticed=false
       const runtime=running.session.workbenchRuntime
       const stream=runtime?.events??running.session.dispatch(request,material)
       let flushErrorNoted=false
@@ -324,6 +333,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 又动起来了(自己被后台通知唤醒也算):不再安静就不再计时。文件夹本来就是它的,
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
+          store.ledger.running(running.ledgerRunId??running.identity)
           cancelIdleClose(running)
           // 自己醒来这条路唯一能推进 turnSeq 的地方(评审修复轮 1)——没有比这更早的信号
           // 了,所以是尽力而为:一段自动续作连着抖好几次 quiet↔busy 时,这里会跟着抖好几
@@ -342,9 +352,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         summary=await collectWorkbenchTurn(stream,running.stop,ctx.deps.timeoutMs ?? 10*60_000,
           ev => {
             if (running.cancelled) return
+            if(pendingLedger&&!ledgerNoticed&&['text','tool_call','result'].includes(ev.kind)){store.ledger.injected(running.ledgerRunId!);ledgerNoticed=true}
             if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');ctx.hub.bumped(task.id)}
             if(rewound&&!rewoundNoticed&&['text','tool_call','result'].includes(ev.kind)){rewoundNoticed=true;domains.rewind?.markNoticed(task.id,rewound.ids)}
-            if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
+            if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,running.ledgerOpening?'handoff':'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
             // Open the stored turn before its first row is persisted. For result,
             // flush pending text first, while that same turn is still open.
             if (ev.kind !== 'result') noteTurn(running,ev)
@@ -390,7 +401,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         finalStatus='failed'; finalError=error
         const coded=error!==raw&&!!summary.error
         if(!modelRejected&&!networkRefused)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':coded?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
-      } else { finalStatus='completed'; quota.clear(task.providerId); try{ctx.deps.onTurnCompleted?.(task.providerId)}catch{/* 只是个提示 */}; try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 写回话题失败不影响收尾 */} }
+      } else { finalStatus='completed'; quota.clear(task.providerId); try{ctx.deps.onTurnCompleted?.(task.providerId)}catch{/* 只是个提示 */};if(!store.ledger.enabled(task.id))try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 写回话题失败不影响收尾 */} }
     } catch (error) {
       const thrown=isNetworkUnprotectedError(error)?'network_unprotected':error instanceof CodexExecutionError?error.code:error instanceof Error?error.message:'task_failed'
       const message=thrown==='network_unprotected'||error instanceof CodexExecutionError?thrown:taskErrorForProviderCode(providerErrorCodeOf(error),thrown)??thrown
@@ -455,6 +466,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
           // 这件事的轮记不上(比如这件事的行没了)不能挡任务自己的终态 —— 外层 catch 会把写者一直锁着。
           try{store.execution.endRun(task.id,running.identity,status,finalError)}catch{/* 只少一轮的结局 */}
+          finishLedger(ctx,running,status)
           store.update(task.id,status,finalError)
           stageFinishedNotice(running,status,finalError,willReport)
         })
@@ -468,7 +480,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 说成「已答复」,跟 stageFinishedNotice 给 failed/额度耗尽的既有文案("这一轮
         // 需要处理"/问"交给 X 继续?")直接打架。失败/取消不经这里回报,不代表主人收不
         // 到通知——stageFinishedNotice 走的是另一条既有的完成通知路径,不受这里影响。
-        if (status==='completed') reportOnce(running,body)
+        if (status==='completed') {
+          reportOnce(running,body)
+          if(store.ledger.enabled(task.id))try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 话题写回不影响收尾 */}
+        }
         // 回忆(task-5,fix round 3,评审必判①):这是唯一的触发点(round 2
         // 还有 settleQuiet 那一处,这一轮去掉了——见 settleQuiet 里的注
         // 释)。这里的 turnSeq 是这个 run 真实的总轮数,"一件事一段记述"与
@@ -507,7 +522,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
 
 
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string};ledgerOpening?:boolean},attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     assertNotRewindBlocked(store.rewinds,task.id)
     if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
@@ -525,6 +540,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let firstTurn=null as string|null
     const handoffPeer=store.atomic(()=>{
       firstTurn=store.execution.accept(task.id,runId,execution)
+      if(acceptance?.ledgerOpening)store.ledger.start(task.id,runId,task.providerId,text)
       const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?continuationAttachmentScope(task.id,attachments):acceptance?.scope)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
@@ -582,7 +598,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       launch:runText=>execute(task,runText,running),
       execution,
       attachments:dispatchAttachments,
-      interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
+      ledgerOpening:acceptance?.ledgerOpening??false,ledgerRunId:store.ledger.agents(task.id).at(-1)?.runId,interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,spawnAttempted:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
       ...(firstTurn?{turn:{id:firstTurn,open:true}}:{}),
     }
