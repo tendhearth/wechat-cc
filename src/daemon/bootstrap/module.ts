@@ -59,14 +59,22 @@ export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
       return {
         makeContextRotation: parts => wireContextRotation({
           ...parts, db, stateDir, log,
+          active: key => {
+            const mode=parts.getMode(key.chatId),alias=parts.resolve(key.chatId)?.alias
+            return !!parts.registry.get(key.providerId)&&alias===key.alias&&(mode?.kind==='solo'?mode.provider===key.providerId:mode?.kind==='primary_tool'?mode.primary===key.providerId:false)
+          },
+          recordOverflow: (key,model,inputTokens) => {
+            const actual=parts.effectiveTarget(key,model)
+            makeCheckupStore(stateDir,{log}).recordContextOverflow({provider:key.providerId,address:actual.baseUrl??'default',model,windowTokens:32000,windowKnown:false},inputTokens)
+          },
           budgetFor: (provider, model, key) => {
             const entry=parts.registry.get(provider)
             const current=providerCallTarget(entry?.provider,provider,'session',{model})
             const actual=key?parts.effectiveTarget(key,model):current
             const resolved=model!=='default'?model:actual.model??current.model??model
             const configured=loadAgentConfig(stateDir).modelContextWindows?.find(w=>w.provider===provider&&w.model===resolved&&checkupAddress(w.address)===checkupAddress(actual.baseUrl??'default'))
-            const measured=actual.baseUrl===current.baseUrl?entry?.provider.contextWindowTokens?.(resolved)??configured?.windowTokens:undefined
-            return makeCheckupStore(stateDir).contextBudgetFor({provider,address:actual.baseUrl??'default',model:resolved,windowTokens:measured??32000,windowKnown:measured!==undefined},resolved)
+            const measured=(actual.baseUrl===current.baseUrl?entry?.provider.contextWindowTokens?.(resolved):undefined)??configured?.windowTokens
+            return makeCheckupStore(stateDir,{log}).rotationBudgetFor({provider,address:actual.baseUrl??'default',model:resolved,windowTokens:measured??32000,windowKnown:measured!==undefined},resolved,entry?.provider.fallbackContextWindowTokens)
           },
           pending: chatId => wxPerm.listPendingPermissions().some(p => p.chatId === chatId),
         }),

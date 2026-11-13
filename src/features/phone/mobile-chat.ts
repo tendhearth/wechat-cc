@@ -155,7 +155,7 @@ const sourceOf = (s: string): 'wechat' | 'desktop' | 'phone' => (s === 'desktop'
 const message = (r: MessageRecord, inboxDir?:string) => ({
   id: r.id, role: r.direction === 'in' ? 'me' as const : 'cc' as const, kind: r.kind,
   text: r.text.length > CHAT_TEXT_MAX ? r.text.slice(0, CHAT_TEXT_MAX) : r.text, truncated: r.text.length > CHAT_TEXT_MAX,
-  at: Date.parse(r.ts), source: sourceOf(r.source),
+  at: Date.parse(r.ts), source: sourceOf(r.id.startsWith('app:companion:')&&r.source.startsWith('speech:')?'phone':r.source),
   ...(r.direction === 'out' ? phoneExtrasFields(r.extras) : incomingUploadAttachments(r,inboxDir).length ? {attachments:incomingUploadAttachments(r,inboxDir).map(({name})=>({kind:'file' as const,name}))} : {}),
 })
 

@@ -136,6 +136,8 @@ export interface AgentSession {
    * 冷启动近况块据它决定加不加:续上了就不必再贴一遍最近的对话(B2,2026-10-25:OpenAI 兼容对话开始能续接)。
    */
   resumedHistory?: boolean
+  /** New native continuity evidence is consumed only by owner rotation; legacy consumers keep dev behavior. */
+  resumedHistoryOwnerOnly?: boolean
   /** Optional owned lifetime capability; legacy dispatch remains unchanged. */
   workbenchRuntime?: AgentWorkbenchRuntime
   /** Native acknowledgement of supplemental input to the current turn only. */
@@ -449,6 +451,10 @@ export interface ProviderCapabilities {
 }
 
 export interface AgentProvider {
+  /** Native storage is absent or reclaimed on close for ephemeral sessions. */
+  supportsEphemeralSessions?: boolean
+  /** Conservative owner-rotation baseline when no request has reported a window. Not a checkup observation. */
+  fallbackContextWindowTokens?: number
   /** Synchronous, previously observed model capacity; must not call a model. */
   contextWindowTokens?(model:string):number|undefined
   /** Optional bounded metadata lookup, only when explicitly preparing an estimate. */

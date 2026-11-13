@@ -10,7 +10,7 @@ import type { TickDeps } from './tick-deps'
 
 it('companion ticks use short isolated sessions while owner history and outgoing delivery stay intact',async()=>{
   const db=openTestDb(),registry=createProviderRegistry(),history=new Map<string,string[]>(),notes:string[]=[],sent:string[]=[],closed:string[]=[],models:(string|undefined)[]=[]
-  registry.register('claude',{spawn:async (project,ctx)=>{models.push(ctx.model);return ({async *dispatch(text){const rows=history.get(project.alias)??[];rows.push(text);history.set(project.alias,rows);yield {kind:'text',text:'陪伴的完整正文\n'.repeat(40)};yield {kind:'result',sessionId:project.alias,numTurns:1,durationMs:1}},close:async()=>{closed.push(project.alias)}})}},{displayName:'Claude',canResume:()=>true})
+  registry.register('claude',{supportsEphemeralSessions:true,spawn:async (project,ctx)=>{models.push(ctx.model);return ({async *dispatch(text){const rows=history.get(project.alias)??[];rows.push(text);history.set(project.alias,rows);yield {kind:'text',text:'陪伴的完整正文\n'.repeat(40)};yield {kind:'result',sessionId:project.alias,numTurns:1,durationMs:1}},close:async()=>{closed.push(project.alias)}})}},{displayName:'Claude',canResume:()=>true})
   const manager=new SessionManager({registry,maxConcurrent:6,idleEvictMs:60_000})
   const owner=await manager.acquire({alias:'_default',path:'/tmp',providerId:'claude',chatId:'owner',tierProfile:TIER_PROFILES.admin,permissionMode:'strict'})
   for await(const _ of owner.dispatch('主人原文')){/* drain */}
@@ -32,14 +32,22 @@ it('companion ticks use short isolated sessions while owner history and outgoing
 
 for(const chatId of ['visitor','group@chatroom','owner'])it(`owner continuity: ${chatId} keeps its session lifecycle when preparing a tick`,async()=>{
  const db=openTestDb(),registry=createProviderRegistry(),inputs:{alias:string;text:string;ephemeral:boolean}[]=[]
- let claims=0,spawns=0
- registry.register('claude',{spawn:async(p,ctx)=>{spawns++;return {async *dispatch(text){inputs.push({alias:p.alias,text,ephemeral:ctx.ephemeral??false});yield {kind:'text',text:'说给你听'};yield {kind:'result',sessionId:'s',numTurns:1,durationMs:0}},close:async()=>{}}}},{displayName:'Claude',canResume:()=>true})
+ let claims=0,spawns=0;const observedModels:(string|undefined)[]=[]
+ registry.register('claude',{supportsEphemeralSessions:true,spawn:async(p,ctx)=>{spawns++;observedModels.push(ctx.model);return {async *dispatch(text){inputs.push({alias:p.alias,text,ephemeral:ctx.ephemeral??false});yield {kind:'text',text:'说给你听'};yield {kind:'result',sessionId:'s',numTurns:1,durationMs:0}},close:async()=>{}}}},{displayName:'Claude',canResume:()=>true})
  const manager=new SessionManager({registry,maxConcurrent:6,idleEvictMs:60000})
  const outbound=makeProactiveOutbound({wechatDegraded:()=>false,wechatClosedSince:()=>null,sendWechat:async()=>({msgId:'m'}),app:()=>null,log:()=>{}})
- const tick=makeTickDispatch({db,stateDir:'/tmp/no-real-state',projects:{load:()=>({projects:{},current:null})},boot:{sessionManager:manager,defaultProviderId:'claude',coordinator:{getMode:()=>({kind:'solo',provider:'claude'}),runExclusive:async(_c:string,fn:()=>Promise<void>)=>fn()},contextRotation:{isOwnerChat:(c:string)=>c==='owner',continuation:async()=>{throw Error('offline context read')},noteCompanion:()=>{}}},loadAccess:()=>({dmPolicy:'allowlist',allowFrom:[],admins:['owner',chatId]}),permissionMode:'strict',speech:{},replyDelivery:makeReplyDeliveryRuntime({sendText:async()=>({msgId:'m'}),sleep:async()=>{},log:()=>{}}),log:()=>{}} as unknown as TickDeps)
+ const tick=makeTickDispatch({db,stateDir:'/tmp/no-real-state',projects:{load:()=>({projects:{},current:null})},boot:{sessionManager:manager,defaultProviderId:'claude',coordinator:{getMode:()=>({kind:'solo',provider:'claude',model:'nonowner-pin'}),runExclusive:async(_c:string,fn:()=>Promise<void>)=>fn()},contextRotation:{isOwnerChat:(c:string)=>c==='owner',continuation:async()=>{throw Error('offline context read')},noteCompanion:()=>{}}},loadAccess:()=>({dmPolicy:'allowlist',allowFrom:[],admins:['owner',chatId]}),permissionMode:'strict',speech:{},replyDelivery:makeReplyDeliveryRuntime({sendText:async()=>({msgId:'m'}),sleep:async()=>{},log:()=>{}}),log:()=>{}} as unknown as TickDeps)
  try{
   const work=tick.dispatchToChat(chatId,{claim:()=>{claims++},buildText:()=> '定时提示',outbound:outbound.open(chatId)})
   if(chatId==='owner'){await expect(work).rejects.toThrow('offline context read');expect(spawns).toBe(0);expect(claims).toBe(0);expect(manager.list()).toHaveLength(0)}
-  else {await work;expect(inputs).toEqual([{alias:'_default',text:'定时提示',ephemeral:false}]);expect(manager.list()).toHaveLength(1);expect(claims).toBe(1)}
+  else {await work;expect(inputs).toEqual([{alias:'_default',text:'定时提示',ephemeral:false}]);expect(manager.list()).toHaveLength(1);expect(claims).toBe(1);expect(observedModels).toEqual([undefined])}
  }finally{await manager.shutdown();db.close()}
+})
+
+for(const providerId of ['cursor','custom-acp','gemini','agy'])it(`${providerId} owner scheduled actions reuse ordinary sessions when ephemeral storage is unsupported`,async()=>{
+ const db=openTestDb(),registry=createProviderRegistry(),inputs:{alias:string;ephemeral:boolean;model?:string}[]=[];let spawns=0
+ registry.register(providerId,{spawn:async(p,c)=>{spawns++;return {async *dispatch(){inputs.push({alias:p.alias,ephemeral:c.ephemeral??false,model:c.model});yield {kind:'text',text:'提醒正文'};yield {kind:'result',sessionId:'same-native',numTurns:1,durationMs:0}},close:async()=>{}}}},{displayName:providerId,canResume:()=>true})
+ const manager=new SessionManager({registry,maxConcurrent:6,idleEvictMs:60000}),outbound=makeProactiveOutbound({wechatDegraded:()=>false,wechatClosedSince:()=>null,sendWechat:async()=>({msgId:'m'}),app:()=>null,log:()=>{}})
+ const tick=makeTickDispatch({db,stateDir:'/tmp/no-real-state',projects:{load:()=>({projects:{},current:null})},boot:{sessionManager:manager,defaultProviderId:providerId,coordinator:{getMode:()=>({kind:'solo',provider:providerId,model:'owner-pin'}),runExclusive:async(_c:string,fn:()=>Promise<void>)=>fn()},contextRotation:{isOwnerChat:()=>true,continuation:async()=>({block:'最近主人原文',carried:1}),noteCompanion:()=>{}}},loadAccess:()=>({dmPolicy:'allowlist',allowFrom:[],admins:['owner']}),permissionMode:'strict',speech:{},replyDelivery:makeReplyDeliveryRuntime({sendText:async()=>({msgId:'m'}),sleep:async()=>{},log:()=>{}}),log:()=>{}} as unknown as TickDeps)
+ try{for(let i=0;i<2;i++)await tick.dispatchToChat('owner',{claim:()=>{},buildText:()=> '定时提示',outbound:outbound.open('owner')});expect(spawns).toBe(1);expect(inputs).toEqual(Array.from({length:2},()=>({alias:'_default',ephemeral:false,model:'owner-pin'})));expect(manager.list()).toHaveLength(1)}finally{await manager.shutdown();db.close()}
 })

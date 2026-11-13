@@ -111,3 +111,14 @@ it('owner continuity: native missing request usage is unknown through SessionMan
   expect(await rotation.beforeTurn(key,'m',manager)).toBeNull()
  }finally{await manager.shutdown()}
 })
+
+for(const mode of ['parallel','chatroom'])it(`nightly leaves ${mode} native handles and resume pointers intact after solo metadata retires`,async()=>{
+ const db=openTestDb(),registry=createProviderRegistry(),store=makeSessionStore(db),key={chatId:'owner',alias:'p',providerId:'claude'}
+ let current='solo',closed=0
+ registry.register('claude',{spawn:async()=>({contextUsage:()=>({tokens:80000,firstInputTokens:1000}),async *dispatch(){yield {kind:'result',sessionId:'native-stays',numTurns:1,durationMs:0}},close:async()=>{closed++}})},{displayName:'Claude',canResume:()=>true})
+ const rotation=new ContextRotation({owner:()=> 'owner',active:()=>current==='solo',load:()=>({sessions:{},chats:{}}),save:()=>{},budgetFor:()=>({windowTokens:200000,reliableFillRatio:.6}),pending:()=>false,recent:async()=>[],ongoing:async()=>[],latestTs:async()=> '2026-11-13T00:00:00Z',accounted:async()=>true,extract:async()=>true,defer:()=>{},log:()=>{}})
+ const manager=new SessionManager({registry,sessionStore:store,contextRotation:rotation,maxConcurrent:6,idleEvictMs:60000})
+ try{await rotation.beforeTurn(key,'m',manager);const h=await manager.acquire({...key,path:'/tmp/offline',tierProfile:TIER_PROFILES.admin,permissionMode:'strict'});for await(const _ of h.dispatch('聊过的原文')){/* drain */}rotation.observe(key,{tokens:80000,turns:8});current=mode;rotation.nightly('owner',true);await rotation.rotateIdle('owner',manager)
+ expect(manager.has(key)).toBe(true);expect(closed).toBe(0);expect(store.get({alias:'p',provider:'claude',chatId:'owner'})?.session_id).toBe('native-stays');expect(rotation.status()).toEqual([])
+ }finally{await manager.shutdown();db.close()}
+})

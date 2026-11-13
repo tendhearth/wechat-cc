@@ -153,6 +153,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
         await session?.close().catch(() => {})
       }
     },
+    supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // read-only does not disable native read/shell tools or inherited project instructions.
       // Until the app-server verifies a fake-tools-only surface, do not bill an unsafe checkup.
@@ -193,7 +194,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       let closed = false
 
       return {
-        resumedHistory,
+        resumedHistory, resumedHistoryOwnerOnly:true,
         callTarget: () => core.callTarget?.() ?? targetOf(model ?? null, project.path, config),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           return {

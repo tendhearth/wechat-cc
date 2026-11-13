@@ -110,3 +110,28 @@ it('owner continuity: previous chat tools carry names and honest result status w
  const carry=await s.rotation.continuation(key)
  expect(carry.block).toContain('工具 Read');expect(carry.block).toContain('结果未记录');expect(carry.block).not.toContain('UNRELATED_TOOL')
 })
+
+it('queued inbound A keeps delivered proactive originals through speech, canonical wiring and coordinator; B consumes after A',async()=>{
+ const {makeAppChannel}=await import('../companion/app-channel'),{makeProactiveOutbound}=await import('../companion/proactive-channel'),{makeSpeechPolicy}=await import('../speech/policy')
+ const {ownerChatReadingEvent}=await import('../wiring/owner-chat-reading')
+ const {SessionManager}=await import('../../app/session-manager'),{createConversationCoordinator}=await import('../../app/conversation-coordinator'),{makeReplyDeliveryRuntime}=await import('../reply-delivery')
+ const store=makeMessagesStore(db),registry=createProviderRegistry(),inputs:string[]=[]
+ registry.register('claude',{spawn:async()=>({resumedHistory:true,async *dispatch(text){inputs.push(text);yield {kind:'text',text:'接着聊'};yield {kind:'result',sessionId:'native',numTurns:1,durationMs:0}},close:async()=>{}})},{displayName:'Claude',canResume:()=>true})
+ const rotation=wireContextRotation({db,stateDir:dir,registry,owner:()=> 'owner',getMode:()=>({kind:'solo',provider:'claude'}),defer:()=>{},log:()=>{}})
+ await rotation.beforeTurn(key,'m',sessions)
+ await row('prior','上一次主人发言','2026-11-12T19:00:00.000Z')
+ const ch=makeAppChannel({ownerChatId:()=> 'owner',pushDevices:()=>['offline-device'],onlineDevices:()=>new Set(),relayOnline:()=>true,append:r=>store.append(r),touched:()=>{},push:()=>({sent:1,online:0}),now:()=>Date.parse('2026-11-12T20:00:00Z'),log:()=>{}})
+ const outbound=makeProactiveOutbound({wechatDegraded:()=>true,wechatClosedSince:()=>null,sendWechat:async()=>{throw Error('must stay offline')},app:()=>ch,log:()=>{}})
+ const speech=makeSpeechPolicy({isOwnerChat:c=>c==='owner',care:()=> 'low',quietEndsAt:()=>null,outbound,log:()=>{}})
+ await speech.say({kind:'companion',chatId:'owner'},async t=>{await t.sendText('owner','我刚才建议去河边散步，然后在桥边喝茶。')})
+ const proactive=(await store.listRange('owner',{limit:10})).find(r=>r.direction==='out')!
+ expect(proactive.source).toBe('speech:companion')
+ expect(ownerChatReadingEvent(proactive).source).toBe('phone')
+ await row('owner:1000','你刚才说的那个','2026-11-12T21:00:00.000Z');await row('owner:2000','第二个排队问题','2026-11-12T21:00:01.000Z')
+ const manager=new SessionManager({registry,contextRotation:rotation,maxConcurrent:6,idleEvictMs:60000})
+ const c=createConversationCoordinator({resolveProject:()=>({alias:'proj',path:'/tmp/offline'}),manager,registry,contextRotation:rotation,conversationStore:{get:()=>null,set:()=>{},setParticipants:()=>{}},defaultProviderId:'claude',permissionMode:'strict',format:m=>m.text,loadAccess:()=>({dmPolicy:'allowlist',allowFrom:[],admins:['owner']}),replyDelivery:makeReplyDeliveryRuntime({sendText:async()=>({msgId:'m'}),sleep:async()=>{},log:()=>{}}),log:()=>{}})
+ try{for(const [text,at] of [['你刚才说的那个',1000],['第二个排队问题',2000]] as const)await c.dispatch({accountId:'offline',chatId:'owner',userId:'owner',text,msgType:'text',createTimeMs:at})
+ expect(inputs[0]).toContain('我刚才建议去河边散步，然后在桥边喝茶。');expect(inputs[0]).toContain('2026-11-12T20:00:00');expect(inputs[0]).not.toContain('第二个排队问题')
+ expect(inputs[1]).not.toContain('我刚才建议去河边散步')
+ }finally{await manager.shutdown()}
+})

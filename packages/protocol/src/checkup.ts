@@ -69,6 +69,7 @@ export interface ContextBudget {
   reliableFillRatio: number
   source: 'measured' | 'default'
   windowSource?: 'measured'|'persisted'|'assumed'
+  budgetError?: string|null
   ratioSource?: 'measured'|'default'
 }
 

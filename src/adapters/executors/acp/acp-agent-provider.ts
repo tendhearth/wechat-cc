@@ -417,7 +417,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       if (options.notice !== null) context.reportNotice?.(options.notice ?? acpNotice(options.displayName))
 
       return {
-        resumedHistory,
+        resumedHistory, resumedHistoryOwnerOnly:true,
         processGroups: () => (child.pid ? [child.pid] : []),
         ...(targetProvider ? { callTarget: () => (currentModel ? { provider: targetProvider, model: currentModel } : null) } : {}),
         dispatch(text, attachments) {

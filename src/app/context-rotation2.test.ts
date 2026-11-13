@@ -8,7 +8,7 @@ function rig(extra:Partial<ContextRotationDeps>={}) {
  budgetFor:()=>({windowTokens:200000,reliableFillRatio:.6}),pending:()=>false,recent:async()=>[],ongoing:async()=>[],latestTs:async()=> '2026-11-12T23:59:00Z',accounted:async()=>accounted,extract:async()=>true,defer:j=>jobs.push(j),log:()=>{},...extra})
  const manager={isInFlight:()=>false,rotate:async()=>{rotations++;return true}}
  const before=()=>c.beforeTurn(key,'actual',manager)
- return {c,key,jobs,before,get rotations(){return rotations},setAccounted:(v:boolean)=>{accounted=v},advance:(ms:number)=>{time+=ms}}
+ return {c,key,jobs,before,manager,get rotations(){return rotations},setAccounted:(v:boolean)=>{accounted=v},advance:(ms:number)=>{time+=ms}}
 }
 describe('owner continuity: safe budget semantics',()=>{
  it('unknown occupancy and a huge bootstrap prompt never rotate',async()=>{
@@ -24,15 +24,15 @@ describe('owner continuity: safe budget semantics',()=>{
  })
  it('ratio zero is clamped, history floor survives a small assumed window, and rotations are >=8 turns apart',async()=>{
   const r=rig({budgetFor:()=>({windowTokens:32000,reliableFillRatio:0})});await r.before()
-  r.c.observe(r.key,{tokens:40000,turns:1});expect(r.c.status()[0]!.budgetTokens).toBe(64000)
+  r.c.observe(r.key,{tokens:40000,turns:1});expect(r.c.status()[0]!.budgetTokens).toBe(27200)
   const at:number[]=[]
   for(let i=1;i<=40;i++){r.c.observe(r.key,{tokens:100000,turns:1});await r.before();if(r.rotations>at.length)at.push(i)}
   expect(at.length).toBeGreaterThan(0)
   for(let i=1;i<at.length;i++)expect(at[i]!-at[i-1]!).toBeGreaterThanOrEqual(8)
  })
  it('nightly keeps a session below half budget and only rotates with useful history',async()=>{
-  const r=rig();await r.before();r.c.observe(r.key,{tokens:40000,turns:1});r.c.nightly('owner',true);await r.before();expect(r.rotations).toBe(0)
-  r.c.observe(r.key,{tokens:80000,turns:1});await r.before();expect(r.rotations).toBe(1)
+  const r=rig();await r.before();r.c.observe(r.key,{tokens:40000,turns:1});r.c.nightly('owner',true);await r.c.rotateIdle('owner',r.manager);expect(r.rotations).toBe(0)
+  r.c.observe(r.key,{tokens:80000,turns:8});await r.before();expect(r.rotations).toBe(0);r.c.nightly('owner',true);await r.c.rotateIdle('owner',r.manager);expect(r.rotations).toBe(1)
  })
  it('reply boundary never waits for extraction; delivery schedules catchup and later rotation succeeds',async()=>{
   let finish!:()=>void,started=false

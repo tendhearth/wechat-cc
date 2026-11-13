@@ -16,7 +16,7 @@ import type { SendAssistantText } from './fallback-reply'
 import type { HealthRuntime } from '../health'
 
 export interface BootstrapDeps {
-  makeContextRotation?: (parts: {registry:ProviderRegistry; getMode(chatId:string):Mode|undefined;holdBusy(label:string):()=>void;effectiveTarget(key:import('../../app/session-manager').InFlightKey,model?:string):import('../../lib/network-gate').CallTarget}) => import('../../app/context-rotation').ContextRotation
+  makeContextRotation?: (parts: {resolve(chatId:string):{alias:string;path:string}|null;registry:ProviderRegistry; getMode(chatId:string):Mode|undefined;holdBusy(label:string):()=>void;effectiveTarget(key:import('../../app/session-manager').InFlightKey,model?:string):import('../../lib/network-gate').CallTarget}) => import('../../app/context-rotation').ContextRotation
 
   stateDir: string
   /**

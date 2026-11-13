@@ -36,6 +36,8 @@ export const PROVIDER_ERROR_CODES = [
   'quota',
   /** 请求本身不合法(上下文太长、模型不可用等)。 */
   'invalid_request',
+  /** 输入超过上下文窗口；主人对话立即换段并仅重试一次。 */
+  'context_overflow',
   /** provider 明确标了这是一次 API 失败,但没说是哪类。 */
   'provider_error',
   /** 账号在当前网络出口所在地区用不了(agy:「not currently available in your location」)。不是登录问题,也不是瞬时。 */
@@ -97,6 +99,7 @@ export function codeForHttpStatus(status: unknown, body?: string): ProviderError
   if (typeof status !== 'number' || !Number.isFinite(status)) return undefined
   if (status === 401 || status === 403) return 'auth_rejected'
   if (status === 400 && typeof body === 'string' && /API_KEY_INVALID|API key not valid|invalid[_ ]api[_ ]key/i.test(body)) return 'auth_rejected'
+  if (isContextOverflow(body)) return 'context_overflow'
   if (status === 402) return 'quota'
   if (status === 429) return 'rate_limited'
   if (status === 408) return 'network'
@@ -110,4 +113,25 @@ export function errorWithProviderCode(message: string, code: string | undefined)
   const err = new Error(message)
   if (isProviderErrorCode(code)) Object.assign(err, { [PROVIDER_ERROR_CODE_PROP]: code })
   return err
+}
+
+/** Only call at an error boundary, never on ordinary assistant prose. Walk known error envelopes only. */
+export function isContextOverflow(error:unknown):boolean {
+  const seen=new Set<object>()
+  const visit=(v:unknown,depth=0):boolean=>{
+    if(depth>6)return false
+    if(typeof v==='string')return /context[_ ](?:length|window)[_ ]exceeded|contextWindowExceeded|ContextWindowExceededError|prompt is too long|maximum context length|exceeds? (?:the )?(?:model.s? )?(?:maximum )?context (?:window|length)|input (?:is )?too long for (?:the )?model/i.test(v)
+    if(!v||typeof v!=='object'||seen.has(v))return false
+    seen.add(v)
+    if(Array.isArray(v))return v.some(x=>visit(x,depth+1))
+    const r=v as Record<string,unknown>
+    return ['providerErrorCode','code','type','name','message','responseBody','error','errors','cause','lastError','data','codexErrorInfo'].some(k=>r[k]==='context_overflow'||visit(r[k],depth+1))
+  }
+  return visit(error)
+}
+/** Vendor rejection text sometimes carries the exact rejected input, even when usage is absent. */
+export function contextOverflowInputTokens(text:string):number|undefined {
+  const match=/(?:prompt is too long[: ]*|requested\s+|messages resulted in\s+)([\d,]+)(?:\s+tokens)?/i.exec(text)
+  const n=match?Number(match[1]!.replaceAll(',','')):NaN
+  return Number.isSafeInteger(n)&&n>0?n:undefined
 }

@@ -2088,7 +2088,7 @@ describe('伙伴推送 × App 第二条路(2026-10-18)', () => {
     await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(s.dispatch).toHaveBeenCalledOnce()
     expect(w.sendWechat).not.toHaveBeenCalled()
-    expect(w.app.record).toHaveBeenCalledWith('chat-1', '前两天说的面试,后来怎么样了?', undefined, {source:'speech:companion'})
+    expect(w.app.record).toHaveBeenCalledWith('chat-1', '前两天说的面试,后来怎么样了?')
     expect(w.app.push).toHaveBeenCalledOnce()
     // App 送达和微信主动发一样进台账:无回复计数 +1(学到的暂停照常生效)
     expect(s.careLedgerEntries['chat-1']).toMatchObject({ noReplyCount: 1 })

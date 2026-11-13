@@ -9,7 +9,7 @@ import { describeProviderDenial, slashFor } from '../../domain/provider-policy'
 import { capabilitiesFor } from '../../domain/capability-matrix'
 import { makeTurnTextCollector, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
 import { TURN_TIMEOUT_CODE, type TurnSummary } from '../../ports/agent-provider'
-import { isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
+import { isContextOverflow, contextOverflowInputTokens, isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
 import type { CoordinatorCtx, ProjectRef } from './ctx'
 import type { TurnPlan } from './plan'
 import type { TurnRunner } from './runner'
@@ -160,14 +160,26 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       // 开轮(附件从此刻起登记到这一轮)。编码型执行者(last_segment)挂上长任务进度(已定 ①:
       // 一轮最多一次,有旁白用最近一段);聊天型模型(all_segments)每段都会交付,不发进度。
       const textStrategy = ctx.textStrategyFor(providerId)
-      const live = makeTurnTextCollector()
-      const d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId, textStrategy })
+      let live = makeTurnTextCollector()
+      let d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId, textStrategy })
       delivery = d
       summary = await runner.run({
         chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn', startedAt, turn,
         observe: (ev) => live.push(ev),
         ...(textStrategy === 'last_segment' ? { progress: () => { void d.progress(live.latestSegment() ?? LONG_TURN_PROGRESS).catch(() => {}) } } : {}),
       })
+      if (rotation && rotateManager && !stopped() && isContextOverflow({code:summary.errorCode,message:summary.error})) {
+        try {
+          const carry=await rotation.recoverOverflow(contextKey,rotateManager,currentInput,contextOverflowInputTokens(summary.error??''))
+          if(carry){
+            d.abandon('context_overflow')
+            handle=await deps.manager.acquire({alias:proj.alias,path:proj.path,providerId,chatId:msg.chatId,tierProfile:auth.tierProfile,permissionMode:auth.permissionMode,...(pinnedModel!==undefined?{model:pinnedModel}:{})})
+            live=makeTurnTextCollector()
+            d=deps.replyDelivery.begin(msg.chatId,{context:'dm',providerId,textStrategy});delivery=d
+            summary=await runner.run({chatId:msg.chatId,alias:proj.alias,providerId,handle,prompt:`${carry.block}\n\n${deps.format(msg)}`,budget:'turn',startedAt,turn,observe:ev=>live.push(ev),...(textStrategy==='last_segment'?{progress:()=>{void d.progress(live.latestSegment()??LONG_TURN_PROGRESS).catch(()=>{})}}:{})})
+          }
+        }catch(err){summary={assistantText:[],replyToolCalled:false,toolCalls:[],error:err instanceof Error?err.message:String(err),...(providerErrorCodeOf(err)?{errorCode:providerErrorCodeOf(err)}:{})}}
+      }
       const settle = (reason: string) => { if (!deliverySettled) { deliverySettled = true; d.abandon(reason) } }
 
       // Per-turn watchdog fired: the SDK stream went silent. Discard the

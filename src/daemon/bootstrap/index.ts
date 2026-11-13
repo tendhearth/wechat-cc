@@ -141,7 +141,7 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
   })
   // 系统提示组装 — ./wire-instructions.ts。社交在不在:每次起会话时现问(social 模块在后面)。
   const buildInstructions = wireInstructions(deps, { plugins: { delegateStdioByProvider: b.delegateStdioByProvider, knowledgePluginNames: b.knowledgePluginNames }, defaultProviderId, knowledge: parts.knowledge, socialWired: parts.socialWired })
-  const contextRotation: import('../../app/context-rotation').ContextRotation | undefined = deps.makeContextRotation?.({registry, getMode:chatId=>b.conversationStore.get(chatId)?.mode, holdBusy:b.busyRegistry.hold, effectiveTarget:(key,model)=>sessionManager.effectiveTarget(key,model)})
+  const contextRotation: import('../../app/context-rotation').ContextRotation | undefined = deps.makeContextRotation?.({resolve:b.resolve,registry, getMode:chatId=>b.conversationStore.get(chatId)?.mode??{kind:'solo',provider:defaultProviderId}, holdBusy:b.busyRegistry.hold, effectiveTarget:(key,model)=>sessionManager.effectiveTarget(key,model)})
   const sessionManager: SessionManager = new SessionManager({
     contextRotation,
     maxConcurrent: 6,

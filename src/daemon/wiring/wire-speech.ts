@@ -6,6 +6,7 @@
  * 主动开口的各条路逐个迁过来,迁一处就把 scripts/speech-send.guard.test.ts 的数字调下来。
  */
 import type { Db } from '../../lib/db'
+import { ownerChatIdOf } from '../owner-chat'
 import { originOf } from '../../domain/speech/kinds'
 import { quietEndsAt } from '../../domain/quiet-hours'
 import type { ChatPrefsStore } from '../chat-prefs'
@@ -41,6 +42,7 @@ export function wireSpeech(d: {
   reservations.recover()
   d.db.query('INSERT OR IGNORE INTO speech_audit_coverage(id,started_at) VALUES(1,?)').run(now())
   return makeSpeechPolicy({
+    isOwnerChat:chatId=>chatId===ownerChatIdOf(d.stateDir),
     proposals: (execute, peek) => makeProposalSubmissions((sources, sourceContext) => makeSpeechPicker({
       sources, reservations, execute, peek, now, log: d.log,
       observed(p, result) {

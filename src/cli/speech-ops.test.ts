@@ -130,3 +130,11 @@ it('does not infer delivery of a multi-page archived letter from a partial page 
   expect(backfillSpeech(db).confirmed).toBe(1)
   expect(db.query("SELECT spoken_at FROM speech_log WHERE ref='letter:multi'").get()).toEqual({ spoken_at: 300 })
 })
+
+it('tagged companion WeChat receipts preserve live-only backfill semantics and exact identities',()=>{
+ const db=setup()
+ for(const id of ['wx1','wx2','app:companion:1:0:out','incoming','wrong','imported'])log(db,id==='wx2'?`message:${id}`:id,'companion')
+ for(const [id,chat,direction,source] of [['wx1','owner','out','speech:companion'],['wx2','owner','out','speech:companion'],['app:companion:1:0:out','owner','out','speech:companion'],['incoming','owner','in','speech:companion'],['wrong','other','out','speech:companion'],['imported','owner','out','backfill:claude']] as const)db.query('INSERT INTO messages(id,chat_id,ts,direction,text,source) VALUES(?,?,?,?,?,?)').run(id,chat,'2026-11-13T00:00:00Z',direction,'',source)
+ expect(backfillSpeech(db)).toEqual({scanned:6,confirmed:2,legacyUnknown:4})
+ expect(backfillSpeech(db)).toEqual({scanned:4,confirmed:0,legacyUnknown:4})
+})

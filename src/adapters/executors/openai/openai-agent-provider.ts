@@ -255,6 +255,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
     // 会话 / 评估都用 makeChatModel(构造时的 base URL);模型:会话钉的 ?? 默认,评估用 evalModel ?? 默认。
     callTarget: (kind, ctx) => callTarget(kind === 'cheapEval' || kind === 'strongEval' ? evalModel() : ctx?.model),
     canResume: (path, sessionId) => opts.sessions !== undefined && opts.connectionHash !== undefined && sessions.canResume(sessionId, path, connection),
+    supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       if (ctx.evaluation) {
         const fake = ctx.evaluation.tools

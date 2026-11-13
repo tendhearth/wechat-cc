@@ -952,3 +952,31 @@ it('owner continuity: an unmeasured first request never makes a later tool reque
   expect(session.contextUsage?.()).toMatchObject({tokens:90000,firstInputTokens:null})
  }finally{await session.close()}
 })
+
+for(const usageKey of ['claude-opus-4-8[1m]','opus'])it(`SDK-shaped result window resolves ${usageKey} to the actual parent model`,async()=>{
+ const result={type:'result',subtype:'success',duration_ms:1,duration_api_ms:1,is_error:false,num_turns:1,result:'在呢',stop_reason:'end_turn',total_cost_usd:0,
+ usage:{cache_creation:{ephemeral_1h_input_tokens:0,ephemeral_5m_input_tokens:0},cache_creation_input_tokens:0,cache_read_input_tokens:0,inference_geo:'not_available',input_tokens:1000,iterations:[],output_tokens:10,server_tool_use:{web_fetch_requests:0,web_search_requests:0},service_tier:'standard',speed:'standard'},
+ modelUsage:{[usageKey]:{inputTokens:1000,outputTokens:10,cacheReadInputTokens:0,cacheCreationInputTokens:0,webSearchRequests:0,costUSD:0,contextWindow:usageKey.endsWith('[1m]')?131072:262144,maxOutputTokens:64000}},permission_denials:[],uuid:'00000000-0000-4000-8000-000000000001',session_id:'00000000-0000-4000-8000-000000000002'} satisfies import('@anthropic-ai/claude-agent-sdk').SDKResultMessage
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'opus'})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{const events=drain(session.dispatch('接着聊'));emitSdk({type:'assistant',message:{id:'parent',model:'claude-opus-4-8',usage:{input_tokens:1000},content:[{type:'text',text:'在呢'}]}});emitSdk(result);await events
+ expect(session.contextUsage?.().model).toBe('claude-opus-4-8')
+ expect(provider.contextWindowTokens?.('claude-opus-4-8')).toBe(usageKey.endsWith('[1m]')?131072:262144)
+ expect(provider.contextWindowTokens?.('opus[1m]')).toBe(usageKey.endsWith('[1m]')?131072:200000)
+ }finally{await session.close()}
+})
+it('Claude unknown window uses conservative 200k instead of the generic 32k assumption',()=>{
+ const p=createClaudeAgentProvider({sdkOptionsForProject:()=>({})});expect(p.fallbackContextWindowTokens).toBe(200000);expect(p.contextWindowTokens?.('claude-unknown')).toBeUndefined()
+})
+it('synthetic overflow does not replace the actual model with a synthetic error model',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{const events=drain(session.dispatch('继续'));emitSdk({type:'assistant',message:{id:'parent',model:'claude-opus-4-8',usage:{input_tokens:1234},content:[{type:'tool_use',name:'Read'}]}});emitSdk({type:'assistant',error:'invalid_request',message:{model:'<synthetic>',content:[{type:'text',text:'prompt is too long: 210000 tokens'}]}});emitSdk({type:'result',subtype:'error_during_execution',is_error:true,errors:['prompt is too long: 210000 tokens']});const got=await events
+ expect(session.contextUsage?.()).toMatchObject({tokens:1234,model:'claude-opus-4-8'});expect(got.filter(e=>e.kind==='error').every(e=>e.kind==='error'&&e.code==='context_overflow')).toBe(true)
+ }finally{await session.close()}
+})
+
+it('a first rejected Claude request retains the actual init model for persisted overflow capacity',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'opus'})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{const events=drain(session.dispatch('继续'));emitSdk({type:'system',subtype:'init',session_id:'s',model:'claude-opus-4-8'});emitSdk({type:'assistant',error:'invalid_request',message:{model:'<synthetic>',content:[{type:'text',text:'prompt is too long: 210000 tokens'}]}});emitSdk({type:'result',subtype:'error_during_execution',is_error:true,errors:['prompt is too long: 210000 tokens']});await events
+ expect(session.contextUsage?.().model).toBe('claude-opus-4-8')
+ }finally{await session.close()}
+})

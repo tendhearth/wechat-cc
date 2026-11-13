@@ -44,7 +44,7 @@ describe('codexAppServerErrorCode — 工作台 app-server 的结构化 codexErr
     expect(codexAppServerErrorCode({ message: 'x', codexErrorInfo: 'usageLimitExceeded' })).toBe('quota')
     expect(codexAppServerErrorCode({ message: 'x', codexErrorInfo: 'rateLimitExceeded' })).toBe('rate_limited')
     expect(codexAppServerErrorCode({ message: 'x', codexErrorInfo: 'serverOverloaded' })).toBe('server_error')
-    expect(codexAppServerErrorCode({ message: 'x', codexErrorInfo: 'contextWindowExceeded' })).toBe('invalid_request')
+    expect(codexAppServerErrorCode({ message: 'x', codexErrorInfo: 'contextWindowExceeded' })).toBe('context_overflow')
   })
   it('带 httpStatusCode 的变体:null = 没拿到响应 = 网络;有 status 按 status', () => {
     expect(codexAppServerErrorCode({ message: 'x', codexErrorInfo: { httpConnectionFailed: { httpStatusCode: null } } })).toBe('network')

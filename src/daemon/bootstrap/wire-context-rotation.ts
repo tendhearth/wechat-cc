@@ -10,7 +10,7 @@ import type { ProviderRegistry } from '../../app/provider-registry'
 import type { ProviderId } from '../../domain/conversation'
 import { readJsonFile } from '../../lib/read-json-file'
 import { updateJsonFile } from '../../lib/json-file'
-import { inboundFallbackMessageId, makeMessagesStore } from '../../lib/messages-store'
+import { makeMessagesStore } from '../../lib/messages-store'
 import { makeThreadsStore } from '../../lib/threads-store'
 import type { Db } from '../../lib/db'
 import { projectActivities, resolveCheapEval } from '../../features/memory'
@@ -24,6 +24,8 @@ export const CONTEXT_CARE = { memory: CHECKUP_CARE.memory.policy, discretion: { 
 export function wireContextRotation(d: {
   db: Db; stateDir: string; registry: ProviderRegistry
   getMode(chatId:string): {kind:string;provider?:string} | undefined
+  active?(key:ContextKey):boolean
+  recordOverflow?(key:ContextKey,model:string,inputTokens:number):void
   budgetFor?(provider:ProviderId,model:string,key?:ContextKey):ContextBudget
   pending?(chatId:string):boolean
   owner?():string|null
@@ -43,14 +45,6 @@ export function wireContextRotation(d: {
     }
     return state
   }
-  const currentId = (chatId:string,current?:ContextInput) => !current ? '' : current.at ? current.id : inboundFallbackMessageId(current.userId??chatId,current.text??'')
-  const recentRows=async(chatId:string,current?:ContextInput)=>{
-    // Filter before limiting: proactive bubbles must not push the preceding owner rounds out.
-    const rows=d.db.query<{id:string;direction:'in'|'out';text:string;ts:string},[string,string,string]>(
-      "SELECT id,direction,text,ts FROM messages WHERE chat_id=? AND id!=? AND NOT (id LIKE 'app:%' AND id LIKE ?) AND source!='workbench' AND source NOT LIKE 'speech:%' ORDER BY ts DESC,rowid DESC LIMIT 256",
-    ).all(chatId,currentId(chatId,current),current?`%:${current.at}:in`:'')
-    return rows.reverse()
-  }
   const accounted=async(chatId:string,throughTs:string)=>{
     const watermark=(await threads.getExtractState(chatId)).entriesToTs
     return watermark!==null && Date.parse(watermark)>=Date.parse(throughTs)
@@ -59,6 +53,7 @@ export function wireContextRotation(d: {
     owner,load:()=>{try{return loadState()}catch{d.log('CONTEXT_STATE','unreadable_estimates_rebuilt');return blank()}},
     save:state=>{updateJsonFile(path,raw=>{raw.state=state})},
     budgetFor:(p,m,key)=>d.budgetFor?.(p,m,key)??{windowTokens:32000,reliableFillRatio:.6},
+    active:d.active,recordOverflow:d.recordOverflow,
     pending:chatId=>d.pending?.(chatId)??false,
     recent:async(chatId,current)=>history.recent(chatId,current),
     proactive:async(chatId,current)=>history.proactive(chatId,current),
@@ -67,7 +62,7 @@ export function wireContextRotation(d: {
       if(chatId!==owner())return []
       return [...activity.values()].flatMap(v=>v.sessions.filter(s=>s.activity==='running'||s.activity==='waiting').map(s=>`${s.title}：${s.latestStep || (s.activity==='waiting'?'等主人答复':'正在办')}`))
     },
-    latestTs:async(chatId,current)=> current===undefined ? messages.latestTs(chatId) : (await recentRows(chatId,current)).at(-1)?.ts??null,
+    latestTs:async(chatId,current)=> current===undefined ? messages.latestTs(chatId) : history.latestTs(chatId,current),
     accounted,
     extract:async(chatId,mode,throughTs)=>{
       if(chatId!==owner())return false

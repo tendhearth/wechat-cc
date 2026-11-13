@@ -16,7 +16,7 @@ for(const failure of [false,true])it(`nightly consolidation ${failure?'failure d
   const context=new ContextRotation({owner:()=> 'owner',load:()=>({sessions:{},chats:{}}),save:()=>{},budgetFor:()=>({windowTokens:8192,reliableFillRatio:.25}),pending:()=>false,recent:async()=>[],ongoing:async()=>[],latestTs:async()=>'2026-11-12T20:00:00Z',accounted:async()=>true,extract:async()=>true,defer:()=>{},log:()=>{}})
   const key={chatId:'owner',providerId:'claude',alias:'proj'},sessions={isInFlight:()=>false,rotate:async()=>{rotations++;return true}}
   await context.beforeTurn(key,'m',sessions)
-  context.observe(key,{tokens:1000,turns:1});context.observe(key,{tokens:20000,turns:1})
+  context.observe(key,{tokens:1000,turns:1});context.observe(key,{tokens:6000,turns:7})
   await consolidateAfterSleep({chatId:'owner',isOwner:()=>true,threads:makeThreadsStore(db,{filterSources:true}),sdkEval:async()=> 'bad consolidation response',rotation:context,sessions,runExclusive:async(_c,fn)=>fn(),log:()=>{}})
   expect(rotations).toBe(failure?0:1)
   await context.beforeTurn(key,'m',sessions);await context.beforeTurn(key,'m',sessions)

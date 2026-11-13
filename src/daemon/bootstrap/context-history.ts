@@ -12,7 +12,11 @@ export function contextHistory(db:Db){
     const id=!current?'':current.at?current.id:inboundFallbackMessageId(current.userId??chatId,current.text??'')
     const filter="chat_id=? AND id!=? AND NOT (id LIKE 'app:%' AND id LIKE ?) AND source!='workbench'"
     const args:[string,string,string]=[chatId,id,current?`%:${current.at}:in`:'']
-    const incoming=db.query<Row,typeof args>(`SELECT rowid,* FROM messages WHERE ${filter} AND direction='in' ORDER BY ts DESC,rowid DESC LIMIT 6`).all(...args)
+    const anchor=current?db.query<Row,typeof args>(`SELECT rowid,* FROM messages WHERE chat_id=? AND direction='in' AND (id=? OR (id LIKE 'app:%' AND id LIKE ?)) ORDER BY ts DESC,rowid DESC LIMIT 1`).get(...args):null
+    // Later inbound rows can already be persisted while this turn waits for the chat mutex.
+    // Outgoing remains unbounded: the preceding reply may be delivered after this inbound.
+    const incoming=anchor?db.query<Row,[...typeof args,string,string,number]>(`SELECT rowid,* FROM messages WHERE ${filter} AND direction='in' AND (ts<? OR (ts=? AND rowid<?)) ORDER BY ts DESC,rowid DESC LIMIT 6`).all(...args,anchor.ts,anchor.ts,anchor.rowid)
+      :db.query<Row,typeof args>(`SELECT rowid,* FROM messages WHERE ${filter} AND direction='in' ORDER BY ts DESC,rowid DESC LIMIT 6`).all(...args)
     const outgoing=db.query<Row,typeof args>(`SELECT rowid,* FROM messages WHERE ${filter} AND direction='out' ORDER BY ts DESC,rowid DESC LIMIT 128`).all(...args)
     const oldest=incoming.at(-1)
     return [...incoming,...outgoing.filter(r=>!oldest||r.ts>oldest.ts||(r.ts===oldest.ts&&r.rowid>oldest.rowid))].sort((a,b)=>a.ts.localeCompare(b.ts)||a.rowid-b.rowid)
@@ -23,6 +27,7 @@ export function contextHistory(db:Db){
     return {dir:r.direction,ts:r.ts,source:r.source,text:[r.text,...files,...(!r.text&&!files.length?[`[${r.kind}]`]:[])].filter(Boolean).join('\n')}
   }
   return {
+    latestTs(chatId:string,current?:ContextInput){return rows(chatId,current).filter(r=>!r.source.startsWith('speech:')).at(-1)?.ts??null},
     recent(chatId:string,current?:ContextInput){
       const recent=rows(chatId,current).map(render)
       const toolRows=db.query<{payload:string;status:string;ts:number},[string]>(`SELECT i.payload_json AS payload,t.status,t.ended_at AS ts FROM matter_items i JOIN matter_turns t ON t.id=i.turn_id WHERE i.kind='tool_call' AND t.id=(SELECT t.id FROM matter_turns t JOIN matters m ON m.id=t.matter_id WHERE m.kind='chat' AND m.owner_chat_id=? AND t.ended_at IS NOT NULL ORDER BY t.ended_at DESC,t.cursor DESC LIMIT 1) ORDER BY i.seq LIMIT 16`).all(chatId)

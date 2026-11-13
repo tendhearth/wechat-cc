@@ -28,7 +28,7 @@ export function backfillSpeech(db: Db, pageSize = 200) {
         }
         // An exact message identity (bare ID or message:ID); imported transcripts are not receipts.
         if (row.ref) {
-          const m = db.query<{ ts: string }, [string, string]>("SELECT ts FROM messages WHERE id=? AND chat_id=? AND direction='out' AND source='live'").get(row.ref.startsWith('message:') ? row.ref.slice(8) : row.ref, row.chat_id)
+          const m = db.query<{ ts: string }, [string, string]>("SELECT ts FROM messages WHERE id=? AND chat_id=? AND direction='out' AND (source='live' OR (source='speech:companion' AND id NOT LIKE 'app:companion:%'))").get(row.ref.startsWith('message:') ? row.ref.slice(8) : row.ref, row.chat_id)
           if (m && Number.isFinite(Date.parse(m.ts))) times.push(Date.parse(m.ts))
         }
         if (times.length) confirmed += db.query("UPDATE speech_log SET spoken_at=?,delivery_state='confirmed' WHERE id=? AND spoken_at IS NULL AND delivery_state='legacy_unknown'").run(times.reduce((a, b) => Math.min(a, b)), row.id).changes

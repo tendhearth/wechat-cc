@@ -19,16 +19,16 @@ it('estimates with configured endpoint capacity, preferring observed provider me
     expect(service.view().target).toMatchObject({windowTokens:65536,windowKnown:true})
     requestedModel='stale-pin'
     expect(service.view().target.model).toBe('m')
-    expect(service.view({model:'operator-pin'}).target.model).toBe('m')
+    expect(service.view({model:'operator-pin'}).target.model).toBe('operator-pin')
     requestedModel='m'
     const configured=service.estimate()
     observed=32768
     expect(service.view().target).toMatchObject({windowTokens:32768,windowKnown:true})
     expect(service.estimate().inputTokens).toBeLessThan(configured.inputTokens)
     observed=undefined;address='https://other.example/v1'
-    expect(service.view().target).toMatchObject({windowTokens:32000,windowKnown:false})
+    expect(service.view().target).toMatchObject({windowTokens:8192,windowKnown:false})
     address='https://gateway.example/v1';model='other';requestedModel='other'
-    expect(service.view().target).toMatchObject({windowTokens:32000,windowKnown:false})
+    expect(service.view().target).toMatchObject({windowTokens:8192,windowKnown:false})
     const prepared=await service.prepareEstimate()
     expect(prepared.windowKnown).toBe(true)
     expect(service.view().target.windowTokens).toBe(131072)

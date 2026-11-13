@@ -286,6 +286,7 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 | `rate_limit` | — | `rate_limited` | 同上 | `unknown`(不判坏链路) |
 | `billing_error` | — | `quota` | 同上 | `unknown` |
 | `invalid_request` | — | `invalid_request` | 同上 | `unknown` |
+| 明确输入上下文超限（见末节） | — | `context_overflow` | 主人立即换段，同轮仅重试一次；再失败才通知 | `unknown`（不判链路/认证故障） |
 | `unknown` / 新标注 | — | `provider_error` | 同上 | `unknown` |
 | `max_output_tokens` | — | (不是失败) | 正文照常 | — |
 
@@ -403,3 +404,19 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 **测试**(全用照真机形状演的假 `cursor-agent acp`,没有一次真 Cursor 调用):`cursor-errors.test.ts`(每种写法的码 + 「正文提到 looping」等反例)、`acp/events.test.ts`(扣住 / 放行 / 跨轮清空)、`acp-agent-provider.test.ts` 与 `acp-workbench-provider.test.ts`(对话 messages 模式与工作台 append 模式)、`conversation-coordinator.cursor-delivery.test.ts`(生产的 ACP 客户端 + 协调器 + 交付运行时:两臂都不把报错当回复;原样回放真机 c4both;`acp/scripted-agent.ts` 新增 `{ cliError }` 步骤照 catch 的写法发一整块)。
 
 **残留**:cursor-agent 换版本可能改句式 —— 认不出就退回今天的行为(当正文发出去),不会误伤正文;换版本时按上面的位置(`processPrompt` 的 catch)重新核对一遍。
+
+
+## 2026-11-13：输入上下文超长（context_overflow）
+
+判定唯一入口为 `src/lib/provider-error-code.ts:isContextOverflow`，只在 provider 错误边界或 coded error 使用，不对正常助理正文扫描。
+
+| 真实错误形状 | 判定 |
+|---|---|
+| Claude SDK invalid_request / failed result errors[] 的 `prompt is too long` | context_overflow |
+| OpenAI 兼容 `context_length_exceeded` / `context_window_exceeded`、400 的 maximum context length | context_overflow |
+| LiteLLM `ContextWindowExceededError`（含内层 RetryError/cause） | context_overflow |
+| Codex `codexErrorInfo:contextWindowExceeded` | context_overflow |
+| ACP RPC data 或已确认的错误整块模板中同类超长 | context_overflow |
+| max_output_tokens、quota、rate limit、普通回答引用这些词 | 保留原行为，不算上下文超长 |
+
+owner solo 立即换段并携 canonical 近况重试一次，绕过日常8轮/记账门；访客群不新增恢复行为。可取得拒绝输入计数时持久化窗口实测上界；无计数不以局部字节伪造。health 仍归 unknown，工作台沿用 provider_invalid_request 的请求拒绝文案。覆盖见 `context-overflow.test.ts`、`context-overflow.integration.test.ts`、SDK result 真实类型 fixture。

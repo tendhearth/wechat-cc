@@ -63,9 +63,9 @@ describe('owner context rotation, shared policy', () => {
     expect(await s.prepare()).toBeNull();expect(s.rotations).toBe(0)
   })
   it('nightly success requests one rotation; failure does not request one',async()=>{
-    const s=setup();await s.prepare();s.context.observe(s.key,{bytes:40_000,turns:1})
+    const s=setup();await s.prepare();s.context.observe(s.key,{bytes:24_000,turns:8})
     s.context.nightly('owner',false);await s.prepare();expect(s.rotations).toBe(0)
-    s.context.nightly('owner',true);await s.prepare();await s.prepare();expect(s.rotations).toBe(1)
+    s.context.nightly('owner',true);await s.context.rotateIdle('owner',s.sessions);await s.prepare();expect(s.rotations).toBe(1)
   })
   it('uses measured budgets with history floor, clamped zero and safe defaults',async()=>{
     const s=setup('openai',{budgetFor:()=>({windowTokens:1000,reliableFillRatio:.8})})

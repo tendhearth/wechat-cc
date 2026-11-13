@@ -121,7 +121,8 @@ export function makeTickDispatch(deps: TickDeps) {
     const nowMs = args.nowIso ? Date.parse(args.nowIso) : NaN
     const produce = async (outbound: import('../../daemon/companion/proactive-channel').ProactiveTurn) => {
     await deps.boot.coordinator.runExclusive(chatId, async () => {
-      const isolated=deps.boot.contextRotation?.isOwnerChat(chatId)??false
+      const owner=deps.boot.contextRotation?.isOwnerChat(chatId)??false
+      const isolated=owner&&(deps.boot.sessionManager.supportsEphemeral?.(providerId)??false)
       const carry=isolated?await deps.boot.contextRotation?.continuation({alias:proj.alias,providerId,chatId}):null
       const mode=deps.boot.coordinator.getMode(chatId)
       const tickKey = { alias: isolated?`companion:${randomUUID()}`:proj.alias, providerId, chatId }
@@ -129,7 +130,7 @@ export function makeTickDispatch(deps: TickDeps) {
       const handle = await deps.boot.sessionManager.acquire({
         alias: tickKey.alias,
         ...(isolated?{ephemeral:true}:{}),
-        ...(mode.kind==='solo'&&mode.provider===providerId&&mode.model?{model:mode.model}:{}),
+        ...(owner&&mode.kind==='solo'&&mode.provider===providerId&&mode.model?{model:mode.model}:{}),
         path: proj.path,
         providerId,
         chatId,

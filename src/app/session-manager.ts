@@ -8,6 +8,7 @@ import type { PermissionMode } from '../domain/capability-matrix'
 import { pathsConflict, canonicalClaimPath } from '../lib/claim-paths'
 import { log } from '../lib/log'
 import { contextBytes } from '../domain/context-continuation'
+import { isContextOverflow } from '../lib/provider-error-code'
 import type { ContextRotation } from './context-rotation'
 
 export interface SessionManagerOptions {
@@ -304,7 +305,7 @@ export class SessionManager {
       providerId: req.providerId,
       ...(model !== undefined ? { model } : {}),
       callTarget: effectiveTarget,
-      ...(session.resumedHistory !== undefined ? {resumedHistory:session.resumedHistory} : rotation?.isOwnerChat(req.chatId) ? {resumedHistory:req.providerId==='claude' && !!resumeSessionId} : {}),
+      ...(session.resumedHistory !== undefined && (!session.resumedHistoryOwnerOnly||rotation?.isOwnerChat(req.chatId)) ? {resumedHistory:session.resumedHistory} : rotation?.isOwnerChat(req.chatId) ? {resumedHistory:req.providerId==='claude' && !!resumeSessionId} : {}),
       lastUsedAt: Date.now(),
       dispatch(text: string): AsyncIterable<AgentEvent> {
         checkExecution()
@@ -326,7 +327,7 @@ export class SessionManager {
             try {
               const inner = session.dispatch(text)
               for await (const ev of inner) {
-                yield ev
+                yield ev.kind==='error'&&isContextOverflow(ev.message)?{...ev,code:'context_overflow'}:ev
                 if (ev.kind === 'result' && ev.sessionId && sessionStore && !req.ephemeral) {
                   sessionStore.set({ alias: req.alias, provider: req.providerId, chatId: req.chatId, sessionId: ev.sessionId })
                 }
@@ -417,6 +418,8 @@ export class SessionManager {
 
   /** Is there a cached (live) session for this key right now? Coordinator uses
    *  it to know a dispatch is about to cold-spawn (→ cold-start context block). */
+  supportsEphemeral(providerId:ProviderId){return this.opts.registry.get(providerId)?.provider.supportsEphemeralSessions===true}
+
   has(k: InFlightKey): boolean {
     return this.sessions.has(sessionKey(k))
   }

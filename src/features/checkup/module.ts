@@ -24,12 +24,11 @@ export function checkupModule(f:Foundation):DaemonModule<CheckupService> {
         const model=o.model ?? (!o.providerId && mode?.kind==='solo'?mode.model:undefined) ?? boot.currentModelFor?.(provider)
         const entry=boot.registry.get(provider)
         const target=providerCallTarget(entry?.provider,provider,'session',model?{model}:{})
-        const actualModel=target.model??model??'default',address=checkupAddress(target.baseUrl??'default')
+        const actualModel=o.model??target.model??model??'default',address=checkupAddress(target.baseUrl??'default')
         const configured=config().modelContextWindows?.filter(w=>w.provider===provider&&w.model===actualModel&&checkupAddress(w.address)===address)??[]
         const observed=entry?.provider.contextWindowTokens?.(actualModel)
         const capacity=Number.isSafeInteger(observed)&&observed!>=1024&&observed!<=10_000_000?observed:configured.length===1?configured[0]!.windowTokens:undefined
-        const budget=makeCheckupStore(f.stateDir).contextBudgetFor({provider,model:actualModel,address,windowTokens:capacity??DEFAULT_CHECKUP_WINDOW,windowKnown:capacity!==undefined},actualModel)
-        return {provider,model:actualModel,address,windowTokens:budget.windowTokens,windowKnown:budget.windowSource!=='assumed'}
+        return {provider,model:actualModel,address,windowTokens:capacity??DEFAULT_CHECKUP_WINDOW,windowKnown:capacity!==undefined}
       },
       async prepareTarget(o={}){
         const t=this.resolveTarget(o)

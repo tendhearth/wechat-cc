@@ -42,7 +42,7 @@ describe('local checkup lifecycle', () => {
     expect(store.contextBudgetFor(target, target.model).source).toBe('default')
     await service.start({}).done
     expect(service.view().profile?.memory).toBe('good')
-    expect(store.contextBudgetFor(target, target.model)).toEqual({ windowTokens: 32000, reliableFillRatio: .25, source: 'measured',windowSource:'assumed',ratioSource:'measured' })
+    expect(store.contextBudgetFor(target, target.model)).toEqual({ windowTokens: 8192, reliableFillRatio: .25, source: 'measured' })
     expect(store.contextBudgetFor({ ...target, address: 'https://other.invalid' }, target.model).source).toBe('default')
     expect(service.view({ model: 'new-pin' }).profile).toBeNull()
   })

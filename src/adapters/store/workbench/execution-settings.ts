@@ -21,7 +21,7 @@ export function taskErrorForProviderCode(code:string|undefined,raw:string):strin
     case 'network':return 'provider_network'
     case 'server_error':return 'provider_server_error'
     case 'region_unavailable':return 'provider_region_unavailable'
-    case 'invalid_request':return executionFailureMessage(raw)!==raw?raw:'provider_invalid_request'
+    case 'context_overflow': case 'invalid_request':return executionFailureMessage(raw)!==raw?raw:'provider_invalid_request'
     // provider 明说这一轮失败了、没说哪类(Claude 的 result is_error 而无标注,等):以前 task.error 就是原文,现在给码 + 一句人话,原文跟在事件里。
     case 'provider_error':return executionFailureMessage(raw)!==raw?raw:'provider_failed'
     default:return undefined
