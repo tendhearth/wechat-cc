@@ -76,6 +76,7 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | [app-rename-migration.md](app-rename-migration.md) | 1.7.5 macOS 改名(`Tendhearth CC.app` / 主二进制 / sidecar):updater 原地安装的证据、首启自改名、`service repair`(LaunchAgent / hook / `~/.local/bin/wechat-cc`)、1.7.4→1.7.5 真机验证清单 |
 | [release.md](release.md) | 给用户发版:四个人工步骤、两道 `release-signing` 批准、tag 镜像、R2 更新源;和 `self deploy` 的区别 |
 | [verify.md](verify.md) | `selftest` 三种用法(workbench / chat / phone)、两种 token 分别够得着什么、必须主人在场的检查清单 |
+| [butler-checkup.md](butler-checkup.md) | 本机编造题体检、成本估计、档案、探针与下步上下文预算接口；原生后端隔离限制 |
 | [task-permissions.md](task-permissions.md) | 当前任务的同命令批准、脚本指纹与快照全文、微信 `yt` 码和失效边界 |
 | [macmini-ui-lab.md](macmini-ui-lab.md) | 双 Mac 测试分工、离线验证入口、远端原生输入与系统授权的实际边界 |
 | [desktop-notification-click.md](desktop-notification-click.md) | 桌面通知事项回跳、seen、平台限制与离线测试边界 |

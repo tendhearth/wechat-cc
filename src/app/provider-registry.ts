@@ -45,12 +45,16 @@ export function providerCallTarget(provider: AgentProvider | null | undefined, p
  * 注册进 registry 的每一个 provider 都套这一层。
  */
 export function withNetworkGate<P extends AgentProvider>(inner: P, gate: NetworkGate, providerId: string): P {
-  const gated = new Set<PropertyKey>(['spawn', 'cheapEval', 'strongEval', 'modelCatalog'])
+  const gated = new Set<PropertyKey>(['spawn', 'cheapEval', 'strongEval', 'modelCatalog', 'prepareContextWindow'])
   return new Proxy(inner, {
     get(target, prop, receiver) {
       const v = Reflect.get(target, prop, receiver)
       if (!gated.has(prop) || typeof v !== 'function') return v
       return async (...args: unknown[]) => {
+        if(prop==='prepareContextWindow'){
+          await assertCallAllowed(gate,{...providerCallTarget(target,providerId,'session',{model:args[0] as string}),purpose:'catalog'})
+          return (v as (...a:unknown[])=>unknown).apply(target,args)
+        }
         if (prop === 'modelCatalog') {
           // 列模型目录不是一次模型回合(Cursor 按自家处理);端点按配置补,和 v2 一样。
           await assertCallAllowed(gate, { provider: providerId, purpose: 'catalog' })

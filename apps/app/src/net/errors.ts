@@ -1,10 +1,10 @@
 import type { BackendCode } from '../backend/types'
 
-const STALE = new Set(['permission_stale', 'question_stale', 'cli_permission_stale'])
+const STALE = new Set(['permission_stale', 'question_stale', 'cli_permission_stale', 'stale', 'checkup_target_changed'])
 /** daemon 的 409:这件事这一轮还在跑 / 上一条补充还没交付 / 会话正在回话。请求内容冲突另说,不能当排队。 */
-const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'chat_busy', 'cli_session_busy'])
+const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'chat_busy', 'cli_session_busy', 'busy', 'checkup_busy'])
 /** 找不到:事项不在 / 还没有主人那条对话(页面当空对话)/ 原生会话读不了。 */
-const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'owner_chat_not_configured', 'unsupported', 'not_found', 'review_comment_not_found', 'memory_retraction_not_found', 'native_history_unsupported'])
+const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'owner_chat_not_configured', 'unsupported', 'not_found', 'review_comment_not_found', 'memory_retraction_not_found', 'native_history_unsupported', 'checkup_run_unknown'])
 /** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话 / 待办。 */
 const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired', 'cli_sessions_not_wired', 'cli_actions_not_wired', 'matters_not_wired', 'memory_nightly_not_wired', 'knowledge_not_wired', 'review_not_wired', 'todos_not_wired', 'workbench_not_wired', 'input_storage_unavailable', 'module_off', 'module_degraded', 'module_starting'])
 /** 接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions D11):各有各的一句话,不能都说「没送到」。
@@ -13,6 +13,8 @@ const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_no
 const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>([
   // Notebook errors keep the device paired; only the executor session can have ended.
   ['matter_ledger_forbidden','unavailable'],['matter_session_ended','cli_ended'],['matter_note_limit','unavailable'],
+  ['checkup_invalid_request', 'checkup_invalid'],
+  ['checkup_rate_limited', 'checkup_rate_limited'],
   ['input_stale', 'input_stale'], ['input_conflict', 'input_conflict'],
   ['native_session_busy', 'session_busy'], ['native_folder_busy', 'folder_busy'],
   ['unavailable_provider', 'provider_missing'], ['invalid_path', 'folder_missing'], ['provider_quota_exhausted', 'quota'], ['worktree_not_git', 'worktree_not_git'], ['worktree_dirty', 'worktree_dirty'],

@@ -234,6 +234,42 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     } finally {writeFileSync(configPath,config);for(const id of ids)db.query('DELETE FROM threads WHERE id=?').run(id);db.close()}
   })
 
+  it('checkup: explicit owner trigger uses synthetic requests and keeps an unscorable run out of the archive', async () => {
+    type View = { target: { provider: string; model: string }; profile: { memory: string; short: boolean } | null; attempt: { status: string } | null; periodicProbe: boolean }
+    const before = await desktop<View>('GET', '/v1/checkup')
+    expect(before.status).toBe(200)
+    expect(before.body.target.provider).toBe('claude')
+    expect(before.body.profile).toBeNull()
+    expect(before.body.periodicProbe).toBe(false)
+    expect((await desktop('GET', '/v1/checkup', undefined, 'trusted')).status).toBe(403)
+    const personaPath=join(d.stateDir,'memory',d.owner,'persona.md')
+    const priorPersona=existsSync(personaPath)?readFileSync(personaPath,'utf8'):null
+    const privateCanary='CHECKUP_PRIVATE_MEMORY_TOPIC_693818'
+    writeFileSync(personaPath,`名字：小禾\n称呼用户：阿青\n自称：小禾\n记忆：${privateCanary}`)
+    const spawnsBefore=spawnOptions.length
+    const estimate = await desktop<{ targetKey: string; requests: number }>('POST', '/v1/checkup/estimate', {})
+    expect(estimate.status).toBe(200)
+    expect(estimate.body.requests).toBeGreaterThan(0)
+    expect((await desktop('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey }, 'trusted')).status).toBe(403)
+    const started = await desktop<View>('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey })
+    expect(started.status).toBe(202)
+    await expect.poll(async () => (await desktop<View>('GET', '/v1/checkup')).body.attempt?.status, { timeout: 15000 }).toBe('failed')
+    const result = await desktop<View>('GET', '/v1/checkup')
+    // The boundary fake says only "好的。" and never calls the fictional tools.
+    // No legal actions means the measurement did not succeed; it cannot establish a budget.
+    expect(result.body.profile).toBeNull()
+    expect(result.body.attempt).toMatchObject({status:'failed',errorCode:'no_measurement'})
+    const interviewSpawns=spawnOptions.slice(spawnsBefore).filter(o=>o.strictMcpConfig===true)
+    expect(interviewSpawns.length).toBeGreaterThan(0)
+    const sent=JSON.stringify(interviewSpawns.map(o=>({system:o.systemPrompt,tools:o.tools,allowedTools:o.allowedTools,settings:o.settings})))
+    expect(sent).toContain('小禾')
+    for(const secret of [privateCanary,'在杭州做独立开发','周三晚上固定打羽毛球',d.stateDir])expect(sent).not.toContain(secret)
+    if(priorPersona===null)rmSync(personaPath);else writeFileSync(personaPath,priorPersona)
+    expect(result.body.periodicProbe).toBe(false)
+    expect(existsSync(join(d.stateDir, 'checkup', 'profiles.json'))).toBe(true)
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
   it('T4: recall opens a private bubble; successful sleep closes it except for owner-visible running matters', async () => {
     const db = openSqlite(join(d.stateDir, 'wechat-cc.db')) as unknown as Db
     const threads = makeThreadsStore(db)

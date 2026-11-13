@@ -162,3 +162,13 @@ it.each([
 ] as const)('v1 response %s %s maps without a legacy envelope', (status, error, want) => {
   expect(mapPhoneError(status, { error })).toBe(want)
 })
+
+
+it.each([
+  [409, 'checkup_busy', 'busy'], [409, 'busy', 'busy'],
+  [409, 'checkup_target_changed', 'stale'], [409, 'stale', 'stale'],
+  [400, 'checkup_invalid_request', 'checkup_invalid'],
+  [404, 'checkup_run_unknown', 'not_found'],
+] as const)('checkup wire code %s %s has a concrete meaning', (status, error, want) => {
+  expect(mapPhoneError(status, { error })).toBe(want)
+})

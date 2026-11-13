@@ -206,6 +206,7 @@ type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: str
 // contain private file or command output and is deliberately not read here.
 type UserMsg = { type: 'user'; parent_tool_use_id?: string | null; message?: { content?: string | Array<{ type?: string; tool_use_id?: string; is_error?: boolean }> } }
 type ResultMsg = {
+  modelUsage?: Record<string,{contextWindow:number}>
   type: 'result'
   subtype?: string
   session_id?: string
@@ -284,6 +285,8 @@ export function claudeBaseUrl(env?: Record<string, string | undefined>): string 
 }
 
 export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider {
+  const windows=new Map<string,number>()
+  const windowKey=(base:string|null,model:string)=>JSON.stringify([base,model])
   // One-shot eval with no tools, no MCP, no session continuation — shared by
   // cheapEval (haiku-class) and strongEval (the verdict's main model). Both
   // pass an explicit model so the only difference is which model runs.
@@ -344,6 +347,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       const options=await opts.sdkOptionsForProject(project.alias,project.path,TIER_PROFILES.trusted,'workbench:catalog')
       return discoverClaudeModels(options,Math.max(0,deadline-Date.now()))
     },
+    contextWindowTokens:model=>windows.get(windowKey(claudeBaseUrl(),model)),
+    supportsIsolatedEvaluation: true,
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
@@ -367,7 +372,30 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // chatId is threaded into sdkOptionsForProject so the builder can
       // produce a canUseTool whose tier/mode closures are bound to THIS
       // session — see bootstrap/index.ts:buildCanUseTool().
-      const options = {...await opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
+      // A checkup never opens the production tool bridge or instruction builder.
+      // Match oneShot's isolation, with only the run-owned fake MCP server admitted.
+      const evaluation = spawnOpts.evaluation
+      const options: Options = evaluation ? {
+        cwd: project.path,
+        model: spawnOpts.model ?? opts.strongModel?.() ?? DEFAULT_CLAUDE_MODEL,
+        settingSources: [], tools: [], persistSession: false,
+        hooks: {}, plugins: [], settings: { disableAllHooks: true, disableSkillShellExecution: true, autoMemoryEnabled: false },
+        includePartialMessages: true,
+        strictMcpConfig: true,
+        mcpServers: { wechat: { type: 'http', url: evaluation.mcpServer.url } },
+        allowedTools: evaluation.tools.tools.map(tool => `mcp__wechat__${tool.name}`),
+        permissionMode: 'default',
+        systemPrompt: spawnOpts.appendInstructions ?? '',
+        maxTurns: evaluation.maxSteps,
+        // The SDK exposes its output cap through the documented subprocess env.
+        // Internal retries are disabled: an isolated sample must stay bounded even
+        // if the owner's interactive CLI normally enables an indefinite watchdog.
+        env: { ...process.env, CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(evaluation.maxOutputTokens), CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' },
+        canUseTool: async (name, input) => evaluation.tools.tools.some(tool => name === `mcp__wechat__${tool.name}`)
+          ? { behavior: 'allow', updatedInput: input }
+          : { behavior: 'deny', message: 'Only the current conversation tools are available.' },
+        ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
+      } : {...await opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
       const execution = spawnOpts.execution ? {...spawnOpts.execution} : undefined
       if (execution) {
         if (execution.model) options.model=execution.model
@@ -421,6 +449,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       let pendingApiError: { sdkError: string; text: string } | null = null
       // 这一轮已经发过带码的 error(没登录哨兵):result 不再补第二个 error,也不带 finalText。
       let turnErrored = false
+      let evaluationHasPartialText = false
       const flushApiError = (aq: AsyncQueue<AgentEvent>, apiErrorStatus?: number | null): void => {
         if (!pendingApiError) return
         const { sdkError, text } = pendingApiError
@@ -438,6 +467,14 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       ;(async () => {
         try {
           for await (const raw of q as AsyncGenerator<SDKMessage>) {
+            if (evaluation && activeEventQueue) {
+              const partial = raw as unknown as { type?: string; event?: { type?: string; delta?: { type?: string; text?: string } } }
+              if (partial.type === 'stream_event' && partial.event?.type === 'content_block_delta' && partial.event.delta?.type === 'text_delta' && partial.event.delta.text) {
+                evaluationHasPartialText = true
+                ;(activeEventQueue as AsyncQueue<AgentEvent>).push({ kind: 'text', text: partial.event.delta.text })
+                continue
+              }
+            }
             const msg = narrow(raw)
             if (!msg) continue
 
@@ -498,7 +535,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 pending = ''
               }
               for (const block of blocks) {
-                if (block?.type === 'text') pending += block.text ?? ''
+                if (block?.type === 'text' && !(evaluation && evaluationHasPartialText)) pending += block.text ?? ''
                 else if (block?.type === 'tool_use') { flushText(); aq.push(parseToolUseToEvent(block)) }
               }
               flushText()
@@ -511,7 +548,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                   ? msg.result.slice(0, 400)
                   : JSON.stringify(msg).slice(0, 400)
                 log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
-                aq.push({ kind: 'error', message: `subtype=${msg.subtype}` })
+                aq.push({ kind: 'error', message: `subtype=${msg.subtype}`, ...(evaluation && msg.subtype === 'error_max_turns' && !apiErrored && !turnErrored ? { code: 'checkup_step_budget' } : {}) })
               } else if (!apiErrored && !turnErrored) {
                 // SDK 说这一轮是失败的(is_error),却没有带 error 标注的助理消息(上面那条路没接住):
                 // result.result 就是错误原文。带码收尾,coordinator 只发通知 —— 一个字都不进回复(#190 红线)。
@@ -524,6 +561,10 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               // SDK 自己的「最后的话」(result.result = 最后一条助理消息的文字):只在成功轮带,只用于核对
               // 分段的结果(回复交付第 5 步:交付用分段,见 AgentEvent.result 的注释)。
+              for(const [model,usage] of Object.entries(msg.modelUsage??{})){
+                const capacity=usage?.contextWindow
+                if(Number.isSafeInteger(capacity)&&capacity>=1024&&capacity<=10_000_000)windows.set(windowKey(spawnTarget.baseUrl,model),capacity)
+              }
               const clean = !failed && msg.is_error !== true && !apiErrored && !turnErrored && typeof msg.result === 'string'
               aq.push({
                 kind: 'result',
@@ -566,6 +607,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           const queue = new AsyncQueue<AgentEvent>()
           pendingApiError = null
           turnErrored = false
+          evaluationHasPartialText = false
           activeEventQueue = queue
           sdkQueue.push({
             type: 'user',

@@ -1049,3 +1049,15 @@ describe('agent-config — unreadable / BOM files', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+it('retains validated per-endpoint model windows through strict parsing and load/save',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'config-window-'))
+  const entry={provider:'custom-acp',address:'https://gateway.example/v1',model:'custom-model',windowTokens:65536}
+  try{
+    const config=parseAgentConfig({modelContextWindows:[entry]})
+    expect(config.modelContextWindows).toEqual([entry])
+    saveAgentConfig(dir,config)
+    expect(loadAgentConfig(dir).modelContextWindows).toEqual([entry])
+    for(const windowTokens of [0,8192.5,Infinity,-1])expect(()=>parseAgentConfig({modelContextWindows:[{...entry,windowTokens}]})).toThrow()
+  }finally{rmSync(dir,{recursive:true,force:true})}
+})

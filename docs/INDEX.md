@@ -29,6 +29,7 @@
 | 工作台文件锚定层的威胁模型(防什么 / 不防什么 / 从锚点开整条链) | [reference/workbench-file-guard.md](reference/workbench-file-guard.md) | 评审 #3 owner 定案(2026-10-01),见 roadmap 修订记录 |
 | 网络守护(守护 v2 按调用判:哪些调用需要保护、guard.json 覆盖、bx / 探测信号、拦在哪、刻意不拦什么、怎么验) | [reference/network-guard.md](reference/network-guard.md) | 主人拍板(2026-10-02 两次,第二次收窄),见 roadmap 修订记录 |
 | 内部 API 鉴权(tier / token / routeAllow / 登记几处) | [reference/internal-api-auth.md](reference/internal-api-auth.md) | `superpowers/specs/2026-06-21-internal-api-tier-authz-design.md` |
+| 管家体检（本机编造题、档案、可选探针、预算接口与后端隔离限制） | [maintainer/butler-checkup.md](maintainer/butler-checkup.md) | `superpowers/specs/2026-11-12-one-butler-direction.md` |
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
 | macOS 改名迁移(`Tendhearth CC.app`、进程名、LaunchAgent 自修、1.7.4→1.7.5 真机清单) | [maintainer/app-rename-migration.md](maintainer/app-rename-migration.md) | 主人拍板(2026-10-04) |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |

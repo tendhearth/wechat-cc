@@ -21,7 +21,7 @@ import { AsyncQueue } from '../../../lib/async-queue'
 import { makeTurnEmitter } from '../turn-emitter'
 import { isAuthFail } from '../../../domain/auth-fail'
 import { acpErrorCode, cursorAcpInbandError } from './cursor-errors'
-import { withProviderCode } from '../../../lib/provider-error-code'
+import { withProviderCode, errorWithProviderCode } from '../../../lib/provider-error-code'
 import { AcpRequestError, createAcpConnection, type AcpConnection } from './rpc'
 import { acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './events'
 import { workbenchSubprocessEnv } from '../subprocess-env'
@@ -182,6 +182,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       },
     } : {}),
     async spawn(project, context: SpawnContext): Promise<AgentSession> {
+      if (context.evaluation) throw errorWithProviderCode('isolated_evaluation_unavailable', 'provider_error')
       // 对话侧与工作台共用这一句:两边都靠 close() 杀进程组收尾,Windows 上那条路没验过。
       // 文案不提"工作台" —— 对话侧也会撞到它(bootstrap 那边另有一道门:win32 不注册 ACP 对话 provider)。
       if (!acpSupportedOn()) throw new Error(`${options.displayName} 暂不支持 Windows：尚未验证进程树清理。`)

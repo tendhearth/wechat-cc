@@ -25,6 +25,13 @@ type Body = Record<string, unknown>
 const body = () => ({ body: t<Body>() })
 
 export const DESKTOP_CALLS = {
+  checkup: {
+    get:call('GET /v1/checkup'),
+    estimate:call('POST /v1/checkup/estimate',body()),
+    run:call('POST /v1/checkup/run',body()),
+    cancel:call('POST /v1/checkup/cancel',body()),
+    settings:call('POST /v1/checkup/settings',body()),
+  },
   permissions: { pending: call('GET /v1/permissions/pending') },
   conversation: {
     events: call('GET /v1/matter/owner-chat/events', {query:t<{since?:number}>()}),

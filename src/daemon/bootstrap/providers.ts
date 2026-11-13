@@ -610,12 +610,12 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         // restart. `model` is undefined for background evals (cheapEval/strongEval) and for spawns before any pin
         // exists; both fall back to the boot-time configured model. Building one is cheap (SDK client wiring, no network).
         // 对话:不设每步输出上限;首个输出前有界重试,下一次出发前再核守护。
-        makeChatModel: (model) => createApiModel({
+        makeChatModel: (model, limits) => createApiModel({
           baseURL: openaiBaseUrl,
           apiKey: openaiKey,
           model: model ?? defaultOpenaiModel,
-          maxOutputTokens: null,
-          maxRetries: 2,
+          maxOutputTokens: limits?.maxOutputTokens ?? null,
+          maxRetries: limits?.maxRetries ?? 2,
           providerName: 'wechat-openai',
           log: deps.log,
           beforeRetry: () => assertCallAllowed(deps.networkGate, { provider: 'openai', baseUrl: openaiBaseUrl, model: model ?? defaultOpenaiModel, exact: true }),

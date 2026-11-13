@@ -49,5 +49,10 @@ export { RESPONSE_SCHEMAS } from './desktop-api'
 
 export * from './topic-bubbles'
 export * from './owner-conversation'
+export type { CheckupTarget, CheckupProfile, CheckupEstimate, CheckupAttempt, CheckupView, ContextBudget } from './checkup'
+export { CheckupViewSchema, CheckupEstimateSchema } from './checkup'
 export { CC_ACTIVITY, createCCActivity, successfulCCResults, CC_RESPONSE, createCCResponsePerformance } from './cc-activity.js'
 export type { CCPhase, CCStream } from './cc-activity.js'
+
+export type {CheckupInterview,CheckupQuality,CheckupRatio,CheckupReview} from './checkup'
+export * from './checkup-review'

@@ -5,7 +5,7 @@ import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentAttachment, ty
 import type { McpStdioSpec } from '../mcp-stdio-spec'
 import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from '../mcp-stdio-spec'
 import { isAuthFail } from '../../../domain/auth-fail'
-import { providerErrorCodeOf, withProviderCode } from '../../../lib/provider-error-code'
+import { providerErrorCodeOf, withProviderCode, errorWithProviderCode } from '../../../lib/provider-error-code'
 import { log } from '../../../lib/log'
 import { codexCallTarget, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import { resolveCodexCheapModel } from './codex-cheap-model'
@@ -153,6 +153,9 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       }
     },
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
+      // read-only does not disable native read/shell tools or inherited project instructions.
+      // Until the app-server verifies a fake-tools-only surface, do not bill an unsafe checkup.
+      if (ctx.evaluation) throw errorWithProviderCode('isolated_evaluation_unavailable', 'provider_error')
       const tierOpts = compilePolicy('codex', ctx.tierProfile, ctx.permissionMode)
       // 只在**这一次** spawn 是 dangerously 时才免审(安全 10-20)。
       const bypass = !!opts.dangerouslyBypassApprovalsAndSandbox && ctx.permissionMode === 'dangerously'

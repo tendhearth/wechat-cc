@@ -169,8 +169,8 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
           return createOpenAiAgentProvider({
             endpoint: { baseUrl: baseURL, model: defaultModel },
             // 和对话侧同一种会话(B2):首个输出前有界重试;不给 sessions ⇒ 内存,不续接(委派每次都是新的)。
-            makeChatModel: (model) =>
-              createApiModel({ baseURL, apiKey: openaiKey, model: model ?? defaultModel, maxOutputTokens: null, maxRetries: 2, providerName: 'wechat-openai', log: deps.log,
+            makeChatModel: (model, limits) =>
+              createApiModel({ baseURL, apiKey: openaiKey, model: model ?? defaultModel, maxOutputTokens: limits?.maxOutputTokens ?? null, maxRetries: limits?.maxRetries ?? 2, providerName: 'wechat-openai', log: deps.log,
                 beforeRetry: () => assertCallAllowed(deps.networkGate, { provider: 'openai', baseUrl: baseURL, model: model ?? defaultModel, exact: true }) }),
             // Empty spec set → bridge with zero MCP tools (bare-bones).
             makeMcpBridge: async () => createMcpToolBridge({}),

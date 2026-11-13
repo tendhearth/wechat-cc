@@ -15,6 +15,8 @@ export type AgentProviderKind = KnownProviderId
 export interface AgentConfig {
   provider: AgentProviderKind
   model?: string
+  /** Explicit capacity for this exact backend endpoint and model. */
+  modelContextWindows?: Array<{provider:string;address:string;model:string;windowTokens:number}>
   // Cursor-specific model id (e.g. 'composer-2'). Mirrors `model?`'s
   // optional-string shape so an operator can persist a Cursor model
   // alongside the Claude one without overloading a single field.
@@ -310,7 +312,9 @@ export type ForwardBudgetConfig = z.infer<typeof ForwardBudgetConfig>
 
 const AcpAgentEntry = z.object({ id: z.string(), name: z.string(), command: z.string(), args: z.array(z.string()).optional(), auth_method: z.string().max(64).optional() })
 
+const ModelContextWindow = z.object({provider:z.string().min(1).max(64),address:z.string().refine(s=>s==='default'||URL.canParse(s)),model:z.string().min(1).max(200),windowTokens:z.number().int().min(1024).max(10_000_000)}).strict()
 const AgentConfigSchema = z.object({
+  modelContextWindows:z.array(ModelContextWindow).max(200).optional(),
   provider: z.enum(PROVIDER_IDS).default('claude'),
   model: z.string().optional(),
   cursorModel: z.string().optional(),
@@ -402,6 +406,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     // safeParse: if the sub-field is malformed we silently drop it rather
     // than crashing the entire config load (same lenient posture as the
     // rest of this function).
+    const modelContextWindows=Array.isArray(parsed.modelContextWindows)?parsed.modelContextWindows.flatMap(value=>{const r=ModelContextWindow.safeParse(value);return r.success?[r.data]:[]}).slice(0,200):undefined
     const a2aListen = parsed.a2a_listen != null
       ? A2AListen.safeParse(parsed.a2a_listen).data
       : undefined
@@ -453,6 +458,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
 
     return {
       provider,
+      ...(modelContextWindows?.length?{modelContextWindows}:{}),
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
       ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),

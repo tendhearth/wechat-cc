@@ -25,6 +25,11 @@ export interface WorkbenchErrorSpec {
 export type WorkbenchErrorSurface = 'desktop' | 'phone'
 
 export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Object.freeze({
+  checkup_rate_limited: { desktop:429, phone:429 },
+  checkup_busy: { desktop:409, phone:[409,'busy'] },
+  checkup_invalid_request: { desktop:400, phone:400 },
+  checkup_target_changed: { desktop:409, phone:[409,'stale'] },
+  checkup_run_unknown: { desktop:404, phone:[404,'not_found'] },
   // ── 交办入口:与 apps/desktop/src/shared/task-entry-contract.js 的 rejections 同码同状态(那份是桌面 / 网页判「确实被拒」用的,桌面 JS 引不到这里 ⇒ scripts/workbench-errors.guard.test.ts 核对)
   api_task_attachment_invalid: {desktop: 400, phone: 400, entry: true},
   api_task_attachment_unsupported: {desktop: 422, phone: 422, entry: true},

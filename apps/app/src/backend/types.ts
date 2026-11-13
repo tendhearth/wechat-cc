@@ -1,4 +1,4 @@
-import type { TopicsListResponse, TopicDetailResponse, TopicOpenResponse } from '@wechat-cc/protocol'
+import type { TopicsListResponse, TopicDetailResponse, TopicOpenResponse, CheckupView, CheckupEstimate } from '@wechat-cc/protocol'
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
@@ -78,6 +78,7 @@ export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch:
 export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unavailable' | 'unknown'
   | 'session_busy' | 'folder_busy' | 'provider_missing' | 'folder_missing' | 'quota' | 'session_changed' | 'session_empty' | 'session_managed'
   | 'handoff_changed'
+  | 'checkup_invalid' | 'checkup_rate_limited'
   | 'worktree_not_git' | 'worktree_dirty' | 'worktree_uncommitted' | 'merge_manual' | 'project_busy' | 'worktree_branch_missing' | 'worktree_base_missing'
   | 'input_stale' | 'input_conflict'
   | 'too_large' | 'no_voice'
@@ -206,6 +207,11 @@ export interface Backend {
   sticker(file: string): Promise<{ mime: string; data: string }>
   /** CC 的连接快照(手机版,没有 detail)。 */
   connections(): Promise<ConnectionsT>
+  checkup(): Promise<CheckupView>
+  checkupEstimate(): Promise<CheckupEstimate>
+  checkupRun(expectedTargetKey:string): Promise<CheckupView>
+  checkupCancel(): Promise<CheckupView>
+  checkupSettings(periodicProbe:boolean): Promise<CheckupView>
   /** 电脑上的原生会话(只读);cursor = 上一页的 nextCursor。 */
   /** names:两个分段的执行者正式名字(daemon 下发,收敛清单 ⑥);老 daemon 不带。 */
   sessions(provider: 'claude' | 'codex', cursor?: string, q?: string): Promise<{ items: NativeSessionRowT[]; nextCursor: string | null; names?: Record<string, string> }>

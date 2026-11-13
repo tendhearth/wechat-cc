@@ -129,6 +129,7 @@ describe('两个监听各认各的令牌', () => {
 })
 
 /** P3c-1 / P3c-2 / P3c-3 / P3c-4 起路由表里带 phone 块的 /v1 行(一份数据一个处理器,手机的旧路径是别名);链接令牌只读其中两条。 */
+const CHECKUP_DEVICE = ['GET /v1/checkup', 'POST /v1/checkup/estimate', 'POST /v1/checkup/run', 'POST /v1/checkup/cancel', 'POST /v1/checkup/settings']
 const T4_DEVICE = ['GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop','GET /v1/cli/activity','POST /v1/cli/decide','POST /v1/cli/session-say','POST /v1/cli/session-stop','GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics']
 const P3C1_DEVICE = ['GET /v1/cli/sessions', 'GET /v1/connections', 'GET /v1/matter', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/retractions', 'GET /v1/overseer/today', 'GET /v1/workbench/entry-options', 'GET /v1/workbench/models', 'GET /v1/workbench/session', 'GET /v1/workbench/sessions', 'POST /v1/companion/transcribe', 'POST /v1/journal/seen', 'POST /v1/knowledge/facts/set_fact_status', 'POST /v1/matter/say', 'POST /v1/memory/retractions/restore', 'POST /v1/workbench/discard-attachment']
 const P3C1_LINK = ['GET /v1/matter', 'GET /v1/matters']
@@ -152,9 +153,9 @@ const P3D_LINK = ['GET /v1/home', 'GET /v1/phone/art/presence']
 
 describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不了', () => {
   it('交给分发的(带 desktop + phone 块的)/v1 行只有 P3c-1 / P3c-2 / P3c-3 / P3c-4 / P3e 并的那几条;PHONE_ROUTES / LINK_ROUTES 里的 /v1 键就是它们加 P3d 手机独有的', () => {
-    expect([...PANEL_V1_ROUTES.device].sort()).toEqual([...P3C1_DEVICE, ...P3E_DEVICE, ...T4_DEVICE].sort())
+    expect([...PANEL_V1_ROUTES.device].sort()).toEqual([...P3C1_DEVICE, ...P3E_DEVICE, ...T4_DEVICE, ...CHECKUP_DEVICE].sort())
     expect([...PANEL_V1_ROUTES.link].sort()).toEqual([...P3C1_LINK, ...P3E_LINK].sort())
-    expect([...PHONE_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual([...P3C1_DEVICE, ...P3D_DEVICE, ...P3E_DEVICE, ...T4_DEVICE].sort())
+    expect([...PHONE_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual([...P3C1_DEVICE, ...P3D_DEVICE, ...P3E_DEVICE, ...T4_DEVICE, ...CHECKUP_DEVICE].sort())
     expect([...LINK_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual([...P3C1_LINK, ...P3D_LINK, ...P3E_LINK].sort())
     // 链接令牌能写的(LINK_WRITE_OK):/m/api、/set/api 那几条,外加 P3e 的停下(同别名行 POST /m/api/matter/stop 冻结的 write)
     expect(Object.keys(LINK_WRITE_OK).length).toBeGreaterThan(0)
@@ -170,7 +171,14 @@ describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不
       for (const key of V1_KEYS) {
         const [method, path] = key.split(' ') as [string, string]
         const r = await viaPanel(path, tok, method === 'POST' ? post({}) : {})
-        const open = tok === device ? [...P3C1_DEVICE, ...P3D_DEVICE, ...P3E_DEVICE, ...T4_DEVICE].includes(key) : [...P3C1_LINK, ...P3D_LINK, ...P3E_LINK].includes(key)
+        const open = tok === device ? [...P3C1_DEVICE, ...P3D_DEVICE, ...P3E_DEVICE, ...T4_DEVICE, ...CHECKUP_DEVICE].includes(key) : [...P3C1_LINK, ...P3D_LINK, ...P3E_LINK].includes(key)
+        // This dispatcher-only fixture intentionally does not mount checkup.
+        // A paired device reaches its module gate; links still fail above it.
+        if (open && CHECKUP_DEVICE.includes(key)) {
+          expect(r.status, key).toBe(503)
+          expect(await r.json()).toEqual({ error: 'module_starting', module: 'checkup' })
+          continue
+        }
         if (open) { expect(r.status, `${tok[0]} ${key}`).not.toBe(403); continue }
         expect(r.status, `${tok[0]} ${key}`).toBe(403)
         expect(await r.json()).toEqual({ error: 'route_not_allowed' })

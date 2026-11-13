@@ -27,6 +27,13 @@ function call<K extends PhoneApiKey, Q = void, B = void>(key: K, types?: { query
 type JobsActionT = 'pause' | 'resume' | 'remove'
 
 export const PHONE_CALLS = {
+  checkup: {
+    get:call('GET /v1/checkup'),
+    estimate:call('POST /v1/checkup/estimate',{body:t<{full?:boolean}>()}),
+    run:call('POST /v1/checkup/run',{body:t<{full?:boolean;expectedTargetKey:string}>()}),
+    cancel:call('POST /v1/checkup/cancel',{body:t<Record<string,never>>()}),
+    settings:call('POST /v1/checkup/settings',{body:t<{periodicProbe:boolean}>()}),
+  },
   permissions: {
     script:call('GET /v1/matter/permission-script',{query:t<{id:string;requestId:string;path:string;sha256:string;offset:number}>()}),
   },
