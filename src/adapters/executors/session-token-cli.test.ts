@@ -26,12 +26,14 @@ function captureCli(output: string) {
     }) as never)
   }
   vi.stubEnv('WECHAT_SESSION_TOKEN', 'CLI_AMBIENT_SECRET_CANARY')
+  vi.stubEnv('WECHAT_SESSION_TIER', 'CLI_TIER_SECRET_CANARY')
 }
 function cleanSpawns(count: number) {
   expect(boundary).toHaveLength(count)
   for (const [args, options] of boundary) {
     // An omitted env inherits process.env and is unsafe as well.
     expect([...args, ...Object.values(options.env ?? process.env) as string[]].some(v => v?.includes('SECRET_CANARY'))).toBe(false)
+    expect(Object.keys(options.env ?? process.env).some(name => /^WECHAT_SESSION_(TOKEN|TIER)$/i.test(name))).toBe(false)
     expect(options.env!.PATH).toBe(process.env.PATH)
   }
 }

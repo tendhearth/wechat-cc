@@ -36,6 +36,7 @@ const corruptNetworkReceipt = (networkAccess: boolean | undefined): NonNullable<
 describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)', () => {
   it('spawn argv and general env exclude ambient/session tokens on new, resumed and cheap sessions', async () => {
     vi.stubEnv('WECHAT_SESSION_TOKEN', 'AMBIENT_CODEX_SECRET_CANARY')
+    vi.stubEnv('WECHAT_SESSION_TIER', 'CODEX_TIER_SECRET_CANARY')
     const scripted = createScriptedCodex({ turns: [{ steps: [{ say: 'offline' }] }] })
     const spawnProcess = vi.fn(scripted.spawn)
     const r = rig({}, { spawnProcess, mcpServers: { wechat: { command: 'w' }, delegate: { command: 'd' }, plugin: { command: 'p' } } })
@@ -44,6 +45,7 @@ describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)
     expect(spawnProcess.mock.calls.length).toBe(3)
     for (const [command, args, options] of spawnProcess.mock.calls) {
       expect([command, ...args, ...Object.values(options.env)].some(v => v?.includes('SECRET_CANARY'))).toBe(false)
+      expect(Object.keys(options.env).some(name => /^WECHAT_SESSION_(TOKEN|TIER)$/i.test(name))).toBe(false)
       expect(options.env.PATH).toBe(process.env.PATH)
     }
     const servers = (scripted.threadStarts[0]!.params.config as any).mcp_servers as any

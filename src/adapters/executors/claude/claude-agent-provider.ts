@@ -394,7 +394,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         // The SDK exposes its output cap through the documented subprocess env.
         // Internal retries are disabled: an isolated sample must stay bounded even
         // if the owner's interactive CLI normally enables an indefinite watchdog.
-        env: { ...process.env, CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(evaluation.maxOutputTokens), CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' },
+        env: { ...sessionSubprocessEnv(), CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', CLAUDE_CODE_DISABLE_CLAUDE_MDS:'1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(evaluation.maxOutputTokens), CLAUDE_CODE_MAX_RETRIES: '0', CLAUDE_CODE_RETRY_WATCHDOG: '0' },
         canUseTool: async (name, input) => evaluation.tools.tools.some(tool => name === `mcp__wechat__${tool.name}`)
           ? { behavior: 'allow', updatedInput: input }
           : { behavior: 'deny', message: 'Only the current conversation tools are available.' },

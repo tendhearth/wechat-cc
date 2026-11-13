@@ -35,6 +35,7 @@ it('OpenAI bridge spawns core MCP with private env, never argv; plugin general e
     expect(f.snapshot('wechat').tokenMatchesExpected).toBe(true)
     expect(f.snapshot('delegate').tokenMatchesExpected).toBe(true)
     expect(f.snapshot('plugin').hasToken).toBe(false)
+    expect(f.snapshot('plugin').hasTier).toBe(false)
   } finally { await bridge.close() }
 })
 
@@ -44,9 +45,13 @@ it('Gemini MCP spawn keeps session token out of argv and never inherits an ambie
   try {
     expect(f.snapshot('core').argvLeak).toBe(false)
     expect(f.snapshot('core').tokenMatchesExpected).toBe(true)
+    expect(f.snapshot('core').hasTier).toBe(false)
   } finally { await core.close() }
   const bare = await connectWechatMcp(f.spec('bare'))
-  try { expect(f.snapshot('bare').hasToken).toBe(false) } finally { await bare.close() }
+  try {
+    expect(f.snapshot('bare').hasToken).toBe(false)
+    expect(f.snapshot('bare').hasTier).toBe(false)
+  } finally { await bare.close() }
 })
 
 it('workbench OpenAI matter child gets its own baton while generic MCP children inherit neither session credential', async () => {
