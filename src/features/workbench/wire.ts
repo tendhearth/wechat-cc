@@ -241,7 +241,7 @@ export function wireWorkbench(opts: {
       nativeHistory.codex=createCodexHistoryReader({codexPathOverride:current})
     },
     // 同一种会话(B2),用途是工作台:只有文件工具 —— 和 Claude / Codex 的工作台一样不给 wechat MCP。
-    openai:()=>{ if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,loadAgentConfig(opts.stateDir),process.env,opts.log,matterMcp) },
+    openai:()=>{ if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,loadAgentConfig(opts.stateDir),process.env,opts.log,matterMcp,opts.networkGate) },
     cursor:()=>{ registerAcpExecutors(registry,opts.boot.registry,loadAgentConfig(opts.stateDir),{log:opts.log,matterMcp}) },
     agy:()=>{ registerUnattendedExecutors(registry,opts.boot.registry) },
   }

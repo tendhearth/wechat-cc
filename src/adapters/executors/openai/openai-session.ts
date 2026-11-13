@@ -14,6 +14,8 @@ import {AsyncQueue} from '../../../lib/async-queue'
 import {sumTurnUsage,type TurnUsage} from '../../../domain/turn-usage'
 import {userMessage,type APIModel,type ChatMessage,type ToolSpec} from './api-model'
 import type {ApiSessionState} from './api-sessions'
+import {createHash} from 'node:crypto'
+import {openaiErrorStatus,openaiErrorMessage,openaiErrorCode} from './openai-error-code'
 
 export interface ToolCall{id:string;name:string;input:unknown}
 export interface ImagePart{data:Uint8Array|string;mediaType:string}
@@ -114,6 +116,8 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
   const {model,history,purpose}=args
   let lastContextTokens: number | undefined
   let requestBytes = 0
+  let lastRequest:ReturnType<APIModel['stream']>|undefined
+  let requestFailure:{status:number;signature:string}|null=null
   let firstInputTokens: number | undefined
   let firstRequestSeen=false
   let resolvedModel: string | undefined
@@ -124,6 +128,7 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
     const started=Date.now()
     if(first){first=false;queue.push({kind:'init',sessionId:history.id})}
     let outputBytes=0,usage:TurnUsage|undefined,steps=0
+    requestFailure=null
     const push=(event:AgentEvent)=>{queue.push(event)}
     try{
       check(signal);purpose.check?.()
@@ -143,6 +148,7 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         requestBytes=Buffer.byteLength(JSON.stringify(history.messages()))+Buffer.byteLength(JSON.stringify(purpose.tools()))
         lastContextTokens=undefined
         const turn=model.stream(structuredClone(history.messages()),purpose.tools(),signal,step===0)
+        lastRequest=turn
         void turn.finished.catch(()=>undefined)
         let buffered=''
         const flush=()=>{if(buffered){push({kind:'text',text:buffered});buffered=''}}
@@ -185,6 +191,13 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
       }
       fail('api_task_step_limit')
     }catch(error){
+      const status=openaiErrorStatus(error)
+      const code=openaiErrorCode(error)
+      if(!signal.aborted&&status!==undefined&&status>=400&&status<500&&![401,402,403,429].includes(status)&&(code===undefined||code==='invalid_request'||code==='provider_error')){
+        // Requested counts can grow on the same rejection. Keep only a normalized digest, never the error/body.
+        const signature=createHash('sha256').update(openaiErrorMessage(error).replace(/\d+/g,'#').replace(/\s+/g,' ').trim()).digest('hex')
+        requestFailure={status,signature}
+      }
       const report=purpose.failure(error,signal.aborted,{steps,...(usage?{usage}:{})},history.id)
       // 存不下(工作台)⇒ 这一轮的 promise 失败、close 跟着失败,任务不放手(和改之前一样)。
       if(history.state()==='active')history.save(report.state==='interrupted'?history.messages():trimDanglingToolCalls(history.messages()),report.state)
@@ -195,7 +208,9 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
 
   return{
     contextUsage() {
-      return {historyBytes:requestBytes,...(lastContextTokens!==undefined?{tokens:lastContextTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(resolvedModel?{model:resolvedModel}:{})}
+      // A transport with wire observation can also say no request was serialized. Do not replace that with a guess.
+      const bytes=lastRequest&&'requestBytes' in lastRequest?lastRequest.requestBytes:requestBytes
+      return {...(bytes!==undefined?{historyBytes:bytes}:{}),...(lastRequest?.requestBytes!==undefined?{requestBytes:lastRequest.requestBytes}:{}),requestFailure,...(lastContextTokens!==undefined?{tokens:lastContextTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(resolvedModel?{model:resolvedModel}:{})}
     },
     dispatch(text,attachments=[]){
       if(closed)fail('api_task_closed')

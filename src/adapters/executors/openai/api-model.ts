@@ -8,6 +8,7 @@ import {makeThinkFilter} from '../../../domain/think-tags'
 import {makeTimeoutFetch,openaiFetchTimeoutsFromEnv,type FetchLike,type FetchTimeouts} from '../../../lib/timeout-fetch'
 import {jsonSchema,streamText,tool,type LanguageModel,type ModelMessage,type TextStreamPart,type ToolSet} from 'ai'
 import {makeOpenaiRetry,type OpenaiRetryOptions} from './openai-retry'
+import {usageFetch} from './usage-fetch'
 
 export type ChatMessage=ModelMessage
 export interface ToolSpec{name:string;description:string;parameters:Record<string,unknown>}
@@ -15,7 +16,7 @@ export type TurnDelta={kind:'text';text:string}|{kind:'tool_call';id:string;name
 export interface StepResult{messages:ChatMessage[];toolCalls:{id:string;name:string;input:unknown}[];finishReason:string;model:string|null;usage?:TurnUsage}
 export interface APIModel{
   /** 一步:先把 `deltas` 读完,再等 `finished`(反过来会和 AI SDK 的 tee 互相等)。`signal` 真的掐掉请求。 */
-  stream(messages:ChatMessage[],tools:ToolSpec[],signal:AbortSignal,retryAllowed?:boolean):{deltas:AsyncIterable<TurnDelta>;finished:Promise<StepResult>}
+  stream(messages:ChatMessage[],tools:ToolSpec[],signal:AbortSignal,retryAllowed?:boolean):{deltas:AsyncIterable<TurnDelta>;finished:Promise<StepResult>;readonly requestBytes?:number}
   /** 一次性评估(cheapEval / strongEval):整段文字,开头的 <think> 已剥。 */
   generate(messages:ChatMessage[],signal?:AbortSignal):Promise<string>
 }
@@ -79,13 +80,16 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
   const maxRetries=options.maxRetries??0
   if(!baseURL||!apiKey||!modelId||(maxOutputTokens!==undefined&&(!Number.isSafeInteger(maxOutputTokens)||maxOutputTokens<1||maxOutputTokens>16_384))||!Number.isSafeInteger(maxRetries)||maxRetries<0||maxRetries>2)throw Error('invalid_api_model')
   const frozen=Object.freeze({...options,baseURL,model:modelId,maxOutputTokens})
-  const model=languageModelFactory?.(frozen)??createOpenAICompatible({name:options.providerName??'workbench-api',baseURL,apiKey,
+  const injectedModel=languageModelFactory?.(frozen)
+  const modelFor=(observe:(bytes:number)=>void=()=>{})=>injectedModel??createOpenAICompatible({name:options.providerName??'workbench-api',baseURL,apiKey,includeUsage:true,
     // 边界超时(arch backlog #4 第 2 步,§4.4):AI SDK 自己没有请求超时 —— 黑洞地址会一直挂到回合看门狗。
     // 连不上 / 流停住 ⇒ 带 network 码的错误。
-    fetch:makeTimeoutFetch(options.timeouts??openaiFetchTimeoutsFromEnv(),options.fetch) as typeof fetch}).chatModel(modelId)
+    fetch:usageFetch(makeTimeoutFetch(options.timeouts??openaiFetchTimeoutsFromEnv(),options.fetch),observe,options.beforeRetry) as typeof fetch}).chatModel(modelId)
   const retry=makeOpenaiRetry(modelId,options)
   return{
     stream(messages,toolSpecs,signal,retryAllowed=true){
+      let requestBytes:number|undefined
+      const model=modelFor(bytes=>{requestBytes=bytes})
       const first=messages[0]
       const system=first?.role==='system'?first.content:undefined
       const input=system===undefined?messages:messages.slice(1)
@@ -158,9 +162,10 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
         }catch(error){complete=true;completion.reject(error);throw error}
         finally{if(!complete)completion.reject(Error('api_model_stream_incomplete'))}
       }
-      return{deltas:deltas(),finished:completion.promise}
+      return{deltas:deltas(),finished:completion.promise,get requestBytes(){return requestBytes}}
     },
     async generate(messages,signal=new AbortController().signal){
+      const model=modelFor()
       // streamText 而不是 generateText:只实现了流式的端点 / 测试替身也能用,一条路。
       // 显式给 max_tokens:思考型模型(Kimi / GLM 带思考)把思维链也算 completion token,上游默认预算被思考吃光就回
       // content="" + finish_reason=length —— 看起来像模型不回话。

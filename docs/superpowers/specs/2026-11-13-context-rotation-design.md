@@ -1,6 +1,6 @@
 # 主人对话上下文轮换与当场记账（2026-11-13，第三轮修订）
 
-最高原则：轮换为了避免撑爆窗口和记忆掉线，不是为了省 token。拿不准宁可不换。没有体检的 Claude 主人继续自然聊天，正常一天只应有一两次必要轮换；绝不按每轮工具调用机械换段。
+最高原则：轮换为了避免撑爆窗口和记忆掉线，不是为了省 token。原生会话拿不准宁可不换；OpenAI 兼容通道每步重发完整历史，缺 usage 时以真实请求体估量作刹车。没有体检的 Claude 主人继续自然聊天，正常一天只应有一两次必要轮换；绝不按每轮工具调用机械换段。
 
 ## 核实与范围
 
@@ -13,7 +13,9 @@
 ## 预算与占用
 
 - **占用**是最近一次模型请求的输入 token。Claude 读取最后一个父 assistant 请求的 input + cache read + cache creation；同一 message id 的重复块不累加，子 agent 与 result 的整轮累计 usage 不算。OpenAI 读取最后一步 prompt/input，不加 output、不加请求后产生的工具结果字节。计费用量照原样累计，二者独立。
-- 新段尚无 provider 回报时占用未知，不按量轮换。系统提示字节、全部 canonical 消息、每个工具的假定大小都不作轮换证据。已有首请求输入后，最新请求缺 usage 时才可用该请求真实字节作回退；没有可信首请求基线仍不按量换。未知工具结果不预留任何 token。
+- 原生会话新段尚无 provider 回报时占用未知，不按量轮换。系统提示字节、全部 canonical 消息、每个工具的假定大小都不作轮换证据。已有首请求输入后，最新请求缺 usage 时才可用该请求真实字节作回退；没有可信首请求基线仍不按量换。未知工具结果不预留任何 token。
+- **OpenAI 兼容通道例外（真模型验收修复）**：对话、工作台、delegate、cheapEval/strongEval 和体检共用 APIModel，所有流式请求开启 `stream_options.include_usage=true`。端点首次以 400/422 明确拒绝 `stream_options` / `include_usage` 参数时，记住该端点不支持，去掉参数仅重试一次；后续该端点直接省略，其他端点不受影响。认证、模型不存在、参数值非法等不触发此降级。每次重发仍过守护与取消检查。
+- **兼容通道缺 usage 时按真实发送的 UTF-8 请求体字节数 / 3 向上取整**参与按量轮换，状态为 `source=bytes`，不要求首请求 token 基线。字节由传输层在 SDK 序列化之后记录，包含本次 system、历史、工具定义、附件及协议开销，不计响应或未送出的工具结果。没有真实序列化证据时仍保持原来的未知规则；估量不冒充计费用量、实测固定开销或模型窗口。Claude 等原生会话保持未知不换，8 轮及记账边界门槛保留。
 - **固定开销**取新段第一次请求的输入，包含系统提示、工具定义及首次输入。保存首次请求证据，不把后来较大的工具请求误当首请求。第一请求未测得时保持未知；恢复原段保留原基线。首次部署续接的旧原生会话没有基线时，后续的整段请求不能冒充固定开销；状态为 null，预算只用窗口×比例。真正新开段后重新测首请求。
 - **历史下限**为 `max(24000, ceil(window × .15))`；**硬顶**为 `floor(window × .85)`；有基线的**预算**为 `min(硬顶, max(floor(window × ratio), fixedOverhead + historyFloor))`，无基线则 `min(硬顶, floor(window × ratio))`。固定开销加历史下限超过硬顶时仍取硬顶，状态标“窗口偏小”。只有固定开销不换，历史占用为 `max(0, occupancy - fixedOverhead)`。
 - 未体检比例 .6，实测使用值夹在 [.2,.8]，原始体检分数保留；实测 0 不会给出预算 0。轮换窗口未知按 32000 假设，Claude provider 提供独立的 200000 保守轮换基线；体检仍用原来的 8192/.25 默认及展示，不把保守轮换基线冒充 SDK 观测。SDK/可信配置已知窗口优先，按 provider + 规范端点摘要 + 实际模型 id 写入原子 JSON。跨重启读取标为 persisted，新观测标为 measured，未知标为 assumed。模型 alias 不覆盖已解析的实际模型。Claude 窗口键两头去后缀并关联严格 family alias；有后缀的推导容量保守限制到 200k，避免把普通线程推到 1M。合成 API 错误不覆盖实际模型或用量；SDK result 多模型项不取首项/最大项。
@@ -21,11 +23,13 @@
 
 ## 上下文超长恢复
 
-错误码 `context_overflow` 在 `lib/provider-error-code.ts` 集中判定：Claude prompt-too-long、OpenAI 兼容 code/400 maximum-context、LiteLLM ContextWindowExceededError、Codex contextWindowExceeded 和 ACP 错误封套。只处理错误通道，不扫描正常回答，不把输出上限/额度/限流当超长。
+错误码 `context_overflow` 在 `lib/provider-error-code.ts` 集中判定：Claude prompt-too-long、OpenAI 兼容 code/400 maximum-context、LiteLLM ContextWindowExceededError、`exceeded model token limit`、`maximum context length is N tokens`、带容量或超限说明的 `context window`、`prompt is too long`、`input is too long`、`too many tokens`、Codex contextWindowExceeded 和 ACP 错误封套。带不带 requested 数字都恢复。只处理错误通道，不扫描正常回答，不把输出上限/额度/限流当超长。
 
 主人 solo 在同一 chat 锁内立即 forget 旧段、读取 canonical 接续并重试当前入站一次，不受8轮、审批记账水位或夜间 generation 限制；原文仍在 canonical 库，事后照常抽取。第二次失败才通知主人；新 spawn 的认证/网络失败保留原有码。两次尝试共用同一运行记录，失败片段不作为回复交付。
 
-错误封套提供这次输入 token 数时，按 provider+规范端点+实际模型原子保存最小拒绝输入上界；以后预算在已知窗口与拒绝上界中取小。没有拒绝输入计数的 legacy resume 仍立即恢复，但只记 `overflow_input_unknown`，不以短用户输入字节伪造整段输入并永久污染窗口。窗口读/写失败保留安全回退，打受控日志，并在 health/status 的 budgetError 显示。
+错误文案独立解析 limit 与 requested（支持 `requested: N` 及千位逗号）；有明确 limit 时优先将它按 provider+规范端点+实际模型原子保存为窗口实测上界，否则用拒绝输入数作上界。以后预算在已知窗口与最小实测上界中取小，跨重启保留，不污染其他端点、模型或 provider。没有任何计数的 legacy resume 仍立即恢复，但只记 `overflow_input_unknown`，不以短用户输入字节伪造整段输入并永久污染窗口。窗口读/写失败保留安全回退，打受控日志，并在 health/status 的 budgetError 显示。
+
+**未识别错误的保险丝只用于 OpenAI 兼容主人会话**：连续两轮以同样的 4xx 失败，且第二轮实际请求体未缩小，下一轮开新段并带接续。已知认证、额度和限流不入保险丝，保留各自处理，避免换段丢掉无须丢弃的历史。相同错误按 HTTP status + 规范化错误摘要判断，变化的数字（例如 requested 数）不影响同类识别；持久化只存摘要、状态、字节和次数，不存错误正文。成功、不同错误、请求缩小或真正新段复位。保险丝不在失败当轮盲目重试，不记录虚假的窗口上界；日志标记 `reason=failure_fuse`（health 兼容使用已有 overflow 原因），绕过按量的 8 轮与记账滞后门槛，仍须无在途请求且接续读取成功。
 
 ## 安全边界与记账
 

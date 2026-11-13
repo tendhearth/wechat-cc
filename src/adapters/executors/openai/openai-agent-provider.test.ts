@@ -11,7 +11,7 @@ import { openDb, type Db } from '../../../lib/db'
 import { makeChatSessionStore, openAiConnectionHash, CHAT_RESUME_MAX_BYTES } from './api-sessions'
 import { trimDanglingToolCalls } from './openai-session'
 import { scriptedOpenAiModel, scriptedMcpTools, type OpenAiScriptedStep } from '../../../test-support/executors/openai-scripted'
-import { EvalOutputExhaustedError } from './api-model'
+import { EvalOutputExhaustedError,type APIModel } from './api-model'
 
 const guestSpawn = {
   tierProfile: { allow: new Set(['reply']), relay: new Set(), deny: new Set() } as any,
@@ -265,6 +265,36 @@ describe('openai provider loop(对话这一份用途)', () => {
     const provider = createOpenAiAgentProvider({ makeChatModel, evalModel: () => undefined, endpoint: { baseUrl: 'https://gw/v1', model: 'Qwen3.8' }, makeMcpBridge: async () => replyBridge().bridge })
     await expect(provider.cheapEval!('x')).rejects.toBeInstanceOf(EvalOutputExhaustedError)
     expect(calls).toBe(1)
+  })
+
+  it('uses the current gateway main model for unconfigured eval and exhausted explicit eval fallback',async()=>{
+    const models:Array<string|undefined>=[];let main='Kimi-Code',chosen:string|undefined
+    const provider=createOpenAiAgentProvider({endpoint:{baseUrl:'https://offline.invalid/v1',model:'old-1'},evalModel:()=>chosen,evalFallbackModel:()=>main,makeMcpBridge:async()=>replyBridge().bridge,makeChatModel:model=>{
+      models.push(model);return scriptedOpenAiModel([],{generate:()=>{if(model==='GLM-FLASH')throw new EvalOutputExhaustedError(model,4000);return 'ready'}}).model
+    }})
+    expect(await provider.cheapEval!('fixture')).toBe('ready')
+    main='DeepSeek';chosen='GLM-FLASH'
+    expect(await provider.strongEval!('fixture')).toBe('ready')
+    expect(models).toEqual(['Kimi-Code','GLM-FLASH','DeepSeek'])
+  })
+  it('does not retry an exhausted current main eval with the stale boot model',async()=>{
+    const models:Array<string|undefined>=[]
+    const provider=createOpenAiAgentProvider({endpoint:{baseUrl:'https://offline.invalid/v1',model:'old-1'},evalFallbackModel:()=> 'Kimi-Code',makeMcpBridge:async()=>replyBridge().bridge,makeChatModel:model=>{
+      models.push(model);return scriptedOpenAiModel([],{generate:()=>{throw new EvalOutputExhaustedError('Kimi-Code',4000)}}).model
+    }})
+    await expect(provider.cheapEval!('fixture')).rejects.toBeInstanceOf(EvalOutputExhaustedError)
+    expect(models).toEqual(['Kimi-Code'])
+  })
+  it('does not invent request bytes when serialization failed before a new request was sent',async()=>{
+    const scripted=scriptedOpenAiModel([{text:'ready',usage:{input:10,output:2}},{fail:Error('before serialization')}])
+    const model:APIModel={...scripted.model,stream:(...args)=>({...scripted.model.stream(...args),requestBytes:undefined})}
+    const provider=createOpenAiAgentProvider({makeChatModel:()=>model,makeMcpBridge:async()=>replyBridge().bridge,makeBuiltins:()=>[]})
+    const session=await provider.spawn({alias:'a',path:'/tmp'},guestSpawn as any)
+    try{
+      await collectTurn(session.dispatch('first'));expect(session.contextUsage?.().tokens).toBe(10)
+      await collectTurn(session.dispatch('next'));expect(session.contextUsage?.().tokens).toBeUndefined()
+      expect(session.contextUsage?.().historyBytes).toBeUndefined()
+    }finally{await session.close()}
   })
 
   it('a tool the model invented (not on any surface) gets an error result instead of crashing the loop', async () => {

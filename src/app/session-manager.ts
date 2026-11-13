@@ -327,7 +327,7 @@ export class SessionManager {
             try {
               const inner = session.dispatch(text)
               for await (const ev of inner) {
-                yield ev.kind==='error'&&isContextOverflow(ev.message)?{...ev,code:'context_overflow'}:ev
+                yield ev.kind==='error'&&isContextOverflow({code:ev.code,message:ev.message})?{...ev,code:'context_overflow'}:ev
                 if (ev.kind === 'result' && ev.sessionId && sessionStore && !req.ephemeral) {
                   sessionStore.set({ alias: req.alias, provider: req.providerId, chatId: req.chatId, sessionId: ev.sessionId })
                 }
@@ -337,7 +337,7 @@ export class SessionManager {
                 const observed = session.contextUsage?.()
                 if (observed?.historyBytes!==undefined) historyBytes = observed.historyBytes
                 const tokens = observed?.tokens
-                rotation?.observe(contextKey, { bytes: historyBytes, ...(observed&&observed.tokens===undefined&&observed.historyBytes===undefined?{unknown:true}:{}), ...(tokens !== undefined ? { tokens } : {}), ...(observed?.firstInputTokens !== undefined ? {firstInputTokens:observed.firstInputTokens} : {}), ...(observed?.model ? {model:observed.model} : {}), turns: 1 })
+                rotation?.observe(contextKey, { bytes: historyBytes, ...(observed?.requestBytes!==undefined?{requestBytes:observed.requestBytes}:{}), ...(observed?.requestFailure!==undefined?{requestFailure:observed.requestFailure}:{}), ...(observed&&observed.tokens===undefined&&observed.historyBytes===undefined?{unknown:true}:{}), ...(tokens !== undefined ? { tokens } : {}), ...(observed?.firstInputTokens !== undefined ? {firstInputTokens:observed.firstInputTokens} : {}), ...(observed?.model ? {model:observed.model} : {}), turns: 1 })
               } catch { /* Observation must never break reply delivery. */ }
               const n = inFlight.get(k) ?? 1
               if (n <= 1) inFlight.delete(k)

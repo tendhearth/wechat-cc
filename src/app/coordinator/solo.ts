@@ -9,7 +9,7 @@ import { describeProviderDenial, slashFor } from '../../domain/provider-policy'
 import { capabilitiesFor } from '../../domain/capability-matrix'
 import { makeTurnTextCollector, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
 import { TURN_TIMEOUT_CODE, type TurnSummary } from '../../ports/agent-provider'
-import { isContextOverflow, contextOverflowInputTokens, isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
+import { isContextOverflow, contextOverflowInputTokens, contextOverflowLimitTokens, isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
 import type { CoordinatorCtx, ProjectRef } from './ctx'
 import type { TurnPlan } from './plan'
 import type { TurnRunner } from './runner'
@@ -170,7 +170,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       })
       if (rotation && rotateManager && !stopped() && isContextOverflow({code:summary.errorCode,message:summary.error})) {
         try {
-          const carry=await rotation.recoverOverflow(contextKey,rotateManager,currentInput,contextOverflowInputTokens(summary.error??''))
+          const carry=await rotation.recoverOverflow(contextKey,rotateManager,currentInput,contextOverflowInputTokens(summary.error??''),contextOverflowLimitTokens(summary.error??''))
           if(carry){
             d.abandon('context_overflow')
             handle=await deps.manager.acquire({alias:proj.alias,path:proj.path,providerId,chatId:msg.chatId,tierProfile:auth.tierProfile,permissionMode:auth.permissionMode,...(pinnedModel!==undefined?{model:pinnedModel}:{})})

@@ -6,10 +6,11 @@ import { continuationBlock, tokensFromBytes, worthAccounting } from '../domain/c
 export interface ContextInput { id: string; at: number; text?: string; userId?: string }
 export interface ContextKey { providerId: ProviderId; alias: string; chatId: string }
 export interface ContextBudget { windowTokens: number; reliableFillRatio: number; source?: 'measured'|'default'; windowSource?: 'measured'|'persisted'|'assumed'; ratioSource?: 'measured'|'default'; budgetError?: string|null }
-export interface ContextObservation { unknown?:boolean; bytes?: number; tokens?: number; firstInputTokens?: number|null; model?: string; turns?: number }
+export interface ContextObservation { unknown?:boolean; bytes?: number; requestBytes?:number; requestFailure?:{status:number;signature:string}|null; tokens?: number; firstInputTokens?: number|null; model?: string; turns?: number }
 interface Segment {
   key: ContextKey; model: string; requestedModel?:string; bytes: number; tokens: number; source: 'unknown'|'bytes'|'provider'; turns: number
   baselineUnknown?: boolean; fixedOverheadTokens?: number; budgetError?: string|null; windowError?:string|null; lastDeferredTurn?:number; throughTs: string|null; lastRotatedAt: string|null; reason: 'budget'|'nightly'|'overflow'|null
+  requestFailure?:{status:number;signature:string;bytes:number;count:number}
   continuation: boolean; nightlyDone: number; sinceBudget?: number
   deferredRotations?: number; consecutiveDeferrals?: number; deferredSince?: number; lastDeferredReason?: string|null; alerted?: boolean; catchupThrough?: string
 }
@@ -74,6 +75,7 @@ export class ContextRotation {
     try{
       const delivery=this.deliveries.get(k.chatId)
       if(delivery&&idOf(delivery.key)===idOf(k)){s.throughTs=delivery.throughTs??await this.d.latestTs(k.chatId,current);this.deliveries.delete(k.chatId)}
+      if(k.providerId==='openai'&&(s.requestFailure?.count??0)>=2)return await this.recoverOverflow(k,sessions,current,undefined,undefined,'failure_fuse')
       const chat=this.chat(k.chatId),b=this.budgetInfo(s),known=s.source!=='unknown'
       const nightly=nightlyWindow&&chat.nightly>s.nightlyDone
       if(chat.nightly>s.nightlyDone){s.nightlyDone=chat.nightly;this.persist()}
@@ -91,6 +93,7 @@ export class ContextRotation {
       if(!this.owner(k)||sessions.isInFlight(k)||this.d.pending(k.chatId)||!await sessions.rotate(k))return null
       const prevTurns=s.turns
       s.bytes=0;s.tokens=0;s.turns=0;s.source='unknown';delete s.fixedOverheadTokens;delete s.baselineUnknown
+      delete s.requestFailure
       if(reason==='budget')s.sinceBudget=0
       s.continuation=true;s.nightlyDone=chat.nightly;s.consecutiveDeferrals=0;delete s.deferredSince;s.alerted=false;delete s.lastDeferredTurn;delete s.catchupThrough
       s.lastRotatedAt=new Date(this.now()).toISOString();s.reason=reason;this.persist()
@@ -106,7 +109,7 @@ export class ContextRotation {
   opened(k:ContextKey,model:string,_bytes:number,resumed:boolean){
     if(!this.tracked(k))return
     const s=this.segment(k);if(!resumed)s.model=model
-    if(!resumed){s.bytes=0;s.tokens=0;s.source='unknown';s.turns=0;delete s.fixedOverheadTokens;delete s.baselineUnknown;s.continuation=true}
+    if(!resumed){s.bytes=0;s.tokens=0;s.source='unknown';s.turns=0;delete s.fixedOverheadTokens;delete s.baselineUnknown;delete s.requestFailure;s.continuation=true}
     else {s.continuation=false;if(s.fixedOverheadTokens===undefined)s.baselineUnknown=true}
     this.persist()
   }
@@ -117,8 +120,16 @@ export class ContextRotation {
     const s=this.segment(k)
     if(o.model)s.model=o.model
     if(!s.baselineUnknown&&typeof o.firstInputTokens==='number'&&Number.isFinite(o.firstInputTokens)&&o.firstInputTokens>=0)s.fixedOverheadTokens??=o.firstInputTokens
+    if(o.requestFailure!==undefined&&k.providerId==='openai'){
+      const f=o.requestFailure,prior=s.requestFailure,bytes=o.requestBytes
+      if(f&&f.status>=400&&f.status<500&&![401,402,403,429].includes(f.status)&&bytes!==undefined&&bytes>0){
+        s.requestFailure={...f,bytes,count:prior&&prior.status===f.status&&prior.signature===f.signature&&bytes>=prior.bytes?prior.count+1:1}
+      }else delete s.requestFailure
+    }
     if(o.bytes!==undefined)s.bytes=o.bytes
+    if(o.requestBytes!==undefined)s.bytes=o.requestBytes
     if(o.tokens!==undefined&&Number.isFinite(o.tokens)&&o.tokens>=0){s.tokens=o.tokens;s.source='provider'}
+    else if(k.providerId==='openai'&&o.requestBytes!==undefined&&Number.isFinite(o.requestBytes)&&o.requestBytes>0){s.tokens=Math.ceil(o.requestBytes/3);s.source='bytes'}
     else if(o.unknown){s.tokens=0;s.source='unknown'}
     else if(o.bytes!==undefined){s.tokens=tokensFromBytes(o.bytes);s.source=s.fixedOverheadTokens===undefined?'unknown':'bytes'}
     if(!s.baselineUnknown&&o.tokens!==undefined&&o.firstInputTokens!==null)s.fixedOverheadTokens??=o.firstInputTokens??o.tokens
@@ -145,15 +156,16 @@ export class ContextRotation {
     })
   }
   /** Context rejection is a capacity emergency: canonical history can be accounted after recovery. */
-  async recoverOverflow(k:ContextKey,sessions:RotationSessions,current?:ContextInput,rejectedTokens?:number){
+  async recoverOverflow(k:ContextKey,sessions:RotationSessions,current?:ContextInput,rejectedTokens?:number,limitTokens?:number,reason:'overflow'|'failure_fuse'='overflow'){
     if(!this.owner(k))return null
     const s=this.segment(k)
-    try{if(rejectedTokens!==undefined){this.d.recordOverflow?.(k,s.model,rejectedTokens);s.windowError=null}else this.d.log('CONTEXT_BUDGET','overflow_input_unknown')}catch{s.windowError='window_write_failed';s.budgetError='window_write_failed';this.d.log('CONTEXT_BUDGET','window_write_failed')}
+    const bound=limitTokens??rejectedTokens
+    try{if(bound!==undefined){this.d.recordOverflow?.(k,s.model,bound);s.windowError=null}else if(reason==='overflow')this.d.log('CONTEXT_BUDGET','overflow_input_unknown')}catch{s.windowError='window_write_failed';s.budgetError='window_write_failed';this.d.log('CONTEXT_BUDGET','window_write_failed')}
     const carry=await this.continuation(k,current)
     if(!this.owner(k)||sessions.isInFlight(k)||!await sessions.rotate(k))return null
     s.bytes=0;s.tokens=0;s.turns=0;s.source='unknown';delete s.fixedOverheadTokens;delete s.baselineUnknown
-    s.sinceBudget=0;s.continuation=true;s.reason='overflow';s.lastRotatedAt=new Date(this.now()).toISOString();s.consecutiveDeferrals=0;delete s.deferredSince;s.alerted=false
-    this.persist();this.d.log('CONTEXT_ROTATE',`reason=overflow provider=${k.providerId} carried=${carry.carried}`)
+    s.sinceBudget=0;s.continuation=true;s.reason='overflow';s.lastRotatedAt=new Date(this.now()).toISOString();s.consecutiveDeferrals=0;delete s.deferredSince;s.alerted=false;delete s.requestFailure
+    this.persist();this.d.log('CONTEXT_ROTATE',`reason=${reason} provider=${k.providerId} carried=${carry.carried}`)
     return carry
   }
   private prune(){let changed=false;for(const [id,s] of Object.entries(this.state.sessions))if(!this.owner(s.key)||this.d.active?.(s.key)===false){delete this.state.sessions[id];changed=true}if(changed)this.persist()}
