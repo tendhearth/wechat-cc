@@ -209,11 +209,11 @@ export function agyPermissionOpts(_tp: TierProfile, permissionMode: PermissionMo
 
 /**
  * openai 兼容(自研循环):逐工具闸门(openai-gate.ts 的 gateTool)按档位判;dangerously 全放。
- * `relayAs: 'deny'`:档位说「问」的,这一家现在一律拒、不问(稿 §6 第 6 步待主人点头)。
+ * 档位说「问」的,经同一套主人确认通道批准后执行。
  */
-export interface OpenaiGateOpts { bypass: boolean; relayAs: 'deny' }
+export interface OpenaiGateOpts { bypass: boolean; relayAs: 'ask' }
 export function openaiGateOpts(_tp: TierProfile, permissionMode: PermissionMode): OpenaiGateOpts {
-  return { bypass: permissionMode === 'dangerously', relayAs: 'deny' }
+  return { bypass: permissionMode === 'dangerously', relayAs: 'ask' }
 }
 
 /** 编译对象:按「怎么连的」分,不按 provider id —— cursor 有 ACP(生产)和 SDK 兜底两条路,翻法不同。 */

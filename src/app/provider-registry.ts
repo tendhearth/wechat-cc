@@ -11,7 +11,7 @@
  * The registry is intentionally not a singleton; it's constructed and
  * passed via deps. Tests can build their own with mock providers.
  */
-import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, SpawnContext } from '../ports/agent-provider'
+import type { AgentAttachment, AgentDispatchContext, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, SpawnContext } from '../ports/agent-provider'
 import type { WorkbenchExecutorCapabilities } from '../domain/workbench/executor-capabilities'
 import type { ProviderId } from '../domain/conversation'
 import { executorNames, type ExecutorNames } from '../domain/provider-display-names'
@@ -89,10 +89,10 @@ export function guardSession(session: AgentSession, gate: NetworkGate, provider:
     get(t, prop, receiver) {
       if (prop === 'callTarget') return target
       if (prop === 'dispatch') {
-        return (text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> => ({
+        return (text: string, attachments?: readonly AgentAttachment[], context?: AgentDispatchContext): AsyncIterable<AgentEvent> => ({
           async *[Symbol.asyncIterator]() {
             await admit()
-            yield* t.dispatch(text, attachments)
+            yield* (context ? t.dispatch(text, attachments, context) : t.dispatch(text, attachments))
           },
         })
       }

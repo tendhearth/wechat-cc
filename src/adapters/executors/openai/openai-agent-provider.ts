@@ -22,7 +22,8 @@ import { isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import { EvalOutputExhaustedError, systemMessage, userMessage, type APIModel, type ChatMessage, type ToolSpec } from './api-model'
 import { builtinTools, type BuiltinTool } from './openai-tools'
-import { gateTool } from './openai-gate'
+import { ChatApprovalTurn } from '../chat-approval'
+import { gateTool, type OpenAiApproval } from './openai-gate'
 import type { ChatOwnerRules } from '../../permission-rules/chat'
 import { makeTurnEmitter } from '../turn-emitter'
 import { makeMemoryChatSessionStore, type ApiSessionState, type ChatSession, type ChatSessionBinding, type ChatSessionStore } from './api-sessions'
@@ -57,6 +58,7 @@ export interface OpenAiAgentProviderOptions {
   makeBuiltins?: (cwd: string) => BuiltinTool[]
   /** 主人自己的对话走放行规则(2026-10-25,core/permission-rules/chat.ts)。现取;不给 / 回 null ⇒ 不看规则。 */
   ownerRules?: () => ChatOwnerRules | null
+  approval?: OpenAiApproval
   /** 会话历史存哪(B2):DB 那一份(makeChatSessionStore)⇒ daemon 重启 / 会话释放后续得上。不给 ⇒ 内存,不续接。 */
   sessions?: ChatSessionStore
   /** 绑定续接的连接身份(`openAiConnectionHash`:base URL + 密钥的摘要,不含密钥本身)。换了端点 / 密钥就不续接。 */
@@ -142,7 +144,9 @@ function chatPurpose(args: {
   builtins: BuiltinTool[]
   maxSteps: number
   ownerRules?: () => ChatOwnerRules | null
+  approval?: OpenAiApproval
 }): OpenAiPurpose {
+  const turns = new WeakMap<AbortSignal, { budget: ChatApprovalTurn; inbound: boolean }>()
   const { ctx, bridge, maxSteps, ownerRules } = args
   const builtinByName = new Map<string, BuiltinTool>(args.builtins.map(b => [b.spec.name, b]))
   const toolSpecs: ToolSpec[] = [...bridge.tools, ...args.builtins.map(b => b.spec)]
@@ -154,6 +158,9 @@ function chatPurpose(args: {
     closeTimeoutMs: CLOSE_TIMEOUT_MS,
     closeMustConfirm: false,
     cancelWaits: false,
+    beginTurn(signal, context) {
+      turns.set(signal, { budget: new ChatApprovalTurn(args.approval?.maxCards), inbound: context?.source === 'inbound' })
+    },
     tools: () => toolSpecs,
     // Stamp `server` from the REAL owning MCP server (never assume `wechat` for every MCP tool) — isReplyToolCall keys on it.
     toolCallEvent(call): AgentEvent {
@@ -172,7 +179,9 @@ function chatPurpose(args: {
       if (signal.aborted) return { output: CANCELLED_TOOL }
       const server = bridge.serverOf(call.name)
       const input = (call.input ?? {}) as Record<string, unknown>
+      const turn = turns.get(signal)
       const gate = await gateTool({
+        approvalTurn: turn?.budget,
         toolName: call.name,
         ...(server !== undefined ? { mcpServer: server } : {}),
         input,
@@ -180,6 +189,9 @@ function chatPurpose(args: {
         permissionMode: ctx.permissionMode,
         chatId: ctx.chatId,
         ownerRules: ownerRules?.() ?? null,
+        // 没有主人刚发起的入站轮，relay 保持 deny；缓存会话不携带这项资格。
+        approval: turn?.inbound ? args.approval : undefined,
+        signal,
       })
       if (signal.aborted) return { output: CANCELLED_TOOL }
       if (gate.decision === 'deny') return { output: gate.message ?? `Permission denied: tool "${call.name}" is not allowed for this chat.` }
@@ -309,7 +321,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       const session = openOpenAiSession({
         model,
         history: chatHistory(store, saved, log),
-        purpose: chatPurpose({ ctx, bridge, builtins: (opts.makeBuiltins ?? builtinTools)(cwd), maxSteps, ...(opts.ownerRules ? { ownerRules: opts.ownerRules } : {}) }),
+        purpose: chatPurpose({ ctx, bridge, builtins: (opts.makeBuiltins ?? builtinTools)(cwd), maxSteps, approval: opts.approval, ...(opts.ownerRules ? { ownerRules: opts.ownerRules } : {}) }),
       })
       log('SESSION_SPAWN', `alias=${project.alias} provider=openai session=${saved.id}${resumed ? ' resumed' : ''}`)
       session.callTarget = () => target?({...target,...(session.contextUsage?.().model?{model:session.contextUsage!().model!}:{})}):null

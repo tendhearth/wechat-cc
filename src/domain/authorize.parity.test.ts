@@ -252,15 +252,22 @@ describe('authorize 逐格对照:对话 · Gemini 闸门', () => {
         const ownerRules = wiredRules(tn === 'admin', counter)
         const run = async (build: (d: GeminiGateDeps) => (ctx: SpawnContext) => ToolGate) => {
           const trace: unknown[] = []
-          const gate = build({
-            ownerRules: () => ownerRules,
-            askUser: async (...a) => { trace.push(['ask', ...a]); return answer },
-            adminFor: (c) => { trace.push(['admin?', c]); return admin },
-            modeFor: (c) => { trace.push(['mode?', c]); return mode },
-            lookupBase: (m, p) => { trace.push(['base?', m, p]); return { askUser } as never },
-          })({ chatId: 'chat', tierProfile, permissionMode } as SpawnContext)
           const out: unknown[] = []
-          for (const name of BARE) out.push(await gate(name, { text: 'hi', command: 'rm -rf /' }))
+          // 逐格比较的是权限规则，每格是一轮；限流和卡身份由通道回归另测。
+          for (const name of BARE) {
+            const gate = build({
+              ownerRules: () => ownerRules,
+              askUser: async (admin, prompt, hash, timeout) => {
+                expect(prompt).toContain(name)
+                expect(hash).toMatch(/^[a-z0-9]{5}$/i)
+                trace.push(['ask', admin, timeout]); return answer
+              },
+              adminFor: (c) => { trace.push(['admin?', c]); return admin },
+              modeFor: (c) => { trace.push(['mode?', c]); return mode },
+              lookupBase: (m, p) => { trace.push(['base?', m, p]); return { askUser } as never },
+            })({ chatId: 'chat', tierProfile, permissionMode } as SpawnContext)
+            out.push(await gate(name, { text: 'hi', command: 'rm -rf /' }))
+          }
           return { out, trace }
         }
         expect(await run(makeGeminiToolGate), `${tn}/${permissionMode}/${mode}/${askUser}/${admin}/${answer}`).toEqual(await run(legacyGeminiGate))
@@ -349,12 +356,12 @@ describe('放行规则生效的面(2026-10-25 起:终端会话、一起做、主
     // 档位直接放 / 拒的格子根本不问规则(主人对话里普通 shell 本来就放)
     expect(authorize(s, { name: 'Bash', kind: 'shell' })).toMatchObject({ verdict: 'allow', consultOwnerRules: false })
   })
-  it('对话 · openai(问不了):规则在「问落成拒」之前看,规则没拿主意照旧拒', () => {
+  it('对话 · openai:先看规则,规则没拿主意就问主人', () => {
     const s = { ...admin, executor: 'openai' as const, surface: 'chat' as const, ownerChat: true }
-    expect(authorize(s, destructive)).toMatchObject({ verdict: 'deny', reason: 'relay_unavailable', consultOwnerRules: true })
+    expect(authorize(s, destructive)).toMatchObject({ verdict: 'ask', reason: 'tier', consultOwnerRules: true })
     expect(authorize(s, destructive, { ownerRuling: { verdict: 'allow', by: 'rule' } })).toMatchObject({ verdict: 'allow', reason: 'owner_rules' })
-    expect(authorize(s, destructive, { ownerRuling: { verdict: 'ask', by: 'floor' } })).toMatchObject({ verdict: 'deny', reason: 'relay_unavailable' })
-    expect(authorize({ ...s, ownerChat: false }, destructive)).toMatchObject({ verdict: 'deny', reason: 'relay_unavailable', consultOwnerRules: false })
+    expect(authorize(s, destructive, { ownerRuling: { verdict: 'ask', by: 'floor' } })).toMatchObject({ verdict: 'ask', reason: 'tier' })
+    expect(authorize({ ...s, ownerChat: false }, destructive)).toMatchObject({ verdict: 'ask', reason: 'tier', consultOwnerRules: false })
   })
   it('格子总数(防有人把循环删空了)', () => {
     expect(cells).toBeGreaterThan(45_000)

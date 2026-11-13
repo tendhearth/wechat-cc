@@ -159,7 +159,7 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
       if (handle) openTurns.set(t.turn!, handle)
       const log = handle ? (ev: AgentEvent) => { try { handle.event(ev) } catch { /* 只少一步 */ } } : undefined
       const onEvent = (ev: AgentEvent) => { observe?.(ev); log?.(ev); deps.onTurnEvent?.(t.chatId, ev) }
-      const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, () => collectTurn(t.handle.dispatch(t.prompt), { timeoutMs, onEvent }))
+      const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, () => collectTurn(t.handle.dispatch(t.prompt, { source: 'inbound' }), { timeoutMs, onEvent }))
       if (progressTimer) {
         // 旁路收尾,不多套一层 then:调用方 await 的还是回合本身,恢复的那一拍不变。
         const clear = () => { if (progressTimer) { clearTimeout(progressTimer); progressTimer = undefined } }

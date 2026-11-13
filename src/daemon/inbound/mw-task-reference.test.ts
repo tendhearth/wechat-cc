@@ -19,6 +19,7 @@ function setup(over: Partial<TaskReferenceMwDeps> = {}) {
   const commands: string[] = [], sent: string[] = [], watches: string[] = []
   let t = NOW
   const deps: TaskReferenceMwDeps = {
+    handoffExecutors: () => ['Claude', 'Codex'],
     ownerChatId: () => OWNER,
     candidates: () => [todo, latency, review],
     // 「提醒我」是管家第一次点名时顺手开的,单独记,不混进主要动作的断言。
@@ -35,10 +36,18 @@ function setup(over: Partial<TaskReferenceMwDeps> = {}) {
     await mw(ctx, async () => { nexted = true })
     return { nexted, consumed: ctx.consumedBy }
   }
-  return { run, commands, sent, watches, advance: (ms: number) => { t += ms } }
+  return { run, mw, commands, sent, watches, advance: (ms: number) => { t += ms } }
 }
 
 describe('mw-task-reference', () => {
+  it.each(['请调用 matter_handoff 把事项 a85aec02 交给 Claude', '让 Claude 接着做 a85aec02 的后半段'])('交接请求让路,探针和消费者都不发送补充: %s', async text => {
+    let judged = false
+    const { run, mw, commands, sent, watches } = setup({ judge: async () => { judged = true; return { taskId: todo.id, confident: true } } })
+    const ctx = { msg: { chatId: OWNER, text, quote: { type: 'text', text: '任务 a85aec02：已答复' } } } as InboundCtx
+    expect(await mw.probe(ctx)).toBeNull()
+    expect((await run(text, { quote: '任务 a85aec02：已答复' })).nexted).toBe(true)
+    expect(commands).toEqual([]); expect(sent).toEqual([]); expect(watches).toEqual([]); expect(judged).toBe(false)
+  })
   it('非主人 ⇒ 直接放行', async () => {
     const { run, commands } = setup()
     expect((await run('整理 TODO 那件继续', { chatId: 'guest@im.wechat' })).nexted).toBe(true)
@@ -164,6 +173,21 @@ describe('额度止损:执行者额度用完时,不再往它送,直接问"交给
     expect(typeof (created[0] as { fromTaskId?: string }).fromTaskId).toBe('string')
     expect(created[0]!.text).toContain('读 DATA.md,哪三个模型在 1 秒以内'); expect(created[0]!.text).toContain('再加一列百分比'); expect(created[0]!.text).toMatch(/接替 Codex/)
     expect(sent.at(-1)).toMatch(/已交给 Claude/); expect(sent.at(-1)).toMatch(/c0ffee00/)
+  })
+  it.each(['交给 Claude', '是', '好,交给 Claude'])('已有额度接管 offer 先收确认：%s', async answer => {
+    const { run, mw, created } = quotaOn()
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    const ctx = { msg: { chatId: OWNER, text: answer } } as InboundCtx
+    expect((await mw.probe(ctx))?.data).toMatchObject({ kind: 'takeover-yes' })
+    expect((await run(answer)).nexted).toBe(false)
+    expect(created).toHaveLength(1)
+    expect(created[0]).toMatchObject({ providerId: 'claude', fromTaskId: latency.id })
+  })
+  it('答另一个执行者不能误批准当前 offer', async () => {
+    const { run, created } = quotaOn()
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    expect((await run('交给 Codex')).nexted).toBe(true)
+    expect(created).toEqual([])
   })
   it('回「不用」⇒ 作罢;之后的「是」不再算接管', async () => {
     const { run, created, sent } = quotaOn()

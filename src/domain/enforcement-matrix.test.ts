@@ -23,8 +23,6 @@ const WHY_GAPS: Readonly<Record<string, string>> = {
     + '执行命令有权限卡(拒掉);改文件不弹卡(trusted / admin 本来允许改)。只挂 wechat MCP(按会话档位注册),不挂插件和 delegate。'
     + '改成真的问是设计稿 §6 第 5 步,等主人点头。注意:wechat MCP 上要问的那几类(memory_delete / a2a_send / daemon_remediate)'
     + '算成拒,依据是「每条权限请求都拒」这条编译设置;Cursor 对 MCP 调用发不发权限请求没有单独登记的事实。',
-  // trusted / admin:ask→deny(档位说问的,一律拒)。
-  openai: '自研循环有逐工具闸门,但「问」还没接通道:compilePolicy 的 relayAs 是 deny,档位说问的一律拒(设计稿 §6 第 6 步待主人点头)。',
   // trusted:ask→allow;admin:ask→allow(shell_destructive / memory_delete)、allow→deny / ask→deny(admin 专用工具)。
   agy: '没有逐工具回调,也没有映射的沙箱(confines 全是 none):shell_destructive / memory_delete / a2a_send 不会停下来问;问不了 ⇒ 维持不问,'
     + '主人切过去时照实说(设计稿 §6)。wechat MCP 是钉死 trusted 的静态配置(adminMcpTools 为假),主人聊天里 admin 专用工具'
@@ -74,7 +72,7 @@ describe('provider × tier × tool-kind enforcement (derived)', () => {
     expect(Object.keys(WHY_GAPS).sort(), '有缺口的执行者要在 WHY_GAPS 写理由;没有缺口了就删掉那条').toEqual(withGaps)
   })
 
-  // 准绳(稿 §6):问不了、于是放行的那几家,主人切过去时照实说一句;比档位严的(cursor / openai 直接拒)不用提醒。
+  // 准绳(稿 §6):问不了、于是放行的那几家,主人切过去时照实说一句;比档位严的(cursor 直接拒)不用提醒。
   it('the "it will not ask you" notice goes exactly to the executors that let ask-kinds through', () => {
     expect(KNOWN_PROVIDER_IDS.filter(p => noAskNotice(p) !== null).sort()).toEqual(['agy', 'codex'])
     // 按切换的那个对话的档位说(2026-10-26):codex 在主人自己的对话里逐条问 ⇒ 不提醒;信任的对话照旧提醒。

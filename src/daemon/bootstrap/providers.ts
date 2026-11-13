@@ -71,7 +71,7 @@ export interface ProviderDeps {
   stateDir: string
   /** OpenAI 兼容对话的会话历史存这里(B2,api-sessions 的 openai_chat_sessions)。不给 ⇒ 只在内存,不续接。 */
   db?: import('../../lib/db').Db
-  ilink: Pick<BootstrapDeps['ilink'], 'askUser' | 'companion'>
+  ilink: Pick<BootstrapDeps['ilink'], 'askUser' | 'resolvePermission' | 'companion'>
   agentProviderKind?: AgentProviderKind
   configuredAgent: AgentConfig
   permissionMode: PermissionMode
@@ -600,6 +600,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       const { createMcpToolBridge } = await import('../../adapters/executors/openai/openai-mcp-bridge')
       const { makeChatSessionStore, openAiConnectionHash } = await import('../../adapters/executors/openai/api-sessions')
       const provider = createOpenAiAgentProvider({
+        approval: {
+          revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
+          askUser: deps.ilink.askUser,
+          adminFor: chatId => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
+        },
         // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
         endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
         // 后台评估单独的模型(现取:改了配置下一次评估就换,不用重启)。
@@ -679,6 +684,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       const { lookup } = await import('../../domain/capability-matrix')
       const genaiClient = new GoogleGenAI({ apiKey: geminiKey }) as unknown as import('../../adapters/executors/gemini/gemini-agent-provider').GenaiClient
       const buildGate = makeGeminiToolGate({
+          revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
         askUser: deps.ilink.askUser,
         adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         modeFor: (chatId) => conversationStore.get(chatId)?.mode.kind ?? 'solo',

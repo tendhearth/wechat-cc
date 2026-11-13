@@ -37,10 +37,14 @@ it('API executors use the same task-only stdio notebook tools with their bound t
       {calls:[{id:'write',name:'matter_note',input:{text:'handoff verified'}}]},
       {text:'Notebook updated.'},
     ])
-    const p=createOpenAiWorkbenchProvider({sessions:makeApiSessionStore(db),model:fixture.model,configHash:'a'.repeat(64),configuredModel:'fixture',matterMcp:ctx=>({command:process.versions.bun?process.execPath:'bun',args:[fileURLToPath(new URL('../../../mcp-servers/matter/main.ts',import.meta.url))],env:{WECHAT_INTERNAL_API:`http://127.0.0.1:${port}`,WECHAT_SESSION_TOKEN:ctx.mcpEnv!.WECHAT_SESSION_TOKEN!}})})
-    session=await p.spawn({alias:`workbench:${task.id}`,path:project},{tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:'owner',mcpEnv:{WECHAT_SESSION_TOKEN:'bound-api-token'},requestPermission:async()=>{throw Error('notebook does not ask for file permission')}})
+    const advertised:string[][]=[]
+    const model:APIModel={...fixture.model,stream(messages,tools,signal,retryAllowed){advertised.push(tools.map(tool=>tool.name));return fixture.model.stream(messages,tools,signal,retryAllowed)}}
+    const p=createOpenAiWorkbenchProvider({sessions:makeApiSessionStore(db),model,configHash:'a'.repeat(64),configuredModel:'fixture',matterMcp:ctx=>{expect(ctx.matterLedger===true).toBe(true);return {command:process.versions.bun?process.execPath:'bun',args:[fileURLToPath(new URL('../../../mcp-servers/matter/main.ts',import.meta.url))],env:{WECHAT_INTERNAL_API:`http://127.0.0.1:${port}`,WECHAT_SESSION_TOKEN:ctx.mcpEnv!.WECHAT_SESSION_TOKEN!}}}})
+    session=await p.spawn({alias:`workbench:${task.id}`,path:project},{tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:'owner',matterLedger:true,mcpEnv:{WECHAT_SESSION_TOKEN:'bound-api-token'},requestPermission:async()=>{throw Error('notebook does not ask for file permission')}})
     const events=[];for await(const event of session.dispatch('read and note'))events.push(event)
     expect(events.at(-1)?.kind).toBe('result')
+    expect(advertised.every(tools=>tools.includes('matter_notes')&&tools.includes('matter_note'))).toBe(true)
+    expect(advertised.length).toBeGreaterThan(0)
     expect(calls).toEqual([['GET','/v1/matter/notes',true,false,null],['POST','/v1/matter/note',true,false,{text:'handoff verified'}]])
     expect(JSON.stringify(fixture.seen)).toContain('first agent note')
   }finally{await session?.close();await new Promise<void>(resolve=>http.close(()=>resolve()));db.close();removeTempDir(root)}

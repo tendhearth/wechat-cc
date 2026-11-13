@@ -11,7 +11,9 @@ it('exposes only the bound matter notebook and rejects caller-supplied matter or
   const [a,b]=InMemoryTransport.createLinkedPair(),client=new Client({name:'test',version:'0'})
   await Promise.all([server.connect(a),client.connect(b)])
   try{
-    expect((await client.listTools()).tools.map(t=>t.name)).toEqual(['matter_notes','matter_note'])
+    const listed=(await client.listTools()).tools
+    expect(listed.map(t=>t.name)).toEqual(['matter_notes','matter_note'])
+    expect(listed.every(t=>t._meta?.['anthropic/alwaysLoad']===true)).toBe(true)
     expect((await client.callTool({name:'matter_notes',arguments:{}})).isError).not.toBe(true)
     expect((await client.callTool({name:'matter_note',arguments:{text:'Use dark.webp'}})).isError).not.toBe(true)
     expect(calls).toEqual([['GET','/v1/matter/notes',undefined],['POST','/v1/matter/note',{text:'Use dark.webp'}]])

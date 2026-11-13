@@ -19,9 +19,9 @@
  *   4. 登记表:一起做的 Claude 只认这件事登记过的原生 MCP(没登记 / 登记了但不放进来 ⇒ 拒,登记且放进来 ⇒ 问);
  *   5. 定时任务只读档:不在档里 ⇒ 拒;读过本机之后不再上网;读文件只限项目目录、不碰红线;
  *   6. 档位 × 工具类别(tool-decision.ts 的 decideTool,三家共用)⇒ 放 / 问 / 拒;
- *   7. 问不了:编译好的策略说这家执行者「问」落成拒(openai v1)⇒ 拒;
+ *   7. 问不了:编译好的策略说这家执行者「问」落成拒 ⇒ 拒;
  *   8. 主人的放行规则:终端会话(terminal)、一起做(workbench),以及**主人自己的对话**(chat 且 ownerChat,2026-10-25
- *      主人点头);只在前面落到「问」时才看(问不了的 openai:在「问落成拒」之前看,规则没拿主意照旧拒)。
+ *      主人点头);只在前面落到「问」时才看。
  *
  * 网络守护不在这里:它判的是「这一次 spawn / 这一次模型调用连哪个端点」(lib/network-gate 的 decideCall,按调用
  * 目标、不按工具),没有逐工具的那一层。
@@ -151,7 +151,7 @@ export interface Authorization {
   by?: 'rule' | 'review' | 'floor'
   /**
    * 落到「问」、这个面上放行规则生效、还没拿到裁决 ⇒ 真。调用方去问 permission-gate,拿 ownerRuling 再调一次。
-   * 对话面只在 ownerChat 时才可能为真(见 OWNER_RULE_SURFACES)。为真时 verdict 是没有规则时的落点(问,或 openai 的拒)。
+   * 对话面只在 ownerChat 时才可能为真(见 OWNER_RULE_SURFACES)。为真时 verdict 是没有规则时的落点。
    */
   consultOwnerRules: boolean
 }
@@ -166,7 +166,7 @@ function ownerRulesApply(subject: AuthSubject): boolean {
 
 /**
  * 「问」:放行规则生效的面上,先交给规则(有裁决就按裁决落)。
- * cannotAsk:这家执行者问不了(openai v1 的 relayAs deny)—— 规则没拿主意时落成拒(relay_unavailable),而不是问。
+ * cannotAsk:这家执行者问不了(relayAs deny)—— 规则没拿主意时落成拒(relay_unavailable),而不是问。
  */
 function ask(subject: AuthSubject, reason: AuthReason, action: AuthAction, cannotAsk = false): Authorization {
   const fallback = (extra: Partial<Authorization> = {}) => (cannotAsk ? done('deny', 'relay_unavailable', extra) : done('ask', reason, extra))

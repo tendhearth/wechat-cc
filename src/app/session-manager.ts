@@ -1,6 +1,6 @@
 import type { ProviderId } from '../domain/conversation'
 import type { SessionStore } from '../ports/session-store'
-import type { AgentEvent, AgentSession } from '../ports/agent-provider'
+import type { AgentDispatchContext, AgentEvent, AgentSession } from '../ports/agent-provider'
 import { assertCallAllowed, classifyWith, sessionCallTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
 import { providerCallTarget, type ProviderRegistry } from './provider-registry'
 import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from '../domain/user-tier'
@@ -135,7 +135,7 @@ export interface SessionHandle {
   /** 会话报的「续上了上一次的历史」(AgentSession.resumedHistory);没报 ⇒ undefined。 */
   readonly resumedHistory?: boolean
   lastUsedAt: number
-  dispatch(text: string): AsyncIterable<AgentEvent>
+  dispatch(text: string, context?: AgentDispatchContext): AsyncIterable<AgentEvent>
   /**
    * Interrupt the in-flight dispatch (if any) on this session. Forwards
    * to the underlying `AgentSession.cancel?.()` — see that interface for
@@ -307,7 +307,7 @@ export class SessionManager {
       callTarget: effectiveTarget,
       ...(session.resumedHistory !== undefined && (!session.resumedHistoryOwnerOnly||rotation?.isOwnerChat(req.chatId)) ? {resumedHistory:session.resumedHistory} : rotation?.isOwnerChat(req.chatId) ? {resumedHistory:req.providerId==='claude' && !!resumeSessionId} : {}),
       lastUsedAt: Date.now(),
-      dispatch(text: string): AsyncIterable<AgentEvent> {
+      dispatch(text: string, context?: AgentDispatchContext): AsyncIterable<AgentEvent> {
         checkExecution()
         handle.lastUsedAt = Date.now()
         // Track in-flight under (provider, alias, chatId) so sweepIdle
@@ -325,7 +325,7 @@ export class SessionManager {
             historyBytes += inputBytes
             rotation?.started(contextKey)
             try {
-              const inner = session.dispatch(text)
+              const inner = context ? session.dispatch(text, undefined, context) : session.dispatch(text)
               for await (const ev of inner) {
                 yield ev.kind==='error'&&isContextOverflow({code:ev.code,message:ev.message})?{...ev,code:'context_overflow'}:ev
                 if (ev.kind === 'result' && ev.sessionId && sessionStore && !req.ephemeral) {
