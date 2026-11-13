@@ -68,7 +68,11 @@ export function choiceTakes(text: string, open: OpenChoice | undefined, nowMs: n
   return n >= 1 && n <= open.count
 }
 // 整句匹配(评审 #3):"好像还没开始做"不是"好";"交给 Claude"要带名字。
-const YES = /^\s*(是|是的|好|好的|可以|行|嗯|交给\s*\S{1,12}|换\s*\S{1,12})\s*[。.!！]?\s*$/
+function acceptsOffer(text: string, providerId: string): boolean {
+  if (BARE_ACK.test(text)) return true
+  const names = [providerId, providerDisplayName(providerId)].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  return new RegExp(`^(?:(?:好|好的|是)[,，]??\\s*)?(?:交给|换(?:成)?)\\s*(?:${names})(?:\\s*继续)?[。.!！]?$`, 'i').test(text)
+}
 const NO = /^\s*(不用|不要|算了|不了|先不|先放着)\s*[。.!！]?\s*$/
 const BARE_ACK = /^\s*(是|是的|好|好的|可以|行|嗯)\s*[。.!！]?\s*$/
 const QUOTA_CODES = new Set(['provider_quota_exhausted', 'provider_rate_limited'])
@@ -176,7 +180,6 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     const text = (msg.text ?? '').trim()
     const owner = deps.ownerChatId()
     if (!owner || msg.chatId !== owner || !text || isWechatTaskCommand(text)) return null
-    if (isTaskHandoffRequest(text, deps.handoffExecutors?.())) return null
     // 刚接管出来的新任务在服务列表刷新前也得能被指到。
     const listed = deps.candidates(msg.chatId)
     const candidates = [...listed, ...[...takenOver.values()].filter(c => !listed.some(x => x.id === c.id))]
@@ -195,9 +198,10 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
       if (recent.length === 1) return { kind: 'quota-wait', candidates, task: recent[0]! }
     }
     if (offerLive) {
-      if (YES.test(text)) return { kind: 'takeover-yes', candidates, offer: offer! }
+      if (acceptsOffer(text, offer!.to)) return { kind: 'takeover-yes', candidates, offer: offer! }
       if (NO.test(text)) return { kind: 'takeover-no', candidates, offer: offer! }
     }
+    if (isTaskHandoffRequest(text, deps.handoffExecutors?.())) return null
     // 通知里说过"回「是」":没有待确认的接管,但恰好只有一件近期因额度失败的任务 ⇒ 「是」就是它。
     if (!offerLive && BARE_ACK.test(text) && deps.createTask) {
       const recent = candidates.filter(c => QUOTA_CODES.has(c.error ?? '') && c.updatedAt >= now() - TAKEOVER_TTL_MS && !takenOver.has(c.id))
