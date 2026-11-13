@@ -9,6 +9,7 @@ import type { WechatCommand } from './registry'
 import { isTaskHandoffCommand } from '../../features/workbench'
 
 export interface TaskCommandDeps {
+  handoffExecutors?(): readonly string[]
   handleWechat(chatId: string, text: string, identity?: WechatMessageIdentity): Promise<WechatWorkbenchReply | null>
   sendMessage(chatId: string, text: string): Promise<unknown>
 }
@@ -19,7 +20,7 @@ export function makeTaskCommand(deps: TaskCommandDeps): WechatCommand {
     group: 'workbench',
     probe: (m) => {
       const text = m.text ?? ''
-      if (isTaskHandoffCommand(text)) return false
+      if (isTaskHandoffCommand(text, deps.handoffExecutors?.())) return false
       return isWechatTaskCommand(text)
     },
     async handle(msg, turn) {

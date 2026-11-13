@@ -4,6 +4,7 @@ import { makeTaskCommand, type TaskCommandDeps } from '../commands/task-command'
 import { buildInboundPipeline, type InboundPipelineDeps } from './build'
 import type { InboundCtx } from './types'
 import { makeModeCommands } from '../mode-commands'
+import { handoffCases, handoffNames } from '../../test-support/task-handoff-cases'
 
 function fakeDeps(over: Partial<{
   adminConsumes: boolean; modeConsumes: boolean; onboardingConsumes: boolean;
@@ -80,10 +81,10 @@ describe('inbound pipeline (integration)', () => {
   ])('handoff reaches CC through the real command and reference chain: %s', async text => {
     const { deps, spy } = fakeDeps()
     const handleWechat = vi.fn(async () => '补充正在发送'), sendMessage = vi.fn(async () => ({})), judge = vi.fn()
-    const mode = makeModeCommands({ getMode: () => ({ kind: 'solo', provider: 'claude' }), setMode: async () => {}, providers: () => ['claude'], tierOf: () => 'admin', sendMessage } as unknown as Parameters<typeof makeModeCommands>[0])
-    withCommands(deps, [makeTaskCommand({ handleWechat, sendMessage }), ...mode.commands()])
+    const mode = makeModeCommands({ getMode: () => ({ kind: 'solo', provider: 'claude' }), setMode: async () => {}, registry: { list: () => ['claude'], get: () => null }, tierOf: () => 'admin', sendMessage } as unknown as Parameters<typeof makeModeCommands>[0])
+    withCommands(deps, [makeTaskCommand({ handleWechat, sendMessage, handoffExecutors: () => handoffNames }), ...mode.commands()])
     deps.taskReference = {
-      ownerChatId: () => 'c1', candidates: () => [{ id: 'a85aec02', title: 'hand off', project: 'project', path: '/project', providerId: 'codex', phase: 'replied', updatedAt: 0 }],
+      handoffExecutors: () => handoffNames, ownerChatId: () => 'c1', candidates: () => [{ id: 'a85aec02', title: 'hand off', project: 'project', path: '/project', providerId: 'codex', phase: 'replied', updatedAt: 0 }],
       handleWechat, sendMessage, judge, log: () => {},
     }
     const ctx = mkCtx(); ctx.msg.text = text
@@ -98,6 +99,25 @@ describe('inbound pipeline (integration)', () => {
       expect(handleWechat).toHaveBeenCalledWith('c1', supplement.msg.text, expect.anything())
     }
     expect(spy.dispatch).toHaveBeenCalledOnce()
+  })
+  it.each(handoffCases)('第二轮真实命令链：%s → handoff=%s', async (text, handoff) => {
+    const { deps, spy } = fakeDeps()
+    const handled: string[] = []
+    const handleWechat = async (_chat: string, text: string) => { handled.push(text); return 'ok' }
+    const sendMessage = async () => ({})
+    const mode = makeModeCommands({ registry: { list: () => ['claude', 'codex', 'agy'], get: () => null }, readConfig: () => ({ openaiAliases: {} }) } as unknown as Parameters<typeof makeModeCommands>[0])
+    withCommands(deps, [makeTaskCommand({ handleWechat, sendMessage, handoffExecutors: () => handoffNames }), ...mode.commands()])
+    deps.taskReference = {
+      handoffExecutors: () => handoffNames, ownerChatId: () => 'c1',
+      candidates: () => [{ id: 'a85aec02', title: 'work', project: 'project', path: '/project', providerId: 'codex', phase: 'replied', updatedAt: 0 }],
+      handleWechat, sendMessage, log: () => {},
+    }
+    const ctx = mkCtx(); ctx.msg.text = text
+    ctx.msg.quote = { type: 'text', text: '任务 a85aec02：已答复' }
+    await buildInboundPipeline(deps)(ctx)
+    expect(spy.dispatch).toHaveBeenCalledTimes(handoff ? 1 : 0)
+    const original = text === '转给后端,Claude 看结果' ? '任务 a85aec02 结果' : text === '交给另一位来完成' ? '任务 a85aec02' : text.startsWith('任务 ') ? text : `任务 a85aec02 补充 ${text}`
+    expect(handled).toEqual(handoff ? [] : [original])
   })
   it('consumes an accepted workbench file delivery without a duplicate text reply or companion dispatch',async()=>{
     const {deps,spy}=fakeDeps(),send=vi.fn(async()=>{})

@@ -18,6 +18,7 @@ import { providerDisplayName } from '../provider-display-names'
 import { QUOTA_TAKEOVER_DEFAULT_REQUEST, quotaTakeoverText } from '../../features/workbench'
 
 export interface TaskReferenceMwDeps {
+  handoffExecutors?(): readonly string[]
   ownerChatId(): string | null
   /** 活跃候选(进行中 / 已答复 / 排队),按 chat 给。 */
   candidates(chatId: string): TaskCandidate[]
@@ -175,7 +176,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     const text = (msg.text ?? '').trim()
     const owner = deps.ownerChatId()
     if (!owner || msg.chatId !== owner || !text || isWechatTaskCommand(text)) return null
-    if (isTaskHandoffRequest(text)) return null
+    if (isTaskHandoffRequest(text, deps.handoffExecutors?.())) return null
     // 刚接管出来的新任务在服务列表刷新前也得能被指到。
     const listed = deps.candidates(msg.chatId)
     const candidates = [...listed, ...[...takenOver.values()].filter(c => !listed.some(x => x.id === c.id))]
@@ -214,7 +215,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
       return picked ? { kind: 'command', candidates, picked, effectiveText: ask.text, clearChoice: true } : { kind: 'choice-invalid', candidates }
     }
     if (BARE_CHOICE.test(text)) return ask ? { kind: 'choice-expired', candidates } : null
-    const r = await resolveTaskReference({ text, quotedText: msg.quote?.text ?? null, focus: currentFocus(msg.chatId), nowMs: now(), candidates, judge: deps.judge })
+    const r = await resolveTaskReference({ text, quotedText: msg.quote?.text ?? null, focus: currentFocus(msg.chatId), nowMs: now(), candidates, handoffExecutors: deps.handoffExecutors?.(), judge: deps.judge })
     if (r.kind === 'none') return null
     if (r.kind === 'ambiguous') return { kind: 'ambiguous', candidates, options: r.options, text }
     if (r.kind === 'set_focus') return { kind: 'set_focus', candidates, taskId: r.taskId }

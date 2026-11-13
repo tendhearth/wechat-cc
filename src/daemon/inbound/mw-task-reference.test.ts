@@ -19,6 +19,7 @@ function setup(over: Partial<TaskReferenceMwDeps> = {}) {
   const commands: string[] = [], sent: string[] = [], watches: string[] = []
   let t = NOW
   const deps: TaskReferenceMwDeps = {
+    handoffExecutors: () => ['Claude', 'Codex'],
     ownerChatId: () => OWNER,
     candidates: () => [todo, latency, review],
     // 「提醒我」是管家第一次点名时顺手开的,单独记,不混进主要动作的断言。

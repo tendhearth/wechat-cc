@@ -1,3 +1,4 @@
+import { taskHandoffNames } from './task-handoff-names'
 import { isTaskHandoffCommand } from '../features/workbench'
 /**
  * mode-commands — slash commands that switch a chat's Conversation Mode
@@ -873,7 +874,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           id: 'mode.unknown',
           group: 'mode',
           slashCatchAll: true,
-          probe: (m) => COMMAND_REGEX.test(m.text) && !isTaskHandoffCommand(m.text),
+          probe: (m) => COMMAND_REGEX.test(m.text) && !isTaskHandoffCommand(m.text, taskHandoffNames(deps.registry, deps.readConfig?.())),
           handle: async (m) => { const p = parse(m); return !!p && handleUnknown(m, p.slashWord) },
         },
       ]

@@ -39,6 +39,8 @@ export interface ResolveInput {
   nowMs: number
   candidates: TaskCandidate[]
   judge?: TaskJudge
+  /** 来自 provider registry 的名字、显示名和已登记模型别名。 */
+  handoffExecutors?: readonly string[]
   /** 模型判断的上限;超时当作没把握。主人的消息不能被一个慢网关卡住。 */
   judgeTimeoutMs?: number
 }
@@ -59,13 +61,36 @@ const STOP = new Set(['一个', '那个', '这个', '一下', '什么', '怎么'
 /** 零命中时才问模型,而且只在这句话有"任务感"时问 —— 普通聊天不付一次 LLM 往返。 */
 const TASK_CUE = /(任务|那件|这件|哪件|项目|继续|进展|结果|成果|怎么样|做完|好了吗|弄完|做好|接着|停止|交给|换人)/
 const JUDGE_TIMEOUT_MS = 3000
-/** 调度请求必须先到 CC,即使带着引用、编号或焦点。宁可让对话澄清,也不把换人要求默默发给旧执行者。 */
-export function isTaskHandoffRequest(text: string): boolean {
-  return /matter_handoff|\bhand[\s_-]?off\b|交给|接手|接管|换人|换(?:成|到|用)\s*(?:Claude|Codex|Cursor|DeepSeek|Kimi|Qwen|Gemini|GLM|OpenAI|agent)\b|换(?:成|到|用)\s*(?:克劳德|执行者|模型)|换(?:一位|一个|个)(?:人|执行者|模型|agent)|换[^，。！？\n]{0,24}执行者|让[^，。！？\n]{1,40}(?:接着|继续)(?:做|处理|完成)/i.test(text)
+/** 只让明确转交给已知执行者的请求到 CC；普通补充仍归原任务。 */
+export function isTaskHandoffRequest(text: string, executors: readonly string[] = []): boolean {
+  const names = [...new Set(executors.map(n => n.trim()).filter(Boolean))]
+    .sort((a, b) => b.length - a.length)
+    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*'))
+  const name = `(?:${names.join('|')})(?![a-z0-9_-]|\\s*(?:的)?(?:风格|命名|格式|变量|模型名))`
+  const patterns = names.length ? [
+    `(?<!提)交给\\s*${name}`, `转给\\s*${name}`, `改由\\s*${name}`,
+    `换(?:成)?\\s*${name}\\s*(?:来做|继续(?:做|处理|完成)?|接着做|接手|接管)`,
+    `让\\s*${name}\\s*(?:来)?(?:接着(?:做|处理|完成)|继续(?:做|处理|完成)?|接手|接管)`,
+    `(?<![a-z0-9_-])${name}\\s*来(?:接着做|继续(?:做|处理|完成)?|接手|接管)`,
+    `(?<![交转提])给\\s*${name}\\s*做`,
+    `\\bswitch\\s+to\\s+${name}`, `\\bhand\\s+(?:it\\s+)?off\\s+to\\s+${name}`,
+    `\\blet\\s+${name}\\s+take\\s+over\\b`,
+  ].map(p => new RegExp(p, 'i')) : []
+  for (const clause of text.split(/[,，。！？!?；;\n]/)) {
+    const matches = [/\bmatter_handoff\b/i, ...patterns]
+    for (const pattern of matches) {
+      const m = pattern.exec(clause)
+      if (!m) continue
+      const before = clause.slice(0, m.index)
+      if (/(?:别|不要|不用|不必|无需|禁止|停止|取消|\bdon't\b|\bdo not\b|\bnever\b|\bstop\b)/i.test(before)) continue
+      return true
+    }
+  }
+  return false
 }
 
-/** 命令前缀也可能装着调度请求;新建命令中的任务正文照旧归命令处理。 */
-export const isTaskHandoffCommand = (text: string): boolean => /^(?:任务|\/task)\s+[a-f0-9]{8}\s+/i.test(text.trim()) && isTaskHandoffRequest(text)
+/** 新建命令里的任务正文照旧处理；仅已有事项的显式接力让路。 */
+export const isTaskHandoffCommand = (text: string, executors: readonly string[] = []): boolean => /^(?:任务|\/task)\s+[a-f0-9]{8}\s+/i.test(text.trim()) && isTaskHandoffRequest(text, executors)
 const PROVIDER_WORDS: Record<string, string[]> = {
   claude: ['claude', '克劳德'], codex: ['codex'], openai: ['api', 'qwen', 'deepseek', 'kimi'], cursor: ['cursor'], agy: ['agy', 'gemini'],
 }
@@ -152,7 +177,7 @@ async function askJudge(judge: TaskJudge | undefined, text: string, candidates: 
 }
 
 export async function resolveTaskReference(input: ResolveInput): Promise<Resolution> {
-  if (isTaskHandoffRequest(input.text)) return { kind: 'none' }
+  if (isTaskHandoffRequest(input.text, input.handoffExecutors)) return { kind: 'none' }
   const { candidates } = input
   if (!candidates.length) return { kind: 'none' }
 

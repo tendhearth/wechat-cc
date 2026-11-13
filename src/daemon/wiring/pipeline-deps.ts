@@ -13,6 +13,7 @@ import { makeOwnerChatFileReader, ownerChatReadingEvent } from './owner-chat-rea
 import { makeCommandRegistry, yieldNumbersToOpenChoice } from '../commands/registry'
 import { makePermissionAnswer } from '../permission-answer'
 import { choiceTakes, type OpenChoice } from '../inbound/mw-task-reference'
+import { taskHandoffNames } from '../task-handoff-names'
 import { makeTaskCommand } from '../commands/task-command'
 import { join } from 'node:path'
 import { memoryFactsFor, recallFromMemory } from '../../features/memory'
@@ -615,7 +616,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const consumePermissionAnswer = makePermissionAnswer({ ilink, log })
   const commandRegistry = makeCommandRegistry([
     // 「任务 …」(工作台控制,步 4):排第一 —— 以前是单独一种 intent,排在整张命令表之前。
-    ...(opts.workbench ? [makeTaskCommand({ handleWechat: opts.workbench.handleWechat, sendMessage: (chatId: string, text: string) => send(chatId, text, { source: 'workbench' }) })] : []),
+    ...(opts.workbench ? [makeTaskCommand({ handoffExecutors: () => taskHandoffNames(boot.registry, loadAgentConfig(stateDir)), handleWechat: opts.workbench.handleWechat, sendMessage: (chatId: string, text: string) => send(chatId, text, { source: 'workbench' }) })] : []),
     // 管理员命令一条一行(第三批 3d,admin-commands.ts 的 commands()):admin.owner-only(非主人发显式命令)+ admin.<id>,两两互斥
     ...adminCommandsHandler.commands(),
     // 斜杠命令一条一行(第三批 3d,mode-commands.ts 的 commands()):mode.provider / set / … / help,最后 mode.unknown 是 /词兜底
@@ -660,6 +661,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
     ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c,undefined,'wechat'),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
     ...(opts.workbench?{taskReference:{
+      handoffExecutors: () => taskHandoffNames(boot.registry, loadAgentConfig(stateDir)),
       ownerChatId,
       noteChoice:(c:string,e:OpenChoice|null)=>{ if(e===null) butlerChoice.delete(c); else butlerChoice.set(c,e) },
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
