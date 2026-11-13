@@ -10,6 +10,7 @@
  */
 import type { InboundCtx, Middleware } from './types'
 import type { Intent } from './intent'
+import { isTaskHandoffRequest } from '../../features/workbench'
 import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../features/workbench'
 import { resolveTaskReference, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from '../../features/workbench'
 import type { QuotaState } from '../../domain/provider-quota'
@@ -174,6 +175,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     const text = (msg.text ?? '').trim()
     const owner = deps.ownerChatId()
     if (!owner || msg.chatId !== owner || !text || isWechatTaskCommand(text)) return null
+    if (isTaskHandoffRequest(text)) return null
     // 刚接管出来的新任务在服务列表刷新前也得能被指到。
     const listed = deps.candidates(msg.chatId)
     const candidates = [...listed, ...[...takenOver.values()].filter(c => !listed.some(x => x.id === c.id))]

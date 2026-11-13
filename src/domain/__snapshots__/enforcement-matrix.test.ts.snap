@@ -559,7 +559,7 @@ exports[`provider × tier × tool-kind enforcement (derived) > the derived matri
         "social_seek",
         "subagent",
       ],
-      "ask→deny": [
+      "ask": [
         "daemon_remediate",
         "memory_delete",
         "shell_destructive",
@@ -614,7 +614,7 @@ exports[`provider × tier × tool-kind enforcement (derived) > the derived matri
         "shell",
         "subagent",
       ],
-      "ask→deny": [
+      "ask": [
         "a2a_send",
         "memory_delete",
         "shell_destructive",

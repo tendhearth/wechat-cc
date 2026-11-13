@@ -12,8 +12,8 @@ describe('authorize:每一层的理由', () => {
     expect(authorize(chat('gemini', TIER_PROFILES.guest, 'dangerously'), { name: 'shell', kind: 'shell' })).toMatchObject({ verdict: 'allow', reason: 'bypass' })
     expect(authorize(chat('claude', TIER_PROFILES.guest, 'dangerously'), { name: 'Bash', kind: 'shell' })).toMatchObject({ verdict: 'deny', reason: 'tier' })
   })
-  it('openai:档位说问 ⇒ 问不了、拒(relayAs);claude / gemini ⇒ 问', () => {
-    expect(authorize(chat('openai'), { name: 'Bash', kind: 'shell_destructive' })).toMatchObject({ verdict: 'deny', reason: 'relay_unavailable' })
+  it('openai / claude / gemini:档位说问 ⇒ 问', () => {
+    expect(authorize(chat('openai'), { name: 'Bash', kind: 'shell_destructive' })).toMatchObject({ verdict: 'ask', reason: 'tier' })
     expect(authorize(chat('claude'), { name: 'Bash', kind: 'shell_destructive' })).toMatchObject({ verdict: 'ask', reason: 'tier', consultOwnerRules: false })
     expect(authorize(chat('gemini'), { name: 'x', kind: 'shell_destructive' })).toMatchObject({ verdict: 'ask', reason: 'tier' })
   })

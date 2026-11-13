@@ -22,7 +22,7 @@ import { isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import { EvalOutputExhaustedError, systemMessage, userMessage, type APIModel, type ChatMessage, type ToolSpec } from './api-model'
 import { builtinTools, type BuiltinTool } from './openai-tools'
-import { gateTool } from './openai-gate'
+import { gateTool, type OpenAiApproval } from './openai-gate'
 import type { ChatOwnerRules } from '../../permission-rules/chat'
 import { makeTurnEmitter } from '../turn-emitter'
 import { makeMemoryChatSessionStore, type ApiSessionState, type ChatSession, type ChatSessionBinding, type ChatSessionStore } from './api-sessions'
@@ -57,6 +57,7 @@ export interface OpenAiAgentProviderOptions {
   makeBuiltins?: (cwd: string) => BuiltinTool[]
   /** 主人自己的对话走放行规则(2026-10-25,core/permission-rules/chat.ts)。现取;不给 / 回 null ⇒ 不看规则。 */
   ownerRules?: () => ChatOwnerRules | null
+  approval?: OpenAiApproval
   /** 会话历史存哪(B2):DB 那一份(makeChatSessionStore)⇒ daemon 重启 / 会话释放后续得上。不给 ⇒ 内存,不续接。 */
   sessions?: ChatSessionStore
   /** 绑定续接的连接身份(`openAiConnectionHash`:base URL + 密钥的摘要,不含密钥本身)。换了端点 / 密钥就不续接。 */
@@ -142,6 +143,7 @@ function chatPurpose(args: {
   builtins: BuiltinTool[]
   maxSteps: number
   ownerRules?: () => ChatOwnerRules | null
+  approval?: OpenAiApproval
 }): OpenAiPurpose {
   const { ctx, bridge, maxSteps, ownerRules } = args
   const builtinByName = new Map<string, BuiltinTool>(args.builtins.map(b => [b.spec.name, b]))
@@ -180,6 +182,8 @@ function chatPurpose(args: {
         permissionMode: ctx.permissionMode,
         chatId: ctx.chatId,
         ownerRules: ownerRules?.() ?? null,
+        approval: args.approval,
+        signal,
       })
       if (signal.aborted) return { output: CANCELLED_TOOL }
       if (gate.decision === 'deny') return { output: gate.message ?? `Permission denied: tool "${call.name}" is not allowed for this chat.` }
@@ -309,7 +313,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       const session = openOpenAiSession({
         model,
         history: chatHistory(store, saved, log),
-        purpose: chatPurpose({ ctx, bridge, builtins: (opts.makeBuiltins ?? builtinTools)(cwd), maxSteps, ...(opts.ownerRules ? { ownerRules: opts.ownerRules } : {}) }),
+        purpose: chatPurpose({ ctx, bridge, builtins: (opts.makeBuiltins ?? builtinTools)(cwd), maxSteps, approval: opts.approval, ...(opts.ownerRules ? { ownerRules: opts.ownerRules } : {}) }),
       })
       log('SESSION_SPAWN', `alias=${project.alias} provider=openai session=${saved.id}${resumed ? ' resumed' : ''}`)
       session.callTarget = () => target?({...target,...(session.contextUsage?.().model?{model:session.contextUsage!().model!}:{})}):null

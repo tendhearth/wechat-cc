@@ -600,6 +600,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       const { createMcpToolBridge } = await import('../../adapters/executors/openai/openai-mcp-bridge')
       const { makeChatSessionStore, openAiConnectionHash } = await import('../../adapters/executors/openai/api-sessions')
       const provider = createOpenAiAgentProvider({
+        approval: {
+          askUser: deps.ilink.askUser,
+          adminFor: chatId => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
+        },
         // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
         endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
         // 后台评估单独的模型(现取:改了配置下一次评估就换,不用重启)。

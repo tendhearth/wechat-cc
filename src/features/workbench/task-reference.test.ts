@@ -19,6 +19,29 @@ const all = [todo, latency, review]
 const resolve = (text: string, over: Partial<Parameters<typeof resolveTaskReference>[0]> = {}) =>
   resolveTaskReference({ text, candidates: all, nowMs: NOW, ...over })
 
+describe('换执行者交给 CC 对话,不发送给原执行者', () => {
+  it.each([
+    '请调用 matter_handoff 把事项 a85aec02 交给 Claude',
+    '让 Claude 接着做 a85aec02 的后半段',
+    '把事项 a85aec02 交给 Claude 接着做',
+    'sample-project 换人接着做',
+    '让 DeepSeek 接手',
+    '交给另一位来完成',
+    '换成 Codex 继续',
+  ])('%s', async text => {
+    let judged = false
+    expect(await resolve(text, {
+      quotedText: '任务 a85aec02：已答复',
+      focus: { taskId: todo.id, expiresAt: NOW + FOCUS_TTL_MS },
+      judge: async () => { judged = true; return { taskId: todo.id, confident: true } },
+    })).toEqual({ kind: 'none' })
+    expect(judged).toBe(false)
+  })
+  it.each(['a85aec02 再跑一下测试', '让 Claude 再跑一下测试', 'a85aec02 继续', 'sample-project 把标题改短', 'a85aec02 把标题换成中文', 'sample-project 换个标题', '换一个文件名'])('保留补充: %s', async text => {
+    expect(await resolve(text, { focus: { taskId: todo.id, expiresAt: NOW + FOCUS_TTL_MS } })).toMatchObject({ kind: 'task', taskId: todo.id })
+  })
+})
+
 describe('引用锚:回复 CC 发过的任务消息,归属是确定的', () => {
   it('从被引用消息的「任务 <编号>」头里读出任务', () => {
     expect(parseTaskIdFromMessage('任务 a85aec02：补充已传达给执行者。')).toBe('a85aec02')

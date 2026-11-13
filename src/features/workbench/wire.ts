@@ -61,7 +61,7 @@ export async function workbenchClaudeOptions(base: Options, instructions: string
     env:{...workbenchClaudeEnvironment(base.env),...scratchEnv},
     ...tier,
     allowDangerouslySkipPermissions:false,
-    allowedTools:[],
+    allowedTools:notebook?['mcp__wechat-cc-matter__matter_notes','mcp__wechat-cc-matter__matter_note']:[],
     disallowedTools:[...(tier.disallowedTools ?? []),'mcp__wechat__*','mcp__delegate__*'],
     tools:{type:'preset',preset:'claude_code'},
     mcpServers:{...native.servers,...(notebook?{'wechat-cc-matter':notebook}:{})},

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { gateTool } from './openai-gate'
 import { TIER_PROFILES } from '../../../domain/user-tier'
 
@@ -10,6 +10,39 @@ const admin = TIER_PROFILES.admin
 const trusted = TIER_PROFILES.trusted
 
 describe('gateTool', () => {
+  it.each(['matter_handoff', 'model_set', 'session_release', 'daemon_restart'])('asks the owner for %s, matching Claude; non-admins remain denied', async toolName => {
+    const askUser = vi.fn(async () => 'allow' as const)
+    for (const [tierProfile, decision] of [[admin, 'allow'], [trusted, 'deny'], [guest, 'deny']] as const) {
+      const result = await gateTool({ toolName, mcpServer: 'wechat', input: { id: 'a85aec02' }, tierProfile, permissionMode: 'strict', chatId: 'initiator', approval: { askUser, adminFor: () => 'owner' } })
+      expect(result.decision).toBe(decision)
+    }
+    expect(askUser).toHaveBeenCalledOnce()
+    expect(askUser).toHaveBeenCalledWith('owner', expect.stringContaining(toolName), expect.stringMatching(/^[a-z0-9]{5}$/), 600_000)
+  })
+
+  it.each(['deny', 'timeout', 'undelivered', 'no-admin', 'throw', 'cancelled'] as const)('approval failure stays denied: %s', async outcome => {
+    const abort = new AbortController()
+    const askUser = vi.fn(async () => {
+      if (outcome === 'throw') throw Error('offline')
+      if (outcome === 'cancelled') abort.abort()
+      return outcome === 'cancelled' || outcome === 'no-admin' ? 'allow' as const : outcome
+    })
+    const result = await gateTool({ toolName: 'matter_handoff', mcpServer: 'wechat', input: {}, tierProfile: admin, permissionMode: 'strict', chatId: 'initiator', signal: abort.signal, approval: { askUser, adminFor: () => outcome === 'no-admin' ? null : 'owner' } })
+    expect(result.decision).toBe('deny')
+    expect(askUser).toHaveBeenCalledTimes(outcome === 'no-admin' ? 0 : 1)
+  })
+
+  it.each([
+    { toolName: 'memory_delete', mcpServer: 'wechat', input: {}, tierProfile: admin },
+    { toolName: 'memory_delete', mcpServer: 'wechat', input: {}, tierProfile: trusted },
+    { toolName: 'Bash', input: { command: 'rm ./__offline_sentinel__' }, tierProfile: admin },
+    { toolName: 'Bash', input: { command: 'rm ./__offline_sentinel__' }, tierProfile: trusted },
+    { toolName: 'a2a_send', mcpServer: 'wechat', input: {}, tierProfile: trusted },
+  ])('other relay kinds also use owner approval: $toolName/$tierProfile.name', async call => {
+    const askUser = vi.fn(async () => 'allow' as const)
+    expect((await gateTool({ ...call, permissionMode: 'strict', chatId: 'c', approval: { askUser, adminFor: () => 'owner' } })).decision).toBe('allow')
+    expect(askUser).toHaveBeenCalledOnce()
+  })
   it('denies a deny-classified tool in strict mode', async () => {
     // guest.deny includes fs_write; Write classifies to fs_write.
     await expect(
@@ -24,7 +57,7 @@ describe('gateTool', () => {
     ).resolves.toEqual({ decision: 'allow' })
   })
 
-  it('collapses a relay-classified tool to deny in strict mode (v1)', async () => {
+  it('denies a relay-classified tool when no approval channel is provided', async () => {
     // admin.relay includes shell_destructive; a destructive Bash command
     // classifies to shell_destructive (classifyToolUse's isDestructiveBash).
     await expect(

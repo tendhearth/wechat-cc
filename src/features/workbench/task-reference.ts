@@ -59,6 +59,13 @@ const STOP = new Set(['一个', '那个', '这个', '一下', '什么', '怎么'
 /** 零命中时才问模型,而且只在这句话有"任务感"时问 —— 普通聊天不付一次 LLM 往返。 */
 const TASK_CUE = /(任务|那件|这件|哪件|项目|继续|进展|结果|成果|怎么样|做完|好了吗|弄完|做好|接着|停止|交给|换人)/
 const JUDGE_TIMEOUT_MS = 3000
+/** 调度请求必须先到 CC,即使带着引用、编号或焦点。宁可让对话澄清,也不把换人要求默默发给旧执行者。 */
+export function isTaskHandoffRequest(text: string): boolean {
+  return /matter_handoff|\bhand[\s_-]?off\b|交给|接手|接管|换人|换(?:成|到|用)\s*(?:Claude|Codex|Cursor|DeepSeek|Kimi|Qwen|Gemini|GLM|OpenAI|agent)\b|换(?:成|到|用)\s*(?:克劳德|执行者|模型)|换(?:一位|一个|个)(?:人|执行者|模型|agent)|换[^，。！？\n]{0,24}执行者|让[^，。！？\n]{1,40}(?:接着|继续)(?:做|处理|完成)/i.test(text)
+}
+
+/** 命令前缀也可能装着调度请求;新建命令中的任务正文照旧归命令处理。 */
+export const isTaskHandoffCommand = (text: string): boolean => /^(?:任务|\/task)\s+[a-f0-9]{8}\s+/i.test(text.trim()) && isTaskHandoffRequest(text)
 const PROVIDER_WORDS: Record<string, string[]> = {
   claude: ['claude', '克劳德'], codex: ['codex'], openai: ['api', 'qwen', 'deepseek', 'kimi'], cursor: ['cursor'], agy: ['agy', 'gemini'],
 }
@@ -145,6 +152,7 @@ async function askJudge(judge: TaskJudge | undefined, text: string, candidates: 
 }
 
 export async function resolveTaskReference(input: ResolveInput): Promise<Resolution> {
+  if (isTaskHandoffRequest(input.text)) return { kind: 'none' }
   const { candidates } = input
   if (!candidates.length) return { kind: 'none' }
 

@@ -35,10 +35,18 @@ function setup(over: Partial<TaskReferenceMwDeps> = {}) {
     await mw(ctx, async () => { nexted = true })
     return { nexted, consumed: ctx.consumedBy }
   }
-  return { run, commands, sent, watches, advance: (ms: number) => { t += ms } }
+  return { run, mw, commands, sent, watches, advance: (ms: number) => { t += ms } }
 }
 
 describe('mw-task-reference', () => {
+  it.each(['请调用 matter_handoff 把事项 a85aec02 交给 Claude', '让 Claude 接着做 a85aec02 的后半段'])('交接请求让路,探针和消费者都不发送补充: %s', async text => {
+    let judged = false
+    const { run, mw, commands, sent, watches } = setup({ judge: async () => { judged = true; return { taskId: todo.id, confident: true } } })
+    const ctx = { msg: { chatId: OWNER, text, quote: { type: 'text', text: '任务 a85aec02：已答复' } } } as InboundCtx
+    expect(await mw.probe(ctx)).toBeNull()
+    expect((await run(text, { quote: '任务 a85aec02：已答复' })).nexted).toBe(true)
+    expect(commands).toEqual([]); expect(sent).toEqual([]); expect(watches).toEqual([]); expect(judged).toBe(false)
+  })
   it('非主人 ⇒ 直接放行', async () => {
     const { run, commands } = setup()
     expect((await run('整理 TODO 那件继续', { chatId: 'guest@im.wechat' })).nexted).toBe(true)

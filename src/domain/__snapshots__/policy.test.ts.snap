@@ -148,27 +148,27 @@ exports[`compilePolicy —— 档位 × 模式 → 每家执行者实际的设�
   },
   "openai / admin / dangerously": {
     "bypass": true,
-    "relayAs": "deny",
+    "relayAs": "ask",
   },
   "openai / admin / strict": {
     "bypass": false,
-    "relayAs": "deny",
+    "relayAs": "ask",
   },
   "openai / guest / dangerously": {
     "bypass": true,
-    "relayAs": "deny",
+    "relayAs": "ask",
   },
   "openai / guest / strict": {
     "bypass": false,
-    "relayAs": "deny",
+    "relayAs": "ask",
   },
   "openai / trusted / dangerously": {
     "bypass": true,
-    "relayAs": "deny",
+    "relayAs": "ask",
   },
   "openai / trusted / strict": {
     "bypass": false,
-    "relayAs": "deny",
+    "relayAs": "ask",
   },
 }
 `;

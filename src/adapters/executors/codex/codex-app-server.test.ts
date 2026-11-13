@@ -96,7 +96,7 @@ it.each([false,true])('injects only bound matter tools in thread config while ke
   vi.stubEnv('WECHAT_SESSION_TIER','admin')
   const token='bound-ledger-token'
   const spec={command:'/cc',args:['mcp-server','matter'],env:{WECHAT_INTERNAL_API:'http://127.0.0.1:1',WECHAT_SESSION_TOKEN:token}}
-  const {child}=await start({mcpEnv:{WECHAT_SESSION_TOKEN:token},...(resume?{resumeSessionId:'thread-1'}:{})},{matterMcp:(context:Pick<SpawnContext,'mcpEnv'|'matterLedger'>)=>({...spec,env:{...spec.env,WECHAT_SESSION_TOKEN:context.mcpEnv!.WECHAT_SESSION_TOKEN!}})})
+  const {child}=await start({matterLedger:true,mcpEnv:{WECHAT_SESSION_TOKEN:token},...(resume?{resumeSessionId:'thread-1'}:{})},{matterMcp:(context:Pick<SpawnContext,'mcpEnv'|'matterLedger'>)=>{expect(context.matterLedger===true).toBe(true);return {...spec,env:{...spec.env,WECHAT_SESSION_TOKEN:context.mcpEnv!.WECHAT_SESSION_TOKEN!}}}})
   const started=child.sent.find(m=>m.method===(resume?'thread/resume':'thread/start'))!
   expect(started.params.config.mcp_servers['wechat-cc-matter']).toMatchObject({...spec,enabled:true,enabled_tools:['matter_notes','matter_note'],default_tools_approval_mode:'approve'})
   const matterEnv=started.params.config.mcp_servers['wechat-cc-matter'].env

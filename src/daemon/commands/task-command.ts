@@ -6,6 +6,7 @@
  */
 import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../features/workbench'
 import type { WechatCommand } from './registry'
+import { isTaskHandoffCommand } from '../../features/workbench'
 
 export interface TaskCommandDeps {
   handleWechat(chatId: string, text: string, identity?: WechatMessageIdentity): Promise<WechatWorkbenchReply | null>
@@ -16,7 +17,11 @@ export function makeTaskCommand(deps: TaskCommandDeps): WechatCommand {
   return {
     id: 'task-command',
     group: 'workbench',
-    probe: (m) => isWechatTaskCommand(m.text ?? ''),
+    probe: (m) => {
+      const text = m.text ?? ''
+      if (isTaskHandoffCommand(text)) return false
+      return isWechatTaskCommand(text)
+    },
     async handle(msg, turn) {
       // App 一轮里的「任务」命令:出生地是桌面 / 手机,不是微信(origin 只由 daemon 在 appTurn 里填)。
       const reply = await deps.handleWechat(msg.chatId, msg.text, turn?.origin !== undefined ? { ...msg, origin: turn.origin } : msg)

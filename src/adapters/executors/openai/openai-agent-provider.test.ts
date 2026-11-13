@@ -27,6 +27,30 @@ const tmp = (p: string) => { const d = mkdtempSync(join(tmpdir(), p)); dirs.push
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
 
 describe('openai provider loop(对话这一份用途)', () => {
+  it('strict handoff waits for the owner card before calling the bridge', async () => {
+    const tools = scriptedMcpTools({ tools: [{ name: 'matter_handoff', server: 'wechat' }] })
+    const model = scriptedOpenAiModel([{ calls: [{ id: 'handoff-1', name: 'matter_handoff', input: { id: 'a85aec02', provider: 'claude' } }] }, { text: 'done' }])
+    let approve: ((answer: 'allow') => void) | undefined
+    const requests: string[] = []
+    const provider = createOpenAiAgentProvider({
+      makeChatModel: () => model.model, makeMcpBridge: async () => tools.bridge,
+      approval: { adminFor: () => 'owner', askUser: async (admin, prompt) => {
+        requests.push(admin, prompt)
+        return new Promise<'allow'>(resolve => { approve = resolve })
+      } },
+    })
+    const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'initiator' })
+    try {
+      const work = collectTurn(session.dispatch('接力'))
+      await expect.poll(() => requests.length).toBe(2)
+      expect(requests[0]).toBe('owner')
+      expect(requests[1]).toContain('matter_handoff')
+      expect(tools.calls).toHaveLength(0)
+      approve!('allow')
+      await work
+      expect(tools.calls.map(c => c.name)).toEqual(['matter_handoff'])
+    } finally { await session.close() }
+  })
   it('view_image:工具结果是文字,图另起一条用户消息紧跟其后再进下一轮', async () => {
     const dir = tmp('oai-view-')
     const png = new Uint8Array(33); png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); const dv = new DataView(png.buffer)

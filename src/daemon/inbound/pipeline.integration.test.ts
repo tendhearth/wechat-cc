@@ -3,6 +3,7 @@ import { makeCommandRegistry, type WechatCommand } from '../commands/registry'
 import { makeTaskCommand, type TaskCommandDeps } from '../commands/task-command'
 import { buildInboundPipeline, type InboundPipelineDeps } from './build'
 import type { InboundCtx } from './types'
+import { makeModeCommands } from '../mode-commands'
 
 function fakeDeps(over: Partial<{
   adminConsumes: boolean; modeConsumes: boolean; onboardingConsumes: boolean;
@@ -71,6 +72,33 @@ const mkCtx = (): InboundCtx => ({
 })
 
 describe('inbound pipeline (integration)', () => {
+  it.each([
+    '请调用 matter_handoff 把事项 a85aec02 交给 Claude',
+    '让 Claude 接着做 a85aec02 的后半段',
+    '任务 a85aec02 交给 Claude 接着做',
+    '/task a85aec02 让 Claude 接手',
+  ])('handoff reaches CC through the real command and reference chain: %s', async text => {
+    const { deps, spy } = fakeDeps()
+    const handleWechat = vi.fn(async () => '补充正在发送'), sendMessage = vi.fn(async () => ({})), judge = vi.fn()
+    const mode = makeModeCommands({ getMode: () => ({ kind: 'solo', provider: 'claude' }), setMode: async () => {}, providers: () => ['claude'], tierOf: () => 'admin', sendMessage } as unknown as Parameters<typeof makeModeCommands>[0])
+    withCommands(deps, [makeTaskCommand({ handleWechat, sendMessage }), ...mode.commands()])
+    deps.taskReference = {
+      ownerChatId: () => 'c1', candidates: () => [{ id: 'a85aec02', title: 'hand off', project: 'project', path: '/project', providerId: 'codex', phase: 'replied', updatedAt: 0 }],
+      handleWechat, sendMessage, judge, log: () => {},
+    }
+    const ctx = mkCtx(); ctx.msg.text = text
+    await buildInboundPipeline(deps)(ctx)
+    expect(ctx.intent?.kind).toBe('chat')
+    expect(handleWechat).not.toHaveBeenCalled(); expect(sendMessage).not.toHaveBeenCalled(); expect(judge).not.toHaveBeenCalled()
+    expect(spy.dispatch).toHaveBeenCalledOnce()
+    for (const text of ['任务 a85aec02 再跑一下测试', '任务 3 再跑一下测试']) {
+      const supplement = mkCtx(); supplement.msg.text = text
+      await buildInboundPipeline(deps)(supplement)
+      expect(supplement.intent?.kind).toBe('command')
+      expect(handleWechat).toHaveBeenCalledWith('c1', supplement.msg.text, expect.anything())
+    }
+    expect(spy.dispatch).toHaveBeenCalledOnce()
+  })
   it('consumes an accepted workbench file delivery without a duplicate text reply or companion dispatch',async()=>{
     const {deps,spy}=fakeDeps(),send=vi.fn(async()=>{})
     withWorkbench(deps,{handleWechat:async()=>({kind:'artifact_delivered',receiptId:'saved-delivery'}),sendMessage:send})
