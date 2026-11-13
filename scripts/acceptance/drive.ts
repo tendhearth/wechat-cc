@@ -1,5 +1,5 @@
 /** Sequential acceptance driver. Only calls the explicitly selected synthetic daemon. */
-import {readFileSync,existsSync,appendFileSync,writeFileSync,unlinkSync,mkdirSync} from 'node:fs'
+import {readFileSync,existsSync,appendFileSync,writeFileSync,unlinkSync,mkdirSync,statSync} from 'node:fs'
 import {join} from 'node:path'
 import {loadavg} from 'node:os'
 const dir=process.env.WECHAT_STATE_DIR
@@ -31,7 +31,7 @@ async function mode(provider:string){record('mode-'+provider,await api('POST','/
 async function approvedTurn(id:string,text:string){
  let settled=false
  const work=turn(id,text);void work.finally(()=>settled=true).catch(()=>{})
- while(!settled){const pending=await api('GET','/v1/permissions/pending');for(const p of pending.body.items??[])if(p.hash)record(id+'-approve',await api('POST','/v1/permissions/resolve',{hash:p.hash,decision:'allow'}));await sleep(500)}
+ while(!settled){const pending=await api('GET','/v1/permissions/pending');for(const p of pending.body.items??[])if(p.hash&&p.chatId==='acc-owner'&&(!id.startsWith('C-r3-')||p.prompt?.includes('matter_handoff'))){record(id+'-pending',p);const matter=text.match(/[a-f0-9]{8}/)?.[0];if(matter)record(id+'-before-approval',await api('GET','/v1/workbench/task?id='+matter));record(id+'-approve',await api('POST','/v1/permissions/resolve',{hash:p.hash,decision:'allow'}))};await sleep(500)}
  return await work
 }
 async function taskDone(id:string,label:string,terminalOnly=false){
@@ -46,6 +46,10 @@ async function taskDone(id:string,label:string,terminalOnly=false){
 }
 function config(change:(c:any)=>void){const p=join(dir,'agent-config.json'),c=JSON.parse(readFileSync(p,'utf8'));change(c);writeFileSync(p,JSON.stringify(c))}
 const requestCount=()=>existsSync(join(dir,'gateway.jsonl'))?readFileSync(join(dir,'gateway.jsonl'),'utf8').trim().split('\n').filter(Boolean).length:0
+async function ledgerProof(id:string){
+ const {Database}=await import('bun:sqlite'),db=new Database(join(dir,'wechat-cc.db'),{readonly:true})
+ try{return db.query('SELECT position,run_id AS runId,executor,status,injected_at IS NOT NULL AS injected FROM matter_agents WHERE matter_id=? ORDER BY position').all(id)}finally{db.close()}
+}
 async function checkup(providerId:string,model:string,cancel=false){
  const before=requestCount(),quote=await api('POST','/v1/checkup/estimate',{providerId,model,full:false})
  record('D.1-estimate-'+providerId+'-'+model,{...quote,noRequests:requestCount()===before})
@@ -56,7 +60,7 @@ async function checkup(providerId:string,model:string,cancel=false){
  for(let i=0;i<1800;i++){
   const r=await api('GET','/v1/checkup?run='+quote.body.targetKey)
   if(r.status!==200){record('D-query-error',{providerId,model,...r});return r}
-  if(r.body.attempt?.status!=='running'){record('D-result-'+providerId+'-'+model,r);return r}
+  if(r.body.attempt?.status!=='running'){record('D-result-'+providerId+'-'+model,r);record('D-request-span',{providerId,model,cancel,before,after:requestCount()});return r}
   if(i%30===0)record('D-progress',{providerId,model,completedRequests:r.body.attempt.completedRequests})
   await sleep(1000)
  }
@@ -160,6 +164,38 @@ if(section==='A'){
  record('B.9-visitor',await api('POST','/test/inbound',{chatId:'acc-visitor',text:'你好，今天只需回复一句收到。'}))
  record('B.9-group',await api('POST','/test/inbound',{chatId:'acc-group@chatroom',text:'你好，今天只需回复一句收到。'}))
  await sleep(20000);record('B.9-health',await api('GET','/v1/health',undefined,'file'))
+}else if(section==='B-round3'){
+ const logOffset=readFileSync(join(dir,'daemon.log'),'utf8').length
+ await mode('openai')
+ await turn('B.3-r3','请记住：编造的青松周报固定周五发。用一句话确认。')
+ record('B.3-r3-health',await api('GET','/v1/health',undefined,'file'))
+ config(c=>{for(const w of c.modelContextWindows??[])if(w.provider==='openai')w.windowTokens=8192})
+ for(let i=1;i<=10;i++)await turn('B.4-r3-'+i,i===1?'请记住：青松周报固定周五发，负责人小青。'+('这是编造的周报安排。'.repeat(800)):i===10?'刚才那个安排哪天发，谁负责？只回答这两点。':'继续刚才那个安排，请简短确认。')
+ record('B.4-r3-health',await api('GET','/v1/health',undefined,'file'))
+ config(c=>{for(const w of c.modelContextWindows??[])if(w.provider==='openai')w.windowTokens=1000000})
+ await turn('B.5-r3-fresh','/reset')
+ for(let i=1;i<=4;i++){
+  await turn('B.5-r3-'+i,'以下是隔离超长窗口验收的编造填充，只需回复“收到”：\n'+Array.from({length:10000},(_,j)=>`青松周报条目${i}-${j}在周五。`).join('\n'))
+  if(readFileSync(join(dir,'daemon.log'),'utf8').slice(logOffset).includes('[CONTEXT_ROTATE] reason=overflow provider=openai'))break
+ }
+ await turn('B.5-r3-short','我们刚才编造的周报是哪天发？只说星期几。')
+ record('B.5-r3-health',await api('GET','/v1/health',undefined,'file'))
+ for(const name of ['context-windows.json','context-upper-bounds.json']){const capacity=join(dir,'checkup',name);record('B.5-r3-'+name,{fileExists:existsSync(capacity),...(existsSync(capacity)?{content:JSON.parse(readFileSync(capacity,'utf8'))}:{})})}
+}else if(section==='B-r3-small'){
+ const logOffset=readFileSync(join(dir,'daemon.log'),'utf8').length
+ await mode('openai');await turn('B.4-r3-clean','/reset')
+ config(c=>{for(const w of c.modelContextWindows??[])if(w.provider==='openai')w.windowTokens=8192})
+ for(let i=1;i<=11;i++){
+  await turn('B.4-r3-clean-'+i,i===1?'这是新编造安排：金桂周报周二发，负责人小金。'+('金桂周报是编造的工作安排。'.repeat(800)):i>=9?'刚才那个安排哪天发，谁负责？只回答这两点。':'继续刚才那个安排，请简短确认。')
+  record('B.4-r3-clean-health-'+i,await api('GET','/v1/health',undefined,'file'))
+  if(i>=8)await sleep(20000)
+  if(readFileSync(join(dir,'daemon.log'),'utf8').slice(logOffset).includes('[CONTEXT_ROTATE] reason=budget provider=openai'))break
+ }
+ await turn('B.4-r3-after-rotation-reference','刚才那个金桂周报安排哪天发，谁负责？只回答这两点。')
+ record('B.4-r3-after-rotation-health',await api('GET','/v1/health',undefined,'file'))
+}else if(section==='B-r3-persist'){
+ await turn('B.5-r3-after-restart','请简短回复收到。')
+ record('B.5-r3-persist-health',await api('GET','/v1/health',undefined,'file'))
 }else if(section==='B-extra'){
  await mode('claude');await turn('B-reset-after-overflow','/reset')
  await turn('B.7-recovery-yes','好啊')
@@ -208,6 +244,74 @@ if(section==='A'){
  record('B.9-group-inbound',await api('POST','/test/inbound',{chatId:'acc-group@chatroom',text:'你好，本次合成群标识验收，只需回复一句收到。'}))
  for(let i=0;i<90;i++){const out=(await api('GET','/test/outbox')).body.slice(baseline);if(['acc-visitor','acc-group@chatroom'].every(chat=>out.some((m:any)=>m.chatId===chat))){record('B.9-replies',{outbox:out});break}await sleep(1000)}
  record('B.9-after',await api('GET','/v1/health',undefined,'file'));record('B.9-turns',await api('GET','/v1/turns',undefined,'owner'))
+}else if(section==='C-r3-start'){
+ await mode('claude')
+ const nonce=Date.now().toString(36),canary='ACC_TRANSCRIPT_ONLY_'+nonce
+ writeFileSync(join(dir,'transcript-canaries.json'),JSON.stringify([canary]))
+ for(const providerId of ['codex','claude']){
+  const path=join(dir,'tasks','round3-'+providerId+'-'+nonce);mkdirSync(path,{recursive:true});writeFileSync(join(path,'private-progress.txt'),canary)
+  const created=await api('POST','/v1/workbench/create',{path,providerId,title:'青松周报交接核对',text:`先用 Read 读取 private-progress.txt，仅供过程检查，不要在回复和产出引用它。创建 handoff.txt，内容“青松周报固定周五，负责人小青；批次${nonce}”。最终回复交接备注：下一位先用 matter_notes 读记录本，读取 handoff.txt 后创建 checked.txt 保留批次号，再用 matter_note 写一条核对备注。只在当前工作区操作，不联网，不用Bash。`})
+  record('C.1-r3-create-'+providerId,created)
+  const id=created.body.task?.id;if(!id)continue
+  writeFileSync(join(dir,'c-round3.json'),JSON.stringify({id,path,nonce,providerId}))
+  const result=await taskDone(id,'C.1-r3-'+providerId)
+  record('C.1-r3-file-'+providerId,{handoffExists:existsSync(join(path,'handoff.txt')),status:result?.body.task?.status,phase:result?.body.task?.phase})
+  if(existsSync(join(path,'handoff.txt'))&&result&&(result.body.task?.phase==='replied'||['done','completed'].includes(result.body.task?.status)))break
+ }
+}else if(section==='C-r3-handoff'||section==='C-r3-openai'||section==='C-r3-fail'){
+ const {id,path,nonce}=JSON.parse(readFileSync(join(dir,'c-round3.json'),'utf8'))
+ record(section+'-before',await api('GET','/v1/workbench/task?id='+id));record(section+'-injection-before',await ledgerProof(id))
+ await mode(section==='C-r3-handoff'?'claude':'openai')
+ if(section==='C-r3-fail')writeFileSync(join(dir,'fail-claude-start'),'synthetic startup failure\n')
+ try{await approvedTurn(section,`把事项 ${id} 交给 Claude 接着做。按交接备注先调用 matter_notes 读记录本，读取 handoff.txt，创建 ${section==='C-r3-openai'?'gateway-checked.txt':'checked.txt'} 保留批次号，再调用 matter_note 写“${section}已核对批次${nonce}”。不要联网，不用Bash。`);await taskDone(id,section+'-baton')}
+ finally{if(section==='C-r3-fail')unlinkSync(join(dir,'fail-claude-start'))}
+ record(section+'-notes',await api('GET','/v1/matter/notes?matter='+id));record(section+'-injection-after',await ledgerProof(id))
+ const targetFile=join(path,section==='C-r3-openai'?'gateway-checked.txt':'checked.txt');record(section+'-files',{targetFileExists:existsSync(targetFile),nonceMatches:existsSync(targetFile)&&readFileSync(targetFile,'utf8').includes(nonce)})
+}else if(section==='C-r3-exited'||section==='C-r3-continue'){
+ const {id}=JSON.parse(readFileSync(join(dir,'c-round3.json'),'utf8')),cleanup=JSON.parse(readFileSync(join(dir,'cleanup.json'),'utf8'))
+ if(cleanup.remainingCount!==0||cleanup.remainingGroupMembers!==0)throw Error('prior external cleanup must prove no writers')
+ const before=await api('GET','/v1/workbench/task?id='+id);record(section+'-before',before)
+ if(before.body.lastExecution?.createdAt&&statSync(join(dir,'cleanup.json')).mtimeMs<before.body.lastExecution.createdAt)throw Error('cleanup predates latest writer; stop/resume again')
+ if(before.body.task?.error==='writer_not_closed')record(section+'-writer-exited',await api('POST','/v1/workbench/writer-exited',{id}))
+ if(section==='C-r3-continue'){
+  const detail=await api('GET','/v1/workbench/task?id='+id),restartToken=detail.body.continuation?.restart?.token
+  record('C.5-r3-continue',await api('POST','/v1/workbench/continue',{id,text:'继续。先实际调用 matter_notes 读取记录本，再读取 handoff.txt，并实际调用 matter_note 写一条含文件批次号的恢复核对备注。不用Bash，不联网。',...(restartToken?{restartToken}:{})}))
+  const after=await taskDone(id,'C.5-r3-continued');record('C.5-r3-injection',await ledgerProof(id));record('C.5-r3-proof',{newExecution:!!after?.body.lastExecution?.runId&&!!before.body.lastExecution?.runId&&after.body.lastExecution.runId!==before.body.lastExecution.runId,sameBaton:!!after?.body.agentRuns?.at(-1)?.runId&&!!before.body.agentRuns?.at(-1)?.runId&&after.body.agentRuns.at(-1).runId===before.body.agentRuns.at(-1).runId})
+ }
+ }else if(section==='C-r3-supplements'){
+ const path=join(dir,'running-supplement');mkdirSync(path,{recursive:true})
+ const created=await api('POST','/v1/workbench/create',{path,providerId:'claude',title:'编造表单核对',text:'这是隔离验收的编造表单。请先用Bash实际执行 sleep 40，再简短回复等待补充。之后收到的所有补充只作模拟处理，不发送任何网络请求、不真正提交表单。不要读写工作区之外。'});record('C-regression-create',created)
+ const id=created.body.task?.id;if(!id)throw Error('supplement task missing')
+ for(let i=0;i<30;i++){
+  const pending=await api('GET','/v1/permissions/pending');for(const p of pending.body.items??[])if(p.hash)record('C-regression-approve',await api('POST','/v1/permissions/resolve',{hash:p.hash,decision:'allow'}))
+  const detail=await api('GET','/v1/workbench/task?id='+id)
+  if(detail.body.task?.phase==='working'&&detail.body.events?.some((e:any)=>e.kind==='tool_call'&&e.activity?.type==='command'&&e.activity?.status==='running')){record('C-regression-running',detail);break}await sleep(500)
+ }
+ await turn('C-regression-set-focus',`接下来说 ${id}`)
+ for(const text of ['把结果交给我看一下','把表单提交给后端']){
+  const before=await api('GET','/v1/workbench/task?id='+id);await turn('C-regression-'+text,text);record('C-regression-after-'+text,{before,after:await api('GET','/v1/workbench/task?id='+id)})
+ }
+ await taskDone(id,'C-regression-done')
+}else if(section==='C-r3-supplement-stream'){
+ const path=join(dir,'running-supplement-stream');mkdirSync(path,{recursive:true})
+ const created=await api('POST','/v1/workbench/create',{path,providerId:'claude',title:'编造表单检查清单',text:'这是编造表单的隔离验收，请认真给出30条字段检查建议，每条至少20个字。只输出文字，不调用工具、不访问网络。稍后所有补充均只模拟处理，不真正提交任何表单。'});record('C-regression-stream-create',created)
+ const id=created.body.task?.id;if(!id)throw Error('supplement task missing')
+ for(let i=0;i<100;i++){const d=await api('GET','/v1/workbench/task?id='+id);if(d.body.task?.phase==='working'&&d.body.runtime?.foreground==='running'){record('C-regression-stream-running',d);break}await sleep(100)}
+ await turn('C-regression-stream-focus',`接下来说 ${id}`)
+ for(const text of ['把结果交给我看一下','把表单提交给后端']){const before=await api('GET','/v1/workbench/task?id='+id);await turn('C-regression-stream-'+text,text);record('C-regression-stream-after-'+text,{wasRunning:before.body.task?.phase==='working'&&before.body.runtime?.foreground==='running',before,after:await api('GET','/v1/workbench/task?id='+id)})}
+ await taskDone(id,'C-regression-stream-done')
+ let final:any
+ for(let i=0;i<60;i++){final=await api('GET','/v1/workbench/task?id='+id);if(final.body.inputs?.length>=2&&final.body.inputs.every((x:any)=>x.status==='delivered')&&final.body.task?.phase==='replied')break;await sleep(1000)}
+ record('C-regression-stream-final',final)
+}else if(section==='C-r3-scope'){
+ const {id,path}=JSON.parse(readFileSync(join(dir,'c-round3.json'),'utf8'))
+ const otherPath=join(dir,'other-scope');mkdirSync(otherPath,{recursive:true})
+ const other=await api('POST','/v1/workbench/create',{path:otherPath,providerId:'claude',title:'独立事项权限核对',text:'只回复独立事项就绪，不调用工具。'});record('C.4-r3-other',other)
+ const otherId=other.body.task?.id;if(otherId)await taskDone(otherId,'C.4-r3-other')
+ const credential=JSON.parse(readFileSync(join(dir,'session-scopes.json'),'utf8')).findLast((s:any)=>s.sessionKey===`workbench/${id}`)
+ if(credential&&otherId){const headers={authorization:'Bearer '+credential.token,'content-type':'application/json'},own=await fetch(info.baseUrl+'/v1/matter/notes?matter='+id,{headers}),forged=await fetch(info.baseUrl+'/v1/matter/notes?matter='+otherId,{headers}),forgedWrite=await fetch(info.baseUrl+'/v1/matter/note',{method:'POST',headers,body:JSON.stringify({matter:otherId,text:'不应写入的伪造备注'})});record('C.4-r3-scope',{own:own.status,forgedRead:forged.status,forgedWrite:forgedWrite.status})}
+ record('C.6-r3-close',await api('POST','/v1/workbench/cancel',{id}));await taskDone(id,'C.6-r3-terminal',true)
+ await sleep(5000);record('C.6-r3-topics',await api('GET','/v1/memory/topics?view=all'));record('C.6-r3-source',{systemTemporaryWorkspace:true})
 }else if(section==='C'||section==='C-fallback'){
  await mode('claude')
  const firstProvider=section==='C'?'codex':'claude'
@@ -367,13 +471,21 @@ if(section==='A'){
  record('D.1-cli-estimate',{exitCode:cli.exitCode,noRequests:requestCount()===count,result:cliEstimate})
  record('D.1-claude-estimate',await api('POST','/v1/checkup/estimate',{providerId:'claude',model:'Kimi-Code',full:false}))
  record('D.1-claude-no-request',{noRequests:requestCount()===count})
- await checkup('openai','Kimi-Code')
+ const completed=await checkup('openai','Kimi-Code')
  const profiles=()=>existsSync(join(dir,'checkup/profiles.json'))?readFileSync(join(dir,'checkup/profiles.json'),'utf8'):null
  const saved=profiles(),cancelled=await checkup('openai','Kimi-Code',true)
- record('D.2-kimi-cancel-preserved',{profileExisted:!!saved,unchangedAfterCancel:saved===profiles(),attemptStatus:cancelled?.body.attempt?.status})
+ record('D.2-kimi-cancel-preserved',{profileExisted:!!saved,previousCompleteProfile:completed?.body.attempt?.status==='completed'&&!!completed.body.profile,unchangedAfterCancel:saved===profiles(),attemptStatus:cancelled?.body.attempt?.status})
  await checkup('codex','Kimi-Code')
  await checkup('agy','Kimi-Code')
- record('D.7-health',await api('GET','/v1/health',undefined,'file'))
+ await mode('openai');await turn('D.7-r3-owner','这是体检后的预算验收，请只回复收到。');record('D.7-health',await api('GET','/v1/health',undefined,'file'))
+}else if(section==='D-claude-proxy'){
+ const before=requestCount(),quote=await api('POST','/v1/checkup/estimate',{providerId:'claude',model:'Kimi-Code',full:false});record('D-claude-proxy-estimate',quote)
+ const oldIds=new Set(readFileSync(join(dir,'gateway.jsonl'),'utf8').split('\n').filter(Boolean).map(s=>JSON.parse(s).id))
+ record('D-claude-proxy-start',await api('POST','/v1/checkup/run',{providerId:'claude',model:'Kimi-Code',full:false,expectedTargetKey:quote.body.targetKey}))
+ let actual:any
+ for(let i=0;i<150;i++){actual=readFileSync(join(dir,'gateway.jsonl'),'utf8').split('\n').filter(Boolean).map(s=>JSON.parse(s)).find(r=>!oldIds.has(r.id)&&r.path==='/v1/messages'&&r.onlyFakeTools);if(actual)break;await sleep(300)}
+ record('D-claude-proxy-observed',{before,after:requestCount(),actualFictionalRequestObserved:!!actual,requestId:actual?.id,maxTokens:actual?.maxTokens,onlyFakeTools:actual?.onlyFakeTools});record('D-claude-proxy-cancel',await api('POST','/v1/checkup/cancel',{}))
+ for(let i=0;i<60;i++){const r=await api('GET','/v1/checkup?run='+quote.body.targetKey);if(r.body.attempt?.status!=='running'){record('D-claude-proxy-result',r);break}await sleep(1000)}
 }else if(section==='D-samples'){
  for(const id of ['0/0/clarify','0/0/handoff','0/0/ordinary-handoff'])record('D.3-manual-'+id,await api('POST','/test/checkup-sample',{id}))
 }else if(section==='D-fallback'){

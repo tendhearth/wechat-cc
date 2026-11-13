@@ -17,10 +17,12 @@ const server=Bun.serve({hostname:'127.0.0.1',port,idleTimeout:255,async fetch(re
   row.messageCount=b.messages?.length??null
   row.systemChars=typeof b.system==='string'?b.system.length:Array.isArray(b.system)?b.system.reduce((n:number,s:any)=>n+(s.text?.length??0),0):(b.messages??[]).filter((m:any)=>m.role==='system').reduce((n:number,m:any)=>n+(typeof m.content==='string'?m.content.length:JSON.stringify(m.content).length),0)
   row.toolDefinitionBytes=Buffer.byteLength(JSON.stringify(b.tools??[]))
-  row.onlyFakeTools=tools.length>0&&tools.every((n:string)=>['reply','ask_user','delegate'].includes(n))
+  row.onlyFakeTools=tools.length>0&&tools.every((n:string)=>['reply','ask_user','delegate'].includes(n.replace(/^mcp__wechat__/,'')))
   row.hasActualExecutorName=/\b(?:claude|codex|cursor|agy)\b/i.test(body??'')
   row.hasNotebook=body?.includes('matter_ledger_data')??false
   row.hasHandoffFile=body?.includes('handoff.txt')??false
+  row.hasResultSupplement=body?.includes('把结果交给我看一下')??false
+  row.hasBackendSupplement=body?.includes('把表单提交给后端')??false
   row.hasCodexTranscriptEnvelope=/"(?:thread_id|parent_tool_use_id)"|"type":"(?:turn.started|item.completed)"/.test(body??'')
   const canaryFile=join(dir,'transcript-canaries.json')
   row.hasTranscriptOnlyCanary=existsSync(canaryFile)&&(JSON.parse(readFileSync(canaryFile,'utf8')) as string[]).some(c=>(body??'').includes(c))
@@ -36,7 +38,7 @@ const server=Bun.serve({hostname:'127.0.0.1',port,idleTimeout:255,async fetch(re
       let parsed:any;try{parsed=JSON.parse(error.replace(/^upstream error:\s*/,''))}catch{}
       row.errorCode=parsed?.error?.code??null;row.errorType=parsed?.error?.type??null
       const message=parsed?.error?.message??''
-      row.contextOverflow=/context.{0,30}(?:exceed|length|window|maximum)|prompt.{0,20}(?:long|token)/i.test(message)
+      row.contextOverflow=/context.{0,30}(?:exceed|length|window|maximum)|prompt.{0,20}(?:long|token)|request exceeded model token limit/i.test(message)
       if(row.contextOverflow){let safe=String(message).slice(0,500);for(const name of ['authorization','x-api-key']){const secret=req.headers.get(name)?.replace(/^Bearer\s+/i,'');if(secret)safe=safe.split(secret).join('[REDACTED]')}row.contextError=safe.replace(/(?:sk-|Bearer\s+)[A-Za-z0-9._-]+/gi,'[REDACTED]')}
       appendFileSync(join(dir,'gateway.jsonl'),JSON.stringify(row)+'\n');return new Response(error,{status:r.status,headers:outHeaders})
     }
