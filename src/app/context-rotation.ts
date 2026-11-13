@@ -86,8 +86,11 @@ export class ContextRotation {
       const latest=await this.d.latestTs(k.chatId,current)
       if(latest&&(!s.throughTs||Date.parse(latest)>Date.parse(s.throughTs)))s.throughTs=latest
       if(s.turns>0&&!s.throughTs){this.deferred(s,'boundary_unknown');return null}
-      if(s.throughTs&&!await this.d.accounted(k.chatId,s.throughTs)){
-        s.catchupThrough=s.throughTs;this.deferred(s,'accounting_behind');return null
+      // 要先记过账的只是「换段后会掉出上下文的那部分」。最近一轮(最后一条主人的话起)原文带进新段,不必等它记完——
+      // 否则账永远落后刚答完的那一轮,换段被无限推迟(2026-11-13 真模型验收 B.4)。原文都在 canonical messages 里,抽取照常追。
+      const gate=await this.accountingGate(k,current,s.throughTs)
+      if(gate&&!await this.d.accounted(k.chatId,gate)){
+        s.catchupThrough=s.throughTs??gate;this.deferred(s,'accounting_behind');return null
       }
       const continuation=await this.continuation(k,current)
       if(!this.owner(k)||sessions.isInFlight(k)||this.d.pending(k.chatId)||!await sessions.rotate(k))return null
@@ -100,6 +103,16 @@ export class ContextRotation {
       this.d.log('CONTEXT_ROTATE',`reason=${reason} provider=${k.providerId} prevTurns=${prevTurns} carried=${continuation.carried}`)
       return continuation
     }catch{this.deferred(s,'accounting_or_context_unavailable');return null}
+  }
+  /** 换段前必须已经进话题记忆的最后时刻:最近一轮开始之前那条消息。认不出最近一轮(没有带时间的更早消息)时退回整段边界,宁可不换。 */
+  private async accountingGate(k:ContextKey,current:ContextInput|undefined,throughTs:string|null|undefined):Promise<string|null>{
+    const recent=await this.d.recent(k.chatId,current)
+    let start=-1
+    for(let i=recent.length-1;i>=0;i--)if(recent[i]!.dir==='in'){start=i;break}
+    if(start<0)return throughTs??null
+    for(let i=start-1;i>=0;i--){const ts=recent[i]!.ts;if(ts&&Number.isFinite(Date.parse(ts)))return ts}
+    // 最近一轮之前没取到带时间的消息(列表被截断 / 只有主动消息):分不清有没有会掉出去的内容,保守用整段边界。
+    return throughTs??null
   }
   async continuation(k:ContextKey,current?:ContextInput){return continuationBlock(await this.d.recent(k.chatId,current),await this.d.ongoing(k.chatId),12000,this.d.proactive?[]:this.chat(k.chatId).companion)}
   tracked(k:ContextKey){return this.owner(k)&&!!this.state.sessions[idOf(k)]}
@@ -144,7 +157,8 @@ export class ContextRotation {
       const s=this.segment(k)
       try{const throughTs=boundary.throughTs??await this.d.latestTs(k.chatId);if(throughTs&&(!s.throughTs||Date.parse(throughTs)>Date.parse(s.throughTs)))s.throughTs=throughTs;this.persist();if(this.deliveries.get(k.chatId)===boundary)this.deliveries.delete(k.chatId)}catch{return}
       if(s.catchupThrough){
-        try{const through=s.catchupThrough;if(await this.d.extract(k.chatId,'catchup',through)&&await this.d.accounted(k.chatId,through))delete s.catchupThrough}catch{/* keep pending */}
+        // 追到刚交付的这一轮为止,不是开轮前冻结的旧边界——否则每追一次又落后一轮。
+        try{const frozen=s.catchupThrough,through=s.throughTs&&Date.parse(s.throughTs)>Date.parse(frozen)?s.throughTs:frozen;if(await this.d.extract(k.chatId,'catchup',through)&&await this.d.accounted(k.chatId,through))delete s.catchupThrough}catch{/* keep pending */}
         this.persist();return
       }
       if(!worthAccounting(text,tools))return

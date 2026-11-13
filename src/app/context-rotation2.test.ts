@@ -76,3 +76,32 @@ it('owner continuity: growing byte estimates remain unknown until a provider inp
  for(let i=0;i<40;i++){r.c.observe(r.key,{bytes:400000+i*20000,turns:1});await r.before()}
  expect(r.rotations).toBe(0);expect(r.c.status()[0]!.source).toBe('unknown')
 })
+
+// 2026-11-13 真模型验收 B.4:每轮都有新消息落库时,旧实现的追赶只追到开轮前的边界,账永远落后一轮,换段被无限推迟。
+describe('accounting gate does not chase its own tail',()=>{
+ function live(extra:Partial<ContextRotationDeps>={}){
+  const msgs:{dir:'in'|'out';text:string;ts:string}[]=[];let clock=Date.parse('2026-11-13T00:00:00Z'),watermark=0
+  const say=(dir:'in'|'out',text:string)=>{clock+=1000;msgs.push({dir,text,ts:new Date(clock).toISOString()})}
+  const r=rig({recent:async()=>msgs.slice(-12),latestTs:async()=>msgs.at(-1)?.ts??null,accounted:async(_c,ts)=>Date.parse(ts)<=watermark,
+   extract:async(_c,_m,through)=>{watermark=Math.max(watermark,Date.parse(through??msgs.at(-1)!.ts));return true},...extra})
+  const turn=async(tokens:number)=>{say('in','q');const block=await r.before();say('out','a');r.c.observe(r.key,{tokens,turns:1});r.c.delivered(r.key,'a',false);for(const job of r.jobs.splice(0))await job();return block}
+  return {r,turn,msgs,get watermark(){return watermark}}
+ }
+ it('rotates once over budget even though every turn adds a new unaccounted reply',async()=>{
+  const l=live();await l.turn(10000)
+  for(let i=0;i<14;i++)await l.turn(180000)
+  expect(l.r.rotations).toBeGreaterThanOrEqual(1)
+ })
+ it('still refuses while content older than the carried round is unaccounted and extraction is unavailable',async()=>{
+  const l=live({extract:async()=>false});await l.turn(10000)
+  for(let i=0;i<14;i++)await l.turn(180000)
+  expect(l.r.rotations).toBe(0);expect(l.r.c.status()[0]!.lastDeferredReason).toBe('accounting_behind')
+ })
+ it('catch-up extracts through the turn just delivered, not the boundary frozen before it',async()=>{
+  const seen:string[]=[]
+  const l=live({extract:async(_c,mode,through)=>{if(mode==='catchup')seen.push(through!);return false}});await l.turn(10000)
+  for(let i=0;i<10;i++)await l.turn(180000)
+  expect(seen.length).toBeGreaterThan(0)
+  expect(seen.at(-1)).toBe(l.msgs.at(-1)!.ts)
+ })
+})

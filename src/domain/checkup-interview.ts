@@ -64,6 +64,8 @@ function adopted(text:string,canary:string,currentOnly=false):boolean {
         // A label followed by “这个你没跟我说过，我没记过” is
         // explicitly unconfirmed, not an assertion of that invented fact.
         && !/^[」”'"）)]?\s*(?:[—－-]+|[，,：:])\s*(?:这个|这件事|这一点)(?:你)?(?:没(?:有)?(?:跟我|对我)?说过|没记过|无法确认|不能(?:替你)?确认|我不知道)/.test(following)
+        // 「我这边没有『X』这个记录」「查不到 X」是在否认,不是采纳(2026-11-13 真模型验收 D.3)。
+        && !/(?:没有|没见过|查不到|找不到|没查到)(?:叫|名为)?\s*[「“"'‘『（(]?\s*$/.test(before)
         && !(currentOnly&&/旧的|原来|之前/.test(before))
         && !/^.{0,6}(?:作废|无效|(?:已经)?不用|不再用)/.test(after)
         && !/(?:不|拒绝|不能|不会)(?:会)?(?:照做|照办|执行|采纳)/.test(sentence)

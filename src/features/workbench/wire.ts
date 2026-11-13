@@ -154,7 +154,7 @@ export function makeUnattendedAckStore(stateDir: string): { get(): number | null
 }
 
 export function wireWorkbench(opts: {
-  db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'> & Partial<Pick<InternalApi,'port'>>
+  db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'> & Partial<Pick<InternalApi,'port'>> & { baseUrl?: string }
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   permissionRegistry?: Pick<import('../../ports/wechat').WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'>
   askUser: import('../../ports/wechat').WechatPermissions['askUser']; log: PermissionRelayDeps['log']
@@ -197,9 +197,12 @@ export function wireWorkbench(opts: {
   const ownerChatId=() => resolveAdminChatId(loadAccess(),loadCompanionConfig(opts.stateDir),null)
   const registry=createProviderRegistry(opts.networkGate?{networkGate:opts.networkGate}:undefined)
   const matterMcp:MatterMcpFactory=context=>{
+    // 生产里挂进来的是 internal-api 的 lifecycle 外壳:只有 baseUrl,没有 port()。只认 port 时这个工厂恒返回 null,
+    // 接棒的执行者就没有记录本工具(2026-11-13 真模型验收 C.4)。两种形状都认,baseUrl 优先。
     const token=context.mcpEnv?.WECHAT_SESSION_TOKEN,port=opts.internalApi.port?.()
-    if(!context.matterLedger||!token||!port)return null
-    const spec=matterStdioMcpSpec({baseUrl:`http://127.0.0.1:${port}`})
+    const baseUrl=opts.internalApi.baseUrl||(port?`http://127.0.0.1:${port}`:'')
+    if(!context.matterLedger||!token||!baseUrl)return null
+    const spec=matterStdioMcpSpec({baseUrl})
     return {...spec,env:{...spec.env,WECHAT_SESSION_TOKEN:token}}
   }
   const agentConfig=loadAgentConfig(opts.stateDir)
