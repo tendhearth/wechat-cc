@@ -3,6 +3,14 @@ import { join } from 'node:path'
 import { checkupReview, type CheckupView } from '../../../packages/protocol/src'
 import { test, expect } from './fixtures'
 
+// 和 dashboard.spec.ts 同一套进面板的办法:等壳子定下模式,再切到 dashboard(只 goto 会停在引导页,点不到「CC 的连接」)。
+async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
+  await page.waitForFunction(() => { const m = document.documentElement.dataset.mode; return m !== undefined && m !== 'loading' }, { timeout: 15_000 })
+  await page.evaluate(() => { document.documentElement.dataset.mode = 'dashboard' })
+  await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 5_000 })
+}
+
 async function syntheticCheckup(page: import('@playwright/test').Page) {
   let state = { target: { provider: 'fake', model: 'synthetic', address:'default',windowTokens:8192,windowKnown:false }, profile: null as null | object, attempt: null as null | object, periodicProbe: false, suspectedChanged: false }
   const mutations: string[] = []
@@ -23,9 +31,10 @@ async function syntheticCheckup(page: import('@playwright/test').Page) {
 
 }
 
-test('checkup shows cost before explicit start, can cancel, and keeps periodic checks opt-in', async ({ page, shimUrl }) => {
+test('checkup shows cost before explicit start, can cancel, and keeps periodic checks opt-in', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   const fake = await syntheticCheckup(page)
-  await page.goto(shimUrl)
+  await bootIntoDashboard(page, shimUrl)
   await page.locator('.cc-home-details > summary').click()
   const panel = page.locator('.nc-butler')
   await expect(panel).toContainText('还没体检')
@@ -42,9 +51,10 @@ test('checkup shows cost before explicit start, can cancel, and keeps periodic c
   await expect(panel.locator('[data-checkup="periodic"]')).toBeChecked()
 })
 
-test('measured weak memory has plain reassurance and a synthetic screenshot fixture', async ({ page, shimUrl }) => {
+test('measured weak memory has plain reassurance and a synthetic screenshot fixture', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   const fake = await syntheticCheckup(page); fake.weak()
-  await page.goto(shimUrl)
+  await bootIntoDashboard(page, shimUrl)
   await page.locator('.cc-home-details > summary').click()
   const panel = page.locator('.nc-butler')
   await expect(panel).toContainText('CC 会这样照顾它：更勤换新对话')
