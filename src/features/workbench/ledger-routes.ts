@@ -1,21 +1,23 @@
-import {workbenchErrorHttp} from '../../../packages/protocol/src/workbench-errors'
+import {workbenchErrorHttp,matterToolFailure} from '../../../packages/protocol/src/workbench-errors'
 import {ownerLedgerCaller,ownerLedgerConversation} from '../../lib/matter-ledger-access'
 import type {WorkbenchService} from './service'
 import type {RouteTable} from '../../daemon/internal-api/types'
+import {PlanInputError,type PlanCaller,type PlanConversation} from '../../adapters/workbench/matter-plan-input'
 import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
 
 const ID=/^[a-f0-9]{8}$/
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v)
 const forbidden=()=>({status:403,body:{error:'matter_ledger_forbidden'}})
 const invalid=()=>({status:400,body:{error:'invalid_request'}})
-export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:()=>string|null}):RouteTable{
+export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:()=>string|null;planConversation?:(caller:PlanCaller)=>PlanConversation|null}):RouteTable{
   return {
     'POST /v1/matter/plan':async(q,b,c)=>{
-      if(!ownerLedgerConversation(d.resolveAdminChatId?.()??null,c))return forbidden()
+      if(!ownerLedgerConversation(d.resolveAdminChatId?.()??null,c))return {status:403,body:matterToolFailure('matter_ledger_forbidden',false)}
+      const approved=d.workbench.matterApprovalStatus?.('mcp__wechat__matter_plan',b,c??{})??false
       const parsed=MatterPlanRequest.safeParse(b)
-      if([...q.keys()].length||!parsed.success)return invalid()
-      try{return {status:202,body:await d.workbench.matterPlan(parsed.data)}}
-      catch(error){const code=error instanceof Error?error.message:'';return {status:code==='matter_ledger_forbidden'?403:409,body:{error:/^[a-z_]+$/.test(code)?code:'matter_plan_failed'}}}
+      if([...q.keys()].length||!parsed.success)return {status:400,body:matterToolFailure('invalid_matter_plan',approved)}
+      try{return {status:202,body:await d.workbench.matterPlan(parsed.data,d.planConversation?.(c??{})??undefined)}}
+      catch(error){const code=error instanceof Error?error.message:'';return {status:code==='matter_ledger_forbidden'?403:409,body:matterToolFailure(code,approved,'plan',error instanceof PlanInputError?error.projects:undefined)}}
     },
     'GET /v1/matter/notes':async(q,_b,c)=>{
       const owner=d.resolveAdminChatId?.()??null
@@ -40,10 +42,11 @@ export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:(
       try{return {status:200,body:d.workbench.matterNote(c.sessionKey,b.text)}}catch(error){const code=error instanceof Error?error.message:'';if(['matter_note_limit','matter_session_ended'].includes(code)){const mapped=workbenchErrorHttp(code,'desktop');return {status:mapped.status,body:{error:mapped.error}}}return forbidden()}
     },
     'POST /v1/matter/relay':async(_q,b,c)=>{
-      if(!ownerLedgerConversation(d.resolveAdminChatId?.()??null,c))return forbidden()
-      if(!object(b)||Object.keys(b).some(k=>!['matter','executor','brief'].includes(k))||typeof b.matter!=='string'||!ID.test(b.matter)||typeof b.executor!=='string'||typeof b.brief!=='string'||!b.brief.trim()||b.brief.length>20_000)return invalid()
+      if(!ownerLedgerConversation(d.resolveAdminChatId?.()??null,c))return {status:403,body:matterToolFailure('matter_ledger_forbidden',false,'handoff')}
+      const approved=d.workbench.matterApprovalStatus?.('mcp__wechat__matter_handoff',b,c??{})??false
+      if(!object(b)||Object.keys(b).some(k=>!['matter','executor','brief'].includes(k))||typeof b.matter!=='string'||!ID.test(b.matter)||typeof b.executor!=='string'||typeof b.brief!=='string'||!b.brief.trim()||b.brief.length>20_000)return {status:400,body:matterToolFailure('invalid_request',approved,'handoff')}
       try{return {status:202,body:{task:await d.workbench.matterHandoff(b.matter,b.executor,b.brief)}}}
-      catch(error){const code=error instanceof Error?error.message:'';return {status:code==='matter_ledger_forbidden'?403:409,body:{error:/^[a-z_]+$/.test(code)?code:'matter_handoff_failed'}}}
+      catch(error){const code=error instanceof Error?error.message:'';return {status:code==='matter_ledger_forbidden'?403:409,body:matterToolFailure(code,approved,'handoff')}}
     },
   }
 }

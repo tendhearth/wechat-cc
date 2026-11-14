@@ -22,7 +22,7 @@ import {TIER_PROFILES} from '../../domain/user-tier'
 vi.setConfig({testTimeout:30_000})
 const cleanups:Array<()=>Promise<void>>=[]
 afterEach(async()=>{for(const cleanup of cleanups.splice(0))await cleanup()})
-function setup(retainedFirst:boolean|'all'=false,signals=true){
+function setup(retainedFirst:boolean|'all'=false,signals=true,extra:Partial<Parameters<typeof makeWorkbenchService>[0]>={}){
   const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-auto-relay-'))),project=join(root,'project'),stateDir=join(root,'state');mkdirSync(project);mkdirSync(stateDir)
   const db=openTestDb(),store=makeWorkbenchStore(db),matters=makeMatterStore(db),registry=createProviderRegistry()
   const calls:Array<{executor:string;context:SpawnContext;text:string;queue:AsyncQueue<AgentEvent>;idle?:()=>void}>=[],notices:string[]=[],ordinaryReports:string[]=[],order:string[]=[]
@@ -39,6 +39,7 @@ function setup(retainedFirst:boolean|'all'=false,signals=true){
   const opts={store,registry,stateDir,managedWorkspaceRoot:join(root,'Tasks'),ownerChatId:()=>'owner',matters,
     usage:(id:string):UsageSnapshot|null=>id==='claude'&&nextBlock==='quota'?{providerId:'claude',plan:null,fetchedAt:Date.now(),exhausted:true,windows:[{name:'5h',usedPercent:100,resetsAt:Date.now()+3600_000,durationMins:300}]}:null,
     ...(signals?{refusal:(id:string)=>id==='claude'&&nextBlock==='refused'?{code:'refused',since:'2026-11-14T00:00:00Z'}:null}:{}),executionConflict:()=>false,reports:{enqueue(id:string){ordinaryReports.push(id)},enqueueRelay(_id:string,text:string){notices.push(text)}}}
+  Object.assign(opts,extra)
   let service=makeWorkbenchService(opts)
   cleanups.push(async()=>{await service.shutdown();db.close();removeTempDir(root)})
   const request=()=>({requestId:randomUUID(),target:{kind:'managed' as const},title:'三棒接力',legs:[{executor:'codex',brief:'出三张图'},{executor:'claude',brief:'接入插图'},{executor:'openai',brief:'跑测试'}]})
@@ -374,4 +375,152 @@ it('replaying a plan request does not create another matter; changing a later br
   await expect(f.service.matterPlan({...request,legs:[request.legs[0]!,{...request.legs[1]!,brief:'换了分工'},request.legs[2]!]})).rejects.toThrow('creation_conflict')
   await expect.poll(()=>f.calls.length).toBe(1)
   expect(f.store.list()).toHaveLength(1)
+})
+
+
+it('same normalized plan in one owner turn has one durable receipt; different content or turn has another',async()=>{
+ const f=setup(),input=f.request(),{requestId:_id,...body}=input
+ const caller={scope:'owner-turn-1',path:f.project}
+ const [a,b]=await Promise.all([f.service.matterPlan(body,caller),f.service.matterPlan({...body,title:'  三棒接力  ',legs:body.legs.map(l=>({...l,brief:'  '+l.brief+'  '}))},caller)])
+ expect(b.receipt).toEqual(a.receipt)
+ await f.restart()
+ expect((await f.service.matterPlan(body,caller)).receipt).toEqual(a.receipt)
+ const c=await f.service.matterPlan({...body,title:'另一件事'},caller)
+ const d=await f.service.matterPlan(body,{...caller,scope:'owner-turn-2'})
+ expect(c.receipt.requestId).not.toBe(a.receipt.requestId)
+ expect(d.receipt.requestId).not.toBe(a.receipt.requestId)
+ expect(f.store.list()).toHaveLength(3)
+})
+
+it.each(['relay-lab','RELAY-LAB','id','path','current'] as const)('resolves %s to a catalog project without a model-generated id',async kind=>{
+ const f=setup();f.service.addProject({path:f.project,providerId:'claude'})
+ // Registered names are authoritative, not the folder basename.
+ const g=setup(false,true,{registeredProjects:()=>[{alias:'relay-lab',path:f.project}]})
+ const p=g.service.entryOptions({ownerKey:'owner',surface:'desktop'}).projects.find(p=>p.path===f.project)!
+ const {requestId:_id,target:_target,...body}=g.request()
+ const input={...body,...(kind==='current'?{}:{project:kind==='id'?p.id:kind==='path'?f.project:kind})}
+ const result=await g.service.matterPlan(input,{scope:'turn',path:f.project})
+ expect(result.task.path).toBe(f.project)
+ expect(g.store.list()).toHaveLength(1)
+})
+
+it.each([
+ {label:'invented projectId',input:{target:{kind:'project',projectId:'p-00000000000000000000',base:'relay-lab'}}},
+ {label:'local target',input:{target:{kind:'local'}}},
+ {label:'project without id',input:{target:{kind:'project'}}},
+ {label:'missing project outside catalog',input:{}},
+ {label:'unknown project',input:{project:'made-up'}},
+])('acceptance input $label returns a useful project error and creates nothing',async row=>{
+ const f=setup(),g=setup(false,true,{registeredProjects:()=>[{alias:'relay-lab',path:f.project}]}),{requestId:_id,target:_target,...body}=g.request()
+ const route=ledgerRoutes({workbench:g.service,resolveAdminChatId:()=>'owner',planConversation:()=>({scope:'turn',path:g.project})})['POST /v1/matter/plan']!
+ const result=await route(new URLSearchParams(),{...body,...row.input},{tier:'admin',origin:'session',chatId:'owner',sessionKey:'openai/offline/owner'})
+ expect(result.status).toBeGreaterThanOrEqual(400)
+ expect(result.body).toMatchObject({error:expect.any(String),message:expect.stringContaining('relay-lab')})
+ expect(JSON.stringify(result.body)).toContain('没建成')
+ expect(g.store.list()).toHaveLength(0)
+})
+
+it('duplicate registered names require an exact catalog id or path instead of guessing',async()=>{
+ const a=setup(),b=setup(),f=setup(false,true,{registeredProjects:()=>[{alias:'Relay-Lab',path:a.project},{alias:'relay-lab',path:b.project}]})
+ const {requestId:_id,target:_target,...body}=f.request()
+ const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner',planConversation:()=>({scope:'turn',path:f.project})})['POST /v1/matter/plan']!
+ const result=await route(new URLSearchParams(),{...body,project:'RELAY-LAB'},{tier:'admin',origin:'session',chatId:'owner'})
+ expect(result.body).toMatchObject({error:'matter_project_ambiguous',message:expect.stringContaining('重名')})
+ expect(JSON.stringify(result.body)).toContain(a.project)
+ expect(JSON.stringify(result.body)).toContain(b.project)
+ expect(f.store.list()).toHaveLength(0)
+})
+
+it.each(['native_session_busy','unavailable_provider','invalid_matter_plan'] as const)('approved plan %s failure explicitly explains approval and recovery',async code=>{
+ const f=setup(false,true,{...(code==='native_session_busy'?{executionConflict:()=>true}:{}),planConversation:()=>({scope:'approved-turn'})})
+ const request=f.request()
+ if(code==='unavailable_provider')request.legs[1]!.executor='relay-unregistered'
+ if(code==='invalid_matter_plan')request.legs=request.legs.slice(0,1)
+ f.service.noteMatterApproval('mcp__wechat__matter_plan',request,{chatId:'owner',provider:'openai'})
+ const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner'})['POST /v1/matter/plan']!
+ const result=await route(new URLSearchParams(),request,{tier:'admin',origin:'session',chatId:'owner'})
+ expect(result.status).toBeGreaterThanOrEqual(400)
+ expect(result.body).toMatchObject({error:code,message:expect.stringContaining('主人已批准')})
+ expect(JSON.stringify(result.body)).toContain('没建成')
+ expect(JSON.stringify(result.body)).toContain(code==='native_session_busy'?'工作区':code==='unavailable_provider'?'执行者':'2–6')
+ expect(f.store.list()).toHaveLength(0)
+})
+
+it('accepted relay retry returns its receipt even when a later executor is now unavailable',async()=>{
+ const f=setup(),request=f.request(),first=await f.service.matterPlan(request)
+ f.blockNext('quota')
+ expect((await f.service.matterPlan(request)).receipt).toEqual(first.receipt)
+ expect(f.store.list()).toHaveLength(1)
+})
+
+it('daemon pins the approved original project input even if its name now resolves elsewhere',async()=>{
+ const a=setup(),b=setup();let named=a.project
+ const context={scope:'live-owner-turn',path:b.project}
+ const f=setup(false,true,{registeredProjects:()=>[{alias:'relay-lab',path:named},{alias:'old-project',path:a.project}],planConversation:()=>context})
+ const {requestId:_id,target:_target,...body}=f.request(),input={...body,project:'relay-lab'},caller={chatId:'owner',provider:'openai'}
+ const shown=f.service.matterPlanPreview(input,caller)
+ f.service.noteMatterApproval('mcp__wechat__matter_plan',input,caller)
+ named=b.project
+ expect((await f.service.matterPlan(input,context)).task.path).toBe(shown.projectPath)
+ expect(f.store.list()[0]!.path).toBe(a.project)
+ expect(f.service.matterApprovalStatus('mcp__wechat__matter_plan',input,caller)).toBe(true)
+ expect(f.service.matterApprovalStatus('mcp__wechat__matter_plan',{...input,title:'别的'},caller)).toBe(false)
+})
+
+it('a bypassed tool invocation never claims the owner clicked approval',async()=>{
+ const f=setup(false,true,{executionConflict:()=>true,planConversation:()=>({scope:'turn'})})
+ const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner'})['POST /v1/matter/plan']!
+ const result=await route(new URLSearchParams(),f.request(),{tier:'admin',origin:'session',chatId:'owner',sessionKey:'openai/lab/owner'})
+ expect(result.body).toMatchObject({error:'native_session_busy',approved:false})
+ expect(JSON.stringify(result.body)).not.toContain('主人已批准')
+ expect(JSON.stringify(result.body)).toContain('没建成')
+})
+
+it('a long live turn retains the accepted project binding for a delayed retry',async()=>{
+ const a=setup(),b=setup();let named=a.project
+ const context={scope:'long-live-turn',path:b.project},caller={chatId:'owner',provider:'openai'}
+ const f=setup(false,true,{registeredProjects:()=>[{alias:'relay-lab',path:named},{alias:'old-project',path:a.project}],planConversation:()=>context})
+ const {requestId:_id,target:_target,...body}=f.request(),input={...body,project:'relay-lab'}
+ f.service.matterPlanPreview(input,caller);f.service.noteMatterApproval('mcp__wechat__matter_plan',input,caller)
+ const first=await f.service.matterPlan(input,context)
+ named=b.project
+ const future=Date.now()+16*60_000,clock=vi.spyOn(Date,'now').mockReturnValue(future)
+ try{expect((await f.service.matterPlan(input,context)).receipt).toEqual(first.receipt);expect(f.store.list()).toHaveLength(1)}finally{clock.mockRestore()}
+})
+
+it('an accepted external structured-target request replays even after the project folder disappears',async()=>{
+ const f=setup();f.service.addProject({path:f.project,providerId:'claude'})
+ const p=f.service.entryOptions({ownerKey:'owner',surface:'desktop'}).projects[0]!,input={...f.request(),target:{kind:'project' as const,projectId:p.id}}
+ const first=await f.service.matterPlan(input)
+ renameSync(f.project,join(f.root,'moved-project'))
+ expect((await f.service.matterPlan(input)).receipt).toEqual(first.receipt)
+ expect(f.store.list()).toHaveLength(1)
+})
+
+it('same turn overlapping approval previews retain the first target rather than overwrite its card',async()=>{
+ const a=setup(),b=setup();let named=a.project
+ const context={scope:'overlapping-cards',path:b.project},caller={chatId:'owner',provider:'codex'}
+ const f=setup(false,true,{registeredProjects:()=>[{alias:'relay-lab',path:named},{alias:'old-project',path:a.project}],planConversation:()=>context})
+ const {requestId:_id,target:_target,...body}=f.request(),input={...body,project:'relay-lab'}
+ const first=f.service.matterPlanPreview(input,caller)
+ named=b.project
+ expect(f.service.matterPlanPreview(input,caller).projectPath).toBe(first.projectPath)
+ f.service.noteMatterApproval('mcp__wechat__matter_plan',input,caller)
+ expect((await f.service.matterPlan(input,context)).task.path).toBe(first.projectPath)
+})
+
+it('project approval preview checks owner identity before resolving or exposing the catalog',()=>{
+ const f=setup(false,true,{planConversation:()=>({scope:'unrelated-admin'})})
+ expect(()=>f.service.matterPlanPreview({...f.request(),target:undefined,project:'private-project'},{chatId:'other-admin',provider:'openai'})).toThrow('matter_ledger_forbidden')
+ expect(f.store.list()).toHaveLength(0)
+})
+
+it('handoff failure retains approval after MCP trims the brief',async()=>{
+ const f=setup(false,true,{planConversation:()=>({scope:'handoff-turn'})}),id=await f.create()
+ const args={matter:id,executor:'relay-unregistered',brief:'  接着做  '}
+ f.service.noteMatterApproval('mcp__wechat__matter_handoff',args,{chatId:'owner',provider:'openai'})
+ const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner'})['POST /v1/matter/relay']!
+ const result=await route(new URLSearchParams(),{...args,brief:'接着做'},{tier:'admin',origin:'session',chatId:'owner'})
+ expect(result.body).toMatchObject({error:'unavailable_provider',approved:true,message:expect.stringContaining('主人已批准')})
+ expect(JSON.stringify(result.body)).toContain('没接成')
 })

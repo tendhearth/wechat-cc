@@ -5,7 +5,7 @@ import { isReplyToolName } from '../../../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type UserTier } from '../../../domain/user-tier'
 import { authorize } from '../../../domain/authorize'
 import { authorizeChatToolUse, type ChatOwnerRules } from '../../permission-rules/chat'
-import { ChatApprovalTurn, newChatApprovalId, type ChatApprovalChannel, type ChatApprovalLifecycle, renderChatApprovalPrompt } from '../chat-approval'
+import { ChatApprovalTurn, newChatApprovalId, type ChatApprovalChannel, type ChatApprovalLifecycle, prepareChatApprovalPrompt, noteChatApproval } from '../chat-approval'
 
 export interface PermissionRelayDeps extends ChatApprovalChannel {
   /**
@@ -118,9 +118,11 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool & ChatAppr
       } satisfies PermissionResult
     }
     const hash = newChatApprovalId()
-    const prompt = renderChatApprovalPrompt('Claude', toolName, input, hash, opts.title)
+    let prompt:string
+    try{prompt=await prepareChatApprovalPrompt('Claude',toolName,input,hash,deps,deps.initiatingChatId()??'',opts.title)}
+    catch(error){return {behavior:'deny',message:error instanceof Error?error.message:'没建成：解析项目失败，请重新选择项目。'}}
     const answer = await approvalTurn.ask({ channel: deps, target, prompt, hash, timeoutMs: DEFAULT_TIMEOUT_MS, signal, tool: toolName })
-    if (answer === 'allow' && !signal.aborted) return { behavior: 'allow' } satisfies PermissionResult
+    if (answer === 'allow' && !signal.aborted) {noteChatApproval(deps,'Claude',toolName,input,deps.initiatingChatId()??'');return { behavior: 'allow',...(toolName==='mcp__wechat__matter_plan'&&deps.resolveMatterPlan?{updatedInput:input}:{}) } satisfies PermissionResult}
     deps.log('PERMISSION', `${answer}: tool=${toolName} hash=${hash}`)
     // 'undelivered' ≠ denied: the approver never saw the prompt (their push
     // window was closed). Tell the agent honestly so it can relay a useful

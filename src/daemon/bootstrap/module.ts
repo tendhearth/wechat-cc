@@ -83,6 +83,12 @@ export function bootstrapDependencies(f: Foundation, ctx: ModuleCtx): BootstrapD
       },
       pending: chatId => wxPerm.listPendingPermissions().some(p => p.chatId === chatId),
     }),
+    noteMatterApproval:(tool,input,chatId,provider)=>workbench()?.noteMatterApproval(tool,input,{chatId,provider}),
+    resolveMatterPlan:(input,chatId,provider)=>{
+      const service=workbench()
+      if(!service)throw Error('entry_not_wired')
+      return service.matterPlanPreview(input as Parameters<WorkbenchService['matterPlanPreview']>[0],{chatId,provider})
+    },
     stateDir, db, loadProjects: () => f.projects.load(), networkGate: guardRt.gate,
     ilink: { ...pick(wxSend, 'sendMessage', 'sendFile'), ...pick(wxPerm, 'askUser', 'resolvePermission'), companion: wxCompanion },
     // CC 开口那道门在 wired 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 现取。

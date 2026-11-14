@@ -155,6 +155,7 @@ export function makeUnattendedAckStore(stateDir: string): { get(): number | null
 
 export function wireWorkbench(opts: {
   db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'> & Partial<Pick<InternalApi,'port'>> & { baseUrl?: string }
+  planConversation?: (caller:import('../../adapters/workbench/matter-plan-input').PlanCaller)=>import('../../adapters/workbench/matter-plan-input').PlanConversation|null
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   permissionRegistry?: Pick<import('../../ports/wechat').WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'>
   askUser: import('../../ports/wechat').WechatPermissions['askUser']; log: PermissionRelayDeps['log']
@@ -307,6 +308,7 @@ export function wireWorkbench(opts: {
     ...(opts.requestReview?{requestReview:opts.requestReview}:{}),
     ...(opts.permissionGate?{permissionDecide:(ask:import('../../domain/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,
+    planConversation:opts.planConversation,
     // 同一个对象:codex 晚到时 BUILD.codex 往里补,服务侧读的是这份引用。
     nativeHistory,
     store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,

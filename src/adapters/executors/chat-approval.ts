@@ -1,14 +1,16 @@
+import {matterToolFailure} from '../../../packages/protocol/src/workbench-errors'
+import {PlanInputError,type PlanTarget} from '../workbench/matter-plan-input'
 import { randomBytes } from 'node:crypto'
 import { toolInputPreview,redactPreviewText } from '../../domain/workbench/tool-input-preview'
 import { redactSecrets } from '../../domain/cli-transcript'
 
 /** 三个对话通道用同一份预览；先打码，再截断。 */
-export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, requestId: string, title?: string): string {
+export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, requestId: string, title?: string, resolved?:PlanTarget): string {
   if(/(?:^|__)matter_plan$/.test(tool)&&input&&typeof input==='object'){
     const plan=input as {title?:unknown;target?:unknown;legs?:unknown}
     if(Array.isArray(plan.legs)&&plan.legs.length>=2&&plan.legs.length<=6){
       const clip=(v:unknown,n:number)=>{const s=redactPreviewText(redactSecrets(typeof v==='string'?v:JSON.stringify(v)??'')).replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
-      return `${provider} · matter_plan [approval:${requestId}]\n确认拆法：${clip(plan.title,120)}\n工作区：${clip(plan.target,160)}\n`+plan.legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,80)}：${clip(l?.brief,160)}`}).join('\n')+'\n批准后按此顺序接力；失败或提问就停。'
+      return `${provider} · matter_plan [approval:${requestId}]\n确认拆法：${clip(plan.title,120)}\n工作区：${clip(resolved?`${resolved.projectName}（${resolved.projectPath}）`:plan.target,320)}${resolved?.target.kind==='project'&&resolved.target.isolation==='worktree'?`\n独立工作区 · 起点：${clip(resolved.target.base??'项目默认分支',80)}`:''}\n`+plan.legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,64)}：${clip(l?.brief,130)}`}).join('\n')+'\n批准后按此顺序接力；失败或提问就停。'
     }
   }
   const preview = toolInputPreview(input, true) ?? '[input omitted: too large or unreadable]'
@@ -20,7 +22,10 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
 
 /** 对话审批的共同等待边界。取消不依赖主人回答，也不接受迟到的批准。 */
 export type ChatApprovalAnswer = 'allow' | 'deny' | 'timeout' | 'undelivered' | 'cancelled'
+export type MatterPlanResolver=(input:unknown,chatId:string,provider:string)=>PlanTarget|Promise<PlanTarget>
 export interface ChatApprovalChannel {
+  noteMatterApproval?:(tool:string,input:unknown,chatId:string,provider:string)=>void
+  resolveMatterPlan?:MatterPlanResolver
   maxCards?: number
   askUser(chatId: string, prompt: string, hash: string, timeoutMs: number): Promise<Exclude<ChatApprovalAnswer, 'cancelled'>>
   /** 删除 pending 登记并让旧卡失效。 */
@@ -76,4 +81,29 @@ export interface ChatApprovalLifecycle {
 /** 不从轮内序号或可缺省的 SDK toolUseID 生成，旧卡不能命中新一轮。 */
 export function newChatApprovalId(): string {
   return randomBytes(4).readUInt32BE(0).toString(36).padStart(5, '0').slice(-5)
+}
+
+
+/** Resolve before asking. The approved project identity is carried into local tool execution. */
+export async function prepareChatApprovalPrompt(provider:string,tool:string,input:unknown,requestId:string,channel:Pick<ChatApprovalChannel,'resolveMatterPlan'>,chatId:string,title?:string):Promise<string> {
+  let resolved:PlanTarget|undefined
+  if(tool==='mcp__wechat__matter_plan'&&channel.resolveMatterPlan){
+    try{
+      resolved=await channel.resolveMatterPlan(input,chatId,provider.toLowerCase())
+      if(input&&typeof input==='object'){
+        const args=input as Record<string,unknown>
+        delete args.project;delete args.isolation;delete args.base
+        args.target=resolved.target
+      }
+    }catch(error){
+      const code=error instanceof Error?error.message:'matter_plan_failed'
+      throw Error(matterToolFailure(code,false,'plan',error instanceof PlanInputError?error.projects:undefined).message)
+    }
+  }
+  return renderChatApprovalPrompt(provider,tool,input,requestId,title,resolved)
+}
+
+
+export function noteChatApproval(channel:Pick<ChatApprovalChannel,'noteMatterApproval'>,provider:string,tool:string,input:unknown,chatId:string):void {
+  if(tool==='mcp__wechat__matter_plan'||tool==='mcp__wechat__matter_handoff')channel.noteMatterApproval?.(tool,input,chatId,provider.toLowerCase())
 }

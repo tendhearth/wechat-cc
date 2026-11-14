@@ -16,7 +16,7 @@
 import { classifyToolUse, type TierProfile } from '../../../domain/user-tier'
 import type { PermissionMode } from '../../../ports/agent-provider'
 import { authorizeChatCall, type ChatOwnerRules } from '../../permission-rules/chat'
-import { ChatApprovalTurn, newChatApprovalId, renderChatApprovalPrompt, type ChatApprovalChannel } from '../chat-approval'
+import { ChatApprovalTurn, newChatApprovalId, prepareChatApprovalPrompt, noteChatApproval, type ChatApprovalChannel } from '../chat-approval'
 
 export interface OpenAiApproval extends ChatApprovalChannel {
   adminFor: (chatId: string) => string | null
@@ -71,11 +71,11 @@ export async function gateTool(args: {
     if (!admin) return { decision: 'deny', message: 'no admin configured to approve permission requests' }
     try {
       const hash = newChatApprovalId()
-      const prompt = renderChatApprovalPrompt('OpenAI', sdkName, args.input, hash)
+      const prompt = await prepareChatApprovalPrompt('OpenAI', sdkName, args.input, hash,args.approval,args.chatId)
       const answer = await (args.approvalTurn ?? new ChatApprovalTurn(args.approval.maxCards)).ask({ tool: sdkName, channel: args.approval, target: admin, prompt, hash, timeoutMs: 10 * 60_000, signal: args.signal })
-      if (answer === 'allow' && !args.signal?.aborted) return { decision: 'allow' }
+      if (answer === 'allow' && !args.signal?.aborted) {noteChatApproval(args.approval,'OpenAI',sdkName,args.input,args.chatId);return { decision: 'allow' }}
       return { decision: 'deny', message: answer === 'undelivered' ? 'Could not deliver the approval request to the owner; ask them to try again shortly.' : answer === 'timeout' ? 'User did not reply in time; request denied' : 'User denied the request' }
-    } catch { return { decision: 'deny' } }
+    } catch(error) { return { decision: 'deny',message:error instanceof Error?error.message:'没建成：解析项目失败，请重新选择项目。' } }
   }
   return auth.denyMessage ? { decision: 'deny', message: auth.denyMessage } : { decision: 'deny' }
 }

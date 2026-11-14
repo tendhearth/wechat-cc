@@ -28,7 +28,7 @@ export interface PermissionsSlice {
 }
 
 export function wirePermissions(
-  deps: Pick<BootstrapDeps, 'loadProjects' | 'fallbackProject' | 'dangerouslySkipPermissions' | 'conversationStore' | 'ilink' | 'chatOwnerRules'>,
+  deps: Pick<BootstrapDeps, 'loadProjects' | 'fallbackProject' | 'dangerouslySkipPermissions' | 'conversationStore' | 'ilink' | 'chatOwnerRules' | 'resolveMatterPlan' | 'noteMatterApproval'>,
   ctx: Pick<BootstrapCtx, 'db' | 'stateDir' | 'log'>,
 ): PermissionsSlice {
   // busy-registry (spec 2026-08-11 §1) — the "work is happening" complement
@@ -75,6 +75,8 @@ export function wirePermissions(
   // of what arrived after.
   const buildCanUseTool = (chatId: string) => makeCanUseTool({
     askUser: deps.ilink.askUser,
+    resolveMatterPlan:deps.resolveMatterPlan,
+    noteMatterApproval:deps.noteMatterApproval,
     revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
     // initiatingChatId is the session's own chatId, baked in at spawn.
     // (The relay only uses this for log correlation; prompts always route

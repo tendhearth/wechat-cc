@@ -36,3 +36,27 @@ for (const provider of ['Claude', 'OpenAI', 'Gemini']) describe(`${provider} sha
     for (const secret of ['__offline_secret_value__', '__offline_url_password__', '__offline_url_token__', '__offline_header_secret__', '__offline_title_secret__']) expect(cards[0]).not.toContain(secret)
   })
 })
+
+for(const provider of ['Claude','OpenAI','Gemini'])it(`${provider} resolves the target before approval and pins the shown project`,async()=>{
+ const {resolvePlanTarget}=await import('../workbench/matter-plan-input')
+ const cards:string[]=[],input={project:'RELAY-LAB',title:'整理',legs:[{executor:'claude',brief:'先做'},{executor:'openai',brief:'后做'}]}
+ const catalog=[{id:'p-0123456789abcdef0123',name:'relay-lab',path:'/offline/registered-project',providerId:'claude'}]
+ const channel={askUser:async(_chat:string,prompt:string)=>{cards.push(prompt);return 'allow' as const},resolveMatterPlan:(args:unknown)=>resolvePlanTarget(args as never,catalog)}
+ if(provider==='OpenAI')expect(await gateTool({toolName:'matter_plan',mcpServer:'wechat',input,tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner',approval:{...channel,adminFor:()=>'owner'}})).toMatchObject({decision:'allow'})
+ else if(provider==='Claude')expect(await makeCanUseTool({...channel,initiatingChatId:()=>'owner',adminChatId:()=>'owner',resolveTier:()=>'admin',log:()=>{},mode:()=>'solo',provider:'claude',permissionMode:'strict'})('mcp__wechat__matter_plan',input,{signal:new AbortController().signal,toolUseID:'plan'} as any)).toMatchObject({behavior:'allow'})
+ else expect(await makeGeminiToolGate({...channel,adminFor:()=>'owner',modeFor:()=>'solo',lookupBase:()=>({askUser:'per-tool'})})({tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})('matter_plan',input)).toMatchObject({allow:true})
+ expect(cards).toHaveLength(1)
+ expect(cards[0]).toContain('relay-lab')
+ expect(cards[0]).toContain('/offline/registered-project')
+ expect(input).toMatchObject({target:{kind:'project',projectId:'p-0123456789abcdef0123'}})
+ expect(input).not.toHaveProperty('project')
+})
+
+it('resolved approval still distinguishes isolated workspaces and their base branch',async()=>{
+ const {prepareChatApprovalPrompt}=await import('./chat-approval')
+ const prompt=await prepareChatApprovalPrompt('OpenAI','mcp__wechat__matter_plan',{title:'整理',legs:[{executor:'claude',brief:'先做'},{executor:'openai',brief:'后做'}]},'test',{
+  resolveMatterPlan:()=>({target:{kind:'project',projectId:'p-0123456789abcdef0123',isolation:'worktree',base:'dev'},projectName:'relay-lab',projectPath:'/offline/project'}),
+ },'owner')
+ expect(prompt).toContain('独立工作区')
+ expect(prompt).toContain('dev')
+})

@@ -25,7 +25,7 @@ import { makeTurnEmitter } from '../turn-emitter'
 import { openaiErrorCode } from '../openai/openai-error-code'
 import { withProviderCode } from '../../../lib/provider-error-code'
 import type { CheckupBudget } from '../../../domain/checkup-budget'
-import { ChatApprovalTurn, newChatApprovalId, type ChatApprovalChannel, renderChatApprovalPrompt } from '../chat-approval'
+import { ChatApprovalTurn, newChatApprovalId, type ChatApprovalChannel, prepareChatApprovalPrompt, noteChatApproval } from '../chat-approval'
 
 export { GEMINI_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -300,8 +300,11 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
       const admin = deps.adminFor(ctx.chatId)
       if (!admin) return { allow: false, message: 'no admin configured to approve permission requests' }
       const hash = newChatApprovalId()
-      const answer = await turn.ask({ channel: deps, target: admin, prompt: renderChatApprovalPrompt('Gemini', `mcp__wechat__${toolName}`, input, hash), hash, timeoutMs: GEMINI_RELAY_TIMEOUT_MS, signal, tool: `mcp__wechat__${toolName}` })
-      if (answer === 'allow' && !signal?.aborted) return { allow: true }
+      let prompt:string
+      try{prompt=await prepareChatApprovalPrompt('Gemini',`mcp__wechat__${toolName}`,input,hash,deps,ctx.chatId)}
+      catch(error){return {allow:false,message:error instanceof Error?error.message:'没建成：解析项目失败，请重新选择项目。'}}
+      const answer = await turn.ask({ channel: deps, target: admin, prompt, hash, timeoutMs: GEMINI_RELAY_TIMEOUT_MS, signal, tool: `mcp__wechat__${toolName}` })
+      if (answer === 'allow' && !signal?.aborted) {noteChatApproval(deps,'Gemini',`mcp__wechat__${toolName}`,input,ctx.chatId);return { allow: true }}
       const message = answer === 'undelivered'
         ? 'could not reach the owner for approval (their message window is likely closed) — tell the user to try again shortly or have the owner message first'
         : answer === 'timeout' ? 'no reply in time; denied' : 'denied by operator'

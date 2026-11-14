@@ -40,6 +40,7 @@ interface Options {
   /** 这家执行者现在被拒着(出口地区用不了);执行者列表照实带出去。 */
   refusal?: (providerId: string) => { code: string; since: string } | null
   defaultProvider?: string
+  planConversation?:ServiceCtx['deps']['planConversation']
   registeredProjects?:()=>Array<{alias:string;path:string}>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   nativeHistory?:Partial<Record<NativeHistoryProvider,NativeHistoryReader>>

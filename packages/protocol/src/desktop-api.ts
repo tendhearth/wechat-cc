@@ -1,3 +1,4 @@
+import {EntryRequestId} from './entry-request-id'
 import { CliProjectMemoryRequest } from './cli-project-memory'
 import { CHECKUP_RESPONSES } from './checkup'
 import { TopicOpenRequest, TopicRenameRequest, TopicMergeRequest, TopicDeleteRequest, TopicWrongRequest } from './topic-bubbles'
@@ -910,11 +911,15 @@ export const WorkbenchEntryResultResponse = z.object({ receipt: EntryReceipt, ta
 
 /** Same project/managed target as the owner conversation's existing entry. */
 export const MatterPlanRequest=z.object({
-  requestId:z.string().uuid().optional(),
+  requestId:EntryRequestId.optional(),
+  project:z.string().trim().min(1).max(4096).optional(),
+  isolation:z.literal('worktree').optional(),
+  base:z.string().min(1).optional(),
   target:z.union([
     z.object({kind:z.literal('managed')}).strict(),
-    z.object({kind:z.literal('project'),projectId:z.string().regex(/^p-[a-f0-9]{20}$/),isolation:z.literal('worktree').optional(),base:z.string().min(1).optional()}).strict(),
-  ]),
+    z.object({kind:z.literal('project'),projectId:z.string().regex(/^p-[a-f0-9]{20}$/).optional(),isolation:z.literal('worktree').optional(),base:z.string().min(1).optional()}).strict(),
+    z.object({kind:z.literal('local')}).strict(),
+  ]).optional(),
   title:z.string().trim().min(1).max(120),
   legs:z.array(z.object({executor:z.string().trim().min(1).max(80),brief:z.string().trim().min(1).max(20_000)}).strict()).min(2).max(6),
 }).strict()

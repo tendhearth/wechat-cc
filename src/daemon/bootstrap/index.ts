@@ -137,6 +137,8 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
     turnTimeoutMs,
     ...(deps.chatOwnerRules ? { chatOwnerRules: deps.chatOwnerRules } : {}),
     mintSessionToken: deps.mintSessionToken,
+    resolveMatterPlan:deps.resolveMatterPlan,
+    noteMatterApproval:deps.noteMatterApproval,
     agyGeminiConfigDir: deps.agyGeminiConfigDir,
   })
   // 系统提示组装 — ./wire-instructions.ts。社交在不在:每次起会话时现问(social 模块在后面)。
