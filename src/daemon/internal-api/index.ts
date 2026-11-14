@@ -133,7 +133,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
   const noteRouteUsage = makeRouteUsage(deps.stateDir)
   const tokenPath = join(deps.stateDir, TOKEN_FILE)
   const operatorTokenPath = join(deps.stateDir, OPERATOR_TOKEN_FILE)
-  const registry = makeTokenRegistry()
+  const registry = deps.tokenRegistry ?? makeTokenRegistry()
   let server: Server | null = null
   let boundPort: number | null = null
   let token: Buffer | null = null

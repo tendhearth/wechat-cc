@@ -1,17 +1,48 @@
 # 统一验收清单(2026-11-13):#915 #916 #917 #918
 
-dev `7a95fb14` 上有四块**已合入、未部署**的改动,都碰主人每天和 CC 对话的路径。离线测试与独立评审都过了,但都没用真实模型 / 真实 CLI 跑过。本清单全部通过才部署到主人的机器。
+验收基线 `e3d65c530`（功能树 `7a95fb140`）有四块**已合入、未部署**的改动,都碰主人每天和 CC 对话的路径。离线测试与独立评审已过。真实运行结果单独记在 [逐项结果](acceptance-2026-11-13-results.md)，未通过不在验收分支修改生产代码。
 
-规矩照旧:界面与重型流程在 mini lab 跑(`docs/maintainer/macmini-ui-lab.md`,走 lab 入口、拿 `~/ci/lock`),主 Mac 不跑 UI;lab 用自己的状态目录,不碰主人的 daemon 和生产库。每一条记:通过 / 不通过 + 证据(日志行、截图路径)。
+## 怎么跑（主人 2026-11-13 更新）
 
-「不绑一家」:标 ★ 的条目跑两遍——Claude 当对话模型一遍,网关上的模型(Kimi-Code)一遍。
+- 主 Mac 只跑无界面真模型：真实 Claude / Codex 程序及 OpenAI 兼容通道，全部指向内部网关 `https://llm.youdamaster.cc`。Claude 用 `/v1/messages`，Codex 用 `/v1/responses`，OpenAI 兼容用 `/v1/chat/completions`。默认 Kimi-Code，备选 DeepSeek / GLM-FLASH，不使用订阅登录态。
+- `scripts/acceptance/run.py` 前台监督临时 daemon，明确指定 `<验收临时目录>/acc/state/<run>`；空白 HOME、CLAUDE_CONFIG_DIR、CODEX_HOME，先证明没有订阅凭据文件。网关 key 仅进入子进程环境；模型子进程受只准回环出站的 sandbox 约束，回环代理固定转发内部网关并拒绝重定向。合成账号只连回环 fake ilink，不登录微信、不连中继/A2A/社交、不注册服务。
+- 每次起跑同命令检查 load < 12，最多等 20 分钟，不检查游戏；不运行 UI、Playwright、模拟器或重型构建，不改网络保护状态。断言、日志和报告不输出环境全文或凭据；`ps` 在监督进程内存中比较，只给命中布尔与本次子进程数量。
+- A→B→C→D 串行驱动；单项失败留最小复现后继续。`drive.ts` 保存合成 API/轮次证据，代理只记录请求结构、工具名/数量、状态、长度、隐私分类布尔及 usage，不保存请求正文。模型 SDK 的观察器仅用于凭据检查和编造体检工具取证，不替换模型/工具/评分实现。
+- C.3、D.5 及 C.1 的截图对照标 **待 mini**；mini lab 仅离线夹具和本地模拟接口，见 [mini 规矩](macmini-ui-lab.md)，不复制网关 key、不调用真实模型。
+- 真实 Claude 订阅专属的 SDK 模型名/窗口和超长错误文案标 **部署后只读复核**。网关经 Claude CLI 回报的容量不能当作订阅证据，也不能直接当作上游模型真实容量。
+- ★ 的两个通道改为“真实 Claude 程序 + 网关模型”和“OpenAI 兼容 + 网关模型”；Codex 另验真实程序。结束停本次 daemon 及所有子进程，保留临时状态；脚本和文档提交，不 push。
+
+```bash
+# 用任务分配的 /private/tmp/ 下绝对临时目录替换占位；所有入口无显式临时状态目录都会拒绝。
+export WECHAT_STATE_DIR="<验收临时目录>/acc/state/run-01"
+export ACCEPTANCE_KEY_FILE="<验收临时目录>/acc/gateway.key" # 0600；不要 cat
+python3 scripts/acceptance/run.py start # 留在前台；另一终端串行驱动
+bun scripts/acceptance/drive.ts A
+bun scripts/acceptance/drive.ts A-extra # 模式API、真delegate、手动回收续接
+bun scripts/acceptance/drive.ts A-codex
+bun scripts/acceptance/drive.ts A-long # >60秒、<10分钟的真实委派
+bun scripts/acceptance/drive.ts B
+bun scripts/acceptance/drive.ts B-extra # A遗留冷却结束后的记账/五分钟节流补验
+bun scripts/acceptance/drive.ts B-openai20
+bun scripts/acceptance/drive.ts C
+bun scripts/acceptance/drive.ts D
+bun scripts/acceptance/drive.ts D-fallback # 单独标注备选模型结果
+python3 scripts/acceptance/run.py ps
+python3 scripts/acceptance/run.py stop
+# 仅先前已清理、无残留、无登录凭据的本次合成状态可显式 resume；保留代理端口以复核持久容量。
+python3 scripts/acceptance/run.py resume
+```
+
+真实30分钟空闲回收另留一份合成状态，观察 `sessions_live=0` 后才跑 `drive.ts A-idle`。`B-lab` 在另一份全新临时 daemon 上跑喝茶指代和已知半预算夜整；它与包含超长失败历史的 B 状态分开。所有驱动都自带同命令 load<12 门禁，不检查游戏。D 入口自动种下并核验合成记忆、话题、对话 canary；只对实际体检请求作隐私判定。C 用唯一目录/批次核对产物，临时 Claude wrapper 仅为 C.5 注入启动失败。
+
+每项记录：通过 / 不通过 / 做不了（原因）及脱敏证据；局部通过必须写清未覆盖部分。
 
 ## A. 对话令牌不进命令行(#917)——先验,它改的是每一轮对话
 
-1. ★ lab daemon 用 Claude 对话:发一句需要工具的话(如「今天有什么在办的事」),工具被正常调用、回复正常。
-2. 同一时刻 `ps -axww | grep -c <该会话令牌>` 为 0(令牌从 lab 的令牌登记处取,只比对不打印);Claude 子进程的环境里也没有(`ps eww` 只看命中布尔值)。
+1. ★ 临时 daemon 用真实 Claude 程序 + 网关对话:发一句需要工具的话(如「今天有什么在办的事」),工具被正常调用、回复正常。
+2. 同一时刻在监督进程内存里比对 `ps` argv 与模型子进程环境，命中均为 false；会话令牌取本次临时登记观察器，不将令牌放进 grep argv。必须观察到实际模型子进程，0个进程不算通过。
 3. 模型看到的工具名仍是 `mcp__wechat__*`,数量与合入前一致;工具没有被折叠成「需要先搜索」而用不了。
-4. `/both`、`/chat` 两种多模型模式各发一句,各家都能用工具。
+4. `/both`、`/chat` 当前只提示去桌面；先验证此现行行为，再用内部 set-mode 开 parallel/chatroom，合成入站各发一句，各家工具可用。圆桌须等结束，避免排队的 `/stop` 中止下一条。
 5. 空闲 30 分钟被回收后再发一句:续接成功,工具仍在。
 6. delegate(让 CC 问一下另一家)一次,10 分钟内的长调用不被掐断。
 7. Codex 对话、OpenAI 兼容对话各一句:工具可用;子进程环境不含继承的令牌。
@@ -22,7 +53,7 @@ dev `7a95fb14` 上有四块**已合入、未部署**的改动,都碰主人每天
 2. ★ 连续聊 20 轮(含工具调用):Claude 下不发生按量轮换;日志无 `[CONTEXT_ROTATE]`。
 3. 网关模型:确认网关是否回报 usage(状态里占用不是「未知」)。不回报 → 记为发现,决定是否给该通道加字节估算兜底。
 4. 人为把预算压小(lab 配置里给该模型一个小窗口),聊到越过预算:在两轮之间换段;换后说「刚才那个」能接上;回复没有明显变慢;日志一行 `[CONTEXT_ROTATE]`。
-5. 超长兜底:给模型配一个比真实窗口大的假窗口,灌到真实超长——看真实错误文案是否被认成 `context_overflow`、是否自动换段重试成功。认不出 → 把真实文案补进识别表。
+5. 超长兜底:给模型配一个比真实窗口大的假窗口,用各自未超窗的分块累积历史到真实超长——看真实错误文案是否被认成 `context_overflow`、是否自动换段重试成功。认不出 → 保留脱敏原文案，另开修复，不在验收分支补识别表。
 6. 当场记账:说一句明确的决定(「以后周报都发周五」),这一轮回复之后几分钟内话题里出现这条;5 分钟内再说一条不重复触发。
 7. 定时动作:触发一次主动消息,主人会话的占用不因它增长;随后回「好啊」,CC 知道指的是哪条。
 8. 夜间整理后:占用不到半预算不换;白天不出现迟到的夜间轮换。

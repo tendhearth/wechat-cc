@@ -103,6 +103,8 @@ export type PetTurnDep = () => Promise<import('../../domain/pet-turn').PetTurnPa
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
+  /** Optional instance supplied by an isolated harness; defaults to the real registry. */
+  tokenRegistry?: import('./token-registry').TokenRegistry
   /** Daemon process pid — exposed by /v1/health for smoke tests. */
   daemonPid: number
   /**

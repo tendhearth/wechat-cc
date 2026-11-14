@@ -42,6 +42,7 @@ export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecy
       const wired = ctx.late<WiredDeps>('wired')
       const api: InternalApiLifecycle = await registerInternalApi({
         stateDir, daemonPid: process.pid, db, projects: f.projects,
+        tokenRegistry: f.tokenRegistry,
         getChatPrefs: (c) => f.chatPrefs.get(c),
         setChatPref: (c, p) => f.chatPrefs.set(c, p),
         replySinks: f.replySinks,

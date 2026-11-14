@@ -26,6 +26,7 @@ import './fake-media'
 import './fake-credentials'
 import type { RawUpdate } from '../poll-loop'
 import { installSessionAuthRecorder, type RecordedSessionAuth } from '../../test-support/session-auth-recorder'
+import type { BootDaemonOpts } from '../main'
 
 export interface TestDaemonAccount {
   id: string
@@ -37,6 +38,8 @@ export interface TestDaemonAccount {
 }
 
 export interface TestDaemonOpts {
+  tokenRegistry?: BootDaemonOpts['tokenRegistry']
+  makeCheckupTurn?: BootDaemonOpts['makeCheckupTurn']
   claudeScript?: FakeSdkScript
   codexScript?: FakeSdkScript
   cursorScript?: FakeSdkScript
@@ -316,7 +319,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   // NOTE: import is dynamic so vi.mock has time to register before SDK loads.
   const { bootDaemon } = await import('../main')
   // 一件事的提议(S3b)判「人在不在电脑前」、自己弹桌面通知:测试里不去探跑测试那台机器的真键鼠、也不真弹系统通知
-  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
+  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
 
   // Give polling loop a moment to spin up.
   await new Promise(r => setTimeout(r, 50))
