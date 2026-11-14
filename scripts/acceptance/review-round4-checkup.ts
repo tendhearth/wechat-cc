@@ -8,11 +8,12 @@ import {checkupKey} from '../../src/adapters/store/checkup-store'
 const dir=process.env.WECHAT_STATE_DIR
 if(!dir?.startsWith('/private/tmp/')||!dir.includes('/acc/state/')||!existsSync(join(dir,'.acceptance-only')))throw Error('explicit synthetic state required')
 const result=JSON.parse(readFileSync(join(dir,'D-round4-result.json'),'utf8')).body
-if(result.attempt?.status!=='completed'||!result.profile?.interview||result.profile.interview.version!=='interview-v2')throw Error('completed v2 profile required')
+if(result.attempt?.status!=='completed'||!result.profile?.interview||result.profile.interview.version!=='interview-v3')throw Error('completed v3 profile required')
 const profile=result.profile,stored=JSON.parse(readFileSync(join(dir,'checkup/observations.json'),'utf8'))[checkupKey(result.target)]
-const persona={name:'验收CC',userTitle:'验收主人',selfTitle:'验收CC'},executors=['阿禾']
+const persona={name:'验收CC',userTitle:'验收主人',selfTitle:'验收CC'},executors=profile.interview.delegationAvailable?['阿禾']:[]
 const plan=buildInterviewPlan({windowTokens:profile.windowTokens,full:!profile.short,seed:profile.seed,persona,executors,systemTokens:estimateTokens(interviewInstructions(result.target.provider,result.target.model,persona,executors))})
 const observations=plan.samples.map(s=>stored.samples[s.id]),scores=plan.samples.map((s,i)=>observations[i]?scoreInterview(s,observations[i],persona):{qualities:{},business:null,observed:false,unmeasured:true})
+if(result.attempt.totalRequests!==plan.samples.length||result.attempt.completedRequests!==plan.samples.length||observations.some((o,i)=>o&&(o.version!==plan.version||o.seed!==plan.seed||o.id!==plan.samples[i]!.id)))throw Error('v3 plan/observation mismatch')
 const replay=summarizeInterview(plan.samples,scores)
 const tools:Record<string,number>={}
 for(const o of observations)for(const c of o?.toolCalls??[])tools[c.name]=(tools[c.name]??0)+1
