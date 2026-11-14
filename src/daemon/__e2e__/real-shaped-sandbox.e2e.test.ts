@@ -258,7 +258,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // The boundary fake says only "好的。" and never calls the fictional tools.
     // Its visible speech is evidence. Wrong content fails the relevant qualities;
     // lack of reply calls does not turn a completed interview into infrastructure failure.
-    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v3',qualities:{memory:{ratio:0}}}})
+    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v3',qualities:{memory:{ratio:0}},business:{ratio:24/28}}})
     // This SDK boundary deliberately omits usage, so every 3 × 4096 reservation
     // stays charged. The short allowance is sized so all 28 questions still fit.
     expect(result.body.attempt).toMatchObject({status:'completed',completedRequests:28,totalRequests:28})
