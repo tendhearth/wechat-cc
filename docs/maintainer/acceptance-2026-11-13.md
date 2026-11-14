@@ -5,17 +5,17 @@
 ## 怎么跑（主人 2026-11-13 更新）
 
 - 主 Mac 只跑无界面真模型：真实 Claude / Codex 程序及 OpenAI 兼容通道，全部指向内部网关 `https://llm.youdamaster.cc`。Claude 用 `/v1/messages`，Codex 用 `/v1/responses`，OpenAI 兼容用 `/v1/chat/completions`。默认 Kimi-Code，备选 DeepSeek / GLM-FLASH，不使用订阅登录态。
-- `scripts/acceptance/run.py` 前台监督临时 daemon，明确指定 `/private/tmp/.../acc/state/<run>`；空白 HOME、CLAUDE_CONFIG_DIR、CODEX_HOME，先证明没有订阅凭据文件。网关 key 仅进入子进程环境；模型子进程受只准回环出站的 sandbox 约束，回环代理固定转发内部网关并拒绝重定向。合成账号只连回环 fake ilink，不登录微信、不连中继/A2A/社交、不注册服务。
-- 每次起跑同命令检查 load < 8 且无 CivilizationVII，最多等 30 分钟；不运行 UI、Playwright、模拟器或重型构建，不改网络保护状态。断言、日志和报告不输出环境全文或凭据；`ps` 在监督进程内存中比较，只给命中布尔与本次子进程数量。
+- `scripts/acceptance/run.py` 前台监督临时 daemon，明确指定 `<验收临时目录>/acc/state/<run>`；空白 HOME、CLAUDE_CONFIG_DIR、CODEX_HOME，先证明没有订阅凭据文件。网关 key 仅进入子进程环境；模型子进程受只准回环出站的 sandbox 约束，回环代理固定转发内部网关并拒绝重定向。合成账号只连回环 fake ilink，不登录微信、不连中继/A2A/社交、不注册服务。
+- 每次起跑同命令检查 load < 12，最多等 20 分钟，不检查游戏；不运行 UI、Playwright、模拟器或重型构建，不改网络保护状态。断言、日志和报告不输出环境全文或凭据；`ps` 在监督进程内存中比较，只给命中布尔与本次子进程数量。
 - A→B→C→D 串行驱动；单项失败留最小复现后继续。`drive.ts` 保存合成 API/轮次证据，代理只记录请求结构、工具名/数量、状态、长度、隐私分类布尔及 usage，不保存请求正文。模型 SDK 的观察器仅用于凭据检查和编造体检工具取证，不替换模型/工具/评分实现。
 - C.3、D.5 及 C.1 的截图对照标 **待 mini**；mini lab 仅离线夹具和本地模拟接口，见 [mini 规矩](macmini-ui-lab.md)，不复制网关 key、不调用真实模型。
 - 真实 Claude 订阅专属的 SDK 模型名/窗口和超长错误文案标 **部署后只读复核**。网关经 Claude CLI 回报的容量不能当作订阅证据，也不能直接当作上游模型真实容量。
 - ★ 的两个通道改为“真实 Claude 程序 + 网关模型”和“OpenAI 兼容 + 网关模型”；Codex 另验真实程序。结束停本次 daemon 及所有子进程，保留临时状态；脚本和文档提交，不 push。
 
 ```bash
-# 用任务分配的绝对临时目录替换示例；所有入口无显式临时状态目录都会拒绝。
-export WECHAT_STATE_DIR=/private/tmp/<验收目录>/acc/state/run-01
-export ACCEPTANCE_KEY_FILE=/private/tmp/<验收目录>/acc/gateway.key # 0600；不要 cat
+# 用任务分配的 /private/tmp/ 下绝对临时目录替换占位；所有入口无显式临时状态目录都会拒绝。
+export WECHAT_STATE_DIR="<验收临时目录>/acc/state/run-01"
+export ACCEPTANCE_KEY_FILE="<验收临时目录>/acc/gateway.key" # 0600；不要 cat
 python3 scripts/acceptance/run.py start # 留在前台；另一终端串行驱动
 bun scripts/acceptance/drive.ts A
 bun scripts/acceptance/drive.ts A-extra # 模式API、真delegate、手动回收续接
@@ -33,7 +33,7 @@ python3 scripts/acceptance/run.py stop
 python3 scripts/acceptance/run.py resume
 ```
 
-真实30分钟空闲回收另留一份合成状态，观察 `sessions_live=0` 后才跑 `drive.ts A-idle`。`B-lab` 在另一份全新临时 daemon 上跑喝茶指代和已知半预算夜整；它与包含超长失败历史的 B 状态分开。所有驱动都自带同命令负载/游戏门禁。D 入口自动种下并核验合成记忆、话题、对话 canary；只对实际体检请求作隐私判定。C 用唯一目录/批次核对产物，临时 Claude wrapper 仅为 C.5 注入启动失败。
+真实30分钟空闲回收另留一份合成状态，观察 `sessions_live=0` 后才跑 `drive.ts A-idle`。`B-lab` 在另一份全新临时 daemon 上跑喝茶指代和已知半预算夜整；它与包含超长失败历史的 B 状态分开。所有驱动都自带同命令 load<12 门禁，不检查游戏。D 入口自动种下并核验合成记忆、话题、对话 canary；只对实际体检请求作隐私判定。C 用唯一目录/批次核对产物，临时 Claude wrapper 仅为 C.5 注入启动失败。
 
 每项记录：通过 / 不通过 / 做不了（原因）及脱敏证据；局部通过必须写清未覆盖部分。
 

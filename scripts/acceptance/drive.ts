@@ -2,8 +2,9 @@
 import {readFileSync,existsSync,appendFileSync,writeFileSync,unlinkSync,mkdirSync,statSync} from 'node:fs'
 import {join} from 'node:path'
 import {loadavg} from 'node:os'
-const dir=process.env.WECHAT_STATE_DIR
-if(!dir?.startsWith('/private/tmp/')||!dir.includes('/acc/state/')||!existsSync(join(dir,'.acceptance-only')))throw Error('explicit temporary state marker required')
+const stateDir=process.env.WECHAT_STATE_DIR
+if(!stateDir?.startsWith('/private/tmp/')||!stateDir.includes('/acc/state/')||!existsSync(join(stateDir,'.acceptance-only')))throw Error('explicit temporary state marker required')
+const dir=stateDir
 const info=JSON.parse(readFileSync(join(dir,'internal-api-info.json'),'utf8'))
 const ready=JSON.parse(readFileSync(join(dir,'ready.json'),'utf8'))
 for(const u of [info.baseUrl,ready.controlUrl])if(new URL(u).hostname!=='127.0.0.1')throw Error('loopback required')
@@ -68,7 +69,7 @@ async function checkup(providerId:string,model:string,cancel=false){
 }
 // Gate applies to every invocation, before any new model work.
 const until=Date.now()+1200000
-for(;;){const load=loadavg()[0];if(load<12){record('load-gate',{load,allowed:true});break}record('load-gate',{load,allowed:false});if(Date.now()>=until)process.exit(3);await sleep(Math.min(30000,Math.max(0,until-Date.now())))}
+for(;;){const load=loadavg()[0];if(load===undefined)throw Error('load average unavailable');if(load<12){record('load-gate',{load,allowed:true});break}record('load-gate',{load,allowed:false});if(Date.now()>=until)process.exit(3);await sleep(Math.min(30000,Math.max(0,until-Date.now())))}
 const section=process.argv[2]
 if(section==='A'){
  await mode('claude');await turn('A.1','请调用工具查询今天有什么在办的事，简短回复。')

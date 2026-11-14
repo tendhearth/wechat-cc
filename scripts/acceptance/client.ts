@@ -4,6 +4,7 @@ import {join} from 'node:path'
 const dir=process.env.WECHAT_STATE_DIR
 if(!dir?.startsWith('/private/tmp/')||!dir.includes('/acc/state/')||!existsSync(join(dir,'.acceptance-only')))throw Error('explicit temporary state marker required')
 const [method,path,payload]=process.argv.slice(2)
+if(!path)throw Error('request path required')
 const control=path?.startsWith('/test/')
 const info=JSON.parse(readFileSync(join(dir,control?'ready.json':'internal-api-info.json'),'utf8'))
 const base=control?info.controlUrl:info.baseUrl

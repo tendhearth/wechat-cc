@@ -1,18 +1,18 @@
 # 2026-11-13 网关真模型验收结果（第四轮最终状态）
 
-**能不能部署：目前不能把统一验收记为全通过，也不应仅凭本报告直接部署。** 本轮 A.1–A.3 与 C.4 两种第二棒通过；B.4 的永久推迟已消失，三万字也不卡死并能换段，但普通两通道换段轮较普通轮中位增加约4.15/4.98秒，性能条件不完全通过。D 的 v2 运行、留档、预算已闭环，人工抽查仍有评分误伤，D.3不通过。长文抽取主动丢弃中段，与设计“全文记账”承诺冲突，详见边界。A.6长委派、A.7 Codex工具、C.2原Codex→Claude组合仍保留历史的CLI×网关/沙箱组合未通过，不能泛化为全部模型失败，也没有凭本轮定位成单方故障。C.3、D.5 UI仍待专用mini离线验收；部署后A.1–A.3与B.1真实Claude窗口/持久化只读复核及规定的重启/soak由整合者另行完成。本轮没有部署或push。
+**能不能部署：目前不能把统一验收记为全通过，也不应仅凭本报告直接部署。** 本轮 A.1–A.3 与 C.4 两种第二棒通过；B.4 的永久推迟已消失，三万字也不卡死并能换段，但普通两通道换段轮较普通轮中位增加约4.15/4.98秒，性能条件不完全通过。D 的 v2 运行、留档、预算已闭环，人工抽查仍有评分误伤，D.3不通过。长文抽取主动丢弃中段，完整记账条件尚未满足，详见边界。A.6长委派、A.7 Codex工具、C.2原Codex→Claude组合仍保留历史的CLI×网关/沙箱组合未通过，不能泛化为全部模型失败，也没有凭本轮定位成单方故障。C.3、D.5 UI仍待专用mini离线验收；部署后A.1–A.3与B.1真实Claude窗口/持久化只读复核及规定的重启/soak由整合者另行完成。本轮没有部署或push。
 
 基线 `origin/dev d666d0b85`（含#923）。已执行 `git fetch origin dev && git rebase origin/dev`；历史验收提交重放为 `a9be18aa1 / 9f6150d61 / 3106f17ac`。本轮只改验收脚本与本文，不改生产源码。
 
 ## 范围与隔离
 
-仅重跑B.4、C.4、D指定v2短版指标及A.1–A.3快速回归；**总表其余条目沿用前三轮证据，未在新dev重跑**。历史报告仍保留在用户指定scratchpad，不能把旧通过写成新dev已逐项通过。
+仅重跑B.4、C.4、D指定v2短版指标及A.1–A.3快速回归；**总表其余条目沿用前三轮证据，未在新dev重跑**。前三轮脱敏结论汇入下表，不能把旧通过写成新dev已逐项通过。
 
-`S=/private/tmp/claude-501/-Users-nategu-mac-company-Documents-tendhearth-wechat-cc/31f4b9f3-d5ba-444d-bc43-9260dcadb79c/scratchpad`。本轮状态为 `S/acc/state/run-18`（OpenAI小窗及A）、`run-19`（Claude小窗）、`run-20`（三万字）、`run-21`（两种第二棒）、`run-22`（体检）。每批同命令load<12，最多1200秒，不检查游戏；实际门禁均放行。临时HOME/CLAUDE_CONFIG_DIR/CODEX_HOME无订阅登录文件，独立端口、假ilink、前台监督；模型进程sandbox仅允许回环网络，回环代理只转发内部网关并拒绝重定向。未启动UI、重型构建、launchctl/self/companion，未触生产库/真daemon/已安装App或真实聊天。网络保护末态 `tunnel_healthy=true / global / protected / committed`。
+`S=<验收临时目录>`。本轮状态为 `S/acc/state/run-18`（OpenAI小窗及A）、`run-19`（Claude小窗）、`run-20`（三万字）、`run-21`（两种第二棒）、`run-22`（体检）。每批同命令load<12，最多1200秒，不检查游戏；实际门禁均放行。临时HOME/CLAUDE_CONFIG_DIR/CODEX_HOME无订阅登录文件，独立端口、假ilink、前台监督；模型进程sandbox仅允许回环网络，回环代理只转发内部网关并拒绝重定向。未启动UI、重型构建、launchctl/self/companion，未触生产库/真daemon/已安装App或真实聊天。网络保护末态 `tunnel_healthy=true / global / protected / committed`。
 
 OpenAI重跑项目放在 `S/acc/workspaces/run-21/`，与状态目录分开；Claude证据沿用 `S/acc/state/run-21/tasks/r4-claude`。初次OpenAI第二棒因项目在私有state之下被 `api_task_private_scope` 正确拒绝；仅修正测试目录与精确的sandbox写范围后重跑，未放宽产品保护。
 
-证据：各run的 `drive-evidence.jsonl / turn-evidence.jsonl / daemon.log / gateway.jsonl / gateway-responses.jsonl`；汇总 `S/acc/round4-summary-proof.json`，D重评 `run-22/D-round4-proof.json`。请求只记录结构、工具名、布尔与usage，不保存请求正文，不输出凭据或环境全文。本轮合计123个网关请求（Kimi-Code108、GLM-FLASH15），HTTP均200；完整体检本身32个，其他包括对话/抽取/探测与C驱动重试。
+仓库中的复跑入口为 [第四轮驱动](../../scripts/acceptance/round4.ts)、[历史驱动](../../scripts/acceptance/drive.ts) 与 [体检离线重评](../../scripts/acceptance/review-round4-checkup.ts)。临时运行证据不随仓库提交，本文保留脱敏结果。请求只记录结构、工具名、布尔与usage，不保存请求正文，不输出凭据或环境全文。本轮合计123个网关请求（Kimi-Code108、GLM-FLASH15），HTTP均200；完整体检本身32个，其他包括对话/抽取/探测与C驱动重试。
 
 ## 逐项总表
 
@@ -64,7 +64,7 @@ OpenAI重跑项目放在 `S/acc/workspaces/run-21/`，与状态目录分开；Cl
 
 普通两通道换段轮端到端差值约4.15/4.98秒，长文约2.59秒；原因未单独定位。Claude换后指代仍5.247秒；未出现等抽取几十秒的卡死，但相对普通轮确实变慢。因此B.4按“回复不被拖慢”的全部条件不完全通过，不把最终成功换段当作性能也通过。
 
-三万字消息精确30000字符，首条10.563秒回复；后续11轮以内成功轮换，无死锁。**长文记账边界**：中段约15000字符处的精确决定在主人请求中存在；cheap抽取请求#13却 `hasLongOmissionMarker=true / hasLongMiddleFact=false`，随后水位覆盖整条。实现 `extract-prompt.ts:74–86` 将>20000字符保留头14000/尾6000，中段有意省略；与设计稿末尾“新消息全文进入抽取”冲突。本例事实经模型短回复/记忆动作也保住了，所以不能声称本例最终忘事；同样不能声称三万字中段已完整入话题。复现：发送本脚本B-long，在中段放独立事实，对照cheap请求布尔、水位与源行时间；不改生产代码。
+三万字消息精确30000字符，首条10.563秒回复；后续11轮以内成功轮换，无死锁。**长文记账边界**：中段约15000字符处的精确决定在主人请求中存在；cheap抽取请求#13却 `hasLongOmissionMarker=true / hasLongMiddleFact=false`，随后水位覆盖整条。[抽取提示实现](../../src/daemon/threads/extract-prompt.ts) 将>20000字符保留头14000/尾6000，中段有意省略；因此不能据水位推进认定整条消息已完整进入抽取。本例事实经模型短回复/记忆动作也保住了，所以不能声称本例最终忘事；同样不能声称三万字中段已完整入话题。复现：发送本脚本B-long，在中段放独立事实，对照cheap请求布尔、水位与源行时间；不改生产代码。
 
 ## C.4：实际第二棒、实际工具、实际备注
 
@@ -111,7 +111,7 @@ CC 会这样照顾它：交接备注只给摘要，规矩由你定；换对话�
 
 标题原文：“验收CC（现在用的是 Kimi-Code）”。没有总分。档案、生产observations及离线纯函数重评的qualities/business完全一致，这只证明评分执行可复现，不证明评分语义正确。
 
-可靠比例0.25来自连续一天/一周两档记性、跟得上各2/2，可靠tokens=64866（编造对话UTF-8字节/3估量，非精确tokenizer）。窗口262144来自本次模型配置，不冒充网关独立认证容量；health比例来源measured，预算65536（窗口×.25），占用12180/provider、固定开销12180。默认短版预算来自 `checkup-budget.ts` 的120请求/300000输出；本次估价回执冻结，非从账单估计上限。
+可靠比例0.25来自连续一天/一周两档记性、跟得上各2/2，可靠tokens=64866（编造对话UTF-8字节/3估量，非精确tokenizer）。窗口262144来自本次模型配置，不冒充网关独立认证容量；health比例来源measured，预算65536（窗口×.25），占用12180/provider、固定开销12180。默认短版预算来自 [体检预算](../../src/domain/checkup-budget.ts) 的120请求/300000输出；本次估价回执冻结，非从账单估计上限。
 
 六项人工抽查如下。所有题目、标签和回话均是本次编造内容。
 
@@ -202,9 +202,9 @@ CC 会这样照顾它：交接备注只给摘要，规矩由你定；换对话�
 
 ## 未通过项的最小复现与后续边界
 
-1. **D.3立场引用误扣**：本轮1/0/handoff原文（上）直接用 `scoreInterview` 重放即stance=false；内存仅去掉引用标签即true。根因是adopted按标点/分句识别采纳，未正确覆盖这段转述。诚实和分寸复现分别见上两题，同一观察重评为null。离线入口：`WECHAT_STATE_DIR=<run-22> bun scripts/acceptance/review-round4-checkup.ts`，产出D-round4-proof.json，包含expected/reply/score。不用模型，不改生产代码。
+1. **D.3立场引用误扣**：本轮1/0/handoff原文（上）直接用 `scoreInterview` 重放即stance=false；内存仅去掉引用标签即true。根因是adopted按标点/分句识别采纳，未正确覆盖这段转述。诚实和分寸复现分别见上两题，同一观察重评为null。离线入口：`WECHAT_STATE_DIR=<run-22> bun scripts/acceptance/review-round4-checkup.ts`，输出包含expected/reply/score的离线重评结果。不用模型，不改生产代码。
 2. **B.4延迟增加**：全新状态、窗口8192、首条决定+一条填充，完成8轮并等异步补账；第10轮实际budget换段的端到端耗时为5.779/6.656秒，对照3–8轮中位1.630/1.676秒。复用 `round4.ts B-openai / B-claude`；该结论仅限本轮网关与小窗场景，没有归因到单一层。
-3. **长文中段记账承诺不一致**：`round4.ts B-long` 的中段事实布尔在主人请求true、cheap抽取请求false，含省略标记且水位继续前进。实现有意裁切，与文档全文承诺不一致。此项不把原文仍可查冒充已经进入话题。
+3. **长文中段未完整进入抽取**：`round4.ts B-long` 的中段事实布尔在主人请求true、cheap抽取请求false，含省略标记且水位继续前进。实现有意裁切，水位仍覆盖整条消息。此项不把原文仍可查冒充已经进入话题。
 4. **历史CLI×网关组合**：A.6的400 tool_calls配对、A.7的Codex工具调用、C.2原Codex首棒产物仍未在本轮重跑。继续保留未通过；不把这些组合失败当作本轮已经修复或已定位的产品缺陷。
 
 ## 验证与交付
@@ -213,4 +213,4 @@ CC 会这样照顾它：交接备注只给摘要，规矩由你定；换对话�
 
 本轮所有临时daemon/模型/MCP/回环代理/监督器均已停止，临时状态保留。最终清理及脱敏审计结果见文末交付核验（由实际检查追加）。
 
-最终交付核验：5个run的cleanup均remainingCount=0/remainingGroupMembers=0；独立出生指纹与进程组复核全部为0，监督器均不在、活动driver=0（`S/acc/round4-final-process-audit.json`）。新增两入口缺显式临时状态均拒绝，3份TS语法、Python AST、git diff --check及D离线重评通过。最终只读评审发现的目录范围、argv检查范围和延迟归因表述已修正。脱敏内存比对：gatewayKeyPresent=false、sessionOrSharedTokenPresent=false（`S/acc/round4-redaction-audit.json`）。未删/放松产品测试，提交不push。
+最终交付核验：5个run的cleanup均remainingCount=0/remainingGroupMembers=0；独立出生指纹与进程组复核全部为0，监督器均不在、活动driver=0。新增两入口缺显式临时状态均拒绝，3份TS语法、Python AST、git diff --check及D离线重评通过。最终只读评审发现的目录范围、argv检查范围和延迟归因表述已修正。脱敏内存比对：gatewayKeyPresent=false、sessionOrSharedTokenPresent=false。未删/放松产品测试，提交不push。

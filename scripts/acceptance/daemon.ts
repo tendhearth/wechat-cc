@@ -1,4 +1,4 @@
-/** Full production boot with existing scheduler/desktop test hooks only. */
+/** Isolated production boot with real dependencies and explicit observers. */
 import { existsSync,mkdirSync,writeFileSync,readFileSync,appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 const dir=process.env.WECHAT_STATE_DIR
@@ -22,24 +22,18 @@ put('chat_prefs.json',{'acc-owner':JSON.stringify({care:'high',hunt:false,visit:
 put('current-cwd',join(dir,'workspace'))
 put('memory/acc-owner/memory.md','# 合成验收记忆\nACC_PRIVATE_MEMORY_CANARY\n')
 put('memory/acc-owner/persona.md','名字：验收CC\n称呼用户：验收主人\n自称：验收CC\n口吻：简短平实\n记忆：ACC_PRIVATE_MEMORY_CANARY\n')
-// Same observer seam as test-support/session-auth-recorder, without fake SDKs.
 // Real registry mints are preserved; bearers stay in this process's memory.
 const sessionTokens:string[]=[]
 const auth=await import('../../src/daemon/internal-api/token-registry')
-const make=auth.makeTokenRegistry
-const {mock}=await import('bun:test')
-mock.module('../../src/daemon/internal-api/token-registry',()=>({...auth,makeTokenRegistry:(...args:Parameters<typeof make>)=>{
- const registry=make(...args),mint=registry.mint.bind(registry)
- const scopes:Array<{token:string;tier:string;sessionKey:string}>=[]
- registry.mint=(...values:Parameters<typeof mint>)=>{const token=mint(...values);sessionTokens.push(token);scopes.push({token,tier:values[0],sessionKey:values[1]});writeFileSync(join(dir,'session-bearers.json'),JSON.stringify(sessionTokens),{mode:0o600});writeFileSync(join(dir,'session-scopes.json'),JSON.stringify(scopes),{mode:0o600});return token}
- return registry
-}}))
+const registry=auth.makeTokenRegistry(),mint=registry.mint.bind(registry)
+const scopes:Array<{token:string;tier:string;sessionKey:string}>=[]
+registry.mint=(...values:Parameters<typeof mint>)=>{const token=mint(...values);sessionTokens.push(token);scopes.push({token,tier:values[0],sessionKey:values[1]});writeFileSync(join(dir,'session-bearers.json'),JSON.stringify(sessionTokens),{mode:0o600});writeFileSync(join(dir,'session-scopes.json'),JSON.stringify(scopes),{mode:0o600});return token}
 // Observe the real isolated runner and real scoring, without changing either.
 const runner=await import('../../src/features/checkup/runner')
 const makeTurn=runner.makeCheckupTurn
 const {scoreInterview,buildInterviewPlan}=await import('../../src/domain/checkup-interview')
 let isolatedTurn:ReturnType<typeof makeTurn>|undefined
-mock.module('../../src/features/checkup/runner',()=>({...runner,makeCheckupTurn:(...args:Parameters<typeof runner.makeCheckupTurn>)=>{
+const observeMakeTurn:typeof makeTurn=(...args)=>{
  const real=makeTurn(...args)
  isolatedTurn=real
  return async(...values:Parameters<typeof real>)=>{
@@ -51,7 +45,7 @@ mock.module('../../src/features/checkup/runner',()=>({...runner,makeCheckupTurn:
   }
   return result
  }
-}}))
+}
 const {bootDaemon}=await import('../../src/daemon/main')
 let handle:Awaited<ReturnType<typeof bootDaemon>>|undefined
 const control=Bun.serve({hostname:'127.0.0.1',port:0,idleTimeout:255,async fetch(req){
@@ -72,7 +66,7 @@ const control=Bun.serve({hostname:'127.0.0.1',port:0,idleTimeout:255,async fetch
  if(req.method==='POST'&&u.pathname==='/inbound'){const b=await req.json() as any;ilink.enqueueInbound({message_id:Date.now(),from_user_id:b.chatId??'acc-owner',to_user_id:'acc-bot',create_time_ms:Date.now(),message_type:1,message_state:2,item_list:[{type:1,msg_id:String(Date.now()),text_item:{text:b.text}}],context_token:'synthetic-context'});return Response.json({ok:true})}
  return new Response('not found',{status:404})
 }})
-handle=await bootDaemon({stateDir:dir,dangerously:false,schedulerIntervalMs:1_000_000_000,speechFlushIntervalMs:1_000_000_000,scheduledJobsIntervalMs:1_000_000_000,reminderIntervalMs:1_000_000_000,machineIdle:async()=>null,desktopNotify:async()=>true})
+handle=await bootDaemon({stateDir:dir,dangerously:false,tokenRegistry:registry,makeCheckupTurn:observeMakeTurn,schedulerIntervalMs:1_000_000_000,speechFlushIntervalMs:1_000_000_000,scheduledJobsIntervalMs:1_000_000_000,reminderIntervalMs:1_000_000_000,machineIdle:async()=>null,desktopNotify:async()=>true})
 writeFileSync(join(dir,'ready.json'),JSON.stringify({controlUrl:`http://127.0.0.1:${control.port}`,pid:process.pid}))
 let stopping=false
 async function stop(){if(stopping)return;stopping=true;control.stop(true);await handle?.shutdown();await ilink.stop();process.exit(0)}

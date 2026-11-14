@@ -2,8 +2,9 @@
 import {readFileSync,existsSync,appendFileSync,writeFileSync,mkdirSync,statSync} from 'node:fs'
 import {join} from 'node:path'
 import {loadavg} from 'node:os'
-const dir=process.env.WECHAT_STATE_DIR
-if(!dir?.startsWith('/private/tmp/')||!dir.includes('/acc/state/')||!existsSync(join(dir,'.acceptance-only')))throw Error('explicit temporary state marker required')
+const stateDir=process.env.WECHAT_STATE_DIR
+if(!stateDir?.startsWith('/private/tmp/')||!stateDir.includes('/acc/state/')||!existsSync(join(stateDir,'.acceptance-only')))throw Error('explicit temporary state marker required')
+const dir=stateDir
 const info=JSON.parse(readFileSync(join(dir,'internal-api-info.json'),'utf8'))
 const ready=JSON.parse(readFileSync(join(dir,'ready.json'),'utf8'))
 for(const u of [info.baseUrl,ready.controlUrl])if(new URL(u).hostname!=='127.0.0.1')throw Error('loopback required')
@@ -68,8 +69,9 @@ async function checkup(providerId:string,model:string,cancel=false){
 }
 // Every model batch has its own bounded gate. Never inspect games or user apps.
 const until=Date.now()+1200000
-for(;;){const load=loadavg()[0];record('load-gate',{load,allowed:load<12});if(load<12)break;if(Date.now()>=until)process.exit(3);await sleep(30000)}
+for(;;){const load=loadavg()[0];if(load===undefined)throw Error('load average unavailable');record('load-gate',{load,allowed:load<12});if(load<12)break;if(Date.now()>=until)process.exit(3);await sleep(30000)}
 const section=process.argv[2]
+if(!section)throw Error('round4 section required')
 async function boundary(label:string){
  const {Database}=await import('bun:sqlite'),db=new Database(join(dir,'wechat-cc.db'),{readonly:true})
  try{

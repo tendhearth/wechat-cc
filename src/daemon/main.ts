@@ -29,6 +29,9 @@ import { resolveDaemonStateDir } from './resolve-state-dir'
 export interface BootDaemonOpts {
   stateDir: string
   dangerously: boolean
+  /** 隔离验收的显式依赖;未传入时沿用生产实现。 */
+  tokenRegistry?: Foundation['tokenRegistry']
+  makeCheckupTurn?: Foundation['makeCheckupTurn']
   /**
    * 收尾函数一建好就交出来(第三批 3b 第 2 步):开机途中收到 SIGTERM,信号处理拿它停掉已经起了的东西,
    * 不用等 bootDaemon 返回。以前信号处理在开机走完之后才装,开机途中收到 SIGTERM 就是默认行为:直接死,什么都不收。
@@ -71,7 +74,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   const { stateDir, dangerously } = opts
   const base = await openFoundation({ stateDir }, undo)
   const requestRestart = makeRequestRestart(stateDir, () => shutdown())
-  const f: Foundation = { ...base, dangerously, ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), ...(opts.machineIdle ? { machineIdle: opts.machineIdle } : {}), ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}), ...(opts.desktopNotify ? { desktopNotify: opts.desktopNotify } : {}), requestRestart }
+  const f: Foundation = { ...base, dangerously, ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), ...(opts.machineIdle ? { machineIdle: opts.machineIdle } : {}), ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}), ...(opts.desktopNotify ? { desktopNotify: opts.desktopNotify } : {}), requestRestart }
   const modules = createModules(daemonModules(f), { log: (t, l) => log(t, l) })
   // 状态进 /v1/health.subsystems(和 bootstrap 的可选接线块一起)
   f.sup.adopt(modules)

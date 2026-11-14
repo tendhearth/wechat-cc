@@ -38,7 +38,7 @@ export function checkupModule(f:Foundation):DaemonModule<CheckupService> {
         const t=this.resolveTarget(o)
         if(!t.windowKnown)await boot.registry.get(t.provider)?.provider.prepareContextWindow?.(t.model)
       },
-      run:makeCheckupTurn(id=>boot.registry.get(id)?.provider??null),
+      run:(f.makeCheckupTurn??makeCheckupTurn)(id=>boot.registry.get(id)?.provider??null),
     }
   }})
 }

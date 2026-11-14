@@ -179,6 +179,9 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
 
 export type Foundation = Awaited<ReturnType<typeof openFoundation>> & {
   dangerously: boolean
+  /** 隔离验收可传入带观察器的真实依赖,不替换模块导出。 */
+  tokenRegistry?: import('./internal-api/token-registry').TokenRegistry
+  makeCheckupTurn?: typeof import('../features/checkup').makeCheckupTurn
   schedulerIntervalMs?: number
   /** 测试缝:「待说」补说那一拍的间隔(main.ts BootDaemonOpts.speechFlushIntervalMs)。 */
   speechFlushIntervalMs?: number
