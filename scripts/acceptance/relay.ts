@@ -80,6 +80,8 @@ async function owner(label:string,text:string,approval=false){
     }
     record(label+'-approval-result',await api('POST','/v1/permissions/resolve',{hash:card.hash,decision:'allow'}))
    }
+   // An executor's own file-tool card is what the owner would approve while the work runs.
+   else if(card.taskId)record(label+'-executor-tool-card-allowed',await api('POST','/v1/permissions/resolve',{hash:card.hash,decision:'allow'}))
    else record(label+'-unexpected-card-denied',await api('POST','/v1/permissions/resolve',{hash:card.hash,decision:'deny'}))
   }
   await injectQuota()
@@ -97,7 +99,7 @@ async function wait(id:string,label:string,until:'stop'|'done'|'second'='done',t
  while(Date.now()<end){
   await injectQuota()
   const permissions=await api('GET','/v1/permissions/pending')
-  for(const card of permissions.body.items??[]){if(card.taskId!==id||denied.has(card.hash))continue;denied.add(card.hash);record(label+'-extra-task-approval-card',card);record(label+'-extra-task-approval-denied',await api('POST','/v1/permissions/resolve',{hash:card.hash,decision:'deny'}))}
+  for(const card of permissions.body.items??[]){if(card.taskId!==id||denied.has(card.hash))continue;denied.add(card.hash);record(label+'-executor-tool-card',card);record(label+'-executor-tool-card-allowed',await api('POST','/v1/permissions/resolve',{hash:card.hash,decision:'allow'}))}
   last=await api('GET','/v1/workbench/task?id='+id);const p=plan(id),t=last.body.task??{}
   const quiet=t.phase==='replied'||['completed','done','failed','error','interrupted','cancelled'].includes(t.status)
   const changed=!since||(last.body.events??[]).some((e:any)=>e.kind==='text'&&Number(e.createdAt??e.at??e.ts??0)>=since)
@@ -152,12 +154,12 @@ const first=process.argv[3]??'claude',second=process.argv[4]??'openai'
 const projectName='“relay-lab”'
 const common=`在${projectName}这个项目里，只处理当前工作区的文件，不联网。`
 const parts={
- S1:`让 ${first} 先建 notes.md 写三条整理书桌的要点，然后让 ${second} 读 notes.md 把三条要点扩成 summary.md，最后再让 ${first} 检查这两个文件并把检查结论写进 check.md。`,
- S2:`先让 ${first} 在 notes.md 写三条旅行准备要点；然后让 ${second} 读它，必须先问我 summary.md 用“简洁版”还是“详细版”，等我二选一后才能写，不能替我决定；最后让 ${first} 检查 notes.md 和 summary.md，写 check.md。`,
- S3:`先让 ${first} 写 notes.md，列三条整理资料的要点；然后让 ${second} 读取 missing-source.md，只能基于这个源文件写 summary.md，找不到就如实停下，不要编造；最后让 ${first} 检查 notes.md 和 summary.md，写 check.md。`,
- S4:`先让 ${first} 建 notes.md 写三条整理桌面的要点，然后让 ${second} 读它扩写 summary.md，最后让 ${first} 核对两个文件并写 check.md。`,
+ S1:`让 ${first} 先建 notes.md 写三条整理书桌的要点，然后让 ${second} 读 notes.md 把三条要点扩写成一份 summary.md 成果（存成成果就行，不用写进项目目录），最后再让 ${first} 检查 notes.md 和上一棒的 summary.md 成果并把检查结论写进 check.md。`,
+ S2:`先让 ${first} 在 notes.md 写三条旅行准备要点；然后让 ${second} 读它，必须先问我 summary.md 用“简洁版”还是“详细版”，等我二选一后才能写（存成成果就行，不用写进项目目录），不能替我决定；最后让 ${first} 检查 notes.md 和上一棒的 summary.md 成果，写 check.md。`,
+ S3:`先让 ${first} 写 notes.md，列三条整理资料的要点；然后让 ${second} 读取 missing-source.md，只能基于这个源文件写 summary.md 成果（存成成果就行），找不到就如实停下，不要编造；最后让 ${first} 检查 notes.md 和上一棒的 summary.md 成果，写 check.md。`,
+ S4:`先让 ${first} 建 notes.md 写三条整理桌面的要点，然后让 ${second} 读它扩写成一份 summary.md 成果（存成成果就行，不用写进项目目录），最后让 ${first} 核对 notes.md 和上一棒的 summary.md 成果并写 check.md。`,
  S5:`只让 ${first} 建 todo.md，写三条待办，完成后告诉我。`,
- S6:`先让 ${first} 写 notes.md，列三条旅行准备要点；然后让 ${second} 读它，必须先问我 summary.md 用“简洁版”还是“详细版”，等我选择才能写；最后让 ${first} 检查两个文件并写 check.md。`,
+ S6:`先让 ${first} 写 notes.md，列三条旅行准备要点；然后让 ${second} 读它，必须先问我 summary.md 用“简洁版”还是“详细版”，等我选择才能写（存成成果就行，不用写进项目目录）；最后让 ${first} 检查 notes.md 和上一棒的 summary.md 成果并写 check.md。`,
  S7:`只让 ${first} 建 todo.md，写三条待办，完成后告诉我。`,
 }
 const prompts=[common+parts[command as keyof typeof parts],`帮我在${projectName}项目安排这件事：${parts[command as keyof typeof parts]}只操作这个项目，不联网。`]

@@ -179,6 +179,10 @@ def start(state, resume=False):
     for forbidden in (original_home + '/.claude', original_home + '/.codex', original_home + '/Library/Keychains', '/Library/Keychains', '/Applications/Tendhearth CC.app'):
         policy += '(deny file-read* file-write* (subpath ' + json.dumps(forbidden) + '))'
     policy += '(deny mach-lookup (global-name "com.apple.securityd"))'
+    # /bin/ps is setuid and cannot be executed inside a sandbox; the daemon needs
+    # it to confirm a native executor's process groups have exited before the next
+    # leg starts. ps only reads the process table and opens no network.
+    policy += '(allow process-exec (literal "/bin/ps") (with no-sandbox))'
     # Restrict writes even if a model attempts an unintended tool action.
     policy += '(deny file-write*)(allow file-write* (subpath ' + json.dumps(str(state)) + ')(subpath ' + json.dumps(str(workspace)) + ')(literal "/dev/null")(literal "/dev/tty"))'
     if relay_project:

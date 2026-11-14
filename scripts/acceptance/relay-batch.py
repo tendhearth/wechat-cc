@@ -33,7 +33,7 @@ for offset, scenario in enumerate(scenarios):
             subprocess.run(driver + ['setup'], env=env, cwd=root, check=True)
             # An API opening baton exits without a retained native writer. Keep
             # both real executors while reaching the later acceptance nodes.
-            extra = ['openai', 'claude'] if scenario in ('S2', 'S3', 'S4', 'S6') else []
+            extra = []
             try:
                 result = subprocess.run(driver + ['S7' if scenario == 'S7-missing' else scenario] + extra, env=env, cwd=root, timeout=1500)
                 exit_code = result.returncode
