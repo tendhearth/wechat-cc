@@ -145,6 +145,12 @@ def start(state, resume=False):
     (state / '.acceptance-only').write_text('synthetic acceptance state; never production\n')
     workspace = state.parents[1] / 'workspaces' / state.name
     workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
+    relay_project = None
+    if (state / '.relay-acceptance').exists():
+        relay_project = Path(json.loads((state / 'relay-config.json').read_text())['project']).resolve()
+        project_root = state.parents[1] / 'projects' / state.name
+        if relay_project != project_root or not (relay_project / '.git').is_dir():
+            raise SystemExit('refused: relay project must be this run\'s isolated git repository')
     home = state / 'home'
     claude = home / '.claude'
     codex = home / '.codex'
@@ -175,6 +181,8 @@ def start(state, resume=False):
     policy += '(deny mach-lookup (global-name "com.apple.securityd"))'
     # Restrict writes even if a model attempts an unintended tool action.
     policy += '(deny file-write*)(allow file-write* (subpath ' + json.dumps(str(state)) + ')(subpath ' + json.dumps(str(workspace)) + ')(literal "/dev/null")(literal "/dev/tty"))'
+    if relay_project:
+        policy += '(allow file-write* (subpath ' + json.dumps(str(relay_project)) + '))'
     policy_file = state / 'sandbox.sb'
     policy_file.write_text(policy)
     checked = subprocess.run(['/usr/bin/sandbox-exec', '-f', str(policy_file), '/usr/bin/true'], capture_output=True)

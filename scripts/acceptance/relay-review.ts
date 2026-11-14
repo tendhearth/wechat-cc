@@ -18,6 +18,7 @@ const result=runs.map(run=>{
   const turns=db.query('SELECT * FROM matter_turns ORDER BY started_at,seq').all()
   const agents=db.query('SELECT * FROM matter_agents ORDER BY matter_id,position').all()
   const messages=db.query("SELECT matter_id,turn_id,kind,payload_json,created_at FROM matter_items WHERE kind IN ('agent_message','system') ORDER BY created_at,cursor").all().map((r:any)=>({...r,payload:JSON.parse(r.payload_json),payload_json:undefined}))
+  const reports=db.query('SELECT id,matter_id,text,status,attempts,next_at,created_at,first_fail_at,ref FROM matter_report_outbox ORDER BY id').all()
   const toolErrors:any[]=[]
   for(const r of db.query('SELECT messages_json FROM openai_chat_sessions').all() as any[]){
    for(const m of JSON.parse(r.messages_json))if(m.role==='tool'&&Array.isArray(m.content))for(const item of m.content)if(['matter_plan','matter_handoff'].includes(item.toolName))toolErrors.push(item)
@@ -26,7 +27,7 @@ const result=runs.map(run=>{
    const start=r.value.requestStart,end=r.value.requestEnd,selected=requests.slice(start,end),ids=new Set(selected.map(q=>q.id)),usage=responses.filter(s=>ids.has(s.responseOf))
    return {...r.value,requests:selected.length,reportedOutputTokens:usage.reduce((n,s)=>n+(s.usage?.completion_tokens??s.usage?.output_tokens??0),0),missingResponses:selected.filter(q=>!usage.some(s=>s.responseOf===q.id)).length,responsesWithoutOutputUsage:usage.filter(s=>s.usage?.completion_tokens===undefined&&s.usage?.output_tokens===undefined).length,errors:selected.filter(s=>s.status!==200||s.transportError),models:Object.fromEntries([...new Set(selected.map(s=>s.model))].map(m=>[m,selected.filter(s=>s.model===m).length]))}
   })
-  return {run,evidence,decisions,toolCalls:jsonl(dir,'relay-tool-calls.jsonl'),tasks,turns,agents,messages,toolErrors,metrics,requests,responses,cleanup:existsSync(join(dir,'stop-audit.json'))?JSON.parse(readFileSync(join(dir,'stop-audit.json'),'utf8')):null,observerFailure:readFileSync(join(dir,'daemon.log'),'utf8').includes('RELAY_OBSERVER_FAILURE')}
+  return {run,evidence,decisions,toolCalls:jsonl(dir,'relay-tool-calls.jsonl'),tasks,turns,agents,messages,reports,toolErrors,metrics,requests,responses,cleanup:existsSync(join(dir,'stop-audit.json'))?JSON.parse(readFileSync(join(dir,'stop-audit.json'),'utf8')):null,observerFailure:readFileSync(join(dir,'daemon.log'),'utf8').includes('RELAY_OBSERVER_FAILURE')}
  }finally{db.close()}
 })
 const safe=JSON.stringify(result,null,2).replace(/\b[a-f0-9]{64}\b/g,'[HEX64]').replace(/Bearer\s+[A-Za-z0-9._-]+/gi,'Bearer [REDACTED]')

@@ -1,4 +1,4 @@
-/** Opt-in, read-only tracing of the original pure functions. No result substitution. */
+/** Opt-in decision tracing and a real-registry quota fixture. No result substitution. */
 import {appendFileSync,readFileSync,existsSync} from 'node:fs'
 import {join} from 'node:path'
 
@@ -14,6 +14,14 @@ export function installRelayObserver(dir:string){
  // It runs before bootDaemon is imported; no source file is written.
  ;(globalThis as any).__acceptanceRelayObserve=observe
  Bun.plugin({name:'acceptance-relay-observer',setup(build){
+  // Expose the real registry only in the marked synthetic daemon. S4 drives its
+  // public provider-error note/clear methods; admission and decisions stay real.
+  build.onLoad({filter:/[\\/]src[\\/]domain[\\/]provider-quota\.ts$/},args=>{
+   const contents=readFileSync(args.path,'utf8')
+   const signature='export function makeQuotaRegistry('
+   if(contents.split(signature).length!==2)throw Error('quota observer source shape changed')
+   return {contents:contents.replace(signature,'function original_makeQuotaRegistry(')+`\nexport function makeQuotaRegistry(...args: Parameters<typeof original_makeQuotaRegistry>): ReturnType<typeof original_makeQuotaRegistry> { const registry=original_makeQuotaRegistry(...args); (globalThis as any).__acceptanceRelayQuota=registry; return registry }\n`,loader:'ts'}
+  })
   build.onLoad({filter:/[\\/]src[\\/]domain[\\/]relay-decision\.ts$/},args=>{
    let contents=readFileSync(args.path,'utf8')
    for(const name of ['decideRelay','decideResume']){

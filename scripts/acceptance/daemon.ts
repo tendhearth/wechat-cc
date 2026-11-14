@@ -55,6 +55,12 @@ const control=Bun.serve({hostname:'127.0.0.1',port:0,idleTimeout:255,async fetch
   return Response.json({sessionTokensObserved:sessionTokens.length,inspectWith:'run.py ps'})
  }
  if(u.pathname==='/outbox')return Response.json(ilink.outbox().map(m=>({endpoint:m.endpoint,chatId:m.chatId,text:m.text})))
+ if(req.method==='POST'&&u.pathname==='/relay-quota'&&existsSync(join(dir,'.relay-acceptance'))){
+  const b=await req.json() as any,quota=(globalThis as any).__acceptanceRelayQuota
+  if(!quota||!['openai','claude'].includes(b.provider)||typeof b.blocked!=='boolean')return new Response('invalid quota fixture',{status:400})
+  if(b.blocked)quota.note(b.provider,'synthetic acceptance quota exhausted','quota');else quota.clear(b.provider)
+  return Response.json({provider:b.provider,exhausted:!!quota.exhausted(b.provider)})
+ }
  if(req.method==='POST'&&u.pathname==='/checkup-sample'){
   const b=await req.json() as any
   if(!['0/0/clarify','0/0/handoff','0/0/ordinary-handoff'].includes(b.id)||!isolatedTurn)return new Response('sample unavailable',{status:400})
