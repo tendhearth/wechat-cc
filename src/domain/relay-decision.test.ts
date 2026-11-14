@@ -3,6 +3,8 @@ import { decideRelay, decideResume, HELD_AFTER_COMPLETION, readLegReply, RELAY_P
 
 // 新说法先加进表里再改规则。偏向:拿不准就停。
 const DONE = [
+  '已完成，只改了 notes.md，未创建其他文件。',
+  '扩写完成，成果已保存；按要求未生成额外文件，也未写入项目目录。',
   '三张插图已经出完,放在 assets/login/ 下,深色版文件名带 -dark。',
   '已完成。改了 LoginHero.tsx 和 login.css,测试全部通过。',
   'Done. Added the three images under assets/login and wired them into LoginHero.',
@@ -79,6 +81,9 @@ const ASKED = [
 ]
 
 const BLOCKED = [
+  // run-52:找不到源文件,如实停下——后面的棒不能接着派
+  '已如实停止，未编写 `summary.md`。`missing-source.md` 在当前工作区不存在。',
+  '我已在当前工作区查找 `missing-source.md`，但未找到该文件。\n\n因此按照要求，我**没有编写 `summary.md`**，也没有基于任何其他来源编造内容。',
   '没能完成:仓库里找不到登录页的入口文件。',
   '无法访问网络,依赖没有装上。',
   '只完成了前两张图,第三张生成失败。',
