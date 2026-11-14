@@ -484,7 +484,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async connections() { return demoConnections(lastLang, now()) },
     async checkup() { return checkupView() },
-    async checkupEstimate() { const quote={requests:56,maxRequests:120,inputTokens:146000,outputTokens:81200,maxOutputTokens:300000,windowKnown:false,targetKey:checkupTargetKey()}; return {...quote,summary:checkupEstimateSummary(quote)} },
+    async checkupEstimate() { const quote={requests:56,maxRequests:120,inputTokens:146000,outputTokens:81200,maxOutputTokens:350000,windowKnown:false,targetKey:checkupTargetKey()}; return {...quote,summary:checkupEstimateSummary(quote)} },
     async checkupRun(expectedTargetKey) {
       if (expectedTargetKey !== checkupTargetKey()) throw new BackendError('stale')
       if (checkupActive) throw new BackendError('busy')

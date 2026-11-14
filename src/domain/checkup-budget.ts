@@ -1,8 +1,10 @@
 /** Run-owned allowance. Reserve before sending so even a full final response fits. */
 export interface CheckupLimits { maxOutputTokens:number; maxRequests:number }
 export type CheckupBudgetMode = 'request' | 'question'
+// Short: 28 questions × 3 steps × 4096 must fit even when a provider reports
+// no usage and every reservation stays charged in full (344,064).
 export const CHECKUP_LIMITS = {
-  short:{maxOutputTokens:300_000,maxRequests:120},
+  short:{maxOutputTokens:350_000,maxRequests:120},
   full:{maxOutputTokens:1_000_000,maxRequests:400},
 } as const
 export type CheckupLimitSettings = {short?:Partial<CheckupLimits>;full?:Partial<CheckupLimits>}

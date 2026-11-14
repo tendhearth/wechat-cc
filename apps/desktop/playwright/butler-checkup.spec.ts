@@ -17,7 +17,7 @@ async function syntheticCheckup(page: import('@playwright/test').Page) {
   await page.route('**/v1/checkup**', async route => {
     const path = new URL(route.request().url()).pathname
     if (route.request().method() !== 'GET') mutations.push(path)
-    if (path.endsWith('/estimate')) return route.fulfill({ json: { requests: 56, maxRequests: 120, inputTokens: 12000, outputTokens: 81200, maxOutputTokens: 300000, summary: '预计用 8 万左右、最多不超过 30 万输出 token，大约 3–6 分钟。', windowKnown: false, targetKey: 'synthetic-quote' } })
+    if (path.endsWith('/estimate')) return route.fulfill({ json: { requests: 56, maxRequests: 120, inputTokens: 12000, outputTokens: 81200, maxOutputTokens: 350000, summary: '预计用 8 万左右、最多不超过 35 万输出 token，大约 3–6 分钟。', windowKnown: false, targetKey: 'synthetic-quote' } })
     if (path.endsWith('/run')) { expect(route.request().postDataJSON().expectedTargetKey).toBe('synthetic-quote') }
     if (path.endsWith('/run')) state = { ...state, attempt: { status: 'running', completedRequests: 0, totalRequests: 28 } }
     if (path.endsWith('/cancel')) state = { ...state, attempt: { status: 'cancelled', completedRequests: 1, totalRequests: 28 } }
@@ -40,7 +40,7 @@ test('checkup shows cost before explicit start, can cancel, and keeps periodic c
   await expect(panel).toContainText('还没体检')
   expect(fake.mutations).toEqual([])
   await panel.locator('[data-checkup="prepare"]').click()
-  await expect(panel.locator('[data-checkup="estimate"]')).toContainText('预计用 8 万左右、最多不超过 30 万输出 token')
+  await expect(panel.locator('[data-checkup="estimate"]')).toContainText('预计用 8 万左右、最多不超过 35 万输出 token')
   expect(fake.mutations).toEqual(['/v1/checkup/estimate'])
   await panel.locator('[data-checkup="start"]').click()
   await expect(panel).toContainText('正在体检')

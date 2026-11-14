@@ -258,14 +258,15 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // The boundary fake says only "好的。" and never calls the fictional tools.
     // Its visible speech is evidence. Wrong content fails the relevant qualities;
     // lack of reply calls does not turn a completed interview into infrastructure failure.
-    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v3',qualities:{memory:{ratio:0}},business:{ratio:21/24}}})
-    // This SDK boundary deliberately omits usage: keep each 3 × 4096 reservation.
-    // The unchanged 300k gate fits 24 of 28 questions; the final four remain unmeasured.
-    expect(result.body.attempt).toMatchObject({status:'completed',completedRequests:24,totalRequests:28,errorCode:'checkup_usage_limit'})
-    expect(result.body.profile?.interview?.qualities.stance.unmeasured).toBe(2)
+    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v3',qualities:{memory:{ratio:0}}}})
+    // This SDK boundary deliberately omits usage, so every 3 × 4096 reservation
+    // stays charged. The short allowance is sized so all 28 questions still fit.
+    expect(result.body.attempt).toMatchObject({status:'completed',completedRequests:28,totalRequests:28})
+    expect(result.body.attempt?.errorCode).toBeUndefined()
+    expect(result.body.profile?.interview?.qualities.stance.unmeasured).toBeUndefined()
     expect(readFileSync(join(d.stateDir,'checkup','observations.json'),'utf8')).toContain('好的。')
     const interviewSpawns=spawnOptions.slice(spawnsBefore).filter(o=>o.strictMcpConfig===true)
-    expect(interviewSpawns).toHaveLength(24)
+    expect(interviewSpawns).toHaveLength(28)
     expect(interviewSpawns.every(o=>Array.isArray(o.allowedTools)&&o.allowedTools.includes('mcp__wechat__delegate'))).toBe(true)
     expect(interviewSpawns.every(o=>(o.env as Record<string,unknown>|undefined)?.CLAUDE_CODE_MAX_OUTPUT_TOKENS==='4096')).toBe(true)
     const sent=JSON.stringify(interviewSpawns.map(o=>({system:o.systemPrompt,tools:o.tools,allowedTools:o.allowedTools,settings:o.settings})))
