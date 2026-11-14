@@ -7,7 +7,7 @@ import { trackPreparation } from './state'
  */
 import { isUnattendedExecutor } from '../../../domain/workbench/executor-capabilities'
 import { mkdirSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { randomUUID,createHash } from 'node:crypto'
 import { readdirAnchored } from '../../../adapters/workbench/anchored-fs'
 import { canonicalProject } from '../../../adapters/workbench/artifacts'
 import type { EntryRecord } from '../../../adapters/store/workbench/entry-store'
@@ -27,6 +27,9 @@ import type { ExecuteDomain } from './execute'
 import type { QuotaDomain } from './quota'
 import type { ViewDomain } from './view'
 import type { ScriptsDomain } from './scripts'
+
+export interface EntryAcceptance {identity:string;persist:(task:Parameters<NonNullable<Parameters<ExecuteDomain['createTask']>[1]>>[0],runId:string)=>void}
+const entryHash=(input:EntryInput,acceptance?:EntryAcceptance)=>acceptance?createHash('sha256').update(canonicalEntryHash(input)+'\0'+acceptance.identity).digest('hex'):canonicalEntryHash(input)
 
 export interface EntryDomains { execute: ExecuteDomain; view: ViewDomain; admission: AdmissionDomain; quota: QuotaDomain; /** 工作区脚本(2026-10-20):建好独立工作区后跑 setup;老测试不传。 */ scripts?: Pick<ScriptsDomain,'afterCheckout'> }
 
@@ -78,18 +81,18 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     return record?.phase==='accepted'?entryResult(record):null
   }
   const pendingEntries = new Map<string, { hash: string; promise: Promise<EntryResult> }>()
-  async function createEntry(value:EntryInput,context:EntryContext):Promise<EntryResult> {
+  async function createEntry(value:EntryInput,context:EntryContext,acceptance?:EntryAcceptance):Promise<EntryResult> {
     requireEntryOwner(context)
-    const input=parseEntryInput(value),hash=canonicalEntryHash(input),key=JSON.stringify([context.ownerKey,input.requestId])
+    const input=parseEntryInput(value),hash=entryHash(input,acceptance),key=JSON.stringify([context.ownerKey,input.requestId])
     const prior=pendingEntries.get(key)
     if(prior){if(prior.hash!==hash)throw Error('creation_conflict');return prior.promise}
-    const promise=trackPreparation(ctx.state,createEntryImpl(value,context)).finally(()=>pendingEntries.delete(key))
+    const promise=trackPreparation(ctx.state,createEntryImpl(value,context,acceptance)).finally(()=>pendingEntries.delete(key))
     pendingEntries.set(key,{hash,promise})
     return promise
   }
-  async function createEntryImpl(value:EntryInput,context:EntryContext):Promise<EntryResult> {
+  async function createEntryImpl(value:EntryInput,context:EntryContext,acceptance?:EntryAcceptance):Promise<EntryResult> {
     requireEntryOwner(context)
-    const input=parseEntryInput(value),hash=canonicalEntryHash(input)
+    const input=parseEntryInput(value),hash=entryHash(input,acceptance)
     let record=store.entryRequests.get(context.ownerKey,input.requestId)
     if(record&&record.canonicalRequestHash!==hash)throw Error('creation_conflict')
     if(record?.phase==='accepted')return entryResult(record)
@@ -164,9 +167,10 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
         if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:tree.scriptSha,start:tree.plan.start})
         // 做到条件成立为止(v80):命令在这里写一次就定死(parseEntryInput 已保证只在独立工作区上出现)。
         if(input.until)store.goals.create(task.id,input.until)
+        acceptance?.persist(task,runId)
       },undefined,{
         // 独立工作区的目录不登记成项目:它属于源项目,侧栏按源项目归组(2026-10-07)。
-        context,conversationMessageId:`entry:${input.requestId}`,conversationText:input.text.trim()||input.title||current.map(a=>a.name).join('\n'),workspaceKind:frozen.target.kind==='managed'?'managed':'project',...(tree?{registerProject:false}:{}),fromChat:!!input.context,materials:current,
+        context,conversationMessageId:`entry:${input.requestId}`,conversationText:input.text.trim()||input.title||current.map(a=>a.name).join('\n'),workspaceKind:frozen.target.kind==='managed'?'managed':'project',...(tree?{registerProject:false}:{}),fromChat:!!input.context||!!acceptance,materials:current,
         beforeCreate:()=>{
           const latest=store.entryRequests.get(context.ownerKey,input.requestId)
           if(latest?.phase==='accepted')throw Error('entry_already_accepted')

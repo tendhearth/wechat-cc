@@ -227,6 +227,7 @@ const ROUTE_TABLE = {
   'GET /v1/matter/notes': { module: 'workbench', desktop: { tier: 'trusted', tokens: ['operator'] }, phone:{link:'none'} },
   'POST /v1/matter/note': { module: 'workbench', desktop: { tier: 'trusted' } },
   'POST /v1/matter/relay': { module: 'workbench', desktop: { tier: 'admin' } },
+  'POST /v1/matter/plan': { module: 'workbench', desktop: { tier: 'admin' } },
   'POST /v1/matter/seen': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
   'POST /v1/matter/say': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
   // P3e 一件事上的动作(设计稿 2026-11-05-p3-one-route-family「P3e」):一个动作一个处理器(internal-api/routes-matter-actions.ts,

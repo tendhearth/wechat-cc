@@ -908,6 +908,17 @@ export const WorkbenchEntryOptionsResponse = EntryOptions
 // ── POST /v1/workbench/create-entry(202)/ GET /v1/workbench/entry-receipt ──
 export const WorkbenchEntryResultResponse = z.object({ receipt: EntryReceipt, task: WorkbenchDesktopTaskView })
 
+/** Same project/managed target as the owner conversation's existing entry. */
+export const MatterPlanRequest=z.object({
+  requestId:z.string().uuid().optional(),
+  target:z.union([
+    z.object({kind:z.literal('managed')}).strict(),
+    z.object({kind:z.literal('project'),projectId:z.string().regex(/^p-[a-f0-9]{20}$/),isolation:z.literal('worktree').optional(),base:z.string().min(1).optional()}).strict(),
+  ]),
+  title:z.string().trim().min(1).max(120),
+  legs:z.array(z.object({executor:z.string().trim().min(1).max(80),brief:z.string().trim().min(1).max(20_000)}).strict()).min(2).max(6),
+}).strict()
+
 // ── GET /v1/workbench(列表)──
 export const WorkbenchListResponse = z.object({
   tasks: z.array(WorkbenchDesktopTaskView),
@@ -2448,6 +2459,7 @@ export const PenpalMarkReadResponse = z.object({ ok: z.literal(true) })
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/matter/note':z.object({text:z.string().trim().min(1).max(1000)}).strict(),
   'POST /v1/matter/relay':z.object({matter:z.string().regex(/^[a-f0-9]{8}$/),executor:z.string().min(1),brief:z.string().trim().min(1).max(20_000)}).strict(),
+  'POST /v1/matter/plan':MatterPlanRequest,
   'POST /v1/memory/topics/rename': TopicRenameRequest,
   'POST /v1/memory/topics/merge': TopicMergeRequest,
   'POST /v1/memory/topics/delete': TopicDeleteRequest,
@@ -2540,6 +2552,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/matter/notes':z.object({notes:z.array(MatterNote).optional(),agentRuns:z.array(MatterAgent).optional(),notesTotal:z.number().int().nonnegative().optional(),matchedTotal:z.number().int().nonnegative().optional(),nextBefore:z.number().int().positive().nullable().optional(),truncated:z.boolean().optional(),retentionNotice:z.string().optional()}),
   'POST /v1/matter/note':z.object({ok:z.literal(true)}),
   'POST /v1/matter/relay':z.object({task:WorkbenchDesktopTaskView}),
+  'POST /v1/matter/plan':WorkbenchEntryResultResponse,
   'GET /v1/matter/permission-script': PermissionScriptChunk,
   ...TOPIC_BUBBLE_RESPONSES,
   ...OWNER_CONVERSATION_RESPONSES,

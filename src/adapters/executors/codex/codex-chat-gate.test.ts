@@ -43,6 +43,13 @@ const cmd = (command: string) => ({ tool: 'commandExecution', description: comma
 const mcp = (tool: string, input: Record<string, unknown> = {}) => ({ tool: `mcp__wechat__${tool}`, description: tool, input })
 
 describe('Codex 对话审批 → authorize', () => {
+  it('自动接力拆法在一张批准卡列出全部六棒，未批准时拒绝',async()=>{
+    const r=rig({answer:'deny'}),input={target:{kind:'managed'},title:'插图',legs:Array.from({length:6},(_,i)=>({executor:`worker-${i+1}`,brief:`第${i+1}项工作 `+'资料 '.repeat(400)}))}
+    expect(await r.approve(mcp('matter_plan',input),signal())).toBe(false)
+    expect(r.cards).toHaveLength(1)
+    for(let i=1;i<=6;i++){expect(r.cards[0]!.prompt).toContain(`第 ${i} 棒`);expect(r.cards[0]!.prompt).toContain(`worker-${i}`);expect(r.cards[0]!.prompt).toContain(`第${i}项工作`)}
+    expect(r.cards[0]!.prompt.length).toBeLessThanOrEqual(2000)
+  })
   it('命令:codex 报上来要批的 ⇒ 问主人(拍板卡,10 分钟),主人点了才放', async () => {
     const yes = rig({ answer: 'allow' })
     expect(await yes.approve(cmd('rm -rf build'), signal())).toBe(true)

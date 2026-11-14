@@ -2,6 +2,7 @@ import {workbenchErrorHttp} from '../../../packages/protocol/src/workbench-error
 import {ownerLedgerCaller,ownerLedgerConversation} from '../../lib/matter-ledger-access'
 import type {WorkbenchService} from './service'
 import type {RouteTable} from '../../daemon/internal-api/types'
+import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
 
 const ID=/^[a-f0-9]{8}$/
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v)
@@ -9,6 +10,13 @@ const forbidden=()=>({status:403,body:{error:'matter_ledger_forbidden'}})
 const invalid=()=>({status:400,body:{error:'invalid_request'}})
 export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:()=>string|null}):RouteTable{
   return {
+    'POST /v1/matter/plan':async(q,b,c)=>{
+      if(!ownerLedgerConversation(d.resolveAdminChatId?.()??null,c))return forbidden()
+      const parsed=MatterPlanRequest.safeParse(b)
+      if([...q.keys()].length||!parsed.success)return invalid()
+      try{return {status:202,body:await d.workbench.matterPlan(parsed.data)}}
+      catch(error){const code=error instanceof Error?error.message:'';return {status:code==='matter_ledger_forbidden'?403:409,body:{error:/^[a-z_]+$/.test(code)?code:'matter_plan_failed'}}}
+    },
     'GET /v1/matter/notes':async(q,_b,c)=>{
       const owner=d.resolveAdminChatId?.()??null
       const executor=c?.origin==='session'&&c.tier!=='guest'&&/^workbench\/[a-f0-9]{8}$/.test(c.sessionKey??'')

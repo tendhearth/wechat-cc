@@ -1,3 +1,5 @@
+import type {RelayTurnHook,RelayResume} from './relay-events'
+import {isRelayContinue} from '../../../adapters/store/matter-plans'
 import {ledgerBrief} from '../../../adapters/store/matter-ledger'
 import {finishLedger} from './ledger-completion'
 import { trackPreparation } from './state'
@@ -103,6 +105,8 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
 }
 
 export interface ExecuteDomains {
+  relay?:RelayTurnHook
+  resumeRelay?:RelayResume
   admission: AdmissionDomain
   attachments: AttachmentsDomain
   quota: QuotaDomain
@@ -410,6 +414,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if (!running.cancelled) { store.addEvent(task.id,'error',error instanceof CodexExecutionError?error.message:message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); }
     } finally {
       cancelIdleClose(running)
+      const relayPending=running.questions.pending().length>0||running.permissions.pending().length>0
+      let relayQueued=true
+      try{relayQueued=store.liveInputs.count(task.id)>0}catch{/* Unread owner input must never release the next leg. */}
+      let relayStatus:TaskStatus=finalStatus
       running.finishing=true;running.questions.close();ctx.hub.bumped(task.id)
       for(const input of running.runtimeInputs?.values()??[])settleRuntimeInput(running,input,new Error('runtime_closed_before_input_acknowledgement'))
       running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended');ctx.hub.bumped(task.id)
@@ -432,6 +440,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       let terminalCommitted=false
       try {
         const status=running.cancelled&&!running.uncertain?(running.closedWhileReplied?'completed':'cancelled'):finalStatus
+        relayStatus=status
         if (status==='cancelled'&&running.restartInterrupted) finalError='daemon_restarted'
         // 会不会真的在这一拍入队回报,两个条件都要成立(终审后修复第二轮
         // Important②a,判据比"这一轮有没有出生地"更紧):①这一轮有出生地
@@ -468,7 +477,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           try{store.execution.endRun(task.id,running.identity,status,finalError)}catch{/* 只少一轮的结局 */}
           finishLedger(ctx,running,status)
           store.update(task.id,status,finalError)
-          stageFinishedNotice(running,status,finalError,willReport)
+          if(store.plans.get(task.id)?.state!=='approved'&&!running.relayClosing&&running.relayReportedTurn!==running.turnSeq)stageFinishedNotice(running,status,finalError,willReport)
         })
         terminalCommitted=true
         matterSync(m=>m.setLifecycle(task.id,status==='interrupted'?'open':'done'))
@@ -481,7 +490,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 需要处理"/问"交给 X 继续?")直接打架。失败/取消不经这里回报,不代表主人收不
         // 到通知——stageFinishedNotice 走的是另一条既有的完成通知路径,不受这里影响。
         if (status==='completed') {
-          reportOnce(running,body)
+          if(store.plans.get(task.id)?.state!=='approved'&&!running.relayClosing)reportOnce(running,body)
           if(store.ledger.enabled(task.id))try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 话题写回不影响收尾 */}
         }
         // 回忆(task-5,fix round 3,评审必判①):这是唯一的触发点(round 2
@@ -509,6 +518,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
       if (!running.uncertain) releaseReservation(running)
+      if(terminalCommitted)try{await domains.relay?.(running,relayStatus,relayPending,relayQueued)}catch(error){ctx.log?.('MATTER_RELAY',`completion failed: ${error instanceof Error?error.message:String(error)}`)}
       // 做到条件成立为止(v80):不保留会话的执行者只走这里。成功做完 ⇒ 排检查(先于 drainInputs:主人有排队的,
       // until 自己让路);失败 ⇒ 停并写原因(额度 / 限流也在这里)。retained 的那一轮 settleQuiet 已经排过,按轮去重。
       try {
@@ -538,7 +548,14 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     // 就不会发布这个未提交的信号,提交后的 (atomic 块外)会把真实 seq 发出去。
     const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);return id}
     let firstTurn=null as string|null
+    let planCancelled=false
     const handoffPeer=store.atomic(()=>{
+      const plan=store.plans.get(task.id)
+      if(plan?.state==='approved'&&!acceptance?.ledgerOpening){
+        const leg=plan.legs.find(l=>l.runId===store.ledger.agents(task.id).at(-1)?.runId&&l.state==='stopped')
+        if(leg&&isRelayContinue(text))store.plans.resume(task.id,leg.runId!)
+        else if((!queuedInputId||!store.liveInputs.get(queuedInputId))&&!isRelayContinue(text)||!plan.legs.some(l=>l.state==='running'))planCancelled=store.plans.cancel(task.id)
+      }
       firstTurn=store.execution.accept(task.id,runId,execution)
       if(acceptance?.ledgerOpening)store.ledger.start(task.id,runId,task.providerId,text)
       const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?continuationAttachmentScope(task.id,attachments):acceptance?.scope)
@@ -604,7 +621,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     }
     const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
     if(acceptance)acceptance.activate(activate);else activate()
-    return taskView(publicTask({...task,status:'queued',error:null}))
+    return {...taskView(publicTask({...task,status:'queued',error:null})),...(planCancelled?{planCancelled:true,notice:'拆法已作废'}:{})}
   }
 
   /** matter 同步永不打断任务本身:登记失败只是少一条索引,任务照跑。 */
@@ -726,6 +743,17 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         return taskView(publicTask(store.get(id)))
       }
     }
+    const request=checkedText(text,attachments)
+    if(isRelayContinue(request)&&domains.resumeRelay?.(id,()=>{
+      // This entry resumes the approved brief; it cannot silently consume new materials.
+      if(attachments.length)throw Error('invalid_request')
+      if(inputRequestId)store.atomic(()=>{
+        const runId=store.execution.last(id)?.runId
+        if(!runId)throw Error('input_stale')
+        store.liveInputs.add({id:inputRequestId,taskId:id,runId,text:request,attachments})
+        store.liveInputs.set(inputRequestId,'delivered');store.bump(id)
+      })
+    }))return taskView(publicTask(store.get(id)))
     if (runsByTask.has(id)) throw new Error('workbench_busy')
     const task=store.get(id)
     const execution=normalizeExecutionChoice(options?.execution,store.execution.choice(id))
@@ -736,7 +764,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     if(store.worktrees.get(id)?.removedAt!=null)throw new Error('worktree_removed')
     provider(task.providerId)
     if (canonicalProject(task.path)!==task.path) throw new Error('invalid_path')
-    const request=checkedText(text,attachments),acceptedDirectoryIdentity=directoryIdentity(task.path)
+    const acceptedDirectoryIdentity=directoryIdentity(task.path)
     const restartToken=options?.restartToken
     if (restartToken!==undefined && (typeof restartToken!=='string' || !/^[a-f0-9]{64}$/.test(restartToken))) throw new Error('invalid_request')
     const decision=continuation(task,execution)

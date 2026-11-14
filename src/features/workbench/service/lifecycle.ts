@@ -1,3 +1,4 @@
+import type {RelayTurnHook} from './relay-events'
 /**
  * lifecycle + settle 域:文件夹租约、空闲自动收工、回报 / 回忆去重、安静落定、占用释放、不确定退出、派发泵、取消,
  * 以及 setArchived / cancel / shutdown 三个入口。
@@ -35,6 +36,7 @@ import { timelineKind } from '../../../adapters/store/workbench/store'
 export const NETWORK_SUSPENDED_LABEL='已暂停(网络未受保护)'
 
 export interface LifecycleDomains {
+  relay?:RelayTurnHook
   view: Pick<ViewDomain,'isReplied'|'runtimeSnapshot'|'taskView'|'held'>
   artifacts: Pick<ArtifactsDomain,'collect'|'collectTurnArtifacts'|'captureCodeChanges'>
   notices: Pick<NoticesDomain,'stageFinishedNotice'|'publishFinishedNotices'|'enqueueNotice'>
@@ -137,6 +139,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
    * 文,回报只是"事情有进展,看这里"的一句指路。
    */
   function reportOnce(running:Active,body?:string):void {
+    if(store.plans.get(running.taskId)?.state==='approved'||running.relayClosing||running.relayReportedTurn===running.turnSeq)return
     if (running.reportedTurn===running.turnSeq) return
     running.reportedTurn=running.turnSeq
     try { ctx.deps.reports?.enqueue(running.taskId,running.turnSeq,body) } catch (err) { ctx.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
@@ -173,7 +176,13 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     // 与「该暂停了」的判据同义:回合真的停下来了才登记,否则会把半成品当成固定版本的成果发布出去。
     if (!snapshot?.retained||snapshot.foreground!=='idle'||snapshot.backgroundCount!==0) return
     collectTurnArtifacts(running)
-    if (!quiet(running)) return
+    if (!quiet(running)) {
+      if(store.plans.get(running.taskId)?.state==='approved'){
+        store.atomic(()=>{finishLedger(ctx,running,'completed');store.bump(running.taskId)})
+        void domains.relay?.(running,'completed',running.questions.pending().length>0||running.permissions.pending().length>0).catch(error=>ctx.log?.('MATTER_RELAY',String(error)))
+      }
+      return
+    }
     // 取消归档、结局清回 open(以前写 replied 列的那一处;v102 删列后 replied 只看下面那一步)
     matterSync(m=>m.setLifecycle(running.taskId,'open'))
     // 「答完了、闲着」落成这件事最近一轮上的一步(ready:<turnId>,幂等;主人看不见)。线上旧 status 的 replied 读它(M6e)。
@@ -198,6 +207,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       await codeCapture
       if(state.shutdownComplete||running.finishing||running.cancelled||running.uncertain||running.turnSeq!==ledgerTurn||!quiet(running))return
       store.atomic(()=>{finishLedger(ctx,running,'completed');store.bump(running.taskId)})
+      await domains.relay?.(running,'completed',running.questions.pending().length>0||running.permissions.pending().length>0)
     })().catch(error=>ctx.log?.('MATTER_LEDGER',`completion failed: ${error instanceof Error?error.message:String(error)}`))
     armIdleClose(running)
     // 做到条件成立为止(v80):这一轮安静了 ⇒ 排一次检查(按 run+turnSeq 去重,不阻塞)。
@@ -336,19 +346,25 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     }
   }
   function cancelRun(running:Active):void {
+    const relayPending=running.questions.pending().length>0||running.permissions.pending().length>0
+    let relayQueued=true
+    try{relayQueued=store.liveInputs.count(running.taskId)>0}catch{/* Preserve ambiguous input. */}
     cancelIdleClose(running)
     running.questions.close();ctx.hub.bumped(running.taskId);holdInputs(running.taskId,'任务已停止，补充尚未发送。')
     if (running.state==='queued') {
       running.cancelled=true; running.permissions.rejectAll('cancelled'); ctx.hub.bumped(running.taskId); running.signalStop()
       const index=state.queue.indexOf(running); if (index>=0) state.queue.splice(index,1)
       state.runningText.delete(running.identity)
+      let terminalCommitted=false
       try {
-        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};finishLedger(ctx,running,'cancelled');store.update(running.taskId,'cancelled',running.restartInterrupted?'daemon_restarted':null);stageFinishedNotice(running,'cancelled')})
+        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};finishLedger(ctx,running,'cancelled');store.update(running.taskId,'cancelled',running.restartInterrupted?'daemon_restarted':null);if(store.plans.get(running.taskId)?.state!=='approved')stageFinishedNotice(running,'cancelled')})
+        terminalCommitted=true
         matterSync(m=>m.setLifecycle(running.taskId,'done'))
         publishFinishedNotices()
       } catch { /* in-memory cancellation still must settle */ }
       running.publicFinished=true; running.resolveDone()
       if (state.runsByTask.get(running.taskId)===running) state.runsByTask.delete(running.taskId)
+      if(terminalCommitted)void domains.relay?.(running,'cancelled',relayPending,relayQueued).catch(error=>ctx.log?.('MATTER_RELAY',String(error)))
       if (!state.stopping) pump()
       return
     }

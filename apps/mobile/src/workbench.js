@@ -6,6 +6,7 @@ var mAgents
 var M_STATUS = { open: "在做", replied: "这一轮做完了", done: "完成", archived: "已归档" }
 var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
 var M_PHASE = { queued: "在做", working: "在做", replied: "这一轮做完了", failed: "没做成", cancelled: "停下了", interrupted: "停下了" }
+var M_AGENT_STATUS = { queued: "排队" }
 var mCurrent = null, mDetail = null, mPoll = null, mSeq = 0, mActive = true, mBusy = {}
 // 一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,分「在做」「带回来的」两组(等你那一件是此刻页上那张卡);
 // 带回来的只收 24 小时内,更早的点「全部」。组名、状态词来自协议包那一张(CCP,App / 桌面同一张)。
@@ -144,6 +145,9 @@ function mStateWord(d) {
 }
 function mRenderStatus(d) {
   var root=document.getElementById('m-status'),state=mStateWord(d),quota=mQuotaView(d.quotaHandoff),html='<p class="m-state">'+esc(state.word)+'</p>'
+  ;(d.agentRuns||[]).filter(function(leg){return leg.matterId===d.matter.id&&leg.status==='queued'}).forEach(function(leg){
+    html+='<p class="m-task-note">'+esc((d.matter.agentNames||{})[leg.executor]||leg.executor)+' · '+esc(M_AGENT_STATUS.queued)+' · '+esc(leg.brief)+'</p>'
+  })
   if(state.waiting&&!(typeof cReady!=='undefined'&&cReady))html+='<p class="m-task-note">有 '+state.waiting+' 项等你决定，到手机 App 或电脑上处理。</p>'
   var events=d.events||[],last=events[events.length-1]
   if(last&&last.kind==='tool_call'&&last.activity&&last.activity.status==='running')html+='<p class="m-now"><span>正在</span> '+esc(last.activity.label||last.text)+'</p>'
