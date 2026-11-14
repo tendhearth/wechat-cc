@@ -33,9 +33,9 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   checkup_run_unknown: { desktop:404, phone:[404,'not_found'] },
   matter_project_ambiguous: {desktop: 409, matter: '这个项目名有重名，无法唯一确定；请改用列表中的精确项目编号或路径。'},
   invalid_request: {desktop: 400, matter: '事项编号或交接参数不正确；请确认事项编号、执行者和具体要求后重试。'},
-  invalid_matter_plan: {desktop: 409, matter: '拆法参数不正确；请提供标题和按顺序排列的 2–6 棒，每棒都要有已登记的执行者和具体要求。'},
+  invalid_matter_plan: {desktop: 409, matter: '交办参数不正确；请提供标题和按顺序排列的 1–6 棒，每棒都要有已登记的执行者和具体要求。'},
   matter_conversation_unavailable: {desktop: 409, matter: '无法唯一确定当前主人对话的轮次；请回到原对话重试。'},
-  matter_plan_failed: {desktop: 409, matter: '创建拆法时遇到错误；请检查工作区和执行者状态后重试，不要告诉主人还在等批准。'},
+  matter_plan_failed: {desktop: 409, matter: '创建事项时遇到错误；请检查工作区和执行者状态后重试，不要告诉主人还在等批准。'},
   matter_handoff_failed: {desktop: 409, matter: '没有接上下一棒；请检查事项编号、工作区和执行者状态后重试。'},
   // ── 交办入口:与 apps/desktop/src/shared/task-entry-contract.js 的 rejections 同码同状态(那份是桌面 / 网页判「确实被拒」用的,桌面 JS 引不到这里 ⇒ scripts/workbench-errors.guard.test.ts 核对)
   api_task_attachment_invalid: {desktop: 400, phone: 400, entry: true},

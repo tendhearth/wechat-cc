@@ -48,6 +48,40 @@ function setup(retainedFirst:boolean|'all'=false,signals=true,extra:Partial<Para
   return {root,project,db,store,matters,registry,calls,notices,ordinaryReports,order,request,create,finish,blockNext(mode:typeof nextBlock){nextBlock=mode;if(mode==='ack')registry.get('claude')!.opts.workbench=UNATTENDED_CAPABILITIES},get service(){return service},async restart(){await service.shutdown();service=makeWorkbenchService(opts)}}
 }
 
+it.each([false,true])('one leg creates an ordinary task without a relay plan or relay report (retained=%s)',async retained=>{
+  const f=setup(retained),request={...f.request(),title:'整理插图',legs:[{executor:'codex',brief:'整理插图'}]}
+  f.db.exec("CREATE TRIGGER reject_single_plan BEFORE INSERT ON matter_plans BEGIN SELECT RAISE(ABORT,'single_must_not_write_plan'); END")
+  f.db.exec("CREATE TRIGGER reject_single_leg BEFORE INSERT ON matter_plan_legs BEGIN SELECT RAISE(ABORT,'single_must_not_write_leg'); END")
+  const first=await f.service.matterPlan(request),id=first.task.id
+  expect((await f.service.matterPlan(request)).receipt).toEqual(first.receipt)
+  await expect.poll(()=>f.calls.length).toBe(1)
+  expect(f.store.list()).toHaveLength(1)
+  expect(f.matters.list({kind:'task'})).toHaveLength(1)
+  expect(f.matters.get(id)?.originMatterId).toBeTruthy()
+  expect(f.db.query('SELECT * FROM matter_plans').all()).toEqual([])
+  expect(f.db.query('SELECT * FROM matter_plan_legs').all()).toEqual([])
+  expect(f.service.detail(id).agentRuns).toBeUndefined()
+  expect(f.calls[0]!.text).not.toContain('matter_ledger_data')
+  await f.finish(0)
+  await expect.poll(()=>f.ordinaryReports).toEqual([id])
+  expect(f.notices).toEqual([])
+  expect(f.calls).toHaveLength(1)
+  expect(f.service.detail(id).events.some(e=>e.text?.includes('棒都做完了'))).toBe(false)
+  await expect(f.service.matterPlan({...request,legs:[...request.legs,{executor:'claude',brief:'接着做'}]})).rejects.toThrow('creation_conflict')
+})
+
+it.each([0,7])('rejects %s legs with a Chinese explanation and creates nothing',async length=>{
+  const f=setup(),route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner'})['POST /v1/matter/plan']!
+  const result=await route(new URLSearchParams(),{...f.request(),legs:Array.from({length},()=>({executor:'codex',brief:'整理插图'}))},{tier:'admin',origin:'session',chatId:'owner'})
+  expect(result.status).toBe(400)
+  expect(result.body).toMatchObject({error:'invalid_matter_plan',approved:false,message:expect.stringContaining('1–6')})
+  expect(JSON.stringify(result.body)).toContain('没建成')
+  expect(f.store.list()).toEqual([])
+  expect(f.db.query('SELECT * FROM matter_plans').all()).toEqual([])
+  expect(f.db.query('SELECT * FROM matter_plan_legs').all()).toEqual([])
+  expect(f.calls).toEqual([])
+})
+
 it('three approved legs run in order with ledger openings and no prior raw transcript',async()=>{
   const f=setup(),id=await f.create()
   expect(f.service.detail(id).agentRuns?.map(a=>a.status)).toEqual(['running','queued','queued'])
@@ -435,14 +469,14 @@ it.each(['native_session_busy','unavailable_provider','invalid_matter_plan'] as 
  const f=setup(false,true,{...(code==='native_session_busy'?{executionConflict:()=>true}:{}),planConversation:()=>({scope:'approved-turn'})})
  const request=f.request()
  if(code==='unavailable_provider')request.legs[1]!.executor='relay-unregistered'
- if(code==='invalid_matter_plan')request.legs=request.legs.slice(0,1)
+ if(code==='invalid_matter_plan')request.legs=[]
  f.service.noteMatterApproval('mcp__wechat__matter_plan',request,{chatId:'owner',provider:'openai'})
  const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner'})['POST /v1/matter/plan']!
  const result=await route(new URLSearchParams(),request,{tier:'admin',origin:'session',chatId:'owner'})
  expect(result.status).toBeGreaterThanOrEqual(400)
  expect(result.body).toMatchObject({error:code,message:expect.stringContaining('主人已批准')})
  expect(JSON.stringify(result.body)).toContain('没建成')
- expect(JSON.stringify(result.body)).toContain(code==='native_session_busy'?'工作区':code==='unavailable_provider'?'执行者':'2–6')
+ expect(JSON.stringify(result.body)).toContain(code==='native_session_busy'?'工作区':code==='unavailable_provider'?'执行者':'1–6')
  expect(f.store.list()).toHaveLength(0)
 })
 

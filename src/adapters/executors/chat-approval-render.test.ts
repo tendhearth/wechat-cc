@@ -3,6 +3,18 @@ import { gateTool } from './openai/openai-gate'
 import { makeCanUseTool } from './claude/permission-relay'
 import { makeGeminiToolGate } from './gemini/gemini-agent-provider'
 import { TIER_PROFILES } from '../../domain/user-tier'
+import {prepareChatApprovalPrompt} from './chat-approval'
+
+it.each(['Claude','OpenAI','Gemini','Codex'])('%s shows one executor on the shared card without promising relay',async provider=>{
+  const prompt=await prepareChatApprovalPrompt(provider,'mcp__wechat__matter_plan',{title:'整理插图',project:'relay-lab',legs:[{executor:'codex',brief:'整理插图文件'}]},'single',{
+    resolveMatterPlan:()=>({target:{kind:'project',projectId:'p-0123456789abcdef0123'},projectName:'relay-lab',projectPath:'/offline/project'}),
+  },'owner')
+  expect(prompt).toContain('第 1 棒 · codex：整理插图文件')
+  expect(prompt).not.toContain('第 2 棒')
+  expect(prompt).toContain('relay-lab（/offline/project）')
+  expect(prompt).toContain('批准后开工')
+  expect(prompt).not.toContain('按此顺序接力')
+})
 
 const cyclic: Record<string, unknown> = {}; cyclic.self = cyclic
 const cases = [

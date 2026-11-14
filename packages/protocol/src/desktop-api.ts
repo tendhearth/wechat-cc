@@ -921,7 +921,7 @@ export const MatterPlanRequest=z.object({
     z.object({kind:z.literal('local')}).strict(),
   ]).optional(),
   title:z.string().trim().min(1).max(120),
-  legs:z.array(z.object({executor:z.string().trim().min(1).max(80),brief:z.string().trim().min(1).max(20_000)}).strict()).min(2).max(6),
+  legs:z.array(z.object({executor:z.string().trim().min(1).max(80),brief:z.string().trim().min(1).max(20_000)}).strict()).min(1).max(6),
 }).strict()
 
 // ── GET /v1/workbench(列表)──

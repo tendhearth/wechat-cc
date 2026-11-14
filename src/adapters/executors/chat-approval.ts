@@ -8,9 +8,9 @@ import { redactSecrets } from '../../domain/cli-transcript'
 export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, requestId: string, title?: string, resolved?:PlanTarget): string {
   if(/(?:^|__)matter_plan$/.test(tool)&&input&&typeof input==='object'){
     const plan=input as {title?:unknown;target?:unknown;legs?:unknown}
-    if(Array.isArray(plan.legs)&&plan.legs.length>=2&&plan.legs.length<=6){
+    if(Array.isArray(plan.legs)&&plan.legs.length>=1&&plan.legs.length<=6){
       const clip=(v:unknown,n:number)=>{const s=redactPreviewText(redactSecrets(typeof v==='string'?v:JSON.stringify(v)??'')).replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
-      return `${provider} · matter_plan [approval:${requestId}]\n确认拆法：${clip(plan.title,120)}\n工作区：${clip(resolved?`${resolved.projectName}（${resolved.projectPath}）`:plan.target,320)}${resolved?.target.kind==='project'&&resolved.target.isolation==='worktree'?`\n独立工作区 · 起点：${clip(resolved.target.base??'项目默认分支',80)}`:''}\n`+plan.legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,64)}：${clip(l?.brief,130)}`}).join('\n')+'\n批准后按此顺序接力；失败或提问就停。'
+      return `${provider} · matter_plan [approval:${requestId}]\n${plan.legs.length===1?'确认交办':'确认拆法'}：${clip(plan.title,120)}\n工作区：${clip(resolved?`${resolved.projectName}（${resolved.projectPath}）`:plan.target,320)}${resolved?.target.kind==='project'&&resolved.target.isolation==='worktree'?`\n独立工作区 · 起点：${clip(resolved.target.base??'项目默认分支',80)}`:''}\n`+plan.legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,64)}：${clip(l?.brief,130)}`}).join('\n')+(plan.legs.length===1?'\n批准后开工。':'\n批准后按此顺序接力；失败或提问就停。')
     }
   }
   const preview = toolInputPreview(input, true) ?? '[input omitted: too large or unreadable]'

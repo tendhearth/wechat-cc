@@ -80,6 +80,8 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       return d.entry.createEntry({requestId,target:prepared.target,title:prepared.title,text:first.brief,providerId:first.executor},{ownerKey:owner,surface:'desktop'},
         {identity:JSON.stringify(legs),persist:(task,runId)=>{
           if(ctx.deps.ownerChatId()!==owner)throw Error('matter_ledger_forbidden')
+          // A single executor is an ordinary chat delegation, without a relay ledger or plan.
+          if(legs.length===1)return
           store.ledger.start(task.id,runId,first.executor,first.brief)
           store.plans.approve(task.id,legs,runId)
           store.ledger.plan(task.id,legs)

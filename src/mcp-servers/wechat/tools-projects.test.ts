@@ -12,7 +12,7 @@ it('matter_plan is owner-only scheduling with the existing target shape and orde
  await Promise.all([server.connect(a),client.connect(b)])
  try{
   const args={target:{kind:'project',projectId:'p-'+'a'.repeat(20),isolation:'worktree',base:'dev'},title:'插图',legs:[{executor:'codex',brief:'出图'},{executor:'claude',brief:'接图'}]}
-  expect((await client.listTools()).tools.find(t=>t.name==='matter_plan')?.description).toContain('只有主人一句话里明确要多个执行者先后做时才用')
+  expect((await client.listTools()).tools.find(t=>t.name==='matter_plan')?.description).toContain('主人在对话里把一件事交给执行者去做')
   expect((await client.callTool({name:'matter_plan',arguments:args})).isError).not.toBe(true)
   expect(calls.find(call=>Array.isArray(call)&&call[1]==='/v1/matter/plan')).toMatchObject(['POST','/v1/matter/plan',args])
   expect(classifyToolUse('mcp__wechat__matter_plan',{})).toBe('daemon_remediate')
@@ -71,6 +71,6 @@ for(const tool of ['matter_plan','matter_handoff'])it.each(['native_session_busy
   expect(body).toMatchObject({error:code,approved:true})
   expect(body.message).toContain('主人已批准')
   expect(body.message).toContain(tool==='matter_plan'?'没建成':'没接成')
-  expect(body.message).toContain(code==='native_session_busy'?'工作区':code==='project_stale'?'项目':code==='unavailable_provider'?'执行者':'2–6')
+  expect(body.message).toContain(code==='native_session_busy'?'工作区':code==='project_stale'?'项目':code==='unavailable_provider'?'执行者':'1–6')
  }finally{await client.close();await server.close()}
 })
