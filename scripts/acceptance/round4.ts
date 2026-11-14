@@ -55,13 +55,17 @@ async function checkup(providerId:string,model:string,cancel=false){
  const before=requestCount(),quote=await api('POST','/v1/checkup/estimate',{providerId,model,full:false})
  record('D.1-estimate-'+providerId+'-'+model,{...quote,noRequests:requestCount()===before})
  if(quote.status!==200)return
+ // The short v3 quote budgets two requests per question; a capped quote
+ // cannot be inverted safely. Keep the question count tied to this receipt.
+ const estimatedQuestions=quote.body.requests/2
+ if(!Number.isInteger(estimatedQuestions)||estimatedQuestions<=0||quote.body.requests>=quote.body.maxRequests)throw Error('uncapped two-step interview estimate required')
  const run=await api('POST','/v1/checkup/run',{providerId,model,full:false,expectedTargetKey:quote.body.targetKey});record('D-start-'+providerId+'-'+model,run)
- if(run.status!==202){record('D-run-rejected',{providerId,model,status:run.status});return run}
+ if(run.status!==202){record('D-run-rejected',{providerId,model,status:run.status});return {...run,estimatedQuestions}}
  if(cancel){await sleep(800);record('D-cancel',await api('POST','/v1/checkup/cancel',{}))}
  for(let i=0;i<1800;i++){
   const r=await api('GET','/v1/checkup?run='+quote.body.targetKey)
-  if(r.status!==200){record('D-query-error',{providerId,model,...r});return r}
-  if(r.body.attempt?.status!=='running'){record('D-result-'+providerId+'-'+model,r);record('D-request-span',{providerId,model,cancel,before,after:requestCount()});return r}
+  if(r.status!==200){record('D-query-error',{providerId,model,...r});return {...r,estimatedQuestions}}
+  if(r.body.attempt?.status!=='running'){record('D-result-'+providerId+'-'+model,r);record('D-request-span',{providerId,model,cancel,before,after:requestCount()});return {...r,estimatedQuestions}}
   if(i%30===0)record('D-progress',{providerId,model,completedRequests:r.body.attempt.completedRequests})
   await sleep(1000)
  }
@@ -159,8 +163,8 @@ if(section.startsWith('B-')){
  if(!proven)throw Error('live openai scope not proved')
 }else if(section==='D'){
  const done=await checkup('openai','Kimi-Code')
- record('D-round4-completeness',{status:done?.body.attempt?.status,completed:done?.body.attempt?.completedRequests,total:done?.body.attempt?.totalRequests,version:done?.body.profile?.interview?.version})
- if(done?.body.attempt?.status!=='completed'||done?.body.attempt?.completedRequests!==24||done?.body.profile?.interview?.version!=='interview-v2')throw Error('complete 24-question v2 required; inspect evidence, do not claim success')
+ record('D-round4-completeness',{status:done?.body.attempt?.status,estimatedQuestions:done?.estimatedQuestions,completed:done?.body.attempt?.completedRequests,total:done?.body.attempt?.totalRequests,version:done?.body.profile?.interview?.version})
+ if(done?.body.attempt?.status!=='completed'||done?.body.attempt?.completedRequests!==done?.estimatedQuestions||done?.body.attempt?.totalRequests!==done?.estimatedQuestions||done?.body.profile?.interview?.version!=='interview-v3')throw Error('complete interview-v3 matching the estimate required; inspect evidence, do not claim success')
  writeFileSync(join(dir,'D-round4-result.json'),JSON.stringify(clean(done),null,2))
  await mode('openai');await turn('D-budget-r4','体检已结束，请简短回复收到。');record('D-budget-r4-health',await api('GET','/v1/health',undefined,'file'))
 }else throw Error('unknown round4 section')
