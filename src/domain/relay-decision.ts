@@ -137,7 +137,7 @@ const TAIL_MAX = 700
 const OFFER = /需要我|要不要我|要我(再|继续|顺便|帮|也|把)|是否(需要|要)我|还(需要|要|有)(什么|别的|其他|其它|哪些)|想让我|可以(再)?帮你|有(什么)?(问题|需要)(随时|可以|再|就)|随时(告诉|叫|找)我|let me know if|if you('d| would) like|would you like me to|(do you )?want me to|anything else|shall i|should i (also|go ahead|continue|proceed)|happy to/i
 
 /** 明说在等主人的一个答复。 */
-const REQUEST = /请(你|您)?(先)?(确认|告诉我|告知|提供|选择|选一|决定|指定|回复|补充|授权|批准|拍板)|需要(你|您|主人)(来|先|的)?(确认|提供|决定|选择|授权|告诉|拍板|给|回复|批准|同意)|等(你|您|主人)(的)?(确认|回复|决定|拍板|答复|同意|批准)|待(你|您|主人)?(确认|决定|拍板)|由(你|您|主人)(来)?(决定|定|选)|(你|您)来(定|决定|选)|需要(你|您|主人)(来)?(定|定夺|定一下)|waiting (for|on) you|need(s)? your (confirmation|input|decision|approval|answer|go-ahead)|please (confirm|provide|choose|decide|tell me|specify|advise|clarify)|awaiting your/i
+const REQUEST = /请(你|您|主人)?(先|明确|直接)?(确认|告诉我|告知|提供|选择|选一|决定|指定|回复|补充|授权|批准|拍板)|需要(你|您|主人)(来|先|的)?(确认|提供|决定|选择|授权|告诉|拍板|给|回复|批准|同意)|等(你|您|主人)(的)?(确认|回复|决定|拍板|答复|同意|批准)|待(你|您|主人)?(确认|决定|拍板)|由(你|您|主人)(来)?(决定|定|选)|(你|您)来(定|决定|选)|需要(你|您|主人)(来)?(定|定夺|定一下)|waiting (for|on) you|need(s)? your (confirmation|input|decision|approval|answer|go-ahead)|please (confirm|provide|choose|decide|tell me|specify|advise|clarify)|awaiting your/i
 
 /** 同一句里说明问题已经过去了。 */
 const RESOLVED = /已(经)?(修复|解决|修好|处理|绕过|绕开|恢复|改好|补上)|修(复|好)了|解决了|处理(好|掉)了|绕(过|开)了|后来|最后|最终|现在(可以|能|已|正常|都)|改(成|用|为).{0,12}(后|之后)|换(成|用).{0,12}(后|之后)|不再|\bfixed\b|\bresolved\b|worked around|now (works|passes|runs|succeeds)|no longer|eventually|in the end/i
@@ -153,6 +153,9 @@ const BLOCKED = new RegExp([
   '做不(了|到|成)|完成不了|进行不下去',
   '(任务|这一步|这一棒|本次|这次|这件事)?(没有完成|未完成|没做完|尚未完成|只(完成|做)了|部分完成|中止了|中断了)',
   '被(拒绝|拦截|阻止|拦下|中断|限流)',
+  // 「已如实停止,未编写 summary.md」(第三轮真模型验收 run-52):要交的东西没交。「未写入项目目录」「未创建其他文件」是在说范围,不算。
+  '(已|已经|如实|按要求|只好|只能)(如实|按要求)?(停止|停下|停工|中止)',
+  '(没有|未|并未|尚未)(编写|生成|创建|产出|写出)(?!(任何)?(其他|其它|额外|多余|别的|新的))',
   '卡在|卡住|受阻|权限不足|没有权限|额度(用完|不足|耗尽)',
   '缺少(权限|依赖|凭据|密钥|文件|配置|环境)',
   '[1-9]\\d* ?(个|条|项)?(测试|用例|检查)?(失败|未通过|没通过|不通过)',
@@ -169,7 +172,7 @@ const BLOCKED = new RegExp([
  * (service/execute.ts),所以几乎每一棒的最后一段都带着「未完成的验证:未运行…」。那是如实交代,
  * 不是这一棒卡住了;真有失败(「3 个测试没过」「构建失败」)照样会被 BLOCKED 认出来。
  */
-const UNVERIFIED = /未完成的?(验证|校验|检查|测试)|(未|没有?|尚未|暂未|并未)(实际)?(运行|执行|跑|做|进行|完成)(过)?(任何|其他|其它|额外)?[^,。;:]{0,16}(验证|校验|检查|测试|lint|工具)|(验证|校验|测试|检查)(尚未|还没|没有?|未)(运行|执行|跑|做|进行|完成)|not (yet )?(verified|tested|validated)|unverified|untested|(did not|didn'?t|have not|haven'?t) (run|execute)[^,.;]{0,24}(tests?|checks?|lint\w*|validation|verification)|no (tests?|checks?|validation|verification) (was |were )?(run|performed|executed)|(verification|validation|testing) (was |is )?not (completed|run|done|performed)/gi
+const UNVERIFIED = /(未完成|未做完?|没做完?|遗留|剩余)(的)?(项|事项|部分|内容|工作|验证|问题)?\s*[:：]\s*(无|没有|暂无|none|n\/a)[^。;；\n]*|未完成的?(验证|校验|检查|测试)|(未|没有?|尚未|暂未|并未)(实际)?(运行|执行|跑|做|进行|完成)(过)?(任何|其他|其它|额外)?[^,。;:]{0,16}(验证|校验|检查|测试|lint|工具)|(验证|校验|测试|检查)(尚未|还没|没有?|未)(运行|执行|跑|做|进行|完成)|not (yet )?(verified|tested|validated)|unverified|untested|(did not|didn'?t|have not|haven'?t) (run|execute)[^,.;]{0,24}(tests?|checks?|lint\w*|validation|verification)|no (tests?|checks?|validation|verification) (was |were )?(run|performed|executed)|(verification|validation|testing) (was |is )?not (completed|run|done|performed)/gi
 
 /** 交办开场要求的收尾小节:位置、做了的验证、没做的验证。它们是附录,不是结论。 */
 const REPORT_SECTION = /^(改动(或交付)?(的)?文件(的)?位置|交付文件(的)?位置|文件位置|改动位置|实际完成的验证|已完成的验证|完成的验证|未完成的验证|未做的验证|验证情况|files? (changed|touched)|verification( done| performed)?|not verified|unverified)\s*:/i
@@ -214,6 +217,8 @@ const listOnly = (p: string): boolean => {
   return items.every(line => /^\s*(-|\d+[.)、])\s/.test(line))
 }
 const offerOnly = (p: string): boolean => sentences(p).every(s => OFFER.test(s))
+/** 只说「以后如果…可以…」的收尾段:它不是这一棒的结论,结论在它前面一段(第三轮真模型验收 run-56)。带着请求的不算,那是在问主人。 */
+const followUpOnly = (p: string): boolean => sentences(p).every(s => /^(若|如果|如需|如有|要是|假如|后续|之后|下一步|if\b|once\b)/i.test(s) && !REQUEST.test(s))
 
 export function readLegReply(text: string): LegReply {
   const body = prose(text)
@@ -227,7 +232,7 @@ export function readLegReply(text: string): LegReply {
   while (at > 0) {
     const p = paragraphs[at]!
     const section = REPORT_SECTION.test(p)
-    if (!section && !listOnly(p) && !offerOnly(p)) break
+    if (!section && !listOnly(p) && !offerOnly(p) && !followUpOnly(p)) break
     if (section) skippedSections.push(p.slice(0, TAIL_MAX))
     if (section || listOnly(p)) skippedAsk.push(p.slice(-TAIL_MAX))
     at--

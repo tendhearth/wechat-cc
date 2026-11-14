@@ -159,8 +159,10 @@ it.each([['failed','没能完成。',true,'leg_failed'],['asked','请确认用�
   expect(f.notices.at(-1)).toContain('第 2 棒')
   if(reason==='leg_asked')expect(f.notices.at(-1)).toBe('第 2 棒（Claude）在等你回话，你回了它接着做。')
   else expect(f.notices.at(-1)).toContain('说「继续」让它接着做')
-  f.service.continueTask(id,'继续')
+  // 在等回话的那一棒:主人回的是答案,不必以「继续」开头,拆法照旧
+  f.service.continueTask(id,reason==='leg_asked'?'用第二版':'继续')
   await expect.poll(()=>f.calls.length).toBe(3)
+  expect(f.store.plans.get(id)?.state).toBe('approved')
   expect(f.store.plans.get(id)?.legs[1]).toMatchObject({state:'running',runId:baton,autoDispatches:1})
   await f.finish(2);await expect.poll(()=>f.calls.length).toBe(4);await f.finish(3)
   await expect.poll(()=>f.store.plans.get(id)?.state).toBe('done')
@@ -180,7 +182,7 @@ it('queued owner words wait for the current baton to finish its next round',asyn
 })
 
 it.each(['manual','new-round'] as const)('%s takes over and cancels remaining plan',async mode=>{
-  const f=setup(),id=await f.create();await f.finish(0,'请确认。')
+  const f=setup(),id=await f.create();await f.finish(0,'没能完成。')
   await expect.poll(()=>f.store.plans.get(id)?.legs[0]?.state).toBe('stopped')
   if(mode==='manual')expect(await f.service.matterHandoff(id,'openai','换人继续')).toMatchObject({planCancelled:true})
   else f.service.continueTask(id,'另起一轮，重新整理')

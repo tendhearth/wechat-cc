@@ -553,7 +553,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const plan=store.plans.get(task.id)
       if(plan?.state==='approved'&&!acceptance?.ledgerOpening){
         const leg=plan.legs.find(l=>l.runId===store.ledger.agents(task.id).at(-1)?.runId&&l.state==='stopped')
-        if(leg&&isRelayContinue(text))store.plans.resume(task.id,leg.runId!)
+        // 等主人回话的那一棒:主人回什么都是在答它,拆法照旧(第三轮真模型验收 run-58:回了「选简洁版」拆法却作废,第三棒没人做)。
+        if(leg&&(isRelayContinue(text)||leg.stopReason==='leg_asked'))store.plans.resume(task.id,leg.runId!)
         else if((!queuedInputId||!store.liveInputs.get(queuedInputId))&&!isRelayContinue(text)||!plan.legs.some(l=>l.state==='running'))planCancelled=store.plans.cancel(task.id)
       }
       firstTurn=store.execution.accept(task.id,runId,execution)
