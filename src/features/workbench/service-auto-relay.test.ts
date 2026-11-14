@@ -562,3 +562,15 @@ it('handoff failure retains approval after MCP trims the brief',async()=>{
  expect(result.body).toMatchObject({error:'unavailable_provider',approved:true,message:expect.stringContaining('主人已批准')})
  expect(JSON.stringify(result.body)).toContain('没接成')
 })
+
+it('relay legs are asked for a closing status line and the line decides; a single leg is not asked',async()=>{
+  const f=setup(),id=await f.create()
+  expect(f.calls[0]!.text).toContain('「状态:做完」')
+  // 措辞像做完,状态行说没做完 → 停,不派下一棒
+  await f.finish(0,'已按要求处理。\n\n状态:没做完')
+  await expect.poll(()=>f.store.plans.get(id)?.legs[0]?.stopReason).toBe('leg_blocked')
+  expect(f.calls).toHaveLength(1)
+  const single=setup(),request={...single.request(),title:'整理插图',legs:[{executor:'codex',brief:'整理插图'}]}
+  await single.service.matterPlan(request);await expect.poll(()=>single.calls.length).toBe(1)
+  expect(single.calls[0]!.text).not.toContain('状态:做完')
+})

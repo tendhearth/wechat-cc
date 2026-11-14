@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decideRelay, decideResume, HELD_AFTER_COMPLETION, readLegReply, RELAY_PLAN_TTL_MS, type RelayInput } from './relay-decision'
+import { decideRelay, decideResume, HELD_AFTER_COMPLETION, readLegReply, readStatusLine, RELAY_PLAN_TTL_MS, type RelayInput } from './relay-decision'
 
 // 新说法先加进表里再改规则。偏向:拿不准就停。
 const DONE = [
@@ -236,5 +236,32 @@ describe('decideResume(上一棒做完、下一棒没派出去,主人说「继�
       const d = decideRelay(edit(change))
       expect(d.action === 'stop' && HELD_AFTER_COMPLETION.has(d.reason)).toBe(true)
     }
+  })
+})
+
+describe('收尾状态行', () => {
+  it.each([
+    ['全部写好了。\n\n状态:做完', 'done'],
+    ['已如实停止,未编写 summary.md。\n\n**状态:没做完**', 'blocked'],
+    ['读完了,有两种写法。\n\n- 状态:「要问主人」', 'asked'],
+    ['写好了。\n状态：已完成。', 'done'],
+  ] as const)('有状态行就按它: %s', (text, expected) => {
+    expect(readStatusLine(text)).toBe(expected)
+    expect(readLegReply(text)).toBe(expected)
+  })
+  it('状态行说了算:措辞像没做完,但执行者自己说做完了', () => {
+    expect(readLegReply('summary.md 只作为成果保存,无法也不需要写进项目目录。\n\n状态:做完')).toBe('done')
+  })
+  it('措辞像做完,但执行者自己说没做完 → 停', () => {
+    expect(readLegReply('已按要求处理。\n\n状态:没做完')).toBe('blocked')
+  })
+  it.each([
+    '按要求,回复最后要写「状态:做完」。\n\n我先去读文件,读完再说。\n还没开始。\n稍等。\n马上。',
+    '全部写好了,测试通过。',
+    '项目状态良好,全部写好了。',
+  ])('没有合格的状态行 → 退回原来的规则: %s', text => expect(readStatusLine(text)).toBeNull())
+  it('没有状态行时原来的规则照常工作', () => {
+    expect(readLegReply('已如实停止,未编写 summary.md。')).toBe('blocked')
+    expect(readLegReply('全部写好了,测试通过。')).toBe('done')
   })
 })
