@@ -67,6 +67,8 @@ function detectUserCodexOnPath(): { path: string | null; version: string | null 
 }
 
 export interface ProviderDeps {
+  noteMatterApproval?:import('../../adapters/executors/chat-approval').ChatApprovalChannel['noteMatterApproval']
+  resolveMatterPlan?:import('../../adapters/executors/chat-approval').MatterPlanResolver
   log: BootstrapDeps['log']
   stateDir: string
   /** OpenAI 兼容对话的会话历史存这里(B2,api-sessions 的 openai_chat_sessions)。不给 ⇒ 只在内存,不续接。 */
@@ -387,6 +389,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         // 要问就发和 Claude 对话同一张微信拍板卡;主人的放行规则在这里一样生效(chatOwnerRules)。
         approvals: makeCodexChatGate({
           askUser: deps.ilink.askUser,
+          resolveMatterPlan:deps.resolveMatterPlan,
+          noteMatterApproval:deps.noteMatterApproval,
           adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
           ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
           log: deps.log,
@@ -603,6 +607,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         approval: {
           revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
           askUser: deps.ilink.askUser,
+          resolveMatterPlan:deps.resolveMatterPlan,
+          noteMatterApproval:deps.noteMatterApproval,
           adminFor: chatId => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         },
         // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
@@ -686,6 +692,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       const buildGate = makeGeminiToolGate({
           revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
         askUser: deps.ilink.askUser,
+        resolveMatterPlan:deps.resolveMatterPlan,
+          noteMatterApproval:deps.noteMatterApproval,
         adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         modeFor: (chatId) => conversationStore.get(chatId)?.mode.kind ?? 'solo',
         lookupBase: (mode, perm) => lookup(mode as never, 'gemini', perm),

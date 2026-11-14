@@ -164,6 +164,16 @@ const BLOCKED = new RegExp([
   '[1-9]\\d* (tests? )?(failed|failing|failures)\\b|(tests?|build|compilation|install) (still )?(fails|failed|is failing)',
 ].join('|'), 'i')
 
+/**
+ * 「没验证」不等于「没做完」。交办的开场要求每个执行者收尾时分别写「实际完成的验证」和「未完成的验证」
+ * (service/execute.ts),所以几乎每一棒的最后一段都带着「未完成的验证:未运行…」。那是如实交代,
+ * 不是这一棒卡住了;真有失败(「3 个测试没过」「构建失败」)照样会被 BLOCKED 认出来。
+ */
+const UNVERIFIED = /未完成的?(验证|校验|检查|测试)|(未|没有?|尚未|暂未|并未)(实际)?(运行|执行|跑|做|进行|完成)(过)?(任何|其他|其它|额外)?[^,。;:]{0,16}(验证|校验|检查|测试|lint|工具)|(验证|校验|测试|检查)(尚未|还没|没有?|未)(运行|执行|跑|做|进行|完成)|not (yet )?(verified|tested|validated)|unverified|untested|(did not|didn'?t|have not|haven'?t) (run|execute)[^,.;]{0,24}(tests?|checks?|lint\w*|validation|verification)|no (tests?|checks?|validation|verification) (was |were )?(run|performed|executed)|(verification|validation|testing) (was |is )?not (completed|run|done|performed)/gi
+
+/** 交办开场要求的收尾小节:位置、做了的验证、没做的验证。它们是附录,不是结论。 */
+const REPORT_SECTION = /^(改动(或交付)?(的)?文件(的)?位置|交付文件(的)?位置|文件位置|改动位置|实际完成的验证|已完成的验证|完成的验证|未完成的验证|未做的验证|验证情况|files? (changed|touched)|verification( done| performed)?|not verified|unverified)\s*:/i
+
 /** 去掉不是「它在说话」的部分:代码、引用、表格行、强调符号。 */
 function prose(text: string): string {
   return text.normalize('NFKC')
@@ -190,7 +200,7 @@ function asks(zone: string): boolean {
 function reportsBlock(zone: string): boolean {
   for (const s of sentences(zone)) {
     if (RESOLVED.test(s)) continue
-    for (const c of clauses(s)) {
+    for (const c of clauses(s.replace(UNVERIFIED, ' '))) {
       if (HYPOTHETICAL.test(c) || NEGATED_FAILURE.test(c)) continue
       if (BLOCKED.test(c)) return true
     }
@@ -210,14 +220,21 @@ export function readLegReply(text: string): LegReply {
   if (!body) return 'empty'
   const paragraphs = body.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
   const head = paragraphs[0]!.slice(0, HEAD_MAX)
-  // 结尾:从后往前跳过纯列表和纯客气话,落在最后一段正文上。
-  // 被跳过的列表里若有问句(「- 用哪个库?」),仍算在问主人;但不拿列表项当「没做完」的证据。
+  // 结尾:从后往前跳过纯列表、纯客气话和收尾小节,落在最后一段正文上。
+  // 被跳过的列表和小节里若在问主人(「- 用哪个库?」),仍算在问;小节里说的失败也算(列表项不算)。
   let at = paragraphs.length - 1
-  const trailingLists: string[] = []
-  while (at > 0 && (listOnly(paragraphs[at]!) || offerOnly(paragraphs[at]!))) { if (listOnly(paragraphs[at]!)) trailingLists.push(paragraphs[at]!.slice(-TAIL_MAX)); at-- }
+  const skippedAsk: string[] = [], skippedSections: string[] = []
+  while (at > 0) {
+    const p = paragraphs[at]!
+    const section = REPORT_SECTION.test(p)
+    if (!section && !listOnly(p) && !offerOnly(p)) break
+    if (section) skippedSections.push(p.slice(0, TAIL_MAX))
+    if (section || listOnly(p)) skippedAsk.push(p.slice(-TAIL_MAX))
+    at--
+  }
   const tail = paragraphs[at]!.slice(-TAIL_MAX)
   // 问主人只算结尾:开头的反问多半是复述任务。
-  if (asks(tail) || trailingLists.some(asks)) return 'asked'
-  if (reportsBlock(head) || reportsBlock(tail)) return 'blocked'
+  if (asks(tail) || skippedAsk.some(asks)) return 'asked'
+  if (reportsBlock(head) || reportsBlock(tail) || skippedSections.some(reportsBlock)) return 'blocked'
   return 'done'
 }

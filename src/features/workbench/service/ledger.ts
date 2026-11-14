@@ -11,16 +11,53 @@ import {directoryIdentity} from './directory-identity'
 import {seedLedger} from './ledger-completion'
 import {checkedText} from './checked-text'
 import type {EntryDomain} from './entry'
-import type {EntryTarget} from '../../../adapters/workbench/task-entry'
-import type {PlanBrief} from '../../../adapters/store/matter-plans'
-import {randomUUID} from 'node:crypto'
+import {matterApprovals} from './matter-approvals'
+import {MatterPlanRequest} from '../../../../packages/protocol/src/desktop-api'
+import {resolvePlanTarget,planRequestId,type PlanConversation,type PlanCaller,type MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
 
-export interface MatterPlanInput {requestId?:string;target:EntryTarget;title:string;legs:PlanBrief[]}
+export type {MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
 export interface AutoRelayHandoff {from:number|null;to:number;beforeStart:()=>void;ownerResume?:boolean;accepted?:()=>void}
 
 export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecycle:LifecycleDomain;admission:AdmissionDomain;entry:EntryDomain}){
   const {store,state}=ctx,inFlight=new Set<string>()
+  const approvals=matterApprovals()
+  const scopes=new Map<string,string>()
+  const conversation=(caller:PlanCaller)=>{
+    const current=ctx.deps.planConversation?.(caller)??undefined
+    if(current){
+      const key=JSON.stringify([caller.chatId,caller.provider??caller.sessionKey?.split('/')[0]])
+      const previous=scopes.get(key)
+      if(previous&&previous!==current.scope)approvals.drop(previous)
+      scopes.set(key,current.scope)
+    }
+    return current
+  }
+  function prepare(input:MatterPlanInput,context?:PlanConversation){
+    const parsed=MatterPlanRequest.safeParse(input)
+    if(!parsed.success)throw Error('invalid_matter_plan')
+    const normalized=parsed.data
+    const bound=context&&approvals.get(context.scope,'mcp__wechat__matter_plan',normalized)
+    const prior=normalized.requestId&&store.entryRequests.get(ctx.deps.ownerChatId()??'',normalized.requestId.toLowerCase())
+    const target=normalized.target
+    if(prior&&prior.phase==='accepted'&&!normalized.project&&target&&(target.kind==='managed'&&!normalized.isolation&&!normalized.base||target.kind==='project'&&target.projectId)){
+      return {...normalized,target:target.kind==='managed'?target:{...target,projectId:target.projectId!,...(normalized.isolation?{isolation:normalized.isolation}:{}),...(normalized.base?{base:normalized.base}:{})},projectName:'',projectPath:''}
+    }
+    const resolved=bound?.approved&&bound.target?bound.target:resolvePlanTarget(normalized,d.entry.entryOptions({ownerKey:ctx.deps.ownerChatId()??'',surface:'desktop'}).projects,context?.path)
+    return {...normalized,...resolved}
+  }
   return {
+    matterPlanPreview(input:MatterPlanInput,caller:PlanCaller){
+      if(!caller.chatId||caller.chatId!==ctx.deps.ownerChatId())throw Error('matter_ledger_forbidden')
+      const context=conversation(caller)
+      if(!context)throw Error('matter_conversation_unavailable')
+      const existing=approvals.get(context.scope,'mcp__wechat__matter_plan',input)?.target
+      const prepared=existing?{...MatterPlanRequest.parse(input),...existing}:prepare(input,context)
+      for(const leg of prepared.legs)d.admission.requireEntryInput(leg.executor,[],PROVIDER_EXECUTION_CHOICE,leg.brief)
+      approvals.preview(context.scope,input,prepared)
+      return prepared
+    },
+    noteMatterApproval(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);if(context)approvals.approve(context.scope,tool,input)},
+    matterApprovalStatus(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);return !!context&&approvals.get(context.scope,tool,input)?.approved===true},
     matterNotes:(key:string|undefined,requested?:string,q?:MatterNotesQuery)=>store.ledger.page(store.ledger.bound(key,requested),q),
     matterNote(key:string|undefined,text:string){
       const id=store.ledger.bound(key),run=state.runsByTask.get(id)
@@ -31,18 +68,20 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     },
     ledgerOwned:(id:string,owner:string|null)=>!!owner&&store.get(id).ownerChatId===owner,
     ledgerRead:(id:string):{agentRuns?:MatterAgent[];notes?:MatterNote[];notesTotal?:number}=>(store.ledger.enabled(id)?{agentRuns:store.ledger.projectedAgents(id),...store.ledger.recent(id)}:{}),
-    async matterPlan(input:MatterPlanInput){
+    async matterPlan(input:MatterPlanInput,context?:PlanConversation){
       const owner=ctx.deps.ownerChatId()
       if(!owner)throw Error('matter_ledger_forbidden')
-      if(!input||typeof input.title!=='string'||!input.title.trim()||input.title.length>120||!Array.isArray(input.legs)||input.legs.length<2||input.legs.length>6)throw Error('invalid_matter_plan')
-      const legs=input.legs.map(l=>{
-        if(!l||typeof l.executor!=='string'||!l.executor.trim()||l.executor.length>80||typeof l.brief!=='string')throw Error('invalid_matter_plan')
-        return {executor:l.executor,brief:checkedText(l.brief)}
-      })
-      const first=legs[0]!
-      return d.entry.createEntry({requestId:input.requestId??randomUUID(),target:input.target,title:input.title,text:first.brief,providerId:first.executor},{ownerKey:owner,surface:'desktop'},
+      const prepared=prepare(input,context),legs=prepared.legs
+      if(!input.requestId&&!context?.scope)throw Error('matter_conversation_unavailable')
+      const requestId=input.requestId??planRequestId(JSON.stringify([owner,context!.scope]),prepared)
+      // Accepted receipts replay before mutable provider admission; createEntry still checks the complete hash.
+      if(!d.entry.entryReceipt(requestId,{ownerKey:owner,surface:'desktop'}))for(const leg of legs)d.admission.requireEntryInput(leg.executor,[],PROVIDER_EXECUTION_CHOICE,leg.brief)
+      const first=prepared.legs[0]!
+      return d.entry.createEntry({requestId,target:prepared.target,title:prepared.title,text:first.brief,providerId:first.executor},{ownerKey:owner,surface:'desktop'},
         {identity:JSON.stringify(legs),persist:(task,runId)=>{
           if(ctx.deps.ownerChatId()!==owner)throw Error('matter_ledger_forbidden')
+          // A single executor is an ordinary chat delegation, without a relay ledger or plan.
+          if(legs.length===1)return
           store.ledger.start(task.id,runId,first.executor,first.brief)
           store.plans.approve(task.id,legs,runId)
           store.ledger.plan(task.id,legs)

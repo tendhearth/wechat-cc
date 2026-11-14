@@ -82,6 +82,7 @@ const PHONE_PROJECT_ID = /^p-[A-Za-z0-9_-]{1,64}$/
 
 /** 这几条路由要的(以前是 InternalApiDeps 的 workbench + resolveAdminChatId)。 */
 export interface WorkbenchRoutesDeps {
+  planConversation?: (caller:import('../../adapters/workbench/matter-plan-input').PlanCaller)=>import('../../adapters/workbench/matter-plan-input').PlanConversation|null
   workbench: WorkbenchService
   /** 交办入口的主人(entry context 的 ownerKey);没配主人 ⇒ ''。 */
   resolveAdminChatId?: () => string | null

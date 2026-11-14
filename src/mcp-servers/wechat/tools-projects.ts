@@ -6,6 +6,8 @@ import z from 'zod'
 import { ProjectsActivityQuery } from '../../domain/projects-activity'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
+import { InternalApiError } from './client'
+import {matterToolFailure} from '../../../packages/protocol/src/workbench-errors'
 import { passthroughErrorResult } from './tool-helpers'
 import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
 
@@ -116,17 +118,24 @@ export function registerMatterHandoffTool(server:McpServer,client:InternalApiCli
     inputSchema:{matter:z.string().regex(/^[a-f0-9]{8}$/),executor:z.string().min(1),brief:z.string().trim().min(1).max(20_000)},
   },async args=>{
     try{return {content:[{type:'text',text:JSON.stringify(await client.request('POST','/v1/matter/relay',args))}]}}
-    catch(err){return passthroughErrorResult(err,'matter_handoff')}
+    catch(err){return relayFailure(err,'handoff')}
   })
 }
 
 export function registerMatterPlanTool(server:McpServer,client:InternalApiClient):void {
   server.registerTool('matter_plan',{
-    title:'安排多棒接力',
-    description:'【主人当前对话】只有主人一句话里明确要多个执行者先后做时才用；只有一个执行者用原来的交办。沿用交办的 target 项目/工作区形状，传标题和 2–6 个按顺序排列的 {executor,brief}。先用一张卡给主人确认每一棒是谁、做什么、顺序；批准后第一棒开工，后面按记录本自动接力，失败或提问就停。新执行者只收到记录本，不收到上一棒的原始对话。',
-    inputSchema:{...MatterPlanRequest.shape,requestId:z.string().uuid().describe('这次拆法的 UUID；同一次调用重试必须复用。')},
+    title:'交办一件事',
+    description:'【主人当前对话】主人在对话里把一件事交给执行者去做时用。一位执行者就填一棒，多位先后做就按顺序填几棒。主人只是在问问题、让 CC 自己答，或者是一次性的咨询 delegate 时，不用这个工具。project 只填项目名、项目编号或已登记路径（例如 project: relay-lab）；不填则用当前对话所在的已登记项目。不要编 projectId，不要填 requestId。传标题和 1–6 个按顺序排列的 {executor,brief}。isolation: worktree 可选，默认当前项目目录；base 可选，默认项目分支。target 保留兼容旧调用。先用同一张卡给主人确认谁、做什么、顺序；批准后一棒按普通交办开工和回报，不建拆法；多棒则第一棒开工，后面按记录本自动接力，失败或提问就停。接力时新执行者只收到记录本，不收到上一棒的原始对话。',
+    inputSchema:{...MatterPlanRequest.omit({requestId:true,legs:true}).shape,legs:z.array(MatterPlanRequest.shape.legs.element)},
   },async args=>{
     try{return {content:[{type:'text',text:JSON.stringify(await client.request('POST','/v1/matter/plan',args))}]}}
-    catch(error){return passthroughErrorResult(error,'matter_plan')}
+    catch(error){return relayFailure(error,'plan')}
   })
+}
+
+
+function relayFailure(error:unknown,operation:'plan'|'handoff') {
+  const body=error instanceof InternalApiError&&error.body&&typeof error.body==='object'?error.body as {error?:unknown;message?:unknown;approved?:unknown}:null
+  const failure=body&&typeof body.error==='string'&&typeof body.message==='string'?body:matterToolFailure(body&&typeof body.error==='string'?body.error:operation==='plan'?'matter_plan_failed':'matter_handoff_failed',null,operation)
+  return {content:[{type:'text' as const,text:JSON.stringify(failure)}]}
 }

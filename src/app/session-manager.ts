@@ -168,6 +168,12 @@ export class SessionManager {
   // promise instead of forking a duplicate subprocess. Without this, the
   // companion tick + an inbound message racing on the same chat would both
   // miss the cache and both spawn — first one ends up orphaned.
+  private readonly activeTurns=new Map<string,{scope:string;path:string;sessionKey:string;chatId:string;provider:string}>()
+  /** Authenticated session key wins; provider/chat lookup must identify exactly one live dispatch. */
+  activeConversation(caller:{sessionKey?:string;chatId?:string;provider?:string}):{scope:string;path:string}|null {
+    const found=[...this.activeTurns.values()].filter(t=>caller.sessionKey?t.sessionKey===caller.sessionKey&&(!caller.chatId||t.chatId===caller.chatId):!!caller.chatId&&!!caller.provider&&t.chatId===caller.chatId&&t.provider===caller.provider)
+    return found.length===1?{scope:found[0]!.scope,path:found[0]!.path}:null
+  }
   private readonly pendingPaths=new Map<string,string>()
   private readonly closingPaths=new Map<string,string>()
   hasProjectConflict(path:string):boolean {
@@ -290,6 +296,7 @@ export class SessionManager {
 
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
+    const activeTurns=this.activeTurns
     const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req),networkGate=this.opts.networkGate
     const rotation = this.opts.contextRotation
     const contextKey = { alias: req.alias, providerId: req.providerId, chatId: req.chatId }
@@ -321,6 +328,8 @@ export class SessionManager {
             // 先过网络闸门再碰 provider:session.dispatch 本身可能就立刻发请求。按这条会话实际的目标判。
             await assertCallAllowed(networkGate, effectiveTarget())
             inFlight.set(k, (inFlight.get(k) ?? 0) + 1)
+            const scope=globalThis.crypto.randomUUID()
+            activeTurns.set(scope,{scope,path:req.path,sessionKey:tokenKey,chatId:req.chatId,provider:req.providerId})
             const inputBytes = contextBytes(text)
             historyBytes += inputBytes
             rotation?.started(contextKey)
@@ -339,6 +348,7 @@ export class SessionManager {
                 const tokens = observed?.tokens
                 rotation?.observe(contextKey, { bytes: historyBytes, ...(observed?.requestBytes!==undefined?{requestBytes:observed.requestBytes}:{}), ...(observed?.requestFailure!==undefined?{requestFailure:observed.requestFailure}:{}), ...(observed&&observed.tokens===undefined&&observed.historyBytes===undefined?{unknown:true}:{}), ...(tokens !== undefined ? { tokens } : {}), ...(observed?.firstInputTokens !== undefined ? {firstInputTokens:observed.firstInputTokens} : {}), ...(observed?.model ? {model:observed.model} : {}), turns: 1 })
               } catch { /* Observation must never break reply delivery. */ }
+              activeTurns.delete(scope)
               const n = inFlight.get(k) ?? 1
               if (n <= 1) inFlight.delete(k)
               else inFlight.set(k, n - 1)

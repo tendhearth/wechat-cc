@@ -51,6 +51,7 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
           turnCompleted: (taskId) => { const h = setTimeout(() => { void matterTopics.writeBack(taskId) }, 1_000); (h as { unref?: () => void }).unref?.() },
         },
         providerRefusal: (providerId) => f.providerRefusals.get(providerId),
+        planConversation: caller => boot.sessionManager.activeConversation(caller),
         executionConflict: (path, providerId, nativeId) => boot.sessionManager.hasProjectConflict(path) ||
           (!!nativeId && Object.values(boot.sessionStore.all()).some(s => s.provider === providerId && s.session_id === nativeId)) ||
           cli.legacyClaims.conflicts({ owner: 'workbench', path, providerId, nativeId }) ||

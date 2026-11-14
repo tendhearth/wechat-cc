@@ -313,7 +313,8 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
       }
     }
 
-    const reqSchema = REQUEST_SCHEMAS[routeKey]
+    // Relay routes validate with their authenticated approval context to explain failures truthfully.
+    const reqSchema = routeKey==='POST /v1/matter/plan'||routeKey==='POST /v1/matter/relay'?undefined:REQUEST_SCHEMAS[routeKey]
     if (reqSchema) {
       const input = method === 'POST'
         ? body

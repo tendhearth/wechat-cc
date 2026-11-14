@@ -19,6 +19,7 @@ export interface WorkbenchErrorSpec {
   readonly phone?: WorkbenchErrorOut
   readonly entry?: true
   readonly rewind?: true
+  readonly matter?: string
   readonly wechat?: string
   readonly wechatWorktree?: string
 }
@@ -30,6 +31,12 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   checkup_invalid_request: { desktop:400, phone:400 },
   checkup_target_changed: { desktop:409, phone:[409,'stale'] },
   checkup_run_unknown: { desktop:404, phone:[404,'not_found'] },
+  matter_project_ambiguous: {desktop: 409, matter: '这个项目名有重名，无法唯一确定；请改用列表中的精确项目编号或路径。'},
+  invalid_request: {desktop: 400, matter: '事项编号或交接参数不正确；请确认事项编号、执行者和具体要求后重试。'},
+  invalid_matter_plan: {desktop: 409, matter: '交办参数不正确；请提供标题和按顺序排列的 1–6 棒，每棒都要有已登记的执行者和具体要求。'},
+  matter_conversation_unavailable: {desktop: 409, matter: '无法唯一确定当前主人对话的轮次；请回到原对话重试。'},
+  matter_plan_failed: {desktop: 409, matter: '创建事项时遇到错误；请检查工作区和执行者状态后重试，不要告诉主人还在等批准。'},
+  matter_handoff_failed: {desktop: 409, matter: '没有接上下一棒；请检查事项编号、工作区和执行者状态后重试。'},
   // ── 交办入口:与 apps/desktop/src/shared/task-entry-contract.js 的 rejections 同码同状态(那份是桌面 / 网页判「确实被拒」用的,桌面 JS 引不到这里 ⇒ scripts/workbench-errors.guard.test.ts 核对)
   api_task_attachment_invalid: {desktop: 400, phone: 400, entry: true},
   api_task_attachment_unsupported: {desktop: 422, phone: 422, entry: true},
@@ -40,15 +47,15 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   invalid_context: {desktop: 400, phone: 400, entry: true},
   invalid_entry: {desktop: 400, phone: 400, entry: true},
   invalid_execution: {desktop: 400, phone: 400, entry: true},
-  invalid_path: {desktop: 400, phone: 400, entry: true},
-  invalid_provider: {desktop: 400, phone: 400, entry: true},
-  invalid_request_id: {desktop: 400, phone: 400, entry: true},
-  invalid_target: {desktop: 400, phone: 400, entry: true},
+  invalid_path: {matter: '项目文件夹已经移动、删除或身份发生变化；请让主人检查目录后重新选择项目或工作区。', desktop: 400, phone: 400, entry: true},
+  invalid_provider: {matter: '执行者编号不正确；请改用已登记且支持「一起做」的执行者。', desktop: 400, phone: 400, entry: true},
+  invalid_request_id: {matter: '请求编号不是入口支持的 UUID；外部调用请使用有效的 UUID 1–5，模型调用不需要填写 requestId。', desktop: 400, phone: 400, entry: true},
+  invalid_target: {matter: '项目目标写法不完整或不支持；请只填 project（项目名、项目编号或已登记路径），不要编造编号或 local 目标。隔离工作区用 isolation: worktree，base 仅与隔离一起使用。', desktop: 400, phone: 400, entry: true},
   invalid_text: {desktop: 400, phone: 400, entry: true},
   invalid_title: {desktop: 400, phone: 400, entry: true},
   invalid_until: {desktop: 400, phone: 400, entry: true},
-  project_stale: {desktop: 409, phone: 409, entry: true, wechat: '这个项目编号已失效或目录已变化，没有开始工作。请发送「任务 项目」重新选择。'},
-  unattended_ack_required: {desktop: 428, desktopEntry: 422, phone: 422, entry: true, wechat: 'agy 是免审执行者：跑任务时看不到、拦不下单步操作，没有权限卡和提问，只能停止；它用的工具凭据不是按任务隔离的；时间线只有文字；不能带附件、不能选模型。请先在桌面工作台确认一次，之后微信也能直接用。没有开始工作。'},
+  project_stale: {matter: '找不到已登记的项目，或当前对话不在已登记项目里；请用项目名、精确项目编号或已登记路径重新选择。', desktop: 409, phone: 409, entry: true, wechat: '这个项目编号已失效或目录已变化，没有开始工作。请发送「任务 项目」重新选择。'},
+  unattended_ack_required: {matter: '执行者需要主人先在电脑上确认免审执行；请完成确认或换一位执行者。', desktop: 428, desktopEntry: 422, phone: 422, entry: true, wechat: 'agy 是免审执行者：跑任务时看不到、拦不下单步操作，没有权限卡和提问，只能停止；它用的工具凭据不是按任务隔离的；时间线只有文字；不能带附件、不能选模型。请先在桌面工作台确认一次，之后微信也能直接用。没有开始工作。'},
   until_requires_worktree: {desktop: 422, phone: 422, entry: true},
   until_unattended_unsupported: {desktop: 422, phone: 422, entry: true},
   workbench_attachments_unsupported: {desktop: 422, phone: 422, entry: true, wechat: '这个执行者暂不支持工作任务附件，没有开始工作。请移除附件，或改用支持附件的执行者。'},
@@ -60,7 +67,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   rewind_failed: {desktop: 502, phone: 502, rewind: true},
   rewind_ignored_conflict: {desktop: 409, phone: 409, rewind: true},
   rewind_merged: {desktop: 409, phone: 409, rewind: true},
-  rewind_needs_owner: {desktop: 409, phone: 409, rewind: true},
+  rewind_needs_owner: {matter: '这件事的回退需要主人处理；请先完成回退确认，再接下一棒。', desktop: 409, phone: 409, rewind: true},
   rewind_noop: {desktop: 422, phone: 422, rewind: true},
   rewind_not_blocked: {desktop: 409, rewind: true},
   rewind_not_latest: {desktop: 409, phone: 409},
@@ -93,7 +100,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   worktree_not_ff: {desktop: 409, phone: 409, wechatWorktree: '项目在这之后又有了新提交，不能直接快进。请在电脑上自己合并（可能要处理冲突）。'},
   worktree_not_git: {desktop: 422, phone: 422, wechat: '这个项目不是 Git 仓库，开不了独立工作区。去掉「独立」就能照常交办。'},
   worktree_open: {desktop: 409, phone: 409, wechatWorktree: '独立工作区还开着，不用重开。'},
-  worktree_removed: {desktop: 409, phone: 409, wechat: '这件事的独立工作区已经删除了（分支还在项目里）。要接着做，先发「任务 {id} 重开工作区」。', wechatWorktree: '这件事的独立工作区已经删除了，分支还在项目里。要接着做：任务 {id} 重开工作区'},
+  worktree_removed: {matter: '这件事的独立工作区已经删除；请先重开工作区，再接下一棒。', desktop: 409, phone: 409, wechat: '这件事的独立工作区已经删除了（分支还在项目里）。要接着做，先发「任务 {id} 重开工作区」。', wechatWorktree: '这件事的独立工作区已经删除了，分支还在项目里。要接着做：任务 {id} 重开工作区'},
   worktree_uncommitted: {desktop: 409, phone: 409, wechatWorktree: '独立工作区里还有没提交的改动，先发「任务 {id} 提交」再合回。'},
   // ── 工作区脚本(2026-10-20):批准只在电脑上 ⇒ 手机拿到 script_needs_computer
   no_scripts: {desktop: 422, phone: 422},
@@ -120,7 +127,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   upload_offset: {phone: 409},
   upload_unfinished_limit: {phone: 413},
   // ── 续接 / 交接 / 原生会话 / 额度接手
-  external_close_confirmation_required: {desktop: 409, phone: 409, wechat: '请先在桌面工作台确认原执行程序已关闭，再继续这项任务。'},
+  external_close_confirmation_required: {matter: '原执行程序尚未确认关闭；请让主人先在桌面工作台确认它已关闭，再接下一棒。', desktop: 409, phone: 409, wechat: '请先在桌面工作台确认原执行程序已关闭，再继续这项任务。'},
   external_close_confirmation_stale: {desktop: 409, phone: 409},
   handoff_artifact_unsupported: {desktop: 422},
   handoff_changed: {desktop: 409},
@@ -131,10 +138,10 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   native_history_unsupported: {desktop: 422},
   native_import_too_large: {desktop: 400},
   native_session_already_managed: {desktop: 409},
-  native_session_busy: {desktop: 409, phone: 409},
+  native_session_busy: {matter: '这个项目文件夹里有尚未关闭的会话（可能就是你和主人的当前对话）；请换一个独立工作区，或让主人先结束那边的会话。', desktop: 409, phone: 409},
   native_session_identity_mismatch: {desktop: 409},
   // 桌面以前回 500 internal,「另做一份」那句额度人话出不来(#465 盘点时发现)
-  provider_quota_exhausted: {desktop: 503, phone: 503},
+  provider_quota_exhausted: {matter: '执行者额度已用完；请等额度恢复或换一位执行者。', desktop: 503, phone: 503},
   quota_handoff_changed: {desktop: 409, phone: 409},
   quota_handoff_not_needed: {desktop: 409, phone: 409},
   quota_handoff_unavailable: {desktop: 503, phone: 503},
@@ -142,7 +149,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   restart_confirmation_stale: {desktop: 409, phone: 409, wechat: '原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'},
   workbench_resume_unsupported: {desktop: 422, wechat: '这个执行者无法安全恢复原会话，没有继续工作。请在桌面查看恢复说明，并决定是否带记录重新开始。'},
   // ── 执行者 / 模型 / 托管工作区 / 没接上
-  creation_conflict: {desktop: 409, phone: 409, wechat: '这条消息的内容与已记录的新建要求不一致，未再次创建。请发送一条新消息。'},
+  creation_conflict: {matter: '这个请求编号已经对应另一份内容；没有再建一件事，请保留原要求重试，或作为新要求重新交办。', desktop: 409, phone: 409, wechat: '这条消息的内容与已记录的新建要求不一致，未再次创建。请发送一条新消息。'},
   entry_not_wired: {desktop: 503, phone: 503},
   input_storage_unavailable: {desktop: 503, phone: [503, 'unavailable']},
   invalid_entry_owner: {desktop: 403, phone: 403},
@@ -153,7 +160,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   model_catalog_unavailable: {desktop: 503},
   network_unprotected: {desktop: 503, phone: 503},
   unattended_ack_unavailable: {desktop: 503},
-  unavailable_provider: {desktop: 422, phone: 503, wechat: '暂时没有可用的工作执行者，没有开始工作。请在桌面连接或管理一个支持工作任务的执行者。'},
+  unavailable_provider: {matter: '有执行者尚未登记或不能进入「一起做」；请从已登记且支持工作任务的执行者中重新选择。', desktop: 422, phone: 503, wechat: '暂时没有可用的工作执行者，没有开始工作。请在桌面连接或管理一个支持工作任务的执行者。'},
   workbench_stopping: {desktop: 503, phone: 503},
   // 工作台没接上(开机途中 / 上游没起来 / 测试里不挂):桌面带原码(桌面 JS 与 daemon 同一个包;架构终态 A5 起由模块门统一回 503
   // workbench_not_wired,见 routes.ts 的 MODULE_UNAVAILABLE_CODE —— 以前是桌面路由里 44 处字面量),
@@ -196,20 +203,20 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   invalid_answer: {desktop: 400, wechat: '答案格式或选项不正确，尚未提交。请按问题中的示例回答。'},
   invalid_question: {desktop: 400},
   invalid_state: {desktop: 409},
-  matter_ledger_forbidden: {desktop:403,phone:403},
+  matter_ledger_forbidden: {matter: '无法确认这是主人的当前对话或主人名下的事项；请回到主人原对话并使用正确的事项编号。', desktop:403,phone:403},
   matter_session_ended: {desktop:409,phone:409},
   matter_note_limit: {desktop:409,phone:409},
-  matter_not_found: {desktop: 404, phone: 404},
+  matter_not_found: {matter: '找不到这件事；请查询主人名下的事项并使用正确编号。', desktop: 404, phone: 404},
   matter_say_unsupported: {phone: 400},
   matter_task_required: {desktop: 400, phone: 400},
-  not_found: {desktop: 404, phone: [404, 'matter_not_found']},
+  not_found: {matter: '找不到这件事；请查询主人名下的事项并使用正确编号。', desktop: 404, phone: [404, 'matter_not_found']},
   permission_stale: {desktop: 409, phone: 409, wechat: '这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'},
   question_stale: {desktop: 409, phone: 409, wechat: '这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'},
   reply_sink_busy: {phone: 409},
-  workbench_archived: {desktop: 409, phone: 409, wechat: '这项任务已归档。请在桌面工作台恢复任务后再继续。', wechatWorktree: '这项任务已归档，请先在桌面恢复任务。'},
-  workbench_busy: {desktop: 409, phone: 409, wechat: '任务轮次已变化或正在停止，这条补充没有发送。请重新查询任务后再提交。', wechatWorktree: '这个工作区还有会话开着，先「停止」或等它收工再操作。'},
+  workbench_archived: {matter: '这件事已经归档；请让主人先在桌面恢复，再接下一棒。', desktop: 409, phone: 409, wechat: '这项任务已归档。请在桌面工作台恢复任务后再继续。', wechatWorktree: '这项任务已归档，请先在桌面恢复任务。'},
+  workbench_busy: {matter: '这件事的上一棒、待处理输入或写入方还未停稳；请等它结束后再接棒。', desktop: 409, phone: 409, wechat: '任务轮次已变化或正在停止，这条补充没有发送。请重新查询任务后再提交。', wechatWorktree: '这个工作区还有会话开着，先「停止」或等它收工再操作。'},
   writer_alive: {desktop: 409},
-  writer_not_closed: {desktop: 409, phone: [409, 'workbench_busy'], wechat: '原执行程序没确认退出，补充要求没有发送。请先在任务页确认它已经结束。'},
+  writer_not_closed: {matter: '原写入程序还没确认退出；请让主人先确认它已经结束，再接下一棒。', desktop: 409, phone: [409, 'workbench_busy'], wechat: '原执行程序没确认退出，补充要求没有发送。请先在任务页确认它已经结束。'},
   // ── CC 代主人对终端会话说一句(terminal_say,2026-10-24;features/terminal/routes.ts 的 /v1/cli/say,调用方只有 CC 的 MCP 工具)。
   // 业务上的拒绝回 409 + detail(登记处里的原状态,工具照实转给模型,不说成「它忙」);一句都没送出去。
   terminal_say_not_owner: {desktop: 403},
@@ -258,4 +265,13 @@ export function workbenchErrorHttp(code: string, surface: WorkbenchErrorSurface,
   const out = surface === 'desktop' ? (entry && spec?.desktopEntry !== undefined ? spec.desktopEntry : spec?.desktop) : spec?.phone
   if (out === undefined) return fallback(code, surface)
   return typeof out === 'number' ? {status: out, error: code} : {status: out[0], error: out[1]}
+}
+
+
+/** Relay tool failures retain machine codes and state explicitly whether approval has happened. */
+export function matterToolFailure(code:string,approved:boolean|null,operation:'plan'|'handoff'='plan',projects?:readonly {name:string;path:string;id:string}[]) {
+  const known=workbenchErrorSpec(code),error=known?code:operation==='plan'?'matter_plan_failed':'matter_handoff_failed'
+  const reason=workbenchErrorSpec(error)?.matter??'操作失败，请检查事项、工作区和执行者后重试。'
+  const choices=projects===undefined?'':projects.length?' 可选项目：'+projects.map(p=>`${p.name}（${p.id}，${p.path}）`).join('；')+'。':' 目前没有可选项目，请让主人先登记项目。'
+  return {error,approved,message:`${approved===null?'批准状态未确认，':approved?'主人已批准，但':'本次调用未获得主人批准，'}${operation==='plan'?'没建成':'没接成'}：${reason}${choices}`}
 }

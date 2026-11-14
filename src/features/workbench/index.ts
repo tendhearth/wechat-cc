@@ -68,7 +68,7 @@ export function workbenchFeature(o: {
       // 手机令牌读原生会话(P3c-4,以前在 wire-settings-panel.ts):单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
       const phoneSessions = phoneSessionsOf(service)
       internalApi.mount('workbench', workbenchRoutes({
-        workbench: service, resolveAdminChatId: o.resolveAdminChatId, ...(o.desktop ? { desktop: o.desktop } : {}),
+        workbench: service, resolveAdminChatId: o.resolveAdminChatId, planConversation:deps.planConversation, ...(o.desktop ? { desktop: o.desktop } : {}),
         // 执行者叫什么(收敛清单 ⑥):唯一出处 registry
         phoneSessions: { sessions: phoneSessions, executorName: (id: string) => deps.boot.registry.namesOf(id).name },
       }))
