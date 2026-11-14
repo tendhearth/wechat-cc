@@ -1,6 +1,8 @@
 import {test,expect} from '@playwright/test'
 import {readFile} from 'node:fs/promises'
 import {execFileSync} from 'node:child_process'
+import {join} from 'node:path'
+import {mkdir} from 'node:fs/promises'
 import {fileURLToPath} from 'node:url'
 
 // Actual desktop renderer/controller/styles against isolated synthetic responses.
@@ -19,7 +21,7 @@ const invokeWorkbenchApi=async(method,path,body)=>{
  if(path.startsWith('/v1/matter/changes?')){const reviews=reviewsByTask[new URL(path,location.origin).searchParams.get('id')]??[];return delayReviews?new Promise(resolve=>releaseReviews=()=>resolve({reviews})):{reviews}}
  if(path.startsWith('/v1/matter/artifact?'))return{name:'访谈记录.md',mime:'text/plain',size:25,sha256:'a'.repeat(64),contentBase64:btoa('saved result')}
  if(path.startsWith('/v1/matters?'))return{matters:[]}
- return{tasks:[task,other],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}
+ return{tasks:[task,other],providers:[{id:'codex',displayName:'Codex'},{id:'claude',displayName:'Claude'}],defaultProvider:'codex',canWechat:false}
 }
 const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60000})
 window.qa={controller,details,posts,reviewsByTask,holdReviews:()=>delayReviews=true,releaseReviews:()=>releaseReviews?.(),stop:stopWorkbenchPolling,reject:()=>rejectPost?.(Error('synthetic request rejected')),paint:()=>controller.paint(true),answer:()=>{details.A.task.phase='replied';controller.paint(true)},waiting:()=>{details.A.permissions=[{id:'p',taskId:'A',tool:'Bash',description:'bun run verify\\ncwd: /synthetic/project\\n仅允许本次请求',createdAt:1},{id:'foreign',taskId:'B',tool:'Bash',description:'foreign action',createdAt:1}];details.A.questions=[{id:'q',taskId:'A',createdAt:1,questions:[{id:'choice',header:'选择',question:'保留哪一份访谈？',options:[]}]}];controller.paint(true)},recover:()=>{details.A.permissions=[];details.A.questions=[];details.A.task.status='interrupted';details.A.task.phase='interrupted';details.A.continuation={mode:'restart_required',restart:{token:'restart-token',context:'用户原要求与已保存的访谈。',eventCount:20,includedEventCount:10,truncated:true}};controller.paint(true)}}
@@ -237,6 +239,29 @@ test('two executor batons and their notebook render in the existing detail',asyn
  await expect(page.locator('.wb-ledger')).toContainText('这一轮做完了')
  await expect(page.locator('.wb-ledger')).toContainText('在做')
  await expect(page.locator('#wb-ledger-notes')).toContainText('assets/login-dark.webp')
+ await expect(page.locator('#wb-ledger-notes')).toHaveAttribute('open','')
+ await page.locator('.wb-ledger').scrollIntoViewIfNeeded()
  await page.screenshot({path:testInfo.outputPath('two-batons-notebook.png')})
+ if(process.env.WECHAT_CC_DESIGN_SHOTS){await mkdir(process.env.WECHAT_CC_DESIGN_SHOTS,{recursive:true});await page.screenshot({path:join(process.env.WECHAT_CC_DESIGN_SHOTS,'desktop-two-batons-notebook.png')})}
+ await page.evaluate(()=>(window as any).qa.stop())
+})
+
+
+test('ordinary single-executor detail has no added executor or notebook sections',async({page},testInfo)=>{
+ await page.setViewportSize({width:900,height:700})
+ const ordinary=`details.A.agentRuns=[{matterId:'A',runId:'only',executor:'codex',brief:'整理访谈',position:1,status:'running'}];details.A.notes=[{id:1,matterId:'A',author:'codex',text:'单棒记录也不增加详情栏'}];`
+ await page.route('http://127.0.0.1:4211/**',async route=>{
+  const path=new URL(route.request().url()).pathname
+  if(path==='/'){await route.fulfill({contentType:'text/html',body:fixture.replace('const controller=initWorkbenchPage',ordinary+'\nconst controller=initWorkbenchPage')});return}
+  try{await route.fulfill({body:await readFile(source+path),contentType:/\.m?js$/.test(path)?'text/javascript':path.endsWith('.css')?'text/css':'application/octet-stream'})}catch{await route.fulfill({status:404,body:'missing fixture asset'})}
+ })
+ await page.goto('http://127.0.0.1:4211')
+ await expect(page.locator('#wb-followup-text')).toBeVisible()
+ await expect(page.locator('.wb-ledger')).toHaveCount(0)
+ await expect(page.locator('#wb-ledger-notes')).toHaveCount(0)
+ await expect(page.locator('.wb-content')).not.toContainText('执行者')
+ await expect(page.locator('.wb-message')).toHaveCount(18)
+ await page.screenshot({path:testInfo.outputPath('ordinary-task.png')})
+ if(process.env.WECHAT_CC_DESIGN_SHOTS){await mkdir(process.env.WECHAT_CC_DESIGN_SHOTS,{recursive:true});await page.screenshot({path:join(process.env.WECHAT_CC_DESIGN_SHOTS,`desktop-ordinary-task-${process.env.CC_UI_CAPTURE_PHASE??'after'}.png`)})}
  await page.evaluate(()=>(window as any).qa.stop())
 })
