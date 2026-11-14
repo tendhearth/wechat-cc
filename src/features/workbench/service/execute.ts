@@ -1,4 +1,4 @@
-import type {RelayTurnHook} from './relay-events'
+import type {RelayTurnHook,RelayResume} from './relay-events'
 import {isRelayContinue} from '../../../adapters/store/matter-plans'
 import {ledgerBrief} from '../../../adapters/store/matter-ledger'
 import {finishLedger} from './ledger-completion'
@@ -106,6 +106,7 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
 
 export interface ExecuteDomains {
   relay?:RelayTurnHook
+  resumeRelay?:RelayResume
   admission: AdmissionDomain
   attachments: AttachmentsDomain
   quota: QuotaDomain
@@ -742,6 +743,17 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         return taskView(publicTask(store.get(id)))
       }
     }
+    const request=checkedText(text,attachments)
+    if(isRelayContinue(request)&&domains.resumeRelay?.(id,()=>{
+      // This entry resumes the approved brief; it cannot silently consume new materials.
+      if(attachments.length)throw Error('invalid_request')
+      if(inputRequestId)store.atomic(()=>{
+        const runId=store.execution.last(id)?.runId
+        if(!runId)throw Error('input_stale')
+        store.liveInputs.add({id:inputRequestId,taskId:id,runId,text:request,attachments})
+        store.liveInputs.set(inputRequestId,'delivered');store.bump(id)
+      })
+    }))return taskView(publicTask(store.get(id)))
     if (runsByTask.has(id)) throw new Error('workbench_busy')
     const task=store.get(id)
     const execution=normalizeExecutionChoice(options?.execution,store.execution.choice(id))
@@ -752,7 +764,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     if(store.worktrees.get(id)?.removedAt!=null)throw new Error('worktree_removed')
     provider(task.providerId)
     if (canonicalProject(task.path)!==task.path) throw new Error('invalid_path')
-    const request=checkedText(text,attachments),acceptedDirectoryIdentity=directoryIdentity(task.path)
+    const acceptedDirectoryIdentity=directoryIdentity(task.path)
     const restartToken=options?.restartToken
     if (restartToken!==undefined && (typeof restartToken!=='string' || !/^[a-f0-9]{64}$/.test(restartToken))) throw new Error('invalid_request')
     const decision=continuation(task,execution)

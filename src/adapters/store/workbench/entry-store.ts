@@ -41,6 +41,7 @@ export function createEntryStore(db:Db) {
   }
   return {
     get,
+    forMatter:(id:string)=>decode(db.query<Row,[string]>(SELECT+" WHERE matter_id=? AND phase='accepted'").get(id)),
     reserve(input:EntryReservation):EntryRecord {
       return db.transaction(()=>{
         const prior=get(input.ownerKey,input.requestId)

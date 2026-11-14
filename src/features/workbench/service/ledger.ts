@@ -16,7 +16,7 @@ import type {PlanBrief} from '../../../adapters/store/matter-plans'
 import {randomUUID} from 'node:crypto'
 
 export interface MatterPlanInput {requestId?:string;target:EntryTarget;title:string;legs:PlanBrief[]}
-export interface AutoRelayHandoff {from:number;to:number;beforeStart:()=>void}
+export interface AutoRelayHandoff {from:number|null;to:number;beforeStart:()=>void;ownerResume?:boolean;accepted?:()=>void}
 
 export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecycle:LifecycleDomain;admission:AdmissionDomain;entry:EntryDomain}){
   const {store,state}=ctx,inFlight=new Set<string>()
@@ -87,8 +87,10 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
           if(!store.ledger.enabled(id))seedLedger(ctx,task,prior)
           store.switchExecutor(id,executor)
           if(!automatic)planCancelled=store.plans.cancel(id)
-          return d.execute.start(store.get(id),text,identity,{mode:'new'},undefined,undefined,undefined,undefined,[],undefined,PROVIDER_EXECUTION_CHOICE,{ledgerOpening:true,persist:runId=>{if(automatic)store.plans.advance(id,automatic.from,automatic.to,runId)},activate:fn=>{activate=fn}})
+          return d.execute.start(store.get(id),text,identity,{mode:'new'},undefined,undefined,undefined,undefined,[],undefined,PROVIDER_EXECUTION_CHOICE,{ledgerOpening:true,persist:runId=>{if(automatic)store.plans.advance(id,automatic.from,automatic.to,runId,automatic.ownerResume)},activate:fn=>{activate=fn}})
         })
+        // Once accepted, even a queued run must never be recorded as an unstarted pending leg.
+        automatic?.accepted?.()
         activate?.()
         return {...view,...publicTask(store.get(id)),...(planCancelled?{planCancelled:true,notice:'拆法已作废'}:{})}
       }finally{inFlight.delete(id)}

@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,renameSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
@@ -112,6 +112,7 @@ it.each(['question','permission'] as const)('retained %s stops before closing it
   await f.finish(0)
   await expect.poll(()=>f.store.plans.get(id)?.legs[0]?.stopReason).toBe('leg_asked')
   expect(f.calls).toHaveLength(1);expect(f.notices).toHaveLength(1)
+  expect(f.notices[0]).not.toContain('继续')
 })
 
 it.each([['failed','没能完成。',true,'leg_failed'],['asked','请确认用哪一版。',false,'leg_asked']] as const)('second leg %s stops, continuing resumes that same baton then completes third',async(_label,text,error,reason)=>{
@@ -120,7 +121,9 @@ it.each([['failed','没能完成。',true,'leg_failed'],['asked','请确认用�
   await f.finish(1,text,error)
   await expect.poll(()=>f.store.plans.get(id)?.legs[1]?.state).toBe('stopped')
   expect(f.store.plans.get(id)?.legs[1]?.stopReason).toBe(reason);expect(f.calls).toHaveLength(2)
-  expect(f.notices.at(-1)).toContain('第 2 棒');expect(f.notices.at(-1)).toContain('继续')
+  expect(f.notices.at(-1)).toContain('第 2 棒')
+  if(reason==='leg_asked')expect(f.notices.at(-1)).toBe('第 2 棒（Claude）在等你回话，你回了它接着做。')
+  else expect(f.notices.at(-1)).toContain('说「继续」让它接着做')
   f.service.continueTask(id,'继续')
   await expect.poll(()=>f.calls.length).toBe(3)
   expect(f.store.plans.get(id)?.legs[1]).toMatchObject({state:'running',runId:baton,autoDispatches:1})
@@ -194,13 +197,15 @@ it('owner stopping a quiet retained leg waiting on queued input must not dispatc
 
 it.each(['quota','refused','ack'] as const)('real next executor %s admission prevents automatic dispatch',async mode=>{
   const f=setup(),id=await f.create();f.blockNext(mode);await f.finish(0)
-  await expect.poll(()=>f.store.plans.get(id)?.legs[0]?.stopReason).toBe('next_unavailable')
+  await expect.poll(()=>f.store.plans.get(id)?.legs[1]?.stopReason).toBe('next_unavailable')
+  expect(f.store.plans.get(id)?.legs).toMatchObject([{state:'completed',stopReason:null},{state:'pending',runId:null,autoDispatches:0},{state:'pending',stopReason:null}])
+  expect(f.notices.at(-1)).toBe(`第 1 棒（Codex）做完了，第 2 棒（Claude）没派出去：${{quota:'额度用完了',refused:'执行者的服务拒绝了请求',ack:'需要先确认免审执行'}[mode]}。好了之后说「继续」。`)
   expect(f.calls).toHaveLength(1)
 })
 
 it('missing executor refusal signal stops conservatively instead of inventing availability',async()=>{
   const f=setup(false,false),id=await f.create();await f.finish(0)
-  await expect.poll(()=>f.store.plans.get(id)?.legs[0]?.stopReason).toBe('next_unavailable')
+  await expect.poll(()=>f.store.plans.get(id)?.legs[1]?.stopReason).toBe('next_unavailable')
   expect(f.calls).toHaveLength(1)
 })
 
@@ -213,14 +218,117 @@ it.each(['继续','继续 按原方案做'])('Wechat %s resumes the stopped bato
   expect(f.store.plans.get(id)).toMatchObject({state:'approved',legs:[{state:'running',runId:baton},{state:'pending'},{state:'pending'}]})
 })
 
-it('an unavailable next executor stops the current leg without touching the third',async()=>{
+it('an unregistered next executor holds the next leg without touching the third',async()=>{
   const f=setup(),id=await f.create()
   const original=f.registry.get.bind(f.registry)
   vi.spyOn(f.registry,'get').mockImplementation(executor=>executor==='claude'?null:original(executor))
   await f.finish(0)
-  await expect.poll(()=>f.store.plans.get(id)?.legs[0]?.stopReason).toBe('next_unavailable')
+  await expect.poll(()=>f.store.plans.get(id)?.legs[1]?.stopReason).toBe('next_unavailable')
+  expect(f.store.plans.get(id)?.legs[0]).toMatchObject({state:'completed',stopReason:null})
+  expect(f.notices.at(-1)).toContain('执行者还没登记')
   expect(f.calls).toHaveLength(1)
   expect(f.store.plans.get(id)?.legs.slice(1).map(l=>l.state)).toEqual(['pending','pending'])
+})
+
+it.each([false,true])('owner resumes the pending baton after quota recovery (retained=%s), then finishes the plan',async retained=>{
+  const f=setup(retained),id=await f.create();f.blockNext('quota');await f.finish(0)
+  await expect.poll(()=>f.notices.length).toBe(1)
+  const first=f.store.plans.get(id)!.legs[0]!.runId
+  f.blockNext(null)
+  await f.service.handleWechat('owner',`任务 ${id} 继续`)
+  await expect.poll(()=>f.calls.length).toBe(2)
+  expect(f.calls.map(c=>c.executor)).toEqual(['codex','claude'])
+  expect(f.store.plans.get(id)?.legs).toMatchObject([{state:'completed',runId:first},{state:'running',stopReason:null,autoDispatches:0},{state:'pending'}])
+  expect(f.notices.at(-1)).toBe('Codex 做完了，Claude 接着做第 2 棒。')
+  await f.finish(1);await expect.poll(()=>f.calls.length).toBe(3);await f.finish(2)
+  await expect.poll(()=>f.store.plans.get(id)?.state).toBe('done')
+  expect(f.store.ledger.agents(id)).toHaveLength(3)
+})
+
+it.each([false,true])('owner resume while quota is still exhausted reports the hold without rerunning the completed executor (retained=%s)',async retained=>{
+  const f=setup(retained),id=await f.create();f.blockNext('quota');await f.finish(0)
+  await expect.poll(()=>f.notices.length).toBe(1)
+  const reply=await f.service.handleWechat('owner',`任务 ${id} 继续`)
+  await expect.poll(()=>f.notices.length).toBe(2)
+  expect(reply).not.toContain('已传达给执行者')
+  expect(f.calls).toHaveLength(1)
+  expect(f.store.plans.get(id)?.legs).toMatchObject([{state:'completed'},{state:'pending',stopReason:'next_unavailable',autoDispatches:0},{state:'pending'}])
+  expect(f.notices[1]).toBe(f.notices[0])
+})
+
+it.each([false,true])('replaying the same owner resume receipt never sends another input to the next executor (retained=%s)',async retained=>{
+  const f=setup(retained),id=await f.create();f.blockNext('quota');await f.finish(0)
+  await expect.poll(()=>f.notices.length).toBe(1)
+  f.blockNext(null)
+  const identity={accountId:'offline',userId:'owner',msgId:'same-continue',createTimeMs:1}
+  await f.service.handleWechat('owner',`任务 ${id} 继续`,identity)
+  await expect.poll(()=>f.calls.length).toBe(2)
+  const accepted=f.store.liveInputs.list(id)
+  expect(accepted).toHaveLength(1);expect(accepted[0]?.status).toBe('delivered')
+  await f.service.handleWechat('owner',`任务 ${id} 继续`,identity)
+  expect(f.store.liveInputs.list(id)).toEqual(accepted)
+  expect(f.calls).toHaveLength(2);expect(f.notices).toHaveLength(2)
+})
+
+it('resume waits for real queued owner input without changing it or restarting the completed baton',async()=>{
+  const f=setup(),id=await f.create();f.blockNext('quota');await f.finish(0)
+  await expect.poll(()=>f.notices.length).toBe(1);f.blockNext(null)
+  const input=f.store.liveInputs.add({id:randomUUID(),taskId:id,runId:f.store.execution.last(id)!.runId,text:'还要加一版'})
+  f.service.continueTask(id,'继续')
+  expect(f.calls).toHaveLength(1);expect(f.store.liveInputs.get(input.id)).toEqual(input)
+  expect(f.notices.at(-1)).toBe('你之前的补充还在等处理，接力先等一下。')
+  expect(f.store.plans.get(id)?.legs).toMatchObject([{state:'completed'},{state:'pending',stopReason:'next_unavailable'},{state:'pending'}])
+})
+
+it('resume rejects a replacement directory using the persisted accepted directory identity',async()=>{
+  const f=setup(),id=await f.create();f.blockNext('quota');await f.finish(0)
+  await expect.poll(()=>f.notices.length).toBe(1);f.blockNext(null)
+  const path=f.store.get(id).path
+  renameSync(path,path+'-original');mkdirSync(path)
+  f.service.continueTask(id,'继续')
+  expect(f.calls).toHaveLength(1)
+  expect(f.store.plans.get(id)?.legs[1]).toMatchObject({state:'pending',stopReason:'matter_blocked'})
+  expect(f.notices.at(-1)).toContain('第 1 棒（Codex）做完了，第 2 棒（Claude）没派出去：工作区暂时不能继续开工')
+})
+
+it('a new owner request on a retained completed baton cancels its held relay plan',async()=>{
+  const f=setup(true),id=await f.create();f.blockNext('quota');await f.finish(0)
+  await expect.poll(()=>f.notices.length).toBe(1)
+  await f.service.submitInput(id,{runId:f.service.detail(id).runId!,requestId:randomUUID(),text:'另起一轮，重新整理'})
+  expect(f.store.plans.get(id)?.state).toBe('cancelled')
+  expect(f.calls.map(c=>c.executor)).toEqual(['codex','codex'])
+})
+
+it.each([false,true])('held resume with new attachments rejects the unsupported combination without losing materials or claiming delivery (retained=%s)',async retained=>{
+  const f=setup(retained),id=await f.create();f.blockNext('quota');await f.finish(0)
+  await expect.poll(()=>f.notices.length).toBe(1);f.blockNext(null)
+  const draftId=randomUUID(),attachment=f.service.uploadAttachment({id:randomUUID(),draftId,taskId:id,name:'brief.txt',mime:'text/plain',base64:Buffer.from('新材料').toString('base64')})
+  const requestId=randomUUID(),materials={draftId,attachmentIds:[attachment.id]}
+  if(retained)await expect(f.service.submitInput(id,{runId:f.service.detail(id).runId!,requestId,text:'继续',...materials})).rejects.toThrow('invalid_request')
+  else expect(()=>f.service.continueTask(id,'继续',{inputRequestId:requestId,...materials})).toThrow('invalid_request')
+  expect(f.store.liveInputs.get(requestId)).toBeNull();expect(f.calls).toHaveLength(1)
+  expect(f.store.attachments.select([attachment.id],id,draftId)).toEqual([attachment])
+  expect(f.store.plans.get(id)?.legs[1]).toMatchObject({state:'pending',stopReason:'next_unavailable'})
+})
+
+it.each(['plan_stale','next_already_tried'] as const)('owner resume passes the %s automatic-only guard without adding an automatic attempt',async reason=>{
+  const f=setup(),id=await f.create()
+  if(reason==='plan_stale')f.db.query('UPDATE matter_plans SET approved_at=? WHERE matter_id=?').run(Date.now()-8*86_400_000,id)
+  else f.db.query('UPDATE matter_plan_legs SET auto_dispatches=1 WHERE matter_id=? AND position=2').run(id)
+  await f.finish(0);await expect.poll(()=>f.store.plans.get(id)?.legs[1]?.stopReason).toBe(reason)
+  f.service.continueTask(id,'继续')
+  await expect.poll(()=>f.calls.length).toBe(2)
+  expect(f.calls[1]!.executor).toBe('claude')
+  expect(f.store.plans.get(id)?.legs[1]).toMatchObject({state:'running',stopReason:null,autoDispatches:reason==='plan_stale'?0:1})
+})
+
+it.each([['provider_quota_exhausted','next_unavailable','额度用完了'],['native_session_busy','matter_blocked','工作区暂时不能继续开工']] as const)('automatic handoff failing before acceptance with %s holds the pending baton',async(code,reason,message)=>{
+  const f=setup(),id=await f.create()
+  vi.spyOn(f.store,'switchExecutor').mockImplementationOnce(()=>{if(reason==='next_unavailable')f.blockNext('quota');throw Error(code)})
+  await f.finish(0);await expect.poll(()=>f.store.plans.get(id)?.legs[1]?.stopReason).toBe(reason)
+  expect(f.store.plans.get(id)?.legs).toMatchObject([{state:'completed',stopReason:null},{state:'pending',runId:null,autoDispatches:0},{state:'pending'}])
+  expect(f.calls).toHaveLength(1);expect(f.store.ledger.agents(id)).toHaveLength(1)
+  expect(f.notices.at(-1)).toContain(`没派出去：${message}。好了之后说「继续」。`)
 })
 
 it.each(['question','permission'] as const)('unanswered %s is captured before terminal cleanup',async kind=>{

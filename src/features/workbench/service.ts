@@ -199,6 +199,7 @@ export function makeWorkbenchService(opts: Options) {
     until: untilDomain,
   })
   const inputsDomain = makeInputsDomain(ctx, {
+    resumeRelay:(...args)=>relayDomain.resume(...args),
     admission: admissionDomain,
     attachments: attachmentsDomain,
     view: viewDomain,
@@ -215,6 +216,7 @@ export function makeWorkbenchService(opts: Options) {
   // ---- 6 层:execute 在顶上,它要的都已建好
   const executeDomain = makeExecuteDomain(ctx, {
     relay:afterRelayTurn,
+    resumeRelay:(...args)=>relayDomain.resume(...args),
     admission: admissionDomain,
     attachments: attachmentsDomain,
     quota: quotaDomain,
