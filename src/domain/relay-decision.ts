@@ -137,7 +137,7 @@ const TAIL_MAX = 700
 const OFFER = /需要我|要不要我|要我(再|继续|顺便|帮|也|把)|是否(需要|要)我|还(需要|要|有)(什么|别的|其他|其它|哪些)|想让我|可以(再)?帮你|有(什么)?(问题|需要)(随时|可以|再|就)|随时(告诉|叫|找)我|let me know if|if you('d| would) like|would you like me to|(do you )?want me to|anything else|shall i|should i (also|go ahead|continue|proceed)|happy to/i
 
 /** 明说在等主人的一个答复。 */
-const REQUEST = /请(你|您|主人)?(先)?(确认|告诉我|告知|提供|选择|选一|决定|指定|回复|补充|授权|批准|拍板)|需要(你|您|主人)(来|先|的)?(确认|提供|决定|选择|授权|告诉|拍板|给|回复|批准|同意)|等(你|您|主人)(的)?(确认|回复|决定|拍板|答复|同意|批准)|待(你|您|主人)?(确认|决定|拍板)|由(你|您|主人)(来)?(决定|定|选)|(你|您)来(定|决定|选)|需要(你|您|主人)(来)?(定|定夺|定一下)|waiting (for|on) you|need(s)? your (confirmation|input|decision|approval|answer|go-ahead)|please (confirm|provide|choose|decide|tell me|specify|advise|clarify)|awaiting your/i
+const REQUEST = /请(你|您|主人)?(先|明确|直接)?(确认|告诉我|告知|提供|选择|选一|决定|指定|回复|补充|授权|批准|拍板)|需要(你|您|主人)(来|先|的)?(确认|提供|决定|选择|授权|告诉|拍板|给|回复|批准|同意)|等(你|您|主人)(的)?(确认|回复|决定|拍板|答复|同意|批准)|待(你|您|主人)?(确认|决定|拍板)|由(你|您|主人)(来)?(决定|定|选)|(你|您)来(定|决定|选)|需要(你|您|主人)(来)?(定|定夺|定一下)|waiting (for|on) you|need(s)? your (confirmation|input|decision|approval|answer|go-ahead)|please (confirm|provide|choose|decide|tell me|specify|advise|clarify)|awaiting your/i
 
 /** 同一句里说明问题已经过去了。 */
 const RESOLVED = /已(经)?(修复|解决|修好|处理|绕过|绕开|恢复|改好|补上)|修(复|好)了|解决了|处理(好|掉)了|绕(过|开)了|后来|最后|最终|现在(可以|能|已|正常|都)|改(成|用|为).{0,12}(后|之后)|换(成|用).{0,12}(后|之后)|不再|\bfixed\b|\bresolved\b|worked around|now (works|passes|runs|succeeds)|no longer|eventually|in the end/i
@@ -169,7 +169,7 @@ const BLOCKED = new RegExp([
  * (service/execute.ts),所以几乎每一棒的最后一段都带着「未完成的验证:未运行…」。那是如实交代,
  * 不是这一棒卡住了;真有失败(「3 个测试没过」「构建失败」)照样会被 BLOCKED 认出来。
  */
-const UNVERIFIED = /未完成的?(验证|校验|检查|测试)|(未|没有?|尚未|暂未|并未)(实际)?(运行|执行|跑|做|进行|完成)(过)?(任何|其他|其它|额外)?[^,。;:]{0,16}(验证|校验|检查|测试|lint|工具)|(验证|校验|测试|检查)(尚未|还没|没有?|未)(运行|执行|跑|做|进行|完成)|not (yet )?(verified|tested|validated)|unverified|untested|(did not|didn'?t|have not|haven'?t) (run|execute)[^,.;]{0,24}(tests?|checks?|lint\w*|validation|verification)|no (tests?|checks?|validation|verification) (was |were )?(run|performed|executed)|(verification|validation|testing) (was |is )?not (completed|run|done|performed)/gi
+const UNVERIFIED = /(未完成|未做完?|没做完?|遗留|剩余)(的)?(项|事项|部分|内容|工作|验证|问题)?\s*[:：]\s*(无|没有|暂无|none|n\/a)[^。;；\n]*|未完成的?(验证|校验|检查|测试)|(未|没有?|尚未|暂未|并未)(实际)?(运行|执行|跑|做|进行|完成)(过)?(任何|其他|其它|额外)?[^,。;:]{0,16}(验证|校验|检查|测试|lint|工具)|(验证|校验|测试|检查)(尚未|还没|没有?|未)(运行|执行|跑|做|进行|完成)|not (yet )?(verified|tested|validated)|unverified|untested|(did not|didn'?t|have not|haven'?t) (run|execute)[^,.;]{0,24}(tests?|checks?|lint\w*|validation|verification)|no (tests?|checks?|validation|verification) (was |were )?(run|performed|executed)|(verification|validation|testing) (was |is )?not (completed|run|done|performed)/gi
 
 /** 交办开场要求的收尾小节:位置、做了的验证、没做的验证。它们是附录,不是结论。 */
 const REPORT_SECTION = /^(改动(或交付)?(的)?文件(的)?位置|交付文件(的)?位置|文件位置|改动位置|实际完成的验证|已完成的验证|完成的验证|未完成的验证|未做的验证|验证情况|files? (changed|touched)|verification( done| performed)?|not verified|unverified)\s*:/i
