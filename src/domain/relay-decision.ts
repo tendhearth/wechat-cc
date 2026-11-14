@@ -137,7 +137,7 @@ const TAIL_MAX = 700
 const OFFER = /需要我|要不要我|要我(再|继续|顺便|帮|也|把)|是否(需要|要)我|还(需要|要|有)(什么|别的|其他|其它|哪些)|想让我|可以(再)?帮你|有(什么)?(问题|需要)(随时|可以|再|就)|随时(告诉|叫|找)我|let me know if|if you('d| would) like|would you like me to|(do you )?want me to|anything else|shall i|should i (also|go ahead|continue|proceed)|happy to/i
 
 /** 明说在等主人的一个答复。 */
-const REQUEST = /请(你|您)?(先)?(确认|告诉我|告知|提供|选择|选一|决定|指定|回复|补充|授权|批准|拍板)|需要(你|您|主人)(来|先|的)?(确认|提供|决定|选择|授权|告诉|拍板|给|回复|批准|同意)|等(你|您|主人)(的)?(确认|回复|决定|拍板|答复|同意|批准)|待(你|您|主人)?(确认|决定|拍板)|由(你|您|主人)(来)?(决定|定|选)|(你|您)来(定|决定|选)|需要(你|您|主人)(来)?(定|定夺|定一下)|waiting (for|on) you|need(s)? your (confirmation|input|decision|approval|answer|go-ahead)|please (confirm|provide|choose|decide|tell me|specify|advise|clarify)|awaiting your/i
+const REQUEST = /请(你|您|主人)?(先)?(确认|告诉我|告知|提供|选择|选一|决定|指定|回复|补充|授权|批准|拍板)|需要(你|您|主人)(来|先|的)?(确认|提供|决定|选择|授权|告诉|拍板|给|回复|批准|同意)|等(你|您|主人)(的)?(确认|回复|决定|拍板|答复|同意|批准)|待(你|您|主人)?(确认|决定|拍板)|由(你|您|主人)(来)?(决定|定|选)|(你|您)来(定|决定|选)|需要(你|您|主人)(来)?(定|定夺|定一下)|waiting (for|on) you|need(s)? your (confirmation|input|decision|approval|answer|go-ahead)|please (confirm|provide|choose|decide|tell me|specify|advise|clarify)|awaiting your/i
 
 /** 同一句里说明问题已经过去了。 */
 const RESOLVED = /已(经)?(修复|解决|修好|处理|绕过|绕开|恢复|改好|补上)|修(复|好)了|解决了|处理(好|掉)了|绕(过|开)了|后来|最后|最终|现在(可以|能|已|正常|都)|改(成|用|为).{0,12}(后|之后)|换(成|用).{0,12}(后|之后)|不再|\bfixed\b|\bresolved\b|worked around|now (works|passes|runs|succeeds)|no longer|eventually|in the end/i
