@@ -28,6 +28,12 @@ const server=Bun.serve({hostname:'127.0.0.1',port,idleTimeout:255,async fetch(re
   row.hasCodexTranscriptEnvelope=/"(?:thread_id|parent_tool_use_id)"|"type":"(?:turn.started|item.completed)"/.test(body??'')
   const canaryFile=join(dir,'transcript-canaries.json')
   row.hasTranscriptOnlyCanary=existsSync(canaryFile)&&(JSON.parse(readFileSync(canaryFile,'utf8')) as string[]).some(c=>(body??'').includes(c))
+  const relayAcceptance=existsSync(join(dir,'.relay-acceptance'))
+  if(relayAcceptance){
+    const messages=b.messages??[],last=messages.filter((m:any)=>m.role==='user').at(-1)
+    row.lastUserHasNotebook=JSON.stringify(last??'').includes('matter_ledger_data')
+    row.lastUserHasTranscriptOnlyCanary=existsSync(canaryFile)&&(JSON.parse(readFileSync(canaryFile,'utf8')) as string[]).some(c=>JSON.stringify(last??'').includes(c))
+  }
   const headers=new Headers(req.headers);headers.delete('host');headers.delete('connection');headers.delete('content-length')
   try{
     const r=await fetch('https://llm.youdamaster.cc'+u.pathname+u.search,{method:req.method,body,headers,redirect:'manual',signal:req.signal})
@@ -49,8 +55,19 @@ const server=Bun.serve({hostname:'127.0.0.1',port,idleTimeout:255,async fetch(re
     const [stream,observation]=r.body.tee()
     void(async()=>{
       let buffer='',usage:unknown=null,names:string[]=[],finishReasons:string[]=[],textChars=0,reasoningChars=0
+      const relayCalls=new Map<string,{name:string;arguments:string}>()
+      function observeCalls(event:any){
+        if(!relayAcceptance)return
+        for(const call of event.choices?.[0]?.delta?.tool_calls??[]){
+          const key='o'+call.index,old=relayCalls.get(key)??{name:'',arguments:''}
+          old.name+=call.function?.name??'';old.arguments+=call.function?.arguments??'';relayCalls.set(key,old)
+        }
+        if(event.content_block?.type==='tool_use')relayCalls.set('a'+event.index,{name:event.content_block.name,arguments:Object.keys(event.content_block.input??{}).length?JSON.stringify(event.content_block.input):''})
+        if(event.delta?.type==='input_json_delta'){const old=relayCalls.get('a'+event.index);if(old)old.arguments+=event.delta.partial_json??''}
+      }
       const decoder=new TextDecoder(),reader=observation.getReader()
-      try{for(;;){const chunk=await reader.read();if(chunk.done)break;buffer+=decoder.decode(chunk.value,{stream:true});const lines=buffer.split('\n');buffer=lines.pop()??'';for(const line of lines){if(!line.startsWith('data:'))continue;try{const event=JSON.parse(line.slice(5));usage=event.usage??event.message?.usage??event.response?.usage??usage;const choice=event.choices?.[0],delta=choice?.delta;for(const call of delta?.tool_calls??[])if(call.function?.name)names.push(call.function.name);if(event.content_block?.type==='tool_use')names.push(event.content_block.name);const finish=choice?.finish_reason??event.delta?.stop_reason??event.response?.incomplete_details?.reason;if(finish)finishReasons.push(finish);textChars+=(delta?.content?.length??0)+(event.delta?.text?.length??0);reasoningChars+=(delta?.reasoning_content?.length??0)+(event.delta?.thinking?.length??0)}catch{}}if(buffer.length>1000000)buffer=''}
+      try{for(;;){const chunk=await reader.read();if(chunk.done)break;buffer+=decoder.decode(chunk.value,{stream:true});const lines=buffer.split('\n');buffer=lines.pop()??'';for(const line of lines){if(!line.startsWith('data:'))continue;try{const event=JSON.parse(line.slice(5));observeCalls(event);usage=event.usage??event.message?.usage??event.response?.usage??usage;const choice=event.choices?.[0],delta=choice?.delta;for(const call of delta?.tool_calls??[])if(call.function?.name)names.push(call.function.name);if(event.content_block?.type==='tool_use')names.push(event.content_block.name);const finish=choice?.finish_reason??event.delta?.stop_reason??event.response?.incomplete_details?.reason;if(finish)finishReasons.push(finish);textChars+=(delta?.content?.length??0)+(event.delta?.text?.length??0);reasoningChars+=(delta?.reasoning_content?.length??0)+(event.delta?.thinking?.length??0)}catch{}}if(buffer.length>1000000)buffer=''}
+      if(relayAcceptance)for(const call of relayCalls.values())if(/(?:^|__)matter_(?:plan|handoff)$/.test(call.name))appendFileSync(join(dir,'relay-tool-calls.jsonl'),JSON.stringify({at:new Date().toISOString(),requestId:row.id,...call})+'\n')
       appendFileSync(join(dir,'gateway-responses.jsonl'),JSON.stringify({responseOf:row.id,status:r.status,usage,toolCalls:names,finishReasons,textChars,reasoningChars})+'\n')
       }catch{appendFileSync(join(dir,'gateway-responses.jsonl'),JSON.stringify({responseOf:row.id,incomplete:true})+'\n')}
     })()

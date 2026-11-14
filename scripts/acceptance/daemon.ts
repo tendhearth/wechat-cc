@@ -3,6 +3,7 @@ import { existsSync,mkdirSync,writeFileSync,readFileSync,appendFileSync } from '
 import { join } from 'node:path'
 const dir=process.env.WECHAT_STATE_DIR
 if(!dir?.startsWith('/private/tmp/')||!dir.includes('/acc/state/')||!existsSync(join(dir,'.acceptance-only')))throw Error('explicit temporary state marker required')
+if(existsSync(join(dir,'.relay-acceptance'))){const {installRelayObserver}=await import('./relay-observer');installRelayObserver(dir)}
 const {startFakeIlink}=await import('../../src/daemon/__e2e__/fake-ilink-server')
 const ilink=await startFakeIlink()
 const put=(name:string,value:unknown)=>{const p=join(dir,name);mkdirSync(join(p,'..'),{recursive:true});if(!existsSync(p))writeFileSync(p,typeof value==='string'?value:JSON.stringify(value))}
