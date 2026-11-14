@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildInterviewPlan, scoreInterview, summarizeInterview } from './checkup-interview'
+import { buildInterviewPlan, scoreInterview, summarizeInterview } from './checkup-interview-legacy'
 import { extractCheckupPersona } from './checkup-persona'
 import { CHECKUP_CARE, checkupReview } from '../../packages/protocol/src/checkup-review'
 
 const persona = extractCheckupPersona('名字：小禾\n称呼用户：阿青\n自称：小禾\n口头禅：慢慢来\n口吻：温柔\n记忆：PRIVATE_MEMORY_098123\n昨天阿青的银行卡是 PRIVATE_BANK_88991')
-import { interviewAnswer } from '../test-support/checkup-model'
+import { interviewAnswer } from '../test-support/checkup-model-legacy'
 const options={windowTokens:32768,full:true,persona,executors:['worker']}
 describe('interview v2',()=>{
   it('has a reproducible story, two short stages, five full stages and repeated checkpoints',()=>{

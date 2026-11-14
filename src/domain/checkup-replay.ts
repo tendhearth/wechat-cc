@@ -1,5 +1,5 @@
-import { scoreInterview, summarizeInterview } from './checkup-interview'
-import type { InterviewSample, InterviewScore } from './checkup-interview'
+import { scoreInterview, summarizeInterview } from './checkup-interview-legacy'
+import type { InterviewSample, InterviewScore } from './checkup-interview-legacy'
 import type { CheckupTurn } from './checkup-types'
 
 export interface SavedInterviewObservation extends Omit<CheckupTurn,'text'|'firstTextMs'> {

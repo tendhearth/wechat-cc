@@ -131,9 +131,9 @@ it('allows a delegate then a reply then model completion without exhausting the 
   expect(result.toolError).toBeUndefined()
   expect(scoreInterview(sample,result).business).toBe(true)
   const estimate=estimateInterview({windowTokens:8192,full:false,executors:['private-id']})
-  expect(estimate.requests).toBe(48)
+  expect(estimate.requests).toBe(56)
   expect(estimate.maxRequests).toBe(120)
-  expect(estimate.outputTokens).toBe(69600)
+  expect(estimate.outputTokens).toBe(81200)
 })
 
 it('does not bypass the registry network guard when preparing model capacity',async()=>{
@@ -208,10 +208,10 @@ it('does not retry Claude context-window warnings as output exhaustion',async()=
   expect(calls).toBe(1)
 })
 
-for(const backend of ['openai','claude','gemini'] as const) it(`${backend} retains a scored fake reply when only the sign-off exhausts reasoning`,async()=>{
+for(const backend of ['openai','claude','gemini'] as const) for(const checkpoint of ['recall','honesty']) it(`${backend} retains a scored ${checkpoint} fake reply when only the sign-off exhausts reasoning`,async()=>{
   const {buildInterviewPlan,scoreInterview}=await import('../../domain/checkup-interview')
   const {interviewAnswer}=await import('../../test-support/checkup-model')
-  const sample=buildInterviewPlan({windowTokens:8192,full:false}).samples[0]!,answer=interviewAnswer(sample).toolCalls[0]!
+  const sample=buildInterviewPlan({windowTokens:8192,full:false}).samples.find(s=>s.id===`0/0/${checkpoint}`)!,answer=interviewAnswer(sample).toolCalls[0]!
   let spawns=0
   let provider:AgentProvider
   if(backend==='openai'){
@@ -236,6 +236,6 @@ for(const backend of ['openai','claude','gemini'] as const) it(`${backend} retai
   }
   const turn=await makeCheckupTurn(()=>provider)(sample,target,new AbortController().signal)
   expect(turn.toolCalls).toEqual([answer])
-  expect(scoreInterview(sample,turn)).toMatchObject({observed:true,business:true,qualities:{memory:true,tracking:true,honesty:true}})
+  expect(scoreInterview(sample,turn)).toMatchObject({observed:true,business:true,qualities:checkpoint==='honesty'?{honesty:true}:{memory:true,tracking:true}})
   expect(spawns).toBe(1)
 })

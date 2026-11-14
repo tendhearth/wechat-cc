@@ -48,7 +48,7 @@ export function makeCheckupStore(stateDir: string, diagnostics: {log?(tag:string
       return validProfile(p) && p.provider === target.provider && p.model === target.model && p.addressHash === addressHash(target.address) ? p : null
     },
     save(target: CheckupTarget, profile: CheckupProfile) { updateJsonFile(profilesPath, raw => { raw[checkupKey(target)] = profile }) },
-    saveObservation(target:CheckupTarget,runId:string,observation:CheckupTurn&{version:'interview-v2';seed:number;id:string}) {
+    saveObservation(target:CheckupTarget,runId:string,observation:CheckupTurn&{version:'interview-v3';seed:number;id:string}) {
       updateJsonFile(join(stateDir,'checkup','observations.json'),raw=>{
         const key=checkupKey(target),previous=raw[key] as {runId?:string;samples?:Record<string,unknown>}|undefined
         const samples=previous?.runId===runId?previous.samples??{}:{}
@@ -66,7 +66,7 @@ export function makeCheckupStore(stateDir: string, diagnostics: {log?(tag:string
     contextBudgetFor(provider: string | CheckupTarget, model: string): ContextBudget {
       const t = typeof provider === 'string' ? null : { ...provider, model }
       const stored = t ? this.profile(t) : null
-      const p=stored?.interview?.version==='interview-v2'?stored:null
+      const p=stored?.interview?.version==='interview-v3'?stored:null
       return p ? { windowTokens:p.windowTokens,reliableFillRatio:p.reliableFillRatio,source:'measured' } : { windowTokens:t?.windowTokens ?? DEFAULT_CHECKUP_WINDOW,reliableFillRatio:DEFAULT_RELIABLE_FILL,source:'default' }
     },
     recordContextOverflow(target:CheckupTarget,inputTokens:number) {
@@ -77,7 +77,7 @@ export function makeCheckupStore(stateDir: string, diagnostics: {log?(tag:string
     rotationBudgetFor(provider: string | CheckupTarget, model: string, fallbackWindow=DEFAULT_ROTATION_WINDOW): ContextBudget {
       const t = typeof provider === 'string' ? null : { ...provider, model }
       const stored = t ? this.profile(t) : null
-      const p=stored?.interview?.version==='interview-v2'?stored:null
+      const p=stored?.interview?.version==='interview-v3'?stored:null
       const windowsPath=join(stateDir,'checkup','context-windows.json')
       let budgetError:string|null=null
       let windowTokens=fallbackWindow,windowSource: 'measured'|'persisted'|'assumed'='assumed'

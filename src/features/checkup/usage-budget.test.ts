@@ -23,7 +23,7 @@ afterEach(()=>vi.unstubAllEnvs())
 const gateway=()=>{vi.stubEnv('ANTHROPIC_BASE_URL','https://fictional.invalid');vi.stubEnv('ANTHROPIC_API_KEY','fictional')}
 
 it('defaults to short/full hard limits and never refunds unknown usage from a byte guess',()=>{
-  expect(checkupLimits(false)).toEqual({maxOutputTokens:300000,maxRequests:120})
+  expect(checkupLimits(false)).toEqual({maxOutputTokens:350000,maxRequests:120})
   expect(checkupLimits(true)).toEqual({maxOutputTokens:1000000,maxRequests:400})
   const budget=makeCheckupBudget({maxOutputTokens:5000,maxRequests:3})
   const first=budget.reserve(4096);first.settle({outputBytes:300})

@@ -249,7 +249,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const spawnsBefore=spawnOptions.length
     const estimate = await desktop<{ targetKey: string; requests: number }>('POST', '/v1/checkup/estimate', {})
     expect(estimate.status).toBe(200)
-    expect(estimate.body.requests).toBe(48)
+    expect(estimate.body.requests).toBe(56)
     expect((await desktop('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey }, 'trusted')).status).toBe(403)
     const started = await desktop<View>('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey })
     expect(started.status).toBe(202)
@@ -258,11 +258,15 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // The boundary fake says only "好的。" and never calls the fictional tools.
     // Its visible speech is evidence. Wrong content fails the relevant qualities;
     // lack of reply calls does not turn a completed interview into infrastructure failure.
-    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v2',qualities:{memory:{ratio:0}},business:{ratio:20/24}}})
-    expect(result.body.attempt).toMatchObject({status:'completed'})
+    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v3',qualities:{memory:{ratio:0}},business:{ratio:24/28}}})
+    // This SDK boundary deliberately omits usage, so every 3 × 4096 reservation
+    // stays charged. The short allowance is sized so all 28 questions still fit.
+    expect(result.body.attempt).toMatchObject({status:'completed',completedRequests:28,totalRequests:28})
+    expect(result.body.attempt?.errorCode).toBeUndefined()
+    expect(result.body.profile?.interview?.qualities.stance.unmeasured).toBeUndefined()
     expect(readFileSync(join(d.stateDir,'checkup','observations.json'),'utf8')).toContain('好的。')
     const interviewSpawns=spawnOptions.slice(spawnsBefore).filter(o=>o.strictMcpConfig===true)
-    expect(interviewSpawns).toHaveLength(24)
+    expect(interviewSpawns).toHaveLength(28)
     expect(interviewSpawns.every(o=>Array.isArray(o.allowedTools)&&o.allowedTools.includes('mcp__wechat__delegate'))).toBe(true)
     expect(interviewSpawns.every(o=>(o.env as Record<string,unknown>|undefined)?.CLAUDE_CODE_MAX_OUTPUT_TOKENS==='4096')).toBe(true)
     const sent=JSON.stringify(interviewSpawns.map(o=>({system:o.systemPrompt,tools:o.tools,allowedTools:o.allowedTools,settings:o.settings})))

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { buildInterviewPlan, scoreInterview } from './checkup-interview'
+import { buildInterviewPlan, scoreInterview } from './checkup-interview-legacy'
 
 it('does not let a denial or unrelated uncertainty excuse an explicit invented label',()=>{
   const sample=buildInterviewPlan({windowTokens:8192,full:false}).samples[0]!,x=sample.expected.unknown!

@@ -60,10 +60,10 @@ it('uses the workbench executor source when boot registry has no workbench capab
     const mod=checkupModule({stateDir} as any)
     expect(mod.needs).toContain('workbench')
     const service=mod.init(ctx) as any
-    expect(service.estimate().requests).toBe(48)
+    expect(service.estimate().requests).toBe(56)
     await service.start().done
     expect(service.view().profile?.interview?.qualities.privacy).toEqual({passed:4,total:4,ratio:1})
-    expect(outbound.filter(o=>typeof o==='object')).toHaveLength(24)
+    expect(outbound.filter(o=>typeof o==='object')).toHaveLength(28)
     expect(JSON.stringify(outbound)).not.toContain('codex')
     expect(outbound[0].tools.find((t:any)=>t.name==='delegate').parameters.properties.executor.enum).toEqual(['阿禾'])
   }finally{await wb.shutdown();db.close();vi.unstubAllEnvs();rmSync(stateDir,{recursive:true,force:true})}

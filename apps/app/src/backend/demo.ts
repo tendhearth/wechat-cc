@@ -61,7 +61,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const checkupTargetKey = () => { const x = checkupTarget(); return `demo-checkup:${x.provider}:${x.model}` }
   const checkupProfile = (good = false): CheckupProfile => {
     const x = checkupTarget(), ratio=(value:number)=>({passed:value*2,total:2,ratio:value}),qualities={memory:ratio(good?1:0),tracking:ratio(1),honesty:ratio(1),discretion:ratio(good?1:.5),stance:ratio(1),privacy:ratio(1),persona:{passed:0,total:0,ratio:null}}
-    return { provider: x.provider, addressHash: 'synthetic-only', model: x.model, windowTokens: x.windowTokens, windowKnown: false, interview:{version:'interview-v2',name:'CC',reliableDay:good?'一周':null,qualities,business:ratio(good?1:.5)}, reliableFillRatio: good ? .25 : 0, stages: [{ fillRatio: .1, accuracy: 1 }, { fillRatio: .25, accuracy: good ? 1 : 0 }], memory: good ? 'good' : 'weak', tools: good ? 'stable' : 'flaky', toolAccuracy: good ? 1 : .5, firstTextMedianMs: 250, completionMedianMs: 1000, testedAt: new Date(now()).toISOString(), ccVersion: 'demo', short: true, seed: 113 }
+    return { provider: x.provider, addressHash: 'synthetic-only', model: x.model, windowTokens: x.windowTokens, windowKnown: false, interview:{version:'interview-v3',name:'CC',reliableDay:good?'一周':null,qualities,business:ratio(good?1:.5),stanceActions:{total:2,acted:0,reported:2}}, reliableFillRatio: good ? .25 : 0, stages: [{ fillRatio: .1, accuracy: 1 }, { fillRatio: .25, accuracy: good ? 1 : 0 }], memory: good ? 'good' : 'weak', tools: good ? 'stable' : 'flaky', toolAccuracy: good ? 1 : .5, firstTextMedianMs: 250, completionMedianMs: 1000, testedAt: new Date(now()).toISOString(), ccVersion: 'demo', short: true, seed: 113 }
   }
   const checkupView = (): CheckupView => { const data:CheckupView=JSON.parse(JSON.stringify({ target: checkupTarget(), profile: checkupProfiles.get(checkupTargetKey()) ?? null, attempt: checkupAttempts.get(checkupTargetKey()) ?? null, suspectedChanged: false, periodicProbe: checkupPeriodic }));return {...data,review:checkupReview(data)} }
   function seedCheckup() { checkupProfiles.clear(); checkupAttempts.clear(); checkupPeriodic = false; checkupActive = null; ++checkupGeneration; checkupProfiles.set(checkupTargetKey(), checkupProfile()) }
@@ -484,19 +484,19 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async connections() { return demoConnections(lastLang, now()) },
     async checkup() { return checkupView() },
-    async checkupEstimate() { const quote={requests:48,maxRequests:120,inputTokens:125000,outputTokens:69600,maxOutputTokens:300000,windowKnown:false,targetKey:checkupTargetKey()}; return {...quote,summary:checkupEstimateSummary(quote)} },
+    async checkupEstimate() { const quote={requests:56,maxRequests:120,inputTokens:146000,outputTokens:81200,maxOutputTokens:350000,windowKnown:false,targetKey:checkupTargetKey()}; return {...quote,summary:checkupEstimateSummary(quote)} },
     async checkupRun(expectedTargetKey) {
       if (expectedTargetKey !== checkupTargetKey()) throw new BackendError('stale')
       if (checkupActive) throw new BackendError('busy')
       const key = checkupTargetKey(), generation = ++checkupGeneration, initialEpoch = epoch
       checkupActive = { key, generation }
-      checkupAttempts.set(key, { status: 'running', completedRequests: 0, totalRequests: 16, startedAt: new Date(now()).toISOString() })
+      checkupAttempts.set(key, { status: 'running', completedRequests: 0, totalRequests: 28, startedAt: new Date(now()).toISOString() })
       const result = checkupProfile(true)
       schedule(() => {
         if (epoch !== initialEpoch || checkupActive?.generation !== generation) return
         const attempt = checkupAttempts.get(key)!
         checkupProfiles.set(key, { ...result, testedAt: new Date(now()).toISOString() })
-        checkupAttempts.set(key, { ...attempt, status: 'completed', completedRequests: 16, finishedAt: new Date(now()).toISOString() })
+        checkupAttempts.set(key, { ...attempt, status: 'completed', completedRequests: 28, finishedAt: new Date(now()).toISOString() })
         checkupActive = null
       }, 6000)
       return checkupView()

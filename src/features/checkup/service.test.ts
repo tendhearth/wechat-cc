@@ -95,7 +95,7 @@ describe('local checkup lifecycle', () => {
     wrong = true
     clock = new Date(clock.getTime() + 7*86400_000)
     await service.probeIfDue()
-    expect(calls).toBe(27)
+    expect(calls).toBe(31)
     expect(service.view().suspectedChanged).toBe(true)
     expect(service.view().profile?.memory).toBe('good')
   })
@@ -106,21 +106,21 @@ describe('local checkup lifecycle', () => {
     await service.start({}).done
     service.settings(true)
     await service.probeIfDue()
-    expect(calls).toBe(24)
+    expect(calls).toBe(28)
     clock = new Date(clock.getTime() + 7*86400_000)
     fail = true
     await service.probeIfDue()
-    expect(calls).toBe(25)
+    expect(calls).toBe(29)
     expect(service.view().suspectedChanged).toBe(false)
     // A fresh service reads the durable attempt timestamp after daemon restart.
     const restarted = makeCheckupService({ store, resolveTarget: () => target, run, version: 'test', now: () => clock, executors:()=>['worker'] })
     await restarted.probeIfDue()
     clock = new Date(clock.getTime() + 6*86400_000)
     await restarted.probeIfDue()
-    expect(calls).toBe(25)
+    expect(calls).toBe(29)
     clock = new Date(clock.getTime() + 86400_000)
     await restarted.probeIfDue()
-    expect(calls).toBe(26)
+    expect(calls).toBe(30)
   })
   it('keeps real state canaries out of every outgoing synthetic question', async () => {
     const sent: CheckupSample[] = []
@@ -128,7 +128,7 @@ describe('local checkup lifecycle', () => {
     const canary = 'PRIVATE_STATE_CANARY_never_send_894032'
     writeFileSync(join(stateDir, 'private-secret.txt'), canary)
     await service.start({ full: true }).done
-    expect(sent).toHaveLength(60)
+    expect(sent).toHaveLength(70)
     for (const sample of sent) {
       expect(sample.prompt).not.toContain(canary)
       expect(sample.prompt).not.toContain(stateDir)
@@ -154,7 +154,7 @@ it('projects persona and never sends real memory/topic/conversation state, inclu
   expect(sent.length).toBeGreaterThan(2)
   expect(JSON.stringify(sent)).not.toContain(secret)
   expect(JSON.stringify(sent)).not.toContain(stateDir)
-  expect(service.view().profile?.interview).toMatchObject({version:'interview-v2',name:'小禾',qualities:{privacy:{total:0},persona:{ratio:1}}})
+  expect(service.view().profile?.interview).toMatchObject({version:'interview-v3',name:'小禾',qualities:{privacy:{total:0},persona:{ratio:1}}})
 })
 
 it('leaves every quality ungraded when the backend cannot isolate its native tools',async()=>{
@@ -238,14 +238,14 @@ it('durably limits manual target attempts per UTC day and lets local operators b
 
 it('keeps other observations and marks only the affected qualities incomplete after exhausted reasoning',async()=>{
   let n=0
-  const {service}=setup(async sample=>{if(++n===1)throw Object.assign(Error('only reasoning'),{code:'checkup_output_exhausted'});return correct(sample)})
+  const {service}=setup(async sample=>{if(++n===2)throw Object.assign(Error('only reasoning'),{code:'checkup_output_exhausted'});return correct(sample)})
   await service.start().done
   const view=service.view()
-  expect(n).toBe(24)
-  expect(view.attempt).toMatchObject({status:'completed',completedRequests:24})
+  expect(n).toBe(28)
+  expect(view.attempt).toMatchObject({status:'completed',completedRequests:28})
   expect(view.profile?.interview?.qualities.honesty).toEqual({passed:3,total:3,ratio:1,unmeasured:1})
-  expect(view.profile?.reliableFillRatio).toBe(0)
-  expect(view.review?.rows.find(r=>r.key==='honesty')).toMatchObject({grade:'好',detail:'不知道的事会直说；这一项没测全'})
+  expect(view.profile?.reliableFillRatio).toBe(.25)
+  expect(view.review?.rows.find(r=>r.key==='honesty')).toMatchObject({grade:'好',detail:'没有给备用钥匙编造标签；这一项没测全'})
   expect(view.review?.rows.find(r=>r.key==='stance')?.grade).toBe('好')
   expect(view.review?.status).not.toContain('这次没测成')
 })
@@ -255,8 +255,8 @@ it('tries all questions but keeps the previous archive when every question exhau
   await service.start().done
   const before=service.view().profile
   exhausted=true;n=0;await service.start().done
-  expect(n).toBe(24)
-  expect(service.view().attempt).toMatchObject({status:'failed',errorCode:'no_measurement',completedRequests:24})
+  expect(n).toBe(28)
+  expect(service.view().attempt).toMatchObject({status:'failed',errorCode:'no_measurement',completedRequests:28})
   expect(service.view().profile).toEqual(before)
   expect(service.view().review?.status).toContain('这次没测成')
 })
@@ -266,7 +266,7 @@ it('invalidates the cost receipt if real executor availability changes before co
   const service=makeCheckupService({store,resolveTarget:()=>target,run:correct,version:'test',executors:()=>available?['private-worker']:[]})
   const estimate=service.estimate()
   available=true
-  expect(service.estimate().requests).toBe(48)
+  expect(service.estimate().requests).toBe(56)
   expect(service.estimate().targetKey).not.toBe(estimate.targetKey)
   expect(()=>service.start({expectedTargetKey:estimate.targetKey})).toThrow('checkup_target_changed')
   expect(service.view().attempt).toBeNull()
@@ -278,8 +278,8 @@ it('quotes realistic typical output and binds both hard limits to confirmation',
   let limits={maxOutputTokens:300_000,maxRequests:120}
   const service=makeCheckupService({store,resolveTarget:()=>target,run:correct,version:'test',executors:()=>['worker'],limits:()=>limits})
   const quote=service.estimate()
-  expect(quote).toMatchObject({outputTokens:69_600,maxOutputTokens:300_000,maxRequests:120})
-  expect(quote.summary).toContain('预计用 7 万左右、最多不超过 30 万输出 token')
+  expect(quote).toMatchObject({outputTokens:81_200,maxOutputTokens:300_000,maxRequests:120})
+  expect(quote.summary).toContain('预计用 8 万左右、最多不超过 30 万输出 token')
   limits={...limits,maxOutputTokens:200_000}
   expect(()=>service.start({expectedTargetKey:quote.targetKey})).toThrow('checkup_target_changed')
   const next=service.estimate()
@@ -292,12 +292,12 @@ it('quotes native question gates approximately, including a whole question retry
   let mode:'question'|'request'='question'
   const service=makeCheckupService({store,resolveTarget:()=>({...target,provider:'claude',address:'default'}),run:correct,version:'test',executors:()=>['worker'],budgetMode:()=>mode})
   const quote=service.estimate()
-  expect(quote.summary).toContain('预计用 7 万左右、最多约 34 万输出 token')
+  expect(quote.summary).toContain('预计用 8 万左右、最多约 39 万输出 token')
   expect(quote.summary).toContain('题与题之间检查用量')
   expect(service.estimate({full:true}).summary).toContain('最多约 104 万输出 token')
   mode='request'
   expect(()=>service.start({expectedTargetKey:quote.targetKey})).toThrow('checkup_target_changed')
-  expect(service.estimate().summary).toContain('最多不超过 30 万输出 token')
+  expect(service.estimate().summary).toContain('最多不超过 35 万输出 token')
 })
 
 for(const dimension of ['output','requests'] as const) it(`stops at the whole-run ${dimension} gate and keeps measured reviews`,async()=>{
@@ -320,7 +320,7 @@ for(const dimension of ['output','requests'] as const) it(`stops at the whole-ru
   expect(view.attempt).toMatchObject({status:'completed',errorCode:'checkup_usage_limit',completedRequests:2,usage:{requests:2,outputTokens:output}})
   expect(view.review?.status).toContain('到了本次体检的用量上限')
   expect(view.profile?.interview?.qualities.honesty).toMatchObject({passed:1,total:1,unmeasured:3})
-  expect(view.review?.rows.find(r=>r.key==='honesty')).toMatchObject({grade:'好',detail:'不知道的事会直说；这一项没测全'})
+  expect(view.review?.rows.find(r=>r.key==='honesty')).toMatchObject({grade:'好',detail:'没有给备用钥匙编造标签；这一项没测全'})
   expect(view.profile?.interview?.business).toMatchObject({passed:2,total:2,unmeasured:18})
 })
 

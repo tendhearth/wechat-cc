@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import { buildInterviewPlan, scoreInterview, summarizeInterview } from './checkup-interview'
-import { interviewAnswer } from '../test-support/checkup-model'
+import { buildInterviewPlan, scoreInterview, summarizeInterview } from './checkup-interview-legacy'
+import { interviewAnswer } from '../test-support/checkup-model-legacy'
 import type { CheckupTurn } from './checkup-types'
 
 const persona={name:'小禾',userTitle:'阿青',selfTitle:'小禾',habit:'慢慢来'}
