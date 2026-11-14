@@ -1,9 +1,16 @@
 import { randomBytes } from 'node:crypto'
-import { toolInputPreview } from '../../domain/workbench/tool-input-preview'
+import { toolInputPreview,redactPreviewText } from '../../domain/workbench/tool-input-preview'
 import { redactSecrets } from '../../domain/cli-transcript'
 
 /** 三个对话通道用同一份预览；先打码，再截断。 */
 export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, requestId: string, title?: string): string {
+  if(/(?:^|__)matter_plan$/.test(tool)&&input&&typeof input==='object'){
+    const plan=input as {title?:unknown;target?:unknown;legs?:unknown}
+    if(Array.isArray(plan.legs)&&plan.legs.length>=2&&plan.legs.length<=6){
+      const clip=(v:unknown,n:number)=>{const s=redactPreviewText(redactSecrets(typeof v==='string'?v:JSON.stringify(v)??'')).replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
+      return `${provider} · matter_plan [approval:${requestId}]\n确认拆法：${clip(plan.title,120)}\n工作区：${clip(plan.target,160)}\n`+plan.legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,80)}：${clip(l?.brief,160)}`}).join('\n')+'\n批准后按此顺序接力；失败或提问就停。'
+    }
+  }
   const preview = toolInputPreview(input, true) ?? '[input omitted: too large or unreadable]'
   const safeTitle = title ? toolInputPreview({ title }) : null
   const text = redactSecrets(`${provider} wants to run ${tool} [approval:${requestId}]${safeTitle ? `\n${safeTitle}` : ''}\n${preview}`)

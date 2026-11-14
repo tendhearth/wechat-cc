@@ -410,7 +410,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         return `任务 ${id}：已提交回答。`
       }
       if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办|提醒我|静音|正文|文件|改动|提交|合回|删除工作区|重开工作区)(?:\s|$)/.test(suffix))return usage(id)
-      const supplement=suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
+      const supplement=opts.store.plans.get(task.id)?.state==='approved'&&/^继续(?:\s|$)/.test(suffix)?suffix.trim():suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
       if(!supplement)return usage(id)
       const prior=opts.store.liveInputs.get(requestId)
       if(prior)return inputReply(await opts.actions.submitInput(id,{runId:prior.runId,requestId,text:supplement}),!!opts.actions.detail(id).runtime?.retained)

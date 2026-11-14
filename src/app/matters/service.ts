@@ -329,7 +329,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       // 详情页标题下那组头像:跟列表同一个出处
       const agents=deps.store.agents([matter.id]).get(matter.id)
-      const named=namesFor([...(agents??[]),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
+      const named=namesFor([...(agents??[]),...(ledger.agentRuns??[]).map(a=>a.executor),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
       const act=actOf(matter,deps.actTurnLimit??20)
       const status=deps.store.legacyStatuses([matter.id]).get(matter.id)??'open'
       return {matter:wireMatter({...(act?.matter??matter),...(agents?.length?{agents}:{}),...named},status),...(act?{actTurns:act.turns}:{}),bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...ledger,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}

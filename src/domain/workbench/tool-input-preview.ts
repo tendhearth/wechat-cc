@@ -1,7 +1,7 @@
 const credentialKey = /(?:token|secret|password|api[_-]?key|authorization|cookie|credential|signature)/i
 const omitted = '[credential omitted]'
 
-function redactText(text: string): string {
+export function redactPreviewText(text: string): string {
   return text.replace(/https?:\/\/[^\s<>"']+/gi, raw => {
     try {
       const url = new URL(raw)
@@ -29,7 +29,7 @@ export function toolInputPreview(input: unknown, pretty = false): string | null 
     if (raw === undefined || raw.length > 20_000) return null
     const preview = JSON.stringify(JSON.parse(raw), (key, value: unknown) => {
       if (credentialKey.test(key)) return omitted
-      if (typeof value === 'string') return redactText(value)
+      if (typeof value === 'string') return redactPreviewText(value)
       if (value && typeof value === 'object' && !Array.isArray(value)) {
         const record = value as Record<string, unknown>
         if ([record.name, record.key].some(name => typeof name === 'string' && credentialKey.test(name)) && Object.hasOwn(record, 'value')) return { ...record, value: omitted }

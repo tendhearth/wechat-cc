@@ -17,6 +17,9 @@ import type { ArtifactDeliveryReceipt } from '../../../adapters/store/workbench/
 
 export type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
 export interface Active extends PathReservation {
+  /** Internal relay closes the retained writer; its terminal close must not decide twice. */
+  relayClosing?:boolean
+  relayReportedTurn?:number
   ledgerOpening?:boolean
   ledgerRunId?:string
   execution:AgentExecutionChoice

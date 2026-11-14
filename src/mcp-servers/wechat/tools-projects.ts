@@ -7,6 +7,7 @@ import { ProjectsActivityQuery } from '../../domain/projects-activity'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
+import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
 
 export function registerProjectTools(server: McpServer, client: InternalApiClient): void {
   server.registerTool(
@@ -116,5 +117,16 @@ export function registerMatterHandoffTool(server:McpServer,client:InternalApiCli
   },async args=>{
     try{return {content:[{type:'text',text:JSON.stringify(await client.request('POST','/v1/matter/relay',args))}]}}
     catch(err){return passthroughErrorResult(err,'matter_handoff')}
+  })
+}
+
+export function registerMatterPlanTool(server:McpServer,client:InternalApiClient):void {
+  server.registerTool('matter_plan',{
+    title:'安排多棒接力',
+    description:'【主人当前对话】只有主人一句话里明确要多个执行者先后做时才用；只有一个执行者用原来的交办。沿用交办的 target 项目/工作区形状，传标题和 2–6 个按顺序排列的 {executor,brief}。先用一张卡给主人确认每一棒是谁、做什么、顺序；批准后第一棒开工，后面按记录本自动接力，失败或提问就停。新执行者只收到记录本，不收到上一棒的原始对话。',
+    inputSchema:{...MatterPlanRequest.shape,requestId:z.string().uuid().describe('这次拆法的 UUID；同一次调用重试必须复用。')},
+  },async args=>{
+    try{return {content:[{type:'text',text:JSON.stringify(await client.request('POST','/v1/matter/plan',args))}]}}
+    catch(error){return passthroughErrorResult(error,'matter_plan')}
   })
 }

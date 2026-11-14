@@ -1,3 +1,4 @@
+import {isRelayContinue} from '../../../adapters/store/matter-plans'
 /**
  * inputs 域:主人的补充 —— 排空(drain)一个内部动作,以及
  * submitInput / withdrawInput / resolveAnswer / resolvePermission 四个入口。
@@ -166,6 +167,10 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
         // 「投给 runtime 了」这件事本身就是新一轮开始的证据,回报去重键(reportOnce)
         // 靠它才不会因为快照从未被看见处于「忙碌」而永久锁死。
         running.turnSeq++
+        const plan=store.plans.get(id),baton=running.ledgerRunId??running.identity
+        if(plan?.state==='approved'&&plan.legs.some(l=>l.runId===baton&&l.state==='stopped')){
+          if(isRelayContinue(text))store.plans.resume(id,baton);else store.plans.cancel(id)
+        }
         store.ledger.running(running.ledgerRunId??running.identity)
         // Replay acknowledgement may wait behind an autonomous native turn.
         // The HTTP receipt is already durable; never wait here or auto-resend.

@@ -40,6 +40,14 @@ export interface ReportSinkDeps {
 
 export function makeReportSink(deps: ReportSinkDeps): ReportSink {
   return {
+    enqueueRelay(matterId,text){
+      const matter=deps.matters.get(matterId)
+      if(!matter?.originMatterId||!deps.notificationsEnabled(matterId))return
+      let ref:string|null=null
+      try{ref=deps.eventRef?.(matterId)??null}catch{/* 少一个事件键不影响原对话回报 */}
+      void deps.outbox.insert({matterId,originMatterId:matter.originMatterId,originMessageId:matter.originMessageId,text},deps.now?.()??Date.now(),ref)
+        .catch(err=>deps.log?.('MATTER_REPORT',`relay outbox insert failed for ${matterId}: ${err instanceof Error?err.message:err}`))
+    },
     enqueue(matterId, turn, body) {
       const matter = deps.matters.get(matterId)
       if (!matter) {

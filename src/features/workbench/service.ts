@@ -1,3 +1,6 @@
+import {makeRelayDomain} from './service/relay'
+import type {RelayTurnHook} from './service/relay-events'
+import {trackPreparation} from './service/state'
 import {makeLedgerDomain} from './service/ledger'
 import {makeWechatWorkbenchControl,type WechatMessageIdentity,type WechatWorkbenchReply} from './wechat-control'
 import type { ProviderRegistry } from '../../app/provider-registry'
@@ -185,7 +188,10 @@ export function makeWorkbenchService(opts: Options) {
   const untilDomain = makeUntilDomain(ctx, { view: viewDomain, resume: resumeAfterCheck }, opts.until)
 
   // ---- 4–5 层
+  // Like until's continuation, this callback runs only after construction and committed turns.
+  const afterRelayTurn:RelayTurnHook=(...args)=>trackPreparation(state,relayDomain.afterTurn(...args))
   const lifecycleDomain = makeLifecycleDomain(ctx, {
+    relay:afterRelayTurn,
     view: viewDomain,
     artifacts: artifactsDomain,
     notices: noticesDomain,
@@ -208,6 +214,7 @@ export function makeWorkbenchService(opts: Options) {
 
   // ---- 6 层:execute 在顶上,它要的都已建好
   const executeDomain = makeExecuteDomain(ctx, {
+    relay:afterRelayTurn,
     admission: admissionDomain,
     attachments: attachmentsDomain,
     quota: quotaDomain,
@@ -238,7 +245,8 @@ export function makeWorkbenchService(opts: Options) {
     quota: quotaDomain,
     scripts: scriptsDomain,
   })
-  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain})
+  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain,entry:entryDomain})
+  const relayDomain=makeRelayDomain(ctx,{admission:admissionDomain,ledger:ledgerDomain})
   const quotaHandoffDomain = makeQuotaHandoffDomain(ctx, { execute: executeDomain, quota: quotaDomain })
   const review = makeReviewDomain(ctx, {
     scripts: scriptsDomain,
@@ -256,6 +264,7 @@ export function makeWorkbenchService(opts: Options) {
 
   // 开机对账:全部建好之后再做(顺序同改造前)
   store.recover()
+  store.plans.recover()
   store.liveInputs.recover()
   quarantineRestartContinuations(ctx)
   lifecycleDomain.adoptWriters()
