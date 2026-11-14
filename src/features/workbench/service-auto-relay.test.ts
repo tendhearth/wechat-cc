@@ -460,8 +460,10 @@ it('duplicate registered names require an exact catalog id or path instead of gu
  const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner',planConversation:()=>({scope:'turn',path:f.project})})['POST /v1/matter/plan']!
  const result=await route(new URLSearchParams(),{...body,project:'RELAY-LAB'},{tier:'admin',origin:'session',chatId:'owner'})
  expect(result.body).toMatchObject({error:'matter_project_ambiguous',message:expect.stringContaining('重名')})
- expect(JSON.stringify(result.body)).toContain(a.project)
- expect(JSON.stringify(result.body)).toContain(b.project)
+ // 比对解析后的文字:JSON 文本里 Windows 路径的反斜杠是转义过的。
+ const message=(result.body as {message:string}).message
+ expect(message).toContain(a.project)
+ expect(message).toContain(b.project)
  expect(f.store.list()).toHaveLength(0)
 })
 
