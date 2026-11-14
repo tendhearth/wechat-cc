@@ -3,6 +3,7 @@ import { decideRelay, decideResume, HELD_AFTER_COMPLETION, readLegReply, RELAY_P
 
 // 新说法先加进表里再改规则。偏向:拿不准就停。
 const DONE = [
+  '三个接口都接好了，测试全部通过。\n\n后续如果要支持分页，可以在 list 接口上加 cursor 参数。',
   '已完成，只改了 notes.md，未创建其他文件。',
   '扩写完成，成果已保存；按要求未生成额外文件，也未写入项目目录。',
   '三张插图已经出完,放在 assets/login/ 下,深色版文件名带 -dark。',
@@ -82,6 +83,7 @@ const ASKED = [
 
 const BLOCKED = [
   // run-52:找不到源文件,如实停下——后面的棒不能接着派
+  '已按本轮要求处理，未联网。\n\n**检查结果**：在项目当前工作区中未找到 `missing-source.md` 文件。\n\n- 已检查目录：\n  - `/tmp/project/`\n  - 其下的 `tmp/` 子目录\n\n**处理结果**：由于源文件 `missing-source.md` 不存在，已如实停下，**没有创建 `summary.md`，也没有编造任何内容**。\n\n若后续提供 `missing-source.md`，可基于该文件撰写并保存 `summary.md`。',
   '已如实停止，未编写 `summary.md`。`missing-source.md` 在当前工作区不存在。',
   '我已在当前工作区查找 `missing-source.md`，但未找到该文件。\n\n因此按照要求，我**没有编写 `summary.md`**，也没有基于任何其他来源编造内容。',
   '没能完成:仓库里找不到登录页的入口文件。',

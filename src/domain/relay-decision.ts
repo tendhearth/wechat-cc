@@ -217,6 +217,8 @@ const listOnly = (p: string): boolean => {
   return items.every(line => /^\s*(-|\d+[.)、])\s/.test(line))
 }
 const offerOnly = (p: string): boolean => sentences(p).every(s => OFFER.test(s))
+/** 只说「以后如果…可以…」的收尾段:它不是这一棒的结论,结论在它前面一段(第三轮真模型验收 run-56)。带着请求的不算,那是在问主人。 */
+const followUpOnly = (p: string): boolean => sentences(p).every(s => /^(若|如果|如需|如有|要是|假如|后续|之后|下一步|if\b|once\b)/i.test(s) && !REQUEST.test(s))
 
 export function readLegReply(text: string): LegReply {
   const body = prose(text)
@@ -230,7 +232,7 @@ export function readLegReply(text: string): LegReply {
   while (at > 0) {
     const p = paragraphs[at]!
     const section = REPORT_SECTION.test(p)
-    if (!section && !listOnly(p) && !offerOnly(p)) break
+    if (!section && !listOnly(p) && !offerOnly(p) && !followUpOnly(p)) break
     if (section) skippedSections.push(p.slice(0, TAIL_MAX))
     if (section || listOnly(p)) skippedAsk.push(p.slice(-TAIL_MAX))
     at--
