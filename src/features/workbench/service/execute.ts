@@ -1,5 +1,6 @@
 import type {RelayTurnHook,RelayResume} from './relay-events'
 import {isRelayContinue} from '../../../adapters/store/matter-plans'
+import {RELAY_STATUS_ASK} from '../../../domain/relay-decision'
 import {ledgerBrief} from '../../../adapters/store/matter-ledger'
 import {finishLedger} from './ledger-completion'
 import { trackPreparation } from './state'
@@ -297,7 +298,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const material=store.attachments.prepare(task.id,running.attachments,running.path,ctx.stateDir)
       // 回退之后的第一轮:前置一句告知(评审 8);送达(第一条事件)才 markNoticed,派发失败下次还带
       const rewound=domains.rewind?.notice(task.id)??null
-      const body=rewound?`${rewound.text}\n\n${text}`:text
+      // 接力中的一棒:请执行者用一行状态收尾,判断做没做完先读这一行(domain/relay-decision.ts)。
+      const statusAsk=store.plans.get(task.id)?.state==='approved'?`\n\n${RELAY_STATUS_ASK}`:''
+      const body=(rewound?`${rewound.text}\n\n${text}`:text)+statusAsk
       const pendingLedger=!!running.ledgerRunId&&store.ledger.needsInjection(running.ledgerRunId)
       const records=pendingLedger?ledgerBrief(store.ledger.notes(task.id)):''
       const opening=matterToolsAvailable?records:records.replace('；可用 matter_notes 查询完整记录','')

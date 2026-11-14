@@ -220,9 +220,30 @@ const offerOnly = (p: string): boolean => sentences(p).every(s => OFFER.test(s))
 /** 只说「以后如果…可以…」的收尾段:它不是这一棒的结论,结论在它前面一段(第三轮真模型验收 run-56)。带着请求的不算,那是在问主人。 */
 const followUpOnly = (p: string): boolean => sentences(p).every(s => /^(若|如果|如需|如有|要是|假如|后续|之后|下一步|if\b|once\b)/i.test(s) && !REQUEST.test(s))
 
+/**
+ * 接力的每一棒在开场里被要求用这一行收尾。用正则猜「做完没有」要追各家模型的措辞,追不完;
+ * 让执行者自己说,代码只读这一行。没写(或写得不合格式)才退回下面那套规则。
+ */
+export const RELAY_STATUS_ASK = '这是接力中的一棒,后面可能还有别的执行者接着做。回复的最后单独写一行,三选一:「状态:做完」「状态:没做完」「状态:要问主人」。没做完或做不了就写没做完,需要主人决定或补充才能继续就写要问主人。'
+const STATUS_LINE = /^[\s>*_`\-]*状态\s*[:\uFF1A]\s*[*_`「『"“]*(做完|已做完|完成|已完成|没做完|未做完|未完成|没完成|要问主人|问主人|等主人)/
+const STATUS_TAIL_LINES = 3
+
+/** 只认最后几行里的状态行:前文里复述要求、引用别人的状态都不算。 */
+export function readStatusLine(text: string): LegReply | null {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  for (const line of lines.slice(-STATUS_TAIL_LINES).reverse()) {
+    const word = STATUS_LINE.exec(line)?.[1]
+    if (!word) continue
+    return /主人/.test(word) ? 'asked' : /^(没|未)/.test(word) ? 'blocked' : 'done'
+  }
+  return null
+}
+
 export function readLegReply(text: string): LegReply {
   const body = prose(text)
   if (!body) return 'empty'
+  const stated = readStatusLine(text)
+  if (stated) return stated
   const paragraphs = body.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
   const head = paragraphs[0]!.slice(0, HEAD_MAX)
   // 结尾:从后往前跳过纯列表、纯客气话和收尾小节,落在最后一段正文上。
