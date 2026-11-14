@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decideRelay, readLegReply, RELAY_PLAN_TTL_MS, type RelayInput } from './relay-decision'
+import { decideRelay, decideResume, HELD_AFTER_COMPLETION, readLegReply, RELAY_PLAN_TTL_MS, type RelayInput } from './relay-decision'
 
 // 新说法先加进表里再改规则。偏向:拿不准就停。
 const DONE = [
@@ -171,5 +171,38 @@ describe('decideRelay', () => {
   it('棒号不连续也取下一个最小的', () => {
     const i = edit(i => { i.plan.legs = [{ position: 5, state: 'pending', autoDispatches: 0 }, { position: 1, state: 'running', autoDispatches: 0 }, { position: 3, state: 'pending', autoDispatches: 0 }] })
     expect(decideRelay(i)).toEqual({ action: 'dispatch', position: 3 })
+  })
+})
+
+describe('decideResume(上一棒做完、下一棒没派出去,主人说「继续」)', () => {
+  const held = (f: (i: RelayInput) => void = () => {}): RelayInput => edit(i => {
+    i.plan.legs = [{ position: 1, state: 'completed', autoDispatches: 0 }, { position: 2, state: 'pending', autoDispatches: 0 }, { position: 3, state: 'pending', autoDispatches: 0 }]
+    f(i)
+  })
+  it('现在能派 → 派', () => expect(decideResume(held())).toEqual({ action: 'dispatch', position: 2 }))
+  it('主人亲口要的:不看批准多久、不看自动派过没有', () => {
+    expect(decideResume(held(i => { i.plan.approvedAt = T0 - RELAY_PLAN_TTL_MS * 3; i.plan.legs[1]!.autoDispatches = 1 }))).toEqual({ action: 'dispatch', position: 2 })
+  })
+  it.each([
+    ['拆法已作废', (i: RelayInput) => { i.plan.state = 'cancelled' }, 'plan_inactive'],
+    ['有棒在跑', (i: RelayInput) => { i.plan.legs[0]!.state = 'running' }, 'not_plan_leg'],
+    ['有棒停在半路', (i: RelayInput) => { i.plan.legs[0]!.state = 'stopped' }, 'not_plan_leg'],
+    ['待派的棒后面有派过的棒(状态对不上)', (i: RelayInput) => { i.plan.legs[2]!.state = 'completed' }, 'not_plan_leg'],
+    ['事还是不能开工', (i: RelayInput) => { i.matter.worktreeRemoved = true }, 'matter_blocked'],
+    ['执行者还是用不了', (i: RelayInput) => { i.nextExecutor.blocked = 'quota' }, 'next_unavailable'],
+  ] as const)('%s → 停', (_n, change, reason) => expect(decideResume(held(change))).toEqual({ action: 'stop', reason }))
+  it('没有待派的棒 → 做完', () => {
+    expect(decideResume(held(i => { for (const l of i.plan.legs) l.state = 'completed' }))).toEqual({ action: 'done' })
+  })
+  it('主人的话还排着 → 等', () => expect(decideResume(held(i => { i.matter.ownerInputQueued = true }))).toEqual({ action: 'wait', reason: 'owner_input_queued' }))
+  it('「这一棒其实做完了」的停法只有这四种', () => {
+    expect([...HELD_AFTER_COMPLETION].sort()).toEqual(['matter_blocked', 'next_already_tried', 'next_unavailable', 'plan_stale'])
+    // decideRelay 给出这四种时,前面一定已经判过这一棒做完了。
+    for (const change of [(i: RelayInput) => { i.matter.archived = true }, (i: RelayInput) => { i.now = T0 + RELAY_PLAN_TTL_MS + 1 }, (i: RelayInput) => { i.nextExecutor.blocked = 'refused' }, (i: RelayInput) => { i.plan.legs[1]!.autoDispatches = 1 }]) {
+      const blockedLeg = edit(i => { change(i); i.finished.finalText = '没能完成。' })
+      expect(decideRelay(blockedLeg)).toEqual({ action: 'stop', reason: 'leg_blocked' })
+      const d = decideRelay(edit(change))
+      expect(d.action === 'stop' && HELD_AFTER_COMPLETION.has(d.reason)).toBe(true)
+    }
   })
 })

@@ -100,6 +100,33 @@ export function decideRelay(i: RelayInput): RelayDecision {
 
 const stop = (reason: RelayStop): RelayDecision => ({ action: 'stop', reason })
 
+/**
+ * 这几种停法,这一棒本身是做完了的,只是下一棒没派出去。
+ * 接线据此把这一棒记成 completed、把原因挂在下一棒上;主人说「继续」时不是让做完的那位再做一遍,
+ * 而是用 decideResume 重新判一次下一棒能不能派。
+ */
+export const HELD_AFTER_COMPLETION: ReadonlySet<RelayStop> = new Set(['matter_blocked', 'plan_stale', 'next_unavailable', 'next_already_tried'])
+
+/**
+ * 主人对一件「上一棒做完、下一棒没派出去」的事说了「继续」。
+ * 这是主人此刻亲口要的:不再看批准有多久、不再看这一棒是不是自动派过;
+ * 只看现在能不能派——事能不能开工、执行者用不用得了。
+ */
+export function decideResume(i: Pick<RelayInput, 'plan' | 'matter' | 'nextExecutor'>): RelayDecision {
+  const { plan, matter } = i
+  if (plan.state !== 'approved' || plan.approvedAt === null) return stop('plan_inactive')
+  // 还有在跑或停在半路的棒:那是「续这一棒」,不归这里管。
+  if (plan.legs.some(l => l.state === 'running' || l.state === 'stopped')) return stop('not_plan_leg')
+  const next = plan.legs.filter(l => l.state === 'pending').sort((a, b) => a.position - b.position)[0]
+  if (!next) return { action: 'done' }
+  // 待派的棒后面不该有派过的棒:状态对不上就不动。
+  if (plan.legs.some(l => l.position > next.position && l.state !== 'pending')) return stop('not_plan_leg')
+  if (matter.ownerInputQueued) return { action: 'wait', reason: 'owner_input_queued' }
+  if (matter.archived || matter.writerNotClosed || matter.worktreeRemoved || matter.rewindBlocked) return stop('matter_blocked')
+  if (!i.nextExecutor.registered || i.nextExecutor.blocked !== null) return stop('next_unavailable')
+  return { action: 'dispatch', position: next.position }
+}
+
 // ── 读这一棒最后那段话 ─────────────────────────────────────────────────────────
 
 /** 只看开头一段和结尾最后一段正文,各取有限长度。 */
