@@ -30,6 +30,13 @@ const DONE = [
   'Wrote the migration. Want me to also backfill the old rows?',
   '处理完了,旧数据里 3 条重复记录已合并。',
   '已完成,提交 9f3c2aa。',
+  // 11-14 网关实跑(真 Claude 程序 × Kimi-Code)第一棒的原话:交办开场要求的收尾格式。
+  '已完成第 1 棒任务。\n\n改动文件位置:`/tmp/project/notes.md`\n\n实际完成的验证:已确认该文件此前不存在,写入了三条旅行准备要点(证件与行程文件、行李打包清单、财务与安全准备)。\n\n未完成的验证:未运行任何格式或内容校验工具;后续棒的接力者可读取并继续处理。',
+  '三张图接好了。\n\n改动文件位置:src/LoginHero.tsx\n\n实际完成的验证:本地打开页面看过三张图都显示。\n\n未完成的验证:没有跑单元测试。',
+  '清单整理完毕。未验证:没有在真机上打开过。',
+  'Done: wrote summary.md.\n\nVerification: read the file back.\n\nNot verified: did not run the linter.',
+  '写完了。测试尚未运行,因为这个仓库没有测试脚本。',
+  'Implemented the endpoint. I have not run the integration tests; unit tests pass.',
   '接好了。\n\n改动:\n- LoginHero.tsx:接入三张图\n- api.ts:无法连接时重试\n- 测试:失败时打印日志',
   '当接口超时时会自动重试三次,这部分已经写完并提交。',
   'Done. When the upload fails the UI now shows a retry button.',
@@ -51,6 +58,8 @@ const ASKED = [
   '完成了前两项。\n\n第三项需要主人授权访问生产配置。',
   'Should we keep backwards compatibility here?',
   '请告诉我登录页现在用的是哪个组件库。',
+  '两种写法都可以,你想要简洁版还是详细版?\n\n改动文件位置:无\n\n实际完成的验证:无\n\n未完成的验证:未运行任何检查。',
+  '草稿写好了。\n\n改动文件位置:summary.md\n\n未完成的验证:需要你确认用简洁版还是详细版,确认前没有定稿。',
   '图有两版。你想用哪一版?\n\n文件:\n- assets/a.webp\n- assets/b.webp',
   '做到一半,还有几个问题需要你定:\n\n- 用哪个组件库?\n- 要不要兼容旧版?',
   '清单整理好了,但删除前需要你确认。\n\n还需要我做别的吗?',
@@ -75,6 +84,9 @@ const BLOCKED = [
   '任务未完成。\n\n我尝试了三种方式都不行,细节见上。',
   'Permission denied when writing to /etc/hosts, so I stopped.',
   '集成测试没通过,5 条用例未通过。',
+  '改完了 LoginHero。\n\n改动文件位置:src/LoginHero.tsx\n\n实际完成的验证:跑了单元测试。\n\n未完成的验证:构建失败,报错在 vite.config.ts,没有继续查。',
+  '第 2 棒做了一部分。\n\n改动文件位置:summary.md\n\n实际完成的验证:无。\n\n未完成的验证:3 个测试没通过。',
+  '没能完成:notes.md 不存在。\n\n改动文件位置:无\n\n实际完成的验证:无\n\n未完成的验证:未运行任何检查。',
   '没能完成第三张图。\n\n已有文件:\n- assets/a.webp\n- assets/b.webp',
 ]
 
