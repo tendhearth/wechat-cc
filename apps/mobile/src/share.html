@@ -78,7 +78,7 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
   function size(n) { return n == null ? "" : n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB" }
   function gate(text) { $("page").hidden = true; $("gate").hidden = false; $("gate").textContent = text }
 
-  var shownOnce = false
+  var shownOnce = false, lastAt = 0
   function render(d) {
     var m = d.matter
     document.title = m.title || "请你看看这件事"
@@ -111,7 +111,8 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
     var files = $("files"); files.textContent = ""
     $("files-box").hidden = !m.outputs.length
     m.outputs.forEach(function (f) { var li = el("li", "", f.name); if (f.size != null) li.appendChild(el("small", "", size(f.size))); files.appendChild(li) })
-    var talk = $("talk"), atEnd = !shownOnce || window.innerHeight + window.scrollY >= document.body.scrollHeight - 80, count = talk.childNodes.length
+    var talk = $("talk"), atEnd = !shownOnce || window.innerHeight + window.scrollY >= document.body.scrollHeight - 80, newest = m.talk.length ? m.talk[m.talk.length - 1].at : 0, fresh = newest > lastAt
+    lastAt = newest
     talk.textContent = ""
     $("talk-more").hidden = !m.talkOmitted
     $("talk-more").textContent = "更早的 " + m.talkOmitted + " 句没有显示"
@@ -124,7 +125,7 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
     $("composer").hidden = !canSay
     $("talk-empty").hidden = m.talk.length > 0
     $("talk-empty").textContent = canSay ? "还没有人说话。有想法直接写在下面。" : "这个链接只能看，不能留言。"
-    if (shownOnce && m.talk.length > count && atEnd) setTimeout(function () { window.scrollTo(0, document.body.scrollHeight) }, 0)
+    if (shownOnce && fresh && atEnd) setTimeout(function () { window.scrollTo(0, document.body.scrollHeight) }, 0)
     shownOnce = true
     $("scope").textContent = "这个链接只能看到这一件事，" + when(d.expiresAt) + " 到期"
     $("gate").hidden = true; $("page").hidden = false
@@ -133,8 +134,9 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
   if (window.__CC_SHARE_DEMO__) { render(window.__CC_SHARE_DEMO__); $("composer").addEventListener("submit", function (ev) { ev.preventDefault() }); return }
 
   var P = {}
-  location.hash.slice(1).split("&").forEach(function (kv) { var i = kv.indexOf("="); if (i > 0) P[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)) })
+  location.hash.slice(1).split("&").forEach(function (kv) { var i = kv.indexOf("="); if (i > 0) { try { P[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)) } catch (e) {} } })
   var shell = window.__CC_SHELL__, token = P.t
+  var OFFLINE = "现在连不上，看到的可能不是最新的；会自己再试。"
   var CLOSED = "这个链接已经关闭或过期了。请找发给你的人再要一个。"
   if (!shell || !token) { gate(CLOSED); return }
 
@@ -153,17 +155,22 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
     open: function () { return socket(shell.relay + "?id=" + encodeURIComponent(shell.id)) },
     token: token, client: "web", requestTimeoutMs: 20000, handshakeTimeoutMs: 15000,
   })
-  var shown = false, closed = false, timer = null
+  var shown = false, closed = false, timer = null, seq = 0
   function load() {
     if (closed) return
+    var mine = ++seq
     client.request({ method: "GET", path: "/share/state" }).then(function (r) {
+      if (mine !== seq) return
       if (r.status === 401) { closed = true; gate(CLOSED); return }
       if (r.status !== 200) throw new Error("status_" + r.status)
-      render(r.json()); shown = true
+      render(r.json()); shown = true; if ($("say-note").textContent === OFFLINE) $("say-note").textContent = ""
     }).catch(function (err) {
+      if (mine !== seq) return
       if (err && err.message === "auth_failed") { closed = true; gate(CLOSED); return }
-      if (!shown) gate(err && err.message === "daemon_offline" ? "对方的电脑现在不在线，晚一点再打开试试。" : "暂时连不上，稍后会自己再试。")
+      if (shown) $("say-note").textContent = OFFLINE
+      else gate(err && err.message === "daemon_offline" ? "对方的电脑现在不在线，晚一点再打开试试。" : "暂时连不上，稍后会自己再试。")
     }).then(function () {
+      if (mine !== seq) return
       if (closed) { try { client.close() } catch (e) {} ; return }
       clearTimeout(timer)
       // 页面在前台才轮询;切走就停,回来立刻取一次。
@@ -171,7 +178,7 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
     })
   }
   var SAY_ERR = { share_say_limit: "今天说得够多了，明天再来。", share_view_only: "这个链接只能看，不能留言。", invalid_request: "这句话太长或是空的，改一改再发。" }
-  $("say").addEventListener("keydown", function (ev) { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); $("send").click() } })
+  $("say").addEventListener("keydown", function (ev) { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229) { ev.preventDefault(); $("send").click() } })
   $("composer").addEventListener("submit", function (ev) {
     ev.preventDefault()
     var text = $("say").value.trim()

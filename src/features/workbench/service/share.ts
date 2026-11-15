@@ -7,7 +7,7 @@
  */
 import {publicTask} from '../../../adapters/store/workbench/store'
 import type {MatterShare} from '../../../adapters/store/matter-shares'
-import {PARTNER_AUTHOR_PREFIX,SHARE_MODES,SHARE_SAY_PER_DAY,shareRefusal,shareSayText,sharedMatterView,type ShareMode,type ShareRefusal,type ShareView} from '../../../domain/matters/share-scope'
+import {PARTNER_AUTHOR_PREFIX,SHARE_MODES,SHARE_SAY_PER_DAY,SHARE_SAY_PER_MATTER_DAY,shareRefusal,shareSayText,sharedMatterView,type ShareMode,type ShareRefusal,type ShareView} from '../../../domain/matters/share-scope'
 import {GIT_REVIEW_MIME} from '../git-review'
 import type {ServiceCtx} from './ctx'
 import type {ViewDomain} from './view'
@@ -39,7 +39,9 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
     shareSetMode(id:string,shareId:string,mode:unknown):boolean{
       owned(id)
       if(!SHARE_MODES.includes(mode as ShareMode))throw Error('invalid_share_mode')
-      return store.shares.setMode(id,shareId,mode as ShareMode)
+      const changed=store.shares.setMode(id,shareId,mode as ShareMode)
+      if(changed)ctx.log?.('SHARE',`mode → ${String(mode)} (matter ${id}, share ${shareId})`)
+      return changed
     },
     /**
      * 被分享的人在这件事里说一句。只进对话,不进执行者的上下文:要不要照着做是后面的事(CC 汇总问主人,或主人给了「直接改」那一档)。
@@ -52,7 +54,7 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
       const text=shareSayText(raw)
       if(!text)return {ok:false,reason:'invalid'}
       const at=ctx.now()
-      if(store.shares.talkCountSince(share.id,at-24*60*60*1000)>=SHARE_SAY_PER_DAY)return {ok:false,reason:'limit'}
+      if(store.shares.talkCountSince(share.id,at-24*60*60*1000)>=SHARE_SAY_PER_DAY||store.shares.talkGuestCountSince(share.matterId,at-24*60*60*1000)>=SHARE_SAY_PER_MATTER_DAY)return {ok:false,reason:'limit'}
       store.shares.talkAdd(share.matterId,{who:'guest',name:share.name,shareId:share.id,text},at)
       try{ctx.deps.onShareTalk?.({matterId:share.matterId,shareId:share.id,name:share.name,mode:share.mode,text})}catch(error){ctx.log?.('SHARE',`onShareTalk failed: ${error instanceof Error?error.message:'error'}`)}
       return {ok:true}

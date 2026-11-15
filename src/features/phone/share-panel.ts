@@ -32,6 +32,8 @@ export const SHARE_STATE_PATH = '/share/state'
 /** 被分享的人在这件事里说一句(「只看」的链接不行)。 */
 export const SHARE_SAY_PATH = '/share/say'
 const SAY_BODY_MAX = 8 * 1024
+/** 一帧再挤,最近这几句对话也留着。 */
+const TALK_KEEP = 10
 /** 被分享的人打开的那一页:壳页先取它(document.write 进去),页面再自己取上面的状态。 */
 export const SHARE_PAGE_PATH = '/share'
 
@@ -46,9 +48,13 @@ export function shareUrl(remote: { relay: string; id: string }, token: string): 
 const json = (body: object, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 const unauthorized = () => json({ error: 'unauthorized' }, 401)
 
-/** 一帧装不下就从最早的记录起少给(记在 notesOmitted 里),标题、分工、状态不动。 */
+/** 一帧装不下就少给:先从最早的对话裁(记在 talkOmitted),对话裁到只剩最近几句还不够再裁记录本(notesOmitted);标题、分工、状态不动。 */
 function fitted(body: { ok: true; v: 1; name: string; mode: ShareMode; expiresAt: number; matter: SharedMatter }): object {
   let out = body
+  while (out.matter.talk.length > TALK_KEEP && framedTooLargeFor(JSON.stringify(out), MAX_MOBILE_DETAIL_BYTES)) {
+    const drop = Math.min(out.matter.talk.length - TALK_KEEP, Math.max(1, Math.floor(out.matter.talk.length / 4)))
+    out = { ...out, matter: { ...out.matter, talk: out.matter.talk.slice(drop), talkOmitted: out.matter.talkOmitted + drop } }
+  }
   while (out.matter.notes.length && framedTooLargeFor(JSON.stringify(out), MAX_MOBILE_DETAIL_BYTES)) {
     const drop = Math.max(1, Math.floor(out.matter.notes.length / 4))
     out = { ...out, matter: { ...out.matter, notes: out.matter.notes.slice(drop), notesOmitted: out.matter.notesOmitted + drop } }
@@ -59,7 +65,7 @@ function fitted(body: { ok: true; v: 1; name: string; mode: ShareMode; expiresAt
 async function sayRequest(shares: SharePort, token: string, req: Request): Promise<Response> {
   // 先核链接再读正文:失效的链接不值得读一个字节。
   let open = false
-  try { open = shares.view(token).ok } catch { /* 当成失效 */ }
+  try { open = shares.valid(token) } catch { /* 当成失效 */ }
   if (!open) return unauthorized()
   if (Number(req.headers.get('content-length') ?? 0) > SAY_BODY_MAX) return json({ error: 'invalid_request' }, 400)
   let text: unknown

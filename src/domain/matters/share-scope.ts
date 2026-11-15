@@ -34,6 +34,8 @@ export const SHARE_MODES: readonly ShareMode[] = ['view', 'discuss', 'act']
 export const SHARE_SAY_MAX = 500
 /** 每个链接每天最多说这么多句:对方的话会让 CC 回应,花的是主人的额度。 */
 export const SHARE_SAY_PER_DAY = 60
+/** 同一件事上所有被分享的人加起来每天最多说这么多句:一个人刷屏不至于把别人的话都挤出去。 */
+export const SHARE_SAY_PER_MATTER_DAY = 200
 /** 对方说的话:去掉控制字符、两头空白;空的、太长的 ⇒ null。 */
 export function shareSayText(raw: unknown): string | null {
   if (typeof raw !== 'string') return null

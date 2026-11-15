@@ -52,6 +52,7 @@ export function makeMatterShares(db:Db,now=()=>Date.now()){
     talkTotal(matterId:string):number{return db.query<{n:number},[string]>('SELECT COUNT(*) AS n FROM matter_talk WHERE matter_id=?').get(matterId)!.n},
     /** 这个链接从某一刻起说了几句(限速用)。 */
     talkCountSince(shareId:string,since:number):number{return db.query<{n:number},[string,number]>("SELECT COUNT(*) AS n FROM matter_talk WHERE share_id=? AND who='guest' AND created_at>=?").get(shareId,since)!.n},
+    talkGuestCountSince(matterId:string,since:number):number{return db.query<{n:number},[string,number]>("SELECT COUNT(*) AS n FROM matter_talk WHERE matter_id=? AND who='guest' AND created_at>=?").get(matterId,since)!.n},
     revokeAll(matterId:string):number{return db.query('UPDATE matter_shares SET revoked_at=? WHERE matter_id=? AND revoked_at IS NULL').run(now(),matterId).changes},
   }
 }

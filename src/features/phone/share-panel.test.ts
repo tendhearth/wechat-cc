@@ -150,6 +150,17 @@ describe('分享一件事给合伙人', () => {
 
     for (let i = 1; i < 60; i++) expect((await say(lin.token, { text: `第 ${i} 句` })).status).toBe(200)
     expect(await (await say(lin.token, { text: '超了' })).json()).toEqual({ error: 'share_say_limit' })
+    // 上限按链接算:小林说满了,别人照样能说;别的事上的链接换不了这个链接的档。
+    const other = open('老周')
+    expect((await say(other.token, { text: '我还能说' })).status).toBe(200)
+    const elsewhere = f.store.create({ title: '别的事', path: '/work/else', providerId: 'codex', ownerChatId: OWNER })
+    expect(f.domain.shareSetMode(elsewhere.id, lin.share.id, 'act')).toBe(false)
+    // 对话太长装不进一帧:从最早的裁,最近的留着,记录本不动。
+    for (let i = 0; i < 100; i++) f.domain.shareTalkAdd(f.task.id, 'cc', 'CC', '长'.repeat(1900) + i)
+    const big = await seenBy(other.token) as unknown as { matter: { talk: { text: string }[]; talkOmitted: number } }
+    expect(big.matter.talk.length).toBeLessThan(100)
+    expect(big.matter.talk.at(-1)!.text.endsWith('99')).toBe(true)
+    expect(big.matter.talkOmitted).toBeGreaterThan(60)
     clock += 24 * 60 * 60 * 1000 + 1
     expect((await say(lin.token, { text: '第二天' })).status).toBe(200)
     // 主人换一档:只看之后就不能说了。
