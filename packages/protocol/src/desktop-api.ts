@@ -2467,7 +2467,8 @@ const MatterShareRow=z.object({id:z.string(),matterId:z.string(),name:z.string()
 const MATTER_ID=z.string().regex(/^[a-f0-9]{8}$/)
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
-  'POST /v1/matter/share':z.object({matter:MATTER_ID,name:z.string().min(1).max(200),mode:SHARE_MODE.optional()}).strict(),
+  // title:对话里的 CC 开链接时必带(确认卡上给主人看的那个标题,路由核对它确实是这件事的);桌面不用带。
+  'POST /v1/matter/share':z.object({matter:MATTER_ID,title:z.string().trim().min(1).max(200).optional(),name:z.string().min(1).max(200),mode:SHARE_MODE.optional()}).strict(),
   'POST /v1/matter/share/mode':z.object({matter:MATTER_ID,id:z.string().regex(/^[a-f0-9]{12}$/),mode:SHARE_MODE}).strict(),
   'GET /v1/matter/talk':z.object({matter:MATTER_ID}).strict(),
   'POST /v1/matter/talk':z.object({matter:MATTER_ID,text:z.string().trim().min(1).max(2000)}).strict(),

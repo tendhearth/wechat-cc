@@ -2,6 +2,7 @@ import {matterToolFailure} from '../../../packages/protocol/src/workbench-errors
 import {PlanInputError,type PlanTarget} from '../workbench/matter-plan-input'
 import { randomBytes } from 'node:crypto'
 import { toolInputPreview,redactPreviewText } from '../../domain/workbench/tool-input-preview'
+import { shareName } from '../../domain/matters/share-scope'
 import { redactSecrets } from '../../domain/cli-transcript'
 
 /** 三个对话通道用同一份预览；先打码，再截断。 */
@@ -12,6 +13,13 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
       const clip=(v:unknown,n:number)=>{const s=redactPreviewText(redactSecrets(typeof v==='string'?v:JSON.stringify(v)??'')).replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
       return `${provider} · matter_plan [approval:${requestId}]\n${plan.legs.length===1?'确认交办':'确认拆法'}：${clip(plan.title,120)}\n工作区：${clip(resolved?`${resolved.projectName}（${resolved.projectPath}）`:plan.target,320)}${resolved?.target.kind==='project'&&resolved.target.isolation==='worktree'?`\n独立工作区 · 起点：${clip(resolved.target.base??'项目默认分支',80)}`:''}\n`+plan.legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,64)}：${clip(l?.brief,Math.min(400,Math.floor(1300/(plan.legs as unknown[]).length)))}`}).join('\n')+(plan.legs.length===1?'\n批准后开工。':'\n批准后按此顺序接力；失败或提问就停。')
     }
+  }
+  if(/(?:^|__)matter_share$/.test(tool)&&input&&typeof input==='object'){
+    const share=input as {matter?:unknown;title?:unknown;name?:unknown;mode?:unknown}
+    // 卡上写的名字就是会存下来的那个(同一个归一);名字不合格、档位不是「能讨论 / 只看」的,不出这张卡,落到下面的原样预览。
+    const name=shareName(share.name),title=typeof share.title==='string'?redactPreviewText(redactSecrets(share.title)).replace(/[\s「」]+/g,' ').trim().slice(0,80):''
+    if(name&&title&&typeof share.matter==='string'&&/^[a-f0-9]{8}$/.test(share.matter)&&(share.mode===undefined||share.mode==='discuss'||share.mode==='view'))
+      return `${provider} · matter_share [approval:${requestId}]\n确认分享:把「${title}」这件事(${share.matter})开给「${name}」,${share.mode==='view'?'对方只能看':'对方能看、能在里面说话'}。\n拿到链接的人看得到这件事的分工、过程记录和产出的文件名,看不到你的其他对话和别的事。链接 14 天有效,可以随时关掉。`
   }
   const preview = toolInputPreview(input, true) ?? '[input omitted: too large or unreadable]'
   const safeTitle = title ? toolInputPreview({ title }) : null
@@ -105,5 +113,5 @@ export async function prepareChatApprovalPrompt(provider:string,tool:string,inpu
 
 
 export function noteChatApproval(channel:Pick<ChatApprovalChannel,'noteMatterApproval'>,provider:string,tool:string,input:unknown,chatId:string):void {
-  if(tool==='mcp__wechat__matter_plan'||tool==='mcp__wechat__matter_handoff')channel.noteMatterApproval?.(tool,input,chatId,provider.toLowerCase())
+  if(tool==='mcp__wechat__matter_plan'||tool==='mcp__wechat__matter_handoff'||tool==='mcp__wechat__matter_share')channel.noteMatterApproval?.(tool,input,chatId,provider.toLowerCase())
 }

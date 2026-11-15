@@ -57,6 +57,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       return prepared
     },
     noteMatterApproval(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);if(context)approvals.approve(context.scope,tool,input)},
+    matterApprovalConsume(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);if(context)approvals.consume(context.scope,tool,input)},
     matterApprovalStatus(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);return !!context&&approvals.get(context.scope,tool,input)?.approved===true},
     matterNotes:(key:string|undefined,requested?:string,q?:MatterNotesQuery)=>store.ledger.page(store.ledger.bound(key,requested),q),
     matterNote(key:string|undefined,text:string){

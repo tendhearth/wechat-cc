@@ -266,7 +266,7 @@ const ROUTE_TABLE = {
   'POST /v1/phone/enable-relay': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/phone/link': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/phone/devices': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  // 分享一件事给合伙人(主人侧:开链接、列、撤)。开链接是对外的动作,只给桌面的 operator 凭据;处理器里再核一遍 origin。
+  // 分享一件事(主人侧:开链接、列、撤)。开链接是对外的动作:桌面的 operator 凭据,或主人自己那段对话里主人在确认卡上点过头的那一次(处理器里核)。
   // 还没有界面在调(tauri 那一栏等界面做了再加)。合伙人读的那一条不在这张表里:它不走 /v1,见 src/features/phone/share-panel.ts。
   'POST /v1/matter/share': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'] } },
   'GET /v1/matter/shares': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'] } },
