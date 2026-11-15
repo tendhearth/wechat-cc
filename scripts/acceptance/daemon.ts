@@ -3,10 +3,19 @@ import { existsSync,mkdirSync,writeFileSync,readFileSync,appendFileSync } from '
 import { join } from 'node:path'
 const dir=process.env.WECHAT_STATE_DIR
 if(!dir?.startsWith('/private/tmp/')||!dir.includes('/acc/state/')||!existsSync(join(dir,'.acceptance-only')))throw Error('explicit temporary state marker required')
+if(existsSync(join(dir,'.share-acceptance'))){const {installShareObserver}=await import('./share-observer');installShareObserver()}
 if(existsSync(join(dir,'.relay-acceptance'))){const {installRelayObserver}=await import('./relay-observer');installRelayObserver(dir)}
 const {startFakeIlink}=await import('../../src/daemon/__e2e__/fake-ilink-server')
 const ilink=await startFakeIlink()
 const put=(name:string,value:unknown)=>{const p=join(dir,name);mkdirSync(join(p,'..'),{recursive:true});if(!existsSync(p))writeFileSync(p,typeof value==='string'?value:JSON.stringify(value))}
+let shareRelay: ReturnType<typeof import('./share-relay').startShareRelay> | undefined
+if(existsSync(join(dir,'.share-acceptance'))){
+ const {startShareRelay}=await import('./share-relay')
+ const {loadOrCreateRelayIdentity}=await import('../../src/features/phone/relay-identity')
+ const identity=loadOrCreateRelayIdentity(dir)
+ writeFileSync(join(dir,'share-relay-identity.json'),JSON.stringify({id:identity.id}),{mode:0o600})
+ shareRelay=startShareRelay(dir)
+}
 const proxy=JSON.parse(readFileSync(join(dir,'gateway.json'),'utf8')).baseUrl
 put('access.json',{allowFrom:['acc-owner','acc-visitor','acc-group@chatroom'],admins:['acc-owner'],trusted:['acc-visitor']})
 put('accounts/acc-bot/account.json',{botId:'acc-bot',userId:'acc-owner',baseUrl:ilink.baseUrl})
@@ -18,6 +27,7 @@ put('user_account_ids.json',{'acc-owner':'acc-bot','acc-visitor':'acc-bot','acc-
 put('context_tokens.json',{'acc-owner':'synthetic-context','acc-visitor':'synthetic-context','acc-group@chatroom':'synthetic-context'})
 put('companion/config.json',{enabled:false,default_chat_id:'acc-owner',timezone:'UTC',snooze_until:null,last_introspect_at:new Date().toISOString(),import_local_history:false,memory_nightly_enabled:false,ingest_enabled:false,letters_enabled:false,hearth_enabled:false,atelier_mode:'off'})
 put('agent-config.json',{provider:'claude',model:'Kimi-Code',openaiBaseUrl:proxy+'/v1',openaiModel:'Kimi-Code',openaiEvalModel:'GLM-FLASH',cheapEvalProvider:'openai',turnJudgeProvider:'openai',bot_name:'验收CC',dangerouslySkipPermissions:false,autoStart:false,closeStopsDaemon:false,remote_tunnel:false,cli_auto_upgrade:{enabled:false},modelContextWindows:[{provider:'claude',address:proxy,model:'Kimi-Code',windowTokens:262144},{provider:'openai',address:proxy+'/v1',model:'Kimi-Code',windowTokens:262144}]})
+if(shareRelay){const p=join(dir,'agent-config.json'),cfg=JSON.parse(readFileSync(p,'utf8'));cfg.remote_tunnel=true;cfg.relay_v2_url=shareRelay.base;writeFileSync(p,JSON.stringify(cfg))}
 put('projects.json',{acceptance:join(dir,'workspace')})
 put('chat_prefs.json',{'acc-owner':JSON.stringify({care:'high',hunt:false,visit:false})})
 put('current-cwd',join(dir,'workspace'))
@@ -51,6 +61,17 @@ const {bootDaemon}=await import('../../src/daemon/main')
 let handle:Awaited<ReturnType<typeof bootDaemon>>|undefined
 const control=Bun.serve({hostname:'127.0.0.1',port:0,idleTimeout:255,async fetch(req){
  const u=new URL(req.url)
+ if(req.method==='POST'&&u.pathname==='/share-local-probe'&&shareRelay){
+  const {sharePanel}=await import('./share-observer'),panel=sharePanel(),b=await req.json() as {token?:unknown}
+  if(!panel||typeof b.token!=='string'||!/^s[a-f0-9]{64}$/.test(b.token))return new Response('invalid probe',{status:400})
+  return panel.handleRequest(new Request('http://127.0.0.1/share/state?t='+b.token))
+ }
+ if(req.method==='POST'&&u.pathname==='/share-seed'&&shareRelay){
+  const {openDb}=await import('../../src/lib/db')
+  const {makeWorkbenchStore}=await import('../../src/adapters/store/workbench/store')
+  const db=openDb({path:join(dir,'wechat-cc.db')})
+  try{const store=makeWorkbenchStore(db),b=await req.json() as {canaryOnly?:boolean};const other=store.create({title:'ACC_OTHER_MATTER_CANARY',path:join(dir,'workspace'),providerId:'claude',ownerChatId:'acc-owner'});const task=b.canaryOnly?other:store.create({title:'首页配色',path:join(dir,'workspace'),providerId:'claude',ownerChatId:'acc-owner'});return Response.json({id:task.id})}finally{db.close()}
+ }
  if(u.pathname==='/ps'){
   return Response.json({sessionTokensObserved:sessionTokens.length,inspectWith:'run.py ps'})
  }
@@ -76,5 +97,5 @@ const control=Bun.serve({hostname:'127.0.0.1',port:0,idleTimeout:255,async fetch
 handle=await bootDaemon({stateDir:dir,dangerously:false,tokenRegistry:registry,makeCheckupTurn:observeMakeTurn,schedulerIntervalMs:1_000_000_000,speechFlushIntervalMs:1_000_000_000,scheduledJobsIntervalMs:1_000_000_000,reminderIntervalMs:1_000_000_000,machineIdle:async()=>null,desktopNotify:async()=>true})
 writeFileSync(join(dir,'ready.json'),JSON.stringify({controlUrl:`http://127.0.0.1:${control.port}`,pid:process.pid}))
 let stopping=false
-async function stop(){if(stopping)return;stopping=true;control.stop(true);await handle?.shutdown();await ilink.stop();process.exit(0)}
+async function stop(){if(stopping)return;stopping=true;control.stop(true);await handle?.shutdown();await ilink.stop();shareRelay?.stop();process.exit(0)}
 process.on('SIGTERM',()=>void stop());process.on('SIGINT',()=>void stop())

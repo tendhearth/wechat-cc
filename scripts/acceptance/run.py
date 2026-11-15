@@ -107,7 +107,7 @@ def ps_check(state):
         if not row or row['parent'] != pids.get('supervisor'):
             continue
         command_line = subprocess.run(['ps', '-p', str(pid), '-o', 'command='], capture_output=True, text=True, errors='replace').stdout
-        if str(ROOT / 'scripts' / 'acceptance' / (role + '.ts')) not in command_line or pids.get('starts', {}).get(role) not in (None, row['start']):
+        if str(ROOT / 'scripts' / 'acceptance' / (('share-offline-gateway' if role == 'gateway' and (state / '.share-offline').exists() else role) + '.ts')) not in command_line or pids.get('starts', {}).get(role) not in (None, row['start']):
             continue
         roots.append(pid);tracked[pid] = row['start'];groups.add(row['group'])
     observe_owned(roots, tracked, groups)
@@ -131,7 +131,7 @@ def ps_check(state):
     print(json.dumps({'event': 'ps_check', 'ownedAliveCount': len(owned & live), 'sharedTokensObserved': len(tokens), 'sessionTokensObserved': len(sessions), 'modelProcessCount': len(models), 'argvContainsSessionToken': any(t in argv for t in sessions), 'modelEnvironmentContainsSessionToken': any(t in model_env for t in sessions), **values}))
 
 
-def start(state, resume=False):
+def start(state, resume=False, offline=False):
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     if (state / 'pids.json').exists():
         cleanup_file = state / 'cleanup.json'
@@ -251,14 +251,20 @@ def start(state, resume=False):
         print(json.dumps(result), flush=True)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     signal.signal(signal.SIGINT, lambda *_: sys.exit(130))
-    key_path = Path(os.environ.get('ACCEPTANCE_KEY_FILE', str(state.parents[1] / 'gateway.key')))
-    if key_path.stat().st_mode & 0o077:
-        raise SystemExit('refused: gateway key must have mode 0600')
-    key = key_path.read_text().strip()
-    if not key:
-        raise SystemExit('refused: empty key')
+    if offline:
+        (state / '.share-offline').write_text('no network model calls\n')
+        if not (state / '.share-acceptance').exists():
+            raise SystemExit('offline mode requires .share-acceptance')
+        key = 'synthetic-offline-key'
+    else:
+        key_path = Path(os.environ.get('ACCEPTANCE_KEY_FILE', str(state.parents[1] / 'gateway.key')))
+        if key_path.stat().st_mode & 0o077:
+            raise SystemExit('refused: gateway key must have mode 0600')
+        key = key_path.read_text().strip()
+        if not key:
+            raise SystemExit('refused: empty key')
     try:
-        gateway = subprocess.Popen(['bun', str(ROOT / 'scripts/acceptance/gateway.ts')], cwd=ROOT, env=base, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        gateway = subprocess.Popen(['bun', str(ROOT / ('scripts/acceptance/share-offline-gateway.ts' if offline else 'scripts/acceptance/gateway.ts'))], cwd=ROOT, env=base, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         remember_child(gateway)
         for _ in range(100):
             if (state / 'gateway.json').exists():
@@ -284,6 +290,7 @@ def start(state, resume=False):
                 # Never persist any credential from a provider error or debug line.
                 safe = line.replace(key, '[REDACTED]')
                 safe = re.sub(r'(?i)(bearer\s+)[A-Za-z0-9._-]+', r'\1[REDACTED]', safe)
+                safe = re.sub(r's[a-f0-9]{64}', '[SHARE_TOKEN]', safe)
                 safe = re.sub(r'\b[a-f0-9]{64}\b', '[HEX64]', safe)
                 log.write(safe)
                 log.flush()
@@ -295,8 +302,8 @@ def start(state, resume=False):
 if __name__ == '__main__':
     state = state_dir()
     command = sys.argv[1] if len(sys.argv) > 1 else ''
-    if command in ('start', 'resume'):
-        start(state, resume=command == 'resume')
+    if command in ('start', 'resume', 'start-offline'):
+        start(state, resume=command == 'resume', offline=command == 'start-offline')
     elif command == 'stop':
         pids = json.loads((state / 'pids.json').read_text())
         # Validate supervisor identity before signalling; never signal a recycled PID.
@@ -319,7 +326,7 @@ if __name__ == '__main__':
             if not row:
                 continue
             command_line = subprocess.run(['ps', '-p', str(pid), '-o', 'command='], capture_output=True, text=True, errors='replace').stdout
-            expected_script = str(ROOT / 'scripts' / 'acceptance' / (role + '.ts'))
+            expected_script = str(ROOT / 'scripts' / 'acceptance' / (('share-offline-gateway' if role == 'gateway' and (state / '.share-offline').exists() else role) + '.ts'))
             stored_start = pids.get('starts', {}).get(role)
             if row['parent'] != pids['supervisor'] or expected_script not in command_line or stored_start and stored_start != row['start']:
                 unverified_roots += 1
