@@ -7,10 +7,17 @@
  */
 import {publicTask} from '../../../adapters/store/workbench/store'
 import type {MatterShare} from '../../../adapters/store/matter-shares'
+import {readShareReply,shareActInput,shareActNotice,shareProposalNotice,shareReplyPrompt,shareTalkNotice} from '../../../domain/matters/share-reply'
 import {PARTNER_AUTHOR_PREFIX,SHARE_MODES,SHARE_SAY_PER_DAY,SHARE_SAY_PER_MATTER_DAY,shareRefusal,shareSayText,sharedMatterView,type ShareMode,type ShareRefusal,type ShareView} from '../../../domain/matters/share-scope'
 import {GIT_REVIEW_MIME} from '../git-review'
 import type {ServiceCtx} from './ctx'
 import type {ViewDomain} from './view'
+
+export interface ShareResponder {eval(prompt:string):Promise<string|null>;tellOwner(text:string):void;act(matterId:string,text:string):Promise<unknown>}
+/** CC 回一句最多等这么久;超了这一轮就不回。 */
+const SHARE_REPLY_BUDGET_MS=45_000
+/** 同一位隔了这么久再开口,算「又来说话了」,告诉主人一声。 */
+const SHARE_QUIET_MS=30*60*1000
 
 export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
   const {store,state}=ctx
@@ -27,6 +34,57 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
     let task:{archivedAt:number|null}|null=null
     try{task=owned(share.matterId)}catch{/* 这件事没了或不再是主人的 ⇒ not_shareable */}
     return shareRefusal(share,record(task),ctx.now())
+  }
+  /** 这位被分享的人看得到的那份投影(也是 CC 回应时唯一的材料)。 */
+  function project(share:MatterShare){
+    const id=share.matterId,task=publicTask(store.get(id)),running=state.runsByTask.get(id)
+    const ledger=store.ledger.enabled(id)?{agentRuns:store.ledger.projectedAgents(id),...store.ledger.recent(id)}:null
+    const plan=store.plans.get(id)
+    // 被分享的人看正式名字(Codex、Claude),不看内部 id;查不到名字就用 id。
+    const named=(executor:string)=>{try{return ctx.deps.registry.namesOf(executor).name||executor}catch{return executor}}
+    return sharedMatterView({
+      talk:store.shares.talkRecent(id),talkTotal:store.shares.talkTotal(id),viewer:share.id,
+      matter:{title:task.title,projectPath:task.path},
+      task:{status:task.status,phase:d.view.phaseOf(task,running),providerId:named(task.providerId)},
+      agentRuns:(ledger?.agentRuns??[]).map(run=>({...run,executor:named(run.executor)})),notes:(ledger?.notes??[]).map(note=>({...note,author:note.author.startsWith(PARTNER_AUTHOR_PREFIX)?note.author:named(note.author)})),notesTotal:ledger?.notesTotal??0,
+      // 批准卡、提问、接力停下等主人一句话:内容都不给,只说在等主人。
+      ownerPending:!!running&&(running.permissions.pending().length>0||running.questions.pending().length>0)||plan?.state==='approved'&&plan.legs.some(leg=>leg.state==='stopped'),
+      artifacts:store.artifacts(id).filter(a=>a.mime!==GIT_REVIEW_MIME).map(a=>({name:a.name,size:a.size})),
+    })
+  }
+  let responder:ShareResponder|null=null
+  /** 每件事同一时刻只回一轮;回的途中又有人说话 ⇒ 这一轮完了再回一轮(回最新那位)。 */
+  const replying=new Map<string,{next:MatterShare|null}>()
+  function respond(share:MatterShare,quiet:boolean,said:string):void{
+    if(!responder)return
+    const slot=replying.get(share.matterId)
+    if(slot){slot.next=share;return}
+    replying.set(share.matterId,{next:null})
+    const handlers=responder
+    void (async()=>{
+      let proposed=false
+      try{
+        const current=store.shares.byId(share.id)
+        if(!current||refusalOf(current)||current.mode==='view')return
+        const title=publicTask(store.get(share.matterId)).title
+        const out=readShareReply(await Promise.race([handlers.eval(shareReplyPrompt(project(current),{name:current.name,canAct:current.mode==='act'})),new Promise<null>(resolve=>setTimeout(()=>resolve(null),SHARE_REPLY_BUDGET_MS))]))
+        if(out?.reply)store.shares.talkAdd(share.matterId,{who:'cc',name:'CC',shareId:null,text:out.reply},ctx.now())
+        if(out?.proposal){
+          proposed=true
+          if(current.mode==='act'){
+            try{await handlers.act(share.matterId,shareActInput(current.name,out.proposal));handlers.tellOwner(shareActNotice(title,current.name,out.proposal));ctx.log?.('SHARE',`act: ${current.id} said into ${share.matterId}`)}
+            catch(error){store.shares.talkAdd(share.matterId,{who:'cc',name:'CC',shareId:null,text:'这一条现在没安排上,我告诉发起人了。'},ctx.now());handlers.tellOwner(shareProposalNotice(title,current.name,out.proposal));ctx.log?.('SHARE',`act failed: ${error instanceof Error?error.message:'error'}`)}
+          }else handlers.tellOwner(shareProposalNotice(title,current.name,out.proposal))
+        }
+        // 没有提议时,隔了一阵的第一句也告诉主人一声:有人在这件事里说话了。
+        if(!proposed&&quiet)handlers.tellOwner(shareTalkNotice(title,current.name,said))
+      }catch(error){ctx.log?.('SHARE',`reply failed: ${error instanceof Error?error.message:'error'}`)}
+      finally{
+        const next=replying.get(share.matterId)?.next??null
+        replying.delete(share.matterId)
+        if(next)respond(next,false,'')
+      }
+    })()
   }
   return {
     shareCreate(id:string,name:unknown,mode:unknown='discuss'):{share:MatterShare;token:string}{
@@ -55,8 +113,9 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
       if(!text)return {ok:false,reason:'invalid'}
       const at=ctx.now()
       if(store.shares.talkCountSince(share.id,at-24*60*60*1000)>=SHARE_SAY_PER_DAY||store.shares.talkGuestCountSince(share.matterId,at-24*60*60*1000)>=SHARE_SAY_PER_MATTER_DAY)return {ok:false,reason:'limit'}
+      const quiet=store.shares.talkCountSince(share.id,at-SHARE_QUIET_MS)===0
       store.shares.talkAdd(share.matterId,{who:'guest',name:share.name,shareId:share.id,text},at)
-      try{ctx.deps.onShareTalk?.({matterId:share.matterId,shareId:share.id,name:share.name,mode:share.mode,text})}catch(error){ctx.log?.('SHARE',`onShareTalk failed: ${error instanceof Error?error.message:'error'}`)}
+      respond(share,quiet,text)
       return {ok:true}
     },
     /** 主人(或 CC 替主人、CC 自己)在这件事的对话里说一句。 */
@@ -73,22 +132,14 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
       if(!share)return {ok:false,reason:'unknown'}
       const refusal=refusalOf(share)
       if(refusal)return {ok:false,reason:refusal}
-      const id=share.matterId,task=publicTask(store.get(id)),running=state.runsByTask.get(id)
-      const ledger=store.ledger.enabled(id)?{agentRuns:store.ledger.projectedAgents(id),...store.ledger.recent(id)}:null
-      const plan=store.plans.get(id)
-      // 被分享的人看正式名字(Codex、Claude),不看内部 id;查不到名字就用 id。
-      const named=(executor:string)=>{try{return ctx.deps.registry.namesOf(executor).name||executor}catch{return executor}}
       store.shares.opened(share.id,ctx.now())
-      return {ok:true,name:share.name,mode:share.mode,expiresAt:share.expiresAt,matter:sharedMatterView({
-        talk:store.shares.talkRecent(id),talkTotal:store.shares.talkTotal(id),viewer:share.id,
-        matter:{title:task.title,projectPath:task.path},
-        task:{status:task.status,phase:d.view.phaseOf(task,running),providerId:named(task.providerId)},
-        agentRuns:(ledger?.agentRuns??[]).map(run=>({...run,executor:named(run.executor)})),notes:(ledger?.notes??[]).map(note=>({...note,author:note.author.startsWith(PARTNER_AUTHOR_PREFIX)?note.author:named(note.author)})),notesTotal:ledger?.notesTotal??0,
-        // 批准卡、提问、接力停下等主人一句话:内容都不给,只说在等主人。
-        ownerPending:!!running&&(running.permissions.pending().length>0||running.questions.pending().length>0)||plan?.state==='approved'&&plan.legs.some(leg=>leg.state==='stopped'),
-        artifacts:store.artifacts(id).filter(a=>a.mime!==GIT_REVIEW_MIME).map(a=>({name:a.name,size:a.size})),
-      })}
+      return {ok:true,name:share.name,mode:share.mode,expiresAt:share.expiresAt,matter:project(share)}
     },
+    /**
+     * 接上 CC 的回应(wiring 在开机后给):eval = 不带工具的一次模型调用;tellOwner = 经 CC 开口那道门告诉主人;
+     * act = 把一句话说进这件事(只给「能直接让 CC 改」的链接用)。没接 ⇒ 对方的话只存进对话。
+     */
+    shareResponder(handlers:ShareResponder|null){responder=handlers},
   }
 }
 export type ShareDomain=ReturnType<typeof makeShareDomain>
