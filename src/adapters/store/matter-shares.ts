@@ -11,6 +11,8 @@ const COLUMNS='id,matter_id AS matterId,name,created_at AS createdAt,expires_at 
 export const SHARE_TOKEN=/^s[a-f0-9]{64}$/
 /** 同一件事最多同时开这么多个没撤销的链接:够三四位合伙人用,也拦住循环误调。 */
 export const SHARES_PER_MATTER_MAX=12
+/** 所有事加起来的有效链接上限:隧道握手要拿每一枚去试,候选不能无限长。 */
+export const SHARES_ACTIVE_MAX=64
 
 export function makeMatterShares(db:Db,now=()=>Date.now()){
   const list=(matterId:string):MatterShare[]=>db.query<MatterShare,[string]>(`SELECT ${COLUMNS} FROM matter_shares WHERE matter_id=? ORDER BY created_at,rowid`).all(matterId)
@@ -20,7 +22,7 @@ export function makeMatterShares(db:Db,now=()=>Date.now()){
     create(matterId:string,rawName:unknown,at=now()):{share:MatterShare;token:string}{
       const name=shareName(rawName)
       if(!name)throw Error('invalid_share_name')
-      if(list(matterId).filter(s=>s.revokedAt===null&&s.expiresAt>at).length>=SHARES_PER_MATTER_MAX)throw Error('too_many_shares')
+      if(list(matterId).filter(s=>s.revokedAt===null&&s.expiresAt>at).length>=SHARES_PER_MATTER_MAX||db.query<{n:number},[number]>('SELECT COUNT(*) AS n FROM matter_shares WHERE revoked_at IS NULL AND expires_at>?').get(at)!.n>=SHARES_ACTIVE_MAX)throw Error('too_many_shares')
       // 首字母 s:和手机令牌(d 设备 / t 链接)一样,页面按它认种类。
       const token='s'+randomBytes(32).toString('hex'),id=randomBytes(6).toString('hex')
       db.query('INSERT INTO matter_shares(id,matter_id,name,token,created_at,expires_at) VALUES(?,?,?,?,?,?)').run(id,matterId,name,token,at,at+SHARE_TTL_MS)

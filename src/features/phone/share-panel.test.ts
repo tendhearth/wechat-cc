@@ -66,6 +66,10 @@ describe('分享一件事给合伙人', () => {
       expect([path, (await f.get(path, token)).status]).toEqual([path, 401])
     }
     expect((await f.get('/share/state', token, { method: 'POST', body: '{}' })).status).toBe(401)
+    // 同一个请求里又带一枚设备 / 链接令牌:d 是分享令牌就只走分享出口,拿不到主人的东西。
+    const link = f.panel.issueToken()
+    expect((await f.panel.handleRequest(new Request(`http://127.0.0.1/set/api/state?d=${token}&t=${link}`))).status).toBe(401)
+    expect((await f.panel.handleRequest(new Request(`http://127.0.0.1/share/state?t=${token}`))).status).toBe(200)
     // 请求里点名别的事也没用:看哪一件由分享记录定。
     const other = f.store.create({ title: '别的事', path: '/Users/someone/work/other', providerId: 'claude', ownerChatId: OWNER })
     const named = await (await f.get(`/share/state?matter=${other.id}&id=${other.id}`, token)).json() as { matter: { title: string } }
@@ -96,6 +100,15 @@ describe('分享一件事给合伙人', () => {
     clock += SHARE_TTL_MS
     expect(await denied(kept.token)).toEqual(DENIED)
     expect(f.panel.shareTokens()).toEqual([])
+
+    // 开出去之后这件事不再是主人名下的 ⇒ 链接失效。
+    clock -= SHARE_TTL_MS
+    const moved = f.store.create({ title: '后来转走的事', path: '/work/m', providerId: 'codex', ownerChatId: OWNER })
+    const movedLink = f.panel.shareLink(moved.id, '小林')
+    if (!movedLink.ok) throw Error('expected a link')
+    expect((await f.get('/share/state', tokenOf(movedLink.url))).status).toBe(200)
+    db.query('UPDATE workbench_tasks SET owner_chat_id=? WHERE id=?').run('guest@im.wechat', moved.id)
+    expect(await denied(tokenOf(movedLink.url))).toEqual(DENIED)
 
     const theirs = f.store.create({ title: '访客的事', path: '/work/x', providerId: 'codex', ownerChatId: 'guest@im.wechat' })
     expect(() => f.domain.shareCreate(theirs.id, '小林')).toThrow('matter_not_found')

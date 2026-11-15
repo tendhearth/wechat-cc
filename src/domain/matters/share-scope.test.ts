@@ -31,6 +31,16 @@ describe('本机路径不到合伙人那里', () => {
     ['见 /Users/nate/文档/设计稿/v2.fig', '见 …/v2.fig'],
     ['C:\\Users\\nate\\shop\\a.ts 也一样', '…/a.ts 也一样'],
     ['临时文件 /private/tmp/cc-123/out.png', '临时文件 …/out.png'],
+    // 评审 11-14:不空格、带前缀的写法也要收掉
+    ['日志在/Users/nate/Library/Logs/run.log', '日志在…/run.log'],
+    ['见 file:///Users/nate/secret/plan.md', '见 …/plan.md'],
+    ['读了 @/Users/nate/other/notes.md', '读了 @…/notes.md'],
+    ['编译带 -I/Users/nate/include/x', '编译带 -I…/x'],
+    ['打开 vscode://file/Users/nate/a/b.txt', '打开 vscode://file…/b.txt'],
+    ['别人的 ~nate/a/b.txt', '别人的 …/b.txt'],
+    // 兄弟目录不被项目根削掉一截
+    ['另一个 /Users/nate/Documents/shopping/list.md', '另一个 …/list.md'],
+    ['还有 /Users/nate/Documents/shop-secret/x.ts', '还有 …/x.ts'],
   ])('%s', (text, expected) => expect(withoutLocalPaths(text, root)).toBe(expected))
   it.each([
     '接口是 /v1/health,返回 200',
@@ -82,6 +92,10 @@ describe('合伙人看到的一件事', () => {
     expect(notes[2]).toEqual({ author: '小林', partner: true, kind: 'note', text: '第三张的熊再大一点', at: 3 })
     expect(notes[1]).toMatchObject({ author: '执行者 codex', partner: false })
     expect(notes[1]!.text).toContain('public/hero-dark.webp')
+  })
+  it('产出那一条只留第一行:提交号和工作区目录不给', () => {
+    const view = sharedMatterView({ ...base(), notes: [{ author: 'codex', kind: 'artifact', text: '2 个文件 · src/a.ts、src/b.ts\n提交 9f3c2ab17de0\n工作区 /Users/nate/.cc/worktrees/ab12cd34-login', createdAt: 5 }], notesTotal: 1 })
+    expect(view.notes).toEqual([{ author: 'codex', partner: false, kind: 'artifact', text: '2 个文件 · src/a.ts、src/b.ts', at: 5 }])
   })
   it('产出只给文件名和大小', () => {
     expect(sharedMatterView(base()).outputs).toEqual([{ name: 'hero-dark.webp', size: 20480 }, { name: 'summary.md', size: null }])

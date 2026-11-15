@@ -14,6 +14,8 @@ export const SHARE_TTL_MS = 14 * 24 * 60 * 60 * 1000
 export const SHARE_NAME_MAX = 24
 /** 一页最多给这么多条记录,从最新的往回数。 */
 export const SHARE_NOTES_MAX = 60
+/** 产出最多列这么多个名字(从最新的往回数),免得一页装不进中继的一帧。 */
+export const SHARE_OUTPUTS_MAX = 200
 const TEXT_MAX = 2000
 
 /** 主人分享时给合伙人起的名字:留话署名用它,也显示在主人的分享列表里。不合格 ⇒ null。 */
@@ -50,14 +52,25 @@ const SYSTEM_ROOTS = new Set(['Users', 'home', 'private', 'var', 'tmp', 'Volumes
  */
 export function withoutLocalPaths(text: string, projectPath: string | null): string {
   let out = text
-  for (const root of projectRoots(projectPath)) out = out.split(root + '/').join('').split(root).join('.')
-  return out.replace(ABSOLUTE_PATH, path => {
-    const segments = path.split(/[/\\]/).filter(Boolean), rooted = /^(~|[A-Za-z]:)/.test(path) || SYSTEM_ROOTS.has(segments[0] ?? '')
-    if (!rooted && segments.length < 3) return path
-    // 「/Users/某人」本身就是要藏的东西,不留最后一段。
-    return segments.length < 3 ? '…' : '…/' + segments.at(-1)
-  })
+  for (const root of projectRoots(projectPath)) {
+    // 只认整段:/a/shop 不该把兄弟目录 /a/shopping 也削掉一截。
+    const whole = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    out = out.replace(new RegExp(`${whole}/`, 'gu'), '').replace(new RegExp(`${whole}(?!${SEG})`, 'gu'), '.')
+  }
+  // 网址原样留着(里面的 /home/… 不是本机路径);file:// 不算网址。
+  return out.split(/(https?:\/\/[^\s<>"'）)】,，。;；]+)/u).map((part, i) => i % 2 ? part : part.replace(ABSOLUTE_PATH, shortPath).replace(HOME_PATH, shortPath)).join('')
 }
+function shortPath(path: string): string {
+  const segments = path.replace(/^file:\/+/i, '/').split(/[/\\]/).filter(Boolean), rooted = /^(~|[A-Za-z]:|file:)/i.test(path) || SYSTEM_ROOTS.has(segments[0] ?? '')
+  if (!rooted && segments.length < 3) return path
+  // 「/Users/某人」本身就是要藏的东西,不留最后一段。
+  return segments.length < 3 ? '…' : '…/' + segments.at(-1)
+}
+/**
+ * 兜底:不管前面紧贴着什么(中文、@、-I、file://、vscode://file),只要出现家目录那几个根,就把整条路径收掉。
+ * 上面那条按「前面不是路径字符」起头,中文记录里「日志在/Users/…」这种不空格的写法会漏。
+ */
+const HOME_PATH = new RegExp(`(?:file:/+|[/\\\\]+)(?:Users|home|Volumes|private|root)[/\\\\]${SEG}+(?:[/\\\\]${SEG}*)*|~${SEG}*[/\\\\]${SEG}+(?:[/\\\\]${SEG}*)*`, 'giu')
 function projectRoots(projectPath: string | null): string[] {
   if (!projectPath) return []
   const root = projectPath.replace(/\/+$/, '')
@@ -112,7 +125,9 @@ export function sharedMatterView(source: ShareSource): SharedMatter {
   const kept = source.notes.filter(note => note.kind === 'plan' || note.kind === 'note' || note.kind === 'artifact').slice(-SHARE_NOTES_MAX)
   const notes = kept.map((note): SharedNote => {
     const partner = note.author.startsWith(PARTNER_AUTHOR_PREFIX)
-    return { author: clean(partner ? note.author.slice(PARTNER_AUTHOR_PREFIX.length) : note.author, null).slice(0, 64), partner, kind: note.kind as SharedNote['kind'], text: clean(note.text, root), at: note.createdAt }
+    // 产出那一条后面两行是提交号和工作区目录,都是本机的东西,只留第一行(几个文件、叫什么)。
+    const text = note.kind === 'artifact' ? note.text.split('\n')[0] ?? '' : note.text
+    return { author: clean(partner ? note.author.slice(PARTNER_AUTHOR_PREFIX.length) : note.author, null).slice(0, 64), partner, kind: note.kind as SharedNote['kind'], text: clean(text, root), at: note.createdAt }
   })
   const has = (wanted: SharedLeg['status']) => legs.some(leg => leg.status === wanted)
   const state: SharedState = source.ownerPending ? 'waiting_owner'
@@ -126,6 +141,6 @@ export function sharedMatterView(source: ShareSource): SharedMatter {
     title: clean(source.matter.title, root).slice(0, 200), state, legs, notes,
     notesOmitted: Math.max(0, source.notesTotal - notes.length),
     // 只给文件名:成果目录里的相对位置也不给,名字里夹带的目录去掉。
-    outputs: source.artifacts.map(file => ({ name: clean(String(file.name).split(/[/\\]/).filter(Boolean).at(-1) ?? '', null).slice(0, 200), size: typeof file.size === 'number' && Number.isFinite(file.size) ? file.size : null })).filter(file => file.name),
+    outputs: source.artifacts.slice(-SHARE_OUTPUTS_MAX).map(file => ({ name: clean(String(file.name).split(/[/\\]/).filter(Boolean).at(-1) ?? '', null).slice(0, 200), size: typeof file.size === 'number' && Number.isFinite(file.size) ? file.size : null })).filter(file => file.name),
   }
 }
