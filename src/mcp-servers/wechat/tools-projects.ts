@@ -122,6 +122,30 @@ export function registerMatterHandoffTool(server:McpServer,client:InternalApiCli
   })
 }
 
+/** 分享一件事给主人请来的人(设计稿 2026-11-14-share-a-matter):开链接要主人在确认卡上点头;看开过哪些、关掉不用。 */
+export function registerMatterShareTool(server:McpServer,client:InternalApiClient):void {
+  const MATTER=z.string().regex(/^[a-f0-9]{8}$/)
+  server.registerTool('matter_share',{
+    title:'把一件事分享给主人请来的人',
+    description:'【主人当前对话】主人说“把这件事分享给小林”“让设计师帮我看看这件事”时用。matter是这件事编号，name是主人对这个人的称呼（24字以内，页面上和对话里都用它署名）。mode: discuss（默认，对方能看、能在里面说话，要改的事会转告主人）或 view（只能看）。系统会先发确认卡给主人，直接调工具。成功后把返回的 url 原样发给主人，由主人转给对方；说明链接14天有效、只能看到这一件事、随时可以让你关掉。每人单独开一个，不要把同一个链接给几个人。',
+    inputSchema:{matter:MATTER,name:z.string().trim().min(1).max(24),mode:z.enum(['discuss','view']).optional()},
+  },async args=>{
+    try{return {content:[{type:'text',text:JSON.stringify(await client.request('POST','/v1/matter/share',args))}]}}
+    catch(err){return passthroughErrorResult(err,'matter_share')}
+  })
+  server.registerTool('matter_shares',{
+    title:'看一件事分享给了谁，或关掉一个分享',
+    description:'【主人当前对话】只传 matter：列出这件事开过的分享（给了谁、哪一档、什么时候到期、最后一次打开、关没关）。再传 close（列表里的 id）：立即关掉那一个链接，对方再打开就失效。主人说“小林那个链接关掉”“这件事都分享给谁了”时用。',
+    inputSchema:{matter:MATTER,close:z.string().regex(/^[a-f0-9]{12}$/).optional()},
+  },async args=>{
+    try{
+      const {matter,close}=args as {matter:string;close?:string}
+      const body=close?await client.request('POST','/v1/matter/share/revoke',{matter,id:close}):await client.request('GET',`/v1/matter/shares?matter=${matter}`)
+      return {content:[{type:'text',text:JSON.stringify(body)}]}
+    }catch(err){return passthroughErrorResult(err,'matter_shares')}
+  })
+}
+
 export function registerMatterPlanTool(server:McpServer,client:InternalApiClient):void {
   server.registerTool('matter_plan',{
     title:'交办一件事',

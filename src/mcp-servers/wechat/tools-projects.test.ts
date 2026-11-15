@@ -74,3 +74,24 @@ for(const tool of ['matter_plan','matter_handoff'])it.each(['native_session_busy
   expect(body.message).toContain(code==='native_session_busy'?'工作区':code==='project_stale'?'项目':code==='unavailable_provider'?'执行者':'1–6')
  }finally{await client.close();await server.close()}
 })
+
+it('matter_share 只给主人的对话:开链接归「要主人点头」那一类,看和关不用点头',async()=>{
+ const calls:unknown[]=[],server=await createWechatMcpServer({async request(method,path,body){calls.push([method,path,body]);return {ok:true} as never}},{tier:'admin'})
+ const [a,b]=InMemoryTransport.createLinkedPair(),client=new Client({name:'share',version:'0'})
+ await Promise.all([server.connect(a),client.connect(b)])
+ try{
+  await client.callTool({name:'matter_share',arguments:{matter:'ab12cd34',name:'小林'}})
+  await client.callTool({name:'matter_shares',arguments:{matter:'ab12cd34'}})
+  await client.callTool({name:'matter_shares',arguments:{matter:'ab12cd34',close:'0123456789ab'}})
+  expect(calls.filter(call=>Array.isArray(call)&&String(call[1]).startsWith('/v1/matter/share'))).toEqual([['POST','/v1/matter/share',{matter:'ab12cd34',name:'小林'}],['GET','/v1/matter/shares?matter=ab12cd34',undefined],['POST','/v1/matter/share/revoke',{matter:'ab12cd34',id:'0123456789ab'}]])
+  // 工具给不了「直接改」那一档
+  expect((await client.callTool({name:'matter_share',arguments:{matter:'ab12cd34',name:'小林',mode:'act'}})).isError).toBe(true)
+  expect(classifyToolUse('mcp__wechat__matter_share',{})).toBe('daemon_remediate')
+  expect(classifyToolUse('mcp__wechat__matter_shares',{})).toBe('daemon_introspect')
+  for(const tier of ['trusted','guest']){
+   const other=await createWechatMcpServer({async request(){throw Error('forbidden')}},{tier}),[c,d]=InMemoryTransport.createLinkedPair(),viewer=new Client({name:'tier',version:'0'})
+   await Promise.all([other.connect(c),viewer.connect(d)])
+   try{expect((await viewer.listTools()).tools.some(t=>t.name.startsWith('matter_share'))).toBe(false)}finally{await viewer.close();await other.close()}
+  }
+ }finally{await client.close();await server.close()}
+})

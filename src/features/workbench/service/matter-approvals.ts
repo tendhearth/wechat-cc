@@ -11,6 +11,10 @@ const normalize=(tool:string,input:unknown)=>{
     const parsed=REQUEST_SCHEMAS['POST /v1/matter/relay']!.safeParse(input)
     if(parsed.success)return parsed.data
   }
+  if(tool==='mcp__wechat__matter_share'){
+    const parsed=REQUEST_SCHEMAS['POST /v1/matter/share']!.safeParse(input)
+    if(parsed.success)return parsed.data
+  }
   return input
 }
 interface Approval {scope:string;approved:boolean;target?:PlanTarget}

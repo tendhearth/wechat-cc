@@ -13,6 +13,11 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
       return `${provider} · matter_plan [approval:${requestId}]\n${plan.legs.length===1?'确认交办':'确认拆法'}：${clip(plan.title,120)}\n工作区：${clip(resolved?`${resolved.projectName}（${resolved.projectPath}）`:plan.target,320)}${resolved?.target.kind==='project'&&resolved.target.isolation==='worktree'?`\n独立工作区 · 起点：${clip(resolved.target.base??'项目默认分支',80)}`:''}\n`+plan.legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,64)}：${clip(l?.brief,Math.min(400,Math.floor(1300/(plan.legs as unknown[]).length)))}`}).join('\n')+(plan.legs.length===1?'\n批准后开工。':'\n批准后按此顺序接力；失败或提问就停。')
     }
   }
+  if(/(?:^|__)matter_share$/.test(tool)&&input&&typeof input==='object'){
+    const share=input as {matter?:unknown;name?:unknown;mode?:unknown}
+    const clip=(v:unknown,n:number)=>{const s=redactPreviewText(redactSecrets(typeof v==='string'?v:JSON.stringify(v)??'')).replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
+    return `${provider} · matter_share [approval:${requestId}]\n确认分享:把这件事(${clip(share.matter,16)})开给「${clip(share.name,24)}」,${share.mode==='view'?'对方只能看':'对方能看、能在里面说话'}。\n拿到链接的人看得到这件事的分工、过程记录和产出的文件名,看不到你的其他对话和别的事。链接 14 天有效,可以随时关掉。`
+  }
   const preview = toolInputPreview(input, true) ?? '[input omitted: too large or unreadable]'
   const safeTitle = title ? toolInputPreview({ title }) : null
   const text = redactSecrets(`${provider} wants to run ${tool} [approval:${requestId}]${safeTitle ? `\n${safeTitle}` : ''}\n${preview}`)
@@ -105,5 +110,5 @@ export async function prepareChatApprovalPrompt(provider:string,tool:string,inpu
 
 
 export function noteChatApproval(channel:Pick<ChatApprovalChannel,'noteMatterApproval'>,provider:string,tool:string,input:unknown,chatId:string):void {
-  if(tool==='mcp__wechat__matter_plan'||tool==='mcp__wechat__matter_handoff')channel.noteMatterApproval?.(tool,input,chatId,provider.toLowerCase())
+  if(tool==='mcp__wechat__matter_plan'||tool==='mcp__wechat__matter_handoff'||tool==='mcp__wechat__matter_share')channel.noteMatterApproval?.(tool,input,chatId,provider.toLowerCase())
 }

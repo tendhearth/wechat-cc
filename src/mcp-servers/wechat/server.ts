@@ -4,7 +4,7 @@ import z from 'zod'
 import { InternalApiError, type InternalApiClient } from './client'
 import { formatError, formatErrorShort } from './tool-helpers'
 import { registerMemoryTools, registerTopicSearchTool } from './tools-memory'
-import { registerProjectTools, registerProjectsActivityTool, registerMatterHandoffTool, registerMatterPlanTool } from './tools-projects'
+import { registerProjectTools, registerProjectsActivityTool, registerMatterHandoffTool, registerMatterPlanTool, registerMatterShareTool } from './tools-projects'
 import { registerVoiceShareTools } from './tools-voice-share'
 import { registerMessagingTools } from './tools-messaging'
 import { registerCompanionTools } from './tools-companion'
@@ -162,6 +162,7 @@ export async function createWechatMcpServer(client: InternalApiClient, options: 
     registerProjectsActivityTool(server, client)
     registerMatterHandoffTool(server, client)
     registerMatterPlanTool(server, client)
+    registerMatterShareTool(server, client)
     // terminal_say / terminal_say_result(2026-10-24):代主人对终端里正在干活的会话说一句、带回它的回话。
     // 只给 admin 会话;路由层再只认主人那条聊天的会话令牌(features/terminal/routes.ts)。
     registerTerminalTools(server, client, options.participantTag)

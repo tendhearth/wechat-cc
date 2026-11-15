@@ -263,6 +263,25 @@ describe('主人侧三条路由', () => {
       expect((await routes['POST /v1/matter/talk']!(q, { matter: 'aaaaaaaa', text: '好' }, caller as never)).status).toBe(403)
     }
   })
+  it('主人自己那段对话(CC 的工具):开链接要主人在确认卡上点过头;看和关不用;别的对话不行', async () => {
+    const made = { ok: true as const, url: 'https://relay.test/pset/#x', share: { id: 'bbbbbbbbbbbb', matterId: 'aaaaaaaa', name: '小林', mode: 'discuss' as const, createdAt: 1, expiresAt: 2, revokedAt: null, lastOpenedAt: null } }
+    const approvedInputs: unknown[] = []
+    const owned = { ...share, link: () => made, list: () => [made.share], ownerConversation: (c: unknown) => (c as { chatId?: string })?.chatId === OWNER, approved: (input: unknown) => approvedInputs.some(a => JSON.stringify(a) === JSON.stringify(input)) }
+    const r = phoneRoutes({ phoneConnect: () => ({ link: async () => ({ ok: false as const, state: 'starting' as const }), devices: () => [], share: owned }) })
+    const mine = { tier: 'admin', origin: 'session', chatId: OWNER }, other = { tier: 'admin', origin: 'session', chatId: 'someone-else' }
+    const body = { matter: 'aaaaaaaa', name: '小林' }
+    expect(await r['POST /v1/matter/share']!(q, body, mine as never)).toEqual({ status: 403, body: { error: 'share_not_approved' } })
+    approvedInputs.push(body)
+    expect(await r['POST /v1/matter/share']!(q, body, mine as never)).toEqual({ status: 200, body: { share: made.share, url: made.url } })
+    // 点头的是这一次的参数:换个名字、换一档都要重新点
+    expect((await r['POST /v1/matter/share']!(q, { ...body, name: '阿伟' }, mine as never)).status).toBe(403)
+    expect((await r['POST /v1/matter/share']!(q, body, other as never)).status).toBe(403)
+    expect((await r['GET /v1/matter/shares']!(new URLSearchParams('matter=aaaaaaaa'), undefined, mine as never)).status).toBe(200)
+    expect((await r['POST /v1/matter/share/revoke']!(q, { matter: 'aaaaaaaa', id: 'bbbbbbbbbbbb' }, mine as never)).status).toBe(200)
+    expect((await r['GET /v1/matter/shares']!(new URLSearchParams('matter=aaaaaaaa'), undefined, other as never)).status).toBe(403)
+    // 换档、读写那段对话:主人的对话也不行(还只有桌面凭据)
+    expect((await r['POST /v1/matter/share/mode']!(q, { matter: 'aaaaaaaa', id: 'bbbbbbbbbbbb', mode: 'act' }, mine as never)).status).toBe(403)
+  })
   it('说得清为什么没开成', async () => {
     expect(await routes['POST /v1/matter/share']!(q, { matter: 'aaaaaaaa', name: '小林' }, OPERATOR as never)).toEqual({ status: 409, body: { error: 'share_relay_not_ready', state: 'remote_off' } })
     expect(await routes['GET /v1/matter/shares']!(new URLSearchParams('matter=aaaaaaaa'), undefined, OPERATOR as never)).toEqual({ status: 404, body: { error: 'matter_not_found' } })

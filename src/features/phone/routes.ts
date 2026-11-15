@@ -17,6 +17,10 @@ export interface PhoneConnectDep {
     /** 这件事里和被分享的人一起聊的那段对话:主人读、主人说。 */
     talk(matterId: string): { talk: TalkRow[]; total: number }
     say(matterId: string, text: string): TalkRow
+    /** 这位调用者是不是主人自己的那段对话(CC 的 matter_share / matter_shares 工具从这里进来)。 */
+    ownerConversation?(caller: unknown): boolean
+    /** 主人在确认卡上点过头的那一次开链接(同一段对话、同样的参数)。 */
+    approved?(input: unknown, caller: unknown): boolean
   }
 }
 
@@ -68,8 +72,12 @@ export function phoneRoutes(deps: PhoneRoutesDeps): RouteTable {
     },
     // ── 分享一件事给合伙人(主人侧)。只认桌面的 operator 凭据:开链接是对外的动作,聊天会话、执行者、手机链接都不能替主人开。
     'POST /v1/matter/share': async (_q, body, caller) => {
-      if (!ownerDesktop(caller)) return { status: 403, body: { error: 'forbidden' } }
       const share = deps.phoneConnect()?.share
+      // 桌面凭据,或者主人自己那段对话里、主人在确认卡上点过头的那一次(开链接是对外的动作,模型自己说了不算)。
+      if (!ownerDesktop(caller)) {
+        if (!share?.ownerConversation?.(caller)) return { status: 403, body: { error: 'forbidden' } }
+        if (!share.approved?.(body, caller)) return { status: 403, body: { error: 'share_not_approved' } }
+      }
       if (!share) return { status: 503, body: { error: 'phone_not_wired' } }
       const b = body as { matter: string; name: string; mode?: string }
       try {
@@ -79,14 +87,15 @@ export function phoneRoutes(deps: PhoneRoutesDeps): RouteTable {
       } catch (e) { return shareError(e) }
     },
     'GET /v1/matter/shares': async (q, _b, caller) => {
-      if (!ownerDesktop(caller)) return { status: 403, body: { error: 'forbidden' } }
       const share = deps.phoneConnect()?.share
+      if (!ownerDesktop(caller) && !share?.ownerConversation?.(caller)) return { status: 403, body: { error: 'forbidden' } }
       if (!share) return { status: 503, body: { error: 'phone_not_wired' } }
       try { return { status: 200, body: { shares: share.list(q.get('matter') ?? '') } } } catch (e) { return shareError(e) }
     },
     'POST /v1/matter/share/revoke': async (_q, body, caller) => {
-      if (!ownerDesktop(caller)) return { status: 403, body: { error: 'forbidden' } }
       const share = deps.phoneConnect()?.share
+      // 关掉是收紧:主人自己那段对话里说一声就行,不用确认卡。
+      if (!ownerDesktop(caller) && !share?.ownerConversation?.(caller)) return { status: 403, body: { error: 'forbidden' } }
       if (!share) return { status: 503, body: { error: 'phone_not_wired' } }
       const b = body as { matter: string; id: string }
       try { return { status: 200, body: { revoked: share.revoke(b.matter, b.id) } } } catch (e) { return shareError(e) }
