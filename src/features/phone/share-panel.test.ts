@@ -193,7 +193,7 @@ describe('分享一件事给合伙人', () => {
     expect(prompts[0]).toContain('标题:登录页插图')
     for (const hidden of [f.task.id, OWNER, '/Users/someone/work/site', lin.share.id]) expect(prompts[0]).not.toContain(hidden)
 
-    answer = JSON.stringify({ reply: '我转告发起人,他同意就开工。', proposal: '第三张插图里的熊放大一圈' })
+    answer = JSON.stringify({ reply: '我转告发起人,同意了就开工。', proposal: '第三张插图里的熊放大一圈' })
     await say(lin.token, '第三张的熊再大一点')
     await settled(4)
     expect(told.at(-1)).toBe('「登录页插图」这件事里,小林 提了个想法:第三张插图里的熊放大一圈\n要做的话,直接告诉我怎么改;不做不用管。')

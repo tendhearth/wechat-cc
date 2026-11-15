@@ -56,3 +56,12 @@ it('告诉主人的话:提议只带整理过的那一句;有人开口那一句�
   expect(shareProposalNotice('登录页重做', '小林', '熊放大一圈')).toBe('「登录页重做」这件事里,小林 提了个想法:熊放大一圈\n要做的话,直接告诉我怎么改;不做不用管。')
   expect(shareTalkNotice('登录页重做', '小林')).toBe('小林 在「登录页重做」这件事里说话了。')
 })
+
+describe('不替发起人和来的人猜性别', () => {
+  it('提示词里不用「他 / 她」指人,并要求模型也不用', () => {
+    const prompt = shareReplyPrompt({ title: '首页配色', state: 'working', legs: [], notes: [], notesOmitted: 0, outputs: [], talk: [{ who: 'guest', name: '小林', text: '按钮颜色太淡了', createdAt: 1, mine: false } as never], talkOmitted: 0 }, { name: '小林' })
+    const rules = prompt.slice(0, prompt.indexOf('<shared_matter>'))
+    expect(rules).toContain('不要用「他」「她」')
+    expect(rules.replace('不要用「他」「她」', '')).not.toMatch(/[他她]/)
+  })
+})
