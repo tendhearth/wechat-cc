@@ -2,6 +2,7 @@ import {matterToolFailure} from '../../../packages/protocol/src/workbench-errors
 import {PlanInputError,type PlanTarget} from '../workbench/matter-plan-input'
 import { randomBytes } from 'node:crypto'
 import { toolInputPreview,redactPreviewText } from '../../domain/workbench/tool-input-preview'
+import { shareName } from '../../domain/matters/share-scope'
 import { redactSecrets } from '../../domain/cli-transcript'
 
 /** 三个对话通道用同一份预览；先打码，再截断。 */
@@ -14,9 +15,11 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
     }
   }
   if(/(?:^|__)matter_share$/.test(tool)&&input&&typeof input==='object'){
-    const share=input as {matter?:unknown;name?:unknown;mode?:unknown}
-    const clip=(v:unknown,n:number)=>{const s=redactPreviewText(redactSecrets(typeof v==='string'?v:JSON.stringify(v)??'')).replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
-    return `${provider} · matter_share [approval:${requestId}]\n确认分享:把这件事(${clip(share.matter,16)})开给「${clip(share.name,24)}」,${share.mode==='view'?'对方只能看':'对方能看、能在里面说话'}。\n拿到链接的人看得到这件事的分工、过程记录和产出的文件名,看不到你的其他对话和别的事。链接 14 天有效,可以随时关掉。`
+    const share=input as {matter?:unknown;title?:unknown;name?:unknown;mode?:unknown}
+    // 卡上写的名字就是会存下来的那个(同一个归一);名字不合格、档位不是「能讨论 / 只看」的,不出这张卡,落到下面的原样预览。
+    const name=shareName(share.name),title=typeof share.title==='string'?redactPreviewText(redactSecrets(share.title)).replace(/[\s「」]+/g,' ').trim().slice(0,80):''
+    if(name&&title&&typeof share.matter==='string'&&/^[a-f0-9]{8}$/.test(share.matter)&&(share.mode===undefined||share.mode==='discuss'||share.mode==='view'))
+      return `${provider} · matter_share [approval:${requestId}]\n确认分享:把「${title}」这件事(${share.matter})开给「${name}」,${share.mode==='view'?'对方只能看':'对方能看、能在里面说话'}。\n拿到链接的人看得到这件事的分工、过程记录和产出的文件名,看不到你的其他对话和别的事。链接 14 天有效,可以随时关掉。`
   }
   const preview = toolInputPreview(input, true) ?? '[input omitted: too large or unreadable]'
   const safeTitle = title ? toolInputPreview({ title }) : null

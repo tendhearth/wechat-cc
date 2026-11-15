@@ -209,6 +209,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   invalid_share_name: {desktop: 400},
   invalid_share_mode: {desktop: 400},
   share_not_approved: {desktop: 403},
+  share_title_mismatch: {desktop: 409},
   too_many_shares: {desktop: 409},
   matter_archived: {desktop: 409},
   matter_ledger_forbidden: {matter: '无法确认这是主人的当前对话或主人名下的事项；请回到主人原对话并使用正确的事项编号。', desktop:403,phone:403},

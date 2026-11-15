@@ -21,6 +21,10 @@ export interface PhoneConnectDep {
     ownerConversation?(caller: unknown): boolean
     /** 主人在确认卡上点过头的那一次开链接(同一段对话、同样的参数)。 */
     approved?(input: unknown, caller: unknown): boolean
+    /** 点过头的那一次用掉:同一次批准不能再开第二个链接。 */
+    consume?(input: unknown, caller: unknown): void
+    /** 这件事的标题(主人名下的事才有)。对话里开链接时核对确认卡上写的标题就是这件事。 */
+    titleOf?(matterId: string): string | null
   }
 }
 
@@ -70,18 +74,26 @@ export function phoneRoutes(deps: PhoneRoutesDeps): RouteTable {
       try { return { status: 200, body: await connect.link({ enableRemote: b.enable_remote === true }) } }
       catch (e) { deps.log?.('INTERNAL_API', `phone_link_failed: ${e instanceof Error ? e.message : 'error'}`); return { status: 503, body: { error: 'unavailable' } } }
     },
-    // ── 分享一件事给合伙人(主人侧)。只认桌面的 operator 凭据:开链接是对外的动作,聊天会话、执行者、手机链接都不能替主人开。
+    // ── 分享一件事(主人侧)。开链接是对外的动作:桌面的 operator 凭据,或者主人自己那段对话里主人在确认卡上点过头的那一次;
+    // 别的对话、执行者、手机设备 / 链接都不能替主人开。
     'POST /v1/matter/share': async (_q, body, caller) => {
       const share = deps.phoneConnect()?.share
       // 桌面凭据,或者主人自己那段对话里、主人在确认卡上点过头的那一次(开链接是对外的动作,模型自己说了不算)。
-      if (!ownerDesktop(caller)) {
+      const b = body as { matter: string; title?: string; name: string; mode?: string }
+      const viaChat = !ownerDesktop(caller)
+      if (viaChat) {
         if (!share?.ownerConversation?.(caller)) return { status: 403, body: { error: 'forbidden' } }
+        // 对话里开不了「直接改」那一档;确认卡上写的标题必须就是这件事的标题(卡上只有编号主人分不清是哪件)。
+        if (b.mode === 'act') return { status: 403, body: { error: 'forbidden' } }
+        const actual = share.titleOf?.(b.matter) ?? null
+        if (actual === null) return { status: 404, body: { error: 'matter_not_found' } }
+        if (!b.title || b.title.trim() !== actual.trim()) return { status: 409, body: { error: 'share_title_mismatch' } }
         if (!share.approved?.(body, caller)) return { status: 403, body: { error: 'share_not_approved' } }
       }
       if (!share) return { status: 503, body: { error: 'phone_not_wired' } }
-      const b = body as { matter: string; name: string; mode?: string }
       try {
         const out = share.link(b.matter, b.name, b.mode)
+        if (out.ok && viaChat) share.consume?.(body, caller)
         if (out.ok) return { status: 200, body: { share: out.share, url: out.url } }
         return { status: out.error === 'share_unavailable' ? 503 : 409, body: out.error === 'share_relay_not_ready' ? { error: out.error, state: out.state } : { error: out.error } }
       } catch (e) { return shareError(e) }

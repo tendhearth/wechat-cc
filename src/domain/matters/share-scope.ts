@@ -23,8 +23,9 @@ export function shareName(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
   const name = raw.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '').replace(/\s+/g, ' ').trim()
   if (!name || [...name].length > SHARE_NAME_MAX) return null
-  // 冒号留给署名前缀(partner:<名字>),尖括号和反引号免得进了记录本被执行者当成标记。
-  return /[:：<>`]/.test(name) ? null : name
+  // 冒号留给署名前缀(partner:<名字>),尖括号和反引号免得进了记录本被执行者当成标记;
+  // 直角引号免得在确认卡的「…」里把后半句伪造出来。
+  return /[:：<>`「」『』]/.test(name) ? null : name
 }
 
 /** 链接的三档(主人 11-15 定):只看;能讨论(默认);能直接让 CC 改(主人按人、按事打开)。 */

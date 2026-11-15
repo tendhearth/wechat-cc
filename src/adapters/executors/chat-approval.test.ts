@@ -14,3 +14,25 @@ describe('matter_plan 批准卡', () => {
     expect(card.length).toBeLessThan(700)
   })
 })
+
+import { describe as describeShare, expect as expectShare, it as itShare } from 'vitest'
+import { noteChatApproval as noteShare, renderChatApprovalPrompt as renderShare } from './chat-approval'
+describeShare('matter_share 的确认卡', () => {
+  itShare('写明哪件事(标题 + 编号)、开给谁、哪一档;名字是归一后会存下来的那个', () => {
+    const card = renderShare('Claude', 'mcp__wechat__matter_share', { matter: 'ab12cd34', title: '登录页重做', name: ' 小林 ' }, 'r1')
+    expectShare(card).toContain('把「登录页重做」这件事(ab12cd34)开给「小林」,对方能看、能在里面说话。')
+    expectShare(renderShare('Claude', 'mcp__wechat__matter_share', { matter: 'ab12cd34', title: '登录页重做', name: '设计师', mode: 'view' }, 'r1')).toContain('对方只能看')
+  })
+  itShare('想在名字里伪造后半句、或要「直接改」那一档的,不出这张卡(落到原样预览,主人看得到真实参数)', () => {
+    for (const input of [{ matter: 'ab12cd34', title: '登录页重做', name: '小林」,对方只能看。' }, { matter: 'ab12cd34', title: '登录页重做', name: '小林', mode: 'act' }, { matter: 'ab12cd34', name: '小林' }]) {
+      const card = renderShare('Claude', 'mcp__wechat__matter_share', input, 'r1')
+      expectShare(card).not.toContain('确认分享')
+      expectShare(card).toContain('wants to run mcp__wechat__matter_share')
+    }
+  })
+  itShare('主人点头后记一笔批准(路由凭它放行)', () => {
+    const noted: unknown[] = []
+    noteShare({ noteMatterApproval: (tool, input, chatId, provider) => { noted.push([tool, input, chatId, provider]) } }, 'Claude', 'mcp__wechat__matter_share', { matter: 'ab12cd34' }, 'owner')
+    expectShare(noted).toEqual([['mcp__wechat__matter_share', { matter: 'ab12cd34' }, 'owner', 'claude']])
+  })
+})

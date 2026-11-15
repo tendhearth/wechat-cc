@@ -35,6 +35,8 @@ export function matterApprovals(){
       const parsed=MatterPlanRequest.parse(input),{project:_project,isolation:_isolation,base:_base,...rest}=parsed
       records.set(key(scope,tool,{...rest,target:target.target}),record)
     },
+    /** 用掉一次批准(开分享链接:点一次头只开一个)。 */
+    consume(scope:string,tool:string,input:unknown){records.delete(key(scope,tool,input))},
     approve(scope:string,tool:string,input:unknown){const k=key(scope,tool,input),record=records.get(k);if(record)record.approved=true;else records.set(k,{scope,approved:true})},
   }
 }

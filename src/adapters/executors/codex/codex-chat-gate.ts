@@ -58,7 +58,7 @@ function combine(all: ChatAuthorization[]): ChatAuthorization {
 
 /** 拍板卡上那一段:命令 / 改文件 / 工具 + codex 给的说明(截断)。 */
 function promptOf(req: CodexChatApprovalRequest,hash:string): string {
-  if(req.tool==='mcp__wechat__matter_plan')return renderChatApprovalPrompt('Codex',req.tool,req.input,hash)
+  if(req.tool==='mcp__wechat__matter_plan'||req.tool==='mcp__wechat__matter_share')return renderChatApprovalPrompt('Codex',req.tool,req.input,hash)
   const what = req.tool === 'commandExecution' ? '执行命令' : req.tool === 'fileChange' ? '改文件' : `调用 ${req.tool}`
   const body = req.description.length > PROMPT_MAX ? `${req.description.slice(0, PROMPT_MAX - 1)}…` : req.description
   return `Codex 想${what}:\n${body}`

@@ -140,6 +140,8 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
     shareTalkAdd(id:string,who:'owner'|'cc',name:string,text:string){owned(id);return store.shares.talkAdd(id,{who,name,shareId:null,text},ctx.now())},
     /** 主人这边读这段对话(原文,不过投影:主人本来就都看得到)。 */
     shareTalk(id:string){owned(id);return {talk:store.shares.talkRecent(id),total:store.shares.talkTotal(id)}},
+    /** 主人名下这件事的标题;不是主人的、不存在的 ⇒ null。 */
+    shareTitle(id:string):string|null{try{return owned(id).title}catch{return null}},
     shareList(id:string):MatterShare[]{owned(id);return store.shares.list(id)},
     shareRevoke(id:string,shareId:string):boolean{owned(id);return store.shares.revoke(id,shareId)},
     /** 隧道握手的候选:没撤销、没过期的链接。归档等情况在握手之后由 shareTokenValid / shareView 判。 */

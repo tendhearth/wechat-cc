@@ -80,12 +80,12 @@ it('matter_share 只给主人的对话:开链接归「要主人点头」那一�
  const [a,b]=InMemoryTransport.createLinkedPair(),client=new Client({name:'share',version:'0'})
  await Promise.all([server.connect(a),client.connect(b)])
  try{
-  await client.callTool({name:'matter_share',arguments:{matter:'ab12cd34',name:'小林'}})
+  await client.callTool({name:'matter_share',arguments:{matter:'ab12cd34',title:'登录页重做',name:'小林'}})
   await client.callTool({name:'matter_shares',arguments:{matter:'ab12cd34'}})
   await client.callTool({name:'matter_shares',arguments:{matter:'ab12cd34',close:'0123456789ab'}})
-  expect(calls.filter(call=>Array.isArray(call)&&String(call[1]).startsWith('/v1/matter/share'))).toEqual([['POST','/v1/matter/share',{matter:'ab12cd34',name:'小林'}],['GET','/v1/matter/shares?matter=ab12cd34',undefined],['POST','/v1/matter/share/revoke',{matter:'ab12cd34',id:'0123456789ab'}]])
+  expect(calls.filter(call=>Array.isArray(call)&&String(call[1]).startsWith('/v1/matter/share'))).toEqual([['POST','/v1/matter/share',{matter:'ab12cd34',title:'登录页重做',name:'小林'}],['GET','/v1/matter/shares?matter=ab12cd34',undefined],['POST','/v1/matter/share/revoke',{matter:'ab12cd34',id:'0123456789ab'}]])
   // 工具给不了「直接改」那一档
-  expect((await client.callTool({name:'matter_share',arguments:{matter:'ab12cd34',name:'小林',mode:'act'}})).isError).toBe(true)
+  expect((await client.callTool({name:'matter_share',arguments:{matter:'ab12cd34',title:'登录页重做',name:'小林',mode:'act'}})).isError).toBe(true)
   expect(classifyToolUse('mcp__wechat__matter_share',{})).toBe('daemon_remediate')
   expect(classifyToolUse('mcp__wechat__matter_shares',{})).toBe('daemon_introspect')
   for(const tier of ['trusted','guest']){
