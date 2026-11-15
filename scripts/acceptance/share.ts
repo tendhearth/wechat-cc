@@ -3,9 +3,8 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } fr
 import { join, resolve } from 'node:path'
 import { makeProtocolClient, type ProtocolClient } from '@wechat-cc/protocol'
 
-const root = '/private/tmp/claude-501/-Users-nategu-mac-company-Documents-tendhearth-wechat-cc/f71eba2a-4407-4d17-9b28-b1eb12232935/scratchpad/acc/state'
 const dir = resolve(process.env.WECHAT_STATE_DIR ?? '')
-if (!dir.startsWith(root + '/share-offline-') || !existsSync(join(dir, '.acceptance-only')) || !existsSync(join(dir, '.share-acceptance'))) throw Error('marked share acceptance state required')
+if (!dir.startsWith('/private/tmp/') || !dir.includes('/acc/state/') || !existsSync(join(dir, '.acceptance-only')) || !existsSync(join(dir, '.share-acceptance'))) throw Error('marked share acceptance state required')
 const command = process.argv[2]
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 function check(id: string, ok: boolean, detail: Record<string, number | boolean | string> = {}) {
@@ -17,9 +16,9 @@ function check(id: string, ok: boolean, detail: Record<string, number | boolean 
 function read(name: string) { return JSON.parse(readFileSync(join(dir, name), 'utf8')) }
 function rows(name: string): any[] { return existsSync(join(dir, name)) ? readFileSync(join(dir, name), 'utf8').split('\n').filter(Boolean).map(s => JSON.parse(s)) : [] }
 function loopback(base: string) { if (new URL(base).hostname !== '127.0.0.1') throw Error('loopback required'); return base }
-async function api(method: string, path: string, body?: unknown, control = false) {
+async function api(method: string, path: string, body?: unknown, control = false, token = 'internal-operator-token') {
   const base = loopback(control ? read('ready.json').controlUrl : read('internal-api-info.json').baseUrl)
-  const r = await fetch(base + path, { method, headers: { 'content-type': 'application/json', ...(!control ? { authorization: 'Bearer ' + readFileSync(join(dir, 'internal-operator-token'), 'utf8').trim() } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(180000) })
+  const r = await fetch(base + path, { method, headers: { 'content-type': 'application/json', ...(!control ? { authorization: 'Bearer ' + readFileSync(join(dir, token), 'utf8').trim() } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(180000) })
   const text = await r.text()
   let value: any; try { value = JSON.parse(text) } catch { value = {} }
   return { status: r.status, body: value }
@@ -86,7 +85,8 @@ async function ownerTurn(text: string, decision?: 'allow' | 'deny') {
 }
 async function a() {
   check('online-mode', !existsSync(join(dir, '.share-offline')))
-  await api('POST', '/v1/conversation/set-mode', { chatId: 'acc-owner', mode: { kind: 'solo', provider: 'openai' }, quiet: true })
+  // 换模式只认文件令牌(operator 会 403 route_not_allowed)。
+  check('a-mode', (await api('POST', '/v1/conversation/set-mode', { chatId: 'acc-owner', mode: { kind: 'solo', provider: process.env.SHARE_ACC_PROVIDER ?? 'openai' }, quiet: true }, false, 'internal-token')).status === 200)
   const made = await api('POST', '/v1/workbench/create', { title: '首页配色', path: join(dir, 'workspace'), providerId: 'openai', text: '只回复：首页配色方案已备好。不要使用工具。' })
   check('a-operator-create', made.status === 202 && !!made.body.task?.id)
   const matter = made.body.task.id
