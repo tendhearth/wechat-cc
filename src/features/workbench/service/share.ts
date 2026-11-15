@@ -7,13 +7,17 @@
  */
 import {publicTask} from '../../../adapters/store/workbench/store'
 import type {MatterShare} from '../../../adapters/store/matter-shares'
-import {readShareReply,shareActInput,shareActNotice,shareProposalNotice,shareReplyPrompt,shareTalkNotice} from '../../../domain/matters/share-reply'
+import {readShareReply,shareProposalNotice,shareQuietNotice,shareReplyPrompt,shareTalkNotice} from '../../../domain/matters/share-reply'
 import {PARTNER_AUTHOR_PREFIX,SHARE_MODES,SHARE_SAY_PER_DAY,SHARE_SAY_PER_MATTER_DAY,shareRefusal,shareSayText,sharedMatterView,type ShareMode,type ShareRefusal,type ShareView} from '../../../domain/matters/share-scope'
 import {GIT_REVIEW_MIME} from '../git-review'
 import type {ServiceCtx} from './ctx'
 import type {ViewDomain} from './view'
 
-export interface ShareResponder {eval(prompt:string):Promise<string|null>;tellOwner(text:string):void;act(matterId:string,text:string):Promise<unknown>}
+export interface ShareResponder {eval(prompt:string):Promise<string|null>;tellOwner(text:string):void}
+/** 每件事告诉主人的条数上限。 */
+const SHARE_TELL_PER_HOUR=3,SHARE_TELL_PER_DAY=10
+/** 全机每天为分享出去的事叫模型的次数上限。 */
+const SHARE_REPLIES_PER_DAY=400
 /** CC 回一句最多等这么久;超了这一轮就不回。 */
 const SHARE_REPLY_BUDGET_MS=45_000
 /** 同一位隔了这么久再开口,算「又来说话了」,告诉主人一声。 */
@@ -54,35 +58,49 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
   }
   let responder:ShareResponder|null=null
   /** 每件事同一时刻只回一轮;回的途中又有人说话 ⇒ 这一轮完了再回一轮(回最新那位)。 */
-  const replying=new Map<string,{next:MatterShare|null}>()
-  function respond(share:MatterShare,quiet:boolean,said:string):void{
+  const replying=new Map<string,{next:{share:MatterShare;quiet:boolean}|null}>()
+  /** 告诉主人的条数:每件事每小时、每天有上限,到了上限说最后一句就停(来的人刷不了主人的微信)。 */
+  const told=new Map<string,number[]>()
+  function tellOwner(handlers:ShareResponder,matterId:string,title:string,text:string){
+    const at=ctx.now(),recent=(told.get(matterId)??[]).filter(t=>t>at-24*60*60*1000)
+    const hour=recent.filter(t=>t>at-60*60*1000).length
+    if(hour>=SHARE_TELL_PER_HOUR||recent.length>=SHARE_TELL_PER_DAY)return
+    recent.push(at);told.set(matterId,recent)
+    handlers.tellOwner(recent.length===SHARE_TELL_PER_DAY?shareQuietNotice(title):text)
+  }
+  /** 全机每天叫模型的次数上限(所有分享出去的事加起来)。 */
+  let calls:number[]=[]
+  function respond(share:MatterShare,quiet:boolean):void{
     if(!responder)return
     const slot=replying.get(share.matterId)
-    if(slot){slot.next=share;return}
+    if(slot){slot.next={share,quiet:quiet||!!slot.next?.quiet};return}
     replying.set(share.matterId,{next:null})
     const handlers=responder
     void (async()=>{
-      let proposed=false
+      let timer:ReturnType<typeof setTimeout>|undefined
       try{
         const current=store.shares.byId(share.id)
         if(!current||refusalOf(current)||current.mode==='view')return
+        const at=ctx.now()
+        calls=calls.filter(t=>t>at-24*60*60*1000)
+        if(calls.length>=SHARE_REPLIES_PER_DAY)return
+        calls.push(at)
         const title=publicTask(store.get(share.matterId)).title
-        const out=readShareReply(await Promise.race([handlers.eval(shareReplyPrompt(project(current),{name:current.name,canAct:current.mode==='act'})),new Promise<null>(resolve=>setTimeout(()=>resolve(null),SHARE_REPLY_BUDGET_MS))]))
+        const raw=await Promise.race([handlers.eval(shareReplyPrompt(project(current),{name:current.name})),new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),SHARE_REPLY_BUDGET_MS)})])
+        const out=readShareReply(raw)
+        // 等模型的这段时间里链接可能被撤销、换成只看、这件事被归档:回话之前再核一遍。
+        const still=store.shares.byId(share.id)
+        if(!still||refusalOf(still)||still.mode==='view')return
         if(out?.reply)store.shares.talkAdd(share.matterId,{who:'cc',name:'CC',shareId:null,text:out.reply},ctx.now())
-        if(out?.proposal){
-          proposed=true
-          if(current.mode==='act'){
-            try{await handlers.act(share.matterId,shareActInput(current.name,out.proposal));handlers.tellOwner(shareActNotice(title,current.name,out.proposal));ctx.log?.('SHARE',`act: ${current.id} said into ${share.matterId}`)}
-            catch(error){store.shares.talkAdd(share.matterId,{who:'cc',name:'CC',shareId:null,text:'这一条现在没安排上,我告诉发起人了。'},ctx.now());handlers.tellOwner(shareProposalNotice(title,current.name,out.proposal));ctx.log?.('SHARE',`act failed: ${error instanceof Error?error.message:'error'}`)}
-          }else handlers.tellOwner(shareProposalNotice(title,current.name,out.proposal))
-        }
-        // 没有提议时,隔了一阵的第一句也告诉主人一声:有人在这件事里说话了。
-        if(!proposed&&quiet)handlers.tellOwner(shareTalkNotice(title,current.name,said))
+        // 提议只转告主人。「能直接让 CC 改」那一档现在同样只转告(见 domain/matters/share-reply.ts 头注)。
+        if(out?.proposal)tellOwner(handlers,share.matterId,title,shareProposalNotice(title,still.name,out.proposal))
+        else if(quiet)tellOwner(handlers,share.matterId,title,shareTalkNotice(title,still.name))
       }catch(error){ctx.log?.('SHARE',`reply failed: ${error instanceof Error?error.message:'error'}`)}
       finally{
+        if(timer)clearTimeout(timer)
         const next=replying.get(share.matterId)?.next??null
         replying.delete(share.matterId)
-        if(next)respond(next,false,'')
+        if(next)respond(next.share,next.quiet)
       }
     })()
   }
@@ -115,7 +133,7 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
       if(store.shares.talkCountSince(share.id,at-24*60*60*1000)>=SHARE_SAY_PER_DAY||store.shares.talkGuestCountSince(share.matterId,at-24*60*60*1000)>=SHARE_SAY_PER_MATTER_DAY)return {ok:false,reason:'limit'}
       const quiet=store.shares.talkCountSince(share.id,at-SHARE_QUIET_MS)===0
       store.shares.talkAdd(share.matterId,{who:'guest',name:share.name,shareId:share.id,text},at)
-      respond(share,quiet,text)
+      respond(share,quiet)
       return {ok:true}
     },
     /** 主人(或 CC 替主人、CC 自己)在这件事的对话里说一句。 */
@@ -136,8 +154,8 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
       return {ok:true,name:share.name,mode:share.mode,expiresAt:share.expiresAt,matter:project(share)}
     },
     /**
-     * 接上 CC 的回应(wiring 在开机后给):eval = 不带工具的一次模型调用;tellOwner = 经 CC 开口那道门告诉主人;
-     * act = 把一句话说进这件事(只给「能直接让 CC 改」的链接用)。没接 ⇒ 对方的话只存进对话。
+     * 接上 CC 的回应(wiring 在开机后给):eval = 不带工具的一次模型调用;tellOwner = 经 CC 开口那道门告诉主人。
+     * 没接 ⇒ 对方的话只存进对话。这里没有任何通向执行者的路。
      */
     shareResponder(handlers:ShareResponder|null){responder=handlers},
   }
