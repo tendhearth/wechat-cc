@@ -1,3 +1,4 @@
+import {readTopicBrief} from './topic-brief'
 import type {RelayTurnHook,RelayResume} from './relay-events'
 import {isRelayContinue} from '../../../adapters/store/matter-plans'
 import {RELAY_STATUS_ASK} from '../../../domain/relay-decision'
@@ -188,11 +189,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       }
       const directory=outputDirectory(running.path,task.id)
       // 话题 T3:从和主人聊过的话题里拣一份简报(只用索引,最多等 2 秒;拿不到就没有,不拦起执行者)
-      let briefTimer:ReturnType<typeof setTimeout>|undefined
-      const topicBrief=ctx.deps.topicBrief?await Promise.race([
-        ctx.deps.topicBrief({matterId:task.id,ownerChatId:task.ownerChatId??null,title:task.title,text}).catch(()=>null),
-        new Promise<null>(resolve=>{briefTimer=setTimeout(()=>resolve(null),2_000)}),
-      ]).finally(()=>clearTimeout(briefTimer)):null
+      const ledgerEnabled=store.ledger.enabled(task.id)
+      const topicBrief=ledgerEnabled?null:await readTopicBrief(ctx.deps.topicBrief,task,text)
       const instructions=[
         `你是 CC 的工作助手。当前任务编号 ${task.id}，任务：${task.title}。`,
         `本任务工作目录：${running.path}。成果目录：${directory}。`,
@@ -207,6 +205,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 项目经验(第二轮对标 ★2):按源项目(独立工作区算它的源项目)取主人写的那几句,哪家执行者都带上
         ...(()=>{try{const b=ctx.deps.projectLessons?.(store.worktrees.get(task.id)?.projectPath??(task.workspaceKind==='managed'?null:task.path));return b?[b]:[]}catch{return []}})(),
         ...(topicBrief?[topicBrief]:[]),
+        ...(ledgerEnabled?['需要了解主人之前怎么聊过这件事时，用 matter_context 查；不需要就别查。']:[]),
       ].join('\n')
       const reviewStop=new AbortController()
       void running.stop.then(()=>reviewStop.abort())

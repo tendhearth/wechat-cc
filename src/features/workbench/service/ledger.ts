@@ -1,3 +1,4 @@
+import {readTopicBrief} from './topic-brief'
 import type {MatterNotesQuery,MatterAgent,MatterNote} from '../../../ports/matters'
 import {canonicalProject} from '../../../adapters/workbench/artifacts'
 import {publicTask} from '../../../adapters/store/workbench/store'
@@ -59,6 +60,13 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     noteMatterApproval(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);if(context)approvals.approve(context.scope,tool,input)},
     matterApprovalConsume(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);if(context)approvals.consume(context.scope,tool,input)},
     matterApprovalStatus(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);return !!context&&approvals.get(context.scope,tool,input)?.approved===true},
+    async matterContext(key:string|undefined,requested?:string){
+      const id=store.ledger.bound(key,requested),task=store.get(id)
+      if(!store.ledger.enabled(id))throw Error('matter_ledger_forbidden')
+      const text=store.events(id).filter(e=>e.kind==='user').at(-1)?.text??''
+      const context=await readTopicBrief(ctx.deps.topicBrief,task,text)
+      return {context:context??'',...(!context?{message:'没有相关话题'}:{})}
+    },
     matterNotes:(key:string|undefined,requested?:string,q?:MatterNotesQuery)=>store.ledger.page(store.ledger.bound(key,requested),q),
     matterNote(key:string|undefined,text:string){
       const id=store.ledger.bound(key),run=state.runsByTask.get(id)

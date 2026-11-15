@@ -61,7 +61,7 @@ export async function workbenchClaudeOptions(base: Options, instructions: string
     env:{...workbenchClaudeEnvironment(base.env),...scratchEnv},
     ...tier,
     allowDangerouslySkipPermissions:false,
-    allowedTools:notebook?['mcp__wechat-cc-matter__matter_notes','mcp__wechat-cc-matter__matter_note']:[],
+    allowedTools:notebook?['mcp__wechat-cc-matter__matter_notes','mcp__wechat-cc-matter__matter_note','mcp__wechat-cc-matter__matter_context']:[],
     disallowedTools:[...(tier.disallowedTools ?? []),'mcp__wechat__*','mcp__delegate__*'],
     tools:{type:'preset',preset:'claude_code'},
     mcpServers:{...native.servers,...(notebook?{'wechat-cc-matter':notebook}:{})},
@@ -320,7 +320,7 @@ export function wireWorkbench(opts: {
     ...(opts.topics?{topicBrief:opts.topics.brief,onTaskTurnCompleted:opts.topics.turnCompleted}:{}),
     ...(opts.providerRefusal?{refusal:opts.providerRefusal}:{}),
     // Task credentials reach only their bound notebook, never messaging or personal memory.
-    mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set(['GET /v1/matter/notes','POST /v1/matter/note'])}),
+    mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set(['GET /v1/matter/context','GET /v1/matter/notes','POST /v1/matter/note'])}),
     revokeSessionToken:key => opts.internalApi.invalidateSession(key),
     unattendedAck:makeUnattendedAckStore(opts.stateDir),
     // 空闲自动收工的两档时长:用闭包读(同 ownerChatId),主人改了 agent-config.json 立刻生效;

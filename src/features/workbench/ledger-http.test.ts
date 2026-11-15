@@ -14,7 +14,7 @@ import {makeSettingsPanel} from '../phone/settings-panel'
 
 it('paired phones are the owner: device tokens may read and link tokens may not; real authenticated HTTP protects every detail and notebook read, including long polls and forged executor scope',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'cc-ledger-http-')),db=openTestDb(),matters=makeMatterStore(db),store=makeWorkbenchStore(db)
-  const workbench=makeWorkbenchService({store,registry:createProviderRegistry(),stateDir:dir,ownerChatId:()=>'owner',matters})
+  const workbench=makeWorkbenchService({store,registry:createProviderRegistry(),stateDir:dir,ownerChatId:()=>'owner',matters,topicBrief:async(t)=>'HTTP_CONTEXT_'+t.matterId})
   const api=createInternalApi({stateDir:dir,daemonPid:7777,resolveAdminChatId:()=>'owner',matters:makeMattersService({store:matters,workbench,ownerChatId:()=>'owner'})})
   try{
     const task=store.create({title:'task',providerId:'codex',ownerChatId:'owner',path:'/projects/ledger'})
@@ -30,7 +30,7 @@ it('paired phones are the owner: device tokens may read and link tokens may not;
     const {port,operatorTokenFilePath}=await api.start()
     const owner=api.mintSessionToken('admin','claude/default/owner'),admin=api.mintSessionToken('admin','claude/default/other'),guest=api.mintSessionToken('guest','claude/default/owner')
     const operator=readFileSync(operatorTokenFilePath,'utf8').trim()
-    const executor=api.mintSessionToken('trusted',`workbench/${task.id}`,{routeAllow:new Set(['GET /v1/matter/notes','POST /v1/matter/note'])})
+    const executor=api.mintSessionToken('trusted',`workbench/${task.id}`,{routeAllow:new Set(['GET /v1/matter/context','GET /v1/matter/notes','POST /v1/matter/note'])})
     const get=async(path:string,token:string)=>{const r=await fetch(`http://127.0.0.1:${port}${path}`,{headers:{authorization:`Bearer ${token}`}});return {status:r.status,body:await r.json()}}
     for(const token of [owner,operator]){
       const r=await get(`/v1/matter/notes?matter=${task.id}`,token)
@@ -67,6 +67,11 @@ it('paired phones are the owner: device tokens may read and link tokens may not;
     expect(JSON.stringify((await get('/v1/matter/notes',executor)).body)).toContain('LEDGER_HTTP_PRIVATE_CANARY')
     expect((await get(`/v1/matter/notes?matter=${other.id}`,executor)).status).toBe(403)
     expect((await get(`/v1/matter?id=${task.id}`,executor)).status).toBe(403)
+    expect(await get('/v1/matter/context',executor)).toEqual({status:200,body:{context:'HTTP_CONTEXT_'+task.id}})
+    expect((await get(`/v1/matter/context?matter=${other.id}`,executor)).status).toBe(403)
+    const noToken=async(path:string)=>(await fetch(`http://127.0.0.1:${port}${path}`)).status
+    expect(await noToken('/v1/matter/context')).toBe(await noToken('/v1/matter/notes'))
+    expect([401,403]).toContain(await noToken('/v1/matter/context'))
     expect((await get('/v1/matter/owner-chat',executor)).status).toBe(403)
     expect((await get('/v1/health',executor)).status).toBe(403)
   }finally{await api.stop({unlinkToken:true});await workbench.shutdown();db.close();rmSync(dir,{recursive:true,force:true})}

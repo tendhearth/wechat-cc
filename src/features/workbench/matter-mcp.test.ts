@@ -48,9 +48,9 @@ it('admits only the two daemon-owned notebook tools, without exposing companion 
   const gate=makeWorkbenchClaudeCanUseTool(undefined,undefined,[],[],true)
   const options=await workbenchClaudeOptions({cwd:'/project'},'task instructions',gate,{servers:{},omitted:[]},undefined,undefined,spec)
   expect(options.mcpServers?.['wechat-cc-matter']).toMatchObject({type:'sdk',name:'wechat-cc-matter'})
-  expect(options.allowedTools).toEqual(['mcp__wechat-cc-matter__matter_notes','mcp__wechat-cc-matter__matter_note'])
+  expect(options.allowedTools).toEqual(['mcp__wechat-cc-matter__matter_notes','mcp__wechat-cc-matter__matter_note','mcp__wechat-cc-matter__matter_context'])
   expect(Object.hasOwn(options.env??{},'WECHAT_SESSION_TOKEN')).toBe(false)
-  for(const name of ['matter_notes','matter_note']){
+  for(const name of ['matter_notes','matter_note','matter_context']){
     expect(await gate(`mcp__wechat-cc-matter__${name}`,{}, {signal:new AbortController().signal} as never)).toMatchObject({behavior:'allow'})
   }
   for(const name of ['mcp__wechat-cc-matter__memory_read','mcp__wechat__matter_notes','mcp__wechat__memory_read']){
