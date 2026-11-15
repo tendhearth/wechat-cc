@@ -509,8 +509,11 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // 重启后照样收发(对话模式也留住了:还是 Codex)
     d.sendText(d.owner, '还在吗')
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 在。')), 15_000)
-    expect(lastCodexEnvelope).toContain('<matters>')
-    expect(lastCodexEnvelope).toContain('写一份笔记')
+    // 那件「写一份笔记」是上面派活那条建的;win32 上那条不跑(Codex 工作台在 Windows 上拒绝),没有在办的事 ⇒ 没有这个块。
+    if (process.platform !== 'win32') {
+      expect(lastCodexEnvelope).toContain('<matters>')
+      expect(lastCodexEnvelope).toContain('写一份笔记')
+    } else expect(lastCodexEnvelope).not.toContain('<matters>')
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
     // 上一次重启已经说过作废了,这次没有挂着的卡 ⇒ 不再说
     expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes('作废了'))).toEqual([])
