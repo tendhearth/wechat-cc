@@ -26,7 +26,7 @@ function setup(over: { remote?: typeof REMOTE | null } = {}) {
     stateDir: dir, ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: (_c, p) => p }, getUserName: () => null, setUserName: async () => {}, log: () => {},
     tokens, now: () => clock, relayV2Configured: () => true, remote: { isEnabled: () => true, setEnabled: () => {}, requestRestart: () => {} },
     remoteInfo: () => over.remote === undefined ? REMOTE : over.remote,
-    shares: { create: domain.shareCreate, view: domain.shareView, tokens: domain.shareTokens, valid: domain.shareTokenValid },
+    shares: { create: domain.shareCreate, say: domain.shareSay, view: domain.shareView, tokens: domain.shareTokens, valid: domain.shareTokenValid },
   })
   const task = store.create({ title: '登录页插图', path: '/Users/someone/work/site', providerId: 'codex', ownerChatId: OWNER })
   const get = (path: string, token: string, init?: RequestInit) => panel.handleRequest(new Request(`http://127.0.0.1${path}${path.includes('?') ? '&' : '?'}d=${token}`, init))
@@ -73,6 +73,7 @@ describe('分享一件事给合伙人', () => {
       expect([path, (await f.get(path, token)).status]).toEqual([path, 401])
     }
     expect((await f.get('/share/state', token, { method: 'POST', body: '{}' })).status).toBe(401)
+    expect((await f.get('/share/say', token)).status).toBe(401)
     // 同一个请求里又带一枚设备 / 链接令牌:d 是分享令牌就只走分享出口,拿不到主人的东西。
     const link = f.panel.issueToken()
     expect((await f.panel.handleRequest(new Request(`http://127.0.0.1/set/api/state?d=${token}&t=${link}`))).status).toBe(401)
@@ -123,6 +124,40 @@ describe('分享一件事给合伙人', () => {
     expect(() => f.domain.shareCreate('deadbeef', '小林')).toThrow('matter_not_found')
   })
 
+  it('一起聊:被分享的人说的话进对话、各人看到是谁说的;只看的链接不能说;有上限;说的话不进记录本', async () => {
+    const f = setup()
+    const open = (name: string, mode?: string) => { const made = f.panel.shareLink(f.task.id, name, mode); if (!made.ok) throw Error('expected a link'); return { token: tokenOf(made.url), share: made.share } }
+    const lin = open('小林'), wei = open('阿伟'), viewer = open('路人', 'view')
+    expect([lin.share.mode, viewer.share.mode]).toEqual(['discuss', 'view'])
+    const say = (token: string, body: unknown) => f.get('/share/say', token, { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) })
+    expect((await say(lin.token, { text: '  第三张的熊再大一点\u0000 ' })).status).toBe(200)
+    f.domain.shareTalkAdd(f.task.id, 'cc', 'CC', '记下了,等发起人点头就改。原图在 /Users/someone/work/site/img/bear.webp')
+    const seenBy = async (token: string) => ((await (await f.get('/share/state', token)).json()) as { mode: string; matter: { talk: unknown[]; notes: unknown[] } })
+    expect((await seenBy(lin.token)).matter.talk).toEqual([
+      { who: 'guest', name: '小林', text: '第三张的熊再大一点', at: clock, mine: true },
+      { who: 'cc', name: 'CC', text: '记下了,等发起人点头就改。原图在 img/bear.webp', at: clock, mine: false },
+    ])
+    expect((await seenBy(wei.token)).matter.talk).toMatchObject([{ name: '小林', mine: false }, { who: 'cc' }])
+    expect((await seenBy(lin.token)).matter.notes).toEqual([])
+    expect(f.store.ledger.enabled(f.task.id) ? f.store.ledger.recent(f.task.id).notes : []).toEqual([])
+
+    expect([(await say(viewer.token, { text: '我也说一句' })).status, (await seenBy(viewer.token)).mode]).toEqual([403, 'view'])
+    for (const bad of [{ text: '' }, { text: 'x'.repeat(501) }, { text: 5 }, [], 'not json']) expect((await say(lin.token, bad)).status).toBe(400)
+    expect((await say(lin.token, JSON.stringify({ text: 'x', pad: 'y'.repeat(9000) }))).status).toBe(400)
+    expect((await say('s' + '0'.repeat(64), { text: '好' })).status).toBe(401)
+    f.domain.shareRevoke(f.task.id, wei.share.id)
+    expect((await say(wei.token, { text: '好' })).status).toBe(401)
+
+    for (let i = 1; i < 60; i++) expect((await say(lin.token, { text: `第 ${i} 句` })).status).toBe(200)
+    expect(await (await say(lin.token, { text: '超了' })).json()).toEqual({ error: 'share_say_limit' })
+    clock += 24 * 60 * 60 * 1000 + 1
+    expect((await say(lin.token, { text: '第二天' })).status).toBe(200)
+    // 主人换一档:只看之后就不能说了。
+    expect(f.domain.shareSetMode(f.task.id, lin.share.id, 'view')).toBe(true)
+    expect((await say(lin.token, { text: '还能说吗' })).status).toBe(403)
+    expect(() => f.domain.shareSetMode(f.task.id, lin.share.id, 'admin')).toThrow('invalid_share_mode')
+  })
+
   it('中继没就绪不开链接,也不留下记录', () => {
     const f = setup({ remote: null })
     expect(f.panel.shareLink(f.task.id, '小林')).toEqual({ ok: false, error: 'share_relay_not_ready', state: 'starting' })
@@ -132,7 +167,7 @@ describe('分享一件事给合伙人', () => {
 
 describe('主人侧三条路由', () => {
   const q = new URLSearchParams()
-  const share = { link: () => ({ ok: false as const, error: 'share_relay_not_ready' as const, state: 'remote_off' as const }), list: () => { throw Error('matter_not_found') }, revoke: () => true }
+  const share = { link: () => ({ ok: false as const, error: 'share_relay_not_ready' as const, state: 'remote_off' as const }), list: () => { throw Error('matter_not_found') }, revoke: () => true, setMode: () => true, talk: () => ({ talk: [], total: 0 }), say: () => { throw Error('matter_not_found') } }
   const routes = phoneRoutes({ phoneConnect: () => ({ link: async () => ({ ok: false as const, state: 'starting' as const }), devices: () => [], share }) })
   const OPERATOR = { tier: 'admin' as const, origin: 'operator' as const }
 
@@ -141,6 +176,9 @@ describe('主人侧三条路由', () => {
       expect((await routes['POST /v1/matter/share']!(q, { matter: 'aaaaaaaa', name: '小林' }, caller as never)).status).toBe(403)
       expect((await routes['GET /v1/matter/shares']!(new URLSearchParams('matter=aaaaaaaa'), undefined, caller as never)).status).toBe(403)
       expect((await routes['POST /v1/matter/share/revoke']!(q, { matter: 'aaaaaaaa', id: 'bbbbbbbbbbbb' }, caller as never)).status).toBe(403)
+      expect((await routes['POST /v1/matter/share/mode']!(q, { matter: 'aaaaaaaa', id: 'bbbbbbbbbbbb', mode: 'act' }, caller as never)).status).toBe(403)
+      expect((await routes['GET /v1/matter/talk']!(new URLSearchParams('matter=aaaaaaaa'), undefined, caller as never)).status).toBe(403)
+      expect((await routes['POST /v1/matter/talk']!(q, { matter: 'aaaaaaaa', text: '好' }, caller as never)).status).toBe(403)
     }
   })
   it('说得清为什么没开成', async () => {

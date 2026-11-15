@@ -32,6 +32,21 @@ ol,ul{list-style:none;margin:0;padding:0}
 .files small{color:var(--soft);margin-left:6px}
 .empty{color:var(--soft);font-size:14.5px;padding:8px 0}
 footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
+.talk{padding:8px 0}
+.line{margin:10px 0;max-width:88%}
+.line .by{font-size:13px;color:var(--soft);margin-bottom:2px}
+.line .say{background:var(--wash);border-radius:var(--r-m);padding:8px 12px;overflow-wrap:anywhere;white-space:pre-wrap;font-size:15.5px}
+.line.mine{margin-left:auto}
+.line.mine .by{text-align:right}
+.line.mine .say{background:var(--accent);color:var(--on-accent)}
+.line.cc .by{color:var(--accent)}
+#composer{position:sticky;bottom:0;background:var(--paper);padding:10px 0 calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--line);display:flex;gap:8px;align-items:flex-end;margin-top:8px}
+#say{flex:1;font:inherit;font-size:16px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:var(--r-m);padding:9px 12px;resize:none;min-height:44px;max-height:160px}
+#say:focus{outline:2px solid var(--accent);outline-offset:1px}
+#send{font:inherit;font-size:15px;background:var(--accent);color:var(--on-accent);border:0;border-radius:var(--r-m);padding:0 16px;height:44px;cursor:pointer}
+#send:disabled{opacity:.5;cursor:default}
+#say-note{color:var(--soft);font-size:13px;min-height:1.4em;margin:4px 0 0}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 #gate{min-height:70svh;display:grid;place-items:center;text-align:center;color:var(--soft);font-size:15px;padding:0 12px}
 [hidden]{display:none!important}
 </style></head><body>
@@ -44,6 +59,9 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
     <section id="legs-box"><h2>谁在做什么</h2><ol id="legs"></ol></section>
     <section><h2>过程里记下的</h2><p class="more" id="notes-more" hidden></p><ul id="notes"></ul><p class="empty" id="notes-empty" hidden>还没有记录。</p></section>
     <section id="files-box" hidden><h2>做出来的东西</h2><ul class="files" id="files"></ul></section>
+    <section><h2>一起聊</h2><p class="more" id="talk-more" hidden></p><div class="talk" id="talk" role="log" aria-label="这件事里的对话"></div><p class="empty" id="talk-empty" hidden></p>
+      <form id="composer" hidden><label class="sr" for="say">说一句</label><textarea id="say" rows="1" maxlength="500" placeholder="说说你的看法…"></textarea><button id="send" type="submit">发送</button></form>
+      <p id="say-note" role="status" aria-live="polite"></p></section>
     <footer><span id="scope"></span><br>由 Tendhearth CC 提供 · 内容直接来自对方的电脑,途中加密</footer>
   </div>
 </main>
@@ -60,6 +78,7 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
   function size(n) { return n == null ? "" : n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB" }
   function gate(text) { $("page").hidden = true; $("gate").hidden = false; $("gate").textContent = text }
 
+  var shownOnce = false
   function render(d) {
     var m = d.matter
     document.title = m.title || "请你看看这件事"
@@ -92,11 +111,26 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
     var files = $("files"); files.textContent = ""
     $("files-box").hidden = !m.outputs.length
     m.outputs.forEach(function (f) { var li = el("li", "", f.name); if (f.size != null) li.appendChild(el("small", "", size(f.size))); files.appendChild(li) })
+    var talk = $("talk"), atEnd = !shownOnce || window.innerHeight + window.scrollY >= document.body.scrollHeight - 80, count = talk.childNodes.length
+    talk.textContent = ""
+    $("talk-more").hidden = !m.talkOmitted
+    $("talk-more").textContent = "更早的 " + m.talkOmitted + " 句没有显示"
+    m.talk.forEach(function (t) {
+      var box = el("div", "line" + (t.mine ? " mine" : "") + (t.who === "cc" ? " cc" : ""))
+      box.appendChild(el("div", "by", (t.mine ? "你" : t.who === "cc" ? "CC" : t.who === "owner" ? (t.name || "发起人") : t.name) + " · " + when(t.at)))
+      box.appendChild(el("div", "say", t.text)); talk.appendChild(box)
+    })
+    var canSay = d.mode !== "view"
+    $("composer").hidden = !canSay
+    $("talk-empty").hidden = m.talk.length > 0
+    $("talk-empty").textContent = canSay ? "还没有人说话。有想法直接写在下面。" : "这个链接只能看，不能留言。"
+    if (shownOnce && m.talk.length > count && atEnd) setTimeout(function () { window.scrollTo(0, document.body.scrollHeight) }, 0)
+    shownOnce = true
     $("scope").textContent = "这个链接只能看到这一件事，" + when(d.expiresAt) + " 到期"
     $("gate").hidden = true; $("page").hidden = false
   }
 
-  if (window.__CC_SHARE_DEMO__) { render(window.__CC_SHARE_DEMO__); return }
+  if (window.__CC_SHARE_DEMO__) { render(window.__CC_SHARE_DEMO__); $("composer").addEventListener("submit", function (ev) { ev.preventDefault() }); return }
 
   var P = {}
   location.hash.slice(1).split("&").forEach(function (kv) { var i = kv.indexOf("="); if (i > 0) P[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)) })
@@ -133,9 +167,22 @@ footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
       if (closed) { try { client.close() } catch (e) {} ; return }
       clearTimeout(timer)
       // 页面在前台才轮询;切走就停,回来立刻取一次。
-      if (!document.hidden) timer = setTimeout(load, 15000)
+      if (!document.hidden) timer = setTimeout(load, 5000)
     })
   }
+  var SAY_ERR = { share_say_limit: "今天说得够多了，明天再来。", share_view_only: "这个链接只能看，不能留言。", invalid_request: "这句话太长或是空的，改一改再发。" }
+  $("say").addEventListener("keydown", function (ev) { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); $("send").click() } })
+  $("composer").addEventListener("submit", function (ev) {
+    ev.preventDefault()
+    var text = $("say").value.trim()
+    if (!text || closed) return
+    $("send").disabled = true; $("say-note").textContent = ""
+    client.request({ method: "POST", path: "/share/say", body: JSON.stringify({ text: text }) }).then(function (r) {
+      if (r.status === 401) { closed = true; gate(CLOSED); return }
+      if (r.status !== 200) { var code = ""; try { code = r.json().error } catch (e) {} ; $("say-note").textContent = SAY_ERR[code] || "没发出去，稍后再试。"; return }
+      $("say").value = ""; clearTimeout(timer); load()
+    }, function () { $("say-note").textContent = "没发出去，稍后再试。" }).then(function () { $("send").disabled = false })
+  })
   document.addEventListener("visibilitychange", function () { if (!document.hidden && !closed) { clearTimeout(timer); load() } })
   load()
 })()

@@ -146,7 +146,7 @@ export interface RouteSpec {
  *   → GET /v1/connections
  *
  * 桌面「连接手机」(plan 7a):设置抽屉弹层与引导页的码、轮询「已连上」。
- *   → POST /v1/matter/share, GET /v1/matter/shares, POST /v1/matter/share/revoke(分享一件事给合伙人,主人在桌面开 / 列 / 撤)
+ *   → POST /v1/matter/share, GET /v1/matter/shares, POST /v1/matter/share/revoke, POST /v1/matter/share/mode, GET /v1/matter/talk, POST /v1/matter/talk(分享一件事:主人在桌面开 / 列 / 撤 / 换档,读和说那段对话)
  *
  *   → POST /v1/phone/link, GET /v1/phone/devices, GET /v1/workbench/models, GET /v1/workbench/sessions, GET /v1/workbench/session, GET /v1/workbench/task, POST /v1/workbench/project, POST /v1/workbench/create, POST /v1/workbench/continue, POST /v1/workbench/cancel, GET /v1/workbench/artifact, POST /v1/workbench/approve, POST /v1/workbench/permission, POST /v1/workbench/archive, POST /v1/workbench/writer-exited, POST /v1/workbench/unattended-ack, GET /v1/workbench/review, POST /v1/workbench/review-mark, POST /v1/workbench/review-return, POST /v1/workbench/review-revert, POST /v1/workbench/review-comment, POST /v1/workbench/review-comments-send, POST /v1/workbench/review-hunk, POST /v1/workbench/worktree, POST /v1/workbench/script-approve, GET /v1/workbench/rewind-preview, POST /v1/workbench/rewind, POST /v1/workbench/rewind-resolve, POST /v1/workbench/import, POST /v1/workbench/prepare-resume, POST /v1/workbench/prepare-continuation, POST /v1/workbench/quota-handoff, POST /v1/workbench/handoff-preview, POST /v1/workbench/handoff, GET /v1/workbench/handoff, GET /v1/workbench/attention, POST /v1/workbench/input, POST /v1/workbench/answer, POST /v1/workbench/withdraw-input
  *
@@ -271,6 +271,10 @@ const ROUTE_TABLE = {
   'POST /v1/matter/share': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'] } },
   'GET /v1/matter/shares': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'] } },
   'POST /v1/matter/share/revoke': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'] } },
+  // 换一档(只看 / 能讨论 / 能直接让 CC 改);这件事里和被分享的人一起聊的那段对话,主人读、主人说。
+  'POST /v1/matter/share/mode': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/matter/talk': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/matter/talk': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'] } },
   // P3c-4(手机原 /m/api/entry/models):手机令牌也走这一条,处理器按 caller 收 —— 只认 providerId + 项目目录 id、不认 path;只给设备。
   'GET /v1/workbench/models': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/workbench/attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
