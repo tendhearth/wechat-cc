@@ -13,6 +13,7 @@ const server=Bun.serve({hostname:'127.0.0.1',port,idleTimeout:255,async fetch(re
   let b:any={};try{b=JSON.parse(body??'{}')}catch{}
   const tools=(b.tools??[]).map((t:any)=>t.name??t.function?.name).filter(Boolean)
   const row:any={id:++sequence,at:new Date().toISOString(),path:u.pathname,bodyBytes:Buffer.byteLength(body??''),model:b.model??null,maxTokens:b.max_tokens??b.max_output_tokens??null,temperature:b.temperature??null,toolCount:tools.length,toolNames:tools,hasMemoryCanary:body?.includes('ACC_PRIVATE_MEMORY_CANARY')??false,hasTopicCanary:body?.includes('ACC_PRIVATE_TOPIC_CANARY')??false,hasDialogueCanary:body?.includes('ACC_PRIVATE_DIALOGUE_CANARY')??false,hasExecutorCanary:body?.includes('ACC_PRIVATE_EXECUTOR_CANARY')??false,hasPersonaName:body?.includes('验收CC')??false,hasStatePath:body?.includes(dir)??false}
+  if(existsSync(join(dir,'.share-acceptance')))row.hasShareReplyPrompt=body?.includes('<shared_matter>')===true&&body?.includes('<latest>')===true
   row.hasLongMiddleFact=body?.includes('以后银杏周报固定周四发，负责人小杏。')??false
   row.hasLongOmissionMarker=body?.includes('中间略去')??false
   row.includeUsageRequested=b.stream_options?.include_usage===true
