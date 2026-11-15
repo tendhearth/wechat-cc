@@ -1,3 +1,4 @@
+import { workbenchPathHolders } from './path-occupancy'
 /**
  * native + handoff 域:原生会话(claude / codex 历史)的导入、续接决策、交接。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 6 项,排在第 7 项之后做)。
@@ -167,7 +168,7 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     let canonical:string
     try{canonical=canonicalProject(path)}catch{return true}
     if(nativeId&&(store.sourceByIdentity(providerId,nativeId)||store.taskByNativeIdentity(providerId,nativeId)))return true
-    return [...state.runsByTask.values()].some(run=>pathsConflict(run.path,canonical))
+    return [...state.runsByTask.values(),...workbenchPathHolders(state)].some(run=>pathsConflict(run.path,canonical))
   }
   async function importNativeHistory(raw:NativeImportInput) {
     ctx.ensureAccepting()

@@ -1,3 +1,4 @@
+import { workbenchPathHolders } from './path-occupancy'
 /**
  * view 域:主人眼里的进度(阶段 / 等待行 / 任务视图)以及 attention / projects / addProject / list / detail 五个只读入口。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 7 项);只认 ctx。
@@ -60,7 +61,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
   function waitingFor(running:Active):TaskWaitingFor|null {
     if (running.state !== 'queued') return null
     const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
-    const blocked=findPathBlocker(running,[...held(),...state.writerOrphans.values(),...earlier])
+    const blocked=findPathBlocker(running,[...workbenchPathHolders(state),...earlier])
     if (!blocked) return null
     const holder=state.runsByTask.get(blocked.taskId)
     // 找不到持有者是不该发生的时序缝隙;宁可继续说「还在写」,也不能凭空报一个假的倒计时。

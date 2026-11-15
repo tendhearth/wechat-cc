@@ -109,3 +109,13 @@ describe('makeNativeDomain · 交接', () => {
     expect(domain.conflictsExternal(project, 'claude', null)).toBe(true)
   })
 })
+
+it('终端目录准入包含恢复的孤立写入者；没有 live run 也拒绝其他原生身份',()=>{
+  const {domain,state,store,task,project}=setup()
+  store.update(task.id,'interrupted','writer_not_closed')
+  state.writerOrphans.set(task.id,{identity:'orphan',taskId:task.id,title:'writer',path:project,order:0,state:'uncertain',groups:[]})
+  expect(state.runsByTask.size).toBe(0)
+  expect(domain.conflictsExternal(project,'codex','other-terminal')).toBe(true)
+  state.writerOrphans.clear()
+  expect(domain.conflictsExternal(project,'codex','other-terminal')).toBe(false)
+})

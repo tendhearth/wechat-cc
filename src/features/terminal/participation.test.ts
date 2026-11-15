@@ -168,3 +168,20 @@ it('隔离回环 API 以真实参与令牌只读写 A；跨事、context、摘�
     expect((await call('/v1/matter/notes')).status).toBe(401)
   }finally{await api.stop();removeTempDir(stateDir)}
 })
+
+it.each(['same','parent','child','symlink'] as const)('挂入事务拒绝已有终端的 %s 路径占用，摘下后可挂入',kind=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-attach-conflict-')))
+  try{
+    const project=join(root,'project'),child=join(project,'child'),alias=join(root,'alias')
+    mkdirSync(child,{recursive:true});symlinkSync(project,alias,'dir')
+    const f=setup(),second='second-terminal-session',source=f.matters.create({kind:'terminal',title:'second',ownerChatId:'owner'})
+    const firstPath=kind==='parent'?child:project,secondPath=kind==='child'?child:kind==='symlink'?alias:project
+    f.db.query('UPDATE cli_sessions SET cwd=? WHERE session_id=?').run(firstPath,f.sid)
+    f.sessions.touch({session_id:second,source:'codex',cwd:secondPath,machine:hostname()},Date.now());f.matters.bind(source.id,'cli',second)
+    const first=f.p.attach(f.sid,f.target.id,'owner')
+    expect(()=>f.p.attach(second,f.other.id,'owner')).toThrow('terminal_path_busy')
+    expect(f.p.list(f.other.id)).toHaveLength(0)
+    f.p.detach(first.id)
+    expect(f.p.attach(second,f.other.id,'owner').matterId).toBe(f.other.id)
+  }finally{removeTempDir(root)}
+})

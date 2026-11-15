@@ -18,11 +18,12 @@ export function makeTerminalParticipations(db:Db,now=()=>Date.now(),machine=host
     if(!source)throw Error('terminal_session_unavailable')
     return {s,source}
   }
+  const conflicts=(path:string)=> db.query<{sessionId:string},[]>('SELECT session_id AS sessionId FROM terminal_participations WHERE detached_at IS NULL').all().map(r=>readCliSession(db,r.sessionId)).some(s=>s!==null&&pathsConflict(canonicalClaimPath(path),canonicalClaimPath(s.cwd)))
   const active=(id:string)=>db.query('SELECT 1 FROM terminal_participations WHERE matter_id=? AND detached_at IS NULL').get(id)!==null
   return {
     list,active,
     endSession(sessionId:string){db.query("UPDATE terminal_participations SET detached_at=?,detach_reason='session_end' WHERE session_id=? AND detached_at IS NULL").run(now(),sessionId)},
-    conflicts(path:string){return db.query<{sessionId:string},[]>('SELECT session_id AS sessionId FROM terminal_participations WHERE detached_at IS NULL').all().map(r=>readCliSession(db,r.sessionId)).some(s=>s!==null&&pathsConflict(canonicalClaimPath(path),canonicalClaimPath(s.cwd)))},
+    conflicts,
     restart(){db.query("UPDATE terminal_participations SET detached_at=?,detach_reason='restart' WHERE detached_at IS NULL").run(now())},
     detach(id:string,reason='owner'){return db.query('UPDATE terminal_participations SET detached_at=?,detach_reason=? WHERE id=? AND detached_at IS NULL').run(now(),reason,id).changes>0},
     attach(sessionId:string,matterId:string,owner:string){return db.transaction(()=>{
@@ -31,6 +32,7 @@ export function makeTerminalParticipations(db:Db,now=()=>Date.now(),machine=host
       if(!target||target.owner!==owner||target.archived!==null||source.id===matterId)throw Error('terminal_target_unavailable')
       if(db.query("SELECT 1 FROM workbench_tasks WHERE matter_id=? AND (status IN ('queued','running','cancelling') OR error='writer_not_closed')").get(matterId)||db.query("SELECT 1 FROM matter_plans WHERE matter_id=? AND state='approved'").get(matterId))throw Error('workbench_busy')
       if(active(matterId)||db.query('SELECT 1 FROM terminal_participations WHERE session_id=? AND detached_at IS NULL').get(sessionId))throw Error('terminal_already_attached')
+      if(conflicts(s.cwd))throw Error('terminal_path_busy')
       const generation=db.query<{n:number},[string]>('SELECT COALESCE(MAX(generation),0)+1 AS n FROM terminal_participations WHERE session_id=?').get(sessionId)!.n
       const p:TerminalParticipation={id:randomUUID(),matterId,sessionId,sourceMatterId:source.id,runId:randomUUID(),generation,author:`${s.source} · 终端 · ${sessionId.slice(0,6)}`,attachedAt:now(),detachedAt:null,detachReason:null}
       db.query('INSERT INTO terminal_participations(id,matter_id,session_id,source_matter_id,run_id,generation,author,attached_at) VALUES(?,?,?,?,?,?,?,?)').run(p.id,p.matterId,p.sessionId,p.sourceMatterId,p.runId,p.generation,p.author,p.attachedAt)
