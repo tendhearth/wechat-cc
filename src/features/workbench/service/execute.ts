@@ -172,6 +172,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     try {
       // 开机对账没做完 / 回退把这件事停住了(评审 #433-4)⇒ 不在半切换的工作区上跑
       await domains.rewind?.ready()
+      if(store.ledger.terminals.active(store.taskMatterId(task.id)??task.id))throw Error('workbench_busy')
       assertNotRewindBlocked(store.rewinds,task.id)
       requireInput(task.providerId,running.attachments,running.execution,running.continuation.mode==='resume')
       running.releaseBusy=ctx.deps.holdBusy?.(sessionKey)

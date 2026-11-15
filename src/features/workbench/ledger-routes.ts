@@ -28,7 +28,7 @@ export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:(
     },
     'GET /v1/matter/notes':async(q,_b,c)=>{
       const owner=d.resolveAdminChatId?.()??null
-      const executor=c?.origin==='session'&&c.tier!=='guest'&&/^workbench\/[a-f0-9]{8}$/.test(c.sessionKey??'')
+      const executor=c?.origin==='session'&&c.tier!=='guest'&&/^(?:workbench\/[a-f0-9]{8}|terminal-participation\/[A-Za-z0-9_-]+)$/.test(c.sessionKey??'')
       if(!executor&&!ownerLedgerCaller(owner,c))return forbidden()
       const allowed=executor?['matter','runId','before','limit']:['matter']
       if([...q.keys()].some(k=>!allowed.includes(k)||q.getAll(k).length>1))return invalid()
@@ -43,7 +43,7 @@ export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:(
       }catch{return forbidden()}
     },
     'POST /v1/matter/note':async(q,b,c)=>{
-      if(c?.origin!=='session'||c.tier==='guest'||!/^workbench\/[a-f0-9]{8}$/.test(c.sessionKey??''))return forbidden()
+      if(c?.origin!=='session'||c.tier==='guest'||!/^(?:workbench\/[a-f0-9]{8}|terminal-participation\/[A-Za-z0-9_-]+)$/.test(c.sessionKey??''))return forbidden()
       if([...q.keys()].length)return invalid()
       if(!object(b)||Object.keys(b).some(k=>k!=='text')||typeof b.text!=='string'||!b.text.trim()||b.text.length>1000)return invalid()
       try{return {status:200,body:d.workbench.matterNote(c.sessionKey,b.text)}}catch(error){const code=error instanceof Error?error.message:'';if(['matter_note_limit','matter_session_ended'].includes(code)){const mapped=workbenchErrorHttp(code,'desktop');return {status:mapped.status,body:{error:mapped.error}}}return forbidden()}

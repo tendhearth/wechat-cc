@@ -420,6 +420,8 @@ const ROUTE_TABLE = {
   'GET /v1/cli/sessions': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):往主人终端里正在干活的会话里送话 —— admin,
   // 不给 operator(桌面 / CLI 没有这个入口;主人自己说走微信「@码」/ 手机)。路由里另外只认主人那条聊天的会话令牌。
+  'POST /v1/cli/attach': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/cli/detach': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'] } },
   'POST /v1/cli/say': { module: 'terminal', desktop: { tier: 'admin' } },
   'GET /v1/cli/say': { module: 'terminal', desktop: { tier: 'admin' } },
   // 「今天」一眼看完(2026-10-14):同上一份登记处 + 一起做的标题与待批 —— 主人的私事,admin。

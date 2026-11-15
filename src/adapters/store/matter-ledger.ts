@@ -1,3 +1,4 @@
+import {makeTerminalParticipations} from './terminal-participations'
 import {randomUUID} from '../../lib/random'
 import type {Db} from '../../lib/db'
 import type {MatterAgent,MatterNote,MatterNotesQuery,MatterNotesPage} from '../../ports/matters'
@@ -29,6 +30,7 @@ export function ledgerBrief(notes:readonly MatterNote[],max=LEDGER_BRIEF_MAX):st
 
 export function makeMatterLedger(db:Db,now=()=>Date.now()){
   const plans=makeMatterPlans(db,now)
+  const terminals=makeTerminalParticipations(db,now)
   const notes=(matterId:string):MatterNote[]=>db.query<MatterNote,[string]>(`SELECT id,matter_id AS matterId,run_id AS runId,author,kind,text,created_at AS createdAt FROM matter_notes WHERE matter_id=? ORDER BY id`).all(matterId)
   const agents=(matterId:string):MatterAgent[]=>db.query<MatterAgent,[string]>(`SELECT matter_id AS matterId,run_id AS runId,executor,brief,position,status,created_at AS createdAt,ended_at AS endedAt FROM matter_agents WHERE matter_id=? ORDER BY position`).all(matterId)
   function write(matterId:string,runId:string|null,author:string,kind:MatterNote['kind'],text:string,key?:string,replace=false){
@@ -52,7 +54,7 @@ export function makeMatterLedger(db:Db,now=()=>Date.now()){
     })()
   }
   return {
-    notes,agents,
+    notes,agents,terminals,
     projectedAgents(id:string):MatterAgent[]{
       const actual=agents(id),plan=plans.get(id)
       if(plan?.state!=='approved')return actual
@@ -85,7 +87,7 @@ export function makeMatterLedger(db:Db,now=()=>Date.now()){
       page.nextBefore=page.truncated?rows[taken-1]?.id??null:null
       return page
     },
-    enabled:(id:string)=>!!plans.get(id)||agents(id).length>1,
+    enabled:(id:string)=>!!plans.get(id)||agents(id).length>1||terminals.list(id).length>0,
     recent:(id:string,limit=50)=>({notes:db.query<MatterNote,[string,number]>(`SELECT id,matter_id AS matterId,run_id AS runId,author,kind,text,created_at AS createdAt FROM (SELECT * FROM matter_notes WHERE matter_id=? ORDER BY id DESC LIMIT ?) ORDER BY id`).all(id,limit),notesTotal:db.query<{n:number},[string]>('SELECT COUNT(*) AS n FROM matter_notes WHERE matter_id=?').get(id)!.n}),
     start(matterId:string,runId:string,executor:string,brief:string){
       db.transaction(()=>{
@@ -112,6 +114,7 @@ export function makeMatterLedger(db:Db,now=()=>Date.now()){
     interrupt(){db.query("UPDATE matter_agents SET status='interrupted',ended_at=? WHERE status IN ('queued','running')").run(now())},
     /** Scope is resolved exclusively from the authenticated session token. */
     bound(sessionKey:string|undefined,requested?:string):string {
+      if(sessionKey?.startsWith('terminal-participation/'))return terminals.bound(sessionKey,requested).matterId
       const match=/^workbench\/([a-f0-9]{8})$/.exec(sessionKey??'')
       const id=match?.[1]
       if(!id)throw Error('matter_ledger_forbidden')

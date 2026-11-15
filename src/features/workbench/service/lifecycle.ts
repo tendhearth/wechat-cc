@@ -1,3 +1,4 @@
+import { workbenchPathHolders } from './path-occupancy'
 import type {RelayTurnHook} from './relay-events'
 /**
  * lifecycle + settle 域:文件夹租约、空闲自动收工、回报 / 回忆去重、安静落定、占用释放、不确定退出、派发泵、取消,
@@ -46,7 +47,7 @@ export interface LifecycleDomains {
 
 export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
   const { store, state } = ctx
-  const { isReplied, runtimeSnapshot, taskView, held } = domains.view
+  const { isReplied, runtimeSnapshot, taskView } = domains.view
   const { collect, collectTurnArtifacts, captureCodeChanges } = domains.artifacts
   const { stageFinishedNotice, publishFinishedNotices, enqueueNotice } = domains.notices
   const { holdInputs, hasUndeliveredInput } = domains.pending
@@ -323,7 +324,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     for (const running of state.queue) {
       if (running.state !== 'queued') continue
       const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
-      const blocker=findPathBlocker(running,[...held(),...state.writerOrphans.values(),...earlier])
+      const blocker=findPathBlocker(running,[...workbenchPathHolders(state),...earlier])
       if (blocker) {
         // 「有人来等这个文件夹了」的唯一入口:挡路的那条会话若已经安静,就按短让位重排它的
         // 自动收工(armIdleClose 自己判安静,不安静就什么都不做)。
