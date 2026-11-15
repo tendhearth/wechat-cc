@@ -95,10 +95,12 @@ async function a() {
     return ['completed', 'failed', 'cancelled'].includes(r.body.task?.status ?? r.body.status)
   }, 180000))
   const before = (await api('GET', '/v1/matter/shares?matter=' + matter)).body.shares ?? []
-  const denied = await ownerTurn('把首页配色这件事分享给小林,让他帮我看看', 'deny')
+  // SHARE_ACC_WITH_ID=1:句子里带编号(CC 每轮还看不到在办的事时,先验后半条链)
+  const ref = process.env.SHARE_ACC_WITH_ID === '1' ? `首页配色(${matter})` : '首页配色'
+  const denied = await ownerTurn(`把${ref}这件事分享给小林,让他帮我看看`, 'deny')
   const after = (await api('GET', '/v1/matter/shares?matter=' + matter)).body.shares ?? []
   check('a-denial-no-link-record', !/s[a-f0-9]{64}|\/pset\//.test(denied) && after.length === before.length)
-  const reply = await ownerTurn('现在重新请你把首页配色这件事分享给小林,让他帮我看看', 'allow')
+  const reply = await ownerTurn(`现在重新请你把${ref}这件事分享给小林,让他帮我看看`, 'allow')
   const url = reply.match(/(?:https?|wss?):\/\/127\.0\.0\.1:[0-9]+\/pset\/#[^\s<>"）)]+/)?.[0]
   check('a-approved-reply-link', !!url)
   const shares = (await api('GET', '/v1/matter/shares?matter=' + matter)).body.shares ?? []
