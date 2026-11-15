@@ -201,6 +201,8 @@ if (relay) {
       // 设备令牌从面板取(梳理第 6 步:不再裸读 settings-devices.json,文件只有 device-store 一个读者)。
       knownDeviceTokens: () => settingsPanel.deviceTokens(),
       activeLinkToken: () => settingsPanel.activeLinkToken(),
+      shareTokens: () => settingsPanel.shareTokens(),
+      shareTokenValid: (token: string) => settingsPanel.shareTokenValid(token),
       onClientActivity: (client: 'app' | 'web', build?: string) => noteRouteUsage(client === 'app' && build === 'selftest-P3d' ? 'selftest' : client, build === 'selftest-P3d' ? 'P3d' : build),
       onDeviceBuild: (token: string, build: string) => settingsPanel.noteDeviceBuild(token, build),
       log: (tag: string, line: string) => log(tag, line),

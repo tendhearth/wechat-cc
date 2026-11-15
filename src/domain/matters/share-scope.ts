@@ -73,6 +73,9 @@ const clean = (text: unknown, projectPath: string | null): string => {
   return safe.length > TEXT_MAX ? safe.slice(0, TEXT_MAX - 1) + '…' : safe
 }
 
+/** 凭一枚分享令牌读到的东西:能看 ⇒ 投影;不能看 ⇒ 原因(只在本机用,不回给合伙人)。 */
+export type ShareView = { ok: true; name: string; expiresAt: number; matter: SharedMatter } | { ok: false; reason: ShareRefusal | 'unknown' }
+
 export type SharedState = 'working' | 'waiting_owner' | 'stopped' | 'done'
 export interface SharedLeg { position: number; executor: string; brief: string; status: 'queued' | 'running' | 'done' | 'stopped' }
 export interface SharedNote { author: string; partner: boolean; kind: 'plan' | 'note' | 'artifact'; text: string; at: number }

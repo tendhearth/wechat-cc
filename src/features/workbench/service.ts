@@ -2,6 +2,7 @@ import {makeRelayDomain} from './service/relay'
 import type {RelayTurnHook} from './service/relay-events'
 import {trackPreparation} from './service/state'
 import {makeLedgerDomain} from './service/ledger'
+import {makeShareDomain} from './service/share'
 import {makeWechatWorkbenchControl,type WechatMessageIdentity,type WechatWorkbenchReply} from './wechat-control'
 import type { ProviderRegistry } from '../../app/provider-registry'
 import type { NativeHistoryReader, NativeHistoryProvider } from '../../adapters/workbench/native-history'
@@ -285,6 +286,7 @@ export function makeWorkbenchService(opts: Options) {
 
   const service={
     ...ledgerDomain,
+    ...makeShareDomain(ctx,{view:viewDomain}),
     artifactDeliveryStore:store.artifactDeliveries,
     setArtifactDelivery:noticesDomain.setArtifactDelivery,
     artifactDeliveryEligible:noticesDomain.artifactDeliveryEligible,

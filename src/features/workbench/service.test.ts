@@ -878,8 +878,12 @@ describe('persistent workbench', () => {
     const before=service.detail(task.id)
     expect(before.task.canArchive).toBe(true)
     expect(service.list().page).toMatchObject({limit:50,total:1,hasMore:false,nextCursor:null})
+    // 分享给合伙人的链接:做完的事照样看得到产出名;归档即作废,恢复也不回来。
+    const shared=service.shareCreate(task.id,'小林')
+    expect(service.shareView(shared.token)).toMatchObject({ok:true,name:'小林',matter:{state:'done',outputs:[{name:'kept.txt'}]}})
     const archived=service.setArchived(task.id,true)
     expect(archived).toMatchObject({archivedAt:expect.any(Number),canArchive:true})
+    expect(service.shareView(shared.token)).toEqual({ok:false,reason:'revoked'})
     expect(service.list().tasks).toEqual([])
     expect(service.list({archived:'only'}).tasks.map(t=>t.id)).toEqual([task.id])
     expect(()=>service.continueTask(task.id,'hidden run')).toThrow('workbench_archived')
@@ -889,6 +893,7 @@ describe('persistent workbench', () => {
     expect(service.detail(task.id).artifacts).toEqual(before.artifacts)
     renameSync(project,join(root,'moved-project'))
     expect(service.setArchived(task.id,false).archivedAt).toBeNull()
+    expect(service.shareTokenValid(shared.token)).toBe(false)
     expect(service.setArchived(task.id,true).archivedAt).toEqual(expect.any(Number))
   })
 

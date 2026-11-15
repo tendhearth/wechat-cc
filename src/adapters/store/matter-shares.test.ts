@@ -1,7 +1,7 @@
 import {expect,it} from 'vitest'
 import {openDb} from '../../lib/db'
 import {makeWorkbenchStore} from './workbench/store'
-import {makeMatterShares,shareTokenHash,SHARES_PER_MATTER_MAX} from './matter-shares'
+import {makeMatterShares,SHARES_PER_MATTER_MAX} from './matter-shares'
 import {SHARE_TTL_MS} from '../../domain/matters/share-scope'
 
 function setup(){
@@ -12,15 +12,15 @@ function setup(){
   return {db,shares,task,tasks,tick(ms:number){clock+=ms},now:()=>clock}
 }
 
-it('创建给一次令牌,库里只有哈希;按令牌找得回这一行',()=>{
+it('创建给一次令牌;按令牌找得回这一行,列表里不带令牌',()=>{
   const f=setup()
   try{
     const {share,token}=f.shares.create(f.task.id,'  小林 ')
     expect(token).toMatch(/^s[a-f0-9]{64}$/)
     expect(share).toMatchObject({matterId:f.task.id,name:'小林',expiresAt:f.now()+SHARE_TTL_MS,revokedAt:null,lastOpenedAt:null})
-    const raw=f.db.query<Record<string,unknown>,[]>('SELECT * FROM matter_shares').all()
-    expect(JSON.stringify(raw)).not.toContain(token)
-    expect(raw[0]!.token_hash).toBe(shareTokenHash(token))
+    expect(JSON.stringify(f.shares.list(f.task.id))).not.toContain(token)
+    expect(f.shares.active()).toEqual([token])
+    expect(f.shares.byToken(token.toUpperCase())).toBeNull()
     expect(f.shares.byToken(token)).toEqual(share)
     expect(f.shares.byToken('s'+'0'.repeat(64))).toBeNull()
   }finally{f.db.close()}

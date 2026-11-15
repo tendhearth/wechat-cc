@@ -177,6 +177,36 @@ describe('tunnel-client (daemon side)', () => {
     expect(p.replies()).toEqual([{ error: 'auth_failed' }])
   })
 
+  it('分享令牌:有效的能握手、请求带着它进面板;不能订阅;撤销后下一个请求就断', async () => {
+    const sock = fakeSocket(), STOK = 's' + 'ab'.repeat(32)
+    let valid = true
+    const seen: string[] = []
+    mk(sock, {
+      knownDeviceTokens: () => [], activeLinkToken: () => null, shareTokens: () => valid ? [STOK] : [], shareTokenValid: t => valid && t === STOK,
+      events: { subscribe: () => { throw new Error('a share stream must never subscribe') } } as never,
+      handleRequest: async (req) => { seen.push(new URL(req.url).search); return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } }) },
+    })
+    const p = await phone(sock, 'sS', STOK)
+    // 手机自己写的 d / t 被换成握手认出来的那一枚。
+    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/share/state?d=dtest0000&t=tother' })
+    await waitFor(() => p.replies().length === 1, 'res')
+    expect(seen).toEqual([`?d=${STOK}&_via=tunnel`])
+    p.send({ t: 'sub', sid: 'x1', topic: 'home' })
+    await waitFor(() => p.replies().length === 2, 'sub err')
+    expect(p.replies()[1]).toMatchObject({ t: 'err', sid: 'x1', code: 'topic_not_allowed' })
+    valid = false
+    p.send({ t: 'req', rid: 'r2', method: 'GET', path: '/share/state' })
+    await waitFor(() => sock.sent.some(s => JSON.parse(s).close === true), 'close')
+    expect(seen).toHaveLength(1)
+    expect(p.replies().at(-1)).toEqual({ error: 'auth_failed' })
+    // 撤销之后拿同一枚令牌重新握手也进不来。
+    const again = await phone(sock, 'sS2', STOK)
+    again.send({ t: 'req', rid: 'r3', method: 'GET', path: '/share/state' })
+    await waitFor(() => again.replies().length === 1, 'refused')
+    expect(again.replies()).toEqual([{ error: 'auth_failed' }])
+    expect(seen).toHaveLength(1)
+  })
+
   it('a closed control frame frees the stream state (later sealed frames ⇒ stream_unknown, never the router)', async () => {
     const sock = fakeSocket()
     let handled = 0
