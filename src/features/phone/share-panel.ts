@@ -61,6 +61,7 @@ async function sayRequest(shares: SharePort, token: string, req: Request): Promi
   let open = false
   try { open = shares.view(token).ok } catch { /* 当成失效 */ }
   if (!open) return unauthorized()
+  if (Number(req.headers.get('content-length') ?? 0) > SAY_BODY_MAX) return json({ error: 'invalid_request' }, 400)
   let text: unknown
   try {
     const raw = await req.text()
