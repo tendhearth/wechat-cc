@@ -64,4 +64,8 @@ describe('不替发起人和来的人猜性别', () => {
     expect(rules).toContain('不要用「他」「她」')
     expect(rules.replace('不要用「他」「她」', '')).not.toMatch(/[他她]/)
   })
+  it('要求回话里不出现 proposal / JSON 这些内部词(验收里 CC 说过「整理成 proposal 转告」)', () => {
+    const prompt = shareReplyPrompt({ title: 't', state: 'working', legs: [], notes: [], notesOmitted: 0, outputs: [], talk: [], talkOmitted: 0 }, { name: '小林' })
+    expect(prompt).toContain('不要出现 proposal、JSON、数据块这些词')
+  })
 })
