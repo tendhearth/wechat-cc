@@ -12,7 +12,7 @@ it('exposes only the bound matter notebook and rejects caller-supplied matter or
   await Promise.all([server.connect(a),client.connect(b)])
   try{
     const listed=(await client.listTools()).tools
-    expect(listed.map(t=>t.name)).toEqual(['matter_notes','matter_note'])
+    expect(listed.map(t=>t.name)).toEqual(['matter_notes','matter_context','matter_note'])
     expect(listed.every(t=>t._meta?.['anthropic/alwaysLoad']===true)).toBe(true)
     expect((await client.callTool({name:'matter_notes',arguments:{}})).isError).not.toBe(true)
     expect((await client.callTool({name:'matter_note',arguments:{text:'Use dark.webp'}})).isError).not.toBe(true)
@@ -21,7 +21,11 @@ it('exposes only the bound matter notebook and rejects caller-supplied matter or
       expect((await client.callTool({name:'matter_notes',arguments:args})).isError).toBe(true)
       expect((await client.callTool({name:'matter_note',arguments:{text:'forged',...args}})).isError).toBe(true)
     }
-    expect(calls).toHaveLength(2)
+    expect((await client.callTool({name:'matter_context',arguments:{matter:'other'}})).isError).toBe(true)
+    expect((await client.callTool({name:'matter_context',arguments:{}})).isError).not.toBe(true)
+    expect(listed.find(t=>t.name==='matter_context')?.annotations?.readOnlyHint).toBe(true)
+    expect(calls.at(-1)).toEqual(['GET','/v1/matter/context',undefined])
+    expect(calls).toHaveLength(3)
   }finally{await client.close();await server.close()}
 })
 

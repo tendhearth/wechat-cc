@@ -21,6 +21,16 @@ export function registerMatterTools(server:McpServer,client:InternalApiClient):v
     try{return {content:[{type:'text',text:JSON.stringify(await client.request('GET',`/v1/matter/notes${q.size?'?'+q:''}`))}]}}
     catch(error){return passthroughErrorResult(error,'matter_notes')}
   })
+  server.registerTool('matter_context',{
+    title:'Read this matter topic context',
+    description:'需要了解主人之前怎么聊过这件事时，读取当前被派到的这件事的话题简报。',
+    inputSchema:z.object({}).strict(),
+    annotations:{readOnlyHint:true},
+    _meta:{'anthropic/alwaysLoad':true},
+  },async()=>{
+    try{return {content:[{type:'text',text:JSON.stringify(await client.request('GET','/v1/matter/context'))}]}}
+    catch(error){return passthroughErrorResult(error,'matter_context')}
+  })
   server.registerTool('matter_note',{
     title:'Write a handoff note',
     description:'给当前被派到的这件事写一条短交接备注，说明产出位置、验证结果或后续注意事项。只写本事备注，不发送消息。',

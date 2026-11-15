@@ -87,7 +87,7 @@ it.skipIf(process.platform === 'win32')('handoff reaches the real Claude SDK wit
     await expect.poll(() => native.initialized).toEqual(['wechat-cc-matter'])
     expect(ledger).toBe(true)
     expect(spawned?.mcpServers?.['wechat-cc-matter']).toMatchObject({ type: 'sdk', name: 'wechat-cc-matter' })
-    expect(spawned?.allowedTools).toEqual(['mcp__wechat-cc-matter__matter_notes', 'mcp__wechat-cc-matter__matter_note'])
+    expect(spawned?.allowedTools).toEqual(['mcp__wechat-cc-matter__matter_notes', 'mcp__wechat-cc-matter__matter_note', 'mcp__wechat-cc-matter__matter_context'])
     expect(native.argv.includes('--strict-mcp-config')).toBe(true)
     expect(native.argv.includes('--allowedTools')).toBe(true)
     expect(native.argv.some(arg => arg.includes(token))).toBe(false)
@@ -95,7 +95,7 @@ it.skipIf(process.platform === 'win32')('handoff reaches the real Claude SDK wit
     expect(initialize.subtype).toBe('success')
     await native.request!({ jsonrpc: '2.0', method: 'notifications/initialized' })
     const listed = await native.request!({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
-    expect(listed.response.mcp_response.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual(['matter_note', 'matter_notes'])
+    expect(listed.response.mcp_response.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual(['matter_context', 'matter_note', 'matter_notes'])
     expect(listed.response.mcp_response.result.tools.every((tool: { _meta?: Record<string, unknown> }) => tool._meta?.['anthropic/alwaysLoad'] === true)).toBe(true)
   } finally { await service.shutdown(); db.close(); removeTempDir(root) }
 })

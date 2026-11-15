@@ -19,6 +19,13 @@ export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:(
       try{return {status:202,body:await d.workbench.matterPlan(parsed.data,d.planConversation?.(c??{})??undefined)}}
       catch(error){const code=error instanceof Error?error.message:'';return {status:code==='matter_ledger_forbidden'?403:409,body:matterToolFailure(code,approved,'plan',error instanceof PlanInputError?error.projects:undefined)}}
     },
+    'GET /v1/matter/context':async(q,_b,c)=>{
+      if(c?.origin!=='session'||c.tier==='guest'||!/^workbench\/[a-f0-9]{8}$/.test(c.sessionKey??''))return forbidden()
+      if([...q.keys()].some(k=>k!=='matter'||q.getAll(k).length>1))return invalid()
+      const id=q.get('matter')??undefined
+      if(id!==undefined&&!ID.test(id))return invalid()
+      try{return {status:200,body:await d.workbench.matterContext(c.sessionKey,id)}}catch{return forbidden()}
+    },
     'GET /v1/matter/notes':async(q,_b,c)=>{
       const owner=d.resolveAdminChatId?.()??null
       const executor=c?.origin==='session'&&c.tier!=='guest'&&/^workbench\/[a-f0-9]{8}$/.test(c.sessionKey??'')
