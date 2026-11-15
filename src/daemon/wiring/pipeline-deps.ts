@@ -35,7 +35,7 @@ import { makeSelfChangeSpawner, resolveSelfCli } from '../self-change-spawn'
 import { makeModeCommands } from '../mode-commands'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeThreadsStore } from '../../lib/threads-store'
-import { makeTopicRecall } from '../threads/recall'
+import { makeMatterRecall, makeTopicRecall } from '../threads/recall'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeCheapJudge, type TaskCandidate } from '../../features/workbench'
 import { scopedSend } from '../inbound/reply-scope'
@@ -451,6 +451,23 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  const taskCandidates = ():TaskCandidate[]=>{
+    const since=Date.now()-7*24*60*60_000
+    const tasks=opts.workbench ? opts.workbench.list({archived:'exclude',limit:50}).tasks : []
+    const active=tasks
+      .filter(t=>t.phase!=='cancelled'&&t.updatedAt>=since)
+      .sort((a,b)=>b.updatedAt-a.updatedAt)
+    // 有「一件事」登记处时以它为准:候选就是"最近动过的事",顺序也是它的顺序;任务详情仍从工作台取。
+    const ordered=opts.matters
+      ?(()=>{const byId=new Map(active.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',legacy:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
+      :active
+    return ordered.map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
+  }
+  const matterRecall = makeMatterRecall({
+    candidates: taskCandidates,
+    isOwner: chatId => { const mode = boot.coordinator.getMode(chatId).kind; return chatId === ownerChatId() && (mode === 'solo' || mode === 'primary_tool') },
+    executorName: id => boot.registry.namesOf(id).name,
+  })
   // 话题 T2:每一轮按话题调记忆,只在主人自己的对话里(微信入站在 mw-recall,App 那一轮在 wire-converse)。
   const topicSeen=makeMatterSeen(db,opts.proposals?.desktop),topicExecutorName=(id:string)=>boot.registry.namesOf(id).name
   const topicRecall = makeTopicRecall({
@@ -470,7 +487,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     stateDir, boot, careLedger, replySinks, messagesStore, ilink, log,
     appTurn: () => late.appTurn?.() ?? null,
     matters: opts.matters, petSignals: opts.petSignals, stickers: opts.stickers,
-    topicRecall,
+    topicRecall, matterRecall,
   })
 
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
@@ -669,17 +686,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
       // 时它得还在;焦点指向的任务失败了也不能凭空消失(真机 2026-09-16:Codex 额度耗尽
       // 把任务打成 failed,焦点随之静默失效,后面两句掉进了普通聊天)。项目显示名用目录名。
-      candidates:():TaskCandidate[]=>{
-        const since=Date.now()-7*24*60*60_000
-        const tasks=opts.workbench!.list({archived:'exclude',limit:50}).tasks
-          .filter(t=>t.phase!=='cancelled'&&t.updatedAt>=since)
-          .sort((a,b)=>b.updatedAt-a.updatedAt)
-        // 有「一件事」登记处时以它为准:候选就是"最近动过的事",顺序也是它的顺序;任务详情仍从工作台取。
-        const ordered=opts.matters
-          ?(()=>{const byId=new Map(tasks.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',legacy:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
-          :tasks
-        return ordered.map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
-      },
+      candidates: taskCandidates,
       // 额度止损:这家耗尽就不再往它送,问"交给另一位继续?";「是」就在同一文件夹给另一位新开一件。
       quotaExhausted:(id:string)=>opts.workbench!.quotaExhausted(id),
       fallbackExecutor:(id:string)=>opts.workbench!.fallbackExecutor(id),
@@ -743,6 +750,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       isAdmin,
       log,
       topics: topicRecall,
+      matters: matterRecall,
       // Non-admin lane — deterministic keyword recall over the chat's OWN
       // memory files only (same subtree memory_read grants it). Sync under
       // the hood; wrapped to satisfy the middleware's async contract.

@@ -10,6 +10,7 @@
  */
 import type { InboundCtx, Middleware } from './types'
 import type { Intent } from './intent'
+import { PHASE_NAME } from '../../domain/task-phase'
 import { isTaskHandoffRequest, isMatterShareRequest } from '../../features/workbench'
 import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../features/workbench'
 import { resolveTaskReference, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from '../../features/workbench'
@@ -49,7 +50,6 @@ export interface TaskReferenceMwDeps {
 /** 管家开着的「哪一件?回数字」:到什么时候、有几个选项(noteChoice 报给命令表)。 */
 export interface OpenChoice { expiresAt: number; count: number }
 
-const PHASE_NAME: Record<string, string> = { queued: '排队中', working: '进行中', replied: '已答复', failed: '需要处理', cancelled: '已停止', interrupted: '已中断' }
 const STOP_VERB = /(停止|结束|取消|别做了|不用做了)\s*[。.!！]?$/
 // 只认句尾、只认短句(评审 #7):补充里提到"文件 / 看看"不是在要结果。
 const RESULT_VERB = /(结果|成果|文件|下载)(了|吗|呢|啊)?\s*[?？。.!！]?$/

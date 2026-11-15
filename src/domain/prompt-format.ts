@@ -43,6 +43,8 @@ export interface InboundMsg {
    * 只在主人自己的对话里有。渲染成 <recall> 前面的 <topics> 元素;没有 ⇒ 信封和以前逐字节一样。
    */
   topics?: string
+  /** 主人这一轮看得到的「正在办的事」每件一行(threads/recall.ts 的 renderMatters);没有 ⇒ 不出 <matters>。 */
+  matters?: string
 }
 
 /** Cap on the rendered <recall> body — recall is a hint, not a transcript. */
@@ -111,7 +113,8 @@ export function formatInbound(m: InboundMsg): string {
   const topicsEl = m.topics && m.topics.trim()
     ? `<topics hint="这句话聊到的话题,以前记下的几条(可能过时,以主人这句为准)">\n${escBody(m.topics.trim())}\n</topics>`
     : ''
-  const body = [topicsEl, recallEl, quoteEl, escBody(m.text), ...attachmentLines].filter(Boolean).join('\n')
+  const mattersEl = m.matters ? `<matters>\n${escBody(m.matters)}\n</matters>` : ''
+  const body = [topicsEl, mattersEl, recallEl, quoteEl, escBody(m.text), ...attachmentLines].filter(Boolean).join('\n')
   return `<wechat ${attrs}>\n${body}\n</wechat>`
 }
 

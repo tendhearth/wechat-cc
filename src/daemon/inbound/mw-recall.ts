@@ -33,6 +33,7 @@ export interface RecallMwDeps {
    * 同一个超时;缺席 / 没碰到 / 出错 ⇒ 不加 <topics>。
    */
   topics?: (chatId: string, text: string) => Promise<{ block: string; adopt?: (requestId: string, messageIds?: string[]) => void } | null>
+  matters?: (chatId: string) => Promise<string | null>
   timeoutMs?: number
   log: (tag: string, line: string) => void
 }
@@ -47,6 +48,7 @@ export function makeMwRecall(deps: RecallMwDeps): Middleware {
   }
   return async (ctx, next) => {
     const { msg } = ctx
+    const matters = deps.matters ? Promise.resolve().then(() => deps.matters!(msg.chatId)).then(block => { if (block) msg.matters = block }, () => {}) : null
     const lane = deps.isAdmin(msg.chatId) ? deps.recall : deps.recallFallback
     const topics = deps.topics && msg.text.trim().length > 0
       ? withTimeout(deps.topics(msg.chatId, msg.text), 'topics').then(
@@ -69,6 +71,7 @@ export function makeMwRecall(deps: RecallMwDeps): Middleware {
         if (timer !== undefined) clearTimeout(timer)
       }
     }
+    if (matters) await matters
     if (topics) await topics
     await next()
   }
