@@ -124,6 +124,41 @@ export function isTaskHandoffRequest(text: string, executors: readonly string[] 
   return false
 }
 
+/**
+ * 这句话是不是在让 CC 把一件事分享给某人(或关掉 / 列出分享链接)。是 ⇒ 不当补充塞给执行者,交回 CC 的对话
+ * (由它调 matter_share / matter_shares,开链接走主人确认卡)。验收 11-15:「把首页配色这件事分享给小林」被管家译成
+ * 「任务 … 补充 …」送给了执行者,CC 根本没看到。
+ *
+ * 跟接力同一个取舍:精确优先,判错成「是」会把日常补充从执行者手里劫走。只认三种句式:
+ *   - 开:「分享给 / 共享给 <人>」,对象是这件事(这件 / 这个 / 它 / 这事 / 「…这件事」)或省略;<人> 是 1–12 个字的称呼,
+ *     不能是功能词(「加个分享给好友的按钮」是在给执行者提需求)。
+ *   - 关:「分享(链接)… 关掉 / 关了 / 撤掉 / 收回 / 停掉」,或「<人>那个 / 那条链接 … 关掉」;句子里有功能词(按钮 / 页脚…)不算。
+ *   - 列:「(都)分享给谁了」「分享了哪些人」。
+ * 否定(别 / 不要 / 先不…)与引号里的文字不算。
+ */
+const SHARE_FEATURE = /(按钮|功能|入口|图标|卡片|海报|弹窗|页|导航|菜单|好友|朋友圈|群|接口|组件|的)/
+const SHARE_OPEN = /(?:分享|共享)给 ?([^\s,，。！!？?；;:：、]{1,12})/
+const SHARE_CLOSE = /(?:分享|那个链接|那条链接)[^,，。！!？?]{0,12}?(?:关掉|关了|关上|关一下|撤掉|撤了|撤回|收回|停掉|作废)/
+const SHARE_LIST = /(?:都)?(?:分享|共享)给(?:了)?(?:谁|哪些人|几个人)|(?:分享|共享)了(?:哪些人|几个人|给谁)/
+const SHARE_NEGATION = /(?:别|不要|不用|不必|先不|不想|不能|不准|没有?)[^,，]{0,4}$/
+export function isMatterShareRequest(text: string): boolean {
+  const unquoted = handoffNormalize(text).replace(HANDOFF_QUOTED, ' ')
+  for (const clause of unquoted.split(/[。！？!?；;\n,，]/).map(part => part.trim()).filter(Boolean)) {
+    const list = SHARE_LIST.exec(clause)
+    if (list && !SHARE_NEGATION.test(clause.slice(0, list.index))) return true
+    const close = SHARE_CLOSE.exec(clause)
+    if (close && !SHARE_NEGATION.test(clause.slice(0, close.index)) && !SHARE_FEATURE.test(clause.replace(/(那个|那条)链接/, ''))) return true
+    const open = SHARE_OPEN.exec(clause)
+    if (!open || SHARE_NEGATION.test(clause.slice(0, open.index))) continue
+    const who = open[1]!
+    // 「分享给小林,让他帮我看看」里 who 只截到分句;「分享给小林的按钮」这种功能词 ⇒ 不是。
+    if (SHARE_FEATURE.test(who) || SHARE_FEATURE.test(clause.slice(open.index + open[0].length, open.index + open[0].length + 4))) continue
+    // 对象:没有,或者是「这件(事)/ 这个 / 它 / 这事 / …这件事」—— 「把登录页分享给小林」也算(主人说的就是这件)。
+    return true
+  }
+  return false
+}
+
 /** 新建命令里的任务正文照旧处理；仅已有事项的显式接力让路。 */
 export const isTaskHandoffCommand = (text: string, executors: readonly string[] = []): boolean => /^(?:任务|\/task)\s+[a-f0-9]{8}\s+/i.test(text.trim()) && isTaskHandoffRequest(text, executors)
 const PROVIDER_WORDS: Record<string, string[]> = {
@@ -212,7 +247,7 @@ async function askJudge(judge: TaskJudge | undefined, text: string, candidates: 
 }
 
 export async function resolveTaskReference(input: ResolveInput): Promise<Resolution> {
-  if (isTaskHandoffRequest(input.text, input.handoffExecutors)) return { kind: 'none' }
+  if (isTaskHandoffRequest(input.text, input.handoffExecutors) || isMatterShareRequest(input.text)) return { kind: 'none' }
   const { candidates } = input
   if (!candidates.length) return { kind: 'none' }
 

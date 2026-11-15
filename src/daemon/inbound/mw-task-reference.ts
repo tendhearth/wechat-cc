@@ -10,7 +10,7 @@
  */
 import type { InboundCtx, Middleware } from './types'
 import type { Intent } from './intent'
-import { isTaskHandoffRequest } from '../../features/workbench'
+import { isTaskHandoffRequest, isMatterShareRequest } from '../../features/workbench'
 import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../features/workbench'
 import { resolveTaskReference, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from '../../features/workbench'
 import type { QuotaState } from '../../domain/provider-quota'
@@ -202,6 +202,8 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
       if (NO.test(text)) return { kind: 'takeover-no', candidates, offer: offer! }
     }
     if (isTaskHandoffRequest(text, deps.handoffExecutors?.())) return null
+    // 分享这件事 / 关掉分享链接:是对 CC 说的(它调 matter_share,开链接要主人确认),不是给执行者的补充。
+    if (isMatterShareRequest(text)) return null
     // 通知里说过"回「是」":没有待确认的接管,但恰好只有一件近期因额度失败的任务 ⇒ 「是」就是它。
     if (!offerLive && BARE_ACK.test(text) && deps.createTask) {
       const recent = candidates.filter(c => QUOTA_CODES.has(c.error ?? '') && c.updatedAt >= now() - TAKEOVER_TTL_MS && !takenOver.has(c.id))
