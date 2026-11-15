@@ -76,7 +76,7 @@ describe('合伙人看到的一件事', () => {
 
   it('只有允许的字段:没有任何编号、路径、原始对话', () => {
     const view = sharedMatterView({ ...base(), matter: { ...base().matter, id: 'ab12cd34', ownerChatId: 'owner@im' } as never, events: [{ text: 'RAW_TRANSCRIPT' }], permissions: [{ description: 'rm -rf' }] } as never)
-    expect(Object.keys(view).sort()).toEqual(['legs', 'notes', 'notesOmitted', 'outputs', 'state', 'title'])
+    expect(Object.keys(view).sort()).toEqual(['legs', 'notes', 'notesOmitted', 'outputs', 'state', 'talk', 'talkOmitted', 'title'])
     const wire = JSON.stringify(view)
     for (const hidden of ['ab12cd34', 'owner@im', 'RAW_TRANSCRIPT', 'rm -rf', '/Users/', 'nate', 'sk-abcdefghijklmnopqrstuvwxyz123456', 'runId', 'partner:']) expect(wire).not.toContain(hidden)
   })

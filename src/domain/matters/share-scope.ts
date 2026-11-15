@@ -27,6 +27,22 @@ export function shareName(raw: unknown): string | null {
   return /[:：<>`]/.test(name) ? null : name
 }
 
+/** 链接的三档(主人 11-15 定):只看;能讨论(默认);能直接让 CC 改(主人按人、按事打开)。 */
+export type ShareMode = 'view' | 'discuss' | 'act'
+export const SHARE_MODES: readonly ShareMode[] = ['view', 'discuss', 'act']
+/** 对方说的一句话:最多这么多字。 */
+export const SHARE_SAY_MAX = 500
+/** 每个链接每天最多说这么多句:对方的话会让 CC 回应,花的是主人的额度。 */
+export const SHARE_SAY_PER_DAY = 60
+/** 同一件事上所有被分享的人加起来每天最多说这么多句:一个人刷屏不至于把别人的话都挤出去。 */
+export const SHARE_SAY_PER_MATTER_DAY = 200
+/** 对方说的话:去掉控制字符、两头空白;空的、太长的 ⇒ null。 */
+export function shareSayText(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const text = raw.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, c => (c === '\n' ? '\n' : ' ')).replace(/\n{3,}/g, '\n\n').trim()
+  return text && [...text].length <= SHARE_SAY_MAX ? text : null
+}
+
 export interface ShareRecord { expiresAt: number; revokedAt: number | null }
 export type ShareRefusal = 'revoked' | 'expired' | 'archived' | 'not_shareable'
 
@@ -87,13 +103,15 @@ const clean = (text: unknown, projectPath: string | null): string => {
 }
 
 /** 凭一枚分享令牌读到的东西:能看 ⇒ 投影;不能看 ⇒ 原因(只在本机用,不回给合伙人)。 */
-export type ShareView = { ok: true; name: string; expiresAt: number; matter: SharedMatter } | { ok: false; reason: ShareRefusal | 'unknown' }
+export type ShareView = { ok: true; name: string; mode: ShareMode; expiresAt: number; matter: SharedMatter } | { ok: false; reason: ShareRefusal | 'unknown' }
 
 export type SharedState = 'working' | 'waiting_owner' | 'stopped' | 'done'
 export interface SharedLeg { position: number; executor: string; brief: string; status: 'queued' | 'running' | 'done' | 'stopped' }
 export interface SharedNote { author: string; partner: boolean; kind: 'plan' | 'note' | 'artifact'; text: string; at: number }
 export interface SharedOutput { name: string; size: number | null }
-export interface SharedMatter { title: string; state: SharedState; legs: SharedLeg[]; notes: SharedNote[]; notesOmitted: number; outputs: SharedOutput[] }
+/** 对话里的一句。mine:是不是打开这个链接的人自己说的。 */
+export interface SharedTalk { who: 'owner' | 'guest' | 'cc'; name: string; text: string; at: number; mine: boolean }
+export interface SharedMatter { title: string; state: SharedState; legs: SharedLeg[]; notes: SharedNote[]; notesOmitted: number; outputs: SharedOutput[]; talk: SharedTalk[]; talkOmitted: number }
 
 export interface ShareSource {
   matter: { title: string; projectPath: string | null }
@@ -104,6 +122,10 @@ export interface ShareSource {
   notesTotal: number
   /** 主人还有没处理的批准卡或提问。内容不给,只给「在等主人」。 */
   ownerPending: boolean
+  /** 这件事里的对话(最近的若干条,正序)与总条数;viewer = 打开这个链接的那一位的分享记录 id。 */
+  talk?: readonly { who: 'owner' | 'guest' | 'cc'; name: string; text: string; createdAt: number; shareId: string | null }[]
+  talkTotal?: number
+  viewer?: string
   artifacts: readonly { name: string; size?: number | null }[]
 }
 
@@ -137,8 +159,9 @@ export function sharedMatterView(source: ShareSource): SharedMatter {
     : has('queued') ? (active ? 'working' : 'stopped')
     : legs.length ? 'done'
     : active ? 'working' : settled ? 'done' : 'stopped'
+  const talk = (source.talk ?? []).map((line): SharedTalk => ({ who: line.who, name: clean(line.name, null).slice(0, 64), text: clean(line.text, root), at: line.createdAt, mine: line.who === 'guest' && !!source.viewer && line.shareId === source.viewer }))
   return {
-    title: clean(source.matter.title, root).slice(0, 200), state, legs, notes,
+    title: clean(source.matter.title, root).slice(0, 200), state, legs, notes, talk, talkOmitted: Math.max(0, (source.talkTotal ?? talk.length) - talk.length),
     notesOmitted: Math.max(0, source.notesTotal - notes.length),
     // 只给文件名:成果目录里的相对位置也不给,名字里夹带的目录去掉。
     outputs: source.artifacts.slice(-SHARE_OUTPUTS_MAX).map(file => ({ name: clean(String(file.name).split(/[/\\]/).filter(Boolean).at(-1) ?? '', null).slice(0, 200), size: typeof file.size === 'number' && Number.isFinite(file.size) ? file.size : null })).filter(file => file.name),

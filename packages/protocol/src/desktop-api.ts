@@ -2461,11 +2461,16 @@ export const PenpalMarkReadResponse = z.object({ ok: z.literal(true) })
 // validate responses; under the test runner index.ts checks every 2xx body
 // against it (assertResponseContract).
 
-const MatterShareRow=z.object({id:z.string(),matterId:z.string(),name:z.string(),createdAt:z.number(),expiresAt:z.number(),revokedAt:z.number().nullable(),lastOpenedAt:z.number().nullable()}).strict()
+const SHARE_MODE=z.enum(['view','discuss','act'])
+const MatterTalkRow=z.object({id:z.number(),matterId:z.string(),shareId:z.string().nullable(),who:z.enum(['owner','guest','cc']),name:z.string(),text:z.string(),createdAt:z.number()}).strict()
+const MatterShareRow=z.object({id:z.string(),matterId:z.string(),name:z.string(),mode:SHARE_MODE,createdAt:z.number(),expiresAt:z.number(),revokedAt:z.number().nullable(),lastOpenedAt:z.number().nullable()}).strict()
 const MATTER_ID=z.string().regex(/^[a-f0-9]{8}$/)
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
-  'POST /v1/matter/share':z.object({matter:MATTER_ID,name:z.string().min(1).max(200)}).strict(),
+  'POST /v1/matter/share':z.object({matter:MATTER_ID,name:z.string().min(1).max(200),mode:SHARE_MODE.optional()}).strict(),
+  'POST /v1/matter/share/mode':z.object({matter:MATTER_ID,id:z.string().regex(/^[a-f0-9]{12}$/),mode:SHARE_MODE}).strict(),
+  'GET /v1/matter/talk':z.object({matter:MATTER_ID}).strict(),
+  'POST /v1/matter/talk':z.object({matter:MATTER_ID,text:z.string().trim().min(1).max(2000)}).strict(),
   'GET /v1/matter/shares':z.object({matter:MATTER_ID}).strict(),
   'POST /v1/matter/share/revoke':z.object({matter:MATTER_ID,id:z.string().regex(/^[a-f0-9]{12}$/)}).strict(),
   'POST /v1/matter/note':z.object({text:z.string().trim().min(1).max(1000)}).strict(),
@@ -2564,6 +2569,9 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/matter/share':z.object({share:MatterShareRow,url:z.string()}).strict(),
   'GET /v1/matter/shares':z.object({shares:z.array(MatterShareRow)}).strict(),
   'POST /v1/matter/share/revoke':z.object({revoked:z.boolean()}).strict(),
+  'POST /v1/matter/share/mode':z.object({changed:z.boolean()}).strict(),
+  'GET /v1/matter/talk':z.object({talk:z.array(MatterTalkRow),total:z.number()}).strict(),
+  'POST /v1/matter/talk':z.object({line:MatterTalkRow}).strict(),
   'GET /v1/matter/notes':z.object({notes:z.array(MatterNote).optional(),agentRuns:z.array(MatterAgent).optional(),notesTotal:z.number().int().nonnegative().optional(),matchedTotal:z.number().int().nonnegative().optional(),nextBefore:z.number().int().positive().nullable().optional(),truncated:z.boolean().optional(),retentionNotice:z.string().optional()}),
   'POST /v1/matter/note':z.object({ok:z.literal(true)}),
   'POST /v1/matter/relay':z.object({task:WorkbenchDesktopTaskView}),

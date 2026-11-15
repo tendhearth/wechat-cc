@@ -80,6 +80,8 @@ export interface ServiceDeps {
   /** 项目经验(2026-10-20):源项目路径 ⇒ 要放进执行者指令的那一段;没有 ⇒ null。 */
   projectLessons?: (projectPath: string | null) => string | null
   /** 话题 T3(2026-11-05):起执行者时从话题拼的简报(只给主人的任务、只用索引、私密话题不进);没有 ⇒ null。 */
+  /** 被分享的人在一件事里说了一句(share.ts):接出去让 CC 回应、告诉主人。缺省 ⇒ 只存进对话。 */
+  onShareTalk?: (said: { matterId: string; shareId: string; name: string; mode: 'discuss' | 'act'; text: string }) => void
   topicBrief?: (task: { matterId: string; ownerChatId: string | null; title: string; text: string }) => Promise<string | null>
   /** 话题 T3:这件事一轮真的完成了(同 onTurnCompleted 那一处)—— 把结论写回挂着的话题。 */
   onTaskTurnCompleted?: (taskId: string) => void

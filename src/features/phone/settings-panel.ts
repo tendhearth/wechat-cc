@@ -214,7 +214,7 @@ export interface SettingsPanel {
   /** 桌面「连接手机」(spec 2026-10-01-tendhearth-pairing-ux §4.1):按需打开远程隧道;只在 v2 中继就绪时铸码。 */
   phoneLink(opts: { enableRemote: boolean }): Promise<PhoneLinkResult>
   /** 主人开一个分享链接(只在 v2 中继就绪时开;不替主人打开远程访问)。 */
-  shareLink(matterId: string, name: unknown): ShareLinkResult
+  shareLink(matterId: string, name: unknown, mode?: unknown): ShareLinkResult
   /** 没撤销、没过期的分享令牌 —— 隧道握手的候选。 */
   shareTokens(): string[]
   /** 这枚分享令牌此刻还能用吗(撤销、过期、这件事归档都算不能)。 */
@@ -667,7 +667,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       return devices.list()
     },
 
-    shareLink(matterId, name) {
+    shareLink(matterId, name, mode) {
       const remote = deps.remoteInfo?.() ?? null
       const state = phoneLinkState({
         owner: !!deps.ownerChatId(), v2Configured: deps.relayV2Configured?.() ?? false,
@@ -676,8 +676,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       if (!deps.shares) return { ok: false, error: 'share_unavailable' }
       // 中继没就绪就不开:开出来的链接合伙人也打不开。
       if (state !== 'ready' || !remote) return { ok: false, error: 'share_relay_not_ready', state: state === 'ready' ? 'starting' : state }
-      const { share, token } = deps.shares.create(matterId, name)
-      deps.audit?.(`share: 开了一个链接(事 ${matterId},给「${share.name}」,${share.id})`)
+      const { share, token } = deps.shares.create(matterId, name, mode)
+      deps.audit?.(`share: 开了一个链接(事 ${matterId},给「${share.name}」,${share.mode},${share.id})`)
       return { ok: true, share, url: shareUrl(remote, token) }
     },
     shareTokens() {
