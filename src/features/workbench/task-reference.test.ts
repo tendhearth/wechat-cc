@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { handoffCases, handoffNames } from '../../test-support/task-handoff-cases'
-import { makeCheapJudge, resolveTaskReference, parseTaskIdFromMessage, focusDeclaration, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge } from './task-reference'
+import { makeCheapJudge, resolveTaskReference, isMatterShareRequest, parseTaskIdFromMessage, focusDeclaration, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge } from './task-reference'
 
 /**
  * 管家式指称解析(spec 2026-09-16):主人在微信里说"那个整理 TODO 的事"、引用一条任务
@@ -233,5 +233,34 @@ describe('评审回归(2026-09-16 独立评审的反例)', () => {
     const t0 = Date.now()
     expect(await resolve('那个延迟表弄完了吗', { judge, judgeTimeoutMs: 50 })).toEqual({ kind: 'none' })
     expect(Date.now() - t0).toBeLessThan(2000)
+  })
+})
+
+describe('isMatterShareRequest(分享这件事是对 CC 说的,不是补充)', () => {
+  it.each([
+    '把首页配色这件事分享给小林,让他帮我看看',
+    '这件事分享给设计师',
+    '把它共享给老王',
+    '分享给小林看看',
+    '小林那个链接关掉',
+    '把分享关了',
+    '分享链接都撤掉吧',
+    '这件事都分享给谁了',
+  ])('是:%s', text => expect(isMatterShareRequest(text)).toBe(true))
+  it.each([
+    '加个分享给好友的按钮',
+    '做一个分享给朋友圈的功能',
+    '把页脚那个链接关掉',
+    '分享按钮先关掉',
+    '先别分享给小林',
+    '不要分享给任何人',
+    '文案写成「分享给小林」',
+    '把结果发给我',
+    '首页配色再深一点',
+  ])('不是:%s', text => expect(isMatterShareRequest(text)).toBe(false))
+  it('管家不把分享请求解析成某个任务的补充', async () => {
+    const r = await resolveTaskReference({ text: '把首页配色这件事分享给小林,让他帮我看看', quotedText: null, focus: null, nowMs: 0,
+      candidates: [{ id: 'b12f5314', title: '首页配色', project: 'site', providerId: 'codex', phase: 'replied', path: '/p', updatedAt: 0, error: null } as never] })
+    expect(r.kind).toBe('none')
   })
 })
