@@ -32,6 +32,7 @@ export function makeMatterShares(db:Db,now=()=>Date.now()){
       db.query('INSERT INTO matter_shares(id,matter_id,name,mode,token,created_at,expires_at) VALUES(?,?,?,?,?,?,?)').run(id,matterId,name,mode,token,at,at+SHARE_TTL_MS)
       return {share:{id,matterId,name,mode,createdAt:at,expiresAt:at+SHARE_TTL_MS,revokedAt:null,lastOpenedAt:null},token}
     },
+    byId(id:string):MatterShare|null{return db.query<MatterShare,[string]>(`SELECT ${COLUMNS} FROM matter_shares WHERE id=?`).get(id)??null},
     byToken(token:string):MatterShare|null{
       return SHARE_TOKEN.test(token)?db.query<MatterShare,[string]>(`SELECT ${COLUMNS} FROM matter_shares WHERE token=?`).get(token)??null:null
     },

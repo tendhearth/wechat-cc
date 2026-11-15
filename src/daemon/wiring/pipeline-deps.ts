@@ -1,3 +1,4 @@
+import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
 import { projectActivities } from '../../features/memory'
 import { makeMatterSeen } from '../../adapters/store/matter-seen'
 import { turnJudge } from '../../app/turn-judge'
@@ -813,5 +814,22 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const petTurn = wirePetTurn({ stateDir, ilink: opts.ilink, petSignals: opts.petSignals, boot, messagesStore, activities:()=>opts.workbench?.petActivities()??[] })
 
 
+  // 分享出去的一件事里 CC 回应来的人(features/workbench/service/share.ts)。**只用验证过一次性调用不带工具的那两家**:
+  // OpenAI 兼容(纯 chat completion)和 Claude(tools: [])。Codex 的一次性调用是只读沙箱但仍能读盘跑命令,Cursor / agy 没验证过,
+  // 所以不走 registry.getCheapEval() 的回退链 —— 这两家都没有就不回(评审 11-15)。提议只转告主人(经开口那道门),这里没有通向执行者的路。
+  // 回话期间持 busy,空闲自重启不在半句话上打断。
+  if (opts.workbench) {
+    opts.workbench.shareResponder({
+      eval: async (prompt) => {
+        const plain = (['openai', 'claude'] as const).map(id => boot.registry.get(id)?.provider.cheapEval).find(fn => !!fn)
+        const cheap = plain ? wrapCheapEvalWithAuthFailCheck(plain, (tag, line) => log(tag, line)) : null
+        if (!cheap) return null
+        let release: (() => void) | undefined
+        try { release = boot.holdBusy?.('share-reply') } catch { release = undefined }
+        try { return await cheap(prompt) } finally { try { release?.() } catch { /* 只是登记 */ } }
+      },
+      tellOwner: (text) => { const owner = ownerChatId(); if (owner) void speech.tell('share_talk', owner, text).catch(err => log('SHARE', `tell owner failed: ${err instanceof Error ? err.message : String(err)}`)) },
+    })
+  }
   return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices(), ...(opts.workbench ? { share: { link: (id: string, name: unknown, mode?: unknown) => settingsPanel.shareLink(id, name, mode), list: (id: string) => opts.workbench!.shareList(id), revoke: (id: string, shareId: string) => opts.workbench!.shareRevoke(id, shareId), setMode: (id: string, shareId: string, mode: unknown) => opts.workbench!.shareSetMode(id, shareId, mode), talk: (id: string) => opts.workbench!.shareTalk(id), say: (id: string, text: string) => opts.workbench!.shareTalkAdd(id, 'owner', '', text) } } : {}) } }
 }
