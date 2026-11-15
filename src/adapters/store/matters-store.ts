@@ -1,3 +1,4 @@
+import {makeMatterLedger} from './matter-ledger'
 import { makeTopicBubbles } from '../../lib/topic-bubbles'
 import { log } from '../../lib/log'
 import {randomBytes} from 'node:crypto'
@@ -97,6 +98,10 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
   const bump=(id:string)=>{db.query('UPDATE matters SET updated_at=? WHERE id=?').run(now(),id);hinted(id)}
   return {
     create,get,list,
+    terminalLedger(id){
+      const ledger=makeMatterLedger(db,now),terminalParticipants=ledger.terminals.list(id)
+      return terminalParticipants.length?{terminalParticipants,...ledger.recent(id)}:undefined
+    },
     setLifecycle(id,to){
       if(!LIFECYCLES.has(to))throw new Error('invalid_matter_lifecycle');require(id)
       const ts=now()

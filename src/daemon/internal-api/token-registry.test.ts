@@ -105,6 +105,8 @@ describe('token-registry', () => {
       'POST /v1/cli/rollback',
       'GET /v1/cli/sessions',
       'GET /v1/overseer/today',
+      'POST /v1/cli/attach',
+      'POST /v1/cli/detach',
       'POST /v1/cli/hooks/install',
       'POST /v1/cli/hooks/uninstall',
       'GET /v1/letters',

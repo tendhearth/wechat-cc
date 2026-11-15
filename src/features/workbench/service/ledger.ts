@@ -61,6 +61,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     matterApprovalConsume(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);if(context)approvals.consume(context.scope,tool,input)},
     matterApprovalStatus(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);return !!context&&approvals.get(context.scope,tool,input)?.approved===true},
     async matterContext(key:string|undefined,requested?:string){
+      if(key?.startsWith('terminal-participation/'))throw Error('matter_ledger_forbidden')
       const id=store.ledger.bound(key,requested),task=store.get(id)
       if(!store.ledger.enabled(id))throw Error('matter_ledger_forbidden')
       const text=store.events(id).filter(e=>e.kind==='user').at(-1)?.text??''
@@ -69,14 +70,20 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     },
     matterNotes:(key:string|undefined,requested?:string,q?:MatterNotesQuery)=>store.ledger.page(store.ledger.bound(key,requested),q),
     matterNote(key:string|undefined,text:string){
+      if(key?.startsWith('terminal-participation/')){
+        const p=store.ledger.terminals.bound(key)
+        if(typeof text!=='string'||!text.trim()||text.length>1000)throw Error('invalid_matter_note')
+        store.atomic(()=>{store.ledger.note(p.matterId,p.runId,p.author,text);ctx.deps.matters?.touch(p.matterId)})
+        return {ok:true as const}
+      }
       const id=store.ledger.bound(key),run=state.runsByTask.get(id)
       if(!store.ledger.enabled(id)||!run||run.cancelled||run.finishing||run.uncertain)throw Error('matter_session_ended')
       if(typeof text!=='string'||!text.trim()||text.length>1000)throw Error('invalid_matter_note')
       store.atomic(()=>{store.ledger.note(id,run.ledgerRunId??run.identity,run.task.providerId,text,run.turn?.id);store.bump(id)})
       return {ok:true as const}
     },
-    ledgerOwned:(id:string,owner:string|null)=>!!owner&&store.get(id).ownerChatId===owner,
-    ledgerRead:(id:string):{agentRuns?:MatterAgent[];notes?:MatterNote[];notesTotal?:number}=>(store.ledger.enabled(id)?{agentRuns:store.ledger.projectedAgents(id),...store.ledger.recent(id)}:{}),
+    ledgerOwned:(id:string,owner:string|null)=>!!owner&&(ctx.deps.matters?.get(id)?.ownerChatId??store.get(id).ownerChatId)===owner,
+    ledgerRead:(id:string):{agentRuns?:MatterAgent[];notes?:MatterNote[];notesTotal?:number;terminalParticipants?:import('../../../ports/matters').TerminalParticipation[]}=>(store.ledger.enabled(id)?{...(store.ledger.terminals.list(id).length?{terminalParticipants:store.ledger.terminals.list(id)}:{}),agentRuns:store.ledger.projectedAgents(id),...store.ledger.recent(id)}:{}),
     async matterPlan(input:MatterPlanInput,context?:PlanConversation){
       const owner=ctx.deps.ownerChatId()
       if(!owner)throw Error('matter_ledger_forbidden')

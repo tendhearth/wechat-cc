@@ -113,5 +113,5 @@ export async function prepareChatApprovalPrompt(provider:string,tool:string,inpu
 
 
 export function noteChatApproval(channel:Pick<ChatApprovalChannel,'noteMatterApproval'>,provider:string,tool:string,input:unknown,chatId:string):void {
-  if(tool==='mcp__wechat__matter_plan'||tool==='mcp__wechat__matter_handoff'||tool==='mcp__wechat__matter_share')channel.noteMatterApproval?.(tool,input,chatId,provider.toLowerCase())
+  if(tool==='mcp__wechat__matter_plan'||tool==='mcp__wechat__matter_handoff'||tool==='mcp__wechat__matter_share'||tool==='mcp__wechat__terminal_attach'||tool==='mcp__wechat__terminal_detach')channel.noteMatterApproval?.(tool,input,chatId,provider.toLowerCase())
 }

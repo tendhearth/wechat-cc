@@ -41,7 +41,7 @@ export type MatterQuotaHandoff =
   | {state:'offer';from:string;to:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'none';from:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'handed';from:string;to:string;matterId:string}
-export interface MatterDetail extends MatterTaskControls {agentRuns?:MatterAgent[];notes?:MatterNote[];notesTotal?:number;/** 线上形状:带旧 status(wire-compat.ts 第一行)。 */matter:WireMatter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterDetailEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
+export interface MatterDetail extends MatterTaskControls {terminalParticipants?:import('../../ports/matters').TerminalParticipation[];agentRuns?:MatterAgent[];notes?:MatterNote[];notesTotal?:number;/** 线上形状:带旧 status(wire-compat.ts 第一行)。 */matter:WireMatter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterDetailEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
 export interface MatterSayInput {requestId:string;runId?:string;draftId?:string;attachmentIds?:string[]}
 type MatterMaterials=Pick<MatterSayInput,'draftId'|'attachmentIds'>
 export interface MatterArtifactInput {artifactId:string;sha256:string;offset:number;length?:number}
@@ -329,6 +329,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       // 详情页标题下那组头像:跟列表同一个出处
       const agents=deps.store.agents([matter.id]).get(matter.id)
+      ledger={...ledger,...deps.store.terminalLedger?.(id)}
       const named=namesFor([...(agents??[]),...(ledger.agentRuns??[]).map(a=>a.executor),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
       const act=actOf(matter,deps.actTurnLimit??20)
       const status=deps.store.legacyStatuses([matter.id]).get(matter.id)??'open'

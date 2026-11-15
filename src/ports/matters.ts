@@ -47,6 +47,7 @@ export interface CreateMatter {id?:string;kind:MatterKind;/** 不给 ⇒ owner�
 export interface ListMatters {q?:string;project?:string;state?:MatterState;before?:{at:number;id:string};kind?:MatterKind;/** 线上 `?status=` 的筛选(旧状态,wire-compat.ts 第一行):SQL 里按 legacy-status 的式子筛,LIMIT 之前。 */legacy?:LegacyMatterStatus[];since?:number;limit?:number;/** 只要在这个表面露过面的 */surface?:MatterSurface}
 
 export interface MatterStore {
+  terminalLedger?(id:string):{terminalParticipants:TerminalParticipation[];notes:MatterNote[];notesTotal:number}|undefined
   create(input:CreateMatter):Matter
   get(id:string):Matter|null
   list(filter?:ListMatters):Matter[]
@@ -137,3 +138,5 @@ export interface MatterLog {
   /** 按 seq;给了 afterCursor 只要这之后写过的。 */
   items(matterId:string,opts?:{afterCursor?:number}):MatterItem[]
 }
+
+export interface TerminalParticipation {id:string;matterId:string;sessionId:string;sourceMatterId:string;runId:string;generation:number;author:string;attachedAt:number;detachedAt:number|null;detachReason:string|null}
