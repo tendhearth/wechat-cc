@@ -127,7 +127,7 @@ export function registerMatterShareTool(server:McpServer,client:InternalApiClien
   const MATTER=z.string().regex(/^[a-f0-9]{8}$/)
   server.registerTool('matter_share',{
     title:'把一件事分享给主人请来的人',
-    description:'【主人当前对话】主人说“把这件事分享给小林”“让设计师帮我看看这件事”时用。matter是这件事编号，title是这件事的标题（照事项列表里的原样填，确认卡上给主人看，和编号对不上会被拒），name是主人对这个人的称呼（24字以内，页面上和对话里都用它署名）。mode: discuss（默认，对方能看、能在里面说话，要改的事会转告主人）或 view（只能看）。系统会先发确认卡给主人，直接调工具。成功后把返回的 url 原样发给主人，由主人转给对方；说明链接14天有效、只能看到这一件事、随时可以让你关掉。每人单独开一个，不要把同一个链接给几个人。',
+    description:'【主人当前对话】主人说“把这件事分享给小林”“让设计师帮我看看这件事”时用。matter是这件事编号，title是这件事的标题（照 <matters> 里的原样填，确认卡上给主人看，和编号对不上会被拒），name是主人对这个人的称呼（24字以内，页面上和对话里都用它署名）。mode: discuss（默认，对方能看、能在里面说话，要改的事会转告主人）或 view（只能看）。系统会先发确认卡给主人，直接调工具。成功后把返回的 url 原样发给主人，由主人转给对方；说明链接14天有效、只能看到这一件事、随时可以让你关掉。每人单独开一个，不要把同一个链接给几个人。',
     inputSchema:{matter:MATTER,title:z.string().trim().min(1).max(200),name:z.string().trim().min(1).max(24),mode:z.enum(['discuss','view']).optional()},
   },async args=>{
     try{return {content:[{type:'text',text:JSON.stringify(await client.request('POST','/v1/matter/share',args))}]}}

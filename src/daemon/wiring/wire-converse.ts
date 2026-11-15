@@ -37,6 +37,7 @@ export interface WireConverseDeps {
   petSignals?: PetSignals
   stickers?: StickerLib
   /** 话题 T2:这一轮碰到的话题调出来的那几条(只在主人自己的对话里;缺席 ⇒ 不调)。 */
+  matterRecall?: (chatId: string) => Promise<string | null>
   topicRecall?: TopicRecall
 }
 
@@ -178,6 +179,9 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
         persistAppTurn(origin, synthetic, text, reply, undefined, images)
         return { reply }
       }
+    }
+    if (d.matterRecall) {
+      try { const block = await d.matterRecall(ownerChatId); if (block) synthetic.matters = block } catch { /* 事项读取失败不打断回合 */ }
     }
     // 话题 T2:App 那一轮不走入站管道(mw-recall 够不着),在进对话之前调一次;超时 / 出错 ⇒ 不加。
     if (d.topicRecall && text.trim()) {

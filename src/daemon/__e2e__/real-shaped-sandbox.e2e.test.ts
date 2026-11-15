@@ -70,7 +70,7 @@ const RETRACTED = '每天早上七点起床跑步'
 const STRANGER = 'o9fixture-stranger@im.wechat'
 
 /** 入站给执行者的是 `<wechat …>原话</wechat>`(前面可能还有交接说明、近况);剧本按主人这一句的原话分路。 */
-const said = (text: string): string => [...text.matchAll(/<wechat [^>]*>\n([\s\S]*?)\n<\/wechat>/g)].at(-1)?.[1]?.trim() ?? text.trim()
+const said = (text: string): string => [...text.matchAll(/<wechat [^>]*>\n([\s\S]*?)\n<\/wechat>/g)].at(-1)?.[1]?.replace(/<matters>[\s\S]*?<\/matters>\n?/g, '').trim() ?? text.trim()
 
 /** S2 那几条:配对过的一台手机、免打扰里压着的那一句、那件事的编号。 */
 const PHONE_TOKEN = 'sandbox-phone-device-token-0001'
@@ -89,6 +89,7 @@ const codexThreads: Array<Record<string, unknown>> = []
 /** codex 收到的审批应答,按命令记。 */
 const decisions = new Map<string, unknown>()
 let codexDecision: unknown
+let lastCodexEnvelope = ''
 let topicJudgeAttempts=0,topicRoundDispatches=0
 const claudeScript: FakeSdkScript = { async onDispatch(text) { if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
 const approval = (command: string, finalText: string) => ({
@@ -104,6 +105,7 @@ const approval = (command: string, finalText: string) => ({
 })
 const codexScript: FakeSdkScript = {
   async onDispatch(text) {
+    lastCodexEnvelope = text
     const s = said(text)
     if (s === '把 build 删了') return approval('rm -rf build', '删好了。')
     if (s === '列一下目录') return approval('ls', '列好了。')
@@ -507,6 +509,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // 重启后照样收发(对话模式也留住了:还是 Codex)
     d.sendText(d.owner, '还在吗')
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 在。')), 15_000)
+    expect(lastCodexEnvelope).toContain('<matters>')
+    expect(lastCodexEnvelope).toContain('写一份笔记')
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
     // 上一次重启已经说过作废了,这次没有挂着的卡 ⇒ 不再说
     expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes('作废了'))).toEqual([])
