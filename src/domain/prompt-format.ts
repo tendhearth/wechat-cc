@@ -42,8 +42,9 @@ export interface InboundMsg {
    * 话题 T2(2026-11-05):这一轮碰到的话题调出来的那几条(src/daemon/threads/recall.ts 渲染好的正文),
    * 只在主人自己的对话里有。渲染成 <recall> 前面的 <topics> 元素;没有 ⇒ 信封和以前逐字节一样。
    */
-  matters?: string
   topics?: string
+  /** 主人这一轮看得到的「正在办的事」每件一行(threads/recall.ts 的 renderMatters);没有 ⇒ 不出 <matters>。 */
+  matters?: string
 }
 
 /** Cap on the rendered <recall> body — recall is a hint, not a transcript. */

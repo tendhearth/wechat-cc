@@ -37,8 +37,9 @@ export interface WireConverseDeps {
   petSignals?: PetSignals
   stickers?: StickerLib
   /** 话题 T2:这一轮碰到的话题调出来的那几条(只在主人自己的对话里;缺席 ⇒ 不调)。 */
-  matterRecall?: (chatId: string) => Promise<string | null>
   topicRecall?: TopicRecall
+  /** 主人每轮的「正在办的事」(threads/recall.ts makeMatterRecall);缺席 ⇒ 不带。 */
+  matterRecall?: (chatId: string) => Promise<string | null>
 }
 
 /** App 那一轮调话题最多等多久(和微信入站的 RECALL_TIMEOUT_MS 同值)。 */
