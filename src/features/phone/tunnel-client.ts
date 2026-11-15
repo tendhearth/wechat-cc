@@ -53,6 +53,12 @@ export interface TunnelClientDeps {
    *  只有它可以用来握手;进去后点「把 CC 带在身上」换长期设备令牌(2026-09-24)。
    *  与设备令牌同一套 HKDF 绑定:令牌只在链接的 # 里,不上中继。 */
   activeLinkToken?: () => string | null
+  /**
+   * 分享给合伙人的链接令牌(share-panel.ts):没撤销没过期的那些当握手候选;握手之后每个请求再问一遍还有效没有。
+   * 它不是设备:不能订阅,进了面板也只到得了分享那一个出口。
+   */
+  shareTokens?: () => string[]
+  shareTokenValid?: (token: string) => boolean
   /** Opens the outbound WS. Default dials the relay via Bun's WebSocket. */
   connect?: (url: string, protocols?: string[]) => TunnelWS
   /** `<relay>/v2/daemon`(remote-relay-config.ts 拼好的)。 */
@@ -255,7 +261,8 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   /** Token list the tunnel accepts right now: paired devices + the active /set link token. */
   function candidateTokens(): string[] {
     const link = deps.activeLinkToken?.() ?? null
-    return link ? [...deps.knownDeviceTokens(), link] : deps.knownDeviceTokens()
+    const shares = deps.shareTokens?.() ?? []
+    return [...deps.knownDeviceTokens(), ...(link ? [link] : []), ...shares]
   }
 
   async function onV2Frame(stream: string, st: StreamState, frame: unknown): Promise<void> {
@@ -273,13 +280,14 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     if (st.client === 'app' && st.build && st.build !== 'selftest-P3d' && deps.onDeviceBuild) { try { deps.onDeviceBuild(token, st.build) } catch { /* 只少一次记录 */ } }
     st.v2s = makeV2Stream({
       stream, channel: hit.channel, token, client: st.client, build: st.build,
-      onActivity: () => deps.onClientActivity?.(st.client, st.build),
+      // 合伙人打开分享页不算主人的手机网页在用(那份用量是给「老路由还有没有人走」看的)。
+      onActivity: () => { if (token.charAt(0) !== 's') deps.onClientActivity?.(st.client, st.build) },
       send: (f) => { if (streams.get(stream) === st) sendToStream(stream, f) },
       handleRequest: deps.handleRequest,
       events: deps.events,
       device: deps.knownDeviceTokens().includes(token),
       topicsScope: () => deps.knownDeviceTokens().includes(token) ? deps.topicsOwner?.() ?? null : null,
-      tokenValid: () => deps.knownDeviceTokens().includes(token) || (deps.activeLinkToken?.() ?? null) === token,
+      tokenValid: () => deps.knownDeviceTokens().includes(token) || (deps.activeLinkToken?.() ?? null) === token || (token.charAt(0) === 's' && (deps.shareTokenValid?.(token) ?? false)),
       onRevoked: () => {
         if (streams.get(stream) !== st) return
         streams.delete(stream)

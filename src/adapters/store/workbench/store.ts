@@ -1,4 +1,5 @@
 import {makeMatterPlans} from '../matter-plans'
+import {makeMatterShares} from '../matter-shares'
 import {makeMatterLedger} from '../matter-ledger'
 import type { WorktreeStart } from '../../git/worktree-workspaces'
 import { makeMessagesStore } from '../../../lib/messages-store'
@@ -171,6 +172,7 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     entryRequests:createEntryStore(db),
     ledger:makeMatterLedger(db),
     plans:makeMatterPlans(db),
+    shares:makeMatterShares(db),
     switchExecutor(id:string,providerId:string){
       get(id)
       db.query("UPDATE workbench_tasks SET provider_id=?,session_id=NULL,execution_choice_json=? WHERE id=?").run(providerId,JSON.stringify({defaults:'provider',model:null,reasoningEffort:null}),id)

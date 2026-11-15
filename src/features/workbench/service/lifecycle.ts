@@ -458,6 +458,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     const task=store.get(id)
     if(archived && !taskView(publicTask(task)).canArchive)throw new Error('workbench_busy')
     const view=taskView(publicTask(store.setArchived(id,archived)))
+    // 归档 ⇒ 这件事开出去的链接全部作废(设计稿「主人这边」);取消归档不恢复,要再开。
+    if(archived)store.shares.revokeAll(id)
     // store.setArchived 是裸 UPDATE,不像别的写点那样自带 bump —— archivedAt 在 detail 里能看见,补一下。
     ctx.hub.bumped(id)
     matterSync(m=>m.setLifecycle(id,taskLifecycle({archived,status:view.status})))

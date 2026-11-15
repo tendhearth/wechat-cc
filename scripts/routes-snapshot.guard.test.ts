@@ -96,9 +96,11 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     const P3E_MATTER_ACTIONS = ['POST /v1/matter/stop', 'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree', 'POST /v1/matter/create', 'GET /v1/matter/create-receipt',
       // P3e-2(双胞胎:rewind-preview / rewind / review / review-mark / review-return / review-comment / review-comments-send)
       'GET /v1/matter/rewind', 'POST /v1/matter/rewind', 'GET /v1/matter/changes', 'POST /v1/matter/review-mark', 'POST /v1/matter/review-return', 'POST /v1/matter/review-comment', 'POST /v1/matter/review-comments-send']
+    // operator:分享一件事给合伙人(2026-11-14,设计稿 share-a-matter):开链接是对外的动作,只有主人在桌面上能开 / 列 / 撤;聊天会话、手机链接都不给。
+    const SHARE_A_MATTER = ['POST /v1/matter/share', 'GET /v1/matter/shares', 'POST /v1/matter/share/revoke']
     const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: [
       'GET /v1/matter/notes', // Matter notebook: authenticated owner or local operator only.
-      'POST /v1/phone/enable-relay', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics', 'POST /v1/matter/seen', 'GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...BUTLER_CHECKUP, ...P3E_MATTER_ACTIONS, 'GET /v1/matter/permission-script'], federation: [], selftest: [], link: [] }
+      'POST /v1/phone/enable-relay', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics', 'POST /v1/matter/seen', 'GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...BUTLER_CHECKUP, ...P3E_MATTER_ACTIONS, ...SHARE_A_MATTER, 'GET /v1/matter/permission-script'], federation: [], selftest: [], link: [] }
     const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))
     reg.registerOperatorToken('op')
     const all = (a: Iterable<string>) => [...a].sort()

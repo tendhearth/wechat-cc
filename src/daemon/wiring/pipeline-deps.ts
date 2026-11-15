@@ -813,5 +813,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const petTurn = wirePetTurn({ stateDir, ilink: opts.ilink, petSignals: opts.petSignals, boot, messagesStore, activities:()=>opts.workbench?.petActivities()??[] })
 
 
-  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices(), ...(opts.workbench ? { share: { link: (id: string, name: unknown) => settingsPanel.shareLink(id, name), list: (id: string) => opts.workbench!.shareList(id), revoke: (id: string, shareId: string) => opts.workbench!.shareRevoke(id, shareId) } } : {}) } }
 }
