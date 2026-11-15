@@ -1,4 +1,6 @@
 import {readTopicBrief} from './topic-brief'
+/** 接力的棒、执行者接上了记录本工具时,代替话题简报的那一行。 */
+export const MATTER_CONTEXT_HINT='需要了解主人之前怎么聊过这件事时，用 matter_context 查；不需要就别查。'
 import type {RelayTurnHook,RelayResume} from './relay-events'
 import {isRelayContinue} from '../../../adapters/store/matter-plans'
 import {RELAY_STATUS_ASK} from '../../../domain/relay-decision'
@@ -205,7 +207,6 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 项目经验(第二轮对标 ★2):按源项目(独立工作区算它的源项目)取主人写的那几句,哪家执行者都带上
         ...(()=>{try{const b=ctx.deps.projectLessons?.(store.worktrees.get(task.id)?.projectPath??(task.workspaceKind==='managed'?null:task.path));return b?[b]:[]}catch{return []}})(),
         ...(topicBrief?[topicBrief]:[]),
-        ...(ledgerEnabled?['需要了解主人之前怎么聊过这件事时，用 matter_context 查；不需要就别查。']:[]),
       ].join('\n')
       const reviewStop=new AbortController()
       void running.stop.then(()=>reviewStop.abort())
@@ -302,7 +303,11 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const body=(rewound?`${rewound.text}\n\n${text}`:text)+statusAsk
       const pendingLedger=!!running.ledgerRunId&&store.ledger.needsInjection(running.ledgerRunId)
       const records=pendingLedger?ledgerBrief(store.ledger.notes(task.id)):''
-      const opening=matterToolsAvailable?records:records.replace('；可用 matter_notes 查询完整记录','')
+      const opening0=matterToolsAvailable?records:records.replace('；可用 matter_notes 查询完整记录','')
+      // 派活三档(总纲「少给,要用再取」):接力的棒不推话题简报,给一行「要用就查」。
+      // 这家执行者没接上记录本工具(spec 为 null)就查不了 ⇒ 照旧把简报推进去,别让它两头落空。
+      const contextLine=ledgerEnabled?(matterToolsAvailable?MATTER_CONTEXT_HINT:await readTopicBrief(ctx.deps.topicBrief,task,text)):null
+      const opening=[opening0,contextLine].filter(Boolean).join('\n\n')
       const currentRequest=opening?`${opening}\n\n本轮要求：\n${body}`:body
       const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n${opening?`${opening}\n\n`:''}本轮要求：\n${body}` : currentRequest
       let rewoundNoticed=false,ledgerNoticed=false
