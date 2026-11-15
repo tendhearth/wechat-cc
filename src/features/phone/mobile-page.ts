@@ -27,6 +27,8 @@ export const MOBILE_SW_JS = fillMobileTemplate(page.sw, { BRAND_ICON_VERSION: MO
 /** 单一色板(apps/mobile/src/tokens.css):/set 页与过期页内联它,和 /m 同一套颜色、圆角、字体。 */
 export const MOBILE_TOKENS_CSS = fillMobileTemplate(page.tokens, {})
 export const MOBILE_BOOTSTRAP_HTML = fillMobileTemplate(page.bootstrap, {})
+/** 分享给别人看的那一页(share-panel.ts 的 GET /share):不带令牌,页面自己从链接的 # 里取。 */
+export const MOBILE_SHARE_HTML = fillMobileTemplate(page.share, {})
 /** /set 与 /m 共用的传输层:同 Wi-Fi 直连,失败走端到端加密隧道。 */
 export const TUNNEL_CLIENT_JS = fillMobileTemplate(page.transport, {})
 export const MOBILE_WORKBENCH_JS = fillMobileTemplate(page.scripts.workbench, {})

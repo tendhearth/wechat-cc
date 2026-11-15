@@ -53,6 +53,13 @@ describe('分享一件事给合伙人', () => {
     expect(text).not.toContain('/Users/')
     expect(text).not.toContain(OWNER)
     expect(f.domain.shareList(f.task.id)[0]!.lastOpenedAt).toBe(clock)
+    // 那一页本身:只给有效的链接,页面里没有这件事的任何内容,也没有令牌。
+    const page = await f.get('/share', tokenOf(made.url)), html = await page.text()
+    expect([page.status, page.headers.get('content-type')]).toEqual([200, 'text/html; charset=utf-8'])
+    expect(html).toContain('请你看看这件事')
+    expect(html).not.toContain('登录页插图')
+    expect(html).not.toContain(tokenOf(made.url))
+    expect((await f.get('/share', 's' + '0'.repeat(64))).status).toBe(401)
   })
 
   it('分享令牌只到得了那一个出口:别的路径、别的方法一律 401,令牌登记处里也没有它', async () => {
@@ -62,7 +69,7 @@ describe('分享一件事给合伙人', () => {
     const token = tokenOf(made.url)
     expect(f.tokens.resolve(token)).toBeNull()
     expect(f.panel.validToken(token)).toBe(false)
-    for (const path of ['/v1/matters', `/v1/matter?id=${f.task.id}`, '/v1/home', '/v1/phone/state', '/m/api/matters', '/set', '/set/api/state', '/share', '/share/state/x', '/share/state/']) {
+    for (const path of ['/v1/matters', `/v1/matter?id=${f.task.id}`, '/v1/home', '/v1/phone/state', '/m/api/matters', '/set', '/set/api/state', '/share/', '/share/x', '/share/state/x', '/share/state/']) {
       expect([path, (await f.get(path, token)).status]).toEqual([path, 401])
     }
     expect((await f.get('/share/state', token, { method: 'POST', body: '{}' })).status).toBe(401)

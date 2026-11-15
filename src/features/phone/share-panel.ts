@@ -11,6 +11,7 @@ import type { SharedMatter, ShareView } from '../../domain/matters/share-scope'
 import { framedTooLargeFor } from '../../domain/matters/phone-scope'
 import { MAX_MOBILE_DETAIL_BYTES } from './mobile-matter-response'
 import type { PhoneLinkState } from './phone-link'
+import { MOBILE_SHARE_HTML } from './mobile-page'
 
 /** 面板要的分享能力(工作台服务给,wire-settings-panel.ts 接)。 */
 export interface SharePort {
@@ -26,7 +27,7 @@ export type ShareLinkResult =
   | { ok: false; error: 'share_relay_not_ready'; state: Exclude<PhoneLinkState, 'ready'> }
 
 export const SHARE_STATE_PATH = '/share/state'
-/** 合伙人打开的那一页(下一步做;壳页先取它再取上面的状态)。 */
+/** 被分享的人打开的那一页:壳页先取它(document.write 进去),页面再自己取上面的状态。 */
 export const SHARE_PAGE_PATH = '/share'
 
 export const isShareToken = (t: string | null | undefined): t is string => typeof t === 'string' && t.charAt(0) === 's'
@@ -51,9 +52,12 @@ function fitted(body: { ok: true; v: 1; name: string; expiresAt: number; matter:
 }
 
 export function shareRequest(shares: SharePort | undefined, url: URL, token: string, req: Request): Response {
-  if (!shares || req.method !== 'GET' || url.pathname !== SHARE_STATE_PATH) return unauthorized()
+  const page = url.pathname === SHARE_PAGE_PATH
+  if (!shares || req.method !== 'GET' || (!page && url.pathname !== SHARE_STATE_PATH)) return unauthorized()
   let view: ShareView
   try { view = shares.view(token) } catch { return unauthorized() }
   if (!view.ok) return unauthorized()
+  // 页面本身不含这件事的任何内容,但也只给还有效的链接:失效的链接在壳页就停下。
+  if (page) return new Response(MOBILE_SHARE_HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' } })
   return json(fitted({ ok: true, v: 1, name: view.name, expiresAt: view.expiresAt, matter: view.matter }))
 }

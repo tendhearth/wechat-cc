@@ -7,7 +7,7 @@
  */
 import {publicTask} from '../../../adapters/store/workbench/store'
 import type {MatterShare} from '../../../adapters/store/matter-shares'
-import {shareRefusal,sharedMatterView,type ShareRefusal,type ShareView} from '../../../domain/matters/share-scope'
+import {PARTNER_AUTHOR_PREFIX,shareRefusal,sharedMatterView,type ShareRefusal,type ShareView} from '../../../domain/matters/share-scope'
 import {GIT_REVIEW_MIME} from '../git-review'
 import type {ServiceCtx} from './ctx'
 import type {ViewDomain} from './view'
@@ -47,11 +47,13 @@ export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
       const id=share.matterId,task=publicTask(store.get(id)),running=state.runsByTask.get(id)
       const ledger=store.ledger.enabled(id)?{agentRuns:store.ledger.projectedAgents(id),...store.ledger.recent(id)}:null
       const plan=store.plans.get(id)
+      // 被分享的人看正式名字(Codex、Claude),不看内部 id;查不到名字就用 id。
+      const named=(executor:string)=>{try{return ctx.deps.registry.namesOf(executor).name||executor}catch{return executor}}
       store.shares.opened(share.id,ctx.now())
       return {ok:true,name:share.name,expiresAt:share.expiresAt,matter:sharedMatterView({
         matter:{title:task.title,projectPath:task.path},
-        task:{status:task.status,phase:d.view.phaseOf(task,running),providerId:task.providerId},
-        agentRuns:ledger?.agentRuns??[],notes:ledger?.notes??[],notesTotal:ledger?.notesTotal??0,
+        task:{status:task.status,phase:d.view.phaseOf(task,running),providerId:named(task.providerId)},
+        agentRuns:(ledger?.agentRuns??[]).map(run=>({...run,executor:named(run.executor)})),notes:(ledger?.notes??[]).map(note=>({...note,author:note.author.startsWith(PARTNER_AUTHOR_PREFIX)?note.author:named(note.author)})),notesTotal:ledger?.notesTotal??0,
         // 批准卡、提问、接力停下等主人一句话:内容都不给,只说在等主人。
         ownerPending:!!running&&(running.permissions.pending().length>0||running.questions.pending().length>0)||plan?.state==='approved'&&plan.legs.some(leg=>leg.state==='stopped'),
         artifacts:store.artifacts(id).filter(a=>a.mime!==GIT_REVIEW_MIME).map(a=>({name:a.name,size:a.size})),

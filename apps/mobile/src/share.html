@@ -1,0 +1,142 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex">
+<title>请你看看这件事</title>
+<style>{{>tokens.css}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.6;-webkit-text-size-adjust:100%}
+main{max-width:640px;margin:0 auto;padding:calc(28px + env(safe-area-inset-top)) 20px calc(40px + env(safe-area-inset-bottom))}
+.from{color:var(--soft);font-size:14px;margin:0 0 6px}
+h1{font-size:26px;line-height:1.3;font-weight:500;margin:0 0 10px;overflow-wrap:anywhere}
+.state{display:inline-block;font-size:14px;color:var(--accent);border:1px solid var(--accent);border-radius:var(--r-pill);padding:2px 12px;margin:0}
+.state.quiet{color:var(--soft);border-color:var(--line)}
+h2{font-size:14px;font-weight:400;color:var(--soft);margin:32px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+ol,ul{list-style:none;margin:0;padding:0}
+.leg{display:grid;grid-template-columns:20px 1fr auto;gap:10px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.leg .mark{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--faint);align-self:center;justify-self:center}
+.leg.done .mark{background:var(--accent);border-color:var(--accent)}
+.leg.running .mark{border-color:var(--accent);background:linear-gradient(90deg,var(--accent) 50%,transparent 50%)}
+.leg.stopped .mark{border-color:var(--soft)}
+.leg .who{font-weight:500}
+.leg .brief{color:var(--soft);font-size:14.5px;margin-top:2px;overflow-wrap:anywhere;white-space:pre-wrap}
+.leg .st{font-size:13.5px;color:var(--soft);white-space:nowrap}
+.leg.running .st{color:var(--accent)}
+.note{padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.note .head{display:flex;gap:8px;align-items:baseline;font-size:13.5px;color:var(--soft)}
+.note .head b{font-weight:500;color:var(--ink);font-size:14.5px}
+.note.guest .head b{color:var(--accent)}
+.note .text{margin-top:2px;overflow-wrap:anywhere;white-space:pre-wrap;font-size:15.5px}
+.more{color:var(--soft);font-size:13.5px;padding:8px 0}
+.files{display:flex;flex-wrap:wrap;gap:8px}
+.files li{background:var(--wash);border-radius:var(--r-s);padding:5px 10px;font-size:14px;overflow-wrap:anywhere}
+.files small{color:var(--soft);margin-left:6px}
+.empty{color:var(--soft);font-size:14.5px;padding:8px 0}
+footer{margin-top:40px;color:var(--soft);font-size:13px;line-height:1.7}
+#gate{min-height:70svh;display:grid;place-items:center;text-align:center;color:var(--soft);font-size:15px;padding:0 12px}
+[hidden]{display:none!important}
+</style></head><body>
+<main>
+  <div id="gate" role="status" aria-live="polite">正在打开…</div>
+  <div id="page" hidden>
+    <p class="from" id="from"></p>
+    <h1 id="title"></h1>
+    <p class="state" id="state"></p>
+    <section id="legs-box"><h2>谁在做什么</h2><ol id="legs"></ol></section>
+    <section><h2>过程里记下的</h2><p class="more" id="notes-more" hidden></p><ul id="notes"></ul><p class="empty" id="notes-empty" hidden>还没有记录。</p></section>
+    <section id="files-box" hidden><h2>做出来的东西</h2><ul class="files" id="files"></ul></section>
+    <footer><span id="scope"></span><br>由 Tendhearth CC 提供 · 内容直接来自对方的电脑,途中加密</footer>
+  </div>
+</main>
+<script>
+{{>protocol-generated.js}}
+;(function () {
+  var STATE = { working: "在做", waiting_owner: "在等对方确认", stopped: "停下了", done: "做完了" }
+  var LEG = { queued: "排队", running: "在做", done: "做完", stopped: "停下了" }
+  var KIND = { plan: "分工", artifact: "产出" }
+  var $ = function (id) { return document.getElementById(id) }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e }
+  function pad(n) { return n < 10 ? "0" + n : "" + n }
+  function when(ms) { var d = new Date(ms); return (d.getMonth() + 1) + "月" + d.getDate() + "日 " + pad(d.getHours()) + ":" + pad(d.getMinutes()) }
+  function size(n) { return n == null ? "" : n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB" }
+  function gate(text) { $("page").hidden = true; $("gate").hidden = false; $("gate").textContent = text }
+
+  function render(d) {
+    var m = d.matter
+    document.title = m.title || "请你看看这件事"
+    $("from").textContent = d.name + "，请你看看这件事"
+    $("title").textContent = m.title
+    var running = null, i
+    for (i = 0; i < m.legs.length; i++) if (m.legs[i].status === "running") running = m.legs[i]
+    $("state").textContent = STATE[m.state] + (m.state === "working" && running && m.legs.length > 1 ? " · 第 " + running.position + " 步，共 " + m.legs.length + " 步" : "")
+    $("state").className = "state" + (m.state === "working" ? "" : " quiet")
+    var legs = $("legs"); legs.textContent = ""
+    $("legs-box").hidden = !m.legs.length
+    m.legs.forEach(function (leg) {
+      var li = el("li", "leg " + leg.status), body = el("div")
+      li.appendChild(el("span", "mark"))
+      body.appendChild(el("div", "who", leg.executor))
+      if (leg.brief) body.appendChild(el("div", "brief", leg.brief))
+      li.appendChild(body); li.appendChild(el("span", "st", LEG[leg.status])); legs.appendChild(li)
+    })
+    var notes = $("notes"); notes.textContent = ""
+    $("notes-more").hidden = !m.notesOmitted
+    $("notes-more").textContent = "更早的 " + m.notesOmitted + " 条没有显示"
+    $("notes-empty").hidden = m.notes.length > 0
+    m.notes.forEach(function (n) {
+      var li = el("li", "note" + (n.partner ? " guest" : "")), head = el("div", "head")
+      head.appendChild(el("b", "", n.author))
+      if (KIND[n.kind]) head.appendChild(el("span", "", KIND[n.kind]))
+      head.appendChild(el("span", "", when(n.at)))
+      li.appendChild(head); li.appendChild(el("div", "text", n.text)); notes.appendChild(li)
+    })
+    var files = $("files"); files.textContent = ""
+    $("files-box").hidden = !m.outputs.length
+    m.outputs.forEach(function (f) { var li = el("li", "", f.name); if (f.size != null) li.appendChild(el("small", "", size(f.size))); files.appendChild(li) })
+    $("scope").textContent = "这个链接只能看到这一件事，" + when(d.expiresAt) + " 到期"
+    $("gate").hidden = true; $("page").hidden = false
+  }
+
+  if (window.__CC_SHARE_DEMO__) { render(window.__CC_SHARE_DEMO__); return }
+
+  var P = {}
+  location.hash.slice(1).split("&").forEach(function (kv) { var i = kv.indexOf("="); if (i > 0) P[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)) })
+  var shell = window.__CC_SHELL__, token = P.t
+  var CLOSED = "这个链接已经关闭或过期了。请找发给你的人再要一个。"
+  if (!shell || !token) { gate(CLOSED); return }
+
+  function socket(url) {
+    var ws = new WebSocket(url), onOpen = null, onMsg = null, onClose = null
+    ws.onopen = function () { if (onOpen) onOpen() }
+    ws.onmessage = function (ev) { if (onMsg) onMsg(typeof ev.data === "string" ? ev.data : String(ev.data)) }
+    ws.onclose = function () { if (onClose) onClose() }
+    ws.onerror = function () { try { ws.close() } catch (e) {} }
+    return {
+      send: function (s) { ws.send(s) }, close: function () { try { ws.close() } catch (e) {} },
+      onOpen: function (cb) { onOpen = cb }, onMessage: function (cb) { onMsg = cb }, onClose: function (cb) { onClose = cb },
+    }
+  }
+  var client = CCP.makeProtocolClient({
+    open: function () { return socket(shell.relay + "?id=" + encodeURIComponent(shell.id)) },
+    token: token, client: "web", requestTimeoutMs: 20000, handshakeTimeoutMs: 15000,
+  })
+  var shown = false, closed = false, timer = null
+  function load() {
+    if (closed) return
+    client.request({ method: "GET", path: "/share/state" }).then(function (r) {
+      if (r.status === 401) { closed = true; gate(CLOSED); return }
+      if (r.status !== 200) throw new Error("status_" + r.status)
+      render(r.json()); shown = true
+    }).catch(function (err) {
+      if (err && err.message === "auth_failed") { closed = true; gate(CLOSED); return }
+      if (!shown) gate(err && err.message === "daemon_offline" ? "对方的电脑现在不在线，晚一点再打开试试。" : "暂时连不上，稍后会自己再试。")
+    }).then(function () {
+      if (closed) { try { client.close() } catch (e) {} ; return }
+      clearTimeout(timer)
+      // 页面在前台才轮询;切走就停,回来立刻取一次。
+      if (!document.hidden) timer = setTimeout(load, 15000)
+    })
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && !closed) { clearTimeout(timer); load() } })
+  load()
+})()
+</script></body></html>
