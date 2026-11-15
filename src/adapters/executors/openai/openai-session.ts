@@ -151,7 +151,9 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         const firstRequest=!firstRequestSeen;firstRequestSeen=true
         requestBytes=Buffer.byteLength(JSON.stringify(history.messages()))+Buffer.byteLength(JSON.stringify(purpose.tools()))
         lastContextTokens=undefined
-        const turn=model.stream(structuredClone(history.messages()),purpose.tools(),signal,step===0)
+        // 每一步的请求都可以在出字之前有界重试(api-model:最多两次、2s/4s,已流出任何东西就不重试)。工具结果已经
+        // 写进历史,重发这一步不会重跑任何工具;以前只许第一步重试,网关 410 落在工具之后那一步就整轮失败(验收 11-15)。
+        const turn=model.stream(structuredClone(history.messages()),purpose.tools(),signal,true)
         lastRequest=turn
         void turn.finished.catch(()=>undefined)
         let buffered='',visibleText=''

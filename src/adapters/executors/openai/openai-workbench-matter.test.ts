@@ -78,3 +78,21 @@ it('closes the notebook bridge when opening the executor session throws',async()
     db.close();removeTempDir(root)
   }
 })
+
+// 验收 11-15:网关 410 落在工具之后那一步时整轮失败 —— 那一步不许重试。现在每一步都交给 api-model 的有界重试
+// (出字之前、最多两次);工具结果已在历史里,重发不会重跑工具。
+it('every step of a turn may retry before output, not only the first request',async()=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-api-retry-steps-'))),db=openDb({path:':memory:'})
+  let session:Awaited<ReturnType<ReturnType<typeof createOpenAiWorkbenchProvider>['spawn']>>|undefined
+  try{
+    const fixture=scriptedOpenAiModel([{calls:[{id:'a',name:'matter_notes',input:{}}]},{text:'done'}])
+    const allowed:(boolean|undefined)[]=[]
+    const model:APIModel={...fixture.model,stream(messages,tools,signal,retryAllowed){allowed.push(retryAllowed);return fixture.model.stream(messages,tools,signal,retryAllowed)}}
+    const p=createOpenAiWorkbenchProvider({sessions:makeApiSessionStore(db),model,configHash:'a'.repeat(64),configuredModel:'fixture'})
+    const task=makeWorkbenchStore(db).create({title:'task',path:root,ownerChatId:'owner',providerId:'openai'})
+    session=await p.spawn({alias:`workbench:${task.id}`,path:root},{tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:'owner'})
+    for await(const event of session.dispatch('do task'))void event
+    expect(allowed.length).toBe(2)
+    expect(allowed).toEqual([true,true])
+  }finally{await session?.close();db.close();removeTempDir(root)}
+})

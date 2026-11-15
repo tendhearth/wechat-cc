@@ -203,14 +203,24 @@ describe('OpenAI gateway bounded transient retries (injected fetch, no ports)',(
     expect(doStream).toHaveBeenCalledTimes(1)
   })
 
-  it('a later request in a turn that already ran a tool does not retry',async()=>{
+  // 11-15 改:工具之后那一步也在出字之前有界重试(工具结果已在历史,重发不重跑工具);重试用完仍失败才报错。
+  it('a later request in a turn that already ran a tool retries before output, without re-running the tool',async()=>{
     const fetch=vi.fn().mockImplementationOnce(async()=>sse({tool_calls:[{index:0,id:'c',type:'function',function:{name:'save',arguments:'{}'}}]},'tool_calls')).mockImplementation(async()=>failed(410))
     const f=fixture(fetch),execute=vi.fn(async()=>'saved')
     const provider=createOpenAiAgentProvider({makeChatModel:()=>f.api,makeMcpBridge:async()=>({tools:[],serverOf:()=>undefined,call:async()=>'',close:async()=>{}}),makeBuiltins:()=>[{spec:{name:'save',description:'save',parameters:{type:'object'}},execute,risk:'caution'}]})
     expect((await turn(provider)).error).toBeTruthy()
     expect(execute).toHaveBeenCalledTimes(1)
-    expect(fetch).toHaveBeenCalledTimes(2)
-    expect(f.sleep).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(4)
+    expect(f.sleep).toHaveBeenCalledTimes(2)
+  })
+
+  it('a 410 on the request after a tool, then 200, completes the turn and the tool ran once',async()=>{
+    const fetch=vi.fn().mockImplementationOnce(async()=>sse({tool_calls:[{index:0,id:'c',type:'function',function:{name:'save',arguments:'{}'}}]},'tool_calls')).mockImplementationOnce(async()=>failed(410)).mockImplementation(async()=>sse({content:'saved it'},'stop'))
+    const f=fixture(fetch),execute=vi.fn(async()=>'saved')
+    const provider=createOpenAiAgentProvider({makeChatModel:()=>f.api,makeMcpBridge:async()=>({tools:[],serverOf:()=>undefined,call:async()=>'',close:async()=>{}}),makeBuiltins:()=>[{spec:{name:'save',description:'save',parameters:{type:'object'}},execute,risk:'caution'}]})
+    expect((await turn(provider)).error).toBeFalsy()
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(3)
   })
 
   it.each(['stream','generate'] as const)('abort cancels %s while retry sleep is pending',async kind=>{
