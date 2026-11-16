@@ -6,6 +6,9 @@
  * conversationStore / registry / defaultProviderId / readAgentConfig / permissionMode /
  * turnTimeoutMs / health 走 parts.*。anomalyNotes 随块搬进来,index 用它拼 providerNotes。
  */
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
 import { makeChatTurnLog } from '../../adapters/store/chat-turns'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeMatterStore } from '../../adapters/store/matters-store'
@@ -148,6 +151,9 @@ export function wireCoordinator(
   const handoffMessages = makeMessagesStore(ctx.db)
   const coordinator = createConversationCoordinator({
     resolveProject: parts.resolve,
+    // 单次代答:每句一个空临时目录(0700),答完删掉;不在主人的项目里跑。
+    oneoffWorkspace: () => { const root = join(tmpdir(), 'wechat-cc-oneoff'); mkdirSync(root, { recursive: true, mode: 0o700 }); return mkdtempSync(join(root, 'q-')) },
+    releaseOneoffWorkspace: path => { if (path.startsWith(join(tmpdir(), 'wechat-cc-oneoff') + sep)) rmSync(path, { recursive: true, force: true }) },
     manager: parts.sessionManager,
     contextRotation: parts.contextRotation,
     conversationStore: parts.conversationStore,

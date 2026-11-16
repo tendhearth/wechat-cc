@@ -7,6 +7,7 @@ import type { InboundMsg } from '../../domain/prompt-format'
 import { buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from '../../domain/provider-handoff'
 import { describeProviderDenial, slashFor } from '../../domain/provider-policy'
 import { capabilitiesFor } from '../../domain/capability-matrix'
+import { ONEOFF_PROFILE } from '../../domain/user-tier'
 import { makeTurnTextCollector, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
 import { TURN_TIMEOUT_CODE, type TurnSummary } from '../../ports/agent-provider'
 import { isContextOverflow, contextOverflowInputTokens, contextOverflowLimitTokens, isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
@@ -99,8 +100,8 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
           path: proj.path,
           providerId,
           chatId: msg.chatId,
-          tierProfile: auth.tierProfile,
-          permissionMode: auth.permissionMode,
+          tierProfile: oneoff ? ONEOFF_PROFILE : auth.tierProfile,
+          permissionMode: oneoff ? 'strict' : auth.permissionMode,
           ...(oneoff ? { ephemeral: true, oneoff: true } : {}),
           ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
         })
@@ -248,9 +249,12 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       if (delivery && !deliverySettled) { deliverySettled = true; try { delivery.abandon(outcome) } catch { /* 记账不影响回合 */ } }
       runner.record({ chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: recordMode, startedAt, endedAt: nowMs(), outcome, summary, report, turn })
       if (oneoff && acquired) {
-        if (deps.manager.release) await deps.manager.release({ alias: proj.alias, providerId, chatId: msg.chatId })
-        else await acquired.close()
+        try {
+          if (deps.manager.release) await deps.manager.release({ alias: proj.alias, providerId, chatId: msg.chatId })
+          else await acquired.close()
+        } catch { /* 收尾失败不拖这一轮 */ }
       }
+      if (oneoff) { try { deps.releaseOneoffWorkspace?.(proj.path) } catch { /* 同上 */ } }
     }
   }
 

@@ -143,12 +143,21 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       await ctx.notice(msg.chatId, '点名的执行者目前不可用。要改由 CC 来答吗？')
       return
     }
-    if (oneoff && !supportsOneoffAnswer(oneoff.provider)) {
+    if (oneoff && (!supportsOneoffAnswer(oneoff.provider) || !deps.oneoffWorkspace)) {
       await ctx.notice(msg.chatId, '点名的执行者目前无法隔离本句代答所需的会话权限。要改由 CC 来答吗？')
       return
     }
     const resolved = deps.resolveProject(msg.chatId)
-    const proj = resolved && oneoff ? { ...resolved, alias: oneoffSessionAlias(oneoff.requestId) } : resolved
+    // 代答不在主人的项目里跑:空临时目录 + 只许回复的档(solo 里换),原生文件/命令工具碰不到真实项目。
+    let proj = resolved
+    if (resolved && oneoff) {
+      let path: string
+      try { path = deps.oneoffWorkspace!(oneoff.requestId) } catch {
+        await ctx.notice(msg.chatId, '点名的执行者这次没法单独开一个临时会话。要改由 CC 来答吗？')
+        return
+      }
+      proj = { alias: oneoffSessionAlias(oneoff.requestId), path }
+    }
     if (!proj) {
       deps.log('COORDINATOR', `drop: no project for chat=${msg.chatId}`)
       return

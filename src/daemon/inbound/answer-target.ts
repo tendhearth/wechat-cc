@@ -9,9 +9,15 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 export function explicitAnswerName(text: string, names: readonly string[]): boolean {
   const alternatives = names.filter(n => n.trim() && n.toLowerCase() !== 'cc').map(escape).sort((a, b) => b.length - a.length).join('|')
   if (!alternatives) return false
-  const prefix = `(?:让|请|请让)\\s*(?:${alternatives})\\s*(?:来)?(?:回答|答)(?:这(?:个问题|个|句|一道题)|一下)?`
-  const suffix = `(?:这(?:个问题|个|句))\\s*(?:让|请让)\\s*(?:${alternatives})\\s*(?:来)?(?:回答|答)`
-  return new RegExp(`^(?:${prefix}|${suffix})(?:[。！!]?|\\s*[:：]\\s*[\\s\\S]+)$`, 'i').test(text.trim())
+  // 「让 Codex 回答这个问题吗?」「让它答吧」是在商量要不要,不是点名;留给 CC。
+  if (/[吗呢么嘛吧][？?。!！]?\s*$/.test(text.trim())) return false
+  const who = `(?:让|请|请让)\\s*(?:${alternatives})\\s*(?:来)?`
+  const end = `(?:[。！!？?]?|\\s*[:：，,]\\s*[\\s\\S]+)`
+  // 「回答」后面可以直接接正文(让 Claude 回答一下为什么会失败);单字「答」只认结尾或带分隔的正文,免得「答应」被当成点名。
+  const long = `${who}回答(?:这(?:个问题|个|句|一道题)|一下)?(?:${end}|\\s*[^\\s:：，,。！!？?][\\s\\S]*)`
+  const short = `${who}答(?:这(?:个问题|个|句|一道题)|一下)?${end}`
+  const suffix = `(?:这(?:个问题|个|句))\\s*(?:让|请让)\\s*(?:${alternatives})\\s*(?:来)?(?:回答|答)${end}`
+  return new RegExp(`^(?:${long}|${short}|${suffix})$`, 'i').test(text.trim())
 }
 
 export function namedAnswerTarget(text: string, providers: readonly AnswerProvider[], unavailableNames: readonly string[] = []): AnswerTarget | null {

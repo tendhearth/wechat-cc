@@ -27,13 +27,13 @@ function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: b
   mkdirSync(join(stateDir, 'companion'))
   writeFileSync(join(stateDir, 'companion/config.json'), JSON.stringify({ default_chat_id: 'owner' }))
   const registry = createProviderRegistry({ networkGate: options.gate }), sinks = makeReplySinks(), messages = makeMessagesStore(db)
-  const spawns: Array<{ provider: string; alias: string; ephemeral?: boolean; instructions?: string; resume?: string }> = []
+  const spawns: Array<{ provider: string; alias: string; path?: string; ephemeral?: boolean; instructions?: string; resume?: string; permissionMode?: string; allow?: string[] }> = []
   const prompts: Array<{ provider: string; text: string }> = [], closed: string[] = [], revoked: string[] = []
   for (const id of ['claude', 'codex']) registry.register(id, {
     callTarget: () => ({ provider: id, model: `${id}-test` }),
     spawn: async (project, ctx) => {
       // 白名单采集；不读取或断言 spawn 的环境字段。
-      spawns.push({ provider: id, alias: project.alias, ephemeral: ctx.ephemeral, instructions: ctx.appendInstructions, resume: ctx.resumeSessionId })
+      spawns.push({ provider: id, alias: project.alias, path: project.path, ephemeral: ctx.ephemeral, instructions: ctx.appendInstructions, resume: ctx.resumeSessionId, permissionMode: ctx.permissionMode, allow: [...(ctx.tierProfile?.allow ?? [])] })
       options.onSpawn?.()
       return { async *dispatch(text) {
         prompts.push({ provider: id, text })
@@ -52,8 +52,9 @@ function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: b
     invalidateSessionToken: key => { revoked.push(key) },
   })
   const runtime = makeReplyDeliveryRuntime({ sendText: async () => { throw Error('must stay in sink') }, sink: { captureReply: (c, r) => sinks.captureReply!(c, r) }, log: () => {} })
-  const notices: string[] = []
+  const notices: string[] = [], workspaces: string[] = [], released: string[] = []
   const coordinator = createConversationCoordinator({ resolveProject: () => ({ alias: 'fixture', path: stateDir }), manager, registry,
+    oneoffWorkspace: () => { const w = mkdtempSync(join(tmpdir(), 'who-oneoff-')); workspaces.push(w); return w }, releaseOneoffWorkspace: w => { released.push(w); rmSync(w, { recursive: true, force: true }) },
     conversationStore: makeConversationStore(db), defaultProviderId: 'claude', permissionMode: 'strict', format: formatInbound,
     recentTurns: async () => [{ text: 'PRIVATE_HISTORY', dir: 'in' as const, ts: '2026-11-16T00:00:00Z' }],
     loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['owner'], admins: options.trusted ? [] : ['owner'] }), trustedProviders: () => ['claude'],
@@ -66,7 +67,7 @@ function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: b
     ilink: { resolveAccountId: () => 'offline' }, appTurn: () => async ctx => { await route(ctx, async () => {}); return { consumed: false } }, log: () => {}, topicRecall, matterRecall,
   })
   cleanups.push(async () => { await manager.shutdown(); db.close(); rmSync(stateDir, { recursive: true, force: true }) })
-  return { converse, coordinator, manager, spawns, prompts, closed, revoked, instructions, rotation, messages, notices, topicRecall, matterRecall, tokens, minted }
+  return { workspaces, released, converse, coordinator, manager, spawns, prompts, closed, revoked, instructions, rotation, messages, notices, topicRecall, matterRecall, tokens, minted }
 }
 
 it('一次代答用隔离会话、原样交付且记 agent 来源；下一句与原 CC 会话续聊', async () => {
@@ -77,7 +78,11 @@ it('一次代答用隔离会话、原样交付且记 agent 来源；下一句与
   expect(result).toMatchObject({ reply: 'codex 原样答复', speaker: 'agent', provider: 'codex' })
   expect(t.coordinator.getMode('owner')).toEqual({ kind: 'solo', provider: 'claude' })
   const spawned = t.spawns.find(s => s.provider === 'codex')!
-  expect(spawned).toMatchObject({ ephemeral: true })
+  expect(spawned).toMatchObject({ ephemeral: true, permissionMode: 'strict', allow: ['reply'] })
+  // 评审 P1:代答不在主人的项目里跑,用一次性的空目录,答完删掉。
+  expect(spawned.path).toBe(t.workspaces[0])
+  expect(spawned.path).not.toBe(t.spawns[0]!.path)
+  expect(t.released).toEqual(t.workspaces)
   expect(spawned.resume).toBeUndefined()
   expect(spawned.alias).not.toBe('fixture')
   expect(spawned.instructions).toContain('硬规矩')

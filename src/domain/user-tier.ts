@@ -130,6 +130,14 @@ export const JOB_PROFILE: TierProfile = {
   deny: difference(ALL_KINDS, JOB_ALLOW),
 }
 
+/** 单次代答(这句该谁答 PR 2):只许写出回复 —— 不读文件、不上网、不碰记忆;配合空的临时工作目录。 */
+const ONEOFF_ALLOW = new Set<ToolKind>(['reply'])
+export const ONEOFF_PROFILE: TierProfile = {
+  allow: ONEOFF_ALLOW,
+  relay: new Set(),
+  deny: difference(ALL_KINDS, ONEOFF_ALLOW),
+}
+
 /**
  * 换一家来审那一轮(评审 #460):定时只读档去掉 network。审的 diff 是直接放进提示词的材料,不是读出来的 ⇒
  * 「读过才断网」的污点一开始就没有;被注入的 diff 能先 WebFetch 把仓库内容拼进 URL 发出去。全程不给网。

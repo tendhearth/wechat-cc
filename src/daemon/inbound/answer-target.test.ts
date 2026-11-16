@@ -4,6 +4,7 @@ import { makeMwTaskReference } from './mw-task-reference'
 import type { InboundCtx } from './types'
 import { createProviderRegistry } from '../../app/provider-registry'
 import { answerTargetProviders } from '../task-handoff-names'
+import { explicitAnswerName } from './answer-target'
 
 const ctxOf = (text: string, origin?: 'desktop'): InboundCtx => ({
   msg: { chatId: 'owner', userId: 'owner', text, msgType: 'text', createTimeMs: 1, accountId: 'a' },
@@ -16,6 +17,12 @@ const providers = () => [
 const route = (extra: Partial<RouteMwDeps> = {}) => makeMwRoute({ probes: {}, providers, log: () => {}, ...extra })
 
 describe('共用答话目标（PR 2，仅结构判定）', () => {
+  it('评审 P2:逗号/直接接正文的常见说法也算点名;「答应」不算', () => {
+    const names = ['Codex', 'codex']
+    for (const t of ['让 Codex 回答这个问题，2+2 等于多少？', '让 Codex 回答一下为什么会失败', '请让 Codex 回答这个', '让Codex答一下：hi']) expect(explicitAnswerName(t, names)).toBe(true)
+    for (const t of ['让 Codex 答应我一件事', 'Codex 能回答这个吗？', '别让 Codex 回答这个', '换成 Codex', '让 Codex 回答这个问题吗？', '让 Codex 回答吧']) expect(explicitAnswerName(t, names)).toBe(false)
+  })
+
   it('人选与名字只从真实 registry 取，支持自定义显示名，不把网关模型名当人选', () => {
     const registry = createProviderRegistry()
     const provider = { spawn: async () => { throw Error('unused') } }
