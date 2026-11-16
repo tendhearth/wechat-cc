@@ -5,7 +5,7 @@
  *   1. 静默(NO_REPLY,场合允许才算数;私聊里同样不显示,但记 REPLY_SILENT_IN_DM)
  *   2. app 接收器:桌面 / 手机这一轮 ⇒ 整个 TurnReply(文字 + 附件 + 旁白)交给接收器,不进微信
  *   3. 旁听(打猎记账):原文、分条之前
- *   4. 前缀:/chat、/both 的 `[名字]`,每一条都加
+ *   4. 前缀:直通 / 代答及 /chat、/both 的 `[名字]`,每一条都加
  *   5. 分条:reply-bubbles 的规则(空行分段、最多 4 条、代码整块……)
  *   6. 节奏:条与条之间 paceMs
  *   7. 传输层 4000 字切块(ilink sendReply 自己做;超长代码块已在第 5 步按行切开补围栏)
@@ -23,6 +23,7 @@ import { splitBubbles } from './reply-bubbles'
 import { paceMs } from './reply-split'
 import { replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protocol'
 import { withReplyAttribution } from '../lib/reply-attribution'
+import { withParticipantLabel } from '../lib/reply-presentation'
 import { ruleAllowLine, type RuleAllowNotice } from '../adapters/permission-rules/chat'
 import {
   buildTurnReply,
@@ -41,6 +42,8 @@ export interface PendingAttachment {
 export interface DeliverDeps {
   /** 一条文字(ilink sendReply:带重试、带 4000 字切块、记外发健康)。 */
   sendText(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
+  /** registry 的短名;只用于 agent 的微信展示,不按模型名猜。 */
+  participantName?(providerId: string): string | undefined
   sleep?(ms: number): Promise<void>
   /** app 接收器:开着 ⇒ 收下整个 TurnReply 并返回 true(调用方不发微信)。 */
   sink?: { captureReply(chatId: string, reply: TurnReply): boolean }
@@ -69,6 +72,11 @@ export interface DeliverInput {
 
 const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 const norm = (s: string) => s.replace(/[\s\p{P}\p{S}]/gu, '')
+
+function participantLabel(source: Partial<ReplyAttribution>, deps: DeliverDeps, explicit?: string): string | undefined {
+  if (source.speaker === 'notice') return undefined
+  return explicit || (source.speaker === 'agent' && source.provider ? deps.participantName?.(source.provider) : undefined)
+}
 
 function sameOrContains(a: string, b: string): boolean {
   const x = norm(a), y = norm(b)
@@ -126,9 +134,10 @@ async function deliverAttributedReply(input: DeliverInput, deps: DeliverDeps): P
     deps.log('REPLY_DEDUPED', `chat=${chatId} message 工具已把同样的话发给主人,最后的话不再重复交付`)
   }
 
-  const sendOne = async (t: string): Promise<boolean> => {
+  const sendOne = async (t: string, source: Partial<ReplyAttribution> = reply): Promise<boolean> => {
     try {
-      const r = await deps.sendText(chatId, t)
+      const label = deps.textOnly?.() ? undefined : participantLabel(source, deps, source.provider === reply.provider ? input.participantLabel : undefined)
+      const r = await withParticipantLabel(t, label, displayed => deps.sendText(chatId, displayed))
       if (r.error) { failures.push(r.error); return false }
       msgIds.push(r.msgId)
       return true
@@ -142,13 +151,12 @@ async function deliverAttributedReply(input: DeliverInput, deps: DeliverDeps): P
     // 3. 旁听:原文、分条之前、只在真的进微信时。
     deps.observe?.(chatId, text)
     // 5. 分条 + 4. 前缀(每条都加,第 2 条起不会丢掉署名)
-    const prefix = input.participantLabel ? `[${input.participantLabel}] ` : ''
     // 聊天型模型的多段:每段按 ④ 各自分条,依次发(spec 修订 2026-10-03);否则整段分条。
     // /chat 一人一条、不分条(§4.9):辩论的一次发言是一个整体,拆开了在群里会和别人的发言交错。
     const oneMessage = context === 'chatroom'
     const split = !oneMessage && deps.chatPrefs?.(chatId)?.split !== false
     const sources = !oneMessage && reply.segments && reply.segments.length > 0 && !reply.silent ? reply.segments : [text]
-    const parts = sources.flatMap(seg => splitBubbles(seg, { split })).map(p => `${prefix}${p}`)
+    const parts = sources.flatMap(seg => splitBubbles(seg, { split }))
     for (let i = 0; i < parts.length; i++) {
       if (!(await sendOne(parts[i]!))) {
         deps.log('REPLY_DELIVERY_FAIL', `chat=${chatId} sent=${bubbles}/${parts.length} err=${failures[failures.length - 1]}`)
@@ -173,7 +181,7 @@ async function deliverAttributedReply(input: DeliverInput, deps: DeliverDeps): P
         if (took) { attachmentsSent++; continue }
       }
       // 收不下(或只收文字的出口):语音改发同样的字,别的附件不发也不去碰微信。
-      if (a.attachment.kind === 'voice' && (await withReplyAttribution(a.attribution ?? replyAttributionFields(reply), () => sendOne((a.attachment as {text:string}).text)))) bubbles++
+      if (a.attachment.kind === 'voice' && (await withReplyAttribution(a.attribution ?? replyAttributionFields(reply), () => sendOne((a.attachment as {text:string}).text, a.attribution ?? reply)))) bubbles++
       else deps.log('REPLY_ATTACHMENT_SKIPPED', `chat=${chatId} kind=${a.attachment.kind} — text-only outbound`)
       continue
     }
@@ -182,7 +190,7 @@ async function deliverAttributedReply(input: DeliverInput, deps: DeliverDeps): P
     if (r.ok) { attachmentsSent++; deps.confirmWechatAttachment?.(); continue }
     if (a.attachment.kind === 'voice') {
       deps.log('REPLY_VOICE_FALLBACK', `chat=${chatId} voice failed (${r.error ?? 'unknown'}) — sending the same words as text`)
-      if (await withReplyAttribution(a.attribution ?? replyAttributionFields(reply), () => sendOne((a.attachment as {text:string}).text))) bubbles++
+      if (await withReplyAttribution(a.attribution ?? replyAttributionFields(reply), () => sendOne((a.attachment as {text:string}).text, a.attribution ?? reply))) bubbles++
       else deps.log('REPLY_DELIVERY_FAIL', `chat=${chatId} voice→text fallback failed err=${failures[failures.length - 1]}`)
       continue
     }
@@ -303,7 +311,9 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         if (deps.isSinkOpen?.(chatId)) return // app 这一轮:旁白在 app 里本来就看得见,不进微信
         try {
           // 模型自己的旁白算这一轮答话者的;固定的「还在做」才是通知。
-          const r = await withReplyAttribution(from === 'model' ? { ...attribution } : { speaker: 'notice' }, () => out.sendText(chatId, text))
+          const source = from === 'model' ? { ...attribution } : { speaker: 'notice' as const }
+          const label = out.textOnly?.() ? undefined : participantLabel(source, out, from === 'model' ? opts.participantLabel : undefined)
+          const r = await withReplyAttribution(source, () => withParticipantLabel(text, label, displayed => out.sendText(chatId, displayed)))
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId}${r.error ? ` err=${r.error}` : ''}`)
         } catch (err) {
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId} threw: ${err instanceof Error ? err.message : String(err)}`)

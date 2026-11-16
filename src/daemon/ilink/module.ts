@@ -13,6 +13,8 @@ import { WECHAT_PORTS as W, type WechatSend } from '../../ports/wechat'
 import { makeReplyDeliveryRuntime } from '../reply-delivery'
 import { registerIlink } from '../ilink-lifecycle'
 import { registerPolling } from '../polling-lifecycle'
+import { namesIn } from '../../app/provider-registry'
+import type { Bootstrap } from '../bootstrap'
 
 /**
  * 权限卡、自改、终端会话要经 CC 开口那道门(wired 里才造)⇒ lazy。别的模块不拿整个 adapter,只 needs 它交出的窄口
@@ -37,10 +39,13 @@ export function replyDeliveryModule(f: Foundation): DaemonModule<ReturnType<type
   return {
     name: 'reply-delivery',
     needs: [W.send],
+    lazy: ['bootstrap'], // bootstrap itself needs reply-delivery; names are read only when a reply is sent.
     init(ctx) {
       const wxSend = ctx.get<WechatSend>(W.send)
+      const boot = ctx.late<Bootstrap>('bootstrap')
       return makeReplyDeliveryRuntime({
         sendText: (c, t) => wxSend.sendMessage(c, t),
+        participantName: id => { const registry = boot()?.registry; return registry ? namesIn(registry, id).short : undefined },
         sink: { captureReply: (c, r) => f.replySinks.captureReply?.(c, r) ?? false },
         isSinkOpen: (c) => f.replySinks.isOpen?.(c) ?? false,
         observe: (c, t) => f.outboundTaps.observe(c, t),
