@@ -61,9 +61,8 @@ describe('e2e: ilink-glue records outbound into messages table', () => {
       expect(outbound[0]?.text).toBe(replyText)
       expect(outbound[0]?.kind).toBe('text')
       expect(outbound[0]?.source).toBe('live')
-      // provider is not in scope at the transport layer (ilink-glue sendMessage);
-      // pin that so future plumbing that populates it must update this test.
-      expect(outbound[0]!.provider).toBeUndefined()
+      // 回复来源贯通(这句该谁答 PR 1):交付层把实际执行轮的来源带到 ilink 出站落库。
+      expect(outbound[0]).toMatchObject({ speaker: 'cc', provider: 'claude' })
     } finally {
       db.close()
       await daemon.stop()

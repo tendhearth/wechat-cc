@@ -4,6 +4,7 @@
  * 先过 route + consume(与微信同一张命令表),落库进同一条消息流。
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
+import type { ReplyAttribution, ReplyPart } from '@wechat-cc/protocol'
 import { basename, join } from 'node:path'
 import type { Bootstrap } from '../bootstrap'
 import type { WechatAccounts } from '../../ports/wechat'
@@ -65,14 +66,14 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
     const images = atts.filter(a => a.kind === 'image').length, files = atts.length - images
     return [text.trim(), images ? `[图片 ×${images}]` : '', files ? `[文件 ×${files}]` : ''].filter(Boolean).join('\n')
   }
-  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null, uploads?: ConverseImage[]) => {
+  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null, uploads?: ConverseImage[], attribution?: Partial<ReplyAttribution> & { replyParts?: ReplyPart[] }) => {
     const ts = new Date().toISOString()
     const ownerChatId = synthetic.chatId
     const incoming=synthetic.attachments?.length?encodeExtras({attachments:synthetic.attachments.map((a,i)=>({kind:'file',path:a.path,name:basename(uploads?.[i]?.name||a.path)})),narration:[]}):undefined
     void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? attachmentRecordText(text, synthetic.attachments) : text, source: origin, ...(incoming?{extras:incoming}:{}) }).catch(() => {})
     const encoded = encodeExtras(extras)
     const outTs = new Date(Date.now() + 1).toISOString()
-    if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: outTs, direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
+    if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: outTs, direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...attribution, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
     boot.contextRotation?.persisted(ownerChatId, (reply || encoded) ? outTs : ts)
   }
   // 本地表情:解析一次(标签 → 表情库里随机一张),落库与桌面回包看到的是同一张。
@@ -177,8 +178,8 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
       log('APP_INBOUND', `origin=${origin} intent=${ctx.intent?.kind ?? '-'} consumed=${front.result.consumed ? (ctx.consumedBy ?? 'yes') : 'dispatched'}`)
       if (front.result.consumed) {
         const reply = front.replies.join('\n')
-        persistAppTurn(origin, synthetic, text, reply, undefined, images)
-        return { reply }
+        persistAppTurn(origin, synthetic, text, reply, undefined, images, { speaker: 'notice' })
+        return { reply, speaker: 'notice' }
       }
     }
     if (d.matterRecall) {
@@ -208,7 +209,7 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
             // 回复交付 daemon 模式:附件与旁白随回复交还(桌面 / 手机显示);旧路径两样都是空的。
             const extras = projectExtras(sink.extras?.())
             const reply = sink.close()
-            return { reply, extras }
+            return { reply, extras, attribution: { ...sink.attribution?.(), ...(sink.replyParts?.().length ? { replyParts: sink.replyParts!() } : {}) } }
           } catch (err) {
             sink.close()
             throw err
@@ -217,11 +218,12 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
       })
       // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),
       // 三个入口看到的是同一段对话。落库失败不影响这一轮。
-      persistAppTurn(origin, synthetic, text, captured.reply, captured.extras, images)
+      persistAppTurn(origin, synthetic, text, captured.reply, captured.extras, images, captured.attribution)
       const x = captured.extras
-      if (!hasExtras(x)) return { reply: captured.reply }
+      if (!hasExtras(x)) return { reply: captured.reply, ...captured.attribution }
       return {
         reply: captured.reply,
+        ...captured.attribution,
         ...(x.attachments.length ? { attachments: withStickerImages(x.attachments, f => stickerDataUri(stickerDir, f)) } : {}),
         ...(x.narration.length ? { narration: x.narration } : {}),
       }

@@ -17,6 +17,7 @@
         "source": "wechat"
       },
       {
+        "provider": "claude",
         "id": "m-02",
         "role": "cc",
         "kind": "text",
@@ -35,6 +36,7 @@
         "source": "phone"
       },
       {
+        "provider": "claude",
         "id": "m-04",
         "role": "cc",
         "kind": "text",
@@ -67,6 +69,7 @@
         "source": "desktop"
       },
       {
+        "provider": "claude",
         "id": "m-06",
         "role": "cc",
         "kind": "text",

@@ -22,7 +22,7 @@ export function lettersModule(f: Foundation): DaemonModule<void> {
         stateDir, db,
         providerFor: (c) => { const m = boot.coordinator.getMode(c); return m && m.kind === 'solo' ? m.provider : undefined },
         strongEval: (id) => (typeof boot.registry.getStrongEval === 'function' ? boot.registry.getStrongEval(id as never) : null),
-        cheapEval: (c) => resolveCheapEval({ getMode: (x) => boot.coordinator.getMode(x), registry: boot.registry }, c),
+        cheapEval: (c) => resolveCheapEval({ getMode: (x) => boot.coordinator.getMode(x), registry: boot.registry }, c, true),
         wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
         speech: wired.speech,
         sendText: (c, t) => wxSend.sendMessage(c, t),

@@ -1993,7 +1993,7 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     const d = withDelivery(s, [{ kind: 'text', text: '我看看记忆' }, { kind: 'tool_call', server: 'wechat', tool: 'memory_read' }, { kind: 'text', text: '项目最近顺利吗?' }, { kind: 'result', sessionId: 's', numTurns: 2, durationMs: 1 }])
     await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     // 这一轮经主动开口的门开(S1):交付拿到的是门开的那一轮(outbound),不再自己开
-    expect(d.begun).toEqual([{ chatId: 'chat-1', context: 'tick', providerId: 'claude', textStrategy: 'last_segment', outbound: expect.objectContaining({ channel: expect.any(Function), finish: expect.any(Function) }) }])
+    expect(d.begun).toEqual([{ chatId: 'chat-1', context: 'tick', speaker: 'cc', model: undefined, providerId: 'claude', textStrategy: 'last_segment', outbound: expect.objectContaining({ channel: expect.any(Function), finish: expect.any(Function) }) }])
     expect(d.delivered).toEqual([{ finalText: '项目最近顺利吗?', narration: ['我看看记忆'] }])
     const text = (s.dispatch.mock.calls[0] as unknown[])[0] as string
     expect(text).toContain('NO_REPLY')

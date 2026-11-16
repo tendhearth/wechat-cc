@@ -1,3 +1,4 @@
+import { captureReplyAttribution, withReplyAttribution } from '../../lib/reply-attribution'
 import { composeCcInk } from '../../lib/cc-ink-compose'
 import { isNetworkUnprotectedError, NETWORK_UNPROTECTED_REASON } from '../../lib/network-gate'
 /**
@@ -232,7 +233,8 @@ export function makeVisit(deps: VisitDeps): Visit {
     // 第 1 句是谁说的,决定这趟是我去的还是对方来的。
     const hosting = transcript[0]!.who === 'peer'
     const me = myPersona(s)
-    const text = cleanSpeech(await deps.evalText(buildVisitNarrationPrompt({ ...me, transcript, peerLabel: s.peerLabel, hosting })))
+    const evaluated = await captureReplyAttribution(() => deps.evalText(buildVisitNarrationPrompt({ ...me, transcript, peerLabel: s.peerLabel, hosting })))
+    const text = cleanSpeech(evaluated.result)
     if (!text) throw new VisitAbort('narration_empty')
     s.beforeTell?.()
     const title = hosting ? `${s.peerLabel}来过` : `去${s.peerLabel}家串门`
@@ -252,13 +254,13 @@ export function makeVisit(deps: VisitDeps): Visit {
         if (!svg) deps.log('VISIT', `postcard rejected by safeSvg visit=${s.id}`)
         else {
           if (rowId) deps.postcard.attach(rowId, svg)
-          await deps.postcard.send(svg, text, `visit:${s.id}`)
+          await withReplyAttribution(evaluated.attribution ?? { speaker: 'cc' }, () => deps.postcard!.send(svg, text, `visit:${s.id}`))
           submitted = true
           deps.log('VISIT', `visit=${s.id} 见闻与明信片已提交`)
         }
       } catch (err) { deps.log('VISIT', `明信片失败(见闻已发出): ${err instanceof Error ? err.message : String(err)}`) }
     }
-    if (!submitted) deps.notifyOwner(text, 'social_story')
+    if (!submitted) withReplyAttribution(evaluated.attribution ?? { speaker: 'cc' }, () => deps.notifyOwner(text, 'social_story'))
   }
 
   // ── RemoteDriver:信封走信道,回话经 onInbound ─────────────────────────

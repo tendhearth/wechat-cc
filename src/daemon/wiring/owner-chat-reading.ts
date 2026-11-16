@@ -1,13 +1,14 @@
 import { join } from 'node:path'
 import type { MessageRecord } from '../../lib/messages-store'
 import { parseExtras, phoneExtrasFields, incomingUploadAttachments, recordedFileCanonical } from '../app-reply'
+import { replyMetadataFields } from '@wechat-cc/protocol'
 
 /** Project only durable, public metadata; never expose stored paths or invent upload references. */
 export function ownerChatReadingEvent(row: MessageRecord, inboxDir?:string) {
   const incoming=incomingUploadAttachments(row,inboxDir)
   const replyExtras = row.direction === 'out' ? phoneExtrasFields(row.extras) : incoming.length?{attachments:incoming.map(({name})=>({kind:'file' as const,name}))}:{}
   return { kind: row.direction === 'in' ? 'user' : 'text', text: row.text, createdAt: Date.parse(row.ts), source: row.id.startsWith('app:companion:')&&row.source.startsWith('speech:')?'phone':row.source,
-    messageId: row.id, ...(Object.keys(replyExtras).length ? { replyExtras } : {}) }
+    messageId: row.id, ...replyMetadataFields(row, 4000), ...(Object.keys(replyExtras).length ? { replyExtras } : {}) }
 }
 export type OwnerChatFileInput = { id:string; i:number; offset:number; sha256?:string; size?:number }
 export type OwnerChatFileResult = {status:number;body:Record<string,unknown>}

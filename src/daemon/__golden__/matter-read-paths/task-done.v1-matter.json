@@ -71,17 +71,24 @@
       {
         "kind": "user",
         "text": "把测试修好,写一份报告",
-        "createdAt": 1793412060000
+        "createdAt": 1793412060000,
+        "turnId": "<turn:1>"
       },
       {
         "kind": "text",
         "text": "先跑一遍测试。",
-        "createdAt": 1793412060000
+        "createdAt": 1793412060000,
+        "speaker": "agent",
+        "provider": "claude",
+        "matterId": "<task:done>",
+        "agentId": "<uuid:1>",
+        "turnId": "<turn:1>"
       },
       {
         "kind": "tool_call",
         "text": "bun test",
         "createdAt": 1793412060000,
+        "turnId": "<turn:1>",
         "activity": {
           "type": "command",
           "status": "completed",
@@ -91,17 +98,22 @@
       {
         "kind": "system",
         "text": "权限请求：Bash · Delete scratch.txt · <uuid:2>",
-        "createdAt": 1793412060000
+        "createdAt": 1793412060000,
+        "speaker": "notice",
+        "turnId": "<turn:1>"
       },
       {
         "kind": "system",
         "text": "权限结果：Bash · allow · <uuid:2>",
-        "createdAt": 1793412120000
+        "createdAt": 1793412120000,
+        "speaker": "notice",
+        "turnId": "<turn:1>"
       },
       {
         "kind": "tool_call",
         "text": "rm scratch.txt",
         "createdAt": 1793412120000,
+        "turnId": "<turn:1>",
         "activity": {
           "type": "command",
           "status": "completed",
@@ -111,17 +123,28 @@
       {
         "kind": "text",
         "text": "测试全过,报告写好了。",
-        "createdAt": 1793412180000
+        "createdAt": 1793412180000,
+        "speaker": "agent",
+        "provider": "claude",
+        "matterId": "<task:done>",
+        "agentId": "<uuid:1>",
+        "turnId": "<turn:1>"
       },
       {
         "kind": "user",
         "text": "再确认一次",
-        "createdAt": 1793412300000
+        "createdAt": 1793412300000,
+        "turnId": "<turn:2>"
       },
       {
         "kind": "text",
         "text": "第 2 轮:再确认一次 —— 确认过了。",
-        "createdAt": 1793412300000
+        "createdAt": 1793412300000,
+        "speaker": "agent",
+        "provider": "claude",
+        "matterId": "<task:done>",
+        "agentId": "<uuid:3>",
+        "turnId": "<turn:2>"
       }
     ],
     "permissions": [],

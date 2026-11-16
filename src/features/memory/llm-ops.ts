@@ -6,6 +6,9 @@
  * routes the desktop calls (./routes.ts). This is the single place LLM
  * memory ops run — NEVER the compiled CLI sidecar (spec §1).
  */
+import type { AgentProvider } from '../../ports/agent-provider'
+import { noteReplyAttribution } from '../../lib/reply-attribution'
+import { providerCallTarget } from '../../app/provider-registry'
 import { memoryFactsFor, synthesisMemoryFor } from './memory-export'
 import { writeFileAtomic } from '../../lib/json-file'
 import type { Db } from '../../lib/db'
@@ -16,7 +19,7 @@ export interface MemoryLlmOpsDeps {
   db: Db
   getMode: (chatId: string) => { kind: string; provider?: string } | undefined
   registry: {
-    get(id: string): { provider: { cheapEval?: (p: string) => Promise<string> } } | null | undefined
+    get(id: string): { provider: Pick<AgentProvider, 'cheapEval' | 'callTarget'> } | null | undefined
     getCheapEval(): ((p: string) => Promise<string>) | null
   }
 }
@@ -31,10 +34,19 @@ export interface MemoryLlmOps {
 }
 
 /** 与主人当前对话同一家的 cheapEval,没有就用注册表默认 —— 记忆整理类任务统一走这里。 */
-export function resolveCheapEval(deps: Pick<MemoryLlmOpsDeps, 'getMode' | 'registry'>, chatId: string): ((p: string) => Promise<string>) | null {
+export function resolveCheapEval(deps: Pick<MemoryLlmOpsDeps, 'getMode' | 'registry'>, chatId: string, attributed = false): ((p: string) => Promise<string>) | null {
   const mode = deps.getMode(chatId)
   const provider = mode && mode.kind === 'solo' ? mode.provider : undefined
-  return (provider ? deps.registry.get(provider)?.provider.cheapEval : null) ?? deps.registry.getCheapEval()
+  const selected = provider ? deps.registry.get(provider)?.provider : undefined
+  const evaluate = selected?.cheapEval
+  if (!provider || !evaluate) return deps.registry.getCheapEval()
+  if (!attributed) return evaluate
+  return async prompt => {
+    const model = providerCallTarget(selected, provider, 'cheapEval').model
+    const result = await evaluate(prompt)
+    noteReplyAttribution({ speaker: 'cc', provider, ...(model ? { model } : {}) })
+    return result
+  }
 }
 
 export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {

@@ -1,3 +1,4 @@
+import type { ReplyAttribution, ReplyPart } from '@wechat-cc/protocol'
 /**
  * turn-reply — 一轮的回复对象(回复交付设计 docs/superpowers/specs/2026-10-03-reply-delivery-design.md §4.1)。
  *
@@ -35,7 +36,8 @@ export type TurnAttachment =
   | { kind: 'sticker'; ref: StickerRef }
   | { kind: 'file'; path: string }
 
-export interface TurnReply {
+export interface TurnReply extends Partial<ReplyAttribution> {
+  replyParts?: ReplyPart[]
   /** 最后的话(已去掉 NO_REPLY);可以为空。 */
   text: string
   /** 模型写了 NO_REPLY。私聊里同样不显示,但调用方要记异常(见 buildTurnReply)。 */
@@ -76,7 +78,9 @@ export interface DeliveryReport {
 /** 一轮的交付句柄:daemon 实现(reply-delivery.ts),coordinator / 伙伴推送使用。 */
 export interface TurnDeliveryHandle {
   /** 长任务进度(已定 ①,一轮最多一次,由调用方保证)。app 这一轮 ⇒ 不进微信。 */
-  progress(text: string): Promise<void>
+  progress(text: string, from?: 'model' | 'notice'): Promise<void>
+  /** 这一轮在对话事项里落下的那一轮(runner 开轮后回填);之后交付的回复都带它。 */
+  bindTurn?(ids: { turnId: string; matterId?: string }): void
   /** 只有 outcome === 'completed' 的轮才调这个(§4.2 末段)。 */
   deliver(parts: TurnTextParts): Promise<DeliveryReport>
   /** 超时 / 出错 / 认证失败:不交付文字,登记的附件丢弃(会记日志)。 */
@@ -85,6 +89,11 @@ export interface TurnDeliveryHandle {
 
 export interface ReplyDeliveryPort {
   begin(chatId: string, opts: {
+    speaker?: ReplyAttribution['speaker']
+    model?: string
+    matterId?: string
+    agentId?: string
+    turnId?: string
     context: ReplyContext
     providerId: string
     /** /chat、/both 的发言人显示名 —— 前缀 `[名字]` 由 daemon 加(§4.3 第 4 步)。 */

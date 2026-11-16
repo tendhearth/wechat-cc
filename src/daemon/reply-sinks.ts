@@ -14,6 +14,8 @@
  * 桌面 / 手机显示(旁白是灰色过程行)。语音 / 表情从此不会在 app 这一轮里漏到微信。
  */
 import type { TurnAttachment, TurnReply } from '../domain/turn-reply'
+import { replyAttributionFields, type ReplyAttribution, type ReplyPart } from '@wechat-cc/protocol'
+import { currentReplyAttribution } from '../lib/reply-attribution'
 
 export interface SinkExtras { attachments: TurnAttachment[]; narration: string[] }
 
@@ -21,6 +23,8 @@ export interface ReplySinkHandle {
   close(): string
   /** 新交付路径交过来的附件与旁白(close 之前读)。旧路径 ⇒ 两个空数组。 */
   extras?(): SinkExtras
+  attribution?(): Partial<ReplyAttribution> | undefined
+  replyParts?(): ReplyPart[]
 }
 
 export interface ReplySinks {
@@ -40,7 +44,13 @@ export interface ReplySinks {
   isOpen?(chatId: string): boolean
 }
 
-interface Buf { texts: string[]; attachments: TurnAttachment[]; narration: string[] }
+interface Buf { texts: string[]; attachments: TurnAttachment[]; narration: string[]; parts: ReplyPart[] }
+
+const copyPart = (part: ReplyPart): ReplyPart => ({ ...part, ...(part.attachmentIndexes ? { attachmentIndexes: [...part.attachmentIndexes] } : {}), ...(part.narrationIndexes ? { narrationIndexes: [...part.narrationIndexes] } : {}) })
+const attributionOf = (parts: ReplyPart[]): Partial<ReplyAttribution> | undefined => {
+  const first = parts[0] ? replyAttributionFields(parts[0]) : undefined
+  return first && Object.keys(first).length && parts.every(p => JSON.stringify(replyAttributionFields(p)) === JSON.stringify(first)) ? first : undefined
+}
 
 export function makeReplySinks(): ReplySinks {
   const sinks = new Map<string, Buf>()
@@ -48,7 +58,7 @@ export function makeReplySinks(): ReplySinks {
   return {
     open(chatId: string) {
       if (sinks.has(chatId)) throw new Error('reply_sink_busy')
-      const buf: Buf = { texts: [], attachments: [], narration: [] }
+      const buf: Buf = { texts: [], attachments: [], narration: [], parts: [] }
       sinks.set(chatId, buf)
       return {
         close(): string {
@@ -56,6 +66,8 @@ export function makeReplySinks(): ReplySinks {
           return buf.texts.join('\n')
         },
         extras: () => ({ attachments: [...buf.attachments], narration: [...buf.narration] }),
+        attribution: () => attributionOf(buf.parts),
+        replyParts: () => !attributionOf(buf.parts) && buf.parts.some(p => p.speaker || p.provider) ? buf.parts.map(copyPart) : [],
       }
     },
     capture(chatId: string, text: string): boolean {
@@ -63,12 +75,20 @@ export function makeReplySinks(): ReplySinks {
       if (!buf) return false
       // 空白不是一条回复:照样认领(绝不能漏到微信),但不进拼接 —— 否则
       // close() 拼出一行空行,App 那头看到的就是一条「空消息」(2026-10-02)。
-      if (text.trim()) buf.texts.push(text)
+      if (text.trim()) { buf.texts.push(text); buf.parts.push({ text, ...currentReplyAttribution() }) }
       return true
     },
     captureReply(chatId, reply) {
       const buf = sinks.get(chatId)
       if (!buf) return false
+      const parts = reply.replyParts ?? [{ ...replyAttributionFields(reply), text: reply.silent ? '' : reply.text,
+        ...(reply.attachments.length ? { attachmentIndexes: reply.attachments.map((_, i) => i) } : {}),
+        ...(reply.narration.length ? { narrationIndexes: reply.narration.map((_, i) => i) } : {}),
+      }]
+      for (const part of parts) if (part.text.trim() || part.attachmentIndexes?.length || part.narrationIndexes?.length) buf.parts.push({ ...part,
+        ...(part.attachmentIndexes ? { attachmentIndexes: part.attachmentIndexes.map(i => i + buf.attachments.length) } : {}),
+        ...(part.narrationIndexes ? { narrationIndexes: part.narrationIndexes.map(i => i + buf.narration.length) } : {}),
+      })
       if (!reply.silent && reply.text.trim()) buf.texts.push(reply.text)
       buf.attachments.push(...reply.attachments)
       buf.narration.push(...reply.narration)

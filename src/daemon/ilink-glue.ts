@@ -35,6 +35,7 @@ import { readJsonFile } from '../lib/read-json-file'
 import { isAdmin } from '../lib/access'
 import { EXPIRED_NOTIFY_TEXT, expiredNoticeRecipients } from './ilink/expired-notice'
 import type { SentMedia } from './companion/media-mirror'
+import { currentReplyAttribution } from '../lib/reply-attribution'
 
 /**
  * Monotonic counter to keep same-millisecond outbound IDs unique. Module
@@ -158,6 +159,7 @@ export function makeIlinkAdapter(opts: {
 
   const adapter: IlinkAdapter = {
     async sendMessage(chatId, text, metadata) {
+      const attribution = { ...currentReplyAttribution() ?? { speaker: 'notice' as const } }
       // 只有空白也算空:ilink 会照发,微信那头就是一条空气泡(2026-10-02)。
       if (!text.trim()) return { msgId: `err:${Date.now()}`, error: 'empty text' }
       let reachedWire = false
@@ -186,11 +188,7 @@ export function makeIlinkAdapter(opts: {
           direction: 'out',
           kind: 'text',
           text,
-          // provider context is not available at the transport layer;
-          // the coordinator knows the provider but sendMessage is a generic
-          // send primitive called from many paths (admin, mode, onboarding,
-          // AI reply). Recorded as undefined — can be enriched later if needed.
-          provider: undefined,
+          ...attribution,
           source: metadata?.source ?? 'live',
         }).catch(err => log('MESSAGES', `outbound record failed: ${err instanceof Error ? err.message : err}`))
         return { msgId: `sent:${Date.now()}` }

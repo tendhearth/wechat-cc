@@ -20,6 +20,7 @@ import { projectReplyExtras, type AppAttachment } from '../app-reply'
 import type { PushPayload } from '../../features/phone'
 import type { AppChannel } from './proactive-channel'
 import { attachmentRow } from './media-mirror'
+import { currentReplyAttribution } from '../../lib/reply-attribution'
 
 /** 推送正文上限(同终端会话推送 features/terminal/app-push.ts 的 280 字,超出截断加「…」;phone-push 自己还有 300 的硬上限)。 */
 export const COMPANION_PUSH_BODY_MAX = 280
@@ -69,6 +70,7 @@ export function makeAppChannel(deps: AppChannelDeps): AppChannel {
     const rec: MessageRecord = attachments?.length
       ? attachmentRow({ id, chatId, at: t, attachments: [...attachments], text, source: metadata?.source ?? 'phone' })
       : { id, chatId, ts: new Date(t).toISOString(), direction: 'out', kind: 'text', text, source: metadata?.source ?? 'phone' }
+    Object.assign(rec, currentReplyAttribution() ?? { speaker: 'notice' })
     try {
       await deps.append(rec)
     } catch (e) {

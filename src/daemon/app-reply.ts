@@ -1,4 +1,5 @@
 import type {MessageRecord} from '../lib/messages-store'
+import type {ReplyAttribution, ReplyPart} from '@wechat-cc/protocol'
 /**
  * app-reply — 桌面 / 手机那一轮回复的附件与旁白,给 app 看的形状(回复交付 2026-10-04)。
  *
@@ -128,7 +129,7 @@ export function converseFileStem(name: string | undefined): string {
   return base
 }
 
-export interface ConverseResult { reply: string; attachments?: ConverseAttachment[]; narration?: string[] }
+export interface ConverseResult extends Partial<ReplyAttribution> { reply: string; attachments?: ConverseAttachment[]; narration?: string[]; replyParts?: ReplyPart[] }
 
 /** 内联进桌面回包的表情图至多这么大;再大就只显示 label。 */
 export const STICKER_INLINE_MAX_BYTES = 1_048_576

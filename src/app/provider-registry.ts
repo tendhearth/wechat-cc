@@ -11,6 +11,7 @@
  * The registry is intentionally not a singleton; it's constructed and
  * passed via deps. Tests can build their own with mock providers.
  */
+import { noteReplyAttribution } from '../lib/reply-attribution'
 import type { AgentAttachment, AgentDispatchContext, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, SpawnContext } from '../ports/agent-provider'
 import type { WorkbenchExecutorCapabilities } from '../domain/workbench/executor-capabilities'
 import type { ProviderId } from '../domain/conversation'
@@ -26,7 +27,7 @@ import { assertCallAllowed, decideCall, isNetworkUnprotectedError, NetworkUnprot
  * 默认模型、ctx 里钉的模型,和它真去调用时是同一份参数。provider 没报(或报错)⇒ unresolved ⇒ 闸门按
  * 需要保护(fail closed)。**不再**按 provider id + 此刻的配置去猜(配置改了,在用的执行者不会跟着改)。
  */
-export function providerCallTarget(provider: AgentProvider | null | undefined, providerId: string, kind: CallTargetKind, ctx?: Partial<SpawnContext>): CallTarget {
+export function providerCallTarget(provider: Pick<AgentProvider, 'callTarget'> | null | undefined, providerId: string, kind: CallTargetKind, ctx?: Partial<SpawnContext>): CallTarget {
   const purpose: CallTarget['purpose'] = kind === 'cheapEval' || kind === 'strongEval' ? 'eval' : 'turn'
   try {
     const t = provider?.callTarget?.(kind, ctx) ?? (kind === 'spawn' ? provider?.callTarget?.('session', ctx) : null)
@@ -369,7 +370,9 @@ export function createProviderRegistry(opts?: {
     const r = refusedNow(id)
     if (r) throw refusedError(id, r)
     try {
+      const model = providerCallTarget(entries.get(id)?.provider, id, 'cheapEval').model
       const out = await fn(prompt)
+      noteReplyAttribution({ speaker: 'cc', provider: id, ...(model ? { model } : {}) })
       cheapEvalRefused.delete(id)
       return out
     } catch (err) { noteRefusal(id, err); throw err }
@@ -437,7 +440,9 @@ export function createProviderRegistry(opts?: {
         }
         attempted++
         try {
+          const model = providerCallTarget(entries.get(c.id)?.provider, c.id, 'cheapEval').model
           const out = await c.fn(prompt)
+          noteReplyAttribution({ speaker: 'cc', provider: c.id, ...(model ? { model } : {}) })
           cheapEvalRefused.delete(c.id)
           return out
         } catch (err) {
@@ -467,7 +472,10 @@ export function createProviderRegistry(opts?: {
         const first = coolingEligible[0]
         if (first) {
           cheapEvalCooldownUntil.delete(first.id)
-          return first.fn(prompt)
+          const model = providerCallTarget(entries.get(first.id)?.provider, first.id, 'cheapEval').model
+          const out = await first.fn(prompt)
+          noteReplyAttribution({ speaker: 'cc', provider: first.id, ...(model ? { model } : {}) })
+          return out
         }
         // 能试的候选全被守护挡下:一个都不出门,抛统一的「网络未受保护」。
         if (guardRefusal) throw guardRefusal
@@ -506,7 +514,14 @@ export function createProviderRegistry(opts?: {
       return fn ? tracked(fn) : null
     },
     getStrongEval(id) {
-      return entries.get(id)?.provider.strongEval ?? null
+      const provider = entries.get(id)?.provider, evaluate = provider?.strongEval
+      if (!evaluate) return null
+      return async prompt => {
+        const model = providerCallTarget(provider, id, 'strongEval').model
+        const result = await evaluate(prompt)
+        noteReplyAttribution({ speaker: 'cc', provider: id, ...(model ? { model } : {}) })
+        return result
+      }
     },
     getCheapEvalBudgetMs() {
       // 与 getCheapEval 同一套候选解析(钉死优先,再偏好序,再其余),

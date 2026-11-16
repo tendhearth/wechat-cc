@@ -1,3 +1,4 @@
+import { OptionalReplyMetadata } from './reply-attribution'
 import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
 import { CHECKUP_RESPONSES } from './checkup'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
@@ -168,6 +169,7 @@ export const MatterTaskView = z.object({
 })
 
 export const MatterEvent = z.object({
+  ...OptionalReplyMetadata.shape,
   kind: z.string(), text: z.string(), createdAt: z.number(),
   source: z.string().optional(), attachments: z.array(Attachment).optional(),
   errorCode: z.literal('execution_model_unsupported').optional(), diagnostic: z.string().optional(),
@@ -535,6 +537,7 @@ export const CHAT_NARRATION_MAX = 20
  * CC 的回复行才可能有。narration = 最后的话之前的过程话(没发到微信),手机显示成灰色、默认收起的「过程」。
  */
 export const ChatMessage = z.object({
+  ...OptionalReplyMetadata.shape,
   id: z.string(), role: z.enum(['me', 'cc']), kind: z.string(), text: z.string(), truncated: z.boolean(), at: z.number(), source: z.enum(['wechat', 'desktop', 'phone']),
   attachments: ChatAttachments.optional(),
   narration: z.array(z.string()).optional(),

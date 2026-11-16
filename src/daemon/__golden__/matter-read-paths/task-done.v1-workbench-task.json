@@ -43,14 +43,18 @@
         "turnId": "<turn:1>"
       },
       {
+        "speaker": "agent",
+        "provider": "claude",
+        "matterId": "<task:done>",
+        "turnId": "<turn:1>",
+        "agentId": "<uuid:1>",
         "id": 2,
         "taskId": "<task:done>",
         "kind": "text",
         "text": "先跑一遍测试。",
         "createdAt": 1793412060000,
         "sourceId": null,
-        "runId": "<uuid:1>",
-        "turnId": "<turn:1>"
+        "runId": "<uuid:1>"
       },
       {
         "id": 3,
@@ -70,6 +74,7 @@
         }
       },
       {
+        "speaker": "notice",
         "id": 4,
         "taskId": "<task:done>",
         "kind": "system",
@@ -80,6 +85,7 @@
         "turnId": "<turn:1>"
       },
       {
+        "speaker": "notice",
         "id": 5,
         "taskId": "<task:done>",
         "kind": "system",
@@ -106,14 +112,18 @@
         }
       },
       {
+        "speaker": "agent",
+        "provider": "claude",
+        "matterId": "<task:done>",
+        "turnId": "<turn:1>",
+        "agentId": "<uuid:1>",
         "id": 7,
         "taskId": "<task:done>",
         "kind": "text",
         "text": "测试全过,报告写好了。",
         "createdAt": 1793412180000,
         "sourceId": null,
-        "runId": "<uuid:1>",
-        "turnId": "<turn:1>"
+        "runId": "<uuid:1>"
       },
       {
         "id": 8,
@@ -126,14 +136,18 @@
         "turnId": "<turn:2>"
       },
       {
+        "speaker": "agent",
+        "provider": "claude",
+        "matterId": "<task:done>",
+        "turnId": "<turn:2>",
+        "agentId": "<uuid:3>",
         "id": 9,
         "taskId": "<task:done>",
         "kind": "text",
         "text": "第 2 轮:再确认一次 —— 确认过了。",
         "createdAt": 1793412300000,
         "sourceId": null,
-        "runId": "<uuid:3>",
-        "turnId": "<turn:2>"
+        "runId": "<uuid:3>"
       }
     ],
     "artifacts": [

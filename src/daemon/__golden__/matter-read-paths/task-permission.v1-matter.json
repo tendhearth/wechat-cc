@@ -62,12 +62,14 @@
       {
         "kind": "user",
         "text": "跑一下数据库迁移",
-        "createdAt": 1793412600000
+        "createdAt": 1793412600000,
+        "turnId": "<turn:3>"
       },
       {
         "kind": "tool_call",
         "text": "package.json",
         "createdAt": 1793412600000,
+        "turnId": "<turn:3>",
         "activity": {
           "type": "read",
           "status": "completed",
@@ -77,7 +79,9 @@
       {
         "kind": "system",
         "text": "权限请求：Bash · Run the migration against the local db\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。 · <uuid:7>",
-        "createdAt": 1793412600000
+        "createdAt": 1793412600000,
+        "speaker": "notice",
+        "turnId": "<turn:3>"
       }
     ],
     "runId": "<uuid:6>",

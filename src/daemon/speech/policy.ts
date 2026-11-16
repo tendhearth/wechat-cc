@@ -10,6 +10,7 @@
  * 每拍再问一次,会把账淹掉)。放行 / 被拒 / 失败以后重新算。
  * 第 1 步只加不接:还没有调用方,行为不变。
  */
+import { currentReplyAttribution, withReplyAttribution } from '../../lib/reply-attribution'
 import { isRoutineSpeech } from '../../domain/topic-noise'
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../domain/speech/decide'
 import { keepForMs, originOf, type SpeechKind, type SpeechOrigin } from '../../domain/speech/kinds'
@@ -250,7 +251,7 @@ export function makeSpeechPolicy(deps: {
       const keepMs = keepForMs(item.kind)
       if (keepMs === null || !deps.pending) return false
       const t = now()
-      deps.pending.add({ kind: item.kind, chatId: item.chatId, text: item.text, at: new Date(t).toISOString(), expiresAt: t + keepMs, ...(item.attach ? { attach: item.attach } : {}) })
+      deps.pending.add({ attribution: currentReplyAttribution() ?? { speaker: 'notice' }, kind: item.kind, chatId: item.chatId, text: item.text, at: new Date(t).toISOString(), expiresAt: t + keepMs, ...(item.attach ? { attach: item.attach } : {}) })
       return true
     },
     flushPending() {
@@ -326,7 +327,7 @@ export function makeSpeechPolicy(deps: {
     const tasks = own.filter(i => i.kind !== 'social_story' || i === stories.at(-1)).slice(0, budget).map(item => async () => {
       if (stopped) return 0
       let sent = false, undeliverable = false
-      const o = await policy.propose({ source: item.kind === 'sticker' ? 'sticker' : 'social', summary: item.text.slice(0, 1000), ref: `pending:${item.id}`, createdAt: Date.parse(item.at), expiresAt: item.expiresAt ?? Date.parse(item.at) + (keepForMs(item.kind) ?? 0), payloadRef: { pending: item.id }, kind: item.kind, chatId }, async (turn) => {
+      const o = await policy.propose({ source: item.kind === 'sticker' ? 'sticker' : 'social', summary: item.text.slice(0, 1000), ref: `pending:${item.id}`, createdAt: Date.parse(item.at), expiresAt: item.expiresAt ?? Date.parse(item.at) + (keepForMs(item.kind) ?? 0), payloadRef: { pending: item.id }, kind: item.kind, chatId }, async (turn) => withReplyAttribution(item.attribution ?? {}, async () => {
         try {
           // 带图的先发图;图发不出去 ⇒ 这一样什么都不说,**不退成一句光秃秃的文字**(新贴纸那一句的老规矩)
           const a = item.attach
@@ -337,7 +338,7 @@ export function makeSpeechPolicy(deps: {
           }
           sent = item.text ? !(await turn.sendText(chatId, item.text)).error : true
         } catch { sent = false }
-      })
+      }))
       if ('defer' in o) return 0
       if ('drop' in o) { deps.pending!.remove(chatId, [item.id], 0); return 0 }   // 别烦我 / 频率:账上已经记了 dropped
       if (sent || undeliverable) {

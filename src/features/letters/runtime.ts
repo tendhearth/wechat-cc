@@ -12,6 +12,8 @@
  *   - 其它失败最多试 3 次,之后放弃(信还在存档里)。
  * 一次一封:上一封没寄出去之前,不写下一封。
  */
+import { captureReplyAttribution, withReplyAttribution } from '../../lib/reply-attribution'
+import type { ReplyAttribution } from '@wechat-cc/protocol'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { ProactiveTurn } from '../../daemon/companion/proactive-channel'
 import { writeFileAtomic } from '../../lib/json-file'
@@ -32,6 +34,7 @@ const EVAL_TIMEOUT_MS = 4 * 60_000
 const isWindowClosed = (msg: string) => /errcode=-2\b/.test(msg)
 
 export interface PendingLetter {
+  attribution?: ReplyAttribution
   id: string
   createdAt: number
   pages: string[]
@@ -54,6 +57,7 @@ export interface LetterState {
   lastSentAt?: number | null
 }
 export interface LetterRecord {
+  attribution?: ReplyAttribution
   id: string
   day: string
   created_at: string
@@ -208,7 +212,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
   const delivered = () => letterDeliveries(d.acts)
   const lastSentAt = () => lastSentAtOf(state(), delivered())
 
-  async function compose(owner: string, request: string | undefined): Promise<{ kind: 'letter'; letter: LetterDraft } | { kind: 'skip' | 'failed'; reason: string }> {
+  async function compose(owner: string, request: string | undefined): Promise<{ kind: 'letter'; letter: LetterDraft; attribution?: ReplyAttribution } | { kind: 'skip' | 'failed'; reason: string }> {
     const ev = d.evalText()
     if (!ev) return { kind: 'failed', reason: 'no_model' }
     const nowMs = d.now()
@@ -224,27 +228,33 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     }
     const prompt = buildLetterPrompt(material)
     let raw: string
+    let attribution: ReplyAttribution | undefined
+    const evaluate = async (prompt: string) => {
+      const result = await captureReplyAttribution(() => withTimeout(ev(prompt), EVAL_TIMEOUT_MS))
+      attribution = result.attribution
+      return result.result
+    }
     try {
-      raw = await withTimeout(ev(prompt), EVAL_TIMEOUT_MS)
+      raw = await evaluate(prompt)
       const first = parseLetter(raw)
       const hit = first.kind === 'letter' ? letterText(first.letter).match(TELLTALE) : null
       if (hit) {
         // 露馅了(「翻到那条记录」):带着原稿重写一次;第二次还露馅也寄,不无限重试
         d.log('LETTERS', `draft said 「${hit[0]}」; rewriting once`)
-        raw = await withTimeout(ev(`${prompt}\n\n## 你刚写的一稿\n${raw}\n\n这一稿里出现了「${hit[0]}」这种字眼,读起来像在翻档案。按同样的格式重写一遍:同样的事,写得像你自然记得。`), EVAL_TIMEOUT_MS)
+        raw = await evaluate(`${prompt}\n\n## 你刚写的一稿\n${raw}\n\n这一稿里出现了「${hit[0]}」这种字眼,读起来像在翻档案。按同样的格式重写一遍:同样的事,写得像你自然记得。`)
       }
     } catch (e) { if (isNetworkUnprotectedError(e)) throw e; return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) } }
     const r = parseLetter(raw)
     if (r.kind !== 'letter' && (r.reason === 'empty' || r.reason === 'unparseable')) d.log('LETTERS', `model reply not a letter (${raw.length} chars): ${raw.slice(0, 80).replace(/\s+/g, ' ')}`)
-    return r.kind === 'letter' ? r : { kind: 'skip', reason: r.reason }
+    return r.kind === 'letter' ? { ...r, ...(attribution ? { attribution } : {}) } : { kind: 'skip', reason: r.reason }
   }
 
   /** 存档 + 排成图;返回待寄的那封。 */
-  function file(letter: LetterDraft, requested: boolean, allocatedId?: string): PendingLetter {
+  function file(letter: LetterDraft, requested: boolean, allocatedId?: string, attribution?: ReplyAttribution): PendingLetter {
     const nowMs = d.now()
     const day = localParts(nowMs, d.timezone()).day
     const id = allocatedId ?? `${day}-${d.newId()}`
-    const record: LetterRecord = { id, day, created_at: new Date(nowMs).toISOString(), sent_at: null, requested, letter }
+    const record: LetterRecord = { id, day, created_at: new Date(nowMs).toISOString(), sent_at: null, requested, letter, ...(attribution ? { attribution } : {}) }
     writeRecord(d.stateDir, record)
     const dir = join(d.stateDir, LETTERS_DIR, id)
     const pages: string[] = []
@@ -254,10 +264,13 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       if (!png) { pages.length = 0; break }   // 一页失败就整封退回文字,别寄半封
       pages.push(png)
     }
-    return { id, createdAt: nowMs, pages, text: letterText(letter), attempts: 0, blockedAt: null, ...(requested ? { requested: true } : {}) }
+    return { id, createdAt: nowMs, ...(attribution ? { attribution } : {}), pages, text: letterText(letter), attempts: 0, blockedAt: null, ...(requested ? { requested: true } : {}) }
   }
 
   async function deliver(p: PendingLetter, outbound: ProactiveTurn, owner: string): Promise<'sent' | 'waiting' | 'failed' | 'expired'> {
+    return withReplyAttribution(p.attribution ?? {}, () => deliverLetter(p, outbound, owner))
+  }
+  async function deliverLetter(p: PendingLetter, outbound: ProactiveTurn, owner: string): Promise<'sent' | 'waiting' | 'failed' | 'expired'> {
     const nowMs = d.now()
     if (nowMs - p.createdAt > PENDING_TTL_MS) {
       save({ pending: null })
@@ -404,7 +417,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
           d.log('LETTERS', `scheduled letter ${r.kind}: ${r.reason}; look again in ${retryDays}d`)
           return
         }
-        const p = file(r.letter, false, allocatedId)
+        const p = file(r.letter, false, allocatedId, r.attribution)
         filed(t, p)
         save({ pending: p, dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
         const result = await deliverIn(t, p, outbound, owner)
@@ -438,7 +451,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
         await d.sendText(owner, r.kind === 'skip' ? '这封信我没写成 —— 能落笔的具体的事还太少。多跟我说说,过几天再给你写。' : '这封信我没写成(这会儿模型连不上)。晚点再跟我说一次。').catch(() => {})
         return { status: r.kind === 'skip' ? 'skipped' : 'failed', reason: r.reason }
       }
-      const p = file(r.letter, true)
+      const p = file(r.letter, true, undefined, r.attribution)
       filed(t, p)
       save({ pending: p })
       let out = 'waiting' as Awaited<ReturnType<typeof deliver>>

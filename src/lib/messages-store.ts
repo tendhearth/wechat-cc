@@ -6,10 +6,12 @@
 import { createHash } from 'node:crypto'
 import type { Db } from './db'
 import { hintWrite } from './write-hints'
+import { OptionalReplyMetadata, replyMetadataFields, type ReplyAttribution, type ReplyPart } from '@wechat-cc/protocol'
 
 export type MessageDirection = 'in' | 'out'
 
-export interface MessageRecord {
+export interface MessageRecord extends Partial<ReplyAttribution> {
+  replyParts?: ReplyPart[]
   id: string
   chatId: string
   ts: string
@@ -100,11 +102,14 @@ interface Row {
 }
 
 function rowToRecord(r: Row): MessageRecord {
+  let attribution: Partial<ReplyAttribution> & { replyParts?: ReplyPart[] } = {}
+  try { attribution = OptionalReplyMetadata.parse(JSON.parse(r.extras ?? '{}').replyAttribution ?? {}) } catch { /* Old/invalid extras carry no identity. */ }
   return {
     id: r.id, chatId: r.chat_id, ts: r.ts,
     direction: r.direction as MessageDirection,
     kind: r.kind, text: r.text, source: r.source,
-    ...(r.provider !== null ? { provider: r.provider } : {}),
+    ...attribution,
+    ...(r.provider != null ? { provider: r.provider } : {}),
     ...(r.extras != null ? { extras: r.extras } : {}),
   }
 }
@@ -162,8 +167,14 @@ export function makeMessagesStore(db: Db): MessagesStore {
   const LATE_ARRIVAL_DAYS=10/1440
   const canRewind=db.query<{name:string},[]>('PRAGMA table_info(thread_extract_state)').all().some(c=>c.name==='entries_to_ts')
   const appendSync = db.transaction((rec:MessageRecord):number => {
-      rec.extras !== undefined
-        ? insertExtras().run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source, rec.extras)
+      const {provider: _provider, ...attribution} = replyMetadataFields(rec)
+      // Reuse v72's extensible JSON envelope; provider remains in its canonical column. No schema migration.
+      let base: Record<string, unknown> | null = {}
+      try { const v = JSON.parse(rec.extras ?? '{}'); base = v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { base = null }
+      // Attribution is best-effort: unparseable extras are stored untouched rather than failing the message write.
+      const extras = Object.keys(attribution).length && base ? JSON.stringify({ ...base, replyAttribution: attribution }) : rec.extras
+      extras !== undefined
+        ? insertExtras().run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source, extras)
         : stmtInsert.run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source)
       // SQLite changes()只数顶层消息行;Bun.run().changes 也会计入版本触发器。
       const changes = db.query<{ n: number }, []>('SELECT changes() AS n').get()!.n

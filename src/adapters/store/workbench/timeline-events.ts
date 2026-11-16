@@ -1,4 +1,6 @@
 import type {Db} from '../../../lib/db'
+import {turnReplyAttribution} from '../../../domain/matters/reply-attribution'
+import type {MatterTurn} from '../../../ports/matters'
 import type {AgentActivity,AgentEvent} from '../../../ports/agent-provider'
 import type { Attachment } from '../../../ports/workbench'
 import type {MatterItem,MatterItemKind,MatterItemStatus,MatterLog} from '../../../ports/matters'
@@ -47,10 +49,10 @@ export const stepPayload=(item:MatterItem):TimelinePayload=>item.payload as Time
 export const timelineSteps=(items:readonly MatterItem[]):MatterItem[]=>items.filter(item=>timelineKind(item)!==null)
 
 /** 步 → 线上旧形状(WorkbenchTaskEvent)。只在出口用。 */
-export function workbenchTaskEvent(item:MatterItem):WorkbenchTaskEventT|null {
+export function workbenchTaskEvent(item:MatterItem, turn?:MatterTurn):WorkbenchTaskEventT|null {
   const kind=timelineKind(item);if(!kind)return null
   const p=stepPayload(item)
-  return {id:item.id,taskId:item.matterId,kind,text:p.text,createdAt:item.createdAt,sourceId:p.sourceId??null,
+  return {...(kind==='system'||kind==='error'?{speaker:'notice' as const}:kind==='text'&&turn?turnReplyAttribution(turn,'agent'):{}),id:item.id,taskId:item.matterId,kind,text:p.text,createdAt:item.createdAt,sourceId:p.sourceId??null,
     ...(p.runId?{runId:p.runId}:{}),...(item.turnId?{turnId:item.turnId}:{}),...(p.activity?{activity:p.activity}:{}),...(p.attachments?.length?{attachments:p.attachments}:{})}
 }
 
@@ -59,9 +61,12 @@ export function makeTimelineEvents(db:Db,log:MatterLog=makeMatterLog(db)) {
   /** 这件事时间线上的步,按 seq。 */
   const steps=(id:string)=>timelineSteps(log.items(id))
   /** 线上投影。since:按版本号(事件的 v)筛;sinceCursor(P1b):按这一步最后一次写的全库游标筛 —— 改过的步(工具调用做完)也会再来一次。 */
-  const events=(id:string,since?:number,sinceCursor?:number)=>(sinceCursor===undefined?log.items(id):log.items(id,{afterCursor:sinceCursor}))
-    .filter(item=>since===undefined||(item.payload as Payload).v>since)
-    .map(workbenchTaskEvent).filter((e):e is WorkbenchTaskEventT=>e!==null)
+  const events=(id:string,since?:number,sinceCursor?:number)=>{
+    const turns=new Map(log.turns(id).map(t=>[t.id,t]))
+    return log.items(id).filter(item=>sinceCursor===undefined||item.cursor>sinceCursor||(item.turnId!==null&&(turns.get(item.turnId)?.cursor??0)>sinceCursor))
+      .filter(item=>since===undefined||(item.payload as Payload).v>since)
+      .map(item=>workbenchTaskEvent(item,item.turnId?turns.get(item.turnId):undefined)).filter((e):e is WorkbenchTaskEventT=>e!==null)
+  }
   const addEvent=(id:string,kind:EventKind,text:string,sourceId:string|null=null,runId:string|null=null,attachments:readonly Attachment[]=[],seq:number,turnId?:string|null)=>
     log.writeItem({matterId:id,turnId:turnId===undefined?activeTurn(id,runId):turnId,kind:ITEM_KIND[kind],status:'completed',payload:payloadOf({text:text.slice(0,TEXT_MAX),v:seq,sourceId,runId,attachments})}).id
   const recordAgentEvent=(taskId:string,runId:string,event:VisibleEvent,seq:number)=>{
