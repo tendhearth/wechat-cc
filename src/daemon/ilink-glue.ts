@@ -36,6 +36,7 @@ import { isAdmin } from '../lib/access'
 import { EXPIRED_NOTIFY_TEXT, expiredNoticeRecipients } from './ilink/expired-notice'
 import type { SentMedia } from './companion/media-mirror'
 import { currentReplyAttribution } from '../lib/reply-attribution'
+import { unprefixedReplyText } from '../lib/reply-presentation'
 
 /**
  * Monotonic counter to keep same-millisecond outbound IDs unique. Module
@@ -187,7 +188,7 @@ export function makeIlinkAdapter(opts: {
           ts: new Date().toISOString(),
           direction: 'out',
           kind: 'text',
-          text,
+          text: unprefixedReplyText(text),
           ...attribution,
           source: metadata?.source ?? 'live',
         }).catch(err => log('MESSAGES', `outbound record failed: ${err instanceof Error ? err.message : err}`))
