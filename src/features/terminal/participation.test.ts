@@ -3,7 +3,7 @@ import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {afterEach,expect,it} from 'vitest'
 import {hostname,tmpdir} from 'node:os'
 import {mkdtempSync,mkdirSync,symlinkSync,realpathSync} from 'node:fs'
-import {join} from 'node:path'
+import {join,resolve} from 'node:path'
 import {removeTempDir} from '../../lib/test-temp'
 import {openTestDb,type Db} from '../../lib/db'
 import {makeMatterStore} from '../../adapters/store/matters-store'
@@ -241,7 +241,9 @@ it('启动清空旧凭据，说明沿 hook 的路径解析且不暴露令牌',as
     terminalCredentials(root,f.db,{baseUrl:'http://127.0.0.1:12345',invalidateSession:()=>{}})
     expect(existsSync(old)).toBe(false)
     const text=terminalInstructions('这件事',"/tmp/主人's 凭据",{execPath:'/test/bun',compiled:false,cliEntry:'/test/cli.ts'})
-    expect(text).toContain("'/test/bun' '/test/cli.ts' matter notes --cred")
+    // resolve() turns these into D:\… on Windows; compare against the same resolution.
+    expect(text).toContain(`'${resolve('/test/bun')}' '${resolve('/test/cli.ts')}' matter notes --cred`)
+    expect(text).toContain(`--cred '${resolve('/tmp/主人')}'\\''s 凭据'`)
     expect(text).toContain("matter note --cred")
     expect(text.split('\n').length).toBeLessThanOrEqual(4)
   }finally{removeTempDir(root)}
