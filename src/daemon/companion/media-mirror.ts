@@ -17,6 +17,7 @@
 import { basename, dirname, relative, isAbsolute, resolve } from 'node:path'
 import { encodeExtras, type AppAttachment } from '../app-reply'
 import type { MessageRecord } from '../../lib/messages-store'
+import { currentReplyAttribution } from '../../lib/reply-attribution'
 
 /** 微信那头真的送出去了的一样东西(ilink-glue 在 sendFile / replyVoice 成功之后报上来)。 */
 export type SentMedia =
@@ -75,6 +76,7 @@ export function attachmentRow(o: { id: string; chatId: string; at: number; attac
     // kind 给读消息库的其它地方(写信取材只认 text)一个提示:这一行不是一句话。
     kind: o.text?.trim() ? 'text' : first ? first.kind : 'text',
     text: o.text ?? '', source: o.source,
+    ...(currentReplyAttribution() ?? { speaker: 'notice' as const }),
     ...(extras ? { extras } : {}),
   }
 }

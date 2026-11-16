@@ -29,6 +29,15 @@ describe('messages store', () => {
     expect('extras' in rows[0]!).toBe(false)
   })
 
+  it('来源:写进 extras 并读回;坏 extras 不影响落库', async () => {
+    const s = makeMessagesStore(openTestDb())
+    await s.append({ id: 'ok', chatId: 'c1', ts: '2026-06-11T00:00:00Z', direction: 'out', kind: 'text', text: 'a', provider: 'codex', source: 'live', speaker: 'agent', matterId: 'm1' })
+    await s.append({ id: 'bad', chatId: 'c1', ts: '2026-06-11T00:01:00Z', direction: 'out', kind: 'text', text: 'b', provider: 'claude', source: 'live', speaker: 'cc', extras: 'not-json' })
+    const [ok, bad] = await s.listRange('c1', { limit: 10 })
+    expect(ok).toMatchObject({ speaker: 'agent', provider: 'codex', matterId: 'm1' })
+    expect(bad).toMatchObject({ text: 'b', provider: 'claude', extras: 'not-json' })
+  })
+
   it('get returns one row only within its own chat', async () => {
     const s = makeMessagesStore(openTestDb())
     await s.append({ id: 'x', chatId: 'c1', ts: '2026-06-11T00:00:00Z', direction: 'out', kind: 'text', text: 'hi', source: 'desktop' })

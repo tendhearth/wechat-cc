@@ -1,3 +1,4 @@
+import { OptionalReplyMetadata } from './reply-attribution'
 import {EntryRequestId} from './entry-request-id'
 import { CliProjectMemoryRequest } from './cli-project-memory'
 import { CHECKUP_RESPONSES } from './checkup'
@@ -988,6 +989,7 @@ export const WorkbenchSessionResponse = z.union([z.object({ ok: z.literal(true) 
 
 // ── GET /v1/workbench/task(详情;带 since / wait_ms 时长轮询)──
 const WorkbenchTaskEvent = z.object({
+  ...OptionalReplyMetadata.shape,
   id: z.number(), taskId: z.string(), kind: z.enum(['user', 'text', 'tool_call', 'error', 'system']), text: z.string(), createdAt: z.number(),
   sourceId: z.string().nullable().optional(), runId: z.string().optional(), turnId: z.string().optional(),
   activity: z.object({
@@ -1629,6 +1631,7 @@ const CompanionConverseAttachmentShape = z.union([
   z.object({ kind: z.literal('file'), name: z.string(), path: z.string() }),
 ])
 export const CompanionConverseResponse = z.object({
+  ...OptionalReplyMetadata.shape,
   ok: z.literal(true),
   reply: z.string(),
   attachments: z.array(CompanionConverseAttachmentShape),

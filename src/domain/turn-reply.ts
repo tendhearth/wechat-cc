@@ -1,3 +1,4 @@
+import type { ReplyAttribution, ReplyPart } from '@wechat-cc/protocol'
 /**
  * turn-reply — 一轮的回复对象(回复交付设计 docs/superpowers/specs/2026-10-03-reply-delivery-design.md §4.1)。
  *
@@ -35,7 +36,8 @@ export type TurnAttachment =
   | { kind: 'sticker'; ref: StickerRef }
   | { kind: 'file'; path: string }
 
-export interface TurnReply {
+export interface TurnReply extends Partial<ReplyAttribution> {
+  replyParts?: ReplyPart[]
   /** 最后的话(已去掉 NO_REPLY);可以为空。 */
   text: string
   /** 模型写了 NO_REPLY。私聊里同样不显示,但调用方要记异常(见 buildTurnReply)。 */
@@ -85,6 +87,11 @@ export interface TurnDeliveryHandle {
 
 export interface ReplyDeliveryPort {
   begin(chatId: string, opts: {
+    speaker?: ReplyAttribution['speaker']
+    model?: string
+    matterId?: string
+    agentId?: string
+    turnId?: string
     context: ReplyContext
     providerId: string
     /** /chat、/both 的发言人显示名 —— 前缀 `[名字]` 由 daemon 加(§4.3 第 4 步)。 */

@@ -38,6 +38,7 @@
         "kind": "text",
         "text": "早。迁移那件我在看,有卡住的地方叫你。",
         "createdAt": 1793413208000,
+        "provider": "claude",
         "messageId": "m-02",
         "source": "live"
       },
@@ -52,6 +53,7 @@
         "kind": "text",
         "text": "发了,在附件里。",
         "createdAt": 1793413272000,
+        "provider": "claude",
         "messageId": "m-04",
         "replyExtras": {
           "attachments": [

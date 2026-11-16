@@ -1,3 +1,4 @@
+import type { ReplyAttribution } from '@wechat-cc/protocol'
 import type { AgentEvent } from './agent-provider'
 import type { DeliveryReport } from '../domain/turn-reply'
 import type { TurnRecord } from '../domain/turn-record'
@@ -20,7 +21,7 @@ export interface ChatTurnHandle {
 }
 export interface ChatTurnLog {
   /** 这个 chat 对应的那件对话里开一轮;找不到这件事 ⇒ null(那就不记)。 */
-  begin(t: { chatId: string; provider: ProviderId; alias: string; startedAt: number }): ChatTurnHandle | null
+  begin(t: { chatId: string; provider: ProviderId; alias: string; startedAt: number; speaker?: ReplyAttribution['speaker']; model?: string }): ChatTurnHandle | null
   /** 开机:上一次进程里没收的对话轮记中断。 */
   interruptAll(): void
 }

@@ -3,6 +3,7 @@
  * (Promise.allSettled)。每位的最后的话经交付端口送达(前缀 [名字] 由 daemon 加)。最后补一条综合。
  * 跑回合本身交给 TurnRunner。
  */
+import { captureReplyAttribution, withReplyAttribution } from '../../lib/reply-attribution'
 import { namesIn } from '../provider-registry'
 import type { InboundMsg } from '../../domain/prompt-format'
 import { labelOpenings, buildParallelSynthesisPrompt, type Opening } from '../../domain/chatroom-conductor'
@@ -45,7 +46,7 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
     const deliveries = acquired.map((a, i) => {
       if (a.status !== 'fulfilled') return undefined
       const dn = namesIn(deps.registry, participants[i]!).short
-      return deps.replyDelivery.begin(msg.chatId, { context: 'parallel', providerId: participants[i]!, participantLabel: dn, textStrategy: ctx.textStrategyFor(participants[i]!) })
+      return deps.replyDelivery.begin(msg.chatId, { context: 'parallel', speaker: 'agent', model: a.value.callTarget?.().model ?? a.value.model, providerId: participants[i]!, participantLabel: dn, textStrategy: ctx.textStrategyFor(participants[i]!) })
     })
     // Register every acquired handle's cancel BEFORE dispatching — /stop must
     // reach whichever participants are in flight, not just the first. Each
@@ -59,7 +60,7 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
     try {
       settled = await Promise.allSettled(acquired.map((a, i) =>
         a.status === 'fulfilled'
-          ? runner.run({ chatId: msg.chatId, alias: proj.alias, providerId: a.value.providerId, handle: a.value, prompt: text, budget: 'turn', startedAt, turn: turns[i]! })
+          ? runner.run({ chatId: msg.chatId, alias: proj.alias, providerId: a.value.providerId, handle: a.value, prompt: text, budget: 'turn', speaker: 'agent', startedAt, turn: turns[i]! })
           : Promise.reject(a.reason),
       ))
     } finally {
@@ -129,8 +130,9 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
     const synthEval = deps.verdictEval ?? deps.haikuEval
     if (answers.length >= 2 && synthEval) {
       try {
-        const synth = (await synthEval(buildParallelSynthesisPrompt(text, labelOpenings(answers)))).trim()
-        if (synth) await deps.sendAssistantText?.(msg.chatId, synth.startsWith('🎯') ? synth : `🎯 ${synth}`)
+        const evaluated = await captureReplyAttribution(() => synthEval(buildParallelSynthesisPrompt(text, labelOpenings(answers))))
+        const synth = evaluated.result.trim()
+        if (synth) await withReplyAttribution(evaluated.attribution ?? { speaker: 'cc' }, () => deps.sendAssistantText?.(msg.chatId, synth.startsWith('🎯') ? synth : `🎯 ${synth}`))
       } catch (e) {
         deps.log('COORDINATOR_PARALLEL', `synthesis failed: ${e instanceof Error ? e.message : e}`)
       }

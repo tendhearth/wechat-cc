@@ -11,6 +11,7 @@
  *  - 超过每条对话的上限 ⇒ 最老的变成 overflow(不说,说的时候带一句「还有 N 件更早的」,说过就删),记一行日志,不悄悄少。
  * 旧文件里有的,第一次开机时读进来(INSERT OR IGNORE,id 原样),然后改名成 `.migrated`(同 activity / events 那几张表的做法)。
  */
+import { OptionalReplyAttribution, type ReplyAttribution } from '@wechat-cc/protocol'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Db } from '../../lib/db'
@@ -23,11 +24,12 @@ import type { SpeechKind } from '../../domain/speech/kinds'
 export type PendingAttach = { sticker: { mood: string; path: string } } | { file: string }
 
 /** id:入队时给,说完只删这次真说了的那几条(flush 发送途中又进来的不会被一并删掉;整合者评审 #531)。 */
-export interface PendingNotice { id: string; kind: SpeechKind; chatId: string; text: string; at: string; expiresAt?: number; attach?: PendingAttach }
+export interface PendingNotice { attribution?: Partial<ReplyAttribution>; id: string; kind: SpeechKind; chatId: string; text: string; at: string; expiresAt?: number; attach?: PendingAttach }
 
 export const MAX_PENDING_PER_CHAT = 20
 
 export interface PendingNoticeInput {
+  attribution?: Partial<ReplyAttribution>
   kind: SpeechKind
   chatId: string
   text: string
@@ -72,7 +74,7 @@ export function makePendingNotices(o: {
     const created = Number.isFinite(at) ? at : now()
     db.query(`INSERT ${orIgnore ? 'OR IGNORE ' : ''}INTO speech_pending(id,lane,chat_id,kind,body,attach,ref,created_at,next_at,attempts,first_failed_at,expires_at,status)
       VALUES(?,'say',?,?,?,?,NULL,?,0,0,NULL,?,?)`)   // next_at = 0:新进来的下一拍就能说(退避只由 failed 排)
-      .run(n.id ?? newId(), n.chatId, n.kind, n.text, n.attach ? JSON.stringify(n.attach) : null, created, n.expiresAt ?? created + RETRY_WINDOW_MS, n.status ?? 'pending')
+      .run(n.id ?? newId(), n.chatId, n.kind, n.text, n.attach || n.attribution ? JSON.stringify({ ...n.attach, ...(n.attribution ? { replyAttribution: n.attribution } : {}) }) : null, created, n.expiresAt ?? created + RETRY_WINDOW_MS, n.status ?? 'pending')
   }
   const capChat = (chatId: string): void => {
     const ids = db.query<{ id: string }, [string]>("SELECT id FROM speech_pending WHERE lane='say' AND status='pending' AND chat_id=? ORDER BY created_at DESC, rowid DESC").all(chatId).map(r => r.id)
@@ -82,10 +84,14 @@ export function makePendingNotices(o: {
     o.log('SPEECH', `pending notices for chat=${chatId} over ${MAX_PENDING_PER_CHAT} — dropped the oldest ${over.length} (the things themselves are still recorded elsewhere)`)
   }
   if (o.stateDir) importLegacy(o.stateDir, insert, capChat, o.log)
-  const toNotice = (r: Row): PendingNotice => ({
-    id: r.id, kind: r.kind as SpeechKind, chatId: r.chat_id, text: r.body, at: new Date(r.created_at).toISOString(), expiresAt: r.expires_at,
-    ...(r.attach ? { attach: JSON.parse(r.attach) as PendingAttach } : {}),
-  })
+  const toNotice = (r: Row): PendingNotice => {
+    const stored = r.attach ? JSON.parse(r.attach) : {}
+    const attribution = OptionalReplyAttribution.safeParse(stored.replyAttribution)
+    return { id: r.id, kind: r.kind as SpeechKind, chatId: r.chat_id, text: r.body, at: new Date(r.created_at).toISOString(), expiresAt: r.expires_at,
+      ...('sticker' in stored ? { attach: { sticker: stored.sticker } } : 'file' in stored ? { attach: { file: stored.file } } : {}),
+      ...(attribution.success && Object.keys(attribution.data).length ? { attribution: attribution.data } : {}),
+    }
+  }
   return {
     add(input) {
       db.transaction(() => { insert(input); capChat(input.chatId) })()

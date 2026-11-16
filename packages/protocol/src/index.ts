@@ -49,6 +49,7 @@ export { RESPONSE_SCHEMAS } from './desktop-api'
 
 export * from './topic-bubbles'
 export * from './owner-conversation'
+export * from './reply-attribution'
 export type { CheckupTarget, CheckupProfile, CheckupEstimate, CheckupAttempt, CheckupView, ContextBudget } from './checkup'
 export { CheckupViewSchema, CheckupEstimateSchema } from './checkup'
 export { checkupEstimateSummary } from './checkup-estimate'

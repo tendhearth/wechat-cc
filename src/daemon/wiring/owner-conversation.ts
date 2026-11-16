@@ -4,6 +4,8 @@ import type { ConversationWindowQuery } from '../../../packages/protocol/src/own
 import type { Db } from '../../lib/db'
 import { makeMessagesStore, type MessageRecord } from '../../lib/messages-store'
 import { ownerChatReadingEvent } from './owner-chat-reading'
+import { turnReplyAttribution } from '../../domain/matters/reply-attribution'
+import { makeMatterLog } from '../../adapters/store/matter-log'
 
 const conversationScope=(owner:string)=>createHash('sha256').update(owner).digest('hex').slice(0,24)
 
@@ -65,15 +67,19 @@ export function ownerConversationWork(db: Db, owner: string, p:{cursor?:string;l
       AND (SELECT COUNT(*) FROM matter_turns old WHERE old.matter_id=page.matterId AND old.run_id=json_extract(i.payload_json,'$.runId'))=1)) AND i.kind='agent_message' AND i.status='completed' ORDER BY i.seq DESC LIMIT 1),'') ELSE NULL END AS text FROM page ORDER BY createdAt DESC,id DESC`)
     .all(owner,owner,...(before?[before.at,before.id]:[]),limit+1)
   const page=rows.slice(0,limit),last=page.at(-1)
+  const kindOfResult=(id:string)=>db.query<{kind:string},[string]>('SELECT kind FROM matters WHERE id=?').get(id)?.kind==='act'?'cc' as const:'agent' as const
+  const log=makeMatterLog(db), turns=new Map(page.filter(r=>r.type==='result').flatMap(r=>log.turns(r.matterId)).map(t=>[t.id,t]))
   return {scope,nextCursor:rows.length>limit&&last?Buffer.from(JSON.stringify([scope,last.createdAt,last.id])).toString('base64url'):null,
     references:page.filter(r=>r.type==='reference').map(({id,matterId,messageId,kind,title,createdAt})=>({id,matterId,messageId,kind,title,createdAt,detailRoute:`/v1/matter?id=${encodeURIComponent(matterId)}`})),
-    results:page.filter(r=>r.type==='result'&&!!r.text).map(({id,matterId,messageId,turnId,text,createdAt})=>({id,matterId,messageId,turnId:turnId!,text:(text??'').slice(0,16000),...((text?.length??0)>16000?{truncated:true}:{}),createdAt}))}
+    results:page.filter(r=>r.type==='result'&&!!r.text).map(({id,matterId,messageId,turnId,text,createdAt})=>({id,matterId,messageId,turnId:turnId!,text:(text??'').slice(0,16000),...((text?.length??0)>16000?{truncated:true}:{}),createdAt,...(turns.has(turnId!)?turnReplyAttribution(turns.get(turnId!)!,kindOfResult(matterId)): {})}))}
 }
 
 export function ownerConversationEvents(db: Db, owner: string, since: number, limit=50) {
   const running=db.query<{turnId:string;runId:string|null},[string]>(`SELECT t.id AS turnId,t.run_id AS runId FROM matter_turns t JOIN matters m ON m.id=t.matter_id WHERE m.kind='chat' AND m.owner_chat_id=? AND t.status='running' ORDER BY t.started_at DESC LIMIT 1`).get(owner)
   const events=db.query<{id:number;turnId:string|null;cursor:number;kind:string;text:string;createdAt:number},[string,number,number,number]>(`SELECT i.id,i.turn_id AS turnId,i.cursor,i.kind,COALESCE(json_extract(i.payload_json,'$.text'),'') AS text,i.created_at AS createdAt FROM matter_items i JOIN matters m ON m.id=i.matter_id WHERE m.kind='chat' AND m.owner_chat_id=? AND i.cursor>? AND (? > 0 OR i.turn_id IN (SELECT id FROM matter_turns WHERE status='running')) ORDER BY i.cursor LIMIT ?`).all(owner,since,since,limit)
-  return {scope:conversationScope(owner),running:running??null,events:events.map(e=>({...e,text:e.text.slice(0,16000),...(e.text.length>16000?{truncated:true}:{}),id:`item:${e.id}`})),cursor:events.at(-1)?.cursor??since}
+  const log=makeMatterLog(db), chat=db.query<{id:string},[string]>("SELECT id FROM matters WHERE kind='chat' AND owner_chat_id=?").get(owner)
+  const turns=new Map((chat?log.turns(chat.id):[]).map(t=>[t.id,t]))
+  return {scope:conversationScope(owner),running:running??null,events:events.map(e=>({...e,...(e.kind==='system'||e.kind==='error'?{speaker:'notice' as const}:e.kind==='agent_message'&&e.turnId&&turns.has(e.turnId)?turnReplyAttribution(turns.get(e.turnId)!,turns.get(e.turnId)!.policy?.speaker as 'cc'|'agent'|undefined):{}),text:e.text.slice(0,16000),...(e.text.length>16000?{truncated:true}:{}),id:`item:${e.id}`})),cursor:events.at(-1)?.cursor??since}
 }
 
 /** Compare the exact observed turn synchronously before signalling the coordinator. */

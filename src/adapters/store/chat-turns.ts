@@ -21,10 +21,10 @@ export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<Ma
   const { db, log, matters } = deps
   const now = deps.now ?? Date.now
   return {
-    begin({ chatId, provider, alias, startedAt }) {
+    begin({ chatId, provider, alias, startedAt, speaker = 'cc', model }) {
       const matter = matters.findChat(chatId)
       if (!matter) return null
-      const turn = log.startTurn({ matterId: matter.id, executor: provider, policy: { alias }, startedAt })
+      const turn = log.startTurn({ matterId: matter.id, executor: provider, model, policy: { alias, speaker }, startedAt })
       let segment=0, breakSegment=true
       const texts=new Map<string,string>()
       let usage: TurnUsage | null = null, sessionId: string | null = null, ended = false, plain = 0
@@ -60,7 +60,7 @@ export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<Ma
           // turn_records 那一行的其余几项也记在这一轮上(M3b:/v1/turns 与手机首页的「聊天日」从这里拼回同一个形状)
           const sm = r.summary
           log.updateTurn(turn.id, { policy: {
-            alias, mode: r.mode, outcome: r.outcome, ...(firstAt !== null ? { ttftMs: firstAt - runAt } : {}),
+            alias, speaker, mode: r.mode, outcome: r.outcome, ...(firstAt !== null ? { ttftMs: firstAt - runAt } : {}),
             ...(sm ? { replyToolCalled: sm.replyToolCalled, toolCalls: sm.toolCalls, textChunks: sm.textChunks, ...(sm.narrationSegments !== undefined ? { narrationSegments: sm.narrationSegments } : {}) } : {}),
             ...((r.error ?? '') ? { error: r.error!.slice(0, ERROR_MAX) } : {}),
             ...(r.report ? { delivery: r.report.delivery, bubbles: r.report.bubbles, attachments: r.report.attachmentsSent } : {}),

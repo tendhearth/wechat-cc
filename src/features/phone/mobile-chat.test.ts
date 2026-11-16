@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { PHONE_API_SCHEMAS, makeV2Channel } from '@wechat-cc/protocol'
+import { PHONE_API_SCHEMAS, makeV2Channel, ChatPage } from '@wechat-cc/protocol'
 import { makePhoneChatId, makePhoneOwner, mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
 import { combinePhoneRoutes, routePhone, type PhoneRouteTable } from '../../lib/phone-route-table'
 import { legacyRoutes } from './legacy-routes'
@@ -42,6 +42,14 @@ const call = async (d: LegacyChatFakes | undefined, r: Request) => {
 }
 
 describe('mobileChatRoutes', () => {
+  it('passes saved reply sources through the phone contract and bounds aggregate metadata with the visible text', async () => {
+    const r = await call(deps({ history: async () => [rec(1, { speaker: 'cc', provider: 'gateway-a', model: 'old-model' }), rec(3, { text: 'x'.repeat(6000), replyParts: [{ speaker: 'agent', provider: 'codex', text: 'x'.repeat(5000), attachmentIndexes: [0] }, { speaker: 'notice', text: 'notice' }] })] }), get())
+    const page = ChatPage.parse(r.body)
+    expect(page.messages[0]).toMatchObject({ speaker: 'cc', provider: 'gateway-a', model: 'old-model' })
+    expect(page.messages[1]!.replyParts!.map(p => p.text).join('').length).toBeLessThanOrEqual(4000)
+    expect(page.messages[1]!.replyParts![0]).toMatchObject({ provider: 'codex', attachmentIndexes: [0], truncated: true })
+    expect(page.messages[1]).not.toHaveProperty('speaker')
+  })
   it('不是这两条路径 ⇒ null', async () => {
     expect(await routePhone(mobileChatRoutes(deps()), new URL('http://x/m/api/matters'), get())).toBeNull()
   })

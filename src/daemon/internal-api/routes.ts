@@ -1,3 +1,4 @@
+import { replyMetadataFields } from '@wechat-cc/protocol'
 import { CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { turnRoutes } from './routes-turn'
 import { mattersRoutes } from './routes-matters'
@@ -514,7 +515,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
         // 回复交付(spec 2026-10-03 §4.10,app 显示 2026-10-04):附件与旁白**总在**(没有就是空数组),桌面不用分新旧形状。
         // 附件是 app 的形状(src/daemon/app-reply.ts):语音 { text }、表情 { label, file?, image? }、文件 { name, path }。
         // path 只给桌面的 Rust 层(换成一次性引用再交给网页,见 lib.rs agent_converse);这条路由本来就只认 admin 令牌。
-        return { status: 200, body: { ok: true, reply: r.reply, attachments: r.attachments ?? [], narration: r.narration ?? [] } }
+        return { status: 200, body: { ok: true, reply: r.reply, ...replyMetadataFields(r, 16000), attachments: r.attachments ?? [], narration: r.narration ?? [] } }
       } catch (err) {
         const msg = errMsg(err)
         if (msg === 'reply_sink_busy') return { status: 409, body: { ok: false, error: 'session_busy' } }

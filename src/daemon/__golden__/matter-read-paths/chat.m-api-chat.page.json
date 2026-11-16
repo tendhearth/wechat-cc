@@ -17,6 +17,7 @@
         "source": "phone"
       },
       {
+        "provider": "claude",
         "id": "m-04",
         "role": "cc",
         "kind": "text",

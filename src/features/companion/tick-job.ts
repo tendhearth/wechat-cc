@@ -61,7 +61,7 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
         const style: TickTextStyle = { allSegments: replyTextStrategyFor(providerId) === 'all_segments' }
         // 早报(对标 #7)自己拼好信封(素材 + 写法);其余定时用主人的原话包一层。
         const text = args.buildText ? args.buildText(style) : buildJobText({ jobId, nowIso: args.nowIso, text: args.text }, style)
-        const turn = deps.replyDelivery.begin(chatId, { context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
+        const turn = deps.replyDelivery.begin(chatId, { context: 'tick', speaker: 'cc', model: handle.callTarget?.().model ?? handle.model, providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
         // 到点就 cancel(终审 I3):不然一轮卡住就一直占着主人那条对话的锁,晚到的回复还会照发。
         const deadline = setTimeout(() => { void handle.cancel?.().catch(() => {}) }, JOB_TURN_MAX_MS)
         ;(deadline as { unref?: () => void }).unref?.()

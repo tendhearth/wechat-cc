@@ -12,6 +12,7 @@
  *   聊天 ⇒ 报错:不给模型留一条「在本轮里用工具说话」的旧路,否则连发会换个工具名回来。发给主人
  *   聊天的话记一笔,交付时去重(REPLY_DEDUPED)。
  */
+import { withReplyAttribution } from '../../lib/reply-attribution'
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { PendingAttachment } from '../reply-delivery'
@@ -45,6 +46,13 @@ export function turnRoutes(deps: InternalApiDeps, route: (key: string) => RouteH
     if (!h) return { ok: false, error: `${key} not wired` }
     try { return okOf(await h(new URLSearchParams(), body, undefined)) } catch (err) { return { ok: false, error: errMsg(err) } }
   }
+
+  const sourceOf = (caller: Parameters<RouteHandler>[2]) => {
+    if (caller?.origin !== 'session') return undefined
+    const key = caller.sessionKey, provider = key === 'agy-static' ? 'agy' : key?.includes('/') ? key.split('/')[0] : undefined
+    return provider ? deps.replyDelivery?.attributionFor(caller.chatId || caller.turnChatId || '', provider) : undefined
+  }
+  const providerOf = (caller: Parameters<RouteHandler>[2]) => caller?.sessionKey === 'agy-static' ? 'agy' : caller?.sessionKey?.includes('/') ? caller.sessionKey.split('/')[0] : undefined
 
   return {
     'POST /v1/turn/attach': async (_q, body, caller) => {
@@ -106,7 +114,7 @@ export function turnRoutes(deps: InternalApiDeps, route: (key: string) => RouteH
         return { status: 400, body: { ok: false, error: "kind must be 'voice' | 'sticker' | 'file'" } }
       }
 
-      if (!rd.attach(chatId, { attachment, send })) return { status: 200, body: { ok: false, error: NO_TURN } }
+      if (!rd.attach(chatId, { attachment, send }, providerOf(caller))) return { status: 200, body: { ok: false, error: NO_TURN } }
       return { status: 200, body: { ok: true, attached: true } }
     },
 
@@ -119,14 +127,14 @@ export function turnRoutes(deps: InternalApiDeps, route: (key: string) => RouteH
       if (!text.trim()) return { status: 200, body: { ok: false, error: 'empty_text: nothing was sent' } }
       const callerChat = caller?.origin === 'session' ? caller.chatId : undefined
       if (to === 'broadcast') {
-        try { return { status: 200, body: await deps.ilink.broadcast(text, str(b.account_id)) } } catch (err) { return { status: 200, body: { ok: false, error: errMsg(err) } } }
+        try { return { status: 200, body: await withReplyAttribution(sourceOf(caller) ?? (caller?.origin === 'session' ? {} : { speaker: 'notice' }), () => deps.ilink!.broadcast(text, str(b.account_id))) } } catch (err) { return { status: 200, body: { ok: false, error: errMsg(err) } } }
       }
       const ownerChat = deps.resolveAdminChatId?.() ?? null
       const target = to === 'owner' ? ownerChat : to
       if (!target) return { status: 200, body: { ok: false, error: 'owner_not_configured: nothing was sent' } }
       if (callerChat && target === callerChat) return { status: 200, body: { ok: false, error: OWN_CHAT } }
       try {
-        const r = await deps.ilink.sendReply(target, text)
+        const r = await withReplyAttribution(sourceOf(caller) ?? (caller?.origin === 'session' ? {} : { speaker: 'notice' }), () => deps.ilink!.sendReply(target, text))
         if (r.error) return { status: 200, body: { ok: false, error: r.error } }
         if (callerChat) deps.replyDelivery?.noteMessage(callerChat, { toOwner: target === ownerChat, text })
         return { status: 200, body: { ok: true, msg_id: r.msgId } }

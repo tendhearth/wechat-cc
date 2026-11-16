@@ -161,7 +161,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       // 一轮最多一次,有旁白用最近一段);聊天型模型(all_segments)每段都会交付,不发进度。
       const textStrategy = ctx.textStrategyFor(providerId)
       let live = makeTurnTextCollector()
-      let d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId, textStrategy })
+      let d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', speaker: 'cc', providerId, model: handle.callTarget?.().model ?? handle.model, textStrategy })
       delivery = d
       summary = await runner.run({
         chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn', startedAt, turn,
@@ -175,7 +175,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
             d.abandon('context_overflow')
             handle=await deps.manager.acquire({alias:proj.alias,path:proj.path,providerId,chatId:msg.chatId,tierProfile:auth.tierProfile,permissionMode:auth.permissionMode,...(pinnedModel!==undefined?{model:pinnedModel}:{})})
             live=makeTurnTextCollector()
-            d=deps.replyDelivery.begin(msg.chatId,{context:'dm',providerId,textStrategy});delivery=d
+            d=deps.replyDelivery.begin(msg.chatId,{context:'dm',speaker:'cc',providerId,model:handle.callTarget?.().model??handle.model,textStrategy});delivery=d
             summary=await runner.run({chatId:msg.chatId,alias:proj.alias,providerId,handle,prompt:`${carry.block}\n\n${deps.format(msg)}`,budget:'turn',startedAt,turn,observe:ev=>live.push(ev),...(textStrategy==='last_segment'?{progress:()=>{void d.progress(live.latestSegment()??LONG_TURN_PROGRESS).catch(()=>{})}}:{})})
           }
         }catch(err){summary={assistantText:[],replyToolCalled:false,toolCalls:[],error:err instanceof Error?err.message:String(err),...(providerErrorCodeOf(err)?{errorCode:providerErrorCodeOf(err)}:{})}}
