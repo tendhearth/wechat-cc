@@ -138,6 +138,7 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
     ...(deps.chatOwnerRules ? { chatOwnerRules: deps.chatOwnerRules } : {}),
     mintSessionToken: deps.mintSessionToken,
     resolveMatterPlan:deps.resolveMatterPlan,
+    resolveTerminalParticipation:deps.resolveTerminalParticipation,
     noteMatterApproval:deps.noteMatterApproval,
     agyGeminiConfigDir: deps.agyGeminiConfigDir,
   })

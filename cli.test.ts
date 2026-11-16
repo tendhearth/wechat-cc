@@ -85,6 +85,7 @@ describe('citty migrated commands', () => {
       'list',
       'log',
       'logs',
+      'matter',
       'mcp-server',
       'memory',
       'milestones',

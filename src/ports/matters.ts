@@ -139,4 +139,4 @@ export interface MatterLog {
   items(matterId:string,opts?:{afterCursor?:number}):MatterItem[]
 }
 
-export interface TerminalParticipation {id:string;matterId:string;sessionId:string;sourceMatterId:string;runId:string;generation:number;author:string;attachedAt:number;detachedAt:number|null;detachReason:string|null}
+export interface TerminalParticipation {displayName?:string;connection?:'pending'|'connected';cwd?:string;activity?:string;code?:string;source?:string;id:string;matterId:string;sessionId:string;sourceMatterId:string;runId:string;generation:number;author:string;attachedAt:number;detachedAt:number|null;detachReason:string|null}

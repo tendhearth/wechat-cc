@@ -122,7 +122,7 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool & ChatAppr
     try{prompt=await prepareChatApprovalPrompt('Claude',toolName,input,hash,deps,deps.initiatingChatId()??'',opts.title)}
     catch(error){return {behavior:'deny',message:error instanceof Error?error.message:'没建成：解析项目失败，请重新选择项目。'}}
     const answer = await approvalTurn.ask({ channel: deps, target, prompt, hash, timeoutMs: DEFAULT_TIMEOUT_MS, signal, tool: toolName })
-    if (answer === 'allow' && !signal.aborted) {noteChatApproval(deps,'Claude',toolName,input,deps.initiatingChatId()??'');return { behavior: 'allow',...(toolName==='mcp__wechat__matter_plan'&&deps.resolveMatterPlan?{updatedInput:input}:{}) } satisfies PermissionResult}
+    if (answer === 'allow' && !signal.aborted) {noteChatApproval(deps,'Claude',toolName,input,deps.initiatingChatId()??'');return { behavior: 'allow',...((toolName==='mcp__wechat__matter_plan'&&deps.resolveMatterPlan||toolName==='mcp__wechat__terminal_attach'||toolName==='mcp__wechat__terminal_detach')?{updatedInput:input}:{}) } satisfies PermissionResult}
     deps.log('PERMISSION', `${answer}: tool=${toolName} hash=${hash}`)
     // 'undelivered' ≠ denied: the approver never saw the prompt (their push
     // window was closed). Tell the agent honestly so it can relay a useful

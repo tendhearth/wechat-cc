@@ -22,6 +22,7 @@ import {renderChatApprovalPrompt,prepareChatApprovalPrompt,noteChatApproval,type
 
 export interface CodexChatGateDeps {
   resolveMatterPlan?:MatterPlanResolver
+  resolveTerminalParticipation?:import('../chat-approval').TerminalParticipationResolver
   noteMatterApproval?:import('../chat-approval').ChatApprovalChannel['noteMatterApproval']
   askUser: (adminChatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
   /** 这个对话的审批卡发给谁(resolveAdminChatId);没有 ⇒ 拒。 */
@@ -99,7 +100,12 @@ export function makeCodexChatGate(deps: CodexChatGateDeps): (ctx: SpawnContext) 
       if (signal.aborted) return false
       const hash = shortHash(`${ctx.chatId}:codex:${req.tool}:${++seq}:${Date.now()}`)
       let prompt:string
-      try{prompt=req.tool==='mcp__wechat__matter_plan'?await prepareChatApprovalPrompt('Codex',req.tool,structuredClone(req.input),hash,deps,ctx.chatId):promptOf(req,hash)}catch{return false}
+      try{prompt=req.tool==='mcp__wechat__matter_plan'||req.tool==='mcp__wechat__terminal_attach'||req.tool==='mcp__wechat__terminal_detach'?await prepareChatApprovalPrompt('Codex',req.tool,req.tool==='mcp__wechat__matter_plan'?structuredClone(req.input):req.input,hash,deps,ctx.chatId):promptOf(req,hash)}catch{
+        // Native approvals only return a boolean, so let the daemon report
+        // resolution errors (including ambiguous candidates) to the tool.
+        // No approval receipt is recorded: the route cannot perform a mutation.
+        return req.tool==='mcp__wechat__terminal_attach'||req.tool==='mcp__wechat__terminal_detach'
+      }
       const answer = await deps.askUser(admin, prompt, hash, deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       if (answer === 'allow'&&!signal.aborted) {noteChatApproval(deps,'Codex',req.tool,req.input,ctx.chatId);return true}
       deps.log('PERMISSION', `${answer}: provider=codex tool=${req.tool} hash=${hash}`)

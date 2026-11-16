@@ -310,7 +310,7 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // calendar_agenda(读日历,对标 #8):主人的日程,同理 admin-only —— 不能落到 fs_read 默认值(trusted 也有)。
     // matter_shares(看分享给了谁 / 关掉一个):主人的私事,admin-only;关掉是收紧,不用确认卡。matter_share(开链接)是对外的动作 ⇒ 下面的 daemon_remediate,要主人点头。
     if (sub.startsWith('diagnostic_') || sub === 'matter_shares' || sub === 'model_get' || sub === 'terminal_sessions' || sub === 'today_digest' || sub === 'projects_activity' || sub === 'calendar_agenda') return 'daemon_introspect'
-    if (sub.startsWith('daemon_') || sub.startsWith('session_') || sub === 'model_set' || sub === 'matter_handoff' || sub === 'matter_plan' || sub === 'matter_share') return 'daemon_remediate'
+    if (sub.startsWith('daemon_') || sub.startsWith('session_') || sub === 'model_set' || sub === 'matter_handoff' || sub === 'matter_plan' || sub === 'matter_share' || sub === 'terminal_attach' || sub === 'terminal_detach') return 'daemon_remediate'
     // File-locate family — admin-only, classified by PREFIX so a sibling
     // (locate_dir, …) fails CLOSED into file_locate, not the fs_read default.
     if (sub.startsWith('locate_')) return 'file_locate'

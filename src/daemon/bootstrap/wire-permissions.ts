@@ -28,7 +28,7 @@ export interface PermissionsSlice {
 }
 
 export function wirePermissions(
-  deps: Pick<BootstrapDeps, 'loadProjects' | 'fallbackProject' | 'dangerouslySkipPermissions' | 'conversationStore' | 'ilink' | 'chatOwnerRules' | 'resolveMatterPlan' | 'noteMatterApproval'>,
+  deps: Pick<BootstrapDeps, 'loadProjects' | 'fallbackProject' | 'dangerouslySkipPermissions' | 'conversationStore' | 'ilink' | 'chatOwnerRules' | 'resolveMatterPlan' | 'resolveTerminalParticipation' | 'noteMatterApproval'>,
   ctx: Pick<BootstrapCtx, 'db' | 'stateDir' | 'log'>,
 ): PermissionsSlice {
   // busy-registry (spec 2026-08-11 §1) — the "work is happening" complement
@@ -76,6 +76,7 @@ export function wirePermissions(
   const buildCanUseTool = (chatId: string) => makeCanUseTool({
     askUser: deps.ilink.askUser,
     resolveMatterPlan:deps.resolveMatterPlan,
+    resolveTerminalParticipation:deps.resolveTerminalParticipation,
     noteMatterApproval:deps.noteMatterApproval,
     revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
     // initiatingChatId is the session's own chatId, baked in at spawn.

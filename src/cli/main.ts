@@ -22,6 +22,7 @@ import { providerCmd } from './commands/provider'
 import { accountCmd } from './commands/account'
 import { accessCmd } from './commands/access'
 import { companionCmd } from './commands/companion'
+import {matterCmd} from './commands/matter'
 import { hookCmd } from './commands/hook'
 import { connectionCmd } from './commands/connection'
 import { daemonCmd } from './commands/daemon'
@@ -127,6 +128,7 @@ const SUBCOMMANDS = {
   'federated-source': federatedSourceCmd,
   // 终端 claude / codex 的 hooks 出口(spec 2026-09-09-cli-hook-push)。
   hook: hookCmd,
+  matter: matterCmd,
 } as const
 
 export const cittyRoot = defineCommand({

@@ -73,6 +73,7 @@ export const DESKTOP_CALLS = {
     works: call('GET /v1/atelier/works', { query: t<{ limit: number }>() }),
   },
   cli: {
+    detach:call('POST /v1/cli/detach',{body:t<{participationId:string}>()}),
     stop:call('POST /v1/cli/session-stop',{body:t<{session_id:string;run_id:string;confirmed:true}>()}),
     activity:call('GET /v1/cli/activity',{query:t<{session_id:string}>()}),
     sessionSay:call('POST /v1/cli/session-say',body()),

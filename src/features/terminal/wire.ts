@@ -1,3 +1,5 @@
+import {resolveTerminalParticipation} from './participation-input'
+import {terminalCredentials} from './credentials'
 import {readCliSession} from '../../adapters/store/cli-session-store'
 import {makeTerminalParticipations,terminalParticipationKey} from '../../adapters/store/terminal-participations'
 import type {InternalApiLifecycle} from '../../daemon/internal-api/lifecycle'
@@ -389,8 +391,10 @@ export function wireTerminal(d: WireTerminalDeps) {
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,
     command, phoneActions, routes,
     terminalMatterOf,
-    participation(api:Pick<InternalApiLifecycle,'mintSessionToken'|'invalidateSession'>){
+    participation(api:Pick<InternalApiLifecycle,'mintSessionToken'|'invalidateSession'|'baseUrl'>){
+      const credentials=terminalCredentials(stateDir,db,api)
       return {
+        resolve:(action:'attach'|'detach',input:unknown,owner:string)=>resolveTerminalParticipation(db,action,input,owner),
         owner:()=>resolveAdminChatId(loadAccess(),loadCompanionConfig(stateDir),null),
         approved:(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller)=>d.workbench()?.matterApprovalStatus?.(tool,input,caller)??false,
         consume:(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller)=>{d.workbench()?.matterApprovalConsume?.(tool,input,caller)},
@@ -398,7 +402,12 @@ export function wireTerminal(d: WireTerminalDeps) {
           const session=readCliSession(db,sessionId)
           if(!session||!d.workbench()||d.workbench()!.conflictsExternal(session.cwd,session.source,session.session_id))throw Error('workbench_busy')
           const p=participations.attach(sessionId,matterId,owner)
-          try{return {participation:p,token:api.mintSessionToken('trusted',terminalParticipationKey(p),{routeAllow:new Set(['GET /v1/matter/notes','POST /v1/matter/note'])})}}
+          try{
+            const token=api.mintSessionToken('trusted',terminalParticipationKey(p),{routeAllow:new Set(['GET /v1/matter/notes','POST /v1/matter/note'])})
+            const result=credentials.issue(p,token,matterStore.get(matterId)!.title)
+            matterLog.touch(matterId)
+            return result
+          }
           catch(error){participations.detach(p.id,'mint_failed');throw error}
         },
         detach:(id:string,owner:string)=>{
