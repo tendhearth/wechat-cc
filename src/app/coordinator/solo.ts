@@ -165,8 +165,8 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       delivery = d
       summary = await runner.run({
         chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn', startedAt, turn,
-        observe: (ev) => live.push(ev),
-        ...(textStrategy === 'last_segment' ? { progress: () => { void d.progress(live.latestSegment() ?? LONG_TURN_PROGRESS).catch(() => {}) } } : {}),
+        observe: (ev) => live.push(ev), onTurn: ids => d.bindTurn?.(ids),
+        ...(textStrategy === 'last_segment' ? { progress: () => { const seg = live.latestSegment(); void d.progress(seg ?? LONG_TURN_PROGRESS, seg ? 'model' : 'notice').catch(() => {}) } } : {}),
       })
       if (rotation && rotateManager && !stopped() && isContextOverflow({code:summary.errorCode,message:summary.error})) {
         try {
@@ -176,7 +176,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
             handle=await deps.manager.acquire({alias:proj.alias,path:proj.path,providerId,chatId:msg.chatId,tierProfile:auth.tierProfile,permissionMode:auth.permissionMode,...(pinnedModel!==undefined?{model:pinnedModel}:{})})
             live=makeTurnTextCollector()
             d=deps.replyDelivery.begin(msg.chatId,{context:'dm',speaker:'cc',providerId,model:handle.callTarget?.().model??handle.model,textStrategy});delivery=d
-            summary=await runner.run({chatId:msg.chatId,alias:proj.alias,providerId,handle,prompt:`${carry.block}\n\n${deps.format(msg)}`,budget:'turn',startedAt,turn,observe:ev=>live.push(ev),...(textStrategy==='last_segment'?{progress:()=>{void d.progress(live.latestSegment()??LONG_TURN_PROGRESS).catch(()=>{})}}:{})})
+            summary=await runner.run({chatId:msg.chatId,alias:proj.alias,providerId,handle,prompt:`${carry.block}\n\n${deps.format(msg)}`,budget:'turn',startedAt,turn,observe:ev=>live.push(ev),onTurn:ids=>d.bindTurn?.(ids),...(textStrategy==='last_segment'?{progress:()=>{const seg=live.latestSegment();void d.progress(seg??LONG_TURN_PROGRESS,seg?'model':'notice').catch(()=>{})}}:{})})
           }
         }catch(err){summary={assistantText:[],replyToolCalled:false,toolCalls:[],error:err instanceof Error?err.message:String(err),...(providerErrorCodeOf(err)?{errorCode:providerErrorCodeOf(err)}:{})}}
       }

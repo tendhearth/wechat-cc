@@ -78,7 +78,9 @@ export interface DeliveryReport {
 /** 一轮的交付句柄:daemon 实现(reply-delivery.ts),coordinator / 伙伴推送使用。 */
 export interface TurnDeliveryHandle {
   /** 长任务进度(已定 ①,一轮最多一次,由调用方保证)。app 这一轮 ⇒ 不进微信。 */
-  progress(text: string): Promise<void>
+  progress(text: string, from?: 'model' | 'notice'): Promise<void>
+  /** 这一轮在对话事项里落下的那一轮(runner 开轮后回填);之后交付的回复都带它。 */
+  bindTurn?(ids: { turnId: string; matterId?: string }): void
   /** 只有 outcome === 'completed' 的轮才调这个(§4.2 末段)。 */
   deliver(parts: TurnTextParts): Promise<DeliveryReport>
   /** 超时 / 出错 / 认证失败:不交付文字,登记的附件丢弃(会记日志)。 */

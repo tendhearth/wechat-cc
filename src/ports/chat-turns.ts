@@ -9,6 +9,9 @@ import type { ProviderId } from '../domain/conversation'
  * 协调器的 runner 开 / 收;实现(src/adapters/store/chat-turns.ts)只经 MatterLog 写,写不上自己吞掉 —— 只少一轮记录,不挡回复。
  */
 export interface ChatTurnHandle {
+  /** 这一轮在对话事项里的身份(回复来源贯通用)。 */
+  readonly turnId?: string
+  readonly matterId?: string
   /** 这一轮的每个执行者事件:工具调用写成步;result 的用量 / 原生会话、error 记下,收的时候一起写。 */
   event(ev: AgentEvent): void
   /** 收这一轮:结局、模式、送达;幂等(第二次什么都不做)。 */

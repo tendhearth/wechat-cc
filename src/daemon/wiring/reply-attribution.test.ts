@@ -202,3 +202,18 @@ it('persists one fixed execution source across bubbles and media while notices h
       expect(wireTexts).toEqual(['第一条回复有足够的内容', '第二条回复也有足够的内容', 'system notice'])
     } finally { vi.unstubAllGlobals(); await adapter.flush(); rmSync(stateDir, { recursive: true, force: true }) }
   })
+
+it('评审修复:runner 回填的 turnId 进回复;模型旁白算答话者、固定进度才是通知', async () => {
+  db = openTestDb()
+  const sent: Array<{ text: string; source: unknown }> = []
+  const { currentReplyAttribution } = await import('../../lib/reply-attribution')
+  const runtime = makeReplyDeliveryRuntime({ sendText: async (_c, t) => { sent.push({ text: t, source: { ...currentReplyAttribution() } }); return { msgId: String(sent.length) } }, sleep: async () => {}, log: () => {} })
+  const turn = runtime.begin('chat-1', { context: 'dm', speaker: 'cc', providerId: 'claude', model: 'm1' })
+  turn.bindTurn?.({ turnId: 'turn-7', matterId: 'chat-matter' })
+  await turn.progress('我先翻一下那个文件', 'model')
+  await turn.progress('还在做,有点久')
+  await turn.deliver({ finalText: '做完了,结论是这样的一段话', narration: [] })
+  expect(sent[0]!.source).toMatchObject({ speaker: 'cc', provider: 'claude', turnId: 'turn-7', matterId: 'chat-matter' })
+  expect(sent[1]!.source).toEqual({ speaker: 'notice' })
+  expect(sent[2]!.source).toMatchObject({ speaker: 'cc', provider: 'claude', turnId: 'turn-7' })
+})

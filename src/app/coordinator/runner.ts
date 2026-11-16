@@ -50,6 +50,8 @@ export interface RunTurn {
   startedAt?: number
   /** 这一轮的身份:调用方每轮新建一个对象,run 和 record 带同一个 ⇒ 记进这件对话的同一轮。不给 ⇒ 不在 run 时开轮。 */
   turn?: object
+  /** 开轮后回填这一轮的身份(交付层把它带进回复来源)。 */
+  onTurn?: (ids: { turnId: string; matterId?: string }) => void
 }
 
 export interface TurnRecordInput {
@@ -159,6 +161,7 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
       const observe = t.observe
       const handle = t.turn === undefined || t.startedAt === undefined ? null : openTurns.get(t.turn)??beginTurn(t.chatId, t.providerId, t.alias, t.startedAt, t.speaker, t.handle.callTarget?.().model ?? t.handle.model)
       if (handle) openTurns.set(t.turn!, handle)
+      if (handle?.turnId) { try { t.onTurn?.({ turnId: handle.turnId, ...(handle.matterId ? { matterId: handle.matterId } : {}) }) } catch { /* 来源回填失败不影响这一轮 */ } }
       const log = handle ? (ev: AgentEvent) => { try { handle.event(ev) } catch { /* 只少一步 */ } } : undefined
       const onEvent = (ev: AgentEvent) => { observe?.(ev); log?.(ev); deps.onTurnEvent?.(t.chatId, ev) }
       const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, () => collectTurn(t.handle.dispatch(t.prompt, { source: 'inbound' }), { timeoutMs, onEvent }))

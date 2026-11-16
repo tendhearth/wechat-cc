@@ -276,7 +276,8 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
 
   function begin(chatId: string, inputOpts: Parameters<ReplyDeliveryPort['begin']>[1]): TurnDeliveryHandle {
     const opts = { ...inputOpts }
-    const attribution = Object.freeze({ ...replyAttributionFields(opts), speaker: opts.speaker ?? 'cc', provider: opts.providerId })
+    // Mutable only through bindTurn (trusted runner callback); the same object sits in turn.sources.
+    const attribution: Partial<ReplyAttribution> = { ...replyAttributionFields(opts), speaker: opts.speaker ?? 'cc', provider: opts.providerId }
     const turn = acquire(chatId)
     turn.sources.add(attribution)
     let done = false
@@ -292,11 +293,17 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
       : deps
     const finishDaemon = () => { if (!done) trackDaemon(opts.providerId, chatId, -1); finish() }
     return {
-      async progress(text: string) {
+      bindTurn(ids) {
+        if (done) return
+        attribution.turnId = ids.turnId
+        if (ids.matterId && attribution.matterId === undefined) attribution.matterId = ids.matterId
+      },
+      async progress(text: string, from: 'model' | 'notice' = 'notice') {
         if (done || text.trim() === '') return
         if (deps.isSinkOpen?.(chatId)) return // app 这一轮:旁白在 app 里本来就看得见,不进微信
         try {
-          const r = await withReplyAttribution({ speaker: 'notice' }, () => out.sendText(chatId, text))
+          // 模型自己的旁白算这一轮答话者的;固定的「还在做」才是通知。
+          const r = await withReplyAttribution(from === 'model' ? { ...attribution } : { speaker: 'notice' }, () => out.sendText(chatId, text))
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId}${r.error ? ` err=${r.error}` : ''}`)
         } catch (err) {
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId} threw: ${err instanceof Error ? err.message : String(err)}`)

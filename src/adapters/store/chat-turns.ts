@@ -33,6 +33,7 @@ export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<Ma
       const runAt = now()
       let firstAt: number | null = null
       const handle: ChatTurnHandle = {
+        turnId: turn.id, matterId: matter.id,
         event(ev) {
           if (ended) return
           if (firstAt === null && (ev.kind === 'text' || ev.kind === 'tool_call')) firstAt = now()
