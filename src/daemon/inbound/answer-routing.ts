@@ -114,7 +114,9 @@ export function makeAnswerRouting(deps: Deps) {
     }
     const mentions = answerCandidates(ctx.msg.text ?? '', ps)
     if (mentions.length > 1 && eitherOr(ctx.msg.text ?? '', mentions)) {
-      const options = mentions.filter(p => p.available)
+      // 按主人说出名字的先后编号(「让 Codex 还是 Claude」⇒ Codex 是 1),不按注册顺序。
+      const at = (p: AnswerProvider) => Math.min(...[p.id, ...p.names].map(n => { const i = (ctx.msg.text ?? '').toLowerCase().indexOf(n.toLowerCase()); return i < 0 ? Infinity : i }))
+      const options = mentions.filter(p => p.available).sort((a, b) => at(a) - at(b))
       if (options.length > 1) {
         const target: AnswerTarget = Object.freeze({ kind: 'clarify', candidates: options.map(p => ({ provider: p.id, name: name(p) })), reason: 'ambiguous_provider' })
         remember(ctx, target, options)

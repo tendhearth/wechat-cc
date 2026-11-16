@@ -35,6 +35,15 @@ describe('评审修复', () => {
     expect(h.submitted).toHaveLength(0)
   })
 
+  it('候选按主人说出的先后编号;「X 你帮我说说」也过前置筛', async () => {
+    const h = harness()
+    await h.send('让 Claude 还是 Codex 来答：1+1')
+    expect(h.notices[0]).toMatch(/Claude（1）.*Codex（2）/)
+    const h2 = harness()
+    await h2.send('让 Codex 还是 Claude 来答：1+1')
+    expect(h2.notices[0]).toMatch(/Codex（1）.*Claude（2）/)
+  })
+
   it('「总结 A 和 B 回答失败的原因」不问交给谁', async () => {
     const h = harness()
     await h.send('请总结 Codex 和 Claude 回答失败的原因')

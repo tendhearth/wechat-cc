@@ -1,3 +1,4 @@
+import { TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
 import type { AnswerTarget } from '../../domain/answer-target'
 import type { AnswerProvider } from './answer-target'
 
@@ -15,7 +16,7 @@ export function answerCandidates(text: string, providers: readonly AnswerProvide
   if (!/(?:回答|答(?!应)|回(?!来|去)|看看|说说)/.test(instruction)) return []
   const mentioned = providers.filter(p => [p.id, ...p.names].some(n => n.trim() && new RegExp(`(?<![a-z0-9_])${escape(n)}(?![a-z0-9_])`, 'i').test(instruction)))
   const request = /(?:让|请|找|交给|交由|麻烦|拜托|要不|希望)/.test(instruction)
-  const direct = mentioned.some(p => [p.id, ...p.names].some(n => new RegExp(`^${escape(n)}\\s*(?:还是|或者|或|、|和|来|帮我|回答|答|看看|说说)`, 'i').test(instruction)))
+  const direct = mentioned.some(p => [p.id, ...p.names].some(n => new RegExp(`^${escape(n)}\\s*[,，]?\\s*(?:你\\s*)?(?:还是|或者|或|、|和|来|帮我|回答|答|看看|说说)`, 'i').test(instruction)))
   return request || direct ? mentioned : []
 }
 
@@ -41,7 +42,7 @@ export async function fallbackAnswerTarget(text: string, providers: readonly Ans
   if (!candidates.length) return cc()
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const id = await Promise.race([judge({ text, candidates }), new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 2500) })])
+    const id = await Promise.race([judge({ text, candidates }), new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), TURN_JUDGE_TIMEOUT_MS) })])
     return id && candidates.some(p => p.id === id) ? Object.freeze({ kind: 'oneoff', provider: id, reason: 'model_provider' }) : cc()
   } catch { return cc() } finally { if (timer !== undefined) clearTimeout(timer) }
 }

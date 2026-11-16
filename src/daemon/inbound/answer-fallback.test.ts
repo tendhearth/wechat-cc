@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fallbackAnswerTarget, makeCheapAnswerJudge } from './answer-fallback'
+import { answerCandidates, fallbackAnswerTarget, makeCheapAnswerJudge } from './answer-fallback'
 
 const candidates = [
   { id: 'codex', names: ['Codex'], available: true },
@@ -32,6 +32,12 @@ describe('有限代答模型兜底', () => {
     const target = await fallbackAnswerTarget('我想请 Codex 看看', candidates, makeCheapAnswerJudge(async () => raw))
     expect(target.kind).toBe('cc')
   })
+  it('「Codex 你帮我说说…」过前置筛(交给模型判);闲聊不过', () => {
+    const ps = [{ id: 'codex', names: ['Codex'], available: true }]
+    expect(answerCandidates('Codex 你帮我说说 TCP 三次握手', ps).map(p => p.id)).toEqual(['codex'])
+    expect(answerCandidates('今天天气不错', ps)).toEqual([])
+  })
+
   it('超时或抛错回 CC', async () => {
     vi.useFakeTimers()
     try {
