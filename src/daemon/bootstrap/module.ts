@@ -1,3 +1,5 @@
+import {isOwnerOf} from '../owner-chat'
+import {resolveTerminalParticipation} from '../../features/terminal'
 import { loadAgentConfig } from '../../lib/agent-config'
 import { makeCheckupStore,checkupAddress } from '../../adapters/store/checkup-store'
 import { makeOwnerDelegationRecorder } from '../wiring/owner-delegation'
@@ -84,6 +86,10 @@ export function bootstrapDependencies(f: Foundation, ctx: ModuleCtx): BootstrapD
       pending: chatId => wxPerm.listPendingPermissions().some(p => p.chatId === chatId),
     }),
     noteMatterApproval:(tool,input,chatId,provider)=>workbench()?.noteMatterApproval(tool,input,{chatId,provider}),
+    resolveTerminalParticipation:(action,input,chatId)=>{
+      if(!isOwnerOf(stateDir)(chatId))throw Error('forbidden')
+      return resolveTerminalParticipation(db,action,input,chatId)
+    },
     resolveMatterPlan:(input,chatId,provider)=>{
       const service=workbench()
       if(!service)throw Error('entry_not_wired')

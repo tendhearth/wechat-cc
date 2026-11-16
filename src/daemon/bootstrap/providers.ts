@@ -69,6 +69,7 @@ function detectUserCodexOnPath(): { path: string | null; version: string | null 
 export interface ProviderDeps {
   noteMatterApproval?:import('../../adapters/executors/chat-approval').ChatApprovalChannel['noteMatterApproval']
   resolveMatterPlan?:import('../../adapters/executors/chat-approval').MatterPlanResolver
+  resolveTerminalParticipation?:import('../../adapters/executors/chat-approval').TerminalParticipationResolver
   log: BootstrapDeps['log']
   stateDir: string
   /** OpenAI 兼容对话的会话历史存这里(B2,api-sessions 的 openai_chat_sessions)。不给 ⇒ 只在内存,不续接。 */
@@ -390,6 +391,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         approvals: makeCodexChatGate({
           askUser: deps.ilink.askUser,
           resolveMatterPlan:deps.resolveMatterPlan,
+          resolveTerminalParticipation:deps.resolveTerminalParticipation,
           noteMatterApproval:deps.noteMatterApproval,
           adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
           ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
@@ -608,6 +610,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
           askUser: deps.ilink.askUser,
           resolveMatterPlan:deps.resolveMatterPlan,
+          resolveTerminalParticipation:deps.resolveTerminalParticipation,
           noteMatterApproval:deps.noteMatterApproval,
           adminFor: chatId => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         },
@@ -693,6 +696,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
         askUser: deps.ilink.askUser,
         resolveMatterPlan:deps.resolveMatterPlan,
+        resolveTerminalParticipation:deps.resolveTerminalParticipation,
           noteMatterApproval:deps.noteMatterApproval,
         adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         modeFor: (chatId) => conversationStore.get(chatId)?.mode.kind ?? 'solo',

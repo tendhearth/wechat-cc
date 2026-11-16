@@ -47,3 +47,6 @@ export function terminalFeature(o: { needs: readonly string[]; lazy?: readonly s
     },
   }
 }
+
+export {resolveTerminalParticipation} from './participation-input'
+export type {TerminalCredential} from './credentials'

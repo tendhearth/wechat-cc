@@ -1,3 +1,5 @@
+import {makeMatterLog} from './matter-log'
+import {EXECUTOR_FACTS} from '../../lib/executor-facts'
 import {canonicalClaimPath,pathsConflict} from '../../lib/claim-paths'
 import {hostname} from 'node:os'
 import {randomUUID} from '../../lib/random'
@@ -5,10 +7,14 @@ import type {Db} from '../../lib/db'
 import type {TerminalParticipation} from '../../ports/matters'
 import {readCliSession} from './cli-session-store'
 
+// Shared across terminal wiring and ledger stores; tokens die on restart.
+const runtime=new WeakMap<Db,Map<string,number>>()
+function memory(db:Db){let value=runtime.get(db);if(!value){value=new Map();runtime.set(db,value)}return value}
 const COLS='id,matter_id AS matterId,session_id AS sessionId,source_matter_id AS sourceMatterId,run_id AS runId,generation,author,attached_at AS attachedAt,detached_at AS detachedAt,detach_reason AS detachReason'
 export const terminalParticipationKey=(p:TerminalParticipation)=>`terminal-participation/${Buffer.from(JSON.stringify([p.id,p.sessionId,p.matterId,p.generation])).toString('base64url')}`
 export function makeTerminalParticipations(db:Db,now=()=>Date.now(),machine=hostname()){
-  const list=(matterId:string)=>db.query<TerminalParticipation,[string]>(`SELECT ${COLS} FROM terminal_participations WHERE matter_id=? ORDER BY attached_at,id`).all(matterId)
+  const sessionView=(id:string)=>{const s=readCliSession(db,id);return {cwd:s?.cwd??'',activity:s?.status??'ended',code:id.slice(0,6),source:s?.source??'claude',displayName:EXECUTOR_FACTS[s?.source??'claude'].names.name}}
+  const list=(matterId:string)=>db.query<TerminalParticipation,[string]>(`SELECT ${COLS} FROM terminal_participations WHERE matter_id=? ORDER BY attached_at,id`).all(matterId).map(p=>({...p,connection:memory(db).has(p.id)?'connected' as const:'pending' as const,...sessionView(p.sessionId)}))
   function eligible(sessionId:string){
     // Exact lookup only: never authorize by the registry's fuzzy prefix resolver.
     const s=readCliSession(db,sessionId)
@@ -22,6 +28,8 @@ export function makeTerminalParticipations(db:Db,now=()=>Date.now(),machine=host
   const active=(id:string)=>db.query('SELECT 1 FROM terminal_participations WHERE matter_id=? AND detached_at IS NULL').get(id)!==null
   return {
     list,active,
+    connected(key:string){const p=this.bound(key);if(!memory(db).has(p.id)){memory(db).set(p.id,now());makeMatterLog(db).touch(p.matterId)}},
+    touch(matterId:string){makeMatterLog(db).touch(matterId)},
     endSession(sessionId:string){db.query("UPDATE terminal_participations SET detached_at=?,detach_reason='session_end' WHERE session_id=? AND detached_at IS NULL").run(now(),sessionId)},
     conflicts,
     restart(){db.query("UPDATE terminal_participations SET detached_at=?,detach_reason='restart' WHERE detached_at IS NULL").run(now())},

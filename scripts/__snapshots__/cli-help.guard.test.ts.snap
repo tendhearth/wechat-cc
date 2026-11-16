@@ -1410,6 +1410,52 @@ OPTIONS
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > matter --help > matter note --help 1`] = `
+"写一条短备注 (matter note)
+
+USAGE matter note [OPTIONS] --cred=<cred> [TEXT]
+
+ARGUMENTS
+
+  TEXT    备注文字，省略则从 stdin 读
+
+OPTIONS
+
+  --cred=<cred>    本次挂入的凭据文件 (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > matter --help > matter notes --help 1`] = `
+"读这件事的记录本 (matter notes)
+
+USAGE matter notes [OPTIONS] --cred=<cred>
+
+OPTIONS
+
+      --cred=<cred>    本次挂入的凭据文件 (Required)
+  --before=<before>    向前翻页游标              
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > matter --help 1`] = `
+"终端参与的记录本 (wechat-cc matter v1.8.0 (dev))
+
+USAGE wechat-cc matter notes|note
+
+COMMANDS
+
+  notes    读这件事的记录本
+   note    写一条短备注  
+
+Use wechat-cc matter <command> --help for more information about a command.
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > mcp-server --help 1`] = `
 "Internal — run a stdio MCP server entrypoint (wechat | delegate | matter). Spawned by the daemon when running from the compiled binary. (wechat-cc mcp-server v1.8.0 (dev))
 
@@ -2003,6 +2049,9 @@ Usage:
                         推到主人微信(写 ~/.claude/settings.json 与 $CODEX_HOME/
                         hooks.json 的 hooks;幂等;只动自己的条目)。
   wechat-cc hook uninstall | status
+  wechat-cc matter notes|note --cred <path> [--before <n>] [文字]
+                        挂进一件事的终端会话读 / 写那件事的记录本(凭据文件由
+                        主人挂入时生成;只认这一件事)。
   wechat-cc status      Show daemon status + accounts
   wechat-cc list        List bound accounts
   wechat-cc doctor [--json]        Diagnose install/setup state

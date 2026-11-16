@@ -103,7 +103,7 @@ function providerLabel(p) {
 /** @typedef {import('../../../../src/adapters/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/adapters/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/features/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{agentRuns?:Array<{matterId:string,executor:string,brief:string,position:number,status:'queued'|'running'|'completed'|'failed'|'cancelled'|'interrupted'}>,notes?:Array<{matterId:string,author:string,text:string}>,agentNames?:Record<string,string>,quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
+/** @typedef {{terminalParticipants?:Array<{id:string,matterId:string,sessionId:string,displayName?:string,source?:string,code?:string,cwd?:string,activity?:string,connection?:'pending'|'connected',detachedAt:number|null}>,agentRuns?:Array<{matterId:string,executor:string,brief:string,position:number,status:'queued'|'running'|'completed'|'failed'|'cancelled'|'interrupted'}>,notes?:Array<{matterId:string,author:string,text:string}>,agentNames?:Record<string,string>,quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],agentNames?:Record<string,string>,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
@@ -1268,6 +1268,11 @@ export function initWorkbenchPage(deps) {
     if (!target) return
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
     let action = target.dataset.action
+    if(action==='terminal-detach'&&target.dataset.participationId){
+      target.disabled=true
+      try{await v1(deps.invokeWorkbenchApi,V1.cli.detach,{body:{participationId:target.dataset.participationId}});await controller.refresh({force:true})}catch(error){target.disabled=false;fail(error)}
+      return
+    }
     if(action==='expand-permission-script'){
       const taskId=target.dataset.ownerTask,requestId=target.dataset.requestId,path=target.dataset.scriptPath,sha256=target.dataset.scriptSha
       if(!taskId||!requestId||!path||!sha256)return

@@ -68,12 +68,18 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       const context=await readTopicBrief(ctx.deps.topicBrief,task,text)
       return {context:context??'',...(!context?{message:'没有相关话题'}:{})}
     },
-    matterNotes:(key:string|undefined,requested?:string,q?:MatterNotesQuery)=>store.ledger.page(store.ledger.bound(key,requested),q),
+    matterNotes(key:string|undefined,requested?:string,q?:MatterNotesQuery){
+      const page=store.ledger.page(store.ledger.bound(key,requested),q)
+      if(key?.startsWith('terminal-participation/'))store.ledger.terminals.connected(key)
+      return page
+    },
     matterNote(key:string|undefined,text:string){
       if(key?.startsWith('terminal-participation/')){
         const p=store.ledger.terminals.bound(key)
         if(typeof text!=='string'||!text.trim()||text.length>1000)throw Error('invalid_matter_note')
         store.atomic(()=>{store.ledger.note(p.matterId,p.runId,p.author,text);ctx.deps.matters?.touch(p.matterId)})
+        store.ledger.terminals.connected(key)
+        store.ledger.terminals.touch(p.matterId)
         return {ok:true as const}
       }
       const id=store.ledger.bound(key),run=state.runsByTask.get(id)

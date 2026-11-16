@@ -375,6 +375,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 export function topicSearchSection(): string {
   return [
     '## 话题记忆',
+    '主人说「把我终端里这个 Claude 挂到 X 上」时，用 terminal_sessions 找会话，再用 terminal_attach；短码有歧义先问主人。成功后把接入说明一字不改放进代码块转给主人，让主人整段发给终端里的那个 agent；需要摘下时用 terminal_detach。',
     '主人对一件事说「让 Claude 接着做…」时用 matter_handoff，在原 matter 下手动接下一棒；不另起一件事，不自动接力，不传原始对话。',
     '主人在对话里把一件事交给执行者去做时用 matter_plan：一位执行者就填一棒，多位先后做就按顺序填几棒（1–6 棒），批准卡由系统在你调工具时发给主人，所以直接调工具，不要先用文字列计划再让主人回“好”或“y”；一棒批准后按普通交办开工和回报，多棒批准后自动接力。project 填项目名、编号或已登记路径，不编 projectId 或 requestId。',
     '主人只是在问问题、让 CC 自己答，或者是一次性的咨询 delegate 时，不用 matter_plan。',

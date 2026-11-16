@@ -1,4 +1,5 @@
 // @ts-check
+import {renderWorkbenchLedger} from './workbench-ledger.js'
 import { V1,v1 } from '../daemon-client.js'
 
 /** Open the canonical kind first. Terminal/act ids never enter workbench task APIs.
@@ -21,6 +22,17 @@ async function showWorkDetail(call,detail){
   const body=document.createElement('div');body.className='wb-handoff-body'
   const note=document.createElement('p');note.role='status'
   dialog.append(title,close,body,note);dialog.addEventListener('close',()=>dialog.remove(),{once:true});document.body.append(dialog);dialog.showModal()
+  if(detail.terminalParticipants?.length){
+    const ledger=document.createElement('div')
+    ledger.innerHTML=renderWorkbenchLedger({...detail,task:{id:detail.matter.id}},id=>detail.matter.agentNames?.[id])
+    ledger.addEventListener('click',async event=>{
+      const button=event.target instanceof Element?event.target.closest('button[data-participation-id]'):null
+      if(!(button instanceof HTMLButtonElement))return
+      button.disabled=true
+      try{await v1(call,V1.cli.detach,{body:{participationId:button.dataset.participationId}});button.textContent='已摘下';note.textContent='终端已摘下'}catch{button.disabled=false;note.textContent='没摘下，请重试'}
+    })
+    body.append(ledger)
+  }
   if(detail.matter.kind==='act') {
     for(const turn of detail.actTurns??[])for(const step of turn.steps??[]){const line=document.createElement('p');line.textContent=step.payload?.text??step.kind;body.append(line)}
     return

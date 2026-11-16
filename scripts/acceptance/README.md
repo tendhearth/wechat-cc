@@ -27,3 +27,15 @@ python3 scripts/acceptance/run.py stop
 证据：`share-evidence.jsonl`（断言与计数）、`share-relay.jsonl`（登录与转发计数），结合既有 `gateway.jsonl`。不输出正文、链接或令牌。`share-fixture.json` 是 a 与后续子命令间使用的私密能力文件（0600，含链接），不要复制进报告或提交；隔离数据库也含令牌。失败时只报场景名；可查看脱敏的 `daemon.log` 和 supervisor 日志定位启动问题。离线成功必须有 `cleanup.json` 的剩余进程与进程组成员均为 0。
 
 撤销差异：产品隧道会在面板之前拒绝无效分享令牌，所以不会返回 HTTP 401。夹具没有把 auth_failed 伪装成 HTTP 响应；只在 `.share-acceptance` 下通过加载观察器取得真实面板实例，以本机控制请求补验其 401。不启动面板的 `0.0.0.0` 监听，不改写产品函数行为。
+
+## 终端会话挂进一件事
+
+需要网关模型(与上面在线验收同一套 `run.py start` 与 gateway.key)。全新状态目录只放 `.acceptance-only`:
+
+```sh
+python3 scripts/acceptance/run.py start            # 另一终端,同一个 WECHAT_STATE_DIR
+bun scripts/acceptance/terminal-attach.ts
+python3 scripts/acceptance/run.py stop
+```
+
+假 hook 报到一个 Claude 终端会话 → 主人自然语言「把我终端里这个 Claude 挂到首页配色这件事上」→ 确认卡(短码 / 目录 / 事名)批准 → 回复里一字不改带接入说明、不带令牌,凭据 0600 / 目录 0700 → 详情 pending → 真 CLI 桥写两条(参数 / stdin)、读回 → 详情 connected → 自然语言摘下 → 凭据文件删掉、CLI 拒绝、详情显示已摘下。证据在 `terminal-evidence.jsonl`(只有断言);`attach-reply.txt`(0600)是主人看到的那条回复,只留在本次状态目录里排查用,不进报告。

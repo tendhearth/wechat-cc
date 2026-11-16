@@ -30,10 +30,12 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
 
 /** 对话审批的共同等待边界。取消不依赖主人回答，也不接受迟到的批准。 */
 export type ChatApprovalAnswer = 'allow' | 'deny' | 'timeout' | 'undelivered' | 'cancelled'
+export type TerminalParticipationResolver=(action:'attach'|'detach',input:unknown,chatId:string)=>{body:unknown;code:string;cwd:string;title:string}
 export type MatterPlanResolver=(input:unknown,chatId:string,provider:string)=>PlanTarget|Promise<PlanTarget>
 export interface ChatApprovalChannel {
   noteMatterApproval?:(tool:string,input:unknown,chatId:string,provider:string)=>void
   resolveMatterPlan?:MatterPlanResolver
+  resolveTerminalParticipation?:TerminalParticipationResolver
   maxCards?: number
   askUser(chatId: string, prompt: string, hash: string, timeoutMs: number): Promise<Exclude<ChatApprovalAnswer, 'cancelled'>>
   /** 删除 pending 登记并让旧卡失效。 */
@@ -93,7 +95,17 @@ export function newChatApprovalId(): string {
 
 
 /** Resolve before asking. The approved project identity is carried into local tool execution. */
-export async function prepareChatApprovalPrompt(provider:string,tool:string,input:unknown,requestId:string,channel:Pick<ChatApprovalChannel,'resolveMatterPlan'>,chatId:string,title?:string):Promise<string> {
+export async function prepareChatApprovalPrompt(provider:string,tool:string,input:unknown,requestId:string,channel:Pick<ChatApprovalChannel,'resolveMatterPlan'|'resolveTerminalParticipation'>,chatId:string,title?:string):Promise<string> {
+  if(tool==='mcp__wechat__terminal_attach'||tool==='mcp__wechat__terminal_detach'){
+    if(!channel.resolveTerminalParticipation)throw Error('终端挂入尚未准备好')
+    const action=tool.endsWith('_attach')?'attach':'detach'
+    const preview=channel.resolveTerminalParticipation(action,input,chatId)
+    // Bind approval to the exact identity, not a prefix or mutable matter selection.
+    for(const key of Object.keys(input as object))delete (input as Record<string,unknown>)[key]
+    Object.assign(input as object,preview.body)
+    const clean=(text:string)=>redactPreviewText(redactSecrets(text)).replace(/\s+/g,' ').slice(0,500)
+    return `${provider} · terminal_${action} [approval:${requestId}]\n确认${action==='attach'?'挂入':'摘下'}终端：${clean(preview.code)}\n目录：${clean(preview.cwd)}\n事名：${clean(preview.title)}`
+  }
   let resolved:PlanTarget|undefined
   if(tool==='mcp__wechat__matter_plan'&&channel.resolveMatterPlan){
     try{

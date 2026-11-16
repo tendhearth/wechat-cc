@@ -16,6 +16,9 @@ Usage:
                         推到主人微信(写 ~/.claude/settings.json 与 $CODEX_HOME/
                         hooks.json 的 hooks;幂等;只动自己的条目)。
   wechat-cc hook uninstall | status
+  wechat-cc matter notes|note --cred <path> [--before <n>] [文字]
+                        挂进一件事的终端会话读 / 写那件事的记录本(凭据文件由
+                        主人挂入时生成;只认这一件事)。
   wechat-cc status      Show daemon status + accounts
   wechat-cc list        List bound accounts
   wechat-cc doctor [--json]        Diagnose install/setup state

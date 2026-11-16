@@ -1,3 +1,4 @@
+import {registerTerminalParticipationTools} from './tools-terminal-participation'
 /** Shared tool registration for stdio and parent-process SDK MCP transports. */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import z from 'zod'
@@ -165,6 +166,7 @@ export async function createWechatMcpServer(client: InternalApiClient, options: 
     registerMatterShareTool(server, client)
     // terminal_say / terminal_say_result(2026-10-24):代主人对终端里正在干活的会话说一句、带回它的回话。
     // 只给 admin 会话;路由层再只认主人那条聊天的会话令牌(features/terminal/routes.ts)。
+    registerTerminalParticipationTools(server, client)
     registerTerminalTools(server, client, options.participantTag)
     registerFileTools(server, client)
     // 社交工具面(spec 2026-09-05-social-tools):social_seek + 九个读 / 动
