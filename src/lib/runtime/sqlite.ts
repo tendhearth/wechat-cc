@@ -205,27 +205,3 @@ class NodeDatabase implements SqlDatabase {
   }
   close(): void { this.cache.clear(); this.db.close() }
 }
-
-/** Observe successful writes on one connection, including trigger-driven revocations.
- * Installed only by the terminal credential owner. Reentrant reads/writes in the
- * observer do not notify again. Revocation before transaction commit deliberately
- * fails closed if that transaction later rolls back.
- */
-export function observeSqliteWrites(db:SqlDatabase,changed:()=>void):void {
-  let notifying=false
-  const notify=()=>{if(notifying)return;notifying=true;try{changed()}finally{notifying=false}}
-  const wrapped=new WeakMap<object,object>()
-  const wrap=<T extends SqlStatement<any,any>>(statement:T,sql:string):T=>{
-    const prior=wrapped.get(statement);if(prior)return prior as T
-    const proxy=new Proxy(statement,{get(target,key){
-      const value=Reflect.get(target,key,target)
-      if(typeof value==='function'&&(key==='run'||/^\s*(?:INSERT|UPDATE|DELETE|REPLACE|WITH)\b/i.test(sql)&&['get','all','values'].includes(String(key))))return (...args:any[])=>{const result=value.apply(target,args);notify();return result}
-      return typeof value==='function'?value.bind(target):value
-    }})
-    wrapped.set(statement,proxy);return proxy
-  }
-  const query=db.query.bind(db),prepare=db.prepare.bind(db),exec=db.exec.bind(db)
-  db.query=((...args:Parameters<typeof query>)=>wrap(query(...args),args[0])) as typeof db.query
-  db.prepare=((...args:Parameters<typeof prepare>)=>wrap(prepare(...args),args[0])) as typeof db.prepare
-  db.exec=(sql:string)=>{const result=exec(sql);notify();return result}
-}

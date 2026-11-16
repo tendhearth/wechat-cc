@@ -2,7 +2,6 @@ import {chmodSync,lstatSync,mkdirSync,rmSync} from 'node:fs'
 import {join,resolve} from 'node:path'
 import {writeJsonAtomic} from '../../lib/json-file'
 import {defaultHookSelf,type HookSelf} from '../../cli/terminal-hooks'
-import {observeSqliteWrites} from '../../lib/runtime/sqlite'
 import type {Db} from '../../lib/db'
 import {makeMatterLog} from '../../adapters/store/matter-log'
 import {terminalParticipationKey} from '../../adapters/store/terminal-participations'
@@ -28,13 +27,18 @@ export function terminalCredentials(stateDir:string,db:Db,api:{baseUrl:string;in
     const row=db.query<{matterId:string},[string]>('SELECT matter_id AS matterId FROM terminal_participations WHERE id=?').get(id)
     if(row&&db.query('SELECT 1 FROM matters WHERE id=?').get(row.matterId))makeMatterLog(db).touch(row.matterId)
   }
-  observeSqliteWrites(db,()=>{
-    for(const id of keys.keys()){
+  // Revocation itself is server-side (bound() re-checks the row on every request);
+  // this only removes the dead file and drops the token. Triggers (archive, registry
+  // purge, rebinding) revoke without passing through here; their dead files go at the next
+  // attach / SessionEnd sweep, or at daemon start (which clears the whole directory).
+  const sweep=()=>{
+    for(const id of [...keys.keys()]){
       if(!db.query('SELECT 1 FROM terminal_participations WHERE id=? AND detached_at IS NULL').get(id))remove(id)
     }
-  })
+  }
   return {
     issue(p:TerminalParticipation,token:string,title:string){
+      sweep()
       const credentialPath=this.write(p,token)
       return {credentialPath,instructions:terminalInstructions(title,credentialPath)}
     },
@@ -45,6 +49,6 @@ export function terminalCredentials(stateDir:string,db:Db,api:{baseUrl:string;in
       writeJsonAtomic(path,{api:api.baseUrl,token,participationId:p.id,matterId:p.matterId} satisfies TerminalCredential,{mode:0o600})
       return path
     },
-    remove,
+    remove,sweep,
   }
 }
