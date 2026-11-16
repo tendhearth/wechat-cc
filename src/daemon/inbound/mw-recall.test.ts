@@ -111,6 +111,14 @@ describe('makeMwRecall', () => {
     expect(ctx.msg.recall).toBeUndefined()
   })
 
+  it('没把握就问:便宜模型猜出来的话题 ⇒ msg.topicsUnsure;索引对上的 ⇒ 不标', async () => {
+    for (const [via, unsure] of [['model', true], ['near', undefined], ['exact', undefined], [undefined, undefined]] as const) {
+      const ctx = ctxWith('上次那个后来怎么定的')
+      await makeMwRecall({ topics: async () => ({ block: '话题「迁服务器」', ...(via ? { via } : {}) }), isAdmin: () => true, log: noopLog })(ctx, async () => {})
+      expect(ctx.msg.topicsUnsure).toBe(unsure)
+    }
+  })
+
   it('话题 T2:topics 和 recall 并行,结果挂在 msg.topics 上;没碰到 / 抛错 / 超时 ⇒ 不挂,照常 next', async () => {
     const ctx = ctxWith('最近上海的事')
     let seen: { topics?: string; recall?: string[] } = {}
