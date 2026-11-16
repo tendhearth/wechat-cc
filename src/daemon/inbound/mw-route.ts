@@ -57,6 +57,11 @@ export function makeMwRoute(deps: RouteMwDeps): Middleware & { consume: Middlewa
     // 老嵌入没有目标目录时仍保留原 ROUTE 日志契约。
     if (deps.providers) recordAnswerTarget(deps.log, ctx.requestId, ctx.target, ctx.msg.answerRoute?.requestId)
     await next()
+    // 评审 P2:这条被后面的某一步接住(consumedBy;降级拦下、额度询问…)又没交给协调器 / 事项 ⇒ 原句不会再自己送出;
+    // App 那条路在这之后才 dispatch,但那时没人 consume,不受影响。
+    // 标成取消,之后的「换成 X 答 / 跟 CC 说」如实说要重说一次,不假装改好了。
+    const receipt = ctx.msg.answerRoute
+    if (receipt && receipt.state === 'pending' && !receipt.enqueued && ctx.consumedBy !== undefined) receipt.state = 'cancelled'
   }
   return Object.assign(mw, { consume: answers.consume })
 }

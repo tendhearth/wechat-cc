@@ -25,6 +25,13 @@ const clean = (text: string) => text.trim().replace(/[。！!？?]$/, '').trim()
 const named = (text: string, p: AnswerProvider) => [p.id, ...p.names].some(n => n.toLowerCase() === text.toLowerCase())
 const name = (p: AnswerProvider) => p.names.find(n => n !== p.id) ?? p.names[0] ?? p.id
 
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** 评审 P2:只认「让 A 还是 B(来)答」这种明摆着在挑答话者的句式;「总结 A 和 B 回答失败的原因」不算。 */
+function eitherOr(text: string, ps: readonly AnswerProvider[]): boolean {
+  const alt = ps.flatMap(p => [p.id, ...p.names]).filter(n => n.trim()).map(esc).sort((a, b) => b.length - a.length).join('|')
+  return new RegExp(`^(?:让|请|请让|找)?\\s*(?:${alt})\\s*(?:还是|或者|或)\\s*(?:${alt})\\s*(?:来)?(?:回答|答|说说|看看)`, 'i').test(text.trim())
+}
+
 /** route 与 consume 共用的短期原句；不落盘、不记录正文，不改变 Mode。 */
 export function makeAnswerRouting(deps: Deps) {
   const now = deps.now ?? Date.now
@@ -106,7 +113,7 @@ export function makeAnswerRouting(deps: Deps) {
       originals.delete(ctx.msg.chatId)
     }
     const mentions = answerCandidates(ctx.msg.text ?? '', ps)
-    if (mentions.length > 1 && /(?:还是|或者|或|、|和)/.test(ctx.msg.text)) {
+    if (mentions.length > 1 && eitherOr(ctx.msg.text ?? '', mentions)) {
       const options = mentions.filter(p => p.available)
       if (options.length > 1) {
         const target: AnswerTarget = Object.freeze({ kind: 'clarify', candidates: options.map(p => ({ provider: p.id, name: name(p) })), reason: 'ambiguous_provider' })

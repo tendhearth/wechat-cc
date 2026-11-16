@@ -14,6 +14,8 @@ export interface AnswerRouteReceipt {
   readonly requestId: string
   target: AnswerTarget
   state: 'pending' | 'submitted' | 'sent' | 'cancelled'
+  /** 协调器收下了(排着队等开跑)。没有 ⇒ 这句被路由之后的别的步骤接住了,不会再自己送出。 */
+  enqueued?: boolean
 }
 
 export const oneoffSessionAlias = (requestId: string): string => `__oneoff__:${requestId}`

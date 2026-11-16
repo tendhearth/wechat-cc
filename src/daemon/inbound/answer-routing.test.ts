@@ -12,9 +12,12 @@ function harness(extra: Partial<RouteMwDeps> = {}) {
   let time = 1, sequence = 0
   const notices: string[] = [], submitted: InboundCtx['msg'][] = []
   const mw = makeMwRoute({ providers, probes: {}, now: () => time, sendMessage: async (_c, text) => { notices.push(text) }, log: () => {}, ...extra })
-  const send = async (text: string, origin?: 'desktop', sent = true) => {
+  const send = async (text: string, origin?: 'desktop', sent = true, consumedDownstream = false) => {
     const ctx: InboundCtx = { msg: { chatId: 'owner', userId: 'owner', text, msgType: 'text', createTimeMs: time, msgId: `m${++sequence}`, accountId: 'test' }, requestId: `r${sequence}`, receivedAtMs: time, ...(origin ? { origin } : {}) }
     await mw(ctx, () => mw.consume(ctx, async () => {
+      // 路由之后的别的步骤接住了(降级拦下、额度询问…):不进协调器。
+      if (consumedDownstream) { ctx.consumedBy = 'health'; return }
+      if (ctx.msg.answerRoute) ctx.msg.answerRoute.enqueued = true
       submitted.push(ctx.msg)
       if (sent && ctx.msg.answerRoute) ctx.msg.answerRoute.state = 'sent'
     }))
@@ -22,6 +25,24 @@ function harness(extra: Partial<RouteMwDeps> = {}) {
   }
   return { send, notices, submitted, advance: (ms: number) => { time += ms } }
 }
+
+describe('评审修复', () => {
+  it('原句被下游接住没进协调器 ⇒「换成 X 答」如实说不会生效,不假装改好', async () => {
+    const h = harness()
+    await h.send('让 Codex 回答这个问题：为什么慢', undefined, false, true)
+    await h.send('换成 Claude 答')
+    expect(h.notices.at(-1)).toContain('请把要回答的原句再说一次')
+    expect(h.submitted).toHaveLength(0)
+  })
+
+  it('「总结 A 和 B 回答失败的原因」不问交给谁', async () => {
+    const h = harness()
+    await h.send('请总结 Codex 和 Claude 回答失败的原因')
+    expect(h.notices.join('')).not.toContain('交给')
+    expect(h.submitted).toHaveLength(1)
+    expect(h.submitted[0]!.answerTarget?.kind).toBe('cc')
+  })
+})
 
 describe('共用歧义原句与纠正', () => {
   it.each([undefined, 'desktop'] as const)('两入口歧义问一句，跨入口答名字只交原句一次：%s', async origin => {

@@ -205,6 +205,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     msg: InboundMsg,
     opts?: { within?: (dispatch: () => Promise<void>) => Promise<T> },
   ): Promise<T | void> {
+    if (msg.answerRoute) msg.answerRoute.enqueued = true
     const mode = getMode(msg.chatId)
     let policy = msg.answerTarget?.kind === 'oneoff' || msg.answerTarget?.kind === 'clarify' ? 'queue' as const : turnPolicy(mode)
     // 评审 #193 P2-4:排队方式跟着**实际执行的集合**走,不跟着模式名走。/chat 被守护筛到只剩
