@@ -6,7 +6,7 @@ export function registerTerminalParticipationTools(server:McpServer,client:Inter
   const matter=z.string().regex(/^[a-f0-9]{8}$/)
   server.registerTool('terminal_attach',{
     title:'把终端会话挂进一件事',
-    description:'【主人当前对话】把主人已开的终端会话挂到 matter。sessionId 完整 ID 或 code 短码二选一；歧义先问主人。系统先请主人确认会话码、目录和事名。成功后必须把 instructions 原样转给主人，供主人粘贴到终端；只接记录本，不启动执行者或自动接力。',
+    description:'【主人当前对话】把主人已开的终端会话挂到 matter。sessionId 完整 ID 或 code 短码二选一；歧义先问主人。系统先请主人确认会话码、目录和事名。成功后必须把 instructions 一字不改放进一个代码块转给主人，并告诉主人：把这段整段发给终端里的那个 agent（是对它说的话，不是在 shell 里运行）；只接记录本，不启动执行者或自动接力。',
     inputSchema:z.object({sessionId:z.string().min(7).optional(),code:z.string().min(4).optional(),matter}).strict(),
   },async input=>{
     try{return {content:[{type:'text',text:JSON.stringify(await client.request('POST','/v1/cli/attach',input))}]}}catch(e){return passthroughErrorResult(e,'terminal_attach')}

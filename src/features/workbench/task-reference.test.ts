@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { handoffCases, handoffNames } from '../../test-support/task-handoff-cases'
-import { makeCheapJudge, resolveTaskReference, isMatterShareRequest, parseTaskIdFromMessage, focusDeclaration, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge } from './task-reference'
+import { makeCheapJudge, resolveTaskReference, isMatterShareRequest, isTerminalAttachRequest, parseTaskIdFromMessage, focusDeclaration, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge } from './task-reference'
 
 /**
  * 管家式指称解析(spec 2026-09-16):主人在微信里说"那个整理 TODO 的事"、引用一条任务
@@ -261,6 +261,26 @@ describe('isMatterShareRequest(分享这件事是对 CC 说的,不是补充)', (
   it('管家不把分享请求解析成某个任务的补充', async () => {
     const r = await resolveTaskReference({ text: '把首页配色这件事分享给小林,让他帮我看看', quotedText: null, focus: null, nowMs: 0,
       candidates: [{ id: 'b12f5314', title: '首页配色', project: 'site', providerId: 'codex', phase: 'replied', path: '/p', updatedAt: 0, error: null } as never] })
+    expect(r.kind).toBe('none')
+  })
+})
+
+describe('isTerminalAttachRequest(挂终端是对 CC 说的,不是补充)', () => {
+  it.each([
+    '把我终端里这个 Claude 挂到首页配色这件事上',
+    '把终端那个 codex 挂进登录页',
+    '把终端从首页配色这件事上摘下来',
+    '首页配色上挂着的终端摘掉吧',
+  ])('是:%s', text => expect(isTerminalAttachRequest(text)).toBe(true))
+  it.each([
+    '终端挂了,帮我看看',
+    '把这张图挂到首页上',
+    '先别把终端挂到首页配色上',
+    '文案写成「把终端挂到首页」',
+    '首页配色再深一点',
+  ])('不是:%s', text => expect(isTerminalAttachRequest(text)).toBe(false))
+  it('管家不把挂终端解析成某个任务的补充', async () => {
+    const r = await resolveTaskReference({ text: '把我终端里这个 Claude 挂到首页配色这件事上', quotedText: null, focus: null, nowMs: 0, candidates: [{ id: 'aaaaaaaa', title: '首页配色', status: 'completed', updatedAt: 0 }] } as any)
     expect(r.kind).toBe('none')
   })
 })

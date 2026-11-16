@@ -159,6 +159,21 @@ export function isMatterShareRequest(text: string): boolean {
   return false
 }
 
+/** 「把我终端里这个 Claude 挂到 X 上」「把终端从 X 上摘下来」是对 CC 说的(terminal_attach / detach),不是给 X 的补充。
+ * 要同时提到终端会话、又用挂/摘这类动词;「终端挂了」「页面挂到首页」都不算。 */
+const TERMINAL_WORD = /(终端|命令行|terminal)/i
+const TERMINAL_ACT = /(挂到|挂进|挂上|挂在|接到|接进|摘下|摘掉|摘了|取下|拿下来)/
+export function isTerminalAttachRequest(text: string): boolean {
+  const t = text.replace(/「[^」]*」|“[^”]*”|"[^"]*"/g, '')
+  for (const clause of t.split(/[。！!？?；;\n]/)) {
+    const act = TERMINAL_ACT.exec(clause)
+    if (!act || !TERMINAL_WORD.test(clause)) continue
+    if (SHARE_NEGATION.test(clause.slice(0, act.index))) continue
+    return true
+  }
+  return false
+}
+
 /** 新建命令里的任务正文照旧处理；仅已有事项的显式接力让路。 */
 export const isTaskHandoffCommand = (text: string, executors: readonly string[] = []): boolean => /^(?:任务|\/task)\s+[a-f0-9]{8}\s+/i.test(text.trim()) && isTaskHandoffRequest(text, executors)
 const PROVIDER_WORDS: Record<string, string[]> = {
@@ -247,7 +262,7 @@ async function askJudge(judge: TaskJudge | undefined, text: string, candidates: 
 }
 
 export async function resolveTaskReference(input: ResolveInput): Promise<Resolution> {
-  if (isTaskHandoffRequest(input.text, input.handoffExecutors) || isMatterShareRequest(input.text)) return { kind: 'none' }
+  if (isTaskHandoffRequest(input.text, input.handoffExecutors) || isMatterShareRequest(input.text) || isTerminalAttachRequest(input.text)) return { kind: 'none' }
   const { candidates } = input
   if (!candidates.length) return { kind: 'none' }
 
