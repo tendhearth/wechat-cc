@@ -1,6 +1,6 @@
 # 这句该谁答 + 直通露标 + 补 Grok
 
-状态：设计草稿，未授权实施。基线 `origin/dev = 27d0109ed`；本次只新增本文，不运行服务或真实模型。
+状态：主人 11-16 已点头第 6 节四项，按第 5 节顺序实施。基线 `origin/dev = 27d0109ed`；本次只新增本文，不运行服务或真实模型。
 依据：[一个管家总纲](2026-11-12-one-butler-direction.md)规矩 1–3、7 与顺序第 5 步；[话题方向](2026-11-05-one-conversation-topics-direction.md)、[T1–T3](2026-11-05-topics-t1-t3-design.md)、[T5](2026-11-06-t5-one-conversation-ui-design.md)、[多 agent 记录本](2026-11-12-one-matter-many-agents-design.md)。冲突以总纲为准。目的：主人照常对 CC 说话，需要别人答时知道是谁，送错时能退回来。
 
 ## 1. 今天怎么答：已有与缺口
