@@ -173,7 +173,11 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       delivery = d
       summary = await runner.run({
         chatId: msg.chatId, alias: proj.alias, providerId, handle, speaker: oneoff ? 'agent' : 'cc', prompt: text, budget: 'turn', startedAt, turn,
-        observe: (ev) => live.push(ev), onTurn: ids => d.bindTurn?.(ids),
+        observe: (ev) => {
+          // 网络守护可能在 iterator 真正发送前拒绝；只有执行者事件才算送达证据。
+          if (msg.answerRoute && ev.kind !== 'error') msg.answerRoute.state = 'sent'
+          live.push(ev)
+        }, onTurn: ids => d.bindTurn?.(ids),
         ...(textStrategy === 'last_segment' ? { progress: () => { const seg = live.latestSegment(); void d.progress(seg ?? LONG_TURN_PROGRESS, seg ? 'model' : 'notice').catch(() => {}) } } : {}),
       })
       if (rotation && rotateManager && !stopped() && isContextOverflow({code:summary.errorCode,message:summary.error})) {

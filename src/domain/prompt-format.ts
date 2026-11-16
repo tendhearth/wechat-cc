@@ -1,6 +1,7 @@
 export interface InboundMsg {
   /** daemon 固化的单轮目标；不渲染进信封，不接受模型或客户端自报。 */
   answerTarget?: import('./answer-target').AnswerTarget & { readonly requestId: string }
+  answerRoute?: import('./answer-target').AnswerRouteReceipt
   chatId: string
   userId: string
   userName?: string

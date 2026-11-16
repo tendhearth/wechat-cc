@@ -28,6 +28,7 @@ import type { CareLedger } from '../../features/companion/care-ledger'
 import type { InboundMsg } from '../../domain/prompt-format'
 import type { Mode } from '../../domain/conversation'
 import type { PipelineRun } from '../inbound/types'
+import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
 
 // 模型挂了:llm 子系统判定该暂停(其余照常)
 let llmDown = true
@@ -43,7 +44,7 @@ function readAllowFrom(): string[] {
   return (JSON.parse(readFileSync(ACCESS_FILE, 'utf8')) as { allowFrom: string[] }).allowFrom
 }
 
-function setup(admins: string[] = ['admin_chat']) {
+function setup(admins: string[] = ['admin_chat'], registry?: ProviderRegistry) {
   writeAccess(admins)
   _clearCache()
   _resetSnapshotForTest()
@@ -55,7 +56,7 @@ function setup(admins: string[] = ['admin_chat']) {
     sessionManager: { isInFlight: vi.fn(() => false) } as unknown as Bootstrap['sessionManager'],
     sessionStore: {} as Bootstrap['sessionStore'],
     conversationStore: { upsertIdentity: vi.fn() } as unknown as Bootstrap['conversationStore'],
-    registry: { get: vi.fn(), list: vi.fn(() => []), getCheapEval: vi.fn(() => null), has: vi.fn(() => false) } as unknown as Bootstrap['registry'],
+    registry: registry ?? { get: vi.fn(), list: vi.fn(() => []), getCheapEval: vi.fn(() => null), has: vi.fn(() => false) } as unknown as Bootstrap['registry'],
     coordinator: { dispatch: coordinatorDispatch, getMode: vi.fn((): Mode => ({ kind: 'solo', provider: 'claude' })), cancel: vi.fn(() => false) } as unknown as Bootstrap['coordinator'],
     resolve: vi.fn(() => null),
     formatInbound: vi.fn() as unknown as Bootstrap['formatInbound'],
@@ -141,4 +142,24 @@ describe('模型挂了时的主人命令(步 1c 基线)', () => {
       expect(said.some(t => t.includes('目前没有待批准'))).toBe(true)
     } finally { teardown(s.stateDir); llmDown = true }
   })
+})
+
+it('PR3 生产 route wiring 从注册的 cheapEval 做有限代答判定，微信/App 一致', async () => {
+  const registry = createProviderRegistry()
+  const prompts: string[] = []
+  registry.register('openai', { spawn: async () => { throw Error('must not spawn') }, cheapEval: async prompt => { prompts.push(prompt); return '1' } }, { canResume: () => false })
+  registry.register('codex', { spawn: async () => { throw Error('must not spawn') } }, { canResume: () => false })
+  const s = setup(['admin_chat'], registry)
+  try {
+    const pipeline = buildInboundPipeline(s.pipelineDeps)
+    for (const origin of [undefined, 'desktop'] as const) {
+      const msg = adminMsg('我想请 Codex 看看这个问题')
+      const ctx = { msg, receivedAtMs: msg.createTimeMs, requestId: `test-${origin ?? 'wechat'}`, ...(origin ? { origin } : {}) }
+      if (origin) await pipeline.appTurn(ctx)
+      else await pipeline(ctx)
+      expect(msg.answerTarget).toMatchObject({ kind: 'oneoff', provider: 'codex' })
+    }
+    expect(prompts).toHaveLength(2)
+    expect(prompts.every(p => p.includes('1. codex') && !p.includes('1. openai'))).toBe(true)
+  } finally { teardown(s.stateDir) }
 })

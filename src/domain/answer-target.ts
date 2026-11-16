@@ -6,8 +6,17 @@ export type AnswerTarget = Readonly<
   | { kind: 'cc'; reason: string }
   | { kind: 'oneoff'; provider: string; reason: string }
   | { kind: 'matter'; matterId: string; reason: string }
-  | { kind: 'clarify'; provider?: string; reason: string }
+  | { kind: 'clarify'; provider?: string; candidates?: readonly { provider: string; name: string }[]; reason: string }
 >
+
+/** 仅进程内共享的投递回执。排队时允许纠正，提交后绝不自动重放。 */
+export interface AnswerRouteReceipt {
+  readonly requestId: string
+  target: AnswerTarget
+  state: 'pending' | 'submitted' | 'sent' | 'cancelled'
+  /** 协调器收下了(排着队等开跑)。没有 ⇒ 这句被路由之后的别的步骤接住了,不会再自己送出。 */
+  enqueued?: boolean
+}
 
 export const oneoffSessionAlias = (requestId: string): string => `__oneoff__:${requestId}`
 
