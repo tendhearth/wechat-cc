@@ -115,7 +115,8 @@ describe('home hero uses the real pet lifecycle', () => {
     const rect = (x: number, width = 40) => ({ left: x, right: x + width, top: 0, bottom: 40, width, height: 40 }) as DOMRect
     row.getBoundingClientRect = () => rect(0, 400); button.getBoundingClientRect = () => rect(100)
     const add = (id: string, x: number) => { const el = document.createElement('button'); el.dataset.topicId = id; el.getBoundingClientRect = () => rect(x); row.append(el); return el }
-    const hero = mountNowHero({ root, button, petOptions: { fetchImpl: fetchManifest as any, preload: () => {} } })
+    // 空闲眨眼在 6–12s 之间随机触发;正好落在下面 12.5s 那一刻时 CC 在眨眼、按规则不转头 ⇒ 用 Math.random 会偶发红(CI macOS 11-16 连红三次)。固定随机数。
+    const hero = mountNowHero({ root, button, petOptions: { fetchImpl: fetchManifest as any, preload: () => {}, random: () => 0.5 } })
     hero.setPresence(connected as any); await hero.ready
     const src = () => root.querySelector<HTMLImageElement>('.now-pet-sprite')!.src
     hero.setTopics(['old']); add('left', 10); hero.setTopics(['old', 'left'])
