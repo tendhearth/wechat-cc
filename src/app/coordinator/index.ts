@@ -15,6 +15,8 @@
 import type { Mode, ProviderId } from '../../domain/conversation'
 import type { InboundMsg } from '../../domain/prompt-format'
 import { capabilitiesFor } from '../../domain/capability-matrix'
+import { oneoffSessionAlias, supportsOneoffAnswer } from '../../domain/answer-target'
+import { namesIn } from '../provider-registry'
 import { makeChatMutex } from '../../lib/async-mutex'
 import { createCoordinatorCtx } from './ctx'
 import { createPlanner } from './plan'
@@ -128,12 +130,39 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
    * 可能拿掉某家、网络可能断 —— 不信排队之前的结论(和「不信模式行的年份」同一个道理)。
    */
   async function dispatchInner(msg: InboundMsg): Promise<void> {
-    const proj = deps.resolveProject(msg.chatId)
+    const target = msg.answerTarget
+    if (target?.kind === 'clarify') {
+      const name = target.provider ? namesIn(deps.registry, target.provider).short : '点名的执行者'
+      const reason = target.provider && !supportsOneoffAnswer(target.provider) ? '目前无法隔离本句代答所需的会话权限' : '目前不可用'
+      await ctx.notice(msg.chatId, `${name} ${reason}，这句没有交给其他人。要改由 CC 来答吗？`)
+      return
+    }
+    const oneoff = target?.kind === 'oneoff' ? target : null
+    // admit 对旧 Mode 可回落默认；单次点名绝不借用这个回落。
+    if (oneoff && !deps.registry.has(oneoff.provider)) {
+      await ctx.notice(msg.chatId, '点名的执行者目前不可用。要改由 CC 来答吗？')
+      return
+    }
+    if (oneoff && (!supportsOneoffAnswer(oneoff.provider) || !deps.oneoffWorkspace)) {
+      await ctx.notice(msg.chatId, '点名的执行者目前无法隔离本句代答所需的会话权限。要改由 CC 来答吗？')
+      return
+    }
+    const resolved = deps.resolveProject(msg.chatId)
+    // 代答不在主人的项目里跑:空临时目录 + 只许回复的档(solo 里换),原生文件/命令工具碰不到真实项目。
+    let proj = resolved
+    if (resolved && oneoff) {
+      let path: string
+      try { path = deps.oneoffWorkspace!(oneoff.requestId) } catch {
+        await ctx.notice(msg.chatId, '点名的执行者这次没法单独开一个临时会话。要改由 CC 来答吗？')
+        return
+      }
+      proj = { alias: oneoffSessionAlias(oneoff.requestId), path }
+    }
     if (!proj) {
       deps.log('COORDINATOR', `drop: no project for chat=${msg.chatId}`)
       return
     }
-    const mode = getMode(msg.chatId)
+    const mode: Mode = oneoff ? { kind: 'solo', provider: oneoff.provider } : getMode(msg.chatId)
     // /chat:先按 latest-wins 停掉上一场、等它收尾,再定计划 —— 档位要在等完之后读(以前 dispatchChatroom
     // 也是等完才读档位)。没有在跑的就不 await(不多让出一拍)。
     if (mode.kind === 'chatroom') {
@@ -168,7 +197,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     opts?: { within?: (dispatch: () => Promise<void>) => Promise<T> },
   ): Promise<T | void> {
     const mode = getMode(msg.chatId)
-    let policy = turnPolicy(mode)
+    let policy = msg.answerTarget?.kind === 'oneoff' || msg.answerTarget?.kind === 'clarify' ? 'queue' as const : turnPolicy(mode)
     // 评审 #193 P2-4:排队方式跟着**实际执行的集合**走,不跟着模式名走。/chat 被守护筛到只剩
     // 一个(或一个都不剩)时执行已经退成单模型 —— 那就得像 solo 一样排队,否则第二条消息会在
     // 同一个会话上撞上还在跑的第一条(ACP 的 acp_turn_already_running,第二条就丢了)。

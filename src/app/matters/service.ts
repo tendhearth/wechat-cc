@@ -49,6 +49,8 @@ export interface MatterArtifactInput {artifactId:string;sha256:string;offset:num
 export const MATTER_ARTIFACT_CHUNK_BYTES=128*1024
 export interface MatterArtifactChunk {taskId:string;artifactId:string;name:string;mime:string;size:number;sha256:string;offset:number;nextOffset:number;contentBase64:string}
 export interface MattersServiceDeps {
+  /** daemon 的目标回执，仅标识、不含正文；失败不得改变原输入路径。 */
+  onSayTarget?:(target:{requestId:string;matterId:string})=>void
   store:MatterStore
   /** Trusted owner resolver for narrow phone receipt reads; no identity comes from the request. */
   ownerChatId?:()=>string|null
@@ -354,6 +356,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
         if(!deps.workbench)throw new Error('workbench_not_wired')
         const d=taskDetail(id)
         const requestId=input?normalizeInputRequestId(input.requestId):undefined
+        const targetRequestId=requestId??randomUUID()
+        try{deps.onSayTarget?.({requestId:targetRequestId,matterId:id})}catch{/* 回执失败不拦原入口 */}
         const materials:MatterMaterials={...(input?.draftId!==undefined?{draftId:input.draftId}:{}),...(input?.attachmentIds!==undefined?{attachmentIds:input.attachmentIds}:{})}
         // 策略来自可信调用表面，Workbench 再解析当前主人；不从请求体接受 owner 或策略。
         const attachmentPolicy=surface==='phone'?'owner':undefined
@@ -373,7 +377,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
           return {kind:'task',task:syncTask(id),input:publicInput(receipt)}
         }
         if(!input&&d.runId&&deps.workbench.submitInput){
-          const request={runId:d.runId,requestId:randomUUID(),text}
+          const request={runId:d.runId,requestId:targetRequestId,text}
           const receipt=await (attachmentPolicy?deps.workbench.submitInput(id,request,attachmentPolicy):deps.workbench.submitInput(id,request))
           return {kind:'task',task:syncTask(id),input:publicInput(receipt)}
         }

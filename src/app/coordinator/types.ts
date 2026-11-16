@@ -19,6 +19,10 @@ export type { TurnRecord }
 export interface ConversationCoordinatorDeps {
   contextRotation?: import('../context-rotation').ContextRotation
   resolveProject(chatId: string): { alias: string; path: string } | null
+  /** 单次代答的空临时工作目录(daemon 建好返回绝对路径);缺席 ⇒ 不支持代答,问主人是否改由 CC。 */
+  oneoffWorkspace?: (requestId: string) => string
+  /** 代答结束后清掉那个目录;失败不影响这一轮。 */
+  releaseOneoffWorkspace?: (path: string) => void
   manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has' | 'effectiveTarget' | 'rotate' | 'isInFlight'>>
   conversationStore: Pick<ConversationStore, 'get' | 'set' | 'setParticipants'>
   registry: Pick<ProviderRegistry, 'has' | 'list' | 'get'>

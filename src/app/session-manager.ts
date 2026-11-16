@@ -9,6 +9,7 @@ import { pathsConflict, canonicalClaimPath } from '../lib/claim-paths'
 import { log } from '../lib/log'
 import { contextBytes } from '../domain/context-continuation'
 import { isContextOverflow } from '../lib/provider-error-code'
+import { ONEOFF_INSTRUCTIONS } from '../domain/answer-target'
 import type { ContextRotation } from './context-rotation'
 
 export interface SessionManagerOptions {
@@ -50,7 +51,7 @@ export interface SessionManagerOptions {
    * token registry. Called once per real spawn; the tier is recovered from the
    * acquire's tierProfile. Paired with `invalidateSessionToken` at release.
    */
-  mintSessionToken?: (tier: UserTier, sessionKey: string) => string
+  mintSessionToken?: (tier: UserTier, sessionKey: string, limits?: { routeAllow: ReadonlySet<string> }) => string
   /**
    * Assemble the per-session system prompt for (providerId, tierProfile,
    * chatId), called ONCE per real spawn (cache miss) — the daemon owns
@@ -89,6 +90,8 @@ export interface SessionManagerOptions {
  * this particular chat's caller.
  */
 export interface AcquireRequest {
+  /** 单次代答：禁用 CC 指令和个人上下文轮换；调用方必须使用独立 alias 并及时 release。 */
+  oneoff?: boolean
   ephemeral?: boolean
   alias: string
   path: string
@@ -258,7 +261,10 @@ export class SessionManager {
     // dispatch into the registry.
     const tokenKey = `${req.providerId}/${req.alias}/${req.chatId}`
     const tier = tierNameFromProfile(req.tierProfile)
-    const sessionToken = this.opts.mintSessionToken?.(tier, tokenKey)
+    // 代答只直接输出，不授予 CC 的记忆、模式切换、社交等 API 能力。
+    const sessionToken = req.oneoff
+      ? this.opts.mintSessionToken?.(tier, tokenKey, { routeAllow: new Set() })
+      : this.opts.mintSessionToken?.(tier, tokenKey)
     // Compute the per-spawn MCP env overlay ONCE here (the daemon owns the
     // tier→env policy); providers merge it blindly into their MCP children.
     const mcpEnv = sessionAuthEnv(tier, sessionToken)
@@ -269,7 +275,7 @@ export class SessionManager {
     // Model first, then the prompt: the prompt states the model so the agent
     // can answer「你是哪个模型」truthfully instead of guessing (or calling an
     // admin-only tool a trusted user can't reach).
-    const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
+    const appendInstructions = req.oneoff ? ONEOFF_INSTRUCTIONS : this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
     // spawn 这一刻 provider 报的会话目标:会话自己不报时,之后每一轮都按它判(配置后来再改也不跟)。
     const spawnTarget = providerCallTarget(provider, req.providerId, 'session', model !== undefined ? { model } : {})
     let session: AgentSession
@@ -277,6 +283,7 @@ export class SessionManager {
       session = await provider.spawn(project, {
         ...(resumeSessionId ? { resumeSessionId } : {}),
         ...(req.ephemeral?{ephemeral:true}:{}),
+        ...(req.oneoff?{oneoff:true}:{}),
         tierProfile: req.tierProfile,
         permissionMode: req.permissionMode,
         // Forward chatId so the Claude provider can bake it into a
@@ -298,7 +305,7 @@ export class SessionManager {
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
     const activeTurns=this.activeTurns
     const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req),networkGate=this.opts.networkGate
-    const rotation = this.opts.contextRotation
+    const rotation = req.oneoff ? undefined : this.opts.contextRotation
     const contextKey = { alias: req.alias, providerId: req.providerId, chatId: req.chatId }
     let historyBytes = contextBytes(appendInstructions ?? '')
     rotation?.opened(contextKey, spawnTarget.model ?? model ?? 'default', historyBytes, session.resumedHistory ?? !!resumeSessionId)

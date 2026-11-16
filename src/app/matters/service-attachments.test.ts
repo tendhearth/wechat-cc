@@ -39,6 +39,17 @@ beforeEach(()=>{
 afterEach(async()=>{for(const running of active)await running.shutdown();db.close();removeTempDir(root)})
 
 describe('matter materials',()=>{
+  it('explicit matter/run input keeps its current baton and records only target identifiers even when another provider is named',async()=>{
+    const task={id:'deadbeef',title:'t',status:'running',providerId:'claude',path:project,error:null,updatedAt:1}
+    const requestId=randomUUID(),runId=randomUUID(),text='让 Codex 回答这个问题: 私密补充'
+    matterStore.create({id:task.id,kind:'task',title:'t'})
+    const submitInput=vi.fn(async()=>({id:requestId,taskId:task.id,runId,text,status:'held' as const,createdAt:1,error:null}))
+    const onSayTarget=vi.fn()
+    service=makeMattersService({store:matterStore,onSayTarget,workbench:{detail:()=>({task,runId,events:[]}),continueTask:()=>task,submitInput}})
+    await service.say(task.id,text,'phone',{requestId,runId})
+    expect(submitInput).toHaveBeenCalledWith(task.id,{requestId,runId,text},'owner')
+    expect(onSayTarget).toHaveBeenCalledWith({requestId,matterId:task.id})
+  })
   it('projects only public material fields for recent events and held input receipts',async()=>{
     const task={id:'deadbeef',title:'t',status:'running',providerId:'claude',path:project,error:null,updatedAt:1}
     matterStore.create({id:task.id,kind:'task',title:'t'})

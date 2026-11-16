@@ -7,6 +7,7 @@ import type { InboundMsg } from '../../domain/prompt-format'
 import { buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from '../../domain/provider-handoff'
 import { describeProviderDenial, slashFor } from '../../domain/provider-policy'
 import { capabilitiesFor } from '../../domain/capability-matrix'
+import { ONEOFF_PROFILE } from '../../domain/user-tier'
 import { makeTurnTextCollector, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
 import { TURN_TIMEOUT_CODE, type TurnSummary } from '../../ports/agent-provider'
 import { isContextOverflow, contextOverflowInputTokens, contextOverflowLimitTokens, isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
@@ -45,11 +46,13 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       chat_id: msg.chatId,
       provider: providerId,
     })
-    await notice(msg.chatId, describeProviderDenial(denial, slashFor(providerId)))
+    await notice(msg.chatId, describeProviderDenial(denial, slashFor(providerId)) + (msg.answerTarget?.kind === 'oneoff' ? '\n要改由 CC 来答吗？' : ''))
   }
 
   async function dispatch(msg: InboundMsg, proj: ProjectRef, plan: SoloPlan): Promise<void> {
     const { providerId, auth } = plan
+    const oneoff = msg.answerTarget?.kind === 'oneoff'
+    const failureNotice = (text: string) => notice(msg.chatId, text + (oneoff ? '\n要改由 CC 来答吗？' : ''))
     // The mode this dispatch is serving, for the TurnRecord. This is the
     // single-provider dispatch path for solo AND primary_tool AND a
     // parallel/chatroom that degraded to one participant — recording a literal
@@ -74,12 +77,13 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
     let delivery: TurnDeliveryHandle | undefined
     let report: DeliveryReport | undefined
     let deliverySettled = false
+    let acquired: Awaited<ReturnType<typeof deps.manager.acquire>> | undefined
     try {
       // Per-chat model pin lives on the solo mode row; only solo carries it.
       const cur = ctx.getMode(msg.chatId)
-      const pinnedModel = cur.kind === 'solo' && cur.provider === providerId ? cur.model : undefined
+      const pinnedModel = !oneoff && cur.kind === 'solo' && cur.provider === providerId ? cur.model : undefined
       const contextKey = { alias: proj.alias, providerId, chatId: msg.chatId }
-      const rotation = deps.contextRotation?.isOwnerChat(msg.chatId) ? deps.contextRotation : undefined
+      const rotation = !oneoff && deps.contextRotation?.isOwnerChat(msg.chatId) ? deps.contextRotation : undefined
       const rotateManager = deps.manager.rotate && deps.manager.isInFlight ? {
         rotate: (k: typeof contextKey) => deps.manager.rotate!(k),
         isInFlight: (k: typeof contextKey) => deps.manager.isInFlight!(k),
@@ -88,7 +92,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       const currentInput = {id:`${msg.userId}:${msg.createTimeMs}`,at:msg.createTimeMs,text:msg.text,userId:msg.userId}
       const rotated = rotateManager ? await rotation?.beforeTurn(contextKey, actualModel, rotateManager, currentInput) : null
       // 冷启动判定要在 acquire 之前看:acquire 之后缓存里一定有了。
-      const coldSpawn = deps.manager.has ? !deps.manager.has({ alias: proj.alias, providerId, chatId: msg.chatId }) : false
+      const coldSpawn = !oneoff && deps.manager.has ? !deps.manager.has({ alias: proj.alias, providerId, chatId: msg.chatId }) : false
       let handle: Awaited<ReturnType<typeof deps.manager.acquire>>
       try {
         handle = await deps.manager.acquire({
@@ -96,8 +100,9 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
           path: proj.path,
           providerId,
           chatId: msg.chatId,
-          tierProfile: auth.tierProfile,
-          permissionMode: auth.permissionMode,
+          tierProfile: oneoff ? ONEOFF_PROFILE : auth.tierProfile,
+          permissionMode: oneoff ? 'strict' : auth.permissionMode,
+          ...(oneoff ? { ephemeral: true, oneoff: true } : {}),
           ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
         })
       } catch (err) {
@@ -112,21 +117,24 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
         deps.log('COORDINATOR', `chat=${msg.chatId} provider=${providerId} spawn failed${code ? ` code=${code}` : ''}: ${detail.slice(0, 300)}`, { event: 'spawn_failed', chat_id: msg.chatId, provider: providerId })
         if (isAuthErrorCode(code)) {
           outcome = 'auth_failed'
-          await failures.handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
+          if (oneoff) await failureNotice(spawnFailedNotice(providerId, detail, code))
+          else await failures.handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
           return
         }
         outcome = 'error'
-        await notice(msg.chatId, spawnFailedNotice(providerId, detail, code))
+        await failureNotice(spawnFailedNotice(providerId, detail, code))
         return
       }
+      acquired = handle
       // Registered before the turn starts draining so /stop can reach
       // this turn for its entire lifetime — cleared in the finally below,
       // same lifecycle as chatroom's aborters.
       unregisterCancel = runner.registerCancel(msg.chatId, () => { void handle.cancel?.() })
       const stopped = runner.stopMark(msg.chatId)
-      let text = deps.format(msg)
+      // 只从本句白名单重建信封；即使上游误带 recall/quote/topics 也不透给代答者。
+      let text = deps.format(oneoff ? { chatId: msg.chatId, userId: msg.userId, text: msg.text, msgType: msg.msgType, createTimeMs: msg.createTimeMs, accountId: msg.accountId, ...(msg.attachments ? { attachments: msg.attachments } : {}) } : msg)
       // 换 provider 后的第一条:前置交接块(近况原文 + chat_history 提示)。
-      const handoff = ctx.handoffLedger.takeHandoff(msg.chatId)
+      const handoff = oneoff ? null : ctx.handoffLedger.takeHandoff(msg.chatId)
       let usedContinuation = false
       if (handoff && rotation) {
         const carry = rotated ?? await rotation.continuation(contextKey, currentInput)
@@ -161,10 +169,10 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       // 一轮最多一次,有旁白用最近一段);聊天型模型(all_segments)每段都会交付,不发进度。
       const textStrategy = ctx.textStrategyFor(providerId)
       let live = makeTurnTextCollector()
-      let d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', speaker: 'cc', providerId, model: handle.callTarget?.().model ?? handle.model, textStrategy })
+      let d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', speaker: oneoff ? 'agent' : 'cc', providerId, model: handle.callTarget?.().model ?? handle.model, textStrategy })
       delivery = d
       summary = await runner.run({
-        chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn', startedAt, turn,
+        chatId: msg.chatId, alias: proj.alias, providerId, handle, speaker: oneoff ? 'agent' : 'cc', prompt: text, budget: 'turn', startedAt, turn,
         observe: (ev) => live.push(ev), onTurn: ids => d.bindTurn?.(ids),
         ...(textStrategy === 'last_segment' ? { progress: () => { const seg = live.latestSegment(); void d.progress(seg ?? LONG_TURN_PROGRESS, seg ? 'model' : 'notice').catch(() => {}) } } : {}),
       })
@@ -188,7 +196,8 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       if (summary.errorCode === TURN_TIMEOUT_CODE) {
         outcome = 'timeout'
         settle('timeout')
-        await failures.handleTurnTimeout(msg.chatId, proj.alias, providerId, summary)
+        if (oneoff) await failureNotice('点名的执行者这一轮超时，尚未交付答复。')
+        else await failures.handleTurnTimeout(msg.chatId, proj.alias, providerId, summary)
         return
       }
 
@@ -199,7 +208,8 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       if (isAuthErrorCode(summary.errorCode)) {
         outcome = 'auth_failed'
         settle('auth_failed')
-        await failures.handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
+        if (oneoff) await failureNotice(turnErrorNotice(providerId, summary.error, summary.errorCode))
+        else await failures.handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
         return
       }
 
@@ -215,7 +225,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       // 不发残文(与 #190「错误不许当回复发」同一条红线)。
       if (outcome !== 'completed') {
         settle('error')
-        await notice(msg.chatId, turnErrorNotice(providerId, summary.error, summary.errorCode))
+        await failureNotice(turnErrorNotice(providerId, summary.error, summary.errorCode))
         return
       }
       deliverySettled = true
@@ -227,10 +237,24 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       report = await d.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
       ctx.noteDelivery(providerId, report.delivery)
       rotation?.delivered(contextKey, msg.text, summary.toolCalls.length > 0)
+    } catch (err) {
+      if (!oneoff) throw err
+      const code = providerErrorCodeOf(err)
+      summary = { assistantText: [], replyToolCalled: false, toolCalls: [], error: err instanceof Error ? err.message : String(err), ...(code ? { errorCode: code } : {}) }
+      outcome = isAuthErrorCode(code) ? 'auth_failed' : 'error'
+      if (delivery && !deliverySettled) { deliverySettled = true; delivery.abandon('error') }
+      await failureNotice(turnErrorNotice(providerId, summary.error, summary.errorCode))
     } finally {
       unregisterCancel?.()
       if (delivery && !deliverySettled) { deliverySettled = true; try { delivery.abandon(outcome) } catch { /* 记账不影响回合 */ } }
       runner.record({ chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: recordMode, startedAt, endedAt: nowMs(), outcome, summary, report, turn })
+      if (oneoff && acquired) {
+        try {
+          if (deps.manager.release) await deps.manager.release({ alias: proj.alias, providerId, chatId: msg.chatId })
+          else await acquired.close()
+        } catch { /* 收尾失败不拖这一轮 */ }
+      }
+      if (oneoff) { try { deps.releaseOneoffWorkspace?.(proj.path) } catch { /* 同上 */ } }
     }
   }
 

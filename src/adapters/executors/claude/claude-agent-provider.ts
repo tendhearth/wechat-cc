@@ -447,6 +447,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // (the TN-zombie source). The per-turn watchdog's release→close path
       // now actually reaps the subprocess through this.
       if(spawnOpts.ephemeral)options.persistSession=false
+      if(spawnOpts.oneoff)options.settings={...(typeof options.settings==='object'?options.settings:{}),autoMemoryEnabled:false}
       const approvalLifecycle = options.canUseTool as Partial<ChatApprovalLifecycle> | undefined
       const aborter = options.abortController ?? new AbortController()
       options.abortController = aborter

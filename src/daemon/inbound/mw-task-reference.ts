@@ -282,7 +282,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     const body = reply ?? '任务控制仅对已绑定的主人开放。'
     const lines = [header(picked), body]
     if (fresh) lines.push('（接下来默认说这件，20 分钟内。）')
-    deps.log('WORKBENCH', `task reference → ${cmd.slice(0, 60)}`)
+    deps.log('WORKBENCH', `task reference task=${picked.id} action=${cmd.startsWith(`任务 ${picked.id} 补充 `) ? 'supplement' : 'control'}`)
     const sent = await deps.sendMessage(msg.chatId, lines.join('\n'))
     if (sent && typeof sent === 'object' && 'error' in sent && (sent as { error?: unknown }).error) throw Error('workbench_reply_failed')
   }
