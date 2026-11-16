@@ -74,6 +74,24 @@ check('credential-private', statSync(cred!).mode % 0o1000 === 0o600 && statSync(
 check('tool-observed', await until(async () => rows('gateway-responses.jsonl').some(r => (r.toolCalls ?? []).some((n: string) => /(?:^|__)terminal_attach$/.test(n)))))
 check('pending-before-use', (await api('GET', '/v1/matter?id=' + matter)).body.terminalParticipants?.[0]?.connection === 'pending')
 
+// Optional: a real terminal agent receives the owner's code block verbatim and follows it.
+if (process.env.TERM_ACC_AGENT === 'codex') {
+  const block = attached.match(/```[^\n]*\n([\s\S]*?)```/)?.[1]?.trim()
+  check('reply-has-code-block', !!block && block.includes('你现在挂在「首页配色」这件事上'))
+  const ask = block + '\n\n先读一下这件事的记录本，再写一条备注：以「Codex 终端：」开头，一句话说你读到了几条备注。写完就结束，不要做别的。'
+  // Clean env: no owner keys reach the agent; login comes from CODEX_HOME.
+  const env: Record<string, string> = { PATH: process.env.PATH!, HOME: process.env.HOME! }
+  const p = Bun.spawnSync(['codex', 'exec', '--skip-git-repo-check', '--ignore-user-config', '--disable', 'plugins', '--disable', 'browser_use', '--disable', 'computer_use', '--disable', 'apps', '--disable', 'hooks',
+    '-s', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=true', '-C', term, '--json', '--', ask], { cwd: term, env, stdin: 'ignore', timeout: 600000 })
+  const events = p.stdout.toString().split('\n').filter(Boolean).flatMap(l => { try { return [JSON.parse(l)] } catch { return [] } })
+  const commands = events.filter(e => e.type === 'item.completed' && e.item?.type === 'command_execution').map(e => String(e.item.command ?? ''))
+  check('agent-ran', p.exitCode === 0, { code: p.exitCode ?? -1, commands: commands.length })
+  check('agent-used-bridge', commands.some(c => /matter notes/.test(c)) && commands.some(c => /matter note /.test(c)))
+  const seen = (await api('GET', '/v1/matter?id=' + matter)).body
+  check('agent-note-landed', (seen.notes ?? []).some((n: any) => /^Codex 终端：/.test(n.text)))
+  check('agent-connected', seen.terminalParticipants?.[0]?.connection === 'connected')
+}
+
 const wrote = cli(['matter', 'note', '--cred', cred!, '终端这边：按钮先试深一号的蓝'])
 check('cli-note', wrote.code === 0 && wrote.out.includes('备注已写入'), { code: wrote.code ?? -1 })
 const piped = cli(['matter', 'note', '--cred', cred!], '第二条：从 stdin 写')

@@ -38,4 +38,4 @@ bun scripts/acceptance/terminal-attach.ts
 python3 scripts/acceptance/run.py stop
 ```
 
-假 hook 报到一个 Claude 终端会话 → 主人自然语言「把我终端里这个 Claude 挂到首页配色这件事上」→ 确认卡(短码 / 目录 / 事名)批准 → 回复里一字不改带接入说明、不带令牌,凭据 0600 / 目录 0700 → 详情 pending → 真 CLI 桥写两条(参数 / stdin)、读回 → 详情 connected → 自然语言摘下 → 凭据文件删掉、CLI 拒绝、详情显示已摘下。证据在 `terminal-evidence.jsonl`(只有断言);`attach-reply.txt`(0600)是主人看到的那条回复,只留在本次状态目录里排查用,不进报告。
+假 hook 报到一个 Claude 终端会话 → 主人自然语言「把我终端里这个 Claude 挂到首页配色这件事上」→ 确认卡(短码 / 目录 / 事名)批准 → 回复里一字不改带接入说明、不带令牌,凭据 0600 / 目录 0700 → 详情 pending → 真 CLI 桥写两条(参数 / stdin)、读回 → 详情 connected → 自然语言摘下 → 凭据文件删掉、CLI 拒绝、详情显示已摘下。加 `TERM_ACC_AGENT=codex` 时,在 pending 之后把回复里的代码块原样交给一个真的 `codex exec`(清洗环境、关插件/MCP、只开回环网络),查它自己用 CLI 桥读过、写下以「Codex 终端:」开头的备注、详情变 connected。证据在 `terminal-evidence.jsonl`(只有断言);`attach-reply.txt`(0600)是主人看到的那条回复,只留在本次状态目录里排查用,不进报告。
