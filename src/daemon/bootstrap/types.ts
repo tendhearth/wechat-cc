@@ -47,7 +47,7 @@ export interface BootstrapDeps {
   /** Mint/invalidate per-session internal-api tokens — main.ts wires these to
    *  the internal-api token registry so each session's MCP children carry the
    *  caller's tier. Omitted in tests / minimal embeddings. */
-  mintSessionToken?: (tier: import('../../domain/user-tier').UserTier, sessionKey: string) => string
+  mintSessionToken?: (tier: import('../../domain/user-tier').UserTier, sessionKey: string, limits?: { routeAllow: ReadonlySet<string> }) => string
   invalidateSession?: (sessionKey: string) => void
   /**
    * Test/harness override for agy's tier-C global MCP config target dir

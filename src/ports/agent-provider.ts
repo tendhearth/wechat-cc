@@ -262,6 +262,8 @@ export interface AgentMcpTools {
 }
 
 export interface SpawnContext {
+  /** 本句一次代答：关闭 provider 自有的自动记忆；CC API 已由临时令牌限权。 */
+  oneoff?: boolean
   /** Isolated synthetic evaluation: only these run-owned tools, no private history or native tools.
    * Providers which cannot enforce isolation must refuse before opening any session. */
   evaluation?: { tools: AgentMcpTools; mcpServer: { url: string }; maxSteps: number; maxOutputTokens: number; budget?: import('../domain/checkup-budget').CheckupBudget }

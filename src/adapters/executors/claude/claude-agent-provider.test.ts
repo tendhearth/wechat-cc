@@ -104,6 +104,14 @@ describe('Claude native execution choice',()=>{
   const project={alias:'task',path:'/tmp'}
   const context={tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const,chatId:'task'}
   const options=()=> (sdk as unknown as {__test_last_options:()=>any}).__test_last_options()
+  it('oneoff disables cwd-based native auto memory while retaining project hard rules',async()=>{
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({settingSources:['project','local'],settings:{autoMemoryEnabled:true}})})
+    const session=await provider.spawn(project,{...context,ephemeral:true,oneoff:true})
+    expect(options().settings.autoMemoryEnabled).toBe(false)
+    expect(options().settingSources).toEqual(['project','local'])
+    expect(options().persistSession).toBe(false)
+    await session.close()
+  })
   it('discovers a bounded native catalog without prompt, tool, hook or session persistence',async()=>{
     const abortController=new AbortController()
     const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({abortController,mcpServers:{user:{command:'must-not-start'}},hooks:{},model:'cc-fallback'})})

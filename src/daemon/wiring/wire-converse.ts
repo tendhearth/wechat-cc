@@ -182,11 +182,12 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
         return { reply, speaker: 'notice' }
       }
     }
-    if (d.matterRecall) {
+    const isolated = synthetic.answerTarget?.kind === 'oneoff' || synthetic.answerTarget?.kind === 'clarify'
+    if (!isolated && d.matterRecall) {
       try { const block = await d.matterRecall(ownerChatId); if (block) synthetic.matters = block } catch { /* 事项读取失败不打断回合 */ }
     }
     // 话题 T2:App 那一轮不走入站管道(mw-recall 够不着),在进对话之前调一次;超时 / 出错 ⇒ 不加。
-    if (d.topicRecall && text.trim()) {
+    if (!isolated && d.topicRecall && text.trim()) {
       let timer: ReturnType<typeof setTimeout> | undefined
       try {
         const r = await Promise.race([d.topicRecall(ownerChatId, text), new Promise<null>(res => { timer = setTimeout(() => res(null), TOPIC_RECALL_BUDGET_MS) })])

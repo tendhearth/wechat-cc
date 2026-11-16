@@ -15,7 +15,8 @@ import { makeOwnerChatFileReader, ownerChatReadingEvent } from './owner-chat-rea
 import { makeCommandRegistry, yieldNumbersToOpenChoice } from '../commands/registry'
 import { makePermissionAnswer } from '../permission-answer'
 import { choiceTakes, type OpenChoice } from '../inbound/mw-task-reference'
-import { taskHandoffNames } from '../task-handoff-names'
+import { taskHandoffNames, answerTargetProviders, unavailableAnswerNames } from '../task-handoff-names'
+import { matterAnswerTarget, recordAnswerTarget } from '../inbound/answer-target'
 import { makeTaskCommand } from '../commands/task-command'
 import { join } from 'node:path'
 import { memoryFactsFor, recallFromMemory } from '../../features/memory'
@@ -493,6 +494,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
+    onSayTarget: ({ requestId, matterId }) => recordAnswerTarget(log, requestId, matterAnswerTarget(matterId)),
     ownerChatId,
     // 执行者叫什么(收敛清单 ⑥):唯一出处是 registry,三端只读 agentNames。
     executorName: (id: string) => boot.registry.namesOf(id).name,
@@ -707,6 +709,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     }}:{}),
     // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。
     route: {
+      providers: () => answerTargetProviders(boot.registry, id => {
+        const entry = boot.registry.get(id)
+        if (!entry || opts.workbench?.quotaExhausted(id)) return false
+        try { return !entry.opts.bin || entry.opts.bin() !== null } catch { return false }
+      }),
+      unavailableNames: () => unavailableAnswerNames(boot.registry),
       probes: {
         command: (ctx) => commandRegistry.probe(ctx.msg),
       },

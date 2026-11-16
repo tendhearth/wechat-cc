@@ -23,6 +23,8 @@ export interface ExecutorFacts {
   id: KnownProviderId
   /** 叫什么(收敛清单 ⑥,主人 10-21 定;两种 Gemini 都开时的「Gemini(账号)」在 core/provider-display-names)。 */
   names: ExecutorNames
+  /** 仅用于识别主人点名的常用别名，不改变显示名。 */
+  aliases?: readonly string[]
   /** 微信里切到它的词(/cc、/api …)。 */
   slash: string
   /** agent-config 里它读的模型字段。claude / codex 共用 `model`(只在它是全局默认时才算它的)。 */
@@ -52,9 +54,9 @@ export interface ExecutorFacts {
 export type ExecutorConfigField = 'openaiBaseUrl' | 'openaiModel' | 'geminiModel' | 'cursorModel'
 
 export const EXECUTOR_FACTS: Readonly<Record<KnownProviderId, ExecutorFacts>> = {
-  claude: { id: 'claude', names: { name: 'Claude', short: 'Claude', settings: 'Claude' }, slash: 'cc', modelField: 'model', setupHint: '安装 Claude Code 并在终端登录一次(claude)', endpoint: { host: 'api.anthropic.com', source: '官方 API 文档;未抓包' } },
+  claude: { id: 'claude', names: { name: 'Claude', short: 'Claude', settings: 'Claude' }, aliases: ['克劳德', 'Claude Code'], slash: 'cc', modelField: 'model', setupHint: '安装 Claude Code 并在终端登录一次(claude)', endpoint: { host: 'api.anthropic.com', source: '官方 API 文档;未抓包' } },
   codex: { id: 'codex', names: { name: 'Codex', short: 'Codex', settings: 'Codex' }, slash: 'codex', modelField: 'model', setupHint: '安装 codex CLI 并登录一次', endpoint: { host: 'api.openai.com', source: '官方 API 文档;未抓包(ChatGPT 账号登录时可能走 chatgpt.com,待核)' } },
-  cursor: { id: 'cursor', names: { name: 'Cursor', short: 'Cursor', settings: 'Cursor' }, slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)', detect: { binary: { name: 'cursor-agent', configKey: 'cursorAgentBin' } }, endpoint: { host: 'api2.cursor.sh', source: '抓包 2026-10-23:cursor-agent 2026.10.22 -p 一轮,连 api2.cursor.sh 与 api3.cursor.sh(另有几个遥测地址)' } },
+  cursor: { id: 'cursor', names: { name: 'Cursor', short: 'Cursor', settings: 'Cursor' }, aliases: ['cursor-agent'], slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)', detect: { binary: { name: 'cursor-agent', configKey: 'cursorAgentBin' } }, endpoint: { host: 'api2.cursor.sh', source: '抓包 2026-10-23:cursor-agent 2026.10.22 -p 一轮,连 api2.cursor.sh 与 api3.cursor.sh(另有几个遥测地址)' } },
   // 「/api」不是 /openai:这是主人自己的 API 端点(DeepSeek / Kimi / Qwen …),不绑哪家厂商。
   openai: { id: 'openai', names: { name: '自定义 AI 服务', short: 'API', settings: '自定义 AI 服务' }, slash: 'api', modelField: 'openaiModel', setupHint: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel', credentialEnv: ['WECHAT_OPENAI_API_KEY'], detect: { requiresConfig: ['openaiBaseUrl', 'openaiModel'] }, endpoint: { host: 'api.openai.com', source: '没配 openaiBaseUrl 时的缺省;实际几乎总是主人自配的网关' } },
   gemini: { id: 'gemini', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 密钥连接' }, slash: 'gemini', modelField: 'geminiModel', setupHint: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env', credentialEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'], detect: { requiresConfig: ['geminiModel'] }, endpoint: { host: 'generativelanguage.googleapis.com', source: 'Gemini API(密钥)官方端点;未抓包' } },

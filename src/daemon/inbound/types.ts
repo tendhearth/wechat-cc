@@ -6,6 +6,7 @@ import type { MatterOrigin } from '../../ports/matters'
 export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'command' | 'guard' | 'access' | 'health' | 'workbench'
 
 export interface InboundCtx {
+  target?: import('../../domain/answer-target').AnswerTarget
   readonly msg: InboundMsg
   readonly receivedAtMs: number
   readonly requestId: string

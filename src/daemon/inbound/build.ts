@@ -114,13 +114,13 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
     // Recall runs after every consuming middleware (only messages that will
     // reach dispatch pay the embed cost) and BEFORE llm-health/dispatch so
     // the <recall> element is on ctx.msg when dispatch formats the envelope.
-    makeMwRecall(d.recall),
+    skipWhen(ctx => ctx.target?.kind === 'oneoff' || ctx.target?.kind === 'clarify', makeMwRecall(d.recall)),
     // LLM health gate runs immediately BEFORE dispatch (the terminal
     // middleware where the LLM turn actually happens) — degraded LLM means
     // every inbound would otherwise drive one doomed API call per message
     // (unlike the wechat side: inbound still arrives fine when the LLM is
     // down, so this is where "hammering a failing API" actually happens).
-    makeMwLlmHealth(d.llmHealth),
+    skipWhen(ctx => ctx.target?.kind === 'oneoff' || ctx.target?.kind === 'clarify', makeMwLlmHealth(d.llmHealth)),
     makeMwDispatch(d.dispatch),
   ])
   return Object.assign(run, { appTurn })
