@@ -82,6 +82,13 @@ describe('formatInbound', () => {
     expect(formatInbound({ ...base, topics: undefined })).toBe(formatInbound(base))
   })
 
+  it('没把握就问:猜着对上的话题标 sure="no";对上名字的照旧', () => {
+    const base = { chatId: 'c', userId: 'u', userName: 'x', text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a', topics: '话题「bx」' }
+    expect(formatInbound({ ...base, topicsUnsure: true })).toContain('<topics sure="no" hint="猜着对上的话题,不一定是主人说的那件;要靠它回答前先问主人一句是不是这件">\n话题「bx」\n</topics>')
+    expect(formatInbound({ ...base, topicsUnsure: false })).toBe(formatInbound(base))
+    expect(formatInbound(base)).not.toContain('sure=')
+  })
+
   it('omits <recall> entirely when recall is absent, empty, or blank-only', () => {
     const base = { chatId: 'c', userId: 'u', userName: 'x', text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a' }
     expect(formatInbound(base)).not.toContain('<recall')

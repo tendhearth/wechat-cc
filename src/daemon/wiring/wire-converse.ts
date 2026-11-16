@@ -191,6 +191,7 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
         const r = await Promise.race([d.topicRecall(ownerChatId, text), new Promise<null>(res => { timer = setTimeout(() => res(null), TOPIC_RECALL_BUDGET_MS) })])
         if (r && r.block.trim()) {
           synthetic.topics = r.block
+          if (r.via === 'model') synthetic.topicsUnsure = true
           r.adopt?.(`app:${origin}:${synthetic.createTimeMs}`, [`app:${origin}:${synthetic.createTimeMs}:in`])
         }
       } catch { /* 调不出来就照常进对话 */ } finally { if (timer !== undefined) clearTimeout(timer) }
