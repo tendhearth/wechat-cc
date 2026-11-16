@@ -51,6 +51,6 @@ export function intentAnswerTarget(intent: Intent): AnswerTarget {
 }
 
 /** 白名单回执，绝不展开 ctx/msg 或解析结果（其中有正文）。 */
-export function recordAnswerTarget(log: (tag: string, line: string) => void, requestId: string, target: AnswerTarget): void {
-  log('ANSWER_TARGET', JSON.stringify({ requestId, kind: target.kind, ...('matterId' in target ? { matterId: target.matterId } : {}), ...('provider' in target && target.provider ? { provider: target.provider } : {}), reason: target.reason }))
+export function recordAnswerTarget(log: (tag: string, line: string) => void, requestId: string, target: AnswerTarget, originalRequestId?: string): void {
+  log('ANSWER_TARGET', JSON.stringify({ requestId, ...(originalRequestId && originalRequestId !== requestId ? { originalRequestId } : {}), kind: target.kind, ...('matterId' in target ? { matterId: target.matterId } : {}), ...('provider' in target && target.provider ? { provider: target.provider } : {}), reason: target.reason }))
 }

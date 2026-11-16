@@ -130,8 +130,17 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
    * 可能拿掉某家、网络可能断 —— 不信排队之前的结论(和「不信模式行的年份」同一个道理)。
    */
   async function dispatchInner(msg: InboundMsg): Promise<void> {
+    if (msg.answerRoute) {
+      if (msg.answerRoute.state !== 'pending') return
+      msg.answerTarget = Object.freeze({ ...msg.answerRoute.target, requestId: msg.answerRoute.requestId })
+      msg.answerRoute.state = 'submitted'
+    }
     const target = msg.answerTarget
     if (target?.kind === 'clarify') {
+      if (target.candidates?.length) {
+        await ctx.notice(msg.chatId, `这句要交给 ${target.candidates.map((p, i) => `${p.name}（${i + 1}）`).join(' 还是 ')}？还是我来答？`)
+        return
+      }
       const name = target.provider ? namesIn(deps.registry, target.provider).short : '点名的执行者'
       const reason = target.provider && !supportsOneoffAnswer(target.provider) ? '目前无法隔离本句代答所需的会话权限' : '目前不可用'
       await ctx.notice(msg.chatId, `${name} ${reason}，这句没有交给其他人。要改由 CC 来答吗？`)

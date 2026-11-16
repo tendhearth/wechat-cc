@@ -112,7 +112,7 @@ function routedDecision(intent: Intent): Decision | null {
 }
 
 /** 管家中间件 + 同一份状态上的只读探针(路由阶段用;null = 这句不是在说任务)。 */
-export type TaskReferenceMw = Middleware & { probe: (ctx: InboundCtx) => Promise<Intent | null> }
+export type TaskReferenceMw = Middleware & { probe: (ctx: InboundCtx) => Promise<Intent | null>; clearFocus: (chatId: string) => void }
 
 export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw {
   const now = deps.now ?? Date.now
@@ -277,6 +277,21 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
       watched.add(picked.id)
       try { await deps.watchTask(picked.id, msg.accountId) } catch { /* 提醒开不开不挡主要动作 */ }
     }
+    if (msg.answerRoute) {
+      if (msg.answerRoute.state !== 'pending') return
+      if (msg.answerRoute.target.kind !== 'matter' || msg.answerRoute.target.matterId !== picked.id) {
+        // watchTask 等待期间主人纠正了目标；原句交回共用对话出口，不能继续投旧事。
+        ctx.target = msg.answerRoute.target
+        msg.answerTarget = Object.freeze({ ...ctx.target, requestId: msg.answerRoute.requestId })
+        msg.text = effectiveText
+        ctx.intent = { kind: 'chat' }
+        ctx.consumedBy = undefined
+        await next()
+        return
+      }
+      // 旧工作台口没有独立的执行者接收确认，保守记「已提交」，不冒充送达。
+      msg.answerRoute.state = 'submitted'
+    }
     const reply = await deps.handleWechat(msg.chatId, cmd, identity)
     if (reply !== null && typeof reply === 'object') return
     const body = reply ?? '任务控制仅对已绑定的主人开放。'
@@ -288,5 +303,9 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
   }
   // choice-invalid 是唯一"判定说是、执行却放行"的分支(数字越界):路由阶段算作 chat,但判定照带,本体好把待选清掉。
   mw.probe = async ctx => { const d = await decide(ctx); return d ? { kind: d.kind === 'choice-invalid' ? 'chat' : 'task-reference', data: d } : null }
+  mw.clearFocus = chatId => {
+    focus.delete(chatId); pending.delete(chatId); takeover.delete(chatId); waitOffer.delete(chatId)
+    deps.noteChoice?.(chatId, null)
+  }
   return mw
 }

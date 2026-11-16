@@ -74,6 +74,8 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/admin-commands.ts': ['reply', 70], // +1 2026-10-23「放行规则关掉 / 打开」:回主人当面那一句
   'src/daemon/onboarding.ts': ['reply', 16],
   'src/daemon/inbound/mw-task-reference.ts': ['reply', 11],
+  // 主人当前这句的选答话者/纠正回话；只在入站 consume 内同步回答，不主动开口。
+  'src/daemon/inbound/answer-routing.ts': ['reply', 1],
   'src/daemon/mode-commands.ts': ['reply', 2],
   'src/daemon/inbound/mw-llm-health.ts': ['reply', 2],
   'src/daemon/commands/task-command.ts': ['reply', 2],

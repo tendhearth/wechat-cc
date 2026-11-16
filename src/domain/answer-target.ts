@@ -6,8 +6,15 @@ export type AnswerTarget = Readonly<
   | { kind: 'cc'; reason: string }
   | { kind: 'oneoff'; provider: string; reason: string }
   | { kind: 'matter'; matterId: string; reason: string }
-  | { kind: 'clarify'; provider?: string; reason: string }
+  | { kind: 'clarify'; provider?: string; candidates?: readonly { provider: string; name: string }[]; reason: string }
 >
+
+/** 仅进程内共享的投递回执。排队时允许纠正，提交后绝不自动重放。 */
+export interface AnswerRouteReceipt {
+  readonly requestId: string
+  target: AnswerTarget
+  state: 'pending' | 'submitted' | 'sent' | 'cancelled'
+}
 
 export const oneoffSessionAlias = (requestId: string): string => `__oneoff__:${requestId}`
 

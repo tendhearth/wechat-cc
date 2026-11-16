@@ -67,7 +67,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
     const missing = present.filter(([kind, on]) => on && !(kind in probes)).map(([kind]) => kind)
     if (missing.length) throw new Error(`inbound route: probe missing for ${missing.join(', ')}`)
   }
-  const route = d.route ? makeMwRoute({ ...d.route, probes }) : null
+  const route = d.route ? makeMwRoute({ ...d.route, probes, clearFocus: taskReference?.clearFocus ?? d.route.clearFocus }) : null
   // 第三步(c):消费者收成一张表(mw-consume);原链里夹在消费者中间的副作用站按意图跳过,语义不变:
   //   打字中 —— 原来在工作台命令之后,所以任务命令不发(「任务 …」现在是命令表第一条,但打字中在路由之前,仍按文字跳过);
   //   (网络守护 v2,2026-10-02:原来这里有个 guard 站,断网时连 y/n、取消、换模型都一并吞掉。
@@ -81,7 +81,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
   const appTurn: AppTurn = async (ctx) => {
     let consumed = true
     const fell: Middleware = async () => { consumed = false }
-    await compose([...(route ? [route] : []), consume, fell])(ctx)
+    await compose([...(route ? [route, route.consume] : []), consume, fell])(ctx)
     return { consumed }
   }
   const run = compose([
@@ -110,6 +110,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
     makeMwActivity(d.activity),
     makeMwMilestone(d.milestone),
     makeMwWelcome(d.welcome),
+    ...(route ? [route.consume] : []),
     consume,
     // Recall runs after every consuming middleware (only messages that will
     // reach dispatch pay the embed cost) and BEFORE llm-health/dispatch so

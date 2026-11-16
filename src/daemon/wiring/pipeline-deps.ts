@@ -39,6 +39,7 @@ import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterRecall, makeTopicRecall } from '../threads/recall'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeCheapJudge, type TaskCandidate } from '../../features/workbench'
+import { makeCheapAnswerJudge } from '../inbound/answer-fallback'
 import { scopedSend } from '../inbound/reply-scope'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
@@ -709,6 +710,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     }}:{}),
     // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。
     route: {
+      judge: async input => {
+        const fast = turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log)
+        return fast ? makeCheapAnswerJudge(fast)(input) : null
+      },
+      sendMessage: (chatId, text) => send(chatId, text, { source: 'workbench' }),
       providers: () => answerTargetProviders(boot.registry, id => {
         const entry = boot.registry.get(id)
         if (!entry || opts.workbench?.quotaExhausted(id)) return false
