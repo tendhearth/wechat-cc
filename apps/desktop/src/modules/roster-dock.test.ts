@@ -172,3 +172,13 @@ it('旧终端首轮请求迟到后销毁，不能覆盖新全屏窗口的草稿'
  wide=true;await dock.open({kind:'terminal',id:'late-session'})
  expect((document.querySelector('[data-terminal-input]') as HTMLTextAreaElement).value).toBe('B')
 })
+it('直通的重工具先展开唯一事项层再打开原详情',async()=>{
+ const {layer,expand}=setup()
+ layer.innerHTML='<details id="wb-task-info"><summary>任务详情</summary></details><button data-dock-tool="info">任务详情</button>'
+ await dock!.open({kind:'matter',id:'old'})
+ ;(layer.querySelector('[data-dock-tool]') as HTMLButtonElement).click()
+ await Promise.resolve();await Promise.resolve()
+ expect(expand).toHaveBeenCalledWith({kind:'matter',id:'old'})
+ expect((layer.querySelector('#wb-task-info') as HTMLDetailsElement).open).toBe(true)
+ expect(layer.parentElement?.tagName).toBe('MAIN')
+})

@@ -163,7 +163,7 @@ function renderSkeleton(root, deps) {
     <div class="converse-compose">
       <div id="converse-images" class="converse-images" aria-label="要一起发的图片" hidden></div>
       <p id="converse-image-note" class="converse-image-note" role="status" hidden></p>
-      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="跟 CC 说点什么…可以拖进截图或文件" rows="2"></textarea>
+      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="对 CC 说…" rows="2"></textarea>
       <div id="converse-recording" class="converse-recording" hidden>
         <button id="converse-cancel-recording" type="button">取消</button>
         <span class="converse-recording-dot" aria-hidden="true"></span>

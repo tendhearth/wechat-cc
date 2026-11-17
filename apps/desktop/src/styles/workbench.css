@@ -606,3 +606,6 @@
 .wb-ledger dt { color:var(--wb-muted); font-size:12px; overflow-wrap:anywhere; }
 .wb-ledger dd { margin:0; font-size:13px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
 .wb-ledger small { color:var(--wb-muted); }
+
+/* The compact heading is shown only by the roster dock host. */
+.roster-direct-heading, .roster-relay { display:none; }

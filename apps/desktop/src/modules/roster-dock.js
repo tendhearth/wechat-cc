@@ -63,6 +63,13 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
   try{await v1(call,V1.matter.get,{query:{id:item.id}})}catch(error){if(alive&&generation===ticket&&/404|not_found/.test(String(error)))missing()}finally{checking=false}
  },3000)
  const heavy=(/** @type {Event} */event)=>{
+  const tool=event.target instanceof Element?event.target.closest('[data-dock-tool]'):null
+  if(tool instanceof HTMLElement){
+   event.preventDefault();event.stopImmediatePropagation()
+   const action=tool.dataset.dockTool
+   void unfold().then(()=>{if(action==='review'||action==='info'){const target=layer.querySelector(action==='review'?'#wb-review':'#wb-task-info');if(target instanceof HTMLDetailsElement)target.open=true}})
+   return
+  }
   const button=event.target instanceof Element?event.target.closest('summary,[data-action],.wb-artifact[data-artifact-id]'):null
   if(!(button instanceof HTMLElement)||!layer.contains(button)||!current)return
   const details=button.tagName==='SUMMARY'?button.parentElement:null

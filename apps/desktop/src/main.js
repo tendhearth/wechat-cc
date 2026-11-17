@@ -1709,7 +1709,7 @@ async function boot() {
   if(rosterAside&&matterLayer)rosterDock=createRosterDock({aside:rosterAside,layer:matterLayer,call:invokeWorkbenchApi,wide:()=>window.innerWidth>=1080,
     openTask:async id=>{initWorkbenchPage(deps);await openWorkbenchTask(id)},
     onClose:()=>stopWorkbenchPolling(),onChange:setDockedMatter,
-    onExpand:async item=>{if(item.kind==='terminal')await openConversationTerminal(invokeWorkbenchApi,item.id);else await openConversationWork(invokeWorkbenchApi,item.id,async id=>{switchPane('workbench');await openWorkbenchTask(id)})}})
+    onExpand:async item=>{rosterAside.removeAttribute('data-open');document.getElementById('topbar-roster')?.setAttribute('aria-expanded','false');if(item.kind==='terminal')await openConversationTerminal(invokeWorkbenchApi,item.id);else await openConversationWork(invokeWorkbenchApi,item.id,async id=>{switchPane('workbench');await openWorkbenchTask(id)})}})
   window.addEventListener('pagehide',()=>rosterDock?.destroy(),{once:true})
   const rosterRoot = document.getElementById('roster-list')
   if (rosterRoot) {
@@ -1718,6 +1718,12 @@ async function boot() {
       const button=document.getElementById('topbar-roster');if(button)button.textContent=`在做 ${items.length}`
     }})
     window.addEventListener('pagehide',()=>roster.destroy(),{once:true})
+  }
+  const connectionsDetails=document.querySelector('.cc-home-details')
+  if(connectionsDetails){
+    document.getElementById('dash-global-rail')?.append(connectionsDetails)
+    const summary=connectionsDetails.querySelector('summary')
+    if(summary){summary.replaceChildren();const presence=document.getElementById('topbar-presence');if(presence)summary.append(presence)}
   }
   document.getElementById('topbar-roster')?.addEventListener('click',()=>{
     const aside=document.getElementById('roster-aside'),button=document.getElementById('topbar-roster')
