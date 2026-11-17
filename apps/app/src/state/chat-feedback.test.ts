@@ -169,3 +169,79 @@ for (const lang of ['en', 'zh-Hans'] as const) it(`explains unavailable original
   expect(byId('chat-att-file')).toBeNull()
   expect(byId('chat-att-image')).toBeNull()
 })
+
+describe('reply attribution avatars', () => {
+  const reply = (id: string, metadata: Partial<ChatPageT['messages'][number]> = {}): ChatPageT['messages'][number] => ({ id, role: 'cc', kind: 'text', text: id, at: 1, source: 'phone', truncated: false, ...metadata })
+  const row = (text: string) => [...byId('chat-list').querySelectorAll('section')].find(s => s.textContent?.includes(text))!
+  const avatar = (text: string) => row(text).querySelector('[data-testid="reply-avatar"]')
+
+  async function attributedScreen(messages: ChatPageT['messages'], namesFail = false, extras: Partial<Backend> = {}) {
+    const backend = makeDemoBackend({ lang: 'en' })
+    const model = await backend.chatModel()
+    backend.chat = async () => ({ ...empty(), messages })
+    backend.chatModel = vi.fn(async () => {
+      if (namesFail) throw new BackendError('offline')
+      return { ...model, provider: 'openai', providers: [{ ...model.providers[0]!, id: 'claude', name: 'Claude' }, { ...model.providers[0]!, id: 'codex', name: 'Codex' }, { ...model.providers[0]!, id: 'openai', name: 'My gateway' }] }
+    })
+    Object.assign(backend, extras)
+    await act(() => root.render(withProviders(createElement(Chat), { backend, lang: 'en' }))); await flush()
+    return backend
+  }
+
+  it('shows exactly one shared monochrome avatar per actual executor, with settings names and a generic compatible-service mark', async () => {
+    await attributedScreen([
+      reply('first reply', { speaker: 'agent', provider: 'claude' }),
+      reply('second reply', { speaker: 'agent', provider: 'codex' }),
+      reply('gateway reply', { speaker: 'agent', provider: 'openai', model: 'Claude' }),
+      reply('unknown reply', { speaker: 'agent', provider: 'custom' }),
+    ])
+    for (const [text, name, glyph] of [['first reply', 'Claude', 'claude'], ['second reply', 'Codex', 'codex']] as const) {
+      const mark = avatar(text)!
+      expect(mark?.getAttribute('role')).toBe('image')
+      expect(mark?.getAttribute('aria-label')).toBe(name)
+      expect(mark?.querySelectorAll('img')).toHaveLength(1)
+      expect(mark?.querySelector('img')?.getAttribute('src')).toContain(`/agents/${glyph}.png`)
+      expect(JSON.parse(mark.querySelector('img')!.getAttribute('data-style')!).tintColor).toBe(color.ink)
+      expect(row(text).textContent).not.toContain('CC')
+      expect(row(text).textContent).not.toContain(name)
+      expect(row(text).textContent).toContain('Phone')
+    }
+    expect(avatar('gateway reply')?.getAttribute('aria-label')).toBe('My gateway')
+    expect(avatar('gateway reply')?.querySelector('img')).toBeNull()
+    expect(avatar('gateway reply')?.textContent).toBe('A')
+    expect(avatar('unknown reply')?.getAttribute('aria-label')).toBe('custom')
+    expect(avatar('unknown reply')?.textContent).toBe('A')
+  })
+
+  it('preserves CC, notices, owners and old records without inferring attribution from settings, model or reply parts', async () => {
+    const messages = [
+      reply('CC answer', { speaker: 'cc', provider: 'claude', replyParts: [{ text: 'part', speaker: 'agent', provider: 'codex' }] }),
+      reply('notice message', { speaker: 'notice', provider: 'codex' }),
+      reply('legacy provider', { provider: 'claude', model: 'Claude' }), reply('legacy message'),
+      reply('owner message', { role: 'me', speaker: 'agent', provider: 'codex' }),
+      reply('missing provider', { speaker: 'agent' }), reply('blank provider', { speaker: 'agent', provider: '  ' }),
+    ]
+    await attributedScreen(messages)
+    for (const message of messages) expect(avatar(message.text)).toBeNull()
+    expect(row('CC answer').textContent).toContain('CC')
+    expect(row('legacy message').textContent).toContain('CC')
+  })
+
+  it('keeps the transcript and provider-id accessible name when model settings cannot load', async () => {
+    await attributedScreen([reply('offline reply', { speaker: 'agent', provider: 'claude' })], true)
+    expect(avatar('offline reply')?.getAttribute('aria-label')).toBe('claude')
+    expect(row('offline reply').textContent).toContain('offline reply')
+  })
+
+  it('retains per-reply attribution for live events, brought-back results and attachment-only replies', async () => {
+    await attributedScreen([reply('', { speaker: 'agent', provider: 'codex', attachments: [{ kind: 'file', name: 'output.txt' }] })], false, {
+      conversationEvents: async () => ({ running: { turnId: 'turn', runId: 'run' }, events: [{ id: 'event', turnId: 'turn', cursor: 1, kind: 'agent_message', text: 'streamed reply', createdAt: 2, speaker: 'agent', provider: 'claude' }], cursor: 1 }),
+      conversationWork: async () => ({ references: [], results: [{ id: 'result', matterId: 'matter', turnId: 'previous', messageId: null, text: 'brought back reply', createdAt: 3, speaker: 'agent', provider: 'codex' }] }),
+    })
+    expect(avatar('streamed reply')?.getAttribute('aria-label')).toBe('Claude')
+    expect(avatar('brought back reply')?.getAttribute('aria-label')).toBe('Codex')
+    expect(avatar('output.txt')?.getAttribute('aria-label')).toBe('Codex')
+    expect(row('streamed reply').textContent).not.toContain('CC')
+    expect(row('brought back reply').textContent).not.toContain('CC')
+  })
+})

@@ -7,6 +7,7 @@ import { deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplie
 import { bytesToBase64, uploadImages, withImageMarker, type PickedImage } from './image-upload'
 import { useQuery, useSubmit } from './hooks'
 import { useChatUpdates } from './useChatUpdates'
+import { replyAttributionFields } from '@wechat-cc/protocol'
 
 export type ChatSendOutcome = 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'refused' | 'tooLong' | 'imagesGone' | 'imagesUnsupported'
 const NO_JOB = { pending: null, failed: null } as const
@@ -189,5 +190,5 @@ export function useChat(): {
 }
 
 function windowPage(page: ChatPageT, window: import('zod').infer<typeof import('@wechat-cc/protocol').ConversationWindow>): ChatPageT {
-  return { ...page, hasMore: !!window.earlier, nextBefore: window.earlier, messages: window.messages.map(m => ({ id: m.messageId, role: m.kind === 'user' ? 'me' as const : 'cc' as const, kind: 'text', text: m.text, truncated: !!m.truncated, at: m.createdAt, source: m.source === 'desktop' || m.source === 'phone' ? m.source : 'wechat', ...(m.replyExtras && typeof m.replyExtras==='object' ? m.replyExtras : {}) })) }
+  return { ...page, hasMore: !!window.earlier, nextBefore: window.earlier, messages: window.messages.map(m => ({ id: m.messageId, role: m.kind === 'user' ? 'me' as const : 'cc' as const, kind: 'text', text: m.text, truncated: !!m.truncated, at: m.createdAt, source: m.source === 'desktop' || m.source === 'phone' ? m.source : 'wechat', ...(m.replyExtras && typeof m.replyExtras==='object' ? m.replyExtras : {}), ...replyAttributionFields(m) })) }
 }
