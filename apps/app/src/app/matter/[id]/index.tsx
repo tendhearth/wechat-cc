@@ -22,7 +22,9 @@ import { Icon } from '../../../ui/Icon'
 import { Dot } from '../../../ui/Dot'
 import { MessageText } from '../../../ui/Markdown'
 import { InputReceipts } from '../../../ui/InputReceipts'
-import { SayBar } from '../../../ui/SayBar'
+import { MatterDirectComposer } from '../../../ui/DirectComposer'
+import { DirectHeader } from '../../../ui/DirectHeader'
+import { directHeaderView } from '../../../view/direct-header'
 import { Expansion } from '../../../ui/Sheet'
 import { StatusPill } from '../../../ui/StatusPill'
 import { componentAppearance, radius, space } from '../../../ui/tokens'
@@ -131,9 +133,12 @@ export default function Matter() {
     lastPhase.current = phase
   }, [verKey, ver, refreshDetail, refreshInsight, refreshChanges])
 
+  const scrollRef = useRef<ScrollView>(null)
+  const [moreOpen, setMoreOpen] = useState(0)
+  const direct = detail.data ? directHeaderView(detail.data, lang) : null
   const header = (
     <>
-      <TopBar title={t(lang, 'home.matter')} onBack={() => router.back()} />
+      {direct ? <DirectHeader view={direct} onMore={()=>{setMoreOpen(n=>n+1);scrollRef.current?.scrollToEnd({animated:true})}} onProject={direct.project?()=>router.push('/topics'):undefined} /> : <TopBar title={t(lang, 'home.matter')} onBack={() => router.canGoBack()?router.back():router.replace('/')} />}
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
     </>
   )
@@ -261,8 +266,8 @@ export default function Matter() {
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
       {header}
-      <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
-        <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
+      <ScrollView ref={scrollRef} contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
+
         <View testID="progress-status"><StatusPill status={v.status} label={taskDetailLabel(d.task,v.pendingCount,lang,v.status)} /></View>
         {untilRow ? (
           // 直到…通过(10-20):状态在前、不截(命令再长也看得见结果);命令等宽,这里不是确认处,可以截;整句给读屏
@@ -353,7 +358,7 @@ export default function Matter() {
           </View>
         </DetailSection>
 
-        <DetailSection key={`process:${id}`} testID="progress-process" title={conversationText(lang, 'process')}>
+        <DetailSection key={`process:${id}`} testID="progress-process" openRequest={moreOpen} title={conversationText(lang, 'process')}>
           <View testID="progress-conversation" style={{ gap: space.m }}>
             <Txt role="caption" tone="inkSoft" accessibilityRole="header">{t(lang, 'progress.conversation')}</Txt>
             {conv.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noEvents')}</Txt> : null}
@@ -505,7 +510,7 @@ export default function Matter() {
         </View>
       )}
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
-        <SayBar testID="progress-say" placeholder={t(lang, 'progress.continueSay')} onPress={() => router.push(`/compose?matter=${encodeURIComponent(id)}`)} />
+        <MatterDirectComposer key={id} id={id} view={direct!} />
       </View>
 
       {rewindOpen && turn?.artifactId ? (
@@ -539,9 +544,10 @@ export default function Matter() {
 }
 
 /** Stateful review editors survive collapsing; a new matter or change artifact starts fresh. */
-function DetailSection({ title, testID, children, keepMounted = false }: { title: string; testID: string; children: ReactNode; keepMounted?: boolean }) {
+function DetailSection({ title, testID, children, keepMounted = false, openRequest = 0 }: { title: string; testID: string; children: ReactNode; keepMounted?: boolean; openRequest?: number }) {
   const { c } = useTheme()
   const [open, setOpen] = useState(false)
+  useEffect(()=>{if(openRequest)setOpen(true)},[openRequest])
   return <View>
     <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={title} accessibilityState={{ expanded: open }}
       onPress={() => setOpen(v => !v)} style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: space.m }}>

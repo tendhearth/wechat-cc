@@ -14,7 +14,7 @@ export function RosterStrip() {
   return <View testID="roster-strip" style={{flexDirection:'row',alignItems:'center',paddingHorizontal:space.l,paddingVertical:space.s,borderBottomWidth:1,borderBottomColor:c.hair}}>
     {view.avatars.map((a,i) => <Pressable key={a.key} testID={`roster-avatar-${i}`} accessibilityRole="button" accessibilityLabel={a.label} onPress={()=>router.push(rosterHref(roster.items.find(r=>r.key===a.key)!) as never)} style={{minWidth:44,minHeight:44,justifyContent:'center',alignItems:'center'}}>
       {a.agents.length > 1 ? <View style={{width:40,height:40}}>
-        <View style={{position:'absolute',left:0,top:0,opacity:0.5}}><AgentAvatar id={a.agents[1]!} size={26} /></View>
+        <View style={{position:'absolute',left:0,top:0,opacity:0.5}}><AgentAvatar id={a.agents[1]!} size={26} border="hair" /></View>
         <View style={{position:'absolute',right:0,bottom:0}}><AgentAvatar id={a.current} size={30} border={a.waiting?'accent':'ink'} borderWidth={a.waiting?2:1} /></View>
       </View> : <AgentAvatar id={a.current} size={40} border={a.waiting?'accent':'hair'} borderWidth={a.waiting?2:1} />}
     </Pressable>)}

@@ -41,7 +41,8 @@ import { useWork } from '../state/useWork'
 import type { HomeView } from '../view/home'
 import { useRoster } from '../state/roster'
 import { conversationItems } from '../view/conversation-work'
-import { isMatterArchived } from '../view/status'
+import { rosterRow } from '../view/roster-strip'
+import { statusOfMatter, isMatterArchived } from '../view/status'
 import { newReferences, rememberReference, useReferences } from '../state/conversation-references'
 import { DelegationMessage } from '../ui/DelegationMessage'
 import { RosterStrip } from './RosterStrip'
@@ -159,9 +160,9 @@ export default function Chat() {
   const allMatters = [...new Map([...(history.data ?? []), ...work.matters].map(m => [m.id, m])).values()]
   const visibleMatters = allMatters.map(m => references.includes(`matter:${m.id}`) && isMatterArchived(m) ? { ...m, status: 'done' as const, archivedAt: null } : m)
   const roster = useRoster()
-  const workView: HomeView = { waitingUnknown: roster.stale, actionableWaiting: [], moreCount: 0, groups: [{ key: 'working', title: '', rows: visibleMatters.map(m => ({
-    id:m.id,source:'matter',href:`/matter/${encodeURIComponent(m.id)}`,title:m.title,caption:null,detail:null,note:null,status:m.state==='working'?'working':m.state==='waiting'?'waiting':m.state==='failed'?'failed':m.state==='cancelled'?'stopped':m.state==='done'?'done':'replied',pendingRequestId:null,agents:m.agents??[],agentNames:m.agentNames,origin:null,updatedAt:m.updatedAt,
-  })) }] }
+  const workView: HomeView = { waitingUnknown: roster.stale, actionableWaiting: [], moreCount: 0, groups: [{ key: 'working', title: '', rows: [...visibleMatters.map(m => ({
+    id:m.id,source:'matter',href:`/matter/${encodeURIComponent(m.id)}`,title:m.title,caption:null,detail:null,note:null,status:statusOfMatter(m,null,0),pendingRequestId:null,agents:m.agents??[],agentNames:m.agentNames,origin:null,updatedAt:m.updatedAt,
+  } as import('../view/home').HomeRow)), ...roster.items.filter(i=>i.kind==='terminal').map(i=>rosterRow(i,!roster.stale))] }] }
   const companion = useCompanion()
   const card = companion.home ? companionCard(companion.home.events, companion.home.seenUntil, Date.now(), companion.localSeen) : null
   const items = conversationItems(chat.bubbles, workView, allMatters, chat.page?.matterId, references, newReferences(backend),new Map((durableWork.data?.references??[]).flatMap(r=>r.messageId?[[r.matterId,r.messageId] as const]:[])))

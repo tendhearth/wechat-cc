@@ -165,6 +165,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     ]
     portfolio.notes=[{id:1,matterId:IDS.portfolio,runId:'demo-assets',author:'codex',kind:'note',text:lastLang==='zh-Hans'?'素材在 assets/portfolio/，沿用浅色版。':'Assets are in assets/portfolio/. Use the light version.',createdAt:n-300_000},
       {id:2,matterId:IDS.portfolio,runId:'demo-assets',author:'codex',kind:'artifact',text:'2 files · assets/portfolio/hero.webp · demo123 · ~/Projects/portfolio',createdAt:n-300_000}]
+    const notes = map.get(IDS.notes)!.detail
+    notes.agentRuns = ['codex', 'claude', 'codex'].map((executor, position) => ({matterId:IDS.notes,runId:`demo-notes-${position}`,executor,brief:'',position,status:position===0?'completed':position===1?'running':'queued',createdAt:n-DAY,endedAt:position===0?n-DAY:null}))
+    notes.runId = 'demo-notes-1'
+    notes.matter.agents = ['claude', 'codex']
     return { map, ids }
   }
   function seedChat() {
@@ -308,12 +312,12 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return () => { set!.delete(cb) }
     },
     async roster() {
-      const ids = [IDS.portfolio, IDS.notes, IDS.trip, IDS.report]
+      const ids = [IDS.portfolio, IDS.trip, IDS.notes, IDS.report]
       return { version: 'demo-roster:1', items: ids.map((id, i) => ({
         key: `matter:${id}`, kind: 'matter' as const, id, title: entries.get(id)!.detail.matter.title,
         project: 'Tendhearth CC', group: (['waiting', 'working', 'working', 'back'] as const)[i]!,
         status: (['waiting', 'working', 'working', 'done'] as const)[i]!,
-        agents: i === 2 ? [{ id: 'codex', current: true }, { id: 'claude', current: false }] : [{ id: i === 1 ? 'codex' : 'claude', current: true }],
+        agents: i === 2 ? [{ id: 'claude', name: demoName('claude'), current: true }, { id: 'codex', name: demoName('codex'), current: false }] : [{ id: i === 1 ? 'codex' : 'claude', name: demoName(i === 1 ? 'codex' : 'claude'), current: true }],
         ...(i === 2 ? { relay: { index: 2, total: 3 } } : {}),
         quiet: false, updatedAt: now(), unseen: i === 3,
       })) }

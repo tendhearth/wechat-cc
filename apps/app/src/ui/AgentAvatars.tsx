@@ -25,8 +25,9 @@ const RING = 2
 
 function Disc({ size, children, border, width = 1 }: { size: number; children: ReactNode; border?: 'ink' | 'hair' | 'accent'; width?: number }) {
   const { c } = useTheme()
+  const halo = border ? 0 : RING
   return (
-    <View style={{ width: size + RING * 2, height: size + RING * 2, borderRadius: size, backgroundColor: c.paper, alignItems: 'center', justifyContent: 'center' }}>
+    <View style={{ width: size + halo * 2, height: size + halo * 2, borderRadius: size, backgroundColor: c.paper, alignItems: 'center', justifyContent: 'center' }}>
       <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: c.rail, borderWidth: width, borderColor: c[border ?? 'hair'], alignItems: 'center', justifyContent: 'center' }}>
         {children}
       </View>
