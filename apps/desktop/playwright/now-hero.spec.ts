@@ -184,15 +184,18 @@ test('late shared history only updates the bubble; visible local pending can rec
   // The authoritative client snapshot on return must also consume a reply that already arrived in chat.
   await page.locator(stage).evaluate(el => {
     ;(window as any).__hiddenReplyBehaviors = []
-    new MutationObserver(records => { for (const r of records) (window as any).__hiddenReplyBehaviors.push(r.oldValue, el.getAttribute('data-behavior')) }).observe(el, { attributes: true, attributeFilter: ['data-behavior'], attributeOldValue: true })
+    new MutationObserver(records => { const seen=(window as any).__hiddenReplyBehaviors; for (const b of [...records.map(r=>r.oldValue),el.getAttribute('data-behavior')]) if(b&&seen.at(-1)!==b)seen.push(b) }).observe(el, { attributes: true, attributeFilter: ['data-behavior'], attributeOldValue: true })
   })
   deliver = undefined as any
   await page.locator('#converse-input').fill('留在对话里等这轮回复'); await page.locator('#converse-send').click()
   await expect.poll(() => typeof deliver).toBe('function'); await clickNav(page,'recollections'); deliver()
   await expect(page.locator('#converse-send')).toBeEnabled()
-  await clickNav(page,'overview')
+  await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'receive')
+  await expect(page.locator('.now-bubble')).not.toBeVisible()
+  await expect(page.locator('#converse-input')).not.toBeFocused()
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'idle')
-  expect(await page.evaluate(() => (window as any).__hiddenReplyBehaviors)).not.toContain('receive')
+  await clickNav(page,'overview')
+  expect(await page.evaluate(() => (window as any).__hiddenReplyBehaviors.filter((b:string)=>b==='receive').length)).toBe(1)
   expect(await page.evaluate(() => (window as any).__hiddenReplyBehaviors)).not.toContain('done')
 })
 
@@ -260,12 +263,17 @@ for (const recovery of ['pane', 'system']) test(`${recovery} recovery consumes a
       for (const b of [...records.map(r => r.oldValue), el.getAttribute('data-behavior')]) if (b && seen.at(-1) !== b) seen.push(b)
     }).observe(el, { attributes: true, attributeFilter: ['data-behavior'], attributeOldValue: true })
   })
-  if (recovery === 'pane') await clickNav(page,'overview')
-  else await page.emulateMedia({ reducedMotion: 'no-preference' })
+  if (recovery === 'system') await page.emulateMedia({ reducedMotion: 'no-preference' })
   await expect(page.locator(stage)).not.toHaveClass(/pet-paused|pet-motion-reduced/)
   phase = 'replied'; hold = false; release()
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'idle')
-  expect(await page.evaluate(() => (window as any).__recoveryBehaviors)).not.toContain('done')
+  if(recovery==='pane') {
+    await expect.poll(() => page.evaluate(() => (window as any).__recoveryBehaviors.filter((b:string)=>b==='done').length)).toBe(1)
+    await expect(page.locator('.now-bubble')).not.toBeVisible()
+    await expect(page.locator('#converse-input')).not.toBeFocused()
+  } else expect(await page.evaluate(() => (window as any).__recoveryBehaviors)).not.toContain('done')
+  if(recovery==='pane')await clickNav(page,'overview')
+  await page.evaluate(() => { (window as any).__recoveryBehaviors.length = 0 })
   phase = 'working'; await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'working')
   phase = 'replied'
   await expect.poll(() => page.evaluate(() => (window as any).__recoveryBehaviors.filter((b: string) => b === 'done').length)).toBe(1)

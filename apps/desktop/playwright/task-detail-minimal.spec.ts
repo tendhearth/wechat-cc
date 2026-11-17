@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url'
 
 // Actual desktop renderer/controller/styles against isolated synthetic responses.
 const source=fileURLToPath(new URL('../src/',import.meta.url))
-const fixture=`<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/fonts.css"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/styles/workbench.css"><style>html,body{margin:0;height:100%;overflow:hidden}#workbench-root{height:100%}</style></head><body><div id="workbench-root"></div><script type="module">
+const fixture=`<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/fonts.css"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/shared/agent-avatars.css"><link rel="stylesheet" href="/styles/workbench.css"><style>html,body{margin:0;height:100%;overflow:hidden}#workbench-root{height:100%}</style></head><body><div id="workbench-root"></div><script type="module">
 import {initWorkbenchPage,stopWorkbenchPolling} from '/modules/workbench.js'
 const task={id:'A',title:'整理访谈，准备交付',path:'/synthetic/project',providerId:'codex',status:'running',phase:'working',createdAt:1,updatedAt:2,error:null}
 const other={...task,id:'B',title:'已保存的访谈记录',status:'completed',phase:'replied'}
