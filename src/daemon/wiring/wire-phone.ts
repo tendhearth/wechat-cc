@@ -49,7 +49,7 @@ export interface WirePhoneDeps {
   ownerChatId(): string | null
   matterActivity: ReturnType<typeof makeMatterActivity> | null
   companionConverse: CompanionConverse
-  roster?: ReturnType<typeof import('../../features/roster/reader').makeRosterReader> | null
+  roster?: import('../../ports/roster').RosterReader | null
   mattersService: MattersService | null
   memoryNightly: MemoryNightlyRuntime
   /** CC 开口那道门:工作台 / 终端会话的原生推送先问它(speech/push-gate.ts)。 */

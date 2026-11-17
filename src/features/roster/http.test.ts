@@ -10,7 +10,7 @@ afterEach(async()=>{for(const fn of cleanups.splice(0).reverse())await fn()})
 it('真实 HTTP 与手机别名传递 ETag，device 可读、link 被拒',async()=>{
  const stateDir=mkdtempSync(join(tmpdir(),'roster-http-')); cleanups.push(()=>rmSync(stateDir,{recursive:true,force:true}))
  const roster=makeRosterReader({matters:{list:()=>[]},terminals:()=>[],seen:()=>null})
- const api=createInternalApi({stateDir,daemonPid:1,roster});cleanups.push(()=>api.stop())
+ const api=createInternalApi({stateDir,daemonPid:1});api.provide({roster});cleanups.push(()=>api.stop())
  const started=await api.start(),token=readFileSync(started.operatorTokenFilePath,'utf8').trim()
  const url=`http://127.0.0.1:${started.port}/v1/roster`
  const first=await fetch(url,{headers:{authorization:`Bearer ${token}`}})

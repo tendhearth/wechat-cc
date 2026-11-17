@@ -6,12 +6,17 @@ import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
 import type { MatterStore } from '../../ports/matters'
 import type { CliSessionView } from '../../ports/cli-session'
 import type { MatterSeen } from '../../adapters/store/matter-seen'
-import type { WorkbenchService } from '../workbench'
-import { phoneCliSession } from '../terminal/phone-sessions'
 
 export interface RosterReaderDeps {
   matters: Pick<MatterStore, 'list'>
-  workbench?: Pick<WorkbenchService, 'list' | 'attention' | 'detail'>
+  workbench?: {
+    list(query: {archived:'exclude';limit:number}): {tasks:Array<{id:string;status:string;phase?:string}>}
+    attention(): {tasks:Array<{id:string}>}
+    detail(id:string): {
+      permissions:Array<{id:string;tool:string;description:string;createdAt:number}>
+      questions:Array<{id:string;questions:Array<{question:string}>;createdAt:number}>
+    }
+  }
   terminals: () => CliSessionView[]
   seen: MatterSeen
   relay?: (matterId: string) => { index: number; total: number; currentAgent: string } | null
@@ -55,7 +60,10 @@ export function makeRosterReader(deps: RosterReaderDeps) {
     // 挂在被筛掉 / 归档的事下的会话也不单列。
     const hidden = new Set(all.filter(m => !matters.some(v => v.id === m.id)).map(m => m.id))
     const terminals = deps.terminals().filter(t => !t.matter_id || (!excluded.has(t.matter_id) && !hidden.has(t.matter_id)))
-      .map(t => ({...phoneCliSession(t), ...(deps.executorName ? {displayName:deps.executorName(t.source)} : {})}))
+      .map(t => ({session_id:t.session_id,code:t.code,source:t.source,status:t.status,
+        project:basename(t.project),last_summary:t.last_summary,last_event_at:t.last_event_at,
+        ...(t.matter_id?{matter_id:t.matter_id}:{}),pending:t.pending?{since:t.pending.since}:null,
+        ...(deps.executorName ? {displayName:deps.executorName(t.source)} : {})}))
     const items = buildRoster({matters,tasks,pending,relays,terminals,seen:deps.seen,now:deps.now?.() ?? Date.now()})
     const version = createHash('sha256').update(JSON.stringify(items)).digest('hex').slice(0,16)
     return {items,version}

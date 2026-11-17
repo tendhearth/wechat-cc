@@ -101,6 +101,7 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: [
       // 主人 2026-11-16 授权桌面一键接入：只新增元数据/白名单计划，终端仍由原生打开；不开放 phone/link/session。
       'GET /v1/llm/setup', 'POST /v1/llm/setup',
+      'GET /v1/roster', // 名单只给 operator 与配对设备。
       'POST /v1/cli/attach', 'POST /v1/cli/detach', // 主人挂摘终端参与；会话还须一次性确认卡。
       'GET /v1/matter/notes', // Matter notebook: authenticated owner or local operator only.
       'POST /v1/phone/enable-relay', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics', 'POST /v1/matter/seen', 'GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...BUTLER_CHECKUP, ...P3E_MATTER_ACTIONS, ...SHARE_A_MATTER, 'GET /v1/matter/permission-script'], federation: [], selftest: [], link: [] }
@@ -118,7 +119,7 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     expect(sorted(phoneSide(LINK_ROUTES))).toEqual(snap.LINK_ROUTES)
     // 这两份不是路由:整份比
     expect([...LAN_ONLY_OPS].sort()).toEqual(snap.LAN_ONLY_OPS)
-    expect([...PHONE_TOPICS].sort()).toEqual([...snap.PHONE_TOPICS, 'topics'].sort())
+    expect([...PHONE_TOPICS].sort()).toEqual([...snap.PHONE_TOPICS, 'topics', 'roster'].sort())
   })
   it('别名的新键:手机令牌经新键够得着的,和别名键一模一样(在不在、link、理由)', () => {
     expect(MERGED_ALIASES.length, '没有已并的行 ⇒ 这一条空转').toBeGreaterThan(0)

@@ -24,10 +24,11 @@ const SOURCE = /\.(ts|tsx|js|mjs|cjs|html)$/
 const SKIP = /(\.test\.|\.generated\.|\/__golden__\/|\/node_modules\/)/
 const LITERAL = /['"`](?:[A-Z]+ )?\/m\/api/
 
+// 2026-11-17 名单计划要求手机别名及类型化调用,两份登记各增一行。
 // @debt 带引号的 /m/api 字面量,按文件记的行数(P3c–P3h 逐步降;降到 0 = 只剩 legacy-routes.ts 与 wire-compat.ts)
 const BASELINE: Record<string, number> = {
-  'packages/protocol/src/api.ts': 60,
-  'packages/protocol/src/phone-calls.ts': 60,
+  'packages/protocol/src/api.ts': 61,
+  'packages/protocol/src/phone-calls.ts': 61,
 }
 
 /** 一行是不是整行注释(按行判,不跨行)。 */

@@ -1,4 +1,4 @@
-import { makeRosterReader } from '../../features/roster/reader'
+import { makeRosterReader } from '../../features/roster'
 import { ownerLedgerConversation } from '../../lib/matter-ledger-access'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
 import { projectActivities } from '../../features/memory'
