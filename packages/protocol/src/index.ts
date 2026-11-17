@@ -44,6 +44,8 @@ export type { PhoneApi, PhoneCallSpec, PhoneCallArgs, PhoneCallFn, PhoneCallRequ
 export { PHONE_CALLS, phoneRouteRequest, makePhoneApi, phoneCallRequest, toProtocolRequest } from './phone-calls'
 export { HOME_GROUP_ORDER, HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_KEYS, STATUS_TABLE, STATUS_WORDS, TASK_DETAIL_WORDS } from './status-table'
 export type { StatusKey, HomeGroupKey, StatusIcon, StatusSpec } from './status-table'
+export { isMatterArchived, statusOf, statusOfMatter, terminalStatusKey } from './status-of'
+export type { TaskObservation } from './status-of'
 
 export { RESPONSE_SCHEMAS } from './desktop-api'
 
@@ -58,3 +60,4 @@ export type { CCPhase, CCStream } from './cc-activity.js'
 
 export type {CheckupInterview,CheckupQuality,CheckupRatio,CheckupReview} from './checkup'
 export * from './checkup-review'
+export * from './roster'
