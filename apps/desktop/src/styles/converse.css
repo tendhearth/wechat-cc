@@ -166,8 +166,10 @@
 .conversation-migration { margin:0; color:var(--th-ink-soft); font-size:var(--th-size-small); }
 .conversation-migration button { border:0; background:transparent; color:var(--th-ink); font:inherit; padding:4px 8px; cursor:pointer; }
 /* Keep layer controls below the native title-bar drag strip. */
-.dashboard .workbench-pane { top:48px; height:auto; min-height:0; max-height:calc(100dvh - 64px); box-sizing:border-box; }
-@media(max-width:760px) { .dashboard .workbench-pane { top:44px; max-height:calc(100dvh - 44px); } }
+/* 全屏事项层从全局页头下沿开始:页头永远在上面(z-index 110),层不能钻到它底下(mini 验收 11-17:返回键被页头挡住)。
+   --topbar-bottom 由 main.js 按页头实际下沿写(演示横幅、窗口变化都跟着);缺省 72px。 */
+.dashboard .workbench-pane { top:calc(var(--topbar-bottom, 72px) + 8px); height:auto; min-height:0; max-height:calc(100dvh - var(--topbar-bottom, 72px) - 16px); box-sizing:border-box; }
+@media(max-width:760px) { .dashboard .workbench-pane { top:var(--topbar-bottom, 72px); max-height:calc(100dvh - var(--topbar-bottom, 72px)); } }
 
 .cc-now-pane[data-conversation="single"] #now-waiting-list > li:not(.now-terminal) { display:none; }
 .cc-now-pane[data-conversation="single"] #now-waiting-list { max-height:34vh; overflow:auto; }

@@ -1680,7 +1680,18 @@ function showDevBannerIfShim() {
   banner.hidden = false
 }
 
+/** 全局页头的下沿写进 --topbar-bottom,全屏事项层从这里开始,不被页头盖住返回键。 */
+function trackTopbarBottom() {
+  const bar = document.getElementById('dash-global-rail')
+  if (!bar) return
+  const write = () => document.documentElement.style.setProperty('--topbar-bottom', `${Math.round(bar.getBoundingClientRect().bottom)}px`)
+  write()
+  if (typeof ResizeObserver === 'function') new ResizeObserver(write).observe(bar)
+  window.addEventListener('resize', write)
+}
+
 async function boot() {
+  trackTopbarBottom()
   showDevBannerIfShim()
   mountHugeicons()
   wireDoctorSubscribers()
