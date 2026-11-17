@@ -6,7 +6,7 @@ for(const width of [1440,900])test(`roster keeps request purpose, keyboard desti
  await page.setViewportSize({width,height:900})
  await shim.invoke('demo.seed',{daemonAlive:true})
  let unreadable=false
- const items=[rosterItem(task.id,task.title,{waiting:{kind:'permission',requestId:'p1',summary:'Bash: bun run test',count:1}}),rosterItem('terminal-1','演示项目',{key:'terminal:terminal-1',kind:'terminal',terminal:{sessionId:'terminal-1',code:'demo'}})]
+ const items=[rosterItem(task.id,task.title,{waiting:{kind:'permission',requestId:'p1',summary:'Bash: bun run test',count:1}}),rosterItem('terminal-1','演示项目',{key:'terminal:terminal-1',kind:'terminal',waiting:undefined,terminal:{sessionId:'terminal-1',code:'demo',actionable:true}})]
  await page.route('**/v1/roster',route=>unreadable?route.fulfill({status:503,json:{error:'unavailable'}}):route.fulfill({json:{items,version:'two'}}))
  await page.route(WORKBENCH_ROUTES,route=>{
   const path=new URL(route.request().url()).pathname
