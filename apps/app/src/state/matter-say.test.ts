@@ -3,16 +3,15 @@ import { act, createElement } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError } from '../backend/types'
-import { cleanup, mount } from '../ui/native-motion.test-support'
+import { cleanup, mount, focus } from '../ui/native-motion.test-support'
 import { withProviders } from './providers.test-support'
-import { clearDrafts, getDraft } from './drafts'
+import { clearDrafts, getDraft, setDraft } from './drafts'
 import { matterInputState, matterInputs } from './matter-inputs'
 import { useMatterSay } from './matter-say'
 import { IDS } from '../backend/demo-data'
 vi.mock('react-native', async () => (await import('../ui/native-motion.test-support')).nativeBoundary())
 vi.mock('expo-router', async () => (await import('../ui/native-motion.test-support')).routerBoundary())
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
-vi.mock('./session', () => ({ useSession: () => ({ pairing:null,inputScope:null }) }))
 afterEach(async()=>{await cleanup();await matterInputState.clear();clearDrafts()})
 const flush=()=>act(async()=>{await new Promise(r=>setTimeout(r,0))})
 it('uncertain task send retains draft; reconnect checks receipt without resending',async()=>{
@@ -40,4 +39,16 @@ it('agent identity updates do not reset the matter draft',async()=>{
  await act(()=>hook.setText('unfinished'))
  await act(()=>hook.detail.refresh());await flush()
  expect(hook.text).toBe('unfinished')
+})
+
+it('returning from attachment compose reloads the updated shared draft',async()=>{
+ const backend=makeDemoBackend(),id=IDS.notes
+ let hook!:ReturnType<typeof useMatterSay>
+ function Probe(){hook=useMatterSay({kind:'matter',id});return null}
+ await mount(withProviders(createElement(Probe),{backend}));await flush()
+ await act(()=>hook.setText('before attachments'))
+ await focus(false)
+ setDraft(id,'edited in attachment compose')
+ await focus(true);await flush()
+ expect(hook.text).toBe('edited in attachment compose')
 })

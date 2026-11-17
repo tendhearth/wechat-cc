@@ -13,6 +13,7 @@ import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { StatusWord } from '../ui/MatterRow'
 import { terminalStatusKey } from '../view/status'
 import { space } from '../ui/tokens'
+import { TopBar } from './TopBar'
 import { DirectHeader } from './DirectHeader'
 import { DirectComposer } from './DirectComposer'
 import { directHeaderView } from '../view/direct-header'
@@ -107,7 +108,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
   const scrollRef = useRef<ScrollView>(null)
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      {direct?<DirectHeader view={direct} onMore={()=>scrollRef.current?.scrollToEnd({animated:true})} onProject={()=>router.push('/topics')} />:null}
+      {direct?<DirectHeader view={direct} onMore={()=>scrollRef.current?.scrollToEnd({animated:true})} onProject={()=>router.push('/topics')} />:<TopBar title={t(lang,'terminal.title')} onBack={()=>router.canGoBack()?router.back():router.replace('/')} />}
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{s?.run_id&&backend.cliStop?<Button testID="terminal-stop" kind="secondary" label={t(lang,stopRun===s.run_id?'progress.stopConfirm':'progress.stop')} onPress={()=>void stop()} />:null}</View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
@@ -183,7 +184,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
           <View style={{ paddingHorizontal: space.xl, paddingTop: space.m, paddingBottom: space.m, gap: space.s }}>
             {row.live ? <Txt testID="terminal-say-live" role="meta" tone="inkSoft">{t(lang, 'terminal.liveWindow')}</Txt> : null}
             {!canSayTo(row.status, row.live) ? <Txt testID="terminal-say-busy" role="meta" tone="inkSoft">{t(lang, row.status === 'waiting' ? 'terminal.sayWaiting' : 'terminal.sayBusy')}</Txt> : null}
-            {direct?<DirectComposer testID="terminal-say" view={direct} text={text} onChangeText={setText} onSend={()=>void send()} disabled={!sayOpen||!text.trim()} busy={sending}/>:null}
+            {direct?<DirectComposer variant="chat" maxLength={SAY_MAX} testID="terminal-say" view={direct} text={text} onChangeText={setText} onSend={()=>void send()} disabled={!sayOpen||!text.trim()} busy={sending}/>:null}
           </View>
         ) : null}
       </KeyboardAvoidingView>

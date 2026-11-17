@@ -11,15 +11,18 @@ import { useMatterSay } from '../state/matter-say'
 import { directHeaderView } from '../view/direct-header'
 import { DirectHeader } from './DirectHeader'
 import { DirectComposer, MatterDirectComposer } from './DirectComposer'
+import Matter from '../app/matter/[id]/index'
+import { TerminalDetail } from './TerminalDetail'
 import { RosterStrip } from './RosterStrip'
 import { matterInputState } from '../state/matter-inputs'
-const host=vi.hoisted(()=>({back:vi.fn(),replace:vi.fn(),push:vi.fn(),canGoBack:()=>false}))
+const host=vi.hoisted(()=>({back:vi.fn(),replace:vi.fn(),push:vi.fn(),canGoBack:()=>false,useLocalSearchParams:()=>({id:'e5f6a7b8'})}))
 vi.mock('react-native',async()=>{
  const native=(await import('./native-motion.test-support')).nativeBoundary()
- return {...native,TextInput:forwardRef<any,any>(({value,onChangeText,testID,placeholder}:any,ref)=>createElement('textarea',{ref,value,placeholder,'data-testid':testID,onInput:(e:any)=>onChangeText(e.currentTarget.value)}))}
+ return {...native,KeyboardAvoidingView:({children,behavior}:any)=>createElement('div',{'data-keyboard':behavior},children),TextInput:forwardRef<any,any>(({value,onChangeText,testID,placeholder,maxLength}:any,ref)=>createElement('textarea',{ref,value,placeholder,maxLength,'data-testid':testID,onInput:(e:any)=>onChangeText(e.currentTarget.value)}))}
 })
+vi.mock('react-native-safe-area-context',()=>({SafeAreaView:({children}:any)=>createElement('main',null,children)}))
 vi.mock('expo-localization',()=>({getLocales:()=>[]}))
-vi.mock('expo-router',async()=>({...await (await import('./native-motion.test-support')).routerBoundary(),useRouter:()=>host}))
+vi.mock('expo-router',async()=>({...await (await import('./native-motion.test-support')).routerBoundary(),useRouter:()=>host,useLocalSearchParams:host.useLocalSearchParams}))
 const flush=()=>act(async()=>{await new Promise(r=>setTimeout(r,0))})
 afterEach(async()=>{await cleanup();await matterInputState.clear();vi.clearAllMocks()})
 it('header back from cold direct entry replaces with CC',async()=>{
@@ -63,4 +66,20 @@ it('roster keeps cached avatars offline but removes waiting accent and opens the
  expect(ui.byId('roster-strip')).not.toBeNull()
  expect(styles().some(s=>s.borderColor===color.accent)).toBe(false)
  expect(ui.container.textContent).toContain('在做 4')
+})
+
+it('task composer is inside the iOS keyboard avoiding region',async()=>{
+ const ui=await mount(withProviders(createElement(Matter),{backend:makeDemoBackend()}));await flush()
+ expect(ui.byId('direct-input')?.closest('[data-keyboard="padding"]')).not.toBeNull()
+})
+it('terminal composer retains the 4000 character input limit',async()=>{
+ const demo=makeDemoBackend(),sessions=await demo.cliSessions()
+ const ui=await mount(withProviders(createElement(TerminalDetail,{sessionId:sessions[0]!.session_id}),{backend:demo}));await flush()
+ expect((ui.byId('terminal-say-input') as HTMLTextAreaElement).maxLength).toBe(4000)
+})
+it('missing terminal session still provides a cold-entry back to CC',async()=>{
+ const demo=makeDemoBackend(),backend={...demo,cliSessions:async()=>[],cliActivity:async()=>[]}
+ const ui=await mount(withProviders(createElement(TerminalDetail,{sessionId:'gone'}),{backend}));await flush()
+ expect(ui.byId('topbar-back')).not.toBeNull()
+ await act(()=>ui.byId('topbar-back').click());expect(host.replace).toHaveBeenCalledWith('/')
 })

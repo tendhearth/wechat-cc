@@ -33,3 +33,19 @@ it('roster events reload; failure retains the previous items and marks stale', a
   expect(roster.mock.calls.length).toBeGreaterThan(1)
   expect(value.items).toBe(previous); expect(value.stale).toBe(true); expect(value.error).toBeDefined()
 })
+
+it('reconnect keeps old waiting stale until a new connection read finishes', async()=>{
+ const demo=makeDemoBackend();let conn=demo.connection()
+ const listeners=new Set<(c:typeof conn)=>void>()
+ let hold=false,resolve!: (r:Awaited<ReturnType<NonNullable<typeof demo.roster>>>)=>void
+ const backend={...demo,connection:()=>conn,onConnection:(cb:(c:typeof conn)=>void)=>{listeners.add(cb);return()=>{listeners.delete(cb)}},roster:async()=>hold?new Promise<Awaited<ReturnType<NonNullable<typeof demo.roster>>>>(r=>{resolve=r}):demo.roster!()}
+ let value!:ReturnType<typeof useRoster>
+ function Probe(){value=useRoster();return null}
+ await mount(withProviders(createElement(Probe),{backend}));await flush()
+ expect(value.stale).toBe(false)
+ conn={...conn,state:'offline'};await act(()=>{listeners.forEach(cb=>cb(conn))})
+ hold=true;conn={...conn,state:'online',epoch:conn.epoch+1};await act(()=>{listeners.forEach(cb=>cb(conn))});await flush()
+ expect(value.items).toHaveLength(4);expect(value.stale).toBe(true)
+ hold=false;await act(async()=>resolve(await demo.roster!()));await flush();await flush()
+ expect(value.stale).toBe(false)
+})

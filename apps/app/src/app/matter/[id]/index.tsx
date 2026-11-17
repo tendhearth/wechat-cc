@@ -3,7 +3,7 @@ import { STATUS_TABLE } from '@wechat-cc/protocol'
 import { rememberReference } from '../../../state/conversation-references'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
-import { Modal, Pressable, ScrollView, View } from 'react-native'
+import { KeyboardAvoidingView, Platform, Modal, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { ChatModelViewT, MatterInputT } from '../../../backend/types'
 import { t } from '../../../i18n'
@@ -264,8 +264,9 @@ export default function Matter() {
   ) : null
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {header}
+      <KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}>
       <ScrollView ref={scrollRef} contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
 
         <View testID="progress-status"><StatusPill status={v.status} label={taskDetailLabel(d.task,v.pendingCount,lang,v.status)} /></View>
@@ -512,6 +513,8 @@ export default function Matter() {
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
         <MatterDirectComposer key={id} id={id} view={direct!} />
       </View>
+
+      </KeyboardAvoidingView>
 
       {rewindOpen && turn?.artifactId ? (
         <RewindSheet matterId={id} artifactId={turn.artifactId} backend={backend} lang={lang} online={online} submit={submit}

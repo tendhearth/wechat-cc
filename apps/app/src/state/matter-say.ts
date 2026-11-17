@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useFocusEffect } from 'expo-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BackendError, type MatterInputT } from '../backend/types'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -32,7 +33,7 @@ export function useMatterSay(target: SayTarget, options: {images?:PickedImage[];
   const refreshDetail=detail.refresh
   const online=canSubmit(conn) && recovery.phase==='ready' && (backend.mode!=='live'||!!recovery.scope&&recovery.scope===inputScope)
   const terminal=useTerminalActions()
-  useEffect(()=>{textRef.current=getDraft(draftKey);setTextState(textRef.current);setInputNotice(null)},[draftKey,backend])
+  useFocusEffect(useCallback(()=>{textRef.current=getDraft(draftKey);setTextState(textRef.current);setInputNotice(null)},[draftKey,backend]))
   useEffect(()=>{
     let alive=true
     if(id)void consumeMatterInputDraft(id).then(cleared=>{if(cleared&&alive&&draftKeyRef.current===id){textRef.current=getDraft(id);setTextState(textRef.current)}}).catch(()=>{})

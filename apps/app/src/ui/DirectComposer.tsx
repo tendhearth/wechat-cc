@@ -11,12 +11,12 @@ import { IconButton } from './IconButton'
 import { Txt } from './Txt'
 import { componentAppearance, radius, space } from './tokens'
 import { useTheme } from './useTheme'
-export function DirectComposer({view,text,onChangeText,onSend,disabled,busy,onAdd,testID='direct'}:{view:DirectHeaderView;text:string;onChangeText(v:string):void;onSend():void;disabled?:boolean;busy?:boolean;onAdd?():void;testID?:string}) {
+export function DirectComposer({view,text,onChangeText,onSend,disabled,busy,onAdd,testID='direct',maxLength,variant='chat'}:{view:DirectHeaderView;text:string;onChangeText(v:string):void;onSend():void;disabled?:boolean;busy?:boolean;onAdd?():void;testID?:string;maxLength?:number;variant?:'chat'}) {
   const {c}=useTheme(),lang=useLang(),appearance=componentAppearance.textField.chat
   return <View style={{flexDirection:'row',alignItems:'center',gap:space.s,padding:space.s,borderWidth:appearance.borderWidth,borderColor:c.accent,borderRadius:radius.control}}>
     {onAdd?<IconButton name="plus" testID={`${testID}-add`} label={t(lang,'images.add')} onPress={onAdd}/>:null}
     <AgentAvatar id={view.current} size={24} border="ink" />
-    <TextField testID={`${testID}-input`} value={text} onChangeText={onChangeText} placeholder={view.placeholder} accessibilityLabel={view.placeholder} multiline style={{flex:1,minHeight:44,maxHeight:140}} />
+    <TextField variant={variant} maxLength={maxLength} testID={`${testID}-input`} value={text} onChangeText={onChangeText} placeholder={view.placeholder} accessibilityLabel={view.placeholder} multiline style={{flex:1,minHeight:44,maxHeight:140,borderWidth:0,paddingHorizontal:0,paddingVertical:space.s}} />
     <Pressable testID={`${testID}-send`} accessibilityRole="button" accessibilityLabel={t(lang,'input.send')} accessibilityState={{disabled:disabled||busy,busy}} disabled={disabled||busy} onPress={onSend} style={{width:44,height:44,borderRadius:radius.control,alignItems:'center',justifyContent:'center',backgroundColor:c.accent,opacity:disabled||busy?componentAppearance.button.disabledOpacity:1}}><Icon name="arrowUp" color={c.onAccent} /></Pressable>
   </View>
 }
