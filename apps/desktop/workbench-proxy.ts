@@ -53,11 +53,11 @@ export function createWorkbenchProxy(opts:Options) {
       if(base.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(base.hostname)||!info.operatorTokenFilePath)throw new Error('invalid_info')
       const token=(await readFile(info.operatorTokenFilePath,'utf8')).trim()
       const res=await (opts.fetch??fetch)(base.origin+url.pathname+url.search,{
-        method:req.method,headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},
+        method:req.method,headers:{authorization:`Bearer ${token}`,'content-type':'application/json',...(url.pathname==='/v1/roster'&&req.headers.has('if-none-match')?{'if-none-match':req.headers.get('if-none-match')!}:{})},
         ...(body!==undefined?{body}:{}),signal:AbortSignal.timeout(30_000),
       })
       if(res.status===404&&url.pathname==='/v1/workbench')return Response.json({error:'workbench_endpoint_missing'},{status:404})
-      return new Response(await res.text(),{status:res.status,headers:{'content-type':'application/json'}})
+      return new Response(res.status===304?null:await res.text(),{status:res.status,headers:{'content-type':'application/json',...(res.headers.has('etag')?{etag:res.headers.get('etag')!}:{})}})
     } catch(error) {
       if(error instanceof Error&&error.message==='request_body_too_large')return Response.json({error:'request_body_too_large'},{status:413})
       return Response.json({error:'workbench_connection_unavailable'},{status:502})

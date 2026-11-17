@@ -251,8 +251,10 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
     if (command === "daemon_request") {
       const res = await fetch(args.path, {
         method: args.method,
+        ...(args.ifNoneMatch && args.path === "/v1/roster" ? { headers: { "If-None-Match": args.ifNoneMatch } } : {}),
         ...(args.method === "POST" ? { headers: { "content-type": "application/json" }, body: args.body ?? "{}" } : {})
       })
+      if (res.status === 304) return JSON.stringify({ notModified: true })
       const text = await res.text()
       if (!res.ok) throw new Error(invokeErrorMessage(command, res.status, text))
       return text

@@ -396,6 +396,7 @@
             <span>CC</span><small id="topbar-presence">正在连接…</small>
           </button>
           <nav aria-label="主导航">
+            <button id="topbar-roster" type="button" aria-controls="roster-aside" aria-expanded="false">在做 0</button>
             <button id="topbar-search" type="button">搜索</button>
             <button class="dash-nav-link" data-pane="memory">记忆<span id="memory-count" hidden></span></button>
             <button class="dash-nav-link" data-pane="recollections">回忆</button>
@@ -795,6 +796,7 @@
           </article>
 
         </section>
+        <aside id="roster-aside" class="roster-aside" aria-label="在做"><div id="roster-list"></div><div id="roster-dock" hidden></div></aside>
       </div>
     </main>
 

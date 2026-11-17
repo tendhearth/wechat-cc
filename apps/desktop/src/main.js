@@ -1,3 +1,4 @@
+import { mountRosterPane } from './modules/roster-pane.js'
 // @ts-check
 /// <reference lib="dom" />
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
@@ -1698,6 +1699,17 @@ async function boot() {
     document.getElementById('topbar-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
     window.addEventListener('pagehide',()=>topics.destroy(),{once:true})
   }
+  const rosterRoot = document.getElementById('roster-list')
+  if (rosterRoot) {
+    const roster = mountRosterPane({root:rosterRoot,call:invokeWorkbenchApi,onOpen:item=>item.kind==='terminal'?deps.onOpenTerminal(item.id):deps.onOpenMatter(item.id),onItems:items=>{
+      const button=document.getElementById('topbar-roster');if(button)button.textContent=`在做 ${items.length}`
+    }})
+    window.addEventListener('pagehide',()=>roster.destroy(),{once:true})
+  }
+  document.getElementById('topbar-roster')?.addEventListener('click',()=>{
+    const aside=document.getElementById('roster-aside'),button=document.getElementById('topbar-roster')
+    const open=aside?.toggleAttribute('data-open');button?.setAttribute('aria-expanded',String(!!open))
+  })
   startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop
   // launch. Keep it off the critical render path: decrypting larger archives
