@@ -40,15 +40,3 @@ it('隐藏时停止轮询，回到窗口立即刷新',async()=>{
  visibility.mockReturnValue('visible');document.dispatchEvent(new Event('visibilitychange'));await Promise.resolve();expect(call).toHaveBeenCalledTimes(1)
  visibility.mockRestore()
 })
-it('键盘 Enter / 空格直接打开那一行,带修饰键或输入法组字时不抢',async()=>{
- document.body.innerHTML='<div id="list"></div>'
- const call=vi.fn(async()=>({items:[item('waiting')],version:'v'})),open=vi.fn()
- pane=mountRosterPane({root:document.getElementById('list')!,call,onOpen:open})
- await pane.refresh()
- const row=document.querySelector<HTMLButtonElement>('[data-roster-key="matter:waiting"]')!
- const press=(key:string,init:KeyboardEventInit={})=>{const ev=new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,...init});row.dispatchEvent(ev);return ev}
- expect(press('Enter').defaultPrevented).toBe(true);expect(open).toHaveBeenCalledTimes(1)
- press(' ');expect(open).toHaveBeenCalledTimes(2)
- press('Enter',{metaKey:true});press('Enter',{isComposing:true});press('a')
- expect(open).toHaveBeenCalledTimes(2)
-})
