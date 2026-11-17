@@ -219,7 +219,7 @@ function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidde
 function mRefresh() {
   clearTimeout(mPoll);if(!mActive||!mCurrent||document.hidden||mOffline)return Promise.resolve()
   var id=mCurrent,seq=++mSeq
-  if(isDevice&&mRosterTarget&&mRosterTarget.terminal)return mTerminalRefresh(id,seq)
+  if(mIsDevice()&&mRosterTarget&&mRosterTarget.terminal)return mTerminalRefresh(id,seq)
   return mApi('/v1/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq)mNotice(mError(e.message))}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
 }
 function openMatter(id) {
@@ -253,14 +253,16 @@ setInterval(function(){ if (!document.hidden && !mCurrent) loadMatters() }, 1500
 loadMatters()
 
 var mRosterTarget=null,mDirectDrafts=new Map(),mDirectPending=new Map(),mDirectSending=new Set()
-function mSaveDirect(){if(!isDevice)return;var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text'));if(input&&mCurrent)mDirectDrafts.set(mCurrent,input.value)}
+// 详情页也会单独装进只看状态的页面和测试里(那里没有 boot.js 的 isDevice):没有就当不是设备。
+function mIsDevice(){return typeof isDevice!=='undefined'&&isDevice}
+function mSaveDirect(){if(!mIsDevice())return;var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text'));if(input&&mCurrent)mDirectDrafts.set(mCurrent,input.value)}
 function mDirectMount(){
- if(!isDevice)return;var old=document.getElementById('m-say');if(old)old.remove()
+ if(!mIsDevice())return;var old=document.getElementById('m-say');if(old)old.remove()
  var form=document.createElement('form');form.id='m-say';form.innerHTML='<span id="m-say-avatar"></span><label class="sr-only" for="m-say-text">直接说一句</label><textarea id="m-say-text" rows="1" maxlength="6000"></textarea><button type="submit" aria-label="发送">↑</button><small id="m-say-notice" role="status"></small>'
  document.getElementById('m-detail').appendChild(form);/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text')).value=mDirectDrafts.get(mCurrent)||'';form.addEventListener('input',mSaveDirect);form.addEventListener('submit',mDirectSend)
 }
 function mDirectRender(d){
- if(!isDevice)return
+ if(!mIsDevice())return
  if(d.matter.kind==='terminal'&&!mRosterTarget&&d.sessions&&d.sessions[0])mRosterTarget={agents:[],terminal:{sessionId:d.sessions[0].sessionId}}
  var item=mRosterTarget,agent=item&&item.agents.find(function(a){return a.current})||item&&item.agents[0],id=agent?agent.id:d.task&&d.task.providerId||(d.matter.agents||[])[0]||'agent',name=agent&&agent.name||mNameOf(d.matter.agentNames)(id),avatar=mAgents.agentAvatarsHtml([id],{nameOf:function(){return name}})
  document.getElementById('m-back').textContent='‹ CC';document.getElementById('m-title').textContent=ccPlain(d.matter.title)
