@@ -41,7 +41,7 @@ export interface VersionProbeHandle {
   /** 子进程退出后读输出(截断用);缺省实现读 pipe。没有 ⇒ 空串。 */
   output?: () => Promise<{ stdout: string; stderr: string }>
 }
-export type VersionProbeSpawn = (bin: string, args: string[]) => VersionProbeHandle
+export type VersionProbeSpawn = (bin: string, args: string[], env?: NodeJS.ProcessEnv) => VersionProbeHandle
 
 export interface ProbeVersionOptions {
   /** 「循环醒着的时间」累计到这么久还没退出 ⇒ 超时。缺省 5s。 */
@@ -50,6 +50,8 @@ export interface ProbeVersionOptions {
   graceMs?: number
   spawnFn?: VersionProbeSpawn
   now?: () => number
+  /** Caller-owned subprocess environment, e.g. Grok's dedicated HOME. */
+  env?: NodeJS.ProcessEnv
 }
 
 export const DEFAULT_PROBE_TIMEOUT_MS = 5000
@@ -61,10 +63,10 @@ async function readStream(s: ReadableStream<Uint8Array> | null | undefined): Pro
   try { return await new Response(s).text() } catch { return '' }
 }
 
-function defaultSpawn(bin: string, args: string[]): VersionProbeHandle {
+function defaultSpawn(bin: string, args: string[], env?: NodeJS.ProcessEnv): VersionProbeHandle {
   // PATH 补全与 probeBinaryVersion 一致:launchd 起的 daemon 拿到的 PATH 比终端短,
   // cursor-agent 这类 shell 脚本里再去找 node 时要用到。
-  const proc = spawn([bin, ...args], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, PATH: augmentedPathEnv() } })
+  const proc = spawn([bin, ...args], { stdout: 'pipe', stderr: 'pipe', env: env ?? { ...process.env, PATH: augmentedPathEnv() } })
   // 立刻开始读,免得输出塞满 pipe 反过来卡住子进程。
   const out = readStream(proc.stdout)
   const err = readStream(proc.stderr)
@@ -105,7 +107,7 @@ export async function probeVersion(bin: string, opts: ProbeVersionOptions = {}):
   const start = now()
   let h: VersionProbeHandle
   try {
-    h = spawnFn(bin, ['--version'])
+    h = opts.env ? spawnFn(bin, ['--version'], opts.env) : spawnFn(bin, ['--version'])
   } catch (err) {
     return { ok: false, reason: 'spawn_error', detail: err instanceof Error ? err.message : String(err), ms: now() - start }
   }

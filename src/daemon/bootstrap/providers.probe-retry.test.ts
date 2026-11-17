@@ -79,6 +79,25 @@ function probeScript(target: string, ...seq: VersionProbeResult[]) {
 }
 
 describe('registerProviders — 外部 CLI 探测失败后的退避重探', () => {
+  it.runIf(process.platform !== 'win32')('Grok fake version probe retries once, then registers without any evaluation callback', async () => {
+    const timers = manualTimers()
+    const probe = probeScript('/fake/grok', fail('offline fake timeout'), okProbe)
+    const envs: Array<NodeJS.ProcessEnv | undefined> = []
+    const { deps } = makeDeps({ configuredAgent: baseConfig({ grokBin: '/fake/grok' }), probeVersion: (bin, options) => { if (bin === '/fake/grok') envs.push(options?.env); return probe(bin) }, probeRetry: { setTimer: timers.setTimer, clearTimer: timers.clearTimer } })
+    const wiring = await registerProviders(deps)
+    try {
+      expect(wiring.registry.has('grok')).toBe(false)
+      await timers.fireNext(() => wiring.registry.has('grok'))
+      expect(wiring.registry.has('grok')).toBe(true)
+      expect(wiring.registry.get('grok')!.provider.cheapEval).toBeUndefined()
+      expect(probe.targetCalls).toHaveLength(2)
+      expect(envs).toHaveLength(2)
+      for (const env of envs) {
+        expect(env?.HOME).toBe(join(deps.stateDir, 'executors/grok/home'))
+        expect(env?.WECHAT_SESSION_TOKEN).toBeUndefined()
+      }
+    } finally { wiring.stopProviderProbes() }
+  })
   it('agy 开机探测失败一次 ⇒ 不注册、日志带真实原因;第一次重探通过 ⇒ 注册上,不用重启', async () => {
     const timers = manualTimers()
     const probe = probeScript('/fake/bin/agy', fail('12034ms 内没退出(超时按 5000ms 计;其间事件循环被卡住约 11500ms(不计入超时))'), okProbe)

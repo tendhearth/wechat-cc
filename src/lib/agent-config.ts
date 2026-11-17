@@ -22,6 +22,9 @@ export interface AgentConfig {
   // optional-string shape so an operator can persist a Cursor model
   // alongside the Claude one without overloading a single field.
   cursorModel?: string
+  /** Grok 账号 ACP 的独立模型/二进制覆盖；不参与后台评估。 */
+  grokModel?: string
+  grokBin?: string
   // OpenAI-compatible provider fields (also covers OpenAI-compatible
   // endpoints like DeepSeek). Mirrors `cursorModel?`'s shape: kept separate
   // from `model?` so switching providers doesn't clobber another
@@ -322,6 +325,8 @@ const AgentConfigSchema = z.object({
   provider: z.enum(PROVIDER_IDS).default('claude'),
   model: z.string().optional(),
   cursorModel: z.string().optional(),
+  grokModel: z.string().optional(),
+  grokBin: z.string().optional(),
   openaiBaseUrl: z.string().optional(),
   openaiModel: z.string().optional(),
   openaiEvalModel: z.string().optional(),
@@ -466,6 +471,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(modelContextWindows?.length?{modelContextWindows}:{}),
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
+      ...(typeof parsed.grokModel === 'string' ? { grokModel: parsed.grokModel } : {}),
+      ...(typeof parsed.grokBin === 'string' ? { grokBin: parsed.grokBin } : {}),
       ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),
       ...(typeof parsed.openaiModel === 'string' ? { openaiModel: parsed.openaiModel } : {}),
       ...(typeof parsed.openaiEvalModel === 'string' && parsed.openaiEvalModel ? { openaiEvalModel: parsed.openaiEvalModel } : {}),

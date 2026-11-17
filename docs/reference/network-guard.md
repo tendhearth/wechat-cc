@@ -98,7 +98,7 @@ codex 只按自己的配置连:`model_provider`(缺省 `openai`)→ 自定义 id
 
 | 类别 (`kind`) | 例子 | 需要保护 |
 |---|---|---|
-| `official` | `*.anthropic.com` `claude.ai` `*.openai.com` `chatgpt.com` `*.googleapis.com` `x.ai` `mistral.ai` `groq.com` … | 是 |
+| `official` | `*.anthropic.com` `claude.ai` `*.openai.com` `chatgpt.com` `*.googleapis.com` `x.ai` `grok.com`（含 `cli-chat-proxy.grok.com`） `mistral.ai` `groq.com` … | 是 |
 | `aggregator` | `openrouter.ai` `together.xyz` `fireworks.ai` `deepinfra.com` `poe.com` | 是 |
 | `overseas_other`(拿不准、按 host 判成海外) | 通义国际版 `dashscope-intl.aliyuncs.com`、`api.deepseek.ai` | 是(`trust` 可放开) |
 | `cursor_model` | Cursor + `auto` 以外的**任何**模型:Claude / GPT / Gemini、Cursor 自家的 `composer-*`、不认识的名字(`kimi-k2`、`grok-4`、`glm-*` …) | 是(`trust` 可放开) |
@@ -248,3 +248,9 @@ wechat-cc guard status                                        # 信号 + 各 pro
 ```
 
 不要为了验证去 `bx down`、`bx setup`,也不要跑任何会把流量送出隧道的检查(例如 `bx leakcheck --compare-direct`)。断网路径由单测覆盖:`src/lib/call-classifier.test.ts`(分类表)、`src/daemon/guard/owner-table.test.ts`(主人那张表逐格 + 端点 / 模型解析 + health)、`src/daemon/guard/*.test.ts`(bx JSON、超时、fail closed、第一次探测的有界等待)、`src/app/provider-registry.network-gate.test.ts`(逐候选故障转移、Claude 聊天停 + DeepSeek 后台照常)、`src/daemon/guard/effective-target.test.ts`(评审 #193:配置改了在用的执行者不跟、Cursor 一次性评估、报不出目标按保护)、`src/lib/codex-target.test.ts`(Codex 按自己的配置层判:默认 / 自定义国内 / `OPENAI_BASE_URL` 不算 / 读不出按保护 / `-c` 覆盖 / 项目层)、`src/adapters/executors/codex/codex-agent-provider.test.ts` 与 `src/adapters/executors/codex/codex-app-server.test.ts`(对话侧与工作台 `config/read`)、`src/adapters/executors/acp/acp-agent-provider.test.ts`(cursor-agent 自报的当前模型)、`src/daemon/wiring/tick-bodies.test.ts`(被拒 = 这一拍跳过)、`src/app/conversation-coordinator.test.ts`(network gate 一节)、`src/app/session-manager.test.ts`、`src/features/workbench/service-network-gate.test.ts`、`src/daemon/inbound/pipeline.integration.test.ts`(入站控制照常)、`src/daemon/ilink/voice-gate.test.ts`、`src/features/terminal/reply-handler.test.ts`、`src/features/memory/nightly.test.ts`、健康路由与桌面渲染测试。暂停在跑的任务:`src/daemon/guard/pause-policy.test.ts`(bx 从不暂停 / probe 两次暂停 / 安全放开 / 30 分钟到顶停下 / 守护关掉放开,假时钟)、`src/lib/process-tree-freeze.test.ts`(真的子进程树:根、同组孩子、另起一组的孩子都停止计数、放开后接着数、冻住时直接杀)、`src/lib/pausable-timers.test.ts`(假时钟)、`src/features/workbench/service-network-suspend.test.ts`(冻住期间回合看门狗与批准期限不走、冻不住退回停、到顶 / 取消只杀不放)、`src/adapters/executors/codex/codex-app-server.test.ts`(冻住期间首个事件超时不触发、terminate 后 close 不发收尾 RPC)、`src/adapters/executors/claude/claude-workbench-process.test.ts`、`src/daemon/wiring/lifecycle-deps.test.ts`(接线);逐执行者沙盒见上。测试里永远注入执行器 / 探测,单测进程下 `findBx()` 不认真的 bx、闸门不真探 google;`vitest.setup.ts` 把 `CODEX_HOME` 指到空临时目录,测试不读主人的 `~/.codex`。
+
+### Grok CLI / ACP（2026-11-16）
+
+Grok 账号执行者的实际模型出口为 `cli-chat-proxy.grok.com`，来源「整合者实测 2026-11-16 grok 1.0.77 -p 一轮」（本分支未运行真实 Grok）。`grok.com` 与 `x.ai` 及其子域按官方端点保护；包括 setup，不套 Cursor auto 的例外。所有 Grok 版本首探/重探、ACP 对话与工作台都使用 `<STATE_DIR>/executors/grok/home`（0700）及其独立登录；不读取或复制主人原有 auth.json。会话缺专属家/登录文件时拒绝并给出专属 HOME 的登录命令，守护放行不能绕过该门。doctor 不运行 Grok，models 尚无子进程实现。项目 `.grok`/`.claude` 配置与其他执行者一样按项目信任处理，HOME 隔离不替代文件或网络沙盒。
+
+专属 config.toml 关闭 `plugin_auto_update`、`features.cursor_marketplace`、`features.telemetry`、`diagnostics.error_reporting`、`telemetry.mixpanel_enabled/trace_upload/otel_enabled`；设置采用原子替换。整合者先前在专属 HOME 的 `-p` 还观察到 `grok.com` 和 `github.com`，GitHub 疑似市场获取；本轮仅静态核查安装自带文档，没有运行 Grok，尚未证明这些开关下 GitHub 请求消失。不要把 GitHub 请求当作模型端点，也不因此新增免保护例外。见[接入交接](../superpowers/plans/2026-11-16-grok-acp-executor.md)。

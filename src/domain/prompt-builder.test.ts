@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, curatedMemorySection, ownerMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, socialToolsSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
+  it('keeps final-text identity and envelope guidance without advertising absent CC MCP tools', () => {
+    const p = buildSystemPrompt({ providerId: 'grok', model: 'grok-test', peerProviderId: 'claude', companionEnabled: true, delegateAvailable: true, mcpTools: 'none', daemonOpsAvailable: true, fileLocateAvailable: true, socialAvailable: true, careEnabled: true, knowledgeSearchAvailable: true, graphAvailable: true })
+    expect(p).toContain('你是 grok(当前模型 grok-test)')
+    expect(p).toContain('`ts`')
+    expect(p).toContain('<quote')
+    expect(p).toContain('最后写下的那段话')
+    expect(p).toContain('未接入 wechat、记忆、记录本或委派工具')
+    expect(p).not.toMatch(/wxvault|memory_read|memory_write|matter_plan|delegate_|attach_file|ask_user\(|voice\(/)
+  })
   function defaults() {
     return {
       providerId: 'claude' as const,

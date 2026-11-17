@@ -20,8 +20,8 @@ export interface AnswerRouteReceipt {
 
 export const oneoffSessionAlias = (requestId: string): string => `__oneoff__:${requestId}`
 
-/** 共享长期令牌不能把本轮的记忆/切换能力收回，尚不支持隔离代答。 */
-export const supportsOneoffAnswer = (provider: string): boolean => !isKnownProviderId(provider) || capabilitiesFor(provider).adminMcpTools
+/** 未满足配置隔离，或共享长期令牌不能收回本轮能力时，不支持一次代答。 */
+export const supportsOneoffAnswer = (provider: string): boolean => !isKnownProviderId(provider) || (!capabilitiesFor(provider).unavailableReason && (capabilitiesFor(provider).adminMcpTools || (provider === 'grok' && capabilitiesFor(provider).mcpTools === 'none')))
 
 /** 独立临时会话仅带当前句与这些硬规矩，不调用 CC 的个人记忆指令构造器。 */
 export const ONEOFF_INSTRUCTIONS = [

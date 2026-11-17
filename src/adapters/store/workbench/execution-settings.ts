@@ -18,7 +18,7 @@ export function taskErrorForProviderCode(code:string|undefined,raw:string):strin
     case 'rate_limited':return 'provider_rate_limited'
     case 'auth_rejected':return 'provider_auth_rejected'
     case 'auth_failed':return executionFailureMessage(raw)!==raw?raw:'provider_auth_expired'
-    case 'network':return 'provider_network'
+    case 'network':return raw === 'grok_network_unavailable' ? raw : 'provider_network'
     case 'server_error':return 'provider_server_error'
     case 'region_unavailable':return 'provider_region_unavailable'
     case 'context_overflow': case 'invalid_request':return executionFailureMessage(raw)!==raw?raw:'provider_invalid_request'
@@ -70,8 +70,12 @@ export function executionFailureMessage(code:string):string {
   }
   const ACP_SESSION = 'Cursor 的 ACP 会话无法建立或中断，请确认 cursor-agent 是支持 acp 子命令的版本后重试。'
   const acp: Array<[string, string]> = [
+    ['grok_network_unavailable', 'Grok 现在连不上（网络），这句我先不转给它。'],
+    ['acp_turn_cancelled', '执行者已停止这一轮。'],
+    ['grok_auth_required', 'Grok 在 CC 里的登录已失效，请在 CC 的专属 HOME 中运行 grok login 后再试。'],
     ['acp_auth_required', 'Cursor 登录态失效，请在电脑上跑一次 cursor-agent login 后再试。'],
     ['acp_agent_auth_required', '这个执行者还没登录。先在终端里登录它一次（比如直接运行一次 gemini），或用 wechat-cc cli acp add 时加 --auth-method 指定登录方式。'],
+    ['acp_mcp_stdio_unsupported', '这个执行者未声明 stdio MCP 支持，CC 没有连接工具通道；请使用经过验证的传输方式。'],
     ['acp_resume_unsupported', '这个版本的 Cursor 不支持接着原会话，请带记录重新开始。'],
     ['acp_protocol_version_unsupported', ACP_SESSION], ['acp_session_failed', ACP_SESSION], ['acp_process_exited', ACP_SESSION],
     ['acp_process_start_failed', ACP_SESSION], ['acp_invalid_protocol_message', ACP_SESSION], ['acp_line_too_long', ACP_SESSION], ['acp_protocol_write_failed', ACP_SESSION],
@@ -88,6 +92,7 @@ export function executionFailureMessage(code:string):string {
     ['acp_prompt_too_large', '附件太大，Cursor 一次接不下（上限约 4 MB），请压缩图片或分批发送。'],
   ]
   // 自定义执行者的登录失败带着 agent 自己说的原因:原样给主人看,比一句笼统的「没登录」有用得多。
+  if (code.startsWith('acp_prompt_idle_timeout: ')) return `${code.slice('acp_prompt_idle_timeout: '.length)} 没回应，已停下。`
   if (code.startsWith('acp_agent_auth_required: ')) return `这个执行者没能登录：${code.slice('acp_agent_auth_required: '.length)}`
   for (const [prefix, text] of acp) if (code === prefix || code.startsWith(`${prefix}:`)) return text
   return messages[code]??code

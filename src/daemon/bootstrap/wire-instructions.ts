@@ -79,6 +79,7 @@ export function wireInstructions(
     // 真的注册了它时才提(admin + 每会话 tier 的 provider —— agy 那种钉死 trusted 的拿不到)。
     return buildSystemPrompt({
       providerId,
+      mcpTools: capabilitiesFor(providerId).mcpTools,
       replyText: replyTextStrategyFor(providerId),
       messageToolAvailable: tierProfile.allow.has('message_other') && capabilitiesFor(providerId).adminMcpTools,
       // 让 bot 知道自己此刻跑的是哪个模型(session-manager 按 spawn 解析后

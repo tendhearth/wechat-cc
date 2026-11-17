@@ -4,6 +4,7 @@
  */
 import type { ProviderId } from '../../domain/conversation'
 import { capabilitiesFor } from '../../domain/capability-matrix'
+import { providerDisplayName } from '../../domain/provider-display-names'
 import type { TurnSummary } from '../../ports/agent-provider'
 import type { CoordinatorCtx } from './ctx'
 
@@ -42,6 +43,8 @@ function endpointHost(error: string | undefined): string | null {
 }
 
 export function providerFailureReason(providerId: ProviderId, code: string | undefined, error?: string): string | undefined {
+  if (providerId === 'grok' && code === 'network' && error === 'grok_network_unavailable') return 'Grok 现在连不上（网络），这句我先不转给它。'
+  if (error?.startsWith('acp_prompt_idle_timeout: ')) return `${providerDisplayName(providerId)} 没回应，已停下。`
   switch (code) {
     case 'context_overflow': return `${providerId} 的上下文仍然过长，这一轮没有完成。请缩短本次输入后再试。`
     case 'network': {
@@ -61,6 +64,7 @@ export function providerFailureReason(providerId: ProviderId, code: string | und
 }
 
 export function spawnFailedNotice(providerId: ProviderId, detail: string, code?: string): string {
+  if (providerId === 'grok' && code === 'network' && detail === 'grok_network_unavailable') return providerFailureReason(providerId, code, detail)!
   const head = `${providerId} 这次没起来,这条我没接住。`
   const reason = providerFailureReason(providerId, code, detail)
   if (reason) return `${head}${reason.replace(/^这条没接住:/, '')}\n先 /cc 用 Claude 也行。`

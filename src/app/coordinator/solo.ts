@@ -22,7 +22,7 @@ type SoloPlan = TurnPlan & { kind: 'solo' }
 type RefusedPlan = TurnPlan & { kind: 'refused' }
 
 export interface Solo {
-  dispatch(msg: InboundMsg, proj: ProjectRef, plan: SoloPlan): Promise<void>
+  dispatch(msg: InboundMsg, proj: ProjectRef, plan: SoloPlan): Promise<'grok_unreachable' | void>
   /**
    * Dispatch-time fail-closed provider gate (core/provider-policy.ts).
    * mode-commands' slash gate only guards the SLASH flip: POST
@@ -49,7 +49,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
     await notice(msg.chatId, describeProviderDenial(denial, slashFor(providerId)) + (msg.answerTarget?.kind === 'oneoff' ? '\n要改由 CC 来答吗？' : ''))
   }
 
-  async function dispatch(msg: InboundMsg, proj: ProjectRef, plan: SoloPlan): Promise<void> {
+  async function dispatch(msg: InboundMsg, proj: ProjectRef, plan: SoloPlan): Promise<'grok_unreachable' | void> {
     const { providerId, auth } = plan
     const oneoff = msg.answerTarget?.kind === 'oneoff'
     const failureNotice = (text: string) => notice(msg.chatId, text + (oneoff ? '\n要改由 CC 来答吗？' : ''))
@@ -122,6 +122,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
           return
         }
         outcome = 'error'
+        if (oneoff && providerId === 'grok' && code === 'network' && detail === 'grok_network_unavailable') return 'grok_unreachable'
         await failureNotice(spawnFailedNotice(providerId, detail, code))
         return
       }
@@ -229,6 +230,13 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       // 不发残文(与 #190「错误不许当回复发」同一条红线)。
       if (outcome !== 'completed') {
         settle('error')
+        if (oneoff && providerId === 'grok' && summary.errorCode === 'network' && summary.error === 'grok_network_unavailable') return 'grok_unreachable'
+        if (summary.error?.startsWith('acp_prompt_idle_timeout:')) {
+          // Only the next inbound message may acquire a new process; never replay this turn.
+          try { await deps.manager.release?.({ alias: proj.alias, providerId, chatId: msg.chatId }) } catch { /* Already closed by ACP; still report the stop. */ }
+          await notice(msg.chatId, turnErrorNotice(providerId, summary.error, summary.errorCode))
+          return
+        }
         await failureNotice(turnErrorNotice(providerId, summary.error, summary.errorCode))
         return
       }

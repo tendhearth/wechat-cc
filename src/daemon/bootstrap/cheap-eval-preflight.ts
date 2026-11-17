@@ -77,3 +77,9 @@ export function makeCheapEvalPreflight(deps?: CheapEvalPreflightDeps): (id: stri
     return p
   }
 }
+
+/** Chat and workbench share endpoint cache/in-flight probes. Only invoked for an intended turn. */
+export const grokNetworkPreflight = (() => {
+  const preflight = makeCheapEvalPreflight()
+  return () => preflight('grok')
+})()

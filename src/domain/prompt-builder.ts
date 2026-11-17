@@ -28,6 +28,7 @@
  * bootstrap.ts:178-181 for the latency rationale). Keep it tight.
  */
 import type { ProviderId } from './conversation'
+import { NO_CC_MCP_INSTRUCTIONS } from './provider-capabilities'
 
 /**
  * Knowledge plugins the knowledge-orchestration section knows how to explain
@@ -45,6 +46,7 @@ import type { ProviderId } from './conversation'
 export const KNOWN_KNOWLEDGE_PLUGINS = ['wxsearch', 'wxmedia'] as const
 
 export interface BuildSystemPromptArgs {
+  mcpTools?: 'none'
   /** A restricted conversation transport: only reply / ask_user / optional delegate are exposed. */
   conversationActions?: {executors: readonly string[]}
   /** Which provider this session is for. Used to compute peer + delegate tool name. */
@@ -298,6 +300,7 @@ export interface BuildSystemPromptArgs {
  */
 export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   const { providerId, peerProviderId, companionEnabled, delegateAvailable, model } = args
+  if (args.mcpTools === 'none') return [baseChannelSection(providerId, model, args.replyText === 'all_segments', true), NO_CC_MCP_INSTRUCTIONS].join('\n\n')
 
   // `knowledge_search` is a daemon-owned tool (agent-facing search design
   // Task 5), independent of whether any KNOWN_KNOWLEDGE_PLUGINS entry is

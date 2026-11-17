@@ -217,17 +217,18 @@ export function openaiGateOpts(_tp: TierProfile, permissionMode: PermissionMode)
 }
 
 /** 编译对象:按「怎么连的」分,不按 provider id —— cursor 有 ACP(生产)和 SDK 兜底两条路,翻法不同。 */
-export type PolicyTarget = 'claude' | 'codex' | 'cursor-acp' | 'cursor-sdk' | 'openai' | 'gemini' | 'agy'
+export type PolicyTarget = 'claude' | 'codex' | 'cursor-acp' | 'grok-acp' | 'cursor-sdk' | 'openai' | 'gemini' | 'agy'
 export interface ExecutorPolicySettings {
   claude: ClaudeTierSdkOpts
   codex: CodexTierSdkOpts & ReturnType<typeof codexNetworkOpts>
   'cursor-acp': AcpModeAnswer
+  'grok-acp': AcpModeAnswer
   'cursor-sdk': CursorTierSdkOpts
   openai: OpenaiGateOpts
   gemini: GeminiTierSdkOpts
   agy: AgyPermissionOpts
 }
-export const POLICY_TARGETS: readonly PolicyTarget[] = ['claude', 'codex', 'cursor-acp', 'cursor-sdk', 'openai', 'gemini', 'agy']
+export const POLICY_TARGETS: readonly PolicyTarget[] = ['claude', 'codex', 'cursor-acp', 'grok-acp', 'cursor-sdk', 'openai', 'gemini', 'agy']
 
 /** 唯一入口:这一轮、这家执行者、这个档位和模式,实际用什么设置。 */
 export function compilePolicy<T extends PolicyTarget>(target: T, tp: TierProfile, permissionMode: PermissionMode): ExecutorPolicySettings[T] {
@@ -235,6 +236,7 @@ export function compilePolicy<T extends PolicyTarget>(target: T, tp: TierProfile
     claude: () => tierProfileToClaudeSdkOpts(tp, permissionMode),
     codex: () => ({ ...tierProfileToCodexSdkOpts(tp, permissionMode), ...codexNetworkOpts(tp) }),
     'cursor-acp': () => acpModeAnswer(tp, permissionMode),
+    'grok-acp': () => acpModeAnswer(tp, permissionMode),
     'cursor-sdk': () => tierProfileToCursorSdkOpts(tp, permissionMode),
     openai: () => openaiGateOpts(tp, permissionMode),
     gemini: () => tierProfileToGeminiSdkOpts(tp, permissionMode),

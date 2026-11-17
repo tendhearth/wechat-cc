@@ -11,9 +11,9 @@
 import { EXECUTOR_FACTS, type ExecutorConfigField } from './executor-facts'
 import type { KnownProviderId } from './provider-ids'
 
-type BinaryId = 'cursor' | 'agy'
+type BinaryId = 'cursor' | 'agy' | 'grok'
 type Env = Readonly<Record<string, string | undefined>>
-type ConfigLike = Partial<Record<ExecutorConfigField | 'cursorAgentBin' | 'agyBin', string | undefined>>
+type ConfigLike = Partial<Record<ExecutorConfigField | 'cursorAgentBin' | 'agyBin' | 'grokBin', string | undefined>>
 
 const filled = (v: string | undefined): string | null => (v && v.trim() ? v : null)
 

@@ -179,6 +179,12 @@ def start(state, resume=False, offline=False):
     for forbidden in (original_home + '/.claude', original_home + '/.codex', original_home + '/Library/Keychains', '/Library/Keychains', '/Applications/Tendhearth CC.app'):
         policy += '(deny file-read* file-write* (subpath ' + json.dumps(forbidden) + '))'
     policy += '(deny mach-lookup (global-name "com.apple.securityd"))'
+    # Opt-in for real Grok legs only: grok's account traffic cannot go through the
+    # local gateway. Claude/Codex here still have no login files; writes stay confined below.
+    if (state / '.grok-acceptance').exists():
+        if not (state / 'executors' / 'grok' / 'home' / '.grok' / 'auth.json').is_file():
+            raise SystemExit('refused: grok acceptance needs an owner login in this state')
+        policy += '(allow network-outbound (remote tcp "*:443") (remote udp "*:53") (literal "/private/var/run/mDNSResponder"))'
     # /bin/ps is setuid and cannot be executed inside a sandbox; the daemon needs
     # it to confirm a native executor's process groups have exited before the next
     # leg starts. ps only reads the process table and opens no network.

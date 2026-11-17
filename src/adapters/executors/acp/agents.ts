@@ -1,17 +1,19 @@
 /**
- * 走 ACP 的执行者启动描述。只认 cursor(`cursor-agent acp` 在用户已装的 CLI 里,零额外安装);
+ * 走 ACP 的执行者启动描述。内置 cursor(`cursor-agent acp`)与 grok(`grok agent --no-leader stdio`);
+ * Grok 的实际 spawn 必须传 CC 专属 HOME 并在该目录独立登录;
  * agy 的 ACP 面是 dl.google.com 上的独立二进制,按 2026-09-17 评估备忘推迟。
  * 不探测 --version、不起进程:能不能用由第一次 initialize 真跑说了算(codex-version-coupling 定案)。
  */
 import { executorBinary } from '../../../lib/executor-detect'
+import { PROVIDER_IDS } from '../../../lib/provider-ids'
 import { EXECUTOR_FACTS } from '../../../lib/executor-facts'
-export interface AcpAgentLaunch { id: 'cursor'; displayName: string; command: string; args: string[] }
+export interface AcpAgentLaunch { id: 'cursor' | 'grok'; displayName: string; command: string; args: string[] }
 
-export function resolveAcpAgent(id: 'cursor', config: { cursorAgentBin?: string }, findOnPath: (cmd: string) => string | null): AcpAgentLaunch | null {
-  if (id !== 'cursor') return null
+export function resolveAcpAgent(id: 'cursor' | 'grok', config: { cursorAgentBin?: string; grokBin?: string }, findOnPath: (cmd: string) => string | null): AcpAgentLaunch | null {
+  if (id !== 'cursor' && id !== 'grok') return null
   // 空串等于没配(面板清空一格就是空串),回落到 PATH —— 这条规则只在 executor-detect 里写一次。
-  const command = executorBinary('cursor', config, findOnPath)
-  return command ? { id: 'cursor', displayName: EXECUTOR_FACTS.cursor.names.name, command, args: ['acp'] } : null
+  const command = executorBinary(id, config, findOnPath)
+  return command ? { id, displayName: EXECUTOR_FACTS[id].names.name, command, args: id === 'grok' ? ['agent', '--no-leader', 'stdio'] : ['acp'] } : null
 }
 
 /**
@@ -21,7 +23,7 @@ export function resolveAcpAgent(id: 'cursor', config: { cursorAgentBin?: string 
  */
 export interface AcpCustomAgent { id: string; name: string; command: string; args: string[] }
 /** 内置执行者的 id 不能被占(claude / codex / cursor / agy / openai / gemini …)。 */
-export const RESERVED_EXECUTOR_IDS: ReadonlySet<string> = new Set(['claude', 'codex', 'cursor', 'agy', 'openai', 'gemini', 'api'])
+export const RESERVED_EXECUTOR_IDS: ReadonlySet<string> = new Set([...PROVIDER_IDS, 'api'])
 export const ACP_AGENT_ID = /^[a-z][a-z0-9-]{1,30}$/
 /** 已知会说 ACP 的 CLI:命令名 + 参数。版本不对的话第一次 initialize 会如实报错,这里不探测。 */
 export const ACP_PRESETS: Readonly<Record<string, { name: string; bin: string; args: string[]; note?: string }>> = Object.freeze({

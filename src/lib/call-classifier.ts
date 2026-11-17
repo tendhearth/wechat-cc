@@ -85,6 +85,7 @@ const PROVIDER_DEFAULT_HOST: Record<string, { host: string; label: string }> = {
   gemini: { host: host('gemini'), label: 'Gemini' },
   agy: { host: host('agy'), label: 'Gemini(agy)' },
   cursor: { host: host('cursor'), label: 'Cursor' },
+  grok: { host: host('grok'), label: 'Grok' },
 }
 
 /** 海外官方端点(后缀匹配)→ 名字。 */
@@ -92,7 +93,7 @@ const OFFICIAL_HOSTS: Array<[string, string]> = [
   ['anthropic.com', 'Claude'], ['claude.ai', 'Claude'],
   ['openai.com', 'OpenAI'], ['chatgpt.com', 'OpenAI'],
   ['googleapis.com', 'Gemini'], ['google.com', 'Google'],
-  ['x.ai', 'xAI'], ['mistral.ai', 'Mistral'], ['groq.com', 'Groq'], ['cohere.com', 'Cohere'], ['cohere.ai', 'Cohere'],
+  ['grok.com', 'Grok'], ['x.ai', 'xAI'], ['mistral.ai', 'Mistral'], ['groq.com', 'Groq'], ['cohere.com', 'Cohere'], ['cohere.ai', 'Cohere'],
   ['perplexity.ai', 'Perplexity'],
 ]
 /** 海外模型聚合。 */

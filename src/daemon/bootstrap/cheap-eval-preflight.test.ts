@@ -1,5 +1,7 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { makeCheapEvalPreflight } from './cheap-eval-preflight'
+
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
 function okFetcher() {
   return vi.fn(async (_url: string, _signal: AbortSignal) => ({ status: 404 })) // any HTTP response = reachable
@@ -11,6 +13,40 @@ function deadFetcher() {
 }
 
 describe('makeCheapEvalPreflight', () => {
+  it('Grok probes only HEAD cli-chat-proxy, caches success 60s/failure 15s and never probes by itself', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn().mockResolvedValue({ status: 401 })
+    vi.stubGlobal('fetch', fetcher)
+    const pf = makeCheapEvalPreflight()
+    expect(await pf('grok')).toBe(true)
+    expect(fetcher).toHaveBeenCalledWith('https://cli-chat-proxy.grok.com', { method: 'HEAD', redirect: 'manual', signal: expect.any(AbortSignal) })
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(await pf('grok')).toBe(true)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    fetcher.mockRejectedValue(new Error('getaddrinfo ENOTFOUND'))
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await pf('grok')).toBe(false)
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(await pf('grok')).toBe(false)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    // Cache expiry is not a retry: another intended turn must ask first.
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    fetcher.mockResolvedValue({ status: 404 })
+    expect(await pf('grok')).toBe(true)
+    expect(fetcher).toHaveBeenCalledTimes(3)
+  })
+
+  it('coalesces concurrent Grok preflights into one request', async () => {
+    let finish!: (value: { status: number }) => void
+    const fetcher = vi.fn(() => new Promise<{ status: number }>(resolve => { finish = resolve }))
+    const pf = makeCheapEvalPreflight({ fetcher })
+    const first = pf('grok'), second = pf('grok')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    finish({ status: 403 })
+    expect(await Promise.all([first, second])).toEqual([true, true])
+  })
+
   it('reachable endpoint → true; the verdict is cached inside okTtl (no second fetch)', async () => {
     const fetcher = okFetcher()
     let t = 1000

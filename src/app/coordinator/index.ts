@@ -51,6 +51,9 @@ export function turnPolicy(mode: Mode): TurnPolicy {
   return mode.kind === 'chatroom' ? 'preempt' : 'queue'
 }
 
+/** 一次代答 Grok 连不上、改由 CC 答时垫在原话前面的说明(只进这一轮的提示,不改对话模式)。 */
+export const GROK_UNREACHABLE_FALLBACK_NOTE = '(系统说明:主人点名让 Grok 答这一句,但 Grok 现在连不上网络。这一句请你直接回答,不要切换执行者,也不要调用 provider_switch。)'
+
 export function createConversationCoordinator(deps: ConversationCoordinatorDeps): ConversationCoordinator {
   const ctx = createCoordinatorCtx(deps)
   const { getMode } = ctx
@@ -186,7 +189,24 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     switch (p.kind) {
       case 'paused': return
       case 'refused': return solo.refuse(msg, p)
-      case 'solo': return solo.dispatch(msg, proj, p)
+      case 'solo': {
+        const result = await solo.dispatch(msg, proj, p)
+        if (result !== 'grok_unreachable' || !oneoff || !resolved) return
+        // The failed oneoff has already recorded/cleaned up. Plan CC afresh in the
+        // original project, under this same chat lock; never reselect Grok or change Mode.
+        const current = getMode(msg.chatId)
+        const provider = current.kind === 'solo' && current.provider !== 'grok' ? current.provider : deps.defaultProviderId
+        if (provider === 'grok') { await ctx.notice(msg.chatId, 'Grok 现在连不上（网络），这句我先不转给它。'); return }
+        // 原话里点了 Grok 的名:不加说明,CC 的模型会把它当「切到 Grok」去调 provider_switch(验收真遇到过)。
+        const fallbackMsg: InboundMsg = { ...msg, text: `${GROK_UNREACHABLE_FALLBACK_NOTE}\n${msg.text}`, answerTarget: undefined, answerRoute: undefined }
+        const fallback = await planner.planTurn(fallbackMsg, { kind: 'solo', provider })
+        if (fallback.kind === 'solo' && fallback.providerId !== 'grok') {
+          await ctx.notice(msg.chatId, 'Grok 现在连不上（网络），这句由 CC 来答。')
+          await solo.dispatch(fallbackMsg, resolved, fallback)
+        } else if (fallback.kind === 'refused') await solo.refuse(fallbackMsg, fallback)
+        else if (fallback.kind === 'solo') await ctx.notice(msg.chatId, 'Grok 现在连不上（网络），这句我先不转给它。')
+        return
+      }
       case 'parallel': return dispatchParallel(msg, proj, p)
       case 'chatroom': return chatroom.dispatch(msg, proj, p)
     }

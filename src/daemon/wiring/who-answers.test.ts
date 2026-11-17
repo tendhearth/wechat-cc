@@ -21,20 +21,22 @@ import { makeTokenRegistry } from '../internal-api/token-registry'
 import { scopedSend } from '../inbound/reply-scope'
 import { makeCheapAnswerJudge } from '../inbound/answer-fallback'
 import type { InboundCtx } from '../inbound/types'
+import { errorWithProviderCode } from '../../lib/provider-error-code'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
 
-function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: boolean; fail?: boolean; onSpawn?: () => void; evaluate?: (prompt: string) => Promise<string> } = {}) {
+function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: boolean; fail?: boolean; defaultProviderId?: string; persistedProviderId?: string; spawnFailure?: { provider: string; error: Error }; onSpawn?: () => void; evaluate?: (prompt: string) => Promise<string> } = {}) {
   const db = openTestDb(), stateDir = mkdtempSync(join(tmpdir(), 'who-answers-'))
   mkdirSync(join(stateDir, 'companion'))
   writeFileSync(join(stateDir, 'companion/config.json'), JSON.stringify({ default_chat_id: 'owner' }))
   const registry = createProviderRegistry({ networkGate: options.gate }), sinks = makeReplySinks(), messages = makeMessagesStore(db)
   const spawns: Array<{ provider: string; alias: string; path?: string; ephemeral?: boolean; instructions?: string; resume?: string; permissionMode?: string; allow?: string[] }> = []
   const prompts: Array<{ provider: string; text: string }> = [], closed: string[] = [], revoked: string[] = []
-  for (const id of ['claude', 'codex']) registry.register(id, {
+  for (const id of ['claude', 'codex', 'grok']) registry.register(id, {
     callTarget: () => ({ provider: id, model: `${id}-test` }),
     spawn: async (project, ctx) => {
+      if (options.spawnFailure?.provider === id) throw options.spawnFailure.error
       // 白名单采集；不读取或断言 spawn 的环境字段。
       spawns.push({ provider: id, alias: project.alias, path: project.path, ephemeral: ctx.ephemeral, instructions: ctx.appendInstructions, resume: ctx.resumeSessionId, permissionMode: ctx.permissionMode, allow: [...(ctx.tierProfile?.allow ?? [])] })
       options.onSpawn?.()
@@ -56,14 +58,16 @@ function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: b
   })
   const runtime = makeReplyDeliveryRuntime({ sendText: async () => { throw Error('must stay in sink') }, sink: { captureReply: (c, r) => sinks.captureReply!(c, r) }, log: () => {} })
   const notices: string[] = [], workspaces: string[] = [], released: string[] = []
+  const conversationStore = makeConversationStore(db)
+  if (options.persistedProviderId) conversationStore.set('owner', { kind: 'solo', provider: options.persistedProviderId })
   const coordinator = createConversationCoordinator({ resolveProject: () => ({ alias: 'fixture', path: stateDir }), manager, registry,
     oneoffWorkspace: () => { const w = mkdtempSync(join(tmpdir(), 'who-oneoff-')); workspaces.push(w); return w }, releaseOneoffWorkspace: w => { released.push(w); rmSync(w, { recursive: true, force: true }) },
-    conversationStore: makeConversationStore(db), defaultProviderId: 'claude', permissionMode: 'strict', format: formatInbound,
+    conversationStore, defaultProviderId: options.defaultProviderId ?? 'claude', permissionMode: 'strict', format: formatInbound,
     recentTurns: async () => [{ text: 'PRIVATE_HISTORY', dir: 'in' as const, ts: '2026-11-16T00:00:00Z' }],
     loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['owner'], admins: options.trusted ? [] : ['owner'] }), trustedProviders: () => ['claude'],
     replyDelivery: runtime, networkGate: options.gate, log: () => {}, sendNotice: async (_c, text) => { notices.push(text); sinks.capture('owner', text) },
   })
-  const route = makeMwRoute({ probes: {}, providers: () => [{ id: 'codex', names: ['Codex'], available: !options.unavailable }, { id: 'claude', names: ['Claude'], available: true }], log: () => {},
+  const route = makeMwRoute({ probes: {}, providers: () => [{ id: 'codex', names: ['Codex'], available: !options.unavailable }, { id: 'grok', names: ['Grok'], available: true }, { id: 'claude', names: ['Claude'], available: true }], log: () => {},
     ...(options.evaluate ? { judge: makeCheapAnswerJudge(options.evaluate) } : {}),
     sendMessage: scopedSend(async (_c, text) => { notices.push(text) }),
   })
@@ -73,17 +77,20 @@ function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: b
     ilink: { resolveAccountId: () => 'offline' }, appTurn: () => async ctx => { let consumed = true; await route(ctx, () => route.consume(ctx, async () => { consumed = false })); return { consumed } }, log: () => {}, topicRecall, matterRecall,
   })
   cleanups.push(async () => { await manager.shutdown(); db.close(); rmSync(stateDir, { recursive: true, force: true }) })
-  return { route, workspaces, released, converse, coordinator, manager, spawns, prompts, closed, revoked, instructions, rotation, messages, notices, topicRecall, matterRecall, tokens, minted }
+  // 落库 id 是 app:<来源>:<毫秒>:in/out;测试一毫秒内连发两句会撞 id 被当重复丢掉(主人不会这样发)。每句前等时钟走一格。
+  let lastAt = 0
+  const send = async (...args: Parameters<typeof converse>) => { while (Date.now() <= lastAt) await new Promise(r => setTimeout(r, 1)); try { return await converse(...args) } finally { lastAt = Date.now() } }
+  return { route, workspaces, released, converse: send, coordinator, manager, spawns, prompts, closed, revoked, instructions, rotation, messages, notices, topicRecall, matterRecall, tokens, minted }
 }
 
-it('一次代答用隔离会话、原样交付且记 agent 来源；下一句与原 CC 会话续聊', async () => {
+it.each(['codex', 'grok'])('%s 一次代答用隔离会话、原样交付且记 agent 来源；下一句与原 CC 会话续聊', async provider => {
   const t = setup()
   await t.converse('先聊一句')
   const before = t.rotation.opened.mock.calls.length
-  const result = await t.converse('让 Codex 回答这个问题: 2+2')
-  expect(result).toMatchObject({ reply: 'codex 原样答复', speaker: 'agent', provider: 'codex' })
+  const result = await t.converse(`让 ${provider} 回答这个问题: 2+2`)
+  expect(result).toMatchObject({ reply: `${provider} 原样答复`, speaker: 'agent', provider })
   expect(t.coordinator.getMode('owner')).toEqual({ kind: 'solo', provider: 'claude' })
-  const spawned = t.spawns.find(s => s.provider === 'codex')!
+  const spawned = t.spawns.find(s => s.provider === provider)!
   expect(spawned).toMatchObject({ ephemeral: true, permissionMode: 'strict', allow: ['reply'] })
   // 评审 P1:代答不在主人的项目里跑,用一次性的空目录,答完删掉。
   expect(spawned.path).toBe(t.workspaces[0])
@@ -93,21 +100,22 @@ it('一次代答用隔离会话、原样交付且记 agent 来源；下一句与
   expect(spawned.alias).not.toBe('fixture')
   expect(spawned.instructions).toContain('硬规矩')
   expect(spawned.instructions).not.toContain('CC_PRIVATE')
-  expect(t.prompts.find(p => p.provider === 'codex')?.text).not.toMatch(/PRIVATE_/)
+  expect(t.prompts.find(p => p.provider === provider)?.text).not.toMatch(/PRIVATE_/)
   expect(t.rotation.opened.mock.calls.length).toBe(before)
-  expect(t.closed).toEqual(['codex'])
-  expect(t.revoked).toEqual([`codex/${spawned.alias}/owner`])
-  const permission = t.tokens.resolve(t.minted.find(m => m.key.startsWith('codex/'))!.token)
+  expect(t.closed).toEqual([provider])
+  expect(t.revoked).toEqual([`${provider}/${spawned.alias}/owner`])
+  const permission = t.tokens.resolve(t.minted.find(m => m.key.startsWith(`${provider}/`))!.token)
   expect(permission?.routeAllow).toEqual(new Set())
   expect(permission?.routeAllow?.has('POST /v1/conversation/set-mode')).toBe(false)
   expect(permission?.routeAllow?.has('GET /v1/memory/search')).toBe(false)
   expect(t.manager.has({ alias: 'fixture', chatId: 'owner', providerId: 'claude' })).toBe(true)
   expect(await t.converse('接着聊')).toMatchObject({ reply: 'claude 原样答复', speaker: 'cc', provider: 'claude' })
-  expect(t.spawns.map(s => s.provider)).toEqual(['claude', 'codex'])
+  expect(t.spawns.map(s => s.provider)).toEqual(['claude', provider])
   expect(t.instructions).toHaveBeenCalledTimes(1)
   expect(t.topicRecall).toHaveBeenCalledTimes(2)
   expect(t.matterRecall).toHaveBeenCalledTimes(2)
-  expect((await t.messages.listRange('owner', { limit: 20 })).find(m => m.text === 'codex 原样答复')).toMatchObject({ speaker: 'agent', provider: 'codex' })
+  // 落库在回复交付之后异步写;等它落下再看来源,不赌时序。
+  await vi.waitFor(async () => expect((await t.messages.listRange('owner', { limit: 20 })).find(m => m.text === `${provider} 原样答复`)).toMatchObject({ speaker: 'agent', provider }))
 })
 
 it('spawn 后网络失保护也说明失败并问 CC，释放代答会话且不重放', async () => {
@@ -118,6 +126,36 @@ it('spawn 后网络失保护也说明失败并问 CC，释放代答会话且不�
   expect(t.spawns.map(s => s.provider)).toEqual(['codex'])
   expect(t.prompts).toEqual([])
   expect(t.closed).toEqual(['codex'])
+})
+
+it('Grok 一次代答网络预检失败时说明原因并由 CC 回答，不重试 Grok，下一句仍续 CC', async () => {
+  const t = setup({ spawnFailure: { provider: 'grok', error: errorWithProviderCode('grok_network_unavailable', 'network') } })
+  const result = await t.converse('让 Grok 回答：2+2？')
+  expect(result.reply).toBe('Grok 现在连不上（网络），这句由 CC 来答。\nclaude 原样答复')
+  expect(result.replyParts).toContainEqual(expect.objectContaining({ text: 'claude 原样答复', speaker: 'cc', provider: 'claude' }))
+  expect(t.notices).toEqual(['Grok 现在连不上（网络），这句由 CC 来答。'])
+  expect(t.prompts.map(p => p.provider)).toEqual(['claude'])
+  expect(t.spawns.map(s => s.provider)).toEqual(['claude'])
+  // 不垫说明,CC 的模型会把「让 Grok 回答」当切换去调 provider_switch(真模型验收遇到过)。
+  expect(t.prompts[0]?.text).toContain('不要调用 provider_switch')
+  expect(t.prompts[0]?.text).toContain('2+2？')
+  expect(t.spawns[0]).toMatchObject({ alias: 'fixture', allow: expect.arrayContaining(['reply']) })
+  expect(t.spawns[0]?.ephemeral).not.toBe(true)
+  expect(t.released).toEqual(t.workspaces)
+  expect(t.coordinator.getMode('owner')).toEqual({ kind: 'solo', provider: 'claude' })
+  expect(await t.converse('接着聊')).toMatchObject({ reply: 'claude 原样答复', speaker: 'cc', provider: 'claude' })
+  expect(t.spawns.map(s => s.provider)).toEqual(['claude'])
+})
+
+it('CC 计划把已移除的执行者回落为 Grok 时，也不把失败的代答再投给 Grok', async () => {
+  const t = setup({ defaultProviderId: 'grok', persistedProviderId: 'removed-executor', spawnFailure: { provider: 'grok', error: errorWithProviderCode('grok_network_unavailable', 'network') } })
+  const acquire = vi.spyOn(t.manager, 'acquire')
+  const result = await t.converse('让 Grok 回答：2+2？')
+  expect(result.reply).toBe('Grok 现在连不上（网络），这句我先不转给它。')
+  expect(acquire).toHaveBeenCalledTimes(1)
+  expect(t.prompts).toEqual([])
+  expect(t.coordinator.getMode('owner')).toEqual({ kind: 'solo', provider: 'removed-executor' })
+  expect(t.released).toEqual(t.workspaces)
 })
 
 it.each(['unavailable', 'trusted', 'network', 'auth'] as const)('点名失败不代换、不改 Mode：%s', async reason => {
