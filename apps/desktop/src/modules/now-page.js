@@ -60,7 +60,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
   /** @type {import('./terminal-waiting.js').TerminalRow[]} */ let terminal = []
   // 按下去之后到下一拍列表把它收走之前,别让 3 秒一次的重绘把「看清楚」又放出来(hash → 行上那句话;'' = 正在送)。
   /** @type {Map<string,string>} */ const decided = new Map()
-  list.addEventListener('click', e => {
+  list?.addEventListener('click', e => {
     const target = /** @type {HTMLElement} */ (e.target)
     const term = /** @type {HTMLElement|null} */ (target.closest('.now-terminal-row[data-hash]'))
     if (term) { openDecide(/** @type {string} */ (term.dataset.hash)); return }
@@ -163,6 +163,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     const rows = waitingRows(attention)
     const head = waitingHeader(attention, terminal.length)
     const box = $('now-waiting')
+    if (!box || !list) return
     box.hidden = head.hidden
     box.setAttribute('aria-labelledby', 'now-waiting-title')
     if (attention?.stale) box.dataset.state = head.unknown ? 'unknown' : 'partial'; else delete box.dataset.state

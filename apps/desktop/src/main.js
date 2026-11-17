@@ -46,7 +46,7 @@ import { initConversePage, addConversationMatter, addConversationTerminal, openC
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
-import { mountConversationTopics } from './modules/conversation-topics.js'
+import { mountMemoryTopics } from './modules/conversation-topics.js'
 import { updateConversationMatters, updateConversationAttention } from './modules/conversation-matters.js'
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
@@ -93,8 +93,8 @@ const state = {
   updateProbed: false,
   connectionIntent: /** @type {"disconnected" | null} */ (null),
 }
-/** @type {ReturnType<typeof mountConversationTopics>|null} */
-let conversationTopics=null
+/** @type {ReturnType<typeof mountMemoryTopics>|null} */
+let memoryTopics=null
 const mainNavigation = createMainNavigation(destination => {
   if (typeof destination === 'string') { switchPane(destination); return }
   switchPane('workbench')
@@ -701,7 +701,7 @@ function switchPane(name) {
   if(searchRequested)name='workbench'
   const focusConversation = name === "converse" || name === 'chat'
   document.body.dataset.pane = focusConversation ? "overview" : name
-  if (focusConversation) {conversationTopics?.close();name = "overview"}
+  if (focusConversation) {memoryTopics?.close();name = "overview"}
   // 连接浮层只在原地看一眼:任何一次导航都把它收起。
   document.querySelector(".cc-home-details")?.removeAttribute("open")
   const currentPane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
@@ -1690,26 +1690,11 @@ async function boot() {
       projects:openConversationProjects,
       history:async()=>{await terminalWaiting.refresh();return openComputerSessions(()=>home.sessions,session=>addConversationTerminal(session),async()=>{try{const list=/** @type {import('./modules/workbench.js').ListResult} */(await v1(invokeWorkbenchApi,V1.workbench.list));mountHistoryDialog(invokeWorkbenchApi,list.historyProviders??[],async id=>{switchPane('workbench');await openWorkbenchTask(id)},list.agentNames??{})}catch{showToast('暂时读不到电脑上的会话，请稍后再试')}})},
       navigate:switchPane})
-    const waiting=document.getElementById('now-waiting')
-    if(waiting){
-      conversationRoot.querySelector('.converse-compose')?.before(waiting)
-      waiting.addEventListener('toggle',()=>{
-        if(!(waiting instanceof HTMLDetailsElement)||!waiting.open||lastAttention?.stale)return
-        const tasks=lastAttention?.tasks??[]
-        for(const task of tasks)addConversationMatter(task.id,/** @type {any} */(task).title??'交办的事')
-        updateConversationMatters(home.tasks??[])
-        const first=tasks[0]
-        if(first)conversationRoot.querySelector(`[data-matter-id="${CSS.escape(first.id)}"]`)?.scrollIntoView({block:'center'})
-        // Terminal permissions keep their original protected card until a terminal detail contract exists.
-        if(!terminalWaitingCount)waiting.open=false
-      })
-    }
-    const topics=mountConversationTopics({root:conversationRoot,call:invokeWorkbenchApi,
-      onTopics:ids=>nowPage?.setTopics(ids),
+    const topics=mountMemoryTopics({root:/** @type {HTMLElement} */(document.getElementById('memory-topics')),call:invokeWorkbenchApi,
       openMatter:id=>deps.onOpenMatter(id),
       locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),
       manage:()=>switchPane('memory')})
-    conversationTopics=topics
+    memoryTopics=topics
     document.getElementById('topbar-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
     window.addEventListener('pagehide',()=>topics.destroy(),{once:true})
   }

@@ -421,10 +421,7 @@
             </div>
             </details>
             <div id="converse-root" class="converse-page"></div>
-            <details id="now-waiting" class="now-waiting" aria-labelledby="now-waiting-title" hidden>
-              <summary id="now-waiting-title"></summary>
-              <ul id="now-waiting-list"></ul>
-            </details>
+
           </article>
 
           <!-- Hidden shim: keeps the IDs that JS modules
@@ -477,6 +474,7 @@
 
           <!-- ── pane: memory ───────────────────────────────────────── -->
           <article class="dash-pane" data-pane="memory" hidden>
+            <section id="memory-topics" class="memory-topics" aria-label="话题"></section>
             <section class="memory-profile-overview" id="memory-profile-overview">
               <section class="memory-facts" id="memory-facts" aria-labelledby="memory-facts-title">
                 <header class="memory-facts-head"><div><h1 id="memory-facts-title">记忆</h1></div><button id="memory-facts-edit" class="btn" type="button" aria-label="查看并纠正记忆" disabled>纠正</button></header>

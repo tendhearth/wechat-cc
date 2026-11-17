@@ -9,10 +9,11 @@ const activityLabel = t => [t.title, t.activity?.waiting ? `${t.activity.waiting
 
 /** T4 reads never open a bubble. Only a deliberate owner selection writes.
  * @param {{root:HTMLElement,call:(method:any,path:string,body?:any)=>Promise<any>,openMatter:(id:string)=>unknown,locateMessage:(id:string,excerpt?:string)=>unknown,manage:()=>unknown,onTopics?:(ids:string[])=>void}} deps */
-export function mountConversationTopics({root,call,openMatter,locateMessage,manage,onTopics}) {
+export function mountMemoryTopics({root,call,openMatter,locateMessage,manage,onTopics}) {
   const row = document.createElement('nav'); row.className = 'conversation-topics'; row.ariaLabel = '最近话题'; row.hidden = true
   const panel = document.createElement('section'); panel.className = 'conversation-topic-panel'; panel.ariaLabel = '话题'; panel.hidden = true; panel.tabIndex = -1
-  root.querySelector('.converse-compose')?.before(row)
+  const heading = document.createElement('h2'); heading.textContent = '话题'
+  root.prepend(heading, row)
   root.append(panel)
   /** @type {HTMLElement|null} */ let returnFocus = null
   let editing = false
@@ -202,7 +203,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
     /** @type {string|null} */ let next=null
     let loading=false
     const seen=new Set()
-    panel.replaceChildren(button('返回对话',close))
+    panel.replaceChildren(button('返回话题',close))
     const title=document.createElement('h2');title.id='conversation-topic-title';title.textContent='更多话题';panel.setAttribute('aria-labelledby',title.id);panel.append(title)
     const search=document.createElement('input');search.type='search';search.placeholder='搜索话题';search.ariaLabel='搜索话题'
     const results=document.createElement('div'),notice=document.createElement('p'),actions=document.createElement('div')
@@ -259,5 +260,5 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   }
   root.addEventListener('keydown',escape)
   void refresh().then(()=>{if(supported!==false)void subscribe()})
-  return {close,refresh,destroy() { alive = false; topics=[];detail=null;pendingOpen=null;panel.hidden=true; syncPanel(); visibility.disconnect(); narrow.removeEventListener('change',syncPanel); ticket++; listTicket++; clearTimeout(timer); root.removeEventListener('keydown',escape); row.remove(); panel.remove() }}
+  return {close,refresh,destroy() { alive = false; topics=[];detail=null;pendingOpen=null;panel.hidden=true; syncPanel(); visibility.disconnect(); narrow.removeEventListener('change',syncPanel); ticket++; listTicket++; clearTimeout(timer); root.removeEventListener('keydown',escape); row.remove(); panel.remove(); heading.remove() }}
 }
