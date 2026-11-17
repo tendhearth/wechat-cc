@@ -224,10 +224,12 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       // 文案不提"工作台" —— 对话侧也会撞到它(bootstrap 那边另有一道门:win32 不注册 ACP 对话 provider)。
       if (!acpSupportedOn()) throw new Error(`${options.displayName} 暂不支持 Windows：尚未验证进程树清理。`)
       // daemon 自己的凭据不进外部 CLI —— cursor-agent 还会再 spawn 它自己的 MCP 子进程,env 是会传染的。
+      if (context.preparationSignal?.aborted) throw new Error('acp_session_closed')
       const baseEnv = workbenchSubprocessEnv()
       const isGrok = options.targetProvider === 'grok' || options.policyTarget === 'grok-acp' || /^grok(?:\.exe)?$/i.test(basename(options.command))
       const env = isGrok ? grokSubprocessEnv(options.grokStateDir, baseEnv, true) : baseEnv
       if (options.preflight) await options.preflight()
+      if (context.preparationSignal?.aborted) throw new Error('acp_session_closed')
       const child = spawn(options.command, options.args, { cwd: project.path, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true })
       // 按 JSON-RPC 请求 id 记账:id 是 agent 唯一能用来对上回复的东西,撞 id ⇒ 协议已经不可信。
       let mcpSession: AcpMcpSession | undefined
@@ -253,22 +255,30 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       }
       const clearTurnTimers = (turn: Turn) => { clearTimeout(turn.idleTimer); clearTimeout(turn.cancelTimer) }
       const idleError = (): AgentEvent => ({ kind: 'error', message: `acp_prompt_idle_timeout: ${options.displayName}`, code: 'provider_error' })
+      const flushTextTail = (turn: Turn) => {
+        if (!turn.lastText) return
+        const tail = turn.redactText?.('', true)
+        if (tail) turn.queue.push({ ...turn.lastText, text: tail })
+      }
       const emit = (turn: Turn, event: AgentEvent) => {
         if (event.kind === 'text') {
+          // messages mode is already reassembled by the translator: redact atomically.
+          // In append mode, held prefixes must stay in the original text item.
+          if (turn.lastText && turn.lastText.itemId !== event.itemId) flushTextTail(turn)
           turn.lastText = event
-          const text = turn.redactText?.(event.text) ?? redact(event.text)
+          const text = options.text === 'messages' ? redact(event.text) : turn.redactText?.(event.text) ?? redact(event.text)
           if (text) turn.queue.push({ ...event, text })
-        } else turn.queue.push(event)
+        } else {
+          flushTextTail(turn)
+          turn.queue.push(event)
+        }
       }
       const finish = (turn: Turn, event: AgentEvent) => {
         if (active !== turn) return
         clearTurnTimers(turn)
         active = undefined
         settlePermissions({ outcome: { outcome: 'cancelled' } })
-        if (!turn.cancelled && turn.lastText) {
-          const tail = turn.redactText?.('', true)
-          if (tail) turn.queue.push({ ...turn.lastText, text: tail })
-        }
+        if (!turn.cancelled) flushTextTail(turn)
         turn.queue.push(event); turn.queue.end()
       }
       // 先收掉在飞回合(把中文提示作为该回合最后一个事件推出),再 dispose 连接 ——
@@ -447,6 +457,9 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         if (broken && (error === broken || (error instanceof Error && error.message === 'acp_session_closed'))) return withTail(broken.message)
         return error instanceof Error ? error : new Error(String(error))
       }
+      const abortPreparation = () => { void close().catch(() => {}) }
+      context.preparationSignal?.addEventListener('abort', abortPreparation, { once: true })
+      if (context.preparationSignal?.aborted) abortPreparation()
       let resumedHistory = false
       try {
         const initialized = await connection.request('initialize', { protocolVersion: 1, clientCapabilities: CLIENT_CAPABILITIES, clientInfo: CLIENT_INFO })
@@ -533,7 +546,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         await close().catch(() => {})
         mapped.message = redact(mapped.message)
         throw mapped
-      }
+      } finally { context.preparationSignal?.removeEventListener('abort', abortPreparation) }
       loading = false
       if (options.notice !== null) context.reportNotice?.(options.notice ?? acpNotice(options.displayName))
 
@@ -622,6 +635,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         async cancel() {
           const turn = active
           if (turn) cancelTurn(turn)
+          else if (mcpSession?.servers.length) await close()
         },
         close,
       }

@@ -25,7 +25,7 @@ export function mcpBearerMatches(header: string | undefined, token: string): boo
 
 export async function createMcpHttpBridge(
   specs: readonly AcpStdioMcpServer[],
-  options: { cwd: string; spawn?: typeof nodeSpawn; log?: (tag: string, line: string) => void },
+  options: { cwd: string; spawn?: typeof nodeSpawn; signal?: AbortSignal; log?: (tag: string, line: string) => void },
 ): Promise<McpHttpBridge> {
   const token = randomBytes(32).toString('base64url')
   let active = true, closing: Promise<void> | undefined
@@ -58,6 +58,7 @@ export async function createMcpHttpBridge(
       }))
       server.closeAllConnections()
       await new Promise<void>(resolve => server.close(() => resolve()))
+      options.signal?.removeEventListener('abort', abortBridge)
       const failed = outcomes.find(result => result.status === 'rejected')
       if (failed?.status === 'rejected') throw new Error('mcp_process_cleanup_failed', { cause: failed.reason })
     })()
@@ -92,7 +93,10 @@ export async function createMcpHttpBridge(
     try { await entry.transport.handleRequest(req, res) }
     catch { if (!res.headersSent) res.writeHead(400).end(); else res.end() }
   }
+  const abortBridge = () => { void close().catch(() => {}) }
+  options.signal?.addEventListener('abort', abortBridge, { once: true })
   try {
+    if (options.signal?.aborted) throw new Error('mcp_bridge_closed')
     for (const spec of specs) {
       if (!active) throw new Error('mcp_bridge_closed')
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID })

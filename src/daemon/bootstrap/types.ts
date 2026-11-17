@@ -284,7 +284,7 @@ export interface Bootstrap {
    * per-chat sections (currently: the care section, via `deps.careLevelFor`).
    * Exposed for tests.
    */
-  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
+  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string, actualMcp?: { wechat: boolean; delegate: boolean }) => string
   /** 这家执行者现在用哪个模型(session-manager 起会话时问的同一个;输出评测也照它起会话)。可选:测试里的假 boot 没有它。 */
   currentModelFor?: (providerId: ProviderId) => string | undefined
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */

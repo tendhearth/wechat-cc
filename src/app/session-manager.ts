@@ -63,7 +63,7 @@ export interface SessionManagerOptions {
    * Omitted in tests/embeddings → `appendInstructions` is left off the
    * SpawnContext entirely.
    */
-  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
+  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string, actualMcp?: { wechat: boolean; delegate: boolean }) => string
   /**
    * The pinned model id for a (provider) spawn, read per-spawn so a `/model`
    * switch applies without a daemon restart. Returns undefined when no pin
@@ -125,6 +125,7 @@ export interface InFlightKey {
 }
 
 export interface SessionHandle {
+  readonly supportsDelegation?: boolean
   readonly alias: string
   readonly path: string
   readonly providerId: ProviderId
@@ -188,6 +189,8 @@ export class SessionManager {
     if(this.opts.executionGuard?.(req.path,req.providerId,nativeId))throw new Error('native_session_busy')
   }
   private readonly pending = new Map<string, Promise<SessionHandle>>()
+  private readonly preparations = new Map<string, { controller: AbortController; req: AcquireRequest }>()
+  private shutdownPromise?: Promise<void>
   // In-flight dispatch counter keyed by (provider, alias, chatId). Each
   // dispatch() iterator increments on first .next() entry and decrements
   // in its finally block. sweepIdle skips any session with count > 0 — a
@@ -210,6 +213,7 @@ export class SessionManager {
    * required for per-chat tier policy + per-chat conversation isolation.
    */
   async acquire(req: AcquireRequest): Promise<SessionHandle> {
+    if (this.shutdownPromise) await this.shutdownPromise
     this.checkExecution(req)
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
     const existing = this.sessions.get(k)
@@ -220,20 +224,24 @@ export class SessionManager {
     const inFlight = this.pending.get(k)
     if (inFlight) return inFlight
     this.pendingPaths.set(k,req.path)
-    const promise = this.spawn(req).finally(() => {
-      this.pending.delete(k);this.pendingPaths.delete(k)
+    const controller = new AbortController()
+    this.preparations.set(k, { controller, req })
+    const promise = this.spawn(req, controller.signal).finally(() => {
+      this.pending.delete(k);this.pendingPaths.delete(k);this.preparations.delete(k)
     })
     this.pending.set(k, promise)
     return promise
   }
 
-  private async spawn(req: AcquireRequest): Promise<SessionHandle> {
+  private async spawn(req: AcquireRequest, preparationSignal: AbortSignal): Promise<SessionHandle> {
     const model = req.model ?? this.opts.currentModelFor?.(req.providerId)
     const entry = this.opts.registry.get(req.providerId)
     if (!entry) throw new Error(`unknown provider: ${req.providerId} (registered: ${this.opts.registry.list().join(', ')})`)
     const { provider, opts: regOpts } = entry
     // 评审 #193:问 provider 这次 spawn 实际会连到哪里(构造时的端点 + 这次的模型),不按配置猜。
     await assertCallAllowed(this.opts.networkGate, providerCallTarget(provider, req.providerId, 'spawn', model !== undefined ? { model } : {}))
+
+    if (preparationSignal.aborted) throw new Error('session_preparation_cancelled')
 
     // Check for a recent session_id to resume — cut cold-start latency.
     const ttl = this.opts.resumeTTLMs ?? 7 * 24 * 60 * 60_000
@@ -275,11 +283,14 @@ export class SessionManager {
     // Model first, then the prompt: the prompt states the model so the agent
     // can answer「你是哪个模型」truthfully instead of guessing (or calling an
     // admin-only tool a trusted user can't reach).
-    const appendInstructions = req.oneoff ? ONEOFF_INSTRUCTIONS : this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
+    let appendInstructions = req.oneoff ? ONEOFF_INSTRUCTIONS : this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
     // spawn 这一刻 provider 报的会话目标:会话自己不报时,之后每一轮都按它判(配置后来再改也不跟)。
     const spawnTarget = providerCallTarget(provider, req.providerId, 'session', model !== undefined ? { model } : {})
     let session: AgentSession
+    const revokePreparation = () => this.opts.invalidateSessionToken?.(tokenKey)
+    preparationSignal.addEventListener('abort', revokePreparation, { once: true })
     try {
+      if (preparationSignal.aborted) throw new Error('session_preparation_cancelled')
       session = await provider.spawn(project, {
         ...(resumeSessionId ? { resumeSessionId } : {}),
         ...(req.ephemeral?{ephemeral:true}:{}),
@@ -289,17 +300,20 @@ export class SessionManager {
         // Forward chatId so the Claude provider can bake it into a
         // per-session canUseTool closure (see bootstrap/index.ts).
         chatId: req.chatId,
+        preparationSignal,
         mcpEnv,
         ...(appendInstructions !== undefined ? { appendInstructions } : {}),
+        ...(!req.oneoff && this.opts.buildInstructions ? { instructionsForMcp: (available: { wechat: boolean; delegate: boolean }) => { appendInstructions = this.opts.buildInstructions!(req.providerId, req.tierProfile, req.chatId, model, available); return appendInstructions } } : {}),
         ...(model !== undefined ? { model } : {}),
       })
+      if (preparationSignal.aborted) { await session.close(); throw new Error('session_preparation_cancelled') }
     } catch (err) {
       // spawn failed → the session is never cached, so release() never runs
       // and the just-minted token would leak in the registry forever. Revoke
       // it on the error path before propagating.
       this.opts.invalidateSessionToken?.(tokenKey)
       throw err
-    }
+    } finally { preparationSignal.removeEventListener('abort', revokePreparation) }
 
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
@@ -319,6 +333,7 @@ export class SessionManager {
       providerId: req.providerId,
       ...(model !== undefined ? { model } : {}),
       callTarget: effectiveTarget,
+      get supportsDelegation() { return session.supportsDelegation },
       ...(session.resumedHistory !== undefined && (!session.resumedHistoryOwnerOnly||rotation?.isOwnerChat(req.chatId)) ? {resumedHistory:session.resumedHistory} : rotation?.isOwnerChat(req.chatId) ? {resumedHistory:req.providerId==='claude' && !!resumeSessionId} : {}),
       lastUsedAt: Date.now(),
       dispatch(text: string, context?: AgentDispatchContext): AsyncIterable<AgentEvent> {
@@ -501,19 +516,33 @@ export class SessionManager {
    */
   async shutdownProtected(): Promise<number> {
     const gate = this.opts.networkGate
+    const preparing = [...this.preparations.entries()].filter(([, entry]) => classifyWith(gate, this.effectiveTarget({ alias: entry.req.alias, providerId: entry.req.providerId, chatId: entry.req.chatId }, entry.req.model)).protected)
     const entries = Array.from(this.sessions.values())
       .filter(s => classifyWith(gate, s.handle.callTarget ? s.handle.callTarget() : sessionCallTarget(null, s.handle.providerId)).protected)
-    await Promise.all(entries.map(s => this.release({ alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId })))
-    return entries.length
+    const closing = entries.map(s => this.release({ alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId }))
+    for (const [, entry] of preparing) entry.controller.abort()
+    await Promise.allSettled([...closing, ...preparing.flatMap(([key]) => this.pending.get(key) ? [this.pending.get(key)!] : [])])
+    return entries.length + preparing.length
   }
 
-  async shutdown(): Promise<void> {
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise
+    // Start every live close and preparation abort before the first await: all bearers
+    // must be revoked together, even if another provider takes time to stop spawning.
     const entries = Array.from(this.sessions.values())
-    await Promise.all(entries.map(s => this.release({
-      alias: s.handle.alias,
-      providerId: s.handle.providerId,
-      chatId: s.chatId,
-    })))
+    const closing = entries.map(s => this.release({
+      alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId,
+    }))
+    for (const entry of this.preparations.values()) entry.controller.abort()
+    const pending = [...this.pending.values()]
+    this.shutdownPromise = (async () => {
+      await Promise.allSettled([...closing, ...pending])
+      const late = Array.from(this.sessions.values())
+      await Promise.all(late.map(s => this.release({
+        alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId,
+      })))
+    })().finally(() => { this.shutdownPromise = undefined })
+    return this.shutdownPromise
   }
 
   private async enforceCapacity(): Promise<void> {

@@ -11,7 +11,7 @@ import { KNOWN_PROVIDER_IDS } from './capability-matrix'
  * 有箭头格子的执行者必须在这里有一条理由;不再有箭头的,删掉这条(下面的守卫两头都查)。
  */
 const WHY_GAPS: Readonly<Record<string, string>> = {
-  grok: '专属 HOME 只隔离账号与用户配置，不是工具沙盒；访客拒绝。严格对话拒绝报来的权限请求，问→拒；无 CC MCP 的工具调不到，放→拒。',
+  grok: '专属 HOME 只隔离账号与用户配置，不是工具沙盒；访客拒绝。严格对话拒绝报来的权限请求，问→拒；CC MCP 按会话 HTTP 协商接入，失败则无工具。',
   // trusted:ask→allow(shell_destructive / memory_delete / a2a_send)。admin 自 2026-10-26 起没有缺口(见下)。
   codex: 'trusted 的对话:strict 下 workspace-write 沙箱 + approval never,破坏性 shell 和 wechat MCP 上要问的那几类都不会停下来问'
     + '(审批卡发给主人,问的却是别人的对话 —— 主人只点头了自己对话的逐条问),问不了 ⇒ 维持不问,切过去时照实说'

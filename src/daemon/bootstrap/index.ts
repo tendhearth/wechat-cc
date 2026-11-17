@@ -129,6 +129,8 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
     pluginMcp: b.pluginMcp,
     wechatStdioForCodex: b.wechatStdioForCodex,
     delegateStdioForCodex: b.delegateStdioForCodex,
+    wechatStdioForGrok: b.wechatStdioForGrok,
+    delegateStdioForGrok: b.delegateStdioForGrok,
     wechatStdioForCursor: b.wechatStdioForCursor,
     delegateStdioForCursor: b.delegateStdioForCursor,
     wechatStdioForOpenai: b.wechatStdioForOpenai,

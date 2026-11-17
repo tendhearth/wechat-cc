@@ -90,6 +90,8 @@ export interface ProviderDeps {
   pluginMcp: Record<string, McpStdioSpec>
   wechatStdioForCodex: McpStdioSpec | null
   delegateStdioForCodex: McpStdioSpec | null
+  wechatStdioForGrok?: McpStdioSpec | null
+  delegateStdioForGrok?: McpStdioSpec | null
   wechatStdioForCursor: McpStdioSpec | null
   delegateStdioForCursor: McpStdioSpec | null
   wechatStdioForOpenai: McpStdioSpec | null
@@ -476,11 +478,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const grokBin = executorBinary('grok', configuredAgent, UNDER_TEST_RUNNER ? () => null : findOnPath)
   const registerGrok = async (bin: string): Promise<boolean> => {
     const { createAcpGrokProvider } = await import('../../adapters/executors/acp/acp-grok')
-    registry.register('grok', createAcpGrokProvider({ bin, stateDir: deps.stateDir, model: configuredAgent.grokModel, log: deps.log, networkPreflight: grokNetworkPreflight }), {
+    registry.register('grok', createAcpGrokProvider({ bin, stateDir: deps.stateDir, model: configuredAgent.grokModel, log: deps.log, networkPreflight: grokNetworkPreflight, mcpSpecs: { wechat: deps.wechatStdioForGrok ?? null, delegate: deps.delegateStdioForGrok ?? null } }), {
       canResume: () => false,
       bin: () => executorBinary('grok', readAgentConfig(), UNDER_TEST_RUNNER ? () => null : findOnPath),
     })
-    deps.log('BOOT', `grok: ${grokHomeProblem(deps.stateDir) ?? 'ACP account executor ready (CC 专属 HOME；无 CC MCP 工具)'}`)
+    deps.log('BOOT', `grok: ${grokHomeProblem(deps.stateDir) ?? 'ACP account executor ready (CC 专属 HOME；CC 工具按会话协商)'}`)
     return true
   }
   if (grokBin && !acpSupportedOn()) {
@@ -895,7 +897,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   return {
     refreshInstalledProvider,
     registry, defaultProviderId, codexBinary, codexVersionCheck,
-    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}), ...(grokBin ? { grok: grokHomeProblem(deps.stateDir) ?? 'CC 专属 HOME 已登录；无 wechat、记录本或委派工具。' } : {}) }),
+    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}), ...(grokBin ? { grok: grokHomeProblem(deps.stateDir) ?? 'CC 专属 HOME 已登录；CC 工具按会话协商。' } : {}) }),
     providerProbes: () => probeRetrier.status(),
     stopProviderProbes: () => probeRetrier.stop(),
     reprobeProvider: (id) => probeRetrier.reprobeNow(id),

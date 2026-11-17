@@ -122,7 +122,7 @@ export function registerAcpExecutors(target: ProviderRegistry, source: Pick<Prov
   return ['cursor']
 }
 
-/** Grok 使用 boot 登记的二进制，不另找路径，也不传不受支持的 stdio matter MCP。 */
+/** Grok 使用 boot 登记的二进制，不另找路径，通过会话 HTTP 转接记录本 MCP。 */
 export function registerGrokAcpExecutor(target: ProviderRegistry, source: Pick<ProviderRegistry, 'get'>,
   deps: { stateDir?: string; platform?: NodeJS.Platform; log?: (tag: string, line: string) => void; matterMcp?: MatterMcpFactory } = {}): string[] {
   const entry = source.get('grok')
@@ -130,7 +130,7 @@ export function registerGrokAcpExecutor(target: ProviderRegistry, source: Pick<P
   if (!acpSupportedOn(deps.platform)) { deps.log?.('WORKBENCH', 'grok: ACP 暂不支持 Windows，未注册'); return [] }
   const bin = entry.opts.bin?.()
   if (!bin) { deps.log?.('WORKBENCH', 'grok: boot binary unavailable，未注册工作台'); return [] }
-  const provider = createAcpGrokProvider({ bin, stateDir: deps.stateDir, log: deps.log ?? (() => {}), workbench: true, networkPreflight: grokNetworkPreflight,
+  const provider = createAcpGrokProvider({ bin, stateDir: deps.stateDir, log: deps.log ?? (() => {}), workbench: true, networkPreflight: grokNetworkPreflight, matterMcp: deps.matterMcp,
     // 工作台里跑构建/测试时 Grok 可以长时间不吐更新;只兜住真卡死,不打断正常长命令。
     promptIdleTimeoutMs: 600_000 })
   target.register('grok', provider, { ...entry.opts, canResume: () => false, workbench: { ...GROK_ACP_CAPABILITIES, get unavailableReason() { return grokHomeProblem(deps.stateDir) } } })
@@ -265,7 +265,7 @@ export function wireWorkbench(opts: {
     // 同一种会话(B2),用途是工作台:只有文件工具 —— 和 Claude / Codex 的工作台一样不给 wechat MCP。
     openai:()=>{ if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,loadAgentConfig(opts.stateDir),process.env,opts.log,matterMcp,opts.networkGate) },
     cursor:()=>{ registerAcpExecutors(registry,opts.boot.registry,loadAgentConfig(opts.stateDir),{log:opts.log,matterMcp}) },
-    grok:()=>{ registerGrokAcpExecutor(registry,opts.boot.registry,{stateDir:opts.stateDir,log:opts.log}) },
+    grok:()=>{ registerGrokAcpExecutor(registry,opts.boot.registry,{stateDir:opts.stateDir,log:opts.log,matterMcp}) },
     agy:()=>{ registerUnattendedExecutors(registry,opts.boot.registry) },
   }
   const follow=(id:string)=>{
