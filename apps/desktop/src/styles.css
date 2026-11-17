@@ -5016,3 +5016,23 @@ b, strong { font-weight: 500; }
 
 /* Desktop identity contract; shared avatar CSS also serves the unchanged PWA. */
 body .th-agents { --th-agent-size:var(--th-identity-agent-size); }
+
+/* 管家的屋子：页头是全局导航，内容留给对话。 */
+.dashboard .dash-window { position: relative; grid-template-rows: 72px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) auto; background: var(--th-paper); }
+.dash-topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; border-bottom: 1px solid var(--th-hair); min-width: 0; }
+.dash-topbar nav { display: flex; align-items: center; gap: 24px; }
+.dash-topbar button, .topbar-more summary { background: transparent; border: 0; padding: 0; color: var(--th-ink-soft); font: inherit; font-size: var(--th-size-meta); letter-spacing: var(--th-tracking-meta); cursor: pointer; }
+#topbar-cc { display: flex; align-items: center; gap: 10px; color: var(--th-ink); letter-spacing: 0; }
+#topbar-cc small { color: var(--th-ink-soft); font-size: var(--th-size-small); }
+.topbar-figure { position: relative; width: 48px; height: 48px; }
+.topbar-figure img { position: absolute; inset: 0; width: 48px; height: 48px; object-fit: contain; }
+#topbar-cc[data-cc="here"] .topbar-cc-dark, #topbar-cc:not([data-cc="here"]) .topbar-cc-light { visibility: hidden; }
+#topbar-cc { position: relative; }
+#topbar-cc .now-pet-stage { position: absolute; left: 0; top: 0; width: 48px; height: 48px; pointer-events: none; }
+#topbar-cc .now-pet-sprite { width: 48px; height: 48px; object-fit: contain; }
+#topbar-cc[data-runtime="ready"] .topbar-figure { visibility: hidden; }
+.topbar-more { position: relative; }
+.topbar-more summary { list-style: none; }
+.topbar-more summary::-webkit-details-marker { display: none; }
+.topbar-more > div { position: absolute; right: 0; top: 28px; z-index: 80; min-width: 120px; display: grid; gap: 20px; padding: 20px; background: var(--th-paper); border: 1px solid var(--th-hair); border-radius: var(--th-radius-sheet); }
+.dash-main { grid-column: 1; grid-row: 2; }

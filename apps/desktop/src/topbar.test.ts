@@ -1,0 +1,35 @@
+import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+const start = html.indexOf('id="dash-global-rail"')
+const topbar = html.slice(start, html.indexOf('</header>', start))
+describe('desktop topbar', () => {
+  it('CC 与搜索住在页头', () => {
+    expect(html).toContain('<header id="dash-global-rail" class="dash-topbar">')
+    expect(topbar).toContain('id="topbar-cc"')
+    expect(topbar).toContain('topbar-cc-light')
+    expect(topbar).toContain('topbar-cc-dark')
+    expect(topbar).toContain('id="topbar-search"')
+  })
+  it('七个目的页与设置后厨都可达', () => {
+    for (const pane of ['overview','memory','recollections','atelier','todos','a2a-agents','sessions']) expect(topbar).toContain(`data-pane="${pane}"`)
+    expect(topbar).toContain('id="settings-open"')
+    expect(topbar).toContain('data-backstage-entry')
+  })
+  it('保持一段对话和唯一事项层', () => {
+    expect(topbar).not.toContain('data-pane="workbench"')
+    expect(html).toContain('data-conversation="single"')
+    expect(html).toContain('id="conversation-matter-layer"')
+    expect(html).toMatch(/id="workbench-home"[^>]*data-life-pane="overview"/)
+  })
+  it('撤掉旧导航与大形象', () => {
+    expect(html).not.toContain('cc-life-nav-more')
+    expect(html).not.toContain('class="now-hero"')
+    expect(topbar).not.toContain('data-pane="converse"')
+    expect(html).not.toContain('id="now-all"')
+  })
+  it('所有 id 唯一', () => {
+    const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map(m=>m[1])
+    expect(ids.filter((id,i)=>ids.indexOf(id)!==i)).toEqual([])
+  })
+})

@@ -37,13 +37,14 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
   // 问候随钟点变:挂载、presence 每一拍、切 home/chat 都重算(textContent 同值不动 DOM)。
   const greet = () => { const g = greetingFor(now().getHours()); const el = $('now-greeting'); if (el && el.textContent !== g) el.textContent = g }
   greet()
-  const hero = mountNowHero({ root, button: $('now-cc') })
+  const cc = /** @type {HTMLElement} */ (document.getElementById('topbar-cc') ?? $('now-cc'))
+  const hero = mountNowHero({ root: cc, button: cc })
   const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p); hero.setPresence(p); greet() })
   /** @param {'home'|'chat'} m */
   function setMode(m) { if (root.dataset.conversation === 'single') m = 'chat'; root.dataset.now = m; if ($('now-back')) $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
   const toChat = () => setMode('chat')
   $('now-cc-bubble')?.addEventListener('click', toChat)
-  $('now-cc').addEventListener('click', toChat)
+  cc.addEventListener('click', toChat)
   $('now-back')?.addEventListener('click', () => setMode('home'))
   const list = $('now-waiting-list')
   // 在做 / 带回来的(home-list.js 算好的行):一件事的行整行打开它;终端会话只看不点。

@@ -70,7 +70,7 @@ import { homeGroups } from "./modules/home-list.js"
 import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getViewedWorkbenchTaskId } from "./modules/workbench.js"
-import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
+import { isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
 import { createTerminalWaitingPoller } from "./modules/terminal-waiting.js"
 import { installExternalLinks } from "./modules/external-links.js"
@@ -104,12 +104,6 @@ const mainNavigation = createMainNavigation(destination => {
 
 const dashWindow = /** @type {HTMLElement|null} */ (document.querySelector('.dash-window'))
 const dashRail = /** @type {HTMLElement|null} */ (document.getElementById('dash-global-rail'))
-const workbenchNavToggle = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-toggle'))
-const workbenchNavScrim = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-scrim'))
-const workbenchNavigation = dashWindow && dashRail && workbenchNavToggle && workbenchNavScrim
-  ? createWorkbenchNavigation({ shell: dashWindow, rail: dashRail, toggle: workbenchNavToggle, scrim: workbenchNavScrim, wideQuery: window.matchMedia?.('(min-width: 1180px)') ?? null })
-  : null
-
 // window.__TAURI__ is injected by the Tauri runtime and not part of the
 // standard Window type. Cast to any to access optional Tauri fields.
 const mock = !(/** @type {any} */ (window).__TAURI__?.core?.invoke)
@@ -190,6 +184,8 @@ function renderRail() {
   const line = nowStatusLine(lastDaemon, lastPresence)
   const dot = document.getElementById('dash-rail-dot'); if (dot) dot.className = `dot ${line.cls}`
   const text = document.getElementById('dash-rail-text'); if (text) text.textContent = line.text
+  const label = document.getElementById('topbar-presence'); if (label) label.textContent = line.text
+  const cc = document.getElementById('topbar-cc'); if (cc) cc.dataset.cc = lastPresence?.presence === 'down' || !lastPresence ? 'away' : 'here'
 }
 presencePoller.subscribe(p => { lastPresence = p; renderRail() })
 // 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
@@ -721,7 +717,6 @@ function switchPane(name) {
     }
   }
   if (isCurrentWorkbenchPane(name, currentPane)) {
-    workbenchNavigation?.setWorkbenchActive(false)
     return
   }
   document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
@@ -739,7 +734,6 @@ function switchPane(name) {
     if (htmlEl.dataset.pane === 'overview') htmlEl.inert = name === 'workbench'
   })
   // The destination must be visible before navigation transfers keyboard focus.
-  workbenchNavigation?.setWorkbenchActive(false)
   // Logs pane gets a 10s auto-refresh tick while active; stop it on
   // pane switch so we don't burn CPU tailing log files no one is reading.
   if (name === "logs") {
@@ -1689,6 +1683,7 @@ async function boot() {
   const conversationRoot=document.getElementById('converse-root')
   if(conversationRoot){
     const search=()=>{ switchPane('workbench'); const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane')); if(layer)layer.dataset.workbenchView='search'; document.getElementById('wb-search')?.focus() }
+    document.getElementById('topbar-search')?.addEventListener('click',search)
     mountConversationTools({root:conversationRoot,
       delegate:()=>openConversationDelegation(deps),
       search,
@@ -1715,7 +1710,7 @@ async function boot() {
       locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),
       manage:()=>switchPane('memory')})
     conversationTopics=topics
-    document.getElementById('now-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
+    document.getElementById('topbar-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
     window.addEventListener('pagehide',()=>topics.destroy(),{once:true})
   }
   startAppUpdateChecks()
