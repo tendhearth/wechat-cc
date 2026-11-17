@@ -245,3 +245,4 @@
 #roster-dock .terminal-compose button { width:32px; height:32px; border:0; border-radius:50%; background:var(--th-accent); color:var(--th-paper); }
 #roster-dock .terminal-direct-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 #roster-dock .terminal-direct-heading h2 { font-size:var(--th-size-item); font-weight:400; }
+.topbar-more > summary:focus-visible, .roster-direct-tools > summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:3px; }
