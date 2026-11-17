@@ -154,5 +154,13 @@ export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledg
     const leg=plan.legs.find(l=>l.position===decision.position)!
     await dispatch(id,current,leg,false,running)
   }
-  return {afterTurn,resume}
+  /** 名单只读投影:停在当前棒时仍显示该棒;全部做完时显示最后一棒。 */
+  function rosterRelay(id:string){
+    const plan=store.plans.get(id)
+    if(!plan||plan.state==='cancelled'||plan.legs.length<2)return null
+    const current=plan.legs.find(l=>l.state==='running'||l.state==='stopped')
+      ?? plan.legs.filter(l=>l.state==='completed').at(-1) ?? plan.legs[0]!
+    return {index:current.position,total:plan.legs.length,currentAgent:current.executor}
+  }
+  return {afterTurn,resume,rosterRelay}
 }

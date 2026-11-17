@@ -65,6 +65,7 @@ export function makeCliSessionStore(db: Db, now: () => number = () => Date.now()
   const changed = (sessionId:string) => {
     const matter=db.query<{matter_id:string},[string]>("SELECT matter_id FROM matter_bindings WHERE surface='cli' AND surface_key=? LIMIT 1").get(sessionId)
     if(matter)hintWrite(db,{kind:'matter',matterId:matter.matter_id})
+    hintWrite(db,{kind:'cli',sessionId})
   }
 
   function prune(t: number): void {

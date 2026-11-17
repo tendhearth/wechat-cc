@@ -215,6 +215,7 @@ const ROUTE_TABLE = {
   // link 照别名行冻结的值抄;送话给执行者的(matter/say)只给设备。
   // CC 回复里的文件按块读(2026-10-06;手机原 /m/api/chat/file)
   'GET /v1/matter/owner-chat/file': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
+  'GET /v1/roster': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/matters': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'read', reason: '一起做的列表' } },
   'GET /v1/matter': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'read', reason: '一件事的详情' } },
   'GET /v1/matter/owner-chat/events': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
@@ -751,7 +752,7 @@ export type PanelV1Key = {
  * 手机能订阅的事件主题(phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾是前缀标记:
  * 真正允许的是 `matter/<id>`,见 phone-routes.ts 的 phoneTopicAllowed。
  */
-export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/', 'topics']
+export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/', 'topics', 'roster']
 
 /** Every declared phone surface, including routes shared with the operator HTTP API. */
 export type PhoneSurfaceRouteKey = PanelRouteKey | { [K in DeclaredRouteKey]: (typeof ROUTE_TABLE)[K] extends {phone:object} ? K : never }[DeclaredRouteKey]

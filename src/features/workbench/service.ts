@@ -286,6 +286,7 @@ export function makeWorkbenchService(opts: Options) {
 
   const service={
     ...ledgerDomain,
+    rosterRelay:relayDomain.rosterRelay,
     ...makeShareDomain(ctx,{view:viewDomain}),
     artifactDeliveryStore:store.artifactDeliveries,
     setArtifactDelivery:noticesDomain.setArtifactDelivery,

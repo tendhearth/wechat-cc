@@ -232,3 +232,29 @@ describe('M4d:状态 / 最近一句 / 等你那一项从那件 terminal 的事�
     expect(store.get(SID)).toMatchObject({ status: 'running' })
   })
 })
+
+describe('终端会话写口提示',()=>{
+ it('无 matter 的 upsert / seen 一律发 cli 提示，各会话不合并',async()=>{
+  const {onWriteHint}=await import('../../lib/write-hints')
+  const hints:unknown[]=[],off=onWriteHint(db,h=>hints.push(h)),store=makeCliSessionStore(db,()=>clock)
+  try{
+   store.touch({session_id:SID,source:'claude',cwd:'/tmp/project'},clock)
+   store.touch({session_id:'another',source:'codex',cwd:'/tmp/project'},clock)
+   await Promise.resolve()
+   expect(hints).toEqual([{kind:'cli',sessionId:SID},{kind:'cli',sessionId:'another'}])
+   hints.length=0;store.seen(SID,clock+1);await Promise.resolve()
+   expect(hints).toEqual([{kind:'cli',sessionId:SID}])
+  }finally{off()}
+ })
+ it('有 matter 的会话同时发 matter 与 cli 提示',async()=>{
+  const matters=makeMatterStore(db,()=>clock),m=matters.create({kind:'terminal',title:'会话'})
+  matters.bind(m.id,'cli',SID)
+  const {onWriteHint}=await import('../../lib/write-hints')
+  const hints:unknown[]=[],off=onWriteHint(db,h=>hints.push(h))
+  try{
+   makeCliSessionStore(db,()=>clock).touch({session_id:SID,source:'claude',cwd:'/tmp/project'},clock)
+   await Promise.resolve()
+   expect(hints).toEqual([{kind:'matter',matterId:m.id},{kind:'cli',sessionId:SID}])
+  }finally{off()}
+ })
+})

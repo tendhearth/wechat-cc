@@ -1,3 +1,4 @@
+import type { RosterResponseT } from '@wechat-cc/protocol'
 /**
  * phone-topic-sources.ts — 手机事件集线器(phone-events.ts)的四路真实来源 + 接线(手机协议 v2
  * 第 11 步,2026-09-29)。
@@ -33,6 +34,7 @@ import type { WriteHint } from '../../lib/write-hints'
 export type PhoneWorkbench = Pick<WorkbenchService, 'list' | 'attention' | 'detail'>
 
 export interface PhoneTopicSourceDeps {
+  roster?: () => RosterResponseT
   topics?: () => Promise<unknown>
   /** 缺省 ⇒ approvals / agents 回空摘要,matter/<任务> 回 {found:false}。 */
   workbench?: PhoneWorkbench
@@ -136,7 +138,15 @@ export function makePhoneTopicSources(deps: PhoneTopicSourceDeps): TopicSource[]
     match: t => t === 'topics', driven: () => true,
     async snapshot() { if (!deps.topics) throw new Error('topics_unavailable'); return deps.topics() },
   }
-  return [home, matter, approvals, agents, topics]
+  const roster: TopicSource = {
+    match: t => t === 'roster', driven: () => true,
+    async snapshot() {
+      if (!deps.roster) throw new Error('roster_unavailable')
+      const r = deps.roster()
+      return { version:r.version, waiting:r.items.filter(i=>i.group==='waiting').length, working:r.items.filter(i=>i.group==='working').length }
+    },
+  }
+  return [home, matter, approvals, agents, topics, roster]
 }
 
 // 推送判定在 phone-notifier.ts。
@@ -164,8 +174,9 @@ export function makePhoneEventsWiring(deps: PhoneTopicSourceDeps & {
   // 写口提示(P2 第二步):只算读得到这样东西的主题
   const ownerOf = (topic: string) => { const id = MATTER_TOPIC.exec(topic)?.[1]; try { return id ? deps.matters?.get(id)?.ownerChatId ?? null : null } catch { return null } }
   const offHints = deps.hints?.((hint) => {
-    if (hint.kind === 'topics') events.poke(topic => topic === 'topics')
-    else if (hint.kind === 'matter') events.poke(topic => topic === `matter/${hint.matterId}` || topic === 'topics')
+    if (hint.kind === 'cli') events.poke(topic => topic === 'roster')
+    else if (hint.kind === 'topics') events.poke(topic => topic === 'topics')
+    else if (hint.kind === 'matter') events.poke(topic => topic === `matter/${hint.matterId}` || topic === 'topics' || topic === 'roster')
     // 新的一条消息:这个 chat 的聊天主题(版本 = 最新一条的时间)+ home(「在跟你聊」看入站时间)
     else if (hint.kind === 'messages') events.poke(topic => topic === 'topics' || topic === 'home' || (topic.startsWith('matter/') && ownerOf(topic) === hint.chatId))
     else events.poke(topic => topic === 'home')   // journal / journal-seen / plan-log:home 的未读与动态

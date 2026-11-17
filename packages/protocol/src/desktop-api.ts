@@ -1,3 +1,4 @@
+import { RosterResponse } from './roster'
 import { OptionalReplyMetadata } from './reply-attribution'
 import {EntryRequestId} from './entry-request-id'
 import { CliProjectMemoryRequest } from './cli-project-memory'
@@ -2690,6 +2691,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/matter/review-comment': z.union([WorkbenchReviewCommentResponse, PhoneActionOk.extend({ commentId: z.string().optional(), deleted: z.boolean().optional() })]),
   'POST /v1/matter/review-comments-send': z.union([WorkbenchReviewCommentsSendResponse, PhoneActionOk.extend({ sent: z.number(), remaining: z.number(), skippedDiscarded: z.number() })]),
   // 一件事 / 连接 / 手机 / 插件 / 许可 / 终端会话 / 日历 / 信
+  'GET /v1/roster': RosterResponse,
   'GET /v1/matters': MattersListResponse,
   'GET /v1/matter': MatterDetailResponse,
   'GET /v1/matter/owner-chat': MatterOwnerChatResponse,
