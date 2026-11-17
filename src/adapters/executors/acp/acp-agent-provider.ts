@@ -233,6 +233,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       let mcpSession: AcpMcpSession | undefined
       const credentialScrubbers: AcpMcpSession[] = []
       const redact = (line: string) => credentialScrubbers.reduce((text, lease) => lease.redact(text), line)
+      const safeForLog = (value: unknown) => forLog(typeof value === 'string' ? redact(value) : value)
       const revokeMcp = () => mcpSession?.close()
       const permissions = new Map<string | number, PendingPermission>()
       const logged = new Set<string>()
@@ -276,7 +277,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         if (broken || closing) return
         void revokeMcp()?.catch(() => logOnce('mcp-close', 'MCP process cleanup unconfirmed'))
         broken = new Error(redact(message))
-        logOnce('fatal', `session stopped: ${message.replace(CONTROL_CHARS, ' ').slice(0, 300)}`)
+        logOnce('fatal', `session stopped: ${redact(message).replace(CONTROL_CHARS, ' ').slice(0, 300)}`)
         // 进程死了不等于这一轮什么都没说:messages 模式把整条助理消息攒在 translator 里,
         // 直接 finish 会把一条已经说完的话连同进程一起丢掉(用户只看到一个错误码)。
         // 先把攒着的吐出来,再推错误事件。append 模式(工作台)本来就逐字发过了,恒空。
@@ -294,7 +295,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           // loading 期间的外来 sessionId 是意料之中的:resume 回退时 session/load 会把旧会话的历史
           // 重播一遍,那些 update 本来就该丢。记一行只会把每会话一次的日志额度花在噪音上,
           // 真正该看见的"跑起来之后还有外来 update"反而挤不进来。
-          if (params.sessionId !== sessionId) { if (!loading) logOnce('update', `session/update dropped: foreign sessionId ${forLog(params.sessionId)}`); return }
+          if (params.sessionId !== sessionId) { if (!loading) logOnce('update', `session/update dropped: foreign sessionId ${safeForLog(params.sessionId)}`); return }
           if (loading) return
           const turn = active
           if (!turn || turn.cancelled) return
@@ -304,7 +305,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         async onRequest(method, params, id) {
           if (method !== 'session/request_permission') throw Object.assign(new Error(`client capability not declared: ${method}`), { code: -32601 })
           const turn = active
-          if (object(params) && params.sessionId !== sessionId) logOnce('permission', `session/request_permission cancelled: foreign sessionId ${forLog(params.sessionId)}`)
+          if (object(params) && params.sessionId !== sessionId) logOnce('permission', `session/request_permission cancelled: foreign sessionId ${safeForLog(params.sessionId)}`)
           if (!turn || turn.cancelled || closing || !object(params) || params.sessionId !== sessionId) return { outcome: { outcome: 'cancelled' } }
           // 撞 id:两张权限卡共用一条回复通道,主人对哪一张点的"允许"就再也说不清了。
           if (permissions.has(id)) { queueMicrotask(() => fatal('acp_duplicate_permission_request')); return { outcome: { outcome: 'cancelled' } } }
@@ -410,7 +411,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
               turn.queue.end()
             }, error => {
               const message = error instanceof Error ? error.message : String(error)
-              logOnce('idle-close', `idle close failed: ${forLog(message)}`)
+              logOnce('idle-close', `idle close failed: ${safeForLog(message)}`)
               turn.queue.push({ kind: 'error', message, code: 'provider_error' }); turn.queue.end()
             })
           }, options.cancelGraceMs ?? 5_000)
@@ -425,7 +426,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         turn.idleTimer = setTimeout(() => cancelTurn(turn, true), options.promptIdleTimeoutMs)
       }
       const withTail = (message: string): Error => {
-        const tail = stderrTail.trim().slice(-300)
+        const tail = redact(stderrTail).trim().slice(-300)
         return new Error(tail ? `${message}\n${tail}` : message)
       }
       // 码挂在抛出物上(arch backlog #4 第 2 步):message 仍是工作台文案认的那几个稳定串,
@@ -436,7 +437,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         // 自定义执行者:把 agent 自己说的原因带上(10-07 真机:Gemini CLI 说「个人 Google 登录已停用,请迁到 Antigravity」,
         // 被我们一句笼统的「还没登录」盖掉了)。Cursor 照旧是裸码,桌面那句 cursor-agent login 的提示靠它。
         if (error instanceof AcpRequestError && (error.code === -32000 || isAuthFail('sdk-error', error.message))) {
-          const reason = options.authErrorCode ? error.message.replace(CONTROL_CHARS, ' ').trim().slice(0, 300) : ''
+          const reason = options.authErrorCode ? redact(error.message).replace(CONTROL_CHARS, ' ').trim().slice(0, 300) : ''
           return withProviderCode(new Error(reason ? `${options.authErrorCode}: ${reason}` : (options.authErrorCode ?? 'acp_auth_required')), 'auth_failed') as Error
         }
         // -32603 Internal error:假 key 与死代理在这一面逐字相同 —— data 没说清就是 provider_error,不猜。
@@ -501,7 +502,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
               if (error instanceof AcpRequestError && error.code === -32602 && /not found/i.test(`${error.message} ${JSON.stringify(error.data ?? '')}`)) throw new Error('acp_session_not_found')
               throw error
             }
-            logOnce('resume', `session/load ${forLog(context.resumeSessionId)} failed (${error instanceof Error ? error.message.replace(CONTROL_CHARS, ' ').slice(0, 120) : String(error)}); opening a new session`)
+            logOnce('resume', `session/load ${safeForLog(context.resumeSessionId)} failed (${error instanceof Error ? redact(error.message).replace(CONTROL_CHARS, ' ').slice(0, 120) : String(error)}); opening a new session`)
             sessionId = ''
             created = await openNew()
           }
@@ -522,10 +523,10 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
               currentModel = acpCurrentModel(result) ?? wanted
             }, (error: unknown) => {
               if (!(error instanceof AcpRequestError)) throw error
-              logOnce('model', `session/set_config_option ${forLog(wanted)} failed: ${error.message.slice(0, 120)}`)
+              logOnce('model', `session/set_config_option ${safeForLog(wanted)} failed: ${redact(error.message).slice(0, 120)}`)
             })
-          } else if (offered) logOnce('model', `model ${forLog(wanted)} offered without a usable config id; using its default`)
-          else logOnce('model', `model ${forLog(wanted)} not offered by ${options.displayName}; using its default`)
+          } else if (offered) logOnce('model', `model ${safeForLog(wanted)} offered without a usable config id; using its default`)
+          else logOnce('model', `model ${safeForLog(wanted)} not offered by ${options.displayName}; using its default`)
         }
       } catch (error) {
         const mapped = setupError(error)

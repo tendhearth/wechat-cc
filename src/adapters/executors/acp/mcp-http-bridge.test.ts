@@ -57,6 +57,25 @@ describe.runIf(process.platform !== 'win32')('session stdio → Streamable HTTP 
       await expect.poll(() => notifications.filter(n => n === 'offline notification')).toEqual(['offline notification'])
     } finally { await client.close() }
   })
+  it('keeps notifications with concurrent POST requests when no GET stream exists', async () => {
+    const { bridge } = await start()
+    const url = bridge.servers[0]!.url
+    const headers: Record<string, string> = { ...headersFor(bridge), Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' }
+    const init = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'offline', version: '1' } } }) })
+    headers['Mcp-Session-Id'] = init.headers.get('mcp-session-id')!
+    await init.text()
+    const responses = await Promise.all([2, 3].map(id => fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'delayed', arguments: { id } } }) }).then(r => r.text())))
+    expect(responses.every(text => text.includes('offline notification'))).toBe(true)
+    expect(responses.join('').match(/offline notification/g)).toHaveLength(2)
+    expect(responses[0]).toContain('"id":2')
+    expect(responses[1]).toContain('"id":3')
+  })
+  it('closes already-started children when a later MCP child fails to spawn', async () => {
+    const childSpawn = vi.fn(spawn)
+    await expect(createMcpHttpBridge(acpMcpServersFor({ wechat: { command: process.execPath, args: [...(process.versions.bun ? [] : ['--experimental-strip-types']), fixture] }, delegate: { command: '/offline/missing-mcp' } }), { cwd: process.cwd(), spawn: childSpawn as unknown as typeof spawn })).rejects.toThrow('mcp_bridge_start_failed')
+    const pid = childSpawn.mock.results[0]!.value.pid!
+    expect(() => process.kill(pid, 0)).toThrow()
+  })
   it('queues unsolicited notifications until a GET SSE stream connects without a pending POST', async () => {
     const { bridge } = await start()
     const url = bridge.servers[0]!.url

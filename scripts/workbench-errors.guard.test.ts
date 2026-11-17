@@ -155,6 +155,9 @@ const INTERNAL_ONLY = new Set([
     'claude_runtime_descendants_not_frozen', 'claude_runtime_process_not_exited',
     // ACP 运行时:进程收不干净 / 对端没给会话 id(同上,落进失败记录)
     'acp_process_not_exited', 'acp_missing_session_id',
+    // Grok 会话 MCP 转接内部错误：启动错误回退无工具，清理错误落进关闭记录。
+    'mcp_process_not_exited', 'mcp_process_cleanup_failed',
+    'mcp_bridge_closed', 'mcp_process_start_failed', 'mcp_process_exited', 'mcp_listen_failed', 'mcp_bridge_start_failed',
     // OpenAI 兼容的 MCP 桥:工具调用被放弃(对话侧,不走工作台路由)
     'abandoned',
     // 主人点名要的成果文件,送之前绑定变了(wire-artifacts.ts,随工作台从 daemon 搬进 features 才扫到):落进投递记录,不走桌面 HTTP

@@ -40,7 +40,7 @@ export async function createMcpHttpBridge(
         try { child.stdin?.end() } catch { /* closed */ }
         const signal = (sig: NodeJS.Signals) => {
           try { if (child.pid) process.kill(-child.pid, sig); else child.kill(sig) }
-          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw new Error('mcp_process_signal_failed') }
+          catch { /* A dying group can transiently reject signals; the exit check below is authoritative. */ }
         }
         const alive = () => {
           if (!child.pid) return !hasExited()
@@ -58,7 +58,8 @@ export async function createMcpHttpBridge(
       }))
       server.closeAllConnections()
       await new Promise<void>(resolve => server.close(() => resolve()))
-      if (outcomes.some(result => result.status === 'rejected')) throw new Error('mcp_process_cleanup_failed')
+      const failed = outcomes.find(result => result.status === 'rejected')
+      if (failed?.status === 'rejected') throw new Error('mcp_process_cleanup_failed', { cause: failed.reason })
     })()
     return closing
   }
@@ -121,6 +122,8 @@ export async function createMcpHttpBridge(
       child.stderr?.resume() // Drain without retaining/logging potentially private server diagnostics.
       let buffer = ''
       child.stdout?.setEncoding('utf8')
+      child.stdout?.on('end', fail)
+      child.stdout?.on('error', fail)
       child.stdout?.on('data', chunk => {
         buffer += String(chunk)
         while (active && buffer.includes('\n')) {
@@ -135,7 +138,7 @@ export async function createMcpHttpBridge(
               if (message.id !== undefined) pending.delete(message.id)
             } else {
               notifications.push(message)
-              queuedBytes += Buffer.byteLength(line)
+              queuedBytes += Buffer.byteLength(serializeMessage(message))
               if (notifications.length > 100 || queuedBytes > 4 * 1024 * 1024) { fail(); return }
               entry.flush()
             }
