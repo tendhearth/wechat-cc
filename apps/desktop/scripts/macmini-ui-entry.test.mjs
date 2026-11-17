@@ -135,6 +135,13 @@ test('mobile budget snapshots accept only the assigned branch and keep App snaps
 })
 
 
+test('who-answers web avatar snapshots accept only the assigned branch',()=>{
+ expect(supportsBrowserSnapshot('who-answers-web-avatar')).toBe(true)
+ expect(supportsAppSnapshot('who-answers-web-avatar')).toBe(false)
+ for(const ref of ['who-answers-web-avatar-x','who-answers-web-avatar;echo x','../who-answers-web-avatar'])expect(supportsBrowserSnapshot(ref)).toBe(false)
+})
+
+
 test('unified acceptance uses bounded suite and only the assigned snapshot branch',()=>{
  expect(supportsBrowserSnapshot('mini-ui-acceptance')).toBe(true)
  expect(supportsAppSnapshot('mini-ui-acceptance')).toBe(true)
