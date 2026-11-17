@@ -1,3 +1,12 @@
+import { acpSupportedOn } from '../../adapters/executors/acp/platform'
+import { makeCliSetupReceipt } from '../cli-setup-receipt'
+import { makeCliSetup } from '../cli-setup'
+import { loadAgentConfig } from '../../lib/agent-config'
+import { executorBinary } from '../../lib/executor-detect'
+import { findCodexBinary } from '../../lib/find-codex-binary'
+import { findOnPath, augmentedPathEnv } from '../../lib/util'
+import { resolveClaudeBinary } from '../bootstrap/claude-env'
+import { grokHomeProblem, grokSubprocessEnv } from '../../lib/grok-home'
 /**
  * internal API 接进 daemon 的那一份:bootstrap 要它的 baseUrl / token 去配 MCP,所以在 init 段就监听(桌面这时来问 ⇒ 「还没有」)。
  * 只有模块表 daemon-modules.ts 引这个文件。
@@ -95,6 +104,16 @@ export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecy
         subsystems: () => f.sup.statuses(),
         // 网络守护此刻的判断(2026-10-02):safe=false ⇒ 所有模型调用暂停。
         guard: () => guardRt.health(),
+        cliSetup: makeCliSetup({ stateDir, platform: process.platform,
+          supported: id => (id !== 'cursor' && id !== 'grok') || acpSupportedOn(),
+          guard: () => guardRt.health(), checkGuard: () => guardRt.gate.check(),
+          binary: id => id === 'claude' ? resolveClaudeBinary() ?? null
+            : id === 'codex' ? findCodexBinary({ pathEnv: augmentedPathEnv() })
+            : executorBinary(id, loadAgentConfig(stateDir), findOnPath),
+          grokLoggedIn: () => !grokHomeProblem(stateDir),
+          prepareGrokHome: () => { grokSubprocessEnv(stateDir, {}) },
+          beginLogin: () => makeCliSetupReceipt(stateDir, process.platform),
+        }),
         // 插件快照(2026-09-30):bootstrap 之前是 null,self deploy 的健康门会等它。
         plugins: () => boot()?.pluginsHealth ?? null,
         providerProbes: () => boot()?.providerProbes?.() ?? [],

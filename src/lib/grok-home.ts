@@ -2,6 +2,7 @@
 import { chmodSync, lstatSync, mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { writeFileAtomic } from './json-file'
+import { EXECUTOR_FACTS } from './executor-facts'
 
 export function grokHome(stateDir: string): string {
   if (!stateDir || !isAbsolute(stateDir)) throw new Error('Grok 需要 CC 的专属 HOME：未提供绝对状态目录。')
@@ -10,7 +11,17 @@ export function grokHome(stateDir: string): string {
 
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
 // umask 077 first: grok creates .grok itself, and CC only trusts a 0700 home.
-export const grokLoginCommand = (stateDir: string): string => { const h = quote(grokHome(stateDir)); return `umask 077 && mkdir -p ${h} && HOME=${h} grok login` }
+export const grokLoginCommand = (stateDir: string, shell: 'posix' | 'powershell' = 'posix', binary?: string): string => {
+  const home = grokHome(stateDir)
+  if (shell === 'powershell') {
+    const h = "'" + home.replaceAll("'", "''") + "'"
+    const bin = binary ? "& '" + binary.replaceAll("'", "''") + "'" : 'grok'
+    return `Get-ChildItem Env:GROK_* | Remove-Item; Remove-Item Env:XAI_API_KEY,Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue; $env:HOME = ${h}; $env:USERPROFILE = $env:HOME; New-Item -ItemType Directory -Force -Path $env:HOME | Out-Null; ${bin} login`
+  }
+  const h = quote(home)
+  const bin = binary ? quote(binary) : 'grok'
+  return `umask 077 && mkdir -p ${h} && (unset GROK_HOME GROK_AUTH_PATH GROK_AUTH GROK_CONFIG GROK_API_KEY XAI_API_KEY CLAUDE_CONFIG_DIR; HOME=${h} ${bin} login)`
+}
 const loginRequired = (stateDir: string) => `Grok 还没在 CC 里登录。请在电脑上运行：${grokLoginCommand(stateDir)}`
 
 /** Only stat the dedicated auth file; its contents and token validity belong to the official CLI. */
@@ -69,5 +80,8 @@ export function grokSubprocessEnv(stateDir: string | undefined, base: NodeJS.Pro
   // These can override HOME or reintroduce another account/configuration source.
   // No provider keys are added; proxy/PATH and normal executor filtering stay with the caller.
   for (const name of Object.keys(env)) if (/^GROK_/i.test(name) || /^(CLAUDE_CONFIG_DIR|XAI_API_KEY)$/i.test(name)) delete env[name]
-  return { ...env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_CACHE_HOME: join(home, '.cache'), XDG_DATA_HOME: join(home, '.local/share'), XDG_STATE_HOME: join(home, '.local/state'), XDG_RUNTIME_DIR: join(home, '.run'), TMPDIR: join(home, 'tmp'), TMP: join(home, 'tmp'), TEMP: join(home, 'tmp') }
+  return { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_CACHE_HOME: join(home, '.cache'), XDG_DATA_HOME: join(home, '.local/share'), XDG_STATE_HOME: join(home, '.local/state'), XDG_RUNTIME_DIR: join(home, '.run'), TMPDIR: join(home, 'tmp'), TMP: join(home, 'tmp'), TEMP: join(home, 'tmp') }
 }
+
+/** Phones cannot run the login; they only point the owner at the desktop card. */
+export const GROK_PHONE_LOGIN_HINT = `${EXECUTOR_FACTS.grok.names.name} 还没在 CC 里登录。到电脑上点一下接入。`

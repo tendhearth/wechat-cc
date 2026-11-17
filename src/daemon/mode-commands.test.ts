@@ -1311,3 +1311,10 @@ describe('斜杠命令一条一行(第三批 3d)', () => {
     expect(overlaps).toEqual([])
   })
 })
+
+it.each(['/cc', '/codex', '/cursor', '/agy', '/grok'])('%s not connected sends the desktop handoff without install commands', async text => {
+  const { cmds, sentMessages } = setup({ registered: [], tier: 'admin' })
+  await cmds.handle(inbound(text))
+  expect(sentMessages[0]?.[1]).toContain('到电脑上点一下接入')
+  expect(sentMessages[0]?.[1]).not.toMatch(/curl|npm|HOME=| login/)
+})

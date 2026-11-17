@@ -56,3 +56,9 @@ describe('CC-owned Grok home', () => {
     expect(parse(readFileSync(config, 'utf8'))).toMatchObject({ plugin_auto_update: false })
   })
 })
+
+it('does not retain a Windows USERPROFILE credential source in Grok subprocesses', () => {
+  const dir = state()
+  const env = grokSubprocessEnv(dir, { USERPROFILE: '/owner-home-sentinel' })
+  expect(env.USERPROFILE).toBe(grokHome(dir))
+})

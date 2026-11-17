@@ -1,5 +1,6 @@
 // @ts-check
 /// <reference lib="dom" />
+import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
 import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
 import { createMainNavigation, createNativeNavigation } from './main-navigation.js'
 /** @typedef {import('../../../src/cli/schema').GuardStatusOutputT} GuardStatus */
@@ -881,16 +882,18 @@ function wireEvents() {
     }
     if (t.closest('[data-action="nb-apikey"]')) { openBrainSetup(deps, "openai"); return }
     if (t.closest('[data-action="nb-cli"]')) {
-      const box = document.getElementById("brain-setup")
-      if (box) {
-        box.hidden = false
-        box.innerHTML = '<div class="brain-setup-title">选择已有账号，查看连接步骤</div>'
-          + '<div class="nb-cli-row">'
-          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+escapeHtml(executorName(pv))+'</button>' }).join('')
-          + '</div>'
-      }
+      void openCliChoices(deps)
       return
     }
+    const launch = t.closest('[data-cli-action]')
+    if (launch instanceof HTMLButtonElement && !launch.disabled) {
+      void startCliSetup(deps, launch.dataset.provider || '', launch.dataset.cliAction || '')
+      return
+    }
+    const recheck = t.closest('[data-cli-recheck]')
+    if (recheck instanceof HTMLElement) { recheckCliSetup(deps, recheck.dataset.cliRecheck || ''); return }
+    const website = t.closest('[data-cli-website]')
+    if (website instanceof HTMLButtonElement && !website.disabled) { void invoke('open_url', { url: website.dataset.cliWebsite }).catch(() => {}); return }
     const setup = t.closest("[data-brain-setup]")
     if (setup instanceof HTMLElement && setup.dataset.brainSetup) {
       openBrainSetup(deps, setup.dataset.brainSetup)

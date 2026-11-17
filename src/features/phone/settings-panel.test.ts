@@ -625,6 +625,19 @@ describe('settings panel — 模型与后端', () => {
     } finally { cleanup() }
   })
 
+  it('mobile setup hints send the owner to desktop without exposing install/login commands', () => {
+    const { panel, cleanup } = build({ registered: ['grok'] })
+    try {
+      const providers = (panel.state() as { models: any }).models.providers
+      const grok = providers.find((p: any) => p.id === 'grok')
+      expect(grok.error).toContain('到电脑上点一下接入')
+      expect(grok.error).not.toMatch(/HOME=|grok login/)
+      const cursor = providers.find((p: any) => p.id === 'cursor')
+      expect(cursor.hint).toContain('到电脑上点一下接入')
+      expect(cursor.hint).not.toMatch(/curl| login/)
+    } finally { cleanup() }
+  })
+
   it('registered Grok exposes its dedicated login without pretending to have a shared trusted token', () => {
     const { panel, cleanup } = build({ registered: ['claude', 'grok'] })
     try {

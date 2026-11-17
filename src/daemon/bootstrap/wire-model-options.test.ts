@@ -95,3 +95,11 @@ describe('wireModelOptions', () => {
     expect((await (await fresh())('WebFetch', { url: 'https://x.example/' }, sig)).behavior).toBe('allow')
   })
 })
+
+it('resolves Claude installed after boot for the next SDK spawn', async () => {
+  let installed: string | undefined
+  const s = wireModelOptions({ stateDir: dir() }, { plugins: noPlugins, permissionMode: 'strict', buildCanUseTool: () => (async () => {}) as any, claudeBin: undefined, resolveClaudeBin: () => installed })
+  expect((await s.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, 'c')).pathToClaudeCodeExecutable).toBeUndefined()
+  installed = '/fixture/new-claude'
+  expect((await s.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, 'c')).pathToClaudeCodeExecutable).toBe('/fixture/new-claude')
+})

@@ -170,7 +170,7 @@ export function bootApiModule(f: Foundation): DaemonModule<BootApi> {
       internalApi.provide({ incidents: boot.health.incidents })
       // LLM 通道体检:没有开机探测、没有定时器(主人 2026-08-25:断网时无人要求的外呼是风控形状),只在点「测试连接」时拨。
       const llmHealth = makeLlmHealth({ registry: boot.registry, defaultProviderId: boot.defaultProviderId, hintFor: (id) => capabilitiesFor(id).authFailHint, log })
-      internalApi.provide({ llmHealth, llmRegistered: () => boot.registry.list(), llmNames: (id) => boot.registry.namesOf(id), llmEndpoints: () => {
+      internalApi.provide({ llmHealth, llmRefreshProvider: boot.refreshInstalledProvider, llmRegistered: () => boot.registry.list(), llmNames: (id) => boot.registry.namesOf(id), llmEndpoints: () => {
         // 自配 base_url:目前只有 openai-compatible 端点可指向国内 / 本地服务;网络体检据此探真实端点。
         const eps: Record<string, string> = {}
         const b = boot.agentConfig.openaiBaseUrl

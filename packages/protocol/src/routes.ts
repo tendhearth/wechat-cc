@@ -591,6 +591,9 @@ const ROUTE_TABLE = {
   'GET /v1/dialogue/thread': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/dialogue/search': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/dialogue/unlock': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // Desktop CLI setup: operator-authenticated whitelist only; never exposed to phone/link tokens.
+  'GET /v1/llm/setup': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/llm/setup': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/llm/health': { desktop: { tier: 'trusted' } },
   'POST /v1/net/probe': { desktop: { tier: 'trusted' } },
   'POST /v1/llm/keys': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },

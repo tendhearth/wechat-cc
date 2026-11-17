@@ -120,7 +120,8 @@ export const DESKTOP_CALLS = {
     deactivate: call('POST /v1/license/deactivate'),
   },
   llm: {
-    health: call('GET /v1/llm/health', { query: t<{ fresh?: number; scope?: string }>() }),
+    health: call('GET /v1/llm/health', { query: t<{ fresh?: number; scope?: string; provider?: string }>() }),
+    setup: call('GET /v1/llm/setup'),
     keys: call('POST /v1/llm/keys', body()),
   },
   matter: {

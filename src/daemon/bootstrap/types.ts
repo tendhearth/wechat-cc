@@ -301,6 +301,7 @@ export interface Bootstrap {
   /** daemon 关停时清掉重探计时器。可选:测试里的假 boot 没有它。 */
   stopProviderProbes?: () => void
   /** 立刻重探一家开机探测失败的 provider(CLI 自动升级器升完时用)。可选:测试里的假 boot 没有它。 */
+  refreshInstalledProvider?: (id: string) => Promise<boolean>
   reprobeProvider?: (id: string) => Promise<boolean | null>
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
   agentProviderKind: ProviderId

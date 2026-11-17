@@ -171,7 +171,10 @@ export function wireSettingsDrawer(opts) {
     if (!drawer || !drawer.classList.contains("is-open")) return
     // A renewal/close action can replace its own DOM before this bubble phase.
     // The original event path still identifies the nested phone dialog.
-    if (e.composedPath().some(node => node instanceof HTMLElement && node.id === 'phone-settings-modal')) return
+    // 接入卡点选项会就地重画自己,target 已脱离文档,drawer.contains 判不出来——按原始路径判。
+    const path = e.composedPath()
+    if (path.includes(drawer)) return
+    if (path.some(node => node instanceof HTMLElement && node.id === 'phone-settings-modal')) return
     const target = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target : null)
     if (!target) return
     if (drawer.contains(target)) return

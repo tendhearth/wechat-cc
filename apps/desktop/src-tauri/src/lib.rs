@@ -1,3 +1,4 @@
+mod cli_setup;
 // wechat-cc desktop installer — Tauri command surface.
 //
 // The bundled `wechat-cc-cli` sidecar (a `bun build --compile`d
@@ -1523,6 +1524,18 @@ fn launch_workbench_folder(folder: &WorkbenchFolder, launch: impl FnOnce(&std::p
     launch(&folder.path)
 }
 
+/// Only provider/action cross IPC; the operator-authenticated daemon owns every command.
+#[tauri::command]
+async fn open_cli_setup(provider: String, action: String) -> Result<(), String> {
+    cli_setup::validate_request(&provider, &action)?;
+    if cfg!(feature = "qa-webdriver") { return Err("cli_setup_disabled_in_qa".into()); }
+    let body = serde_json::json!({ "provider": provider, "action": action }).to_string();
+    let response = workbench_call("POST".into(), "/v1/llm/setup".into(), Some(body)).await?;
+    let plan = cli_setup::parse_plan(&provider, &action, &response)?;
+    tauri::async_runtime::spawn_blocking(move || cli_setup::open(plan)).await
+        .map_err(|_| "open_cli_setup_failed".to_string())?
+}
+
 /// Only a task ID crosses the webview boundary; the existing operator-authenticated
 /// daemon request supplies the directory. This never extends open_url's schemes.
 #[tauri::command]
@@ -1843,6 +1856,7 @@ pub fn run() {
             daemon_request,
             choose_workbench_folder,
             open_workbench_folder,
+            open_cli_setup,
             prepare_workbench_html_preview,
             prepare_workbench_site_preview,
             release_workbench_html_preview

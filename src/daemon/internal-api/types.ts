@@ -432,6 +432,8 @@ export interface InternalApiDeps {
   setChatPref?: (chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => { care?: 'off' | 'low' | 'high'; split?: boolean }
   /** LLM 通道体检 (llm-health.ts) — late-bound (needs the
    *  provider registry). GET /v1/llm/health 503s until set. */
+  cliSetup?: import('../cli-setup').CliSetup
+  llmRefreshProvider?: (id: string) => Promise<boolean>
   llmHealth?: import('../llm-health').LlmHealth
   /** Registered provider ids (registry.list) — set alongside llmHealth. */
   llmRegistered?: () => string[]
@@ -551,7 +553,7 @@ export interface InternalApiDeps {
 /** 可以晚绑定的那些依赖 —— 只有这里列的键能经 `provide` 交进来。 */
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'incidents',
-  'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
+  'cliSetup', 'llmRefreshProvider', 'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
   'workbenchSuspended', 'desktopSeen', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
   'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]

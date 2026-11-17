@@ -9,7 +9,7 @@ import { spawnSync } from 'child_process'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { delimiter } from 'node:path'
 import { homedir, platform } from 'os'
-import { join } from 'node:path'
+import { join, win32 as winPath, posix as posixPath } from 'node:path'
 
 /**
  * Cross-platform PATH lookup: uses `where` on Windows, `which` elsewhere.
@@ -47,34 +47,31 @@ export function findOnPath(cmd: string): string | null {
 }
 
 function findInUserBinaryRoots(cmd: string): string | null {
-  const home = homedir()
-  const exe = platform() === 'win32' ? `${cmd}.exe` : cmd
-  const roots = userBinaryRoots(home)
-  for (const root of roots) {
-    const candidate = join(root, exe)
-    if (safeExecutable(candidate)) return candidate
-  }
-  for (const root of nvmBinaryRoots(home)) {
-    const candidate = join(root, exe)
-    if (safeExecutable(candidate)) return candidate
+  const home = homedir(), windows = platform() === 'win32'
+  const paths = windows ? winPath : posixPath
+  const names = windows ? [`${cmd}.exe`, `${cmd}.cmd`] : [cmd]
+  for (const root of [...userBinaryRoots(home), ...nvmBinaryRoots(home)]) {
+    for (const name of names) {
+      const candidate = paths.join(root, name)
+      if (safeExecutable(candidate)) return candidate
+    }
   }
   return null
 }
 
 function userBinaryRoots(home = homedir()): string[] {
+  const windows = platform() === 'win32', paths = windows ? winPath : posixPath
   const roots: string[] = [
-    join(home, '.bun', 'bin'),
-    join(home, '.local', 'bin'),
-    join(home, '.cargo', 'bin'),
-    join(home, '.deno', 'bin'),
-    join(home, '.nami', 'bin'),
-    join(home, '.local', 'share', 'pnpm'),
-    join(home, 'go', 'bin'),
-    join(home, 'miniconda3', 'bin'),
+    paths.join(home, '.bun', 'bin'), paths.join(home, '.local', 'bin'),
+    paths.join(home, '.grok', 'bin'), paths.join(home, '.cargo', 'bin'),
+    paths.join(home, '.deno', 'bin'), paths.join(home, '.nami', 'bin'),
+    paths.join(home, '.local', 'share', 'pnpm'), paths.join(home, 'go', 'bin'),
+    paths.join(home, 'miniconda3', 'bin'),
   ]
-  if (platform() === 'darwin') {
-    roots.push('/opt/homebrew/bin', '/usr/local/bin')
-  }
+  if (windows) {
+    const local = process.env.LOCALAPPDATA || paths.join(home, 'AppData', 'Local')
+    roots.push(paths.join(local, 'cursor-agent'), paths.join(local, 'Programs', 'OpenAI', 'Codex', 'bin'))
+  } else if (platform() === 'darwin') roots.push('/opt/homebrew/bin', '/usr/local/bin')
   return roots
 }
 

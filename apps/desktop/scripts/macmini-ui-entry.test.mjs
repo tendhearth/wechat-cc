@@ -161,6 +161,20 @@ test('who-answers web avatar snapshots accept only the assigned branch',()=>{
  for(const ref of ['who-answers-web-avatar-x','who-answers-web-avatar;echo x','../who-answers-web-avatar'])expect(supportsBrowserSnapshot(ref)).toBe(false)
 })
 
+test('CLI setup registers only its assigned browser branch and runs its regression after the baseline',()=>{
+ expect(supportsBrowserSnapshot('one-click-cli-setup')).toBe(true)
+ expect(supportsAppSnapshot('one-click-cli-setup')).toBe(false)
+ for(const ref of ['one-click-cli-setup-other','one-click-cli-setup;echo x','../one-click-cli-setup']){
+  expect(supportsBrowserSnapshot(ref)).toBe(false)
+  expect(supportsAppSnapshot(ref)).toBe(false)
+ }
+ const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
+ const suites=remote.match(/const specs=phase==='before' \? (\[[^\]]*\]) : (\[[^\]]*\])/)
+ expect(suites).not.toBeNull()
+ expect(suites[1]).not.toContain("'cli-setup.spec.ts'")
+ expect(suites[2]).toContain("'cli-setup.spec.ts'")
+})
+
 
 test('unified acceptance uses bounded suite and only the assigned snapshot branch',()=>{
  expect(supportsBrowserSnapshot('mini-ui-acceptance')).toBe(true)

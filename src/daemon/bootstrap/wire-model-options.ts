@@ -39,6 +39,7 @@ export function wireModelOptions(
     permissionMode: PermissionMode
     buildCanUseTool: PermissionsSlice['buildCanUseTool']
     claudeBin: string | undefined
+    resolveClaudeBin?: () => string | undefined
   },
 ): ModelOptionsSlice {
   // The model is re-read per spawn via an mtime-cached reader (one stat, parse
@@ -79,6 +80,7 @@ export function wireModelOptions(
     // here via SpawnContext — this builder no longer calls buildSystemPrompt,
     // so claude/codex share one provider-agnostic source.
     const systemPrompt = appendInstructions ?? ''
+    const claudeBin = parts.resolveClaudeBin?.() ?? parts.claudeBin
     // Only parent-process core MCP clients receive the session credential.
     const sessionEnv = mcpEnv ?? {}
     const abortController = new AbortController()
@@ -120,7 +122,7 @@ export function wireModelOptions(
       // daemon. project + local still load so a per-project .claude/
       // setup the user wires in CWD continues to work.
       settingSources: ['project', 'local'],
-      ...(parts.claudeBin ? { pathToClaudeCodeExecutable: parts.claudeBin } : {}),
+      ...(claudeBin ? { pathToClaudeCodeExecutable: claudeBin } : {}),
     }
     // Task 13 — SDK permission knobs derived from the spawn-time tierProfile
     // via the provider's pure translation helper. Pre-Task-13 this branched
