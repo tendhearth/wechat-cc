@@ -197,6 +197,8 @@ before/after覆盖同一个合成截图harness；白名单只覆盖 `playwright/
 
 2026-11-11：`phone-connect-relay` 也使用受控 browser 快照入口，browser 验证包含 `phone-connect.spec.ts`。
 
+2026-11-17：`one-click-cli-setup` 允许使用受控 browser 快照入口；普通 after 验证包含 `cli-setup.spec.ts`，覆盖账号选项、安装 IPC/POST、自动检测、QA 拒绝与 390px 宽度。用例只使用假 daemon 路由与假原生桥接，不打开终端或执行安装。登记与用例存在不代表 mini 验收通过；实际运行由整合者经标准 browser 入口完成。
+
 2026-11-09：主人指定的 `codex-hook-trust-ux`、`topics-waiting-honest` 也允许这两个源码入口。这两条分支的 App 快照通过固定 `--receive-verified` 入口复用上述差异 archive 与完整 Git manifest 校验，避免不稳定 SSH 中传输约 208 MiB 的完整 archive。App target 由接收入口固定传入，不能由 manifest 选择；仅接受 after，只更新 appRoot，不覆盖浏览器 harness。仍固定 486f… 公共源码缓存，核验 commit/tree、每个 blob/mode、差异包摘要、路径和容量边界，离线安装自己的 JS 依赖并核对 workspace 解析；不复制 node_modules、Pods、构建物、账号或凭据。两端应一起更新 app/browser snapshot、source-manifest、remote/protocol 与 lock/lifecycle 模块。其它既有 App 分支继续保留原完整 Git archive 入口。
 
 入口拿锁后核对快照未在排队期间切换，预检4198空闲（占用即失败，不杀未知进程），测试HOME、TMP、daemon/workbench状态与输出均在本轮目录。用 `node apps/desktop/scripts/macmini-ui.mjs browser` 执行；全程headless与拒绝外连，不启动Xcode/模拟器或真实daemon。取回证据后，持同一锁只删除自己创建且没有被active的root/appRoot/browserRoot指向的目录；保留active的after快照，不清理他人的App快照。
