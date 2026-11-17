@@ -130,6 +130,14 @@ export const JOB_PROFILE: TierProfile = {
   deny: difference(ALL_KINDS, JOB_ALLOW),
 }
 
+/** 单次代答(这句该谁答 PR 2):只许写出回复 —— 不读文件、不上网、不碰记忆;配合空的临时工作目录。 */
+const ONEOFF_ALLOW = new Set<ToolKind>(['reply'])
+export const ONEOFF_PROFILE: TierProfile = {
+  allow: ONEOFF_ALLOW,
+  relay: new Set(),
+  deny: difference(ALL_KINDS, ONEOFF_ALLOW),
+}
+
 /**
  * 换一家来审那一轮(评审 #460):定时只读档去掉 network。审的 diff 是直接放进提示词的材料,不是读出来的 ⇒
  * 「读过才断网」的污点一开始就没有;被注入的 diff 能先 WebFetch 把仓库内容拼进 URL 发出去。全程不给网。
@@ -308,8 +316,9 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // 只读,但读的是主人的私事,与 diagnostic_* 同为 admin-only。不加这一行会落到下面的 fs_read 默认值。
     // today_digest(2026-10-14):「今天」一眼看完 —— 终端 + 一起做的标题、待批、最后一句,同理 admin-only。
     // calendar_agenda(读日历,对标 #8):主人的日程,同理 admin-only —— 不能落到 fs_read 默认值(trusted 也有)。
-    if (sub.startsWith('diagnostic_') || sub === 'model_get' || sub === 'terminal_sessions' || sub === 'today_digest' || sub === 'calendar_agenda') return 'daemon_introspect'
-    if (sub.startsWith('daemon_') || sub.startsWith('session_') || sub === 'model_set') return 'daemon_remediate'
+    // matter_shares(看分享给了谁 / 关掉一个):主人的私事,admin-only;关掉是收紧,不用确认卡。matter_share(开链接)是对外的动作 ⇒ 下面的 daemon_remediate,要主人点头。
+    if (sub.startsWith('diagnostic_') || sub === 'matter_shares' || sub === 'model_get' || sub === 'terminal_sessions' || sub === 'today_digest' || sub === 'projects_activity' || sub === 'calendar_agenda') return 'daemon_introspect'
+    if (sub.startsWith('daemon_') || sub.startsWith('session_') || sub === 'model_set' || sub === 'matter_handoff' || sub === 'matter_plan' || sub === 'matter_share' || sub === 'terminal_attach' || sub === 'terminal_detach') return 'daemon_remediate'
     // File-locate family — admin-only, classified by PREFIX so a sibling
     // (locate_dir, …) fails CLOSED into file_locate, not the fs_read default.
     if (sub.startsWith('locate_')) return 'file_locate'

@@ -1,0 +1,165 @@
+/**
+ * share 域:把一件事开给合伙人看(设计稿 docs/superpowers/specs/2026-11-14-share-a-matter-design.md,第 1 步只读)。
+ *
+ * 主人这边:开一个链接、看开过哪些、撤掉。合伙人那边:只有 shareView 一个出口,凭令牌进来,
+ * 这件事是哪一件从分享记录里取,不听请求里说的;能不能看每次请求都重判(撤销、过期、归档立即生效)。
+ * 给出去的内容只经 domain/matters/share-scope.ts 的投影。
+ */
+import {publicTask} from '../../../adapters/store/workbench/store'
+import type {MatterShare} from '../../../adapters/store/matter-shares'
+import {readShareReply,shareProposalNotice,shareQuietNotice,shareReplyPrompt,shareTalkNotice} from '../../../domain/matters/share-reply'
+import {PARTNER_AUTHOR_PREFIX,SHARE_MODES,SHARE_SAY_PER_DAY,SHARE_SAY_PER_MATTER_DAY,shareRefusal,shareSayText,sharedMatterView,type ShareMode,type ShareRefusal,type ShareView} from '../../../domain/matters/share-scope'
+import {GIT_REVIEW_MIME} from '../git-review'
+import type {ServiceCtx} from './ctx'
+import type {ViewDomain} from './view'
+
+export interface ShareResponder {eval(prompt:string):Promise<string|null>;tellOwner(text:string):void}
+/** 每件事告诉主人的条数上限。 */
+const SHARE_TELL_PER_HOUR=3,SHARE_TELL_PER_DAY=10
+/** 全机每天为分享出去的事叫模型的次数上限。 */
+const SHARE_REPLIES_PER_DAY=400
+/** CC 回一句最多等这么久;超了这一轮就不回。 */
+const SHARE_REPLY_BUDGET_MS=45_000
+/** 同一位隔了这么久再开口,算「又来说话了」,告诉主人一声。 */
+const SHARE_QUIET_MS=30*60*1000
+
+export function makeShareDomain(ctx:ServiceCtx,d:{view:ViewDomain}){
+  const {store,state}=ctx
+  /** 主人自己交办的事才能分享;别人的、不存在的都当「没有这件」。 */
+  function owned(id:string){
+    const owner=ctx.deps.ownerChatId()
+    let task:ReturnType<typeof store.get>
+    try{task=store.get(id)}catch{throw Error('matter_not_found')}
+    if(!owner||task.ownerChatId!==owner)throw Error('matter_not_found')
+    return task
+  }
+  const record=(task:{archivedAt:number|null}|null)=>task?{kind:'task',archivedAt:task.archivedAt}:null
+  function refusalOf(share:MatterShare):ShareRefusal|null{
+    let task:{archivedAt:number|null}|null=null
+    try{task=owned(share.matterId)}catch{/* 这件事没了或不再是主人的 ⇒ not_shareable */}
+    return shareRefusal(share,record(task),ctx.now())
+  }
+  /** 这位被分享的人看得到的那份投影(也是 CC 回应时唯一的材料)。 */
+  function project(share:MatterShare){
+    const id=share.matterId,task=publicTask(store.get(id)),running=state.runsByTask.get(id)
+    const ledger=store.ledger.enabled(id)?{agentRuns:store.ledger.projectedAgents(id),...store.ledger.recent(id)}:null
+    const plan=store.plans.get(id)
+    // 被分享的人看正式名字(Codex、Claude),不看内部 id;查不到名字就用 id。
+    const named=(executor:string)=>{try{return ctx.deps.registry.namesOf(executor).name||executor}catch{return executor}}
+    return sharedMatterView({
+      talk:store.shares.talkRecent(id),talkTotal:store.shares.talkTotal(id),viewer:share.id,
+      matter:{title:task.title,projectPath:task.path},
+      task:{status:task.status,phase:d.view.phaseOf(task,running),providerId:named(task.providerId)},
+      agentRuns:(ledger?.agentRuns??[]).map(run=>({...run,executor:named(run.executor)})),notes:(ledger?.notes??[]).map(note=>({...note,author:note.author.startsWith(PARTNER_AUTHOR_PREFIX)?note.author:named(note.author)})),notesTotal:ledger?.notesTotal??0,
+      // 批准卡、提问、接力停下等主人一句话:内容都不给,只说在等主人。
+      ownerPending:!!running&&(running.permissions.pending().length>0||running.questions.pending().length>0)||plan?.state==='approved'&&plan.legs.some(leg=>leg.state==='stopped'),
+      artifacts:store.artifacts(id).filter(a=>a.mime!==GIT_REVIEW_MIME).map(a=>({name:a.name,size:a.size})),
+    })
+  }
+  let responder:ShareResponder|null=null
+  /** 每件事同一时刻只回一轮;回的途中又有人说话 ⇒ 这一轮完了再回一轮(回最新那位)。 */
+  const replying=new Map<string,{next:{share:MatterShare;quiet:boolean}|null}>()
+  /** 告诉主人的条数:每件事每小时、每天有上限,到了上限说最后一句就停(来的人刷不了主人的微信)。 */
+  const told=new Map<string,number[]>()
+  function tellOwner(handlers:ShareResponder,matterId:string,title:string,text:string){
+    const at=ctx.now(),recent=(told.get(matterId)??[]).filter(t=>t>at-24*60*60*1000)
+    const hour=recent.filter(t=>t>at-60*60*1000).length
+    if(hour>=SHARE_TELL_PER_HOUR||recent.length>=SHARE_TELL_PER_DAY)return
+    recent.push(at);told.set(matterId,recent)
+    handlers.tellOwner(recent.length===SHARE_TELL_PER_DAY?shareQuietNotice(title):text)
+  }
+  /** 全机每天叫模型的次数上限(所有分享出去的事加起来)。 */
+  let calls:number[]=[]
+  function respond(share:MatterShare,quiet:boolean):void{
+    if(!responder)return
+    const slot=replying.get(share.matterId)
+    if(slot){slot.next={share,quiet:quiet||!!slot.next?.quiet};return}
+    replying.set(share.matterId,{next:null})
+    const handlers=responder
+    void (async()=>{
+      let timer:ReturnType<typeof setTimeout>|undefined
+      try{
+        const current=store.shares.byId(share.id)
+        if(!current||refusalOf(current)||current.mode==='view')return
+        const at=ctx.now()
+        calls=calls.filter(t=>t>at-24*60*60*1000)
+        if(calls.length>=SHARE_REPLIES_PER_DAY)return
+        calls.push(at)
+        const title=publicTask(store.get(share.matterId)).title
+        const raw=await Promise.race([handlers.eval(shareReplyPrompt(project(current),{name:current.name})),new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),SHARE_REPLY_BUDGET_MS)})])
+        const out=readShareReply(raw)
+        // 等模型的这段时间里链接可能被撤销、换成只看、这件事被归档:回话之前再核一遍。
+        const still=store.shares.byId(share.id)
+        if(!still||refusalOf(still)||still.mode==='view')return
+        if(out?.reply)store.shares.talkAdd(share.matterId,{who:'cc',name:'CC',shareId:null,text:out.reply},ctx.now())
+        // 提议只转告主人。「能直接让 CC 改」那一档现在同样只转告(见 domain/matters/share-reply.ts 头注)。
+        if(out?.proposal)tellOwner(handlers,share.matterId,title,shareProposalNotice(title,still.name,out.proposal))
+        else if(quiet)tellOwner(handlers,share.matterId,title,shareTalkNotice(title,still.name))
+      }catch(error){ctx.log?.('SHARE',`reply failed: ${error instanceof Error?error.message:'error'}`)}
+      finally{
+        if(timer)clearTimeout(timer)
+        const next=replying.get(share.matterId)?.next??null
+        replying.delete(share.matterId)
+        if(next)respond(next.share,next.quiet)
+      }
+    })()
+  }
+  return {
+    shareCreate(id:string,name:unknown,mode:unknown='discuss'):{share:MatterShare;token:string}{
+      const task=owned(id)
+      if(task.archivedAt!==null)throw Error('matter_archived')
+      if(!SHARE_MODES.includes(mode as ShareMode))throw Error('invalid_share_mode')
+      return store.shares.create(id,name,ctx.now(),mode as ShareMode)
+    },
+    /** 主人给某个链接换一档(只看 / 能讨论 / 能直接让 CC 改)。 */
+    shareSetMode(id:string,shareId:string,mode:unknown):boolean{
+      owned(id)
+      if(!SHARE_MODES.includes(mode as ShareMode))throw Error('invalid_share_mode')
+      const changed=store.shares.setMode(id,shareId,mode as ShareMode)
+      if(changed)ctx.log?.('SHARE',`mode → ${String(mode)} (matter ${id}, share ${shareId})`)
+      return changed
+    },
+    /**
+     * 被分享的人在这件事里说一句。只进对话,不进执行者的上下文:要不要照着做是后面的事(CC 汇总问主人,或主人给了「直接改」那一档)。
+     * 「只看」的链接不能说;每个链接每天有上限(对方的话会让 CC 回应,花的是主人的额度)。
+     */
+    shareSay(token:string,raw:unknown):{ok:true}|{ok:false;reason:'closed'|'view_only'|'invalid'|'limit'}{
+      const share=store.shares.byToken(token)
+      if(!share||refusalOf(share))return {ok:false,reason:'closed'}
+      if(share.mode==='view')return {ok:false,reason:'view_only'}
+      const text=shareSayText(raw)
+      if(!text)return {ok:false,reason:'invalid'}
+      const at=ctx.now()
+      if(store.shares.talkCountSince(share.id,at-24*60*60*1000)>=SHARE_SAY_PER_DAY||store.shares.talkGuestCountSince(share.matterId,at-24*60*60*1000)>=SHARE_SAY_PER_MATTER_DAY)return {ok:false,reason:'limit'}
+      const quiet=store.shares.talkCountSince(share.id,at-SHARE_QUIET_MS)===0
+      store.shares.talkAdd(share.matterId,{who:'guest',name:share.name,shareId:share.id,text},at)
+      respond(share,quiet)
+      return {ok:true}
+    },
+    /** 主人(或 CC 替主人、CC 自己)在这件事的对话里说一句。 */
+    shareTalkAdd(id:string,who:'owner'|'cc',name:string,text:string){owned(id);return store.shares.talkAdd(id,{who,name,shareId:null,text},ctx.now())},
+    /** 主人这边读这段对话(原文,不过投影:主人本来就都看得到)。 */
+    shareTalk(id:string){owned(id);return {talk:store.shares.talkRecent(id),total:store.shares.talkTotal(id)}},
+    /** 主人名下这件事的标题;不是主人的、不存在的 ⇒ null。 */
+    shareTitle(id:string):string|null{try{return owned(id).title}catch{return null}},
+    shareList(id:string):MatterShare[]{owned(id);return store.shares.list(id)},
+    shareRevoke(id:string,shareId:string):boolean{owned(id);return store.shares.revoke(id,shareId)},
+    /** 隧道握手的候选:没撤销、没过期的链接。归档等情况在握手之后由 shareTokenValid / shareView 判。 */
+    shareTokens:():string[]=>store.shares.active(ctx.now()),
+    shareTokenValid(token:string):boolean{const share=store.shares.byToken(token);return !!share&&refusalOf(share)===null},
+    shareView(token:string):ShareView{
+      const share=store.shares.byToken(token)
+      if(!share)return {ok:false,reason:'unknown'}
+      const refusal=refusalOf(share)
+      if(refusal)return {ok:false,reason:refusal}
+      store.shares.opened(share.id,ctx.now())
+      return {ok:true,name:share.name,mode:share.mode,expiresAt:share.expiresAt,matter:project(share)}
+    },
+    /**
+     * 接上 CC 的回应(wiring 在开机后给):eval = 不带工具的一次模型调用;tellOwner = 经 CC 开口那道门告诉主人。
+     * 没接 ⇒ 对方的话只存进对话。这里没有任何通向执行者的路。
+     */
+    shareResponder(handlers:ShareResponder|null){responder=handlers},
+  }
+}
+export type ShareDomain=ReturnType<typeof makeShareDomain>

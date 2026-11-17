@@ -5,6 +5,13 @@
  */
 const DAEMON_CREDENTIAL = /^(WECHAT_|HEARTH_|WXVAULT_|WXGRAPH_)/i
 
+/** Conversation credentials belong only to explicitly configured core MCP clients. */
+export function sessionSubprocessEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...base }
+  for (const name of Object.keys(env)) if (/^WECHAT_SESSION_(TOKEN|TIER)$/i.test(name)) delete env[name]
+  return env
+}
+
 export function workbenchSubprocessEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env = { ...base }
   for (const name of Object.keys(env)) if (DAEMON_CREDENTIAL.test(name)) delete env[name]

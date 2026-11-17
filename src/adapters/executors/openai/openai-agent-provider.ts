@@ -18,10 +18,12 @@ import {
   assertNotAuthFailed,
 } from '../../../ports/agent-provider'
 import { isAuthErrorCode, withProviderCode } from '../../../lib/provider-error-code'
+import { isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import { EvalOutputExhaustedError, systemMessage, userMessage, type APIModel, type ChatMessage, type ToolSpec } from './api-model'
 import { builtinTools, type BuiltinTool } from './openai-tools'
-import { gateTool } from './openai-gate'
+import { ChatApprovalTurn } from '../chat-approval'
+import { gateTool, type OpenAiApproval } from './openai-gate'
 import type { ChatOwnerRules } from '../../permission-rules/chat'
 import { makeTurnEmitter } from '../turn-emitter'
 import { makeMemoryChatSessionStore, type ApiSessionState, type ChatSession, type ChatSessionBinding, type ChatSessionStore } from './api-sessions'
@@ -34,7 +36,7 @@ export interface OpenAiAgentProviderOptions {
   // instance so `spawn` can honor `ctx.model` per-session (the operator's pinned model, hot-reloaded via the daemon's
   // mtime-cached config reader — see bootstrap currentModelFor) instead of the model baked in at provider construction.
   // `cheapEval`/`strongEval` are background calls with no per-chat pin, so they pass `evalModel()` (undefined ⇒ the default model).
-  makeChatModel: (model?: string) => APIModel
+  makeChatModel: (model?: string, limits?: { maxOutputTokens: number; maxRetries: number; budget?:import('../../../domain/checkup-budget').CheckupBudget }) => APIModel
   makeMcpBridge: (mcpEnv: Record<string, string>) => Promise<AgentMcpTools>
   /**
    * 守护(评审 #193 P1-1):`makeChatModel` 实际连的 base URL 和它的默认模型 —— 与建模型用的是**同一份**值(bootstrap
@@ -44,6 +46,8 @@ export interface OpenAiAgentProviderOptions {
   /** 后台评估(cheapEval/strongEval)单独用的模型(agent-config `openaiEvalModel`,现取)。不给 / 回空 ⇒ 默认模型。
    *  对话不受影响:主人可以聊天用 Qwen、后台判断用 DeepSeek。 */
   evalModel?: () => string | undefined
+  /** 评估未单独配置或预算耗尽时回退的主模型；可现取，避免热切换后回到启动时旧模型。 */
+  evalFallbackModel?: () => string | undefined
   cwd?: string
   maxSteps?: number
   log?: (tag: string, line: string) => void
@@ -54,6 +58,7 @@ export interface OpenAiAgentProviderOptions {
   makeBuiltins?: (cwd: string) => BuiltinTool[]
   /** 主人自己的对话走放行规则(2026-10-25,core/permission-rules/chat.ts)。现取;不给 / 回 null ⇒ 不看规则。 */
   ownerRules?: () => ChatOwnerRules | null
+  approval?: OpenAiApproval
   /** 会话历史存哪(B2):DB 那一份(makeChatSessionStore)⇒ daemon 重启 / 会话释放后续得上。不给 ⇒ 内存,不续接。 */
   sessions?: ChatSessionStore
   /** 绑定续接的连接身份(`openAiConnectionHash`:base URL + 密钥的摘要,不含密钥本身)。换了端点 / 密钥就不续接。 */
@@ -87,6 +92,7 @@ function chatHistory(store: ChatSessionStore, initial: ChatSession, log: (tag: s
     log('SESSION_PERSIST', `openai session=${initial.id} 存不下历史,这条会话不再续接:${err instanceof Error ? err.message : String(err)}`)
   }
   return {
+    release:()=>store.release?.(initial.id),
     id: initial.id,
     revision: () => revision,
     messages: () => messages,
@@ -138,7 +144,9 @@ function chatPurpose(args: {
   builtins: BuiltinTool[]
   maxSteps: number
   ownerRules?: () => ChatOwnerRules | null
+  approval?: OpenAiApproval
 }): OpenAiPurpose {
+  const turns = new WeakMap<AbortSignal, { budget: ChatApprovalTurn; inbound: boolean }>()
   const { ctx, bridge, maxSteps, ownerRules } = args
   const builtinByName = new Map<string, BuiltinTool>(args.builtins.map(b => [b.spec.name, b]))
   const toolSpecs: ToolSpec[] = [...bridge.tools, ...args.builtins.map(b => b.spec)]
@@ -150,6 +158,9 @@ function chatPurpose(args: {
     closeTimeoutMs: CLOSE_TIMEOUT_MS,
     closeMustConfirm: false,
     cancelWaits: false,
+    beginTurn(signal, context) {
+      turns.set(signal, { budget: new ChatApprovalTurn(args.approval?.maxCards), inbound: context?.source === 'inbound' })
+    },
     tools: () => toolSpecs,
     // Stamp `server` from the REAL owning MCP server (never assume `wechat` for every MCP tool) — isReplyToolCall keys on it.
     toolCallEvent(call): AgentEvent {
@@ -168,7 +179,9 @@ function chatPurpose(args: {
       if (signal.aborted) return { output: CANCELLED_TOOL }
       const server = bridge.serverOf(call.name)
       const input = (call.input ?? {}) as Record<string, unknown>
+      const turn = turns.get(signal)
       const gate = await gateTool({
+        approvalTurn: turn?.budget,
         toolName: call.name,
         ...(server !== undefined ? { mcpServer: server } : {}),
         input,
@@ -176,6 +189,9 @@ function chatPurpose(args: {
         permissionMode: ctx.permissionMode,
         chatId: ctx.chatId,
         ownerRules: ownerRules?.() ?? null,
+        // 没有主人刚发起的入站轮，relay 保持 deny；缓存会话不携带这项资格。
+        approval: turn?.inbound ? args.approval : undefined,
+        signal,
       })
       if (signal.aborted) return { output: CANCELLED_TOOL }
       if (gate.decision === 'deny') return { output: gate.message ?? `Permission denied: tool "${call.name}" is not allowed for this chat.` }
@@ -199,6 +215,7 @@ function chatPurpose(args: {
       // /stop:说一句「停了」,这一轮照常收尾(result 照发,历史留着下一轮用)。
       if (aborted || reason === 'api_task_cancelled') return { events: [em.errorText('cancelled', { code: 'cancelled' })], state: 'ready', finish: true }
       if (reason === 'api_task_step_limit') return { events: [em.errorText(`step budget ${maxSteps} exhausted`, { code: 'step_budget' })], state: 'ready', finish: true }
+      if (isNetworkUnprotectedError(error)) return { events: [em.error(error, { code: 'network_unprotected' })], state: 'ready', finish: false }
       // 边界产码(arch backlog #4 第 2 步):HTTP status / 重试链里最后一次的 status / 连接层系统码 / 我们自己的超时 ⇒ 码;
       // 消息里把 RetryError 吃掉的真实 status 拼回来。分不出 ⇒ 旧的回退(按文字认 auth)。
       const code = openaiErrorCode(error)
@@ -213,7 +230,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS
   const sessions = opts.sessions ?? makeMemoryChatSessionStore()
   const connection = opts.connectionHash ?? 'unbound'
-  const evalModel = (): string | undefined => opts.evalModel?.() || undefined
+  const evalModel = (): string | undefined => opts.evalModel?.() || opts.evalFallbackModel?.() || undefined
   const callTarget = (model?: string) => opts.endpoint ? { provider: 'openai', baseUrl: opts.endpoint.baseUrl, model: model ?? opts.endpoint.model } : null
 
   /** 续接的那条(绑定对得上才续);续不上 ⇒ 记一行、从头来(和续接之前一样),不让这一轮失败。 */
@@ -237,21 +254,50 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
    * 只换一次、只在设了别的评估模型时换(同一个模型重试只会再想满一次);同一网关同一 base URL,网络闸门判定不变。
    */
   async function evalWithFallback(prompt: string, source: string): Promise<string> {
-    const chosen = evalModel()
+    const fallback = opts.evalFallbackModel?.() || undefined
+    const chosen = opts.evalModel?.() || fallback
     try {
       return await runEval(opts.makeChatModel(chosen), prompt, log, source)
     } catch (err) {
-      if (!(err instanceof EvalOutputExhaustedError) || chosen === undefined || chosen === opts.endpoint?.model) throw err
+      if (!(err instanceof EvalOutputExhaustedError) || chosen === undefined || chosen === (fallback ?? opts.endpoint?.model)) throw err
       log('EVAL_FALLBACK', `${source}: ${err.message} — retrying once with the default model`)
-      return runEval(opts.makeChatModel(undefined), prompt, log, source)
+      return runEval(opts.makeChatModel(fallback), prompt, log, source)
     }
   }
 
   return {
+    supportsIsolatedEvaluation: true,
     // 会话 / 评估都用 makeChatModel(构造时的 base URL);模型:会话钉的 ?? 默认,评估用 evalModel ?? 默认。
     callTarget: (kind, ctx) => callTarget(kind === 'cheapEval' || kind === 'strongEval' ? evalModel() : ctx?.model),
     canResume: (path, sessionId) => opts.sessions !== undefined && opts.connectionHash !== undefined && sessions.canResume(sessionId, path, connection),
+    supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
+      if (ctx.evaluation) {
+        const fake = ctx.evaluation.tools
+        const memory = makeMemoryChatSessionStore()
+        const initial = ctx.appendInstructions ? [systemMessage(ctx.appendInstructions)] : []
+        const saved = memory.create({ chatId: ctx.chatId, alias: project.alias, path: project.path, configHash: 'checkup' }, initial)
+        const session = openOpenAiSession({
+          model: opts.makeChatModel(ctx.model, { maxOutputTokens: ctx.evaluation.maxOutputTokens, maxRetries: 2, ...(ctx.evaluation.budget?{budget:ctx.evaluation.budget}:{}) }), history: chatHistory(memory, saved, () => {}),
+          purpose: {
+            maxSteps: ctx.evaluation.maxSteps, strict: true, emptyOutputCode:'checkup_output_exhausted', textEvents: 'streamed', singleDispatch: true,
+            closeTimeoutMs: CLOSE_TIMEOUT_MS, closeMustConfirm: true, cancelWaits: true,
+            tools: () => fake.tools,
+            request: text => userMessage(text),
+            toolCallEvent: call => ({ kind: 'tool_call', server: 'wechat', tool: call.name }),
+            async runTool(call, signal) {
+              signal.throwIfAborted()
+              if (!fake.tools.some(tool => tool.name === call.name)) return { output: 'Unknown checkup tool.' }
+              return { output: await fake.call(call.name, call.input) }
+            },
+            failure(error, aborted) {
+              return { events: [{ kind: 'error', message: aborted ? 'cancelled' : openaiErrorMessage(error), code: aborted ? 'cancelled' : error instanceof Error && error.message === 'api_task_step_limit' ? 'checkup_step_budget' : error instanceof Error && error.message==='checkup_usage_limit' ? 'checkup_usage_limit' : error instanceof Error && error.message==='checkup_output_exhausted' ? 'checkup_output_exhausted' : openaiErrorCode(error) ?? 'provider_error' }], state: 'interrupted', finish: false }
+            },
+          },
+        })
+        session.callTarget = () => callTarget(ctx.model)
+        return session
+      }
       const cwd = opts.cwd ?? project.path
       const bridge = await opts.makeMcpBridge(ctx.mcpEnv ?? {})
       // Built once per spawn from ctx.model (the operator's per-chat pinned model, if any) — an in-flight session keeps
@@ -263,7 +309,8 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       let saved: ChatSession
       let store = sessions
       try {
-        saved = openHistory(binding, initial, ctx.resumeSessionId)
+        if(ctx.ephemeral){store=makeMemoryChatSessionStore();saved=store.create(binding,initial)}
+        else saved = openHistory(binding, initial, ctx.resumeSessionId)
       } catch (err) {
         // DB 出了问题不该让对话起不来:这条会话退回内存(不续接),照常聊。
         log('SESSION_PERSIST', `openai 会话存档不可用,这条会话只在内存里:${err instanceof Error ? err.message : String(err)}`)
@@ -274,10 +321,10 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       const session = openOpenAiSession({
         model,
         history: chatHistory(store, saved, log),
-        purpose: chatPurpose({ ctx, bridge, builtins: (opts.makeBuiltins ?? builtinTools)(cwd), maxSteps, ...(opts.ownerRules ? { ownerRules: opts.ownerRules } : {}) }),
+        purpose: chatPurpose({ ctx, bridge, builtins: (opts.makeBuiltins ?? builtinTools)(cwd), maxSteps, approval: opts.approval, ...(opts.ownerRules ? { ownerRules: opts.ownerRules } : {}) }),
       })
       log('SESSION_SPAWN', `alias=${project.alias} provider=openai session=${saved.id}${resumed ? ' resumed' : ''}`)
-      session.callTarget = () => target
+      session.callTarget = () => target?({...target,...(session.contextUsage?.().model?{model:session.contextUsage!().model!}:{})}):null
       session.resumedHistory = resumed
       return session
     },

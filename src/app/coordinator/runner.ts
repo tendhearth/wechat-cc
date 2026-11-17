@@ -8,6 +8,7 @@
  *  - 一轮的结构化记录(TurnRecord)。
  * 派法只管编排:什么时候 acquire、prompt 怎么拼、出错怎么说、交付走哪条路。
  */
+import type { ReplyAttribution } from '@wechat-cc/protocol'
 import type { ProviderId } from '../../domain/conversation'
 import type { SessionHandle } from '../session-manager'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from '../../ports/agent-provider'
@@ -36,7 +37,8 @@ export interface RunTurn {
   alias: string
   /** 会话锁的键用它(和 SessionManager 的会话键同一个粒度)。 */
   providerId: ProviderId
-  handle: Pick<SessionHandle, 'dispatch'>
+  handle: Pick<SessionHandle, 'dispatch' | 'callTarget' | 'model'>
+  speaker?: ReplyAttribution['speaker']
   prompt: string
   /** 'turn' = daemon 的回合看门狗(deps.turnTimeoutMs,缺省不限);'beat' = /chat 的一拍。 */
   budget: 'turn' | 'beat'
@@ -48,6 +50,8 @@ export interface RunTurn {
   startedAt?: number
   /** 这一轮的身份:调用方每轮新建一个对象,run 和 record 带同一个 ⇒ 记进这件对话的同一轮。不给 ⇒ 不在 run 时开轮。 */
   turn?: object
+  /** 开轮后回填这一轮的身份(交付层把它带进回复来源)。 */
+  onTurn?: (ids: { turnId: string; matterId?: string }) => void
 }
 
 export interface TurnRecordInput {
@@ -139,8 +143,8 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
   // 对话的轮(M3a):run 开的那一轮按调用方给的 turn 对象记着,record 收。不拿时间当钥匙 —— 同一毫秒开的两轮会撞(Codex 评审)。
   // 记不上不挡回合。
   const openTurns = new WeakMap<object, ChatTurnHandle>()
-  const beginTurn = (chatId: string, provider: ProviderId, alias: string, startedAt: number): ChatTurnHandle | null => {
-    try { return deps.chatTurns?.begin({ chatId, provider, alias, startedAt }) ?? null } catch { return null }
+  const beginTurn = (chatId: string, provider: ProviderId, alias: string, startedAt: number, speaker?: ReplyAttribution['speaker'], model?: string): ChatTurnHandle | null => {
+    try { return deps.chatTurns?.begin({ chatId, provider, alias, startedAt, speaker, model }) ?? null } catch { return null }
   }
 
   return {
@@ -155,11 +159,12 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
         ? Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS)
         : deps.turnTimeoutMs
       const observe = t.observe
-      const handle = t.turn === undefined || t.startedAt === undefined ? null : beginTurn(t.chatId, t.providerId, t.alias, t.startedAt)
+      const handle = t.turn === undefined || t.startedAt === undefined ? null : openTurns.get(t.turn)??beginTurn(t.chatId, t.providerId, t.alias, t.startedAt, t.speaker, t.handle.callTarget?.().model ?? t.handle.model)
       if (handle) openTurns.set(t.turn!, handle)
+      if (handle?.turnId) { try { t.onTurn?.({ turnId: handle.turnId, ...(handle.matterId ? { matterId: handle.matterId } : {}) }) } catch { /* 来源回填失败不影响这一轮 */ } }
       const log = handle ? (ev: AgentEvent) => { try { handle.event(ev) } catch { /* 只少一步 */ } } : undefined
       const onEvent = (ev: AgentEvent) => { observe?.(ev); log?.(ev); deps.onTurnEvent?.(t.chatId, ev) }
-      const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, () => collectTurn(t.handle.dispatch(t.prompt), { timeoutMs, onEvent }))
+      const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, () => collectTurn(t.handle.dispatch(t.prompt, { source: 'inbound' }), { timeoutMs, onEvent }))
       if (progressTimer) {
         // 旁路收尾,不多套一层 then:调用方 await 的还是回合本身,恢复的那一拍不变。
         const clear = () => { if (progressTimer) { clearTimeout(progressTimer); progressTimer = undefined } }

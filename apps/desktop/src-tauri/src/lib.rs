@@ -1,3 +1,4 @@
+mod cli_setup;
 // wechat-cc desktop installer — Tauri command surface.
 //
 // The bundled `wechat-cc-cli` sidecar (a `bun build --compile`d
@@ -940,8 +941,8 @@ fn reply_file_path(token: &str) -> Option<PathBuf> {
     guard.1.iter().find(|(t, _)| t == token).map(|(_, p)| p.clone())
 }
 
-/// Daemon converse body → what the webview gets: `{ reply, attachments, narration }`
-/// with every file attachment's `path` replaced by a `ref` token.
+/// Daemon converse body → webview reply, with file paths replaced by ref tokens.
+/// Attribution is optional and belongs to the actual reply, never a host default.
 fn webview_converse_reply(body: &Value) -> Value {
     let reply = body.get("reply").and_then(|v| v.as_str()).unwrap_or_default();
     let narration: Vec<Value> = body
@@ -967,7 +968,13 @@ fn webview_converse_reply(body: &Value) -> Value {
                 .collect()
         })
         .unwrap_or_default();
-    serde_json::json!({ "reply": reply, "attachments": attachments, "narration": narration })
+    let mut out = serde_json::json!({ "reply": reply, "attachments": attachments, "narration": narration });
+    for key in ["speaker", "provider", "replyParts", "model", "agentId"] {
+        if let Some(value) = body.get(key) {
+            out[key] = value.clone();
+        }
+    }
+    out
 }
 
 /// Reveal a file CC attached to a reply in Finder. Only a token minted by
@@ -1246,9 +1253,12 @@ fn daemon_request_channel(method: &str, path: &str) -> Result<DaemonChannel, Str
 }
 
 #[tauri::command]
-async fn daemon_request(method: String, path: String, body: Option<String>) -> Result<String, String> {
+async fn daemon_request(method: String, path: String, body: Option<String>, if_none_match: Option<String>) -> Result<String, String> {
     match daemon_request_channel(&method, &path)? {
-        DaemonChannel::Workbench => workbench_call(method, path, body).await,
+        DaemonChannel::Workbench => {
+            let etag = if method == "GET" { if_none_match } else { None };
+            workbench_call_conditional(method, path, body, etag).await
+        },
         DaemonChannel::OwnerWorkspace => owner_workspace_call(method, path, body).await,
     }
 }
@@ -1384,6 +1394,10 @@ fn validate_workbench_body(method: &str, path: &str, body: Option<&str>) -> Resu
 
 // 工作台那一半(原 workbench_api 命令)。
 async fn workbench_call(method: String, path: String, body: Option<String>) -> Result<String, String> {
+    workbench_call_conditional(method, path, body, None).await
+}
+
+async fn workbench_call_conditional(method: String, path: String, body: Option<String>, etag: Option<String>) -> Result<String, String> {
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -1410,10 +1424,12 @@ async fn workbench_call(method: String, path: String, body: Option<String>) -> R
         let request = if method == "GET" { client.get(url) } else {
             client.post(url).header("Content-Type", "application/json").body(body.unwrap_or_else(|| "{}".into()))
         };
+        let request = if let Some(etag) = etag { request.header("If-None-Match", etag) } else { request };
         request.header("x-cc-desktop-version", env!("CARGO_PKG_VERSION")).bearer_auth(token).send().await
     }).await.map_err(|_| "request timed out".to_string())?
       .map_err(|e| format!("request error: {e}"))?;
     let status = response.status();
+    if status == reqwest::StatusCode::NOT_MODIFIED { return Ok("{\"notModified\":true}".into()); }
     let response_body = response.text().await.map_err(|e| format!("failed to read response body ({status}): {e}"))?;
     if !status.is_success() {
         return Err(workbench_error_message(&response_body, &status.to_string()));
@@ -1515,6 +1531,18 @@ fn launch_workbench_folder(folder: &WorkbenchFolder, launch: impl FnOnce(&std::p
     // This protects the current inspection/launch boundary. The task detail
     // does not expose its original inode, and the OS launcher resolves a path.
     launch(&folder.path)
+}
+
+/// Only provider/action cross IPC; the operator-authenticated daemon owns every command.
+#[tauri::command]
+async fn open_cli_setup(provider: String, action: String) -> Result<(), String> {
+    cli_setup::validate_request(&provider, &action)?;
+    if cfg!(feature = "qa-webdriver") { return Err("cli_setup_disabled_in_qa".into()); }
+    let body = serde_json::json!({ "provider": provider, "action": action }).to_string();
+    let response = workbench_call("POST".into(), "/v1/llm/setup".into(), Some(body)).await?;
+    let plan = cli_setup::parse_plan(&provider, &action, &response)?;
+    tauri::async_runtime::spawn_blocking(move || cli_setup::open(plan)).await
+        .map_err(|_| "open_cli_setup_failed".to_string())?
 }
 
 /// Only a task ID crosses the webview boundary; the existing operator-authenticated
@@ -1837,6 +1865,7 @@ pub fn run() {
             daemon_request,
             choose_workbench_folder,
             open_workbench_folder,
+            open_cli_setup,
             prepare_workbench_html_preview,
             prepare_workbench_site_preview,
             release_workbench_html_preview
@@ -1874,6 +1903,7 @@ pub fn run() {
 #[cfg(test)]
 mod converse_reply_tests {
     use super::{reply_file_path, webview_converse_reply};
+    use serde_json::Value;
 
     #[test]
     fn file_paths_never_reach_the_webview_and_map_back_through_tokens() {
@@ -1899,6 +1929,39 @@ mod converse_reply_tests {
     fn old_daemon_body_without_extras_still_yields_the_reply_object() {
         let out = webview_converse_reply(&serde_json::json!({ "ok": true, "reply": "hi" }));
         assert_eq!(out, serde_json::json!({ "reply": "hi", "attachments": [], "narration": [] }));
+    }
+
+    #[test]
+    fn reply_attribution_and_mixed_parts_pass_through_unchanged() {
+        let body = serde_json::json!({
+            "reply": "两家回复", "speaker": "agent", "provider": "codex",
+            "model": "actual-model", "agentId": "agent-1",
+            "replyParts": [
+                { "speaker": "agent", "provider": "claude", "text": "第一家", "attachmentIndexes": [0], "narrationIndexes": [1] },
+                { "speaker": "notice", "text": "通知" }
+            ]
+        });
+        let out = webview_converse_reply(&body);
+        for key in ["speaker", "provider", "replyParts", "model", "agentId"] {
+            assert_eq!(out.get(key), body.get(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn optional_attribution_fields_are_independent_and_never_defaulted() {
+        let keys = ["speaker", "provider", "replyParts", "model", "agentId"];
+        for present in keys {
+            // Even an explicit null is a present daemon value, not a missing field.
+            for value in [Value::Null, serde_json::json!({"future": [1, "raw"]})] {
+                let mut body = serde_json::json!({"reply": "hi"});
+                body[present] = value.clone();
+                let out = webview_converse_reply(&body);
+                assert_eq!(out.get(present), Some(&value), "{present}");
+                for absent in keys.into_iter().filter(|key| *key != present) {
+                    assert!(out.get(absent).is_none(), "unexpected default: {absent}");
+                }
+            }
+        }
     }
 }
 

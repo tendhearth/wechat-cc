@@ -18,6 +18,8 @@ import {API_FILE_TOOLS,prepareApiFileTool} from './api-files'
 import type {APIModel,ChatMessage} from './api-model'
 import {openAiConnectionHash,type ApiSession,type ApiSessionBinding,type makeApiSessionStore} from './api-sessions'
 import {openOpenAiSession,type OpenAiPurpose,type SessionHistory} from './openai-session'
+import {createMcpToolBridge,type McpToolBridge} from './openai-mcp-bridge'
+import {MATTER_TOOL_NAMES,type MatterMcpFactory} from '../matter-mcp'
 
 type SessionStore=ReturnType<typeof makeApiSessionStore>
 interface Options {
@@ -26,6 +28,7 @@ interface Options {
   baseURL?:string
   maxSteps?:number;closeTimeoutMs?:number;privateStateDir?:string
   log?:(tag:string,line:string)=>void
+  matterMcp?:MatterMcpFactory
 }
 const TEXT_MIMES=new Set(['text/plain','text/markdown','text/csv','application/json'])
 const IMAGE_MIMES=new Set(['image/png','image/jpeg','image/webp'])
@@ -129,7 +132,7 @@ function workbenchHistory(sessions:SessionStore,initial:ApiSession):SessionHisto
   }
 }
 
-function workbenchPurpose(args:{ctx:SpawnContext;sessionId:()=>string;ensureScope:()=>void;binding:ApiSessionBinding;maxSteps:number;closeTimeoutMs:number;log?:(tag:string,line:string)=>void}):OpenAiPurpose{
+function workbenchPurpose(args:{ctx:SpawnContext;sessionId:()=>string;ensureScope:()=>void;binding:ApiSessionBinding;maxSteps:number;closeTimeoutMs:number;log?:(tag:string,line:string)=>void;matter?:McpToolBridge|null}):OpenAiPurpose{
   const {ctx,ensureScope,binding}=args
   return{
     maxSteps:args.maxSteps,
@@ -140,7 +143,7 @@ function workbenchPurpose(args:{ctx:SpawnContext;sessionId:()=>string;ensureScop
     closeTimeoutMs:args.closeTimeoutMs,
     closeMustConfirm:true,
     cancelWaits:true,
-    tools:()=>API_FILE_TOOLS,
+    tools:()=>[...API_FILE_TOOLS,...(args.matter?.tools.filter(tool=>MATTER_TOOL_NAMES.some(name=>name===tool.name))??[])],
     request:(text,attachments)=>requestMessage(text,attachments,binding),
     check:ensureScope,
     async runTool(call,signal,emit){
@@ -149,6 +152,11 @@ function workbenchPurpose(args:{ctx:SpawnContext;sessionId:()=>string;ensureScop
       emit({kind:'tool_call',tool:call.name,activity:{...activity,status:'running'}})
       let output:string,status:'completed'|'failed'='completed'
       try{
+        if(args.matter&&MATTER_TOOL_NAMES.some(name=>name===call.name)&&args.matter.serverOf(call.name)==='wechat-cc-matter'){
+          output=await withAbort(args.matter.call(call.name,call.input),signal)
+          check(signal);ensureScope()
+          return {output,after:{kind:'tool_call',tool:call.name,activity:{...activity,status}}}
+        }
         // 不在文件工具里的名字(Shell、wechat 工具 …)在这里就以 unsupported_api_tool 失败,不问主人、不执行。
         const tool=prepareApiFileTool(binding.path,binding.taskId,call.name,call.input)
         let feedback:string|undefined
@@ -166,6 +174,7 @@ function workbenchPurpose(args:{ctx:SpawnContext;sessionId:()=>string;ensureScop
       return{output,after:{kind:'tool_call',tool:call.name,activity:{...activity,status}}}
     },
     observedModel:(model,sessionId)=>ctx.reportExecution?.({model,sessionId,source:'native_response'}),
+    close:()=>args.matter?.close()??Promise.resolve(),
     failure(error,aborted){
       const reason=aborted?'api_task_cancelled':error instanceof Error?error.message:''
       const code=/^(api_task_[a-z_]+|workbench_execution_unsupported)$/.test(reason)?reason:'api_task_request_failed'
@@ -198,7 +207,13 @@ export function createOpenAiWorkbenchProvider(options:Options):AgentProvider&{ca
       if(!match)fail('api_task_scope_invalid')
       if(ctx.execution&&(ctx.execution.defaults==='native'||ctx.execution.model!==null||ctx.execution.reasoningEffort!==null))fail('workbench_execution_unsupported')
       const binding:ApiSessionBinding={taskId:match[1]!,owner:ctx.chatId,path:project.path,directoryIdentity:scopeIdentity(project.path),configHash:options.configHash}
-      const initial:ChatMessage[]=[{role:'system',content:[ctx.appendInstructions??'',INSTRUCTIONS].join('\n')}]
+      const matterSpec=options.matterMcp?.(ctx)
+      const matter=matterSpec?await createMcpToolBridge({'wechat-cc-matter':matterSpec},{isOptional:()=>true,startupTimeoutMs:2000}):null
+      const hasMatter=!!matter&&MATTER_TOOL_NAMES.every(name=>matter.tools.some(tool=>tool.name===name))
+      ctx.reportMatterTools?.(hasMatter)
+      try{
+      const instructions=hasMatter?INSTRUCTIONS.replace('No shell, web, MCP,','matter_notes and matter_note read and write this notebook. No shell, web, other MCP tools,'):INSTRUCTIONS
+      const initial:ChatMessage[]=[{role:'system',content:[ctx.appendInstructions??'',instructions].join('\n')}]
       let saved:ApiSession=ctx.resumeSessionId?options.sessions.acquire(ctx.resumeSessionId,binding):options.sessions.create(binding,initial)
       // 续接时用这一次派发的指令换掉建会话时存下的那条系统消息:之后加的项目经验等,续接的会话也看得到(10-20)
       if(ctx.resumeSessionId&&saved.messages[0]?.role==='system'&&JSON.stringify(saved.messages[0])!==JSON.stringify(initial[0]))saved=options.sessions.save(saved.id,saved.revision,[initial[0]!,...saved.messages.slice(1)],'active')
@@ -208,8 +223,9 @@ export function createOpenAiWorkbenchProvider(options:Options):AgentProvider&{ca
       return openOpenAiSession({
         model:options.model,
         history,
-        purpose:workbenchPurpose({ctx,sessionId:()=>history.id,ensureScope,binding,maxSteps,closeTimeoutMs,...(options.log?{log:options.log}:{})}),
+        purpose:workbenchPurpose({ctx,sessionId:()=>history.id,ensureScope,binding,maxSteps,closeTimeoutMs,matter,...(options.log?{log:options.log}:{})}),
       })
+      }catch(error){await matter?.close().catch(()=>{});throw error}
     },
   }
 }

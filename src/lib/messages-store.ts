@@ -6,10 +6,12 @@
 import { createHash } from 'node:crypto'
 import type { Db } from './db'
 import { hintWrite } from './write-hints'
+import { OptionalReplyMetadata, replyMetadataFields, type ReplyAttribution, type ReplyPart } from '@wechat-cc/protocol'
 
 export type MessageDirection = 'in' | 'out'
 
-export interface MessageRecord {
+export interface MessageRecord extends Partial<ReplyAttribution> {
+  replyParts?: ReplyPart[]
   id: string
   chatId: string
   ts: string
@@ -45,6 +47,8 @@ export interface MessagesStore {
   latestInboundTs(chatId: string): Promise<string | null>
   /** Extractor input: all messages after a watermark, ascending. */
   listSince(chatId: string, sinceTs: string, limit: number): Promise<MessageRecord[]>
+  /** Full timestamp group, so an extraction watermark never bisects a fetch boundary. */
+  listAtTs?(chatId: string, ts: string): Promise<MessageRecord[]>
   /** List distinct chat_ids that have at least one message. */
   listChatIds(): Promise<string[]>
 }
@@ -98,11 +102,14 @@ interface Row {
 }
 
 function rowToRecord(r: Row): MessageRecord {
+  let attribution: Partial<ReplyAttribution> & { replyParts?: ReplyPart[] } = {}
+  try { attribution = OptionalReplyMetadata.parse(JSON.parse(r.extras ?? '{}').replyAttribution ?? {}) } catch { /* Old/invalid extras carry no identity. */ }
   return {
     id: r.id, chatId: r.chat_id, ts: r.ts,
     direction: r.direction as MessageDirection,
     kind: r.kind, text: r.text, source: r.source,
-    ...(r.provider !== null ? { provider: r.provider } : {}),
+    ...attribution,
+    ...(r.provider != null ? { provider: r.provider } : {}),
     ...(r.extras != null ? { extras: r.extras } : {}),
   }
 }
@@ -155,16 +162,29 @@ export function makeMessagesStore(db: Db): MessagesStore {
     return q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
   }
 
-  const appendSync = (rec:MessageRecord):number => {
-      rec.extras !== undefined
-        ? insertExtras().run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source, rec.extras)
+  // 只为「刚刚迟到」的消息回退水位(同毫秒的气泡、晚到几秒的入站)。带着很久以前时间戳写进来的消息(导入历史、
+  // 补录)不回退:否则一条旧消息会让它之后的全部对话重新抽取一遍——重复条目、白花便宜模型的额度。
+  const LATE_ARRIVAL_DAYS=10/1440
+  const canRewind=db.query<{name:string},[]>('PRAGMA table_info(thread_extract_state)').all().some(c=>c.name==='entries_to_ts')
+  const appendSync = db.transaction((rec:MessageRecord):number => {
+      const {provider: _provider, ...attribution} = replyMetadataFields(rec)
+      // Reuse v72's extensible JSON envelope; provider remains in its canonical column. No schema migration.
+      let base: Record<string, unknown> | null = {}
+      try { const v = JSON.parse(rec.extras ?? '{}'); base = v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { base = null }
+      // Attribution is best-effort: unparseable extras are stored untouched rather than failing the message write.
+      const extras = Object.keys(attribution).length && base ? JSON.stringify({ ...base, replyAttribution: attribution }) : rec.extras
+      extras !== undefined
+        ? insertExtras().run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source, extras)
         : stmtInsert.run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source)
       // SQLite changes()只数顶层消息行;Bun.run().changes 也会计入版本触发器。
       const changes = db.query<{ n: number }, []>('SELECT changes() AS n').get()!.n
+      // A timestamp watermark is not an insertion cursor. Delayed inbound and
+      // same-millisecond bubbles must be replayed, including their full ts group.
+      if(changes>0&&canRewind&&Number.isFinite(Date.parse(rec.ts)))db.query(`UPDATE thread_extract_state SET entries_to_ts=? WHERE chat_id=? AND julianday(entries_to_ts)>=julianday(?) AND julianday(entries_to_ts)-julianday(?)<=?`).run(new Date(Date.parse(rec.ts)-1).toISOString(),rec.chatId,rec.ts,rec.ts,LATE_ARRIVAL_DAYS)
       // 消息不进 MatterLog 的游标:新的一行给手机主题一声提示(聊天的 matter/<id>、home 的「在跟你聊」)
       if (changes > 0) hintWrite(db, { kind: 'messages', chatId: rec.chatId })
       return changes
-    }
+    })
   return {
     appendSync,
     async append(rec) { return appendSync(rec) },
@@ -189,6 +209,9 @@ export function makeMessagesStore(db: Db): MessagesStore {
     },
     async listSince(chatId, sinceTs, limit) {
       return stmtListSince.all(chatId, sinceTs, limit).map(rowToRecord)
+    },
+    async listAtTs(chatId, ts) {
+      return db.query<Row, [string, string]>('SELECT * FROM messages WHERE chat_id=? AND ts=? ORDER BY id').all(chatId, ts).map(rowToRecord)
     },
     async listChatIds() {
       return stmtListChatIds.all().map(r => r.chat_id)

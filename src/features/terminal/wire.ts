@@ -1,3 +1,8 @@
+import {resolveTerminalParticipation} from './participation-input'
+import {terminalCredentials} from './credentials'
+import {readCliSession} from '../../adapters/store/cli-session-store'
+import {makeTerminalParticipations,terminalParticipationKey} from '../../adapters/store/terminal-participations'
+import type {InternalApiLifecycle} from '../../daemon/internal-api/lifecycle'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { randomUUID as conversationReferenceId } from 'node:crypto'
 /**
@@ -55,7 +60,7 @@ import type { NetworkGate } from '../../lib/network-gate'
 import { makeProjectMemory } from './project-memory'
 
 /** 工作台里这一块用到的两样:有没有跟外部会话撞文件夹、「今天」里那一节。 */
-export type CliSessionsWorkbench = TodayWorkbench & { conflictsExternal(cwd: string, source: string, sessionId: string): boolean }
+export type CliSessionsWorkbench = TodayWorkbench & {matterApprovalStatus?(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller):boolean;matterApprovalConsume?(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller):void} & { conflictsExternal(cwd: string, source: string, sessionId: string): boolean }
 
 export interface WireTerminalDeps {
   stateDir: string
@@ -85,6 +90,7 @@ export interface WireTerminalDeps {
 }
 
 export function wireTerminal(d: WireTerminalDeps) {
+  let sweepCredentials:(()=>void)|undefined
   const { stateDir, dangerously, db, ilink, own, boot } = d
   // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
   // 再推给主人,同会话再敲一句就撤。发到哪:与权限卡、A2A notify 同一个主人
@@ -93,6 +99,8 @@ export function wireTerminal(d: WireTerminalDeps) {
   const cliAppPush = (): AppPushOutlet | null => d.appPush()
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):replyCore 在下面才建,这里先占位
   let terminalSay: ReturnType<typeof makeTerminalSay> | null = null
+  const participations=makeTerminalParticipations(db)
+  participations.restart()
   const matterLog = makeMatterLog(db), matterStore = makeMatterStore(db)
   const terminalTurns = makeTerminalTurnLog({ db, log: matterLog, matters: matterStore })
   try { terminalTurns.interruptAll() } catch (err) { log('CLI_TURNS', `interruptAll failed: ${err instanceof Error ? err.message : String(err)}`) }
@@ -207,6 +215,7 @@ export function wireTerminal(d: WireTerminalDeps) {
   const cliEventsRoute: TerminalRoutesDeps['cliEvents'] = {
     // 转给脑的事件本机登记处也记一笔(observe 只记不推):这台机自己的列表也看得到。
     ingest: (ev) => {
+      if(ev.kind==='session_end'){participations.endSession(ev.session_id);sweepCredentials?.()}
       let handed = false
       try { handed = terminalSay?.noteEvent(ev) ?? false } catch (err) { log('TERMINAL_SAY', `noteEvent failed: ${err instanceof Error ? err.message : String(err)}`) }
       // 会话又有了动静(Stop / 新 prompt / 结束)⇒ 终端已自己答过,挂着的码作废(评审 10-15 #5)。
@@ -379,8 +388,40 @@ export function wireTerminal(d: WireTerminalDeps) {
   const routes: TerminalRoutesDeps = { projectMemory, cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions }
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
+    participationConflict:(path:string)=>participations.conflicts(path),
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,
     command, phoneActions, routes,
     terminalMatterOf,
+    participation(api:Pick<InternalApiLifecycle,'mintSessionToken'|'invalidateSession'|'baseUrl'>){
+      const credentials=terminalCredentials(stateDir,db,api)
+      sweepCredentials=credentials.sweep
+      return {
+        resolve:(action:'attach'|'detach',input:unknown,owner:string)=>resolveTerminalParticipation(db,action,input,owner),
+        owner:()=>resolveAdminChatId(loadAccess(),loadCompanionConfig(stateDir),null),
+        approved:(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller)=>d.workbench()?.matterApprovalStatus?.(tool,input,caller)??false,
+        consume:(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller)=>{d.workbench()?.matterApprovalConsume?.(tool,input,caller)},
+        attach:(sessionId:string,matterId:string,owner:string)=>{
+          const session=readCliSession(db,sessionId)
+          if(!session||!d.workbench()||d.workbench()!.conflictsExternal(session.cwd,session.source,session.session_id))throw Error('workbench_busy')
+          const p=participations.attach(sessionId,matterId,owner)
+          try{
+            const token=api.mintSessionToken('trusted',terminalParticipationKey(p),{routeAllow:new Set(['GET /v1/matter/notes','POST /v1/matter/note'])})
+            const result=credentials.issue(p,token,matterStore.get(matterId)!.title)
+            matterLog.touch(matterId)
+            return result
+          }
+          catch(error){participations.detach(p.id,'mint_failed');throw error}
+        },
+        detach:(id:string,owner:string)=>{
+          const p=db.query<{matterId:string},[string]>('SELECT matter_id AS matterId FROM terminal_participations WHERE id=?').get(id)
+          const row=p&&participations.list(p.matterId).find(p=>p.id===id)
+          if(!row||!db.query('SELECT 1 FROM matters WHERE id=? AND owner_chat_id=?').get(row.matterId,owner))throw Error('forbidden')
+          const changed=participations.detach(id)
+          api.invalidateSession(terminalParticipationKey(row))
+          credentials.remove(id)
+          return changed
+        },
+      }
+    },
   }
 }

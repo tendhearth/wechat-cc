@@ -1,3 +1,7 @@
+import { cliSetupId } from '../../lib/executor-cli-setup'
+import { cliSetupRoutes } from './routes-cli-setup'
+import { rosterRoutes } from '../../features/roster'
+import { replyMetadataFields } from '@wechat-cc/protocol'
 import { CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { turnRoutes } from './routes-turn'
 import { mattersRoutes } from './routes-matters'
@@ -76,9 +80,11 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     ...turnRoutes(deps, (key) => table[key] ?? mounted?.[key]),
     // 工作台的 /v1/workbench/* 由 workbench 模块自己挂(src/features/workbench,路由表标 module: 'workbench')
     ...mattersRoutes(deps),
+    ...rosterRoutes(deps),
     // 一件事上的动作(P3e):/v1/matter/<动词> 一个处理器;桌面还在调的 /v1/workbench/* 双胞胎挂同一个函数(下面 withDesktopAliases)
     ...matterActionRoutes(deps),
     ...connectionsRoutes(deps),
+    ...cliSetupRoutes(deps),
     'GET /v1/health': (_q, _body, caller) => ({
       status: 200,
       body: {
@@ -89,6 +95,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
         // fresh (false ⇒ the daemon may be wedged / not serving).
         turns_store_wired: !!deps.turns,
         sessions_live: deps.listSessions?.()?.length ?? 0,
+        ...(deps.ownerContext ? { owner_context: deps.ownerContext().map(({provider,model,estimatedTokens,budgetTokens,historyBytes,source,turns,lastRotatedAt,reason,windowTokens,windowSource,reliableFillRatio,ratioSource,fixedOverheadTokens,windowTooSmall,budgetError,historyTokens,deferredRotations,lastDeferredReason,warning}) => ({provider,model,estimatedTokens,budgetTokens,historyBytes,source,turns,lastRotatedAt,reason,...(windowTokens!==undefined?{windowTokens,windowSource,reliableFillRatio,ratioSource,fixedOverheadTokens,windowTooSmall,budgetError,historyTokens,deferredRotations,lastDeferredReason,warning}:{})})) } : {}),
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
         // 只有两个计数,没有账号 id(这条路由是 guest 档)。null = 开机还没走到拉消息那一步。
         ...(deps.polling ? { polling: deps.polling() } : {}),
@@ -209,11 +216,24 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
       // 别把国内/本地自配的大脑挡在「先开代理」的墙后面。
       return { status: 200, body: { ok: true, results, verdict: verdictOf(results), dial_advisable: dialAdvisable(results, registered, endpoints) } }
     },
-    'GET /v1/llm/health': async (q) => {
+    'GET /v1/llm/health': async (q, _body, caller) => {
       if (!deps.llmHealth) return { status: 503, body: { error: 'llm_health_not_wired' } }
       const { unconfiguredHints } = await import('../llm-health')
       const fresh = q.get('fresh') === '1'
-      const report = fresh ? await deps.llmHealth.dial(q.get('scope') === 'current' ? 'current' : undefined) : deps.llmHealth.cached()
+      let provider: string | undefined
+      if (q.has('provider')) {
+        try { provider = cliSetupId(q.get('provider')) } catch { return { status: 400, body: { error: 'invalid_provider' } } }
+      }
+      if (fresh && provider) {
+        if (caller?.origin !== 'file' && !(caller?.tier === 'admin' && caller.origin === 'operator')) return { status: 403, body: { error: 'desktop_only' } }
+        if (!deps.cliSetup) return { status: 503, body: { error: 'cli_setup_not_wired' } }
+        try { await deps.cliSetup.check() } catch { return { status: 409, body: { error: 'network_unprotected' } } }
+        await deps.llmRefreshProvider?.(provider)
+      }
+      const local = fresh && provider === 'grok' ? deps.cliSetup?.snapshot().providers.find(p => p.id === 'grok') : null
+      const report = local ? { checked_at: new Date().toISOString(), default_provider: null,
+        results: [{ provider: 'grok', ok: local.installed && local.loggedIn === true && local.loginCompleted === true && (deps.llmRegistered?.().includes('grok') ?? false), latency_ms: 0, source: 'login_receipt' }] }
+        : fresh ? await deps.llmHealth.dial(provider ?? (q.get('scope') === 'current' ? 'current' : undefined)) : deps.llmHealth.cached()
       const registered = deps.llmRegistered?.() ?? []
       // names(收敛清单 ⑥):六家内置 + 已注册的(含自定义 ACP)都给正式名字和设置里的写法;桌面不存名字表,
       // 没注册的也给(「连接其他 AI 服务」的选项、旧对话里的执行者)。老 daemon 不带 ⇒ 桌面退回 id。
@@ -513,7 +533,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
         // 回复交付(spec 2026-10-03 §4.10,app 显示 2026-10-04):附件与旁白**总在**(没有就是空数组),桌面不用分新旧形状。
         // 附件是 app 的形状(src/daemon/app-reply.ts):语音 { text }、表情 { label, file?, image? }、文件 { name, path }。
         // path 只给桌面的 Rust 层(换成一次性引用再交给网页,见 lib.rs agent_converse);这条路由本来就只认 admin 令牌。
-        return { status: 200, body: { ok: true, reply: r.reply, attachments: r.attachments ?? [], narration: r.narration ?? [] } }
+        return { status: 200, body: { ok: true, reply: r.reply, ...replyMetadataFields(r, 16000), attachments: r.attachments ?? [], narration: r.narration ?? [] } }
       } catch (err) {
         const msg = errMsg(err)
         if (msg === 'reply_sink_busy') return { status: 409, body: { ok: false, error: 'session_busy' } }

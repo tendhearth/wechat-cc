@@ -7,7 +7,7 @@ import { trackPreparation } from './state'
  */
 import { isUnattendedExecutor } from '../../../domain/workbench/executor-capabilities'
 import { mkdirSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { randomUUID,createHash } from 'node:crypto'
 import { readdirAnchored } from '../../../adapters/workbench/anchored-fs'
 import { canonicalProject } from '../../../adapters/workbench/artifacts'
 import type { EntryRecord } from '../../../adapters/store/workbench/entry-store'
@@ -27,6 +27,9 @@ import type { ExecuteDomain } from './execute'
 import type { QuotaDomain } from './quota'
 import type { ViewDomain } from './view'
 import type { ScriptsDomain } from './scripts'
+
+export interface EntryAcceptance {identity:string;persist:(task:Parameters<NonNullable<Parameters<ExecuteDomain['createTask']>[1]>>[0],runId:string)=>void}
+const entryHash=(input:EntryInput,acceptance?:EntryAcceptance)=>acceptance?createHash('sha256').update(canonicalEntryHash(input)+'\0'+acceptance.identity).digest('hex'):canonicalEntryHash(input)
 
 export interface EntryDomains { execute: ExecuteDomain; view: ViewDomain; admission: AdmissionDomain; quota: QuotaDomain; /** 工作区脚本(2026-10-20):建好独立工作区后跑 setup;老测试不传。 */ scripts?: Pick<ScriptsDomain,'afterCheckout'> }
 
@@ -51,15 +54,18 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     if(task.ownerChatId!==record.ownerKey)throw Error('invalid_entry_owner')
     return{receipt:{requestId:record.requestId,taskId:record.taskId,matterId:record.matterId,runId:record.runId,acceptedAt:record.acceptedAt},task:taskView(publicTask(task))}
   }
-  function entryOptions(context:EntryContext):EntryOptions {
-    if(!context.ownerKey||context.ownerKey!==ctx.deps.ownerChatId())return{status:'needs_connection',reason:{code:'invalid_entry_owner',message:'请先在电脑上配置主人身份。'},defaultProviderId:null,providers:[],projects:[]}
-    const providers=ctx.deps.registry.list().flatMap(id=>{
+  function entryProviders():EntryOptions['providers'] {
+    return ctx.deps.registry.list().flatMap(id=>{
       const p=ctx.deps.registry.get(id)
       if(!isWorkbenchProviderId(id)||!p||!isWorkbenchExecutorCapabilities(p.opts.workbench))return[]
       let reason:string|undefined
       try{requireInput(id,[],PROVIDER_EXECUTION_CHOICE);if(quota.exhausted(id))reason='provider_quota_exhausted'}catch(error){reason=error instanceof Error?error.message:'unavailable_provider'}
-      return[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,available:!reason,...(reason?{unavailableReason:{code:reason,message:reason==='unattended_ack_required'?'请先在电脑上确认免审执行。':executionFailureMessage(reason)}}:{}),capabilities:structuredClone(p.opts.workbench)}]
+      return[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,available:!reason,...(reason?{unavailableReason:{code:reason,message:p.opts.workbench.unavailableReason??(reason==='unattended_ack_required'?'请先在电脑上确认免审执行。':executionFailureMessage(reason))}}:{}),capabilities:structuredClone(p.opts.workbench)}]
     })
+  }
+  function entryOptions(context:EntryContext):EntryOptions {
+    if(!context.ownerKey||context.ownerKey!==ctx.deps.ownerChatId())return{status:'needs_connection',reason:{code:'invalid_entry_owner',message:'请先在电脑上配置主人身份。'},defaultProviderId:null,providers:[],projects:[]}
+    const providers=entryProviders()
     const defaultProviderId=providers.find(p=>p.id===ctx.deps.defaultProvider&&p.available)?.id??null
     return{status:defaultProviderId?'ready':'needs_connection',...(!defaultProviderId?{reason:{code:'unavailable_provider',message:'请在电脑上连接默认执行者，或在更多选项中选择已连接的执行者。'}}:{}),defaultProviderId,providers,projects:projects()}
   }
@@ -75,18 +81,18 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     return record?.phase==='accepted'?entryResult(record):null
   }
   const pendingEntries = new Map<string, { hash: string; promise: Promise<EntryResult> }>()
-  async function createEntry(value:EntryInput,context:EntryContext):Promise<EntryResult> {
+  async function createEntry(value:EntryInput,context:EntryContext,acceptance?:EntryAcceptance):Promise<EntryResult> {
     requireEntryOwner(context)
-    const input=parseEntryInput(value),hash=canonicalEntryHash(input),key=JSON.stringify([context.ownerKey,input.requestId])
+    const input=parseEntryInput(value),hash=entryHash(input,acceptance),key=JSON.stringify([context.ownerKey,input.requestId])
     const prior=pendingEntries.get(key)
     if(prior){if(prior.hash!==hash)throw Error('creation_conflict');return prior.promise}
-    const promise=trackPreparation(ctx.state,createEntryImpl(value,context)).finally(()=>pendingEntries.delete(key))
+    const promise=trackPreparation(ctx.state,createEntryImpl(value,context,acceptance)).finally(()=>pendingEntries.delete(key))
     pendingEntries.set(key,{hash,promise})
     return promise
   }
-  async function createEntryImpl(value:EntryInput,context:EntryContext):Promise<EntryResult> {
+  async function createEntryImpl(value:EntryInput,context:EntryContext,acceptance?:EntryAcceptance):Promise<EntryResult> {
     requireEntryOwner(context)
-    const input=parseEntryInput(value),hash=canonicalEntryHash(input)
+    const input=parseEntryInput(value),hash=entryHash(input,acceptance)
     let record=store.entryRequests.get(context.ownerKey,input.requestId)
     if(record&&record.canonicalRequestHash!==hash)throw Error('creation_conflict')
     if(record?.phase==='accepted')return entryResult(record)
@@ -161,9 +167,10 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
         if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:tree.scriptSha,start:tree.plan.start})
         // 做到条件成立为止(v80):命令在这里写一次就定死(parseEntryInput 已保证只在独立工作区上出现)。
         if(input.until)store.goals.create(task.id,input.until)
+        acceptance?.persist(task,runId)
       },undefined,{
         // 独立工作区的目录不登记成项目:它属于源项目,侧栏按源项目归组(2026-10-07)。
-        context,conversationMessageId:`entry:${input.requestId}`,conversationText:input.text.trim()||input.title||current.map(a=>a.name).join('\n'),workspaceKind:frozen.target.kind==='managed'?'managed':'project',...(tree?{registerProject:false}:{}),fromChat:!!input.context,materials:current,
+        context,conversationMessageId:`entry:${input.requestId}`,conversationText:input.text.trim()||input.title||current.map(a=>a.name).join('\n'),workspaceKind:frozen.target.kind==='managed'?'managed':'project',...(tree?{registerProject:false}:{}),fromChat:!!input.context||!!acceptance,materials:current,
         beforeCreate:()=>{
           const latest=store.entryRequests.get(context.ownerKey,input.requestId)
           if(latest?.phase==='accepted')throw Error('entry_already_accepted')
@@ -195,6 +202,6 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     if(!project)mkdirSync(path,{recursive:true,mode:0o700})
     return modelCatalog(input.providerId,path)
   }
-  return { managed,requireEntryOwner,entryResult, entryOptions,entryReceipt,createEntry,entryModels }
+  return { managed,requireEntryOwner,entryResult, entryOptions,availableExecutors:()=>entryProviders().filter(p=>p.available).map(p=>p.id),entryReceipt,createEntry,entryModels }
 }
 export type EntryDomain = ReturnType<typeof makeEntryDomain>

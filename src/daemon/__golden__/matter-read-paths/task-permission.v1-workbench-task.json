@@ -50,6 +50,7 @@
         }
       },
       {
+        "speaker": "notice",
         "id": 12,
         "taskId": "<task:permission>",
         "kind": "system",

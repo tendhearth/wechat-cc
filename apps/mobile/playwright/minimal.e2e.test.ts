@@ -32,6 +32,7 @@ async function fixture(page, opts = {}) {
     if (p === '/v1/phone/art/presence') return route.fulfill({ json: { ok: true, mime: 'image/png', unlit: art.unlit.base64, lit: art.lit.base64 } })
     if (down && (p.startsWith('/v1/')||p.includes('/api/'))) return route.abort('connectionfailed')
     if (req.method() === 'POST') { posts.push({ path: p, body: req.postDataJSON() }); return route.fulfill({ json: p === '/set/api/pair' ? { ok: true, device_token: 'dNEW' } : p === '/set/api/apply' ? { ok: false, error: 'lan_only' } : { ok: true } }) }
+    if (p === '/v1/roster') return route.fulfill({ json: { items: [], version: '1' } })
     if (p === '/v1/home') return route.fulfill({ json: home })
     if (p === '/v1/matters') return route.fulfill({ json: { ok: true, matters: empty ? [] : [matter] } })
     if (p === '/v1/matter') return route.fulfill({ json: opts.link ? linkMatterStatus(detail) : detail })
@@ -51,7 +52,7 @@ test('normal 390px status shell, pairing, flat list and keyboard stop', async ({
   await page.goto(HOST + '/m'); await expect(page.locator('.home-arrived')).toBeVisible()
   await expect(page.locator('#pres-txt')).toHaveText('在帮你整理出行安排'); await fits(page); await shot(page, info, 'home-390')
   await page.locator('#pairbtn').click(); await expect(page.locator('#pairbar')).toBeHidden(); expect(h.posts.filter(p => p.path === '/set/api/pair')).toHaveLength(1)
-  await expect(page.locator('nav')).toHaveCount(0); await expect(page.locator('#m-list [data-mid]')).toHaveCount(0); await expect(page.locator('.home-action')).toBeVisible()
+  await expect(page.locator('nav:visible')).toHaveCount(0); await expect(page.locator('#chat-waiting, #topic-row')).toHaveCount(0); await expect(page.locator('#m-list [data-mid]')).toHaveCount(0); await expect(page.locator('.home-action')).toBeVisible()
   h.home.work.focus = null; await page.locator('#refresh').click(); await expect(page.locator('.home-action')).toHaveCount(0)
   await expect(page.locator('#m-list [data-mid]')).toHaveCount(1); await expect(page.locator('#m-list .grp')).toHaveText('在做'); await fits(page); await shot(page, info, 'list-390')
   await page.locator('[data-mid]').click(); await expect(page.locator('#m-home')).toBeHidden(); await expect(page.locator('#m-title')).not.toContainText('**'); await fits(page); await targets(page); await shot(page, info, 'status-390')

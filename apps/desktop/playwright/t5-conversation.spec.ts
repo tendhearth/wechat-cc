@@ -1,8 +1,10 @@
 import { join } from 'node:path'
-import { test, expect } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
+import {routeRoster,rosterItem,showRoster} from './roster-fixture'
 const task={id:'aabbccdd',title:'检查备份',path:'/offline/backup',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:1,pendingQuestionCount:0}
 const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,activity:id==='backup'?{waiting:1,running:2,unread:1,lastActiveAt:1793923200000}:id==='travel'?{waiting:0,running:1,unread:0,lastActiveAt:1793923100000}:id==='food'?{waiting:0,running:0,unread:1,lastActiveAt:1793923000000}:{waiting:0,running:0,unread:0,lastActiveAt:null},matterSummary:{waiting:1,running:0,total:1}})
 test.beforeEach(async({page,shim})=>{
+  await routeRoster(page,[rosterItem(task.id,task.title)])
   await shim.invoke('demo.unseed');await shim.invoke('demo.seed',{})
   await page.route('**/v1/protocol/capabilities',r=>r.fulfill({json:{routes:'v1',topics:'v1'}}))
   await page.route('**/v1/matter/owner-chat/window**',r=>r.fulfill({json:{messages:[{kind:'user',text:'那台机器后来怎么样了？',createdAt:1,messageId:'source1'},{kind:'text',text:'正在核对备份。',createdAt:2,messageId:'source2'}],anchor:null,earlier:null,later:null}}))
@@ -19,47 +21,40 @@ test.beforeEach(async({page,shim})=>{
   await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting',session:{id:task.id,kind:'task',title:task.title,executor:'codex',displayName:'Codex',activity:'waiting',latestStep:'等你批准 · Read',updatedAt:1793923200000,requestId:'permission-backup'}},{id:'b0b0cafe',title:'终端会话',state:'open',session:{id:'b0b0cafe',kind:'terminal',title:'终端会话',executor:'claude',displayName:'Claude',activity:'idle',latestStep:'答完了',updatedAt:Date.now()-600000,requestId:null}}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:2,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
   await page.route('**/v1/subscribe/topics?*',r=>r.fulfill({json:{revision:'2',recentIds:['backup'],openIds:['backup'],hasMoreOpen:false}}))
 })
-test('one conversation, six topics, original task tools and drafts survive wide and narrow layers',async({page,shimUrl},info)=>{
-  await page.setViewportSize({width:1280,height:800})
-  await page.goto(shimUrl)
-  await expect(page.locator('main.dashboard')).toBeVisible()
-  await expect(page.locator('#converse-scroll')).toContainText('那台机器后来怎么样了？')
-  await expect(page.locator('#now-cc')).toHaveCSS('width','44px')
-  await expect(page.locator('.converse-avatar')).toHaveCount(0)
-  await expect(page.locator('.converse-msg-cc').first()).toHaveAttribute('role','group')
-  await expect(page.locator('.converse-msg-cc').first()).toHaveAttribute('aria-label','CC')
-  await expect(page.locator('.converse-compose')).toHaveCSS('border-radius','14px')
-  await expect(page.locator('.converse-msg-user .converse-bubble')).toHaveCSS('background-color','rgb(243, 238, 230)')
-  await expect(page.locator('.conversation-topics button')).toHaveCount(7)
-  await page.locator('#converse-input').fill('还没发出的草稿')
-  await page.locator('#now-waiting-title').click()
-  await expect(page.locator('[data-matter-id="aabbccdd"]')).toContainText('等你决定')
-  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
-  const panel=page.locator('.conversation-topic-panel')
-  await expect(panel).toContainText('这次想起')
-  await expect(page.locator('.conversation-topics button[aria-pressed="true"]')).toHaveCSS('border-top-color','rgb(42, 38, 34)')
-  await panel.getByText('每周核验一次',{exact:false}).click()
-  await expect(panel).toContainText('备份留在本地。')
-  await page.screenshot({path:join(info.outputDir,'wide-topic.png')})
-  await panel.getByRole('button',{name:/检查备份/}).click()
-  await expect(page.locator('.workbench-pane')).toBeVisible()
-  await expect(page.locator('.wb-sidebar')).toBeHidden()
-  await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
-  await page.screenshot({path:join(info.outputDir,'matter-process.png')})
-  await page.locator('#workbench-home').click()
-  await expect(panel).toBeVisible()
-  await panel.getByRole('button',{name:'收起',exact:true}).click()
-  await expect(page.locator('[data-matter-id="aabbccdd"]')).toHaveCount(1)
-  await page.locator('[data-conversation-search-matters]').click()
-  await expect(page.locator('#wb-filter-project')).toBeVisible()
-  await expect(page.locator('#wb-filter-status')).toBeVisible()
-  await page.locator('#workbench-home').click()
-  await page.setViewportSize({width:390,height:844})
-  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
-  await expect(panel).toBeVisible()
-  await page.screenshot({path:join(info.outputDir,'narrow-topic.png')})
-  await panel.getByRole('button',{name:'收起',exact:true}).click()
-  await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
+test('one conversation, memory topics and dock preserve drafts across wide and narrow layouts',async({page,shimUrl},info)=>{
+ await page.setViewportSize({width:1440,height:900});await page.goto(shimUrl)
+ await expect(page.locator('#converse-scroll')).toContainText('那台机器后来怎么样了？')
+ await expect(page.locator('#topbar-cc .topbar-figure')).toHaveCSS('width','48px')
+ await expect(page.locator('.converse-avatar')).toHaveCount(0)
+ await expect(page.locator('.converse-msg-cc').first()).toHaveAttribute('role','group')
+ await expect(page.locator('.converse-msg-cc').first()).toHaveAttribute('aria-label','CC')
+ await expect(page.locator('.converse-compose')).toHaveCSS('border-radius','14px')
+ await page.locator('#converse-input').fill('还没发出的草稿')
+ await expect(page.locator('#now-waiting')).toHaveCount(0)
+ await expect(page.locator('#converse-root .conversation-topics')).toHaveCount(0)
+ await clickNav(page,'memory');await expect(page.locator('#memory-topics .conversation-topics button')).toHaveCount(7)
+ await page.locator('#memory-topics .conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
+ const panel=page.locator('.conversation-topic-panel')
+ await expect(panel).toContainText('这次想起')
+ await expect(page.locator('.conversation-topics button[aria-pressed="true"]')).toHaveCSS('border-top-color','rgb(42, 38, 34)')
+ await panel.getByText('每周核验一次',{exact:false}).click();await expect(panel).toContainText('备份留在本地。')
+ await page.screenshot({path:join(info.outputDir,'wide-topic.png')})
+ await panel.locator('[data-project-session="aabbccdd"]').click()
+ await expect(page.locator('#roster-dock .workbench-pane')).toBeVisible()
+ await expect(page.locator('.wb-sidebar')).toBeHidden()
+ await page.locator('#roster-dock').getByRole('button',{name:'‹ 在做',exact:true}).click()
+ await expect(panel).toBeVisible();await panel.getByRole('button',{name:'收起',exact:true}).click()
+ await clickNav(page,'overview');await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
+ await page.locator('#topbar-search').click()
+ await expect(page.locator('#wb-filter-project')).toBeVisible();await expect(page.locator('#wb-filter-status')).toBeVisible()
+ await page.locator('#workbench-home').click()
+ await page.setViewportSize({width:900,height:844});await clickNav(page,'memory')
+ await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click();await expect(panel).toBeVisible()
+ await page.screenshot({path:join(info.outputDir,'narrow-topic.png')})
+ await panel.getByRole('button',{name:/CC · .*正在核对备份/}).click()
+ await expect(page.locator('#converse-input')).toBeVisible()
+ await expect(page.locator('#converse-scroll')).toContainText('正在核对备份。')
+ await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
 })
 test('older daemon hides topics and preserves the owner composer',async({page,shimUrl})=>{
   await page.route('**/v1/protocol/capabilities',r=>r.fulfill({status:404,json:{error:'not_found'}}))
@@ -76,8 +71,8 @@ test('existing terminal reference exposes shared actions without creating work',
   page.on('request',request=>{if(request.url().endsWith('/__invoke')){try{const body=request.postDataJSON();if(body.command==='agent_converse')dispatched.push(body.command)}catch{}}})
   await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await expect(page.locator('#converse-input')).toBeVisible()
-  await page.locator('.conversation-more summary').click()
-  await page.locator('.conversation-more').getByRole('button',{name:'电脑上的会话',exact:true}).click()
+  await page.locator('.conversation-add summary').click()
+  await page.locator('.conversation-add').getByRole('button',{name:'电脑上的会话',exact:true}).click()
   const resources=page.getByRole('dialog',{name:'电脑上的会话',exact:true})
   await expect(resources).toBeVisible()
   await resources.getByRole('button',{name:/核对备份终端/}).click()
@@ -92,8 +87,8 @@ test('unavailable native history is visible and preserves the owner draft',async
   await page.route(/\/v1\/workbench(?:\?.*)?$/,route=>route.fulfill({status:503,json:{error:'unavailable'}}))
   await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.locator('#converse-input').fill('这句还没发送')
-  await page.locator('.conversation-more summary').click()
-  await page.locator('.conversation-more').getByRole('button',{name:'电脑上的会话',exact:true}).click()
+  await page.locator('.conversation-add summary').click()
+  await page.locator('.conversation-add').getByRole('button',{name:'电脑上的会话',exact:true}).click()
   await page.getByRole('dialog',{name:'电脑上的会话',exact:true}).getByRole('button',{name:'查找、导入或接着做已有会话',exact:true}).click()
   await expect(page.locator('#app-toast')).toContainText('暂时读不到电脑上的会话')
   await expect(page.locator('#converse-input')).toHaveValue('这句还没发送')
@@ -116,7 +111,7 @@ test('shared anchor, durable result and observed owner stop use the daemon contr
   await expect(page.locator('#converse-scroll')).toContainText('正在整理结果')
   await page.locator('#converse-stop').click();expect(stops).toEqual([])
   await page.locator('#converse-stop').click();await expect.poll(()=>stops).toEqual([{turnId:'owner-turn'}])
-  await page.locator('#converse-search-open').click();await page.locator('#converse-search-input').fill('更早');await page.locator('#converse-search-input').press('Enter')
+  await page.locator('.conversation-add summary').click();await page.locator('.conversation-add').getByRole('button',{name:'搜索对话',exact:true}).click();await page.locator('#converse-search-input').fill('更早');await page.locator('#converse-search-input').press('Enter')
   await page.getByRole('button',{name:'回到原消息',exact:true}).click()
   await expect(page.locator('#converse-scroll')).toContainText('更早的原消息位置')
   await expect(page.locator('[data-matter-id="aabbccdd"]')).toHaveCount(1)
@@ -133,9 +128,9 @@ test('overlapping historical anchors retain the forward gap until they join the 
   })
   await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await expect(page.locator('#converse-scroll')).toContainText('latest')
-  await page.locator('#converse-search-open').click();await page.locator('#converse-search-input').fill('old');await page.locator('#converse-search-input').press('Enter')
+  await page.locator('.conversation-add summary').click();await page.locator('.conversation-add').getByRole('button',{name:'搜索对话',exact:true}).click();await page.locator('#converse-search-input').fill('old');await page.locator('#converse-search-input').press('Enter')
   await page.locator('[data-locate-message="old1"]').click();await expect(page.locator('#converse-later')).toBeVisible()
-  await page.locator('#converse-search-open').click();await page.locator('#converse-search-input').fill('old2');await page.locator('#converse-search-input').press('Enter')
+  await page.locator('.conversation-add summary').click();await page.locator('.conversation-add').getByRole('button',{name:'搜索对话',exact:true}).click();await page.locator('#converse-search-input').fill('old2');await page.locator('#converse-search-input').press('Enter')
   await page.locator('[data-locate-message="old2"]').click();await expect(page.locator('#converse-later')).toBeVisible()
   await page.locator('#converse-later').click();await expect.poll(()=>forward).toEqual(['old2'])
   await expect(page.locator('#converse-later')).toBeHidden()
@@ -152,7 +147,7 @@ test('T6: owner manages topics and marks a recalled entry wrong inside the exist
     if(action==='entry/wrong')wrong=true
     await route.fulfill({json:{ok:true}})
   })
-  await page.goto(shimUrl)
+  await page.goto(shimUrl);await clickNav(page,'memory')
   const panel=page.locator('.conversation-topic-panel')
   const open=async()=>{await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click();await expect(panel).toBeVisible()}
   await open()
@@ -177,7 +172,7 @@ test('T6: owner manages topics and marks a recalled entry wrong inside the exist
   await panel.getByRole('button',{name:'确认删除',exact:true}).click()
   await expect.poll(()=>writes.at(-1)).toEqual({action:'delete',body:{id:'backup'}})
   await expect(panel).toBeHidden()
-  await expect(page.locator('#converse-input')).toBeVisible()
+  await clickNav(page,'overview');await expect(page.locator('#converse-input')).toBeVisible()
 })
 
 
@@ -186,7 +181,7 @@ test('project topics show one priority mark, complete reader counts, and origina
  await page.route('**/v1/workbench/task?*',r=>r.fulfill({json:{task,runId:'run1',events:[],artifacts:[],permissions:allowed?[]:[{id:'permission-backup',taskId:task.id,tool:'Read',description:'需要读取备份文件夹',createdAt:1}],questions:[]}}))
  await page.route('**/v1/matter/permission',r=>{expect(r.request().postDataJSON()).toMatchObject({id:task.id,requestId:'permission-backup',decision:'allow'});allowed=true;return r.fulfill({json:{ok:true}})})
 
- await page.goto(shimUrl)
+ await page.goto(shimUrl);await clickNav(page,'memory')
  const topics=page.locator('.conversation-topics')
  const backup=topics.getByRole('button',{name:'服务器，1 个等你，2 个在跑，1 个做完未看',exact:true})
  await expect(backup.locator('[data-topic-activity="waiting"]')).toHaveText('1')
@@ -226,7 +221,7 @@ test('project topics show one priority mark, complete reader counts, and origina
 test('topic-only subscription failure hides old counts before opening a panel',async({page,shimUrl},info)=>{
   let subscription:import('@playwright/test').Route|undefined
   await page.route('**/v1/subscribe/topics?*',route=>{subscription=route})
-  await page.goto(shimUrl)
+  await page.goto(shimUrl);await clickNav(page,'memory')
   const row=page.locator('[data-topic-id="backup"]')
   await expect(row).toHaveAttribute('aria-label',/1 个等你，2 个在跑/)
   await expect.poll(()=>!!subscription).toBe(true)
@@ -235,7 +230,7 @@ test('topic-only subscription failure hides old counts before opening a panel',a
   await expect(row).toHaveAttribute('aria-label','服务器，尚未同步')
   await expect(page.locator('.conversation-topics [data-topic-activity]')).toHaveCount(0)
   await expect(page.locator('.conversation-topic-panel')).toBeHidden()
-  await expect(page.locator('#converse-input')).toBeVisible()
+  await clickNav(page,'overview');await expect(page.locator('#converse-input')).toBeVisible()
   await page.screenshot({path:join(info.outputDir,'topics-unsynced.png')})
 })
 
@@ -244,7 +239,7 @@ test('six replied terminal sessions leave the project quiet and remain ordinary 
  const matters=Array.from({length:6},(_,i)=>({id:`terminal-${i}`,title:`终端 ${i+1}`,state:'open',session:{id:`terminal-${i}`,kind:'terminal',title:`终端 ${i+1}`,executor:'claude',displayName:'Claude',activity:'idle',latestStep:'答完了',updatedAt:Date.now()-600000-i*86400000,requestId:null}}))
  await page.route('**/v1/memory/topics?*',r=>r.fulfill({json:{topics:[ranu],nextCursor:null,revision:'quiet'}}))
  await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:ranu,entries:[],matters,messages:[],pages:{entries:{total:0,nextCursor:null},matters:{total:6,nextCursor:null},messages:{total:0,nextCursor:null}},revision:'quiet'}}))
- await page.goto(shimUrl)
+ await page.goto(shimUrl);await clickNav(page,'memory')
  const button=page.locator('.conversation-topics').getByRole('button',{name:'ranu',exact:true})
  await expect(button.locator('[data-topic-activity]')).toHaveCount(0)
  await button.click()
@@ -255,4 +250,102 @@ test('six replied terminal sessions leave the project quiet and remain ordinary 
  await expect(panel.locator('[data-project-session="terminal-0"]')).toContainText('10 分钟前')
  expect(await panel.evaluate(el=>el.textContent!.indexOf('家里的服务与备份')<el.textContent!.indexOf('答完了'))).toBe(true)
  await page.screenshot({path:join(info.outputDir,'topics-waiting-ranu-quiet.png')})
+})
+
+// Phone page renders who answered per reply: executor glyph for agent replies, plain CC otherwise.
+test('PWA shows the answering executor per reply and keeps CC replies unmarked', async ({ page, shimUrl }) => {
+  const { readJsonFile } = await import('../../../src/lib/read-json-file')
+  const { fillMobileTemplate, inlineScriptJson } = await import('../../../src/features/phone/mobile-page-template')
+  const { fileURLToPath } = await import('node:url')
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message))
+  const art = readJsonFile<{ lit: { base64: string }; unlit: { base64: string } }>(fileURLToPath(new URL('../../../src/features/phone/mobile-presence-art.json', import.meta.url)))
+  const mobilePage = readJsonFile<{ phone: string }>(fileURLToPath(new URL('../../../src/features/phone/mobile-page.generated.json', import.meta.url)))
+  const messages = [
+    { id: 'me1', role: 'me', text: '让 Codex 回答：备份几点跑？', at: 1 },
+    { id: 'codex1', role: 'cc', text: '每天凌晨三点。', at: 2, speaker: 'agent', provider: 'codex' },
+    { id: 'claude1', role: 'cc', text: '我这边看到的也是三点。', at: 3, speaker: 'agent', provider: 'claude' },
+    { id: 'svc1', role: 'cc', text: '自定义服务的回答。', at: 4, speaker: 'agent', provider: 'openai' },
+    { id: 'cc1', role: 'cc', text: '好的，记下了。', at: 5, speaker: 'cc', provider: 'claude' },
+    { id: 'notice1', role: 'cc', text: '已切回 CC。', at: 6, speaker: 'notice', provider: 'codex' },
+  ]
+  await page.route(`${shimUrl}/**`, route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/m') return route.fulfill({ contentType: 'text/html', body: fillMobileTemplate(mobilePage.phone, { TOKEN_JSON: inlineScriptJson('dDEVICE'), REMOTE_JSON: inlineScriptJson(null) }) })
+    if (path === '/m/sw.js') return route.fulfill({ contentType: 'application/javascript', body: '' })
+    if (path === '/v1/home') return route.fulfill({ json: { ok: true, synced_at: new Date().toISOString(), presence: { presence: 'ok', activity: { kind: 'idle', label: '' } }, work: { focus: null, partial: false } } })
+    if (path === '/v1/phone/art/presence') return route.fulfill({ json: { ok: true, mime: 'image/png', lit: art.lit.base64, unlit: art.unlit.base64 } })
+    if (path === '/v1/matters') return route.fulfill({ json: { matters: [], nextCursor: null } })
+    if (path === '/v1/matter/owner-chat/page') return route.fulfill({ json: { ok: true, conversation: 'v1', matterId: 'owner', messages, hasMore: false, pending: null } })
+    if (path === '/v1/matter/owner-chat/model') return route.fulfill({ json: { ok: true, providers: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'openai', name: '自定义 AI 服务' }], provider: 'claude', model: 'm' } })
+    if (path === '/v1/matter/owner-chat/events') return route.fulfill({ json: { running: null, cursor: 1, events: [] } })
+    return route.fulfill({ status: 404, json: { ok: false } })
+  })
+  await page.setViewportSize({ width: 390, height: 844 }); await page.goto(`${shimUrl}/m`)
+  await expect(page.locator('#message-codex1')).toBeVisible()
+  for (const [id, name, agent] of [['codex1', 'Codex', 'codex'], ['claude1', 'Claude', 'claude']] as const) {
+    const mark = page.locator(`#message-${id} .chat-reply-avatar`)
+    await expect(mark).toHaveCount(1); await expect(mark).toHaveAttribute('aria-label', name)
+    await expect(mark.locator('.th-agent')).toHaveAttribute('data-agent', agent)
+    await expect(page.locator(`#message-${id} small`)).not.toContainText('CC')
+    const box = await mark.boundingBox(); expect(box && box.width > 8 && box.width <= 28 && box.height <= 28).toBe(true)
+  }
+  await expect(page.locator('#message-svc1 .chat-reply-avatar')).toHaveAttribute('aria-label', '自定义 AI 服务')
+  for (const id of ['me1', 'cc1', 'notice1']) await expect(page.locator(`#message-${id} .chat-reply-avatar`)).toHaveCount(0)
+  await expect(page.locator('#message-cc1 small')).toContainText('CC')
+  const out = process.env.WECHAT_CC_DESIGN_SHOTS
+  if (out) await page.screenshot({ path: join(out, 'pwa-reply-avatars.png') })
+  expect(errors).toEqual([])
+})
+
+test('reply attribution keeps one named shared avatar per reply across wide and narrow layouts',async({page,shimUrl},info)=>{
+  let currentProvider='claude'
+  const message=(id:string,text:string,meta:Record<string,unknown>={})=>({messageId:id,kind:'text',text,createdAt:1,source:'desktop',...meta})
+  const messages=[
+    message('claude','Claude 直接答',{speaker:'agent',provider:'claude'}),
+    message('codex','Codex 接着答',{speaker:'agent',provider:'codex'}),
+    message('gateway','网关直接答',{speaker:'agent',provider:'openai',model:'claude-test'}),
+    message('cc','CC 自己组织的回复',{speaker:'cc',provider:'claude'}),
+    message('notice','这一轮的通知',{speaker:'notice',provider:'codex'}),
+    message('old','没有来源的旧消息'),
+  ]
+  await page.route('**/v1/matter/owner-chat/window**',r=>r.fulfill({json:{messages,earlier:null,later:null,anchor:null}}))
+  await page.route('**/v1/matter/owner-chat/model',r=>r.fulfill({json:{ok:true,provider:currentProvider,model:null,providers:[{id:'claude',name:'Claude'},{id:'codex',name:'Codex'},{id:'openai',name:'我的网关'}]}}))
+  await page.route('**/v1/workbench/task?*',r=>r.fulfill({json:{task,events:messages.map((m,i)=>({...m,id:i+1,taskId:task.id})),artifacts:[],permissions:[],questions:[]}}))
+  const row=(text:string)=>page.locator('#converse-scroll .converse-msg').filter({hasText:text})
+  const checkSources=async()=>{
+    for(const [text,id,name] of [['Claude 直接答','claude','Claude'],['Codex 接着答','codex','Codex'],['网关直接答','service','我的网关']]){
+      const reply=row(text!),avatar=reply.locator('.th-agents[role="img"]')
+      await expect(reply.locator('.th-agent')).toHaveCount(1)
+      await expect(avatar).toHaveAttribute('aria-label',name!);await expect(avatar).toHaveAttribute('title',name!)
+      await expect(avatar.locator('.th-agent')).toHaveAttribute('data-agent',id!)
+      await expect(reply).toHaveAttribute('aria-label',name!)
+    }
+    await expect(row('网关直接答').locator('.th-agent svg')).toHaveCount(0)
+    for(const text of ['CC 自己组织的回复','这一轮的通知','没有来源的旧消息'])await expect(row(text).locator('.th-agent')).toHaveCount(0)
+    await expect(row('CC 自己组织的回复')).toHaveAttribute('aria-label','CC')
+  }
+  for(const width of [1280,390]){
+    await page.setViewportSize({width,height:844});await page.goto(shimUrl)
+    await checkSources()
+    expect(await page.locator('#converse-scroll').evaluate(root=>{
+      const bounds=root.getBoundingClientRect()
+      return [...root.querySelectorAll('.converse-msg')].every(row=>{const box=row.getBoundingClientRect();return box.left>=bounds.left-1&&box.right<=bounds.right+1&&row.scrollWidth<=row.clientWidth+1})
+    })).toBe(true)
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+    await page.screenshot({path:join(info.outputDir,`reply-avatars-${width}.png`)})
+    await showRoster(page)
+    await page.locator('[data-roster-key="matter:aabbccdd"]').click()
+    const matter=page.locator('.workbench-pane')
+    await expect(matter).toBeVisible()
+    for(const [text,id,name] of [['Claude 直接答','claude','Claude'],['Codex 接着答','codex','Codex'],['网关直接答','service','我的网关']]){
+      const reply=matter.locator('.wb-message').filter({hasText:text!})
+      await expect(reply.locator('.th-agent')).toHaveCount(1)
+      await expect(reply.locator('.th-agents')).toHaveAttribute('aria-label',name!)
+      await expect(reply.locator('.th-agent')).toHaveAttribute('data-agent',id!)
+    }
+    expect(await matter.locator('.wb-dialogue').evaluate(root=>[...root.querySelectorAll('.wb-message')].every(row=>row.scrollWidth<=row.clientWidth+1))).toBe(true)
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+    if(width>=1080)await page.locator('#roster-dock').getByRole('button',{name:'‹ 在做',exact:true}).click();else await page.locator('#workbench-home').click()
+  }
+  currentProvider='codex';await page.reload();await checkSources()
 })

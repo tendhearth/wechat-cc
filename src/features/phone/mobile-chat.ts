@@ -1,3 +1,4 @@
+import { replyMetadataFields } from '@wechat-cc/protocol'
 import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import type { MessageRecord } from '../../lib/messages-store'
 import type { MatterOrigin, MatterStore } from '../../ports/matters'
@@ -153,9 +154,10 @@ const err = (error: string, status: number) => json({ ok: false, error }, status
 const wireJob = ({ requestId, text, status, since, error }: ChatJob) => ({ requestId, text, status, since, ...(error ? { error } : {}) })
 const sourceOf = (s: string): 'wechat' | 'desktop' | 'phone' => (s === 'desktop' || s === 'phone' ? s : 'wechat')
 const message = (r: MessageRecord, inboxDir?:string) => ({
+  ...replyMetadataFields(r, CHAT_TEXT_MAX),
   id: r.id, role: r.direction === 'in' ? 'me' as const : 'cc' as const, kind: r.kind,
   text: r.text.length > CHAT_TEXT_MAX ? r.text.slice(0, CHAT_TEXT_MAX) : r.text, truncated: r.text.length > CHAT_TEXT_MAX,
-  at: Date.parse(r.ts), source: sourceOf(r.source),
+  at: Date.parse(r.ts), source: sourceOf(r.id.startsWith('app:companion:')&&r.source.startsWith('speech:')?'phone':r.source),
   ...(r.direction === 'out' ? phoneExtrasFields(r.extras) : incomingUploadAttachments(r,inboxDir).length ? {attachments:incomingUploadAttachments(r,inboxDir).map(({name})=>({kind:'file' as const,name}))} : {}),
 })
 

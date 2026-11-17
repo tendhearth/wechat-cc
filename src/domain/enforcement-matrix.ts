@@ -61,6 +61,7 @@ const GATE_EXECUTOR: Readonly<Record<string, GateExecutor>> = { claude: 'claude'
 function unattendedAnswer(provider: string, tp: TierProfile): 'allow' | 'deny' {
   if (provider === 'codex') return compilePolicy('codex', tp, 'strict').approvalPolicy === 'never' ? 'allow' : 'deny'
   if (provider === 'cursor') return compilePolicy('cursor-acp', tp, 'strict').answer === 'allow' ? 'allow' : 'deny'
+  if (provider === 'grok') return compilePolicy('grok-acp', tp, 'strict').answer === 'allow' ? 'allow' : 'deny'
   if (provider === 'agy') return 'allow'
   throw new Error(`enforcement-matrix: ${provider} 没有逐工具回调,也没说明问不了时怎么落(unattendedAnswer)`)
 }
@@ -106,6 +107,7 @@ export function enforcementFor(provider: string, tier: UserTier, kind: ToolKind)
     if (said === 'ask') return asked()
     return 'deny→allow'
   }
+  if (cap.mcpTools === 'none') return said === 'deny' ? 'deny' : said === 'allow' ? 'allow→deny' : 'ask→deny'
   // wechat MCP / 插件上的工具:按会话档位注册(adminMcpTools 为假 ⇒ MCP 钉成 trusted)。
   const registered = !TIER_PROFILES[cap.adminMcpTools ? tier : 'trusted'].deny.has(kind)
   if (!registered) return said === 'deny' ? 'deny' : said === 'allow' ? 'allow→deny' : 'ask→deny'

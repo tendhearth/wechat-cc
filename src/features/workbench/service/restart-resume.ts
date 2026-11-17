@@ -37,6 +37,7 @@ export function recoverRestartContinuations(ctx: ServiceCtx, execute: Pick<Execu
     const drop=()=>dropRestartContinuation(ctx.stateDir,entry.taskId,entry.runId)
     try {
       if(entry.writerExited!==true)continue
+      if(ctx.store.plans.get(entry.taskId)?.state==='approved'){drop();continue}
       const task = ctx.store.get(entry.taskId)
       if (task.archivedAt !== null || task.error !== 'daemon_restarted' || !['cancelled', 'interrupted'].includes(task.status)) {drop();continue}
       if (ctx.state.runsByTask.has(task.id) || ctx.store.execution.last(task.id)?.runId !== entry.runId) {drop();continue}

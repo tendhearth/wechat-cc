@@ -1,3 +1,4 @@
+import { renderChatApprovalPrompt } from '../adapters/executors/chat-approval'
 import { makeProjects } from './projects'
 import { describe, it, expect, vi } from 'vitest'
 import { makeIlinkAdapter, loadAllAccounts, type Account } from './ilink-glue'
@@ -523,6 +524,35 @@ describe('引用卡片回「y」', () => {
     // 引用的是无关消息:名下只剩一条,照「一条就是它」
     expect(a.handlePermissionReply('n', 'chat-1', '昨天的天气真好')).toBe(true)
     expect(await p1).toBe('deny')
+    await a.flush()
+  })
+  it('revoked card quotes never approve the next same-tool card or fall back to a bare approval', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    const old = a.askUser('chat-1', 'Claude wants to run Bash\nold operation', 'old01', 60_000)
+    const oldCard = sent[0]!
+    expect(a.resolvePermission('old01', 'deny')).toBe(true); expect(await old).toBe('deny')
+    const next = a.askUser('chat-1', 'Claude wants to run Bash\nnew operation', 'new01', 60_000)
+    expect(a.probePermissionReply('y', 'chat-1', oldCard)).toBe(false)
+    expect(a.handlePermissionReply('y', 'chat-1', oldCard)).toBe(false)
+    expect(a.listPendingPermissions().map(p => p.hash)).toEqual(['new01'])
+    a.resolvePermission('new01', 'deny'); expect(await next).toBe('deny')
+    await a.flush()
+  })
+  it('a truncated shared card header binds only its own request, including after stop and a new turn', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    const old = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'old offline action' }, 'old02'), 'old02', 60000)
+    const oldHeader = sent[0]!.split('\n')[0]!
+    a.resolvePermission('old02', 'deny'); await old
+    const next = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'new offline action' }, 'new02'), 'new02', 60000)
+    expect(a.probePermissionReply('y', 'chat-1', oldHeader)).toBe(false)
+    expect(a.handlePermissionReply('y', 'chat-1', oldHeader)).toBe(false)
+    expect(a.listPendingPermissions().map(p => p.hash)).toEqual(['new02'])
+    expect(a.handlePermissionReply('y', 'chat-1', sent[1]!.split('\n')[0]!)).toBe(true)
+    expect(await next).toBe('allow')
     await a.flush()
   })
   it('引用卡片但从别的 chat 回,不算', async () => {

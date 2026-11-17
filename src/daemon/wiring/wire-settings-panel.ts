@@ -60,6 +60,8 @@ return makeSettingsPanel({
   executorName: (id: string) => boot.registry.namesOf(id).name,
   // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
   ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),
+  // 分享一件事给合伙人:能看什么、令牌还有效没有,都问工作台服务。
+  ...(opts.workbench ? { shares: { create: (id: string, name: unknown, mode?: unknown) => opts.workbench!.shareCreate(id, name, mode ?? 'discuss'), say: (token: string, text: unknown) => opts.workbench!.shareSay(token, text), view: (token: string) => opts.workbench!.shareView(token), tokens: () => opts.workbench!.shareTokens(), valid: (token: string) => opts.workbench!.shareTokenValid(token) } } : {}),
   stateDir,
   ownerChatId,
   relayV2Configured: () => relayV2Configured(stateDir),

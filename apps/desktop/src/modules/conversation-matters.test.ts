@@ -1,17 +1,17 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
-import { matterReferenceHtml, updateConversationMatters, updateConversationAttention, mountMatterProgress } from './conversation-matters.js'
+import { matterReferenceHtml, updateConversationMatters, updateConversationAttention, mountMatterReferences, setDockedMatter } from './conversation-matters.js'
 describe('conversation matter references', () => {
-  it('updates the stable reference without collapsing the process or changing focus', () => {
+  it('单行引用保留焦点、标题转义和历史来源', () => {
     document.body.innerHTML = matterReferenceHtml('test1', '<backup>', true)
-    const row = document.querySelector('details')!; row.open = true
-    const button = row.querySelector('button')!; button.focus()
-    updateConversationMatters([{ id:'test1', title:'backup', status:'running', pendingPermissionCount:1, updatedAt:1, providerId:'codex' } as any])
+    const row = document.querySelector('a')!; row.focus()
+    expect(document.querySelector('details')).toBeNull()
+    updateConversationMatters([{ id:'test1', title:'backup', status:'running', pendingPermissionCount:1, updatedAt:1, providerId:'codex' } as any],false)
     expect(row.textContent).toContain('等你决定')
     expect(row.textContent).toContain('以前交办的事')
-    expect(row.open).toBe(true)
-    expect(document.activeElement).toBe(button)
+    expect(document.activeElement).toBe(row)
     expect(row.querySelector('backup')).toBeNull()
+    expect(row.querySelector('[data-matter-avatar]')!.innerHTML).toContain('th-agent')
     updateConversationMatters([], true)
     expect(row.textContent).toContain('尚未同步')
     expect(row.textContent).not.toContain('等你决定')
@@ -48,25 +48,24 @@ it('fresh attention stays actionable when the older task list is unavailable',()
   updateConversationMatters([],true)
   updateConversationAttention({stale:false,tasks:[{id:'attention-only',first:{text:'确认文件夹'}}]})
   expect(document.querySelector('[data-matter-state]')!.textContent).toContain('等你决定')
-  expect(document.querySelector('[data-matter-progress]')!.textContent).toContain('确认文件夹')
+  expect(document.querySelector('[data-matter-progress]')).toBeNull()
   updateConversationAttention({stale:true,tasks:[]})
   expect(document.querySelector('[data-matter-state]')!.textContent).toBe('尚未同步')
 })
 
-it('checks canonical kind before reading the original task progress and never sends a terminal id to task APIs',async()=>{
-  document.body.innerHTML=matterReferenceHtml('progress-task','task')+matterReferenceHtml('progress-terminal','terminal')
-  const calls:string[]=[]
-  const stop=mountMatterProgress(document.body,async(_method:string,path:string)=>{
-    calls.push(path)
-    if(path.startsWith('/v1/matter?')){const terminal=path.includes('progress-terminal');return {matter:{id:terminal?'progress-terminal':'progress-task',kind:terminal?'terminal':'task',title:terminal?'terminal detail':'task'}}}
-    if(path.startsWith('/v1/workbench/task?'))return {task:{id:'progress-task',status:'running',createdAt:1,updatedAt:2},events:[{kind:'text',text:'original executor progress'}],artifacts:[]}
-    throw Error(path)
-  })
-  try{
-    for(const row of document.querySelectorAll('details')){row.open=true;row.dispatchEvent(new Event('toggle'))}
-    await expect.poll(()=>document.querySelector('[data-matter-id="progress-task"] [data-matter-progress]')?.textContent).toContain('original executor progress')
-    expect(calls.some(p=>p.startsWith('/v1/matter?')&&p.includes('progress-terminal'))).toBe(true)
-    expect(calls.some(p=>p.startsWith('/v1/workbench/task?')&&p.includes('progress-task'))).toBe(true)
-    expect(calls.some(p=>p.startsWith('/v1/workbench/task?')&&p.includes('progress-terminal'))).toBe(false)
-  }finally{stop();document.body.innerHTML=''}
+it('点击不在名单里的旧事也交给 canonical opener，引用本身不读详情或轮询',async()=>{
+  document.body.innerHTML=matterReferenceHtml('old-not-in-roster','旧事')
+  const opened:string[]=[]
+  const stop=mountMatterReferences(document.body,id=>{opened.push(id)})
+  const row=document.querySelector('a')!
+  row.click();expect(opened).toEqual(['old-not-in-roster'])
+  stop();row.click();expect(opened).toHaveLength(1)
+})
+it('正停靠的事显示右边打开着，其余事仍保留状态',()=>{
+ document.body.innerHTML=matterReferenceHtml('open','打开')+matterReferenceHtml('other','其他')
+ setDockedMatter('open')
+ expect(document.querySelector('[data-matter-id="open"]')?.getAttribute('data-docked')).toBe('true')
+ expect(document.querySelector('[data-matter-id="open"]')?.textContent).toContain('在右边打开着')
+ expect(document.querySelector('[data-matter-id="other"]')?.textContent).not.toContain('在右边打开着')
+ setDockedMatter(null);expect(document.body.textContent).not.toContain('在右边打开着')
 })

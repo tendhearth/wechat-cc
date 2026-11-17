@@ -1,4 +1,5 @@
 import {validBaseBranch} from '../../adapters/git/worktree-workspaces'
+import {isRelayContinue} from '../../adapters/store/matter-plans'
 import {parseReviewRequest,reviewMaterial} from './review-request'
 import {WORKBENCH_ERRORS,workbenchErrorSpec} from '@wechat-cc/protocol'
 import {compareReply} from './wechat-compare'
@@ -72,9 +73,9 @@ export function wechatTaskMessageKey(msg:WechatMessageIdentity&{chatId:string;te
   const taskId=/^(?:任务|\/task)\s+([a-f0-9]{8})(?:\s|$)/i.exec(msg.text.trim())?.[1]?.toLowerCase()??''
   return 'workbench:'+inputId(msg.chatId,taskId,msg.text,msg)
 }
-function inputReply(input:LiveInput,retained=false){
+function inputReply(input:LiveInput,retained=false,hasPlan=false){
   const prefix=`任务 ${input.taskId}：`
-  if(input.status==='delivered')return prefix+'补充已传达给执行者。'
+  if(input.status==='delivered')return prefix+(hasPlan&&isRelayContinue(input.text)?'已收到继续的要求。':'补充已传达给执行者。')
   if(input.status==='pending')return prefix+(retained?'补充已保存在 CC，当前执行者暂不接收；不会自动发送。':'补充已保存，将在当前轮次完成后进入同一任务的下一轮。')
   if(input.status==='sending')return prefix+'补充正在发送，尚未确认收到。请稍后查询任务。'
   if(input.status==='withdrawn')return prefix+'这条补充已撤回。'
@@ -410,14 +411,14 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         return `任务 ${id}：已提交回答。`
       }
       if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办|提醒我|静音|正文|文件|改动|提交|合回|删除工作区|重开工作区)(?:\s|$)/.test(suffix))return usage(id)
-      const supplement=suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
+      const supplement=opts.store.plans.get(task.id)?.state==='approved'&&/^继续(?:\s|$)/.test(suffix)?suffix.trim():suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
       if(!supplement)return usage(id)
       const prior=opts.store.liveInputs.get(requestId)
-      if(prior)return inputReply(await opts.actions.submitInput(id,{runId:prior.runId,requestId,text:supplement}),!!opts.actions.detail(id).runtime?.retained)
+      if(prior)return inputReply(await opts.actions.submitInput(id,{runId:prior.runId,requestId,text:supplement}),!!opts.actions.detail(id).runtime?.retained,!!opts.store.plans.get(id))
       const detail=opts.actions.detail(id)
       if(detail.runId){
         if(!detail.inputMode)throw Error('input_stale')
-        return inputReply(await opts.actions.submitInput(id,{runId:detail.runId,requestId,text:supplement}),!!detail.runtime?.retained)
+        return inputReply(await opts.actions.submitInput(id,{runId:detail.runId,requestId,text:supplement}),!!detail.runtime?.retained,!!opts.store.plans.get(id))
       }
       opts.actions.continueTask(task.id,supplement,{inputRequestId:requestId})
       return `任务 ${id}：已收到补充要求，继续处理。稍后发送「任务 ${id}」查看进展。`

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { makeCheapJudge, resolveTaskReference, parseTaskIdFromMessage, focusDeclaration, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge } from './task-reference'
+import { handoffCases, handoffNames } from '../../test-support/task-handoff-cases'
+import { makeCheapJudge, resolveTaskReference, isMatterShareRequest, isTerminalAttachRequest, parseTaskIdFromMessage, focusDeclaration, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge } from './task-reference'
 
 /**
  * 管家式指称解析(spec 2026-09-16):主人在微信里说"那个整理 TODO 的事"、引用一条任务
@@ -17,7 +18,46 @@ const latency = c({ id: 'f3c7234a', title: '读 DATA.md,回答:哪三个模型�
 const review = c({ id: '5c12e75a', title: '检查 · 读 DATA.md,回答:哪三个模型在 1 秒以内?', project: 'project-b', path: '/s/project-b' })
 const all = [todo, latency, review]
 const resolve = (text: string, over: Partial<Parameters<typeof resolveTaskReference>[0]> = {}) =>
-  resolveTaskReference({ text, candidates: all, nowMs: NOW, ...over })
+  resolveTaskReference({ text, candidates: all, nowMs: NOW, handoffExecutors: handoffNames, ...over })
+
+describe('换执行者交给 CC 对话,不发送给原执行者', () => {
+  it.each([
+    '请调用 matter_handoff 把事项 a85aec02 交给 Claude',
+    '让 Claude 接着做 a85aec02 的后半段',
+    '把事项 a85aec02 交给 Claude 接着做',
+    '让 DeepSeek 接手',
+    '换成 Codex 继续',
+  ])('%s', async text => {
+    let judged = false
+    expect(await resolve(text, {
+      quotedText: '任务 a85aec02：已答复',
+      focus: { taskId: todo.id, expiresAt: NOW + FOCUS_TTL_MS },
+      judge: async () => { judged = true; return { taskId: todo.id, confident: true } },
+    })).toEqual({ kind: 'none' })
+    expect(judged).toBe(false)
+  })
+  it.each(['a85aec02 再跑一下测试', '让 Claude 再跑一下测试', 'a85aec02 继续', 'sample-project 把标题改短', 'a85aec02 把标题换成中文', 'sample-project 换个标题', '换一个文件名'])('保留补充: %s', async text => {
+    expect(await resolve(text, { focus: { taskId: todo.id, expiresAt: NOW + FOCUS_TTL_MS } })).toMatchObject({ kind: 'task', taskId: todo.id })
+  })
+})
+
+describe('第二轮：转交动词和真实执行者必须构成同一分句的接力', () => {
+  it.each(handoffCases)('%s → handoff=%s', async (text, handoff) => {
+    for (const anchor of [
+      { quotedText: '任务 a85aec02：已答复' },
+      { text: `a85aec02 ${text}` },
+      { focus: { taskId: todo.id, expiresAt: NOW + FOCUS_TTL_MS } },
+    ]) {
+      const r = await resolve(text, { candidates: [todo], ...anchor })
+      expect(r.kind).toBe(handoff ? 'none' : 'task')
+      if (!handoff) expect(r).toMatchObject({ taskId: todo.id })
+    }
+  })
+  it('GLM4 未登记就不是接力，登记后大小写不敏感', async () => {
+    expect(await resolve('换成 GLM4 继续', { handoffExecutors: ['Claude'], focus: { taskId: todo.id, expiresAt: NOW + FOCUS_TTL_MS } })).toMatchObject({ kind: 'task' })
+    expect(await resolve('换成 glm4 继续')).toEqual({ kind: 'none' })
+  })
+})
 
 describe('引用锚:回复 CC 发过的任务消息,归属是确定的', () => {
   it('从被引用消息的「任务 <编号>」头里读出任务', () => {
@@ -193,5 +233,54 @@ describe('评审回归(2026-09-16 独立评审的反例)', () => {
     const t0 = Date.now()
     expect(await resolve('那个延迟表弄完了吗', { judge, judgeTimeoutMs: 50 })).toEqual({ kind: 'none' })
     expect(Date.now() - t0).toBeLessThan(2000)
+  })
+})
+
+describe('isMatterShareRequest(分享这件事是对 CC 说的,不是补充)', () => {
+  it.each([
+    '把首页配色这件事分享给小林,让他帮我看看',
+    '这件事分享给设计师',
+    '把它共享给老王',
+    '分享给小林看看',
+    '小林那个链接关掉',
+    '把分享关了',
+    '分享链接都撤掉吧',
+    '这件事都分享给谁了',
+  ])('是:%s', text => expect(isMatterShareRequest(text)).toBe(true))
+  it.each([
+    '加个分享给好友的按钮',
+    '做一个分享给朋友圈的功能',
+    '把页脚那个链接关掉',
+    '分享按钮先关掉',
+    '先别分享给小林',
+    '不要分享给任何人',
+    '文案写成「分享给小林」',
+    '把结果发给我',
+    '首页配色再深一点',
+  ])('不是:%s', text => expect(isMatterShareRequest(text)).toBe(false))
+  it('管家不把分享请求解析成某个任务的补充', async () => {
+    const r = await resolveTaskReference({ text: '把首页配色这件事分享给小林,让他帮我看看', quotedText: null, focus: null, nowMs: 0,
+      candidates: [{ id: 'b12f5314', title: '首页配色', project: 'site', providerId: 'codex', phase: 'replied', path: '/p', updatedAt: 0, error: null } as never] })
+    expect(r.kind).toBe('none')
+  })
+})
+
+describe('isTerminalAttachRequest(挂终端是对 CC 说的,不是补充)', () => {
+  it.each([
+    '把我终端里这个 Claude 挂到首页配色这件事上',
+    '把终端那个 codex 挂进登录页',
+    '把终端从首页配色这件事上摘下来',
+    '首页配色上挂着的终端摘掉吧',
+  ])('是:%s', text => expect(isTerminalAttachRequest(text)).toBe(true))
+  it.each([
+    '终端挂了,帮我看看',
+    '把这张图挂到首页上',
+    '先别把终端挂到首页配色上',
+    '文案写成「把终端挂到首页」',
+    '首页配色再深一点',
+  ])('不是:%s', text => expect(isTerminalAttachRequest(text)).toBe(false))
+  it('管家不把挂终端解析成某个任务的补充', async () => {
+    const r = await resolveTaskReference({ text: '把我终端里这个 Claude 挂到首页配色这件事上', quotedText: null, focus: null, nowMs: 0, candidates: [{ id: 'aaaaaaaa', title: '首页配色', status: 'completed', updatedAt: 0 }] } as any)
+    expect(r.kind).toBe('none')
   })
 })

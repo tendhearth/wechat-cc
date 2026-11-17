@@ -25,6 +25,9 @@ describe('wirePlugins', () => {
       ctx(),
     )
     expect(s.wechatStdioForClaude?.env).toMatchObject({ WECHAT_INTERNAL_API: 'http://127.0.0.1:0' })
+    expect(s.wechatStdioForGrok?.env).toMatchObject({ WECHAT_PARTICIPANT_TAG: 'grok' })
+    expect(s.delegateStdioForGrok).toBe(s.delegateStdioByProvider.grok)
+    expect(s.delegateStdioForGrok).not.toBeNull()
     expect(s.wechatStdioForCursor).not.toBeNull()
     expect(s.wechatStdioForOpenai).not.toBeNull()
     expect(s.wechatStdioForGemini).not.toBeNull()

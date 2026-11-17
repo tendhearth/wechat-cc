@@ -16,7 +16,7 @@ describe('production phone presence',()=>{
   // 收敛 5b(2026-10-21):网页只留配对、此刻(CC + 一行状态 + 连不上 + 等你的那一件)、一起做(列表 + 只看状态的详情)、设置。
   it('一个主页(设计稿 2026-10-31 U5):只剩此刻一页,没有底部标签;记忆、待办、画像、贴纸在 App 里',()=>{
     const html=phoneHtml('test',null)
-    expect(html).not.toMatch(/<nav[\s>]/)
+    expect(html.match(/<nav[^>]*>/g)).toEqual(['<nav id="roster-strip" aria-label="在做" hidden>']);expect(html).not.toContain('id="chat-waiting"');expect(html).not.toContain('id="topic-row"')
     expect(html).not.toContain('data-p=')
     expect(html.match(/class="pane[^"]*" id="p-[a-z]+"/g)?.map(m=>m.replace(/.*id="/,'').replace('"',''))).toEqual(['p-today'])
     for(const id of ['home-focus','pres-txt','banner','pairbar','nav-set','m-home','m-list','m-all','m-detail','m-status'])expect(html).toContain(`id="${id}"`)

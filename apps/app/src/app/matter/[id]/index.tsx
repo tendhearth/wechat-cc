@@ -3,9 +3,9 @@ import { STATUS_TABLE } from '@wechat-cc/protocol'
 import { rememberReference } from '../../../state/conversation-references'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
-import { Modal, Pressable, ScrollView, View } from 'react-native'
+import { KeyboardAvoidingView, Platform, Modal, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import type { MatterInputT } from '../../../backend/types'
+import type { ChatModelViewT, MatterInputT } from '../../../backend/types'
 import { t } from '../../../i18n'
 import { conversationText } from '../../../i18n/minimal-conversation'
 import { useLang } from '../../../i18n/useLang'
@@ -22,12 +22,15 @@ import { Icon } from '../../../ui/Icon'
 import { Dot } from '../../../ui/Dot'
 import { MessageText } from '../../../ui/Markdown'
 import { InputReceipts } from '../../../ui/InputReceipts'
-import { SayBar } from '../../../ui/SayBar'
+import { MatterDirectComposer } from '../../../ui/DirectComposer'
+import { DirectHeader } from '../../../ui/DirectHeader'
+import { directHeaderView } from '../../../view/direct-header'
 import { Expansion } from '../../../ui/Sheet'
 import { StatusPill } from '../../../ui/StatusPill'
 import { componentAppearance, radius, space } from '../../../ui/tokens'
 import { TopBar } from '../../../ui/TopBar'
 import { AgentAvatars } from '../../../ui/AgentAvatars'
+import { ReplySpeaker } from '../../../ui/ReplySpeaker'
 import { agentsLabel, matterAgents } from '../../../view/agents'
 import { OriginMark } from '../../../ui/OriginMark'
 import { matterOrigin, originKey } from '../../../view/origin'
@@ -66,6 +69,7 @@ export default function Matter() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id
   // 打开就拉新:有缓存也重拉详情与概括(旧缓存先摆着,拿到新的再换)。
   const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
+  const chatModel = useQuery('chatModel', () => backend.chatModel(), { refreshOnMount: true })
   useEffect(() => { if (detail.data?.matter.kind === 'task') rememberReference(backend, id) }, [backend, id, detail.data?.matter.kind])
   const localInputs = useMatterInputs(id, detail.data?.inputs ?? NO_INPUTS)
   const inputReceipts = inputRows(detail.data?.inputs ?? NO_INPUTS, localInputs)
@@ -129,9 +133,12 @@ export default function Matter() {
     lastPhase.current = phase
   }, [verKey, ver, refreshDetail, refreshInsight, refreshChanges])
 
+  const scrollRef = useRef<ScrollView>(null)
+  const [moreOpen, setMoreOpen] = useState(0)
+  const direct = detail.data ? directHeaderView(detail.data, lang) : null
   const header = (
     <>
-      <TopBar title={t(lang, 'home.matter')} onBack={() => router.back()} />
+      {direct ? <DirectHeader view={direct} onMore={()=>{setMoreOpen(n=>n+1);scrollRef.current?.scrollToEnd({animated:true})}} onProject={direct.project?()=>router.push('/topics'):undefined} /> : <TopBar title={t(lang, 'home.matter')} onBack={() => router.canGoBack()?router.back():router.replace('/')} />}
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
     </>
   )
@@ -257,10 +264,11 @@ export default function Matter() {
   ) : null
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {header}
-      <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
-        <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
+      <KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}>
+      <ScrollView ref={scrollRef} contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
+
         <View testID="progress-status"><StatusPill status={v.status} label={taskDetailLabel(d.task,v.pendingCount,lang,v.status)} /></View>
         {untilRow ? (
           // 直到…通过(10-20):状态在前、不截(命令再长也看得见结果);命令等宽,这里不是确认处,可以截;整句给读屏
@@ -297,15 +305,28 @@ export default function Matter() {
             <Icon name="chevronRight" color={c.inkSoft} />
           </Pressable>
         )) : null}
+        {(d.agentRuns?.length??0)>1 ? <View testID="progress-agents" style={{ gap: space.m }}>
+          <Txt role="meta" tone="inkSoft">{t(lang,'progress.agents')}</Txt>
+          {(d.agentRuns??[]).filter(a=>a.matterId===id).map(a=><View key={a.runId} style={{ flexDirection:'row',gap:space.m,alignItems:'flex-start' }}>
+            <Txt role="meta" tone="inkSoft">{d.matter.agentNames?.[a.executor]??a.executor}</Txt>
+            <View style={{ flex:1,gap:space.xs }}><Txt role="bubble" content="user">{a.brief}</Txt><Txt role="meta" tone="inkSoft">{t(lang,`progress.agent.${a.status}`)}</Txt></View>
+          </View>)}
+        </View> : null}
+        {(d.agentRuns?.length??0)>1 && d.notes?.length ? <DetailSection key={`ledger:${id}`} testID="progress-ledger" title={t(lang,'progress.records')}>
+          {d.notes.filter(n=>n.matterId===id).map(n=><View key={n.id} style={{ gap:space.xs }}>
+            <Txt role="meta" tone="inkSoft">{n.author==='cc'?'CC':n.author==='owner'?t(lang,'chat.me'):d.matter.agentNames?.[n.author]??n.author}</Txt>
+            <Txt role="body" content="user" selectable>{n.text}</Txt>
+          </View>)}
+        </DetailSection> : null}
         <View testID="progress-latest-conversation" style={{ gap: space.l }}>
-          {recent.filter(e => e.kind === 'me' || e.kind === 'cc').map((e, i) => <ConversationMessage key={i} event={e} />)}
+          {recent.filter(e => e.kind === 'me' || e.kind === 'cc').map((e, i) => <ConversationMessage key={i} event={e} providers={chatModel.data?.providers} />)}
         </View>
         {activity ? <Txt testID="progress-activity-now" role="meta" tone="inkSoft" selectable>{t(lang, 'progress.stepNow')} · {activity.text}</Txt> : null}
         {currentError ? <Txt testID="progress-current-error" role="body" tone="inkSoft" selectable>{currentError.text}</Txt> : null}
         {d.artifacts.length ? <Artifacts matterId={id} artifacts={d.artifacts} backend={backend} lang={lang} online={online} /> : null}
 
         {earlier.length ? <DetailSection key={`earlier:${id}`} testID="progress-earlier" title={conversationText(lang, 'earlier')}>
-          <View testID="progress-earlier-conversation" style={{ gap: space.l }}>{earlier.map((e, i) => <ConversationMessage key={i} event={e} />)}</View>
+          <View testID="progress-earlier-conversation" style={{ gap: space.l }}>{earlier.map((e, i) => <ConversationMessage key={i} event={e} providers={chatModel.data?.providers} />)}</View>
         </DetailSection> : null}
 
         <DetailSection key={`summary:${id}`} testID="progress-summary-toggle" title={conversationText(lang, 'summary')}>
@@ -338,7 +359,7 @@ export default function Matter() {
           </View>
         </DetailSection>
 
-        <DetailSection key={`process:${id}`} testID="progress-process" title={conversationText(lang, 'process')}>
+        <DetailSection key={`process:${id}`} testID="progress-process" openRequest={moreOpen} title={conversationText(lang, 'process')}>
           <View testID="progress-conversation" style={{ gap: space.m }}>
             <Txt role="caption" tone="inkSoft" accessibilityRole="header">{t(lang, 'progress.conversation')}</Txt>
             {conv.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noEvents')}</Txt> : null}
@@ -490,8 +511,10 @@ export default function Matter() {
         </View>
       )}
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
-        <SayBar testID="progress-say" placeholder={t(lang, 'progress.continueSay')} onPress={() => router.push(`/compose?matter=${encodeURIComponent(id)}`)} />
+        <MatterDirectComposer key={id} id={id} view={direct!} />
       </View>
+
+      </KeyboardAvoidingView>
 
       {rewindOpen && turn?.artifactId ? (
         <RewindSheet matterId={id} artifactId={turn.artifactId} backend={backend} lang={lang} online={online} submit={submit}
@@ -524,9 +547,10 @@ export default function Matter() {
 }
 
 /** Stateful review editors survive collapsing; a new matter or change artifact starts fresh. */
-function DetailSection({ title, testID, children, keepMounted = false }: { title: string; testID: string; children: ReactNode; keepMounted?: boolean }) {
+function DetailSection({ title, testID, children, keepMounted = false, openRequest = 0 }: { title: string; testID: string; children: ReactNode; keepMounted?: boolean; openRequest?: number }) {
   const { c } = useTheme()
   const [open, setOpen] = useState(false)
+  useEffect(()=>{if(openRequest)setOpen(true)},[openRequest])
   return <View>
     <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={title} accessibilityState={{ expanded: open }}
       onPress={() => setOpen(v => !v)} style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: space.m }}>
@@ -538,12 +562,11 @@ function DetailSection({ title, testID, children, keepMounted = false }: { title
 }
 
 
-function ConversationMessage({ event }: { event: ConvItem }) {
-  const lang = useLang()
+function ConversationMessage({ event, providers }: { event: ConvItem; providers?: ChatModelViewT['providers'] }) {
   const { c } = useTheme()
   const appearance = componentAppearance.message
   return <View style={{ paddingVertical: event.kind === 'me' ? appearance.paddingY : 0, paddingHorizontal: event.kind === 'me' ? appearance.paddingX : 0, borderRadius: appearance.radius, backgroundColor: event.kind === 'me' ? c[appearance.userBackground] : appearance.replyBackground, gap: space.xs, alignSelf: event.kind === 'me' ? 'flex-end' : 'stretch', maxWidth: '100%' }}>
-    <Txt role="caption" tone="inkSoft" style={{ textAlign: event.kind === 'me' ? 'right' : 'left' }}>{t(lang, event.kind === 'me' ? 'chat.me' : 'cc.label')}</Txt>
+    <ReplySpeaker role={event.kind === 'me' ? 'me' : 'cc'} reply={event} providers={providers} />
     <MessageText typeRole={event.kind === 'me' ? appearance.userRole : appearance.replyRole} role={event.kind === 'me' ? 'user' : 'assistant'} text={event.text} userAlign="right" />
   </View>
 }

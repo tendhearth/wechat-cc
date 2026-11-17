@@ -2,6 +2,7 @@
  * 伙伴主动找主人那一拍(20 分钟一拍,从 tick-bodies.ts 原样搬出):到点的跟进 → 日程判断 → 来访叙述。
  * 日程判断在哪些事里挑,由登记进来的候选决定(ports/companion-contributions.ts,登记表在 daemon/wiring/tick-bodies.ts);这里不认识任何一个。
  */
+import { captureReplyAttribution, withReplyAttribution } from '../../lib/reply-attribution'
 import { createHash } from 'node:crypto'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import { join } from 'node:path'
@@ -229,19 +230,19 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
             // 一时没有可用模型:这次做客不能就此吞掉,等有模型了再讲
             if (!evalText) { noModel = true; return }
             const cfgAgent = loadAgentConfig(deps.stateDir)
-            const raw = await evalText(buildGuestVisitNarrationPrompt({
+            const evaluated = await captureReplyAttribution(() => evalText(buildGuestVisitNarrationPrompt({
               myName: cfgAgent.bot_name?.trim() || '我',
               persona: null, ownerOverview: null,
               disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
               guestName: name,
               lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
-            }))
-            const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
+            })))
+            const text = evaluated.result.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
             if (!text) return
             // sendText **不抛**,失败是回 {error} —— 一定要看(盘点 10-21:以前只有 catch,失败时水位照记,这次来访就丢了)
             let r: { msgId: string; error?: string }
             sending = true
-            try { r = await turn.sendText(ownerChat, text) } catch (err) { throw new GuestNarrationSendFailed(errMsg(err)) }
+            try { r = await withReplyAttribution(evaluated.attribution ?? { speaker: 'cc' }, () => turn.sendText(ownerChat, text)) } catch (err) { throw new GuestNarrationSendFailed(errMsg(err)) }
             if (r.error) throw new GuestNarrationSendFailed(r.error)
             told = text
             } catch (err) {

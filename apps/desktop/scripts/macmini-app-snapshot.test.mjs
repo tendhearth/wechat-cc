@@ -20,3 +20,10 @@ for(const stage of ['mkdir','realpath'])test(`App snapshot cancellation in ${sta
  expect(earlyRelease).toBe(false);expect(events).not.toContain('tar');expect(events).not.toContain('activate')
  expect(error.message).toContain('stopping');expect(events).toContain('release')
 })
+
+test('ledger development is not a blanket authorization for either snapshot path',async()=>{
+ const {supportsAppSnapshot}=await import('./macmini-app-snapshot.mjs')
+ expect(supportsAppSnapshot('matter-ledger-step1')).toBe(false)
+ const source=await import('node:fs/promises').then(fs=>fs.readFile(new URL('./macmini-app-snapshot.mjs',import.meta.url),'utf8'))
+ expect(source).not.toContain("ref === 'matter-ledger-step1'")
+})

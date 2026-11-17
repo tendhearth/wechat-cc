@@ -1049,3 +1049,26 @@ describe('agent-config — unreadable / BOM files', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+it('retains validated per-endpoint model windows through strict parsing and load/save',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'config-window-'))
+  const entry={provider:'custom-acp',address:'https://gateway.example/v1',model:'custom-model',windowTokens:65536}
+  try{
+    const config=parseAgentConfig({modelContextWindows:[entry]})
+    expect(config.modelContextWindows).toEqual([entry])
+    saveAgentConfig(dir,config)
+    expect(loadAgentConfig(dir).modelContextWindows).toEqual([entry])
+    for(const windowTokens of [0,8192.5,Infinity,-1])expect(()=>parseAgentConfig({modelContextWindows:[{...entry,windowTokens}]})).toThrow()
+  }finally{rmSync(dir,{recursive:true,force:true})}
+})
+
+it('round-trips per-version checkup hard limits and rejects invalid limits',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'checkup-config-'))
+  const settings={short:{maxOutputTokens:250000,maxRequests:90},full:{maxOutputTokens:800000,maxRequests:300}}
+  try{
+    const config=parseAgentConfig({provider:'claude',dangerouslySkipPermissions:true,autoStart:true,closeStopsDaemon:false,checkup:settings})
+    saveAgentConfig(dir,config)
+    expect(loadAgentConfig(dir).checkup).toEqual(settings)
+    for(const value of [0,-1,1.5,Infinity])expect(()=>parseAgentConfig({...config,checkup:{short:{maxOutputTokens:value}}})).toThrow()
+  }finally{rmSync(dir,{recursive:true,force:true})}
+})

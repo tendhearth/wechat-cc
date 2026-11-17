@@ -7,7 +7,7 @@
  * 失败:同一个话题重试一次,还不行跳过它、水位不前移(下一晚再来);网络不安全 ⇒ 整批停。
  */
 import z from 'zod'
-import type { ThreadsStore, TopicEntry, EntryKind } from '../../lib/threads-store'
+import type { ThreadsStore, TopicEntry, EntryKind, ConsolidationPlan } from '../../lib/threads-store'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import { tokens } from '../../domain/topic-match'
 import { isRoutineTopicEntry } from '../../domain/topic-noise'
@@ -172,9 +172,10 @@ export function parseConsolidate(raw: string, progress: readonly TopicEntry[], t
   return out
 }
 
-async function evalOnce(sdkEval: (p: string) => Promise<string>, prompt: string): Promise<string> {
+async function evalOnce(sdkEval: (p: string) => Promise<string>, prompt: string, allowed:()=>boolean): Promise<string> {
   for (let i = 0; i < 2; i++) {
     try {
+      if(!allowed())return ''
       const out = await sdkEval(prompt)
       if (out && out.trim()) return out
     } catch (err) {
@@ -191,6 +192,7 @@ export interface ConsolidateDeps {
   sdkEval: ((prompt: string) => Promise<string>) | null
   log: (tag: string, line: string) => void
   now?: () => string
+  isOwner?: (chatId:string) => boolean
 }
 
 export interface ConsolidateResult { topics: number; merged: number; stripped: number; failed: number }
@@ -206,6 +208,8 @@ export async function consolidateTopics(d: ConsolidateDeps): Promise<Consolidate
     const live = all.filter(e => e.status === 'live' && !isRoutineTopicEntry(e))
     if (live.length === 0) continue
     res.topics++
+    const allowed=()=>d.isOwner?.(d.chatId)!==false && d.threads.contextAllowed?.(d.chatId,[t],all.filter(e=>e.status!=='superseded').map(e=>e.id))!==false
+    if(!allowed()){res.failed++;continue}
     const topicWords = topicWordsOf(t)
     const groups: TopicEntry[][] = duplicateFactGroups(live)
     // 1) 进展:模型只分组,代码核过才并
@@ -217,29 +221,32 @@ export async function consolidateTopics(d: ConsolidateDeps): Promise<Consolidate
     if (progress.length >= 2 && live.length > CONSOLIDATE_MIN_LIVE && d.sdkEval) {
       let picked: TopicEntry[][] | null = null
       try {
-        picked = parseConsolidate(await evalOnce(d.sdkEval, consolidatePrompt(t, progress)), progress, topicWords)
+        picked = parseConsolidate(await evalOnce(d.sdkEval, consolidatePrompt(t, progress), allowed), progress, topicWords)
       } catch (err) {
         if (isNetworkUnprotectedError(err)) { d.log('TOPICS', 'consolidate stopped — network unprotected'); res.failed++; return res }
         d.log('TOPICS', `consolidate ${t.id} failed: ${err instanceof Error ? err.message : String(err)}`)
       }
+      if(!allowed()){res.failed++;continue}
       if (!picked) { res.failed++; d.log('TOPICS', `consolidate ${t.id}: no usable answer, progress left as is`) }
       else groups.push(...picked)
     }
-    for (const g of groups) {
-      const m = mergedEntry(g)
-      const id = await d.threads.addEntry({ threadId: t.id, kind: m.kind, line: m.line, body: m.body, source: m.source, ts: m.ts })
-      for (const e of g) await d.threads.updateEntry(e.id, { status: 'superseded', supersededBy: id, ts: startedAt })
-      res.merged += g.length
+    // Assemble from the authorized snapshot. Apply in one synchronous transaction:
+    // no awaited reader can revoke a source halfway through a merge.
+    if(!allowed()){res.failed++;continue}
+    const plan:ConsolidationPlan={groups:groups.map(g=>({entry:mergedEntry(g),originals:g.map(e=>e.id)})),strips:[],ts:startedAt}
+    const grouped=new Set(groups.flatMap(g=>g.map(e=>e.id)))
+    const remaining=live.filter(e=>!grouped.has(e.id))
+    for(const e of all.filter(e=>e.status==='live'&&!grouped.has(e.id))){
+      if(!hasCommitHash(e.line)&&!hasCommitHash(e.body))continue
+      plan.strips.push({id:e.id,line:stripCommitHashes(e.line),body:stripCommitHashes(e.body),ts:e.updatedTs})
     }
-    // 2) 剩下还算数的:提交号按规则去掉(不叫模型)
-    for (const e of await d.threads.entries(t.id, { live: true })) {
-      if (!hasCommitHash(e.line) && !hasCommitHash(e.body)) continue
-      await d.threads.updateEntry(e.id, { line: stripCommitHashes(e.line), body: stripCommitHashes(e.body), ts: e.updatedTs })
-      res.stripped++
-    }
-    // 3) 摘要:代码拼,不让模型写(模型改写过摘要,把「待邮寄」写成了「已寄出」)
-    const summary = buildSummary(t.description, (await d.threads.entries(t.id, { live: true })).filter(e => !isRoutineTopicEntry(e)))
-    if (summary && summary !== t.summary) await d.threads.update(t.id, { summary })
+    const combined=[...remaining,...plan.groups.map((g,i)=>({...g.entry,id:`merged:${i}`,updatedTs:g.entry.ts!,createdTs:g.entry.ts!,threadId:t.id,status:'live' as const,body:g.entry.body??'',due:null,matterId:null,supersededBy:null,source:g.entry.source??'chat'}))]
+    const summary=buildSummary(t.description,combined)
+    if(summary&&summary!==t.summary&&d.threads.topicHistoryAllowed?.(d.chatId,t.id)!==false)plan.summary=summary
+    if(!d.threads.applyConsolidation(d.chatId,t.id,plan,allowed)){res.failed++;continue}
+    res.merged+=groups.reduce((n,g)=>n+g.length,0)
+    res.stripped+=plan.strips.length
+
   }
   if (res.failed === 0) await d.threads.setExtractState(d.chatId, { consolidatedToTs: startedAt })
   d.log('TOPICS', `consolidate chat=${d.chatId} topics=${res.topics} merged=${res.merged} stripped=${res.stripped} failed=${res.failed}`)

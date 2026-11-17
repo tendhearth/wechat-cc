@@ -40,14 +40,20 @@ var ID = P.id, LINK_T = P.t, T = P.t, PATH = P.p || "/m"
 // 令牌绑在发它的那台电脑(中继 id)上(2026-10-10):中继是所有人共用的一个域,别人的配对链接
 // (#id=<他的电脑>)也能打开这个壳页 —— 只用、只删属于这台电脑的那枚。老手机存的令牌没记 id:照用,
 // 但别的链接说 auth_failed 时不删(打开一次成功后页面会补记 id)。
+// 分享链接(令牌 s+64hex,打开的是 /share):给主人请来的人看一件事。它只认链接里那枚令牌 ——
+// 这台手机就算配对过(主人在自己手机上点自己的分享链接),也不能换成设备令牌,否则 /share 回 403。
+// 打开的人多半不是主人:文案不说「回微信跟 CC 要」「你的电脑」,说「发给你的人」「对方的电脑」。
+var SHARE = /^s[0-9a-f]{64}$/.test(LINK_T || "")
 var DT_ID = null
-try { var dt = localStorage.getItem("deviceToken"); DT_ID = localStorage.getItem("deviceTokenId"); if (dt && (!DT_ID || DT_ID === ID)) T = dt } catch (e) {}
+if (!SHARE) { try { var dt = localStorage.getItem("deviceToken"); DT_ID = localStorage.getItem("deviceTokenId"); if (dt && (!DT_ID || DT_ID === ID)) T = dt } catch (e) {} }
 var msg = document.getElementById("msg")
-if (!ID || !T) { msg.textContent = "链接不完整,回微信跟 CC 再要一个" }
+if (SHARE) { document.querySelector(".hand").textContent = "有人请你看一件事"; msg.textContent = "正在打开…" }
+if (!ID || !T) { msg.textContent = SHARE ? "链接不完整，找发给你的人再要一个" : "链接不完整,回微信跟 CC 再要一个" }
 
-var REPAIR = "连接方式升级了，请在电脑上重新扫码配对"
-var EXPIRED = "这个链接已经用过或过期了，回微信跟 CC 再要一个"
-var TAMPERED = "家里的电脑暂时连不上（连接在半路被改过），过一会儿再试"
+var REPAIR = SHARE ? "这个链接用不了了，找发给你的人再要一个" : "连接方式升级了，请在电脑上重新扫码配对"
+var EXPIRED = SHARE ? "这个链接已经关掉或过期了，找发给你的人再要一个" : "这个链接已经用过或过期了，回微信跟 CC 再要一个"
+var TAMPERED = SHARE ? "暂时连不上（连接在半路被改过），过一会儿再试" : "家里的电脑暂时连不上（连接在半路被改过），过一会儿再试"
+var OFFLINE = SHARE ? "对方的电脑现在没开着，晚点再打开这个链接" : "家里的 CC 不在线 — 电脑开着吗?"
 
 /** 浏览器 WebSocket → 协议客户端要的 ProtocolSocket。 */
 function socket(url) {
@@ -64,12 +70,13 @@ function socket(url) {
 
 // 老中继(t… id)随 v1 退休:连不上了。丢掉绑在它上面的设备令牌,说清楚怎么重新配对。
 function needsRepair() {
+  if (SHARE) { msg.textContent = REPAIR; return }
   try { var dt = localStorage.getItem("deviceTokenId"); if (dt && dt.charAt(0) === "t") { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } } catch (e) {}
   msg.textContent = REPAIR
 }
 
 function viaTunnel() {
-  msg.textContent = "从远处连回你的电脑…(加密直达)"
+  msg.textContent = SHARE ? "正在连到对方的电脑…(加密直达)" : "从远处连回你的电脑…(加密直达)"
   var relay = "wss://" + location.host + "/v2/phone"
   var cli = CCP.makeProtocolClient({
     open: function() { return socket(relay + "?id=" + encodeURIComponent(ID)) },
@@ -79,7 +86,7 @@ function viaTunnel() {
   })
   var settled = false, tampered = false
   function done() { if (settled) return false; settled = true; clearTimeout(timer); try { cli.close() } catch (e) {} ; return true }
-  var timer = setTimeout(function(){ if (done()) msg.textContent = tampered ? TAMPERED : "连不上家里的电脑 — 看看它开着没、CC 在跑没" }, 20000)
+  var timer = setTimeout(function(){ if (done()) msg.textContent = tampered ? TAMPERED : SHARE ? OFFLINE : "连不上家里的电脑 — 看看它开着没、CC 在跑没" }, 20000)
   cli.request({ method: "GET", path: PATH + "?t=" + T }).then(function(r) {
     if (!done()) return
     if (r.status === 401) { msg.textContent = EXPIRED; return }
@@ -92,12 +99,12 @@ function viaTunnel() {
     var code = err && err.message
     if (code === "auth_failed") {
       // 本域存的设备令牌不被认了(解除配对 / 换了电脑):丢掉它,用链接里的短令牌重来一次。
-      if (T !== LINK_T && LINK_T) { if (DT_ID === ID) { try { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } catch (e) {} } T = LINK_T; settled = false; viaTunnel(); return }
+      if (!SHARE && T !== LINK_T && LINK_T) { if (DT_ID === ID) { try { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } catch (e) {} } T = LINK_T; settled = false; viaTunnel(); return }
       msg.textContent = EXPIRED; return
     }
     if (code === "upgrade_required") { needsRepair(); return }
     if (tampered) { msg.textContent = TAMPERED; return }
-    msg.textContent = code === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : code === "unreachable" || code === "timeout" ? "网络不给力,稍后再试" : ("连接出错:" + code)
+    msg.textContent = code === "daemon_offline" ? OFFLINE : code === "unreachable" || code === "timeout" ? "网络不给力,稍后再试" : ("连接出错:" + code)
   })
 }
 

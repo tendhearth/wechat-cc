@@ -1,3 +1,5 @@
+import { resolveClaudeBinary } from './claude-env'
+import { cliSetupId, type CliSetupId } from '../../lib/executor-cli-setup'
 import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
@@ -11,6 +13,8 @@ import { createCodexChatProvider } from '../../adapters/executors/codex/codex-ch
 import { makeCodexChatGate } from '../../adapters/executors/codex/codex-chat-gate'
 import { buildSystemPrompt } from '../../domain/prompt-builder'
 import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '../../domain/capability-matrix'
+import { grokHomeProblem, grokSubprocessEnv } from '../../lib/grok-home'
+import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 import type { ProviderId } from '../../domain/conversation'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
@@ -20,7 +24,7 @@ import type { Access } from '../../lib/access'
 import type { CompanionConfig } from '../../lib/companion-config'
 import { loadAccess } from '../../lib/access'
 import { loadCompanionConfig } from '../../lib/companion-config'
-import { findOnPath, probeBinaryVersion } from '../../lib/util'
+import { findOnPath, probeBinaryVersion, augmentedPathEnv } from '../../lib/util'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { cursorSdkFallback, executorBinary, executorCredential, executorMissingConfig } from '../../lib/executor-detect'
 import { checkCodexVersion } from './codex-version-check'
@@ -32,7 +36,8 @@ import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { setupAgyGlobalMcp } from './agy-mcp-config'
 import { probeVersion, describeProbeFailure, createProbeRetrier, type VersionProbeResult, type ProbeRetrierOptions, type ProbeRetryStatus, type ProbeAttempt } from './provider-probe'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
-import { makeCheapEvalPreflight } from './cheap-eval-preflight'
+import { makeCheapEvalPreflight, grokNetworkPreflight } from './cheap-eval-preflight'
+import { assertCallAllowed } from '../../lib/network-gate'
 import type { BootstrapDeps } from './types'
 import { AGY_STATIC_SESSION_KEY } from '../internal-api/token-registry'
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
@@ -66,22 +71,27 @@ function detectUserCodexOnPath(): { path: string | null; version: string | null 
 }
 
 export interface ProviderDeps {
+  noteMatterApproval?:import('../../adapters/executors/chat-approval').ChatApprovalChannel['noteMatterApproval']
+  resolveMatterPlan?:import('../../adapters/executors/chat-approval').MatterPlanResolver
+  resolveTerminalParticipation?:import('../../adapters/executors/chat-approval').TerminalParticipationResolver
   log: BootstrapDeps['log']
   stateDir: string
   /** OpenAI 兼容对话的会话历史存这里(B2,api-sessions 的 openai_chat_sessions)。不给 ⇒ 只在内存,不续接。 */
   db?: import('../../lib/db').Db
-  ilink: Pick<BootstrapDeps['ilink'], 'askUser' | 'companion'>
+  ilink: Pick<BootstrapDeps['ilink'], 'askUser' | 'resolvePermission' | 'companion'>
   agentProviderKind?: AgentProviderKind
   configuredAgent: AgentConfig
   permissionMode: PermissionMode
   conversationStore: ConversationStore
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: import('../../domain/user-tier').TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode }) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: import('../../domain/user-tier').TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode }) => Options | Promise<Options>
   claudeBin: string | undefined
   currentClaudeModel: () => string
   resolveAdminChatId: (access: Access, companion: CompanionConfig, initiatingChatId?: string | null) => string | null
   pluginMcp: Record<string, McpStdioSpec>
   wechatStdioForCodex: McpStdioSpec | null
   delegateStdioForCodex: McpStdioSpec | null
+  wechatStdioForGrok?: McpStdioSpec | null
+  delegateStdioForGrok?: McpStdioSpec | null
   wechatStdioForCursor: McpStdioSpec | null
   delegateStdioForCursor: McpStdioSpec | null
   wechatStdioForOpenai: McpStdioSpec | null
@@ -117,7 +127,8 @@ export interface ProviderDeps {
    * 测试接缝(2026-10-04):外部 CLI 的 `--version` 探测。缺省 provider-probe.ts 的
    * `probeVersion`(超时按事件循环醒着的时间计,失败带原因)。
    */
-  probeVersion?: (bin: string) => Promise<VersionProbeResult>
+  findSetupBinary?: (id: CliSetupId) => string | null
+  probeVersion?: (bin: string, options?: { env?: NodeJS.ProcessEnv }) => Promise<VersionProbeResult>
   /**
    * 测试接缝:探测失败后的退避重探(档位 / 计时器)。生产不传 ⇒ 2s、4s … 60s,之后每 10 分钟。
    * 测试 runner 下不传 ⇒ 不重探(单测里的 buildBootstrap 不该在背后排计时器去起真 CLI)。
@@ -137,6 +148,7 @@ export interface ProviderWiring {
   /** daemon 关停时清掉重探计时器。 */
   stopProviderProbes: () => void
   /** 立刻重探一家(CLI 自动升级器升完时用)。语义见 ProbeRetrier.reprobeNow。 */
+  refreshInstalledProvider: (id: string) => Promise<boolean>
   reprobeProvider: (id: string) => Promise<boolean | null>
 }
 
@@ -158,7 +170,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const readAgentConfig = makeMtimeCachedConfigReader(deps.stateDir)
 
   // 外部 CLI 的开机探测 + 失败后的退避重探(2026-10-04,见 provider-probe.ts 文件头)。
-  const probe = deps.probeVersion ?? ((bin: string) => probeVersion(bin))
+  const probe = deps.probeVersion ?? probeVersion
+  const probeGrok = async (bin: string): Promise<VersionProbeResult> => {
+    try { return await probe(bin, { env: grokSubprocessEnv(deps.stateDir, workbenchSubprocessEnv({ ...process.env, PATH: augmentedPathEnv() })) }) }
+    catch (error) { return { ok: false, reason: 'spawn_error', detail: error instanceof Error ? error.message : 'Grok 专属 HOME 不可用', ms: 0 } }
+  }
   const probeRetrier = createProbeRetrier({ ...deps.probeRetry, log: deps.log })
   const retryEnabled = !UNDER_TEST_RUNNER || deps.probeRetry !== undefined
   const scheduleProbeRetry = (id: ProviderId, firstError: string, attempt: ProbeAttempt) => {
@@ -174,9 +190,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const retryRegistration = (id: ProviderId, bin: string, firstError: string, opts: {
     accept?: (r: Extract<Awaited<ReturnType<typeof probe>>, { ok: true }>) => string | null
     register: (bin: string, r: Extract<Awaited<ReturnType<typeof probe>>, { ok: true }>) => boolean | Promise<boolean>
+    probe?: typeof probe
   }) => scheduleProbeRetry(id, firstError, async () => {
     if (registry.has(id)) return { ok: true }
-    const r = await probe(bin)
+    const r = await (opts.probe ?? probe)(bin)
     if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
     const rejected = opts.accept?.(r)
     if (rejected) return { ok: false, reason: rejected }
@@ -248,7 +265,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       // Threaded into cheapEval's query() call so the bun-compile
       // findClaudePath() trap doesn't bite the chatroom moderator path
       // (same protection the legacy haiku-eval helper provided).
-      ...(claudeBin ? { claudeBin } : {}),
+      get claudeBin() { return claudeBin ?? (UNDER_TEST_RUNNER ? undefined : resolveClaudeBinary()) },
       // strongEval (the /chat verdict) runs on the live default model, not
       // haiku — synthesis quality matters more than cost there.
       strongModel: currentClaudeModel,
@@ -386,6 +403,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         // 要问就发和 Claude 对话同一张微信拍板卡;主人的放行规则在这里一样生效(chatOwnerRules)。
         approvals: makeCodexChatGate({
           askUser: deps.ilink.askUser,
+          resolveMatterPlan:deps.resolveMatterPlan,
+          resolveTerminalParticipation:deps.resolveTerminalParticipation,
+          noteMatterApproval:deps.noteMatterApproval,
           adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
           ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
           log: deps.log,
@@ -454,6 +474,29 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   }
 
   // ──────────────────────────────────────────────────────────────
+  // 版本探测和会话都使用 CC 专属 HOME；只检查专属 auth 文件存在，不复制主人登录。
+  const grokBin = executorBinary('grok', configuredAgent, UNDER_TEST_RUNNER ? () => null : findOnPath)
+  const registerGrok = async (bin: string): Promise<boolean> => {
+    const { createAcpGrokProvider } = await import('../../adapters/executors/acp/acp-grok')
+    registry.register('grok', createAcpGrokProvider({ bin, stateDir: deps.stateDir, model: configuredAgent.grokModel, log: deps.log, networkPreflight: grokNetworkPreflight, mcpSpecs: { wechat: deps.wechatStdioForGrok ?? null, delegate: deps.delegateStdioForGrok ?? null } }), {
+      canResume: () => false,
+      bin: () => executorBinary('grok', readAgentConfig(), UNDER_TEST_RUNNER ? () => null : findOnPath),
+    })
+    deps.log('BOOT', `grok: ${grokHomeProblem(deps.stateDir) ?? 'ACP account executor ready (CC 专属 HOME；CC 工具按会话协商)'}`)
+    return true
+  }
+  if (grokBin && !acpSupportedOn()) {
+    deps.log('BOOT', 'grok: ACP 暂不支持 Windows(进程组清理未验证)，未注册')
+  } else if (grokBin) {
+    const r = await probeGrok(grokBin)
+    if (r.ok) await registerGrok(grokBin)
+    else {
+      const reason = describeProbeFailure(r)
+      deps.log('BOOT', `grok: --version 探测失败(${reason})— 后台退避重探`)
+      retryRegistration('grok', grokBin, reason, { register: registerGrok, probe: probeGrok })
+    }
+  }
+
   // Cursor SDK provider — third registered provider.
   //
   // CURSOR_API_KEY is env-only — not stored in agent-config.json.
@@ -599,23 +642,35 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       const { createMcpToolBridge } = await import('../../adapters/executors/openai/openai-mcp-bridge')
       const { makeChatSessionStore, openAiConnectionHash } = await import('../../adapters/executors/openai/api-sessions')
       const provider = createOpenAiAgentProvider({
+        approval: {
+          revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
+          askUser: deps.ilink.askUser,
+          resolveMatterPlan:deps.resolveMatterPlan,
+          resolveTerminalParticipation:deps.resolveTerminalParticipation,
+          noteMatterApproval:deps.noteMatterApproval,
+          adminFor: chatId => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
+        },
         // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
         endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
         // 后台评估单独的模型(现取:改了配置下一次评估就换,不用重启)。
         evalModel: () => readAgentConfig().openaiEvalModel,
+        evalFallbackModel: () => readAgentConfig().openaiModel || defaultOpenaiModel,
         ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
         // Built per-spawn (not once at construction) so an operator's `/api <model>` pin — re-read via the mtime-cached
         // config reader through currentModelFor → SpawnContext.model — takes effect on the NEXT session without a daemon
-        // restart. `model` is undefined for background evals (cheapEval/strongEval) and for spawns before any pin
-        // exists; both fall back to the boot-time configured model. Building one is cheap (SDK client wiring, no network).
-        // 对话:不设每步输出上限(交给上游默认)、AI SDK 重试 2 次(和统一之前一样)。
-        makeChatModel: (model) => createApiModel({
+        // restart. Background evals pass their explicit eval model or the current main model through evalFallbackModel.
+        // Spawns before any pin exists fall back to the boot-time configured model. Building one is cheap (no network).
+        // 对话:不设每步输出上限;首个输出前有界重试,下一次出发前再核守护。
+        makeChatModel: (model, limits) => createApiModel({
           baseURL: openaiBaseUrl,
           apiKey: openaiKey,
           model: model ?? defaultOpenaiModel,
-          maxOutputTokens: null,
-          maxRetries: 2,
+          maxOutputTokens: limits?.maxOutputTokens ?? null,
+          maxRetries: limits?.maxRetries ?? 2,
+          budget: limits?.budget,
           providerName: 'wechat-openai',
+          log: deps.log,
+          beforeRetry: () => assertCallAllowed(deps.networkGate, { provider: 'openai', baseUrl: openaiBaseUrl, model: model ?? defaultOpenaiModel, exact: true }),
         }),
         // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see sessionEnv (WECHAT_SESSION_TOKEN) — third-party
         // plugin MCP specs must never receive the daemon's loopback bearer token. See mcp-specs.ts buildOpenaiMcpSpecs.
@@ -674,7 +729,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       const { lookup } = await import('../../domain/capability-matrix')
       const genaiClient = new GoogleGenAI({ apiKey: geminiKey }) as unknown as import('../../adapters/executors/gemini/gemini-agent-provider').GenaiClient
       const buildGate = makeGeminiToolGate({
+          revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
         askUser: deps.ilink.askUser,
+        resolveMatterPlan:deps.resolveMatterPlan,
+        resolveTerminalParticipation:deps.resolveTerminalParticipation,
+          noteMatterApproval:deps.noteMatterApproval,
         adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         modeFor: (chatId) => conversationStore.get(chatId)?.mode.kind ?? 'solo',
         lookupBase: (mode, perm) => lookup(mode as never, 'gemini', perm),
@@ -797,11 +856,48 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   assertMatrixComplete(registry.list())
 
   // 默认 provider 是共享钥匙的那种(目前只剩 agy):允许,但说清后果。
-  { let shared = false; try { shared = !capabilitiesFor(defaultProviderId).adminMcpTools } catch { /* unknown id → registry will complain */ }
+  { let shared = false; try { shared = capabilitiesFor(defaultProviderId).mcpTools !== 'none' && !capabilitiesFor(defaultProviderId).adminMcpTools } catch { /* unknown id → registry will complain */ }
     if (shared) deps.log('BOOT', `默认 provider 是 ${defaultProviderId}(订阅 CLI,所有对话共用一把 trusted 钥匙):guest 对话会被拒,管理员/信任对话正常;主动关心等走主人会话不受影响`) }
+  // Explicit desktop setup polling only: discover binaries absent at boot, without timers or restart.
+  const setupInFlight = new Map<string, Promise<boolean>>()
+  const refreshInstalledProvider = (input: string): Promise<boolean> => {
+    let id: CliSetupId
+    try { id = cliSetupId(input) } catch { return Promise.resolve(false) }
+    if (setupInFlight.has(id)) return setupInFlight.get(id)!
+    const work = async () => {
+      if (registry.has(id)) return true
+      const retried = await probeRetrier.reprobeNow(id)
+      if (retried !== null) return retried
+      if (id === 'claude') return registry.has('claude')
+      if ((id === 'cursor' || id === 'grok') && !acpSupportedOn()) return false
+      const config = readAgentConfig()
+      const bin = deps.findSetupBinary ? deps.findSetupBinary(id)
+        : id === 'codex' ? findCodexBinary({ pathEnv: augmentedPathEnv() })
+        : executorBinary(id, config, UNDER_TEST_RUNNER ? () => null : findOnPath)
+      if (!bin) return false
+      const r = await (id === 'grok' ? probeGrok(bin) : probe(bin))
+      if (!r.ok) return false
+      let registered = false
+      if (id === 'codex') {
+        const check = codexCheckFrom(bin, r)
+        if (check.reason === 'version_probe_failed') return false
+        codexVersionCheck = check
+        registerCodex(bin, check)
+        registered = true
+      } else if (id === 'grok') registered = await registerGrok(bin)
+      else if (id === 'cursor') registered = await registerCursorCli(bin)
+      else registered = await registerAgy(bin)
+      if (registered) assertLateRegistration(id)
+      return registered
+    }
+    const pending = work().finally(() => setupInFlight.delete(id))
+    setupInFlight.set(id, pending)
+    return pending
+  }
   return {
+    refreshInstalledProvider,
     registry, defaultProviderId, codexBinary, codexVersionCheck,
-    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}) }),
+    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}), ...(grokBin ? { grok: grokHomeProblem(deps.stateDir) ?? 'CC 专属 HOME 已登录；CC 工具按会话协商。' } : {}) }),
     providerProbes: () => probeRetrier.status(),
     stopProviderProbes: () => probeRetrier.stop(),
     reprobeProvider: (id) => probeRetrier.reprobeNow(id),

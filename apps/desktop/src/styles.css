@@ -1886,14 +1886,22 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .privacy-submit:hover { background: var(--th-ink); }
 .privacy-dialog {
   position: fixed;
-  z-index: 1200;
   inset: 0;
+  margin: 0;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
   padding: 24px;
   background: color-mix(in srgb, var(--th-ink) 28%, transparent);
   backdrop-filter: blur(6px);
 }
+.privacy-dialog:not([open]) { display: none; }
+.privacy-dialog::backdrop { background: transparent; }
 .privacy-card {
   position: relative;
   width: min(420px, 100%);
@@ -5016,3 +5024,82 @@ b, strong { font-weight: 500; }
 
 /* Desktop identity contract; shared avatar CSS also serves the unchanged PWA. */
 body .th-agents { --th-agent-size:var(--th-identity-agent-size); }
+
+/* 管家的屋子：页头是全局导航，内容留给对话。 */
+.dashboard .dash-window { position: relative; grid-template-rows: 72px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) auto; background: var(--th-paper); }
+.dash-topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; border-bottom: 1px solid var(--th-hair); min-width: 0; }
+.dash-topbar nav { display: flex; align-items: center; gap: 24px; }
+.dash-topbar button, .topbar-more summary { background: transparent; border: 0; padding: 0; color: var(--th-ink-soft); font: inherit; font-size: var(--th-size-meta); letter-spacing: var(--th-tracking-meta); cursor: pointer; }
+#topbar-cc { display: flex; align-items: center; gap: 10px; color: var(--th-ink); letter-spacing: 0; }
+#topbar-cc small { color: var(--th-ink-soft); font-size: var(--th-size-small); }
+.topbar-figure { position: relative; width: 48px; height: 48px; }
+.topbar-figure img { position: absolute; inset: 0; width: 48px; height: 48px; object-fit: contain; }
+#topbar-cc[data-cc="here"] .topbar-cc-dark, #topbar-cc:not([data-cc="here"]) .topbar-cc-light { visibility: hidden; }
+#topbar-cc { position: relative; }
+#topbar-cc .now-pet-stage { position: absolute; left: 0; top: 0; width: 48px; height: 48px; pointer-events: none; }
+#topbar-cc .now-pet-sprite { width: 48px; height: 48px; object-fit: contain; }
+#topbar-cc[data-runtime="ready"] .topbar-figure { visibility: hidden; }
+.topbar-more { position: relative; }
+.topbar-more summary { list-style: none; }
+.topbar-more summary::-webkit-details-marker { display: none; }
+.topbar-more > div { position: absolute; right: 0; top: 28px; z-index: 80; min-width: 120px; display: grid; gap: 20px; padding: 20px; background: var(--th-paper); border: 1px solid var(--th-hair); border-radius: var(--th-radius-sheet); }
+.dash-main { grid-column: 1; grid-row: 2; }
+
+.roster-aside { grid-column: 2; grid-row: 2; width: 360px; min-height: 0; overflow: auto; border-left: 1px solid var(--th-hair); background: var(--th-paper); }
+.roster-aside[data-docked] { width: 400px; }
+#roster-list { padding: 24px 20px; }
+.roster-group h2 { margin: 0 0 12px; font-size: var(--th-size-small); font-weight: 400; color: var(--th-ink-soft); display: flex; justify-content: space-between; }
+.roster-group + .roster-group { margin-top: 24px; }
+.roster-group[data-group="waiting"] h2, .roster-group[data-group="waiting"] small { color: var(--th-accent); }
+.roster-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 12px 0; border: 0; background: transparent; text-align: left; font: inherit; color: var(--th-ink); cursor: pointer; }
+.roster-copy { display: grid; gap: 4px; min-width: 0; font-size: var(--th-size-item); overflow-wrap: anywhere; }
+.roster-copy small, #roster-list > p, #roster-list > p small { display: block; color: var(--th-ink-soft); font-size: var(--th-size-small); }
+.roster-avatars { display: flex; align-items: center; flex-shrink: 0; }
+.roster-avatars > span { position: relative; }
+.roster-avatars .th-agent { width: 32px; height: 32px; border: 1px solid var(--th-hair); border-radius: 50%; background: var(--th-paper); }
+.roster-avatars [data-current="true"] .th-agent { border-color: var(--th-ink); }
+.roster-avatars [data-current="false"] { opacity: .5; transform: scale(.85); margin-right: -12px; }
+.roster-group[data-group="waiting"] .th-agent { border-color: var(--th-accent); }
+.roster-empty { display: grid; justify-items: center; align-content: center; min-height: 300px; color: var(--th-ink-soft); }
+.roster-empty img { width: 120px; height: 120px; object-fit: contain; }
+#topbar-roster { display: none; }
+@media (max-width: 1079px) {
+  .roster-aside { display: none; position: absolute; right: 0; top: 72px; bottom: 0; max-width: 100%; z-index: 60; }
+  .roster-aside[data-open] { display: block; }
+  #topbar-roster { display: block; }
+  .dash-topbar nav { gap: 16px; }
+}
+
+#roster-dock { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+#roster-dock[hidden], #roster-list[hidden] { display: none; }
+.roster-dock-toolbar { display: flex; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--th-hair); }
+.roster-dock-toolbar button { border: 0; background: transparent; color: var(--th-ink-soft); font: inherit; font-size: var(--th-size-meta); cursor: pointer; }
+#roster-dock .workbench-pane { position: relative; inset: auto; width: 100%; max-height: none; border: 0; border-radius: 0; z-index: auto; flex: 1; }
+#roster-dock .workbench-pane > .cc-life-topline { display: none !important; }
+#roster-dock .wb-main { min-width: 0; }
+#roster-dock .wb-content-inner, #roster-dock .wb-controls-inner { width: 100%; padding: 16px; }
+#roster-dock .wb-task-head { padding: 16px; }
+#roster-dock .wb-sidebar { display: none; }
+#roster-dock .wb-controls { position: relative; }
+#roster-dock .wb-followup .reply-avatar { flex-shrink: 0; }
+.roster-terminal { padding: 20px; overflow: auto; }
+.roster-terminal textarea { width: 100%; box-sizing: border-box; font: inherit; border: 1px solid var(--th-hair); border-radius: var(--th-radius-bubble); background: transparent; color: var(--th-ink); }
+#roster-dock .wb-followup, #converse-root .converse-compose { border-color: var(--th-hair); }
+#roster-dock .wb-followup:focus-within, #converse-root .converse-compose:focus-within, .roster-terminal textarea:focus { border-color: var(--th-accent); }
+
+#topbar-cc .roster-glance { position: absolute; left: 0; top: 0; width: 48px; height: 48px; object-fit: contain; pointer-events: none; }
+#topbar-cc[data-roster-glance] .now-pet-stage, #topbar-cc[data-roster-glance] .topbar-figure { visibility: hidden; }
+
+@media (max-width: 600px) {
+  .dash-topbar { padding: 0 12px; }
+  .dash-topbar nav { gap: 10px; }
+  #topbar-presence { display: none; }
+}
+@media (max-width: 1079px) and (prefers-reduced-motion: no-preference) {
+  .roster-aside[data-open] { animation: roster-enter 180ms ease-out; }
+  @keyframes roster-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
+}
+
+#roster-dock .wb-history-dialog { width: auto; max-width: 100%; box-sizing: border-box; margin: 0; padding: 0; border: 0; max-height: none; background: transparent; }
+#roster-dock .roster-terminal { min-width: 0; }
+#roster-dock .roster-terminal .wb-handoff-body { min-width: 0; overflow-wrap: anywhere; }

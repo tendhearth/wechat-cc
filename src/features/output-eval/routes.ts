@@ -13,6 +13,7 @@
  * 没有便宜模型 ⇒ 503 eval_no_cheap_model(码在 packages/protocol/src/workbench-errors.ts)。
  * 由 output-eval 模块自己挂(internalApi.mount);模块没起来时路由层回 module_*。
  */
+import { ProjectsActivityFixture, summarizeProjectsActivity, activityWindow } from '../../domain/projects-activity'
 import { workbenchErrorHttp } from '@wechat-cc/protocol'
 import type { RouteTable } from '../../daemon/internal-api/types'
 import type { PickedAsk } from '../../domain/owner-asks'
@@ -130,13 +131,23 @@ export function outputEvalRoutes(runner: EvalRunner): RouteTable {
       try {
         const b = isObj(body) ? body : fail('body 要是 JSON 对象')
         switch (b.kind) {
+          case 'projects-activity': {
+            const parsed=ProjectsActivityFixture.safeParse(b)
+            if(!parsed.success) fail('projects-activity 夹具不合法')
+            const i=parsed.data!
+            try{activityWindow(i.query,Date.parse(i.now))}catch{fail('invalid_window')}
+            call=async()=>{
+              const finalText=JSON.stringify(summarizeProjectsActivity(i.query,i.evidence,Date.parse(i.now)))
+              return {ok:true,kind:'projects-activity',finalText,bubbles:[finalText],silent:false,durationMs:0}
+            };break
+          }
           case 'reply': { const i = replyInput(b); call = () => runner.reply(i); break }
           case 'brief': { const i = briefInput(b); call = () => runner.brief(i); break }
           case 'reference': { const i = referenceInput(b); call = () => runner.reference(i); break }
           case 'topic-recall': { if (b.search) fail('topic-recall 不使用 search'); const i = topicInput(b); call = async () => ({ ...await runner.topic(i), kind: 'topic-recall' }); break }
           case 'topic': { const i = topicInput(b); call = () => runner.topic(i); break }
           case 'judge': { const p = str(b.prompt, 'prompt', PROMPT_MAX); call = () => runner.judge(p); break }
-          default: return fail('kind 只能是 reply / brief / reference / topic / judge')
+          default: return fail('kind 只能是 reply / brief / reference / topic / topic-recall / projects-activity / judge')
         }
       } catch (e) {
         if (e instanceof Invalid) { const h = workbenchErrorHttp('eval_invalid_request', 'desktop'); return { status: h.status, body: { ok: false, error: h.error, detail: e.message } } }

@@ -13,6 +13,24 @@ import {removeTempDir} from '../../lib/test-temp'
 const roots:string[]=[]
 afterEach(()=>{for(const root of roots.splice(0))removeTempDir(root)})
 
+it('rechecks the workbench network guard before retrying without stream_options',async()=>{
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-api-usage-guard-')));roots.push(root)
+  const stateDir=join(root,'state'),project=join(root,'project');mkdirSync(stateDir);mkdirSync(project)
+  const db=openDb({path:join(stateDir,'state.db')}),registry=createProviderRegistry(),tasks=makeWorkbenchStore(db)
+  let calls=0,protectedNow=true
+  const guard={classify:()=>({protected:true,kind:'override' as const,label:'fixture',host:null,reason:'fixture'}),check:async()=>({safe:protectedNow,source:'bx' as const,detail:'offline fixture'})}
+  const fetchSpy=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>{
+    calls++;protectedNow=false
+    return new Response(JSON.stringify({error:{message:'Unsupported parameter: stream_options'}}),{status:400,headers:{'content-type':'application/json'}})
+  })
+  try{
+    expect(registerWorkbenchApi(registry,db,stateDir,{openaiBaseUrl:'https://usage-guard.invalid/v1',openaiModel:'Kimi-Code'},{WECHAT_OPENAI_API_KEY:'fixture'},undefined,undefined,guard)).toBe(true)
+    const task=tasks.create({title:'offline',path:project,providerId:'openai',ownerChatId:'owner'})
+    const session=await registry.get('openai')!.provider.spawn({alias:`workbench:${task.id}`,path:project},{tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:'owner'})
+    try{const events=[];for await(const event of session.dispatch('fixture'))events.push(event);expect(calls).toBe(1);expect(events.some(e=>e.kind==='error')).toBe(true)}finally{await session.close()}
+  }finally{fetchSpy.mockRestore();db.close()}
+})
+
 it('registers the isolated API task adapter without making a network call',()=>{
   const root=mkdtempSync(join(tmpdir(),'cc-register-api-'));roots.push(root);const db=openDb({path:join(root,'state.db')}),registry=createProviderRegistry(),fetchSpy=vi.spyOn(globalThis,'fetch')
   try{

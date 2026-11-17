@@ -438,6 +438,29 @@ describe('createGeminiAgentProvider', () => {
   })
 })
 
+it('stop during a real Gemini approval revokes the card and preserves tool responses before the next turn', async () => {
+  const cards = new Set<string>(), called: string[] = [], seen: any[] = []
+  let answer!: (a: 'allow') => void
+  const responses = [{ functionCalls: [{ name: 'matter_handoff', args: {} }, { name: 'matter_handoff', args: {} }] }, { text: 'next turn' }]
+  const provider = createGeminiAgentProvider({ model: 'offline', systemInstruction: '',
+    genai: { models: { generateContent: async (req: { contents: unknown }) => { seen.push(structuredClone(req.contents)); return responses.shift()! } } } as any,
+    mcpConnect: async () => ({ listTools: async () => [{ name: 'matter_handoff', inputSchema: {} }], callTool: async name => { called.push(name); return { content: [] } }, close: async () => {} }),
+    buildGate: makeGeminiToolGate({ askUser: async (_to, _prompt, hash) => { cards.add(hash); return new Promise<'allow'>(r => { answer = r }) }, revoke: hash => { cards.delete(hash) }, adminFor: () => 'owner', modeFor: () => 'solo', lookupBase: () => ({ askUser: 'per-tool' }) }),
+  })
+  const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'owner' })
+  let finished = false
+  const work = collectTurn(session.dispatch('first')).then(r => { finished = true; return r })
+  try {
+    await expect.poll(() => cards.size).toBe(1)
+    await session.cancel!()
+    await expect.poll(() => finished, { timeout: 200 }).toBe(true)
+    expect(cards.size).toBe(0); expect(called).toEqual([])
+    answer('allow'); await work
+    await collectTurn(session.dispatch('second'))
+    expect(seen[1].flatMap((m: any) => m.parts ?? []).filter((p: any) => p.functionResponse)).toHaveLength(2)
+  } finally { answer?.('allow'); await work; await session.close() }
+})
+
 describe('makeGeminiToolGate', () => {
   function deps(over: Partial<GeminiGateDeps> = {}): GeminiGateDeps {
     return {
@@ -510,4 +533,27 @@ describe('makeGeminiToolGate', () => {
     expect(hashes).toHaveLength(2)
     for (const h of hashes) expect(h).toMatch(/^[A-Za-z0-9]{5}$/)
   })
+})
+
+it('keeps ordinary constructor model selection and boundary cancellation identical to production',async()=>{
+  let request:any,finish!:(value:any)=>void,started!:()=>void
+  const ready=new Promise<void>(r=>started=r)
+  const provider=createGeminiAgentProvider({model:'production-model',systemInstruction:'production',genai:{models:{generateContent:async req=>{
+    request=req;started()
+    return new Promise<any>((resolve,reject)=>{finish=resolve;req.config?.abortSignal?.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')))})
+  }}},mcpConnect:async()=>({listTools:async()=>[],callTool:async()=>({content:[]}),close:async()=>{}}),buildGate:()=>async()=>({allow:true})})
+  const ctx={tierProfile:TIER_PROFILES.admin,permissionMode:'strict' as const,chatId:'offline',model:'spawn-model'}
+  const session=await provider.spawn({alias:'offline',path:'/tmp'},ctx)
+  expect(provider.callTarget?.('session',ctx)?.model).toBe('production-model')
+  const pending=collectTurn(session.dispatch('hello'))
+  await ready
+  await session.cancel?.()
+  finish({functionCalls:[{name:'reply',args:{text:'never send'}}]})
+  const turn=await pending
+  expect(request.model).toBe('production-model')
+  expect(request.config.abortSignal).toBeUndefined()
+  expect(turn.error).toBeUndefined()
+  expect(turn.result).toBeDefined()
+  expect(request.contents).toContainEqual({role:'model',parts:[{text:'[cancelled]'}]})
+  await session.close()
 })

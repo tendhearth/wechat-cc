@@ -8,7 +8,7 @@
  * 半个月没人发现。core/capability-matrix 的 CAPABILITIES_BY_PROVIDER 是能力
  * 的事实源,它的键必须与这里相等(capability-matrix.test 钉死)。
  */
-export const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy'] as const
+export const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy', 'grok'] as const
 export type KnownProviderId = (typeof PROVIDER_IDS)[number]
 
 export function isKnownProviderId(x: unknown): x is KnownProviderId {

@@ -607,13 +607,13 @@ describe('settings panel — 模型与后端', () => {
     return { panel, stateDir, audit, cleanup: () => rmSync(stateDir, { recursive: true, force: true }) }
   }
 
-  it('state().models: six providers with registered/status/model, openai block (no key value), aliases, cheap', () => {
+  it('state().models: seven providers with registered/status/model, openai block (no key value), aliases, cheap', () => {
     const { panel, cleanup } = build()
     try {
       const m = (panel.state() as { models: any }).models
       expect(m.default_provider).toBe('claude')
       const byId = Object.fromEntries(m.providers.map((p: any) => [p.id, p]))
-      expect(Object.keys(byId)).toEqual(['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy'])   // lib/provider-ids order
+      expect(Object.keys(byId)).toEqual(['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy', 'grok'])   // lib/provider-ids order
       expect(byId.claude).toMatchObject({ registered: true, status: 'ok', model: 'claude-opus-5', latency_ms: 120 })
       expect(byId.agy).toMatchObject({ registered: true, status: 'broken', error: 'Not logged in', model: 'gemini-3.7-flash-high' })
       expect(byId.openai).toMatchObject({ registered: true, status: 'unknown', model: 'DeepSeek' })   // registered, never probed
@@ -622,6 +622,30 @@ describe('settings panel — 模型与后端', () => {
       expect(m.openai).toEqual({ base_url: 'https://llm.example/v1', model: 'DeepSeek', has_key: true, aliases: { ds: 'DeepSeek' } })
       expect(JSON.stringify(m)).not.toContain('sk-')
       expect(m.cheap).toBe('auto')
+    } finally { cleanup() }
+  })
+
+  it('mobile setup hints send the owner to desktop without exposing install/login commands', () => {
+    const { panel, cleanup } = build({ registered: ['grok'] })
+    try {
+      const providers = (panel.state() as { models: any }).models.providers
+      const grok = providers.find((p: any) => p.id === 'grok')
+      expect(grok.error).toContain('到电脑上点一下接入')
+      expect(grok.error).not.toMatch(/HOME=|grok login/)
+      const cursor = providers.find((p: any) => p.id === 'cursor')
+      expect(cursor.hint).toContain('到电脑上点一下接入')
+      expect(cursor.hint).not.toMatch(/curl| login/)
+    } finally { cleanup() }
+  })
+
+  it('registered Grok exposes its dedicated login without pretending to have a shared trusted token', () => {
+    const { panel, cleanup } = build({ registered: ['claude', 'grok'] })
+    try {
+      const m = (panel.state() as { models: any }).models
+      expect(m.providers.find((p: any) => p.id === 'grok')).toMatchObject({ status: 'broken', error: expect.stringContaining('Grok 还没在 CC 里登录') })
+      expect(m.shared_token).not.toContain('grok')
+      expect(m.guest_blocked).toContain('grok')
+      expect(m.default_provider).toBe('claude')
     } finally { cleanup() }
   })
 
@@ -676,7 +700,7 @@ describe('settings panel — 模型与后端', () => {
       // …but a guest still can't use it: ACP Cursor edits the workspace without
       // a permission card (guestSafe:false), so it joins the "访客不可用" list.
       // Codex too (2026-10-10): its read-only sandbox can still read any file on the machine.
-      expect([...m.guest_blocked].sort()).toEqual(['agy', 'codex', 'cursor'])
+      expect([...m.guest_blocked].sort()).toEqual(['agy', 'codex', 'cursor', 'grok'])
     } finally { cleanup() }
   })
 

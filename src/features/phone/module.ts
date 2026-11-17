@@ -4,19 +4,20 @@
 import { log } from '../../lib/log'
 import type { DaemonModule } from '../../daemon/modules/container'
 import type { WiredDeps } from '../../daemon/wiring'
+import { enablePhoneRelay } from './remote-toggle'
 import { phoneFeature } from './index'
 
 /**
  * 这里只挂桌面「连接手机」那两条 `/v1/phone/*`;出码要的设置面板在 wired 里建(手机那一簇的装配还在 wiring/wire-phone.ts)
  * ⇒ 经 lazy 现取,没建好照旧 503 phone_not_wired。
  */
-export function phoneModule(): DaemonModule {
+export function phoneModule(stateDir: string): DaemonModule {
   return phoneFeature({
     needs: [],
     lazy: ['wired'],
     deps: (ctx) => {
       const wired = ctx.late<WiredDeps>('wired')
-      return { phoneConnect: () => wired()?.phoneConnect ?? null, log: (t, l) => log(t, l) }
+      return { enableRelay: () => enablePhoneRelay(stateDir), phoneConnect: () => wired()?.phoneConnect ?? null, log: (t, l) => log(t, l) }
     },
   })
 }

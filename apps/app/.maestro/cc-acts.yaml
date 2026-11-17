@@ -49,7 +49,7 @@ appId: com.tendhearth.app
 - assertVisible: 写好了一封信，还没寄出|Wrote a letter, not sent yet
 - takeScreenshot: a03-act-detail-letters
 - assertNotVisible:
-    id: progress-say
+    id: direct-input
 - assertNotVisible:
     id: terminal-say-input
 - assertNotVisible:

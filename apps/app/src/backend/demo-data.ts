@@ -71,6 +71,10 @@ export const copy = {
   chatSeed3: ['作品集那件我先放着，明天接着看？', 'Shall I park the portfolio and pick it up tomorrow?'],
   chatSeed4: ['可以', 'Sounds good'],
   chatDemoReply: ['收到。这是演示模式，真连上你的电脑后，这里就是 CC 本人在回你。', 'Got it. This is the demo; once you pair with your computer, CC itself replies here.'],
+  replyDemoOwner: ['这次是谁在回复？', 'Who is replying?'],
+  replyDemoCc: ['我请 Codex 看一下。', 'I’ll ask Codex to check.'],
+  replyDemoCodex: ['我检查过改动了。', 'I checked the changes.'],
+  replyDemoNotice: ['仅为离线演示。', 'Offline demo only.'],
   // 回复的附件与过程(回复交付,2026-10-04)
   chatDemoNarr1: ['我先看一下你今天的安排。', 'Let me check your day first.'],
   chatDemoNarr2: ['再对一下已经设好的提醒。', 'And the reminders you already have.'],

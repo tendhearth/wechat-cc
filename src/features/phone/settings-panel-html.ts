@@ -214,7 +214,7 @@ async function pollAtelier() {
 }
 function startAtelierPoll() { if (atelierPoll) clearInterval(atelierPoll); atelierPoll = setInterval(pollAtelier, 2000) }
 // ── 模型与后端 ─────────────────────────────────────────────────────────
-var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", openai: "openaiModel", gemini: "geminiModel" };
+var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", grok: "grokModel", openai: "openaiModel", gemini: "geminiModel" };
 // 执行者叫什么只读 daemon 下发的 providers[].name(收敛清单 ⑥),页面不存名字表;老 daemon 不带 ⇒ id
 var PROVIDER_NAME = {};
 function esc(t) { return String(t == null ? "" : t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] }) }
@@ -222,7 +222,7 @@ function statusText(p) {
   if (p.status === "ok") return "✓ 通" + (p.latency_ms != null ? "(" + p.latency_ms + "ms)" : "")
   if (p.status === "broken") return "✗ 不通" + (p.error ? ":" + p.error : "")
   if (p.status === "unknown") return "已接入,还没测过(桌面「大脑」卡可测)"
-  return "未接入" + (p.hint ? " · " + p.hint : "")
+  return "未接入 · 到电脑上点一下接入"
 }
 function renderModels(m) {
   if (!m) return

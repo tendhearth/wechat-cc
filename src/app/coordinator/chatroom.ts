@@ -8,6 +8,7 @@
  *
  * 这里只编排拍子和 latest-wins 抢占;每一拍里每一位的回合交给 TurnRunner。
  */
+import { captureReplyAttribution, withReplyAttribution } from '../../lib/reply-attribution'
 import type { ProviderId } from '../../domain/conversation'
 import { namesIn } from '../provider-registry'
 import type { InboundMsg } from '../../domain/prompt-format'
@@ -188,10 +189,13 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
       const verdictEval = deps.verdictEval ?? deps.haikuEval
       if (verdictEval) {
         let verdict = ''
+        let attribution: import('@wechat-cc/protocol').ReplyAttribution | undefined
         try {
-          verdict = (await verdictEval(buildVerdictPrompt(question, {
+          const evaluated = await captureReplyAttribution(() => verdictEval(buildVerdictPrompt(question, {
             labels, rebuttals, contested: contention.contested, ranking,
-          }))).trim()
+          })))
+          verdict = evaluated.result.trim()
+          attribution = evaluated.attribution
         }
         catch (e) { deps.log('COORDINATOR_CHATROOM', `verdict failed: ${e instanceof Error ? e.message : e}`) }
         if (verdict && !aborter.signal.aborted) {
@@ -199,7 +203,7 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
           // 而这一行恰恰是让「这场辩论有没有用」变得可衡量的东西。
           const footer = [formatRankingFooter(ranking), ...notes].filter(Boolean).join('\n')
           const body = verdict.startsWith('🎯') ? verdict : `🎯 ${verdict}`
-          await deps.sendAssistantText?.(msg.chatId, footer ? `${body}\n\n${footer}` : body)
+          await withReplyAttribution(attribution ?? { speaker: 'cc' }, () => deps.sendAssistantText?.(msg.chatId, footer ? `${body}\n\n${footer}` : body))
         }
       }
     } finally {
@@ -248,8 +252,8 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
           chatId: msg.chatId, tierProfile: auth.tierProfile, permissionMode: auth.permissionMode,
         })
         unlink = runner.linkAbort(signal, () => { void handle.cancel?.() })
-        delivery = deps.replyDelivery.begin(msg.chatId, { context: 'chatroom', providerId, participantLabel: dn, textStrategy: ctx.textStrategyFor(providerId) })
-        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), budget: 'beat', startedAt, turn })
+        delivery = deps.replyDelivery.begin(msg.chatId, { context: 'chatroom', speaker: 'agent', model: handle.callTarget?.().model ?? handle.model, providerId, participantLabel: dn, textStrategy: ctx.textStrategyFor(providerId) })
+        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), budget: 'beat', speaker: 'agent', startedAt, turn, onTurn: ids => delivery?.bindTurn?.(ids) })
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       } finally {

@@ -1,3 +1,6 @@
+import { makeRosterReader } from '../../features/roster'
+import { ownerLedgerConversation } from '../../lib/matter-ledger-access'
+import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
 import { projectActivities } from '../../features/memory'
 import { makeMatterSeen } from '../../adapters/store/matter-seen'
 import { turnJudge } from '../../app/turn-judge'
@@ -13,6 +16,8 @@ import { makeOwnerChatFileReader, ownerChatReadingEvent } from './owner-chat-rea
 import { makeCommandRegistry, yieldNumbersToOpenChoice } from '../commands/registry'
 import { makePermissionAnswer } from '../permission-answer'
 import { choiceTakes, type OpenChoice } from '../inbound/mw-task-reference'
+import { taskHandoffNames, answerTargetProviders, unavailableAnswerNames } from '../task-handoff-names'
+import { matterAnswerTarget, recordAnswerTarget } from '../inbound/answer-target'
 import { makeTaskCommand } from '../commands/task-command'
 import { join } from 'node:path'
 import { memoryFactsFor, recallFromMemory } from '../../features/memory'
@@ -32,9 +37,10 @@ import { makeSelfChangeSpawner, resolveSelfCli } from '../self-change-spawn'
 import { makeModeCommands } from '../mode-commands'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeThreadsStore } from '../../lib/threads-store'
-import { makeTopicRecall } from '../threads/recall'
+import { makeMatterRecall, makeTopicRecall } from '../threads/recall'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeCheapJudge, type TaskCandidate } from '../../features/workbench'
+import { makeCheapAnswerJudge } from '../inbound/answer-fallback'
 import { scopedSend } from '../inbound/reply-scope'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
@@ -142,6 +148,7 @@ export interface BuildPipelineDepsResult {
   /** 桌面「连接手机」(plan 7a)。 */
   phoneConnect: import('../../features/phone').PhoneConnectDep
   /** 「一件事」读写面(有 matters store 才有)。 */
+  roster: ReturnType<typeof makeRosterReader> | null
   mattersService: import('../../app/matters/service').MattersService | null
   /** 退订工作台事件 + 清「一件事」活动时间的节流定时器;main.ts 登记进 shutdown。可重复调用。 */
   stopMatterActivity: () => void
@@ -448,12 +455,29 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  const taskCandidates = ():TaskCandidate[]=>{
+    const since=Date.now()-7*24*60*60_000
+    const tasks=opts.workbench ? opts.workbench.list({archived:'exclude',limit:50}).tasks : []
+    const active=tasks
+      .filter(t=>t.phase!=='cancelled'&&t.updatedAt>=since)
+      .sort((a,b)=>b.updatedAt-a.updatedAt)
+    // 有「一件事」登记处时以它为准:候选就是"最近动过的事",顺序也是它的顺序;任务详情仍从工作台取。
+    const ordered=opts.matters
+      ?(()=>{const byId=new Map(active.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',legacy:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
+      :active
+    return ordered.map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
+  }
+  const matterRecall = makeMatterRecall({
+    candidates: taskCandidates,
+    isOwner: chatId => { const mode = boot.coordinator.getMode(chatId).kind; return chatId === ownerChatId() && (mode === 'solo' || mode === 'primary_tool') },
+    executorName: id => boot.registry.namesOf(id).name,
+  })
   // 话题 T2:每一轮按话题调记忆,只在主人自己的对话里(微信入站在 mw-recall,App 那一轮在 wire-converse)。
   const topicSeen=makeMatterSeen(db,opts.proposals?.desktop),topicExecutorName=(id:string)=>boot.registry.namesOf(id).name
   const topicRecall = makeTopicRecall({
     activity: chatId => projectActivities(db, chatId, topicSeen, undefined, opts.workbench?.projectActivity, topicExecutorName),
     onAdopt: (chatId, requestId, r, messageIds) => makeTopicBubbles(db).adopt(chatId, requestId, 'recall', r.topicIds.map(id => ({ id, entryIds: r.entryIds, messageIds }))),
-    threads: makeThreadsStore(db),
+    threads: makeThreadsStore(db, { filterSources: true }),
     isOwner: (chatId) => chatId === ownerChatId(),
     cheapEval: () => turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log),
     log,
@@ -467,12 +491,26 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     stateDir, boot, careLedger, replySinks, messagesStore, ilink, log,
     appTurn: () => late.appTurn?.() ?? null,
     matters: opts.matters, petSignals: opts.petSignals, stickers: opts.stickers,
-    topicRecall,
+    topicRecall, matterRecall,
   })
 
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
+  const roster = opts.matters ? makeRosterReader({
+    matters:{list:filter=>{
+      const rows=opts.matters!.list(filter),agents=opts.matters!.agents(rows.map(m=>m.id))
+      return rows.map(m=>({...m,agents:agents.get(m.id)??[]}))
+    },get:id=>{
+      const m=opts.matters!.get(id)
+      return m?{...m,agents:opts.matters!.agents([id]).get(id)??[]}:null
+    }},
+    terminals:opts.rosterTerminals??(()=>[]),
+    seen:makeMatterSeen(db,opts.proposals?.desktop),
+    executorName:id=>boot.registry.namesOf(id).name,
+    ...(opts.workbench?{workbench:opts.workbench,relay:opts.workbench.rosterRelay}:{}),
+  }) : null
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
+    onSayTarget: ({ requestId, matterId }) => recordAnswerTarget(log, requestId, matterAnswerTarget(matterId)),
     ownerChatId,
     // 执行者叫什么(收敛清单 ⑥):唯一出处是 registry,三端只读 agentNames。
     executorName: (id: string) => boot.registry.namesOf(id).name,
@@ -512,7 +550,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // 簇里的环在 wirePhone 里面解(显式的 late 对象);这里只拿结果。关机停它的那一项 main.ts 登记在 polling 之前。
   const phone = wirePhone({
     opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore,
-    ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, speech,
+    ownerChatId, matterActivity, companionConverse, mattersService, roster, memoryNightly, speech,
     ...(opts.proposals ? { proposals: opts.proposals } : {}),
   })
   phoneDevices.current = () => phone.settingsPanel.phoneDevices().length
@@ -615,7 +653,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const consumePermissionAnswer = makePermissionAnswer({ ilink, log })
   const commandRegistry = makeCommandRegistry([
     // 「任务 …」(工作台控制,步 4):排第一 —— 以前是单独一种 intent,排在整张命令表之前。
-    ...(opts.workbench ? [makeTaskCommand({ handleWechat: opts.workbench.handleWechat, sendMessage: (chatId: string, text: string) => send(chatId, text, { source: 'workbench' }) })] : []),
+    ...(opts.workbench ? [makeTaskCommand({ handoffExecutors: () => taskHandoffNames(boot.registry, loadAgentConfig(stateDir)), handleWechat: opts.workbench.handleWechat, sendMessage: (chatId: string, text: string) => send(chatId, text, { source: 'workbench' }) })] : []),
     // 管理员命令一条一行(第三批 3d,admin-commands.ts 的 commands()):admin.owner-only(非主人发显式命令)+ admin.<id>,两两互斥
     ...adminCommandsHandler.commands(),
     // 斜杠命令一条一行(第三批 3d,mode-commands.ts 的 commands()):mode.provider / set / … / help,最后 mode.unknown 是 /词兜底
@@ -660,22 +698,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
     ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c,undefined,'wechat'),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
     ...(opts.workbench?{taskReference:{
+      handoffExecutors: () => taskHandoffNames(boot.registry, loadAgentConfig(stateDir)),
       ownerChatId,
       noteChoice:(c:string,e:OpenChoice|null)=>{ if(e===null) butlerChoice.delete(c); else butlerChoice.set(c,e) },
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
       // 时它得还在;焦点指向的任务失败了也不能凭空消失(真机 2026-09-16:Codex 额度耗尽
       // 把任务打成 failed,焦点随之静默失效,后面两句掉进了普通聊天)。项目显示名用目录名。
-      candidates:():TaskCandidate[]=>{
-        const since=Date.now()-7*24*60*60_000
-        const tasks=opts.workbench!.list({archived:'exclude',limit:50}).tasks
-          .filter(t=>t.phase!=='cancelled'&&t.updatedAt>=since)
-          .sort((a,b)=>b.updatedAt-a.updatedAt)
-        // 有「一件事」登记处时以它为准:候选就是"最近动过的事",顺序也是它的顺序;任务详情仍从工作台取。
-        const ordered=opts.matters
-          ?(()=>{const byId=new Map(tasks.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',legacy:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
-          :tasks
-        return ordered.map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
-      },
+      candidates: taskCandidates,
       // 额度止损:这家耗尽就不再往它送,问"交给另一位继续?";「是」就在同一文件夹给另一位新开一件。
       quotaExhausted:(id:string)=>opts.workbench!.quotaExhausted(id),
       fallbackExecutor:(id:string)=>opts.workbench!.fallbackExecutor(id),
@@ -696,6 +725,17 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     }}:{}),
     // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。
     route: {
+      judge: async input => {
+        const fast = turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log)
+        return fast ? makeCheapAnswerJudge(fast)(input) : null
+      },
+      sendMessage: (chatId, text) => send(chatId, text, { source: 'workbench' }),
+      providers: () => answerTargetProviders(boot.registry, id => {
+        const entry = boot.registry.get(id)
+        if (!entry || opts.workbench?.quotaExhausted(id)) return false
+        try { return !entry.opts.bin || entry.opts.bin() !== null } catch { return false }
+      }),
+      unavailableNames: () => unavailableAnswerNames(boot.registry),
       probes: {
         command: (ctx) => commandRegistry.probe(ctx.msg),
       },
@@ -739,6 +779,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       isAdmin,
       log,
       topics: topicRecall,
+      matters: matterRecall,
       // Non-admin lane — deterministic keyword recall over the chat's OWN
       // memory files only (same subtree memory_read grants it). Sync under
       // the hood; wrapped to satisfy the middleware's async contract.
@@ -811,5 +852,22 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const petTurn = wirePetTurn({ stateDir, ilink: opts.ilink, petSignals: opts.petSignals, boot, messagesStore, activities:()=>opts.workbench?.petActivities()??[] })
 
 
-  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  // 分享出去的一件事里 CC 回应来的人(features/workbench/service/share.ts)。**只用验证过一次性调用不带工具的那两家**:
+  // OpenAI 兼容(纯 chat completion)和 Claude(tools: [])。Codex 的一次性调用是只读沙箱但仍能读盘跑命令,Cursor / agy 没验证过,
+  // 所以不走 registry.getCheapEval() 的回退链 —— 这两家都没有就不回(评审 11-15)。提议只转告主人(经开口那道门),这里没有通向执行者的路。
+  // 回话期间持 busy,空闲自重启不在半句话上打断。
+  if (opts.workbench) {
+    opts.workbench.shareResponder({
+      eval: async (prompt) => {
+        const plain = (['openai', 'claude'] as const).map(id => boot.registry.get(id)?.provider.cheapEval).find(fn => !!fn)
+        const cheap = plain ? wrapCheapEvalWithAuthFailCheck(plain, (tag, line) => log(tag, line)) : null
+        if (!cheap) return null
+        let release: (() => void) | undefined
+        try { release = boot.holdBusy?.('share-reply') } catch { release = undefined }
+        try { return await cheap(prompt) } finally { try { release?.() } catch { /* 只是登记 */ } }
+      },
+      tellOwner: (text) => { const owner = ownerChatId(); if (owner) void speech.tell('share_talk', owner, text).catch(err => log('SHARE', `tell owner failed: ${err instanceof Error ? err.message : String(err)}`)) },
+    })
+  }
+  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, roster, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices(), ...(opts.workbench ? { share: { link: (id: string, name: unknown, mode?: unknown) => settingsPanel.shareLink(id, name, mode), list: (id: string) => opts.workbench!.shareList(id), revoke: (id: string, shareId: string) => opts.workbench!.shareRevoke(id, shareId), setMode: (id: string, shareId: string, mode: unknown) => opts.workbench!.shareSetMode(id, shareId, mode), talk: (id: string) => opts.workbench!.shareTalk(id), say: (id: string, text: string) => opts.workbench!.shareTalkAdd(id, 'owner', '', text), ownerConversation: (caller: unknown) => ownerLedgerConversation(ownerChatId(), caller as Parameters<typeof ownerLedgerConversation>[1]), titleOf: (id: string) => opts.workbench!.shareTitle(id), consume: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalConsume('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]), approved: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalStatus('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]) } } : {}) } }
 }

@@ -43,3 +43,8 @@ const CONNECT_RE = new RegExp(CONNECT_FAILURE_SOURCE, 'i')
 export function isConnectFailure(text: unknown): boolean {
   return typeof text === 'string' && CONNECT_RE.test(text)
 }
+
+/** 系统明确说网络/路由不可达时直接停手,不要把离线当作短暂 socket 抖动。 */
+export function isOfflineErrorCode(code:unknown):boolean{
+  return typeof code==='string'&&/^(ENETDOWN|ENETUNREACH|EHOSTUNREACH)$/.test(code)
+}

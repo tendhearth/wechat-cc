@@ -1,5 +1,6 @@
+import { checkupEstimateSummary, replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protocol'
 import { demoTopics } from './demo-topics'
-import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES } from '@wechat-cc/protocol'
+import { checkupReview, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, type CheckupView, type CheckupProfile, type CheckupAttempt } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_PORTRAIT_PNG, DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT, type TodoStatus } from './types'
@@ -9,7 +10,7 @@ import {
   demoName, demoNames, demoCcActs,
 } from './demo-data'
 
-type Topic = 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`
+type Topic = 'roster' | 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`
 type Copy = keyof typeof copy
 /** 事件记录:带 key 的在读时按请求的语言生成文案;text 是用户自己的字,原样保留。 */
 type EvRec = { kind: string; createdAt: number; key?: Copy; extra?: string; text?: string }
@@ -17,14 +18,14 @@ type Entry = { detail: MatterDetailT; stage: Stage; version: number; evs: EvRec[
 const DAY = 86_400_000
 const HOUR = 3_600_000
 /** 主人对话里的一条:key 的在读时按语言出文案;text 是用户自己的字。 */
-type ChatRec = { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source']; narr?: Copy[]; atts?: DemoAtt[] }
+type ChatRec = Partial<ReplyAttribution> & { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source']; narr?: Copy[]; atts?: DemoAtt[] }
 /** 演示回复的附件:文案按语言生成;表情有 file ⇒ 走 sticker() 取图,没有 ⇒ 联网表情只写情绪。 */
 type DemoAtt = { kind: 'voice'; key: Copy } | { kind: 'sticker'; label: Copy; file?: string } | { kind: 'file'; name: string }
 
 /** 演示里 CC 回一句要多久:「在想…」留得够久,主人看得见,模拟器 UI 测试(一次点击 2 秒多)也看得见。 */
 export const DEMO_CHAT_REPLY_MS = 5000
 
-export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
+export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang; chatFixture?: 'reply-speaker' } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
   const topicOpened = new Map<string, string>()
   const topicTitles = new Map<string,string>(), topicDeleted = new Set<string>(), topicMerged = new Map<string,string>()
@@ -52,6 +53,19 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const uploads = new Map<string, UploadStateT>()
   // 演示:主人对话的后端 / 模型
   let demoChatModel: ChatModelViewT = { mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'openai', name: 'API' }] }
+  // Checkup demo: synthetic records only, with no model calls or persistence.
+  const checkupProfiles = new Map<string, CheckupProfile>(), checkupAttempts = new Map<string, CheckupAttempt>()
+  let checkupPeriodic = false, checkupGeneration = 0
+  let checkupActive: { key: string; generation: number } | null = null
+  const checkupTarget = () => ({ provider: demoChatModel.provider, address: 'https://synthetic.invalid', model: demoChatModel.model ?? demoChatModel.globalModel ?? 'synthetic-model', windowTokens: 8000, windowKnown: false })
+  const checkupTargetKey = () => { const x = checkupTarget(); return `demo-checkup:${x.provider}:${x.model}` }
+  const checkupProfile = (good = false): CheckupProfile => {
+    const x = checkupTarget(), ratio=(value:number)=>({passed:value*2,total:2,ratio:value}),qualities={memory:ratio(good?1:0),tracking:ratio(1),honesty:ratio(1),discretion:ratio(good?1:.5),stance:ratio(1),privacy:ratio(1),persona:{passed:0,total:0,ratio:null}}
+    return { provider: x.provider, addressHash: 'synthetic-only', model: x.model, windowTokens: x.windowTokens, windowKnown: false, interview:{version:'interview-v3',name:'CC',reliableDay:good?'一周':null,qualities,business:ratio(good?1:.5),stanceActions:{total:2,acted:0,reported:2}}, reliableFillRatio: good ? .25 : 0, stages: [{ fillRatio: .1, accuracy: 1 }, { fillRatio: .25, accuracy: good ? 1 : 0 }], memory: good ? 'good' : 'weak', tools: good ? 'stable' : 'flaky', toolAccuracy: good ? 1 : .5, firstTextMedianMs: 250, completionMedianMs: 1000, testedAt: new Date(now()).toISOString(), ccVersion: 'demo', short: true, seed: 113 }
+  }
+  const checkupView = (): CheckupView => { const data:CheckupView=JSON.parse(JSON.stringify({ target: checkupTarget(), profile: checkupProfiles.get(checkupTargetKey()) ?? null, attempt: checkupAttempts.get(checkupTargetKey()) ?? null, suspectedChanged: false, periodicProbe: checkupPeriodic }));return {...data,review:checkupReview(data)} }
+  function seedCheckup() { checkupProfiles.clear(); checkupAttempts.clear(); checkupPeriodic = false; checkupActive = null; ++checkupGeneration; checkupProfiles.set(checkupTargetKey(), checkupProfile()) }
+  seedCheckup()
   // 演示用的几条记忆(只在内存里;纠错会真的拿掉)
   const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
   // 收回的话(演示):逐条纠错拿掉的那句挪到这里;恢复就放回去
@@ -144,11 +158,27 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     ], 'reportTitle')
     // 主人和 CC 的那条对话:也是一件 chat matter(daemon 的 /m/api/matters 也会列它),内容走 chat()。
     add(mkDetail({ ...mkMatter(CHAT_ID, 'chat', t(lastLang, 'chatTitle'), 'open', null, n - HOUR), ownerChatId: 'demo-owner' }, null), 'replied', [], 'chatTitle')
+    const portfolio=map.get(IDS.portfolio)!.detail
+    portfolio.agentRuns=[
+      {matterId:IDS.portfolio,runId:'demo-assets',executor:'codex',brief:lastLang==='zh-Hans'?'整理页面素材':'Prepare page assets',position:1,status:'completed',createdAt:n-600_000,endedAt:n-300_000},
+      {matterId:IDS.portfolio,runId:RUN_IDS[IDS.portfolio]!,executor:'claude',brief:lastLang==='zh-Hans'?'把素材接进页面':'Use the assets on the page',position:2,status:'running',createdAt:n-300_000,endedAt:null},
+    ]
+    portfolio.notes=[{id:1,matterId:IDS.portfolio,runId:'demo-assets',author:'codex',kind:'note',text:lastLang==='zh-Hans'?'素材在 assets/portfolio/，沿用浅色版。':'Assets are in assets/portfolio/. Use the light version.',createdAt:n-300_000},
+      {id:2,matterId:IDS.portfolio,runId:'demo-assets',author:'codex',kind:'artifact',text:'2 files · assets/portfolio/hero.webp · demo123 · ~/Projects/portfolio',createdAt:n-300_000}]
+    const notes = map.get(IDS.notes)!.detail
+    notes.agentRuns = ['codex', 'claude', 'codex'].map((executor, position) => ({matterId:IDS.notes,runId:`demo-notes-${position}`,executor,brief:'',position,status:position===0?'completed':position===1?'running':'queued',createdAt:n-DAY,endedAt:position===0?n-DAY:null}))
+    notes.runId = 'demo-notes-1'
+    notes.matter.agents = ['claude', 'codex']
     return { map, ids }
   }
   function seedChat() {
     const n = now()
-    chatMsgs = [
+    chatMsgs = opts.chatFixture === 'reply-speaker' ? [
+      { id: 'reply-demo-owner', role: 'me', key: 'replyDemoOwner', at: n - 4_000, source: 'phone' },
+      { id: 'reply-demo-cc', role: 'cc', key: 'replyDemoCc', at: n - 3_000, source: 'phone', speaker: 'cc', provider: 'claude' },
+      { id: 'reply-demo-codex', role: 'cc', key: 'replyDemoCodex', at: n - 2_000, source: 'phone', speaker: 'agent', provider: 'codex' },
+      { id: 'reply-demo-notice', role: 'cc', key: 'replyDemoNotice', at: n - 1_000, source: 'phone', speaker: 'notice', provider: 'cursor' },
+    ] : [
       { id: 'demo-chat-1', role: 'cc', key: 'chatSeed1', at: n - 3 * HOUR, source: 'wechat' },
       { id: 'demo-chat-2', role: 'me', key: 'chatSeed2', at: n - 3 * HOUR + 120_000, source: 'wechat' },
       { id: 'demo-chat-3', role: 'cc', key: 'chatSeed3', at: n - 2 * HOUR, source: 'desktop', atts: [{ kind: 'file', name: 'portfolio-notes.md' }] },
@@ -163,7 +193,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   function seedCompanion() { huntAt = now() - 40 * 60_000; seenUntil = null }
   function seed() { const b = buildSeed(); entries = b.map; order = b.ids; seedChat(); seedCompanion() }
   const chatText = (m: ChatRec, l: Lang) => (m.key ? t(l, m.key) : m.text ?? '')
-  const chatExtras = (m: ChatRec, l: Lang): Pick<ChatMessageT, 'attachments' | 'narration'> => ({
+  const chatExtras = (m: ChatRec, l: Lang): Pick<ChatMessageT, 'attachments' | 'narration'> & Partial<ReplyAttribution> => ({
+    ...replyAttributionFields(m),
     ...(m.narr?.length ? { narration: m.narr.map(k => t(l, k)) } : {}),
     ...(m.atts?.length ? { attachments: m.atts.map(a => a.kind === 'voice' ? { kind: 'voice' as const, text: t(l, a.key) } : a.kind === 'sticker' ? { kind: 'sticker' as const, label: t(l, a.label), ...(a.file ? { file: a.file } : {}) } : a) } : {}),
   })
@@ -177,7 +208,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     d.matter.title = title
     if (d.task) d.task.title = title
     d.questions = d.questions.map(q => (q.id === QUESTION_ID ? tripQuestion(l, q.createdAt) : q))
-    if (d.matter.id === CHAT_ID) d.events = chatMsgs.map(m => ({ kind: m.role === 'me' ? 'user' : 'text', createdAt: m.at, text: chatText(m, l) }))
+    if (d.matter.id === CHAT_ID) d.events = chatMsgs.map(m => ({ kind: m.role === 'me' ? 'user' : 'text', createdAt: m.at, text: chatText(m, l), ...replyAttributionFields(m) }))
     // 跟 daemon 一样带上这件事里出现过的执行者叫什么(收敛清单 ⑥)
     const q = d.quotaHandoff
     const names = demoNames([...(d.matter.agents ?? []), d.task?.providerId, d.nativeStart?.providerId, q?.from, q && 'to' in q ? q.to : undefined])
@@ -279,6 +310,17 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       set.add(cb)
       cb(snapshot(topic as Topic) as never)
       return () => { set!.delete(cb) }
+    },
+    async roster() {
+      const ids = [IDS.portfolio, IDS.trip, IDS.notes, IDS.report]
+      return { version: 'demo-roster:1', items: ids.map((id, i) => ({
+        key: `matter:${id}`, kind: 'matter' as const, id, title: entries.get(id)!.detail.matter.title,
+        project: 'Tendhearth CC', group: (['waiting', 'working', 'working', 'back'] as const)[i]!,
+        status: (['waiting', 'working', 'working', 'done'] as const)[i]!,
+        agents: i === 2 ? [{ id: 'claude', name: demoName('claude'), current: true }, { id: 'codex', name: demoName('codex'), current: false }] : [{ id: i === 1 ? 'codex' : 'claude', name: demoName(i === 1 ? 'codex' : 'claude'), current: true }],
+        ...(i === 2 ? { relay: { index: 2, total: 3 } } : {}),
+        quiet: false, updatedAt: now(), unseen: i === 3,
+      })) }
     },
     async topics(p) { return topicsList(p) },
     async topicDetail(p) {
@@ -462,6 +504,33 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { ...DEMO_STICKER }
     },
     async connections() { return demoConnections(lastLang, now()) },
+    async checkup() { return checkupView() },
+    async checkupEstimate() { const quote={requests:56,maxRequests:120,inputTokens:146000,outputTokens:81200,maxOutputTokens:350000,windowKnown:false,targetKey:checkupTargetKey()}; return {...quote,summary:checkupEstimateSummary(quote)} },
+    async checkupRun(expectedTargetKey) {
+      if (expectedTargetKey !== checkupTargetKey()) throw new BackendError('stale')
+      if (checkupActive) throw new BackendError('busy')
+      const key = checkupTargetKey(), generation = ++checkupGeneration, initialEpoch = epoch
+      checkupActive = { key, generation }
+      checkupAttempts.set(key, { status: 'running', completedRequests: 0, totalRequests: 28, startedAt: new Date(now()).toISOString() })
+      const result = checkupProfile(true)
+      schedule(() => {
+        if (epoch !== initialEpoch || checkupActive?.generation !== generation) return
+        const attempt = checkupAttempts.get(key)!
+        checkupProfiles.set(key, { ...result, testedAt: new Date(now()).toISOString() })
+        checkupAttempts.set(key, { ...attempt, status: 'completed', completedRequests: 28, finishedAt: new Date(now()).toISOString() })
+        checkupActive = null
+      }, 6000)
+      return checkupView()
+    },
+    async checkupCancel() {
+      if (checkupActive) {
+        const key = checkupActive.key, attempt = checkupAttempts.get(key)!
+        checkupAttempts.set(key, { ...attempt, status: 'cancelled', finishedAt: new Date(now()).toISOString() })
+        checkupActive = null; ++checkupGeneration
+      }
+      return checkupView()
+    },
+    async checkupSettings(periodicProbe) { checkupPeriodic = periodicProbe; return checkupView() },
     async sessions(provider, _cursor, q) {
       if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
       const needle = q?.trim().toLowerCase() ?? ''
@@ -784,6 +853,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { topicTitles.clear();topicDeleted.clear();topicMerged.clear();topicWrong=false;topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
+    reset() { seedCheckup(); topicTitles.clear();topicDeleted.clear();topicMerged.clear();topicWrong=false;topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }

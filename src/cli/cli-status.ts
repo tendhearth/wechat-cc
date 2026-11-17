@@ -60,13 +60,9 @@ function printAccounts(): void {
 }
 
 export interface RunStatusDeps {
+  ownerContext?: () => Promise<import('@wechat-cc/protocol/desktop-api').OwnerContextStatusT[] | null>
   /** 开机探测失败、正在重探的 provider(daemon 的 /v1/health.provider_probes)。null = 不知道。 */
   providerProbes?: () => Promise<import('./daemon-health').ProviderProbeRow[] | null>
-}
-
-async function defaultProviderProbes(): Promise<import('./daemon-health').ProviderProbeRow[] | null> {
-  const { fetchDaemonHealth, providerProbesFrom } = await import('./daemon-health')
-  return providerProbesFrom(await fetchDaemonHealth(STATE_DIR))
 }
 
 export async function runStatus(cmd: 'status' | 'list', deps: RunStatusDeps = {}): Promise<void> {
@@ -80,9 +76,11 @@ export async function runStatus(cmd: 'status' | 'list', deps: RunStatusDeps = {}
   if (alive && pid != null) {
     console.log(`daemon: running (pid=${pid})`)
     // 2026-10-04:开机 `--version` 探测失败的 provider 不再永久掉线,后台退避重探 —— 在这里看得见。
-    const { formatProviderProbes } = await import('./daemon-health')
-    const rows = await (deps.providerProbes ?? defaultProviderProbes)().catch(() => null)
-    for (const line of formatProviderProbes(rows)) console.log(line)
+    const { fetchDaemonHealth, providerProbesFrom, formatProviderProbes, ownerContextFrom, formatOwnerContext } = await import('./daemon-health')
+    const health = !deps.providerProbes || !deps.ownerContext ? await fetchDaemonHealth(STATE_DIR) : null
+    const rows = deps.providerProbes ? await deps.providerProbes().catch(() => null) : providerProbesFrom(health)
+    const context = deps.ownerContext ? await deps.ownerContext().catch(() => null) : ownerContextFrom(health)
+    for (const line of [...formatProviderProbes(rows), ...formatOwnerContext(context)]) console.log(line)
   } else if (pid != null) {
     console.log(`daemon: stale pid file (pid=${pid}, process not found)`)
   } else {

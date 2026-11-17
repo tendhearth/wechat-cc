@@ -47,10 +47,11 @@ describe('provider 名单都以 provider-ids.ts 为准', () => {
     expect(Object.values(PROVIDER_SLASH).sort()).toEqual(expected)
   })
 
-  it('桌面「选择已有账号」芯片只列订阅 CLI 三家,且都是真 id', () => {
+  it('桌面「选择已有账号」芯片由 daemon 的一键接入表给(11-16 起),桌面不再写死 id 列表;表里都是真 id', async () => {
     const src = read('apps', 'desktop', 'src', 'main.js')
-    const m = /\['claude','codex','cursor'\]\.map/.exec(src)
-    expect(m, 'main.js nb-cli 芯片列表形状变了,更新这条守卫').toBeTruthy()
-    for (const id of ['claude', 'codex', 'cursor']) expect(IDS).toContain(id)
+    expect(src, 'main.js nb-cli 应走 openCliChoices,不在桌面写死芯片 id').toContain('openCliChoices(deps)')
+    expect(/\[\s*'claude'\s*,\s*'codex'\s*,\s*'cursor'/.test(src), 'main.js 又写死了执行者 id 列表').toBe(false)
+    const { CLI_SETUP_IDS } = await import('../src/lib/executor-cli-setup')
+    for (const id of CLI_SETUP_IDS) expect(IDS).toContain(id)
   })
 })

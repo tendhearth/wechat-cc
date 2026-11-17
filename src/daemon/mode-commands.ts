@@ -1,3 +1,6 @@
+import { CLI_SETUP_IDS } from '../lib/executor-cli-setup'
+import { taskHandoffNames } from './task-handoff-names'
+import { isTaskHandoffCommand } from '../features/workbench'
 /**
  * mode-commands — slash commands that switch a chat's Conversation Mode
  * (RFC 03 §4.1 P2 scope).
@@ -289,7 +292,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           '',
           '**模式切换**',
           // Provider checklist: keep this list in sync with /mode's list below (~:434).
-          `/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)。当前可用: ${availableSlashes()}`,
+          `/cc /codex /cursor /api /gemini /agy /grok — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)。当前可用: ${availableSlashes()}`,
           '/gemini 是 API key 版(已弃用,保留给已配 GEMINI_API_KEY 的人);新接入请用 /agy。',
           '/agy 是订阅 CLI:所有对话共用一把钥匙,guest 不可用。/cursor 同为订阅 CLI,按对话分权限,但它在工作区内的文件编辑不经过权限卡,guest 同样不可用。',
           '/api list — 看网关上有哪些模型;/api <别名|模型> 切换(只对本对话);/api alias ds=DeepSeek 起短名',
@@ -359,7 +362,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       }
       if (tail === '') {
         if (!deps.registry.has(providerId)) {
-          await reply(msg.chatId, `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
+          await reply(msg.chatId, (CLI_SETUP_IDS as readonly string[]).includes(providerId) ? `provider \`${providerId}\` 未注册。到电脑上点一下接入。可用: ${deps.registry.list().join(', ')}` : `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
           return true
         }
         deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId })
@@ -468,7 +471,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           return true
         }
         if (!deps.registry.has(providerId)) {
-          await reply(msg.chatId, `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
+          await reply(msg.chatId, (CLI_SETUP_IDS as readonly string[]).includes(providerId) ? `provider \`${providerId}\` 未注册。到电脑上点一下接入。可用: ${deps.registry.list().join(', ')}` : `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
           return true
         }
         // 别名先解(只对 openai):ds → DeepSeek。解不到再问网关:名字在网关列表里才切,
@@ -546,7 +549,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '/set provider 是全局设置,仅管理员可改。'); return true }
         if (!deps.setConfig) { await reply(msg.chatId, '配置写入未接线。'); return true }
         const target = rawValue.toLowerCase() === 'cc' ? 'claude' : rawValue.toLowerCase() === 'api' ? 'openai' : rawValue.toLowerCase()
-        if (!deps.registry.has(target)) { await reply(msg.chatId, `provider \`${target}\` 未注册。可用: ${deps.registry.list().join(', ')}`); return true }
+        if (!deps.registry.has(target)) { await reply(msg.chatId, (CLI_SETUP_IDS as readonly string[]).includes(target) ? `provider \`${target}\` 未注册。到电脑上点一下接入。可用: ${deps.registry.list().join(', ')}` : `provider \`${target}\` 未注册。可用: ${deps.registry.list().join(', ')}`); return true }
         if (target === deps.defaultProviderId) { await reply(msg.chatId, `默认已经是 ${target},不用改。`); return true }
         const r = await deps.setConfig('provider', target)
         if (!r.ok) { await reply(msg.chatId, `没改成:${r.detail ?? r.error}`); return true }
@@ -872,7 +875,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           id: 'mode.unknown',
           group: 'mode',
           slashCatchAll: true,
-          probe: (m) => COMMAND_REGEX.test(m.text),
+          probe: (m) => COMMAND_REGEX.test(m.text) && !isTaskHandoffCommand(m.text, taskHandoffNames(deps.registry, deps.readConfig?.())),
           handle: async (m) => { const p = parse(m); return !!p && handleUnknown(m, p.slashWord) },
         },
       ]

@@ -31,6 +31,8 @@ export interface SqlTransaction<A extends any[], T> {
   exclusive: (...args: A) => T
 }
 export interface SqlDatabase {
+  /** Native transaction state, including manually started transactions. */
+  readonly inTransaction: boolean
   query<ReturnType, ParamsType extends SqlBinding | SqlBinding[]>(sql: string): SqlStatement<ReturnType, Params<ParamsType>>
   prepare<ReturnType, ParamsType extends SqlBinding | SqlBinding[]>(sql: string, params?: ParamsType): SqlStatement<ReturnType, Params<ParamsType>>
   /** 只接 SQL 文本:仓库里没人给 exec 传绑定,Bun 的带绑定形式也照样满足这个签名。 */
@@ -118,6 +120,7 @@ interface NodeStatement {
   iterate(...params: unknown[]): IterableIterator<unknown>
 }
 interface NodeDatabaseSync {
+  readonly isTransaction: boolean
   prepare(sql: string): NodeStatement
   exec(sql: string): void
   close(): void
@@ -165,6 +168,7 @@ class NodeDatabase implements SqlDatabase {
     const { path, readOnly } = parseUri(filename, options)
     this.db = new (nodeSqlite().DatabaseSync)(path, { readOnly })
   }
+  get inTransaction(): boolean { return this.db.isTransaction }
   query<R, P extends SqlBinding | SqlBinding[]>(sql: string): SqlStatement<R, Params<P>> {
     let statement = this.cache.get(sql)
     if (!statement) { statement = this.db.prepare(sql); this.cache.set(sql, statement) }

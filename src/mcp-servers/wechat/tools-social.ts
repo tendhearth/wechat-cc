@@ -81,18 +81,26 @@ function registerRefPost(
  * 不能因为一次读失败把主人开着的社交弄丢。最多等 2 秒,不拖住会话启动。
  */
 export async function socialIsUp(client: InternalApiClient, timeoutMs = 2_000): Promise<boolean> {
+  return await socialUnavailable(client, timeoutMs) === null
+}
+
+/** Preserve the module gate's off/degraded distinction for parallel registration. */
+export async function socialUnavailable(client: InternalApiClient, timeoutMs = 2_000): Promise<{ error: 'module_off' | 'module_degraded'; module: 'social'; detail?: string } | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    let timer: ReturnType<typeof setTimeout> | undefined
     const health = await Promise.race([
-      client.request<{ subsystems?: Array<{ name: string; state: string }> }>('GET', '/v1/health'),
+      client.request<{ subsystems?: Array<{ name: string; state: string; error?: string }> }>('GET', '/v1/health'),
       new Promise<null>(r => { timer = setTimeout(() => r(null), timeoutMs) }),
     ])
-    if (timer) clearTimeout(timer)
     const social = health?.subsystems?.find(s => s.name === 'social')
-    return !social || social.state === 'ok'
+    if (!social || social.state === 'ok') return null
+    return {
+      error: social.state === 'off' ? 'module_off' : 'module_degraded', module: 'social',
+      ...(social.state !== 'off' && social.error ? { detail: social.error } : {}),
+    }
   } catch {
-    return true
-  }
+    return null
+  } finally { if (timer) clearTimeout(timer) }
 }
 
 export function registerSocialTools(server: McpServer, client: InternalApiClient): void {

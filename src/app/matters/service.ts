@@ -1,4 +1,5 @@
-import type { ListMatters, Matter, MatterActStep, MatterActTurn, MatterBinding, MatterLog, MatterOrigin, MatterSession, MatterStore, MatterTurn, SayReceipts } from '../../ports/matters'
+import {replyMetadataFields} from '@wechat-cc/protocol'
+import type { ListMatters, Matter, MatterActStep, MatterActTurn, MatterBinding, MatterLog, MatterOrigin, MatterSession, MatterStore, MatterTurn, SayReceipts, MatterAgent, MatterNote } from '../../ports/matters'
 import {randomUUID} from '../../lib/random'
 import type { PendingWorkbenchPermission, PermissionDecision, PendingUserInput, Artifact, LiveInput, Attachment } from '../../ports/workbench'
 import { normalizeInputRequestId } from '../../domain/workbench/input-request-id'
@@ -29,7 +30,7 @@ export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'at
 // 只投影显示材料所需的五个字段；不能把内部存储路径、owner 或草稿身份带到手机。
 const publicMaterials=(attachments?:readonly Attachment[])=>attachments?.length?{attachments:attachments.map(({id,name,mime,size,sha256})=>({id,name,mime,size,sha256}))}:{}
 const publicInput=({id,taskId,runId,text,status,attachments}:MatterInput):MatterInput=>({id,taskId,runId,text,status,...publicMaterials(attachments)})
-const publicEvent=({kind,text,createdAt,source,attachments,errorCode,diagnostic,activity,messageId,replyExtras}:MatterDetailEvent):MatterDetailEvent=>({kind,text,createdAt,...(messageId?{messageId}:{}),...(replyExtras?{replyExtras}:{}),...(source!==undefined?{source}:{}),...(kind==='tool_call'&&activity&&typeof activity.status==='string'?{activity:{type:String(activity.type),status:activity.status,label:String(activity.label??'').slice(0,200)}}:{}),...publicMaterials(attachments),...(kind==='error'&&errorCode==='execution_model_unsupported'?{errorCode,...(typeof diagnostic==='string'?{diagnostic}:{} )}:{})})
+const publicEvent=({kind,text,createdAt,source,attachments,errorCode,diagnostic,activity,messageId,replyExtras,...attribution}:MatterDetailEvent):MatterDetailEvent=>({kind,text,createdAt,...replyMetadataFields(attribution),...(messageId?{messageId}:{}),...(replyExtras?{replyExtras}:{}),...(source!==undefined?{source}:{}),...(kind==='tool_call'&&activity&&typeof activity.status==='string'?{activity:{type:String(activity.type),status:activity.status,label:String(activity.label??'').slice(0,200)}}:{}),...publicMaterials(attachments),...(kind==='error'&&errorCode==='execution_model_unsupported'?{errorCode,...(typeof diagnostic==='string'?{diagnostic}:{} )}:{})})
 export interface MatterTaskControls {
   runId?:string;inputMode?:'steer'|'send'|'queue'
   permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];artifacts:Artifact[];inputs:MatterInput[]
@@ -41,20 +42,22 @@ export type MatterQuotaHandoff =
   | {state:'offer';from:string;to:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'none';from:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'handed';from:string;to:string;matterId:string}
-export interface MatterDetail extends MatterTaskControls {/** 线上形状:带旧 status(wire-compat.ts 第一行)。 */matter:WireMatter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterDetailEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
+export interface MatterDetail extends MatterTaskControls {terminalParticipants?:import('../../ports/matters').TerminalParticipation[];agentRuns?:MatterAgent[];notes?:MatterNote[];notesTotal?:number;/** 线上形状:带旧 status(wire-compat.ts 第一行)。 */matter:WireMatter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterDetailEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
 export interface MatterSayInput {requestId:string;runId?:string;draftId?:string;attachmentIds?:string[]}
 type MatterMaterials=Pick<MatterSayInput,'draftId'|'attachmentIds'>
 export interface MatterArtifactInput {artifactId:string;sha256:string;offset:number;length?:number}
 export const MATTER_ARTIFACT_CHUNK_BYTES=128*1024
 export interface MatterArtifactChunk {taskId:string;artifactId:string;name:string;mime:string;size:number;sha256:string;offset:number;nextOffset:number;contentBase64:string}
 export interface MattersServiceDeps {
+  /** daemon 的目标回执，仅标识、不含正文；失败不得改变原输入路径。 */
+  onSayTarget?:(target:{requestId:string;matterId:string})=>void
   store:MatterStore
   /** Trusted owner resolver for narrow phone receipt reads; no identity comes from the request. */
   ownerChatId?:()=>string|null
   /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。没接 ⇒ 不带 agentNames,界面退回 id。 */
   executorName?:(id:string)=>string
   workbench?:{
-    detail(id:string):{task:MatterTaskView;events:MatterDetailEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string};rewind?:{blocked:unknown}|null}
+    detail(id:string):{task:MatterTaskView;events:MatterDetailEvent[];agentRuns?:MatterAgent[];notes?:MatterNote[];notesTotal?:number}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string};rewind?:{blocked:unknown}|null}
     /** 手机说第一句给「导入了、还没发过第一句」的任务(spec D5);没接 ⇒ 手机也走 continueTask(409)。 */
     continueImported?(id:string,text:string,options:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<MatterTaskView>
     continueTask(id:string,text:string,options?:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):MatterTaskView
@@ -305,6 +308,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     async detail(id){
       const matter=require(id)
       let task:MatterTaskView|null=null,events:MatterDetailEvent[]=[]
+      let ledger:{agentRuns?:MatterAgent[];notes?:MatterNote[];notesTotal?:number}={}
       let controls:MatterTaskControls={permissions:[],questions:[],artifacts:[],inputs:[]}
       let nativeStart:MatterNativeStart|undefined
       let quotaHandoff:MatterQuotaHandoff|undefined
@@ -314,7 +318,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       if(matter.kind==='task'&&deps.workbench){
         try{
-          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{base?:string;baseSha?:string;branch:string;projectPath?:string;removed:boolean;merged?:boolean;port?:number;scripts?:unknown}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{...(wt.base&&wt.baseSha?{base:wt.base,baseSha:wt.baseSha}:{}),branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{}),...(wt.removed?{}:phoneScripts(wt.scripts as never,wt.port,d.events as never,[d.task.path,wt.projectPath??'']))}}:{}),...(d.rewind?.blocked?{rewind:{blocked:true}}:{})};events=d.events.slice(-50).map(publicEvent)
+          const d=taskDetail(matter.id);ledger={...(d.agentRuns?.length?{agentRuns:d.agentRuns,notes:d.notes??[],notesTotal:d.notesTotal}: {})};const wt=(d.task as {worktree?:{base?:string;baseSha?:string;branch:string;projectPath?:string;removed:boolean;merged?:boolean;port?:number;scripts?:unknown}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{...(wt.base&&wt.baseSha?{base:wt.base,baseSha:wt.baseSha}:{}),branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{}),...(wt.removed?{}:phoneScripts(wt.scripts as never,wt.port,d.events as never,[d.task.path,wt.projectPath??'']))}}:{}),...(d.rewind?.blocked?{rewind:{blocked:true}}:{})};events=d.events.slice(-50).map(publicEvent)
           controls={...(d.runId?{runId:d.runId}:{}),...(d.inputMode?{inputMode:d.inputMode}:{}),
             permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt,canAllowTask,scripts})=>({id,taskId,tool,description,createdAt,...(canAllowTask?{canAllowTask}:{}),...(scripts?{scripts}:{})})),
             questions:(d.questions??[]).filter(q=>q.taskId===id).map(({id,taskId,createdAt,questions})=>({id,taskId,createdAt,questions:questions.map(({id,header,question,options,multiSelect,allowOther})=>({id,header,question,options:options.map(({label,description})=>({label,description})),multiSelect,allowOther}))})),
@@ -328,10 +332,11 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       // 详情页标题下那组头像:跟列表同一个出处
       const agents=deps.store.agents([matter.id]).get(matter.id)
-      const named=namesFor([...(agents??[]),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
+      ledger={...ledger,...deps.store.terminalLedger?.(id)}
+      const named=namesFor([...(agents??[]),...(ledger.agentRuns??[]).map(a=>a.executor),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
       const act=actOf(matter,deps.actTurnLimit??20)
       const status=deps.store.legacyStatuses([matter.id]).get(matter.id)??'open'
-      return {matter:wireMatter({...(act?.matter??matter),...(agents?.length?{agents}:{}),...named},status),...(act?{actTurns:act.turns}:{}),bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
+      return {matter:wireMatter({...(act?.matter??matter),...(agents?.length?{agents}:{}),...named},status),...(act?{actTurns:act.turns}:{}),bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...ledger,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
     },
     conversationEvents(since,limit){const owner=deps.chat?.ownerChatId();return owner?deps.chat?.events?.(owner,since,limit):null},
     stopConversation(turnId){const owner=deps.chat?.ownerChatId();return !!owner&&!!deps.chat?.stop?.(owner,turnId)},
@@ -351,6 +356,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
         if(!deps.workbench)throw new Error('workbench_not_wired')
         const d=taskDetail(id)
         const requestId=input?normalizeInputRequestId(input.requestId):undefined
+        const targetRequestId=requestId??randomUUID()
+        try{deps.onSayTarget?.({requestId:targetRequestId,matterId:id})}catch{/* 回执失败不拦原入口 */}
         const materials:MatterMaterials={...(input?.draftId!==undefined?{draftId:input.draftId}:{}),...(input?.attachmentIds!==undefined?{attachmentIds:input.attachmentIds}:{})}
         // 策略来自可信调用表面，Workbench 再解析当前主人；不从请求体接受 owner 或策略。
         const attachmentPolicy=surface==='phone'?'owner':undefined
@@ -370,7 +377,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
           return {kind:'task',task:syncTask(id),input:publicInput(receipt)}
         }
         if(!input&&d.runId&&deps.workbench.submitInput){
-          const request={runId:d.runId,requestId:randomUUID(),text}
+          const request={runId:d.runId,requestId:targetRequestId,text}
           const receipt=await (attachmentPolicy?deps.workbench.submitInput(id,request,attachmentPolicy):deps.workbench.submitInput(id,request))
           return {kind:'task',task:syncTask(id),input:publicInput(receipt)}
         }

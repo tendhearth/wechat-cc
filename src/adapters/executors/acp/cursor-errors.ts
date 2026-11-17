@@ -10,7 +10,7 @@
  *     **边界内**的匹配,只认这一家 CLI 的原话,不外溢。
  */
 import { AcpRequestError } from './rpc'
-import type { ProviderErrorCode } from '../../../lib/provider-error-code'
+import { isContextOverflow, type ProviderErrorCode } from '../../../lib/provider-error-code'
 import { isConnectFailure } from '../../../lib/net-errors'
 
 // eslint-disable-next-line no-control-regex
@@ -53,6 +53,7 @@ const dataText = (data: unknown): string => {
  */
 export function acpErrorCode(error: unknown): ProviderErrorCode | undefined {
   if (!(error instanceof AcpRequestError)) return undefined
+  if (isContextOverflow(error)) return 'context_overflow'
   if (error.code === -32000) return 'auth_failed'
   const detail = `${dataText(error.data)} ${error.message}`
   const fromText = cursorPrintErrorCode(detail)
@@ -112,5 +113,5 @@ export function cursorAcpInbandError(chunk: string): AcpInbandError | null {
   const rest = body.slice(m[0].length)
   if (!rest.trim()) return null
   const byConnect = m[2] && Object.hasOwn(CONNECT_CODE, m[2]) ? CONNECT_CODE[m[2]] : undefined
-  return { code: byConnect ?? (isConnectFailure(rest) ? 'network' : 'provider_error'), message: body }
+  return { code: isContextOverflow(rest)?'context_overflow':byConnect ?? (isConnectFailure(rest) ? 'network' : 'provider_error'), message: body }
 }

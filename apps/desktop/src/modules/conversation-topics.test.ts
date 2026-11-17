@@ -1,15 +1,15 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mountConversationTopics } from './conversation-topics.js'
+import { mountMemoryTopics } from './conversation-topics.js'
 import { formatRelativeTime } from '../view.js'
 const topic = (id:string) => ({id,title:`话题${id}`,description:'说明',summary:'现状',bubbleState:'closed'})
-let current:ReturnType<typeof mountConversationTopics>|undefined
+let current:ReturnType<typeof mountMemoryTopics>|undefined
 afterEach(() => { current?.destroy(); vi.restoreAllMocks() })
 const settle = async () => { for(let i=0;i<12;i++) await Promise.resolve() }
 function setup(call:any) {
   document.body.innerHTML='<div id="root"><textarea>未发送的草稿</textarea><div class="converse-compose"></div></div>'
   const openMatter=vi.fn(),locateMessage=vi.fn()
-  current=mountConversationTopics({root:document.getElementById('root')!,call:async(method:any,path:string,body?:any)=>{if(path==='/v1/protocol/capabilities'){await call(method,path,body);return {topics:'v1',routes:'v1'}}return call(method,path,body)},openMatter,locateMessage,manage:vi.fn()})
+  current=mountMemoryTopics({root:document.getElementById('root')!,call:async(method:any,path:string,body?:any)=>{if(path==='/v1/protocol/capabilities'){await call(method,path,body);return {topics:'v1',routes:'v1'}}return call(method,path,body)},openMatter,locateMessage,manage:vi.fn()})
   return {openMatter,locateMessage}
 }
 describe('T4 desktop topic bubbles', () => {
@@ -100,7 +100,7 @@ it('refreshing an expanded topic preserves the entry disclosure and keyboard foc
 it('requires topics:v1 from the operator capability contract, never infers it from routes or list success',async()=>{
   document.body.innerHTML='<div id="root"><div class="converse-compose"></div></div>'
   const call=vi.fn(async()=>({routes:'v1',topics:[topic('a')],revision:'1'}))
-  current=mountConversationTopics({root:document.getElementById('root')!,call,openMatter:vi.fn(),locateMessage:vi.fn(),manage:vi.fn()})
+  current=mountMemoryTopics({root:document.getElementById('root')!,call,openMatter:vi.fn(),locateMessage:vi.fn(),manage:vi.fn()})
   await settle()
   expect((document.querySelector('nav') as HTMLElement).hidden).toBe(true)
   expect(call.mock.calls).toHaveLength(1)
@@ -116,7 +116,7 @@ it('a selected merged topic follows the authorized surviving id',async()=>{
   })
   await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
   expect(detailReads).toBeGreaterThanOrEqual(2)
-  expect(document.querySelector('h2')?.textContent).toBe('话题survivor')
+  expect(document.querySelector('.conversation-topic-panel h2')?.textContent).toBe('话题survivor')
 })
 
 it('shows one priority activity mark with full counts for readers and opens original project sessions',async()=>{
@@ -230,4 +230,20 @@ it.each(['refresh','subscribe'])('hides cached activity after %s failure while t
  fail=false;await current!.refresh()
  expect(document.querySelector('[data-topic-activity]')).not.toBeNull()
  expect(document.querySelector('[data-topic-id="cached"]')!.getAttribute('aria-label')).toContain('2 个在跑')
+})
+
+it('记忆页话题管理沿用改名接口',async()=>{
+  const writes:any[]=[]
+  setup(async(method:string,path:string,body:any)=>{
+    if(path.includes('/subscribe/'))return new Promise(()=>{})
+    if(method==='POST'){writes.push([path,body]);return {}}
+    if(path.includes('/detail'))return {topic:topic('a'),entries:[],matters:[],messages:[],pages:{}}
+    return {topics:[topic('a')],revision:'1'}
+  });await settle()
+  expect(document.querySelector('h2')?.textContent).toBe('话题')
+  ;(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  const input=document.querySelector('.conversation-topic-panel details input') as HTMLInputElement
+  input.value='新名字'
+  ;([...document.querySelectorAll('button')].find(b=>b.textContent==='改名') as HTMLButtonElement).click();await settle()
+  expect(writes).toContainEqual(['/v1/memory/topics/rename',{id:'a',title:'新名字'}])
 })

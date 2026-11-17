@@ -1,3 +1,4 @@
+import { makeThreadsStore } from './threads-store'
 import { describe, expect, it } from 'vitest'
 import { openSqlite } from './runtime/sqlite'
 import { migrations, openTestDb, openDb, openWechatDb, renameMigrated, runMigrations, withLockRetry } from './db'
@@ -1384,7 +1385,7 @@ describe('v102 — 删掉 matters.status(M6e,不可逆)', () => {
     expect(() => db.exec("INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('nope','wechat','x',1)")).toThrow()
     expect(() => db.exec("UPDATE matters SET origin_surface='app' WHERE id='0000000a'")).toThrow(/matter_origin_immutable/)
     const names = (db.query("SELECT name FROM sqlite_master WHERE tbl_name='matters' AND type IN ('index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map(r => r.name)
-    expect(names).toEqual(['matters_origin', 'matters_origin_surface_once', 'matters_updated', 't4_matters_delete', 't4_matters_update'])
+    expect(names).toEqual(['matters_origin', 'matters_origin_surface_once', 'matters_updated', 't4_matters_delete', 't4_matters_update', 'terminal_participation_matter_end'])
     expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'matters_v%'").all()).toEqual([])
     const before = db.query('SELECT * FROM matters ORDER BY id').all()
     db.exec('PRAGMA user_version = 101')
@@ -1565,4 +1566,80 @@ it('v110 upgrades v109 without changing speech history and replay preserves audi
     expect(db.query('SELECT COUNT(*) AS n FROM speech_audit_events').get()).toEqual({ n: 1 })
     expect(db.query('SELECT started_at FROM speech_audit_coverage').get()).toEqual({ started_at: 1 })
   } finally { db.close() }
+})
+
+
+it('v111 preserves v110 topic history and replay preserves derived evidence',async()=>{
+  const db=migratedTo(110)
+  try {
+    const raw=makeThreadsStore(db)
+    const topic=await raw.create({chatId:'owner',title:'保留',summary:'原摘要',facets:['task'],tags:[],private:false,episodes:[]})
+    const original=await raw.addEntry({threadId:topic,kind:'fact',line:'原条目'})
+    const before={threads:db.query('SELECT * FROM threads').all(),entries:db.query('SELECT * FROM topic_entries').all()}
+    runMigrations(db,migrations)
+    expect(db.query('SELECT * FROM threads').all()).toEqual(before.threads)
+    expect(db.query('SELECT * FROM topic_entries').all()).toEqual(before.entries)
+    expect(db.query('SELECT * FROM topic_entry_sources').all()).toEqual([])
+    const derived=await raw.addEntry({threadId:topic,kind:'fact',line:'派生条目',derivedFrom:[original]})
+    migrations[110]!(db)
+    expect(db.query('SELECT * FROM topic_entry_sources').all()).toEqual([{entry_id:derived,source_id:original}])
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+  } finally {db.close()}
+})
+
+
+it('v112 upgrades a real v110 database without changing old work or topic data',()=>{
+  const db=migratedTo(110)
+  try{
+    db.query("INSERT INTO matters(id,kind,title,owner_chat_id,created_at,updated_at) VALUES('12345678','task','旧事','owner',1,2)").run()
+    db.query("INSERT INTO matter_sessions VALUES('12345678','codex','old-session','main',1)").run()
+    const before=db.query('SELECT * FROM matters').all(),sessions=db.query('SELECT * FROM matter_sessions').all()
+    runMigrations(db,migrations.slice(0,112))
+    expect(db.query('PRAGMA user_version').get()).toEqual({user_version:112})
+    expect(db.query('SELECT * FROM matters').all()).toEqual(before)
+    expect(db.query('SELECT * FROM matter_sessions').all()).toEqual(sessions)
+    expect(db.query('SELECT * FROM matter_notes').all()).toEqual([])
+    expect(db.query('SELECT * FROM matter_agents').all()).toEqual([])
+    migrations[111]!(db)
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+  }finally{db.close()}
+})
+
+it('v113 only adds approved relay plans and ordered legs, preserves v112 data and replays safely',()=>{
+  const db=migratedTo(112)
+  try{
+    db.query("INSERT INTO matters(id,kind,title,owner_chat_id,created_at,updated_at) VALUES('12345678','task','旧事','owner',1,2)").run()
+    const before=db.query('SELECT * FROM matters').all()
+    runMigrations(db,migrations)
+    expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('matter_plans','matter_plan_legs') ORDER BY name").all()).toEqual([{name:'matter_plan_legs'},{name:'matter_plans'}])
+    db.query("INSERT INTO matter_plans VALUES('12345678','approved',3,3)").run()
+    db.query("INSERT INTO matter_plan_legs VALUES('12345678',1,'codex','先做','running','run-1',0,NULL)").run()
+    expect(()=>db.query("INSERT INTO matter_plan_legs VALUES('12345678',1,'claude','重复','pending',NULL,0,NULL)").run()).toThrow()
+    expect(()=>db.query("INSERT INTO matter_plan_legs VALUES('12345678',7,'claude','越界','pending',NULL,0,NULL)").run()).toThrow()
+    expect(()=>db.query("UPDATE matter_plan_legs SET state='done'").run()).toThrow()
+    expect(()=>db.query("UPDATE matter_plans SET state='proposed'").run()).toThrow()
+    expect(db.query('SELECT * FROM matters').all()).toEqual(before)
+    migrations[112]!(db)
+    expect(db.query('SELECT run_id FROM matter_plan_legs').all()).toEqual([{run_id:'run-1'}])
+    db.query("DELETE FROM matters WHERE id='12345678'").run()
+    expect(db.query('SELECT * FROM matter_plans').all()).toEqual([])
+    expect(db.query('SELECT * FROM matter_plan_legs').all()).toEqual([])
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+  }finally{db.close()}
+})
+
+it('v116 从真实 v115 升级，唯一活跃关系与重放不改变历史',()=>{
+  const db=migratedTo(115)
+  try{
+    db.query("INSERT INTO matters(id,kind,title,state,owner_chat_id,created_at,updated_at) VALUES('11111111','terminal','source','open','owner',1,1),('22222222','task','target','open','owner',1,1)").run()
+    runMigrations(db,migrations)
+    const insert=(id:string,gen:number)=>db.query('INSERT INTO terminal_participations(id,matter_id,session_id,source_matter_id,run_id,generation,author,attached_at) VALUES(?,?,?,?,?,?,?,?)').run(id,'22222222','full-session-id','11111111',id,gen,'claude',1)
+    insert('p1',1)
+    expect(()=>insert('p2',2)).toThrow()
+    db.query('UPDATE terminal_participations SET detached_at=2 WHERE id=?').run('p1')
+    insert('p2',2)
+    migrations[115]!(db)
+    expect(db.query('SELECT id,generation,detached_at FROM terminal_participations ORDER BY generation').all()).toEqual([{id:'p1',generation:1,detached_at:2},{id:'p2',generation:2,detached_at:null}])
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+  }finally{db.close()}
 })

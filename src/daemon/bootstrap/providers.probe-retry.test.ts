@@ -14,6 +14,7 @@ import { openTestDb } from '../../lib/db'
 import { makeConversationStore } from '../../adapters/store/conversation-store'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { VersionProbeResult } from './provider-probe'
+import * as acpPlatform from '../../adapters/executors/acp/platform'
 
 function baseConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return { provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false, ...overrides }
@@ -79,6 +80,25 @@ function probeScript(target: string, ...seq: VersionProbeResult[]) {
 }
 
 describe('registerProviders — 外部 CLI 探测失败后的退避重探', () => {
+  it.runIf(process.platform !== 'win32')('Grok fake version probe retries once, then registers without any evaluation callback', async () => {
+    const timers = manualTimers()
+    const probe = probeScript('/fake/grok', fail('offline fake timeout'), okProbe)
+    const envs: Array<NodeJS.ProcessEnv | undefined> = []
+    const { deps } = makeDeps({ configuredAgent: baseConfig({ grokBin: '/fake/grok' }), probeVersion: (bin, options) => { if (bin === '/fake/grok') envs.push(options?.env); return probe(bin) }, probeRetry: { setTimer: timers.setTimer, clearTimer: timers.clearTimer } })
+    const wiring = await registerProviders(deps)
+    try {
+      expect(wiring.registry.has('grok')).toBe(false)
+      await timers.fireNext(() => wiring.registry.has('grok'))
+      expect(wiring.registry.has('grok')).toBe(true)
+      expect(wiring.registry.get('grok')!.provider.cheapEval).toBeUndefined()
+      expect(probe.targetCalls).toHaveLength(2)
+      expect(envs).toHaveLength(2)
+      for (const env of envs) {
+        expect(env?.HOME).toBe(join(deps.stateDir, 'executors/grok/home'))
+        expect(env?.WECHAT_SESSION_TOKEN).toBeUndefined()
+      }
+    } finally { wiring.stopProviderProbes() }
+  })
   it('agy 开机探测失败一次 ⇒ 不注册、日志带真实原因;第一次重探通过 ⇒ 注册上,不用重启', async () => {
     const timers = manualTimers()
     const probe = probeScript('/fake/bin/agy', fail('12034ms 内没退出(超时按 5000ms 计;其间事件循环被卡住约 11500ms(不计入超时))'), okProbe)
@@ -176,5 +196,39 @@ describe('registerProviders — 外部 CLI 探测失败后的退避重探', () =
     stopProviderProbes()
     expect(queue).toHaveLength(0)
     expect(registry.has('agy')).toBe(false)
+  })
+})
+
+describe('desktop setup late registration', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)('discovers a CLI installed after boot, coalesces requests, and uses existing registration (%s)', async platform => {
+    const supported = acpPlatform.acpSupportedOn(platform)
+    let installed = false
+    const probe = vi.fn(async () => ({ ok: true as const, firstLine: 'grok 1.0.77', ms: 1 }))
+    const { deps } = makeDeps({ probeVersion: probe, findSetupBinary: id => id === 'grok' && installed ? '/fixture/new-grok' : null })
+    const wiring = await registerProviders(deps)
+    expect(wiring.registry.has('grok')).toBe(false)
+    const platformGate = vi.spyOn(acpPlatform, 'acpSupportedOn').mockReturnValue(supported)
+    try {
+      installed = true
+      const before = probe.mock.calls.length
+      const results = await Promise.all([wiring.refreshInstalledProvider('grok'), wiring.refreshInstalledProvider('grok')])
+      if (platform === 'win32') {
+        // Grok ACP 在 Windows 尚未验证进程树清理，应在探测前拒绝注册。
+        expect(results).toEqual([false, false])
+        expect(probe.mock.calls.length - before).toBe(0)
+        expect(wiring.registry.has('grok')).toBe(false)
+      } else {
+        expect(results).toEqual([true, true])
+        expect(probe.mock.calls.length - before).toBe(1)
+        expect(wiring.registry.has('grok')).toBe(true)
+        expect(wiring.registry.get('grok')!.provider.cheapEval).toBeUndefined()
+      }
+      expect(await wiring.refreshInstalledProvider('grok')).toBe(platform !== 'win32')
+      expect(probe.mock.calls.length - before).toBe(platform === 'win32' ? 0 : 1)
+      expect(await wiring.refreshInstalledProvider('grok;whoami')).toBe(false)
+    } finally {
+      platformGate.mockRestore()
+      wiring.stopProviderProbes()
+    }
   })
 })

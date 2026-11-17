@@ -123,7 +123,7 @@ describe('最后的话就是回复', () => {
     const p = fakePort({ delivery: 'text', bubbles: 2 })
     const t = setup([{ kind: 'text', text: '我查一下' }, { kind: 'tool_call', server: 'wechat', tool: 'list_projects' }, { kind: 'text', text: '你有两个项目' }, RESULT], { port: p.port })
     await t.c.dispatch(inbound())
-    expect(p.begun).toEqual([{ chatId: 'chat-1', context: 'dm', providerId: 'openai', textStrategy: 'all_segments' }])
+    expect(p.begun).toEqual([{ chatId: 'chat-1', context: 'dm', speaker: 'cc', model: undefined, providerId: 'openai', textStrategy: 'all_segments' }])
     expect(p.delivered).toEqual([{ finalText: '你有两个项目', narration: ['我查一下'] }])
     expect(t.sendAssistantText).not.toHaveBeenCalled()
     expect(t.records[0]).toMatchObject({ outcome: 'completed', replyToolCalled: false, delivery: 'text', bubbles: 2, attachments: 0, narrationSegments: 1 })
@@ -203,8 +203,8 @@ describe('daemon × /both(parallel)', () => {
     await c.dispatch(inbound())
     // 以前 claude 这一位走旧路(每段一条经 sendAssistantText);D3 起两位都经端口。
     expect(p.begun).toEqual([
-      { chatId: 'chat-1', context: 'parallel', providerId: 'openai', participantLabel: 'API', textStrategy: 'all_segments' },  // 内置执行者的名字由 executor-facts 定(⑥),注册时给的 'Qwen' 不算
-      { chatId: 'chat-1', context: 'parallel', providerId: 'claude', participantLabel: 'Claude', textStrategy: 'last_segment' },
+      { chatId: 'chat-1', context: 'parallel', speaker: 'agent', model: undefined, providerId: 'openai', participantLabel: 'API', textStrategy: 'all_segments' },  // 内置执行者的名字由 executor-facts 定(⑥),注册时给的 'Qwen' 不算
+      { chatId: 'chat-1', context: 'parallel', speaker: 'agent', model: undefined, providerId: 'claude', participantLabel: 'Claude', textStrategy: 'last_segment' },
     ])
     expect(p.delivered).toEqual([{ finalText: '选 A', narration: ['我想想'] }, { finalText: '选 A', narration: ['我想想'] }])
     expect(sendAssistantText).not.toHaveBeenCalled()

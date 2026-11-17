@@ -30,7 +30,7 @@ function offsetOf(cursor: string | undefined, scope: string): number {
   return offset
 }
 export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null; seen?: MatterSeen; taskActivity?:ProjectTaskActivitySource; executorName?: (id:string)=>string }): RouteTable {
-  const threads = makeThreadsStore(d.db)
+  const threads = makeThreadsStore(d.db, { filterSources: true })
   const bubbles = makeTopicBubbles(d.db)
   const wrap = (run: (q: URLSearchParams, body: unknown, owner: string, caller: NonNullable<Caller>, ctx: Parameters<RouteHandler>[3]) => ReturnType<RouteHandler>): RouteHandler => async (q, body, caller, ctx) => {
     if (!isTopicOwnerSurface(caller)) return err(403, 'forbidden')

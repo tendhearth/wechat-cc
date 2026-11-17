@@ -7,6 +7,7 @@ import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection } from '../state/hooks'
 import { useConnections } from '../state/useConnections'
 import { Button } from '../ui/Button'
+import { ButlerStatus } from '../ui/ButlerStatus'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Icon } from '../ui/Icon'
 import { IconButton } from '../ui/IconButton'
@@ -76,6 +77,7 @@ export default function Connections() {
             <View>
               {v.computers.map(x => row(x.id === 'home' ? 'connections-computer-home' : `connections-computer-${x.id}`, x.id, x.dot, x.label, x.detail))}
             </View>
+            <ButlerStatus />
             {v.capabilities.length > 0 ? (
               <>
                 {heading('links.capabilities')}

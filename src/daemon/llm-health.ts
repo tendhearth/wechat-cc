@@ -62,7 +62,7 @@ export interface LlmHealth {
   /** Last user-initiated report, or null. NEVER dials. */
   cached(): LlmHealthReport | null
   /** One user-initiated dial round (concurrent callers coalesce). */
-  dial(scope?: 'current'): Promise<LlmHealthReport>
+  dial(scope?: string): Promise<LlmHealthReport>
 }
 
 /** 人话 setup hints for providers that are NOT registered — surfaces in the
@@ -133,8 +133,8 @@ export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
     }
   }
 
-  async function runProbe(scope?: 'current'): Promise<LlmHealthReport> {
-    const results = await Promise.all((scope === 'current' ? [deps.defaultProviderId] : deps.registry.list()).map(probeOne))
+  async function runProbe(scope?: string): Promise<LlmHealthReport> {
+    const results = await Promise.all((scope === 'current' ? [deps.defaultProviderId] : scope ? [scope as ProviderId] : deps.registry.list()).map(probeOne))
     const report: LlmHealthReport = {
       checked_at: new Date().toISOString(),
       default_provider: deps.defaultProviderId,

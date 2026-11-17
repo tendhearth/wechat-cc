@@ -1,14 +1,19 @@
 import type { ProviderId } from '../domain/conversation'
 import type { SessionStore } from '../ports/session-store'
-import type { AgentEvent, AgentSession } from '../ports/agent-provider'
+import type { AgentDispatchContext, AgentEvent, AgentSession } from '../ports/agent-provider'
 import { assertCallAllowed, classifyWith, sessionCallTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
 import { providerCallTarget, type ProviderRegistry } from './provider-registry'
 import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from '../domain/user-tier'
 import type { PermissionMode } from '../domain/capability-matrix'
 import { pathsConflict, canonicalClaimPath } from '../lib/claim-paths'
 import { log } from '../lib/log'
+import { contextBytes } from '../domain/context-continuation'
+import { isContextOverflow } from '../lib/provider-error-code'
+import { ONEOFF_INSTRUCTIONS } from '../domain/answer-target'
+import type { ContextRotation } from './context-rotation'
 
 export interface SessionManagerOptions {
+  contextRotation?: ContextRotation
   maxConcurrent: number
   idleEvictMs: number
   /**
@@ -46,7 +51,7 @@ export interface SessionManagerOptions {
    * token registry. Called once per real spawn; the tier is recovered from the
    * acquire's tierProfile. Paired with `invalidateSessionToken` at release.
    */
-  mintSessionToken?: (tier: UserTier, sessionKey: string) => string
+  mintSessionToken?: (tier: UserTier, sessionKey: string, limits?: { routeAllow: ReadonlySet<string> }) => string
   /**
    * Assemble the per-session system prompt for (providerId, tierProfile,
    * chatId), called ONCE per real spawn (cache miss) — the daemon owns
@@ -58,7 +63,7 @@ export interface SessionManagerOptions {
    * Omitted in tests/embeddings → `appendInstructions` is left off the
    * SpawnContext entirely.
    */
-  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
+  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string, actualMcp?: { wechat: boolean; delegate: boolean }) => string
   /**
    * The pinned model id for a (provider) spawn, read per-spawn so a `/model`
    * switch applies without a daemon restart. Returns undefined when no pin
@@ -85,6 +90,9 @@ export interface SessionManagerOptions {
  * this particular chat's caller.
  */
 export interface AcquireRequest {
+  /** 单次代答：禁用 CC 指令和个人上下文轮换；调用方必须使用独立 alias 并及时 release。 */
+  oneoff?: boolean
+  ephemeral?: boolean
   alias: string
   path: string
   providerId: ProviderId
@@ -117,6 +125,7 @@ export interface InFlightKey {
 }
 
 export interface SessionHandle {
+  readonly supportsDelegation?: boolean
   readonly alias: string
   readonly path: string
   readonly providerId: ProviderId
@@ -130,7 +139,7 @@ export interface SessionHandle {
   /** 会话报的「续上了上一次的历史」(AgentSession.resumedHistory);没报 ⇒ undefined。 */
   readonly resumedHistory?: boolean
   lastUsedAt: number
-  dispatch(text: string): AsyncIterable<AgentEvent>
+  dispatch(text: string, context?: AgentDispatchContext): AsyncIterable<AgentEvent>
   /**
    * Interrupt the in-flight dispatch (if any) on this session. Forwards
    * to the underlying `AgentSession.cancel?.()` — see that interface for
@@ -163,6 +172,12 @@ export class SessionManager {
   // promise instead of forking a duplicate subprocess. Without this, the
   // companion tick + an inbound message racing on the same chat would both
   // miss the cache and both spawn — first one ends up orphaned.
+  private readonly activeTurns=new Map<string,{scope:string;path:string;sessionKey:string;chatId:string;provider:string}>()
+  /** Authenticated session key wins; provider/chat lookup must identify exactly one live dispatch. */
+  activeConversation(caller:{sessionKey?:string;chatId?:string;provider?:string}):{scope:string;path:string}|null {
+    const found=[...this.activeTurns.values()].filter(t=>caller.sessionKey?t.sessionKey===caller.sessionKey&&(!caller.chatId||t.chatId===caller.chatId):!!caller.chatId&&!!caller.provider&&t.chatId===caller.chatId&&t.provider===caller.provider)
+    return found.length===1?{scope:found[0]!.scope,path:found[0]!.path}:null
+  }
   private readonly pendingPaths=new Map<string,string>()
   private readonly closingPaths=new Map<string,string>()
   hasProjectConflict(path:string):boolean {
@@ -174,6 +189,8 @@ export class SessionManager {
     if(this.opts.executionGuard?.(req.path,req.providerId,nativeId))throw new Error('native_session_busy')
   }
   private readonly pending = new Map<string, Promise<SessionHandle>>()
+  private readonly preparations = new Map<string, { controller: AbortController; req: AcquireRequest }>()
+  private shutdownPromise?: Promise<void>
   // In-flight dispatch counter keyed by (provider, alias, chatId). Each
   // dispatch() iterator increments on first .next() entry and decrements
   // in its finally block. sweepIdle skips any session with count > 0 — a
@@ -196,6 +213,7 @@ export class SessionManager {
    * required for per-chat tier policy + per-chat conversation isolation.
    */
   async acquire(req: AcquireRequest): Promise<SessionHandle> {
+    if (this.shutdownPromise) await this.shutdownPromise
     this.checkExecution(req)
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
     const existing = this.sessions.get(k)
@@ -206,14 +224,16 @@ export class SessionManager {
     const inFlight = this.pending.get(k)
     if (inFlight) return inFlight
     this.pendingPaths.set(k,req.path)
-    const promise = this.spawn(req).finally(() => {
-      this.pending.delete(k);this.pendingPaths.delete(k)
+    const controller = new AbortController()
+    this.preparations.set(k, { controller, req })
+    const promise = this.spawn(req, controller.signal).finally(() => {
+      this.pending.delete(k);this.pendingPaths.delete(k);this.preparations.delete(k)
     })
     this.pending.set(k, promise)
     return promise
   }
 
-  private async spawn(req: AcquireRequest): Promise<SessionHandle> {
+  private async spawn(req: AcquireRequest, preparationSignal: AbortSignal): Promise<SessionHandle> {
     const model = req.model ?? this.opts.currentModelFor?.(req.providerId)
     const entry = this.opts.registry.get(req.providerId)
     if (!entry) throw new Error(`unknown provider: ${req.providerId} (registered: ${this.opts.registry.list().join(', ')})`)
@@ -221,9 +241,11 @@ export class SessionManager {
     // 评审 #193:问 provider 这次 spawn 实际会连到哪里(构造时的端点 + 这次的模型),不按配置猜。
     await assertCallAllowed(this.opts.networkGate, providerCallTarget(provider, req.providerId, 'spawn', model !== undefined ? { model } : {}))
 
+    if (preparationSignal.aborted) throw new Error('session_preparation_cancelled')
+
     // Check for a recent session_id to resume — cut cold-start latency.
     const ttl = this.opts.resumeTTLMs ?? 7 * 24 * 60 * 60_000
-    const record = this.opts.sessionStore?.get({ alias: req.alias, provider: req.providerId, chatId: req.chatId }) ?? null
+    const record = req.ephemeral?null:this.opts.sessionStore?.get({ alias: req.alias, provider: req.providerId, chatId: req.chatId }) ?? null
     let resumeSessionId: string | undefined
     if (record) {
       const age = Date.now() - Date.parse(record.last_used_at)
@@ -247,7 +269,10 @@ export class SessionManager {
     // dispatch into the registry.
     const tokenKey = `${req.providerId}/${req.alias}/${req.chatId}`
     const tier = tierNameFromProfile(req.tierProfile)
-    const sessionToken = this.opts.mintSessionToken?.(tier, tokenKey)
+    // 代答只直接输出，不授予 CC 的记忆、模式切换、社交等 API 能力。
+    const sessionToken = req.oneoff
+      ? this.opts.mintSessionToken?.(tier, tokenKey, { routeAllow: new Set() })
+      : this.opts.mintSessionToken?.(tier, tokenKey)
     // Compute the per-spawn MCP env overlay ONCE here (the daemon owns the
     // tier→env policy); providers merge it blindly into their MCP children.
     const mcpEnv = sessionAuthEnv(tier, sessionToken)
@@ -258,33 +283,49 @@ export class SessionManager {
     // Model first, then the prompt: the prompt states the model so the agent
     // can answer「你是哪个模型」truthfully instead of guessing (or calling an
     // admin-only tool a trusted user can't reach).
-    const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
+    let appendInstructions = req.oneoff ? ONEOFF_INSTRUCTIONS : this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
     // spawn 这一刻 provider 报的会话目标:会话自己不报时,之后每一轮都按它判(配置后来再改也不跟)。
     const spawnTarget = providerCallTarget(provider, req.providerId, 'session', model !== undefined ? { model } : {})
     let session: AgentSession
+    const revokePreparation = () => this.opts.invalidateSessionToken?.(tokenKey)
+    preparationSignal.addEventListener('abort', revokePreparation, { once: true })
     try {
+      if (preparationSignal.aborted) throw new Error('session_preparation_cancelled')
       session = await provider.spawn(project, {
         ...(resumeSessionId ? { resumeSessionId } : {}),
+        ...(req.ephemeral?{ephemeral:true}:{}),
+        ...(req.oneoff?{oneoff:true}:{}),
         tierProfile: req.tierProfile,
         permissionMode: req.permissionMode,
         // Forward chatId so the Claude provider can bake it into a
         // per-session canUseTool closure (see bootstrap/index.ts).
         chatId: req.chatId,
+        preparationSignal,
         mcpEnv,
         ...(appendInstructions !== undefined ? { appendInstructions } : {}),
+        ...(!req.oneoff && this.opts.buildInstructions ? { instructionsForMcp: (available: { wechat: boolean; delegate: boolean }) => { appendInstructions = this.opts.buildInstructions!(req.providerId, req.tierProfile, req.chatId, model, available); return appendInstructions } } : {}),
         ...(model !== undefined ? { model } : {}),
       })
+      if (preparationSignal.aborted) { await session.close(); throw new Error('session_preparation_cancelled') }
     } catch (err) {
       // spawn failed → the session is never cached, so release() never runs
       // and the just-minted token would leak in the registry forever. Revoke
       // it on the error path before propagating.
       this.opts.invalidateSessionToken?.(tokenKey)
       throw err
-    }
+    } finally { preparationSignal.removeEventListener('abort', revokePreparation) }
 
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
+    const activeTurns=this.activeTurns
     const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req),networkGate=this.opts.networkGate
+    const rotation = req.oneoff ? undefined : this.opts.contextRotation
+    const contextKey = { alias: req.alias, providerId: req.providerId, chatId: req.chatId }
+    let historyBytes = contextBytes(appendInstructions ?? '')
+    rotation?.opened(contextKey, spawnTarget.model ?? model ?? 'default', historyBytes, session.resumedHistory ?? !!resumeSessionId)
+    if(rotation?.tracked(contextKey) && (session.resumedHistory ?? !!resumeSessionId)) {
+      const observed=rotation.observation(contextKey);historyBytes=observed.bytes
+    }
     const effectiveTarget = (): CallTarget => typeof session.callTarget === 'function' ? sessionCallTarget(session, req.providerId) : spawnTarget
     const handle: SessionHandle = {
       alias: req.alias,
@@ -292,9 +333,10 @@ export class SessionManager {
       providerId: req.providerId,
       ...(model !== undefined ? { model } : {}),
       callTarget: effectiveTarget,
-      ...(session.resumedHistory !== undefined ? { resumedHistory: session.resumedHistory } : {}),
+      get supportsDelegation() { return session.supportsDelegation },
+      ...(session.resumedHistory !== undefined && (!session.resumedHistoryOwnerOnly||rotation?.isOwnerChat(req.chatId)) ? {resumedHistory:session.resumedHistory} : rotation?.isOwnerChat(req.chatId) ? {resumedHistory:req.providerId==='claude' && !!resumeSessionId} : {}),
       lastUsedAt: Date.now(),
-      dispatch(text: string): AsyncIterable<AgentEvent> {
+      dispatch(text: string, context?: AgentDispatchContext): AsyncIterable<AgentEvent> {
         checkExecution()
         handle.lastUsedAt = Date.now()
         // Track in-flight under (provider, alias, chatId) so sweepIdle
@@ -307,16 +349,28 @@ export class SessionManager {
             checkExecution()
             // 先过网络闸门再碰 provider:session.dispatch 本身可能就立刻发请求。按这条会话实际的目标判。
             await assertCallAllowed(networkGate, effectiveTarget())
-            const inner = session.dispatch(text)
             inFlight.set(k, (inFlight.get(k) ?? 0) + 1)
+            const scope=globalThis.crypto.randomUUID()
+            activeTurns.set(scope,{scope,path:req.path,sessionKey:tokenKey,chatId:req.chatId,provider:req.providerId})
+            const inputBytes = contextBytes(text)
+            historyBytes += inputBytes
+            rotation?.started(contextKey)
             try {
+              const inner = context ? session.dispatch(text, undefined, context) : session.dispatch(text)
               for await (const ev of inner) {
-                yield ev
-                if (ev.kind === 'result' && ev.sessionId && sessionStore) {
+                yield ev.kind==='error'&&isContextOverflow({code:ev.code,message:ev.message})?{...ev,code:'context_overflow'}:ev
+                if (ev.kind === 'result' && ev.sessionId && sessionStore && !req.ephemeral) {
                   sessionStore.set({ alias: req.alias, provider: req.providerId, chatId: req.chatId, sessionId: ev.sessionId })
                 }
               }
             } finally {
+              try {
+                const observed = session.contextUsage?.()
+                if (observed?.historyBytes!==undefined) historyBytes = observed.historyBytes
+                const tokens = observed?.tokens
+                rotation?.observe(contextKey, { bytes: historyBytes, ...(observed?.requestBytes!==undefined?{requestBytes:observed.requestBytes}:{}), ...(observed?.requestFailure!==undefined?{requestFailure:observed.requestFailure}:{}), ...(observed&&observed.tokens===undefined&&observed.historyBytes===undefined?{unknown:true}:{}), ...(tokens !== undefined ? { tokens } : {}), ...(observed?.firstInputTokens !== undefined ? {firstInputTokens:observed.firstInputTokens} : {}), ...(observed?.model ? {model:observed.model} : {}), turns: 1 })
+              } catch { /* Observation must never break reply delivery. */ }
+              activeTurns.delete(scope)
               const n = inFlight.get(k) ?? 1
               if (n <= 1) inFlight.delete(k)
               else inFlight.set(k, n - 1)
@@ -341,6 +395,14 @@ export class SessionManager {
    * 释放并且忘掉:关会话、再删它的续接记录 —— 下一次同一个 key 是全新的对话(定时任务每次一轮,
    * 不该续上上一次的,2026-10-20)。普通 release 留着续接记录,给主人的对话下次接着聊。
    */
+  /** Called only by the shared owner policy at a serialized turn boundary. */
+  async rotate(k: InFlightKey): Promise<boolean> {
+    const key = sessionKey(k)
+    if (this.isInFlight(k) || this.pending.has(key) || this.closingPaths.has(key)) return false
+    await this.forget(k)
+    return true
+  }
+
   async forget(k: InFlightKey): Promise<void> {
     await this.release(k)
     this.opts.sessionStore?.deleteOne({ alias: k.alias, provider: k.providerId, chatId: k.chatId })
@@ -388,6 +450,8 @@ export class SessionManager {
 
   /** Is there a cached (live) session for this key right now? Coordinator uses
    *  it to know a dispatch is about to cold-spawn (→ cold-start context block). */
+  supportsEphemeral(providerId:ProviderId){return this.opts.registry.get(providerId)?.provider.supportsEphemeralSessions===true}
+
   has(k: InFlightKey): boolean {
     return this.sessions.has(sessionKey(k))
   }
@@ -452,19 +516,33 @@ export class SessionManager {
    */
   async shutdownProtected(): Promise<number> {
     const gate = this.opts.networkGate
+    const preparing = [...this.preparations.entries()].filter(([, entry]) => classifyWith(gate, this.effectiveTarget({ alias: entry.req.alias, providerId: entry.req.providerId, chatId: entry.req.chatId }, entry.req.model)).protected)
     const entries = Array.from(this.sessions.values())
       .filter(s => classifyWith(gate, s.handle.callTarget ? s.handle.callTarget() : sessionCallTarget(null, s.handle.providerId)).protected)
-    await Promise.all(entries.map(s => this.release({ alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId })))
-    return entries.length
+    const closing = entries.map(s => this.release({ alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId }))
+    for (const [, entry] of preparing) entry.controller.abort()
+    await Promise.allSettled([...closing, ...preparing.flatMap(([key]) => this.pending.get(key) ? [this.pending.get(key)!] : [])])
+    return entries.length + preparing.length
   }
 
-  async shutdown(): Promise<void> {
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise
+    // Start every live close and preparation abort before the first await: all bearers
+    // must be revoked together, even if another provider takes time to stop spawning.
     const entries = Array.from(this.sessions.values())
-    await Promise.all(entries.map(s => this.release({
-      alias: s.handle.alias,
-      providerId: s.handle.providerId,
-      chatId: s.chatId,
-    })))
+    const closing = entries.map(s => this.release({
+      alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId,
+    }))
+    for (const entry of this.preparations.values()) entry.controller.abort()
+    const pending = [...this.pending.values()]
+    this.shutdownPromise = (async () => {
+      await Promise.allSettled([...closing, ...pending])
+      const late = Array.from(this.sessions.values())
+      await Promise.all(late.map(s => this.release({
+        alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId,
+      })))
+    })().finally(() => { this.shutdownPromise = undefined })
+    return this.shutdownPromise
   }
 
   private async enforceCapacity(): Promise<void> {

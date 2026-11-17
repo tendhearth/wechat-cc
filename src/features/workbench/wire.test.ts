@@ -1,5 +1,7 @@
+import { TIER_PROFILES } from '../../domain/user-tier'
 import { afterEach, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, unlinkSync } from 'node:fs'
+import { grokHome, grokSubprocessEnv } from '../../lib/grok-home'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -79,6 +81,40 @@ it('retains provider reasoning defaults for a fresh task while excluding unrelat
 
 const fakeProvider = (): AgentProvider => ({
   spawn: async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }),
+})
+
+it('registers Grok from the boot binary without stdio matter tools, and requires a dedicated HOME', async () => {
+  const source = createProviderRegistry(), target = createProviderRegistry()
+  source.register('grok', fakeProvider(), { bin: () => '/boot/grok', canResume: () => false })
+  const { registerGrokAcpExecutor } = await import('./wire')
+  const { requireWorkbenchInput } = await import('../../domain/workbench/executor-capabilities')
+  const matterMcp = vi.fn()
+  expect(registerGrokAcpExecutor(target, source, { platform: 'darwin', matterMcp })).toEqual(['grok'])
+  const entry = target.get('grok')!
+  expect(entry.opts.workbench?.features).toEqual({ nativeResume: false, attachments: false, executionSettings: false, modelCatalog: false })
+  expect(entry.opts.workbench?.unavailableReason).toContain('专属 HOME')
+  expect(() => requireWorkbenchInput(entry.opts.workbench!, { attachments: [], execution: { defaults: 'provider', model: null, reasoningEffort: null } })).toThrow('unavailable_provider')
+  // 注册时注入的平台只管注册；spawn 仍在 Windows 上先拒绝未经验证的 ACP 进程树清理。
+  await expect(entry.provider.spawn({ alias: 'test', path: '/test' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'test', reportMatterTools: vi.fn() })).rejects.toThrow(process.platform === 'win32' ? 'Grok 暂不支持 Windows' : '专属 HOME')
+  expect(matterMcp).not.toHaveBeenCalled()
+  expect(registerGrokAcpExecutor(createProviderRegistry(), source, { platform: 'win32' })).toEqual([])
+})
+
+it('Grok workbench admission follows a new dedicated login without restarting or exposing MCP', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'wb-grok-login-'))
+  try {
+    const source = createProviderRegistry(), target = createProviderRegistry()
+    source.register('grok', fakeProvider(), { bin: () => '/fake/grok', canResume: () => false })
+    const { registerGrokAcpExecutor } = await import('./wire')
+    registerGrokAcpExecutor(target, source, { stateDir, platform: 'darwin' })
+    const capabilities = target.get('grok')!.opts.workbench!
+    expect(capabilities.unavailableReason).toContain('Grok 还没在 CC 里登录')
+    grokSubprocessEnv(stateDir, {})
+    writeFileSync(join(grokHome(stateDir), '.grok/auth.json'), 'existence only')
+    expect(capabilities.unavailableReason).toBeUndefined()
+    unlinkSync(join(grokHome(stateDir), '.grok/auth.json'))
+    expect(capabilities.unavailableReason).toContain('Grok 还没在 CC 里登录')
+  } finally { removeTempDir(stateDir) }
 })
 
 it('registers only agy as unattended; cursor is no longer an unattended executor', () => {
@@ -217,6 +253,17 @@ it('an executor registered on the boot registry after wiring (late probe success
     expect(agy).toHaveLength(1)
     expect(agy[0]!.capabilities.permissions).toBe('unattended')
     expect(lines.some(l => l.includes('agy') && l.includes('晚到'))).toBe(true)
+    bootRegistry.register('grok', fakeProvider(), { bin: () => '/fake/grok', canResume: () => false })
+    const grok = service.list().providers.filter(p => p.id === 'grok')
+    if (process.platform === 'win32') {
+      expect(grok).toHaveLength(0)
+      expect(lines.some(l => l.includes('grok') && l.includes('暂不支持 Windows'))).toBe(true)
+      expect(lines.some(l => l.includes('grok') && l.includes('晚到'))).toBe(false)
+    } else {
+      expect(grok).toHaveLength(1)
+      expect(grok[0]!.capabilities.unavailableReason).toContain('Grok 还没在 CC 里登录')
+      expect(lines.some(l => l.includes('grok') && l.includes('晚到'))).toBe(true)
+    }
     // 工作台不认的 id(gemini 不进工作台)登记了也不出错、不出现
     bootRegistry.register('gemini', fakeProvider(), { displayName: 'Gemini', canResume: () => false })
     expect(service.list().providers.find(p => p.id === 'gemini')).toBeUndefined()

@@ -22,6 +22,7 @@ export interface ChatSessionStore{
   canResume(id:string,path:string,configHash:string):boolean
   get(id:string):ChatSession|null
   /** 不落盘(没有 DB):会话的历史只在它自己的内存里,存取口什么都不留。 */
+  release?(id:string):void
   readonly ephemeral?:true
 }
 
@@ -32,7 +33,6 @@ const MAX_MESSAGES=10_000,MAX_BYTES=16*1024*1024
  */
 export const CHAT_RESUME_MAX_BYTES=192*1024
 /** 不再续接的老对话会话留多久(session-manager 的续接期限是 7 天)。 */
-const CHAT_KEEP_MS=8*24*60*60_000
 const SELECT=`SELECT id,revision,messages_json AS messagesJson,state,task_id AS taskId,owner,path,directory_identity AS directoryIdentity,config_hash AS configHash FROM workbench_api_sessions WHERE id=?`
 const CHAT_SELECT=`SELECT id,revision,messages_json AS messagesJson,state,chat_id AS chatId,alias,path,config_hash AS configHash FROM openai_chat_sessions WHERE id=?`
 type Row={id:string;revision:number;messagesJson:string;state:string;taskId:string;owner:string;path:string;directoryIdentity:string;configHash:string}
@@ -133,22 +133,28 @@ export function makeApiSessionStore(db:Db){
 }
 
 export function makeChatSessionStore(db:Db):ChatSessionStore{
+  const live=new Set<string>()
   const raw=(id:string)=>db.query<ChatRow,[string]>(CHAT_SELECT).get(id)
   const get=(id:string):ChatSession|null=>{const row=raw(id);return row?chatSession(row):null}
   return{
+    release:id=>{live.delete(id)},
     create(binding,messages){
       validChatBinding(binding);const json=encode(messages),id=randomUUID(),now=Date.now()
       db.transaction(()=>{
-        // 同一个对话 + 项目只留正在用的那一份(一个文件夹一个活会话);过了续接期限的(含崩溃留下的 active)顺手清掉。
-        db.query("DELETE FROM openai_chat_sessions WHERE (state!='active' AND chat_id=? AND alias=?) OR updated_at<?").run(binding.chatId,binding.alias,now-CHAT_KEEP_MS)
+        // Eight-day retention for retired segments, across owner and visitor chats.
+        // Current live rows and persisted resume pointers must survive the sweep.
+        const liveIds=[...live]
+        db.query(`DELETE FROM openai_chat_sessions WHERE updated_at<? ${liveIds.length?`AND id NOT IN (${liveIds.map(()=>'?').join(',')})`:''} AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.provider='openai' AND s.session_id=openai_chat_sessions.id)`).run(now-8*24*60*60*1000,...liveIds)
         db.query('INSERT INTO openai_chat_sessions(id,chat_id,alias,path,config_hash,revision,messages_json,state,created_at,updated_at) VALUES(?,?,?,?,?,0,?,\'active\',?,?)').run(id,binding.chatId,binding.alias,binding.path,binding.configHash,json,now,now)
       })()
+      live.add(id)
       return get(id)!
     },
     acquire(id,binding){
       validChatBinding(binding)
       const result=db.query("UPDATE openai_chat_sessions SET state='active',revision=revision+1,updated_at=? WHERE id=? AND state='ready' AND chat_id=? AND alias=? AND path=? AND config_hash=?").run(Date.now(),id,binding.chatId,binding.alias,binding.path,binding.configHash)
       if(result.changes!==1)throw Error('api_session_conflict')
+      live.add(id)
       return get(id)!
     },
     save(id,revision,messages,state){

@@ -6,12 +6,15 @@
  * conversationStore / registry / defaultProviderId / readAgentConfig / permissionMode /
  * turnTimeoutMs / health 走 parts.*。anomalyNotes 随块搬进来,index 用它拼 providerNotes。
  */
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
 import { makeChatTurnLog } from '../../adapters/store/chat-turns'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../app/conversation-coordinator'
 import type { ConversationStore } from '../../ports/conversation-store'
-import type { ProviderRegistry } from '../../app/provider-registry'
+import { namesIn, type ProviderRegistry } from '../../app/provider-registry'
 import type { ProviderId } from '../../domain/conversation'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import { formatInbound } from '../../domain/prompt-format'
@@ -61,6 +64,7 @@ export function wireCoordinator(
   deps: Pick<BootstrapDeps, 'ilink' | 'log' | 'onTurnRecord' | 'petSignals' | 'replySinks' | 'outboundTaps' | 'networkGate' | 'replyDelivery'>,
   ctx: Pick<BootstrapCtx, 'db'>,
   parts: {
+    contextRotation?: import('../../app/context-rotation').ContextRotation
     health: HealthRuntime
     resolve: Bootstrap['resolve']
     sessionManager: SessionManager
@@ -92,7 +96,7 @@ export function wireCoordinator(
   const sendNotice = makeSendNotice({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture })
   // 回复交付只有一条路(D3):生产里是 main.ts 造的那**同一个**实例(attach / message 路由要登记到它上面)。
   // 没注入的只有测试 / 最小嵌入 —— 就地造一个只会直发微信的,别让协调器没有路可走。
-  const replyDelivery = deps.replyDelivery ?? makeReplyDeliveryRuntime({ sendText: deps.ilink.sendMessage, log: deps.log })
+  const replyDelivery = deps.replyDelivery ?? makeReplyDeliveryRuntime({ sendText: deps.ilink.sendMessage, participantName: id => namesIn(parts.registry, id).short, log: deps.log })
 
   // (turnTimeoutMs is resolved earlier now — see the block just above
   // registerProviders() — so the agy provider's `--print-timeout` can be
@@ -147,7 +151,11 @@ export function wireCoordinator(
   const handoffMessages = makeMessagesStore(ctx.db)
   const coordinator = createConversationCoordinator({
     resolveProject: parts.resolve,
+    // 单次代答:每句一个空临时目录(0700),答完删掉;不在主人的项目里跑。
+    oneoffWorkspace: () => { const root = join(tmpdir(), 'wechat-cc-oneoff'); mkdirSync(root, { recursive: true, mode: 0o700 }); return mkdtempSync(join(root, 'q-')) },
+    releaseOneoffWorkspace: path => { if (path.startsWith(join(tmpdir(), 'wechat-cc-oneoff') + sep)) rmSync(path, { recursive: true, force: true }) },
     manager: parts.sessionManager,
+    contextRotation: parts.contextRotation,
     conversationStore: parts.conversationStore,
     registry: parts.registry,
     defaultProviderId: parts.defaultProviderId,

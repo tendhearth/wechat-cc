@@ -111,7 +111,7 @@ function refusalText(code: string): string {
   return code
 }
 
-export function registerTerminalTools(server: McpServer, client: InternalApiClient): void {
+export function registerTerminalTools(server: McpServer, client: InternalApiClient, participantTag = OWN_PROVIDER): void {
   server.registerTool(
     'terminal_say',
     {
@@ -136,7 +136,7 @@ export function registerTerminalTools(server: McpServer, client: InternalApiClie
       try {
         const r = await client.request<{ ok: true; ticket: string; max_wait_ms?: number }>('POST', '/v1/cli/say', { code, text })
         ticket = r.ticket
-        waitS = effectiveWaitS(wait_seconds ?? TERMINAL_SAY_WAIT_DEFAULT_S, r.max_wait_ms)
+        waitS = effectiveWaitS(wait_seconds ?? TERMINAL_SAY_WAIT_DEFAULT_S, r.max_wait_ms, participantTag)
       } catch (err) { return refusal(err, 'terminal_say') }
       try {
         const v = await pollUntil(client, ticket, started + waitS * 1000)
@@ -167,7 +167,7 @@ export function registerTerminalTools(server: McpServer, client: InternalApiClie
         const want = wait_seconds ?? 0
         // 先看一眼(不算在等),拿到 daemon 给的上限再接着等
         let v = await client.request<SayView | null>('GET', `/v1/cli/say?ticket=${encodeURIComponent(ticket)}&wait_ms=0`)
-        const waitS = v ? effectiveWaitS(want, v.max_wait_ms) : 0
+        const waitS = v ? effectiveWaitS(want, v.max_wait_ms, participantTag) : 0
         if (v && !v.final && waitS > 0) v = await pollUntil(client, ticket, started + waitS * 1000)
         if (!v) return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: 'terminal_say_ticket_unknown' }) }] }
         return { content: [{ type: 'text', text: formatSayResult(v, { waitedS: Math.round((Date.now() - started) / 1000) }) }] }

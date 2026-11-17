@@ -5,7 +5,7 @@
  *   1. 静默(NO_REPLY,场合允许才算数;私聊里同样不显示,但记 REPLY_SILENT_IN_DM)
  *   2. app 接收器:桌面 / 手机这一轮 ⇒ 整个 TurnReply(文字 + 附件 + 旁白)交给接收器,不进微信
  *   3. 旁听(打猎记账):原文、分条之前
- *   4. 前缀:/chat、/both 的 `[名字]`,每一条都加
+ *   4. 前缀:直通 / 代答及 /chat、/both 的 `[名字]`,每一条都加
  *   5. 分条:reply-bubbles 的规则(空行分段、最多 4 条、代码整块……)
  *   6. 节奏:条与条之间 paceMs
  *   7. 传输层 4000 字切块(ilink sendReply 自己做;超长代码块已在第 5 步按行切开补围栏)
@@ -21,6 +21,9 @@
  */
 import { splitBubbles } from './reply-bubbles'
 import { paceMs } from './reply-split'
+import { replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protocol'
+import { withReplyAttribution } from '../lib/reply-attribution'
+import { withParticipantLabel } from '../lib/reply-presentation'
 import { ruleAllowLine, type RuleAllowNotice } from '../adapters/permission-rules/chat'
 import {
   buildTurnReply,
@@ -30,6 +33,8 @@ import {
 
 /** 登记在这一轮上的附件:描述 + 真正发出去的动作(由 attach 路由在登记时绑好)。 */
 export interface PendingAttachment {
+  /** Snapshotted by attach from the trusted session caller, independently of delivery order. */
+  attribution?: Partial<ReplyAttribution>
   attachment: TurnAttachment
   send(): Promise<{ ok: boolean; error?: string }>
 }
@@ -37,6 +42,8 @@ export interface PendingAttachment {
 export interface DeliverDeps {
   /** 一条文字(ilink sendReply:带重试、带 4000 字切块、记外发健康)。 */
   sendText(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
+  /** registry 的短名;只用于 agent 的微信展示,不按模型名猜。 */
+  participantName?(providerId: string): string | undefined
   sleep?(ms: number): Promise<void>
   /** app 接收器:开着 ⇒ 收下整个 TurnReply 并返回 true(调用方不发微信)。 */
   sink?: { captureReply(chatId: string, reply: TurnReply): boolean }
@@ -66,6 +73,11 @@ export interface DeliverInput {
 const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 const norm = (s: string) => s.replace(/[\s\p{P}\p{S}]/gu, '')
 
+function participantLabel(source: Partial<ReplyAttribution>, deps: DeliverDeps, explicit?: string): string | undefined {
+  if (source.speaker === 'notice') return undefined
+  return explicit || (source.speaker === 'agent' && source.provider ? deps.participantName?.(source.provider) : undefined)
+}
+
 function sameOrContains(a: string, b: string): boolean {
   const x = norm(a), y = norm(b)
   return x.length > 0 && y.length > 0 && (x === y || x.includes(y) || y.includes(x))
@@ -78,14 +90,26 @@ function classify(text: { bubbles: number }, attachmentsSent: number, silent: bo
 }
 
 export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): Promise<DeliveryReport> {
+  const attribution = replyAttributionFields(input.reply)
+  return withReplyAttribution({ ...attribution, speaker: attribution.speaker ?? 'notice' }, () => deliverAttributedReply(input, deps))
+}
+
+async function deliverAttributedReply(input: DeliverInput, deps: DeliverDeps): Promise<DeliveryReport> {
   const { chatId, reply, attachments, context } = input
   const sleep = deps.sleep ?? defaultSleep
 
   const noticeText = (input.notices ?? []).join('\n')
   // 2. app 接收器:整个对象交过去,一个字都不进微信(包括语音 / 表情 —— 修 §1.2 ④)。第 10 步的提醒接在文字末尾一起交过去。
   const forSink: TurnReply = noticeText
-    ? { ...reply, silent: false, text: reply.silent || !reply.text.trim() ? noticeText : `${reply.text}\n\n${noticeText}`, ...(reply.segments ? { segments: [...(reply.silent ? [] : reply.segments), noticeText] } : {}) }
+    ? { ...reply, ...(reply.silent || (!reply.text.trim() && !reply.attachments.length) ? { speaker: 'notice' as const, provider: undefined, model: undefined, agentId: undefined } : {}), silent: false, text: reply.silent || !reply.text.trim() ? noticeText : `${reply.text}\n\n${noticeText}`, ...(reply.segments ? { segments: [...(reply.silent ? [] : reply.segments), noticeText] } : {}) }
     : reply
+  if (noticeText) forSink.replyParts = [
+    ...(reply.replyParts ?? [{ ...replyAttributionFields(reply), text: reply.silent ? '' : reply.text,
+      ...(reply.attachments.length ? { attachmentIndexes: reply.attachments.map((_, i) => i) } : {}),
+      ...(reply.narration.length ? { narrationIndexes: reply.narration.map((_, i) => i) } : {}),
+    }]),
+    { speaker: 'notice', text: noticeText },
+  ]
   if (deps.sink?.captureReply(chatId, forSink)) {
     const hasText = reply.text.trim() !== ''
     return {
@@ -110,9 +134,10 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
     deps.log('REPLY_DEDUPED', `chat=${chatId} message 工具已把同样的话发给主人,最后的话不再重复交付`)
   }
 
-  const sendOne = async (t: string): Promise<boolean> => {
+  const sendOne = async (t: string, source: Partial<ReplyAttribution> = reply): Promise<boolean> => {
     try {
-      const r = await deps.sendText(chatId, t)
+      const label = deps.textOnly?.() ? undefined : participantLabel(source, deps, source.provider === reply.provider ? input.participantLabel : undefined)
+      const r = await withParticipantLabel(t, label, displayed => deps.sendText(chatId, displayed))
       if (r.error) { failures.push(r.error); return false }
       msgIds.push(r.msgId)
       return true
@@ -126,13 +151,12 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
     // 3. 旁听:原文、分条之前、只在真的进微信时。
     deps.observe?.(chatId, text)
     // 5. 分条 + 4. 前缀(每条都加,第 2 条起不会丢掉署名)
-    const prefix = input.participantLabel ? `[${input.participantLabel}] ` : ''
     // 聊天型模型的多段:每段按 ④ 各自分条,依次发(spec 修订 2026-10-03);否则整段分条。
     // /chat 一人一条、不分条(§4.9):辩论的一次发言是一个整体,拆开了在群里会和别人的发言交错。
     const oneMessage = context === 'chatroom'
     const split = !oneMessage && deps.chatPrefs?.(chatId)?.split !== false
     const sources = !oneMessage && reply.segments && reply.segments.length > 0 && !reply.silent ? reply.segments : [text]
-    const parts = sources.flatMap(seg => splitBubbles(seg, { split })).map(p => `${prefix}${p}`)
+    const parts = sources.flatMap(seg => splitBubbles(seg, { split }))
     for (let i = 0; i < parts.length; i++) {
       if (!(await sendOne(parts[i]!))) {
         deps.log('REPLY_DELIVERY_FAIL', `chat=${chatId} sent=${bubbles}/${parts.length} err=${failures[failures.length - 1]}`)
@@ -151,22 +175,22 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
       // 出口收得下附件(伙伴落到 App,第 2 步:App 对话页画得出表情 / 图 / 语音)⇒ 记进去,不碰微信。
       if (deps.sendAttachment) {
         let took = false
-        try { took = await deps.sendAttachment(chatId, a.attachment) } catch (err) {
+        try { took = await withReplyAttribution(a.attribution ?? replyAttributionFields(reply), () => deps.sendAttachment!(chatId, a.attachment)) } catch (err) {
           deps.log('REPLY_ATTACHMENT_SKIPPED', `chat=${chatId} kind=${a.attachment.kind} outbound threw: ${err instanceof Error ? err.message : String(err)}`)
         }
         if (took) { attachmentsSent++; continue }
       }
       // 收不下(或只收文字的出口):语音改发同样的字,别的附件不发也不去碰微信。
-      if (a.attachment.kind === 'voice' && (await sendOne(a.attachment.text))) bubbles++
+      if (a.attachment.kind === 'voice' && (await withReplyAttribution(a.attribution ?? replyAttributionFields(reply), () => sendOne((a.attachment as {text:string}).text, a.attribution ?? reply)))) bubbles++
       else deps.log('REPLY_ATTACHMENT_SKIPPED', `chat=${chatId} kind=${a.attachment.kind} — text-only outbound`)
       continue
     }
     let r: { ok: boolean; error?: string }
-    try { r = await a.send() } catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
+    try { r = await withReplyAttribution(a.attribution ?? replyAttributionFields(reply), () => a.send()) } catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
     if (r.ok) { attachmentsSent++; deps.confirmWechatAttachment?.(); continue }
     if (a.attachment.kind === 'voice') {
       deps.log('REPLY_VOICE_FALLBACK', `chat=${chatId} voice failed (${r.error ?? 'unknown'}) — sending the same words as text`)
-      if (await sendOne(a.attachment.text)) bubbles++
+      if (await withReplyAttribution(a.attribution ?? replyAttributionFields(reply), () => sendOne((a.attachment as {text:string}).text, a.attribution ?? reply))) bubbles++
       else deps.log('REPLY_DELIVERY_FAIL', `chat=${chatId} voice→text fallback failed err=${failures[failures.length - 1]}`)
       continue
     }
@@ -177,7 +201,7 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
   // 10. 放行规则的提醒:最后单独一条(不跟模型的话混在一起分条,也不加 [名字] 前缀)。不算 bubbles —— 交付分类只看模型的话。
   if (noticeText) {
     try {
-      const r = await deps.sendText(chatId, noticeText)
+      const r = await withReplyAttribution({ speaker: 'notice' }, () => deps.sendText(chatId, noticeText))
       deps.log('REPLY_RULE_NOTICE', `chat=${chatId} lines=${input.notices!.length}${r.error ? ` err=${r.error}` : ''}`)
       if (r.error) failures.push(r.error); else msgIds.push(r.msgId)
     } catch (err) {
@@ -202,7 +226,8 @@ export interface ReplyDeliveryRuntimeDeps extends DeliverDeps {
 
 export interface ReplyDeliveryRuntime extends ReplyDeliveryPort {
   /** attach 路由:登记到这个 chat 正在进行的那一轮。没有开着的轮 ⇒ false(工具回执报错)。 */
-  attach(chatId: string, pending: PendingAttachment): boolean
+  attach(chatId: string, pending: PendingAttachment, providerId?: string): boolean
+  attributionFor(chatId: string, providerId?: string): Partial<ReplyAttribution> | undefined
   /** 这个 chat 此刻有没有一轮在收附件。 */
   hasOpenTurn(chatId: string): boolean
   /** message 路由:记一笔,交付时去重(只认发给主人聊天的)。 */
@@ -227,7 +252,7 @@ export type TurnChatBinding =
   | { kind: 'none' }
   | { kind: 'ambiguous'; count: number }
 
-interface OpenTurn { attachments: PendingAttachment[]; messagedOwner: string[]; ruleNotices: Map<string, { notice: RuleAllowNotice; count: number }>; refs: number }
+interface OpenTurn { sources: Set<Readonly<Partial<ReplyAttribution>>>; attachments: PendingAttachment[]; messagedOwner: string[]; ruleNotices: Map<string, { notice: RuleAllowNotice; count: number }>; refs: number }
 
 const takeNotices = (t: OpenTurn): string[] => {
   const lines = [...t.ruleNotices.values()].map(n => ruleAllowLine(n.notice, n.count))
@@ -248,7 +273,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
 
   const acquire = (chatId: string): OpenTurn => {
     let t = open.get(chatId)
-    if (!t) { t = { attachments: [], messagedOwner: [], ruleNotices: new Map(), refs: 0 }; open.set(chatId, t) }
+    if (!t) { t = { sources: new Set(), attachments: [], messagedOwner: [], ruleNotices: new Map(), refs: 0 }; open.set(chatId, t) }
     t.refs++
     return t
   }
@@ -257,10 +282,14 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     if (t.refs <= 0 && open.get(chatId) === t) open.delete(chatId)
   }
 
-  function begin(chatId: string, opts: Parameters<ReplyDeliveryPort['begin']>[1]): TurnDeliveryHandle {
+  function begin(chatId: string, inputOpts: Parameters<ReplyDeliveryPort['begin']>[1]): TurnDeliveryHandle {
+    const opts = { ...inputOpts }
+    // Mutable only through bindTurn (trusted runner callback); the same object sits in turn.sources.
+    const attribution: Partial<ReplyAttribution> = { ...replyAttributionFields(opts), speaker: opts.speaker ?? 'cc', provider: opts.providerId }
     const turn = acquire(chatId)
+    turn.sources.add(attribution)
     let done = false
-    const finish = () => { if (!done) { done = true; release(chatId, turn) } }
+    const finish = () => { if (!done) { done = true; turn.sources.delete(attribution); release(chatId, turn) } }
 
     trackDaemon(opts.providerId, chatId, 1)
     // 这一轮另有出口(伙伴主动找你)⇒ 文字、进度都走它;其余(接收器、旁听、分条)照旧。
@@ -272,11 +301,19 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
       : deps
     const finishDaemon = () => { if (!done) trackDaemon(opts.providerId, chatId, -1); finish() }
     return {
-      async progress(text: string) {
+      bindTurn(ids) {
+        if (done) return
+        attribution.turnId = ids.turnId
+        if (ids.matterId && attribution.matterId === undefined) attribution.matterId = ids.matterId
+      },
+      async progress(text: string, from: 'model' | 'notice' = 'notice') {
         if (done || text.trim() === '') return
         if (deps.isSinkOpen?.(chatId)) return // app 这一轮:旁白在 app 里本来就看得见,不进微信
         try {
-          const r = await out.sendText(chatId, text)
+          // 模型自己的旁白算这一轮答话者的;固定的「还在做」才是通知。
+          const source = from === 'model' ? { ...attribution } : { speaker: 'notice' as const }
+          const label = out.textOnly?.() ? undefined : participantLabel(source, out, from === 'model' ? opts.participantLabel : undefined)
+          const r = await withReplyAttribution(source, () => withParticipantLabel(text, label, displayed => out.sendText(chatId, displayed)))
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId}${r.error ? ` err=${r.error}` : ''}`)
         } catch (err) {
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId} threw: ${err instanceof Error ? err.message : String(err)}`)
@@ -290,6 +327,11 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         const notices = takeNotices(turn)
         finishDaemon()
         const built = buildTurnReply(parts, pending.map(p => p.attachment), opts.context, opts.textStrategy)
+        Object.assign(built.reply, attribution)
+        built.reply.replyParts = [
+          { ...attribution, text: built.reply.silent ? '' : built.reply.text, ...(built.reply.narration.length ? { narrationIndexes: built.reply.narration.map((_, i) => i) } : {}) },
+          ...pending.map((p, i) => ({ ...p.attribution, text: '', attachmentIndexes: [i] })),
+        ]
         if (built.mixed) deps.log('NO_REPLY_MIXED', `chat=${chatId} provider=${opts.providerId} 令牌行已剥掉,其余照发`)
         if (built.silentInDm) {
           deps.log('REPLY_SILENT_IN_DM', `chat=${chatId} provider=${opts.providerId} 私聊里写了 NO_REPLY —— 不显示、不替模型补话,记一次应答轮交付为空`, { event: 'reply_silent_in_dm', chat_id: chatId, provider: opts.providerId })
@@ -321,10 +363,15 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
 
   return {
     begin,
-    attach(chatId, pending) {
+    attributionFor(chatId, providerId) {
+      const sources = [...open.get(chatId)?.sources ?? []].filter(s => providerId === undefined || s.provider === providerId)
+      return sources.length === 1 ? { ...sources[0] } : undefined
+    },
+    attach(chatId, pending, providerId) {
       const t = open.get(chatId)
       if (!t) return false
-      t.attachments.push(pending)
+      const sources = [...t.sources].filter(s => providerId === undefined || s.provider === providerId)
+      t.attachments.push({ ...pending, attribution: sources.length === 1 ? { ...sources[0] } : {} })
       return true
     },
     hasOpenTurn: (chatId) => open.has(chatId),

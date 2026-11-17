@@ -3,7 +3,7 @@
  * computer. Registered ONLY for an admin-tier session (SESSION_IS_ADMIN gate in
  * main.ts). Thin wrapper over GET /v1/locate; same shape as the daemon tools.
  */
-import { z } from 'zod'
+import z from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'

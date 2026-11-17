@@ -2,6 +2,8 @@
 export const HELP_TEXT = `wechat-cc — WeChat bridge for Claude Code (Agent SDK daemon)
 
 Usage:
+  wechat-cc checkup [--full] [--provider ID --model MODEL] [--estimate] [--json]
+                        本机 CC 体检，只用编造对话；不上传，Ctrl-C 可取消。
   wechat-cc speech <backfill|audit> [--db PATH] [--days 7] [--json]
   wechat-cc setup [--qr-json] Scan QR + bind a WeChat bot
   wechat-cc setup-poll --qrcode TOKEN [--base-url URL] [--json]
@@ -14,6 +16,9 @@ Usage:
                         推到主人微信(写 ~/.claude/settings.json 与 $CODEX_HOME/
                         hooks.json 的 hooks;幂等;只动自己的条目)。
   wechat-cc hook uninstall | status
+  wechat-cc matter notes|note --cred <path> [--before <n>] [文字]
+                        挂进一件事的终端会话读 / 写那件事的记录本(凭据文件由
+                        主人挂入时生成;只认这一件事)。
   wechat-cc status      Show daemon status + accounts
   wechat-cc list        List bound accounts
   wechat-cc doctor [--json]        Diagnose install/setup state

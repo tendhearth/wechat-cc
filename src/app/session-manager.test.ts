@@ -135,7 +135,7 @@ describe('SessionManager', () => {
       // Caller passes admin tier + chatId — provider gets both verbatim, plus
       // the daemon-computed mcpEnv overlay (always carries WECHAT_SESSION_TIER;
       // no WECHAT_SESSION_TOKEN here since no mintSessionToken is wired).
-      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_legacy', mcpEnv: { WECHAT_SESSION_TIER: 'admin' } },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_legacy', mcpEnv: { WECHAT_SESSION_TIER: 'admin' }, preparationSignal: expect.any(AbortSignal) },
     )
     expect(dispatched).toEqual(['hello codex'])
     await mgr.shutdown()

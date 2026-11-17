@@ -423,3 +423,9 @@ describe('policy.peek —— 只判不记账、不开一轮(S1:花钱之前先�
     expect(s.out.open).not.toHaveBeenCalled()
   })
 })
+
+for(const chatId of ['owner','visitor','group@chatroom'])it(`companion provenance tagging preserves dev for ${chatId}`,async()=>{
+ const ob=fakeOutbound(),policy=makeSpeechPolicy({isOwnerChat:c=>c==='owner',care:()=> 'low',quietEndsAt:()=>null,outbound:ob.out,log:()=>{}})
+ await policy.say({kind:'companion',chatId},async t=>{await t.sendText(chatId,'原话')})
+ expect(ob.out.open).toHaveBeenCalledWith(...(chatId==='owner'?[chatId,{source:'speech:companion'}]:[chatId]))
+})

@@ -286,6 +286,7 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 | `rate_limit` | — | `rate_limited` | 同上 | `unknown`(不判坏链路) |
 | `billing_error` | — | `quota` | 同上 | `unknown` |
 | `invalid_request` | — | `invalid_request` | 同上 | `unknown` |
+| 明确输入上下文超限（见末节） | — | `context_overflow` | 主人立即换段，同轮仅重试一次；再失败才通知 | `unknown`（不判链路/认证故障） |
 | `unknown` / 新标注 | — | `provider_error` | 同上 | `unknown` |
 | `max_output_tokens` | — | (不是失败) | 正文照常 | — |
 
@@ -334,6 +335,10 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 | openai 兼容 | idle:流式正文相邻两块之间 | 120s | `WECHAT_OPENAI_IDLE_TIMEOUT_MS` |
 
 到点都以 `network` 码收尾(codex 若最后一条重连通知里认得出别的码,比如 401,就用那个)。用户自己 /stop 不是超时,不挂码。
+
+**OpenAI 兼容网关的请求内重试(2026-11-12)**:对话 / delegate 与一次性评估在本回合尚无输出时,遇到 401 / 404 / 408 / 409 / 410 / 429 / 5xx 或瞬时网络错误,总共最多尝试三次,等待 2s、4s(各加 0–200ms 抖动)。策略在 `adapters/executors/openai/api-model.ts` / `openai-retry.ts`,SDK 内层重试固定为 0;工作台流式请求保持原来的缺省不重试。每次实际重试只记 `[OPENAI_RETRY] attempt=n status=… model=…`,不记请求/响应正文。最终失败才交给上面的产码与既有外层冷却;401 耗尽后仍判 `auth_rejected`,403 直接沿用鉴权失败判定。
+
+任意正文、思考或工具输入分块都关掉本回合的重试,工具后的后续步骤也不重试。重试等待可取消,失败的旧流先中止再发下一次。守护拒绝与明确离线(`ENETDOWN` / `ENETUNREACH` / `EHOSTUNREACH`)直接停止;生产对话 / delegate 在等待后重核原目标的守护,拒绝保留 `network_unprotected`,不另开探测或后台重发任务。验证用注入 fetch / sleep,不调用真实模型。
 
 **下游怎么收**
 
@@ -399,3 +404,19 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 **测试**(全用照真机形状演的假 `cursor-agent acp`,没有一次真 Cursor 调用):`cursor-errors.test.ts`(每种写法的码 + 「正文提到 looping」等反例)、`acp/events.test.ts`(扣住 / 放行 / 跨轮清空)、`acp-agent-provider.test.ts` 与 `acp-workbench-provider.test.ts`(对话 messages 模式与工作台 append 模式)、`conversation-coordinator.cursor-delivery.test.ts`(生产的 ACP 客户端 + 协调器 + 交付运行时:两臂都不把报错当回复;原样回放真机 c4both;`acp/scripted-agent.ts` 新增 `{ cliError }` 步骤照 catch 的写法发一整块)。
 
 **残留**:cursor-agent 换版本可能改句式 —— 认不出就退回今天的行为(当正文发出去),不会误伤正文;换版本时按上面的位置(`processPrompt` 的 catch)重新核对一遍。
+
+
+## 2026-11-13：输入上下文超长（context_overflow）
+
+判定唯一入口为 `src/lib/provider-error-code.ts:isContextOverflow`，只在 provider 错误边界或 coded error 使用，不对正常助理正文扫描。
+
+| 真实错误形状 | 判定 |
+|---|---|
+| Claude SDK invalid_request / failed result errors[] 的 `prompt is too long` | context_overflow |
+| OpenAI 兼容 `context_length_exceeded` / `context_window_exceeded`、400 的 maximum context length | context_overflow |
+| LiteLLM `ContextWindowExceededError`（含内层 RetryError/cause） | context_overflow |
+| Codex `codexErrorInfo:contextWindowExceeded` | context_overflow |
+| ACP RPC data 或已确认的错误整块模板中同类超长 | context_overflow |
+| max_output_tokens、quota、rate limit、普通回答引用这些词 | 保留原行为，不算上下文超长 |
+
+owner solo 立即换段并携 canonical 近况重试一次，绕过日常8轮/记账门；访客群不新增恢复行为。可取得拒绝输入计数时持久化窗口实测上界；无计数不以局部字节伪造。health 仍归 unknown，工作台沿用 provider_invalid_request 的请求拒绝文案。覆盖见 `context-overflow.test.ts`、`context-overflow.integration.test.ts`、SDK result 真实类型 fixture。

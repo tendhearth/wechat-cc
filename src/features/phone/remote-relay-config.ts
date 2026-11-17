@@ -4,8 +4,7 @@
  * 老 VPS 中继(`t…` id,`/tunnel/*`,`remote_relay_url`)与协议 v1 一起在 2026-10-25 退休(架构终态 F4):
  * 不再连它,也不再生成 `tunnel-id.json`(盘上留着的旧文件不碰)。还指着它的老网页提示「重新扫码配对」。
  *
- * 只在 `remote_tunnel:true` 且显式设了非空 `relay_v2_url` 时才开 —— 缺省值不能把链接指向一个还不存在的域名
- * (上线步骤见 docs/maintainer/relay.md)。身份文件坏了 ⇒ 这次不连(relay-identity.ts 不会悄悄换 id),记一条日志。
+ * 只在 `remote_tunnel:true` 且显式设了非空 `relay_v2_url` 时才开 —— 新装不自动连，桌面「连接手机」显式开通。身份文件坏了 ⇒ 这次不连(relay-identity.ts 不会悄悄换 id),记一条日志。
  */
 import { loadOrCreateRelayIdentity, type RelayIdentity } from './relay-identity'
 

@@ -9,11 +9,13 @@
  *
  * 一轮(dispatch)是一个立即开跑的任务,事件进队列 —— 不靠消费方拉着走,所以 cancel / close 能等它真停下。
  */
-import type {AgentAttachment,AgentEvent,AgentSession} from '../../../ports/agent-provider'
+import type {AgentAttachment,AgentDispatchContext,AgentEvent,AgentSession} from '../../../ports/agent-provider'
 import {AsyncQueue} from '../../../lib/async-queue'
 import {sumTurnUsage,type TurnUsage} from '../../../domain/turn-usage'
 import {userMessage,type APIModel,type ChatMessage,type ToolSpec} from './api-model'
 import type {ApiSessionState} from './api-sessions'
+import {createHash} from 'node:crypto'
+import {openaiErrorStatus,openaiErrorMessage,openaiErrorCode} from './openai-error-code'
 
 export interface ToolCall{id:string;name:string;input:unknown}
 export interface ImagePart{data:Uint8Array|string;mediaType:string}
@@ -22,6 +24,7 @@ export interface ToolOutcome{output:string;images?:ImagePart[];/** 结果存进�
 
 /** 会话历史 + 它的存法(对话 / 工作台各有一份实现,都落在 api-sessions)。 */
 export interface SessionHistory{
+  release?():void
   readonly id:string
   /** 存了几次(只增):续接的会话也不会和上一次撞上逐字流的 itemId。 */
   revision():number
@@ -40,6 +43,8 @@ export interface OpenAiPurpose{
   readonly maxSteps:number
   /** 工作台:finishReason 必须是 stop / tool-calls、最后一步要有字、响应形状逐项核,否则不算完成。对话:照收(半截也是回复)。 */
   readonly strict:boolean
+  /** Isolated evaluations distinguish empty reasoning exhaustion from invalid answers. */
+  readonly emptyOutputCode?:string
   /** 对话:一步的文字攒成一条 text 事件(AgentEvent 的契约:一条完整消息,消费方按条拼);工作台:逐字 append(带 itemId)。 */
   readonly textEvents:'per-step'|'streamed'
   /** 一轮最多吐多少字(端点不认输出上限时兜底)。 */
@@ -51,6 +56,7 @@ export interface OpenAiPurpose{
   readonly closeMustConfirm:boolean
   /** cancel() 要不要等这一轮停下(工作台要;对话照旧只掐,不等)。 */
   readonly cancelWaits:boolean
+  beginTurn?(signal:AbortSignal,context?:AgentDispatchContext):void
   tools():ToolSpec[]
   /** 模型一发起调用就报(对话:带真正所属的 MCP server)。不给 ⇒ 由 runTool 自己报(工作台的 activity)。 */
   toolCallEvent?(call:ToolCall):AgentEvent
@@ -111,16 +117,25 @@ export function trimDanglingToolCalls(messages:ChatMessage[]):ChatMessage[]{
 
 export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;purpose:OpenAiPurpose}):AgentSession{
   const {model,history,purpose}=args
+  let lastContextTokens: number | undefined
+  let requestBytes = 0
+  let lastRequest:ReturnType<APIModel['stream']>|undefined
+  let requestFailure:{status:number;signature:string}|null=null
+  let firstInputTokens: number | undefined
+  let firstRequestSeen=false
+  let resolvedModel: string | undefined
   let closed=false,active:Promise<void>|null=null,controller:AbortController|null=null,dispatched=false,first=true,toolsClosed=false
-  const closeTools=async()=>{if(toolsClosed)return;toolsClosed=true;await purpose.close?.().catch(()=>{})}
+  const closeTools=async()=>{if(toolsClosed)return;toolsClosed=true;try{await purpose.close?.().catch(()=>{})}finally{history.release?.()}}
 
-  async function run(text:string,attachments:readonly AgentAttachment[],queue:AsyncQueue<AgentEvent>,signal:AbortSignal){
+  async function run(text:string,attachments:readonly AgentAttachment[],queue:AsyncQueue<AgentEvent>,signal:AbortSignal,context?:AgentDispatchContext){
     const started=Date.now()
     if(first){first=false;queue.push({kind:'init',sessionId:history.id})}
     let outputBytes=0,usage:TurnUsage|undefined,steps=0
+    requestFailure=null
     const push=(event:AgentEvent)=>{queue.push(event)}
     try{
       check(signal);purpose.check?.()
+      purpose.beginTurn?.(signal,context)
       history.begin()
       // 同步给得出来就同步(工作台):这一轮一路同步走到第一个请求,和统一之前的时序一样。
       const pending=purpose.request(text,attachments)
@@ -132,13 +147,21 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         check(signal);purpose.check?.()
         const itemId=`${history.id}:${history.revision()}:${step}`
         steps++
-        const turn=model.stream(structuredClone(history.messages()),purpose.tools(),signal)
+        // 后续步骤说明本轮已经发起过工具调用;即使下一次请求还没输出,也不能再重试这一轮。
+        const firstRequest=!firstRequestSeen;firstRequestSeen=true
+        requestBytes=Buffer.byteLength(JSON.stringify(history.messages()))+Buffer.byteLength(JSON.stringify(purpose.tools()))
+        lastContextTokens=undefined
+        // 每一步的请求都可以在出字之前有界重试(api-model:最多两次、2s/4s,已流出任何东西就不重试)。工具结果已经
+        // 写进历史,重发这一步不会重跑任何工具;以前只许第一步重试,网关 410 落在工具之后那一步就整轮失败(验收 11-15)。
+        const turn=model.stream(structuredClone(history.messages()),purpose.tools(),signal,true)
+        lastRequest=turn
         void turn.finished.catch(()=>undefined)
-        let buffered=''
+        let buffered='',visibleText=''
         const flush=()=>{if(buffered){push({kind:'text',text:buffered});buffered=''}}
         for await(const delta of turn.deltas){
           check(signal)
           if(delta.kind==='text'){
+            if(purpose.emptyOutputCode)visibleText+=delta.text
             outputBytes+=Buffer.byteLength(delta.text)
             if(purpose.outputLimitBytes!==undefined&&outputBytes>purpose.outputLimitBytes)fail('api_task_output_limit')
             if(purpose.textEvents==='streamed')push({kind:'text',text:delta.text,itemId,textMode:'append'})
@@ -151,6 +174,11 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
         flush()
         const result=await turn.finished;check(signal);purpose.check?.()
         if(result.usage)usage=sumTurnUsage(usage,result.usage)
+        // Keep the last request separate from per-turn billing totals (which repeat history).
+        lastContextTokens = result.usage?.input !== undefined ? result.usage.input : undefined
+        if(firstRequest)firstInputTokens=lastContextTokens
+        if(result.model)resolvedModel=result.model
+        if(purpose.emptyOutputCode && result.finishReason==='length' && !result.toolCalls.length && (!visibleText.trim() || visibleText.trimStart().startsWith('<think>')&&!visibleText.includes('</think>')))fail(purpose.emptyOutputCode)
         if(purpose.strict)strictCheck(result,ids)
         const assistantMessages=result.messages.filter(m=>m.role==='assistant')
         history.save([...history.messages(),...assistantMessages])
@@ -171,6 +199,13 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
       }
       fail('api_task_step_limit')
     }catch(error){
+      const status=openaiErrorStatus(error)
+      const code=openaiErrorCode(error)
+      if(!signal.aborted&&status!==undefined&&status>=400&&status<500&&![401,402,403,429].includes(status)&&(code===undefined||code==='invalid_request'||code==='provider_error')){
+        // Requested counts can grow on the same rejection. Keep only a normalized digest, never the error/body.
+        const signature=createHash('sha256').update(openaiErrorMessage(error).replace(/\d+/g,'#').replace(/\s+/g,' ').trim()).digest('hex')
+        requestFailure={status,signature}
+      }
       const report=purpose.failure(error,signal.aborted,{steps,...(usage?{usage}:{})},history.id)
       // 存不下(工作台)⇒ 这一轮的 promise 失败、close 跟着失败,任务不放手(和改之前一样)。
       if(history.state()==='active')history.save(report.state==='interrupted'?history.messages():trimDanglingToolCalls(history.messages()),report.state)
@@ -180,14 +215,19 @@ export function openOpenAiSession(args:{model:APIModel;history:SessionHistory;pu
   }
 
   return{
-    dispatch(text,attachments=[]){
+    contextUsage() {
+      // A transport with wire observation can also say no request was serialized. Do not replace that with a guess.
+      const bytes=lastRequest&&'requestBytes' in lastRequest?lastRequest.requestBytes:requestBytes
+      return {...(bytes!==undefined?{historyBytes:bytes}:{}),...(lastRequest?.requestBytes!==undefined?{requestBytes:lastRequest.requestBytes}:{}),requestFailure,...(lastContextTokens!==undefined?{tokens:lastContextTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(resolvedModel?{model:resolvedModel}:{})}
+    },
+    dispatch(text,attachments=[],context){
       if(closed)fail('api_task_closed')
       if(purpose.singleDispatch&&(active||dispatched))fail('api_task_busy')
       dispatched=true
       // 在 dispatch() 的同步体里建好:dispatch 返回之后、第一次 next() 之前的 cancel() 也够得着这一轮。
       const ctl=new AbortController();controller=ctl
       const queue=new AsyncQueue<AgentEvent>()
-      const work=run(text,attachments,queue,ctl.signal)
+      const work=run(text,attachments,queue,ctl.signal,context)
       active=work
       // Persistence errors must make close reject so task ownership remains held.
       void work.catch(()=>undefined).finally(()=>{ctl.abort();if(active===work)active=null;if(controller===ctl)controller=null})

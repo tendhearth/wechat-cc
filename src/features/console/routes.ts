@@ -1,3 +1,4 @@
+import { ownerTopicCaller } from '../../lib/topic-provenance'
 /**
  * 桌面控制台的读写(架构终态 F6):以前桌面起 `wechat-cc <命令> --json` 读的那些,现在 daemon 直接回。
  * **每条 = 一条 CLI 命令**:调的是那条命令调的同一个函数 / store,回的是同一个形状(`src/cli/schema.ts` 的契约原样 parse),
@@ -43,6 +44,7 @@ import {
 
 export interface ConsoleRoutesDeps {
   stateDir: string
+  ownerChatId?: () => string | null
   db: Db
   /** daemon 那一份(地基里造的;CLI 每次新开一份,读到的是同一张表)。 */
   conversationStore: ConversationStore
@@ -113,7 +115,7 @@ export function consoleRoutes(deps: ConsoleRoutesDeps): RouteTable {
     },
 
     'GET /v1/sessions/projects': (q) => {
-      const records = Object.values(sessions().all())
+      const records = Object.values(sessions().all()).filter(r=>!r.alias.startsWith('companion:'))
       const chat = q.get('chat')
       let projects
       if (chat) projects = filterProjectsByChat(records, chat)
@@ -132,7 +134,7 @@ export function consoleRoutes(deps: ConsoleRoutesDeps): RouteTable {
       return { status: 200, body: SessionsListProjectsOutput.parse({ ok: true, projects }) }
     },
     'GET /v1/sessions/chats': () => {
-      const records = Object.values(sessions().all())
+      const records = Object.values(sessions().all()).filter(r=>!r.alias.startsWith('companion:'))
       const convs = deps.conversationStore
       const chats = groupChats(records, id => convs.getIdentity(id)?.last_user_name ?? null, id => convs.getIdentity(id)?.account_id ?? null)
       return { status: 200, body: SessionsListChatsOutput.parse({ ok: true, chats }) }
@@ -150,13 +152,17 @@ export function consoleRoutes(deps: ConsoleRoutesDeps): RouteTable {
       const before = q.get('before')
       return { status: 200, body: await dialogueTimeline(deps.db, chatParam(q), { limit: intOr(q.get('limit'), 100, true), ...(before ? { beforeTs: before } : {}) }) }
     },
-    'GET /v1/dialogue/threads': async (q) => {
+    'GET /v1/dialogue/threads': async (q, _b, caller) => {
+      const owner = deps.ownerChatId?.() ?? null
+      const allowed = ownerTopicCaller(owner, caller)
+      if (chatParam(q) !== owner) return { status: 200, body: { threads: [] } }
       const facet = q.get('facet') as 'task' | 'knowledge' | 'life' | null
-      return { status: 200, body: await dialogueThreads(deps.db, chatParam(q), { ...(facet ? { facet } : {}), includePrivate: q.get('include_private') === '1' }) }
+      return { status: 200, body: await dialogueThreads(deps.db, chatParam(q), { ...(facet ? { facet } : {}), includePrivate: allowed && q.get('include_private') === '1', allowWork: allowed }) }
     },
-    'GET /v1/dialogue/thread': async (q) => {
+    'GET /v1/dialogue/thread': async (q, _b, caller) => {
       const id = q.get('id') ?? ''
-      const result = await dialogueThreadDetail(deps.db, id)
+      const owner = deps.ownerChatId?.() ?? null
+      const result = await dialogueThreadDetail(deps.db, id, { owner, allowWork: ownerTopicCaller(owner, caller) })
       if (result === null) return { status: 404, body: { ok: false, error: `thread not found: ${id}` } }
       return { status: 200, body: result }
     },

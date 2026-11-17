@@ -30,12 +30,14 @@ describe('token-registry', () => {
     expect(opInfo?.tier).toBe('admin')
     expect(opInfo?.origin).toBe('operator')
     expect(opInfo?.routeAllow).toEqual(new Set([
-      'GET /v1/permissions/pending',
+      'GET /v1/permissions/pending', 'GET /v1/roster',
       'POST /v1/companion/converse',
       'POST /v1/companion/speak',
       'POST /v1/companion/transcribe',
       'POST /v1/knowledge/facts/find_facts',
       'POST /v1/llm/keys',
+      'GET /v1/llm/setup',
+      'POST /v1/llm/setup',
       'GET /v1/companion/thoughts',
       'POST /v1/knowledge/facts/set_fact_status',
       'POST /v1/knowledge/graph/top_contacts',
@@ -49,12 +51,15 @@ describe('token-registry', () => {
       'GET /v1/workbench/attachment',
       'POST /v1/workbench/discard-attachment',
       'GET /v1/workbench',
-      'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','GET /v1/matter/owner-chat/file','GET /v1/matter/owner-chat/search','POST /v1/matter/say','POST /v1/matter/seen',
+      'GET /v1/matters','GET /v1/matter','GET /v1/matter/notes','GET /v1/matter/owner-chat','GET /v1/matter/owner-chat/file','GET /v1/matter/owner-chat/search','POST /v1/matter/say','POST /v1/matter/seen',
       // P3e 一件事上的动作(/v1/matter/*):operator 本来就能走它们的 /v1/workbench/* 双胞胎,新键是同一个处理器
+      // 分享一件事给合伙人:主人在桌面开 / 列 / 撤
+      'POST /v1/matter/share','GET /v1/matter/shares','POST /v1/matter/share/revoke','POST /v1/matter/share/mode','GET /v1/matter/talk','POST /v1/matter/talk',
       'POST /v1/matter/stop','POST /v1/matter/permission','POST /v1/matter/answer','GET /v1/matter/artifact','GET /v1/matter/permission-script','POST /v1/matter/handoff','POST /v1/matter/worktree','POST /v1/matter/create','GET /v1/matter/create-receipt',
       'GET /v1/matter/rewind','POST /v1/matter/rewind','GET /v1/matter/changes','POST /v1/matter/review-mark','POST /v1/matter/review-return','POST /v1/matter/review-comment','POST /v1/matter/review-comments-send',
       'GET /v1/connections',
       'POST /v1/phone/link',
+      'POST /v1/phone/enable-relay',
       'GET /v1/phone/devices',
       'GET /v1/workbench/models',
       'GET /v1/workbench/sessions',
@@ -102,6 +107,8 @@ describe('token-registry', () => {
       'POST /v1/cli/rollback',
       'GET /v1/cli/sessions',
       'GET /v1/overseer/today',
+      'POST /v1/cli/attach',
+      'POST /v1/cli/detach',
       'POST /v1/cli/hooks/install',
       'POST /v1/cli/hooks/uninstall',
       'GET /v1/letters',
@@ -141,6 +148,12 @@ describe('token-registry', () => {
       'POST /v1/dialogue/unlock',
       // AI 输出回归评测(2026-10-29):`wechat-cc eval run`
       'POST /v1/eval/run',
+      // 主人显式授权的本机管家体检：查询、估价、运行、取消、可选小探针开关。
+      'GET /v1/checkup',
+      'POST /v1/checkup/estimate',
+      'POST /v1/checkup/run',
+      'POST /v1/checkup/cancel',
+      'POST /v1/checkup/settings',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })

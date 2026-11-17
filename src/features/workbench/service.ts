@@ -1,3 +1,8 @@
+import {makeRelayDomain} from './service/relay'
+import type {RelayTurnHook} from './service/relay-events'
+import {trackPreparation} from './service/state'
+import {makeLedgerDomain} from './service/ledger'
+import {makeShareDomain} from './service/share'
 import {makeWechatWorkbenchControl,type WechatMessageIdentity,type WechatWorkbenchReply} from './wechat-control'
 import type { ProviderRegistry } from '../../app/provider-registry'
 import type { NativeHistoryReader, NativeHistoryProvider } from '../../adapters/workbench/native-history'
@@ -36,6 +41,7 @@ interface Options {
   /** 这家执行者现在被拒着(出口地区用不了);执行者列表照实带出去。 */
   refusal?: (providerId: string) => { code: string; since: string } | null
   defaultProvider?: string
+  planConversation?:ServiceCtx['deps']['planConversation']
   registeredProjects?:()=>Array<{alias:string;path:string}>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   nativeHistory?:Partial<Record<NativeHistoryProvider,NativeHistoryReader>>
@@ -184,7 +190,10 @@ export function makeWorkbenchService(opts: Options) {
   const untilDomain = makeUntilDomain(ctx, { view: viewDomain, resume: resumeAfterCheck }, opts.until)
 
   // ---- 4–5 层
+  // Like until's continuation, this callback runs only after construction and committed turns.
+  const afterRelayTurn:RelayTurnHook=(...args)=>trackPreparation(state,relayDomain.afterTurn(...args))
   const lifecycleDomain = makeLifecycleDomain(ctx, {
+    relay:afterRelayTurn,
     view: viewDomain,
     artifacts: artifactsDomain,
     notices: noticesDomain,
@@ -192,6 +201,7 @@ export function makeWorkbenchService(opts: Options) {
     until: untilDomain,
   })
   const inputsDomain = makeInputsDomain(ctx, {
+    resumeRelay:(...args)=>relayDomain.resume(...args),
     admission: admissionDomain,
     attachments: attachmentsDomain,
     view: viewDomain,
@@ -207,6 +217,8 @@ export function makeWorkbenchService(opts: Options) {
 
   // ---- 6 层:execute 在顶上,它要的都已建好
   const executeDomain = makeExecuteDomain(ctx, {
+    relay:afterRelayTurn,
+    resumeRelay:(...args)=>relayDomain.resume(...args),
     admission: admissionDomain,
     attachments: attachmentsDomain,
     quota: quotaDomain,
@@ -237,6 +249,8 @@ export function makeWorkbenchService(opts: Options) {
     quota: quotaDomain,
     scripts: scriptsDomain,
   })
+  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain,entry:entryDomain})
+  const relayDomain=makeRelayDomain(ctx,{admission:admissionDomain,ledger:ledgerDomain})
   const quotaHandoffDomain = makeQuotaHandoffDomain(ctx, { execute: executeDomain, quota: quotaDomain })
   const review = makeReviewDomain(ctx, {
     scripts: scriptsDomain,
@@ -254,6 +268,7 @@ export function makeWorkbenchService(opts: Options) {
 
   // 开机对账:全部建好之后再做(顺序同改造前)
   store.recover()
+  store.plans.recover()
   store.liveInputs.recover()
   quarantineRestartContinuations(ctx)
   lifecycleDomain.adoptWriters()
@@ -270,6 +285,9 @@ export function makeWorkbenchService(opts: Options) {
 
 
   const service={
+    ...ledgerDomain,
+    rosterRelay:relayDomain.rosterRelay,
+    ...makeShareDomain(ctx,{view:viewDomain}),
     artifactDeliveryStore:store.artifactDeliveries,
     setArtifactDelivery:noticesDomain.setArtifactDelivery,
     artifactDeliveryEligible:noticesDomain.artifactDeliveryEligible,
@@ -286,7 +304,7 @@ export function makeWorkbenchService(opts: Options) {
     contextAvailable:noticesDomain.contextAvailable,
     notificationEligible:noticesDomain.notificationEligible,
     setWechatWatch:noticesDomain.setWechatWatch,
-    entryOptions:entryDomain.entryOptions,entryModels:entryDomain.entryModels,
+    entryOptions:entryDomain.entryOptions,availableExecutors:entryDomain.availableExecutors,entryModels:entryDomain.entryModels,
     entryReceipt:entryDomain.entryReceipt,
     createEntry:entryDomain.createEntry,
     projects:viewDomain.projects,

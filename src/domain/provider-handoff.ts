@@ -49,6 +49,9 @@ export interface HandoffTurn {
   dir: 'in' | 'out'
   text: string
   ts: string
+  source?: string
+  /** Query-stage omission boundary; never render this synthetic row as speech. */
+  omitted?: boolean
 }
 
 const PER_MSG_CAP = 400      // chars — one runaway message must not eat the block

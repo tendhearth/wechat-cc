@@ -202,3 +202,40 @@ describe('变化驱动的主题(P2)', () => {
     expect(hinted()).toBe(false)
   })
 })
+
+describe('roster 来源与提示',()=>{
+ it('允许订阅 roster',async()=>{
+  const {phoneTopicAllowed}=await import('./phone-routes')
+  expect(phoneTopicAllowed('roster')).toBe(true)
+ })
+ it('摘要与名单共享 version，只带 waiting / working 数量',async()=>{
+  const {makeRosterReader}=await import('../roster/reader')
+  const r=makeRosterReader({matters:{list:()=>[]},terminals:()=>[],seen:()=>null})
+  const snapshot=r.read('device')
+  const source=makePhoneTopicSources({home,roster:()=>snapshot}).find(s=>s.match('roster'))!
+  expect(await source.snapshot('roster')).toEqual({version:snapshot.version,waiting:0,working:0})
+  const populated=makePhoneTopicSources({home,roster:()=>({version:'v2',items:[{group:'waiting'},{group:'working'},{group:'working'},{group:'back'}]}) as never}).find(s=>s.match('roster'))!
+  expect(await populated.snapshot('roster')).toEqual({version:'v2',waiting:1,working:2})
+ })
+ it('缺 roster 依赖抛 roster_unavailable',async()=>{
+  const source=makePhoneTopicSources({home}).find(s=>s.match('roster'))!
+  await expect(source.snapshot('roster')).rejects.toThrow('roster_unavailable')
+ })
+ it('cli 提示只 poke roster；matter 提示和变化也 poke roster',async()=>{
+  vi.useFakeTimers()
+  let hint!:(h:WriteHint)=>void,change!:(id:string,cursor:number)=>void
+  const roster=vi.fn(()=>({version:'v',items:[]})),readHome=vi.fn(home),topics=vi.fn(async()=>({}))
+  const wiring=makePhoneEventsWiring({home:readHome,topics,roster,hints:cb=>{hint=cb;return()=>{}},changes:{onChange:cb=>{change=cb;return()=>{}}},pollMs:2000})
+  try{
+   for(const topic of ['home','topics','roster'])wiring.events.subscribe(topic,undefined,()=>{})
+   await vi.advanceTimersByTimeAsync(0)
+   roster.mockClear();readHome.mockClear();topics.mockClear()
+   hint({kind:'cli',sessionId:'s'});await vi.advanceTimersByTimeAsync(0)
+   expect(roster).toHaveBeenCalledTimes(1);expect(readHome).not.toHaveBeenCalled();expect(topics).not.toHaveBeenCalled()
+   hint({kind:'matter',matterId:'deadbeef'});await vi.advanceTimersByTimeAsync(0)
+   expect(roster).toHaveBeenCalledTimes(2)
+   change('deadbeef',1);await vi.advanceTimersByTimeAsync(0)
+   expect(roster).toHaveBeenCalledTimes(3)
+  }finally{wiring.dispose()}
+ })
+})

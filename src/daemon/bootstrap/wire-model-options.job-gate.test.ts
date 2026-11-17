@@ -16,10 +16,10 @@ const root = realpathSync(mkdtempSync(join(tmpdir(), 'job-gate-')))
 const stateDir = realpathSync(mkdtempSync(join(tmpdir(), 'job-gate-state-')))
 mkdirSync(join(root, 'src'), { recursive: true })
 
-const gateFor = (tp: TierProfile) => wireModelOptions({ stateDir }, {
+const gateFor = async (tp: TierProfile) => (await wireModelOptions({ stateDir }, {
   plugins: { wechatStdioForClaude: null, delegateStdioForClaude: null, pluginMcpForClaude: {} }, permissionMode: 'strict',
   buildCanUseTool: () => { throw new Error('标准档的闸门不该给定时任务建') }, claudeBin: undefined,
-}).sdkOptionsForProject('job:j', root, tp, 'chat', undefined, undefined, { permissionMode: 'strict' }).canUseTool!
+}).sdkOptionsForProject('job:j', root, tp, 'chat', undefined, undefined, { permissionMode: 'strict' })).canUseTool!
 const OPTS = { signal: new AbortController().signal } as never
 const deny = (tool: string, why: string) => ({ behavior: 'deny', message: `这一轮是只读的定时任务,不能用 ${tool}(${why})。` })
 const allow = (input: unknown) => ({ behavior: 'allow', updatedInput: input })
@@ -54,7 +54,7 @@ const ROWS: [string, Record<string, unknown>, string | null, boolean][] = [
 
 describe('定时任务只读档:单次调用', () => {
   it.each(ROWS)('%s %j', async (tool, input, why) => {
-    const got = await gateFor(JOB_PROFILE)(tool, input, OPTS)
+    const got = await (await gateFor(JOB_PROFILE))(tool, input, OPTS)
     expect(got).toEqual(why === null ? allow(input) : deny(tool, why))
     if (why === null) expect((got as { updatedInput: unknown }).updatedInput).toBe(input)   // 原样交回,不复制
   })
@@ -62,55 +62,55 @@ describe('定时任务只读档:单次调用', () => {
   it('审查档:同一张表,只是网一律不给', async () => {
     for (const [tool, input, why] of ROWS) {
       const want = tool === 'WebFetch' || tool === 'WebSearch' ? NOT_IN : why
-      expect(await gateFor(REVIEW_PROFILE)(tool, input, OPTS), tool).toEqual(want === null ? allow(input) : deny(tool, want))
+      expect(await (await gateFor(REVIEW_PROFILE))(tool, input, OPTS), tool).toEqual(want === null ? allow(input) : deny(tool, want))
     }
   })
 
   it('红线:项目里的密钥 / CC 的状态目录 ⇒ 拒,话里带红线给的理由', async () => {
     for (const p of [join(root, '.env'), join(root, '.ssh', 'id_rsa')]) {
-      const got = await gateFor(JOB_PROFILE)('Read', { file_path: p }, OPTS) as { behavior: string; message: string }
+      const got = await (await gateFor(JOB_PROFILE))('Read', { file_path: p }, OPTS) as { behavior: string; message: string }
       expect(got.behavior, p).toBe('deny')
       expect(got.message, p).toMatch(/^这一轮是只读的定时任务,不能用 Read\(.+\)。$/)
       expect(got.message, p).not.toContain(NOT_IN)
       expect(got.message, p).not.toContain(OUTSIDE)
     }
-    const st = await gateFor(JOB_PROFILE)('Read', { file_path: join(stateDir, 'access.json') }, OPTS) as { behavior: string; message: string }
+    const st = await (await gateFor(JOB_PROFILE))('Read', { file_path: join(stateDir, 'access.json') }, OPTS) as { behavior: string; message: string }
     expect(st.behavior).toBe('deny')   // 状态目录不在项目里:按范围先拒
   })
 
   it('MCP 的读文件工具没给路径 ⇒ 拒(没有路径);内置的不给路径 = 项目目录', async () => {
     // attach_file:wechat MCP 里分类成读文件的工具
-    const g = gateFor(JOB_PROFILE)
+    const g = await gateFor(JOB_PROFILE)
     expect(await g('mcp__wechat__attach_file', {}, OPTS)).toEqual(deny('mcp__wechat__attach_file', '没有路径'))
     expect(await g('mcp__wechat__attach_file', { pattern: 'src/**' }, OPTS)).toEqual(deny('mcp__wechat__attach_file', '没有路径'))  // 相对的 glob 不算路径
     expect(await g('mcp__wechat__attach_file', { path: '/etc/passwd' }, OPTS)).toEqual(deny('mcp__wechat__attach_file', OUTSIDE))
     expect(await g('mcp__wechat__attach_file', { path: join(root, 'a.txt') }, OPTS)).toEqual(allow({ path: join(root, 'a.txt') }))
-    expect(await gateFor(JOB_PROFILE)('mcp__wechat__attach_file', { pattern: join(root, '*.ts') }, OPTS)).toEqual(allow({ pattern: join(root, '*.ts') }))
+    expect(await (await gateFor(JOB_PROFILE))('mcp__wechat__attach_file', { pattern: join(root, '*.ts') }, OPTS)).toEqual(allow({ pattern: join(root, '*.ts') }))
     expect(await g('Read', {}, OPTS)).toEqual(allow({}))
   })
 
   it('input 为 undefined 也不炸', async () => {
-    expect(await gateFor(JOB_PROFILE)('WebSearch', undefined as never, OPTS)).toEqual({ behavior: 'allow', updatedInput: undefined })
+    expect(await (await gateFor(JOB_PROFILE))('WebSearch', undefined as never, OPTS)).toEqual({ behavior: 'allow', updatedInput: undefined })
   })
 })
 
 describe('污点:读过本机的东西以后,这一轮不再上网;新的一轮(新闸门)重新算', () => {
   const NET: [string, Record<string, unknown>][] = [['WebFetch', { url: 'https://example.com' }], ['WebSearch', { query: 'x' }]]
   it.each(ROWS)('先 %s %j,再上网', async (tool, input, why, taints) => {
-    const g = gateFor(JOB_PROFILE)
+    const g = await gateFor(JOB_PROFILE)
     await g(tool, input, OPTS)
     for (const [n, i] of NET) expect(await g(n, i, OPTS), n).toEqual(taints ? deny(n, '这一轮已经读过本机的东西,不再上网') : allow(i))
     void why
   })
   it('先上网再读:都放;读完以后再上网才拒', async () => {
-    const g = gateFor(JOB_PROFILE)
+    const g = await gateFor(JOB_PROFILE)
     expect(await g('WebSearch', { query: 'a' }, OPTS)).toEqual(allow({ query: 'a' }))
     expect(await g('Read', { file_path: join(root, 'a.txt') }, OPTS)).toEqual(allow({ file_path: join(root, 'a.txt') }))
     expect((await g('WebSearch', { query: 'b' }, OPTS)).behavior).toBe('deny')
-    expect(await gateFor(JOB_PROFILE)('WebSearch', { query: 'c' }, OPTS)).toEqual(allow({ query: 'c' }))
+    expect(await (await gateFor(JOB_PROFILE))('WebSearch', { query: 'c' }, OPTS)).toEqual(allow({ query: 'c' }))
   })
   it('被拒的读不算读过', async () => {
-    const g = gateFor(JOB_PROFILE)
+    const g = await gateFor(JOB_PROFILE)
     await g('Read', { file_path: '/etc/passwd' }, OPTS)
     await g('Read', { file_path: join(root, '.env') }, OPTS)
     expect(await g('WebSearch', { query: 'x' }, OPTS)).toEqual(allow({ query: 'x' }))
@@ -124,22 +124,22 @@ describe('Claude 用哪个模型:只认全局是 claude 且钉了 model 的', ()
     [{ provider: 'codex', model: 'claude-x-1' }, 'default'],
     [null, 'default'],
   ]
-  it.each(ROWS)('%j ⇒ %s', (config, want) => {
+  it.each(ROWS)('%j ⇒ %s', async (config, want) => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'wmo-model-')))
     if (config) writeFileSync(join(dir, 'agent-config.json'), JSON.stringify(config))
     const s = wireModelOptions({ stateDir: dir }, { plugins: { wechatStdioForClaude: null, delegateStdioForClaude: null, pluginMcpForClaude: {} }, permissionMode: 'strict', buildCanUseTool: () => (async () => ({ behavior: 'allow' })) as never, claudeBin: undefined })
     const model = want === 'pinned' ? 'claude-x-1' : DEFAULT_CLAUDE_MODEL
     expect(s.currentClaudeModel()).toBe(model)
     expect(s.currentModelFor('claude')).toBe(model)
-    expect(s.sdkOptionsForProject('P', root, TIER_PROFILES.admin, 'c').model).toBe(model)
+    expect((await s.sdkOptionsForProject('P', root, TIER_PROFILES.admin, 'c')).model).toBe(model)
   })
 })
 
 describe('标准档仍走按对话取档的闸门', () => {
-  it('admin / trusted / guest 不建只读闸门', () => {
+  it('admin / trusted / guest 不建只读闸门', async () => {
     const marker = (async () => ({ behavior: 'allow' })) as never
     const s = wireModelOptions({ stateDir }, { plugins: { wechatStdioForClaude: null, delegateStdioForClaude: null, pluginMcpForClaude: {} }, permissionMode: 'strict', buildCanUseTool: () => marker, claudeBin: undefined })
-    for (const t of ['admin', 'trusted', 'guest'] as const) expect(s.sdkOptionsForProject('P', root, TIER_PROFILES[t], 'c').canUseTool).toBe(marker)
+    for (const t of ['admin', 'trusted', 'guest'] as const) expect((await s.sdkOptionsForProject('P', root, TIER_PROFILES[t], 'c')).canUseTool).toBe(marker)
   })
 })
 

@@ -1,7 +1,8 @@
 import type { MatterDetailT } from '../backend/types'
+import { replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protocol'
 
 // running(2026-10-17):这串步骤的最后一步还在跑 ⇒ 页面标「正在」。
-export type ConvItem = { kind: 'me' | 'cc' | 'steps' | 'error'; text: string; at: number; count?: number; diagnostic?: string; running?: boolean }
+export type ConvItem = Partial<ReplyAttribution> & { kind: 'me' | 'cc' | 'steps' | 'error'; text: string; at: number; count?: number; diagnostic?: string; running?: boolean }
 const MAX = 4000
 const clip = (s: string) => (s.length > MAX ? s.slice(0, MAX) + '…' : s)
 
@@ -10,7 +11,7 @@ export function conversationView(events: MatterDetailT['events']): ConvItem[] {
   const out: ConvItem[] = []
   for (const e of events) {
     if (e.kind === 'user') out.push({ kind: 'me', text: clip(e.text), at: e.createdAt })
-    else if (e.kind === 'text') out.push({ kind: 'cc', text: clip(e.text), at: e.createdAt })
+    else if (e.kind === 'text') out.push({ kind: 'cc', text: clip(e.text), at: e.createdAt, ...replyAttributionFields(e) })
     else if (e.kind === 'error') out.push({ kind: 'error', text: clip(e.text), at: e.createdAt, ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) })
     else if (e.kind === 'tool_call') {
       const prev = out[out.length - 1]

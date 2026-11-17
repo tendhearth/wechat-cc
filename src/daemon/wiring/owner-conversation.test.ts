@@ -30,7 +30,7 @@ describe('owner conversation durable contracts', () => {
     log.finishTurn(turn.id,{status:'completed'})
     const result=ConversationWork.parse(ownerConversationWork(db,'owner'))
     expect(result.references[0]).toMatchObject({id:`work:${m.id}`,messageId:'origin',kind:'task'})
-    expect(result.results).toEqual([{id:`result:${turn.id}`,matterId:m.id,turnId:turn.id,messageId:'origin',text:'stage done',createdAt:expect.any(Number)}])
+    expect(result.results).toEqual([{id:`result:${turn.id}`,matterId:m.id,turnId:turn.id,messageId:'origin',text:'stage done',speaker:'agent',provider:'codex',createdAt:expect.any(Number)}])
     expect(ownerConversationWork(db,'owner')).toEqual(result)
     expect(ownerConversationWork(db,'other')).toMatchObject({references:[],results:[],nextCursor:null})
     db.close()

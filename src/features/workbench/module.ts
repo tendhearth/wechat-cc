@@ -36,7 +36,7 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
       const wxPerm = ctx.get<WechatPermissions>(W.permissions)
       const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
       // 话题 T3:派活时从话题拣简报、做完把结论写回话题(只给主人的任务)
-      const matterTopics = makeMatterTopics({ db, threads: makeThreadsStore(db), ownerChatId: () => ownerChatIdOf(stateDir), log: (t, l) => log(t, l) })
+      const matterTopics = makeMatterTopics({ db, threads: makeThreadsStore(db, { filterSources: true }), ownerChatId: () => ownerChatIdOf(stateDir), log: (t, l) => log(t, l) })
       return {
         db, stateDir, boot, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
         onTurnError: (providerId, code, message) => {
@@ -51,8 +51,10 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
           turnCompleted: (taskId) => { const h = setTimeout(() => { void matterTopics.writeBack(taskId) }, 1_000); (h as { unref?: () => void }).unref?.() },
         },
         providerRefusal: (providerId) => f.providerRefusals.get(providerId),
+        planConversation: caller => boot.sessionManager.activeConversation(caller),
         executionConflict: (path, providerId, nativeId) => boot.sessionManager.hasProjectConflict(path) ||
           (!!nativeId && Object.values(boot.sessionStore.all()).some(s => s.provider === providerId && s.session_id === nativeId)) ||
+          cli.participationConflict(path) ||
           cli.legacyClaims.conflicts({ owner: 'workbench', path, providerId, nativeId }) ||
           (!!nativeId && cli.cliEvents.sessions().some(s => s.source === providerId && s.session_id === nativeId && !!s.origin_agent)),
         askUser: wxPerm.askUser, permissionRegistry:wxPerm, log: (t, l) => log(t, l),

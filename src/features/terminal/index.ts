@@ -42,8 +42,11 @@ export function terminalFeature(o: { needs: readonly string[]; lazy?: readonly s
     ...(o.lazy ? { lazy: o.lazy } : {}),
     init(ctx) {
       const terminal = wireTerminal(o.deps(ctx))
-      ctx.get<InternalApiLifecycle>('internal-api').mount('terminal', terminalRoutes(terminal.routes))
+      ctx.get<InternalApiLifecycle>('internal-api').mount('terminal', terminalRoutes({...terminal.routes,participation:terminal.participation(ctx.get<InternalApiLifecycle>('internal-api'))}))
       return terminal
     },
   }
 }
+
+export {resolveTerminalParticipation} from './participation-input'
+export type {TerminalCredential} from './credentials'

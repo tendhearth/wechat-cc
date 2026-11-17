@@ -1,3 +1,11 @@
+import {readTopicBrief} from './topic-brief'
+/** 接力的棒、执行者接上了记录本工具时,代替话题简报的那一行。 */
+export const MATTER_CONTEXT_HINT='需要了解主人之前怎么聊过这件事时，用 matter_context 查；不需要就别查。'
+import type {RelayTurnHook,RelayResume} from './relay-events'
+import {isRelayContinue} from '../../../adapters/store/matter-plans'
+import {RELAY_STATUS_ASK} from '../../../domain/relay-decision'
+import {ledgerBrief} from '../../../adapters/store/matter-ledger'
+import {finishLedger} from './ledger-completion'
 import { trackPreparation } from './state'
 /**
  * execute 域:一条 run 的完整生命周期(派发 → 事件流 → 结算 → 终态),以及创建入口 create / continueTask / createWechat。
@@ -101,6 +109,8 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
 }
 
 export interface ExecuteDomains {
+  relay?:RelayTurnHook
+  resumeRelay?:RelayResume
   admission: AdmissionDomain
   attachments: AttachmentsDomain
   quota: QuotaDomain
@@ -162,6 +172,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     try {
       // 开机对账没做完 / 回退把这件事停住了(评审 #433-4)⇒ 不在半切换的工作区上跑
       await domains.rewind?.ready()
+      if(store.ledger.terminals.active(store.taskMatterId(task.id)??task.id))throw Error('workbench_busy')
       assertNotRewindBlocked(store.rewinds,task.id)
       requireInput(task.providerId,running.attachments,running.execution,running.continuation.mode==='resume')
       running.releaseBusy=ctx.deps.holdBusy?.(sessionKey)
@@ -181,11 +192,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       }
       const directory=outputDirectory(running.path,task.id)
       // 话题 T3:从和主人聊过的话题里拣一份简报(只用索引,最多等 2 秒;拿不到就没有,不拦起执行者)
-      let briefTimer:ReturnType<typeof setTimeout>|undefined
-      const topicBrief=ctx.deps.topicBrief?await Promise.race([
-        ctx.deps.topicBrief({matterId:task.id,ownerChatId:task.ownerChatId??null,title:task.title,text}).catch(()=>null),
-        new Promise<null>(resolve=>{briefTimer=setTimeout(()=>resolve(null),2_000)}),
-      ]).finally(()=>clearTimeout(briefTimer)):null
+      const ledgerEnabled=store.ledger.enabled(task.id)
+      const topicBrief=ledgerEnabled?null:await readTopicBrief(ctx.deps.topicBrief,task,text)
       const instructions=[
         `你是 CC 的工作助手。当前任务编号 ${task.id}，任务：${task.title}。`,
         `本任务工作目录：${running.path}。成果目录：${directory}。`,
@@ -221,11 +229,14 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       running.credentialsMinted=!!ctx.deps.mintSessionToken
       if (running.cancelled) revokeCredentials(running)
       store.update(task.id,running.cancelled ? 'cancelling' : 'running');
+      store.ledger.running(running.ledgerRunId??running.identity)
       if (running.cancelled) { finalStatus='cancelled'; return }
       const preparationAbort=new AbortController()
       void running.stop.then(()=>preparationAbort.abort())
+      let matterToolsAvailable=false
       running.spawnAttempted=true
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
+        reportMatterTools:available=>{matterToolsAvailable=available},
         workbenchTimeline:true,
         workbenchLifecycle:true,
         execution:{...running.execution},
@@ -242,7 +253,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         },
         preparationSignal:AbortSignal.any([state.preparationAbort.signal,preparationAbort.signal]),
         workbenchTaskId:task.id,tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
-        ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
+        ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,...(store.ledger.enabled(task.id)?{matterLedger:true}:{}),
         // 结束在这里补一次评估:请求**自己超时**(权限 5 分钟)那一下既没有事件、也不走
         // resolvePermission —— 会话早就静下来的话,没有人会回来起空闲收工的计时(终审 I4)。
         requestPermission:(request,signal) => {
@@ -288,9 +299,19 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const material=store.attachments.prepare(task.id,running.attachments,running.path,ctx.stateDir)
       // 回退之后的第一轮:前置一句告知(评审 8);送达(第一条事件)才 markNoticed,派发失败下次还带
       const rewound=domains.rewind?.notice(task.id)??null
-      const body=rewound?`${rewound.text}\n\n${text}`:text
-      const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${body}` : body
-      let rewoundNoticed=false
+      // 接力中的一棒:请执行者用一行状态收尾,判断做没做完先读这一行(domain/relay-decision.ts)。
+      const statusAsk=store.plans.get(task.id)?.state==='approved'?`\n\n${RELAY_STATUS_ASK}`:''
+      const body=(rewound?`${rewound.text}\n\n${text}`:text)+statusAsk
+      const pendingLedger=!!running.ledgerRunId&&store.ledger.needsInjection(running.ledgerRunId)
+      const records=pendingLedger?ledgerBrief(store.ledger.notes(task.id)):''
+      const opening0=matterToolsAvailable?records:records.replace('；可用 matter_notes 查询完整记录','')
+      // 派活三档(总纲「少给,要用再取」):接力的棒不推话题简报,给一行「要用就查」。
+      // 这家执行者没接上记录本工具(spec 为 null)就查不了 ⇒ 照旧把简报推进去,别让它两头落空。
+      const contextLine=ledgerEnabled?(matterToolsAvailable?MATTER_CONTEXT_HINT:await readTopicBrief(ctx.deps.topicBrief,task,text)):null
+      const opening=[opening0,contextLine].filter(Boolean).join('\n\n')
+      const currentRequest=opening?`${opening}\n\n本轮要求：\n${body}`:body
+      const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n${opening?`${opening}\n\n`:''}本轮要求：\n${body}` : currentRequest
+      let rewoundNoticed=false,ledgerNoticed=false
       const runtime=running.session.workbenchRuntime
       const stream=runtime?.events??running.session.dispatch(request,material)
       let flushErrorNoted=false
@@ -324,6 +345,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 又动起来了(自己被后台通知唤醒也算):不再安静就不再计时。文件夹本来就是它的,
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
+          store.ledger.running(running.ledgerRunId??running.identity)
           cancelIdleClose(running)
           // 自己醒来这条路唯一能推进 turnSeq 的地方(评审修复轮 1)——没有比这更早的信号
           // 了,所以是尽力而为:一段自动续作连着抖好几次 quiet↔busy 时,这里会跟着抖好几
@@ -342,9 +364,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         summary=await collectWorkbenchTurn(stream,running.stop,ctx.deps.timeoutMs ?? 10*60_000,
           ev => {
             if (running.cancelled) return
+            if(pendingLedger&&!ledgerNoticed&&['text','tool_call','result'].includes(ev.kind)){store.ledger.injected(running.ledgerRunId!);ledgerNoticed=true}
             if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');ctx.hub.bumped(task.id)}
             if(rewound&&!rewoundNoticed&&['text','tool_call','result'].includes(ev.kind)){rewoundNoticed=true;domains.rewind?.markNoticed(task.id,rewound.ids)}
-            if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
+            if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,running.ledgerOpening?'handoff':'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
             // Open the stored turn before its first row is persisted. For result,
             // flush pending text first, while that same turn is still open.
             if (ev.kind !== 'result') noteTurn(running,ev)
@@ -390,7 +413,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         finalStatus='failed'; finalError=error
         const coded=error!==raw&&!!summary.error
         if(!modelRejected&&!networkRefused)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':coded?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
-      } else { finalStatus='completed'; quota.clear(task.providerId); try{ctx.deps.onTurnCompleted?.(task.providerId)}catch{/* 只是个提示 */}; try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 写回话题失败不影响收尾 */} }
+      } else { finalStatus='completed'; quota.clear(task.providerId); try{ctx.deps.onTurnCompleted?.(task.providerId)}catch{/* 只是个提示 */};if(!store.ledger.enabled(task.id))try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 写回话题失败不影响收尾 */} }
     } catch (error) {
       const thrown=isNetworkUnprotectedError(error)?'network_unprotected':error instanceof CodexExecutionError?error.code:error instanceof Error?error.message:'task_failed'
       const message=thrown==='network_unprotected'||error instanceof CodexExecutionError?thrown:taskErrorForProviderCode(providerErrorCodeOf(error),thrown)??thrown
@@ -399,6 +422,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if (!running.cancelled) { store.addEvent(task.id,'error',error instanceof CodexExecutionError?error.message:message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); }
     } finally {
       cancelIdleClose(running)
+      const relayPending=running.questions.pending().length>0||running.permissions.pending().length>0
+      let relayQueued=true
+      try{relayQueued=store.liveInputs.count(task.id)>0}catch{/* Unread owner input must never release the next leg. */}
+      let relayStatus:TaskStatus=finalStatus
       running.finishing=true;running.questions.close();ctx.hub.bumped(task.id)
       for(const input of running.runtimeInputs?.values()??[])settleRuntimeInput(running,input,new Error('runtime_closed_before_input_acknowledgement'))
       running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended');ctx.hub.bumped(task.id)
@@ -421,6 +448,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       let terminalCommitted=false
       try {
         const status=running.cancelled&&!running.uncertain?(running.closedWhileReplied?'completed':'cancelled'):finalStatus
+        relayStatus=status
         if (status==='cancelled'&&running.restartInterrupted) finalError='daemon_restarted'
         // 会不会真的在这一拍入队回报,两个条件都要成立(终审后修复第二轮
         // Important②a,判据比"这一轮有没有出生地"更紧):①这一轮有出生地
@@ -455,8 +483,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
           // 这件事的轮记不上(比如这件事的行没了)不能挡任务自己的终态 —— 外层 catch 会把写者一直锁着。
           try{store.execution.endRun(task.id,running.identity,status,finalError)}catch{/* 只少一轮的结局 */}
+          finishLedger(ctx,running,status)
           store.update(task.id,status,finalError)
-          stageFinishedNotice(running,status,finalError,willReport)
+          if(store.plans.get(task.id)?.state!=='approved'&&!running.relayClosing&&running.relayReportedTurn!==running.turnSeq)stageFinishedNotice(running,status,finalError,willReport)
         })
         terminalCommitted=true
         matterSync(m=>m.setLifecycle(task.id,status==='interrupted'?'open':'done'))
@@ -468,7 +497,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 说成「已答复」,跟 stageFinishedNotice 给 failed/额度耗尽的既有文案("这一轮
         // 需要处理"/问"交给 X 继续?")直接打架。失败/取消不经这里回报,不代表主人收不
         // 到通知——stageFinishedNotice 走的是另一条既有的完成通知路径,不受这里影响。
-        if (status==='completed') reportOnce(running,body)
+        if (status==='completed') {
+          if(store.plans.get(task.id)?.state!=='approved'&&!running.relayClosing)reportOnce(running,body)
+          if(store.ledger.enabled(task.id))try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 话题写回不影响收尾 */}
+        }
         // 回忆(task-5,fix round 3,评审必判①):这是唯一的触发点(round 2
         // 还有 settleQuiet 那一处,这一轮去掉了——见 settleQuiet 里的注
         // 释)。这里的 turnSeq 是这个 run 真实的总轮数,"一件事一段记述"与
@@ -494,6 +526,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
       if (!running.uncertain) releaseReservation(running)
+      if(terminalCommitted)try{await domains.relay?.(running,relayStatus,relayPending,relayQueued)}catch(error){ctx.log?.('MATTER_RELAY',`completion failed: ${error instanceof Error?error.message:String(error)}`)}
       // 做到条件成立为止(v80):不保留会话的执行者只走这里。成功做完 ⇒ 排检查(先于 drainInputs:主人有排队的,
       // until 自己让路);失败 ⇒ 停并写原因(额度 / 限流也在这里)。retained 的那一轮 settleQuiet 已经排过,按轮去重。
       try {
@@ -507,7 +540,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
 
 
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string};ledgerOpening?:boolean},attachmentPolicy?:'owner',initialDenials=0):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     assertNotRewindBlocked(store.rewinds,task.id)
     if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
@@ -523,8 +556,17 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     // 就不会发布这个未提交的信号,提交后的 (atomic 块外)会把真实 seq 发出去。
     const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);return id}
     let firstTurn=null as string|null
+    let planCancelled=false
     const handoffPeer=store.atomic(()=>{
+      const plan=store.plans.get(task.id)
+      if(plan?.state==='approved'&&!acceptance?.ledgerOpening){
+        const leg=plan.legs.find(l=>l.runId===store.ledger.agents(task.id).at(-1)?.runId&&l.state==='stopped')
+        // 等主人回话的那一棒:主人回什么都是在答它,拆法照旧(第三轮真模型验收 run-58:回了「选简洁版」拆法却作废,第三棒没人做)。
+        if(leg&&(isRelayContinue(text)||leg.stopReason==='leg_asked'))store.plans.resume(task.id,leg.runId!)
+        else if((!queuedInputId||!store.liveInputs.get(queuedInputId))&&!isRelayContinue(text)||!plan.legs.some(l=>l.state==='running'))planCancelled=store.plans.cancel(task.id)
+      }
       firstTurn=store.execution.accept(task.id,runId,execution)
+      if(acceptance?.ledgerOpening)store.ledger.start(task.id,runId,task.providerId,text)
       const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?continuationAttachmentScope(task.id,attachments):acceptance?.scope)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
@@ -582,13 +624,13 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       launch:runText=>execute(task,runText,running),
       execution,
       attachments:dispatchAttachments,
-      interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
+      ledgerOpening:acceptance?.ledgerOpening??false,ledgerRunId:store.ledger.agents(task.id).at(-1)?.runId,interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,spawnAttempted:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
       ...(firstTurn?{turn:{id:firstTurn,open:true}}:{}),
     }
     const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
     if(acceptance)acceptance.activate(activate);else activate()
-    return taskView(publicTask({...task,status:'queued',error:null}))
+    return {...taskView(publicTask({...task,status:'queued',error:null})),...(planCancelled?{planCancelled:true,notice:'拆法已作废'}:{})}
   }
 
   /** matter 同步永不打断任务本身:登记失败只是少一条索引,任务照跑。 */
@@ -710,6 +752,17 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         return taskView(publicTask(store.get(id)))
       }
     }
+    const request=checkedText(text,attachments)
+    if(isRelayContinue(request)&&domains.resumeRelay?.(id,()=>{
+      // This entry resumes the approved brief; it cannot silently consume new materials.
+      if(attachments.length)throw Error('invalid_request')
+      if(inputRequestId)store.atomic(()=>{
+        const runId=store.execution.last(id)?.runId
+        if(!runId)throw Error('input_stale')
+        store.liveInputs.add({id:inputRequestId,taskId:id,runId,text:request,attachments})
+        store.liveInputs.set(inputRequestId,'delivered');store.bump(id)
+      })
+    }))return taskView(publicTask(store.get(id)))
     if (runsByTask.has(id)) throw new Error('workbench_busy')
     const task=store.get(id)
     const execution=normalizeExecutionChoice(options?.execution,store.execution.choice(id))
@@ -720,7 +773,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     if(store.worktrees.get(id)?.removedAt!=null)throw new Error('worktree_removed')
     provider(task.providerId)
     if (canonicalProject(task.path)!==task.path) throw new Error('invalid_path')
-    const request=checkedText(text,attachments),acceptedDirectoryIdentity=directoryIdentity(task.path)
+    const acceptedDirectoryIdentity=directoryIdentity(task.path)
     const restartToken=options?.restartToken
     if (restartToken!==undefined && (typeof restartToken!=='string' || !/^[a-f0-9]{64}$/.test(restartToken))) throw new Error('invalid_request')
     const decision=continuation(task,execution)

@@ -20,13 +20,14 @@
  *    (缺省 = 全部已注册)。admin 不受限。
  */
 import type { ProviderId } from './conversation'
-import { PROVIDER_IDS, type KnownProviderId } from '../lib/provider-ids'
+import { PROVIDER_IDS, isKnownProviderId, type KnownProviderId } from '../lib/provider-ids'
 import { EXECUTOR_FACTS } from '../lib/executor-facts'
 import type { UserTier } from './user-tier'
 import { capabilitiesFor } from './capability-matrix'
 import { guestSafe } from './confinement'
 
 export type ProviderDenial =
+  | { kind: 'unavailable'; reason: string }
   | { kind: 'shared_token_guest' }
   | { kind: 'unconfined_guest' }
   | { kind: 'not_in_trusted_list'; allowed: readonly ProviderId[] }
@@ -36,13 +37,15 @@ export function providerDenialFor(
   tier: UserTier,
   trustedProviders: readonly ProviderId[] | undefined,
 ): ProviderDenial | null {
+  const unavailableReason = isKnownProviderId(providerId) ? capabilitiesFor(providerId).unavailableReason : undefined
+  if (unavailableReason) return { kind: 'unavailable', reason: unavailableReason }
   if (tier === 'admin') return null
   if (tier === 'guest') {
     // 能力表里查不到的 id(拼错、或新加一家漏了登记)对访客关门:缺省往拒绝的方向兜底(3c,2026-10-22)。
     let cap: ReturnType<typeof capabilitiesFor> | null = null
     try { cap = capabilitiesFor(providerId) } catch { cap = null }
     if (!cap) return { kind: 'unconfined_guest' }
-    if (!cap.adminMcpTools) return { kind: 'shared_token_guest' }
+    if (cap.mcpTools !== 'none' && !cap.adminMcpTools) return { kind: 'shared_token_guest' }
     if (!guestSafe(cap)) return { kind: 'unconfined_guest' }
   }
   if (trustedProviders && !trustedProviders.includes(providerId)) return { kind: 'not_in_trusted_list', allowed: trustedProviders }
@@ -51,6 +54,7 @@ export function providerDenialFor(
 
 /** 用户看得懂的拒绝语。slash = 用户打的那个词(cc/agy/cursor…)。 */
 export function describeProviderDenial(d: ProviderDenial, slash: string): string {
+  if (d.kind === 'unavailable') return d.reason
   if (d.kind === 'shared_token_guest') return `/${slash} 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。`
   if (d.kind === 'unconfined_guest') {
     if (slash === 'cursor') return 'Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。'

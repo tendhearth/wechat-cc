@@ -3,6 +3,26 @@ import { FeedEvent, Connections, NativeSessionPage, ChatPage, ChatJob, MatterTop
 import { DEMO_CHAT_REPLY_MS, makeDemoBackend } from './demo'
 
 describe('演示后端', () => {
+  it('reply-speaker fixture keeps owner, CC, Codex and notice attribution distinct through chat and matter reads', async () => {
+    const b = makeDemoBackend({ lang: 'en', now: () => 1_800_000_000_000, chatFixture: 'reply-speaker' })
+    try {
+      const page = ChatPage.parse(await b.chat({}))
+      expect(page.messages.map(m => [m.role, m.speaker, m.provider])).toEqual([
+        ['me', undefined, undefined], ['cc', 'cc', 'claude'],
+        ['cc', 'agent', 'codex'], ['cc', 'notice', 'cursor'],
+      ])
+      expect(page.messages.map(m => m.id)).toEqual(['reply-demo-owner', 'reply-demo-cc', 'reply-demo-codex', 'reply-demo-notice'])
+      expect(page.pending).toBeNull()
+      expect(page.failed).toBeNull()
+      const detail = MatterDetail.parse(await b.matter(page.matterId!, 'en'))
+      expect(detail.events.map(e => [e.kind, e.speaker, e.provider])).toEqual([
+        ['user', undefined, undefined], ['text', 'cc', 'claude'],
+        ['text', 'agent', 'codex'], ['text', 'notice', 'cursor'],
+      ])
+      b.reset()
+      expect((await b.chat({})).messages).toEqual(page.messages)
+    } finally { b.dispose() }
+  })
   it('初始:一条待批准、一个待回答,四件事(含一件额度用完) + 主人那条对话(chat matter)', async () => {
     const b = makeDemoBackend()
     const ms = await b.matters('en')

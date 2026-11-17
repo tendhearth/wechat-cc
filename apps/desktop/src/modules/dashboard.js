@@ -1,5 +1,6 @@
 // @ts-check
 /// <reference lib="dom" />
+import { openCliSetup, closeCliSetup, refreshCliSetupGuard } from './cli-setup.js'
 // Dashboard module. Owns the settings drawer's 连接 section: connection verdict (hero), bound-accounts
 // table (incl. inline two-step delete confirm), footer pid indicator,
 // and the smart restart-daemon button.
@@ -467,6 +468,7 @@ let _lastIncidentsCheckAt = 0
  * TEST-ONLY: Reset all module-level dashboard state.
  */
 export function __resetDashboardState() {
+  closeCliSetup()
   _lastRestart = null
   _lastProbe = null
   _reconnectPhase = "idle"
@@ -1085,6 +1087,7 @@ export async function loadBrainHealth(deps, fresh) {
  */
 /** @param {DashboardDeps} deps @param {boolean} [manual] */
 export function renderNoBrain(deps, manual = false) {
+  closeCliSetup()
   if (manual) _troubleshootOpen = true
   const el = document.getElementById("brain-health")
   if (!el) return
@@ -1100,7 +1103,7 @@ export function renderNoBrain(deps, manual = false) {
         </button>
         <button class="nb-opt" type="button" data-action="nb-cli">
 
-          <span class="nb-txt"><b>登录已有账号</b><small>Claude / Codex / Cursor · 需要相应登录工具，账号支持情况以服务商为准。</small></span>
+          <span class="nb-txt"><b>登录已有账号</b><small>选择账号后，CC 会打开终端帮你安装并登录。</small></span>
         </button>
       </div>
       <div class="brain-setup" id="brain-setup" hidden></div>
@@ -1110,6 +1113,7 @@ export function renderNoBrain(deps, manual = false) {
 /** 排障流程:网络体检 →(有可达大脑端点就)真拨大脑 → 状态与修复指引。 */
 /** @param {DashboardDeps} deps */
 export async function runTroubleshoot(deps) {
+  closeCliSetup()
   const el = document.getElementById("brain-health")
   if (!el) return
   _troubleshootOpen = true
@@ -1184,45 +1188,17 @@ export async function runBrainDial(deps) {
 /** 收起排障面板;若缓存里仍有红,回到告警条。 */
 /** @param {DashboardDeps} deps */
 export function closeTroubleshoot(deps) {
+  closeCliSetup()
   _troubleshootOpen = false
   const el = document.getElementById("brain-health")
   if (el) el.hidden = true
   loadBrainHealth(deps, false).catch(() => {})
 }
 
-// CLI/订阅型 provider 的接入命令(点「+」显示,可一键复制,不用小白翻文档)。
-// 命令是 macOS/Linux 的官方原生安装器(不预设用户装过 Node/npm);
-// Windows 上如实指去官网而不是给一条跑不了的 Unix 命令。
-const IS_WINDOWS = typeof navigator !== "undefined" && /Win/i.test(navigator.platform || "")
-const CLI_SETUP = {
-  claude: {
-    title: "Claude Code(订阅)",
-    cmds: ["curl -fsSL https://claude.ai/install.sh | bash", "claude"],
-    win: "Windows:打开 claude.com/claude-code 下载安装,装好后在终端跑一次 claude 登录",
-    note: "第二条命令会引导浏览器登录",
-  },
-  codex: {
-    title: "Codex CLI(订阅)",
-    cmds: ["brew install codex", "codex"],
-    win: "Windows:参见 openai.com 的 Codex CLI 安装说明",
-    note: "没有 Homebrew 的话参见官网其它安装方式;首次运行会引导登录",
-  },
-  cursor: {
-    title: "Cursor(订阅)",
-    cmds: ["curl https://cursor.com/install -fsS | bash", "cursor-agent login"],
-    win: "Windows:参见 cursor.com/cli 的 Windows 安装说明(或在 WSL 里执行左边命令)",
-    note: "用你的 Cursor 账号在浏览器点一下授权",
-  },
-  agy: {
-    title: "Gemini · Antigravity(订阅)",
-    cmds: ["agy"],
-    win: "Windows:参见 Antigravity 官网安装说明",
-    note: "需先安装 Antigravity CLI,首次运行引导 Google 登录",
-  },
-}
-
 /** 点「+」徽章 → 就地展开接入表单/命令。 @param {{ invokeApi: (method: any, path: string, body?: any, opts?: any) => Promise<any> }} _deps @param {string} provider */
 export function openBrainSetup(_deps, provider) {
+  _troubleshootOpen = true
+  closeCliSetup()
   const box = document.getElementById("brain-setup")
   if (!box) return
   box.hidden = false
@@ -1239,17 +1215,7 @@ export function openBrainSetup(_deps, provider) {
       </div>`
     return
   }
-  const c = /** @type {Record<string, typeof CLI_SETUP[keyof typeof CLI_SETUP] | undefined>} */ (CLI_SETUP)[provider]
-  if (!c) { box.hidden = true; return }
-  box.innerHTML = IS_WINDOWS
-    ? `
-    <div class="brain-setup-title">接入 ${escapeHtml(c.title)}</div>
-    <div class="brain-setup-note">${escapeHtml(c.win)};装好登录后回来点「测试连接」。</div>`
-    : `
-    <div class="brain-setup-title">接入 ${escapeHtml(c.title)} — 在终端里逐条跑:</div>
-    ${c.cmds.map((/** @type {string} */ cmd) => `
-      <div class="brain-cmd"><code>${escapeHtml(cmd)}</code><button class="brain-copy" type="button" data-copy-cmd="${escapeHtml(cmd)}">复制</button></div>`).join("")}
-    <div class="brain-setup-note">${escapeHtml(c.note)},完成后回来点「测试连接」。</div>`
+  return openCliSetup(_deps, provider)
 }
 
 /** 保存 API key(走 owner-workspace 通道,daemon 落 daemon.env,值不进日志)。
@@ -1340,7 +1306,7 @@ export function checkGuardOnPoll(deps) {
   const now = Date.now()
   if (_lastGuardCheckAt !== 0 && now - _lastGuardCheckAt < GUARD_POLL_INTERVAL_MS) return Promise.resolve()
   _lastGuardCheckAt = now
-  return loadGuardLine(deps).catch(err => console.warn("[guard] check failed:", err))
+  return Promise.all([loadGuardLine(deps), refreshCliSetupGuard(deps)]).catch(err => console.warn("[guard] check failed:", err))
 }
 
 let _lastFsCheckAt = 0

@@ -13,7 +13,7 @@ import type { Facet, Episode, ThreadStatus, EntryKind } from '../../lib/threads-
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export interface NewEntry { kind: EntryKind; line: string; body?: string; due?: string; /** 结论来自哪件事(agent 的活)。 */ matter?: string }
+export interface NewEntry { kind: EntryKind; line: string; body?: string; due?: string; /** 结论来自哪件事(agent 的活)。 */ matter?: string; /** 本条实际依据的已有条目 id;纯新对话可省略。 */ derivedFrom?: string[] }
 
 export type ExtractOp =
   | { op: 'create_topic'; title: string; summary: string; description?: string; facets: [Facet, ...Facet[]]; tags: string[]; aliases: string[]; private: boolean; episode?: Episode; entries: NewEntry[] }
@@ -71,8 +71,19 @@ function clip(text: string, n = TEXT_MAX): string {
   return text.length > n ? text.slice(0, n) + '…' : text
 }
 
-export function renderMessage(m: PromptMessage): string {
-  return `[${m.ts}] ${m.direction === 'in' ? '主人' : 'CC'}: ${clip(m.text)}`
+/** 新消息单条上限。足够放下正常的长回答 / 贴进来的一段日志;再长的(整份文件、几十万字的粘贴)留头留尾。
+ * 不设上限时,一条超出便宜模型窗口的消息会让抽取永远失败、水位永远不动——话题整理和上下文轮换一起卡死。
+ * 被略去的中段没有进话题记忆是有意的取舍:原文一直在 messages 里,可查可搜。 */
+export const NEW_TEXT_MAX = 20000
+function clipNew(text: string): string {
+  if (text.length <= NEW_TEXT_MAX) return text
+  const head = Math.floor(NEW_TEXT_MAX * 0.7), tail = NEW_TEXT_MAX - head
+  return `${text.slice(0, head)}\n…[中间略去 ${text.length - NEW_TEXT_MAX} 字]…\n${text.slice(-tail)}`
+}
+export function renderMessage(m: PromptMessage, contextOnly = false): string {
+  // New originals must be presented in full before their timestamp can be
+  // accounted. Only the already-accounted context tail may be abbreviated.
+  return `[${m.ts}] ${m.direction === 'in' ? '主人' : 'CC'}: ${contextOnly ? clip(m.text) : clipNew(m.text)}`
 }
 
 export function renderWork(w: PromptWork): string {
@@ -112,6 +123,7 @@ const TASK = `你是 CC,在整理和主人聊过的「话题」。话题是记�
 - 已经记过的事不要重复记(看已有话题下的条目)。
 - 不记密码、密钥、令牌原文;写「密码在 X 处」。
 - agent 的活只记结论(改了什么、结果是什么、卡在哪、下一步),不记过程;结论条目写 "matter":"事的编号"。
+- 新条目依据已有条目时,用 "derivedFrom":["ent_xxx"] 列出实际引用的条目 id(只能引用下方展示的 id)。纯新增聊天事实写 derivedFrom:[],不要继承无关话题或整段上下文。
 
 ## 时间戳
 episode 的时间戳必须原样复制消息里的 ts(UTC、以 Z 结尾),不要改写时区。没有对话、只有 agent 的活时不写 episode。
@@ -135,9 +147,9 @@ export function buildExtractPrompt(input: ExtractPromptInput): string {
 
   const vocab = tagVocabulary.length > 0 ? tagVocabulary.join('、') : '(暂无)'
   const tail = contextTail && contextTail.length > 0
-    ? `\n=== 近期历史(只用来判断话题是不是又聊到了,不要为它们本身记条目) ===\n${contextTail.map(renderMessage).join('\n')}\n`
+    ? `\n=== 近期历史(只用来判断话题是不是又聊到了,不要为它们本身记条目) ===\n${contextTail.map(m=>renderMessage(m,true)).join('\n')}\n`
     : ''
-  const msgs = newMessages.length === 0 ? '(无新消息)' : newMessages.map(renderMessage).join('\n')
+  const msgs = newMessages.length === 0 ? '(无新消息)' : newMessages.map(m=>renderMessage(m)).join('\n')
   const work = workResults && workResults.length > 0
     ? `\n=== agent 做完的活(只记结论) ===\n${workResults.map(renderWork).join('\n')}\n`
     : ''
@@ -168,7 +180,7 @@ const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const Line = z.string().trim().min(1)
 const Words = z.array(z.string().trim().min(1))
 
-const EntryShape = { kind: KindEnum, line: Line, body: z.string().optional(), due: Day.optional(), matter: z.string().optional() }
+const EntryShape = { kind: KindEnum, line: Line, body: z.string().optional(), due: Day.optional(), matter: z.string().optional(), derivedFrom: Words.optional() }
 
 const ExtractOpSchema = z.discriminatedUnion('op', [
   z.object({

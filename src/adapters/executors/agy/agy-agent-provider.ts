@@ -19,6 +19,7 @@ import { agyErrorCode } from './agy-errors'
 import { errorWithProviderCode } from '../../../lib/provider-error-code'
 import { spawn } from '../../../lib/runtime/process'
 import { wrapForProcessTree } from '../../../lib/jobspawn'
+import { sessionSubprocessEnv } from '../subprocess-env'
 
 /** agyModel 没设时的兜底 —— 只此一处(见 claude-agent-provider 的 DEFAULT_CLAUDE_MODEL 注释)。 */
 export const DEFAULT_AGY_MODEL = 'gemini-3.8-flash-medium'
@@ -112,7 +113,7 @@ function defaultSpawnFn(bin: string): AgySpawnFn {
     // (它的 MCP 子进程)会留下继续跑 —— 这里以前**一处 win32 判断都没有**,漏得最彻底。
     // 其他平台原样(见 src/lib/jobspawn.ts)。
     const wrapped = wrapForProcessTree(bin, args)
-    const proc = spawn([wrapped.command, ...wrapped.args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
+    const proc = spawn([wrapped.command, ...wrapped.args], { cwd: opts.cwd, env: sessionSubprocessEnv(), stdout: 'pipe', stderr: 'pipe' })
     // Start draining stderr NOW (concurrently with whatever the caller does
     // with stdout/exited) — see drainCappedStderr's doc comment for why a
     // lazy read-on-demand deadlocks against a chatty child.
@@ -326,6 +327,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
     // 守护(评审 #193 P1-1):agy 永远连 Google;模型和下面 spawn / oneShotEval 用的是同一份。
     callTarget: (kind, ctx) => ({ provider: 'agy', model: kind === 'cheapEval' ? modelFor(CHEAP_EVAL_MODEL) : kind === 'strongEval' ? modelFor(opts.model) : ctx?.model ?? opts.model }),
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
+      if (ctx.evaluation) throw errorWithProviderCode('isolated_evaluation_unavailable', 'provider_error')
       // resumeSessionId-seeded spawns already have a handle — their first
       // dispatch uses `--conversation`, never `--new-project` (RULING 1).
       let conversationId: string | null = ctx.resumeSessionId ?? null

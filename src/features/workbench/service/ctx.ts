@@ -40,6 +40,7 @@ export interface ServiceDeps {
   unattendedAck?: { get(): number | null; set(at: number): void }
   /** 原生历史读取器(claude / codex):list 只报名字,native 域真读。 */
   nativeHistory?: Partial<Record<NativeHistoryProvider, NativeHistoryReader>>
+  planConversation?: (caller:import('../../../adapters/workbench/matter-plan-input').PlanCaller)=>import('../../../adapters/workbench/matter-plan-input').PlanConversation|null
   registeredProjects?: () => Array<{alias:string;path:string}>
   defaultProvider?: string
   /** 外部(终端里的 claude/codex)是否正占着这个文件夹/会话;不传 ⇒ 不查。 */

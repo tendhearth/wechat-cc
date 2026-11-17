@@ -1,3 +1,4 @@
+import {ownerLedgerCaller,scopeMatterLedger} from '../../lib/matter-ledger-access'
 import { ConversationWindowQuery,ConversationWorkQuery } from '../../../packages/protocol/src/owner-conversation'
 import type { ListMatters, MatterKind, MatterSurface } from '../../ports/matters'
 import { LEGACY_MATTER_STATUSES, type LegacyMatterStatus, type WireMatter } from '../../domain/matters/legacy-status'
@@ -185,6 +186,8 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       let detail:Awaited<ReturnType<typeof service.detail>>
       try{detail=await service.detail(id)}
       catch(error){const message=error instanceof Error?error.message:'internal';return message==='matter_not_found'?{status:404,body:{error:message}}:known(message)?{status:400,body:{error:message}}:{status:500,body:{error:'internal'}}}
+      const ledgerOwner=deps.resolveAdminChatId?.()??null
+      detail=scopeMatterLedger(detail,ownerLedgerCaller(ledgerOwner,caller)&&!!ledgerOwner&&detail.matter.ownerChatId===ledgerOwner)
       if(!fromPhone(caller)){
         // 桌面读这件事的详情 = 在电脑上看过了(S3b):先只在桌面提示的那一件到点就不再推手机
         try{deps.desktopSeen?.(id)}catch{/* 只是记一笔 */}

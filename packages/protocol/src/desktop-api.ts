@@ -1,4 +1,8 @@
+import { RosterResponse } from './roster'
+import { OptionalReplyMetadata } from './reply-attribution'
+import {EntryRequestId} from './entry-request-id'
 import { CliProjectMemoryRequest } from './cli-project-memory'
+import { CHECKUP_RESPONSES } from './checkup'
 import { TopicOpenRequest, TopicRenameRequest, TopicMergeRequest, TopicDeleteRequest, TopicWrongRequest } from './topic-bubbles'
 import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
@@ -19,7 +23,7 @@ import z from 'zod'
 import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import {
   PHONE_API_SCHEMAS, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent, MatterPermission, PermissionScript, PermissionScriptChunk,
-  MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
+  MatterAgent,MatterNote,MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
 // ── GET /v1/health ───────────────────────────────────────────────────────────
@@ -31,7 +35,17 @@ export const SubsystemStatusSchema = z.object({
   sinceIso: z.string(),
 })
 
+export const OwnerContextStatus = z.object({
+  provider: z.string(), model: z.string(), estimatedTokens: z.number().nonnegative(), budgetTokens: z.number().nonnegative(),
+  historyBytes: z.number().nonnegative(), source: z.enum(['unknown', 'bytes', 'provider']), turns: z.number().nonnegative(),
+  lastRotatedAt: z.string().nullable(), reason: z.enum(['budget', 'nightly','overflow']).nullable(),
+  windowTokens:z.number().optional(),windowSource:z.enum(['measured','persisted','assumed']).optional(),reliableFillRatio:z.number().optional(),ratioSource:z.enum(['measured','default']).optional(),
+  fixedOverheadTokens:z.number().nullable().optional(),windowTooSmall:z.boolean().optional(),budgetError:z.string().nullable().optional(),historyTokens:z.number().optional(),deferredRotations:z.number().optional(),lastDeferredReason:z.string().nullable().optional(),warning:z.string().nullable().optional(),
+})
+export type OwnerContextStatusT = z.infer<typeof OwnerContextStatus>
+
 export const HealthResponse = z.object({
+  owner_context: z.array(OwnerContextStatus).optional(),
   ok: z.boolean(),
   daemon_pid: z.number(),
   // Ops fields (added with the admin self-diagnosis tools). Optional so older
@@ -897,6 +911,21 @@ export const WorkbenchEntryOptionsResponse = EntryOptions
 // ── POST /v1/workbench/create-entry(202)/ GET /v1/workbench/entry-receipt ──
 export const WorkbenchEntryResultResponse = z.object({ receipt: EntryReceipt, task: WorkbenchDesktopTaskView })
 
+/** Same project/managed target as the owner conversation's existing entry. */
+export const MatterPlanRequest=z.object({
+  requestId:EntryRequestId.optional(),
+  project:z.string().trim().min(1).max(4096).optional(),
+  isolation:z.literal('worktree').optional(),
+  base:z.string().min(1).optional(),
+  target:z.union([
+    z.object({kind:z.literal('managed')}).strict(),
+    z.object({kind:z.literal('project'),projectId:z.string().regex(/^p-[a-f0-9]{20}$/).optional(),isolation:z.literal('worktree').optional(),base:z.string().min(1).optional()}).strict(),
+    z.object({kind:z.literal('local')}).strict(),
+  ]).optional(),
+  title:z.string().trim().min(1).max(120),
+  legs:z.array(z.object({executor:z.string().trim().min(1).max(80),brief:z.string().trim().min(1).max(20_000)}).strict()).min(1).max(6),
+}).strict()
+
 // ── GET /v1/workbench(列表)──
 export const WorkbenchListResponse = z.object({
   tasks: z.array(WorkbenchDesktopTaskView),
@@ -961,6 +990,7 @@ export const WorkbenchSessionResponse = z.union([z.object({ ok: z.literal(true) 
 
 // ── GET /v1/workbench/task(详情;带 since / wait_ms 时长轮询)──
 const WorkbenchTaskEvent = z.object({
+  ...OptionalReplyMetadata.shape,
   id: z.number(), taskId: z.string(), kind: z.enum(['user', 'text', 'tool_call', 'error', 'system']), text: z.string(), createdAt: z.number(),
   sourceId: z.string().nullable().optional(), runId: z.string().optional(), turnId: z.string().optional(),
   activity: z.object({
@@ -987,6 +1017,7 @@ const WorkbenchHandoffView = z.object({
   sourceStatus: z.string(), targetStatus: z.string(),
 })
 export const WorkbenchTaskDetailResponse = z.object({
+  agentRuns:z.array(MatterAgent).optional(),notes:z.array(MatterNote).optional(),notesTotal:z.number().int().nonnegative().optional(),
   task: WorkbenchDesktopTaskView,
   events: z.array(WorkbenchTaskEvent),
   artifacts: z.array(WorkbenchTaskArtifact),
@@ -1601,6 +1632,7 @@ const CompanionConverseAttachmentShape = z.union([
   z.object({ kind: z.literal('file'), name: z.string(), path: z.string() }),
 ])
 export const CompanionConverseResponse = z.object({
+  ...OptionalReplyMetadata.shape,
   ok: z.literal(true),
   reply: z.string(),
   attachments: z.array(CompanionConverseAttachmentShape),
@@ -2433,7 +2465,22 @@ export const PenpalMarkReadResponse = z.object({ ok: z.literal(true) })
 // validate responses; under the test runner index.ts checks every 2xx body
 // against it (assertResponseContract).
 
+const SHARE_MODE=z.enum(['view','discuss','act'])
+const MatterTalkRow=z.object({id:z.number(),matterId:z.string(),shareId:z.string().nullable(),who:z.enum(['owner','guest','cc']),name:z.string(),text:z.string(),createdAt:z.number()}).strict()
+const MatterShareRow=z.object({id:z.string(),matterId:z.string(),name:z.string(),mode:SHARE_MODE,createdAt:z.number(),expiresAt:z.number(),revokedAt:z.number().nullable(),lastOpenedAt:z.number().nullable()}).strict()
+const MATTER_ID=z.string().regex(/^[a-f0-9]{8}$/)
+
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  // title:对话里的 CC 开链接时必带(确认卡上给主人看的那个标题,路由核对它确实是这件事的);桌面不用带。
+  'POST /v1/matter/share':z.object({matter:MATTER_ID,title:z.string().trim().min(1).max(200).optional(),name:z.string().min(1).max(200),mode:SHARE_MODE.optional()}).strict(),
+  'POST /v1/matter/share/mode':z.object({matter:MATTER_ID,id:z.string().regex(/^[a-f0-9]{12}$/),mode:SHARE_MODE}).strict(),
+  'GET /v1/matter/talk':z.object({matter:MATTER_ID}).strict(),
+  'POST /v1/matter/talk':z.object({matter:MATTER_ID,text:z.string().trim().min(1).max(2000)}).strict(),
+  'GET /v1/matter/shares':z.object({matter:MATTER_ID}).strict(),
+  'POST /v1/matter/share/revoke':z.object({matter:MATTER_ID,id:z.string().regex(/^[a-f0-9]{12}$/)}).strict(),
+  'POST /v1/matter/note':z.object({text:z.string().trim().min(1).max(1000)}).strict(),
+  'POST /v1/matter/relay':z.object({matter:z.string().regex(/^[a-f0-9]{8}$/),executor:z.string().min(1),brief:z.string().trim().min(1).max(20_000)}).strict(),
+  'POST /v1/matter/plan':MatterPlanRequest,
   'POST /v1/memory/topics/rename': TopicRenameRequest,
   'POST /v1/memory/topics/merge': TopicMergeRequest,
   'POST /v1/memory/topics/delete': TopicDeleteRequest,
@@ -2523,6 +2570,17 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  // 令牌只在 url 里出现这一次;列表里没有。
+  'POST /v1/matter/share':z.object({share:MatterShareRow,url:z.string()}).strict(),
+  'GET /v1/matter/shares':z.object({shares:z.array(MatterShareRow)}).strict(),
+  'POST /v1/matter/share/revoke':z.object({revoked:z.boolean()}).strict(),
+  'POST /v1/matter/share/mode':z.object({changed:z.boolean()}).strict(),
+  'GET /v1/matter/talk':z.object({talk:z.array(MatterTalkRow),total:z.number()}).strict(),
+  'POST /v1/matter/talk':z.object({line:MatterTalkRow}).strict(),
+  'GET /v1/matter/notes':z.object({notes:z.array(MatterNote).optional(),agentRuns:z.array(MatterAgent).optional(),notesTotal:z.number().int().nonnegative().optional(),matchedTotal:z.number().int().nonnegative().optional(),nextBefore:z.number().int().positive().nullable().optional(),truncated:z.boolean().optional(),retentionNotice:z.string().optional()}),
+  'POST /v1/matter/note':z.object({ok:z.literal(true)}),
+  'POST /v1/matter/relay':z.object({task:WorkbenchDesktopTaskView}),
+  'POST /v1/matter/plan':WorkbenchEntryResultResponse,
   'GET /v1/matter/permission-script': PermissionScriptChunk,
   ...TOPIC_BUBBLE_RESPONSES,
   ...OWNER_CONVERSATION_RESPONSES,
@@ -2633,6 +2691,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/matter/review-comment': z.union([WorkbenchReviewCommentResponse, PhoneActionOk.extend({ commentId: z.string().optional(), deleted: z.boolean().optional() })]),
   'POST /v1/matter/review-comments-send': z.union([WorkbenchReviewCommentsSendResponse, PhoneActionOk.extend({ sent: z.number(), remaining: z.number(), skippedDiscarded: z.number() })]),
   // 一件事 / 连接 / 手机 / 插件 / 许可 / 终端会话 / 日历 / 信
+  'GET /v1/roster': RosterResponse,
   'GET /v1/matters': MattersListResponse,
   'GET /v1/matter': MatterDetailResponse,
   'GET /v1/matter/owner-chat': MatterOwnerChatResponse,
@@ -2641,6 +2700,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/matter/say': MatterSayResponse,
   'GET /v1/connections': ConnectionsResponse,
   'POST /v1/phone/link': PhoneLinkResponse,
+  'POST /v1/phone/enable-relay': PhoneLinkResponse,
   'GET /v1/phone/devices': PhoneDevicesResponse,
   'GET /v1/plugins/list': PluginsListResponse,
   'POST /v1/plugins/toggle': PluginToggleResponse,
@@ -2770,4 +2830,5 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/penpal/letters': PenpalSendLetterResponse,
   'POST /v1/penpal/letters/read': PenpalMarkReadResponse,
   'POST /v1/penpal/letters/resend': PenpalResendLetterResponse,
+  ...CHECKUP_RESPONSES,
 }

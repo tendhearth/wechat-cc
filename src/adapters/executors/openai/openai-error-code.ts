@@ -8,7 +8,7 @@
  * 唯一的例外是 Gemini 风格的「400 但正文明说 key 无效」,那是 codeForHttpStatus
  * 里的一条固定规则。
  */
-import { codeForHttpStatus, providerErrorCodeOf, type ProviderErrorCode } from '../../../lib/provider-error-code'
+import { isContextOverflow, codeForHttpStatus, providerErrorCodeOf, type ProviderErrorCode } from '../../../lib/provider-error-code'
 import { isConnectFailure } from '../../../lib/net-errors'
 
 type Obj = Record<string, unknown>
@@ -34,6 +34,8 @@ const statusOf = (e: unknown): number | undefined => {
 const bodyOf = (e: unknown): string => (obj(e) && typeof e.responseBody === 'string' ? e.responseBody : '')
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e ?? ''))
 
+export const openaiErrorStatus = (err: unknown): number | undefined => statusOf(lastAttempt(err)) ?? statusOf(err)
+
 /** Bun / Node fetch 的「连不上」系统码(放在 err.code 或 err.cause.code)。 */
 const NET_CODES = /^(ConnectionRefused|ConnectionClosed|FailedToOpenSocket|ECONNRESET|ETIMEDOUT|EPIPE|EAI_AGAIN|UND_ERR_[A-Z_]+|UNKNOWN_CERTIFICATE_VERIFICATION_ERROR|CERT_[A-Z_]+|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_[A-Z_]+)$/
 
@@ -43,6 +45,7 @@ export function openaiErrorCode(err: unknown): ProviderErrorCode | undefined {
   const attempt = lastAttempt(err)
   const fromAttempt = providerErrorCodeOf(attempt)
   if (fromAttempt) return fromAttempt
+  if (isContextOverflow(err)) return 'context_overflow'
   const status = statusOf(attempt) ?? statusOf(err)
   const http = codeForHttpStatus(status, `${bodyOf(attempt)} ${messageOf(attempt)}`)
   if (http) return http

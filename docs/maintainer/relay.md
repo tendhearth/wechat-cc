@@ -1,5 +1,7 @@
 # 官方中继 v2(apps/relay)
 
+> **维护者高级说明，不对外。** 用户在桌面点「连接手机」即可开通；以下部署与手动配置只用于维护和测试。
+
 ## 1. 这是什么
 
 手机 app / 手机网页与家里电脑上的 daemon 之间,需要一个公网上的「会合点」。官方中继 v2 就是这个会合点:一个跑在 Cloudflare Workers 上的服务(每个 daemon 一个 Durable Object),转发加密后的实时通道,并在手机不在线时替 daemon 发 APNs / FCM 推送。它看不到明文。代码在 `apps/relay/`,协议在 `packages/protocol/`。

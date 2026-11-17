@@ -432,3 +432,35 @@ it('one step and repeated pages avoid scanning 1500 unrelated linked historical 
  expect(query.mock.calls.filter(([sql])=>/FROM matters m|WITH RECURSIVE valid_entry|FROM matter_topics l/.test(sql))).toHaveLength(0)
  process.stdout.write('TOPICS_REVIEW_MEASURE '+JSON.stringify({historicalLinks:1500,coldMs,stepMs,stepQueries,warmTenPagesMs:warmMs,warmQueries})+'\n')
 })
+
+it.each(['remote','subagent','temporary','visitor'] as const)('task activity excludes %s provenance on cold and warm reads',async shape=>{
+  const f=await fixture(),seen=()=>null
+  await f.threads.addEntry({threadId:f.id,kind:'fact',line:'安全聊天'})
+  const task=f.matters.create({kind:'task',title:'bx',projectPath:root,ownerChatId:'owner'})
+  const turn=f.log.startTurn({matterId:task.id,executor:'codex',policy:{cwd:root}})
+  f.log.writeItem({matterId:task.id,turnId:turn.id,kind:'tool_call',status:'started',payload:{verb:'read',target:'SECRET_REMOTE_FILE.txt',tool:'Read'}})
+  const warm=await projectActivities(f.db,'owner',seen,f.identify)
+  expect(JSON.stringify([...warm])).toContain('SECRET_REMOTE_FILE.txt')
+  if(shape==='visitor')f.db.query('UPDATE matters SET owner_chat_id=? WHERE id=?').run('visitor',task.id)
+  else f.db.query('UPDATE matter_turns SET policy_json=? WHERE id=?').run(JSON.stringify({cwd:shape==='temporary'?'/tmp/restricted':root,...(shape==='remote'?{machine:'remote-host'}:shape==='subagent'?{originAgent:'child-agent'}:{})}),turn.id)
+  const activity=await projectActivities(f.db,'owner',seen,f.identify)
+  expect(JSON.stringify([...activity])).not.toContain('SECRET_REMOTE_FILE.txt')
+  expect(activity.get(f.id)?.sessions??[]).toEqual([])
+  const cold=await projectActivities(f.db,'owner',()=>null,f.identify)
+  expect(cold.get(f.id)?.sessions??[]).toEqual([])
+  const recalled=await resolveTopicRecall('bx',[{id:f.id,title:'bx',aliases:[],tags:[],summary:'',lastActive:'',entries:[]}],{activity,bodies:false})
+  expect(JSON.stringify(recalled)).not.toContain('SECRET_REMOTE_FILE.txt')
+  expect(JSON.stringify(recalled)).not.toContain('1 个在跑')
+})
+
+it('owner current terminal stays visible after local hostname collision drift', async () => {
+  const f = await fixture(), m = f.terminal('rename-current')
+  const { hostname } = await import('node:os')
+  const machine = hostname().replace(/\.local$/i, '').replace(/-\d+$/, '').toUpperCase() + '-2.local'
+  f.db.query('UPDATE cli_sessions SET machine=?').run(machine)
+  f.db.query('UPDATE matter_turns SET policy_json=? WHERE matter_id=?').run(JSON.stringify({ cwd: root, machine }), m.id)
+  const activity = (await projectActivities(f.db, 'owner', () => null, f.identify)).get(f.id)!
+  expect(activity).toBeDefined()
+  expect(activity.sessions.map(s => s.id)).toContain(m.id)
+  expect(activity.activity.running).toBe(1)
+})

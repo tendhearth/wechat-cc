@@ -5,7 +5,7 @@ window.addEventListener('offline',function(){cConnectionText();if(cReady)cRender
 window.addEventListener('online',function(){cConnectionText();if(cReady){cRead(false);tList(false,false)}})
 if('serviceWorker' in navigator)navigator.serviceWorker.addEventListener('controllerchange',function(){toast('界面已更新，请刷新继续。')})
 
-function cShowMatterLayout(){if(!cReady){document.body.classList.remove('matter-open');return};document.body.classList.toggle('matter-open',!!mCurrent);if(mCurrent){document.getElementById('m-home').hidden=!window.matchMedia('(min-width:1000px)').matches;document.getElementById('topic-panel').hidden=true}}
+function cShowMatterLayout(){if(!cReady){document.body.classList.remove('matter-open');return};document.body.classList.toggle('matter-open',!!mCurrent);if(mCurrent){document.getElementById('m-home').hidden=!window.matchMedia('(min-width:900px)').matches;document.getElementById('topic-panel').hidden=true}}
 window.addEventListener('resize',cShowMatterLayout)
 
 var cEntryRestored=false

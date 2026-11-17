@@ -20,6 +20,7 @@
 import type { TurnAttachment } from '../../domain/turn-reply'
 import type { WechatSend } from '../../ports/wechat'
 import type { AppAttachment } from '../app-reply'
+import { unprefixedReplyText } from '../../lib/reply-presentation'
 
 export type ProactiveChannel = 'wechat' | 'app'
 
@@ -100,6 +101,7 @@ export function makeProactiveOutbound(deps: ProactiveChannelDeps): ProactiveOutb
     let seq = 0
 
     const toApp = async (a: AppChannel, text: string, silent = false): Promise<{ msgId: string; error?: string }> => {
+      text = unprefixedReplyText(text)
       let ok = false
       try { ok = await (metadata ? a.record(chatId, text, undefined, metadata) : a.record(chatId, text)) } catch (e) { deps.log('COMPANION_APP', `chat=${chatId} record threw: ${errMsg(e)}`) }
       if (!ok) return { msgId: `err:${Date.now()}`, error: 'app_record_failed' }

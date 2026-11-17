@@ -222,7 +222,9 @@
               <div id="onboard-phone-qr" class="qr-svg"></div>
               <p id="onboard-phone-status" class="qr-note"></p>
               <p id="onboard-phone-check" class="qr-check" hidden></p>
+              <button id="onboard-phone-connect" class="btn ghost" type="button" hidden></button>
               <button id="onboard-phone-renew" class="btn ghost" type="button" hidden></button>
+              <a id="onboard-phone-privacy" class="qr-sub" href="https://cc.tendhearth.com/privacy/" hidden></a>
               <p id="onboard-phone-later" class="qr-sub"></p>
             </div>
             <!-- 可选:接上终端里的 Claude Code / Codex(2026-10-14,modules/terminal-hooks.js mountOnboardTerminal)。没装 / 已接上 ⇒ 不出现。 -->
@@ -388,51 +390,39 @@
     <main class="dashboard">
       <div class="dash-window">
 
-        <aside id="dash-global-rail" class="dash-rail">
-          <p class="dash-wordmark">tendhearth</p>
-
-          <nav class="dash-nav" aria-label="主导航">
-            <button class="dash-nav-link active" data-pane="overview">CC<span class="count" id="now-count"></span></button>
-            <button class="dash-nav-link" data-pane="recollections">回忆</button>
-          </nav>
-
-          <details class="cc-life-nav-more">
-            <summary>生活与工具</summary>
-            <div>
-              <button class="dash-nav-link" aria-label="画室" data-pane="atelier">画室</button>
-              <button class="dash-nav-link" aria-label="记忆" data-pane="memory">记忆<span class="count" id="memory-count"></span></button>
-              <button class="dash-nav-link" aria-label="待办" data-pane="todos">待办</button>
-              <button class="dash-nav-link" aria-label="觅食" data-pane="a2a-agents">觅食</button>
-              <button class="dash-nav-link" aria-label="后厨" data-pane="sessions" data-backstage-entry="true">后厨<span class="count" id="sessions-count"></span></button>
+        <header id="dash-global-rail" class="dash-topbar">
+          <button id="topbar-cc" class="dash-nav-link active" data-pane="overview" aria-label="跟 CC 说">
+            <span class="topbar-figure"><img class="topbar-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" /><img class="topbar-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" /></span>
+            <span>CC</span>
+          </button>
+          <details class="cc-home-details">
+            <summary><span class="now-sr">CC 的连接:</span><span id="topbar-presence-dot" class="dot" aria-hidden="true"></span><span id="topbar-presence">正在连接…</span></summary>
+            <div class="now-panel">
+              <div id="now-connections" class="now-connections"></div>
+              <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
             </div>
           </details>
-          <div class="dash-utilities"><button id="settings-open" class="rail-gear" type="button" aria-label="设置">设置</button></div>
-        </aside>
-
-        <div id="workbench-nav-scrim" class="workbench-nav-scrim" aria-hidden="true" hidden></div>
+          <nav aria-label="主导航">
+            <button id="topbar-roster" type="button" aria-controls="roster-aside" aria-expanded="false">在做 0</button>
+            <button id="topbar-search" type="button">搜索</button>
+            <button class="dash-nav-link" data-pane="memory">记忆<span id="memory-count" hidden></span></button>
+            <button class="dash-nav-link" data-pane="recollections">回忆</button>
+            <details class="topbar-more"><summary aria-label="更多">⋯</summary><div>
+              <button class="dash-nav-link" data-pane="atelier">画室</button>
+              <button class="dash-nav-link" data-pane="todos">待办</button>
+              <button class="dash-nav-link" data-pane="a2a-agents">觅食</button>
+              <button class="dash-nav-link" data-pane="sessions" data-backstage-entry="true">后厨<span id="sessions-count" hidden></span></button>
+              <button id="settings-open" type="button">设置</button>
+            </div></details>
+          </nav>
+        </header>
 
         <section class="dash-main">
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
           <article class="dash-pane cc-now-pane" data-pane="overview" data-now="chat" data-conversation="single" data-cc="away">
-            <details class="cc-home-details">
-            <summary><span class="now-sr">CC 的连接:</span><span id="dash-rail-dot" class="dot"></span><span id="dash-rail-text">正在连接…</span></summary>
-            <div class="now-panel">
-              <div id="now-connections" class="now-connections"></div>
-              <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
-            </div>
-            </details>
-            <header class="now-hero" aria-label="CC">
-              <button id="now-cc" class="now-figure" type="button" aria-label="跟 CC 说">
-                <img class="now-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" />
-                <img class="now-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
-              </button><span>CC</span>
-            </header>
             <div id="converse-root" class="converse-page"></div>
-            <details id="now-waiting" class="now-waiting" aria-labelledby="now-waiting-title" hidden>
-              <summary id="now-waiting-title"></summary>
-              <ul id="now-waiting-list"></ul>
-            </details>
+
           </article>
 
           <!-- Hidden shim: keeps the IDs that JS modules
@@ -485,6 +475,7 @@
 
           <!-- ── pane: memory ───────────────────────────────────────── -->
           <article class="dash-pane" data-pane="memory" hidden>
+            <section id="memory-topics" class="memory-topics" aria-label="话题"></section>
             <section class="memory-profile-overview" id="memory-profile-overview">
               <section class="memory-facts" id="memory-facts" aria-labelledby="memory-facts-title">
                 <header class="memory-facts-head"><div><h1 id="memory-facts-title">记忆</h1></div><button id="memory-facts-edit" class="btn" type="button" aria-label="查看并纠正记忆" disabled>纠正</button></header>
@@ -666,7 +657,7 @@
 
           <!-- ── pane: workbench ───────────────────────────────────── -->
           <section id="conversation-matter-layer" class="dash-pane workbench-pane" data-pane="workbench" role="dialog" aria-modal="true" aria-label="事项" hidden>
-            <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-home" class="workbench-home" type="button" data-life-pane="overview">‹ 返回对话</button><button id="workbench-nav-toggle" class="workbench-nav-toggle" type="button" aria-label="打开导航" title="打开导航" aria-controls="dash-global-rail" aria-expanded="false"><span class="dash-wordmark">tendhearth</span></button></span></header>
+            <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-home" class="workbench-home" type="button" data-life-pane="overview">‹ 返回对话</button></span></header>
             <div id="workbench-root" class="workbench-root"><p class="empty-state">正在读取事项…</p></div>
           </section>
 
@@ -805,6 +796,7 @@
           </article>
 
         </section>
+        <aside id="roster-aside" class="roster-aside" aria-label="在做"><div id="roster-list"></div><div id="roster-dock" hidden></div></aside>
       </div>
     </main>
 

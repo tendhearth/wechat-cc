@@ -24,6 +24,13 @@ function harness() {
 const RESULT: AgentEvent = { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }
 
 describe('runner · 对话的轮(M3a)', () => {
+  it('user coordinator marks each dispatch as inbound for permission prompts', async () => {
+    const { runner } = harness()
+    const dispatch = vi.fn(() => (async function* () { yield RESULT })())
+    const summary = await runner.run({ chatId: 'owner', alias: 'a', providerId: 'openai', handle: { dispatch }, prompt: 'hand off', budget: 'turn' })
+    expect(summary.result?.sessionId).toBe('s')
+    expect(dispatch).toHaveBeenCalledWith('hand off', { source: 'inbound' })
+  })
   it('run 开一轮、事件都给它;record 按同一个 turn 标记收同一轮,只收一次', async () => {
     const { runner, opened, recordTurn, handle } = harness()
     const tool: AgentEvent = { kind: 'tool_call', tool: 'Bash' }

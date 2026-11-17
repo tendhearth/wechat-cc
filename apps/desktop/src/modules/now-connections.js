@@ -13,6 +13,7 @@
 
 import { HOOKS_RUN, makeHooksAction } from './terminal-hooks.js'
 import { V1, v1 } from '../daemon-client.js'
+import { mountButlerStatus } from './butler-status.js'
 
 /** @typedef {'ok'|'warn'|'bad'|'unknown'} Dot */
 /** @typedef {'ready'|'behind'|'not_loaded'|'unknown'} State */
@@ -112,6 +113,8 @@ function row(cls, d, name, detail) {
 export function mountNowConnections({ host, call, now = () => Date.now(), openUrl, openPlace }) {
   // 「接上」/「修复」的确认状态放在浮层外面:30 秒一次的刷新整块重画,也不会把「确认中」冲掉。
   const hooks = makeHooksAction({ call, rerender: () => render(), onDone: () => { void refresh() } })
+  const butlerHost = el('section')
+  const butler = mountButlerStatus({ host: butlerHost, call })
   /** @type {Connections|null} */ let data = null
   /** @type {number|null} */ let fetchedAt = null
   let failed = false
@@ -132,6 +135,7 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
     }
     if (v) {
       if (v.computers.length) parts.push(section('家里的电脑', v.computers.map(x => row('nc-computer', x.dot, x.label, x.detail))))
+      parts.push(butlerHost)
       // 能力行就在大标题「CC 现在怎么样」下面,不再重复一遍同名小标题(2026-10-16)。
       if (v.capabilities.length) parts.push(section('CC 现在怎么样', v.capabilities.map(x => {
         const li = row('nc-capability', x.dot, x.name, x.label)
@@ -155,6 +159,7 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
   }
 
   async function refresh() {
+    void butler.refresh()
     const mine = ++ticket
     try {
       const r = /** @type {Connections} */ (await v1(call, V1.connections.get))
@@ -178,5 +183,5 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
   }
 
   render()
-  return { refresh, open }
+  return { refresh, open, destroy: () => butler.destroy() }
 }

@@ -34,7 +34,7 @@ export type { ReviewCommentInput } from './service/review-lines'
 export { makeProjectLessons, LESSONS_MAX, LESSON_MAX_CHARS, type ProjectLessons } from './project-lessons'
 // 微信「任务 …」那一族(命令表、入站去重 / 记消息、指称解析都要认它)
 export { isWechatTaskCommand, wechatTaskMessageKey, type WechatMessageIdentity, type WechatWorkbenchReply } from './wechat-control'
-export { resolveTaskReference, makeCheapJudge, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from './task-reference'
+export { resolveTaskReference, makeCheapJudge, isTaskHandoffRequest, isTaskHandoffCommand, isMatterShareRequest, isTerminalAttachRequest, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from './task-reference'
 export { QUOTA_TAKEOVER_DEFAULT_REQUEST, quotaTakeoverText } from './quota-takeover'
 // 桌面 / 手机令牌的 /v1/workbench/* 路由表(模块自己挂;测试拼面板时也要)
 export { workbenchRoutes, type WorkbenchRoutesDeps } from './routes'
@@ -68,7 +68,7 @@ export function workbenchFeature(o: {
       // 手机令牌读原生会话(P3c-4,以前在 wire-settings-panel.ts):单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
       const phoneSessions = phoneSessionsOf(service)
       internalApi.mount('workbench', workbenchRoutes({
-        workbench: service, resolveAdminChatId: o.resolveAdminChatId, ...(o.desktop ? { desktop: o.desktop } : {}),
+        workbench: service, resolveAdminChatId: o.resolveAdminChatId, planConversation:deps.planConversation, ...(o.desktop ? { desktop: o.desktop } : {}),
         // 执行者叫什么(收敛清单 ⑥):唯一出处 registry
         phoneSessions: { sessions: phoneSessions, executorName: (id: string) => deps.boot.registry.namesOf(id).name },
       }))

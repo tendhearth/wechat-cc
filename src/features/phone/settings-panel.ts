@@ -1,3 +1,5 @@
+import { CLI_SETUP_IDS } from '../../lib/executor-cli-setup'
+import { EXECUTOR_FACTS } from '../../lib/executor-facts'
 import { linkHomeStatus } from '../../domain/matters/phone-scope'
 /**
  * settings-panel.ts — the WeChat-openable graphical settings page
@@ -34,6 +36,7 @@ import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/ag
 import { saveLlmKey } from '../../daemon/llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from '../../daemon/llm-health'
 import { capabilitiesFor } from '../../domain/capability-matrix'
+import { GROK_PHONE_LOGIN_HINT, grokHomeProblem } from '../../lib/grok-home'
 import { providerDenialFor } from '../../domain/provider-policy'
 import { PROVIDER_IDS } from '../../lib/provider-ids'
 import { buildFeed, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
@@ -108,6 +111,8 @@ export interface SettingsPanelDeps {
   }
   /** 三轴 presence,经 internal-api lifecycle.getPresence 共用。缺省/抛 ⇒ 手机页显示「不知道」。 */
   presence?: () => Promise<Presence | null>
+  /** 分享一件事给合伙人(share-panel.ts)。缺省 ⇒ 分享令牌一律不认,和乱写的令牌一样 401。 */
+  shares?: SharePort
   /** 手机洞察(批准说明 + 进展概括,spec 2026-09-30-tendhearth-app-v1 §5)。缺省 ⇒ /m/api/matter/insight 503。 */
   insight?: import('./phone-insight').PhoneInsight
   // 手机看改动、逐文件审阅、行评论(§5.3 / 2026-10-17 / 切片 4)P3e 起是 /v1/matter/changes、review-* 那一个处理器(内部 API,MattersService 那一层)。
@@ -211,6 +216,12 @@ export interface SettingsPanel {
   linkUrl(): Promise<string | null>
   /** 桌面「连接手机」(spec 2026-10-01-tendhearth-pairing-ux §4.1):按需打开远程隧道;只在 v2 中继就绪时铸码。 */
   phoneLink(opts: { enableRemote: boolean }): Promise<PhoneLinkResult>
+  /** 主人开一个分享链接(只在 v2 中继就绪时开;不替主人打开远程访问)。 */
+  shareLink(matterId: string, name: unknown, mode?: unknown): ShareLinkResult
+  /** 没撤销、没过期的分享令牌 —— 隧道握手的候选。 */
+  shareTokens(): string[]
+  /** 这枚分享令牌此刻还能用吗(撤销、过期、这件事归档都算不能)。 */
+  shareTokenValid(token: string): boolean
   /** 已配对设备(不含令牌),桌面轮询「已连上」用。 */
   phoneDevices(): DeviceRow[]
   /** Route one request — shared by the LAN Bun.serve and the remote tunnel
@@ -251,6 +262,7 @@ import { ROUTES } from '@wechat-cc/protocol/routes'
 import { makeRouteUsage } from '../../lib/route-usage'
 import { phoneBuildOf, phoneClientOf, withPhoneClient } from './phone-client'
 import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
+import { isShareToken, shareRequest, shareUrl, type ShareLinkResult, type SharePort } from './share-panel'
 
 /** 手机能看哪几件(P3c-1 起规矩在 domain/matters/phone-scope.ts,`/v1/matters`、`/v1/matter` 按 caller 用它)。 */
 export { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
@@ -296,7 +308,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     const providers = PANEL_PROVIDERS.map(id => {
       const isReg = registered.has(id)
       const pr = probe.get(id)
-      const status = !isReg ? 'unconfigured' : pr == null ? 'unknown' : pr.ok === true ? 'ok' : pr.ok === false ? 'broken' : 'unknown'
+      const unavailableReason = id === 'grok' ? grokHomeProblem(deps.stateDir) : capabilitiesFor(id).unavailableReason
+      const status = !isReg ? 'unconfigured' : unavailableReason ? 'broken' : pr == null ? 'unknown' : pr.ok === true ? 'ok' : pr.ok === false ? 'broken' : 'unknown'
       return {
         id,
         // 设置页要分清「怎么连的」⇒ 用 settings 那种写法(收敛清单 ⑥;页面不再自带名字表)
@@ -304,8 +317,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         registered: isReg,
         model: modelForProvider(cfg, id) ?? null,
         status,
-        ...(pr?.error ? { error: pr.error.slice(0, 160) } : {}),
-        ...(!isReg && PROVIDER_SETUP_HINTS[id] ? { hint: PROVIDER_SETUP_HINTS[id] } : {}),
+        ...(unavailableReason && isReg ? { error: id === 'grok' ? GROK_PHONE_LOGIN_HINT : unavailableReason } : pr?.error ? { error: pr.error.slice(0, 160) } : {}),
+        ...(!isReg && PROVIDER_SETUP_HINTS[id] ? { hint: (CLI_SETUP_IDS as readonly string[]).includes(id) ? `${EXECUTOR_FACTS[id as keyof typeof EXECUTOR_FACTS].detect?.binary?.name ?? id}：到电脑上点一下接入。` : PROVIDER_SETUP_HINTS[id] } : {}),
         ...(pr?.latency_ms != null ? { latency_ms: pr.latency_ms } : {}),
       }
     })
@@ -327,7 +340,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       //    如走 ACP 的 cursor)⇒ 面板上"访客不可用"那句。cursor 不是共享钥匙,所以没有 🔑,
       //    但访客照样用不了 —— 两条规矩(core/provider-policy.ts)对得上。
       trusted_providers: cfg.trusted_providers ?? null,
-      shared_token: PANEL_PROVIDERS.filter(id => { try { return !capabilitiesFor(id).adminMcpTools } catch { return false } }),
+      shared_token: PANEL_PROVIDERS.filter(id => { try { return capabilitiesFor(id).mcpTools !== 'none' && !capabilitiesFor(id).adminMcpTools } catch { return false } }),
       // 从 providerDenialFor 推出来,不另抄一遍规矩:面板说的和分派时真挡的永远是同一个判断。
       guest_blocked: PANEL_PROVIDERS.filter(id => providerDenialFor(id, 'guest', undefined) !== null),
     }
@@ -657,6 +670,26 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     phoneDevices() {
       return devices.list()
     },
+
+    shareLink(matterId, name, mode) {
+      const remote = deps.remoteInfo?.() ?? null
+      const state = phoneLinkState({
+        owner: !!deps.ownerChatId(), v2Configured: deps.relayV2Configured?.() ?? false,
+        tunnelOn: deps.remote?.isEnabled() ?? false, bootRemoteId: remote?.id ?? null, bootFailed: !!deps.remoteAtBoot && !remote,
+      })
+      if (!deps.shares) return { ok: false, error: 'share_unavailable' }
+      // 中继没就绪就不开:开出来的链接合伙人也打不开。
+      if (state !== 'ready' || !remote) return { ok: false, error: 'share_relay_not_ready', state: state === 'ready' ? 'starting' : state }
+      const { share, token } = deps.shares.create(matterId, name, mode)
+      deps.audit?.(`share: 开了一个链接(事 ${matterId},给「${share.name}」,${share.mode},${share.id})`)
+      return { ok: true, share, url: shareUrl(remote, token) }
+    },
+    shareTokens() {
+      try { return deps.shares?.tokens() ?? [] } catch { return [] }
+    },
+    shareTokenValid(token) {
+      try { return deps.shares?.valid(token) ?? false } catch { return false }
+    },
   }
 
   // ── 手机面板的处理器表(F2):键同路由表 "METHOD /path",门过了才查。面板自己那几条在下面,其余各在 mobile-*.ts。
@@ -794,6 +827,9 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       // 存的 deviceToken 续命;没有则提示回微信要新链接。
       return new Response(M_BOOTSTRAP_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
     }
+
+    // 分享令牌(s…)只有 share-panel.ts 那一个出口:不进令牌登记处、不查手机路由表,别的路径拿它一律 401。
+    if (isShareToken(t)) return shareRequest(deps.shares, url, t, req)
 
     const caller = panelToken(t)
     if (!caller) {

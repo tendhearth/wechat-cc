@@ -24,6 +24,8 @@ import { childEnvFor } from '../mcp-stdio-spec'
 import { makeTurnEmitter } from '../turn-emitter'
 import { openaiErrorCode } from '../openai/openai-error-code'
 import { withProviderCode } from '../../../lib/provider-error-code'
+import type { CheckupBudget } from '../../../domain/checkup-budget'
+import { ChatApprovalTurn, newChatApprovalId, type ChatApprovalChannel, prepareChatApprovalPrompt, noteChatApproval } from '../chat-approval'
 
 export { GEMINI_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -33,7 +35,7 @@ export { tierProfileToGeminiSdkOpts, type GeminiTierSdkOpts } from '../../../dom
  *  functionResponse so the model sees the refusal. Phase B builds the real one
  *  from domain/authorize + askUser; tests inject a fake. */
 export type ToolGateDecision = { allow: true } | { allow: false; message: string }
-export type ToolGate = (toolName: string, input: Record<string, unknown>) => Promise<ToolGateDecision>
+export type ToolGate = (toolName: string, input: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolGateDecision>
 
 export interface McpToolDef {
   name: string
@@ -74,11 +76,12 @@ export function mcpToolsToFunctionDeclarations(tools: McpToolDef[]): GeminiFunct
 
 /** Minimal genai surface the loop needs (real: ai.models). */
 export interface GenaiPort {
+  get?(args:{model:string;config:{abortSignal:AbortSignal;httpOptions:{retryOptions:{attempts:number}}}}):Promise<{inputTokenLimit?:number}>
   generateContent(req: {
     model: string
     contents: unknown[]
-    config?: { systemInstruction?: string; tools?: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }> }
-  }): Promise<{ text?: string; functionCalls?: Array<{ name?: string; args?: Record<string, unknown> }> }>
+    config?: { systemInstruction?: string; tools?: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }>; abortSignal?: AbortSignal; maxOutputTokens?: number; httpOptions?: { retryOptions?: { attempts?: number } } }
+  }): Promise<{ text?: string; functionCalls?: Array<{ name?: string; args?: Record<string, unknown> }>; candidates?: Array<{finishReason?:string}>; usageMetadata?:{candidatesTokenCount?:number;thoughtsTokenCount?:number} }>
 }
 /** Minimal MCP surface the loop needs (real: @modelcontextprotocol/sdk Client). */
 export interface McpPort {
@@ -104,6 +107,13 @@ export interface DispatchLoopArgs {
    *  boundary, not instantly. Additive/optional so direct callers of
    *  runDispatchLoop that don't pass one are unaffected. */
   signal?: AbortSignal
+  abortSdkRequest?: boolean
+  toolServer?: string
+  stepBudgetCode?: string
+  emptyOutputCode?: string
+  maxOutputTokens?: number
+  budget?: CheckupBudget
+  httpRetryAttempts?: number
 }
 
 /** The tool-use loop. Yields AgentEvents; mutates `history`. */
@@ -113,6 +123,9 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
   args.history.push({ role: 'user', parts: [{ text: args.userText }] })
   const config = {
     systemInstruction: args.systemInstruction,
+    ...(args.abortSdkRequest && args.signal ? { abortSignal: args.signal } : {}),
+    ...(args.maxOutputTokens !== undefined ? { maxOutputTokens: args.maxOutputTokens } : {}),
+    ...(args.httpRetryAttempts !== undefined ? { httpOptions: { retryOptions: { attempts: args.httpRetryAttempts } } } : {}),
     ...(args.functionDeclarations.length > 0 ? { tools: [{ functionDeclarations: args.functionDeclarations }] } : {}),
   }
   let rounds = 0
@@ -129,9 +142,16 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
         return
       }
       rounds++
-      const resp = await args.genai.generateContent({ model: args.model, contents: args.history, config })
+      const lease=args.budget?.reserve(args.maxOutputTokens??4096)
+      const resp = await args.genai.generateContent({ model: args.model, contents: args.history, config:{...config,...(lease?{maxOutputTokens:lease.maxOutputTokens}:{})} })
+      const usage=resp.usageMetadata
+      lease?.settle({outputTokens:typeof usage?.candidatesTokenCount==='number'||typeof usage?.thoughtsTokenCount==='number'?(usage?.candidatesTokenCount??0)+(usage?.thoughtsTokenCount??0):undefined,outputBytes:new TextEncoder().encode(JSON.stringify(resp)).length,exhausted:resp.candidates?.some(c=>c.finishReason==='MAX_TOKENS')})
       const text = resp.text ?? ''
       const calls = resp.functionCalls ?? []
+      if(args.emptyOutputCode && !text.trim() && !calls.length && resp.candidates?.some(c=>c.finishReason==='MAX_TOKENS')){
+        yield {kind:'error',code:args.emptyOutputCode,message:'Output allowance exhausted without a visible answer.'}
+        return
+      }
 
       if (text) yield { kind: 'text', text }
 
@@ -165,8 +185,12 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
           responseParts.push({ functionResponse: { name, response: { error: 'cancelled: the user stopped this turn before this tool ran' } } })
           continue
         }
-        yield { kind: 'tool_call', server: 'wechat', tool: name }
-        const decision = await args.gate(name, callArgs)
+        yield { kind: 'tool_call', server: args.toolServer ?? 'wechat', tool: name }
+        const decision = await args.gate(name, callArgs, args.signal)
+        if (args.signal?.aborted) {
+          responseParts.push({ functionResponse: { name, response: { error: 'cancelled: the user stopped this turn before this tool ran' } } })
+          continue
+        }
         if (!decision.allow) {
           responseParts.push({ functionResponse: { name, response: { error: decision.message } } })
           continue
@@ -199,6 +223,7 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
         // turn. Append a synthetic model turn so the NEXT dispatch (this session
         // reuses `history`) doesn't produce two consecutive user turns.
         args.history.push({ role: 'model', parts: [{ text: '[max tool rounds reached]' }] })
+        if (args.stepBudgetCode) yield { kind: 'error', message: 'conversation step budget reached', code: args.stepBudgetCode }
         yield em.finish({ sessionId: args.sessionId, numTurns: rounds })
         return
       }
@@ -210,7 +235,7 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
     if ((args.history.at(-1) as any)?.role === 'user') args.history.pop()
     // 同一套 HTTP 边界分类(arch backlog #4 第 2 步):GoogleGenAI 的 ApiError 带 `status`;
     // 无效 key 是 400 + API_KEY_INVALID(§4.5)⇒ auth_rejected。分不出 ⇒ 旧回退。
-    const code = openaiErrorCode(err)
+    const code = err instanceof Error&&err.message==='checkup_usage_limit'?'checkup_usage_limit':openaiErrorCode(err)
     yield code ? em.error(err, { code }) : em.error(err)
   }
 }
@@ -235,8 +260,7 @@ export interface GateBaseCapability {
 
 /** Injected deps for the gate — bootstrap supplies the real ones; tests fake them.
  *  Kept abstract so the provider module doesn't import bootstrap. */
-export interface GeminiGateDeps {
-  askUser: (adminChatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
+export interface GeminiGateDeps extends ChatApprovalChannel {
   adminFor: (chatId: string) => string | null
   modeFor: (chatId: string) => string
   lookupBase: (mode: string, permissionMode: PermissionMode) => GateBaseCapability
@@ -246,28 +270,14 @@ export interface GeminiGateDeps {
 
 const GEMINI_RELAY_TIMEOUT_MS = 120_000
 
-/** Inlined (NOT imported from permission-relay.ts, which would recreate the
- *  gemini→permission-relay→capability-matrix→gemini import cycle) djb2-ish hash →
- *  5-char base36. The relay hash MUST be exactly 5 alphanumeric chars so the admin's
- *  WeChat reply matches pending-permissions.ts's PERMISSION_REPLY_RE
- *  (/^([yn])\s+([A-Za-z0-9]{5})$/i) — anything else can NEVER be approved. A base36
- *  uint32 is 1–7 chars, so padStart guarantees the low end and slice(-5) the high end:
- *  the result is ALWAYS exactly 5 alphanumeric chars. */
-function shortHash(s: string): string {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0
-  return (h >>> 0).toString(36).padStart(5, '0').slice(-5)
-}
-
 /** Build the per-spawn tool gate. Replicates makeCanUseTool's allow/relay/deny
  *  but returns ToolGateDecision and normalizes the wechat MCP server's BARE tool
  *  names (`reply`) into the `mcp__wechat__reply` form classifyToolUse expects. */
 export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) => ToolGate {
   return (ctx: SpawnContext): ToolGate => {
-    // Per-spawn relay counter — each session owns its own, so hashes don't couple
-    // across chats. Combined with chatId in the hash input → unique per relay.
-    let relaySeq = 0
-    return async (toolName, input) => {
+    const turn = new ChatApprovalTurn(deps.maxCards)
+    return async (toolName, input, signal) => {
+      if (turn.denies(`mcp__wechat__${toolName}`)) return { allow: false, message: 'Tool already denied this turn' }
       // 判定只在 domain/authorize.ts(架构终态 C2):旁路(dangerously ⇒ 闸门不判)→ 名字 → 档位 × 类别 × 能力表 →
       // 主人自己的对话里落到「问」的先过放行规则(2026-10-25,core/permission-rules/chat.ts)。
       // 规则看到的工具名是 SDK 形状的 `mcp__wechat__<名>`(和 Claude 一样,一条规则三家通用)。
@@ -282,16 +292,19 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
         { chatId: ctx.chatId, provider: 'gemini', tool: `mcp__wechat__${toolName}`, input: (input ?? {}) as Record<string, unknown> },
         malformed ? null : deps.ownerRules?.() ?? null,
       )
+      if (signal?.aborted) return { allow: false, message: 'Turn cancelled' }
       if (auth.verdict === 'allow') return { allow: true }
       if (auth.reason === 'malformed_name') return { allow: false, message: `invalid tool name '${toolName}'` }
       if (auth.denyMessage) return { allow: false, message: auth.denyMessage }
       if (auth.verdict === 'deny') return { allow: false, message: `tool '${toolName}' (${kind}) not allowed for this tier` }
       const admin = deps.adminFor(ctx.chatId)
       if (!admin) return { allow: false, message: 'no admin configured to approve permission requests' }
-      const seq = ++relaySeq
-      const hash = shortHash(`${ctx.chatId}:${toolName}:${seq}`)
-      const answer = await deps.askUser(admin, `Gemini wants to run ${toolName}`, hash, GEMINI_RELAY_TIMEOUT_MS)
-      if (answer === 'allow') return { allow: true }
+      const hash = newChatApprovalId()
+      let prompt:string
+      try{prompt=await prepareChatApprovalPrompt('Gemini',`mcp__wechat__${toolName}`,input,hash,deps,ctx.chatId)}
+      catch(error){return {allow:false,message:error instanceof Error?error.message:'没建成：解析项目失败，请重新选择项目。'}}
+      const answer = await turn.ask({ channel: deps, target: admin, prompt, hash, timeoutMs: GEMINI_RELAY_TIMEOUT_MS, signal, tool: `mcp__wechat__${toolName}` })
+      if (answer === 'allow' && !signal?.aborted) {noteChatApproval(deps,'Gemini',`mcp__wechat__${toolName}`,input,ctx.chatId);return { allow: true }}
       const message = answer === 'undelivered'
         ? 'could not reach the owner for approval (their message window is likely closed) — tell the user to try again shortly or have the owner message first'
         : answer === 'timeout' ? 'no reply in time; denied' : 'denied by operator'
@@ -344,20 +357,36 @@ export async function connectWechatMcp(spec: McpStdioSpec, mcpEnv?: Record<strin
 }
 
 export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): AgentProvider {
+  const windows=new Map<string,number>()
   let uuidCounter = 0
   const newSessionId = () => `gemini-${Date.now()}-${++uuidCounter}`
 
   return {
+    contextWindowTokens:model=>windows.get(model),
+    async prepareContextWindow(model){
+      if(windows.has(model)||!opts.genai.models.get)return
+      try{
+        const info=await opts.genai.models.get({model,config:{abortSignal:AbortSignal.timeout(5000),httpOptions:{retryOptions:{attempts:1}}}})
+        const capacity=info.inputTokenLimit
+        if(Number.isSafeInteger(capacity)&&capacity!>=1024&&capacity!<=10_000_000)windows.set(model,capacity!)
+      }catch{/* Unavailable metadata stays explicitly unknown. */}
+    },
+    supportsIsolatedEvaluation: true,
     // 守护(评审 #193 P1-1):API key 直连 Google;模型和 spawn / cheapEval 用的是同一份。
-    callTarget: (kind) => ({ provider: 'gemini', model: kind === 'cheapEval' ? opts.cheapModel ?? opts.model : opts.model }),
+    callTarget: (kind, ctx) => ({ provider: 'gemini', model: kind === 'cheapEval' ? opts.cheapModel ?? opts.model : ctx?.evaluation ? ctx.model ?? opts.model : opts.model }),
     async spawn(_project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
-      const conn = await opts.mcpConnect(ctx.mcpEnv)
+      const fake = ctx.evaluation?.tools
+      const conn: McpConnection = fake ? {
+        listTools: async () => fake.tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.parameters })),
+        callTool: async (name, args) => ({ content: [{ type: 'text', text: await fake.call(name, args) }] }),
+        close: async () => {}, // The checkup owns this in-process bridge.
+      } : await opts.mcpConnect(ctx.mcpEnv)
       let functionDeclarations: GeminiFunctionDeclaration[]
       let gate: ToolGate
       try {
         const mcpTools = await conn.listTools()
         functionDeclarations = mcpToolsToFunctionDeclarations(mcpTools)
-        gate = opts.buildGate(ctx)
+        gate = fake ? async name => fake.tools.some(tool => tool.name === name) ? { allow: true } : { allow: false, message: 'Unknown checkup tool.' } : opts.buildGate(ctx)
       } catch (err) {
         // Setup failed after the MCP client connected — close it so we don't
         // orphan the stdio subprocess, then propagate.
@@ -383,8 +412,8 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
           return runDispatchLoop({
             genai: opts.genai.models,
             mcp: { callTool: (n, a) => conn.callTool(n, a) },
-            gate,
-            model: opts.model,
+            gate: fake ? gate : opts.buildGate(ctx),
+            model: ctx.evaluation ? ctx.model ?? opts.model : opts.model,
             // Per-spawn prompt from the daemon (persona / core memory / care /
             // sticker / knowledge sections + the model line — the SAME text
             // every other provider gets). The construction-time
@@ -392,12 +421,13 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
             // spawn without one (tests, one-shot evals). Without this line
             // gemini ran as a bare model with no persona and no memory
             // guidance while claude/agy/openai/cursor all had them.
-            systemInstruction: ctx.appendInstructions ?? opts.systemInstruction,
+            systemInstruction: ctx.evaluation ? ctx.appendInstructions ?? '' : ctx.appendInstructions ?? opts.systemInstruction,
             functionDeclarations,
             history,
             sessionId,
             userText: text,
             signal: abort.signal,
+            ...(ctx.evaluation ? { abortSdkRequest:true, toolServer: 'wechat', stepBudgetCode:'checkup_step_budget', emptyOutputCode:'checkup_output_exhausted', maxRounds: ctx.evaluation.maxSteps, maxOutputTokens: ctx.evaluation.maxOutputTokens, budget:ctx.evaluation.budget, httpRetryAttempts: 1 } : {}),
           })
         },
         async cancel() {

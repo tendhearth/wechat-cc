@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, expect } from './fixtures'
+import { rosterItem } from './roster-fixture'
 import { fileURLToPath } from 'node:url'
 import { readJsonFile } from '../../../src/lib/read-json-file'
 import { fillMobileTemplate, inlineScriptJson } from '../../../src/features/phone/mobile-page-template'
@@ -14,6 +15,8 @@ test('captures evidence-driven gaze and a bounded text response', async ({ page,
   await mkdir(out!, { recursive: true })
   await shim.invoke('demo.unseed'); await shim.invoke('demo.seed', {})
   let running = false, text = '', cursor = 0, revision = 0
+  let roster: ReturnType<typeof rosterItem>[] = []
+  await page.route('**/v1/roster', r => r.fulfill({json:{items:roster,version:JSON.stringify(roster)}}))
   let ids = ['baseline']
   await page.route('**/__dev_reload.js', r => r.fulfill({ contentType: 'application/javascript', body: '' }))
   await page.route('**/v1/protocol/capabilities', r => r.fulfill({ json: { routes: 'v1', topics: 'v1' } }))
@@ -24,14 +27,9 @@ test('captures evidence-driven gaze and a bounded text response', async ({ page,
   await page.route('**/v1/memory/topics?**', r => r.fulfill({ json: { topics: ids.map(id => ({ id, title: `${id} ${revision}`, bubbleState: 'open', matterSummary: { waiting: 0, running: 0, total: 0 } })), revision: String(revision), nextCursor: null } }))
   await page.route('**/v1/subscribe/topics?**', r => r.fulfill({ json: { revision: String(revision), recentIds: ids, openIds: ids, hasMoreOpen: false } }))
   await page.goto(shimUrl, { waitUntil: 'domcontentloaded' })
-  const stage = page.locator('#now-cc .now-pet-stage'), sprite = stage.locator('.now-pet-sprite')
-  await expect(page.locator('#now-cc')).toHaveAttribute('data-runtime', 'ready')
+  const stage = page.locator('#topbar-cc .now-pet-stage'), sprite = stage.locator('.now-pet-sprite')
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-runtime', 'ready')
   await expect(stage).toHaveAttribute('data-form', 'lit')
-  await expect(page.locator('[data-topic-id="baseline"]')).toBeVisible()
-  // Topics can arrive before main has mounted its hero. Establish a fresh
-  // readable baseline after the hero is ready, without inventing a new ID.
-  revision++
-  await expect(page.locator('[data-topic-id="baseline"]')).toContainText('baseline 1')
   const shot = (name: string) => page.screenshot({ path: join(out!, `desktop-${name}-${capture}.png`) })
   await shot('idle')
   await page.locator('#converse-input').fill('主人正在输入')
@@ -43,16 +41,15 @@ test('captures evidence-driven gaze and a bounded text response', async ({ page,
   if (capture === 'after') await expect(sprite).toHaveAttribute('src', /attention\/lit\/speaking\/00[12]/)
   await shot('speaking-000'); await page.waitForTimeout(100); await shot('speaking-001')
   running = false; text = ''; await expect(stage).toHaveAttribute('data-cc-phase', 'idle')
-  ids.push('right'); revision++
-  if (capture === 'after') await expect(sprite).toHaveAttribute('src', /attention\/lit\/right/)
-  else await expect(stage).toHaveAttribute('data-behavior', 'look')
-  await shot('topic-right')
-  await page.waitForTimeout(12500)
-  await page.addStyleTag({ content: '#now-cc { transform: translateX(500px); }' })
-  ids.push('left'); revision++
-  if (capture === 'after') await expect(sprite).toHaveAttribute('src', /attention\/lit\/left/)
-  else await expect(stage).toHaveAttribute('data-behavior', 'look')
-  await shot('topic-left')
+  roster=[rosterItem('aabbccdd','核对备份')]
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-roster-glance','1')
+  await shot('roster-right')
+  await expect(page.locator('#topbar-cc')).not.toHaveAttribute('data-roster-glance','1')
+  roster=[rosterItem('aabbccdd','核对备份',{updatedAt:3})]
+  await expect(page.locator('[data-roster-key="matter:aabbccdd"]')).toBeVisible()
+  await page.waitForTimeout(3500)
+  await expect(page.locator('#topbar-cc')).not.toHaveAttribute('data-roster-glance','1')
+  await shot('roster-once')
   await page.emulateMedia({ reducedMotion: 'reduce' }); await page.locator('#converse-input').fill('减少动态仍可输入')
   await expect(stage).toHaveAttribute('data-cc-phase', 'idle')
   if (capture === 'after') await expect(sprite).not.toHaveAttribute('src', /attention\//)

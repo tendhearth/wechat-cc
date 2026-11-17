@@ -8,6 +8,8 @@ import { join } from 'node:path'
 import { makeBusyRegistry } from '../busy-registry'
 import { makeResolver } from '../../domain/project-resolver'
 import { makeCanUseTool } from '../../adapters/executors/claude/permission-relay'
+import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk'
+import type { ChatApprovalLifecycle } from '../../adapters/executors/chat-approval'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import { makeConversationStore } from '../../adapters/store/conversation-store'
 import type { ConversationStore } from '../../ports/conversation-store'
@@ -22,11 +24,11 @@ export interface PermissionsSlice {
   resolve: Bootstrap['resolve']
   permissionMode: PermissionMode
   conversationStore: ConversationStore
-  buildCanUseTool: (chatId: string) => ReturnType<typeof makeCanUseTool>
+  buildCanUseTool: (chatId: string) => CanUseTool & Partial<ChatApprovalLifecycle>
 }
 
 export function wirePermissions(
-  deps: Pick<BootstrapDeps, 'loadProjects' | 'fallbackProject' | 'dangerouslySkipPermissions' | 'conversationStore' | 'ilink' | 'chatOwnerRules'>,
+  deps: Pick<BootstrapDeps, 'loadProjects' | 'fallbackProject' | 'dangerouslySkipPermissions' | 'conversationStore' | 'ilink' | 'chatOwnerRules' | 'resolveMatterPlan' | 'resolveTerminalParticipation' | 'noteMatterApproval'>,
   ctx: Pick<BootstrapCtx, 'db' | 'stateDir' | 'log'>,
 ): PermissionsSlice {
   // busy-registry (spec 2026-08-11 §1) — the "work is happening" complement
@@ -73,6 +75,10 @@ export function wirePermissions(
   // of what arrived after.
   const buildCanUseTool = (chatId: string) => makeCanUseTool({
     askUser: deps.ilink.askUser,
+    resolveMatterPlan:deps.resolveMatterPlan,
+    resolveTerminalParticipation:deps.resolveTerminalParticipation,
+    noteMatterApproval:deps.noteMatterApproval,
+    revoke: hash => { deps.ilink.resolvePermission(hash, 'deny') },
     // initiatingChatId is the session's own chatId, baked in at spawn.
     // (The relay only uses this for log correlation; prompts always route
     // to adminChatId.)

@@ -1,4 +1,7 @@
 export interface InboundMsg {
+  /** daemon 固化的单轮目标；不渲染进信封，不接受模型或客户端自报。 */
+  answerTarget?: import('./answer-target').AnswerTarget & { readonly requestId: string }
+  answerRoute?: import('./answer-target').AnswerRouteReceipt
   chatId: string
   userId: string
   userName?: string
@@ -43,6 +46,10 @@ export interface InboundMsg {
    * 只在主人自己的对话里有。渲染成 <recall> 前面的 <topics> 元素;没有 ⇒ 信封和以前逐字节一样。
    */
   topics?: string
+  /** 规矩 5「没把握就问」:true ⇔ 这几条是便宜模型猜着对上的(不是名字或关键词对上),渲染成 sure="no"。 */
+  topicsUnsure?: boolean
+  /** 主人这一轮看得到的「正在办的事」每件一行(threads/recall.ts 的 renderMatters);没有 ⇒ 不出 <matters>。 */
+  matters?: string
 }
 
 /** Cap on the rendered <recall> body — recall is a hint, not a transcript. */
@@ -109,9 +116,12 @@ export function formatInbound(m: InboundMsg): string {
     ? `<recall hint="自动检索的相关片段，可能不相关，仅供参考">\n${escBody(recallLines.join('\n')).slice(0, RECALL_BLOCK_MAX)}\n</recall>`
     : ''
   const topicsEl = m.topics && m.topics.trim()
-    ? `<topics hint="这句话聊到的话题,以前记下的几条(可能过时,以主人这句为准)">\n${escBody(m.topics.trim())}\n</topics>`
+    ? (m.topicsUnsure
+      ? `<topics sure="no" hint="猜着对上的话题,不一定是主人说的那件;要靠它回答前先问主人一句是不是这件">\n${escBody(m.topics.trim())}\n</topics>`
+      : `<topics hint="这句话聊到的话题,以前记下的几条(可能过时,以主人这句为准)">\n${escBody(m.topics.trim())}\n</topics>`)
     : ''
-  const body = [topicsEl, recallEl, quoteEl, escBody(m.text), ...attachmentLines].filter(Boolean).join('\n')
+  const mattersEl = m.matters ? `<matters>\n${escBody(m.matters)}\n</matters>` : ''
+  const body = [topicsEl, mattersEl, recallEl, quoteEl, escBody(m.text), ...attachmentLines].filter(Boolean).join('\n')
   return `<wechat ${attrs}>\n${body}\n</wechat>`
 }
 

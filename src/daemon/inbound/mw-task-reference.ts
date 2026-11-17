@@ -10,6 +10,8 @@
  */
 import type { InboundCtx, Middleware } from './types'
 import type { Intent } from './intent'
+import { PHASE_NAME } from '../../domain/task-phase'
+import { isTaskHandoffRequest, isMatterShareRequest, isTerminalAttachRequest } from '../../features/workbench'
 import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../features/workbench'
 import { resolveTaskReference, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from '../../features/workbench'
 import type { QuotaState } from '../../domain/provider-quota'
@@ -17,6 +19,7 @@ import { providerDisplayName } from '../provider-display-names'
 import { QUOTA_TAKEOVER_DEFAULT_REQUEST, quotaTakeoverText } from '../../features/workbench'
 
 export interface TaskReferenceMwDeps {
+  handoffExecutors?(): readonly string[]
   ownerChatId(): string | null
   /** 活跃候选(进行中 / 已答复 / 排队),按 chat 给。 */
   candidates(chatId: string): TaskCandidate[]
@@ -47,7 +50,6 @@ export interface TaskReferenceMwDeps {
 /** 管家开着的「哪一件?回数字」:到什么时候、有几个选项(noteChoice 报给命令表)。 */
 export interface OpenChoice { expiresAt: number; count: number }
 
-const PHASE_NAME: Record<string, string> = { queued: '排队中', working: '进行中', replied: '已答复', failed: '需要处理', cancelled: '已停止', interrupted: '已中断' }
 const STOP_VERB = /(停止|结束|取消|别做了|不用做了)\s*[。.!！]?$/
 // 只认句尾、只认短句(评审 #7):补充里提到"文件 / 看看"不是在要结果。
 const RESULT_VERB = /(结果|成果|文件|下载)(了|吗|呢|啊)?\s*[?？。.!！]?$/
@@ -66,7 +68,11 @@ export function choiceTakes(text: string, open: OpenChoice | undefined, nowMs: n
   return n >= 1 && n <= open.count
 }
 // 整句匹配(评审 #3):"好像还没开始做"不是"好";"交给 Claude"要带名字。
-const YES = /^\s*(是|是的|好|好的|可以|行|嗯|交给\s*\S{1,12}|换\s*\S{1,12})\s*[。.!！]?\s*$/
+function acceptsOffer(text: string, providerId: string): boolean {
+  if (BARE_ACK.test(text)) return true
+  const names = [providerId, providerDisplayName(providerId)].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  return new RegExp(`^(?:(?:好|好的|是)[,，]?\\s*)?(?:交给|换(?:成)?)\\s*(?:${names})(?:\\s*继续)?[。.!！]?$`, 'i').test(text)
+}
 const NO = /^\s*(不用|不要|算了|不了|先不|先放着)\s*[。.!！]?\s*$/
 const BARE_ACK = /^\s*(是|是的|好|好的|可以|行|嗯)\s*[。.!！]?\s*$/
 const QUOTA_CODES = new Set(['provider_quota_exhausted', 'provider_rate_limited'])
@@ -106,7 +112,7 @@ function routedDecision(intent: Intent): Decision | null {
 }
 
 /** 管家中间件 + 同一份状态上的只读探针(路由阶段用;null = 这句不是在说任务)。 */
-export type TaskReferenceMw = Middleware & { probe: (ctx: InboundCtx) => Promise<Intent | null> }
+export type TaskReferenceMw = Middleware & { probe: (ctx: InboundCtx) => Promise<Intent | null>; clearFocus: (chatId: string) => void }
 
 export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw {
   const now = deps.now ?? Date.now
@@ -192,9 +198,12 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
       if (recent.length === 1) return { kind: 'quota-wait', candidates, task: recent[0]! }
     }
     if (offerLive) {
-      if (YES.test(text)) return { kind: 'takeover-yes', candidates, offer: offer! }
+      if (acceptsOffer(text, offer!.to)) return { kind: 'takeover-yes', candidates, offer: offer! }
       if (NO.test(text)) return { kind: 'takeover-no', candidates, offer: offer! }
     }
+    if (isTaskHandoffRequest(text, deps.handoffExecutors?.())) return null
+    // 分享这件事 / 关掉分享链接:是对 CC 说的(它调 matter_share,开链接要主人确认),不是给执行者的补充。
+    if (isMatterShareRequest(text) || isTerminalAttachRequest(text)) return null
     // 通知里说过"回「是」":没有待确认的接管,但恰好只有一件近期因额度失败的任务 ⇒ 「是」就是它。
     if (!offerLive && BARE_ACK.test(text) && deps.createTask) {
       const recent = candidates.filter(c => QUOTA_CODES.has(c.error ?? '') && c.updatedAt >= now() - TAKEOVER_TTL_MS && !takenOver.has(c.id))
@@ -212,7 +221,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
       return picked ? { kind: 'command', candidates, picked, effectiveText: ask.text, clearChoice: true } : { kind: 'choice-invalid', candidates }
     }
     if (BARE_CHOICE.test(text)) return ask ? { kind: 'choice-expired', candidates } : null
-    const r = await resolveTaskReference({ text, quotedText: msg.quote?.text ?? null, focus: currentFocus(msg.chatId), nowMs: now(), candidates, judge: deps.judge })
+    const r = await resolveTaskReference({ text, quotedText: msg.quote?.text ?? null, focus: currentFocus(msg.chatId), nowMs: now(), candidates, handoffExecutors: deps.handoffExecutors?.(), judge: deps.judge })
     if (r.kind === 'none') return null
     if (r.kind === 'ambiguous') return { kind: 'ambiguous', candidates, options: r.options, text }
     if (r.kind === 'set_focus') return { kind: 'set_focus', candidates, taskId: r.taskId }
@@ -268,16 +277,35 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
       watched.add(picked.id)
       try { await deps.watchTask(picked.id, msg.accountId) } catch { /* 提醒开不开不挡主要动作 */ }
     }
+    if (msg.answerRoute) {
+      if (msg.answerRoute.state !== 'pending') return
+      if (msg.answerRoute.target.kind !== 'matter' || msg.answerRoute.target.matterId !== picked.id) {
+        // watchTask 等待期间主人纠正了目标；原句交回共用对话出口，不能继续投旧事。
+        ctx.target = msg.answerRoute.target
+        msg.answerTarget = Object.freeze({ ...ctx.target, requestId: msg.answerRoute.requestId })
+        msg.text = effectiveText
+        ctx.intent = { kind: 'chat' }
+        ctx.consumedBy = undefined
+        await next()
+        return
+      }
+      // 旧工作台口没有独立的执行者接收确认，保守记「已提交」，不冒充送达。
+      msg.answerRoute.state = 'submitted'
+    }
     const reply = await deps.handleWechat(msg.chatId, cmd, identity)
     if (reply !== null && typeof reply === 'object') return
     const body = reply ?? '任务控制仅对已绑定的主人开放。'
     const lines = [header(picked), body]
     if (fresh) lines.push('（接下来默认说这件，20 分钟内。）')
-    deps.log('WORKBENCH', `task reference → ${cmd.slice(0, 60)}`)
+    deps.log('WORKBENCH', `task reference task=${picked.id} action=${cmd.startsWith(`任务 ${picked.id} 补充 `) ? 'supplement' : 'control'}`)
     const sent = await deps.sendMessage(msg.chatId, lines.join('\n'))
     if (sent && typeof sent === 'object' && 'error' in sent && (sent as { error?: unknown }).error) throw Error('workbench_reply_failed')
   }
   // choice-invalid 是唯一"判定说是、执行却放行"的分支(数字越界):路由阶段算作 chat,但判定照带,本体好把待选清掉。
   mw.probe = async ctx => { const d = await decide(ctx); return d ? { kind: d.kind === 'choice-invalid' ? 'chat' : 'task-reference', data: d } : null }
+  mw.clearFocus = chatId => {
+    focus.delete(chatId); pending.delete(chatId); takeover.delete(chatId); waitOffer.delete(chatId)
+    deps.noteChoice?.(chatId, null)
+  }
   return mw
 }

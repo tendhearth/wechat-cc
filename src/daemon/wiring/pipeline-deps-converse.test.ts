@@ -288,7 +288,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     const origins: unknown[] = []
     const appTurn: AppTurn = async (ctx) => { seen.push(ctx.msg.text); origins.push(ctx.origin); if (ctx.msg.text === '/帮助') { scopedReply()!.push('这里是帮助'); scopedReply()!.push('第二段'); ctx.consumedBy = 'mode'; return { consumed: true } } return { consumed: false } }
     const { companionConverse, dispatchInner, replySinksOpen, ilink } = setup({ inFlight: false, appTurn })
-    await expect(companionConverse('/帮助', 'phone')).resolves.toEqual({ reply: '这里是帮助\n第二段' })
+    await expect(companionConverse('/帮助', 'phone')).resolves.toEqual({ reply: '这里是帮助\n第二段', speaker: 'notice' })
     expect(dispatchInner).not.toHaveBeenCalled(); expect(replySinksOpen).not.toHaveBeenCalled(); expect(ilink.sendMessage).not.toHaveBeenCalled()
     // 没人吃 ⇒ 照常进会话
     await expect(companionConverse('how are you')).resolves.toEqual({ reply: 'reply text' })

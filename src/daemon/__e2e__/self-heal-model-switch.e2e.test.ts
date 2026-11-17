@@ -21,10 +21,7 @@ function readBaseUrl(stateDir: string): string {
 }
 
 /** Token the daemon baked into a spawn's wechat MCP child env. */
-function tokenOf(opts: Record<string, unknown>): string | undefined {
-  const mcp = opts.mcpServers as Record<string, { env?: Record<string, string> }> | undefined
-  return mcp?.wechat?.env?.WECHAT_SESSION_TOKEN
-}
+
 
 const modelOf = (opts: Record<string, unknown>): string | undefined =>
   typeof opts.model === 'string' ? opts.model : undefined
@@ -42,6 +39,7 @@ async function pollUntil<T>(fn: () => T | undefined, timeoutMs = 8000): Promise<
 describe('e2e: POST /v1/model takes effect on the next spawn (self-heal, no restart)', () => {
   it('an admin switches the model and a later chat spawns with the new one', async () => {
     const spawns: Record<string, unknown>[] = []
+    const auths: import('../../test-support/session-auth-recorder').RecordedSessionAuth[] = []
     const daemon = await startTestDaemon({
       // Two admin chats so the second cold-starts AFTER the switch — reusing
       // the first chat's live session would keep its original model (in-flight
@@ -51,6 +49,7 @@ describe('e2e: POST /v1/model takes effect on the next spawn (self-heal, no rest
       agentConfig: { provider: 'claude', model: 'claude-opus-4-8' },
       claudeScript: { async onDispatch() { return { toolCalls: [], finalText: 'ok' } } },
       recordClaudeSpawnOptions: o => { spawns.push(o) },
+      recordSessionAuth: auth => { auths.push(auth) },
     })
     try {
       const baseUrl = readBaseUrl(daemon.stateDir)
@@ -61,7 +60,7 @@ describe('e2e: POST /v1/model takes effect on the next spawn (self-heal, no rest
       const first = await pollUntil(() => (spawns.length >= 1 ? spawns[0] : undefined))
       expect(first, 'first admin chat should spawn a session').toBeTruthy()
       expect(modelOf(first!)).toBe('claude-opus-4-8')
-      const adminToken = tokenOf(first!)
+      const adminToken = auths.find(a => a.sessionKey.endsWith('/admin1'))?.token
       expect(adminToken, 'spawn must carry an admin session token').toBeTruthy()
 
       // 2. Admin curls the remediation route to switch the pinned model.

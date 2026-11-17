@@ -1,3 +1,4 @@
+import {participationRoutes,type ParticipationRoutesDeps} from './participation-routes'
 /**
  * 终端会话的路由(spec 2026-09-09-cli-hook-push-design §6.1;架构终态 A5 从 internal-api/routes-cli-events.ts 搬来):
  * hooks 报进来的事件、权限中继、登记处列表、CC 代主人说一句、接上 / 撤掉 hooks、「今天」一眼看完。
@@ -24,6 +25,7 @@ import type { ProjectMemoryRequest } from './project-memory'
 
 /** 这几条路由要的(以前是 InternalApiDeps 的 cliEvents / cliPermissions / terminalSay / cliHooks / overseerToday)。 */
 export interface TerminalRoutesDeps {
+  participation?:ParticipationRoutesDeps
   projectMemory(request: ProjectMemoryRequest): Promise<{ context: string; reason: string }>
   /** 终端 claude / codex 会话的 hook 事件入口 + 登记处(v76)。 */
   cliEvents: {
@@ -81,6 +83,7 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
   const sayError = (code: string) => { const h = workbenchErrorHttp(code, 'desktop'); return { status: h.status, body: { ok: false, error: h.error } } }
   return {
     ...terminalOwnerRoutes(deps.ownerActions),
+    ...(deps.participation?participationRoutes(deps.participation):{}),
     'POST /v1/cli/project-memory': async (_q, body, caller) => {
       if (caller?.origin !== 'file') return { status: 403, body: { error: 'forbidden' } }
       return { status: 200, body: await deps.projectMemory(body as ProjectMemoryRequest) }

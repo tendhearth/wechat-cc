@@ -1,12 +1,39 @@
 // Private UI never calls a private route under a link identity. No transcript cache on disk.
 var cOwnerMatterId=null,cPrivacyRevision=0
 var cMessages = new Map(), cBefore = null, cLoading = false, cReady = false, cPending = null, cDraftKey = null, cSending = false
+var cAgentNames=Object.create(null),cAgentNamesRequested=false
 function cNotice(text) { document.getElementById('chat-notice').textContent = text }
+// Attribution is per reply. Settings supply names only, never the speaker or glyph.
+function cReplyAvatar(m){
+  if(m.role!=='cc'||m.speaker!=='agent'||typeof m.provider!=='string'||!m.provider.trim())return ''
+  var provider=m.provider,glyph=provider!=='openai'?mAgents.agentGlyph(provider):null
+  var label=cAgentNames[provider]||(glyph?provider:'AI 服务')
+  if(glyph)return mAgents.agentAvatarsHtml([glyph],{nameOf:function(){return label},cls:'chat-reply-avatar'})
+  return '<span class="th-agents chat-reply-avatar" role="img" aria-label="'+esc(label)+'" title="'+esc(label)+'">'+mAgents.agentAvatarHtml('service',function(){return 'AI 服务'})+'</span>'
+}
+function cMessageHtml(m){
+  var avatar=cReplyAvatar(m),who=m.role==='me'?'你':avatar?'':'CC'
+  return '<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+avatar+who+(who?' · ':'')+esc(new Date(m.at).toLocaleString())+'</small><div>'+esc(m.text)+'</div>'+(typeof cAttachmentHtml==='function'?cAttachmentHtml(m):'')+'</article>'
+}
+async function cLoadAgentNames(){
+  if(!isDevice||!cReady||cAgentNamesRequested)return
+  cAgentNamesRequested=true
+  var identity=T,privacy=cPrivacyRevision
+  try{
+    var r=await /* link-scan: device-only */ api('/v1/matter/owner-chat/model')
+    if(identity!==T||privacy!==cPrivacyRevision||!isDevice)return
+    if(r.status===401){onUnauthorized(identity);return}
+    var b=await r.json()
+    if(identity!==T||privacy!==cPrivacyRevision||!isDevice||!cReady||!b.ok)return
+    ;(b.providers||[]).forEach(function(p){if(typeof p.id==='string'&&p.id&&typeof p.name==='string'&&p.name.trim())cAgentNames[p.id]=p.name})
+    cRender()
+  }catch(e){/* Names are optional; the transcript and its source still render. */}
+}
 function cRender() {
   var root = document.getElementById('chat-messages')
   var rows = Array.from(cMessages.values()).sort(function(a,b){return a.at-b.at||a.id.localeCompare(b.id)})
-  var html = rows.map(function(m){return '<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+ (m.role==='me'?'你':'CC')+' · '+esc(new Date(m.at).toLocaleString())+'</small><div>'+esc(m.text)+'</div>'+(typeof cAttachmentHtml==='function'?cAttachmentHtml(m):'')+'</article>'}).join('') || '<p class="empty">跟 CC 说一句吧。</p>'
-  if(typeof cReference==='function'){var added=new Set();html=rows.map(function(m){var text='<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+(m.role==='me'?'你':'CC')+' · '+esc(new Date(m.at).toLocaleString())+'</small><div>'+esc(m.text)+'</div>'+(typeof cAttachmentHtml==='function'?cAttachmentHtml(m):'')+'</article>';cReferences.forEach(function(ref){if(ref.originMessageId===m.id){text+=cReference(ref,false);added.add(ref.id)}});return text}).join('');cReferences.forEach(function(ref){if(!added.has(ref.id))html+=cReference(ref,true)});if(!html)html='<p class="empty">跟 CC 说一句吧。</p>'}
+  var html = rows.map(cMessageHtml).join('') || '<p class="empty">跟 CC 说一句吧。</p>'
+  if(typeof cReference==='function'){var added=new Set();html=rows.map(function(m){var text=cMessageHtml(m);cReferences.forEach(function(ref){if(ref.originMessageId===m.id){text+=cReference(ref,false);added.add(ref.id)}});return text}).join('');cReferences.forEach(function(ref){if(!added.has(ref.id))html+=cReference(ref,true)});if(!html)html='<p class="empty">跟 CC 说一句吧。</p>'}
   cPatchMessages(root,html)
 }
 async function cRead(older) {
@@ -20,10 +47,12 @@ async function cRead(older) {
     if(identity!==T||!isDevice)return
     if(!b.ok){if(cReady&&(r.status===403||b.error==='no_owner_chat'||b.error==='owner_chat_not_configured')){cClearPrivate();document.getElementById('conversation').hidden=false};cNotice(b.error==='no_owner_chat'?'还没设好主人对话，请在电脑上检查。':'对话暂时读不到，请刷新重试。');return}
     if(b.conversation!=='v1'){cNotice('电脑版本暂不支持网页对话，请在 App 或电脑上继续。');return}
+    if(typeof rStart==='function')rStart()
     if(b.topics==='v1'&&typeof tStart==='function')tStart()
     if(cOwnerMatterId&&cOwnerMatterId!==b.matterId){cClearPrivate();location.reload();return}
     cOwnerMatterId=b.matterId
     cReady=true;if(typeof mobileCC!=='undefined')mobileCC.refresh();document.body.classList.add('conversation-ready');document.getElementById('conversation').hidden=false
+    cLoadAgentNames()
     if(!cDraftKey){cDraftKey='cc.conversation.draft:'+ (REMOTE?REMOTE.id:location.host)+':'+T.slice(-16)+':'+b.matterId;try{/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input')).value=sessionStorage.getItem(cDraftKey)||'';cPending=JSON.parse(sessionStorage.getItem(cDraftKey+':pending')||'null')}catch(e){}}
     ;(b.messages||[]).forEach(function(m){cMessages.set(m.id,m)})
     if(older||!cBefore)cBefore=b.nextBefore
@@ -58,7 +87,7 @@ document.getElementById('chat-older').addEventListener('click',function(){cRead(
 if(isDevice){document.getElementById('conversation').hidden=false;cRead(false)}
 setInterval(function(){if(isDevice&&!document.hidden&&!mCurrent)cRead(false)},3000)
 
-function cClearPrivate(){if(typeof mobileCC!=='undefined')mobileCC.stop();cOwnerMatterId=null;cBefore=null;document.getElementById('chat-waiting').hidden=true;if(typeof history!=='undefined')history.replaceState(null,'');['chat-query','chat-project','topic-query'].forEach(function(id){var field=/** @type {HTMLInputElement} */ (document.getElementById(id));if(field)field.value=''});document.body.classList.remove('matter-open');cPrivacyRevision++;if(typeof cSearchRows!=='undefined'){cSearchRows=[];cSearchSeq++};if(typeof cResponseUnknown!=='undefined')cResponseUnknown.clear();if(typeof homeSeq!=='undefined'){homeSeq++;homeState=null;presenceAt=null;try{localStorage.removeItem(HOME_KEY)}catch(e){};document.getElementById('home-focus').replaceChildren();document.getElementById('pres-txt').textContent='尚未同步';setPresenceLit(false);if(typeof cConnectionText==='function')cConnectionText()};isDevice=false;if(typeof cWaitingRows!=='undefined')cWaitingRows=null;if(typeof cMatterSeen!=='undefined')cMatterSeen.clear();if(typeof cExpanded!=='undefined')cExpanded.clear();if(typeof cResetResponse==='function')cResetResponse();if(typeof mSeq!=='undefined'){mSeq++;mConnectionEpoch++;mMatters=null;document.getElementById('m-list').replaceChildren();document.getElementById('m-all').hidden=true;mCurrent=null;mDetail=null;clearTimeout(mPoll);document.getElementById('m-status').replaceChildren();document.getElementById('m-notice').textContent='';document.getElementById('m-title').textContent='';document.getElementById('m-agents').replaceChildren();document.getElementById('m-detail').hidden=true;document.getElementById('m-home').hidden=false;}if(typeof tClear==='function')tClear();if(typeof cReferences!=='undefined')cReferences.clear();cMessages.clear();cReady=false;cPending=null;try{if(cDraftKey){sessionStorage.removeItem(cDraftKey);sessionStorage.removeItem(cDraftKey+':pending')}}catch(e){};cDraftKey=null;document.getElementById('chat-messages').replaceChildren();var search=document.getElementById('chat-search');if(search){search.hidden=true;document.getElementById('chat-search-results').replaceChildren()};/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input')).value='';document.getElementById('conversation').hidden=true;document.body.classList.remove('conversation-ready')}
+function cClearPrivate(){if(typeof rStop==='function')rStop();if(typeof mDirectClear==='function')mDirectClear();cAgentNames=Object.create(null);cAgentNamesRequested=false;if(typeof mobileCC!=='undefined')mobileCC.stop();cOwnerMatterId=null;cBefore=null;if(typeof history!=='undefined')history.replaceState(null,'');['chat-query','chat-project','topic-query'].forEach(function(id){var field=/** @type {HTMLInputElement} */ (document.getElementById(id));if(field)field.value=''});document.body.classList.remove('matter-open');cPrivacyRevision++;if(typeof cSearchRows!=='undefined'){cSearchRows=[];cSearchSeq++};if(typeof cResponseUnknown!=='undefined')cResponseUnknown.clear();if(typeof homeSeq!=='undefined'){homeSeq++;homeState=null;presenceAt=null;try{localStorage.removeItem(HOME_KEY)}catch(e){};document.getElementById('home-focus').replaceChildren();document.getElementById('pres-txt').textContent='尚未同步';setPresenceLit(false);if(typeof cConnectionText==='function')cConnectionText()};isDevice=false;if(typeof cWaitingRows!=='undefined')cWaitingRows=null;if(typeof cMatterSeen!=='undefined')cMatterSeen.clear();if(typeof cExpanded!=='undefined')cExpanded.clear();if(typeof cResetResponse==='function')cResetResponse();if(typeof mSeq!=='undefined'){mSeq++;mConnectionEpoch++;mMatters=null;document.getElementById('m-list').replaceChildren();document.getElementById('m-all').hidden=true;mCurrent=null;mDetail=null;clearTimeout(mPoll);document.getElementById('m-status').replaceChildren();document.getElementById('m-notice').textContent='';document.getElementById('m-title').textContent='';document.getElementById('m-agents').replaceChildren();document.getElementById('m-detail').hidden=true;document.getElementById('m-home').hidden=false;}if(typeof tClear==='function')tClear();if(typeof cReferences!=='undefined')cReferences.clear();cMessages.clear();cReady=false;cPending=null;try{if(cDraftKey){sessionStorage.removeItem(cDraftKey);sessionStorage.removeItem(cDraftKey+':pending')}}catch(e){};cDraftKey=null;document.getElementById('chat-messages').replaceChildren();var search=document.getElementById('chat-search');if(search){search.hidden=true;document.getElementById('chat-search-results').replaceChildren()};/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input')).value='';document.getElementById('conversation').hidden=true;document.body.classList.remove('conversation-ready')}
 
 /** @param {HTMLElement} root @param {string} html */
 function cPatchMessages(root,html){

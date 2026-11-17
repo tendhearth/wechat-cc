@@ -111,3 +111,16 @@ it('keeps the earliest boundary when later pages are appended',async()=>{
   expect(window).toHaveBeenLastCalledWith({before:'old'});expect(view.canLoadOlder).toBe(false)
   expect(view.bubbles.map(b=>b.key)).toEqual(['earliest','old','middle','new'])
 })
+
+it('preserves top-level attribution when seeking, paging and refreshing a conversation window', async () => {
+  const row = (id: string, provider: string) => ({ messageId: id, kind: 'text' as const, text: id, createdAt: 1, source: 'wechat', speaker: 'agent' as const, provider, replyExtras: { speaker: 'cc', provider: 'wrong-backend' } })
+  const window = vi.fn(async (p: { anchor?: string; before?: string }) => ({ messages: [row(p.anchor ?? 'earlier', p.anchor ? 'codex' : 'claude')], anchor: p.anchor ?? null, earlier: p.anchor ? 'old' : null, later: null }))
+  await mount(async () => page(), { conversationWindow: window })
+  await act(async () => { await view.seek('old') })
+  await act(async () => { await view.loadOlder() })
+  await act(async () => { await view.refresh() })
+  expect(view.bubbles).toEqual(expect.arrayContaining([
+    expect.objectContaining({ key: 'old', speaker: 'agent', provider: 'codex' }),
+    expect.objectContaining({ key: 'earlier', speaker: 'agent', provider: 'claude' }),
+  ]))
+})

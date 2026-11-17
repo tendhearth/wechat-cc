@@ -39,6 +39,8 @@ export interface ResolveInput {
   nowMs: number
   candidates: TaskCandidate[]
   judge?: TaskJudge
+  /** 来自 provider registry 的名字、显示名和已登记模型别名。 */
+  handoffExecutors?: readonly string[]
   /** 模型判断的上限;超时当作没把握。主人的消息不能被一个慢网关卡住。 */
   judgeTimeoutMs?: number
 }
@@ -59,6 +61,121 @@ const STOP = new Set(['一个', '那个', '这个', '一下', '什么', '怎么'
 /** 零命中时才问模型,而且只在这句话有"任务感"时问 —— 普通聊天不付一次 LLM 往返。 */
 const TASK_CUE = /(任务|那件|这件|哪件|项目|继续|进展|结果|成果|怎么样|做完|好了吗|弄完|做好|接着|停止|交给|换人)/
 const JUDGE_TIMEOUT_MS = 3000
+/**
+ * 这句话是不是在说「把这件事转给另一位执行者」。是 ⇒ 不当补充塞给原执行者,交回 CC 的对话(由它调接力工具并走主人确认)。
+ *
+ * 精确优先:判错成「是」会把日常补充从执行者手里劫走,判错成「不是」只是主人换个说法再说一遍。所以只认
+ * 「转交动词 + 已登记的执行者 + 干净的收尾」这一种句式,其余一律不是。三段都由下面的表定:
+ *   - 动词:交给 / 转给 / 改由 / 换(成) 可以不带后续动作;让 / 给 / 「X 来」必须带(「让 Claude」本身不成句)。
+ *   - 执行者:只认登记过的名字,去掉泛称(api);名字后面紧跟字母数字、路径、「的」都不算(codex 的配置、claude-style)。
+ *   - 收尾:名字之后到分句结束只能是「(来)接着做 / 继续 / 接手…」+ 可选的「这件 / 剩下的 / 后半段 / 事项 <id> 的后半段」
+ *     + 可选语气词或一句短问(吧 / 了 / 行吗 / 会不会更快)。出现别的内容(「之前先补测试」「闪烁的 bug」「一个头像」)就不是。
+ * 否定(别 / 不要 / 先不…)、引号里的文案、「文档里写:…」这类转述不算。显式写出 matter_handoff 按协议算。
+ */
+const HANDOFF_GENERIC_NAMES = new Set(['api'])
+const HANDOFF_VERB = '(?:做|处理|完成|干|弄|写|改|跑|负责)'
+const HANDOFF_ACTION = `(?:来|去)?(?:(?:接着|继续|接手|接管)${HANDOFF_VERB}?(?:下去|完)?|${HANDOFF_VERB}|试试|看看)`
+const HANDOFF_OBJECT = '(?:(?:任务|事项)? ?[a-f0-9]{8}|这个(?:修复|任务|活)?|这件事?|这一?步|它|剩下的?(?:部分|活)?|后面的?(?:部分|活)?|后续|[前后上下]半段)'
+const HANDOFF_ENDING = '(?:吧|了|啊|呀|嘛|好了|一下|就行|即可|试试|看看|行吗|可以吗|好吗|好不好|行不行|怎么样|如何|(?:会不会|是不是|能不能)[^的 ]{0,6})'
+const HANDOFF_NEGATION = /(?:别|不要|不用|不必|无需|禁止|停止|取消|不再|不能|不该|不是|先不|没有?|为什么不|不(?=交|转|换|让|给|改由)|\bdon'?t\b|\bdo not\b|\bnever\b|\bstop\b|\bno need\b|\bnot\b)/i
+/** 冒号前以这些结尾 ⇒ 冒号后是被转述 / 被引用的文字,不是对 CC 说的话。 */
+const HANDOFF_REPORTED = /(?:写上?|写着|写道|文案|注释|提示|显示|出现|叫做?|名为|标题|字样|原文是?|改成|改为|(?<!意思)是|为|输入用?|says?|said|reads?|shows?|to|as)$/i
+const HANDOFF_QUOTED = /“[^”]{0,200}”|‘[^’]{0,200}’|「[^」]{0,200}」|『[^』]{0,200}』|`[^`]{0,200}`|"[^"]{0,200}"|'[^']{0,200}'/g
+/** 归一:全角转半角、弯引号的撇号转直的、连续空白并成一个空格(也去掉了正则回溯的空间)、过长的只看开头。 */
+const handoffNormalize = (text: string) => text.normalize('NFKC').replace(/[’ʼ]/g, "'").replace(/\s+/g, ' ').trim().slice(0, 400)
+export function isTaskHandoffRequest(text: string, executors: readonly string[] = []): boolean {
+  const normalized = handoffNormalize(text)
+  const unquoted = normalized.replace(HANDOFF_QUOTED, ' ')
+  const sentences = unquoted.split(/[。！？!?；;\n]|\.(?= |$)/).map(part => part.trim()).filter(Boolean)
+  const clausesOf = (sentence: string) => {
+    // 「文档里写:交给 Claude 接着做」是转述:冒号前以「写 / 文案 / 出现 / says…」结尾的,冒号后不看。
+    const colon = sentence.search(/[:：]/)
+    const body = colon >= 0 && HANDOFF_REPORTED.test(sentence.slice(0, colon).trim()) ? sentence.slice(0, colon) : sentence
+    return body.split(/[,，:：]/).map(part => part.trim()).filter(Boolean)
+  }
+  const negated = (clause: string, index: number) => HANDOFF_NEGATION.test(clause.slice(0, index).split(/而是|但是|不过/).at(-1) ?? '')
+  // 显式工具名:只有「调用 / 用 / call…」它才算请求;提到函数名、要改名、说别调用都不是。
+  const TOOL = /(?:调用|使用|用|执行|走|call|use|run|invoke) ?`?matter_handoff(?![a-z0-9_])/i
+  for (const sentence of sentences) for (const clause of clausesOf(sentence)) {
+    const m = TOOL.exec(clause)
+    if (m && !negated(clause, m.index)) return true
+  }
+  const names = [...new Set(executors.map(n => handoffNormalize(n).toLowerCase()).filter(n => n && !HANDOFF_GENERIC_NAMES.has(n)))]
+    .sort((a, b) => b.length - a.length)
+    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  if (!names.length) return false
+  const name = `@?(?:${names.join('|')})(?![a-z0-9_./@-])`
+  const rest = (actionRequired: boolean) => `(?: ?${HANDOFF_ACTION})${actionRequired ? '' : '?'}(?: ?${HANDOFF_OBJECT})?(?: ?的 ?${HANDOFF_OBJECT})?(?: ?${HANDOFF_ENDING})?$`
+  const forms = [
+    `(?<!提)(?:交给|转给|改由) ?${name}${rest(false)}`,
+    `换(?:成|个)? ?${name}${rest(false)}`,
+    `(?<![交转提])(?:让|给|由|请) ?${name}${rest(true)}`,
+    // 名字打头必须带「来」:「Claude 跑了」「Codex 继续」是在说现状或对当前执行者说话,不是换人。
+    `(?<![a-z0-9_.@/-])${name} ?来(?:(?:接着|继续|接手|接管)${HANDOFF_VERB}?|${HANDOFF_VERB}|试试)(?:下去|完)?(?: ?${HANDOFF_OBJECT})?(?: ?${HANDOFF_ENDING})?$`,
+    `\\b(?:switch|reassign(?: (?:it|this|this task|the task))?|hand(?: (?:it|this))? off|hand(?: (?:it|this))? over|pass(?: (?:it|this))?) to ${name}(?: (?:please|now))?$`,
+    `\\b(?:let|can|could) ${name} (?:take (?:it |this )?over|continue|finish(?: (?:it|this))?)(?: (?:please|now|from here))?$`,
+  ].map(f => new RegExp(f, 'i'))
+  for (const sentence of sentences) for (const clause of clausesOf(sentence)) {
+    for (const form of forms) {
+      const m = form.exec(clause)
+      if (m && !negated(clause, m.index)) return true
+    }
+  }
+  return false
+}
+
+/**
+ * 这句话是不是在让 CC 把一件事分享给某人(或关掉 / 列出分享链接)。是 ⇒ 不当补充塞给执行者,交回 CC 的对话
+ * (由它调 matter_share / matter_shares,开链接走主人确认卡)。验收 11-15:「把首页配色这件事分享给小林」被管家译成
+ * 「任务 … 补充 …」送给了执行者,CC 根本没看到。
+ *
+ * 跟接力同一个取舍:精确优先,判错成「是」会把日常补充从执行者手里劫走。只认三种句式:
+ *   - 开:「分享给 / 共享给 <人>」,对象是这件事(这件 / 这个 / 它 / 这事 / 「…这件事」)或省略;<人> 是 1–12 个字的称呼,
+ *     不能是功能词(「加个分享给好友的按钮」是在给执行者提需求)。
+ *   - 关:「分享(链接)… 关掉 / 关了 / 撤掉 / 收回 / 停掉」,或「<人>那个 / 那条链接 … 关掉」;句子里有功能词(按钮 / 页脚…)不算。
+ *   - 列:「(都)分享给谁了」「分享了哪些人」。
+ * 否定(别 / 不要 / 先不…)与引号里的文字不算。
+ */
+const SHARE_FEATURE = /(按钮|功能|入口|图标|卡片|海报|弹窗|页|导航|菜单|好友|朋友圈|群|接口|组件|的)/
+const SHARE_OPEN = /(?:分享|共享)给 ?([^\s,，。！!？?；;:：、]{1,12})/
+const SHARE_CLOSE = /(?:分享|那个链接|那条链接)[^,，。！!？?]{0,12}?(?:关掉|关了|关上|关一下|撤掉|撤了|撤回|收回|停掉|作废)/
+const SHARE_LIST = /(?:都)?(?:分享|共享)给(?:了)?(?:谁|哪些人|几个人)|(?:分享|共享)了(?:哪些人|几个人|给谁)/
+const SHARE_NEGATION = /(?:别|不要|不用|不必|先不|不想|不能|不准|没有?)[^,，]{0,4}$/
+export function isMatterShareRequest(text: string): boolean {
+  const unquoted = handoffNormalize(text).replace(HANDOFF_QUOTED, ' ')
+  for (const clause of unquoted.split(/[。！？!?；;\n,，]/).map(part => part.trim()).filter(Boolean)) {
+    const list = SHARE_LIST.exec(clause)
+    if (list && !SHARE_NEGATION.test(clause.slice(0, list.index))) return true
+    const close = SHARE_CLOSE.exec(clause)
+    if (close && !SHARE_NEGATION.test(clause.slice(0, close.index)) && !SHARE_FEATURE.test(clause.replace(/(那个|那条)链接/, ''))) return true
+    const open = SHARE_OPEN.exec(clause)
+    if (!open || SHARE_NEGATION.test(clause.slice(0, open.index))) continue
+    const who = open[1]!
+    // 「分享给小林,让他帮我看看」里 who 只截到分句;「分享给小林的按钮」这种功能词 ⇒ 不是。
+    if (SHARE_FEATURE.test(who) || SHARE_FEATURE.test(clause.slice(open.index + open[0].length, open.index + open[0].length + 4))) continue
+    // 对象:没有,或者是「这件(事)/ 这个 / 它 / 这事 / …这件事」—— 「把登录页分享给小林」也算(主人说的就是这件)。
+    return true
+  }
+  return false
+}
+
+/** 「把我终端里这个 Claude 挂到 X 上」「把终端从 X 上摘下来」是对 CC 说的(terminal_attach / detach),不是给 X 的补充。
+ * 要同时提到终端会话、又用挂/摘这类动词;「终端挂了」「页面挂到首页」都不算。 */
+const TERMINAL_WORD = /(终端|命令行|terminal)/i
+const TERMINAL_ACT = /(挂到|挂进|挂上|挂在|接到|接进|摘下|摘掉|摘了|取下|拿下来)/
+export function isTerminalAttachRequest(text: string): boolean {
+  const t = text.replace(/「[^」]*」|“[^”]*”|"[^"]*"/g, '')
+  for (const clause of t.split(/[。！!？?；;\n]/)) {
+    const act = TERMINAL_ACT.exec(clause)
+    if (!act || !TERMINAL_WORD.test(clause)) continue
+    if (SHARE_NEGATION.test(clause.slice(0, act.index))) continue
+    return true
+  }
+  return false
+}
+
+/** 新建命令里的任务正文照旧处理；仅已有事项的显式接力让路。 */
+export const isTaskHandoffCommand = (text: string, executors: readonly string[] = []): boolean => /^(?:任务|\/task)\s+[a-f0-9]{8}\s+/i.test(text.trim()) && isTaskHandoffRequest(text, executors)
 const PROVIDER_WORDS: Record<string, string[]> = {
   claude: ['claude', '克劳德'], codex: ['codex'], openai: ['api', 'qwen', 'deepseek', 'kimi'], cursor: ['cursor'], agy: ['agy', 'gemini'],
 }
@@ -145,6 +262,7 @@ async function askJudge(judge: TaskJudge | undefined, text: string, candidates: 
 }
 
 export async function resolveTaskReference(input: ResolveInput): Promise<Resolution> {
+  if (isTaskHandoffRequest(input.text, input.handoffExecutors) || isMatterShareRequest(input.text) || isTerminalAttachRequest(input.text)) return { kind: 'none' }
   const { candidates } = input
   if (!candidates.length) return { kind: 'none' }
 

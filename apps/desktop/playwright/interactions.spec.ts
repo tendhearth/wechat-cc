@@ -9,7 +9,7 @@
 //                                     toggle is independent of wizard
 //                                     step-4 toggle with the same name)
 
-import { test, expect } from './fixtures'
+import { test, expect, clickRevealed } from './fixtures'
 
 test('hidden-titlebar window exposes four narrow drag edges', async ({ page, shimUrl }) => {
   await page.goto(shimUrl)
@@ -111,14 +111,14 @@ test('settings drawer is in DOM and starts closed (no .is-open)', async ({ page,
 test('clicking #settings-open opens the drawer (.is-open class)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
 })
 
 test('clicking #settings-close closes the drawer', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
   await page.locator('#settings-close').click()
   await expect(page.locator('#settings-drawer')).not.toHaveClass(/is-open/)
@@ -127,7 +127,7 @@ test('clicking #settings-close closes the drawer', async ({ page, shimUrl, shim 
 test('ESC key closes the drawer', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
   await page.keyboard.press('Escape')
   await expect(page.locator('#settings-drawer')).not.toHaveClass(/is-open/)
@@ -136,7 +136,7 @@ test('ESC key closes the drawer', async ({ page, shimUrl, shim }) => {
 test('clicking outside the drawer (on dashboard body) closes it', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
   // Click somewhere clearly outside the drawer
   await page.locator('main.dashboard').click({ position: { x: 100, y: 100 } })
@@ -148,7 +148,7 @@ test('clicking outside the drawer (on dashboard body) closes it', async ({ page,
 test('drawer toggle: aria-pressed flips on click', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   const toggle = page.locator('#autostart-toggle')
   const initial = await toggle.getAttribute('aria-pressed')
   await toggle.click()
@@ -165,7 +165,7 @@ test('drawer toggle: aria-pressed flips on click', async ({ page, shimUrl, shim 
 test('drawer toggle: .on class toggles on click(写入成功的开关)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   // 原先用 #memory-embryo-toggle(纯本地开关);2026-10-03 UI 评审把「实验」
   // 整段藏起来了(无效开关),藏起来的按钮点不到。改用 autostart:shim 在
   // DRY_RUN 下把 `provider set` 当成功写入,开关机制照样测得到、不会回滚。
@@ -181,7 +181,7 @@ test('drawer toggle: .on class toggles on click(写入成功的开关)', async (
 test('drawer toggle: 持久化失败时回滚,不静默撒谎(v1.6.4 契约)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   // guard 开关要落盘;shim 的 mutations=blocked 让这次写必然失败。开关必须
   // 退回原状,而不是停在乐观的"已开启"上骗人。这条契约此前没有 e2e 覆盖 ——
   // 恰恰是它让上面那条老测试红了七周。
@@ -206,7 +206,7 @@ test('drawer and wizard step-4 toggles are independent (duplicate-ID fix regress
   // clicking the drawer toggle leaves the wizard copy untouched.
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   const drawerToggle = page.locator('#autostart-toggle')          // drawer's
   const wizardToggle = page.locator('#screen-autostart-toggle')   // wizard step-4's
   await expect(drawerToggle).toBeAttached()

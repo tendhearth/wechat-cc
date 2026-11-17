@@ -14,11 +14,17 @@ export type AgentProviderKind = KnownProviderId
 
 export interface AgentConfig {
   provider: AgentProviderKind
+  checkup?: Partial<Record<'short'|'full',{maxOutputTokens?:number;maxRequests?:number}>>
   model?: string
+  /** Explicit capacity for this exact backend endpoint and model. */
+  modelContextWindows?: Array<{provider:string;address:string;model:string;windowTokens:number}>
   // Cursor-specific model id (e.g. 'composer-2'). Mirrors `model?`'s
   // optional-string shape so an operator can persist a Cursor model
   // alongside the Claude one without overloading a single field.
   cursorModel?: string
+  /** Grok 账号 ACP 的独立模型/二进制覆盖；不参与后台评估。 */
+  grokModel?: string
+  grokBin?: string
   // OpenAI-compatible provider fields (also covers OpenAI-compatible
   // endpoints like DeepSeek). Mirrors `cursorModel?`'s shape: kept separate
   // from `model?` so switching providers doesn't clobber another
@@ -50,7 +56,7 @@ export interface AgentConfig {
   /** 老 VPS 中继的地址。2026-10-25 随协议 v1 退休:还读进来(老配置文件不报错),但 daemon 不再用它。 */
   remote_relay_url?: string
   /** 官方中继 v2 的地址(wss 源,不带路径)。**不设(或空串)⇒ 远程关**(老中继已退休);没有隐式缺省。
-   *  上线步骤:生产中继 /healthz 正常后设 `"relay_v2_url": "wss://relay.tendhearth.com"`(docs/maintainer/relay.md)。 */
+   *  桌面点「连接手机」时显式写入官方地址；仍允许维护者保留手动配置。 */
   relay_v2_url?: string
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
    *  该 provider,openai 注册不再静默劫持。 */
@@ -310,10 +316,17 @@ export type ForwardBudgetConfig = z.infer<typeof ForwardBudgetConfig>
 
 const AcpAgentEntry = z.object({ id: z.string(), name: z.string(), command: z.string(), args: z.array(z.string()).optional(), auth_method: z.string().max(64).optional() })
 
+const ModelContextWindow = z.object({provider:z.string().min(1).max(64),address:z.string().refine(s=>s==='default'||URL.canParse(s)),model:z.string().min(1).max(200),windowTokens:z.number().int().min(1024).max(10_000_000)}).strict()
+const CheckupLimits = z.object({maxOutputTokens:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),maxRequests:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()}).strict()
+const CheckupSettings = z.object({short:CheckupLimits.optional(),full:CheckupLimits.optional()}).strict()
 const AgentConfigSchema = z.object({
+  checkup:CheckupSettings.optional(),
+  modelContextWindows:z.array(ModelContextWindow).max(200).optional(),
   provider: z.enum(PROVIDER_IDS).default('claude'),
   model: z.string().optional(),
   cursorModel: z.string().optional(),
+  grokModel: z.string().optional(),
+  grokBin: z.string().optional(),
   openaiBaseUrl: z.string().optional(),
   openaiModel: z.string().optional(),
   openaiEvalModel: z.string().optional(),
@@ -402,6 +415,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     // safeParse: if the sub-field is malformed we silently drop it rather
     // than crashing the entire config load (same lenient posture as the
     // rest of this function).
+    const modelContextWindows=Array.isArray(parsed.modelContextWindows)?parsed.modelContextWindows.flatMap(value=>{const r=ModelContextWindow.safeParse(value);return r.success?[r.data]:[]}).slice(0,200):undefined
     const a2aListen = parsed.a2a_listen != null
       ? A2AListen.safeParse(parsed.a2a_listen).data
       : undefined
@@ -453,8 +467,12 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
 
     return {
       provider,
+      ...(CheckupSettings.safeParse(parsed.checkup).success?{checkup:CheckupSettings.parse(parsed.checkup)}:{}),
+      ...(modelContextWindows?.length?{modelContextWindows}:{}),
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
+      ...(typeof parsed.grokModel === 'string' ? { grokModel: parsed.grokModel } : {}),
+      ...(typeof parsed.grokBin === 'string' ? { grokBin: parsed.grokBin } : {}),
       ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),
       ...(typeof parsed.openaiModel === 'string' ? { openaiModel: parsed.openaiModel } : {}),
       ...(typeof parsed.openaiEvalModel === 'string' && parsed.openaiEvalModel ? { openaiEvalModel: parsed.openaiEvalModel } : {}),

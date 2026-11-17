@@ -4,7 +4,7 @@ import type { ProviderRegistry } from '../../app/provider-registry'
 import type { ConversationCoordinator, TurnRecord } from '../../app/conversation-coordinator'
 import type { ConversationStore } from '../../ports/conversation-store'
 import { formatInbound } from '../../domain/prompt-format'
-import type { ProviderId } from '../../domain/conversation'
+import type { ProviderId, Mode } from '../../domain/conversation'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { WechatSend, WechatPermissions, WechatCompanionControls } from '../../ports/wechat'
 import type { Db } from '../../lib/db'
@@ -16,6 +16,11 @@ import type { SendAssistantText } from './fallback-reply'
 import type { HealthRuntime } from '../health'
 
 export interface BootstrapDeps {
+  noteMatterApproval?:import('../../adapters/executors/chat-approval').ChatApprovalChannel['noteMatterApproval']
+  resolveMatterPlan?:import('../../adapters/executors/chat-approval').MatterPlanResolver
+  resolveTerminalParticipation?:import('../../adapters/executors/chat-approval').TerminalParticipationResolver
+  makeContextRotation?: (parts: {resolve(chatId:string):{alias:string;path:string}|null;registry:ProviderRegistry; getMode(chatId:string):Mode|undefined;holdBusy(label:string):()=>void;effectiveTarget(key:import('../../app/session-manager').InFlightKey,model?:string):import('../../lib/network-gate').CallTarget}) => import('../../app/context-rotation').ContextRotation
+
   stateDir: string
   /**
    * 网络闸门(2026-10-02,main.ts 建):provider registry / SessionManager / 协调器都接它。
@@ -25,7 +30,7 @@ export interface BootstrapDeps {
   /** 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire(SessionManagerOptions.executionGuard);缺省 = 不冲突。 */
   executionGuard?: (path: string, providerId: string, nativeId: string | null) => boolean
   /** 微信那一侧只用这几样(架构终态 A6 窄口,src/ports/wechat.ts):回复 / 通知、发文件、工具权限卡、提示词里「主动关心开没开」。 */
-  ilink: Pick<WechatSend, 'sendMessage' | 'sendFile'> & Pick<WechatPermissions, 'askUser'> & { companion: WechatCompanionControls }
+  ilink: Pick<WechatSend, 'sendMessage' | 'sendFile'> & Pick<WechatPermissions, 'askUser' | 'resolvePermission'> & { companion: WechatCompanionControls }
   loadProjects: () => { projects: Record<string, { path: string; last_active: number }>; current: string | null }
   lastActiveChatId: () => string | null
   /** Third `fields` arg lands in the JSONL sidecar (channel.log.jsonl) for
@@ -42,7 +47,7 @@ export interface BootstrapDeps {
   /** Mint/invalidate per-session internal-api tokens — main.ts wires these to
    *  the internal-api token registry so each session's MCP children carry the
    *  caller's tier. Omitted in tests / minimal embeddings. */
-  mintSessionToken?: (tier: import('../../domain/user-tier').UserTier, sessionKey: string) => string
+  mintSessionToken?: (tier: import('../../domain/user-tier').UserTier, sessionKey: string, limits?: { routeAllow: ReadonlySet<string> }) => string
   invalidateSession?: (sessionKey: string) => void
   /**
    * Test/harness override for agy's tier-C global MCP config target dir
@@ -263,6 +268,7 @@ export interface BootstrapDeps {
 }
 
 export interface Bootstrap {
+  contextRotation?: import('../../app/context-rotation').ContextRotation
   sessionManager: SessionManager
   sessionStore: import('../../ports/session-store').SessionStore
   conversationStore: ConversationStore
@@ -270,7 +276,7 @@ export interface Bootstrap {
   coordinator: ConversationCoordinator
   resolve: (chatId: string) => { alias: string; path: string } | null
   formatInbound: typeof formatInbound
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode }) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode; conversationMcp?: boolean }) => Promise<Options>
   /**
    * The single provider-agnostic system-prompt assembler. SessionManager calls
    * it once per spawn and forwards the result via SpawnContext.appendInstructions;
@@ -278,7 +284,7 @@ export interface Bootstrap {
    * per-chat sections (currently: the care section, via `deps.careLevelFor`).
    * Exposed for tests.
    */
-  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
+  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string, actualMcp?: { wechat: boolean; delegate: boolean }) => string
   /** 这家执行者现在用哪个模型(session-manager 起会话时问的同一个;输出评测也照它起会话)。可选:测试里的假 boot 没有它。 */
   currentModelFor?: (providerId: ProviderId) => string | undefined
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
@@ -295,6 +301,7 @@ export interface Bootstrap {
   /** daemon 关停时清掉重探计时器。可选:测试里的假 boot 没有它。 */
   stopProviderProbes?: () => void
   /** 立刻重探一家开机探测失败的 provider(CLI 自动升级器升完时用)。可选:测试里的假 boot 没有它。 */
+  refreshInstalledProvider?: (id: string) => Promise<boolean>
   reprobeProvider?: (id: string) => Promise<boolean | null>
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
   agentProviderKind: ProviderId

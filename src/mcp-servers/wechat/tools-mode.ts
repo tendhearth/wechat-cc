@@ -6,7 +6,7 @@
  * coordinator path /cc /api /agy use). Registered for non-guest sessions;
  * classify gates it to ToolKind 'mode_switch' (trusted+).
  */
-import { z } from 'zod'
+import z from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'

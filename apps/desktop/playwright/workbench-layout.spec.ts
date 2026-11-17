@@ -1,3 +1,4 @@
+import {routeRoster,rosterItem} from './roster-fixture'
 import { join } from 'node:path'
 import { test, expect, clickNav, WORKBENCH_ROUTES } from './fixtures'
 
@@ -25,6 +26,7 @@ const tasks = [
 ]
 
 async function setup(page:any, shimUrl:string, shim:any) {
+  await routeRoster(page,[rosterItem('deadbeef','完善作品集在手机上的排版'),rosterItem('cafefeed','整理访谈主题与引用')])
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
   await page.route(WORKBENCH_ROUTES, async (route:any) => {
     const url = new URL(route.request().url())
@@ -113,10 +115,12 @@ test('conversation layers preserve the global navigation and restore the convers
   await expect(page.locator('#dash-global-rail')).toBeVisible()
   // 会话工具层保留此刻的导航归属；中等宽度主导航仍可用，手机宽度从返回按钮回到对话。
   await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toHaveClass(/active/)
-  await expect(page.locator('#workbench-nav-toggle')).toBeHidden()
+  await expect(page.locator('#workbench-nav-toggle')).toHaveCount(0)
+  await expect(page.locator('#dash-global-rail')).toBeVisible()
   await expect(page.locator('.wb-chats')).toHaveCount(0)
   await page.setViewportSize({width:1000,height:900})
-  await expect(page.locator('#workbench-nav-toggle')).toBeHidden()
+  await expect(page.locator('#workbench-nav-toggle')).toHaveCount(0)
+  await expect(page.locator('#dash-global-rail')).toBeVisible()
   await expect(page.locator('#workbench-home')).toBeVisible()
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('inert','')
   await expect(page.locator('#dash-global-rail')).not.toHaveAttribute('aria-hidden','true')
@@ -128,7 +132,8 @@ test('conversation layers preserve the global navigation and restore the convers
   await expect(page.locator('.cc-now-pane')).not.toHaveAttribute('inert')
 })
 
-test('the waiting count lives next to 此刻 in the rail, not in a banner',async({page,shimUrl,shim})=>{
+test('waiting count stays in the roster while navigating the global topbar',async({page,shimUrl,shim})=>{
+  await routeRoster(page,[rosterItem('deadbeef','完善作品集在手机上的排版'),rosterItem('cafefeed','整理访谈主题与引用')])
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
   await page.route('**/v1/workbench/attention',route=>route.fulfill({json:{tasks:[
     {id:'deadbeef',title:'完善作品集在手机上的排版',providerId:'claude',pendingPermissionCount:1,pendingQuestionCount:0,attentionKey:JSON.stringify(['permission-1']),first:{kind:'permission',text:'Bash: bun run test'}},
@@ -137,8 +142,8 @@ test('the waiting count lives next to 此刻 in the rail, not in a banner',async
   await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.waitForFunction(()=>document.documentElement.dataset.mode && document.documentElement.dataset.mode!=='loading')
   await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
-  await expect(page.locator('#now-count')).toHaveText('2')
+  await expect(page.locator('#roster-list [data-group="waiting"] h2')).toHaveText('等你 2')
   await expect(page.locator('#workbench-attention')).toHaveCount(0)
   await clickNav(page,'recollections')
-  await expect(page.locator('#now-count')).toHaveText('2')
+  await expect(page.locator('#roster-list [data-group="waiting"] h2')).toHaveText('等你 2')
 })

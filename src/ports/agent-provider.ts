@@ -127,12 +127,23 @@ export interface AgentWorkbenchRuntime {
   snapshot(): AgentRuntimeSnapshot
 }
 
+/** daemon 给当前回合的来源；不从模型文本、chatId 或持久会话推断。 */
+export interface AgentDispatchContext { source: 'inbound' | 'background' }
+
 export interface AgentSession {
+  /** Negotiated tool surface for providers with session-scoped transport setup. */
+  readonly supportsDelegation?: boolean
+  /** Observation only. requestBytes is the actual UTF-8 wire body; historyBytes may be a legacy estimate.
+   * Tokens describe the last request, not billed step totals. requestFailure contains only a normalized digest. */
+  contextUsage?(): { historyBytes?: number; requestBytes?: number; tokens?: number; firstInputTokens?: number|null; model?: string; requestFailure?: {status:number;signature:string}|null }
+
   /**
-   * 这条会话是不是接着上一次的历史起来的(续接成功)。provider 知道才填;不填 ⇒ 协调器按能力表的 supportsResume 猜。
+   * 这条会话是不是接着上一次的历史起来的(续接成功)。provider 知道才填；主人对话未确认时补共享接续块，旧嵌入仍可按能力表兜底。
    * 冷启动近况块据它决定加不加:续上了就不必再贴一遍最近的对话(B2,2026-10-25:OpenAI 兼容对话开始能续接)。
    */
   resumedHistory?: boolean
+  /** New native continuity evidence is consumed only by owner rotation; legacy consumers keep dev behavior. */
+  resumedHistoryOwnerOnly?: boolean
   /** Optional owned lifetime capability; legacy dispatch remains unchanged. */
   workbenchRuntime?: AgentWorkbenchRuntime
   /** Native acknowledgement of supplemental input to the current turn only. */
@@ -145,7 +156,7 @@ export interface AgentSession {
    * dispatches. Claude provider serialises (one in-flight per session);
    * Codex provider runs each turn as a separate runStreamed.
    */
-  dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent>
+  dispatch(text: string, attachments?: readonly AgentAttachment[], context?: AgentDispatchContext): AsyncIterable<AgentEvent>
   /**
    * Interrupt the in-flight dispatch (if any) without closing the
    * session — future dispatches still work. Wired into the chatroom
@@ -253,6 +264,11 @@ export interface AgentMcpTools {
 }
 
 export interface SpawnContext {
+  /** 本句一次代答：关闭 provider 自有的自动记忆；CC API 已由临时令牌限权。 */
+  oneoff?: boolean
+  /** Isolated synthetic evaluation: only these run-owned tools, no private history or native tools.
+   * Providers which cannot enforce isolation must refuse before opening any session. */
+  evaluation?: { tools: AgentMcpTools; mcpServer: { url: string }; maxSteps: number; maxOutputTokens: number; budget?: import('../domain/checkup-budget').CheckupBudget }
   /** Cancels pre-executor task environment preparation on stop/shutdown. */
   preparationSignal?: AbortSignal
   /** Task-local temporary directories; never set for companion chat. */
@@ -269,6 +285,7 @@ export interface SpawnContext {
   chatId: string
   /** When set, the provider should resume an existing session (claude
    *  jsonl, codex thread id, cursor agent id) instead of cold-starting. */
+  ephemeral?: boolean
   resumeSessionId?: string
   /** Per-spawn env overlay the provider merges into every stdio MCP child's
    *  env (via mergeEnvIntoMcpServers). Computed once by the daemon
@@ -290,6 +307,12 @@ export interface SpawnContext {
    * `mcpEnv`. Absent in tests/embeddings that don't wire the thunk — providers
    * then fall back to whatever prompt their construction opts carried (or none).
    */
+  /** Set only after an accepted matter_handoff. */
+  matterLedger?: boolean
+  /** Providers report actual notebook tool availability before returning from spawn. */
+  reportMatterTools?: (available:boolean)=>void
+  /** Rebuild daemon instructions after optional MCP transport negotiation. */
+  instructionsForMcp?: (available: { wechat: boolean; delegate: boolean }) => string | undefined
   appendInstructions?: string
   /**
    * The pinned model id for this spawn, read per-spawn by the daemon
@@ -375,6 +398,11 @@ export { guestSafe, type Confinement, type ToolSurfaceConfinement } from '../dom
 import type { ToolSurfaceConfinement } from '../domain/confinement'
 
 export interface ProviderCapabilities {
+  /** 已发现但不满足启动前提的执行者；所有档位均拒绝，不能用 dangerously 绕开。 */
+  unavailableReason?: string
+  /** none: 无 CC MCP；session: 须在会话协商成功后才宣称工具可用。 */
+  mcpTools?: 'none' | 'session'
+
   /**
    * In `primary_tool` mode this provider delegates to `delegate_<peer>`;
    * the single source for provider pairing (replaces the old 2-provider
@@ -438,6 +466,18 @@ export interface ProviderCapabilities {
 }
 
 export interface AgentProvider {
+  /** Native storage is absent or reclaimed on close for ephemeral sessions. */
+  supportsEphemeralSessions?: boolean
+  /** Conservative owner-rotation baseline when no request has reported a window. Not a checkup observation. */
+  fallbackContextWindowTokens?: number
+  /** Synchronous, previously observed model capacity; must not call a model. */
+  contextWindowTokens?(model:string):number|undefined
+  /** Optional bounded metadata lookup, only when explicitly preparing an estimate. */
+  prepareContextWindow?(model:string):Promise<void>
+  /** Explicitly verified tools-only, no-private-history evaluation boundary. */
+  supportsIsolatedEvaluation?: true
+  /** Native transports reserve whole questions; API gateways can gate requests. */
+  isolatedEvaluationBudgetMode?(): import('../domain/checkup-budget').CheckupBudgetMode
   /** Discovery owns one bounded native deadline and subprocess cleanup; no model turn is sent. */
   modelCatalog?(project: AgentProject): Promise<AgentModelCatalog>
   /**

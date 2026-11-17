@@ -22,6 +22,7 @@ import { providerCmd } from './commands/provider'
 import { accountCmd } from './commands/account'
 import { accessCmd } from './commands/access'
 import { companionCmd } from './commands/companion'
+import {matterCmd} from './commands/matter'
 import { hookCmd } from './commands/hook'
 import { connectionCmd } from './commands/connection'
 import { daemonCmd } from './commands/daemon'
@@ -34,6 +35,7 @@ import { replyCmd } from './commands/reply'
 import { updateCmd } from './commands/update'
 import { selftestCmd } from './commands/selftest'
 import { evalCmd } from './commands/eval'
+import { checkupCmd } from './commands/checkup'
 import { ciCmd } from './commands/ci'
 import { modeCmd } from './commands/mode'
 import { mcpServerCmd, federatedSourceCmd } from './commands/mcp-server'
@@ -107,6 +109,7 @@ const SUBCOMMANDS = {
   selftest: selftestCmd,
   // AI 输出回归评测 — `eval run|diff`(设计稿 docs/design/2026-10-29-output-eval.md)。
   eval: evalCmd,
+  checkup: checkupCmd,
   // CI 信号面 — `ci triage` (spec 2026-09-18-ci-triage §3);「看 CI」不再是人的判断。
   ci: ciCmd,
   'install-progress': installProgressCmd,
@@ -125,6 +128,7 @@ const SUBCOMMANDS = {
   'federated-source': federatedSourceCmd,
   // 终端 claude / codex 的 hooks 出口(spec 2026-09-09-cli-hook-push)。
   hook: hookCmd,
+  matter: matterCmd,
 } as const
 
 export const cittyRoot = defineCommand({

@@ -195,6 +195,19 @@ push-open 首轮在 `2026-11-06T02-00-27.575Z-app-maestro` 失败：已回此刻
 
 before/after覆盖同一个合成截图harness；白名单只覆盖 `playwright/design-unify-shots.spec.ts` 与测试配置 `playwright.config.ts`，不覆盖产品代码、shim或协议包，harness摘要单独记在snapshot.json。before只产四页对照，不拿旧外观去跑新合同断言；after再跑T5、详情、工作台布局、行审阅及原陪伴浏览器回归。配置使用仓库的playwright.config.ts，经校验的Home缓存浏览器固定为原root下browser-1228，不下载/升级浏览器；每轮结果和 `design-shots/desktop-<page>-before|after.png` 在该快照artifacts下。主页行取当前唯一对话主页中的待决事项引用行。
 
+2026-11-11：`phone-connect-relay` 也使用受控 browser 快照入口，browser 验证包含 `phone-connect.spec.ts`。
+
+2026-11-17：`one-click-cli-setup` 允许使用受控 browser 快照入口；普通 after 验证包含 `cli-setup.spec.ts`，覆盖账号选项、安装 IPC/POST、自动检测、QA 拒绝与 390px 宽度。用例只使用假 daemon 路由与假原生桥接，不打开终端或执行安装。登记与用例存在不代表 mini 验收通过；实际运行由整合者经标准 browser 入口完成。
+
 2026-11-09：主人指定的 `codex-hook-trust-ux`、`topics-waiting-honest` 也允许这两个源码入口。这两条分支的 App 快照通过固定 `--receive-verified` 入口复用上述差异 archive 与完整 Git manifest 校验，避免不稳定 SSH 中传输约 208 MiB 的完整 archive。App target 由接收入口固定传入，不能由 manifest 选择；仅接受 after，只更新 appRoot，不覆盖浏览器 harness。仍固定 486f… 公共源码缓存，核验 commit/tree、每个 blob/mode、差异包摘要、路径和容量边界，离线安装自己的 JS 依赖并核对 workspace 解析；不复制 node_modules、Pods、构建物、账号或凭据。两端应一起更新 app/browser snapshot、source-manifest、remote/protocol 与 lock/lifecycle 模块。其它既有 App 分支继续保留原完整 Git archive 入口。
 
 入口拿锁后核对快照未在排队期间切换，预检4198空闲（占用即失败，不杀未知进程），测试HOME、TMP、daemon/workbench状态与输出均在本轮目录。用 `node apps/desktop/scripts/macmini-ui.mjs browser` 执行；全程headless与拒绝外连，不启动Xcode/模拟器或真实daemon。取回证据后，持同一锁只删除自己创建且没有被active的root/appRoot/browserRoot指向的目录；保留active的after快照，不清理他人的App快照。
+
+
+### 2026-11-13 统一界面验收
+
+主人指定 `mini-ui-acceptance` 分支可使用 browser / verified App 快照入口。该分支的 browser `before` 固定取记录本 PR #915 的父提交（`9547a8c30^`），`after` 仍取已提交 HEAD；两端使用同一份 `task-detail-minimal.spec.ts` 测试夹具覆盖，摘要记录在 snapshot.json，产品源码仍按 Git manifest 核验。
+
+设置 `CC_UI_BROWSER_SUITE=mini-ui-acceptance` 后，标准 `browser` 入口仅运行详情与体检两份用例；before 只运行普通单执行者详情对照。此开关只接受该固定值，不接受路径或自定义命令。App 的 `butler-checkup` 流程也已登记。Homebot 若缺少 `app-tools`，须记录标准入口的实际阻塞，不能借用个人工具、默认设备或主机补跑。
+
+2026-11-17：主人指定的 `claude/butler-web` 已登记 browser 快照白名单。网页名单条 / 直通的宽窄屏用例在 `apps/mobile/playwright/conversation.e2e.test.ts`，旧结构回归同步更新 `minimal.e2e.test.ts`。本分支仅编写用例、未连接 mini 或运行浏览器；整合者须在 mini 的独立离线网页测试环境运行这两份用例，取得通过回执后再集成验收。白名单登记本身不表示网页用例已被标准 desktop browser suite 执行。

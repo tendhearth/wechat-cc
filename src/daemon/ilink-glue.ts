@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { WECHAT_PORTS, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling } from '../ports/wechat'
-import { howToReplyLine, parsePermissionReply } from './pending-permissions'
+import { howToReplyLine, isPermissionCardQuote, parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
 import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText } from '../lib/ilink-workbench'
@@ -35,6 +35,8 @@ import { readJsonFile } from '../lib/read-json-file'
 import { isAdmin } from '../lib/access'
 import { EXPIRED_NOTIFY_TEXT, expiredNoticeRecipients } from './ilink/expired-notice'
 import type { SentMedia } from './companion/media-mirror'
+import { currentReplyAttribution } from '../lib/reply-attribution'
+import { unprefixedReplyText } from '../lib/reply-presentation'
 
 /**
  * Monotonic counter to keep same-millisecond outbound IDs unique. Module
@@ -158,6 +160,7 @@ export function makeIlinkAdapter(opts: {
 
   const adapter: IlinkAdapter = {
     async sendMessage(chatId, text, metadata) {
+      const attribution = { ...currentReplyAttribution() ?? { speaker: 'notice' as const } }
       // 只有空白也算空:ilink 会照发,微信那头就是一条空气泡(2026-10-02)。
       if (!text.trim()) return { msgId: `err:${Date.now()}`, error: 'empty text' }
       let reachedWire = false
@@ -185,12 +188,8 @@ export function makeIlinkAdapter(opts: {
           ts: new Date().toISOString(),
           direction: 'out',
           kind: 'text',
-          text,
-          // provider context is not available at the transport layer;
-          // the coordinator knows the provider but sendMessage is a generic
-          // send primitive called from many paths (admin, mode, onboarding,
-          // AI reply). Recorded as undefined — can be enriched later if needed.
-          provider: undefined,
+          text: unprefixedReplyText(text),
+          ...attribution,
           source: metadata?.source ?? 'live',
         }).catch(err => log('MESSAGES', `outbound record failed: ${err instanceof Error ? err.message : err}`))
         return { msgId: `sent:${Date.now()}` }
@@ -415,7 +414,7 @@ export function makeIlinkAdapter(opts: {
       if (!parsed) return false
       const owned = (hash: string) => { const approver = pending.approverOf(hash); return approver === null || approver === fromChatId }
       if (!parsed.ref) {
-        if (quoted) { const hash = pending.hashOfQuote(quoted); if (hash) return owned(hash) && pending.list().some(p => p.hash === hash) }
+        if (quoted) { const hash = pending.hashOfQuote(quoted); if (hash) return owned(hash) && pending.list().some(p => p.hash === hash); if (isPermissionCardQuote(quoted)) return false }
         return pending.list().some(p => p.chatId === fromChatId)
       }
       const hash = parsed.ref.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref.value
@@ -432,7 +431,8 @@ export function makeIlinkAdapter(opts: {
           if (approver !== null && approver !== fromChatId) return false
           return pending.consume(hash, parsed.decision, parsed.reason)
         }
-        // 引用的不是待批卡片(或已经过期):按没引用处理,下面看待批条数。
+        if (isPermissionCardQuote(quoted)) return false
+        // 引用的是无关消息：保留原来的裸回复语义。
       }
       // 没带码:看这个 chat 名下现在有几条待批。一条 → 就是它;零条 → 这不是拍板,
       // 是普通聊天(比如「y」是在回别的事),放行给后面的中间件;多条 → 列出来让主人带码。

@@ -183,6 +183,7 @@ export function createScriptedClaude(opts: ScriptedClaudeOptions): ScriptedClaud
 
     const it = gen()
     return Object.assign(it, {
+      getSettings: async () => ({effective:{},sources:[]}),
       interrupt: async () => {},
       close: () => { closed = true },
     })

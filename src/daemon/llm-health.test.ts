@@ -117,3 +117,11 @@ it('current-only testing never calls other configured services', async () => {
  expect(current).toHaveBeenCalledTimes(1)
  expect(other).not.toHaveBeenCalled()
 })
+
+it('setup polling dials only the requested provider, leaving other accounts untouched', async () => {
+  const calls: string[] = []
+  const h = makeLlmHealth({ registry: { list: () => ['claude', 'cursor'], get: (id) => ({ provider: { cheapEval: async () => { calls.push(id); return 'ok' } } }) }, defaultProviderId: 'claude', log: () => {} })
+  const result = await h.dial('cursor')
+  expect(calls).toEqual(['cursor'])
+  expect(result.results).toEqual([expect.objectContaining({ provider: 'cursor', ok: true })])
+})

@@ -70,7 +70,7 @@ const RETRACTED = '每天早上七点起床跑步'
 const STRANGER = 'o9fixture-stranger@im.wechat'
 
 /** 入站给执行者的是 `<wechat …>原话</wechat>`(前面可能还有交接说明、近况);剧本按主人这一句的原话分路。 */
-const said = (text: string): string => [...text.matchAll(/<wechat [^>]*>\n([\s\S]*?)\n<\/wechat>/g)].at(-1)?.[1]?.trim() ?? text.trim()
+const said = (text: string): string => [...text.matchAll(/<wechat [^>]*>\n([\s\S]*?)\n<\/wechat>/g)].at(-1)?.[1]?.replace(/<matters>[\s\S]*?<\/matters>\n?/g, '').trim() ?? text.trim()
 
 /** S2 那几条:配对过的一台手机、免打扰里压着的那一句、那件事的编号。 */
 const PHONE_TOKEN = 'sandbox-phone-device-token-0001'
@@ -89,6 +89,7 @@ const codexThreads: Array<Record<string, unknown>> = []
 /** codex 收到的审批应答,按命令记。 */
 const decisions = new Map<string, unknown>()
 let codexDecision: unknown
+let lastCodexEnvelope = ''
 let topicJudgeAttempts=0,topicRoundDispatches=0
 const claudeScript: FakeSdkScript = { async onDispatch(text) { if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
 const approval = (command: string, finalText: string) => ({
@@ -104,6 +105,7 @@ const approval = (command: string, finalText: string) => ({
 })
 const codexScript: FakeSdkScript = {
   async onDispatch(text) {
+    lastCodexEnvelope = text
     const s = said(text)
     if (s === '把 build 删了') return approval('rm -rf build', '删好了。')
     if (s === '列一下目录') return approval('ls', '列好了。')
@@ -205,7 +207,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(d.query<{ chat_id: string }>('SELECT chat_id FROM memory_import ORDER BY chat_id').map(r => r.chat_id)).toEqual(expect.arrayContaining([d.owner, d.guest]))
     expect(d.log().some(l => /\[FACTS_IMPORT\] imported facts\.db: \+7/.test(l))).toBe(true)
     // 上一条的会话起的时候,提示词是从表里读回来的:长期记忆(memory.md)和主人原话(owner.md)都在
-    const prompt = JSON.stringify(spawnOptions.at(-1) ?? {})
+    const prompt = JSON.stringify(spawnOptions.at(-1)?.systemPrompt ?? {})
     expect(prompt).toContain('在杭州做独立开发')
     expect(prompt).toContain('周三晚上固定打羽毛球')
     // 下一条场景要在记忆页上删掉的那一句,这时还在提示词里
@@ -232,6 +234,50 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       d.sendText(d.owner,'快判甲后来怎么样了')
       await expect.poll(()=>d.query('SELECT * FROM topic_recall_refs WHERE thread_id=?',ids[0]!).length,{timeout:6000}).toBe(1)
     } finally {writeFileSync(configPath,config);for(const id of ids)db.query('DELETE FROM threads WHERE id=?').run(id);db.close()}
+  })
+
+  it('checkup: explicit owner trigger scores visible synthetic speech and preserves isolation', async () => {
+    type View = import('@wechat-cc/protocol').CheckupView
+    const before = await desktop<View>('GET', '/v1/checkup')
+    expect(before.status).toBe(200)
+    expect(before.body.target.provider).toBe('claude')
+    expect(before.body.profile).toBeNull()
+    expect(before.body.periodicProbe).toBe(false)
+    expect((await desktop('GET', '/v1/checkup', undefined, 'trusted')).status).toBe(403)
+    const personaPath=join(d.stateDir,'memory',d.owner,'persona.md')
+    const priorPersona=existsSync(personaPath)?readFileSync(personaPath,'utf8'):null
+    const privateCanary='CHECKUP_PRIVATE_MEMORY_TOPIC_693818'
+    writeFileSync(personaPath,`名字：小禾\n称呼用户：阿青\n自称：小禾\n记忆：${privateCanary}`)
+    const spawnsBefore=spawnOptions.length
+    const estimate = await desktop<{ targetKey: string; requests: number }>('POST', '/v1/checkup/estimate', {})
+    expect(estimate.status).toBe(200)
+    expect(estimate.body.requests).toBe(56)
+    expect((await desktop('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey }, 'trusted')).status).toBe(403)
+    const started = await desktop<View>('POST', '/v1/checkup/run', { expectedTargetKey: estimate.body.targetKey })
+    expect(started.status).toBe(202)
+    await expect.poll(async () => (await desktop<View>('GET', '/v1/checkup')).body.attempt?.status, { timeout: 15000 }).toBe('completed')
+    const result = await desktop<View>('GET', '/v1/checkup')
+    // The boundary fake says only "好的。" and never calls the fictional tools.
+    // Its visible speech is evidence. Wrong content fails the relevant qualities;
+    // lack of reply calls does not turn a completed interview into infrastructure failure.
+    expect(result.body.profile).toMatchObject({memory:'weak',interview:{version:'interview-v3',qualities:{memory:{ratio:0}},business:{ratio:24/28}}})
+    // This SDK boundary deliberately omits usage, so every 3 × 4096 reservation
+    // stays charged. The short allowance is sized so all 28 questions still fit.
+    expect(result.body.attempt).toMatchObject({status:'completed',completedRequests:28,totalRequests:28})
+    expect(result.body.attempt?.errorCode).toBeUndefined()
+    expect(result.body.profile?.interview?.qualities.stance.unmeasured).toBeUndefined()
+    expect(readFileSync(join(d.stateDir,'checkup','observations.json'),'utf8')).toContain('好的。')
+    const interviewSpawns=spawnOptions.slice(spawnsBefore).filter(o=>o.strictMcpConfig===true)
+    expect(interviewSpawns).toHaveLength(28)
+    expect(interviewSpawns.every(o=>Array.isArray(o.allowedTools)&&o.allowedTools.includes('mcp__wechat__delegate'))).toBe(true)
+    expect(interviewSpawns.every(o=>(o.env as Record<string,unknown>|undefined)?.CLAUDE_CODE_MAX_OUTPUT_TOKENS==='4096')).toBe(true)
+    const sent=JSON.stringify(interviewSpawns.map(o=>({system:o.systemPrompt,tools:o.tools,allowedTools:o.allowedTools,settings:o.settings})))
+    expect(sent).toContain('小禾')
+    for(const secret of [privateCanary,'在杭州做独立开发','周三晚上固定打羽毛球',d.stateDir])expect(sent).not.toContain(secret)
+    if(priorPersona===null)rmSync(personaPath);else writeFileSync(personaPath,priorPersona)
+    expect(result.body.periodicProbe).toBe(false)
+    expect(existsSync(join(d.stateDir, 'checkup', 'profiles.json'))).toBe(true)
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 
   it('T4: recall opens a private bubble; successful sleep closes it except for owner-visible running matters', async () => {
@@ -412,7 +458,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // 访客档:能动手的工具全关(读写文件、跑命令、联网、派子任务)
     expect(spawn.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Write', 'Edit', 'Read', 'WebFetch', 'Task']))
     // 主人的长期记忆和原话不进访客的提示词
-    const prompt = JSON.stringify(spawn)
+    const prompt = JSON.stringify(spawn, (key, value) => key === 'instance' ? undefined : value)
     expect(prompt).not.toContain('在杭州做独立开发')
     expect(prompt).not.toContain('周三晚上固定打羽毛球')
   })
@@ -463,6 +509,11 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // 重启后照样收发(对话模式也留住了:还是 Codex)
     d.sendText(d.owner, '还在吗')
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 在。')), 15_000)
+    // 那件「写一份笔记」是上面派活那条建的;win32 上那条不跑(Codex 工作台在 Windows 上拒绝),没有在办的事 ⇒ 没有这个块。
+    if (process.platform !== 'win32') {
+      expect(lastCodexEnvelope).toContain('<matters>')
+      expect(lastCodexEnvelope).toContain('写一份笔记')
+    } else expect(lastCodexEnvelope).not.toContain('<matters>')
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
     // 上一次重启已经说过作废了,这次没有挂着的卡 ⇒ 不再说
     expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes('作废了'))).toEqual([])

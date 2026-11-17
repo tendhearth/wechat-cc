@@ -17,8 +17,8 @@ const SRC = join(ROOT, 'src')
 const HOME = 'src/lib/executor-detect.ts'
 
 const HAND_WRITTEN: Record<string, RegExp> = {
-  '自己在 PATH 上找执行者的二进制': /findOnPath\(\s*['"](cursor-agent|agy)['"]\s*\)/,
-  '自己判覆盖路径(空串规则会写歪)': /\b(cursorAgentBin|agyBin)\s*(\?\?|\|\|)/,
+  '自己在 PATH 上找执行者的二进制': /findOnPath\(\s*['"](cursor-agent|agy|grok)['"]\s*\)/,
+  '自己判覆盖路径(空串规则会写歪)': /\b(cursorAgentBin|agyBin|grokBin)\s*(\?\?|\|\|)/,
   '自己读执行者密钥判在不在': /\benv\.(GEMINI_API_KEY|GOOGLE_API_KEY|CURSOR_API_KEY)\b/,
 }
 

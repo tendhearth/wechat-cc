@@ -23,25 +23,29 @@ import { BusyIndicator } from '../ui/motion'
 import { StatusHint } from '../ui/StatusHint'
 import { MessageText } from '../ui/Markdown'
 import { ReplyAttachments, ReplyProcess } from '../ui/ReplyExtras'
+import { ReplySpeaker } from './ReplySpeaker'
+import { replyProvider } from '../view/reply-speaker'
 import { TextField } from '../ui/TextField'
 import { ImageTray } from '../ui/ImageTray'
 import { SendTalkButton, TalkStatus, useHoldToTalk } from '../ui/HoldToTalk'
 import { mergeTranscript } from '../view/hold-to-talk'
 import type { PickedImage } from '../state/image-upload'
-import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES } from '@wechat-cc/protocol'
+import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES, replyAttributionFields } from '@wechat-cc/protocol'
+import type { ChatModelViewT } from '../backend/types'
 import { componentAppearance, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { hasBubbleText, textAfterSend, type Bubble } from '../view/chat'
 import { useWork } from '../state/useWork'
-import { useTerminalSessions } from '../state/useTerminal'
-import { homeView } from '../view/home'
+import type { HomeView } from '../view/home'
+import { useRoster } from '../state/roster'
 import { conversationItems } from '../view/conversation-work'
-import { isMatterArchived } from '../view/status'
+import { rosterRow } from '../view/roster-strip'
+import { statusOfMatter, isMatterArchived } from '../view/status'
 import { newReferences, rememberReference, useReferences } from '../state/conversation-references'
 import { DelegationMessage } from '../ui/DelegationMessage'
-import { TopicRow } from '../ui/TopicRow'
+import { RosterStrip } from './RosterStrip'
 import { ConversationMore } from '../ui/ConversationMore'
 import { canSubmit } from '../view/connection'
 
@@ -68,7 +72,6 @@ export default function Chat() {
   const inputRef = useRef<import('react-native').TextInput>(null)
   const [text, setTextState] = useState(() => getDraft('chat'))
   const [typing, setTyping] = useState(false)
-  const [topicIds, setTopicIds] = useState<string[]>()
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const endTyping = () => { clearTimeout(typingTimer.current); setTyping(false) }
   useEffect(() => () => clearTimeout(typingTimer.current), [])
@@ -134,7 +137,6 @@ export default function Chat() {
     configured: sttStatus.data?.configured ?? null,
   })
   const work = useWork()
-  const terminal = useTerminalSessions()
   const stream=useConversationStream(backend,online)
   const [stopTurn,setStopTurn]=useState<string|null>(null)
   const [stopError,setStopError]=useState(false)
@@ -157,14 +159,15 @@ export default function Chat() {
   }, { enabled: references.length > 0 })
   const allMatters = [...new Map([...(history.data ?? []), ...work.matters].map(m => [m.id, m])).values()]
   const visibleMatters = allMatters.map(m => references.includes(`matter:${m.id}`) && isMatterArchived(m) ? { ...m, status: 'done' as const, archivedAt: null } : m)
-  const workView = homeView({ ...work, matters: visibleMatters, terminal: terminal.sessions ?? [], known: backend.mode === 'demo' || online, now: Date.now(), lang, backWindowMs: null, keepStaleWaiting: true })
-  const waiting = backend.mode === 'demo' || online ? workView.groups.find(g => g.key === 'waiting')?.rows ?? [] : []
-  const [waitingIndex, setWaitingIndex] = useState(0)
+  const roster = useRoster()
+  const workView: HomeView = { waitingUnknown: roster.stale, actionableWaiting: [], moreCount: 0, groups: [{ key: 'working', title: '', rows: [...visibleMatters.map(m => ({
+    id:m.id,source:'matter',href:`/matter/${encodeURIComponent(m.id)}`,title:m.title,caption:null,detail:null,note:null,status:statusOfMatter(m,null,0),pendingRequestId:null,agents:m.agents??[],agentNames:m.agentNames,origin:null,updatedAt:m.updatedAt,
+  } as import('../view/home').HomeRow)), ...roster.items.filter(i=>i.kind==='terminal').map(i=>rosterRow(i,!roster.stale))] }] }
   const companion = useCompanion()
   const card = companion.home ? companionCard(companion.home.events, companion.home.seenUntil, Date.now(), companion.localSeen) : null
   const items = conversationItems(chat.bubbles, workView, allMatters, chat.page?.matterId, references, newReferences(backend),new Map((durableWork.data?.references??[]).flatMap(r=>r.messageId?[[r.matterId,r.messageId] as const]:[])))
-  if(stream?.running)for(const event of stream.events.filter(e=>e.turnId===stream.running?.turnId&&e.kind==='agent_message'&&e.text))items.push({key:event.id,at:event.createdAt,bubble:{projection:'stream',key:event.id,at:event.createdAt,side:'cc',source:'desktop',state:'sent',truncated:false,text:event.text}})
-  for(const result of durableWork.data?.results??[]) items.push({key:result.id,at:result.createdAt,bubble:{projection:'result',key:result.id,at:result.createdAt,side:'cc',source:'desktop',state:'sent',truncated:false,text:result.text}})
+  if(stream?.running)for(const event of stream.events.filter(e=>e.turnId===stream.running?.turnId&&e.kind==='agent_message'&&e.text))items.push({key:event.id,at:event.createdAt,bubble:{projection:'stream',key:event.id,at:event.createdAt,side:'cc',source:'desktop',state:'sent',truncated:false,text:event.text,...replyAttributionFields({...event,turnId:event.turnId??undefined})}})
+  for(const result of durableWork.data?.results??[]) items.push({key:result.id,at:result.createdAt,bubble:{projection:'result',key:result.id,at:result.createdAt,side:'cc',source:'desktop',state:'sent',truncated:false,text:result.text,...replyAttributionFields(result)}})
   if (card) items.push({ key: `companion:${card.id}`, at: card.at, card })
   const data = items.sort((a, b) => a.at - b.at).reverse()
   if(chat.canLoadLater){const boundary=data.findIndex(i=>i.key===chat.laterAfterId);data.splice(boundary<0?0:boundary,0,{key:'conversation-gap',at:0,gap:true})}
@@ -199,10 +202,11 @@ export default function Chat() {
       <TopBar
         title="CC" showStatus onAvatar={() => router.push('/settings')}
         onConnection={() => router.push('/connections')} connectionTestID="now-connections"
-        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused} topics={topicIds} />}
+        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused}  />}
         actions={<View style={{ flexDirection: 'row' }}><IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />
           <ConversationMore /></View>}
       />
+      <RosterStrip />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{backend.mode === 'demo' ? <DemoBanner /> : null}</View>
       {stream?.running&&backend.stopConversation?<Button testID="conversation-stop" kind="secondary" label={t(lang,stopTurn===stream.running.turnId?'progress.stopConfirm':'progress.stop')} onPress={()=>void stopConversation()} />:null}
       {stopError?<Txt role="meta" tone="inkSoft">{t(lang,'progress.stopFailed')}</Txt>:null}
@@ -245,18 +249,12 @@ export default function Chat() {
             </View>
           }
           renderItem={({ item }) => (
-            <>{item.gap?<Button testID="chat-load-later" kind="secondary" label={t(lang,'minimal.more')} busy={chat.loadingLater} onPress={()=>void chat.loadLater()} />:item.card ? <View><Txt role="caption" tone="inkSoft">CC</Txt><CompanionCard card={item.card} onSeen={companion.markSeen} /></View> : item.row ? <DelegationMessage live row={item.row} historical={item.historical} synced={online && !work.mattersError} /> : item.bubble ? <ChatBubble b={item.bubble} lang={lang} canRetry={online && !sending} onRetry={() => retry(item.bubble!)} onDismiss={() => chat.dismiss(item.bubble?.requestId ?? '')} checking={chat.loading} checkError={chat.error} onCheck={chat.refresh} /> : null}</>
+            <>{item.gap?<Button testID="chat-load-later" kind="secondary" label={t(lang,'minimal.more')} busy={chat.loadingLater} onPress={()=>void chat.loadLater()} />:item.card ? <View><Txt role="caption" tone="inkSoft">CC</Txt><CompanionCard card={item.card} onSeen={companion.markSeen} /></View> : item.row ? <DelegationMessage live row={item.row} historical={item.historical} synced={online && !work.mattersError} /> : item.bubble ? <ChatBubble b={item.bubble} providers={chatModel.data?.providers} lang={lang} canRetry={online && !sending} onRetry={() => retry(item.bubble!)} onDismiss={() => chat.dismiss(item.bubble?.requestId ?? '')} checking={chat.loading} checkError={chat.error} onCheck={chat.refresh} /> : null}</>
           )}
         />
         <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
           {readingOlder && newChanges ? <Button testID="conversation-new-updates" kind="secondary" label={lang === 'zh-Hans' ? '有新变化 · 回到最新' : 'New updates · Go to latest'} onPress={() => { listRef.current?.scrollToOffset({ offset: 0, animated: false }); setReadingOlder(false); setNewChanges(false) }} /> : null}
-          {waiting.length ? <Pressable testID="conversation-waiting" accessibilityRole="button" onPress={() => {
-            const row = waiting[waitingIndex % waiting.length]!
-            rememberReference(backend, row.id, row.source); setWaitingIndex(i => i + 1)
-            router.push(row.href)
-          }} style={{ minHeight: 44, justifyContent: 'center' }}><Txt role="meta" tone="accent">{lang === 'zh-Hans' ? `${waiting.length} 件事等你` : `${waiting.length} waiting for you`}</Txt></Pressable> : null}
           {locateNote ? <Txt testID="chat-locate-gone" role="meta" tone="inkSoft">{lang === 'zh-Hans' ? '暂时找不到这句，仍可继续对话' : 'Cannot locate this message. You can continue talking.'}</Txt> : null}
-          <TopicRow onTopics={setTopicIds} />
           {outcome ? (
             <View style={{ alignItems: 'flex-end' }}><StatusHint testID={`chat-outcome-${outcome}`} label={t(lang, outcome === 'uncertain' ? 'feedback.unconfirmed' : 'feedback.notSent')}
               icon={outcome === 'uncertain' ? 'help' : 'alert'} description={t(lang, OUTCOME_KEY[outcome])}>
@@ -300,15 +298,15 @@ export default function Chat() {
 }
 
 // 用户消息用浅底，CC 回复为透明正文；左右与留白区分说话人,文件先于可展开的执行过程。
-function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
+function ChatBubble({ b, providers, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; providers?: ChatModelViewT['providers']; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
   const { c } = useTheme()
   const appearance = componentAppearance.message
   const me = b.side === 'me'
   if (b.state === 'thinking') return <Thinking lang={lang} />
-  const from = b.projection==='result'?(lang==='zh-Hans'?'CC 的结果':'CC result'):b.projection==='stream'?'CC':t(lang, `chat.from.${b.source}`)
+  const from = b.projection && replyProvider(b.side, b) ? null : b.projection==='result'?(lang==='zh-Hans'?'CC 的结果':'CC result'):b.projection==='stream'?'CC':t(lang, `chat.from.${b.source}`)
   // 只有附件的回复不画空文字区;过程仍可展开查看。
   return (
-    <View style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
+    <View testID={`chat-message-${b.key}`} style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
       {hasBubbleText(b) ? <View
         testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'}
         style={{
@@ -317,14 +315,15 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkErro
           opacity: b.state === 'failed' ? 0.8 : 1,
         }}
       >
-        <Txt role="caption" tone="inkSoft">{t(lang, me ? 'chat.me' : 'cc.label')}</Txt>
+        <ReplySpeaker role={b.side} reply={b} providers={providers} />
         <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} text={b.text} />
         {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
       </View> : null}
+      {!hasBubbleText(b) ? <ReplySpeaker role={b.side} reply={b} providers={providers} showFallback={false} /> : null}
       {b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}
       {b.originalUnavailable ? <Txt testID="chat-original-unavailable" role="meta" tone="inkSoft" style={{ maxWidth: '88%' }}>{t(lang, 'chat.originalUnavailable')}</Txt> : null}
       {!me && b.narration?.length ? <ReplyProcess lines={b.narration} lang={lang} testID="chat-process" /> : null}
-      <Txt role="caption" tone="inkSoft">{from} · {hhmm(b.at)}</Txt>
+      <Txt role="caption" tone="inkSoft">{from ? `${from} · ` : ''}{hhmm(b.at)}</Txt>
       {b.state === 'failed' && b.failedKind ? (
         <StatusHint testID={`chat-failed-${b.failedKind}`}
           label={t(lang, b.failedKind === 'maybeLost' || b.failedKind === 'notConfirmed' ? 'feedback.unconfirmed' : 'feedback.notSent')}

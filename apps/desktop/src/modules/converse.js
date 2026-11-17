@@ -14,19 +14,22 @@ import { mountOwnerConversation } from './conversation-contracts.js'
 
 import {openOwnerChatFile,openConversationImage,openLocalConversationFile} from "./converse-media.js"
 import { terminalReferenceHtml, paintTerminalReferences, setTerminalActionsSupported } from './conversation-sessions.js'
-import { matterReferenceHtml, updateConversationMatters, mountMatterProgress } from './conversation-matters.js'
+import { matterReferenceHtml, updateConversationMatters, mountMatterReferences } from './conversation-matters.js'
 import { icon } from "./icons.js"
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
 import { renderWorkbenchMarkdown, renderWorkbenchUserText } from "./workbench-markdown.js"
 import { paintConversation, syncConversationLatest, showConversationLatest, conversationInteractionActive } from "./converse-reading.js"
 import { V1, v1 } from '../daemon-client.js'
+import { replyAttribution, replyProvider, replyAgentName, replyAvatarHtml, loadReplyAgentNames, updateReplyAvatarNames } from './reply-avatar.js'
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onOpenMatter?: (id:string) => unknown, onOpenTerminal?: (id:string)=>unknown, onSend?: () => void }} Deps
  * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, terminalId?: string, matterId?: string, historical?: boolean, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[], contractKey?:string, projection?:string }} ConverseMsg
+ * @typedef {import('./reply-avatar.js').ReplyAttribution & {text:string,truncated?:boolean,attachmentIndexes:number[],narrationIndexes:number[]}} ReplyPart
+ * @typedef {import('./reply-avatar.js').ReplyAttribution & {reply:string,attachments:ReplyAttachment[],attachmentSourceIndexes?:number[],narration:string[],replyParts?:ReplyPart[]}} NormalizedReply
+ * @typedef {import('./reply-avatar.js').ReplyAttribution & { id: number, role: 'user'|'cc'|'error'|'system', text: string, terminalId?: string, matterId?: string, historical?: boolean, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], attachmentSourceIndexes?:number[], narration?: string[], replyParts?:ReplyPart[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[], contractKey?:string, projection?:string }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -38,6 +41,7 @@ let messages = []
 let nextId = 1
 let sending = false
 let delegating = false
+/** @type {Record<string,string>} */ let replyAgentNames = {}
 // 此刻里拖进 / 粘进来、还没发出去的图(2026-10-05)。url 是本页的 blob 预览,发出去时只带 mime + base64。
 // 2026-10-06 起也收文档(PDF / 文本 / Markdown / CSV / JSON / Word / Excel / PPT):图显示缩略图,文档显示名字。
 /** @type {{ id: number, mime: string, data_b64: string, url: string, name: string }[]} */
@@ -72,9 +76,12 @@ let sharedSupported=false,earlierCursor='',laterCursor='',reconcileAfter=0,owner
 function mergeStoredEvents(events){
   if(reconcileAfter){messages=messages.filter(m=>m.id<reconcileAfter||m.messageId||m.matterId||m.terminalId||m.contractKey||m.role==='error'||m.role==='system');reconcileAfter=0}
   for(const event of events){
-    if(!event.messageId||messages.some(m=>m.messageId===event.messageId))continue
-    const extras=normalizeConverseReply(event.replyExtras)
-    messages.push({id:nextId++,role:event.kind==='user'?'user':'cc',text:event.text+(event.truncated?'…':''),at:event.createdAt,messageId:event.messageId,source:event.source,...extras})
+    if(!event.messageId)continue
+    const extras=storedReply(event)
+    const existing = messages.find(m=>m.messageId===event.messageId)
+    const content = {text:event.text+(event.truncated?'…':''),at:event.createdAt,source:event.source,...extras,speaker:extras.speaker,provider:extras.provider}
+    if(existing)Object.assign(existing,content)
+    else messages.push({id:nextId++,role:event.kind==='user'?'user':'cc',messageId:event.messageId,...content})
   }
   messages.sort((a,b)=>(a.at??Date.now())-(b.at??Date.now())||a.id-b.id)
 }
@@ -97,7 +104,7 @@ function acceptWork(data){
     if(old){old.at=ref.createdAt;old.contractKey=ref.id;old.historical=false;continue}
     messages.push({id:nextId++,role:'cc',text:ref.title,matterId:ref.matterId,contractKey:ref.id,at:ref.createdAt})
   }
-  for(const result of data.results??[])if(!messages.some(m=>m.contractKey===result.id))messages.push({id:nextId++,role:'cc',text:result.text,contractKey:result.id,projection:'CC 的结果',at:result.createdAt})
+  for(const result of data.results??[])if(!messages.some(m=>m.contractKey===result.id))messages.push({id:nextId++,role:'cc',text:result.text,contractKey:result.id,projection:result.speaker==='agent'||result.speaker==='notice'?'结果':'CC 的结果',at:result.createdAt,...storedReply(result)})
   messages.sort((a,b)=>(a.at??Date.now())-(b.at??Date.now())||a.id-b.id);renderMessages()
 }
 /** @param {any} data */
@@ -108,7 +115,7 @@ function acceptStream(data){
   messages=messages.filter(m=>!m.contractKey?.startsWith('stream:'))
   for(const [id,event] of streamRows){
     if(event.turnId!==data.running?.turnId){streamRows.delete(id);continue}
-    if(event.kind==='agent_message'&&event.text)messages.push({id:event.localId,role:'cc',text:event.text,contractKey:`stream:${id}`,projection:'CC',at:event.createdAt})
+    if(event.kind==='agent_message'&&event.text)messages.push({id:event.localId,role:'cc',text:event.text,contractKey:`stream:${id}`,projection:event.speaker==='agent'||event.speaker==='notice'?'':'CC',at:event.createdAt,...storedReply(event)})
   }
   reflectSharedControls();renderMessages()
 }
@@ -156,7 +163,7 @@ function renderSkeleton(root, deps) {
     <div class="converse-compose">
       <div id="converse-images" class="converse-images" aria-label="要一起发的图片" hidden></div>
       <p id="converse-image-note" class="converse-image-note" role="status" hidden></p>
-      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="跟 CC 说点什么…可以拖进截图或文件" rows="2"></textarea>
+      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="对 CC 说…" rows="2"></textarea>
       <div id="converse-recording" class="converse-recording" hidden>
         <button id="converse-cancel-recording" type="button">取消</button>
         <span class="converse-recording-dot" aria-hidden="true"></span>
@@ -192,32 +199,51 @@ function setVoiceOut(v) {
 // ── rendering ──────────────────────────────────────────────────────────
 
 /**
- * agent_converse 的回包 → 统一的回复对象(回复交付,2026-10-04)。新 Rust 回 `{ reply, attachments, narration }`
- * (文件只带一次性 ref,路径不进网页);老 Rust 回裸字符串。认不得的附件逐条丢掉。
- * @param {unknown} res @returns {{ reply: string, attachments: ReplyAttachment[], narration: string[] }}
+ * agent_converse 的回包 → 回复、逐条来源与混合 parts。老 Rust 可回裸字符串。
+ * 丢弃非法附件/旁白时重映射 parts，并保存历史附件的原始索引。
+ * @param {unknown} res @returns {NormalizedReply}
  */
 export function normalizeConverseReply(res) {
   if (typeof res === "string" || res == null) return { reply: String(res ?? ""), attachments: [], narration: [] }
   const o = /** @type {Record<string, unknown>} */ (res)
   /** @type {ReplyAttachment[]} */
   const attachments = []
-  for (const a of Array.isArray(o.attachments) ? o.attachments : []) {
+  /** @type {number[]} */ const attachmentSourceIndexes = []
+  const rawAttachments = Array.isArray(o.attachments) ? o.attachments : []
+  for (const [index,a] of rawAttachments.entries()) {
     if (!a || typeof a !== "object") continue
     const x = /** @type {Record<string, unknown>} */ (a)
+    const before = attachments.length
     if (x.kind === "voice" && typeof x.text === "string") attachments.push({ kind: "voice", text: x.text })
     else if (x.kind === "sticker" && typeof x.label === "string") attachments.push({ kind: "sticker", label: x.label, ...(typeof x.file === "string" ? { file: x.file } : {}), ...(typeof x.image === "string" && x.image.startsWith("data:image/") ? { image: x.image } : {}) })
     else if (x.kind === "file" && typeof x.name === "string") attachments.push({ kind: "file", name: x.name, ...(typeof x.ref === "string" ? { ref: x.ref } : {}) })
+    if (attachments.length > before) attachmentSourceIndexes.push(index)
   }
-  const narration = (Array.isArray(o.narration) ? o.narration : []).filter(n => typeof n === "string" && n.trim() !== "").map(String)
-  return { reply: typeof o.reply === "string" ? o.reply : "", attachments, narration }
+  const rawNarration = Array.isArray(o.narration) ? o.narration : []
+  const narrationSourceIndexes = rawNarration.flatMap((n,i) => typeof n === 'string' && n.trim() ? [i] : [])
+  const narration = narrationSourceIndexes.map(i => String(rawNarration[i]))
+  /** @param {unknown} indexes @param {number[]} source */
+  const remap = (indexes,source) => [...new Set((Array.isArray(indexes) ? indexes : []).flatMap(i => Number.isInteger(i) && source.includes(i) ? [source.indexOf(i)] : []))]
+  const replyParts = (Array.isArray(o.replyParts) ? o.replyParts : []).flatMap(part => {
+    if (!part || typeof part !== 'object' || typeof part.text !== 'string') return []
+    return [{...replyAttribution(part),text:part.text,...(part.truncated === true ? {truncated:true} : {}),attachmentIndexes:remap(part.attachmentIndexes,attachmentSourceIndexes),narrationIndexes:remap(part.narrationIndexes,narrationSourceIndexes)}]
+  })
+  return { reply: typeof o.reply === "string" ? o.reply : "", attachments, attachmentSourceIndexes, narration, replyParts, ...replyAttribution(o) }
+}
+
+/** Stored attribution lives on the event; extras contain media. No attribution matterId
+ * is copied: ConverseMsg.matterId means a navigable matter reference.
+ * @param {any} event @returns {NormalizedReply} */
+function storedReply(event) {
+  return normalizeConverseReply({...event.replyExtras,...event,attachments:event.replyExtras?.attachments??event.attachments,narration:event.replyExtras?.narration??event.narration})
 }
 
 /**
  * 过程:最后的话之前 CC 写下的过程话。灰、默认收起;说清它没发到微信(不假装它是回复)。
  * @param {ConverseMsg} m
  */
-function narrationHtml(m) {
-  const lines = m.narration ?? []
+function narrationHtml(m, indexes = (m.narration ?? []).map((_,i) => i)) {
+  const lines = indexes.map(i => m.narration?.[i] ?? '')
   if (!lines.length) return ""
   return `<details class="converse-process" data-msg-id="${m.id}">
     <summary title="CC 在最后回复之前写下的过程话,只在这里显示,没有发到微信">过程 · ${lines.length} 段</summary>
@@ -230,10 +256,12 @@ function narrationHtml(m) {
  * 文件(名字 + 在访达中显示 —— 只显示不打开,打开附件可能直接运行程序)。
  * @param {ConverseMsg} m
  */
-function attachmentsHtml(m) {
+function attachmentsHtml(m, indexes = (m.attachments ?? []).map((_,i) => i)) {
   const list = m.attachments ?? []
   if (!list.length) return ""
-  const items = list.map((a, i) => {
+  const items = indexes.map(i => {
+    const a = list[i]
+    if (!a) return ''
     if (a.kind === "voice") {
       return `<div class="converse-att converse-att-voice">
         <button class="converse-att-play" type="button" data-msg-id="${m.id}" data-att="${i}" aria-label="播放语音">${icon("play")}<span>语音</span></button>
@@ -254,8 +282,8 @@ function attachmentsHtml(m) {
   return `<div class="converse-attachments">${items.join("")}</div>`
 }
 
-/** @param {ConverseMsg} m */
-function messageHtml(m) {
+/** @param {ConverseMsg} m @param {number[]} [attachmentIndexes] @param {number[]} [narrationIndexes] @param {number} [partIndex] @returns {string} */
+function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
   if(m.terminalId)return terminalReferenceHtml(m.terminalId,m.text)
   if (m.matterId) return `<div class="converse-msg converse-msg-cc"><div class="converse-cc-body">${matterReferenceHtml(m.matterId,m.text,!!m.historical)}</div></div>`
   if (m.role === "error") {
@@ -264,12 +292,27 @@ function messageHtml(m) {
   if (m.role === "system") {
     return `<div class="converse-system-line">${escapeHtml(m.text)}</div>`
   }
+  if (m.role === 'cc' && m.replyParts?.length) {
+    const usedAttachments = new Set(), usedNarration = new Set()
+    const parts = m.replyParts.map((part,index) => {
+      const attachments = part.attachmentIndexes.filter(i => !usedAttachments.has(i) && !!usedAttachments.add(i))
+      const narration = part.narrationIndexes.filter(i => !usedNarration.has(i) && !!usedNarration.add(i))
+      return messageHtml({...m,...replyAttribution(part),speaker:part.speaker,provider:part.provider,text:part.text+(part.truncated?'…':''),replyParts:[],projection:''},attachments,narration,index)
+    })
+    const attachments = (m.attachments ?? []).map((_,i) => i).filter(i => !usedAttachments.has(i))
+    const narration = (m.narration ?? []).map((_,i) => i).filter(i => !usedNarration.has(i))
+    if (attachments.length || narration.length) parts.push(messageHtml({...m,text:'',replyParts:[],projection:''},attachments,narration))
+    return `<div class="converse-reply-parts">${parts.join('')}</div>`
+  }
+  const provider = m.role === 'cc' ? replyProvider(m) : ''
+  const name = provider ? replyAgentName(replyAgentNames,provider) : m.role === 'user' ? '你' : m.speaker === 'notice' ? '通知' : 'CC'
+  const avatar = provider ? replyAvatarHtml(m,replyAgentNames) : ''
   const roleCls = m.role === "user" ? "converse-msg-user" : "converse-msg-cc"
   const pendingCls = m.pending ? " is-pending" : ""
   // Replay is only meaningful for a real CC reply — not the "…" placeholder
   // and not the user's own bubble.
   const replayBtn = m.role === "cc" && !m.pending
-    ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}" aria-label="朗读这条回复" title="朗读">${icon("play")} </button>`
+    ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}"${partIndex === undefined ? '' : ` data-reply-part="${partIndex}"`} aria-label="朗读这条回复" title="朗读">${icon("play")} </button>`
     : ""
   const markdown = m.role === "cc" && !m.pending
   const bubble = `${m.projection?`<small>${escapeHtml(m.projection)}</small>`:''}<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
@@ -277,13 +320,14 @@ function messageHtml(m) {
   const userImages = m.role === "user" && (m.images?.length || m.files?.length)
     ? `<div class="converse-user-images">${(m.images ?? []).map((src,i) => `<button type="button" class="converse-user-image" data-msg-id="${m.id}" data-image="${i}" aria-label="打开你发的图片"><img src="${escapeHtml(src)}" alt="你发的图片" /></button>`).join("")}${(m.files ?? []).map((name,i) => m.uploadedFiles?.[i] ? `<button type="button" class="converse-file-chip" data-local-file="${i}" data-msg-id="${m.id}">${escapeHtml(name)}</button>` : `<span class="converse-file-chip">${escapeHtml(name)}</span>`).join("")}</div>`
     : ""
-  const extras = ((m.attachments?.length ?? 0) > 0 || (m.narration?.length ?? 0) > 0)
+  const extras = ((attachmentIndexes?.length ?? m.attachments?.length ?? 0) > 0 || (narrationIndexes?.length ?? m.narration?.length ?? 0) > 0)
   // 带附件 / 过程的回复:过程在上、回复居中、附件在下,一列排;没有的照旧(样式与测试不动)。
   // 朗读按钮永远贴着正文最后一行(带附件时放进正文那一行里),不随附件块漂。
   const body = extras
-    ? `<div class="converse-cc-body">${m.role === "cc" ? narrationHtml(m) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m)}</div>`
+    ? `<div class="converse-cc-body">${m.role === "cc" ? narrationHtml(m,narrationIndexes) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m,attachmentIndexes)}</div>`
     : bubble
-  return `<div class="converse-msg ${roleCls}${pendingCls}" role="group" aria-label="${m.role === "user" ? "你" : "CC"}">
+  return `<div class="converse-msg ${roleCls}${pendingCls}${avatar ? ' has-reply-avatar' : ''}" role="group" aria-label="${escapeHtml(name)}">
+    ${avatar}
     ${userImages ? `<div class="converse-user-body">${userImages}${m.text.trim() ? body : ""}</div>` : body}
     ${m.legacyMedia ? '<small class="converse-legacy-media">这条记录只保存了附件数量，原附件未保存在对话中。</small>' : ""}
     ${extras || !m.text.trim() ? "" : replayBtn}
@@ -556,11 +600,11 @@ async function loadSharedHistory(deps) {
   }
   if(messages.length)return
   try {
-    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number,source?:string,messageId?:string,replyExtras?:unknown}>}|null} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChat))
+    const detail = /** @type {{events?:any[]}|null} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChat))
     const events = (detail?.events ?? []).filter(e => e.kind === "user" || e.kind === "text")
     if (!events.length || messages.length) return
     for (const e of events) {
-      const extras = normalizeConverseReply(e.replyExtras)
+      const extras = storedReply(e)
       messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text, at: e.createdAt, source: e.source, ...(typeof e.messageId === "string" ? {messageId:e.messageId} : {}), ...extras, legacyMedia:e.kind === "user" && !extras.attachments.length && /\[(?:图片|文件) ×\d+\]/.test(e.text) })
     }
     renderMessages()
@@ -638,13 +682,13 @@ async function sendMessage(deps) {
     pendingTimers.forEach(clearTimeout)
     messages = messages.filter(m => m.id !== pendingId)
     const replyText = res.reply
-    const extras = { ...(res.attachments.length ? { attachments: res.attachments } : {}), ...(res.narration.length ? { narration: res.narration } : {}) }
+    const {reply:_,...extras} = res
     if (replyText.trim() === "") {
       // 只有附件(一张表情、一段语音)也是回复:照常画 CC 那一行,只是没有文字气泡。
       // 什么都没有(或只有过程话)⇒ 灰色一句说明,过程照样能展开看。
-      if (res.attachments.length) messages.push({ id: nextId++, role: "cc", text: "", at: Date.now(), ...extras })
+      if (res.attachments.length || res.replyParts?.length) messages.push({ id: nextId++, role: "cc", text: "", at: Date.now(), ...extras })
       else {
-        if (res.narration.length) messages.push({ id: nextId++, role: "cc", text: "", at: Date.now(), narration: res.narration })
+        if (res.narration.length) messages.push({ id: nextId++, role: "cc", text: "", at: Date.now(), ...extras })
         messages.push({ id: nextId++, role: "system", text: "（CC 这轮没有用文字回复）" })
       }
     } else {
@@ -819,10 +863,8 @@ function wireEvents(root, deps) {
     scroll.addEventListener("scroll",()=>syncConversationLatest(scroll,latest),{passive:true})
     latest?.addEventListener("click",()=>showConversationLatest(scroll,latest))
   }
-  if (deps.invokeWorkbenchApi) {const stop=mountMatterProgress(root,deps.invokeWorkbenchApi);window.addEventListener?.('pagehide',stop,{once:true})}
+  {const stop=mountMatterReferences(root,id=>deps.onOpenMatter?.(id));window.addEventListener?.('pagehide',stop,{once:true})}
   root.addEventListener('click', event => {
-    const id = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-open-matter]'))?.dataset.openMatter
-    if (id) deps.onOpenMatter?.(id)
     const locate=/** @type {HTMLElement|null} */(/** @type {HTMLElement} */(event.target).closest('[data-locate-message]'))?.dataset.locateMessage
     if(locate){setSearchOpen(false);void locateConversationMessage(deps,locate)}
     if(/** @type {HTMLElement} */(event.target).closest('[data-search-earlier]'))void runSearch(deps,searchQuery,searchBefore)
@@ -905,7 +947,7 @@ function wireEvents(root, deps) {
     const localFile=target.closest('[data-local-file]');if(localFile instanceof HTMLElement){const file=messages.find(m=>m.id===Number(localFile.dataset.msgId))?.uploadedFiles?.[Number(localFile.dataset.localFile)];if(file)openLocalConversationFile(deps,file);return}
     const image=target.closest('.converse-user-image');if(image instanceof HTMLElement){const src=messages.find(m=>m.id===Number(image.dataset.msgId))?.images?.[Number(image.dataset.image)];if(src)openConversationImage(src);return}
     const historyFile = target.closest('.converse-history-file')
-    if(historyFile instanceof HTMLElement){const m=messages.find(m=>m.id===Number(historyFile.dataset.msgId)),i=Number(historyFile.dataset.att),a=m?.attachments?.[i];if(m?.messageId&&a&&(a.kind==='file'||a.kind==='sticker'))openOwnerChatFile(deps,m.messageId,i,a.kind==='file'?a.name:a.label);return}
+    if(historyFile instanceof HTMLElement){const m=messages.find(m=>m.id===Number(historyFile.dataset.msgId)),i=Number(historyFile.dataset.att),a=m?.attachments?.[i];if(m?.messageId&&a&&(a.kind==='file'||a.kind==='sticker'))openOwnerChatFile(deps,m.messageId,m.attachmentSourceIndexes?.[i]??i,a.kind==='file'?a.name:a.label);return}
     const play = target.closest(".converse-att-play")
     if (play instanceof HTMLElement) {
       const msg = messages.find(m => m.id === Number(play.dataset.msgId))
@@ -928,7 +970,8 @@ function wireEvents(root, deps) {
     const id = Number(btn.dataset.msgId)
     const msg = messages.find(m => m.id === id)
     if (!msg) return
-    speakAndPlay(deps, msg.text).catch(() => {})
+    const text = btn.dataset.replyPart === undefined ? msg.text : msg.replyParts?.[Number(btn.dataset.replyPart)]?.text ?? ''
+    speakAndPlay(deps, text).catch(() => {})
   })
 }
 
@@ -958,6 +1001,10 @@ export function initConversePage(deps, { focus = true } = {}) {
   reflectMic()
   renderMessages()
   void loadSharedHistory(deps)
+  if (deps.invokeWorkbenchApi) void loadReplyAgentNames(deps.invokeWorkbenchApi).then(names => {
+    if (document.getElementById('converse-root') !== root) return
+    replyAgentNames = names; updateReplyAvatarNames(root,names)
+  })
   const input = document.getElementById("converse-input")
   if (focus && input instanceof HTMLElement) input.focus()
 }

@@ -19,6 +19,7 @@ import type { Access } from '../../lib/access'
 import { decideCall, unprotectedMessage } from '../../lib/network-gate'
 import type { CoordinatorCtx } from './ctx'
 import type { TurnRecord } from './types'
+import { oneoffSessionAlias } from '../../domain/answer-target'
 
 type GroupMode = Mode & { kind: 'parallel' | 'chatroom' }
 
@@ -211,10 +212,12 @@ export function createPlanner(ctx: CoordinatorCtx): Planner {
     const allowed: ProviderId[] = []
     const refused: { label: string; source: 'bx' | 'probe' | 'off'; detail: string }[] = []
     for (const p of providers) {
-      const model = cur.kind === 'solo' && cur.provider === p ? cur.model : undefined
+      const oneoff = msg.answerTarget?.kind === 'oneoff' ? msg.answerTarget : null
+      const model = !oneoff && cur.kind === 'solo' && cur.provider === p ? cur.model : undefined
       // 评审 #193 P1-1:按这一轮**实际**会连到的目标判 —— 有在用的会话就是它起来时定下的端点 + 模型,
       // 没有就是 provider 按这次的模型报的;都报不出来 ⇒ 按需要保护。不按此刻的配置猜。
-      const proj = deps.resolveProject(msg.chatId)
+      const resolved = deps.resolveProject(msg.chatId)
+      const proj = resolved && oneoff ? { ...resolved, alias: oneoffSessionAlias(oneoff.requestId) } : resolved
       const target = proj && deps.manager.effectiveTarget
         ? deps.manager.effectiveTarget({ alias: proj.alias, providerId: p, chatId: msg.chatId }, model)
         : providerCallTarget(deps.registry.get(p)?.provider, p, 'session', model !== undefined ? { model } : {})
@@ -225,7 +228,7 @@ export function createPlanner(ctx: CoordinatorCtx): Planner {
     if (refused.length > 0 && !quiet) {
       const labels = [...new Set(refused.map(r => r.label))].join('、')
       deps.log('GUARD', `chat=${msg.chatId} protected call refused (${labels}) — network unprotected [${refused[0]!.source}] ${refused[0]!.detail}`, { event: 'network_unprotected', chat_id: msg.chatId })
-      await ctx.notice(msg.chatId, unprotectedMessage(refused[0]!, labels))
+      await ctx.notice(msg.chatId, unprotectedMessage(refused[0]!, labels) + (msg.answerTarget?.kind === 'oneoff' ? '\n要改由 CC 来答吗？' : ''))
     }
     return allowed
   }

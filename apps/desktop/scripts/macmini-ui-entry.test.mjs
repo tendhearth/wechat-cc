@@ -105,6 +105,20 @@ test('project topic snapshots accept only the explicit task branch and preserve 
  }
 })
 
+test('reply speaker accepts only its assigned App snapshot and transports the registered flow', () => {
+  expect(supportsAppSnapshot('who-answers-app-avatar')).toBe(true)
+  expect(supportsBrowserSnapshot('who-answers-app-avatar')).toBe(false)
+  for (const ref of ['who-answers-app-avatar-other', 'who-answers-app-avatar;echo x', '../who-answers-app-avatar']) {
+    expect(supportsAppSnapshot(ref)).toBe(false)
+    expect(supportsBrowserSnapshot(ref)).toBe(false)
+  }
+  const calls = []
+  expect(main(['node', 'entry', 'app-maestro', 'reply-speaker'], {}, (...args) => { calls.push(args); return { status: 0 } })).toBe(0)
+  expect(calls).toHaveLength(1)
+  expect(calls[0][1].at(-1)).toContain('/app-run.mjs')
+  expect(JSON.parse(calls[0][2].input)).toEqual({ command: 'app-maestro', flow: 'reply-speaker' })
+})
+
 
 test('B3 accepts only the assigned immutable source branch and includes its page regressions',()=>{
  expect(supportsBrowserSnapshot('design-b3')).toBe(true)
@@ -133,3 +147,49 @@ test('mobile budget snapshots accept only the assigned branch and keep App snaps
  expect(supportsAppSnapshot('mobile-budget')).toBe(false)
  for(const ref of ['mobile-budget-other','mobile-budget;echo x','../mobile-budget'])expect(supportsBrowserSnapshot(ref)).toBe(false)
 })
+
+test('desktop reply avatar snapshots accept only the assigned branch and keep App snapshots separate',()=>{
+ expect(supportsBrowserSnapshot('who-answers-desktop-avatar')).toBe(true)
+ expect(supportsAppSnapshot('who-answers-desktop-avatar')).toBe(false)
+ for(const ref of ['who-answers-desktop-avatar-other','who-answers-desktop-avatar;echo x','../who-answers-desktop-avatar'])expect(supportsBrowserSnapshot(ref)).toBe(false)
+})
+
+
+test('who-answers web avatar snapshots accept only the assigned branch',()=>{
+ expect(supportsBrowserSnapshot('who-answers-web-avatar')).toBe(true)
+ expect(supportsAppSnapshot('who-answers-web-avatar')).toBe(false)
+ for(const ref of ['who-answers-web-avatar-x','who-answers-web-avatar;echo x','../who-answers-web-avatar'])expect(supportsBrowserSnapshot(ref)).toBe(false)
+})
+
+test('CLI setup registers only its assigned browser branch and runs its regression after the baseline',()=>{
+ expect(supportsBrowserSnapshot('one-click-cli-setup')).toBe(true)
+ expect(supportsAppSnapshot('one-click-cli-setup')).toBe(false)
+ for(const ref of ['one-click-cli-setup-other','one-click-cli-setup;echo x','../one-click-cli-setup']){
+  expect(supportsBrowserSnapshot(ref)).toBe(false)
+  expect(supportsAppSnapshot(ref)).toBe(false)
+ }
+ const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
+ const suites=remote.match(/const specs=phase==='before' \? (\[[^\]]*\]) : (\[[^\]]*\])/)
+ expect(suites).not.toBeNull()
+ expect(suites[1]).not.toContain("'cli-setup.spec.ts'")
+ expect(suites[2]).toContain("'cli-setup.spec.ts'")
+})
+
+
+test('unified acceptance uses bounded suite and only the assigned snapshot branch',()=>{
+ expect(supportsBrowserSnapshot('mini-ui-acceptance')).toBe(true)
+ expect(supportsAppSnapshot('mini-ui-acceptance')).toBe(true)
+ for(const ref of ['mini-ui-acceptance-other','mini-ui-acceptance;echo x','../mini-ui-acceptance']){
+  expect(supportsBrowserSnapshot(ref)).toBe(false)
+  expect(supportsAppSnapshot(ref)).toBe(false)
+ }
+ const calls=[]
+ main(['node','entry','browser','homebot'],{CC_UI_BROWSER_SUITE:'mini-ui-acceptance'},(...args)=>{calls.push(args);return{status:0}})
+ expect(calls[0][1].at(-1)).toContain('CC_UI_BROWSER_SUITE=mini-ui-acceptance')
+ expect(()=>main(['node','entry','browser'],{CC_UI_BROWSER_SUITE:'arbitrary.spec.ts'},()=>{throw Error('SSH called')})).toThrow('Invalid browser suite')
+ const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
+ expect(remote).toContain("'butler-checkup.spec.ts'")
+ expect(remote).toContain("['task-detail-minimal.spec.ts','--grep','ordinary single-executor']")
+})
+
+test('butler web is registered only for browser snapshots',()=>{expect(supportsBrowserSnapshot('claude/butler-web')).toBe(true);expect(supportsAppSnapshot('claude/butler-web')).toBe(false);expect(supportsBrowserSnapshot('claude/butler-web-other')).toBe(false)})

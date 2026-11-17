@@ -1,10 +1,12 @@
 import { join } from 'node:path'
 import { mkdir } from 'node:fs/promises'
 import { test, expect, clickNav, reveal } from './fixtures'
+import { rosterItem,routeRoster } from './roster-fixture'
 import { secondaryFixtures } from './secondary-fixtures'
 const task={id:'aabbccdd',title:'检查备份',path:'/offline/backup',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:1,pendingQuestionCount:0}
 const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,activity:id==='backup'?{waiting:1,running:2,unread:1,lastActiveAt:1793923200000}:id==='travel'?{waiting:0,running:1,unread:0,lastActiveAt:1793923100000}:id==='food'?{waiting:0,running:0,unread:1,lastActiveAt:1793923000000}:{waiting:0,running:0,unread:0,lastActiveAt:null},matterSummary:{waiting:1,running:0,total:1}})
 test.beforeEach(async({page,shim})=>{
+  await routeRoster(page,[rosterItem(task.id,task.title)])
   await shim.invoke('demo.unseed');await shim.invoke('demo.seed',{})
   await page.route('**/v1/protocol/capabilities',r=>r.fulfill({json:{routes:'v1',topics:'v1'}}))
   await page.route('**/v1/matter/owner-chat/window**',r=>r.fulfill({json:{messages:[{kind:'user',text:'那台机器后来怎么样了？',createdAt:1,messageId:'source1'},{kind:'text',text:'正在核对备份。',createdAt:2,messageId:'source2'}],anchor:null,earlier:null,later:null}}))
@@ -35,11 +37,13 @@ test('design unification captures the four owner-approved surfaces', async ({pag
   await expect(page.locator('#converse-scroll')).toContainText('那台机器后来怎么样了？')
   await page.locator('#converse-input').fill('还没发出的草稿')
   await page.screenshot({path:join(out!,`desktop-conversation-${phase}.png`)})
-  await page.locator('#now-waiting-title').click()
-  const row=page.locator('[data-matter-id="aabbccdd"]')
+  await expect(page.locator('.roster-group[data-group="waiting"] h2')).toContainText('等你')
+  const row=page.locator('[data-roster-key="matter:aabbccdd"]')
   await expect(row).toContainText('等你决定')
   await row.screenshot({path:join(out!,`desktop-home-row-${phase}.png`)})
-  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
+  await clickNav(page,'memory')
+  await clickNav(page,'memory')
+ await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
   const panel=page.locator('.conversation-topic-panel')
   await expect(panel).toContainText('这次想起')
   await page.screenshot({path:join(out!,`desktop-topic-${phase}.png`)})
@@ -53,7 +57,7 @@ test('design unification captures the four owner-approved surfaces', async ({pag
   await page.screenshot({path:join(out!,`desktop-topic-narrow-${phase}.png`)})
   await page.setViewportSize({width:1280,height:900})
   await panel.getByRole('button',{name:/检查备份/}).click()
-  await expect(page.locator('.wb-task-head h2')).toHaveText('检查备份')
+  await expect(page.locator('#roster-dock .roster-direct-heading h2')).toHaveText('检查备份')
   await expect(page.locator('.wb-dialogue')).toContainText('正在核对文件')
   await page.screenshot({path:join(out!,`desktop-matter-${phase}.png`)})
   await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
@@ -65,7 +69,7 @@ test('design fixes keep toolbar semantics, final identity dimensions and current
  const summary=page.locator('.conversation-add > summary')
  await expect(summary).toBeVisible()
  expect(await summary.evaluate(el=>getComputedStyle(el).listStyleType)).toBe('none')
- const more=page.locator('.conversation-more > summary')
+ const more=page.locator('.topbar-more > summary')
  expect(await more.evaluate(el=>getComputedStyle(el).listStyleType)).toBe('none')
  for(const control of [summary,more]){
   await control.focus();await page.keyboard.press('Enter')
@@ -73,11 +77,12 @@ test('design fixes keep toolbar semantics, final identity dimensions and current
   expect(await control.evaluate(el=>getComputedStyle(el).outlineStyle)).toBe('solid')
   await page.keyboard.press('Space');await expect(control.locator('..')).not.toHaveAttribute('open','')
  }
- expect(await page.locator('.now-waiting > summary').evaluate(el=>getComputedStyle(el).listStyleType)).not.toBe('none')
+ await expect(page.locator('.roster-group[data-group="waiting"] h2')).toContainText('等你')
  await page.evaluate(()=>{document.documentElement.style.setProperty('--th-identity-header-target','53px');document.documentElement.style.setProperty('--th-identity-header-image','37px')})
- const dimensions=await page.locator('.now-figure').evaluate(el=>({width:getComputedStyle(el).width,height:getComputedStyle(el).height,image:getComputedStyle(el.querySelector('img')!).width}))
- expect(dimensions).toEqual({width:'53px',height:'53px',image:'37px'})
+ const dimensions=await page.locator('.topbar-figure').evaluate(el=>({width:getComputedStyle(el).width,height:getComputedStyle(el).height,image:getComputedStyle(el.querySelector('img')!).width}))
+ expect(dimensions).toEqual({width:'48px',height:'48px',image:'48px'})
  await page.evaluate(()=>{document.documentElement.style.removeProperty('--th-identity-header-target');document.documentElement.style.removeProperty('--th-identity-header-image')})
+ await clickNav(page,'memory')
  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
  await page.locator('.conversation-topic-panel').getByRole('button',{name:/检查备份/}).click()
  await expect(page.locator('.wb-dialogue')).toContainText('正在核对文件')
@@ -119,10 +124,10 @@ test('B3 captures settings, connections, facts and the existing correction edito
  }
  await page.screenshot({path:join(out!,`desktop-settings-confirm-${phase}.png`)})
  await page.locator('#settings-close').click()
- await page.locator('.cc-home-details > summary').click()
+ await page.locator('#dash-global-rail .cc-home-details > summary').click()
  await expect(page.locator('.nc-capability')).toHaveCount(4)
  await page.screenshot({path:join(out!,`desktop-connections-${phase}.png`)})
- await page.locator('.cc-home-details > summary').click()
+ await page.locator('#dash-global-rail .cc-home-details > summary').click()
  await clickNav(page,'memory')
  await expect(page.locator('#memory-facts-records')).toContainText('我喜欢在窗边看书')
  if(phase==='after') {

@@ -1,3 +1,4 @@
+import { workbenchPathHolders } from './path-occupancy'
 /**
  * view 域:主人眼里的进度(阶段 / 等待行 / 任务视图)以及 attention / projects / addProject / list / detail 五个只读入口。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 7 项);只认 ctx。
@@ -60,7 +61,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
   function waitingFor(running:Active):TaskWaitingFor|null {
     if (running.state !== 'queued') return null
     const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
-    const blocked=findPathBlocker(running,[...held(),...state.writerOrphans.values(),...earlier])
+    const blocked=findPathBlocker(running,[...workbenchPathHolders(state),...earlier])
     if (!blocked) return null
     const holder=state.runsByTask.get(blocked.taskId)
     // 找不到持有者是不该发生的时序缝隙;宁可继续说「还在写」,也不能凭空报一个假的倒计时。
@@ -215,7 +216,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     // 工作区脚本(2026-10-20)只进详情:读 tendhearth.json 要跑 git,列表不背这个;原文给桌面的确认框。
     const view=taskView(detail.task,true),scripts=view.worktree?domains.scripts?.(id)??null:null
     const detailMarks=agentsOf([id]),quotaHandoff=domains.quotaHandoff?.(id)??null
-    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(scripts&&view.worktree?{...view,worktree:{...view.worktree,scripts}}:view,detailMarks),agentNames:agentNamesOf([view.providerId,...(detailMarks.agents.get(id)??[]),...handoffIds(quotaHandoff)]),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+    const result={...detail,...(store.ledger.enabled(id)?{...(store.ledger.terminals.list(id).length?{terminalParticipants:store.ledger.terminals.list(id)}:{}),agentRuns:store.ledger.projectedAgents(id),...store.ledger.recent(id)}:{}),events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(scripts&&view.worktree?{...view,worktree:{...view.worktree,scripts}}:view,detailMarks),agentNames:agentNamesOf([...store.ledger.projectedAgents(id).map(a=>a.executor),view.providerId,...(detailMarks.agents.get(id)??[]),...handoffIds(quotaHandoff)]),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
       // The timeline stays live through cancellation and process cleanup;
       // accepting supplemental input is a separate, narrower capability.
       ...(running?{runId:running.identity}:{}),

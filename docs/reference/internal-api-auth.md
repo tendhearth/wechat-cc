@@ -6,7 +6,7 @@
 
 daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在 `<stateDir>/internal-api-info.json`。调用方:
 
-- 每个 agent 会话的 stdio MCP 子进程(wechat 工具),经环境变量拿 session token;
+- 每个 agent 会话的核心 MCP 客户端(wechat / delegate):Claude 对话走 SDK 进程内 server,其余 provider 的 stdio MCP 子进程经私有环境拿 session token;
 - 桌面 app,经 Tauri 宿主代理(`daemon_request` / `agent_converse` 等 Rust 命令;`daemon_request` 是 10-25 F5 由 `workbench_api` 与 `customer_review_api` 合成的),webview JS 永远拿不到凭据;
 - CLI 子命令,读 file token;
 - 手机页 `/set` 与 `/m`,经 daemon 自己的 `/m/api/*` 分发器 —— **不走这套鉴权**,见末节。
@@ -21,10 +21,18 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 | origin | 谁拿 | tier | routeAllow | 存哪 |
 |---|---|---|---|---|
 | `file` | 任何能读 `<stateDir>/internal-token` 的本机进程(CLI、trusted agent 的 shell) | 固定 `trusted`:shell 可读的凭据不能高于最不可信的读者 | 无 | 文件 0600,每次 boot 轮换 |
-| `session` | 每次 spawn 的 agent 会话,经 `WECHAT_SESSION_TOKEN` 环境变量 | 该会话的真实 tier;**不带 routeAllow 的 admin 只从这里来**(operator 也是 admin,但被路由白名单框住) | 无(例外:hearth federation mint 出来的 token 带 TTL + routeAllow) | 只在子进程 env。例外 `agy-static`:agy 只有全局 `~/.gemini/config/mcp_config.json`,所以 boot 时铸一枚长期 `trusted` token 写进那个文件;补偿控制是 `/agy` 拒 guest、solo+agy 在 dispatch 时再拒一次 |
+| `session` | 每次 spawn 的 agent 会话,经父进程闭包或核心 MCP 专用 `WECHAT_SESSION_TOKEN` 环境变量 | 该会话的真实 tier;**不带 routeAllow 的 admin 只从这里来**(operator 也是 admin,但被路由白名单框住) | 无(例外:hearth federation mint 出来的 token 带 TTL + routeAllow) | Claude 对话只在父进程客户端闭包;其余 provider 只在核心 MCP 子进程 env。例外 `agy-static`:agy 只有全局 `~/.gemini/config/mcp_config.json`,所以 boot 时铸一枚长期 `trusted` token 写进那个文件;补偿控制是 `/agy` 拒 guest、solo+agy 在 dispatch 时再拒一次 |
 | `operator` | 桌面 app 的 Tauri 宿主(`<stateDir>/internal-operator-token`) | `admin` | **有**:converse / speak / transcribe、customer-review 八条、待办五条、pet permission resolve、federation mint、workbench 全套、matters 四条(精确集合:路由表里 `desktop.tokens` 含 `operator` 的行) | 文件 0600;能读它的人已经是本机主人 |
 | `link` | 微信里要来的设置链接(`/set?t=…`,`t` + 32 hex) | `admin` | **有**:`LINK_ROUTES`(`src/features/phone/phone-routes.ts`)= 链接页面源码里扫出来的调用(`scripts/link-routes-from-source.guard.test.ts`,理念 2),只对手机面板生效 | 只在内存;10 分钟过期,同一时刻只一枚 |
 | `device` | 配对过的手机(`d` + 48 hex,加主屏后一直用) | `admin` | **有**:`PHONE_ROUTES`(路由表里带 `phone` / `set` 的每一行) | `settings-devices.json`(0600,≤ 20 台);永不过期,可按台撤销 |
+
+## 会话令牌的进程边界(2026-11-12)
+
+Claude Agent SDK 会把 stdio MCP 的整份配置(包括 `env`)序列化进 `--mcp-config <json>`。因此 Claude 对话的 `wechat` / `delegate` 使用 SDK 进程内 `McpServer`:工具表与 stdio 入口共用注册工厂,会话令牌只由父进程 HTTP 客户端闭包持有,不会进入 Claude CLI 的 argv 或通用 env。会话 / MCP transport 关闭时取消未完成的 HTTP 请求。
+
+Codex 的核心 MCP 配置走 app-server thread RPC,Cursor 走 ACP session RPC;OpenAI / Gemini 桥直接给核心 MCP 子进程专用 env。agy 保留上述 `agy-static` 的 trusted 配置。所有通用模型子进程 / OpenAI Bash 与 MCP 环境继承都先清除宿主的 `WECHAT_SESSION_TOKEN` / `WECHAT_SESSION_TIER`,只有显式核心 MCP 配置才重新注入。第三方插件不会通过环境继承拿到会话令牌。
+
+回归测试在真实 Claude SDK spawn 边界、Codex / ACP spawn 边界和离线 MCP 子进程检查 argv / 通用 env。这项修复不提供同 uid 进程的 OS 隔离;其它 provider 的核心 stdio MCP 环境仍有 Linux `/proc` 等既有边界。
 
 ## 发送类路由的 chat 范围(2026-10-03 起;2026-10-04 收紧到 admin)
 
@@ -70,7 +78,7 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 
 - **手机的链接 / 设备令牌**(2026-09-29 起进了同一个 token-registry,见上表 `link` / `device`):面板经内部 API 的 `panelTokens` 窄接口登记与撤销,只认这两种 origin(内部 API 的 session / file / operator 令牌打不开面板)。路由门是 `PHONE_ROUTES`(设备)/ `LINK_ROUTES`(链接,= 链接页面实际调用的那几条,守卫见上表),不在册的路径 403 `route_not_allowed`;新加手机路由在路由表 `packages/protocol/src/routes.ts` 加一行(`phone` / `set` 块,`link` 必填),`phone-routes.ts` 的集合从表推出来;`scripts/phone-routes.guard.test.ts` 对着源码双向核对。经隧道(`_via=tunnel`)一律拒的操作是 `LAN_ONLY_OPS`:`set_remote`、`revoke_device`、`forget_devices`。面板仍监听 `0.0.0.0`(手机局域网直连,有意);`runtime/http.ts` 的 `serve()` 缺省改成 `127.0.0.1`。`/m/api/*` **没有**并进内部 API dispatcher(设计稿范围 B,未做)。
   - **协议 v2(2026-09-29)**:隧道握手 `{hs, v:[2]}`(老 App 发 `[1,2]`,网页多带 `client:'web'`);v1 在 2026-10-25 退休,不带 2 的握手回明文 `upgrade_required`。v2 两方向各一把密钥、计数器 nonce、拒绝重放。v2 上可 `sub` 订阅,主题白名单是 `PHONE_TOPICS`(`src/features/phone/phone-routes.ts`:`home` / `approvals` / `agents` / `matter/<id>`),`phoneTopicAllowed` 判定;不在册的主题回 `err`。订阅与 `/m/api/*` 用同一枚令牌、同一套 origin 门。协议包见 `packages/protocol/README.md`。
-- **admin session token 无 routeAllow**:主人 chat 的 MCP 子进程持有能调 `daemon/restart` 等全部 admin 路由的 token,只靠 LLM 侧的工具分类拦。已知、接受、待改。
+- **admin session token 无 routeAllow**:主人 chat 的核心 MCP 客户端持有能调 `daemon/restart` 等全部 admin 路由的 token,只靠 LLM 侧的工具分类拦。已知、接受、待改。
 - **file token 的 trusted 档约 90 条路由**,含 `memory/write`、`plugins/install`、`a2a/send`。
 - **插件工具**:未知的 `mcp__*` 一律按 `plugin_tool` ⇒ admin-only(`user-tier.ts`;wxvault 那次修复就是这条)。
 - **微信侧的 y/n 权限回话**只认被问的那个 chat(`ilink-glue.ts`)。

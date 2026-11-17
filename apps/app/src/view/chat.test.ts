@@ -9,6 +9,17 @@ const msg = (id: string, at: number, role: 'me' | 'cc' = 'me', text = id, source
 const page = (messages: ChatMessageT[], over: Partial<ChatPageT> = {}): ChatPageT => ({ matterId: 'c0ffee01', title: 't', messages, hasMore: false, nextBefore: null, pending: null, failed: null, ...over })
 
 describe('chat 视图', () => {
+  it('keeps each reply attribution through history merge, refresh and bubble projection', () => {
+    const first = { ...msg('first', 1, 'cc'), speaker: 'agent' as const, provider: 'claude' }
+    const second = { ...msg('second', 2, 'cc'), speaker: 'agent' as const, provider: 'codex' }
+    const latest = page([first, second]), older = rebaseOlder(page([first]), latest, [page([first])])
+    const bubbles = chatBubbles(mergeChatPages(latest, older), latest, null, 3)
+    expect(bubbles).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'first', speaker: 'agent', provider: 'claude' }),
+      expect.objectContaining({ key: 'second', speaker: 'agent', provider: 'codex' }),
+    ]))
+    expect(chatBubbles([msg('old', 3, 'cc')], latest, null, 3)[0]).not.toHaveProperty('speaker')
+  })
   it('合并:旧页在前、按时间排、按 id 去重(重拉最新页与旧页重叠)', () => {
     const latest = page([msg('b', 2), msg('c', 3)]), older = [page([msg('a', 1), msg('b', 2)], { nextBefore: 'x', hasMore: true })]
     expect(mergeChatPages(latest, older).map(m => m.id)).toEqual(['a', 'b', 'c'])

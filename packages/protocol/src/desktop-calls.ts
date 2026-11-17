@@ -25,6 +25,14 @@ type Body = Record<string, unknown>
 const body = () => ({ body: t<Body>() })
 
 export const DESKTOP_CALLS = {
+  roster: { get: call('GET /v1/roster') },
+  checkup: {
+    get:call('GET /v1/checkup'),
+    estimate:call('POST /v1/checkup/estimate',body()),
+    run:call('POST /v1/checkup/run',body()),
+    cancel:call('POST /v1/checkup/cancel',body()),
+    settings:call('POST /v1/checkup/settings',body()),
+  },
   permissions: { pending: call('GET /v1/permissions/pending') },
   conversation: {
     events: call('GET /v1/matter/owner-chat/events', {query:t<{since?:number}>()}),
@@ -66,6 +74,7 @@ export const DESKTOP_CALLS = {
     works: call('GET /v1/atelier/works', { query: t<{ limit: number }>() }),
   },
   cli: {
+    detach:call('POST /v1/cli/detach',{body:t<{participationId:string}>()}),
     stop:call('POST /v1/cli/session-stop',{body:t<{session_id:string;run_id:string;confirmed:true}>()}),
     activity:call('GET /v1/cli/activity',{query:t<{session_id:string}>()}),
     sessionSay:call('POST /v1/cli/session-say',body()),
@@ -112,7 +121,8 @@ export const DESKTOP_CALLS = {
     deactivate: call('POST /v1/license/deactivate'),
   },
   llm: {
-    health: call('GET /v1/llm/health', { query: t<{ fresh?: number; scope?: string }>() }),
+    health: call('GET /v1/llm/health', { query: t<{ fresh?: number; scope?: string; provider?: string }>() }),
+    setup: call('GET /v1/llm/setup'),
     keys: call('POST /v1/llm/keys', body()),
   },
   matter: {
@@ -161,6 +171,7 @@ export const DESKTOP_CALLS = {
   phone: {
     devices: call('GET /v1/phone/devices'),
     link: call('POST /v1/phone/link', body()),
+    enableRelay: call('POST /v1/phone/enable-relay'),
   },
   plugins: {
     list: call('GET /v1/plugins/list'),

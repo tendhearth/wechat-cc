@@ -142,10 +142,16 @@ describe('GET /v1/llm/health · names(收敛清单 ⑥)', () => {
     const llmNames = (id: string) => id === 'agy' ? { name: 'Gemini(账号)', short: 'Gemini(账号)', settings: 'Gemini · 账号连接' } : { name: `N:${id}`, short: id, settings: `S:${id}` }
     const r = await makeRoutesUnderTest({ llmHealth, llmRegistered: () => ['claude', 'my-acp'], llmNames })['GET /v1/llm/health']!(q(), undefined)
     const names = (r.body as { names: Record<string, { displayName: string; settingsLabel: string }> }).names
-    expect(Object.keys(names).sort()).toEqual(['agy', 'claude', 'codex', 'cursor', 'gemini', 'my-acp', 'openai'])
+    expect(Object.keys(names).sort()).toEqual(['agy', 'claude', 'codex', 'cursor', 'gemini', 'grok', 'my-acp', 'openai'])
     expect(names.agy).toEqual({ displayName: 'Gemini(账号)', settingsLabel: 'Gemini · 账号连接' })
     expect(names['my-acp']).toEqual({ displayName: 'N:my-acp', settingsLabel: 'S:my-acp' })
     const bare = await makeRoutesUnderTest({ llmHealth, llmRegistered: () => [] })['GET /v1/llm/health']!(q(), undefined)
     expect((bare.body as { names?: unknown }).names).toBeUndefined()
   })
+})
+
+it('health exposes bounded owner context telemetry without identity or conversation content',async()=>{
+  const context=[{provider:'claude',model:'m',estimatedTokens:123,budgetTokens:2048,historyBytes:246,source:'bytes' as const,turns:2,lastRotatedAt:'2026-11-12T20:00:00Z',reason:'budget' as const}]
+  const result=await makeRoutesUnderTest({ownerContext:()=>context})['GET /v1/health']!({} as never,undefined,{tier:'guest'} as never)
+  expect((result.body as any).owner_context).toEqual(context)
 })

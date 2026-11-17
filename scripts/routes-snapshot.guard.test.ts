@@ -88,12 +88,23 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     ]
     // operator:AI 输出回归评测(2026-10-29,docs/design/2026-10-29-output-eval.md):`wechat-cc eval run` 起一条只读、不批权限、不发微信的真会话,同 selftest/converse。
     const OUTPUT_EVAL = ['POST /v1/eval/run','GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop','GET /v1/cli/activity','POST /v1/cli/decide','POST /v1/cli/session-say','POST /v1/cli/session-stop']
+    // Owner-authorized local checkup (2026-11-12): desktop/CLI operator only;
+    // model session tokens cannot query or spend quota on the owner's behalf.
+    const BUTLER_CHECKUP = ['GET /v1/checkup','POST /v1/checkup/estimate','POST /v1/checkup/run','POST /v1/checkup/cancel','POST /v1/checkup/settings']
     // operator:一件事上的动作收进 /v1/matter/*(P3e,设计稿 2026-11-05-p3-one-route-family):operator 本来就能走它们的 /v1/workbench/* 双胞胎
     // (cancel / permission / answer / artifact / quota-handoff / worktree / create-entry / entry-receipt,还在快照里),新键是同一个处理器,够得着的不变。
     const P3E_MATTER_ACTIONS = ['POST /v1/matter/stop', 'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree', 'POST /v1/matter/create', 'GET /v1/matter/create-receipt',
       // P3e-2(双胞胎:rewind-preview / rewind / review / review-mark / review-return / review-comment / review-comments-send)
       'GET /v1/matter/rewind', 'POST /v1/matter/rewind', 'GET /v1/matter/changes', 'POST /v1/matter/review-mark', 'POST /v1/matter/review-return', 'POST /v1/matter/review-comment', 'POST /v1/matter/review-comments-send']
-    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics', 'POST /v1/matter/seen', 'GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...P3E_MATTER_ACTIONS, 'GET /v1/matter/permission-script'], federation: [], selftest: [], link: [] }
+    // operator:分享一件事给合伙人(2026-11-14,设计稿 share-a-matter):开链接是对外的动作,只有主人在桌面上能开 / 列 / 撤;聊天会话、手机链接都不给。
+    const SHARE_A_MATTER = ['POST /v1/matter/share', 'GET /v1/matter/shares', 'POST /v1/matter/share/revoke', 'POST /v1/matter/share/mode', 'GET /v1/matter/talk', 'POST /v1/matter/talk']
+    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: [
+      // 主人 2026-11-16 授权桌面一键接入：只新增元数据/白名单计划，终端仍由原生打开；不开放 phone/link/session。
+      'GET /v1/llm/setup', 'POST /v1/llm/setup',
+      'GET /v1/roster', // 名单只给 operator 与配对设备。
+      'POST /v1/cli/attach', 'POST /v1/cli/detach', // 主人挂摘终端参与；会话还须一次性确认卡。
+      'GET /v1/matter/notes', // Matter notebook: authenticated owner or local operator only.
+      'POST /v1/phone/enable-relay', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics', 'POST /v1/matter/seen', 'GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...BUTLER_CHECKUP, ...P3E_MATTER_ACTIONS, ...SHARE_A_MATTER, 'GET /v1/matter/permission-script'], federation: [], selftest: [], link: [] }
     const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))
     reg.registerOperatorToken('op')
     const all = (a: Iterable<string>) => [...a].sort()
@@ -108,7 +119,7 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     expect(sorted(phoneSide(LINK_ROUTES))).toEqual(snap.LINK_ROUTES)
     // 这两份不是路由:整份比
     expect([...LAN_ONLY_OPS].sort()).toEqual(snap.LAN_ONLY_OPS)
-    expect([...PHONE_TOPICS].sort()).toEqual([...snap.PHONE_TOPICS, 'topics'].sort())
+    expect([...PHONE_TOPICS].sort()).toEqual([...snap.PHONE_TOPICS, 'topics', 'roster'].sort())
   })
   it('别名的新键:手机令牌经新键够得着的,和别名键一模一样(在不在、link、理由)', () => {
     expect(MERGED_ALIASES.length, '没有已并的行 ⇒ 这一条空转').toBeGreaterThan(0)

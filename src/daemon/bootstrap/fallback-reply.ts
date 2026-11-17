@@ -26,6 +26,8 @@
  * handling stays intact).
  */
 
+import { withReplyAttribution } from '../../lib/reply-attribution'
+
 export type SendMessageResult = { msgId: string; error?: string }
 
 export interface FallbackReplyDeps {
@@ -89,7 +91,7 @@ export function makeSendAssistantText(deps: FallbackReplyDeps): SendAssistantTex
 export function makeSendNotice(deps: FallbackReplyDeps): SendAssistantText | undefined {
   if (!deps.sendMessage) return undefined
   const send = deps.sendMessage
-  return async (chatId, text) => {
+  return async (chatId, text) => withReplyAttribution({ speaker: 'notice' }, async () => {
     if (deps.capture?.(chatId, text)) return true
     let result: SendMessageResult
     try {
@@ -104,5 +106,5 @@ export function makeSendNotice(deps: FallbackReplyDeps): SendAssistantText | und
     }
     deps.log('NOTICE_SENT', `chat=${chatId} msgId=${result.msgId}`)
     return true
-  }
+  })
 }

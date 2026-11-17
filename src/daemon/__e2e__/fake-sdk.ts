@@ -257,7 +257,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
    * Returns an AsyncGenerator of SDKMessage-shaped objects.
    */
   const fakeQuery = (opts: { prompt: unknown; options?: unknown }) => {
-    return (async function* () {
+    return Object.assign((async function* () {
       const { prompt } = opts
 
       if (typeof prompt === 'string') {
@@ -334,7 +334,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         const result = await script.onDispatch(text)
         for (const msg of await buildCycle(result)) yield msg
       }
-    })()
+    })(),{getSettings:async()=>({effective:{},sources:[]})})
   }
 
   return { query: fakeQuery }

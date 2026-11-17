@@ -34,16 +34,21 @@
         "turnId": "<turn:4>"
       },
       {
+        "speaker": "agent",
+        "provider": "claude",
+        "matterId": "<task:question>",
+        "turnId": "<turn:4>",
+        "agentId": "<uuid:8>",
         "id": 14,
         "taskId": "<task:question>",
         "kind": "text",
         "text": "动手之前先问一句。",
         "createdAt": 1793412720000,
         "sourceId": null,
-        "runId": "<uuid:8>",
-        "turnId": "<turn:4>"
+        "runId": "<uuid:8>"
       },
       {
+        "speaker": "notice",
         "id": 15,
         "taskId": "<task:question>",
         "kind": "system",

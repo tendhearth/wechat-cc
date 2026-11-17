@@ -13,6 +13,7 @@ import { drainCappedStderr } from '../agy/agy-agent-provider'
 import { spawn } from '../../../lib/runtime/process'
 import { cursorPrintErrorCode } from './cursor-errors'
 import { errorWithProviderCode } from '../../../lib/provider-error-code'
+import { sessionSubprocessEnv } from '../subprocess-env'
 
 export interface CursorSpawnHandle {
   stdout: AsyncIterable<Uint8Array | string>
@@ -26,7 +27,7 @@ const STDERR_CAP_BYTES = 64 * 1024
 
 export function defaultCursorSpawnFn(bin: string): CursorSpawnFn {
   return (args, opts) => {
-    const proc = spawn([bin, ...args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
+    const proc = spawn([bin, ...args], { cwd: opts.cwd, env: sessionSubprocessEnv(), stdout: 'pipe', stderr: 'pipe' })
     const stderrPromise = drainCappedStderr(proc.stderr as ReadableStream<Uint8Array>, STDERR_CAP_BYTES)
     stderrPromise.catch(() => {})
     return {

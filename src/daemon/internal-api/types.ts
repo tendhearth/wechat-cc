@@ -103,6 +103,8 @@ export type PetTurnDep = () => Promise<import('../../domain/pet-turn').PetTurnPa
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
+  /** Optional instance supplied by an isolated harness; defaults to the real registry. */
+  tokenRegistry?: import('./token-registry').TokenRegistry
   /** Daemon process pid — exposed by /v1/health for smoke tests. */
   daemonPid: number
   /**
@@ -113,6 +115,7 @@ export interface InternalApiDeps {
   /** 桌面读了一件事的详情(S3b):记「在电脑上看过」,一件事的提议到点就不再推手机。由 workbench 模块 `provide`。 */
   desktopSeen?: (matterId: string) => void
   /** 「一件事」读写面(routes-matters);与工作台一样晚绑定。 */
+  roster?: import('../../ports/roster').RosterReader
   matters?: import('../../app/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
   connections?: () => import('../connections').ConnectionsSnapshot
@@ -361,6 +364,7 @@ export interface InternalApiDeps {
    * main.ts closes over the bootstrap ref. Returns null until bootstrap wired
    * it (route then 503s).
    */
+  ownerContext?: () => readonly import('@wechat-cc/protocol/desktop-api').OwnerContextStatusT[]
   listSessions?: () => readonly {
     alias: string; path: string; providerId: string; chatId: string; lastUsedAt: number
   }[] | null
@@ -429,6 +433,8 @@ export interface InternalApiDeps {
   setChatPref?: (chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => { care?: 'off' | 'low' | 'high'; split?: boolean }
   /** LLM 通道体检 (llm-health.ts) — late-bound (needs the
    *  provider registry). GET /v1/llm/health 503s until set. */
+  cliSetup?: import('../cli-setup').CliSetup
+  llmRefreshProvider?: (id: string) => Promise<boolean>
   llmHealth?: import('../llm-health').LlmHealth
   /** Registered provider ids (registry.list) — set alongside llmHealth. */
   llmRegistered?: () => string[]
@@ -548,8 +554,8 @@ export interface InternalApiDeps {
 /** 可以晚绑定的那些依赖 —— 只有这里列的键能经 `provide` 交进来。 */
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'incidents',
-  'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
-  'workbenchSuspended', 'desktopSeen', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
+  'cliSetup', 'llmRefreshProvider', 'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
+  'workbenchSuspended', 'desktopSeen', 'matters', 'roster', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
   'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]
 export type LateKey = typeof LATE_KEYS[number]
@@ -621,7 +627,7 @@ export const PANEL_CAUSE_HEADER = 'x-cc-cause'
  * 处理器的回包。`cause`(可选,P3c-1):错误回包背后的原始码(抛出来的那个),不进正文、不上 127.0.0.1 的线 ——
  * 只给面板里的旧路由别名换手机那一列的码用(`/v1` 回的是桌面那一列,有的码桌面列改了名,别名就认不回来)。
  */
-export type RouteResult = { status: number; body: unknown; cause?: string }
+export type RouteResult = { status: number; body: unknown; cause?: string; headers?: Record<string,string> }
 
 /**
  * Each route handler receives the parsed query (always present) and the
@@ -662,7 +668,7 @@ export type RouteHandler = (
    * signal:调用方断开时中止(长轮询的路由用;其余忽略)。
    * onSent:回包真写出去之后再调(没写出去 / 调用方已断 ⇒ 不调)。
    */
-  ctx?: { signal: AbortSignal; onSent(cb: () => void): void },
+  ctx?: { headers?: Headers; signal: AbortSignal; onSent(cb: () => void): void },
 ) => Promise<RouteResult> | RouteResult
 
 export type RouteTable = Record<string, RouteHandler | undefined>

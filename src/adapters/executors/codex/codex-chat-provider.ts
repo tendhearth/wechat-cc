@@ -1,11 +1,12 @@
 import { tmpdir } from 'node:os'
 import { compilePolicy } from '../../../domain/policy'
+import { sessionSubprocessEnv } from '../subprocess-env'
 import { TIER_PROFILES } from '../../../domain/user-tier'
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentAttachment, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type SpawnContext } from '../../../ports/agent-provider'
 import type { McpStdioSpec } from '../mcp-stdio-spec'
 import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from '../mcp-stdio-spec'
 import { isAuthFail } from '../../../domain/auth-fail'
-import { providerErrorCodeOf, withProviderCode } from '../../../lib/provider-error-code'
+import { providerErrorCodeOf, withProviderCode, errorWithProviderCode } from '../../../lib/provider-error-code'
 import { log } from '../../../lib/log'
 import { codexCallTarget, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import { resolveCodexCheapModel } from './codex-cheap-model'
@@ -124,7 +125,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
 
   const cheapProfile = (): CodexChatProfile => ({
     // 一次性评估:不给工具、不给网、不给写;`low` 是 codex 在工具目录里带 image_gen 时还肯接的最低推理档。
-    sandbox: 'read-only', approvalPolicy: 'never', env: process.env, log,
+    sandbox: 'read-only', approvalPolicy: 'never', env: sessionSubprocessEnv(), log,
     config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } },
   })
 
@@ -152,7 +153,11 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
         await session?.close().catch(() => {})
       }
     },
+    supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
+      // read-only does not disable native read/shell tools or inherited project instructions.
+      // Until the app-server verifies a fake-tools-only surface, do not bill an unsafe checkup.
+      if (ctx.evaluation) throw errorWithProviderCode('isolated_evaluation_unavailable', 'provider_error')
       const tierOpts = compilePolicy('codex', ctx.tierProfile, ctx.permissionMode)
       // 只在**这一次** spawn 是 dangerously 时才免审(安全 10-20)。
       const bypass = !!opts.dangerouslyBypassApprovalsAndSandbox && ctx.permissionMode === 'dangerously'
@@ -161,18 +166,21 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       const config = codexChatThreadConfig(opts.mcpServers, ctx, bypass, !!approve)
       const model = ctx.model ?? opts.model
       const approvalPolicy = tierOpts.approvalPolicy === 'on-request' && !approve ? 'never' : tierOpts.approvalPolicy
-      const profile: CodexChatProfile = { sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: process.env, log, ...(approve ? { approve } : {}) }
+      const profile: CodexChatProfile = { sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: sessionSubprocessEnv(), log, ...(approve ? { approve } : {}) }
       // 对话只把这几样交给协议客户端;工作台专用的(审批桥、时间线、后台生命周期)一律不带。
       const base: SpawnContext = {
         tierProfile: ctx.tierProfile, permissionMode: ctx.permissionMode, chatId: ctx.chatId,
+        ...(ctx.ephemeral?{ephemeral:true}:{}),
         ...(ctx.appendInstructions ? { appendInstructions: ctx.appendInstructions } : {}),
         ...(model ? { model } : {}),
       }
       const open = (resumeSessionId?: string) => spawnCodexAppServerSession(coreOptions(opts.model), project, { ...base, ...(resumeSessionId ? { resumeSessionId } : {}) }, profile)
       let core: CodexAppServerSession
+      let resumedHistory = false
       if (ctx.resumeSessionId) {
         try {
           core = await open(ctx.resumeSessionId)
+          resumedHistory = true
           log('SESSION_RESUME', `alias=${project.alias} thread_id=${ctx.resumeSessionId} provider=codex`)
         } catch (err) {
           // 续接不上(线程文件没了 / 不认):记下来,起一个新线程 —— 不让这个聊天每一轮都卡在同一个坏 id 上。
@@ -186,6 +194,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       let closed = false
 
       return {
+        resumedHistory, resumedHistoryOwnerOnly:true,
         callTarget: () => core.callTarget?.() ?? targetOf(model ?? null, project.path, config),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           return {

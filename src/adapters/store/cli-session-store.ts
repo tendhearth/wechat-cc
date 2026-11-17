@@ -57,12 +57,15 @@ const DERIVED = `SELECT c.session_id, c.source, c.cwd, c.machine, c.transcript_p
   LEFT JOIN matter_bindings b ON b.surface = 'cli' AND b.surface_key = c.session_id
   LEFT JOIN matters m ON m.id = b.matter_id AND m.kind = 'terminal'`
 
+export const readCliSession=(db:Db,id:string):CliSessionRow|null=>db.query<CliSessionRow,[string]>(`SELECT ${COLS} FROM (${DERIVED}) WHERE session_id=?`).get(id)??null
+
 export function makeCliSessionStore(db: Db, now: () => number = () => Date.now()): CliSessionStore {
   let writes = 0
   const afterWrite = (at: number) => { if (++writes % PRUNE_EVERY === 0) prune(at) }
   const changed = (sessionId:string) => {
     const matter=db.query<{matter_id:string},[string]>("SELECT matter_id FROM matter_bindings WHERE surface='cli' AND surface_key=? LIMIT 1").get(sessionId)
     if(matter)hintWrite(db,{kind:'matter',matterId:matter.matter_id})
+    hintWrite(db,{kind:'cli',sessionId})
   }
 
   function prune(t: number): void {
@@ -94,7 +97,7 @@ export function makeCliSessionStore(db: Db, now: () => number = () => Date.now()
       changed(sessionId)
     },
     get(sessionId) {
-      return db.query<CliSessionRow, [string]>(`SELECT ${COLS} FROM (${DERIVED}) WHERE session_id=?`).get(sessionId) ?? null
+      return readCliSession(db,sessionId)
     },
     findByPrefix(prefix) {
       const p = prefix.trim().toLowerCase()

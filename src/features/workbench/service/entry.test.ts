@@ -50,7 +50,7 @@ function setup(over: { defaultProvider?: string; managedRoot?: string } = {}) {
   const execute = makeExecuteDomain(ctx, { admission, attachments, quota, view, native, inputs, lifecycle, notices, artifacts, until })
   const entry = makeEntryDomain(ctx, { execute, view, admission, quota })
   shutdowns.push(lifecycle.shutdown)
-  return { store, entry, project, root }
+  return { store, entry, project, root, registry }
 }
 
 describe('makeEntryDomain · 守门', () => {
@@ -74,6 +74,14 @@ describe('makeEntryDomain · 守门', () => {
 })
 
 describe('makeEntryDomain · 选项与创建', () => {
+  it('lists discovered Grok as unavailable with its dedicated login reason', async () => {
+    const { GROK_ACP_CAPABILITIES } = await import('../../../domain/workbench/executor-capabilities')
+    const { entry, registry } = setup()
+    registry.register('grok', provider, { canResume: () => false, workbench: { ...GROK_ACP_CAPABILITIES, unavailableReason: 'Grok 还没在 CC 里登录' } })
+    const grok = entry.entryOptions(OWNER).providers.find(p => p.id === 'grok')
+    expect(grok).toMatchObject({ available: false, unavailableReason: { code: 'unavailable_provider', message: expect.stringContaining('Grok 还没在 CC 里登录') } })
+    expect(entry.availableExecutors()).not.toContain('grok')
+  })
   it('entryOptions:不是主人 ⇒ needs_connection + invalid_entry_owner;是主人 ⇒ 列出可用执行者,默认执行者只在配了且可用时才有', () => {
     const { entry } = setup()
     expect(entry.entryOptions({ ownerKey: 'x', surface: 'phone' })).toMatchObject({ status: 'needs_connection', reason: { code: 'invalid_entry_owner' }, providers: [] })

@@ -1,3 +1,4 @@
+import { makeCanUseTool } from './permission-relay'
 import { describe, it, expect, vi } from 'vitest'
 import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
 import type { AgentEvent } from '../../../ports/agent-provider'
@@ -103,12 +104,22 @@ describe('Claude native execution choice',()=>{
   const project={alias:'task',path:'/tmp'}
   const context={tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const,chatId:'task'}
   const options=()=> (sdk as unknown as {__test_last_options:()=>any}).__test_last_options()
+  it('oneoff disables cwd-based native auto memory while retaining project hard rules',async()=>{
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({settingSources:['project','local'],settings:{autoMemoryEnabled:true}})})
+    const session=await provider.spawn(project,{...context,ephemeral:true,oneoff:true})
+    expect(options().settings.autoMemoryEnabled).toBe(false)
+    expect(options().settingSources).toEqual(['project','local'])
+    expect(options().persistSession).toBe(false)
+    await session.close()
+  })
   it('discovers a bounded native catalog without prompt, tool, hook or session persistence',async()=>{
-    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({mcpServers:{user:{command:'must-not-start'}},hooks:{},model:'cc-fallback'})})
+    const abortController=new AbortController()
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({abortController,mcpServers:{user:{command:'must-not-start'}},hooks:{},model:'cc-fallback'})})
     expect(typeof provider.modelCatalog).toBe('function')
     expect(await provider.modelCatalog!(project)).toEqual({source:'native',models:[{id:'native-a',displayName:'Native A',description:'Native',reasoningEfforts:['low','max']}]})
     expect(options()).toMatchObject({tools:[],mcpServers:{},strictMcpConfig:true,persistSession:false,hooks:{},plugins:[],settings:{disableAllHooks:true}})
     expect(options().abortController.signal.aborted).toBe(true)
+    expect(abortController.signal.aborted).toBe(true)
   })
   it.each(['provider','native'] as const)('omits global fallback on opted-in %s auto resume',async(defaults)=>{
     const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'cc-fallback',effort:'high',thinking:{type:'disabled'}})})
@@ -131,8 +142,12 @@ describe('Claude native execution choice',()=>{
     expect(reportExecution.mock.calls.map(call=>call[0])).toEqual([{model:'native-resolved',sessionId:'native-session',source:'native_message'},{model:'fallback-native',sessionId:'native-session',source:'native_message'}])
   })
   it('rejects unknown explicit models and model-specific effort before dispatch',async()=>{
-    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})})
-    for(const [model,reasoningEffort] of [['unknown',null],['native-a','medium']])await expect(provider.spawn(project,{...context,execution:{defaults:'native',model:model!,reasoningEffort:reasoningEffort??null}})).rejects.toThrow(/execution_(model|effort)_unsupported/)
+    for(const [model,reasoningEffort] of [['unknown',null],['native-a','medium']]){
+      const abortController=new AbortController()
+      const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({abortController})})
+      await expect(provider.spawn(project,{...context,execution:{defaults:'native',model:model!,reasoningEffort:reasoningEffort??null}})).rejects.toThrow(/execution_(model|effort)_unsupported/)
+      expect(abortController.signal.aborted).toBe(true)
+    }
   })
 })
 
@@ -643,6 +658,38 @@ describe('claude-agent-provider', () => {
     await session.close()
   })
 
+  it('real permission relay resets denied tools on each dispatch and ends pending cards on cancel', async () => {
+    const cards = new Set<string>()
+    let asks = 0, pending = false, answer!: (v: 'allow') => void
+    const gate = makeCanUseTool({
+      askUser: async (_to, _prompt, hash) => { asks++; if (!pending) return 'deny'; cards.add(hash); return new Promise<'allow'>(r => { answer = r }) },
+      revoke: hash => { cards.delete(hash) }, initiatingChatId: () => 'owner', adminChatId: () => 'owner', resolveTier: () => 'admin', log: () => {}, mode: () => 'solo', provider: 'claude', permissionMode: 'strict',
+    })
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({ canUseTool: gate }) })
+    const session = await provider.spawn({ alias: 'offline', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'owner' })
+    const invoke = (id: string) => gate('mcp__wechat__matter_handoff', {}, { signal: new AbortController().signal, toolUseID: id } as any)
+    const finish = () => (sdk as unknown as { __test_yield(m: unknown): void }).__test_yield({ type: 'result', subtype: 'success', session_id: 'offline', num_turns: 1, duration_ms: 0 })
+    let work = drain(session.dispatch('first'))
+    try {
+      expect((await invoke('first')).behavior).toBe('deny')
+      expect((await invoke('repeat')).behavior).toBe('deny')
+      expect(asks).toBe(1)
+      finish(); await work
+      work = drain(session.dispatch('second'))
+      pending = true
+      let settled = false
+      const permission = invoke('second').then(r => { settled = true; return r })
+      await expect.poll(() => cards.size).toBe(1)
+      expect(asks).toBe(2)
+      await session.cancel!()
+      await expect.poll(() => settled, { timeout: 200 }).toBe(true)
+      expect((await permission).behavior).toBe('deny')
+      expect(cards.size).toBe(0)
+      answer('allow')
+      finish(); await work
+    } finally { answer?.('allow'); await session.close(); await work }
+  })
+
   it('close() survives a dead SDK ProcessTransport (sync throw)', async () => {
     // Regression: 2026-05-28 PDT — daemon crashed twice with exit 1.
     // sweepIdle → release → close → SDK.interrupt() threw "ProcessTransport
@@ -910,4 +957,67 @@ describe('Claude call target is captured at spawn (review #193 P1)', () => {
     expect(session.callTarget?.()).toEqual({ provider: 'claude', model: 'claude-x', baseUrl: 'http://127.0.0.1:8080' })
     await session.close()
   })
+})
+
+it('owner continuity: occupancy is the last parent request input, first overhead stays fixed, and ephemeral resume is explicit',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})})
+ const session=await provider.spawn({alias:'companion:test',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner',resumeSessionId:'valid-native',ephemeral:true})
+ const events=drain(session.dispatch('接着聊'))
+ emitSdk({type:'assistant',message:{id:'one',model:'claude-actual',usage:{input_tokens:100,cache_read_input_tokens:900,cache_creation_input_tokens:20},content:[{type:'tool_use',id:'tool1',name:'Read'}]}})
+ emitSdk({type:'assistant',parent_tool_use_id:'child',message:{usage:{input_tokens:900000},content:[]}})
+ emitSdk({type:'assistant',message:{id:'two',model:'claude-actual',usage:{input_tokens:200,cache_read_input_tokens:1500,cache_creation_input_tokens:10},content:[{type:'text',text:'连着呢'}]}})
+ emitSdk({type:'result',subtype:'success',session_id:'valid-native',usage:{input_tokens:900000,output_tokens:100000},num_turns:3,duration_ms:1})
+ await events
+ expect(session.contextUsage?.()).toMatchObject({tokens:1710,firstInputTokens:1020,model:'claude-actual'})
+ expect(session.resumedHistory).toBe(true)
+ expect((sdk as unknown as {__test_last_options:()=>any}).__test_last_options().persistSession).toBe(false)
+ await session.close()
+})
+it('owner continuity: repeated request blocks retain usage, and a later failed turn does not reuse stale input',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{
+  const first=drain(session.dispatch('一'))
+  emitSdk({type:'assistant',message:{id:'same',usage:{input_tokens:1000},content:[]}})
+  emitSdk({type:'assistant',message:{id:'same',content:[{type:'text',text:'在呢'}]}});finishSdkTurn();await first
+  expect(session.contextUsage?.().tokens).toBe(1000)
+  const second=drain(session.dispatch('二'));emitSdk({type:'result',subtype:'error',session_id:'s'});await second
+  expect(session.contextUsage?.().tokens).toBeUndefined();expect(session.contextUsage?.().firstInputTokens).toBe(1000)
+ }finally{await session.close()}
+})
+it('owner continuity: an unmeasured first request never makes a later tool request the fixed overhead',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{
+  const turn=drain(session.dispatch('一'))
+  emitSdk({type:'assistant',message:{id:'first',content:[{type:'tool_use',id:'t',name:'Read'}]}})
+  emitSdk({type:'assistant',message:{id:'second',usage:{input_tokens:90000},content:[{type:'text',text:'在呢'}]}});finishSdkTurn();await turn
+  expect(session.contextUsage?.()).toMatchObject({tokens:90000,firstInputTokens:null})
+ }finally{await session.close()}
+})
+
+for(const usageKey of ['claude-opus-4-8[1m]','opus'])it(`SDK-shaped result window resolves ${usageKey} to the actual parent model`,async()=>{
+ const result={type:'result',subtype:'success',duration_ms:1,duration_api_ms:1,is_error:false,num_turns:1,result:'在呢',stop_reason:'end_turn',total_cost_usd:0,
+ usage:{cache_creation:{ephemeral_1h_input_tokens:0,ephemeral_5m_input_tokens:0},cache_creation_input_tokens:0,cache_read_input_tokens:0,inference_geo:'not_available',input_tokens:1000,iterations:[],output_tokens:10,server_tool_use:{web_fetch_requests:0,web_search_requests:0},service_tier:'standard',speed:'standard'},
+ modelUsage:{[usageKey]:{inputTokens:1000,outputTokens:10,cacheReadInputTokens:0,cacheCreationInputTokens:0,webSearchRequests:0,costUSD:0,contextWindow:usageKey.endsWith('[1m]')?131072:262144,maxOutputTokens:64000}},permission_denials:[],uuid:'00000000-0000-4000-8000-000000000001',session_id:'00000000-0000-4000-8000-000000000002'} satisfies import('@anthropic-ai/claude-agent-sdk').SDKResultMessage
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'opus'})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{const events=drain(session.dispatch('接着聊'));emitSdk({type:'assistant',message:{id:'parent',model:'claude-opus-4-8',usage:{input_tokens:1000},content:[{type:'text',text:'在呢'}]}});emitSdk(result);await events
+ expect(session.contextUsage?.().model).toBe('claude-opus-4-8')
+ expect(provider.contextWindowTokens?.('claude-opus-4-8')).toBe(usageKey.endsWith('[1m]')?131072:262144)
+ expect(provider.contextWindowTokens?.('opus[1m]')).toBe(usageKey.endsWith('[1m]')?131072:200000)
+ }finally{await session.close()}
+})
+it('Claude unknown window uses conservative 200k instead of the generic 32k assumption',()=>{
+ const p=createClaudeAgentProvider({sdkOptionsForProject:()=>({})});expect(p.fallbackContextWindowTokens).toBe(200000);expect(p.contextWindowTokens?.('claude-unknown')).toBeUndefined()
+})
+it('synthetic overflow does not replace the actual model with a synthetic error model',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{const events=drain(session.dispatch('继续'));emitSdk({type:'assistant',message:{id:'parent',model:'claude-opus-4-8',usage:{input_tokens:1234},content:[{type:'tool_use',name:'Read'}]}});emitSdk({type:'assistant',error:'invalid_request',message:{model:'<synthetic>',content:[{type:'text',text:'prompt is too long: 210000 tokens'}]}});emitSdk({type:'result',subtype:'error_during_execution',is_error:true,errors:['prompt is too long: 210000 tokens']});const got=await events
+ expect(session.contextUsage?.()).toMatchObject({tokens:1234,model:'claude-opus-4-8'});expect(got.filter(e=>e.kind==='error').every(e=>e.kind==='error'&&e.code==='context_overflow')).toBe(true)
+ }finally{await session.close()}
+})
+
+it('a first rejected Claude request retains the actual init model for persisted overflow capacity',async()=>{
+ const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'opus'})}),session=await provider.spawn({alias:'p',path:'/tmp'},{tierProfile:TIER_PROFILES.admin,permissionMode:'strict',chatId:'owner'})
+ try{const events=drain(session.dispatch('继续'));emitSdk({type:'system',subtype:'init',session_id:'s',model:'claude-opus-4-8'});emitSdk({type:'assistant',error:'invalid_request',message:{model:'<synthetic>',content:[{type:'text',text:'prompt is too long: 210000 tokens'}]}});emitSdk({type:'result',subtype:'error_during_execution',is_error:true,errors:['prompt is too long: 210000 tokens']});await events
+ expect(session.contextUsage?.().model).toBe('claude-opus-4-8')
+ }finally{await session.close()}
 })

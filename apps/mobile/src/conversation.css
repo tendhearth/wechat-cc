@@ -4,6 +4,7 @@
 #chat-notice { color:var(--soft); font-size:13px }
 .chat-message { margin:24px 0; overflow-wrap:anywhere; white-space:pre-wrap; line-height:1.65 }
 .chat-message small { display:block; color:var(--soft); font-size:12px }
+.chat-message .chat-reply-avatar { vertical-align:middle; margin-right:8px; --th-agent-ring:var(--paper) }
 #chat-form { position:sticky; bottom:0; display:flex; gap:8px; padding:12px 0 calc(10px + env(safe-area-inset-bottom)); background:var(--paper) }
 #chat-input { flex:1; min-width:0; resize:vertical; max-height:200px; font:inherit; border:1px solid var(--line); border-radius:var(--r-s); padding:12px; color:var(--ink); background:var(--card) }
 .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%) }
@@ -15,18 +16,14 @@ body.conversation-ready header { display:flex; gap:12px; align-items:center; max
 .cc-reference small { color:var(--soft); font-size:12px }
 .cc-reference summary { padding:8px 0; cursor:pointer; min-height:44px }
 .matter-process,.matter-results { margin:20px 0; white-space:pre-wrap; overflow-wrap:anywhere }
-#chat-waiting { display:block; width:100%; text-align:left; margin-top:12px }
 
-#topic-row { display:flex; overflow-x:auto; gap:8px; padding:8px 0; position:sticky; bottom:100px; background:var(--paper) }
-#topic-row button { white-space:nowrap; flex-shrink:0 }
-#topic-row [aria-pressed=true] { border-color:var(--ink) }
 #topic-panel { position:fixed; inset:0 0 0 auto; width:min(440px,100%); z-index:30; background:var(--paper); padding:20px 22px calc(24px + env(safe-area-inset-bottom)); overflow-y:auto; box-shadow:-12px 0 32px #0000000c }
 #topic-body button,#topic-list button { display:block; text-align:left; width:100%; margin:10px 0; overflow-wrap:anywhere }
 #topic-body details { margin:12px 0; white-space:pre-wrap; overflow-wrap:anywhere }
 #topic-body summary { min-height:44px; cursor:pointer }
 #topic-panel h2 { font-size:22px } #topic-panel h3 { font-size:16px; margin-top:28px }
 #topic-query { font:inherit; padding:12px; max-width:100%; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:var(--r-s) }
-@media(min-width:1000px){body.conversation-ready{max-width:1200px}body.topic-open #p-today { margin-right:440px }}
+@media(min-width:900px){body.conversation-ready{max-width:1200px}body.topic-open #p-today { margin-right:440px }}
 
 #chat-search { position:fixed; inset:0; z-index:35; max-width:900px; margin:auto; padding:20px 22px; background:var(--paper); overflow:auto }
 #chat-search form { display:flex; flex-wrap:wrap; gap:12px; margin:24px 0 }
@@ -54,7 +51,7 @@ body:not(.conversation-ready) #conversation .conversation-tools,body:not(.conver
 
 body.conversation-ready > header { position:sticky; top:0; z-index:15; background:var(--paper) }
 
-@media(min-width:1000px){body.matter-open #p-today{margin-right:440px}body.conversation-ready #m-detail{position:fixed;inset:0 0 0 auto;width:440px;padding:24px;overflow-y:auto;background:var(--paper);z-index:31;box-shadow:-12px 0 32px #0000000c}}
+@media(min-width:900px){body.matter-open #p-today{margin-right:440px}body.conversation-ready #m-detail{position:fixed;inset:0 0 0 auto;width:440px;padding:24px;overflow-y:auto;background:var(--paper);z-index:31;box-shadow:-12px 0 32px #0000000c}}
 
 .cc-reference .th-agents { display:inline-flex; vertical-align:middle; margin-right:8px; --th-agent-ring:var(--paper) }
 body.conversation-ready { min-height:100svh; padding-bottom:0; display:flex; flex-direction:column }
@@ -63,13 +60,39 @@ body.conversation-ready #p-today { flex:1; display:flex; flex-direction:column; 
 body.conversation-ready #m-home { flex:1; display:flex; flex-direction:column }
 body.conversation-ready #conversation { flex:1; display:flex; flex-direction:column; width:100% }
 body.conversation-ready #chat-messages { flex:1 }
-@media(min-width:1000px){body.topic-open.conversation-ready > header,body.matter-open.conversation-ready > header{max-width:none;width:calc(100% - 440px);margin-left:0;margin-right:440px}}
+@media(min-width:900px){body.topic-open.conversation-ready > header,body.matter-open.conversation-ready > header{max-width:none;width:calc(100% - 440px);margin-left:0;margin-right:440px}}
 
-#topic-row [data-topic-activity] { display:inline-flex; align-items:center; gap:var(--th-topic-activity-gap); margin-left:var(--th-topic-activity-gap); color:var(--th-topic-activity-passive) }
-#topic-row [data-topic-activity="waiting"] { color:var(--th-topic-activity-attention) }
-#topic-row [data-topic-activity] i { width:var(--th-topic-activity-dot-size); height:var(--th-topic-activity-dot-size); border-radius:50%; background:currentColor }
-#topic-row [data-topic-activity="unread"] i { width:var(--th-topic-activity-line-width); height:var(--th-topic-activity-line-height); border-radius:0 }
 #topic-body [data-project-session] { display:flex; align-items:flex-start; gap:var(--th-space-s); border:0; background:transparent; padding:var(--th-space-s) 0 }
 #topic-body [data-project-session] small { display:block; color:var(--ink-soft) }
 
-#topic-row [data-topic-activity="waiting"] i { width:var(--th-topic-activity-attention-dot-size); height:var(--th-topic-activity-attention-dot-size); }
+
+#roster-strip { display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line) }
+#roster-strip[hidden], #roster-sheet[hidden] { display:none }
+#roster-strip button { background:none; border:0; padding:0; color:var(--soft); font-size:14px }
+.roster-avatar { position:relative; display:inline-flex; width:40px; height:40px }
+.roster-avatar .th-agents { padding:0; --th-agent-size:40px }
+.roster-person.waiting .roster-avatar { border-radius:50%; outline:2px solid var(--accent) }
+.roster-avatar.relay .th-agents { position:absolute; left:0; top:0; --th-agent-size:26px; opacity:.5 }
+.roster-avatar.relay .th-agents:last-child { left:10px; top:10px; --th-agent-size:30px; opacity:1 }
+.roster-avatar.relay .th-agents:last-child .th-agent { border-color:var(--ink) }
+#roster-sheet { position:fixed; inset:20% 0 0; z-index:30; background:var(--paper); overflow:auto; padding:24px; border-top:1px solid var(--line) }
+#roster-sheet button[data-roster] { display:flex; align-items:center; gap:12px; width:100%; padding:12px 0; background:none; border:0; color:var(--ink) }
+#roster-sheet small { color:var(--soft) }
+
+body.conversation-ready #m-title { font-size:17px; color:var(--ink) }
+body.conversation-ready #m-agents { --th-agent-size:36px }
+#m-sub { display:block; font-size:12px; color:var(--soft) } #m-sub[hidden] { display:none }
+#m-say { position:sticky; bottom:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px; border:1px solid var(--accent); border-radius:var(--r-m); padding:10px; background:var(--paper) }
+#m-say-avatar .th-agents { --th-agent-size:24px }
+#m-say-text { flex:1; min-width:0; font:inherit; border:0; resize:vertical; background:var(--paper); color:var(--ink) }
+#m-say button { border:0; border-radius:50%; width:44px; height:44px; flex:none; background:var(--accent); color:var(--on-accent) }
+#m-say-notice { width:100%; color:var(--soft) }
+
+body.conversation-ready #m-agents .th-agents { --th-agent-size:36px }
+
+/* 直通页头:头像占左列(跨两行),右列是事名和「项目 · 第 i 棒」。不用绝对定位,#m-agents 自己有尺寸(读屏与可见性都靠它)。 */
+body.conversation-ready #m-heading { display:grid; grid-template-columns:36px minmax(0,1fr); grid-template-areas:"av title" "av sub"; column-gap:12px; align-items:center; margin:16px 0 }
+body.conversation-ready #m-title { grid-area:title; margin:0 }
+body.conversation-ready #m-agents { grid-area:av; margin:0 }
+body.conversation-ready #m-sub { grid-area:sub }
+#m-project { padding:0; border:0; background:none; color:var(--soft); font:inherit }

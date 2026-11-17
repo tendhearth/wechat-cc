@@ -28,6 +28,11 @@ interface Entry {
   code: string
 }
 
+/** 明确引用旧批准卡时不能退回到“当前唯一待批”。 */
+export function isPermissionCardQuote(quoted: string): boolean {
+  return /「[yn]\s*(?:[0-9]{2}|[a-z0-9]{5})」|\[approval:[a-z0-9]{5}\]|^(?:Claude|OpenAI|Gemini) wants to run\b/im.test(quoted)
+}
+
 export class PendingPermissions {
   private readonly entries = new Map<string, Entry>()
   // 两位数码滚动分配:01 → 99 → 01。不是「最小未用」—— 那样刚过期的 01 马上被下一条复用,
@@ -106,15 +111,18 @@ export class PendingPermissions {
     const q = quoted.trim()
     if (!q) return null
     // 只认卡片自己写的「y 07」/「y k3x9z」这种带书名号的形式:正文里的「run 12 tests」不能当成码 12。
+    const request = /\[approval:([a-z0-9]{5})\]/i.exec(q)
+    if (request) return this.entries.has(request[1]!) ? request[1]! : null
     const byCode = /「[yn]\s*([0-9]{2})」/i.exec(q)
-    if (byCode) { const h = this.hashOfCode(byCode[1]!); if (h) return h }
+    if (byCode) return this.hashOfCode(byCode[1]!)
     const byHash = /「[yn]\s+([a-z0-9]{5})」/i.exec(q)
-    if (byHash && this.entries.has(byHash[1]!)) return byHash[1]!
+    if (byHash) return this.entries.has(byHash[1]!) ? byHash[1]! : null
     const head = q.split('\n')[0]!.trim()
     const matches = Array.from(this.entries.entries()).filter(([, e]) => {
       const p = (e.meta?.prompt ?? '').trim()
       if (!p) return false
       const firstLine = p.split('\n')[0]!.trim()
+      if (/\[approval:[a-z0-9]{5}\]/i.test(firstLine)) return firstLine === head || q.startsWith(firstLine)
       return firstLine === head || p.startsWith(q) || q.startsWith(firstLine)
     })
     return matches.length === 1 ? matches[0]![0] : null

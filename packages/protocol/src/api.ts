@@ -1,4 +1,7 @@
+import { RosterResponse } from './roster'
+import { OptionalReplyMetadata } from './reply-attribution'
 import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
+import { CHECKUP_RESPONSES } from './checkup'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 /**
  * api.ts — `/m/api/*` 与 `/set/api/*` 每条真实路由的返回形状(zod v4)。
@@ -167,6 +170,7 @@ export const MatterTaskView = z.object({
 })
 
 export const MatterEvent = z.object({
+  ...OptionalReplyMetadata.shape,
   kind: z.string(), text: z.string(), createdAt: z.number(),
   source: z.string().optional(), attachments: z.array(Attachment).optional(),
   errorCode: z.literal('execution_model_unsupported').optional(), diagnostic: z.string().optional(),
@@ -224,7 +228,10 @@ export const MatterQuotaHandoff = z.discriminatedUnion('state', [
 ])
 export type MatterQuotaHandoffT = z.infer<typeof MatterQuotaHandoff>
 export const MatterHandoffResult = z.object({ matterId: z.string(), created: z.boolean() })
+export const MatterAgent = z.object({matterId:z.string(),runId:z.string(),executor:z.string(),brief:z.string(),position:z.number(),status:z.enum(['queued','running','completed','failed','cancelled','interrupted']),createdAt:z.number(),endedAt:z.number().nullable()})
+export const MatterNote = z.object({id:z.number(),matterId:z.string(),runId:z.string().nullable(),author:z.string(),kind:z.enum(['plan','note','artifact']),text:z.string(),createdAt:z.number()})
 export const MatterDetail = z.object({
+  agentRuns:z.array(MatterAgent).optional(),notes:z.array(MatterNote).optional(),notesTotal:z.number().int().nonnegative().optional(),
   matter: Matter, bindings: z.array(MatterBinding), sessions: z.array(MatterSession),
   task: MatterTaskView.nullable(), events: z.array(MatterEvent),
   runId: z.string().optional(), inputMode: z.enum(['steer', 'send', 'queue']).optional(),
@@ -531,6 +538,7 @@ export const CHAT_NARRATION_MAX = 20
  * CC 的回复行才可能有。narration = 最后的话之前的过程话(没发到微信),手机显示成灰色、默认收起的「过程」。
  */
 export const ChatMessage = z.object({
+  ...OptionalReplyMetadata.shape,
   id: z.string(), role: z.enum(['me', 'cc']), kind: z.string(), text: z.string(), truncated: z.boolean(), at: z.number(), source: z.enum(['wechat', 'desktop', 'phone']),
   attachments: ChatAttachments.optional(),
   narration: z.array(z.string()).optional(),
@@ -671,6 +679,7 @@ const PHONE_API = {
   'POST /m/api/memory/restore': z.union([MemoryRestoreSuccess, PhoneErrorResponse]),
   'GET /m/api/home': z.union([HomeSuccess, PhoneErrorResponse]),
   'POST /m/api/seen': z.union([z.object({ ok: z.literal(true), seen_until: z.string() }), PhoneErrorResponse]),
+  'GET /v1/roster': RosterResponse,
   'GET /m/api/matters': z.union([z.object({ ok: z.literal(true), matters: z.array(Matter) }), PhoneErrorResponse]),
   'GET /m/api/matter/insight': z.union([
     z.object({ ok: z.literal(true), explanations: z.record(z.string(), ApprovalExplanation), progress: ProgressSummary.nullable() }),
@@ -743,6 +752,7 @@ const PHONE_API = {
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),
   'POST /m/api/push/register': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/push/test': z.union([z.object({ ok: z.literal(true), result: z.object({ ok: z.boolean(), code: z.string() }) }), PhoneErrorResponse]),
+  ...CHECKUP_RESPONSES,
 } satisfies Partial<Record<PhoneSurfaceRouteKey, z.ZodTypeAny>>
 
 export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = PHONE_API

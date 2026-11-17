@@ -1,3 +1,5 @@
+import { workbenchPathHolders } from './path-occupancy'
+import type {RelayTurnHook} from './relay-events'
 /**
  * lifecycle + settle 域:文件夹租约、空闲自动收工、回报 / 回忆去重、安静落定、占用释放、不确定退出、派发泵、取消,
  * 以及 setArchived / cancel / shutdown 三个入口。
@@ -11,6 +13,7 @@
  *   排队的那件活自己带着做法 —— 环就断在数据上,而不是藏在一个晚绑定的引用后面。
  * quiet 是 isReplied 的别名(原文 `const quiet=isReplied`)。
  */
+import {finishLedger} from './ledger-completion'
 import { findPathBlocker } from '../../../adapters/workbench/scheduler'
 import { publicTask } from '../../../adapters/store/workbench/store'
 import { taskLifecycle } from '../../../domain/matters/legacy-status'
@@ -34,6 +37,7 @@ import { timelineKind } from '../../../adapters/store/workbench/store'
 export const NETWORK_SUSPENDED_LABEL='已暂停(网络未受保护)'
 
 export interface LifecycleDomains {
+  relay?:RelayTurnHook
   view: Pick<ViewDomain,'isReplied'|'runtimeSnapshot'|'taskView'|'held'>
   artifacts: Pick<ArtifactsDomain,'collect'|'collectTurnArtifacts'|'captureCodeChanges'>
   notices: Pick<NoticesDomain,'stageFinishedNotice'|'publishFinishedNotices'|'enqueueNotice'>
@@ -43,7 +47,7 @@ export interface LifecycleDomains {
 
 export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
   const { store, state } = ctx
-  const { isReplied, runtimeSnapshot, taskView, held } = domains.view
+  const { isReplied, runtimeSnapshot, taskView } = domains.view
   const { collect, collectTurnArtifacts, captureCodeChanges } = domains.artifacts
   const { stageFinishedNotice, publishFinishedNotices, enqueueNotice } = domains.notices
   const { holdInputs, hasUndeliveredInput } = domains.pending
@@ -136,6 +140,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
    * 文,回报只是"事情有进展,看这里"的一句指路。
    */
   function reportOnce(running:Active,body?:string):void {
+    if(store.plans.get(running.taskId)?.state==='approved'||running.relayClosing||running.relayReportedTurn===running.turnSeq)return
     if (running.reportedTurn===running.turnSeq) return
     running.reportedTurn=running.turnSeq
     try { ctx.deps.reports?.enqueue(running.taskId,running.turnSeq,body) } catch (err) { ctx.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
@@ -172,7 +177,13 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     // 与「该暂停了」的判据同义:回合真的停下来了才登记,否则会把半成品当成固定版本的成果发布出去。
     if (!snapshot?.retained||snapshot.foreground!=='idle'||snapshot.backgroundCount!==0) return
     collectTurnArtifacts(running)
-    if (!quiet(running)) return
+    if (!quiet(running)) {
+      if(store.plans.get(running.taskId)?.state==='approved'){
+        store.atomic(()=>{finishLedger(ctx,running,'completed');store.bump(running.taskId)})
+        void domains.relay?.(running,'completed',running.questions.pending().length>0||running.permissions.pending().length>0).catch(error=>ctx.log?.('MATTER_RELAY',String(error)))
+      }
+      return
+    }
     // 取消归档、结局清回 open(以前写 replied 列的那一处;v102 删列后 replied 只看下面那一步)
     matterSync(m=>m.setLifecycle(running.taskId,'open'))
     // 「答完了、闲着」落成这件事最近一轮上的一步(ready:<turnId>,幂等;主人看不见)。线上旧 status 的 replied 读它(M6e)。
@@ -189,7 +200,16 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     // 钟级),接受。
     // 差异边界 = 回合边界:这一轮的代码变更现在就截(以前这一步挂在「答复即释放」后面,
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
-    void captureCodeChanges(running).catch(()=>{})
+    const ledgerTurn=running.turnSeq
+    const codeCapture=captureCodeChanges(running)
+    if(!store.ledger.enabled(running.taskId))void codeCapture.catch(()=>{})
+    else void (async()=>{
+      await running.turnCollection
+      await codeCapture
+      if(state.shutdownComplete||running.finishing||running.cancelled||running.uncertain||running.turnSeq!==ledgerTurn||!quiet(running))return
+      store.atomic(()=>{finishLedger(ctx,running,'completed');store.bump(running.taskId)})
+      await domains.relay?.(running,'completed',running.questions.pending().length>0||running.permissions.pending().length>0)
+    })().catch(error=>ctx.log?.('MATTER_LEDGER',`completion failed: ${error instanceof Error?error.message:String(error)}`))
     armIdleClose(running)
     // 做到条件成立为止(v80):这一轮安静了 ⇒ 排一次检查(按 run+turnSeq 去重,不阻塞)。
     try { untilAfterTurn(running) } catch (err) { ctx.log?.('WORKBENCH_UNTIL',`afterTurn failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
@@ -304,7 +324,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     for (const running of state.queue) {
       if (running.state !== 'queued') continue
       const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
-      const blocker=findPathBlocker(running,[...held(),...state.writerOrphans.values(),...earlier])
+      const blocker=findPathBlocker(running,[...workbenchPathHolders(state),...earlier])
       if (blocker) {
         // 「有人来等这个文件夹了」的唯一入口:挡路的那条会话若已经安静,就按短让位重排它的
         // 自动收工(armIdleClose 自己判安静,不安静就什么都不做)。
@@ -327,19 +347,25 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     }
   }
   function cancelRun(running:Active):void {
+    const relayPending=running.questions.pending().length>0||running.permissions.pending().length>0
+    let relayQueued=true
+    try{relayQueued=store.liveInputs.count(running.taskId)>0}catch{/* Preserve ambiguous input. */}
     cancelIdleClose(running)
     running.questions.close();ctx.hub.bumped(running.taskId);holdInputs(running.taskId,'任务已停止，补充尚未发送。')
     if (running.state==='queued') {
       running.cancelled=true; running.permissions.rejectAll('cancelled'); ctx.hub.bumped(running.taskId); running.signalStop()
       const index=state.queue.indexOf(running); if (index>=0) state.queue.splice(index,1)
       state.runningText.delete(running.identity)
+      let terminalCommitted=false
       try {
-        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};store.update(running.taskId,'cancelled',running.restartInterrupted?'daemon_restarted':null);stageFinishedNotice(running,'cancelled')})
+        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};finishLedger(ctx,running,'cancelled');store.update(running.taskId,'cancelled',running.restartInterrupted?'daemon_restarted':null);if(store.plans.get(running.taskId)?.state!=='approved')stageFinishedNotice(running,'cancelled')})
+        terminalCommitted=true
         matterSync(m=>m.setLifecycle(running.taskId,'done'))
         publishFinishedNotices()
       } catch { /* in-memory cancellation still must settle */ }
       running.publicFinished=true; running.resolveDone()
       if (state.runsByTask.get(running.taskId)===running) state.runsByTask.delete(running.taskId)
+      if(terminalCommitted)void domains.relay?.(running,'cancelled',relayPending,relayQueued).catch(error=>ctx.log?.('MATTER_RELAY',String(error)))
       if (!state.stopping) pump()
       return
     }
@@ -433,6 +459,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     const task=store.get(id)
     if(archived && !taskView(publicTask(task)).canArchive)throw new Error('workbench_busy')
     const view=taskView(publicTask(store.setArchived(id,archived)))
+    // 归档 ⇒ 这件事开出去的链接全部作废(设计稿「主人这边」);取消归档不恢复,要再开。
+    if(archived)store.shares.revokeAll(id)
     // store.setArchived 是裸 UPDATE,不像别的写点那样自带 bump —— archivedAt 在 detail 里能看见,补一下。
     ctx.hub.bumped(id)
     matterSync(m=>m.setLifecycle(id,taskLifecycle({archived,status:view.status})))

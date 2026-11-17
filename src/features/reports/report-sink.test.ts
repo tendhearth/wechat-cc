@@ -26,6 +26,16 @@ describe('makeReportSink', () => {
   })
   afterEach(() => db.close())
 
+  it('relay notice uses the same origin outbox with one sentence and respects mute',async()=>{
+    const sink=makeReportSink({matters,outbox,taskTitle:()=>'首页调整',artifactCount:()=>0,notificationsEnabled:()=>true,now:()=>1000})
+    sink.enqueueRelay!(FROM_CHAT,'Codex 做完了，Claude 接着做。')
+    expect(await outbox.listDue(1000)).toEqual([expect.objectContaining({matterId:FROM_CHAT,originMatterId:CHAT,text:'Codex 做完了，Claude 接着做。'})])
+    await outbox.markSent((await outbox.listDue(1000))[0]!.id)
+    const muted=makeReportSink({matters,outbox,taskTitle:()=>'首页调整',artifactCount:()=>0,notificationsEnabled:()=>false,now:()=>1000})
+    muted.enqueueRelay!(FROM_CHAT,'这一句不应发送。')
+    expect(await outbox.listDue(1000)).toEqual([])
+  })
+
   it('从聊天交办的事:enqueue 写进 outbox,文本带标题与成果数', async () => {
     const sink = makeReportSink({matters, outbox, taskTitle: () => '首页调整', artifactCount: () => 2, notificationsEnabled: () => true, now: () => 1_000})
     sink.enqueue(FROM_CHAT, 0)

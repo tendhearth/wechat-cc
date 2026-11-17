@@ -15,6 +15,8 @@
 import type { Mode, ProviderId } from '../../domain/conversation'
 import type { InboundMsg } from '../../domain/prompt-format'
 import { capabilitiesFor } from '../../domain/capability-matrix'
+import { oneoffSessionAlias, supportsOneoffAnswer } from '../../domain/answer-target'
+import { namesIn } from '../provider-registry'
 import { makeChatMutex } from '../../lib/async-mutex'
 import { createCoordinatorCtx } from './ctx'
 import { createPlanner } from './plan'
@@ -48,6 +50,9 @@ import type { ConversationCoordinator, ConversationCoordinatorDeps, TurnPolicy }
 export function turnPolicy(mode: Mode): TurnPolicy {
   return mode.kind === 'chatroom' ? 'preempt' : 'queue'
 }
+
+/** 一次代答 Grok 连不上、改由 CC 答时垫在原话前面的说明(只进这一轮的提示,不改对话模式)。 */
+export const GROK_UNREACHABLE_FALLBACK_NOTE = '(系统说明:主人点名让 Grok 答这一句,但 Grok 现在连不上网络。这一句请你直接回答,不要切换执行者,也不要调用 provider_switch。)'
 
 export function createConversationCoordinator(deps: ConversationCoordinatorDeps): ConversationCoordinator {
   const ctx = createCoordinatorCtx(deps)
@@ -128,12 +133,48 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
    * 可能拿掉某家、网络可能断 —— 不信排队之前的结论(和「不信模式行的年份」同一个道理)。
    */
   async function dispatchInner(msg: InboundMsg): Promise<void> {
-    const proj = deps.resolveProject(msg.chatId)
+    if (msg.answerRoute) {
+      if (msg.answerRoute.state !== 'pending') return
+      msg.answerTarget = Object.freeze({ ...msg.answerRoute.target, requestId: msg.answerRoute.requestId })
+      msg.answerRoute.state = 'submitted'
+    }
+    const target = msg.answerTarget
+    if (target?.kind === 'clarify') {
+      if (target.candidates?.length) {
+        await ctx.notice(msg.chatId, `这句要交给 ${target.candidates.map((p, i) => `${p.name}（${i + 1}）`).join(' 还是 ')}？还是我来答？`)
+        return
+      }
+      const name = target.provider ? namesIn(deps.registry, target.provider).short : '点名的执行者'
+      const reason = target.provider && !supportsOneoffAnswer(target.provider) ? '目前无法隔离本句代答所需的会话权限' : '目前不可用'
+      await ctx.notice(msg.chatId, `${name} ${reason}，这句没有交给其他人。要改由 CC 来答吗？`)
+      return
+    }
+    const oneoff = target?.kind === 'oneoff' ? target : null
+    // admit 对旧 Mode 可回落默认；单次点名绝不借用这个回落。
+    if (oneoff && !deps.registry.has(oneoff.provider)) {
+      await ctx.notice(msg.chatId, '点名的执行者目前不可用。要改由 CC 来答吗？')
+      return
+    }
+    if (oneoff && (!supportsOneoffAnswer(oneoff.provider) || !deps.oneoffWorkspace)) {
+      await ctx.notice(msg.chatId, '点名的执行者目前无法隔离本句代答所需的会话权限。要改由 CC 来答吗？')
+      return
+    }
+    const resolved = deps.resolveProject(msg.chatId)
+    // 代答不在主人的项目里跑:空临时目录 + 只许回复的档(solo 里换),原生文件/命令工具碰不到真实项目。
+    let proj = resolved
+    if (resolved && oneoff) {
+      let path: string
+      try { path = deps.oneoffWorkspace!(oneoff.requestId) } catch {
+        await ctx.notice(msg.chatId, '点名的执行者这次没法单独开一个临时会话。要改由 CC 来答吗？')
+        return
+      }
+      proj = { alias: oneoffSessionAlias(oneoff.requestId), path }
+    }
     if (!proj) {
       deps.log('COORDINATOR', `drop: no project for chat=${msg.chatId}`)
       return
     }
-    const mode = getMode(msg.chatId)
+    const mode: Mode = oneoff ? { kind: 'solo', provider: oneoff.provider } : getMode(msg.chatId)
     // /chat:先按 latest-wins 停掉上一场、等它收尾,再定计划 —— 档位要在等完之后读(以前 dispatchChatroom
     // 也是等完才读档位)。没有在跑的就不 await(不多让出一拍)。
     if (mode.kind === 'chatroom') {
@@ -148,7 +189,24 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     switch (p.kind) {
       case 'paused': return
       case 'refused': return solo.refuse(msg, p)
-      case 'solo': return solo.dispatch(msg, proj, p)
+      case 'solo': {
+        const result = await solo.dispatch(msg, proj, p)
+        if (result !== 'grok_unreachable' || !oneoff || !resolved) return
+        // The failed oneoff has already recorded/cleaned up. Plan CC afresh in the
+        // original project, under this same chat lock; never reselect Grok or change Mode.
+        const current = getMode(msg.chatId)
+        const provider = current.kind === 'solo' && current.provider !== 'grok' ? current.provider : deps.defaultProviderId
+        if (provider === 'grok') { await ctx.notice(msg.chatId, 'Grok 现在连不上（网络），这句我先不转给它。'); return }
+        // 原话里点了 Grok 的名:不加说明,CC 的模型会把它当「切到 Grok」去调 provider_switch(验收真遇到过)。
+        const fallbackMsg: InboundMsg = { ...msg, text: `${GROK_UNREACHABLE_FALLBACK_NOTE}\n${msg.text}`, answerTarget: undefined, answerRoute: undefined }
+        const fallback = await planner.planTurn(fallbackMsg, { kind: 'solo', provider })
+        if (fallback.kind === 'solo' && fallback.providerId !== 'grok') {
+          await ctx.notice(msg.chatId, 'Grok 现在连不上（网络），这句由 CC 来答。')
+          await solo.dispatch(fallbackMsg, resolved, fallback)
+        } else if (fallback.kind === 'refused') await solo.refuse(fallbackMsg, fallback)
+        else if (fallback.kind === 'solo') await ctx.notice(msg.chatId, 'Grok 现在连不上（网络），这句我先不转给它。')
+        return
+      }
       case 'parallel': return dispatchParallel(msg, proj, p)
       case 'chatroom': return chatroom.dispatch(msg, proj, p)
     }
@@ -167,8 +225,9 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     msg: InboundMsg,
     opts?: { within?: (dispatch: () => Promise<void>) => Promise<T> },
   ): Promise<T | void> {
+    if (msg.answerRoute) msg.answerRoute.enqueued = true
     const mode = getMode(msg.chatId)
-    let policy = turnPolicy(mode)
+    let policy = msg.answerTarget?.kind === 'oneoff' || msg.answerTarget?.kind === 'clarify' ? 'queue' as const : turnPolicy(mode)
     // 评审 #193 P2-4:排队方式跟着**实际执行的集合**走,不跟着模式名走。/chat 被守护筛到只剩
     // 一个(或一个都不剩)时执行已经退成单模型 —— 那就得像 solo 一样排队,否则第二条消息会在
     // 同一个会话上撞上还在跑的第一条(ACP 的 acp_turn_already_running,第二条就丢了)。

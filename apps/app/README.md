@@ -100,7 +100,7 @@ Build 3 回归补充:
 
 ### 真机全自动验收(scripts/device-e2e.ts,2026-10-01)
 
-USB 连着一台 iPhone、daemon 在跑并已连上中继 v2(`relay_v2_url`),一条命令跑完配对 → 跟 CC 说一句 → 真推送点开批准 → 撤销,没人碰屏幕:
+USB 连着一台 iPhone、daemon 在跑并已通过桌面「连接手机」开通连接,一条命令跑完配对 → 跟 CC 说一句 → 真推送点开批准 → 撤销,没人碰屏幕:
 
 ```bash
 bun run e2e:device                      # = bun scripts/device-e2e.ts;第一次会 prebuild + 构建(几分钟),之后增量
@@ -251,7 +251,7 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 - **安卓在这台 Mac 上没验过**:没有 Android SDK / adb。Kotlin 服务只有 JVM 单测(`test.sh`),编译进 APK 与运行都要等 EAS 构建 + 真机或模拟器。
 - **iPhone staging 已有真机记录**：2026-10-01 / 10-02 的 `bun run e2e:device` 通过配对(经深链，不经相机)、同码重用被拒、聊天、后台扩展解密后的 APNs 横幅与点开批准、撤销、收尾；当时 staging 已配 APNs、本机 daemon 已设 `relay_v2_url`。该记录对应当时的验收构建，后续补充持久恢复、附件和普通发布包需各自验收，不能据此宣称主人真手机已经更新。
 - **仍需人手的 iOS 验收**：系统相机扫码 / 通用链接、锁屏解密后的文字、进程被杀后点通知冷启动、系统设置拒绝再打开通知权限、撤销后再触发只显示中性占位、加密备份恢复，以及下节聊天 / 会话续接清单。物理 iPhone 的补充日志跨进程恢复仍未实测。
-- **TestFlight 发布条件**：按[中继手册](../../docs/maintainer/relay.md#8-上线前后必读--go-live-notes)经 `relay-production` 环境批准部署 production Worker，配置生产 APNs 并核对健康，再将 daemon 的 `relay_v2_url` 切到生产，打开 `RELAY_WATCH`。staging 的成功不代替生产验收。EAS 仍需 `eas init` 提交 projectId，再 `eas build --profile production --platform ios` 与 `eas submit`；App Store Connect 记录和商店提交另办。
+- **TestFlight 发布条件**：按[中继手册](../../docs/maintainer/relay.md#8-上线前后必读--go-live-notes)经 `relay-production` 环境批准部署 production Worker，配置生产 APNs 并核对健康，在桌面点「连接手机」开通连接，打开 `RELAY_WATCH`；维护者测试配置见中继手册（不对外）。staging 的成功不代替生产验收。EAS 仍需 `eas init` 提交 projectId，再 `eas build --profile production --platform ios` 与 `eas submit`；App Store Connect 记录和商店提交另办。
 - **TestFlight 本机出包(2026-10-17 实走,不用 EAS)**:App Store Connect 记录 `Tendhearth CC · Personal AI`(app id 6824007352,API 建不了,网页建);
   1. `TENDHEARTH_APNS_ENV=production bunx expo prebuild --platform ios --clean --no-install`,之后 `git checkout -- package.json`(prebuild 会改);
   2. `cd ios && pod install`;

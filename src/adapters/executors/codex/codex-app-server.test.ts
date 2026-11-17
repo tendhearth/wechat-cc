@@ -91,6 +91,23 @@ function enableExternal() {
   discovery = '[{"name":"external","enabled":true}]'
   nativeConfig = { mcp_servers: { external: { command: '/tools/external', tools: { create_note: { approval_mode: 'approve' } } } } }
 }
+it.each([false,true])('injects only bound matter tools in thread config while keeping the token out of startup arguments and shell environment (resume=%s)',async resume=>{
+  vi.stubEnv('WECHAT_SESSION_TOKEN','inherited-chat-token')
+  vi.stubEnv('WECHAT_SESSION_TIER','admin')
+  const token='bound-ledger-token'
+  const spec={command:'/cc',args:['mcp-server','matter'],env:{WECHAT_INTERNAL_API:'http://127.0.0.1:1',WECHAT_SESSION_TOKEN:token}}
+  const {child}=await start({matterLedger:true,mcpEnv:{WECHAT_SESSION_TOKEN:token},...(resume?{resumeSessionId:'thread-1'}:{})},{matterMcp:(context:Pick<SpawnContext,'mcpEnv'|'matterLedger'>)=>{expect(context.matterLedger===true).toBe(true);return {...spec,env:{...spec.env,WECHAT_SESSION_TOKEN:context.mcpEnv!.WECHAT_SESSION_TOKEN!}}}})
+  const started=child.sent.find(m=>m.method===(resume?'thread/resume':'thread/start'))!
+  expect(started.params.config.mcp_servers['wechat-cc-matter']).toMatchObject({...spec,enabled:true,enabled_tools:['matter_notes','matter_note','matter_context'],default_tools_approval_mode:'approve'})
+  const matterEnv=started.params.config.mcp_servers['wechat-cc-matter'].env
+  expect(matterEnv.WECHAT_SESSION_TOKEN===token).toBe(true)
+  expect(Object.hasOwn(matterEnv,'WECHAT_SESSION_TIER')).toBe(false)
+  expect(JSON.stringify(mocks.spawn.mock.calls).includes(token)).toBe(false)
+  for(const call of mocks.spawn.mock.calls){
+    for(const key of ['WECHAT_SESSION_TOKEN','WECHAT_SESSION_TIER'])expect(Object.hasOwn(call[2].env,key)).toBe(false)
+  }
+  for(const key of ['WECHAT_SESSION_TOKEN','WECHAT_SESSION_TIER'])expect(Object.hasOwn(started.params.config.shell_environment_policy.set??{},key)).toBe(false)
+})
 beforeEach(() => {
   proxyEnabled = true; threadProxyEnabled = true; managedRequirements = null
   terminalCleanup = 'normal'
@@ -106,7 +123,7 @@ beforeEach(() => {
     return child
   })
 })
-afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); vi.restoreAllMocks() })
+afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); vi.restoreAllMocks(); vi.unstubAllEnvs() })
 
 describe('workbench Codex app-server', () => {
   // 3c 第 3 步(2026-10-22,设计稿 §4.1 ①):CLI 升级换了 codex 路径 ⇒ 下一个会话用新的;在跑的那个是自己的子进程,

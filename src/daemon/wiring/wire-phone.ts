@@ -49,6 +49,7 @@ export interface WirePhoneDeps {
   ownerChatId(): string | null
   matterActivity: ReturnType<typeof makeMatterActivity> | null
   companionConverse: CompanionConverse
+  roster?: import('../../ports/roster').RosterReader | null
   mattersService: MattersService | null
   memoryNightly: MemoryNightlyRuntime
   /** CC 开口那道门:工作台 / 终端会话的原生推送先问它(speech/push-gate.ts)。 */
@@ -171,6 +172,7 @@ if (relay) {
   // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。关机时由 phoneLc 退订。
   const topicSeen=makeMatterSeen(db,proposalDeps?.desktop),topicExecutorName=(id:string)=>boot.registry.namesOf(id).name
   const phone = makePhoneEventsWiring({
+    ...(d.roster ? {roster:()=>d.roster!.read('device')} : {}),
     ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
     ...(opts.matters ? { matters: opts.matters } : {}),
     topics: async () => {
@@ -201,6 +203,8 @@ if (relay) {
       // 设备令牌从面板取(梳理第 6 步:不再裸读 settings-devices.json,文件只有 device-store 一个读者)。
       knownDeviceTokens: () => settingsPanel.deviceTokens(),
       activeLinkToken: () => settingsPanel.activeLinkToken(),
+      shareTokens: () => settingsPanel.shareTokens(),
+      shareTokenValid: (token: string) => settingsPanel.shareTokenValid(token),
       onClientActivity: (client: 'app' | 'web', build?: string) => noteRouteUsage(client === 'app' && build === 'selftest-P3d' ? 'selftest' : client, build === 'selftest-P3d' ? 'P3d' : build),
       onDeviceBuild: (token: string, build: string) => settingsPanel.noteDeviceBuild(token, build),
       log: (tag: string, line: string) => log(tag, line),

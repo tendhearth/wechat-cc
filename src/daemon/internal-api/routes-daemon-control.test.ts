@@ -19,6 +19,18 @@ function stateDirWith(config: Record<string, unknown>) {
 // 模型。老路由只认全局默认 provider:在 /api 对话里说「换模型」,改的是
 // claude 的字段,读回还理直气壮地说 ok。
 describe('/v1/model — per-provider', () => {
+  for(const explicit of [true,false])for(const model of ['Kimi-Code','DeepSeek','GLM-FLASH'])it(`accepts digit-free OpenAI gateway model ${model} (explicit=${explicit})`,async()=>{
+    const dir=stateDirWith({provider:explicit?'claude':'openai',openaiModel:'old-1'})
+    try{
+      const routes=routesWith({stateDir:dir})
+      const res=await routes['POST /v1/model']!(new URLSearchParams(),{model,...(explicit?{provider:'openai'}:{})})
+      expect(res.status).toBe(200);expect(loadAgentConfig(dir).openaiModel).toBe(model)
+    }finally{rmSync(dir,{recursive:true,force:true})}
+  })
+  it('still rejects whitespace inside an OpenAI model id',async()=>{
+    const dir=stateDirWith({provider:'openai',openaiModel:'old-1'})
+    try{const routes=routesWith({stateDir:dir});expect((await routes['POST /v1/model']!(new URLSearchParams(),{model:'Kimi Code'})).status).toBe(400);expect(loadAgentConfig(dir).openaiModel).toBe('old-1')}finally{rmSync(dir,{recursive:true,force:true})}
+  })
   it('GET ?provider= reports THAT provider\'s model, not the global default\'s', async () => {
     const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8', openaiModel: 'DeepSeek', agyModel: 'gemini-3.7-flash-high' })
     try {
@@ -276,4 +288,14 @@ describe('POST /v1/cli/upgrade|rollback + /v1/health cli_upgrade(外部 CLI 自�
     const without = await routesWith({ daemonPid: 1, stateDir: '/nonexistent' })['GET /v1/health']!(new URLSearchParams(), undefined)
     expect((without.body as { cli_upgrade?: unknown }).cli_upgrade).toBeUndefined()
   })
+})
+
+it('owner continuity: session UI hides internal companion aliases while preserving the safety lister',async()=>{
+ const sessions=[{alias:'owner-project',providerId:'claude',chatId:'owner',lastUsedAt:1},{alias:'companion:uuid',providerId:'claude',chatId:'owner',lastUsedAt:2}]
+ const routes=routesWith({stateDir:'/tmp/no-real-state',listSessions:()=>sessions,releaseSession:async()=>{}})
+ const listed=await routes['GET /v1/sessions']!(new URLSearchParams(),undefined)
+ expect((listed.body as any).sessions).toEqual([sessions[0]])
+ const released=await routes['POST /v1/sessions/release']!(new URLSearchParams(),{alias:'none',providerId:'claude',chatId:'owner'})
+ expect((released.body as any).sessions).toEqual([sessions[0]])
+ expect(sessions).toHaveLength(2)
 })

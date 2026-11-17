@@ -191,3 +191,11 @@ it('POST /v1/cli/hooks/install|uninstall(接上终端 agent):live 带 body 走�
  expect((await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/cli/hooks/other','POST')))?.status).toBe(405)
  expect(upstream).toHaveBeenCalledTimes(2)
 })
+it('名单条件读取保留 ETag 与空的 304 响应',async()=>{
+ const upstream=vi.fn(async(_url:string,_init?:RequestInit)=>new Response(null,{status:304,headers:{etag:'"one"'}}))
+ const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:false,fetch:upstream})
+ const response=await proxy(req('/v1/roster','GET',{'if-none-match':'"one"'}))
+ expect(response?.status).toBe(304);expect(response?.headers.get('etag')).toBe('"one"')
+ expect(await response!.text()).toBe('')
+ expect(new Headers(upstream.mock.calls[0]?.[1]?.headers).get('if-none-match')).toBe('"one"')
+})

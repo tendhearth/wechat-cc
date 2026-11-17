@@ -9,10 +9,10 @@ async function tList(all,more){
   var r=await /* link-scan: device-only */ api('/v1/memory/topics?view='+(all?'all':'recent')+'&limit='+(all?'20':'6')+(more&&tCursor?'&cursor='+encodeURIComponent(tCursor):'')+(all&&/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value.trim()?'&q='+encodeURIComponent(/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value.trim()):''))
   if(r.status===401){onUnauthorized(identity);return}if(r.status!==200)throw Error('unavailable')
   var b=await r.json();if(!isDevice||identity!==T||listSeq!==tListSeq[lane])return
-  if(all){tAll=more?tAll.concat(b.topics):b.topics;tCursor=b.nextCursor;tRenderAll();tNotice('')}else{tRecent=b.topics;var row=document.getElementById('topic-row');row.hidden=!tRecent.length;row.innerHTML=tRecent.map(function(t){return '<button type="button" data-topic="'+esc(t.id)+'" aria-label="'+esc(tActivityLabel(t))+'" aria-pressed="'+(t.id===tSelected)+'">'+esc(t.title)+tActivityMark(t)+'</button>'}).join('')+(tRecent.length?'<button type="button" data-topic-more>更多话题</button>':'')}
+  if(all){tAll=more?tAll.concat(b.topics):b.topics;tCursor=b.nextCursor;tRenderAll();tNotice('')}else{tRecent=b.topics}
  }catch(e){tNotice('暂时读不到，重试')}
 }
-function tRenderAll(){var query=/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value.toLowerCase();document.getElementById('topic-list').innerHTML=tAll.map(function(t){return '<button type="button" data-topic="'+esc(t.id)+'">'+esc(t.title)+'</button>'}).join('');document.getElementById('topic-list-more').hidden=!tCursor}
+function tRenderAll(){var query=/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value.toLowerCase();document.getElementById('topic-list').innerHTML=tAll.map(function(t){return '<button type="button" data-topic="'+esc(t.id)+'" aria-label="'+esc(tActivityLabel(t))+'">'+esc(t.title)+tActivityMark(t)+'</button>'}).join('');document.getElementById('topic-list-more').hidden=!tCursor}
 async function tOpen(id){
  if(typeof cPushLayer==='function')cPushLayer({kind:'topic',id:id})
  if(!isDevice||!tReady)return
@@ -32,7 +32,7 @@ async function tRead(section,cursor){
   var r=await /* link-scan: device-only */ api('/v1/memory/topics/detail?id='+encodeURIComponent(id)+(section?'&section='+section+'&limit=20&cursor='+encodeURIComponent(cursor):''))
   if(r.status===401){onUnauthorized(identity);return}
   if(id!==tSelected||seq!==tReadSeq||identity!==T||!isDevice||!tReady)return
-  if(r.status===404){tDetail=null;tRecent=[];tAll=[];document.getElementById('topic-body').replaceChildren();document.getElementById('topic-list').replaceChildren();document.getElementById('topic-row').replaceChildren();tClose();tList(false,false);return}if(r.status!==200)throw Error('unavailable')
+  if(r.status===404){tDetail=null;tRecent=[];tAll=[];document.getElementById('topic-body').replaceChildren();document.getElementById('topic-list').replaceChildren();tClose();tList(false,false);return}if(r.status!==200)throw Error('unavailable')
   var b=await r.json();if(id!==tSelected||seq!==tReadSeq||identity!==T||!isDevice||!tReady)return
   if(b.topic.mergedInto&&b.topic.id===b.topic.mergedInto&&b.topic.mergedInto!==id){tSelected=b.topic.mergedInto;tMatterTarget=0;tDetail=null;await tRead();tList(false,false);return}
   if(b.topic.id!==id)throw Error('unavailable')
@@ -93,10 +93,11 @@ async function tWatch(){
  }catch(e){tNotice('尚未同步')}
  finally{tPolling=false;if(isDevice&&tReady)setTimeout(tWatch,document.hidden?15000:3000)}
 }
-document.getElementById('topic-row').addEventListener('click',tClick)
+function tShowAll(){if(!isDevice||!tReady)return;if(typeof cPushLayer==='function')cPushLayer({kind:'topic'});document.body.classList.add('topic-open');document.getElementById('topic-panel').hidden=false;document.getElementById('topic-all').hidden=false;document.getElementById('topic-body').replaceChildren();tList(true,false)}
+document.getElementById('topic-open').addEventListener('click',tShowAll)
 document.getElementById('topic-list').addEventListener('click',tClick)
 document.getElementById('topic-body').addEventListener('click',tClick)
-function tClick(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('button'));if(!b)return;if(b.dataset.topicEdit||b.dataset.topicWrong){tEdit(b.dataset.topicWrong?'wrong':b.dataset.topicEdit,b.dataset.topicWrong);return}if(b.dataset.topic)tOpen(b.dataset.topic);else if(b.hasAttribute('data-topic-more')){if(typeof cPushLayer==='function')cPushLayer({kind:'topic'});document.body.classList.add('topic-open');document.getElementById('topic-panel').hidden=false;document.getElementById('topic-all').hidden=false;document.getElementById('topic-body').replaceChildren();tList(true,false)}else if(b.dataset.mid){openMatter(b.dataset.mid)}else if(b.dataset.topicSection)tRead(b.dataset.topicSection,b.dataset.cursor);else if(b.dataset.message)cLocateMessage(b.dataset.message,b.dataset.at)}
+function tClick(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('button'));if(!b)return;if(b.dataset.topicEdit||b.dataset.topicWrong){tEdit(b.dataset.topicWrong?'wrong':b.dataset.topicEdit,b.dataset.topicWrong);return}if(b.dataset.topic)tOpen(b.dataset.topic);else if(b.hasAttribute('data-topic-more'))tShowAll();else if(b.dataset.mid){openMatter(b.dataset.mid)}else if(b.dataset.topicSection)tRead(b.dataset.topicSection,b.dataset.cursor);else if(b.dataset.message)cLocateMessage(b.dataset.message,b.dataset.at)}
 document.getElementById('topic-close').addEventListener('click',tClose)
 document.getElementById('topic-retry').addEventListener('click',function(){if(tOpenFailed&&tSelected)tOpen(tSelected);else if(tSelected)tRead();else tList(true,false)})
 document.getElementById('topic-query').addEventListener('input',function(){clearTimeout(tSearchTimer);tSearchTimer=setTimeout(function(){tCursor=null;tList(true,false)},250)})
@@ -117,7 +118,7 @@ async function cLocateMessage(id,at){
  var node=document.getElementById('message-'+id);if(node){node.tabIndex=-1;node.scrollIntoView({block:'center'});node.focus({preventScroll:true})}else cNotice('找不到原消息了，请返回对话。')
 }
 
-function tClear(){tOpenFailed=false;tNotice('');if(tUnsubscribe)tUnsubscribe();tUnsubscribe=null;clearTimeout(tSearchTimer);tListSeq.recent++;tListSeq.all++;tReady=false;tSelected=null;tDetail=null;tMatterTarget=0;tRecent=[];tAll=[];tRevision=null;tReadSeq++;document.getElementById('topic-row').replaceChildren();document.getElementById('topic-row').hidden=true;document.getElementById('topic-panel').hidden=true;document.getElementById('topic-body').replaceChildren();document.getElementById('topic-list').replaceChildren();document.body.classList.remove('topic-open')}
+function tClear(){tOpenFailed=false;tNotice('');if(tUnsubscribe)tUnsubscribe();tUnsubscribe=null;clearTimeout(tSearchTimer);tListSeq.recent++;tListSeq.all++;tReady=false;tSelected=null;tDetail=null;tMatterTarget=0;tRecent=[];tAll=[];tRevision=null;tReadSeq++;document.getElementById('topic-panel').hidden=true;document.getElementById('topic-body').replaceChildren();document.getElementById('topic-list').replaceChildren();document.body.classList.remove('topic-open')}
 
 async function tLoadTargets(id){
  var cursor=null,identity=T

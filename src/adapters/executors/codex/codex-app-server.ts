@@ -23,6 +23,7 @@ import { isAuthFail } from '../../../domain/auth-fail'
 import { APP_VERSION } from '../../../lib/app-version'
 import { codexCallTarget, codexTargetFromConfig, codexTargetToCall, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import type { CallTarget } from '../../../lib/call-classifier'
+import {MATTER_TOOL_NAMES,type MatterMcpFactory} from '../matter-mcp'
 
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
@@ -40,6 +41,7 @@ interface Options {
   timeouts?: CodexTimeouts
   /** 测试接缝:起子进程的那一下(缺省 codex-app-server-process.ts)。对话侧的剧本替身从这里接进来。 */
   spawnProcess?: CodexAppServerSpawn
+  matterMcp?: MatterMcpFactory
 }
 export type CodexAppServerOptions = Options
 /**
@@ -1060,13 +1062,16 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           // (主人自己 codex 配置里的 MCP 不认,照旧拒);版本太旧核实不了 MCP 审批 ⇒ MCP 审批照旧拒。
           if (chat.approve && object(chat.config.mcp_servers) && supportsCodexMcpApproval(initialized.userAgent)) for (const name of Object.keys(chat.config.mcp_servers)) enabledMcp.add(name)
           response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
-            ...resumeParams, cwd: project.path, approvalPolicy: chat.approvalPolicy, sandbox: chat.sandbox,
+            ...resumeParams, ...(context.ephemeral?{ephemeral:true}:{}), cwd: project.path, approvalPolicy: chat.approvalPolicy, sandbox: chat.sandbox,
             ...(chat.approve ? { approvalsReviewer: 'user' } : {}),
             ...(context.appendInstructions ? { developerInstructions: context.appendInstructions } : {}),
             config: chat.config, ...(model ? { model } : {}),
           })
         } else {
           const config = workbenchCodexNativeConfig(discovery!.servers, native.config)
+          const matter=options.matterMcp?.(context)
+          context.reportMatterTools?.(!!matter)
+          const mcpServers:Record<string,unknown>={...config.mcp_servers,...(matter?{'wechat-cc-matter':{...matter,enabled:true,enabled_tools:[...MATTER_TOOL_NAMES],default_tools_approval_mode:'approve'}}:{})}
           const catalog = execution && (execution.model || execution.reasoningEffort) ? await readCodexModelCatalog(request, project.path) : undefined
           if (catalog && execution?.model) selectedModel = executionModel(catalog, execution)
           for (const [name, server] of Object.entries(config.mcp_servers)) if (server.enabled) enabledMcp.add(name)
@@ -1076,7 +1081,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
             ...resumeParams,
             cwd: project.path, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
-            developerInstructions: context.appendInstructions ?? '', config: {...config,...taskConfig,features:{...config.features,...taskConfig.features},...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
+            developerInstructions: context.appendInstructions ?? '', config: {...config,...taskConfig,mcp_servers:mcpServers,features:{...config.features,...taskConfig.features},...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
             ...(model ? {model} : {}),
           })
           if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)

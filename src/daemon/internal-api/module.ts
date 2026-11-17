@@ -1,3 +1,12 @@
+import { acpSupportedOn } from '../../adapters/executors/acp/platform'
+import { makeCliSetupReceipt } from '../cli-setup-receipt'
+import { makeCliSetup } from '../cli-setup'
+import { loadAgentConfig } from '../../lib/agent-config'
+import { executorBinary } from '../../lib/executor-detect'
+import { findCodexBinary } from '../../lib/find-codex-binary'
+import { findOnPath, augmentedPathEnv } from '../../lib/util'
+import { resolveClaudeBinary } from '../bootstrap/claude-env'
+import { grokHomeProblem, grokSubprocessEnv } from '../../lib/grok-home'
 /**
  * internal API 接进 daemon 的那一份:bootstrap 要它的 baseUrl / token 去配 MCP,所以在 init 段就监听(桌面这时来问 ⇒ 「还没有」)。
  * 只有模块表 daemon-modules.ts 引这个文件。
@@ -42,6 +51,7 @@ export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecy
       const wired = ctx.late<WiredDeps>('wired')
       const api: InternalApiLifecycle = await registerInternalApi({
         stateDir, daemonPid: process.pid, db, projects: f.projects,
+        tokenRegistry: f.tokenRegistry,
         getChatPrefs: (c) => f.chatPrefs.get(c),
         setChatPref: (c, p) => f.chatPrefs.set(c, p),
         replySinks: f.replySinks,
@@ -86,6 +96,7 @@ export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecy
         turns: f.turnRecordStore,
         // 下面这些读口在 bootstrap 起来之前回「还没有」(null / 空 / no-op),路由据此回 503 —— 跟以前一样。
         listSessions: () => boot()?.sessionManager?.list() ?? null,
+        ownerContext: () => boot()?.contextRotation?.status() ?? [],
         heartbeatFresh: () => isHeartbeatFresh(f.heartbeatPath),
         polling: () => polling()?.current()?.bootSummary() ?? null,
         // 后台在跑的版本(2026-09-16):head 只在「从 git 检出跑」时有值;打包产物里退回编译期钉进去的 BUILD_SHA。
@@ -93,6 +104,16 @@ export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecy
         subsystems: () => f.sup.statuses(),
         // 网络守护此刻的判断(2026-10-02):safe=false ⇒ 所有模型调用暂停。
         guard: () => guardRt.health(),
+        cliSetup: makeCliSetup({ stateDir, platform: process.platform,
+          supported: id => (id !== 'cursor' && id !== 'grok') || acpSupportedOn(),
+          guard: () => guardRt.health(), checkGuard: () => guardRt.gate.check(),
+          binary: id => id === 'claude' ? resolveClaudeBinary() ?? null
+            : id === 'codex' ? findCodexBinary({ pathEnv: augmentedPathEnv() })
+            : executorBinary(id, loadAgentConfig(stateDir), findOnPath),
+          grokLoggedIn: () => !grokHomeProblem(stateDir),
+          prepareGrokHome: () => { grokSubprocessEnv(stateDir, {}) },
+          beginLogin: () => makeCliSetupReceipt(stateDir, process.platform),
+        }),
         // 插件快照(2026-09-30):bootstrap 之前是 null,self deploy 的健康门会等它。
         plugins: () => boot()?.pluginsHealth ?? null,
         providerProbes: () => boot()?.providerProbes?.() ?? [],

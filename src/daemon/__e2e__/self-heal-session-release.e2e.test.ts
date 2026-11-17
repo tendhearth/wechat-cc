@@ -17,10 +17,7 @@ function readBaseUrl(stateDir: string): string {
   return (JSON.parse(readFileSync(join(stateDir, 'internal-api-info.json'), 'utf8')) as { baseUrl: string }).baseUrl
 }
 
-function tokenOf(opts: Record<string, unknown>): string | undefined {
-  const mcp = opts.mcpServers as Record<string, { env?: Record<string, string> }> | undefined
-  return mcp?.wechat?.env?.WECHAT_SESSION_TOKEN
-}
+
 
 interface SessionEntry { alias: string; providerId: string; chatId: string }
 
@@ -37,12 +34,14 @@ async function pollUntil<T>(fn: () => Promise<T | undefined> | (T | undefined), 
 describe('e2e: POST /v1/sessions/release drops a live session (self-heal)', () => {
   it('lists a live session, releases it, and a repeat release is an honest no-op', async () => {
     const spawns: Record<string, unknown>[] = []
+    const auths: import('../../test-support/session-auth-recorder').RecordedSessionAuth[] = []
     const daemon = await startTestDaemon({
       access: { allowFrom: ['*'], admins: ['admin1'] },
       knownUsers: { admin1: 'u1' },
       agentConfig: { provider: 'claude', model: 'claude-opus-4-8' },
       claudeScript: { async onDispatch() { return { toolCalls: [], finalText: 'ok' } } },
       recordClaudeSpawnOptions: o => { spawns.push(o) },
+      recordSessionAuth: auth => { auths.push(auth) },
     })
     try {
       const baseUrl = readBaseUrl(daemon.stateDir)
@@ -50,7 +49,7 @@ describe('e2e: POST /v1/sessions/release drops a live session (self-heal)', () =
       // Drive the admin chat → a session spawns; recover its admin-tier token.
       daemon.sendText('admin1', 'hi')
       const spawn = await pollUntil(() => (spawns.length >= 1 ? spawns[0] : undefined))
-      const adminToken = tokenOf(spawn!)
+      const adminToken = auths.find(a => a.sessionKey.endsWith('/admin1'))?.token
       expect(adminToken, 'spawn must carry an admin session token').toBeTruthy()
       const authed = (init: RequestInit = {}) => ({
         ...init,

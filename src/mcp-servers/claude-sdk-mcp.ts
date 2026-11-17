@@ -1,0 +1,33 @@
+import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpStdioSpec } from '../adapters/executors/mcp-stdio-spec'
+import { createInternalApiClient } from './wechat/client'
+import { createWechatMcpServer } from './wechat/server'
+import { createDelegateMcpServer } from './delegate/server'
+import { registerMatterTools } from './matter/tools'
+
+/** SDK serializes stdio specs into argv. Core credentials stay in parent closures. */
+export async function claudeSdkMcp(name: 'wechat' | 'delegate' | 'wechat-cc-matter', spec: McpStdioSpec, sessionEnv: Record<string, string> = {}, signal?: AbortSignal): Promise<McpSdkServerConfigWithInstance> {
+  const logErr = (line: string) => { process.stderr.write(`[${name === 'wechat-cc-matter' ? name : `${name}-mcp`}] ${line}\n`) }
+  const env = { ...spec.env, ...sessionEnv }
+  const lifetime = new AbortController()
+  const cancel = () => lifetime.abort()
+  if (signal?.aborted) cancel()
+  else signal?.addEventListener('abort', cancel, { once: true })
+  lifetime.signal.addEventListener('abort', () => signal?.removeEventListener('abort', cancel), { once: true })
+  try {
+    const client = createInternalApiClient({
+      baseUrl: env.WECHAT_INTERNAL_API!, tokenFilePath: env.WECHAT_INTERNAL_TOKEN_FILE ?? '',
+      sessionToken: env.WECHAT_SESSION_TOKEN ?? '', signal: lifetime.signal, logger: logErr,
+    })
+    const instance = name === 'wechat'
+      ? await createWechatMcpServer(client, { tier: env.WECHAT_SESSION_TIER, participantTag: env.WECHAT_PARTICIPANT_TAG, logger: logErr, parallelSocialProbe: true })
+      : name === 'delegate'
+        ? createDelegateMcpServer(client, env.WECHAT_DELEGATE_PEER!, logErr)
+        : new McpServer({ name, version: '0.1.0' })
+    if (name === 'wechat-cc-matter') registerMatterTools(instance, client)
+    const onclose = instance.server.onclose
+    instance.server.onclose = () => { cancel(); onclose?.() }
+    return { type: 'sdk', name, instance }
+  } catch (error) { cancel(); throw error }
+}

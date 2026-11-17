@@ -20,7 +20,7 @@ describe('parseSample', () => {
     expect(parseSample({ id: 'a', kind: 'reply', input: { text: '早' } }, 'a-copy')).toEqual({ ok: false, error: 'id 要和文件名一致(a-copy)' })
   })
   it('kind 不认得、input 不对 ⇒ 拒并说明', () => {
-    expect(parseSample({ id: 'a', kind: 'chat', input: {} }, 'a')).toEqual({ ok: false, error: 'kind 只能是 reply / brief / reference / topic / topic-recall' })
+    expect(parseSample({ id: 'a', kind: 'chat', input: {} }, 'a')).toEqual({ ok: false, error: 'kind 只能是 reply / brief / reference / topic / topic-recall / projects-activity' })
     expect(parseSample({ id: 'a', kind: 'reply', input: {} }, 'a')).toEqual({ ok: false, error: 'reply 的 input.text 要是非空字符串' })
     expect(parseSample({ id: 'a', kind: 'reply', input: { text: '早', tier: 'guest' } }, 'a')).toEqual({ ok: false, error: 'reply 的 input.tier 只能是 admin / trusted' })
     expect(parseSample({ id: 'a', kind: 'brief', input: {} }, 'a')).toEqual({ ok: false, error: 'brief 的 input.material 要是对象' })

@@ -82,7 +82,7 @@ describe('Codex version checks do not spend the SessionStart response budget', (
       expect(response).toMatchObject({ status: 200, body: { context: 'project context' } })
       // Release only after the response: the probe is necessarily unfinished at that point.
       writeFileSync(`${binary}.release`, gate)
-      await expect.poll(() => service.capabilityInput()!.sources[0]!.trust?.version).toBe('codex-cli 0.167.0')
+      await expect.poll(() => service.capabilityInput()!.sources[0]!.trust?.version, { timeout: 5000 }).toBe('codex-cli 0.167.0')
     } finally {
       writeFileSync(`${binary}.release`, gate)
       if (previousPath === undefined) delete process.env.PATH

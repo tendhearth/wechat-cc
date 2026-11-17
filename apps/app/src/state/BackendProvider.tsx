@@ -11,12 +11,12 @@ import { makeStore, type Store } from './store'
 import { backendFor, watchConnection, watchLaunch } from './wiring'
 import { matterInputState } from './matter-inputs'
 
-type Ctx = { backend: Backend; store: Store; resetDemo(): void; boundPairing: PairingRecord | null; boundEpoch: number }
+type Ctx = { inputScope: string | null; backend: Backend; store: Store; resetDemo(): void; boundPairing: PairingRecord | null; boundEpoch: number }
 const BackendCtx = createContext<Ctx | null>(null)
 
 /** Offline review only: no pairing scope changes, input journal, storage, or live wiring. */
 export function OfflineReviewProvider({ children, backend, lang }: { children: ReactNode; backend: Backend; lang: Lang }) {
-  const value = useMemo<Ctx>(() => ({ backend, store: makeStore(backend, { lang }), boundPairing: null, boundEpoch: 0, resetDemo() {} }), [backend, lang])
+  const value = useMemo<Ctx>(() => ({ inputScope: null, backend, store: makeStore(backend, { lang }), boundPairing: null, boundEpoch: 0, resetDemo() {} }), [backend, lang])
   useEffect(() => () => backend.dispose(), [backend])
   return <BackendCtx.Provider value={value}>{children}</BackendCtx.Provider>
 }
@@ -35,7 +35,7 @@ export function BackendProvider({ children, backend: injected, lang, pairing, in
     // 换配对 ⇒ 草稿 / 本机回执 / 已回复集合全清(复评:A 电脑的那句不能带到 B 上重试)。同步做,新后端的第一帧就干净。
     setPairingScope(inputScope === undefined ? pairingScopeKey(pairing) : inputScope ?? 'none')
     const { backend: b, demo } = backendFor(pairing, { lang, build: appBuild.value, open: rnSocket, log: devLog, ...(injected ? { injected } : {}) })
-    return { backend: b, store: makeStore(b, { lang }), boundPairing: pairing, boundEpoch: epoch, resetDemo: () => { clearReferences(b); clearDrafts(); void matterInputState.clear().catch(() => {}); demo?.reset() } }
+    return { inputScope: inputScope === undefined ? pairingScopeKey(pairing) : inputScope, backend: b, store: makeStore(b, { lang }), boundPairing: pairing, boundEpoch: epoch, resetDemo: () => { clearReferences(b); clearDrafts(); void matterInputState.clear().catch(() => {}); demo?.reset() } }
     // lang 只用于初次创建;之后走 store.setLang
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [injected, pairing, epoch])

@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { QUIET_MS } from '../companion-preferences.js'
-import { createNowHeroFacts, mountNowHero as mountHero } from './now-hero.js'
+import { createNowHeroFacts, createRosterGlances, mountNowHero as mountHero } from './now-hero.js'
 
 const heroes: ReturnType<typeof mountHero>[] = []
 function mountNowHero(opts: Parameters<typeof mountHero>[0]) { const hero = mountHero(opts); heroes.push(hero); return hero }
@@ -115,7 +115,8 @@ describe('home hero uses the real pet lifecycle', () => {
     const rect = (x: number, width = 40) => ({ left: x, right: x + width, top: 0, bottom: 40, width, height: 40 }) as DOMRect
     row.getBoundingClientRect = () => rect(0, 400); button.getBoundingClientRect = () => rect(100)
     const add = (id: string, x: number) => { const el = document.createElement('button'); el.dataset.topicId = id; el.getBoundingClientRect = () => rect(x); row.append(el); return el }
-    const hero = mountNowHero({ root, button, petOptions: { fetchImpl: fetchManifest as any, preload: () => {} } })
+    // 空闲眨眼在 6–12s 之间随机触发;正好落在下面 12.5s 那一刻时 CC 在眨眼、按规则不转头 ⇒ 用 Math.random 会偶发红(CI macOS 11-16 连红三次)。固定随机数。
+    const hero = mountNowHero({ root, button, petOptions: { fetchImpl: fetchManifest as any, preload: () => {}, random: () => 0.5 } })
     hero.setPresence(connected as any); await hero.ready
     const src = () => root.querySelector<HTMLImageElement>('.now-pet-sprite')!.src
     hero.setTopics(['old']); add('left', 10); hero.setTopics(['old', 'left'])
@@ -374,4 +375,28 @@ describe('home hero uses the real pet lifecycle', () => {
     expect(button.querySelectorAll('img')).toHaveLength(2)
     expect(vi.getTimerCount()).toBe(0)
   })
+})
+
+it('名单初始快照不表演，同一件 waiting/back 一天只看一次',()=>{
+ let day=0
+ const glance=createRosterGlances(()=>new Date(2026,10,17+day).getTime())
+ expect(glance([{key:'a',group:'waiting'}])).toBe(false)
+ expect(glance([{key:'a',group:'working'}])).toBe(false)
+ expect(glance([{key:'a',group:'waiting'}])).toBe(true)
+ expect(glance([{key:'a',group:'working'}])).toBe(false)
+ expect(glance([{key:'a',group:'back'}])).toBe(false)
+ day++
+ expect(glance([{key:'a',group:'working'}])).toBe(false)
+ expect(glance([{key:'a',group:'back'}])).toBe(true)
+})
+it('名单变化看右边 1.2 秒后恢复，销毁取消动作',async()=>{
+ vi.useFakeTimers()
+ document.body.innerHTML='<button id="cc"></button>'
+ const button=document.getElementById('cc')!
+ const hero=mountNowHero({root:button,button,petOptions:{fetchImpl:(async()=>new Response('',{status:503})) as any,preload:()=>{}} })
+ hero.setPresence(connected as any)
+ hero.setRoster([{key:'glance',group:'working'}]);hero.setRoster([{key:'glance',group:'waiting'}])
+ expect(button.querySelector('.roster-glance')?.getAttribute('src')).toContain('/attention/lit/right/000.png')
+ await vi.advanceTimersByTimeAsync(1199);expect(button.querySelector('.roster-glance')).not.toBeNull()
+ await vi.advanceTimersByTimeAsync(1);expect(button.querySelector('.roster-glance')).toBeNull()
 })

@@ -222,6 +222,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
         if (off) later(off)
       }
     },
+    async roster(_signal) { return api.roster.get() },
     async topics(p) { return api.topics.list({ query: p }) },
     async topicDetail(p) { return api.topics.detail({ query: p }) },
     async topicEdit(action, input) { await api.topics[action]({ body: input as never }) },
@@ -394,6 +395,11 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async connections() {
       return strip(await api.connections.get())
     },
+    checkup:()=>api.checkup.get(),
+    checkupEstimate:()=>api.checkup.estimate({body:{full:false}}),
+    checkupRun:expectedTargetKey=>api.checkup.run({body:{full:false,expectedTargetKey},retry:false}),
+    checkupCancel:()=>api.checkup.cancel({body:{},retry:false}),
+    checkupSettings:periodicProbe=>api.checkup.settings({body:{periodicProbe},retry:false}),
     async sessions(provider, cursor, q) {
       if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
       const r = await api.sessions.list({ query: { provider, cursor: cursor || undefined, q: q ? q.trim() : undefined } })

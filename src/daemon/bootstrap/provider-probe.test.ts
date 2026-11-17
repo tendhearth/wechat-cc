@@ -8,6 +8,12 @@ import { probeVersion, createProbeRetrier, describeProbeFailure, type VersionPro
 const handle = (h: Partial<VersionProbeHandle> & { exited: Promise<number> }): VersionProbeHandle => ({ kill: vi.fn(), ...h })
 
 describe('probeVersion —— 失败带具体原因', () => {
+  it('passes the exact caller-owned HOME environment to its fake subprocess', async () => {
+    const env = { HOME: '/cc-owned/grok/home', PATH: '/usr/bin' }
+    const spawnFn = vi.fn(() => handle({ exited: Promise.resolve(0) }))
+    expect((await probeVersion('/fake/grok', { env, spawnFn })).ok).toBe(true)
+    expect(spawnFn).toHaveBeenCalledWith('/fake/grok', ['--version'], env)
+  })
   it('退出 0 ⇒ ok,带 stdout 第一行非空行', async () => {
     const r = await probeVersion('/x/agy', {
       spawnFn: () => handle({ exited: Promise.resolve(0), output: async () => ({ stdout: '\n1.2.16\nmore\n', stderr: '' }) }),

@@ -36,6 +36,8 @@ export const SPEECH_KINDS = {
   // 终端会话的汇总(做完了 / 等你批准,带 y/n 码):hub 自己有压一段、撤回、桌面通知和 App 推送这一套;
   // 汇总里可能带会过期的码 ⇒ 标 expiring,不进待说队列(features/terminal/wire.ts)。
   cli_session: { origin: 'report', label: '终端会话', expiring: true },
+  // 分享出去的一件事里,请来的人说话了 / 提了个想法(domain/matters/share-reply.ts):别人说给主人的,推后进待说队列补说。
+  share_talk: { origin: 'report', label: '分享的事里有人说话' },
   rules_notice: { origin: 'report', label: '放行规则出了问题' },
   restart_notice: { origin: 'report', label: '重启了' },
   // 重启前挂着的拍板卡作废了(daemon/pending-cards.ts):这一句本身不带码,推后了照样补说

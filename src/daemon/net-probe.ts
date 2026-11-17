@@ -31,6 +31,7 @@ const PROVIDER_ENDPOINTS: Record<string, ProbeTarget> = {
   agy: { id: 'google_agy', label: 'Google(Gemini 账号连接)', url: url('agy') },
   gemini: { id: 'google_ai', label: 'Google AI(Gemini)', url: url('gemini') },
   cursor: { id: 'cursor', label: 'Cursor', url: url('cursor') },
+  grok: { id: 'grok', label: 'Grok', url: url('grok') },
 }
 
 /** base_url → 干净的 origin(scheme://host[:port]),给 HEAD 探测用;非法则 null。 */

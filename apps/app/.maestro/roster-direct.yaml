@@ -1,0 +1,53 @@
+# 只用离线演示数据;在 mini 上跑。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: roster-strip
+    timeout: 10000
+- tapOn:
+    id: roster-avatar-1
+- extendedWaitUntil:
+    visible:
+      id: direct-title
+    timeout: 10000
+- assertVisible: '在跟 Codex 说.*|Talking to Codex.*'
+- tapOn:
+    id: direct-input
+- inputText: 'Please keep the existing draft and continue.'
+- tapOn:
+    id: direct-send
+- hideKeyboard
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: roster-strip
+    timeout: 10000
+# 推送深链打开直通页,返回落回 CC 对话。演示模式被杀掉后不保留(冷启动回欢迎页是演示的既有行为),
+# 所以这里重开 App、先进演示再点深链;真冷启动的返回栈由 direct.test.ts 的单测覆盖。
+- stopApp
+- launchApp
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: roster-strip
+    timeout: 10000
+- openLink: 'tendhearth://push-open?kind=task_done&taskId=e5f6a7b8'
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: direct-header
+    timeout: 15000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: roster-strip
+    timeout: 10000
+- assertVisible:
+    id: chat-input

@@ -1,3 +1,4 @@
+import {ENTRY_REQUEST_ID_PATTERN} from '../../../packages/protocol/src/entry-request-id'
 import {createHash} from 'node:crypto'
 import { parseUntil, type UntilSpec } from './until'
 import type {WorkbenchExecutorCapabilities} from '../../domain/workbench/executor-capabilities'
@@ -61,7 +62,7 @@ export type EntryOptions = {
 }
 
 // Match the existing attachment UUID contract; new clients generate v4 IDs.
-const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
+const UUID = ENTRY_REQUEST_ID_PATTERN
 const ENTRY_KEYS = ['requestId', 'text', 'title', 'target', 'providerId', 'execution', 'draftId', 'attachmentIds', 'context', 'until']
 const EXECUTION_KEYS = ['defaults', 'model', 'reasoningEffort'] as const
 
