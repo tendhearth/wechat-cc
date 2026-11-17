@@ -17,6 +17,11 @@
 .converse-msg { display: flex; align-items: flex-end; gap: 6px; }
 .converse-msg-user { justify-content: flex-end; }
 .converse-msg-cc { justify-content: flex-start; }
+.converse-reply-parts { display:flex; flex-direction:column; gap:var(--th-space-xl); min-width:0; }
+.converse-msg.has-reply-avatar { align-items:flex-start; }
+.converse-msg > .th-agents { margin-top:4px; }
+.converse-msg.has-reply-avatar > .converse-cc-body { flex:1; }
+.converse-msg.has-reply-avatar > .converse-bubble { flex:1; }
 .converse-bubble { min-width:0; max-width: 85%; padding: 4px 0; font-size: var(--th-message-user-role); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
 .converse-msg-cc .converse-bubble.cc-readable-markdown { max-width:min(70ch,100%); }
 .converse-msg-user .converse-bubble.cc-user-bubble { max-width:min(70ch,85%); white-space:normal; }

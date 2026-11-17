@@ -103,6 +103,10 @@ describe('换成类型化客户端的,一条手写路径都没有(F3 / F5)', () 
 })
 
 describe('桌面拼请求的小实现(daemon-client.js)和协议包的 callRequest 逐字一样(F5)', () => {
+  it('桌面可选回复名称查询由生成器提供已有路由键', () => {
+    expect(V1.matter.ownerChatModel).toBe('GET /v1/matter/owner-chat/model')
+    expect(v1Request(V1.matter.ownerChatModel)).toEqual({key:'GET /v1/matter/owner-chat/model',method:'GET',path:'/v1/matter/owner-chat/model'})
+  })
   const specs = Object.entries(DESKTOP_CALLS).flatMap(([ns, ms]) => Object.entries(ms).map(([m, s]) => ({ ns, m, key: (s as { key: string }).key })))
   const SAMPLES: Array<{ query?: Record<string, string | number | undefined> | URLSearchParams; body?: unknown; suffix?: string } | undefined> = [
     undefined,

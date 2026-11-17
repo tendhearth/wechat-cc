@@ -1,8 +1,8 @@
 // @ts-check
 // Keep already-read messages in the DOM: polling must not erase selection,
 // keyboard focus, disclosure state or horizontal code scrolling.
-/** @typedef {{id:number,role:'user'|'cc'|'error'|'system',text:string,pending?:boolean}} Message */
-/** @typedef {{message:Message,node:Element}} Row */
+/** @typedef {import('./converse.js').ConverseMsg} Message */
+/** @typedef {{message:Message,signature:string,node:Element}} Row */
 /** @typedef {{rows:Map<number,Row>,unread:boolean,following:boolean,lastTop:number}} ReadingState */
 /** @type {WeakMap<HTMLElement,ReadingState>} */
 const states = new WeakMap()
@@ -60,14 +60,15 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
   let cursor=scroll.firstElementChild,newReply=false
   for(const message of messages){
     const previous=state.rows.get(message.id)
+    const signature=JSON.stringify([message.role,message.text,message.pending,message.speaker,message.provider,message.replyParts,message.attachments,message.attachmentSourceIndexes,message.narration,message.projection])
     let row=previous
-    if(!previous || previous.message.role!==message.role || previous.message.text!==message.text || previous.message.pending!==message.pending){
+    if(!previous || previous.signature!==signature){
       const template=scroll.ownerDocument.createElement('template')
       template.innerHTML=render(message)
       const node=template.content.firstElementChild
       if(!node)continue
       node.setAttribute('data-converse-message',String(message.id))
-      row={message:{...message},node}
+      row={message:{...message},signature,node}
     }
     if(!row)continue
     if(row.node!==cursor)scroll.insertBefore(row.node,cursor)

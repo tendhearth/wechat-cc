@@ -67,6 +67,10 @@ export function renderDaemonCalls(): string {
     table[ns] = {}
     for (const [m, spec] of Object.entries(methods as Record<string, { key: string }>)) table[ns]![m] = spec.key
   }
+  // 桌面回复名称的可选查询。协议包保持不动；这里只生成已有路由的调用键，
+  // 不扩大宿主/令牌白名单。旧宿主或未装配此接口的 daemon 仍按 provider id 降级。
+  const ownerChatModel: keyof typeof ROUTES = 'GET /v1/matter/owner-chat/model'
+  table.matter!.ownerChatModel = ownerChatModel
   const keys = [...new Set(Object.values(table).flatMap(o => Object.values(o)))].sort()
   const ownerPaths = Object.entries(ROUTES).filter(([, r]) => r.desktop?.ownerWorkspace).map(([k]) => k.slice(k.indexOf(' ') + 1)).sort()
   return [

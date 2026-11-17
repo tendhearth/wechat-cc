@@ -300,4 +300,58 @@ test('PWA shows the answering executor per reply and keeps CC replies unmarked',
   const out = process.env.WECHAT_CC_DESIGN_SHOTS
   if (out) await page.screenshot({ path: join(out, 'pwa-reply-avatars.png') })
   expect(errors).toEqual([])
+
+test('reply attribution keeps one named shared avatar per reply across wide and narrow layouts',async({page,shimUrl},info)=>{
+  let currentProvider='claude'
+  const message=(id:string,text:string,meta:Record<string,unknown>={})=>({messageId:id,kind:'text',text,createdAt:1,source:'desktop',...meta})
+  const messages=[
+    message('claude','Claude 直接答',{speaker:'agent',provider:'claude'}),
+    message('codex','Codex 接着答',{speaker:'agent',provider:'codex'}),
+    message('gateway','网关直接答',{speaker:'agent',provider:'openai',model:'claude-test'}),
+    message('cc','CC 自己组织的回复',{speaker:'cc',provider:'claude'}),
+    message('notice','这一轮的通知',{speaker:'notice',provider:'codex'}),
+    message('old','没有来源的旧消息'),
+  ]
+  await page.route('**/v1/matter/owner-chat/window**',r=>r.fulfill({json:{messages,earlier:null,later:null,anchor:null}}))
+  await page.route('**/v1/matter/owner-chat/model',r=>r.fulfill({json:{ok:true,provider:currentProvider,model:null,providers:[{id:'claude',name:'Claude'},{id:'codex',name:'Codex'},{id:'openai',name:'我的网关'}]}}))
+  await page.route('**/v1/workbench/task?*',r=>r.fulfill({json:{task,events:messages.map((m,i)=>({...m,id:i+1,taskId:task.id})),artifacts:[],permissions:[],questions:[]}}))
+  const row=(text:string)=>page.locator('#converse-scroll .converse-msg').filter({hasText:text})
+  const checkSources=async()=>{
+    for(const [text,id,name] of [['Claude 直接答','claude','Claude'],['Codex 接着答','codex','Codex'],['网关直接答','service','我的网关']]){
+      const reply=row(text!),avatar=reply.locator('.th-agents[role="img"]')
+      await expect(reply.locator('.th-agent')).toHaveCount(1)
+      await expect(avatar).toHaveAttribute('aria-label',name!);await expect(avatar).toHaveAttribute('title',name!)
+      await expect(avatar.locator('.th-agent')).toHaveAttribute('data-agent',id!)
+      await expect(reply).toHaveAttribute('aria-label',name!)
+    }
+    await expect(row('网关直接答').locator('.th-agent svg')).toHaveCount(0)
+    for(const text of ['CC 自己组织的回复','这一轮的通知','没有来源的旧消息'])await expect(row(text).locator('.th-agent')).toHaveCount(0)
+    await expect(row('CC 自己组织的回复')).toHaveAttribute('aria-label','CC')
+  }
+  for(const width of [1280,390]){
+    await page.setViewportSize({width,height:844});await page.goto(shimUrl)
+    await checkSources()
+    expect(await page.locator('#converse-scroll').evaluate(root=>{
+      const bounds=root.getBoundingClientRect()
+      return [...root.querySelectorAll('.converse-msg')].every(row=>{const box=row.getBoundingClientRect();return box.left>=bounds.left-1&&box.right<=bounds.right+1&&row.scrollWidth<=row.clientWidth+1})
+    })).toBe(true)
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+    await page.screenshot({path:join(info.outputDir,`reply-avatars-${width}.png`)})
+    await page.locator('#now-waiting-title').click()
+    const reference=page.locator('[data-matter-id="aabbccdd"]')
+    await reference.locator('summary').click()
+    await reference.getByRole('button',{name:'看过程、成果与回应',exact:true}).click()
+    const matter=page.locator('.workbench-pane')
+    await expect(matter).toBeVisible()
+    for(const [text,id,name] of [['Claude 直接答','claude','Claude'],['Codex 接着答','codex','Codex'],['网关直接答','service','我的网关']]){
+      const reply=matter.locator('.wb-message').filter({hasText:text!})
+      await expect(reply.locator('.th-agent')).toHaveCount(1)
+      await expect(reply.locator('.th-agents')).toHaveAttribute('aria-label',name!)
+      await expect(reply.locator('.th-agent')).toHaveAttribute('data-agent',id!)
+    }
+    expect(await matter.locator('.wb-dialogue').evaluate(root=>[...root.querySelectorAll('.wb-message')].every(row=>row.scrollWidth<=row.clientWidth+1))).toBe(true)
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+    await page.locator('#workbench-home').click()
+  }
+  currentProvider='codex';await page.reload();await checkSources()
 })

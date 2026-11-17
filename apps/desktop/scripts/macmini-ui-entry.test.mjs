@@ -134,6 +134,12 @@ test('mobile budget snapshots accept only the assigned branch and keep App snaps
  for(const ref of ['mobile-budget-other','mobile-budget;echo x','../mobile-budget'])expect(supportsBrowserSnapshot(ref)).toBe(false)
 })
 
+test('desktop reply avatar snapshots accept only the assigned branch and keep App snapshots separate',()=>{
+ expect(supportsBrowserSnapshot('who-answers-desktop-avatar')).toBe(true)
+ expect(supportsAppSnapshot('who-answers-desktop-avatar')).toBe(false)
+ for(const ref of ['who-answers-desktop-avatar-other','who-answers-desktop-avatar;echo x','../who-answers-desktop-avatar'])expect(supportsBrowserSnapshot(ref)).toBe(false)
+})
+
 
 test('who-answers web avatar snapshots accept only the assigned branch',()=>{
  expect(supportsBrowserSnapshot('who-answers-web-avatar')).toBe(true)

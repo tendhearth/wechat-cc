@@ -940,8 +940,8 @@ fn reply_file_path(token: &str) -> Option<PathBuf> {
     guard.1.iter().find(|(t, _)| t == token).map(|(_, p)| p.clone())
 }
 
-/// Daemon converse body → what the webview gets: `{ reply, attachments, narration }`
-/// with every file attachment's `path` replaced by a `ref` token.
+/// Daemon converse body → webview reply, with file paths replaced by ref tokens.
+/// Attribution is optional and belongs to the actual reply, never a host default.
 fn webview_converse_reply(body: &Value) -> Value {
     let reply = body.get("reply").and_then(|v| v.as_str()).unwrap_or_default();
     let narration: Vec<Value> = body
@@ -967,7 +967,13 @@ fn webview_converse_reply(body: &Value) -> Value {
                 .collect()
         })
         .unwrap_or_default();
-    serde_json::json!({ "reply": reply, "attachments": attachments, "narration": narration })
+    let mut out = serde_json::json!({ "reply": reply, "attachments": attachments, "narration": narration });
+    for key in ["speaker", "provider", "replyParts", "model", "agentId"] {
+        if let Some(value) = body.get(key) {
+            out[key] = value.clone();
+        }
+    }
+    out
 }
 
 /// Reveal a file CC attached to a reply in Finder. Only a token minted by
@@ -1874,6 +1880,7 @@ pub fn run() {
 #[cfg(test)]
 mod converse_reply_tests {
     use super::{reply_file_path, webview_converse_reply};
+    use serde_json::Value;
 
     #[test]
     fn file_paths_never_reach_the_webview_and_map_back_through_tokens() {
@@ -1899,6 +1906,39 @@ mod converse_reply_tests {
     fn old_daemon_body_without_extras_still_yields_the_reply_object() {
         let out = webview_converse_reply(&serde_json::json!({ "ok": true, "reply": "hi" }));
         assert_eq!(out, serde_json::json!({ "reply": "hi", "attachments": [], "narration": [] }));
+    }
+
+    #[test]
+    fn reply_attribution_and_mixed_parts_pass_through_unchanged() {
+        let body = serde_json::json!({
+            "reply": "两家回复", "speaker": "agent", "provider": "codex",
+            "model": "actual-model", "agentId": "agent-1",
+            "replyParts": [
+                { "speaker": "agent", "provider": "claude", "text": "第一家", "attachmentIndexes": [0], "narrationIndexes": [1] },
+                { "speaker": "notice", "text": "通知" }
+            ]
+        });
+        let out = webview_converse_reply(&body);
+        for key in ["speaker", "provider", "replyParts", "model", "agentId"] {
+            assert_eq!(out.get(key), body.get(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn optional_attribution_fields_are_independent_and_never_defaulted() {
+        let keys = ["speaker", "provider", "replyParts", "model", "agentId"];
+        for present in keys {
+            // Even an explicit null is a present daemon value, not a missing field.
+            for value in [Value::Null, serde_json::json!({"future": [1, "raw"]})] {
+                let mut body = serde_json::json!({"reply": "hi"});
+                body[present] = value.clone();
+                let out = webview_converse_reply(&body);
+                assert_eq!(out.get(present), Some(&value), "{present}");
+                for absent in keys.into_iter().filter(|key| *key != present) {
+                    assert!(out.get(absent).is_none(), "unexpected default: {absent}");
+                }
+            }
+        }
     }
 }
 
