@@ -68,7 +68,7 @@ RosterItem {
   - `terminal` 事(终端会话已经是一件事):进,`kind: "matter"`;直通时说话走 `cli/session-say`,详情开终端详情。
   - 挂进别的事的终端会话(v116 `TerminalParticipation`):**不单列**,算进那件事的 `agents`。
   - 既没有 matter、也没挂进事的 CLI 会话(`/v1/cli/sessions` 里 `matter_id` 为空):`kind: "terminal"`。结束了的不列(沿用用词表)。
-  - `act`(CC 自己做的事):**只有等你时进**。11-08 数据显示 CC 自己交办的全是自检,常驻会把名单刷满。
+  - `act`(CC 自己做的事):**不进**。主人 10-31 定「CC 自己做的事不和交办混排」(`apps/app/src/view/home.ts` 现行规则);何况 11-08 数据里 CC 交办的全是自检,放进来会把名单刷满。
   - `chat`(主人对话本身):不进。
 - **排序**:等你在前(按等待开始时间),在做其次(按更新时间),带回来的最后(只收 24 小时内,没看过的优先)。
 - **`unseen` 用现有数据**:任何一端记过看过(`matter_bindings.last_seen_at`,不分端)就算看过;在桌面右栏打开一件事也记看过(走 S3c 已有的记看过口)。终端会话没有「看过」,`unseen` 恒为 false。所以**不加迁移**。
