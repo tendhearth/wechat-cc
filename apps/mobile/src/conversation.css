@@ -81,7 +81,7 @@ body.conversation-ready #chat-messages { flex:1 }
 
 body.conversation-ready #m-title { font-size:17px; color:var(--ink) }
 body.conversation-ready #m-agents { --th-agent-size:36px }
-#m-agents small { display:block; font-size:12px; color:var(--soft) }
+#m-sub { display:block; font-size:12px; color:var(--soft) } #m-sub[hidden] { display:none }
 #m-say { position:sticky; bottom:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px; border:1px solid var(--accent); border-radius:var(--r-m); padding:10px; background:var(--paper) }
 #m-say-avatar .th-agents { --th-agent-size:24px }
 #m-say-text { flex:1; min-width:0; font:inherit; border:0; resize:vertical; background:var(--paper); color:var(--ink) }
@@ -90,7 +90,9 @@ body.conversation-ready #m-agents { --th-agent-size:36px }
 
 body.conversation-ready #m-agents .th-agents { --th-agent-size:36px }
 
-body.conversation-ready #m-heading { position:relative; min-height:40px; padding-left:48px; margin:16px 0 }
-body.conversation-ready #m-title { margin:0 }
-body.conversation-ready #m-agents .th-agents { position:absolute; left:0; top:0 }
+/* 直通页头:头像占左列(跨两行),右列是事名和「项目 · 第 i 棒」。不用绝对定位,#m-agents 自己有尺寸(读屏与可见性都靠它)。 */
+body.conversation-ready #m-heading { display:grid; grid-template-columns:36px minmax(0,1fr); grid-template-areas:"av title" "av sub"; column-gap:12px; align-items:center; margin:16px 0 }
+body.conversation-ready #m-title { grid-area:title; margin:0 }
+body.conversation-ready #m-agents { grid-area:av; margin:0 }
+body.conversation-ready #m-sub { grid-area:sub }
 #m-project { padding:0; border:0; background:none; color:var(--soft); font:inherit }

@@ -17,7 +17,7 @@ import { assembleMobilePage } from '../../../apps/mobile/assemble'
 import { readMobileSource } from '../../../apps/mobile/sources'
 import { HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, STATUS_WORDS } from '../../../packages/protocol/src/status-table'
 
-const IDS = ['refresh', 'm-home', 'm-list', 'm-all', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-status', 'm-conn']
+const IDS = ['refresh', 'm-home', 'm-list', 'm-all', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-sub', 'm-notice', 'm-status', 'm-conn']
 
 type Handler = (ev: unknown) => void
 interface FakeEl {

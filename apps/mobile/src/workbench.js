@@ -226,7 +226,7 @@ function openMatter(id) {
   if(typeof cPushLayer==='function')cPushLayer({kind:'matter',id:id})
   if(typeof cResetResponse==='function'&&id!==mCurrent)cResetResponse()
   mDetailFresh=false
-  if(mCurrent!==id){mRenderedStatus=null;mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
+  if(mCurrent!==id){var oldSub=document.getElementById('m-sub');if(oldSub){oldSub.innerHTML='';oldSub.hidden=true}mRenderedStatus=null;mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
   if(typeof mSaveDirect==='function')mSaveDirect()
   if(mRosterTarget&&id!==mRosterTarget.id&&id!=='terminal:'+mRosterTarget.id)mRosterTarget=null
   if(typeof rItems!=='undefined')mRosterTarget=rItems.find(function(i){return i.id===id||'terminal:'+i.id===id})||mRosterTarget
@@ -266,7 +266,7 @@ function mDirectRender(d){
  if(d.matter.kind==='terminal'&&!mRosterTarget&&d.sessions&&d.sessions[0])mRosterTarget={agents:[],terminal:{sessionId:d.sessions[0].sessionId}}
  var item=mRosterTarget,agent=item&&item.agents.find(function(a){return a.current})||item&&item.agents[0],id=agent?agent.id:d.task&&d.task.providerId||(d.matter.agents||[])[0]||'agent',name=agent&&agent.name||mNameOf(d.matter.agentNames)(id),avatar=mAgents.agentAvatarsHtml([id],{nameOf:function(){return name}})
  document.getElementById('m-back').textContent='‹ CC';document.getElementById('m-title').textContent=ccPlain(d.matter.title)
- document.getElementById('m-agents').hidden=false;document.getElementById('m-agents').setAttribute('aria-label','在跟 '+name+' 说');document.getElementById('m-agents').innerHTML=avatar+'<small>'+(item&&item.project?'<button type="button" id="m-project">'+esc(item.project)+'</button>':'')+esc(item&&item.relay?(item.project?' · ':'')+'第 '+item.relay.index+' 棒 / '+item.relay.total:'')+'</small>';var project=document.getElementById('m-project');if(project)project.addEventListener('click',function(){if(typeof tShowAll!=='function')return;var topic=tRecent.concat(tAll).find(function(t){return t.title===item.project});if(topic)tOpen(topic.id);else{tShowAll();/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value=item.project;tList(true,false)}})
+ document.getElementById('m-agents').hidden=false;document.getElementById('m-agents').setAttribute('aria-label','在跟 '+name+' 说');document.getElementById('m-agents').innerHTML=avatar;var sub=document.getElementById('m-sub');sub.innerHTML=(item&&item.project?'<button type="button" id="m-project">'+esc(item.project)+'</button>':'')+esc(item&&item.relay?(item.project?' · ':'')+'第 '+item.relay.index+' 棒 / '+item.relay.total:'');sub.hidden=!sub.innerHTML;var project=document.getElementById('m-project');if(project)project.addEventListener('click',function(){if(typeof tShowAll!=='function')return;var topic=tRecent.concat(tAll).find(function(t){return t.title===item.project});if(topic)tOpen(topic.id);else{tShowAll();/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value=item.project;tList(true,false)}})
  var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text'));if(input){input.placeholder='对 '+name+' 说…';document.getElementById('m-say-avatar').innerHTML=avatar}
  document.querySelectorAll('.m-elsewhere').forEach(function(el){/** @type {HTMLElement} */ (el).hidden=true});mDirectCheck()
 }
@@ -290,5 +290,5 @@ async function mTerminalRefresh(id,seq){
  var item=mRosterTarget,identity=T
  try{var r=await /* link-scan: device-only */ api('/v1/cli/activity?session_id='+encodeURIComponent(item.terminal.sessionId)),b=await r.json();if(!isDevice||identity!==T||mCurrent!==id||seq!==mSeq)return;if(r.status===401){onUnauthorized(identity);return}if(r.status!==200||!b.ok)throw Error('unavailable');mDetailFresh=true;document.getElementById('m-status').innerHTML='<p>'+esc(CCP.STATUS_WORDS[item.status])+'</p>'+(b.items||[]).map(function(i){return '<p>'+esc(i.text)+'</p>'}).join('');mDirectRender({matter:{title:item.title,agents:[]}})}catch(e){if(mCurrent===id)mNotice('家里的电脑暂时连不上')}finally{if(mCurrent===id)mSchedule()}
 }
-function mDirectClear(){mDirectDrafts.clear();mDirectPending.clear();mRosterTarget=null;var form=document.getElementById('m-say');if(form)form.remove()}
+function mDirectClear(){var sub=document.getElementById('m-sub');if(sub){sub.innerHTML='';sub.hidden=true}mDirectDrafts.clear();mDirectPending.clear();mRosterTarget=null;var form=document.getElementById('m-say');if(form)form.remove()}
 window.addEventListener('online',mDirectCheck)
