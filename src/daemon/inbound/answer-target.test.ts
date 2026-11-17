@@ -4,7 +4,7 @@ import { makeMwTaskReference } from './mw-task-reference'
 import type { InboundCtx } from './types'
 import { createProviderRegistry } from '../../app/provider-registry'
 import { answerTargetProviders } from '../task-handoff-names'
-import { explicitAnswerName } from './answer-target'
+import { explicitAnswerName, namedAnswerTarget } from './answer-target'
 
 const ctxOf = (text: string, origin?: 'desktop'): InboundCtx => ({
   msg: { chatId: 'owner', userId: 'owner', text, msgType: 'text', createTimeMs: 1, accountId: 'a' },
@@ -97,5 +97,17 @@ describe('共用答话目标（PR 2，仅结构判定）', () => {
     for (const text of ['换成 Codex', '用 Codex', '切回 Claude']) expect((await send(text)).target?.kind).toBe('cc')
     expect((await send('再补一行')).target?.kind).toBe('matter')
     expect(handleWechat.mock.calls.map(([, text]) => text)).toEqual([`任务 ${task.id} 补充 再加一行`, `任务 ${task.id} 补充 再补一行`])
+  })
+})
+
+describe('疑问词里的「么」不算商量语气(11-16 真机验收抓到)', () => {
+  const ps = [{ id: 'codex', names: ['codex', 'Codex'], available: true }]
+  it('「…是什么。」「…怎么办」仍是点名', () => {
+    expect(namedAnswerTarget('让 Codex 回答这个问题：用一句话解释 DNS 是什么。', ps)).toMatchObject({ kind: 'oneoff', provider: 'codex' })
+    expect(namedAnswerTarget('让 Codex 回答：网断了怎么办', ps)).toMatchObject({ kind: 'oneoff', provider: 'codex' })
+  })
+  it('真正商量的「么」照旧留给 CC', () => {
+    expect(namedAnswerTarget('让 Codex 回答这个么', ps)).toBeNull()
+    expect(namedAnswerTarget('让 Codex 回答这个问题吗？', ps)).toBeNull()
   })
 })

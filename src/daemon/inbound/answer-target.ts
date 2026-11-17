@@ -10,7 +10,8 @@ export function explicitAnswerName(text: string, names: readonly string[]): bool
   const alternatives = names.filter(n => n.trim() && n.toLowerCase() !== 'cc').map(escape).sort((a, b) => b.length - a.length).join('|')
   if (!alternatives) return false
   // 「让 Codex 回答这个问题吗?」「让它答吧」是在商量要不要,不是点名;留给 CC。
-  if (/[吗呢么嘛吧][？?。!！]?\s*$/.test(text.trim())) return false
+  // 「…是什么。」「…怎么办」里的么是疑问词,不是商量语气。
+  if (/(?:[吗呢嘛吧]|(?<![什怎多那这要])么)[？?。!！]?\s*$/.test(text.trim())) return false
   const who = `(?:让|请|请让)\\s*(?:${alternatives})\\s*(?:来)?`
   const end = `(?:[。！!？?]?|\\s*[:：，,]\\s*[\\s\\S]+)`
   // 「回答」后面可以直接接正文(让 Claude 回答一下为什么会失败);单字「答」只认结尾或带分隔的正文,免得「答应」被当成点名。
