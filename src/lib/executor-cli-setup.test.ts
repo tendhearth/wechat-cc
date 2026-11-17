@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as setup from './executor-cli-setup'
+import { grokHome } from './grok-home'
 
 const plan = (id: unknown, action: unknown, platform = 'darwin', installed = false) => setup.cliSetupPlan(id, action, '/tmp/CC state', platform, installed)
 
@@ -12,8 +13,10 @@ describe('CLI setup whitelist', () => {
     expect(plan('codex', 'install', 'darwin', true).commands).toEqual(['codex login'])
   })
   it('keeps Grok login in the dedicated HOME, including shell metacharacters', () => {
-    const p = setup.cliSetupPlan('grok', 'login', "/tmp/CC's $(touch nope)", 'darwin', true)
-    expect(p.commands).toEqual(["umask 077 && mkdir -p '/tmp/CC'\\''s $(touch nope)/executors/grok/home' && (unset GROK_HOME GROK_AUTH_PATH GROK_AUTH GROK_CONFIG GROK_API_KEY XAI_API_KEY CLAUDE_CONFIG_DIR; HOME='/tmp/CC'\\''s $(touch nope)/executors/grok/home' grok login)"])
+    const stateDir = "/tmp/CC's $(touch nope)"
+    const home = grokHome(stateDir).replaceAll("'", "'\\''")
+    const p = setup.cliSetupPlan('grok', 'login', stateDir, 'darwin', true)
+    expect(p.commands).toEqual([`umask 077 && mkdir -p '${home}' && (unset GROK_HOME GROK_AUTH_PATH GROK_AUTH GROK_CONFIG GROK_API_KEY XAI_API_KEY CLAUDE_CONFIG_DIR; HOME='${home}' grok login)`])
     expect(p.script).toContain('set -e')
     expect(p.script).toContain('pipefail')
   })
@@ -40,7 +43,7 @@ describe('CLI setup whitelist', () => {
       expect(p.script).not.toContain('curl -fsSL')
     }
     const grok = plan('grok', 'login', 'win32', true)
-    expect(grok.commands[0]).toContain("$env:HOME = '/tmp/CC state/executors/grok/home'")
+    expect(grok.commands[0]).toContain(`$env:HOME = '${grokHome('/tmp/CC state')}'`)
     expect(grok.commands[0]).toContain('grok login')
     expect(() => plan('agy', 'install', 'win32')).toThrow('installer_unavailable')
   })
@@ -65,11 +68,14 @@ it('contains PowerShell installer exits in a child process so the visible parent
 })
 it('isolates Grok installer credential discovery as well as its login on Windows', () => {
   const command = plan('grok', 'install', 'win32').commands[0]!
-  expect(command).toContain("$env:USERPROFILE = '/tmp/CC state/executors/grok/home'")
+  expect(command).toContain(`$env:USERPROFILE = '${grokHome('/tmp/CC state')}'`)
+  expect(command).toContain(`$env:HOME = '${grokHome('/tmp/CC state')}'`)
   expect(command).toContain('$env:GROK_BIN_DIR')
   expect(command).toContain('Env:GROK_*')
 })
 it('preserves JS replacement metacharacters literally in the isolated Grok installer HOME', () => {
-  const p = setup.cliSetupPlan('grok', 'install', "/s/$&/$'/$`", 'darwin', false)
-  expect(p.commands[0]).toContain("HOME='/s/$&/$'\\''/$`/executors/grok/home' bash")
+  const stateDir = "/s/$&/$'/$`"
+  const home = grokHome(stateDir).replaceAll("'", "'\\''")
+  const p = setup.cliSetupPlan('grok', 'install', stateDir, 'darwin', false)
+  expect(p.commands[0]).toContain(`HOME='${home}' bash`)
 })

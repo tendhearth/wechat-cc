@@ -11,7 +11,9 @@ describe('grok login command', () => {
 })
 
 it('Windows login isolates USERPROFILE and clears inherited Grok credential locations', () => {
-  const cmd = grokLoginCommand('/s', 'powershell')
+  const stateDir = "/s/Owner's $&/$`"
+  const cmd = grokLoginCommand(stateDir, 'powershell')
+  expect(cmd).toContain(`$env:HOME = '${grokHome(stateDir).replaceAll("'", "''")}'`)
   expect(cmd).toContain('$env:USERPROFILE = $env:HOME')
   expect(cmd).toContain('Env:GROK_*')
   expect(cmd).toContain('Remove-Item')

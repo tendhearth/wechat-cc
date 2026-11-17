@@ -14,6 +14,7 @@ import { openTestDb } from '../../lib/db'
 import { makeConversationStore } from '../../adapters/store/conversation-store'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { VersionProbeResult } from './provider-probe'
+import * as acpPlatform from '../../adapters/executors/acp/platform'
 
 function baseConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return { provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false, ...overrides }
@@ -199,19 +200,35 @@ describe('registerProviders — 外部 CLI 探测失败后的退避重探', () =
 })
 
 describe('desktop setup late registration', () => {
-  it('discovers a CLI installed after boot, coalesces requests, and uses existing registration', async () => {
+  it.each(['darwin', 'linux', 'win32'] as const)('discovers a CLI installed after boot, coalesces requests, and uses existing registration (%s)', async platform => {
+    const supported = acpPlatform.acpSupportedOn(platform)
     let installed = false
     const probe = vi.fn(async () => ({ ok: true as const, firstLine: 'grok 1.0.77', ms: 1 }))
     const { deps } = makeDeps({ probeVersion: probe, findSetupBinary: id => id === 'grok' && installed ? '/fixture/new-grok' : null })
     const wiring = await registerProviders(deps)
     expect(wiring.registry.has('grok')).toBe(false)
-    installed = true
-    const before = probe.mock.calls.length
-    expect(await Promise.all([wiring.refreshInstalledProvider('grok'), wiring.refreshInstalledProvider('grok')])).toEqual([true, true])
-    expect(probe.mock.calls.length - before).toBe(1)
-    expect(wiring.registry.has('grok')).toBe(true)
-    expect(wiring.registry.get('grok')!.provider.cheapEval).toBeUndefined()
-    expect(await wiring.refreshInstalledProvider('grok;whoami')).toBe(false)
-    wiring.stopProviderProbes()
+    const platformGate = vi.spyOn(acpPlatform, 'acpSupportedOn').mockReturnValue(supported)
+    try {
+      installed = true
+      const before = probe.mock.calls.length
+      const results = await Promise.all([wiring.refreshInstalledProvider('grok'), wiring.refreshInstalledProvider('grok')])
+      if (platform === 'win32') {
+        // Grok ACP 在 Windows 尚未验证进程树清理，应在探测前拒绝注册。
+        expect(results).toEqual([false, false])
+        expect(probe.mock.calls.length - before).toBe(0)
+        expect(wiring.registry.has('grok')).toBe(false)
+      } else {
+        expect(results).toEqual([true, true])
+        expect(probe.mock.calls.length - before).toBe(1)
+        expect(wiring.registry.has('grok')).toBe(true)
+        expect(wiring.registry.get('grok')!.provider.cheapEval).toBeUndefined()
+      }
+      expect(await wiring.refreshInstalledProvider('grok')).toBe(platform !== 'win32')
+      expect(probe.mock.calls.length - before).toBe(platform === 'win32' ? 0 : 1)
+      expect(await wiring.refreshInstalledProvider('grok;whoami')).toBe(false)
+    } finally {
+      platformGate.mockRestore()
+      wiring.stopProviderProbes()
+    }
   })
 })
