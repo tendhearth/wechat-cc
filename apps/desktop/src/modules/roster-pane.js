@@ -41,9 +41,16 @@ export function mountRosterPane({root,call,onOpen,onItems,now=Date.now,intervalM
   const row=event.target instanceof Element?event.target.closest('[data-roster-key]'):null
   const item=items.find(i=>i.key===row?.getAttribute('data-roster-key'));if(item)void onOpen(item)
  }
+ // 键盘直接打开,不依赖浏览器把 Enter / 空格合成 click(mini 全量 11-17:名单行按 Enter 打不开)。
+ const key=(/** @type {KeyboardEvent} */event)=>{
+  if(event.defaultPrevented||event.isComposing||event.altKey||event.ctrlKey||event.metaKey||(event.key!=='Enter'&&event.key!==' '))return
+  const row=event.target instanceof Element?event.target.closest('[data-roster-key]'):null
+  const item=items.find(i=>i.key===row?.getAttribute('data-roster-key'));if(!item)return
+  event.preventDefault();void onOpen(item)
+ }
  const visibility=()=>{if(root.ownerDocument.visibilityState==='visible')void refresh()}
- root.addEventListener('click',click);root.ownerDocument.addEventListener('visibilitychange',visibility)
+ root.addEventListener('click',click);root.addEventListener('keydown',key);root.ownerDocument.addEventListener('visibilitychange',visibility)
  draw();void refresh()
  const timer=setInterval(()=>void refresh(),intervalMs)
- return {refresh,items:()=>items.slice(),destroy(){alive=false;clearInterval(timer);root.removeEventListener('click',click);root.ownerDocument.removeEventListener('visibilitychange',visibility)}}
+ return {refresh,items:()=>items.slice(),destroy(){alive=false;clearInterval(timer);root.removeEventListener('click',click);root.removeEventListener('keydown',key);root.ownerDocument.removeEventListener('visibilitychange',visibility)}}
 }
