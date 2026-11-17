@@ -752,7 +752,7 @@ export type PanelV1Key = {
  * 手机能订阅的事件主题(phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾是前缀标记:
  * 真正允许的是 `matter/<id>`,见 phone-routes.ts 的 phoneTopicAllowed。
  */
-export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/', 'topics']
+export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/', 'topics', 'roster']
 
 /** Every declared phone surface, including routes shared with the operator HTTP API. */
 export type PhoneSurfaceRouteKey = PanelRouteKey | { [K in DeclaredRouteKey]: (typeof ROUTE_TABLE)[K] extends {phone:object} ? K : never }[DeclaredRouteKey]

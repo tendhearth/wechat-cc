@@ -17,6 +17,7 @@ export type WriteHint =
   | { kind: 'messages'; chatId: string }
   | { kind: 'topics'; chatId: string; mapping?: boolean; topicId?:string }
   | { kind: 'matter'; matterId: string }
+  | { kind: 'cli'; sessionId: string }
   | { kind: 'journal' }
   | { kind: 'journal-seen' }
   | { kind: 'plan-log' }
@@ -39,7 +40,7 @@ function channel(scope: Db | string, create: boolean): Channel | undefined {
 }
 
 const keyOf = (h: WriteHint): string =>
-  h.kind === 'topics' ? `topics:${h.chatId}:${h.mapping===false?'activity':'mapping'}:${h.topicId??''}` : h.kind === 'messages' ? `messages:${h.chatId}` : h.kind === 'matter' ? `matter:${h.matterId}` : h.kind
+  h.kind === 'cli' ? `cli:${h.sessionId}` : h.kind === 'topics' ? `topics:${h.chatId}:${h.mapping===false?'activity':'mapping'}:${h.topicId??''}` : h.kind === 'messages' ? `messages:${h.chatId}` : h.kind === 'matter' ? `matter:${h.matterId}` : h.kind
 
 /** 写口落笔之后调:排到微任务里发,同一拍里同样的提示只发一次。从不抛。 */
 export function hintWrite(scope: Db | string, hint: WriteHint): void {
