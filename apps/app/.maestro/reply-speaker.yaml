@@ -18,7 +18,6 @@ appId: com.tendhearth.app
     element:
       id: chat-message-reply-demo-owner
     direction: UP
-    centerElement: true
     timeout: 10000
 - assertVisible:
     id: chat-message-reply-demo-owner
@@ -26,7 +25,6 @@ appId: com.tendhearth.app
     element:
       id: chat-message-reply-demo-cc
     direction: DOWN
-    centerElement: true
     timeout: 10000
 - assertVisible:
     id: chat-message-reply-demo-cc
@@ -37,7 +35,6 @@ appId: com.tendhearth.app
     element:
       id: chat-message-reply-demo-notice
     direction: DOWN
-    centerElement: true
     timeout: 10000
 - assertVisible:
     id: chat-message-reply-demo-notice
@@ -47,7 +44,6 @@ appId: com.tendhearth.app
     element:
       id: reply-speaker-codex
     direction: UP
-    centerElement: true
     timeout: 10000
 - assertVisible:
     id: chat-message-reply-demo-codex
