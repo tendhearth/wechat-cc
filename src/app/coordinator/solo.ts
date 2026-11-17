@@ -127,6 +127,9 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
         return
       }
       acquired = handle
+      if (recordMode === 'primary_tool' && handle.supportsDelegation === false) {
+        await notice(msg.chatId, '本会话未接入委派工具，CC 会按当前可用能力回答。')
+      }
       // Registered before the turn starts draining so /stop can reach
       // this turn for its entire lifetime — cleared in the finally below,
       // same lifecycle as chatroom's aborters.

@@ -131,6 +131,8 @@ export interface AgentWorkbenchRuntime {
 export interface AgentDispatchContext { source: 'inbound' | 'background' }
 
 export interface AgentSession {
+  /** Negotiated tool surface for providers with session-scoped transport setup. */
+  readonly supportsDelegation?: boolean
   /** Observation only. requestBytes is the actual UTF-8 wire body; historyBytes may be a legacy estimate.
    * Tokens describe the last request, not billed step totals. requestFailure contains only a normalized digest. */
   contextUsage?(): { historyBytes?: number; requestBytes?: number; tokens?: number; firstInputTokens?: number|null; model?: string; requestFailure?: {status:number;signature:string}|null }
@@ -309,6 +311,8 @@ export interface SpawnContext {
   matterLedger?: boolean
   /** Providers report actual notebook tool availability before returning from spawn. */
   reportMatterTools?: (available:boolean)=>void
+  /** Rebuild daemon instructions after optional MCP transport negotiation. */
+  instructionsForMcp?: (available: { wechat: boolean; delegate: boolean }) => string | undefined
   appendInstructions?: string
   /**
    * The pinned model id for this spawn, read per-spawn by the daemon
@@ -396,8 +400,8 @@ import type { ToolSurfaceConfinement } from '../domain/confinement'
 export interface ProviderCapabilities {
   /** 已发现但不满足启动前提的执行者；所有档位均拒绝，不能用 dangerously 绕开。 */
   unavailableReason?: string
-  /** 没有 CC MCP 通道时明确声明，不能误当作 agy 的静态 trusted 通道。 */
-  mcpTools?: 'none'
+  /** none: 无 CC MCP；session: 须在会话协商成功后才宣称工具可用。 */
+  mcpTools?: 'none' | 'session'
 
   /**
    * In `primary_tool` mode this provider delegates to `delegate_<peer>`;

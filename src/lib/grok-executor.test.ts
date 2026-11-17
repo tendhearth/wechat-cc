@@ -50,8 +50,8 @@ describe('Grok account ACP executor', () => {
     expect(classifyCall({ provider: 'openai', baseUrl: 'https://not-grok.com' }).kind).toBe('custom_gateway')
   })
 
-  it('supports text-only oneoff while keeping MCP, guest confinement, resume and delegation unavailable', () => {
-    expect(capabilitiesFor('grok')).toMatchObject({ adminMcpTools: false, mcpTools: 'none', perToolCallback: false, supportsResume: false, supportsDelegation: false })
+  it('supports session-negotiated MCP and text-only oneoff while keeping guest access and resume unavailable', () => {
+    expect(capabilitiesFor('grok')).toMatchObject({ adminMcpTools: true, mcpTools: 'session', perToolCallback: false, supportsResume: false, supportsDelegation: true })
     expect(capabilitiesFor('grok').unavailableReason).toBeUndefined()
     expect(supportsOneoffAnswer('grok')).toBe(true)
     expect(supportsOneoffAnswer('agy')).toBe(false)

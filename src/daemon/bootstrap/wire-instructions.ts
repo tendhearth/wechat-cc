@@ -61,7 +61,7 @@ export function wireInstructions(
   // reference to `socialWiring` from inside the closure, which is declared
   // later with `const` and would be a TDZ hazard if any session's prompt
   // were built before social wiring completes.
-  return (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string): string => {
+  return (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string, actualMcp?: { wechat: boolean; delegate: boolean }): string => {
     const p = deps.personaFor?.(chatId)
     // owner-onboarding design §C2, fix round 2: the empty-library variant
     // nudges `save_sticker` — a memory_write-gated write, same posture as
@@ -79,7 +79,7 @@ export function wireInstructions(
     // 真的注册了它时才提(admin + 每会话 tier 的 provider —— agy 那种钉死 trusted 的拿不到)。
     return buildSystemPrompt({
       providerId,
-      mcpTools: capabilitiesFor(providerId).mcpTools,
+      mcpTools: actualMcp ? (actualMcp.wechat ? undefined : 'none') : capabilitiesFor(providerId).mcpTools === 'session' ? 'none' : capabilitiesFor(providerId).mcpTools === 'none' ? 'none' : undefined,
       replyText: replyTextStrategyFor(providerId),
       messageToolAvailable: tierProfile.allow.has('message_other') && capabilitiesFor(providerId).adminMcpTools,
       // 让 bot 知道自己此刻跑的是哪个模型(session-manager 按 spawn 解析后
@@ -88,7 +88,7 @@ export function wireInstructions(
       // Unused when delegateAvailable is false; fall back to the daemon default.
       peerProviderId: capabilitiesFor(providerId).defaultPeer ?? parts.defaultProviderId,
       companionEnabled: deps.ilink.companion.status().enabled,
-      delegateAvailable: !!parts.plugins.delegateStdioByProvider[providerId],
+      delegateAvailable: !!parts.plugins.delegateStdioByProvider[providerId] && (actualMcp?.delegate ?? true),
       // 同 socialAvailable:agy 的 wechat MCP 钉死 trusted,diagnostic_* / today_digest / calendar_agenda 都没注册 ——
       // 提示词里不能写着有(执行者会以为工具坏了反复去试,或跟主人说「查不到」)。
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect') && capabilitiesFor(providerId).adminMcpTools,

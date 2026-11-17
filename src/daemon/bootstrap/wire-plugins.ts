@@ -21,6 +21,8 @@ import type { BootstrapDeps, BootstrapCtx } from './types'
 export interface PluginsSlice {
   wechatStdioForClaude: McpStdioSpec | null
   wechatStdioForCodex: McpStdioSpec | null
+  wechatStdioForGrok: McpStdioSpec | null
+  delegateStdioForGrok: McpStdioSpec | null
   wechatStdioForCursor: McpStdioSpec | null
   wechatStdioForOpenai: McpStdioSpec | null
   wechatStdioForGemini: McpStdioSpec | null
@@ -63,6 +65,8 @@ export function wirePlugins(
       if (peer) delegateStdioByProvider[p] = delegateStdioMcpSpec(deps.internalApi, peer)
     }
   }
+  const wechatStdioForGrok = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'grok') : null
+  const delegateStdioForGrok = delegateStdioByProvider.grok ?? null
   const delegateStdioForClaude: McpStdioSpec | null = delegateStdioByProvider.claude ?? null
   const delegateStdioForCodex: McpStdioSpec | null = delegateStdioByProvider.codex ?? null
   const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
@@ -116,7 +120,7 @@ export function wirePlugins(
   )
 
   return {
-    wechatStdioForClaude, wechatStdioForCodex, wechatStdioForCursor, wechatStdioForOpenai, wechatStdioForGemini, wechatStdioForAgy,
+    wechatStdioForGrok, delegateStdioForGrok, wechatStdioForClaude, wechatStdioForCodex, wechatStdioForCursor, wechatStdioForOpenai, wechatStdioForGemini, wechatStdioForAgy,
     delegateStdioByProvider, delegateStdioForClaude, delegateStdioForCodex, delegateStdioForCursor, delegateStdioForOpenai,
     loadedPlugins, pluginMcp, knowledgePluginNames, pluginMcpForClaude, pluginsHealth,
   }

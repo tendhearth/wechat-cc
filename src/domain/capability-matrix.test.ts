@@ -45,7 +45,7 @@ describe('CAPABILITY_MATRIX', () => {
       // B2(spec §4): delegate is loaded only when BOTH mode=primary_tool
       // AND the provider itself supportsDelegation — cursor/gemini/agy
       // can't be a delegating host (no delegate stdio channel).
-      const canDelegate = row.provider === 'claude' || row.provider === 'codex' || row.provider === 'openai'
+      const canDelegate = row.provider === 'claude' || row.provider === 'codex' || row.provider === 'openai' || row.provider === 'grok'
       if (row.mode === 'primary_tool' && canDelegate) expect(row.delegate).toBe('loaded')
       else                                             expect(row.delegate).toBe('unloaded')
       if (row.mode === 'parallel' || row.mode === 'chatroom') expect(row.replyPrefix).toBe('always')
