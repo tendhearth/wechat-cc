@@ -300,6 +300,7 @@ test('PWA shows the answering executor per reply and keeps CC replies unmarked',
   const out = process.env.WECHAT_CC_DESIGN_SHOTS
   if (out) await page.screenshot({ path: join(out, 'pwa-reply-avatars.png') })
   expect(errors).toEqual([])
+})
 
 test('reply attribution keeps one named shared avatar per reply across wide and narrow layouts',async({page,shimUrl},info)=>{
   let currentProvider='claude'
