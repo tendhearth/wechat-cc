@@ -74,3 +74,16 @@ body.conversation-ready #chat-messages { flex:1 }
 #topic-body [data-project-session] small { display:block; color:var(--ink-soft) }
 
 #topic-row [data-topic-activity="waiting"] i { width:var(--th-topic-activity-attention-dot-size); height:var(--th-topic-activity-attention-dot-size); }
+
+#roster-strip { display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line) }
+#roster-strip[hidden], #roster-sheet[hidden] { display:none }
+#roster-strip button { background:none; border:0; padding:0; color:var(--soft); font-size:14px }
+.roster-avatar { position:relative; display:inline-flex; width:40px; height:40px }
+.roster-avatar .th-agents { padding:0; --th-agent-size:40px }
+.roster-person.waiting .roster-avatar { border-radius:50%; outline:2px solid var(--accent) }
+.roster-avatar.relay .th-agents { position:absolute; left:0; top:0; --th-agent-size:26px; opacity:.5 }
+.roster-avatar.relay .th-agents:last-child { left:10px; top:10px; --th-agent-size:30px; opacity:1 }
+.roster-avatar.relay .th-agents:last-child .th-agent { border-color:var(--ink) }
+#roster-sheet { position:fixed; inset:20% 0 0; z-index:30; background:var(--paper); overflow:auto; padding:24px; border-top:1px solid var(--line) }
+#roster-sheet button[data-roster] { display:flex; align-items:center; gap:12px; width:100%; padding:12px 0; background:none; border:0; color:var(--ink) }
+#roster-sheet small { color:var(--soft) }
