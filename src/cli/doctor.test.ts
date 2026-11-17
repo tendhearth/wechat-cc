@@ -37,7 +37,7 @@ describe('doctor installer JSON', () => {
       expect(report.checks.provider).toMatchObject({ ok: false, provider: 'grok', model: 'grok-4.7', binaryPath: installed ? '/bin/grok' : null })
       expect(report.nextActions).not.toContain('install_claude')
       expect(report.checks.provider.fix?.action).toContain(installed ? 'Grok 还没在 CC 里登录' : 'grok login')
-      if (installed) expect(report.checks.provider.fix?.action).toContain("HOME='/test/executors/grok/home' grok login")
+      if (installed) expect(report.checks.provider.fix?.action).toContain(`HOME='${grokHome('/test')}' grok login`)
       expect(DoctorOutput.parse(report).checks.grok?.ok).toBe(false)
     }
   })

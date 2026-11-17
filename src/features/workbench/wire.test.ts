@@ -94,7 +94,8 @@ it('registers Grok from the boot binary without stdio matter tools, and requires
   expect(entry.opts.workbench?.features).toEqual({ nativeResume: false, attachments: false, executionSettings: false, modelCatalog: false })
   expect(entry.opts.workbench?.unavailableReason).toContain('专属 HOME')
   expect(() => requireWorkbenchInput(entry.opts.workbench!, { attachments: [], execution: { defaults: 'provider', model: null, reasoningEffort: null } })).toThrow('unavailable_provider')
-  await expect(entry.provider.spawn({ alias: 'test', path: '/test' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'test', reportMatterTools: vi.fn() })).rejects.toThrow('专属 HOME')
+  // 注册时注入的平台只管注册；spawn 仍在 Windows 上先拒绝未经验证的 ACP 进程树清理。
+  await expect(entry.provider.spawn({ alias: 'test', path: '/test' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'test', reportMatterTools: vi.fn() })).rejects.toThrow(process.platform === 'win32' ? 'Grok 暂不支持 Windows' : '专属 HOME')
   expect(matterMcp).not.toHaveBeenCalled()
   expect(registerGrokAcpExecutor(createProviderRegistry(), source, { platform: 'win32' })).toEqual([])
 })
@@ -254,9 +255,15 @@ it('an executor registered on the boot registry after wiring (late probe success
     expect(lines.some(l => l.includes('agy') && l.includes('晚到'))).toBe(true)
     bootRegistry.register('grok', fakeProvider(), { bin: () => '/fake/grok', canResume: () => false })
     const grok = service.list().providers.filter(p => p.id === 'grok')
-    expect(grok).toHaveLength(1)
-    expect(grok[0]!.capabilities.unavailableReason).toContain('Grok 还没在 CC 里登录')
-    expect(lines.some(l => l.includes('grok') && l.includes('晚到'))).toBe(true)
+    if (process.platform === 'win32') {
+      expect(grok).toHaveLength(0)
+      expect(lines.some(l => l.includes('grok') && l.includes('暂不支持 Windows'))).toBe(true)
+      expect(lines.some(l => l.includes('grok') && l.includes('晚到'))).toBe(false)
+    } else {
+      expect(grok).toHaveLength(1)
+      expect(grok[0]!.capabilities.unavailableReason).toContain('Grok 还没在 CC 里登录')
+      expect(lines.some(l => l.includes('grok') && l.includes('晚到'))).toBe(true)
+    }
     // 工作台不认的 id(gemini 不进工作台)登记了也不出错、不出现
     bootRegistry.register('gemini', fakeProvider(), { displayName: 'Gemini', canResume: () => false })
     expect(service.list().providers.find(p => p.id === 'gemini')).toBeUndefined()
