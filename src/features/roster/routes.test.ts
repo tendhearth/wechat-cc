@@ -34,3 +34,24 @@ describe('名单读取与路由', () => {
     expect(r.read('device').items[0]).toMatchObject({waiting:{requestId:'q',count:2},relay:{index:2,total:3},agents:[{id:'claude',name:'name:claude',current:false},{id:'codex',current:true}]})
   })
 })
+
+describe('名单只读可能进名单的事', () => {
+  it('没完的(不论多旧)与 24 小时内动过的都在;更早做完的不读;等你的旧任务按 id 补', () => {
+    const DAY = 24 * 3_600_000, NOW = 10 * DAY
+    const rows = [
+      m({ id: 'aaaa0001', state: 'working', updatedAt: NOW - 5 * DAY }),
+      m({ id: 'aaaa0002', state: 'done', updatedAt: NOW - 2 * DAY }),
+      m({ id: 'aaaa0003', state: 'done', updatedAt: NOW - 3_600_000 }),
+      m({ id: 'aaaa0004', state: 'done', updatedAt: NOW - 3 * DAY }),
+    ]
+    const filters: unknown[] = []
+    const list = (f: { kind?: string; state?: string; since?: number } = {}) => {
+      filters.push(f)
+      return rows.filter(r => (!f.kind || r.kind === f.kind) && (!f.state || r.state === f.state) && (f.since === undefined || r.updatedAt >= f.since))
+    }
+    const workbench = { list: () => ({ tasks: [] }), attention: () => ({ tasks: [{ id: 'aaaa0004' }] }), detail: () => ({ permissions: [{ id: 'p1', tool: 'Bash', description: 'ls', createdAt: NOW - 3 * DAY }], questions: [] }) }
+    const r = makeRosterReader({ matters: { list, get: id => rows.find(x => x.id === id) ?? null }, terminals: () => [], seen: () => null, now: () => NOW, workbench })
+    expect(r.read('operator').items.map(i => i.id).sort()).toEqual(['aaaa0001', 'aaaa0003', 'aaaa0004'])
+    expect(filters.every(f => (f as { state?: string; since?: number }).state !== undefined || (f as { since?: number }).since !== undefined)).toBe(true)
+  })
+})

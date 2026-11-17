@@ -101,7 +101,6 @@ const RETIRE: Record<Readers[number], string> = {
  * daemon 的别名表照样按键写。每并一条往这里加一个键,删一行别名就从这里删。
  */
 export const MERGED_ALIAS_KEYS = [
-  'GET /m/api/roster',
   'GET /m/api/matters', 'GET /m/api/matter', 'POST /m/api/matter/say',
   'GET /m/api/chat/search', 'GET /m/api/chat/file', 'POST /m/api/chat/transcribe',
   // P3c-2 终端与总览
@@ -141,7 +140,6 @@ const desktopAlias = (from: string, to: string): WireRouteAlias =>
 
 export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   // ── P3c-1 一件事与主人对话:已并(MERGED_ALIAS_KEYS),一份数据一个 /v1 处理器
-  alias('GET /m/api/roster', 'GET /v1/roster', 'P3c-1', 'phoneRoster'),
   alias('GET /m/api/matters', 'GET /v1/matters', 'P3c-1', 'phoneMatters', ['app'], 'read'),
   alias('GET /m/api/matter', 'GET /v1/matter', 'P3c-1', 'phoneMatter', ['app'], 'read'),
   alias('POST /m/api/matter/say', 'POST /v1/matter/say', 'P3c-1', 'phoneMatterSay'),

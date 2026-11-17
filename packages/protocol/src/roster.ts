@@ -1,6 +1,6 @@
 /**
  * roster.ts —— 「在做」名单的线上形状(设计稿 docs/superpowers/specs/2026-11-17-butler-layout-design.md §4.1)。
- * daemon 的 src/domain/roster.ts 算,`GET /v1/roster`(桌面)与 `GET /m/api/roster`(App / 已配对网页)回。
+ * daemon 的 src/domain/roster.ts 算,`GET /v1/roster` 回(桌面用 operator 令牌;App / 已配对网页用设备令牌从面板那一口进来,同一个处理器)。
  * 不带任何本地化文字:状态词、分组标题都由端上按 STATUS_TABLE 查。
  */
 import z from 'zod'

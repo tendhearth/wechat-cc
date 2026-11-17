@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** daemon 算出一张「在做」名单(一件事 + 没挂进事的终端会话),桌面经 `GET /v1/roster`、手机经 `GET /m/api/roster` 与 hub 主题 `roster` 拿到,三端以后只用这一套分组规则。
+**Goal:** daemon 算出一张「在做」名单(一件事 + 没挂进事的终端会话),桌面经 `GET /v1/roster`、手机经 `GET /v1/roster`(设备令牌) 与 hub 主题 `roster` 拿到,三端以后只用这一套分组规则。
 
 **Architecture:** 状态判定(`statusOf` / `statusOfMatter` / `terminalStatusKey`)从 App 搬进协议包,daemon 和 App 共用;名单本身是 `src/domain/roster.ts` 里的纯函数 `buildRoster`,由 `src/features/roster/` 的读取器从 MatterStore、工作台、终端登记处、看过记录取数据后调用。只读投影,不加迁移。
 
@@ -102,7 +102,7 @@ export function buildRoster(input: RosterInput): RosterItem[]
 **Files:**
 - Create: `src/features/roster/reader.ts`、`src/features/roster/routes.ts`
 - Test: `src/features/roster/routes.test.ts`
-- Modify: 注册路由的地方(与 `mattersRoutes` 同一处,`src/daemon/internal-api/routes.ts`);`src/features/phone/legacy-routes.ts` 加别名 `'GET /m/api/roster' → GET /v1/roster`(照 `/m/api/matters` 那条写);`packages/protocol/src/routes.ts` 与 `desktop-calls.ts` / `phone-calls.ts` 的路由登记(守卫 `scripts/phone-routes.guard.test.ts` 会要求)
+- Modify: 注册路由的地方(与 `mattersRoutes` 同一处,`src/daemon/internal-api/routes.ts`);`src/features/phone/legacy-routes.ts` 加别名 `'GET /v1/roster' → GET /v1/roster`(照 `/m/api/matters` 那条写);`packages/protocol/src/routes.ts` 与 `desktop-calls.ts` / `phone-calls.ts` 的路由登记(守卫 `scripts/phone-routes.guard.test.ts` 会要求)
 - Modify: `src/daemon/wiring/` 里装配 internal-api deps 的那份,给 `roster` 读取器接上 matters store、workbench、cli hub、`makeMatterSeen`、relay 读口(`features/workbench/service/relay.ts` 里读当前棒的函数)
 
 **Interfaces:**
@@ -122,7 +122,7 @@ export function buildRoster(input: RosterInput): RosterItem[]
 - [ ] **Step 2:** 跑,预期 FAIL。
 - [ ] **Step 3:** 实现读取器与路由;装配接线;别名与路由登记。
 - [ ] **Step 4:** `bun test src/features/roster scripts/phone-routes.guard.test.ts` 全绿。
-- [ ] **Step 5:** commit `名单:GET /v1/roster(手机别名 /m/api/roster,短链接 403)`
+- [ ] **Step 5:** commit `名单:GET /v1/roster(手机别名 /v1/roster,短链接 403)`
 
 ### Task 4: hub 主题 `roster` + 终端会话的变化提示
 
@@ -135,7 +135,7 @@ export function buildRoster(input: RosterInput): RosterItem[]
 
 **Interfaces:**
 - Consumes: Task 3 `makeRosterReader(...).read('device')`
-- Produces: 主题 `roster` 快照 `{ version: string; waiting: number; working: number }`(只带摘要,端上收到再拉 `/m/api/roster`)
+- Produces: 主题 `roster` 快照 `{ version: string; waiting: number; working: number }`(只带摘要,端上收到再拉 `/v1/roster`)
 
 - [ ] **Step 1: 失败用例:**
   - `phoneTopicAllowed('roster') === true`

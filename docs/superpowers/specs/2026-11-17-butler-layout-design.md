@@ -73,7 +73,7 @@ RosterItem {
 - **排序**:等你在前(按等待开始时间),在做其次(按更新时间),带回来的最后(只收 24 小时内,没看过的优先)。
 - **`unseen` 用现有数据**:任何一端记过看过(`matter_bindings.last_seen_at`,不分端)就算看过;在桌面右栏打开一件事也记看过(走 S3c 已有的记看过口)。终端会话没有「看过」,`unseen` 恒为 false。所以**不加迁移**。
 - **取代 App 的端上分组**:`apps/app/src/view/home.ts` 的 `homeView` 里与数据有关的规则(分组、`QUIET_AFTER_MS`、每行说明文字与详情文字)搬进 daemon 的名单投影;和连接有关的(`known=false` 时藏等你组、`keepStaleWaiting`、「你不在的这 N 小时」改标)留在端上。三端只剩一套分组规则。
-- **路由**:`GET /v1/roster`(桌面,operator token)、`GET /m/api/roster`(App / 已配对网页,设备令牌)。
+- **路由**:`GET /v1/roster`(桌面,operator token)(App / 已配对网页用设备令牌从面板那一口进来,同一条路由;手机一族只用 /v1,不新增 /m/api 别名)。
 - **更新**:手机走 subscribe hub,新增 `roster` 频道;matter 变更沿用现有来源戳它,另外**补一个终端会话来源**(会话开始 / 等你 / 歇着 / 结束时戳 `roster`)。现在终端状态变化不推 hub,等你行会落后到兜底轮询。桌面没有 hub(hub 只给已登记设备),窗口可见时每 3 秒轮询 `/v1/roster`,和桌面现有的轮询器一致;用 `etag` 省流量。
 - 短链接(非设备令牌)拿不到名单,与现在网页短链接只看受限状态页一致。
 - 这是 **只读投影**:不新增状态、不加迁移。
@@ -162,7 +162,7 @@ RosterItem {
 
 ## 6. 拆步(每步一个 PR,从 dev 起)
 
-1. **daemon 名单**:`RosterItem` 进协议包;投影(从 `homeView` 搬来的数据规则)、`/v1/roster`、`/m/api/roster`、`roster` 订阅频道和终端会话来源;测试覆盖:各 kind 进不进、分组排序、挂入终端并入不重复、act 只在等你时出现、unseen 跨端、短链接 403、结束会话不列。
+1. **daemon 名单**:`RosterItem` 进协议包;投影(从 `homeView` 搬来的数据规则)、`/v1/roster`、`/v1/roster`、`roster` 订阅频道和终端会话来源;测试覆盖:各 kind 进不进、分组排序、挂入终端并入不重复、act 只在等你时出现、unseen 跨端、短链接 403、结束会话不列。
 2. **桌面两栏**:撤左栏、页头导航与「⋯」菜单、右栏名单、直通挂载(复用详情)、瘦事项卡、撤话题行与定位器、窄窗滑层、CC 看一眼;改写 `rail.test.ts` 并补新守卫;mini 上跑 t5-conversation / workbench-layout 等受影响的 spec 并更新。
 3. **App**:名单条 + sheet(`homeView` 改成读名单)、直通页页头与内联输入框(去掉 `/compose` 跳转)、撤话题行与定位器、记忆页顶部话题;view 测试。
 4. **网页**:同 App;设备令牌下的直通输入框;mini 上跑 conversation / minimal e2e。

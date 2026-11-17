@@ -499,6 +499,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     matters:{list:filter=>{
       const rows=opts.matters!.list(filter),agents=opts.matters!.agents(rows.map(m=>m.id))
       return rows.map(m=>({...m,agents:agents.get(m.id)??[]}))
+    },get:id=>{
+      const m=opts.matters!.get(id)
+      return m?{...m,agents:opts.matters!.agents([id]).get(id)??[]}:null
     }},
     terminals:opts.rosterTerminals??(()=>[]),
     seen:makeMatterSeen(db,opts.proposals?.desktop),

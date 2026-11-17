@@ -27,7 +27,7 @@ function call<K extends PhoneApiKey, Q = void, B = void>(key: K, types?: { query
 type JobsActionT = 'pause' | 'resume' | 'remove'
 
 export const PHONE_CALLS = {
-  roster: { get: call('GET /m/api/roster') },
+  roster: { get: call('GET /v1/roster') },
   checkup: {
     get:call('GET /v1/checkup'),
     estimate:call('POST /v1/checkup/estimate',{body:t<{full?:boolean}>()}),
