@@ -73,7 +73,10 @@ function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: b
     ilink: { resolveAccountId: () => 'offline' }, appTurn: () => async ctx => { let consumed = true; await route(ctx, () => route.consume(ctx, async () => { consumed = false })); return { consumed } }, log: () => {}, topicRecall, matterRecall,
   })
   cleanups.push(async () => { await manager.shutdown(); db.close(); rmSync(stateDir, { recursive: true, force: true }) })
-  return { route, workspaces, released, converse, coordinator, manager, spawns, prompts, closed, revoked, instructions, rotation, messages, notices, topicRecall, matterRecall, tokens, minted }
+  // 落库 id 是 app:<来源>:<毫秒>:in/out;测试一毫秒内连发两句会撞 id 被当重复丢掉(主人不会这样发)。每句前等时钟走一格。
+  let lastAt = 0
+  const send = async (...args: Parameters<typeof converse>) => { while (Date.now() <= lastAt) await new Promise(r => setTimeout(r, 1)); try { return await converse(...args) } finally { lastAt = Date.now() } }
+  return { route, workspaces, released, converse: send, coordinator, manager, spawns, prompts, closed, revoked, instructions, rotation, messages, notices, topicRecall, matterRecall, tokens, minted }
 }
 
 it.each(['codex', 'grok'])('%s 一次代答用隔离会话、原样交付且记 agent 来源；下一句与原 CC 会话续聊', async provider => {
@@ -107,7 +110,8 @@ it.each(['codex', 'grok'])('%s 一次代答用隔离会话、原样交付且记 
   expect(t.instructions).toHaveBeenCalledTimes(1)
   expect(t.topicRecall).toHaveBeenCalledTimes(2)
   expect(t.matterRecall).toHaveBeenCalledTimes(2)
-  expect((await t.messages.listRange('owner', { limit: 20 })).find(m => m.text === `${provider} 原样答复`)).toMatchObject({ speaker: 'agent', provider })
+  // 落库在回复交付之后异步写;等它落下再看来源,不赌时序。
+  await vi.waitFor(async () => expect((await t.messages.listRange('owner', { limit: 20 })).find(m => m.text === `${provider} 原样答复`)).toMatchObject({ speaker: 'agent', provider }))
 })
 
 it('spawn 后网络失保护也说明失败并问 CC，释放代答会话且不重放', async () => {
