@@ -1,4 +1,4 @@
-import { checkupEstimateSummary } from '@wechat-cc/protocol'
+import { checkupEstimateSummary, replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protocol'
 import { demoTopics } from './demo-topics'
 import { checkupReview, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, type CheckupView, type CheckupProfile, type CheckupAttempt } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
@@ -18,14 +18,14 @@ type Entry = { detail: MatterDetailT; stage: Stage; version: number; evs: EvRec[
 const DAY = 86_400_000
 const HOUR = 3_600_000
 /** 主人对话里的一条:key 的在读时按语言出文案;text 是用户自己的字。 */
-type ChatRec = { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source']; narr?: Copy[]; atts?: DemoAtt[] }
+type ChatRec = Partial<ReplyAttribution> & { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source']; narr?: Copy[]; atts?: DemoAtt[] }
 /** 演示回复的附件:文案按语言生成;表情有 file ⇒ 走 sticker() 取图,没有 ⇒ 联网表情只写情绪。 */
 type DemoAtt = { kind: 'voice'; key: Copy } | { kind: 'sticker'; label: Copy; file?: string } | { kind: 'file'; name: string }
 
 /** 演示里 CC 回一句要多久:「在想…」留得够久,主人看得见,模拟器 UI 测试(一次点击 2 秒多)也看得见。 */
 export const DEMO_CHAT_REPLY_MS = 5000
 
-export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
+export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang; chatFixture?: 'reply-speaker' } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
   const topicOpened = new Map<string, string>()
   const topicTitles = new Map<string,string>(), topicDeleted = new Set<string>(), topicMerged = new Map<string,string>()
@@ -169,7 +169,12 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   }
   function seedChat() {
     const n = now()
-    chatMsgs = [
+    chatMsgs = opts.chatFixture === 'reply-speaker' ? [
+      { id: 'reply-demo-owner', role: 'me', key: 'replyDemoOwner', at: n - 4_000, source: 'phone' },
+      { id: 'reply-demo-cc', role: 'cc', key: 'replyDemoCc', at: n - 3_000, source: 'phone', speaker: 'cc', provider: 'claude' },
+      { id: 'reply-demo-codex', role: 'cc', key: 'replyDemoCodex', at: n - 2_000, source: 'phone', speaker: 'agent', provider: 'codex' },
+      { id: 'reply-demo-notice', role: 'cc', key: 'replyDemoNotice', at: n - 1_000, source: 'phone', speaker: 'notice', provider: 'cursor' },
+    ] : [
       { id: 'demo-chat-1', role: 'cc', key: 'chatSeed1', at: n - 3 * HOUR, source: 'wechat' },
       { id: 'demo-chat-2', role: 'me', key: 'chatSeed2', at: n - 3 * HOUR + 120_000, source: 'wechat' },
       { id: 'demo-chat-3', role: 'cc', key: 'chatSeed3', at: n - 2 * HOUR, source: 'desktop', atts: [{ kind: 'file', name: 'portfolio-notes.md' }] },
@@ -184,7 +189,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   function seedCompanion() { huntAt = now() - 40 * 60_000; seenUntil = null }
   function seed() { const b = buildSeed(); entries = b.map; order = b.ids; seedChat(); seedCompanion() }
   const chatText = (m: ChatRec, l: Lang) => (m.key ? t(l, m.key) : m.text ?? '')
-  const chatExtras = (m: ChatRec, l: Lang): Pick<ChatMessageT, 'attachments' | 'narration'> => ({
+  const chatExtras = (m: ChatRec, l: Lang): Pick<ChatMessageT, 'attachments' | 'narration'> & Partial<ReplyAttribution> => ({
+    ...replyAttributionFields(m),
     ...(m.narr?.length ? { narration: m.narr.map(k => t(l, k)) } : {}),
     ...(m.atts?.length ? { attachments: m.atts.map(a => a.kind === 'voice' ? { kind: 'voice' as const, text: t(l, a.key) } : a.kind === 'sticker' ? { kind: 'sticker' as const, label: t(l, a.label), ...(a.file ? { file: a.file } : {}) } : a) } : {}),
   })
@@ -198,7 +204,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     d.matter.title = title
     if (d.task) d.task.title = title
     d.questions = d.questions.map(q => (q.id === QUESTION_ID ? tripQuestion(l, q.createdAt) : q))
-    if (d.matter.id === CHAT_ID) d.events = chatMsgs.map(m => ({ kind: m.role === 'me' ? 'user' : 'text', createdAt: m.at, text: chatText(m, l) }))
+    if (d.matter.id === CHAT_ID) d.events = chatMsgs.map(m => ({ kind: m.role === 'me' ? 'user' : 'text', createdAt: m.at, text: chatText(m, l), ...replyAttributionFields(m) }))
     // 跟 daemon 一样带上这件事里出现过的执行者叫什么(收敛清单 ⑥)
     const q = d.quotaHandoff
     const names = demoNames([...(d.matter.agents ?? []), d.task?.providerId, d.nativeStart?.providerId, q?.from, q && 'to' in q ? q.to : undefined])

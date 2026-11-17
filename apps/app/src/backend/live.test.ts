@@ -949,6 +949,27 @@ it('T5d reads capabilities through protocol and uses shared owner window/work/ev
   h.b.dispose()
 })
 
+it.each(['m', 'v1'] as const)('%s preserves daemon reply attribution through the real App read schemas', async family => {
+  const attribution = { speaker: 'agent', provider: 'codex', model: 'model-id', turnId: 'turn' }
+  const chatPath = family === 'v1' ? '/v1/matter/owner-chat/page' : '/m/api/chat'
+  const matterPath = family === 'v1' ? '/v1/matter' : '/m/api/matter'
+  const h = harness({
+    [`GET ${chatPath}`]: ok({ ok: true, matterId: ID, title: 'CC', messages: [{ id: 'reply', role: 'cc', kind: 'text', text: 'original', at: 1, source: 'phone', truncated: false, ...attribution }], hasMore: false, nextBefore: null, pending: null, failed: null }),
+    [`GET ${matterPath}`]: ok({ ok: true, ...DETAIL, events: [{ kind: 'text', text: 'matter answer', createdAt: 1, ...attribution }] }),
+    'GET /v1/matter/owner-chat/window': ok({ messages: [{ messageId: 'reply', kind: 'text', text: 'original', createdAt: 1, source: 'phone', ...attribution }], anchor: 'reply', earlier: null, later: null }),
+    'GET /v1/matter/owner-chat/work': ok({ references: [], results: [{ id: 'result', matterId: ID, messageId: null, text: 'result', createdAt: 1, ...attribution }] }),
+    'GET /v1/matter/owner-chat/events': ok({ running: { turnId: 'turn', runId: null }, events: [{ id: 'event', cursor: 1, kind: 'agent_message', text: 'stream', createdAt: 1, ...attribution }], cursor: 1 }),
+  }, family === 'v1' ? 'v1' : undefined)
+  try {
+    h.status('ready')
+    expect((await h.b.chat({})).messages[0]).toMatchObject(attribution)
+    expect((await h.b.matter(ID, 'en')).events[0]).toMatchObject(attribution)
+    expect((await h.b.conversationWindow!({ anchor: 'reply' })).messages[0]).toMatchObject(attribution)
+    expect((await h.b.conversationWork!()).results[0]).toMatchObject(attribution)
+    expect((await h.b.conversationEvents!()).events[0]).toMatchObject(attribution)
+  } finally { h.b.dispose() }
+})
+
 describe('task network pause is separate from phone connectivity',()=>{
  it.each(['m','v1'] as const)('%s preserves the narrow optional pause projection and recovery',async family=>{
   const task={id:ID,title:'work',status:'running',phase:'working',providerId:'codex',path:'',error:null,updatedAt:1,networkSuspended:{since:42,privateDetail:'never projected'}}

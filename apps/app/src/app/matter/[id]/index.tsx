@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
 import { Modal, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import type { MatterInputT } from '../../../backend/types'
+import type { ChatModelViewT, MatterInputT } from '../../../backend/types'
 import { t } from '../../../i18n'
 import { conversationText } from '../../../i18n/minimal-conversation'
 import { useLang } from '../../../i18n/useLang'
@@ -28,6 +28,7 @@ import { StatusPill } from '../../../ui/StatusPill'
 import { componentAppearance, radius, space } from '../../../ui/tokens'
 import { TopBar } from '../../../ui/TopBar'
 import { AgentAvatars } from '../../../ui/AgentAvatars'
+import { ReplySpeaker } from '../../../ui/ReplySpeaker'
 import { agentsLabel, matterAgents } from '../../../view/agents'
 import { OriginMark } from '../../../ui/OriginMark'
 import { matterOrigin, originKey } from '../../../view/origin'
@@ -66,6 +67,7 @@ export default function Matter() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id
   // 打开就拉新:有缓存也重拉详情与概括(旧缓存先摆着,拿到新的再换)。
   const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
+  const chatModel = useQuery('chatModel', () => backend.chatModel(), { refreshOnMount: true })
   useEffect(() => { if (detail.data?.matter.kind === 'task') rememberReference(backend, id) }, [backend, id, detail.data?.matter.kind])
   const localInputs = useMatterInputs(id, detail.data?.inputs ?? NO_INPUTS)
   const inputReceipts = inputRows(detail.data?.inputs ?? NO_INPUTS, localInputs)
@@ -311,14 +313,14 @@ export default function Matter() {
           </View>)}
         </DetailSection> : null}
         <View testID="progress-latest-conversation" style={{ gap: space.l }}>
-          {recent.filter(e => e.kind === 'me' || e.kind === 'cc').map((e, i) => <ConversationMessage key={i} event={e} />)}
+          {recent.filter(e => e.kind === 'me' || e.kind === 'cc').map((e, i) => <ConversationMessage key={i} event={e} providers={chatModel.data?.providers} />)}
         </View>
         {activity ? <Txt testID="progress-activity-now" role="meta" tone="inkSoft" selectable>{t(lang, 'progress.stepNow')} · {activity.text}</Txt> : null}
         {currentError ? <Txt testID="progress-current-error" role="body" tone="inkSoft" selectable>{currentError.text}</Txt> : null}
         {d.artifacts.length ? <Artifacts matterId={id} artifacts={d.artifacts} backend={backend} lang={lang} online={online} /> : null}
 
         {earlier.length ? <DetailSection key={`earlier:${id}`} testID="progress-earlier" title={conversationText(lang, 'earlier')}>
-          <View testID="progress-earlier-conversation" style={{ gap: space.l }}>{earlier.map((e, i) => <ConversationMessage key={i} event={e} />)}</View>
+          <View testID="progress-earlier-conversation" style={{ gap: space.l }}>{earlier.map((e, i) => <ConversationMessage key={i} event={e} providers={chatModel.data?.providers} />)}</View>
         </DetailSection> : null}
 
         <DetailSection key={`summary:${id}`} testID="progress-summary-toggle" title={conversationText(lang, 'summary')}>
@@ -551,12 +553,11 @@ function DetailSection({ title, testID, children, keepMounted = false }: { title
 }
 
 
-function ConversationMessage({ event }: { event: ConvItem }) {
-  const lang = useLang()
+function ConversationMessage({ event, providers }: { event: ConvItem; providers?: ChatModelViewT['providers'] }) {
   const { c } = useTheme()
   const appearance = componentAppearance.message
   return <View style={{ paddingVertical: event.kind === 'me' ? appearance.paddingY : 0, paddingHorizontal: event.kind === 'me' ? appearance.paddingX : 0, borderRadius: appearance.radius, backgroundColor: event.kind === 'me' ? c[appearance.userBackground] : appearance.replyBackground, gap: space.xs, alignSelf: event.kind === 'me' ? 'flex-end' : 'stretch', maxWidth: '100%' }}>
-    <Txt role="caption" tone="inkSoft" style={{ textAlign: event.kind === 'me' ? 'right' : 'left' }}>{t(lang, event.kind === 'me' ? 'chat.me' : 'cc.label')}</Txt>
+    <ReplySpeaker role={event.kind === 'me' ? 'me' : 'cc'} reply={event} providers={providers} />
     <MessageText typeRole={event.kind === 'me' ? appearance.userRole : appearance.replyRole} role={event.kind === 'me' ? 'user' : 'assistant'} text={event.text} userAlign="right" />
   </View>
 }

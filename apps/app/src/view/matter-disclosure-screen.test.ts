@@ -168,3 +168,34 @@ it('shows the persisted worktree base after the original start event is no longe
   await flush()
   expect(ui.byId('progress-wt-base')?.textContent).toBe('Started from dev @ abcdef0')
 })
+
+it('shows actual matter reply avatars in recent and earlier results after a handoff, using model-settings names', async () => {
+  route.id = 'e5f6a7b8'
+  const backend = makeDemoBackend({ lang: 'en' })
+  const detail = await backend.matter(route.id, 'en'), model = await backend.chatModel()
+  detail.events = [
+    event('user', 'First request', 1),
+    { ...event('text', 'First executor answer', 2), speaker: 'agent', provider: 'claude' },
+    event('user', 'Continue please', 3),
+    { ...event('text', 'Second executor answer', 4), speaker: 'agent', provider: 'codex' },
+    { ...event('text', 'Gateway answer', 5), speaker: 'agent', provider: 'openai', model: 'Claude' },
+    { ...event('text', 'CC answer', 6), speaker: 'cc', provider: 'claude' },
+    { ...event('text', 'Notice', 7), speaker: 'notice', provider: 'codex' },
+    event('text', 'Legacy answer', 8),
+  ]
+  detail.matter.agentNames = { claude: 'Wrong matter name' }
+  backend.matter = async () => detail
+  backend.chatModel = async () => ({ ...model, providers: [{ ...model.providers[0]!, id: 'claude', name: 'Claude' }, { ...model.providers[0]!, id: 'codex', name: 'Codex' }, { ...model.providers[0]!, id: 'openai', name: 'My gateway' }] })
+  const ui = await mount(withProviders(createElement(Matter), { backend, lang: 'en' })); await flush()
+  const marks = (id: string) => [...ui.byId(id).querySelectorAll('[data-testid^="reply-speaker-"]')]
+  expect(marks('progress-latest-conversation').map(n => n.getAttribute('data-testid'))).toEqual(['reply-speaker-codex', 'reply-speaker-openai'])
+  expect(marks('progress-latest-conversation').map(n => n.getAttribute('aria-label'))).toEqual(['Codex', 'My gateway'])
+  expect(marks('progress-latest-conversation')[0]?.querySelector('img')?.getAttribute('src')).toContain('/agents/codex.png')
+  expect(marks('progress-latest-conversation')[1]?.querySelector('img')).toBeNull()
+  expect(ui.byId('progress-latest-conversation').textContent).toContain('CC answer')
+  expect(ui.byId('progress-latest-conversation').textContent).toContain('Legacy answer')
+  await act(() => ui.byId('progress-earlier').click()); await flush()
+  expect(marks('progress-earlier-conversation').map(n => n.getAttribute('aria-label'))).toEqual(['Claude'])
+  expect(marks('progress-earlier-conversation')[0]?.getAttribute('role')).toBe('image')
+  expect(ui.byId('progress-earlier-conversation').textContent).toContain('First executor answer')
+})

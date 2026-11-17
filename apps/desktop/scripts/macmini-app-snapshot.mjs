@@ -50,7 +50,7 @@ export async function receiveAppSnapshot({mini,sha,lifecycle=jobLifecycle(),inpu
   }
 }
 
-export const supportsAppSnapshot = ref => ['mini-ui-acceptance', 'cc-alive-2', 'origin/dev', 'app-maestro-build3', 'design-unify-b1-fixes', 'codex-hook-trust-ux', 'topics-are-projects', 'topics-waiting-honest', 'design-b3'].includes(ref)
+export const supportsAppSnapshot = ref => ['mini-ui-acceptance', 'cc-alive-2', 'origin/dev', 'app-maestro-build3', 'design-unify-b1-fixes', 'codex-hook-trust-ux', 'topics-are-projects', 'topics-waiting-honest', 'design-b3', 'who-answers-app-avatar'].includes(ref)
 
 export async function main() {
  if (process.argv[2] === '--receive' || process.argv[2] === '--receive-verified') {

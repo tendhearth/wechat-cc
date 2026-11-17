@@ -1,9 +1,9 @@
 // 「跟 CC 说」对话页的纯视图模型。被根目录测试 import:纯 TS,不碰 react / expo。
-import { CHAT_TEXT_MAX } from '@wechat-cc/protocol'
+import { CHAT_TEXT_MAX, replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protocol'
 import type { ChatAttachmentT, ChatMessageT, ChatPageT } from '../backend/types'
 import { composeOutcome } from './compose'
 
-export type Bubble = {
+export type Bubble = Partial<ReplyAttribution> & {
   projection?:'result'|'stream'
   key: string; side: 'me' | 'cc'; text: string; at: number; source: 'wechat' | 'desktop' | 'phone'; state: 'sent' | 'thinking' | 'failed'
   failedKind?: 'busy' | 'unavailable' | 'notConfigured' | 'maybeLost' | 'notConfirmed'; requestId?: string; truncated: boolean
@@ -68,6 +68,7 @@ export function chatBubbles(msgs: ChatMessageT[], page: JobState, accepted: Acce
     && !mine.some(a => landed([m], a))
   const out: Bubble[] = msgs.map(m => ({
     key: m.id, side: m.role, text: m.text, at: m.at, source: m.source, state: 'sent', truncated: m.truncated,
+    ...replyAttributionFields(m),
     ...(m.attachments?.length ? { attachments: m.attachments } : {}),
     ...(countOnly(m) ? { originalUnavailable: true as const } : {}),
     ...(m.role === 'cc' && m.narration?.length ? { narration: m.narration } : {}),

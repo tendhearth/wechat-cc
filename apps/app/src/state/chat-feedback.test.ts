@@ -6,12 +6,14 @@ import { color, componentAppearance, typeScale } from '@wechat-cc/design-tokens'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type ChatPageT } from '../backend/types'
 import { clearDrafts, getDraft, putReceipt, setDraft } from './drafts'
-import { withProviders } from './providers.test-support'
+import { withLang, withProviders } from './providers.test-support'
 import Chat from '../ui/ConversationScreen'
+import DevE2E from '../app/dev-e2e'
 const scrollHost = vi.hoisted(() => ({ offset: vi.fn() }))
+const route = vi.hoisted(() => ({ params: {} as { op?: string }, keychainRead: vi.fn(), keychainWrite: vi.fn(), keychainDelete: vi.fn() }))
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => ({}), useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
+vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => route.params, useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
 vi.mock('react-native', async () => {
   const { createElement, forwardRef, useImperativeHandle } = await import('react')
   const { nativeBoundary } = await import('../ui/native-motion.test-support')
@@ -31,6 +33,8 @@ vi.mock('react-native', async () => {
 })
 // 设备边界:系统语言、录音 / 播放、文件系统(真页面、真 Provider、真 TopBar / Markdown / ReplyExtras 都照常渲染)。
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
+vi.mock('expo-constants', () => ({ default: { expoConfig: { extra: { e2eBuild: true } } } }))
+vi.mock('expo-secure-store', () => ({ AFTER_FIRST_UNLOCK: 'after-first-unlock', getItemAsync: route.keychainRead, setItemAsync: route.keychainWrite, deleteItemAsync: route.keychainDelete }))
 vi.mock('expo-audio', () => ({ createAudioPlayer: () => ({}), setAudioModeAsync: async () => {} }))
 vi.mock('expo-file-system', () => ({ File: class {}, Paths: {} }))
 vi.mock('react-native-safe-area-context', async () => { const { createElement } = await import('react'); return { SafeAreaProvider: ({ children }: any) => children, SafeAreaView: ({ children }: any) => createElement('main', null, children) } })
@@ -48,10 +52,38 @@ async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = 
   await act(() => root.render(withProviders(createElement(Chat), { backend, lang }))); await flush()
   return { read, say, backend }
 }
-beforeEach(() => { scrollHost.offset.mockClear(); clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
+beforeEach(() => { scrollHost.offset.mockClear(); route.params = {}; route.keychainRead.mockClear(); route.keychainWrite.mockClear(); route.keychainDelete.mockClear(); clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
 afterEach(async () => { await act(() => root.unmount()); container.remove() })
 
 describe('native chat feedback', () => {
+  it('opens the reply-speaker E2E conversation without reading or changing pairing in a Release UI-test build', async () => {
+    route.params = { op: 'reply-speaker' }
+    vi.stubGlobal('__DEV__', false)
+    try {
+      await act(() => root.render(withLang('en', createElement(DevE2E)))); await flush()
+      for (const id of ['owner', 'cc', 'codex', 'notice']) expect(byId(`chat-message-reply-demo-${id}`)).not.toBeNull()
+      expect(byId('reply-speaker-codex')).not.toBeNull()
+      expect(byId('reply-speaker-claude')).toBeNull()
+      expect(byId('reply-speaker-cursor')).toBeNull()
+      expect(route.keychainRead).not.toHaveBeenCalled()
+      expect(route.keychainWrite).not.toHaveBeenCalled()
+      expect(route.keychainDelete).not.toHaveBeenCalled()
+    } finally { vi.unstubAllGlobals() }
+  })
+  it('shows a stable Codex avatar only on the delegated reply in the offline speaker fixture', async () => {
+    const demo = makeDemoBackend({ lang: 'en', chatFixture: 'reply-speaker' })
+    try {
+      await mount(await demo.chat({}), vi.fn(), false, 'en')
+      expect(byId('chat-message-reply-demo-owner')?.textContent).toContain('Who is replying?')
+      expect(byId('chat-message-reply-demo-cc')?.textContent).toContain('I’ll ask Codex to check.')
+      expect(byId('chat-message-reply-demo-codex')?.textContent).toContain('I checked the changes.')
+      expect(byId('chat-message-reply-demo-notice')?.textContent).toContain('Offline demo only.')
+      expect([...container.querySelectorAll('[data-testid^="reply-speaker-"]')].map(n => n.getAttribute('data-testid'))).toEqual(['reply-speaker-codex'])
+      expect(byId('reply-speaker-codex')?.getAttribute('aria-label')).toBe('Codex')
+      expect(byId('reply-speaker-codex')?.querySelector('img')?.getAttribute('src')).toContain('/agents/codex.png')
+      for (const id of ['owner', 'cc', 'notice']) expect(byId(`chat-message-reply-demo-${id}`).querySelector('[data-testid^="reply-speaker-"]')).toBeNull()
+    } finally { demo.dispose() }
+  })
   it('uses a rail bubble and bubble text for the user, transparent body text for CC, and the 44-point header target', async () => {
     const at=Date.now()
     await mount({...empty(),messages:[{id:'me',role:'me',source:'phone',text:'我的消息',at,truncated:false,kind:'text'},{id:'cc',role:'cc',source:'phone',text:'CC 的回复',at:at+1,truncated:false,kind:'text'}]})
@@ -168,4 +200,80 @@ for (const lang of ['en', 'zh-Hans'] as const) it(`explains unavailable original
   expect(byId('chat-original-unavailable')?.textContent).toBe(lang === 'en' ? 'This record kept only text. The original attachment is not available to open.' : '这条记录只保留了文字，无法打开原附件。')
   expect(byId('chat-att-file')).toBeNull()
   expect(byId('chat-att-image')).toBeNull()
+})
+
+describe('reply attribution avatars', () => {
+  const reply = (id: string, metadata: Partial<ChatPageT['messages'][number]> = {}): ChatPageT['messages'][number] => ({ id, role: 'cc', kind: 'text', text: id, at: 1, source: 'phone', truncated: false, ...metadata })
+  const row = (text: string) => [...byId('chat-list').querySelectorAll('section')].find(s => s.textContent?.includes(text))!
+  const avatar = (text: string) => row(text).querySelector('[data-testid^="reply-speaker-"]')
+
+  async function attributedScreen(messages: ChatPageT['messages'], namesFail = false, extras: Partial<Backend> = {}) {
+    const backend = makeDemoBackend({ lang: 'en' })
+    const model = await backend.chatModel()
+    backend.chat = async () => ({ ...empty(), messages })
+    backend.chatModel = vi.fn(async () => {
+      if (namesFail) throw new BackendError('offline')
+      return { ...model, provider: 'openai', providers: [{ ...model.providers[0]!, id: 'claude', name: 'Claude' }, { ...model.providers[0]!, id: 'codex', name: 'Codex' }, { ...model.providers[0]!, id: 'openai', name: 'My gateway' }] }
+    })
+    Object.assign(backend, extras)
+    await act(() => root.render(withProviders(createElement(Chat), { backend, lang: 'en' }))); await flush()
+    return backend
+  }
+
+  it('shows exactly one shared monochrome avatar per actual executor, with settings names and a generic compatible-service mark', async () => {
+    await attributedScreen([
+      reply('first reply', { speaker: 'agent', provider: 'claude' }),
+      reply('second reply', { speaker: 'agent', provider: 'codex' }),
+      reply('gateway reply', { speaker: 'agent', provider: 'openai', model: 'Claude' }),
+      reply('unknown reply', { speaker: 'agent', provider: 'custom' }),
+    ])
+    for (const [text, name, glyph] of [['first reply', 'Claude', 'claude'], ['second reply', 'Codex', 'codex']] as const) {
+      const mark = avatar(text)!
+      expect(mark?.getAttribute('role')).toBe('image')
+      expect(mark?.getAttribute('aria-label')).toBe(name)
+      expect(mark?.querySelectorAll('img')).toHaveLength(1)
+      expect(mark?.querySelector('img')?.getAttribute('src')).toContain(`/agents/${glyph}.png`)
+      expect(JSON.parse(mark.querySelector('img')!.getAttribute('data-style')!).tintColor).toBe(color.ink)
+      expect(row(text).textContent).not.toContain('CC')
+      expect(row(text).textContent).not.toContain(name)
+      expect(row(text).textContent).toContain('Phone')
+    }
+    expect(avatar('gateway reply')?.getAttribute('aria-label')).toBe('My gateway')
+    expect(avatar('gateway reply')?.querySelector('img')).toBeNull()
+    expect(avatar('gateway reply')?.textContent).toBe('A')
+    expect(avatar('unknown reply')?.getAttribute('aria-label')).toBe('custom')
+    expect(avatar('unknown reply')?.textContent).toBe('A')
+  })
+
+  it('preserves CC, notices, owners and old records without inferring attribution from settings, model or reply parts', async () => {
+    const messages = [
+      reply('CC answer', { speaker: 'cc', provider: 'claude', replyParts: [{ text: 'part', speaker: 'agent', provider: 'codex' }] }),
+      reply('notice message', { speaker: 'notice', provider: 'codex' }),
+      reply('legacy provider', { provider: 'claude', model: 'Claude' }), reply('legacy message'),
+      reply('owner message', { role: 'me', speaker: 'agent', provider: 'codex' }),
+      reply('missing provider', { speaker: 'agent' }), reply('blank provider', { speaker: 'agent', provider: '  ' }),
+    ]
+    await attributedScreen(messages)
+    for (const message of messages) expect(avatar(message.text)).toBeNull()
+    expect(row('CC answer').textContent).toContain('CC')
+    expect(row('legacy message').textContent).toContain('CC')
+  })
+
+  it('keeps the transcript and provider-id accessible name when model settings cannot load', async () => {
+    await attributedScreen([reply('offline reply', { speaker: 'agent', provider: 'claude' })], true)
+    expect(avatar('offline reply')?.getAttribute('aria-label')).toBe('claude')
+    expect(row('offline reply').textContent).toContain('offline reply')
+  })
+
+  it('retains per-reply attribution for live events, brought-back results and attachment-only replies', async () => {
+    await attributedScreen([reply('', { speaker: 'agent', provider: 'codex', attachments: [{ kind: 'file', name: 'output.txt' }] })], false, {
+      conversationEvents: async () => ({ running: { turnId: 'turn', runId: 'run' }, events: [{ id: 'event', turnId: 'turn', cursor: 1, kind: 'agent_message', text: 'streamed reply', createdAt: 2, speaker: 'agent', provider: 'claude' }], cursor: 1 }),
+      conversationWork: async () => ({ references: [], results: [{ id: 'result', matterId: 'matter', turnId: 'previous', messageId: null, text: 'brought back reply', createdAt: 3, speaker: 'agent', provider: 'codex' }] }),
+    })
+    expect(avatar('streamed reply')?.getAttribute('aria-label')).toBe('Claude')
+    expect(avatar('brought back reply')?.getAttribute('aria-label')).toBe('Codex')
+    expect(avatar('output.txt')?.getAttribute('aria-label')).toBe('Codex')
+    expect(row('streamed reply').textContent).not.toContain('CC')
+    expect(row('brought back reply').textContent).not.toContain('CC')
+  })
 })

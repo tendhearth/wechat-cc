@@ -2,6 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { conversationView } from './conversation'
 const ev = (kind: string, text: string, createdAt: number) => ({ kind, text, createdAt })
 describe('conversationView', () => {
+  it('keeps the actual speaker of each matter reply across a handoff without attributing old events', () => {
+    expect(conversationView([
+      { ...ev('text', 'First answer', 1), speaker: 'agent', provider: 'claude' },
+      { ...ev('text', 'Second answer', 2), speaker: 'agent', provider: 'codex' },
+      { ...ev('text', 'CC answer', 3), speaker: 'cc', provider: 'openai' },
+      ev('text', 'Old answer', 4),
+    ])).toEqual([
+      { kind: 'cc', text: 'First answer', at: 1, speaker: 'agent', provider: 'claude' },
+      { kind: 'cc', text: 'Second answer', at: 2, speaker: 'agent', provider: 'codex' },
+      { kind: 'cc', text: 'CC answer', at: 3, speaker: 'cc', provider: 'openai' },
+      { kind: 'cc', text: 'Old answer', at: 4 },
+    ])
+  })
   it('用户 / CC / 合并的步骤 / 出错;系统行不显示', () => {
     expect(conversationView([ev('user', '帮我看看', 1), ev('system', '权限请求', 2), ev('tool_call', 'ListFiles', 3), ev('tool_call', 'ReadFile', 4), ev('text', '看完了', 5), ev('error', '额度用完', 6), ev('user', 'wxvault 不能看到么', 7)]))
       .toEqual([
