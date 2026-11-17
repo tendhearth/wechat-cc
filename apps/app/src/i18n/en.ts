@@ -619,7 +619,7 @@ const en = {
   'chatModel.save': 'Use this',
   'chatModel.saving': 'Switching…',
   'chatModel.saved': 'Done. Your next message uses it.',
-  'chatModel.unknown': 'That backend is not available right now.',
+  'chatModel.unknown': 'Connect it with one click on your computer.',
   'chatModel.failed': "Couldn't switch. Try again in a moment.",
   'chatModel.unavailable': "Can't read it now. Is your computer on?",
   'chatModel.multi': 'This chat is in a multi-agent mode ({mode}); picking one switches it back to a single agent.',

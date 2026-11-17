@@ -40,6 +40,7 @@ export interface FindCodexBinaryDeps {
   /** Defaults to `os.homedir()`. */
   homeDir?: string
   /** Defaults to `process.platform`. */
+  localAppData?: string
   platform?: NodeJS.Platform
 }
 
@@ -106,5 +107,10 @@ export function findCodexBinary(deps: FindCodexBinaryDeps = {}): string | null {
     }
   }
 
+  if (platform === 'win32') {
+    const local = deps.localAppData ?? process.env.LOCALAPPDATA ?? platformPath.join(homeDir, 'AppData', 'Local')
+    const installed = platformPath.join(local, 'Programs', 'OpenAI', 'Codex', 'bin', exe)
+    if (exists(installed)) return installed
+  }
   return null
 }

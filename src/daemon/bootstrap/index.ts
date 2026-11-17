@@ -1,3 +1,4 @@
+import { UNDER_TEST_RUNNER } from '../../lib/config'
 /**
  * bootstrap —— 把 daemon 的核心分发图拼起来(架构终态 A2:**一组模块**,进 main 的同一个容器)。
  * 每一块的构造仍在 ./wire-*.ts(或同目录的小模块)里;这里只说「谁要谁」,产物最后在 `bootstrap` 那个模块里
@@ -106,13 +107,13 @@ type BootBase = ReturnType<typeof bootBase>
 async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge']; socialWired: () => boolean }) {
   const { deps, ctxBase } = b
   // 模型热读 + Claude SDK Options — ./wire-model-options.ts。
-  const { readAgentConfig, currentClaudeModel, currentModelFor, sdkOptionsForProject } = wireModelOptions(ctxBase, { plugins: { wechatStdioForClaude: b.wechatStdioForClaude, delegateStdioForClaude: b.delegateStdioForClaude, pluginMcpForClaude: b.pluginMcpForClaude }, permissionMode: b.permissionMode, buildCanUseTool: b.buildCanUseTool, claudeBin: b.claudeBin })
+  const { readAgentConfig, currentClaudeModel, currentModelFor, sdkOptionsForProject } = wireModelOptions(ctxBase, { plugins: { wechatStdioForClaude: b.wechatStdioForClaude, delegateStdioForClaude: b.delegateStdioForClaude, pluginMcpForClaude: b.pluginMcpForClaude }, permissionMode: b.permissionMode, buildCanUseTool: b.buildCanUseTool, claudeBin: b.claudeBin, resolveClaudeBin: () => UNDER_TEST_RUNNER ? b.claudeBin : resolveClaudeBinary() })
   // Persistent session_id map — enables `resume` after daemon restart (./session-paths.ts probes the right jsonl).
   const sessionStore = makeSessionStore(deps.db, { migrateFromFile: join(deps.stateDir, 'sessions.json') })
   // Per-turn watchdog (default 10 min, WECHAT_TURN_TIMEOUT_MS; 0 disables). Resolved before
   // registerProviders so agy's `--print-timeout` shares this exact value, same as the coordinator below.
   const turnTimeoutMs = turnTimeoutMsFromEnv(process.env)
-  const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider } = await registerProviders({
+  const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider, refreshInstalledProvider } = await registerProviders({
     log: deps.log, networkGate: deps.networkGate,
     stateDir: deps.stateDir,
     db: deps.db,
@@ -187,7 +188,7 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
   })
   // A2A registry / client / events + resolveOperatorChatId — ./wire-a2a.ts。
   const a2a = wireA2a(ctxBase)
-  return { contextRotation, readAgentConfig, sdkOptionsForProject, sessionStore, registry, defaultProviderId, baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider, buildInstructions, currentModelFor, sessionManager, anomalyNotes, sendAssistantText, coordinator, dispatchDelegate, ...a2a }
+  return { contextRotation, readAgentConfig, sdkOptionsForProject, sessionStore, registry, defaultProviderId, baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider, refreshInstalledProvider, buildInstructions, currentModelFor, sessionManager, anomalyNotes, sendAssistantText, coordinator, dispatchDelegate, ...a2a }
 }
 type BootCore = Awaited<ReturnType<typeof bootCore>>
 
@@ -360,7 +361,7 @@ function assemble(b: BootBase, c: BootCore, opt: {
     sdkOptionsForProject: c.sdkOptionsForProject,
     buildInstructions: c.buildInstructions,
     currentModelFor: c.currentModelFor,
-    defaultProviderId: c.defaultProviderId, pluginsHealth: b.pluginsHealth, providerProbes: c.providerProbes, stopProviderProbes: c.stopProviderProbes, reprobeProvider: c.reprobeProvider,
+    defaultProviderId: c.defaultProviderId, pluginsHealth: b.pluginsHealth, providerProbes: c.providerProbes, stopProviderProbes: c.stopProviderProbes, reprobeProvider: c.reprobeProvider, refreshInstalledProvider: c.refreshInstalledProvider,
     codeHead: opt.selfRestart?.loadedHead ?? null,
     providerNotes: () => {
       const out: Partial<Record<ProviderId, string>> = { ...c.baseProviderNotes() }

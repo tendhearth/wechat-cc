@@ -1,3 +1,5 @@
+import { cliSetupId } from '../../lib/executor-cli-setup'
+import { cliSetupRoutes } from './routes-cli-setup'
 import { replyMetadataFields } from '@wechat-cc/protocol'
 import { CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { turnRoutes } from './routes-turn'
@@ -80,6 +82,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     // 一件事上的动作(P3e):/v1/matter/<动词> 一个处理器;桌面还在调的 /v1/workbench/* 双胞胎挂同一个函数(下面 withDesktopAliases)
     ...matterActionRoutes(deps),
     ...connectionsRoutes(deps),
+    ...cliSetupRoutes(deps),
     'GET /v1/health': (_q, _body, caller) => ({
       status: 200,
       body: {
@@ -211,11 +214,24 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
       // 别把国内/本地自配的大脑挡在「先开代理」的墙后面。
       return { status: 200, body: { ok: true, results, verdict: verdictOf(results), dial_advisable: dialAdvisable(results, registered, endpoints) } }
     },
-    'GET /v1/llm/health': async (q) => {
+    'GET /v1/llm/health': async (q, _body, caller) => {
       if (!deps.llmHealth) return { status: 503, body: { error: 'llm_health_not_wired' } }
       const { unconfiguredHints } = await import('../llm-health')
       const fresh = q.get('fresh') === '1'
-      const report = fresh ? await deps.llmHealth.dial(q.get('scope') === 'current' ? 'current' : undefined) : deps.llmHealth.cached()
+      let provider: string | undefined
+      if (q.has('provider')) {
+        try { provider = cliSetupId(q.get('provider')) } catch { return { status: 400, body: { error: 'invalid_provider' } } }
+      }
+      if (fresh && provider) {
+        if (caller?.origin !== 'file' && !(caller?.tier === 'admin' && caller.origin === 'operator')) return { status: 403, body: { error: 'desktop_only' } }
+        if (!deps.cliSetup) return { status: 503, body: { error: 'cli_setup_not_wired' } }
+        try { await deps.cliSetup.check() } catch { return { status: 409, body: { error: 'network_unprotected' } } }
+        await deps.llmRefreshProvider?.(provider)
+      }
+      const local = fresh && provider === 'grok' ? deps.cliSetup?.snapshot().providers.find(p => p.id === 'grok') : null
+      const report = local ? { checked_at: new Date().toISOString(), default_provider: null,
+        results: [{ provider: 'grok', ok: local.installed && local.loggedIn === true && local.loginCompleted === true && (deps.llmRegistered?.().includes('grok') ?? false), latency_ms: 0, source: 'login_receipt' }] }
+        : fresh ? await deps.llmHealth.dial(provider ?? (q.get('scope') === 'current' ? 'current' : undefined)) : deps.llmHealth.cached()
       const registered = deps.llmRegistered?.() ?? []
       // names(收敛清单 ⑥):六家内置 + 已注册的(含自定义 ACP)都给正式名字和设置里的写法;桌面不存名字表,
       // 没注册的也给(「连接其他 AI 服务」的选项、旧对话里的执行者)。老 daemon 不带 ⇒ 桌面退回 id。

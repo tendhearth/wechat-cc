@@ -222,7 +222,7 @@ function statusText(p) {
   if (p.status === "ok") return "✓ 通" + (p.latency_ms != null ? "(" + p.latency_ms + "ms)" : "")
   if (p.status === "broken") return "✗ 不通" + (p.error ? ":" + p.error : "")
   if (p.status === "unknown") return "已接入,还没测过(桌面「大脑」卡可测)"
-  return "未接入" + (p.hint ? " · " + p.hint : "")
+  return "未接入 · 到电脑上点一下接入"
 }
 function renderModels(m) {
   if (!m) return

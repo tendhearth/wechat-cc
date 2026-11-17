@@ -202,3 +202,8 @@ describe('findCodexBinary', () => {
     expect(result).toBe('/usr/local/bin/codex')
   })
 })
+
+it('finds a new Windows standalone install without restarting the daemon PATH', () => {
+  const path = 'C:\\Users\\nate\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe'
+  expect(findCodexBinary({ platform: 'win32', pathEnv: 'C:\\Windows', homeDir: 'C:\\Users\\nate', localAppData: 'C:\\Users\\nate\\AppData\\Local', exists: p => p === path, readdir: () => [] })).toBe(path)
+})

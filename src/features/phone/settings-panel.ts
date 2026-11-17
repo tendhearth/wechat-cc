@@ -1,3 +1,5 @@
+import { CLI_SETUP_IDS } from '../../lib/executor-cli-setup'
+import { EXECUTOR_FACTS } from '../../lib/executor-facts'
 import { linkHomeStatus } from '../../domain/matters/phone-scope'
 /**
  * settings-panel.ts — the WeChat-openable graphical settings page
@@ -34,7 +36,7 @@ import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/ag
 import { saveLlmKey } from '../../daemon/llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from '../../daemon/llm-health'
 import { capabilitiesFor } from '../../domain/capability-matrix'
-import { grokHomeProblem } from '../../lib/grok-home'
+import { GROK_PHONE_LOGIN_HINT, grokHomeProblem } from '../../lib/grok-home'
 import { providerDenialFor } from '../../domain/provider-policy'
 import { PROVIDER_IDS } from '../../lib/provider-ids'
 import { buildFeed, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
@@ -315,8 +317,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         registered: isReg,
         model: modelForProvider(cfg, id) ?? null,
         status,
-        ...(unavailableReason && isReg ? { error: unavailableReason } : pr?.error ? { error: pr.error.slice(0, 160) } : {}),
-        ...(!isReg && PROVIDER_SETUP_HINTS[id] ? { hint: PROVIDER_SETUP_HINTS[id] } : {}),
+        ...(unavailableReason && isReg ? { error: id === 'grok' ? GROK_PHONE_LOGIN_HINT : unavailableReason } : pr?.error ? { error: pr.error.slice(0, 160) } : {}),
+        ...(!isReg && PROVIDER_SETUP_HINTS[id] ? { hint: (CLI_SETUP_IDS as readonly string[]).includes(id) ? `${EXECUTOR_FACTS[id as keyof typeof EXECUTOR_FACTS].detect?.binary?.name ?? id}：到电脑上点一下接入。` : PROVIDER_SETUP_HINTS[id] } : {}),
         ...(pr?.latency_ms != null ? { latency_ms: pr.latency_ms } : {}),
       }
     })

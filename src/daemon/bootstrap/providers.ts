@@ -1,3 +1,5 @@
+import { resolveClaudeBinary } from './claude-env'
+import { cliSetupId, type CliSetupId } from '../../lib/executor-cli-setup'
 import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
@@ -123,6 +125,7 @@ export interface ProviderDeps {
    * 测试接缝(2026-10-04):外部 CLI 的 `--version` 探测。缺省 provider-probe.ts 的
    * `probeVersion`(超时按事件循环醒着的时间计,失败带原因)。
    */
+  findSetupBinary?: (id: CliSetupId) => string | null
   probeVersion?: (bin: string, options?: { env?: NodeJS.ProcessEnv }) => Promise<VersionProbeResult>
   /**
    * 测试接缝:探测失败后的退避重探(档位 / 计时器)。生产不传 ⇒ 2s、4s … 60s,之后每 10 分钟。
@@ -143,6 +146,7 @@ export interface ProviderWiring {
   /** daemon 关停时清掉重探计时器。 */
   stopProviderProbes: () => void
   /** 立刻重探一家(CLI 自动升级器升完时用)。语义见 ProbeRetrier.reprobeNow。 */
+  refreshInstalledProvider: (id: string) => Promise<boolean>
   reprobeProvider: (id: string) => Promise<boolean | null>
 }
 
@@ -259,7 +263,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       // Threaded into cheapEval's query() call so the bun-compile
       // findClaudePath() trap doesn't bite the chatroom moderator path
       // (same protection the legacy haiku-eval helper provided).
-      ...(claudeBin ? { claudeBin } : {}),
+      get claudeBin() { return claudeBin ?? (UNDER_TEST_RUNNER ? undefined : resolveClaudeBinary()) },
       // strongEval (the /chat verdict) runs on the live default model, not
       // haiku — synthesis quality matters more than cost there.
       strongModel: currentClaudeModel,
@@ -852,7 +856,44 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // 默认 provider 是共享钥匙的那种(目前只剩 agy):允许,但说清后果。
   { let shared = false; try { shared = capabilitiesFor(defaultProviderId).mcpTools !== 'none' && !capabilitiesFor(defaultProviderId).adminMcpTools } catch { /* unknown id → registry will complain */ }
     if (shared) deps.log('BOOT', `默认 provider 是 ${defaultProviderId}(订阅 CLI,所有对话共用一把 trusted 钥匙):guest 对话会被拒,管理员/信任对话正常;主动关心等走主人会话不受影响`) }
+  // Explicit desktop setup polling only: discover binaries absent at boot, without timers or restart.
+  const setupInFlight = new Map<string, Promise<boolean>>()
+  const refreshInstalledProvider = (input: string): Promise<boolean> => {
+    let id: CliSetupId
+    try { id = cliSetupId(input) } catch { return Promise.resolve(false) }
+    if (setupInFlight.has(id)) return setupInFlight.get(id)!
+    const work = async () => {
+      if (registry.has(id)) return true
+      const retried = await probeRetrier.reprobeNow(id)
+      if (retried !== null) return retried
+      if (id === 'claude') return registry.has('claude')
+      if ((id === 'cursor' || id === 'grok') && !acpSupportedOn()) return false
+      const config = readAgentConfig()
+      const bin = deps.findSetupBinary ? deps.findSetupBinary(id)
+        : id === 'codex' ? findCodexBinary({ pathEnv: augmentedPathEnv() })
+        : executorBinary(id, config, UNDER_TEST_RUNNER ? () => null : findOnPath)
+      if (!bin) return false
+      const r = await (id === 'grok' ? probeGrok(bin) : probe(bin))
+      if (!r.ok) return false
+      let registered = false
+      if (id === 'codex') {
+        const check = codexCheckFrom(bin, r)
+        if (check.reason === 'version_probe_failed') return false
+        codexVersionCheck = check
+        registerCodex(bin, check)
+        registered = true
+      } else if (id === 'grok') registered = await registerGrok(bin)
+      else if (id === 'cursor') registered = await registerCursorCli(bin)
+      else registered = await registerAgy(bin)
+      if (registered) assertLateRegistration(id)
+      return registered
+    }
+    const pending = work().finally(() => setupInFlight.delete(id))
+    setupInFlight.set(id, pending)
+    return pending
+  }
   return {
+    refreshInstalledProvider,
     registry, defaultProviderId, codexBinary, codexVersionCheck,
     providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}), ...(grokBin ? { grok: grokHomeProblem(deps.stateDir) ?? 'CC 专属 HOME 已登录；无 wechat、记录本或委派工具。' } : {}) }),
     providerProbes: () => probeRetrier.status(),

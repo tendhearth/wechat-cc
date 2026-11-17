@@ -1,3 +1,4 @@
+import { CLI_SETUP_IDS } from '../lib/executor-cli-setup'
 import { taskHandoffNames } from './task-handoff-names'
 import { isTaskHandoffCommand } from '../features/workbench'
 /**
@@ -361,7 +362,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       }
       if (tail === '') {
         if (!deps.registry.has(providerId)) {
-          await reply(msg.chatId, `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
+          await reply(msg.chatId, (CLI_SETUP_IDS as readonly string[]).includes(providerId) ? `provider \`${providerId}\` 未注册。到电脑上点一下接入。可用: ${deps.registry.list().join(', ')}` : `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
           return true
         }
         deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId })
@@ -470,7 +471,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           return true
         }
         if (!deps.registry.has(providerId)) {
-          await reply(msg.chatId, `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
+          await reply(msg.chatId, (CLI_SETUP_IDS as readonly string[]).includes(providerId) ? `provider \`${providerId}\` 未注册。到电脑上点一下接入。可用: ${deps.registry.list().join(', ')}` : `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
           return true
         }
         // 别名先解(只对 openai):ds → DeepSeek。解不到再问网关:名字在网关列表里才切,
@@ -548,7 +549,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '/set provider 是全局设置,仅管理员可改。'); return true }
         if (!deps.setConfig) { await reply(msg.chatId, '配置写入未接线。'); return true }
         const target = rawValue.toLowerCase() === 'cc' ? 'claude' : rawValue.toLowerCase() === 'api' ? 'openai' : rawValue.toLowerCase()
-        if (!deps.registry.has(target)) { await reply(msg.chatId, `provider \`${target}\` 未注册。可用: ${deps.registry.list().join(', ')}`); return true }
+        if (!deps.registry.has(target)) { await reply(msg.chatId, (CLI_SETUP_IDS as readonly string[]).includes(target) ? `provider \`${target}\` 未注册。到电脑上点一下接入。可用: ${deps.registry.list().join(', ')}` : `provider \`${target}\` 未注册。可用: ${deps.registry.list().join(', ')}`); return true }
         if (target === deps.defaultProviderId) { await reply(msg.chatId, `默认已经是 ${target},不用改。`); return true }
         const r = await deps.setConfig('provider', target)
         if (!r.ok) { await reply(msg.chatId, `没改成:${r.detail ?? r.error}`); return true }

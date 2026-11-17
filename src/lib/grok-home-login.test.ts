@@ -9,3 +9,15 @@ describe('grok login command', () => {
     expect(cmd.indexOf('umask 077')).toBeLessThan(cmd.indexOf('grok login'))
   })
 })
+
+it('Windows login isolates USERPROFILE and clears inherited Grok credential locations', () => {
+  const cmd = grokLoginCommand('/s', 'powershell')
+  expect(cmd).toContain('$env:USERPROFILE = $env:HOME')
+  expect(cmd).toContain('Env:GROK_*')
+  expect(cmd).toContain('Remove-Item')
+})
+it('POSIX login clears inherited home/auth overrides before the official CLI', () => {
+  const cmd = grokLoginCommand('/s')
+  expect(cmd).toContain('unset GROK_HOME')
+  expect(cmd).toContain('GROK_AUTH_PATH')
+})

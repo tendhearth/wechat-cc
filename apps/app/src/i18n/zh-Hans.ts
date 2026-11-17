@@ -621,7 +621,7 @@ const zh: Record<keyof typeof en, string> = {
   'chatModel.save': '换成这个',
   'chatModel.saving': '正在换…',
   'chatModel.saved': '好了，下一句开始用它。',
-  'chatModel.unknown': '这个后端现在不可用。',
+  'chatModel.unknown': '到电脑上点一下接入。',
   'chatModel.failed': '没换成，稍后再试。',
   'chatModel.unavailable': '暂时读不到，看看电脑开着没。',
   'chatModel.multi': '这条对话现在是多人模式（{mode}）；选一个就会改回单人。',

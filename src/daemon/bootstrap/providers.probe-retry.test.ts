@@ -197,3 +197,21 @@ describe('registerProviders — 外部 CLI 探测失败后的退避重探', () =
     expect(registry.has('agy')).toBe(false)
   })
 })
+
+describe('desktop setup late registration', () => {
+  it('discovers a CLI installed after boot, coalesces requests, and uses existing registration', async () => {
+    let installed = false
+    const probe = vi.fn(async () => ({ ok: true as const, firstLine: 'grok 1.0.77', ms: 1 }))
+    const { deps } = makeDeps({ probeVersion: probe, findSetupBinary: id => id === 'grok' && installed ? '/fixture/new-grok' : null })
+    const wiring = await registerProviders(deps)
+    expect(wiring.registry.has('grok')).toBe(false)
+    installed = true
+    const before = probe.mock.calls.length
+    expect(await Promise.all([wiring.refreshInstalledProvider('grok'), wiring.refreshInstalledProvider('grok')])).toEqual([true, true])
+    expect(probe.mock.calls.length - before).toBe(1)
+    expect(wiring.registry.has('grok')).toBe(true)
+    expect(wiring.registry.get('grok')!.provider.cheapEval).toBeUndefined()
+    expect(await wiring.refreshInstalledProvider('grok;whoami')).toBe(false)
+    wiring.stopProviderProbes()
+  })
+})
