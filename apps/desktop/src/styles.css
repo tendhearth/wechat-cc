@@ -5061,3 +5061,20 @@ body .th-agents { --th-agent-size:var(--th-identity-agent-size); }
   #topbar-roster { display: block; }
   .dash-topbar nav { gap: 16px; }
 }
+
+#roster-dock { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+#roster-dock[hidden], #roster-list[hidden] { display: none; }
+.roster-dock-toolbar { display: flex; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--th-hair); }
+.roster-dock-toolbar button { border: 0; background: transparent; color: var(--th-ink-soft); font: inherit; font-size: var(--th-size-meta); cursor: pointer; }
+#roster-dock .workbench-pane { position: relative; inset: auto; width: 100%; max-height: none; border: 0; border-radius: 0; z-index: auto; flex: 1; }
+#roster-dock .workbench-pane > .cc-life-topline { display: none !important; }
+#roster-dock .wb-main { min-width: 0; }
+#roster-dock .wb-content-inner, #roster-dock .wb-controls-inner { width: 100%; padding: 16px; }
+#roster-dock .wb-task-head { padding: 16px; }
+#roster-dock .wb-sidebar { display: none; }
+#roster-dock .wb-controls { position: relative; }
+#roster-dock .wb-followup .reply-avatar { flex-shrink: 0; }
+.roster-terminal { padding: 20px; overflow: auto; }
+.roster-terminal textarea { width: 100%; box-sizing: border-box; font: inherit; border: 1px solid var(--th-hair); border-radius: var(--th-radius-bubble); background: transparent; color: var(--th-ink); }
+#roster-dock .wb-followup, #converse-root .converse-compose { border-color: var(--th-hair); }
+#roster-dock .wb-followup:focus-within, #converse-root .converse-compose:focus-within, .roster-terminal textarea:focus { border-color: var(--th-accent); }

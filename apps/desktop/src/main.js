@@ -1,3 +1,4 @@
+import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
 // @ts-check
 /// <reference lib="dom" />
@@ -96,6 +97,8 @@ const state = {
 }
 /** @type {ReturnType<typeof mountMemoryTopics>|null} */
 let memoryTopics=null
+/** @type {ReturnType<typeof createRosterDock>|null} */
+let rosterDock=null
 const mainNavigation = createMainNavigation(destination => {
   if (typeof destination === 'string') { switchPane(destination); return }
   switchPane('workbench')
@@ -313,8 +316,8 @@ const deps = {
   invokeApi,
   invokeWorkbenchApi,
   onMatterViewed: (/** @type {import('./modules/workbench.js').Task} */ task) => { addConversationMatter(task.id,task.title); updateConversationMatters([task]) },
-  onOpenMatter: async (/** @type {string} */ id) => openConversationWork(invokeWorkbenchApi,id,async taskId=>{switchPane('workbench');await openWorkbenchTask(taskId)}),
-  onOpenTerminal:(/** @type {string} */ id)=>openConversationTerminal(invokeWorkbenchApi,id),
+  onOpenMatter: async (/** @type {string} */ id) => { await rosterDock?.open({kind:'matter',id}) },
+  onOpenTerminal:(/** @type {string} */ id)=>rosterDock?.open({kind:'terminal',id}),
   onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
@@ -701,6 +704,7 @@ function switchPane(name) {
   const searchRequested = name === 'all' || name === 'together'
   if(searchRequested)name='workbench'
   const focusConversation = name === "converse" || name === 'chat'
+  if(name==='workbench'&&rosterDock?.current())rosterDock.close()
   document.body.dataset.pane = focusConversation ? "overview" : name
   if (focusConversation) {memoryTopics?.close();name = "overview"}
   // 连接浮层只在原地看一眼:任何一次导航都把它收起。
@@ -720,7 +724,7 @@ function switchPane(name) {
   if (isCurrentWorkbenchPane(name, currentPane)) {
     return
   }
-  document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
+  document.querySelector(".topbar-more")?.removeAttribute("open")
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
@@ -731,6 +735,7 @@ function switchPane(name) {
   })
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
+    if(htmlEl.closest('#roster-dock'))return
     htmlEl.hidden = htmlEl.dataset.pane !== name && !(name === 'workbench' && htmlEl.dataset.pane === 'overview')
     if (htmlEl.dataset.pane === 'overview') htmlEl.inert = name === 'workbench'
   })
@@ -771,7 +776,7 @@ function switchPane(name) {
     initWorkbenchPage(deps)
     const back=document.getElementById('workbench-home')
     if(back){back.textContent=document.querySelector('.conversation-topic-panel:not([hidden])')?'‹ 返回话题':'‹ 返回对话';back.focus()}
-  } else {
+  } else if(!rosterDock?.current()) {
     stopWorkbenchPolling()
   }
   if (name === "sessions") {
@@ -1699,6 +1704,12 @@ async function boot() {
     document.getElementById('topbar-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
     window.addEventListener('pagehide',()=>topics.destroy(),{once:true})
   }
+  const rosterAside=document.getElementById('roster-aside'),matterLayer=document.getElementById('conversation-matter-layer')
+  if(rosterAside&&matterLayer)rosterDock=createRosterDock({aside:rosterAside,layer:matterLayer,call:invokeWorkbenchApi,wide:()=>window.innerWidth>=1080,
+    openTask:async id=>{initWorkbenchPage(deps);await openWorkbenchTask(id)},
+    onClose:()=>stopWorkbenchPolling(),
+    onExpand:async item=>{if(item.kind==='terminal')await openConversationTerminal(invokeWorkbenchApi,item.id);else await openConversationWork(invokeWorkbenchApi,item.id,async id=>{switchPane('workbench');await openWorkbenchTask(id)})}})
+  window.addEventListener('pagehide',()=>rosterDock?.destroy(),{once:true})
   const rosterRoot = document.getElementById('roster-list')
   if (rosterRoot) {
     const roster = mountRosterPane({root:rosterRoot,call:invokeWorkbenchApi,onOpen:item=>item.kind==='terminal'?deps.onOpenTerminal(item.id):deps.onOpenMatter(item.id),onItems:items=>{
