@@ -10,6 +10,10 @@ for await (const line of createInterface({ input: process.stdin })) {
   else if (message.method === 'tools/list') send({ id: message.id, result: { tools: [{ name: 'echo', inputSchema: { type: 'object', properties: {} } }] } })
   else if (message.method === 'tools/call') {
     if (message.params.name === 'exit') process.exit(0)
+    if (message.params.name === 'list-shaped') {
+      send({ id: message.id, result: { content: [], tools: [{ name: 'unlisted' }] } })
+      continue
+    }
     const reply = () => {
       send({ method: 'notifications/message', params: { level: 'info', data: 'offline notification' } })
       send({ id: message.id, result: { content: [{ type: 'text', text: JSON.stringify(message.params.arguments) }] } })

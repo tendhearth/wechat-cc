@@ -13,6 +13,8 @@ import { wireInstructions } from '../../../daemon/bootstrap/wire-instructions'
 import { SessionManager } from '../../../app/session-manager'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { NO_CC_MCP_INSTRUCTIONS } from '../../../domain/provider-capabilities'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
 const dirs: string[] = []
 const bridges: McpHttpBridge[] = []
@@ -35,7 +37,7 @@ function setup(caps: Record<string, boolean | undefined> = { http: true }, turns
   const provider = createAcpGrokProvider({ bin: '/fake/grok', stateDir, spawn: acpSpawn as unknown as typeof fake.spawn, log, networkPreflight: async () => true, mcpSpecs: { wechat: spec, delegate: spec }, bridge, ...extra })
   return { fake, provider, bridge, log, acpSpawn }
 }
-function stallSetup({ acpSpawn, fake }: Pick<ReturnType<typeof setup>, 'acpSpawn' | 'fake'>) {
+function stallSetup({ acpSpawn, fake }: Pick<ReturnType<typeof setup>, 'acpSpawn' | 'fake'>, method = 'session/new') {
   const original = acpSpawn.getMockImplementation()!
   acpSpawn.mockImplementation(((...args: Parameters<typeof original>) => {
       const child = original(...args)
@@ -46,7 +48,7 @@ function stallSetup({ acpSpawn, fake }: Pick<ReturnType<typeof setup>, 'acpSpawn
         if (event === 'data') {
           const response = JSON.parse(String(values[0]))
           const request = record.sent.find(r => r.id === response.id && r.method)
-          if (request?.method === 'session/new') return true // Agent remains alive but never answers setup.
+          if (request?.method === method) return true // Agent remains alive but never answers this request.
         }
         return emit(event, ...values)
       }) as typeof output.emit
@@ -56,6 +58,63 @@ function stallSetup({ acpSpawn, fake }: Pick<ReturnType<typeof setup>, 'acpSpawn
 async function drain(session: Awaited<ReturnType<ReturnType<typeof createAcpGrokProvider>['spawn']>>) { for await (const _ of session.dispatch('offline question')) { /* drain */ } }
 
 describe.runIf(process.platform !== 'win32')('Grok negotiated MCP sessions', () => {
+  it.each([false, true])('allows only tools listed by its active MCP bridge (workbench=%s)', async workbench => {
+    const fixture = setup({ http: true }, [{ steps: [] }], { workbench, matterMcp: () => spec })
+    stallSetup(fixture, 'session/prompt')
+    const { provider, fake, acpSpawn } = fixture
+    const requestPermission = vi.fn(async () => false)
+    const session = await provider.spawn(project, { ...context, requestPermission })
+    const bridge = bridges[0]!
+    const clients: Client[] = []
+    let turn: Promise<void> | undefined
+    let nextId = 9000
+    const options = [
+      { optionId: 'always', kind: 'allow_always', name: 'Always' },
+      { optionId: 'once', kind: 'allow_once', name: 'Once' },
+      { optionId: 'reject', kind: 'reject_once', name: 'Reject' },
+    ]
+    const ask = async (title: string, offered = options) => {
+      requestPermission.mockClear()
+      const id = nextId++
+      acpSpawn.mock.results[0]!.value.stdout!.emit('data', JSON.stringify({ jsonrpc: '2.0', id, method: 'session/request_permission',
+        params: { sessionId: 'scripted-session-1', toolCall: { kind: 'other', title, rawInput: { offline: true }, toolCallId: `offline-${id}`, _meta: {} }, options: offered } }) + '\n')
+      await expect.poll(() => fake.children[0]!.sent.some(r => r.id === id)).toBe(true)
+      return fake.children[0]!.sent.find(r => r.id === id)!.result
+    }
+    const selected = (optionId: string) => ({ outcome: { outcome: 'selected', optionId } })
+    try {
+      for (const server of bridge.servers) {
+        const client = new Client({ name: 'offline-permissions', version: '1' }, { capabilities: {} })
+        clients.push(client)
+        await client.connect(new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers: Object.fromEntries(server.headers.map(h => [h.name, h.value])) } }))
+      }
+      turn = drain(session)
+      await expect.poll(() => fake.children[0]!.prompts.length).toBe(1)
+      const title = `${bridge.servers[0]!.name}__echo`
+      // Even a real endpoint does not authorize a name until this bridge sees tools/list.
+      expect(await ask(title)).toEqual(selected('reject'))
+      expect(requestPermission).toHaveBeenCalledTimes(workbench ? 1 : 0)
+      for (let i = 0; i < clients.length; i++) {
+        expect((await clients[i]!.listTools()).tools.map(t => t.name)).toEqual(['echo'])
+        expect(await ask(`${bridge.servers[i]!.name}__echo`)).toEqual(selected('once'))
+        expect(requestPermission).not.toHaveBeenCalled()
+      }
+      for (const unknown of [`${bridge.servers[0]!.name}__unlisted`, `${title}_extra`, ` ${title}`, 'third-party__echo']) {
+        expect(await ask(unknown)).toEqual(selected('reject'))
+        expect(requestPermission).toHaveBeenCalledTimes(workbench ? 1 : 0)
+      }
+      expect(await ask(title, options.filter(o => o.kind !== 'allow_once'))).toEqual({ outcome: { outcome: 'cancelled' } })
+      expect(requestPermission).not.toHaveBeenCalled()
+      const closed = bridge.close()
+      expect(await ask(title)).toEqual(selected('reject'))
+      expect(requestPermission).toHaveBeenCalledTimes(workbench ? 1 : 0)
+      await closed
+    } finally {
+      await session.close()
+      await Promise.all(clients.map(c => c.close()))
+      await turn
+    }
+  })
   it('injects HTTP credentials after initialize and rebuilds the real daemon prompt only on success', async () => {
     const { provider, fake, bridge } = setup()
     const reportMatterTools = vi.fn()

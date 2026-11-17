@@ -69,6 +69,17 @@ stdio stderr 只排空、不保留也不转日志；转接失败只记固定文�
 6. 核实真实 Grok 不把 ACP headers 写入配置/日志/历史，工具初始化与调用不会把 bearer 放入模型上下文。若发现凭据持久化，应停止启用并修正客户端，不靠桥端 URL 隐藏代替。
 7. 后续 UI 在 mini 离线验收，真模型及最终部署由整合者在保护主机按原流程完成，留完整回滚包；本分支不执行。
 
+## 真机验收发现
+
+2026-11-17，整合者使用真实 Grok 1.0.77 验收确认以下两条问题，证据来自已撤掉的临时调试日志。本次修复在整合者已 rebase 的 `grok-mcp-bridge` / `da3ad2a5faa2de23c51cb7c099ab6e5458a27bac` 上继续，仅离线验证，不再运行真实 Grok、模型或生产 daemon。
+
+1. **初始化前的请求级错误误撤整桥。** Grok 先发 GET SSE，SDK 正确答 400 `Server not initialized`，同时触发 `transport.onerror`；旧代码将它接到 `fail`，随即撤桥，initialize 无法进入。现在 `onerror` 只按会话记录一次固定的可恢复请求错误类别，不读取或记录请求体、头或错误对象。子进程退出、stdout 结束/错误、stdin 写失败、transport 关闭、消息/通知超量等不可恢复路径仍撤桥。新增 GET / 非 initialize POST 各先触发两次 400，再通过真实 SDK 客户端 initialize → tools/list → tools/call 并核对桥 active 的回归；修复前均在 `expected false to be true` 处红，修复后绿。
+2. **strict 对话拒绝 CC MCP 权限请求。** Grok 的 `session/request_permission` 使用 `kind: 'other'`、完整 `server__tool` 标题和 allow_always / allow_once / reject_once 选项。旧 `mode` 分支将非 dangerously 请求一律 reject_once。现在桥按请求 ID 记住转给子进程的 method，只从对应 `tools/list` stdout 成功响应收集工具名，组合实际注入的 server 名形成会话集合；不按前缀推测，也不从其他方法的相似响应收集。撤桥前同步清空集合。`mode` / `bridge` 公共入口仅在桥 active 且标题完全命中时选择 allow_once；没有该选项就 cancelled，不弹权限卡。原 stdio 子进程依原有 mcpEnv 判断 tier、访客与记录本授权，其他权限请求维持原逻辑。真实桥接回归覆盖对话 wechat/delegate、工作台记录本、尚未列工具、同前缀未列名字、标题附加字符、缺 allow_once 和撤桥后同名；修复前两个路径均得到 reject 而非 once，修复后绿。
+
+**空回复观察（未改交付逻辑）：** completed 且没有文字的 Grok 回合经 `src/app/coordinator/solo.ts` 交付空文字，`src/daemon/reply-delivery.ts` 只记录 `delivery=empty`；现有通用交付测试允许空轮，连续空轮只记异常诊断。没有找到可直接复用的“完成但无文字”兜底文案，错误回合提示不能如实说明工具被拒这一具体原因，因此按本轮要求仅记录。真实验收时仍应观察工具拒绝/失败后的用户可见回执。
+
+本轮定向：桥传输、Grok 接线、通用 ACP provider **3 文件、73 项通过**。独立只读复核、最终 verify 与 Node 回执另追加在文末。未删减/放松测试。
+
 ## 最终回执
 
 2026-11-17，最终代码已完成独立只读正确性复核；发现的消息边界、pending spawn 撤销、live/pending 同时关闭顺序和空闲取消问题均已修复并加回归，复核未再发现确定问题。

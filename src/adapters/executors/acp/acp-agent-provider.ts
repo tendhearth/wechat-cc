@@ -100,6 +100,8 @@ export type AcpMcpServer = AcpStdioMcpServer | AcpHttpMcpServer
 export interface AcpMcpSession {
   servers: AcpMcpServer[]
   readonly active: boolean
+  /** Exact names observed by a session-owned MCP transport; never a prefix rule. */
+  hasTool?: (title: string) => boolean
   close(): Promise<void>
   createTextRedactor?: () => (chunk: string, final?: boolean) => string
   redact(text: string): string
@@ -320,6 +322,12 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           // 撞 id:两张权限卡共用一条回复通道,主人对哪一张点的"允许"就再也说不清了。
           if (permissions.has(id)) { queueMicrotask(() => fatal('acp_duplicate_permission_request')); return { outcome: { outcome: 'cancelled' } } }
           if (permissions.size >= permissionLimit) { queueMicrotask(() => fatal('acp_request_limit')); return { outcome: { outcome: 'cancelled' } } }
+          // CC MCP children enforce tier/notebook authorization via their original env.
+          // Agent-native/project tools retain the normal mode or permission-card path.
+          if (mcpSession?.active && object(params.toolCall) && typeof params.toolCall.title === 'string' && mcpSession.hasTool?.(params.toolCall.title)) {
+            const optionId = acpPermissionOption(params.options, true)
+            return optionId ? { outcome: { outcome: 'selected', optionId } } : { outcome: { outcome: 'cancelled' } }
+          }
           const description = acpPermissionDescription(params)
           if (description === null) {
             if (options.permissions === 'mode') { logOnce('permission-shape', 'session/request_permission cancelled: undisplayable request'); return { outcome: { outcome: 'cancelled' } } }

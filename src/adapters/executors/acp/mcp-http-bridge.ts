@@ -10,6 +10,8 @@ import type { AcpHttpMcpServer, AcpStdioMcpServer } from './acp-agent-provider'
 export interface McpHttpBridge {
   servers: AcpHttpMcpServer[]
   readonly active: boolean
+  /** Exact ACP title learned only from this bridge's tools/list responses. */
+  hasTool(title: string): boolean
   processGroups(): readonly number[]
   /** Revokes synchronously, then waits for sockets and children to close. */
   close(): Promise<void>
@@ -30,10 +32,12 @@ export async function createMcpHttpBridge(
   const token = randomBytes(32).toString('base64url')
   let active = true, closing: Promise<void> | undefined
   let requestErrorLogged = false
+  const toolTitles = new Set<string>()
   const entries: Array<{ child: ChildProcess; transport: StreamableHTTPServerTransport; hasExited(): boolean; getStream?: ServerResponse; flush(): void }> = []
   const server = createServer((req, res) => { void handle(req, res) })
   const close = (): Promise<void> => {
     active = false // Before any await: every endpoint, including in-flight body reads, is revoked.
+    toolTitles.clear()
     if (closing) return closing
     closing = (async () => {
       const outcomes = await Promise.allSettled(entries.map(async ({ child, transport, hasExited }) => {
@@ -106,14 +110,14 @@ export async function createMcpHttpBridge(
         stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true,
       })
       let ended = false
-      const pending = new Set<RequestId>()
+      const pending = new Map<RequestId, string>()
       const notifications: JSONRPCMessage[] = []
       let queuedBytes = 0
       const entry = { child, transport, hasExited: () => ended, getStream: undefined as ServerResponse | undefined, flush: () => {
         while (notifications.length && active && (entry.getStream || pending.size)) {
           const message = notifications.shift()!
           queuedBytes -= Buffer.byteLength(serializeMessage(message))
-          const relatedRequestId = entry.getStream ? undefined : pending.values().next().value
+          const relatedRequestId = entry.getStream ? undefined : pending.keys().next().value
           void transport.send(message, { relatedRequestId }).catch(fail)
         }
       } }
@@ -139,6 +143,11 @@ export async function createMcpHttpBridge(
             const message = deserializeMessage(line)
             const response = 'id' in message && !('method' in message)
             if (response) {
+              if (message.id !== undefined && pending.get(message.id) === 'tools/list' && 'result' in message && Array.isArray(message.result.tools)) {
+                for (const tool of message.result.tools) {
+                  if (tool && typeof tool.name === 'string') toolTitles.add(`${spec.name}__${tool.name}`)
+                }
+              }
               void transport.send(message).catch(fail)
               if (message.id !== undefined) pending.delete(message.id)
             } else {
@@ -153,7 +162,7 @@ export async function createMcpHttpBridge(
       })
       transport.onmessage = message => {
         if (!active || ended || !child.stdin?.writable) { fail(); return }
-        if ('method' in message && 'id' in message && message.id !== undefined) pending.add(message.id)
+        if ('method' in message && 'id' in message && message.id !== undefined) pending.set(message.id, message.method)
         entry.flush()
         try { child.stdin.write(serializeMessage(message), error => { if (error) fail() }) } catch { fail() }
       }
@@ -180,6 +189,7 @@ export async function createMcpHttpBridge(
     if (!address || typeof address === 'string') throw new Error('mcp_listen_failed')
     return {
       processGroups: () => entries.flatMap(e => e.child.pid ? [e.child.pid] : []),
+      hasTool: title => active && toolTitles.has(title),
       get active() { return active }, close, redact: text => text.replaceAll(token, '[redacted]'),
       createTextRedactor: () => {
         let held = ''

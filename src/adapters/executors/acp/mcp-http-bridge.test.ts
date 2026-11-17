@@ -76,6 +76,24 @@ describe.runIf(process.platform !== 'win32')('session stdio → Streamable HTTP 
       expect(log.mock.calls).toEqual([['MCP', 'Grok MCP request error (recoverable)']])
     } finally { await client.close() }
   })
+  it('learns exact server tool titles only from matching tools/list responses and clears them on revoke', async () => {
+    const { bridge } = await start()
+    const client = new Client({ name: 'offline-tool-titles', version: '1' }, { capabilities: {} })
+    try {
+      expect(bridge.hasTool('wechat__echo')).toBe(false)
+      await client.connect(new StreamableHTTPClientTransport(new URL(bridge.servers[0]!.url), { requestInit: { headers: headersFor(bridge) } }))
+      expect(bridge.hasTool('wechat__echo')).toBe(false)
+      expect((await client.callTool({ name: 'list-shaped' })).content).toEqual([])
+      expect(bridge.hasTool('wechat__unlisted')).toBe(false)
+      expect((await client.listTools()).tools.map(t => t.name)).toEqual(['echo'])
+      expect(bridge.hasTool('wechat__echo')).toBe(true)
+      expect(bridge.hasTool('wechat__echo_extra')).toBe(false)
+      expect(bridge.hasTool('delegate__echo')).toBe(false)
+      const closed = bridge.close()
+      expect(bridge.hasTool('wechat__echo')).toBe(false)
+      await closed
+    } finally { await client.close() }
+  })
   it('keeps notifications with concurrent POST requests when no GET stream exists', async () => {
     const { bridge } = await start()
     const url = bridge.servers[0]!.url
@@ -137,8 +155,11 @@ describe.runIf(process.platform !== 'win32')('session stdio → Streamable HTTP 
     const { bridge, log } = await start()
     const client = new Client({ name: 'offline-test', version: '1' }, { capabilities: {} })
     await client.connect(new StreamableHTTPClientTransport(new URL(bridge.servers[0]!.url), { requestInit: { headers: headersFor(bridge) } }))
+    await client.listTools()
+    expect(bridge.hasTool('wechat__echo')).toBe(true)
     const call = client.callTool({ name: 'exit' }).catch(() => undefined)
     await expect.poll(() => bridge.active).toBe(false)
+    expect(bridge.hasTool('wechat__echo')).toBe(false)
     await bridge.close()
     await client.close()
     await call
