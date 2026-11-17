@@ -23,22 +23,22 @@ const OVERLAP = 0.36
 /** 外圈一道纸色描边,把叠在后面的那个干净地切开。 */
 const RING = 2
 
-function Disc({ size, children }: { size: number; children: ReactNode }) {
+function Disc({ size, children, border, width = 1 }: { size: number; children: ReactNode; border?: 'ink' | 'hair' | 'accent'; width?: number }) {
   const { c } = useTheme()
   return (
     <View style={{ width: size + RING * 2, height: size + RING * 2, borderRadius: size, backgroundColor: c.paper, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: c.rail, borderWidth: 1, borderColor: c.hair, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: c.rail, borderWidth: width, borderColor: c[border ?? 'hair'], alignItems: 'center', justifyContent: 'center' }}>
         {children}
       </View>
     </View>
   )
 }
 
-export function AgentAvatar({ id, size = 24, names }: { id: string; size?: number; names?: AgentNames }) {
+export function AgentAvatar({ id, size = 24, names, border, borderWidth }: { id: string; size?: number; names?: AgentNames; border?: 'ink' | 'hair' | 'accent'; borderWidth?: number }) {
   const { c } = useTheme()
   const glyph = agentGlyph(id)
   return (
-    <Disc size={size}>
+    <Disc size={size} border={border} width={borderWidth}>
       {glyph
         ? <Image source={GLYPH[glyph]} style={{ width: Math.round(size * 0.6), height: Math.round(size * 0.6), tintColor: c.ink }} resizeMode="contain" />
         : <Txt role="caption" tone="ink">{agentMonogram(id, names)}</Txt>}

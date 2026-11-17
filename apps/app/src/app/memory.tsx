@@ -121,6 +121,7 @@ export default function Memory() {
       <TopBar title={st(lang, 'memory')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
+        <Pressable testID="memory-topics" accessibilityRole="button" onPress={() => router.push('/topics')} style={{minHeight:44,justifyContent:'center'}}><Txt role="meta" tone="inkSoft">{lang === 'zh-Hans' ? '话题 ›' : 'Topics ›'}</Txt></Pressable>
         <View accessibilityRole="tablist" style={{ flexDirection: 'row', gap: space.xl }}>
           {(['facts', 'todos'] as const).map(value => <Pressable key={value} testID={`memory-tab-${value}`} accessibilityRole="tab" accessibilityState={{ selected: tab === value }}
             onPress={() => setTab(value)} style={{ minHeight: 44, justifyContent: 'center', borderBottomWidth: tab === value ? 1 : 0, borderBottomColor: c.ink }}>
