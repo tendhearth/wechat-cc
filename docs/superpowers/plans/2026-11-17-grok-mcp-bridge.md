@@ -68,3 +68,17 @@ stdio stderr 只排空、不保留也不转日志；转接失败只记固定文�
 5. 对话停止、工作台取消、agent 退出、daemon 正常关闭后核对端口关闭和 MCP 进程组退出；新会话/续接只使用新凭据。安全检查只报告成功/失败，不输出 bearer、环境或登录内容。
 6. 核实真实 Grok 不把 ACP headers 写入配置/日志/历史，工具初始化与调用不会把 bearer 放入模型上下文。若发现凭据持久化，应停止启用并修正客户端，不靠桥端 URL 隐藏代替。
 7. 后续 UI 在 mini 离线验收，真模型及最终部署由整合者在保护主机按原流程完成，留完整回滚包；本分支不执行。
+
+## 最终回执
+
+2026-11-17，最终代码已完成独立只读正确性复核；发现的消息边界、pending spawn 撤销、live/pending 同时关闭顺序和空闲取消问题均已修复并加回归，复核未再发现确定问题。
+
+- `bun run verify` **退出 0**：根项目 typecheck 通过；depcheck 0 errors / 16 条既有 warnings；相关测试 **219 文件、4,417 项通过**（另 1 个既有 live 测试文件未启用、2 项既有条件跳过）；守卫 **102 文件、873 项通过**（19 项既有条件跳过）；真实形状沙盒 **1 文件、26 项通过**。
+- Node 定向：`VITEST_MAX_WORKERS=2 node node_modules/vitest/vitest.mjs run src/adapters/executors/acp/mcp-http-bridge.test.ts src/adapters/executors/acp/acp-grok-mcp.test.ts`，**2 文件、28 项通过**。
+- 新增 HTTP 端口、真实假 stdio 子进程、SSE 和撤销测试全部实际运行，**无端口权限例外待补**。
+- `bun scripts/test-shrink-check.ts --base fe887741f991f85ca65852f82393374ef4a68fff`：10 个测试相关文件没有变少/变松；`git diff --check` 通过。
+- verify 使用受控临时 HOME / PATH、离线 CLI 版本替身和最多两个 worker；没有运行真实 Grok / 模型或接触生产 daemon。完整全量、三平台、真实 Grok 工具可见性/调用、真实权限与客户端凭据保存边界仍按上面的整合者步骤验收。
+
+工作期间共享远端引用 `origin/dev` 前进到 `9e89aa8517d38d1d2d23e74edaa997b15469506f`（roster #960），本分支仍从 `fe887741` 开发，没有合入/重排上游。整合者先同步最新 dev，再等组合后的三平台 CI；本分支验证结果不代表已验证该组合。
+
+最后追加本节为纯文档回执，代码与上述最终验证一致。所有提交均使用主人指定的中文提交信息及 Co-Authored-By；未 push、开 PR、合并或部署。
