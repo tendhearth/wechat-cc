@@ -214,7 +214,7 @@ async function pollAtelier() {
 }
 function startAtelierPoll() { if (atelierPoll) clearInterval(atelierPoll); atelierPoll = setInterval(pollAtelier, 2000) }
 // ── 模型与后端 ─────────────────────────────────────────────────────────
-var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", openai: "openaiModel", gemini: "geminiModel" };
+var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", grok: "grokModel", openai: "openaiModel", gemini: "geminiModel" };
 // 执行者叫什么只读 daemon 下发的 providers[].name(收敛清单 ⑥),页面不存名字表;老 daemon 不带 ⇒ id
 var PROVIDER_NAME = {};
 function esc(t) { return String(t == null ? "" : t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] }) }

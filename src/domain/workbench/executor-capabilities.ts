@@ -2,6 +2,8 @@ import type {AgentExecutionChoice} from '../../ports/agent-provider'
 
 /** Code-level adapter promise, not automatic detection or filesystem isolation. */
 export interface WorkbenchExecutorCapabilities {
+  /** 已发现但尚不满足执行前提；创建任务前拒绝。 */
+  unavailableReason?: string
   version: 1
   permissions: 'task' | 'unattended'
   configuration: 'task-policy'
@@ -42,6 +44,12 @@ export const ACP_CAPABILITIES: WorkbenchExecutorCapabilities = Object.freeze({
   features:Object.freeze({nativeResume:true,attachments:true,executionSettings:false,modelCatalog:false}),
 })
 
+/** Grok 使用专属 HOME；本轮不收附件、不许恢复或注入记录本 MCP。 */
+export const GROK_ACP_CAPABILITIES: WorkbenchExecutorCapabilities = Object.freeze({
+  version:1,permissions:'task',configuration:'task-policy',completion:'native',stop:'confirmed',background:'disabled',
+  features:Object.freeze({nativeResume:false,attachments:false,executionSettings:false,modelCatalog:false}),
+})
+
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)
 /** A transport token; actual availability always comes from the registry contract. */
 export const isWorkbenchProviderId=(value:unknown):value is string=>typeof value==='string'&&/^[a-z][a-z0-9._-]{0,63}$/.test(value)
@@ -59,6 +67,7 @@ export const canResumeWorkbenchExecutor=(capabilities:WorkbenchExecutorCapabilit
 
 export function requireWorkbenchInput(capabilities:WorkbenchExecutorCapabilities,input:{attachments:readonly unknown[];execution:AgentExecutionChoice;resume?:boolean}):void {
   if(!isWorkbenchExecutorCapabilities(capabilities))throw Error('unavailable_provider')
+  if(capabilities.unavailableReason)throw new Error('unavailable_provider', {cause:capabilities.unavailableReason})
   if(input.attachments.length&&!capabilities.features.attachments)throw Error('workbench_attachments_unsupported')
   if((input.execution.defaults==='native'||input.execution.model!==null||input.execution.reasoningEffort!==null)&&!capabilities.features.executionSettings)throw Error('workbench_execution_unsupported')
   if(input.resume&&!canResumeWorkbenchExecutor(capabilities))throw Error('workbench_resume_unsupported')

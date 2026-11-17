@@ -75,6 +75,17 @@ export const ACP_CURSOR_CAPABILITIES: ProviderCapabilities = {
   replyText: 'last_segment',
 }
 
+// 2026-11-16 整合者验证专属 HOME；登录门由适配器检查。项目配置按项目信任处理。
+export const NO_CC_MCP_INSTRUCTIONS = '本会话未接入 wechat、记忆、记录本或委派工具。需要这些操作时如实说明当前不可用；不要声称已经发送文件、写入记录或完成委派。直接输出最终文字，由 CC 交付回复。遵守当前工作区的硬规矩和权限边界。'
+export const ACP_GROK_CAPABILITIES: ProviderCapabilities = {
+  mcpTools: 'none',
+  adminMcpTools: false, perToolCallback: false, sandboxLevels: new Set(),
+  supportsDelegation: false, supportsResume: false,
+  confines: { read_outside_workspace: 'none', fs_write: 'none', shell: 'none', network: 'none' },
+  authFailHint: 'Grok 在 CC 里的登录已失效，请在 CC 的专属 HOME 中运行 `grok login` 后再试。',
+  replyText: 'last_segment',
+}
+
 export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   // We own the loop, so per-tool gating IS realisable.
   perToolCallback: true,

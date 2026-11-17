@@ -9,7 +9,7 @@ const nameOf = (id: string) => NAMES[id]
 
 describe('执行者头像(桌面 / 手机网页共用)', () => {
   it('认得的几家有图标,别的画首字母;名字只认 daemon 给的,没给 ⇒ id', () => {
-    expect(A.AGENT_GLYPHS).toEqual(['claude', 'codex', 'cursor', 'agy', 'gemini', 'kimi', 'openai', 'deepseek', 'qwen'])
+    expect(A.AGENT_GLYPHS).toEqual(['claude', 'codex', 'cursor', 'grok', 'agy', 'gemini', 'kimi', 'openai', 'deepseek', 'qwen'])
     expect(A.agentGlyph('claude')).toBe('claude')
     expect(A.agentGlyph('my-acp')).toBeNull()
     expect(A.agentGlyph('toString')).toBeNull()

@@ -84,6 +84,49 @@ const fakeWechatSpec: McpStdioSpec = {
   env: { WECHAT_INTERNAL_API: 'http://127.0.0.1:1234', WECHAT_INTERNAL_TOKEN_FILE: '/state/internal-token' },
 }
 
+describe('registerProviders — Grok ACP account discovery (no model calls)', () => {
+  it('does not probe/register Grok ACP on Windows', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    try {
+      const probe = vi.fn(async () => ({ ok: true as const, firstLine: 'fake', ms: 0 }))
+      const { registry, stopProviderProbes } = await registerProviders(baseDeps({ configuredAgent: baseConfig({ grokBin: '/fake/grok' }), probeVersion: probe }))
+      try {
+        expect(registry.has('grok')).toBe(false)
+        expect(probe).not.toHaveBeenCalledWith('/fake/grok')
+      } finally { stopProviderProbes() }
+    } finally { vi.restoreAllMocks() }
+  })
+  it('never discovers the real Grok on test-runner PATH', async () => {
+    const { registry, stopProviderProbes } = await registerProviders(baseDeps())
+    try { expect(registry.has('grok')).toBe(false) } finally { stopProviderProbes() }
+  })
+
+  it.runIf(process.platform !== 'win32')('registers a fake binary with dynamic bin, a dedicated-login note, isolated probe and no eval callbacks', async () => {
+    const probe = vi.fn(async (_bin: string, _options?: { env?: NodeJS.ProcessEnv }) => ({ ok: true as const, firstLine: 'grok 1.0.77', ms: 0 }))
+    const deps = baseDeps({ configuredAgent: baseConfig({ grokBin: '/fake/grok' }), probeVersion: probe })
+    saveAgentConfig(deps.stateDir, deps.configuredAgent)
+    const { registry, defaultProviderId, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    try {
+      expect(registry.has('grok')).toBe(true)
+      expect(defaultProviderId).toBe('claude')
+      expect(registry.get('grok')?.opts.bin?.()).toBe('/fake/grok')
+      expect(registry.get('grok')?.provider.cheapEval).toBeUndefined()
+      expect(registry.get('grok')?.provider.strongEval).toBeUndefined()
+      expect(providerNotes().grok).toContain('Grok 还没在 CC 里登录')
+      expect(probe.mock.calls.find(([bin]) => bin === '/fake/grok')?.[1]?.env?.HOME).toBe(join(deps.stateDir, 'executors/grok/home'))
+    } finally { stopProviderProbes() }
+  })
+
+  it('does not claim that Grok has a shared trusted MCP token when selected as the configured default', async () => {
+    const { deps, logs } = baseDepsWithLogs({ configuredAgent: baseConfig({ provider: 'grok' }) })
+    const wiring = await registerProviders(deps)
+    try {
+      expect(logs.some(([, line]) => line.includes('默认 provider 是 grok') && line.includes('共享一把 trusted'))).toBe(false)
+      expect(logs.some(([, line]) => line.includes('所有对话共用一把 trusted') && line.includes('grok'))).toBe(false)
+    } finally { wiring.stopProviderProbes() }
+  })
+})
+
 describe('registerProviders — agy (fix round 1: test-runner guard)', () => {
   // This whole file runs under vitest, so UNDER_TEST_RUNNER is genuinely
   // true here — no env-var stubbing needed to exercise the guard.

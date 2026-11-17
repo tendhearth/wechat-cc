@@ -9,6 +9,7 @@ const GLYPH: Record<AgentGlyph, number> = {
   claude: require('../../assets/agents/claude.png'),
   codex: require('../../assets/agents/codex.png'),
   cursor: require('../../assets/agents/cursor.png'),
+  grok: require('../../assets/agents/grok.png'),
   agy: require('../../assets/agents/agy.png'),
   gemini: require('../../assets/agents/gemini.png'),
   kimi: require('../../assets/agents/kimi.png'),

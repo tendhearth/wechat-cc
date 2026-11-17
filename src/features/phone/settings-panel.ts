@@ -34,6 +34,7 @@ import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/ag
 import { saveLlmKey } from '../../daemon/llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from '../../daemon/llm-health'
 import { capabilitiesFor } from '../../domain/capability-matrix'
+import { grokHomeProblem } from '../../lib/grok-home'
 import { providerDenialFor } from '../../domain/provider-policy'
 import { PROVIDER_IDS } from '../../lib/provider-ids'
 import { buildFeed, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
@@ -305,7 +306,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     const providers = PANEL_PROVIDERS.map(id => {
       const isReg = registered.has(id)
       const pr = probe.get(id)
-      const status = !isReg ? 'unconfigured' : pr == null ? 'unknown' : pr.ok === true ? 'ok' : pr.ok === false ? 'broken' : 'unknown'
+      const unavailableReason = id === 'grok' ? grokHomeProblem(deps.stateDir) : capabilitiesFor(id).unavailableReason
+      const status = !isReg ? 'unconfigured' : unavailableReason ? 'broken' : pr == null ? 'unknown' : pr.ok === true ? 'ok' : pr.ok === false ? 'broken' : 'unknown'
       return {
         id,
         // 设置页要分清「怎么连的」⇒ 用 settings 那种写法(收敛清单 ⑥;页面不再自带名字表)
@@ -313,7 +315,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         registered: isReg,
         model: modelForProvider(cfg, id) ?? null,
         status,
-        ...(pr?.error ? { error: pr.error.slice(0, 160) } : {}),
+        ...(unavailableReason && isReg ? { error: unavailableReason } : pr?.error ? { error: pr.error.slice(0, 160) } : {}),
         ...(!isReg && PROVIDER_SETUP_HINTS[id] ? { hint: PROVIDER_SETUP_HINTS[id] } : {}),
         ...(pr?.latency_ms != null ? { latency_ms: pr.latency_ms } : {}),
       }
@@ -336,7 +338,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       //    如走 ACP 的 cursor)⇒ 面板上"访客不可用"那句。cursor 不是共享钥匙,所以没有 🔑,
       //    但访客照样用不了 —— 两条规矩(core/provider-policy.ts)对得上。
       trusted_providers: cfg.trusted_providers ?? null,
-      shared_token: PANEL_PROVIDERS.filter(id => { try { return !capabilitiesFor(id).adminMcpTools } catch { return false } }),
+      shared_token: PANEL_PROVIDERS.filter(id => { try { return capabilitiesFor(id).mcpTools !== 'none' && !capabilitiesFor(id).adminMcpTools } catch { return false } }),
       // 从 providerDenialFor 推出来,不另抄一遍规矩:面板说的和分派时真挡的永远是同一个判断。
       guest_blocked: PANEL_PROVIDERS.filter(id => providerDenialFor(id, 'guest', undefined) !== null),
     }

@@ -8,7 +8,7 @@ import { STATE_DIR } from '../lib/config'
 import { findOnPath, probeBinaryVersion } from '../lib/util'
 import { findCodexBinary } from '../lib/find-codex-binary'
 import { cursorSdkFallback, executorBinary, executorCredential, executorMissingConfig } from '../lib/executor-detect'
-import { loadAgentConfig, type AgentConfig } from '../lib/agent-config'
+import { activeModel, loadAgentConfig, type AgentConfig } from '../lib/agent-config'
 import { buildServicePlan, isServiceInstalled, type ServiceKind } from './service-manager'
 import { appMainBinaryPath, compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
 import { probeFsAccess, describeFsAccess } from '../lib/fs-access'
@@ -20,6 +20,8 @@ import { scanSatelliteRepos, type SatelliteRepo } from './satellite-repos'
 import { readJsonFile } from '../lib/read-json-file'
 import { defaultTerminalHooksDeps, readTerminalHooks, type HookSourceState } from './terminal-hooks'
 import { codexTrustMessage } from '../domain/codex-hook-trust'
+import { EXECUTOR_FACTS } from '../lib/executor-facts'
+import { grokHomeProblem, grokLoginCommand } from '../lib/grok-home'
 
 export interface BoundAccount {
   id: string
@@ -164,6 +166,7 @@ export interface DoctorReport {
     // bootstrap to register the gemini provider.
     gemini: DoctorCheckBase & { apiKeySet: boolean; sdkInstalled: boolean }
     agy?: DoctorCheckBase & { path: string | null }
+    grok?: DoctorCheckBase & { path: string | null }
     accounts: DoctorCheckBase & { count: number; items: BoundAccount[] }
     access: DoctorCheckBase & { dmPolicy: string; allowFromCount: number; admins?: string[] }
     // A1 (spec §A1): allowFrom non-empty + admins empty/missing means the
@@ -221,8 +224,14 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   // agy 有自己的二进制(与 daemon 同一条:agent-config 的 agyBin,否则 PATH 上的 agy);openai 是 API,没有二进制。
   // 2026-10-13 以前除 codex / cursor / gemini 外一律当 claude —— 只装了 agy 的人被叫去装 Claude。
   const agyPath = executorBinary('agy', agent, deps.findOnPath)
+  const grokPath = executorBinary('grok', agent, deps.findOnPath)
+  const grokReason = grokHomeProblem(deps.stateDir)
+  const grokOk = !!grokPath && !grokReason
+  const selectedModel = activeModel(agent)
   const providerBinary = agent.provider === 'codex'
     ? codex
+    : agent.provider === 'grok'
+      ? grokPath
     : agent.provider === 'agy'
       ? agyPath
       : (agent.provider === 'cursor' || agent.provider === 'gemini' || agent.provider === 'openai')
@@ -256,7 +265,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   // name ('install_cursor') only when cursor is selected; claude/codex
   // continue to emit their existing action strings unchanged.
   if (!providerBinary && agent.provider !== 'cursor' && agent.provider !== 'gemini' && agent.provider !== 'openai') {
-    nextActions.push(agent.provider === 'codex' ? 'install_codex' : agent.provider === 'agy' ? 'install_agy' : 'install_claude')
+    nextActions.push(agent.provider === 'codex' ? 'install_codex' : agent.provider === 'agy' ? 'install_agy' : agent.provider === 'grok' ? 'install_grok' : 'install_claude')
   } else if (agent.provider === 'cursor' && !cursorOk) {
     nextActions.push('install_cursor')
   } else if (agent.provider === 'gemini' && !geminiOk) {
@@ -318,6 +327,8 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
         fix: { action: '安装 Cursor CLI(cursor-agent),在终端里运行 cursor-agent login 登录', link: 'https://cursor.com/cli' },
       }),
     },
+    grok: { ok: grokOk, path: grokPath, ...(grokOk ? {} : { severity: (agent.provider === 'grok' ? 'hard' : 'soft') as Severity,
+      fix: { action: grokPath ? grokReason : EXECUTOR_FACTS.grok.setupHint, ...(grokPath ? { command: grokLoginCommand(deps.stateDir) } : {}) } }) },
     // agy:订阅版 Gemini(Antigravity CLI)。2026-10-13 起向导也列它;能用 = 二进制在(与 daemon 注册同一条)。
     agy: {
       ok: !!agyPath, path: agyPath,
@@ -372,13 +383,15 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
       // Cursor and Gemini's "backend ready" check is SDK+key, not a PATH
       // binary — fall through to their respective Ok when the active provider
       // is cursor/gemini so the gate aligns with what bootstrap will register.
-      ok: cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : agent.provider === 'openai' ? openaiOk : !!providerBinary,
+      ok: agent.provider === 'grok' ? grokOk : cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : agent.provider === 'openai' ? openaiOk : !!providerBinary,
       provider: agent.provider,
-      ...(agent.model ? { model: agent.model } : {}),
+      ...(selectedModel ? { model: selectedModel } : {}),
       binaryPath: providerBinary,
-      ...((cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : agent.provider === 'openai' ? openaiOk : !!providerBinary) ? {} : {
+      ...((agent.provider === 'grok' ? grokOk : cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : agent.provider === 'openai' ? openaiOk : !!providerBinary) ? {} : {
         severity: 'hard' as const,
-        fix: agent.provider === 'codex'
+        fix: agent.provider === 'grok'
+          ? { action: grokPath ? grokReason : EXECUTOR_FACTS.grok.setupHint }
+          : agent.provider === 'codex'
           ? { link: 'https://github.com/openai/codex#installation' }
           : agent.provider === 'agy'
             ? { action: '安装 Antigravity CLI(agy)并在终端里登录一次' }

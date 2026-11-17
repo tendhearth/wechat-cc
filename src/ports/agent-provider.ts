@@ -394,6 +394,11 @@ export { guestSafe, type Confinement, type ToolSurfaceConfinement } from '../dom
 import type { ToolSurfaceConfinement } from '../domain/confinement'
 
 export interface ProviderCapabilities {
+  /** 已发现但不满足启动前提的执行者；所有档位均拒绝，不能用 dangerously 绕开。 */
+  unavailableReason?: string
+  /** 没有 CC MCP 通道时明确声明，不能误当作 agy 的静态 trusted 通道。 */
+  mcpTools?: 'none'
+
   /**
    * In `primary_tool` mode this provider delegates to `delegate_<peer>`;
    * the single source for provider pairing (replaces the old 2-provider

@@ -11,6 +11,8 @@ import { createCodexChatProvider } from '../../adapters/executors/codex/codex-ch
 import { makeCodexChatGate } from '../../adapters/executors/codex/codex-chat-gate'
 import { buildSystemPrompt } from '../../domain/prompt-builder'
 import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '../../domain/capability-matrix'
+import { grokHomeProblem, grokSubprocessEnv } from '../../lib/grok-home'
+import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 import type { ProviderId } from '../../domain/conversation'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
@@ -20,7 +22,7 @@ import type { Access } from '../../lib/access'
 import type { CompanionConfig } from '../../lib/companion-config'
 import { loadAccess } from '../../lib/access'
 import { loadCompanionConfig } from '../../lib/companion-config'
-import { findOnPath, probeBinaryVersion } from '../../lib/util'
+import { findOnPath, probeBinaryVersion, augmentedPathEnv } from '../../lib/util'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { cursorSdkFallback, executorBinary, executorCredential, executorMissingConfig } from '../../lib/executor-detect'
 import { checkCodexVersion } from './codex-version-check'
@@ -121,7 +123,7 @@ export interface ProviderDeps {
    * 测试接缝(2026-10-04):外部 CLI 的 `--version` 探测。缺省 provider-probe.ts 的
    * `probeVersion`(超时按事件循环醒着的时间计,失败带原因)。
    */
-  probeVersion?: (bin: string) => Promise<VersionProbeResult>
+  probeVersion?: (bin: string, options?: { env?: NodeJS.ProcessEnv }) => Promise<VersionProbeResult>
   /**
    * 测试接缝:探测失败后的退避重探(档位 / 计时器)。生产不传 ⇒ 2s、4s … 60s,之后每 10 分钟。
    * 测试 runner 下不传 ⇒ 不重探(单测里的 buildBootstrap 不该在背后排计时器去起真 CLI)。
@@ -162,7 +164,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const readAgentConfig = makeMtimeCachedConfigReader(deps.stateDir)
 
   // 外部 CLI 的开机探测 + 失败后的退避重探(2026-10-04,见 provider-probe.ts 文件头)。
-  const probe = deps.probeVersion ?? ((bin: string) => probeVersion(bin))
+  const probe = deps.probeVersion ?? probeVersion
+  const probeGrok = async (bin: string): Promise<VersionProbeResult> => {
+    try { return await probe(bin, { env: grokSubprocessEnv(deps.stateDir, workbenchSubprocessEnv({ ...process.env, PATH: augmentedPathEnv() })) }) }
+    catch (error) { return { ok: false, reason: 'spawn_error', detail: error instanceof Error ? error.message : 'Grok 专属 HOME 不可用', ms: 0 } }
+  }
   const probeRetrier = createProbeRetrier({ ...deps.probeRetry, log: deps.log })
   const retryEnabled = !UNDER_TEST_RUNNER || deps.probeRetry !== undefined
   const scheduleProbeRetry = (id: ProviderId, firstError: string, attempt: ProbeAttempt) => {
@@ -178,9 +184,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const retryRegistration = (id: ProviderId, bin: string, firstError: string, opts: {
     accept?: (r: Extract<Awaited<ReturnType<typeof probe>>, { ok: true }>) => string | null
     register: (bin: string, r: Extract<Awaited<ReturnType<typeof probe>>, { ok: true }>) => boolean | Promise<boolean>
+    probe?: typeof probe
   }) => scheduleProbeRetry(id, firstError, async () => {
     if (registry.has(id)) return { ok: true }
-    const r = await probe(bin)
+    const r = await (opts.probe ?? probe)(bin)
     if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
     const rejected = opts.accept?.(r)
     if (rejected) return { ok: false, reason: rejected }
@@ -461,6 +468,29 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   }
 
   // ──────────────────────────────────────────────────────────────
+  // 版本探测和会话都使用 CC 专属 HOME；只检查专属 auth 文件存在，不复制主人登录。
+  const grokBin = executorBinary('grok', configuredAgent, UNDER_TEST_RUNNER ? () => null : findOnPath)
+  const registerGrok = async (bin: string): Promise<boolean> => {
+    const { createAcpGrokProvider } = await import('../../adapters/executors/acp/acp-grok')
+    registry.register('grok', createAcpGrokProvider({ bin, stateDir: deps.stateDir, model: configuredAgent.grokModel, log: deps.log }), {
+      canResume: () => false,
+      bin: () => executorBinary('grok', readAgentConfig(), UNDER_TEST_RUNNER ? () => null : findOnPath),
+    })
+    deps.log('BOOT', `grok: ${grokHomeProblem(deps.stateDir) ?? 'ACP account executor ready (CC 专属 HOME；无 CC MCP 工具)'}`)
+    return true
+  }
+  if (grokBin && !acpSupportedOn()) {
+    deps.log('BOOT', 'grok: ACP 暂不支持 Windows(进程组清理未验证)，未注册')
+  } else if (grokBin) {
+    const r = await probeGrok(grokBin)
+    if (r.ok) await registerGrok(grokBin)
+    else {
+      const reason = describeProbeFailure(r)
+      deps.log('BOOT', `grok: --version 探测失败(${reason})— 后台退避重探`)
+      retryRegistration('grok', grokBin, reason, { register: registerGrok, probe: probeGrok })
+    }
+  }
+
   // Cursor SDK provider — third registered provider.
   //
   // CURSOR_API_KEY is env-only — not stored in agent-config.json.
@@ -820,11 +850,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   assertMatrixComplete(registry.list())
 
   // 默认 provider 是共享钥匙的那种(目前只剩 agy):允许,但说清后果。
-  { let shared = false; try { shared = !capabilitiesFor(defaultProviderId).adminMcpTools } catch { /* unknown id → registry will complain */ }
+  { let shared = false; try { shared = capabilitiesFor(defaultProviderId).mcpTools !== 'none' && !capabilitiesFor(defaultProviderId).adminMcpTools } catch { /* unknown id → registry will complain */ }
     if (shared) deps.log('BOOT', `默认 provider 是 ${defaultProviderId}(订阅 CLI,所有对话共用一把 trusted 钥匙):guest 对话会被拒,管理员/信任对话正常;主动关心等走主人会话不受影响`) }
   return {
     registry, defaultProviderId, codexBinary, codexVersionCheck,
-    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}) }),
+    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}), ...(grokBin ? { grok: grokHomeProblem(deps.stateDir) ?? 'CC 专属 HOME 已登录；无 wechat、记录本或委派工具。' } : {}) }),
     providerProbes: () => probeRetrier.status(),
     stopProviderProbes: () => probeRetrier.stop(),
     reprobeProvider: (id) => probeRetrier.reprobeNow(id),

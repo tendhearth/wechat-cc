@@ -32,7 +32,7 @@ function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: b
   const registry = createProviderRegistry({ networkGate: options.gate }), sinks = makeReplySinks(), messages = makeMessagesStore(db)
   const spawns: Array<{ provider: string; alias: string; path?: string; ephemeral?: boolean; instructions?: string; resume?: string; permissionMode?: string; allow?: string[] }> = []
   const prompts: Array<{ provider: string; text: string }> = [], closed: string[] = [], revoked: string[] = []
-  for (const id of ['claude', 'codex']) registry.register(id, {
+  for (const id of ['claude', 'codex', 'grok']) registry.register(id, {
     callTarget: () => ({ provider: id, model: `${id}-test` }),
     spawn: async (project, ctx) => {
       // 白名单采集；不读取或断言 spawn 的环境字段。
@@ -63,7 +63,7 @@ function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: b
     loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['owner'], admins: options.trusted ? [] : ['owner'] }), trustedProviders: () => ['claude'],
     replyDelivery: runtime, networkGate: options.gate, log: () => {}, sendNotice: async (_c, text) => { notices.push(text); sinks.capture('owner', text) },
   })
-  const route = makeMwRoute({ probes: {}, providers: () => [{ id: 'codex', names: ['Codex'], available: !options.unavailable }, { id: 'claude', names: ['Claude'], available: true }], log: () => {},
+  const route = makeMwRoute({ probes: {}, providers: () => [{ id: 'codex', names: ['Codex'], available: !options.unavailable }, { id: 'grok', names: ['Grok'], available: true }, { id: 'claude', names: ['Claude'], available: true }], log: () => {},
     ...(options.evaluate ? { judge: makeCheapAnswerJudge(options.evaluate) } : {}),
     sendMessage: scopedSend(async (_c, text) => { notices.push(text) }),
   })
@@ -76,14 +76,14 @@ function setup(options: { unavailable?: boolean; gate?: NetworkGate; trusted?: b
   return { route, workspaces, released, converse, coordinator, manager, spawns, prompts, closed, revoked, instructions, rotation, messages, notices, topicRecall, matterRecall, tokens, minted }
 }
 
-it('一次代答用隔离会话、原样交付且记 agent 来源；下一句与原 CC 会话续聊', async () => {
+it.each(['codex', 'grok'])('%s 一次代答用隔离会话、原样交付且记 agent 来源；下一句与原 CC 会话续聊', async provider => {
   const t = setup()
   await t.converse('先聊一句')
   const before = t.rotation.opened.mock.calls.length
-  const result = await t.converse('让 Codex 回答这个问题: 2+2')
-  expect(result).toMatchObject({ reply: 'codex 原样答复', speaker: 'agent', provider: 'codex' })
+  const result = await t.converse(`让 ${provider} 回答这个问题: 2+2`)
+  expect(result).toMatchObject({ reply: `${provider} 原样答复`, speaker: 'agent', provider })
   expect(t.coordinator.getMode('owner')).toEqual({ kind: 'solo', provider: 'claude' })
-  const spawned = t.spawns.find(s => s.provider === 'codex')!
+  const spawned = t.spawns.find(s => s.provider === provider)!
   expect(spawned).toMatchObject({ ephemeral: true, permissionMode: 'strict', allow: ['reply'] })
   // 评审 P1:代答不在主人的项目里跑,用一次性的空目录,答完删掉。
   expect(spawned.path).toBe(t.workspaces[0])
@@ -93,21 +93,21 @@ it('一次代答用隔离会话、原样交付且记 agent 来源；下一句与
   expect(spawned.alias).not.toBe('fixture')
   expect(spawned.instructions).toContain('硬规矩')
   expect(spawned.instructions).not.toContain('CC_PRIVATE')
-  expect(t.prompts.find(p => p.provider === 'codex')?.text).not.toMatch(/PRIVATE_/)
+  expect(t.prompts.find(p => p.provider === provider)?.text).not.toMatch(/PRIVATE_/)
   expect(t.rotation.opened.mock.calls.length).toBe(before)
-  expect(t.closed).toEqual(['codex'])
-  expect(t.revoked).toEqual([`codex/${spawned.alias}/owner`])
-  const permission = t.tokens.resolve(t.minted.find(m => m.key.startsWith('codex/'))!.token)
+  expect(t.closed).toEqual([provider])
+  expect(t.revoked).toEqual([`${provider}/${spawned.alias}/owner`])
+  const permission = t.tokens.resolve(t.minted.find(m => m.key.startsWith(`${provider}/`))!.token)
   expect(permission?.routeAllow).toEqual(new Set())
   expect(permission?.routeAllow?.has('POST /v1/conversation/set-mode')).toBe(false)
   expect(permission?.routeAllow?.has('GET /v1/memory/search')).toBe(false)
   expect(t.manager.has({ alias: 'fixture', chatId: 'owner', providerId: 'claude' })).toBe(true)
   expect(await t.converse('接着聊')).toMatchObject({ reply: 'claude 原样答复', speaker: 'cc', provider: 'claude' })
-  expect(t.spawns.map(s => s.provider)).toEqual(['claude', 'codex'])
+  expect(t.spawns.map(s => s.provider)).toEqual(['claude', provider])
   expect(t.instructions).toHaveBeenCalledTimes(1)
   expect(t.topicRecall).toHaveBeenCalledTimes(2)
   expect(t.matterRecall).toHaveBeenCalledTimes(2)
-  expect((await t.messages.listRange('owner', { limit: 20 })).find(m => m.text === 'codex 原样答复')).toMatchObject({ speaker: 'agent', provider: 'codex' })
+  expect((await t.messages.listRange('owner', { limit: 20 })).find(m => m.text === `${provider} 原样答复`)).toMatchObject({ speaker: 'agent', provider })
 })
 
 it('spawn 后网络失保护也说明失败并问 CC，释放代答会话且不重放', async () => {

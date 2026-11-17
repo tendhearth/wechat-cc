@@ -146,6 +146,24 @@ exports[`compilePolicy —— 档位 × 模式 → 每家执行者实际的设�
   "gemini / trusted / strict": {
     "gateEnabled": true,
   },
+  "grok-acp / admin / dangerously": {
+    "answer": "allow",
+  },
+  "grok-acp / admin / strict": {
+    "answer": "reject",
+  },
+  "grok-acp / guest / dangerously": {
+    "answer": "allow",
+  },
+  "grok-acp / guest / strict": {
+    "answer": "reject",
+  },
+  "grok-acp / trusted / dangerously": {
+    "answer": "allow",
+  },
+  "grok-acp / trusted / strict": {
+    "answer": "reject",
+  },
   "openai / admin / dangerously": {
     "bypass": true,
     "relayAs": "ask",

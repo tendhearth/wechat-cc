@@ -70,8 +70,10 @@ export function executionFailureMessage(code:string):string {
   }
   const ACP_SESSION = 'Cursor 的 ACP 会话无法建立或中断，请确认 cursor-agent 是支持 acp 子命令的版本后重试。'
   const acp: Array<[string, string]> = [
+    ['grok_auth_required', 'Grok 在 CC 里的登录已失效，请在 CC 的专属 HOME 中运行 grok login 后再试。'],
     ['acp_auth_required', 'Cursor 登录态失效，请在电脑上跑一次 cursor-agent login 后再试。'],
     ['acp_agent_auth_required', '这个执行者还没登录。先在终端里登录它一次（比如直接运行一次 gemini），或用 wechat-cc cli acp add 时加 --auth-method 指定登录方式。'],
+    ['acp_mcp_stdio_unsupported', '这个执行者未声明 stdio MCP 支持，CC 没有连接工具通道；请使用经过验证的传输方式。'],
     ['acp_resume_unsupported', '这个版本的 Cursor 不支持接着原会话，请带记录重新开始。'],
     ['acp_protocol_version_unsupported', ACP_SESSION], ['acp_session_failed', ACP_SESSION], ['acp_process_exited', ACP_SESSION],
     ['acp_process_start_failed', ACP_SESSION], ['acp_invalid_protocol_message', ACP_SESSION], ['acp_line_too_long', ACP_SESSION], ['acp_protocol_write_failed', ACP_SESSION],

@@ -8,7 +8,7 @@
  */
 
 /** 有图标的那几家(图形来自 lobe-icons,MIT;单色、按 ink 着色)。别的执行者画首字母。 */
-export const AGENT_GLYPHS = ['claude', 'codex', 'cursor', 'agy', 'gemini', 'kimi', 'openai', 'deepseek', 'qwen'] as const
+export const AGENT_GLYPHS = ['claude', 'codex', 'cursor', 'grok', 'agy', 'gemini', 'kimi', 'openai', 'deepseek', 'qwen'] as const
 export type AgentGlyph = typeof AGENT_GLYPHS[number]
 
 /** 执行者 id → daemon 给的正式名字。 */

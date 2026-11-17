@@ -26,6 +26,8 @@ import { AcpRequestError, createAcpConnection, type AcpConnection } from './rpc'
 import { acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './events'
 import { workbenchSubprocessEnv } from '../subprocess-env'
 import { APP_VERSION } from '../../../lib/app-version'
+import { grokSubprocessEnv } from '../../../lib/grok-home'
+import { basename } from 'node:path'
 
 export interface AcpProviderBaseOptions {
   command: string; args: string[]; displayName: string
@@ -54,14 +56,20 @@ export interface AcpProviderBaseOptions {
   authMethod?: string
   /** 认证失败时抛哪个码:缺省 acp_auth_required(桌面文案写的是 Cursor 怎么登录);自定义执行者用 acp_agent_auth_required。 */
   authErrorCode?: string
+  /** 内置执行者自己的启动/权限策略；自定义 ACP 与 Cursor 保留原策略。 */
+  policyTarget?: 'cursor-acp' | 'grok-acp'
+  /** Mandatory for Grok, including a custom ACP command named grok. No owner HOME fallback. */
+  grokStateDir?: string
 }
 
-/** ACP session/new|load 应答里 agent 自报的当前模型:configOptions 里的 model 项,退而求其次 models.currentModelId。 */
+/** ACP session/new|load 应答里 agent 自报的当前模型:configOptions 里的 model 项,退而求其次 models.currentModelId、_meta.modelState.currentModelId。 */
 export function acpCurrentModel(result: unknown): string | null {
   if (!object(result)) return null
   const option = Array.isArray(result.configOptions) ? result.configOptions.find((item: unknown) => object(item) && (item.id === 'model' || item.category === 'model')) : undefined
   if (object(option) && typeof option.currentValue === 'string' && option.currentValue) return option.currentValue
   if (object(result.models) && typeof result.models.currentModelId === 'string' && result.models.currentModelId) return result.models.currentModelId
+  const state = object(result._meta) ? result._meta.modelState : undefined
+  if (object(state) && typeof state.currentModelId === 'string' && state.currentModelId) return state.currentModelId
   return null
 }
 
@@ -89,6 +97,8 @@ export interface AcpProviderOptions extends AcpProviderBaseOptions {
   text: 'append' | 'messages'
   /** 注入的 MCP server 列表;缺省不注入(工作台任务本来就不给执行者 wechat MCP)。 */
   mcpServers?: (context: SpawnContext) => AcpMcpServer[]
+  /** 要求 agent 明确声明 stdio MCP；旧 Cursor 报文未声明此位，保持原行为。 */
+  requireMcpCapabilities?: boolean
   /** 想钉的模型;只在新开的会话上生效(session/load 沿用会话原状),agent 未提供该选项时只记日志。 */
   model?: (context: SpawnContext) => string | undefined
   /** 'strict'(缺省):session/load 失败即拒绝(工作台语义,resume 到期就该让调用方知道);
@@ -182,12 +192,16 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       },
     } : {}),
     async spawn(project, context: SpawnContext): Promise<AgentSession> {
+      const policy = compilePolicy(options.policyTarget ?? 'cursor-acp', context.tierProfile, context.permissionMode)
       if (context.evaluation) throw errorWithProviderCode('isolated_evaluation_unavailable', 'provider_error')
       // 对话侧与工作台共用这一句:两边都靠 close() 杀进程组收尾,Windows 上那条路没验过。
       // 文案不提"工作台" —— 对话侧也会撞到它(bootstrap 那边另有一道门:win32 不注册 ACP 对话 provider)。
       if (!acpSupportedOn()) throw new Error(`${options.displayName} 暂不支持 Windows：尚未验证进程树清理。`)
       // daemon 自己的凭据不进外部 CLI —— cursor-agent 还会再 spawn 它自己的 MCP 子进程,env 是会传染的。
-      const child = spawn(options.command, options.args, { cwd: project.path, env: workbenchSubprocessEnv(), stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true })
+      const baseEnv = workbenchSubprocessEnv()
+      const isGrok = options.targetProvider === 'grok' || options.policyTarget === 'grok-acp' || /^grok(?:\.exe)?$/i.test(basename(options.command))
+      const env = isGrok ? grokSubprocessEnv(options.grokStateDir, baseEnv, true) : baseEnv
+      const child = spawn(options.command, options.args, { cwd: project.path, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true })
       // 按 JSON-RPC 请求 id 记账:id 是 agent 唯一能用来对上回复的东西,撞 id ⇒ 协议已经不可信。
       const permissions = new Map<string | number, PendingPermission>()
       const logged = new Set<string>()
@@ -253,7 +267,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             queueMicrotask(() => fatal(`无法核实或完整显示本次 ${options.displayName} 权限请求，工作台已停止任务。`)); return { outcome: { outcome: 'cancelled' } }
           }
           if (options.permissions === 'mode') {
-            const optionId = acpPermissionOption(params.options, compilePolicy('cursor-acp', context.tierProfile, context.permissionMode).answer === 'allow')
+            const optionId = acpPermissionOption(params.options, policy.answer === 'allow')
             return optionId ? { outcome: { outcome: 'selected', optionId } } : { outcome: { outcome: 'cancelled' } }
           }
           const toolCall = params.toolCall as Record<string, unknown>
@@ -353,6 +367,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       try {
         const initialized = await connection.request('initialize', { protocolVersion: 1, clientCapabilities: CLIENT_CAPABILITIES, clientInfo: CLIENT_INFO })
         if (!object(initialized) || initialized.protocolVersion !== 1) throw new Error('acp_protocol_version_unsupported')
+        const initialModel = acpCurrentModel(initialized)
         const loadSession = object(initialized.agentCapabilities) && initialized.agentCapabilities.loadSession === true
         imageOk = acpImageCapable(initialized)
         // 配了登录方式、agent 也认 ⇒ 先声明(只这一次,失败按认证失败报)。agent 没列这个方式 ⇒ 不调,让 session/new 自己说。
@@ -360,6 +375,10 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           await connection.request('authenticate', { methodId: options.authMethod })
         }
         const mcpServers = options.mcpServers?.(context) ?? []
+        if (mcpServers.length && options.requireMcpCapabilities) {
+          const capabilities = object(initialized.agentCapabilities) ? initialized.agentCapabilities.mcpCapabilities : undefined
+          if (!object(capabilities) || capabilities.stdio !== true) throw new Error('acp_mcp_stdio_unsupported')
+        }
         const openNew = async () => {
           const created = await connection.request('session/new', { cwd: project.path, mcpServers })
           if (!object(created) || !sessionIdOk(created.sessionId)) throw new Error('acp_missing_session_id')
@@ -387,7 +406,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             created = await openNew()
           }
         } else created = await openNew()
-        if (created) currentModel = acpCurrentModel(created)
+        if (created) currentModel = acpCurrentModel(created) ?? initialModel
         // 只在新会话上钉模型:session/load 沿用会话原状。失败只记日志,模型选错不该让整段对话起不来 ——
         // 但只吞 AcpRequestError(agent 明确拒绝了这个选项):任何别的拒绝(尤其是进程死掉时
         // connection.dispose() 甩出的那个)都必须原样上抛,让外层 catch 走 setupError + close(),

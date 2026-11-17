@@ -21,8 +21,8 @@ describe('ProviderCapabilities.defaultPeer', () => {
 })
 
 describe('CAPABILITY_MATRIX', () => {
-  it('contains exactly 48 rows (4 modes × 6 providers × 2 perms)', () => {
-    expect(CAPABILITY_MATRIX).toHaveLength(48)
+  it('contains exactly 56 rows (4 modes × 7 providers × 2 perms)', () => {
+    expect(CAPABILITY_MATRIX).toHaveLength(56)
   })
 
   it.each(CAPABILITY_MATRIX)(

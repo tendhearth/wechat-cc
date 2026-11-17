@@ -22,7 +22,7 @@
 import type { ReplyTextStrategy } from './turn-reply'
 import type { Mode, ProviderId } from './conversation'
 import type { ProviderCapabilities, PermissionMode } from '../ports/agent-provider'
-import { ACP_CURSOR_CAPABILITIES, AGY_CAPABILITIES, CLAUDE_CAPABILITIES, CODEX_CAPABILITIES, GEMINI_CAPABILITIES, OPENAI_CAPABILITIES } from './provider-capabilities'
+import { ACP_GROK_CAPABILITIES, ACP_CURSOR_CAPABILITIES, AGY_CAPABILITIES, CLAUDE_CAPABILITIES, CODEX_CAPABILITIES, GEMINI_CAPABILITIES, OPENAI_CAPABILITIES } from './provider-capabilities'
 
 // Backwards-compat re-export: PermissionMode used to live here. Moved
 // to agent-provider.ts to break the cycle introduced by Phase 2's
@@ -94,6 +94,7 @@ const CAPABILITIES_BY_PROVIDER: Record<ProviderId, ProviderCapabilities> = {
   claude: CLAUDE_CAPABILITIES,
   codex:  CODEX_CAPABILITIES,
   cursor: ACP_CURSOR_CAPABILITIES,
+  grok: ACP_GROK_CAPABILITIES,
   openai: OPENAI_CAPABILITIES,
   gemini: GEMINI_CAPABILITIES,
   agy:    AGY_CAPABILITIES,

@@ -1282,7 +1282,7 @@ describe('/set visit:社交不在时照存,但不说成「已开启」就完了(
 describe('斜杠命令一条一行(第三批 3d)', () => {
   it('认的斜杠词从命令行表推出来,跟以前手写的那份一字不差(没有新的被当成「不认识」,也没有悄悄多认)', () => {
     const { cmds } = setup()
-    expect([...cmds.slashWords()].sort()).toEqual(['agy', 'api', 'both', 'cc', 'chat', 'codex', 'cursor', 'gemini', 'help', 'mode', 'name', 'parallel', 'set', 'solo', 'stop', 'whoami'])
+    expect([...cmds.slashWords()].sort()).toEqual(['agy', 'api', 'both', 'cc', 'chat', 'codex', 'cursor', 'gemini', 'grok', 'help', 'mode', 'name', 'parallel', 'set', 'solo', 'stop', 'whoami'])
   })
   it('**主人的 /help 提到了每个认的词**(加了命令不写进 /help 就红);不提的几个写明为什么', async () => {
     // 不在 /help 里的:help 自己;both / parallel / chat 是 10-21 从微信退掉的(只回一句「去桌面开」),不该再招呼主人用

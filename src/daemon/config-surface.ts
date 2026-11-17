@@ -64,6 +64,8 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
     effect: 'immediate', description: 'OpenAI 兼容后端做后台评估(记忆整理/指称判断)用的模型 id;留空 = 跟 openaiModel', validate: (v) => MODEL_RE.test(v) },
   { key: 'geminiModel', store: 'agent', field: 'geminiModel', type: 'string', writable: true,
     effect: 'immediate', description: 'Gemini 模型 id', validate: (v) => MODEL_RE.test(v) },
+  { key: 'grokModel', store: 'agent', field: 'grokModel', type: 'string', writable: true,
+    effect: 'immediate', description: 'Grok 账号执行者模型（在 CC 专属 HOME 中独立登录）', validate: (v) => MODEL_RE.test(v) },
   { key: 'cursorModel', store: 'agent', field: 'cursorModel', type: 'string', writable: true,
     effect: 'immediate', description: 'Cursor 模型 id', validate: (v) => MODEL_RE.test(v) },
   { key: 'agyModel', store: 'agent', field: 'agyModel', type: 'string', writable: true,

@@ -6,11 +6,41 @@ import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, read
 import { openWechatDb } from '../lib/db'
 import { makeSessionStateStore } from '../adapters/store/session-state'
 import { DoctorOutput } from './schema'
+import { grokHome, grokSubprocessEnv } from '../lib/grok-home'
 
 const installedSystemd = () => ({ installed: true, kind: 'systemd-user' as const })
 const missingSystemd = () => ({ installed: false, kind: 'systemd-user' as const })
 
 describe('doctor installer JSON', () => {
+  it('reports Grok ready from only the dedicated auth file, without running a binary or parsing credentials', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'doctor-grok-'))
+    try {
+      grokSubprocessEnv(stateDir, {})
+      writeFileSync(join(grokHome(stateDir), '.grok/auth.json'), 'not JSON; presence only')
+      const report = analyzeDoctor({ stateDir, findOnPath: cmd => cmd === 'grok' ? '/fake/grok' : null,
+        readAccounts: () => [], readAccess: () => ({ dmPolicy: 'disabled', allowFrom: [] }),
+        readAgentConfig: () => ({ provider: 'grok', grokModel: 'grok-test', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false }),
+        readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: installedSystemd,
+      })
+      expect(report.checks.grok).toMatchObject({ ok: true, path: '/fake/grok' })
+      expect(report.checks.provider).toMatchObject({ ok: true, provider: 'grok', model: 'grok-test' })
+    } finally { rmSync(stateDir, { recursive: true, force: true }) }
+  })
+  it('Grok uses its own binary/model and reports its dedicated login instead of Claude readiness', () => {
+    for (const installed of [false, true]) {
+      const report = analyzeDoctor({ stateDir: '/test', findOnPath: cmd => cmd === 'grok' ? installed ? '/bin/grok' : null : '/bin/claude',
+        probeCursor: () => ({ apiKeySet: false, sdkInstalled: false }), probeGemini: () => ({ apiKeySet: false, sdkInstalled: false }),
+        readAccounts: () => [], readAccess: () => ({ dmPolicy: 'disabled', allowFrom: [] }),
+        readAgentConfig: () => ({ provider: 'grok', model: 'wrong-claude', grokModel: 'grok-4.7', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false }),
+        readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: installedSystemd,
+      })
+      expect(report.checks.provider).toMatchObject({ ok: false, provider: 'grok', model: 'grok-4.7', binaryPath: installed ? '/bin/grok' : null })
+      expect(report.nextActions).not.toContain('install_claude')
+      expect(report.checks.provider.fix?.action).toContain(installed ? 'Grok 还没在 CC 里登录' : 'grok login')
+      if (installed) expect(report.checks.provider.fix?.action).toContain("HOME='/test/executors/grok/home' grok login")
+      expect(DoctorOutput.parse(report).checks.grok?.ok).toBe(false)
+    }
+  })
   it('preserves Codex confirmation states in doctor JSON without gating daemon readiness', () => {
     for (const state of ['untrusted', 'trusted', 'changed'] as const) {
       const report = analyzeDoctor({ stateDir: '/test', findOnPath: () => '/bin/test',

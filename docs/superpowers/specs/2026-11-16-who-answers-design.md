@@ -47,19 +47,19 @@ CC 旁听按已有工作结果 → 话题/总账记；执行者间仍只经该�
 
 GUI 不在回复旁常驻厂商文字，保留读屏名称/悬停说明；CC 页头与现有事项参与者头像组保留各自用途，不拿头像组代表这条回复是谁说的。只增加来源辨识，不增第二个聊天入口。
 
-## 4. Grok：独立身份，复用兼容通道
+## 4. Grok：CLI / ACP，主人账号登录
 
-仓库 [provider-ids](../../../src/lib/provider-ids.ts)尚无 grok；ProviderId 虽是 string，注册仍须补事实、能力与构造，按 [加执行者手册](../../maintainer/add-an-executor.md)。当前 [providers](../../../src/daemon/bootstrap/providers.ts)的兼容槽是 `openaiBaseUrl/openaiModel` + `WECHAT_OPENAI_API_KEY`，可另配 openaiEvalModel；[createApiModel](../../../src/adapters/executors/openai/api-model.ts)用 Chat Completions 形状。
+**11-16 主人改定**：原 API 槽方案取消。新增内置 `grok` 身份，走官方 `grok agent stdio` ACP，用主人自己的 Grok 账号登录，不新增 API key、base URL 或后台评估槽。安装：`curl -fsSL https://x.ai/cli/install.sh | bash`，然后在 CC 专属 `HOME=<STATE_DIR>/executors/grok/home`（0700）中运行 `grok login`，与主人原有登录分开；不读、不复制主人 auth.json。默认 CC 不变，Grok 只是可选执行者；有限免费额度不用于自动后台判断/便宜模型调用。
 
-| 选项 | 取舍 |
-|---|---|
-| 现有 openai 槽指向 xAI 或提供 Grok 的网关 | 改配置少；会替换已有网关，身份仍是 openai，工作台也固定该槽模型。只适合用户主动替换的试用，不能算完整「补一家」 |
-| **推荐：新增 grok 身份与独立槽，底层复用兼容适配器** | 原网关与 Grok 可同时在线；可直连 xAI，也可用网关；不另写调用循环或依赖 Grok 自带记忆/调度 |
+按[执行者手册](../../maintainer/add-an-executor.md)补事实、检测、独立 `grokModel/grokBin`、能力、策略、注册、圆标和工作台构造；复用 Cursor 的通用 ACP 客户端，不复用 print 评估方法。启动描述预留 `grok agent --no-leader stdio`，避免接入用户已有 leader。`cached_token` 认证方式由 initialize 声明，登录/刷新留给官方 CLI，不复制凭据。
 
-建议新增 `grokBaseUrl/grokModel`、密钥声明 `WECHAT_XAI_API_KEY`，可选 grokEvalModel；这些**现在不存在**。填实际兼容端点、模型标识及该端点的 API key，沿现有密钥设置保存，不在消息/日志/报告输出。本文不指定未经仓库验证的 API 路径、现行模型名或原生搜索能力；实现时先核兼容性、工具调用、流式与错误形状。
-需把 [对话适配器](../../../src/adapters/executors/openai/openai-agent-provider.ts)、[工作台适配器](../../../src/adapters/executors/openai/openai-workbench-provider.ts)及 [api-sessions](../../../src/adapters/executors/openai/api-sessions.ts)里的 openai 身份条件参数化：调用目标、续接、配置指纹、会话保留/清理都隔离到实际 provider，不能仅换 registry key。补 Grok 圆标至现有头像表，不让网关上的所有模型共用 Grok 标。
-**网络守护沿实际端点判**：[call-classifier](../../../src/lib/call-classifier.ts)已列 x.ai 为官方，直连需保护；自定义网关默认不保护，可被 protect/protect_custom_gateways 覆盖，已知海外聚合仍按原分类。新身份须如实报实际 baseURL/model，经过 registry 和每轮/工作台准入门，不单凭“叫 Grok”放行或拦截（[规则](../../reference/network-guard.md)）。
-**角色**：工具/权限/记录本真流程通过后可作执行者；对话、体检、记忆与轮换通过后可由主人选作 CC 后端。只会文字先只开文字，未验证的能力不宣称支持；不自动替换当前 CC，也不把手下执行者的失败静默切给另一家。
+整合者实测 2026-11-16、CLI 1.0.77：协议版本 1，支持 loadSession、图片/embeddedContext，session list/resume/close；模型状态在 `_meta.modelState`（当时 currentModelId 为 `grok-4.7`）。这些是协议事实，不等于 CC 已完成真模型验收。模型网络端点为 `cli-chat-proxy.grok.com`，来源「整合者实测 2026-11-16 grok 1.0.77 -p 一轮」；`grok.com` 与 `x.ai` 均按受保护的官方端点分类，不沿用 Cursor auto 的免保护例外。
+
+**MCP 降级**：Grok 仅声明 http/sse，未声明 stdio MCP；CC 现有 wechat/delegate/记录本出口为 stdio。本轮不注入这些 MCP，不假称 admin 工具或委派可用，也不新增临时 HTTP 桥/listen 端口。后续 HTTP/SSE 桥须另验逐会话 token、tier、撤销和记录本授权。
+
+**专属 HOME 是启动门（11-16 整合者实测裁决）**：grok 1.0.77 以独立 HOME 跑 inspect 时不再加载主人 `~/.claude` / `~/.claude.json` 的配置、skills、MCP、插件和 hooks，`-p` 正常登录作答。所有内置 Grok ACP、工作台、版本首探/重探都带 CC 专属 HOME 和必要 XDG/TMP；保留现有环境清洗，不额外传密钥，删除能覆盖账号/配置来源的变量。会话缺专属家或专属 auth.json 即拒绝（只查存在，不读内容），给出「Grok 还没在 CC 里登录」与实际 `HOME='…' grok login` 命令。doctor 仅查二进制/专属登录，不启动 CLI；models 未实现。专属 config 关闭插件自动更新、可选 Cursor 市场、遥测、trace、crash 与外部 OTEL 上传，以原子替换避免并发读空。项目 `.grok` / `.claude` 的配置、指令、MCP、插件和 hooks 与 Claude/Codex 一样按项目信任处理，不宣称禁用项目/系统 managed 策略或拥有原生工具沙盒。访客仍拒；恢复、附件和执行设置仍未开放。详情见[交接](../plans/2026-11-16-grok-acp-executor.md)。
+
+**无 MCP 的纯文字代答可用**：ONEOFF_PROFILE 只要最终文字，由既有文字事件交付，无需 wechat/记录本/委派工具；本轮仅对 Grok 显式放开。对话/工作台提示词明确无这些工具，不宣称写入记录成功。保留 strict、临时空目录、无私人历史和权限请求拒绝；专属 HOME 不等于原生工具沙盒。真实模型最终文字与来源仍由整合者双跑验收。
 
 ## 5. 拆步：每行一个小 PR，每行都双跑真模型
 
@@ -75,9 +75,9 @@ GUI 不在回复旁常驻厂商文字，保留读屏名称/悬停说明；CC 页
 | 5 App 露标 | 主对话/事项过程/结果用既有圆标 | 两棒接力回看、退出详情、重连；真实来源经离线 mini 同形回放验 UI |
 | 6 桌面露标 | 同上，复用共享头像 | 同场景双跑产来源，mini 宽窄屏/读屏属性回放，旧消息不换标 |
 | 7 网页露标 | 同上，设备与短链接边界不变 | 同场景双跑产来源，mini 重连/旧字段/设备权限回放 |
-| 8 兼容适配器复用 | 参数化 provider 与会话隔离，不注册 Grok | 两个测试身份交替续接、轮换/清理；CC 与网关历史不串，守护目标正确 |
-| 9 Grok 对话接入 | 独立配置/事实/能力/策略/注册/圆标，默认不换 CC | 两种 CC 均点名真 Grok 答一句/调工具；另以 Grok 作 CC 跑短体检/记账轮换；端点被守护拒绝时无请求 |
-| 10 Grok 执行者 | 工作台构造、记录本与接力能力声明 | 两种 CC 各派 Grok 写编造文件并留备注，再交另一家回读；失败/提问停住，权限不扩大 |
+| 8 Grok ACP 边界（11-16 主人改定） | 复用 ACP；按实测读模型状态/能力，验证账号与配置隔离，取消 API 槽参数化 | 假 ACP 验专属 HOME/登录门与 env；整合者已实测用户来源隔离，另验独立账号刷新与关闭市场/上传开关后的域名 |
+| 9 Grok 对话接入（11-16 主人改定） | 账号 CLI 的事实/检测/能力/策略/注册/圆标；默认 CC 不变，无后台评估 | 专属 HOME 登录后双跑纯文字点名代答；先验证守护拒绝时无请求。无 stdio MCP 时不开工具/记账，缺独立登录如实给命令 |
+| 10 Grok 执行者（11-16 主人改定） | 工作台构造跟随晚注册；如实声明记录本/恢复/附件与配置隔离边界 | 专属 HOME 登录后双跑编造文件与接力；未接 MCP 时不声称留备注成功，缺独立登录在入口/启动拒绝。mini 假进程/UI，真模型由整合者串行验 |
 
 每个 PR 记录提交、两次 CC 后端/模型、目标与实际回包来源、去重回执、结果及证据路径；UI 步另带 mini 回执。没有真模型、守护或隔离条件就记未验，不用 mock 冒充。按 [verify](../../maintainer/verify.md)跑牵连检查，既有测试只增不减。
 
@@ -85,5 +85,5 @@ GUI 不在回复旁常驻厂商文字，保留读屏名称/悬停说明；CC 页
 
 1. **答话路由**：明确「让 X 答这句」变成一次代答，结束恢复原目标；自然语言持久换后端、已回显事项焦点和当前棒补充保留。歧义问一句及「跟 CC 说 / 不是这件 / 换成 X」的文案和退回方式需确认；纠正语里的「换成 X」须确认只改原句还是持久切换。
 2. **可见身份**：App/桌面/网页的直通、代答和带回原始结果只露实际一家圆标；微信用 `[名字]` 文字例外。CC 本人回复保留 CC，不露承载 CC 的后端标。
-3. **Grok 入口与花费**：多一家配置、模型选择和执行者，新增密钥与独立额度；允许手动选作 CC，接入体检先展示预计用量/时间，默认 CC 不变。
+3. **Grok 入口与花费（11-16 主人改定）**：官方 CLI / ACP，主人 Grok 账号登录，不新增 API key；多一家可选身份，默认 CC 不变，不自动用于后台评估。专属 HOME 独立登录后开放文字执行与 oneoff，无 CC MCP 工具；真模型/体检由整合者验收。
 4. **不作为新行为推出的现状**：话题只帮助找事；现有斜杠/模式、终端入口、审批和拆棒确认照旧。新增元数据、适配器复用属于内部工作，不拿本稿提交当作上述可见变化已获批准。

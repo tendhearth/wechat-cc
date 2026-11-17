@@ -11,6 +11,12 @@ const parts = (socialWired: () => boolean) => ({
 })
 
 describe('wireInstructions', () => {
+  it('Grok declares no wechat, memory, notebook or delegation tools even for admin', () => {
+    const build = wireInstructions(deps(), parts(() => true))
+    const text = build('grok', TIER_PROFILES.admin, 'c')
+    expect(text).toContain('未接入 wechat、记忆、记录本或委派工具')
+    expect(text).not.toMatch(/wxvault|memory_read|memory_write|matter_plan|delegate_|attach_file|ask_user\(/)
+  })
   it('每次起会话时现问:admin + social 接好 ⇒ 提示词含社交段;guest ⇒ 不含', () => {
     const build = wireInstructions(deps(), parts(() => true))
     expect(build('claude', TIER_PROFILES.admin, 'c')).toContain('替主人交朋友')

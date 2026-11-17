@@ -23,7 +23,7 @@ import { makeWorkbenchService } from './service'
 import { makeRecollectSink } from '../../daemon/recollection/recollect-sink'
 import { makeJournal } from '../../adapters/store/journal-store'
 import { wrapCheapEvalWithAuthFailCheck } from '../../daemon/bootstrap/wire-coordinator'
-import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
+import { ACP_CAPABILITIES, GROK_ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../adapters/executors/claude/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../adapters/workbench/native-capability-notice'
 import { loadCompanionConfig } from '../../lib/companion-config'
@@ -37,6 +37,8 @@ import { readLocalClaudeOAuth } from '../../adapters/executors/claude/claude-oau
 import { readCodexRateLimits } from '../../adapters/executors/codex/codex-history-rpc'
 import { homedir } from 'node:os'
 import { createAcpWorkbenchProvider } from '../../adapters/executors/acp/acp-workbench-provider'
+import { createAcpGrokProvider } from '../../adapters/executors/acp/acp-grok'
+import { grokHomeProblem } from '../../lib/grok-home'
 import { acpAgentProblem, resolveAcpAgent, resolveCustomAcpAgent } from '../../adapters/executors/acp/agents'
 import { findOnPath } from '../../lib/util'
 import {matterStdioMcpSpec} from '../../daemon/bootstrap/mcp-specs'
@@ -117,6 +119,19 @@ export function registerAcpExecutors(target: ProviderRegistry, source: Pick<Prov
   const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName, log: deps.log, targetProvider: 'cursor',matterMcp:deps.matterMcp })
   target.register('cursor', provider, { ...entry.opts, workbench: ACP_CAPABILITIES })
   return ['cursor']
+}
+
+/** Grok 使用 boot 登记的二进制，不另找路径，也不传不受支持的 stdio matter MCP。 */
+export function registerGrokAcpExecutor(target: ProviderRegistry, source: Pick<ProviderRegistry, 'get'>,
+  deps: { stateDir?: string; platform?: NodeJS.Platform; log?: (tag: string, line: string) => void; matterMcp?: MatterMcpFactory } = {}): string[] {
+  const entry = source.get('grok')
+  if (!entry) return []
+  if (!acpSupportedOn(deps.platform)) { deps.log?.('WORKBENCH', 'grok: ACP 暂不支持 Windows，未注册'); return [] }
+  const bin = entry.opts.bin?.()
+  if (!bin) { deps.log?.('WORKBENCH', 'grok: boot binary unavailable，未注册工作台'); return [] }
+  const provider = createAcpGrokProvider({ bin, stateDir: deps.stateDir, log: deps.log ?? (() => {}), workbench: true })
+  target.register('grok', provider, { ...entry.opts, canResume: () => false, workbench: { ...GROK_ACP_CAPABILITIES, get unavailableReason() { return grokHomeProblem(deps.stateDir) } } })
+  return ['grok']
 }
 
 /**
@@ -247,6 +262,7 @@ export function wireWorkbench(opts: {
     // 同一种会话(B2),用途是工作台:只有文件工具 —— 和 Claude / Codex 的工作台一样不给 wechat MCP。
     openai:()=>{ if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,loadAgentConfig(opts.stateDir),process.env,opts.log,matterMcp,opts.networkGate) },
     cursor:()=>{ registerAcpExecutors(registry,opts.boot.registry,loadAgentConfig(opts.stateDir),{log:opts.log,matterMcp}) },
+    grok:()=>{ registerGrokAcpExecutor(registry,opts.boot.registry,{stateDir:opts.stateDir,log:opts.log}) },
     agy:()=>{ registerUnattendedExecutors(registry,opts.boot.registry) },
   }
   const follow=(id:string)=>{
@@ -254,7 +270,7 @@ export function wireWorkbench(opts: {
     if(!build||registry.has(id))return
     try{build()}catch(err){opts.log('WORKBENCH',`${id}: 接不上工作台 — ${err instanceof Error?err.message:String(err)}`)}
   }
-  for(const id of ['claude','codex','openai','cursor'])follow(id)
+  for(const id of ['claude','codex','openai','cursor','grok'])follow(id)
   registerCustomAcpExecutors(registry,agentConfig.acp_agents,{log:opts.log,matterMcp})
   follow('agy')
   opts.boot.registry.onRegister(id=>{ follow(id); if(registry.has(id))opts.log('WORKBENCH',`${id}: 晚到的执行者已进工作台`) })

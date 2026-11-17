@@ -94,6 +94,7 @@ export const DoctorOutput = z.object({
     // signals (GEMINI_API_KEY or GOOGLE_API_KEY + @google/genai package).
     gemini: DoctorCheckBase.extend({ apiKeySet: z.boolean(), sdkInstalled: z.boolean() }),
     agy: DoctorCheckBase.extend({ path: z.string().nullable() }).optional(),
+    grok: DoctorCheckBase.extend({ path: z.string().nullable() }).optional(),
     accounts: DoctorCheckBase.extend({
       count: z.number(),
       items: z.array(BoundAccount),
@@ -200,6 +201,7 @@ const AgentConfigSchema = z.object({
   provider: AgentProviderKind,
   model: z.string().optional(),
   cursorModel: z.string().optional(),
+  grokModel: z.string().optional(),
   openaiBaseUrl: z.string().optional(),
   openaiModel: z.string().optional(),
   geminiModel: z.string().optional(),

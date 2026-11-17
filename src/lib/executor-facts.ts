@@ -8,7 +8,7 @@
  */
 import type { KnownProviderId } from './provider-ids'
 
-export type ModelField = 'model' | 'cursorModel' | 'openaiModel' | 'geminiModel' | 'agyModel'
+export type ModelField = 'model' | 'cursorModel' | 'openaiModel' | 'geminiModel' | 'agyModel' | 'grokModel'
 
 export interface ExecutorNames {
   /** 正式名字:桌面 / 手机 / App 头像旁、「CC 的连接」里。 */
@@ -40,7 +40,7 @@ export interface ExecutorFacts {
    * - requiresConfig:agent-config 里必须非空(trim 后)的字段。
    */
   detect?: {
-    binary?: { name: string; configKey: 'cursorAgentBin' | 'agyBin' }
+    binary?: { name: string; configKey: 'cursorAgentBin' | 'agyBin' | 'grokBin' }
     requiresConfig?: readonly ExecutorConfigField[]
   }
   /**
@@ -57,6 +57,7 @@ export const EXECUTOR_FACTS: Readonly<Record<KnownProviderId, ExecutorFacts>> = 
   claude: { id: 'claude', names: { name: 'Claude', short: 'Claude', settings: 'Claude' }, aliases: ['克劳德', 'Claude Code'], slash: 'cc', modelField: 'model', setupHint: '安装 Claude Code 并在终端登录一次(claude)', endpoint: { host: 'api.anthropic.com', source: '官方 API 文档;未抓包' } },
   codex: { id: 'codex', names: { name: 'Codex', short: 'Codex', settings: 'Codex' }, slash: 'codex', modelField: 'model', setupHint: '安装 codex CLI 并登录一次', endpoint: { host: 'api.openai.com', source: '官方 API 文档;未抓包(ChatGPT 账号登录时可能走 chatgpt.com,待核)' } },
   cursor: { id: 'cursor', names: { name: 'Cursor', short: 'Cursor', settings: 'Cursor' }, aliases: ['cursor-agent'], slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)', detect: { binary: { name: 'cursor-agent', configKey: 'cursorAgentBin' } }, endpoint: { host: 'api2.cursor.sh', source: '抓包 2026-10-23:cursor-agent 2026.10.22 -p 一轮,连 api2.cursor.sh 与 api3.cursor.sh(另有几个遥测地址)' } },
+  grok: { id: 'grok', names: { name: 'Grok', short: 'Grok', settings: 'Grok · 账号连接' }, slash: 'grok', modelField: 'grokModel', setupHint: '终端跑:curl -fsSL https://x.ai/cli/install.sh | bash，然后在 CC 的专属 HOME=<STATE_DIR>/executors/grok/home 中运行 grok login；不要复制已有登录。', detect: { binary: { name: 'grok', configKey: 'grokBin' } }, endpoint: { host: 'cli-chat-proxy.grok.com', source: '整合者实测 2026-11-16 grok 1.0.77 -p 一轮' } },
   // 「/api」不是 /openai:这是主人自己的 API 端点(DeepSeek / Kimi / Qwen …),不绑哪家厂商。
   openai: { id: 'openai', names: { name: '自定义 AI 服务', short: 'API', settings: '自定义 AI 服务' }, slash: 'api', modelField: 'openaiModel', setupHint: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel', credentialEnv: ['WECHAT_OPENAI_API_KEY'], detect: { requiresConfig: ['openaiBaseUrl', 'openaiModel'] }, endpoint: { host: 'api.openai.com', source: '没配 openaiBaseUrl 时的缺省;实际几乎总是主人自配的网关' } },
   gemini: { id: 'gemini', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 密钥连接' }, slash: 'gemini', modelField: 'geminiModel', setupHint: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env', credentialEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'], detect: { requiresConfig: ['geminiModel'] }, endpoint: { host: 'generativelanguage.googleapis.com', source: 'Gemini API(密钥)官方端点;未抓包' } },
