@@ -10,7 +10,7 @@ import {
   demoName, demoNames, demoCcActs,
 } from './demo-data'
 
-type Topic = 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`
+type Topic = 'roster' | 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`
 type Copy = keyof typeof copy
 /** 事件记录:带 key 的在读时按请求的语言生成文案;text 是用户自己的字,原样保留。 */
 type EvRec = { kind: string; createdAt: number; key?: Copy; extra?: string; text?: string }
@@ -306,6 +306,17 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       set.add(cb)
       cb(snapshot(topic as Topic) as never)
       return () => { set!.delete(cb) }
+    },
+    async roster() {
+      const ids = [IDS.portfolio, IDS.notes, IDS.trip, IDS.report]
+      return { version: 'demo-roster:1', items: ids.map((id, i) => ({
+        key: `matter:${id}`, kind: 'matter' as const, id, title: entries.get(id)!.detail.matter.title,
+        project: 'Tendhearth CC', group: (['waiting', 'working', 'working', 'back'] as const)[i]!,
+        status: (['waiting', 'working', 'working', 'done'] as const)[i]!,
+        agents: i === 2 ? [{ id: 'codex', current: true }, { id: 'claude', current: false }] : [{ id: i === 1 ? 'codex' : 'claude', current: true }],
+        ...(i === 2 ? { relay: { index: 2, total: 3 } } : {}),
+        quiet: false, updatedAt: now(), unseen: i === 3,
+      })) }
     },
     async topics(p) { return topicsList(p) },
     async topicDetail(p) {

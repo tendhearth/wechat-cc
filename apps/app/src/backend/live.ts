@@ -222,6 +222,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
         if (off) later(off)
       }
     },
+    async roster(_signal) { return api.roster.get() },
     async topics(p) { return api.topics.list({ query: p }) },
     async topicDetail(p) { return api.topics.detail({ query: p }) },
     async topicEdit(action, input) { await api.topics[action]({ body: input as never }) },
