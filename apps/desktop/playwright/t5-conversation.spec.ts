@@ -256,3 +256,48 @@ test('six replied terminal sessions leave the project quiet and remain ordinary 
  expect(await panel.evaluate(el=>el.textContent!.indexOf('家里的服务与备份')<el.textContent!.indexOf('答完了'))).toBe(true)
  await page.screenshot({path:join(info.outputDir,'topics-waiting-ranu-quiet.png')})
 })
+
+// Phone page renders who answered per reply: executor glyph for agent replies, plain CC otherwise.
+test('PWA shows the answering executor per reply and keeps CC replies unmarked', async ({ page, shimUrl }) => {
+  const { readJsonFile } = await import('../../../src/lib/read-json-file')
+  const { fillMobileTemplate, inlineScriptJson } = await import('../../../src/features/phone/mobile-page-template')
+  const { fileURLToPath } = await import('node:url')
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message))
+  const art = readJsonFile<{ lit: { base64: string }; unlit: { base64: string } }>(fileURLToPath(new URL('../../../src/features/phone/mobile-presence-art.json', import.meta.url)))
+  const mobilePage = readJsonFile<{ phone: string }>(fileURLToPath(new URL('../../../src/features/phone/mobile-page.generated.json', import.meta.url)))
+  const messages = [
+    { id: 'me1', role: 'me', text: '让 Codex 回答：备份几点跑？', at: 1 },
+    { id: 'codex1', role: 'cc', text: '每天凌晨三点。', at: 2, speaker: 'agent', provider: 'codex' },
+    { id: 'claude1', role: 'cc', text: '我这边看到的也是三点。', at: 3, speaker: 'agent', provider: 'claude' },
+    { id: 'svc1', role: 'cc', text: '自定义服务的回答。', at: 4, speaker: 'agent', provider: 'openai' },
+    { id: 'cc1', role: 'cc', text: '好的，记下了。', at: 5, speaker: 'cc', provider: 'claude' },
+    { id: 'notice1', role: 'cc', text: '已切回 CC。', at: 6, speaker: 'notice', provider: 'codex' },
+  ]
+  await page.route(`${shimUrl}/**`, route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/m') return route.fulfill({ contentType: 'text/html', body: fillMobileTemplate(mobilePage.phone, { TOKEN_JSON: inlineScriptJson('dDEVICE'), REMOTE_JSON: inlineScriptJson(null) }) })
+    if (path === '/m/sw.js') return route.fulfill({ contentType: 'application/javascript', body: '' })
+    if (path === '/v1/home') return route.fulfill({ json: { ok: true, synced_at: new Date().toISOString(), presence: { presence: 'ok', activity: { kind: 'idle', label: '' } }, work: { focus: null, partial: false } } })
+    if (path === '/v1/phone/art/presence') return route.fulfill({ json: { ok: true, mime: 'image/png', lit: art.lit.base64, unlit: art.unlit.base64 } })
+    if (path === '/v1/matters') return route.fulfill({ json: { matters: [], nextCursor: null } })
+    if (path === '/v1/matter/owner-chat/page') return route.fulfill({ json: { ok: true, conversation: 'v1', matterId: 'owner', messages, hasMore: false, pending: null } })
+    if (path === '/v1/matter/owner-chat/model') return route.fulfill({ json: { ok: true, providers: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'openai', name: '自定义 AI 服务' }], provider: 'claude', model: 'm' } })
+    if (path === '/v1/matter/owner-chat/events') return route.fulfill({ json: { running: null, cursor: 1, events: [] } })
+    return route.fulfill({ status: 404, json: { ok: false } })
+  })
+  await page.setViewportSize({ width: 390, height: 844 }); await page.goto(`${shimUrl}/m`)
+  await expect(page.locator('#message-codex1')).toBeVisible()
+  for (const [id, name, agent] of [['codex1', 'Codex', 'codex'], ['claude1', 'Claude', 'claude']] as const) {
+    const mark = page.locator(`#message-${id} .chat-reply-avatar`)
+    await expect(mark).toHaveCount(1); await expect(mark).toHaveAttribute('aria-label', name)
+    await expect(mark.locator('.th-agent')).toHaveAttribute('data-agent', agent)
+    await expect(page.locator(`#message-${id} small`)).not.toContainText('CC')
+    const box = await mark.boundingBox(); expect(box && box.width > 8 && box.width <= 28 && box.height <= 28).toBe(true)
+  }
+  await expect(page.locator('#message-svc1 .chat-reply-avatar')).toHaveAttribute('aria-label', '自定义 AI 服务')
+  for (const id of ['me1', 'cc1', 'notice1']) await expect(page.locator(`#message-${id} .chat-reply-avatar`)).toHaveCount(0)
+  await expect(page.locator('#message-cc1 small')).toContainText('CC')
+  const out = process.env.WECHAT_CC_DESIGN_SHOTS
+  if (out) await page.screenshot({ path: join(out, 'pwa-reply-avatars.png') })
+  expect(errors).toEqual([])
+})
