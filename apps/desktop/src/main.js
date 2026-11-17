@@ -177,10 +177,7 @@ const nowPage = nowRoot ? mountNowPage({
       const off = subscribeConverse(msgs => nowPage?.setConversationSnapshot(msgs.filter(m=>!m.matterId&&!m.terminalId)))
       off()
     }
-    // 只在焦点没停在别的控件上时才去聚焦输入框:后台轮询也会走到这里,不能把键盘用户正停着的名单行 / 按钮的焦点抢走
-    // (mini 全量验收 11-17:名单行按 Enter 打不开事项,就是焦点在按下前被抢回了输入框)。主动「跟 CC 说」有自己的 focus。
-    const active = document.activeElement
-    if (m === 'chat' && (!active || active === document.body)) document.getElementById('converse-input')?.focus()
+    if (m === 'chat') document.getElementById('converse-input')?.focus()
   },
 }) : null
 if (nowPage) setConverseMode('chat')
