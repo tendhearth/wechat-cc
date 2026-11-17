@@ -1,16 +1,18 @@
 import { join } from 'node:path'
 import { test, expect, clickNav } from './fixtures'
+import {routeRoster,rosterItem} from './roster-fixture'
 import { routePresenceTopic, PRESENCE_OK } from './presence-topic'
 const shots = join(process.cwd(), '../../.superpowers/now-hero-shots')
-const pane = '.cc-now-pane', stage = '#now-cc .now-pet-stage', sprite = '#now-cc .now-pet-sprite'
+const pane = '.cc-now-pane', stage = '#topbar-cc .now-pet-stage', sprite = '#topbar-cc .now-pet-sprite'
 async function openHome(page: import('@playwright/test').Page, url: string) {
   await page.goto(url, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('main.dashboard')).toBeVisible()
-  await expect(page.locator('#now-cc')).toHaveAttribute('data-runtime', 'ready')
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-runtime', 'ready')
   await expect(page.locator(stage)).toHaveAttribute('data-form', 'lit')
 }
 test.beforeEach(async ({ page, shim }) => {
   await page.route('**/__dev_reload.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }))
+  await routeRoster(page,[rosterItem('deadbeef','备份')])
   await shim.invoke('demo.unseed'); await shim.invoke('demo.seed', {})
 })
 
@@ -77,19 +79,19 @@ test('home uses Light/Dark connection forms, one breathing layer and stable keyb
   await page.route('**/v1/companion/presence', route => down ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } } }))
   await openHome(page, shimUrl)
   await expect(page.locator(sprite)).toHaveAttribute('src', /canonical\/lit\/front\.png$/)
-  const metrics = await page.locator('#now-cc').evaluate(el => {
-    const b = el.getBoundingClientRect(), s = el.querySelector('.now-pet-sprite')!.getBoundingClientRect()
-    return { width: b.width, spriteWidth: s.width, spriteHeight: s.height, clipped: getComputedStyle(el).overflow === 'hidden', canonicalVisible: [...el.querySelectorAll('.now-cc-light,.now-cc-dark')].filter(n => getComputedStyle(n).display !== 'none').length,
+  const metrics = await page.locator('#topbar-cc').evaluate(el => {
+    const b = el.querySelector('.topbar-figure')!.getBoundingClientRect(), s = el.querySelector('.now-pet-sprite')!.getBoundingClientRect()
+    return { width: b.width, spriteWidth: s.width, spriteHeight: s.height, clipped: getComputedStyle(el).overflow === 'hidden', canonicalVisible: [...el.querySelectorAll('.topbar-cc-light,.topbar-cc-dark')].filter(n => getComputedStyle(n).visibility !== 'hidden').length,
       animations: el.getAnimations({ subtree: true }).filter(a => (a as CSSAnimation).animationName === 'now-pet-breathe').length,
       paper: getComputedStyle(document.querySelector('.cc-now-pane')!).backgroundColor }
   })
-  expect(metrics).toMatchObject({ width: 44, spriteWidth: 44, clipped: false, canonicalVisible: 0, animations: 1 })
-  expect(metrics.spriteHeight).toBeGreaterThanOrEqual(44)
-  expect(metrics.spriteHeight).toBeLessThan(46)
+  expect(metrics).toMatchObject({ width: 48, spriteWidth: 48, clipped: false, canonicalVisible: 0, animations: 1 })
+  expect(metrics.spriteHeight).toBeGreaterThanOrEqual(48)
+  expect(metrics.spriteHeight).toBeLessThan(50)
   expect(metrics.paper).not.toBe('rgba(0, 0, 0, 0)')
   await page.screenshot({ path: join(shots, 'light-home.png') })
   await page.setViewportSize({ width: 390, height: 844 })
-  await expect(page.locator('#now-cc')).toHaveCSS('width', '44px')
+  await expect(page.locator('#topbar-cc .topbar-figure')).toHaveCSS('width', '48px')
   await expect(page.locator(stage)).toHaveCSS('overflow', 'visible')
   await page.screenshot({ path: join(shots, 'light-home-small.png') })
   await page.setViewportSize({ width: 1280, height: 720 })
@@ -103,10 +105,10 @@ test('home uses Light/Dark connection forms, one breathing layer and stable keyb
   await expect(page.locator(sprite)).toHaveAttribute('src', /\/(?:canonical|sprites|motion)\/unlit\//)
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'sleep')
   await page.screenshot({ path: join(shots, 'dark-disconnected-home.png') })
-  await page.locator('#now-cc').focus(); await page.keyboard.press('Enter')
+  await page.locator('#topbar-cc').focus(); await page.keyboard.press('Enter')
   await expect(page.locator(pane)).toHaveAttribute('data-now', 'chat')
   await clickNav(page,'recollections')
-  await expect(page.locator(stage)).toHaveClass(/pet-paused/)
+  await expect(page.locator(stage)).not.toHaveClass(/pet-paused/) // 页头属于全局，进入回忆仍在场
   await clickNav(page,'overview')
   await expect(page.locator(stage)).toHaveAttribute('data-form', 'unlit')
 })
@@ -134,7 +136,7 @@ test('real attention snapshots express a round reply once, preserve permission p
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'idle')
   waiting = true; phase = 'working'
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'permission', { timeout: 6000 })
-  await expect(page.locator('#now-waiting-title')).toHaveText('1 件事等你')
+  await expect(page.locator('#roster-list [data-group="waiting"] h2')).toHaveText('等你 1')
   const previousReads = reads; phase = 'replied'
   await expect.poll(() => reads).toBeGreaterThan(previousReads)
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'permission')
@@ -144,13 +146,12 @@ test('real attention snapshots express a round reply once, preserve permission p
   await page.screenshot({ path: join(shots, 'permission-reduced-home.png') })
   waiting = false; phase = 'working'
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'working', { timeout: 6000 })
-  await page.locator('#now-cc').click()
+  await page.locator('#topbar-cc').click()
   await clickNav(page,'recollections')
-  await expect(page.locator(stage)).toHaveClass(/pet-paused/)
+  await expect(page.locator(stage)).not.toHaveClass(/pet-paused/) // 页头属于全局，进入回忆仍在场
   const hiddenReads = reads; phase = 'replied'
   await expect.poll(() => reads).toBeGreaterThan(hiddenReads)
   await clickNav(page,'overview')
-  await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'idle')
   await expect(page.locator(stage)).not.toHaveClass(/pet-paused/)
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await expect(page.locator(stage)).not.toHaveClass(/pet-motion-reduced/)
@@ -172,14 +173,14 @@ test('late shared history only updates the bubble; visible local pending can rec
   await page.locator('#converse-input').fill('请回复'); await page.locator('#converse-send').click()
   await expect(page.locator(pane)).toHaveAttribute('data-now', 'chat')
   await clickNav(page,'recollections')
-  await expect(page.locator(stage)).toHaveClass(/pet-paused/)
+  await expect(page.locator(stage)).not.toHaveClass(/pet-paused/) // 页头属于全局，进入回忆仍在场
   await clickNav(page,'overview')
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'idle') // only local pending, no running turn evidence
   await expect.poll(() => typeof deliver).toBe('function'); deliver()
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'receive')
   await expect(page.locator('#converse-scroll')).toContainText('这轮实际回复')
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'idle')
-  await page.locator('#now-cc').click(); await expect(page.locator(pane)).toHaveAttribute('data-now', 'chat')
+  await page.locator('#topbar-cc').click(); await expect(page.locator(pane)).toHaveAttribute('data-now', 'chat')
   // The authoritative client snapshot on return must also consume a reply that already arrived in chat.
   await page.locator(stage).evaluate(el => {
     ;(window as any).__hiddenReplyBehaviors = []
@@ -200,11 +201,11 @@ test('unavailable motion catalog retains canonical pictures and working navigati
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible()
   await expect(page.locator(pane)).toHaveAttribute('data-cc', 'here')
-  await expect(page.locator('#now-cc .now-cc-light')).toBeVisible()
-  await expect(page.locator('#now-cc .now-cc-dark')).toBeHidden()
-  await expect(page.locator('#now-cc .now-pet-stage')).toHaveCount(0)
-  expect(await page.locator('#now-cc .now-cc-light').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
-  await page.locator('#now-cc').click(); await expect(page.locator(pane)).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#topbar-cc .topbar-cc-light')).toBeVisible()
+  await expect(page.locator('#topbar-cc .topbar-cc-dark')).toBeHidden()
+  await expect(page.locator('#topbar-cc .now-pet-stage')).toHaveCount(0)
+  expect(await page.locator('#topbar-cc .topbar-cc-light').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
+  await page.locator('#topbar-cc').click(); await expect(page.locator(pane)).toHaveAttribute('data-now', 'chat')
 })
 
 test('a home snapshot reconciles suspended quiet without celebrating work completed during quiet', async ({ page, shimUrl }) => {
@@ -221,13 +222,13 @@ test('a home snapshot reconciles suspended quiet without celebrating work comple
   })
   await openHome(page, shimUrl)
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'working')
-  await expect(page.locator('#now-cc')).toHaveAttribute('data-motion', 'reduced')
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-motion', 'reduced')
   await page.locator(stage).evaluate(el => {
     ;(window as any).__quietBehaviors = []
     new MutationObserver(records => { for (const r of records) (window as any).__quietBehaviors.push(r.oldValue, el.getAttribute('data-behavior')) }).observe(el, { attributes: true, attributeFilter: ['data-behavior'], attributeOldValue: true })
   })
   complete = true
-  await expect(page.locator('#now-cc')).toHaveAttribute('data-motion', 'full', { timeout: 6000 })
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-motion', 'full', { timeout: 6000 })
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'idle')
   expect(await page.evaluate(() => (window as any).__quietBehaviors)).not.toContain('done')
   expect(await page.evaluate(() => (window as any).__quietBehaviors)).not.toContain('receive')

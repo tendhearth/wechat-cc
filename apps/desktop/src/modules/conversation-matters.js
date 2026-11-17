@@ -1,7 +1,6 @@
 // @ts-check
 import { escapeHtml } from '../view.js'
 import { workbenchTaskStatusKey, taskStatusKey, statusGlyphHtml } from './matter-status.js'
-import { V1, v1 } from '../daemon-client.js'
 import { workbenchRuntimePresentation } from './workbench-runtime.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { STATUS_WORDS, TASK_DETAIL_WORDS } from '../generated/status-table.js'
@@ -10,16 +9,14 @@ import { STATUS_WORDS, TASK_DETAIL_WORDS } from '../generated/status-table.js'
 /** @type {Map<string, Task>} */
 const tasks = new Map()
 const agents = createAgentAvatars()
-/** @type {Map<string,{at:number,text:string}>} */
-const results = new Map()
 /** @type {Map<string,any>|null} */ let attention = null
 let attentionStale = false
-const detailStale = new Set()
+/** @type {string|null} */ let dockedId = null
 let stale = false
 /** Stable references are materialized on acceptance/search/open, never by dumping history. */
 /** @param {string} id @param {string} title @param {boolean} historical */
 export function matterReferenceHtml(id, title, historical = false) {
-  return `<details class="converse-matter" data-matter-id="${escapeHtml(id)}"><summary><span>${escapeHtml(title)}</span><span data-matter-state>尚未同步</span></summary><div data-matter-progress></div><button type="button" data-open-matter="${escapeHtml(id)}">看过程、成果与回应</button>${historical ? '<small data-matter-origin>以前交办的事 · 正在核对原始时间</small>' : ''}</details>`
+  return `<a class="converse-matter" href="#matter:${escapeHtml(id)}" data-open-matter="${escapeHtml(id)}" data-matter-id="${escapeHtml(id)}" data-docked="${dockedId===id}"><span data-matter-avatar></span><span class="converse-matter-title">${escapeHtml(title)}</span><span data-matter-state>${dockedId===id?'在右边打开着':'尚未同步'}</span><span aria-hidden="true">›</span>${historical ? '<span class="now-sr" data-matter-origin>以前交办的事 · 正在核对原始时间</span>' : ''}</a>`
 }
 /** Update only the projection, preserving open disclosures, focus and reading position.
  * @param {Task[]} values @param {boolean} disconnected */
@@ -33,45 +30,29 @@ export function updateConversationMatters(values, disconnected = stale) {
     if (state) {
       const key = task ? attention ? (attention.has(task.id)?'waiting':taskStatusKey(task)) : workbenchTaskStatusKey(task) : id&&attention?.has(id)?'waiting':null
       const waitingConfirmed=!!id&&!!attention?.has(id)&&!attentionStale
-      state.innerHTML = (stale&&!waitingConfirmed) || attentionStale || (id && detailStale.has(id)) || !key ? '尚未同步' : `${statusGlyphHtml(key)}${escapeHtml(key === 'waiting' ? STATUS_WORDS.waiting : task?.status==='queued' ? TASK_DETAIL_WORDS.queued : task ? workbenchRuntimePresentation(task.status,task.runtime,task.phase,task.networkSuspended)?.label ?? STATUS_WORDS[key] : STATUS_WORDS[key])}`
+      state.innerHTML = (stale&&!waitingConfirmed) || attentionStale || !key ? '尚未同步' : `${statusGlyphHtml(key)}${escapeHtml(key === 'waiting' ? STATUS_WORDS.waiting : task?.status==='queued' ? TASK_DETAIL_WORDS.queued : task ? workbenchRuntimePresentation(task.status,task.runtime,task.phase,task.networkSuspended)?.label ?? STATUS_WORDS[key] : STATUS_WORDS[key])}`
     }
-    const progress = node.querySelector('[data-matter-progress]')
-    if(progress&&!task&&id)progress.textContent=attention?.get(id)?.first?.text??''
+    node.setAttribute('data-docked',String(id===dockedId))
+    if(state && id===dockedId)state.textContent='在右边打开着'
+    const avatar=node.querySelector('[data-matter-avatar]')
+    if(avatar&&task)avatar.innerHTML=agents.agentAvatarsHtml(task.providerId?[task.providerId]:[])
     const origin=node.querySelector('[data-matter-origin]');if(origin&&task)origin.textContent=`${task.origin==='cc'||task.origin==='companion'?'CC 自己做的事':'以前交办的事'} · ${new Date(task.createdAt).toLocaleString()}`
-    if (progress && task) { progress.textContent = [ new Date(task.updatedAt).toLocaleString(), task.error, attention?.get(task.id)?.first?.text, results.get(task.id)?.at === task.updatedAt ? results.get(task.id)?.text : null].filter(Boolean).join(' · '); progress.insertAdjacentHTML('afterbegin',agents.agentAvatarsHtml(task.providerId?[task.providerId]:[],{cls:'converse-agents'}) + `<span class="converse-agent-name">${escapeHtml(agents.agentsLabel(task.providerId?[task.providerId]:[]))}</span> · `) }
   }
 }
 
-/** Expanded references read the original event/result projection; no generated progress.
- * @param {HTMLElement} root @param {(method:any,path:string,body?:any)=>Promise<any>} call */
-export function mountMatterProgress(root,call) {
-  let alive=true
-  const inflight=new WeakSet()
-  const loadCard = async (/** @type {HTMLDetailsElement} */ card) => {
-    if (!alive || !card.matches?.('.converse-matter') || !card.open) return
-    const id = card.dataset.matterId
-    const progress = card.querySelector('[data-matter-progress]')
-    if (!id || !progress || inflight.has(card)) return
-    inflight.add(card)
-    try {
-      const canonical = await v1(call,V1.matter.get,{query:{id}})
-      if (!alive || !card.isConnected || !card.open || canonical.matter?.id !== id) return
-      detailStale.delete(id)
-      if(canonical.matter.kind!=='task'){progress.textContent=canonical.matter.title;return}
-      const detail=await v1(call,V1.workbench.task,{query:{id}})
-      if(!alive||!card.isConnected||!card.open||detail.task?.id!==id)return
-      const latest = (detail.events ?? []).filter((/** @type {any} */ event) => event.kind === 'text' || event.kind === 'error').at(-1)
-      const result = detail.artifacts?.length ? `成果：${detail.artifacts.map((/** @type {any} */ item) => item.name).join('、')}` : ''
-      results.set(id,{at:detail.task.updatedAt,text:[latest?.text,result].filter(Boolean).join('\n')})
-      updateConversationMatters([detail.task])
-    } catch { if (alive && card.isConnected) {detailStale.add(id);updateConversationMatters([]);progress.textContent = '尚未同步 · 正在重新连接'} }
-    finally {inflight.delete(card)}
-  }
-  const load=(/** @type {Event} */ event)=>{void loadCard(/** @type {HTMLDetailsElement} */(event.target))}
-  const timer=setInterval(()=>{if(root.closest?.('[hidden],[inert]'))return;for(const card of root.querySelectorAll?.('.converse-matter[open]')??[])void loadCard(/** @type {HTMLDetailsElement} */(card))},5000)
-  root.addEventListener('toggle',load,true)
-  return () => {alive=false;clearInterval(timer);root.removeEventListener('toggle',load,true)}
+/** References only navigate; live progress has one home in the detail layer.
+ * @param {HTMLElement} root @param {(id:string)=>unknown} onOpenMatter */
+export function mountMatterReferences(root,onOpenMatter) {
+ const click=(/** @type {Event} */event)=>{
+  const row=event.target instanceof Element?event.target.closest('a[data-open-matter]'):null
+  const id=row?.getAttribute('data-open-matter')
+  if(id){event.preventDefault();void onOpenMatter(id)}
+ }
+ root.addEventListener('click',click)
+ return ()=>root.removeEventListener('click',click)
 }
+/** @param {string|null} id */
+export function setDockedMatter(id){dockedId=id;updateConversationMatters([])}
 
 /** One attention projection supplies both the locator and reference status.
  * @param {{stale:boolean,tasks:Array<{id:string,first?:{text?:string}|null}>}} snapshot */

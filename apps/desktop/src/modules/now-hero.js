@@ -85,12 +85,31 @@ export function createNowHeroFacts() {
   }
 }
 
+/** Consume transitions once per local day; first snapshot is history.
+ * @param {()=>number} [now] */
+export function createRosterGlances(now=Date.now) {
+ /** @type {Map<string,string>|null} */ let previous=null
+ let day=''
+ const seen=new Set()
+ return (/** @type {Array<{key:string,group:string}>} */items)=>{
+  const today=new Date(now()).toLocaleDateString('sv-SE')
+  if(today!==day){day=today;seen.clear()}
+  const changed=items.filter(item=>previous && previous.get(item.key)!==item.group && ['waiting','back'].includes(item.group) && !seen.has(item.key))
+  previous=new Map(items.map(item=>[item.key,item.group]))
+  for(const item of changed)seen.add(item.key)
+  return changed.length>0
+ }
+}
+
 /** @param {{root:HTMLElement,button:HTMLElement,motionQuery?:MediaQueryList|null,storage?:Storage|null,petOptions?:Partial<Parameters<typeof createPet>[1]>}} o */
 export function mountNowHero({ root, button, motionQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null, storage, petOptions = {} }) {
   const doc = root.ownerDocument
   const view = doc.defaultView
   if (storage === undefined) { try { storage = view?.localStorage ?? null } catch { storage = null } }
   const facts = createNowHeroFacts()
+  const glance=createRosterGlances()
+  let glanceTimer=0
+  const clearGlance=()=>{view?.clearTimeout(glanceTimer);button.querySelector('.roster-glance')?.remove();delete button.dataset.rosterGlance}
   // Visibility or motion suppression can end before a delayed stream returns.
   // Each first fresh observation consumes its own old baseline independently.
   const reobserve = new Set()
@@ -127,7 +146,7 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   }
   /** @param {import('../companion-preferences.js').MotionPreferences} s */
   const applyMotion = s => {
-    if (s.quiet || s.reducedMotion) topicsKnown = false
+    if (s.quiet || s.reducedMotion) {topicsKnown = false;clearGlance()}
     if ((motion?.quiet && !s.quiet) || (motion?.reducedMotion && !s.reducedMotion)) for (const stream of ['presence', 'attention', 'terminal', 'converse']) reobserve.add(stream)
     motion = s; apply(facts.setMotion(s))
   }
@@ -141,6 +160,7 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
     if (active === next) return
     topicsKnown = false
     if (next) for (const stream of ['presence', 'attention', 'terminal', 'converse']) reobserve.add(stream)
+    if(!next)clearGlance()
     active = next
     preferences.refresh()
     apply(facts.setActive(active))
@@ -180,6 +200,15 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   }
   return {
     ready,
+    /** @param {Array<{key:string,group:string}>} items */
+    setRoster(items){
+      const changed=glance(items);syncVisibility()
+      if(!changed||!active||motion.reducedMotion||motion.quiet||facts.current().intent.form!=='lit')return
+      clearGlance()
+      const look=doc.createElement('img');look.className='roster-glance';look.src='./assets/pet/cc-v1/attention/lit/right/000.png';look.alt='';look.setAttribute('aria-hidden','true')
+      button.append(look);button.dataset.rosterGlance='1'
+      glanceTimer=view?.setTimeout(clearGlance,1200)??0
+    },
     // Consume before expiry, and release only this stream's baseline afterward.
     /** @param {import('../presence-poller.js').Presence|null} p */
     setPresence(p) { observe('presence', () => facts.presence(p), !!p && p.presence !== 'down') },
@@ -205,7 +234,7 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
       ids.forEach(id => seenTopics.add(id)); topicsKnown = active && !motion.reducedMotion && !motion.quiet
     },
     destroy() {
-      destroyed = true; activity.destroy(); offMachine?.(); pet?.destroy(); preferences.destroy(); observer.disconnect()
+      clearGlance();destroyed = true; activity.destroy(); offMachine?.(); pet?.destroy(); preferences.destroy(); observer.disconnect()
       doc.removeEventListener('visibilitychange', syncVisibility); motionQuery?.removeEventListener('change', systemChanged)
       view?.removeEventListener('storage', storageChanged); img.removeEventListener('load', reveal)
       stage.remove(); delete button.dataset.runtime; delete button.dataset.motion

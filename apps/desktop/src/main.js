@@ -1,3 +1,4 @@
+import { setDockedMatter } from './modules/conversation-matters.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
 // @ts-check
@@ -1707,12 +1708,13 @@ async function boot() {
   const rosterAside=document.getElementById('roster-aside'),matterLayer=document.getElementById('conversation-matter-layer')
   if(rosterAside&&matterLayer)rosterDock=createRosterDock({aside:rosterAside,layer:matterLayer,call:invokeWorkbenchApi,wide:()=>window.innerWidth>=1080,
     openTask:async id=>{initWorkbenchPage(deps);await openWorkbenchTask(id)},
-    onClose:()=>stopWorkbenchPolling(),
+    onClose:()=>stopWorkbenchPolling(),onChange:setDockedMatter,
     onExpand:async item=>{if(item.kind==='terminal')await openConversationTerminal(invokeWorkbenchApi,item.id);else await openConversationWork(invokeWorkbenchApi,item.id,async id=>{switchPane('workbench');await openWorkbenchTask(id)})}})
   window.addEventListener('pagehide',()=>rosterDock?.destroy(),{once:true})
   const rosterRoot = document.getElementById('roster-list')
   if (rosterRoot) {
     const roster = mountRosterPane({root:rosterRoot,call:invokeWorkbenchApi,onOpen:item=>item.kind==='terminal'?deps.onOpenTerminal(item.id):deps.onOpenMatter(item.id),onItems:items=>{
+      nowPage?.setRoster(items)
       const button=document.getElementById('topbar-roster');if(button)button.textContent=`在做 ${items.length}`
     }})
     window.addEventListener('pagehide',()=>roster.destroy(),{once:true})

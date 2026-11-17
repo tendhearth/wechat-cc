@@ -83,26 +83,14 @@ export const test = base.extend<ShimFixtures, WorkerShimFixtures>({
 
 export { expect }
 
-/**
- * 点侧栏导航到某个面板。2026-09-13 起「生活与工具」那组入口(记忆 / 跟 CC 说 / 待办 /
- * 对话 / 觅食…)收进了 `<details class="cc-life-nav-more">`,而 main.js 每次切面板都会把
- * 它收起 —— 直接点被折叠的按钮会一直等 visible 到超时。先展开再点,和用户的手一样。
- */
+/** 页头在所有宽度保持可达；偶尔去的页面先展开更多。 */
 export async function clickNav(page: import('@playwright/test').Page, pane: string): Promise<void> {
-  // 「一起做」不再是导航项(设计稿 2026-10-31 U4):和用户一样回此刻,点「全部 →」。
-  if (pane === 'workbench') {
-    if (await page.locator('.dash-pane[data-pane="workbench"]').isVisible()) { if(await page.locator('.workbench-pane').getAttribute('data-workbench-view')==='search')return; await page.locator('#workbench-home').click() }
-    await clickNav(page, 'overview')
-    await page.locator('[data-conversation-search-matters]').click()
-    return
+  if(pane==='workbench'){await page.locator('#topbar-search').click();return}
+  const target=page.locator(`#dash-global-rail button[data-pane="${pane}"]`)
+  if(await target.evaluate(el=>!!el.closest('.topbar-more'))){
+    const more=page.locator('.topbar-more');if(await more.getAttribute('open')===null)await more.locator('summary').click()
   }
-  // 在「全部」(原一起做)里:左上角「‹ 此刻」回主页。
-  if (pane === 'overview' && await page.locator('#workbench-home').isVisible()) { await page.locator('#workbench-home').click(); return }
-  // 窄窗口的「全部」把主导航收起(2026-10-05 起宽窗口不收):和用户一样先点左上角叫出来。
-  const toggle = page.locator('#workbench-nav-toggle')
-  if (await toggle.isVisible() && (await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
-  await page.locator('details.cc-life-nav-more').evaluateAll(els => { for (const el of els) el.setAttribute('open', '') })
-  await page.locator(`button.dash-nav-link[data-pane="${pane}"]`).click()
+  await target.click()
 }
 
 /**
@@ -114,6 +102,7 @@ export async function reveal(page: import('@playwright/test').Page, selector: st
   // 2026-10-01 起重连 / 测试 / 状态自检与用户卡片住在「连接与设置」抽屉的「连接」段:和用户一样先点开抽屉。
   const inDrawer = await page.locator(selector).first().evaluate(el => !!el.closest('#settings-drawer'))
   if (inDrawer && !(await page.locator('#settings-drawer').evaluate(el => el.classList.contains('is-open')))) {
+    if(await page.locator('.topbar-more').getAttribute('open')===null)await page.locator('.topbar-more summary').click()
     await page.locator('#settings-open').click()
     await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
   }

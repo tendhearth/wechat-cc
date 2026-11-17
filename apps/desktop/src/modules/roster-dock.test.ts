@@ -91,3 +91,14 @@ it('两个输入框同屏时，CC 回车与直通 submit 各走自己的发送�
   document.dispatchEvent(new KeyboardEvent('keydown',{key:'2',metaKey:true,bubbles:true}));expect(document.activeElement?.id).toBe('wb-followup-text')
  }finally{wb.stopWorkbenchPolling()}
 })
+it('看成果等重工具先展开，再交还原有处理器',async()=>{
+ const {layer,expand}=setup()
+ layer.innerHTML='<button data-action="preview-artifact" data-artifact-id="a">看改动</button>'
+ const handled=vi.fn();layer.addEventListener('click',handled)
+ await dock!.open({kind:'matter',id:'old'})
+ layer.querySelector('button')!.click()
+ for(let i=0;i<8;i++)await Promise.resolve()
+ expect(expand).toHaveBeenCalledWith({kind:'matter',id:'old'})
+ expect(handled).toHaveBeenCalledTimes(1)
+ expect(dock!.current()).toBeNull()
+})

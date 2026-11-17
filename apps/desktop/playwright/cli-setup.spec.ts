@@ -64,6 +64,7 @@ async function stubCliSetup(page: Page, qaBlocked = false) {
 async function openChoices(page: Page, shimUrl: string) {
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible()
+  await page.locator('.topbar-more summary').click()
   await page.locator('#settings-open').click()
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
   await page.locator('#accounts-current .provider-switch').click()

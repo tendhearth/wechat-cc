@@ -235,6 +235,8 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
       b.setAttribute('aria-label', `CC 最近说的话：${preview.text}，点开${preview.shortened ? '查看完整回复' : '进对话'}`)
       time.textContent = line.at === null ? '' : when(line.at, now())
     },
+    /** @param {Array<{key:string,group:string}>} items */
+    setRoster(items) { hero.setRoster(items) },
     /** @param {any} state */
     setAttention(state) { attention = state; hero.setAttention(state); renderWaiting() },
     /** @param {import('./converse.js').ConverseMsg[]} msgs */

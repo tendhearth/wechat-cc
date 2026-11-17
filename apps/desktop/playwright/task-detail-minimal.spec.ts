@@ -38,6 +38,8 @@ for(const size of [{width:1400,height:850},{width:900,height:650},{width:390,hei
  await page.goto('http://127.0.0.1:4211')
  const composer=page.locator('#wb-followup-text'),help=page.locator('#wb-input-help')
  await expect(composer).toBeVisible()
+ await expect(composer).toHaveAttribute('placeholder','对 Codex 说…')
+ await expect(page.locator('.wb-followup .th-agent')).toHaveAttribute('data-agent','codex')
  await expect(help).toHaveCount(1)
  await page.locator('.wb-followup [data-action="cancel"]').focus()
  await expect(page.locator('.wb-followup [data-action="cancel"]')).toBeInViewport()

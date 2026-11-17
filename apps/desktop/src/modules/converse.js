@@ -14,7 +14,7 @@ import { mountOwnerConversation } from './conversation-contracts.js'
 
 import {openOwnerChatFile,openConversationImage,openLocalConversationFile} from "./converse-media.js"
 import { terminalReferenceHtml, paintTerminalReferences, setTerminalActionsSupported } from './conversation-sessions.js'
-import { matterReferenceHtml, updateConversationMatters, mountMatterProgress } from './conversation-matters.js'
+import { matterReferenceHtml, updateConversationMatters, mountMatterReferences } from './conversation-matters.js'
 import { icon } from "./icons.js"
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
@@ -863,10 +863,8 @@ function wireEvents(root, deps) {
     scroll.addEventListener("scroll",()=>syncConversationLatest(scroll,latest),{passive:true})
     latest?.addEventListener("click",()=>showConversationLatest(scroll,latest))
   }
-  if (deps.invokeWorkbenchApi) {const stop=mountMatterProgress(root,deps.invokeWorkbenchApi);window.addEventListener?.('pagehide',stop,{once:true})}
+  {const stop=mountMatterReferences(root,id=>deps.onOpenMatter?.(id));window.addEventListener?.('pagehide',stop,{once:true})}
   root.addEventListener('click', event => {
-    const id = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-open-matter]'))?.dataset.openMatter
-    if (id) deps.onOpenMatter?.(id)
     const locate=/** @type {HTMLElement|null} */(/** @type {HTMLElement} */(event.target).closest('[data-locate-message]'))?.dataset.locateMessage
     if(locate){setSearchOpen(false);void locateConversationMessage(deps,locate)}
     if(/** @type {HTMLElement} */(event.target).closest('[data-search-earlier]'))void runSearch(deps,searchQuery,searchBefore)

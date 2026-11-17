@@ -66,6 +66,19 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
   checking=true
   try{await v1(call,V1.matter.get,{query:{id:item.id}})}catch(error){if(alive&&generation===ticket&&/404|not_found/.test(String(error)))missing()}finally{checking=false}
  },3000)
+ const heavy=(/** @type {Event} */event)=>{
+  const button=event.target instanceof Element?event.target.closest('[data-action]'):null
+  if(!(button instanceof HTMLElement)||!layer.contains(button)||!current)return
+  const action=button.dataset.action??''
+  if(!['preview-artifact','show-artifacts','rewind-open','new-task','add-project','task-entry'].includes(action))return
+  const data={...button.dataset}
+  event.preventDefault();event.stopImmediatePropagation()
+  void unfold().then(()=>{
+   const next=[...layer.querySelectorAll('[data-action]')].find(el=>el instanceof HTMLElement&&Object.entries(data).every(([key,value])=>el.dataset[key]===value))
+   if(next instanceof HTMLElement)next.click()
+  })
+ }
+ dock.addEventListener('click',heavy,true)
  const resize=()=>{if(current&&!wide())void unfold()}
  const keys=(/** @type {KeyboardEvent} */event)=>{
   if(!event.metaKey||event.altKey||event.ctrlKey)return
@@ -73,5 +86,5 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
   if(target instanceof HTMLElement){event.preventDefault();target.focus()}
  }
  back.onclick=close;expand.onclick=()=>void unfold();view?.addEventListener('resize',resize);doc.addEventListener('keydown',keys)
- return {open,close,current:()=>current?.id??null,destroy(){close();alive=false;clearInterval(timer);view?.removeEventListener('resize',resize);doc.removeEventListener('keydown',keys);home.remove()}}
+ return {open,close,current:()=>current?.id??null,destroy(){close();alive=false;clearInterval(timer);dock.removeEventListener('click',heavy,true);view?.removeEventListener('resize',resize);doc.removeEventListener('keydown',keys);home.remove()}}
 }

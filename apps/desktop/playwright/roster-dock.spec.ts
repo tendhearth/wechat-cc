@@ -1,0 +1,62 @@
+import {test,expect,clickNav} from './fixtures'
+import {rosterItem,routeRoster,showRoster} from './roster-fixture'
+const task={id:'deadbeef',title:'备份检查',path:'/offline/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2}
+test.beforeEach(async({page,shim})=>{
+ await shim.invoke('demo.seed',{daemonAlive:true})
+ await routeRoster(page,[rosterItem(task.id,task.title)])
+ await page.route('**/v1/matter?id=*',r=>r.fulfill({json:{matter:{...task,kind:'task'}}}))
+ await page.route(/\/v1\/workbench(?:\?.*)?$/,r=>r.fulfill({json:{tasks:[task],projects:[],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}}))
+ await page.route('**/v1/workbench/attention*',r=>r.fulfill({json:{tasks:[]}}))
+ await page.route('**/v1/workbench/task?*',r=>r.fulfill({json:{task,runId:'run',inputMode:'steer',events:[{id:1,taskId:task.id,kind:'text',text:'执行者的原话',createdAt:2}],permissions:[],questions:[],artifacts:[]}}))
+ await page.route('**/v1/matter/changes*',r=>r.fulfill({json:{reviews:[]}}))
+ await page.route('**/v1/matter/seen',r=>r.fulfill({json:{ok:true}}))
+})
+for(const width of [1440,900])test(`名单打开、返回与全局导航 ${width}`,async({page,shimUrl})=>{
+ await page.setViewportSize({width,height:900});await page.goto(shimUrl)
+ await expect(page.locator('#dash-global-rail')).toHaveCSS('height','72px')
+ await expect(page.locator('#converse-input')).toBeVisible()
+ await showRoster(page);await page.locator('[data-roster-key="matter:deadbeef"]').click()
+ const layer=page.locator('#conversation-matter-layer')
+ await expect(layer).toBeVisible();await expect(layer).toContainText('执行者的原话')
+ if(width>=1080){
+  await expect(page.locator('#roster-dock > #conversation-matter-layer')).toHaveCount(1)
+  await expect(page.locator('#converse-input')).toBeVisible();await expect(page.locator('.cc-now-pane')).not.toHaveAttribute('inert')
+  await expect(page.locator('#roster-aside')).toHaveCSS('width','400px')
+  await clickNav(page,'memory');await expect(layer).toBeVisible();await clickNav(page,'overview')
+  await page.keyboard.press('Meta+1');await expect(page.locator('#converse-input')).toBeFocused()
+  await page.keyboard.press('Meta+2');await expect(page.locator('#wb-followup-text')).toBeFocused()
+  await page.locator('#roster-dock').getByRole('button',{name:'‹ 在做',exact:true}).click()
+  await expect(page.locator('#roster-aside')).toHaveCSS('width','360px')
+  await expect(page.locator('#roster-list')).toBeVisible()
+  await page.locator('[data-roster-key="matter:deadbeef"]').click()
+  await page.locator('#wb-followup-text').fill('未发送草稿')
+  await page.locator('#roster-dock').getByRole('button',{name:'展开',exact:true}).click()
+  await expect(page.locator('.dash-main > #conversation-matter-layer')).toBeVisible()
+  await expect(page.locator('#wb-followup-text')).toHaveValue('未发送草稿')
+ }else{
+  await expect(page.locator('#roster-dock > #conversation-matter-layer')).toHaveCount(0)
+  await expect(page.locator('.cc-now-pane')).toHaveAttribute('inert','')
+ }
+ await page.locator('#workbench-home').click();await expect(page.locator('#converse-input')).toBeVisible()
+})
+test('宽变窄沿用同一事项与草稿；详情 404 回名单',async({page,shimUrl})=>{
+ await page.setViewportSize({width:1440,height:900});await page.goto(shimUrl)
+ await page.locator('[data-roster-key="matter:deadbeef"]').click();await page.locator('#wb-followup-text').fill('窗口变化前的草稿')
+ await page.setViewportSize({width:900,height:900})
+ await expect(page.locator('.dash-main > #conversation-matter-layer')).toBeVisible()
+ await expect(page.locator('#wb-followup-text')).toHaveValue('窗口变化前的草稿')
+ await page.locator('#workbench-home').click();await page.setViewportSize({width:1440,height:900})
+ await page.locator('[data-roster-key="matter:deadbeef"]').click()
+ await page.route('**/v1/matter?id=*',r=>r.fulfill({status:404,json:{error:'matter_not_found'}}))
+ await expect(page.locator('#roster-list')).toBeVisible({timeout:10000})
+ await expect(page.locator('#roster-list')).toContainText('这件事已经不在了')
+})
+test('设置抽屉进入已有账号登录仍能到接入服务页',async({page,shimUrl})=>{
+ await page.goto(shimUrl);await page.locator('.topbar-more summary').click();await page.locator('#settings-open').click()
+ await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
+ // This existing route must remain reachable after topbar replacement.
+ await page.locator('#accounts-current .provider-switch').click()
+ await page.locator('#provider-menu [data-action="connect-ai"]').click()
+ await page.locator('#brain-health').getByRole('button',{name:'登录已有账号'}).click()
+ await expect(page.locator('#brain-setup')).toBeVisible()
+})

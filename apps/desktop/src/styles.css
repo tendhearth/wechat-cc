@@ -5078,3 +5078,16 @@ body .th-agents { --th-agent-size:var(--th-identity-agent-size); }
 .roster-terminal textarea { width: 100%; box-sizing: border-box; font: inherit; border: 1px solid var(--th-hair); border-radius: var(--th-radius-bubble); background: transparent; color: var(--th-ink); }
 #roster-dock .wb-followup, #converse-root .converse-compose { border-color: var(--th-hair); }
 #roster-dock .wb-followup:focus-within, #converse-root .converse-compose:focus-within, .roster-terminal textarea:focus { border-color: var(--th-accent); }
+
+#topbar-cc .roster-glance { position: absolute; left: 0; top: 0; width: 48px; height: 48px; object-fit: contain; pointer-events: none; }
+#topbar-cc[data-roster-glance] .now-pet-stage, #topbar-cc[data-roster-glance] .topbar-figure { visibility: hidden; }
+
+@media (max-width: 600px) {
+  .dash-topbar { padding: 0 12px; }
+  .dash-topbar nav { gap: 10px; }
+  #topbar-presence { display: none; }
+}
+@media (max-width: 1079px) and (prefers-reduced-motion: no-preference) {
+  .roster-aside[data-open] { animation: roster-enter 180ms ease-out; }
+  @keyframes roster-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
+}
