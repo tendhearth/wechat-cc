@@ -33,7 +33,7 @@ describe('Grok ACP integration boundary', () => {
   it('cannot consume account quota through automatic or explicitly pinned background evaluation', () => {
     for (const cheapEvalProvider of [undefined, 'grok']) {
       const registry = createProviderRegistry({ cheapEvalProvider })
-      registry.register('grok', createAcpGrokProvider({ bin: '/fake/grok', log: () => {} }), { canResume: () => false })
+      registry.register('grok', createAcpGrokProvider({ networkPreflight: async () => true, bin: '/fake/grok', log: () => {} }), { canResume: () => false })
       expect(registry.getCheapEval()).toBeNull()
       expect(registry.getStrongEval('grok')).toBeNull()
     }
@@ -41,7 +41,7 @@ describe('Grok ACP integration boundary', () => {
   it.runIf(process.platform !== 'win32')('refuses any CLI without its dedicated HOME, even dangerously/workbench', async () => {
     const spawn = vi.fn() as unknown as typeof import('node:child_process').spawn
     for (const workbench of [false, true]) for (const permissionMode of ['strict', 'dangerously'] as const) {
-      const provider = createAcpGrokProvider({ bin: '/fake/grok', log: () => {}, spawn, workbench })
+      const provider = createAcpGrokProvider({ networkPreflight: async () => true, bin: '/fake/grok', log: () => {}, spawn, workbench })
       expect(provider.cheapEval).toBeUndefined()
       expect(provider.strongEval).toBeUndefined()
       await expect(provider.spawn({ alias: 'test', path: '/test' }, { ...context, permissionMode, mcpEnv: { WECHAT_SESSION_TOKEN: 'never-forward' } })).rejects.toThrow('专属 HOME')
@@ -53,7 +53,7 @@ describe('Grok ACP integration boundary', () => {
     const stateDir = loggedIn(), spawn = vi.fn() as unknown as typeof import('node:child_process').spawn
     unlinkSync(join(grokHome(stateDir), '.grok/auth.json'))
     for (const workbench of [false, true]) {
-      const provider = createAcpGrokProvider({ bin: '/fake/grok', stateDir, log: () => {}, spawn, workbench })
+      const provider = createAcpGrokProvider({ networkPreflight: async () => true, bin: '/fake/grok', stateDir, log: () => {}, spawn, workbench })
       await expect(provider.spawn({ alias: 'test', path: '/test' }, context)).rejects.toThrow(`HOME='${grokHome(stateDir)}' grok login`)
     }
     expect(spawn).not.toHaveBeenCalled()
@@ -65,7 +65,7 @@ describe('Grok ACP integration boundary', () => {
     for (const workbench of [false, true]) {
       const fake = createScriptedAcpAgent({ initializeResult: initialized, turns: [] })
       const spawn = vi.fn(fake.spawn)
-      const provider = createAcpGrokProvider({ bin: '/fake/grok', stateDir, log: () => {}, spawn: spawn as unknown as typeof fake.spawn, workbench })
+      const provider = createAcpGrokProvider({ networkPreflight: async () => true, bin: '/fake/grok', stateDir, log: () => {}, spawn: spawn as unknown as typeof fake.spawn, workbench })
       const session = await provider.spawn({ alias: 'test', path: '/test' }, context)
       try {
         const env = (spawn.mock.calls[0]![2] as import('node:child_process').SpawnOptions).env!
@@ -81,7 +81,7 @@ describe('Grok ACP integration boundary', () => {
 
   it.runIf(process.platform !== 'win32')('delivers a final-text oneoff without MCP and rejects requested native commands', async () => {
     const fake = createScriptedAcpAgent({ initializeResult: initialized, turns: [{ steps: [{ native: 'execute', title: 'do not execute', command: 'echo forbidden' }, { say: '纯文字最终回复' }] }] })
-    const provider = createAcpGrokProvider({ bin: '/fake/grok', stateDir: loggedIn(), log: () => {}, spawn: fake.spawn })
+    const provider = createAcpGrokProvider({ networkPreflight: async () => true, bin: '/fake/grok', stateDir: loggedIn(), log: () => {}, spawn: fake.spawn })
     const reportMatterTools = vi.fn()
     const session = await provider.spawn({ alias: '__oneoff__:test', path: '/empty-oneoff' }, { ...context, tierProfile: ONEOFF_PROFILE, oneoff: true, ephemeral: true, appendInstructions: ONEOFF_INSTRUCTIONS, reportMatterTools })
     try {

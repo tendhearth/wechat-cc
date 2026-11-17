@@ -13,7 +13,7 @@ export interface AcpConnectionOptions {
   onFatal(error: Error): void
 }
 export interface AcpConnection {
-  /** timeoutMs 缺省 rpcTimeoutMs;0 ⇒ 不限时(session/prompt 由服务层 watchdog 兜底)。 */
+  /** timeoutMs 缺省 rpcTimeoutMs;0 ⇒ RPC 不限时(session/prompt 由 ACP 可选 idle watchdog / 服务层兜底)。 */
   request(method: string, params: unknown, timeoutMs?: number): Promise<any>
   notify(method: string, params: unknown): void
   /** 拒绝所有挂起请求;之后 request 直接 reject,晚到的 agent 请求回 -32603。 */

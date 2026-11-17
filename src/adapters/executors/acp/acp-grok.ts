@@ -6,6 +6,7 @@
 import type { AgentProvider } from '../../../ports/agent-provider'
 import { createAcpProvider } from './acp-agent-provider'
 import { NO_CC_MCP_INSTRUCTIONS } from '../../../domain/provider-capabilities'
+import { errorWithProviderCode } from '../../../lib/provider-error-code'
 
 export { ACP_GROK_CAPABILITIES } from '../../../domain/provider-capabilities'
 export interface AcpGrokOptions {
@@ -15,6 +16,10 @@ export interface AcpGrokOptions {
   spawn?: typeof import('node:child_process').spawn
   workbench?: boolean
   stateDir?: string
+  /** Injected by daemon/workbench; HEAD reachability with the shared 60s/15s cache. */
+  networkPreflight: () => Promise<boolean>
+  promptIdleTimeoutMs?: number
+  cancelGraceMs?: number
 }
 
 export function createAcpGrokProvider(options: AcpGrokOptions): AgentProvider {
@@ -26,6 +31,13 @@ export function createAcpGrokProvider(options: AcpGrokOptions): AgentProvider {
     mcpServers: context => { context.reportMatterTools?.(false); return [] },
     model: context => context.model ?? options.model,
     log: options.log, spawn: options.spawn,
+    preflight: async () => {
+      let reachable = false
+      try { reachable = await options.networkPreflight() } catch { /* Fail closed, never spawn/retry. */ }
+      if (!reachable) throw errorWithProviderCode('grok_network_unavailable', 'network')
+    },
+    promptIdleTimeoutMs: options.promptIdleTimeoutMs ?? 90_000,
+    cancelGraceMs: options.cancelGraceMs ?? 5_000,
   })
   return { ...provider, spawn: (project, context) => provider.spawn(project, { ...context, appendInstructions: [context.appendInstructions, NO_CC_MCP_INSTRUCTIONS].filter(Boolean).join('\n\n') }) }
 }

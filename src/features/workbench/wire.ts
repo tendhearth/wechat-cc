@@ -39,6 +39,7 @@ import { homedir } from 'node:os'
 import { createAcpWorkbenchProvider } from '../../adapters/executors/acp/acp-workbench-provider'
 import { createAcpGrokProvider } from '../../adapters/executors/acp/acp-grok'
 import { grokHomeProblem } from '../../lib/grok-home'
+import { grokNetworkPreflight } from '../../daemon/bootstrap/cheap-eval-preflight'
 import { acpAgentProblem, resolveAcpAgent, resolveCustomAcpAgent } from '../../adapters/executors/acp/agents'
 import { findOnPath } from '../../lib/util'
 import {matterStdioMcpSpec} from '../../daemon/bootstrap/mcp-specs'
@@ -129,7 +130,9 @@ export function registerGrokAcpExecutor(target: ProviderRegistry, source: Pick<P
   if (!acpSupportedOn(deps.platform)) { deps.log?.('WORKBENCH', 'grok: ACP 暂不支持 Windows，未注册'); return [] }
   const bin = entry.opts.bin?.()
   if (!bin) { deps.log?.('WORKBENCH', 'grok: boot binary unavailable，未注册工作台'); return [] }
-  const provider = createAcpGrokProvider({ bin, stateDir: deps.stateDir, log: deps.log ?? (() => {}), workbench: true })
+  const provider = createAcpGrokProvider({ bin, stateDir: deps.stateDir, log: deps.log ?? (() => {}), workbench: true, networkPreflight: grokNetworkPreflight,
+    // 工作台里跑构建/测试时 Grok 可以长时间不吐更新;只兜住真卡死,不打断正常长命令。
+    promptIdleTimeoutMs: 600_000 })
   target.register('grok', provider, { ...entry.opts, canResume: () => false, workbench: { ...GROK_ACP_CAPABILITIES, get unavailableReason() { return grokHomeProblem(deps.stateDir) } } })
   return ['grok']
 }

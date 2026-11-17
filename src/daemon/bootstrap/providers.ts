@@ -34,7 +34,7 @@ import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { setupAgyGlobalMcp } from './agy-mcp-config'
 import { probeVersion, describeProbeFailure, createProbeRetrier, type VersionProbeResult, type ProbeRetrierOptions, type ProbeRetryStatus, type ProbeAttempt } from './provider-probe'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
-import { makeCheapEvalPreflight } from './cheap-eval-preflight'
+import { makeCheapEvalPreflight, grokNetworkPreflight } from './cheap-eval-preflight'
 import { assertCallAllowed } from '../../lib/network-gate'
 import type { BootstrapDeps } from './types'
 import { AGY_STATIC_SESSION_KEY } from '../internal-api/token-registry'
@@ -472,7 +472,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const grokBin = executorBinary('grok', configuredAgent, UNDER_TEST_RUNNER ? () => null : findOnPath)
   const registerGrok = async (bin: string): Promise<boolean> => {
     const { createAcpGrokProvider } = await import('../../adapters/executors/acp/acp-grok')
-    registry.register('grok', createAcpGrokProvider({ bin, stateDir: deps.stateDir, model: configuredAgent.grokModel, log: deps.log }), {
+    registry.register('grok', createAcpGrokProvider({ bin, stateDir: deps.stateDir, model: configuredAgent.grokModel, log: deps.log, networkPreflight: grokNetworkPreflight }), {
       canResume: () => false,
       bin: () => executorBinary('grok', readAgentConfig(), UNDER_TEST_RUNNER ? () => null : findOnPath),
     })

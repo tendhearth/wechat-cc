@@ -1,6 +1,6 @@
 # Grok ACP 内置执行者交接（2026-11-16）
 
-状态：**已按整合者实测改为 CC 专属 HOME + 独立登录门；离线接线完成，真实模型仍待整合者验收。** 先前「隔离未证实，一律拒绝」已由本次裁决替代。未调用真实 Grok、未部署或触碰运行中的 daemon。
+状态：**已按整合者实测改为 CC 专属 HOME + 独立登录门；已追加网络预检和静默止损，离线接线完成，真实模型仍待整合者验收。** 先前「隔离未证实，一律拒绝」已由本次裁决替代。未调用真实 Grok、未部署或触碰运行中的 daemon。
 
 工作区 `/Users/nategu_mac_company/Documents/tendhearth/wt-grok`，分支 `grok-acp-executor`，起点/merge-base `087dbf9f87b87242fe7f28ac51368c597efd8c5d`。本批整合、真模型与部署归整合者；按主人要求，不 git add/commit/push，全部为本工作区未提交改动。
 
@@ -40,6 +40,26 @@ ACP 对话、工作台、版本首探与退避重探都使用同一 HOME 工厂�
 - **开放纯文字 oneoff**：`ONEOFF_PROFILE` 只允许 reply；最终文字经 `AgentEvent.text → reply-delivery` 交付，不依赖 MCP。仅对 Grok 显式放开无 MCP 一次代答，agy 仍拒；独立空工作目录、strict、临时会话、无私人历史/记忆注入沿用原路径，下一句回 CC。原生工具可能有无需上报的只读操作，不能宣称 ONEOFF_PROFILE 是 Grok 原生工具沙盒。
 - 不提供 cheapEval / strongEval / modelCatalog，自动后台评估、故障转移与 pinned cheap 均不消耗 Grok 模型额度。恢复、附件、执行设置与模型目录本轮仍不开放。
 - 工作台初始与晚注册均重新构造 Grok provider，并传同一个 stateDir。Windows ACP 仍受现有进程树清理限制，不登记。
+
+## 网络预检与静默止损（整合者 DNS 失败反馈后的追加）
+
+整合者发现网络不通时 Grok CLI 在 ACP 内部重试约 15 次、CC 一直等。现在两道门一起止损，**CC 不新增任何重试或失败轮次重放**：
+
+- 启动子进程前、复用会话的每次 `session/prompt` 前都做注入式预检。对话与工作台共用 `cheap-eval-preflight.ts` 的单一闭包：`endpointFor('grok')` → `HEAD https://cli-chat-proxy.grok.com`，任意 HTTP 响应算可达，3s 超时；成功缓存 60s、失败缓存 15s、并发合并。只在本来要发起的一轮检查，缓存到期不自行探测。失败或预检抛错均不 spawn / 不发 prompt。
+- 预检失败如实说「Grok 现在连不上（网络），这句我先不转给它。」；Grok 一次代答遇到这道失败门时，清理并记录失败的隔离会话，再以原项目和重新核定的权限由 CC 作答，说明原因，不改持久模式。最终回落计划也排除 Grok，避免默认执行者导致回投；没有其他 CC 可用时保留失败提示。
+- Cursor/通用 ACP 原来没有按原始更新计时的机制，`session/prompt` 的 RPC timeout 为 0。现在在**通用 ACP 层**增加可选 idle watchdog，Grok 默认 `promptIdleTimeoutMs: 90_000`、`cancelGraceMs: 5_000`，构造选项可配置/注入。匹配本会话的任何 `session/update`（包括翻译器不输出的 thought）都重置计时。静默到期仅发一次 `session/cancel`；宽限内仍未结束则复用已有 `close()` 的 SIGTERM / SIGKILL 进程组清理，确认退出才报告「Grok 没回应，已停下。」；清理失败保留真实错误，不冒称停止成功。取消后的更新不能续命，也不交付半截回复。手动取消/停止消费同样有界收尾。
+- 正常结束、取消、进程退出和 close 都清理计时器。失败轮不重试；对话侧释放超时会话，只有同会话下一句才重新获取执行者，仍受预检缓存约束。未启用该选项的 Cursor/其他 ACP 保持原限时策略。
+
+新增红/绿记录：未修复时「预检失败不 spawn」「静默 90s 发 cancel」两项均红；一次代答原先只问是否交给 CC，新增自动回落断言红。只读复核另发现手动停止可撤掉止损、planner 可把 CC 回落重新指向 Grok，两条补测均先红后修复。全部使用内存假 ACP（pid undefined）、编造登录文件及假时钟；没有真实模型、DNS/HEAD 请求、socket listen 或生产凭据。
+
+新增覆盖还包括：成功正常回复；复用会话断网不发 prompt、恢复后仅下一句再试；默认 HEAD 的实际方法/域名、60s/15s 边界、并发合并、缓存到期不自探；thought 重置计时；cancel 宽限内正常结束；无视 cancel 后终止；无视 SIGTERM 后复用 SIGKILL 升级且不提前报告停止；对话/工作台如实错误文案、一次代答的 CC 来源与临时目录清理。既有测试未删除、未放松，仅给 Grok 假进程测试显式注入成功预检。
+
+本次追加最终验证（2026-11-16）：
+
+- 牵连 **21 文件、415 项通过**：ACP 全目录、预检缓存、真实协调器的代答/CC 回落、Cursor 交付回归、bootstrap 首探/晚注册、工作台接线和错误映射。
+- 离线守卫 **50 文件、370 项通过**（46 个 scripts 守卫 + 4 个 src 守卫）；首轮新取消码未映射、显示名硬编码两项红，补映射并改读唯一显示名来源后复跑全部绿。未改守卫断言。
+- 根、mobile、relay、app `bun run typecheck` 全过；`bun run depcheck` 0 errors / 16 条既有 CLI→daemon warnings；`git diff --check` 通过。只读复核提出的两项正确性问题已修复并补测，复核未发现新的确定问题。
+- 未运行真实 Grok/真实 HEAD、daemon/self/companion、生产数据库、主人 Grok 登录文件、UI/截图/模拟器或重型构建；未 git add/commit。`verify`、需要 listen 的真实形状沙盒/E2E、会建 git 索引的测试、真实 CLI help、三平台 CI 与真模型验收仍未跑，受本任务明确边界限制，交整合者/mini 后续执行。
 
 ## 离线红/绿与检查
 
