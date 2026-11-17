@@ -94,7 +94,20 @@ export function acpRuleFacts(toolCall: Record<string, unknown>, fullCommand = fa
   return out
 }
 
-export interface AcpMcpServer { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }
+export interface AcpStdioMcpServer { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }
+export interface AcpHttpMcpServer { type: 'http'; name: string; url: string; headers: Array<{ name: string; value: string }> }
+export type AcpMcpServer = AcpStdioMcpServer | AcpHttpMcpServer
+export interface AcpMcpSession {
+  servers: AcpMcpServer[]
+  readonly active: boolean
+  close(): Promise<void>
+  createTextRedactor?: () => (chunk: string, final?: boolean) => string
+  redact(text: string): string
+  instructions?: string
+  supportsDelegation?: boolean
+  processGroups?: () => readonly number[]
+  fallback?: () => AcpMcpSession
+}
 export interface AcpProviderOptions extends AcpProviderBaseOptions {
   /** 'bridge':逐工具转给 context.requestPermission(工作台任务桥);
    *  'mode':就地按 context.permissionMode 判(dangerously ⇒ allow-once,否则 reject-once),从不调用桥。 */
@@ -102,7 +115,9 @@ export interface AcpProviderOptions extends AcpProviderBaseOptions {
   /** 'append':token 级 chunk(工作台逐字流);'messages':每条助理消息一条 text 事件(对话侧)。 */
   text: 'append' | 'messages'
   /** 注入的 MCP server 列表;缺省不注入(工作台任务本来就不给执行者 wechat MCP)。 */
-  mcpServers?: (context: SpawnContext) => AcpMcpServer[]
+  mcpServers?: (context: SpawnContext) => AcpStdioMcpServer[]
+  /** Owns optional transports negotiated after initialize; close revokes synchronously. */
+  prepareMcp?: (context: SpawnContext, initialized: unknown, project: { path: string }) => Promise<AcpMcpSession>
   /** 要求 agent 明确声明 stdio MCP；旧 Cursor 报文未声明此位，保持原行为。 */
   requireMcpCapabilities?: boolean
   /** 想钉的模型;只在新开的会话上生效(session/load 沿用会话原状),agent 未提供该选项时只记日志。 */
@@ -176,6 +191,7 @@ const sessionIdOk = (value: unknown): value is string => typeof value === 'strin
 
 interface Turn {
   queue: AsyncQueue<AgentEvent>; cancelled: boolean; startedAt: number
+  redactText?: (chunk: string, final?: boolean) => string; lastText?: Extract<AgentEvent, { kind: 'text' }>
   denialFeedback?: string[]; promptGeneration?: number; idleTimedOut?: boolean
   idleTimer?: ReturnType<typeof setTimeout>; cancelTimer?: ReturnType<typeof setTimeout>
 }
@@ -214,9 +230,13 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       if (options.preflight) await options.preflight()
       const child = spawn(options.command, options.args, { cwd: project.path, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true })
       // 按 JSON-RPC 请求 id 记账:id 是 agent 唯一能用来对上回复的东西,撞 id ⇒ 协议已经不可信。
+      let mcpSession: AcpMcpSession | undefined
+      const credentialScrubbers: AcpMcpSession[] = []
+      const redact = (line: string) => credentialScrubbers.reduce((text, lease) => lease.redact(text), line)
+      const revokeMcp = () => mcpSession?.close()
       const permissions = new Map<string | number, PendingPermission>()
       const logged = new Set<string>()
-      const logOnce = (kind: string, line: string) => { if (!options.log || logged.has(kind)) return; logged.add(kind); options.log('ACP', line) }
+      const logOnce = (kind: string, line: string) => { if (!options.log || logged.has(kind)) return; logged.add(kind); options.log('ACP', redact(line)) }
       // 带内错误按 cursor-agent 的约定认(这个通用客户端今天只接 cursor-agent;acpErrorCode 同理)。
       const translator = createAcpTranslator({ text: options.text, inbandError: cursorAcpInbandError })
       let sessionId = '', active: Turn | undefined, loading = true, imageOk = false
@@ -232,30 +252,43 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       }
       const clearTurnTimers = (turn: Turn) => { clearTimeout(turn.idleTimer); clearTimeout(turn.cancelTimer) }
       const idleError = (): AgentEvent => ({ kind: 'error', message: `acp_prompt_idle_timeout: ${options.displayName}`, code: 'provider_error' })
+      const emit = (turn: Turn, event: AgentEvent) => {
+        if (event.kind === 'text') {
+          turn.lastText = event
+          const text = turn.redactText?.(event.text) ?? redact(event.text)
+          if (text) turn.queue.push({ ...event, text })
+        } else turn.queue.push(event)
+      }
       const finish = (turn: Turn, event: AgentEvent) => {
         if (active !== turn) return
         clearTurnTimers(turn)
         active = undefined
         settlePermissions({ outcome: { outcome: 'cancelled' } })
+        if (!turn.cancelled && turn.lastText) {
+          const tail = turn.redactText?.('', true)
+          if (tail) turn.queue.push({ ...turn.lastText, text: tail })
+        }
         turn.queue.push(event); turn.queue.end()
       }
       // 先收掉在飞回合(把中文提示作为该回合最后一个事件推出),再 dispose 连接 ——
       // 颠倒顺序会让 dispose 触发的挂起请求 reject 抢先把 finish 判定为"晚到"而丢弃这句提示。
       const fatal = (message: string) => {
         if (broken || closing) return
-        broken = new Error(message)
+        void revokeMcp()?.catch(() => logOnce('mcp-close', 'MCP process cleanup unconfirmed'))
+        broken = new Error(redact(message))
         logOnce('fatal', `session stopped: ${message.replace(CONTROL_CHARS, ' ').slice(0, 300)}`)
         // 进程死了不等于这一轮什么都没说:messages 模式把整条助理消息攒在 translator 里,
         // 直接 finish 会把一条已经说完的话连同进程一起丢掉(用户只看到一个错误码)。
         // 先把攒着的吐出来,再推错误事件。append 模式(工作台)本来就逐字发过了,恒空。
         // (本地已取消的回合除外 —— 那条路的规矩是半截话不发,见 dispatch 里的 settle 注释。)
-        if (active) { if (!active.cancelled) for (const e of translator.endTurn()) active.queue.push(e); finish(active, active.idleTimedOut ? idleError() : { kind: 'error', message }) }
+        if (active) { if (!active.cancelled) for (const e of translator.endTurn()) emit(active, e); finish(active, active.idleTimedOut ? idleError() : { kind: 'error', message: redact(message) }) }
         // dispose 的理由就是真因:setup 阶段挂起的 initialize / session.* 会拿着它 reject,
         // 换成 acp_session_closed 会把"老版本没有 acp 子命令"这类唯一的线索盖掉。
         connection.dispose(broken)
       }
       const connection: AcpConnection = createAcpConnection(child.stdin!, child.stdout!, {
         rpcTimeoutMs,
+        redactIncoming: redact,
         onNotification(method, params) {
           if (method !== 'session/update' || !object(params)) return
           // loading 期间的外来 sessionId 是意料之中的:resume 回退时 session/load 会把旧会话的历史
@@ -266,7 +299,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           const turn = active
           if (!turn || turn.cancelled) return
           armIdleTimer(turn)
-          for (const event of translator.update(params.update)) turn.queue.push(event)
+          for (const event of translator.update(params.update)) emit(turn, event)
         },
         async onRequest(method, params, id) {
           if (method !== 'session/request_permission') throw Object.assign(new Error(`client capability not declared: ${method}`), { code: -32601 })
@@ -336,6 +369,8 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         if (closePromise) return closePromise
         closing = true
         closePromise = (async () => {
+          const mcpClosed = revokeMcp()
+          void mcpClosed?.catch(() => {})
           const deadline = Date.now() + closeTimeoutMs
           settlePermissions({ outcome: { outcome: 'cancelled' } })
           if (active && sessionId && !active.cancelled) { active.cancelled = true; connection.notify('session/cancel', { sessionId }) }
@@ -353,6 +388,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             const pause = new Promise<void>(resolve => setTimeout(resolve, 15))
             await (exited ? pause : Promise.race([exit, pause]))
           }
+          await mcpClosed
         })()
         return closePromise
       }
@@ -381,6 +417,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         }
         settlePermissions({ outcome: { outcome: 'cancelled' } })
         connection.notify('session/cancel', { sessionId })
+        if (mcpSession?.servers.length) void close().catch(() => {})
       }
       const armIdleTimer = (turn: Turn) => {
         clearTimeout(turn.idleTimer)
@@ -420,13 +457,30 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         if (options.authMethod && Array.isArray(initialized.authMethods) && initialized.authMethods.some((m: unknown) => object(m) && m.id === options.authMethod)) {
           await connection.request('authenticate', { methodId: options.authMethod })
         }
-        const mcpServers = options.mcpServers?.(context) ?? []
+        mcpSession = await options.prepareMcp?.(context, initialized, project)
+        if (mcpSession) credentialScrubbers.push(mcpSession)
+        if (closing || exited || broken) { await revokeMcp(); throw new Error('acp_session_closed') }
+        let mcpServers = mcpSession?.servers ?? options.mcpServers?.(context) ?? []
         if (mcpServers.length && options.requireMcpCapabilities) {
           const capabilities = object(initialized.agentCapabilities) ? initialized.agentCapabilities.mcpCapabilities : undefined
           if (!object(capabilities) || capabilities.stdio !== true) throw new Error('acp_mcp_stdio_unsupported')
         }
+        const requestSession = async (method: string, params: Record<string, unknown>) => {
+          try { return await connection.request(method, { ...params, mcpServers }) }
+          catch (error) {
+            // Only a live agent's explicit setup rejection can downgrade the optional MCP
+            // transport. Authentication/process failures keep their original error path.
+            if (!(error instanceof AcpRequestError) || error.code === -32000 || isAuthFail('sdk-error', error.message) || !mcpServers.length || !mcpSession?.fallback) throw error
+            const fallback = mcpSession.fallback
+            await revokeMcp()
+            mcpSession = fallback()
+            mcpServers = []
+            logOnce('mcp-fallback', 'MCP session setup rejected; continuing without tools')
+            return connection.request(method, { ...params, mcpServers })
+          }
+        }
         const openNew = async () => {
-          const created = await connection.request('session/new', { cwd: project.path, mcpServers })
+          const created = await requestSession('session/new', { cwd: project.path })
           if (!object(created) || !sessionIdOk(created.sessionId)) throw new Error('acp_missing_session_id')
           sessionId = created.sessionId
           return created
@@ -436,7 +490,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           try {
             if (!loadSession) throw new Error('acp_resume_unsupported')
             sessionId = context.resumeSessionId
-            const loaded = await connection.request('session/load', { sessionId, cwd: project.path, mcpServers })
+            const loaded = await requestSession('session/load', { sessionId, cwd: project.path })
             if (object(loaded) && loaded.sessionId !== undefined && loaded.sessionId !== sessionId) throw new Error('acp_resume_session_mismatch')
             currentModel = acpCurrentModel(loaded)
             resumedHistory = true
@@ -476,6 +530,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       } catch (error) {
         const mapped = setupError(error)
         await close().catch(() => {})
+        mapped.message = redact(mapped.message)
         throw mapped
       }
       loading = false
@@ -483,27 +538,32 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
 
       return {
         resumedHistory, resumedHistoryOwnerOnly:true,
-        processGroups: () => (child.pid ? [child.pid] : []),
+        get supportsDelegation() { return mcpSession ? mcpSession.active && mcpSession.supportsDelegation === true : undefined },
+        processGroups: () => [...(child.pid ? [child.pid] : []), ...(mcpSession?.processGroups?.() ?? [])],
         ...(targetProvider ? { callTarget: () => (currentModel ? { provider: targetProvider, model: currentModel } : null) } : {}),
         dispatch(text, attachments) {
           if (attachments?.length && options.attachments !== 'prompt') throw new Error('acp_attachments_unsupported')
-          if (closing || broken || exited) throw new Error('acp_session_closed')
+          if (closing || broken || exited || (mcpSession?.servers.length && !mcpSession.active)) throw new Error('acp_session_closed')
           if (active) throw new Error('acp_turn_already_running')
-          const injectInstructions = !instructionsInjected && !!context.appendInstructions
-          const prompt = injectInstructions ? `${context.appendInstructions}\n\n---\n\n${text}` : text
+          const appendInstructions = mcpSession?.instructions ?? context.appendInstructions
+          const injectInstructions = !instructionsInjected && !!appendInstructions
+          const prompt = injectInstructions ? `${appendInstructions}\n\n---\n\n${text}` : text
           // acpPromptBlocks 校验/组块可能抛错(mime 不支持、agent 无图片能力、缺 data、prompt 太大)——必须在
           // active = turn 之前抛,否则一个坏附件会把 dispatch 甩出去、却留下一个没人收尾的挂起回合。
           // instructionsInjected 也要等这一步成功了再翻:抛错说明这一轮从没真的把 instructions 发出去,
           // 翻早了会让同一 session 的下一次重试悄悄漏掉 appendInstructions。
           const blocks: AcpPromptBlock[] = options.attachments === 'prompt' ? acpPromptBlocks(prompt, attachments, imageOk) : [{ type: 'text', text: prompt }]
           const em = makeTurnEmitter()
-          const turn: Turn = { queue: new AsyncQueue<AgentEvent>(), cancelled: false, startedAt: Date.now() }
+          const turn: Turn = { redactText: (() => {
+            const scrubbers = credentialScrubbers.flatMap(lease => lease.createTextRedactor ? [lease.createTextRedactor()] : [])
+            return scrubbers.length ? (chunk: string, final = false) => scrubbers.reduce((text, scrub) => scrub(text, final), chunk) : undefined
+          })(), queue: new AsyncQueue<AgentEvent>(), cancelled: false, startedAt: Date.now() }
           active = turn
           translator.beginTurn()
           // 三处结束态(成功 / 非取消的中止原因 / prompt 请求本身报错)在写入结果事件之前先把
           // messages 模式攒着的助理文本吐出来 —— 取消路径(下面的 acp_turn_cancelled)故意绕过它:
           // 半截话不该在"用户主动打断"时还发出去。
-          const settle = (event: AgentEvent) => { if (active !== turn) return; for (const e of translator.endTurn()) turn.queue.push(e); finish(turn, event) }
+          const settle = (event: AgentEvent) => { if (active !== turn) return; for (const e of translator.endTurn()) emit(turn, e); finish(turn, event) }
           const promptTurn = (prompt: AcpPromptBlock[]): void => {
             turn.promptGeneration = (turn.promptGeneration ?? 0) + 1
             const send = () => {

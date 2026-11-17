@@ -27,6 +27,11 @@ describe('ACP cursor chat provider', () => {
       expect(acpMcpServersFor({ wechat: null, delegate: null })).toEqual([])
     } finally { process.env.PATH = prevPath; process.env.HOME = prevHome }
   })
+  it('keeps non-CORE server authorization in spec.env without leaking session credentials', () => {
+    const servers = acpMcpServersFor({ 'wechat-cc-matter': { command: '/offline', env: { NOTEBOOK_KEY: 'offline-notebook' } } }, { WECHAT_SESSION_TOKEN: 'offline-session' })
+    expect(servers[0]!.env).toContainEqual({ name: 'NOTEBOOK_KEY', value: 'offline-notebook' })
+    expect(servers[0]!.env.some(e => e.name === 'WECHAT_SESSION_TOKEN')).toBe(false)
+  })
   it('declares admin MCP tools, resume, no per-tool callback, claude as default peer', () => {
     expect(ACP_CURSOR_CAPABILITIES).toMatchObject({ perToolCallback: false, adminMcpTools: true, supportsDelegation: false, supportsResume: true, defaultPeer: 'claude' })
     // MCP 子进程按会话带 tier(adminMcpTools:true),但 Cursor 自己的工具面约束不住 ⇒ guest 一律拒。

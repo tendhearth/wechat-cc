@@ -6,6 +6,8 @@
 export interface AcpRpcError { code: number; message: string; data?: unknown }
 export interface AcpConnectionOptions {
   rpcTimeoutMs: number
+  /** Session credential scrubber, applied before any agent message reaches diagnostics/events. */
+  redactIncoming?: (line: string) => string
   /** agent → client 请求:返回值作为 result;抛错 ⇒ error 回复(code 取 err.code 数字,否则 -32603)。 */
   onRequest(method: string, params: unknown, id: string | number): Promise<unknown>
   onNotification(method: string, params: unknown): void
@@ -78,7 +80,7 @@ export function createAcpConnection(stdin: NodeJS.WritableStream, stdout: NodeJS
       if (!line) continue
       if (line.length > MAX_LINE) { fail('acp_line_too_long'); return }
       let message: unknown
-      try { message = JSON.parse(line) } catch { fail('acp_invalid_protocol_message'); return }
+      try { message = JSON.parse(options.redactIncoming?.(line) ?? line) } catch { fail('acp_invalid_protocol_message'); return }
       if (!object(message)) { fail('acp_invalid_protocol_message'); return }
       try { handle(message) } catch { /* 消费者抛错不能打断传输层。 */ }
     }

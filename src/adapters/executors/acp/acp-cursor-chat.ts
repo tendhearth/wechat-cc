@@ -7,7 +7,7 @@
 import type { AgentProvider, SpawnContext } from '../../../ports/agent-provider'
 import { assertNotAuthFailed, CORE_MCP_SERVER_NAMES } from '../../../ports/agent-provider'
 import type { McpStdioSpec } from '../mcp-stdio-spec'
-import { createAcpProvider, type AcpMcpServer } from './acp-agent-provider'
+import { createAcpProvider, type AcpStdioMcpServer } from './acp-agent-provider'
 import { cursorOneShotEval, defaultCursorSpawnFn, type CursorSpawnFn } from './cursor-eval'
 
 /** cursorModel 没设时的兜底('auto' = 让 Cursor 自己挑)。 */
@@ -26,9 +26,9 @@ export interface AcpCursorChatOptions {
 }
 
 /** MCP 子进程 env:PATH/HOME(gemini 曾因缺这层拿不到 PATH)+ spec.env + 会话 env(只给 CORE 名字,与 mergeEnvIntoMcpServers 同一条规矩)。 */
-export function acpMcpServersFor(specs: AcpCursorChatOptions['mcpSpecs'], mcpEnv?: Record<string, string>): AcpMcpServer[] {
-  const servers: AcpMcpServer[] = []
-  for (const name of ['wechat', 'delegate'] as const) {
+export function acpMcpServersFor(specs: Record<string, McpStdioSpec | null>, mcpEnv?: Record<string, string>): AcpStdioMcpServer[] {
+  const servers: AcpStdioMcpServer[] = []
+  for (const name of Object.keys(specs)) {
     const spec = specs[name]
     if (!spec) continue
     const env: Record<string, string> = {}
