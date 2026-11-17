@@ -29,6 +29,7 @@ export async function createMcpHttpBridge(
 ): Promise<McpHttpBridge> {
   const token = randomBytes(32).toString('base64url')
   let active = true, closing: Promise<void> | undefined
+  let requestErrorLogged = false
   const entries: Array<{ child: ChildProcess; transport: StreamableHTTPServerTransport; hasExited(): boolean; getStream?: ServerResponse; flush(): void }> = []
   const server = createServer((req, res) => { void handle(req, res) })
   const close = (): Promise<void> => {
@@ -158,7 +159,12 @@ export async function createMcpHttpBridge(
       }
       transport.onclose = () => { if (active) fail() }
       child.stdin?.on('error', fail)
-      transport.onerror = fail
+      transport.onerror = () => {
+        // The SDK also reports request-level 4xx here; it already answered that request.
+        if (!active || requestErrorLogged) return
+        requestErrorLogged = true
+        options.log?.('MCP', 'Grok MCP request error (recoverable)')
+      }
       await transport.start()
       await started
       if (!active || ended) throw new Error('mcp_process_exited')

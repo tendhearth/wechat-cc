@@ -57,6 +57,25 @@ describe.runIf(process.platform !== 'win32')('session stdio → Streamable HTTP 
       await expect.poll(() => notifications.filter(n => n === 'offline notification')).toEqual(['offline notification'])
     } finally { await client.close() }
   })
+  it.each(['GET', 'POST'])('keeps the bridge active after pre-initialize %s request errors', async method => {
+    const { bridge, log } = await start()
+    const headers = { ...headersFor(bridge), Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' }
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(bridge.servers[0]!.url, { method, headers,
+        ...(method === 'POST' ? { body: JSON.stringify({ jsonrpc: '2.0', id: i, method: 'tools/list' }) } : {}) })
+      expect(response.status).toBe(400)
+      await response.text()
+      expect(bridge.active).toBe(true)
+    }
+    const client = new Client({ name: 'offline-recovery', version: '1' }, { capabilities: {} })
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(bridge.servers[0]!.url), { requestInit: { headers: headersFor(bridge) } }))
+      expect((await client.listTools()).tools.map(t => t.name)).toEqual(['echo'])
+      expect(await client.callTool({ name: 'echo', arguments: { text: 'after rejected request' } })).toEqual({ content: [{ type: 'text', text: '{"text":"after rejected request"}' }] })
+      expect(bridge.active).toBe(true)
+      expect(log.mock.calls).toEqual([['MCP', 'Grok MCP request error (recoverable)']])
+    } finally { await client.close() }
+  })
   it('keeps notifications with concurrent POST requests when no GET stream exists', async () => {
     const { bridge } = await start()
     const url = bridge.servers[0]!.url
