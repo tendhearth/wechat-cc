@@ -38,13 +38,14 @@ import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { hasBubbleText, textAfterSend, type Bubble } from '../view/chat'
 import { useWork } from '../state/useWork'
-import { useTerminalSessions } from '../state/useTerminal'
-import { homeView } from '../view/home'
+import type { HomeView } from '../view/home'
+import { useRoster } from '../state/roster'
 import { conversationItems } from '../view/conversation-work'
-import { isMatterArchived } from '../view/status'
+import { rosterRow } from '../view/roster-strip'
+import { statusOfMatter, isMatterArchived } from '../view/status'
 import { newReferences, rememberReference, useReferences } from '../state/conversation-references'
 import { DelegationMessage } from '../ui/DelegationMessage'
-import { TopicRow } from '../ui/TopicRow'
+import { RosterStrip } from './RosterStrip'
 import { ConversationMore } from '../ui/ConversationMore'
 import { canSubmit } from '../view/connection'
 
@@ -71,7 +72,6 @@ export default function Chat() {
   const inputRef = useRef<import('react-native').TextInput>(null)
   const [text, setTextState] = useState(() => getDraft('chat'))
   const [typing, setTyping] = useState(false)
-  const [topicIds, setTopicIds] = useState<string[]>()
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const endTyping = () => { clearTimeout(typingTimer.current); setTyping(false) }
   useEffect(() => () => clearTimeout(typingTimer.current), [])
@@ -137,7 +137,6 @@ export default function Chat() {
     configured: sttStatus.data?.configured ?? null,
   })
   const work = useWork()
-  const terminal = useTerminalSessions()
   const stream=useConversationStream(backend,online)
   const [stopTurn,setStopTurn]=useState<string|null>(null)
   const [stopError,setStopError]=useState(false)
@@ -160,9 +159,10 @@ export default function Chat() {
   }, { enabled: references.length > 0 })
   const allMatters = [...new Map([...(history.data ?? []), ...work.matters].map(m => [m.id, m])).values()]
   const visibleMatters = allMatters.map(m => references.includes(`matter:${m.id}`) && isMatterArchived(m) ? { ...m, status: 'done' as const, archivedAt: null } : m)
-  const workView = homeView({ ...work, matters: visibleMatters, terminal: terminal.sessions ?? [], known: backend.mode === 'demo' || online, now: Date.now(), lang, backWindowMs: null, keepStaleWaiting: true })
-  const waiting = backend.mode === 'demo' || online ? workView.groups.find(g => g.key === 'waiting')?.rows ?? [] : []
-  const [waitingIndex, setWaitingIndex] = useState(0)
+  const roster = useRoster()
+  const workView: HomeView = { waitingUnknown: roster.stale, actionableWaiting: [], moreCount: 0, groups: [{ key: 'working', title: '', rows: [...visibleMatters.map(m => ({
+    id:m.id,source:'matter',href:`/matter/${encodeURIComponent(m.id)}`,title:m.title,caption:null,detail:null,note:null,status:statusOfMatter(m,null,0),pendingRequestId:null,agents:m.agents??[],agentNames:m.agentNames,origin:null,updatedAt:m.updatedAt,
+  } as import('../view/home').HomeRow)), ...roster.items.filter(i=>i.kind==='terminal').map(i=>rosterRow(i,!roster.stale))] }] }
   const companion = useCompanion()
   const card = companion.home ? companionCard(companion.home.events, companion.home.seenUntil, Date.now(), companion.localSeen) : null
   const items = conversationItems(chat.bubbles, workView, allMatters, chat.page?.matterId, references, newReferences(backend),new Map((durableWork.data?.references??[]).flatMap(r=>r.messageId?[[r.matterId,r.messageId] as const]:[])))
@@ -202,10 +202,11 @@ export default function Chat() {
       <TopBar
         title="CC" showStatus onAvatar={() => router.push('/settings')}
         onConnection={() => router.push('/connections')} connectionTestID="now-connections"
-        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused} topics={topicIds} />}
+        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused}  />}
         actions={<View style={{ flexDirection: 'row' }}><IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />
           <ConversationMore /></View>}
       />
+      <RosterStrip />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{backend.mode === 'demo' ? <DemoBanner /> : null}</View>
       {stream?.running&&backend.stopConversation?<Button testID="conversation-stop" kind="secondary" label={t(lang,stopTurn===stream.running.turnId?'progress.stopConfirm':'progress.stop')} onPress={()=>void stopConversation()} />:null}
       {stopError?<Txt role="meta" tone="inkSoft">{t(lang,'progress.stopFailed')}</Txt>:null}
@@ -253,13 +254,7 @@ export default function Chat() {
         />
         <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
           {readingOlder && newChanges ? <Button testID="conversation-new-updates" kind="secondary" label={lang === 'zh-Hans' ? '有新变化 · 回到最新' : 'New updates · Go to latest'} onPress={() => { listRef.current?.scrollToOffset({ offset: 0, animated: false }); setReadingOlder(false); setNewChanges(false) }} /> : null}
-          {waiting.length ? <Pressable testID="conversation-waiting" accessibilityRole="button" onPress={() => {
-            const row = waiting[waitingIndex % waiting.length]!
-            rememberReference(backend, row.id, row.source); setWaitingIndex(i => i + 1)
-            router.push(row.href)
-          }} style={{ minHeight: 44, justifyContent: 'center' }}><Txt role="meta" tone="accent">{lang === 'zh-Hans' ? `${waiting.length} 件事等你` : `${waiting.length} waiting for you`}</Txt></Pressable> : null}
           {locateNote ? <Txt testID="chat-locate-gone" role="meta" tone="inkSoft">{lang === 'zh-Hans' ? '暂时找不到这句，仍可继续对话' : 'Cannot locate this message. You can continue talking.'}</Txt> : null}
-          <TopicRow onTopics={setTopicIds} />
           {outcome ? (
             <View style={{ alignItems: 'flex-end' }}><StatusHint testID={`chat-outcome-${outcome}`} label={t(lang, outcome === 'uncertain' ? 'feedback.unconfirmed' : 'feedback.notSent')}
               icon={outcome === 'uncertain' ? 'help' : 'alert'} description={t(lang, OUTCOME_KEY[outcome])}>

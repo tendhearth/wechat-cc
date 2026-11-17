@@ -1,4 +1,4 @@
-# T4: 六个最近话题、sheet、来源与事项、历史话题、返回保留主人草稿。
+# T4 / 管家的屋子:话题从 ⋯ → 记忆 → 话题 进(输入框上方话题行已撤);sheet、来源与事项、历史话题、返回保留主人草稿。
 appId: com.tendhearth.app
 ---
 - tapOn:
@@ -8,9 +8,16 @@ appId: com.tendhearth.app
 - tapOn:
     id: chat-input
 - inputText: "topic draft stays"
-- assertVisible:
-    text: "服务器，1 个等你，2 个在跑，1 个做完未看|服务器, 1 waiting for you, 2 running, 1 completed, unread"
-- takeScreenshot: topics-projects-topic-row
+- tapOn:
+    id: home-more
+- tapOn:
+    id: conversation-memory
+- tapOn:
+    id: memory-topics
+- extendedWaitUntil:
+    visible:
+      id: topics-search
+    timeout: 10000
 - tapOn:
     id: topic-demo-backup
 - extendedWaitUntil:
@@ -74,21 +81,31 @@ appId: com.tendhearth.app
 - takeScreenshot: t5-topic-memory-source
 - tapOn:
     id: topbar-back
+- tapOn:
+    id: topbar-back
+- tapOn:
+    id: topbar-back
 - assertVisible:
     id: chat-input
     text: "topic draft stays"
 - tapOn:
-    id: topics-more
+    id: home-more
+- tapOn:
+    id: conversation-memory
+- tapOn:
+    id: memory-topics
 - extendedWaitUntil:
     visible:
       id: topics-search
-    timeout: 5000
+    timeout: 10000
 - tapOn:
     id: topic-demo-trip
 - extendedWaitUntil:
     visible:
       id: topic-sheet
     timeout: 5000
+- tapOn:
+    id: topbar-back
 - tapOn:
     id: topbar-back
 - tapOn:

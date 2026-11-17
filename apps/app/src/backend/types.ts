@@ -98,7 +98,8 @@ export interface Backend {
   readonly mode: 'demo' | 'live'
   connection(): Connection
   onConnection(cb: (c: Connection) => void): Unsubscribe
-  subscribe<T>(topic: 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`, cb: (data: T) => void): Unsubscribe
+  subscribe<T>(topic: 'roster' | 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`, cb: (data: T) => void): Unsubscribe
+  roster?(signal?: AbortSignal): Promise<import('@wechat-cc/protocol').RosterResponseT>
   topics(p: { view?: 'recent' | 'all'; limit?: number; cursor?: string }): Promise<TopicsListT>
   topicDetail(p: { id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }): Promise<TopicDetailT>
   topicEdit(action: 'rename' | 'merge' | 'delete' | 'wrong', input: { id: string; title?: string; into?: string }): Promise<void>

@@ -16,7 +16,7 @@ appId: com.tendhearth.app
 - assertNotVisible:
     id: now-cc-status
 - assertVisible:
-    id: conversation-waiting
+    id: roster-strip
 - assertVisible:
     id: now-connections
 - tapOn:
@@ -118,6 +118,11 @@ appId: com.tendhearth.app
 - tapOn:
     id: settings-language-en
 - assertVisible: "Settings"
+- scrollUntilVisible:
+    element:
+      id: settings-language-zh-Hans
+    direction: DOWN
+    timeout: 5000
 - tapOn:
     id: settings-language-zh-Hans
 - assertVisible: "设置"

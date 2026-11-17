@@ -12,13 +12,15 @@ import { Button } from '../ui/Button'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { StatusWord } from '../ui/MatterRow'
 import { terminalStatusKey } from '../view/status'
-import { TextField } from '../ui/TextField'
 import { space } from '../ui/tokens'
-import { TopBar } from '../ui/TopBar'
+import { TopBar } from './TopBar'
+import { DirectHeader } from './DirectHeader'
+import { DirectComposer } from './DirectComposer'
+import { directHeaderView } from '../view/direct-header'
+import { useMatterSay } from '../state/matter-say'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { Icon } from '../ui/Icon'
-import { IconButton } from '../ui/IconButton'
 import { canSayTo, relAgo, stepLabel, terminalErrorKey, terminalRow } from '../view/terminal'
 import { nextSayView, sayNote, SAY_FAST_POLL_MS, type SayTrack, type SayView } from '../view/terminal-say'
 
@@ -44,7 +46,8 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const actions = useTerminalActions()
   const activity = useTerminalActivity(id)
-  const [text, setTextState] = useState('')
+  const say = useMatterSay({kind:'terminal',sessionId:id})
+  const {text,setText:setTextState}=say
   const draftRevision = useRef(0)
   const setText = (value: string) => { draftRevision.current++; setTextState(value) }
   const [stopRun,setStopRun]=useState<string|null>(null)
@@ -63,7 +66,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
   const newest = activity.items.reduce((m, i) => (i.at !== null && i.at > m ? i.at : m), s?.last_event_at ?? 0)
   const fresher = !!s && newest > s.last_event_at
   const sayOpen = !!row && canSayTo(row.status, row.live) && terminal.online
-  const sending = actions.pending === `cli:say:${id}`
+  const sending = say.terminalPending === `cli:say:${id}`
   const last = s?.last_say
   useEffect(() => {
     if (track) setSaid(v => nextSayView(v, track, last, Date.now()))
@@ -93,7 +96,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
     const prevId = s?.last_say?.id ?? null
     const live = !!row?.live
     const sentAt = Date.now()
-    const { error: err, sayId } = await actions.say(id, body)
+    const { error: err, sayId } = await say.sendTerminal(id, body)
     if (!alive.current || view.current !== owner || pairingGen() !== atGen) return
     if (err === null) {
       if (draftRevision.current === revision) setText('')
@@ -101,12 +104,14 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
     } else if (err !== 'busy') setNote(t(lang, terminalErrorKey(err)))
   }
 
+  const direct = s ? directHeaderView(s,lang) : null
+  const scrollRef = useRef<ScrollView>(null)
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={row?.project ?? t(lang, 'terminal.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+      {direct?<DirectHeader view={direct} onMore={()=>scrollRef.current?.scrollToEnd({animated:true})} onProject={()=>router.push('/topics')} />:<TopBar title={t(lang,'terminal.title')} onBack={()=>router.canGoBack()?router.back():router.replace('/')} />}
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{s?.run_id&&backend.cliStop?<Button testID="terminal-stop" kind="secondary" label={t(lang,stopRun===s.run_id?'progress.stopConfirm':'progress.stop')} onPress={()=>void stop()} />:null}</View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
+        <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
           {!row ? (
             <Txt testID="terminal-missing" role="bubble" tone="inkSoft" style={{ paddingTop: space.xl }}>
               {terminal.loaded ? t(lang, 'terminal.gone') : t(lang, 'sessions.loading')}
@@ -179,20 +184,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
           <View style={{ paddingHorizontal: space.xl, paddingTop: space.m, paddingBottom: space.m, gap: space.s }}>
             {row.live ? <Txt testID="terminal-say-live" role="meta" tone="inkSoft">{t(lang, 'terminal.liveWindow')}</Txt> : null}
             {!canSayTo(row.status, row.live) ? <Txt testID="terminal-say-busy" role="meta" tone="inkSoft">{t(lang, row.status === 'waiting' ? 'terminal.sayWaiting' : 'terminal.sayBusy')}</Txt> : null}
-            <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.s }}>
-            <TextField
-              testID="terminal-say-input" variant="chat"
-              accessibilityLabel={t(lang, 'terminal.sayPlaceholder')}
-              placeholder={t(lang, 'terminal.sayPlaceholder')}
-              value={text}
-              onChangeText={setText}
-              editable={sayOpen}
-              multiline
-              maxLength={SAY_MAX}
-              style={{ flex: 1, maxHeight: 160 }}
-            />
-            <IconButton name="arrowUp" testID="terminal-say-send" label={t(lang, 'terminal.send')} busy={sending} disabled={!sayOpen || !text.trim()} onPress={() => void send()} />
-            </View>
+            {direct?<DirectComposer variant="chat" maxLength={SAY_MAX} testID="terminal-say" view={direct} text={text} onChangeText={setText} onSend={()=>void send()} disabled={!sayOpen||!text.trim()} busy={sending}/>:null}
           </View>
         ) : null}
       </KeyboardAvoidingView>
