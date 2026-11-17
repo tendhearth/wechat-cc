@@ -6,7 +6,7 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: conversation-waiting
+      id: roster-strip
     timeout: 10000
 - openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
 - runFlow: subflows/_open-link-guard.yaml
@@ -20,7 +20,7 @@ appId: com.tendhearth.app
     id: topbar-back
 - extendedWaitUntil:
     visible:
-      id: conversation-waiting
+      id: roster-strip
     timeout: 10000
 - openLink: tendhearth://push-open?kind=task_done&taskId=e5f6a7b8
 - runFlow: subflows/_open-link-guard.yaml
@@ -35,7 +35,7 @@ appId: com.tendhearth.app
     id: topbar-back
 - extendedWaitUntil:
     visible:
-      id: conversation-waiting
+      id: roster-strip
     timeout: 10000
 - openLink: tendhearth://push-open?kind=permission&taskId=cli%3Ademo-cli-blog
 - runFlow: subflows/_open-link-guard.yaml
@@ -51,7 +51,7 @@ appId: com.tendhearth.app
     id: topbar-back
 - extendedWaitUntil:
     visible:
-      id: conversation-waiting
+      id: roster-strip
     timeout: 10000
 - openLink: tendhearth://push-open?kind=task_done&taskId=ffffffff
 - runFlow: subflows/_open-link-guard.yaml
@@ -65,13 +65,13 @@ appId: com.tendhearth.app
     id: push-go-now
 - extendedWaitUntil:
     visible:
-      id: conversation-waiting
+      id: roster-strip
     timeout: 10000
 - openLink: tendhearth://push-open?kind=permission&taskId=..%2F..%2Fx
 - runFlow: subflows/_open-link-guard.yaml
 - extendedWaitUntil:
     visible:
-      id: conversation-waiting
+      id: roster-strip
     timeout: 10000
 - assertNotVisible:
     id: push-opening
@@ -90,7 +90,7 @@ appId: com.tendhearth.app
     id: topbar-back
 - extendedWaitUntil:
     visible:
-      id: conversation-waiting
+      id: roster-strip
     timeout: 10000
 - openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
 - runFlow: subflows/_open-link-guard.yaml
@@ -102,7 +102,7 @@ appId: com.tendhearth.app
     id: topbar-back
 - extendedWaitUntil:
     visible:
-      id: conversation-waiting
+      id: roster-strip
     timeout: 10000
 - runFlow:
     when:
@@ -117,7 +117,7 @@ appId: com.tendhearth.app
           end: 85%, 50%
           duration: 400
 - assertVisible:
-    id: conversation-waiting
+    id: roster-strip
 - assertNotVisible:
     id: search-work
 - openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
