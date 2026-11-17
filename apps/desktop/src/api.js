@@ -129,7 +129,7 @@ export async function invokeWorkbenchApi(method, path, body, opts) {
   const raw = /** @type {string} */ (await ipcInvoke('daemon_request', {
     method,
     path,
-    ...(opts?.ifNoneMatch && path === "/v1/roster" ? { ifNoneMatch: opts.ifNoneMatch } : {}),
+    ...(opts?.ifNoneMatch && method === "GET" ? { ifNoneMatch: opts.ifNoneMatch } : {}),
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   }, undefined))
   if (typeof raw !== 'string') return raw

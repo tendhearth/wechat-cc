@@ -1,8 +1,8 @@
+// @ts-check
+/// <reference lib="dom" />
 import { setDockedMatter } from './modules/conversation-matters.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
-// @ts-check
-/// <reference lib="dom" />
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
 import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
 import { createMainNavigation, createNativeNavigation } from './main-navigation.js'
@@ -1699,7 +1699,7 @@ async function boot() {
       navigate:switchPane})
     const topics=mountMemoryTopics({root:/** @type {HTMLElement} */(document.getElementById('memory-topics')),call:invokeWorkbenchApi,
       openMatter:id=>deps.onOpenMatter(id),
-      locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),
+      locateMessage:(id,excerpt)=>{switchPane('overview');return locateConversationMessage(deps,id,excerpt)},
       manage:()=>switchPane('memory')})
     memoryTopics=topics
     document.getElementById('topbar-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})

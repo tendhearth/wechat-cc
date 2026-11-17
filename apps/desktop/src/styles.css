@@ -5091,3 +5091,7 @@ body .th-agents { --th-agent-size:var(--th-identity-agent-size); }
   .roster-aside[data-open] { animation: roster-enter 180ms ease-out; }
   @keyframes roster-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
 }
+
+#roster-dock .wb-history-dialog { width: auto; max-width: 100%; box-sizing: border-box; margin: 0; padding: 0; border: 0; max-height: none; background: transparent; }
+#roster-dock .roster-terminal { min-width: 0; }
+#roster-dock .roster-terminal .wb-handoff-body { min-width: 0; overflow-wrap: anywhere; }

@@ -50,7 +50,7 @@
 /* Production shell follows art/cc-presence-entry: a home, work, and recollections. */
 .dashboard{--app-bg:var(--th-paper);--paper:var(--th-paper);--ink:var(--th-ink);--hair:var(--th-hair);--hair-2:var(--th-hair)}
 /* Keep the rail's own geometry stable; only its reserved space and position move. */
-.dashboard .dash-main{grid-column:2;grid-row:1;overflow:hidden;background:var(--th-paper)}
+.dashboard .dash-main{grid-column:1;grid-row:2;overflow:hidden;background:var(--th-paper)}
 .dashboard .dash-pane{background:var(--th-paper);overflow:auto}
 /* Mounted while working so closing and rapid reversals retain their exit frames. */
 .workbench-topline-start{display:inline-flex;align-items:center;gap:12px}

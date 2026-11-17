@@ -51,7 +51,9 @@ test('one conversation, memory topics and dock preserve drafts across wide and n
  await page.setViewportSize({width:900,height:844});await clickNav(page,'memory')
  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click();await expect(panel).toBeVisible()
  await page.screenshot({path:join(info.outputDir,'narrow-topic.png')})
- await panel.getByRole('button',{name:'收起',exact:true}).click();await clickNav(page,'overview')
+ await panel.getByRole('button',{name:/CC · .*正在核对备份/}).click()
+ await expect(page.locator('#converse-input')).toBeVisible()
+ await expect(page.locator('#converse-scroll')).toContainText('正在核对备份。')
  await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
 })
 test('older daemon hides topics and preserves the owner composer',async({page,shimUrl})=>{

@@ -15,17 +15,14 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
  toolbar.append(back,expand)
  /** @type {DockItem|null} */ let current=null
  /** @type {(()=>void)|undefined} */let dispose
- let ticket=0,alive=true,checking=false
- /** @type {Map<string,string>} */const drafts=new Map()
+ let ticket=0,alive=true,checking=false,terminalMode=false
  function close(){
   ticket++
-  const input=/** @type {HTMLTextAreaElement|null} */(dock.querySelector('textarea'))
-  if(current&&input)drafts.set(`${current.kind}:${current.id}`,input.value)
   dispose?.();dispose=undefined
   if(layer.parentElement===dock){home.after(layer);layer.hidden=true;layer.setAttribute('aria-modal','true');layer.setAttribute('role','dialog')}
   setWorkbenchDocked(false)
   dock.replaceChildren();dock.hidden=true;list.hidden=false;delete aside.dataset.docked
-  const previous=current;current=null;onChange?.(null);if(previous)onClose?.()
+  const previous=current;current=null;terminalMode=false;onChange?.(null);if(previous)onClose?.()
  }
  function missing(){close();const note=doc.createElement('p');note.role='status';note.textContent='这件事已经不在了';list.prepend(note)}
  async function unfold(){const item=current;if(!item)return;close();await onExpand?.(item)}
@@ -41,7 +38,8 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
    if(!alive||generation!==ticket)return
    if(item.kind==='matter'&&detail.matter?.id!==item.id)throw Error('matter_not_found')
    loading.remove()
-   if(detail.matter.kind==='task'){
+   terminalMode=detail.matter.kind!=='task'
+   if(!terminalMode){
     dock.append(layer);layer.hidden=false;layer.setAttribute('role','region');layer.removeAttribute('aria-modal');setWorkbenchDocked(true)
     await openTask(item.id)
    }else{
@@ -50,8 +48,6 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
     if(!alive||generation!==ticket){cleanup?.();return}dispose=cleanup
    }
    if(!alive||generation!==ticket)return
-   const input=/** @type {HTMLTextAreaElement|null} */(dock.querySelector('textarea'))
-   const draft=drafts.get(`${item.kind}:${item.id}`);if(input&&draft!==undefined){input.value=draft;input.dispatchEvent(new Event('input',{bubbles:true}))}
    if(item.kind==='matter')void v1(call,V1.matter.seen,{body:{id:item.id,surface:'desktop'}}).catch(()=>{})
   }catch(error){
    if(!alive||generation!==ticket)return
@@ -67,22 +63,29 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
   try{await v1(call,V1.matter.get,{query:{id:item.id}})}catch(error){if(alive&&generation===ticket&&/404|not_found/.test(String(error)))missing()}finally{checking=false}
  },3000)
  const heavy=(/** @type {Event} */event)=>{
-  const button=event.target instanceof Element?event.target.closest('[data-action]'):null
+  const button=event.target instanceof Element?event.target.closest('summary,[data-action],.wb-artifact[data-artifact-id]'):null
   if(!(button instanceof HTMLElement)||!layer.contains(button)||!current)return
+  const details=button.tagName==='SUMMARY'?button.parentElement:null
+  const disclosure=details?.id==='wb-review'||details?.hasAttribute('data-review-disclosure')
   const action=button.dataset.action??''
-  if(!['preview-artifact','show-artifacts','rewind-open','new-task','add-project','task-entry'].includes(action))return
-  const data={...button.dataset}
+  if(!disclosure&&!button.matches('.wb-artifact[data-artifact-id]')&&!['preview-artifact','show-artifacts','rewind-open','new-task','add-project','task-entry'].includes(action))return
+  const data={...button.dataset},detailId=details?.id,detailData={...details?.dataset}
   event.preventDefault();event.stopImmediatePropagation()
   void unfold().then(()=>{
-   const next=[...layer.querySelectorAll('[data-action]')].find(el=>el instanceof HTMLElement&&Object.entries(data).every(([key,value])=>el.dataset[key]===value))
-   if(next instanceof HTMLElement)next.click()
+   if(disclosure){
+    const next=[...layer.querySelectorAll('details')].find(el=>detailId?el.id===detailId:Object.entries(detailData).every(([key,value])=>el.dataset[key]===value))
+    if(next)next.open=true
+   }else{
+    const next=[...layer.querySelectorAll('[data-action],.wb-artifact[data-artifact-id]')].find(el=>el instanceof HTMLElement&&Object.entries(data).every(([key,value])=>el.dataset[key]===value))
+    if(next instanceof HTMLElement)next.click()
+   }
   })
  }
  dock.addEventListener('click',heavy,true)
  const resize=()=>{if(current&&!wide())void unfold()}
  const keys=(/** @type {KeyboardEvent} */event)=>{
   if(!event.metaKey||event.altKey||event.ctrlKey)return
-  const target=event.key==='1'?doc.getElementById('converse-input'):event.key==='2'&&current?dock.querySelector('textarea'):null
+  const target=event.key==='1'?doc.getElementById('converse-input'):event.key==='2'&&current?dock.querySelector(terminalMode?'[data-terminal-input]':'#wb-followup-text'):null
   if(target instanceof HTMLElement){event.preventDefault();target.focus()}
  }
  back.onclick=close;expand.onclick=()=>void unfold();view?.addEventListener('resize',resize);doc.addEventListener('keydown',keys)

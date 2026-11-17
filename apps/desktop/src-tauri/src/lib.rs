@@ -1256,7 +1256,7 @@ fn daemon_request_channel(method: &str, path: &str) -> Result<DaemonChannel, Str
 async fn daemon_request(method: String, path: String, body: Option<String>, if_none_match: Option<String>) -> Result<String, String> {
     match daemon_request_channel(&method, &path)? {
         DaemonChannel::Workbench => {
-            let etag = if method == "GET" && path == "/v1/roster" { if_none_match } else { None };
+            let etag = if method == "GET" { if_none_match } else { None };
             workbench_call_conditional(method, path, body, etag).await
         },
         DaemonChannel::OwnerWorkspace => owner_workspace_call(method, path, body).await,

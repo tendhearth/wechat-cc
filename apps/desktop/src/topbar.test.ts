@@ -33,3 +33,9 @@ describe('desktop topbar', () => {
     expect(ids.filter((id,i)=>ids.indexOf(id)!==i)).toEqual([])
   })
 })
+it('晚加载的样式仍把主内容留在页头下方左列',()=>{
+ const life=readFileSync(new URL('./cc-life.css',import.meta.url),'utf8')
+ const rule=life.match(/\.dashboard \.dash-main\s*\{([^}]+)\}/)?.[1]
+ expect(rule).toMatch(/grid-column:\s*1(?:;|\s)/)
+ expect(rule).toMatch(/grid-row:\s*2(?:;|\s)/)
+})

@@ -102,3 +102,73 @@ it('看成果等重工具先展开，再交还原有处理器',async()=>{
  expect(handled).toHaveBeenCalledTimes(1)
  expect(dock!.current()).toBeNull()
 })
+it('⌘2 只聚焦任务补充框，问题答案与权限理由不进入直通草稿',async()=>{
+ const {layer}=setup()
+ layer.innerHTML='<textarea id="permission-reason">拒绝理由</textarea><textarea id="wb-followup-text">任务草稿</textarea>'
+ await dock!.open({kind:'matter',id:'old'})
+ document.dispatchEvent(new KeyboardEvent('keydown',{key:'2',metaKey:true,bubbles:true}))
+ expect(document.activeElement?.id).toBe('wb-followup-text')
+ dock!.close()
+ ;(document.getElementById('wb-followup-text') as HTMLTextAreaElement).value='全屏改过的新草稿'
+ await dock!.open({kind:'matter',id:'old'})
+ expect((document.getElementById('wb-followup-text') as HTMLTextAreaElement).value).toBe('全屏改过的新草稿')
+ expect((document.getElementById('permission-reason') as HTMLTextAreaElement).value).toBe('拒绝理由')
+})
+it('终端事项也按事保留直通草稿，⌘2 聚焦终端说话框',async()=>{
+ vi.useFakeTimers()
+ setup(async(_method:string,path:string)=>path.startsWith('/v1/matter?')?{matter:{id:'old',kind:'terminal',title:'终端事'},bindings:[{surface:'cli',surfaceKey:'session'}]}:path.includes('/sessions')?{sessions:[{session_id:'session',source:'codex',displayName:'Codex',status:'idle'}]}:{items:[]})
+ await dock!.open({kind:'matter',id:'old'})
+ let input=document.querySelector('[data-terminal-input]') as HTMLTextAreaElement
+ input.value='终端草稿';dock!.close();await dock!.open({kind:'matter',id:'old'})
+ input=document.querySelector('[data-terminal-input]') as HTMLTextAreaElement
+ expect(input.value).toBe('终端草稿');expect(input.placeholder).toBe('对 Codex 说…')
+ document.dispatchEvent(new KeyboardEvent('keydown',{key:'2',metaKey:true,bubbles:true}))
+ expect(document.activeElement).toBe(input)
+})
+it('终端宽变窄后全屏详情继承草稿，全屏新草稿又能带回停靠',async()=>{
+ const {openConversationTerminal}=await import('./conversation-work-detail.js')
+ let wide=true
+ const call=async(_method:string,path:string)=>path.includes('/sessions')?{sessions:[{session_id:'resize-session',source:'codex',status:'idle'}]}:{items:[]}
+ const {aside,layer}=setup(call,()=>wide)
+ dock!.destroy()
+ dock=createRosterDock({aside,layer,call,wide:()=>wide,openTask:async()=>{},onExpand:item=>openConversationTerminal(call,item.id)})
+ await dock.open({kind:'terminal',id:'resize-session'})
+ ;(document.querySelector('[data-terminal-input]') as HTMLTextAreaElement).value='终端未发送草稿'
+ wide=false;window.dispatchEvent(new Event('resize'))
+ for(let i=0;i<12;i++)await Promise.resolve()
+ const full=document.querySelector('dialog [data-terminal-input]') as HTMLTextAreaElement
+ expect(full.value).toBe('终端未发送草稿')
+ full.value='全屏改过的终端草稿';document.querySelector('dialog')!.dispatchEvent(new Event('close'))
+ wide=true;await dock.open({kind:'terminal',id:'resize-session'})
+ expect((document.querySelector('[data-terminal-input]') as HTMLTextAreaElement).value).toBe('全屏改过的终端草稿')
+})
+it.each(['summary','artifact'])('真实 %s 入口也先展开，改动不在400px栏展开',async kind=>{
+ const {layer,expand}=setup()
+ layer.innerHTML=kind==='summary'?'<details id="wb-review"><summary>改动</summary><p>diff</p></details>':'<button class="wb-artifact" data-artifact-id="real">成果</button>'
+ const action=layer.querySelector(kind==='summary'?'summary':'button')!
+ const clicked=vi.fn();if(kind==='artifact')action.addEventListener('click',clicked)
+ await dock!.open({kind:'matter',id:'old'});(action as HTMLElement).click()
+ for(let i=0;i<8;i++)await Promise.resolve()
+ expect(expand).toHaveBeenCalledWith({kind:'matter',id:'old'})
+ if(kind==='summary')expect(layer.querySelector('details')?.open).toBe(true)
+ else expect(clicked).toHaveBeenCalledTimes(1)
+})
+it('旧终端首轮请求迟到后销毁，不能覆盖新全屏窗口的草稿',async()=>{
+ const {openConversationTerminal}=await import('./conversation-work-detail.js')
+ let wide=true,activity=0,release:any
+ const call=async(_method:string,path:string)=>path.includes('/sessions')?{sessions:[{session_id:'late-session',source:'codex',status:'idle'}]}:path.includes('/activity')&&++activity===1?await new Promise(r=>{release=r}):{items:[]}
+ const {aside,layer}=setup(call,()=>wide);dock!.destroy()
+ dock=createRosterDock({aside,layer,call,wide:()=>wide,openTask:async()=>{},onExpand:item=>openConversationTerminal(call,item.id)})
+ const opening=dock.open({kind:'terminal',id:'late-session'})
+ for(let i=0;i<8;i++)await Promise.resolve()
+ const old=document.querySelector('[data-terminal-input]') as HTMLTextAreaElement
+ old.value='A';old.dispatchEvent(new Event('input',{bubbles:true}))
+ wide=false;window.dispatchEvent(new Event('resize'))
+ for(let i=0;i<12;i++)await Promise.resolve()
+ const full=document.querySelector('dialog [data-terminal-input]') as HTMLTextAreaElement
+ expect(full.value).toBe('A');full.value='B';full.dispatchEvent(new Event('input',{bubbles:true}))
+ document.querySelector('dialog')!.dispatchEvent(new Event('close'))
+ release({items:[]});await opening
+ wide=true;await dock.open({kind:'terminal',id:'late-session'})
+ expect((document.querySelector('[data-terminal-input]') as HTMLTextAreaElement).value).toBe('B')
+})
