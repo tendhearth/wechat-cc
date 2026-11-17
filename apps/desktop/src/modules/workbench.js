@@ -36,6 +36,7 @@ import {captureTimelineReading,restoreTimelineReading} from './workbench-reading
 import { saveFile } from './save-file.js'
 import { armConfirm, showToast } from '../view.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
+import { replyAvatarHtml, loadReplyAgentNames, updateReplyAvatarNames } from './reply-avatar.js'
 import { V1, v1, v1Request } from '../daemon-client.js'
 import { readPermissionScript, presentPermissionScript } from './permission-script.js'
 
@@ -82,7 +83,7 @@ function forkHtml(task, providers) {
 }
 /** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,agents?:string[],origin?:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{base?:string,baseSha?:string,branch:string,projectPath:string,removed:boolean,merged?:boolean,port?:number,scripts?:import('./workbench-scripts-approve.js').ScriptsView},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null,until?:{command:string,maxRounds:number,rounds:number,status:'active'|'passed'|'exhausted'|'stopped',lastExit:number|null,stopReason:string|null}}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
-/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,turnId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
+/** @typedef {import('./reply-avatar.js').ReplyAttribution & {id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,turnId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number,canAllowTask?:boolean,canDenyWithReason?:boolean,scripts?:Array<{path:string,content:string,error?:string,sha256?:string,truncated?:boolean,expanded?:boolean}>}} Permission */
 /** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null,refusal?:{code:string,since:string}|null}} Provider */
@@ -109,7 +110,7 @@ function providerLabel(p) {
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],agentNames?:Record<string,string>,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {import('./workbench-artifact-preview.js').ArtifactPreview|null} Preview */
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string,asLesson?:boolean}} ReviewReturnOpen */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],agentNames?:Record<string,string>,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,listStatus?:string,listProject?:string,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsLoaded?:boolean,reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,reviewReturnResult?:import('./workbench-review-panel.js').ReviewReturnResult|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],agentNames?:Record<string,string>,replyAgentNames?:Record<string,string>,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,listStatus?:string,listProject?:string,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsLoaded?:boolean,reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,reviewReturnResult?:import('./workbench-review-panel.js').ReviewReturnResult|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onMatterViewed?:(task:Task)=>void,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
 /** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
@@ -307,7 +308,7 @@ function renderTask(task, nameOf, selectedId, projectName) {
   </button>`
 }
 
-/** @typedef {{detail:Detail|null,helper:string,handoffs:Handoff[],actionable:boolean,lastReply:WorkbenchEvent|undefined,otherProvider:Provider|undefined,origin:Handoff|undefined}} MessageContext */
+/** @typedef {{detail:Detail|null,helper:string,replyAgentNames:Record<string,string>,handoffs:Handoff[],actionable:boolean,lastReply:WorkbenchEvent|undefined,otherProvider:Provider|undefined,origin:Handoff|undefined}} MessageContext */
 
 /** 一条消息渲染要用到的上下文。整页重画和逐条增量补丁都从同一个 state 推出来,
  * 两条路才不会长歪。 @param {WorkbenchState} state @returns {MessageContext} */
@@ -317,6 +318,7 @@ export function workbenchMessageContext(state) {
   const events = detail?.events ?? []
   return {
     detail,
+    replyAgentNames: state.replyAgentNames ?? {},
     helper: (detail ? providerNameOf(state)(detail.task.providerId) || detail.task.providerId : '') || '执行助手',
     handoffs,
     origin: handoffs.find(h => h.purpose === 'review' && h.targetTaskId === detail?.task.id),
@@ -327,13 +329,15 @@ export function workbenchMessageContext(state) {
 }
 
 /** @param {MessageContext} context @returns {(event:WorkbenchEvent)=>string} */
-export function renderMessageFor({ detail, helper, handoffs, actionable, lastReply, otherProvider, origin }) {
+export function renderMessageFor({ detail, helper, replyAgentNames, handoffs, actionable, lastReply, otherProvider, origin }) {
   return event => {
     const handoff=handoffs.find(h=>h.requestEventId===Number(event.id))
     const text=handoff?.request??event.text
     const body=event.kind==='user'?renderWorkbenchUserText(text,`task:${event.taskId}:${event.id}`):event.kind==='text'?renderWorkbenchMarkdown(text):escapeWorkbenchHtml(text)
+    const avatar = event.kind === 'text' ? replyAvatarHtml(event,replyAgentNames) : ''
+    const author = event.kind === 'user' ? '你' : avatar || `<span class="wb-provider-badge">${escapeWorkbenchHtml(event.speaker === 'cc' ? 'CC' : event.speaker === 'notice' ? '通知' : helper)}</span>`
     return `<article class="wb-message" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escapeWorkbenchHtml(event.kind)}">
-    <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml((event.sourceId?'原会话记录':time(event.createdAt)))}</time></header>
+    <header><span>${author}</span><time>${escapeWorkbenchHtml((event.sourceId?'原会话记录':time(event.createdAt)))}</time></header>
     <div class="wb-message-body${event.kind==='text'?' cc-readable-markdown wb-markdown':''}">${body}${handoff?`<button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoff.id)}">查看随附的交接内容</button>`:''}</div>
     ${renderMessageAttachments(detail?.task.id??'',event.attachments)}
     ${event.kind==='text'&&detail?renderImageArtifacts(detail.task.id,(detail.artifacts??[]).filter(a=>detail.events.filter(message=>message.kind==='text'&&message.createdAt<=a.createdAt).at(-1)?.id===event.id)):''}
@@ -522,7 +526,8 @@ export function createWorkbenchController(deps) {
   // closeInMs 抹平成 0 只是为了去掉「每次都不一样的数字」——但 null(没有计时器)与非 null
   // (已武装)是两种不同的状态,抹平不能把它们并成同一个键,否则「没计时」→「已武装」这个真转变
   // 会被去重吞掉(终审 M1)。用 0 只代表「已武装、数字不重要」,null 保留 null。
-  const paintKey = () => JSON.stringify({ ...state, reviews: undefined, tasks: (state.tasks ?? []).map(task => ({ ...task, updatedAt: 0, ...(task.waitingFor ? { waitingFor: { ...task.waitingFor, closeInMs: task.waitingFor.closeInMs == null ? null : 0 } } : {}) })) })
+  // 回复名称已原位更新标签，不让下一次轮询为同一批名称替换正文。
+  const paintKey = () => JSON.stringify({ ...state, replyAgentNames: undefined, reviews: undefined, tasks: (state.tasks ?? []).map(task => ({ ...task, updatedAt: 0, ...(task.waitingFor ? { waitingFor: { ...task.waitingFor, closeInMs: task.waitingFor.closeInMs == null ? null : 0 } } : {}) })) })
   const paint = (force = false) => {
     const snapshot = paintKey()
     if (!force && snapshot === lastPaint) return
@@ -1039,6 +1044,11 @@ export function initWorkbenchPage(deps) {
     else if (focusedPreviewAction && sameScope) /** @type {HTMLElement|null} */ (root.querySelector(`.wb-artifact-panel [data-action="${focusedPreviewAction}"]`))?.focus({preventScroll:true})
     else if (nextFocus) { nextFocus.focus({ preventScroll: true }); if (focused && focused.start !== null && focused.end !== null && 'setSelectionRange' in nextFocus) nextFocus.setSelectionRange(focused.start, focused.end) }
   } })
+  void loadReplyAgentNames(deps.invokeWorkbenchApi).then(names => {
+    if (!alive) return
+    controller.state.replyAgentNames = names
+    updateReplyAvatarNames(root,names)
+  })
   /** @param {unknown} error */
   const recoveryCode = (/** @type {unknown} */ error) => String(error).match(/\brestart_confirmation_(required|stale)\b/)?.[1]
   /** @param {unknown} error */
