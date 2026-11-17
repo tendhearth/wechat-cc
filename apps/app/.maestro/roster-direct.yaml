@@ -1,0 +1,45 @@
+# Offline demo only. Authored here; run by the integrator on the dedicated mini.
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: roster-strip
+    timeout: 10000
+- tapOn:
+    id: roster-avatar-1
+- extendedWaitUntil:
+    visible:
+      id: direct-title
+    timeout: 10000
+- assertVisible: '在跟 Codex 说.*|Talking to Codex.*'
+- tapOn:
+    id: direct-input
+- inputText: 'Please keep the existing draft and continue.'
+- tapOn:
+    id: direct-send
+- hideKeyboard
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: roster-strip
+    timeout: 10000
+# Push deep link from a terminated app must seed CC beneath the direct page.
+- stopApp
+- openLink: 'tendhearth://push-open?kind=task_done&taskId=e5f6a7b8'
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: direct-header
+    timeout: 15000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: roster-strip
+    timeout: 10000
+- assertVisible:
+    id: chat-input
