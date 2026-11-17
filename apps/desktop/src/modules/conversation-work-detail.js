@@ -56,7 +56,12 @@ export async function showWorkDetail(call,detail,mount){
   const send=document.createElement('button');send.type='button';send.textContent='发送';send.disabled=true
   const stop=document.createElement('button');stop.type='button';stop.textContent='停止这一轮';stop.hidden=true
   const avatar=document.createElement('span');avatar.className='terminal-input-avatar'
-  body.append(avatar,input,send,stop)
+  if(mount){
+    const composer=document.createElement('div');composer.className='terminal-compose';composer.append(avatar,input,send)
+    const heading=document.createElement('header');heading.className='terminal-direct-heading';heading.append(title,stop)
+    dialog.prepend(heading);dialog.append(composer)
+    send.ariaLabel='发送';send.textContent='↑'
+  }else body.append(avatar,input,send,stop)
   /** @type {any} */ let session=null
   const refresh=async()=>{
     if(busy||!alive)return;busy=true

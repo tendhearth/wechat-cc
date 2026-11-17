@@ -237,3 +237,11 @@
 #roster-dock .wb-controls-inner { box-sizing:border-box; }
 
 #dash-global-rail .cc-home-details { right:auto; }
+
+#roster-dock .terminal-compose { display:flex; align-items:center; gap:8px; margin-top:auto; padding:10px; border:1px solid var(--th-hair); border-radius:var(--th-radius-bubble); }
+#roster-dock .terminal-compose:focus-within { border-color:var(--th-accent); }
+#roster-dock .terminal-compose textarea { flex:1; min-width:0; height:32px; border:0; outline:none; resize:none; }
+#roster-dock .terminal-compose .th-agents { --th-agent-size:24px; }
+#roster-dock .terminal-compose button { width:32px; height:32px; border:0; border-radius:50%; background:var(--th-accent); color:var(--th-paper); }
+#roster-dock .terminal-direct-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+#roster-dock .terminal-direct-heading h2 { font-size:var(--th-size-item); font-weight:400; }
