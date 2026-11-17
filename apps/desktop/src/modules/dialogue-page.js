@@ -130,18 +130,18 @@ function renderSkeleton(root) {
         </button>
       </div>
     </section>
-    <div class="privacy-dialog" id="privacy-dialog" hidden>
+    <dialog class="privacy-dialog" id="privacy-dialog" aria-labelledby="privacy-title">
       <form class="privacy-card">
         <button class="privacy-close" type="button" aria-label="关闭">${icon("cancel-01", { size: 18 })}</button>
         <span class="privacy-lock-mark">${icon("square-lock-01", { size: 20 })}</span>
-        <h2>解锁私密内容</h2>
+        <h2 id="privacy-title">解锁私密内容</h2>
         <p>部分话题包含较私人的内容，输入密码后才能查看。</p>
         <label for="privacy-password">密码</label>
         <input id="privacy-password" type="password" autocomplete="current-password" placeholder="请输入密码" />
         <span class="privacy-error" hidden>密码不正确，请重新输入</span>
         <button class="privacy-submit" type="submit">解锁私密话题</button>
       </form>
-    </div>
+    </dialog>
   `
 }
 
@@ -619,17 +619,18 @@ async function openThreadDetail(deps, threadId) {
 
 function openPrivacyDialog() {
   const modal = document.getElementById("privacy-dialog")
-  if (!modal) return
-  modal.hidden = false
+  if (!(modal instanceof HTMLDialogElement) || modal.open) return
   const input = /** @type {HTMLInputElement|null} */ (document.getElementById("privacy-password"))
-  if (input) { input.value = ""; setTimeout(() => input.focus(), 0) }
+  if (input) input.value = ""
   const err = modal.querySelector(".privacy-error")
   if (err instanceof HTMLElement) err.hidden = true
+  modal.showModal()
+  input?.focus()
 }
 
 function closePrivacyDialog() {
   const modal = document.getElementById("privacy-dialog")
-  if (modal) modal.hidden = true
+  if (modal instanceof HTMLDialogElement) modal.close()
 }
 
 /**

@@ -37,13 +37,14 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
   // 问候随钟点变:挂载、presence 每一拍、切 home/chat 都重算(textContent 同值不动 DOM)。
   const greet = () => { const g = greetingFor(now().getHours()); const el = $('now-greeting'); if (el && el.textContent !== g) el.textContent = g }
   greet()
-  const hero = mountNowHero({ root, button: $('now-cc') })
+  const cc = /** @type {HTMLElement} */ (document.getElementById('topbar-cc') ?? $('now-cc'))
+  const hero = mountNowHero({ root: cc, button: cc })
   const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p); hero.setPresence(p); greet() })
   /** @param {'home'|'chat'} m */
   function setMode(m) { if (root.dataset.conversation === 'single') m = 'chat'; root.dataset.now = m; if ($('now-back')) $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
   const toChat = () => setMode('chat')
   $('now-cc-bubble')?.addEventListener('click', toChat)
-  $('now-cc').addEventListener('click', toChat)
+  cc.addEventListener('click', toChat)
   $('now-back')?.addEventListener('click', () => setMode('home'))
   const list = $('now-waiting-list')
   // 在做 / 带回来的(home-list.js 算好的行):一件事的行整行打开它;终端会话只看不点。
@@ -59,7 +60,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
   /** @type {import('./terminal-waiting.js').TerminalRow[]} */ let terminal = []
   // 按下去之后到下一拍列表把它收走之前,别让 3 秒一次的重绘把「看清楚」又放出来(hash → 行上那句话;'' = 正在送)。
   /** @type {Map<string,string>} */ const decided = new Map()
-  list.addEventListener('click', e => {
+  list?.addEventListener('click', e => {
     const target = /** @type {HTMLElement} */ (e.target)
     const term = /** @type {HTMLElement|null} */ (target.closest('.now-terminal-row[data-hash]'))
     if (term) { openDecide(/** @type {string} */ (term.dataset.hash)); return }
@@ -162,6 +163,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     const rows = waitingRows(attention)
     const head = waitingHeader(attention, terminal.length)
     const box = $('now-waiting')
+    if (!box || !list) return
     box.hidden = head.hidden
     box.setAttribute('aria-labelledby', 'now-waiting-title')
     if (attention?.stale) box.dataset.state = head.unknown ? 'unknown' : 'partial'; else delete box.dataset.state
@@ -233,6 +235,8 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
       b.setAttribute('aria-label', `CC 最近说的话：${preview.text}，点开${preview.shortened ? '查看完整回复' : '进对话'}`)
       time.textContent = line.at === null ? '' : when(line.at, now())
     },
+    /** @param {Array<{key:string,group:string}>} items */
+    setRoster(items) { hero.setRoster(items) },
     /** @param {any} state */
     setAttention(state) { attention = state; hero.setAttention(state); renderWaiting() },
     /** @param {import('./converse.js').ConverseMsg[]} msgs */

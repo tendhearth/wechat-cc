@@ -130,11 +130,13 @@
 .converse-search-text { white-space:pre-wrap; overflow-wrap:anywhere; }
 .converse-search-text mark { background:var(--th-hair); color:inherit; border-radius:2px; padding:0 1px; }
 
-.converse-matter { padding:var(--th-content-reference-padding); border:var(--th-content-reference-border-width) solid var(--th-hair); border-radius:var(--th-content-reference-radius); min-width:min(320px,60vw); }
-.converse-matter summary { cursor:pointer; display:flex; gap:var(--th-space-l); justify-content:space-between; }
-.converse-matter [data-matter-state] { color:var(--th-ink-soft); font-size:var(--th-size-small); }
-.converse-matter button { display:block; margin-top:var(--th-space-m); background:transparent; color:var(--th-ink); border:1px solid var(--th-hair); border-radius:var(--th-radius-control); padding:8px 12px; font:inherit; cursor:pointer; }
-.converse-matter small, [data-matter-progress] { display:block; color:var(--th-ink-soft); font-size:var(--th-size-small); margin-top:var(--th-space-s); }
+.converse-matter { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-bubble); color: var(--th-ink); text-decoration: none; font-size: var(--th-size-bubble); min-width: 0; max-width: 100%; }
+.converse-matter-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.converse-matter [data-matter-state] { color: var(--th-ink-soft); font-size: var(--th-size-small); white-space: nowrap; }
+.converse-matter [data-matter-avatar] { flex-shrink: 0; }
+.converse-matter .th-agent { width: 24px; height: 24px; border: 1px solid var(--th-hair); border-radius: 50%; }
+.converse-matter[data-docked="true"] { border-color: var(--th-ink); }
+
 
 .conversation-tools { display:flex; gap:var(--th-space-m); align-items:center; flex:none; }
 .conversation-tools details { position:relative; }
@@ -164,8 +166,10 @@
 .conversation-migration { margin:0; color:var(--th-ink-soft); font-size:var(--th-size-small); }
 .conversation-migration button { border:0; background:transparent; color:var(--th-ink); font:inherit; padding:4px 8px; cursor:pointer; }
 /* Keep layer controls below the native title-bar drag strip. */
-.dashboard .workbench-pane { top:48px; height:auto; min-height:0; max-height:calc(100dvh - 64px); box-sizing:border-box; }
-@media(max-width:760px) { .dashboard .workbench-pane { top:44px; max-height:calc(100dvh - 44px); } }
+/* 全屏事项层从全局页头下沿开始:页头永远在上面(z-index 110),层不能钻到它底下(mini 验收 11-17:返回键被页头挡住)。
+   --topbar-bottom 由 main.js 按页头实际下沿写(演示横幅、窗口变化都跟着);缺省 72px。 */
+.dashboard .workbench-pane { top:calc(var(--topbar-bottom, 72px) + 8px); height:auto; min-height:0; max-height:calc(100dvh - var(--topbar-bottom, 72px) - 16px); box-sizing:border-box; }
+@media(max-width:760px) { .dashboard .workbench-pane { top:var(--topbar-bottom, 72px); max-height:calc(100dvh - var(--topbar-bottom, 72px)); } }
 
 .cc-now-pane[data-conversation="single"] #now-waiting-list > li:not(.now-terminal) { display:none; }
 .cc-now-pane[data-conversation="single"] #now-waiting-list { max-height:34vh; overflow:auto; }
@@ -180,3 +184,67 @@
 .conversation-tools summary { list-style:none; }
 .conversation-tools summary::-webkit-details-marker { display:none; }
 .conversation-tools summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:3px; }
+
+/* Dock geometry must override the full-screen matter layer in this sheet. */
+.dashboard #roster-dock > .workbench-pane { position:relative; inset:auto; width:100%; height:auto; min-height:0; max-height:none; margin:0; border:0; border-radius:0; box-shadow:none; z-index:auto; flex:1; }
+.dashboard #roster-dock > .workbench-pane > .cc-life-topline { display:none!important; }
+#dash-global-rail { position:relative; z-index:110; }
+@media(max-width:1079px) {
+  #roster-aside { grid-area:auto; width:360px; box-sizing:border-box; }
+  .dash-window:has(#roster-aside[data-open])::after { content:''; position:absolute; inset:72px 0 0; background:color-mix(in srgb,var(--th-ink) 8%,transparent); z-index:59; }
+}
+#roster-dock .wb-followup { display:flex; align-items:center; gap:8px; padding:10px; border:1px solid var(--th-hair); border-radius:var(--th-radius-bubble); }
+#roster-dock .wb-followup:focus-within { border-color:var(--th-accent); }
+#roster-dock .wb-followup textarea { flex:1; min-width:0; height:32px; min-height:0; padding:4px; resize:none; border:0; outline:none; }
+#roster-dock .wb-followup .th-agent { width:24px; height:24px; }
+#roster-dock .wb-followup .wb-control-actions { display:contents; }
+#roster-dock .wb-followup .wb-input-help, #roster-dock .wb-followup .wb-control-actions > small, #roster-dock .wb-followup [data-action="cancel"] { display:none; }
+#roster-dock .wb-followup button[type="submit"] { flex:none; width:32px; height:32px; padding:0; border-radius:50%; background:var(--th-accent); color:var(--th-paper); font-size:0; }
+#roster-dock .wb-followup button[type="submit"]::after { content:'↑'; font-size:var(--th-size-item); }
+#roster-dock .wb-followup button[type="submit"] > * { display:none; }
+#roster-dock .wb-compose-attachments { display:contents; }
+#roster-dock .wb-attachment-chips:empty { display:none; }
+#roster-dock .wb-attach-button { font-size:0; padding:0; border:0; }
+#roster-dock .wb-attach-button::after { content:'＋'; font-size:var(--th-size-item); }
+#roster-dock .wb-task-head { display:none; }
+.roster-direct-heading { display:flex; align-items:center; gap:10px; min-width:0; padding:12px 16px; }
+.roster-direct-heading .th-agent { width:36px; height:36px; border:1px solid var(--th-ink); border-radius:50%; }
+.roster-direct-heading h2 { margin:0; font-size:var(--th-size-title); font-weight:400; }
+.roster-direct-heading small { color:var(--th-ink-soft); font-size:var(--th-size-small); }
+.roster-direct-tools { margin-left:auto; position:relative; }
+.roster-direct-tools > div { position:absolute; right:0; z-index:2; min-width:120px; background:var(--th-paper); border:1px solid var(--th-hair); padding:12px; display:grid; gap:12px; }
+.roster-relay { padding:0 16px 12px; color:var(--th-ink-soft); font-size:var(--th-size-small); }
+#converse-search-open { display:none; }
+.converse-compose .conversation-add { position:relative; align-self:center; }
+.converse-compose .conversation-add > button { display:none; }
+.converse-compose .conversation-add[open] > button { display:block; }
+.converse-compose .conversation-add summary { list-style:none; cursor:pointer; }
+
+.roster-direct-heading, .roster-relay { display:none; }
+#roster-dock .roster-direct-heading { display:flex; }
+#roster-dock .roster-relay { display:block; }
+#roster-dock .roster-direct-heading h2 { font-size:var(--th-size-item); }
+#dash-global-rail .cc-home-details { position:relative; margin:0; }
+#dash-global-rail .cc-home-details > summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:6px; }
+#dash-global-rail .cc-home-details .now-panel { position:absolute; top:32px; left:0; right:auto; max-width:calc(100vw - 32px); }
+#dash-global-rail .cc-home-details { position:absolute; left:112px; top:42px; }
+#topbar-cc { align-self:flex-start; margin-top:12px; }
+.converse-compose .conversation-tools { margin:0; padding:0; }
+@media(max-width:600px) { #dash-global-rail .cc-home-details { left:84px; } #dash-global-rail #topbar-presence { display:inline; } }
+
+/* Only the focused composer takes the accent outline. */
+#converse-root .converse-compose { border-color:var(--th-hair); }
+#converse-root .converse-compose:focus-within { border-color:var(--th-accent); }
+#roster-dock .wb-followup .th-agents { --th-agent-size:24px; }
+#roster-dock .wb-controls-inner { box-sizing:border-box; }
+
+#dash-global-rail .cc-home-details { right:auto; }
+
+#roster-dock .terminal-compose { display:flex; align-items:center; gap:8px; margin-top:auto; padding:10px; border:1px solid var(--th-hair); border-radius:var(--th-radius-bubble); }
+#roster-dock .terminal-compose:focus-within { border-color:var(--th-accent); }
+#roster-dock .terminal-compose textarea { flex:1; min-width:0; height:32px; border:0; outline:none; resize:none; }
+#roster-dock .terminal-compose .th-agents { --th-agent-size:24px; }
+#roster-dock .terminal-compose button { width:32px; height:32px; border:0; border-radius:50%; background:var(--th-accent); color:var(--th-paper); }
+#roster-dock .terminal-direct-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+#roster-dock .terminal-direct-heading h2 { font-size:var(--th-size-item); font-weight:400; }
+.topbar-more > summary:focus-visible, .roster-direct-tools > summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:3px; }

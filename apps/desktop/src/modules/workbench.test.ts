@@ -381,8 +381,8 @@ describe('workbench rendering', () => {
     const completed=renderTaskControls('completed')
     expect(completed).toContain('data-action="continue"')
     expect(completed).not.toContain('data-action="cancel"')
-    expect(completed).toContain('<label class="wb-sr-only" for="wb-followup-text">继续这个任务</label>')
-    expect(completed).toContain('placeholder="继续这个任务…"')
+    expect(completed).toContain('<label class="wb-sr-only" for="wb-followup-text">对 执行者 说…</label>')
+    expect(completed).toContain('placeholder="对 执行者 说…"')
     for(const status of ['running','queued','cancelling','completed'])expect(renderTaskControls(status)).toContain('rows="2"')
   })
 
@@ -3350,4 +3350,10 @@ describe('工作台「改动」的拉取与重画', () => {
     await vi.waitFor(() => expect(reviewCalls()).toBe(2))
     controller.destroy()
   })
+})
+
+it('直通补充框写当前棒的名字并带头像',async()=>{
+ const {renderTaskControls}=await import('./workbench.js')
+ const html=renderTaskControls('running',undefined,null,undefined,{taskId:'deadbeef',runId:'run',inputMode:'steer',providerId:'codex',providerName:'Codex'})
+ expect(html).toContain('对 Codex 说…');expect(html).toContain('th-agent');expect(html).toContain('data-action="send-input"')
 })

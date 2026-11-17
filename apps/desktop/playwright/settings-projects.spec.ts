@@ -8,7 +8,7 @@
 //   - clicking the star toggles the favorite class
 //   - delete is two-step (arm → confirm) and removes the row
 
-import { test, expect } from './fixtures'
+import { test, expect, clickRevealed } from './fixtures'
 
 async function bootDashboard(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl)
@@ -27,7 +27,7 @@ test('settings drawer lists seeded projects with favorite + delete affordances',
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootDashboard(page, shimUrl)
 
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/, { timeout: 5_000 })
 
   const list = page.locator('#projects-admin-list')
@@ -47,7 +47,7 @@ test('settings drawer delete is two-step and removes the project row', async ({ 
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootDashboard(page, shimUrl)
 
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/, { timeout: 5_000 })
 
   const list = page.locator('#projects-admin-list')

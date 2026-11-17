@@ -1,5 +1,8 @@
 // @ts-check
 /// <reference lib="dom" />
+import { setDockedMatter } from './modules/conversation-matters.js'
+import { createRosterDock } from './modules/roster-dock.js'
+import { mountRosterPane } from './modules/roster-pane.js'
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
 import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
 import { createMainNavigation, createNativeNavigation } from './main-navigation.js'
@@ -46,7 +49,7 @@ import { initConversePage, addConversationMatter, addConversationTerminal, openC
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
-import { mountConversationTopics } from './modules/conversation-topics.js'
+import { mountMemoryTopics } from './modules/conversation-topics.js'
 import { updateConversationMatters, updateConversationAttention } from './modules/conversation-matters.js'
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
@@ -70,7 +73,7 @@ import { homeGroups } from "./modules/home-list.js"
 import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getViewedWorkbenchTaskId } from "./modules/workbench.js"
-import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
+import { isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
 import { createTerminalWaitingPoller } from "./modules/terminal-waiting.js"
 import { installExternalLinks } from "./modules/external-links.js"
@@ -93,8 +96,10 @@ const state = {
   updateProbed: false,
   connectionIntent: /** @type {"disconnected" | null} */ (null),
 }
-/** @type {ReturnType<typeof mountConversationTopics>|null} */
-let conversationTopics=null
+/** @type {ReturnType<typeof mountMemoryTopics>|null} */
+let memoryTopics=null
+/** @type {ReturnType<typeof createRosterDock>|null} */
+let rosterDock=null
 const mainNavigation = createMainNavigation(destination => {
   if (typeof destination === 'string') { switchPane(destination); return }
   switchPane('workbench')
@@ -104,12 +109,6 @@ const mainNavigation = createMainNavigation(destination => {
 
 const dashWindow = /** @type {HTMLElement|null} */ (document.querySelector('.dash-window'))
 const dashRail = /** @type {HTMLElement|null} */ (document.getElementById('dash-global-rail'))
-const workbenchNavToggle = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-toggle'))
-const workbenchNavScrim = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-scrim'))
-const workbenchNavigation = dashWindow && dashRail && workbenchNavToggle && workbenchNavScrim
-  ? createWorkbenchNavigation({ shell: dashWindow, rail: dashRail, toggle: workbenchNavToggle, scrim: workbenchNavScrim, wideQuery: window.matchMedia?.('(min-width: 1180px)') ?? null })
-  : null
-
 // window.__TAURI__ is injected by the Tauri runtime and not part of the
 // standard Window type. Cast to any to access optional Tauri fields.
 const mock = !(/** @type {any} */ (window).__TAURI__?.core?.invoke)
@@ -188,8 +187,9 @@ subscribeConverseActivity(stream => nowPage?.setConversationActivity(stream))
 /** @type {{presence:string}|null} */ let lastPresence = null
 function renderRail() {
   const line = nowStatusLine(lastDaemon, lastPresence)
-  const dot = document.getElementById('dash-rail-dot'); if (dot) dot.className = `dot ${line.cls}`
-  const text = document.getElementById('dash-rail-text'); if (text) text.textContent = line.text
+  const dot = document.getElementById('topbar-presence-dot'); if (dot) dot.className = `dot ${line.cls}`
+  const label = document.getElementById('topbar-presence'); if (label) label.textContent = line.text
+  const cc = document.getElementById('topbar-cc'); if (cc) cc.dataset.cc = lastPresence?.presence === 'down' || !lastPresence ? 'away' : 'here'
 }
 presencePoller.subscribe(p => { lastPresence = p; renderRail() })
 // 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
@@ -316,8 +316,8 @@ const deps = {
   invokeApi,
   invokeWorkbenchApi,
   onMatterViewed: (/** @type {import('./modules/workbench.js').Task} */ task) => { addConversationMatter(task.id,task.title); updateConversationMatters([task]) },
-  onOpenMatter: async (/** @type {string} */ id) => openConversationWork(invokeWorkbenchApi,id,async taskId=>{switchPane('workbench');await openWorkbenchTask(taskId)}),
-  onOpenTerminal:(/** @type {string} */ id)=>openConversationTerminal(invokeWorkbenchApi,id),
+  onOpenMatter: async (/** @type {string} */ id) => { await rosterDock?.open({kind:'matter',id}) },
+  onOpenTerminal:(/** @type {string} */ id)=>rosterDock?.open({kind:'terminal',id}),
   onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
@@ -704,8 +704,9 @@ function switchPane(name) {
   const searchRequested = name === 'all' || name === 'together'
   if(searchRequested)name='workbench'
   const focusConversation = name === "converse" || name === 'chat'
+  if(name==='workbench'&&rosterDock?.current())rosterDock.close()
   document.body.dataset.pane = focusConversation ? "overview" : name
-  if (focusConversation) {conversationTopics?.close();name = "overview"}
+  if (focusConversation) {memoryTopics?.close();name = "overview"}
   // 连接浮层只在原地看一眼:任何一次导航都把它收起。
   document.querySelector(".cc-home-details")?.removeAttribute("open")
   const currentPane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
@@ -721,10 +722,9 @@ function switchPane(name) {
     }
   }
   if (isCurrentWorkbenchPane(name, currentPane)) {
-    workbenchNavigation?.setWorkbenchActive(false)
     return
   }
-  document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
+  document.querySelector(".topbar-more")?.removeAttribute("open")
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
@@ -735,11 +735,11 @@ function switchPane(name) {
   })
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
+    if(htmlEl.closest('#roster-dock'))return
     htmlEl.hidden = htmlEl.dataset.pane !== name && !(name === 'workbench' && htmlEl.dataset.pane === 'overview')
     if (htmlEl.dataset.pane === 'overview') htmlEl.inert = name === 'workbench'
   })
   // The destination must be visible before navigation transfers keyboard focus.
-  workbenchNavigation?.setWorkbenchActive(false)
   // Logs pane gets a 10s auto-refresh tick while active; stop it on
   // pane switch so we don't burn CPU tailing log files no one is reading.
   if (name === "logs") {
@@ -776,7 +776,7 @@ function switchPane(name) {
     initWorkbenchPage(deps)
     const back=document.getElementById('workbench-home')
     if(back){back.textContent=document.querySelector('.conversation-topic-panel:not([hidden])')?'‹ 返回话题':'‹ 返回对话';back.focus()}
-  } else {
+  } else if(!rosterDock?.current()) {
     stopWorkbenchPolling()
   }
   if (name === "sessions") {
@@ -1679,7 +1679,18 @@ function showDevBannerIfShim() {
   banner.hidden = false
 }
 
+/** 全局页头的下沿写进 --topbar-bottom,全屏事项层从这里开始,不被页头盖住返回键。 */
+function trackTopbarBottom() {
+  const bar = document.getElementById('dash-global-rail')
+  if (!bar) return
+  const write = () => document.documentElement.style.setProperty('--topbar-bottom', `${Math.round(bar.getBoundingClientRect().bottom)}px`)
+  write()
+  if (typeof ResizeObserver === 'function') new ResizeObserver(write).observe(bar)
+  window.addEventListener('resize', write)
+}
+
 async function boot() {
+  trackTopbarBottom()
   showDevBannerIfShim()
   mountHugeicons()
   wireDoctorSubscribers()
@@ -1689,35 +1700,39 @@ async function boot() {
   const conversationRoot=document.getElementById('converse-root')
   if(conversationRoot){
     const search=()=>{ switchPane('workbench'); const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane')); if(layer)layer.dataset.workbenchView='search'; document.getElementById('wb-search')?.focus() }
+    document.getElementById('topbar-search')?.addEventListener('click',search)
     mountConversationTools({root:conversationRoot,
       delegate:()=>openConversationDelegation(deps),
       search,
       projects:openConversationProjects,
       history:async()=>{await terminalWaiting.refresh();return openComputerSessions(()=>home.sessions,session=>addConversationTerminal(session),async()=>{try{const list=/** @type {import('./modules/workbench.js').ListResult} */(await v1(invokeWorkbenchApi,V1.workbench.list));mountHistoryDialog(invokeWorkbenchApi,list.historyProviders??[],async id=>{switchPane('workbench');await openWorkbenchTask(id)},list.agentNames??{})}catch{showToast('暂时读不到电脑上的会话，请稍后再试')}})},
       navigate:switchPane})
-    const waiting=document.getElementById('now-waiting')
-    if(waiting){
-      conversationRoot.querySelector('.converse-compose')?.before(waiting)
-      waiting.addEventListener('toggle',()=>{
-        if(!(waiting instanceof HTMLDetailsElement)||!waiting.open||lastAttention?.stale)return
-        const tasks=lastAttention?.tasks??[]
-        for(const task of tasks)addConversationMatter(task.id,/** @type {any} */(task).title??'交办的事')
-        updateConversationMatters(home.tasks??[])
-        const first=tasks[0]
-        if(first)conversationRoot.querySelector(`[data-matter-id="${CSS.escape(first.id)}"]`)?.scrollIntoView({block:'center'})
-        // Terminal permissions keep their original protected card until a terminal detail contract exists.
-        if(!terminalWaitingCount)waiting.open=false
-      })
-    }
-    const topics=mountConversationTopics({root:conversationRoot,call:invokeWorkbenchApi,
-      onTopics:ids=>nowPage?.setTopics(ids),
+    const topics=mountMemoryTopics({root:/** @type {HTMLElement} */(document.getElementById('memory-topics')),call:invokeWorkbenchApi,
       openMatter:id=>deps.onOpenMatter(id),
-      locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),
+      locateMessage:(id,excerpt)=>{switchPane('overview');return locateConversationMessage(deps,id,excerpt)},
       manage:()=>switchPane('memory')})
-    conversationTopics=topics
-    document.getElementById('now-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
+    memoryTopics=topics
+    document.getElementById('topbar-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
     window.addEventListener('pagehide',()=>topics.destroy(),{once:true})
   }
+  const rosterAside=document.getElementById('roster-aside'),matterLayer=document.getElementById('conversation-matter-layer')
+  if(rosterAside&&matterLayer)rosterDock=createRosterDock({aside:rosterAside,layer:matterLayer,call:invokeWorkbenchApi,wide:()=>window.innerWidth>=1080,
+    openTask:async id=>{initWorkbenchPage(deps);await openWorkbenchTask(id)},
+    onClose:()=>stopWorkbenchPolling(),onChange:setDockedMatter,
+    onExpand:async item=>{rosterAside.removeAttribute('data-open');document.getElementById('topbar-roster')?.setAttribute('aria-expanded','false');if(item.kind==='terminal')await openConversationTerminal(invokeWorkbenchApi,item.id);else await openConversationWork(invokeWorkbenchApi,item.id,async id=>{switchPane('workbench');await openWorkbenchTask(id)})}})
+  window.addEventListener('pagehide',()=>rosterDock?.destroy(),{once:true})
+  const rosterRoot = document.getElementById('roster-list')
+  if (rosterRoot) {
+    const roster = mountRosterPane({root:rosterRoot,call:invokeWorkbenchApi,onOpen:item=>item.kind==='terminal'?deps.onOpenTerminal(item.id):deps.onOpenMatter(item.id),onItems:items=>{
+      nowPage?.setRoster(items)
+      const button=document.getElementById('topbar-roster');if(button)button.textContent=`在做 ${items.length}`
+    }})
+    window.addEventListener('pagehide',()=>roster.destroy(),{once:true})
+  }
+  document.getElementById('topbar-roster')?.addEventListener('click',()=>{
+    const aside=document.getElementById('roster-aside'),button=document.getElementById('topbar-roster')
+    const open=aside?.toggleAttribute('data-open');button?.setAttribute('aria-expanded',String(!!open))
+  })
   startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop
   // launch. Keep it off the critical render path: decrypting larger archives

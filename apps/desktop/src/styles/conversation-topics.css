@@ -28,3 +28,8 @@
 .topic-session-copy small,.topic-session-copy time { color:var(--th-ink-soft); font-size:var(--th-size-caption); }
 
 .conversation-topics [data-topic-activity="waiting"] i { width:var(--th-topic-activity-attention-dot-size); height:var(--th-topic-activity-attention-dot-size); }
+
+.memory-topics { position: relative; padding: var(--th-space-xl); }
+.memory-topics > h2 { font-size: var(--th-size-item); font-weight: 400; }
+.memory-topics .conversation-topic-panel { position: relative; inset: auto; width: 100%; border: 0; }
+.memory-topics.has-topic { margin-right: 0; }

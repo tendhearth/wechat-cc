@@ -1,4 +1,4 @@
-import { test, expect, clickNav } from './fixtures'
+import { test, expect, clickNav, clickRevealed } from './fixtures'
 import { secondaryFixtures, owner } from './secondary-fixtures'
 
 test('plugins present readable names, complete descriptions and separate diagnostics from main content', async ({ page, shimUrl, shim }) => {
@@ -164,7 +164,7 @@ for (const width of [1440, 760]) test(`all secondary pages use valid normal cont
   await page.locator('#logs-filter').fill('REPLY')
   await expect(page.locator('#logs-body .logs-row')).toHaveCount(1)
   await shot(page, `logs-filter-${width}`)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
   await shot(page, `settings-${width}`)
   await page.locator('#settings-drawer').evaluate(el => { el.scrollTop = el.scrollHeight })

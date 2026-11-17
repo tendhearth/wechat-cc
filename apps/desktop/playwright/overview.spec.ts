@@ -12,7 +12,7 @@
 // Drives the dashboard via the shim's doctor intercept which produces
 // daemon.alive + accounts based on demo.seed state.
 
-import { test, expect } from './fixtures'
+import { test, expect, clickRevealed } from './fixtures'
 
 // These tests rely on initialMode() routing into dashboard mode based on
 // the doctor mock (accounts + provider + service all present). No manual
@@ -25,7 +25,7 @@ import { test, expect } from './fixtures'
 async function openConnections(page: import('@playwright/test').Page) {
   const drawer = page.locator('#settings-drawer')
   await expect(drawer).not.toHaveClass(/is-open/)
-  await page.locator('#settings-open').click()
+  await clickRevealed(page, '#settings-open')
   await expect(drawer).toHaveClass(/is-open/)
   await expect(drawer.locator('.drawer-connection')).toBeVisible()
 }

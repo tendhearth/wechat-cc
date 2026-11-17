@@ -1253,9 +1253,12 @@ fn daemon_request_channel(method: &str, path: &str) -> Result<DaemonChannel, Str
 }
 
 #[tauri::command]
-async fn daemon_request(method: String, path: String, body: Option<String>) -> Result<String, String> {
+async fn daemon_request(method: String, path: String, body: Option<String>, if_none_match: Option<String>) -> Result<String, String> {
     match daemon_request_channel(&method, &path)? {
-        DaemonChannel::Workbench => workbench_call(method, path, body).await,
+        DaemonChannel::Workbench => {
+            let etag = if method == "GET" { if_none_match } else { None };
+            workbench_call_conditional(method, path, body, etag).await
+        },
         DaemonChannel::OwnerWorkspace => owner_workspace_call(method, path, body).await,
     }
 }
@@ -1391,6 +1394,10 @@ fn validate_workbench_body(method: &str, path: &str, body: Option<&str>) -> Resu
 
 // 工作台那一半(原 workbench_api 命令)。
 async fn workbench_call(method: String, path: String, body: Option<String>) -> Result<String, String> {
+    workbench_call_conditional(method, path, body, None).await
+}
+
+async fn workbench_call_conditional(method: String, path: String, body: Option<String>, etag: Option<String>) -> Result<String, String> {
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -1417,10 +1424,12 @@ async fn workbench_call(method: String, path: String, body: Option<String>) -> R
         let request = if method == "GET" { client.get(url) } else {
             client.post(url).header("Content-Type", "application/json").body(body.unwrap_or_else(|| "{}".into()))
         };
+        let request = if let Some(etag) = etag { request.header("If-None-Match", etag) } else { request };
         request.header("x-cc-desktop-version", env!("CARGO_PKG_VERSION")).bearer_auth(token).send().await
     }).await.map_err(|_| "request timed out".to_string())?
       .map_err(|e| format!("request error: {e}"))?;
     let status = response.status();
+    if status == reqwest::StatusCode::NOT_MODIFIED { return Ok("{\"notModified\":true}".into()); }
     let response_body = response.text().await.map_err(|e| format!("failed to read response body ({status}): {e}"))?;
     if !status.is_success() {
         return Err(workbench_error_message(&response_body, &status.to_string()));

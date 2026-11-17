@@ -14,7 +14,7 @@
 //     have inserted img tags from a string, which under CSP is fine
 //     (img-src governs SOURCES, not insertion method) but the
 //     createElement path is what we want to confirm renders normally.
-import { test, expect } from './fixtures'
+import { test, expect, clickRevealed } from './fixtures'
 
 const CSP_VIOLATION_RE = /(refused|violates|Content[\s-]?Security[\s-]?Policy|CSP)/i
 
@@ -54,15 +54,12 @@ test.describe('CSP-injected shim', () => {
     // allowed the external polyfill load).
     await page.waitForFunction(() => Boolean((window as unknown as { __TAURI__?: unknown }).__TAURI__), { timeout: 5000 })
 
-    // Trigger mode → dashboard so the dashboard rail renders (exercises
-    // .dash-brand img which depends on img-src 'self').
-    await page.evaluate(() => document.documentElement.setAttribute('data-mode', 'dashboard'))
-    await page.waitForSelector('.dash-rail', { state: 'visible', timeout: 5000 })
+    await page.waitForFunction(() => document.documentElement.dataset.mode === 'dashboard')
+    await expect(page.locator('header.dash-topbar')).toBeVisible()
+    await expect(page.locator('#topbar-cc img').first()).toHaveJSProperty('complete', true)
 
-    // Open settings drawer — tests style-src 'self' 'unsafe-inline' under
-    // the transform/opacity inline style toggles that .is-open uses.
-    const settingsBtn = page.locator('#open-settings, [data-action="settings"]').first()
-    if (await settingsBtn.count() > 0) await settingsBtn.click().catch(() => {})
+    await clickRevealed(page, '#settings-open')
+    await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
 
     // Wait a beat for any async style/script work to settle.
     await page.waitForTimeout(400)

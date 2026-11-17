@@ -123,11 +123,13 @@ export async function invokeApi(method, path, body, opts) {
  * @param {'GET' | 'POST'} method
  * @param {string} path
  * @param {Record<string, unknown>} [body]
+ * @param {{ifNoneMatch?:string}} [opts]
  */
-export async function invokeWorkbenchApi(method, path, body) {
+export async function invokeWorkbenchApi(method, path, body, opts) {
   const raw = /** @type {string} */ (await ipcInvoke('daemon_request', {
     method,
     path,
+    ...(opts?.ifNoneMatch && method === "GET" ? { ifNoneMatch: opts.ifNoneMatch } : {}),
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   }, undefined))
   if (typeof raw !== 'string') return raw

@@ -1,5 +1,5 @@
 import type { Locator, Page } from '@playwright/test'
-import { test, expect } from './fixtures'
+import { test, expect, clickRevealed } from './fixtures'
 import { REPORTS } from './reports'
 
 // Offline browser contract only: the native bridge below never opens a terminal.
@@ -64,7 +64,8 @@ async function stubCliSetup(page: Page, qaBlocked = false) {
 async function openChoices(page: Page, shimUrl: string) {
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible()
-  await page.locator('#settings-open').click()
+  await page.locator('.topbar-more summary').click()
+  await clickRevealed(page, '#settings-open')
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
   await page.locator('#accounts-current .provider-switch').click()
   await page.locator('#provider-menu [data-action="connect-ai"]').click()
