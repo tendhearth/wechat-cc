@@ -229,6 +229,7 @@ function openMatter(id) {
   if(mCurrent!==id){mRenderedStatus=null;mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
   if(typeof mSaveDirect==='function')mSaveDirect()
   if(mRosterTarget&&id!==mRosterTarget.id&&id!=='terminal:'+mRosterTarget.id)mRosterTarget=null
+  if(typeof rItems!=='undefined')mRosterTarget=rItems.find(function(i){return i.id===id||'terminal:'+i.id===id})||mRosterTarget
   mCurrent=id;mActive=true
   mDirectMount()
   document.getElementById("m-home").hidden=true;document.getElementById("m-detail").hidden=false
@@ -252,17 +253,18 @@ setInterval(function(){ if (!document.hidden && !mCurrent) loadMatters() }, 1500
 loadMatters()
 
 var mRosterTarget=null,mDirectDrafts=new Map(),mDirectPending=new Map(),mDirectSending=new Set()
-function mSaveDirect(){var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text'));if(input&&mCurrent)mDirectDrafts.set(mCurrent,input.value)}
+function mSaveDirect(){if(!isDevice)return;var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text'));if(input&&mCurrent)mDirectDrafts.set(mCurrent,input.value)}
 function mDirectMount(){
- var old=document.getElementById('m-say');if(old)old.remove();if(!isDevice)return
+ if(!isDevice)return;var old=document.getElementById('m-say');if(old)old.remove()
  var form=document.createElement('form');form.id='m-say';form.innerHTML='<span id="m-say-avatar"></span><label class="sr-only" for="m-say-text">直接说一句</label><textarea id="m-say-text" rows="1" maxlength="6000"></textarea><button type="submit" aria-label="发送">↑</button><small id="m-say-notice" role="status"></small>'
  document.getElementById('m-detail').appendChild(form);/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text')).value=mDirectDrafts.get(mCurrent)||'';form.addEventListener('input',mSaveDirect);form.addEventListener('submit',mDirectSend)
 }
 function mDirectRender(d){
  if(!isDevice)return
+ if(d.matter.kind==='terminal'&&!mRosterTarget&&d.sessions&&d.sessions[0])mRosterTarget={agents:[],terminal:{sessionId:d.sessions[0].sessionId}}
  var item=mRosterTarget,agent=item&&item.agents.find(function(a){return a.current})||item&&item.agents[0],id=agent?agent.id:d.task&&d.task.providerId||(d.matter.agents||[])[0]||'agent',name=agent&&agent.name||mNameOf(d.matter.agentNames)(id),avatar=mAgents.agentAvatarsHtml([id],{nameOf:function(){return name}})
  document.getElementById('m-back').textContent='‹ CC';document.getElementById('m-title').textContent=ccPlain(d.matter.title)
- document.getElementById('m-agents').hidden=false;document.getElementById('m-agents').innerHTML=avatar+'<span>在跟 '+esc(name)+' 说<small>'+esc([item&&item.project,item&&item.relay?'第 '+item.relay.index+' 棒 / '+item.relay.total:''].filter(Boolean).join(' · '))+'</small></span>'
+ document.getElementById('m-agents').hidden=false;document.getElementById('m-agents').setAttribute('aria-label','在跟 '+name+' 说');document.getElementById('m-agents').innerHTML=avatar+'<small>'+(item&&item.project?'<button type="button" id="m-project">'+esc(item.project)+'</button>':'')+esc(item&&item.relay?(item.project?' · ':'')+'第 '+item.relay.index+' 棒 / '+item.relay.total:'')+'</small>';var project=document.getElementById('m-project');if(project)project.addEventListener('click',function(){if(typeof tShowAll!=='function')return;var topic=tRecent.concat(tAll).find(function(t){return t.title===item.project});if(topic)tOpen(topic.id);else{tShowAll();/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value=item.project;tList(true,false)}})
  var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text'));if(input){input.placeholder='对 '+name+' 说…';document.getElementById('m-say-avatar').innerHTML=avatar}
  document.querySelectorAll('.m-elsewhere').forEach(function(el){/** @type {HTMLElement} */ (el).hidden=true});mDirectCheck()
 }
@@ -277,8 +279,8 @@ async function mDirectSend(ev){
  if(mDirectPending.has(id)){mDirectNotice(id,'结果待核对');mDirectCheck();return}
  var terminal=mRosterTarget&&mRosterTarget.terminal,p={text:text,requestId:crypto.randomUUID(),terminal:!!terminal},identity=T;mSaveDirect();mDirectPending.set(id,p);mDirectSending.add(id)
  try{var opts={method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(terminal?{session_id:terminal.sessionId,text:text}:{id:id,text:text,requestId:p.requestId})},r
- if(terminal)r=await /* link-scan: device-only */ mPostOnce('/v1/cli/session-say',opts)
- else r=await /* link-scan: device-only */ mPostOnce('/v1/matter/say',opts)
+ if(terminal)r=await /* link-scan: device-only */ mPostOnce('/v1/cli/session-say',{method:'POST',headers:opts.headers,body:opts.body})
+ else r=await /* link-scan: device-only */ mPostOnce('/v1/matter/say',{method:'POST',headers:opts.headers,body:opts.body})
  var b=await r.json();if(!isDevice||identity!==T)return;if(r.status===401){onUnauthorized(identity);return}if(r.status>=200&&r.status<300&&b.ok)mDirectAccepted(id,p);else mDirectNotice(id,'结果待核对')
  }catch(e){if(isDevice&&identity===T)mDirectNotice(id,'结果待核对')}finally{mDirectSending.delete(id)}
 }

@@ -47,6 +47,7 @@ async function cRead(older) {
     if(identity!==T||!isDevice)return
     if(!b.ok){if(cReady&&(r.status===403||b.error==='no_owner_chat'||b.error==='owner_chat_not_configured')){cClearPrivate();document.getElementById('conversation').hidden=false};cNotice(b.error==='no_owner_chat'?'还没设好主人对话，请在电脑上检查。':'对话暂时读不到，请刷新重试。');return}
     if(b.conversation!=='v1'){cNotice('电脑版本暂不支持网页对话，请在 App 或电脑上继续。');return}
+    if(typeof rStart==='function')rStart()
     if(b.topics==='v1'&&typeof tStart==='function')tStart()
     if(cOwnerMatterId&&cOwnerMatterId!==b.matterId){cClearPrivate();location.reload();return}
     cOwnerMatterId=b.matterId

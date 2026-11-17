@@ -93,10 +93,11 @@ async function tWatch(){
  }catch(e){tNotice('尚未同步')}
  finally{tPolling=false;if(isDevice&&tReady)setTimeout(tWatch,document.hidden?15000:3000)}
 }
-document.getElementById('topic-open').addEventListener('click',function(){if(!isDevice||!tReady)return;tClick({target:{closest:function(){return {dataset:{},hasAttribute:function(k){return k==='data-topic-more'}}}}})})
+function tShowAll(){if(!isDevice||!tReady)return;if(typeof cPushLayer==='function')cPushLayer({kind:'topic'});document.body.classList.add('topic-open');document.getElementById('topic-panel').hidden=false;document.getElementById('topic-all').hidden=false;document.getElementById('topic-body').replaceChildren();tList(true,false)}
+document.getElementById('topic-open').addEventListener('click',tShowAll)
 document.getElementById('topic-list').addEventListener('click',tClick)
 document.getElementById('topic-body').addEventListener('click',tClick)
-function tClick(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('button'));if(!b)return;if(b.dataset.topicEdit||b.dataset.topicWrong){tEdit(b.dataset.topicWrong?'wrong':b.dataset.topicEdit,b.dataset.topicWrong);return}if(b.dataset.topic)tOpen(b.dataset.topic);else if(b.hasAttribute('data-topic-more')){if(typeof cPushLayer==='function')cPushLayer({kind:'topic'});document.body.classList.add('topic-open');document.getElementById('topic-panel').hidden=false;document.getElementById('topic-all').hidden=false;document.getElementById('topic-body').replaceChildren();tList(true,false)}else if(b.dataset.mid){openMatter(b.dataset.mid)}else if(b.dataset.topicSection)tRead(b.dataset.topicSection,b.dataset.cursor);else if(b.dataset.message)cLocateMessage(b.dataset.message,b.dataset.at)}
+function tClick(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('button'));if(!b)return;if(b.dataset.topicEdit||b.dataset.topicWrong){tEdit(b.dataset.topicWrong?'wrong':b.dataset.topicEdit,b.dataset.topicWrong);return}if(b.dataset.topic)tOpen(b.dataset.topic);else if(b.hasAttribute('data-topic-more'))tShowAll();else if(b.dataset.mid){openMatter(b.dataset.mid)}else if(b.dataset.topicSection)tRead(b.dataset.topicSection,b.dataset.cursor);else if(b.dataset.message)cLocateMessage(b.dataset.message,b.dataset.at)}
 document.getElementById('topic-close').addEventListener('click',tClose)
 document.getElementById('topic-retry').addEventListener('click',function(){if(tOpenFailed&&tSelected)tOpen(tSelected);else if(tSelected)tRead();else tList(true,false)})
 document.getElementById('topic-query').addEventListener('input',function(){clearTimeout(tSearchTimer);tSearchTimer=setTimeout(function(){tCursor=null;tList(true,false)},250)})

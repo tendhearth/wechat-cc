@@ -19,4 +19,5 @@ function startRoster(opts){
  document.addEventListener('visibilitychange',visible);poll();return clear
 }
 function rOpen(item){mRosterTarget=item;openMatter(item.kind==='terminal'?'terminal:'+item.id:item.id)}
-if(isDevice)rStop=startRoster({isDevice:true,call:function(etag){return /* link-scan: device-only */ api('/v1/roster',{headers:etag?{'If-None-Match':etag}:{}})},onOpen:rOpen})
+function rStart(){if(!isDevice||rStop)return;rStop=startRoster({isDevice:true,call:function(etag){return /* link-scan: device-only */ api('/v1/roster',{headers:etag?{'If-None-Match':etag}:{}})},onOpen:rOpen})}
+rStart()

@@ -89,3 +89,8 @@ body.conversation-ready #m-agents { --th-agent-size:36px }
 #m-say-notice { width:100%; color:var(--soft) }
 
 body.conversation-ready #m-agents .th-agents { --th-agent-size:36px }
+
+body.conversation-ready #m-heading { position:relative; min-height:40px; padding-left:48px; margin:16px 0 }
+body.conversation-ready #m-title { margin:0 }
+body.conversation-ready #m-agents .th-agents { position:absolute; left:0; top:0 }
+#m-project { padding:0; border:0; background:none; color:var(--soft); font:inherit }

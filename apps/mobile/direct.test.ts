@@ -12,3 +12,10 @@ it('uncertain delivery preserves draft and reconciles by requestId without resen
 it('switching away and returning keeps each matter draft',()=>{const h=fixture();h.input().value='第一件';h.setId('other');h.input().value='第二件';h.setId('abcd1234');expect(h.input().value).toBe('第一件')})
 it('terminal sends only to the terminal session',async()=>{const h=fixture();h.terminal();h.input().value='继续';await h.mDirectSend(event);expect(h.writes).toEqual([{p:'/v1/cli/session-say',body:{session_id:'session',text:'继续'}}])})
 it('link identity has no form or writes',async()=>{const h=fixture(false);expect(h.input()).toBeNull();await h.mDirectSend(event);expect(h.writes).toEqual([])})
+it('popstate closes detail before restoring conversation and saves direct draft',()=>{
+ const h=fixture();h.input().value='返回保留';let current:any='abcd1234',saved=false;const doc=h.w.document
+ doc.getElementById('m-back')!.addEventListener('click',()=>{h.mSaveDirect();saved=true;current=null;(doc.getElementById('m-detail') as unknown as HTMLElement).hidden=true})
+ const env={document:doc,window:h.w,history:h.w.history,isDevice:true,cReady:true,tClose:()=>{},tList:()=>{},tRead:()=>{},openMatter:()=>{},mCurrent:current}
+ new Function(...Object.keys(env),readMobileSource('layers.js'))(...Object.values(env))
+ h.w.dispatchEvent(new h.w.PopStateEvent('popstate',{state:null}));expect(saved).toBe(true);expect((doc.getElementById('m-detail') as unknown as HTMLElement).hidden).toBe(true);h.setId('abcd1234');expect(h.input().value).toBe('返回保留')
+})

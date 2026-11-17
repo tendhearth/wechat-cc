@@ -98,7 +98,7 @@ function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; foc
   const ccPlain = new Function(`${readMobileSource('boot.js').slice(readMobileSource('boot.js').indexOf('function ccPlain'))}\nreturn ccPlain`)()
   const CCP = { STATUS_TABLE, STATUS_WORDS: STATUS_WORDS['zh-Hans'], HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'], QUIET_AFTER_MS, ROW_HINT_WORDS: ROW_HINT_WORDS['zh-Hans'] }
   const routeVersionSource = readMobileSource('transport.js').slice(readMobileSource('transport.js').indexOf('function ccRouteVersion'))
-  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'viaTunnel', 'ccPlain', 'CCP', 'homeCardId', routeVersionSource + '\n' + source + '\nreturn {mApi,mError}')
+  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'viaTunnel', 'ccPlain', 'CCP', 'homeCardId', 'var isDevice=false;\n'+routeVersionSource + '\n' + source + '\nreturn {mApi,mError}')
   const page = boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, v) },
