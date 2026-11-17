@@ -12,7 +12,8 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
  const toolbar=doc.createElement('header');toolbar.className='roster-dock-toolbar'
  const back=doc.createElement('button');back.type='button';back.textContent='‹ 在做'
  const expand=doc.createElement('button');expand.type='button';expand.textContent='展开'
- toolbar.append(back,expand)
+ const terminalTools=doc.createElement('details');const terminalSummary=doc.createElement('summary');terminalSummary.textContent='⋯';expand.textContent='展开全屏';terminalTools.append(terminalSummary,expand)
+ toolbar.append(back,terminalTools)
  /** @type {DockItem|null} */ let current=null
  /** @type {(()=>void)|undefined} */let dispose
  let ticket=0,alive=true,checking=false,terminalMode=false
@@ -38,7 +39,7 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
    if(!alive||generation!==ticket)return
    if(item.kind==='matter'&&detail.matter?.id!==item.id)throw Error('matter_not_found')
    loading.remove()
-   terminalMode=detail.matter.kind!=='task'
+   terminalMode=detail.matter.kind!=='task';terminalTools.hidden=!terminalMode
    if(!terminalMode){
     dock.append(layer);layer.hidden=false;layer.setAttribute('role','region');layer.removeAttribute('aria-modal');setWorkbenchDocked(true)
     await openTask(item.id)

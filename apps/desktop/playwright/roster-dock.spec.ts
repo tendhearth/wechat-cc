@@ -15,13 +15,20 @@ for(const width of [1440,900])test(`名单打开、返回与全局导航 ${width
  await page.setViewportSize({width,height:900});await page.goto(shimUrl)
  await expect(page.locator('#dash-global-rail')).toHaveCSS('height','72px')
  await expect(page.locator('#converse-input')).toBeVisible()
- await showRoster(page);await page.locator('[data-roster-key="matter:deadbeef"]').click()
+ await showRoster(page);
+ if(width<1080){await expect(page.locator('#roster-aside')).toHaveCSS('width','360px');await expect(page.locator('#topbar-roster')).toHaveAttribute('aria-expanded','true')}
+ await page.locator('[data-roster-key="matter:deadbeef"]').click()
  const layer=page.locator('#conversation-matter-layer')
  await expect(layer).toBeVisible();await expect(layer).toContainText('执行者的原话')
  if(width>=1080){
   await expect(page.locator('#roster-dock > #conversation-matter-layer')).toHaveCount(1)
   await expect(page.locator('#converse-input')).toBeVisible();await expect(page.locator('.cc-now-pane')).not.toHaveAttribute('inert')
   await expect(page.locator('#roster-aside')).toHaveCSS('width','400px')
+  await expect(layer).toHaveCSS('position','relative')
+  await expect(layer).toHaveCSS('border-radius','0px')
+  const rail=await page.locator('#dash-global-rail').boundingBox(),box=await layer.boundingBox()
+  expect(box!.y).toBeGreaterThanOrEqual(rail!.y+rail!.height)
+  await expect(page.locator('#roster-dock .roster-direct-heading h2')).toHaveText('备份检查')
   await clickNav(page,'memory');await expect(layer).toBeVisible();await clickNav(page,'overview')
   await page.keyboard.press('Meta+1');await expect(page.locator('#converse-input')).toBeFocused()
   await page.keyboard.press('Meta+2');await expect(page.locator('#wb-followup-text')).toBeFocused()
@@ -30,7 +37,8 @@ for(const width of [1440,900])test(`名单打开、返回与全局导航 ${width
   await expect(page.locator('#roster-list')).toBeVisible()
   await page.locator('[data-roster-key="matter:deadbeef"]').click()
   await page.locator('#wb-followup-text').fill('未发送草稿')
-  await page.locator('#roster-dock').getByRole('button',{name:'展开',exact:true}).click()
+  await page.locator('#roster-dock .roster-direct-tools summary').click()
+  await page.locator('#roster-dock').getByRole('button',{name:'展开全屏',exact:true}).click()
   await expect(page.locator('.dash-main > #conversation-matter-layer')).toBeVisible()
   await expect(page.locator('#wb-followup-text')).toHaveValue('未发送草稿')
  }else{

@@ -235,3 +235,5 @@
 #converse-root .converse-compose:focus-within { border-color:var(--th-accent); }
 #roster-dock .wb-followup .th-agents { --th-agent-size:24px; }
 #roster-dock .wb-controls-inner { box-sizing:border-box; }
+
+#dash-global-rail .cc-home-details { right:auto; }
