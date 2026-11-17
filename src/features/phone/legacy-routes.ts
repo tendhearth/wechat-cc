@@ -73,6 +73,11 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
     return { status: res.status, body: await res.json(), cause: res.headers.get(PANEL_CAUSE_HEADER) }
   }
 
+  const phoneRoster: PhoneHandler<Ctx> = async (_url, req, {caller}) => {
+    if (!deps.v1) return panelJson({error:'unavailable'},503)
+    return deps.v1(new Request(new URL('/v1/roster',req.url),{headers:req.headers,signal:req.signal}),caller,{frameBudget:MAX_MOBILE_DETAIL_BYTES,client:phoneClientOf(req)})
+  }
+
   // ── GET /m/api/matters → GET /v1/matters ──────────────────────────────
   const phoneMatters: PhoneHandler<Ctx> = async (url, req, { caller }) => {
     if (!deps.v1) return panelJson({ ok: false, error: 'matters_not_wired' }, 503)
@@ -470,6 +475,7 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
     // P3d-3 撞名的两条:拍板 → /v1/cli/decide、接着说一句 → /v1/cli/session-say(纯改名)
     'POST /m/api/cli/permission': rename('POST /m/api/cli/permission'),
     'POST /m/api/cli/say': rename('POST /m/api/cli/say'),
+    'GET /m/api/roster': phoneRoster,
     'GET /m/api/matters': phoneMatters,
     'GET /m/api/matter': phoneMatter,
     'POST /m/api/matter/say': phoneMatterSay,

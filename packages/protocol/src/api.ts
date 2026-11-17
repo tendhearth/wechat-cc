@@ -1,3 +1,4 @@
+import { RosterResponse } from './roster'
 import { OptionalReplyMetadata } from './reply-attribution'
 import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
 import { CHECKUP_RESPONSES } from './checkup'
@@ -678,6 +679,7 @@ const PHONE_API = {
   'POST /m/api/memory/restore': z.union([MemoryRestoreSuccess, PhoneErrorResponse]),
   'GET /m/api/home': z.union([HomeSuccess, PhoneErrorResponse]),
   'POST /m/api/seen': z.union([z.object({ ok: z.literal(true), seen_until: z.string() }), PhoneErrorResponse]),
+  'GET /m/api/roster': RosterResponse,
   'GET /m/api/matters': z.union([z.object({ ok: z.literal(true), matters: z.array(Matter) }), PhoneErrorResponse]),
   'GET /m/api/matter/insight': z.union([
     z.object({ ok: z.literal(true), explanations: z.record(z.string(), ApprovalExplanation), progress: ProgressSummary.nullable() }),

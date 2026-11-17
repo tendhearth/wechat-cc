@@ -115,6 +115,7 @@ export interface InternalApiDeps {
   /** 桌面读了一件事的详情(S3b):记「在电脑上看过」,一件事的提议到点就不再推手机。由 workbench 模块 `provide`。 */
   desktopSeen?: (matterId: string) => void
   /** 「一件事」读写面(routes-matters);与工作台一样晚绑定。 */
+  roster?: ReturnType<typeof import('../../features/roster/reader').makeRosterReader>
   matters?: import('../../app/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
   connections?: () => import('../connections').ConnectionsSnapshot
@@ -626,7 +627,7 @@ export const PANEL_CAUSE_HEADER = 'x-cc-cause'
  * 处理器的回包。`cause`(可选,P3c-1):错误回包背后的原始码(抛出来的那个),不进正文、不上 127.0.0.1 的线 ——
  * 只给面板里的旧路由别名换手机那一列的码用(`/v1` 回的是桌面那一列,有的码桌面列改了名,别名就认不回来)。
  */
-export type RouteResult = { status: number; body: unknown; cause?: string }
+export type RouteResult = { status: number; body: unknown; cause?: string; headers?: Record<string,string> }
 
 /**
  * Each route handler receives the parsed query (always present) and the
@@ -667,7 +668,7 @@ export type RouteHandler = (
    * signal:调用方断开时中止(长轮询的路由用;其余忽略)。
    * onSent:回包真写出去之后再调(没写出去 / 调用方已断 ⇒ 不调)。
    */
-  ctx?: { signal: AbortSignal; onSent(cb: () => void): void },
+  ctx?: { headers?: Headers; signal: AbortSignal; onSent(cb: () => void): void },
 ) => Promise<RouteResult> | RouteResult
 
 export type RouteTable = Record<string, RouteHandler | undefined>

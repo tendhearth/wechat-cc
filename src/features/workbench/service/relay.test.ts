@@ -64,3 +64,15 @@ it('resume of an already completed plan marks it done without starting any runti
   expect(accepted).toHaveBeenCalledOnce();expect(f.store.plans.get(f.id)?.state).toBe('done')
   expect(f.handoff).not.toHaveBeenCalled();expect(f.notices).toEqual(['「接力」的 2 棒都做完了。'])
 })
+
+it('名单读取当前棒与总棒数，不写接力账本',()=>{
+ const f=fixture(),before=f.store.plans.get(f.id)
+ expect(f.relay.rosterRelay(f.id)).toEqual({index:1,total:2,currentAgent:'codex'})
+ expect(f.store.plans.get(f.id)).toEqual(before)
+ f.store.plans.advance(f.id,1,2,'second')
+ expect(f.relay.rosterRelay(f.id)).toEqual({index:2,total:2,currentAgent:'claude'})
+ f.store.plans.stop(f.id,2,'leg_asked')
+ expect(f.relay.rosterRelay(f.id)).toEqual({index:2,total:2,currentAgent:'claude'})
+ f.store.plans.cancel(f.id)
+ expect(f.relay.rosterRelay(f.id)).toBeNull()
+})

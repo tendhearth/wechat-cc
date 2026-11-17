@@ -86,7 +86,7 @@ export function entryAccepts(entry: DispatchEntry, origin: TokenOrigin): boolean
 const PANEL_QUERY_KEYS = ['d', 't', '_via'] as const
 
 /** dispatch 的结果:回包 + 传输层要做的两件事(413 后关连接、回包写出去以后调的回调)。 */
-type DispatchResult = { status: number; body: unknown; cause?: string; closeConnection?: true; onSent?: Array<() => void> }
+type DispatchResult = { headers?: Record<string,string>; status: number; body: unknown; cause?: string; closeConnection?: true; onSent?: Array<() => void> }
 
 /** 面板那一口能走哪些 `/v1` 路由:默认从路由表推(`PANEL_V1_ROUTES`,带 `phone` 块的 `/v1` 行)。 */
 export interface InternalApiOptions {
@@ -234,6 +234,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     caller: TokenInfo
     /** 只在面板那一口有:帧预算与出生地(设计稿「按范围不按路径的差别」)。 */
     panel?: { frameBudget: number; client: 'app' | 'web' }
+    headers?: Headers
     io: {
       readBody(maxBytes?: number): Promise<unknown>
       /** 处理器开跑前调一次:断开信号从这一刻起算(和抽出来之前一样的时刻)。 */
@@ -400,11 +401,11 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
       // 怎么判「断开」「写出去了」是传输层的事(见下面 handleRequest / panelDispatch)。
       const signal = inp.io.signal()
       const onSent: Array<() => void> = []
-      const out = await route(url.searchParams, body, callerInfo, { signal, onSent: (cb) => { onSent.push(cb) } })
+      const out = await route(url.searchParams, body, callerInfo, { headers: inp.headers, signal, onSent: (cb) => { onSent.push(cb) } })
       // 契约(架构终态 F1):测试里每个 2xx 回包都对着响应契约核一遍 —— 契约写错了、处理器回的形状变了,测试当场红;
       // 生产里不核(不为契约多花一次 parse,也不因契约漏写一个可选字段就让主人的请求失败)。
       if (UNDER_TEST_RUNNER && options.responseContracts !== false && out.status >= 200 && out.status < 300) assertResponseContract(routeKey, out.body)
-      return { status: out.status, body: out.body, onSent, ...(typeof out.cause === 'string' ? { cause: out.cause } : {}) }
+      return { status: out.status, body: out.body, headers: out.headers, onSent, ...(typeof out.cause === 'string' ? { cause: out.cause } : {}) }
     } catch (err) {
       // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
       // 不是 500,daemon 也不退。
@@ -490,6 +491,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     try {
       const out = await dispatch({
         entry: 'local', method, url, rawUrl, caller,
+        headers: new Headers(typeof req.headers['if-none-match'] === 'string' ? {'if-none-match':req.headers['if-none-match']} : {}),
         io: {
           readBody: (maxBytes) => readJsonBody(req, maxBytes),
           signal: () => {
@@ -515,6 +517,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
       // onSent:回包真写出去了('finish';socket 已断时不发,Bun 与 node 都是,10-24 实测)才调。
       const onSent = out.onSent ?? []
       if (onSent.length && !ac.signal.aborted) res.once('finish', () => { for (const cb of onSent) { try { cb() } catch { /* 回调出错不影响已回的包 */ } } })
+      for (const [key,value] of Object.entries(out.headers ?? {})) res.setHeader(key,value)
       send(res, out.status, out.body, origin)
     } finally {
       // keep-alive 的同一条连接上会来很多请求:这一个请求一结束(回完 / 断开 / 抛错)就摘掉,不在 socket 上越挂越多
@@ -537,13 +540,14 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     if (req.signal.aborted) ac.abort()
     else req.signal.addEventListener('abort', () => ac.abort(), { once: true })
     const out = await dispatch({
-      entry: 'panel', method: req.method, url, rawUrl, caller, panel: { frameBudget: opts.frameBudget, client: opts.client },
+      headers: req.headers, entry: 'panel', method: req.method, url, rawUrl, caller, panel: { frameBudget: opts.frameBudget, client: opts.client },
       io: { readBody: (maxBytes) => readFetchJsonBody(req, maxBytes), signal: () => ac.signal },
     })
-    return new Response(JSON.stringify(out.body), {
+    return new Response(out.status === 304 ? null : JSON.stringify(out.body), {
       status: out.status,
       headers: {
         'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store',
+        ...out.headers,
         // 只给面板进程里的旧路由别名(opts.cause);它读完就丢,不写回手机
         ...(opts.cause && out.cause ? { [PANEL_CAUSE_HEADER]: out.cause } : {}),
       },
