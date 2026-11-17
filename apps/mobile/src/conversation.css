@@ -85,7 +85,7 @@ body.conversation-ready #m-agents { --th-agent-size:36px }
 #m-say { position:sticky; bottom:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px; border:1px solid var(--accent); border-radius:var(--r-m); padding:10px; background:var(--paper) }
 #m-say-avatar .th-agents { --th-agent-size:24px }
 #m-say-text { flex:1; min-width:0; font:inherit; border:0; resize:vertical; background:var(--paper); color:var(--ink) }
-#m-say button { border:0; border-radius:50%; width:36px; height:36px; background:var(--accent); color:var(--on-accent) }
+#m-say button { border:0; border-radius:50%; width:44px; height:44px; flex:none; background:var(--accent); color:var(--on-accent) }
 #m-say-notice { width:100%; color:var(--soft) }
 
 body.conversation-ready #m-agents .th-agents { --th-agent-size:36px }
