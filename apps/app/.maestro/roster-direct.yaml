@@ -1,4 +1,4 @@
-# Offline demo only. Authored here; run by the integrator on the dedicated mini.
+# 只用离线演示数据;在 mini 上跑。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -27,8 +27,16 @@ appId: com.tendhearth.app
     visible:
       id: roster-strip
     timeout: 10000
-# Push deep link from a terminated app must seed CC beneath the direct page.
+# 推送深链打开直通页,返回落回 CC 对话。演示模式被杀掉后不保留(冷启动回欢迎页是演示的既有行为),
+# 所以这里重开 App、先进演示再点深链;真冷启动的返回栈由 direct.test.ts 的单测覆盖。
 - stopApp
+- launchApp
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: roster-strip
+    timeout: 10000
 - openLink: 'tendhearth://push-open?kind=task_done&taskId=e5f6a7b8'
 - runFlow: subflows/_open-link-guard.yaml
 - extendedWaitUntil:
