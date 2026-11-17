@@ -93,3 +93,23 @@ stdio stderr 只排空、不保留也不转日志；转接失败只记固定文�
 工作期间共享远端引用 `origin/dev` 前进到 `9e89aa8517d38d1d2d23e74edaa997b15469506f`（roster #960），本分支仍从 `fe887741` 开发，没有合入/重排上游。整合者先同步最新 dev，再等组合后的三平台 CI；本分支验证结果不代表已验证该组合。
 
 最后追加本节为纯文档回执，代码与上述最终验证一致。所有提交均使用主人指定的中文提交信息及 Co-Authored-By；未 push、开 PR、合并或部署。
+
+## 本轮修复最终回执（Grok 1.0.77 验收后）
+
+本轮代码提交：`6b719873a`（请求级 onerror 不撤桥）、`68815fd28`（按 tools/list 精确放行本桥 CC 工具）。独立只读正确性复核未发现确定问题；另补了子进程退出撤桥后已学工具名立即失效的断言。
+
+红/绿定向命令：
+
+```bash
+VITEST_MAX_WORKERS=2 bun --bun vitest run src/adapters/executors/acp/mcp-http-bridge.test.ts -t 'pre-initialize'
+VITEST_MAX_WORKERS=2 bun --bun vitest run src/adapters/executors/acp/acp-grok-mcp.test.ts -t 'allows only tools listed'
+```
+
+分别撤掉对应源文件修复、保留最终回归测试：前一组 GET / POST 两项在 active 预期 true、实际 false 处红；后一组对话 / 工作台两项在预期 `once`、实际 `reject` 处红。恢复后桥传输、Grok 接线与通用 ACP provider **3 文件、73 项全绿**。
+
+- 最终 `bun run verify` **退出 0**：根 typecheck 通过；depcheck 0 errors / 16 条既有 warnings；相关测试 **220 文件、4,423 项通过**（1 个既有 live 文件未启用、2 项既有条件跳过）；全部守卫 **102 文件、873 项通过**（19 项既有条件跳过）；真实形状离线沙盒 **1 文件、26 项通过**。
+- Node 定向：`VITEST_MAX_WORKERS=2 node node_modules/vitest/vitest.mjs run src/adapters/executors/acp/mcp-http-bridge.test.ts src/adapters/executors/acp/acp-grok-mcp.test.ts`，**2 文件、33 项通过**。
+- `bun scripts/test-shrink-check.ts --base da3ad2a5faa2de23c51cb7c099ab6e5458a27bac`：2 个测试相关文件没有变少/变松；`git diff --check` 通过。
+- 验证采用隔离 HOME、受控 PATH、仅支持版本查询的离线 CLI 替身与最多两个 worker。首轮将 TMPDIR 放在 `.cc-tasks`，导致 4 个扫描守卫自测将自身夹具排除；改回系统临时目录后这 3 文件 / 40 项先绿，再重跑上面的整轮 verify 全绿，未改仓库代码或放松断言。
+
+最终追加仅为文档回执，代码与最终验证一致。本轮未 push、rebase、开 PR 或部署；未运行真实 Grok / 模型、操作运行中的 daemon、读取生产库或主人登录文件。空回复仅记录于「真机验收发现」，未修改交付文案或逻辑。
