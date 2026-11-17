@@ -225,7 +225,7 @@
 #roster-dock .roster-relay { display:block; }
 #roster-dock .roster-direct-heading h2 { font-size:var(--th-size-item); }
 #dash-global-rail .cc-home-details { position:relative; margin:0; }
-#dash-global-rail .cc-home-details > summary { list-style:none; cursor:pointer; }
+#dash-global-rail .cc-home-details > summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:6px; }
 #dash-global-rail .cc-home-details .now-panel { position:absolute; top:32px; left:0; right:auto; max-width:calc(100vw - 32px); }
 #dash-global-rail .cc-home-details { position:absolute; left:112px; top:42px; }
 #topbar-cc { align-self:flex-start; margin-top:12px; }

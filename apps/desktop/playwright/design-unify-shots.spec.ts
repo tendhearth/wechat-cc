@@ -124,10 +124,10 @@ test('B3 captures settings, connections, facts and the existing correction edito
  }
  await page.screenshot({path:join(out!,`desktop-settings-confirm-${phase}.png`)})
  await page.locator('#settings-close').click()
- await page.locator('.cc-home-details > summary').click()
+ await page.locator('#dash-global-rail .cc-home-details > summary').click()
  await expect(page.locator('.nc-capability')).toHaveCount(4)
  await page.screenshot({path:join(out!,`desktop-connections-${phase}.png`)})
- await page.locator('.cc-home-details > summary').click()
+ await page.locator('#dash-global-rail .cc-home-details > summary').click()
  await clickNav(page,'memory')
  await expect(page.locator('#memory-facts-records')).toContainText('我喜欢在窗边看书')
  if(phase==='after') {

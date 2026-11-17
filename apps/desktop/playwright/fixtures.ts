@@ -98,7 +98,13 @@ export async function clickNav(page: import('@playwright/test').Page, pane: stri
  * 在抽屉里就先点开抽屉,再点。
  */
 export async function reveal(page: import('@playwright/test').Page, selector: string): Promise<void> {
-  await page.locator(selector).first().evaluate(el => { for (let d = el.closest('details'); d; d = d.parentElement?.closest('details') ?? null) d.setAttribute('open', '') })
+  const target = page.locator(selector).first()
+  if (await target.evaluate(el => !!el.closest('.topbar-more:not([open])'))) {
+    await page.locator('.topbar-more > summary').click()
+  }
+  await target.evaluate(el => {
+    for (let d = el.closest('details'); d; d = d.parentElement?.closest('details') ?? null) d.open = true
+  })
   // 2026-10-01 起重连 / 测试 / 状态自检与用户卡片住在「连接与设置」抽屉的「连接」段:和用户一样先点开抽屉。
   const inDrawer = await page.locator(selector).first().evaluate(el => !!el.closest('#settings-drawer'))
   if (inDrawer && !(await page.locator('#settings-drawer').evaluate(el => el.classList.contains('is-open')))) {

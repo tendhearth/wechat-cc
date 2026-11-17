@@ -42,7 +42,7 @@ test('real 220px phone QR scrolls at 760×280 with close/copy reachable and moda
     await page.keyboard.press(i % 2 ? 'Shift+Tab' : 'Tab')
     expect(await page.evaluate(() => !!document.activeElement?.closest('#phone-settings-modal'))).toBe(true)
   }
-  await page.locator('#settings-open').evaluate((el: HTMLElement) => el.focus())
+  await page.locator('.topbar-more > summary').evaluate((el: HTMLElement) => el.focus())
   expect(await page.evaluate(() => !!document.activeElement?.closest('#phone-settings-modal'))).toBe(true)
   await page.locator('#phone-connect-copy').scrollIntoViewIfNeeded()
   await insideViewport(page.locator('#phone-connect-copy'), page)

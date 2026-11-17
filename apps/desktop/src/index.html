@@ -391,10 +391,17 @@
       <div class="dash-window">
 
         <header id="dash-global-rail" class="dash-topbar">
-          <button id="topbar-cc" class="dash-nav-link" data-pane="overview" aria-label="跟 CC 说">
+          <button id="topbar-cc" class="dash-nav-link active" data-pane="overview" aria-label="跟 CC 说">
             <span class="topbar-figure"><img class="topbar-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" /><img class="topbar-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" /></span>
-            <span>CC</span><small id="topbar-presence">正在连接…</small>
+            <span>CC</span>
           </button>
+          <details class="cc-home-details">
+            <summary><span class="now-sr">CC 的连接:</span><span id="topbar-presence-dot" class="dot" aria-hidden="true"></span><span id="topbar-presence">正在连接…</span></summary>
+            <div class="now-panel">
+              <div id="now-connections" class="now-connections"></div>
+              <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
+            </div>
+          </details>
           <nav aria-label="主导航">
             <button id="topbar-roster" type="button" aria-controls="roster-aside" aria-expanded="false">在做 0</button>
             <button id="topbar-search" type="button">搜索</button>
@@ -414,13 +421,6 @@
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
           <article class="dash-pane cc-now-pane" data-pane="overview" data-now="chat" data-conversation="single" data-cc="away">
-            <details class="cc-home-details">
-            <summary><span class="now-sr">CC 的连接:</span><span id="dash-rail-dot" class="dot"></span><span id="dash-rail-text">正在连接…</span></summary>
-            <div class="now-panel">
-              <div id="now-connections" class="now-connections"></div>
-              <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
-            </div>
-            </details>
             <div id="converse-root" class="converse-page"></div>
 
           </article>

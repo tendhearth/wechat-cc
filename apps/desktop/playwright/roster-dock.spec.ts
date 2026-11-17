@@ -1,4 +1,4 @@
-import {test,expect,clickNav} from './fixtures'
+import {test,expect,clickNav,clickRevealed} from './fixtures'
 import {rosterItem,routeRoster,showRoster} from './roster-fixture'
 const task={id:'deadbeef',title:'备份检查',path:'/offline/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2}
 test.beforeEach(async({page,shim})=>{
@@ -60,7 +60,7 @@ test('宽变窄沿用同一事项与草稿；详情 404 回名单',async({page,s
  await expect(page.locator('#roster-list')).toContainText('这件事已经不在了')
 })
 test('设置抽屉进入已有账号登录仍能到接入服务页',async({page,shimUrl})=>{
- await page.goto(shimUrl);await page.locator('.topbar-more summary').click();await page.locator('#settings-open').click()
+ await page.goto(shimUrl);await clickRevealed(page, '#settings-open')
  await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
  // This existing route must remain reachable after topbar replacement.
  await page.locator('#accounts-current .provider-switch').click()

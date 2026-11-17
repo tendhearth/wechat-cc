@@ -5,7 +5,7 @@ import { test, expect } from './fixtures'
 
 async function shot(page: import('@playwright/test').Page, name: string) {
   const out=process.env.WECHAT_CC_DESIGN_SHOTS
-  if(out){await mkdir(out,{recursive:true});await page.locator('.now-panel').screenshot({path:join(out,`desktop-checkup-${name}.png`)})}
+  if(out){await mkdir(out,{recursive:true});await page.locator('#dash-global-rail .cc-home-details .now-panel').screenshot({path:join(out,`desktop-checkup-${name}.png`)})}
 }
 
 // 和 dashboard.spec.ts 同一套进面板的办法:等壳子定下模式,再切到 dashboard(只 goto 会停在引导页,点不到「CC 的连接」)。
@@ -40,7 +40,7 @@ test('checkup shows cost before explicit start, can cancel, and keeps periodic c
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   const fake = await syntheticCheckup(page)
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-home-details > summary').click()
+  await page.locator('#dash-global-rail .cc-home-details > summary').click()
   const panel = page.locator('.nc-butler')
   await expect(panel).toContainText('还没体检')
   expect(fake.mutations).toEqual([])
@@ -66,7 +66,7 @@ test('measured weak memory has plain reassurance and a synthetic screenshot fixt
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   const fake = await syntheticCheckup(page); fake.weak()
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-home-details > summary').click()
+  await page.locator('#dash-global-rail .cc-home-details > summary').click()
   const panel = page.locator('.nc-butler')
   await expect(panel).toContainText('CC 会这样照顾它：更勤换新对话')
   await expect(panel).toContainText('动作偶尔发不对')
@@ -78,7 +78,7 @@ test('measured weak memory has plain reassurance and a synthetic screenshot fixt
   if (out) {
     await mkdir(out, { recursive: true })
     await panel.locator('h3').evaluate(el=>el.scrollIntoView({block:'start'}))
-    await page.locator('.now-panel').screenshot({path:join(out,'desktop-butler-checkup.png')})
+    await page.locator('#dash-global-rail .cc-home-details .now-panel').screenshot({path:join(out,'desktop-butler-checkup.png')})
     await panel.locator('[data-checkup="prepare"]').scrollIntoViewIfNeeded()
     await shot(page,'interview-bottom')
   }

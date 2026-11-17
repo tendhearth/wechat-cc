@@ -1,7 +1,7 @@
 // 设计验收出图(spec 2026-10-01 §7)。只有设了 WECHAT_CC_DESIGN_SHOTS 才跑,CI 跳过。
 import {routeRoster,rosterItem} from './roster-fixture'
 import { join } from 'node:path'
-import { test, expect, clickNav } from './fixtures'
+import { test, expect, clickNav, clickRevealed } from './fixtures'
 
 const OUT = process.env.WECHAT_CC_DESIGN_SHOTS
 // 面板 / 抽屉有滑入动画,等它停稳再拍,别拍到半路。
@@ -45,7 +45,7 @@ for (const [label, size] of [['wide', { width: 1440, height: 900 }], ['narrow', 
     }
     await clickNav(page, 'overview')
     await page.locator('.topbar-more summary').click()
-    await page.locator('#settings-open').click()
+    await clickRevealed(page, '#settings-open')
     await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
     await settle(page)
     await page.screenshot({ path: join(OUT!, `d09-settings-${label}.png`) })

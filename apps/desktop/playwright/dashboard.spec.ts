@@ -1,7 +1,7 @@
 // Dashboard smoke tests — driven against test-shim.ts (DRY_RUN=1).
 //
-// Presence shell: three primary entries; existing tools remain in the lower
-// disclosure. Conversation is mounted once inside overview.
+// The topbar holds global navigation and the overflow menu.
+// Conversation is mounted once inside overview.
 //
 // NOTE: In DRY_RUN the doctor --json returns accounts.count=0 so the page
 // boots into wizard mode by default. The dashboard <main> is always in the
@@ -10,6 +10,7 @@
 
 import { test, expect, clickNav, clickRevealed } from './fixtures'
 import { REPORTS } from './reports'
+import { rosterItem, showRoster } from './roster-fixture'
 
 async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
@@ -28,10 +29,8 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 
 // ── Pane registry + skeleton presence ───────────────────────────────────
 
-// 顶层导航项(2026-08-24 导航重构后):待办升到一级,日志/插件收进后厨
-// —— 它们仍有 pane,但不再有顶层导航按钮,所以分成两张表校验。
-// 「一起做」不再是导航项(设计稿 2026-10-31 U4):它的 pane 还在,从此刻的「全部 →」进,见下面那条。
-const NAV_PANES = ['overview', 'recollections', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
+// 页头直接导航或「更多」里的页面；日志和插件从后厨标签进入。
+const NAV_PANES = ['overview', 'recollections', 'memory', 'atelier', 'todos', 'sessions', 'a2a-agents'] as const
 /** 有 pane、但入口在后厨标签页里(见 logs.spec.ts 的 bootAndOpenLogs)。 */
 const BACKSTAGE_PANES = ['logs', 'plugins'] as const
 
@@ -45,14 +44,13 @@ test('dashboard renders nav + panes (all attached)', async ({ page, shimUrl, shi
   }
   await expect(page.locator('button.dash-nav-link[data-pane="workbench"]')).toHaveCount(0)
   await expect(page.locator('.dash-pane[data-pane="workbench"]')).toBeAttached()
-  await expect(page.locator('[data-conversation-search-matters]')).toBeVisible()
+  await expect(page.locator('#topbar-search')).toBeVisible()
   for (const pane of BACKSTAGE_PANES) {
     await expect(page.locator(`article.dash-pane[data-pane="sessions"] .dialogue-workspace-tab[data-backstage-pane="${pane}"]`)).toBeAttached()
   }
   await expect(page.locator('#converse-root')).toHaveCount(1)
   await expect(page.locator('article[data-pane="overview"] #converse-root')).toBeAttached()
-  // 「跟 CC 说」不再是侧栏按钮(spec §6.5):此刻页的 CC 与它的气泡就是入口。
-  await expect(page.locator('#now-cc')).toBeAttached()
+  await expect(page.locator('#topbar-cc')).toBeAttached()
   await expect(page.locator('button[data-pane="converse"]')).toHaveCount(0)
   // Settings gear (opens drawer, not wizard — moxiuwen's gear was repurposed
   // when master's wizard refactor landed; #settings-open is the live id).
@@ -76,7 +74,6 @@ test('clicking a pane button switches active pane', async ({ page, shimUrl, shim
   await bootIntoDashboard(page, shimUrl)
 
   // Click memory tab — should switch active class + un-hide memory pane.
-  await page.locator('.cc-life-nav-more > summary').click()
   await clickNav(page, 'memory')
   await expect(page.locator('button.dash-nav-link.active[data-pane="memory"]')).toBeAttached()
   await expect(page.locator('button.dash-nav-link.active[data-pane="overview"]')).toHaveCount(0)
@@ -89,7 +86,6 @@ test('clicking a pane button switches active pane', async ({ page, shimUrl, shim
 test('round-trip: overview → memory → overview restores initial state', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-life-nav-more > summary').click()
   await clickNav(page, 'memory')
   await clickNav(page, 'overview')
   await expect(page.locator('button.dash-nav-link.active[data-pane="overview"]')).toBeAttached()
@@ -99,12 +95,12 @@ test('round-trip: overview → memory → overview restores initial state', asyn
 
 // ── Per-pane DOM contract ───────────────────────────────────────────────
 
-test('此刻 has the connections card + 浮到桌面; no aquarium anywhere; verdict + users + reconnect in 连接与设置', async ({ page, shimUrl, shim }) => {
+test('页头 has the connections card + 浮到桌面; no aquarium anywhere; verdict + users + reconnect in 连接与设置', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
   const now = page.locator('article.dash-pane[data-pane="overview"]')
-  await expect(now.locator('.cc-home-details #now-connections')).toBeAttached()
-  await expect(now.locator('.cc-home-details #companion-desktop-start')).toBeAttached()
+  await expect(page.locator('#dash-global-rail .cc-home-details #now-connections')).toBeAttached()
+  await expect(page.locator('#dash-global-rail .cc-home-details #companion-desktop-start')).toBeAttached()
   await expect(now.locator('#hero-card')).toHaveCount(0)
   // 鱼缸画布 2026-10-01 退休(主人拍板):没有鱼缸页、没有画布、没有沉浸模式。
   await expect(page.locator('[data-pane="aquarium"]')).toHaveCount(0)
@@ -123,7 +119,7 @@ test('此刻 has the connections card + 浮到桌面; no aquarium anywhere; verd
 test('此刻 status line opens CC 的连接: headline + one row per source + the computer', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-home-details > summary').click()
+  await page.locator('#dash-global-rail .cc-home-details > summary').click()
   const card = page.locator('#now-connections')
   await expect(card).toBeVisible()
   await expect(card.locator('.nc-headline')).toHaveText('都连着')
@@ -132,13 +128,13 @@ test('此刻 status line opens CC 的连接: headline + one row per source + the
   await expect(card.locator('.nc-source').first()).toContainText('最新消息')
   await expect(card.locator('.nc-computer')).toContainText('在线')
   await page.keyboard.press('Escape')
-  await expect(page.locator('.cc-home-details')).not.toHaveAttribute('open')
+  await expect(page.locator('#dash-global-rail .cc-home-details')).not.toHaveAttribute('open')
 })
 
 test('CC 的连接 never shows green when it cannot be read', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat', connections: null })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-home-details > summary').click()
+  await page.locator('#dash-global-rail .cc-home-details > summary').click()
   const card = page.locator('#now-connections')
   await expect(card.locator('.nc-headline')).toHaveText('暂时不知道连接情况')
   await expect(card.locator('.nc-headline .dot')).toHaveClass(/unknown/)
@@ -152,7 +148,7 @@ test('CC 现在怎么样:终端里的 Claude Code / Codex 没接上 ⇒「接上
     capabilities: [{ id: 'terminal', name: '终端里的 Claude Code / Codex', state: 'off', code: 'terminal.not_connected', reason: '装了 Claude Code / Codex，还没接上：终端里的会话 CC 看不到。', action: { label: '接上', where: 'desktop', run: 'cli_hooks_install' } }],
   } })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-home-details > summary').click()
+  await page.locator('#dash-global-rail .cc-home-details > summary').click()
   const row = page.locator('#now-connections .nc-capability')
   await expect(row).toContainText('还没接上')
   await row.getByRole('button', { name: '接上', exact: true }).click()
@@ -166,47 +162,72 @@ test('CC 现在怎么样:终端里的 Claude Code / Codex 没接上 ⇒「接上
   expect(((await shim.invoke('mock.hook-calls')) as { result: { calls: unknown[] } }).result.calls).toEqual([{}])
 })
 
-test('此刻「N 件事等你」也列终端里等批准的会话:开了码的点「看清楚」在小窗里允许,没开码的只说回终端处理', async ({ page, shimUrl, shim }) => {
-  const now = Date.now()
-  const base = { source: 'claude', stale: false, cwd: '/w/x', machine: null, origin_agent: null, last_summary: null, last_event_at: now, last_prompt_at: null, created_at: now }
-  await shim.invoke('demo.seed', { chat_id: 'test_chat', cliSessions: [
-    { ...base, session_id: 'ab12c3-full', code: 'ab12c3', status: 'waiting', project: 'wechat-cc', pending: { tool: 'Bash', summary: 'npm publish', since: now, hash: 'k3x9z', reply_code: '07' } },
-    { ...base, session_id: 'cd34e5-full', code: 'cd34e5', source: 'codex', status: 'waiting', project: 'melu', pending: { tool: 'permission', summary: '要改 package.json', since: now, hash: null, reply_code: null } },
-    { ...base, session_id: 'ef56g7-full', code: 'ef56g7', status: 'running', project: 'leni', pending: null },
-  ] })
+test('名单等你组列终端的权限请求，只有可拍板的请求才显示允许和拒绝', async ({ page, shimUrl, shim }) => {
+  await page.setViewportSize({ width: 1000, height: 900 })
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  const allowed = { session_id: 'ab12c3-full', hash: 'k3x9z', decision: 'allow' }
+  const decisions: unknown[] = []
+  const terminal = (id: string, project: string, agent: string, name: string, summary: string) =>
+    rosterItem(id, project, { key: `terminal:${id}`, kind: 'terminal', project,
+      terminal: { sessionId: id }, agents: [{ id: agent, name, current: true }],
+      waiting: { kind: 'permission', requestId: id, summary, count: 1 } })
+  const actionable = terminal(allowed.session_id, 'wechat-cc', 'claude', 'Claude', '想运行 npm publish')
+  const localOnly = terminal('cd34e5-full', 'melu', 'codex', 'Codex', '要改 package.json')
+  const running = { ...terminal('ef56g7-full', 'leni', 'claude', 'Claude', ''), group: 'working', status: 'running', waiting: null }
+  let approved = false
+  await page.route('**/v1/roster', route => route.fulfill({ json: {
+    items: approved ? [{ ...actionable, group: 'working', status: 'running', waiting: null }, localOnly, running] : [actionable, localOnly, running],
+    version: approved ? 'approved' : 'waiting',
+  } }))
+  await page.route('**/v1/cli/sessions*', route => route.fulfill({ json: { sessions: [
+    { session_id: allowed.session_id, source: 'claude', status: approved ? 'running' : 'waiting',
+      pending: approved ? null : { actionable: true, tool: 'Bash', summary: 'npm publish', hash: allowed.hash } },
+    { session_id: 'cd34e5-full', source: 'codex', status: 'waiting', last_summary: '要改 package.json',
+      pending: { actionable: false, tool: 'permission', summary: '要改 package.json' } },
+  ] } }))
+  await page.route('**/v1/cli/activity*', route => route.fulfill({ json: { items: [] } }))
+  await page.route('**/v1/cli/decide', route => {
+    const decision = route.request().postDataJSON()
+    decisions.push(decision)
+    approved = decision.session_id === allowed.session_id && decision.hash === allowed.hash && decision.decision === allowed.decision
+    return route.fulfill({ status: approved ? 200 : 400, json: { ok: approved } })
+  })
   await bootIntoDashboard(page, shimUrl)
-  const waiting = page.locator('#now-waiting')
-  // mock 里工作台读不到(503)⇒ 标题后半句说那边不知道;终端这两条照样列出来。
-  await expect(waiting.locator('#now-waiting-title')).toHaveText(/^2 件事等你/)
-  await waiting.locator('summary').click()
-  const rows = waiting.locator('.now-terminal')
+  await showRoster(page)
+  const waiting = page.locator('#roster-aside [data-group="waiting"]')
+  const rows = waiting.locator('.roster-row')
+  await expect(waiting.getByRole('heading')).toHaveText('等你 2')
   await expect(rows).toHaveCount(2)
   await expect(rows.nth(0)).toContainText('想运行 npm publish')
-  await expect(rows.nth(0).locator('.d')).toHaveText('wechat-cc')
-  // 哪家是行尾的圆头像(2026-10-19),名字给读屏
+  await expect(rows.nth(0)).toContainText('wechat-cc')
   await expect(rows.nth(0).getByRole('img', { name: 'Claude' })).toBeVisible()
   await expect(rows.nth(1).getByRole('img', { name: 'Codex' })).toBeVisible()
-  await expect(rows.nth(0).locator('button')).toHaveCount(1)
-  await expect(rows.nth(0).locator('.go')).toHaveText('看清楚 ›')
   await expect(rows.nth(1)).toContainText('要改 package.json')
-  await expect(rows.nth(1)).toContainText('回终端处理')
-  await expect(rows.nth(1).locator('button')).toHaveCount(0)
-  await rows.nth(0).locator('button').click()
-  const decide = page.locator('dialog.now-terminal-dialog')
-  await expect(decide).toBeVisible()
-  await expect(decide.locator('.now-terminal-command')).toHaveText('npm publish')
-  await decide.getByRole('button', { name: '允许', exact: true }).click()
-  await expect(decide).toHaveCount(0)
-  await expect.poll(async () => ((await shim.invoke('mock.permission-resolves')) as { result: { calls: unknown[] } }).result.calls).toEqual([{ hash: 'k3x9z', decision: 'allow' }])
-  // 拍完之后下一拍列表里就没有它了(shim 把它收回 running,与真 daemon 一致)。
+
+  const detail = page.locator('dialog.wb-history-dialog')
+  await rows.nth(1).click()
+  await expect(detail.getByRole('status')).toHaveText('要改 package.json')
+  await expect(detail.getByRole('button', { name: /^(允许|拒绝)$/ })).toHaveCount(0)
+  await detail.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(detail).toHaveCount(0)
+  await showRoster(page)
+  await rows.nth(0).click()
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('[data-terminal-approval="description"]')).toHaveText('Bash · npm publish')
+  await detail.getByRole('button', { name: '允许', exact: true }).click()
+  await expect(detail.getByRole('button', { name: '允许', exact: true })).toHaveCount(0)
+  expect(decisions).toEqual([allowed])
+  await detail.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(detail).toHaveCount(0)
+  await showRoster(page)
   await expect(rows).toHaveCount(1)
-  await expect(waiting.locator('#now-waiting-title')).toHaveText(/^1 件事等你/)
+  await expect(waiting.getByRole('heading')).toHaveText('等你 1')
+  await expect(rows.first()).toContainText('要改 package.json')
 })
 
 test('memory pane has sidebar + observations + milestones + content viewer', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-life-nav-more > summary').click()
   await clickNav(page, 'memory')
   const pane = page.locator('article.dash-pane[data-pane="memory"]')
   await expect(pane).toBeVisible()
@@ -223,7 +244,6 @@ test('memory pane has sidebar + observations + milestones + content viewer', asy
 test('sessions pane mounts the dialogue-root container (Task 10 real-data page)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-life-nav-more > summary').click()
   await clickNav(page, 'sessions')
   const pane = page.locator('article.dash-pane[data-pane="sessions"]')
   await expect(pane).toBeVisible()
@@ -235,7 +255,6 @@ test('sessions pane mounts the dialogue-root container (Task 10 real-data page)'
 test('logs pane has meta crumb + content container', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-life-nav-more > summary').click()
   await clickNav(page, 'sessions')
   await page.locator('article.dash-pane[data-pane="sessions"] .dialogue-workspace-tab[data-backstage-pane="logs"]').click()
   const pane = page.locator('article.dash-pane[data-pane="logs"]')
@@ -246,8 +265,7 @@ test('logs pane has meta crumb + content container', async ({ page, shimUrl, shi
 test('a2a-agents pane has server banner + agent list + Add Agent button', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-life-nav-more > summary').click()
-  await page.locator('button.dash-nav-link[data-pane="a2a-agents"]').click()
+  await clickNav(page, 'a2a-agents')
   const pane = page.locator('article.dash-pane[data-pane="a2a-agents"]')
   await expect(pane).toBeVisible()
   await expect(pane.locator('#a2a-server-banner')).toBeAttached()
@@ -258,8 +276,7 @@ test('a2a-agents pane has server banner + agent list + Add Agent button', async 
 test('a2a add modal opens + closes via ✕ button (regression for fix 5ddeb72)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('.cc-life-nav-more > summary').click()
-  await page.locator('button.dash-nav-link[data-pane="a2a-agents"]').click()
+  await clickNav(page, 'a2a-agents')
   // Open the modal
   await clickRevealed(page, '#a2a-add-btn')
   await expect(page.locator('dialog#a2a-add-modal[open]')).toBeVisible()
@@ -393,7 +410,7 @@ test.describe('provider-switch dropdown', () => {
   test('connecting another AI service keeps its settings form visible',async({page,shimUrl,shim})=>{
     await shim.invoke('demo.seed',{chat_id:'test_chat'})
     await bootIntoDashboard(page,shimUrl)
-    await page.locator('#settings-open').click()
+    await clickRevealed(page, '#settings-open')
     await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
     await expect(page.locator('#accounts-current .provider-switch')).toBeVisible()
     await page.locator('#accounts-current .provider-switch').click()
@@ -510,24 +527,24 @@ test.describe('RECONNECT_DIAGNOSE telemetry', () => {
 test('presence shell keeps one home composer and its draft through navigation', async ({page,shimUrl,shim}) => {
   await shim.invoke('demo.seed', {chat_id:'test_chat'})
   await bootIntoDashboard(page,shimUrl)
-  await expect(page.locator('.cc-home-details')).not.toHaveAttribute('open')
+  await expect(page.locator('#dash-global-rail .cc-home-details')).not.toHaveAttribute('open')
   await expect(page.locator('#converse-input')).toBeVisible()
   await page.locator('#converse-input').fill('只检查草稿，不发送')
-  await page.locator('.cc-home-details > summary').click()
+  await page.locator('#dash-global-rail .cc-home-details > summary').click()
   await clickNav(page, 'recollections')
   await expect(page.locator('article[data-pane="recollections"]')).toBeVisible()
   await clickNav(page, 'overview')
   await expect(page.locator('article[data-pane="overview"]')).toBeVisible()
-  await page.locator('#now-cc').click()
+  await page.locator('#topbar-cc').click()
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-now', 'chat')
-  await expect(page.locator('.cc-home-details')).not.toHaveAttribute('open')
+  await expect(page.locator('#dash-global-rail .cc-home-details')).not.toHaveAttribute('open')
   await expect(page.locator('#converse-input')).toHaveValue('只检查草稿，不发送')
   await expect(page.locator('#converse-input')).toBeFocused()
   await expect(page.locator('#converse-root')).toHaveCount(1)
-  const rail=await page.locator('.dash-rail').boundingBox()
-  const main=await page.locator('.dash-main').boundingBox()
-  expect(rail!.x+rail!.width).toBeLessThanOrEqual(main!.x+1)
-  expect(rail!.height).toBeGreaterThan(500)
+  const header = await page.locator('header.dash-topbar').boundingBox()
+  const main = await page.locator('.dash-main').boundingBox()
+  expect(header!.y + header!.height).toBeLessThanOrEqual(main!.y + 1)
+  expect(header!.height).toBe(72)
 })
 
 test('conversation opens directly; CC focuses input and draft survives navigation', async ({ page, shimUrl, shim }) => {
@@ -538,14 +555,14 @@ test('conversation opens directly; CC focuses input and draft survives navigatio
   // shim 默认 presence ok ⇒ 够得着 ⇒ 亮着的 CC。
   await expect(pane).toHaveAttribute('data-cc', 'here')
   // 动画就绪后静态 PNG 让位给 now-pet-stage(cc-now.css),亮着看 stage 的 data-form。
-  await expect(page.locator('#now-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
-  await expect(page.locator('.now-cc-dark')).toBeHidden()
+  await expect(page.locator('#topbar-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
+  await expect(page.locator('.topbar-cc-dark')).toBeHidden()
   await expect(page.locator('#converse-scroll')).toBeVisible()
   await page.locator('#converse-input').fill('草稿不丢')
-  await page.locator('#now-cc').click()
+  await page.locator('#topbar-cc').click()
   await expect(pane).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('#converse-scroll')).toBeVisible()
-  // 一起做不再是导航项(设计稿 2026-10-31 U4,从主页的「全部 →」进,聊天态里不露):换一个别的页来回。
+  // 离开对话再回来，草稿仍在同一个输入框里。
   await clickNav(page, 'recollections')
   await clickNav(page, 'overview')
   await expect(pane).toHaveAttribute('data-now', 'chat')
@@ -564,11 +581,11 @@ test('原话只在对话出现,小 CC 聚焦输入,草稿和完整回复保留',
   ] } }))
   await bootIntoDashboard(page, shimUrl)
   await expect(page.locator('#converse-scroll')).toContainText('周五去上海，周日回来。')
-  await expect(page.locator('#now-cc-bubble')).toHaveCount(0)
+  await expect(page.locator('#dash-global-rail')).not.toContainText('周五去上海')
   const metrics = await page.locator('#converse-input').evaluate(el => ({ client: el.clientHeight, scroll: el.scrollHeight }))
   expect(metrics.scroll).toBeLessThanOrEqual(metrics.client)
   await page.locator('#converse-input').fill('保留这句草稿')
-  await page.locator('#now-cc').click()
+  await page.locator('#topbar-cc').click()
   await expect(page.locator('#converse-scroll')).toContainText('备选安排如下：')
   await expect(page.locator('#converse-scroll ol li')).toHaveText(['周五去上海，周日回来。','也可以把行程往后挪一周。'])
   await expect(page.locator('#converse-scroll')).toContainText('任务完成：已修改 3 个文件')
@@ -582,10 +599,12 @@ test('CC goes dark when the daemon cannot be reached', async ({ page, shimUrl, s
   await bootIntoDashboard(page, shimUrl)
   await down
   // index.html 默认就是 away,所以先证明 poller 真的跑过:状态行红点 + 不在身边由同一信号写入。
-  await expect(page.locator('#dash-rail-text')).toHaveText('CC 不在身边', { timeout: 10_000 })
-  await expect(page.locator('#dash-rail-dot')).toHaveClass(/bad/)
+  await expect(page.locator('#topbar-presence')).toHaveText('CC 不在身边', { timeout: 10_000 })
+  await expect(page.locator('#topbar-presence-dot')).toHaveClass(/bad/)
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'away')
-  await expect(page.locator('.now-cc-light')).toBeHidden()
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-cc', 'away')
+  await expect(page.locator('#topbar-cc .now-pet-stage')).toHaveAttribute('data-form', 'unlit')
+  await expect(page.locator('.topbar-cc-light')).toBeHidden()
 })
 
 test('CC is lit and the status line is green when presence answers', async ({ page, shimUrl, shim }) => {
@@ -593,6 +612,7 @@ test('CC is lit and the status line is green when presence answers', async ({ pa
   await bootIntoDashboard(page, shimUrl)
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'here', { timeout: 25_000 })
   // 动画就绪后静态 PNG 让位给 now-pet-stage(cc-now.css),亮着看 stage 的 data-form。
-  await expect(page.locator('#now-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
-  await expect(page.locator('#dash-rail-dot')).toHaveClass(/ok/, { timeout: 15_000 })
+  await expect(page.locator('#topbar-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
+  await expect(page.locator('#topbar-presence-dot')).toHaveClass(/ok/, { timeout: 15_000 })
+  await expect(page.locator('#topbar-presence')).toHaveText('CC 在家 · 运行中')
 })

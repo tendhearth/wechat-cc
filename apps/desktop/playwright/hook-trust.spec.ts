@@ -12,7 +12,7 @@ test('Codex confirmation and changed definitions update automatically in connect
   await page.goto(shimUrl, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => document.documentElement.dataset.mode && document.documentElement.dataset.mode !== 'loading')
   await page.evaluate(() => { document.documentElement.dataset.mode = 'dashboard' })
-  await page.locator('.cc-home-details > summary').click()
+  await page.locator('#dash-global-rail .cc-home-details > summary').click()
   const row = page.locator('#now-connections .nc-capability')
   await expect(row).toContainText('Codex 还差一步')
   await expect(row).toContainText('/hooks')

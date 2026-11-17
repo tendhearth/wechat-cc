@@ -10,9 +10,9 @@ for(const width of [1440,900])test(`roster keeps request purpose, keyboard desti
  await page.route('**/v1/roster',route=>unreadable?route.fulfill({status:503,json:{error:'unavailable'}}):route.fulfill({json:{items,version:'two'}}))
  await page.route(WORKBENCH_ROUTES,route=>{
   const path=new URL(route.request().url()).pathname
-  if(path==='/v1/workbench/task')return route.fulfill({json:{task,events:[{id:'e1',taskId:task.id,kind:'text',text:'想运行测试，确认排版。',createdAt:2}],artifacts:[],permissions:[{id:'p1',taskId:task.id,tool:'Bash',description:'bun run test',createdAt:2}]}})
+  if(path==='/v1/workbench/task')return route.fulfill({json:{task,events:[{id:1,taskId:task.id,kind:'text',text:'想运行测试，确认排版。',createdAt:2}],artifacts:[],questions:[],permissions:[{id:'p1',taskId:task.id,tool:'Bash',description:'bun run test',createdAt:2}]}})
   if(path==='/v1/workbench/attention')return route.fulfill({json:{tasks:[{...task,attentionKey:'["p1"]',first:{kind:'permission',text:'Bash: bun run test'}}]}})
-  if(path==='/v1/workbench')return route.fulfill({json:{tasks:[task],projects:[],providers:[],defaultProvider:'claude',canWechat:false}})
+  if(path==='/v1/workbench')return route.fulfill({json:{tasks:[task],projects:[],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude',canWechat:false}})
   return route.fulfill({json:{reviews:[]}})
  })
  await page.route('**/v1/matter?id=*',route=>route.fulfill({json:{matter:{...task,kind:'task'}}}))
@@ -23,8 +23,10 @@ for(const width of [1440,900])test(`roster keeps request purpose, keyboard desti
  await expect(page.locator('#roster-list [data-group="waiting"] h2')).toHaveText('等你 2')
  const row=page.locator('[data-roster-key="matter:deadbeef"]')
  await expect(row).toContainText('Bash: bun run test')
- await row.focus();await page.keyboard.press('Enter')
- await expect(page.locator('.wb-task-head h2')).toHaveText('作品集')
+ await row.press('Enter')
+ await expect(page.locator('#conversation-matter-layer')).toBeVisible()
+ const heading = width >= 1080 ? '.roster-direct-heading h2' : '.wb-task-head h2'
+ await expect(page.locator(`#conversation-matter-layer ${heading}`)).toHaveText('作品集')
  await expect(page.locator('.wb-permissions')).toContainText('bun run test')
  await expect(page.locator('.workbench-pane')).toContainText('想运行测试，确认排版。')
  if(width>=1080)await page.locator('#roster-dock').getByRole('button',{name:'‹ 在做',exact:true}).click()
@@ -35,7 +37,8 @@ for(const width of [1440,900])test(`roster keeps request purpose, keyboard desti
  await expect(row).toContainText('Bash: bun run test')
  await page.locator('[data-roster-key="terminal:terminal-1"]').click()
  const detail=width>=1080?page.locator('#roster-dock'):page.locator('dialog.wb-history-dialog')
- await expect(detail).toContainText('git status');await expect(detail).toContainText('终端原话')
+ await expect(detail).toContainText('git status')
+ await expect(detail).toContainText('终端原话')
  await expect(detail.getByRole('button',{name:'允许',exact:true})).toBeVisible()
  const out=process.env.WECHAT_CC_DESIGN_SHOTS
  if(out)await page.screenshot({path:join(out,`roster-partial-${width}.png`)})

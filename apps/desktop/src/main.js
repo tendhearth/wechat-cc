@@ -187,8 +187,7 @@ subscribeConverseActivity(stream => nowPage?.setConversationActivity(stream))
 /** @type {{presence:string}|null} */ let lastPresence = null
 function renderRail() {
   const line = nowStatusLine(lastDaemon, lastPresence)
-  const dot = document.getElementById('dash-rail-dot'); if (dot) dot.className = `dot ${line.cls}`
-  const text = document.getElementById('dash-rail-text'); if (text) text.textContent = line.text
+  const dot = document.getElementById('topbar-presence-dot'); if (dot) dot.className = `dot ${line.cls}`
   const label = document.getElementById('topbar-presence'); if (label) label.textContent = line.text
   const cc = document.getElementById('topbar-cc'); if (cc) cc.dataset.cc = lastPresence?.presence === 'down' || !lastPresence ? 'away' : 'here'
 }
@@ -1729,12 +1728,6 @@ async function boot() {
       const button=document.getElementById('topbar-roster');if(button)button.textContent=`在做 ${items.length}`
     }})
     window.addEventListener('pagehide',()=>roster.destroy(),{once:true})
-  }
-  const connectionsDetails=document.querySelector('.cc-home-details')
-  if(connectionsDetails){
-    document.getElementById('dash-global-rail')?.append(connectionsDetails)
-    const summary=connectionsDetails.querySelector('summary')
-    if(summary){summary.replaceChildren();const presence=document.getElementById('topbar-presence');if(presence)summary.append(presence)}
   }
   document.getElementById('topbar-roster')?.addEventListener('click',()=>{
     const aside=document.getElementById('roster-aside'),button=document.getElementById('topbar-roster')

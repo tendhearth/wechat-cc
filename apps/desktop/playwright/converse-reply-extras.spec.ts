@@ -17,7 +17,7 @@ async function openChat(page: import('@playwright/test').Page, shimUrl: string) 
   }, { timeout: 15_000 })
   await page.evaluate(() => { document.documentElement.dataset.mode = 'dashboard' })
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 5_000 })
-  await page.locator('#now-cc').click()
+  await page.locator('#topbar-cc').click()
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-now', 'chat')
 }
 

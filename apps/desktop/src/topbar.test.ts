@@ -10,6 +10,9 @@ describe('desktop topbar', () => {
     expect(topbar).toContain('topbar-cc-light')
     expect(topbar).toContain('topbar-cc-dark')
     expect(topbar).toContain('id="topbar-search"')
+    expect(topbar).toMatch(/id="topbar-cc"[^>]*class="[^"]*\bactive\b/)
+    expect(topbar).toContain('id="topbar-presence-dot"')
+    expect(topbar).toContain('id="topbar-presence"')
   })
   it('七个目的页与设置后厨都可达', () => {
     for (const pane of ['overview','memory','recollections','atelier','todos','a2a-agents','sessions']) expect(topbar).toContain(`data-pane="${pane}"`)

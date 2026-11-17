@@ -140,7 +140,7 @@ describe('apps/desktop shim — HTML structure', () => {
       'memory-editor', 'memory-status',
       'memory-edit-btn', 'memory-save-btn', 'memory-cancel-btn',
       'dash-stop', 'dash-restart', 'dash-refresh',
-      'dash-rail-dot', 'dash-rail-text',
+      'topbar-presence-dot', 'topbar-presence',
       // 此刻页(2026-10-01 照稿重排)
       'topbar-cc', 'topbar-search', 'topbar-roster', 'roster-aside', 'roster-list', 'roster-dock', 'memory-topics', 'converse-root', 'conversation-matter-layer',
       'dev-banner',

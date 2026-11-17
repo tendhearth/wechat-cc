@@ -46,10 +46,10 @@
 .now-connections .dot.warn { background: var(--th-warn); }
 .now-connections .dot.bad { background: var(--th-bad); }
 /* 状态点:≤10px,只有它带状态色;不知道 = 灰。 */
-#dash-rail-dot { width: 8px; height: 8px; background: var(--th-unknown); }
-#dash-rail-dot.ok { background: var(--th-ok); }
-#dash-rail-dot.warn { background: var(--th-warn); }
-#dash-rail-dot.bad { background: var(--th-bad); }
+#topbar-presence-dot { width: 8px; height: 8px; background: var(--th-unknown); }
+#topbar-presence-dot.ok { background: var(--th-ok); }
+#topbar-presence-dot.warn { background: var(--th-warn); }
+#topbar-presence-dot.bad { background: var(--th-bad); }
 .now-hero { display: flex; flex-direction: column; align-items: center; gap: var(--th-space-l); flex: none; width: 100%; max-width: 680px; }
 .now-greeting { font-size: calc(var(--th-size-title) + 10px); line-height: var(--th-lh-title); font-weight: 400; margin: 0; color: var(--th-ink); }
 .now-cc-col { display: flex; align-items: center; justify-content: center; gap: var(--th-space-xl); width: 100%; }
