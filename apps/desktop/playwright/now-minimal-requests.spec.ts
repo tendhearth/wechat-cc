@@ -23,6 +23,8 @@ for(const width of [1440,900])test(`roster keeps request purpose, keyboard desti
  await expect(page.locator('#roster-list [data-group="waiting"] h2')).toHaveText('等你 2')
  const row=page.locator('[data-roster-key="matter:deadbeef"]')
  await expect(row).toContainText('Bash: bun run test')
+ // 应用要先退出「加载中」(那时整个 .dashboard 是 display:none,行拿不到焦点、按键会丢);文字断言不看可见性,所以先等这一行真的看得见。
+ await expect(row).toBeVisible()
  await row.press('Enter')
  await expect(page.locator('#conversation-matter-layer')).toBeVisible()
  const heading = width >= 1080 ? '.roster-direct-heading h2' : '.wb-task-head h2'
