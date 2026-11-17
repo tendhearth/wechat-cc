@@ -26,7 +26,7 @@ it('a delayed location response cannot repopulate private messages after revocat
 })
 
 it('a successful sleep closes the selected panel without deleting its recent tag or sending a close write',async()=>{
- const h=fixture();h.tStart();await new Promise(r=>setTimeout(r,0));await h.tOpen('server');h.sleep();await h.tRead();expect((h.w.document.getElementById('topic-panel') as unknown as HTMLElement).hidden).toBe(true);expect(h.posts).toHaveLength(1);await h.tList(false,false);expect(h.w.document.getElementById('topic-row')?.textContent).toContain('服务器')
+ const h=fixture();h.tStart();await new Promise(r=>setTimeout(r,0));await h.tOpen('server');h.sleep();await h.tRead();expect((h.w.document.getElementById('topic-panel') as unknown as HTMLElement).hidden).toBe(true);expect(h.posts).toHaveLength(1);await h.tList(false,false);await h.tList(true,false);expect(h.w.document.getElementById('topic-list')?.textContent).toContain('服务器');expect(h.w.document.getElementById('topic-row')).toBeNull()
 })
 
 it('a late 404 for the previous topic cannot clear or close the newly selected topic',async()=>{
@@ -67,7 +67,7 @@ it('合并后的旧话题引用跟随 v109 别名，不额外打开泡泡',async
 })
 
 it('device topics read daemon activity and project session data without a new write path',async()=>{
- const h=fixture(true,true);h.tStart();await new Promise(r=>setTimeout(r,0))
+ const h=fixture(true,true);h.tStart();await new Promise(r=>setTimeout(r,0));(h.w.document.getElementById('topic-open') as unknown as HTMLButtonElement).click();await new Promise(r=>setTimeout(r,0));expect((h.w.document.getElementById('topic-all') as unknown as HTMLElement).hidden).toBe(false)
  const tag=h.w.document.querySelector('[data-topic="server"]')!
  expect(tag.getAttribute('aria-label')).toBe('服务器，1 个等你，2 个在跑，1 个做完未看')
  expect(tag.querySelector('[data-topic-activity="waiting"]')?.textContent).toBe('1')

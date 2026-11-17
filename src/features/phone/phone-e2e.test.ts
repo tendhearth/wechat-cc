@@ -200,11 +200,11 @@ describe('手机协议 v2 进程内端到端', () => {
     const { open } = phoneLine({ stripRoutes: true })
     const elements = new Map<string, any>()
     const element = (id: string) => {
-      if (!elements.has(id)) elements.set(id, { textContent: '', src: '', hidden: false, innerHTML: '',
+      if (!elements.has(id)) elements.set(id, { textContent: '', src: '', hidden: false, innerHTML: '', value:'', remove(){}, appendChild(){},
         addEventListener() {}, replaceChildren() {}, classList: { contains: () => true, add() {}, remove() {} } })
       return elements.get(id)
     }
-    const document = { hidden: false, getElementById: element, querySelector: element, querySelectorAll: () => [], addEventListener() {} }
+    const document = { hidden: false, createElement:element, getElementById: element, querySelector: element, querySelectorAll: () => [], addEventListener() {} }
     const paths: string[] = []
     const fetchPage = async (path: string, opts?: RequestInit) => {
       const url = new URL(path, 'http://web.test')
@@ -215,7 +215,7 @@ describe('手机协议 v2 进程内端到端', () => {
     // 真网页传输和调用源码，只有 DOM / socket 边界替身；无浏览器、无生产监听。
     const source = ['transport.js', 'workbench.js', 'presence.js', 'home.js'].map(readMobileSource).join('\n')
     const boot = new Function('document', 'window', 'CCP', 'fetch', 'localStorage', 'location', 'setInterval', 'openSocket', 'token', 'remote', `
-      var T=token,REMOTE=remote;
+      var T=token,REMOTE=remote,isDevice=true;
       function q(path){return path+(path.includes('?')?'&':'?')+'d='+encodeURIComponent(T)}
       function esc(s){return String(s)}
       ${source}

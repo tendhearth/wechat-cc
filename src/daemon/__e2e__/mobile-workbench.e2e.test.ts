@@ -63,7 +63,9 @@ describe('phone web page: T5 device conversation and restricted LINK status',()=
     // T5 使用 chat-input 和过程/成果折叠层，替代旧的 textarea/成果控件不存在断言。
     for(const sel of ['#chat-input','#m-status .matter-process','#m-status .matter-results','#m-status [data-artifact]'])expect(await page.locator(sel).count(),sel).toBe(1)
     // 旧容器和额度交接仍未开放；把已支持的输入/成果从排除列表移走。
-    for(const sel of ['#m-events','#m-artifacts','#m-say','[data-control]','[data-handoff]'])expect(await page.locator(sel).count(),sel).toBe(0)
+    // 管家的屋子(2026-11-17):设备在详情底部能直接对这件事说话(#m-say,主人 11-17 授权的重排);链接令牌仍然没有(见下一条用例)。
+    expect(await page.locator('#m-say').count()).toBe(1)
+    for(const sel of ['#m-events','#m-artifacts','[data-control]','[data-handoff]'])expect(await page.locator(sel).count(),sel).toBe(0)
     expect(errors).toEqual([])
   })
 

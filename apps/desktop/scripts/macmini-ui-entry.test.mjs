@@ -191,3 +191,5 @@ test('unified acceptance uses bounded suite and only the assigned snapshot branc
  expect(remote).toContain("'butler-checkup.spec.ts'")
  expect(remote).toContain("['task-detail-minimal.spec.ts','--grep','ordinary single-executor']")
 })
+
+test('butler web is registered only for browser snapshots',()=>{expect(supportsBrowserSnapshot('claude/butler-web')).toBe(true);expect(supportsAppSnapshot('claude/butler-web')).toBe(false);expect(supportsBrowserSnapshot('claude/butler-web-other')).toBe(false)})

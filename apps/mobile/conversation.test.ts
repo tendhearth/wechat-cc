@@ -114,7 +114,7 @@ describe('reply attribution avatars',()=>{
 it('delegation references update once; old unlinked work is revealed only through waiting/search',async()=>{
  const h=fixture();await new Promise(r=>setTimeout(r,0))
  h.matters.push({id:'old',kind:'task',title:'以前的事',createdAt:1,updatedAt:2,state:'waiting'},{id:'linked',kind:'task',title:'查备份',originMessageId:'a',createdAt:1,updatedAt:2,state:'working'})
- h.cMatterUpdates();await new Promise(r=>setTimeout(r,0));expect(h.w.document.querySelectorAll('[data-reference]')).toHaveLength(1);expect(h.w.document.getElementById('chat-waiting')?.textContent).toBe('1 件事等你')
+ h.cMatterUpdates();await new Promise(r=>setTimeout(r,0));expect(h.w.document.querySelectorAll('[data-reference]')).toHaveLength(1);expect(h.w.document.getElementById('chat-waiting')).toBeNull()
  h.matters[1].state='done';h.cMatterUpdates();await new Promise(r=>setTimeout(r,0));expect(h.w.document.querySelectorAll('[data-reference]')).toHaveLength(1);expect(h.w.document.getElementById('reference-linked')?.textContent).toContain('完成');expect(h.writes).toEqual([])
 })
 

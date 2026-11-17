@@ -209,3 +209,5 @@ before/after覆盖同一个合成截图harness；白名单只覆盖 `playwright/
 主人指定 `mini-ui-acceptance` 分支可使用 browser / verified App 快照入口。该分支的 browser `before` 固定取记录本 PR #915 的父提交（`9547a8c30^`），`after` 仍取已提交 HEAD；两端使用同一份 `task-detail-minimal.spec.ts` 测试夹具覆盖，摘要记录在 snapshot.json，产品源码仍按 Git manifest 核验。
 
 设置 `CC_UI_BROWSER_SUITE=mini-ui-acceptance` 后，标准 `browser` 入口仅运行详情与体检两份用例；before 只运行普通单执行者详情对照。此开关只接受该固定值，不接受路径或自定义命令。App 的 `butler-checkup` 流程也已登记。Homebot 若缺少 `app-tools`，须记录标准入口的实际阻塞，不能借用个人工具、默认设备或主机补跑。
+
+2026-11-17：主人指定的 `claude/butler-web` 已登记 browser 快照白名单。网页名单条 / 直通的宽窄屏用例在 `apps/mobile/playwright/conversation.e2e.test.ts`，旧结构回归同步更新 `minimal.e2e.test.ts`。本分支仅编写用例、未连接 mini 或运行浏览器；整合者须在 mini 的独立离线网页测试环境运行这两份用例，取得通过回执后再集成验收。白名单登记本身不表示网页用例已被标准 desktop browser suite 执行。

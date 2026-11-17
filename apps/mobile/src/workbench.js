@@ -209,6 +209,7 @@ function renderMatter(d) {
   // 出生地(2026-10-19):字形在头像组前面,名字后面写一句「从哪来的」;不知道 ⇒ 不画
   var agents=mAgents.matterAgents(d.task&&d.task.providerId,d.matter.agents),who=document.getElementById("m-agents"),from=mAgents.originLabel(d.matter.origin)
   who.hidden=!agents.length&&!from;who.innerHTML=agents.length||from?mAgents.originMarkHtml(d.matter.origin)+mAgents.agentAvatarsHtml(agents,{nameOf:mNameOf(d.matter.agentNames)})+'<span>'+esc([mAgents.agentsLabel(agents,mNameOf(d.matter.agentNames)),from].filter(Boolean).join(" · "))+'</span>':''
+  if(typeof mDirectRender==='function')mDirectRender(d)
   mRenderStatus(d)
   if(typeof cRenderResponses==='function')cRenderResponses(d)
   mSetButtons()
@@ -218,14 +219,19 @@ function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidde
 function mRefresh() {
   clearTimeout(mPoll);if(!mActive||!mCurrent||document.hidden||mOffline)return Promise.resolve()
   var id=mCurrent,seq=++mSeq
+  if(mIsDevice()&&mRosterTarget&&mRosterTarget.terminal)return mTerminalRefresh(id,seq)
   return mApi('/v1/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq)mNotice(mError(e.message))}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
 }
 function openMatter(id) {
   if(typeof cPushLayer==='function')cPushLayer({kind:'matter',id:id})
   if(typeof cResetResponse==='function'&&id!==mCurrent)cResetResponse()
   mDetailFresh=false
-  if(mCurrent!==id){mRenderedStatus=null;mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
+  if(mCurrent!==id){var oldSub=document.getElementById('m-sub');if(oldSub){oldSub.innerHTML='';oldSub.hidden=true}mRenderedStatus=null;mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
+  if(typeof mSaveDirect==='function')mSaveDirect()
+  if(mRosterTarget&&id!==mRosterTarget.id&&id!=='terminal:'+mRosterTarget.id)mRosterTarget=null
+  if(typeof rItems!=='undefined')mRosterTarget=rItems.find(function(i){return i.id===id||'terminal:'+i.id===id})||mRosterTarget
   mCurrent=id;mActive=true
+  mDirectMount()
   document.getElementById("m-home").hidden=true;document.getElementById("m-detail").hidden=false
   if(typeof cShowMatterLayout==='function')cShowMatterLayout()
   return mRefresh()
@@ -235,7 +241,7 @@ function ccShowMatter(id) {
   openMatter(id)
 }
 document.getElementById("m-list").addEventListener("click",function(ev){var c=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-mid]'));if(c)openMatter(c.dataset.mid)})
-document.getElementById("m-back").addEventListener("click",function(){if(typeof cBackLayer==='function'&&cReady&&!cHandlingPop){cBackLayer();return};mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-home").hidden=false;if(typeof cShowMatterLayout==='function')cShowMatterLayout();loadMatters()})
+document.getElementById("m-back").addEventListener("click",function(){if(typeof cBackLayer==='function'&&cReady&&!cHandlingPop){cBackLayer();return};mSaveDirect();mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-home").hidden=false;if(typeof cShowMatterLayout==='function')cShowMatterLayout();loadMatters()})
 // 回前台按当前页分路:在详情页刷详情,在列表页刷列表。
 document.addEventListener('visibilitychange',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons();if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
 window.addEventListener('offline',function(){clearTimeout(mPoll);mOffline=true;mSeq++;mConnectionEpoch++;mDetailFresh=false;mMisses=M_STALE_MISSES;mConn();mSetButtons()})
@@ -245,3 +251,44 @@ window.addEventListener('pageshow',function(){if(mActive){if(mCurrent)mRefresh()
 // 列表跟此刻页一起:一载入就拉,看着的时候 15 秒刷一次(同 home.js)。
 setInterval(function(){ if (!document.hidden && !mCurrent) loadMatters() }, 15000)
 loadMatters()
+
+var mRosterTarget=null,mDirectDrafts=new Map(),mDirectPending=new Map(),mDirectSending=new Set()
+// 详情页也会单独装进只看状态的页面和测试里(那里没有 boot.js 的 isDevice):没有就当不是设备。
+function mIsDevice(){return typeof isDevice!=='undefined'&&isDevice}
+function mSaveDirect(){if(!mIsDevice())return;var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text'));if(input&&mCurrent)mDirectDrafts.set(mCurrent,input.value)}
+function mDirectMount(){
+ if(!mIsDevice())return;var old=document.getElementById('m-say');if(old)old.remove()
+ var form=document.createElement('form');form.id='m-say';form.innerHTML='<span id="m-say-avatar"></span><label class="sr-only" for="m-say-text">直接说一句</label><textarea id="m-say-text" rows="1" maxlength="6000"></textarea><button type="submit" aria-label="发送">↑</button><small id="m-say-notice" role="status"></small>'
+ document.getElementById('m-detail').appendChild(form);/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text')).value=mDirectDrafts.get(mCurrent)||'';form.addEventListener('input',mSaveDirect);form.addEventListener('submit',mDirectSend)
+}
+function mDirectRender(d){
+ if(!mIsDevice())return
+ if(d.matter.kind==='terminal'&&!mRosterTarget&&d.sessions&&d.sessions[0])mRosterTarget={agents:[],terminal:{sessionId:d.sessions[0].sessionId}}
+ var item=mRosterTarget,agent=item&&item.agents.find(function(a){return a.current})||item&&item.agents[0],id=agent?agent.id:d.task&&d.task.providerId||(d.matter.agents||[])[0]||'agent',name=agent&&agent.name||mNameOf(d.matter.agentNames)(id),avatar=mAgents.agentAvatarsHtml([id],{nameOf:function(){return name}})
+ document.getElementById('m-back').textContent='‹ CC';document.getElementById('m-title').textContent=ccPlain(d.matter.title)
+ document.getElementById('m-agents').hidden=false;document.getElementById('m-agents').setAttribute('aria-label','在跟 '+name+' 说');document.getElementById('m-agents').innerHTML=avatar;var sub=document.getElementById('m-sub');sub.innerHTML=(item&&item.project?'<button type="button" id="m-project">'+esc(item.project)+'</button>':'')+esc(item&&item.relay?(item.project?' · ':'')+'第 '+item.relay.index+' 棒 / '+item.relay.total:'');sub.hidden=!sub.innerHTML;var project=document.getElementById('m-project');if(project)project.addEventListener('click',function(){if(typeof tShowAll!=='function')return;var topic=tRecent.concat(tAll).find(function(t){return t.title===item.project});if(topic)tOpen(topic.id);else{tShowAll();/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value=item.project;tList(true,false)}})
+ var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text'));if(input){input.placeholder='对 '+name+' 说…';document.getElementById('m-say-avatar').innerHTML=avatar}
+ document.querySelectorAll('.m-elsewhere').forEach(function(el){/** @type {HTMLElement} */ (el).hidden=true});mDirectCheck()
+}
+function mDirectNotice(id,text){if(mCurrent===id&&document.getElementById('m-say-notice'))document.getElementById('m-say-notice').textContent=text}
+function mDirectAccepted(id,p){mDirectPending.delete(id);if(mDirectDrafts.get(id)===p.text)mDirectDrafts.delete(id);var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text'));if(mCurrent===id&&input&&input.value===p.text)input.value='';mDirectNotice(id,'已送到。')}
+async function mDirectCheck(){
+ if(!isDevice||!mCurrent)return;var id=mCurrent,p=mDirectPending.get(id),identity=T;if(!p||p.terminal||mDirectSending.has(id))return
+ try{var r=await /* link-scan: device-only */ api('/v1/matter/input-receipt?id='+encodeURIComponent(id)+'&requestId='+encodeURIComponent(p.requestId));var b=await r.json();if(!isDevice||identity!==T||mDirectPending.get(id)!==p)return;if(r.status===401){onUnauthorized(identity);return}if(r.status===200&&b.ok&&b.input&&b.input.id===p.requestId&&b.input.status==='delivered')mDirectAccepted(id,p);else mDirectNotice(id,'结果待核对')}catch(e){mDirectNotice(id,'结果待核对')}
+}
+async function mDirectSend(ev){
+ ev.preventDefault();if(!isDevice||!mCurrent)return;var id=mCurrent,input=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say-text')),text=input.value;if(!text.trim()||mDirectSending.has(id))return
+ if(mDirectPending.has(id)){mDirectNotice(id,'结果待核对');mDirectCheck();return}
+ var terminal=mRosterTarget&&mRosterTarget.terminal,p={text:text,requestId:crypto.randomUUID(),terminal:!!terminal},identity=T;mSaveDirect();mDirectPending.set(id,p);mDirectSending.add(id)
+ try{var opts={method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(terminal?{session_id:terminal.sessionId,text:text}:{id:id,text:text,requestId:p.requestId})},r
+ if(terminal)r=await /* link-scan: device-only */ mPostOnce('/v1/cli/session-say',{method:'POST',headers:opts.headers,body:opts.body})
+ else r=await /* link-scan: device-only */ mPostOnce('/v1/matter/say',{method:'POST',headers:opts.headers,body:opts.body})
+ var b=await r.json();if(!isDevice||identity!==T)return;if(r.status===401){onUnauthorized(identity);return}if(r.status>=200&&r.status<300&&b.ok)mDirectAccepted(id,p);else mDirectNotice(id,'结果待核对')
+ }catch(e){if(isDevice&&identity===T)mDirectNotice(id,'结果待核对')}finally{mDirectSending.delete(id)}
+}
+async function mTerminalRefresh(id,seq){
+ var item=mRosterTarget,identity=T
+ try{var r=await /* link-scan: device-only */ api('/v1/cli/activity?session_id='+encodeURIComponent(item.terminal.sessionId)),b=await r.json();if(!isDevice||identity!==T||mCurrent!==id||seq!==mSeq)return;if(r.status===401){onUnauthorized(identity);return}if(r.status!==200||!b.ok)throw Error('unavailable');mDetailFresh=true;document.getElementById('m-status').innerHTML='<p>'+esc(CCP.STATUS_WORDS[item.status])+'</p>'+(b.items||[]).map(function(i){return '<p>'+esc(i.text)+'</p>'}).join('');mDirectRender({matter:{title:item.title,agents:[]}})}catch(e){if(mCurrent===id)mNotice('家里的电脑暂时连不上')}finally{if(mCurrent===id)mSchedule()}
+}
+function mDirectClear(){var sub=document.getElementById('m-sub');if(sub){sub.innerHTML='';sub.hidden=true}mDirectDrafts.clear();mDirectPending.clear();mRosterTarget=null;var form=document.getElementById('m-say');if(form)form.remove()}
+window.addEventListener('online',mDirectCheck)

@@ -5,7 +5,6 @@ function cMatterUpdates(){
  if(!isDevice||!mMatters)return
  mMatters.forEach(function(m){if(cReferences.has(m.id)||m.originMessageId&&cMessages.has(m.originMessageId)||m.kind==='task'&&(m.createdAt>=cOpenedAt||cMatterSeen.has(m.id)&&cMatterSeen.get(m.id)!==JSON.stringify([m.updatedAt,mStatusKey(m)])))cReferences.set(m.id,m);cMatterSeen.set(m.id,JSON.stringify([m.updatedAt,mStatusKey(m)]))})
  var waiting=typeof cReady!=='undefined'&&cReady?cWaitingMatters():mMatters.filter(function(m){return mStatusKey(m)==='waiting'})
- var locator=document.getElementById('chat-waiting');locator.hidden=!waiting.length;locator.textContent=waiting.length+' 件事等你'
  cRender();if(typeof cReady!=='undefined'&&cReady)cLoadWaiting()
 }
 function cRevealMatter(id){
@@ -13,7 +12,6 @@ function cRevealMatter(id){
  if(!m)return openMatter(id)
  cReferences.set(id,m);cRender();var node=document.getElementById('reference-'+id);if(node){node.scrollIntoView({block:'center'});node.querySelector('summary').focus()}
 }
-document.getElementById('chat-waiting').addEventListener('click',function(){var waiting=cWaitingMatters();if(waiting.length)cRevealMatter(waiting[cWaitingIndex++%waiting.length].id)})
 document.getElementById('chat-messages').addEventListener('click',function(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-mid]'));if(b)openMatter(b.dataset.mid)})
 
 function cMatterWork(d){
@@ -43,7 +41,7 @@ async function cLoadWaiting(){
    var r=await /* link-scan: device-only */ api('/v1/matters?search=1&kind=task&state=waiting&taskState=1&limit=50'+(cursor?'&cursor='+encodeURIComponent(cursor):''))
    if(r.status===401){onUnauthorized(identity);return}if(r.status!==200)throw Error('unavailable');var b=await r.json();if(!isDevice||identity!==T)return;if(!Array.isArray(b.matters))throw Error('unavailable');rows=rows.concat(b.matters);cursor=b.nextCursor
   }while(cursor)
-  cWaitingRows=rows;var locator=document.getElementById('chat-waiting'),waiting=cWaitingMatters();locator.hidden=!waiting.length;locator.textContent=waiting.length+' 件事等你'
- }catch(e){var locator=document.getElementById('chat-waiting');if(!locator.hidden)locator.textContent+=' · 尚未同步'}
+  cWaitingRows=rows
+ }catch(e){}
  finally{cWaitingLoading=false}
 }
