@@ -105,6 +105,20 @@ test('project topic snapshots accept only the explicit task branch and preserve 
  }
 })
 
+test('reply speaker accepts only its assigned App snapshot and transports the registered flow', () => {
+  expect(supportsAppSnapshot('who-answers-app-avatar')).toBe(true)
+  expect(supportsBrowserSnapshot('who-answers-app-avatar')).toBe(false)
+  for (const ref of ['who-answers-app-avatar-other', 'who-answers-app-avatar;echo x', '../who-answers-app-avatar']) {
+    expect(supportsAppSnapshot(ref)).toBe(false)
+    expect(supportsBrowserSnapshot(ref)).toBe(false)
+  }
+  const calls = []
+  expect(main(['node', 'entry', 'app-maestro', 'reply-speaker'], {}, (...args) => { calls.push(args); return { status: 0 } })).toBe(0)
+  expect(calls).toHaveLength(1)
+  expect(calls[0][1].at(-1)).toContain('/app-run.mjs')
+  expect(JSON.parse(calls[0][2].input)).toEqual({ command: 'app-maestro', flow: 'reply-speaker' })
+})
+
 
 test('B3 accepts only the assigned immutable source branch and includes its page regressions',()=>{
  expect(supportsBrowserSnapshot('design-b3')).toBe(true)

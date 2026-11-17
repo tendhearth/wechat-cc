@@ -187,7 +187,8 @@ it('shows actual matter reply avatars in recent and earlier results after a hand
   backend.matter = async () => detail
   backend.chatModel = async () => ({ ...model, providers: [{ ...model.providers[0]!, id: 'claude', name: 'Claude' }, { ...model.providers[0]!, id: 'codex', name: 'Codex' }, { ...model.providers[0]!, id: 'openai', name: 'My gateway' }] })
   const ui = await mount(withProviders(createElement(Matter), { backend, lang: 'en' })); await flush()
-  const marks = (id: string) => [...ui.byId(id).querySelectorAll('[data-testid="reply-avatar"]')]
+  const marks = (id: string) => [...ui.byId(id).querySelectorAll('[data-testid^="reply-speaker-"]')]
+  expect(marks('progress-latest-conversation').map(n => n.getAttribute('data-testid'))).toEqual(['reply-speaker-codex', 'reply-speaker-openai'])
   expect(marks('progress-latest-conversation').map(n => n.getAttribute('aria-label'))).toEqual(['Codex', 'My gateway'])
   expect(marks('progress-latest-conversation')[0]?.querySelector('img')?.getAttribute('src')).toContain('/agents/codex.png')
   expect(marks('progress-latest-conversation')[1]?.querySelector('img')).toBeNull()

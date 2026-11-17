@@ -6,12 +6,14 @@ import { color, componentAppearance, typeScale } from '@wechat-cc/design-tokens'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type ChatPageT } from '../backend/types'
 import { clearDrafts, getDraft, putReceipt, setDraft } from './drafts'
-import { withProviders } from './providers.test-support'
+import { withLang, withProviders } from './providers.test-support'
 import Chat from '../ui/ConversationScreen'
+import DevE2E from '../app/dev-e2e'
 const scrollHost = vi.hoisted(() => ({ offset: vi.fn() }))
+const route = vi.hoisted(() => ({ params: {} as { op?: string }, keychainRead: vi.fn(), keychainWrite: vi.fn(), keychainDelete: vi.fn() }))
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => ({}), useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
+vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => route.params, useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
 vi.mock('react-native', async () => {
   const { createElement, forwardRef, useImperativeHandle } = await import('react')
   const { nativeBoundary } = await import('../ui/native-motion.test-support')
@@ -31,6 +33,8 @@ vi.mock('react-native', async () => {
 })
 // 设备边界:系统语言、录音 / 播放、文件系统(真页面、真 Provider、真 TopBar / Markdown / ReplyExtras 都照常渲染)。
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
+vi.mock('expo-constants', () => ({ default: { expoConfig: { extra: { e2eBuild: true } } } }))
+vi.mock('expo-secure-store', () => ({ AFTER_FIRST_UNLOCK: 'after-first-unlock', getItemAsync: route.keychainRead, setItemAsync: route.keychainWrite, deleteItemAsync: route.keychainDelete }))
 vi.mock('expo-audio', () => ({ createAudioPlayer: () => ({}), setAudioModeAsync: async () => {} }))
 vi.mock('expo-file-system', () => ({ File: class {}, Paths: {} }))
 vi.mock('react-native-safe-area-context', async () => { const { createElement } = await import('react'); return { SafeAreaProvider: ({ children }: any) => children, SafeAreaView: ({ children }: any) => createElement('main', null, children) } })
@@ -48,10 +52,38 @@ async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = 
   await act(() => root.render(withProviders(createElement(Chat), { backend, lang }))); await flush()
   return { read, say, backend }
 }
-beforeEach(() => { scrollHost.offset.mockClear(); clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
+beforeEach(() => { scrollHost.offset.mockClear(); route.params = {}; route.keychainRead.mockClear(); route.keychainWrite.mockClear(); route.keychainDelete.mockClear(); clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
 afterEach(async () => { await act(() => root.unmount()); container.remove() })
 
 describe('native chat feedback', () => {
+  it('opens the reply-speaker E2E conversation without reading or changing pairing in a Release UI-test build', async () => {
+    route.params = { op: 'reply-speaker' }
+    vi.stubGlobal('__DEV__', false)
+    try {
+      await act(() => root.render(withLang('en', createElement(DevE2E)))); await flush()
+      for (const id of ['owner', 'cc', 'codex', 'notice']) expect(byId(`chat-message-reply-demo-${id}`)).not.toBeNull()
+      expect(byId('reply-speaker-codex')).not.toBeNull()
+      expect(byId('reply-speaker-claude')).toBeNull()
+      expect(byId('reply-speaker-cursor')).toBeNull()
+      expect(route.keychainRead).not.toHaveBeenCalled()
+      expect(route.keychainWrite).not.toHaveBeenCalled()
+      expect(route.keychainDelete).not.toHaveBeenCalled()
+    } finally { vi.unstubAllGlobals() }
+  })
+  it('shows a stable Codex avatar only on the delegated reply in the offline speaker fixture', async () => {
+    const demo = makeDemoBackend({ lang: 'en', chatFixture: 'reply-speaker' })
+    try {
+      await mount(await demo.chat({}), vi.fn(), false, 'en')
+      expect(byId('chat-message-reply-demo-owner')?.textContent).toContain('Who is replying?')
+      expect(byId('chat-message-reply-demo-cc')?.textContent).toContain('I’ll ask Codex to check.')
+      expect(byId('chat-message-reply-demo-codex')?.textContent).toContain('I checked the changes.')
+      expect(byId('chat-message-reply-demo-notice')?.textContent).toContain('Offline demo only.')
+      expect([...container.querySelectorAll('[data-testid^="reply-speaker-"]')].map(n => n.getAttribute('data-testid'))).toEqual(['reply-speaker-codex'])
+      expect(byId('reply-speaker-codex')?.getAttribute('aria-label')).toBe('Codex')
+      expect(byId('reply-speaker-codex')?.querySelector('img')?.getAttribute('src')).toContain('/agents/codex.png')
+      for (const id of ['owner', 'cc', 'notice']) expect(byId(`chat-message-reply-demo-${id}`).querySelector('[data-testid^="reply-speaker-"]')).toBeNull()
+    } finally { demo.dispose() }
+  })
   it('uses a rail bubble and bubble text for the user, transparent body text for CC, and the 44-point header target', async () => {
     const at=Date.now()
     await mount({...empty(),messages:[{id:'me',role:'me',source:'phone',text:'我的消息',at,truncated:false,kind:'text'},{id:'cc',role:'cc',source:'phone',text:'CC 的回复',at:at+1,truncated:false,kind:'text'}]})
@@ -173,7 +205,7 @@ for (const lang of ['en', 'zh-Hans'] as const) it(`explains unavailable original
 describe('reply attribution avatars', () => {
   const reply = (id: string, metadata: Partial<ChatPageT['messages'][number]> = {}): ChatPageT['messages'][number] => ({ id, role: 'cc', kind: 'text', text: id, at: 1, source: 'phone', truncated: false, ...metadata })
   const row = (text: string) => [...byId('chat-list').querySelectorAll('section')].find(s => s.textContent?.includes(text))!
-  const avatar = (text: string) => row(text).querySelector('[data-testid="reply-avatar"]')
+  const avatar = (text: string) => row(text).querySelector('[data-testid^="reply-speaker-"]')
 
   async function attributedScreen(messages: ChatPageT['messages'], namesFail = false, extras: Partial<Backend> = {}) {
     const backend = makeDemoBackend({ lang: 'en' })

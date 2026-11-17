@@ -311,7 +311,7 @@ function ChatBubble({ b, providers, lang, canRetry, onRetry, onDismiss, checking
   const from = b.projection && replyProvider(b.side, b) ? null : b.projection==='result'?(lang==='zh-Hans'?'CC 的结果':'CC result'):b.projection==='stream'?'CC':t(lang, `chat.from.${b.source}`)
   // 只有附件的回复不画空文字区;过程仍可展开查看。
   return (
-    <View style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
+    <View testID={`chat-message-${b.key}`} style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
       {hasBubbleText(b) ? <View
         testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'}
         style={{

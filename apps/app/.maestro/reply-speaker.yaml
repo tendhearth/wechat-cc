@@ -1,0 +1,60 @@
+# Synthetic attribution through the real conversation page. No pairing or live backend.
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- openLink: "tendhearth://dev-e2e?op=reply-speaker"
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    visible:
+      id: reply-speaker-codex
+    timeout: 15000
+- scrollUntilVisible:
+    element:
+      id: chat-message-reply-demo-owner
+    direction: UP
+    centerElement: true
+    timeout: 10000
+- assertVisible:
+    id: chat-message-reply-demo-owner
+- scrollUntilVisible:
+    element:
+      id: chat-message-reply-demo-cc
+    direction: DOWN
+    centerElement: true
+    timeout: 10000
+- assertVisible:
+    id: chat-message-reply-demo-cc
+# CC has provider=claude, notice has provider=cursor: neither is an agent reply.
+- assertNotVisible:
+    id: reply-speaker-claude
+- scrollUntilVisible:
+    element:
+      id: chat-message-reply-demo-notice
+    direction: DOWN
+    centerElement: true
+    timeout: 10000
+- assertVisible:
+    id: chat-message-reply-demo-notice
+- assertNotVisible:
+    id: reply-speaker-cursor
+- scrollUntilVisible:
+    element:
+      id: reply-speaker-codex
+    direction: UP
+    centerElement: true
+    timeout: 10000
+- assertVisible:
+    id: chat-message-reply-demo-codex
+- assertVisible:
+    id: chat-message-reply-demo-cc
+- assertVisible:
+    id: reply-speaker-codex
+- assertNotVisible:
+    id: reply-speaker-claude
+- takeScreenshot: reply-speaker

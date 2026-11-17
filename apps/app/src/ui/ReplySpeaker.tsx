@@ -17,7 +17,7 @@ export function ReplySpeaker({ role, reply, providers, showFallback = true }: {
   const label = name?.trim() ? name : provider
   // openai is the custom compatible-service slot. Never infer its brand from a model/name.
   const id = provider !== 'openai' && agentGlyph(provider) ? provider : 'service'
-  return <View testID="reply-avatar" accessible accessibilityRole="image" accessibilityLabel={label}>
+  return <View testID={`reply-speaker-${provider}`} accessible accessibilityRole="image" accessibilityLabel={label}>
     <AgentAvatar id={id} size={24} names={{ service: 'AI' }} />
   </View>
 }
