@@ -10,6 +10,7 @@ import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
+import {makeProcessTreeFreezer,type ProcessRow} from '../../lib/process-tree-freeze'
 
 // 网络守护「暂停在跑的任务」(主人 2026-10-03):冻住(SIGSTOP)而不是停;冻住期间 daemon 侧为这条
 // run 起的计时器(回合看门狗、批准期限、空闲收工)一律不走;放开后接着跑;到顶 / 主人取消 ⇒ 不放开直接杀。
@@ -19,16 +20,16 @@ function gateOpen(){let resolve!:()=>void;const promise=new Promise<void>(r=>res
 async function settled(id:string){await expect.poll(()=>service.detail(id).task.status,{timeout:5_000}).not.toMatch(/^(queued|running|cancelling)$/)}
 const PROTECTED=(_run:{target:unknown})=>'VPN 探测连续两次失败，这个任务用到 Claude。'
 
-function suspendable(opts:{suspendResult?:boolean}={}){
+function suspendable(opts:{suspendResult?:boolean | Promise<boolean>}={}){
   const calls:string[]=[]
-  const hold=gateOpen()
+  const hold=gateOpen(), ready=gateOpen()
   const suspension:AgentSessionSuspension={suspend:vi.fn(()=>{calls.push('suspend');return opts.suspendResult??true}),resume:vi.fn(()=>{calls.push('resume')}),terminate:vi.fn(()=>{calls.push('terminate');hold.resolve()})}
   const provider={async spawn(){return{
-    async *dispatch(){yield {kind:'init' as const,sessionId:'s'};await hold.promise;yield {kind:'text' as const,text:'RECOVERED'};yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},
+    async *dispatch(){ready.resolve();yield {kind:'init' as const,sessionId:'s'};await hold.promise;yield {kind:'text' as const,text:'RECOVERED'};yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},
     async close(){hold.resolve()},async cancel(){hold.resolve()},suspension,
     callTarget:()=>({provider:'claude',model:'claude-opus-5'}),
   }}} as unknown as AgentProvider
-  return {provider,suspension,calls,hold}
+  return {provider,suspension,calls,hold,ready}
 }
 function setup(provider:AgentProvider,extra:Record<string,unknown>={}){
   const registry=createProviderRegistry({networkGate:gate})
@@ -87,7 +88,7 @@ it('an executor that cannot be frozen (no suspension / suspend() false) falls ba
   expect(await service.suspendForNetwork(PROTECTED)).toEqual({suspended:0,stopped:1})
   await settled(task.id)
   expect(service.detail(task.id).task.status).toBe('cancelled')
-  expect(JSON.stringify(service.detail(task.id).events)).toContain('已停止本轮')
+  expect(JSON.stringify(service.detail(task.id).events)).toContain('正在停止本轮')
 })
 
 it('cap reached: stopSuspendedForNetwork terminates the frozen tree without ever resuming it; task stops with the owner sentence',async()=>{
@@ -100,7 +101,7 @@ it('cap reached: stopSuspendedForNetwork terminates the frozen tree without ever
   await settled(task.id)
   expect(calls).toEqual(['suspend','terminate'])
   expect(service.detail(task.id).task.status).toBe('cancelled')
-  expect(JSON.stringify(service.detail(task.id).events)).toContain('网络一直没恢复，任务已停止，可以接着做')
+  expect(JSON.stringify(service.detail(task.id).events)).toContain('网络一直没恢复，正在停止任务。')
   expect(service.networkSuspended()).toEqual([])
 })
 
@@ -132,4 +133,58 @@ it('a pending permission does not expire while frozen (approval deadline paused)
   service.resumeFromNetwork()
   expect(await decision).toBe(false)                            // 放开后按剩下的时间照常到期
   hold.resolve();await settled(task.id)
+})
+
+it('holds the watchdog during a pending freeze and resumes through the normal path',async()=>{
+  const scan=gateOpen()
+  const {provider,calls,hold,ready}=suspendable({suspendResult:scan.promise.then(()=>true)})
+  setup(provider,{timeoutMs:80})
+  const task=service.create({path:project,providerId:'claude',text:'start'})
+  await ready.promise
+  const pending=service.suspendForNetwork(PROTECTED)
+  try {
+    await new Promise(resolve=>setTimeout(resolve,300))
+    expect(service.detail(task.id).task.status).toBe('running')
+    expect(service.resumeFromNetwork()).toBe(1)
+    expect(calls).toEqual(['suspend','resume'])
+    expect(JSON.stringify(service.detail(task.id).events)).toContain('网络恢复，已继续')
+    hold.resolve();await settled(task.id)
+    expect(service.detail(task.id).task.status).toBe('completed')
+  } finally {scan.resolve();await pending}
+})
+
+it.each(['cancel','cap','shutdown'] as const)('%s waits for a pending scan before killing detached descendants',async(action)=>{
+  const ready=gateOpen(), hold=gateOpen()
+  const signals:Array<[number,string|0]>=[]
+  const rows:ProcessRow[]=[{pid:10,parent:1,group:10},{pid:11,parent:10,group:11}]
+  let finish!:(table:ProcessRow[])=>void
+  let reads=0
+  const freezer=makeProcessTreeFreezer(()=>10,{
+    platform:'darwin',
+    table:()=>reads++===0?new Promise(resolve=>{finish=resolve}):rows,
+    signal:(target,signal)=>{signals.push([target,signal])},
+  })
+  const cancel=vi.fn(async()=>hold.resolve())
+  setup({async spawn(){return{
+    async *dispatch(){ready.resolve();yield {kind:'init' as const,sessionId:'s'};await hold.promise},
+    async close(){try{if(!await freezer.kill())throw new Error('cleanup unconfirmed')}finally{hold.resolve()}},
+    cancel,
+    suspension:{suspend:()=>freezer.freeze(),resume:()=>freezer.thaw(),terminate:async()=>{await freezer.kill()}},
+  }}} as unknown as AgentProvider)
+  const task=service.create({path:project,providerId:'claude',text:'start'})
+  await ready.promise
+  const pending=service.suspendForNetwork(PROTECTED)
+  let stopping:Promise<unknown>|undefined
+  try {
+    if(action==='shutdown')stopping=service.shutdown()
+    else if(action==='cancel')stopping=service.cancel(task.id)
+    else expect(service.stopSuspendedForNetwork('网络一直没恢复，任务已停止，可以接着做')).toBe(1)
+    await Promise.resolve()
+    expect(signals).toEqual([[-10,'SIGSTOP']])
+    expect(cancel).not.toHaveBeenCalled()
+  } finally {finish(rows);await pending;await stopping}
+  await settled(task.id)
+  expect(service.detail(task.id).task.status).toBe('cancelled')
+  expect(signals).toContainEqual([-11,'SIGKILL'])
+  expect(signals.some(([,signal])=>signal==='SIGCONT')).toBe(false)
 })

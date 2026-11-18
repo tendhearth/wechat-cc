@@ -522,7 +522,7 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
       const s = setup(); const r = live(s, suspendable(() => { throw new Error('EPERM') }))
       expect(await s.domain.suspendForNetwork(() => 'VPN 掉了。')).toEqual({ suspended: 0, stopped: 1 })
       expect(r.networkSuspended).toBeUndefined(); expect(r.cancelled).toBe(true)
-      expect(s.store.events(s.task.id)).toContainEqual(expect.objectContaining({ kind: 'system', text: '网络未受保护：VPN 掉了。这个执行者暂停不了，已停止本轮，恢复后可以继续。' }))
+      expect(s.store.events(s.task.id)).toContainEqual(expect.objectContaining({ kind: 'system', text: '网络未受保护：VPN 掉了。这个执行者暂停不了，正在停止本轮。' }))
     })
 
     it.each([
@@ -579,7 +579,11 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
       const session = suspendable(() => new Promise(resolve => { finish = resolve }))
       const run = live(s, session)
       const suspended = s.domain.suspendForNetwork(() => 'VPN 掉了。')
-      if (action === 'resume') s.domain.resumeFromNetwork()
+      if (action === 'resume') {
+        vi.advanceTimersByTime(100)
+        expect(s.domain.resumeFromNetwork()).toBe(1)
+        expect(run.interactionAt).toBe(Date.now())
+      }
       else s.domain.cancelRun(run)
       finish(true)
       expect(await suspended).toEqual({ suspended: 0, stopped: 0 })
@@ -595,7 +599,7 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
       expect(s.domain.stopSuspendedForNetwork('网络一直没恢复，任务已停止。')).toBe(1)
       expect(frozen.cancelled).toBe(true); expect(other.cancelled).toBe(false)
       expect(s.spies.untilStop).toHaveBeenCalledTimes(1); expect(s.spies.untilStop).toHaveBeenCalledWith(frozen.taskId, '网络一直没恢复,任务停了')
-      expect(s.store.events(s.task.id)).toContainEqual(expect.objectContaining({ kind: 'system', text: '网络一直没恢复，任务已停止。' }))
+      expect(s.store.events(s.task.id)).toContainEqual(expect.objectContaining({ kind: 'system', text: '网络一直没恢复，正在停止任务。' }))
     })
   })
 })

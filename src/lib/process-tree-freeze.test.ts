@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -70,7 +70,7 @@ describe.skipIf(!posix)('makeProcessTreeFreezer — a real child tree', () => {
 
     // 再冻一次,然后不放开直接杀:SIGKILL 对停住的进程照样生效。
     expect(await freezer.freeze()).toBe(true)
-    freezer.kill()
+    await freezer.kill()
     for (let i = 0; i < 40 && freezer.alive(); i++) await sleep(50)
     expect(freezer.alive()).toBe(false)
   }, 45_000)
@@ -107,7 +107,7 @@ describe('makeProcessTreeFreezer — unit', () => {
     f.thaw()
     expect(sent).toEqual([[14, 'SIGCONT'], [-12, 'SIGCONT'], [-10, 'SIGCONT']])
     sent.length = 0
-    f.kill()
+    await f.kill()
     expect(sent).toEqual([[-10, 'SIGKILL'], [-12, 'SIGKILL'], [14, 'SIGKILL']])
   })
 })
@@ -123,11 +123,11 @@ it('an unreadable process table leaves only registered groups to kill, without t
   expect(await freezer.freeze()).toBe(false)
   expect(freezer.frozen).toBe(true)
   expect(freezer.fullyFrozen).toBe(false)
-  freezer.kill()
+  expect(await freezer.kill()).toBe(false)
   expect(signals).toEqual([[-10, 'SIGSTOP'], [-11, 'SIGSTOP'], [-10, 'SIGKILL'], [-11, 'SIGKILL']])
 })
 
-it.each(['thaw', 'kill'] as const)('a pending process table cannot freeze descendants after %s', async action => {
+it('a pending process table cannot freeze descendants after thaw', async () => {
   const signals: Array<[number, string | 0]> = []
   let finish!: (rows: ProcessRow[]) => void
   const freezer = makeProcessTreeFreezer(() => 10, {
@@ -136,8 +136,72 @@ it.each(['thaw', 'kill'] as const)('a pending process table cannot freeze descen
     signal: (target, signal) => { signals.push([target, signal]) },
   })
   const frozen = freezer.freeze()
-  freezer[action]()
+  freezer.thaw()
   finish([{ pid: 10, parent: 1, group: 10 }, { pid: 11, parent: 10, group: 11 }])
   expect(await frozen).toBe(false)
-  expect(signals).toEqual([[-10, 'SIGSTOP'], [-10, action === 'thaw' ? 'SIGCONT' : 'SIGKILL']])
+  expect(signals).toEqual([[-10, 'SIGSTOP'], [-10, 'SIGCONT']])
+})
+
+const detachedTree: ProcessRow[] = [{ pid: 10, parent: 1, group: 10 }, { pid: 11, parent: 10, group: 11 }]
+
+it('waits for the in-flight table before killing the root and detached descendants', async () => {
+  const signals: Array<[number, string | 0]> = []
+  let finish!: (rows: ProcessRow[]) => void
+  const freezer = makeProcessTreeFreezer(() => 10, {
+    table: () => new Promise(resolve => { finish = resolve }),
+    signal: (target, signal) => { signals.push([target, signal]) },
+  })
+  const freezing = freezer.freeze()
+  const killing = freezer.kill()
+  try { expect(signals).toEqual([[-10, 'SIGSTOP']]) }
+  finally { finish(detachedTree); await killing; await freezing }
+  expect(signals).toContainEqual([-11, 'SIGKILL'])
+  expect(signals).not.toContainEqual([-10, 'SIGCONT'])
+})
+
+it('bounds the stop wait and keeps cleanup unconfirmed when the pending table never settles', async () => {
+  vi.useFakeTimers()
+  try {
+    const signals: Array<[number, string | 0]> = []
+    let finish!: (rows: ProcessRow[]) => void
+    const freezer = makeProcessTreeFreezer(() => 10, {
+      table: () => new Promise(resolve => { finish = resolve }),
+      signal: (target, signal) => { signals.push([target, signal]) },
+    })
+    const freezing = freezer.freeze()
+    const killing = freezer.kill()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(await killing).toBe(false)
+    expect(await freezing).toBe(false)
+    finish(detachedTree)
+    await Promise.resolve()
+    expect(signals).toEqual([[-10, 'SIGSTOP'], [-10, 'SIGKILL']])
+  } finally { vi.useRealTimers() }
+})
+
+it('retries a failed table before killing the frozen root', async () => {
+  const signals: Array<[number, string | 0]> = []
+  let reads = 0
+  const freezer = makeProcessTreeFreezer(() => 10, {
+    table: () => reads++ ? detachedTree : null,
+    signal: (target, signal) => { signals.push([target, signal]) },
+  })
+  expect(await freezer.freeze()).toBe(false)
+  await freezer.kill()
+  expect(signals).toContainEqual([-11, 'SIGKILL'])
+})
+
+it('does not count a descendant whose SIGSTOP failed as frozen', async () => {
+  const signals: Array<[number, string | 0]> = []
+  const freezer = makeProcessTreeFreezer(() => 10, {
+    table: () => detachedTree,
+    signal: (target, signal) => {
+      signals.push([target, signal])
+      if (target === -11 && signal === 'SIGSTOP') throw Object.assign(new Error('denied'), { code: 'EPERM' })
+    },
+  })
+  expect(await freezer.freeze()).toBe(false)
+  expect(freezer.fullyFrozen).toBe(false)
+  freezer.thaw()
+  expect(signals).not.toContainEqual([-11, 'SIGCONT'])
 })

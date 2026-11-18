@@ -24,14 +24,16 @@ export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
   let child: ChildProcessWithoutNullStreams | undefined, exited = false, closing = false, terminated = false
   // 扫描做完了才算知道全部进程组(2026-10-10):根进程先没了、冻住后被停、扫描中途报错 ⇒ 不完整。
   let scanned = false, freezeIncomplete = false
+  let termination: Promise<void> | undefined
   const groups = new Set<number>(), pids = new Set<number>()
   // 网络守护「暂停在跑的任务」(2026-10-03):冻住 / 放开整棵树。冻住期间要停 ⇒ terminate 直接
   // SIGKILL 冻住的那些组(绝不先放开),close 不再要求进程还活着。
   const freezer = makeProcessTreeFreezer(() => (child && !exited && !closing ? child.pid : undefined))
   function terminate() {
-    freezeIncomplete ||= freezer.frozen && !freezer.fullyFrozen
+    if (termination || !freezer.frozen) return termination
     terminated = true
-    freezer.kill()
+    termination = freezer.kill().then(complete => { freezeIncomplete = !complete })
+    return termination
   }
   return {
     async freeze(): Promise<boolean> { return !closing && !terminated && !!child?.pid && !exited && freezer.freeze() },
@@ -55,7 +57,7 @@ export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
       closing = true
       if (!child) return
       // 冻住时已经整棵杀掉:没有什么要再冻、也不再要求它活着(close 下面照样等它们全退)。
-      if (freezer.frozen) terminate()
+      await terminate()
       if (freezeIncomplete) throw new Error('claude_runtime_process_table_unavailable')
       if (terminated) return
       const pid = child.pid
@@ -95,9 +97,9 @@ export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
       if (terminated) {
         // 冻住时已经整棵 SIGKILL 过(登记在 freezer 里,含根组);这里只等它们全退。
         // 不走下面那条:僵尸组上 kill(-组) 在 macOS 报 EPERM,严格版 signal / alive 会把它当成错误。
-        freezer.kill()
+        await termination
         while (!exited || freezer.alive()) {
-          if (Date.now() >= deadline) { freezer.kill(); throw new Error('claude_runtime_process_not_exited') }
+          if (Date.now() >= deadline) throw new Error('claude_runtime_process_not_exited')
           await new Promise<void>(resolve => setTimeout(resolve, 15))
         }
         return

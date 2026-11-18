@@ -57,7 +57,7 @@ it('suspendForNetwork: an executor without suspension falls back to stopping and
   expect(await service.suspendForNetwork(()=>'VPN 探测连续两次失败，这个任务用到 Claude。')).toEqual({suspended:0,stopped:1})
   await settled(task.id)
   expect(service.detail(task.id).task.status).toBe('cancelled')
-  expect(JSON.stringify(service.detail(task.id))).toContain('已停止本轮')
+  expect(JSON.stringify(service.detail(task.id))).toContain('正在停止本轮')
 })
 
 // 守护 v2:按执行者 + 这一轮的模型分类;不需要保护的执行者(Cursor auto)网络不安全时照常起、永远不停。

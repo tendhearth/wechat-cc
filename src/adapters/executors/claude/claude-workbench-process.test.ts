@@ -48,9 +48,12 @@ describe.skipIf(process.platform === 'win32')('Claude owned process teardown', (
     const frozen = ownClaudeWorkbenchProcess(undefined)
     const live = frozen.spawn({ command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd: tmpdir(), env: { PATH: '/usr/bin:/bin' }, signal: new AbortController().signal })
     try {
-      frozen.terminate()
-      await frozen.prepareClose(Date.now() + 2500)
+      expect(await frozen.freeze()).toBe(true)
+      await frozen.terminate()
+      const deadline = Date.now() + 2500
+      await frozen.prepareClose(deadline)
       expect(frozen.groups()).toEqual([])
+      await frozen.close(deadline)
     } finally { try { process.kill(-live.pid!, 'SIGKILL') } catch {} }
     const clean = ownClaudeWorkbenchProcess(undefined)
     const ok = clean.spawn({ command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd: tmpdir(), env: { PATH: '/usr/bin:/bin' }, signal: new AbortController().signal })
@@ -85,12 +88,14 @@ describe.skipIf(process.platform === 'win32')('Claude owned process teardown', (
       expect(read()).toBe(frozenAt)
       owner.thaw()
       await expect.poll(() => read() > frozenAt, { timeout: 5_000 }).toBe(true)
-      expect(await owner.freeze()).toBe(true)
-      owner.terminate()
+      const freezing = owner.freeze()
+      const termination = owner.terminate()
       const deadline = Date.now() + 2500
       await owner.prepareClose(deadline); await owner.close(deadline)
       await gone(processChild.pid!)
       await gone(descendantPid)
+      await termination
+      expect(await freezing).toBe(true)
     } finally {
       for (const pid of [descendantPid, processChild.pid]) if (pid) { try { process.kill(-pid, 'SIGKILL') } catch {} }
       rmSync(area, { recursive: true, force: true })
