@@ -191,14 +191,14 @@ export interface AgentSession {
 
 export interface AgentSessionSuspension {
   /** SIGSTOP 整棵进程树 + 暂停会话自己的计时器。false = 做不到(进程没了 / 平台不支持),调用方改用停。 */
-  suspend(): boolean
+  suspend(): boolean | Promise<boolean>
   /** SIGCONT + 计时器接着走。幂等。 */
   resume(): void
   /**
    * 冻住期间要停(主人取消 / 暂停到顶 / daemon 关):直接 SIGKILL 冻住的树,**不先放开**
-   * (放开那一下它就会接着用不受保护的网络)。之后的 close() 不能再指望进程配合收尾。
+   * (放开那一下它就会接着用不受保护的网络)。close() 等在途终止完成并核实清理结果。
    */
-  terminate(): void
+  terminate(): void | Promise<void>
 }
 
 /** `AgentProvider.callTarget` 问的是哪一种调用。 */

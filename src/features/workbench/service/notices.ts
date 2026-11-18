@@ -114,7 +114,8 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
     let reply=lastRunText(running.taskId,running.identity)
     const label={completed:'这一轮已完成',failed:'这一轮需要处理',interrupted:'这一轮已中断',cancelled:'这一轮已停止'}[status as 'completed'|'failed'|'interrupted'|'cancelled']
     // 网络守护暂停到顶停下的:说那句老实话(「网络一直没恢复，任务已停止，可以接着做」),不贴半截回复。
-    if(running.stopNotice)reply=running.stopNotice
+    if(error==='writer_not_closed')reply='已请求停止，执行程序未确认退出。此文件夹内的新任务将等待。'
+    else if(running.stopNotice)reply=running.stopNotice
     else if(status==='failed'&&(error==='provider_quota_exhausted'||error==='provider_rate_limited')){
       const code=error,other=fallbackExecutor(running.task.providerId)
       // 额度恢复后接着做(2026-10-20):多一个选项「等恢复」—— 主人回这三个字,微信管家就排一次(只试一次)。

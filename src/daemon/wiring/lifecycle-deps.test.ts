@@ -92,7 +92,7 @@ describe('buildLifecycleDeps — network guard suspends running tasks', () => {
     const ticks: TickBodies = { ingestTick: async () => {}, pushTick: async () => {}, introspectTick: async () => {}, runJobTurn: async () => 'silent' }
     const seen: Array<{ protected: string | null }> = []
     const workbench = {
-      suspendForNetwork: vi.fn((select: (run: { providerId: string; model: string | null; target: CallTarget }) => string | null) => {
+      suspendForNetwork: vi.fn(async (select: (run: { providerId: string; model: string | null; target: CallTarget }) => string | null) => {
         seen.push({ protected: select({ providerId: 'claude', model: null, target: { provider: 'claude', model: 'claude-opus-5' } }) })
         seen.push({ protected: select({ providerId: 'cursor', model: null, target: { provider: 'cursor', model: 'auto' } }) })
         return { suspended: 1, stopped: 0 }

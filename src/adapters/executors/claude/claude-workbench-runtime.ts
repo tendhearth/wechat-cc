@@ -108,7 +108,7 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
     closePromise = (async () => {
       const deadline = Date.now() + CLOSE_TIMEOUT
       let ownershipError: unknown
-      try { processOwner.prepareClose(deadline) } catch (error) { ownershipError = error }
+      try { await processOwner.prepareClose(deadline) } catch (error) { ownershipError = error }
       try { abort.abort() } catch {}
       let sdkClose: Promise<unknown> = Promise.resolve()
       try { sdkClose = Promise.resolve(q.close()).catch(() => {}) } catch { /* The owned group below is the authoritative teardown. */ }
@@ -303,7 +303,7 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
     // 网络守护「暂停在跑的任务」(2026-10-03):沙盒验证过 —— claude 在冻住期间被掐断的流,放开后
     // 自己重试接上(src/adapters/executors/suspend-resume.sandbox.test.ts)。这一层自己没有回合计时器,冻进程就够。
     suspension: {
-      suspend: () => !closing && !ended && processOwner.freeze(),
+      suspend: async () => !closing && !ended && processOwner.freeze(),
       resume: () => processOwner.thaw(),
       terminate: () => processOwner.terminate(),
     },
