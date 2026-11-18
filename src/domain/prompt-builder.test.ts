@@ -935,6 +935,8 @@ describe('topic_search 那一段(话题 2026-11-05)', () => {
     const on = buildSystemPrompt({ ...defaults(), topicSearchAvailable: true })
     expect(on).toContain(topicSearchSection())
     expect(topicSearchSection()).toContain('先用 `topic_search`')
+    expect(topicSearchSection()).toContain('说出口的不都是交代')
+    expect(topicSearchSection()).toContain('放到了哪个项目')
     expect(on.replace(`\n\n${topicSearchSection()}`, '')).toBe(base)
   })
 })
