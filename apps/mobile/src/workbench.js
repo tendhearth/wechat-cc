@@ -229,7 +229,6 @@ function openMatter(id) {
   if(mCurrent!==id){var oldSub=document.getElementById('m-sub');if(oldSub){oldSub.innerHTML='';oldSub.hidden=true}mRenderedStatus=null;mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
   if(typeof mSaveDirect==='function')mSaveDirect()
   if(mRosterTarget&&id!==mRosterTarget.id&&id!=='terminal:'+mRosterTarget.id)mRosterTarget=null
-  if(typeof rItems!=='undefined')mRosterTarget=rItems.find(function(i){return i.id===id||'terminal:'+i.id===id})||mRosterTarget
   mCurrent=id;mActive=true
   mDirectMount()
   document.getElementById("m-home").hidden=true;document.getElementById("m-detail").hidden=false

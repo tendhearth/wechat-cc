@@ -21,6 +21,7 @@ async function fixture(page,{link=false,old=false}={}){
   if(p==='/v1/home')return route.fulfill({json:{ok:true,synced_at:new Date().toISOString(),presence:{presence:'ok',activity:{label:'在家待着'}},work:{focus:null,partial:false}}})
   if(p==='/v1/phone/art/presence')return route.fulfill({json:{ok:true,mime:'image/png',unlit:art.unlit.base64,lit:art.lit.base64}})
   if(p==='/v1/roster')return route.fulfill({headers:{etag:'roster-1'},json:{version:'1',items:[{key:'matter:'+id,kind:'matter',id,title:matter.title,project:'服务器',group:'waiting',status:'waiting',agents:[{id:'codex',name:'Codex',current:true}],quiet:false,unseen:false,updatedAt:3}]}})
+  if(p==='/v1/places')return route.fulfill({headers:{etag:'places-1'},json:{version:'1',places:[{key:'p:0000000000000001',name:'服务器',line:'要你批准一步',status:'waiting',waiting:{itemKey:'matter:'+id,kind:'permission',matterId:id,summary:'要你批准一步',count:1},moving:false,unseen:false,updatedAt:3,matterIds:[id],messageIds:[],sessionIds:[]}]}})
   if(p==='/v1/matters')return route.fulfill({json:{matters:[matter]}})
   if(p==='/v1/matter')return route.fulfill({json:detail})
   if(p==='/v1/matter/owner-chat/page')return route.fulfill({json:{ok:true,...(!old?{conversation:'v1',topics:'v1'}:{}),matterId:'chat',messages,hasMore:false,pending:null,failed:null}})
@@ -40,7 +41,7 @@ test('device enters the one conversation, drafts survive topic and matter layers
 })
 test('sending uses one owner-chat request, approval binds exact current run, browser Back returns to conversation',async({page})=>{
  const h=await fixture(page);await page.goto(HOST+'/m');await expect(page.locator('#chat-messages')).toContainText('交给 Codex');await page.locator('#chat-input').fill('看看结果');await page.locator('#chat-send').click();await expect.poll(()=>h.posts.filter(p=>p.path.endsWith('/say')).length).toBe(1)
- await page.locator('#roster-strip [data-roster]').click();await page.getByRole('button',{name:'允许这一步',exact:true}).click();await expect.poll(()=>h.posts.filter(p=>p.path.endsWith('/permission')).length).toBe(1);expect(h.posts.find(p=>p.path.endsWith('/permission')).body).toEqual({id,runId:run,requestId:run,decision:'allow'});await page.goBack();await expect(page.locator('#conversation')).toBeVisible();expect(h.errors).toEqual([])
+ await page.locator('#roster-strip [data-place-open]').click();await page.getByRole('button',{name:'允许这一步',exact:true}).click();await expect.poll(()=>h.posts.filter(p=>p.path.endsWith('/permission')).length).toBe(1);expect(h.posts.find(p=>p.path.endsWith('/permission')).body).toEqual({id,runId:run,requestId:run,decision:'allow'});await page.goBack();await expect(page.locator('#conversation')).toBeVisible();expect(h.errors).toEqual([])
 })
 test('link identity never requests private conversation, topics or approval',async({page})=>{
  const h=await fixture(page,{link:true});await page.goto(HOST+'/m');await expect(page.locator('#pairbar')).toBeVisible();await expect(page.locator('#conversation')).toBeHidden();expect(h.requests.filter(p=>/owner-chat|topics|permission|answer|roster|session-say/.test(p))).toEqual([])
@@ -66,9 +67,9 @@ test('an older daemon keeps its limited status detail and hides unsupported conv
 
 for(const width of [390,1280])test('roster direct send and browser Back preserve drafts at '+width,async({page})=>{
  const h=await fixture(page);await page.setViewportSize({width,height:900});await page.goto(HOST+'/m');await expect(page.locator('#chat-messages')).toContainText('交给 Codex')
- await page.locator('#chat-input').fill('给 CC 的草稿');await page.locator('#roster-strip [data-roster]').click();await expect(page.locator('#m-title')).toHaveText('检查备份');await expect(page.locator('#m-say-text')).toHaveAttribute('placeholder','对 Codex 说…')
+ await page.locator('#chat-input').fill('给 CC 的草稿');await page.locator('#roster-strip [data-place-open]').click();await expect(page.locator('#m-title')).toHaveText('检查备份');await expect(page.locator('#m-say-text')).toHaveAttribute('placeholder','对 Codex 说…')
  await page.locator('#m-say-text').fill('直接核对第二份');await page.locator('#m-say button[type=submit]').click();await expect.poll(()=>h.posts.filter(p=>p.path==='/v1/matter/say').length).toBe(1)
  expect(h.posts.find(p=>p.path==='/v1/matter/say').body).toEqual({id,text:'直接核对第二份',requestId:expect.any(String)});expect(h.posts.filter(p=>p.path==='/v1/matter/owner-chat/say')).toEqual([])
  await page.locator('#m-say-text').fill('下一句草稿');await page.goBack();await expect(page.locator('#m-detail')).toBeHidden();await expect(page.locator('#chat-input')).toHaveValue('给 CC 的草稿')
- await page.locator('#roster-strip [data-roster]').click();await expect(page.locator('#m-say-text')).toHaveValue('下一句草稿');expect(h.errors).toEqual([])
+ await page.locator('#roster-strip [data-place-open]').click();await expect(page.locator('#m-say-text')).toHaveValue('下一句草稿');expect(h.errors).toEqual([])
 })
