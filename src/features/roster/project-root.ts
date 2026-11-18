@@ -10,7 +10,7 @@
  */
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import nodePath from 'node:path'
 
 export interface RootFs { realpath(p: string): string; exists(p: string): boolean; isDir(p: string): boolean; isFile(p: string): boolean; read(p: string): string }
 
@@ -29,10 +29,12 @@ export const SCRATCH_PREFIX = 'claude-scratch:'
 const TEMP_ROOTS = ['/private/tmp', '/tmp', '/private/var/folders', '/var/folders']
 const SCRATCH = /^\/(?:private\/)?tmp\/claude-\d+\/(-[^/]+)(?:\/|$)/
 
-export interface ProjectRootOptions { fs?: RootFs; home?: string; maxCache?: number }
+/** `path`:拼路径用哪一套(默认按平台;测试用 POSIX 的假路径时给 path.posix,三个平台算出来一样)。 */
+export interface ProjectRootOptions { fs?: RootFs; home?: string; maxCache?: number; path?: typeof nodePath.posix }
 
 export function makeProjectRoot(opts: ProjectRootOptions = {}): (path: string | null | undefined) => string | null {
   const fs = opts.fs ?? nodeFs
+  const { basename, dirname, isAbsolute, join, relative, resolve, sep } = opts.path ?? nodePath
   const home = resolve(opts.home ?? homedir())
   const containers = ['Documents', 'Desktop', 'Downloads'].map(d => join(home, d)).concat(home)
   const maxCache = opts.maxCache ?? 2000
