@@ -33,6 +33,7 @@ async function fixture(page, opts = {}) {
     if (down && (p.startsWith('/v1/')||p.includes('/api/'))) return route.abort('connectionfailed')
     if (req.method() === 'POST') { posts.push({ path: p, body: req.postDataJSON() }); return route.fulfill({ json: p === '/set/api/pair' ? { ok: true, device_token: 'dNEW' } : p === '/set/api/apply' ? { ok: false, error: 'lan_only' } : { ok: true } }) }
     if (p === '/v1/roster') return route.fulfill({ json: { items: [], version: '1' } })
+    if (p === '/v1/places') return route.fulfill({ json: { places: [], version: '1' } })
     if (p === '/v1/home') return route.fulfill({ json: home })
     if (p === '/v1/matters') return route.fulfill({ json: { ok: true, matters: empty ? [] : [matter] } })
     if (p === '/v1/matter') return route.fulfill({ json: opts.link ? linkMatterStatus(detail) : detail })
