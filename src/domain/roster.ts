@@ -36,6 +36,8 @@ export interface RosterInput {
   /** 这件事 sinceMs 之后在哪一端被看过;没看过 ⇒ null。 */
   seen: (matterId: string, sinceMs: number) => string | null
   now: number
+  /** 「带回来的」留多久;不给 = ROSTER_BACK_WINDOW_MS。地方(places)按更长的窗口借用同一套行。 */
+  backWindowMs?: number
 }
 
 type Row = RosterItemT & { waitingSince: number }
@@ -110,7 +112,7 @@ export function buildRoster(input: RosterInput): RosterItemT[] {
     if (t.matter_id && input.matters.some(m => m.id === t.matter_id)) continue   // 那件事被筛掉了(归档 / 看不见)⇒ 会话也不单列
     rows.push(terminalRow(t, input.now))
   }
-  const kept = rows.filter(r => r.group !== 'back' || r.updatedAt >= input.now - ROSTER_BACK_WINDOW_MS)
+  const kept = rows.filter(r => r.group !== 'back' || r.updatedAt >= input.now - (input.backWindowMs ?? ROSTER_BACK_WINDOW_MS))
   const order = { waiting: 0, working: 1, back: 2 } as const
   kept.sort((a, b) => order[a.group] - order[b.group]
     || (a.group === 'waiting' ? a.waitingSince - b.waitingSince : 0)

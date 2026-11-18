@@ -1,0 +1,32 @@
+import { PlaceHideRequest, PlaceMoveRequest } from '@wechat-cc/protocol'
+import type { InternalApiDeps, RouteTable } from '../../daemon/internal-api/types'
+
+export function placesRoutes(deps: Pick<InternalApiDeps, 'places'>): RouteTable {
+  const unavailable = { status: 503, body: { error: 'unavailable' } }
+  return {
+    'GET /v1/places': (_query, _body, caller, ctx) => {
+      if (caller?.origin !== 'operator' && caller?.origin !== 'device') return { status: 403, body: { error: 'forbidden' } }
+      try {
+        if (!deps.places) return unavailable
+        const body = deps.places.read(caller.origin)
+        const headers = { etag: body.version }
+        return ctx?.headers?.get('if-none-match') === body.version ? { status: 304, body: null, headers } : { status: 200, body, headers }
+      } catch { return unavailable }
+    },
+    // 顺序和收起是主人在桌面上定的,只给 operator。
+    'POST /v1/places/move': (_query, body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      const input = PlaceMoveRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      if (!deps.places) return unavailable
+      return deps.places.move(input.data.key, input.data.to) ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
+    },
+    'POST /v1/places/hide': (_query, body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      const input = PlaceHideRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      if (!deps.places) return unavailable
+      return deps.places.hide(input.data.key, input.data.hidden) ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
+    },
+  }
+}
