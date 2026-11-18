@@ -28,7 +28,7 @@ function startRoster(opts){
  function clear(){stopped=true;clearTimeout(timer);root.hidden=true;rPlaces=[];rSelected=null;opts.onSelect(null);root.replaceChildren();document.removeEventListener('visibilitychange',visible)}
  function live(){return !stopped&&isDevice}
  root.addEventListener('click',function(ev){
-  var b=ev.target.closest('button'),key=b&&(b.dataset.place||b.dataset.placeOpen),p=key&&rPlaces.find(function(x){return x.key===key});if(!p)return
+  var b=/** @type {HTMLElement} */ (ev.target).closest('button'),key=b&&(b.dataset.place||b.dataset.placeOpen),p=key&&rPlaces.find(function(x){return x.key===key});if(!p)return
   if(b.dataset.placeOpen){opts.onOpen(rTarget(p));return}
   rSelected=rSelected===p.key?null:p.key;draw();opts.onSelect(rSelected?p:null)
  })
