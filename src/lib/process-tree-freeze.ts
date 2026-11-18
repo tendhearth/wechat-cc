@@ -43,9 +43,21 @@ const MAX_DESCENDANTS = 1024
 const TABLE_TIMEOUT_MS = 2_000
 let tableChild: ChildProcess | undefined
 let tableRead: Promise<ProcessRow[] | null> | undefined
+/** performance.now() at the moment the in-flight ps was spawned. */
+let tableStartedAt = -Infinity
 
-export function readProcessTable(timeoutMs = TABLE_TIMEOUT_MS): Promise<ProcessRow[] | null> {
-  if (tableRead) return tableRead
+/**
+ * `freshAfter`(performance.now() 时刻):只接受在这之后才开始的快照。冻住一个组之后再读表,
+ * 必须是冻住之后起的 ps —— 冻之前就在跑的那份共享结果可能漏掉冻前一刻刚开的进程组。
+ */
+export async function readProcessTable(timeoutMs = TABLE_TIMEOUT_MS, freshAfter = -Infinity): Promise<ProcessRow[] | null> {
+  if (tableRead) {
+    if (tableStartedAt >= freshAfter) return tableRead
+    const started = performance.now()
+    await tableRead
+    const left = timeoutMs - (performance.now() - started)
+    return left > 0 ? readProcessTable(left, freshAfter) : null
+  }
   // Keep the handle of an abandoned ps until the runtime observes its exit.
   // A kernel-stuck process can survive even SIGKILL.
   if (tableChild?.pid && tableChild.exitCode == null && tableChild.signalCode == null) return Promise.resolve(null)
@@ -54,6 +66,7 @@ export function readProcessTable(timeoutMs = TABLE_TIMEOUT_MS): Promise<ProcessR
     child = spawn('/bin/ps', ['-axo', 'pid=,ppid=,pgid='], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
   } catch { return Promise.resolve(null) }
   tableChild = child
+  tableStartedAt = performance.now()
   const stdout = child.stdout
   tableRead = new Promise<ProcessRow[] | null>(resolve => {
     let settled = false, size = 0
@@ -114,12 +127,14 @@ export function makeProcessTreeFreezer(rootPid: () => number | undefined | null,
   let pending: Promise<boolean> | undefined
   let killing: Promise<boolean> | undefined
 
+  /** 最近一次成功 SIGSTOP 的时刻;之后的每一遍扫描都要读在它之后起的表。 */
+  let lastStopAt = -Infinity
   async function readBefore(deadline: number) {
-    const remaining = deadline - Date.now()
+    const remaining = deadline - performance.now()
     if (remaining <= 0) return null
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const reading = deps.table ? deps.table() : readProcessTable(remaining)
+      const reading = deps.table ? deps.table() : readProcessTable(remaining, lastStopAt)
       return await Promise.race([
         reading,
         new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), remaining) }),
@@ -156,6 +171,7 @@ export function makeProcessTreeFreezer(rootPid: () => number | undefined | null,
           const target = groupOwned ? -row.group : row.pid
           targets.add(target)
           if (!quiet(target, 'SIGSTOP')) { failed = true; continue }
+          lastStopAt = performance.now()
           if (groupOwned) groups.add(row.group)
           else loose.add(row.pid)
           added = true
@@ -178,12 +194,13 @@ export function makeProcessTreeFreezer(rootPid: () => number | undefined | null,
       if (!pid || pid <= 1) return false
       // 根是 detached 起的组长:先冻整组,新的 fork 就停在这里了。
       if (!quiet(-pid, 'SIGSTOP')) return false
+      lastStopAt = performance.now()
       root = pid
       groups.clear(); loose.clear(); targets.clear()
       groups.add(pid); targets.add(-pid)
       frozen = true
       const current = ++generation
-      pending = scan(pid, current, Date.now() + TABLE_TIMEOUT_MS)
+      pending = scan(pid, current, performance.now() + TABLE_TIMEOUT_MS)
       try { return await pending }
       finally { if (current === generation) pending = undefined }
     },
@@ -197,7 +214,7 @@ export function makeProcessTreeFreezer(rootPid: () => number | undefined | null,
     },
     kill() {
       if (killing) return killing
-      const deadline = Date.now() + TABLE_TIMEOUT_MS
+      const deadline = performance.now() + TABLE_TIMEOUT_MS
       killing = (async () => {
         // Preserve parent links until the current scan has settled. If it
         // failed, use the remaining stop budget to try again before killing.

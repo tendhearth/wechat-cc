@@ -102,7 +102,8 @@ export interface Active extends PathReservation {
    * 网络守护把这条 run 的整棵进程树冻住了(主人 2026-10-03:probe 来源连续两次不安全 ⇒ 暂停,不停)。
    * 冻住期间 daemon 侧为它起的计时器一律不走:回合看门狗按「在等」算、批准期限停表、空闲收工不武装。
    */
-  networkSuspended?: { since: number }
+  /** pending:冻结已发起、扫描还没确认整棵树冻住 —— 看门狗照样停表,但对外不说「已暂停」。 */
+  networkSuspended?: { since: number; pending?: true }
   /** 停下这条 run 时交给终态微信通知的正文(暂停到顶:「网络一直没恢复，任务已停止，可以接着做」)。 */
   stopNotice?: string
   permissionDenialLimit?: boolean

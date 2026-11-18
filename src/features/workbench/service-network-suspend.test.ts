@@ -153,6 +153,24 @@ it('holds the watchdog during a pending freeze and resumes through the normal pa
   } finally {scan.resolve();await pending}
 })
 
+it('does not tell anyone a task is paused until the scan confirms the whole tree is frozen',async()=>{
+  const scan=gateOpen()
+  const {provider,hold,ready}=suspendable({suspendResult:scan.promise.then(()=>true)})
+  setup(provider)
+  const task=service.create({path:project,providerId:'claude',text:'start'})
+  await ready.promise
+  const pending=service.suspendForNetwork(PROTECTED)
+  try {
+    await new Promise(resolve=>setTimeout(resolve,20))
+    // Pending: watchdog is held, but detail / phase / the paused list must not promise "恢复后自动继续" yet (wechat-control reads this view).
+    expect(service.detail(task.id).task.networkSuspended).toBeUndefined()
+    expect(service.networkSuspended()).toEqual([])
+    scan.resolve();await pending
+    expect(service.detail(task.id).task.networkSuspended).toBeDefined()
+    expect(service.networkSuspended().map(t=>t.taskId)).toEqual([task.id])
+  } finally {scan.resolve();await pending;service.resumeFromNetwork();hold.resolve();await settled(task.id)}
+})
+
 it.each(['cancel','cap','shutdown'] as const)('%s waits for a pending scan before killing detached descendants',async(action)=>{
   const ready=gateOpen(), hold=gateOpen()
   const signals:Array<[number,string|0]>=[]

@@ -410,7 +410,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       try { message=select({providerId:running.task.providerId,model:running.execution.model,target:liveRunTarget(running,ctx.deps.registry.get(running.task.providerId)?.provider)}) } catch { message=null }
       if (message===null) return
       if (running.session?.suspension) {
-        running.networkSuspended={since:Date.now()}
+        running.networkSuspended={since:Date.now(),pending:true}
         cancelIdleClose(running)
         try { running.permissions.pause() } catch { /* 期限照走也只是拒掉那一张卡 */ }
       }
@@ -426,6 +426,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       }
       if (frozen && running.networkSuspended) {
         pendingSuspensions.delete(running)
+        delete running.networkSuspended.pending
         const text=`${NETWORK_SUSPENDED_LABEL}：${message}恢复后自动继续。`
         try { store.addEvent(running.taskId,'system',text,null,running.identity); } catch { /* 冻住照样生效 */ }
         try { enqueueNotice(running.task,running.identity,'interrupted',`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${NETWORK_SUSPENDED_LABEL}\n\n${message}恢复后自动继续。\n\n查看：任务 ${running.taskId}`,`network-suspend-${running.networkSuspended.since}`) } catch { /* 提醒失败不影响暂停 */ }
@@ -470,7 +471,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
   }
   /** 此刻被网络守护冻住的任务(health / `guard status` / 手机)。 */
   function networkSuspended():Array<{taskId:string;title:string;providerId:string;since:number}> {
-    return [...state.runsByTask.values()].flatMap(r=>r.networkSuspended?[{taskId:r.taskId,title:r.title,providerId:r.task.providerId,since:r.networkSuspended.since}]:[])
+    return [...state.runsByTask.values()].flatMap(r=>r.networkSuspended&&!r.networkSuspended.pending?[{taskId:r.taskId,title:r.title,providerId:r.task.providerId,since:r.networkSuspended.since}]:[])
   }
   function setArchived(id:string,archived:boolean):WorkbenchTaskView {
     if(typeof archived!=='boolean')throw new Error('invalid_request')
