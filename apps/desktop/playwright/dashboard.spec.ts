@@ -10,7 +10,7 @@
 
 import { test, expect, clickNav, clickRevealed } from './fixtures'
 import { REPORTS } from './reports'
-import { rosterItem, showRoster } from './roster-fixture'
+import { answerPlace, placeItem, placeRow, terminalPlace } from './roster-fixture'
 
 async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
@@ -162,21 +162,17 @@ test('CC 现在怎么样:终端里的 Claude Code / Codex 没接上 ⇒「接上
   expect(((await shim.invoke('mock.hook-calls')) as { result: { calls: unknown[] } }).result.calls).toEqual([{}])
 })
 
-test('名单等你组列终端的权限请求，只有可拍板的请求才显示允许和拒绝', async ({ page, shimUrl, shim }) => {
+test('「地方」里终端停着问的行亮点，只有可拍板的请求才显示允许和拒绝', async ({ page, shimUrl, shim }) => {
   await page.setViewportSize({ width: 1000, height: 900 })
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   const allowed = { session_id: 'ab12c3-full', hash: 'k3x9z', decision: 'allow' }
   const decisions: unknown[] = []
-  const terminal = (id: string, project: string, agent: string, name: string, actionable?: boolean) =>
-    rosterItem(id, project, { key: `terminal:${id}`, kind: 'terminal', project,
-      terminal: { sessionId: id, code: id.split('-')[0], actionable },
-      agents: [{ id: agent, name, current: true }], waiting: undefined })
-  const actionable = terminal(allowed.session_id, 'wechat-cc', 'claude', 'Claude', true)
-  const localOnly = terminal('cd34e5-full', 'melu', 'codex', 'Codex', false)
-  const running = { ...terminal('ef56g7-full', 'leni', 'claude', 'Claude'), group: 'working', status: 'working' }
+  const actionable = terminalPlace('wechat-cc', allowed.session_id, 'Bash · npm publish')
+  const localOnly = terminalPlace('melu', 'cd34e5-full', '要改 package.json')
+  const running = placeItem('leni', { line: '在跑测试', sessionIds: ['ef56g7-full'] })
   let approved = false
-  await page.route('**/v1/roster', route => route.fulfill({ json: {
-    items: approved ? [{ ...actionable, group: 'working', status: 'working' }, localOnly, running] : [actionable, localOnly, running],
+  await page.route('**/v1/places', route => route.fulfill({ json: {
+    places: approved ? [{ ...actionable, waiting: null, status: 'working', moving: true }, localOnly, running] : [actionable, localOnly, running],
     version: approved ? 'approved' : 'waiting',
   } }))
   await page.route('**/v1/cli/sessions*', route => route.fulfill({ json: { sessions: [
@@ -193,24 +189,21 @@ test('名单等你组列终端的权限请求，只有可拍板的请求才显�
     return route.fulfill({ status: approved ? 200 : 400, json: { ok: approved } })
   })
   await bootIntoDashboard(page, shimUrl)
-  await showRoster(page)
-  const waiting = page.locator('#roster-aside [data-group="waiting"]')
-  const rows = waiting.locator('.roster-row')
-  await expect(waiting.getByRole('heading')).toHaveText('等你 2')
-  await expect(rows).toHaveCount(2)
-  await expect(rows.nth(0)).toContainText('wechat-cc')
-  await expect(rows.nth(0).getByRole('img', { name: 'Claude' })).toBeVisible()
-  await expect(rows.nth(1).getByRole('img', { name: 'Codex' })).toBeVisible()
-  await expect(rows.nth(1)).toContainText('melu')
+  const waiting = page.locator('#places-root .place[data-waiting="true"]')
+  await expect(waiting).toHaveCount(2)
+  await expect(placeRow(page, 'wechat-cc')).toContainText('npm publish')
+  await expect(placeRow(page, 'melu')).toContainText('要改 package.json')
+  await expect(placeRow(page, 'leni')).toHaveAttribute('data-waiting', 'false')
+  // 不在对话页时,顶栏 CC 上亮一个点。
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-waiting', '2')
 
   const detail = page.locator('dialog.wb-history-dialog')
-  await rows.nth(1).click()
+  await answerPlace(page, 'melu')
   await expect(detail.getByRole('status')).toHaveText('要改 package.json')
   await expect(detail.getByRole('button', { name: /^(允许|拒绝)$/ })).toHaveCount(0)
   await detail.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(detail).toHaveCount(0)
-  await showRoster(page)
-  await rows.nth(0).click()
+  await answerPlace(page, 'wechat-cc')
   await expect(detail).toBeVisible()
   await expect(detail.locator('[data-terminal-approval="description"]')).toHaveText('Bash · npm publish')
   await detail.getByRole('button', { name: '允许', exact: true }).click()
@@ -218,10 +211,9 @@ test('名单等你组列终端的权限请求，只有可拍板的请求才显�
   expect(decisions).toEqual([allowed])
   await detail.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(detail).toHaveCount(0)
-  await showRoster(page)
-  await expect(rows).toHaveCount(1)
-  await expect(waiting.getByRole('heading')).toHaveText('等你 1')
-  await expect(rows.first()).toHaveAttribute('data-roster-key', localOnly.key)
+  await expect(waiting).toHaveCount(1, { timeout: 6000 })
+  await expect(waiting.first()).toHaveAttribute('data-place-key', localOnly.key)
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-waiting', '1')
 })
 
 test('memory pane has sidebar + observations + milestones + content viewer', async ({ page, shimUrl, shim }) => {

@@ -18,7 +18,7 @@ function setup(rows: Matter[], terminals: any[] = []) {
   const reader = makePlacesReader({
     roster: { matters: { list, get: id => rows.find(r => r.id === id) ?? null }, terminals: () => terminals, seen: () => null, now: () => NOW },
     store,
-    root: p => (p ? p.replace(/\/\.claude\/worktrees\/[^/]+.*$/, '') : null),
+    root: p => (p ? (p.startsWith('/private/tmp/claude-') ? `claude-scratch:${p.split('/')[4]}` : p.replace(/\/\.claude\/worktrees\/[^/]+.*$/, '')) : null),
   })
   return { reader, store }
 }
@@ -45,6 +45,16 @@ describe('地方:读', () => {
     const term = { session_id: 'sess-1', code: 'sess', source: 'claude', status: 'running', project: '/w/bx/sub', matter_id: 'cccc0001', last_summary: '在跑测试', last_event_at: NOW, pending: null }
     const { reader } = setup([m('cccc0001', { kind: 'terminal', projectPath: null })], [term])
     expect(reader.read('operator').places.map(p => [p.name, p.line, p.sessionIds])).toEqual([['sub', '在跑测试', ['sess-1']]])
+  })
+
+  it('Claude Code 临时目录里的会话:对回编码相同的已知项目;对不上的不成行', () => {
+    const term = (id: string, project: string) => ({ session_id: id, code: id, source: 'claude', status: 'running', project, last_summary: '在查', last_event_at: NOW, pending: null })
+    const { reader } = setup([m('gggg0001', { projectPath: '/w/1in8b' })], [
+      term('s1', '/private/tmp/claude-501/-w-1in8b/sess/scratchpad/oce'),
+      term('s2', '/private/tmp/claude-501/-w-unknown/sess/scratchpad'),
+    ])
+    const out = reader.read('operator').places
+    expect(out.map(p => [p.name, p.sessionIds])).toEqual([['1in8b', ['s1']]])
   })
 
   it('主人挪过的顺序保持;状态变了也不重排', () => {

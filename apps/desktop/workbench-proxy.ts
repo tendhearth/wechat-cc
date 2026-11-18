@@ -53,7 +53,7 @@ export function createWorkbenchProxy(opts:Options) {
       if(base.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(base.hostname)||!info.operatorTokenFilePath)throw new Error('invalid_info')
       const token=(await readFile(info.operatorTokenFilePath,'utf8')).trim()
       const res=await (opts.fetch??fetch)(base.origin+url.pathname+url.search,{
-        method:req.method,headers:{authorization:`Bearer ${token}`,'content-type':'application/json',...(url.pathname==='/v1/roster'&&req.headers.has('if-none-match')?{'if-none-match':req.headers.get('if-none-match')!}:{})},
+        method:req.method,headers:{authorization:`Bearer ${token}`,'content-type':'application/json',...((url.pathname==='/v1/roster'||url.pathname==='/v1/places')&&req.headers.has('if-none-match')?{'if-none-match':req.headers.get('if-none-match')!}:{})},
         ...(body!==undefined?{body}:{}),signal:AbortSignal.timeout(30_000),
       })
       if(res.status===404&&url.pathname==='/v1/workbench')return Response.json({error:'workbench_endpoint_missing'},{status:404})

@@ -1735,7 +1735,10 @@ async function boot() {
   if(placesRoot){
     const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,
       onSelect:place=>setConversationPlace(place?{name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
-      onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id)})
+      onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id),
+      // 切到别的页面时「地方」看不见:有事等你,顶栏的 CC 上亮一个点。
+      onPlaces:places=>{const n=places.reduce((sum,p)=>sum+(p.waiting?.count??0),0),cc=document.getElementById('topbar-cc');if(!cc)return
+        if(n){cc.dataset.waiting=String(n);cc.setAttribute('aria-label',`跟 CC 说(有 ${n} 件在等你)`)}else{delete cc.dataset.waiting;cc.setAttribute('aria-label','跟 CC 说')}}})
     window.addEventListener('pagehide',()=>strip.destroy(),{once:true})
   }
   document.getElementById('topbar-roster')?.addEventListener('click',()=>{

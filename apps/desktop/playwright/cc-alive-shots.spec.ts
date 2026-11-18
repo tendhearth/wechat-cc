@@ -46,7 +46,6 @@ test('captures evidence-driven gaze and a bounded text response', async ({ page,
   await shot('roster-right')
   await expect(page.locator('#topbar-cc')).not.toHaveAttribute('data-roster-glance','1')
   roster=[rosterItem('aabbccdd','核对备份',{updatedAt:3})]
-  await expect(page.locator('[data-roster-key="matter:aabbccdd"]')).toBeVisible()
   await page.waitForTimeout(3500)
   await expect(page.locator('#topbar-cc')).not.toHaveAttribute('data-roster-glance','1')
   await shot('roster-once')

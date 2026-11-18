@@ -85,11 +85,12 @@ export function renderPlacesHtml(places, { selected, stale, now }) {
  *   call: (method:any, path:string, body?:any, opts?:any) => Promise<any>,
  *   onSelect: (place: Place | null) => void,
  *   onOpen: (target: {kind:'matter'|'terminal', id:string}) => unknown,
+ *   onPlaces?: (places: Place[]) => void,
  *   now?: () => number,
  *   intervalMs?: number,
  * }} o
  */
-export function mountPlacesStrip({ root, call, onSelect, onOpen, now = Date.now, intervalMs = 3000 }) {
+export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now = Date.now, intervalMs = 3000 }) {
   /** @type {Place[]} */ let places = []
   /** @type {string|null} */ let selected = null
   let version = '', alive = true, busy = false, stale = false, acting = false, notified = ''
@@ -108,7 +109,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, now = Date.now,
       places = data.places; version = data.version; stale = false
       const current = selected ? places.find(p => p.key === selected) ?? null : null
       if (selected && !current) selected = null
-      if (changed) draw()
+      if (changed) { draw(); onPlaces?.(places) }
       // 只在选中的那个地方变了(换了一个 / 它带的 id 变了 / 它没了)时告诉说话,别每次刷新都重画说话。
       const ids = current ? JSON.stringify([current.key, current.matterIds, current.messageIds, current.sessionIds]) : ''
       if (ids !== notified) { notified = ids; onSelect(current) }

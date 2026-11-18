@@ -32,3 +32,6 @@
 .dashboard .roster-aside:not([data-docked]) { display:none; }
 .dashboard #roster-list { display:none; }
 #topbar-roster { display:none !important; }
+/* 在别的页面:有事等你,顶栏 CC 上一个点。 */
+#topbar-cc { position:relative; }
+#topbar-cc[data-waiting]::after { content:''; position:absolute; top:10px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--th-accent); }

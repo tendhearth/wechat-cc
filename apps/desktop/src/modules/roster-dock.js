@@ -10,7 +10,7 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
  const list=/** @type {HTMLElement} */(aside.querySelector('#roster-list'))
  const home=doc.createComment('事项层原位');layer.before(home)
  const toolbar=doc.createElement('header');toolbar.className='roster-dock-toolbar'
- const back=doc.createElement('button');back.type='button';back.textContent='‹ 在做'
+ const back=doc.createElement('button');back.type='button';back.textContent='收起'
  const expand=doc.createElement('button');expand.type='button';expand.textContent='展开'
  const terminalTools=doc.createElement('details');const terminalSummary=doc.createElement('summary');terminalSummary.textContent='⋯';expand.textContent='展开全屏';terminalTools.append(terminalSummary,expand)
  toolbar.append(back,terminalTools)
@@ -25,7 +25,8 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
   dock.replaceChildren();dock.hidden=true;list.hidden=false;delete aside.dataset.docked
   const previous=current;current=null;terminalMode=false;onChange?.(null);if(previous)onClose?.()
  }
- function missing(){close();const note=doc.createElement('p');note.role='status';note.textContent='这件事已经不在了';list.prepend(note)}
+ // 名单本身已由正面上半的「地方」代替(2026-11-18):事情不在了就在详情位置说一句,「收起」关掉。
+ function missing(){close();const note=doc.createElement('p');note.role='status';note.className='roster-dock-missing';note.textContent='这件事已经不在了';dock.hidden=false;aside.dataset.docked='1';dock.append(toolbar,note);terminalTools.hidden=true}
  async function unfold(){const item=current;if(!item)return;close();await onExpand?.(item)}
  async function open(/** @type {DockItem} */item){
   close();if(!alive)return

@@ -1,9 +1,9 @@
 import {test,expect,clickNav,clickRevealed} from './fixtures'
-import {rosterItem,routeRoster,showRoster} from './roster-fixture'
+import {answerPlace,askingPlace,routePlaces} from './roster-fixture'
 const task={id:'deadbeef',title:'备份检查',path:'/offline/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2}
 test.beforeEach(async({page,shim})=>{
  await shim.invoke('demo.seed',{daemonAlive:true})
- await routeRoster(page,[rosterItem(task.id,task.title)])
+ await routePlaces(page,[askingPlace('project',task.id)])
  await page.route('**/v1/matter?id=*',r=>r.fulfill({json:{matter:{...task,kind:'task'}}}))
  await page.route(/\/v1\/workbench(?:\?.*)?$/,r=>r.fulfill({json:{tasks:[task],projects:[],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}}))
  await page.route('**/v1/workbench/attention*',r=>r.fulfill({json:{tasks:[]}}))
@@ -11,13 +11,14 @@ test.beforeEach(async({page,shim})=>{
  await page.route('**/v1/matter/changes*',r=>r.fulfill({json:{reviews:[]}}))
  await page.route('**/v1/matter/seen',r=>r.fulfill({json:{ok:true}}))
 })
-for(const width of [1440,900])test(`名单打开、返回与全局导航 ${width}`,async({page,shimUrl})=>{
+for(const width of [1440,900])test(`从「地方」打开一件事、收起与全局导航 ${width}`,async({page,shimUrl})=>{
  await page.setViewportSize({width,height:900});await page.goto(shimUrl)
  await expect(page.locator('#dash-global-rail')).toHaveCSS('height','72px')
  await expect(page.locator('#converse-input')).toBeVisible()
- await showRoster(page);
- if(width<1080){await expect(page.locator('#roster-aside')).toHaveCSS('width','360px');await expect(page.locator('#topbar-roster')).toHaveAttribute('aria-expanded','true')}
- await page.locator('[data-roster-key="matter:deadbeef"]').click()
+ // 名单本身由正面上半的「地方」代替:没打开事情时右侧什么也没有。
+ await expect(page.locator('#roster-aside')).toBeHidden()
+ await expect(page.locator('#topbar-roster')).toBeHidden()
+ await answerPlace(page,'project')
  const layer=page.locator('#conversation-matter-layer')
  await expect(layer).toBeVisible();await expect(layer).toContainText('执行者的原话')
  if(width>=1080){
@@ -32,10 +33,9 @@ for(const width of [1440,900])test(`名单打开、返回与全局导航 ${width
   await clickNav(page,'memory');await expect(layer).toBeVisible();await clickNav(page,'overview')
   await page.keyboard.press('Meta+1');await expect(page.locator('#converse-input')).toBeFocused()
   await page.keyboard.press('Meta+2');await expect(page.locator('#wb-followup-text')).toBeFocused()
-  await page.locator('#roster-dock').getByRole('button',{name:'‹ 在做',exact:true}).click()
-  await expect(page.locator('#roster-aside')).toHaveCSS('width','360px')
-  await expect(page.locator('#roster-list')).toBeVisible()
-  await page.locator('[data-roster-key="matter:deadbeef"]').click()
+  await page.locator('#roster-dock').getByRole('button',{name:'收起',exact:true}).click()
+  await expect(page.locator('#roster-aside')).toBeHidden()
+  await answerPlace(page,'project')
   await page.locator('#wb-followup-text').fill('未发送草稿')
   await page.locator('#roster-dock .roster-direct-tools summary').click()
   await page.locator('#roster-dock').getByRole('button',{name:'展开全屏',exact:true}).click()
@@ -47,17 +47,18 @@ for(const width of [1440,900])test(`名单打开、返回与全局导航 ${width
  }
  await page.locator('#workbench-home').click();await expect(page.locator('#converse-input')).toBeVisible()
 })
-test('宽变窄沿用同一事项与草稿；详情 404 回名单',async({page,shimUrl})=>{
+test('宽变窄沿用同一事项与草稿；详情 404 就在详情位置说一句',async({page,shimUrl})=>{
  await page.setViewportSize({width:1440,height:900});await page.goto(shimUrl)
- await page.locator('[data-roster-key="matter:deadbeef"]').click();await page.locator('#wb-followup-text').fill('窗口变化前的草稿')
+ await answerPlace(page,'project');await page.locator('#wb-followup-text').fill('窗口变化前的草稿')
  await page.setViewportSize({width:900,height:900})
  await expect(page.locator('.dash-main > #conversation-matter-layer')).toBeVisible()
  await expect(page.locator('#wb-followup-text')).toHaveValue('窗口变化前的草稿')
  await page.locator('#workbench-home').click();await page.setViewportSize({width:1440,height:900})
- await page.locator('[data-roster-key="matter:deadbeef"]').click()
+ await answerPlace(page,'project')
  await page.route('**/v1/matter?id=*',r=>r.fulfill({status:404,json:{error:'matter_not_found'}}))
- await expect(page.locator('#roster-list')).toBeVisible({timeout:10000})
- await expect(page.locator('#roster-list')).toContainText('这件事已经不在了')
+ await expect(page.locator('#roster-dock')).toContainText('这件事已经不在了',{timeout:10000})
+ await page.locator('#roster-dock').getByRole('button',{name:'收起',exact:true}).click()
+ await expect(page.locator('#roster-aside')).toBeHidden()
 })
 test('设置抽屉进入已有账号登录仍能到接入服务页',async({page,shimUrl})=>{
  await page.goto(shimUrl);await clickRevealed(page, '#settings-open')

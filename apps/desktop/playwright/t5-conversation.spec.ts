@@ -1,10 +1,11 @@
 import { join } from 'node:path'
 import { test, expect, clickNav } from './fixtures'
-import {routeRoster,rosterItem,showRoster} from './roster-fixture'
+import {answerPlace,askingPlace,routePlaces,routeRoster,rosterItem} from './roster-fixture'
 const task={id:'aabbccdd',title:'检查备份',path:'/offline/backup',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:1,pendingQuestionCount:0}
 const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,activity:id==='backup'?{waiting:1,running:2,unread:1,lastActiveAt:1793923200000}:id==='travel'?{waiting:0,running:1,unread:0,lastActiveAt:1793923100000}:id==='food'?{waiting:0,running:0,unread:1,lastActiveAt:1793923000000}:{waiting:0,running:0,unread:0,lastActiveAt:null},matterSummary:{waiting:1,running:0,total:1}})
 test.beforeEach(async({page,shim})=>{
   await routeRoster(page,[rosterItem(task.id,task.title)])
+  await routePlaces(page,[askingPlace('backup',task.id)])
   await shim.invoke('demo.unseed');await shim.invoke('demo.seed',{})
   await page.route('**/v1/protocol/capabilities',r=>r.fulfill({json:{routes:'v1',topics:'v1'}}))
   await page.route('**/v1/matter/owner-chat/window**',r=>r.fulfill({json:{messages:[{kind:'user',text:'那台机器后来怎么样了？',createdAt:1,messageId:'source1'},{kind:'text',text:'正在核对备份。',createdAt:2,messageId:'source2'}],anchor:null,earlier:null,later:null}}))
@@ -42,7 +43,7 @@ test('one conversation, memory topics and dock preserve drafts across wide and n
  await panel.locator('[data-project-session="aabbccdd"]').click()
  await expect(page.locator('#roster-dock .workbench-pane')).toBeVisible()
  await expect(page.locator('.wb-sidebar')).toBeHidden()
- await page.locator('#roster-dock').getByRole('button',{name:'‹ 在做',exact:true}).click()
+ await page.locator('#roster-dock').getByRole('button',{name:'收起',exact:true}).click()
  await expect(panel).toBeVisible();await panel.getByRole('button',{name:'收起',exact:true}).click()
  await clickNav(page,'overview');await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
  await page.locator('#topbar-search').click()
@@ -333,8 +334,7 @@ test('reply attribution keeps one named shared avatar per reply across wide and 
     })).toBe(true)
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
     await page.screenshot({path:join(info.outputDir,`reply-avatars-${width}.png`)})
-    await showRoster(page)
-    await page.locator('[data-roster-key="matter:aabbccdd"]').click()
+    await answerPlace(page,'backup')
     const matter=page.locator('.workbench-pane')
     await expect(matter).toBeVisible()
     for(const [text,id,name] of [['Claude 直接答','claude','Claude'],['Codex 接着答','codex','Codex'],['网关直接答','service','我的网关']]){
@@ -345,7 +345,7 @@ test('reply attribution keeps one named shared avatar per reply across wide and 
     }
     expect(await matter.locator('.wb-dialogue').evaluate(root=>[...root.querySelectorAll('.wb-message')].every(row=>row.scrollWidth<=row.clientWidth+1))).toBe(true)
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
-    if(width>=1080)await page.locator('#roster-dock').getByRole('button',{name:'‹ 在做',exact:true}).click();else await page.locator('#workbench-home').click()
+    if(width>=1080)await page.locator('#roster-dock').getByRole('button',{name:'收起',exact:true}).click();else await page.locator('#workbench-home').click()
   }
   currentProvider='codex';await page.reload();await checkSources()
 })

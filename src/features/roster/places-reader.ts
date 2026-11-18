@@ -10,7 +10,7 @@ import { buildPlaces } from '../../domain/places'
 import { gatherRoster, type RosterReaderDeps } from './reader'
 import type { PlacesStore } from '../../adapters/store/places-store'
 import type { PlacesReader } from '../../ports/places'
-import { makeProjectRoot } from './project-root'
+import { claudeProjectSlug, makeProjectRoot, SCRATCH_PREFIX } from './project-root'
 
 export const PLACES_WINDOW_MS = 30 * 24 * 3_600_000
 
@@ -36,11 +36,17 @@ export function makePlacesReader(deps: PlacesReaderDeps): PlacesReader {
         if (m?.projectPath) return m.projectPath
         return item.terminal ? g.sessions.get(item.terminal.sessionId)?.project ?? null : null
       }
+      const saved = deps.store.list()
+      const raw = new Map(items.map(item => [item.key, root(pathOf(item))]))
+      // Claude Code 在临时目录里干活:路径里编码着原目录,对回已知的项目(这一批里认出来的 + 存下的);对不上就不算。
+      const bySlug = new Map<string, string>()
+      for (const r of [...saved.map(x => x.root), ...raw.values()]) if (r && !r.startsWith(SCRATCH_PREFIX)) bySlug.set(claudeProjectSlug(r), r)
+      const resolved = (r: string | null | undefined) => (r?.startsWith(SCRATCH_PREFIX) ? bySlug.get(r.slice(SCRATCH_PREFIX.length)) ?? null : r ?? null)
       const { places, added } = buildPlaces({
         items,
-        rootOf: item => root(pathOf(item)),
+        rootOf: item => resolved(raw.get(item.key)),
         originOf: id => g.matters.get(id)?.originMessageId ?? null,
-        saved: deps.store.list(),
+        saved,
         keyOf: placeKey,
         nameOf: r => basename(r) || r,
       })
