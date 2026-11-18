@@ -3,6 +3,7 @@
 import { setDockedMatter } from './modules/conversation-matters.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
+import { mountPlacesStrip } from './modules/places-strip.js'
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
 import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
 import { createMainNavigation, createNativeNavigation } from './main-navigation.js'
@@ -45,7 +46,7 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace } from "./modules/converse.js"
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
@@ -1728,6 +1729,14 @@ async function boot() {
       const button=document.getElementById('topbar-roster');if(button)button.textContent=`在做 ${items.length}`
     }})
     window.addEventListener('pagehide',()=>roster.destroy(),{once:true})
+  }
+  // 正面上半「现在」:一个地方一行;点一行把说话筛成那个地方(设计稿 2026-11-18-cc-two-sides-design.md §3–4)。
+  const placesRoot=document.getElementById('places-root')
+  if(placesRoot){
+    const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,
+      onSelect:place=>setConversationPlace(place?{name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
+      onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id)})
+    window.addEventListener('pagehide',()=>strip.destroy(),{once:true})
   }
   document.getElementById('topbar-roster')?.addEventListener('click',()=>{
     const aside=document.getElementById('roster-aside'),button=document.getElementById('topbar-roster')

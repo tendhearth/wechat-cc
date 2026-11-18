@@ -1,0 +1,34 @@
+/* 正面上半:「现在」(设计稿 docs/superpowers/specs/2026-11-18-cc-two-sides-design.md §3)。
+   一行三样:名字、一句现状、时间。圆点 = 在等你;加粗 = 说了话你还没看;位置不随状态变。 */
+.cc-now-pane[data-conversation="single"] { display:flex; flex-direction:column; min-height:0; }
+.places-root { flex:none; max-height:38vh; overflow:auto; border-bottom:1px solid var(--th-hair); background:var(--th-rail); }
+.places-list { list-style:none; margin:0; padding:0; }
+.place { position:relative; border-top:1px solid var(--th-hair); }
+.place:first-child { border-top:0; }
+.place[data-selected="true"] { background:var(--th-paper); }
+.place-row { display:grid; grid-template-columns:10px minmax(64px,max-content) minmax(0,1fr) auto; column-gap:var(--th-space-m); align-items:center; width:100%; min-height:44px; padding:0 52px 0 var(--th-space-l); border:0; background:transparent; color:var(--th-ink); font:inherit; font-size:var(--th-size-item); text-align:left; cursor:pointer; }
+.place-row:focus-visible { outline:2px solid var(--th-accent); outline-offset:-2px; }
+.place-dot { width:8px; height:8px; border-radius:50%; }
+.place[data-waiting="true"] .place-dot { background:var(--th-accent); }
+.place-name { font-weight:600; white-space:nowrap; }
+.place-line { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--th-ink-soft); }
+.place[data-moving="true"] .place-line { color:var(--th-ink); }
+.place[data-waiting="true"] .place-line, .place[data-unseen="true"] .place-line { color:var(--th-ink); font-weight:600; }
+.place-time { color:var(--th-ink-soft); font-size:var(--th-size-small); white-space:nowrap; }
+.place-more { position:absolute; right:var(--th-space-s); top:4px; }
+.place-more > summary { list-style:none; display:grid; place-items:center; width:36px; height:36px; border-radius:var(--th-radius-control); color:var(--th-ink-soft); cursor:pointer; }
+.place-more > summary::-webkit-details-marker { display:none; }
+.place-more > summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:2px; }
+.place-more > div { position:absolute; right:0; top:38px; z-index:20; display:grid; min-width:140px; padding:var(--th-space-s); border:1px solid var(--th-hair); border-radius:var(--th-radius-control); background:var(--th-paper); }
+.place-more > div > button { min-height:36px; padding:0 var(--th-space-m); border:0; background:transparent; color:var(--th-ink); font:inherit; font-size:var(--th-size-small); text-align:left; cursor:pointer; }
+.place-ask { display:flex; align-items:center; gap:var(--th-space-s); padding:0 var(--th-space-l) var(--th-space-m) calc(var(--th-space-l) + 10px + var(--th-space-m)); }
+.place-ask button { min-height:36px; padding:0 var(--th-space-l); border:1px solid var(--th-hair); border-radius:var(--th-radius-control); background:var(--th-paper); color:var(--th-ink); font:inherit; font-size:var(--th-size-small); cursor:pointer; }
+.place-ask .place-allow { border-color:var(--th-accent); background:var(--th-accent); color:var(--th-on-accent); }
+.place-ask button[disabled] { opacity:var(--th-button-disabled-opacity); cursor:default; }
+.place-ask small { color:var(--th-ink-soft); font-size:var(--th-size-small); }
+.places-empty, .places-stale { margin:0; padding:var(--th-space-m) var(--th-space-l); color:var(--th-ink-soft); font-size:var(--th-size-small); }
+.places-stale { border-bottom:1px solid var(--th-hair); }
+/* 详情侧栏只在打开一件事时出现;名单本身由上面这几行代替。 */
+.dashboard .roster-aside:not([data-docked]) { display:none; }
+.dashboard #roster-list { display:none; }
+#topbar-roster { display:none !important; }
