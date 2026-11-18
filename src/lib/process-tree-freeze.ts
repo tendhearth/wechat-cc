@@ -111,9 +111,13 @@ async function sharedTable(freshAfter: number, deadline: number): Promise<Proces
     }
     const onError = () => finish(null, true)
     const onClose = (code: number | null) => finish(code === 0 ? parseTable(Buffer.concat(chunks).toString('utf8')) : null)
-    let timer = setTimeout(onError, Math.max(0, deadline - performance.now()))
-    let abandonAt = deadline
-    extendTable = later => {
+    // 续期有封顶:一个 ps 从起到放弃最多 TABLE_TIMEOUT_MS,不管后面又来多少调用方 ——
+    // 不然源源不断加入的调用会让一个卡死的 ps 永远不被放弃。
+    const latest = tableStartedAt + TABLE_TIMEOUT_MS
+    let abandonAt = Math.min(deadline, latest)
+    let timer = setTimeout(onError, Math.max(0, abandonAt - performance.now()))
+    extendTable = wanted => {
+      const later = Math.min(wanted, latest)
       if (settled || later <= abandonAt) return
       abandonAt = later
       clearTimeout(timer)

@@ -94,3 +94,25 @@ it('a caller about to run out of budget does not kill the shared ps for a caller
   expect(await long).toEqual([{ pid: 100, parent: 1, group: 100 }])
   expect(spawn).toHaveBeenCalledOnce()
 })
+
+it('callers that keep joining cannot keep a stuck shared ps alive past its own cap', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+  try {
+    const ps = Object.assign(new EventEmitter(), { pid: 321, exitCode: null as number | null, stdout: new PassThrough(), kill: vi.fn(), unref: vi.fn() })
+    spawn.mockReset()
+    spawn.mockReturnValueOnce(ps)
+    const reads: Array<Promise<unknown>> = []
+    // A new 1s caller every 300ms for 3s; the ps never closes.
+    for (let t = 0; t < 3_000; t += 300) {
+      reads.push(readProcessTable(1_000))
+      await vi.advanceTimersByTimeAsync(300)
+    }
+    // Abandoned no later than 2s after it was spawned, despite later callers asking for more.
+    expect(ps.kill).toHaveBeenCalledWith('SIGKILL')
+    expect(ps.kill).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(2_000)
+    for (const r of reads) expect(await r).toBeNull()
+    expect(spawn).toHaveBeenCalledOnce()
+    ps.exitCode = 1
+  } finally { vi.useRealTimers() }
+})
