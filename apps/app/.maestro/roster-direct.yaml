@@ -6,10 +6,10 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: roster-strip
+      id: places-strip
     timeout: 10000
 - tapOn:
-    id: roster-avatar-1
+    id: place-open-1
 - extendedWaitUntil:
     visible:
       id: direct-title
@@ -25,7 +25,7 @@ appId: com.tendhearth.app
     id: topbar-back
 - extendedWaitUntil:
     visible:
-      id: roster-strip
+      id: places-strip
     timeout: 10000
 # 推送深链打开直通页,返回落回 CC 对话。演示模式被杀掉后不保留(冷启动回欢迎页是演示的既有行为),
 # 所以这里重开 App、先进演示再点深链;真冷启动的返回栈由 direct.test.ts 的单测覆盖。
@@ -35,7 +35,7 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: roster-strip
+      id: places-strip
     timeout: 10000
 - openLink: 'tendhearth://push-open?kind=task_done&taskId=e5f6a7b8'
 - runFlow: subflows/_open-link-guard.yaml
@@ -47,7 +47,7 @@ appId: com.tendhearth.app
     id: topbar-back
 - extendedWaitUntil:
     visible:
-      id: roster-strip
+      id: places-strip
     timeout: 10000
 - assertVisible:
     id: chat-input

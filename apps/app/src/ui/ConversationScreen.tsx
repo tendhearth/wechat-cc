@@ -45,7 +45,9 @@ import { rosterRow } from '../view/roster-strip'
 import { statusOfMatter, isMatterArchived } from '../view/status'
 import { newReferences, rememberReference, useReferences } from '../state/conversation-references'
 import { DelegationMessage } from '../ui/DelegationMessage'
-import { RosterStrip } from './RosterStrip'
+import { PlacesStrip } from './PlacesStrip'
+import { usePlaces } from '../state/places'
+import { inPlace } from '../view/places'
 import { ConversationMore } from '../ui/ConversationMore'
 import { canSubmit } from '../view/connection'
 
@@ -169,7 +171,11 @@ export default function Chat() {
   if(stream?.running)for(const event of stream.events.filter(e=>e.turnId===stream.running?.turnId&&e.kind==='agent_message'&&e.text))items.push({key:event.id,at:event.createdAt,bubble:{projection:'stream',key:event.id,at:event.createdAt,side:'cc',source:'desktop',state:'sent',truncated:false,text:event.text,...replyAttributionFields({...event,turnId:event.turnId??undefined})}})
   for(const result of durableWork.data?.results??[]) items.push({key:result.id,at:result.createdAt,bubble:{projection:'result',key:result.id,at:result.createdAt,side:'cc',source:'desktop',state:'sent',truncated:false,text:result.text,...replyAttributionFields(result)}})
   if (card) items.push({ key: `companion:${card.id}`, at: card.at, card })
-  const data = items.sort((a, b) => a.at - b.at).reverse()
+  // 点了上面一个地方:说话只看这个地方的(设计稿 2026-11-18-cc-two-sides-design.md §4)。
+  const places = usePlaces()
+  const [placeKey, setPlaceKey] = useState<string | null>(null)
+  const place = placeKey ? places.places.find(p => p.key === placeKey) ?? null : null
+  const data = items.filter(item => inPlace(item, place)).sort((a, b) => a.at - b.at).reverse()
   if(chat.canLoadLater){const boundary=data.findIndex(i=>i.key===chat.laterAfterId);data.splice(boundary<0?0:boundary,0,{key:'conversation-gap',at:0,gap:true})}
   useEffect(() => {
     if (!message || !chat.page || located.current === `${message}:${locate ?? ''}`) return
@@ -206,7 +212,7 @@ export default function Chat() {
         actions={<View style={{ flexDirection: 'row' }}><IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />
           <ConversationMore /></View>}
       />
-      <RosterStrip />
+      <PlacesStrip places={places.places} stale={places.stale} selected={place?.key ?? null} onSelect={p => setPlaceKey(p?.key ?? null)} onOpen={href => router.push(href as never)} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{backend.mode === 'demo' ? <DemoBanner /> : null}</View>
       {stream?.running&&backend.stopConversation?<Button testID="conversation-stop" kind="secondary" label={t(lang,stopTurn===stream.running.turnId?'progress.stopConfirm':'progress.stop')} onPress={()=>void stopConversation()} />:null}
       {stopError?<Txt role="meta" tone="inkSoft">{t(lang,'progress.stopFailed')}</Txt>:null}
