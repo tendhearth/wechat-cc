@@ -116,7 +116,7 @@ export interface InternalApiDeps {
   desktopSeen?: (matterId: string) => void
   /** 「一件事」读写面(routes-matters);与工作台一样晚绑定。 */
   roster?: import('../../ports/roster').RosterReader
-  places?: import('../../features/places').PlacesReader
+  places?: import('../../ports/places').PlacesReader
   matters?: import('../../app/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
   connections?: () => import('../connections').ConnectionsSnapshot

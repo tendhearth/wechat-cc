@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { makeProjectRoot, type RootFs } from './root'
+import { makeProjectRoot, type RootFs } from './project-root'
 
 function fakeFs(dirs: string[], files: Record<string, string>): RootFs & { reads: number } {
   const f = {

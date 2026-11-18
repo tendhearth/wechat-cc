@@ -1,7 +1,6 @@
 import { cliSetupId } from '../../lib/executor-cli-setup'
 import { cliSetupRoutes } from './routes-cli-setup'
-import { rosterRoutes } from '../../features/roster'
-import { placesRoutes } from '../../features/places'
+import { placesRoutes, rosterRoutes } from '../../features/roster'
 import { replyMetadataFields } from '@wechat-cc/protocol'
 import { CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { turnRoutes } from './routes-turn'

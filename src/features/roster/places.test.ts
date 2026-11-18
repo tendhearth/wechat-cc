@@ -3,8 +3,8 @@ import { openTestDb } from '../../lib/db'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import type { Matter } from '../../ports/matters'
 import type { InternalApiDeps } from '../../daemon/internal-api/types'
-import { makePlacesReader, placeKey, PLACES_WINDOW_MS } from './reader'
-import { placesRoutes } from './routes'
+import { makePlacesReader, placeKey, PLACES_WINDOW_MS } from './places-reader'
+import { placesRoutes } from './places-routes'
 
 const DAY = 24 * 3_600_000
 const NOW = 100 * DAY

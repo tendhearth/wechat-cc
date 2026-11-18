@@ -1,5 +1,4 @@
-import { makeRosterReader, type RosterReaderDeps } from '../../features/roster'
-import { makePlacesReader } from '../../features/places'
+import { makePlacesReader, makeRosterReader, type RosterReaderDeps } from '../../features/roster'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import { ownerLedgerConversation } from '../../lib/matter-ledger-access'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'

@@ -10,10 +10,10 @@
 .place-row:focus-visible { outline:2px solid var(--th-accent); outline-offset:-2px; }
 .place-dot { width:8px; height:8px; border-radius:50%; }
 .place[data-waiting="true"] .place-dot { background:var(--th-accent); }
-.place-name { font-weight:600; white-space:nowrap; }
+.place-name { font-weight:500; white-space:nowrap; }
 .place-line { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--th-ink-soft); }
 .place[data-moving="true"] .place-line { color:var(--th-ink); }
-.place[data-waiting="true"] .place-line, .place[data-unseen="true"] .place-line { color:var(--th-ink); font-weight:600; }
+.place[data-waiting="true"] .place-line, .place[data-unseen="true"] .place-line { color:var(--th-ink); font-weight:500; }
 .place-time { color:var(--th-ink-soft); font-size:var(--th-size-small); white-space:nowrap; }
 .place-more { position:absolute; right:var(--th-space-s); top:4px; }
 .place-more > summary { list-style:none; display:grid; place-items:center; width:36px; height:36px; border-radius:var(--th-radius-control); color:var(--th-ink-soft); cursor:pointer; }

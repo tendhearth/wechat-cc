@@ -1,6 +1,6 @@
 /**
  * places-store.ts —— 「地方」存下的顺序 / 名字 / 收起(v117;设计稿 2026-11-18-cc-two-sides-design.md §3)。
- * 只存主人定的东西;每一行现在怎么样由 features/places 每次现算。
+ * 只存主人定的东西;每一行现在怎么样由 features/roster/places-reader.ts 每次现算。
  */
 import type { Db } from '../../lib/db'
 import type { PlaceRecord } from '../../domain/places'

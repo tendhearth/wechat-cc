@@ -4,12 +4,13 @@
  */
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
-import type { PlacesResponseT, RosterItemT } from '@wechat-cc/protocol'
+import type { RosterItemT } from '@wechat-cc/protocol'
 import { buildRoster } from '../../domain/roster'
 import { buildPlaces } from '../../domain/places'
-import { gatherRoster, type RosterReaderDeps } from '../roster/reader'
+import { gatherRoster, type RosterReaderDeps } from './reader'
 import type { PlacesStore } from '../../adapters/store/places-store'
-import { makeProjectRoot } from './root'
+import type { PlacesReader } from '../../ports/places'
+import { makeProjectRoot } from './project-root'
 
 export const PLACES_WINDOW_MS = 30 * 24 * 3_600_000
 
@@ -19,11 +20,6 @@ export interface PlacesReaderDeps {
   root?: (path: string | null | undefined) => string | null
 }
 
-export interface PlacesReader {
-  read(scope: 'operator' | 'device'): PlacesResponseT
-  move(key: string, to: number): boolean
-  hide(key: string, hidden: boolean): boolean
-}
 
 export const placeKey = (root: string) => `p:${createHash('sha256').update(root).digest('hex').slice(0, 16)}`
 
