@@ -79,3 +79,18 @@ it('a freeze does not reuse a ps snapshot that started before its SIGSTOP (it re
   expect(freezer.fullyFrozen).toBe(true)
   expect(signals).toEqual([[-100, 'SIGSTOP'], [-200, 'SIGSTOP']])
 })
+
+it('a caller about to run out of budget does not kill the shared ps for a caller that still has time', async () => {
+  const ps = Object.assign(new EventEmitter(), { pid: undefined, exitCode: null as number | null, stdout: new PassThrough(), kill: vi.fn(), unref: vi.fn() })
+  spawn.mockReset()
+  spawn.mockReturnValueOnce(ps)
+  const short = readProcessTable(20)
+  const long = readProcessTable(1_000)
+  expect(await short).toBeNull()
+  // The short caller gave up; the shared ps must still be alive for the long one.
+  expect(ps.kill).not.toHaveBeenCalled()
+  ps.stdout.write('100 1 100\n')
+  ps.emit('close', 0)
+  expect(await long).toEqual([{ pid: 100, parent: 1, group: 100 }])
+  expect(spawn).toHaveBeenCalledOnce()
+})

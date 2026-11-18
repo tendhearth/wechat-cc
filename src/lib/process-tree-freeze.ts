@@ -45,18 +45,33 @@ let tableChild: ChildProcess | undefined
 let tableRead: Promise<ProcessRow[] | null> | undefined
 /** performance.now() at the moment the in-flight ps was spawned. */
 let tableStartedAt = -Infinity
+/** 把在跑的那个 ps 的放弃时刻推到这个(更晚的)单调钟时刻;没有在跑的就是 undefined。 */
+let extendTable: ((deadline: number) => void) | undefined
 
 /**
  * `freshAfter`(performance.now() 时刻):只接受在这之后才开始的快照。冻住一个组之后再读表,
  * 必须是冻住之后起的 ps —— 冻之前就在跑的那份共享结果可能漏掉冻前一刻刚开的进程组。
  */
 export async function readProcessTable(timeoutMs = TABLE_TIMEOUT_MS, freshAfter = -Infinity): Promise<ProcessRow[] | null> {
+  if (timeoutMs <= 0) return null
+  // 每个调用方只守自己的期限;共享的那个 ps 活到所有等它的调用方里最晚的那个期限 ——
+  // 预算快用完的调用方不会把它杀掉、连累预算还长的任务一起读不到。
+  const deadline = performance.now() + timeoutMs
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      sharedTable(freshAfter, deadline),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), timeoutMs) }),
+    ])
+  } finally { clearTimeout(timer) }
+}
+
+async function sharedTable(freshAfter: number, deadline: number): Promise<ProcessRow[] | null> {
   if (tableRead) {
-    if (tableStartedAt >= freshAfter) return tableRead
-    const started = performance.now()
+    if (tableStartedAt >= freshAfter) { extendTable?.(deadline); return tableRead }
+    // 在跑的这份起于 freshAfter 之前:等它结束(它有自己的放弃时刻),再起一份新的。
     await tableRead
-    const left = timeoutMs - (performance.now() - started)
-    return left > 0 ? readProcessTable(left, freshAfter) : null
+    return performance.now() < deadline ? sharedTable(freshAfter, deadline) : null
   }
   // Keep the handle of an abandoned ps until the runtime observes its exit.
   // A kernel-stuck process can survive even SIGKILL.
@@ -86,6 +101,7 @@ export async function readProcessTable(timeoutMs = TABLE_TIMEOUT_MS, freshAfter 
       child.off('close', onClose)
       chunks.length = 0
       tableRead = undefined
+      extendTable = undefined
       resolve(rows)
     }
     const onData = (chunk: Buffer) => {
@@ -95,7 +111,14 @@ export async function readProcessTable(timeoutMs = TABLE_TIMEOUT_MS, freshAfter 
     }
     const onError = () => finish(null, true)
     const onClose = (code: number | null) => finish(code === 0 ? parseTable(Buffer.concat(chunks).toString('utf8')) : null)
-    const timer = setTimeout(onError, timeoutMs)
+    let timer = setTimeout(onError, Math.max(0, deadline - performance.now()))
+    let abandonAt = deadline
+    extendTable = later => {
+      if (settled || later <= abandonAt) return
+      abandonAt = later
+      clearTimeout(timer)
+      timer = setTimeout(onError, Math.max(0, later - performance.now()))
+    }
     stdout.on('data', onData)
     stdout.on('error', onError)
     child.on('error', onError)
