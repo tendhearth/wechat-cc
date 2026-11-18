@@ -505,7 +505,7 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
   })
 
   describe('网络守护暂停', () => {
-    const suspendable = (suspend: () => boolean) => ({
+    const suspendable = (suspend: () => boolean | Promise<boolean>) => ({
       callTarget: () => ({ provider: 'claude', model: 'claude-opus-5' }),
       suspension: { suspend: vi.fn(suspend), resume: vi.fn(), terminate: vi.fn() },
     })
@@ -513,14 +513,14 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
       holding(s, { session: session as never, execution: { model: null } as never, permissions: { pending: () => [], rejectAll: vi.fn(), pause: vi.fn(), resume: vi.fn() } as never, ...over })
     const elsewhere = (s: ReturnType<typeof setup>) => ({ identity: 'o', taskId: 'o', path: join(s.project, '..', 'other') })
 
-    it('判「要不要保护」的回调抛了 ⇒ 当作不需要保护:不冻、不停', () => {
+    it('判「要不要保护」的回调抛了 ⇒ 当作不需要保护:不冻、不停', async () => {
       const s = setup(); const session = suspendable(() => true); const r = live(s, session)
-      expect(s.domain.suspendForNetwork(() => { throw new Error('selector broke') })).toEqual({ suspended: 0, stopped: 0 })
+      expect(await s.domain.suspendForNetwork(() => { throw new Error('selector broke') })).toEqual({ suspended: 0, stopped: 0 })
       expect(session.suspension.suspend).not.toHaveBeenCalled(); expect(r.networkSuspended).toBeUndefined(); expect(r.cancelled).toBe(false)
     })
-    it('冻的那一下抛了 ⇒ 不算冻住,退回按取消停下(不能让一棵没冻住的树挂着「已暂停」接着跑)', () => {
+    it('冻的那一下抛了 ⇒ 不算冻住,退回按取消停下(不能让一棵没冻住的树挂着「已暂停」接着跑)', async () => {
       const s = setup(); const r = live(s, suspendable(() => { throw new Error('EPERM') }))
-      expect(s.domain.suspendForNetwork(() => 'VPN 掉了。')).toEqual({ suspended: 0, stopped: 1 })
+      expect(await s.domain.suspendForNetwork(() => 'VPN 掉了。')).toEqual({ suspended: 0, stopped: 1 })
       expect(r.networkSuspended).toBeUndefined(); expect(r.cancelled).toBe(true)
       expect(s.store.events(s.task.id)).toContainEqual(expect.objectContaining({ kind: 'system', text: '网络未受保护：VPN 掉了。这个执行者暂停不了，已停止本轮，恢复后可以继续。' }))
     })
@@ -531,25 +531,25 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
       ['还在排队(轮到它时闸门按调用拦)', { state: 'queued' }],
       ['没确认退出', { state: 'uncertain', uncertain: true }],
       ['已经冻住了', { networkSuspended: { since: 1 } }],
-    ] as const)('不碰的 run:%s ⇒ 连「要不要保护」都不问', (_name, over) => {
+    ] as const)('不碰的 run:%s ⇒ 连「要不要保护」都不问', async (_name, over) => {
       const s = setup(); const session = suspendable(() => true)
       const r = live(s, session); Object.assign(r, over)
       const select = vi.fn(() => 'VPN 掉了。')
-      expect(s.domain.suspendForNetwork(select)).toEqual({ suspended: 0, stopped: 0 })
+      expect(await s.domain.suspendForNetwork(select)).toEqual({ suspended: 0, stopped: 0 })
       expect(select).not.toHaveBeenCalled(); expect(session.suspension.suspend).not.toHaveBeenCalled(); expect(s.store.events(s.task.id)).toEqual([])
     })
 
-    it('执行者已不在登记表里也照样判(网络守护不能因此放过它)', () => {
+    it('执行者已不在登记表里也照样判(网络守护不能因此放过它)', async () => {
       const s = setup(); live(s, suspendable(() => true))
       const select = vi.fn(() => 'VPN 掉了。')
-      expect(s.domain.suspendForNetwork(select)).toEqual({ suspended: 1, stopped: 0 })
+      expect(await s.domain.suspendForNetwork(select)).toEqual({ suspended: 1, stopped: 0 })
       expect(select).toHaveBeenCalledWith({ providerId: 'claude', model: null, target: expect.objectContaining({ provider: 'claude' }) })
     })
 
-    it('冻住:时间线一句、订了提醒的发一条(标题换行折成空格、按冻住时刻去重)、撤掉已排的空闲收工', () => {
+    it('冻住:时间线一句、订了提醒的发一条(标题换行折成空格、按冻住时刻去重)、撤掉已排的空闲收工', async () => {
       const s = setup(); const r = live(s, suspendable(() => true)); r.title = '事\r\n二'
       s.domain.armIdleClose(r); expect(r.idleClose).toBeDefined()
-      expect(s.domain.suspendForNetwork(() => 'VPN 掉了。')).toEqual({ suspended: 1, stopped: 0 })
+      expect(await s.domain.suspendForNetwork(() => 'VPN 掉了。')).toEqual({ suspended: 1, stopped: 0 })
       const since = r.networkSuspended!.since
       expect(s.store.events(s.task.id).at(-1)).toMatchObject({ kind: 'system', text: '已暂停(网络未受保护)：VPN 掉了。恢复后自动继续。' })
       expect(s.spies.enqueueNotice).toHaveBeenCalledWith(r.task, r.identity, 'interrupted',
@@ -558,12 +558,12 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
       expect(r.cancelled).toBe(false)
     })
 
-    it('恢复:只放开冻住的那条,留一句;放开后重新评估安静、起空闲收工', () => {
+    it('恢复:只放开冻住的那条,留一句;放开后重新评估安静、起空闲收工', async () => {
       const s = setup()
       const frozen = live(s, suspendable(() => true))
       const other = live(s, suspendable(() => true), elsewhere(s))
       let first = true
-      s.domain.suspendForNetwork(() => { const m = first ? 'VPN 掉了。' : null; first = false; return m })
+      await s.domain.suspendForNetwork(() => { const m = first ? 'VPN 掉了。' : null; first = false; return m })
       expect(frozen.networkSuspended).toBeDefined(); expect(other.networkSuspended).toBeUndefined()
       expect(frozen.idleClose).toBeUndefined()
       expect(s.domain.resumeFromNetwork()).toBe(1)
@@ -571,6 +571,21 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
       expect(s.store.events(s.task.id).at(-1)).toMatchObject({ kind: 'system', text: '网络恢复，已继续。' })
       expect(s.store.events('o')).toEqual([])
       expect(other.permissions.resume).not.toHaveBeenCalled()
+    })
+
+    it.each(['resume', 'cancel'] as const)('ignores a late freeze result after %s', async action => {
+      const s = setup()
+      let finish!: (frozen: boolean) => void
+      const session = suspendable(() => new Promise(resolve => { finish = resolve }))
+      const run = live(s, session)
+      const suspended = s.domain.suspendForNetwork(() => 'VPN 掉了。')
+      if (action === 'resume') s.domain.resumeFromNetwork()
+      else s.domain.cancelRun(run)
+      finish(true)
+      expect(await suspended).toEqual({ suspended: 0, stopped: 0 })
+      expect(run.networkSuspended).toBeUndefined()
+      expect(session.suspension.resume).toHaveBeenCalledTimes(action === 'resume' ? 1 : 0)
+      expect(session.suspension.terminate).toHaveBeenCalledTimes(action === 'cancel' ? 1 : 0)
     })
 
     it('暂停到顶:只停冻住的那条;「做到条件成立为止」跟着停并写原因;时间线写主人那句', () => {

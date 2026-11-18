@@ -1,18 +1,12 @@
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { Options, SpawnOptions } from '@anthropic-ai/claude-agent-sdk'
-import { makeProcessTreeFreezer } from '../../../lib/process-tree-freeze'
+import { makeProcessTreeFreezer, readProcessTable } from '../../../lib/process-tree-freeze'
 
-interface ProcessRow { pid: number; parent: number; group: number }
 const remaining = (deadline: number) => {
   const value = deadline - Date.now()
   if (value <= 0) throw new Error('claude_runtime_close_deadline')
   return value
 }
-const table = (deadline: number): ProcessRow[] => execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,pgid='], { encoding: 'utf8', maxBuffer: 4_000_000, timeout: remaining(deadline), killSignal: 'SIGKILL' }).trim().split('\n').map(line => {
-  const [pid, parent, group] = line.trim().split(/\s+/).map(Number)
-  if (!pid || parent === undefined || group === undefined || !Number.isInteger(parent) || !Number.isInteger(group)) throw new Error('claude_runtime_process_table_invalid')
-  return { pid, parent, group }
-})
 const alive = (target: number): boolean => {
   try { process.kill(target, 0); return true }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error }
@@ -29,20 +23,25 @@ const signal = (group: number, value: NodeJS.Signals) => {
 export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
   let child: ChildProcessWithoutNullStreams | undefined, exited = false, closing = false, terminated = false
   // 扫描做完了才算知道全部进程组(2026-10-10):根进程先没了、冻住后被停、扫描中途报错 ⇒ 不完整。
-  let scanned = false
+  let scanned = false, freezeIncomplete = false
   const groups = new Set<number>(), pids = new Set<number>()
   // 网络守护「暂停在跑的任务」(2026-10-03):冻住 / 放开整棵树。冻住期间要停 ⇒ terminate 直接
   // SIGKILL 冻住的那些组(绝不先放开),close 不再要求进程还活着。
   const freezer = makeProcessTreeFreezer(() => (child && !exited && !closing ? child.pid : undefined))
+  function terminate() {
+    freezeIncomplete ||= freezer.frozen && !freezer.fullyFrozen
+    terminated = true
+    freezer.kill()
+  }
   return {
-    freeze(): boolean { return !closing && !terminated && !!child?.pid && !exited && freezer.freeze() },
+    async freeze(): Promise<boolean> { return !closing && !terminated && !!child?.pid && !exited && freezer.freeze() },
     thaw(): void { if (!terminated) freezer.thaw() },
     /**
      * 起过的全部进程组(含子进程自己 setsid 出去的,见 prepareClose 的扫描)。这是「没确认退出」的退出证据:
      * 「组全没了」会放开文件夹,所以扫描没做完时一个都不交(= 没有证据,等主人确认),不交半份。
      */
     groups(): number[] { return scanned ? [...groups] : [] },
-    terminate(): void { terminated = true; freezer.kill() },
+    terminate,
     spawn(options: SpawnOptions) {
       if (closing || child) throw new Error('claude_runtime_closed_or_duplicate_spawn')
       child = spawn(options.command, options.args, { cwd: options.cwd, env: options.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true, signal: options.signal })
@@ -52,16 +51,22 @@ export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
       child.stderr.on('data', chunk => stderr?.(String(chunk)))
       return child
     },
-    prepareClose(deadline: number) {
+    async prepareClose(deadline: number) {
       closing = true
       if (!child) return
       // 冻住时已经整棵杀掉:没有什么要再冻、也不再要求它活着(close 下面照样等它们全退)。
+      if (freezer.frozen) terminate()
+      if (freezeIncomplete) throw new Error('claude_runtime_process_table_unavailable')
       if (terminated) return
-      if (!child.pid || exited || !alive(child.pid)) throw new Error('claude_runtime_process_ownership_lost')
-      signal(child.pid, 'SIGSTOP')
+      const pid = child.pid
+      if (!pid || exited || !alive(pid)) throw new Error('claude_runtime_process_ownership_lost')
+      signal(pid, 'SIGSTOP')
       for (let pass = 0; pass < 10; pass++) {
-        const rows = table(deadline), owned = new Set<number>([child.pid])
-        if (!rows.some(row => row.pid === child!.pid && row.group === child!.pid)) throw new Error('claude_runtime_process_ownership_lost')
+        const rows = await readProcessTable(remaining(deadline))
+        if (!rows) throw new Error('claude_runtime_process_table_unavailable')
+        remaining(deadline)
+        const owned = new Set<number>([pid])
+        if (!rows.some(row => row.pid === pid && row.group === pid)) throw new Error('claude_runtime_process_ownership_lost')
         let changed = true
         while (changed) {
           remaining(deadline)

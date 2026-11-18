@@ -57,7 +57,7 @@ describe.skipIf(!posix)('makeProcessTreeFreezer — a real child tree', () => {
     expect(ticks().own).toBeGreaterThan(2)
 
     const freezer = makeProcessTreeFreezer(() => root!.pid)
-    expect(freezer.freeze()).toBe(true)
+    expect(await freezer.freeze()).toBe(true)
     expect(freezer.frozen).toBe(true)
     await sleep(100)                       // 在途的那一次写落定
     const frozenAt = ticks()
@@ -69,7 +69,7 @@ describe.skipIf(!posix)('makeProcessTreeFreezer — a real child tree', () => {
     await expect.poll(() => { const t = ticks(); return t.root > frozenAt.root && t.same > frozenAt.same && t.own > frozenAt.own }, { timeout: 10_000 }).toBe(true)
 
     // 再冻一次,然后不放开直接杀:SIGKILL 对停住的进程照样生效。
-    expect(freezer.freeze()).toBe(true)
+    expect(await freezer.freeze()).toBe(true)
     freezer.kill()
     for (let i = 0; i < 40 && freezer.alive(); i++) await sleep(50)
     expect(freezer.alive()).toBe(false)
@@ -77,20 +77,20 @@ describe.skipIf(!posix)('makeProcessTreeFreezer — a real child tree', () => {
 })
 
 describe('makeProcessTreeFreezer — unit', () => {
-  it('win32: refuses (no SIGSTOP); caller falls back to the old stop', () => {
+  it('win32: refuses (no SIGSTOP); caller falls back to the old stop', async () => {
     const sent: unknown[] = []
     const f = makeProcessTreeFreezer(() => 42, { platform: 'win32', signal: (t, s) => { sent.push([t, s]) } })
-    expect(f.freeze()).toBe(false)
+    expect(await f.freeze()).toBe(false)
     expect(sent).toEqual([])
   })
 
-  it('no pid / dead root ⇒ false', () => {
-    expect(makeProcessTreeFreezer(() => undefined, { platform: 'darwin', signal: () => {} }).freeze()).toBe(false)
+  it('no pid / dead root ⇒ false', async () => {
+    expect(await makeProcessTreeFreezer(() => undefined, { platform: 'darwin', signal: () => {} }).freeze()).toBe(false)
     const esrch = Object.assign(new Error('x'), { code: 'ESRCH' })
-    expect(makeProcessTreeFreezer(() => 10, { platform: 'darwin', signal: () => { throw esrch } }).freeze()).toBe(false)
+    expect(await makeProcessTreeFreezer(() => 10, { platform: 'darwin', signal: () => { throw esrch } }).freeze()).toBe(false)
   })
 
-  it('stops the root group, every descendant-led group, and loose descendants; thaws descendants before the root', () => {
+  it('stops the root group, every descendant-led group, and loose descendants; thaws descendants before the root', async () => {
     const sent: Array<[number, string | 0]> = []
     const rows: ProcessRow[] = [
       { pid: 10, parent: 1, group: 10 },     // root
@@ -101,7 +101,7 @@ describe('makeProcessTreeFreezer — unit', () => {
       { pid: 99, parent: 1, group: 99 },     // unrelated
     ]
     const f = makeProcessTreeFreezer(() => 10, { platform: 'darwin', table: () => rows, signal: (t, s) => { sent.push([t, s]) } })
-    expect(f.freeze()).toBe(true)
+    expect(await f.freeze()).toBe(true)
     expect(sent).toEqual([[-10, 'SIGSTOP'], [-12, 'SIGSTOP'], [14, 'SIGSTOP']])
     sent.length = 0
     f.thaw()
@@ -110,4 +110,34 @@ describe('makeProcessTreeFreezer — unit', () => {
     f.kill()
     expect(sent).toEqual([[-10, 'SIGKILL'], [-12, 'SIGKILL'], [14, 'SIGKILL']])
   })
+})
+
+it('an unreadable process table leaves only registered groups to kill, without thawing', async () => {
+  const signals: Array<[number, string | 0]> = []
+  let passes = 0
+  const freezer = makeProcessTreeFreezer(() => 10, {
+    platform: 'darwin',
+    table: async () => passes++ === 0 ? [{ pid: 10, parent: 1, group: 10 }, { pid: 11, parent: 10, group: 11 }] : null,
+    signal: (target, signal) => { signals.push([target, signal]) },
+  })
+  expect(await freezer.freeze()).toBe(false)
+  expect(freezer.frozen).toBe(true)
+  expect(freezer.fullyFrozen).toBe(false)
+  freezer.kill()
+  expect(signals).toEqual([[-10, 'SIGSTOP'], [-11, 'SIGSTOP'], [-10, 'SIGKILL'], [-11, 'SIGKILL']])
+})
+
+it.each(['thaw', 'kill'] as const)('a pending process table cannot freeze descendants after %s', async action => {
+  const signals: Array<[number, string | 0]> = []
+  let finish!: (rows: ProcessRow[]) => void
+  const freezer = makeProcessTreeFreezer(() => 10, {
+    platform: 'darwin',
+    table: () => new Promise(resolve => { finish = resolve }),
+    signal: (target, signal) => { signals.push([target, signal]) },
+  })
+  const frozen = freezer.freeze()
+  freezer[action]()
+  finish([{ pid: 10, parent: 1, group: 10 }, { pid: 11, parent: 10, group: 11 }])
+  expect(await frozen).toBe(false)
+  expect(signals).toEqual([[-10, 'SIGSTOP'], [-10, action === 'thaw' ? 'SIGCONT' : 'SIGKILL']])
 })

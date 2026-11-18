@@ -191,7 +191,7 @@ export interface AgentSession {
 
 export interface AgentSessionSuspension {
   /** SIGSTOP 整棵进程树 + 暂停会话自己的计时器。false = 做不到(进程没了 / 平台不支持),调用方改用停。 */
-  suspend(): boolean
+  suspend(): boolean | Promise<boolean>
   /** SIGCONT + 计时器接着走。幂等。 */
   resume(): void
   /**

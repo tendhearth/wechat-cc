@@ -1541,8 +1541,13 @@ describe('守护:工作台 Codex 的实际端点问 codex 自己(config/read,202
 
 describe('网络守护:暂停在跑的任务(2026-10-03)—— 冻住期间自己的计时器不走', () => {
   // FakeProcess 给一个 pid,process.kill 记账:组信号落在 FakeProcess 上(SIGKILL / SIGTERM ⇒ 退出)。
-  function spawnWithPid(pid: number) {
-    mocks.spawn.mockImplementation((_binary: string, args: string[]) => {
+  function spawnWithPid(pid: number, psStuck = false) {
+    mocks.spawn.mockImplementation((binary: string, args: string[]) => {
+      if (binary === '/bin/ps') {
+        const ps = Object.assign(new EventEmitter(), { stdout: new PassThrough(), unref: vi.fn(), kill: vi.fn() })
+        if (!psStuck) queueMicrotask(() => { ps.stdout.end(`${pid} 1 ${pid}\n`); ps.emit('close', 0) })
+        return ps
+      }
       const child = new FakeProcess(args.includes('mcp')); children.push(child)
       if (child.probe) queueMicrotask(() => { child.stdout.write(discovery); child.exit(discoveryExit) })
       else Object.defineProperty(child, 'pid', { value: pid })
@@ -1567,7 +1572,7 @@ describe('网络守护:暂停在跑的任务(2026-10-03)—— 冻住期间自�
     const { session, child } = await start({}, { timeouts: { firstEventTimeoutMs: 40, connectTimeoutMs: 40 } })
     const signals = trackSignals(child, 4242)
     const run = collect(session); await begun(child)
-    expect(session.suspension?.suspend()).toBe(true)
+    expect(await session.suspension?.suspend()).toBe(true)
     expect(signals).toContainEqual([-4242, 'SIGSTOP'])
     await new Promise(resolve => setTimeout(resolve, 150))          // 远超 40ms 的首个事件上限
     expect(run.events.some(e => e.kind === 'error')).toBe(false)
@@ -1594,7 +1599,7 @@ describe('网络守护:暂停在跑的任务(2026-10-03)—— 冻住期间自�
     const signals = trackSignals(child, 4343)
     session.workbenchRuntime!.start('work')
     await begun(child)
-    expect(session.suspension?.suspend()).toBe(true)
+    expect(await session.suspension?.suspend()).toBe(true)
     const before = child.sent.length
     session.suspension!.terminate()
     await expect(session.close()).resolves.toBeUndefined()
@@ -1602,6 +1607,18 @@ describe('网络守护:暂停在跑的任务(2026-10-03)—— 冻住期间自�
     expect(signals).toContainEqual([-4343, 'SIGKILL'])
     expect(child.sent.slice(before).some(m => m.method === 'turn/interrupt' || m.method === 'thread/backgroundTerminals/clean')).toBe(false)
   })
+
+  it('closes using registered groups when the freeze scan times out, preserving uncertain ownership', async () => {
+    spawnWithPid(4444, true)
+    const { session, child } = await start({ workbenchLifecycle: true })
+    const signals = trackSignals(child, 4444)
+    expect(await session.suspension?.suspend()).toBe(false)
+    await expect(session.close()).rejects.toThrow('codex_terminal_cleanup_unverified')
+    expect(session.processGroups?.()).toEqual([])
+    expect(signals.some(([, sig]) => sig === 'SIGCONT')).toBe(false)
+    expect(signals).toContainEqual([-4444, 'SIGKILL'])
+  })
+
 })
 
 it.each([false,true])('pins task temp/cache only in sandbox shell environment and writable roots (resume=%s)', async resume => {

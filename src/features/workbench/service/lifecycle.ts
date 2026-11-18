@@ -346,6 +346,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       })
     }
   }
+  const pendingSuspensions = new Map<Active, symbol>()
+
   function cancelRun(running:Active):void {
     const relayPending=running.questions.pending().length>0||running.permissions.pending().length>0
     let relayQueued=true
@@ -375,7 +377,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       running.cancelled=true
       // 冻住的树要停(主人取消 / 暂停到顶 / daemon 关):不放开、直接整棵杀掉 —— 放开那一下它就会
       // 接着用不受保护的网络。之后的 cancel() / close() 不再指望进程配合。
-      if (running.networkSuspended) {
+      const suspending = pendingSuspensions.delete(running)
+      if (running.networkSuspended || suspending) {
         running.networkSuspended=undefined
         try { running.session?.suspension?.terminate() } catch { /* close 兜底 */ }
         try { running.permissions.resume() } catch { /* 下面 rejectAll 照样收掉 */ }
@@ -396,15 +399,20 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
    * 冻不住的(执行者没实现 / 沙盒里没验证过能接上:agy、Cursor ACP、openai API;win32;会话还没起来):
    * 退回原来的停法(#191 那一套:记一句、按取消停下,之后照常可以「继续」)。排队的不动 —— 轮到它时闸门会按调用拦。
    */
-  function suspendForNetwork(select:(run:{providerId:string;model:string|null;target:CallTarget})=>string|null):{suspended:number;stopped:number} {
+  async function suspendForNetwork(select:(run:{providerId:string;model:string|null;target:CallTarget})=>string|null):Promise<{suspended:number;stopped:number}> {
     let suspended=0,stopped=0
-    for (const running of [...state.runsByTask.values()]) {
-      if (running.cancelled||running.finishing||running.state!=='active'||running.networkSuspended) continue
+    await Promise.all([...state.runsByTask.values()].map(async running => {
+      if (running.cancelled||running.finishing||running.state!=='active'||running.networkSuspended||pendingSuspensions.has(running)) return
       let message:string|null
       try { message=select({providerId:running.task.providerId,model:running.execution.model,target:liveRunTarget(running,ctx.deps.registry.get(running.task.providerId)?.provider)}) } catch { message=null }
-      if (message===null) continue
+      if (message===null) return
+      const attempt = Symbol()
+      pendingSuspensions.set(running,attempt)
       let frozen=false
-      try { frozen=!!running.session?.suspension?.suspend() } catch { frozen=false }
+      try { frozen=!!(await running.session?.suspension?.suspend()) } catch { frozen=false }
+      if (pendingSuspensions.get(running)!==attempt) return
+      pendingSuspensions.delete(running)
+      if (running.cancelled||running.finishing||running.state!=='active') return
       if (frozen) {
         running.networkSuspended={since:Date.now()}
         cancelIdleClose(running)
@@ -414,17 +422,21 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
         try { enqueueNotice(running.task,running.identity,'interrupted',`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${NETWORK_SUSPENDED_LABEL}\n\n${message}恢复后自动继续。\n\n查看：任务 ${running.taskId}`,`network-suspend-${running.networkSuspended.since}`) } catch { /* 提醒失败不影响暂停 */ }
         ctx.hub.bumped(running.taskId)
         suspended++
-        continue
+        return
       }
       try { store.addEvent(running.taskId,'system',`网络未受保护：${message}这个执行者暂停不了，已停止本轮，恢复后可以继续。`); } catch { /* 停仍然要停 */ }
       try { cancelRun(running); stopped++ } catch { /* 下一个照停 */ }
-    }
+    }))
     return {suspended,stopped}
   }
   /** 网络恢复(probe 读到安全,或改用 bx):放开冻住的树,计时器从这一刻接着走。返回放开了几个。 */
   function resumeFromNetwork():number {
     let n=0
     for (const running of [...state.runsByTask.values()]) {
+      const suspending = pendingSuspensions.delete(running)
+      if (suspending) {
+        try { running.session?.suspension?.resume() } catch { /* best effort */ }
+      }
       if (!running.networkSuspended) continue
       running.networkSuspended=undefined
       try { running.session?.suspension?.resume() } catch { /* 放不开的会由它自己的错误收尾 */ }
@@ -442,7 +454,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
   function stopSuspendedForNetwork(message:string):number {
     let n=0
     for (const running of [...state.runsByTask.values()]) {
-      if (!running.networkSuspended) continue
+      if (!running.networkSuspended && !pendingSuspensions.has(running)) continue
       running.stopNotice=message
       try { untilStop(running.taskId,'网络一直没恢复,任务停了') } catch { /* 停照停 */ }
       try { store.addEvent(running.taskId,'system',message,null,running.identity); } catch { /* 停仍然要停 */ }

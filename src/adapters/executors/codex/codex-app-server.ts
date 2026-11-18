@@ -267,7 +267,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       // 一轮判成失败。收尾路上的 cleanupRequest 用自己的截止时间,不在此列。
       const timers = makePausableTimers()
       const freezer = makeProcessTreeFreezer(() => (!exited && !closing ? child.pid : undefined))
-      let terminated = false
+      let terminated = false, freezeIncomplete = false
       const approvals = new Map<RpcId, Approval>()
       const questions = new Map<RpcId, UserQuestion>()
       let sequence = 0, threadId = '', active: Turn | undefined, buffer = ''
@@ -482,8 +482,15 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           rpcs.set(id, {resolve,reject,clear:()=>clearTimeout(timer)}); send({id,method,params})
         })
       }
+      const terminateFrozen = () => {
+        freezeIncomplete ||= freezer.frozen && !freezer.fullyFrozen
+        terminated = true
+        freezer.kill()
+        timers.resume()
+      }
       const close = (): Promise<void> => {
         if (closePromise) return closePromise
+        if (freezer.frozen) terminateFrozen()
         stopped = true
         const unverifiedChildren = [...unknownBackground].filter(key => key.startsWith('child:')).map(key => key.slice(6))
         for (const waiting of candidates.values()) for (const message of waiting) if (rpcId(message.id)) send({id:message.id,result:rejectedRequest(message)})
@@ -493,7 +500,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         for (const turn of stoppingTurns) turn.cancelled = true
         const timeout = Math.min(options.closeTimeoutMs ?? 2_000, 2_500), deadline = Date.now() + timeout
         closePromise = Promise.resolve().then(async () => {
-          let cleanupFailure: Error | undefined
+          let cleanupFailure = freezeIncomplete ? new Error('codex_terminal_cleanup_unverified') : undefined
           // The verified registration barrier and completed producers establish
           // that there is nothing detached to clean. Retention alone (e.g. an
           // accepted followup or a reconciled synthetic start) is not a writer.
@@ -1173,16 +1180,18 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       return {
         ...(runtime ? { workbenchRuntime: runtime } : {}),
         callTarget: () => spawnTarget,
-        processGroups: () => (process.platform !== 'win32' && child.pid ? [child.pid] : []),
+        processGroups: () => (!freezeIncomplete && process.platform !== 'win32' && child.pid ? [child.pid] : []),
         // 沙盒验证过(src/adapters/executors/suspend-resume.sandbox.test.ts):冻住期间被掐断的流,放开后 codex 自己
         // 「Reconnecting… 1/5」重试接上;放开后再收到的 willRetry 由 connect 看门狗照常管。
         suspension: {
-          suspend() {
-            if (closing || exited || broken || terminated || !freezer.freeze()) return false
-            timers.pause(); return true
+          async suspend() {
+            if (closing || stopped || exited || broken || terminated) return false
+            const freezing = freezer.freeze()
+            if (freezer.frozen) timers.pause()
+            return freezing
           },
           resume() { if (terminated) return; freezer.thaw(); timers.resume() },
-          terminate() { terminated = true; freezer.kill(); timers.resume() },
+          terminate: terminateFrozen,
         },
         dispatch(text, attachments) {
           if (runtime) throw new Error('codex_runtime_requires_lifetime_stream')
