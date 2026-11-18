@@ -148,6 +148,7 @@ it('waits for the in-flight table before killing the root and detached descendan
   const signals: Array<[number, string | 0]> = []
   let finish!: (rows: ProcessRow[]) => void
   const freezer = makeProcessTreeFreezer(() => 10, {
+    platform: 'darwin',
     table: () => new Promise(resolve => { finish = resolve }),
     signal: (target, signal) => { signals.push([target, signal]) },
   })
@@ -165,6 +166,7 @@ it('bounds the stop wait and keeps cleanup unconfirmed when the pending table ne
     const signals: Array<[number, string | 0]> = []
     let finish!: (rows: ProcessRow[]) => void
     const freezer = makeProcessTreeFreezer(() => 10, {
+      platform: 'darwin',
       table: () => new Promise(resolve => { finish = resolve }),
       signal: (target, signal) => { signals.push([target, signal]) },
     })
@@ -183,6 +185,7 @@ it('retries a failed table before killing the frozen root', async () => {
   const signals: Array<[number, string | 0]> = []
   let reads = 0
   const freezer = makeProcessTreeFreezer(() => 10, {
+    platform: 'darwin',
     table: () => reads++ ? detachedTree : null,
     signal: (target, signal) => { signals.push([target, signal]) },
   })
@@ -194,6 +197,7 @@ it('retries a failed table before killing the frozen root', async () => {
 it('does not count a descendant whose SIGSTOP failed as frozen', async () => {
   const signals: Array<[number, string | 0]> = []
   const freezer = makeProcessTreeFreezer(() => 10, {
+    platform: 'darwin',
     table: () => detachedTree,
     signal: (target, signal) => {
       signals.push([target, signal])
