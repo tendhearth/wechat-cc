@@ -42,6 +42,9 @@ let nextId = 1
 let sending = false
 let delegating = false
 /** @type {Record<string,string>} */ let replyAgentNames = {}
+// 点了上面某一个地方:说话只看这个地方的(设计稿 2026-11-18-cc-two-sides-design.md §4)。null = 全部。
+/** @type {{name:string,matterIds:Set<string>,messageIds:Set<string>,sessionIds:Set<string>}|null} */
+let placeFilter = null
 // 此刻里拖进 / 粘进来、还没发出去的图(2026-10-05)。url 是本页的 blob 预览,发出去时只带 mime + base64。
 // 2026-10-06 起也收文档(PDF / 文本 / Markdown / CSV / JSON / Word / Excel / PPT):图显示缩略图,文档显示名字。
 /** @type {{ id: number, mime: string, data_b64: string, url: string, name: string }[]} */
@@ -611,10 +614,29 @@ async function loadSharedHistory(deps) {
   } catch { /* 没有登记处或读不到:桌面照旧从空白开始 */ }
 }
 
+/** @param {ConverseMsg} m */
+function inPlace(m) {
+  if (!placeFilter) return true
+  return (!!m.matterId && placeFilter.matterIds.has(m.matterId)) || (!!m.messageId && placeFilter.messageIds.has(m.messageId)) || (!!m.terminalId && placeFilter.sessionIds.has(m.terminalId)) || m.pending === true
+}
+function placeEmptyHtml() {
+  return `<div class="converse-empty converse-place-empty"><p>最近的说话里,还没有这个地方的事。点上面那一行回到全部。</p></div>`
+}
+/** 上面点了一个地方(或者点回全部)。
+ * @param {{name:string,matterIds:string[],messageIds:string[],sessionIds:string[]}|null} place */
+export function setConversationPlace(place) {
+  const switched = (placeFilter?.name ?? null) !== (place?.name ?? null)
+  placeFilter = place ? { name: place.name, matterIds: new Set(place.matterIds), messageIds: new Set(place.messageIds), sessionIds: new Set(place.sessionIds) } : null
+  const root = document.getElementById("converse-root")
+  if (root) { if (placeFilter) root.dataset.place = placeFilter.name; else delete root.dataset.place }
+  renderMessages({ follow: switched })
+}
+
 function renderMessages({ follow = false } = {}) {
   const scroll = document.getElementById("converse-scroll")
   if (scroll) {
-    paintConversation(scroll,messages,messageHtml,emptyStateHtml(),{follow,latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))})
+    const shown = placeFilter ? messages.filter(inPlace) : messages
+    paintConversation(scroll,shown,messageHtml,placeFilter?placeEmptyHtml():emptyStateHtml(),{follow,latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))})
   }
   updateConversationMatters([])
   paintTerminalReferences()

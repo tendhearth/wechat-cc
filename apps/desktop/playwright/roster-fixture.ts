@@ -13,3 +13,27 @@ export async function showRoster(page:Page) {
  await expect(toggle).toHaveAttribute('aria-expanded','true')
  await expect(page.locator('#roster-aside')).toBeVisible()
 }
+
+// ── 「地方」(正面上半,2026-11-18):名单的列表已由它代替,打开一件事从这里的「去回答」进 ──
+const hex16=(s:string)=>[...new TextEncoder().encode(s)].map(b=>b.toString(16).padStart(2,'0')).join('').padEnd(16,'0').slice(0,16)
+export const placeItem=(name:string,extra:Record<string,unknown>={})=>({key:`p:${hex16(name)}`,name,line:`${name} 的事`,status:'working',waiting:null,moving:true,unseen:false,updatedAt:2,matterIds:[],messageIds:[],sessionIds:[],...extra})
+/** 等你回答的一件事(「去回答」打开它)。 */
+export const askingPlace=(name:string,matterId:string,summary='要你回答一个问题',extra:Record<string,unknown>={})=>placeItem(name,{status:'waiting',moving:false,line:summary,matterIds:[matterId],waiting:{itemKey:`matter:${matterId}`,kind:'question',matterId,requestId:'q1',summary,count:1},...extra})
+/** 终端会话自己停着问(「去回答」打开那个会话)。 */
+export const terminalPlace=(name:string,sessionId:string,summary:string,extra:Record<string,unknown>={})=>placeItem(name,{status:'waiting',moving:false,line:summary,sessionIds:[sessionId],waiting:{itemKey:`terminal:${sessionId}`,kind:'terminal',sessionId,summary,count:1},...extra})
+type PlacesSource=ReturnType<typeof placeItem>[]|(()=>ReturnType<typeof placeItem>[]|{status:number})
+export async function routePlaces(page:Page,places:PlacesSource) {
+ await page.route('**/v1/places',route=>{
+  const value=typeof places==='function'?places():places
+  if(!Array.isArray(value))return route.fulfill({status:value.status,json:{error:'unavailable'}})
+  return route.fulfill({json:{places:value,version:JSON.stringify(value)}})
+ })
+}
+export const placeRow=(page:Page,name:string)=>page.locator('#places-root .place').filter({has:page.locator('.place-name',{hasText:new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}$`)})})
+/** 先等应用退出「加载中」(那时 .dashboard 是 display:none),再点那一行的「去回答」。 */
+export async function answerPlace(page:Page,name:string) {
+ await expect(page.locator('main.dashboard')).toBeVisible()
+ const button=placeRow(page,name).locator('[data-place-open]')
+ await expect(button).toBeVisible()
+ await button.click()
+}

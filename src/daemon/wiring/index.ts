@@ -168,6 +168,7 @@ export interface WiredDeps {
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../../features/memory').MemoryNightlyRuntime
   roster: import('../../ports/roster').RosterReader | null
+  places: import('../../ports/places').PlacesReader | null
   mattersService: import('../../app/matters/service').MattersService | null
   /** 「一件事」活动时间:退订工作台事件 + 清节流定时器;main.ts 登记进 shutdown。 */
   stopMatterActivity: () => void
@@ -205,7 +206,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     log: (tag, line) => opts.log(tag, line),
   })
   // pipeline-deps 先造:App 那条路(companionApp)在它里面,伙伴的 tick 要用。buildTickBodies 构造时只是闭包。
-  const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, roster, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, opts.late)
+  const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, roster, places, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, opts.late)
   const ticks = buildTickBodies({
     ...opts,
     proactive,
@@ -233,6 +234,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     phoneConnect,
     mattersService,
     roster,
+    places,
     memoryNightly,
     stopMatterActivity,
     stopPhone,

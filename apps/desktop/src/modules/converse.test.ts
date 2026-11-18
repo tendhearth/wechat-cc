@@ -380,3 +380,29 @@ it('an old string reply normalizes to the same reply object with no extras', asy
   expect(normalizeConverseReply('hi')).toEqual({ reply: 'hi', attachments: [], narration: [] })
   expect(normalizeConverseReply(null)).toEqual({ reply: '', attachments: [], narration: [] })
 })
+
+it('点了上面一个地方:说话只看这个地方的事和分出它们的那几句;点回全部恢复', async () => {
+  vi.resetModules()
+  els['converse-root'] = new El()
+  const invokeWorkbenchApi = vi.fn(async () => ({ events: [
+    { kind: 'user', text: '今天有点累', createdAt: 1, messageId: 'm-tired' },
+    { kind: 'user', text: '让 codex 把菜谱导入做了', createdAt: 2, messageId: 'm-rici' },
+    { kind: 'text', text: '那我少来找你', createdAt: 3, messageId: 'm-reply' },
+  ] }))
+  const { initConversePage, addConversationMatter, setConversationPlace } = await import('./converse.js')
+  initConversePage({ invoke, invokeWorkbenchApi })
+  await settle()
+  addConversationMatter('aaaa0001', '菜谱导入', false)
+  setConversationPlace({ name: 'rici', matterIds: ['aaaa0001'], messageIds: ['m-rici'], sessionIds: [] })
+  let html = els['converse-scroll']!.innerHTML
+  expect(html).toContain('让 codex 把菜谱导入做了')
+  expect(html).toContain('菜谱导入')
+  expect(html).not.toContain('今天有点累')
+  expect(html).not.toContain('那我少来找你')
+  setConversationPlace({ name: 'leni', matterIds: ['none'], messageIds: [], sessionIds: [] })
+  expect(els['converse-scroll']!.innerHTML).toContain('还没有这个地方的事')
+  setConversationPlace(null)
+  html = els['converse-scroll']!.innerHTML
+  expect(html).toContain('今天有点累')
+  expect(html).toContain('那我少来找你')
+})

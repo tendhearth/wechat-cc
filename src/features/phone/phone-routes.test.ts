@@ -25,7 +25,7 @@ describe('phoneRouteAllowed', () => {
       // 本机管家体检只给已配对设备；链接令牌不能读档案或触发花额度。
       'GET /v1/checkup', 'POST /v1/checkup/estimate', 'POST /v1/checkup/run', 'POST /v1/checkup/cancel', 'POST /v1/checkup/settings',
       // T4:私密话题只给配对设备。
-      'GET /v1/roster',
+      'GET /v1/roster', 'GET /v1/places',
       'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics',
       'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/matter/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'POST /m/api/matter/handoff', 'POST /m/api/session/continue', 'POST /m/api/matter/worktree', 'POST /m/api/chat/say', 'POST /m/api/push/register', 'POST /m/api/push/test',
       // 收敛 5b(2026-10-21):网页不再有这几页,链接令牌的读收回(#463「私事,收敛时再看」)
