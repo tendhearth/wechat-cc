@@ -12,7 +12,6 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  ]
  const decisions:unknown[]=[]
  await page.route('**/v1/places',route=>unreadable?route.fulfill({status:503,json:{error:'unavailable'}}):route.fulfill({json:{places,version:'two'}}))
- await page.route('**/v1/matter/permission',route=>{decisions.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}})})
  await page.route(WORKBENCH_ROUTES,route=>{
   const path=new URL(route.request().url()).pathname
   if(path==='/v1/workbench/task')return route.fulfill({json:{task,events:[{id:1,taskId:task.id,kind:'text',text:'想运行测试，确认排版。',createdAt:2}],artifacts:[],questions:[],permissions:[{id:'p1',taskId:task.id,tool:'Bash',description:'bun run test',createdAt:2}]}})
@@ -21,6 +20,8 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
   return route.fulfill({json:{reviews:[]}})
  })
  await page.route('**/v1/matter?id=*',route=>route.fulfill({json:{matter:{...task,kind:'task'}}}))
+ // 在 WORKBENCH_ROUTES 之后登记:Playwright 里后登记的先接,那条宽的正则也匹配 /v1/matter/permission。
+ await page.route('**/v1/matter/permission',route=>{decisions.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}})})
  await page.route('**/v1/cli/sessions*',route=>route.fulfill({json:{sessions:[{session_id:'terminal-1',source:'codex',status:'waiting',live_window:true,last_summary:'git status',pending:{actionable:true,tool:'Bash',summary:'git status',hash:'k3x9z'}}]}}))
  await page.route('**/v1/cli/activity*',route=>route.fulfill({json:{items:[{text:'终端原话'}]}}))
  await page.goto(shimUrl)
