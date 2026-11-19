@@ -9,6 +9,7 @@
 // 点一行 = 把下面的说话筛成这个地方;再点一次回到全部。
 import {V1,v1} from '../daemon-client.js'
 import {escapeHtml} from '../view.js'
+import {deskSituation, deskSpeakerHtml} from './desk-page.js'
 
 /** @typedef {import('../../../../packages/protocol/src/places').PlaceT} Place */
 
@@ -73,7 +74,7 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true,
     const quiet = isQuiet(p, selected, now)
     const actionsId = `place-actions-${i}`
     const control = popover ? `popovertarget="${actionsId}"` : `aria-controls="${actionsId}" aria-expanded="false"`
-    return `<li class="place" data-place-key="${escapeHtml(p.key)}" data-quiet="${quiet}" data-waiting="${!!p.waiting}" data-unseen="${p.unseen}" data-moving="${p.moving}" data-selected="${p.key === selected}">
+    return `<li class="place" data-place-key="${escapeHtml(p.key)}" data-quiet="${quiet}" data-waiting="${!!p.waiting}" data-unseen="${p.unseen}" data-moving="${p.moving}"${wide && p.status === 'working' ? ' data-working' : ''} data-selected="${p.key === selected}">
       <button type="button" class="place-row" aria-pressed="${p.key === selected}">
         <span class="place-dot" aria-hidden="true"></span>
         <span class="place-name">${escapeHtml(p.name)}</span>
@@ -98,14 +99,15 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true,
  *   call: (method:any, path:string, body?:any, opts?:any) => Promise<any>,
  *   onSelect: (place: Place | null) => void,
  *   onOpen: (target: {kind:'matter'|'terminal', id:string}) => unknown,
+ *   onSituation?: (text:string, stale:boolean) => void,
  *   onPlaces?: (places: Place[]) => void,
  *   waitingRoot?: HTMLElement,
- *   onCurrent?: (place: Place | null, now: number) => void,
+ *   onCurrent?: (place: Place | null) => void,
  *   now?: () => number,
  *   intervalMs?: number,
  * }} o
  */
-export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, waitingRoot, onCurrent, now = Date.now, intervalMs = 3000 }) {
+export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSituation, waitingRoot, onCurrent, now = Date.now, intervalMs = 3000 }) {
   /** @type {Place[]} */ let places = []
   /** @type {string|null} */ let selected = null
   const supportsPopover = typeof root.showPopover === 'function'
@@ -124,10 +126,19 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, waiti
     const waiting = wide ? places.filter(p => p.waiting && (!selected || selected === p.key)) : []
     const more = waiting.length - 2
     const toggle = more > 0 ? `<button class="desk-text-button" type="button" data-waiting-toggle aria-expanded="${waitingOpen}">${waitingOpen ? '收起其余等你定的' : `还有 ${more} 件等你定`}</button>` : ''
-    const cards = waiting.slice(0, waitingOpen ? waiting.length : 2).map(p => `<div class="desk-waiting-card" data-place-key="${escapeHtml(p.key)}">
-      <div class="desk-waiting-question"><span class="place-dot" aria-hidden="true"></span><strong>${escapeHtml(p.name)} 等你定</strong><span>${escapeHtml(p.waiting?.summary ?? '')}</span></div>
-      ${askHtml(p, true)}
-    </div>`).join('')
+    const cards = waiting.slice(0, waitingOpen ? waiting.length : 2).map(p => {
+      const note = /** @type {(NonNullable<Place['waiting']> & {ccOpinion?:string, questionReason?:string})|null} */ (p.waiting)
+      return `<div class="desk-waiting-row">
+        ${deskSpeakerHtml('cc')}
+        <div class="desk-waiting-card" data-place-key="${escapeHtml(p.key)}">
+          <div class="desk-waiting-label">这件要你定 · ${escapeHtml(p.name)}</div>
+          <div class="desk-waiting-question">${escapeHtml(note?.summary ?? '')}</div>
+          ${note?.ccOpinion ? `<div class="desk-waiting-opinion">我的意见：${escapeHtml(note.ccOpinion)}</div>` : ''}
+          ${note?.questionReason ? `<div class="desk-waiting-reason">为什么来问你：${escapeHtml(note.questionReason)}</div>` : ''}
+          ${askHtml(p, true)}
+        </div>
+      </div>`
+    }).join('')
     waitingRoot.hidden = waiting.length === 0
     if (waitingMarkup !== cards + toggle) {
       waitingMarkup = cards + toggle
@@ -151,7 +162,10 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, waiti
     }
     if (acting) root.querySelectorAll('[data-place-decision]').forEach(b => b.setAttribute('disabled', ''))
     drawWaiting()
-    onCurrent?.(places.find(p => p.key === selected) ?? null, at)
+    const waitingCount = places.reduce((sum, p) => sum + (p.waiting?.count ?? 0), 0)
+    const movingCount = places.filter(p => p.moving || p.status === 'working').length
+    onSituation?.(version && !stale ? deskSituation(waitingCount, movingCount) : '', stale)
+    onCurrent?.(places.find(p => p.key === selected) ?? null)
     reflectOverflow()
   }
   const placeOf = (/** @type {Element|null} */ el) => places.find(p => p.key === el?.closest('[data-place-key]')?.getAttribute('data-place-key'))
@@ -178,7 +192,6 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, waiti
           const at = now()
           const list = root.querySelectorAll('.place')
           if (places.some((p, i) => isQuiet(p, selected, at) && list[i]?.getAttribute('data-quiet') === 'false')) draw()
-          else onCurrent?.(places.find(p => p.key === selected) ?? null, at)
         }
         return
       }
@@ -239,6 +252,9 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, waiti
     if (target.closest('[data-waiting-toggle]')) {
       waitingOpen = !waitingOpen
       drawWaiting()
+    const waitingCount = places.reduce((sum, p) => sum + (p.waiting?.count ?? 0), 0)
+    const movingCount = places.filter(p => p.moving || p.status === 'working').length
+    onSituation?.(version && !stale ? deskSituation(waitingCount, movingCount) : '', stale)
       const toggle = waitingRoot?.querySelector('button[data-waiting-toggle]')
       if (toggle instanceof HTMLButtonElement) toggle.focus()
       return

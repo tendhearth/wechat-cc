@@ -15,6 +15,7 @@ import { mountOwnerConversation } from './conversation-contracts.js'
 import {openOwnerChatFile,openConversationImage,openLocalConversationFile} from "./converse-media.js"
 import { terminalReferenceHtml, paintTerminalReferences, setTerminalActionsSupported } from './conversation-sessions.js'
 import { matterReferenceHtml, updateConversationMatters, mountMatterReferences } from './conversation-matters.js'
+import { deskSpeakerHtml } from './desk-page.js'
 import { icon } from "./icons.js"
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
@@ -53,12 +54,6 @@ let placeFilter = null
 /** @type {{ id: number, mime: string, data_b64: string, url: string, name: string }[]} */
 let pendingImages = []
 let nextImageId = 1
-// 两栏里说话的人用头像,不写「你 / CC」两个字(主人 11-19)。CC 用它自己的那一张(和左上角同一张);
-// 你的头像在 CC 给你画出来之前,是一张「还没画」的铅笔稿——虚线圈里淡淡的头和肩。只在宽窗口显示(窄窗口没有这一列)。
-const DESK_CC_AVATAR = '<img src="./assets/pet/cc-v1/canonical/lit/front.png" alt="">'
-const DESK_YOU_AVATAR = '<svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="14" cy="14" r="12.6" stroke-dasharray="2.2 2.6"/><circle cx="14" cy="11.4" r="3.5"/><path d="M7.4 21.6c1.1-3.5 3.6-5.1 6.6-5.1s5.5 1.6 6.6 5.1"/></svg>'
-/** @param {string} role */
-const deskSpeakerHtml = role => `<span class="desk-speaker" data-speaker="${role === 'user' ? 'you' : 'cc'}" aria-hidden="true">${role === 'user' ? DESK_YOU_AVATAR : DESK_CC_AVATAR}</span>`
 const IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic"]
 /** @type {Record<string,string>} */
 const DOC_MIMES_BY_EXT = { pdf: "application/pdf", txt: "text/plain", md: "text/markdown", markdown: "text/markdown", csv: "text/csv", json: "application/json",
@@ -173,7 +168,8 @@ function renderSkeleton(root, deps) {
     <div class="converse-page-actions"><button id="converse-earlier" type="button" hidden>更早的对话</button><button id="converse-later" type="button" hidden>后面的对话</button><button id="converse-stop" type="button" hidden>停止这一轮</button></div>
     <div id="converse-scroll" class="converse-scroll"></div>
     <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
-    <div class="converse-compose">
+    <div id="converse-compose" class="converse-compose">
+      ${deskSpeakerHtml('user')}
       <div id="converse-images" class="converse-images" aria-label="要一起发的图片" hidden></div>
       <p id="converse-image-note" class="converse-image-note" role="status" hidden></p>
       <div class="converse-draft">
@@ -263,7 +259,7 @@ function narrationHtml(m, indexes = (m.narration ?? []).map((_,i) => i)) {
   const lines = indexes.map(i => m.narration?.[i] ?? '')
   if (!lines.length) return ""
   return `<details class="converse-process" data-msg-id="${m.id}">
-    <summary title="CC 在最后回复之前写下的过程话,只在这里显示,没有发到微信">过程 · ${lines.length} 段</summary>
+    <summary title="CC 在最后回复之前写下的过程话,只在这里显示,没有发到微信"><span class="converse-process-label">过程 · ${lines.length} 段</span><span class="desk-process-open">干了 ${lines.length} 步，展开看</span><span class="desk-process-close">收起</span></summary>
     <ol class="converse-process-lines">${lines.map(l => `<li>${escapeHtml(l)}</li>`).join("")}</ol>
   </details>`
 }
@@ -299,8 +295,8 @@ function attachmentsHtml(m, indexes = (m.attachments ?? []).map((_,i) => i)) {
   return `<div class="converse-attachments">${items.join("")}</div>`
 }
 
-/** @param {ConverseMsg} m @param {number[]} [attachmentIndexes] @param {number[]} [narrationIndexes] @param {number} [partIndex] @returns {string} */
-function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
+/** @param {ConverseMsg} m @param {number[]} [attachmentIndexes] @param {number[]} [narrationIndexes] @param {number} [partIndex] @param {boolean} [showInlinePlace] @returns {string} */
+function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex, showInlinePlace = partIndex === undefined) {
   if(m.terminalId)return terminalReferenceHtml(m.terminalId,m.text)
   if (m.matterId) return `<div class="converse-msg converse-msg-cc"><span class="converse-speaker">${deskSpeakerHtml('cc')}</span><div class="converse-cc-body">${matterReferenceHtml(m.matterId,m.text,!!m.historical)}</div></div>`
   if (m.role === "error") {
@@ -311,10 +307,11 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
   }
   if (m.role === 'cc' && m.replyParts?.length) {
     const usedAttachments = new Set(), usedNarration = new Set()
+    const firstTextPart = m.replyParts.findIndex(part => part.text.trim() || part.truncated)
     const parts = m.replyParts.map((part,index) => {
       const attachments = part.attachmentIndexes.filter(i => !usedAttachments.has(i) && !!usedAttachments.add(i))
       const narration = part.narrationIndexes.filter(i => !usedNarration.has(i) && !!usedNarration.add(i))
-      return messageHtml({...m,...replyAttribution(part),speaker:part.speaker,provider:part.provider,text:part.text+(part.truncated?'…':''),replyParts:[],projection:''},attachments,narration,index)
+      return messageHtml({...m,...replyAttribution(part),speaker:part.speaker,provider:part.provider,text:part.text+(part.truncated?'…':''),replyParts:[],projection:''},attachments,narration,index,index === firstTextPart)
     })
     const attachments = (m.attachments ?? []).map((_,i) => i).filter(i => !usedAttachments.has(i))
     const narration = (m.narration ?? []).map((_,i) => i).filter(i => !usedNarration.has(i))
@@ -332,7 +329,13 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
     ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}"${partIndex === undefined ? '' : ` data-reply-part="${partIndex}"`} aria-label="朗读这条回复" title="朗读">${icon("play")} </button>`
     : ""
   const markdown = m.role === "cc" && !m.pending
-  const bubble = `${m.projection?`<small>${escapeHtml(m.projection)}</small>`:''}<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
+  const inlineLabel = showInlinePlace ? placeLabelHtml(m, true) : ''
+  let content = markdown ? renderWorkbenchMarkdown(m.text) : m.role === 'user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)
+  if (inlineLabel) {
+    const opening = content.match(/^<(?:p|h[1-6])>/)?.[0] ?? ''
+    content = opening + inlineLabel + content.slice(opening.length)
+  }
+  const bubble = `${m.projection?`<small>${escapeHtml(m.projection)}</small>`:''}<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${content}</div>`
   // Current-session upload previews are blob URLs, never recovered as durable history references.
   const userImages = m.role === "user" && (m.images?.length || m.files?.length)
     ? `<div class="converse-user-images">${(m.images ?? []).map((src,i) => `<button type="button" class="converse-user-image" data-msg-id="${m.id}" data-image="${i}" aria-label="打开你发的图片"><img src="${escapeHtml(src)}" alt="你发的图片" /></button>`).join("")}${(m.files ?? []).map((name,i) => m.uploadedFiles?.[i] ? `<button type="button" class="converse-file-chip" data-local-file="${i}" data-msg-id="${m.id}">${escapeHtml(name)}</button>` : `<span class="converse-file-chip">${escapeHtml(name)}</span>`).join("")}</div>`
@@ -603,6 +606,7 @@ const STARTERS = [
 
 /** @param {HTMLTextAreaElement} input */
 function resizeDraft(input) {
+  document.getElementById('converse-compose')?.toggleAttribute('data-has-text', !!input.value.trim())
   if (input.hidden || !input.clientWidth) return
   // 空草稿回到样式表的一行高，别让占位文字或上一次的行高留下来。
   if (!input.value) { input.style.removeProperty('height'); return }
@@ -655,9 +659,9 @@ function placeEmptyHtml() {
   return `<p class="converse-place-empty">最近还没聊过 ${escapeHtml(placeFilter?.name ?? "")} 的事。</p>`
 }
 /** @param {ConverseMsg} m */
-function placeLabelHtml(m) {
+function placeLabelHtml(m, inline = false) {
   const place = !placeFilter && m.role === 'cc' && m.messageId ? placesByMessage.get(m.messageId) : null
-  return place ? `<button class="converse-place-label" type="button" data-converse-place="${escapeHtml(place.key)}">${escapeHtml(place.name)}</button>` : ''
+  return place ? `<button class="${inline ? 'desk-inline-place' : 'converse-place-label'}" type="button" data-converse-place="${escapeHtml(place.key)}">${escapeHtml(place.name)}</button>` : ''
 }
 
 /** @param {{clear:()=>void,selectKey:(key:string)=>void}} navigation */
@@ -1055,7 +1059,8 @@ function wireEvents(root, deps) {
     const placeLabel = target.closest('[data-converse-place]')
     if (placeLabel instanceof HTMLElement && placeLabel.dataset.conversePlace) {
       placeNavigation?.selectKey(placeLabel.dataset.conversePlace)
-      document.getElementById('converse-place-clear')?.focus()
+      const clear = document.documentElement.hasAttribute('data-desk-wide') ? 'desk-place-clear' : 'converse-place-clear'
+      document.getElementById(clear)?.focus()
       return
     }
     const starter = target.closest(".converse-starter")
