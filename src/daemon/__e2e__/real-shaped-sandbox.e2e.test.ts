@@ -23,6 +23,7 @@ import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import type { Db } from '../../lib/db'
+import { serve } from '../../lib/runtime/http'
 import { openSqlite } from '../../lib/runtime/sqlite'
 import type { OutboundMsg } from './fake-ilink-server'
 import type { FakeSdkScript } from './fake-sdk'
@@ -121,9 +122,6 @@ const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'spee
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
   moderatorScript: { onEval: async (prompt) => {
-    if (prompt.startsWith('你是 CC，给正在决定这件事的主人留两行话。')) {
-      return JSON.stringify({ say: true, opinion: '先别删。请求会直接移除构建目录。', reason: '要批准删除目录' })
-    }
     if (prompt.startsWith('主人对 CC 说了一句话。判断') && prompt.includes('快判沙盒配色')) {
       topicJudgeAttempts++
       await new Promise(r => setTimeout(r, 5_500))
@@ -152,7 +150,7 @@ let d: RealShapedDaemon
  * S2 那几条的起点(关机时写死,不靠上一条留下的):主人的免打扰开(盖住此刻,主人时区)/ 关、配没配一台手机、
  * 待发队列清空(keepPending 的除外 —— 「压着时重启」要的就是它)。然后照真机重启,「待说」那一拍 200ms。
  */
-async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: boolean; beforeBoot?: (stateDir: string) => void; atDesk?: boolean; timedJobs?: boolean }): Promise<string> {
+async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: boolean; beforeBoot?: (stateDir: string) => void; atDesk?: boolean; timedJobs?: boolean; agentConfigPatch?: RealShapedOpts['agentConfigPatch'] }): Promise<string> {
   const stateDir = d.stateDir
   await d.stop({ keepState: true })
   // 免打扰:chat_prefs.json 一个对话一行(值是 JSON 字符串),daemon 开机读一次
@@ -175,7 +173,7 @@ async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: bo
   }
   o.beforeBoot?.(stateDir)
   // 人在不在电脑前(S3b):缺省探不到 = 不在;atDesk ⇒ 本机 5 秒前刚有键鼠输入,「先只在桌面提示」之后 2 秒就推 App(生产 10 分钟)
-  d = await boot({ stateDir, speechFlushIntervalMs: 200, ...(o.timedJobs ? { scheduledJobsIntervalMs: 200 } : {}), ...(o.atDesk ? { machineIdleS: 5, escalateAfterMs: 2_000 } : {}) })
+  d = await boot({ stateDir, agentConfigPatch: o.agentConfigPatch, speechFlushIntervalMs: 200, ...(o.timedJobs ? { scheduledJobsIntervalMs: 200 } : {}), ...(o.atDesk ? { machineIdleS: 5, escalateAfterMs: 2_000 } : {}) })
   expect(await d.moduleProblems()).toEqual([])
   if (o.phone) await expect.poll(() => d.phoneRelay.controls().some(c => (c.push_reg as { device?: string } | undefined)?.device === PHONE_ID), { timeout: 15_000 }).toBe(true)
   return stateDir
@@ -765,8 +763,31 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
   // S3a(一个事件账上一行;设计稿 docs/superpowers/specs/2026-11-05-s3-one-proposal-design.md):同一件事今天有几条路各自问门
   // (App 推送、微信通知、回原对话的回报),问门时带同一个事件键,speech_log 里就只有一行。
   // win32 不跑:要 Codex 在工作台里做一件事 —— 同上面「workbench from WeChat」那条的理由。
-  it.skipIf(process.platform === 'win32')('one event, one ledger row: a task asks for approval ⇒ the App push and the WeChat notice are one speech_log row (app+wechat); the task finishing ⇒ one row for that turn', async () => {
-    await rebootForS2({ quiet: false, phone: true })
+  it.skipIf(process.platform === 'win32')('one event, one ledger row: a task asks for approval ⇒ the App push and the WeChat notice are one speech_log row (app+wechat); the task finishing ⇒ one row for that turn', async ({ onTestFinished }) => {
+    const requests: Array<{ messages?: Array<{ content: string }>; tools?: unknown }> = []
+    const endpoint = serve({
+      port: 0,
+      async fetch(req) {
+        if (new URL(req.url).pathname !== '/v1/chat/completions') return new Response(null, { status: 404 })
+        requests.push(await req.json() as (typeof requests)[number])
+        const content = JSON.stringify({ say: true, opinion: '先别删。请求会直接移除构建目录。', reason: '要批准删除目录' })
+        const chunk = JSON.stringify({
+          id: 'opinion-fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture',
+          choices: [{ index: 0, delta: { content }, finish_reason: 'stop' }],
+        })
+        return new Response(`data: ${chunk}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+      },
+    })
+    onTestFinished(() => endpoint.stop(true))
+    await endpoint.ready
+    vi.stubEnv('WECHAT_OPENAI_API_KEY', 'sandbox-opinion')
+    try {
+      await rebootForS2({ quiet: false, phone: true, agentConfigPatch: {
+        openaiBaseUrl: `http://127.0.0.1:${endpoint.port}/v1`, openaiModel: 'fixture', cheapEvalProvider: 'claude',
+      } })
+    } finally {
+      vi.unstubAllEnvs()
+    }
     const since = Date.now()
     d.sendText(d.owner, '任务 项目')
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
@@ -797,6 +818,9 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await expect.poll(() => d.log().some(l => /\[ASK_OPINION\] given opinionLength=\d+ reasonLength=\d+$/.test(l)), { timeout: 15_000 }).toBe(true)
     const detail = await desktop<{ permissions: Array<{ id: string }> }>('GET', `/v1/workbench/task?id=${asking}`)
     expect(detail.body.permissions).toHaveLength(1)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).not.toHaveProperty('tools')
+    expect(requests[0]?.messages?.[0]?.content).toContain('给正在决定这件事的主人留两行话')
   })
 
   // S3b(一件事一次提议;主人点头的「任务做完时人在电脑前 ⇒ 先只在桌面提示,10 分钟没看再推手机」):沙盒里 10 分钟缩成 2 秒。

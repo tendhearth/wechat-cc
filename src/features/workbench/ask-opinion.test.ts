@@ -4,6 +4,9 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ASK_OPINION_DELAY_MS, ASK_OPINION_TIMEOUT_MS, UNVERIFIED_CLAIMS, makeAskOpinion } from './ask-opinion'
 import type { PermissionAsk } from '../../domain/permission-rules/types'
+import { createApiModel } from '../../adapters/executors/openai/api-model'
+import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
+import { createProviderRegistry } from '../../app/provider-registry'
 import type { CheapEval } from '../../ports/agent-provider'
 
 const MIN = 60_000
@@ -280,9 +283,76 @@ it.each(['已运行命令，没有报错', '已跑过测试', '运行了命令',
 it.each([
   '允许。只读取本地改动。', '先别。建议先跑一次测试。', '先问清楚再定。我建议先看文件。',
   '先别。我还没看过文件。', '先别。这条命令会删除备份。',
+  '允许。文件只读取，不修改。', '先别。命令将执行一次。', '先别。文件还没读过。',
 ])('保留基于请求的描述和建议：%s', async opinion => {
   const opinions = makeAskOpinion({ evaluator: () => async () => JSON.stringify({ ...answer, opinion }) })
   opinions.schedule('request', pending)
   await tick()
   expect(opinions.get('request')?.ccOpinion).toBe(opinion)
+})
+
+
+it.each([undefined, 'codex'])('只有原生执行者时跳过意见 (pin: %s)', async pin => {
+  const registry = createProviderRegistry({ cheapEvalProvider: pin })
+  const model = vi.fn(async () => raw)
+  for (const id of ['codex', 'cursor', 'claude', 'agy']) {
+    registry.register(id, { spawn: async () => { throw new Error('unused') }, cheapEval: model }, { canResume: () => false })
+  }
+  const opinions = makeAskOpinion({ evaluator: () => registry.getCheapEval({ toolFreeOnly: true }) })
+  opinions.schedule('question', () => ({ kind: 'question', project: '/projects/Archive', preview: { question: '要保留备份吗？' } }))
+  await tick()
+  expect(model).not.toHaveBeenCalled()
+  expect(opinions.get('question')).toBeUndefined()
+})
+
+it('超时终止在途请求，下一条不重叠，关停时也取消', async () => {
+  let inFlight = 0
+  const fetch = vi.fn((_input, init?: RequestInit) => {
+    inFlight++
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init!.signal!
+      signal.addEventListener('abort', () => {
+        inFlight--
+        reject(signal.reason)
+      }, { once: true })
+    })
+  })
+  const registry = createProviderRegistry({ cheapEvalProvider: 'codex' })
+  const native = vi.fn(async () => raw)
+  registry.register('codex', { spawn: async () => { throw new Error('unused') }, cheapEval: native }, { canResume: () => false })
+  const api = createApiModel({ baseURL: 'https://offline.invalid/v1', model: 'fixture', apiKey: 'fixture', fetch })
+  registry.register('openai', createOpenAiAgentProvider({
+    makeChatModel: () => api,
+    makeMcpBridge: async () => { throw new Error('unused') },
+  }), { canResume: () => false })
+  const opinions = makeAskOpinion({ evaluator: () => registry.getCheapEval({ toolFreeOnly: true }) })
+  opinions.schedule('timeout', pending)
+  await tick()
+  expect(inFlight).toBe(1)
+  const body = JSON.parse(fetch.mock.calls[0]![1]!.body as string)
+  expect(body).not.toHaveProperty('tools')
+  await vi.advanceTimersByTimeAsync(ASK_OPINION_TIMEOUT_MS)
+  expect(inFlight).toBe(0)
+  expect(opinions.get('timeout')).toBeUndefined()
+  await vi.advanceTimersByTimeAsync(MIN)
+  opinions.schedule('next', pending)
+  await tick()
+  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(inFlight).toBe(1)
+  opinions.dispose()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(inFlight).toBe(0)
+  expect(native).not.toHaveBeenCalled()
+  opinions.schedule('after-close', pending)
+  await tick()
+  expect(fetch).toHaveBeenCalledTimes(2)
+})
+
+it.each(['文件读过了', '日志查看过了', '测试跑完了', '命令执行了', '配置检查过'])('驳回宾语在前的核对声明：%s', async claim => {
+  const opinions = makeAskOpinion({
+    evaluator: () => async () => JSON.stringify({ ...answer, opinion: `先别删。${claim}。` }),
+  })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')).toBeUndefined()
 })

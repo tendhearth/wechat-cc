@@ -222,6 +222,7 @@ export type CallTargetKind =
 export interface CheapEvalOptions {
   /** A caller with a per-call budget can disable provider-internal fallback and retries. */
   singleAttempt?: boolean
+  signal?: AbortSignal
 }
 
 export type CheapEval = (prompt: string, options?: CheapEvalOptions) => Promise<string>
@@ -504,6 +505,8 @@ export interface AgentProvider {
    * should fall back gracefully (skip the eval-driven feature).
    */
   cheapEval?: CheapEval
+  /** Opt in only if cheapEval with singleAttempt sends one tool-free request and honors signal. */
+  supportsToolFreeCheapEval?: true
   /**
    * 一次 `cheapEval` 调用的**预期上限**(毫秒)。缺省 ⇒ in-process 一档。
    *

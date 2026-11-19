@@ -441,12 +441,17 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
     },
     /** CLI 子进程一档,与 codex 同量级。 */
     cheapEvalBudgetMs: 20_000,
+    supportsToolFreeCheapEval: true,
     async cheapEval(prompt: string, options?: CheapEvalOptions): Promise<string> {
       try {
+        options?.signal?.throwIfAborted()
         const resp = await opts.genai.models.generateContent({
           model: opts.cheapModel ?? opts.model,
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          ...(options?.singleAttempt ? { config: { httpOptions: { retryOptions: { attempts: 1 } } } } : {}),
+          ...(options?.signal || options?.singleAttempt ? { config: {
+            ...(options.signal ? { abortSignal: options.signal } : {}),
+            ...(options.singleAttempt ? { httpOptions: { retryOptions: { attempts: 1 } } } : {}),
+          } } : {}),
         })
         return resp.text ?? ''
       } catch (err) {

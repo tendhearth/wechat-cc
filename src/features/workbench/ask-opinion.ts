@@ -30,6 +30,11 @@ const FIRST_PERSON_CHECK = new RegExp(
   'u',
 )
 
+const OBJECT_FIRST_CHECK = new RegExp(
+  `(?:文件|文档|代码|记录|日志|配置|数据|目录|报告|测试|脚本|命令)(?:都|也)?${CHECK_ACTION}(?:(?:过|完)了?|了)$`,
+  'u',
+)
+
 const COMPLETED_CHECK = new RegExp(`(?:已经?|刚刚?|曾经?)${CHECK_ACTION}|^${CHECK_ACTION}(?:过|完|了)`, 'u')
 
 export const ASK_OPINION_PROMPT = [
@@ -92,7 +97,10 @@ function parseOpinion(raw: string | null, tool?: string):
   const folded = combined.replace(/[\s\p{P}\p{Cf}]+/gu, '')
   const clauses = combined.split(/[。！？!?，,；;：:\n]/u)
   if (UNVERIFIED_CLAIMS.some(word => folded.includes(word)) || FIRST_PERSON_CHECK.test(folded) ||
-      clauses.some(clause => COMPLETED_CHECK.test(clause.replace(/[\s\p{P}\p{Cf}]+/gu, '')))) {
+      clauses.some(clause => {
+        const text = clause.replace(/[\s\p{P}\p{Cf}]+/gu, '')
+        return COMPLETED_CHECK.test(text) || OBJECT_FIRST_CHECK.test(text)
+      })) {
     return { result: 'blocked_words', lengths }
   }
   const mentionsTool = tool && combined.toLowerCase().includes(tool.toLowerCase())
@@ -109,6 +117,7 @@ interface Entry {
   timer?: ReturnType<typeof setTimeout>
   expiry?: ReturnType<typeof setTimeout>
   value?: PlaceOpinionT
+  controller?: AbortController
 }
 
 const DailyBudget = z.object({ day: z.string(), count: z.number().int().nonnegative() }).strict()
@@ -142,6 +151,7 @@ export function makeAskOpinion(deps: {
     clearTimeout(entry?.timer)
     clearTimeout(entry?.expiry)
     entries.delete(id)
+    entry?.controller?.abort()
   }
 
   async function evaluate(id: string, entry: Entry, candidate: () => Candidate | null) {
@@ -197,13 +207,13 @@ export function makeAskOpinion(deps: {
       if (budgetPath) writeJsonAtomic(budgetPath, next)
       else memoryBudget = next
       busy = reserved = true
-      const raw = await Promise.race([
-        model(prompt),
-        new Promise<null>(resolve => {
-          timeout = setTimeout(() => resolve(null), ASK_OPINION_TIMEOUT_MS)
-          timeout.unref?.()
-        }),
-      ])
+      const controller = new AbortController()
+      entry.controller = controller
+      timeout = setTimeout(() => controller.abort(), ASK_OPINION_TIMEOUT_MS)
+      timeout.unref?.()
+      // Keep the slot until transport cancellation settles.
+      const raw = await model(prompt, { signal: controller.signal })
+      controller.signal.throwIfAborted()
       const parsed = parseOpinion(raw, input.ask?.tool)
       if (parsed.result === 'invalid' || parsed.result === 'blocked_words') backoff()
       else { failures = 0; backoffUntil = 0 }
@@ -216,10 +226,13 @@ export function makeAskOpinion(deps: {
       entry.value = parsed.value
       log(`given opinionLength=${parsed.value.ccOpinion.length} reasonLength=${parsed.value.questionReason.length}`)
     } catch {
-      backoff()
-      log('quiet')
+      if (entries.get(id) === entry) {
+        backoff()
+        log('quiet')
+      }
     } finally {
       clearTimeout(timeout)
+      delete entry.controller
       if (reserved) busy = false
       if (entries.get(id) === entry && !entry.value) clear(id)
     }

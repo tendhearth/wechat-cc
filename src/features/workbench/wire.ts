@@ -318,7 +318,7 @@ export function wireWorkbench(opts: {
   return makeWorkbenchService({
     ...(opts.permissionRegistry?{permissionPrompt:makeWorkbenchPermissionPrompt(opts.permissionRegistry,ownerChatId)}:{}),
     askOpinion: makeAskOpinion({
-      evaluator: () => opts.boot.registry.getCheapEval({ singleAttempt: true }),
+      evaluator: () => opts.boot.registry.getCheapEval({ toolFreeOnly: true }),
       settings: () => loadAgentConfig(opts.stateDir).ask_opinion,
       stateDir: opts.stateDir,
       log: opts.log,

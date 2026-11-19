@@ -133,7 +133,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
         <div class="desk-waiting-card" data-place-key="${escapeHtml(p.key)}">
           <div class="desk-waiting-label">这件要你定 · ${escapeHtml(p.name)}</div>
           <div class="desk-waiting-question">${escapeHtml(note?.summary ?? '')}</div>
-          ${note?.ccOpinion ? `<div class="desk-waiting-opinion">我的意见：${escapeHtml(note.ccOpinion)}</div>` : ''}
+          ${note?.ccOpinion ? `<div class="desk-waiting-opinion">我的意见(只看了这条请求)：${escapeHtml(note.ccOpinion)}</div>` : ''}
           ${note?.questionReason ? `<div class="desk-waiting-reason">为什么来问你：${escapeHtml(note.questionReason)}</div>` : ''}
           ${askHtml(p, true)}
         </div>

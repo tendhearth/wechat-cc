@@ -202,3 +202,14 @@ it('宽窗置顶卡回答后越过已经在途的读取发起新刷新', async (
   expect(reads).toBe(3)
   expect(document.querySelector('#p .place')?.getAttribute('data-waiting')).toBe('false')
 })
+
+
+it('意见纸条标明 CC 只看了这条请求', async () => {
+  const waitingRoot = document.createElement('div')
+  const ccOpinion = '先别删。这条请求要删除备份。'
+  const waiting = { itemKey: 'matter:x', kind: 'permission', summary: '删旧备份？', count: 1, ccOpinion }
+  mount({ places: [place('归档', { waiting })], version: 'v1' }, { waitingRoot })
+  strip!.setWide(true)
+  await strip!.refresh()
+  expect(waitingRoot.querySelector('.desk-waiting-opinion')?.textContent).toBe('我的意见(只看了这条请求)：' + ccOpinion)
+})
