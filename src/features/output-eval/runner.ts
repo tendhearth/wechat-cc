@@ -14,8 +14,8 @@ import { turnJudge, TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
  *  - 会话不经 SessionManager / 协调器 / replyDelivery,chatId 是 `eval-<uuid>`,跑完 close + 作废令牌;
  *  - 会话按 JOB_PROFILE(定时任务的只读档)起、strict:它的 relay 是空的 ⇒ 不在 allow 里的工具一律拒、不弹拍板卡
  *    (Claude 走 profileGate;Codex 是 read-only 沙箱、没有应答者 ⇒ 审批一律拒);也不给 requestPermission;
- *  - 会话令牌按 guest 铸,只放行 GET /v1/health(同 selftest):wechat MCP 里发消息、写记忆的工具够不着 daemon。
- *  提示词按样本的档位组装、会话按只读档起 —— 这就是「只读档、不批权限」;要动手的样本不在这一版范围里。
+ *  - 会话令牌缺省按 guest 铸,只放行 GET /v1/health(同 selftest);样本可显式开放个别工具的路由。
+ *  提示词按样本的档位组装;样本里的交办由 daemon 只记录。
  * 网络守护不用这里管:registry 里每个 provider 的 spawn / cheapEval 都套了 withNetworkGate。
  */
 import { mkdirSync } from 'node:fs'
@@ -30,10 +30,14 @@ import { buildTurnReply, type ReplyContext } from '../../domain/turn-reply'
 import { replyTextStrategyFor } from '../../domain/capability-matrix'
 import type { PickedAsk } from '../../domain/owner-asks'
 import { splitBubbles } from '../../daemon/reply-bubbles'
+import type { MintTokenOpts } from '../../daemon/internal-api/token-registry'
 import { routesForToken } from '../../daemon/internal-api/route-tiers'
 import { attachAsks, buildBriefMaterial, buildBriefText, type BriefInputs } from '../jobs'
 import { makeCheapJudge, resolveTaskReference, type FocusState, type TaskCandidate } from '../workbench'
 import { resolveTopicRecall } from '../../daemon/threads/recall'
+import type { EvalPlanCall } from '../../domain/output-eval'
+import { makeMatterPlanRecorder } from './plan-calls'
+import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../../domain/workbench/executor-capabilities'
 import { searchTopics, type MatchTopic } from '../../domain/topic-match'
 
 /** 跟 daemon 的轮次看门狗同一个缺省(一段时间没事件就算卡住)。 */
@@ -53,7 +57,7 @@ export interface EvalRunnerDeps {
   buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
   /** 生产的「这家现在用哪个模型」(session-manager 同一个);缺省 ⇒ 执行者自己的缺省。 */
   currentModelFor?: (providerId: ProviderId) => string | undefined
-  mintSessionToken: (tier: UserTier, key: string, opts?: { routeAllow?: ReadonlySet<string>; ttlMs?: number }) => string
+  mintSessionToken: (tier: UserTier, key: string, opts?: MintTokenOpts) => string
   invalidateSession: (key: string) => void
   log: (tag: string, line: string) => void
   /**
@@ -85,6 +89,7 @@ export interface EvalTurnResult {
   /** 这一轮所有文字事件的原文(按顺序)。 */
   segments: string[]
   toolCalls: string[]
+  planCalls: EvalPlanCall[]
   /** brief:拍板候选接上了没有。 */
   attached?: boolean
   error?: string
@@ -102,10 +107,13 @@ export interface EvalReferenceResult {
 export type EvalJudgeResult = { ok: true; kind: 'judge'; answer: string; durationMs: number } | { ok: false; kind: 'judge'; error: string; durationMs: number }
 
 /**
- * `tools`:这一条样本要给会话放开的只读工具(话题 2026-11-05:只有 `topic_search`)。放开 ⇒ 会话按 admin 起 MCP(工具才注册),
- * 令牌照旧只放行 GET /v1/health 再加这一个工具的路由;权限档只多这一类(knowledge_search),别的照旧拒。
+ * `tools` 给当前样本增加 MCP 工具。令牌只放行 GET /v1/health 和这些工具对应的路由。
+ * matter_plan 的令牌自带这轮的记录器，路由直接用它处理交办。
  */
-export const EVAL_TOOLS = { topic_search: { kind: 'knowledge_search' as const, route: 'POST /v1/memory/topics/search' } }
+export const EVAL_TOOLS = {
+  topic_search: { kind: 'knowledge_search', route: 'POST /v1/memory/topics/search' },
+  matter_plan: { kind: 'daemon_remediate', route: 'POST /v1/matter/plan' },
+} as const
 export type EvalTool = keyof typeof EVAL_TOOLS
 export interface ReplyInput { text: string; tier?: 'admin' | 'trusted'; providerId?: string; model?: string; timeoutMs?: number; tools?: EvalTool[] }
 export interface BriefInput { material: BriefInputs; asks?: PickedAsk[]; asksBase?: number; nowIso?: string; providerId?: string; model?: string; timeoutMs?: number }
@@ -143,17 +151,20 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
     // provider/alias/chatId 三段(internal-api 从会话键取 callerChatId 的形状,同 session-manager / selftest)
     const sessionKey = `${a.providerId}/eval/${chatId}`
     const tools = a.tools ?? []
+    const planCalls: EvalPlanCall[] = []
+    const isExecutor = (id: string) => isWorkbenchProviderId(id) && isWorkbenchExecutorCapabilities(deps.registry.get(id)?.opts.workbench)
+    const recorder = tools.includes('matter_plan') ? makeMatterPlanRecorder(projectPath, planCalls, isExecutor) : undefined
     const extraKinds = tools.map(t => EVAL_TOOLS[t].kind)
     const profile: TierProfile = extraKinds.length === 0 ? JOB_PROFILE : {
       allow: new Set([...JOB_PROFILE.allow, ...extraKinds]), relay: JOB_PROFILE.relay,
-      deny: new Set([...JOB_PROFILE.deny].filter(k => !extraKinds.includes(k as never))),
+      deny: new Set([...JOB_PROFILE.deny].filter(k => !extraKinds.some(kind => kind === k))),
     }
     // 放开了工具 ⇒ MCP 按 admin 起(那几个工具只在 admin 会话里注册);令牌的路由照旧是白名单
     const tier = tools.length > 0 ? 'admin' : tierNameFromProfile(JOB_PROFILE)
     const routeAllow = new Set([...routesForToken('selftest'), ...tools.map(t => EVAL_TOOLS[t].route)])
-    const token = deps.mintSessionToken(tier, sessionKey, { routeAllow, ttlMs: TOKEN_TTL_MS })
+    const token = deps.mintSessionToken(tier, sessionKey, { routeAllow, ttlMs: TOKEN_TTL_MS, ...(recorder ? { recordMatterPlan: recorder.record } : {}) })
     const base = { kind: a.kind, providerId: a.providerId, ...(a.model !== undefined ? { model: a.model } : {}) }
-    const empty = { finalText: '', bubbles: [] as string[], silent: false, rawFinalText: '', narration: [] as string[], segments: [] as string[], toolCalls: [] as string[] }
+    const empty = { finalText: '', bubbles: [] as string[], silent: false, rawFinalText: '', narration: [] as string[], segments: [] as string[], toolCalls: [] as string[], planCalls }
     let session: Awaited<ReturnType<typeof entry.provider.spawn>> | undefined
     try {
       const appendInstructions = deps.buildInstructions(a.providerId, a.promptProfile, chatId, a.model)
@@ -163,7 +174,10 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
           tierProfile: profile,
           permissionMode: 'strict',
           chatId,
-          mcpEnv: sessionAuthEnv(tier, token),
+          mcpEnv: {
+            ...sessionAuthEnv(tier, token),
+            ...(recorder ? { WECHAT_OUTPUT_EVAL_TOOLS: tools.join(',') } : {}),
+          },
           appendInstructions,
           ...(a.model !== undefined ? { model: a.model } : {}),
         },
@@ -191,7 +205,7 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
       return {
         ok: !summary.error, ...base,
         finalText: text, bubbles, silent: reply.silent, rawFinalText: raw,
-        narration: summary.narration ?? [], segments: summary.assistantText, toolCalls: summary.toolCalls,
+        narration: summary.narration ?? [], segments: summary.assistantText, toolCalls: summary.toolCalls, planCalls,
         ...(a.transformFinal ? { attached: finalRaw !== raw } : {}),
         ...(summary.error !== undefined ? { error: summary.error } : {}),
         ...(summary.errorCode !== undefined ? { errorCode: summary.errorCode } : {}),
@@ -202,6 +216,8 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
       const code = typeof err === 'object' && err !== null && typeof (err as { code?: unknown }).code === 'string' ? (err as { code: string }).code : undefined
       return { ok: false, ...base, ...empty, error: errMsg(err), ...(code ? { errorCode: code } : {}), durationMs: now() - startedAt }
     } finally {
+      recorder?.stop()
+      if (recorder) deps.invalidateSession(sessionKey)
       if (session) {
         let timer: ReturnType<typeof setTimeout> | undefined
         try {
@@ -212,7 +228,7 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
           if (timer) clearTimeout(timer)
         }
       }
-      deps.invalidateSession(sessionKey)
+      if (!recorder) deps.invalidateSession(sessionKey)
       try { deps.forgetChat?.(chatId) } catch (err) { deps.log('EVAL', `forgetChat failed for ${chatId}: ${errMsg(err)}`) }
     }
   }

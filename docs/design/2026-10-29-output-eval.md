@@ -12,6 +12,7 @@
 
 - 不进 CI:要真模型、要花钱、要 bx。手动跑,和 `selftest` 一样是整合者的工具。
 - 不复活 `eval/companion/`:那是陪伴口吻的多日轨迹,开整个 daemon + 假 ilink,一条半分钟到一分钟;目标不同,留着不动。
+- 评测交办只记在当轮结果里。确认卡、事项、拆法、记录本、执行者、独立工作区和通知都不产生。
 - **真对话不进仓库**(仓库是公开的):样本和报告都在 `<STATE_DIR>/eval/`;仓库里只有跑的代码和几条编出来的示例样本。
 
 ## 跑法
@@ -41,8 +42,10 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
 `reply` 的 tier 跟样本走(`admin` / `trusted`),缺省 admin(主人的对话)。
 提示词是给这个一次性 chatId 组装的 ⇒ 不带主人那条对话的人设 / 核心记忆:评测钉的是提示词和模型,主人的记忆变了不该算回归。权限一律不批:要动手的样本不在这一版范围里。
 「只读档」具体是:**提示词**按样本的档位组装,**会话**按 `JOB_PROFILE` 起、strict、不给 `requestPermission` —— 它的 relay 是空的,
-不在 allow 里的工具一律拒、不弹拍板卡(Claude 走 profileGate;Codex 是 read-only 沙箱、无应答者 ⇒ 审批拒);会话令牌按 guest 铸、
+不在 allow 里的工具一律拒、不弹拍板卡(Claude 走 profileGate;Codex 是 read-only 沙箱、无应答者 ⇒ 审批拒);会话令牌默认按 guest 铸、
 只放行 `GET /v1/health`(同 selftest),wechat MCP 里发消息 / 写记忆的工具够不着 daemon。模型按 `currentModelFor`(同 session-manager),样本可用 `input.model` 改。
+
+`reply` 可用 `input.tools` 开放 `topic_search`、`matter_plan`。开放 `matter_plan` 时，MCP 复用生产注册，令牌的路由白名单只加样本选中的工具对应的路由。runner 给当轮会话令牌登记内存记录器；交办路由在进入生产处理前调用记录器，沿用请求 schema、只读项目目录查询与 `resolvePlanTarget`。省略项目时按该轮自己的目录解析。成功返回单棒交办的 `{ receipt, task }`，失败沿用生产项目解析的错误码和提示。轮次结束时先关闭记录器并作废令牌，再关闭会话；已经通过鉴权的迟到请求也会被拒。
 
 ## 样本格式
 
@@ -54,6 +57,7 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
   "kind": "reply",                 // reply | brief | reference
   "note": "主人早上随口一句,应该一两句话回,别列清单",   // 为什么收这条
   "input": { "text": "早", "tier": "admin" },
+  // 交办评测: "input": { "text": "rici 加个收藏", "tools": ["matter_plan"] }
   // brief:   "input": { "material": { BriefInputs }, "asks": [PickedAsk] }
   // reference: "input": { "text", "quotedText"?, "candidates": [...], "focus"? }
   // topic:     "input": { "text", "topics": [{ id, title, summary?, aliases?, entries: [{ id, kind?, line }] }] }(话题 T2,2026-11-05)
@@ -69,6 +73,10 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
 `{ "silent": true | false }`(NO_REPLY 与否)、`{ "lastLine": "就这些。" }`、`{ "lines": [min, max] }`(早报条数)、
 `{ "resolves": { "kind": "task", "taskId": "…" } }`(指称:kind 必比,taskId / via 写了才比)、
 `{ "recalls": { "topic": "…", "entry": "…" } }` / `{ "recalls": null }`(话题:调出了这个话题 / 这一条;null = 什么都不该调)。
+
+`{ "calls": "matter_plan" }` 和 `{ "notCalls": "matter_plan" }` 分别要求调用、未调用该工具，识别裸名和 MCP 前缀名。
+`{ "plansTo": "rici" }` 要求交办记录里有匹配的项目，优先比解析后的项目名，其次比原始参数，忽略大小写。
+`notCalls` 和 `plansTo` 只用于 `reply` / `brief` / `projects-activity`。每轮的交办记录带标题、项目参数、解析后的项目名、各棒执行者和任务说明（每棒最多 200 字），解析失败时带错误码。Markdown 报告给每条样本列一行交办摘要。
 
 **所有 `reply` / `brief` 样本自动带 `noThink`**,不用每条写。
 
@@ -99,3 +107,5 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
 2026-11-06：每轮话题召回增加 `topic-recall` 类别（旧 `topic` 保留），样本索引、期望话题/条目、同义表达与闲聊负例，以及 `wechat-cc eval run` 跑法见 [话题召回评测](../../eval/output/TOPIC-RECALL.md)。召回与任务指称的秒级判定使用独立 `turn_judge_provider`，不再跟随后台 `cheap_eval_provider`。
 
 2026-11-07：零候选且去标点/空白后至少 12 个字母或数字、至少 3 个不同非停用词时，按 lastActive 取最近 5 个未 done 话题做 2.5 秒快判兜底；短句/寒暄不问模型，模型可用 `话题.条目` 点名并优先召回条目（见 [T2 修订](../superpowers/specs/2026-11-05-topics-t1-t3-design.md#怎么判这一轮碰到哪个话题先索引模型兜底)）。
+
+2026-11-19：回复评测可显式开放只记录的 `matter_plan`，新增 `notCalls`、`plansTo` 和报告中的交办摘要。

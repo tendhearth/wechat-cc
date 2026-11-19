@@ -2,6 +2,15 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { createInternalApi } from '../../daemon/internal-api'
+import { createInternalApiClient } from '../../mcp-servers/wechat/client'
+import { createWechatMcpServer } from '../../mcp-servers/wechat/server'
+import { ledgerRoutes } from '../workbench/ledger-routes'
+import type { WorkbenchService } from '../workbench/service'
+import { WorkbenchEntryResultResponse } from '../../../packages/protocol/src/desktop-api'
+import { matterToolFailure } from '../../../packages/protocol/src/workbench-errors'
 import { makeEvalRunner, type EvalRunnerDeps } from './runner'
 import { makeFakeSession } from '../../test-support/test-helpers'
 import { JOB_PROFILE, TIER_PROFILES } from '../../domain/user-tier'
@@ -219,4 +228,115 @@ describe('整轮上限(Codex 评审:看门狗只管「没动静」,一直在说�
     expect(closed).toBe(true)
     expect(invalidateSession).toHaveBeenCalledWith('claude/eval/eval-u-2')
   })
+})
+
+it('records matter_plan through authenticated HTTP and closes access before session.close', async () => {
+  const h = harness()
+  const project = { id: 'p-0123456789abcdef0123', name: 'rici', path: root, providerId: 'claude' }
+  const matterPlan = vi.fn(async () => ({ task: { id: 'feed1234' }, receipt: { requestId: 'req', taskId: 'feed1234', matterId: 'feed1234', runId: 'run', acceptedAt: 1 } }))
+  const matterApprovalStatus = vi.fn(() => true)
+  const planConversation = vi.fn(() => ({ scope: 'owner-turn' }))
+  const api = createInternalApi({ stateDir: root, daemonPid: 1 })
+  const routes = ledgerRoutes({
+    workbench: { matterPlan, matterApprovalStatus, projects: () => [project] } as unknown as WorkbenchService,
+    resolveAdminChatId: () => 'owner', planConversation,
+  })
+  api.mount('workbench', routes)
+  const { port } = await api.start()
+  const baseUrl = `http://127.0.0.1:${port}`
+  const input = { project: 'RICI', title: '加个收藏', isolation: 'worktree', legs: [{ executor: 'claude', brief: '改'.repeat(220) }] }
+  const post = (token: string, path = '/v1/matter/plan') => fetch(baseUrl + path, {
+    method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(input),
+  })
+  let token: string
+  let recordMatterPlan: NonNullable<Parameters<EvalRunnerDeps['mintSessionToken']>[2]>['recordMatterPlan']
+  let closeStatus: number | undefined
+  const runner = makeEvalRunner({
+    ...h.deps,
+    mintSessionToken: (tier, key, opts) => {
+      recordMatterPlan = opts?.recordMatterPlan
+      return api.mintSessionToken(tier, key, opts)
+    },
+    invalidateSession: key => api.invalidateSession(key),
+    registry: {
+      ...h.deps.registry,
+      get: (id: string) => id !== 'claude' ? null : ({
+        opts: { workbench: { version: 1, permissions: 'task', configuration: 'task-policy', completion: 'native', stop: 'confirmed', background: 'tracked', features: { nativeResume: true, attachments: false, executionSettings: false, modelCatalog: false } } },
+        provider: {
+          async spawn(_project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
+            token = ctx.mcpEnv!.WECHAT_SESSION_TOKEN!
+            expect(ctx.tierProfile.relay.size).toBe(0)
+            expect(ctx.requestPermission).toBeUndefined()
+            return {
+              async *dispatch() {
+                const internal = createInternalApiClient({ baseUrl, tokenFilePath: '', sessionToken: token })
+                const mcp = await createWechatMcpServer(internal, { tier: 'admin', outputEvalTools: ctx.mcpEnv!.WECHAT_OUTPUT_EVAL_TOOLS })
+                const ownerMcp = await createWechatMcpServer(internal, { tier: 'admin', parallelSocialProbe: true })
+                const connect = async (server: typeof mcp) => {
+                  const client = new Client({ name: 'offline-test', version: '1' })
+                  const [s, c] = InMemoryTransport.createLinkedPair()
+                  await Promise.all([server.connect(s), client.connect(c)])
+                  return client
+                }
+                const [client, ownerClient] = await Promise.all([connect(mcp), connect(ownerMcp)])
+                try {
+                  const { tools } = await client.listTools()
+                  expect(tools).toEqual((await ownerClient.listTools()).tools.filter(tool => tool.name === 'matter_plan'))
+                  const call = async (args: typeof input) => {
+                    const result = await client.callTool({ name: 'matter_plan', arguments: args })
+                    return JSON.parse((result.content as Array<{ text: string }>)[0]!.text)
+                  }
+                  const result = WorkbenchEntryResultResponse.parse(await call(input))
+                  expect(result.receipt).toMatchObject({ taskId: result.task.id, matterId: result.task.id })
+                  expect(result.task).toMatchObject({ title: input.title, path: root, providerId: 'claude' })
+                  expect(await call({ ...input, project: 'missing' })).toEqual(matterToolFailure('project_stale', false, 'plan', [project]))
+                  expect(await call({ ...input, legs: [] })).toEqual(matterToolFailure('invalid_matter_plan', false))
+                  // 没登记的执行者:生产受理前会拒,记录器也拒(独立评审)
+                  expect(await call({ ...input, legs: [{ executor: 'ghost', brief: '改' }] })).toEqual(matterToolFailure('unavailable_provider', false, 'plan'))
+                  const denied = await post(token, '/v1/matter/relay')
+                  expect(await denied.json()).toEqual({ error: 'route_not_allowed' })
+                  expect(matterPlan).toHaveBeenCalledTimes(0)
+                  expect(matterApprovalStatus).toHaveBeenCalledTimes(0)
+                  expect(planConversation).toHaveBeenCalledTimes(0)
+                } finally {
+                  await Promise.all([client.close(), ownerClient.close(), mcp.close(), ownerMcp.close()])
+                }
+                yield { kind: 'tool_call', tool: 'matter_plan' }
+                yield text('已交办，放到 rici。')
+              },
+              async close() {
+                closeStatus = (await post(token)).status
+              },
+            }
+          },
+        },
+      }) as never,
+    },
+  })
+  try {
+    const result = await runner.reply({ text: 'rici 加个收藏', tools: ['matter_plan'] })
+    expect(result).toMatchObject({
+      ok: true, planCalls: [
+        { title: input.title, project: 'RICI', resolvedProject: 'rici', legs: [{ executor: 'claude', brief: '改'.repeat(200) }] },
+        { title: input.title, project: 'missing', resolvedProject: null, error: 'project_stale' },
+        { title: input.title, project: 'RICI', resolvedProject: null, error: 'invalid_matter_plan', legs: [] },
+        { title: input.title, project: 'RICI', resolvedProject: 'rici', error: 'unavailable_provider', legs: [{ executor: 'ghost', brief: '改' }] },
+      ],
+    })
+    expect(closeStatus).toBe(401)
+    expect((await post(token!)).status).toBe(401)
+    // A request that already passed token authentication before revocation must still fail closed.
+    const late = await routes['POST /v1/matter/plan']!(new URLSearchParams(), input, {
+      origin: 'session', tier: 'admin', chatId: 'owner', sessionKey: 'claude/eval/eval-u-1', recordMatterPlan: recordMatterPlan!,
+    })
+    expect(late.status).toBe(403)
+    expect(matterPlan).toHaveBeenCalledTimes(0)
+
+    const ordinary = api.mintSessionToken('admin', 'claude/project/owner')
+    expect((await post(ordinary)).status).toBe(202)
+    expect(matterPlan).toHaveBeenCalledTimes(1)
+    expect(matterApprovalStatus).toHaveBeenCalledTimes(1)
+  } finally {
+    await api.stop()
+  }
 })
