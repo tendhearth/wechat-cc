@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ASK_OPINION_DELAY_MS, ASK_OPINION_TIMEOUT_MS, UNVERIFIED_CLAIMS, makeAskOpinion } from './ask-opinion'
 import type { PermissionAsk } from '../../domain/permission-rules/types'
@@ -140,7 +143,8 @@ it('只把打码后的请求资料发给模型，日志只含结果和长度', a
   opinions.schedule('first', pending)
   await tick()
   const data = JSON.parse(model.mock.calls[0]![0].split('\n').at(-1)!)
-  expect(data).toMatchObject({ kind: 'permission', tool: 'Bash', title: '整理备份', place: 'Archive' })
+  expect(data).toMatchObject({ kind: 'permission', tool: 'Bash', place: 'Archive' })
+  expect(data).not.toHaveProperty('title')
   expect(data.preview).toContain('[credential omitted]')
   expect(data.preview).toContain('[路径已打码]')
   expect(data.preview).not.toMatch(/synthetic-secret|synthetic-name|synthetic-token|synthetic name|with spaces/)
@@ -212,4 +216,64 @@ it('每天的判断预算也计入模型选择不说的请求', async () => {
   await tick()
   expect(model).toHaveBeenCalledTimes(1)
   expect(opinions.get('quiet')).toBeUndefined()
+})
+
+it('重建服务保留当天已发起次数，跨日本地预算恢复', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'cc-opinion-budget-'))
+  const model = vi.fn()
+    .mockResolvedValueOnce(raw)
+    .mockRejectedValueOnce(new Error('synthetic failure'))
+    .mockResolvedValue(raw)
+  const create = () => makeAskOpinion({
+    evaluator: () => model, stateDir, settings: () => ({ daily_limit: 2, min_interval_ms: 0 }),
+  })
+  try {
+    const first = create()
+    first.schedule('given', pending)
+    await tick()
+    first.schedule('failed', pending)
+    await tick()
+    expect(first.get('given')).toEqual(note)
+    expect(model).toHaveBeenCalledTimes(2)
+    first.dispose()
+
+    const restarted = create()
+    restarted.schedule('new-request', pending)
+    await tick()
+    expect(model).toHaveBeenCalledTimes(2)
+    expect(restarted.get('given')).toBeUndefined()
+    expect(JSON.parse(readFileSync(join(stateDir, 'ask-opinion-budget.json'), 'utf8')))
+      .toEqual({ day: new Date().toDateString(), count: 2 })
+
+    vi.setSystemTime(new Date(2026, 10, 19))
+    restarted.schedule('new-day', pending)
+    await tick()
+    expect(model).toHaveBeenCalledTimes(3)
+    restarted.dispose()
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true })
+  }
+})
+
+it.each([
+  '我已经跑过测试', '我跑了一遍', '我试过了', '我看过文件',
+  '我们已读完文件', '我刚刚查过了', '我有核对过', '我已经验完了', '我，已经确认了',
+  '我已完成测试', '我测完了', '我测试了', '我查看过文件', '我读取了文件', '我刚做了测试', '我已经执行了测试',
+])('驳回第一人称核对声明：%s', async claim => {
+  const opinions = makeAskOpinion({
+    evaluator: () => async () => JSON.stringify({ ...answer, opinion: `允许。${claim}。` }),
+  })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')).toBeUndefined()
+})
+
+it.each([
+  '允许。只读取本地改动。', '先别。建议先跑一次测试。', '先问清楚再定。我建议先看文件。',
+  '先别。我还没看过文件。',
+])('保留基于请求的描述和建议：%s', async opinion => {
+  const opinions = makeAskOpinion({ evaluator: () => async () => JSON.stringify({ ...answer, opinion }) })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')?.ccOpinion).toBe(opinion)
 })

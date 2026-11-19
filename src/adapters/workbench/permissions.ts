@@ -46,6 +46,11 @@ interface Entry {
   disarm: () => void
 }
 
+/** Only commands eligible to appear outside the approval card. */
+function approvalPreviewCommand({ snapshot, facts }: Entry): string | undefined {
+  return snapshot.requiresBoundExecution ? undefined : facts.command
+}
+
 export function makeRunPermissions(opts: {
   taskId: string
   root?: string
@@ -157,7 +162,17 @@ export function makeRunPermissions(opts: {
 
   return {
     request,
-    pendingAsk: (id: string) => entries.get(id)?.snapshot.ask,
+    pendingOpinionInput(id: string) {
+      const entry = entries.get(id)
+      if (!entry) return null
+      const { snapshot } = entry
+      return {
+        ask: snapshot.ask,
+        preview: snapshot.requiresBoundExecution
+          ? { category: '需要单次批准的命令' }
+          : { command: approvalPreviewCommand(entry), paths: snapshot.ask.paths },
+      }
+    },
     denialCount: () => consecutiveDenials,
     denialLimitReached: () => consecutiveDenials >= 3,
     resetDenials: () => { if (consecutiveDenials < 3) consecutiveDenials = 0 },
@@ -167,10 +182,11 @@ export function makeRunPermissions(opts: {
     notice(id: string): string {
       const entry = entries.get(id)
       if (!entry) return ''
-      const { permission, snapshot, facts } = entry
+      const { permission, snapshot } = entry
+      const command = approvalPreviewCommand(entry)
       const label = snapshot.requiresBoundExecution
         ? `${permission.tool} · 需要你单次批准，详情请在批准卡查看。`
-        : `${permission.tool} · ${facts.command ? redactSecrets(facts.command).slice(0, 1200) : '详情请在批准卡查看。'}`
+        : `${permission.tool} · ${command ? redactSecrets(command).slice(0, 1200) : '详情请在批准卡查看。'}`
       const files = snapshot.scripts.filter(s => s.sha256).map(s => `脚本 ${s.path}\nSHA-256: ${s.sha256}\n内容请在桌面或手机批准卡查看。`)
       if (snapshot.scripts.some(s => !s.sha256)) files.push('有文件无法安全读取，详情请在批准卡查看。')
       return [label, ...files].join('\n\n')

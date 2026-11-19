@@ -589,11 +589,6 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const ruleDecide=ctx.deps.permissionDecide
     const opinion=ctx.deps.askOpinion
     const opinionProject=()=>store.worktrees.get(task.id)?.repoRoot??task.path
-    const opinionTitle=()=>{
-      // 新建时的缺省标题可能就是主人原话的头 40 字。
-      const first=firstUserText(task.id)?.trim()
-      return first && first.includes(task.title.trim()) ? '' : task.title
-    }
     const permissionPrompts=new Map<string,()=>void>()
     const permissions=makeRunPermissions({
       initialDenials,
@@ -612,12 +607,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           }
           requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'))
           opinion?.schedule(event.permission.id, () => {
-            const ask = permissions.pendingAsk(event.permission.id)
-            if (!ask) return null
-            return {
-              kind: 'permission', project: opinionProject(), title: opinionTitle(), ask,
-              preview: { command: ask.command, paths: ask.paths },
-            }
+            const input = permissions.pendingOpinionInput(event.permission.id)
+            return input && { kind: 'permission', project: opinionProject(), ...input }
           })
         }else {
           opinion?.clear(event.permission.id)
@@ -636,7 +627,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           const request = questions.pending().find(q => q.id === event.request.id)
           if (!request) return null
           return {
-            kind: 'question', project: opinionProject(), title: opinionTitle(),
+            kind: 'question', project: opinionProject(),
             preview: request.questions.map(q => ({ question: q.question, options: q.options.map(o => o.label) })),
           }
         })

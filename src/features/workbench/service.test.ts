@@ -693,6 +693,40 @@ describe('persistent workbench', () => {
     expect(model).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    {
+      field: 'inline source', text: '检查归档', title: '检查归档',
+      command: 'python3 -c "print(\'uniqueInlineApprovalSource\')"', excluded: 'uniqueInlineApprovalSource', preview: '需要单次批准的命令',
+    },
+    {
+      field: 'explicit bound source', text: '检查归档', title: '检查归档',
+      command: 'printf uniqueBoundApprovalSource', excluded: 'uniqueBoundApprovalSource', preview: '需要单次批准的命令', requiresBoundExecution: true as const,
+    },
+    {
+      field: 'owner-derived title', text: 'uniqueOwnerText 请检查归档',
+      title: 'uniqueOwnerText · @claude', command: 'ls -l', excluded: 'uniqueOwnerText', preview: 'ls -l',
+    },
+  ])('keeps $field out of the opinion prompt', async ({ text, title, command, excluded, preview, requiresBoundExecution }) => {
+    const model = vi.fn(async (_prompt: string) => '{"say":false,"opinion":"","reason":""}')
+    const askOpinion = makeAskOpinion({ evaluator: () => model })
+    setup({ async spawn(_p, ctx) { return {
+      async *dispatch() {
+        await ctx.requestPermission!({ tool: 'Bash', command, description: '检查归档', requiresBoundExecution })
+        yield result
+      },
+      async close() {},
+    } } }, undefined, undefined, { askOpinion })
+    const task = service.create({ path: project, providerId: 'claude', text, title })
+    await expect.poll(() => model.mock.calls.length, { timeout: 4_000 }).toBe(1)
+    const prompt = model.mock.calls[0]![0]
+    expect(prompt).not.toContain(excluded)
+    const data = JSON.parse(prompt.split('\n').at(-1)!)
+    expect(data).not.toHaveProperty('title')
+    expect(data.preview).toContain(preview)
+    service.resolvePermission(task.id, service.detail(task.id).permissions[0]!.id, 'deny')
+    await settle(task.id)
+  })
+
   it('shows only the active task permission count in the list and clears it after resolve or cancel', async () => {
     setup({ async spawn(_p, ctx) { return {
       async *dispatch() {
