@@ -139,6 +139,31 @@ async function desktop<T = Record<string, unknown>>(method: 'GET' | 'POST', path
 
 let d: RealShapedDaemon
 
+/** 重启后发一句、等回话。Windows runner 上这一步偶发红过两次(一次什么都没发、一次回了「没接住」),原因没查实:
+ *  所以遇到「没接住」立刻失败,并把现场的几个事实一起打出来,下次红了能定位是哪一路取消的。 */
+async function expectPostRebootCodexReply(): Promise<void> {
+  const sentBefore = texts(d.ilink.outbox(), d.owner).length
+  const threadsBefore = codexThreads.length
+  d.sendText(d.owner, '还在吗')
+  const replies = (m: Parameters<typeof texts>[0]) => texts(m, d.owner).slice(sentBefore)
+  const expected = 'Codex 在。'
+  const spawnFailure = 'codex 这次没起来,这条我没接住。'
+  const saw = (marker: string) => d.log().some(l => l.includes(marker))
+  const evidence = () => JSON.stringify({
+    inboundReceived: saw('[POLL] inbound '),
+    spawnFailed: d.log().some(l => l.includes('[COORDINATOR]') && l.includes('provider=codex spawn failed')),
+    probePassed: saw('[CODEX_PROBE] ok in '),
+    threadRequested: codexThreads.length > threadsBefore,
+    accessInvalidated: saw('[ACCESS] tier membership changed'),
+    guardSuspended: saw('[GUARD] network unprotected [probe,'),
+    shutdownStarted: saw('[DAEMON] shutdown initiated'),
+  })
+  const out = await d.waitForOutbound(m => replies(m).some(t => t.includes(expected) || t.includes(spawnFailure)), 15_000)
+    .catch(error => { throw new Error(`Post-reboot reply missing: ${evidence()}`, { cause: error }) })
+  expect(replies(out).filter(t => t.includes(spawnFailure)), evidence()).toEqual([])
+  expect(replies(out).some(t => t.includes(expected))).toBe(true)
+}
+
 /**
  * S2 那几条的起点(关机时写死,不靠上一条留下的):主人的免打扰开(盖住此刻,主人时区)/ 关、配没配一台手机、
  * 待发队列清空(keepPending 的除外 —— 「压着时重启」要的就是它)。然后照真机重启,「待说」那一拍 200ms。
@@ -507,8 +532,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(d.log().filter(l => /\[(MEMORY_IMPORT|FACTS_IMPORT)\]/.test(l))).toEqual([])
     expect(d.query<{ n: number }>('SELECT COUNT(*) AS n FROM memory_facts')[0]!.n).toBe(before)
     // 重启后照样收发(对话模式也留住了:还是 Codex)
-    d.sendText(d.owner, '还在吗')
-    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 在。')), 15_000)
+    await expectPostRebootCodexReply()
     // 那件「写一份笔记」是上面派活那条建的;win32 上那条不跑(Codex 工作台在 Windows 上拒绝),没有在办的事 ⇒ 没有这个块。
     if (process.platform !== 'win32') {
       expect(lastCodexEnvelope).toContain('<matters>')
