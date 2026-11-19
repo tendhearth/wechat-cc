@@ -20,6 +20,12 @@ describe('places view', () => {
     expect(placeLine(place({ status: 'waiting', line: '删旧表?', waiting: { itemKey: 'k', kind: 'permission', summary: '删旧表?', count: 1 } }), 'en')).toBe('删旧表?')
   })
 
+  it('坐回来:上次看过以后另有几件也动过 ⇒ 现状后面补一句', () => {
+    expect(placeLine(place({ status: 'done', alsoChanged: 2 }), 'zh-Hans')).toBe('菜谱导入,另有 2 件也动过')
+    expect(placeLine(place({ status: 'working', alsoChanged: 1 }), 'en')).toBe('菜谱导入… · 1 more changed')
+    expect(placeLine(place({ status: 'done', alsoChanged: 0 }), 'zh-Hans')).toBe('菜谱导入')
+  })
+
   it('「›」打开:等你的那件 > 最近的事 > 最近的会话', () => {
     expect(placeHref(place({ waiting: { itemKey: 'k', kind: 'terminal', sessionId: 's/1', summary: 's', count: 1 } }))).toBe('/terminal/s%2F1')
     expect(placeHref(place({ waiting: { itemKey: 'k', kind: 'question', matterId: 'w1', summary: 's', count: 1 } }))).toBe('/matter/w1')

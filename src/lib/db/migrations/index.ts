@@ -123,6 +123,7 @@ import { migration as v114 } from './v114'
 import { migration as v115 } from './v115'
 import { migration as v116 } from './v116'
 import { migration as v117 } from './v117'
+import { migration as v118 } from './v118'
 
 export type { Migration }
 
@@ -249,4 +250,5 @@ export const migrations: Migration[] = [
   v115,
   v116,
   v117,
+  v118,
 ]

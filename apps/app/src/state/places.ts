@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { PlaceT, PlacesResponseT } from '@wechat-cc/protocol'
 import { useBackendCtx } from './BackendProvider'
 import { useConnection, useQuery } from './hooks'
@@ -34,5 +34,13 @@ export function usePlaces() {
     const off = backend.subscribe('roster', () => { void refresh() })
     return () => { active = false; off() }
   }, [backend, online, q.refresh])
-  return { places: q.data?.places ?? EMPTY, stale: !online || !!q.error || q.data === undefined || (q.syncedAt ?? 0) < since, error: q.error, refresh: q.refresh }
+  // 主人看了这一行(点开 / 选着时它又动了 / 从它打开一件):记一次;同一行同一时刻不重复记。
+  const marked = useRef('')
+  const seen = useCallback((place: PlaceT) => {
+    const mark = `${place.key}@${place.updatedAt ?? ''}`
+    if (!backend.placeSeen || !online || marked.current === mark) return
+    marked.current = mark
+    void backend.placeSeen(place.key).then(() => q.refresh(), () => { marked.current = '' })
+  }, [backend, online, q.refresh])
+  return { seen, places: q.data?.places ?? EMPTY, stale: !online || !!q.error || q.data === undefined || (q.syncedAt ?? 0) < since, error: q.error, refresh: q.refresh }
 }

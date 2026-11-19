@@ -334,10 +334,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         place('portfolio', [IDS.portfolio], { status: 'waiting', moving: false, line: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio),
           waiting: { itemKey: `matter:${IDS.portfolio}`, kind: 'permission', matterId: IDS.portfolio, ...(permission ? { requestId: permission.id } : {}), summary: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio), count: 1 } }),
         place('trip', [IDS.trip], {}),
-        place('notes', [IDS.report, IDS.notes], { status: 'done', moving: false, unseen: true, updatedAt: now() - 2 * HOUR }),
+        place('notes', [IDS.report, IDS.notes], { status: 'done', moving: false, unseen: true, alsoChanged: 1, updatedAt: now() - 2 * HOUR }),
       ]
       return { version: 'demo-places:1', places }
     },
+    async placeSeen() {},
     async topics(p) { return topicsList(p) },
     async topicDetail(p) {
       const into = topicMerged.get(p.id)

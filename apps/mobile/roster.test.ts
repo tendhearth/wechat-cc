@@ -19,6 +19,7 @@ it('时间与现状不用状态词',()=>{
  expect(h.rTime(place('a',{updatedAt:new Date('2026-11-17T22:00:00').getTime()}),NOW)).toBe('昨天')
  expect(h.rLine(place('a',{status:'working'}))).toBe('a 的事…')
  expect(h.rLine(place('a',{status:'failed'}))).toBe('a 的事(没做成)')
+ expect(h.rLine(place('a',{alsoChanged:2}))).toBe('a 的事,另有 2 件也动过')
 })
 it('一行一个地方;在等你的有点;连不上时说一句、不亮点;名字转义',()=>{
  const h=fixture()
@@ -45,12 +46,16 @@ it('设备:读 /v1/places;点一行筛说话再点回全部;「›」开那一�
  const root=h.w.document.getElementById('roster-strip')!
  ;(root.querySelector('[data-place="p:rici"]') as any).click()
  expect(h.place()?.name).toBe('rici');expect(h.rendered()).toBeGreaterThan(0)
+ // 坐回来:点开这一行 = 看过它,记一次;同一时刻不重复记
+ const seen=()=>h.calls.filter((c:any)=>c[0]==='/v1/places/seen').map((c:any)=>JSON.parse(c[1].body).key)
+ expect(seen()).toEqual(['p:rici'])
  expect(h.cInPlace({id:'rici-msg'})).toBe(true);expect(h.cInPlace({id:'other'})).toBe(false);expect(h.cInPlace({id:'r',matterId:'rici-m'})).toBe(true)
  expect(h.cRefInPlace({id:'rici-m'})).toBe(true);expect(h.cRefInPlace({id:'zz'})).toBe(false)
  ;(root.querySelector('[data-place="p:rici"]') as any).click()
  expect(h.place()).toBeNull()
  ;(root.querySelector('[data-place-open="p:bx"]') as any).click()
  expect(h.opened).toEqual(['terminal:sess-1'])
+ expect(seen()).toEqual(['p:rici','p:bx'])
  const node=root.firstChild
  h.respond({status:304});await h.timers.pop()!()
  expect(root.firstChild).toBe(node);expect(h.calls.at(-1)[1].headers).toEqual({'If-None-Match':'v2'})

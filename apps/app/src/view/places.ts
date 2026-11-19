@@ -27,12 +27,16 @@ export function placeTime(place: PlaceT, now: number, lang: Lang): string {
 
 export function placeLine(place: PlaceT, lang: Lang): string {
   const line = place.line?.trim() ?? ''
-  if (!line || place.waiting) return line
+  if (!line) return ''
   const zh = lang === 'zh-Hans'
-  if (place.status === 'working') return line.endsWith('…') ? line : `${line}…`
-  if (place.status === 'failed') return zh ? `${line}(没做成)` : `${line} (didn't work out)`
-  if (place.status === 'stopped') return zh ? `${line}(停了)` : `${line} (stopped)`
-  return line
+  // 坐回来:你上次看过这一行以后,除了这一句,还有几件也动过。
+  const n = place.alsoChanged ?? 0
+  const also = n ? (zh ? `,另有 ${n} 件也动过` : ` · ${n} more changed`) : ''
+  if (place.waiting) return line + also
+  if (place.status === 'working') return (line.endsWith('…') ? line : `${line}…`) + also
+  if (place.status === 'failed') return (zh ? `${line}(没做成)` : `${line} (didn't work out)`) + also
+  if (place.status === 'stopped') return (zh ? `${line}(停了)` : `${line} (stopped)`) + also
+  return line + also
 }
 
 /** 「›」打开哪一件:在等你的那件,否则最近的一件事,否则最近的终端会话;都没有 ⇒ null。 */

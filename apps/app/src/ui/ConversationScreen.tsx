@@ -175,6 +175,8 @@ export default function Chat() {
   const places = usePlaces()
   const [placeKey, setPlaceKey] = useState<string | null>(null)
   const place = placeKey ? places.places.find(p => p.key === placeKey) ?? null : null
+  const seenPlace = places.seen
+  useEffect(() => { if (place) seenPlace(place) }, [place?.key, place?.updatedAt, seenPlace])
   const data = items.filter(item => inPlace(item, place)).sort((a, b) => a.at - b.at).reverse()
   if(chat.canLoadLater){const boundary=data.findIndex(i=>i.key===chat.laterAfterId);data.splice(boundary<0?0:boundary,0,{key:'conversation-gap',at:0,gap:true})}
   useEffect(() => {
@@ -212,7 +214,7 @@ export default function Chat() {
         actions={<View style={{ flexDirection: 'row' }}><IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />
           <ConversationMore /></View>}
       />
-      <PlacesStrip places={places.places} stale={places.stale} selected={place?.key ?? null} onSelect={p => setPlaceKey(p?.key ?? null)} onOpen={href => router.push(href as never)} />
+      <PlacesStrip places={places.places} stale={places.stale} selected={place?.key ?? null} onSelect={p => setPlaceKey(p?.key ?? null)} onOpen={(href, p) => { places.seen(p); router.push(href as never) }} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{backend.mode === 'demo' ? <DemoBanner /> : null}</View>
       {stream?.running&&backend.stopConversation?<Button testID="conversation-stop" kind="secondary" label={t(lang,stopTurn===stream.running.turnId?'progress.stopConfirm':'progress.stop')} onPress={()=>void stopConversation()} />:null}
       {stopError?<Txt role="meta" tone="inkSoft">{t(lang,'progress.stopFailed')}</Txt>:null}

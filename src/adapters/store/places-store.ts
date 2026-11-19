@@ -12,13 +12,15 @@ export interface PlacesStore {
   /** 挪到第 `to` 位(从 0 数,超出就放最后);其余按原顺序顺下去。没有这个 key ⇒ false。 */
   move(key: string, to: number): boolean
   setHidden(key: string, hidden: boolean): boolean
+  /** 主人看了这一行(v118)。时间只往后走。没有这个 key ⇒ false。 */
+  markSeen(key: string, at: number): boolean
 }
 
-type Row = { key: string; root: string; name: string; position: number; hidden: number }
+type Row = { key: string; root: string; name: string; position: number; hidden: number; seen_at: number | null }
 
 export function makePlacesStore(db: Db): PlacesStore {
-  const list = (): PlaceRecord[] => db.query<Row, []>('SELECT key, root, name, position, hidden FROM places ORDER BY position, key').all()
-    .map(r => ({ key: r.key, root: r.root, name: r.name, position: r.position, hidden: r.hidden === 1 }))
+  const list = (): PlaceRecord[] => db.query<Row, []>('SELECT key, root, name, position, hidden, seen_at FROM places ORDER BY position, key').all()
+    .map(r => ({ key: r.key, root: r.root, name: r.name, position: r.position, hidden: r.hidden === 1, seenAt: r.seen_at }))
   return {
     list,
     add(records, now) {
@@ -38,6 +40,9 @@ export function makePlacesStore(db: Db): PlacesStore {
     },
     setHidden(key, hidden) {
       return db.query('UPDATE places SET hidden = ? WHERE key = ?').run(hidden ? 1 : 0, key).changes > 0
+    },
+    markSeen(key, at) {
+      return db.query('UPDATE places SET seen_at = MAX(COALESCE(seen_at, 0), ?) WHERE key = ?').run(at, key).changes > 0
     },
   }
 }
