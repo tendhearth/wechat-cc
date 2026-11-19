@@ -21,10 +21,13 @@ export async function collectOwnerReply(
     if (summary.error || summary.errorCode) return false
     const final = summary.finalText ?? ''
     const segments = strategy === 'all_segments' ? [...(summary.narration ?? []), final] : [final]
-    const text = segments.map(replyTextForInspection).join('\n\n')
-    const category = replyNotForOwner(text)
-    if (!category) return false
-    log('REPLY_NOT_FOR_OWNER', `category=${category} length=${text.length}`)
+    // 逐段判:每一段非空的文字都是内部注记 / 工具回声,这一轮才算「没有给主人的话」。
+    // 拼成一整段再判会漏掉「前面一段工具回声 + 后面一段 [System: …]」这种组合(独立评审第二轮)。
+    const texts = segments.map(replyTextForInspection).filter(segment => segment.trim())
+    if (!texts.length) return false
+    const categories = texts.map(segment => replyNotForOwner(segment))
+    if (categories.some(category => !category)) return false
+    log('REPLY_NOT_FOR_OWNER', `category=${[...new Set(categories)].join('+')} segments=${texts.length} length=${texts.reduce((n, segment) => n + segment.length, 0)}`)
     return true
   }
 
