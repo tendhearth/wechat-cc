@@ -27,7 +27,7 @@ export const HEX_BUDGET: Record<string, number> = {
   'styles.css': 36,
 }
 /** Task 10 加 cc-life.css、cc-now.css;Task 12 加工作台三份(styles/workbench*.css、styles/task-entry.css);converse.css 新建即零。 */
-const ZERO_HEX: string[] = ['cc-life.css', 'cc-now.css', 'styles/workbench.css', 'styles/task-entry.css', 'styles/converse.css']
+const ZERO_HEX: string[] = ['cc-life.css', 'cc-now.css', 'styles/workbench.css', 'styles/task-entry.css', 'styles/converse.css', 'styles/desk-two-pane.css']
 
 describe('desktop design style', () => {
   it('no dark mode', () => { for (const f of CSS) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/prefers-color-scheme:\s*dark/) })
@@ -55,7 +55,7 @@ describe('desktop design style', () => {
     expect(css).not.toMatch(/\.wb-status(\[[^\]]*\])?::before/)
     expect(css).not.toMatch(/\.wb-task-attention::before/)
     expect(css).toMatch(/\.now-row-status\[data-tone="accent"\]/)
-    for (const f of ['styles/workbench.css', 'styles/task-entry.css', 'styles/converse.css']) expect(readFileSync(join(ROOT, f), 'utf8'), f).not.toMatch(/box-shadow:\s*(?!none)/)
+    for (const f of ['styles/workbench.css', 'styles/task-entry.css', 'styles/converse.css', 'styles/desk-two-pane.css']) expect(readFileSync(join(ROOT, f), 'utf8'), f).not.toMatch(/box-shadow:\s*(?!none)/)
   })
   it('literal colours: ratchet', () => {
     for (const f of CSS) {

@@ -296,7 +296,7 @@ function attachmentsHtml(m, indexes = (m.attachments ?? []).map((_,i) => i)) {
 /** @param {ConverseMsg} m @param {number[]} [attachmentIndexes] @param {number[]} [narrationIndexes] @param {number} [partIndex] @returns {string} */
 function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
   if(m.terminalId)return terminalReferenceHtml(m.terminalId,m.text)
-  if (m.matterId) return `<div class="converse-msg converse-msg-cc"><div class="converse-cc-body">${matterReferenceHtml(m.matterId,m.text,!!m.historical)}</div></div>`
+  if (m.matterId) return `<div class="converse-msg converse-msg-cc"><span class="converse-speaker"><span class="desk-speaker" aria-hidden="true">CC</span></span><div class="converse-cc-body">${matterReferenceHtml(m.matterId,m.text,!!m.historical)}</div></div>`
   if (m.role === "error") {
     return `<div class="converse-error-line">${escapeHtml(m.text)}</div>`
   }
@@ -340,7 +340,7 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
     ? `<div class="converse-cc-body">${label}${m.role === "cc" ? narrationHtml(m,narrationIndexes) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m,attachmentIndexes)}</div>`
     : bubble
   return `<div class="converse-msg ${roleCls}${pendingCls}${avatar ? ' has-reply-avatar' : ''}" role="group" aria-label="${escapeHtml(name)}">
-    ${avatar}
+    <span class="converse-speaker"><span class="desk-speaker" aria-hidden="true">${m.role === 'user' ? '你' : 'CC'}</span>${avatar}</span>
     ${userImages ? `<div class="converse-user-body">${userImages}${m.text.trim() ? body : ""}</div>` : body}
     ${m.legacyMedia ? '<small class="converse-legacy-media">这条记录只保存了附件数量，原附件未保存在对话中。</small>' : ""}
     ${grouped || !m.text.trim() ? "" : replayBtn}

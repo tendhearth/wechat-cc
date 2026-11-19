@@ -60,6 +60,7 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
   /** @type {Map<number,Row>} */
   const next=new Map()
   let cursor=scroll.firstElementChild,newReply=false
+  let previousRole = ''
   for(const message of messages){
     const previous=state.rows.get(message.id)
     const signature=JSON.stringify([message.role,message.text,message.pending,message.speaker,message.provider,message.replyParts,message.attachments,message.attachmentSourceIndexes,message.narration,message.projection,decoration?.(message)])
@@ -73,6 +74,8 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
       row={message:{...message},signature,node}
     }
     if(!row)continue
+    row.node.toggleAttribute('data-same-speaker', message.role === previousRole)
+    previousRole = message.role
     if(row.node!==cursor)scroll.insertBefore(row.node,cursor)
     cursor=row.node.nextElementSibling
     next.set(message.id,row)
