@@ -30,8 +30,14 @@ const FIRST_PERSON_CHECK = new RegExp(
   'u',
 )
 
+const CHECK_OBJECT = '(?:文件|文档|代码|记录|日志|配置|数据|目录|报告|测试|脚本|命令)'
 const OBJECT_FIRST_CHECK = new RegExp(
-  `(?:文件|文档|代码|记录|日志|配置|数据|目录|报告|测试|脚本|命令)(?:都|也)?${CHECK_ACTION}(?:(?:过|完)了?|了)$`,
+  `${CHECK_OBJECT}(?:都|也)?${CHECK_ACTION}(?:(?:过|完)了?|了)$`,
+  'u',
+)
+
+const OBJECT_FIRST_RESULT = new RegExp(
+  `^(?:(?:这|那)(?:条|个|项|份))?${CHECK_OBJECT}(?:都|也)?(?:${CHECK_ACTION}|核对|验证)(?:成功|完成|无误|没问题|正常)$`,
   'u',
 )
 
@@ -97,7 +103,7 @@ function parseOpinion(raw: string | null, tool?: string):
   if (UNVERIFIED_CLAIMS.some(word => folded.includes(word)) || FIRST_PERSON_CHECK.test(folded) ||
       clauses.some(clause => {
         const text = clause.replace(/[\s\p{P}\p{Cf}]+/gu, '')
-        return COMPLETED_CHECK.test(text) || OBJECT_FIRST_CHECK.test(text)
+        return COMPLETED_CHECK.test(text) || OBJECT_FIRST_CHECK.test(text) || OBJECT_FIRST_RESULT.test(text)
       })) {
     return { result: 'blocked_words', lengths }
   }
@@ -154,7 +160,7 @@ export function makeAskOpinion(deps: {
 
   async function evaluate(id: string, entry: Entry, candidate: () => Candidate | null) {
     let timeout: ReturnType<typeof setTimeout> | undefined
-    let reserved = false
+    let ownsSlot = false
     const log = (line: string) => deps.log?.('ASK_OPINION', line)
     const now = Date.now()
     let settings: AgentConfig['ask_opinion']
@@ -204,17 +210,25 @@ export function makeAskOpinion(deps: {
         kind: input.kind, tool: input.ask?.tool ?? null, preview: maskedPreview,
         place: mask(basename(input.project)).slice(0, 120),
       })
-      // Reserve before invoking the model so failed or interrupted attempts count too.
-      const next = { day, count: count + 1 }
-      if (budgetPath) writeJsonAtomic(budgetPath, next)
-      else memoryBudget = next
-      busy = reserved = true
+      busy = ownsSlot = true
       const controller = new AbortController()
       entry.controller = controller
       timeout = setTimeout(() => controller.abort(), ASK_OPINION_TIMEOUT_MS)
       timeout.unref?.()
       // Keep the slot until transport cancellation settles.
-      const raw = await model(prompt, { signal: controller.signal })
+      const raw = await model(prompt, {
+        signal: controller.signal,
+        beforeRequest: () => {
+          // Admission may have waited across midnight. Charge the day the call starts.
+          const requestDay = new Date().toDateString()
+          const latest = budgetPath ? readDailyBudget(budgetPath) : memoryBudget
+          const requestCount = latest?.day === requestDay ? latest.count : 0
+          if (requestCount >= (settings?.daily_limit ?? DAILY_LIMIT)) throw new Error('daily opinion budget exhausted')
+          const next = { day: requestDay, count: requestCount + 1 }
+          if (budgetPath) writeJsonAtomic(budgetPath, next)
+          else memoryBudget = next
+        },
+      })
       controller.signal.throwIfAborted()
       const parsed = parseOpinion(raw, input.ask?.tool)
       if (parsed.result === 'invalid' || parsed.result === 'blocked_words') backoff()
@@ -235,7 +249,7 @@ export function makeAskOpinion(deps: {
     } finally {
       clearTimeout(timeout)
       delete entry.controller
-      if (reserved) busy = false
+      if (ownsSlot) busy = false
       if (entries.get(id) === entry && !entry.value) clear(id)
     }
   }

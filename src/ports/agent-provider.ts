@@ -223,6 +223,8 @@ export interface CheapEvalOptions {
   /** A caller with a per-call budget can disable provider-internal fallback and retries. */
   singleAttempt?: boolean
   signal?: AbortSignal
+  /** Called by the registry after admission, immediately before invoking the provider. */
+  beforeRequest?: () => void
 }
 
 export type CheapEval = (prompt: string, options?: CheapEvalOptions) => Promise<string>

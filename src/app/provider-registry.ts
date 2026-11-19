@@ -12,7 +12,7 @@
  * passed via deps. Tests can build their own with mock providers.
  */
 import { noteReplyAttribution } from '../lib/reply-attribution'
-import type { AgentAttachment, AgentDispatchContext, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, SpawnContext } from '../ports/agent-provider'
+import type { AgentAttachment, AgentDispatchContext, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, CheapEvalOptions, SpawnContext } from '../ports/agent-provider'
 import type { WorkbenchExecutorCapabilities } from '../domain/workbench/executor-capabilities'
 import type { ProviderId } from '../domain/conversation'
 import { executorNames, type ExecutorNames } from '../domain/provider-display-names'
@@ -63,6 +63,11 @@ export function withNetworkGate<P extends AgentProvider>(inner: P, gate: Network
         }
         const ctx = prop === 'spawn' ? (args[1] as Partial<SpawnContext> | undefined) : undefined
         await assertCallAllowed(gate, providerCallTarget(target, providerId, prop as CallTargetKind, ctx))
+        if (prop === 'cheapEval') {
+          const options = args[1] as CheapEvalOptions | undefined
+          options?.signal?.throwIfAborted()
+          options?.beforeRequest?.()
+        }
         const out = await (v as (...a: unknown[]) => unknown).apply(target, args)
         if (prop === 'spawn') return guardSession(out as AgentSession, gate, target, providerId, ctx)
         return out
@@ -372,6 +377,12 @@ export function createProviderRegistry(opts?: {
   }
   const refusedError = (id: ProviderId, r: { until: number; code: string }) =>
     errorWithProviderCode(`${r.code}: ${id} 被服务方拒绝,${new Date(r.until).toISOString()} 之前不再问它`, r.code)
+  const networkGate = opts?.networkGate
+  const dispatchCheapEval = (fn: CheapEval, prompt: string, options?: CheapEvalOptions) => {
+    // With a gate, the provider wrapper calls this after its final network check.
+    if (!networkGate) options?.beforeRequest?.()
+    return fn(prompt, options)
+  }
   /** 包一层:被拒期间不调;成功清零;被拒就记。 */
   const guardRefused = (id: ProviderId, fn: CheapEval, singleAttempt: boolean): CheapEval => async (prompt, options) => {
     options?.signal?.throwIfAborted()
@@ -379,13 +390,12 @@ export function createProviderRegistry(opts?: {
     if (r) throw refusedError(id, r)
     try {
       const model = providerCallTarget(entries.get(id)?.provider, id, 'cheapEval').model
-      const out = await fn(prompt, singleAttempt ? { ...options, singleAttempt } : options)
+      const out = await dispatchCheapEval(fn, prompt, singleAttempt ? { ...options, singleAttempt } : options)
       noteReplyAttribution({ speaker: 'cc', provider: id, ...(model ? { model } : {}) })
       cheapEvalRefused.delete(id)
       return out
     } catch (err) { if (!options?.signal?.aborted) noteRefusal(id, err); throw err }
   }
-  const networkGate = opts?.networkGate
   const readPinnedId = (): string | undefined =>
     typeof opts?.cheapEvalProvider === 'function' ? opts.cheapEvalProvider() : opts?.cheapEvalProvider
   /** 不看钉死项的解析:偏好序 → 其余;多个候选时带运行时故障转移。 */
@@ -452,7 +462,7 @@ export function createProviderRegistry(opts?: {
         attempted++
         try {
           const model = providerCallTarget(entries.get(c.id)?.provider, c.id, 'cheapEval').model
-          const out = await c.fn(prompt, singleAttempt ? { ...options, singleAttempt } : options)
+          const out = await dispatchCheapEval(c.fn, prompt, singleAttempt ? { ...options, singleAttempt } : options)
           noteReplyAttribution({ speaker: 'cc', provider: c.id, ...(model ? { model } : {}) })
           cheapEvalRefused.delete(c.id)
           return out
@@ -487,7 +497,7 @@ export function createProviderRegistry(opts?: {
         if (first && !singleAttempt) {
           cheapEvalCooldownUntil.delete(first.id)
           const model = providerCallTarget(entries.get(first.id)?.provider, first.id, 'cheapEval').model
-          const out = await first.fn(prompt, options)
+          const out = await dispatchCheapEval(first.fn, prompt, options)
           noteReplyAttribution({ speaker: 'cc', provider: first.id, ...(model ? { model } : {}) })
           return out
         }
