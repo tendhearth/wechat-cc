@@ -26,7 +26,7 @@ function recordFields(body: unknown): EvalPlanCall {
 
 export function makeMatterPlanRecorder(path: string, calls: EvalPlanCall[]) {
   let active = true
-  const record: RecordMatterPlan = (query, body, projects, executors) => {
+  const record: RecordMatterPlan = (query, body, projects, executors, places) => {
     // Authentication may have finished before the request body arrived.
     if (!active) return { status: 403, body: matterToolFailure('matter_ledger_forbidden', false) }
     const call = recordFields(body)
@@ -39,8 +39,9 @@ export function makeMatterPlanRecorder(path: string, calls: EvalPlanCall[]) {
     }
     const input = parsed.data
     try {
-      const resolved = resolvePlanTarget(input, projects(), path)
+      const resolved = resolvePlanTarget(input, projects(), path, places)
       if (resolved.target.kind === 'project') call.resolvedProject = resolved.projectName
+      if (resolved.registrationPath) call.wouldRegister = true
       const choices = executors()
       const legs = resolvePlanLegs(input, () => choices)
       call.legs = recordFields({ legs }).legs
@@ -60,7 +61,7 @@ export function makeMatterPlanRecorder(path: string, calls: EvalPlanCall[]) {
     } catch (error) {
       const details = error instanceof PlanInputError ? error : undefined
       const failure = matterToolFailure(error instanceof Error ? error.message : '', false, 'plan',
-        details?.projects, details?.executors, details?.defaultUnavailableMessage)
+        details?.projects, details?.executors, details?.defaultUnavailableMessage, details?.candidateNames)
       call.error = failure.error
       return { status: 409, body: failure }
     }

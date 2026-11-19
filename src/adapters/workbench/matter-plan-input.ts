@@ -1,15 +1,19 @@
 import {createHash} from 'node:crypto'
 import {realpathSync} from 'node:fs'
+import {basename} from 'node:path'
 import type {z} from 'zod'
 import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
 import type {ProjectCatalogEntry} from './project-catalog'
+import {validateProjectRegistration} from './project-registration'
+import type {PlaceRecord} from '../../domain/places'
 import type {EntryTarget} from './task-entry'
 import {validBaseBranch} from '../git/worktree-workspaces'
 
+export type PlanPlace=Pick<PlaceRecord,'root'|'name'>
 export type MatterPlanInput=z.infer<typeof MatterPlanRequest>
 export interface PlanConversation {scope:string;path?:string}
 export interface PlanCaller {sessionKey?:string;chatId?:string;provider?:string}
-export interface PlanTarget {target:EntryTarget;projectName:string;projectPath:string}
+export interface PlanTarget {target:EntryTarget;projectName:string;projectPath:string;registrationPath?:string}
 export type PlanLegs=Array<{executor:string;brief:string}>
 export interface PreparedPlanTarget extends PlanTarget {legs:PlanLegs}
 export interface PlanExecutors {
@@ -18,7 +22,7 @@ export interface PlanExecutors {
   defaultUnavailableReason?:{code:string;message:string}
 }
 export class PlanInputError extends Error {
-  constructor(code:string,readonly projects?:ProjectCatalogEntry[],readonly executors?:readonly string[],readonly defaultUnavailableMessage?:string){super(code)}
+  constructor(code:string,readonly projects?:ProjectCatalogEntry[],readonly executors?:readonly string[],readonly defaultUnavailableMessage?:string,readonly candidateNames?:readonly string[]){super(code)}
 }
 
 export function resolvePlanLegs(input:MatterPlanInput,executors:()=>PlanExecutors):PlanLegs {
@@ -35,8 +39,8 @@ export function resolvePlanLegs(input:MatterPlanInput,executors:()=>PlanExecutor
 }
 const canonical=(path:string)=>{try{return realpathSync(path)}catch{return null}}
 
-/** Resolve only registered/catalog entries. Never interpret a model-invented local target as cwd. */
-export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogEntry[],path?:string):PlanTarget {
+/** The catalog takes priority. Only a stored place can supply an unregistered directory. */
+export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogEntry[],path?:string,places:()=>readonly PlanPlace[]=()=>[]):PlanTarget {
   const fail=(code:string):never=>{throw new PlanInputError(code,projects)}
   const target=input.target
   if(input.project!==undefined&&target!==undefined)return fail('invalid_target')
@@ -55,11 +59,30 @@ export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogE
   else if(path){const resolved=canonical(path);if(resolved)found=projects.filter(p=>p.path===resolved)}
   if(found.length>1)return fail('matter_project_ambiguous')
   const project=found[0]
-  if(!project)return fail('project_stale')
+
   const isolation=input.isolation??(target?.kind==='project'?target.isolation:undefined)
   const base=input.base??(target?.kind==='project'?target.base:undefined)
   if(base!==undefined&&(isolation!=='worktree'||!validBaseBranch(base)))return fail('invalid_target')
-  return {target:{kind:'project',projectId:project.id,...(isolation?{isolation}:{}),...(base?{base}:{})},projectName:project.name,projectPath:project.path}
+  const options={...(isolation?{isolation}:{}),...(base?{base}:{})}
+  if(project)return {target:{kind:'project',projectId:project.id,...options},projectName:project.name,projectPath:project.path}
+  if(input.project===undefined)return fail('project_stale')
+  const known=places(),name=input.project.toLowerCase()
+  const matches=known.filter(place=>place.name.toLowerCase()===name||basename(place.root)===input.project||place.root===input.project)
+  const place=matches[0]
+  if(matches.length!==1||!place){
+    const candidates=matches.length?matches.map(p=>p.name):[...projects.map(p=>p.name),...known.map(p=>p.name)]
+    throw new PlanInputError(matches.length?'matter_place_ambiguous':'project_stale',undefined,undefined,undefined,[...new Set(candidates)])
+  }
+  let registrationPath:string
+  try{registrationPath=validateProjectRegistration({path:place.root,name:place.name})}
+  catch(error){
+    if(error instanceof Error&&error.message==='invalid_request')throw Error('matter_place_invalid_registration')
+    if(error instanceof Error&&error.message==='invalid_path')throw Error('matter_place_invalid_path')
+    throw error
+  }
+  // A pending target has a stable request identity even after its catalog ID is assigned.
+  const projectId='p-'+createHash('sha256').update(JSON.stringify(['place',place.name,place.root,registrationPath])).digest('hex').slice(0,20)
+  return {target:{kind:'project',projectId,...options},projectName:place.name,projectPath:place.root,registrationPath}
 }
 
 export function planRequestId(scope:string,input:{title:string;target:EntryTarget;legs:MatterPlanInput['legs']}):string {

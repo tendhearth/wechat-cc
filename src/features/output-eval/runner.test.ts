@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -259,11 +259,14 @@ it('records matter_plan through authenticated HTTP and closes access before sess
   const project = { id: 'p-0123456789abcdef0123', name: 'rici', path: root, providerId: 'claude' }
   const matterPlan = vi.fn(async () => ({ task: { id: 'feed1234' }, receipt: { requestId: 'req', taskId: 'feed1234', matterId: 'feed1234', runId: 'run', acceptedAt: 1 } }))
   let executors = { available: ['claude'], defaultProviderId: 'claude' as string | null }
+  const addProject = vi.fn()
+  const placeRoot = join(root, 'melu')
+  mkdirSync(placeRoot)
   const matterApprovalStatus = vi.fn(() => true)
   const planConversation = vi.fn(() => ({ scope: 'owner-turn' }))
   const api = createInternalApi({ stateDir: root, daemonPid: 1 })
   const routes = ledgerRoutes({
-    workbench: { matterPlan, matterApprovalStatus, projects: () => [project], planExecutors: () => executors } as unknown as WorkbenchService,
+    workbench: { matterPlan, matterApprovalStatus, addProject, projects: () => [project], planExecutors: () => executors, planPlaces: () => [{ root: placeRoot, name: 'melu' }] } as unknown as WorkbenchService,
     resolveAdminChatId: () => 'owner', planConversation,
   })
   api.mount('workbench', routes)
@@ -314,7 +317,7 @@ it('records matter_plan through authenticated HTTP and closes access before sess
                   const result = WorkbenchEntryResultResponse.parse(await call(input))
                   expect(result.receipt).toMatchObject({ taskId: result.task.id, matterId: result.task.id })
                   expect(result.task).toMatchObject({ title: input.title, path: root, providerId: 'claude' })
-                  expect(await call({ ...input, project: 'missing' })).toEqual(matterToolFailure('project_stale', false, 'plan', [project]))
+                  expect(await call({ ...input, project: 'missing' })).toEqual(matterToolFailure('project_stale', false, 'plan', undefined, undefined, undefined, ['rici', 'melu']))
                   expect(await call({ ...input, legs: [] })).toEqual(matterToolFailure('invalid_matter_plan', false))
                   // 没登记的执行者:生产受理前会拒,记录器也拒(独立评审)
                   expect(await call({ ...input, legs: [{ executor: 'ghost', brief: '改' }] })).toEqual(matterToolFailure('unavailable_provider', false, 'plan', undefined, ['claude']))
@@ -323,6 +326,9 @@ it('records matter_plan through authenticated HTTP and closes access before sess
                   expect(await call({ ...input, legs: [...withoutExecutor.legs, ...input.legs] })).toEqual(matterToolFailure('invalid_matter_plan', false))
                   executors = { available: [], defaultProviderId: null }
                   expect(await call(withoutExecutor)).toEqual(matterToolFailure('unavailable_provider', false, 'plan', undefined, []))
+                  executors = { available: ['claude'], defaultProviderId: 'claude' }
+                  expect(WorkbenchEntryResultResponse.parse(await call({ ...input, project: 'melu' })).task.path).toBe(placeRoot)
+                  expect(addProject).not.toHaveBeenCalled()
                   const denied = await post(token, '/v1/matter/relay')
                   expect(await denied.json()).toEqual({ error: 'route_not_allowed' })
                   expect(matterPlan).toHaveBeenCalledTimes(0)
@@ -354,6 +360,7 @@ it('records matter_plan through authenticated HTTP and closes access before sess
         { title: input.title, project: 'RICI', resolvedProject: 'rici', legs: [{ executor: 'claude', brief: '改' }] },
         { title: input.title, project: 'RICI', resolvedProject: null, error: 'invalid_matter_plan' },
         { title: input.title, project: 'RICI', resolvedProject: 'rici', error: 'unavailable_provider', legs: [] },
+        { title: input.title, project: 'melu', resolvedProject: 'melu', wouldRegister: true },
       ],
     })
     expect(closeStatus).toBe(401)

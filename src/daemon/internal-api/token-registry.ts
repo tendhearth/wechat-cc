@@ -82,6 +82,7 @@ export type RecordMatterPlan = (
   body: unknown,
   projects: () => import('../../adapters/workbench/project-catalog').ProjectCatalogEntry[],
   executors: () => import('../../adapters/workbench/matter-plan-input').PlanExecutors,
+  places: () => readonly import('../../adapters/workbench/matter-plan-input').PlanPlace[],
 ) => { status: number; body: unknown }
 
 export type TokenInfo = {

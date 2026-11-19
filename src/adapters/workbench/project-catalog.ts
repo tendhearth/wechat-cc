@@ -12,7 +12,7 @@ export interface ProjectCatalogEntry {
 interface ProjectCatalogInput {
   ownerChatId:string
   registered:Array<{alias:string;path:string}>
-  known:Array<{path:string;providerId:string}>
+  known:Array<{path:string;providerId:string;name?:string}>
   providers:string[]
   defaultProvider?:string
 }
@@ -35,6 +35,9 @@ export function makeProjectCatalog(input:ProjectCatalogInput):ProjectCatalogEntr
   for(const registered of input.registered) {
     const found=directory(registered.path)
     if(found&&!names.has(found.path))names.set(found.path,registered.alias)
+  }
+  for(const known of input.known){
+    if(known.name&&!names.has(known.path))names.set(known.path,known.name)
   }
   const candidates=[...input.registered.map(row=>row.path),...input.known.map(row=>row.path)],seen=new Set<string>(),result:ProjectCatalogEntry[]=[]
   for(const candidate of candidates) {

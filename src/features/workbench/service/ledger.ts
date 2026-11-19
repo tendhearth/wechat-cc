@@ -12,6 +12,7 @@ import {directoryIdentity} from './directory-identity'
 import {seedLedger} from './ledger-completion'
 import {checkedText} from './checked-text'
 import type {EntryDomain} from './entry'
+import type {makeViewDomain} from './view'
 import {matterApprovals} from './matter-approvals'
 import {MatterPlanRequest} from '../../../../packages/protocol/src/desktop-api'
 import {resolvePlanTarget,resolvePlanLegs,PlanInputError,planRequestId,type PlanLegs,type PlanConversation,type PlanCaller,type MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
@@ -19,7 +20,7 @@ import {resolvePlanTarget,resolvePlanLegs,PlanInputError,planRequestId,type Plan
 export type {MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
 export interface AutoRelayHandoff {from:number|null;to:number;beforeStart:()=>void;ownerResume?:boolean;accepted?:()=>void}
 
-export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecycle:LifecycleDomain;admission:AdmissionDomain;entry:EntryDomain}){
+export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecycle:LifecycleDomain;admission:AdmissionDomain;entry:EntryDomain;view:ReturnType<typeof makeViewDomain>}){
   const {store,state}=ctx,inFlight=new Set<string>()
   const approvals=matterApprovals()
   const scopes=new Map<string,string>()
@@ -33,6 +34,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     }
     return current
   }
+  const planPlaces=()=>ctx.deps.planPlaces?.()??[]
   function prepare(input:MatterPlanInput,context?:PlanConversation,preview=false){
     const parsed=MatterPlanRequest.safeParse(input)
     if(!parsed.success)throw Error('invalid_matter_plan')
@@ -43,12 +45,12 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     const replayLegs=prior&&prior.phase==='accepted'&&normalized.legs.length===1&&first&&first.executor===undefined
       ? [{executor:prior.providerId,brief:first.brief}]
       : undefined
-    if(bound?.target&&(preview||bound.approved))return {...normalized,...bound.target,legs:replayLegs??bound.target.legs}
+    if(bound?.target&&(preview||bound.approved))return {...normalized,...bound.target,legs:bound.target.registrationPath?bound.target.legs:replayLegs??bound.target.legs}
     const target=normalized.target
     if(prior&&prior.phase==='accepted'&&!normalized.project&&target&&(target.kind==='managed'&&!normalized.isolation&&!normalized.base||target.kind==='project'&&target.projectId)){
       return {...normalized,legs:replayLegs??resolvePlanLegs(normalized,d.entry.planExecutors),target:target.kind==='managed'?target:{...target,projectId:target.projectId!,...(normalized.isolation?{isolation:normalized.isolation}:{}),...(normalized.base?{base:normalized.base}:{})},projectName:'',projectPath:''}
     }
-    const resolved=resolvePlanTarget(normalized,d.entry.entryOptions({ownerKey:ctx.deps.ownerChatId()??'',surface:'desktop'}).projects,context?.path)
+    const resolved=resolvePlanTarget(normalized,d.entry.entryOptions({ownerKey:ctx.deps.ownerChatId()??'',surface:'desktop'}).projects,context?.path,planPlaces)
     return {...normalized,...resolved,legs:replayLegs??resolvePlanLegs(normalized,d.entry.planExecutors)}
   }
   function requirePlanLegs(legs:PlanLegs){
@@ -60,12 +62,14 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     }
   }
   return {
+    planPlaces,
     matterPlanPreview(input:MatterPlanInput,caller:PlanCaller){
       if(!caller.chatId||caller.chatId!==ctx.deps.ownerChatId())throw Error('matter_ledger_forbidden')
       const context=conversation(caller)
       if(!context)throw Error('matter_conversation_unavailable')
       const prepared=prepare(input,context,true)
       requirePlanLegs(prepared.legs)
+      if(prepared.registrationPath)d.view.validateProject({path:prepared.projectPath,name:prepared.projectName,providerId:prepared.legs[0]!.executor},prepared.registrationPath)
       approvals.preview(context.scope,input,prepared)
       return prepared
     },
@@ -106,12 +110,27 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       const owner=ctx.deps.ownerChatId()
       if(!owner)throw Error('matter_ledger_forbidden')
       const prepared=prepare(input,context),legs=prepared.legs
+      const registrationPath=prepared.registrationPath
+      if(registrationPath){
+        const bound=context&&approvals.get(context.scope,'mcp__wechat__matter_plan',input)
+        if(!bound?.approved||!bound.target?.registrationPath)throw Error('matter_project_registration_requires_approval')
+      }
       if(!input.requestId&&!context?.scope)throw Error('matter_conversation_unavailable')
       const requestId=input.requestId??planRequestId(JSON.stringify([owner,context!.scope]),prepared)
       // Accepted receipts replay before mutable provider admission; createEntry still checks the complete hash.
       if(!d.entry.entryReceipt(requestId,{ownerKey:owner,surface:'desktop'}))requirePlanLegs(legs)
       const first=prepared.legs[0]!
-      return d.entry.createEntry({requestId,target:prepared.target,title:prepared.title,text:first.brief,providerId:first.executor},{ownerKey:owner,surface:'desktop'},
+      let target=prepared.target
+      if(registrationPath&&target.kind==='project'){
+        ctx.ensureAccepting()
+        const project={path:prepared.projectPath,name:prepared.projectName,providerId:first.executor}
+        if(store.projects().some(p=>p.path===registrationPath))d.view.validateProject(project,registrationPath)
+        else d.view.addProject(project,registrationPath)
+        const registered=d.view.projects().find(p=>p.path===registrationPath)
+        if(!registered)throw Error('project_stale')
+        target={...target,projectId:registered.id}
+      }
+      return d.entry.createEntry({requestId,target,title:prepared.title,text:first.brief,providerId:first.executor},{ownerKey:owner,surface:'desktop'},
         {identity:JSON.stringify(legs),persist:(task,runId)=>{
           if(ctx.deps.ownerChatId()!==owner)throw Error('matter_ledger_forbidden')
           // A single executor is an ordinary chat delegation, without a relay ledger or plan.

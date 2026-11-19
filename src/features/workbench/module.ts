@@ -13,6 +13,7 @@ import type { CliUpgradeModule } from '../../daemon/cli-upgrade/start'
 import { ownerChatIdOf } from '../../daemon/owner-chat'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterTopics } from '../../daemon/threads/matter-topics'
+import { makePlacesStore } from '../../adapters/store/places-store'
 import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
 import { WECHAT_PORTS as W, type WechatPermissions } from '../../ports/wechat'
 import type { TerminalFeature } from '../terminal'
@@ -37,7 +38,9 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
       const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
       // 话题 T3:派活时从话题拣简报、做完把结论写回话题(只给主人的任务)
       const matterTopics = makeMatterTopics({ db, threads: makeThreadsStore(db, { filterSources: true }), ownerChatId: () => ownerChatIdOf(stateDir), log: (t, l) => log(t, l) })
+      const places=makePlacesStore(db)
       return {
+        planPlaces:()=>places.list().filter(place=>!place.hidden),
         db, stateDir, boot, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
         onTurnError: (providerId, code, message) => {
           cliUpgrade()?.upgrader()?.onTurnError(providerId, code, message)

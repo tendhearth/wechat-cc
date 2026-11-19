@@ -7,6 +7,7 @@ import {openTestDb} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeMatterStore} from '../../adapters/store/matters-store'
+import {makePlacesStore} from '../../adapters/store/places-store'
 import {createProviderRegistry} from '../../app/provider-registry'
 import {MANAGED_NATIVE_CAPABILITIES,MANAGED_API_CAPABILITIES,UNATTENDED_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import type {UsageSnapshot} from '../../domain/subscription-usage'
@@ -665,4 +666,110 @@ it('relay legs are asked for a closing status line and the line decides; a singl
   const single=setup(),request={...single.request(),title:'整理插图',legs:[{executor:'codex',brief:'整理插图'}]}
   await single.service.matterPlan(request);await expect.poll(()=>single.calls.length).toBe(1)
   expect(single.calls[0]!.text).not.toContain('状态:做完')
+})
+
+function registrationSetup(executionConflict=()=>false){
+ const context={scope:'register-on-handoff'}
+ const caller={chatId:'owner',provider:'openai',tier:'admin' as const,origin:'session' as const}
+ const tool='mcp__wechat__matter_plan'
+ const f=setup(false,true,{planPlaces:()=>places.list(),planConversation:()=>context,executionConflict})
+ const places=makePlacesStore(f.db),addProject=vi.spyOn(f.store,'addProject')
+ const addPlace=(name:string,root:string)=>places.add([{key:root,root,name,position:places.list().length,hidden:false}],1)
+ const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner',planConversation:()=>context})['POST /v1/matter/plan']!
+ const input={title:'加个收藏',project:'rici',legs:[{executor:'claude',brief:'添加收藏'}]}
+ const call=(body=input)=>route(new URLSearchParams(),body,caller)
+ const card=(body=input)=>prepareChatApprovalPrompt('OpenAI',tool,structuredClone(body),'test',{
+  resolveMatterPlan:args=>f.service.matterPlanPreview(MatterPlanRequest.parse(args),caller),
+ },'owner')
+ const approve=(body=input)=>f.service.noteMatterApproval(tool,body,caller)
+ return {f,input,call,card,approve,addPlace,addProject}
+}
+
+it.each(['rici','RICI','stored-basename','root'])('a stored place resolves via %s and displays its own folder',async match=>{
+ const t=registrationSetup(),root=join(t.f.root,'stored-basename')
+ mkdirSync(root)
+ t.addPlace('rici',root)
+ const input={...t.input,project:match==='root'?root:match}
+ expect(await t.card(input)).toContain('工作区：rici（'+root+'）· 还没登记，批准后登记为工作项目')
+ expect(t.addProject).not.toHaveBeenCalled()
+ expect(t.f.store.projects()).toEqual([])
+})
+
+it('a missing match or unknown path offers only candidate names',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ for(const project of ['unknown',join(t.f.root,'other','rici')]){
+  const result=await t.call({...t.input,project})
+  expect(result.body).toMatchObject({error:'project_stale',message:expect.stringContaining('可选项目：rici。')})
+  expect(JSON.stringify(result.body)).not.toContain(t.f.root)
+ }
+ expect(t.addProject).not.toHaveBeenCalled()
+})
+
+it('ambiguity lists matching place names without directory paths or identifiers',async()=>{
+ const t=registrationSetup(),other=join(t.f.root,'rici')
+ mkdirSync(other)
+ t.addPlace('rici',t.f.project)
+ t.addPlace('菜谱本',other)
+ const result=await t.call()
+ expect(result.body).toMatchObject({error:'matter_place_ambiguous',message:expect.stringContaining('可选项目：rici、菜谱本。')})
+ expect(JSON.stringify(result.body)).not.toContain(t.f.root)
+ expect(t.addProject).not.toHaveBeenCalled()
+})
+
+it('registration follows the approved card and a different project or path needs another card',async()=>{
+ const t=registrationSetup(),other=join(t.f.root,'melu')
+ mkdirSync(other)
+ t.addPlace('rici',t.f.project)
+ t.addPlace('melu',other)
+ // The model supplied a folder basename as the project selector. Only the saved root is displayed.
+ const input={...t.input,project:'project'}
+ expect(await t.card(input)).toContain('工作区：rici（'+t.f.project+'）· 还没登记，批准后登记为工作项目')
+ expect((await t.call(input)).body).toMatchObject({error:'matter_project_registration_requires_approval',approved:false})
+ expect(t.addProject).not.toHaveBeenCalled()
+ t.approve(input)
+ expect((await t.call({...input,legs:[{executor:'codex',brief:'换分工'}]})).body)
+  .toMatchObject({error:'matter_project_registration_requires_approval',approved:false})
+ const result=await t.call(input)
+ expect(result.status).toBe(202)
+ expect(result.body).toMatchObject({task:{path:t.f.project,providerId:'claude'}})
+ expect((await t.call(input)).body).toMatchObject({receipt:(result.body as {receipt:unknown}).receipt})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:t.f.project,name:'rici',providerId:'claude'})
+ const changed={...input,project:'melu'}
+ expect((await t.call(changed)).body).toMatchObject({error:'matter_project_registration_requires_approval',approved:false})
+ expect(await t.card(changed)).toContain('工作区：melu（'+other+'）· 还没登记，批准后登记为工作项目')
+ const changedPath={...input,project:other}
+ expect((await t.call(changedPath)).body).toMatchObject({error:'matter_project_registration_requires_approval',approved:false})
+ expect(await t.card(changedPath)).toContain('工作区：melu（'+other+'）· 还没登记，批准后登记为工作项目')
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+})
+
+it('a missing place folder prevents the approval card and registration',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',join(t.f.root,'missing'))
+ await expect(t.card()).rejects.toThrow('这个地方的文件夹不存在')
+ expect((await t.call()).body).toMatchObject({error:'matter_place_invalid_path',approved:false})
+ expect(t.addProject).not.toHaveBeenCalled()
+})
+
+it('an approved project survives a later workbench creation failure',async()=>{
+ const t=registrationSetup(()=>true)
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ expect((await t.call()).body).toMatchObject({error:'native_session_busy',approved:true})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:t.f.project,name:'rici',providerId:'claude'})
+ expect(t.f.store.projects()).toMatchObject([{path:t.f.project,name:'rici',providerId:'claude'}])
+ expect(t.f.store.list()).toEqual([])
+})
+
+it('approval keeps the original stored folder if the place name later becomes ambiguous',async()=>{
+ const t=registrationSetup(),other=join(t.f.root,'other')
+ mkdirSync(other)
+ t.addPlace('rici',t.f.project)
+ expect(await t.card()).toContain('工作区：rici（'+t.f.project+'）')
+ t.addPlace('rici',other)
+ t.approve()
+ expect((await t.call()).body).toMatchObject({task:{path:t.f.project}})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:t.f.project,name:'rici',providerId:'claude'})
 })
