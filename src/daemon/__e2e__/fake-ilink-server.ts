@@ -28,6 +28,8 @@ export interface FakeIlinkHandle {
   port: number
   /** Queue a raw update for the next getupdates poll. */
   enqueueInbound(update: RawUpdate): void
+  /** Whether this instance has served an inbound poll. */
+  hasPolled(): boolean
   /** Wait until outbox satisfies predicate (polls every 50ms, 5s default timeout). */
   waitForOutbound(predicate: (msgs: readonly OutboundMsg[]) => boolean, timeoutMs?: number): Promise<readonly OutboundMsg[]>
   /** Snapshot of current outbox (no wait). */
@@ -54,6 +56,7 @@ export interface FakeIlinkHandle {
 export async function startFakeIlink(): Promise<FakeIlinkHandle> {
   const queue: RawUpdate[] = []
   const captured: OutboundMsg[] = []
+  let polled = false
   let sendMessageFailure: { errcode: number; errmsg: string } | null = null
   const failed: Array<{ chatId: string; text: string | undefined }> = []
 
@@ -73,6 +76,7 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
       if (process.env.E2E_DEBUG_ILINK) console.log('[fake-ilink]', req.method, url.pathname)
 
       if (url.pathname === '/ilink/bot/getupdates') {
+        polled = true
         const msgs = queue.splice(0, queue.length)
         if (process.env.E2E_DEBUG_ILINK && msgs.length > 0) {
           console.log('[fake-ilink] returning', msgs.length, 'msgs to bot:', JSON.stringify(msgs).slice(0, 300))
@@ -133,6 +137,7 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
     baseUrl,
     port,
     enqueueInbound(update) { queue.push(update) },
+    hasPolled() { return polled },
     outbox() { return [...captured] },
     reset() { queue.length = 0; captured.length = 0; sendMessageFailure = null },
     failSendMessage(opts) { sendMessageFailure = { errcode: opts?.errcode ?? -6, errmsg: opts?.errmsg ?? 'auth failed' } },

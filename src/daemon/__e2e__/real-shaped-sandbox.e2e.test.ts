@@ -506,9 +506,36 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // 已经导过的不再导:记忆文件和 facts.db 的指纹都没变
     expect(d.log().filter(l => /\[(MEMORY_IMPORT|FACTS_IMPORT)\]/.test(l))).toEqual([])
     expect(d.query<{ n: number }>('SELECT COUNT(*) AS n FROM memory_facts')[0]!.n).toBe(before)
+    // 模块已启动还不等于开机探测和微信轮询都已跑过。先等这次开机的外部边界就绪，
+    // 不发预热消息，让下面这句仍走 Codex 的首次会话准备。
+    await expect.poll(async () => ({
+      polled: d.ilink.hasPolled(),
+      guard: (await d.health()).guard,
+    }), { timeout: 10_000 }).toMatchObject({
+      polled: true,
+      guard: { enabled: true, safe: true, source: 'probe' },
+    })
     // 重启后照样收发(对话模式也留住了:还是 Codex)
+    const sentBefore = texts(d.ilink.outbox(), d.owner).length
+    const threadsBefore = codexThreads.length
     d.sendText(d.owner, '还在吗')
-    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 在。')), 15_000)
+    const replies = (m: Parameters<typeof texts>[0]) => texts(m, d.owner).slice(sentBefore)
+    const expected = 'Codex 在。'
+    const spawnFailure = 'codex 这次没起来,这条我没接住。'
+    const saw = (marker: string) => d.log().some(l => l.includes(marker))
+    const evidence = () => JSON.stringify({
+      inboundReceived: saw('[POLL] inbound '),
+      spawnFailed: d.log().some(l => l.includes('[COORDINATOR]') && l.includes('provider=codex spawn failed')),
+      probePassed: saw('[CODEX_PROBE] ok in '),
+      threadRequested: codexThreads.length > threadsBefore,
+      accessInvalidated: saw('[ACCESS] tier membership changed'),
+      guardSuspended: saw('[GUARD] network unprotected [probe,'),
+      shutdownStarted: saw('[DAEMON] shutdown initiated'),
+    })
+    const out = await d.waitForOutbound(m => replies(m).some(t => t.includes(expected) || t.includes(spawnFailure)), 15_000)
+      .catch(error => { throw new Error(`Post-reboot reply missing: ${evidence()}`, { cause: error }) })
+    expect(replies(out).filter(t => t.includes(spawnFailure)), evidence()).toEqual([])
+    expect(replies(out).some(t => t.includes(expected))).toBe(true)
     // 那件「写一份笔记」是上面派活那条建的;win32 上那条不跑(Codex 工作台在 Windows 上拒绝),没有在办的事 ⇒ 没有这个块。
     if (process.platform !== 'win32') {
       expect(lastCodexEnvelope).toContain('<matters>')
