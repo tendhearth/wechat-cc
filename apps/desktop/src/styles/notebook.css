@@ -1,0 +1,147 @@
+#notebook-pane {
+  --notebook-line: 36px;
+  color: var(--th-ink);
+  font: 17px / var(--notebook-line) var(--th-font-serif);
+  overflow: hidden;
+}
+
+.notebook-column {
+  box-sizing: border-box;
+  width: 100%;
+  margin-inline: auto;
+  padding-inline: max(24px, calc((100% - 780px) / 2));
+}
+
+[data-desk-wide] .notebook-column {
+  width: min(100%, var(--desk-page-width));
+  padding-inline: calc(var(--desk-page-padding) + var(--desk-speaker-offset)) var(--desk-page-padding);
+}
+
+.notebook-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 12px;
+  padding-block: 8px;
+  font-size: 14px;
+}
+
+.notebook-date-nav {
+  display: flex;
+  align-items: center;
+  text-align: center;
+}
+
+#notebook-date { min-width: 96px; }
+#notebook-paper { margin-inline-start: auto; }
+
+#notebook-pane button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--th-accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+#notebook-pane .notebook-date-nav button {
+  min-width: 36px;
+  font-size: 20px;
+}
+
+#notebook-pane button:disabled {
+  color: var(--th-ink-soft);
+  opacity: 0.45;
+  cursor: default;
+}
+
+.notebook-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-anchor: none;
+}
+
+.notebook-sheet {
+  min-height: 100%;
+  padding-block: var(--notebook-line);
+  background-image: repeating-linear-gradient(to bottom,
+    transparent 0 29px, var(--th-hair) 29px 30px, transparent 30px var(--notebook-line));
+}
+
+#notebook-pane[data-paper="plain"] .notebook-sheet { background-image: none; }
+
+.notebook-entry {
+  position: relative;
+  margin: 0 0 var(--notebook-line);
+}
+
+.notebook-entry[data-author="cc"] {
+  margin-inline-start: min(96px, 22%);
+  font-size: 19px;
+}
+
+.notebook-owner-line {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notebook-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.notebook-entry[data-struck] .notebook-text {
+  color: var(--th-ink-soft);
+  text-decoration: line-through;
+}
+
+.notebook-meta, #notebook-pane .notebook-meta button { font-size: 14px; }
+.notebook-meta button { display: block; text-decoration: underline; text-underline-offset: 4px; }
+/* 「接着你……那一条」是界面上的按钮,不是 CC 写的字:不跟着 CC 的笔走(字体、斜体都用页面自己的)。 */
+#notebook-pane .notebook-meta button { font-family: var(--th-font-serif); font-style: normal; }
+.notebook-pending { color: var(--th-ink-soft); font-size: 13px; }
+
+#notebook-pane .notebook-strike {
+  flex: none;
+  opacity: 0;
+  font-size: 14px;
+}
+
+#notebook-pane .notebook-entry:is(:hover, :focus-within) .notebook-strike { opacity: 1; }
+
+#notebook-write {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--notebook-line);
+  margin: 0;
+  padding: 0;
+  resize: none;
+  overflow: hidden;
+  border: 0;
+  outline: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+
+#notebook-write::placeholder { color: var(--th-ink-soft); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .notebook-entry[data-notebook-highlight] {
+    animation: notebook-highlight 1.5s ease-out;
+  }
+
+  @keyframes notebook-highlight {
+    from { background-color: var(--th-hair); }
+    to { background-color: transparent; }
+  }
+}

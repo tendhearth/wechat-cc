@@ -77,3 +77,12 @@ export function v1(transport, key, args, opts) {
   if ('body' in r) return transport(r.method, r.path, r.body)
   return transport(r.method, r.path)
 }
+
+/**
+ * @param {(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>} transport
+ * @param {{ day: string, fonts: string } | { action: 'write' | 'strike' | 'paper', body: Record<string, unknown> }} request
+ */
+export function callNotebook(transport, request) {
+  if ('day' in request) return v1(transport, V1.notebook.get, { query: request })
+  return v1(transport, V1.notebook[request.action], { body: request.body })
+}

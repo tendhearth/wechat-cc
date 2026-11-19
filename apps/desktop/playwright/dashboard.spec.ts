@@ -30,7 +30,7 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 // ── Pane registry + skeleton presence ───────────────────────────────────
 
 // 页头直接导航或「更多」里的页面；日志和插件从后厨标签进入。
-const NAV_PANES = ['overview', 'recollections', 'memory', 'atelier', 'todos', 'sessions', 'a2a-agents'] as const
+const NAV_PANES = ['overview', 'notebook', 'recollections', 'memory', 'atelier', 'todos', 'sessions', 'a2a-agents'] as const
 /** 有 pane、但入口在后厨标签页里(见 logs.spec.ts 的 bootAndOpenLogs)。 */
 const BACKSTAGE_PANES = ['logs', 'plugins'] as const
 
@@ -62,7 +62,7 @@ test('overview is the default-active pane on first paint', async ({ page, shimUr
   await bootIntoDashboard(page, shimUrl)
   await expect(page.locator('button.dash-nav-link.active[data-pane="overview"]')).toBeAttached()
   // Other panes' nav links must NOT have .active.
-  for (const pane of ['memory', 'sessions', 'logs', 'a2a-agents'] as const) {
+  for (const pane of ['notebook', 'memory', 'sessions', 'logs', 'a2a-agents'] as const) {
     await expect(page.locator(`button.dash-nav-link.active[data-pane="${pane}"]`)).toHaveCount(0)
   }
 })
