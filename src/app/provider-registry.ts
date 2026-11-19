@@ -310,7 +310,7 @@ export function createProviderRegistry(opts?: {
     if (pinnedId) {
       const pinned = entries.get(pinnedId as ProviderId)?.provider.cheapEval
       // 钉死的那家也要看被拒:钉了 agy、agy 在这个出口被拒,就不能每次照问(2026-10-23 回忆 28 次)。
-      if (pinned) return guardRefused(pinnedId as ProviderId, pinned)
+      if (pinned) return guardRefused(pinnedId as ProviderId, pinned, singleAttempt)
       opts?.log?.(`cheap_eval_provider=${pinnedId} 未注册或无 cheapEval — 回落偏好序`)
       // 钉的 provider 此刻没注册(2026-10-04:开机 `--version` 探测一时失败、正在后台
       // 退避重探)。很多调用方在开机时就把这里返回的函数缓存住了(coordinator 的
@@ -324,7 +324,7 @@ export function createProviderRegistry(opts?: {
         const live = id ? entries.get(id as ProviderId)?.provider.cheapEval : undefined
         if (live) {
           if (!returned) { returned = true; opts?.log?.(`cheap_eval_provider=${id} 已注册 — 后台评估回到它`) }
-          return guardRefused(id as ProviderId, live)(prompt)
+          return guardRefused(id as ProviderId, live, singleAttempt)(prompt)
         }
         return (resolveUnpinned(singleAttempt) ?? fallback)(prompt)
       }
@@ -366,12 +366,12 @@ export function createProviderRegistry(opts?: {
   const refusedError = (id: ProviderId, r: { until: number; code: string }) =>
     errorWithProviderCode(`${r.code}: ${id} 被服务方拒绝,${new Date(r.until).toISOString()} 之前不再问它`, r.code)
   /** 包一层:被拒期间不调;成功清零;被拒就记。 */
-  const guardRefused = (id: ProviderId, fn: CheapEval): CheapEval => async (prompt) => {
+  const guardRefused = (id: ProviderId, fn: CheapEval, singleAttempt: boolean): CheapEval => async (prompt) => {
     const r = refusedNow(id)
     if (r) throw refusedError(id, r)
     try {
       const model = providerCallTarget(entries.get(id)?.provider, id, 'cheapEval').model
-      const out = await fn(prompt)
+      const out = await fn(prompt, singleAttempt ? { singleAttempt } : undefined)
       noteReplyAttribution({ speaker: 'cc', provider: id, ...(model ? { model } : {}) })
       cheapEvalRefused.delete(id)
       return out
@@ -395,7 +395,7 @@ export function createProviderRegistry(opts?: {
       if (entry.provider.cheapEval) candidates.push({ id, fn: entry.provider.cheapEval })
     }
     if (candidates.length === 0) return null
-    if (candidates.length === 1) return guardRefused(candidates[0]!.id, candidates[0]!.fn)
+    if (candidates.length === 1) return guardRefused(candidates[0]!.id, candidates[0]!.fn, singleAttempt)
 
     // Runtime failover (2026-08-24): the static preference order once froze
     // the entire ingest pipeline — agy sat at slot 2 with a dead credential
@@ -441,13 +441,13 @@ export function createProviderRegistry(opts?: {
         attempted++
         try {
           const model = providerCallTarget(entries.get(c.id)?.provider, c.id, 'cheapEval').model
-          const out = await c.fn(prompt)
+          const out = await c.fn(prompt, singleAttempt ? { singleAttempt } : undefined)
           noteReplyAttribution({ speaker: 'cc', provider: c.id, ...(model ? { model } : {}) })
           cheapEvalRefused.delete(c.id)
           return out
         } catch (err) {
           // 评估途中网络掉了(闸门在这个候选里拦下):不记冷却,换下一个候选。
-          if (isNetworkUnprotectedError(err)) { attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
+          if (isNetworkUnprotectedError(err)) { if (singleAttempt) throw err; attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
           if (noteRefusal(c.id, err)) { if (singleAttempt) throw err; lastErr = err; continue }
           const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
           cheapEvalCooldownUntil.set(c.id, now() + cd)

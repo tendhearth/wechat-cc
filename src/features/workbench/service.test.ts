@@ -702,6 +702,14 @@ describe('persistent workbench', () => {
       field: 'explicit bound source', text: '检查归档', title: '检查归档',
       command: 'printf uniqueBoundApprovalSource', excluded: 'uniqueBoundApprovalSource', preview: '需要单次批准的命令', requiresBoundExecution: true as const,
     },
+    ...['"Private Clients/payroll.csv"', 'private-payroll.csv', 'private-directory', 'Private\\ Clients/payroll.csv'].map(operand => ({
+      field: `path operand ${operand}`, requiresBoundExecution: undefined, text: '检查归档', title: '检查归档',
+      command: `cat ${operand}`, excluded: operand.includes('Clients') ? 'Clients' : operand, preview: '[路径已打码]',
+    })),
+    {
+      field: 'unclassified command operands', requiresBoundExecution: undefined, text: '检查归档', title: '检查归档',
+      command: 'echo private-payroll.csv', excluded: 'private-payroll.csv', preview: '"category":"命令"',
+    },
     {
       field: 'owner-derived title', text: 'uniqueOwnerText 请检查归档',
       title: 'uniqueOwnerText · @claude', command: 'ls -l', excluded: 'uniqueOwnerText', preview: 'ls -l',

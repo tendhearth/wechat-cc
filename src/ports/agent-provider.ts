@@ -219,7 +219,12 @@ export type CallTargetKind =
  * ≪ $0.01 per call. Replaces the prior hardcoded `claude-haiku-4-5`
  * callsites in chatroom moderator + companion introspect.
  */
-export type CheapEval = (prompt: string) => Promise<string>
+export interface CheapEvalOptions {
+  /** A caller with a per-call budget can disable provider-internal fallback and retries. */
+  singleAttempt?: boolean
+}
+
+export type CheapEval = (prompt: string, options?: CheapEvalOptions) => Promise<string>
 
 export interface AgentUserQuestion {
   id: string

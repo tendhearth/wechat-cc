@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { authorize, type AuthSubject } from '../../domain/authorize'
 import { TIER_PROFILES } from '../../domain/user-tier'
 import type { PendingWorkbenchPermission, PermissionDecision } from '../../ports/workbench'
-import { inspectPermissionCommand, type CommandSnapshot } from './permission-command'
+import { inspectPermissionCommand, literalCommand, type CommandSnapshot } from './permission-command'
 import { matchRule } from '../permission-rules/rules-file'
 import type { Rule } from '../../domain/permission-rules/types'
 import { EDIT_REPORTING_PROVIDERS } from '../permission-rules/decide'
@@ -49,6 +49,18 @@ interface Entry {
 /** Only commands eligible to appear outside the approval card. */
 function approvalPreviewCommand({ snapshot, facts }: Entry): string | undefined {
   return snapshot.requiresBoundExecution ? undefined : facts.command
+}
+
+const FILE_PREVIEW_COMMANDS = new Set(['cat', 'ls', 'rm', 'cp', 'mv'])
+
+/** Keep only known file commands and mask each operand as a unit. */
+function opinionCommandPreview(command: string): { command: string } | { category: string } {
+  // A fixed, argument-free invocation with a known display option.
+  if (command === 'ls -l') return { command: 'ls -l' }
+  const argv = literalCommand(command)
+  if (!argv || !FILE_PREVIEW_COMMANDS.has(argv[0]!)) return { category: '命令' }
+  const [program, ...operands] = argv
+  return { command: [program, ...operands.map(() => '[路径已打码]')].join(' ') }
 }
 
 export function makeRunPermissions(opts: {
@@ -166,11 +178,12 @@ export function makeRunPermissions(opts: {
       const entry = entries.get(id)
       if (!entry) return null
       const { snapshot } = entry
+      const command = approvalPreviewCommand(entry)
       return {
         ask: snapshot.ask,
         preview: snapshot.requiresBoundExecution
           ? { category: '需要单次批准的命令' }
-          : { command: approvalPreviewCommand(entry), paths: snapshot.ask.paths },
+          : { ...(command ? opinionCommandPreview(command) : {}), paths: snapshot.ask.paths },
       }
     },
     denialCount: () => consecutiveDenials,

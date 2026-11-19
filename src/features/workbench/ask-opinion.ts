@@ -24,11 +24,13 @@ export const UNVERIFIED_CLAIMS = [
   '已核对', '已检查', '已确认', '已验证', '已查证', '测试通过', '测试已通过',
 ] as const
 
-const CHECK_ACTION = '(?:跑|试|测试?|看|查看|读取?|阅读|查|查阅|核|核查|验|确认|检查|执行|做(?:完)?(?:了|过)?测试|完成(?:了|过)?测试)'
+const CHECK_ACTION = '(?:跑|试|测试?|看|查看|读取?|阅读|查|查阅|核|核查|验|确认|检查|运行|执行|做(?:完)?(?:了|过)?测试|完成(?:了|过)?测试)'
 const FIRST_PERSON_CHECK = new RegExp(
   `我(?:们)?(?:(?:已经?|刚刚?|曾经?|有)${CHECK_ACTION}|${CHECK_ACTION}(?:过|完|了))`,
   'u',
 )
+
+const COMPLETED_CHECK = new RegExp(`(?:已经?|刚刚?|曾经?)${CHECK_ACTION}|^${CHECK_ACTION}(?:过|完|了)`, 'u')
 
 export const ASK_OPINION_PROMPT = [
   '你是 CC，给正在决定这件事的主人留两行话。你的意见不会代替主人的决定。',
@@ -88,7 +90,11 @@ function parseOpinion(raw: string | null, tool?: string):
   if (!say) return { result: 'quiet', lengths }
   const combined = `${opinion}\n${reason}`.normalize('NFKC')
   const folded = combined.replace(/[\s\p{P}\p{Cf}]+/gu, '')
-  if (UNVERIFIED_CLAIMS.some(word => folded.includes(word)) || FIRST_PERSON_CHECK.test(folded)) return { result: 'blocked_words', lengths }
+  const clauses = combined.split(/[。！？!?，,；;：:\n]/u)
+  if (UNVERIFIED_CLAIMS.some(word => folded.includes(word)) || FIRST_PERSON_CHECK.test(folded) ||
+      clauses.some(clause => COMPLETED_CHECK.test(clause.replace(/[\s\p{P}\p{Cf}]+/gu, '')))) {
+    return { result: 'blocked_words', lengths }
+  }
   const mentionsTool = tool && combined.toLowerCase().includes(tool.toLowerCase())
   if (mentionsTool || /[\\/]/.test(combined) || INTERNAL_ID.test(combined) || redactSecrets(combined) !== combined ||
       [opinion, reason].some(line => !line.trim() || /[\r\n\p{Cc}\p{Cf}\u2028\u2029]/u.test(line))) {

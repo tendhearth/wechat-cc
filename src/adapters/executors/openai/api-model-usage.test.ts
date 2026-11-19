@@ -52,6 +52,13 @@ it('bounds parameter fallback at two attempts even when the second request is re
   expect(calls).toBe(2)
 })
 
+it('single-attempt evaluation sends one HTTP request even after a compatibility rejection',async()=>{
+  let calls=0
+  const api=make('usage-eval-single-attempt',async()=>{calls++;return rejected('Unsupported parameter: stream_options')})
+  await expect(api.generate([userMessage('eval')],undefined,false)).rejects.toThrow('Unsupported parameter')
+  expect(calls).toBe(1)
+})
+
 it('does not resend after the retry guard rejects the changed request',async()=>{
   let calls=0
   const api=createApiModel({baseURL:'https://usage-retry-guard.invalid/v1',apiKey:'offline-fixture',model:'Kimi-Code',maxRetries:0,fetch:async()=>{calls++;return rejected('Unsupported parameter: stream_options')},beforeRetry:async()=>{throw Error('fixture_guard_denied')}})

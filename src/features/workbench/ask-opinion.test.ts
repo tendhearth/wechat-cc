@@ -268,9 +268,18 @@ it.each([
   expect(opinions.get('request')).toBeUndefined()
 })
 
+it.each(['已运行命令，没有报错', '已跑过测试', '运行了命令', '跑过测试', '命令已执行'])('驳回没有第一人称的执行声明：%s', async claim => {
+  const opinions = makeAskOpinion({
+    evaluator: () => async () => JSON.stringify({ ...answer, opinion: `允许。${claim}。` }),
+  })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')).toBeUndefined()
+})
+
 it.each([
   '允许。只读取本地改动。', '先别。建议先跑一次测试。', '先问清楚再定。我建议先看文件。',
-  '先别。我还没看过文件。',
+  '先别。我还没看过文件。', '先别。这条命令会删除备份。',
 ])('保留基于请求的描述和建议：%s', async opinion => {
   const opinions = makeAskOpinion({ evaluator: () => async () => JSON.stringify({ ...answer, opinion }) })
   opinions.schedule('request', pending)

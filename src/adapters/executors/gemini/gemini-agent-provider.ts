@@ -16,7 +16,7 @@
  * loop is unit-testable. See docs/superpowers/specs/2026-06-04-gemini-provider-design.md.
  */
 import { authorizeChatCall, type ChatOwnerRules } from '../../permission-rules/chat'
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from '../../../ports/agent-provider'
+import type { AgentEvent, AgentProject, AgentProvider, AgentSession, CheapEvalOptions, PermissionMode, SpawnContext } from '../../../ports/agent-provider'
 import type { TierProfile } from '../../../domain/user-tier'
 import { classifyToolUse } from '../../../domain/user-tier'
 import type { McpStdioSpec } from '../mcp-stdio-spec'
@@ -441,11 +441,12 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
     },
     /** CLI 子进程一档,与 codex 同量级。 */
     cheapEvalBudgetMs: 20_000,
-    async cheapEval(prompt: string): Promise<string> {
+    async cheapEval(prompt: string, options?: CheapEvalOptions): Promise<string> {
       try {
         const resp = await opts.genai.models.generateContent({
           model: opts.cheapModel ?? opts.model,
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          ...(options?.singleAttempt ? { config: { httpOptions: { retryOptions: { attempts: 1 } } } } : {}),
         })
         return resp.text ?? ''
       } catch (err) {
