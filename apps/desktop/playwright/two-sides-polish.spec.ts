@@ -133,10 +133,17 @@ test('窗口底部空间不足时菜单向上翻，实际末行仍能操作', as
   const menu = row.locator('.place-actions')
   const actions = menu.getByRole('button')
   await expect(actions).toHaveText(['往上挪', '收起这一行'])
+  // 菜单整块在视口里、不压住「⋯」；下面放不下时必须翻到上面（不同平台字体行高不同，按实际几何判）。
   await expect.poll(async () => {
     const [popup, anchor] = await Promise.all([menu.boundingBox(), more.boundingBox()])
-    return !!popup && !!anchor && popup.y + popup.height <= anchor.y
-  }).toBe(true)
+    const viewport = page.viewportSize()!
+    if (!popup || !anchor) return 'missing'
+    if (popup.y < 0 || popup.y + popup.height > viewport.height) return 'outside viewport'
+    const above = popup.y + popup.height <= anchor.y, below = popup.y >= anchor.y + anchor.height
+    if (!above && !below) return 'covers anchor'
+    if (!above && viewport.height - (anchor.y + anchor.height) < popup.height) return 'should flip up'
+    return 'ok'
+  }).toBe('ok')
   for (const action of await actions.all()) await action.click({ trial: true })
 })
 
