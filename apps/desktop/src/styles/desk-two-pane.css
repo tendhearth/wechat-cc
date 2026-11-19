@@ -196,6 +196,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   line-height: 1.75;
 }
 [data-desk-wide] #converse-scroll .converse-msg-user .converse-bubble { color: var(--th-ink-soft); }
+/* 窄窗口里你的话是无衬线的气泡;两栏没有气泡,你和 CC 在同一列里读,用同一种字,只靠墨色分 */
+[data-desk-wide] #converse-scroll :is(.cc-user-reading, .cc-user-reading .cc-readable-markdown.wb-markdown) { font-family: var(--th-font-serif); }
 [data-desk-wide] .converse-msg > .voice-replay-btn { align-self: flex-end; margin-left: 6px; }
 [data-desk-wide] #converse-root .converse-compose { width: calc(min(100%, 720px) - 64px); min-height: 58px; margin: 0 auto 18px; border-radius: 12px; }
 [data-desk-wide] .converse-compose button.converse-recipient { color: var(--th-accent); }
