@@ -186,10 +186,10 @@ export function replyMayBeEcho(raw: string): boolean {
   return lead.startsWith('[System:') || lead.startsWith('[调用工具')
 }
 
-/** 从 offset 起吃掉一个配平的 `[System: …]`;不是 / 没配平 ⇒ -1。 */
-function endOfSystemNote(text: string, offset: number): number {
-  if (!text.startsWith('[System:', offset)) return -1
-  let depth = 1, at = offset + '[System:'.length
+/** 从 offset 起吃掉一个配平的方括号块；不是 / 没配平 ⇒ -1。 */
+function endOfBracketBlock(text: string, offset: number): number {
+  if (text[offset] !== '[') return -1
+  let depth = 1, at = offset + 1
   for (; at < text.length && depth > 0; at++) {
     if (text[at] === '[') depth++
     else if (text[at] === ']') depth--
@@ -223,19 +223,35 @@ function endOfToolEcho(text: string, offset: number): number {
 }
 
 /**
- * 整段只由完整的内部回声组成才算:一个或多个连着的 `[System: …]` 注记、`[调用工具 名字] {JSON}` 回声,两种可以混着排。
- * 引用、代码块、前后有正文、没写完的,一律不算(宁可漏,不可错拦)。有工具回声 ⇒ 'tool_echo',否则 'system_annotation'。
+ * 整段只由完整的内部回声组成才算。`[System: …]` 和 `[调用工具 名字] {JSON}` 可以混排。
+ * 英文注记和时间戳注记各自只认一个方括号块。引用、代码块、前后有正文、没写完的都照发。
  */
-export function replyNotForOwner(raw: string): 'system_annotation' | 'tool_echo' | undefined {
+export function replyNotForOwner(raw: string): 'system_annotation' | 'tool_echo' | 'english_annotation' | 'timestamp_annotation' | undefined {
   const text = raw.trim()
-  if (!replyMayBeEcho(text)) return
+  if (!text.startsWith('[')) return
   // An indented Markdown code block can look like an annotation after trim.
   const lines = raw.split('\n').filter(line => line.trim())
   if (lines.every(line => /^(?: {4}| {0,3}\t)/.test(line))) return
 
+  if (!replyMayBeEcho(text)) {
+    const end = endOfBracketBlock(text, 0)
+    if (end < 0) return
+    if (end === text.length) {
+      const body = text.slice(1, end - 1).trimEnd()
+      // “no reply …” 是已知的两字母开头，单独认这个词组。
+      if (/^(?:[A-Za-z]{3,}\b|no(?= +reply\b))/i.test(body) && body.includes(' ')) return 'english_annotation'
+    } else {
+      const tail = text.slice(end)
+      if (/^ +(?=\d+(?:[-:/]\d|[年月日时分秒点]))\d+(?:[-:/ ]\d+|[年月日时分秒点](?: *\d+)?)+(?: +\(UTC[+-]\d{1,2}(?::\d{2})?\))?$/i.test(tail)) {
+        return 'timestamp_annotation'
+      }
+    }
+    return
+  }
+
   let offset = 0, sawTool = false
   while (offset < text.length) {
-    const note = endOfSystemNote(text, offset)
+    const note = text.startsWith('[System:', offset) ? endOfBracketBlock(text, offset) : -1
     const tool = note < 0 ? endOfToolEcho(text, offset) : -1
     if (note < 0 && tool < 0) return
     if (tool >= 0) sawTool = true
