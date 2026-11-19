@@ -184,8 +184,6 @@ function renderSkeleton(root, deps) {
         <span id="converse-recording-time">00:00</span>
       </div>
       <div class="converse-toolbar">
-        <button id="desk-attach" type="button" aria-label="添加附件" title="添加附件">${icon("attachment")}</button>
-        <input id="desk-attachment-files" type="file" multiple hidden />
         <button id="converse-mic" class="converse-mic" type="button" aria-pressed="false" aria-label="语音输入" title="语音输入">${icon("mic-01")}</button>
         <button id="converse-voice-toggle" class="converse-voice-toggle" type="button" aria-pressed="false" aria-label="朗读回复" title="自动朗读 CC 的回复">${icon("play")}</button>
         <button id="converse-delegate" class="btn converse-delegate-btn" type="button" disabled${deps.onDelegate ? '' : ' hidden'}>交给 CC 做</button>
@@ -985,12 +983,6 @@ function wireEvents(root, deps) {
   })
 
   const input = /** @type {HTMLTextAreaElement|null} */ (root.querySelector("#converse-input"))
-  const picker = /** @type {HTMLInputElement|null} */ (root.querySelector('#desk-attachment-files'))
-  root.querySelector('#desk-attach')?.addEventListener('click', () => picker?.click())
-  picker?.addEventListener('change', () => {
-    void addImages(picker.files).then(() => input?.focus())
-    picker.value = ''
-  })
   const clearPlace = () => {
     placeNavigation?.clear()
     input?.focus()

@@ -34,7 +34,7 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   await expect(heading).toBeEmpty()
   await expect(heading).toHaveCSS('border-bottom-width', '0px')
   const date = page.locator('.desk-date-line')
-  await expect(date).toHaveText(datePattern)
+  await expect(page.locator('#desk-today')).toHaveText(datePattern)
   const [dateBox, scrollBox] = await Promise.all([date.boundingBox(), scroll.boundingBox()])
   expect(dateBox!.y + dateBox!.height).toBeLessThanOrEqual(scrollBox!.y)
   // 说话的人用头像:你的是「还没画」的铅笔稿,CC 的是它自己那一张
@@ -78,7 +78,7 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   await expect(rail.getByRole('button', { name: '记忆' })).toHaveAttribute('aria-current', 'page')
   await expect(main.locator('article[data-pane="memory"]')).toBeVisible()
   await page.locator('#topbar-cc').click()
-  await expect(date).toHaveText(datePattern)
+  await expect(page.locator('#desk-today')).toHaveText(datePattern)
   await expect(page.locator('#converse-input')).toBeVisible()
 })
 
@@ -121,7 +121,7 @@ test('等待卡片钉在上方、跟地方筛选联动、回答后刷新', async
   await expect(cards).toHaveCount(0)
   await expect(clear).toHaveText('只看 leni · 回到全部')
   await clear.click()
-  await expect(date).toHaveText(datePattern)
+  await expect(page.locator('#desk-today')).toHaveText(datePattern)
   await placeRow(page, 'rici').locator('.place-row').click()
   await expect(clear).toHaveText('只看 rici · 回到全部')
   await expect(cards).toHaveCount(1)
@@ -130,7 +130,7 @@ test('等待卡片钉在上方、跟地方筛选联动、回答后刷新', async
   await expect(card).toHaveCount(0)
   await expect(placeRow(page, 'rici')).toHaveAttribute('data-waiting', 'false')
   await page.locator('#topbar-cc').click()
-  await expect(date).toHaveText(datePattern)
+  await expect(page.locator('#desk-today')).toHaveText(datePattern)
   await expect(clear).toBeHidden()
 })
 
@@ -178,7 +178,6 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   await expect(rail).toHaveCSS('height', '72px')
   await expect(page.locator('.desk-date-line')).toBeHidden()
   await expect(page.locator('.desk-heading')).toBeHidden()
-  await expect(page.locator('#desk-attach')).toBeHidden()
   await expect(scroll.locator('.converse-msg-user .converse-bubble')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
   for (const edge of ['top', 'right', 'bottom', 'left']) await expect(page.locator('.converse-compose')).toHaveCSS(`border-${edge}-width`, '1px')
   await expect(clear).toBeVisible()
@@ -224,7 +223,7 @@ test('两栏的拖拽区：两侧空白各起一次拖拽，日期行的筛选�
   await expect(clear).toHaveText('只看 rici · 回到全部')
   await clear.dispatchEvent('mousedown', { button: 0 })
   await clear.click()
-  await expect(page.locator('.desk-date-line')).toHaveText(datePattern)
+  await expect(page.locator('#desk-today')).toHaveText(datePattern)
   expect(await calls()).toBe(2)
 })
 
@@ -237,7 +236,7 @@ test('CC 用新鲜数据说现状，状态点和选中行跟随列表', async ({
   await routePlaces(page, () => places)
   await page.goto(shimUrl)
   const situation = page.locator('#desk-cc-situation')
-  const figure = page.locator('#topbar-cc .topbar-figure')
+  const figure = page.locator('#topbar-cc') // 呼吸的光挂在这一行上,活的 CC 和静态图谁在显示都有
   const breathing = () => figure.evaluate(el => getComputedStyle(el, '::before').animationName)
   const waiting = placeRow(page, 'rici')
   const moving = placeRow(page, 'melu')
@@ -294,12 +293,11 @@ test('地方名与正文同起一行，跨天有日期，输入工具留在线�
   const compose = page.locator('.converse-compose')
   for (const edge of ['top', 'right', 'left']) await expect(compose).toHaveCSS(`border-${edge}-width`, '0px')
   await expect(compose).toHaveCSS('border-bottom-width', '1px')
-  for (const id of ['desk-attach', 'converse-mic', 'converse-voice-toggle', 'converse-send']) {
+  // 功能按钮一个不少、也没多:更多(交办 / 项目 / 会话 / 搜索)、语音、朗读、发送
+  for (const id of ['converse-mic', 'converse-voice-toggle', 'converse-send']) {
     await compose.locator('#' + id).click({ trial: true })
   }
-  const chooser = page.waitForEvent('filechooser')
-  await compose.locator('#desk-attach').click()
-  expect((await chooser).isMultiple()).toBe(true)
+  await expect(compose.locator('#desk-attach')).toHaveCount(0)
   const send = compose.locator('#converse-send')
   await expect(send).not.toHaveCSS('color', 'rgb(79, 107, 79)')
   await compose.locator('#converse-input').fill('写')

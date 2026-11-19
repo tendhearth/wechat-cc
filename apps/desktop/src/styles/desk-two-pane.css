@@ -1,7 +1,6 @@
 .desk-rail-titlebar, .desk-heading, .desk-cc-copy, .desk-cc-connections, .desk-speaker,
 .desk-waiting, .desk-quiet-toggle, .desk-date-line, .desk-message-date,
 .desk-inline-place, .desk-process-open, .desk-process-close,
-.converse-toolbar #desk-attach { display: none; }
 
 html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: none; }
 
@@ -47,15 +46,23 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .places-list:has(.place[data-selected="true"]) .place[data-selected="false"] { opacity: .6; }
 [data-desk-wide] #topbar-cc .topbar-figure,
 [data-desk-wide] #topbar-cc .topbar-figure img { width: 60px; height: 60px; }
-[data-desk-wide] #topbar-cc .topbar-figure { flex: none; visibility: visible; }
-[data-desk-wide] #topbar-cc[data-cc="here"] .topbar-figure::before {
+[data-desk-wide] #topbar-cc .topbar-figure { flex: none; }
+/* 呼吸的光挂在这一行上(不挂在静态图上):运行时就绪后静态图会隐藏,换成活的 CC(now-pet-stage),光还在 */
+[data-desk-wide] #topbar-cc[data-cc="here"]::before {
   content: '';
   position: absolute;
-  inset: -6px;
+  left: -6px;
+  top: 50%;
+  width: 72px;
+  height: 72px;
+  margin-top: -36px;
   background: radial-gradient(circle, var(--th-glow), transparent 68%);
   animation: desk-breathe 5.5s ease-in-out infinite;
+  pointer-events: none;
 }
-[data-desk-wide] #topbar-cc :is(.now-pet-stage, .roster-glance) { display: none; }
+/* 活的 CC 和它的道具(连接异常时的感叹号等)照旧显示,只是放大到这一行的尺寸 */
+[data-desk-wide] #topbar-cc .now-pet-stage { left: 0; top: 50%; width: 60px; height: 60px; margin-top: -30px; }
+[data-desk-wide] #topbar-cc .now-pet-sprite { width: 60px; height: 60px; }
 [data-desk-wide] #topbar-cc .topbar-waiting-dot { right: auto; left: 49px; }
 [data-desk-wide] .desk-cc-copy { display: grid; gap: 3px; min-width: 0; font-size: 17px; }
 [data-desk-wide] .desk-cc-copy strong { font-weight: var(--th-weight-desk-emphasis); }
@@ -90,7 +97,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   animation: desk-breathe 4.5s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  [data-desk-wide] #topbar-cc[data-cc="here"] .topbar-figure::before,
+  [data-desk-wide] #topbar-cc[data-cc="here"]::before,
   [data-desk-wide] .place[data-waiting="false"]:is([data-moving="true"], [data-working]) .place-dot { animation: none; }
 }
 [data-desk-wide] .place-name { font-size: 15px; font-weight: var(--th-weight-desk-emphasis); }
@@ -176,7 +183,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 
 [data-desk-wide] .desk-waiting:not([hidden]) {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   flex: none;
   box-sizing: border-box;
   width: min(100%, var(--desk-page-width));
@@ -193,10 +200,11 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 }
 [data-desk-wide] .desk-waiting-row > .desk-speaker { margin-top: 12px; }
 [data-desk-wide] .desk-waiting-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 20px;
+  align-items: center;
+  padding: 12px 16px 12px 20px;
   border-radius: 3px;
   background: var(--th-on-accent);
   box-shadow: 0 1px 0 var(--th-hair), 0 8px 18px color-mix(in srgb, var(--th-ink) 7%, transparent);
@@ -206,7 +214,10 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .desk-waiting-question { font-size: 18.5px; line-height: 1.55; }
 [data-desk-wide] .desk-waiting-opinion { font-size: 15px; line-height: 1.8; }
 [data-desk-wide] .desk-waiting-reason { color: var(--th-ink-soft); font-size: 14px; line-height: 1.7; }
-[data-desk-wide] .desk-waiting-card .place-ask { gap: 18px; padding: 4px 0 0; }
+[data-desk-wide] .desk-waiting-card :is(.desk-waiting-label, .desk-waiting-opinion, .desk-waiting-reason) { grid-column: 1 / -1; }
+[data-desk-wide] .desk-waiting-card .desk-waiting-question { grid-column: 1; }
+[data-desk-wide] .desk-waiting-card .place-ask { grid-column: 2; grid-row: 2; flex-wrap: nowrap; gap: 18px; padding: 0; }
+[data-desk-wide] .desk-waiting-row + .desk-waiting-row > .desk-speaker { visibility: hidden; }
 [data-desk-wide] .desk-waiting-card .place-ask button { min-height: 36px; font-size: 15px; }
 [data-desk-wide] .desk-waiting-card .place-allow { padding-inline: 22px; border-radius: 8px; }
 [data-desk-wide] .desk-waiting-card [data-place-decision="deny"] {
@@ -345,7 +356,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .converse-compose .conversation-add summary { display: grid; place-items: center; }
 [data-desk-wide] #converse-root .converse-compose:is(:focus-within, :hover) :is(.converse-toolbar button, .conversation-add summary) { color: var(--th-ink); }
 [data-desk-wide] #converse-root .converse-toolbar :is(.is-on, .is-recording) { text-decoration: underline; color: var(--th-accent); }
-[data-desk-wide] #converse-root .converse-toolbar #desk-attach { display: inline-flex; }
 [data-desk-wide] .converse-toolbar svg { width: 16px; height: 16px; }
 [data-desk-wide] #converse-root .converse-compose:is([data-has-text], :has(#converse-images:not([hidden]))) #converse-send { color: var(--th-accent); }
 
