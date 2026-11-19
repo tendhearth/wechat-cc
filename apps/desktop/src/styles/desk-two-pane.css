@@ -182,6 +182,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .desk-speaker :is(img, svg) { display: block; width: 28px; height: 28px; object-fit: contain; }
 /* CC 那张图四周留了白,放大一圈才和你的头像一样大 */
 [data-desk-wide] .desk-speaker[data-speaker="cc"] img { width: 36px; height: 36px; margin: -4px; max-width: none; }
+/* CC 是白的,纸也是浅的:身后一圈它自己的暖光,小尺寸下才看得见它 */
+[data-desk-wide] .desk-speaker[data-speaker="cc"] { border-radius: 50%; background: radial-gradient(circle at 50% 56%, var(--th-glow), transparent 70%); }
 [data-desk-wide] [data-same-speaker] .desk-speaker,
 [data-desk-wide] .converse-reply-parts .converse-msg + .converse-msg .desk-speaker { visibility: hidden; }
 [data-desk-wide] .converse-reply-parts { gap: 14px; }
