@@ -1,6 +1,7 @@
 import {workbenchErrorHttp,matterToolFailure} from '../../../packages/protocol/src/workbench-errors'
 import {ownerLedgerCaller,ownerLedgerConversation} from '../../lib/matter-ledger-access'
 import type {WorkbenchService} from './service'
+import {RegisteredProjectDispatchError} from './service/ledger'
 import type {RouteTable} from '../../daemon/internal-api/types'
 import {PlanInputError,type PlanCaller,type PlanConversation} from '../../adapters/workbench/matter-plan-input'
 import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
@@ -12,7 +13,7 @@ const invalid=()=>({status:400,body:{error:'invalid_request'}})
 export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:()=>string|null;planConversation?:(caller:PlanCaller)=>PlanConversation|null}):RouteTable{
   return {
     'POST /v1/matter/plan':async(q,b,c)=>{
-      if (c?.origin === 'session' && c.recordMatterPlan) return c.recordMatterPlan(q, b, () => d.workbench.projects(), () => d.workbench.planExecutors())
+      if (c?.origin === 'session' && c.recordMatterPlan) return c.recordMatterPlan(q, b, () => d.workbench.planProjects(), () => d.workbench.planExecutors(), () => d.workbench.planPlaces())
       if(!ownerLedgerConversation(d.resolveAdminChatId?.()??null,c))return {status:403,body:matterToolFailure('matter_ledger_forbidden',false)}
       const approved=d.workbench.matterApprovalStatus?.('mcp__wechat__matter_plan',b,c??{})??false
       const parsed=MatterPlanRequest.safeParse(b)
@@ -22,7 +23,9 @@ export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:(
         const code=error instanceof Error?error.message:''
         const details=error instanceof PlanInputError?error:undefined
         const executors=details?details.executors:code==='unavailable_provider'?d.workbench.availableExecutors():undefined
-        return {status:code==='matter_ledger_forbidden'?403:409,body:matterToolFailure(code,approved,'plan',details?.projects,executors,details?.defaultUnavailableMessage)}
+        const body=matterToolFailure(code,approved,'plan',details?.projects,executors,details?.defaultUnavailableMessage,details?.candidateNames,details?.placeChoices)
+        return {status:code==='matter_ledger_forbidden'?403:409,
+          body:error instanceof RegisteredProjectDispatchError?{...body,projectRegistered:true,message:`项目已经登记。${body.message}`}:body}
       }
     },
     'GET /v1/matter/context':async(q,_b,c)=>{

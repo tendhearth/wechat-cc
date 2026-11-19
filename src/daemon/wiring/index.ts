@@ -168,7 +168,7 @@ export interface WiredDeps {
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../../features/memory').MemoryNightlyRuntime
   roster: import('../../ports/roster').RosterReader | null
-  places: import('../../ports/places').PlacesReader | null
+  places: ReturnType<typeof import('../../features/roster').makePlacesReader> | null
   mattersService: import('../../app/matters/service').MattersService | null
   /** 「一件事」活动时间:退订工作台事件 + 清节流定时器;main.ts 登记进 shutdown。 */
   stopMatterActivity: () => void

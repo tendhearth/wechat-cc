@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,renameSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,renameSync,symlinkSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
@@ -7,6 +7,7 @@ import {openTestDb} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeMatterStore} from '../../adapters/store/matters-store'
+import {makePlacesStore} from '../../adapters/store/places-store'
 import {createProviderRegistry} from '../../app/provider-registry'
 import {MANAGED_NATIVE_CAPABILITIES,MANAGED_API_CAPABILITIES,UNATTENDED_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import type {UsageSnapshot} from '../../domain/subscription-usage'
@@ -665,4 +666,250 @@ it('relay legs are asked for a closing status line and the line decides; a singl
   const single=setup(),request={...single.request(),title:'整理插图',legs:[{executor:'codex',brief:'整理插图'}]}
   await single.service.matterPlan(request);await expect.poll(()=>single.calls.length).toBe(1)
   expect(single.calls[0]!.text).not.toContain('状态:做完')
+})
+
+function registrationSetup(executionConflict=()=>false){
+ const context={scope:'register-on-handoff'}
+ const caller={chatId:'owner',provider:'openai',tier:'admin' as const,origin:'session' as const}
+ const tool='mcp__wechat__matter_plan'
+ const f=setup(false,true,{planPlaces:()=>places.list(),planConversation:()=>context,executionConflict})
+ const places=makePlacesStore(f.db),addProject=vi.spyOn(f.store,'addProject')
+ const addPlace=(name:string,root:string)=>places.add([{key:root,root,name,position:places.list().length,hidden:false}],1)
+ const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner',planConversation:()=>context})['POST /v1/matter/plan']!
+ const input={title:'加个收藏',project:'rici',legs:[{executor:'claude',brief:'添加收藏'}]}
+ const call=(body:unknown=input)=>route(new URLSearchParams(),body,caller)
+ const card=(body=input)=>prepareChatApprovalPrompt('OpenAI',tool,structuredClone(body),'test',{
+  resolveMatterPlan:args=>f.service.matterPlanPreview(MatterPlanRequest.parse(args),caller),
+ },'owner')
+ const approve=(body=input)=>f.service.noteMatterApproval(tool,body,caller)
+ return {f,input,call,card,approve,addPlace,addProject}
+}
+
+it.each(['rici','RICI','stored-basename','root'])('a stored place resolves via %s and displays its own folder',async match=>{
+ const t=registrationSetup(),root=join(t.f.root,'stored-basename')
+ mkdirSync(root)
+ t.addPlace('rici',root)
+ const input={...t.input,project:match==='root'?root:match}
+ expect(await t.card(input)).toContain('工作区：rici（'+root+'）· 还没登记，批准后登记为工作项目')
+ expect(t.addProject).not.toHaveBeenCalled()
+ expect(t.f.store.projects()).toEqual([])
+})
+
+it('shows the actual registration folder and its saved symlink on the card',async()=>{
+ const t=registrationSetup(),destination=join(t.f.root,'destination')
+ t.addPlace('rici',t.f.project)
+ renameSync(t.f.project,destination)
+ symlinkSync(destination,t.f.project,process.platform==='win32'?'junction':'dir')
+ expect(await t.card()).toContain(`工作区：rici（${destination}，由 ${t.f.project} 指过去）· 还没登记，批准后登记为工作项目`)
+ t.approve()
+ expect(await t.call()).toMatchObject({status:202,body:{task:{path:destination}}})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:destination,name:'rici',providerId:'claude'})
+})
+
+it('a missing match or unknown path offers only candidate names',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ for(const project of ['unknown',join(t.f.root,'other','rici')]){
+  const result=await t.call({...t.input,project})
+  expect(result.body).toMatchObject({error:'project_stale',message:expect.stringContaining('可选项目：rici。')})
+  expect(JSON.stringify(result.body)).not.toContain(t.f.root)
+ }
+ expect(t.addProject).not.toHaveBeenCalled()
+})
+
+it('ambiguity lists matching place names without directory paths or identifiers',async()=>{
+ const t=registrationSetup(),other=join(t.f.root,'rici')
+ mkdirSync(other)
+ t.addPlace('rici',t.f.project)
+ t.addPlace('菜谱本',other)
+ const result=await t.call()
+ expect(result.body).toMatchObject({error:'matter_place_ambiguous',message:expect.stringContaining('可选项目：rici、菜谱本。')})
+ expect(JSON.stringify(result.body)).not.toContain(t.f.root)
+ expect(t.addProject).not.toHaveBeenCalled()
+})
+
+it('registration follows the approved card and a different project or path needs another card',async()=>{
+ const t=registrationSetup(),other=join(t.f.root,'melu')
+ mkdirSync(other)
+ t.addPlace('rici',t.f.project)
+ t.addPlace('melu',other)
+ // The model supplied a folder basename as the project selector. Only the saved root is displayed.
+ const input={...t.input,project:'project'}
+ expect(await t.card(input)).toContain('工作区：rici（'+t.f.project+'）· 还没登记，批准后登记为工作项目')
+ expect((await t.call(input)).body).toMatchObject({error:'matter_project_registration_requires_approval',approved:false})
+ expect(t.addProject).not.toHaveBeenCalled()
+ t.approve(input)
+ expect((await t.call({...input,legs:[{executor:'codex',brief:'换分工'}]})).body)
+  .toMatchObject({error:'matter_project_registration_requires_approval',approved:false})
+ const result=await t.call(input)
+ expect(result.status).toBe(202)
+ expect(result.body).toMatchObject({task:{path:t.f.project,providerId:'claude'}})
+ expect((await t.call(input)).body).toMatchObject({receipt:(result.body as {receipt:unknown}).receipt})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:t.f.project,name:'rici',providerId:'claude'})
+ const changed={...input,project:'melu'}
+ expect((await t.call(changed)).body).toMatchObject({error:'matter_project_registration_requires_approval',approved:false})
+ expect(await t.card(changed)).toContain('工作区：melu（'+other+'）· 还没登记，批准后登记为工作项目')
+ const changedPath={...input,project:other}
+ expect((await t.call(changedPath)).body).toMatchObject({error:'matter_project_registration_requires_approval',approved:false})
+ expect(await t.card(changedPath)).toContain('工作区：melu（'+other+'）· 还没登记，批准后登记为工作项目')
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+})
+
+it('a missing place folder prevents the approval card and registration',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',join(t.f.root,'missing'))
+ await expect(t.card()).rejects.toThrow('这个地方的文件夹不存在')
+ expect((await t.call()).body).toMatchObject({error:'matter_place_invalid_path',approved:false})
+ expect(t.addProject).not.toHaveBeenCalled()
+})
+
+it('an approved project survives a later workbench creation failure',async()=>{
+ const t=registrationSetup(()=>true)
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ expect((await t.call()).body).toMatchObject({error:'native_session_busy',approved:true})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:t.f.project,name:'rici',providerId:'claude'})
+ expect(t.f.store.projects()).toMatchObject([{path:t.f.project,name:'rici',providerId:'claude'}])
+ expect(t.f.store.list()).toEqual([])
+})
+
+it('approval keeps the original stored folder if the place name later becomes ambiguous',async()=>{
+ const t=registrationSetup(),other=join(t.f.root,'other')
+ mkdirSync(other)
+ t.addPlace('rici',t.f.project)
+ expect(await t.card()).toContain('工作区：rici（'+t.f.project+'）')
+ t.addPlace('rici',other)
+ t.approve()
+ expect((await t.call()).body).toMatchObject({task:{path:t.f.project}})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:t.f.project,name:'rici',providerId:'claude'})
+})
+
+it('rejects approval when a different directory replaces the folder shown on the card',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ renameSync(t.f.project,join(t.f.root,'original-project'))
+ mkdirSync(t.f.project)
+ t.approve()
+ expect(await t.call()).toMatchObject({status:409,body:{
+  error:'matter_place_changed',approved:true,message:expect.stringContaining('这个文件夹和你确认的那个不是同一个了'),
+ }})
+ expect(t.addProject).not.toHaveBeenCalled()
+ expect(t.f.store.projects()).toEqual([])
+ expect(t.f.store.list()).toEqual([])
+ expect(t.f.calls).toEqual([])
+})
+
+it('requires fresh approval for a replacement folder in the same turn',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ renameSync(t.f.project,join(t.f.root,'original-project'))
+ mkdirSync(t.f.project)
+ expect(await t.call()).toMatchObject({status:409,body:{error:'matter_place_changed',approved:true}})
+ await t.card()
+ expect(await t.call()).toMatchObject({status:409,body:{error:'matter_project_registration_requires_approval',approved:false}})
+ expect(t.addProject).not.toHaveBeenCalled()
+ t.approve()
+ const result=await t.call()
+ expect(result).toMatchObject({status:202,body:{task:{path:t.f.project}}})
+ expect(await t.call()).toMatchObject({status:202,body:{receipt:(result.body as {receipt:unknown}).receipt}})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:t.f.project,name:'rici',providerId:'claude'})
+ expect(t.f.store.list()).toHaveLength(1)
+})
+
+it('replays the original receipt when a retry selects the newly registered catalog ID',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ const first=await t.call()
+ expect(first.status).toBe(202)
+ const projectId=t.f.service.projects()[0]!.id
+ const retry=await t.call({...t.input,project:projectId})
+ expect(retry).toMatchObject({status:202,body:{receipt:(first.body as {receipt:unknown}).receipt}})
+ expect(t.f.store.list()).toHaveLength(1)
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+})
+
+it('reports project registration on dispatch failure only when this call added it',async()=>{
+ const t=registrationSetup(()=>true)
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ expect(await t.call()).toMatchObject({status:409,body:{
+  error:'native_session_busy',approved:true,projectRegistered:true,message:expect.stringContaining('项目已经登记'),
+ }})
+ expect(t.f.store.projects()).toMatchObject([{path:t.f.project,name:'rici'}])
+ expect(t.f.store.list()).toEqual([])
+ const retry=await t.call({...t.input,project:t.f.service.projects()[0]!.id})
+ expect(retry).toMatchObject({status:409,body:{error:'native_session_busy'}})
+ expect(retry.body).not.toHaveProperty('projectRegistered')
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+})
+
+it.each(['moved','draining'])('replays accepted registration with a changed workspace state (%s)',async scenario=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ const first=await t.call()
+ expect(first.status).toBe(202)
+ if(scenario==='moved')renameSync(t.f.project,join(t.f.root,'moved-project'))
+ else await t.f.service.shutdown()
+ const {receipt}=first.body as {receipt:{requestId:string}}
+ expect(await t.call()).toMatchObject({status:202,body:{receipt}})
+ await expect(t.card()).resolves.toContain('确认交办')
+ // A receipt alone does not authorize a different plan with the same ID.
+ const target=t.f.store.entryRequests.get('owner',receipt.requestId)?.target
+ expect(target).toMatchObject({kind:'project'})
+ const {project:_project,...plan}=t.input
+ expect(await t.call({...plan,requestId:receipt.requestId,title:'另一件事',target})).toMatchObject({status:409,body:{error:'creation_conflict'}})
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+ expect(t.f.store.list()).toHaveLength(1)
+})
+
+it('keeps a desktop-added project basename ahead of an unregistered place with the same name',async()=>{
+ const t=registrationSetup(),site=join(t.f.root,'site'),other=join(t.f.root,'other')
+ mkdirSync(site)
+ mkdirSync(other)
+ t.f.service.addProject({path:site,name:'Personal Website',providerId:'claude'})
+ t.addPlace('site',other)
+ for(const project of ['site','SITE','Personal Website',site,t.f.service.projects()[0]!.id]){
+  const card=await t.card({...t.input,project})
+  expect(card).toContain('工作区：Personal Website（'+site+'）')
+  expect(card).not.toContain('还没登记')
+ }
+ expect(await t.call({...t.input,project:'site'})).toMatchObject({status:202,body:{task:{path:site}}})
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+})
+
+it.each(['different','same'])('offers usable private selectors for places with the same basename and %s parent names',async scenario=>{
+ const t=registrationSetup(),parents=['Documents','Projects']
+ const roots=parents.map(parent=>join(t.f.root,parent,...(scenario==='same'?['Web']:[]),'site'))
+ for(const root of roots){
+  mkdirSync(root,{recursive:true})
+  t.addPlace('site',root)
+ }
+ const input={...t.input,project:'site'}
+ const result=await t.call(input)
+ expect(result).toMatchObject({status:409,body:{error:'matter_place_ambiguous',placeChoices:parents.map(parent=>({
+  label:scenario==='same'?`site（在 Web 下，上层目录有 ${parent}）`:`site（在 ${parent} 下）`,
+  selector:expect.stringMatching(/^place:[a-f0-9]+$/),
+ }))}})
+ const {placeChoices}=result.body as {placeChoices:Array<{label:string;selector:string}>}
+ expect(new Set(placeChoices.map(choice=>choice.selector)).size).toBe(2)
+ expect(JSON.stringify(result.body)).not.toContain(t.f.root)
+ for(const [i,choice] of placeChoices.entries()){
+  await expect(t.card(input)).rejects.toThrow(choice.selector)
+  const selected={...input,project:choice.selector}
+  expect(await t.card(selected)).toContain('工作区：site（'+roots[i]+'）')
+  expect(t.addProject).not.toHaveBeenCalled()
+ }
+ const selected={...input,project:placeChoices[1]!.selector}
+ t.approve(selected)
+ expect(await t.call(selected)).toMatchObject({status:202,body:{task:{path:roots[1]}}})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:roots[1],name:'site',providerId:'claude'})
 })
