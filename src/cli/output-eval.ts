@@ -97,10 +97,15 @@ function judgeOutput(o: EvalOutput): string | null {
 }
 
 function toOutput(kind: EvalSample['kind'], body: any): EvalOutput {
-  if (kind === 'projects-activity') return {kind,finalText:body?.finalText??'',bubbles:body?.bubbles??[],silent:false}
   if (kind === 'reference') return { kind: 'reference', resolution: body?.resolution ?? { kind: 'none' } }
   if (kind === 'topic' || kind === 'topic-recall') return { kind, recall: body?.recall ?? null }
-  return { kind, finalText: String(body?.finalText ?? ''), bubbles: Array.isArray(body?.bubbles) ? body.bubbles.map(String) : [], silent: body?.silent === true, ...(Array.isArray(body?.toolCalls) ? { toolCalls: body.toolCalls.map(String) } : {}) }
+  return {
+    kind, finalText: String(body?.finalText ?? ''),
+    bubbles: Array.isArray(body?.bubbles) ? body.bubbles.map(String) : [],
+    silent: kind !== 'projects-activity' && body?.silent === true,
+    ...(Array.isArray(body?.toolCalls) ? { toolCalls: body.toolCalls.map(String) } : {}),
+    planCalls: Array.isArray(body?.planCalls) ? body.planCalls : [],
+  }
 }
 
 async function runSample(deps: EvalCliDeps, api: { baseUrl: string; operatorToken: string }, s: EvalSample, providerId: string | undefined): Promise<SampleResult> {

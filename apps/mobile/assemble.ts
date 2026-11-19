@@ -31,7 +31,9 @@ const ANY_MARKER = /\{\{[^{}\n]*\}\}/g
 // 整行的 // 注释不送上手机(10-20:中继帧预算,中文注释一个字 3 字节)。带反引号的文件不动:
 // 多行模板字符串里看着像注释的那一行其实是字符串内容。行尾注释、字符串里的 // 都不碰。
 // 已知的理论缺口:用反斜杠续行的普通字符串,下一行恰好以 // 开头会被删掉 —— 手机脚本里别这么写(评审 #447)。
+// .css 里的 /* */ 说明也不送(11-18:同一份预算);/*! 开头的许可证照留;tokens.css 是生成物,头上那句出处留着。样式表里没有带 /* 的字符串。
 function stripLineComments(name: string, text: string): string {
+  if (name.endsWith('.css') && name !== 'tokens.css') return text.replace(/\/\*(?!!)[\s\S]*?\*\/\n?/g, '')
   return name.endsWith('.js') && !text.includes('`') ? text.replace(/^[ \t]*\/\/[^\n]*(?:\n|$)/gm, '') : text
 }
 

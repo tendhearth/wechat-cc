@@ -1,5 +1,5 @@
 import {matterToolFailure} from '../../../packages/protocol/src/workbench-errors'
-import {PlanInputError,type PlanTarget} from '../workbench/matter-plan-input'
+import {PlanInputError,type PlanTarget,type PlanLegs} from '../workbench/matter-plan-input'
 import { randomBytes } from 'node:crypto'
 import { toolInputPreview,redactPreviewText } from '../../domain/workbench/tool-input-preview'
 import { shareName } from '../../domain/matters/share-scope'
@@ -31,7 +31,8 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
 /** 对话审批的共同等待边界。取消不依赖主人回答，也不接受迟到的批准。 */
 export type ChatApprovalAnswer = 'allow' | 'deny' | 'timeout' | 'undelivered' | 'cancelled'
 export type TerminalParticipationResolver=(action:'attach'|'detach',input:unknown,chatId:string)=>{body:unknown;code:string;cwd:string;title:string}
-export type MatterPlanResolver=(input:unknown,chatId:string,provider:string)=>PlanTarget|Promise<PlanTarget>
+export type MatterPlanResolver=(input:unknown,chatId:string,provider:string)=>MatterPlanPreview|Promise<MatterPlanPreview>
+type MatterPlanPreview=PlanTarget&{legs?:PlanLegs}
 export interface ChatApprovalChannel {
   noteMatterApproval?:(tool:string,input:unknown,chatId:string,provider:string)=>void
   resolveMatterPlan?:MatterPlanResolver
@@ -106,7 +107,7 @@ export async function prepareChatApprovalPrompt(provider:string,tool:string,inpu
     const clean=(text:string)=>redactPreviewText(redactSecrets(text)).replace(/\s+/g,' ').slice(0,500)
     return `${provider} · terminal_${action} [approval:${requestId}]\n确认${action==='attach'?'挂入':'摘下'}终端：${clean(preview.code)}\n目录：${clean(preview.cwd)}\n事名：${clean(preview.title)}`
   }
-  let resolved:PlanTarget|undefined
+  let resolved:MatterPlanPreview|undefined
   if(tool==='mcp__wechat__matter_plan'&&channel.resolveMatterPlan){
     try{
       resolved=await channel.resolveMatterPlan(input,chatId,provider.toLowerCase())
@@ -114,10 +115,12 @@ export async function prepareChatApprovalPrompt(provider:string,tool:string,inpu
         const args=input as Record<string,unknown>
         delete args.project;delete args.isolation;delete args.base
         args.target=resolved.target
+        if(resolved.legs)args.legs=resolved.legs
       }
     }catch(error){
       const code=error instanceof Error?error.message:'matter_plan_failed'
-      throw Error(matterToolFailure(code,false,'plan',error instanceof PlanInputError?error.projects:undefined).message)
+      const details=error instanceof PlanInputError?error:undefined
+      throw Error(matterToolFailure(code,false,'plan',details?.projects,details?.executors,details?.defaultUnavailableMessage).message)
     }
   }
   return renderChatApprovalPrompt(provider,tool,input,requestId,title,resolved)

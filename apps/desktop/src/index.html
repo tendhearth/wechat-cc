@@ -22,6 +22,7 @@
     <link rel="stylesheet" href="./styles/workbench.css" />
     <link rel="stylesheet" href="./styles/pdf-reader.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
+    <link rel="stylesheet" href="./styles/desk-two-pane.css" />
     <link rel="stylesheet" href="./styles/record-reader.css" />
     <link rel="stylesheet" href="./styles/todos.css" />
     <link rel="stylesheet" href="./styles/forage.css" />
@@ -392,13 +393,15 @@
       <div class="dash-window">
 
         <header id="dash-global-rail" class="dash-topbar">
+          <div class="desk-rail-titlebar" data-tauri-drag-region aria-hidden="true"></div>
           <div class="topbar-home">
             <button id="topbar-cc" class="dash-nav-link active" data-pane="overview" aria-label="跟 CC 说">
               <span class="topbar-figure"><img class="topbar-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" /><img class="topbar-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" /></span>
               <span class="topbar-waiting-dot" aria-hidden="true"></span>
+              <span class="desk-cc-copy"><strong id="desk-cc-presence">正在连接…</strong><small id="desk-cc-situation" hidden></small></span>
             </button>
             <details class="cc-home-details">
-              <summary><span class="now-sr">CC 的连接:</span><span id="topbar-presence-dot" class="dot" aria-hidden="true"></span><span id="topbar-presence">正在连接…</span></summary>
+              <summary><span class="now-sr">CC 的连接:</span><span id="topbar-presence-dot" class="dot" aria-hidden="true"></span><span id="topbar-presence">正在连接…</span><span class="desk-cc-connections" aria-hidden="true">⋯</span></summary>
               <div class="now-panel">
                 <div id="now-connections" class="now-connections"></div>
                 <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
@@ -420,11 +423,17 @@
           </nav>
         </header>
 
+        <div class="desk-heading" data-tauri-drag-region aria-hidden="true"></div>
         <section class="dash-main">
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
           <article class="dash-pane cc-now-pane" data-pane="overview" data-now="chat" data-conversation="single" data-cc="away">
             <div class="places-strip"><div id="places-root" class="places-root"></div></div>
+            <div class="desk-date-line">
+              <time id="desk-today"></time>
+              <button id="desk-place-clear" type="button" hidden></button>
+            </div>
+            <div id="desk-waiting" class="desk-waiting" hidden></div>
             <div id="converse-root" class="converse-page"></div>
 
           </article>

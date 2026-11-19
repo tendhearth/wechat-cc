@@ -30,6 +30,12 @@ it('现状不用状态词:在干补省略号,没做成 / 停了补一句', () =>
   expect(placeLine(place('a', { line: null, status: null }))).toBe('')
 })
 
+it('坐回来:上次看过以后另有几件也动过 ⇒ 现状后面补一句', () => {
+  expect(placeLine(place('a', { line: '收藏做好了', alsoChanged: 2 }))).toBe('收藏做好了,另有 2 件也动过')
+  expect(placeLine(place('a', { status: 'working', line: '画图', alsoChanged: 1 }))).toBe('画图…,另有 1 件也动过')
+  expect(placeLine(place('a', { line: '收藏做好了', alsoChanged: 0 }))).toBe('收藏做好了')
+})
+
 it('等批准的在行上直接答;问题 / 终端是「去回答」;还有几件', () => {
   const html = renderPlacesHtml([
     place('1in8b', { waiting: { itemKey: 'matter:x', kind: 'permission', matterId: 'aaaa0001', requestId: 'r', summary: 's', count: 2 } }),
@@ -67,6 +73,20 @@ it('点一行 = 选中并把说话筛成它;再点一次回到全部;没看过�
   expect(calls.some(c => c[1] === '/v1/matter/seen' && c[2]?.id === 'rici-m1')).toBe(true)
   row().click()
   expect(onSelect).toHaveBeenLastCalledWith(null)
+})
+
+it('坐回来:点一行记成看过这个地方;选着时它又动了再记一次;没动不重复记', async () => {
+  let data = { places: [place('rici'), place('melu')], version: 'v1' }
+  const { calls } = mount(() => data)
+  await strip!.refresh()
+  const seen = () => calls.filter(c => c[1] === '/v1/places/seen').map(c => c[2]?.key)
+  document.querySelector<HTMLButtonElement>('[data-place-key="p:rici000000000000"] .place-row')!.click()
+  expect(seen()).toEqual(['p:rici000000000000'])
+  await strip!.refresh()
+  expect(seen()).toEqual(['p:rici000000000000'])
+  data = { places: [place('rici', { updatedAt: NOW }), place('melu')], version: 'v2' }
+  await strip!.refresh()
+  expect(seen()).toEqual(['p:rici000000000000', 'p:rici000000000000'])
 })
 
 it('刷新拿到同一个选中地方、它带的 id 没变 ⇒ 不再通知说话', async () => {
@@ -155,4 +175,30 @@ it('旧 WebView 的固定菜单支持展开、Esc 和点外关闭', async () => 
   more.click()
   document.getElementById('outside')!.click()
   expect(menu.hidden).toBe(true)
+})
+
+it('宽窗置顶卡回答后越过已经在途的读取发起新刷新', async () => {
+  const waiting = place('rici', { waiting: { itemKey: 'matter:aaaa0001', kind: 'permission', matterId: 'aaaa0001', requestId: 'req-1', summary: '要删旧表吗？', count: 1 } })
+  const waitingRoot = document.createElement('div')
+  let reads = 0
+  let releaseRead: (() => void) | undefined
+  const { call } = mount(([, path]: string[]) => {
+    if (path !== '/v1/places') return { ok: true }
+    reads++
+    if (reads === 1) return { places: [waiting], version: 'before' }
+    if (reads === 2) return new Promise(resolve => { releaseRead = () => resolve({ notModified: true }) })
+    return { places: [place('rici')], version: 'after' }
+  }, { waitingRoot })
+  document.body.append(waitingRoot)
+  strip!.setWide(true)
+  await strip!.refresh()
+  expect(document.querySelector('#p .place-ask')).toBeNull()
+  const reading = strip!.refresh()
+  waitingRoot.querySelector<HTMLButtonElement>('[data-place-decision="allow"]')!.click()
+  await vi.waitFor(() => expect(call.mock.calls.some(args => args[1] === '/v1/matter/permission')).toBe(true))
+  releaseRead!()
+  await reading
+  await vi.waitFor(() => expect(waitingRoot.hidden).toBe(true))
+  expect(reads).toBe(3)
+  expect(document.querySelector('#p .place')?.getAttribute('data-waiting')).toBe('false')
 })

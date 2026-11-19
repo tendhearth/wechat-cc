@@ -101,6 +101,28 @@ describe('buildPlaces', () => {
     expect(p!.name).toBe('长名字')
   })
 
+  it('坐回来:看过这一行以后动过的优先当那一句(哪怕另有在干的);之前带回来的不再算没看过;等你的仍在最前', () => {
+    Object.assign(roots, { k1: '/w/back', k2: '/w/back', k3: '/w/back' })
+    const seen = rec('/w/back', 0, { seenAt: NOW - 30 * MIN })
+    const items = [
+      item('k1', { title: '在画第二张图', updatedAt: NOW - 40 * MIN }),
+      item('k2', { title: '收藏做好了', group: 'back', status: 'done', unseen: true, updatedAt: NOW - 10 * MIN }),
+      item('k3', { title: '旧的', group: 'back', status: 'done', unseen: true, updatedAt: NOW - 60 * MIN }),
+    ]
+    const [p] = buildPlaces(input(items, { saved: [seen] })).places
+    expect(p).toMatchObject({ line: '收藏做好了', status: 'done', alsoChanged: 0, unseen: true, moving: true })
+    const [q] = buildPlaces(input(items.filter(i => i.id !== 'k2'), { saved: [seen] })).places
+    expect(q).toMatchObject({ line: '在画第二张图', alsoChanged: 0, unseen: false })
+    const asking = item('k1', { group: 'waiting', status: 'waiting', updatedAt: NOW - 40 * MIN, waiting: { kind: 'permission', requestId: 'r', summary: '删旧表?', count: 1 } })
+    expect(buildPlaces(input([asking, items[1]!], { saved: [seen] })).places[0]).toMatchObject({ line: '删旧表?', alsoChanged: 1 })
+  })
+
+  it('没看过这一行:照每件事自己的看没看过,alsoChanged 0', () => {
+    Object.assign(roots, { l1: '/w/never' })
+    const [p] = buildPlaces(input([item('l1', { group: 'back', status: 'done', unseen: true })])).places
+    expect(p).toMatchObject({ unseen: true, alsoChanged: 0 })
+  })
+
   it('每个地方带去筛说话的 id 有上限', () => {
     const many = Array.from({ length: 5 }, (_, i) => { roots[`h${i}`] = '/w/cap'; return item(`h${i}`, { updatedAt: NOW - i }) })
     expect(buildPlaces(input(many, { maxIds: 2 })).places[0]!.matterIds).toEqual(['h0', 'h1'])

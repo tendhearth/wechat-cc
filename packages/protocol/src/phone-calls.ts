@@ -28,7 +28,7 @@ type JobsActionT = 'pause' | 'resume' | 'remove'
 
 export const PHONE_CALLS = {
   roster: { get: call('GET /v1/roster') },
-  places: { get: call('GET /v1/places') },
+  places: { get: call('GET /v1/places'), seen: call('POST /v1/places/seen', { body: t<{ key: string }>() }) },
   checkup: {
     get:call('GET /v1/checkup'),
     estimate:call('POST /v1/checkup/estimate',{body:t<{full?:boolean}>()}),

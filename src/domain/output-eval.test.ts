@@ -214,3 +214,45 @@ it('topic-recall 样本进入现有 eval 硬规则流程', () => {
   expect(result.ok).toBe(true)
   if(result.ok) expect(result.sample.kind).toBe('topic-recall')
 })
+
+describe('交办规则', () => {
+  it('notCalls 与 calls 用同样的工具名匹配', () => {
+    const rule = { notCalls: 'matter_plan' }
+    expect(checkRule(rule, reply()).ok).toBe(true)
+    expect(checkRule(rule, reply({ toolCalls: ['matter_plan_preview'] })).ok).toBe(true)
+    for (const tool of ['matter_plan', 'wechat/matter_plan', 'mcp__wechat__matter_plan']) {
+      expect(checkRule(rule, reply({ toolCalls: [tool] })).ok).toBe(false)
+    }
+    expect(parseSample({ kind: 'reply', input: { text: '点子' }, rules: [rule] }, 'idea').ok).toBe(true)
+  })
+
+  it('plansTo 不分大小写，优先用解析的名称，缺省比原始项目参数', () => {
+    const rule = { plansTo: 'RICI' }
+    const call = { title: '收藏', project: 'p-project-id', resolvedProject: 'rici', legs: [] }
+    expect(checkRule(rule, reply({ planCalls: [call] })).ok).toBe(true)
+    expect(checkRule({ plansTo: call.project }, reply({ planCalls: [call] })).ok).toBe(false)
+    expect(checkRule(rule, reply({ planCalls: [{ ...call, project: 'Rici', resolvedProject: null }] })).ok).toBe(true)
+    expect(checkRule(rule, reply({ planCalls: [{ ...call, project: null, resolvedProject: null }] })).ok).toBe(false)
+    // 被拒的交办(项目认不出 / 参数不对 / 执行者没登记)不算放到了这个项目,并把拒因带出来
+    expect(checkRule(rule, reply({ planCalls: [{ ...call, project: 'rici', resolvedProject: null, error: 'project_stale' }] }))).toMatchObject({ ok: false, detail: '交办被拒:project_stale' })
+    expect(checkRule(rule, reply({ planCalls: [{ ...call, error: 'unavailable_provider' }, call] })).ok).toBe(true)
+    expect(checkRule(rule, reply()).ok).toBe(false)
+    expect(parseSample({ kind: 'reply', input: { text: '交办' }, rules: [rule] }, 'plan').ok).toBe(true)
+  })
+
+  it('两条规则只认 reply / brief / projects-activity', () => {
+    const wrong: EvalOutput[] = [
+      { kind: 'reference', resolution: { kind: 'none' } }, { kind: 'topic', recall: null }, { kind: 'topic-recall', recall: null },
+    ]
+    for (const out of wrong) {
+      for (const rule of [{ notCalls: 'matter_plan' }, { plansTo: 'rici' }]) {
+        expect(checkRule(rule, out)).toMatchObject({ ok: false, detail: '这条规则只用于 reply / brief / projects-activity' })
+      }
+    }
+    for (const kind of ['reply', 'brief', 'projects-activity'] as const) {
+      const out: EvalOutput = { kind, finalText: '', bubbles: [], silent: false }
+      expect(checkRule({ notCalls: 'matter_plan' }, out).ok).toBe(true)
+      expect(checkRule({ plansTo: 'rici' }, out)).toMatchObject({ ok: false })
+    }
+  })
+})

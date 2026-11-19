@@ -208,3 +208,19 @@ it('五个跨项目问法用合成夹具走CLI→真eval路由→生产聚合，
  expect(d.calls).toHaveLength(5)
  expect(d.calls.every(c=>c.body.kind==='projects-activity'&&c.body.providerId===undefined)).toBe(true)
 })
+
+it('保留交办记录供硬规则和两种报告使用，包括通过的样本', async () => {
+  sample('handoff', { kind: 'reply', input: { text: '交办', tools: ['matter_plan'] }, rules: [{ plansTo: 'RICI' }] })
+  sample('idea', { kind: 'reply', input: { text: '点子' }, rules: [{ notCalls: 'matter_plan' }] })
+  const planCalls = [{ title: '收藏', project: 'p-project-id', resolvedProject: 'rici', legs: [{ executor: 'claude', brief: '增加收藏' }] }]
+  const result = await runEval(deps((_path, body) => body.text === '交办'
+    ? turn('放到 rici。', { planCalls, toolCalls: ['mcp__wechat__matter_plan'] })
+    : turn('这个点子不错。')), {})
+  expect(result.report.summary.pass).toBe(2)
+  expect(result.report.results[0]?.output).toMatchObject({ planCalls })
+  const md = readFileSync(join(result.dir, 'report.md'), 'utf8')
+  expect(md).toContain('handoff · 交办:收藏 → rici · claude')
+  expect(md).toContain('idea · 没有交办')
+  const json = JSON.parse(readFileSync(join(result.dir, 'report.json'), 'utf8')) as RunReport
+  expect(json.results[0]?.output).toMatchObject({ planCalls })
+})

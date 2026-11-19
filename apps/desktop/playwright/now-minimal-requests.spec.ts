@@ -1,6 +1,6 @@
 import {join} from 'node:path'
 import {test,expect,clickNav,WORKBENCH_ROUTES} from './fixtures'
-import {answerPlace,placeItem,placeRow,terminalPlace} from './roster-fixture'
+import {placeAnswerSurface,placeItem,placeRow,terminalPlace} from './roster-fixture'
 const task={id:'deadbeef',title:'作品集',path:'/demo/portfolio',providerId:'claude',status:'running',createdAt:1,updatedAt:2,error:null,archivedAt:null,pendingPermissionCount:1,pendingQuestionCount:0}
 for(const width of [1440,900])test(`places keep request purpose, answer in place, keyboard destination and stale reads at ${width}`,async({page,shim,shimUrl})=>{
  await page.setViewportSize({width,height:900})
@@ -30,11 +30,11 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  await expect(page.locator('#places-root .place[data-waiting="true"]')).toHaveCount(2)
  const row=placeRow(page,'portfolio')
  await expect(row).toContainText('Bash: bun run test')
- // 等批准的,在行上直接答:发给那一件的那一条。
- await row.getByRole('button',{name:'允许',exact:true}).click()
+ // 等批准的从当前窗口的应答入口发给那一件的那一条。
+ await placeAnswerSurface(page,'portfolio').getByRole('button',{name:'允许',exact:true}).click()
  await expect.poll(()=>decisions).toEqual([{id:task.id,requestId:'0f0f0f0f-0000-4000-8000-000000000001',decision:'allow'}])
  // 终端停着问:键盘能到「去回答」,打开的是那个会话。
- const answer=placeRow(page,'demo').locator('[data-place-open]')
+ const answer=placeAnswerSurface(page,'demo').locator('[data-place-open]')
  await expect(answer).toBeVisible()
  await answer.focus();await answer.press('Enter')
  const detail=width>=1080?page.locator('#roster-dock'):page.locator('dialog.wb-history-dialog')

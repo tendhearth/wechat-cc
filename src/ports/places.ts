@@ -4,4 +4,6 @@ export interface PlacesReader {
   read(scope: 'operator' | 'device'): PlacesResponseT
   move(key: string, to: number): boolean
   hide(key: string, hidden: boolean): boolean
+  /** 主人看了这一行:之后那一句先说从这以后变了什么(「坐回来」)。 */
+  seen(key: string): boolean
 }

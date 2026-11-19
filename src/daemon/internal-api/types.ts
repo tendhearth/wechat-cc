@@ -648,6 +648,7 @@ export type RouteHandler = (
     tier: UserTier
     origin: import('./token-registry').TokenOrigin
     chatId?: string
+    recordMatterPlan?: import('./token-registry').RecordMatterPlan
     /** 经令牌注册表认证的会话键,仅供绑定当前主人轮次。 */
     sessionKey?: string
     /**

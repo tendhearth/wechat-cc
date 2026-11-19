@@ -56,5 +56,6 @@ export function makePlacesReader(deps: PlacesReaderDeps): PlacesReader {
     },
     move: (key, to) => deps.store.move(key, to),
     hide: (key, hidden) => deps.store.setHidden(key, hidden),
+    seen: key => deps.store.markSeen(key, deps.roster.now?.() ?? Date.now()),
   }
 }

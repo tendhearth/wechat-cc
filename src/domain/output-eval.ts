@@ -31,6 +31,8 @@ export type EvalRule =
   | { recalls: { topic?: string; entry?: string } | null }
   /** 这一轮调过这个工具(按名字的结尾认:`wechat/topic_search`、`mcp__wechat__topic_search` 都算)。 */
   | { calls: string }
+  | { notCalls: string }
+  | { plansTo: string }
 
 export interface EvalSample {
   id: string
@@ -44,10 +46,18 @@ export interface EvalSample {
   judge?: string
 }
 
+export interface EvalPlanCall {
+  title: string
+  project: string | null
+  resolvedProject: string | null
+  legs: Array<{ executor: string; brief: string }>
+  error?: string
+}
+
 /** daemon 跑完交回来、规则要看的那部分。 */
 export type EvalOutput =
-  | { kind: 'reply' | 'brief'; finalText: string; bubbles: string[]; silent: boolean; toolCalls?: string[] }
-  | { kind: 'projects-activity'; finalText: string; bubbles: string[]; silent: boolean; toolCalls?: string[] }
+  | { kind: 'reply' | 'brief'; finalText: string; bubbles: string[]; silent: boolean; toolCalls?: string[]; planCalls?: EvalPlanCall[] }
+  | { kind: 'projects-activity'; finalText: string; bubbles: string[]; silent: boolean; toolCalls?: string[]; planCalls?: EvalPlanCall[] }
   | { kind: 'reference'; resolution: { kind: string; taskId?: string; via?: string } }
   | { kind: 'topic'; recall: TopicRecallOutput }
   | { kind: 'topic-recall'; recall: TopicRecallOutput }
@@ -135,6 +145,8 @@ function parseRule(raw: unknown, n: number): Parsed<EvalRule> {
       return { ok: true, value: { resolves: { kind: v.kind, ...(v.taskId !== undefined ? { taskId: v.taskId as string } : {}), ...(v.via !== undefined ? { via: v.via as string } : {}) } } }
     }
     case 'calls': return isNonEmptyStr(v) && /^[A-Za-z0-9_]+$/.test(v) ? { ok: true, value: { calls: v } } : bad
+    case 'notCalls': return isNonEmptyStr(v) && /^[A-Za-z0-9_]+$/.test(v) ? { ok: true, value: { notCalls: v } } : bad
+    case 'plansTo': return isNonEmptyStr(v) ? { ok: true, value: { plansTo: v } } : bad
     case 'recalls': {
       if (v === null) return { ok: true, value: { recalls: null } }
       if (!isObj(v) || (v.topic === undefined && v.entry === undefined)) return bad
@@ -229,6 +241,8 @@ function ruleLabel(r: EvalRule): string {
   if ('lastLine' in r) return `lastLine 「${r.lastLine}」`
   if ('lines' in r) return `lines ${r.lines[0]}–${r.lines[1]}`
   if ('calls' in r) return `calls ${r.calls}`
+  if ('notCalls' in r) return `notCalls ${r.notCalls}`
+  if ('plansTo' in r) return `plansTo 「${r.plansTo}」`
   if ('recalls' in r) return r.recalls === null ? 'recalls 无' : `recalls${r.recalls.topic ? ` 话题 ${r.recalls.topic}` : ''}${r.recalls.entry ? ` 条目 ${r.recalls.entry}` : ''}`
   return `resolves ${r.resolves.kind}${r.resolves.taskId ? ` ${r.resolves.taskId}` : ''}${r.resolves.via ? ` via ${r.resolves.via}` : ''}`
 }
@@ -255,10 +269,23 @@ export function checkRule(r: EvalRule, out: EvalOutput): RuleResult {
       && (r.recalls.entry === undefined || got.entryIds.includes(r.recalls.entry))
     return { rule, ok, detail }
   }
-  if (out.kind === 'reference' || (out.kind === 'topic' || out.kind === 'topic-recall')) return { rule, ok: false, detail: '这条规则只用于 reply / brief' }
-  if ('calls' in r) {
+  if (out.kind === 'reference' || out.kind === 'topic' || out.kind === 'topic-recall') {
+    const detail = 'notCalls' in r || 'plansTo' in r ? '这条规则只用于 reply / brief / projects-activity' : '这条规则只用于 reply / brief'
+    return { rule, ok: false, detail }
+  }
+  if ('plansTo' in r) {
+    const project = r.plansTo.toLowerCase()
+    // 被记录器拒掉的那次(参数不对 / 项目认不出 / 执行者没登记)留在报告里,但不算「放到了这个项目」(独立评审)
+    const calls = out.planCalls ?? []
+    const ok = calls.some(call => !call.error && (call.resolvedProject ?? call.project)?.toLowerCase() === project)
+    const failed = calls.filter(call => call.error).map(call => call.error)
+    return { rule, ok, ...(!ok && failed.length ? { detail: `交办被拒:${failed.join(', ')}` } : {}) }
+  }
+  if ('calls' in r || 'notCalls' in r) {
     const calls = out.toolCalls ?? []
-    const ok = calls.some(c => c === r.calls || c.endsWith(`/${r.calls}`) || c.endsWith(`__${r.calls}`))
+    const name = 'calls' in r ? r.calls : r.notCalls
+    const called = calls.some(c => c === name || c.endsWith(`/${name}`) || c.endsWith(`__${name}`))
+    const ok = 'calls' in r ? called : !called
     return { rule, ok, detail: calls.length ? `调过 ${calls.join(', ')}` : '一个工具都没调' }
   }
   const t = out.finalText
@@ -382,6 +409,17 @@ export function renderReportMd(report: RunReport, diff: RunDiff): string {
     if (diff.added.length) out.push(`## 新样本:${diff.added.length}`, '', ...diff.added.map(id => `- ${id}`), '')
     if (diff.missing.length) out.push(`## 这次没跑的(上次有):${diff.missing.length}`, '', ...diff.missing.map(id => `- ${id}`), '')
   }
+  out.push('## 交办记录', '')
+  for (const { id, output } of report.results) {
+    const calls = output && 'planCalls' in output ? output.planCalls ?? [] : []
+    const labels = calls.map(call => {
+      const project = call.resolvedProject ?? call.project ?? '未指定项目'
+      const executors = call.legs.map(leg => leg.executor).join('、')
+      return `${call.title || '未提供标题'} → ${project} · ${executors}${call.error ? `（${call.error}）` : ''}`.replace(/\s+/g, ' ')
+    })
+    out.push(`- ${id} · ${labels.length ? `交办:${labels.join(' / ')}` : '没有交办'}`)
+  }
+  out.push('')
   const bad = report.results.filter(r => r.status !== 'pass')
   if (bad.length) {
     out.push(`## 不过 / 出错:${bad.length}`, '')

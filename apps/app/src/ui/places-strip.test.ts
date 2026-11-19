@@ -32,9 +32,25 @@ it('一个地方一行;在等你的有点;点一行选中再点取消;「›」�
  await act(()=>ui.byId('place-row-1').click())
  expect(onSelect).toHaveBeenLastCalledWith(null)
  await act(()=>ui.byId('place-open-0').click())
- expect(onOpen).toHaveBeenCalledWith(`/matter/${IDS.portfolio}`)
+ expect(onOpen).toHaveBeenCalledWith(`/matter/${IDS.portfolio}`,expect.objectContaining({name:'portfolio'}))
  await act(()=>ui.byId('place-open-1').click())
- expect(onOpen).toHaveBeenLastCalledWith(`/matter/${IDS.trip}`)
+ expect(onOpen).toHaveBeenLastCalledWith(`/matter/${IDS.trip}`,expect.objectContaining({name:'trip'}))
+})
+
+function SeenHarness(){
+ const places=usePlaces()
+ return createElement(PlacesStrip,{places:places.places,stale:places.stale,selected:null,onSelect:(p:PlaceT|null)=>{if(p)places.seen(p)},onOpen:(_h:string,p:PlaceT)=>places.seen(p)})
+}
+
+it('坐回来:点一行 / 从它打开一件 ⇒ 记成看过这个地方;同一时刻不重复记',async()=>{
+ const demo=makeDemoBackend(),placeSeen=vi.fn(async()=>{}),first=demo.places!()
+ const ui=await mount(withProviders(createElement(SeenHarness),{backend:{...demo,places:()=>first,placeSeen}}));await flush()
+ expect(ui.container.textContent).toContain('另有 1 件也动过')
+ await act(()=>ui.byId('place-row-1').click());await flush()
+ await act(()=>ui.byId('place-open-1').click());await flush()
+ expect(placeSeen.mock.calls.map(c=>(c as unknown[])[0])).toHaveLength(1)
+ await act(()=>ui.byId('place-row-2').click());await flush()
+ expect(placeSeen).toHaveBeenCalledTimes(2)
 })
 
 it('连不上:保留上一次的行,不亮「在等你」,说一句',async()=>{

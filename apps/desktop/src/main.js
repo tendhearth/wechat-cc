@@ -3,6 +3,7 @@
 import { setDockedMatter } from './modules/conversation-matters.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
+import { deskDate } from './modules/desk-page.js'
 import { mountPlacesStrip } from './modules/places-strip.js'
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
 import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
@@ -197,6 +198,11 @@ function renderRail() {
   const line = nowStatusLine(lastDaemon, lastPresence)
   const dot = document.getElementById('topbar-presence-dot'); if (dot) dot.className = `dot ${line.cls}`
   const label = document.getElementById('topbar-presence'); if (label) label.textContent = line.cls === 'ok' ? 'CC 在家' : line.text
+  const deskLabel = document.getElementById('desk-cc-presence')
+  const situation = document.getElementById('desk-cc-situation')
+  const stale = situation?.hasAttribute('data-stale')
+  if (deskLabel) deskLabel.textContent = line.cls === 'ok' ? (stale ? '家里的电脑暂时连不上' : 'CC 在家') : line.text
+  if (situation) situation.hidden = line.cls !== 'ok' || !situation.textContent || stale === true
   const cc = document.getElementById('topbar-cc'); if (cc) cc.dataset.cc = lastPresence?.presence === 'down' || !lastPresence ? 'away' : 'here'
 }
 presencePoller.subscribe(p => { lastPresence = p; renderRail() })
@@ -715,6 +721,13 @@ function switchPane(name) {
   if(name==='workbench'&&rosterDock?.current())rosterDock.close()
   document.body.dataset.pane = focusConversation ? "overview" : name
   reflectTopbarWaiting()
+  if (document.documentElement.hasAttribute('data-desk-wide')) {
+    document.getElementById('roster-aside')?.removeAttribute('data-open')
+    document.getElementById('topbar-roster')?.setAttribute('aria-expanded', 'false')
+  }
+  const search = document.getElementById('topbar-search')
+  if (name === 'workbench') search?.setAttribute('aria-current', 'page')
+  else search?.removeAttribute('aria-current')
   if (focusConversation) {memoryTopics?.close();name = "overview"}
   // 连接浮层只在原地看一眼:任何一次导航都把它收起。
   document.querySelector(".cc-home-details")?.removeAttribute("open")
@@ -741,6 +754,8 @@ function switchPane(name) {
       ? backstagePanes.has(name)
       : htmlEl.dataset.pane === name || (name === "workbench" && htmlEl.dataset.pane === "overview")
     htmlEl.classList.toggle("active", hit && !htmlEl.classList.contains("disabled"))
+    if (hit && htmlEl.id !== 'topbar-cc') htmlEl.setAttribute('aria-current', 'page')
+    else if (htmlEl.id !== 'topbar-cc') htmlEl.removeAttribute('aria-current')
   })
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
@@ -933,10 +948,13 @@ function wireEvents() {
   })
   // `data-tauri-drag-region` alone is not reliable with the macOS overlay
   // titlebar in every Tauri/WebKit combination. Explicitly start a native
-  // window drag when the user presses the transparent frame handles.
+  // window drag when the user presses a drag region.
+  // 两栏的标题条是嵌套的拖拽区,里面还有按钮:只认按在拖拽区本身上的那一下
+  //(按钮照常点);外层的拖拽区看到的 target 不是自己,所以一下只起一次拖拽。
+  // 不拦冒泡:Tauri 自己挂在 document 上的那一份(双击放大)照旧收得到。
   document.querySelectorAll("[data-tauri-drag-region]").forEach(region => {
     region.addEventListener("mousedown", event => {
-      if (!(event instanceof MouseEvent) || event.button !== 0) return
+      if (!(event instanceof MouseEvent) || event.button !== 0 || event.target !== region) return
       const currentWindow = /** @type {any} */ (window).__TAURI__?.window?.getCurrentWindow?.()
       if (!currentWindow?.startDragging) return
       event.preventDefault()
@@ -1690,12 +1708,80 @@ function showDevBannerIfShim() {
 
 /** 全局页头的下沿写进 --topbar-bottom,全屏事项层从这里开始,不被页头盖住返回键。 */
 function trackTopbarBottom() {
-  const bar = document.getElementById('dash-global-rail')
-  if (!bar) return
-  const write = () => document.documentElement.style.setProperty('--topbar-bottom', `${Math.round(bar.getBoundingClientRect().bottom)}px`)
+  const heading = document.querySelector('.desk-heading')
+  if (!dashRail || !heading) return
+  const write = () => {
+    const bar = document.documentElement.hasAttribute('data-desk-wide') ? heading : dashRail
+    if (bar) document.documentElement.style.setProperty('--topbar-bottom', `${Math.round(bar.getBoundingClientRect().bottom)}px`)
+  }
   write()
-  if (typeof ResizeObserver === 'function') new ResizeObserver(write).observe(bar)
+  if (typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(write)
+    observer.observe(dashRail)
+    observer.observe(heading)
+  }
   window.addEventListener('resize', write)
+}
+
+/** @param {ReturnType<typeof mountPlacesStrip>} strip */
+function mountDeskLayout(strip) {
+  const layout = window.matchMedia('(min-width: 900px)')
+  const places = document.querySelector('.places-strip')
+  const overview = document.querySelector('.cc-now-pane')
+  const nav = dashRail?.querySelector('nav')
+  const more = nav?.querySelector('.topbar-more')
+  const moreItems = more?.querySelector('div')
+  const roster = document.getElementById('topbar-roster')
+  const search = document.getElementById('topbar-search')
+  const scroll = document.getElementById('converse-scroll')
+  if (!places || !overview || !nav || !more || !moreItems || !roster || !search || !scroll) return
+
+  const today = document.getElementById('desk-today')
+  let midnightTimer = 0
+  const updateDate = () => {
+    window.clearTimeout(midnightTimer)
+    if (!layout.matches || !today) return
+    const now = new Date()
+    today.textContent = deskDate(now)
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+    midnightTimer = window.setTimeout(updateDate, midnight.getTime() - now.getTime())
+  }
+  const apply = () => {
+    const { matches: wide } = layout
+    const focus = document.activeElement
+    const top = scroll.getBoundingClientRect().top
+    const anchor = Array.from(scroll.children).find(row => row.hasAttribute('data-converse-message') && row.getBoundingClientRect().bottom > top)
+    const offset = anchor ? anchor.getBoundingClientRect().top - top : 0
+    const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 1
+    const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
+    document.documentElement.toggleAttribute('data-desk-wide', wide)
+    if (wide) {
+      nav.before(places)
+      more.before(search)
+      moreItems.prepend(roster)
+    } else {
+      overview.prepend(places)
+      nav.prepend(roster, search)
+      const aside = document.getElementById('roster-aside')
+      aside?.removeAttribute('data-open')
+      roster.setAttribute('aria-expanded', 'false')
+    }
+    updateDate()
+    strip.setWide(wide)
+    const placeList = document.getElementById('places-root')
+    if (placeList) placeList.scrollTop = placeTop
+    if (focus instanceof HTMLElement && focus.isConnected && focus.getClientRects().length) focus.focus({ preventScroll: true })
+    if (atBottom) scroll.scrollTop = scroll.scrollHeight
+    else if (anchor) scroll.scrollTop += anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top - offset
+  }
+  if (layout.matches) apply()
+  layout.addEventListener('change', apply)
+  document.addEventListener('visibilitychange', updateDate)
+  window.addEventListener('pagehide', () => {
+    layout.removeEventListener('change', apply)
+    document.removeEventListener('visibilitychange', updateDate)
+    window.clearTimeout(midnightTimer)
+  }, { once: true })
 }
 
 async function boot() {
@@ -1741,10 +1827,27 @@ async function boot() {
   // 正面上半「现在」:一个地方一行;点一行把说话筛成那个地方(设计稿 2026-11-18-cc-two-sides-design.md §3–4)。
   const placesRoot=document.getElementById('places-root')
   if(placesRoot){
-    const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,
+    const waitingRoot = document.getElementById('desk-waiting')
+    const situation = document.getElementById('desk-cc-situation')
+    const clear = document.getElementById('desk-place-clear')
+    const homeButton = document.getElementById('topbar-cc')
+    const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,waitingRoot:waitingRoot ?? undefined,
+      onCurrent: place => {
+        if (clear) {
+          clear.hidden = !place
+          clear.textContent = place ? `只看 ${place.name} · 回到全部` : ''
+        }
+        homeButton?.toggleAttribute('data-place-selected', !!place)
+      },
+      onSituation: (text, stale) => {
+        if (!situation) return
+        situation.textContent = text
+        situation.toggleAttribute('data-stale', stale)
+        renderRail()
+      },
       onSelect:place=>setConversationPlace(place?{name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
       onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id),
-      // 切到别的页面时「地方」看不见:有事等你,顶栏的 CC 上亮一个点。
+      // 非首页时沿用 CC 的等待提示点。
       onPlaces:places=>{
         updateConversationPlaces(places)
         const count = places.reduce((sum,p)=>sum+(p.waiting?.count??0),0)
@@ -1755,11 +1858,24 @@ async function boot() {
         reflectTopbarWaiting()
       }})
     connectConversationPlaces(strip)
+    mountDeskLayout(strip)
+    clear?.addEventListener('click', () => {
+      strip.clear()
+      document.getElementById('converse-input')?.focus()
+    })
+    homeButton?.addEventListener('click', () => {
+      if (document.documentElement.hasAttribute('data-desk-wide')) strip.clear()
+    })
+    placesRoot.addEventListener('click', event => {
+      if (document.documentElement.hasAttribute('data-desk-wide') && document.body.dataset.pane !== 'overview'
+        && event.target instanceof Element && event.target.closest('.place-row')) switchPane('overview')
+    }, true)
     window.addEventListener('pagehide',()=>strip.destroy(),{once:true})
   }
   document.getElementById('topbar-roster')?.addEventListener('click',()=>{
     const aside=document.getElementById('roster-aside'),button=document.getElementById('topbar-roster')
     const open=aside?.toggleAttribute('data-open');button?.setAttribute('aria-expanded',String(!!open))
+    if (open) button?.closest('details')?.removeAttribute('open')
   })
   startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop

@@ -937,6 +937,8 @@ describe('topic_search 那一段(话题 2026-11-05)', () => {
     expect(topicSearchSection()).toContain('先用 `topic_search`')
     expect(topicSearchSection()).toContain('说出口的不都是交代')
     expect(topicSearchSection()).toContain('放到了哪个项目')
+    expect(topicSearchSection()).toContain('先分清是点子还是交办，再决定动不动手：口气里带「以后」「可以」「要不」「也许」的是点子，哪怕说的是某个项目里很具体的东西（「rici 以后可以加个收藏」），也不调 matter_plan，记下、问一句要不要现在做。直接说要做什么、没有这类口气的（「rici 加个收藏」「设置页加个导出按钮」「把这个修了」）就是交办，用 matter_plan，不用再问要不要现在做；交办的活别自己在对话里翻那个项目的代码。')
+    expect(topicSearchSection()).toContain('回主人时别说工具名、内部编号、绝对路径或「执行棒」。交办没成，照工具返回的原因用平常话说卡在哪、主人可以怎么办。项目登没登记、执行者能不能用，只有调了 matter_plan 才知道：没调就不要说「没建成」「还没登记」。')
     expect(on.replace(`\n\n${topicSearchSection()}`, '')).toBe(base)
   })
 })

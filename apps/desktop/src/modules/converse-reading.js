@@ -1,6 +1,8 @@
 // @ts-check
 // Keep already-read messages in the DOM: polling must not erase selection,
 // keyboard focus, disclosure state or horizontal code scrolling.
+import { deskDate, messageDay } from './desk-page.js'
+
 /** @typedef {import('./converse.js').ConverseMsg} Message */
 /** @typedef {{message:Message,signature:string,node:Element}} Row */
 /** @typedef {{rows:Map<number,Row>,unread:boolean,following:boolean,lastTop:number,empty:string}} ReadingState */
@@ -60,6 +62,8 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
   /** @type {Map<number,Row>} */
   const next=new Map()
   let cursor=scroll.firstElementChild,newReply=false
+  let previousRole = ''
+  let previousDay = null
   for(const message of messages){
     const previous=state.rows.get(message.id)
     const signature=JSON.stringify([message.role,message.text,message.pending,message.speaker,message.provider,message.replyParts,message.attachments,message.attachmentSourceIndexes,message.narration,message.projection,decoration?.(message)])
@@ -73,6 +77,25 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
       row={message:{...message},signature,node}
     }
     if(!row)continue
+    const day = messageDay(message.at)
+    if (day && previousDay && day.toDateString() !== previousDay.toDateString()) {
+      const label = deskDate(day)
+      if (!cursor?.classList.contains('desk-message-date')) {
+        const divider = scroll.ownerDocument.createElement('time')
+        divider.className = 'desk-message-date'
+        scroll.insertBefore(divider, cursor)
+        cursor = divider
+      }
+      if (cursor.textContent !== label) cursor.textContent = label
+      cursor = cursor.nextElementSibling
+    } else if (cursor?.classList.contains('desk-message-date')) {
+      const divider = cursor
+      cursor = divider.nextElementSibling
+      divider.remove()
+    }
+    previousDay = day
+    row.node.toggleAttribute('data-same-speaker', message.role === previousRole)
+    previousRole = message.role
     if(row.node!==cursor)scroll.insertBefore(row.node,cursor)
     cursor=row.node.nextElementSibling
     next.set(message.id,row)

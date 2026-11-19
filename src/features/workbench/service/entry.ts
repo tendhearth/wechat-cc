@@ -63,10 +63,19 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       return[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,available:!reason,...(reason?{unavailableReason:{code:reason,message:p.opts.workbench.unavailableReason??(reason==='unattended_ack_required'?'请先在电脑上确认免审执行。':executionFailureMessage(reason))}}:{}),capabilities:structuredClone(p.opts.workbench)}]
     })
   }
+  const defaultProviderFor=(providers:EntryOptions['providers'])=>providers.find(p=>p.id===ctx.deps.defaultProvider&&p.available)?.id??null
+  const planExecutors=()=>{
+    const providers=entryProviders()
+    return {
+      available:providers.filter(p=>p.available).map(p=>p.id),
+      defaultProviderId:defaultProviderFor(providers),
+      defaultUnavailableReason:providers.find(p=>p.id===ctx.deps.defaultProvider)?.unavailableReason,
+    }
+  }
   function entryOptions(context:EntryContext):EntryOptions {
     if(!context.ownerKey||context.ownerKey!==ctx.deps.ownerChatId())return{status:'needs_connection',reason:{code:'invalid_entry_owner',message:'请先在电脑上配置主人身份。'},defaultProviderId:null,providers:[],projects:[]}
     const providers=entryProviders()
-    const defaultProviderId=providers.find(p=>p.id===ctx.deps.defaultProvider&&p.available)?.id??null
+    const defaultProviderId=defaultProviderFor(providers)
     return{status:defaultProviderId?'ready':'needs_connection',...(!defaultProviderId?{reason:{code:'unavailable_provider',message:'请在电脑上连接默认执行者，或在更多选项中选择已连接的执行者。'}}:{}),defaultProviderId,providers,projects:projects()}
   }
   /** 独立工作区的位置:状态目录下,按项目编号 + 预约里的随机编号(前 8 位)。 */
@@ -202,6 +211,6 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     if(!project)mkdirSync(path,{recursive:true,mode:0o700})
     return modelCatalog(input.providerId,path)
   }
-  return { managed,requireEntryOwner,entryResult, entryOptions,availableExecutors:()=>entryProviders().filter(p=>p.available).map(p=>p.id),entryReceipt,createEntry,entryModels }
+  return { managed,requireEntryOwner,entryResult, entryOptions,availableExecutors:()=>planExecutors().available,planExecutors,entryReceipt,createEntry,entryModels }
 }
 export type EntryDomain = ReturnType<typeof makeEntryDomain>

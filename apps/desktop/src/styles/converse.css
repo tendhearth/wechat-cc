@@ -19,7 +19,8 @@
 .converse-msg-cc { justify-content: flex-start; }
 .converse-reply-parts { display:flex; flex-direction:column; gap:var(--th-space-xl); min-width:0; }
 .converse-msg.has-reply-avatar { align-items:flex-start; }
-.converse-msg > .th-agents { margin-top:4px; }
+.converse-speaker { display: contents; }
+.converse-speaker > .th-agents { margin-top:4px; }
 .converse-msg.has-reply-avatar > .converse-cc-body { flex:1; }
 .converse-msg.has-reply-avatar > .converse-bubble { flex:1; }
 .converse-bubble { min-width:0; max-width: 85%; padding: 4px 0; font-size: var(--th-message-user-role); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
@@ -223,8 +224,8 @@
 .roster-relay { padding:0 16px 12px; color:var(--th-ink-soft); font-size:var(--th-size-small); }
 #converse-search-open { display:none; }
 .converse-compose .conversation-add { position:relative; align-self:center; }
-.converse-compose .conversation-add > button { display:none; }
-.converse-compose .conversation-add[open] > button { display:block; }
+.converse-compose .conversation-add-items { display: contents; }
+.converse-compose .conversation-add:not([open]) .conversation-add-items { display: none; }
 .converse-compose .conversation-add summary { list-style:none; cursor:pointer; }
 
 .roster-direct-heading, .roster-relay { display:none; }

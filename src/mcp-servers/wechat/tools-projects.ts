@@ -147,10 +147,11 @@ export function registerMatterShareTool(server:McpServer,client:InternalApiClien
 }
 
 export function registerMatterPlanTool(server:McpServer,client:InternalApiClient):void {
+  const {requestId:_requestId,legs,...inputSchema}=MatterPlanRequest.shape
   server.registerTool('matter_plan',{
     title:'交办一件事',
-    description:'【主人当前对话】主人在对话里把一件事交给执行者去做时用。一位执行者就填一棒，多位先后做就按顺序填几棒。主人只是在问问题、让 CC 自己答，或者是一次性的咨询 delegate 时，不用这个工具。project 只填项目名、项目编号或已登记路径（例如 project: relay-lab）；不填则用当前对话所在的已登记项目。不要编 projectId，不要填 requestId。传标题和 1–6 个按顺序排列的 {executor,brief}。isolation: worktree 可选，默认当前项目目录；base 可选，默认项目分支。target 保留兼容旧调用。先用同一张卡给主人确认谁、做什么、顺序；批准后一棒按普通交办开工和回报，不建拆法；多棒则第一棒开工，后面按记录本自动接力，失败或提问就停。接力时新执行者只收到记录本，不收到上一棒的原始对话。',
-    inputSchema:{...MatterPlanRequest.omit({requestId:true,legs:true}).shape,legs:z.array(MatterPlanRequest.shape.legs.element)},
+    description:'【主人当前对话】主人在对话里把一件事交给执行者去做时用。一位执行者就填一棒，多位先后做就按顺序填几棒。主人只是在问问题、让 CC 自己答，或者是一次性的咨询 delegate 时，不用这个工具。project 只填项目名、项目编号或已登记路径（例如 project: relay-lab）；不填则用当前对话所在的已登记项目。不要编 projectId，不要填 requestId。传标题和 1–6 个按顺序排列的 {executor,brief}。只有一棒时，主人没点名谁来做就不要填 executor，CC 用主人默认的执行者；点了名才填，填登记的 id（例如 codex、claude）。不要填 CC。多棒时每棒都要填 executor。isolation: worktree 可选，默认当前项目目录；base 可选，默认项目分支。target 保留兼容旧调用。先用同一张卡给主人确认谁、做什么、顺序；批准后一棒按普通交办开工和回报，不建拆法；多棒则第一棒开工，后面按记录本自动接力，失败或提问就停。接力时新执行者只收到记录本，不收到上一棒的原始对话。',
+    inputSchema:{...inputSchema,legs:z.array(legs.element)},
   },async args=>{
     try{return {content:[{type:'text',text:JSON.stringify(await client.request('POST','/v1/matter/plan',args))}]}}
     catch(error){return relayFailure(error,'plan')}

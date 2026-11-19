@@ -13,7 +13,7 @@ import { useTheme } from './useTheme'
 
 export function PlacesStrip({ places, stale, selected, onSelect, onOpen, now = Date.now() }: {
   places: PlaceT[]; stale: boolean; selected: string | null
-  onSelect: (place: PlaceT | null) => void; onOpen: (href: string) => void; now?: number
+  onSelect: (place: PlaceT | null) => void; onOpen: (href: string, place: PlaceT) => void; now?: number
 }) {
   const lang = useLang(), { c } = useTheme(), zh = lang === 'zh-Hans'
   if (!places.length) return null
@@ -33,7 +33,7 @@ export function PlacesStrip({ places, stale, selected, onSelect, onOpen, now = D
             <Txt role="small" tone={strong || p.moving ? 'ink' : 'inkSoft'} numberOfLines={1} content="user" style={{ flex: 1 }}>{line}</Txt>
             <Txt role="caption" tone="inkSoft">{placeTime(p, now, lang)}</Txt>
           </Pressable>
-          {href ? <Pressable testID={`place-open-${i}`} accessibilityRole="button" accessibilityLabel={zh ? `打开 ${p.name} 那一件` : `Open ${p.name}`} onPress={() => onOpen(href)}
+          {href ? <Pressable testID={`place-open-${i}`} accessibilityRole="button" accessibilityLabel={zh ? `打开 ${p.name} 那一件` : `Open ${p.name}`} onPress={() => onOpen(href, p)}
             style={{ minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center' }}><Txt role="item" tone="inkSoft">›</Txt></Pressable> : <View style={{ width: 44 }} />}
         </View>
       })}
