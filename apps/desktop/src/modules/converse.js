@@ -598,6 +598,8 @@ const STARTERS = [
 /** @param {HTMLTextAreaElement} input */
 function resizeDraft(input) {
   if (input.hidden || !input.clientWidth) return
+  // 空草稿回到样式表的一行高，别让占位文字或上一次的行高留下来。
+  if (!input.value) { input.style.removeProperty('height'); return }
   input.style.height = 'auto'
   input.style.height = `${input.scrollHeight}px`
 }

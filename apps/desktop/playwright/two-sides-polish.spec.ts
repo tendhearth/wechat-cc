@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
 import { askingPlace, placeItem, placeRow, routePlaces } from './roster-fixture'
 import { PRESENCE_OK } from './presence-topic'
 
@@ -141,29 +141,36 @@ test('窗口底部空间不足时菜单向上翻，实际末行仍能操作', as
 })
 
 for (const width of [900, 520]) {
-  test(`答复按钮与现状对齐，窗口宽 ${width}px`, async ({ page, shimUrl }) => {
+  test(`答复按钮的位置，窗口宽 ${width}px`, async ({ page, shimUrl }) => {
     const line = '要不要先把这份笔记里提到的旧菜谱保留一份，再继续整理剩下的记录？'.repeat(5)
     await page.setViewportSize({ width, height: 800 })
     await routePlaces(page, [askingPlace('rici', 'deadbeef', line)])
     await page.goto(shimUrl)
+    await expect(page.locator('main.dashboard')).toBeVisible()
     const row = placeRow(page, 'rici')
     const button = row.getByRole('button', { name: '去回答' })
     const status = row.locator('.place-line')
     await expect(status).toHaveText(line)
+    await expect(button).toBeVisible()
     const [ask, sentence, name, time] = await Promise.all(
       [button, status, row.locator('.place-name'), row.locator('.place-time')].map(item => item.boundingBox()),
     )
-    expect(ask!.height).toBe(44)
-    expect(ask!.x).toBeCloseTo(sentence!.x, 0)
-    expect(ask!.y).toBeGreaterThan(sentence!.y)
-    if (width < 560) {
+    if (width >= 760) {
+      // 宽窗口：按钮跟在同一行末尾（时间之后），行不被撑成两层。
+      expect(ask!.height).toBeGreaterThanOrEqual(32)
+      expect(Math.abs((ask!.y + ask!.height / 2) - (sentence!.y + sentence!.height / 2))).toBeLessThan(6)
+      expect(ask!.x).toBeGreaterThan(time!.x + time!.width)
+      expect(sentence!.x).toBeGreaterThan(name!.x + name!.width)
+      await expect(status).toHaveCSS('text-overflow', 'ellipsis')
+    } else {
+      // 窄窗口：按钮在第二层，左缘对齐现状那一列；现状两行再省略。
+      expect(ask!.height).toBe(44)
+      expect(ask!.x).toBeCloseTo(sentence!.x, 0)
+      expect(ask!.y).toBeGreaterThan(sentence!.y)
       expect(sentence!.y).toBeGreaterThan(name!.y + name!.height)
       expect(sentence!.y).toBeGreaterThan(time!.y)
       expect(sentence!.width).toBeGreaterThan(220)
       await expect(status).toHaveCSS('-webkit-line-clamp', '2')
-    } else {
-      expect(sentence!.x).toBeGreaterThan(name!.x + name!.width)
-      await expect(status).toHaveCSS('text-overflow', 'ellipsis')
     }
   })
 }
@@ -224,6 +231,9 @@ test('审批等待不再给头像叠感叹号，连接异常仍会显示', async
   await expect(stage).toHaveAttribute('data-behavior', 'permission')
   await expect(mark).toHaveCSS('visibility', 'hidden')
   presence = 'degraded'
+  // 在家状态 20 秒轮询一次；切走再回到说话页会立即重读。
+  await clickNav(page, 'workbench')
+  await clickNav(page, 'overview')
   await expect(page.locator('#topbar-presence')).toHaveText('CC 在家 · 有功能没起来', { timeout: 15_000 })
   await expect(mark).toBeVisible()
 })

@@ -7,7 +7,7 @@
 }
 .places-root { max-height:min(253px, 38vh); overflow:auto; border-bottom:1px solid var(--th-hair); background:var(--th-rail); }
 .places-list { list-style:none; margin:0; padding:0; }
-.place { --place-name-width:clamp(64px, 12vw, 132px); position:relative; }
+.place { --place-name-width:clamp(64px, 8vw, 104px); position:relative; }
 .place:hover { background:color-mix(in srgb, var(--th-paper) 48%, var(--th-rail)); }
 .place[data-selected="true"] { background:var(--th-paper); }
 .place-row {
@@ -20,10 +20,11 @@
 .place-dot { width:8px; height:8px; border-radius:50%; }
 .place[data-waiting="true"] .place-dot { background:var(--th-accent); }
 .place-name, .place-line { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.place-name { font-weight:500; color:var(--th-ink-soft); }
+.place-name { font-weight:500; color:var(--th-ink); }
 .place-line { color:var(--th-ink-soft); }
-.place[data-selected="true"] :is(.place-name,.place-line), .place[data-moving="true"] .place-line { color:var(--th-ink); }
-.place[data-unseen="true"] :is(.place-name,.place-line) { color:var(--th-ink); font-weight:500; }
+/* 在动、选中的是墨色；等你的、你没看过的再加一点字重（原型：圆点 / 加粗 / 时间三样）。 */
+.place[data-selected="true"] .place-line, .place[data-moving="true"] .place-line { color:var(--th-ink); }
+.place:is([data-waiting="true"],[data-unseen="true"]) .place-line { color:var(--th-ink); font-weight:500; }
 .place-time { color:var(--th-ink-soft); font-size:var(--th-size-small); white-space:nowrap; }
 .place-more {
   position:absolute; right:var(--th-space-s); top:5px; display:grid; place-items:center; width:36px; height:36px;
@@ -56,6 +57,13 @@
 .place-ask small { color:var(--th-ink-soft); font-size:var(--th-size-small); }
 .places-empty, .places-stale { margin:0; padding:var(--th-space-m) var(--th-space-l); color:var(--th-ink-soft); font-size:var(--th-size-small); }
 .places-stale { border-bottom:1px solid var(--th-hair); }
+/* 宽窗口：要你答的按钮跟在同一行末尾，一行一件事，条子不被按钮撑高。 */
+@media (min-width: 760px) {
+  .place[data-waiting="true"] { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; }
+  .place[data-waiting="true"] .place-row { grid-column:1; grid-row:1; padding-right:var(--th-space-m); }
+  .place[data-waiting="true"] .place-ask { grid-column:2; grid-row:1; flex-wrap:nowrap; padding:0 52px 0 0; }
+  .place-ask button { min-height:32px; }
+}
 @media (max-width: 559.98px) {
   .place-row { grid-template-columns:10px minmax(0,1fr) auto; row-gap:4px; padding-block:var(--th-space-s); }
   .place-time { grid-column:3; grid-row:1; }
