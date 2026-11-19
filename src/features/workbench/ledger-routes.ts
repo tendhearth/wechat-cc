@@ -1,6 +1,7 @@
 import {workbenchErrorHttp,matterToolFailure} from '../../../packages/protocol/src/workbench-errors'
 import {ownerLedgerCaller,ownerLedgerConversation} from '../../lib/matter-ledger-access'
 import type {WorkbenchService} from './service'
+import {RegisteredProjectDispatchError} from './service/ledger'
 import type {RouteTable} from '../../daemon/internal-api/types'
 import {PlanInputError,type PlanCaller,type PlanConversation} from '../../adapters/workbench/matter-plan-input'
 import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
@@ -22,7 +23,9 @@ export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:(
         const code=error instanceof Error?error.message:''
         const details=error instanceof PlanInputError?error:undefined
         const executors=details?details.executors:code==='unavailable_provider'?d.workbench.availableExecutors():undefined
-        return {status:code==='matter_ledger_forbidden'?403:409,body:matterToolFailure(code,approved,'plan',details?.projects,executors,details?.defaultUnavailableMessage,details?.candidateNames)}
+        const body=matterToolFailure(code,approved,'plan',details?.projects,executors,details?.defaultUnavailableMessage,details?.candidateNames)
+        return {status:code==='matter_ledger_forbidden'?403:409,
+          body:error instanceof RegisteredProjectDispatchError?{...body,projectRegistered:true,message:`项目已经登记。${body.message}`}:body}
       }
     },
     'GET /v1/matter/context':async(q,_b,c)=>{

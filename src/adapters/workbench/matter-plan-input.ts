@@ -4,6 +4,7 @@ import {basename} from 'node:path'
 import type {z} from 'zod'
 import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
 import type {ProjectCatalogEntry} from './project-catalog'
+import {projectRegistrationId} from './project-catalog'
 import {validateProjectRegistration} from './project-registration'
 import type {PlaceRecord} from '../../domain/places'
 import type {EntryTarget} from './task-entry'
@@ -40,7 +41,7 @@ export function resolvePlanLegs(input:MatterPlanInput,executors:()=>PlanExecutor
 const canonical=(path:string)=>{try{return realpathSync(path)}catch{return null}}
 
 /** The catalog takes priority. Only a stored place can supply an unregistered directory. */
-export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogEntry[],path?:string,places:()=>readonly PlanPlace[]=()=>[]):PlanTarget {
+export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogEntry[],path?:string,places:()=>readonly PlanPlace[]=()=>[],ownerChatId=''):PlanTarget {
   const fail=(code:string):never=>{throw new PlanInputError(code,projects)}
   const target=input.target
   if(input.project!==undefined&&target!==undefined)return fail('invalid_target')
@@ -80,8 +81,8 @@ export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogE
     if(error instanceof Error&&error.message==='invalid_path')throw Error('matter_place_invalid_path')
     throw error
   }
-  // A pending target has a stable request identity even after its catalog ID is assigned.
-  const projectId='p-'+createHash('sha256').update(JSON.stringify(['place',place.name,place.root,registrationPath])).digest('hex').slice(0,20)
+  const projectId=projectRegistrationId(ownerChatId,registrationPath)
+  if(!projectId)throw Error('matter_place_invalid_path')
   return {target:{kind:'project',projectId,...options},projectName:place.name,projectPath:place.root,registrationPath}
 }
 

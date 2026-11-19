@@ -32,6 +32,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   checkup_target_changed: { desktop:409, phone:[409,'stale'] },
   checkup_run_unknown: { desktop:404, phone:[404,'not_found'] },
   matter_place_invalid_path: {desktop: 409, matter: '这个地方的文件夹不存在、无法访问，或已经不是文件夹，请让主人在电脑上检查。'},
+  matter_place_changed: {desktop: 409, matter: '这个文件夹和你确认的那个不是同一个了，请检查后重新确认。'},
   matter_place_invalid_registration: {desktop: 409, matter: '这个地方的名字或文件夹路径不符合工作项目登记要求，请让主人在电脑上检查。'},
   matter_place_ambiguous: {desktop: 409, matter: '有多个地方符合这个项目名，请问主人指的是哪一个。'},
   matter_project_registration_requires_approval: {desktop: 409, matter: '这个项目还没登记，请先让主人在确认卡上批准这个文件夹。'},

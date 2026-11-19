@@ -24,6 +24,21 @@ function directory(path:string):{path:string;dev:bigint;ino:bigint;birthtimeNs:b
   } catch { return null }
 }
 
+function catalogId(ownerChatId:string,found:NonNullable<ReturnType<typeof directory>>):string {
+  const identity=JSON.stringify([ownerChatId,found.path,found.dev.toString(),found.ino.toString(),found.birthtimeNs.toString()])
+  return 'p-'+createHash('sha256').update(identity).digest('hex').slice(0,20)
+}
+
+/** Resolve the future catalog ID only when the directory can be identified safely. */
+export function projectRegistrationId(ownerChatId:string,path:string):string|null {
+  const found=directory(path)
+  if(!found)return null
+  // Some Windows filesystems do not supply an inode. In that case the catalog
+  // identity still includes the real path and creation time.
+  if(found.ino<=0n&&(process.platform!=='win32'||found.birthtimeNs<=0n))return null
+  return catalogId(ownerChatId,found)
+}
+
 export function makeProjectCatalog(input:ProjectCatalogInput):ProjectCatalogEntry[] {
   const available=new Set(input.providers),knownProvider=new Map<string,string>()
   for(const known of input.known) {
@@ -44,9 +59,8 @@ export function makeProjectCatalog(input:ProjectCatalogInput):ProjectCatalogEntr
     const found=directory(candidate)
     if(!found||seen.has(found.path))continue
     seen.add(found.path)
-    const identity=JSON.stringify([input.ownerChatId,found.path,found.dev.toString(),found.ino.toString(),found.birthtimeNs.toString()])
     result.push({
-      id:'p-'+createHash('sha256').update(identity).digest('hex').slice(0,20),
+      id:catalogId(input.ownerChatId,found),
       name:names.get(found.path)??basename(found.path),
       path:found.path,
       providerId:knownProvider.get(found.path)??fallback,

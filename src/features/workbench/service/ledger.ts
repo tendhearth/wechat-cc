@@ -16,9 +16,13 @@ import type {makeViewDomain} from './view'
 import {matterApprovals} from './matter-approvals'
 import {MatterPlanRequest} from '../../../../packages/protocol/src/desktop-api'
 import {resolvePlanTarget,resolvePlanLegs,PlanInputError,planRequestId,type PlanLegs,type PlanConversation,type PlanCaller,type MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
+import {projectRegistrationId} from '../../../adapters/workbench/project-catalog'
 
 export type {MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
 export interface AutoRelayHandoff {from:number|null;to:number;beforeStart:()=>void;ownerResume?:boolean;accepted?:()=>void}
+export class RegisteredProjectDispatchError extends Error {
+  constructor(cause:unknown){super(cause instanceof Error?cause.message:'',{cause})}
+}
 
 export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecycle:LifecycleDomain;admission:AdmissionDomain;entry:EntryDomain;view:ReturnType<typeof makeViewDomain>}){
   const {store,state}=ctx,inFlight=new Set<string>()
@@ -50,7 +54,8 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     if(prior&&prior.phase==='accepted'&&!normalized.project&&target&&(target.kind==='managed'&&!normalized.isolation&&!normalized.base||target.kind==='project'&&target.projectId)){
       return {...normalized,legs:replayLegs??resolvePlanLegs(normalized,d.entry.planExecutors),target:target.kind==='managed'?target:{...target,projectId:target.projectId!,...(normalized.isolation?{isolation:normalized.isolation}:{}),...(normalized.base?{base:normalized.base}:{})},projectName:'',projectPath:''}
     }
-    const resolved=resolvePlanTarget(normalized,d.entry.entryOptions({ownerKey:ctx.deps.ownerChatId()??'',surface:'desktop'}).projects,context?.path,planPlaces)
+    const owner=ctx.deps.ownerChatId()??''
+    const resolved=resolvePlanTarget(normalized,d.entry.entryOptions({ownerKey:owner,surface:'desktop'}).projects,context?.path,planPlaces,owner)
     return {...normalized,...resolved,legs:replayLegs??resolvePlanLegs(normalized,d.entry.planExecutors)}
   }
   function requirePlanLegs(legs:PlanLegs){
@@ -120,25 +125,32 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       // Accepted receipts replay before mutable provider admission; createEntry still checks the complete hash.
       if(!d.entry.entryReceipt(requestId,{ownerKey:owner,surface:'desktop'}))requirePlanLegs(legs)
       const first=prepared.legs[0]!
-      let target=prepared.target
+      const target=prepared.target
+      let projectRegistered=false
       if(registrationPath&&target.kind==='project'){
         ctx.ensureAccepting()
         const project={path:prepared.projectPath,name:prepared.projectName,providerId:first.executor}
+        if(projectRegistrationId(owner,project.path)!==target.projectId)throw Error('matter_place_changed')
         if(store.projects().some(p=>p.path===registrationPath))d.view.validateProject(project,registrationPath)
-        else d.view.addProject(project,registrationPath)
-        const registered=d.view.projects().find(p=>p.path===registrationPath)
-        if(!registered)throw Error('project_stale')
-        target={...target,projectId:registered.id}
+        else {
+          d.view.addProject(project,registrationPath)
+          projectRegistered=true
+        }
       }
-      return d.entry.createEntry({requestId,target,title:prepared.title,text:first.brief,providerId:first.executor},{ownerKey:owner,surface:'desktop'},
-        {identity:JSON.stringify(legs),persist:(task,runId)=>{
-          if(ctx.deps.ownerChatId()!==owner)throw Error('matter_ledger_forbidden')
-          // A single executor is an ordinary chat delegation, without a relay ledger or plan.
-          if(legs.length===1)return
-          store.ledger.start(task.id,runId,first.executor,first.brief)
-          store.plans.approve(task.id,legs,runId)
-          store.ledger.plan(task.id,legs)
-        }})
+      try{
+        return await d.entry.createEntry({requestId,target,title:prepared.title,text:first.brief,providerId:first.executor},{ownerKey:owner,surface:'desktop'},
+          {identity:JSON.stringify(legs),persist:(task,runId)=>{
+            if(ctx.deps.ownerChatId()!==owner)throw Error('matter_ledger_forbidden')
+            // A single executor is an ordinary chat delegation, without a relay ledger or plan.
+            if(legs.length===1)return
+            store.ledger.start(task.id,runId,first.executor,first.brief)
+            store.plans.approve(task.id,legs,runId)
+            store.ledger.plan(task.id,legs)
+          }})
+      }catch(error){
+        if(projectRegistered)throw new RegisteredProjectDispatchError(error)
+        throw error
+      }
     },
     async matterHandoff(id:string,executor:string,brief:string,automatic?:AutoRelayHandoff){
       ctx.ensureAccepting()

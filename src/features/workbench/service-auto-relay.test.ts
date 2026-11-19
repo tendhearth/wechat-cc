@@ -773,3 +773,49 @@ it('approval keeps the original stored folder if the place name later becomes am
  expect((await t.call()).body).toMatchObject({task:{path:t.f.project}})
  expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:t.f.project,name:'rici',providerId:'claude'})
 })
+
+it('rejects approval when a different directory replaces the folder shown on the card',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ renameSync(t.f.project,join(t.f.root,'original-project'))
+ mkdirSync(t.f.project)
+ t.approve()
+ expect(await t.call()).toMatchObject({status:409,body:{
+  error:'matter_place_changed',approved:true,message:expect.stringContaining('这个文件夹和你确认的那个不是同一个了'),
+ }})
+ expect(t.addProject).not.toHaveBeenCalled()
+ expect(t.f.store.projects()).toEqual([])
+ expect(t.f.store.list()).toEqual([])
+ expect(t.f.calls).toEqual([])
+})
+
+it('replays the original receipt when a retry selects the newly registered catalog ID',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ const first=await t.call()
+ expect(first.status).toBe(202)
+ const projectId=t.f.service.projects()[0]!.id
+ const retry=await t.call({...t.input,project:projectId})
+ expect(retry).toMatchObject({status:202,body:{receipt:(first.body as {receipt:unknown}).receipt}})
+ expect(t.f.store.list()).toHaveLength(1)
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+})
+
+it('reports project registration on dispatch failure only when this call added it',async()=>{
+ const t=registrationSetup(()=>true)
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ expect(await t.call()).toMatchObject({status:409,body:{
+  error:'native_session_busy',approved:true,projectRegistered:true,message:expect.stringContaining('项目已经登记'),
+ }})
+ expect(t.f.store.projects()).toMatchObject([{path:t.f.project,name:'rici'}])
+ expect(t.f.store.list()).toEqual([])
+ const retry=await t.call({...t.input,project:t.f.service.projects()[0]!.id})
+ expect(retry).toMatchObject({status:409,body:{error:'native_session_busy'}})
+ expect(retry.body).not.toHaveProperty('projectRegistered')
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+})
