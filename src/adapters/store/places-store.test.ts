@@ -4,7 +4,7 @@ import { makePlacesStore } from './places-store'
 
 const rec = (key: string, position: number) => ({ key, root: `/w/${key}`, name: key, position, hidden: false })
 
-describe('places-store(v117)', () => {
+describe('places-store(v117 + v118)', () => {
   it('加进来的按位置列;同 key / 同 root 的不重复加', () => {
     const db = openTestDb()
     const s = makePlacesStore(db)
@@ -22,6 +22,17 @@ describe('places-store(v117)', () => {
     s.move('p:c', 99)
     expect(s.list().map(r => [r.key, r.position])).toEqual([['p:a', 0], ['p:b', 1], ['p:c', 2]])
     expect(s.move('p:zz', 0)).toBe(false)
+  })
+
+  it('看过(v118):记下时刻,只往后走;没有的 key ⇒ false', () => {
+    const db = openTestDb()
+    const s = makePlacesStore(db)
+    s.add([rec('p:a', 0)], 1)
+    expect(s.list()[0]!.seenAt).toBeNull()
+    expect(s.markSeen('p:a', 50)).toBe(true)
+    s.markSeen('p:a', 20)
+    expect(s.list()[0]!.seenAt).toBe(50)
+    expect(s.markSeen('p:zz', 1)).toBe(false)
   })
 
   it('收起 / 放回', () => {

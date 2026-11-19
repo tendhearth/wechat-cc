@@ -1,4 +1,4 @@
-import { PlaceHideRequest, PlaceMoveRequest } from '@wechat-cc/protocol'
+import { PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
 import type { InternalApiDeps, RouteTable } from '../../daemon/internal-api/types'
 
 export function placesRoutes(deps: Pick<InternalApiDeps, 'places'>): RouteTable {
@@ -27,6 +27,14 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places'>): RouteTable 
       if (!input.success) return { status: 400, body: { error: 'invalid' } }
       if (!deps.places) return unavailable
       return deps.places.hide(input.data.key, input.data.hidden) ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
+    },
+    // 看过这一行:桌面和手机都是主人自己在看。
+    'POST /v1/places/seen': (_query, body, caller) => {
+      if (caller?.origin !== 'operator' && caller?.origin !== 'device') return { status: 403, body: { error: 'forbidden' } }
+      const input = PlaceSeenRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      if (!deps.places) return unavailable
+      return deps.places.seen(input.data.key) ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
     },
   }
 }

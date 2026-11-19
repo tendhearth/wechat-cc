@@ -37,11 +37,13 @@ export function placeTime(place, now) {
 export function placeLine(place) {
   const line = place.line?.trim() ?? ''
   if (!line) return ''
-  if (place.waiting) return line
-  if (place.status === 'working') return line.endsWith('…') ? line : `${line}…`
-  if (place.status === 'failed') return `${line}(没做成)`
-  if (place.status === 'stopped') return `${line}(停了)`
-  return line
+  // 坐回来:你上次看过这一行以后,除了这一句,还有几件也动过。
+  const also = place.alsoChanged ? `,另有 ${place.alsoChanged} 件也动过` : ''
+  if (place.waiting) return line + also
+  if (place.status === 'working') return (line.endsWith('…') ? line : `${line}…`) + also
+  if (place.status === 'failed') return `${line}(没做成)${also}`
+  if (place.status === 'stopped') return `${line}(停了)${also}`
+  return line + also
 }
 
 /** @param {Place} p */
@@ -98,7 +100,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
   /** @type {string|null} */ let selected = null
   const supportsPopover = typeof root.showPopover === 'function'
   const openActions = supportsPopover ? '.place-actions:popover-open' : '.place-actions[data-open]'
-  let version = '', alive = true, busy = false, stale = false, acting = false, notified = ''
+  let version = '', alive = true, busy = false, stale = false, acting = false, notified = '', seenMark = ''
   const reflectOverflow = () => {
     const moreBelow = root.scrollHeight - root.clientHeight - root.scrollTop > 1
     root.toggleAttribute('data-more-below', moreBelow)
@@ -126,7 +128,17 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
       // 只在选中的那个地方变了(换了一个 / 它带的 id 变了 / 它没了)时告诉说话,别每次刷新都重画说话。
       const ids = current ? JSON.stringify([current.key, current.name, current.matterIds, current.messageIds, current.sessionIds]) : ''
       if (ids !== notified) { notified = ids; onSelect(current) }
+      // 选着这一行时它又动了:主人正看着,也算看过。
+      if (current) markSeen(current)
     } catch { if (alive) { stale = true; draw() } } finally { busy = false }
+  }
+
+  /** 主人看了这一行(点开 / 选着时又动了 / 从这一行打开一件):daemon 记下时刻,下次那一句从这以后说起。 @param {Place} place */
+  function markSeen(place) {
+    const mark = `${place.key}@${place.updatedAt ?? ''}`
+    if (mark === seenMark) return
+    seenMark = mark
+    void v1(call, V1.places.seen, { body: { key: place.key } }).catch(() => { seenMark = '' })
   }
 
   /** @param {Place|null} place */
@@ -140,6 +152,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
     }
     notified = current ? JSON.stringify([current.key, current.name, current.matterIds, current.messageIds, current.sessionIds]) : ''
     onSelect(current)
+    if (current) markSeen(current)
     // 主人看了这个地方的说话,就算看过了:没看过的那几件记一下(加粗跟着消失)。
     if (current?.unseen) for (const id of current.matterIds.slice(0, 20)) void v1(call, V1.matter.seen, { body: { id, surface: 'desktop' } }).catch(() => {})
   }
@@ -173,6 +186,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
       return
     }
     if (target.closest('[data-place-open]') && place.waiting) {
+      markSeen(place)
       const w = place.waiting
       if (w.matterId) await onOpen({ kind: 'matter', id: w.matterId })
       else if (w.sessionId) await onOpen({ kind: 'terminal', id: w.sessionId })

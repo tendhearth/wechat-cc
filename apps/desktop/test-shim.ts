@@ -1429,6 +1429,9 @@ Bun.serve({
     if (dryRun && url.pathname === '/v1/places' && req.method === 'GET') {
       return Response.json({ places: [], version: 'shim-empty' })
     }
+    if (dryRun && url.pathname === '/v1/places/seen' && req.method === 'POST') {
+      return Response.json({ ok: true })
+    }
     if (dryRun && url.pathname === '/v1/phone/enable-relay' && req.method === 'POST') {
       const q = __mockState.phone?.enableRelay
       return Response.json(q?.length ? (q.length > 1 ? q.shift() : q[0]) : { ok: false, state: 'starting' })

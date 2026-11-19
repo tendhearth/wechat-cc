@@ -10,7 +10,7 @@ function rTime(p,now){
  if(days===1)return '昨天'
  return days<7?'周'+'日一二三四五六'[a.getDay()]:(a.getMonth()+1)+' 月 '+a.getDate()+' 日'
 }
-function rLine(p){var l=(p.line||'').trim();return !l||p.waiting?l:p.status==='working'?(/…$/.test(l)?l:l+'…'):p.status==='failed'?l+'(没做成)':p.status==='stopped'?l+'(停了)':l}
+function rLine(p){var l=(p.line||'').trim();return !l?l:(p.waiting?l:p.status==='working'?(/…$/.test(l)?l:l+'…'):p.status==='failed'?l+'(没做成)':p.status==='stopped'?l+'(停了)':l)+(p.alsoChanged?',另有 '+p.alsoChanged+' 件也动过':'')}
 function rTarget(p){var w=p.waiting||{};return w.matterId?{kind:'matter',id:w.matterId}:w.sessionId?{kind:'terminal',id:w.sessionId}:p.matterIds[0]?{kind:'matter',id:p.matterIds[0]}:p.sessionIds[0]?{kind:'terminal',id:p.sessionIds[0]}:null}
 function renderPlacesStrip(places,o){
  var stale=!!o.stale
@@ -23,14 +23,16 @@ function cInPlace(m){return !cPlace||cPlace.messageIds.indexOf(m.id)>=0||!!m.mat
 function cRefInPlace(r){return !cPlace||cPlace.matterIds.indexOf(r.id)>=0||!!r.originMessageId&&cPlace.messageIds.indexOf(r.originMessageId)>=0}
 function startRoster(opts){
  if(!opts.isDevice)return function(){}
- var root=document.getElementById('roster-strip'),etag=null,timer=null,stopped=false,busy=false,stale=false
+ var root=document.getElementById('roster-strip'),etag=null,timer=null,stopped=false,busy=false,stale=false,mark=''
  function draw(){root.innerHTML=renderPlacesStrip(rPlaces,{selected:rSelected,stale:stale});root.hidden=!rPlaces.length&&!stale}
  function clear(){stopped=true;clearTimeout(timer);root.hidden=true;rPlaces=[];rSelected=null;opts.onSelect(null);root.replaceChildren();document.removeEventListener('visibilitychange',visible)}
  function live(){return !stopped&&isDevice}
+ function seen(p){var m=p.key+p.updatedAt;if(m!==mark){mark=m;/* link-scan: device-only */ api('/v1/places/seen',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key:p.key})}).catch(function(){mark=''})}}
  root.addEventListener('click',function(ev){
-  var b=/** @type {HTMLElement} */ (ev.target).closest('button'),key=b&&(b.dataset.place||b.dataset.placeOpen),p=key&&rPlaces.find(function(x){return x.key===key});if(!p)return
-  if(b.dataset.placeOpen){opts.onOpen(rTarget(p));return}
-  rSelected=rSelected===p.key?null:p.key;draw();opts.onSelect(rSelected?p:null)
+  // @ts-expect-error 点在按钮里的字上:target 是元素
+  var b=ev.target.closest('button'),key=b&&(b.dataset.place||b.dataset.placeOpen),p=key&&rPlaces.find(function(x){return x.key===key});if(!p)return
+  if(b.dataset.placeOpen){seen(p);opts.onOpen(rTarget(p));return}
+  rSelected=rSelected===p.key?null:p.key;draw();opts.onSelect(rSelected?p:null);if(rSelected)seen(p)
  })
  async function poll(){
   if(!live()){clear();return}if(document.hidden||busy)return;busy=true
@@ -42,7 +44,7 @@ function startRoster(opts){
    var b=await r.json();if(!live())return
    rPlaces=b.places;etag=r.headers&&r.headers.get('etag');stale=false
    var cur=rSelected&&rPlaces.find(function(x){return x.key===rSelected})
-   if(rSelected&&!cur)rSelected=null;opts.onSelect(cur||null);draw()
+   if(rSelected&&!cur)rSelected=null;opts.onSelect(cur||null);draw();if(cur)seen(cur)
   }catch(e){if(live()){stale=true;draw()}}
   finally{busy=false;if(live()&&!document.hidden)timer=setTimeout(poll,5000)}
  }

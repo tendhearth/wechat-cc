@@ -35,6 +35,8 @@ export const Place = z.object({
   moving: z.boolean(),
   /** 带回来了、哪一端都还没看过。 */
   unseen: z.boolean(),
+  /** 「坐回来」:主人上次看过这一行以后,除了 line 说的那件,还有几件也动过;没看过这一行 / 没别的动 ⇒ 0。 */
+  alsoChanged: z.number().int().min(0).optional(),
   updatedAt: z.number().nullable(),
   /** 点这一行时,把说话筛成这个地方用:最近的事、它们是从哪条消息分出来的、挂着的终端会话。 */
   matterIds: z.array(z.string()),
@@ -48,4 +50,5 @@ export type PlacesResponseT = z.infer<typeof PlacesResponse>
 
 export const PlaceMoveRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16}$/), to: z.number().int().min(0) }).strict()
 export const PlaceHideRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16}$/), hidden: z.boolean() }).strict()
+export const PlaceSeenRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16}$/) }).strict()
 export const PlaceWriteResponse = z.object({ ok: z.literal(true) })

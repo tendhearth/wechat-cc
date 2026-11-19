@@ -30,6 +30,12 @@ it('现状不用状态词:在干补省略号,没做成 / 停了补一句', () =>
   expect(placeLine(place('a', { line: null, status: null }))).toBe('')
 })
 
+it('坐回来:上次看过以后另有几件也动过 ⇒ 现状后面补一句', () => {
+  expect(placeLine(place('a', { line: '收藏做好了', alsoChanged: 2 }))).toBe('收藏做好了,另有 2 件也动过')
+  expect(placeLine(place('a', { status: 'working', line: '画图', alsoChanged: 1 }))).toBe('画图…,另有 1 件也动过')
+  expect(placeLine(place('a', { line: '收藏做好了', alsoChanged: 0 }))).toBe('收藏做好了')
+})
+
 it('等批准的在行上直接答;问题 / 终端是「去回答」;还有几件', () => {
   const html = renderPlacesHtml([
     place('1in8b', { waiting: { itemKey: 'matter:x', kind: 'permission', matterId: 'aaaa0001', requestId: 'r', summary: 's', count: 2 } }),
@@ -67,6 +73,20 @@ it('点一行 = 选中并把说话筛成它;再点一次回到全部;没看过�
   expect(calls.some(c => c[1] === '/v1/matter/seen' && c[2]?.id === 'rici-m1')).toBe(true)
   row().click()
   expect(onSelect).toHaveBeenLastCalledWith(null)
+})
+
+it('坐回来:点一行记成看过这个地方;选着时它又动了再记一次;没动不重复记', async () => {
+  let data = { places: [place('rici'), place('melu')], version: 'v1' }
+  const { calls } = mount(() => data)
+  await strip!.refresh()
+  const seen = () => calls.filter(c => c[1] === '/v1/places/seen').map(c => c[2]?.key)
+  document.querySelector<HTMLButtonElement>('[data-place-key="p:rici000000000000"] .place-row')!.click()
+  expect(seen()).toEqual(['p:rici000000000000'])
+  await strip!.refresh()
+  expect(seen()).toEqual(['p:rici000000000000'])
+  data = { places: [place('rici', { updatedAt: NOW }), place('melu')], version: 'v2' }
+  await strip!.refresh()
+  expect(seen()).toEqual(['p:rici000000000000', 'p:rici000000000000'])
 })
 
 it('刷新拿到同一个选中地方、它带的 id 没变 ⇒ 不再通知说话', async () => {

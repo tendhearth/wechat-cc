@@ -30,6 +30,7 @@ export const DESKTOP_CALLS = {
     get: call('GET /v1/places'),
     move: call('POST /v1/places/move', { body: t<{ key: string; to: number }>() }),
     hide: call('POST /v1/places/hide', { body: t<{ key: string; hidden: boolean }>() }),
+    seen: call('POST /v1/places/seen', { body: t<{ key: string }>() }),
   },
   checkup: {
     get:call('GET /v1/checkup'),
