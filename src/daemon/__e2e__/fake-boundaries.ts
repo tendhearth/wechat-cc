@@ -58,14 +58,14 @@ export interface FakeInternet {
   stop(): void
 }
 
-export function startFakeInternet(): FakeInternet {
+export function startFakeInternet(probeResponse?: Promise<number>): FakeInternet {
   const hits = new Map<string, number>()
   const server: Server = serve({
     port: 0,
-    fetch(req) {
+    async fetch(req) {
       const path = new URL(req.url).pathname
       hits.set(path, (hits.get(path) ?? 0) + 1)
-      if (path === '/generate_204') return new Response(null, { status: 204 })
+      if (path === '/generate_204') return new Response(null, { status: probeResponse ? await probeResponse : 204 })
       // TEST-NET-3(RFC 5737),不是谁真的地址
       if (path === '/ip') return new Response('203.0.113.7', { headers: { 'content-type': 'text/plain' } })
       // http_tts:回一段假的音频字节(daemon 只转发,不解码)

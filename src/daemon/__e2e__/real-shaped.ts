@@ -36,6 +36,8 @@ export const SANDBOX_GUEST = 'o9fixture-guest@im.wechat'
 export interface RealShapedOpts extends Pick<TestDaemonOpts, 'claudeScript' | 'codexScript' | 'cursorScript' | 'moderatorScript' | 'recordClaudeSpawnOptions' | 'recordCodexSpawnOptions' | 'modes' | 'seedFiles' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'ilinkFailSendMessage' | 'machineIdleS' | 'escalateAfterMs'> {
   /** 复用上一次的 stateDir(重启场景):不再播种记忆 / 知识库 / 对话,只把指向替身的 URL 换成这次的端口。 */
   stateDir?: string
+  /** Hold the fake canary response until the test releases it. */
+  probeResponse?: Promise<number>
   /** 盖在 agent-config.json 上的几项(这次开机的「机器上变了什么」,比如 a2a 端口被别的程序占了)。 */
   agentConfigPatch?: Record<string, unknown>
 }
@@ -174,7 +176,7 @@ const LOG_PREFIX = 'wechat channel: '
 export async function startRealShapedDaemon(opts: RealShapedOpts = {}): Promise<RealShapedDaemon> {
   const fresh = !opts.stateDir
   const stateDir = opts.stateDir ?? mkdtempSync(join(tmpdir(), 'wechat-cc-sandbox-'))
-  const internet = startFakeInternet(), mailbox = startFakeMailboxRelay(), phoneRelay = startFakePhoneRelay()
+  const internet = startFakeInternet(opts.probeResponse), mailbox = startFakeMailboxRelay(), phoneRelay = startFakePhoneRelay()
   if (fresh) seedMachine(stateDir)
   writeConfig(stateDir, { internet, mailbox, phoneRelay }, opts.agentConfigPatch)
 
