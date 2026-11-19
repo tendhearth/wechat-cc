@@ -275,8 +275,11 @@ export function checkRule(r: EvalRule, out: EvalOutput): RuleResult {
   }
   if ('plansTo' in r) {
     const project = r.plansTo.toLowerCase()
-    const ok = (out.planCalls ?? []).some(call => (call.resolvedProject ?? call.project)?.toLowerCase() === project)
-    return { rule, ok }
+    // 被记录器拒掉的那次(参数不对 / 项目认不出 / 执行者没登记)留在报告里,但不算「放到了这个项目」(独立评审)
+    const calls = out.planCalls ?? []
+    const ok = calls.some(call => !call.error && (call.resolvedProject ?? call.project)?.toLowerCase() === project)
+    const failed = calls.filter(call => call.error).map(call => call.error)
+    return { rule, ok, ...(!ok && failed.length ? { detail: `交办被拒:${failed.join(', ')}` } : {}) }
   }
   if ('calls' in r || 'notCalls' in r) {
     const calls = out.toolCalls ?? []

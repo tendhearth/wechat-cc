@@ -37,6 +37,7 @@ import { makeCheapJudge, resolveTaskReference, type FocusState, type TaskCandida
 import { resolveTopicRecall } from '../../daemon/threads/recall'
 import type { EvalPlanCall } from '../../domain/output-eval'
 import { makeMatterPlanRecorder } from './plan-calls'
+import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../../domain/workbench/executor-capabilities'
 import { searchTopics, type MatchTopic } from '../../domain/topic-match'
 
 /** 跟 daemon 的轮次看门狗同一个缺省(一段时间没事件就算卡住)。 */
@@ -151,7 +152,8 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
     const sessionKey = `${a.providerId}/eval/${chatId}`
     const tools = a.tools ?? []
     const planCalls: EvalPlanCall[] = []
-    const recorder = tools.includes('matter_plan') ? makeMatterPlanRecorder(projectPath, planCalls) : undefined
+    const isExecutor = (id: string) => isWorkbenchProviderId(id) && isWorkbenchExecutorCapabilities(deps.registry.get(id)?.opts.workbench)
+    const recorder = tools.includes('matter_plan') ? makeMatterPlanRecorder(projectPath, planCalls, isExecutor) : undefined
     const extraKinds = tools.map(t => EVAL_TOOLS[t].kind)
     const profile: TierProfile = extraKinds.length === 0 ? JOB_PROFILE : {
       allow: new Set([...JOB_PROFILE.allow, ...extraKinds]), relay: JOB_PROFILE.relay,

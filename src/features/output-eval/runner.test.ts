@@ -260,7 +260,8 @@ it('records matter_plan through authenticated HTTP and closes access before sess
     invalidateSession: key => api.invalidateSession(key),
     registry: {
       ...h.deps.registry,
-      get: () => ({
+      get: (id: string) => id !== 'claude' ? null : ({
+        opts: { workbench: { version: 1, permissions: 'task', configuration: 'task-policy', completion: 'native', stop: 'confirmed', background: 'tracked', features: { nativeResume: true, attachments: false, executionSettings: false, modelCatalog: false } } },
         provider: {
           async spawn(_project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
             token = ctx.mcpEnv!.WECHAT_SESSION_TOKEN!
@@ -290,6 +291,8 @@ it('records matter_plan through authenticated HTTP and closes access before sess
                   expect(result.task).toMatchObject({ title: input.title, path: root, providerId: 'claude' })
                   expect(await call({ ...input, project: 'missing' })).toEqual(matterToolFailure('project_stale', false, 'plan', [project]))
                   expect(await call({ ...input, legs: [] })).toEqual(matterToolFailure('invalid_matter_plan', false))
+                  // 没登记的执行者:生产受理前会拒,记录器也拒(独立评审)
+                  expect(await call({ ...input, legs: [{ executor: 'ghost', brief: '改' }] })).toEqual(matterToolFailure('unavailable_provider', false, 'plan'))
                   const denied = await post(token, '/v1/matter/relay')
                   expect(await denied.json()).toEqual({ error: 'route_not_allowed' })
                   expect(matterPlan).toHaveBeenCalledTimes(0)
@@ -317,6 +320,7 @@ it('records matter_plan through authenticated HTTP and closes access before sess
         { title: input.title, project: 'RICI', resolvedProject: 'rici', legs: [{ executor: 'claude', brief: '改'.repeat(200) }] },
         { title: input.title, project: 'missing', resolvedProject: null, error: 'project_stale' },
         { title: input.title, project: 'RICI', resolvedProject: null, error: 'invalid_matter_plan', legs: [] },
+        { title: input.title, project: 'RICI', resolvedProject: 'rici', error: 'unavailable_provider', legs: [{ executor: 'ghost', brief: '改' }] },
       ],
     })
     expect(closeStatus).toBe(401)

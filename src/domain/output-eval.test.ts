@@ -233,6 +233,9 @@ describe('交办规则', () => {
     expect(checkRule({ plansTo: call.project }, reply({ planCalls: [call] })).ok).toBe(false)
     expect(checkRule(rule, reply({ planCalls: [{ ...call, project: 'Rici', resolvedProject: null }] })).ok).toBe(true)
     expect(checkRule(rule, reply({ planCalls: [{ ...call, project: null, resolvedProject: null }] })).ok).toBe(false)
+    // 被拒的交办(项目认不出 / 参数不对 / 执行者没登记)不算放到了这个项目,并把拒因带出来
+    expect(checkRule(rule, reply({ planCalls: [{ ...call, project: 'rici', resolvedProject: null, error: 'project_stale' }] }))).toMatchObject({ ok: false, detail: '交办被拒:project_stale' })
+    expect(checkRule(rule, reply({ planCalls: [{ ...call, error: 'unavailable_provider' }, call] })).ok).toBe(true)
     expect(checkRule(rule, reply()).ok).toBe(false)
     expect(parseSample({ kind: 'reply', input: { text: '交办' }, rules: [rule] }, 'plan').ok).toBe(true)
   })
