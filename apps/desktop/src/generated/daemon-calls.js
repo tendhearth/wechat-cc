@@ -265,5 +265,9 @@ export const OWNER_WORKSPACE_PATHS = /** @type {const} */ ([
   "/v1/knowledge/facts/set_fact_status",
   "/v1/knowledge/graph/top_contacts",
   "/v1/llm/keys",
+  "/v1/notebook",
+  "/v1/notebook/paper",
+  "/v1/notebook/strike",
+  "/v1/notebook/write",
   "/v1/reminders/schedule"
 ])

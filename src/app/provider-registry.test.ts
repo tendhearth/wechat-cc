@@ -520,3 +520,25 @@ it('preflights private candidates and skips providers in refusal backoff', async
   expect(refuses).toHaveBeenCalledTimes(1)
   expect(eligible).toHaveBeenCalledTimes(1)
 })
+
+it('skips a failed private provider on the next request until its cooldown expires', async () => {
+  let now = 0
+  const preflight = vi.fn(async () => true)
+  const registry = createProviderRegistry({ now: () => now, cheapEvalPreflight: preflight })
+  const preferred = vi.fn(async (): Promise<string> => { throw new Error('HTTP 500') })
+  const healthy = vi.fn(async () => 'healthy')
+  registry.register('openai', { ...stub, cheapEval: preferred }, { displayName: 'OpenAI', canResume: () => false })
+  registry.register('claude', { ...stub, cheapEval: healthy }, { displayName: 'Claude', canResume: () => false })
+
+  const evaluate = registry.getCheapEval({ private: true })!
+  await expect(evaluate('first prompt')).rejects.toThrow('Private model request failed')
+  expect(healthy).not.toHaveBeenCalled()
+  await expect(evaluate('second prompt')).resolves.toBe('healthy')
+  expect(preflight.mock.calls).toEqual([['openai'], ['claude']])
+  expect(preferred).toHaveBeenCalledTimes(1)
+  expect(healthy).toHaveBeenCalledExactlyOnceWith('second prompt')
+
+  now += 10 * 60_000
+  preferred.mockResolvedValueOnce('recovered')
+  await expect(evaluate('third prompt')).resolves.toBe('recovered')
+})

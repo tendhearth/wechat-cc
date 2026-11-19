@@ -59,10 +59,8 @@ const allowMutations = process.env.WECHAT_CC_DEV_ALLOW_MUTATIONS === '1'
 
 // Optional isolated workbench runtime. Other pages keep using the existing daemon.
 const workbenchWrites = process.env.WECHAT_CC_DEV_WORKBENCH_WRITES === '1'
-/** 待办代理的放行名单:路由表 `desktop.ownerWorkspace` 里 POST 的路径(生成物;守卫 scripts/route-registry.guard.test.ts)。 */
-const OWNER_WORKSPACE_POST_PATHS: ReadonlySet<string> = new Set(
-  WORKBENCH_ROUTES.ownerWorkspace.filter(key => key.startsWith('POST ')).map(key => key.slice('POST '.length)),
-)
+/** 主人工作区代理按生成名单核对方法与路径。 */
+const OWNER_WORKSPACE_ROUTES: ReadonlySet<string> = new Set(WORKBENCH_ROUTES.ownerWorkspace)
 const workbenchProxy = createWorkbenchProxy({
   stateDir: process.env.WECHAT_CC_WORKBENCH_STATE_DIR ?? STATE_DIR,
   dryRun, allowWrites: allowMutations || workbenchWrites,
@@ -624,8 +622,8 @@ Bun.serve({
       const result = await handler(url.searchParams, undefined)
       return Response.json(result.body, { status: result.status })
     }
-    // 路由表里 `desktop.ownerWorkspace` 的 POST 那几条(生成物,和 lib.rs 同一份);GET 那条(记下的想法)上面在本进程里答。
-    if (OWNER_WORKSPACE_POST_PATHS.has(url.pathname) && req.method === 'POST') {
+    // 记下的想法在本进程里答，其余主人工作区请求转给主人 daemon。
+    if (OWNER_WORKSPACE_ROUTES.has(`${req.method} ${url.pathname}`)) {
       if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
       if (dryRun) return Response.json({ error: 'not_wired_in_mock' }, { status: 503 })
       try {
@@ -635,10 +633,10 @@ Bun.serve({
           return Response.json({ error: 'daemon info unavailable' }, { status: 503 })
         }
         const token = (await Bun.file(info.operatorTokenFilePath).text()).trim()
-        const upstream = await fetch(info.baseUrl + url.pathname, {
-          method: 'POST',
+        const upstream = await fetch(info.baseUrl + url.pathname + url.search, {
+          method: req.method,
           headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: await req.text(),
+          ...(req.method === 'POST' ? { body: await req.text() } : {}),
           signal: AbortSignal.timeout(30_000),
         })
         return new Response(await upstream.text(), {

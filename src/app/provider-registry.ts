@@ -571,7 +571,10 @@ export function createProviderRegistry(opts?: {
                 cheapEvalRefused.delete(id)
                 return result
               } catch (err) {
-                if (!signal?.aborted) noteRefusal(id, err)
+                if (!signal?.aborted && !isNetworkUnprotectedError(err) && !noteRefusal(id, err)) {
+                  const cooldown = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
+                  cheapEvalCooldownUntil.set(id, now() + cooldown)
+                }
                 throw err
               }
             }
