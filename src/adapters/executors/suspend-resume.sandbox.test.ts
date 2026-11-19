@@ -86,7 +86,7 @@ function fakeServer(kind: 'anthropic' | 'openai') {
 async function suspendDropResume(session: AgentSession, server: ReturnType<typeof fakeServer>, events: AgentEvent[], done: () => boolean) {
   for (let i = 0; i < 300 && server.hangingCount() === 0; i++) await sleep(100)
   expect(server.hangingCount()).toBe(1)
-  expect(session.suspension?.suspend()).toBe(true)
+  expect(await session.suspension?.suspend()).toBe(true)
   await sleep(500)
   server.drop()                       // 服务端趁它停着把流掐断
   await sleep(3_000)                  // 停着的这段:它看不到断线,也发不出新请求

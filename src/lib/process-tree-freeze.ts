@@ -12,26 +12,27 @@
  * 不变式:**冻住的树只会被放开(网络恢复)或被杀掉(SIGKILL 对停住的进程照样生效)**,
  * 绝不为了「优雅收尾」先放开 —— 放开那一下它就会接着用不受保护的网络。
  */
-import { execFileSync } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 
 export interface ProcessRow { pid: number; parent: number; group: number }
 
 export interface ProcessTreeFreezer {
-  /** 冻住整棵树。true = 冻住了;false = 做不到(win32 / 没有 pid / 进程已经没了)。重复调用无害。 */
-  freeze(): boolean
+  /** 冻住整棵树。true = 冻住了;false = 做不到,已登记的目标仍可 kill()。重复调用无害。 */
+  freeze(): Promise<boolean>
   /** 放开冻住的那些组 / 进程。没冻过就什么都不做。 */
   thaw(): void
-  /** SIGKILL 冻住时登记过的每一个组 / 进程(不先放开)。 */
-  kill(): void
+  /** 等在途扫描后 SIGKILL 已发现的目标。返回是否确认了扫描覆盖。 */
+  kill(): Promise<boolean>
   /** 登记过的组 / 进程里还有没有活的。 */
   alive(): boolean
   readonly frozen: boolean
+  readonly fullyFrozen: boolean
 }
 
 export interface ProcessTreeFreezerDeps {
   platform?: string
   /** 测试注入;缺省 `/bin/ps -axo pid=,ppid=,pgid=`。 */
-  table?: () => ProcessRow[]
+  table?: () => ProcessRow[] | null | Promise<ProcessRow[] | null>
   /** 测试注入;缺省 process.kill。target 为负 = 进程组。 */
   signal?: (target: number, signal: NodeJS.Signals | 0) => void
 }
@@ -39,21 +40,134 @@ export interface ProcessTreeFreezerDeps {
 const MAX_PASSES = 10
 const MAX_DESCENDANTS = 1024
 
-export function readProcessTable(): ProcessRow[] {
-  return execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,pgid='], { encoding: 'utf8', maxBuffer: 4_000_000, timeout: 2_000, killSignal: 'SIGKILL' })
-    .trim().split('\n').flatMap(line => {
-      const [pid, parent, group] = line.trim().split(/\s+/).map(Number)
-      return pid && Number.isInteger(parent) && Number.isInteger(group) ? [{ pid, parent: parent!, group: group! }] : []
-    })
+const TABLE_TIMEOUT_MS = 2_000
+let tableChild: ChildProcess | undefined
+let tableRead: Promise<ProcessRow[] | null> | undefined
+/** performance.now() at the moment the in-flight ps was spawned. */
+let tableStartedAt = -Infinity
+/** 把在跑的那个 ps 的放弃时刻推到这个(更晚的)单调钟时刻;没有在跑的就是 undefined。 */
+let extendTable: ((deadline: number) => void) | undefined
+
+/**
+ * `freshAfter`(performance.now() 时刻):只接受在这之后才开始的快照。冻住一个组之后再读表,
+ * 必须是冻住之后起的 ps —— 冻之前就在跑的那份共享结果可能漏掉冻前一刻刚开的进程组。
+ */
+export async function readProcessTable(timeoutMs = TABLE_TIMEOUT_MS, freshAfter = -Infinity): Promise<ProcessRow[] | null> {
+  if (timeoutMs <= 0) return null
+  // 每个调用方只守自己的期限;共享的那个 ps 活到所有等它的调用方里最晚的那个期限 ——
+  // 预算快用完的调用方不会把它杀掉、连累预算还长的任务一起读不到。
+  const deadline = performance.now() + timeoutMs
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      sharedTable(freshAfter, deadline),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), timeoutMs) }),
+    ])
+  } finally { clearTimeout(timer) }
+}
+
+async function sharedTable(freshAfter: number, deadline: number): Promise<ProcessRow[] | null> {
+  if (tableRead) {
+    if (tableStartedAt >= freshAfter) { extendTable?.(deadline); return tableRead }
+    // 在跑的这份起于 freshAfter 之前:等它结束(它有自己的放弃时刻),再起一份新的。
+    await tableRead
+    return performance.now() < deadline ? sharedTable(freshAfter, deadline) : null
+  }
+  // Keep the handle of an abandoned ps until the runtime observes its exit.
+  // A kernel-stuck process can survive even SIGKILL.
+  if (tableChild?.pid && tableChild.exitCode == null && tableChild.signalCode == null) return Promise.resolve(null)
+  let child
+  try {
+    child = spawn('/bin/ps', ['-axo', 'pid=,ppid=,pgid='], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
+  } catch { return Promise.resolve(null) }
+  tableChild = child
+  tableStartedAt = performance.now()
+  const stdout = child.stdout
+  tableRead = new Promise<ProcessRow[] | null>(resolve => {
+    let settled = false, size = 0
+    const chunks: Buffer[] = []
+    const finish = (rows: ProcessRow[] | null, abandon = false) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (abandon) {
+        stdout.destroy()
+        child.unref()
+        try { child.kill('SIGKILL') } catch { /* best effort */ }
+      } else tableChild = undefined
+      stdout.off('data', onData)
+      stdout.off('error', onError)
+      child.off('error', onError)
+      child.off('close', onClose)
+      chunks.length = 0
+      tableRead = undefined
+      extendTable = undefined
+      resolve(rows)
+    }
+    const onData = (chunk: Buffer) => {
+      size += chunk.length
+      if (size > 4_000_000) finish(null, true)
+      else chunks.push(chunk)
+    }
+    const onError = () => finish(null, true)
+    const onClose = (code: number | null) => finish(code === 0 ? parseTable(Buffer.concat(chunks).toString('utf8')) : null)
+    // 续期有封顶:一个 ps 从起到放弃最多 TABLE_TIMEOUT_MS,不管后面又来多少调用方 ——
+    // 不然源源不断加入的调用会让一个卡死的 ps 永远不被放弃。
+    const latest = tableStartedAt + TABLE_TIMEOUT_MS
+    let abandonAt = Math.min(deadline, latest)
+    let timer = setTimeout(onError, Math.max(0, abandonAt - performance.now()))
+    extendTable = wanted => {
+      const later = Math.min(wanted, latest)
+      if (settled || later <= abandonAt) return
+      abandonAt = later
+      clearTimeout(timer)
+      timer = setTimeout(onError, Math.max(0, later - performance.now()))
+    }
+    stdout.on('data', onData)
+    stdout.on('error', onError)
+    child.on('error', onError)
+    child.on('close', onClose)
+  })
+  return tableRead
+}
+
+function parseTable(output: string): ProcessRow[] | null {
+  if (!output?.trim()) return null
+  const rows: ProcessRow[] = []
+  for (const line of output.trim().split('\n')) {
+    const [pid, parent, group] = line.trim().split(/\s+/).map(Number)
+    if (!pid || parent === undefined || group === undefined || !Number.isInteger(parent) || !Number.isInteger(group)) return null
+    rows.push({ pid, parent, group })
+  }
+  return rows
 }
 
 export function makeProcessTreeFreezer(rootPid: () => number | undefined | null, deps: ProcessTreeFreezerDeps = {}): ProcessTreeFreezer {
   const platform = deps.platform ?? process.platform
-  const table = deps.table ?? readProcessTable
   const send = deps.signal ?? ((target: number, sig: NodeJS.Signals | 0) => { process.kill(target, sig) })
   /** 冻住的进程组(组号);单独冻的进程(组不归我们的后代)。 */
   const groups = new Set<number>(), loose = new Set<number>()
-  let frozen = false
+  let frozen = false, fullyFrozen = false, generation = 0
+  // Keep discovered targets for SIGKILL and exit checks even when SIGSTOP fails.
+  const targets = new Set<number>()
+  let root: number | undefined
+  let pending: Promise<boolean> | undefined
+  let killing: Promise<boolean> | undefined
+
+  /** 最近一次成功 SIGSTOP 的时刻;之后的每一遍扫描都要读在它之后起的表。 */
+  let lastStopAt = -Infinity
+  async function readBefore(deadline: number) {
+    const remaining = deadline - performance.now()
+    if (remaining <= 0) return null
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const reading = deps.table ? deps.table() : readProcessTable(remaining, lastStopAt)
+      return await Promise.race([
+        reading,
+        new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), remaining) }),
+      ])
+    } finally { clearTimeout(timer) }
+  }
   // 尽力而为、从不抛:ESRCH = 已经没了;EPERM = macOS 上整组只剩僵尸(还没被收)时 kill(-组) 的回答。
   const quiet = (target: number, sig: NodeJS.Signals) => {
     try { send(target, sig); return true }
@@ -63,54 +177,86 @@ export function makeProcessTreeFreezer(rootPid: () => number | undefined | null,
     try { send(target, 0); return true }
     catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH' }
   }
+  async function scan(root: number, current: number, deadline: number): Promise<boolean> {
+    try {
+      for (let pass = 0; pass < MAX_PASSES; pass++) {
+        const rows = await readBefore(deadline)
+        if (!rows || current !== generation || !rows.some(row => row.pid === root && row.group === root)) return false
+        const owned = new Set<number>([root])
+        let changed = true
+        while (changed) {
+          changed = false
+          for (const row of rows) if (owned.has(row.parent) && !owned.has(row.pid)) { owned.add(row.pid); changed = true }
+          if (owned.size > MAX_DESCENDANTS) return false
+        }
+        let added = false, failed = false
+        for (const row of rows) {
+          if (!owned.has(row.pid)) continue
+          if (groups.has(row.group) || loose.has(row.pid)) continue
+          // 组长是我们的后代 ⇒ 整组都是它开的,冻整组;否则(后代挂在别人的组里)只冻它自己。
+          const groupOwned = owned.has(row.group)
+          const target = groupOwned ? -row.group : row.pid
+          targets.add(target)
+          if (!quiet(target, 'SIGSTOP')) { failed = true; continue }
+          lastStopAt = performance.now()
+          if (groupOwned) groups.add(row.group)
+          else loose.add(row.pid)
+          added = true
+        }
+        if (failed) return false
+        if (!added) { fullyFrozen = true; return true }
+      }
+    } catch { /* 调用方按停止路径收掉已登记的进程。 */ }
+    return false
+  }
   return {
     get frozen() { return frozen },
-    freeze() {
-      if (frozen) return true
+    get fullyFrozen() { return fullyFrozen },
+    async freeze() {
+      if (killing) return false
+      if (pending) return pending
+      if (frozen) return fullyFrozen
       if (platform === 'win32') return false
-      const root = rootPid()
-      if (!root || root <= 1) return false
+      const pid = rootPid()
+      if (!pid || pid <= 1) return false
       // 根是 detached 起的组长:先冻整组,新的 fork 就停在这里了。
-      if (!quiet(-root, 'SIGSTOP')) return false
-      groups.add(root)
+      if (!quiet(-pid, 'SIGSTOP')) return false
+      lastStopAt = performance.now()
+      root = pid
+      groups.clear(); loose.clear(); targets.clear()
+      groups.add(pid); targets.add(-pid)
       frozen = true
-      try {
-        for (let pass = 0; pass < MAX_PASSES; pass++) {
-          const rows = table(), owned = new Set<number>([root])
-          let changed = true
-          while (changed) {
-            changed = false
-            for (const row of rows) if (owned.has(row.parent) && !owned.has(row.pid)) { owned.add(row.pid); changed = true }
-            if (owned.size > MAX_DESCENDANTS) break
-          }
-          let added = false
-          for (const row of rows) {
-            if (!owned.has(row.pid)) continue
-            if (groups.has(row.group) || loose.has(row.pid)) continue
-            // 组长是我们的后代 ⇒ 整组都是它开的,冻整组;否则(后代挂在别人的组里)只冻它自己。
-            if (owned.has(row.group)) { groups.add(row.group); quiet(-row.group, 'SIGSTOP') }
-            else { loose.add(row.pid); quiet(row.pid, 'SIGSTOP') }
-            added = true
-          }
-          if (!added) break
-        }
-      } catch { /* ps 读不出:至少根组已经冻住,后代组留给下一次收尾 */ }
-      return true
+      const current = ++generation
+      pending = scan(pid, current, performance.now() + TABLE_TIMEOUT_MS)
+      try { return await pending }
+      finally { if (current === generation) pending = undefined }
     },
     thaw() {
-      if (!frozen) return
-      frozen = false
+      if (!frozen || killing) return
+      frozen = fullyFrozen = false
+      generation++; pending = undefined
       // 先放后代、最后放根:根醒来时看到的子进程都已经在跑。
       for (const pid of loose) quiet(pid, 'SIGCONT')
       for (const group of [...groups].reverse()) quiet(-group, 'SIGCONT')
     },
     kill() {
-      for (const group of groups) quiet(-group, 'SIGKILL')
-      for (const pid of loose) quiet(pid, 'SIGKILL')
-      frozen = false
+      if (killing) return killing
+      const deadline = performance.now() + TABLE_TIMEOUT_MS
+      killing = (async () => {
+        // Preserve parent links until the current scan has settled. If it
+        // failed, use the remaining stop budget to try again before killing.
+        if (pending) await pending
+        if (frozen && !fullyFrozen && root) await scan(root, generation, deadline)
+        const complete = fullyFrozen
+        for (const target of targets) quiet(target, 'SIGKILL')
+        frozen = fullyFrozen = false
+        generation++; pending = undefined
+        return complete
+      })()
+      return killing
     },
     alive() {
-      return [...groups].some(group => exists(-group)) || [...loose].some(pid => exists(pid))
+      return [...targets].some(exists)
     },
   }
 }

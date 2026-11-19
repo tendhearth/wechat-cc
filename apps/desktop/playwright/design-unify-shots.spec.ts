@@ -1,12 +1,13 @@
 import { join } from 'node:path'
 import { mkdir } from 'node:fs/promises'
 import { test, expect, clickNav, reveal } from './fixtures'
-import { rosterItem,routeRoster } from './roster-fixture'
+import { askingPlace,placeRow,rosterItem,routePlaces,routeRoster } from './roster-fixture'
 import { secondaryFixtures } from './secondary-fixtures'
 const task={id:'aabbccdd',title:'检查备份',path:'/offline/backup',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:1,pendingQuestionCount:0}
 const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,activity:id==='backup'?{waiting:1,running:2,unread:1,lastActiveAt:1793923200000}:id==='travel'?{waiting:0,running:1,unread:0,lastActiveAt:1793923100000}:id==='food'?{waiting:0,running:0,unread:1,lastActiveAt:1793923000000}:{waiting:0,running:0,unread:0,lastActiveAt:null},matterSummary:{waiting:1,running:0,total:1}})
 test.beforeEach(async({page,shim})=>{
   await routeRoster(page,[rosterItem(task.id,task.title)])
+  await routePlaces(page,[askingPlace('backup',task.id,'检查备份要你定')])
   await shim.invoke('demo.unseed');await shim.invoke('demo.seed',{})
   await page.route('**/v1/protocol/capabilities',r=>r.fulfill({json:{routes:'v1',topics:'v1'}}))
   await page.route('**/v1/matter/owner-chat/window**',r=>r.fulfill({json:{messages:[{kind:'user',text:'那台机器后来怎么样了？',createdAt:1,messageId:'source1'},{kind:'text',text:'正在核对备份。',createdAt:2,messageId:'source2'}],anchor:null,earlier:null,later:null}}))
@@ -37,9 +38,9 @@ test('design unification captures the four owner-approved surfaces', async ({pag
   await expect(page.locator('#converse-scroll')).toContainText('那台机器后来怎么样了？')
   await page.locator('#converse-input').fill('还没发出的草稿')
   await page.screenshot({path:join(out!,`desktop-conversation-${phase}.png`)})
-  await expect(page.locator('.roster-group[data-group="waiting"] h2')).toContainText('等你')
-  const row=page.locator('[data-roster-key="matter:aabbccdd"]')
-  await expect(row).toContainText('等你决定')
+  await expect(page.locator('#places-root .place[data-waiting="true"]')).toHaveCount(1)
+  const row=placeRow(page,'backup')
+  await expect(row).toContainText('检查备份要你定')
   await row.screenshot({path:join(out!,`desktop-home-row-${phase}.png`)})
   await clickNav(page,'memory')
   await clickNav(page,'memory')
@@ -77,7 +78,7 @@ test('design fixes keep toolbar semantics, final identity dimensions and current
   expect(await control.evaluate(el=>getComputedStyle(el).outlineStyle)).toBe('solid')
   await page.keyboard.press('Space');await expect(control.locator('..')).not.toHaveAttribute('open','')
  }
- await expect(page.locator('.roster-group[data-group="waiting"] h2')).toContainText('等你')
+ await expect(page.locator('#places-root .place[data-waiting="true"]')).toHaveCount(1)
  await page.evaluate(()=>{document.documentElement.style.setProperty('--th-identity-header-target','53px');document.documentElement.style.setProperty('--th-identity-header-image','37px')})
  const dimensions=await page.locator('.topbar-figure').evaluate(el=>({width:getComputedStyle(el).width,height:getComputedStyle(el).height,image:getComputedStyle(el.querySelector('img')!).width}))
  expect(dimensions).toEqual({width:'48px',height:'48px',image:'48px'})

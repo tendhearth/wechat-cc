@@ -30,7 +30,7 @@ describe('token-registry', () => {
     expect(opInfo?.tier).toBe('admin')
     expect(opInfo?.origin).toBe('operator')
     expect(opInfo?.routeAllow).toEqual(new Set([
-      'GET /v1/permissions/pending', 'GET /v1/roster',
+      'GET /v1/permissions/pending', 'GET /v1/roster', 'GET /v1/places', 'POST /v1/places/move', 'POST /v1/places/hide',
       'POST /v1/companion/converse',
       'POST /v1/companion/speak',
       'POST /v1/companion/transcribe',

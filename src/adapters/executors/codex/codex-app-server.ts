@@ -267,7 +267,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       // 一轮判成失败。收尾路上的 cleanupRequest 用自己的截止时间,不在此列。
       const timers = makePausableTimers()
       const freezer = makeProcessTreeFreezer(() => (!exited && !closing ? child.pid : undefined))
-      let terminated = false
+      let terminated = false, freezeIncomplete = false
+      let termination: Promise<void> | undefined
       const approvals = new Map<RpcId, Approval>()
       const questions = new Map<RpcId, UserQuestion>()
       let sequence = 0, threadId = '', active: Turn | undefined, buffer = ''
@@ -482,8 +483,18 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           rpcs.set(id, {resolve,reject,clear:()=>clearTimeout(timer)}); send({id,method,params})
         })
       }
+      const terminateFrozen = () => {
+        if (termination || !freezer.frozen) return termination
+        terminated = true
+        termination = freezer.kill().then(complete => {
+          freezeIncomplete = !complete
+          timers.resume()
+        })
+        return termination
+      }
       const close = (): Promise<void> => {
         if (closePromise) return closePromise
+        const frozenCleanup = terminateFrozen()
         stopped = true
         const unverifiedChildren = [...unknownBackground].filter(key => key.startsWith('child:')).map(key => key.slice(6))
         for (const waiting of candidates.values()) for (const message of waiting) if (rpcId(message.id)) send({id:message.id,result:rejectedRequest(message)})
@@ -493,7 +504,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         for (const turn of stoppingTurns) turn.cancelled = true
         const timeout = Math.min(options.closeTimeoutMs ?? 2_000, 2_500), deadline = Date.now() + timeout
         closePromise = Promise.resolve().then(async () => {
-          let cleanupFailure: Error | undefined
+          if (frozenCleanup) await frozenCleanup
+          let cleanupFailure = freezeIncomplete ? new Error('codex_terminal_cleanup_unverified') : undefined
           // The verified registration barrier and completed producers establish
           // that there is nothing detached to clean. Retention alone (e.g. an
           // accepted followup or a reconciled synthetic start) is not a writer.
@@ -557,10 +569,10 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           child.stdin.end()
           // 冻住时已经整棵 SIGKILL 过:只等它们全退(僵尸组上 kill(-组) 在 macOS 报 EPERM,别再发信号)。
           let killed = terminated
-          if (terminated) freezer.kill(); else signalOwned('SIGTERM')
+          if (!terminated) signalOwned('SIGTERM')
           // 放弃之前一定先发过 SIGKILL,并且发完至少再看 KILL_GRACE_MS 有没有退:以前先查期限再发 SIGKILL ——
           // 收尾阶段在满载下把预算用光时,第一圈就抛 codex_process_not_exited,一次 SIGKILL 都没发,进程留在机器上(10-21)。
-          let giveUpAt = deadline
+          let giveUpAt = terminated ? Math.max(deadline, Date.now() + KILL_GRACE_MS) : deadline
           while (!exited || (terminated ? freezer.alive() : groupAlive())) {
             if (!killed && Date.now() >= deadline - Math.max(50, timeout / 4)) { signalOwned('SIGKILL'); killed = true; giveUpAt = Math.max(deadline, Date.now() + KILL_GRACE_MS) }
             if (Date.now() >= giveUpAt) throw new Error('codex_process_not_exited')
@@ -1173,16 +1185,18 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       return {
         ...(runtime ? { workbenchRuntime: runtime } : {}),
         callTarget: () => spawnTarget,
-        processGroups: () => (process.platform !== 'win32' && child.pid ? [child.pid] : []),
+        processGroups: () => (!terminated && !freezer.frozen && process.platform !== 'win32' && child.pid ? [child.pid] : []),
         // 沙盒验证过(src/adapters/executors/suspend-resume.sandbox.test.ts):冻住期间被掐断的流,放开后 codex 自己
         // 「Reconnecting… 1/5」重试接上;放开后再收到的 willRetry 由 connect 看门狗照常管。
         suspension: {
-          suspend() {
-            if (closing || exited || broken || terminated || !freezer.freeze()) return false
-            timers.pause(); return true
+          async suspend() {
+            if (closing || stopped || exited || broken || terminated) return false
+            const freezing = freezer.freeze()
+            if (freezer.frozen) timers.pause()
+            return freezing
           },
           resume() { if (terminated) return; freezer.thaw(); timers.resume() },
-          terminate() { terminated = true; freezer.kill(); timers.resume() },
+          terminate: terminateFrozen,
         },
         dispatch(text, attachments) {
           if (runtime) throw new Error('codex_runtime_requires_lifetime_stream')

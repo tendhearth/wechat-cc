@@ -131,6 +131,16 @@ describe('makeNoticesDomain · 终态通知', () => {
     expect(n).toMatchObject({ kind: 'completed', runId: 'run-1' })
     expect(n!.text).toContain('这一轮已完成'); expect(n!.text).toContain(`结果：任务 ${task.id} 结果`)
   })
+  it('reports unconfirmed exit instead of the suspension cap success message', () => {
+    const { domain, task, store, running } = setup()
+    store.wechatNotifications.watch(task.id, 'owner', 'acct', true)
+    store.update(task.id, 'interrupted', 'writer_not_closed')
+    domain.stageFinishedNotice(running({ stopNotice: '网络一直没恢复，任务已停止，可以接着做' }), 'interrupted', 'writer_not_closed')
+    domain.publishFinishedNotices()
+    const [notice] = store.wechatNotifications.list(task.id)
+    expect(notice!.text).toContain('执行程序未确认退出')
+    expect(notice!.text).not.toContain('任务已停止')
+  })
   it('failed + 额度耗尽 ⇒ 文案是 executionFailureMessage + 「交给 <候选> 继续?」(候选来自注入的 quota.fallbackExecutor)', () => {
     const { domain, task, store, running } = setup()
     store.wechatNotifications.watch(task.id, 'owner', 'acct', true)

@@ -1,2 +1,5 @@
-export { makeRosterReader, type RosterReaderDeps } from './reader'
+export { gatherRoster, makeRosterReader, type RosterGathered, type RosterReaderDeps } from './reader'
 export { rosterRoutes } from './routes'
+export { makePlacesReader, placeKey, PLACES_WINDOW_MS, type PlacesReaderDeps } from './places-reader'
+export { placesRoutes } from './places-routes'
+export { makeProjectRoot } from './project-root'

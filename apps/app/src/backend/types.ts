@@ -100,6 +100,8 @@ export interface Backend {
   onConnection(cb: (c: Connection) => void): Unsubscribe
   subscribe<T>(topic: 'roster' | 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`, cb: (data: T) => void): Unsubscribe
   roster?(signal?: AbortSignal): Promise<import('@wechat-cc/protocol').RosterResponseT>
+  /** 「地方」:正面上半那几行(设计稿 2026-11-18-cc-two-sides-design.md §3)。 */
+  places?(signal?: AbortSignal): Promise<import('@wechat-cc/protocol').PlacesResponseT>
   topics(p: { view?: 'recent' | 'all'; limit?: number; cursor?: string }): Promise<TopicsListT>
   topicDetail(p: { id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }): Promise<TopicDetailT>
   topicEdit(action: 'rename' | 'merge' | 'delete' | 'wrong', input: { id: string; title?: string; into?: string }): Promise<void>

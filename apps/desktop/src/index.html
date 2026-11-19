@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="./postcard-album.css" />
     <link rel="stylesheet" href="./cc-life.css" />
     <link rel="stylesheet" href="./styles/converse.css" />
+    <link rel="stylesheet" href="./styles/places.css" />
     <link rel="stylesheet" href="./styles/conversation-topics.css" />
     <link rel="stylesheet" href="./cc-now.css" />
     <link rel="stylesheet" href="./cc-activity.css" />
@@ -391,17 +392,19 @@
       <div class="dash-window">
 
         <header id="dash-global-rail" class="dash-topbar">
-          <button id="topbar-cc" class="dash-nav-link active" data-pane="overview" aria-label="跟 CC 说">
-            <span class="topbar-figure"><img class="topbar-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" /><img class="topbar-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" /></span>
-            <span>CC</span>
-          </button>
-          <details class="cc-home-details">
-            <summary><span class="now-sr">CC 的连接:</span><span id="topbar-presence-dot" class="dot" aria-hidden="true"></span><span id="topbar-presence">正在连接…</span></summary>
-            <div class="now-panel">
-              <div id="now-connections" class="now-connections"></div>
-              <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
-            </div>
-          </details>
+          <div class="topbar-home">
+            <button id="topbar-cc" class="dash-nav-link active" data-pane="overview" aria-label="跟 CC 说">
+              <span class="topbar-figure"><img class="topbar-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" /><img class="topbar-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" /></span>
+              <span class="topbar-waiting-dot" aria-hidden="true"></span>
+            </button>
+            <details class="cc-home-details">
+              <summary><span class="now-sr">CC 的连接:</span><span id="topbar-presence-dot" class="dot" aria-hidden="true"></span><span id="topbar-presence">正在连接…</span></summary>
+              <div class="now-panel">
+                <div id="now-connections" class="now-connections"></div>
+                <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
+              </div>
+            </details>
+          </div>
           <nav aria-label="主导航">
             <button id="topbar-roster" type="button" aria-controls="roster-aside" aria-expanded="false">在做 0</button>
             <button id="topbar-search" type="button">搜索</button>
@@ -421,6 +424,7 @@
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
           <article class="dash-pane cc-now-pane" data-pane="overview" data-now="chat" data-conversation="single" data-cc="away">
+            <div class="places-strip"><div id="places-root" class="places-root"></div></div>
             <div id="converse-root" class="converse-page"></div>
 
           </article>

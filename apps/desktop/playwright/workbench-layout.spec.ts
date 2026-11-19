@@ -1,4 +1,4 @@
-import {routeRoster,rosterItem} from './roster-fixture'
+import {askingPlace,routePlaces,routeRoster,rosterItem} from './roster-fixture'
 import { join } from 'node:path'
 import { test, expect, clickNav, WORKBENCH_ROUTES } from './fixtures'
 
@@ -132,8 +132,8 @@ test('conversation layers preserve the global navigation and restore the convers
   await expect(page.locator('.cc-now-pane')).not.toHaveAttribute('inert')
 })
 
-test('waiting count stays in the roster while navigating the global topbar',async({page,shimUrl,shim})=>{
-  await routeRoster(page,[rosterItem('deadbeef','完善作品集在手机上的排版'),rosterItem('cafefeed','整理访谈主题与引用')])
+test('waiting stays visible on the topbar CC while navigating to other panes',async({page,shimUrl,shim})=>{
+  await routePlaces(page,[askingPlace('portfolio','deadbeef','Bash: bun run test'),askingPlace('interviews','cafefeed','要保留原话吗？')])
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
   await page.route('**/v1/workbench/attention',route=>route.fulfill({json:{tasks:[
     {id:'deadbeef',title:'完善作品集在手机上的排版',providerId:'claude',pendingPermissionCount:1,pendingQuestionCount:0,attentionKey:JSON.stringify(['permission-1']),first:{kind:'permission',text:'Bash: bun run test'}},
@@ -142,8 +142,21 @@ test('waiting count stays in the roster while navigating the global topbar',asyn
   await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.waitForFunction(()=>document.documentElement.dataset.mode && document.documentElement.dataset.mode!=='loading')
   await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
-  await expect(page.locator('#roster-list [data-group="waiting"] h2')).toHaveText('等你 2')
+  await expect(page.locator('#places-root .place[data-waiting="true"]')).toHaveCount(2)
+  const dot = page.locator('#topbar-cc .topbar-waiting-dot')
+  await expect(dot).toBeHidden()
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('aria-label','跟 CC 说')
   await expect(page.locator('#workbench-attention')).toHaveCount(0)
   await clickNav(page,'recollections')
-  await expect(page.locator('#roster-list [data-group="waiting"] h2')).toHaveText('等你 2')
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-waiting','2')
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('aria-label','跟 CC 说(有 2 件在等你)')
+  await expect(dot).toBeVisible()
+  const [avatar, badge] = await Promise.all([
+    page.locator('#topbar-cc .topbar-figure').boundingBox(), dot.boundingBox(),
+  ])
+  expect(badge!.x).toBeGreaterThan(avatar!.x + avatar!.width / 2)
+  expect(badge!.x + badge!.width).toBeLessThanOrEqual(avatar!.x + avatar!.width)
+  expect(badge!.y).toBeLessThan(avatar!.y + avatar!.height / 2)
+  await clickNav(page,'overview')
+  await expect(dot).toBeHidden()
 })

@@ -1425,6 +1425,10 @@ Bun.serve({
     // and token=A2A_TOKEN, so api.js routes all fetch() here.
     // Companion presence (dry-run): the dashboard scene and the pet window both
     // poll this; serve the seeded state instead of 404 (= DOWN).
+    // 「地方」(正面上半):默认一行都没有;要行的用例自己 page.route('**/v1/places')。
+    if (dryRun && url.pathname === '/v1/places' && req.method === 'GET') {
+      return Response.json({ places: [], version: 'shim-empty' })
+    }
     if (dryRun && url.pathname === '/v1/phone/enable-relay' && req.method === 'POST') {
       const q = __mockState.phone?.enableRelay
       return Response.json(q?.length ? (q.length > 1 ? q.shift() : q[0]) : { ok: false, state: 'starting' })

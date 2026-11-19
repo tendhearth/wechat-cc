@@ -130,6 +130,8 @@ const INTERNAL_ONLY = new Set([
     'api_artifact_exists_or_invalid_path', 'api_file_not_text', 'api_file_operation_failed', 'api_messages_too_large', 'api_model_aborted',
     'api_model_stream_already_consumed', 'api_model_stream_incomplete', 'api_project_changed', 'api_session_binding', 'api_session_conflict', 'artifact_delivery_conflict', 'artifact_delivery_not_found', 'artifact_delivery_scope',
     'artifact_delivery_stale', 'artifact_transport_unavailable', 'close_timeout',
+    // 收尾时读不到进程表(ps 卡住 / 冻树不完整):落进「退出未确认」,不走桌面 HTTP
+    'claude_runtime_process_table_unavailable',
     'codex_child_message_limit', 'codex_empty_input', 'codex_events_already_consumed', 'codex_input_id_conflict', 'codex_input_limit',
     'codex_invalid_rpc_response', 'codex_missing_thread_id', 'codex_missing_turn_id', 'codex_no_active_turn', 'codex_process_not_exited',
     'codex_resume_thread_mismatch', 'codex_runtime_already_started', 'codex_runtime_record_limit', 'codex_runtime_requires_lifetime_stream',
@@ -150,7 +152,7 @@ const INTERNAL_ONLY = new Set([
     'claude_runtime_closed_or_not_started', 'claude_runtime_request_duplicate_or_invalid', 'claude_runtime_pending_input_limit',
     'claude_runtime_request_limit', 'claude_runtime_requires_lifetime_entry', 'claude_runtime_event_budget_invalid',
     'claude_runtime_event_buffer_limit', 'claude_runtime_single_consumer_required', 'claude_runtime_concurrent_next_unsupported',
-    'claude_runtime_close_deadline', 'claude_runtime_process_table_invalid', 'claude_runtime_closed_or_duplicate_spawn',
+    'claude_runtime_close_deadline', 'claude_runtime_closed_or_duplicate_spawn',
     'claude_runtime_process_ownership_lost', 'claude_runtime_descendant_limit', 'claude_runtime_descendant_group_unowned',
     'claude_runtime_descendants_not_frozen', 'claude_runtime_process_not_exited',
     // ACP 运行时:进程收不干净 / 对端没给会话 id(同上,落进失败记录)

@@ -119,7 +119,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
       ...(task.error==='writer_not_closed'?{writerExit:writerAlive(ctx,task.id)?'alive' as const:'unconfirmed' as const}:{}),
       waitingFor:running ? waitingFor(running) : null,
       // 网络守护冻住了这条 run(2026-10-03):桌面 / 手机显示「已暂停(网络未受保护)」。
-      ...(running?.networkSuspended ? { networkSuspended:{since:running.networkSuspended.since} } : {}),
+      ...(running?.networkSuspended && !running.networkSuspended.pending ? { networkSuspended:{since:running.networkSuspended.since} } : {}),
       ...(includePermissions ? { pendingPermissionCount:running?.permissions.pending().length ?? 0,pendingQuestionCount:running?.questions.pending().length ?? 0 } : {}),
     }
   }
@@ -154,7 +154,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
       const run=state.runsByTask.get(task.id)
       let phase:PetTaskActivity['phase'],detail:string|null=null
       if(task.status==='cancelling'||run?.cancelled)phase='stopping'
-      else if(run?.networkSuspended)phase='paused'
+      else if(run?.networkSuspended&&!run.networkSuspended.pending)phase='paused'
       else {
         const permissions=run?.permissions.pending()??[],questions=run?.questions.pending()??[]
         if(permissions.length||questions.length){phase='needs_input';detail='需要你决定'}

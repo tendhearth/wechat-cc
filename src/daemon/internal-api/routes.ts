@@ -1,6 +1,6 @@
 import { cliSetupId } from '../../lib/executor-cli-setup'
 import { cliSetupRoutes } from './routes-cli-setup'
-import { rosterRoutes } from '../../features/roster'
+import { placesRoutes, rosterRoutes } from '../../features/roster'
 import { replyMetadataFields } from '@wechat-cc/protocol'
 import { CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { turnRoutes } from './routes-turn'
@@ -81,6 +81,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     // 工作台的 /v1/workbench/* 由 workbench 模块自己挂(src/features/workbench,路由表标 module: 'workbench')
     ...mattersRoutes(deps),
     ...rosterRoutes(deps),
+    ...placesRoutes(deps),
     // 一件事上的动作(P3e):/v1/matter/<动词> 一个处理器;桌面还在调的 /v1/workbench/* 双胞胎挂同一个函数(下面 withDesktopAliases)
     ...matterActionRoutes(deps),
     ...connectionsRoutes(deps),

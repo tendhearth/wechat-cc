@@ -26,6 +26,11 @@ const body = () => ({ body: t<Body>() })
 
 export const DESKTOP_CALLS = {
   roster: { get: call('GET /v1/roster') },
+  places: {
+    get: call('GET /v1/places'),
+    move: call('POST /v1/places/move', { body: t<{ key: string; to: number }>() }),
+    hide: call('POST /v1/places/hide', { body: t<{ key: string; hidden: boolean }>() }),
+  },
   checkup: {
     get:call('GET /v1/checkup'),
     estimate:call('POST /v1/checkup/estimate',body()),

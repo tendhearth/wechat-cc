@@ -16,7 +16,7 @@ appId: com.tendhearth.app
 - assertNotVisible:
     id: now-cc-status
 - assertVisible:
-    id: roster-strip
+    id: places-strip
 - assertVisible:
     id: now-connections
 - tapOn:

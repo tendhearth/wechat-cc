@@ -3,7 +3,7 @@
 // keyboard focus, disclosure state or horizontal code scrolling.
 /** @typedef {import('./converse.js').ConverseMsg} Message */
 /** @typedef {{message:Message,signature:string,node:Element}} Row */
-/** @typedef {{rows:Map<number,Row>,unread:boolean,following:boolean,lastTop:number}} ReadingState */
+/** @typedef {{rows:Map<number,Row>,unread:boolean,following:boolean,lastTop:number,empty:string}} ReadingState */
 /** @type {WeakMap<HTMLElement,ReadingState>} */
 const states = new WeakMap()
 
@@ -41,26 +41,28 @@ export function showConversationLatest(scroll, latest) {
 
 /** @param {HTMLElement} scroll @param {Message[]} messages
  * @param {(message:Message)=>string} render @param {string} empty
- * @param {{follow?:boolean,latest?:HTMLButtonElement|null}} [options] */
-export function paintConversation(scroll, messages, render, empty, {follow=false,latest=null}={}) {
+ * @param {{follow?:boolean,latest?:HTMLButtonElement|null,decoration?:(message:Message)=>string}} [options] */
+export function paintConversation(scroll, messages, render, empty, {follow=false,latest=null,decoration}={}) {
   let state=states.get(scroll)
-  if(!state){state={rows:new Map(),unread:false,following:true,lastTop:scroll.scrollTop};states.set(scroll,state)}
+  if(!state){state={rows:new Map(),unread:false,following:true,lastTop:scroll.scrollTop,empty:''};states.set(scroll,state)}
   if(scroll.scrollTop<state.lastTop-1)state.following=false
   const following=follow || !state.rows.size || (state.following && conversationAtLatest(scroll) && !conversationInteractionActive(scroll))
   const top=scroll.scrollTop
   if(!messages.length){
-    if(state.rows.size || !scroll.firstElementChild)scroll.innerHTML=empty
+    if(state.empty!==empty || !scroll.firstElementChild)scroll.innerHTML=empty
+    state.empty=empty
     state.rows.clear();state.unread=false
     if(latest)latest.hidden=true
     return
   }
   if(!state.rows.size)scroll.replaceChildren()
+  state.empty=''
   /** @type {Map<number,Row>} */
   const next=new Map()
   let cursor=scroll.firstElementChild,newReply=false
   for(const message of messages){
     const previous=state.rows.get(message.id)
-    const signature=JSON.stringify([message.role,message.text,message.pending,message.speaker,message.provider,message.replyParts,message.attachments,message.attachmentSourceIndexes,message.narration,message.projection])
+    const signature=JSON.stringify([message.role,message.text,message.pending,message.speaker,message.provider,message.replyParts,message.attachments,message.attachmentSourceIndexes,message.narration,message.projection,decoration?.(message)])
     let row=previous
     if(!previous || previous.signature!==signature){
       const template=scroll.ownerDocument.createElement('template')

@@ -322,6 +322,22 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         quiet: false, updatedAt: now(), unseen: i === 3,
       })) }
     },
+    async places() {
+      const title = (id: string) => entries.get(id)!.detail.matter.title
+      const place = (name: string, ids: string[], extra: Partial<import('@wechat-cc/protocol').PlaceT>): import('@wechat-cc/protocol').PlaceT => ({
+        key: `p:${Array.from(name).map(ch => ch.charCodeAt(0).toString(16)).join('').padEnd(16, '0').slice(0, 16)}`, name,
+        line: title(ids[0]!), status: 'working', waiting: null, moving: true, unseen: false, updatedAt: now(),
+        matterIds: ids, messageIds: [], sessionIds: [], ...extra,
+      })
+      const permission = entries.get(IDS.portfolio)!.detail.permissions[0]
+      const places = [
+        place('portfolio', [IDS.portfolio], { status: 'waiting', moving: false, line: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio),
+          waiting: { itemKey: `matter:${IDS.portfolio}`, kind: 'permission', matterId: IDS.portfolio, ...(permission ? { requestId: permission.id } : {}), summary: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio), count: 1 } }),
+        place('trip', [IDS.trip], {}),
+        place('notes', [IDS.report, IDS.notes], { status: 'done', moving: false, unseen: true, updatedAt: now() - 2 * HOUR }),
+      ]
+      return { version: 'demo-places:1', places }
+    },
     async topics(p) { return topicsList(p) },
     async topicDetail(p) {
       const into = topicMerged.get(p.id)

@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { test, expect, clickNav } from './fixtures'
-import {routeRoster,rosterItem} from './roster-fixture'
+import {askingPlace,routePlaces,routeRoster,rosterItem} from './roster-fixture'
 import { routePresenceTopic, PRESENCE_OK } from './presence-topic'
 const shots = join(process.cwd(), '../../.superpowers/now-hero-shots')
 const pane = '.cc-now-pane', stage = '#topbar-cc .now-pet-stage', sprite = '#topbar-cc .now-pet-sprite'
@@ -13,6 +13,7 @@ async function openHome(page: import('@playwright/test').Page, url: string) {
 test.beforeEach(async ({ page, shim }) => {
   await page.route('**/__dev_reload.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }))
   await routeRoster(page,[rosterItem('deadbeef','备份')])
+  await routePlaces(page,[askingPlace('backup','deadbeef')])
   await shim.invoke('demo.unseed'); await shim.invoke('demo.seed', {})
 })
 
@@ -136,7 +137,7 @@ test('real attention snapshots express a round reply once, preserve permission p
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'idle')
   waiting = true; phase = 'working'
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'permission', { timeout: 6000 })
-  await expect(page.locator('#roster-list [data-group="waiting"] h2')).toHaveText('等你 1')
+  await expect(page.locator('#places-root .place[data-waiting="true"]')).toHaveCount(1)
   const previousReads = reads; phase = 'replied'
   await expect.poll(() => reads).toBeGreaterThan(previousReads)
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'permission')

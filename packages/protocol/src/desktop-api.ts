@@ -1,4 +1,5 @@
 import { RosterResponse } from './roster'
+import { PlaceHideRequest, PlaceMoveRequest, PlacesResponse, PlaceWriteResponse } from './places'
 import { OptionalReplyMetadata } from './reply-attribution'
 import {EntryRequestId} from './entry-request-id'
 import { CliProjectMemoryRequest } from './cli-project-memory'
@@ -2487,6 +2488,8 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/memory/topics/entry/wrong': TopicWrongRequest,
   'POST /v1/memory/topics/open': TopicOpenRequest,
   'POST /v1/matter/seen': z.object({ id: z.string().regex(/^[a-f0-9]{8}$/), surface: z.literal('desktop').optional() }).strict(),
+  'POST /v1/places/move': PlaceMoveRequest,
+  'POST /v1/places/hide': PlaceHideRequest,
   // atelier
   'POST /v1/atelier/share': AtelierShareRequest,
 
@@ -2692,6 +2695,9 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/matter/review-comments-send': z.union([WorkbenchReviewCommentsSendResponse, PhoneActionOk.extend({ sent: z.number(), remaining: z.number(), skippedDiscarded: z.number() })]),
   // 一件事 / 连接 / 手机 / 插件 / 许可 / 终端会话 / 日历 / 信
   'GET /v1/roster': RosterResponse,
+  'GET /v1/places': PlacesResponse,
+  'POST /v1/places/move': PlaceWriteResponse,
+  'POST /v1/places/hide': PlaceWriteResponse,
   'GET /v1/matters': MattersListResponse,
   'GET /v1/matter': MatterDetailResponse,
   'GET /v1/matter/owner-chat': MatterOwnerChatResponse,

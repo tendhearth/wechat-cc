@@ -70,8 +70,11 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, s
       const r = opts.workbench?.suspendForNetwork((run) => {
         const cls = classifyWith(gate, run.target)
         return cls.protected ? `VPN 探测连续两次失败，这个任务用到 ${cls.label}。` : null
-      }) ?? { suspended: 0, stopped: 0 }
-      log('GUARD', `suspended ${r.suspended} protected workbench run(s); stopped ${r.stopped} that cannot be suspended`)
+      })
+      void r?.then(
+        result => log('GUARD', `suspended ${result.suspended} protected workbench run(s); stopped ${result.stopped} that cannot be suspended`),
+        error => log('GUARD', `suspendForNetwork failed: ${error instanceof Error ? error.message : String(error)}`),
+      )
       // 对话会话:常驻会话的回合计时 / 回复送达 / 会话锁都在协调器里,冻住它不是单轮安全的 ⇒ 仍然关
       // (下一条消息按原生会话续上)。只关需要保护的;和工作台同一个时刻(probe 两次)、同一条规矩(bx 不动)。
       void boot.sessionManager.shutdownProtected().then(

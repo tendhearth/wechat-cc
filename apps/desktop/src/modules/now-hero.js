@@ -131,7 +131,10 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   const apply = ({ intent, align }) => {
     if (destroyed) return
     button.dataset.motion = motion.reducedMotion || motion.quiet ? 'reduced' : 'full'
-    activity.update({ connected: intent.form === 'lit', waiting: intent.behavior === 'permission', blocked: intent.props.includes('exclamation'), enabled: active && !motion.reducedMotion && !motion.quiet })
+    // 权限等待也会带出感叹号道具。顶栏用地方的圆点表达等待，只保留异常事实带来的感叹号。
+    const troubled = intent.props.includes('exclamation')
+    button.toggleAttribute('data-troubled', troubled)
+    activity.update({ connected: intent.form === 'lit', waiting: intent.behavior === 'permission', blocked: troubled, enabled: active && !motion.reducedMotion && !motion.quiet })
     if (!pet) return
     // An inactive or reduced view observes facts without retaining any performance.
     pet.setPaused(!active)

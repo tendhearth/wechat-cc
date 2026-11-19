@@ -31,9 +31,9 @@ async function cLoadAgentNames(){
 }
 function cRender() {
   var root = document.getElementById('chat-messages')
-  var rows = Array.from(cMessages.values()).sort(function(a,b){return a.at-b.at||a.id.localeCompare(b.id)})
+  var rows = Array.from(cMessages.values()).filter(function(m){return typeof cInPlace!=='function'||cInPlace(m)}).sort(function(a,b){return a.at-b.at||a.id.localeCompare(b.id)})
   var html = rows.map(cMessageHtml).join('') || '<p class="empty">跟 CC 说一句吧。</p>'
-  if(typeof cReference==='function'){var added=new Set();html=rows.map(function(m){var text=cMessageHtml(m);cReferences.forEach(function(ref){if(ref.originMessageId===m.id){text+=cReference(ref,false);added.add(ref.id)}});return text}).join('');cReferences.forEach(function(ref){if(!added.has(ref.id))html+=cReference(ref,true)});if(!html)html='<p class="empty">跟 CC 说一句吧。</p>'}
+  if(typeof cReference==='function'){var added=new Set();html=rows.map(function(m){var text=cMessageHtml(m);cReferences.forEach(function(ref){if(ref.originMessageId===m.id){text+=cReference(ref,false);added.add(ref.id)}});return text}).join('');cReferences.forEach(function(ref){if(!added.has(ref.id)&&(typeof cRefInPlace!=='function'||cRefInPlace(ref)))html+=cReference(ref,true)});if(!html)html=typeof cPlace!=='undefined'&&cPlace?'<p class="empty">最近的说话里,还没有这个地方的事。点上面那一行回到全部。</p>':'<p class="empty">跟 CC 说一句吧。</p>'}
   cPatchMessages(root,html)
 }
 async function cRead(older) {
