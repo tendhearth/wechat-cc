@@ -38,14 +38,18 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     if(!parsed.success)throw Error('invalid_matter_plan')
     const normalized=parsed.data
     const bound=context&&approvals.get(context.scope,'mcp__wechat__matter_plan',normalized)
-    if(bound?.target&&(preview||bound.approved))return {...normalized,...bound.target}
     const prior=normalized.requestId&&store.entryRequests.get(ctx.deps.ownerChatId()??'',normalized.requestId.toLowerCase())
+    const first=normalized.legs[0]
+    const replayLegs=prior&&prior.phase==='accepted'&&normalized.legs.length===1&&first&&first.executor===undefined
+      ? [{executor:prior.providerId,brief:first.brief}]
+      : undefined
+    if(bound?.target&&(preview||bound.approved))return {...normalized,...bound.target,legs:replayLegs??bound.target.legs}
     const target=normalized.target
     if(prior&&prior.phase==='accepted'&&!normalized.project&&target&&(target.kind==='managed'&&!normalized.isolation&&!normalized.base||target.kind==='project'&&target.projectId)){
-      return {...normalized,legs:resolvePlanLegs(normalized,d.entry.planExecutors),target:target.kind==='managed'?target:{...target,projectId:target.projectId!,...(normalized.isolation?{isolation:normalized.isolation}:{}),...(normalized.base?{base:normalized.base}:{})},projectName:'',projectPath:''}
+      return {...normalized,legs:replayLegs??resolvePlanLegs(normalized,d.entry.planExecutors),target:target.kind==='managed'?target:{...target,projectId:target.projectId!,...(normalized.isolation?{isolation:normalized.isolation}:{}),...(normalized.base?{base:normalized.base}:{})},projectName:'',projectPath:''}
     }
     const resolved=resolvePlanTarget(normalized,d.entry.entryOptions({ownerKey:ctx.deps.ownerChatId()??'',surface:'desktop'}).projects,context?.path)
-    return {...normalized,...resolved,legs:resolvePlanLegs(normalized,d.entry.planExecutors)}
+    return {...normalized,...resolved,legs:replayLegs??resolvePlanLegs(normalized,d.entry.planExecutors)}
   }
   function requirePlanLegs(legs:PlanLegs){
     try{

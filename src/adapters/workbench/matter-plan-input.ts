@@ -12,17 +12,24 @@ export interface PlanCaller {sessionKey?:string;chatId?:string;provider?:string}
 export interface PlanTarget {target:EntryTarget;projectName:string;projectPath:string}
 export type PlanLegs=Array<{executor:string;brief:string}>
 export interface PreparedPlanTarget extends PlanTarget {legs:PlanLegs}
-export interface PlanExecutors {available:readonly string[];defaultProviderId:string|null}
+export interface PlanExecutors {
+  available:readonly string[]
+  defaultProviderId:string|null
+  defaultUnavailableReason?:{code:string;message:string}
+}
 export class PlanInputError extends Error {
-  constructor(code:string,readonly projects?:ProjectCatalogEntry[],readonly executors?:readonly string[]){super(code)}
+  constructor(code:string,readonly projects?:ProjectCatalogEntry[],readonly executors?:readonly string[],readonly defaultUnavailableMessage?:string){super(code)}
 }
 
 export function resolvePlanLegs(input:MatterPlanInput,executors:()=>PlanExecutors):PlanLegs {
   return input.legs.map(leg=>{
     if(leg.executor!==undefined)return {executor:leg.executor,brief:leg.brief}
     if(input.legs.length!==1)throw new PlanInputError('invalid_matter_plan')
-    const {available,defaultProviderId}=executors()
-    if(!defaultProviderId)throw new PlanInputError('unavailable_provider',undefined,available)
+    const {available,defaultProviderId,defaultUnavailableReason}=executors()
+    if(!defaultProviderId){
+      const message=defaultUnavailableReason?.message??(available.length?'还没有连接默认执行者。':undefined)
+      throw new PlanInputError('unavailable_provider',undefined,available,message)
+    }
     return {executor:defaultProviderId,brief:leg.brief}
   })
 }

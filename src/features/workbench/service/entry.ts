@@ -66,7 +66,11 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
   const defaultProviderFor=(providers:EntryOptions['providers'])=>providers.find(p=>p.id===ctx.deps.defaultProvider&&p.available)?.id??null
   const planExecutors=()=>{
     const providers=entryProviders()
-    return {available:providers.filter(p=>p.available).map(p=>p.id),defaultProviderId:defaultProviderFor(providers)}
+    return {
+      available:providers.filter(p=>p.available).map(p=>p.id),
+      defaultProviderId:defaultProviderFor(providers),
+      defaultUnavailableReason:providers.find(p=>p.id===ctx.deps.defaultProvider)?.unavailableReason,
+    }
   }
   function entryOptions(context:EntryContext):EntryOptions {
     if(!context.ownerKey||context.ownerKey!==ctx.deps.ownerChatId())return{status:'needs_connection',reason:{code:'invalid_entry_owner',message:'请先在电脑上配置主人身份。'},defaultProviderId:null,providers:[],projects:[]}

@@ -18,7 +18,12 @@ export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:(
       const parsed=MatterPlanRequest.safeParse(b)
       if([...q.keys()].length||!parsed.success)return {status:400,body:matterToolFailure('invalid_matter_plan',approved)}
       try{return {status:202,body:await d.workbench.matterPlan(parsed.data,d.planConversation?.(c??{})??undefined)}}
-      catch(error){const code=error instanceof Error?error.message:'';return {status:code==='matter_ledger_forbidden'?403:409,body:matterToolFailure(code,approved,'plan',error instanceof PlanInputError?error.projects:undefined,error instanceof PlanInputError?error.executors:code==='unavailable_provider'?d.workbench.availableExecutors():undefined)}}
+      catch(error){
+        const code=error instanceof Error?error.message:''
+        const details=error instanceof PlanInputError?error:undefined
+        const executors=details?details.executors:code==='unavailable_provider'?d.workbench.availableExecutors():undefined
+        return {status:code==='matter_ledger_forbidden'?403:409,body:matterToolFailure(code,approved,'plan',details?.projects,executors,details?.defaultUnavailableMessage)}
+      }
     },
     'GET /v1/matter/context':async(q,_b,c)=>{
       if(c?.origin!=='session'||c.tier==='guest'||!/^workbench\/[a-f0-9]{8}$/.test(c.sessionKey??''))return forbidden()

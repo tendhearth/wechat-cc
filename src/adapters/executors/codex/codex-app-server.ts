@@ -727,6 +727,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           ? chat ? chat.approve!({ ...request, input, ...(request.tool==='mcp__wechat__matter_plan'?{onDenied}:{}) }, controller.signal) : context.requestPermission!({ ...request, onDenied }, controller.signal) : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
+          // The native turn can complete while the decline is being written.
+          if (chat && feedback && allow !== true) approvals.delete(id)
           send({ id, result: { action: allow === true ? 'accept' : 'decline', content: null, _meta: null } }, () => {
             if (approvals.get(id) === entry) approvals.delete(id)
             if (allow !== true && feedback) steerDenial(turn, feedback)
@@ -990,7 +992,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
               dropPendingRequests(turn); retainUnfinishedCommands(turn); turn.occurrence.finish(params.turn?.status)
               turn.events.push(turn.occurrence.event(), reconcileUnstartedCommands()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn); return
             }
-            if (!chat && !turn.cancelled && turn.denialFeedback?.length && ['completed', 'interrupted'].includes(params.turn?.status)) {
+            // Chat only queues denial feedback for matter_plan validation failures.
+            if (!turn.cancelled && turn.denialFeedback?.length && ['completed', 'interrupted'].includes(params.turn?.status)) {
               if (turn.resumingDenial) return
               turn.resumingDenial = true; clearWatchdog(turn)
               void (async () => {
@@ -1001,7 +1004,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
                 turn.denialFeedback = []
                 dropPendingRequests(turn); retainUnfinishedCommands(turn); pruneFinishedTurn(turn)
                 active = undefined
-                context.reportNotice?.('这一步已拒绝，正在同一会话中换一种做法继续。')
+                if (!chat) context.reportNotice?.('这一步已拒绝，正在同一会话中换一种做法继续。')
                 const next = launch(feedback, undefined, turn.events)
                 if (turn.usage) next.turn.usage = sumTurnUsage(next.turn.usage, turn.usage)
                 await next.accepted

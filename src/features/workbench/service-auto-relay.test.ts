@@ -47,7 +47,7 @@ function setup(retainedFirst:boolean|'all'=false,signals=true,extra:Partial<Para
   const request=()=>({requestId:randomUUID(),target:{kind:'managed' as const},title:'三棒接力',legs:[{executor:'codex',brief:'出三张图'},{executor:'claude',brief:'接入插图'},{executor:'openai',brief:'跑测试'}]})
   const create=async()=>{const result=await service.matterPlan(request());await expect.poll(()=>calls.length).toBe(1);return result.task.id}
   const finish=async(index:number,text='已完成。',error=false)=>{const call=calls[index]!;call.idle?.();call.queue.push({kind:'init',sessionId:call.context.resumeSessionId??`session-${index}`});call.queue.push({kind:'text',itemId:'private',text:'RAW_TRANSCRIPT_CANARY'});call.queue.push({kind:'text',itemId:'final',text});if(error)call.queue.push({kind:'error',message:'synthetic_failure'});else call.queue.push({kind:'result',sessionId:call.context.resumeSessionId??`session-${index}`,numTurns:1,durationMs:1});if(!call.idle)call.queue.end()}
-  return {root,project,db,store,matters,registry,calls,notices,ordinaryReports,order,request,create,finish,blockNext(mode:typeof nextBlock){nextBlock=mode;if(mode==='ack')registry.get('claude')!.opts.workbench=UNATTENDED_CAPABILITIES},get service(){return service},async restart(){await service.shutdown();service=makeWorkbenchService(opts)}}
+  return {root,project,db,store,matters,registry,calls,notices,ordinaryReports,order,request,create,finish,blockNext(mode:typeof nextBlock){nextBlock=mode;if(mode==='ack')registry.get('claude')!.opts.workbench=UNATTENDED_CAPABILITIES},get service(){return service},async restart(overrides:Partial<Parameters<typeof makeWorkbenchService>[0]>={}){await service.shutdown();service=makeWorkbenchService({...opts,...overrides})}}
 }
 
 it.each([false,true])('one leg creates an ordinary task without a relay plan or relay report (retained=%s)',async retained=>{
@@ -112,6 +112,48 @@ it('fills the desktop default before showing the approval card and keeps the ori
  expect(await post(input)).toEqual(result)
  expect(await post(shown)).toEqual(result)
  await expect.poll(()=>f.calls.map(call=>call.executor)).toEqual(['claude'])
+})
+
+it.each(['quota','ack'] as const)('replays the accepted default when it is blocked by %s',async block=>{
+ const f=setup(false,true,{defaultProvider:'claude'})
+ const input={...f.request(),legs:[{brief:'加收藏'}]}
+ const first=await f.service.matterPlan(input)
+ await expect.poll(()=>f.calls.map(call=>call.executor)).toEqual(['claude'])
+ f.blockNext(block)
+ expect((await f.service.matterPlan(input)).receipt).toEqual(first.receipt)
+ await expect(f.service.matterPlan({...input,legs:[{brief:'改成导出'}]})).rejects.toThrow('creation_conflict')
+ await expect(f.service.matterPlan({...input,legs:[{executor:'codex',brief:'加收藏'}]})).rejects.toThrow('creation_conflict')
+ expect(f.calls).toHaveLength(1)
+})
+
+it('replays the accepted default after the configured default changes',async()=>{
+ const f=setup(false,true,{defaultProvider:'claude'})
+ const input={...f.request(),legs:[{brief:'加收藏'}]}
+ const first=await f.service.matterPlan(input)
+ await expect.poll(()=>f.calls.map(call=>call.executor)).toEqual(['claude'])
+ await f.finish(0)
+ await f.restart({defaultProvider:'codex'})
+ expect(f.service.planExecutors().defaultProviderId).toBe('codex')
+ expect((await f.service.matterPlan(input)).receipt).toEqual(first.receipt)
+ expect(f.calls).toHaveLength(1)
+})
+
+it.each([
+ ['quota','额度已用完'],
+ ['ack','请先在电脑上确认免审执行'],
+] as const)('explains why the configured default is blocked by %s',async(block,reason)=>{
+ const f=setup(false,true,{defaultProvider:'claude'})
+ f.blockNext(block)
+ const input={...f.request(),legs:[{brief:'加收藏'}]}
+ const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner'})['POST /v1/matter/plan']!
+ const post=()=>route(new URLSearchParams(),input,{tier:'admin',origin:'session',chatId:'owner'})
+ expect(await post()).toMatchObject({status:409,body:{error:'unavailable_provider',message:expect.stringContaining('当前可用的执行者 id：codex、openai')}})
+ expect(await post()).toMatchObject({body:{message:expect.stringContaining(reason)}})
+ for(const id of ['codex','openai'])f.registry.get(id)!.opts.workbench=undefined
+ const result=await post()
+ expect(result).toMatchObject({body:{message:expect.stringContaining(reason)}})
+ expect(result.body).not.toMatchObject({message:expect.stringContaining('连接一位工作执行者')})
+ expect(f.calls).toEqual([])
 })
 
 it.each([

@@ -119,7 +119,8 @@ export async function prepareChatApprovalPrompt(provider:string,tool:string,inpu
       }
     }catch(error){
       const code=error instanceof Error?error.message:'matter_plan_failed'
-      throw Error(matterToolFailure(code,false,'plan',error instanceof PlanInputError?error.projects:undefined,error instanceof PlanInputError?error.executors:undefined).message)
+      const details=error instanceof PlanInputError?error:undefined
+      throw Error(matterToolFailure(code,false,'plan',details?.projects,details?.executors,details?.defaultUnavailableMessage).message)
     }
   }
   return renderChatApprovalPrompt(provider,tool,input,requestId,title,resolved)

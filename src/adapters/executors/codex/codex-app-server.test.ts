@@ -9,7 +9,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentAttachment, AgentEvent, AgentSession, SpawnContext } from '../../../ports/agent-provider'
 import { TIER_PROFILES } from '../../../domain/user-tier'
-import { createWorkbenchCodexProvider } from './codex-app-server'
+import { createWorkbenchCodexProvider, spawnCodexAppServerSession } from './codex-app-server'
 import { makeRunPermissions } from '../../workbench/permissions'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }))
@@ -91,6 +91,42 @@ function enableExternal() {
   discovery = '[{"name":"external","enabled":true}]'
   nativeConfig = { mcp_servers: { external: { command: '/tools/external', tools: { create_note: { approval_mode: 'approve' } } } } }
 }
+it('continues Codex chat with the matter plan validation reason when completion beats steer', async () => {
+  const reason = 'rici 还没登记成能派活的项目。'
+  const approve = vi.fn(async (request: Parameters<NonNullable<import('./codex-app-server').CodexChatProfile['approve']>>[0]) => {
+    request.onDenied?.(reason)
+    return false
+  })
+  const session = await spawnCodexAppServerSession({ codexPathOverride: '/codex', rpcTimeoutMs: 200, closeTimeoutMs: 250 },
+    { alias: 'chat', path: '/project' }, context(), {
+      approvalPolicy: 'on-request', sandbox: 'workspace-write', env: {},
+      config: { mcp_servers: { wechat: { command: '/tools/wechat' } } }, approve,
+    })
+  sessions.push(session)
+  const child = children.at(-1)!, turn = collect(session)
+  await begun(child)
+  const args = { project: 'rici', title: '加收藏', legs: [{ brief: '加收藏' }] }
+  mcpItem(child, { server: 'wechat', tool: 'matter_plan', arguments: args })
+  // The native process completes the turn as soon as it receives decline.
+  child.stdin.on('data', chunk => {
+    const message = JSON.parse(String(chunk)) as Rpc
+    if (message.id === 'plan' && message.result?.action === 'decline' &&
+        child.sent.filter(m => m.id === 'plan').length === 1) completed(child)
+  })
+  mcpRequest(child, 'plan', { serverName: 'wechat', _meta: {
+    codex_approval_kind: 'mcp_tool_call', tool_name: 'matter_plan', tool_params: args,
+  } })
+  await begun(child, 2)
+  expect(approve).toHaveBeenCalledTimes(1)
+  expect(child.sent.filter(m => m.id === 'plan')).toHaveLength(1)
+  expect(child.sent.some(m => m.method === 'turn/steer')).toBe(false)
+  const continuation = child.sent.filter(m => m.method === 'turn/start')[1]!
+  expect(continuation.params).toMatchObject({ threadId: 'thread-1', input: [{ type: 'text', text: expect.stringContaining(reason) }] })
+  completed(child, 'completed', 'turn-2')
+  await turn.done
+  expect(turn.events.filter(event => event.kind === 'result')).toHaveLength(1)
+})
+
 it.each([false,true])('injects only bound matter tools in thread config while keeping the token out of startup arguments and shell environment (resume=%s)',async resume=>{
   vi.stubEnv('WECHAT_SESSION_TOKEN','inherited-chat-token')
   vi.stubEnv('WECHAT_SESSION_TIER','admin')

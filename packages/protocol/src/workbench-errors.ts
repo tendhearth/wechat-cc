@@ -278,10 +278,12 @@ export function workbenchErrorHttp(code: string, surface: WorkbenchErrorSurface,
 
 
 /** Relay tool failures retain machine codes and state explicitly whether approval has happened. */
-export function matterToolFailure(code:string,approved:boolean|null,operation:'plan'|'handoff'='plan',projects?:readonly {name:string;path:string;id:string}[],executors?:readonly string[]) {
+export function matterToolFailure(code:string,approved:boolean|null,operation:'plan'|'handoff'='plan',projects?:readonly {name:string;path:string;id:string}[],executors?:readonly string[],defaultUnavailableMessage?:string) {
   const known=workbenchErrorSpec(code),error=known?code:operation==='plan'?'matter_plan_failed':'matter_handoff_failed'
   const reason=operation==='plan'&&error==='unavailable_provider'&&executors!==undefined
-    ? executors.length?`指定的执行者或默认执行者现在用不了。当前可用的执行者 id：${executors.join('、')}。请选一个重试。`:'现在没有可用的执行者。请在电脑上连接一位工作执行者，再试一次。'
+    ? executors.length
+      ? `${defaultUnavailableMessage??'指定的执行者或默认执行者现在用不了。'}当前可用的执行者 id：${executors.join('、')}。请选一个重试。`
+      : defaultUnavailableMessage??'现在没有可用的执行者。请在电脑上连接一位工作执行者，再试一次。'
     : workbenchErrorSpec(error)?.matter??'操作失败，请检查事项、工作区和执行者后重试。'
   const choices=projects===undefined?'':projects.length?' 可选项目：'+projects.map(p=>`${p.name}（${p.id}，${p.path}）`).join('；')+'。':' 目前没有可选项目，请让主人先登记项目。'
   return {error,approved,message:`${approved===null?'批准状态未确认，':approved?'主人已批准，但':'本次调用未获得主人批准，'}${operation==='plan'?'没建成':'没接成'}：${reason}${choices}`}
