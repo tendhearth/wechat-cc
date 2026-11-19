@@ -13,6 +13,8 @@ export const DEFAULT_OPENING: z.infer<typeof introduction> = {
   lines: ['这是我们两个人的本子。', '我挑了楷体和蓝黑墨水，字清楚，墨色也安静。', '你想写什么都行，不用等我回。'],
 }
 
+export type NotebookRow = Omit<NotebookEntry, 'day' | 'refDay'>
+
 export const PEN_PROMPT = `你是 CC。这是你和主人一起写的本子。按自己的性格挑一款字体和一种墨色，并用自己的口气写两到三句开场。说这是两个人的本子，说你挑了哪支笔、为什么，告诉主人想写什么都行，不用等你回。把包含选笔理由的那一句同时放进 reason 和 lines。
 字体键：${JSON.stringify(NOTEBOOK_FONTS)}
 墨色键：${JSON.stringify(NOTEBOOK_INKS)}
@@ -29,7 +31,7 @@ export function parseOpening(raw: string) {
   }
   return data
 }
-export function parseComment(raw: string, candidates: NotebookEntry[]) {
+export function parseComment(raw: string, candidates: NotebookRow[]) {
   const data = comment.parse(JSON.parse(raw))
   if (!data) return null
   const ref = candidates.find(entry => entry.id === data.refId)

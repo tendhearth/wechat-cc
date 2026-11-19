@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { NotebookEntry } from '../../domain/notebook'
+import type { NotebookRow } from '../../domain/notebook'
 import type { NotebookSettings, NotebookStore } from '../../ports/notebook'
 import type { Db } from '../../lib/db'
 import { localParts } from '../../lib/local-time'
@@ -19,7 +19,7 @@ export function makeNotebookStore(db: Db): NotebookStore {
       db.query('INSERT INTO notebook_settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value))
     },
     append(entry) {
-      const result = db.query<NotebookEntry, [string, string, string, number, string | null, string, string | null]>(`
+      const result = db.query<NotebookRow, [string, string, string, number, string | null, string, string | null]>(`
         INSERT INTO notebook_entries(id, author, body, created_at, ref_id, origin, client_id)
         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(client_id) DO NOTHING RETURNING ${columns}
       `).get(randomUUID(), entry.author, entry.body, entry.createdAt, entry.refId, entry.origin, entry.clientId)
@@ -30,7 +30,7 @@ export function makeNotebookStore(db: Db): NotebookStore {
           calendar.sorted = undefined
         }
       }
-      return result ?? db.query<NotebookEntry, [string | null]>(`SELECT ${columns} FROM notebook_entries WHERE client_id = ?`).get(entry.clientId)!
+      return result ?? db.query<NotebookRow, [string | null]>(`SELECT ${columns} FROM notebook_entries WHERE client_id = ?`).get(entry.clientId)!
     },
     strike(id, at) {
       const result = db.query("UPDATE notebook_entries SET struck_at = ? WHERE id = ? AND author = 'owner'").run(at, id)
@@ -38,7 +38,14 @@ export function makeNotebookStore(db: Db): NotebookStore {
       return db.query('SELECT 1 FROM notebook_entries WHERE id = ?').get(id) ? 'cc' : 'missing'
     },
     byId(id) {
-      return db.query<NotebookEntry, [string]>(`SELECT ${columns} FROM notebook_entries WHERE id = ?`).get(id)
+      return db.query<NotebookRow, [string]>(`SELECT ${columns} FROM notebook_entries WHERE id = ?`).get(id)
+    },
+    referenceTimestamps(ids) {
+      return db.query<{ id: string; createdAt: number }, [string]>(`
+        SELECT entry.id, entry.created_at AS createdAt
+        FROM json_each(?) AS ref
+        CROSS JOIN notebook_entries AS entry ON entry.id = ref.value
+      `).all(JSON.stringify(ids))
     },
     occupiedDays(timezone) {
       // Build once per timezone from the covering timestamp index. Appends
@@ -53,7 +60,7 @@ export function makeNotebookStore(db: Db): NotebookStore {
       return calendar.sorted ??= [...calendar.days].sort().reverse()
     },
     list({ since = 0, until = Number.MAX_SAFE_INTEGER, limit = -1, query = '', olderThan = null, ownerOnly = false } = {}) {
-      return db.query<NotebookEntry, [number, number, string, string | null, string | null, number]>(`
+      return db.query<NotebookRow, [number, number, string, string | null, string | null, number]>(`
         SELECT ${columns} FROM notebook_entries
         WHERE created_at >= ? AND created_at < ? AND instr(body, ?) > 0
         ${ownerOnly ? "AND author = 'owner'" : ''}

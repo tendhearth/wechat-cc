@@ -1,5 +1,5 @@
 import type { NotebookChatReadResponseT, NotebookPageResponseT } from '@wechat-cc/protocol'
-import type { NotebookEntry, NotebookPaper, NotebookPen } from '../domain/notebook'
+import type { NotebookEntry, NotebookPaper, NotebookPen, NotebookRow } from '../domain/notebook'
 
 export interface NotebookSettings {
   pen: NotebookPen
@@ -9,11 +9,12 @@ export interface NotebookSettings {
 export interface NotebookStore {
   get<K extends keyof NotebookSettings>(key: K): NotebookSettings[K] | null
   set<K extends keyof NotebookSettings>(key: K, value: NotebookSettings[K]): void
-  append(entry: Omit<NotebookEntry, 'id' | 'struckAt'>): NotebookEntry
+  append(entry: Omit<NotebookRow, 'id' | 'struckAt'>): NotebookRow
   strike(id: string, at: number | null): 'ok' | 'missing' | 'cc'
-  byId(id: string): NotebookEntry | null
+  byId(id: string): NotebookRow | null
+  referenceTimestamps(ids: readonly string[]): { id: string; createdAt: number }[]
   occupiedDays(timezone: string): readonly string[]
-  list(options?: { since?: number; until?: number; limit?: number; query?: string; olderThan?: string; ownerOnly?: boolean }): NotebookEntry[]
+  list(options?: { since?: number; until?: number; limit?: number; query?: string; olderThan?: string; ownerOnly?: boolean }): NotebookRow[]
   atomic<T>(fn: () => T): T
 }
 

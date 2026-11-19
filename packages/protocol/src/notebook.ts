@@ -10,20 +10,23 @@ export const NotebookPen = z.object({
   ink: z.enum(['blueBlack', 'darkGreen', 'ochre', 'greyPurple']),
   reason: z.string(),
 }).strict()
+export const NotebookDay = z.string().refine(day => /^\d{4}-\d{2}-\d{2}$/.test(day)
+  && Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day)
 export const NotebookEntry = z.object({
   id: z.string().uuid(),
   author: z.enum(['owner', 'cc']),
   body: NotebookBody,
   createdAt: z.number().int(),
+  day: NotebookDay,
   refId: z.string().uuid().nullable(),
+  refDay: NotebookDay.optional(),
   struckAt: z.number().int().nullable(),
   origin: z.enum(['desktop', 'app', 'chat']),
   clientId: z.string().nullable(),
 })
-export const NotebookDay = z.string().refine(day => /^\d{4}-\d{2}-\d{2}$/.test(day)
-  && Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day)
 export const NotebookPageResponse = z.object({
   day: NotebookDay,
+  today: NotebookDay,
   days: z.array(NotebookDay),
   entries: z.array(NotebookEntry),
   nextAfter: z.string().uuid().optional(),

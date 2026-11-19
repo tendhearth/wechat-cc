@@ -4,7 +4,7 @@ import { notebookRoutes } from './routes'
 import { NOTEBOOK_JOT_PREFIX } from '@wechat-cc/protocol'
 import {
   COMMENT_PROMPT, DEFAULT_OPENING, PEN_PROMPT,
-  parseComment, parseOpening, type NotebookEntry,
+  parseComment, parseOpening, type NotebookEntry, type NotebookRow,
 } from '../../domain/notebook'
 import { NOTEBOOK_DEFAULTS, type NotebookConfig } from '../../lib/notebook-config'
 import { localParts } from '../../lib/local-time'
@@ -34,7 +34,7 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     const { timezone, notebook } = deps.settings()
     return { timezone, config: { ...NOTEBOOK_DEFAULTS, ...notebook } }
   }
-  const append = (author: NotebookEntry['author'], body: string, origin: NotebookEntry['origin'], createdAt: number, clientId: string | null = null, refId: string | null = null) => {
+  const append = (author: NotebookRow['author'], body: string, origin: NotebookRow['origin'], createdAt: number, clientId: string | null = null, refId: string | null = null) => {
     const entry = store.append({ author, body, origin, createdAt, clientId, refId })
     deps.log?.(1, Array.from(entry.body).length)
     return entry
@@ -61,6 +61,16 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     } finally {
       clearTimeout(timer)
     }
+  }
+
+  function withReferenceDays(entries: NotebookEntry[], dayOf: (at: number) => string): NotebookEntry[] {
+    const ids = new Set(entries.flatMap(entry => entry.refId === null ? [] : [entry.refId]))
+    if (!ids.size) return entries
+    const refDays = new Map(store.referenceTimestamps([...ids]).map(({ id, createdAt }) => [id, dayOf(createdAt)]))
+    return entries.map(entry => {
+      const refDay = entry.refId === null ? undefined : refDays.get(entry.refId)
+      return refDay === undefined ? entry : { ...entry, refDay }
+    })
   }
 
   let opening: Promise<void> | undefined
@@ -147,19 +157,27 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
       const { timezone } = settings()
       const dayOf = (at: number) => localParts(at, timezone).day
       const days = store.occupiedDays(timezone)
-      const selected = day ?? days[0] ?? dayOf(now())
+      const today = dayOf(now())
+      const selected = day ?? days[0] ?? today
       const utc = Date.parse(selected)
       // IANA 偏移小于一天。先按索引缩小范围，再按当地日期精确匹配。
-      const entries = store.list({ since: utc - DAY_MS, until: utc + 2 * DAY_MS }).filter(entry => dayOf(entry.createdAt) === selected)
+      const rows = store.list({ since: utc - DAY_MS, until: utc + 2 * DAY_MS }).filter(entry => dayOf(entry.createdAt) === selected)
+      const entries = withReferenceDays(rows.map(entry => ({ ...entry, day: selected })), dayOf)
       const pen = store.get('pen')
       const { font, ink, reason } = DEFAULT_OPENING
-      return { day: selected, days: [...days], entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
+      return { day: selected, today, days: [...days], entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
     },
-    write: (body: string, clientId: string, origin: 'desktop' | 'app') => append('owner', body, origin, now(), clientId),
+    write(body, clientId, origin) {
+      const entry = append('owner', body, origin, now(), clientId)
+      return { ...entry, day: localParts(entry.createdAt, settings().timezone).day }
+    },
     strike: (id: string, struck: boolean) => store.strike(id, struck ? now() : null),
     paper: (paper: NotebookSettings['paper']) => { store.set('paper', paper); return paper },
     isOwner: (caller: Parameters<NonNullable<NotebookDeps['isOwner']>>[0]) => deps.isOwner?.(caller) === true,
-    jot: (text: string) => append('cc', NOTEBOOK_JOT_PREFIX + text.trim(), 'chat', now()),
+    jot(text) {
+      const entry = append('cc', NOTEBOOK_JOT_PREFIX + text.trim(), 'chat', now())
+      return { ...entry, day: localParts(entry.createdAt, settings().timezone).day }
+    },
     read(days: number, query?: string, after?: string) {
       const { timezone } = settings()
       const dayOf = (at: number) => localParts(at, timezone).day
@@ -170,8 +188,8 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
       let size = JSON.stringify({ entries: [], nextAfter: '00000000-0000-0000-0000-000000000000' }).length
       for (;;) {
         const batch = store.list({ since, query, olderThan, limit: CHAT_READ_BATCH }).reverse()
-        for (const entry of batch) {
-          if (dayOf(entry.createdAt) < firstDay) continue
+        const dated = batch.map(entry => ({ ...entry, day: dayOf(entry.createdAt) })).filter(entry => entry.day >= firstDay)
+        for (const entry of withReferenceDays(dated, dayOf)) {
           const added = JSON.stringify(entry).length + (entries.length ? 1 : 0)
           if (size + added > CHAT_READ_MAX_CHARS) return { entries, nextAfter: entries.at(-1)?.id }
           entries.push(entry)

@@ -26,6 +26,7 @@ import { makeMemoryLlmOps } from '../../features/memory'
 import { makeAtelierTick } from '../../features/atelier'
 
 export interface WireMainOpts {
+  notebookTick?: () => Promise<void>
   rosterTerminals?: () => import('../../ports/cli-session').CliSessionView[]
   /** 项目登记(别名 → 文件夹),伙伴那一拍选文件夹用。 */
   projects: import('../projects').Projects
@@ -206,7 +207,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     log: (tag, line) => opts.log(tag, line),
   })
   // pipeline-deps 先造:App 那条路(companionApp)在它里面,伙伴的 tick 要用。buildTickBodies 构造时只是闭包。
-  const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, roster, places, notebook, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, opts.late)
+  const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, roster, places, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, opts.late)
   const ticks = buildTickBodies({
     ...opts,
     proactive,
@@ -220,7 +221,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const lifecycleDeps = buildLifecycleDeps(opts, ticks, speech, notebook.tick)
+  const lifecycleDeps = buildLifecycleDeps(opts, ticks, speech, opts.notebookTick)
   return {
     appPush,
     proactive,
@@ -235,7 +236,6 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     mattersService,
     roster,
     places,
-    notebook,
     memoryNightly,
     stopMatterActivity,
     stopPhone,

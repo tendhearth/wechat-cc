@@ -28,7 +28,7 @@ function fixture(model: (() => ((prompt: string) => Promise<string>) | null) | n
   const routes = notebookRoutes(n)
   const call = (key: string, body?: unknown, origin: NonNullable<Parameters<RouteHandler>[2]>['origin'] = 'operator', query = '', tier: 'admin' | 'guest' = 'admin', chatId?: string) =>
     routes[key]!(new URLSearchParams(query), body, { tier, origin, chatId })
-  return { n, store, call, logs, at: (t: number) => { time = t } }
+  return { n, store, db, call, logs, at: (t: number) => { time = t } }
 }
 
 describe('notebook pages', () => {
@@ -43,6 +43,75 @@ describe('notebook pages', () => {
     expect(n.page()).toMatchObject({ day: '2026-11-19', days: ['2026-11-19', '2026-11-18'], entries: [second, third] })
     expect(n.page('2026-11-18').entries).toEqual([first])
     expect(n.page('2026-11-20').entries).toEqual([])
+  })
+
+  it('reports today at owner midnight, independently of the selected page and machine timezone', async () => {
+    const { at, call } = fixture()
+    at(Date.parse('2026-11-19T07:59:59Z'))
+    await call('POST /v1/notebook/write', { body: 'before', clientId: 'before' })
+    expect((await call('GET /v1/notebook')).body).toMatchObject({ today: '2026-11-18' })
+    at(Date.parse('2026-11-19T08:00:00Z'))
+    expect((await call('GET /v1/notebook')).body).toMatchObject({ day: '2026-11-18', today: '2026-11-19' })
+  })
+
+  it('returns the original entry day on a write retry after owner midnight', async () => {
+    const { at, call } = fixture()
+    const write = { body: 'before', clientId: 'retry' }
+    at(Date.parse('2026-11-19T07:59:59Z'))
+    const result = await call('POST /v1/notebook/write', write)
+    expect(result.body).toMatchObject({ entry: { day: '2026-11-18' } })
+    at(Date.parse('2026-11-19T08:00:00Z'))
+    expect(await call('POST /v1/notebook/write', write)).toEqual(result)
+    expect((await call('GET /v1/notebook')).body).toMatchObject({ entries: [{ day: '2026-11-18' }] })
+  })
+
+  it('returns cross-day reference dates on pages and chat reads, then recomputes them after a timezone change', async () => {
+    const { store } = fixture()
+    const before = Date.parse('2026-11-19T07:59:59Z')
+    const after = before + 1000
+    let timezone = 'America/Los_Angeles'
+    const n = makeNotebook({ store, settings: () => ({ timezone }), model: () => null, now: () => after, isOwner: () => true })
+    const ref = store.append({ author: 'owner', body: 'before', createdAt: before, refId: null, origin: 'desktop', clientId: null })
+    const reply = store.append({ author: 'cc', body: 'after', createdAt: after, refId: ref.id, origin: 'desktop', clientId: null })
+    const entry = { id: reply.id, refId: ref.id, day: '2026-11-19', refDay: '2026-11-18' }
+    expect(n.page()).toMatchObject({ entries: [entry] })
+    const chatRead = notebookRoutes(n)['POST /v1/notebook/chat/read']!
+    const result = await chatRead(new URLSearchParams(), { days: 1 }, { tier: 'admin', origin: 'session' })
+    expect(NotebookChatReadResponse.parse(result.body)).toMatchObject({ entries: [entry] })
+    timezone = 'Pacific/Honolulu'
+    expect(n.page()).toMatchObject({
+      today: '2026-11-18', day: '2026-11-18', days: ['2026-11-18'],
+      entries: [{ id: ref.id, day: '2026-11-18' }, { ...entry, day: '2026-11-18' }],
+    })
+    timezone = 'UTC'
+    expect(n.page()).toMatchObject({
+      today: '2026-11-19', entries: [{ id: ref.id, day: '2026-11-19' }, { ...entry, refDay: '2026-11-19' }],
+    })
+  })
+
+  it('fetches only distinct reference IDs on the selected page in one batch', () => {
+    const { n, store } = fixture()
+    const target = n.write('target', 'target', 'desktop')
+    const other = n.write('other', 'other', 'desktop')
+    for (const [refId, createdAt] of [[target.id, BASE + 86_400_000], [target.id, BASE + 86_400_001], [other.id, BASE + 2 * 86_400_000]] as const) {
+      store.append({ author: 'cc', body: 'reply', createdAt, refId, origin: 'desktop', clientId: null })
+    }
+    const lookup = vi.spyOn(store, 'referenceTimestamps')
+    expect(n.page('2026-11-20').entries).toHaveLength(2)
+    expect(lookup.mock.calls).toEqual([[[target.id]]])
+  })
+
+  it('keeps refId and omits refDay for a missing target', () => {
+    const { db, n, store } = fixture()
+    const refId = '00000000-0000-4000-8000-000000000001'
+    db.exec('PRAGMA foreign_keys = OFF')
+    try {
+      store.append({ author: 'cc', body: 'orphan', createdAt: BASE, refId, origin: 'desktop', clientId: null })
+    } finally { db.exec('PRAGMA foreign_keys = ON') }
+    for (const result of [n.page(), n.read(1)]) {
+      expect(result.entries).toMatchObject([{ refId, day: '2026-11-19' }])
+      expect(result.entries[0]).not.toHaveProperty('refDay')
+    }
   })
 
   it('reuses occupied days across reads and writes and rebuilds them when the timezone changes', () => {
@@ -73,10 +142,10 @@ describe('notebook pages', () => {
 
       timezone = 'America/Los_Angeles'
       expect(n.page('2026-11-21')).toMatchObject({
-        days: ['2026-11-25', '2026-11-21', '2026-11-18'], entries: [first],
+        days: ['2026-11-25', '2026-11-21', '2026-11-18'], entries: [{ ...first, day: '2026-11-21' }],
       })
       format.mockClear()
-      expect(n.page('2026-11-21').entries).toEqual([first])
+      expect(n.page('2026-11-21').entries).toEqual([{ ...first, day: '2026-11-21' }])
       expect(format.mock.calls.length).toBeLessThanOrEqual(2)
     } finally { format.mockRestore() }
   })
