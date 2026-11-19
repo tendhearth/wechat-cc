@@ -81,8 +81,7 @@ export type RecordMatterPlan = (
   query: URLSearchParams,
   body: unknown,
   projects: () => import('../../adapters/workbench/project-catalog').ProjectCatalogEntry[],
-  /** 工作台此刻收得了活的执行者(workbench.availableExecutors):工作台有自己的登记表,对话那张表里的同名执行者不带工作台能力。 */
-  executors: () => readonly string[],
+  executors: () => import('../../adapters/workbench/matter-plan-input').PlanExecutors,
 ) => { status: number; body: unknown }
 
 export type TokenInfo = {

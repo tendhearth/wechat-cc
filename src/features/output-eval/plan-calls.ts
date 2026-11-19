@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { z } from 'zod'
 import { MatterPlanRequest, WorkbenchEntryResultResponse } from '../../../packages/protocol/src/desktop-api'
 import { matterToolFailure } from '../../../packages/protocol/src/workbench-errors'
-import { PlanInputError, resolvePlanTarget } from '../../adapters/workbench/matter-plan-input'
+import { PlanInputError, resolvePlanLegs, resolvePlanTarget } from '../../adapters/workbench/matter-plan-input'
 import type { RecordMatterPlan } from '../../daemon/internal-api/token-registry'
 import type { EvalPlanCall } from '../../domain/output-eval'
 
@@ -41,17 +41,16 @@ export function makeMatterPlanRecorder(path: string, calls: EvalPlanCall[]) {
     try {
       const resolved = resolvePlanTarget(input, projects(), path)
       if (resolved.target.kind === 'project') call.resolvedProject = resolved.projectName
-      // 生产会拒的执行者,这里也拒:不然模型编一个名字,评测照样回「已受理」(独立评审)。
-      // 问的是工作台(路由传进来的 availableExecutors),不是对话那张登记表 —— 两张表里同名的 codex / claude 不是同一个东西,
-      // 对话那张不带工作台能力,拿它核会把真能干活的执行者全判成没登记(11-19 真机评测抓到)。
-      const available = executors()
-      if (!input.legs.every(leg => available.includes(leg.executor))) throw new Error('unavailable_provider')
+      const choices = executors()
+      const legs = resolvePlanLegs(input, () => choices)
+      call.legs = recordFields({ legs }).legs
+      if (!legs.every(leg => choices.available.includes(leg.executor))) throw new PlanInputError('unavailable_provider', undefined, choices.available)
       const id = randomBytes(4).toString('hex')
       const acceptedAt = Date.now()
       const result: z.infer<typeof WorkbenchEntryResultResponse> = {
         receipt: { requestId: input.requestId ?? randomUUID(), taskId: id, matterId: id, runId: randomUUID(), acceptedAt },
         task: {
-          id, title: input.title, path: resolved.projectPath, providerId: input.legs[0]!.executor,
+          id, title: input.title, path: resolved.projectPath, providerId: legs[0]!.executor,
           status: 'queued', workspaceKind: resolved.target.kind === 'managed' ? 'managed' : 'project',
           createdAt: acceptedAt, updatedAt: acceptedAt, error: null, archivedAt: null,
           phase: 'queued', canArchive: false, waitingFor: null,
@@ -60,7 +59,7 @@ export function makeMatterPlanRecorder(path: string, calls: EvalPlanCall[]) {
       return { status: 202, body: result }
     } catch (error) {
       const failure = matterToolFailure(error instanceof Error ? error.message : '', false, 'plan',
-        error instanceof PlanInputError ? error.projects : undefined)
+        error instanceof PlanInputError ? error.projects : undefined, error instanceof PlanInputError ? error.executors : undefined)
       call.error = failure.error
       return { status: 409, body: failure }
     }

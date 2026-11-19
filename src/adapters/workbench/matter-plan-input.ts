@@ -10,8 +10,21 @@ export type MatterPlanInput=z.infer<typeof MatterPlanRequest>
 export interface PlanConversation {scope:string;path?:string}
 export interface PlanCaller {sessionKey?:string;chatId?:string;provider?:string}
 export interface PlanTarget {target:EntryTarget;projectName:string;projectPath:string}
+export type PlanLegs=Array<{executor:string;brief:string}>
+export interface PreparedPlanTarget extends PlanTarget {legs:PlanLegs}
+export interface PlanExecutors {available:readonly string[];defaultProviderId:string|null}
 export class PlanInputError extends Error {
-  constructor(code:string,readonly projects?:ProjectCatalogEntry[]){super(code)}
+  constructor(code:string,readonly projects?:ProjectCatalogEntry[],readonly executors?:readonly string[]){super(code)}
+}
+
+export function resolvePlanLegs(input:MatterPlanInput,executors:()=>PlanExecutors):PlanLegs {
+  return input.legs.map(leg=>{
+    if(leg.executor!==undefined)return {executor:leg.executor,brief:leg.brief}
+    if(input.legs.length!==1)throw new PlanInputError('invalid_matter_plan')
+    const {available,defaultProviderId}=executors()
+    if(!defaultProviderId)throw new PlanInputError('unavailable_provider',undefined,available)
+    return {executor:defaultProviderId,brief:leg.brief}
+  })
 }
 const canonical=(path:string)=>{try{return realpathSync(path)}catch{return null}}
 

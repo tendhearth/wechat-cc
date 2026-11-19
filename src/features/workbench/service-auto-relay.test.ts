@@ -17,6 +17,8 @@ import {ledgerRoutes} from './ledger-routes'
 import {createOpenAiAgentProvider} from '../../adapters/executors/openai/openai-agent-provider'
 import {scriptedOpenAiModel,scriptedMcpTools} from '../../test-support/executors/openai-scripted'
 import {collectTurn} from '../../ports/agent-provider'
+import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
+import {prepareChatApprovalPrompt} from '../../adapters/executors/chat-approval'
 import {TIER_PROFILES} from '../../domain/user-tier'
 
 vi.setConfig({testTimeout:30_000})
@@ -80,6 +82,54 @@ it.each([0,7])('rejects %s legs with a Chinese explanation and creates nothing',
   expect(f.db.query('SELECT * FROM matter_plans').all()).toEqual([])
   expect(f.db.query('SELECT * FROM matter_plan_legs').all()).toEqual([])
   expect(f.calls).toEqual([])
+})
+
+it('fills the desktop default before showing the approval card and keeps the original input bound to it',async()=>{
+ const context={scope:'default-executor-turn'},caller={chatId:'owner',provider:'codex'}
+ const f=setup(false,true,{defaultProvider:'claude',planConversation:()=>context})
+ const {requestId:_id,...body}=f.request(),input={...body,title:'加个收藏',legs:[{brief:'加一个收藏按钮'}]}
+ const shown=structuredClone(input),tool='mcp__wechat__matter_plan'
+ expect(MatterPlanRequest.safeParse(input).success).toBe(true)
+ expect(f.service.entryOptions({ownerKey:'owner',surface:'desktop'}).defaultProviderId).toBe('claude')
+ const card=await prepareChatApprovalPrompt('Codex',tool,shown,'test',{
+   resolveMatterPlan:(args,chatId,provider)=>f.service.matterPlanPreview(args as typeof input,{chatId,provider}),
+ },'owner')
+ expect(card).toContain('确认交办：加个收藏')
+ expect(card).toContain('第 1 棒 · claude：加一个收藏按钮')
+ expect(shown.legs).toEqual([{executor:'claude',brief:'加一个收藏按钮'}])
+ expect(f.calls).toEqual([])
+ f.service.noteMatterApproval(tool,input,caller)
+ expect(f.service.matterApprovalStatus(tool,shown,caller)).toBe(true)
+ const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner',planConversation:()=>context})['POST /v1/matter/plan']!
+ const post=(args:unknown)=>route(new URLSearchParams(),args,{tier:'admin',origin:'session',...caller})
+ f.blockNext('quota')
+ expect(await post(input)).toMatchObject({status:409,body:{error:'provider_quota_exhausted',approved:true}})
+ expect(f.calls).toEqual([])
+ f.blockNext(null)
+ const result=await post(input)
+ expect(result).toMatchObject({status:202,body:{task:{providerId:'claude'}}})
+ f.blockNext('quota')
+ expect(await post(input)).toEqual(result)
+ expect(await post(shown)).toEqual(result)
+ await expect.poll(()=>f.calls.map(call=>call.executor)).toEqual(['claude'])
+})
+
+it.each([
+ {label:'missing executor in a relay',legs:[{brief:'改'},{executor:'claude',brief:'检查'}],status:400,error:'invalid_matter_plan',message:'多棒时每棒都要填'},
+ {label:'no available executor',legs:[{brief:'改'}],empty:true,status:409,error:'unavailable_provider',message:'现在没有可用的执行者'},
+ {label:'unknown executor',legs:[{executor:'CC',brief:'改'}],status:409,error:'unavailable_provider',message:'当前可用的执行者 id：codex、claude、openai'},
+ {label:'no default with other executors available',legs:[{brief:'改'}],status:409,error:'unavailable_provider',message:'当前可用的执行者 id：codex、claude、openai'},
+])('rejects $label with actionable feedback',async({legs,empty,status,error,message})=>{
+ const f=setup()
+ if(empty)for(const id of f.registry.list())f.registry.get(id)!.opts.workbench=undefined
+ const input={...f.request(),legs}
+ expect(MatterPlanRequest.safeParse(input).success).toBe(status!==400)
+ const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner'})['POST /v1/matter/plan']!
+ expect(await route(new URLSearchParams(),input,{tier:'admin',origin:'session',chatId:'owner'})).toMatchObject({
+   status,body:{error,approved:false,message:expect.stringContaining(message)},
+ })
+ expect(f.store.list()).toEqual([])
+ expect(f.calls).toEqual([])
 })
 
 it('three approved legs run in order with ledger openings and no prior raw transcript',async()=>{

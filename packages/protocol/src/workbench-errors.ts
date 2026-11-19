@@ -33,7 +33,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   checkup_run_unknown: { desktop:404, phone:[404,'not_found'] },
   matter_project_ambiguous: {desktop: 409, matter: '这个项目名有重名，无法唯一确定；请改用列表中的精确项目编号或路径。'},
   invalid_request: {desktop: 400, matter: '事项编号或交接参数不正确；请确认事项编号、执行者和具体要求后重试。'},
-  invalid_matter_plan: {desktop: 409, matter: '交办参数不正确；请提供标题和按顺序排列的 1–6 棒，每棒都要有已登记的执行者和具体要求。'},
+  invalid_matter_plan: {desktop: 409, matter: '交办参数不正确；请提供标题和按顺序排列的 1–6 棒，每棒都要有具体要求，多棒时每棒都要填已登记的执行者。'},
   matter_conversation_unavailable: {desktop: 409, matter: '无法唯一确定当前主人对话的轮次；请回到原对话重试。'},
   matter_plan_failed: {desktop: 409, matter: '创建事项时遇到错误；请检查工作区和执行者状态后重试，不要告诉主人还在等批准。'},
   matter_handoff_failed: {desktop: 409, matter: '没有接上下一棒；请检查事项编号、工作区和执行者状态后重试。'},
@@ -278,9 +278,11 @@ export function workbenchErrorHttp(code: string, surface: WorkbenchErrorSurface,
 
 
 /** Relay tool failures retain machine codes and state explicitly whether approval has happened. */
-export function matterToolFailure(code:string,approved:boolean|null,operation:'plan'|'handoff'='plan',projects?:readonly {name:string;path:string;id:string}[]) {
+export function matterToolFailure(code:string,approved:boolean|null,operation:'plan'|'handoff'='plan',projects?:readonly {name:string;path:string;id:string}[],executors?:readonly string[]) {
   const known=workbenchErrorSpec(code),error=known?code:operation==='plan'?'matter_plan_failed':'matter_handoff_failed'
-  const reason=workbenchErrorSpec(error)?.matter??'操作失败，请检查事项、工作区和执行者后重试。'
+  const reason=operation==='plan'&&error==='unavailable_provider'&&executors!==undefined
+    ? executors.length?`指定的执行者或默认执行者现在用不了。当前可用的执行者 id：${executors.join('、')}。请选一个重试。`:'现在没有可用的执行者。请在电脑上连接一位工作执行者，再试一次。'
+    : workbenchErrorSpec(error)?.matter??'操作失败，请检查事项、工作区和执行者后重试。'
   const choices=projects===undefined?'':projects.length?' 可选项目：'+projects.map(p=>`${p.name}（${p.id}，${p.path}）`).join('；')+'。':' 目前没有可选项目，请让主人先登记项目。'
   return {error,approved,message:`${approved===null?'批准状态未确认，':approved?'主人已批准，但':'本次调用未获得主人批准，'}${operation==='plan'?'没建成':'没接成'}：${reason}${choices}`}
 }

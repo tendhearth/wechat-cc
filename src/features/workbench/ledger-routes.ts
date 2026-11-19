@@ -12,13 +12,13 @@ const invalid=()=>({status:400,body:{error:'invalid_request'}})
 export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:()=>string|null;planConversation?:(caller:PlanCaller)=>PlanConversation|null}):RouteTable{
   return {
     'POST /v1/matter/plan':async(q,b,c)=>{
-      if (c?.origin === 'session' && c.recordMatterPlan) return c.recordMatterPlan(q, b, () => d.workbench.projects(), () => d.workbench.availableExecutors())
+      if (c?.origin === 'session' && c.recordMatterPlan) return c.recordMatterPlan(q, b, () => d.workbench.projects(), () => d.workbench.planExecutors())
       if(!ownerLedgerConversation(d.resolveAdminChatId?.()??null,c))return {status:403,body:matterToolFailure('matter_ledger_forbidden',false)}
       const approved=d.workbench.matterApprovalStatus?.('mcp__wechat__matter_plan',b,c??{})??false
       const parsed=MatterPlanRequest.safeParse(b)
       if([...q.keys()].length||!parsed.success)return {status:400,body:matterToolFailure('invalid_matter_plan',approved)}
       try{return {status:202,body:await d.workbench.matterPlan(parsed.data,d.planConversation?.(c??{})??undefined)}}
-      catch(error){const code=error instanceof Error?error.message:'';return {status:code==='matter_ledger_forbidden'?403:409,body:matterToolFailure(code,approved,'plan',error instanceof PlanInputError?error.projects:undefined)}}
+      catch(error){const code=error instanceof Error?error.message:'';return {status:code==='matter_ledger_forbidden'?403:409,body:matterToolFailure(code,approved,'plan',error instanceof PlanInputError?error.projects:undefined,error instanceof PlanInputError?error.executors:code==='unavailable_provider'?d.workbench.availableExecutors():undefined)}}
     },
     'GET /v1/matter/context':async(q,_b,c)=>{
       if(c?.origin!=='session'||c.tier==='guest'||!/^workbench\/[a-f0-9]{8}$/.test(c.sessionKey??''))return forbidden()

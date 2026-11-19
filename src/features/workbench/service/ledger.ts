@@ -14,7 +14,7 @@ import {checkedText} from './checked-text'
 import type {EntryDomain} from './entry'
 import {matterApprovals} from './matter-approvals'
 import {MatterPlanRequest} from '../../../../packages/protocol/src/desktop-api'
-import {resolvePlanTarget,planRequestId,type PlanConversation,type PlanCaller,type MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
+import {resolvePlanTarget,resolvePlanLegs,PlanInputError,planRequestId,type PlanLegs,type PlanConversation,type PlanCaller,type MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
 
 export type {MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
 export interface AutoRelayHandoff {from:number|null;to:number;beforeStart:()=>void;ownerResume?:boolean;accepted?:()=>void}
@@ -33,27 +33,35 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     }
     return current
   }
-  function prepare(input:MatterPlanInput,context?:PlanConversation){
+  function prepare(input:MatterPlanInput,context?:PlanConversation,preview=false){
     const parsed=MatterPlanRequest.safeParse(input)
     if(!parsed.success)throw Error('invalid_matter_plan')
     const normalized=parsed.data
     const bound=context&&approvals.get(context.scope,'mcp__wechat__matter_plan',normalized)
+    if(bound?.target&&(preview||bound.approved))return {...normalized,...bound.target}
     const prior=normalized.requestId&&store.entryRequests.get(ctx.deps.ownerChatId()??'',normalized.requestId.toLowerCase())
     const target=normalized.target
     if(prior&&prior.phase==='accepted'&&!normalized.project&&target&&(target.kind==='managed'&&!normalized.isolation&&!normalized.base||target.kind==='project'&&target.projectId)){
-      return {...normalized,target:target.kind==='managed'?target:{...target,projectId:target.projectId!,...(normalized.isolation?{isolation:normalized.isolation}:{}),...(normalized.base?{base:normalized.base}:{})},projectName:'',projectPath:''}
+      return {...normalized,legs:resolvePlanLegs(normalized,d.entry.planExecutors),target:target.kind==='managed'?target:{...target,projectId:target.projectId!,...(normalized.isolation?{isolation:normalized.isolation}:{}),...(normalized.base?{base:normalized.base}:{})},projectName:'',projectPath:''}
     }
-    const resolved=bound?.approved&&bound.target?bound.target:resolvePlanTarget(normalized,d.entry.entryOptions({ownerKey:ctx.deps.ownerChatId()??'',surface:'desktop'}).projects,context?.path)
-    return {...normalized,...resolved}
+    const resolved=resolvePlanTarget(normalized,d.entry.entryOptions({ownerKey:ctx.deps.ownerChatId()??'',surface:'desktop'}).projects,context?.path)
+    return {...normalized,...resolved,legs:resolvePlanLegs(normalized,d.entry.planExecutors)}
+  }
+  function requirePlanLegs(legs:PlanLegs){
+    try{
+      for(const leg of legs)d.admission.requireEntryInput(leg.executor,[],PROVIDER_EXECUTION_CHOICE,leg.brief)
+    }catch(error){
+      if(error instanceof Error&&error.message==='unavailable_provider')throw new PlanInputError(error.message,undefined,d.entry.availableExecutors())
+      throw error
+    }
   }
   return {
     matterPlanPreview(input:MatterPlanInput,caller:PlanCaller){
       if(!caller.chatId||caller.chatId!==ctx.deps.ownerChatId())throw Error('matter_ledger_forbidden')
       const context=conversation(caller)
       if(!context)throw Error('matter_conversation_unavailable')
-      const existing=approvals.get(context.scope,'mcp__wechat__matter_plan',input)?.target
-      const prepared=existing?{...MatterPlanRequest.parse(input),...existing}:prepare(input,context)
-      for(const leg of prepared.legs)d.admission.requireEntryInput(leg.executor,[],PROVIDER_EXECUTION_CHOICE,leg.brief)
+      const prepared=prepare(input,context,true)
+      requirePlanLegs(prepared.legs)
       approvals.preview(context.scope,input,prepared)
       return prepared
     },
@@ -97,7 +105,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       if(!input.requestId&&!context?.scope)throw Error('matter_conversation_unavailable')
       const requestId=input.requestId??planRequestId(JSON.stringify([owner,context!.scope]),prepared)
       // Accepted receipts replay before mutable provider admission; createEntry still checks the complete hash.
-      if(!d.entry.entryReceipt(requestId,{ownerKey:owner,surface:'desktop'}))for(const leg of legs)d.admission.requireEntryInput(leg.executor,[],PROVIDER_EXECUTION_CHOICE,leg.brief)
+      if(!d.entry.entryReceipt(requestId,{ownerKey:owner,surface:'desktop'}))requirePlanLegs(legs)
       const first=prepared.legs[0]!
       return d.entry.createEntry({requestId,target:prepared.target,title:prepared.title,text:first.brief,providerId:first.executor},{ownerKey:owner,surface:'desktop'},
         {identity:JSON.stringify(legs),persist:(task,runId)=>{
