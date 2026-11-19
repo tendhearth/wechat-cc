@@ -10,7 +10,7 @@ import type { MatterSeen } from '../../adapters/store/matter-seen'
 export interface RosterReaderDeps {
   matters: Pick<MatterStore, 'list'> & Partial<Pick<MatterStore, 'get'>>
   workbench?: {
-    list(query: {archived:'exclude';limit:number}): {tasks:Array<{id:string;status:string;phase?:string}>}
+    list(query: {archived:'exclude';limit:number;cursor?:string}): {tasks:Array<{id:string;status:string;phase?:string}>;page?:{nextCursor:string|null}}
     attention(): {tasks:Array<{id:string}>}
     detail(id:string): {
       permissions:Array<{id:string;tool:string;description:string;createdAt:number}>
@@ -32,6 +32,9 @@ export interface RosterGathered {
   /** 终端会话,原样(project 是完整 cwd)。 */
   sessions: Map<string, CliSessionView>
 }
+
+/** 工作台列表接口的页上限(`listFilters` 里那条 `limit>100`);没归档的任务最多翻这么多页。 */
+const TASK_PAGE = 100, TASK_PAGES_MAX = 20
 
 /** 名单要的那几份数据;`windowMs` 管「带回来的」往回看多远(名单 24 小时,地方更长)。 */
 export function gatherRoster(deps: RosterReaderDeps, scope: 'operator' | 'device', now: number, windowMs: number): RosterGathered {
@@ -60,7 +63,14 @@ export function gatherRoster(deps: RosterReaderDeps, scope: 'operator' | 'device
   const tasks = new Map<string, {status:string;phase?:string}>()
   const pending = new Map<string,RosterPending[]>()
   if (wb) {
-    for (const t of wb.list({archived:'exclude',limit:500}).tasks) tasks.set(t.id,{status:t.status,phase:t.phase})
+    // 工作台的列表一页最多 TASK_PAGE 件,多要会直接抛错(真机上名单因此整个读不出来过);按页翻。
+    let cursor: string | undefined
+    for (let n = 0; n < TASK_PAGES_MAX; n++) {
+      const page = wb.list({archived:'exclude',limit:TASK_PAGE,...(cursor ? {cursor} : {})})
+      for (const t of page.tasks) tasks.set(t.id,{status:t.status,phase:t.phase})
+      cursor = page.page?.nextCursor ?? undefined
+      if (!cursor) break
+    }
     for (const id of attention) {
       try {
         const d = wb.detail(id)

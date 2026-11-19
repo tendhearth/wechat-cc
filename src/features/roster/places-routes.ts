@@ -1,7 +1,8 @@
 import { PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
 import type { InternalApiDeps, RouteTable } from '../../daemon/internal-api/types'
+import { readFailure } from './routes'
 
-export function placesRoutes(deps: Pick<InternalApiDeps, 'places'>): RouteTable {
+export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): RouteTable {
   const unavailable = { status: 503, body: { error: 'unavailable' } }
   return {
     'GET /v1/places': (_query, _body, caller, ctx) => {
@@ -11,7 +12,10 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places'>): RouteTable 
         const body = deps.places.read(caller.origin)
         const headers = { etag: body.version }
         return ctx?.headers?.get('if-none-match') === body.version ? { status: 304, body: null, headers } : { status: 200, body, headers }
-      } catch { return unavailable }
+      } catch (error) {
+        deps.log?.('PLACES', `read failed: ${readFailure(error)}`)
+        return unavailable
+      }
     },
     // 顺序和收起是主人在桌面上定的,只给 operator。
     'POST /v1/places/move': (_query, body, caller) => {

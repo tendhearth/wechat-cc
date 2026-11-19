@@ -217,6 +217,17 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 
+  it('the desk: 「现在」那一列的两个接口在整只 daemon 上读得出来(名单 + 地方)', async () => {
+    // 这两条以前在真机上一直 503:名单一次向工作台要 500 件任务,真工作台一页最多 100 件、直接抛错;
+    // 单元测试里的工作台替身不查上限,所以只有接上真工作台的整只 daemon 才看得到。
+    const roster = await desktop<{ items?: unknown[]; version?: string; error?: string }>('GET', '/v1/roster')
+    expect(roster.status, JSON.stringify(roster.body.error ?? null)).toBe(200)
+    expect(Array.isArray(roster.body.items)).toBe(true)
+    const places = await desktop<{ places?: unknown[]; version?: string; error?: string }>('GET', '/v1/places')
+    expect(places.status, JSON.stringify(places.body.error ?? null)).toBe(200)
+    expect(Array.isArray(places.body.places)).toBe(true)
+  })
+
   it('owner sends text → the reply lands in the WeChat outbox', async () => {
     d.sendText(d.owner, '沙盒你好')
     const out = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('主人好,我在。')), 15_000)
