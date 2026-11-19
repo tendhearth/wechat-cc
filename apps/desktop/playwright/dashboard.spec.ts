@@ -516,6 +516,7 @@ test.describe('RECONNECT_DIAGNOSE telemetry', () => {
 
 
 test('presence shell keeps one home composer and its draft through navigation', async ({page,shimUrl,shim}) => {
+  await page.setViewportSize({ width: 800, height: 820 })
   await shim.invoke('demo.seed', {chat_id:'test_chat'})
   await bootIntoDashboard(page,shimUrl)
   await expect(page.locator('#dash-global-rail .cc-home-details')).not.toHaveAttribute('open')

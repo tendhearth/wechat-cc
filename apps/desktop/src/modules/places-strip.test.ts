@@ -176,3 +176,29 @@ it('旧 WebView 的固定菜单支持展开、Esc 和点外关闭', async () => 
   document.getElementById('outside')!.click()
   expect(menu.hidden).toBe(true)
 })
+
+it('宽窗置顶卡回答后越过已经在途的读取发起新刷新', async () => {
+  const waiting = place('rici', { waiting: { itemKey: 'matter:aaaa0001', kind: 'permission', matterId: 'aaaa0001', requestId: 'req-1', summary: '要删旧表吗？', count: 1 } })
+  const waitingRoot = document.createElement('div')
+  let reads = 0
+  let releaseRead: (() => void) | undefined
+  const { call } = mount(([, path]: string[]) => {
+    if (path !== '/v1/places') return { ok: true }
+    reads++
+    if (reads === 1) return { places: [waiting], version: 'before' }
+    if (reads === 2) return new Promise(resolve => { releaseRead = () => resolve({ notModified: true }) })
+    return { places: [place('rici')], version: 'after' }
+  }, { waitingRoot })
+  document.body.append(waitingRoot)
+  strip!.setWide(true)
+  await strip!.refresh()
+  expect(document.querySelector('#p .place-ask')).toBeNull()
+  const reading = strip!.refresh()
+  waitingRoot.querySelector<HTMLButtonElement>('[data-place-decision="allow"]')!.click()
+  await vi.waitFor(() => expect(call.mock.calls.some(args => args[1] === '/v1/matter/permission')).toBe(true))
+  releaseRead!()
+  await reading
+  await vi.waitFor(() => expect(waitingRoot.hidden).toBe(true))
+  expect(reads).toBe(3)
+  expect(document.querySelector('#p .place')?.getAttribute('data-waiting')).toBe('false')
+})

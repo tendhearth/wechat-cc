@@ -5,7 +5,7 @@
 //
 // 一行三样:名字、一句现状、时间。不给状态起名字,只用三样人人会读的:
 //   圆点 = 它在等你;加粗 = 它说了话你还没看;时间「现在」= 在干。
-// 等你批准的,在行上直接答;要回答问题 / 终端停着问的,「去回答」打开那一件。
+// 等你批准的,窄窗在行上答,宽窗在置顶卡片答;「去回答」打开那一件。
 // 点一行 = 把下面的说话筛成这个地方;再点一次回到全部。
 import {V1,v1} from '../daemon-client.js'
 import {escapeHtml} from '../view.js'
@@ -13,6 +13,7 @@ import {escapeHtml} from '../view.js'
 /** @typedef {import('../../../../packages/protocol/src/places').PlaceT} Place */
 
 const MIN = 60_000
+const WEEK_MS = 7 * 24 * 60 * MIN
 const WEEK = ['周日','周一','周二','周三','周四','周五','周六']
 
 /** 时间:在干 = 现在;一小时内按分钟;今天按钟点;昨天;一周内按星期;更早按日子。
@@ -47,25 +48,32 @@ export function placeLine(place) {
 }
 
 /** @param {Place} p */
-function askHtml(p) {
+function askHtml(p, card = false) {
   const w = p.waiting
   if (!w) return ''
   const more = w.count > 1 ? `<small>还有 ${w.count - 1} 件</small>` : ''
   if (w.kind === 'permission' && w.matterId && w.requestId) {
     return `<div class="place-ask"><button type="button" class="place-allow" data-place-decision="allow">允许</button><button type="button" data-place-decision="deny">不允许</button>${more}</div>`
   }
-  return `<div class="place-ask"><button type="button" data-place-open>去回答</button>${more}</div>`
+  return `<div class="place-ask"><button type="button" ${card ? 'class="place-allow" ' : ''}data-place-open>去回答</button>${more}</div>`
 }
 
-/** @param {Place[]} places @param {{selected:string|null,stale:boolean,now:number,popover?:boolean}} o */
-export function renderPlacesHtml(places, { selected, stale, now, popover = true }) {
+/** @param {Place} place @param {string|null} selected @param {number} now */
+function isQuiet(place, selected, now) {
+  return place.key !== selected && !place.waiting && !place.unseen && !place.alsoChanged && !place.moving
+    && (place.updatedAt == null || now - place.updatedAt >= WEEK_MS)
+}
+
+/** @param {Place[]} places @param {{selected:string|null,stale:boolean,now:number,popover?:boolean,wide?:boolean}} o */
+export function renderPlacesHtml(places, { selected, stale, now, popover = true, wide = false }) {
   const notice = stale ? '<p class="places-stale" role="status">家里的电脑暂时连不上,下面是上一次的样子</p>' : ''
   if (!places.length) return `${notice}<p class="places-empty">交代给 CC 的事,会按项目一行一行排在这里。</p>`
   const rows = places.map((p, i) => {
     const time = placeTime(p, now)
+    const quiet = isQuiet(p, selected, now)
     const actionsId = `place-actions-${i}`
     const control = popover ? `popovertarget="${actionsId}"` : `aria-controls="${actionsId}" aria-expanded="false"`
-    return `<li class="place" data-place-key="${escapeHtml(p.key)}" data-waiting="${!!p.waiting}" data-unseen="${p.unseen}" data-moving="${p.moving}" data-selected="${p.key === selected}">
+    return `<li class="place" data-place-key="${escapeHtml(p.key)}" data-quiet="${quiet}" data-waiting="${!!p.waiting}" data-unseen="${p.unseen}" data-moving="${p.moving}" data-selected="${p.key === selected}">
       <button type="button" class="place-row" aria-pressed="${p.key === selected}">
         <span class="place-dot" aria-hidden="true"></span>
         <span class="place-name">${escapeHtml(p.name)}</span>
@@ -78,7 +86,7 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true 
         ${i < places.length - 1 ? '<button type="button" data-place-move="down">往下挪</button>' : ''}
         <button type="button" data-place-hide>收起这一行</button>
       </div>
-      ${askHtml(p)}
+      ${wide ? '' : askHtml(p)}
     </li>`
   }).join('')
   return `${notice}<ol class="places-list" aria-label="现在">${rows}</ol>`
@@ -91,34 +99,89 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true 
  *   onSelect: (place: Place | null) => void,
  *   onOpen: (target: {kind:'matter'|'terminal', id:string}) => unknown,
  *   onPlaces?: (places: Place[]) => void,
+ *   waitingRoot?: HTMLElement,
+ *   onCurrent?: (place: Place | null, now: number) => void,
  *   now?: () => number,
  *   intervalMs?: number,
  * }} o
  */
-export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now = Date.now, intervalMs = 3000 }) {
+export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, waitingRoot, onCurrent, now = Date.now, intervalMs = 3000 }) {
   /** @type {Place[]} */ let places = []
   /** @type {string|null} */ let selected = null
   const supportsPopover = typeof root.showPopover === 'function'
   const openActions = supportsPopover ? '.place-actions:popover-open' : '.place-actions[data-open]'
-  let version = '', alive = true, busy = false, stale = false, acting = false, notified = '', seenMark = ''
+  let wide = false, quietOpen = false, waitingOpen = false
+  let version = '', alive = true, stale = false, acting = false, notified = '', seenMark = ''
+  let waitingMarkup = ''
+  /** @type {Promise<void>|null} */ let inFlight = null
   const reflectOverflow = () => {
     const moreBelow = root.scrollHeight - root.clientHeight - root.scrollTop > 1
     root.toggleAttribute('data-more-below', moreBelow)
     if (root.parentElement?.classList.contains('places-strip')) root.parentElement.toggleAttribute('data-more-below', moreBelow)
   }
+  function drawWaiting() {
+    if (!waitingRoot) return
+    const waiting = wide ? places.filter(p => p.waiting && (!selected || selected === p.key)) : []
+    const more = waiting.length - 2
+    const toggle = more > 0 ? `<button class="desk-text-button" type="button" data-waiting-toggle aria-expanded="${waitingOpen}">${waitingOpen ? '收起其余等你定的' : `还有 ${more} 件等你定`}</button>` : ''
+    const cards = waiting.slice(0, waitingOpen ? waiting.length : 2).map(p => `<div class="desk-waiting-card" data-place-key="${escapeHtml(p.key)}">
+      <div class="desk-waiting-question"><span class="place-dot" aria-hidden="true"></span><strong>${escapeHtml(p.name)} 等你定</strong><span>${escapeHtml(p.waiting?.summary ?? '')}</span></div>
+      ${askHtml(p, true)}
+    </div>`).join('')
+    waitingRoot.hidden = waiting.length === 0
+    if (waitingMarkup !== cards + toggle) {
+      waitingMarkup = cards + toggle
+      waitingRoot.innerHTML = waitingMarkup
+    }
+    waitingRoot.querySelectorAll('[data-place-decision]').forEach(b => b.toggleAttribute('disabled', acting))
+  }
+
   const draw = () => {
-    root.innerHTML = renderPlacesHtml(places, { selected, stale, now: now(), popover: supportsPopover })
+    const active = root.ownerDocument.activeElement
+    const focused = active?.closest('.place-row, .place-more')
+    const focusKey = focused?.closest('[data-place-key]')?.getAttribute('data-place-key')
+    const at = now()
+    root.innerHTML = renderPlacesHtml(places, { selected, stale, now: at, popover: supportsPopover, wide })
+    const count = root.querySelectorAll('[data-quiet="true"]').length
+    root.toggleAttribute('data-quiet-expanded', quietOpen)
+    if (wide && count) root.insertAdjacentHTML('beforeend', `<button class="desk-text-button desk-quiet-toggle" type="button" data-quiet-toggle aria-expanded="${quietOpen}">${quietOpen ? '收起这周没动的' : `这周没动的 ${count} 处`}</button>`)
+    if (wide && focusKey) {
+      const control = focused?.classList.contains('place-more') ? '.place-more' : '.place-row'
+      root.querySelector(`[data-place-key="${CSS.escape(focusKey)}"] ${control}`)?.closest('button')?.focus({ preventScroll: true })
+    }
+    if (acting) root.querySelectorAll('[data-place-decision]').forEach(b => b.setAttribute('disabled', ''))
+    drawWaiting()
+    onCurrent?.(places.find(p => p.key === selected) ?? null, at)
     reflectOverflow()
   }
   const placeOf = (/** @type {Element|null} */ el) => places.find(p => p.key === el?.closest('[data-place-key]')?.getAttribute('data-place-key'))
 
   async function refresh() {
-    if (!alive || busy || root.ownerDocument.visibilityState !== 'visible') return
-    busy = true
+    if (!alive || root.ownerDocument.visibilityState !== 'visible') return
+    if (!inFlight) inFlight = readPlaces().finally(() => { inFlight = null })
+    await inFlight
+  }
+
+  async function refreshAfterWrite() {
+    await inFlight
+    version = ''
+    await refresh()
+  }
+
+  async function readPlaces() {
     try {
       const data = await v1(call, V1.places.get, undefined, version ? { ifNoneMatch: version } : undefined)
       if (!alive) return
-      if (data?.notModified) { if (stale) { stale = false; draw() } return }
+      if (data?.notModified) {
+        if (stale) { stale = false; draw() }
+        else if (wide) {
+          const at = now()
+          const list = root.querySelectorAll('.place')
+          if (places.some((p, i) => isQuiet(p, selected, at) && list[i]?.getAttribute('data-quiet') === 'false')) draw()
+          else onCurrent?.(places.find(p => p.key === selected) ?? null, at)
+        }
+        return
+      }
       if (!Array.isArray(data?.places) || typeof data.version !== 'string') throw Error('invalid_places')
       const changed = data.version !== version || stale
       places = data.places; version = data.version; stale = false
@@ -130,7 +193,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
       if (ids !== notified) { notified = ids; onSelect(current) }
       // 选着这一行时它又动了:主人正看着,也算看过。
       if (current) markSeen(current)
-    } catch { if (alive) { stale = true; draw() } } finally { busy = false }
+    } catch { if (alive && !stale) { stale = true; draw() } }
   }
 
   /** 主人看了这一行(点开 / 选着时又动了 / 从这一行打开一件):daemon 记下时刻,下次那一句从这以后说起。 @param {Place} place */
@@ -145,7 +208,10 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
   function select(place) {
     selected = place && place.key !== selected ? place.key : null
     const current = selected ? place : null
-    for (const row of root.querySelectorAll('.place')) {
+    if (wide) {
+      waitingOpen = false
+      draw()
+    } else for (const row of root.querySelectorAll('.place')) {
       const active = String(row.getAttribute('data-place-key') === selected)
       row.setAttribute('data-selected', active)
       row.querySelector('.place-row')?.setAttribute('aria-pressed', active)
@@ -161,6 +227,22 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
   async function click(event) {
     const target = event.target instanceof Element ? event.target : null
     if (!target) return
+    if (target.closest('[data-quiet-toggle]')) {
+      quietOpen = !quietOpen
+      root.toggleAttribute('data-quiet-expanded', quietOpen)
+      const button = target.closest('[data-quiet-toggle]')
+      button?.setAttribute('aria-expanded', String(quietOpen))
+      if (button) button.textContent = quietOpen ? '收起这周没动的' : `这周没动的 ${root.querySelectorAll('[data-quiet="true"]').length} 处`
+      reflectOverflow()
+      return
+    }
+    if (target.closest('[data-waiting-toggle]')) {
+      waitingOpen = !waitingOpen
+      drawWaiting()
+      const toggle = waitingRoot?.querySelector('button[data-waiting-toggle]')
+      if (toggle instanceof HTMLButtonElement) toggle.focus()
+      return
+    }
     const place = placeOf(target)
     if (!place) return
     if (target.closest('.place-row')) { select(place); return }
@@ -180,9 +262,13 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
     const decision = target.closest('[data-place-decision]')?.getAttribute('data-place-decision')
     if (decision && place.waiting?.matterId && place.waiting.requestId && !acting) {
       acting = true
-      root.querySelectorAll(`[data-place-key="${CSS.escape(place.key)}"] [data-place-decision]`).forEach(b => b.setAttribute('disabled', ''))
+      for (const host of [root, waitingRoot]) host?.querySelectorAll('[data-place-decision]').forEach(b => b.setAttribute('disabled', ''))
       try { await v1(call, V1.workbench.permission, { body: { id: place.waiting.matterId, requestId: place.waiting.requestId, decision } }) }
-      catch { stale = false } finally { acting = false; version = ''; await refresh() }
+      catch { /* 下次刷新照旧 */ } finally {
+        await refreshAfterWrite()
+        acting = false
+        for (const host of [root, waitingRoot]) host?.querySelectorAll('[data-place-decision]').forEach(b => b.removeAttribute('disabled'))
+      }
       return
     }
     if (target.closest('[data-place-open]') && place.waiting) {
@@ -198,13 +284,13 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
       const at = places.findIndex(p => p.key === place.key)
       const to = move === 'up' ? Math.max(0, at - 1) : at + 1
       try { await v1(call, V1.places.move, { body: { key: place.key, to } }) } catch { /* 下次刷新照旧 */ }
-      version = ''; await refresh(); return
+      await refreshAfterWrite(); return
     }
     if (target.closest('[data-place-hide]')) {
       closeActions()
       try { await v1(call, V1.places.hide, { body: { key: place.key, hidden: true } }) } catch { /* 下次刷新照旧 */ }
       if (selected === place.key) select(null)
-      version = ''; await refresh()
+      await refreshAfterWrite()
     }
   }
 
@@ -257,11 +343,18 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
   }
   const visibility = () => { if (root.ownerDocument.visibilityState === 'visible') void refresh() }
   root.addEventListener('click', click)
+  waitingRoot?.addEventListener('click', click)
   root.ownerDocument.addEventListener('visibilitychange', visibility)
   draw(); void refresh()
   const timer = setInterval(() => void refresh(), intervalMs)
   return {
     refresh,
+    /** @param {boolean} enabled */
+    setWide(enabled) {
+      if (wide === enabled) return
+      wide = enabled
+      draw()
+    },
     places: () => places.slice(),
     selected: () => selected,
     clear: () => { if (selected) select(null) },
@@ -283,6 +376,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, now =
       root.removeEventListener('toggle', positionActions, true)
       root.ownerDocument.defaultView?.removeEventListener('resize', scroll)
       root.removeEventListener('click', click)
+      waitingRoot?.removeEventListener('click', click)
       root.ownerDocument.removeEventListener('visibilitychange', visibility)
     },
   }

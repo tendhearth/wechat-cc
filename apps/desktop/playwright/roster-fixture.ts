@@ -34,10 +34,15 @@ export async function routePlaces(page:Page,places:PlacesSource) {
  })
 }
 export const placeRow=(page:Page,name:string)=>page.locator('#places-root .place').filter({has:page.locator('.place-name',{hasText:new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}$`)})})
-/** 先等应用退出「加载中」(那时 .dashboard 是 display:none),再点那一行的「去回答」。 */
+/** 应答入口随窗口宽度在地方行或置顶卡片。 */
+export function placeAnswerSurface(page: Page, name: string) {
+ const key = placeItem(name).key
+ return page.locator(`[data-place-key="${key}"]:is(.place, .desk-waiting-card)`).filter({ has: page.locator('.place-ask') })
+}
+
 export async function answerPlace(page:Page,name:string) {
  await expect(page.locator('main.dashboard')).toBeVisible()
- const button=placeRow(page,name).locator('[data-place-open]')
+ const button=placeAnswerSurface(page,name).locator('[data-place-open]')
  await expect(button).toBeVisible()
  await button.click()
 }
