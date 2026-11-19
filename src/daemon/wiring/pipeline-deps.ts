@@ -1,3 +1,5 @@
+import { makeNotebook } from '../../features/notebook'
+import { makeNotebookStore } from '../../adapters/store/notebook-store'
 import { makePlacesReader, makeRosterReader, type RosterReaderDeps } from '../../features/roster'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import { ownerLedgerConversation } from '../../lib/matter-ledger-access'
@@ -26,7 +28,7 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
@@ -39,7 +41,7 @@ import { makeModeCommands } from '../mode-commands'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterRecall, makeTopicRecall } from '../threads/recall'
-import { resolveAdminChatId } from '../companion/resolve-admin'
+import { configuredOwnerChatId, resolveAdminChatId } from '../companion/resolve-admin'
 import { makeCheapJudge, type TaskCandidate } from '../../features/workbench'
 import { makeCheapAnswerJudge } from '../inbound/answer-fallback'
 import { scopedSend } from '../inbound/reply-scope'
@@ -150,6 +152,7 @@ export interface BuildPipelineDepsResult {
   phoneConnect: import('../../features/phone').PhoneConnectDep
   /** 「一件事」读写面(有 matters store 才有)。 */
   roster: ReturnType<typeof makeRosterReader> | null
+  notebook: ReturnType<typeof makeNotebook>
   places: ReturnType<typeof makePlacesReader> | null
   mattersService: import('../../app/matters/service').MattersService | null
   /** 退订工作台事件 + 清「一件事」活动时间的节流定时器;main.ts 登记进 shutdown。可重复调用。 */
@@ -456,7 +459,19 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
 
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
-  const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  const ownerChatId = () => configuredOwnerChatId(stateDir)
+  const notebook = makeNotebook({
+    store: makeNotebookStore(db),
+    settings: () => loadCompanionConfig(stateDir),
+    model: () => boot.registry.getCheapEval({ private: true }),
+    isOwner: caller => ownerLedgerConversation(ownerChatId(), caller),
+    persona: () => {
+      const owner = ownerChatId()
+      if (!owner) return ''
+      try { return readFileSync(join(stateDir, 'memory', owner, 'persona.md'), 'utf8').slice(0, 300) } catch { return '' }
+    },
+    log: (count, length) => log('NOTEBOOK', `count=${count} length=${length}`),
+  })
   const taskCandidates = ():TaskCandidate[]=>{
     const since=Date.now()-7*24*60*60_000
     const tasks=opts.workbench ? opts.workbench.list({archived:'exclude',limit:50}).tasks : []
@@ -874,5 +889,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       tellOwner: (text) => { const owner = ownerChatId(); if (owner) void speech.tell('share_talk', owner, text).catch(err => log('SHARE', `tell owner failed: ${err instanceof Error ? err.message : String(err)}`)) },
     })
   }
-  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, roster, places, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices(), ...(opts.workbench ? { share: { link: (id: string, name: unknown, mode?: unknown) => settingsPanel.shareLink(id, name, mode), list: (id: string) => opts.workbench!.shareList(id), revoke: (id: string, shareId: string) => opts.workbench!.shareRevoke(id, shareId), setMode: (id: string, shareId: string, mode: unknown) => opts.workbench!.shareSetMode(id, shareId, mode), talk: (id: string) => opts.workbench!.shareTalk(id), say: (id: string, text: string) => opts.workbench!.shareTalkAdd(id, 'owner', '', text), ownerConversation: (caller: unknown) => ownerLedgerConversation(ownerChatId(), caller as Parameters<typeof ownerLedgerConversation>[1]), titleOf: (id: string) => opts.workbench!.shareTitle(id), consume: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalConsume('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]), approved: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalStatus('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]) } } : {}) } }
+  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, roster, places, notebook, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices(), ...(opts.workbench ? { share: { link: (id: string, name: unknown, mode?: unknown) => settingsPanel.shareLink(id, name, mode), list: (id: string) => opts.workbench!.shareList(id), revoke: (id: string, shareId: string) => opts.workbench!.shareRevoke(id, shareId), setMode: (id: string, shareId: string, mode: unknown) => opts.workbench!.shareSetMode(id, shareId, mode), talk: (id: string) => opts.workbench!.shareTalk(id), say: (id: string, text: string) => opts.workbench!.shareTalkAdd(id, 'owner', '', text), ownerConversation: (caller: unknown) => ownerLedgerConversation(ownerChatId(), caller as Parameters<typeof ownerLedgerConversation>[1]), titleOf: (id: string) => opts.workbench!.shareTitle(id), consume: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalConsume('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]), approved: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalStatus('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]) } } : {}) } }
 }

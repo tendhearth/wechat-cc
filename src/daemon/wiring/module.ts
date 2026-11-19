@@ -104,7 +104,7 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
         log: (t, l) => log(t, l),
         schedulerIntervalMs: f.schedulerIntervalMs,
       })
-      internalApi.provide({ companionConverse: wired.companionConverse, ...(wired.roster ? {roster:wired.roster} : {}), ...(wired.places ? {places:wired.places} : {}) })
+      internalApi.provide({ companionConverse: wired.companionConverse, notebook: wired.notebook, ...(wired.roster ? {roster:wired.roster} : {}), ...(wired.places ? {places:wired.places} : {}) })
       if (wired.mattersService) internalApi.provide({ matters: wired.mattersService })
       internalApi.provide({ petTurn: wired.petTurn })
       internalApi.provide({ settingsLink: wired.settingsPanelLink })

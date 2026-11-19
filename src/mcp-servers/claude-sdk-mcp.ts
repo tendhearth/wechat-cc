@@ -21,7 +21,7 @@ export async function claudeSdkMcp(name: 'wechat' | 'delegate' | 'wechat-cc-matt
       sessionToken: env.WECHAT_SESSION_TOKEN ?? '', signal: lifetime.signal, logger: logErr,
     })
     const instance = name === 'wechat'
-      ? await createWechatMcpServer(client, { tier: env.WECHAT_SESSION_TIER, participantTag: env.WECHAT_PARTICIPANT_TAG, logger: logErr, parallelSocialProbe: true, outputEvalTools: env.WECHAT_OUTPUT_EVAL_TOOLS })
+      ? await createWechatMcpServer(client, { tier: env.WECHAT_SESSION_TIER, notebookOwner: env.WECHAT_NOTEBOOK_OWNER === '1', participantTag: env.WECHAT_PARTICIPANT_TAG, logger: logErr, parallelSocialProbe: true, outputEvalTools: env.WECHAT_OUTPUT_EVAL_TOOLS })
       : name === 'delegate'
         ? createDelegateMcpServer(client, env.WECHAT_DELEGATE_PEER!, logErr)
         : new McpServer({ name, version: '0.1.0' })

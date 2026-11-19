@@ -1,3 +1,4 @@
+import { withoutPrivateLogging } from '../lib/private-logging'
 /**
  * provider-registry — central catalogue of available agent providers
  * (RFC 03 §3.3, Appendix D).
@@ -205,7 +206,7 @@ export interface ProviderRegistry {
    * comparison is fundamentally cross-provider (we can't compare
    * Anthropic's haiku to OpenAI's mini purely from interface metadata).
    */
-  getCheapEval(options?: { singleAttempt?: boolean; toolFreeOnly?: boolean }): CheapEval | null
+  getCheapEval(options?: { private?: boolean; singleAttempt?: boolean; toolFreeOnly?: boolean }): CheapEval | null
   /**
    * 后台判断(getCheapEval 交出去的那些调用)最近的成败。只数**真失败**:网络没受保护、连不上不算 ——
    * 那两样「CC 现在怎么样」里已经有网络守护 / 微信两行在说。2026-10-13 gemini-3.7 下线,后台判断
@@ -537,6 +538,19 @@ export function createProviderRegistry(opts?: {
       return { ...evalHealth }
     },
     getCheapEval(options) {
+      if (options?.private) {
+        // A private contribution is one call. Skip failover telemetry and
+        // do not put provider error text in the registry health snapshot.
+        const pinned = readPinnedId() as ProviderId | undefined
+        const ids = [...new Set([...(pinned ? [pinned] : []), ...CHEAP_EVAL_PREFERENCE, ...entries.keys()])]
+        for (const id of ids) {
+          const evaluate = entries.get(id)?.provider.cheapEval
+          if (evaluate) return prompt => withoutPrivateLogging(async () => {
+            try { return await evaluate(prompt) } catch { throw new Error('Private model request failed') }
+          })
+        }
+        return null
+      }
       const toolFreeOnly = options?.toolFreeOnly === true
       const fn = resolveCheapEval(toolFreeOnly || options?.singleAttempt === true, toolFreeOnly)
       return fn ? tracked(fn) : null

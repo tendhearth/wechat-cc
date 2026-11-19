@@ -1643,3 +1643,12 @@ it('v116 从真实 v115 升级，唯一活跃关系与重放不改变历史',()=
     expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
   }finally{db.close()}
 })
+
+it.each([0, 118])('creates both notebook tables when migrating from version %i', version => {
+  const db = migratedTo(version)
+  try {
+    runMigrations(db, migrations)
+    expect(db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'notebook_%' ORDER BY name").all())
+      .toEqual([{ name: 'notebook_entries' }, { name: 'notebook_settings' }])
+  } finally { db.close() }
+})

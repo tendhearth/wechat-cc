@@ -1,3 +1,4 @@
+import { log } from '../lib/log'
 import { describe, expect, it, vi } from 'vitest'
 import { createProviderRegistry, DEFAULT_CHEAP_EVAL_BUDGET_MS, isAuthError } from './provider-registry'
 import { errorWithProviderCode } from '../lib/provider-error-code'
@@ -444,4 +445,25 @@ describe('onRegister', () => {
     expect(reg.has('codex')).toBe(true)
     expect(after).toHaveBeenCalledWith('codex')
   })
+})
+
+it('keeps private cheap eval payloads out of logs, failure telemetry and failover', async () => {
+  const onProviderFailure = vi.fn()
+  const fallback = vi.fn(async () => 'fallback')
+  const registry = createProviderRegistry({ cheapEvalProvider: 'claude', onProviderFailure })
+  const secret = 'unique-private-evaluation-probe'
+  registry.register('claude', { ...stub, cheapEval: async prompt => {
+    await Promise.resolve()
+    log('TEST_EVAL', prompt)
+    throw new Error(prompt)
+  } }, { displayName: 'Claude', canResume: () => true })
+  registry.register('openai', { ...stub, cheapEval: fallback }, { displayName: 'OpenAI', canResume: () => true })
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  try {
+    await expect(registry.getCheapEval({ private: true })!(secret)).rejects.toThrow()
+    expect(stderr.mock.calls.flat().join(' ')).not.toContain(secret)
+    expect(registry.cheapEvalHealth?.().lastError).toBeNull()
+    expect(onProviderFailure).not.toHaveBeenCalled()
+    expect(fallback).not.toHaveBeenCalled()
+  } finally { stderr.mockRestore() }
 })

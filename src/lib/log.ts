@@ -27,6 +27,7 @@
 
 import { appendFileSync, statSync, renameSync, copyFileSync, truncateSync } from 'fs'
 import { join } from 'path'
+import { privateLoggingSuppressed } from './private-logging'
 import { STATE_DIR } from './config.ts'
 
 export const LOG_FILE = join(STATE_DIR, 'channel.log')
@@ -128,6 +129,7 @@ export function formatJsonRecord(ts: string, tag: string, msg: string, fields: L
  * that parses `<ISO> [TAG] <msg>`.
  */
 export function log(tag: string, msg: string, fields?: LogFields): void {
+  if (privateLoggingSuppressed()) return
   if (++_logCallsSinceCheck >= LOG_ROTATE_CHECK_INTERVAL) {
     _logCallsSinceCheck = 0
     maybeRotateAll()

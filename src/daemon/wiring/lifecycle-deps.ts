@@ -46,7 +46,7 @@ export interface LifecycleDepsOpts {
   schedulerIntervalMs?: number
 }
 
-export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, speech?: import('../speech/policy').SpeechPolicy): {
+export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, speech?: import('../speech/policy').SpeechPolicy, notebookTick?: () => Promise<void>): {
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
   companionIngestDeps: CompanionIngestDeps
@@ -122,12 +122,20 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, s
     return true
   }
 
+  const pushTick = gated('companion.push', () => ticks.pushTick())
+  const onPushTick = async () => {
+    await Promise.all([
+      shouldRun() ? pushTick() : undefined,
+      notebookTick?.().catch(() => {}),
+    ])
+  }
+
   return {
     // holdBusy (spec 2026-08-11 §2, Task 6) — same busy-registry instance
     // the self-restart idle check reads (boot.holdBusy / busyRegistry.hold
     // in bootstrap/index.ts), forwarded to all three companion schedulers
     // so a running tick can't be misjudged as idle.
-    companionPushDeps: { shouldRun, log, onTick: gated('companion.push', () => ticks.pushTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionPushDeps: { shouldRun: notebookTick ? () => true : shouldRun, log, onTick: notebookTick ? onPushTick : pushTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
     companionIntrospectDeps: { shouldRun, log, onTick: gated('companion.introspect', () => ticks.introspectTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
     companionIngestDeps: { shouldRun: shouldRunIngest, log, onTick: gated('companion.ingest', () => ticks.ingestTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
     guardDeps: {

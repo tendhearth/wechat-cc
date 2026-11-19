@@ -1,3 +1,4 @@
+import { privateLoggingSuppressed } from '../../../lib/private-logging'
 import { tmpdir } from 'node:os'
 import { compilePolicy } from '../../../domain/policy'
 import { sessionSubprocessEnv } from '../subprocess-env'
@@ -139,7 +140,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     async cheapEval(prompt: string): Promise<string> {
       let session: CodexAppServerSession | undefined
       try {
-        session = await spawnCodexAppServerSession(coreOptions(cheapModel), { alias: 'codex-cheap-eval', path: tmpdir() }, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval' }, cheapProfile())
+        session = await spawnCodexAppServerSession(coreOptions(cheapModel), { alias: 'codex-cheap-eval', path: tmpdir() }, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile())
         const parts: string[] = []
         for await (const ev of session.dispatch(prompt)) {
           if (ev.kind === 'text') parts.push(ev.text)
