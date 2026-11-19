@@ -175,3 +175,30 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   await expect(input).toHaveValue('这句话还没发')
   await expect.poll(anchor).toBe(before)
 })
+
+test('两栏的拖拽区：空白处和标题各起一次拖拽，标题条里的按钮照常点', async ({ page, shimUrl }) => {
+  await routePlaces(page, [placeItem('rici'), placeItem('leni')])
+  await page.goto(shimUrl)
+  await expect(page.locator('.desk-heading')).toBeVisible()
+  await page.evaluate(() => {
+    const w = window as unknown as { __dragCalls: number; __TAURI__: { window: { getCurrentWindow: () => unknown } } }
+    w.__dragCalls = 0
+    w.__TAURI__.window.getCurrentWindow = () => ({ startDragging: async () => { w.__dragCalls += 1 } })
+  })
+  const calls = () => page.evaluate(() => (window as unknown as { __dragCalls: number }).__dragCalls)
+  // 左栏顶上的空白
+  await page.locator('.desk-rail-titlebar').dispatchEvent('mousedown', { button: 0 })
+  await expect.poll(calls).toBe(1)
+  // 标题文字在三层嵌套的拖拽区里:只起一次,不是三次
+  await page.locator('#desk-conversation-title').dispatchEvent('mousedown', { button: 0 })
+  await expect.poll(calls).toBe(2)
+  // 筛到一处后标题条里有「回到全部」:按它不拖窗口,而且真的回到全部
+  await placeRow(page, 'rici').locator('.place-row').click()
+  const clear = page.locator('#desk-place-clear')
+  await expect(clear).toBeVisible()
+  await clear.dispatchEvent('mousedown', { button: 0 })
+  await clear.click()
+  await expect(page.locator('#desk-conversation-title')).toHaveText('和 CC')
+  expect(await calls()).toBe(2)
+})
+

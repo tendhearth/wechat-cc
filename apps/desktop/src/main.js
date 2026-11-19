@@ -943,14 +943,16 @@ function wireEvents() {
   })
   // `data-tauri-drag-region` alone is not reliable with the macOS overlay
   // titlebar in every Tauri/WebKit combination. Explicitly start a native
-  // drag on the first press; Tauri handles the second press and macOS mouseup.
+  // window drag when the user presses a drag region.
+  // 两栏的标题条是嵌套的拖拽区,里面还有按钮:只认按在拖拽区本身上的那一下
+  //(按钮照常点);外层的拖拽区看到的 target 不是自己,所以一下只起一次拖拽。
+  // 不拦冒泡:Tauri 自己挂在 document 上的那一份(双击放大)照旧收得到。
   document.querySelectorAll("[data-tauri-drag-region]").forEach(region => {
     region.addEventListener("mousedown", event => {
-      if (!(event instanceof MouseEvent) || event.button !== 0 || event.detail !== 1 || event.target !== region) return
+      if (!(event instanceof MouseEvent) || event.button !== 0 || event.target !== region) return
       const currentWindow = /** @type {any} */ (window).__TAURI__?.window?.getCurrentWindow?.()
       if (!currentWindow?.startDragging) return
       event.preventDefault()
-      event.stopPropagation()
       currentWindow.startDragging().catch(/** @param {unknown} err */ err => {
         console.warn("window drag failed:", err)
       })
