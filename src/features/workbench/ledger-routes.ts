@@ -12,6 +12,7 @@ const invalid=()=>({status:400,body:{error:'invalid_request'}})
 export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:()=>string|null;planConversation?:(caller:PlanCaller)=>PlanConversation|null}):RouteTable{
   return {
     'POST /v1/matter/plan':async(q,b,c)=>{
+      if (c?.origin === 'session' && c.recordMatterPlan) return c.recordMatterPlan(q, b, () => d.workbench.projects())
       if(!ownerLedgerConversation(d.resolveAdminChatId?.()??null,c))return {status:403,body:matterToolFailure('matter_ledger_forbidden',false)}
       const approved=d.workbench.matterApprovalStatus?.('mcp__wechat__matter_plan',b,c??{})??false
       const parsed=MatterPlanRequest.safeParse(b)

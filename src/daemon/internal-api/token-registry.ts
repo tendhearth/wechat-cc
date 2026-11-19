@@ -76,10 +76,18 @@ export const AGY_STATIC_SESSION_KEY = 'agy-static'
 /** `device` / `link`:手机设置面板的长期设备令牌与 10 分钟链接令牌(梳理第 6 步,2026-09-29)。 */
 export type TokenOrigin = 'file' | 'session' | 'operator' | 'device' | 'link'
 
+/** A recorder attached only to an eval runner's authenticated session token. */
+export type RecordMatterPlan = (
+  query: URLSearchParams,
+  body: unknown,
+  projects: () => import('../../adapters/workbench/project-catalog').ProjectCatalogEntry[],
+) => { status: number; body: unknown }
+
 export type TokenInfo = {
   tier: UserTier
   origin: TokenOrigin
   sessionKey?: string
+  recordMatterPlan?: RecordMatterPlan
   /** When set, this token may ONLY call routes in this set — see the
    *  ROUTE-SCOPING note above. Absent ⇒ no route restriction (tier gate only). */
   routeAllow?: ReadonlySet<string>
@@ -98,11 +106,13 @@ export type TokenInfo = {
 /**
  * Optional narrowing for a minted session token (security review fix round
  * 1, federation mint) — lets a caller mint a token that grants LESS than
- * its raw tier would otherwise reach on its own. Both fields are opt-in;
+ * its raw tier would otherwise reach on its own. All fields are opt-in;
  * omitting `opts` entirely (the pre-existing 2-arg `mint` call shape)
  * reproduces the old unrestricted, unlimited-lifetime session token exactly.
  */
 export interface MintTokenOpts {
+  /** This session can only record matter_plan calls, even if authenticated before revocation. */
+  recordMatterPlan?: RecordMatterPlan
   /** Same ROUTE-SCOPING mechanism `registerOperatorToken` uses — restricts
    *  the minted token to ONLY these `"METHOD /path"` route keys regardless
    *  of its tier. Absent ⇒ unrestricted by route (tier gate only). */
@@ -175,6 +185,7 @@ export function makeTokenRegistry(
     mint(tier, sessionKey, opts) {
       const tok = randomHex()
       const info: TokenInfo = { tier, origin: 'session', sessionKey }
+      if (opts?.recordMatterPlan) info.recordMatterPlan = opts.recordMatterPlan
       if (opts?.routeAllow) info.routeAllow = opts.routeAllow
       if (opts?.ttlMs !== undefined) info.expiresAt = now() + opts.ttlMs
       map.set(tok, info)

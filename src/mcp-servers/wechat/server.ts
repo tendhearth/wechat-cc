@@ -23,12 +23,20 @@ import { registerPersonTools } from './tools-person'
 import { registerModeTools } from './tools-mode'
 import { registerTurnTools } from './tools-turn'
 
-export async function createWechatMcpServer(client: InternalApiClient, options: { tier?: string; participantTag?: string; logger?: (line: string) => void; parallelSocialProbe?: boolean } = {}): Promise<McpServer> {
+export async function createWechatMcpServer(client: InternalApiClient, options: { tier?: string; participantTag?: string; logger?: (line: string) => void; parallelSocialProbe?: boolean; outputEvalTools?: string | undefined } = {}): Promise<McpServer> {
   const logErr = options.logger ?? (() => {})
   const server = new McpServer(
     { name: 'wechat-mcp', version: '0.1.0' },
     { capabilities: { tools: {} } },
   )
+
+  // Tool exposure only. The daemon authenticates and authorizes each call.
+  if (options.outputEvalTools) {
+    const tools = new Set(options.outputEvalTools.split(','))
+    if (tools.has('matter_plan')) registerMatterPlanTool(server, client)
+    if (tools.has('topic_search')) registerTopicSearchTool(server, client)
+    return server
+  }
 
   // Per-session tier supplied by the daemon: explicit options in-process,
   // WECHAT_SESSION_TIER at the stdio entrypoint. The route layer also enforces it.

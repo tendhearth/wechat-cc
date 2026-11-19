@@ -50,7 +50,7 @@ function replyInput(b: Record<string, unknown>): ReplyInput {
   if (b.tier !== undefined && b.tier !== 'admin' && b.tier !== 'trusted') fail('tier 只能是 admin / trusted')
   let tools: EvalTool[] | undefined
   if (b.tools !== undefined) {
-    if (!Array.isArray(b.tools) || !b.tools.every(t => typeof t === 'string' && t in EVAL_TOOLS)) fail(`tools 只能是 ${Object.keys(EVAL_TOOLS).join(' / ')} 组成的数组`)
+    if (!Array.isArray(b.tools) || !b.tools.every(t => typeof t === 'string' && Object.hasOwn(EVAL_TOOLS, t))) fail(`tools 只能是 ${Object.keys(EVAL_TOOLS).join(' / ')} 组成的数组`)
     tools = [...new Set(b.tools as EvalTool[])]
   }
   return { text, ...(b.tier !== undefined ? { tier: b.tier as 'admin' | 'trusted' } : {}), ...(tools?.length ? { tools } : {}), ...runOpts(b) }

@@ -8,7 +8,7 @@ function fakeRunner(): EvalRunner & { calls: Array<[string, unknown]> } {
   const calls: Array<[string, unknown]> = []
   return {
     calls,
-    reply: vi.fn(async (i) => { calls.push(['reply', i]); return { ok: true, kind: 'reply' as const, providerId: 'claude', finalText: 'x', bubbles: ['x'], silent: false, rawFinalText: 'x', narration: [], segments: ['x'], toolCalls: [], durationMs: 1 } }),
+    reply: vi.fn(async (i) => { calls.push(['reply', i]); return { ok: true, kind: 'reply' as const, providerId: 'claude', finalText: 'x', bubbles: ['x'], silent: false, rawFinalText: 'x', narration: [], segments: ['x'], toolCalls: [], planCalls: [], durationMs: 1 } }),
     brief: vi.fn(async (i) => { calls.push(['brief', i]); return { ok: false, code: 'eval_unknown_provider' } as const }),
     reference: vi.fn(async (i) => { calls.push(['reference', i]); return { ok: true, kind: 'reference', resolution: { kind: 'none' }, durationMs: 0 } as const }),
     topic: vi.fn(async (i) => { calls.push(['topic', i]); return { ok: true, kind: 'topic', recall: null, durationMs: 0 } as const }),
@@ -93,4 +93,15 @@ it('topic-recall 使用同一生产召回入口，拒绝混入工具 search', as
   expect(result.body).toMatchObject({kind:'topic-recall',recall:null})
   expect(runner.calls[0]?.[0]).toBe('topic')
   expect((await post(routes,{kind:'topic-recall',text:'冷备怎么查',topics:[],search:true})).status).toBe(400)
+})
+
+it('accepts matter_plan and rejects names outside EVAL_TOOLS', async () => {
+  const run = fakeRunner()
+  const routes = outputEvalRoutes(run)
+  expect((await post(routes, { kind: 'reply', text: '交办', tools: ['matter_plan'] })).status).toBe(200)
+  expect(run.calls).toEqual([['reply', { text: '交办', tools: ['matter_plan'] }]])
+  for (const tool of ['matter_handoff', 'constructor']) {
+    expect((await post(routes, { kind: 'reply', text: '交办', tools: [tool] })).status).toBe(400)
+  }
+  expect(run.calls).toHaveLength(1)
 })
