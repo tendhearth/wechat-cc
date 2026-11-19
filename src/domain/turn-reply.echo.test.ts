@@ -36,4 +36,43 @@ describe('replyNotForOwner · 整段只由内部回声组成才算', () => {
     expect(replyMayBeEcho('好，[System: 这句在中间')).toBe(false)
     expect(replyMayBeEcho('')).toBe(false)
   })
+
+  it.each([
+    ['[assistant turn timed out before producing a reply]', 'english_annotation'],
+    ['[no reply was delivered]', 'english_annotation'],
+    ['[tool call omitted]', 'english_annotation'],
+    ['[tool call omitted [details]]', 'english_annotation'],
+    ['[历史回放] 2026-07-02 23:39 (UTC+8)', 'timestamp_annotation'],
+    ['[历史回放] 2026年7月2日 23时39分', 'timestamp_annotation'],
+    ['[history replay] 2026/07/02 23:39 (UTC-05:30)', 'timestamp_annotation'],
+  ] as const)('新增拦截:%s ⇒ %s', (text, category) => {
+    expect(replyNotForOwner(text)).toBe(category)
+    expect(replyMayBeEcho(text)).toBe(false)
+  })
+
+  it.each([
+    '[捂脸]',
+    '[旺柴]',
+    '[旺柴][旺柴]',
+    '[OK]',
+    '[强]',
+    '[Draft v2] 我改好了。',
+    '[1] 第一点…',
+    '[rici] 收藏功能做完了',
+    '[System',
+    '[assistant turn timed out',
+    '[assistant turn timed out] 正文',
+    '[assistant turn timed out][旺柴]',
+    '> [assistant turn timed out]',
+    '> [历史回放] 2026-07-02',
+    '```\n[assistant turn timed out]\n```',
+    '    [历史回放] 2026-07-02',
+    '`[assistant turn timed out]`',
+    '[2026-07-02] 今天…',
+    '[历史回放] 2026-07-02 那天我们聊过…',
+    '[历史回放] 2026-07-',
+    '[历史回放] 2026-07-02 23:39 (UTC+8',
+  ])('新增形状不拦:%s', text => {
+    expect(replyNotForOwner(text)).toBeUndefined()
+  })
 })

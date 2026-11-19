@@ -399,6 +399,19 @@ describe('非给主人看的整段回复', () => {
     expect(t.dispatch).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    ['[assistant turn timed out before producing a reply]', 'english_annotation'],
+    ['[历史回放] 2026-07-02 23:39 (UTC+8)', 'timestamp_annotation'],
+  ])('微信拦下新增形状，只交付一次重答 (%s)', async (echo, category) => {
+    const t = withDelivery([echo, '可以加收藏。'])
+    await t.c.dispatch(inbound())
+    expect(t.sent).toEqual(['可以加收藏。'])
+    expect(t.dispatch).toHaveBeenCalledTimes(2)
+    expect(t.logs.filter(l => l.startsWith('[REPLY_NOT_FOR_OWNER]'))).toEqual([
+      `[REPLY_NOT_FOR_OWNER] category=${category} segments=1 length=${echo.length}`,
+    ])
+  })
+
   it.each([...echoes, ' [System: first [details]] [System: second] '])('桌面与手机的共用接收器只收到重答后的正文 (%s)', async (echo) => {
     const t = withDelivery([echo, '可以加收藏。'], true)
     await t.c.dispatch(inbound())
