@@ -1,5 +1,6 @@
-import { makeNotebook } from '../../features/notebook'
+import { makeNotebook, notebookRoutes } from '../../features/notebook'
 import { makeNotebookStore } from '../../adapters/store/notebook-store'
+import type { SubsystemStatus } from '../subsystems'
 import { openTestDb } from '../../lib/db'
 /**
  * 一个分发、两个监听(P3b,设计稿 docs/superpowers/specs/2026-11-05-p3-one-route-family-design.md「P3b」)。
@@ -43,8 +44,8 @@ afterEach(async () => {
   removeTempDir(stateDir)
 })
 
-async function start(options: InternalApiOptions = {}, log?: (tag: string, message: string, fields?: unknown) => void) {
-  api = createInternalApi({ stateDir, daemonPid: 1, log }, options)
+async function start(options: InternalApiOptions = {}, log?: (tag: string, message: string, fields?: unknown) => void, subsystems?: () => SubsystemStatus[]) {
+  api = createInternalApi({ stateDir, daemonPid: 1, log, subsystems }, options)
   // 两条替身(社交模块平时自己挂):看处理器跑没跑、拿到的查询串与 caller
   api.mount('social', {
     'GET /v1/social/wishes': async (query, _body, caller) => {
@@ -305,10 +306,10 @@ it('round-trips a notebook line between desktop and a paired phone and keeps bod
   await start({}, (...args) => logs.push(JSON.stringify(args)))
   const db = openTestDb()
   try {
-    api!.provide({ notebook: makeNotebook({
+    api!.mount('notebook', notebookRoutes(makeNotebook({
       store: makeNotebookStore(db), settings: () => ({ timezone: 'UTC' }), model: () => null,
       log: (count, length) => logs.push(`count=${count} length=${length}`),
-    }) })
+    })))
     const device = await pairDevice()
     const secret = 'unique-notebook-dispatch-probe'
     const created = await viaLocal('/v1/notebook/write', operatorToken, post({ body: secret, clientId: 'desktop-1' }))
@@ -326,4 +327,16 @@ it('round-trips a notebook line between desktop and a paired phone and keeps bod
     expect((await viaLocal('/v1/notebook/write', operatorToken, post({ [secret]: true }))).status).toBe(400)
     expect(logs.join(' ')).not.toContain(secret)
   } finally { db.close() }
+})
+
+it('uses the module availability gate for notebook routes', async () => {
+  let subsystems: SubsystemStatus[] = []
+  await start({}, undefined, () => subsystems)
+  const pending = await viaLocal('/v1/notebook', operatorToken)
+  expect(pending.status).toBe(503)
+  expect(await pending.json()).toEqual({ error: 'module_starting', module: 'notebook' })
+  subsystems = [{ name: 'notebook', state: 'degraded', sinceIso: '2026-01-01T00:00:00.000Z', error: 'test failure' }]
+  const degraded = await viaLocal('/v1/notebook/write', operatorToken, post({ body: 'test', clientId: 'test' }))
+  expect(degraded.status).toBe(503)
+  expect(await degraded.json()).toEqual({ error: 'module_degraded', module: 'notebook', detail: 'test failure' })
 })

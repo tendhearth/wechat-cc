@@ -240,6 +240,9 @@ export const DEFAULT_CHEAP_EVAL_BUDGET_MS = 12_000
 // quota (no per-token API cost) — spec §2 slots it after openai, before
 // claude. Future providers append here.
 const CHEAP_EVAL_PREFERENCE: ProviderId[] = ['openai', 'agy', 'claude', 'codex', 'gemini']
+// Audited prompt transports: HTTP bodies (OpenAI/Gemini) or stdio (Claude/Codex).
+// AGY and Cursor print mode put the prompt in subprocess argv.
+const PRIVATE_CHEAP_EVAL_PROVIDERS = new Set<ProviderId>(['openai', 'claude', 'codex', 'gemini'])
 
 /** How long a cheapEval provider sits out after throwing. Long enough to
  *  stop hammering a dead credential every 25-minute ingest cycle, short
@@ -539,17 +542,35 @@ export function createProviderRegistry(opts?: {
     },
     getCheapEval(options) {
       if (options?.private) {
-        // A private contribution is one call. Skip failover telemetry and
-        // do not put provider error text in the registry health snapshot.
         const pinned = readPinnedId() as ProviderId | undefined
-        const ids = [...new Set([...(pinned ? [pinned] : []), ...CHEAP_EVAL_PREFERENCE, ...entries.keys()])]
-        for (const id of ids) {
-          const evaluate = entries.get(id)?.provider.cheapEval
-          if (evaluate) return prompt => withoutPrivateLogging(async () => {
-            try { return await evaluate(prompt) } catch { throw new Error('Private model request failed') }
-          })
-        }
-        return null
+        const candidates = [...new Set([...CHEAP_EVAL_PREFERENCE, ...entries.keys()])]
+          .filter(id => PRIVATE_CHEAP_EVAL_PROVIDERS.has(id) && entries.get(id)?.provider.cheapEval)
+        const ids = pinned && candidates.includes(pinned) ? [pinned] : candidates
+        if (!ids.length) return null
+
+        return prompt => withoutPrivateLogging(async () => {
+          try {
+            for (const id of ids) {
+              const provider = entries.get(id)?.provider
+              const evaluate = provider?.cheapEval
+              if (!evaluate || refusedNow(id) || (cheapEvalCooldownUntil.get(id) ?? 0) > now()) continue
+              if (networkGate && !(await decideCall(networkGate, providerCallTarget(provider, id, 'cheapEval'))).allowed) continue
+              if (opts?.cheapEvalPreflight && !await opts.cheapEvalPreflight(id).catch(() => false)) continue
+              if (refusedNow(id)) continue
+
+              // Once the prompt is submitted, never fail over or collect errors containing it.
+              try {
+                const result = await evaluate(prompt)
+                cheapEvalRefused.delete(id)
+                return result
+              } catch (err) {
+                noteRefusal(id, err)
+                throw err
+              }
+            }
+          } catch { /* Keep raw errors inside the private evaluation. */ }
+          throw new Error('Private model request failed')
+        })
       }
       const toolFreeOnly = options?.toolFreeOnly === true
       const fn = resolveCheapEval(toolFreeOnly || options?.singleAttempt === true, toolFreeOnly)

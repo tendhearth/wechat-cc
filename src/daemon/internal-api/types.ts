@@ -116,7 +116,6 @@ export interface InternalApiDeps {
   desktopSeen?: (matterId: string) => void
   /** 「一件事」读写面(routes-matters);与工作台一样晚绑定。 */
   roster?: import('../../ports/roster').RosterReader
-  notebook?: import('../../ports/notebook').Notebook
   places?: import('../../ports/places').PlacesReader
   matters?: import('../../app/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
@@ -557,7 +556,7 @@ export interface InternalApiDeps {
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'incidents',
   'cliSetup', 'llmRefreshProvider', 'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
-  'workbenchSuspended', 'desktopSeen', 'matters', 'roster', 'places', 'notebook', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
+  'workbenchSuspended', 'desktopSeen', 'matters', 'roster', 'places', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
   'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]
 export type LateKey = typeof LATE_KEYS[number]

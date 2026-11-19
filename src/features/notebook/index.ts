@@ -1,3 +1,6 @@
+import type { DaemonModule, ModuleCtx } from '../../daemon/modules/container'
+import type { InternalApiLifecycle } from '../../daemon/internal-api/lifecycle'
+import { notebookRoutes } from './routes'
 import { NOTEBOOK_JOT_PREFIX } from '@wechat-cc/protocol'
 import {
   COMMENT_PROMPT, DEFAULT_OPENING, PEN_PROMPT,
@@ -156,3 +159,16 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
 }
 
 export { notebookRoutes } from './routes'
+
+export function notebookFeature(deps: (ctx: ModuleCtx) => NotebookDeps): DaemonModule<Notebook> {
+  return {
+    name: 'notebook',
+    needs: ['internal-api', 'bootstrap'],
+    optional: true,
+    init(ctx) {
+      const notebook = makeNotebook(deps(ctx))
+      ctx.get<InternalApiLifecycle>('internal-api').mount('notebook', notebookRoutes(notebook))
+      return notebook
+    },
+  }
+}

@@ -125,7 +125,7 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, s
   const pushTick = gated('companion.push', () => ticks.pushTick())
   const onPushTick = async () => {
     await Promise.all([
-      shouldRun() ? pushTick() : undefined,
+      pushTick(),
       notebookTick?.().catch(() => {}),
     ])
   }
@@ -135,7 +135,7 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, s
     // the self-restart idle check reads (boot.holdBusy / busyRegistry.hold
     // in bootstrap/index.ts), forwarded to all three companion schedulers
     // so a running tick can't be misjudged as idle.
-    companionPushDeps: { shouldRun: notebookTick ? () => true : shouldRun, log, onTick: notebookTick ? onPushTick : pushTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionPushDeps: { shouldRun, log, onTick: notebookTick ? onPushTick : pushTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
     companionIntrospectDeps: { shouldRun, log, onTick: gated('companion.introspect', () => ticks.introspectTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
     companionIngestDeps: { shouldRun: shouldRunIngest, log, onTick: gated('companion.ingest', () => ticks.ingestTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
     guardDeps: {

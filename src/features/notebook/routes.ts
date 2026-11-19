@@ -7,15 +7,13 @@ const ok = (body: unknown) => ({ status: 200, body, headers: { 'cache-control': 
 type ErrorCode = 'notebook_invalid' | 'notebook_not_found' | 'notebook_not_owner' | 'notebook_page_too_large' | 'notebook_unavailable'
 const failure = (error: ErrorCode) => ({ status: WORKBENCH_ERRORS[error]!.desktop as number, body: { error } })
 
-export function notebookRoutes(getNotebook: () => Notebook | undefined): RouteTable {
+export function notebookRoutes(n: Notebook): RouteTable {
   type Caller = NonNullable<Parameters<RouteHandler>[2]>
   const handle = (surface: 'page' | 'chat', fn: (n: Notebook, query: URLSearchParams, body: unknown, caller: Caller, budget?: number) => ReturnType<RouteHandler>): RouteHandler =>
     (query, body, caller) => {
-      const n = getNotebook()
       if (caller?.tier !== 'admin' || (surface === 'page'
         ? caller.origin !== 'operator' && caller.origin !== 'device'
-        : caller.origin !== 'session' || (n && !n.isOwner(caller)))) return failure('notebook_not_owner')
-      if (!n) return failure('notebook_unavailable')
+        : caller.origin !== 'session' || !n.isOwner(caller))) return failure('notebook_not_owner')
       try { return fn(n, query, body, caller, caller.frameBudget) } catch { return failure('notebook_unavailable') }
     }
 

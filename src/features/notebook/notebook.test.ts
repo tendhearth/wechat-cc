@@ -22,7 +22,7 @@ function fixture(model: (() => ((prompt: string) => Promise<string>) | null) | n
     isOwner: caller => caller.chatId === 'owner',
     log: (count, length) => logs.push(`count=${count} length=${length}`),
   })
-  const routes = notebookRoutes(() => n)
+  const routes = notebookRoutes(n)
   const call = (key: string, body?: unknown, origin: NonNullable<Parameters<RouteHandler>[2]>['origin'] = 'operator', query = '', tier: 'admin' | 'guest' = 'admin', chatId?: string) =>
     routes[key]!(new URLSearchParams(query), body, { tier, origin, chatId })
   return { n, store, call, logs, at: (t: number) => { time = t } }
@@ -216,7 +216,7 @@ it('pages an oversized paired-device day without splitting entries', async () =>
   const { n, call } = fixture()
   for (let i = 0; i < 3; i++) n.write('字'.repeat(1000), String(i), 'app')
   expect((await call('GET /v1/notebook')).body).toMatchObject({ entries: n.page().entries })
-  const route = notebookRoutes(() => n)['GET /v1/notebook']!
+  const route = notebookRoutes(n)['GET /v1/notebook']!
   const paired = { tier: 'admin', origin: 'device', frameBudget: 5_000 } as const
   const all = n.page().entries
   const first = await route(new URLSearchParams(), null, paired)
