@@ -26,7 +26,7 @@ import { withReplyAttribution } from '../lib/reply-attribution'
 import { withParticipantLabel } from '../lib/reply-presentation'
 import { ruleAllowLine, type RuleAllowNotice } from '../adapters/permission-rules/chat'
 import {
-  buildTurnReply,
+  buildTurnReply, replyNotForOwner,
   type DeliveryKind, type DeliveryReport, type ReplyContext, type ReplyDeliveryPort,
   type TurnAttachment, type TurnDeliveryHandle, type TurnReply, type TurnTextParts,
 } from '../domain/turn-reply'
@@ -307,7 +307,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         if (ids.matterId && attribution.matterId === undefined) attribution.matterId = ids.matterId
       },
       async progress(text: string, from: 'model' | 'notice' = 'notice') {
-        if (done || text.trim() === '') return
+        if (done || text.trim() === '' || (from === 'model' && replyNotForOwner(text))) return
         if (deps.isSinkOpen?.(chatId)) return // app 这一轮:旁白在 app 里本来就看得见,不进微信
         try {
           // 模型自己的旁白算这一轮答话者的;固定的「还在做」才是通知。
@@ -326,6 +326,11 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         // 提醒也一样:/both 里谁先交付谁带走,别人不再重复。
         const notices = takeNotices(turn)
         finishDaemon()
+        if (parts.suppressed) {
+          const target = deps.isSinkOpen?.(chatId) ? 'sink' : 'wechat'
+          deps.log('REPLY', `chat=${chatId} provider=${opts.providerId} context=${opts.context} target=${target} delivery=empty bubbles=0 attachments=0/${pending.length} narration=0`)
+          return { delivery: 'empty', target, bubbles: 0, attachmentsSent: 0, failures: [], msgIds: [] }
+        }
         const built = buildTurnReply(parts, pending.map(p => p.attachment), opts.context, opts.textStrategy)
         Object.assign(built.reply, attribution)
         built.reply.replyParts = [

@@ -2,6 +2,7 @@
  * 主动外发的那一步(从 tick-bodies.ts 原样搬出):两道闸(微信断了 / 会话在跑)、会话解析、claim-before-dispatch。
  * 推送那一拍(tick-push)和定时那一轮(tick-job)共用这一份,所以单独成文件。
  */
+import { collectOwnerReply, ownerReplyParts } from '../../app/collect-owner-reply'
 import { randomUUID } from 'node:crypto'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMode } from '../../domain/user-tier'
@@ -154,12 +155,12 @@ export function makeTickDispatch(deps: TickDeps) {
       const tickText = [carry?.block,args.buildText({ allSegments })].filter(Boolean).join('\n\n')
       // 往哪儿送(微信能用走微信,不能用 / 发失败落到 App)由门开的那一轮(proactive-channel)定,一轮粘住一条路。
       turn = deps.replyDelivery.begin(chatId, { context: 'tick', speaker: 'cc', model: handle.callTarget?.().model ?? handle.model, providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
-        const summary = await collectTurn(handle.dispatch(tickText))
+        const summary = await collectOwnerReply(text => collectTurn(handle.dispatch(text)), tickText, replyTextStrategyFor(providerId), deps.log)
         if (summary.error) {
           deps.log('SCHED', `companion tick dispatch error event: ${summary.errorCode ? `${summary.errorCode}: ` : ''}${summary.error}`)
           turn.abandon(summary.errorCode ?? 'error')
         } else {
-          const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+          const report = await turn.deliver(ownerReplyParts(summary))
           // 「CC 做过的事」(B9):说出去了 / 想说没发出去 分开记;静默是一个决定,不算做了什么。只记主人。
           const said = report.bubbles > 0 || report.attachmentsSent > 0
           if (said) deps.boot.contextRotation?.noteCompanion(chatId, summary.finalText ?? '')

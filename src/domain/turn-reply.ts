@@ -51,6 +51,8 @@ export interface TurnReply extends Partial<ReplyAttribution> {
 }
 
 export interface TurnTextParts {
+  /** 两次只写了内部注记，按空交付收尾。 */
+  suppressed?: boolean
   finalText: string
   narration: string[]
 }
@@ -176,6 +178,39 @@ export function extractTurnReply(events: Iterable<SegmentEvent>): TurnTextParts 
   const c = makeTurnTextCollector()
   for (const ev of events) c.push(ev)
   return c.parts()
+}
+
+/** Match only complete, unquoted internal annotations or a tool echo with a JSON object. */
+export function replyNotForOwner(raw: string): 'system_annotation' | 'tool_echo' | undefined {
+  const text = raw.trim()
+  if (!text.startsWith('[System:') && !text.startsWith('[调用工具')) return
+  // An indented Markdown code block can look like an annotation after trim.
+  const lines = raw.split('\n').filter(line => line.trim())
+  if (lines.every(line => /^(?: {4}| {0,3}\t)/.test(line))) return
+
+  if (text.startsWith('[System:')) {
+    let offset = 0
+    do {
+      if (!text.startsWith('[System:', offset)) return
+      let depth = 1
+      for (offset += '[System:'.length; offset < text.length && depth > 0; offset++) {
+        if (text[offset] === '[') depth++
+        if (text[offset] === ']') depth--
+      }
+      if (depth !== 0) return
+      while (offset < text.length && /\s/.test(text[offset]!)) offset++
+    } while (offset < text.length)
+    return 'system_annotation'
+  }
+
+  const echo = /^\[调用工具[ \t]+[\w.:-]+\]\s+(\{[\s\S]*\})$/.exec(text)
+  if (!echo) return
+  try {
+    JSON.parse(echo[1]!)
+    return 'tool_echo'
+  } catch {
+    return
+  }
 }
 
 // ─── NO_REPLY ─────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
  * 定时任务的一轮(从 tick-bodies.ts 原样搬出;spec 2026-10-20-scheduled-jobs-design):独立会话 `job:<id>`、只读档、strict,
  * 经 CC 开口那道门(say)开一轮;跑完 forget。
  */
+import { collectOwnerReply, ownerReplyParts } from '../../app/collect-owner-reply'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { localParts } from '../../lib/local-time'
 import { JOB_PROFILE, REVIEW_PROFILE } from '../../domain/user-tier'
@@ -63,10 +64,14 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
         const text = args.buildText ? args.buildText(style) : buildJobText({ jobId, nowIso: args.nowIso, text: args.text }, style)
         const turn = deps.replyDelivery.begin(chatId, { context: 'tick', speaker: 'cc', model: handle.callTarget?.().model ?? handle.model, providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
         // 到点就 cancel(终审 I3):不然一轮卡住就一直占着主人那条对话的锁,晚到的回复还会照发。
-        const deadline = setTimeout(() => { void handle.cancel?.().catch(() => {}) }, JOB_TURN_MAX_MS)
+        let expired = false
+        const deadline = setTimeout(() => { expired = true; void handle.cancel?.().catch(() => {}) }, JOB_TURN_MAX_MS)
         ;(deadline as { unref?: () => void }).unref?.()
         try {
-          const summary = await collectTurn(handle.dispatch(text), { timeoutMs: JOB_TURN_MAX_MS })
+          const summary = await collectOwnerReply(
+            prompt => collectTurn(handle.dispatch(prompt), { timeoutMs: JOB_TURN_MAX_MS }),
+            text, replyTextStrategyFor(providerId), deps.log, () => expired,
+          )
           if (summary.error) {
             if (summary.errorCode === TURN_TIMEOUT_CODE) { try { await handle.cancel?.() } catch { /* 已经停了 */ } }
             turn.abandon(summary.errorCode ?? 'error')
@@ -75,10 +80,11 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
           }
           const raw = summary.finalText ?? ''
           let finalText = raw
-          if (args.transformFinal) { try { finalText = args.transformFinal(raw) } catch (e) { deps.log('JOBS', `job ${jobId} transformFinal threw: ${errMsg(e)}`) } }
-          const report = await turn.deliver({ finalText, narration: summary.narration ?? [] })
+          if (args.transformFinal && !summary.replySuppressed) { try { finalText = args.transformFinal(raw) } catch (e) { deps.log('JOBS', `job ${jobId} transformFinal threw: ${errMsg(e)}`) } }
+          const report = await turn.deliver({ ...ownerReplyParts(summary), finalText })
           outbound.finish()
-          if (report.delivery === 'silent' || report.delivery === 'empty') result = report.failures.length ? `failed:${report.failures[0]}` : 'silent'
+          if (summary.replySuppressed) result = 'failed:error'
+          else if (report.delivery === 'silent' || report.delivery === 'empty') result = report.failures.length ? `failed:${report.failures[0]}` : 'silent'
           else result = report.failures.length && report.bubbles === 0 && report.attachmentsSent === 0 ? `failed:${report.failures[0]}` : 'sent'
         } catch (err) {
           turn.abandon('threw')

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createTurnRunner } from './runner'
-import type { CoordinatorCtx } from './ctx'
+import { createCoordinatorCtx, type CoordinatorCtx } from './ctx'
 import type { AgentEvent } from '../../ports/agent-provider'
 import type { ChatTurnHandle, ChatTurnLog } from '../../ports/chat-turns'
 
@@ -17,7 +17,8 @@ function harness() {
     interruptAll: () => {},
   }
   const recordTurn = vi.fn()
-  const runner = createTurnRunner({ deps: { chatTurns, recordTurn }, nowMs: () => 0 } as unknown as CoordinatorCtx)
+  const deps = { chatTurns, recordTurn, log: vi.fn() } as unknown as CoordinatorCtx['deps']
+  const runner = createTurnRunner(createCoordinatorCtx(deps))
   const handle = (events: AgentEvent[]) => ({ dispatch: () => (async function* () { for (const e of events) yield e })() })
   return { runner, opened, recordTurn, handle }
 }
@@ -31,6 +32,19 @@ describe('runner · 对话的轮(M3a)', () => {
     expect(summary.result?.sessionId).toBe('s')
     expect(dispatch).toHaveBeenCalledWith('hand off', { source: 'inbound' })
   })
+  it('只向事项事件流写入重答后的文字，保留已执行的工具事件', async () => {
+    const { runner, opened, handle } = harness()
+    const tool: AgentEvent = { kind: 'tool_call', tool: 'Read' }
+    const answer: AgentEvent = { kind: 'text', text: '已经查好了。' }
+    const dispatch = vi.fn()
+      .mockImplementationOnce(handle([tool, { kind: 'text', text: '[Sys', itemId: 'item', textMode: 'replace' }, { kind: 'text', text: '[System: echo]', itemId: 'item', textMode: 'replace' }, RESULT]).dispatch)
+      .mockImplementationOnce(handle([answer, RESULT]).dispatch)
+    const summary = await runner.run({ chatId: 'c', alias: 'a', providerId: 'openai', handle: { dispatch }, prompt: 'hi', budget: 'turn', startedAt: 100, turn: {} })
+    expect(opened[0]!.events).toEqual([tool, RESULT, answer, RESULT])
+    expect(summary).toMatchObject({ replyRetried: true, finalText: '已经查好了。', toolCalls: ['Read'] })
+    expect(dispatch).toHaveBeenLastCalledWith('上一条不是给主人的话。请直接用平常话回答主人刚才那句。', { source: 'background' })
+  })
+
   it('run 开一轮、事件都给它;record 按同一个 turn 标记收同一轮,只收一次', async () => {
     const { runner, opened, recordTurn, handle } = harness()
     const tool: AgentEvent = { kind: 'tool_call', tool: 'Bash' }
@@ -74,7 +88,7 @@ describe('runner · 对话的轮(M3a)', () => {
   })
   it('记轮的实现抛错不影响回合与 turn_records', async () => {
     const recordTurn = vi.fn()
-    const runner = createTurnRunner({ deps: { recordTurn, chatTurns: { begin: () => { throw new Error('db gone') }, interruptAll: () => {} } }, nowMs: () => 0 } as unknown as CoordinatorCtx)
+    const runner = createTurnRunner({ textStrategyFor: () => 'last_segment', deps: { recordTurn, chatTurns: { begin: () => { throw new Error('db gone') }, interruptAll: () => {} } }, nowMs: () => 0 } as unknown as CoordinatorCtx)
     const summary = await runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: { dispatch: () => (async function* () { yield RESULT })() }, prompt: 'x', budget: 'turn', startedAt: 1, turn: {} })
     expect(summary.result?.sessionId).toBe('s')
     runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 1, endedAt: 2, outcome: 'completed', summary })

@@ -14,6 +14,7 @@ import type { SessionHandle } from '../session-manager'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from '../../ports/agent-provider'
 import { isAuthErrorCode } from '../../lib/provider-error-code'
 import type { DeliveryReport } from '../../domain/turn-reply'
+import { collectOwnerReply, type OwnerReplySummary } from '../collect-owner-reply'
 import type { CoordinatorCtx } from './ctx'
 import type { ChatTurnHandle, TurnRecord } from './types'
 
@@ -40,6 +41,7 @@ export interface RunTurn {
   handle: Pick<SessionHandle, 'dispatch' | 'callTarget' | 'model'>
   speaker?: ReplyAttribution['speaker']
   prompt: string
+  signal?: AbortSignal
   /** 'turn' = daemon 的回合看门狗(deps.turnTimeoutMs,缺省不限);'beat' = /chat 的一拍。 */
   budget: 'turn' | 'beat'
   /** 这一轮自己还要看事件(solo 的 daemon 交付收旁白)。先于桌宠的 onTurnEvent。 */
@@ -71,7 +73,7 @@ export interface TurnRecordInput {
 }
 
 export interface TurnRunner {
-  run(t: RunTurn): Promise<TurnSummary>
+  run(t: RunTurn): Promise<OwnerReplySummary>
   /** /stop 够得着这个会话:登记它的 cancel,返回注销。 */
   registerCancel(chatId: string, cancel: () => void): () => void
   /** /chat:这一轮的 aborter 一响就取消这个会话(已经响过就当场取消)。返回解绑。 */
@@ -163,8 +165,41 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
       if (handle) openTurns.set(t.turn!, handle)
       if (handle?.turnId) { try { t.onTurn?.({ turnId: handle.turnId, ...(handle.matterId ? { matterId: handle.matterId } : {}) }) } catch { /* 来源回填失败不影响这一轮 */ } }
       const log = handle ? (ev: AgentEvent) => { try { handle.event(ev) } catch { /* 只少一步 */ } } : undefined
-      const onEvent = (ev: AgentEvent) => { observe?.(ev); log?.(ev); deps.onTurnEvent?.(t.chatId, ev) }
-      const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, () => collectTurn(t.handle.dispatch(t.prompt, { source: 'inbound' }), { timeoutMs, onEvent }))
+      const stopped = this.stopMark(t.chatId)
+      const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, async () => {
+        let deferred: AgentEvent[] | undefined
+        const flush = (includeText: boolean) => {
+          for (const ev of deferred ?? []) if (includeText || ev.kind !== 'text') log?.(ev)
+          deferred = undefined
+        }
+        const onEvent = (ev: AgentEvent) => {
+          observe?.(ev)
+          if (log) {
+            // The matter stream is visible in the apps. Hold a possible echo
+            // and subsequent events until the full reply can be classified.
+            if (!deferred && ev.kind === 'text') {
+              const lead = ev.text.trimStart()
+              if (lead && ['[System:', '[调用工具'].some(prefix => lead.startsWith(prefix) || prefix.startsWith(lead))) deferred = []
+            }
+            if (deferred) deferred.push(ev)
+            else log(ev)
+          }
+          deps.onTurnEvent?.(t.chatId, ev)
+        }
+        try {
+          const summary = await collectOwnerReply(
+            (prompt, retry) => {
+              if (retry) flush(false)
+              return collectTurn(t.handle.dispatch(prompt, { source: retry ? 'background' : 'inbound' }), { timeoutMs, onEvent })
+            },
+            t.prompt, ctx.textStrategyFor(t.providerId), deps.log, () => stopped() || t.signal?.aborted === true,
+          )
+          flush(!summary.replySuppressed)
+          return summary
+        } finally {
+          flush(false)
+        }
+      })
       if (progressTimer) {
         // 旁路收尾,不多套一层 then:调用方 await 的还是回合本身,恢复的那一拍不变。
         const clear = () => { if (progressTimer) { clearTimeout(progressTimer); progressTimer = undefined } }

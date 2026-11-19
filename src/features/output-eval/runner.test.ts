@@ -22,7 +22,7 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
 interface Spawned { project: AgentProject; ctx: SpawnContext; dispatched: string[]; closed: boolean }
 
-function harness(o: { events?: AgentEvent[]; spawnThrows?: Error; cheap?: ((p: string) => Promise<string>) | null; providers?: string[] } = {}) {
+function harness(o: { events?: AgentEvent[]; attempts?: AgentEvent[][]; spawnThrows?: Error; cheap?: ((p: string) => Promise<string>) | null; providers?: string[] } = {}) {
   const spawned: Spawned[] = []
   const providers = o.providers ?? ['claude', 'codex', 'openai']
   const registry: EvalRunnerDeps['registry'] = {
@@ -36,7 +36,15 @@ function harness(o: { events?: AgentEvent[]; spawnThrows?: Error; cheap?: ((p: s
             const rec: Spawned = { project, ctx, dispatched: [], closed: false }
             spawned.push(rec)
             const inner = makeFakeSession({ events: o.events ?? [], onDispatch: (t) => { rec.dispatched.push(t) } })
-            return { ...inner, async close() { rec.closed = true; await inner.close() } }
+            return {
+              ...inner,
+              ...(o.attempts ? { dispatch: (t: string) => {
+                const events = o.attempts![rec.dispatched.length] ?? []
+                rec.dispatched.push(t)
+                return makeFakeSession({ events }).dispatch(t)
+              } } : {}),
+              async close() { rec.closed = true; await inner.close() },
+            }
           },
         },
         opts: { displayName: id, canResume: () => true },
@@ -58,6 +66,22 @@ function harness(o: { events?: AgentEvent[]; spawnThrows?: Error; cheap?: ((p: s
 const text = (t: string): AgentEvent => ({ kind: 'text', text: t })
 
 describe('reply:生产的提示词 + 只读档、不批权限', () => {
+  it.each([
+    ['可以加收藏。', true, '可以加收藏。'],
+    ['[System: echo]', false, ''],
+  ] as const)('同一评测会话重答一次并标记结果 (%s)', async (second, ok, finalText) => {
+    const h = harness({ attempts: [[text('[调用工具 matter_plan] {"legs":[]}')], [text(second)]] })
+    const r = await h.runner.reply({ text: '建议加收藏', providerId: 'openai' })
+    expect(r).toMatchObject({ ok, finalText, replyRetried: true, bubbles: finalText ? [finalText] : [] })
+    expect(h.spawned).toHaveLength(1)
+    expect(h.spawned[0]!.dispatched).toEqual(['建议加收藏', '上一条不是给主人的话。请直接用平常话回答主人刚才那句。'])
+  })
+
+  it('普通回复报告没有重答', async () => {
+    const h = harness({ events: [text('好。')] })
+    expect(await h.runner.reply({ text: '早' })).toMatchObject({ replyRetried: false })
+  })
+
   it('提示词按样本的档位用 buildInstructions 组装;会话按定时只读档起(strict、不给批权限的口)', async () => {
     const h = harness({ events: [text('早,今天先做哪件?')] })
     const r = await h.runner.reply({ text: '早' })
