@@ -53,6 +53,12 @@ let placeFilter = null
 /** @type {{ id: number, mime: string, data_b64: string, url: string, name: string }[]} */
 let pendingImages = []
 let nextImageId = 1
+// 两栏里说话的人用头像,不写「你 / CC」两个字(主人 11-19)。CC 用它自己的那一张(和左上角同一张);
+// 你的头像在 CC 给你画出来之前,是一张「还没画」的铅笔稿——虚线圈里淡淡的头和肩。只在宽窗口显示(窄窗口没有这一列)。
+const DESK_CC_AVATAR = '<img src="./assets/pet/cc-v1/canonical/lit/front.png" alt="">'
+const DESK_YOU_AVATAR = '<svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="14" cy="14" r="12.6" stroke-dasharray="2.2 2.6"/><circle cx="14" cy="11.4" r="3.5"/><path d="M7.4 21.6c1.1-3.5 3.6-5.1 6.6-5.1s5.5 1.6 6.6 5.1"/></svg>'
+/** @param {string} role */
+const deskSpeakerHtml = role => `<span class="desk-speaker" data-speaker="${role === 'user' ? 'you' : 'cc'}" aria-hidden="true">${role === 'user' ? DESK_YOU_AVATAR : DESK_CC_AVATAR}</span>`
 const IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic"]
 /** @type {Record<string,string>} */
 const DOC_MIMES_BY_EXT = { pdf: "application/pdf", txt: "text/plain", md: "text/markdown", markdown: "text/markdown", csv: "text/csv", json: "application/json",
@@ -296,7 +302,7 @@ function attachmentsHtml(m, indexes = (m.attachments ?? []).map((_,i) => i)) {
 /** @param {ConverseMsg} m @param {number[]} [attachmentIndexes] @param {number[]} [narrationIndexes] @param {number} [partIndex] @returns {string} */
 function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
   if(m.terminalId)return terminalReferenceHtml(m.terminalId,m.text)
-  if (m.matterId) return `<div class="converse-msg converse-msg-cc"><span class="converse-speaker"><span class="desk-speaker" aria-hidden="true">CC</span></span><div class="converse-cc-body">${matterReferenceHtml(m.matterId,m.text,!!m.historical)}</div></div>`
+  if (m.matterId) return `<div class="converse-msg converse-msg-cc"><span class="converse-speaker">${deskSpeakerHtml('cc')}</span><div class="converse-cc-body">${matterReferenceHtml(m.matterId,m.text,!!m.historical)}</div></div>`
   if (m.role === "error") {
     return `<div class="converse-error-line">${escapeHtml(m.text)}</div>`
   }
@@ -340,7 +346,7 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
     ? `<div class="converse-cc-body">${label}${m.role === "cc" ? narrationHtml(m,narrationIndexes) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m,attachmentIndexes)}</div>`
     : bubble
   return `<div class="converse-msg ${roleCls}${pendingCls}${avatar ? ' has-reply-avatar' : ''}" role="group" aria-label="${escapeHtml(name)}">
-    <span class="converse-speaker"><span class="desk-speaker" aria-hidden="true">${m.role === 'user' ? '你' : 'CC'}</span>${avatar}</span>
+    <span class="converse-speaker">${deskSpeakerHtml(m.role)}${avatar}</span>
     ${userImages ? `<div class="converse-user-body">${userImages}${m.text.trim() ? body : ""}</div>` : body}
     ${m.legacyMedia ? '<small class="converse-legacy-media">这条记录只保存了附件数量，原附件未保存在对话中。</small>' : ""}
     ${grouped || !m.text.trim() ? "" : replayBtn}

@@ -28,7 +28,12 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   const row = placeRow(page, 'rici')
   await expect(row).toBeVisible()
   await expect(heading).toHaveCSS('height', '44px')
-  await expect(scroll.locator('.desk-speaker:visible').first()).toHaveText('你')
+  // 说话的人用头像:你的是「还没画」的铅笔稿,CC 的是它自己那一张
+  await expect(scroll.locator('.desk-speaker:visible').first()).toHaveAttribute('data-speaker', 'you')
+  await expect(scroll.locator('.desk-speaker[data-speaker="you"]:visible svg').first()).toBeVisible()
+  const ccFace = scroll.locator('.desk-speaker[data-speaker="cc"]:visible img').first()
+  await expect(ccFace).toBeVisible()
+  expect(await ccFace.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
   await expect(scroll.locator('.converse-msg[data-same-speaker] .desk-speaker')).toBeHidden()
   const [left, right, talk, input, name, status, dashboard] = await Promise.all([
     rail, main, scroll, compose, row.locator('.place-name'), row.locator('.place-line'), page.locator('main.dashboard'),

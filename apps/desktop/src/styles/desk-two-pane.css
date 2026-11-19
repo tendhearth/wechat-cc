@@ -173,11 +173,15 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   margin-right: 14px;
 }
 [data-desk-wide] .desk-speaker {
-  display: block;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
   color: var(--th-ink-soft);
-  font-size: 13px;
-  line-height: 28px;
 }
+[data-desk-wide] .desk-speaker :is(img, svg) { display: block; width: 28px; height: 28px; object-fit: contain; }
+/* CC 那张图四周留了白,放大一圈才和你的头像一样大 */
+[data-desk-wide] .desk-speaker[data-speaker="cc"] img { width: 36px; height: 36px; margin: -4px; max-width: none; }
 [data-desk-wide] [data-same-speaker] .desk-speaker,
 [data-desk-wide] .converse-reply-parts .converse-msg + .converse-msg .desk-speaker { visibility: hidden; }
 [data-desk-wide] .converse-reply-parts { gap: 14px; }
