@@ -204,7 +204,8 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
         return { ok: false, ...base, ...empty, replyRetried, error: `turn exceeded ${limitMs}ms`, errorCode: 'turn_deadline', durationMs: now() - startedAt }
       }
       const summary = collected
-      if (summary.replySuppressed) return { ok: false, ...base, ...empty, replyRetried, durationMs: now() - startedAt }
+      // 文字被压掉了,两次里真调过的工具照旧带出去(不然评测里像是什么都没发生)
+      if (summary.replySuppressed) return { ok: false, ...base, ...empty, toolCalls: summary.toolCalls, replyRetried, durationMs: now() - startedAt }
       const raw = summary.finalText ?? ''
       let finalRaw = raw
       if (a.transformFinal) { try { finalRaw = a.transformFinal(raw) } catch (e) { deps.log('EVAL', `transformFinal threw: ${errMsg(e)}`) } }

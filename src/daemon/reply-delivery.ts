@@ -25,11 +25,7 @@ import { replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protoc
 import { withReplyAttribution } from '../lib/reply-attribution'
 import { withParticipantLabel } from '../lib/reply-presentation'
 import { ruleAllowLine, type RuleAllowNotice } from '../adapters/permission-rules/chat'
-import {
-  buildTurnReply, replyNotForOwner,
-  type DeliveryKind, type DeliveryReport, type ReplyContext, type ReplyDeliveryPort,
-  type TurnAttachment, type TurnDeliveryHandle, type TurnReply, type TurnTextParts,
-} from '../domain/turn-reply'
+import { buildTurnReply, type DeliveryKind, type DeliveryReport, type ReplyContext, type ReplyDeliveryPort, type TurnAttachment, type TurnDeliveryHandle, type TurnReply, type TurnTextParts, replyMayBeEcho } from '../domain/turn-reply'
 
 /** 登记在这一轮上的附件:描述 + 真正发出去的动作(由 attach 路由在登记时绑好)。 */
 export interface PendingAttachment {
@@ -309,7 +305,8 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         if (ids.matterId && attribution.matterId === undefined) attribution.matterId = ids.matterId
       },
       async progress(text: string, from: 'model' | 'notice' = 'notice') {
-        if (done || text.trim() === '' || (from === 'model' && replyNotForOwner(text))) return
+        // 模型的旁白只要是照内部回声的样子起头的就不当进度发:写完的会被判成回声;没写完的发出去就收不回来了(独立评审第三轮)。
+        if (done || text.trim() === '' || (from === 'model' && replyMayBeEcho(text))) return
         if (deps.isSinkOpen?.(chatId)) return // app 这一轮:旁白在 app 里本来就看得见,不进微信
         try {
           // 模型自己的旁白算这一轮答话者的;固定的「还在做」才是通知。

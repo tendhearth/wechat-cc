@@ -30,6 +30,29 @@ describe('collectOwnerReply · 多段回复逐段判', () => {
     expect(out.replyRetried).toBe(true)
   })
 
+  it('静默令牌 + 一句注记:交付时令牌会被剥掉、注记会单独发出去 ⇒ 按回声重答', async () => {
+    const collect = vi.fn()
+      .mockResolvedValueOnce(summary('NO_REPLY\n[System: 工具结果返回为空字符串]'))
+      .mockResolvedValueOnce(summary('记下了。'))
+    const out = await collectOwnerReply(collect, 'hi', 'last_segment', vi.fn())
+    expect(out).toMatchObject({ replyRetried: true, replySuppressed: false, finalText: '记下了。' })
+  })
+
+  it('整段就是静默令牌 = 模型有意不说,不算回声、不重答', async () => {
+    const collect = vi.fn().mockResolvedValueOnce(summary('NO_REPLY'))
+    const out = await collectOwnerReply(collect, 'hi', 'last_segment', vi.fn())
+    expect(collect).toHaveBeenCalledTimes(1)
+    expect(out).toMatchObject({ replyRetried: false, replySuppressed: false, finalText: 'NO_REPLY' })
+  })
+
+  it('同一段里工具回声紧跟着系统注记(中间没有工具调用把它们分开)⇒ 重答', async () => {
+    const collect = vi.fn()
+      .mockResolvedValueOnce(summary('[调用工具 matter_plan] {"title":"加收藏","legs":[{"brief":"加 {收藏} 按钮"}]}\n[System: 工具结果返回为空字符串]'))
+      .mockResolvedValueOnce(summary('放到 wechat-cc 那边办了。'))
+    const out = await collectOwnerReply(collect, 'hi', 'last_segment', vi.fn())
+    expect(out).toMatchObject({ replyRetried: true, replySuppressed: false })
+  })
+
   it('日志只有类别、段数和长度,没有正文', async () => {
     const log = vi.fn()
     const collect = vi.fn()

@@ -1,4 +1,4 @@
-import { replyNotForOwner, type ReplyTextStrategy, type TurnTextParts } from '../domain/turn-reply'
+import { parseSilence, replyNotForOwner, type ReplyTextStrategy, type TurnTextParts } from '../domain/turn-reply'
 import type { TurnSummary } from '../ports/agent-provider'
 
 export const OWNER_REPLY_REMINDER = '上一条不是给主人的话。请直接用平常话回答主人刚才那句。'
@@ -23,7 +23,9 @@ export async function collectOwnerReply(
     const segments = strategy === 'all_segments' ? [...(summary.narration ?? []), final] : [final]
     // 逐段判:每一段非空的文字都是内部注记 / 工具回声,这一轮才算「没有给主人的话」。
     // 拼成一整段再判会漏掉「前面一段工具回声 + 后面一段 [System: …]」这种组合(独立评审第二轮)。
-    const texts = segments.map(replyTextForInspection).filter(segment => segment.trim())
+    // 先按交付那一步的规矩剥掉静默令牌再判:「NO_REPLY + 一句注记」交付时会剥掉令牌、把注记单独发出去(独立评审第三轮)。
+    // 整段就是令牌 = 模型有意不说,不算回声。
+    const texts = segments.map(replyTextForInspection).map(segment => parseSilence(segment)).filter(parsed => !parsed.silent).map(parsed => parsed.text).filter(segment => segment.trim())
     if (!texts.length) return false
     const categories = texts.map(segment => replyNotForOwner(segment))
     if (categories.some(category => !category)) return false
