@@ -238,7 +238,7 @@ it('records matter_plan through authenticated HTTP and closes access before sess
   const planConversation = vi.fn(() => ({ scope: 'owner-turn' }))
   const api = createInternalApi({ stateDir: root, daemonPid: 1 })
   const routes = ledgerRoutes({
-    workbench: { matterPlan, matterApprovalStatus, projects: () => [project] } as unknown as WorkbenchService,
+    workbench: { matterPlan, matterApprovalStatus, projects: () => [project], availableExecutors: () => ['claude'] } as unknown as WorkbenchService,
     resolveAdminChatId: () => 'owner', planConversation,
   })
   api.mount('workbench', routes)
@@ -260,8 +260,8 @@ it('records matter_plan through authenticated HTTP and closes access before sess
     invalidateSession: key => api.invalidateSession(key),
     registry: {
       ...h.deps.registry,
+      // 对话这张登记表里的 claude 不带工作台能力(生产如此);能不能接活由工作台的 availableExecutors 说了算
       get: (id: string) => id !== 'claude' ? null : ({
-        opts: { workbench: { version: 1, permissions: 'task', configuration: 'task-policy', completion: 'native', stop: 'confirmed', background: 'tracked', features: { nativeResume: true, attachments: false, executionSettings: false, modelCatalog: false } } },
         provider: {
           async spawn(_project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
             token = ctx.mcpEnv!.WECHAT_SESSION_TOKEN!

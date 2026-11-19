@@ -24,10 +24,9 @@ function recordFields(body: unknown): EvalPlanCall {
   }
 }
 
-/** `isExecutor`:这一棒点的执行者是不是已登记、能进「一起做」的(生产在受理前逐棒核,见 workbench admission 的 provider())。 */
-export function makeMatterPlanRecorder(path: string, calls: EvalPlanCall[], isExecutor: (id: string) => boolean = () => true) {
+export function makeMatterPlanRecorder(path: string, calls: EvalPlanCall[]) {
   let active = true
-  const record: RecordMatterPlan = (query, body, projects) => {
+  const record: RecordMatterPlan = (query, body, projects, executors) => {
     // Authentication may have finished before the request body arrived.
     if (!active) return { status: 403, body: matterToolFailure('matter_ledger_forbidden', false) }
     const call = recordFields(body)
@@ -42,8 +41,11 @@ export function makeMatterPlanRecorder(path: string, calls: EvalPlanCall[], isEx
     try {
       const resolved = resolvePlanTarget(input, projects(), path)
       if (resolved.target.kind === 'project') call.resolvedProject = resolved.projectName
-      // 生产会拒的执行者,这里也拒:不然模型编一个名字,评测照样回「已受理」(独立评审)
-      if (!input.legs.every(leg => isExecutor(leg.executor))) throw new Error('unavailable_provider')
+      // 生产会拒的执行者,这里也拒:不然模型编一个名字,评测照样回「已受理」(独立评审)。
+      // 问的是工作台(路由传进来的 availableExecutors),不是对话那张登记表 —— 两张表里同名的 codex / claude 不是同一个东西,
+      // 对话那张不带工作台能力,拿它核会把真能干活的执行者全判成没登记(11-19 真机评测抓到)。
+      const available = executors()
+      if (!input.legs.every(leg => available.includes(leg.executor))) throw new Error('unavailable_provider')
       const id = randomBytes(4).toString('hex')
       const acceptedAt = Date.now()
       const result: z.infer<typeof WorkbenchEntryResultResponse> = {
