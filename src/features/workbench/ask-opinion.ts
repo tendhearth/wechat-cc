@@ -47,12 +47,10 @@ export const ASK_OPINION_PROMPT = [
   '只输出一个 JSON 对象，不带 Markdown 或额外字段。格式为 {"say":true,"opinion":"…","reason":"…"}，不说时为 {"say":false,"opinion":"","reason":""}。',
 ].join('\n')
 
-interface Candidate {
-  kind: 'permission' | 'question'
-  project: string
-  ask?: PermissionAsk
-  preview: unknown
-}
+type Candidate = { project: string } & (
+  | { kind: 'permission'; ask?: PermissionAsk; preview: unknown }
+  | { kind: 'question'; ask?: never; preview: { question: string; options: string[] }[] }
+)
 
 const PRIORITY_KINDS = new Set<ToolKind>([
   'shell_destructive', 'memory_delete', 'a2a_send', 'message_other', 'social_seek',
@@ -191,7 +189,11 @@ export function makeAskOpinion(deps: {
       }
       const model = deps.evaluator()
       if (!model) { log('quiet'); return }
-      const preview = toolInputPreview(input.preview)
+      // Check the original question and labels before credential masking can
+      // remove the first part of a path and leave trailing components behind.
+      const questionHasPath = input.kind === 'question' && input.preview.some(({ question, options }) =>
+        [question, ...options].some(text => /[\\/]/.test(text.normalize('NFKC'))))
+      const preview = toolInputPreview(questionHasPath ? '一个带路径的提问' : input.preview)
       if (preview === null) { log('quiet'); return }
       const maskedPreview = JSON.stringify(JSON.parse(preview), (key, value: unknown) => {
         // A structured path can contain spaces and needs to be masked as a unit.

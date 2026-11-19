@@ -156,6 +156,41 @@ it('只把打码后的请求资料发给模型，日志只含结果和长度', a
   expect(opinions.get('first')).toBeUndefined()
 })
 
+it.each([
+  ['问题', [{ question: '要打开 /Users/alex/Private Clients/payroll.csv 吗？', options: ['打开'] }]],
+  ['选项', [{ question: '要选哪个？', options: ['备份到 D:\\Private Clients\\payroll.csv'] }]],
+])('带空格的路径只向模型提供类别（%s）', async (_label, preview) => {
+  const model = vi.fn(async (_prompt: string) => raw)
+  const opinions = makeAskOpinion({ evaluator: () => model })
+  opinions.schedule('question', () => ({ kind: 'question', project: '/projects/Archive', preview }))
+  await tick()
+  const prompt = model.mock.calls[0]![0]
+  expect(prompt).not.toMatch(/Clients|payroll/)
+  expect(prompt).toContain('带路径的提问')
+})
+
+it('无工具的意见评估只使用明确指定的判断器', async () => {
+  let pin: string | undefined = 'claude'
+  const registry = createProviderRegistry({ cheapEvalProvider: () => pin })
+  const spawn = async () => { throw new Error('unused') }
+  const claude = vi.fn(async () => raw)
+  const gateway = vi.fn(async () => raw)
+  registry.register('claude', { spawn, cheapEval: claude }, { canResume: () => false })
+  registry.register('openai', { spawn, cheapEval: gateway, supportsToolFreeCheapEval: true }, { canResume: () => false })
+  const opinions = makeAskOpinion({ evaluator: () => registry.getCheapEval({ toolFreeOnly: true }) })
+  opinions.schedule('pinned', pending)
+  await tick()
+  expect(claude).not.toHaveBeenCalled()
+  expect(gateway).not.toHaveBeenCalled()
+  expect(opinions.get('pinned')).toBeUndefined()
+
+  pin = undefined
+  opinions.schedule('unpinned', pending)
+  await tick()
+  expect(gateway).toHaveBeenCalledTimes(1)
+  expect(opinions.get('unpinned')).toEqual(note)
+})
+
 describe('不显示不合规回答', () => {
   it.each([
     ['不想说', '{"say":false,"opinion":"","reason":""}'],
@@ -299,7 +334,7 @@ it.each([undefined, 'codex'])('只有原生执行者时跳过意见 (pin: %s)', 
     registry.register(id, { spawn: async () => { throw new Error('unused') }, cheapEval: model }, { canResume: () => false })
   }
   const opinions = makeAskOpinion({ evaluator: () => registry.getCheapEval({ toolFreeOnly: true }) })
-  opinions.schedule('question', () => ({ kind: 'question', project: '/projects/Archive', preview: { question: '要保留备份吗？' } }))
+  opinions.schedule('question', () => ({ kind: 'question', project: '/projects/Archive', preview: [{ question: '要保留备份吗？', options: [] }] }))
   await tick()
   expect(model).not.toHaveBeenCalled()
   expect(opinions.get('question')).toBeUndefined()
@@ -317,7 +352,7 @@ it('超时终止在途请求，下一条不重叠，关停时也取消', async (
       }, { once: true })
     })
   })
-  const registry = createProviderRegistry({ cheapEvalProvider: 'codex' })
+  const registry = createProviderRegistry()
   const native = vi.fn(async () => raw)
   registry.register('codex', { spawn: async () => { throw new Error('unused') }, cheapEval: native }, { canResume: () => false })
   const api = createApiModel({ baseURL: 'https://offline.invalid/v1', model: 'fixture', apiKey: 'fixture', fetch })

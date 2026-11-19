@@ -769,7 +769,11 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       port: 0,
       async fetch(req) {
         if (new URL(req.url).pathname !== '/v1/chat/completions') return new Response(null, { status: 404 })
-        requests.push(await req.json() as (typeof requests)[number])
+        const request = await req.json() as (typeof requests)[number]
+        // The pinned HTTP evaluator also receives ordinary background evaluations.
+        if (request.messages?.some(message => message.content.includes('给正在决定这件事的主人留两行话'))) {
+          requests.push(request)
+        }
         const content = JSON.stringify({ say: true, opinion: '先别删。请求会直接移除构建目录。', reason: '要批准删除目录' })
         const chunk = JSON.stringify({
           id: 'opinion-fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture',
@@ -783,7 +787,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     vi.stubEnv('WECHAT_OPENAI_API_KEY', 'sandbox-opinion')
     try {
       await rebootForS2({ quiet: false, phone: true, agentConfigPatch: {
-        openaiBaseUrl: `http://127.0.0.1:${endpoint.port}/v1`, openaiModel: 'fixture', cheapEvalProvider: 'claude',
+        openaiBaseUrl: `http://127.0.0.1:${endpoint.port}/v1`, openaiModel: 'fixture', cheapEvalProvider: 'openai',
       } })
     } finally {
       vi.unstubAllEnvs()

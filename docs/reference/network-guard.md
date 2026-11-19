@@ -167,7 +167,7 @@ codex 只按自己的配置连:`model_provider`(缺省 `openai`)→ 自定义 id
 |---|---|---|
 | 协调器 `dispatchSolo` / 多人模式参与者(`src/app/conversation-coordinator.ts` `admitProviders`) | 在用会话的实际目标;没有会话就是 provider 按这次的模型报的目标 | 单人:不 acquire,回一句统一的话(按 reply sink 落到发起的那一面),不重试。`/both` `/chat`:**只拿掉被挡的那几位**,一句话说明,其余照常发言(剩一位就降成单人,**并像单人一样排队** —— 评审 #193 P2-4:不然第二条消息会在同一会话上撞上还在跑的第一条) |
 | `ProviderRegistry` → `withNetworkGate`(`src/app/provider-registry.ts`) | provider 报的实际目标(`providerCallTarget`);会话不自己报目标的,把 spawn 那一刻 provider 报的钉在会话上;`modelCatalog` 不算模型回合(Cursor 列目录不保护) | 抛 `NetworkUnprotectedError`,不起子进程、不发请求 |
-| cheapEval 故障转移 | 逐个候选 | 跳过需要保护的候选(**不记冷却**),照常试不需要保护的;都被挡才抛。显式钉了 `cheap_eval_provider` 时只用它(不故障转移),它需要保护就照样暂停 |
+| cheapEval 故障转移 | 逐个候选 | 跳过需要保护的候选(**不记冷却**),照常试不需要保护的;都被挡才抛。显式钉了 `cheap_eval_provider` 时只用它(不故障转移),它需要保护就照样暂停。工作台意见只用无工具、单次请求的评估器，指定的 provider 不满足条件或不可用时省略意见 |
 | `SessionManager.spawn` 与 `handle.dispatch` | 这条会话的实际目标(`handle.callTarget()`:会话自报,或 spawn 那一刻 provider 报的) | 抛错(在碰 provider 之前,一个字都没发);推送 / 打猎 / 议程的 `dispatchToChat` 走这里 |
 | 会话自己的发送方法(`provider-registry.ts` `guardSession`,第二轮 #194) | 同上(会话此刻的实际目标) | registry / delegate 发出去的每个会话:dispatch / steer / 工作台 submit 先判再发;工作台 `start` 是同步的,先挂住等守护答复,被拒就从不 start、事件流报 `network_unprotected`。selftest chat 与 `POST /v1/selftest/converse` 因此也过守护 |
 | delegate(`src/daemon/bootstrap/delegate.ts`) | 同 registry(带 provider id 包一层) | 同上 |

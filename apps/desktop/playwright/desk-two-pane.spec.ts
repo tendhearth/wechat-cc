@@ -329,3 +329,20 @@ test('等待纸条有 CC 意见时只多两行', async ({ page, shimUrl }) => {
   await expect(lines('归档')).toHaveText(['这件要你定 · 归档', summary, '我的意见(只看了这条请求)：' + note.ccOpinion, '为什么来问你：' + note.questionReason])
   await expect(lines('菜谱')).toHaveText(['这件要你定 · 菜谱', '要你回答一个问题'])
 })
+
+test('另一张等待纸条收到意见时保留去回答的键盘焦点', async ({ page, shimUrl }) => {
+  const waiting = { itemKey: 'matter:deadbeef', kind: 'permission', matterId: 'deadbeef', requestId: 'req-1', summary: '要删旧备份吗？', count: 1 }
+  const archive = placeItem('归档', { status: 'waiting', moving: false, line: waiting.summary, waiting })
+  const recipe = askingPlace('菜谱', 'aaaa0001')
+  let places = [archive, recipe]
+  await routePlaces(page, () => places)
+  await page.goto(shimUrl)
+
+  const cards = page.locator('.desk-waiting-card')
+  const answer = cards.filter({ hasText: '菜谱' }).getByRole('button', { name: '去回答' })
+  await answer.focus()
+  await expect(answer).toBeFocused()
+  places = [{ ...archive, waiting: { ...waiting, ccOpinion: '先别删。这是唯一一份备份。', questionReason: '删了回不来' } }, recipe]
+  await expect(cards.filter({ hasText: '归档' }).locator('.desk-waiting-opinion')).toContainText('先别删')
+  await expect(answer).toBeFocused()
+})

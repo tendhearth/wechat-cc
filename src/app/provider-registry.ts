@@ -316,7 +316,8 @@ export function createProviderRegistry(opts?: {
       const pinned = eligibleEval(pinnedId as ProviderId, toolFreeOnly)
       // 钉死的那家也要看被拒:钉了 agy、agy 在这个出口被拒,就不能每次照问(2026-10-23 回忆 28 次)。
       if (pinned) return guardRefused(pinnedId as ProviderId, pinned, singleAttempt)
-      if (!toolFreeOnly) opts?.log?.(`cheap_eval_provider=${pinnedId} 未注册或无 cheapEval — 回落偏好序`)
+      if (toolFreeOnly) return null
+      opts?.log?.(`cheap_eval_provider=${pinnedId} 未注册或无 cheapEval — 回落偏好序`)
       // 钉的 provider 此刻没注册(2026-10-04:开机 `--version` 探测一时失败、正在后台
       // 退避重探)。很多调用方在开机时就把这里返回的函数缓存住了(coordinator 的
       // haikuEval、social 的闸门 …),所以不能把「回落」焊死:返回一个**按调用现取**的
