@@ -236,8 +236,9 @@ test('CC 用新鲜数据说现状，状态点和选中行跟随列表', async ({
   await routePlaces(page, () => places)
   await page.goto(shimUrl)
   const situation = page.locator('#desk-cc-situation')
-  const figure = page.locator('#topbar-cc') // 呼吸的光挂在这一行上,活的 CC 和静态图谁在显示都有
-  const breathing = () => figure.evaluate(el => getComputedStyle(el, '::before').animationName)
+  const figure = page.locator('#topbar-cc .topbar-figure')
+  // 呼吸的光挂在这一行上:活的 CC 和静态图谁在显示都有
+  const breathing = () => page.locator('#topbar-cc').evaluate(el => getComputedStyle(el, '::before').animationName)
   const waiting = placeRow(page, 'rici')
   const moving = placeRow(page, 'melu')
   await expect(page.locator('#desk-cc-presence')).toHaveText('CC 在家')
