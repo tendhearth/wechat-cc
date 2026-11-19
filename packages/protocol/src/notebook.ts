@@ -43,10 +43,12 @@ export const NotebookJotRequest = z.object({
 }).strict()
 export const NotebookChatReadRequest = z.object({
   days: z.number().int().min(1).max(60).default(7),
+  after: NotebookEntry.shape.id.optional(),
   query: z.string().max(4000).optional(),
 }).strict()
 export const NotebookJotResponse = z.object({ ok: z.literal(true), id: NotebookEntry.shape.id })
-export const NotebookChatReadResponse = z.object({ entries: z.array(NotebookEntry) })
+export const NotebookChatReadResponse = z.object({ entries: z.array(NotebookEntry), nextAfter: NotebookEntry.shape.id.optional() })
+export type NotebookChatReadResponseT = z.infer<typeof NotebookChatReadResponse>
 export type NotebookEntryT = z.infer<typeof NotebookEntry>
 export type NotebookPaperT = z.infer<typeof NotebookPaper>
 export type NotebookPenT = z.infer<typeof NotebookPen>

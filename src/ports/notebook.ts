@@ -1,4 +1,4 @@
-import type { NotebookPageResponseT } from '@wechat-cc/protocol'
+import type { NotebookChatReadResponseT, NotebookPageResponseT } from '@wechat-cc/protocol'
 import type { NotebookEntry, NotebookPaper, NotebookPen } from '../domain/notebook'
 
 export interface NotebookSettings {
@@ -13,7 +13,7 @@ export interface NotebookStore {
   strike(id: string, at: number | null): 'ok' | 'missing' | 'cc'
   byId(id: string): NotebookEntry | null
   timestamps(): number[]
-  list(options?: { since?: number; until?: number; limit?: number; query?: string; ownerOnly?: boolean }): NotebookEntry[]
+  list(options?: { since?: number; until?: number; limit?: number; query?: string; olderThan?: string; ownerOnly?: boolean }): NotebookEntry[]
   atomic<T>(fn: () => T): T
 }
 
@@ -32,6 +32,6 @@ export interface Notebook {
   paper(paper: NotebookPaper): NotebookPaper
   isOwner(caller: NotebookCaller): boolean
   jot(text: string): NotebookEntry
-  read(days: number, query?: string): NotebookEntry[]
+  read(days: number, query?: string, after?: string): NotebookChatReadResponseT
   tick(): Promise<void>
 }

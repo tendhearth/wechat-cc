@@ -8,34 +8,23 @@ import {
 } from '../../domain/notebook'
 import { NOTEBOOK_DEFAULTS, type NotebookConfig } from '../../lib/notebook-config'
 import { localParts } from '../../lib/local-time'
+import type { CheapEval } from '../../ports/agent-provider'
 import type { Notebook, NotebookCaller, NotebookSettings, NotebookStore } from '../../ports/notebook'
 
+// A valid 4,000-character entry can grow to 24,000 characters through JSON escaping.
+const CHAT_READ_MAX_CHARS = 26_000
+const CHAT_READ_BATCH = 32
 const DAY_MS = 86_400_000
 const EMPTY_INITIATIVE: NotebookSettings['initiative'] = { lastAt: 0, day: '', attempts: 0, failures: 0, retryAt: 0 }
 
 interface NotebookDeps {
   store: NotebookStore
   settings: () => { timezone: string; notebook?: Partial<NotebookConfig> }
-  model: () => ((prompt: string) => Promise<string>) | null
+  model: () => CheapEval | null
   persona?: () => string
   isOwner?: (caller: NotebookCaller) => boolean
   now?: () => number
   log?: (count: number, length: number) => void
-}
-
-async function ask(model: (prompt: string) => Promise<string>, prompt: string, timeoutMs: number) {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      model(prompt),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Notebook model timed out')), timeoutMs)
-        timer.unref?.()
-      }),
-    ])
-  } finally {
-    clearTimeout(timer)
-  }
 }
 
 export function makeNotebook(deps: NotebookDeps): Notebook {
@@ -49,6 +38,29 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     const entry = store.append({ author, body, origin, createdAt, clientId, refId })
     deps.log?.(1, Array.from(entry.body).length)
     return entry
+  }
+
+  let modelActive = false
+  async function ask(model: CheapEval, prompt: string, timeoutMs: number) {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error('Notebook model timed out')
+        controller.abort(error)
+        reject(error)
+      }, timeoutMs)
+      timer.unref?.()
+    })
+    modelActive = true
+    const request = (async () => model(prompt, controller.signal))().finally(() => { modelActive = false })
+    try {
+      const result = await Promise.race([request, deadline])
+      controller.signal.throwIfAborted()
+      return result
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   let opening: Promise<void> | undefined
@@ -66,7 +78,7 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
         const model = deps.model()
         const persona = deps.persona?.()
         const prompt = persona ? `${PEN_PROMPT}\nCC 的性格资料：${JSON.stringify(persona)}` : PEN_PROMPT
-        if (model) intro = parseOpening(await ask(model, prompt, settings().config.openingTimeoutMs))
+        if (model && !modelActive) intro = parseOpening(await ask(model, prompt, settings().config.openingTimeoutMs))
       } catch { /* 用固定开场。 */ }
       store.atomic(() => {
         if (store.get('pen')) return
@@ -85,7 +97,7 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
   let checking = false
   async function tick() {
     const startedAt = now()
-    if (checking || startedAt < nextCheck) return
+    if (checking || modelActive || startedAt < nextCheck) return
     const { timezone, config } = settings()
     nextCheck = startedAt + config.checkIntervalMs
     const day = localParts(startedAt, timezone).day
@@ -148,11 +160,26 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     paper: (paper: NotebookSettings['paper']) => { store.set('paper', paper); return paper },
     isOwner: (caller: Parameters<NonNullable<NotebookDeps['isOwner']>>[0]) => deps.isOwner?.(caller) === true,
     jot: (text: string) => append('cc', NOTEBOOK_JOT_PREFIX + text.trim(), 'chat', now()),
-    read(days: number, query?: string) {
+    read(days: number, query?: string, after?: string) {
       const { timezone } = settings()
       const dayOf = (at: number) => localParts(at, timezone).day
       const firstDay = new Date(Date.parse(dayOf(now())) - (days - 1) * DAY_MS).toISOString().slice(0, 10)
-      return store.list({ since: Date.parse(firstDay) - DAY_MS, query }).filter(entry => dayOf(entry.createdAt) >= firstDay)
+      const since = Date.parse(firstDay) - DAY_MS
+      const entries: NotebookEntry[] = []
+      let olderThan = after
+      let size = JSON.stringify({ entries: [], nextAfter: '00000000-0000-0000-0000-000000000000' }).length
+      for (;;) {
+        const batch = store.list({ since, query, olderThan, limit: CHAT_READ_BATCH }).reverse()
+        for (const entry of batch) {
+          if (dayOf(entry.createdAt) < firstDay) continue
+          const added = JSON.stringify(entry).length + (entries.length ? 1 : 0)
+          if (size + added > CHAT_READ_MAX_CHARS) return { entries, nextAfter: entries.at(-1)?.id }
+          entries.push(entry)
+          size += added
+        }
+        if (batch.length < CHAT_READ_BATCH) return { entries }
+        olderThan = batch.at(-1)!.id
+      }
     },
     tick,
   }

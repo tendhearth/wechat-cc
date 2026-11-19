@@ -1,3 +1,6 @@
+import { NotebookChatReadResponse } from "@wechat-cc/protocol"
+import { createProviderRegistry } from "../../app/provider-registry"
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openTestDb } from '../../lib/db'
 import { makeNotebookStore } from '../../adapters/store/notebook-store'
@@ -226,4 +229,78 @@ it('pages an oversized paired-device day without splitting entries', async () =>
   const page3 = await route(new URLSearchParams({ day: n.page().day, after: all[1]!.id }), null, paired)
   expect(page3.body).toMatchObject({ entries: [all[2]] })
   expect(page3.body).not.toHaveProperty('nextAfter')
+})
+
+it('cancels an overdue opening during preflight without submitting its prompt', async () => {
+  vi.useFakeTimers()
+  let finishPreflight!: (reachable: boolean) => void
+  const preflight = vi.fn((_id: string, _signal?: AbortSignal) =>
+    new Promise<boolean>(resolve => { finishPreflight = resolve }))
+  const registry = createProviderRegistry({ cheapEvalPreflight: preflight })
+  const evaluate = vi.fn(async () => 'unused')
+  registry.register('openai', { spawn: async () => { throw Error('unused') }, cheapEval: evaluate }, { canResume: () => false })
+  const { n } = fixture(() => registry.getCheapEval({ private: true }), { openingTimeoutMs: 5 })
+  const opening = n.open('desktop')
+  await vi.advanceTimersByTimeAsync(5)
+  await opening
+  expect(n.page().entries.map(e => e.body)).toEqual(DEFAULT_OPENING.lines)
+  finishPreflight(true)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(evaluate).not.toHaveBeenCalled()
+  expect(preflight.mock.calls[0]?.[1]?.aborted).toBe(true)
+})
+
+it('aborts slow inference and waits for its cleanup before the next tick can submit', async () => {
+  vi.useFakeTimers()
+  let finish!: () => void
+  const cancelled = vi.fn()
+  const evaluate = vi.fn((_prompt: string, signal?: AbortSignal) => new Promise<string>((resolve, reject) => {
+    signal?.addEventListener('abort', cancelled, { once: true })
+    finish = () => signal?.aborted ? reject(signal.reason) : resolve('null')
+  }))
+  const registry = createProviderRegistry()
+  registry.register('openai', { spawn: async () => { throw Error('unused') }, cheapEval: evaluate }, { canResume: () => false })
+  const { n, at } = fixture(() => registry.getCheapEval({ private: true }), {
+    timeoutMs: 5, checkIntervalMs: 1, quietMs: 0, failureBaseMs: 1, dailyLimit: 5,
+  })
+  n.write('留言候选', 'candidate', 'desktop')
+  const first = n.tick()
+  await vi.advanceTimersByTimeAsync(5)
+  await first
+  at(BASE + 10)
+  const overlapping = n.tick()
+  await vi.advanceTimersByTimeAsync(5)
+  await overlapping
+  expect(evaluate).toHaveBeenCalledTimes(1)
+  expect(cancelled).toHaveBeenCalledTimes(1)
+  finish()
+  await vi.advanceTimersByTimeAsync(0)
+  const next = n.tick()
+  await vi.advanceTimersByTimeAsync(5)
+  await next
+  expect(evaluate).toHaveBeenCalledTimes(2)
+  finish()
+})
+
+it.each(['', '%'])('bounds and continues chat reads for literal query %j', async query => {
+  const { n, call } = fixture()
+  const entries = Array.from({ length: 100 }, (_, i) =>
+    n.write(i % 2 ? '%' + '\u0001'.repeat(3999) : '字'.repeat(4000), String(i), 'desktop'))
+  const expected = entries.filter(entry => entry.body.includes(query)).reverse().map(entry => entry.id)
+  const received: string[] = []
+  let after: string | undefined
+  let pages = 0
+  do {
+    const result = await call('POST /v1/notebook/chat/read', { query, ...(after ? { after } : {}) }, 'session', '', 'admin', 'owner')
+    expect(result.status).toBe(200)
+    expect(JSON.stringify(result.body).length).toBeLessThanOrEqual(26_000)
+    const page = NotebookChatReadResponse.parse(result.body)
+    expect(page.entries.length).toBeGreaterThan(0)
+    received.push(...page.entries.map(entry => entry.id))
+    after = page.nextAfter
+    if (after) expect(after).toBe(page.entries.at(-1)?.id)
+    expect(++pages).toBeLessThanOrEqual(expected.length)
+  } while (after)
+  expect(received).toEqual(expected)
+  expect(pages).toBeGreaterThan(1)
 })

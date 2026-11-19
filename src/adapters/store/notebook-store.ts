@@ -5,6 +5,8 @@ import type { Db } from '../../lib/db'
 
 const columns = 'id, author, body, created_at AS createdAt, ref_id AS refId, struck_at AS struckAt, origin, client_id AS clientId'
 
+const openingEntry = "(author = 'cc' AND origin != 'chat' AND ref_id IS NULL)"
+
 export function makeNotebookStore(db: Db): NotebookStore {
   return {
     get<K extends keyof NotebookSettings>(key: K): NotebookSettings[K] | null {
@@ -32,13 +34,15 @@ export function makeNotebookStore(db: Db): NotebookStore {
     timestamps() {
       return db.query<{ created_at: number }, []>('SELECT DISTINCT created_at FROM notebook_entries ORDER BY created_at DESC').all().map(row => row.created_at)
     },
-    list({ since = 0, until = Number.MAX_SAFE_INTEGER, limit = -1, query = '', ownerOnly = false } = {}) {
-      return db.query<NotebookEntry, [number, number, string, number]>(`
+    list({ since = 0, until = Number.MAX_SAFE_INTEGER, limit = -1, query = '', olderThan = null, ownerOnly = false } = {}) {
+      return db.query<NotebookEntry, [number, number, string, string | null, string | null, number]>(`
         SELECT ${columns} FROM notebook_entries
         WHERE created_at >= ? AND created_at < ? AND instr(body, ?) > 0
         ${ownerOnly ? "AND author = 'owner'" : ''}
-        ORDER BY created_at DESC, (author = 'cc' AND origin != 'chat' AND ref_id IS NULL), rowid DESC LIMIT ?
-      `).all(since, until, query, limit).reverse()
+        AND (? IS NULL OR (created_at, -${openingEntry}, rowid) <
+          (SELECT created_at, -${openingEntry}, rowid FROM notebook_entries WHERE id = ?))
+        ORDER BY created_at DESC, ${openingEntry}, rowid DESC LIMIT ?
+      `).all(since, until, query, olderThan, olderThan, limit).reverse()
     },
     atomic(fn) { return db.transaction(fn).immediate() },
   }

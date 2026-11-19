@@ -294,7 +294,7 @@ export function createProviderRegistry(opts?: {
    * 真拨(那条路直接调各 provider 的 cheapEval,不走这里)。daemon 侧用
    * net-probe 的端点表包一个带 TTL 缓存的实现注入;core 保持纯净。
    */
-  cheapEvalPreflight?: (id: string) => Promise<boolean>
+  cheapEvalPreflight?: (id: string, signal?: AbortSignal) => Promise<boolean>
   /**
    * 诊断采集(可选):一次 cheapEval 失败时,把**真实形状**交出去。
    * 这条路是 agy 唯一真正跑的地方 —— turn_records 里 agy 是零行,不是埋点
@@ -548,27 +548,35 @@ export function createProviderRegistry(opts?: {
         const ids = pinned && candidates.includes(pinned) ? [pinned] : candidates
         if (!ids.length) return null
 
-        return prompt => withoutPrivateLogging(async () => {
+        return (prompt, signal) => withoutPrivateLogging(async () => {
           try {
             for (const id of ids) {
+              signal?.throwIfAborted()
               const provider = entries.get(id)?.provider
               const evaluate = provider?.cheapEval
               if (!evaluate || refusedNow(id) || (cheapEvalCooldownUntil.get(id) ?? 0) > now()) continue
               if (networkGate && !(await decideCall(networkGate, providerCallTarget(provider, id, 'cheapEval'))).allowed) continue
-              if (opts?.cheapEvalPreflight && !await opts.cheapEvalPreflight(id).catch(() => false)) continue
+              signal?.throwIfAborted()
+              if (opts?.cheapEvalPreflight) {
+                const preflight = signal ? opts.cheapEvalPreflight(id, signal) : opts.cheapEvalPreflight(id)
+                if (!await preflight.catch(() => false)) continue
+              }
+              signal?.throwIfAborted()
               if (refusedNow(id)) continue
 
               // Once the prompt is submitted, never fail over or collect errors containing it.
               try {
-                const result = await evaluate(prompt)
+                const result = await (signal ? evaluate(prompt, signal) : evaluate(prompt))
+                signal?.throwIfAborted()
                 cheapEvalRefused.delete(id)
                 return result
               } catch (err) {
-                noteRefusal(id, err)
+                if (!signal?.aborted) noteRefusal(id, err)
                 throw err
               }
             }
           } catch { /* Keep raw errors inside the private evaluation. */ }
+          signal?.throwIfAborted()
           throw new Error('Private model request failed')
         })
       }

@@ -64,7 +64,7 @@ export function notebookRoutes(n: Notebook): RouteTable {
     }),
     'POST /v1/notebook/chat/read': handle('chat', (n, _query, body) => {
       const input = NotebookChatReadRequest.safeParse(body)
-      return input.success ? ok({ entries: n.read(input.data.days, input.data.query) }) : failure('notebook_invalid')
+      return input.success ? ok(n.read(input.data.days, input.data.query, input.data.after)) : failure('notebook_invalid')
     }),
   }
 }
