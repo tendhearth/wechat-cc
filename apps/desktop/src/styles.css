@@ -5030,12 +5030,13 @@ body .th-agents { --th-agent-size:var(--th-identity-agent-size); }
 .dash-topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; border-bottom: 1px solid var(--th-hair); min-width: 0; }
 .dash-topbar nav { display: flex; align-items: center; gap: 24px; }
 .dash-topbar button, .topbar-more summary { background: transparent; border: 0; padding: 0; color: var(--th-ink-soft); font: inherit; font-size: var(--th-size-meta); letter-spacing: var(--th-tracking-meta); cursor: pointer; }
-#topbar-cc { display: flex; align-items: center; gap: 10px; color: var(--th-ink); letter-spacing: 0; }
-#topbar-cc small { color: var(--th-ink-soft); font-size: var(--th-size-small); }
+#topbar-cc { position:relative; display:flex; flex:none; }
 .topbar-figure { position: relative; width: 48px; height: 48px; }
 .topbar-figure img { position: absolute; inset: 0; width: 48px; height: 48px; object-fit: contain; }
 #topbar-cc[data-cc="here"] .topbar-cc-dark, #topbar-cc:not([data-cc="here"]) .topbar-cc-light { visibility: hidden; }
-#topbar-cc { position: relative; }
+.topbar-waiting-dot { display:none; position:absolute; top:4px; right:4px; z-index:1; width:8px; height:8px; border-radius:50%; background:var(--th-accent); }
+body:not([data-pane="overview"]) #topbar-cc[data-waiting] .topbar-waiting-dot { display:block; }
+#topbar-cc:not([data-troubled]) .pet-prop[data-prop="exclamation"] { visibility:hidden; }
 #topbar-cc .now-pet-stage { position: absolute; left: 0; top: 0; width: 48px; height: 48px; pointer-events: none; }
 #topbar-cc .now-pet-sprite { width: 48px; height: 48px; object-fit: contain; }
 #topbar-cc[data-runtime="ready"] .topbar-figure { visibility: hidden; }
@@ -5093,7 +5094,7 @@ body .th-agents { --th-agent-size:var(--th-identity-agent-size); }
 @media (max-width: 600px) {
   .dash-topbar { padding: 0 12px; }
   .dash-topbar nav { gap: 10px; }
-  #topbar-presence { display: none; }
+  .topbar-home { min-width:0; }
 }
 @media (max-width: 1079px) and (prefers-reduced-motion: no-preference) {
   .roster-aside[data-open] { animation: roster-enter 180ms ease-out; }

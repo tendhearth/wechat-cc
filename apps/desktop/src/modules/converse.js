@@ -45,6 +45,9 @@ let delegating = false
 // 点了上面某一个地方:说话只看这个地方的(设计稿 2026-11-18-cc-two-sides-design.md §4)。null = 全部。
 /** @type {{name:string,matterIds:Set<string>,messageIds:Set<string>,sessionIds:Set<string>}|null} */
 let placeFilter = null
+/** @typedef {{key:string,name:string,messageIds:string[]}} ConversationPlace */
+/** @type {Map<string,ConversationPlace>} */ let placesByMessage = new Map()
+/** @type {{clear:()=>void,selectKey:(key:string)=>void}|null} */ let placeNavigation = null
 // 此刻里拖进 / 粘进来、还没发出去的图(2026-10-05)。url 是本页的 blob 预览,发出去时只带 mime + base64。
 // 2026-10-06 起也收文档(PDF / 文本 / Markdown / CSV / JSON / Word / Excel / PPT):图显示缩略图,文档显示名字。
 /** @type {{ id: number, mime: string, data_b64: string, url: string, name: string }[]} */
@@ -152,6 +155,7 @@ let recordingTimer = null
 /** @param {HTMLElement} root @param {Deps} deps */
 function renderSkeleton(root, deps) {
   root.innerHTML = `
+    <button id="converse-place-clear" class="converse-place-clear" type="button" hidden></button>
     <div class="converse-search-bar">
       <button id="converse-search-open" class="converse-search-open" type="button"${deps.invokeWorkbenchApi ? "" : " hidden"}>搜索对话</button>
       <form id="converse-search" class="converse-search" role="search" hidden>
@@ -166,7 +170,11 @@ function renderSkeleton(root, deps) {
     <div class="converse-compose">
       <div id="converse-images" class="converse-images" aria-label="要一起发的图片" hidden></div>
       <p id="converse-image-note" class="converse-image-note" role="status" hidden></p>
-      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="对 CC 说…" rows="2"></textarea>
+      <div class="converse-draft">
+        <span id="converse-recipient-default" class="converse-recipient">CC ›</span>
+        <button id="converse-recipient" class="converse-recipient" type="button" title="回到全部" hidden></button>
+        <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="随便说，CC 自己分得清" rows="1"></textarea>
+      </div>
       <div id="converse-recording" class="converse-recording" hidden>
         <button id="converse-cancel-recording" type="button">取消</button>
         <span class="converse-recording-dot" aria-hidden="true"></span>
@@ -174,8 +182,8 @@ function renderSkeleton(root, deps) {
         <span id="converse-recording-time">00:00</span>
       </div>
       <div class="converse-toolbar">
-        <button id="converse-mic" class="converse-mic" type="button" aria-pressed="false">${icon("mic-01")}<span>语音输入</span></button>
-        <button id="converse-voice-toggle" class="converse-voice-toggle" type="button" aria-pressed="false" title="自动朗读 CC 的回复"><span class="converse-switch" aria-hidden="true"></span>朗读回复</button>
+        <button id="converse-mic" class="converse-mic" type="button" aria-pressed="false" aria-label="语音输入" title="语音输入">${icon("mic-01")}</button>
+        <button id="converse-voice-toggle" class="converse-voice-toggle" type="button" aria-pressed="false" aria-label="朗读回复" title="自动朗读 CC 的回复">${icon("play")}</button>
         <button id="converse-delegate" class="btn converse-delegate-btn" type="button" disabled${deps.onDelegate ? '' : ' hidden'}>交给 CC 做</button>
         <button id="converse-send" aria-label="发送消息" class="btn primary converse-send-btn" type="button">${icon("sent")}<span>发送</span></button>
       </div>
@@ -304,8 +312,8 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
     })
     const attachments = (m.attachments ?? []).map((_,i) => i).filter(i => !usedAttachments.has(i))
     const narration = (m.narration ?? []).map((_,i) => i).filter(i => !usedNarration.has(i))
-    if (attachments.length || narration.length) parts.push(messageHtml({...m,text:'',replyParts:[],projection:''},attachments,narration))
-    return `<div class="converse-reply-parts">${parts.join('')}</div>`
+    if (attachments.length || narration.length) parts.push(messageHtml({...m,text:'',replyParts:[],projection:''},attachments,narration,parts.length))
+    return `<div class="converse-reply-parts">${placeLabelHtml(m)}${parts.join('')}</div>`
   }
   const provider = m.role === 'cc' ? replyProvider(m) : ''
   const name = provider ? replyAgentName(replyAgentNames,provider) : m.role === 'user' ? '你' : m.speaker === 'notice' ? '通知' : 'CC'
@@ -326,14 +334,16 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex) {
   const extras = ((attachmentIndexes?.length ?? m.attachments?.length ?? 0) > 0 || (narrationIndexes?.length ?? m.narration?.length ?? 0) > 0)
   // 带附件 / 过程的回复:过程在上、回复居中、附件在下,一列排;没有的照旧(样式与测试不动)。
   // 朗读按钮永远贴着正文最后一行(带附件时放进正文那一行里),不随附件块漂。
-  const body = extras
-    ? `<div class="converse-cc-body">${m.role === "cc" ? narrationHtml(m,narrationIndexes) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m,attachmentIndexes)}</div>`
+  const label = partIndex === undefined ? placeLabelHtml(m) : ""
+  const grouped = extras || !!label
+  const body = grouped
+    ? `<div class="converse-cc-body">${label}${m.role === "cc" ? narrationHtml(m,narrationIndexes) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m,attachmentIndexes)}</div>`
     : bubble
   return `<div class="converse-msg ${roleCls}${pendingCls}${avatar ? ' has-reply-avatar' : ''}" role="group" aria-label="${escapeHtml(name)}">
     ${avatar}
     ${userImages ? `<div class="converse-user-body">${userImages}${m.text.trim() ? body : ""}</div>` : body}
     ${m.legacyMedia ? '<small class="converse-legacy-media">这条记录只保存了附件数量，原附件未保存在对话中。</small>' : ""}
-    ${extras || !m.text.trim() ? "" : replayBtn}
+    ${grouped || !m.text.trim() ? "" : replayBtn}
   </div>`
 }
 
@@ -398,7 +408,10 @@ function reflectMic() {
   btn.classList.toggle("is-recording", recording)
   btn.setAttribute("aria-pressed", String(recording))
   const busy = recording || transcribing || requestingMic
-  btn.innerHTML = `${icon(recording ? "stop" : "mic-01")}<span>${transcribing ? "识别中…" : requestingMic ? "等待麦克风…" : recording ? "结束录音" : "语音输入"}</span>`
+  const micLabel = transcribing ? "识别中…" : requestingMic ? "等待麦克风…" : recording ? "结束录音" : "语音输入"
+  btn.setAttribute("aria-label", micLabel)
+  btn.title = micLabel
+  btn.innerHTML = icon(recording ? "stop" : "mic-01")
   btn.toggleAttribute("disabled", transcribing || requestingMic || sending || delegating)
   const panel = document.getElementById("converse-recording")
   if (panel) panel.hidden = !busy
@@ -409,7 +422,11 @@ function reflectMic() {
   const hint = document.getElementById("converse-recording-hint")
   if (hint) hint.hidden = !busy
   const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
-  if (input) input.hidden = busy
+  if (input) {
+    input.parentElement?.toggleAttribute('hidden', busy)
+    input.hidden = busy
+    resizeDraft(input)
+  }
   const send = document.getElementById("converse-send")
   if (send) send.toggleAttribute("disabled", busy || sending || delegating)
   const delegate = document.getElementById("converse-delegate")
@@ -578,6 +595,13 @@ const STARTERS = [
   "陪我随便聊两句。",
 ]
 
+/** @param {HTMLTextAreaElement} input */
+function resizeDraft(input) {
+  if (input.hidden || !input.clientWidth) return
+  input.style.height = 'auto'
+  input.style.height = `${input.scrollHeight}px`
+}
+
 function emptyStateHtml() {
   return `<div class="converse-empty">
     <img class="converse-empty-art" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="190" height="190" />
@@ -620,8 +644,55 @@ function inPlace(m) {
   return (!!m.matterId && placeFilter.matterIds.has(m.matterId)) || (!!m.messageId && placeFilter.messageIds.has(m.messageId)) || (!!m.terminalId && placeFilter.sessionIds.has(m.terminalId)) || m.pending === true
 }
 function placeEmptyHtml() {
-  return `<div class="converse-empty converse-place-empty"><p>最近的说话里,还没有这个地方的事。点上面那一行回到全部。</p></div>`
+  return `<p class="converse-place-empty">最近还没聊过 ${escapeHtml(placeFilter?.name ?? "")} 的事。</p>`
 }
+/** @param {ConverseMsg} m */
+function placeLabelHtml(m) {
+  const place = !placeFilter && m.role === 'cc' && m.messageId ? placesByMessage.get(m.messageId) : null
+  return place ? `<button class="converse-place-label" type="button" data-converse-place="${escapeHtml(place.key)}">${escapeHtml(place.name)}</button>` : ''
+}
+
+/** @param {{clear:()=>void,selectKey:(key:string)=>void}} navigation */
+export function connectConversationPlaces(navigation) {
+  placeNavigation = navigation
+}
+
+/** @param {ConversationPlace[]} places */
+export function updateConversationPlaces(places) {
+  const next = new Map()
+  for (const place of places) {
+    for (const id of place.messageIds) if (!next.has(id)) next.set(id, place)
+  }
+  const changed = next.size !== placesByMessage.size || [...next].some(([id, place]) => {
+    const old = placesByMessage.get(id)
+    return old?.key !== place.key || old?.name !== place.name
+  })
+  placesByMessage = next
+  if (changed && !placeFilter) renderMessages()
+}
+
+function reflectPlaceFilter() {
+  const name = placeFilter?.name
+  const clear = document.getElementById('converse-place-clear')
+  if (clear) {
+    clear.hidden = !name
+    clear.textContent = name ? `只看 ${name} · 回到全部` : ''
+  }
+  const recipient = document.getElementById('converse-recipient')
+  if (recipient) {
+    recipient.hidden = !name
+    recipient.textContent = name ? `${name} ›` : ''
+    if (name) recipient.setAttribute('aria-label', `${name} › 回到全部`)
+  }
+  const defaultRecipient = document.getElementById('converse-recipient-default')
+  if (defaultRecipient) defaultRecipient.hidden = !!name
+  const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('converse-input'))
+  if (input) {
+    input.placeholder = name ? `说说 ${name} 的事` : '随便说，CC 自己分得清'
+    resizeDraft(input)
+  }
+}
+
 /** 上面点了一个地方(或者点回全部)。
  * @param {{name:string,matterIds:string[],messageIds:string[],sessionIds:string[]}|null} place */
 export function setConversationPlace(place) {
@@ -629,6 +700,7 @@ export function setConversationPlace(place) {
   placeFilter = place ? { name: place.name, matterIds: new Set(place.matterIds), messageIds: new Set(place.messageIds), sessionIds: new Set(place.sessionIds) } : null
   const root = document.getElementById("converse-root")
   if (root) { if (placeFilter) root.dataset.place = placeFilter.name; else delete root.dataset.place }
+  reflectPlaceFilter()
   renderMessages({ follow: switched })
 }
 
@@ -636,7 +708,7 @@ function renderMessages({ follow = false } = {}) {
   const scroll = document.getElementById("converse-scroll")
   if (scroll) {
     const shown = placeFilter ? messages.filter(inPlace) : messages
-    paintConversation(scroll,shown,messageHtml,placeFilter?placeEmptyHtml():emptyStateHtml(),{follow,latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))})
+    paintConversation(scroll,shown,messageHtml,placeFilter?placeEmptyHtml():emptyStateHtml(),{follow,decoration:placeLabelHtml,latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))})
   }
   updateConversationMatters([])
   paintTerminalReferences()
@@ -899,6 +971,22 @@ function wireEvents(root, deps) {
   })
 
   const input = /** @type {HTMLTextAreaElement|null} */ (root.querySelector("#converse-input"))
+  const clearPlace = () => {
+    placeNavigation?.clear()
+    input?.focus()
+  }
+  root.querySelector('#converse-place-clear')?.addEventListener('click', clearPlace)
+  root.querySelector('#converse-recipient')?.addEventListener('click', clearPlace)
+  if (input && typeof ResizeObserver === 'function') {
+    let width = 0
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry || entry.contentRect.width === width) return
+      width = entry.contentRect.width
+      resizeDraft(input)
+    })
+    observer.observe(input)
+    window.addEventListener('pagehide', () => observer.disconnect(), { once: true })
+  }
   input?.addEventListener("input", reflectMic)
   input?.addEventListener("keydown", (ev) => {
     if (ev instanceof KeyboardEvent && ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
@@ -956,6 +1044,12 @@ function wireEvents(root, deps) {
   root.querySelector("#converse-scroll")?.addEventListener("click", (ev) => {
     const target = ev.target
     if (!(target instanceof Element)) return
+    const placeLabel = target.closest('[data-converse-place]')
+    if (placeLabel instanceof HTMLElement && placeLabel.dataset.conversePlace) {
+      placeNavigation?.selectKey(placeLabel.dataset.conversePlace)
+      document.getElementById('converse-place-clear')?.focus()
+      return
+    }
     const starter = target.closest(".converse-starter")
     if (starter instanceof HTMLElement) {
       const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
@@ -1020,6 +1114,7 @@ export function initConversePage(deps, { focus = true } = {}) {
   let stopConfirmation=''
   root.querySelector('#converse-stop')?.addEventListener('click',async()=>{const turn=ownerReader?.turn();if(!turn)return;const button=/** @type {HTMLButtonElement} */(root.querySelector('#converse-stop'));if(stopConfirmation!==turn){stopConfirmation=turn;button.textContent='再点一次，确认停止';return}try{await ownerReader?.stop(turn);button.textContent='停止这一轮';stopConfirmation=''}catch{button.textContent='这一轮已经结束或换了一轮，请刷新'}})
   syncVoiceToggleUI()
+  reflectPlaceFilter()
   reflectMic()
   renderMessages()
   void loadSharedHistory(deps)

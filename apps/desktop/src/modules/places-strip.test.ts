@@ -114,3 +114,45 @@ it('往下挪 / 收起:发给 daemon', async () => {
   document.querySelector<HTMLButtonElement>('[data-place-key="p:b000000000000000"] [data-place-hide]')!.click()
   await vi.waitFor(() => expect(calls.some(c => c[1] === '/v1/places/hide')).toBe(true))
 })
+
+it('按地方键选中和清除都更新地方条的选中状态', async () => {
+  const rici = place('rici')
+  const { onSelect } = mount({ places: [rici], version: 'v1' })
+  await strip!.refresh()
+  const row = document.querySelector<HTMLButtonElement>('.place-row')!
+  strip!.selectKey(rici.key)
+  expect(onSelect).toHaveBeenLastCalledWith(rici)
+  expect(row.getAttribute('aria-pressed')).toBe('true')
+  strip!.selectKey(rici.key)
+  strip!.selectKey('p:missing')
+  expect(onSelect).toHaveBeenCalledTimes(1)
+  strip!.clear()
+  expect(onSelect).toHaveBeenLastCalledWith(null)
+  expect(row.getAttribute('aria-pressed')).toBe('false')
+})
+
+it('旧 WebView 的固定菜单支持展开、Esc 和点外关闭', async () => {
+  document.body.innerHTML = '<div id="p"></div><button id="outside">外面</button>'
+  const root = document.getElementById('p')!
+  Object.defineProperty(root, 'showPopover', { value: undefined })
+  strip = mountPlacesStrip({
+    root,
+    call: async () => ({ places: [place('rici')], version: 'v1' }),
+    onSelect: vi.fn(),
+    onOpen: vi.fn(),
+  })
+  await strip.refresh()
+  const more = root.querySelector<HTMLButtonElement>('.place-more')!
+  const menu = root.querySelector<HTMLElement>('.place-actions')!
+  expect(menu.hidden).toBe(true)
+  more.click()
+  expect(more.getAttribute('aria-expanded')).toBe('true')
+  expect(menu.hidden).toBe(false)
+  menu.querySelector('button')!.focus()
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+  expect(menu.hidden).toBe(true)
+  expect(document.activeElement).toBe(more)
+  more.click()
+  document.getElementById('outside')!.click()
+  expect(menu.hidden).toBe(true)
+})
