@@ -471,6 +471,9 @@ export function createProviderRegistry(opts?: {
           // 评估途中网络掉了(闸门在这个候选里拦下):不记冷却,换下一个候选。
           if (isNetworkUnprotectedError(err)) { if (singleAttempt) throw err; attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
           if (noteRefusal(c.id, err)) { if (singleAttempt) throw err; lastErr = err; continue }
+          // 单次模式(可有可无的判断,例如等你定的事上 CC 的意见)关掉了参数回退:这一次失败说明不了
+          // 这家对别的后台判断不可用,不记进大家共用的冷却,由调用方自己的退避管。登录失效对谁都一样,照记。
+          if (singleAttempt && !isAuthError(err)) throw err
           const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
           cheapEvalCooldownUntil.set(c.id, now() + cd)
           lastErr = err

@@ -175,6 +175,27 @@ describe('getCheapEval — runtime failover (2026-08-24: agy auth-dead froze the
     expect(second).not.toHaveBeenCalled()
   })
 
+  it('a single-attempt failure stays out of the shared cooldown: the next ordinary judgment still uses that provider', async () => {
+    // 单次模式关掉了参数回退,这一次失败说明不了这家对别的后台判断不可用。
+    let fail = true
+    const first = vi.fn(async () => { if (fail) throw new Error('temporary failure'); return 'ok-from-agy' })
+    const second = vi.fn(async () => 'ok-from-claude')
+    const r = reg({ agy: first, claude: second })
+    await expect(r.getCheapEval({ singleAttempt: true })!('prompt')).rejects.toThrow('temporary failure')
+    fail = false
+    await expect(r.getCheapEval()!('prompt')).resolves.toBe('ok-from-agy')
+    expect(second).not.toHaveBeenCalled()
+  })
+
+  it('a single-attempt auth failure still cools the provider down for everyone', async () => {
+    const first = vi.fn(async () => { throw new Error('auth_failed: token revoked') })
+    const second = vi.fn(async () => 'ok-from-claude')
+    const r = reg({ agy: first, claude: second })
+    await expect(r.getCheapEval({ singleAttempt: true })!('prompt')).rejects.toThrow('auth_failed')
+    await expect(r.getCheapEval()!('prompt')).resolves.toBe('ok-from-claude')
+    expect(first).toHaveBeenCalledTimes(1)
+  })
+
   it('falls through to the next provider when the preferred one throws', async () => {
     const calls: string[] = []
     const r = reg({
