@@ -605,5 +605,5 @@ test('CC is lit and the status line is green when presence answers', async ({ pa
   // 动画就绪后静态 PNG 让位给 now-pet-stage(cc-now.css),亮着看 stage 的 data-form。
   await expect(page.locator('#topbar-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
   await expect(page.locator('#topbar-presence-dot')).toHaveClass(/ok/, { timeout: 15_000 })
-  await expect(page.locator('#topbar-presence')).toHaveText('CC 在家 · 运行中')
+  await expect(page.locator('#topbar-presence')).toHaveText('CC 在家')
 })

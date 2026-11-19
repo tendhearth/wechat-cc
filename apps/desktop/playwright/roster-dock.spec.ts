@@ -57,6 +57,11 @@ test('宽变窄沿用同一事项与草稿；详情 404 就在详情位置说一
  await answerPlace(page,'project')
  await page.route('**/v1/matter?id=*',r=>r.fulfill({status:404,json:{error:'matter_not_found'}}))
  await expect(page.locator('#roster-dock')).toContainText('这件事已经不在了',{timeout:10000})
+ const padding=await page.locator('.roster-dock-missing').evaluate(el=>{
+  const style=getComputedStyle(el)
+  return [parseFloat(style.paddingTop),parseFloat(style.paddingLeft)]
+ })
+ expect(Math.min(...padding)).toBeGreaterThanOrEqual(12)
  await page.locator('#roster-dock').getByRole('button',{name:'收起',exact:true}).click()
  await expect(page.locator('#roster-aside')).toBeHidden()
 })

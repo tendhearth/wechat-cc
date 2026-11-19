@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { expect, type Page } from '@playwright/test'
 export const rosterItem=(id:string,title:string,extra:Record<string,unknown>={})=>({key:`matter:${id}`,kind:'matter',id,title,group:'waiting',status:'waiting',agents:[{id:'codex',name:'Codex',current:true}],quiet:false,updatedAt:2,unseen:false,waiting:{kind:'permission',requestId:'p1',summary:'需要读取备份文件夹',count:1},...extra})
 export async function routeRoster(page:Page,items:ReturnType<typeof rosterItem>[]) {
@@ -26,7 +27,10 @@ export async function routePlaces(page:Page,places:PlacesSource) {
  await page.route('**/v1/places',route=>{
   const value=typeof places==='function'?places():places
   if(!Array.isArray(value))return route.fulfill({status:value.status,json:{error:'unavailable'}})
-  return route.fulfill({json:{places:value,version:JSON.stringify(value)}})
+  const version=createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0,16)
+  const headers={etag:version}
+  if(route.request().headers()['if-none-match']===version)return route.fulfill({status:304,headers})
+  return route.fulfill({json:{places:value,version},headers})
  })
 }
 export const placeRow=(page:Page,name:string)=>page.locator('#places-root .place').filter({has:page.locator('.place-name',{hasText:new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}$`)})})

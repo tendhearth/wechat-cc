@@ -46,7 +46,7 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace } from "./modules/converse.js"
+import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace, connectConversationPlaces, updateConversationPlaces } from "./modules/converse.js"
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
@@ -186,10 +186,17 @@ subscribeConverseActivity(stream => nowPage?.setConversationActivity(stream))
 // 右上角状态行 = doctor(daemon 跑没跑)∧ presence(够不够得着),与 CC 明暗同一信号。
 /** @type {{alive:boolean}|null} */ let lastDaemon = null
 /** @type {{presence:string}|null} */ let lastPresence = null
+function reflectTopbarWaiting() {
+  const cc = document.getElementById('topbar-cc')
+  if (!cc) return
+  const count = document.body.dataset.pane !== 'overview' && cc.dataset.waiting
+  cc.setAttribute('aria-label', count ? `跟 CC 说(有 ${count} 件在等你)` : '跟 CC 说')
+}
+
 function renderRail() {
   const line = nowStatusLine(lastDaemon, lastPresence)
   const dot = document.getElementById('topbar-presence-dot'); if (dot) dot.className = `dot ${line.cls}`
-  const label = document.getElementById('topbar-presence'); if (label) label.textContent = line.text
+  const label = document.getElementById('topbar-presence'); if (label) label.textContent = line.cls === 'ok' ? 'CC 在家' : line.text
   const cc = document.getElementById('topbar-cc'); if (cc) cc.dataset.cc = lastPresence?.presence === 'down' || !lastPresence ? 'away' : 'here'
 }
 presencePoller.subscribe(p => { lastPresence = p; renderRail() })
@@ -707,6 +714,7 @@ function switchPane(name) {
   const focusConversation = name === "converse" || name === 'chat'
   if(name==='workbench'&&rosterDock?.current())rosterDock.close()
   document.body.dataset.pane = focusConversation ? "overview" : name
+  reflectTopbarWaiting()
   if (focusConversation) {memoryTopics?.close();name = "overview"}
   // 连接浮层只在原地看一眼:任何一次导航都把它收起。
   document.querySelector(".cc-home-details")?.removeAttribute("open")
@@ -1737,8 +1745,16 @@ async function boot() {
       onSelect:place=>setConversationPlace(place?{name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
       onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id),
       // 切到别的页面时「地方」看不见:有事等你,顶栏的 CC 上亮一个点。
-      onPlaces:places=>{const n=places.reduce((sum,p)=>sum+(p.waiting?.count??0),0),cc=document.getElementById('topbar-cc');if(!cc)return
-        if(n){cc.dataset.waiting=String(n);cc.setAttribute('aria-label',`跟 CC 说(有 ${n} 件在等你)`)}else{delete cc.dataset.waiting;cc.setAttribute('aria-label','跟 CC 说')}}})
+      onPlaces:places=>{
+        updateConversationPlaces(places)
+        const count = places.reduce((sum,p)=>sum+(p.waiting?.count??0),0)
+        const cc = document.getElementById('topbar-cc')
+        if (!cc) return
+        if (count) cc.dataset.waiting = String(count)
+        else delete cc.dataset.waiting
+        reflectTopbarWaiting()
+      }})
+    connectConversationPlaces(strip)
     window.addEventListener('pagehide',()=>strip.destroy(),{once:true})
   }
   document.getElementById('topbar-roster')?.addEventListener('click',()=>{
