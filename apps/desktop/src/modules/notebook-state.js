@@ -41,11 +41,42 @@ export function notebookPeriod(timestamp) {
 }
 
 const fonts = {
-  kai: "'Kaiti SC', 'STKaiti', 'KaiTi', var(--th-font-serif)",
-  fangsong: "'STFangsong', 'FangSong', var(--th-font-serif)",
-  xingkai: "'Xingkai SC', 'STXingkai', var(--th-font-serif)",
-  songItalic: 'var(--th-font-serif)',
+  kai: "'Kaiti SC', 'STKaiti', 'KaiTi'",
+  fangsong: "'STFangsong', 'FangSong'",
+  xingkai: "'Xingkai SC', 'STXingkai'",
 }
+const fontSample = '這是我們兩個人的本子。春風寫過青山，我还想接着写。'
+
+/**
+ * @param {NotebookPen['font']} font
+ * @param {(text: string, families: string) => number | string} measure
+ */
+export function canWriteNotebookFont(font, measure) {
+  if (font === 'songItalic') return true
+  return ['serif', 'monospace'].some(fallback =>
+    measure(fontSample, `${fonts[font]}, ${fallback}`) !== measure(fontSample, fallback))
+}
+
+/** @type {ReadonlySet<NotebookPen['font']> | undefined} */
+let availableFonts
+
+export function notebookFonts() {
+  if (!availableFonts) {
+    const ctx = document.createElement('canvas').getContext('2d')
+    /** @type {(text: string, families: string) => number | string} */
+    const measure = (text, families) => {
+      if (!ctx) return 0
+      ctx.font = `32px ${families}`
+      const metrics = ctx.measureText(text)
+      return [metrics.width, metrics.actualBoundingBoxLeft, metrics.actualBoundingBoxRight,
+        metrics.actualBoundingBoxAscent, metrics.actualBoundingBoxDescent].join(',')
+    }
+    const keys = /** @type {(keyof typeof fonts)[]} */ (Object.keys(fonts))
+    availableFonts = new Set([...keys.filter(font => canWriteNotebookFont(font, measure)), 'songItalic'])
+  }
+  return availableFonts
+}
+
 const inks = {
   blueBlack: 'var(--th-notebook-blue-black)',
   darkGreen: 'var(--th-notebook-dark-green)',
@@ -53,11 +84,12 @@ const inks = {
   greyPurple: 'var(--th-notebook-grey-purple)',
 }
 
-/** @param {Pick<NotebookPen, 'font' | 'ink'>} pen */
-export function notebookPenStyle(pen) {
+/** @param {Pick<NotebookPen, 'font' | 'ink'>} pen @param {ReadonlySet<NotebookPen['font']>} available */
+export function notebookPenStyle(pen, available) {
+  const font = available.has(pen.font) ? pen.font : 'songItalic'
   return {
-    fontFamily: fonts[pen.font] ?? 'var(--th-font-serif)',
-    fontStyle: pen.font === 'songItalic' ? 'italic' : 'normal',
+    fontFamily: font === 'songItalic' ? 'var(--th-font-serif)' : `${fonts[font]}, var(--th-font-serif)`,
+    fontStyle: font === 'songItalic' ? 'italic' : 'normal',
     color: inks[pen.ink] ?? inks.blueBlack,
   }
 }
@@ -92,7 +124,7 @@ export function createNotebookQueue(storage, send, acknowledge) {
           attempted.add(row.clientId)
           try {
             const entry = await send({ body: row.body, clientId: row.clientId })
-            if (entry?.clientId !== row.clientId) continue
+            if (entry?.clientId !== row.clientId || !entry.day) continue
             acknowledge(row, entry)
             pending.splice(pending.indexOf(row), 1)
             persist()

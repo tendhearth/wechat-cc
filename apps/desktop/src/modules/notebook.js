@@ -1,14 +1,14 @@
 // @ts-check
 import { callNotebook } from '../daemon-client.js'
 import {
-  NOTEBOOK_CACHE_KEY, createNotebookQueue, notebookDay, notebookDateLabel, notebookPenStyle,
+  NOTEBOOK_CACHE_KEY, createNotebookQueue, notebookDay, notebookDateLabel, notebookFonts, notebookPenStyle,
   notebookPeriod, readNotebookStorage, writeNotebookStorage,
 } from './notebook-state.js'
 
 /** @typedef {import('@wechat-cc/protocol').NotebookPageResponseT} NotebookPage */
 /** @typedef {import('@wechat-cc/protocol').NotebookEntryT} NotebookEntry */
 /** @typedef {import('@wechat-cc/protocol').NotebookPaperT} NotebookPaper */
-/** @typedef {{ day: string, days: string[], entries: NotebookEntry[], pen: NotebookPage['pen'], paper: NotebookPaper, refs: Record<string, string> }} NotebookCache */
+/** @typedef {{ day: string, today?: string, days: string[], entries: NotebookEntry[], pen: NotebookPage['pen'], paper: NotebookPaper }} NotebookCache */
 
 const LINE_HEIGHT = 36
 const UNSAVED_DELAY = 5000
@@ -32,17 +32,15 @@ export function mountNotebook(host, transport) {
   let active = false
   let day = notebookDay()
   let today = day
+  let knowsToday = false
   /** @type {string[]} */
   let days = []
   /** @type {NotebookPage['pen']} */
   let pen = DEFAULT_PEN
   /** @type {NotebookPaper} */
   let paper = 'ruled'
-  /** @type {Record<string, string>} */
-  let refs = {}
   /** @type {Map<string, NotebookEntry[]>} */
   const pages = new Map()
-  const loadedDays = new Set()
   /** @type {Map<string, Promise<NotebookPage>>} */
   const reads = new Map()
   /** @type {Map<string, { node: HTMLElement, signature: string }>} */
@@ -56,7 +54,7 @@ export function mountNotebook(host, transport) {
   let statusTimer = 0
 
   const save = () => writeNotebookStorage(storage, NOTEBOOK_CACHE_KEY,
-    { day, days, entries: pages.get(day) ?? [], pen, paper, refs })
+    { day, today: knowsToday ? today : undefined, days, entries: pages.get(day) ?? [], pen, paper })
 
   /** @param {string} dateKey */
   function rememberDay(dateKey) {
@@ -69,8 +67,8 @@ export function mountNotebook(host, transport) {
     let request = reads.get(key)
     if (!request) {
       request = (async () => {
-        const result = /** @type {NotebookPage} */ (await callNotebook(transport, { day: dateKey }))
-        if (result?.day !== dateKey || !Array.isArray(result.entries) || !Array.isArray(result.days)) {
+        const result = /** @type {NotebookPage} */ (await callNotebook(transport, { day: dateKey, fonts: [...notebookFonts()].join(',') }))
+        if (result?.day !== dateKey || !result.today || !Array.isArray(result.entries) || !Array.isArray(result.days)) {
           throw new Error('Notebook page unavailable')
         }
         return result
@@ -85,16 +83,17 @@ export function mountNotebook(host, transport) {
     return reply?.entry
   }, (pending, entry) => {
     revision++
-    const writtenDay = notebookDay(new Date(entry.createdAt))
-    // The persisted write timestamp is assigned by the daemon at delivery.
-    const entries = pages.get(writtenDay) ?? []
-    const existing = entries.findIndex(row => row.id === entry.id)
-    if (existing === -1) pages.set(writtenDay, [...entries, entry])
-    rememberDay(writtenDay)
+    for (const [dateKey, entries] of pages) {
+      if (dateKey === entry.day) continue
+      if (entries.some(row => row.clientId === pending.clientId)) {
+        pages.set(dateKey, entries.filter(row => row.clientId !== pending.clientId))
+      }
+    }
+    const entries = pages.get(entry.day) ?? []
+    if (!entries.some(row => row.id === entry.id)) pages.set(entry.day, [...entries, entry])
+    rememberDay(entry.day)
     save()
-    if (active) render()
-    // Delivery after midnight moves the row from its original local page.
-    if (active && pending.day !== writtenDay) queueMicrotask(render)
+    render()
   })
 
   function atBottom() {
@@ -128,8 +127,8 @@ export function mountNotebook(host, transport) {
     return node
   }
 
-  /** @param {string} key @param {NotebookEntry} entry @param {boolean} pending @param {boolean} overdue @param {string | undefined} refDay */
-  function makeRow(key, entry, pending, overdue, refDay) {
+  /** @param {string} key @param {NotebookEntry} entry @param {boolean} pending @param {boolean} overdue @param {string | undefined} period */
+  function makeRow(key, entry, pending, overdue, period) {
     const node = document.createElement('div')
     node.className = 'notebook-entry'
     node.dataset.author = entry.author
@@ -139,11 +138,15 @@ export function mountNotebook(host, transport) {
     text.className = 'notebook-text'
     text.textContent = entry.body
     if (entry.author === 'cc') {
-      Object.assign(node.style, notebookPenStyle(pen))
-      const signature = document.createElement('div')
-      signature.className = 'notebook-meta'
-      signature.textContent = `CC，${notebookPeriod(entry.createdAt)}`
-      node.append(text, signature)
+      Object.assign(node.style, notebookPenStyle(pen, notebookFonts()))
+      node.append(text)
+      if (period) {
+        const signature = document.createElement('div')
+        signature.className = 'notebook-meta'
+        signature.textContent = `CC，${period}`
+        node.append(signature)
+      }
+      const { refDay } = entry
       if (entry.refId && refDay) {
         const id = entry.refId
         const line = document.createElement('div')
@@ -192,32 +195,35 @@ export function mountNotebook(host, transport) {
     paperButton.textContent = paper === 'ruled' ? '换成白纸' : '换成横线'
 
     const saved = pages.get(day) ?? []
-    const savedClients = new Set(saved.map(row => row.clientId))
-    const pending = queue.entries().filter(row => row.day === day && !savedClients.has(row.clientId))
+    const pending = queue.entries().filter(row => row.day === day &&
+      ![...pages.values()].some(entries => entries.some(entry => entry.clientId === row.clientId)))
     const pendingIds = new Set(pending.map(row => row.clientId))
     /** @type {NotebookEntry[]} */
     const entries = [...saved, ...pending.map(row => ({
       ...row, id: row.clientId, author: /** @type {const} */ ('owner'), origin: /** @type {const} */ ('desktop'),
       refId: null, struckAt: null,
-    }))].sort((a, b) => a.createdAt - b.createdAt)
+    }))].sort((a, b) => a.createdAt - b.createdAt).filter(entry =>
+      // New CC rows can wait until the pen is lifted. The draft itself stays mounted.
+      !(entry.author === 'cc' && day === today && (composing || input.value) && !rows.has(entry.clientId ?? entry.id)))
 
     const now = Date.now()
     let nextStatus = Infinity
     const retain = new Set()
     let position = list.firstChild
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
       const key = entry.clientId ?? entry.id
       const old = rows.get(key)
-      // New CC rows can wait until the pen is lifted. The draft itself stays mounted.
-      if (!old && entry.author === 'cc' && (composing || input.value) && day === today) continue
       retain.add(key)
       const isPending = pendingIds.has(key)
       const remaining = entry.createdAt + UNSAVED_DELAY - now
       if (isPending && remaining > 0) nextStatus = Math.min(nextStatus, remaining)
-      const refDay = entry.refId ? refs[entry.refId] : undefined
+      const nextEntry = entries[index + 1]
+      const period = entry.author === 'cc' ? notebookPeriod(entry.createdAt) : undefined
+      const signaturePeriod = nextEntry?.author === 'cc' && nextEntry.day === entry.day
+        && notebookPeriod(nextEntry.createdAt) === period ? undefined : period
       const overdue = isPending && remaining <= 0
-      const signature = JSON.stringify([entry, isPending, overdue, refDay, entry.author === 'cc' ? pen : null])
-      const node = old?.signature === signature ? old.node : makeRow(key, entry, isPending, overdue, refDay)
+      const signature = JSON.stringify([entry, isPending, overdue, signaturePeriod, entry.author === 'cc' ? pen : null])
+      const node = old?.signature === signature ? old.node : makeRow(key, entry, isPending, overdue, signaturePeriod)
       if (old && old.node !== node) {
         const restoreFocus = old.node.contains(document.activeElement)
         if (position === old.node) position = node
@@ -243,45 +249,6 @@ export function mountNotebook(host, transport) {
     if (Number.isFinite(nextStatus)) statusTimer = window.setTimeout(render, nextStatus)
   }
 
-  /** @param {number} token */
-  async function resolveReferences(token) {
-    const entries = pages.get(day) ?? []
-    const ids = new Set(entries.flatMap(entry => entry.refId && !refs[entry.refId] ? [entry.refId] : []))
-    if (!ids.size) return
-    const candidates = [day, ...days.filter(item => item !== day).sort().reverse()]
-
-    /** @param {string} candidate @param {NotebookEntry[]} entries */
-    function match(candidate, entries) {
-      let found = false
-      for (const entry of entries) {
-        if (!ids.delete(entry.id)) continue
-        refs[entry.id] = candidate
-        found = true
-      }
-      if (found) {
-        save()
-        render()
-      }
-      return found
-    }
-
-    for (const candidate of candidates) {
-      match(candidate, pages.get(candidate) ?? [])
-      if (!ids.size) return
-    }
-    const startRevision = revision
-    for (const candidate of candidates) {
-      if (loadedDays.has(candidate)) continue
-      const data = await readDay(candidate)
-      if (!active || token !== view || startRevision !== revision) return
-      if (match(candidate, data.entries)) {
-        pages.set(candidate, data.entries)
-        loadedDays.add(candidate)
-      }
-      if (!ids.size) return
-    }
-  }
-
   /** @param {string} [target] */
   async function refresh(target) {
     const token = view
@@ -291,15 +258,21 @@ export function mountNotebook(host, transport) {
       const data = await readDay(selected)
       if (!active || token !== view) return
       if (stamp !== revision) return void refresh(target)
-      pages.set(selected, data.entries)
-      loadedDays.add(selected)
+      pages.set(data.day, data.entries.filter(entry => entry.day === data.day))
       days = [...data.days].sort()
       pen = data.pen ?? DEFAULT_PEN
       if (!changingPaper) paper = data.paper
+      const wasToday = day === today
+      knowsToday = true
+      today = data.today
+      if (wasToday && day !== today) {
+        selectDay(today)
+        scroll.scrollTop = scroll.scrollHeight
+        return void refresh()
+      }
       save()
       render()
       if (target) locate(target)
-      await resolveReferences(token)
     } catch { /* Keep the last locally available page. */ }
   }
 
@@ -318,18 +291,23 @@ export function mountNotebook(host, transport) {
     return true
   }
 
+  /** @param {string} selected */
+  function selectDay(selected) {
+    day = selected
+    view++
+    rows.clear()
+    list.replaceChildren()
+    scroll.scrollTop = 0
+    render()
+    save()
+  }
+
   /** @param {string} selected @param {string} [target] */
   function showDay(selected, target) {
     if (selected !== day) {
-      day = selected
-      view++
-      rows.clear()
-      list.replaceChildren()
-      scroll.scrollTop = 0
-      render()
+      selectDay(selected)
       scroll.scrollTop = selected === today && !target ? scroll.scrollHeight : 0
       if (selected === today && !target) input.focus({ preventScroll: true })
-      save()
     }
     const located = target && locate(target)
     void refresh(located ? undefined : target)
@@ -338,7 +316,7 @@ export function mountNotebook(host, transport) {
   /** @param {NotebookEntry} entry */
   async function strike(entry) {
     if (striking.has(entry.id)) return
-    const selected = day
+    const selected = entry.day
     striking.add(entry.id)
     try {
       const struck = entry.struckAt === null
@@ -376,12 +354,13 @@ export function mountNotebook(host, transport) {
     render()
   }
 
-  function syncDate() {
+  function syncOfflineDate() {
+    if (knowsToday) return
     const localDay = notebookDay()
     if (localDay === today) return
     const wasToday = day === today
     today = localDay
-    if (wasToday) showDay(today)
+    if (wasToday) selectDay(today)
     else render()
   }
 
@@ -398,10 +377,11 @@ export function mountNotebook(host, transport) {
   input.addEventListener('keydown', event => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing || composing || event.keyCode === 229) return
     event.preventDefault()
-    syncDate()
+    syncOfflineDate()
+    if (day !== today) return
     const body = input.value.trim().replaceAll('\0', '')
     if (!body || Array.from(body).length > 4000) return
-    queue.add({ body, clientId: crypto.randomUUID(), day, createdAt: Date.now() })
+    queue.add({ body, clientId: crypto.randomUUID(), day: today, createdAt: Date.now() })
     input.value = ''
     resizeInput()
     render()
@@ -432,18 +412,21 @@ export function mountNotebook(host, transport) {
           days = cached.days
           paper = cached.paper
           pen = cached.pen ?? DEFAULT_PEN
-          refs = cached.refs ?? {}
-          pages.set(day, cached.entries)
+          if (cached.today) {
+            today = cached.today
+            knowsToday = true
+          }
+          pages.set(day, cached.entries.map(entry => ({ ...entry, day: entry.day ?? day })))
         }
       }
-      syncDate()
+      syncOfflineDate()
       render()
       resizeInput()
       if (day === today) input.focus({ preventScroll: true })
       void refresh()
       void retry()
       pollTimer = window.setInterval(() => {
-        syncDate()
+        syncOfflineDate()
         void refresh()
       }, 60_000)
     },

@@ -6,15 +6,16 @@ import { NOTEBOOK_CACHE_KEY } from '../src/modules/notebook-state.js'
 const october = '2026-10-28'
 const november = '2026-11-04'
 const pageDay = '2026-11-19'
+const followingDay = '2026-11-20'
 const writeInput = '#notebook-write'
 const uniqueLine = 'notebook-private-71c6'
 const pen = { font: 'kai', ink: 'blueBlack', reason: '慢一点写' }
 
-function row(id: number, author: NotebookEntryT['author'], body: string, date: string, refId: string | null = null): NotebookEntryT {
+function row(id: number, author: NotebookEntryT['author'], body: string, date: string, refId: string | null = null, refDay?: string): NotebookEntryT {
   return {
     id: `00000000-0000-4000-8000-${String(id).padStart(12, '0')}`, author, body,
     createdAt: new Date(`${date}T15:00:00`).getTime() + id, refId,
-    struckAt: null, clientId: null, origin: 'desktop',
+    day: date, refDay, struckAt: null, clientId: null, origin: 'desktop',
   }
 }
 
@@ -27,15 +28,18 @@ function gate() {
 async function mockNotebook(page: Page, initial: Record<string, NotebookEntryT[]> = {}) {
   const entries = structuredClone(initial)
   const writes: { body: string, clientId: string }[] = []
+  const reads: URLSearchParams[] = []
   const strikes: { id: string, struck: boolean }[] = []
-  const settings: { paper: NotebookPaperT, failWrite: boolean, writeDelay: number, readGate?: Promise<void> } = {
-    paper: 'ruled', failWrite: false, writeDelay: 0,
+  const settings: { paper: NotebookPaperT, failWrite: boolean, writeDelay: number, today: string, writeDay?: string, readGate?: Promise<void> } = {
+    paper: 'ruled', failWrite: false, writeDelay: 0, today: pageDay,
   }
   await page.route(/\/v1\/notebook(\?.*)?$/, async route => {
-    const day = new URL(route.request().url()).searchParams.get('day') ?? pageDay
+    const query = new URL(route.request().url()).searchParams
+    reads.push(query)
+    const day = query.get('day') ?? settings.today
     await settings.readGate
     await route.fulfill({ json: {
-      day, days: Object.keys(entries).filter(day => entries[day]!.length).sort().reverse(),
+      day, today: settings.today, days: Object.keys(entries).filter(day => entries[day]!.length).sort().reverse(),
       entries: entries[day] ?? [], pen, penPending: false, paper: settings.paper,
     } })
   })
@@ -47,9 +51,11 @@ async function mockNotebook(page: Page, initial: Record<string, NotebookEntryT[]
       await route.fulfill({ status: 500, json: { error: 'notebook_unavailable' } })
       return
     }
-    const current = entries[pageDay] ??= []
-    const known = current.find(entry => entry.clientId === request.clientId)
-    const entry = known ?? { ...row(100 + current.length, 'owner', request.body, pageDay), clientId: request.clientId }
+    const writeDay = settings.writeDay ?? settings.today
+    const current = entries[writeDay] ??= []
+    const known = Object.values(entries).flat().find(entry => entry.clientId === request.clientId)
+    // Keep the simulated browser timestamp independent of the daemon's day.
+    const entry = known ?? { ...row(100 + current.length, 'owner', request.body, pageDay), day: writeDay, clientId: request.clientId }
     if (!known) current.push(entry)
     await route.fulfill({ json: { entry } })
   })
@@ -64,7 +70,7 @@ async function mockNotebook(page: Page, initial: Record<string, NotebookEntryT[]
     settings.paper = route.request().postDataJSON().paper
     await route.fulfill({ json: { paper: settings.paper } })
   })
-  return { entries, writes, strikes, settings }
+  return { entries, reads, writes, strikes, settings }
 }
 
 test.beforeEach(async ({ page, shim }) => {
@@ -139,10 +145,10 @@ test('失败的字一直在纸上，五秒后才标记，三十秒重发使用�
 
 test('两个人的字落在同一行距，CC 落款可翻到旧页，翻页跳过空白日期', async ({ page, shimUrl }) => {
   const old = row(1, 'owner', '第一笔', october)
-  await mockNotebook(page, {
+  const { reads } = await mockNotebook(page, {
     [october]: [old],
     [november]: [row(2, 'owner', '第二笔', november)],
-    [pageDay]: [row(3, 'owner', '今天写的', pageDay), row(4, 'cc', '接着那天的想法写', pageDay, old.id)],
+    [pageDay]: [row(3, 'owner', '今天写的', pageDay), row(4, 'cc', '接着那天的想法写', pageDay, old.id, october)],
   })
   await page.goto(shimUrl)
   await clickNav(page, 'notebook')
@@ -150,17 +156,13 @@ test('两个人的字落在同一行距，CC 落款可翻到旧页，翻页跳�
   const cc = page.locator('.notebook-entry[data-author="cc"]')
   await expect(cc).toContainText('CC，下午')
   const first = await owner.locator('p').evaluate(el => {
-    const { fontFamily, color } = getComputedStyle(el)
-    return { fontFamily, color, x: el.getBoundingClientRect().x }
+    return el.getBoundingClientRect().x
   })
   const second = await cc.locator('p').evaluate(el => {
-    const { fontFamily, color } = getComputedStyle(el)
-    return { fontFamily, color, x: el.getBoundingClientRect().x }
+    return el.getBoundingClientRect().x
   })
-  expect(second.fontFamily).toContain('Kaiti SC')
-  expect(second.fontFamily).not.toBe(first.fontFamily)
-  expect(second.color).not.toBe(first.color)
-  expect(second.x - first.x).toBe(96)
+  expect(second - first).toBe(96)
+  expect(reads.map(query => query.get('day'))).toEqual([pageDay])
   expect(await page.locator('.notebook-entry').evaluateAll(rows => rows.map(row => {
     const sheet = row.closest('.notebook-sheet')!
     return (row.getBoundingClientRect().top - sheet.getBoundingClientRect().top) % 36
@@ -169,6 +171,7 @@ test('两个人的字落在同一行距，CC 落款可翻到旧页，翻页跳�
   await expect(page.getByRole('button', { name: '后一页' })).toBeDisabled()
   await page.getByRole('button', { name: '接着你 10 月 28 日那一条' }).click()
   await expect(page.getByText('第一笔', { exact: true })).toBeInViewport()
+  await expect.poll(() => reads.map(query => query.get('day'))).toEqual([pageDay, october])
   await expect(page.locator('#notebook-date')).toHaveText('10 月 28 日')
   await expect(page.locator(writeInput)).toBeHidden()
   await expect(page.getByRole('button', { name: '前一页' })).toBeDisabled()
@@ -182,7 +185,7 @@ test('两个人的字落在同一行距，CC 落款可翻到旧页，翻页跳�
 test('划掉和恢复只给主人，换纸由 daemon 保存，刷新时先画上次读的那天', async ({ page, shimUrl }) => {
   const old = row(1, 'owner', '上次翻的那一天', october)
   const { strikes, settings } = await mockNotebook(page, {
-    [october]: [old, row(2, 'cc', '页边落款', october, old.id)],
+    [october]: [old, row(2, 'cc', '页边落款', october, old.id, october)],
   })
   await page.goto(shimUrl)
   await clickNav(page, 'notebook')
@@ -247,6 +250,94 @@ test('六十秒静静刷页，保留焦点和草稿，CC 等主人放下笔再�
   await expect(page.locator('.notebook-entry[data-author="cc"]')).toContainText('后来添的一笔')
   expect(await scroll.evaluate(el => el.scrollTop)).toBe(180)
   await expect(input).toBeFocused()
+})
+
+test('CC 使用本机可写的笔或宋体斜，字形和墨色都与主人有别', async ({ page, shimUrl }) => {
+  const { reads } = await mockNotebook(page, {
+    [pageDay]: [row(1, 'owner', '主人写字', pageDay), row(2, 'cc', 'CC 写字', pageDay)],
+  })
+  await page.goto(shimUrl)
+  await clickNav(page, 'notebook')
+  const style = (author: string) => page.locator(`[data-author="${author}"] .notebook-text`).evaluate(el => {
+    const { fontFamily, fontStyle, color } = getComputedStyle(el)
+    return { fontFamily, fontStyle, color }
+  })
+  const owner = await style('owner')
+  const cc = await style('cc')
+  const fonts = reads[0]?.get('fonts')?.split(',')
+  expect(fonts).toContain('songItalic')
+  if (fonts?.includes('kai')) {
+    expect(cc.fontFamily).toContain('Kaiti SC')
+    expect(cc.fontStyle).toBe('normal')
+  } else {
+    expect(cc.fontFamily).toBe(owner.fontFamily)
+    expect(cc.fontStyle).toBe('italic')
+  }
+  expect([cc.fontFamily, cc.fontStyle]).not.toEqual([owner.fontFamily, owner.fontStyle])
+  expect(cc.color).not.toBe(owner.color)
+})
+
+test('静静取页跟着 daemon 跨午夜，保留草稿和焦点，补写按回执挪页', async ({ page, shimUrl }) => {
+  const { reads, settings } = await mockNotebook(page, {
+    [pageDay]: [row(1, 'owner', '旧页原有的一笔', pageDay)],
+    [followingDay]: [row(2, 'owner', '新页原有的一笔', followingDay)],
+  })
+  settings.failWrite = true
+  await page.goto(shimUrl)
+  await clickNav(page, 'notebook')
+  const input = page.locator(writeInput)
+  await expect(page.getByText('旧页原有的一笔')).toBeVisible()
+  const failure = page.waitForResponse('**/v1/notebook/write')
+  await input.fill('跨午夜补送的一笔')
+  await input.press('Enter')
+  expect((await failure).status()).toBe(500)
+  await expect(page.getByText('跨午夜补送的一笔')).toBeVisible()
+  await input.fill('跨午夜还在写的草稿')
+  settings.today = followingDay
+  await page.clock.fastForward(60_000)
+  await expect(page.getByText('新页原有的一笔')).toBeVisible()
+  expect(reads.map(query => query.get('day'))).toEqual([pageDay, pageDay, followingDay])
+  await expect(input).toBeFocused()
+  await expect(input).toHaveValue('跨午夜还在写的草稿')
+  await expect(page.locator('#notebook-date')).toHaveText('今天')
+  await expect(page.getByText('跨午夜补送的一笔')).toHaveCount(0)
+  await page.getByRole('button', { name: '前一页' }).click()
+  await expect(input).toBeHidden()
+  await expect(page.getByText('跨午夜补送的一笔')).toBeVisible()
+  settings.failWrite = false
+  await page.clock.fastForward(30_000)
+  await expect(page.getByText('跨午夜补送的一笔')).toHaveCount(0)
+  await page.getByRole('button', { name: '回到今天' }).click()
+  await expect(page.getByText('跨午夜补送的一笔')).toHaveCount(1)
+  await expect(input).toHaveValue('跨午夜还在写的草稿')
+})
+
+test('同日同一时段的连续 CC 留言只在末条落款，引用各自保留', async ({ page, shimUrl }) => {
+  const old = row(1, 'owner', '旧页文字', october)
+  const owner = row(4, 'owner', '主人夹写的一笔', pageDay)
+  await mockNotebook(page, {
+    [october]: [old],
+    [pageDay]: [
+      row(2, 'cc', '连续第一条', pageDay, old.id, october),
+      row(3, 'cc', '连续第二条', pageDay, old.id, october),
+      owner,
+      row(5, 'cc', '主人写过后的留言', pageDay, owner.id, pageDay),
+      { ...row(6, 'cc', '换时段后的留言', pageDay, old.id), createdAt: new Date(`${pageDay}T18:00:00`).getTime() },
+    ],
+  })
+  await page.goto(shimUrl)
+  await clickNav(page, 'notebook')
+  const cc = page.locator('[data-author="cc"]')
+  await expect(cc).toHaveCount(4)
+  await expect(cc.nth(0).getByText('CC，下午')).toHaveCount(0)
+  await expect(cc.nth(1).getByText('CC，下午')).toBeVisible()
+  await expect(cc.nth(2).getByText('CC，下午')).toBeVisible()
+  await expect(cc.nth(3).getByText('CC，傍晚')).toBeVisible()
+  for (const index of [0, 1]) {
+    await expect(cc.nth(index).getByRole('button', { name: '接着你 10 月 28 日那一条' })).toBeVisible()
+  }
+  await expect(cc.nth(2).getByRole('button', { name: '接着你上面那一条' })).toBeVisible()
+  await expect(cc.nth(3).getByRole('button')).toHaveCount(0)
 })
 
 for (const width of [1280, 800]) {
