@@ -61,3 +61,19 @@ it('honors a small upward scroll even while geometrically close to the bottom',(
  h.paint([h.first,h.reply,{id:3,role:'cc',text:'更新'}])
  expect(h.scroll.scrollTop).toBe(670);expect(h.latest.hidden).toBe(false)
 })
+
+it('marks adjacent dated messages across local midnight without replacing message nodes', () => {
+ const h = fixture()
+ const before = h.scroll.firstElementChild
+ const first = {...h.first, at: new Date(2026, 10, 18, 23, 59).getTime()}
+ const reply = {...h.reply, at: new Date(2026, 10, 19, 0, 1).getTime()}
+ h.paint([first, reply])
+ const divider = h.scroll.querySelector('.desk-message-date')
+ expect(divider?.textContent).toBe('十一月十九日 周四')
+ expect(divider?.nextElementSibling?.getAttribute('data-converse-message')).toBe('2')
+ h.paint([first, reply])
+ expect(h.scroll.querySelector('.desk-message-date')).toBe(divider)
+ h.paint([first, {id: 3, role: 'system', text: '没有时间'}, reply])
+ expect(h.scroll.querySelector('.desk-message-date')).toBeNull()
+ expect(h.scroll.firstElementChild).toBe(before)
+})

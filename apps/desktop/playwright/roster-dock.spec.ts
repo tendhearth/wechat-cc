@@ -13,7 +13,7 @@ test.beforeEach(async({page,shim})=>{
 })
 for(const width of [1440,900])test(`从「地方」打开一件事、收起与全局导航 ${width}`,async({page,shimUrl})=>{
  await page.setViewportSize({width,height:900});await page.goto(shimUrl)
- await expect(page.locator('.desk-heading')).toHaveCSS('height','44px')
+ await expect(page.locator('.desk-heading')).toHaveCSS('height','30px')
  await expect(page.locator('#converse-input')).toBeVisible()
  // 名单本身由正面上半的「地方」代替:没打开事情时右侧什么也没有。
  await expect(page.locator('#roster-aside')).toBeHidden()

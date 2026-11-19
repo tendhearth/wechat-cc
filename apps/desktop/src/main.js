@@ -3,7 +3,8 @@
 import { setDockedMatter } from './modules/conversation-matters.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
-import { mountPlacesStrip, placeLine, placeTime } from './modules/places-strip.js'
+import { deskDate } from './modules/desk-page.js'
+import { mountPlacesStrip } from './modules/places-strip.js'
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
 import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
 import { createMainNavigation, createNativeNavigation } from './main-navigation.js'
@@ -197,7 +198,11 @@ function renderRail() {
   const line = nowStatusLine(lastDaemon, lastPresence)
   const dot = document.getElementById('topbar-presence-dot'); if (dot) dot.className = `dot ${line.cls}`
   const label = document.getElementById('topbar-presence'); if (label) label.textContent = line.cls === 'ok' ? 'CC 在家' : line.text
-  const deskLabel = document.getElementById('desk-cc-presence'); if (deskLabel) deskLabel.textContent = line.cls === 'ok' ? '在家 · 全部的话' : line.text
+  const deskLabel = document.getElementById('desk-cc-presence')
+  const situation = document.getElementById('desk-cc-situation')
+  const stale = situation?.hasAttribute('data-stale')
+  if (deskLabel) deskLabel.textContent = line.cls === 'ok' ? (stale ? '家里的电脑暂时连不上' : 'CC 在家') : line.text
+  if (situation) situation.hidden = line.cls !== 'ok' || !situation.textContent || stale === true
   const cc = document.getElementById('topbar-cc'); if (cc) cc.dataset.cc = lastPresence?.presence === 'down' || !lastPresence ? 'away' : 'here'
 }
 presencePoller.subscribe(p => { lastPresence = p; renderRail() })
@@ -1731,11 +1736,21 @@ function mountDeskLayout(strip) {
   const scroll = document.getElementById('converse-scroll')
   if (!places || !overview || !nav || !more || !moreItems || !roster || !search || !scroll) return
 
+  const today = document.getElementById('desk-today')
+  let midnightTimer = 0
+  const updateDate = () => {
+    window.clearTimeout(midnightTimer)
+    if (!layout.matches || !today) return
+    const now = new Date()
+    today.textContent = deskDate(now)
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+    midnightTimer = window.setTimeout(updateDate, midnight.getTime() - now.getTime())
+  }
   const apply = () => {
     const { matches: wide } = layout
     const focus = document.activeElement
     const top = scroll.getBoundingClientRect().top
-    const anchor = Array.from(scroll.children).find(row => row.getBoundingClientRect().bottom > top)
+    const anchor = Array.from(scroll.children).find(row => row.hasAttribute('data-converse-message') && row.getBoundingClientRect().bottom > top)
     const offset = anchor ? anchor.getBoundingClientRect().top - top : 0
     const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 1
     const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
@@ -1751,6 +1766,7 @@ function mountDeskLayout(strip) {
       aside?.removeAttribute('data-open')
       roster.setAttribute('aria-expanded', 'false')
     }
+    updateDate()
     strip.setWide(wide)
     const placeList = document.getElementById('places-root')
     if (placeList) placeList.scrollTop = placeTop
@@ -1760,7 +1776,12 @@ function mountDeskLayout(strip) {
   }
   if (layout.matches) apply()
   layout.addEventListener('change', apply)
-  window.addEventListener('pagehide', () => layout.removeEventListener('change', apply), { once: true })
+  document.addEventListener('visibilitychange', updateDate)
+  window.addEventListener('pagehide', () => {
+    layout.removeEventListener('change', apply)
+    document.removeEventListener('visibilitychange', updateDate)
+    window.clearTimeout(midnightTimer)
+  }, { once: true })
 }
 
 async function boot() {
@@ -1807,16 +1828,22 @@ async function boot() {
   const placesRoot=document.getElementById('places-root')
   if(placesRoot){
     const waitingRoot = document.getElementById('desk-waiting')
-    const title = document.getElementById('desk-conversation-title')
-    const note = document.getElementById('desk-conversation-note')
+    const situation = document.getElementById('desk-cc-situation')
     const clear = document.getElementById('desk-place-clear')
     const homeButton = document.getElementById('topbar-cc')
     const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,waitingRoot:waitingRoot ?? undefined,
-      onCurrent: (place, now) => {
-        if (title) title.textContent = place?.name ?? '和 CC'
-        if (note) note.textContent = place ? [placeLine(place), placeTime(place, now)].filter(Boolean).join(' · ') : '闲聊、点子、交代，都在这一条里'
-        if (clear) clear.hidden = !place
+      onCurrent: place => {
+        if (clear) {
+          clear.hidden = !place
+          clear.textContent = place ? `只看 ${place.name} · 回到全部` : ''
+        }
         homeButton?.toggleAttribute('data-place-selected', !!place)
+      },
+      onSituation: (text, stale) => {
+        if (!situation) return
+        situation.textContent = text
+        situation.toggleAttribute('data-stale', stale)
+        renderRail()
       },
       onSelect:place=>setConversationPlace(place?{name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
       onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id),

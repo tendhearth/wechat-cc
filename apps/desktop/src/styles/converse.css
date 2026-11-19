@@ -224,8 +224,8 @@
 .roster-relay { padding:0 16px 12px; color:var(--th-ink-soft); font-size:var(--th-size-small); }
 #converse-search-open { display:none; }
 .converse-compose .conversation-add { position:relative; align-self:center; }
-.converse-compose .conversation-add > button { display:none; }
-.converse-compose .conversation-add[open] > button { display:block; }
+.converse-compose .conversation-add-items { display: contents; }
+.converse-compose .conversation-add:not([open]) .conversation-add-items { display: none; }
 .converse-compose .conversation-add summary { list-style:none; cursor:pointer; }
 
 .roster-direct-heading, .roster-relay { display:none; }

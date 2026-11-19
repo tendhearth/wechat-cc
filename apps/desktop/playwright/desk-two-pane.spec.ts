@@ -1,7 +1,10 @@
 import { test, expect, clickNav } from './fixtures'
+import { PRESENCE_OK, routePresenceTopic } from './presence-topic'
 import { askingPlace, placeItem, placeRow, routePlaces } from './roster-fixture'
 
 test.use({ viewport: { width: 1280, height: 820 } })
+
+const datePattern = /^[一二三四五六七八九十]+月[一二三四五六七八九十]+日 周[一二三四五六日]$/
 
 const weekAgo = () => Date.now() - 8 * 86_400_000
 
@@ -27,7 +30,13 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   const compose = page.locator('.converse-compose')
   const row = placeRow(page, 'rici')
   await expect(row).toBeVisible()
-  await expect(heading).toHaveCSS('height', '44px')
+  await expect(heading).toHaveCSS('height', '30px')
+  await expect(heading).toBeEmpty()
+  await expect(heading).toHaveCSS('border-bottom-width', '0px')
+  const date = page.locator('.desk-date-line')
+  await expect(date).toHaveText(datePattern)
+  const [dateBox, scrollBox] = await Promise.all([date.boundingBox(), scroll.boundingBox()])
+  expect(dateBox!.y + dateBox!.height).toBeLessThanOrEqual(scrollBox!.y)
   // 说话的人用头像:你的是「还没画」的铅笔稿,CC 的是它自己那一张
   await expect(scroll.locator('.desk-speaker:visible').first()).toHaveAttribute('data-speaker', 'you')
   await expect(scroll.locator('.desk-speaker[data-speaker="you"]:visible svg').first()).toBeVisible()
@@ -38,17 +47,17 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   const [left, right, talk, input, name, status, dashboard] = await Promise.all([
     rail, main, scroll, compose, row.locator('.place-name'), row.locator('.place-line'), page.locator('main.dashboard'),
   ].map(locator => locator.boundingBox()))
-  expect(Math.abs(left!.width - 270)).toBeLessThanOrEqual(2)
+  expect(Math.abs(left!.width - 304)).toBeLessThanOrEqual(2)
   expect(left!.x).toBe(0)
   // The shim's development banner reserves its own row above the dashboard.
   expect(left!.y).toBe(dashboard!.y)
   expect(left!.y + left!.height).toBe(820)
   expect(left!.height).toBe(dashboard!.height)
-  expect(talk!.width).toBeLessThanOrEqual(720)
+  expect(talk!.width).toBeLessThanOrEqual(780)
   expect(Math.abs(talk!.x + talk!.width / 2 - (right!.x + right!.width / 2))).toBeLessThanOrEqual(2)
   expect(input!.x).toBeGreaterThanOrEqual(right!.x)
   expect(input!.x + input!.width).toBeLessThanOrEqual(right!.x + right!.width)
-  expect(input!.height).toBeGreaterThanOrEqual(58)
+  expect(input!.height).toBeGreaterThanOrEqual(48)
   expect(status!.y).toBeGreaterThanOrEqual(name!.y + name!.height)
   await expect(page.getByRole('button', { name: /这周没动的/ })).toHaveCount(0)
 
@@ -69,7 +78,7 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   await expect(rail.getByRole('button', { name: '记忆' })).toHaveAttribute('aria-current', 'page')
   await expect(main.locator('article[data-pane="memory"]')).toBeVisible()
   await page.locator('#topbar-cc').click()
-  await expect(heading).toContainText('和 CC')
+  await expect(date).toHaveText(datePattern)
   await expect(page.locator('#converse-input')).toBeVisible()
 })
 
@@ -86,14 +95,20 @@ test('等待卡片钉在上方、跟地方筛选联动、回答后刷新', async
   })
   await page.goto(shimUrl)
   const cards = page.locator('.desk-waiting-card')
-  const card = cards.filter({ hasText: 'rici 等你定' })
-  const heading = page.locator('.desk-heading')
+  const card = cards.filter({ hasText: '这件要你定 · rici' })
+  const date = page.locator('.desk-date-line')
+  const clear = page.locator('#desk-place-clear')
   const scroll = page.locator('#converse-scroll')
   await expect(cards).toHaveCount(2)
   await expect(card).toContainText('旧表留着吗？')
   await expect(card).toBeVisible()
-  const [cardBox, headingBox, scrollBox] = await Promise.all([card.boundingBox(), heading.boundingBox(), scroll.boundingBox()])
-  expect(cardBox!.y).toBeGreaterThanOrEqual(headingBox!.y + headingBox!.height)
+  for (const edge of ['top', 'right', 'bottom', 'left']) await expect(card).toHaveCSS(`border-${edge}-width`, '0px')
+  await expect(card).not.toHaveCSS('box-shadow', 'none')
+  const deny = card.getByRole('button', { name: '不允许' })
+  await expect(deny).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(deny).toHaveCSS('text-decoration-line', 'underline')
+  const [cardBox, dateBox, scrollBox] = await Promise.all([card.boundingBox(), date.boundingBox(), scroll.boundingBox()])
+  expect(cardBox!.y).toBeGreaterThanOrEqual(dateBox!.y + dateBox!.height)
   expect(cardBox!.y + cardBox!.height).toBeLessThanOrEqual(scrollBox!.y)
   await expect(scroll.locator('.desk-waiting-card')).toHaveCount(0)
   await expect(placeRow(page, 'rici').locator('.place-ask')).toHaveCount(0)
@@ -104,20 +119,19 @@ test('等待卡片钉在上方、跟地方筛选联动、回答后刷新', async
 
   await placeRow(page, 'leni').locator('.place-row').click()
   await expect(cards).toHaveCount(0)
-  await expect(heading.locator('strong')).toHaveText('leni')
-  await heading.getByRole('button', { name: '回到全部' }).click()
-  await expect(heading.locator('strong')).toHaveText('和 CC')
+  await expect(clear).toHaveText('只看 leni · 回到全部')
+  await clear.click()
+  await expect(date).toHaveText(datePattern)
   await placeRow(page, 'rici').locator('.place-row').click()
-  await expect(heading.locator('strong')).toHaveText('rici')
-  await expect(heading).toContainText('旧表留着吗？ ·')
+  await expect(clear).toHaveText('只看 rici · 回到全部')
   await expect(cards).toHaveCount(1)
   await card.getByRole('button', { name: '允许', exact: true }).click()
   expect(decisions).toEqual([{ id: 'deadbeef', requestId: 'req-1', decision: 'allow' }])
   await expect(card).toHaveCount(0)
   await expect(placeRow(page, 'rici')).toHaveAttribute('data-waiting', 'false')
   await page.locator('#topbar-cc').click()
-  await expect(heading.locator('strong')).toHaveText('和 CC')
-  await expect(heading.getByRole('button', { name: '回到全部' })).toBeHidden()
+  await expect(date).toHaveText(datePattern)
+  await expect(clear).toBeHidden()
 })
 
 test('一周没动的地方默认收起，展开仍按原顺序，未读和正在动的保留', async ({ page, shimUrl }) => {
@@ -140,7 +154,7 @@ test('一周没动的地方默认收起，展开仍按原顺序，未读和正�
 
 test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏和筛选条', async ({ page, shimUrl }) => {
   const history = Array.from({ length: 50 }, (_, i) => ({
-    kind: 'text', text: `第 ${i} 条旧消息，用来确认换宽度后还能接着读。`, messageId: `old-${i}`, createdAt: i + 1,
+    kind: i === 0 ? 'user' : 'text', text: `第 ${i} 条旧消息，用来确认换宽度后还能接着读。`, messageId: `old-${i}`, createdAt: i + 1,
   }))
   await page.route('**/v1/matter/owner-chat/window**', route => route.fulfill({ json: { messages: history } }))
   await routePlaces(page, [placeItem('rici', { messageIds: history.map(row => row.messageId) })])
@@ -162,6 +176,11 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   const before = await anchor()
   await page.setViewportSize({ width: 800, height: 820 })
   await expect(rail).toHaveCSS('height', '72px')
+  await expect(page.locator('.desk-date-line')).toBeHidden()
+  await expect(page.locator('.desk-heading')).toBeHidden()
+  await expect(page.locator('#desk-attach')).toBeHidden()
+  await expect(scroll.locator('.converse-msg-user .converse-bubble')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  for (const edge of ['top', 'right', 'bottom', 'left']) await expect(page.locator('.converse-compose')).toHaveCSS(`border-${edge}-width`, '1px')
   await expect(clear).toBeVisible()
   await expect(clear).toHaveText('只看 rici · 回到全部')
   const [top, places, talk] = await Promise.all([rail, page.locator('.places-strip'), scroll].map(locator => locator.boundingBox()))
@@ -172,16 +191,17 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   await expect.poll(anchor).toBe(before)
 
   await page.setViewportSize({ width: 900, height: 820 })
-  await expect(rail).toHaveCSS('width', '270px')
+  await expect(rail).toHaveCSS('width', '304px')
   await page.setViewportSize({ width: 1280, height: 820 })
   await expect(clear).toBeHidden()
-  await expect(page.locator('#desk-conversation-title')).toHaveText('rici')
+  await expect(page.locator('#desk-place-clear')).toHaveText('只看 rici · 回到全部')
   await expect(row).toHaveAttribute('aria-pressed', 'true')
   await expect(input).toHaveValue('这句话还没发')
   await expect.poll(anchor).toBe(before)
+
 })
 
-test('两栏的拖拽区：空白处和标题各起一次拖拽，标题条里的按钮照常点', async ({ page, shimUrl }) => {
+test('两栏的拖拽区：两侧空白各起一次拖拽，日期行的筛选按钮照常点', async ({ page, shimUrl }) => {
   await routePlaces(page, [placeItem('rici'), placeItem('leni')])
   await page.goto(shimUrl)
   await expect(page.locator('.desk-heading')).toBeVisible()
@@ -194,16 +214,104 @@ test('两栏的拖拽区：空白处和标题各起一次拖拽，标题条里�
   // 左栏顶上的空白
   await page.locator('.desk-rail-titlebar').dispatchEvent('mousedown', { button: 0 })
   await expect.poll(calls).toBe(1)
-  // 标题文字在三层嵌套的拖拽区里:只起一次,不是三次
-  await page.locator('#desk-conversation-title').dispatchEvent('mousedown', { button: 0 })
+  // 右栏顶部的空白
+  await page.locator('.desk-heading').dispatchEvent('mousedown', { button: 0 })
   await expect.poll(calls).toBe(2)
-  // 筛到一处后标题条里有「回到全部」:按它不拖窗口,而且真的回到全部
+  // 日期行的按钮能清筛选，点击时不会拖窗口。
   await placeRow(page, 'rici').locator('.place-row').click()
   const clear = page.locator('#desk-place-clear')
   await expect(clear).toBeVisible()
+  await expect(clear).toHaveText('只看 rici · 回到全部')
   await clear.dispatchEvent('mousedown', { button: 0 })
   await clear.click()
-  await expect(page.locator('#desk-conversation-title')).toHaveText('和 CC')
+  await expect(page.locator('.desk-date-line')).toHaveText(datePattern)
   expect(await calls()).toBe(2)
 })
 
+
+test('CC 用新鲜数据说现状，状态点和选中行跟随列表', async ({ page, shimUrl }) => {
+  await routePresenceTopic(page, { presence: () => PRESENCE_OK })
+  let places: ReturnType<typeof placeItem>[] | {status:number} = [
+    askingPlace('rici', 'aaaa0001'), askingPlace('leni', 'aaaa0002'), placeItem('melu'),
+  ]
+  await routePlaces(page, () => places)
+  await page.goto(shimUrl)
+  const situation = page.locator('#desk-cc-situation')
+  const figure = page.locator('#topbar-cc .topbar-figure')
+  const breathing = () => figure.evaluate(el => getComputedStyle(el, '::before').animationName)
+  const waiting = placeRow(page, 'rici')
+  const moving = placeRow(page, 'melu')
+  await expect(page.locator('#desk-cc-presence')).toHaveText('CC 在家')
+  await expect(situation).toHaveText('两件要你定，一件在做。')
+  await expect(situation).toBeVisible()
+  await expect(figure).toHaveCSS('width', '60px')
+  await expect.poll(breathing).not.toBe('none')
+  await expect(moving.locator('.place-dot')).not.toHaveCSS('animation-name', 'none')
+  await expect(waiting.locator('.place-dot')).toHaveCSS('animation-name', 'none')
+  await expect(waiting.locator('.place-dot')).toHaveCSS('background-color', 'rgb(79, 107, 79)')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect.poll(breathing).toBe('none')
+  await expect(moving.locator('.place-dot')).toHaveCSS('animation-name', 'none')
+  await waiting.locator('.place-row').click()
+  await expect(moving).toHaveCSS('opacity', '0.6')
+  await page.locator('#desk-place-clear').click()
+  await expect(moving).toHaveCSS('opacity', '1')
+  places = []
+  await expect(situation).toHaveText('都安静，没有要你管的。', { timeout: 10_000 })
+  places = {status:503}
+  await expect(situation).toBeHidden({ timeout: 10_000 })
+  await expect(page.locator('#desk-cc-presence')).toHaveText('家里的电脑暂时连不上')
+})
+
+test('地方名与正文同起一行，跨天有日期，输入工具留在线上', async ({ page, shimUrl }) => {
+  await routePlaces(page, [placeItem('rici', { messageIds: ['rici-reply'] })])
+  await page.route('**/v1/matter/owner-chat/window**', route => route.fulfill({ json: { messages: [
+    { kind: 'user', text: '昨天的问题。', messageId: 'question', createdAt: 1 },
+    { kind: 'text', text: '菜谱已经整理好了。', messageId: 'rici-reply', createdAt: 86_400_001 },
+    { kind: 'text', text: '顺序也排过了。', messageId: 'rici-more', createdAt: 86_400_002 },
+  ] } }))
+  await page.goto(shimUrl)
+  const scroll = page.locator('#converse-scroll')
+  await expect(scroll.locator('.desk-message-date')).toHaveCount(1)
+  await expect(scroll.locator('.desk-message-date')).toHaveText(datePattern)
+  const label = scroll.locator('.desk-inline-place')
+  await expect(label).toHaveText('rici')
+  await expect(label).toBeVisible()
+  expect(await label.evaluate(el => {
+    const text = el.nextSibling!
+    const range = document.createRange()
+    range.setStart(text, 0)
+    range.setEnd(text, 1)
+    const left = el.getBoundingClientRect(), right = range.getBoundingClientRect()
+    return left.right < right.x && left.top < right.bottom && left.bottom > right.top
+  })).toBe(true)
+  await label.click()
+  const clear = page.locator('#desk-place-clear')
+  await expect(clear).toHaveText('只看 rici · 回到全部')
+  await expect(label).toHaveCount(0)
+  await clear.click()
+
+  const compose = page.locator('.converse-compose')
+  for (const edge of ['top', 'right', 'left']) await expect(compose).toHaveCSS(`border-${edge}-width`, '0px')
+  await expect(compose).toHaveCSS('border-bottom-width', '1px')
+  for (const id of ['desk-attach', 'converse-mic', 'converse-voice-toggle', 'converse-send']) {
+    await compose.locator('#' + id).click({ trial: true })
+  }
+  const chooser = page.waitForEvent('filechooser')
+  await compose.locator('#desk-attach').click()
+  expect((await chooser).isMultiple()).toBe(true)
+  const send = compose.locator('#converse-send')
+  await expect(send).not.toHaveCSS('color', 'rgb(79, 107, 79)')
+  await compose.locator('#converse-input').fill('写')
+  await expect(send).toHaveCSS('color', 'rgb(79, 107, 79)')
+})
+
+test('宽窗的页首日期在本地午夜更新', async ({ page, shimUrl }) => {
+  await page.clock.install({ time: new Date(2026, 10, 19, 23, 59) })
+  await routePlaces(page, [])
+  await page.goto(shimUrl)
+  const today = page.locator('#desk-today')
+  await expect(today).toHaveText('十一月十九日 周四')
+  await page.clock.fastForward(60_000)
+  await expect(today).toHaveText('十一月二十日 周五')
+})

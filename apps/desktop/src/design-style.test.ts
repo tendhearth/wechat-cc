@@ -55,7 +55,14 @@ describe('desktop design style', () => {
     expect(css).not.toMatch(/\.wb-status(\[[^\]]*\])?::before/)
     expect(css).not.toMatch(/\.wb-task-attention::before/)
     expect(css).toMatch(/\.now-row-status\[data-tone="accent"\]/)
-    for (const f of ['styles/workbench.css', 'styles/task-entry.css', 'styles/converse.css', 'styles/desk-two-pane.css']) expect(readFileSync(join(ROOT, f), 'utf8'), f).not.toMatch(/box-shadow:\s*(?!none)/)
+    for (const f of ['styles/workbench.css', 'styles/task-entry.css', 'styles/converse.css', 'styles/desk-two-pane.css']) {
+      let css = readFileSync(join(ROOT, f), 'utf8')
+      if (f === 'styles/desk-two-pane.css') {
+        // 「一页纸」只有 CC 递来的纸条有投影。
+        css = css.replace(/(\[data-desk-wide\] \.desk-waiting-card \{[^}]*?)box-shadow: 0 1px 0 var\(--th-hair\), 0 8px 18px color-mix\(in srgb, var\(--th-ink\) 7%, transparent\);/, '$1')
+      }
+      expect(css, f).not.toMatch(/box-shadow:\s*(?!none)/)
+    }
   })
   it('literal colours: ratchet', () => {
     for (const f of CSS) {
