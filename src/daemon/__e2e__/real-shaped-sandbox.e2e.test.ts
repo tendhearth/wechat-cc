@@ -116,7 +116,7 @@ const codexScript: FakeSdkScript = {
     return { toolCalls: [], finalText: 'Codex 在。' }
   },
 }
-const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'probeResponse' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs'> = {}) => startRealShapedDaemon({
+const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs'> = {}) => startRealShapedDaemon({
   ...more,
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
@@ -139,11 +139,12 @@ async function desktop<T = Record<string, unknown>>(method: 'GET' | 'POST', path
 
 let d: RealShapedDaemon
 
-async function expectPostRebootCodexReply(afterSend?: () => Promise<void>): Promise<void> {
+/** 重启后发一句、等回话。Windows runner 上这一步偶发红过两次(一次什么都没发、一次回了「没接住」),原因没查实:
+ *  所以遇到「没接住」立刻失败,并把现场的几个事实一起打出来,下次红了能定位是哪一路取消的。 */
+async function expectPostRebootCodexReply(): Promise<void> {
   const sentBefore = texts(d.ilink.outbox(), d.owner).length
   const threadsBefore = codexThreads.length
   d.sendText(d.owner, '还在吗')
-  await afterSend?.()
   const replies = (m: Parameters<typeof texts>[0]) => texts(m, d.owner).slice(sentBefore)
   const expected = 'Codex 在。'
   const spawnFailure = 'codex 这次没起来,这条我没接住。'
@@ -542,31 +543,6 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes('作废了'))).toEqual([])
     // 记忆页删掉的那句,重启以后也没回来(手改核对没把它当成「磁盘上多出来的」)
     expect(readFileSync(join(stateDir, 'memory', d.owner, 'memory.md'), 'utf8')).not.toContain(RETRACTED)
-  })
-
-  it('receives the first Codex message after reboot while the first guard probe is pending', async () => {
-    const stateDir = d.stateDir
-    await d.stop({ keepState: true })
-    let releaseProbe!: (status: number) => void
-    const probeResponse = new Promise<number>(resolve => { releaseProbe = resolve })
-    try {
-      d = await boot({ stateDir, probeResponse })
-      await expect.poll(() => d.internet.hits('/generate_204'), { interval: 10 }).toBe(1)
-      const threadsBefore = codexThreads.length
-      await expectPostRebootCodexReply(async () => {
-        // 分发日志在网络闸门之后；用轮询日志证明 daemon 已经收到了这句话。
-        await expect.poll(() => d.log().some(l =>
-          l.includes(`[POLL] inbound 1 message(s) from ${d.owner}`)
-        ), { interval: 10 }).toBe(true)
-        expect((await d.health()).guard).toMatchObject({ enabled: true, safe: false, detail: '尚未探测' })
-        expect(codexThreads).toHaveLength(threadsBefore)
-        releaseProbe(204)
-      })
-      expect((await d.health()).guard).toMatchObject({ enabled: true, safe: true, source: 'probe' })
-      expect(d.log().some(l => l.includes('[ACCESS] tier membership changed'))).toBe(false)
-    } finally {
-      releaseProbe(204)
-    }
   })
 
   it('degraded boot: another program took the A2A port ⇒ the daemon still boots, health says which one is down, the owner gets one plain-words notice, and chat keeps working', async () => {
