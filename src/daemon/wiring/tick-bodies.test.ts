@@ -2293,6 +2293,54 @@ describe('runJobTurn', () => {
     expect(sent).toContain('‹/request>')
     expect(sent).toContain('只读')
   })
+  it('定时重答逾期时释放对话锁，忽略取消后到达的正文', async () => {
+    vi.useFakeTimers()
+    try {
+      const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
+      const { delivered } = job(s, ok)
+      const { JOB_TURN_MAX_MS } = await import('./tick-bodies')
+      const cancel = vi.fn(() => new Promise<void>(() => {}))
+      s.acquire.mockResolvedValueOnce({ dispatch: s.dispatch, cancel } as never)
+      s.dispatch.mockImplementationOnce(() => (async function* () {
+        await new Promise(resolve => setTimeout(resolve, JOB_TURN_MAX_MS - 20))
+        yield { kind: 'text', text: '[System: echo]' }
+      })())
+      s.dispatch.mockImplementationOnce(() => (async function* () {
+        await new Promise(resolve => setTimeout(resolve, 40))
+        for (const event of ok) yield event
+      })())
+      const args = { kind: 'job', scheduled: true, chatId: 'owner', jobId: 'j1', text: 'x', nowIso: '2026-05-13T10:00:00.000Z' } as const
+      const p = buildTickBodies(s.deps).runJobTurn(args)
+      await vi.advanceTimersByTimeAsync(0)
+      const unlocked = vi.fn()
+      const next = s.coordinatorMutex.runExclusive('owner', async () => { unlocked() })
+      await vi.advanceTimersByTimeAsync(JOB_TURN_MAX_MS)
+      const releasesAtDeadline = unlocked.mock.calls.length
+      await vi.advanceTimersByTimeAsync(40)
+      expect(await p).toBe('failed:turn_timeout')
+      await next
+      expect(releasesAtDeadline).toBe(1)
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(s.dispatch).toHaveBeenCalledTimes(2)
+      expect(delivered).toEqual([])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('定时任务在转换最终文字后再核对交付期限', async () => {
+    vi.useFakeTimers()
+    try {
+      const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
+      const { delivered } = job(s, ok)
+      const { JOB_TURN_MAX_MS } = await import('./tick-bodies')
+      const result = await buildTickBodies(s.deps).runJobTurn({
+        kind: 'job', scheduled: true, chatId: 'owner', jobId: 'j1', text: 'x', nowIso: '2026-05-13T10:00:00.000Z',
+        transformFinal: text => { vi.setSystemTime(Date.now() + JOB_TURN_MAX_MS); return text },
+      })
+      expect(result).toBe('failed:turn_timeout')
+      expect(delivered).toEqual([])
+    } finally { vi.useRealTimers() }
+  })
+
   it('a turn that goes silent times out, is cancelled, delivers nothing and frees the owner’s lock (终审 I3)', async () => {
     vi.useFakeTimers()
     try {

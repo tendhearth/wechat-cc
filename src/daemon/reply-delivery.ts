@@ -25,11 +25,7 @@ import { replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protoc
 import { withReplyAttribution } from '../lib/reply-attribution'
 import { withParticipantLabel } from '../lib/reply-presentation'
 import { ruleAllowLine, type RuleAllowNotice } from '../adapters/permission-rules/chat'
-import {
-  buildTurnReply,
-  type DeliveryKind, type DeliveryReport, type ReplyContext, type ReplyDeliveryPort,
-  type TurnAttachment, type TurnDeliveryHandle, type TurnReply, type TurnTextParts,
-} from '../domain/turn-reply'
+import { buildTurnReply, type DeliveryKind, type DeliveryReport, type ReplyContext, type ReplyDeliveryPort, type TurnAttachment, type TurnDeliveryHandle, type TurnReply, type TurnTextParts, replyMayBeEcho } from '../domain/turn-reply'
 
 /** 登记在这一轮上的附件:描述 + 真正发出去的动作(由 attach 路由在登记时绑好)。 */
 export interface PendingAttachment {
@@ -299,6 +295,8 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
           ...(opts.outbound.sendAttachment ? { sendAttachment: (c: string, a: TurnAttachment) => opts.outbound!.sendAttachment!(c, a) } : {}),
         }
       : deps
+    const deliverNotices = (notices: readonly string[]) =>
+      deliverTurnReply({ chatId, reply: { text: '', silent: false, attachments: [], narration: [] }, attachments: [], context: opts.context, notices }, out)
     const finishDaemon = () => { if (!done) trackDaemon(opts.providerId, chatId, -1); finish() }
     return {
       bindTurn(ids) {
@@ -307,7 +305,8 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         if (ids.matterId && attribution.matterId === undefined) attribution.matterId = ids.matterId
       },
       async progress(text: string, from: 'model' | 'notice' = 'notice') {
-        if (done || text.trim() === '') return
+        // 模型的旁白只要是照内部回声的样子起头的就不当进度发:写完的会被判成回声;没写完的发出去就收不回来了(独立评审第三轮)。
+        if (done || text.trim() === '' || (from === 'model' && replyMayBeEcho(text))) return
         if (deps.isSinkOpen?.(chatId)) return // app 这一轮:旁白在 app 里本来就看得见,不进微信
         try {
           // 模型自己的旁白算这一轮答话者的;固定的「还在做」才是通知。
@@ -326,6 +325,13 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         // 提醒也一样:/both 里谁先交付谁带走,别人不再重复。
         const notices = takeNotices(turn)
         finishDaemon()
+        if (parts.suppressed) {
+          const report: DeliveryReport = notices.length
+            ? await deliverNotices(notices)
+            : { delivery: 'empty', target: deps.isSinkOpen?.(chatId) ? 'sink' : 'wechat', bubbles: 0, attachmentsSent: 0, failures: [], msgIds: [] }
+          deps.log('REPLY', `chat=${chatId} provider=${opts.providerId} context=${opts.context} target=${report.target} delivery=empty bubbles=0 attachments=0/${pending.length} narration=0`)
+          return report
+        }
         const built = buildTurnReply(parts, pending.map(p => p.attachment), opts.context, opts.textStrategy)
         Object.assign(built.reply, attribution)
         built.reply.replyParts = [
@@ -354,7 +360,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         const notices = takeNotices(turn)
         finishDaemon()
         if (notices.length) {
-          void deliverTurnReply({ chatId, reply: { text: '', silent: false, attachments: [], narration: [] }, attachments: [], context: opts.context, notices }, out)
+          void deliverNotices(notices)
             .catch(err => deps.log('REPLY_RULE_NOTICE', `chat=${chatId} abandoned-turn notice failed: ${err instanceof Error ? err.message : String(err)}`))
         }
       },

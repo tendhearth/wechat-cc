@@ -1,3 +1,4 @@
+import { collectOwnerReply } from '../../app/collect-owner-reply'
 import { turnJudge, TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
 /**
  * 输出评测在 daemon 里跑的那一下(设计稿 docs/design/2026-10-29-output-eval.md「怎么做到用的是生产那一套」)。
@@ -22,7 +23,7 @@ import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { collectTurn, type TurnSummary } from '../../ports/agent-provider'
+import { collectTurn } from '../../ports/agent-provider'
 import type { ProviderRegistry } from '../../app/provider-registry'
 import type { ProviderId } from '../../domain/conversation'
 import { JOB_PROFILE, TIER_PROFILES, sessionAuthEnv, tierNameFromProfile, type TierProfile, type UserTier } from '../../domain/user-tier'
@@ -82,6 +83,7 @@ export interface EvalTurnResult {
   /** 按生产规则分好的气泡(没开「一条发完」;静默 ⇒ [])。 */
   bubbles: string[]
   silent: boolean
+  replyRetried: boolean
   /** 模型写下的最后那段原文(NO_REPLY、候选占位都还在)。 */
   rawFinalText: string
   narration: string[]
@@ -163,6 +165,7 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
     const token = deps.mintSessionToken(tier, sessionKey, { routeAllow, ttlMs: TOKEN_TTL_MS, ...(recorder ? { recordMatterPlan: recorder.record } : {}) })
     const base = { kind: a.kind, providerId: a.providerId, ...(a.model !== undefined ? { model: a.model } : {}) }
     const empty = { finalText: '', bubbles: [] as string[], silent: false, rawFinalText: '', narration: [] as string[], segments: [] as string[], toolCalls: [] as string[], planCalls }
+    let replyRetried = false
     let session: Awaited<ReturnType<typeof entry.provider.spawn>> | undefined
     try {
       const appendInstructions = deps.buildInstructions(a.providerId, a.promptProfile, chatId, a.model)
@@ -184,24 +187,35 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
       // 不然 CLI 那头按 timeoutMs + 余量挂断了,这边还在跑(Codex 评审)。到点 cancel 那一轮,finally 照样 close。
       const limitMs = a.timeoutMs ?? DEFAULT_TIMEOUT_MS
       let deadline: ReturnType<typeof setTimeout> | undefined
+      let expired = false
       const overrun = new Promise<'overrun'>((resolve) => {
-        deadline = setTimeout(() => { void session?.cancel?.().catch(() => {}); resolve('overrun') }, limitMs)
+        deadline = setTimeout(() => { expired = true; void session?.cancel?.().catch(() => {}); resolve('overrun') }, limitMs)
       })
-      const collected = await Promise.race([collectTurn(session.dispatch(a.text), { timeoutMs: limitMs }), overrun]).finally(() => clearTimeout(deadline))
+      const active = session
+      const strategy = replyTextStrategyFor(a.providerId)
+      const collected = await Promise.race([collectOwnerReply(
+        (text, retry) => {
+          replyRetried = retry
+          return collectTurn(active.dispatch(text), { timeoutMs: limitMs })
+        },
+        a.text, strategy, deps.log, () => expired, undefined, a.context,
+      ), overrun]).finally(() => clearTimeout(deadline))
       if (collected === 'overrun') {
-        return { ok: false, ...base, ...empty, error: `turn exceeded ${limitMs}ms`, errorCode: 'turn_deadline', durationMs: now() - startedAt }
+        return { ok: false, ...base, ...empty, replyRetried, error: `turn exceeded ${limitMs}ms`, errorCode: 'turn_deadline', durationMs: now() - startedAt }
       }
-      const summary: TurnSummary = collected
+      const summary = collected
+      // 文字被压掉了,两次里真调过的工具照旧带出去(不然评测里像是什么都没发生)
+      if (summary.replySuppressed) return { ok: false, ...base, ...empty, toolCalls: summary.toolCalls, replyRetried, durationMs: now() - startedAt }
       const raw = summary.finalText ?? ''
       let finalRaw = raw
       if (a.transformFinal) { try { finalRaw = a.transformFinal(raw) } catch (e) { deps.log('EVAL', `transformFinal threw: ${errMsg(e)}`) } }
       // 回复交付的那一半(reply-delivery.ts):静默 ⇒ 不发;否则聊天型的多段各自分条,其余整段分条。
-      const { reply } = buildTurnReply({ finalText: finalRaw, narration: summary.narration ?? [] }, [], a.context, replyTextStrategyFor(a.providerId))
+      const { reply } = buildTurnReply({ finalText: finalRaw, narration: summary.narration ?? [] }, [], a.context, strategy)
       const text = reply.silent ? '' : reply.text.trim()
       const sources = reply.segments && reply.segments.length > 0 && !reply.silent ? reply.segments : [text]
       const bubbles = text === '' ? [] : sources.flatMap(s => splitBubbles(s))
       return {
-        ok: !summary.error, ...base,
+        ok: !summary.error, ...base, replyRetried,
         finalText: text, bubbles, silent: reply.silent, rawFinalText: raw,
         narration: summary.narration ?? [], segments: summary.assistantText, toolCalls: summary.toolCalls, planCalls,
         ...(a.transformFinal ? { attached: finalRaw !== raw } : {}),
@@ -212,7 +226,7 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
     } catch (err) {
       deps.log('EVAL', `${a.kind} on ${a.providerId} failed: ${errMsg(err)}`)
       const code = typeof err === 'object' && err !== null && typeof (err as { code?: unknown }).code === 'string' ? (err as { code: string }).code : undefined
-      return { ok: false, ...base, ...empty, error: errMsg(err), ...(code ? { errorCode: code } : {}), durationMs: now() - startedAt }
+      return { ok: false, ...base, ...empty, replyRetried, error: errMsg(err), ...(code ? { errorCode: code } : {}), durationMs: now() - startedAt }
     } finally {
       recorder?.stop()
       if (recorder) deps.invalidateSession(sessionKey)

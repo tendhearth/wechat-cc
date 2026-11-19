@@ -51,6 +51,8 @@ export interface TurnReply extends Partial<ReplyAttribution> {
 }
 
 export interface TurnTextParts {
+  /** 两次只写了内部注记，按空交付收尾。 */
+  suppressed?: boolean
   finalText: string
   narration: string[]
 }
@@ -176,6 +178,71 @@ export function extractTurnReply(events: Iterable<SegmentEvent>): TurnTextParts 
   const c = makeTurnTextCollector()
   for (const ev of events) c.push(ev)
   return c.parts()
+}
+
+/** 模型回复「照内部回声的样子起头」:还没写完、判不了整段时用它(进度消息、出错的轮次)。 */
+export function replyMayBeEcho(raw: string): boolean {
+  const lead = raw.trimStart()
+  return lead.startsWith('[System:') || lead.startsWith('[调用工具')
+}
+
+/** 从 offset 起吃掉一个配平的 `[System: …]`;不是 / 没配平 ⇒ -1。 */
+function endOfSystemNote(text: string, offset: number): number {
+  if (!text.startsWith('[System:', offset)) return -1
+  let depth = 1, at = offset + '[System:'.length
+  for (; at < text.length && depth > 0; at++) {
+    if (text[at] === '[') depth++
+    else if (text[at] === ']') depth--
+  }
+  return depth === 0 ? at : -1
+}
+
+/** 从 offset 起吃掉一个 `[调用工具 <名字>] {…JSON 对象…}`;不是 / JSON 不合法 ⇒ -1。 */
+function endOfToolEcho(text: string, offset: number): number {
+  const head = /^\[调用工具[ \t]+[\w.:/-]+\]\s+/.exec(text.slice(offset))
+  if (!head) return -1
+  const start = offset + head[0].length
+  if (text[start] !== '{') return -1
+  let depth = 0, inString = false, escaped = false
+  for (let at = start; at < text.length; at++) {
+    const ch = text[at]!
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{') depth++
+    else if (ch === '}' && --depth === 0) {
+      try { JSON.parse(text.slice(start, at + 1)) } catch { return -1 }
+      return at + 1
+    }
+  }
+  return -1
+}
+
+/**
+ * 整段只由完整的内部回声组成才算:一个或多个连着的 `[System: …]` 注记、`[调用工具 名字] {JSON}` 回声,两种可以混着排。
+ * 引用、代码块、前后有正文、没写完的,一律不算(宁可漏,不可错拦)。有工具回声 ⇒ 'tool_echo',否则 'system_annotation'。
+ */
+export function replyNotForOwner(raw: string): 'system_annotation' | 'tool_echo' | undefined {
+  const text = raw.trim()
+  if (!replyMayBeEcho(text)) return
+  // An indented Markdown code block can look like an annotation after trim.
+  const lines = raw.split('\n').filter(line => line.trim())
+  if (lines.every(line => /^(?: {4}| {0,3}\t)/.test(line))) return
+
+  let offset = 0, sawTool = false
+  while (offset < text.length) {
+    const note = endOfSystemNote(text, offset)
+    const tool = note < 0 ? endOfToolEcho(text, offset) : -1
+    if (note < 0 && tool < 0) return
+    if (tool >= 0) sawTool = true
+    offset = note >= 0 ? note : tool
+    while (offset < text.length && /\s/.test(text[offset]!)) offset++
+  }
+  return sawTool ? 'tool_echo' : 'system_annotation'
 }
 
 // ─── NO_REPLY ─────────────────────────────────────────────────────────────

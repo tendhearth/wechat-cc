@@ -662,6 +662,8 @@ export interface CollectTurnOpts {
    * only a genuinely silent stall is.
    */
   timeoutMs?: number
+  /** Absolute deadline shared by attempts, in Date.now() milliseconds. */
+  deadlineAt?: number
   /**
    * Per-event observer, called once per event just before it is folded
    * into the summary — on BOTH consumption paths (plain drain and the
@@ -709,7 +711,9 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   }
 
   const timeoutMs = opts?.timeoutMs
-  if (!timeoutMs || timeoutMs <= 0) {
+  const deadlineAt = opts?.deadlineAt
+  const idleMs = timeoutMs && timeoutMs > 0 ? timeoutMs : Infinity
+  if (deadlineAt === undefined && idleMs === Infinity) {
     for await (const ev of events) { observe(ev); apply(ev) }
     return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts(), ...extra() }
   }
@@ -720,13 +724,15 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   const it = events[Symbol.asyncIterator]()
   const TIMEOUT = Symbol('timeout')
   let timer: ReturnType<typeof setTimeout> | undefined
-  const armTimeout = (): Promise<typeof TIMEOUT> =>
-    new Promise(resolve => { timer = setTimeout(() => resolve(TIMEOUT), timeoutMs) })
+  const remaining = () => deadlineAt === undefined ? Infinity : deadlineAt - Date.now()
+  const armTimeout = (waitMs: number): Promise<typeof TIMEOUT> =>
+    new Promise(resolve => { timer = setTimeout(() => resolve(TIMEOUT), waitMs) })
   try {
     for (;;) {
-      const step = await Promise.race([it.next(), armTimeout()])
+      const waitMs = Math.min(idleMs, remaining())
+      const step = waitMs <= 0 ? TIMEOUT : await Promise.race([it.next(), armTimeout(waitMs)])
       if (timer) { clearTimeout(timer); timer = undefined }
-      if (step === TIMEOUT) {
+      if (step === TIMEOUT || remaining() <= 0) {
         // Best-effort unwind — do NOT await. A genuinely wedged producer
         // (generator stuck on an unresolved `await`) never completes its
         // `return()`, so awaiting it would re-introduce the very hang the
@@ -738,7 +744,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
           toolCalls,
           replyToolCalled,
           result,
-          error: `turn timed out after ${timeoutMs}ms with no activity`,
+          error: waitMs < idleMs || remaining() <= 0 ? 'turn deadline exceeded' : `turn timed out after ${timeoutMs}ms with no activity`,
           errorCode: TURN_TIMEOUT_CODE,
           ...segments.parts(),
         }

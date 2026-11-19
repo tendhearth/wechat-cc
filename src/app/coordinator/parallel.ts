@@ -3,12 +3,13 @@
  * (Promise.allSettled)。每位的最后的话经交付端口送达(前缀 [名字] 由 daemon 加)。最后补一条综合。
  * 跑回合本身交给 TurnRunner。
  */
+import { ownerReplyParts, type OwnerReplySummary } from '../collect-owner-reply'
 import { captureReplyAttribution, withReplyAttribution } from '../../lib/reply-attribution'
 import { namesIn } from '../provider-registry'
 import type { InboundMsg } from '../../domain/prompt-format'
 import { labelOpenings, buildParallelSynthesisPrompt, type Opening } from '../../domain/chatroom-conductor'
 import { buildTurnReply, type DeliveryReport } from '../../domain/turn-reply'
-import { TURN_TIMEOUT_CODE, type TurnSummary } from '../../ports/agent-provider'
+import { TURN_TIMEOUT_CODE } from '../../ports/agent-provider'
 import { isAuthErrorCode } from '../../lib/provider-error-code'
 import type { CoordinatorCtx, ProjectRef } from './ctx'
 import type { TurnPlan } from './plan'
@@ -56,11 +57,11 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
     const unregisterCancels = acquired.map(a =>
       a.status === 'fulfilled' ? runner.registerCancel(msg.chatId, () => { void a.value.cancel?.() }) : undefined,
     )
-    let settled: PromiseSettledResult<TurnSummary>[]
+    let settled: PromiseSettledResult<OwnerReplySummary>[]
     try {
       settled = await Promise.allSettled(acquired.map((a, i) =>
         a.status === 'fulfilled'
-          ? runner.run({ chatId: msg.chatId, alias: proj.alias, providerId: a.value.providerId, handle: a.value, prompt: text, budget: 'turn', speaker: 'agent', startedAt, turn: turns[i]!, onTurn: ids => deliveries[i]?.bindTurn?.(ids) })
+          ? runner.run({ chatId: msg.chatId, alias: proj.alias, providerId: a.value.providerId, handle: a.value, prompt: text, budget: 'turn', context: 'parallel', speaker: 'agent', startedAt, turn: turns[i]!, onTurn: ids => deliveries[i]?.bindTurn?.(ids) })
           : Promise.reject(a.reason),
       ))
     } finally {
@@ -106,7 +107,7 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
         }
         // acquire 成功才走到这里(失败的 r 是 rejected,上面已经 continue),所以这一位一定开过轮。
         if (!turnDelivery || r.value.error) continue
-        const parts = { finalText: r.value.finalText ?? '', narration: r.value.narration ?? [] }
+        const parts = ownerReplyParts(r.value)
         report = await turnDelivery.deliver(parts)
         // 综合用的答案和交付出去的是同一份文字(同一个策略、同样剥掉令牌)。
         const said = buildTurnReply(parts, [], 'parallel', ctx.textStrategyFor(providerId)).reply

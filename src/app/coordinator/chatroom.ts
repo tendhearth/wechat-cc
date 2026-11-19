@@ -8,6 +8,7 @@
  *
  * 这里只编排拍子和 latest-wins 抢占;每一拍里每一位的回合交给 TurnRunner。
  */
+import type { OwnerReplySummary } from '../collect-owner-reply'
 import { captureReplyAttribution, withReplyAttribution } from '../../lib/reply-attribution'
 import type { ProviderId } from '../../domain/conversation'
 import { namesIn } from '../provider-registry'
@@ -19,7 +20,6 @@ import {
   type Opening, type Contention, type RankedSpeaker,
 } from '../../domain/chatroom-conductor'
 import { buildTurnReply, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
-import type { TurnSummary } from '../../ports/agent-provider'
 import type { CoordinatorCtx, ProjectRef } from './ctx'
 import type { TurnAuth, TurnPlan } from './plan'
 import type { TurnRunner } from './runner'
@@ -238,8 +238,15 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
     const results = await Promise.all(participants.map(async (providerId): Promise<BeatResult | null> => {
       const startedAt = nowMs()
     const turn = {}  // 这一轮的身份(runner 靠它把 run 和 record 对上,M3a)
-      let summary: TurnSummary | undefined
+      let summary: OwnerReplySummary | undefined
       let err: string | undefined
+      // A retry asks for owner-facing text, so it may omit the first attempt's vote.
+      let inspectedRanking: string[] = []
+      const replyTextForInspection = (segment: string) => {
+        const parsed = parsePeerRank(segment)
+        if (parsed.ranking.length) inspectedRanking = parsed.ranking
+        return parsed.text
+      }
       const dn = namesIn(deps.registry, providerId).short
       // 回复交付(spec §4.9):这位发言人的最后的话经端口送达(前缀 [名字] 由 daemon 加,/chat 一人一条
       // 不分条);开轮在 dispatch 之前,附件才登记得上。
@@ -253,7 +260,7 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
         })
         unlink = runner.linkAbort(signal, () => { void handle.cancel?.() })
         delivery = deps.replyDelivery.begin(msg.chatId, { context: 'chatroom', speaker: 'agent', model: handle.callTarget?.().model ?? handle.model, providerId, participantLabel: dn, textStrategy: ctx.textStrategyFor(providerId) })
-        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), budget: 'beat', speaker: 'agent', startedAt, turn, onTurn: ids => delivery?.bindTurn?.(ids) })
+        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), signal, budget: 'beat', replyTextForInspection, context: 'chatroom', speaker: 'agent', startedAt, turn, onTurn: ids => delivery?.bindTurn?.(ids) })
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       } finally {
@@ -284,12 +291,12 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
         // `#RANK:` 是内部信号:先在 conductor 这一侧剥掉(§4.9),交付与互评用同一份剥过的文字。
         const ranks: string[][] = []
         const strip = (t: string): string => { const p = parsePeerRank(t); if (p.ranking.length) ranks.push(p.ranking); return p.text }
-        const parts = { finalText: strip(summary.finalText ?? ''), narration: (summary.narration ?? []).map(strip) }
+        const parts = { finalText: strip(summary.finalText ?? ''), narration: (summary.narration ?? []).map(strip), ...(summary.replySuppressed ? { suppressed: true } : {}) }
         report = await delivery.deliver(parts)
         const said = buildTurnReply(parts, [], 'chatroom', ctx.textStrategyFor(providerId)).reply
         const text = said.silent ? '' : said.text.trim()
         if (!text) return null
-        return { speaker: providerId, text, ranking: countRank ? (ranks[ranks.length - 1] ?? []) : [] }
+        return { speaker: providerId, text, ranking: countRank ? (ranks[ranks.length - 1] ?? inspectedRanking) : [] }
       } finally {
         runner.record({ chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'chatroom', startedAt, endedAt, outcome, summary, error: err, report, turn })
       }

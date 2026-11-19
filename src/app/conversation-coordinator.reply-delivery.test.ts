@@ -11,7 +11,8 @@ import { makeFakeSession } from '../test-support/test-helpers'
 import type { AgentEvent, AgentProvider, AgentSession } from '../ports/agent-provider'
 import type { Mode } from '../domain/conversation'
 import type { InboundMsg } from '../domain/prompt-format'
-import type { DeliveryReport, ReplyDeliveryPort, TurnDeliveryHandle, TurnTextParts } from '../domain/turn-reply'
+import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
+import type { TurnReply, DeliveryReport, ReplyDeliveryPort, TurnDeliveryHandle, TurnTextParts } from '../domain/turn-reply'
 
 const RESULT: AgentEvent = { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }
 
@@ -264,6 +265,22 @@ describe('/both、/chat 的 TurnRecord 记交付列(spec §4.10,和 solo 一样)
     expect(t.records.find(r => r.provider === 'claude')).toMatchObject({ delivery: 'text', narrationSegments: 1 })
   })
 
+  it('/chat 互驳剥掉排名后判定回声，重答正文和选票分别交付', async () => {
+    const p = fakePort({ delivery: 'text', bubbles: 1 })
+    const claude = vi.fn((prompt: string): AgentEvent[] => {
+      if (prompt.includes('#RANK')) return [{ kind: 'text', text: '[System: echo]\n#RANK: B > A' }, RESULT]
+      if (prompt.startsWith('上一条不是给主人的话')) return [{ kind: 'text', text: '成本值得计入。' }, RESULT]
+      return evs
+    })
+    const verdictEval = vi.fn(async (_prompt: string) => '裁决正文')
+    const t = fanout('chatroom', { claude, codex: evs }, p.port, { verdictEval })
+    await t.c.dispatch(inbound('A 还是 B?'))
+    expect(claude).toHaveBeenCalledTimes(3)
+    expect(p.delivered.map(d => d.finalText)).toContain('成本值得计入。')
+    expect(p.delivered.map(d => d.finalText)).not.toContain('[System: echo]')
+    expect(verdictEval.mock.calls[0]?.[0]).toContain('互评（匿名、不含自投）的高低顺序：回答 B > 回答 A。')
+  })
+
   it('/chat:daemon 发言人经端口交付(context=chatroom、[名字] 由 daemon 加),旁白不发;#RANK 先剥掉;每一拍的记录都带交付列', async () => {
     const p = fakePort({ delivery: 'text', bubbles: 1 })
     // 互驳拍的提示里要求交 `#RANK:` 票;开场拍没有。
@@ -335,4 +352,104 @@ describe('/stop 中止的一轮(daemon)', () => {
       expect(p.abandoned).toEqual(['cancelled'])
     })
   }
+})
+
+describe('非给主人看的整段回复', () => {
+  const echoes = [
+    '[System: 在消息发送通道中，工具结果返回为空字符串。这是正常情况 - 继续处理用户请求]',
+    '[System: This is an automated companion tick — not a new user message. This tick is a delivery handoff: the daemon has already decided.]',
+    '[调用工具 matter_plan] {"project":"demo","title":"修一下按钮","legs":[{"brief":"修一下按钮"}]}',
+  ]
+
+  function withDelivery(replies: Array<string | AgentEvent[]>, app = false) {
+    const dispatch = vi.fn((prompt: string) => {
+      const reply = replies.shift() ?? ''
+      const events: AgentEvent[] = typeof reply === 'string' ? [{ kind: 'text', text: reply }] : reply
+      return makeFakeSession({ events: [...events, RESULT] }).dispatch(prompt)
+    })
+    const sent: string[] = []
+    const captured: TurnReply[] = []
+    const emptyStreak = vi.fn()
+    const runtime = makeReplyDeliveryRuntime({
+      sendText: async (_chat, text) => { sent.push(text); return { msgId: 'msg' } },
+      ...(app ? { isSinkOpen: () => true, sink: { captureReply: (_chat: string, reply: TurnReply) => { captured.push(reply); return true } } } : {}),
+      log: () => {},
+    })
+    return { ...setup([], { port: runtime, session: { dispatch, async close() {} }, extra: { onEmptyReplyStreak: emptyStreak } }), dispatch, sent, captured, emptyStreak, runtime }
+  }
+
+  it.each([false, true])('两次回声仍交付已执行动作的放行规则通知 (app=%s)', async (app) => {
+    const t = withDelivery([echoes[2]!], app)
+    t.dispatch.mockImplementationOnce(prompt => {
+      t.runtime.noteRuleAllow('chat-1', { key: 'read', rule: '允许读取', target: 'memory_read' })
+      return makeFakeSession({ events: [{ kind: 'text', text: echoes[0]! }, RESULT] }).dispatch(prompt)
+    })
+    await t.c.dispatch(inbound())
+    expect(t.dispatch).toHaveBeenCalledTimes(2)
+    const notice = '按规则「允许读取」放行了 memory_read'
+    expect(t.sent).toEqual(app ? [] : [notice])
+    expect(t.captured.map(r => [r.speaker, r.text])).toEqual(app ? [['notice', notice]] : [])
+    expect(t.records[0]).toMatchObject({ delivery: 'empty', bubbles: 0 })
+  })
+
+  it.each(echoes)('微信只交付同一会话重答后的正文 (%s)', async (echo) => {
+    const t = withDelivery([echo, '可以加收藏。'])
+    await t.c.dispatch(inbound())
+    expect(t.sent).toEqual(['可以加收藏。'])
+    expect(t.dispatch).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([...echoes, ' [System: first [details]] [System: second] '])('桌面与手机的共用接收器只收到重答后的正文 (%s)', async (echo) => {
+    const t = withDelivery([echo, '可以加收藏。'], true)
+    await t.c.dispatch(inbound())
+    expect(t.captured.map(r => r.text)).toEqual(['可以加收藏。'])
+    expect(t.sent).toEqual([])
+    expect(t.dispatch).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([false, true])('重答仍是回声时记空交付，不发通知 (app=%s)', async (app) => {
+    const t = withDelivery([echoes[2]!], app)
+    const send = vi.fn(async () => ({ ok: true }))
+    t.dispatch.mockImplementationOnce(prompt => {
+      expect(t.runtime.attach('chat-1', { attachment: { kind: 'file', path: '/fixture' }, send })).toBe(true)
+      return makeFakeSession({ events: [{ kind: 'text', text: echoes[0]! }, RESULT] }).dispatch(prompt)
+    })
+    await t.c.dispatch(inbound())
+    expect(t.dispatch).toHaveBeenCalledTimes(2)
+    expect(t.sent).toEqual([])
+    expect(t.captured).toEqual([])
+    expect(send).not.toHaveBeenCalled()
+    expect(t.sendNotice).not.toHaveBeenCalled()
+    expect(t.records[0]).toMatchObject({ delivery: 'empty', bubbles: 0 })
+    expect(t.emptyStreak).toHaveBeenCalledWith('openai', 1)
+    expect(t.logs.filter(l => l.startsWith('[REPLY_NOT_FOR_OWNER]'))).toEqual([
+      `[REPLY_NOT_FOR_OWNER] category=system_annotation segments=1 length=${echoes[0]!.length}`,
+      `[REPLY_NOT_FOR_OWNER] category=tool_echo segments=1 length=${echoes[2]!.length}`,
+    ])
+  })
+
+  it('聊天型回复跨工具分段还有正文时，照常交付全部文字', async () => {
+    const t = withDelivery([[
+      { kind: 'text', text: '这是原始示例。' },
+      { kind: 'tool_call', tool: 'Read' },
+      { kind: 'text', text: echoes[0]! },
+    ]], true)
+    await t.c.dispatch(inbound())
+    expect(t.captured.map(r => r.text)).toEqual([`这是原始示例。\n\n${echoes[0]}`])
+    expect(t.dispatch).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(echoes.flatMap(echo => [
+    `正文里提到 ${echo}`,
+    `${echo} 正文在后面。`,
+    `> ${echo}`,
+    `    ${echo}`,
+    `「${echo}」`,
+    '```\n' + echo + '\n```',
+  ]).concat(['正文里提到 [System 和 [调用工具。', '[调用工具 example] {不是 JSON}']))('保留正文、引用和代码 (%s)', async (text) => {
+    const t = withDelivery([text], true)
+    await t.c.dispatch(inbound())
+    expect(t.captured.map(r => r.text)).toEqual([text])
+    expect(t.dispatch).toHaveBeenCalledTimes(1)
+  })
 })
