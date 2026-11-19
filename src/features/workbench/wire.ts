@@ -10,6 +10,7 @@ import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { Db } from '../../lib/db'
 import {join} from 'node:path'
 import {listProjects} from '../../lib/project-registry'
+import { makeAskOpinion } from './ask-opinion'
 import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/agent-config'
 import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
@@ -316,6 +317,12 @@ export function wireWorkbench(opts: {
   }):undefined
   return makeWorkbenchService({
     ...(opts.permissionRegistry?{permissionPrompt:makeWorkbenchPermissionPrompt(opts.permissionRegistry,ownerChatId)}:{}),
+    askOpinion: makeAskOpinion({
+      evaluator: () => opts.boot.registry.getCheapEval({ singleAttempt: true }),
+      settings: () => loadAgentConfig(opts.stateDir).ask_opinion,
+      stateDir: opts.stateDir,
+      log: opts.log,
+    }),
     managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
     ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
     // 项目经验(第二轮对标 ★2):主人在微信「经验 <项目> …」写的,每家执行者的指令里都带上

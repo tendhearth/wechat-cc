@@ -166,6 +166,15 @@ describe('getCheapEval — runtime failover (2026-08-24: agy auth-dead froze the
     return r
   }
 
+  it('can stop after one provider failure for optional judgments', async () => {
+    const first = vi.fn(async () => { throw new Error('temporary failure') })
+    const second = vi.fn(async () => 'ok')
+    const r = reg({ agy: first, claude: second })
+    await expect(r.getCheapEval({ singleAttempt: true })!('prompt')).rejects.toThrow('temporary failure')
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(second).not.toHaveBeenCalled()
+  })
+
   it('falls through to the next provider when the preferred one throws', async () => {
     const calls: string[] = []
     const r = reg({

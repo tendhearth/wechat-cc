@@ -587,6 +587,13 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const done=new Promise<void>(resolve => { resolveDone=resolve })
     // 放行规则(2026-10-19):问主人之前先问它;规则拿了主意的那条不发通知,时间线里写明是谁批的。
     const ruleDecide=ctx.deps.permissionDecide
+    const opinion=ctx.deps.askOpinion
+    const opinionProject=()=>store.worktrees.get(task.id)?.repoRoot??task.path
+    const opinionTitle=()=>{
+      // 新建时的缺省标题可能就是主人原话的头 40 字。
+      const first=firstUserText(task.id)?.trim()
+      return first && first.includes(task.title.trim()) ? '' : task.title
+    }
     const permissionPrompts=new Map<string,()=>void>()
     const permissions=makeRunPermissions({
       initialDenials,
@@ -604,7 +611,16 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             permissionPrompts.set(event.permission.id,close);replyLine=close.replyLine??''
           }
           requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'))
+          opinion?.schedule(event.permission.id, () => {
+            const ask = permissions.pendingAsk(event.permission.id)
+            if (!ask) return null
+            return {
+              kind: 'permission', project: opinionProject(), title: opinionTitle(), ask,
+              preview: { command: ask.command, paths: ask.paths },
+            }
+          })
         }else {
+          opinion?.clear(event.permission.id)
           permissionPrompts.get(event.permission.id)?.();permissionPrompts.delete(event.permission.id)
           addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}${event.reason?`\n拒绝理由：${event.reason}`:''}`)
         }
@@ -612,9 +628,18 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),firstUserText(task.id)??null,facts))}:{}),
     })
     const questions=makeRunUserInput({taskId:task.id,audit:event=>{
+      if(event.type!=='request')opinion?.clear(event.request.id)
       if(event.type==='request'){
         addRunEvent('system',`执行者提问：${JSON.stringify(event.request)}`)
         requestNotice(task,runId,'question',event.request.id,event.request.questions.map(q=>q.question).join('\n'))
+        opinion?.schedule(event.request.id, () => {
+          const request = questions.pending().find(q => q.id === event.request.id)
+          if (!request) return null
+          return {
+            kind: 'question', project: opinionProject(), title: opinionTitle(),
+            preview: request.questions.map(q => ({ question: q.question, options: q.options.map(o => o.label) })),
+          }
+        })
       }
       else if(event.type==='answer')addRunEvent('user',`回答执行者的问题：\n${event.request.questions.map(q=>`${q.question}\n${event.answers?.[q.id]?.join('、')??''}`).join('\n\n')}`)
       else addRunEvent('system',`问题已结束，未提交回答：${event.request.id}`)

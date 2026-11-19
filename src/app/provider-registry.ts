@@ -200,7 +200,7 @@ export interface ProviderRegistry {
    * comparison is fundamentally cross-provider (we can't compare
    * Anthropic's haiku to OpenAI's mini purely from interface metadata).
    */
-  getCheapEval(): CheapEval | null
+  getCheapEval(options?: { singleAttempt?: boolean }): CheapEval | null
   /**
    * 后台判断(getCheapEval 交出去的那些调用)最近的成败。只数**真失败**:网络没受保护、连不上不算 ——
    * 那两样「CC 现在怎么样」里已经有网络守护 / 微信两行在说。2026-10-13 gemini-3.7 下线,后台判断
@@ -303,7 +303,7 @@ export function createProviderRegistry(opts?: {
   const now = opts?.now ?? Date.now
   const entries = new Map<ProviderId, { provider: AgentProvider; opts: ProviderRegistration }>()
   // 显式指定优先 — 见 opts.cheapEvalProvider 文档。
-  function resolveCheapEval(): CheapEval | null {
+  function resolveCheapEval(singleAttempt: boolean): CheapEval | null {
     // 可以是 getter(bootstrap 传 mtime 缓存的 config 读法),这样 /set cheap
     // 改完下一次评估就生效,不用重启。
     const pinnedId = readPinnedId()
@@ -316,7 +316,7 @@ export function createProviderRegistry(opts?: {
       // 退避重探)。很多调用方在开机时就把这里返回的函数缓存住了(coordinator 的
       // haikuEval、social 的闸门 …),所以不能把「回落」焊死:返回一个**按调用现取**的
       // 派发器 —— 钉的那家晚注册上的那一刻起,每一次评估都回到它。
-      const fallback = resolveUnpinned()
+      const fallback = resolveUnpinned(singleAttempt)
       if (!fallback) return null
       let returned = false
       return async (prompt: string) => {
@@ -326,10 +326,10 @@ export function createProviderRegistry(opts?: {
           if (!returned) { returned = true; opts?.log?.(`cheap_eval_provider=${id} 已注册 — 后台评估回到它`) }
           return guardRefused(id as ProviderId, live)(prompt)
         }
-        return (resolveUnpinned() ?? fallback)(prompt)
+        return (resolveUnpinned(singleAttempt) ?? fallback)(prompt)
       }
     }
-    return resolveUnpinned()
+    return resolveUnpinned(singleAttempt)
   }
 
   const evalHealth: CheapEvalHealth = { consecutiveFailures: 0, lastError: null, lastFailAt: null, lastOkAt: null }
@@ -381,7 +381,7 @@ export function createProviderRegistry(opts?: {
   const readPinnedId = (): string | undefined =>
     typeof opts?.cheapEvalProvider === 'function' ? opts.cheapEvalProvider() : opts?.cheapEvalProvider
   /** 不看钉死项的解析:偏好序 → 其余;多个候选时带运行时故障转移。 */
-  const resolveUnpinned = (): CheapEval | null => {
+  const resolveUnpinned = (singleAttempt: boolean): CheapEval | null => {
     // Preferred order first, then any other registered provider. The
     // implementations are arrow-like (close over `opts`, never `this`),
     // so calling them unbound is safe.
@@ -448,10 +448,11 @@ export function createProviderRegistry(opts?: {
         } catch (err) {
           // 评估途中网络掉了(闸门在这个候选里拦下):不记冷却,换下一个候选。
           if (isNetworkUnprotectedError(err)) { attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
-          if (noteRefusal(c.id, err)) { lastErr = err; continue }
+          if (noteRefusal(c.id, err)) { if (singleAttempt) throw err; lastErr = err; continue }
           const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
           cheapEvalCooldownUntil.set(c.id, now() + cd)
           lastErr = err
+          if (singleAttempt) throw err
           // 只采集,不改判。绝不让采集影响冷却/失败转移。
           try {
             const msg = err instanceof Error ? err.message : String(err)
@@ -470,7 +471,7 @@ export function createProviderRegistry(opts?: {
         // Everyone (still eligible under the network guard) is cooling down —
         // try the first one anyway rather than failing on a stale blacklist.
         const first = coolingEligible[0]
-        if (first) {
+        if (first && !singleAttempt) {
           cheapEvalCooldownUntil.delete(first.id)
           const model = providerCallTarget(entries.get(first.id)?.provider, first.id, 'cheapEval').model
           const out = await first.fn(prompt)
@@ -509,8 +510,8 @@ export function createProviderRegistry(opts?: {
     cheapEvalHealth() {
       return { ...evalHealth }
     },
-    getCheapEval() {
-      const fn = resolveCheapEval()
+    getCheapEval(options) {
+      const fn = resolveCheapEval(options?.singleAttempt === true)
       return fn ? tracked(fn) : null
     },
     getStrongEval(id) {

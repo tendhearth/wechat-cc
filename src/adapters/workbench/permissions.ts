@@ -157,6 +157,7 @@ export function makeRunPermissions(opts: {
 
   return {
     request,
+    pendingAsk: (id: string) => entries.get(id)?.snapshot.ask,
     denialCount: () => consecutiveDenials,
     denialLimitReached: () => consecutiveDenials >= 3,
     resetDenials: () => { if (consecutiveDenials < 3) consecutiveDenials = 0 },

@@ -1,16 +1,18 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { openTestDb } from '../../lib/db'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import type { Matter } from '../../ports/matters'
 import type { InternalApiDeps } from '../../daemon/internal-api/types'
 import { makePlacesReader, placeKey, PLACES_WINDOW_MS } from './places-reader'
 import { placesRoutes } from './places-routes'
+import { ASK_OPINION_DELAY_MS, makeAskOpinion } from '../workbench/ask-opinion'
+import { PlacesResponse } from '@wechat-cc/protocol'
 
 const DAY = 24 * 3_600_000
 const NOW = 100 * DAY
 const m = (id: string, extra: Partial<Matter> = {}): Matter => ({ id, kind: 'task', title: `事 ${id}`, state: 'working', archivedAt: null, projectPath: '/w/rici', ownerChatId: null, originMatterId: null, originMessageId: `msg-${id}`, createdAt: 1, updatedAt: NOW - 60_000, ...extra })
 
-function setup(rows: Matter[], terminals: any[] = [], now: () => number = () => NOW) {
+function setup(rows: Matter[], terminals: any[] = [], now: () => number = () => NOW, extra: Partial<Parameters<typeof makePlacesReader>[0]> = {}) {
   const db = openTestDb()
   const store = makePlacesStore(db)
   const list = (f: { kind?: string; state?: string; since?: number } = {}) =>
@@ -18,6 +20,7 @@ function setup(rows: Matter[], terminals: any[] = [], now: () => number = () => 
   const reader = makePlacesReader({
     roster: { matters: { list, get: id => rows.find(r => r.id === id) ?? null }, terminals: () => terminals, seen: () => null, now },
     store,
+    ...extra,
     root: p => (p ? (p.startsWith('/private/tmp/claude-') ? `claude-scratch:${p.split('/')[4]}` : p.replace(/\/\.claude\/worktrees\/[^/]+.*$/, '')) : null),
   })
   return { reader, store }
@@ -125,4 +128,55 @@ describe('地方:路由', () => {
     expect((await call({ places: reader }, 'POST /v1/places/hide', { key, hidden: true, extra: 1 })).status).toBe(400)
     expect((await call({ places: reader }, 'POST /v1/places/hide', { key: 'p:0000000000000000', hidden: true })).status).toBe(404)
   })
+})
+
+it.each(['slow', 'error'] as const)('GET places 不等待意见模型 (%s)', async mode => {
+  vi.useFakeTimers()
+  try {
+    const id = 'aaaa0001'
+    const rows = [m(id)]
+    let permissions = [{ id: 'req-1', tool: 'Bash', description: '查看变更', createdAt: NOW }]
+    let complete!: (raw: string) => void
+    let fail!: (error: Error) => void
+    const model = vi.fn(() => new Promise<string>((resolve, reject) => { complete = resolve; fail = reject }))
+    const opinion = makeAskOpinion({ evaluator: () => model })
+    const { reader } = setup(rows, [], () => NOW, {
+      opinion: opinion.get,
+      roster: {
+        matters: { list: () => rows }, terminals: () => [], seen: () => null, now: () => NOW,
+        workbench: {
+          list: () => ({ tasks: [{ id, status: 'running' }] }),
+          attention: () => ({ tasks: permissions.length ? [{ id }] : [] }),
+          detail: () => ({ permissions, questions: [] }),
+        },
+      },
+    })
+    opinion.schedule('req-1', () => ({ kind: 'permission', project: '/w/rici', title: '整理菜谱', preview: { command: 'git status' } }))
+    await vi.advanceTimersByTimeAsync(ASK_OPINION_DELAY_MS)
+    expect(model).toHaveBeenCalledTimes(1)
+    const read = () => call({ places: reader }, 'GET /v1/places', null)
+    const first = await read()
+    const { places, version } = PlacesResponse.parse(first.body)
+    expect(first.status).toBe(200)
+    expect(places[0]?.waiting).toMatchObject({ requestId: 'req-1', summary: 'Bash: 查看变更' })
+    expect(places[0]?.waiting).not.toHaveProperty('ccOpinion')
+    expect(places[0]?.waiting).not.toHaveProperty('questionReason')
+    if (mode === 'error') {
+      fail(new Error('synthetic failure'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect((await read()).body).toEqual(first.body)
+      return
+    }
+    complete(JSON.stringify({ say: true, opinion: '允许。只查看本地改动。', reason: '执行者需要读取权限' }))
+    await vi.advanceTimersByTimeAsync(0)
+    const after = PlacesResponse.parse((await call({ places: reader }, 'GET /v1/places', null, 'operator', new Headers({ 'If-None-Match': version }))).body)
+    expect(after.version).not.toBe(version)
+    expect(after.places[0]?.waiting).toMatchObject({ ccOpinion: '允许。只查看本地改动。', questionReason: '执行者需要读取权限' })
+    permissions = []
+    opinion.clear('req-1')
+    expect(PlacesResponse.parse((await read()).body).places[0]?.waiting).toBeNull()
+    expect(opinion.get('req-1')).toBeUndefined()
+  } finally {
+    vi.useRealTimers()
+  }
 })

@@ -120,7 +120,16 @@ const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'spee
   ...more,
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
-  moderatorScript: { onEval: async (prompt) => { if(prompt.startsWith('主人对 CC 说了一句话。判断')&&prompt.includes('快判沙盒配色')){topicJudgeAttempts++;await new Promise(r=>setTimeout(r,5500))}; return JSON.stringify({ add: [], update: [], confirm: [], remove: [] }) } },
+  moderatorScript: { onEval: async (prompt) => {
+    if (prompt.startsWith('你是 CC，给正在决定这件事的主人留两行话。')) {
+      return JSON.stringify({ say: true, opinion: '先别删。请求会直接移除构建目录。', reason: '要批准删除目录' })
+    }
+    if (prompt.startsWith('主人对 CC 说了一句话。判断') && prompt.includes('快判沙盒配色')) {
+      topicJudgeAttempts++
+      await new Promise(r => setTimeout(r, 5_500))
+    }
+    return JSON.stringify({ add: [], update: [], confirm: [], remove: [] })
+  } },
   recordClaudeSpawnOptions: (o) => { spawnOptions.push(o) },
   recordCodexSpawnOptions: (o) => { codexThreads.push(o) },
   ...(more.stateDir ? {} : { seedFiles: { 'permission-rules.json': RULES, 'projects.json': PROJECTS } }),
@@ -785,6 +794,9 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await expect.poll(() => rows().filter(r => r.ref?.startsWith(`ask:${asking}:`)), { timeout: 15_000 })
       .toEqual([{ kind: 'permission_ask', ref: expect.stringMatching(new RegExp(`^ask:${asking}:`)), outcome: 'allowed', channel: expect.stringMatching(/^(app\+wechat|wechat\+app)$/) }])
     expect(rows().filter(r => r.kind === 'permission_ask')).toHaveLength(1)
+    await expect.poll(() => d.log().some(l => /\[ASK_OPINION\] given opinionLength=\d+ reasonLength=\d+$/.test(l)), { timeout: 15_000 }).toBe(true)
+    const detail = await desktop<{ permissions: Array<{ id: string }> }>('GET', `/v1/workbench/task?id=${asking}`)
+    expect(detail.body.permissions).toHaveLength(1)
   })
 
   // S3b(一件事一次提议;主人点头的「任务做完时人在电脑前 ⇒ 先只在桌面提示,10 分钟没看再推手机」):沙盒里 10 分钟缩成 2 秒。

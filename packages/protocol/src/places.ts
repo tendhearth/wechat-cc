@@ -8,6 +8,14 @@
 import z from 'zod'
 import { STATUS_KEYS } from './status-table'
 
+export const PLACE_OPINION_MAX = 40
+export const PLACE_QUESTION_REASON_MAX = 24
+export const PlaceOpinion = z.object({
+  ccOpinion: z.string().min(1).max(PLACE_OPINION_MAX),
+  questionReason: z.string().min(1).max(PLACE_QUESTION_REASON_MAX),
+})
+export type PlaceOpinionT = z.infer<typeof PlaceOpinion>
+
 export const PlaceWaiting = z.object({
   /** 这一条挂在哪一行名单上("matter:<id>" | "terminal:<sessionId>")。 */
   itemKey: z.string(),
@@ -16,6 +24,7 @@ export const PlaceWaiting = z.object({
   matterId: z.string().optional(),
   requestId: z.string().optional(),
   sessionId: z.string().optional(),
+  ...PlaceOpinion.partial().shape,
   summary: z.string(),
   /** 这个地方一共有几条在等你。 */
   count: z.number().int().min(1),

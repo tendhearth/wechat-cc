@@ -314,3 +314,18 @@ test('宽窗的页首日期在本地午夜更新', async ({ page, shimUrl }) => 
   await page.clock.fastForward(60_000)
   await expect(today).toHaveText('十一月二十日 周五')
 })
+
+test('等待纸条有 CC 意见时只多两行', async ({ page, shimUrl }) => {
+  const summary = '要删掉唯一一份旧备份吗？'
+  const waiting = { itemKey: 'matter:deadbeef', kind: 'permission', matterId: 'deadbeef', requestId: 'req-1', summary, count: 1 }
+  const note = { ccOpinion: '先别删。这是唯一一份备份。', questionReason: '删了回不来' }
+  await routePlaces(page, [
+    placeItem('归档', { status: 'waiting', moving: false, line: summary, waiting: { ...waiting, ...note } }),
+    askingPlace('菜谱', 'aaaa0001'),
+  ])
+  await page.goto(shimUrl)
+  const cards = page.locator('.desk-waiting-card')
+  const lines = (name: string) => cards.filter({ hasText: name }).locator(':scope > div:not(.place-ask)')
+  await expect(lines('归档')).toHaveText(['这件要你定 · 归档', summary, '我的意见：' + note.ccOpinion, '为什么来问你：' + note.questionReason])
+  await expect(lines('菜谱')).toHaveText(['这件要你定 · 菜谱', '要你回答一个问题'])
+})
