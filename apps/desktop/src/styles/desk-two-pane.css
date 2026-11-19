@@ -122,7 +122,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   cursor: pointer;
 }
 [data-desk-wide] :is(.desk-text-button, #desk-place-clear):hover { color: var(--th-ink); text-decoration: underline; }
-[data-desk-wide] .desk-quiet-toggle { display: block; min-height: 36px; padding-left: 28px; }
+[data-desk-wide] button.desk-quiet-toggle { display: block; min-height: 36px; padding: 0 0 0 28px; } /* 和名字那一列对齐;上面那条通用的文字按钮规则把 padding 清成 0 了 */
 [data-desk-wide] .dashboard .cc-now-pane[data-now="chat"] { gap: 0; }
 [data-desk-wide] #converse-place-clear { display: none; }
 
