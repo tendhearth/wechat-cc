@@ -13,6 +13,8 @@ const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_no
 const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>([
   // Notebook errors keep the device paired; only the executor session can have ended.
   ['matter_ledger_forbidden','unavailable'],['matter_session_ended','cli_ended'],['matter_note_limit','unavailable'],
+  ['notebook_invalid', 'invalid'], ['notebook_not_found', 'not_found'],
+  ['notebook_not_owner', 'unavailable'], ['notebook_page_too_large', 'too_large'], ['notebook_unavailable', 'unavailable'],
   ['checkup_invalid_request', 'checkup_invalid'],
   ['checkup_rate_limited', 'checkup_rate_limited'],
   ['input_stale', 'input_stale'], ['input_conflict', 'input_conflict'],
