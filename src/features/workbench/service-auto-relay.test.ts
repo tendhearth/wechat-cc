@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,renameSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,renameSync,symlinkSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
@@ -695,6 +695,17 @@ it.each(['rici','RICI','stored-basename','root'])('a stored place resolves via %
  expect(t.f.store.projects()).toEqual([])
 })
 
+it('shows the actual registration folder and its saved symlink on the card',async()=>{
+ const t=registrationSetup(),destination=join(t.f.root,'destination')
+ t.addPlace('rici',t.f.project)
+ renameSync(t.f.project,destination)
+ symlinkSync(destination,t.f.project,process.platform==='win32'?'junction':'dir')
+ expect(await t.card()).toContain(`工作区：rici（${destination}，由 ${t.f.project} 指过去）· 还没登记，批准后登记为工作项目`)
+ t.approve()
+ expect(await t.call()).toMatchObject({status:202,body:{task:{path:destination}}})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:destination,name:'rici',providerId:'claude'})
+})
+
 it('a missing match or unknown path offers only candidate names',async()=>{
  const t=registrationSetup()
  t.addPlace('rici',t.f.project)
@@ -788,6 +799,25 @@ it('rejects approval when a different directory replaces the folder shown on the
  expect(t.f.store.projects()).toEqual([])
  expect(t.f.store.list()).toEqual([])
  expect(t.f.calls).toEqual([])
+})
+
+it('requires fresh approval for a replacement folder in the same turn',async()=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ renameSync(t.f.project,join(t.f.root,'original-project'))
+ mkdirSync(t.f.project)
+ expect(await t.call()).toMatchObject({status:409,body:{error:'matter_place_changed',approved:true}})
+ await t.card()
+ expect(await t.call()).toMatchObject({status:409,body:{error:'matter_project_registration_requires_approval',approved:false}})
+ expect(t.addProject).not.toHaveBeenCalled()
+ t.approve()
+ const result=await t.call()
+ expect(result).toMatchObject({status:202,body:{task:{path:t.f.project}}})
+ expect(await t.call()).toMatchObject({status:202,body:{receipt:(result.body as {receipt:unknown}).receipt}})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:t.f.project,name:'rici',providerId:'claude'})
+ expect(t.f.store.list()).toHaveLength(1)
 })
 
 it('replays the original receipt when a retry selects the newly registered catalog ID',async()=>{

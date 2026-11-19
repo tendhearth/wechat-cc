@@ -139,7 +139,10 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       if(!accepted&&registrationPath&&target.kind==='project'){
         ctx.ensureAccepting()
         const project={path:prepared.projectPath,name:prepared.projectName,providerId:first.executor}
-        if(projectRegistrationId(owner,project.path)!==target.projectId)throw Error('matter_place_changed')
+        if(projectRegistrationId(owner,project.path)!==target.projectId){
+          if(context)approvals.consume(context.scope,'mcp__wechat__matter_plan',input)
+          throw Error('matter_place_changed')
+        }
         if(store.projects().some(p=>p.path===registrationPath))d.view.validateProject(project,registrationPath)
         else {
           d.view.addProject(project,registrationPath)

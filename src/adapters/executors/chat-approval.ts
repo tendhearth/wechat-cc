@@ -12,8 +12,9 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
     if(Array.isArray(plan.legs)&&plan.legs.length>=1&&plan.legs.length<=6){
       const clip=(v:unknown,n:number)=>{const s=redactPreviewText(redactSecrets(typeof v==='string'?v:JSON.stringify(v)??'')).replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
       const legs=resolved?.legs??plan.legs
+      const showPath=(path:string)=>redactPreviewText(redactSecrets(path)).replace(/\r/g,'\\r').replace(/\n/g,'\\n')
       const workspace=resolved?.registrationPath
-        ? `${clip(resolved.projectName,100)}（${redactPreviewText(redactSecrets(resolved.projectPath)).replace(/\r/g,'\\r').replace(/\n/g,'\\n')}）· 还没登记，批准后登记为工作项目`
+        ? `${clip(resolved.projectName,100)}（${showPath(resolved.registrationPath)}${resolved.projectPath===resolved.registrationPath?'':`，由 ${showPath(resolved.projectPath)} 指过去`}）· 还没登记，批准后登记为工作项目`
         : clip(resolved?`${resolved.projectName}（${resolved.projectPath}）`:plan.target,320)
       return `${provider} · matter_plan [approval:${requestId}]\n${plan.legs.length===1?'确认交办':'确认拆法'}：${clip(plan.title,120)}\n工作区：${workspace}${resolved?.target.kind==='project'&&resolved.target.isolation==='worktree'?`\n独立工作区 · 起点：${clip(resolved.target.base??'项目默认分支',80)}`:''}\n`+legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,64)}：${clip(l?.brief,Math.min(400,Math.floor(1300/(plan.legs as unknown[]).length)))}`}).join('\n')+(plan.legs.length===1?'\n批准后开工。':'\n批准后按此顺序接力；失败或提问就停。')
     }
