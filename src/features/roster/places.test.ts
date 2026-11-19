@@ -180,3 +180,18 @@ it.each(['slow', 'error'] as const)('GET places 不等待意见模型 (%s)', asy
     vi.useRealTimers()
   }
 })
+
+it('交办使用「现在」的可见性，收起的地方有事等主人时仍能选', () => {
+  const terminal = { session_id: 'waiting-session', code: 'waiting', source: 'claude', status: 'waiting', project: '/w/rici', last_event_at: NOW, pending: { since: NOW } }
+  const { reader, store } = setup([m('bbbbbbbb', { projectPath: '/w/melu' })], [terminal])
+  reader.read('operator')
+  expect(reader.hide(placeKey('/w/rici'), true)).toBe(true)
+  expect(reader.hide(placeKey('/w/melu'), true)).toBe(true)
+  const visible = reader.read('operator').places
+  expect(visible.map(place => place.name)).toEqual(['rici'])
+  expect(reader.planPlaces()).toMatchObject([{ key: visible[0]!.key, root: '/w/rici', name: 'rici' }])
+  terminal.status = 'running'
+  expect(reader.read('operator').places).toEqual([])
+  expect(reader.planPlaces()).toEqual([])
+  expect(store.list()).toHaveLength(2)
+})

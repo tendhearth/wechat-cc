@@ -50,6 +50,7 @@ export interface EvalPlanCall {
   title: string
   project: string | null
   resolvedProject: string | null
+  wouldRegister?: true
   legs: Array<{ executor: string; brief: string }>
   error?: string
 }

@@ -6,12 +6,17 @@ import { shareName } from '../../domain/matters/share-scope'
 import { redactSecrets } from '../../domain/cli-transcript'
 
 /** 三个对话通道用同一份预览；先打码，再截断。 */
-export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, requestId: string, title?: string, resolved?:PlanTarget): string {
+export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, requestId: string, title?: string, resolved?:MatterPlanPreview): string {
   if(/(?:^|__)matter_plan$/.test(tool)&&input&&typeof input==='object'){
     const plan=input as {title?:unknown;target?:unknown;legs?:unknown}
     if(Array.isArray(plan.legs)&&plan.legs.length>=1&&plan.legs.length<=6){
       const clip=(v:unknown,n:number)=>{const s=redactPreviewText(redactSecrets(typeof v==='string'?v:JSON.stringify(v)??'')).replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n-1)+'…':s}
-      return `${provider} · matter_plan [approval:${requestId}]\n${plan.legs.length===1?'确认交办':'确认拆法'}：${clip(plan.title,120)}\n工作区：${clip(resolved?`${resolved.projectName}（${resolved.projectPath}）`:plan.target,320)}${resolved?.target.kind==='project'&&resolved.target.isolation==='worktree'?`\n独立工作区 · 起点：${clip(resolved.target.base??'项目默认分支',80)}`:''}\n`+plan.legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,64)}：${clip(l?.brief,Math.min(400,Math.floor(1300/(plan.legs as unknown[]).length)))}`}).join('\n')+(plan.legs.length===1?'\n批准后开工。':'\n批准后按此顺序接力；失败或提问就停。')
+      const legs=resolved?.legs??plan.legs
+      const showPath=(path:string)=>redactPreviewText(redactSecrets(path)).replace(/\r/g,'\\r').replace(/\n/g,'\\n')
+      const workspace=resolved?.registrationPath
+        ? `${clip(resolved.projectName,100)}（${showPath(resolved.registrationPath)}${resolved.projectPath===resolved.registrationPath?'':`，由 ${showPath(resolved.projectPath)} 指过去`}）· 还没登记，批准后登记为工作项目`
+        : clip(resolved?`${resolved.projectName}（${resolved.projectPath}）`:plan.target,320)
+      return `${provider} · matter_plan [approval:${requestId}]\n${plan.legs.length===1?'确认交办':'确认拆法'}：${clip(plan.title,120)}\n工作区：${workspace}${resolved?.target.kind==='project'&&resolved.target.isolation==='worktree'?`\n独立工作区 · 起点：${clip(resolved.target.base??'项目默认分支',80)}`:''}\n`+legs.map((leg,i)=>{const l=leg as {executor?:unknown;brief?:unknown};return `第 ${i+1} 棒 · ${clip(l?.executor,64)}：${clip(l?.brief,Math.min(400,Math.floor(1300/(plan.legs as unknown[]).length)))}`}).join('\n')+(plan.legs.length===1?'\n批准后开工。':'\n批准后按此顺序接力；失败或提问就停。')
     }
   }
   if(/(?:^|__)matter_share$/.test(tool)&&input&&typeof input==='object'){
@@ -111,7 +116,7 @@ export async function prepareChatApprovalPrompt(provider:string,tool:string,inpu
   if(tool==='mcp__wechat__matter_plan'&&channel.resolveMatterPlan){
     try{
       resolved=await channel.resolveMatterPlan(input,chatId,provider.toLowerCase())
-      if(input&&typeof input==='object'){
+      if(!resolved.registrationPath&&input&&typeof input==='object'){
         const args=input as Record<string,unknown>
         delete args.project;delete args.isolation;delete args.base
         args.target=resolved.target
@@ -120,7 +125,7 @@ export async function prepareChatApprovalPrompt(provider:string,tool:string,inpu
     }catch(error){
       const code=error instanceof Error?error.message:'matter_plan_failed'
       const details=error instanceof PlanInputError?error:undefined
-      throw Error(matterToolFailure(code,false,'plan',details?.projects,details?.executors,details?.defaultUnavailableMessage).message)
+      throw Error(matterToolFailure(code,false,'plan',details?.projects,details?.executors,details?.defaultUnavailableMessage,details?.candidateNames,details?.placeChoices).message)
     }
   }
   return renderChatApprovalPrompt(provider,tool,input,requestId,title,resolved)

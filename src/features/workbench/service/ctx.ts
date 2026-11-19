@@ -41,6 +41,7 @@ export interface ServiceDeps {
   unattendedAck?: { get(): number | null; set(at: number): void }
   /** 原生历史读取器(claude / codex):list 只报名字,native 域真读。 */
   nativeHistory?: Partial<Record<NativeHistoryProvider, NativeHistoryReader>>
+  planPlaces?:()=>readonly import('../../../adapters/workbench/matter-plan-input').PlanPlace[]
   planConversation?: (caller:import('../../../adapters/workbench/matter-plan-input').PlanCaller)=>import('../../../adapters/workbench/matter-plan-input').PlanConversation|null
   registeredProjects?: () => Array<{alias:string;path:string}>
   defaultProvider?: string
