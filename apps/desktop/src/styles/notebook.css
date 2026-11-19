@@ -103,6 +103,8 @@
 
 .notebook-meta, #notebook-pane .notebook-meta button { font-size: 14px; }
 .notebook-meta button { display: block; text-decoration: underline; text-underline-offset: 4px; }
+/* 「接着你……那一条」是界面上的按钮,不是 CC 写的字:不跟着 CC 的笔走(字体、斜体都用页面自己的)。 */
+#notebook-pane .notebook-meta button { font-family: var(--th-font-serif); font-style: normal; }
 .notebook-pending { color: var(--th-ink-soft); font-size: 13px; }
 
 #notebook-pane .notebook-strike {

@@ -169,7 +169,12 @@ test('两个人的字落在同一行距，CC 落款可翻到旧页，翻页跳�
   }))).toEqual([0, 0])
 
   await expect(page.getByRole('button', { name: '后一页' })).toBeDisabled()
-  await page.getByRole('button', { name: '接着你 10 月 28 日那一条' }).click()
+  // 这个按钮是界面的字,不跟着 CC 的笔走:不斜,字体和主人那一列一样。
+  const refButton = page.getByRole('button', { name: '接着你 10 月 28 日那一条' })
+  await expect(refButton).toHaveCSS('font-style', 'normal')
+  expect(await refButton.evaluate(node => getComputedStyle(node).fontFamily))
+    .toBe(await page.locator('#notebook-write').evaluate(node => getComputedStyle(node).fontFamily))
+  await refButton.click()
   await expect(page.getByText('第一笔', { exact: true })).toBeInViewport()
   await expect.poll(() => reads.map(query => query.get('day'))).toEqual([pageDay, october])
   await expect(page.locator('#notebook-date')).toHaveText('10 月 28 日')
