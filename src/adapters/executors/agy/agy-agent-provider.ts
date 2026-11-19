@@ -12,7 +12,7 @@
  */
 import { compilePolicy } from '../../../domain/policy'
 import { tmpdir } from 'node:os'
-import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type SpawnContext } from '../../../ports/agent-provider'
+import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type CheapEvalOptions, type SpawnContext } from '../../../ports/agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
 import { makeTurnEmitter } from '../turn-emitter'
 import { agyErrorCode } from './agy-errors'
@@ -308,11 +308,11 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
   // 后台一次性评估用的模型名被 agy 拒了 ⇒ 换成同档最新的,本进程记住(见 isUnknownAgyModel)
   const healedModels = new Map<string, string>()
   const modelFor = (model: string) => healedModels.get(model) ?? model
-  async function evalHealing(model: string, prompt: string, turnTimeoutMs: number): Promise<string> {
+  async function evalHealing(model: string, prompt: string, turnTimeoutMs: number, singleAttempt = false): Promise<string> {
     const current = modelFor(model)
     try { return await oneShotEval(spawnFn, current, prompt, turnTimeoutMs) }
     catch (err) {
-      if (!isUnknownAgyModel(err)) throw err
+      if (singleAttempt || !isUnknownAgyModel(err)) throw err
       let next: string | null = null
       try { next = pickReplacementModel(current, await listAgyModels(spawnFn)) } catch { /* 列不出来就照原样报错 */ }
       if (!next) throw err
@@ -575,8 +575,8 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
      *  单次 10.3–14.3s,并发两闸门墙钟 12.66s。30s 是留了一倍余量的「慢到
      *  这个程度还算正常」,不是保证。见 AgentProvider.cheapEvalBudgetMs。 */
     cheapEvalBudgetMs: 30_000,
-    async cheapEval(prompt: string): Promise<string> {
-      const text = await evalHealing(CHEAP_EVAL_MODEL, prompt, turnTimeoutMs)
+    async cheapEval(prompt: string, options?: CheapEvalOptions): Promise<string> {
+      const text = await evalHealing(CHEAP_EVAL_MODEL, prompt, turnTimeoutMs, options?.singleAttempt)
       assertNotAuthFailed(text, log, 'agy cheapEval')
       return text
     },

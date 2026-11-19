@@ -326,6 +326,11 @@ const COMPOUND = /[;&|><\x60\n\r]|\$\(/
 /** 会执行别的程序或写文件的选项(rg --pre、git --output / --ext-diff / --textconv、find -exec …)。 */
 const RISKY_FLAGS = /(?:^|\s)(?:--pre(?:-glob)?\b|--output\b|--ext-diff\b|--textconv\b|--no-index\b|-(?:delete|exec|execdir|ok|okdir|fprint\w*|fls)\b)/
 
+/** Existing low-risk boundary: these shell operands do not establish a project-local target. */
+export function hasUnscopedShellPath(command: string): boolean {
+  return command.trim().split(/\s+/).slice(1).some(w => /^['"]?(?:\/|~|[A-Za-z]:[\\/]|\\)/.test(w) || /(?:^|[\\/'"])\.\.(?:[\\/]|$)/.test(w))
+}
+
 export function isLowRisk(ask: PermissionAsk): boolean {
   switch (toolClass(ask.tool)) {
     case 'read':
@@ -335,8 +340,7 @@ export function isLowRisk(ask: PermissionAsk): boolean {
       const c = ask.command?.trim()
       if (!c || COMPOUND.test(c) || RISKY_FLAGS.test(c)) return false
       const words = c.split(/\s+/)
-      // 参数里出现绝对路径、~、..、盘符 ⇒ 读到项目外去了,不算低风险(2a 10-20:`cat ~/Library/Messages/chat.db`)。
-      if (words.slice(1).some(w => /^['"]?(?:\/|~|[A-Za-z]:[\\/]|\\)/.test(w) || /(?:^|[\\/'"])\.\.(?:[\\/]|$)/.test(w))) return false
+      if (hasUnscopedShellPath(c)) return false
       if (words[0] === 'git') return GIT_READ_VERBS.has(words[1] ?? '')
       return READ_ONLY_HEADS.has(words[0]!)
     }

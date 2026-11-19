@@ -57,6 +57,7 @@ interface Options {
   writerWatchMs?: number
   timeoutMs?: number
   closeTimeoutMs?: number
+  askOpinion?: ServiceCtx['deps']['askOpinion']
   permissionPrompt?: ServiceCtx['deps']['permissionPrompt']
   permissionTimeoutMs?: number; permissionDecide?: ServiceCtx['deps']['permissionDecide']   // 放行规则(2026-10-19);不传 ⇒ 每条权限都问主人
   /** 保留会话安静下来、**没人等这个文件夹**时的空闲自动收工时长(ms;缺省 10 分钟)。
@@ -287,6 +288,7 @@ export function makeWorkbenchService(opts: Options) {
 
   const service={
     ...ledgerDomain,
+    waitingOpinion: (id: string) => opts.askOpinion?.get(id),
     rosterRelay:relayDomain.rosterRelay,
     ...makeShareDomain(ctx,{view:viewDomain}),
     artifactDeliveryStore:store.artifactDeliveries,
@@ -370,6 +372,7 @@ export function makeWorkbenchService(opts: Options) {
       untilDomain.shutdown(),
       Promise.resolve(quotaResumeDomain.shutdown()),
       lifecycleDomain.shutdown(),
+      Promise.resolve(opts.askOpinion?.dispose()),
     ]).then(() => {}),
     changes: {
       /** 这件事每次真的变了(已落库)回调一次。 */

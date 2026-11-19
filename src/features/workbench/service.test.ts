@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,12 +9,14 @@ import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
+import { makeAskOpinion } from './ask-opinion'
 import { markPlannedRestart } from '../../lib/restart-markers'
 
 let root: string, project: string, db: Db, service: WorkbenchService
 let testStore:ReturnType<typeof makeWorkbenchStore>
 const result: AgentEvent = { kind: 'result', sessionId: 'session-one', numTurns: 1, durationMs: 1 }
 function setup(provider: AgentProvider, owner: () => string | null = () => 'owner', permissionTimeoutMs?: number, extra: {
+  askOpinion?: ReturnType<typeof makeAskOpinion>
   timeoutMs?:number; closeTimeoutMs?:number; holdBusy?:(label:string)=>()=>void
   mintSessionToken?:(key:string)=>string; revokeSessionToken?:(key:string)=>void
   writerGroupAlive?:(group:number)=>boolean; writerWatchMs?:number; bootTimeMs?:()=>number
@@ -658,6 +660,79 @@ describe('persistent workbench', () => {
     expect(() => service.resolvePermission(task.id,requestId,'deny')).toThrow('permission_stale')
     await settle(task.id)
     expect(service.detail(task.id).events.some(e => e.kind==='text' && e.text==='allowed')).toBe(true)
+  })
+
+  it('adds advice to a live permission, removes it on answer, and skips a promptly answered follow-up', async () => {
+    const model = vi.fn(async (_prompt: string) => JSON.stringify({
+      say: true, opinion: '先别删。请求要直接删除文件。', reason: '删了可能找不回来',
+    }))
+    const askOpinion = makeAskOpinion({ evaluator: () => model, settings: () => ({ min_interval_ms: 0 }) })
+    setup({ async spawn(_p, ctx) { return {
+      async *dispatch() {
+        await ctx.requestPermission!({ tool: 'Bash', command: 'rm archive.tar', description: '删除旧档案' })
+        await ctx.requestUserInput!({ questions: [{ id: 'q', header: '格式', question: '要哪种报告？', options: [], allowOther: true }] })
+        yield result
+      },
+      async close() {},
+    } } }, undefined, undefined, { askOpinion })
+    const task = create('这一句是主人的原话，不发给判断模型')
+    await expect.poll(() => service.detail(task.id).permissions).toHaveLength(1)
+    const id = service.detail(task.id).permissions[0]!.id
+    expect(service.waitingOpinion(id)).toBeUndefined()
+    await expect.poll(() => service.waitingOpinion(id), { timeout: 4_000 }).toEqual({
+      ccOpinion: '先别删。请求要直接删除文件。', questionReason: '删了可能找不回来',
+    })
+    expect(model.mock.calls[0]![0]).not.toContain('这一句是主人的原话')
+    service.resolvePermission(task.id, id, 'deny')
+    expect(service.waitingOpinion(id)).toBeUndefined()
+    await expect.poll(() => service.detail(task.id).questions).toHaveLength(1)
+    const questionId = service.detail(task.id).questions[0]!.id
+    service.resolveAnswer(task.id, questionId, { q: ['短报告'] })
+    await settle(task.id)
+    expect(service.waitingOpinion(questionId)).toBeUndefined()
+    expect(model).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    {
+      field: 'inline source', text: '检查归档', title: '检查归档',
+      command: 'python3 -c "print(\'uniqueInlineApprovalSource\')"', excluded: 'uniqueInlineApprovalSource', preview: '需要单次批准的命令',
+    },
+    {
+      field: 'explicit bound source', text: '检查归档', title: '检查归档',
+      command: 'printf uniqueBoundApprovalSource', excluded: 'uniqueBoundApprovalSource', preview: '需要单次批准的命令', requiresBoundExecution: true as const,
+    },
+    ...['"Private Clients/payroll.csv"', 'private-payroll.csv', 'private-directory', 'Private\\ Clients/payroll.csv'].map(operand => ({
+      field: `path operand ${operand}`, requiresBoundExecution: undefined, text: '检查归档', title: '检查归档',
+      command: `cat ${operand}`, excluded: operand.includes('Clients') ? 'Clients' : operand, preview: '[路径已打码]',
+    })),
+    {
+      field: 'unclassified command operands', requiresBoundExecution: undefined, text: '检查归档', title: '检查归档',
+      command: 'echo private-payroll.csv', excluded: 'private-payroll.csv', preview: '"category":"命令"',
+    },
+    {
+      field: 'owner-derived title', text: 'uniqueOwnerText 请检查归档',
+      title: 'uniqueOwnerText · @claude', command: 'ls -l', excluded: 'uniqueOwnerText', preview: 'ls -l',
+    },
+  ])('keeps $field out of the opinion prompt', async ({ text, title, command, excluded, preview, requiresBoundExecution }) => {
+    const model = vi.fn(async (_prompt: string) => '{"say":false,"opinion":"","reason":""}')
+    const askOpinion = makeAskOpinion({ evaluator: () => model })
+    setup({ async spawn(_p, ctx) { return {
+      async *dispatch() {
+        await ctx.requestPermission!({ tool: 'Bash', command, description: '检查归档', requiresBoundExecution })
+        yield result
+      },
+      async close() {},
+    } } }, undefined, undefined, { askOpinion })
+    const task = service.create({ path: project, providerId: 'claude', text, title })
+    await expect.poll(() => model.mock.calls.length, { timeout: 4_000 }).toBe(1)
+    const prompt = model.mock.calls[0]![0]
+    expect(prompt).not.toContain(excluded)
+    const data = JSON.parse(prompt.split('\n').at(-1)!)
+    expect(data).not.toHaveProperty('title')
+    expect(data.preview).toContain(preview)
+    service.resolvePermission(task.id, service.detail(task.id).permissions[0]!.id, 'deny')
+    await settle(task.id)
   })
 
   it('shows only the active task permission count in the list and clears it after resolve or cancel', async () => {

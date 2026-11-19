@@ -15,6 +15,21 @@ describe('agent-config', () => {
     }
   })
 
+  it('loads the optional opinion gates and discards an invalid group', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-opinion-'))
+    try {
+      const path = join(dir, 'agent-config.json')
+      const gates = { min_interval_ms: 0, daily_limit: 2, backoff_base_ms: 100, backoff_max_ms: 1_000 }
+      writeFileSync(path, JSON.stringify({ ask_opinion: gates }))
+      expect(loadAgentConfig(dir).ask_opinion).toEqual(gates)
+      expect(parseAgentConfig({ ask_opinion: gates }).ask_opinion).toEqual(gates)
+      writeFileSync(path, JSON.stringify({ ask_opinion: { daily_limit: -1 } }))
+      expect(loadAgentConfig(dir).ask_opinion).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps only well-formed acp_agents entries on load, so a hand-edit typo cannot crash boot (2026-10-10)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-config-acp-'))
     try {

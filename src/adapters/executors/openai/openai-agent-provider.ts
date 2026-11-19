@@ -15,6 +15,7 @@ import {
   type AgentMcpTools,
   type AgentProject,
   type SpawnContext,
+  type CheapEvalOptions,
   assertNotAuthFailed,
 } from '../../../ports/agent-provider'
 import { isAuthErrorCode, withProviderCode } from '../../../lib/provider-error-code'
@@ -118,10 +119,10 @@ function chatHistory(store: ChatSessionStore, initial: ChatSession, log: (tag: s
  *    SAME error is rethrown with a structured `providerErrorCode` attached (openai-error-code), so the registry's
  *    cooldown / llm-health / health classify read the code instead of the text.
  */
-async function runEval(model: APIModel, prompt: string, log: (tag: string, line: string) => void, source: string): Promise<string> {
+async function runEval(model: APIModel, prompt: string, log: (tag: string, line: string) => void, source: string, options?: CheapEvalOptions): Promise<string> {
   let text: string
   try {
-    text = await model.generate([userMessage(prompt)])
+    text = await model.generate([userMessage(prompt)], options?.signal, !options?.singleAttempt)
   } catch (err) {
     // 边界产码,挂在抛出物上原样抛(registry 冷却、llm-health、health 都只看码)。401 只说明凭证被拒,
     // 不说明登录过期(红线 A 的细化),码是 auth_rejected。
@@ -253,15 +254,15 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
    * 2026-10-30 起真机:openaiEvalModel=DeepSeek,记忆整理的提示一长它就想满 4000 token,连败五晚。
    * 只换一次、只在设了别的评估模型时换(同一个模型重试只会再想满一次);同一网关同一 base URL,网络闸门判定不变。
    */
-  async function evalWithFallback(prompt: string, source: string): Promise<string> {
+  async function evalWithFallback(prompt: string, source: string, options?: CheapEvalOptions): Promise<string> {
     const fallback = opts.evalFallbackModel?.() || undefined
     const chosen = opts.evalModel?.() || fallback
     try {
-      return await runEval(opts.makeChatModel(chosen), prompt, log, source)
+      return await runEval(opts.makeChatModel(chosen), prompt, log, source, options)
     } catch (err) {
-      if (!(err instanceof EvalOutputExhaustedError) || chosen === undefined || chosen === (fallback ?? opts.endpoint?.model)) throw err
+      if (options?.signal?.aborted || options?.singleAttempt || !(err instanceof EvalOutputExhaustedError) || chosen === undefined || chosen === (fallback ?? opts.endpoint?.model)) throw err
       log('EVAL_FALLBACK', `${source}: ${err.message} — retrying once with the default model`)
-      return runEval(opts.makeChatModel(fallback), prompt, log, source)
+      return runEval(opts.makeChatModel(fallback), prompt, log, source, options)
     }
   }
 
@@ -329,9 +330,10 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       return session
     },
 
-    async cheapEval(prompt: string): Promise<string> {
+    supportsToolFreeCheapEval: true,
+    async cheapEval(prompt: string, options?: CheapEvalOptions): Promise<string> {
       // Background eval, no per-chat pin — the eval model if one is configured, else the default model.
-      return evalWithFallback(prompt, 'openai cheapEval')
+      return evalWithFallback(prompt, 'openai cheapEval', options)
     },
 
     async strongEval(prompt: string): Promise<string> {

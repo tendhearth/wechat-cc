@@ -362,6 +362,16 @@ describe('createAgyAgentProvider', () => {
     expect(calls[0]!.args).not.toContain('--new-project')
   })
 
+  it('single-attempt cheapEval does not look up a replacement model', async () => {
+    const bad = JSON.stringify({ event: 'result', result: {
+      conversation_id: 'c1', status: 'ERROR', error: 'invalid model selection (--model "gemini-3.8-flash-low")',
+    } })
+    const { spawnFn, calls } = fakeAgy([INIT, bad])
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    await expect(provider.cheapEval!('fixture', { singleAttempt: true })).rejects.toThrow('invalid model selection')
+    expect(calls).toHaveLength(1)
+  })
+
   // 2026-10-13 真机:Google 下线 gemini-3.7-*,写死的模型名让每次后台判断都失败。只在真失败后问一次 `agy models`,换同档最新的。
   it('cheapEval heals an unrecognized model: lists models once, retries with the newest same-tier one, remembers it', async () => {
     const calls: string[][] = []

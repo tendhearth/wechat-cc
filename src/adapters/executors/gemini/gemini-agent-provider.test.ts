@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { GEMINI_CAPABILITIES, tierProfileToGeminiSdkOpts, mcpToolsToFunctionDeclarations, runDispatchLoop, createGeminiAgentProvider, makeGeminiToolGate, type GenaiPort, type McpPort, type GeminiGateDeps, type ToolGate } from './gemini-agent-provider'
+import { describe, it, expect, vi } from 'vitest'
+import { GoogleGenAI } from '@google/genai'
+import { createProviderRegistry } from '../../../app/provider-registry'
+import { GEMINI_CAPABILITIES, tierProfileToGeminiSdkOpts, mcpToolsToFunctionDeclarations, runDispatchLoop, createGeminiAgentProvider, makeGeminiToolGate, type GenaiClient, type GenaiPort, type McpPort, type GeminiGateDeps, type ToolGate } from './gemini-agent-provider'
 import { TIER_PROFILES } from '../../../domain/user-tier'
 import { collectTurn } from '../../../ports/agent-provider'
 
@@ -352,6 +354,39 @@ describe('createGeminiAgentProvider', () => {
     expect(provider.cheapEval).toBeDefined()
     const ans = await provider.cheapEval!('rate 1-10')
     expect(ans).toBe('cheap answer')
+  })
+
+  it('forwards a tool-free evaluation abort to the Gemini HTTP request', async () => {
+    const controller = new AbortController()
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+      }))
+    vi.stubGlobal('fetch', fetch)
+    try {
+      const provider = createGeminiAgentProvider({
+        genai: new GoogleGenAI({ apiKey: 'fixture', vertexai: false, httpOptions: { baseUrl: 'https://offline.invalid' } }) as unknown as GenaiClient,
+        model: 'gemini-flash-latest',
+        systemInstruction: 'fixture session instructions',
+        mcpConnect: async () => { throw new Error('unused') },
+        buildGate: () => async () => ({ allow: false, message: 'unused' }),
+      })
+      const registry = createProviderRegistry({ cheapEvalProvider: 'gemini' })
+      registry.register('gemini', provider, { canResume: () => false })
+      const evaluation = registry.getCheapEval({ toolFreeOnly: true })!('fixture', { signal: controller.signal })
+      void evaluation.catch(() => {})
+      await expect.poll(() => fetch.mock.calls.length).toBe(1)
+      const request = fetch.mock.calls[0]![1]!
+      expect(JSON.parse(request.body as string)).not.toHaveProperty('tools')
+      controller.abort()
+      expect(request.signal?.aborted).toBe(true)
+      await expect(evaluation).rejects.toMatchObject({ name: 'AbortError' })
+      expect(fetch).toHaveBeenCalledTimes(1)
+    } finally {
+      controller.abort()
+      vi.unstubAllGlobals()
+    }
   })
 
   // B1: gemini's wechat MCP child was previously missing session mcpEnv

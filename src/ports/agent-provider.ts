@@ -219,7 +219,15 @@ export type CallTargetKind =
  * ≪ $0.01 per call. Replaces the prior hardcoded `claude-haiku-4-5`
  * callsites in chatroom moderator + companion introspect.
  */
-export type CheapEval = (prompt: string) => Promise<string>
+export interface CheapEvalOptions {
+  /** A caller with a per-call budget can disable provider-internal fallback and retries. */
+  singleAttempt?: boolean
+  signal?: AbortSignal
+  /** Called by the registry after admission, immediately before invoking the provider. */
+  beforeRequest?: () => void
+}
+
+export type CheapEval = (prompt: string, options?: CheapEvalOptions) => Promise<string>
 
 export interface AgentUserQuestion {
   id: string
@@ -499,6 +507,8 @@ export interface AgentProvider {
    * should fall back gracefully (skip the eval-driven feature).
    */
   cheapEval?: CheapEval
+  /** Opt in only if cheapEval with singleAttempt sends one tool-free request and honors signal. */
+  supportsToolFreeCheapEval?: true
   /**
    * 一次 `cheapEval` 调用的**预期上限**(毫秒)。缺省 ⇒ in-process 一档。
    *

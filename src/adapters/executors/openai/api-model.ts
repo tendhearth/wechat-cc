@@ -19,7 +19,7 @@ export interface APIModel{
   /** 一步:先把 `deltas` 读完,再等 `finished`(反过来会和 AI SDK 的 tee 互相等)。`signal` 真的掐掉请求。 */
   stream(messages:ChatMessage[],tools:ToolSpec[],signal:AbortSignal,retryAllowed?:boolean):{deltas:AsyncIterable<TurnDelta>;finished:Promise<StepResult>;readonly requestBytes?:number}
   /** 一次性评估(cheapEval / strongEval):整段文字,开头的 <think> 已剥。 */
-  generate(messages:ChatMessage[],signal?:AbortSignal):Promise<string>
+  generate(messages:ChatMessage[],signal?:AbortSignal,retryAllowed?:boolean):Promise<string>
 }
 
 export interface APIModelOptions extends OpenaiRetryOptions{
@@ -83,10 +83,10 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
   if(!baseURL||!apiKey||!modelId||(maxOutputTokens!==undefined&&(!Number.isSafeInteger(maxOutputTokens)||maxOutputTokens<1||maxOutputTokens>16_384))||!Number.isSafeInteger(maxRetries)||maxRetries<0||maxRetries>2)throw Error('invalid_api_model')
   const frozen=Object.freeze({...options,baseURL,model:modelId,maxOutputTokens})
   const injectedModel=languageModelFactory?.(frozen)
-  const modelFor=(observe:(bytes:number)=>void=()=>{})=>injectedModel??createOpenAICompatible({name:options.providerName??'workbench-api',baseURL,apiKey,includeUsage:true,
+  const modelFor=(observe:(bytes:number)=>void=()=>{},parameterFallback=true)=>injectedModel??createOpenAICompatible({name:options.providerName??'workbench-api',baseURL,apiKey,includeUsage:true,
     // 边界超时(arch backlog #4 第 2 步,§4.4):AI SDK 自己没有请求超时 —— 黑洞地址会一直挂到回合看门狗。
     // 连不上 / 流停住 ⇒ 带 network 码的错误。
-    fetch:usageFetch(makeTimeoutFetch(options.timeouts??openaiFetchTimeoutsFromEnv(),options.fetch),observe,options.beforeRetry) as typeof fetch}).chatModel(modelId)
+    fetch:usageFetch(makeTimeoutFetch(options.timeouts??openaiFetchTimeoutsFromEnv(),options.fetch),observe,options.beforeRetry,parameterFallback) as typeof fetch}).chatModel(modelId)
   const retry=makeOpenaiRetry(modelId,options)
   return{
     stream(messages,toolSpecs,signal,retryAllowed=true){
@@ -170,8 +170,8 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
       }
       return{deltas:deltas(),finished:completion.promise,get requestBytes(){return requestBytes}}
     },
-    async generate(messages,signal=new AbortController().signal){
-      const model=modelFor()
+    async generate(messages,signal=new AbortController().signal,retryAllowed=true){
+      const model=modelFor(undefined,retryAllowed)
       // streamText 而不是 generateText:只实现了流式的端点 / 测试替身也能用,一条路。
       // 显式给 max_tokens:思考型模型(Kimi / GLM 带思考)把思维链也算 completion token,上游默认预算被思考吃光就回
       // content="" + finish_reason=length —— 看起来像模型不回话。
@@ -204,7 +204,7 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
           const lead=raw.trimStart()
           if(finishReason==='length'&&(!visible.trim()||(lead.startsWith('<think>')&&!lead.includes('</think>'))))throw new EvalOutputExhaustedError(modelId,budget)
           return visible
-        }catch(error){attempt.abort(error);if(!await retry(error,retries,outputStarted,signal,options.maxRetries??2))throw error}
+        }catch(error){attempt.abort(error);if(!await retry(error,retries,outputStarted,signal,retryAllowed?(options.maxRetries??2):0))throw error}
         finally{attempt.abort()}
       }
     },

@@ -4,7 +4,7 @@
  */
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
-import type { RosterItemT } from '@wechat-cc/protocol'
+import type { PlaceOpinionT, RosterItemT } from '@wechat-cc/protocol'
 import { buildRoster } from '../../domain/roster'
 import { buildPlaces } from '../../domain/places'
 import { gatherRoster, type RosterReaderDeps } from './reader'
@@ -17,6 +17,7 @@ export const PLACES_WINDOW_MS = 30 * 24 * 3_600_000
 export interface PlacesReaderDeps {
   roster: RosterReaderDeps
   store: PlacesStore
+  opinion?: (requestId: string) => PlaceOpinionT | undefined
   root?: (path: string | null | undefined) => string | null
 }
 
@@ -56,6 +57,10 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     read(scope) {
       const { places, added, now } = collect(scope)
       if (added.length) deps.store.add(added, now)
+      for (const place of places) {
+        const waiting = place.waiting
+        if (waiting?.requestId) Object.assign(waiting, deps.opinion?.(waiting.requestId))
+      }
       const version = createHash('sha256').update(JSON.stringify(places)).digest('hex').slice(0, 16)
       return { places, version }
     },

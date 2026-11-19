@@ -33,6 +33,7 @@ export interface ServiceDeps {
   refusal?: (providerId: string) => { code: string; since: string } | null
   /** 权限卡的等待上限(ms);缺省 WORKBENCH_PERMISSION_TIMEOUT_MS。 */
   permissionTimeoutMs?: number
+  askOpinion?: import('../ask-opinion').AskOpinion
   permissionPrompt?: (title: string, permission: import('../../../ports/workbench').PendingWorkbenchPermission, answer: (decision: import('../../../ports/workbench').PermissionDecision, reason?: string) => boolean, deadline: () => number | null) => (() => void)&{replyLine?:string}
   /** 放行规则(2026-10-19):权限卡登记之前先问;不传 ⇒ 每条都问主人(改造前)。 */
   permissionDecide?: (ask: AskSource) => Promise<{ verdict: 'allow' | 'deny' | 'ask'; by: string }>
