@@ -86,6 +86,7 @@ test('等待卡片钉在上方、跟地方筛选联动、回答后刷新', async
   const scroll = page.locator('#converse-scroll')
   await expect(cards).toHaveCount(2)
   await expect(card).toContainText('旧表留着吗？')
+  await expect(card).toBeVisible()
   const [cardBox, headingBox, scrollBox] = await Promise.all([card.boundingBox(), heading.boundingBox(), scroll.boundingBox()])
   expect(cardBox!.y).toBeGreaterThanOrEqual(headingBox!.y + headingBox!.height)
   expect(cardBox!.y + cardBox!.height).toBeLessThanOrEqual(scrollBox!.y)

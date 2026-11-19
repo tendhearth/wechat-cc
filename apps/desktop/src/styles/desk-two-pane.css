@@ -12,8 +12,10 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] #dash-global-rail {
   grid-area: 1 / 1 / -1 / 2;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 44px auto minmax(0, 1fr) auto;
   align-items: stretch;
+  justify-content: normal; /* 原页头是 space-between,留着会把这一列缩成内容宽 */
   padding: 0;
   border: 0;
   border-right: 1px solid var(--th-hair);
@@ -82,8 +84,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .place-more { width: 28px; height: 28px; right: 2px; }
 
 [data-desk-wide] .dash-topbar nav {
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 18px;
   padding: 12px 20px 14px;
   border-top: 1px solid var(--th-hair);
 }
@@ -92,6 +94,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .topbar-more:has(.active) summary { color: var(--th-ink); background: transparent; }
 [data-desk-wide] .topbar-more > div { inset: auto 0 calc(100% + 8px) auto; gap: 4px; padding: 8px; }
 [data-desk-wide] .topbar-more[open] #topbar-roster { display: block !important; }
+[data-desk-wide] .dash-topbar nav .topbar-more { margin-left: auto; }
+[data-desk-wide] .topbar-more > div button { justify-self: stretch; text-align: left; }
 
 [data-desk-wide] .dashboard .dash-main { grid-area: 2 / 2; }
 [data-desk-wide] .desk-heading {
@@ -135,8 +139,10 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 }
 .desk-waiting-card {
   display: grid;
-  gap: 8px;
-  padding: 14px 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 10px 12px 10px 16px;
   border: 1px solid var(--th-hair);
   border-radius: 10px;
   background: var(--th-paper);
@@ -144,9 +150,10 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 .desk-waiting-question { display: grid; grid-template-columns: 7px auto minmax(0, 1fr); gap: 10px; align-items: baseline; font-size: 15px; overflow-wrap: anywhere; }
 .desk-waiting-question strong { max-width: 18ch; font-weight: var(--th-weight-desk-emphasis); }
 .desk-waiting-question .place-dot { background: var(--th-accent); align-self: start; margin-top: 8px; }
-.desk-waiting-card .place-ask { justify-content: flex-end; padding: 0; }
+.desk-waiting-card .place-ask { justify-content: flex-end; flex-wrap: nowrap; padding: 0; }
 .desk-waiting-card .place-ask button { min-height: 34px; font-size: 14.5px; }
 .desk-waiting > .desk-text-button { justify-self: start; min-height: 32px; }
+.desk-waiting-card > :only-child { grid-column: 1 / -1; }
 
 [data-desk-wide] .cc-now-pane[data-now="chat"] .converse-scroll {
   box-sizing: border-box;
@@ -175,13 +182,16 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .converse-reply-parts .converse-msg + .converse-msg .desk-speaker { visibility: hidden; }
 [data-desk-wide] .converse-reply-parts { gap: 14px; }
 [data-desk-wide] .converse-msg > .converse-terminal { margin-left: 48px; }
-[data-desk-wide] .converse-reply-parts > .converse-place-label { margin-left: 48px; }
+[data-desk-wide] .converse-reply-parts > .converse-place-label { margin-left: 48px; margin-bottom: -11px; }
+[data-desk-wide] .converse-cc-body > .converse-place-label { margin-bottom: calc(3px - var(--th-space-s)); line-height: 22px; }
+[data-desk-wide] .converse-place-label { font-weight: var(--th-weight-desk-emphasis); }
 [data-desk-wide] .converse-user-body { align-items: flex-start; }
 [data-desk-wide] .converse-user-images { justify-content: flex-start; }
 [data-desk-wide] #converse-scroll :is(.converse-bubble, .converse-cc-body, .converse-user-body) { max-width: 100%; }
 [data-desk-wide] #converse-scroll .converse-bubble {
   padding: 0;
   background: transparent;
+  font-family: var(--th-font-serif);
   font-size: 16px;
   line-height: 1.75;
 }
@@ -189,6 +199,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .converse-msg > .voice-replay-btn { align-self: flex-end; margin-left: 6px; }
 [data-desk-wide] #converse-root .converse-compose { width: calc(min(100%, 720px) - 64px); min-height: 58px; margin: 0 auto 18px; border-radius: 12px; }
 [data-desk-wide] .converse-compose button.converse-recipient { color: var(--th-accent); }
+[data-desk-wide] #converse-root .converse-compose :is(textarea, button.converse-recipient) { font-family: var(--th-font-serif); }
 
 [data-desk-wide] #roster-aside[data-docked] { grid-area: 2 / 3; }
 [data-desk-wide] .dashboard #roster-aside[data-open]:not([data-docked]) {
