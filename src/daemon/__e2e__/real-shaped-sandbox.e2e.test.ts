@@ -16,6 +16,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { routesForToken } from '../internal-api/route-tiers'
+import { REQUEST_SCHEMAS } from '../internal-api/schema'
+import { encodeNativeHistoryKey } from '../../adapters/workbench/native-history'
 import { removeTempDir } from '../../lib/test-temp'
 import { deviceIdOf } from '../../features/phone/device-store'
 import { SANDBOX_OWNER, startRealShapedDaemon, type RealShapedDaemon, type RealShapedOpts } from './real-shaped'
@@ -135,16 +138,24 @@ const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'spee
 
 /** 桌面 / CLI 那一侧:operator 令牌(工作台、记忆页那一串路由走它)。 */
 async function desktop<T = Record<string, unknown>>(method: 'GET' | 'POST', path: string, body?: unknown, credential:'operator'|'trusted'='operator'): Promise<{ status: number; body: T }> {
-  const info = JSON.parse(readFileSync(join(d.stateDir, 'internal-api-info.json'), 'utf8')) as { baseUrl: string; operatorTokenFilePath: string; tokenFilePath:string }
-  const r = await fetch(`${info.baseUrl}${path}`, {
-    method,
-    headers: { authorization: `Bearer ${readFileSync(credential==='trusted'?info.tokenFilePath:info.operatorTokenFilePath, 'utf8').trim()}`, 'content-type': 'application/json' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  })
+  const r = await desktopRequest(method, path, body, credential)
   return { status: r.status, body: await r.json() as T }
 }
 
+function desktopRequest(method: 'GET' | 'POST', path: string, body: unknown, credential: 'operator' | 'trusted', signal?: AbortSignal): Promise<Response> {
+  const info = JSON.parse(readFileSync(join(d.stateDir, 'internal-api-info.json'), 'utf8')) as { baseUrl: string; operatorTokenFilePath: string; tokenFilePath:string }
+  return fetch(`${info.baseUrl}${path}`, {
+    method, signal,
+    ...(signal ? { redirect: 'error' as const } : {}),
+    headers: { authorization: `Bearer ${readFileSync(credential==='trusted'?info.tokenFilePath:info.operatorTokenFilePath, 'utf8').trim()}`, 'content-type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+}
+
 let d: RealShapedDaemon
+
+const OPERATOR_GET_ROUTES = [...routesForToken('operator')].filter(key => key.startsWith('GET '))
+const SWEEP_REQUEST_TIMEOUT_MS = 5_000
 
 /** 重启后发一句、等回话。Windows runner 上这一步偶发红过两次(一次什么都没发、一次回了「没接住」),原因没查实:
  *  所以遇到「没接住」立刻失败,并把现场的几个事实一起打出来,下次红了能定位是哪一路取消的。 */
@@ -480,6 +491,103 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(review.status).toBe(200)
     expect(review.body.reviews.flatMap(r => r.files ?? []).map(f => f.path)).toContain('NOTE.md')
   })
+
+  it('operator GET sweep: registered reads respond on the full daemon', async () => {
+    const missingId = '00000000'
+    const missingUuid = '00000000-0000-4000-8000-000000000000'
+    const taskId = d.query<{ id: string }>('SELECT id FROM workbench_tasks WHERE owner_chat_id = ? ORDER BY created_at LIMIT 1', d.owner)[0]?.id ?? missingId
+    const topicId = d.query<{ id: string }>('SELECT id FROM threads WHERE chat_id = ? ORDER BY id LIMIT 1', d.owner)[0]?.id ?? 'sandbox-missing-topic'
+    const chat = encodeURIComponent(d.owner)
+    const task = `id=${taskId}`
+    const artifact = `${task}&artifactId=${missingUuid}`
+    const receipt = `requestId=${missingUuid}`
+    // 对真实独立工作区做回退预览会写检查点，用不存在的任务在那一步之前返回。
+    const rewind = `id=${missingId}&artifactId=${missingUuid}&to=start`
+    const samples: Record<string, string | { path: string }> = {
+      '/v1/matter': `id=${missingId}`, // 读存在的事项会记「桌面看过」
+      '/v1/matter/owner-chat/file': 'id=sandbox-missing-message&i=0',
+      '/v1/matter/owner-chat/search': 'q=' + encodeURIComponent('沙盒你好'),
+      '/v1/matter/notes': `matter=${taskId}`,
+      '/v1/matter/artifact': artifact,
+      '/v1/matter/permission-script': `${task}&requestId=${missingUuid}&path=README.md&sha256=${'0'.repeat(64)}&offset=0`,
+      '/v1/matter/create-receipt': receipt,
+      '/v1/matter/rewind': rewind,
+      '/v1/matter/changes': task,
+      '/v1/matter/shares': `matter=${taskId}`,
+      '/v1/matter/talk': `matter=${taskId}`,
+      '/v1/workbench/entry-receipt': receipt,
+      '/v1/workbench/models': `providerId=claude&path=${encodeURIComponent(project)}`,
+      '/v1/workbench/attachment': `taskId=${taskId}&id=${missingUuid}`,
+      '/v1/workbench/sessions': `providerId=claude&cwd=${encodeURIComponent(project)}`,
+      '/v1/workbench/session': `key=${encodeNativeHistoryKey('claude', missingUuid)}`,
+      '/v1/workbench/task': `${task}&since_cursor=0&wait_ms=0`, // 不挂起，也不记「桌面看过」
+      '/v1/workbench/artifact': artifact,
+      '/v1/workbench/review': task,
+      '/v1/workbench/rewind-preview': rewind,
+      '/v1/workbench/handoff': `taskId=${taskId}&handoffId=${missingUuid}`,
+      '/v1/memory/topics/detail': `id=${encodeURIComponent(topicId)}`,
+      '/v1/subscribe/topics': 'wait_ms=0',
+      '/v1/self-change/decision': 'hash=' + '0'.repeat(64),
+      '/v1/memory/file': `user_id=${chat}&path=memory.md`,
+      '/v1/observations/list': `chat_id=${chat}`,
+      '/v1/milestones/list': `chat_id=${chat}`,
+      '/v1/events/list': `chat_id=${chat}`,
+      '/v1/dialogue/timeline': `chat_id=${chat}`,
+      '/v1/dialogue/threads': `chat_id=${chat}`,
+      '/v1/dialogue/thread': `id=${encodeURIComponent(topicId)}`,
+      '/v1/dialogue/search': `chat_id=${chat}&q=${encodeURIComponent('沙盒你好')}`,
+      '/v1/cli/activity': 'session_id=sandbox-missing-session',
+    }
+    const excluded: Record<string, string> = {
+      '/v1/settings/link': '会启动 LAN 设置面板并轮换单活令牌。',
+    }
+    const allowedUnavailable: Record<string, { error: string; why: string }> = {}
+    const KNOWN_FAILING: Record<string, { status: number; error: string; why: string }> = {}
+
+    const paths = new Set(OPERATOR_GET_ROUTES.map(key => key.slice(4)))
+    for (const path of Object.keys({ ...samples, ...excluded, ...allowedUnavailable, ...KNOWN_FAILING })) {
+      expect(paths.has(path), `GET ${path}: 清理已不在 operator 路由表中的扫测登记`).toBe(true)
+    }
+
+    const failures: string[] = []
+    for (const key of OPERATOR_GET_ROUTES) {
+      const path = key.slice(4)
+      if (excluded[path]) continue
+      const sample = samples[path]
+      const needsSample = `${key}: 给它补一个样例`
+      if (!sample && (/[:*{}]/.test(path) || path.endsWith('/'))) {
+        failures.push(needsSample)
+        continue
+      }
+      const requestPath = typeof sample === 'string' ? `${path}?${sample}` : sample?.path ?? path
+      const signal = AbortSignal.timeout(SWEEP_REQUEST_TIMEOUT_MS)
+      let status: number | undefined
+      try {
+        const response = await desktopRequest('GET', requestPath, undefined, 'operator', signal)
+        status = response.status
+        // 读完整响应也受同一个截止时间约束，不把响应内容带进失败输出。
+        const raw = await response.text()
+        const body = response.headers.get('content-type')?.includes('application/json') && raw
+          ? JSON.parse(raw) as { error?: unknown; method?: unknown; url?: unknown } | null : null
+        const error = typeof body?.error === 'string' ? body.error : ''
+        const result = `${key}: ${status}${error ? ` ${JSON.stringify(error)}` : ''}`
+        // 分发器专门带 method 和 url。处理器查无回执等也可能用 404 not_found。
+        const unmounted = status === 404 && error === 'not_found' && body?.method === 'GET' && typeof body.url === 'string'
+        const expected = KNOWN_FAILING[path]
+        const unavailable = allowedUnavailable[path]
+        if (expected?.status === status && expected.error === error) continue
+        if (status === 503 && unavailable?.error === error) continue
+        if (expected || unavailable || unmounted || status >= 500) failures.push(result)
+        // 老处理器有自己的参数校验，未登记查询 schema 时用空查询的拒绝来发现缺样例。
+        if (!sample && (REQUEST_SCHEMAS[key]?.safeParse({}).success === false || status === 400 || status === 422)) {
+          failures.push(`${result}。 ${needsSample}`)
+        }
+      } catch {
+        failures.push(`${key}: ${status ?? '无状态码'} ${signal.aborted ? '超过 5 秒' : '请求或读取响应失败'}`)
+      }
+    }
+    expect(failures).toEqual([])
+  }, SWEEP_REQUEST_TIMEOUT_MS * (OPERATOR_GET_ROUTES.length + 1))
 
   it('guest path: a stranger writes ⇒ neutral reply + the owner is asked; owner approves ⇒ the stranger is onboarded and talks to CC in a locked-down session that carries none of the owner\'s memory', async () => {
     const before = spawnOptions.length
