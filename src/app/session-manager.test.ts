@@ -90,6 +90,29 @@ describe('SessionManager', () => {
     expect(invalidated).toContain('claude/a/chat-2')
   })
 
+  it('marks only an authenticated owner admin chat for notebook tools', async () => {
+    const markers: Array<string | undefined> = []
+    const registry = registryWithProvider({
+      async spawn(_project, context) {
+        markers.push(context.mcpEnv?.WECHAT_NOTEBOOK_OWNER)
+        return makeFakeSession({ events: [] })
+      },
+    })
+    const manager = new SessionManager({
+      registry, maxConcurrent: 2, idleEvictMs: 60_000,
+      mintSessionToken: () => 'test-token',
+      isNotebookOwnerChat: chatId => chatId === 'owner',
+    })
+    const req = { path: '/p', providerId: 'claude', permissionMode: 'strict' } as const
+    try {
+      await manager.acquire({ ...req, alias: 'a', chatId: 'other', tierProfile: TIER_PROFILES.admin })
+      await manager.acquire({ ...req, alias: 'b', chatId: 'owner', tierProfile: TIER_PROFILES.guest })
+      await manager.acquire({ ...req, alias: 'c', chatId: 'owner', tierProfile: TIER_PROFILES.admin, oneoff: true })
+      await manager.acquire({ ...req, alias: 'd', chatId: 'owner', tierProfile: TIER_PROFILES.admin })
+      expect(markers).toEqual([undefined, undefined, undefined, '1'])
+    } finally { await manager.shutdown() }
+  })
+
   it('revokes the minted token when provider.spawn throws (no registry leak on the error path)', async () => {
     const minted: string[] = []
     const invalidated: string[] = []

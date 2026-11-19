@@ -34,7 +34,7 @@ const DEFAULT_OK_TTL_MS = 60_000
 const DEFAULT_FAIL_TTL_MS = 15_000
 const DEFAULT_TIMEOUT_MS = 3_000
 
-export function makeCheapEvalPreflight(deps?: CheapEvalPreflightDeps): (id: string) => Promise<boolean> {
+export function makeCheapEvalPreflight(deps?: CheapEvalPreflightDeps): (id: string, signal?: AbortSignal) => Promise<boolean> {
   const now = deps?.now ?? (() => Date.now())
   const okTtlMs = deps?.okTtlMs ?? DEFAULT_OK_TTL_MS
   const failTtlMs = deps?.failTtlMs ?? DEFAULT_FAIL_TTL_MS
@@ -47,11 +47,11 @@ export function makeCheapEvalPreflight(deps?: CheapEvalPreflightDeps): (id: stri
   const cache = new Map<string, { ok: boolean; until: number }>()
   const inFlight = new Map<string, Promise<boolean>>()
 
-  async function probe(url: string): Promise<boolean> {
+  async function probe(url: string, signal?: AbortSignal): Promise<boolean> {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), timeoutMs)
     try {
-      await fetcher(url, ctrl.signal)
+      await fetcher(url, signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal)
       return true
     } catch {
       return false
@@ -60,19 +60,24 @@ export function makeCheapEvalPreflight(deps?: CheapEvalPreflightDeps): (id: stri
     }
   }
 
-  return async (id: string): Promise<boolean> => {
+  return async (id: string, signal?: AbortSignal): Promise<boolean> => {
+    signal?.throwIfAborted()
     const ep = endpointFor(id, deps?.overrides?.())
     if (!ep) return true // 没有端点知识就不拦 — 让真实调用自己说话
     const cached = cache.get(ep.url)
     if (cached && cached.until > now()) return cached.ok
-    const running = inFlight.get(ep.url)
-    if (running) return running
-    const p = (async () => {
-      const ok = await probe(ep.url)
+    const check = async () => {
+      const ok = await probe(ep.url, signal)
+      signal?.throwIfAborted()
       cache.set(ep.url, { ok, until: now() + (ok ? okTtlMs : failTtlMs) })
       if (!ok) deps?.log?.(`preflight: ${ep.label} (${ep.url}) 不可达 — 后台评估暂避`)
       return ok
-    })().finally(() => { inFlight.delete(ep.url) })
+    }
+    // A cancellable call owns its probe. Aborting it cannot disrupt other callers.
+    if (signal) return check()
+    const running = inFlight.get(ep.url)
+    if (running) return running
+    const p = check().finally(() => { inFlight.delete(ep.url) })
     inFlight.set(ep.url, p)
     return p
   }

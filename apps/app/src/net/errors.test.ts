@@ -107,6 +107,7 @@ describe('transportErrorCode(协议客户端拒绝的原因 → BackendCode)', (
  * 下面这些是有意按通用说法走的(invalid_* ⇒「不对」,其余 ⇒「没做成」);表里加了手机码 ⇒ 要么在 errors.ts 里给一句,要么加进这里。
  */
 const GENERIC = new Set([
+  'notebook_invalid', // 无效输入用已有的通用文案。
   // 交办被拒
   'api_task_attachment_invalid', 'api_task_attachment_unsupported', 'api_task_input_invalid', 'attachment_changed', 'entry_expired', 'project_stale',
   'unattended_ack_required', 'workbench_attachments_unsupported', 'workbench_execution_unsupported',
@@ -135,6 +136,11 @@ describe('工作台错误码表 × App(daemon 在手机上会回的码都有说�
 })
 
 it.each([
+  [400, 'notebook_invalid', 'invalid'],
+  [403, 'notebook_not_owner', 'unavailable'],
+  [404, 'notebook_not_found', 'not_found'],
+  [413, 'notebook_page_too_large', 'too_large'],
+  [503, 'notebook_unavailable', 'unavailable'],
   [428, 'script_approval_required', 'scripts_unapproved'],
   [404, 'not_found', 'not_found'],
   [400, 'invalid_request', 'invalid'],

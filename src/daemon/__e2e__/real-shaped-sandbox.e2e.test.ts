@@ -38,7 +38,7 @@ import type { FakeSdkScript } from './fake-sdk'
 const ALLOWED_NOT_OK: Record<string, string> = {}
 
 /** 沙盒专门开上的那几样 —— 它们 ok 才说明沙盒还是「真实形状」(配置漂了、开关改名了,这里先红)。 */
-const MUST_BE_ON = ['knowledge', 'social', 'mailbox-poller', 'pairing', 'a2a-server', 'yi', 'self-restart', 'phone', 'letters', 'companion', 'guard', 'cli-upgrade']
+const MUST_BE_ON = ['knowledge', 'social', 'mailbox-poller', 'pairing', 'a2a-server', 'yi', 'self-restart', 'phone', 'letters', 'companion', 'guard', 'cli-upgrade', 'notebook']
 
 /**
  * 真机上本来就会往外打、沙盒的网络围栏(fake-boundaries.ts 的 fenceNetwork)当场拦下的请求。不在这张表里的往外请求 = 红:

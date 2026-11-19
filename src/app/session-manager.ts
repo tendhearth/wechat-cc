@@ -52,6 +52,8 @@ export interface SessionManagerOptions {
    * acquire's tierProfile. Paired with `invalidateSessionToken` at release.
    */
   mintSessionToken?: (tier: UserTier, sessionKey: string, limits?: { routeAllow: ReadonlySet<string> }) => string
+  /** Determines tool visibility. The notebook routes separately authorize the session bearer. */
+  isNotebookOwnerChat?: (chatId: string) => boolean
   /**
    * Assemble the per-session system prompt for (providerId, tierProfile,
    * chatId), called ONCE per real spawn (cache miss) — the daemon owns
@@ -269,6 +271,7 @@ export class SessionManager {
     // dispatch into the registry.
     const tokenKey = `${req.providerId}/${req.alias}/${req.chatId}`
     const tier = tierNameFromProfile(req.tierProfile)
+    const notebookOwner = tier === 'admin' && !req.oneoff && this.opts.isNotebookOwnerChat?.(req.chatId)
     // 代答只直接输出，不授予 CC 的记忆、模式切换、社交等 API 能力。
     const sessionToken = req.oneoff
       ? this.opts.mintSessionToken?.(tier, tokenKey, { routeAllow: new Set() })
@@ -276,6 +279,9 @@ export class SessionManager {
     // Compute the per-spawn MCP env overlay ONCE here (the daemon owns the
     // tier→env policy); providers merge it blindly into their MCP children.
     const mcpEnv = sessionAuthEnv(tier, sessionToken)
+    if (notebookOwner && sessionToken) {
+      mcpEnv.WECHAT_NOTEBOOK_OWNER = '1'
+    }
     // Assemble the per-session system prompt the same place + same way as
     // mcpEnv: daemon-owned, computed once per spawn, forwarded for the provider
     // to inject. Conditionally spread so non-wired callers (tests/embeddings)

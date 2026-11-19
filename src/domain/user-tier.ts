@@ -307,6 +307,8 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     if (sub === 'provider_switch') return 'mode_switch'
     // Explicit write mapping — must NOT fall through to the fs_read default
     // below: set_chat_pref mutates chat_prefs.json (care level / split).
+    if (sub === 'notebook_jot') return 'memory_write'
+    if (sub === 'notebook_read') return 'daemon_introspect'
     if (sub === 'set_chat_pref') return 'memory_write'
     // Daemon-control family — classified by PREFIX (not exact name) so a future
     // rename or sibling tool (e.g. diagnostic_foo, daemon_bar, session_baz)

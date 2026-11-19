@@ -59,6 +59,10 @@ import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } fro
 /** 一件事上的动作(P3e,`/v1/matter/<动词>`):正文上限同它们的 `/v1/workbench/*` 双胞胎(128 KiB)。 */
 const MATTER_ACTION_PATHS: ReadonlySet<string> = new Set(DESKTOP_ROUTE_ALIASES.map(r => r.to.slice(r.to.indexOf(' ') + 1)))
 
+// 4,000 escaped supplementary code points (12 bytes each), 128 escaped
+// clientId code units (6 bytes each), plus JSON keys, punctuation and spacing.
+const NOTEBOOK_BODY_MAX_BYTES = 48 * 1024
+
 export type {
   InternalApi,
   InternalApiDeps,
@@ -243,6 +247,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
   }): Promise<DispatchResult> {
     const { entry, method, url, rawUrl, caller } = inp
     const routeKey = `${method} ${url.pathname}`
+    const isNotebook = url.pathname === '/v1/notebook' || url.pathname.startsWith('/v1/notebook/')
     if (!entryAccepts(entry, caller.origin)) return { status: 401, body: { error: 'unauthorized' } }
 
     if (entry === 'panel') {
@@ -307,10 +312,13 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     let body: unknown = null
     if (method === 'POST') {
       try {
-        body = await inp.io.readBody(url.pathname==='/v1/workbench/attachment'?12*1024*1024:url.pathname.startsWith('/v1/workbench/')||MATTER_ACTION_PATHS.has(url.pathname)?128*1024:undefined)
+        body = await inp.io.readBody(isNotebook ? NOTEBOOK_BODY_MAX_BYTES
+          : url.pathname === '/v1/workbench/attachment' ? 12 * 1024 * 1024
+          : url.pathname.startsWith('/v1/workbench/') || MATTER_ACTION_PATHS.has(url.pathname) ? 128 * 1024
+          : undefined)
       } catch (err) {
         if(err instanceof Error&&err.message==='request_body_too_large') return { status: 413, body: { error: 'request_body_too_large' }, closeConnection: true }
-        return { status: 400, body: { error: 'malformed_json', detail: errMsg(err) } }
+        return { status: 400, body: { error: 'malformed_json', ...(isNotebook ? {} : { detail: errMsg(err) }) } }
       }
     }
 
@@ -322,6 +330,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
         : Object.fromEntries(url.searchParams.entries())
       const parsed = reqSchema.safeParse(input)
       if (!parsed.success) {
+        if (isNotebook) return { status: 400, body: { error: 'notebook_invalid' } }
         deps.log?.('INTERNAL_API', `400 ${routeKey} schema mismatch`, {
           path: routeKey,
           issues: parsed.error.issues,
@@ -410,6 +419,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     } catch (err) {
       // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
       // 不是 500,daemon 也不退。
+      if (isNotebook) return { status: 500, body: { error: 'internal' } }
       const code = (err as { code?: unknown })?.code
       if (code === 'config_unreadable' || code === 'config_busy') {
         deps.log?.('INTERNAL_API', `409 ${method} ${rawUrl}: ${errMsg(err)}`, { event: 'config_write_refused', method, url: rawUrl, error: errMsg(err) })

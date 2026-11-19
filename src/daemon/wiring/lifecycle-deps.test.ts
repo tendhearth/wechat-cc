@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildLifecycleDeps } from './lifecycle-deps'
+import { defaultCompanionConfig, saveCompanionConfig } from '../../lib/companion-config'
+import { startCompanionScheduler } from '../companion/scheduler'
 import { openTestDb } from '../../lib/db'
 import type { Bootstrap } from '../bootstrap'
 import type { LifecycleDepsOpts } from './lifecycle-deps'
@@ -20,7 +22,7 @@ import type { CallTarget } from '../../lib/network-gate'
 // if that happens (verified via stash-mutation: deleting any one of the
 // three lines turns this test red).
 describe('buildLifecycleDeps — holdBusy forwarding', () => {
-  function makeFixture() {
+  function makeFixture(notebookTick?: () => Promise<void>) {
     const stateDir = mkdtempSync(join(tmpdir(), 'lifecycle-deps-holdbusy-'))
     const db = openTestDb()
     const holdBusy = vi.fn((label: string) => vi.fn(() => { void label }))
@@ -47,10 +49,29 @@ describe('buildLifecycleDeps — holdBusy forwarding', () => {
     }
     const deps = buildLifecycleDeps(
       { stateDir, db, ilink, accounts: [], boot, dangerously: false, log: () => {} },
-      ticks,
+      ticks, undefined, notebookTick,
     )
-    return { deps, holdBusy, cleanup: () => rmSync(stateDir, { recursive: true, force: true }) }
+    return { deps, stateDir, holdBusy, cleanup: () => { db.close(); rmSync(stateDir, { recursive: true, force: true }) } }
   }
+
+  it('only calls the notebook tick when proactive activity is enabled and awake', async () => {
+    const tick = vi.fn(async () => {})
+    const { deps, stateDir, cleanup } = makeFixture(tick)
+    const scheduler = startCompanionScheduler({ ...deps.companionPushDeps, jitterRatio: 0, intervalMs: 60_000 })
+    try {
+      await scheduler.runNow()
+      expect(tick).not.toHaveBeenCalled()
+      await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), enabled: true, snooze_until: new Date(Date.now() + 60_000).toISOString() })
+      await scheduler.runNow()
+      expect(tick).not.toHaveBeenCalled()
+      await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), enabled: true })
+      await scheduler.runNow()
+      expect(tick).toHaveBeenCalledTimes(1)
+    } finally {
+      await scheduler.stop()
+      cleanup()
+    }
+  })
 
   it('threads boot.holdBusy into all three companion scheduler deps (same reference, not a copy)', () => {
     const { deps, holdBusy, cleanup } = makeFixture()

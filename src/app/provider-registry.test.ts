@@ -1,3 +1,6 @@
+import { createAgyAgentProvider } from '../adapters/executors/agy/agy-agent-provider'
+import { createAcpCursorChatProvider } from '../adapters/executors/acp/acp-cursor-chat'
+import { log } from '../lib/log'
 import { describe, expect, it, vi } from 'vitest'
 import { createProviderRegistry, DEFAULT_CHEAP_EVAL_BUDGET_MS, isAuthError } from './provider-registry'
 import { errorWithProviderCode } from '../lib/provider-error-code'
@@ -444,4 +447,98 @@ describe('onRegister', () => {
     expect(reg.has('codex')).toBe(true)
     expect(after).toHaveBeenCalledWith('codex')
   })
+})
+
+it('keeps private cheap eval payloads out of logs, failure telemetry and failover', async () => {
+  const onProviderFailure = vi.fn()
+  const fallback = vi.fn(async () => 'fallback')
+  const registry = createProviderRegistry({ cheapEvalProvider: 'claude', onProviderFailure })
+  const secret = 'unique-private-evaluation-probe'
+  registry.register('claude', { ...stub, cheapEval: async prompt => {
+    await Promise.resolve()
+    log('TEST_EVAL', prompt)
+    throw new Error(prompt)
+  } }, { displayName: 'Claude', canResume: () => true })
+  registry.register('openai', { ...stub, cheapEval: fallback }, { displayName: 'OpenAI', canResume: () => true })
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  try {
+    await expect(registry.getCheapEval({ private: true })!(secret)).rejects.toThrow()
+    expect(stderr.mock.calls.flat().join(' ')).not.toContain(secret)
+    expect(registry.cheapEvalHealth?.().lastError).toBeNull()
+    expect(onProviderFailure).not.toHaveBeenCalled()
+    expect(fallback).not.toHaveBeenCalled()
+  } finally { stderr.mockRestore() }
+})
+
+it.each(['agy', 'cursor'] as const)('keeps private prompts out of %s subprocess argv even when pinned', async id => {
+  const argv: string[][] = []
+  const spawn = (args: string[]) => {
+    argv.push(args)
+    return {
+      stdout: (async function* () {
+        yield '{"type":"result","subtype":"success","result":"ok"}\n'
+        yield '{"event":"result","result":{"status":"SUCCESS","response":"ok","num_turns":1}}\n'
+      })(),
+      stderr: async () => '',
+      exited: Promise.resolve(0),
+      kill: () => {},
+    }
+  }
+  const registry = createProviderRegistry({ cheapEvalProvider: id })
+  registry.register(id, id === 'agy'
+    ? createAgyAgentProvider({ bin: id, model: 'm', spawnFn: spawn, log: () => {} })
+    : createAcpCursorChatProvider({ bin: id, model: 'm', evalSpawn: spawn, log: () => {}, mcpSpecs: { wechat: null, delegate: null } }),
+  { displayName: id, canResume: () => false })
+  const sentinel = 'synthetic-private-notebook-argv-marker'
+  const onlyArgvProvider = registry.getCheapEval({ private: true })
+  const safe = vi.fn(async () => 'safe')
+  registry.register('openai', { ...stub, cheapEval: safe }, { displayName: 'OpenAI', canResume: () => false })
+  const result = await registry.getCheapEval({ private: true })!(sentinel).catch(() => null)
+  expect(argv.flat().some(arg => arg.includes(sentinel))).toBe(false)
+  expect(result).toBe('safe')
+  expect(onlyArgvProvider).toBeNull()
+})
+
+it('preflights private candidates and skips providers in refusal backoff', async () => {
+  const preflight = vi.fn(async (id: string) => id !== 'openai')
+  const registry = createProviderRegistry({ cheapEvalPreflight: preflight })
+  const unreachable = vi.fn(async () => 'unreachable')
+  const refuses = vi.fn(async () => { throw errorWithProviderCode('private stub refusal', 'region_unavailable') })
+  const eligible = vi.fn(async () => 'eligible')
+  for (const [id, cheapEval] of [['openai', unreachable], ['claude', refuses], ['codex', eligible]] as const) {
+    registry.register(id, { ...stub, cheapEval }, { displayName: id, canResume: () => false })
+  }
+  const evaluate = registry.getCheapEval({ private: true })!
+  await expect(evaluate('synthetic notebook prompt')).rejects.toThrow('Private model request failed')
+  expect(preflight.mock.calls).toEqual([['openai'], ['claude']])
+  expect(unreachable).not.toHaveBeenCalled()
+  expect(refuses).toHaveBeenCalledTimes(1)
+  expect(eligible).not.toHaveBeenCalled()
+  preflight.mockClear()
+  await expect(evaluate('synthetic second prompt')).resolves.toBe('eligible')
+  expect(preflight.mock.calls).toEqual([['openai'], ['codex']])
+  expect(refuses).toHaveBeenCalledTimes(1)
+  expect(eligible).toHaveBeenCalledTimes(1)
+})
+
+it('skips a failed private provider on the next request until its cooldown expires', async () => {
+  let now = 0
+  const preflight = vi.fn(async () => true)
+  const registry = createProviderRegistry({ now: () => now, cheapEvalPreflight: preflight })
+  const preferred = vi.fn(async (): Promise<string> => { throw new Error('HTTP 500') })
+  const healthy = vi.fn(async () => 'healthy')
+  registry.register('openai', { ...stub, cheapEval: preferred }, { displayName: 'OpenAI', canResume: () => false })
+  registry.register('claude', { ...stub, cheapEval: healthy }, { displayName: 'Claude', canResume: () => false })
+
+  const evaluate = registry.getCheapEval({ private: true })!
+  await expect(evaluate('first prompt')).rejects.toThrow('Private model request failed')
+  expect(healthy).not.toHaveBeenCalled()
+  await expect(evaluate('second prompt')).resolves.toBe('healthy')
+  expect(preflight.mock.calls).toEqual([['openai'], ['claude']])
+  expect(preferred).toHaveBeenCalledTimes(1)
+  expect(healthy).toHaveBeenCalledExactlyOnceWith('second prompt')
+
+  now += 10 * 60_000
+  preferred.mockResolvedValueOnce('recovered')
+  await expect(evaluate('third prompt')).resolves.toBe('recovered')
 })

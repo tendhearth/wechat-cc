@@ -1,6 +1,6 @@
 {
   "_comment": "生成物,别手改:改 packages/protocol/src/routes.ts 后跑 bun run gen:routes",
-  "version": 20,
+  "version": 22,
   "tauri": [
     "GET /v1/access/list",
     "GET /v1/avatar/info",
@@ -262,10 +262,14 @@
   ],
   "ownerWorkspace": [
     "GET /v1/companion/thoughts",
+    "GET /v1/notebook",
     "POST /v1/knowledge/facts/find_facts",
     "POST /v1/knowledge/facts/set_fact_status",
     "POST /v1/knowledge/graph/top_contacts",
     "POST /v1/llm/keys",
+    "POST /v1/notebook/paper",
+    "POST /v1/notebook/strike",
+    "POST /v1/notebook/write",
     "POST /v1/reminders/schedule"
   ]
 }

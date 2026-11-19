@@ -26,6 +26,7 @@ import { makeMemoryLlmOps } from '../../features/memory'
 import { makeAtelierTick } from '../../features/atelier'
 
 export interface WireMainOpts {
+  notebookTick?: () => Promise<void>
   rosterTerminals?: () => import('../../ports/cli-session').CliSessionView[]
   /** 项目登记(别名 → 文件夹),伙伴那一拍选文件夹用。 */
   projects: import('../projects').Projects
@@ -220,7 +221,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const lifecycleDeps = buildLifecycleDeps(opts, ticks, speech)
+  const lifecycleDeps = buildLifecycleDeps(opts, ticks, speech, opts.notebookTick)
   return {
     appPush,
     proactive,

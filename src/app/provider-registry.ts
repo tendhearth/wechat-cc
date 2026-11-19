@@ -1,3 +1,4 @@
+import { withoutPrivateLogging } from '../lib/private-logging'
 /**
  * provider-registry — central catalogue of available agent providers
  * (RFC 03 §3.3, Appendix D).
@@ -205,7 +206,7 @@ export interface ProviderRegistry {
    * comparison is fundamentally cross-provider (we can't compare
    * Anthropic's haiku to OpenAI's mini purely from interface metadata).
    */
-  getCheapEval(options?: { singleAttempt?: boolean; toolFreeOnly?: boolean }): CheapEval | null
+  getCheapEval(options?: { private?: boolean; singleAttempt?: boolean; toolFreeOnly?: boolean }): CheapEval | null
   /**
    * 后台判断(getCheapEval 交出去的那些调用)最近的成败。只数**真失败**:网络没受保护、连不上不算 ——
    * 那两样「CC 现在怎么样」里已经有网络守护 / 微信两行在说。2026-10-13 gemini-3.7 下线,后台判断
@@ -239,6 +240,9 @@ export const DEFAULT_CHEAP_EVAL_BUDGET_MS = 12_000
 // quota (no per-token API cost) — spec §2 slots it after openai, before
 // claude. Future providers append here.
 const CHEAP_EVAL_PREFERENCE: ProviderId[] = ['openai', 'agy', 'claude', 'codex', 'gemini']
+// Audited prompt transports: HTTP bodies (OpenAI/Gemini) or stdio (Claude/Codex).
+// AGY and Cursor print mode put the prompt in subprocess argv.
+const PRIVATE_CHEAP_EVAL_PROVIDERS = new Set<ProviderId>(['openai', 'claude', 'codex', 'gemini'])
 
 /** How long a cheapEval provider sits out after throwing. Long enough to
  *  stop hammering a dead credential every 25-minute ingest cycle, short
@@ -290,7 +294,7 @@ export function createProviderRegistry(opts?: {
    * 真拨(那条路直接调各 provider 的 cheapEval,不走这里)。daemon 侧用
    * net-probe 的端点表包一个带 TTL 缓存的实现注入;core 保持纯净。
    */
-  cheapEvalPreflight?: (id: string) => Promise<boolean>
+  cheapEvalPreflight?: (id: string, signal?: AbortSignal) => Promise<boolean>
   /**
    * 诊断采集(可选):一次 cheapEval 失败时,把**真实形状**交出去。
    * 这条路是 agy 唯一真正跑的地方 —— turn_records 里 agy 是零行,不是埋点
@@ -537,6 +541,49 @@ export function createProviderRegistry(opts?: {
       return { ...evalHealth }
     },
     getCheapEval(options) {
+      if (options?.private) {
+        const pinned = readPinnedId() as ProviderId | undefined
+        const candidates = [...new Set([...CHEAP_EVAL_PREFERENCE, ...entries.keys()])]
+          .filter(id => PRIVATE_CHEAP_EVAL_PROVIDERS.has(id) && entries.get(id)?.provider.cheapEval)
+        const ids = pinned && candidates.includes(pinned) ? [pinned] : candidates
+        if (!ids.length) return null
+
+        return (prompt, requestOptions) => withoutPrivateLogging(async () => {
+          const signal = requestOptions?.signal
+          try {
+            for (const id of ids) {
+              signal?.throwIfAborted()
+              const provider = entries.get(id)?.provider
+              const evaluate = provider?.cheapEval
+              if (!evaluate || refusedNow(id) || (cheapEvalCooldownUntil.get(id) ?? 0) > now()) continue
+              if (networkGate && !(await decideCall(networkGate, providerCallTarget(provider, id, 'cheapEval'))).allowed) continue
+              signal?.throwIfAborted()
+              if (opts?.cheapEvalPreflight) {
+                const preflight = signal ? opts.cheapEvalPreflight(id, signal) : opts.cheapEvalPreflight(id)
+                if (!await preflight.catch(() => false)) continue
+              }
+              signal?.throwIfAborted()
+              if (refusedNow(id)) continue
+
+              // Once the prompt is submitted, never fail over or collect errors containing it.
+              try {
+                const result = await (requestOptions ? dispatchCheapEval(evaluate, prompt, requestOptions) : evaluate(prompt))
+                signal?.throwIfAborted()
+                cheapEvalRefused.delete(id)
+                return result
+              } catch (err) {
+                if (!signal?.aborted && !isNetworkUnprotectedError(err) && !noteRefusal(id, err)) {
+                  const cooldown = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
+                  cheapEvalCooldownUntil.set(id, now() + cooldown)
+                }
+                throw err
+              }
+            }
+          } catch { /* Keep raw errors inside the private evaluation. */ }
+          signal?.throwIfAborted()
+          throw new Error('Private model request failed')
+        })
+      }
       const toolFreeOnly = options?.toolFreeOnly === true
       const fn = resolveCheapEval(toolFreeOnly || options?.singleAttempt === true, toolFreeOnly)
       return fn ? tracked(fn) : null

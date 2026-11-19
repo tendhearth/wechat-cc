@@ -450,7 +450,7 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           ...(options?.signal || options?.singleAttempt ? { config: {
             ...(options.signal ? { abortSignal: options.signal } : {}),
-            ...(options.singleAttempt ? { httpOptions: { retryOptions: { attempts: 1 } } } : {}),
+            ...(options.signal || options.singleAttempt ? { httpOptions: { retryOptions: { attempts: 1 } } } : {}),
           } } : {}),
         })
         return resp.text ?? ''

@@ -9,8 +9,8 @@
  * bootstrap.test.ts importing `resolveAdminChatId` from './bootstrap')
  * keep working unchanged.
  */
-import type { Access } from '../../lib/access'
-import type { CompanionConfig } from '../../lib/companion-config'
+import { loadAccess, type Access } from '../../lib/access'
+import { loadCompanionConfig, type CompanionConfig } from '../../lib/companion-config'
 
 /**
  * Resolve which chat receives permission-relay prompts (and, since
@@ -54,4 +54,9 @@ export function resolveAdminChatId(
     return companion.default_chat_id
   }
   return access.admins?.[0] ?? null
+}
+
+/** The owner of persistent shared state, independent of the initiating chat. */
+export function configuredOwnerChatId(stateDir: string): string | null {
+  return resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir))
 }

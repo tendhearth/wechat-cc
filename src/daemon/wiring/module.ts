@@ -13,6 +13,7 @@ import type { registerIngest } from '../../features/companion'
 import type { TerminalFeature } from '../../features/terminal'
 import type { StickersFeature } from '../../features/stickers'
 import { WECHAT_PORTS as W, type WechatAccounts, type WechatContacts, type WechatLinkStatus, type WechatPages, type WechatPermissions, type WechatPolling, type WechatSend, type WechatVoice } from '../../ports/wechat'
+import type { Notebook } from '../../ports/notebook'
 import type { DaemonModule } from '../modules/container'
 import { lifecycleModule, type LifecycleHolder } from '../modules/lifecycle-module'
 import type { Foundation } from '../foundation'
@@ -41,6 +42,7 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
   return {
     name: 'wired',
     needs: ['bootstrap', 'boot-api', 'terminal', 'owner-commands', 'activity', 'workbench', W.send, W.accounts, W.contacts, W.pages, W.permissions, W.link, W.voice, W.polling, 'reply-delivery', 'internal-api', 'network-gate', 'stickers'],
+    wants: ['notebook'],
     lazy: ['pipeline', 'polling', 'companion.ingest'],
     init(ctx): WiredDeps {
       const boot = ctx.get<Bootstrap>('bootstrap')
@@ -70,6 +72,7 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
           ingestNudge: () => ingest()?.current()?.nudge ?? null,
         },
         workbench,
+        notebookTick: ctx.maybe<Notebook>('notebook')?.tick,
         activity: ctx.get<Activity>('activity').activity, activityLog: ctx.get<Activity>('activity').activityLog,
         terminalHooks: cli.terminalHooks,
         // 手机拍板 / 说一句(终端会话那个功能造好的):拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。

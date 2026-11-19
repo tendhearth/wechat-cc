@@ -1,3 +1,4 @@
+import { NOTEBOOK_DEFAULTS, type NotebookConfig } from './notebook-config'
 /**
  * Companion v2 config — radically simplified from v1.
  *
@@ -30,6 +31,7 @@ export function configPath(stateDir: string): string {
 export interface CompanionConfig {
   enabled: boolean
   timezone: string
+  notebook?: Partial<NotebookConfig>
   default_chat_id: string | null
   snooze_until: string | null
   /**
@@ -110,8 +112,16 @@ export function loadCompanionConfig(stateDir: string): CompanionConfig {
     const parsed = readJsonFile(p) as unknown
     if (!isObject(parsed)) return defaultCompanionConfig()
     const d = defaultCompanionConfig()
+    const notebook: Partial<NotebookConfig> = {}
+    if (isObject(parsed.notebook)) {
+      for (const key of Object.keys(NOTEBOOK_DEFAULTS) as Array<keyof NotebookConfig>) {
+        const value = parsed.notebook[key]
+        if (typeof value === 'number' && Number.isSafeInteger(value) && value >= (key === 'dailyLimit' ? 0 : 1) && value <= 2_147_483_647) notebook[key] = value
+      }
+    }
     return {
       enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : d.enabled,
+      ...(Object.keys(notebook).length ? { notebook } : {}),
       timezone: typeof parsed.timezone === 'string' && parsed.timezone ? parsed.timezone : d.timezone,
       default_chat_id: typeof parsed.default_chat_id === 'string' ? parsed.default_chat_id : null,
       snooze_until: typeof parsed.snooze_until === 'string' ? parsed.snooze_until : null,

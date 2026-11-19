@@ -155,6 +155,7 @@ const FORMER_OWNER_WORKSPACE = {
   shimPost: ['/v1/knowledge/facts/find_facts', '/v1/llm/keys', '/v1/knowledge/facts/set_fact_status', '/v1/knowledge/graph/top_contacts', '/v1/reminders/schedule'],
   shimGet: ['/v1/companion/thoughts'],
 }
+const NOTEBOOK_OWNER_ROUTES = ['GET /v1/notebook', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper']
 const pathOf = (key: string) => key.slice(key.indexOf(' ') + 1)
 
 describe('主人工作区名单(desktop.ownerWorkspace)只在路由表里声明一次', () => {
@@ -162,15 +163,22 @@ describe('主人工作区名单(desktop.ownerWorkspace)只在路由表里声明�
   const API_JS = read('apps', 'desktop', 'src', 'api.js')
   const SHIM = read('apps', 'desktop', 'test-shim.ts')
 
+  it('本子桌面端读写只走主人工作区通道', () => {
+    for (const key of NOTEBOOK_OWNER_ROUTES) {
+      expect(generated.ownerWorkspace, key).toContain(key)
+      expect(generated.tauri, key).not.toContain(key)
+      expect(generated.devProxy, key).not.toContain(key)
+    }
+  })
   it('生成物里的 ownerWorkspace = 表里打了 ownerWorkspace 的行', () => {
     expect(generated.ownerWorkspace).toEqual(owner.map(r => r.key).sort())
   })
-  it('和改造前三处手写的名单逐条相同(lib.rs / api.js 的路径;test-shim 的 POST 与 GET)', () => {
+  it('主人工作区名单包含改造前已登记的路由与本子路由', () => {
     const paths = generated.ownerWorkspace.map(pathOf)
     expect(new Set(paths).size).toBe(paths.length)
-    expect([...paths].sort()).toEqual([...FORMER_OWNER_WORKSPACE.paths].sort())
-    expect(generated.ownerWorkspace.filter(k => k.startsWith('POST ')).map(pathOf).sort()).toEqual([...FORMER_OWNER_WORKSPACE.shimPost].sort())
-    expect(generated.ownerWorkspace.filter(k => k.startsWith('GET ')).map(pathOf).sort()).toEqual([...FORMER_OWNER_WORKSPACE.shimGet].sort())
+    expect([...paths].sort()).toEqual([...FORMER_OWNER_WORKSPACE.paths, ...NOTEBOOK_OWNER_ROUTES.map(pathOf)].sort())
+    expect(generated.ownerWorkspace.filter(k => k.startsWith('POST ')).map(pathOf).sort()).toEqual([...FORMER_OWNER_WORKSPACE.shimPost, ...NOTEBOOK_OWNER_ROUTES.filter(k => k.startsWith('POST ')).map(pathOf)].sort())
+    expect(generated.ownerWorkspace.filter(k => k.startsWith('GET ')).map(pathOf).sort()).toEqual([...FORMER_OWNER_WORKSPACE.shimGet, ...NOTEBOOK_OWNER_ROUTES.filter(k => k.startsWith('GET ')).map(pathOf)].sort())
   })
   it('表内约束:有 operator(宿主拿的是 operator 凭据)、不同时 tauri(一条路由只走一个宿主命令)、方法只有 GET / POST', () => {
     expect(owner.length).toBeGreaterThanOrEqual(1)
@@ -194,12 +202,12 @@ describe('主人工作区名单(desktop.ownerWorkspace)只在路由表里声明�
     const { OWNER_WORKSPACE_PATHS } = await import('../apps/desktop/src/generated/daemon-calls.js')
     expect([...OWNER_WORKSPACE_PATHS].sort()).toEqual(generated.ownerWorkspace.map(pathOf).sort())
   })
-  it('test-shim.ts 读生成物:POST 那几条从 ownerWorkspace 推出来,GET 的每一条本进程都有处理器,没有手写名单', () => {
+  it('test-shim.ts 用生成名单代理主人工作区，原有本地 GET 处理器保留', () => {
     expect(SHIM).toContain("import WORKBENCH_ROUTES from './src-tauri/generated/workbench-routes.json'")
-    expect(SHIM).toContain('WORKBENCH_ROUTES.ownerWorkspace.filter(')
-    expect(SHIM).toContain('OWNER_WORKSPACE_POST_PATHS.has(url.pathname)')
-    for (const key of generated.ownerWorkspace.filter(k => k.startsWith('GET '))) {
-      expect(SHIM, key).toContain(`url.pathname === '${pathOf(key)}' && req.method === 'GET'`)
+    expect(SHIM).toContain('new Set(WORKBENCH_ROUTES.ownerWorkspace)')
+    expect(SHIM).toContain('OWNER_WORKSPACE_ROUTES.has(`${req.method} ${url.pathname}`)')
+    for (const path of FORMER_OWNER_WORKSPACE.shimGet) {
+      expect(SHIM, path).toContain(`url.pathname === '${path}' && req.method === 'GET'`)
     }
     // POST 的路径不再以字面量出现在 shim 里(只剩 playwright 那边的拦截,不在这个文件)
     for (const key of generated.ownerWorkspace.filter(k => k.startsWith('POST '))) expect(SHIM, key).not.toContain(`'${pathOf(key)}'`)

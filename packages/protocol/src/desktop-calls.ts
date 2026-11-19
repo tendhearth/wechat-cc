@@ -11,6 +11,7 @@
  * 返回形状桌面还没用上(`desktop-api.ts` 的 `RESPONSE_SCHEMAS` 键是 string,推不出来),`makeDesktopApi` 先回 unknown。
  * 桌面加一条调用 = 在这里加一行,跑 `bun run gen:routes`。
  */
+import type { NotebookPageQueryT, NotebookPaperT } from './notebook'
 import type { DeclaredRouteKey } from './routes'
 import { callSpec, makeApi, t, type CallArgs, type CallRequest, type CallSpec } from './calls'
 
@@ -38,6 +39,12 @@ export const DESKTOP_CALLS = {
     run:call('POST /v1/checkup/run',body()),
     cancel:call('POST /v1/checkup/cancel',body()),
     settings:call('POST /v1/checkup/settings',body()),
+  },
+  notebook: {
+    get: call('GET /v1/notebook', { query: t<NotebookPageQueryT>() }),
+    write: call('POST /v1/notebook/write', { body: t<{ body: string; clientId: string }>() }),
+    strike: call('POST /v1/notebook/strike', { body: t<{ id: string; struck: boolean }>() }),
+    paper: call('POST /v1/notebook/paper', { body: t<{ paper: NotebookPaperT }>() }),
   },
   permissions: { pending: call('GET /v1/permissions/pending') },
   conversation: {

@@ -104,6 +104,7 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
       'GET /v1/roster', // 名单只给 operator 与配对设备。
       'GET /v1/places', 'POST /v1/places/move', 'POST /v1/places/hide', // 地方:读同名单;顺序 / 收起只给 operator(2026-11-18)。
       'POST /v1/places/seen', // 坐回来:看过这一行,桌面和配好的手机都能记(2026-11-18)。
+      'GET /v1/notebook', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper',
       'POST /v1/cli/attach', 'POST /v1/cli/detach', // 主人挂摘终端参与；会话还须一次性确认卡。
       'GET /v1/matter/notes', // Matter notebook: authenticated owner or local operator only.
       'POST /v1/phone/enable-relay', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics', 'POST /v1/matter/seen', 'GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...BUTLER_CHECKUP, ...P3E_MATTER_ACTIONS, ...SHARE_A_MATTER, 'GET /v1/matter/permission-script'], federation: [], selftest: [], link: [] }

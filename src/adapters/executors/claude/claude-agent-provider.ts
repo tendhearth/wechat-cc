@@ -309,12 +309,24 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
   const runQuery: typeof query = input => (opts.queryImpl ?? query)({ ...input, options: {
     ...input.options, env: sessionSubprocessEnv(input.options?.env),
   } })
-  const oneShot = async (prompt: string, model: string): Promise<string> => {
+  const oneShot = async (prompt: string, model: string, signal?: AbortSignal): Promise<string> => {
+    signal?.throwIfAborted()
+    const controller = signal ? new AbortController() : undefined
+    const abort = () => controller?.abort(signal?.reason)
+    signal?.addEventListener('abort', abort, { once: true })
+    try {
+      return await collectOneShot(prompt, model, controller)
+    } finally {
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+  const collectOneShot = async (prompt: string, model: string, abortController?: AbortController): Promise<string> => {
     const q = runQuery({
       prompt,
       options: {
         model,
         maxTurns: 1,
+        ...(abortController ? { abortController } : {}),
         // Background evaluators must not inherit interactive Claude Code
         // hooks, plugins, skills, MCP servers, or project instructions. Those
         // can alter a strict JSON reply (and add a large cached-token bill).
@@ -374,8 +386,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
-    cheapEval: (prompt: string) =>
-      oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT),
+    cheapEval: (prompt, options) =>
+      oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT, options?.signal),
     // 守护(评审 #193 P1-1):一次性评估每次都起新子进程,继承此刻的 process.env;会话的目标在
     // spawn 里捕获(见下面 spawnTarget),这里的 'session' 只是还没起来时的预测。
     callTarget(kind, ctx) {
