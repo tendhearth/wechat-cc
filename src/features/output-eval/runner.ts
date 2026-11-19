@@ -198,7 +198,7 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
           replyRetried = retry
           return collectTurn(active.dispatch(text), { timeoutMs: limitMs })
         },
-        a.text, strategy, deps.log, () => expired,
+        a.text, strategy, deps.log, () => expired, undefined, a.context,
       ), overrun]).finally(() => clearTimeout(deadline))
       if (collected === 'overrun') {
         return { ok: false, ...base, ...empty, replyRetried, error: `turn exceeded ${limitMs}ms`, errorCode: 'turn_deadline', durationMs: now() - startedAt }

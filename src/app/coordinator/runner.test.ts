@@ -110,6 +110,17 @@ describe('runner · 对话的轮(M3a)', () => {
     expect(opened[0]!.events).toContainEqual(tool)
   })
 
+  it('「NO_REPLY + 注记」写在同一个文字事件里:也先攒着,重答后事项事件流里没有那句注记', async () => {
+    const { runner, opened, handle } = harness()
+    const answer: AgentEvent = { kind: 'text', text: '记下了。' }
+    const dispatch = vi.fn()
+      .mockImplementationOnce(handle([{ kind: 'text', text: 'NO_REPLY\n[System: 工具结果返回为空字符串]' }, RESULT]).dispatch)
+      .mockImplementationOnce(handle([answer, RESULT]).dispatch)
+    const summary = await runner.run({ chatId: 'c', alias: 'a', providerId: 'openai', handle: { dispatch }, prompt: 'hi', budget: 'turn', startedAt: 100, turn: {} })
+    expect(summary).toMatchObject({ replyRetried: true, finalText: '记下了。' })
+    expect(opened[0]!.events.filter(ev => ev.kind === 'text')).toEqual([answer])
+  })
+
   it('出错的一轮里正常的话照旧进事项事件流', async () => {
     const { runner, opened, handle } = harness()
     const said: AgentEvent = { kind: 'text', text: '查到一半,' }

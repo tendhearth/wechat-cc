@@ -53,6 +53,31 @@ describe('collectOwnerReply · 多段回复逐段判', () => {
     expect(out).toMatchObject({ replyRetried: true, replySuppressed: false })
   })
 
+  it('允许静默的场合(伙伴推送 / 聊天室 / 并行):前面一段是注记、最后一段是 NO_REPLY ⇒ 整轮本来就不发,不重答', async () => {
+    for (const context of ['tick', 'chatroom', 'parallel'] as const) {
+      const collect = vi.fn().mockResolvedValueOnce(summary('NO_REPLY', ['[System: 工具结果返回为空字符串]']))
+      const out = await collectOwnerReply(collect, 'hi', 'all_segments', vi.fn(), undefined, undefined, context)
+      expect(collect, context).toHaveBeenCalledTimes(1)
+      expect(out, context).toMatchObject({ replyRetried: false, replySuppressed: false })
+    }
+  })
+
+  it('私聊不认静默:同样的一轮,注记会被发出去 ⇒ 重答', async () => {
+    const collect = vi.fn()
+      .mockResolvedValueOnce(summary('NO_REPLY', ['[System: 工具结果返回为空字符串]']))
+      .mockResolvedValueOnce(summary('好。'))
+    const out = await collectOwnerReply(collect, 'hi', 'all_segments', vi.fn(), undefined, undefined, 'dm')
+    expect(out).toMatchObject({ replyRetried: true, replySuppressed: false })
+  })
+
+  it('另一段只有标点:交付时会丢掉它、只发注记 ⇒ 按回声重答', async () => {
+    const collect = vi.fn()
+      .mockResolvedValueOnce(summary('。', ['[System: 工具结果返回为空字符串]']))
+      .mockResolvedValueOnce(summary('好。'))
+    const out = await collectOwnerReply(collect, 'hi', 'all_segments', vi.fn())
+    expect(out).toMatchObject({ replyRetried: true, replySuppressed: false })
+  })
+
   it('日志只有类别、段数和长度,没有正文', async () => {
     const log = vi.fn()
     const collect = vi.fn()

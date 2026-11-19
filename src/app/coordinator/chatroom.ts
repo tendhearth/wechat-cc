@@ -260,7 +260,7 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
         })
         unlink = runner.linkAbort(signal, () => { void handle.cancel?.() })
         delivery = deps.replyDelivery.begin(msg.chatId, { context: 'chatroom', speaker: 'agent', model: handle.callTarget?.().model ?? handle.model, providerId, participantLabel: dn, textStrategy: ctx.textStrategyFor(providerId) })
-        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), signal, budget: 'beat', replyTextForInspection, speaker: 'agent', startedAt, turn, onTurn: ids => delivery?.bindTurn?.(ids) })
+        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), signal, budget: 'beat', replyTextForInspection, context: 'chatroom', speaker: 'agent', startedAt, turn, onTurn: ids => delivery?.bindTurn?.(ids) })
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       } finally {

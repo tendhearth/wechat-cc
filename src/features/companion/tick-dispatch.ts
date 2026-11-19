@@ -155,7 +155,7 @@ export function makeTickDispatch(deps: TickDeps) {
       const tickText = [carry?.block,args.buildText({ allSegments })].filter(Boolean).join('\n\n')
       // 往哪儿送(微信能用走微信,不能用 / 发失败落到 App)由门开的那一轮(proactive-channel)定,一轮粘住一条路。
       turn = deps.replyDelivery.begin(chatId, { context: 'tick', speaker: 'cc', model: handle.callTarget?.().model ?? handle.model, providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
-        const summary = await collectOwnerReply(text => collectTurn(handle.dispatch(text)), tickText, replyTextStrategyFor(providerId), deps.log)
+        const summary = await collectOwnerReply(text => collectTurn(handle.dispatch(text)), tickText, replyTextStrategyFor(providerId), deps.log, undefined, undefined, 'tick')
         if (summary.error) {
           deps.log('SCHED', `companion tick dispatch error event: ${summary.errorCode ? `${summary.errorCode}: ` : ''}${summary.error}`)
           turn.abandon(summary.errorCode ?? 'error')

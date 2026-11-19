@@ -1,4 +1,4 @@
-import { parseSilence, replyNotForOwner, type ReplyTextStrategy, type TurnTextParts } from '../domain/turn-reply'
+import { buildTurnReply, replyNotForOwner, type ReplyContext, type ReplyTextStrategy, type TurnTextParts } from '../domain/turn-reply'
 import type { TurnSummary } from '../ports/agent-provider'
 
 export const OWNER_REPLY_REMINDER = '上一条不是给主人的话。请直接用平常话回答主人刚才那句。'
@@ -16,16 +16,19 @@ export async function collectOwnerReply(
   log: (tag: string, detail: string) => void,
   stopped?: () => boolean,
   replyTextForInspection: (segment: string) => string = segment => segment,
+  /** 这一轮在哪种场合交付:静默令牌算不算数、哪些段会真发出去,都跟它走。 */
+  context: ReplyContext = 'dm',
 ): Promise<OwnerReplySummary> {
   const inspect = (summary: TurnSummary) => {
     if (summary.error || summary.errorCode) return false
-    const final = summary.finalText ?? ''
-    const segments = strategy === 'all_segments' ? [...(summary.narration ?? []), final] : [final]
-    // 逐段判:每一段非空的文字都是内部注记 / 工具回声,这一轮才算「没有给主人的话」。
-    // 拼成一整段再判会漏掉「前面一段工具回声 + 后面一段 [System: …]」这种组合(独立评审第二轮)。
-    // 先按交付那一步的规矩剥掉静默令牌再判:「NO_REPLY + 一句注记」交付时会剥掉令牌、把注记单独发出去(独立评审第三轮)。
-    // 整段就是令牌 = 模型有意不说,不算回声。
-    const texts = segments.map(replyTextForInspection).map(segment => parseSilence(segment)).filter(parsed => !parsed.silent).map(parsed => parsed.text).filter(segment => segment.trim())
+    // 判的是「交付那一步真会发出去的文字」:用同一个 buildTurnReply 走一遍(剥静默令牌、最后一段 NO_REPLY 在允许静默的
+    // 场合整轮不发、只有标点的段不发),再看剩下的每一段是不是都是内部回声。自己另写一套规矩就会和交付对不上(独立评审四轮)。
+    const { reply } = buildTurnReply({
+      finalText: replyTextForInspection(summary.finalText ?? ''),
+      narration: (summary.narration ?? []).map(replyTextForInspection),
+    }, [], context, strategy)
+    if (reply.silent) return false // 模型有意不说(或这个场合整轮静默):不是回声,也不重答
+    const texts = (strategy === 'all_segments' ? reply.segments ?? [] : [reply.text]).filter(segment => segment.trim())
     if (!texts.length) return false
     const categories = texts.map(segment => replyNotForOwner(segment))
     if (categories.some(category => !category)) return false

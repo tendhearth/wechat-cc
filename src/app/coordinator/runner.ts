@@ -15,6 +15,7 @@ import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } fro
 import { isAuthErrorCode } from '../../lib/provider-error-code'
 import type { DeliveryReport } from '../../domain/turn-reply'
 import { collectOwnerReply, type OwnerReplySummary } from '../collect-owner-reply'
+import { parseSilence, type ReplyContext } from '../../domain/turn-reply'
 import type { CoordinatorCtx } from './ctx'
 import type { ChatTurnHandle, TurnRecord } from './types'
 
@@ -46,6 +47,8 @@ export interface RunTurn {
   budget: 'turn' | 'beat'
   /** Apply the delivery path's text projection before classifying echoes. */
   replyTextForInspection?: (segment: string) => string
+  /** 这一轮在哪种场合交付(缺省私聊):回声判定按它决定静默令牌算不算数。 */
+  context?: ReplyContext
   /** 这一轮自己还要看事件(solo 的 daemon 交付收旁白)。先于桌宠的 onTurnEvent。 */
   observe?: (ev: AgentEvent) => void
   /** 一轮超过阈值还没完时调一次(一轮最多一次)。 */
@@ -189,7 +192,8 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
             // The matter stream is visible in the apps. Hold a possible echo
             // and subsequent events until the full reply can be classified.
             if (!deferred && ev.kind === 'text') {
-              const lead = ev.text.trimStart()
+              // 先按交付的规矩剥掉开头的静默令牌:「NO_REPLY\n[System: …]」也要先攒着(独立评审四轮)
+              const lead = parseSilence(ev.text).text.trimStart()
               if (lead && ['[System:', '[调用工具'].some(prefix => lead.startsWith(prefix) || prefix.startsWith(lead))) deferred = []
             }
             if (deferred) deferred.push(ev)
@@ -211,6 +215,7 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
             t.prompt, ctx.textStrategyFor(t.providerId), deps.log,
             () => stopped() || t.signal?.aborted === true,
             t.replyTextForInspection,
+            t.context ?? 'dm',
           )
           // 这一轮以出错 / 超时收场时没做过回声判定;攒着的那段若本来就是照回声的样子起头的,别让它进 App 看得见的事件流
           //(最终交付反正不发失败的轮次)。工具事件照旧留着。

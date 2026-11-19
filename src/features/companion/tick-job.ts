@@ -82,7 +82,7 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
         try {
           const summary = await collectOwnerReply(
             prompt => collectTurn(handle.dispatch(prompt), { deadlineAt }),
-            text, replyTextStrategyFor(providerId), deps.log, expired,
+            text, replyTextStrategyFor(providerId), deps.log, expired, undefined, 'tick',
           )
           if (expired()) return fail(TURN_TIMEOUT_CODE)
           if (summary.error) return fail(summary.errorCode ?? 'error')
