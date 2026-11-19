@@ -423,8 +423,8 @@ describe('非给主人看的整段回复', () => {
     expect(t.records[0]).toMatchObject({ delivery: 'empty', bubbles: 0 })
     expect(t.emptyStreak).toHaveBeenCalledWith('openai', 1)
     expect(t.logs.filter(l => l.startsWith('[REPLY_NOT_FOR_OWNER]'))).toEqual([
-      `[REPLY_NOT_FOR_OWNER] category=system_annotation length=${echoes[0]!.length}`,
-      `[REPLY_NOT_FOR_OWNER] category=tool_echo length=${echoes[2]!.length}`,
+      `[REPLY_NOT_FOR_OWNER] category=system_annotation segments=1 length=${echoes[0]!.length}`,
+      `[REPLY_NOT_FOR_OWNER] category=tool_echo segments=1 length=${echoes[2]!.length}`,
     ])
   })
 
