@@ -64,23 +64,32 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
         const text = args.buildText ? args.buildText(style) : buildJobText({ jobId, nowIso: args.nowIso, text: args.text }, style)
         const turn = deps.replyDelivery.begin(chatId, { context: 'tick', speaker: 'cc', model: handle.callTarget?.().model ?? handle.model, providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
         // 到点就 cancel(终审 I3):不然一轮卡住就一直占着主人那条对话的锁,晚到的回复还会照发。
-        let expired = false
-        const deadline = setTimeout(() => { expired = true; void handle.cancel?.().catch(() => {}) }, JOB_TURN_MAX_MS)
+        const deadlineAt = Date.now() + JOB_TURN_MAX_MS
+        const expired = () => Date.now() >= deadlineAt
+        let cancelRequested = false
+        const cancel = () => {
+          if (cancelRequested) return
+          cancelRequested = true
+          void handle.cancel?.().catch(() => {})
+        }
+        const deadline = setTimeout(cancel, JOB_TURN_MAX_MS)
+        const fail = (reason: string) => {
+          if (reason === TURN_TIMEOUT_CODE) cancel()
+          turn.abandon(reason)
+          result = `failed:${reason}`
+        }
         ;(deadline as { unref?: () => void }).unref?.()
         try {
           const summary = await collectOwnerReply(
-            prompt => collectTurn(handle.dispatch(prompt), { timeoutMs: JOB_TURN_MAX_MS }),
-            text, replyTextStrategyFor(providerId), deps.log, () => expired,
+            prompt => collectTurn(handle.dispatch(prompt), { deadlineAt }),
+            text, replyTextStrategyFor(providerId), deps.log, expired,
           )
-          if (summary.error) {
-            if (summary.errorCode === TURN_TIMEOUT_CODE) { try { await handle.cancel?.() } catch { /* 已经停了 */ } }
-            turn.abandon(summary.errorCode ?? 'error')
-            result = `failed:${summary.errorCode ?? 'error'}`
-            return
-          }
+          if (expired()) return fail(TURN_TIMEOUT_CODE)
+          if (summary.error) return fail(summary.errorCode ?? 'error')
           const raw = summary.finalText ?? ''
           let finalText = raw
           if (args.transformFinal && !summary.replySuppressed) { try { finalText = args.transformFinal(raw) } catch (e) { deps.log('JOBS', `job ${jobId} transformFinal threw: ${errMsg(e)}`) } }
+          if (expired()) return fail(TURN_TIMEOUT_CODE)
           const report = await turn.deliver({ ...ownerReplyParts(summary), finalText })
           outbound.finish()
           if (summary.replySuppressed) result = 'failed:error'

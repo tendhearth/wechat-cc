@@ -265,6 +265,22 @@ describe('/both、/chat 的 TurnRecord 记交付列(spec §4.10,和 solo 一样)
     expect(t.records.find(r => r.provider === 'claude')).toMatchObject({ delivery: 'text', narrationSegments: 1 })
   })
 
+  it('/chat 互驳剥掉排名后判定回声，重答正文和选票分别交付', async () => {
+    const p = fakePort({ delivery: 'text', bubbles: 1 })
+    const claude = vi.fn((prompt: string): AgentEvent[] => {
+      if (prompt.includes('#RANK')) return [{ kind: 'text', text: '[System: echo]\n#RANK: B > A' }, RESULT]
+      if (prompt.startsWith('上一条不是给主人的话')) return [{ kind: 'text', text: '成本值得计入。' }, RESULT]
+      return evs
+    })
+    const verdictEval = vi.fn(async (_prompt: string) => '裁决正文')
+    const t = fanout('chatroom', { claude, codex: evs }, p.port, { verdictEval })
+    await t.c.dispatch(inbound('A 还是 B?'))
+    expect(claude).toHaveBeenCalledTimes(3)
+    expect(p.delivered.map(d => d.finalText)).toContain('成本值得计入。')
+    expect(p.delivered.map(d => d.finalText)).not.toContain('[System: echo]')
+    expect(verdictEval.mock.calls[0]?.[0]).toContain('互评（匿名、不含自投）的高低顺序：回答 B > 回答 A。')
+  })
+
   it('/chat:daemon 发言人经端口交付(context=chatroom、[名字] 由 daemon 加),旁白不发;#RANK 先剥掉;每一拍的记录都带交付列', async () => {
     const p = fakePort({ delivery: 'text', bubbles: 1 })
     // 互驳拍的提示里要求交 `#RANK:` 票;开场拍没有。
@@ -361,6 +377,20 @@ describe('非给主人看的整段回复', () => {
     })
     return { ...setup([], { port: runtime, session: { dispatch, async close() {} }, extra: { onEmptyReplyStreak: emptyStreak } }), dispatch, sent, captured, emptyStreak, runtime }
   }
+
+  it.each([false, true])('两次回声仍交付已执行动作的放行规则通知 (app=%s)', async (app) => {
+    const t = withDelivery([echoes[2]!], app)
+    t.dispatch.mockImplementationOnce(prompt => {
+      t.runtime.noteRuleAllow('chat-1', { key: 'read', rule: '允许读取', target: 'memory_read' })
+      return makeFakeSession({ events: [{ kind: 'text', text: echoes[0]! }, RESULT] }).dispatch(prompt)
+    })
+    await t.c.dispatch(inbound())
+    expect(t.dispatch).toHaveBeenCalledTimes(2)
+    const notice = '按规则「允许读取」放行了 memory_read'
+    expect(t.sent).toEqual(app ? [] : [notice])
+    expect(t.captured.map(r => [r.speaker, r.text])).toEqual(app ? [['notice', notice]] : [])
+    expect(t.records[0]).toMatchObject({ delivery: 'empty', bubbles: 0 })
+  })
 
   it.each(echoes)('微信只交付同一会话重答后的正文 (%s)', async (echo) => {
     const t = withDelivery([echo, '可以加收藏。'])

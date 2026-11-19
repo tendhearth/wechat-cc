@@ -299,6 +299,8 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
           ...(opts.outbound.sendAttachment ? { sendAttachment: (c: string, a: TurnAttachment) => opts.outbound!.sendAttachment!(c, a) } : {}),
         }
       : deps
+    const deliverNotices = (notices: readonly string[]) =>
+      deliverTurnReply({ chatId, reply: { text: '', silent: false, attachments: [], narration: [] }, attachments: [], context: opts.context, notices }, out)
     const finishDaemon = () => { if (!done) trackDaemon(opts.providerId, chatId, -1); finish() }
     return {
       bindTurn(ids) {
@@ -327,9 +329,11 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         const notices = takeNotices(turn)
         finishDaemon()
         if (parts.suppressed) {
-          const target = deps.isSinkOpen?.(chatId) ? 'sink' : 'wechat'
-          deps.log('REPLY', `chat=${chatId} provider=${opts.providerId} context=${opts.context} target=${target} delivery=empty bubbles=0 attachments=0/${pending.length} narration=0`)
-          return { delivery: 'empty', target, bubbles: 0, attachmentsSent: 0, failures: [], msgIds: [] }
+          const report: DeliveryReport = notices.length
+            ? await deliverNotices(notices)
+            : { delivery: 'empty', target: deps.isSinkOpen?.(chatId) ? 'sink' : 'wechat', bubbles: 0, attachmentsSent: 0, failures: [], msgIds: [] }
+          deps.log('REPLY', `chat=${chatId} provider=${opts.providerId} context=${opts.context} target=${report.target} delivery=empty bubbles=0 attachments=0/${pending.length} narration=0`)
+          return report
         }
         const built = buildTurnReply(parts, pending.map(p => p.attachment), opts.context, opts.textStrategy)
         Object.assign(built.reply, attribution)
@@ -359,7 +363,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         const notices = takeNotices(turn)
         finishDaemon()
         if (notices.length) {
-          void deliverTurnReply({ chatId, reply: { text: '', silent: false, attachments: [], narration: [] }, attachments: [], context: opts.context, notices }, out)
+          void deliverNotices(notices)
             .catch(err => deps.log('REPLY_RULE_NOTICE', `chat=${chatId} abandoned-turn notice failed: ${err instanceof Error ? err.message : String(err)}`))
         }
       },

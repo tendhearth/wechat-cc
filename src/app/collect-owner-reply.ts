@@ -15,11 +15,13 @@ export async function collectOwnerReply(
   strategy: ReplyTextStrategy,
   log: (tag: string, detail: string) => void,
   stopped?: () => boolean,
+  replyTextForInspection: (segment: string) => string = segment => segment,
 ): Promise<OwnerReplySummary> {
   const inspect = (summary: TurnSummary) => {
     if (summary.error || summary.errorCode) return false
     const final = summary.finalText ?? ''
-    const text = strategy === 'all_segments' ? [...(summary.narration ?? []), final].join('\n\n') : final
+    const segments = strategy === 'all_segments' ? [...(summary.narration ?? []), final] : [final]
+    const text = segments.map(replyTextForInspection).join('\n\n')
     const category = replyNotForOwner(text)
     if (!category) return false
     log('REPLY_NOT_FOR_OWNER', `category=${category} length=${text.length}`)

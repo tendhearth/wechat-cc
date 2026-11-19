@@ -44,6 +44,8 @@ export interface RunTurn {
   signal?: AbortSignal
   /** 'turn' = daemon 的回合看门狗(deps.turnTimeoutMs,缺省不限);'beat' = /chat 的一拍。 */
   budget: 'turn' | 'beat'
+  /** Apply the delivery path's text projection before classifying echoes. */
+  replyTextForInspection?: (segment: string) => string
   /** 这一轮自己还要看事件(solo 的 daemon 交付收旁白)。先于桌宠的 onTurnEvent。 */
   observe?: (ev: AgentEvent) => void
   /** 一轮超过阈值还没完时调一次(一轮最多一次)。 */
@@ -167,6 +169,7 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
       const log = handle ? (ev: AgentEvent) => { try { handle.event(ev) } catch { /* 只少一步 */ } } : undefined
       const stopped = this.stopMark(t.chatId)
       const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, async () => {
+        const deadlineAt = timeoutMs !== undefined && timeoutMs > 0 ? Date.now() + timeoutMs : undefined
         let deferred: AgentEvent[] | undefined
         const flush = (includeText: boolean) => {
           for (const ev of deferred ?? []) if (includeText || ev.kind !== 'text') log?.(ev)
@@ -190,9 +193,11 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
           const summary = await collectOwnerReply(
             (prompt, retry) => {
               if (retry) flush(false)
-              return collectTurn(t.handle.dispatch(prompt, { source: retry ? 'background' : 'inbound' }), { timeoutMs, onEvent })
+              return collectTurn(t.handle.dispatch(prompt, { source: retry ? 'background' : 'inbound' }), { deadlineAt, onEvent })
             },
-            t.prompt, ctx.textStrategyFor(t.providerId), deps.log, () => stopped() || t.signal?.aborted === true,
+            t.prompt, ctx.textStrategyFor(t.providerId), deps.log,
+            () => stopped() || t.signal?.aborted === true || (deadlineAt !== undefined && Date.now() >= deadlineAt),
+            t.replyTextForInspection,
           )
           flush(!summary.replySuppressed)
           return summary

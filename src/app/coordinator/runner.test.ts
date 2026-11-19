@@ -45,6 +45,46 @@ describe('runner · 对话的轮(M3a)', () => {
     expect(dispatch).toHaveBeenLastCalledWith('上一条不是给主人的话。请直接用平常话回答主人刚才那句。', { source: 'background' })
   })
 
+  it.each(['turn', 'beat'] as const)('%s 的重答只能使用原看门狗的剩余预算', async budget => {
+    vi.useFakeTimers()
+    try {
+      const runner = createTurnRunner(createCoordinatorCtx({ turnTimeoutMs: 100, log: vi.fn() } as unknown as CoordinatorCtx['deps']))
+      const dispatch = vi.fn()
+        .mockImplementationOnce(async function* () {
+          await new Promise(resolve => setTimeout(resolve, 80))
+          yield { kind: 'text', text: '[System: echo]' }
+        })
+        .mockImplementationOnce(async function* () {
+          await new Promise(resolve => setTimeout(resolve, 10))
+          yield { kind: 'text', text: '半句' }
+          await new Promise(resolve => setTimeout(resolve, 30))
+          yield RESULT
+        })
+      const summary = vi.fn()
+      const run = runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: { dispatch }, prompt: 'hi', budget }).then(summary)
+      await vi.advanceTimersByTimeAsync(100)
+      const atDeadline = summary.mock.calls.slice()
+      await vi.advanceTimersByTimeAsync(100)
+      await run
+      expect(dispatch).toHaveBeenCalledTimes(2)
+      expect(atDeadline).toEqual([[expect.objectContaining({ replyRetried: true, errorCode: 'turn_timeout' })]])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('收完回声时原期限已到，不开始重答', async () => {
+    vi.useFakeTimers()
+    try {
+      const log = (tag: string) => {
+        if (tag === 'REPLY_NOT_FOR_OWNER') vi.setSystemTime(Date.now() + 100)
+      }
+      const runner = createTurnRunner(createCoordinatorCtx({ turnTimeoutMs: 100, log } as unknown as CoordinatorCtx['deps']))
+      const dispatch = vi.fn(async function* (): AsyncGenerator<AgentEvent> { yield { kind: 'text', text: '[System: echo]' } })
+      const summary = await runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: { dispatch }, prompt: 'hi', budget: 'turn' })
+      expect(dispatch).toHaveBeenCalledTimes(1)
+      expect(summary.replyRetried).toBe(false)
+    } finally { vi.useRealTimers() }
+  })
+
   it('run 开一轮、事件都给它;record 按同一个 turn 标记收同一轮,只收一次', async () => {
     const { runner, opened, recordTurn, handle } = harness()
     const tool: AgentEvent = { kind: 'tool_call', tool: 'Bash' }
