@@ -100,10 +100,8 @@ export function makeCodexChatGate(deps: CodexChatGateDeps): (ctx: SpawnContext) 
       if (signal.aborted) return false
       const hash = shortHash(`${ctx.chatId}:codex:${req.tool}:${++seq}:${Date.now()}`)
       let prompt:string
-      try{prompt=req.tool==='mcp__wechat__matter_plan'||req.tool==='mcp__wechat__terminal_attach'||req.tool==='mcp__wechat__terminal_detach'?await prepareChatApprovalPrompt('Codex',req.tool,req.tool==='mcp__wechat__matter_plan'?structuredClone(req.input):req.input,hash,deps,ctx.chatId):promptOf(req,hash)}catch{
-        // Native approvals only return a boolean, so let the daemon report
-        // resolution errors (including ambiguous candidates) to the tool.
-        // No approval receipt is recorded: the route cannot perform a mutation.
+      try{prompt=req.tool==='mcp__wechat__matter_plan'||req.tool==='mcp__wechat__terminal_attach'||req.tool==='mcp__wechat__terminal_detach'?await prepareChatApprovalPrompt('Codex',req.tool,req.tool==='mcp__wechat__matter_plan'?structuredClone(req.input):req.input,hash,deps,ctx.chatId):promptOf(req,hash)}catch(error){
+        if(req.tool==='mcp__wechat__matter_plan'&&error instanceof Error)req.onDenied?.(error.message)
         return req.tool==='mcp__wechat__terminal_attach'||req.tool==='mcp__wechat__terminal_detach'
       }
       const answer = await deps.askUser(admin, prompt, hash, deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)

@@ -304,7 +304,7 @@ export function makeWorkbenchService(opts: Options) {
     contextAvailable:noticesDomain.contextAvailable,
     notificationEligible:noticesDomain.notificationEligible,
     setWechatWatch:noticesDomain.setWechatWatch,
-    entryOptions:entryDomain.entryOptions,availableExecutors:entryDomain.availableExecutors,entryModels:entryDomain.entryModels,
+    entryOptions:entryDomain.entryOptions,availableExecutors:entryDomain.availableExecutors,planExecutors:entryDomain.planExecutors,entryModels:entryDomain.entryModels,
     entryReceipt:entryDomain.entryReceipt,
     createEntry:entryDomain.createEntry,
     projects:viewDomain.projects,

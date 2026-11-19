@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { PlanInputError } from '../../workbench/matter-plan-input'
 import { claudeEquivalentUses, makeCodexChatGate, type CodexChatGateDeps } from './codex-chat-gate'
 import { makeCanUseTool } from '../claude/permission-relay'
 import { decide } from '../../permission-rules/decide'
@@ -50,6 +51,17 @@ describe('Codex 对话审批 → authorize', () => {
     for(let i=1;i<=6;i++){expect(r.cards[0]!.prompt).toContain(`第 ${i} 棒`);expect(r.cards[0]!.prompt).toContain(`worker-${i}`);expect(r.cards[0]!.prompt).toContain(`第${i}项工作`)}
     expect(r.cards[0]!.prompt.length).toBeLessThanOrEqual(2000)
   })
+  it('交办执行者不认时把可用 id 回给模型，不发确认卡', async () => {
+    const askUser = vi.fn(async () => 'allow' as const), onDenied = vi.fn()
+    const approve = makeCodexChatGate({
+      askUser, adminFor: () => 'owner', log: vi.fn(),
+      resolveMatterPlan: () => { throw new PlanInputError('unavailable_provider', undefined, ['codex', 'claude']) },
+    })({ chatId: 'owner', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' } as SpawnContext)
+    expect(await approve({ ...mcp('matter_plan', { title: '加收藏', legs: [{ executor: 'CC', brief: '加收藏' }] }), onDenied }, signal())).toBe(false)
+    expect(onDenied).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('当前可用的执行者 id：codex、claude'))
+    expect(askUser).not.toHaveBeenCalled()
+  })
+
   it('命令:codex 报上来要批的 ⇒ 问主人(拍板卡,10 分钟),主人点了才放', async () => {
     const yes = rig({ answer: 'allow' })
     expect(await yes.approve(cmd('rm -rf build'), signal())).toBe(true)

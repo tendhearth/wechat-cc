@@ -234,11 +234,12 @@ it('records matter_plan through authenticated HTTP and closes access before sess
   const h = harness()
   const project = { id: 'p-0123456789abcdef0123', name: 'rici', path: root, providerId: 'claude' }
   const matterPlan = vi.fn(async () => ({ task: { id: 'feed1234' }, receipt: { requestId: 'req', taskId: 'feed1234', matterId: 'feed1234', runId: 'run', acceptedAt: 1 } }))
+  let executors = { available: ['claude'], defaultProviderId: 'claude' as string | null }
   const matterApprovalStatus = vi.fn(() => true)
   const planConversation = vi.fn(() => ({ scope: 'owner-turn' }))
   const api = createInternalApi({ stateDir: root, daemonPid: 1 })
   const routes = ledgerRoutes({
-    workbench: { matterPlan, matterApprovalStatus, projects: () => [project], availableExecutors: () => ['claude'] } as unknown as WorkbenchService,
+    workbench: { matterPlan, matterApprovalStatus, projects: () => [project], planExecutors: () => executors } as unknown as WorkbenchService,
     resolveAdminChatId: () => 'owner', planConversation,
   })
   api.mount('workbench', routes)
@@ -282,7 +283,7 @@ it('records matter_plan through authenticated HTTP and closes access before sess
                 try {
                   const { tools } = await client.listTools()
                   expect(tools).toEqual((await ownerClient.listTools()).tools.filter(tool => tool.name === 'matter_plan'))
-                  const call = async (args: typeof input) => {
+                  const call = async (args: Omit<typeof input, 'legs'> & { legs: Array<{ executor?: string; brief: string }> }) => {
                     const result = await client.callTool({ name: 'matter_plan', arguments: args })
                     return JSON.parse((result.content as Array<{ text: string }>)[0]!.text)
                   }
@@ -292,7 +293,12 @@ it('records matter_plan through authenticated HTTP and closes access before sess
                   expect(await call({ ...input, project: 'missing' })).toEqual(matterToolFailure('project_stale', false, 'plan', [project]))
                   expect(await call({ ...input, legs: [] })).toEqual(matterToolFailure('invalid_matter_plan', false))
                   // 没登记的执行者:生产受理前会拒,记录器也拒(独立评审)
-                  expect(await call({ ...input, legs: [{ executor: 'ghost', brief: '改' }] })).toEqual(matterToolFailure('unavailable_provider', false, 'plan'))
+                  expect(await call({ ...input, legs: [{ executor: 'ghost', brief: '改' }] })).toEqual(matterToolFailure('unavailable_provider', false, 'plan', undefined, ['claude']))
+                  const withoutExecutor = { ...input, legs: [{ brief: '改' }] }
+                  expect(WorkbenchEntryResultResponse.parse(await call(withoutExecutor)).task.providerId).toBe('claude')
+                  expect(await call({ ...input, legs: [...withoutExecutor.legs, ...input.legs] })).toEqual(matterToolFailure('invalid_matter_plan', false))
+                  executors = { available: [], defaultProviderId: null }
+                  expect(await call(withoutExecutor)).toEqual(matterToolFailure('unavailable_provider', false, 'plan', undefined, []))
                   const denied = await post(token, '/v1/matter/relay')
                   expect(await denied.json()).toEqual({ error: 'route_not_allowed' })
                   expect(matterPlan).toHaveBeenCalledTimes(0)
@@ -321,6 +327,9 @@ it('records matter_plan through authenticated HTTP and closes access before sess
         { title: input.title, project: 'missing', resolvedProject: null, error: 'project_stale' },
         { title: input.title, project: 'RICI', resolvedProject: null, error: 'invalid_matter_plan', legs: [] },
         { title: input.title, project: 'RICI', resolvedProject: 'rici', error: 'unavailable_provider', legs: [{ executor: 'ghost', brief: '改' }] },
+        { title: input.title, project: 'RICI', resolvedProject: 'rici', legs: [{ executor: 'claude', brief: '改' }] },
+        { title: input.title, project: 'RICI', resolvedProject: null, error: 'invalid_matter_plan' },
+        { title: input.title, project: 'RICI', resolvedProject: 'rici', error: 'unavailable_provider', legs: [] },
       ],
     })
     expect(closeStatus).toBe(401)

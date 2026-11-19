@@ -1,5 +1,5 @@
 import {MatterPlanRequest,REQUEST_SCHEMAS} from '../../../../packages/protocol/src/desktop-api'
-import type {PlanTarget} from '../../../adapters/workbench/matter-plan-input'
+import type {PreparedPlanTarget} from '../../../adapters/workbench/matter-plan-input'
 
 const stable=(value:unknown):unknown=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,stable(v)])):value
 const normalize=(tool:string,input:unknown)=>{
@@ -17,7 +17,7 @@ const normalize=(tool:string,input:unknown)=>{
   }
   return input
 }
-interface Approval {scope:string;approved:boolean;target?:PlanTarget}
+interface Approval {scope:string;approved:boolean;target?:PreparedPlanTarget}
 
 /** Process-local bindings belong to live daemon turns; restart revokes the corresponding conversations/cards. */
 export function matterApprovals(){
@@ -26,14 +26,15 @@ export function matterApprovals(){
   return {
     get(scope:string,tool:string,input:unknown){return records.get(key(scope,tool,input))},
     drop(scope:string){for(const [k,v] of records)if(v.scope===scope)records.delete(k)},
-    preview(scope:string,input:unknown,target:PlanTarget){
+    preview(scope:string,input:unknown,target:PreparedPlanTarget){
       const tool='mcp__wechat__matter_plan'
       const prior=records.get(key(scope,tool,input))
       if(prior?.target)return
-      const record={scope,approved:false,target}
+      const {target:entryTarget,projectName,projectPath,legs}=target
+      const record={scope,approved:false,target:{target:entryTarget,projectName,projectPath,legs}}
       records.set(key(scope,tool,input),record)
       const parsed=MatterPlanRequest.parse(input),{project:_project,isolation:_isolation,base:_base,...rest}=parsed
-      records.set(key(scope,tool,{...rest,target:target.target}),record)
+      records.set(key(scope,tool,{...rest,target:target.target,legs:target.legs}),record)
     },
     /** 用掉一次批准(开分享链接:点一次头只开一个)。 */
     consume(scope:string,tool:string,input:unknown){records.delete(key(scope,tool,input))},

@@ -937,6 +937,8 @@ describe('topic_search 那一段(话题 2026-11-05)', () => {
     expect(topicSearchSection()).toContain('先用 `topic_search`')
     expect(topicSearchSection()).toContain('说出口的不都是交代')
     expect(topicSearchSection()).toContain('放到了哪个项目')
+    expect(topicSearchSection()).toContain('主人要在某个项目里改、加、修一个具体的东西，就用 matter_plan 交办，别自己在对话里翻那个项目的代码；拿不准是不是现在做，先当点子，问一句。')
+    expect(topicSearchSection()).toContain('回主人时别说工具名、内部编号、绝对路径或「执行棒」。交办没成，就用平常话说卡在哪（比如「rici 还没登记成能派活的项目」），再说主人可以怎么办。')
     expect(on.replace(`\n\n${topicSearchSection()}`, '')).toBe(base)
   })
 })

@@ -79,7 +79,7 @@ export interface CodexChatProfile {
  * 放行规则要的原文(带了额外授权 —— 网络、项目外读写 —— 的请求不给,只能问主人;和工作台同一条规矩);
  * input 是 MCP 调用的参数(按档位分类要用)。
  */
-export interface CodexChatApprovalRequest { tool: string; description: string; command?: string; paths?: string[]; cwd?: string; input?: Record<string, unknown> }
+export interface CodexChatApprovalRequest { tool: string; description: string; command?: string; paths?: string[]; cwd?: string; input?: Record<string, unknown>; onDenied?: (reason: string) => void }
 export type CodexChatApprove = (request: CodexChatApprovalRequest, signal: AbortSignal) => Promise<boolean>
 
 /** 对话侧多要一样东西:这条 app-server 还活着吗(死了 ⇒ 下一轮换一个新进程续接同一个 thread)。 */
@@ -724,9 +724,11 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         let feedback: string | undefined
         const onDenied = (reason: string) => { feedback = permissionDenialMessage(request.description, reason); (turn.denialFeedback ??= []).push(feedback) }
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && (chat ? chat.approve : context.requestPermission)
-          ? chat ? chat.approve!({ ...request, input }, controller.signal) : context.requestPermission!({ ...request, onDenied }, controller.signal) : false,
+          ? chat ? chat.approve!({ ...request, input, ...(request.tool==='mcp__wechat__matter_plan'?{onDenied}:{}) }, controller.signal) : context.requestPermission!({ ...request, onDenied }, controller.signal) : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
+          // The native turn can complete while the decline is being written.
+          if (chat && feedback && allow !== true) approvals.delete(id)
           send({ id, result: { action: allow === true ? 'accept' : 'decline', content: null, _meta: null } }, () => {
             if (approvals.get(id) === entry) approvals.delete(id)
             if (allow !== true && feedback) steerDenial(turn, feedback)
@@ -990,7 +992,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
               dropPendingRequests(turn); retainUnfinishedCommands(turn); turn.occurrence.finish(params.turn?.status)
               turn.events.push(turn.occurrence.event(), reconcileUnstartedCommands()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn); return
             }
-            if (!chat && !turn.cancelled && turn.denialFeedback?.length && ['completed', 'interrupted'].includes(params.turn?.status)) {
+            // Chat only queues denial feedback for matter_plan validation failures.
+            if (!turn.cancelled && turn.denialFeedback?.length && ['completed', 'interrupted'].includes(params.turn?.status)) {
               if (turn.resumingDenial) return
               turn.resumingDenial = true; clearWatchdog(turn)
               void (async () => {
@@ -1001,7 +1004,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
                 turn.denialFeedback = []
                 dropPendingRequests(turn); retainUnfinishedCommands(turn); pruneFinishedTurn(turn)
                 active = undefined
-                context.reportNotice?.('这一步已拒绝，正在同一会话中换一种做法继续。')
+                if (!chat) context.reportNotice?.('这一步已拒绝，正在同一会话中换一种做法继续。')
                 const next = launch(feedback, undefined, turn.events)
                 if (turn.usage) next.turn.usage = sumTurnUsage(next.turn.usage, turn.usage)
                 await next.accepted

@@ -924,8 +924,8 @@ export const MatterPlanRequest=z.object({
     z.object({kind:z.literal('local')}).strict(),
   ]).optional(),
   title:z.string().trim().min(1).max(120),
-  legs:z.array(z.object({executor:z.string().trim().min(1).max(80),brief:z.string().trim().min(1).max(20_000)}).strict()).min(1).max(6),
-}).strict()
+  legs:z.array(z.object({executor:z.string().trim().min(1).max(80).optional(),brief:z.string().trim().min(1).max(20_000)}).strict()).min(1).max(6),
+}).strict().refine(input=>input.legs.length===1||input.legs.every(leg=>leg.executor!==undefined),{path:['legs'],message:'Multiple legs each require an executor'})
 
 // ── GET /v1/workbench(列表)──
 export const WorkbenchListResponse = z.object({
