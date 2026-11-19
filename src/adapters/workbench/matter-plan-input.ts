@@ -1,7 +1,8 @@
 import {createHash} from 'node:crypto'
 import {realpathSync} from 'node:fs'
-import {basename} from 'node:path'
+import {basename,dirname,isAbsolute} from 'node:path'
 import type {z} from 'zod'
+import type {MatterPlaceChoice} from '../../../packages/protocol/src/workbench-errors'
 import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
 import type {ProjectCatalogEntry} from './project-catalog'
 import {projectRegistrationId} from './project-catalog'
@@ -23,7 +24,7 @@ export interface PlanExecutors {
   defaultUnavailableReason?:{code:string;message:string}
 }
 export class PlanInputError extends Error {
-  constructor(code:string,readonly projects?:ProjectCatalogEntry[],readonly executors?:readonly string[],readonly defaultUnavailableMessage?:string,readonly candidateNames?:readonly string[]){super(code)}
+  constructor(code:string,readonly projects?:ProjectCatalogEntry[],readonly executors?:readonly string[],readonly defaultUnavailableMessage?:string,readonly candidateNames?:readonly string[],readonly placeChoices?:readonly MatterPlaceChoice[]){super(code)}
 }
 
 export function resolvePlanLegs(input:MatterPlanInput,executors:()=>PlanExecutors):PlanLegs {
@@ -38,6 +39,35 @@ export function resolvePlanLegs(input:MatterPlanInput,executors:()=>PlanExecutor
     return {executor:defaultProviderId,brief:leg.brief}
   })
 }
+const placeSelector=(root:string)=>'place:'+createHash('sha256').update(root).digest('hex').slice(0,32)
+
+function parentNames(root:string):string[] {
+  const names:string[]=[]
+  for(let parent=dirname(root);parent!==dirname(parent);parent=dirname(parent)){
+    names.push(basename(parent))
+  }
+  return names
+}
+
+function placeChoices(matches:readonly PlanPlace[]):MatterPlaceChoice[] {
+  const names=matches.map(place=>isAbsolute(place.name)?basename(place.name)||'根目录':place.name)
+  const parents=matches.map(place=>parentNames(place.root))
+  const labels=names.map((name,i)=>{
+    const others=names.flatMap((other,j)=>j!==i&&other===name?[parents[j]!]:[])
+    if(!others.length)return name
+    const ancestors=parents[i]!
+    const parent=ancestors[0]||'根目录'
+    if(others.every(other=>other[0]!==ancestors[0]))return `${name}（在 ${parent} 下）`
+    // When parent names also coincide, include a distinguishing ancestor component.
+    const qualifier=ancestors.find((ancestor,depth)=>depth>0&&others.every(other=>other[depth]!==ancestor))
+    return qualifier?`${name}（在 ${parent} 下，上层目录有 ${qualifier}）`:`${name}（在 ${parent} 下）`
+  })
+  return matches.map((place,i)=>({
+    label:labels.filter(label=>label===labels[i]).length===1?labels[i]!:`选项 ${i+1} · ${labels[i]}`,
+    selector:placeSelector(place.root),
+  }))
+}
+
 const canonical=(path:string)=>{try{return realpathSync(path)}catch{return null}}
 
 /** The catalog takes priority. Only a stored place can supply an unregistered directory. */
@@ -54,8 +84,10 @@ export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogE
   let found:ProjectCatalogEntry[]=[]
   if(value!==undefined){
     found=projects.filter(p=>p.id===value)
-    if(!found.length)found=projects.filter(p=>p.name.toLowerCase()===value.toLowerCase())
+    // Keep existing IDs, aliases, basenames and paths ahead of saved display names.
+    if(!found.length)found=projects.filter(p=>(p.lookupName??p.name).toLowerCase()===value.toLowerCase())
     if(!found.length){const resolved=canonical(value);if(resolved)found=projects.filter(p=>p.path===resolved)}
+    if(!found.length)found=projects.filter(p=>p.name.toLowerCase()===value.toLowerCase())
   }else if(target)return fail('invalid_target')
   else if(path){const resolved=canonical(path);if(resolved)found=projects.filter(p=>p.path===resolved)}
   if(found.length>1)return fail('matter_project_ambiguous')
@@ -67,12 +99,19 @@ export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogE
   const options={...(isolation?{isolation}:{}),...(base?{base}:{})}
   if(project)return {target:{kind:'project',projectId:project.id,...options},projectName:project.name,projectPath:project.path}
   if(input.project===undefined)return fail('project_stale')
-  const known=places(),name=input.project.toLowerCase()
-  const matches=known.filter(place=>place.name.toLowerCase()===name||basename(place.root)===input.project||place.root===input.project)
+  const projectPaths=new Set(projects.map(p=>p.path))
+  const known=places().filter(place=>!projectPaths.has(canonical(place.root)??place.root))
+  const name=input.project.toLowerCase()
+  const selected=known.find(place=>placeSelector(place.root)===input.project)
+  const matches=selected?[selected]:known.filter(place=>place.name.toLowerCase()===name||basename(place.root)===input.project||place.root===input.project)
+  if(matches.length>1){
+    const choices=placeChoices(matches)
+    throw new PlanInputError('matter_place_ambiguous',undefined,undefined,undefined,choices.map(choice=>choice.label),choices)
+  }
   const place=matches[0]
-  if(matches.length!==1||!place){
-    const candidates=matches.length?matches.map(p=>p.name):[...projects.map(p=>p.name),...known.map(p=>p.name)]
-    throw new PlanInputError(matches.length?'matter_place_ambiguous':'project_stale',undefined,undefined,undefined,[...new Set(candidates)])
+  if(!place){
+    const candidates=[...projects.map(p=>p.name),...known.map(p=>p.name)]
+    throw new PlanInputError('project_stale',undefined,undefined,undefined,[...new Set(candidates)])
   }
   let registrationPath:string
   try{registrationPath=validateProjectRegistration({path:place.root,name:place.name})}

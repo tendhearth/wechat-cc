@@ -13,7 +13,7 @@ const invalid=()=>({status:400,body:{error:'invalid_request'}})
 export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:()=>string|null;planConversation?:(caller:PlanCaller)=>PlanConversation|null}):RouteTable{
   return {
     'POST /v1/matter/plan':async(q,b,c)=>{
-      if (c?.origin === 'session' && c.recordMatterPlan) return c.recordMatterPlan(q, b, () => d.workbench.projects(), () => d.workbench.planExecutors(), () => d.workbench.planPlaces())
+      if (c?.origin === 'session' && c.recordMatterPlan) return c.recordMatterPlan(q, b, () => d.workbench.planProjects(), () => d.workbench.planExecutors(), () => d.workbench.planPlaces())
       if(!ownerLedgerConversation(d.resolveAdminChatId?.()??null,c))return {status:403,body:matterToolFailure('matter_ledger_forbidden',false)}
       const approved=d.workbench.matterApprovalStatus?.('mcp__wechat__matter_plan',b,c??{})??false
       const parsed=MatterPlanRequest.safeParse(b)
@@ -23,7 +23,7 @@ export function ledgerRoutes(d:{workbench:WorkbenchService;resolveAdminChatId?:(
         const code=error instanceof Error?error.message:''
         const details=error instanceof PlanInputError?error:undefined
         const executors=details?details.executors:code==='unavailable_provider'?d.workbench.availableExecutors():undefined
-        const body=matterToolFailure(code,approved,'plan',details?.projects,executors,details?.defaultUnavailableMessage,details?.candidateNames)
+        const body=matterToolFailure(code,approved,'plan',details?.projects,executors,details?.defaultUnavailableMessage,details?.candidateNames,details?.placeChoices)
         return {status:code==='matter_ledger_forbidden'?403:409,
           body:error instanceof RegisteredProjectDispatchError?{...body,projectRegistered:true,message:`项目已经登记。${body.message}`}:body}
       }

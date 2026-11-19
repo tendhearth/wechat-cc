@@ -166,13 +166,13 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     const rank:Record<PetTaskActivity['phase'],number>={needs_input:0,failed:1,interrupted:1,paused:1,replied:2,working:3,stopping:3,queued:4}
     return activities.sort((a,b)=>rank[a.phase]-rank[b.phase]||b.updatedAt-a.updatedAt||a.taskId.localeCompare(b.taskId)).slice(0,8)
   }
-  function projects(){
+  function projects(forPlan=false){
     const ownerChatId=ctx.deps.ownerChatId();if(!ownerChatId)return[]
     const providers=ctx.deps.registry.list().filter(id=>isWorkbenchProviderId(id)&&isWorkbenchExecutorCapabilities(ctx.deps.registry.get(id)?.opts.workbench))
     // 主人在桌面「添加项目」加的那些也算(2026-10-07):以前只有配置里登记的 + 有过任务的才进交办选项,
     // 新加的项目在第一件事之前选不到 —— 「在独立工作区里做」只对项目有效,于是也开不了。
     const added=store.projects().map(project=>({path:project.path,providerId:project.providerId,name:project.name}))
-    return makeProjectCatalog({ownerChatId,registered:ctx.deps.registeredProjects?.()??[],known:[...store.ownedProjects(ownerChatId,providers),...added],providers,defaultProvider:ctx.deps.defaultProvider})
+    return makeProjectCatalog({ownerChatId,registered:ctx.deps.registeredProjects?.()??[],known:[...store.ownedProjects(ownerChatId,providers),...added],providers,defaultProvider:ctx.deps.defaultProvider,includeLookupName:forPlan})
   }
   function validateProject(input:{path:string;name?:string;providerId:string},expectedPath?:string) {
     const path=validateProjectRegistration(input,()=>provider(input.providerId))

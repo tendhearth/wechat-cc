@@ -61,7 +61,7 @@ export function makeMatterPlanRecorder(path: string, calls: EvalPlanCall[]) {
     } catch (error) {
       const details = error instanceof PlanInputError ? error : undefined
       const failure = matterToolFailure(error instanceof Error ? error.message : '', false, 'plan',
-        details?.projects, details?.executors, details?.defaultUnavailableMessage, details?.candidateNames)
+        details?.projects, details?.executors, details?.defaultUnavailableMessage, details?.candidateNames,details?.placeChoices)
       call.error = failure.error
       return { status: 409, body: failure }
     }

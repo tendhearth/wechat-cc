@@ -39,6 +39,9 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     return current
   }
   const planPlaces=()=>ctx.deps.planPlaces?.()??[]
+  const planProjects=()=>d.view.projects(true)
+  const requestIdFor=(owner:string,scope:string,plan:Parameters<typeof planRequestId>[1]&{requestId?:string})=>
+    plan.requestId??planRequestId(JSON.stringify([owner,scope]),plan)
   function prepare(input:MatterPlanInput,context?:PlanConversation,preview=false){
     const parsed=MatterPlanRequest.safeParse(input)
     if(!parsed.success)throw Error('invalid_matter_plan')
@@ -55,7 +58,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       return {...normalized,legs:replayLegs??resolvePlanLegs(normalized,d.entry.planExecutors),target:target.kind==='managed'?target:{...target,projectId:target.projectId!,...(normalized.isolation?{isolation:normalized.isolation}:{}),...(normalized.base?{base:normalized.base}:{})},projectName:'',projectPath:''}
     }
     const owner=ctx.deps.ownerChatId()??''
-    const resolved=resolvePlanTarget(normalized,d.entry.entryOptions({ownerKey:owner,surface:'desktop'}).projects,context?.path,planPlaces,owner)
+    const resolved=resolvePlanTarget(normalized,planProjects(),context?.path,planPlaces,owner)
     return {...normalized,...resolved,legs:replayLegs??resolvePlanLegs(normalized,d.entry.planExecutors)}
   }
   function requirePlanLegs(legs:PlanLegs){
@@ -68,13 +71,17 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
   }
   return {
     planPlaces,
+    planProjects,
     matterPlanPreview(input:MatterPlanInput,caller:PlanCaller){
       if(!caller.chatId||caller.chatId!==ctx.deps.ownerChatId())throw Error('matter_ledger_forbidden')
       const context=conversation(caller)
       if(!context)throw Error('matter_conversation_unavailable')
       const prepared=prepare(input,context,true)
-      requirePlanLegs(prepared.legs)
-      if(prepared.registrationPath)d.view.validateProject({path:prepared.projectPath,name:prepared.projectName,providerId:prepared.legs[0]!.executor},prepared.registrationPath)
+      const owner=caller.chatId,requestId=requestIdFor(owner,context.scope,prepared)
+      if(!d.entry.entryReceipt(requestId,{ownerKey:owner,surface:'desktop'})){
+        requirePlanLegs(prepared.legs)
+        if(prepared.registrationPath)d.view.validateProject({path:prepared.projectPath,name:prepared.projectName,providerId:prepared.legs[0]!.executor},prepared.registrationPath)
+      }
       approvals.preview(context.scope,input,prepared)
       return prepared
     },
@@ -121,13 +128,15 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
         if(!bound?.approved||!bound.target?.registrationPath)throw Error('matter_project_registration_requires_approval')
       }
       if(!input.requestId&&!context?.scope)throw Error('matter_conversation_unavailable')
-      const requestId=input.requestId??planRequestId(JSON.stringify([owner,context!.scope]),prepared)
+      const requestId=requestIdFor(owner,context?.scope??'',prepared)
       // Accepted receipts replay before mutable provider admission; createEntry still checks the complete hash.
-      if(!d.entry.entryReceipt(requestId,{ownerKey:owner,surface:'desktop'}))requirePlanLegs(legs)
+      const entryContext={ownerKey:owner,surface:'desktop' as const}
+      const accepted=d.entry.entryReceipt(requestId,entryContext)
+      if(!accepted)requirePlanLegs(legs)
       const first=prepared.legs[0]!
       const target=prepared.target
       let projectRegistered=false
-      if(registrationPath&&target.kind==='project'){
+      if(!accepted&&registrationPath&&target.kind==='project'){
         ctx.ensureAccepting()
         const project={path:prepared.projectPath,name:prepared.projectName,providerId:first.executor}
         if(projectRegistrationId(owner,project.path)!==target.projectId)throw Error('matter_place_changed')
@@ -138,7 +147,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
         }
       }
       try{
-        return await d.entry.createEntry({requestId,target,title:prepared.title,text:first.brief,providerId:first.executor},{ownerKey:owner,surface:'desktop'},
+        return await d.entry.createEntry({requestId,target,title:prepared.title,text:first.brief,providerId:first.executor},entryContext,
           {identity:JSON.stringify(legs),persist:(task,runId)=>{
             if(ctx.deps.ownerChatId()!==owner)throw Error('matter_ledger_forbidden')
             // A single executor is an ordinary chat delegation, without a relay ledger or plan.

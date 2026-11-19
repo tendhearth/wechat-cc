@@ -13,7 +13,6 @@ import type { CliUpgradeModule } from '../../daemon/cli-upgrade/start'
 import { ownerChatIdOf } from '../../daemon/owner-chat'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterTopics } from '../../daemon/threads/matter-topics'
-import { makePlacesStore } from '../../adapters/store/places-store'
 import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
 import { WECHAT_PORTS as W, type WechatPermissions } from '../../ports/wechat'
 import type { TerminalFeature } from '../terminal'
@@ -26,7 +25,7 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
   const { stateDir, db } = f
   return workbenchFeature({
     needs: ['bootstrap', 'terminal', 'jobs', W.permissions, 'internal-api', 'network-gate', 'report-outbox'],
-    lazy: ['cli-upgrade'],
+    lazy: ['cli-upgrade', 'wired'],
     resolveAdminChatId: () => ownerChatIdOf(stateDir),
     // 桌面 app 开着没有 / 在电脑上看过哪件(S3b):一件事的提议读
     desktop: { notePoll: (progress) => f.desktopSurface.notePoll(progress), seen: (id) => { f.desktopSurface.noteSeen(id); hintWrite(f.db, { kind: 'matter', matterId: id }) } },
@@ -38,9 +37,9 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
       const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
       // 话题 T3:派活时从话题拣简报、做完把结论写回话题(只给主人的任务)
       const matterTopics = makeMatterTopics({ db, threads: makeThreadsStore(db, { filterSources: true }), ownerChatId: () => ownerChatIdOf(stateDir), log: (t, l) => log(t, l) })
-      const places=makePlacesStore(db)
+      const wired = ctx.late<WiredDeps>('wired')
       return {
-        planPlaces:()=>places.list().filter(place=>!place.hidden),
+        planPlaces: () => wired()?.places?.planPlaces() ?? [],
         db, stateDir, boot, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
         onTurnError: (providerId, code, message) => {
           cliUpgrade()?.upgrader()?.onTurnError(providerId, code, message)

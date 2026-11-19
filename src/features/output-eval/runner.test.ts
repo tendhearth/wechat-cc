@@ -266,7 +266,7 @@ it('records matter_plan through authenticated HTTP and closes access before sess
   const planConversation = vi.fn(() => ({ scope: 'owner-turn' }))
   const api = createInternalApi({ stateDir: root, daemonPid: 1 })
   const routes = ledgerRoutes({
-    workbench: { matterPlan, matterApprovalStatus, addProject, projects: () => [project], planExecutors: () => executors, planPlaces: () => [{ root: placeRoot, name: 'melu' }] } as unknown as WorkbenchService,
+    workbench: { matterPlan, matterApprovalStatus, addProject, planProjects: () => [project], planExecutors: () => executors, planPlaces: () => [{ root: placeRoot, name: 'melu' }] } as unknown as WorkbenchService,
     resolveAdminChatId: () => 'owner', planConversation,
   })
   api.mount('workbench', routes)

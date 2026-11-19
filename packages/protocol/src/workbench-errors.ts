@@ -282,8 +282,10 @@ export function workbenchErrorHttp(code: string, surface: WorkbenchErrorSurface,
 }
 
 
+export interface MatterPlaceChoice {label:string;selector:string}
+
 /** Relay tool failures retain machine codes and state explicitly whether approval has happened. */
-export function matterToolFailure(code:string,approved:boolean|null,operation:'plan'|'handoff'='plan',projects?:readonly {name:string;path:string;id:string}[],executors?:readonly string[],defaultUnavailableMessage?:string,candidateNames?:readonly string[]) {
+export function matterToolFailure(code:string,approved:boolean|null,operation:'plan'|'handoff'='plan',projects?:readonly {name:string;path:string;id:string}[],executors?:readonly string[],defaultUnavailableMessage?:string,candidateNames?:readonly string[],placeChoices?:readonly MatterPlaceChoice[]) {
   const known=workbenchErrorSpec(code),error=known?code:operation==='plan'?'matter_plan_failed':'matter_handoff_failed'
   const reason=operation==='plan'&&error==='unavailable_provider'&&executors!==undefined
     ? executors.length
@@ -295,5 +297,8 @@ export function matterToolFailure(code:string,approved:boolean|null,operation:'p
   const choices=candidateNames!==undefined
     ? candidateNames.length?' 可选项目：'+candidateNames.join('、')+'。':' 目前没有可选项目。'
     : projects===undefined?'':projects.length?' 可选项目：'+projects.map(p=>`${p.name}（${p.id}，${p.path}）`).join('；')+'。':' 目前没有可选项目，请让主人先登记项目。'
-  return {error,approved,message:`${approved===null?'批准状态未确认，':approved?'主人已批准，但':'本次调用未获得主人批准，'}${operation==='plan'?'没建成':'没接成'}：${reason}${choices}`}
+  const selection=placeChoices?.length
+    ? ' 请用选项名称问主人，选定后把对应的选择器填入 project：'+placeChoices.map(choice=>`${choice.label} = ${choice.selector}`).join('；')+'。'
+    : ''
+  return {error,approved,...(placeChoices?{placeChoices}:{}),message:`${approved===null?'批准状态未确认，':approved?'主人已批准，但':'本次调用未获得主人批准，'}${operation==='plan'?'没建成':'没接成'}：${reason}${choices}${selection}`}
 }

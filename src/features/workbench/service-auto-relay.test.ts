@@ -677,7 +677,7 @@ function registrationSetup(executionConflict=()=>false){
  const addPlace=(name:string,root:string)=>places.add([{key:root,root,name,position:places.list().length,hidden:false}],1)
  const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner',planConversation:()=>context})['POST /v1/matter/plan']!
  const input={title:'加个收藏',project:'rici',legs:[{executor:'claude',brief:'添加收藏'}]}
- const call=(body=input)=>route(new URLSearchParams(),body,caller)
+ const call=(body:unknown=input)=>route(new URLSearchParams(),body,caller)
  const card=(body=input)=>prepareChatApprovalPrompt('OpenAI',tool,structuredClone(body),'test',{
   resolveMatterPlan:args=>f.service.matterPlanPreview(MatterPlanRequest.parse(args),caller),
  },'owner')
@@ -818,4 +818,68 @@ it('reports project registration on dispatch failure only when this call added i
  expect(retry).toMatchObject({status:409,body:{error:'native_session_busy'}})
  expect(retry.body).not.toHaveProperty('projectRegistered')
  expect(t.addProject).toHaveBeenCalledTimes(1)
+})
+
+it.each(['moved','draining'])('replays accepted registration with a changed workspace state (%s)',async scenario=>{
+ const t=registrationSetup()
+ t.addPlace('rici',t.f.project)
+ await t.card()
+ t.approve()
+ const first=await t.call()
+ expect(first.status).toBe(202)
+ if(scenario==='moved')renameSync(t.f.project,join(t.f.root,'moved-project'))
+ else await t.f.service.shutdown()
+ const {receipt}=first.body as {receipt:{requestId:string}}
+ expect(await t.call()).toMatchObject({status:202,body:{receipt}})
+ await expect(t.card()).resolves.toContain('确认交办')
+ // A receipt alone does not authorize a different plan with the same ID.
+ const target=t.f.store.entryRequests.get('owner',receipt.requestId)?.target
+ expect(target).toMatchObject({kind:'project'})
+ const {project:_project,...plan}=t.input
+ expect(await t.call({...plan,requestId:receipt.requestId,title:'另一件事',target})).toMatchObject({status:409,body:{error:'creation_conflict'}})
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+ expect(t.f.store.list()).toHaveLength(1)
+})
+
+it('keeps a desktop-added project basename ahead of an unregistered place with the same name',async()=>{
+ const t=registrationSetup(),site=join(t.f.root,'site'),other=join(t.f.root,'other')
+ mkdirSync(site)
+ mkdirSync(other)
+ t.f.service.addProject({path:site,name:'Personal Website',providerId:'claude'})
+ t.addPlace('site',other)
+ for(const project of ['site','SITE','Personal Website',site,t.f.service.projects()[0]!.id]){
+  const card=await t.card({...t.input,project})
+  expect(card).toContain('工作区：Personal Website（'+site+'）')
+  expect(card).not.toContain('还没登记')
+ }
+ expect(await t.call({...t.input,project:'site'})).toMatchObject({status:202,body:{task:{path:site}}})
+ expect(t.addProject).toHaveBeenCalledTimes(1)
+})
+
+it.each(['different','same'])('offers usable private selectors for places with the same basename and %s parent names',async scenario=>{
+ const t=registrationSetup(),parents=['Documents','Projects']
+ const roots=parents.map(parent=>join(t.f.root,parent,...(scenario==='same'?['Web']:[]),'site'))
+ for(const root of roots){
+  mkdirSync(root,{recursive:true})
+  t.addPlace('site',root)
+ }
+ const input={...t.input,project:'site'}
+ const result=await t.call(input)
+ expect(result).toMatchObject({status:409,body:{error:'matter_place_ambiguous',placeChoices:parents.map(parent=>({
+  label:scenario==='same'?`site（在 Web 下，上层目录有 ${parent}）`:`site（在 ${parent} 下）`,
+  selector:expect.stringMatching(/^place:[a-f0-9]+$/),
+ }))}})
+ const {placeChoices}=result.body as {placeChoices:Array<{label:string;selector:string}>}
+ expect(new Set(placeChoices.map(choice=>choice.selector)).size).toBe(2)
+ expect(JSON.stringify(result.body)).not.toContain(t.f.root)
+ for(const [i,choice] of placeChoices.entries()){
+  await expect(t.card(input)).rejects.toThrow(choice.selector)
+  const selected={...input,project:choice.selector}
+  expect(await t.card(selected)).toContain('工作区：site（'+roots[i]+'）')
+  expect(t.addProject).not.toHaveBeenCalled()
+ }
+ const selected={...input,project:placeChoices[1]!.selector}
+ t.approve(selected)
+ expect(await t.call(selected)).toMatchObject({status:202,body:{task:{path:roots[1]}}})
+ expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:roots[1],name:'site',providerId:'claude'})
 })
