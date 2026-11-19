@@ -548,7 +548,8 @@ export function createProviderRegistry(opts?: {
         const ids = pinned && candidates.includes(pinned) ? [pinned] : candidates
         if (!ids.length) return null
 
-        return (prompt, signal) => withoutPrivateLogging(async () => {
+        return (prompt, requestOptions) => withoutPrivateLogging(async () => {
+          const signal = requestOptions?.signal
           try {
             for (const id of ids) {
               signal?.throwIfAborted()
@@ -566,7 +567,7 @@ export function createProviderRegistry(opts?: {
 
               // Once the prompt is submitted, never fail over or collect errors containing it.
               try {
-                const result = await (signal ? evaluate(prompt, signal) : evaluate(prompt))
+                const result = await (requestOptions ? dispatchCheapEval(evaluate, prompt, requestOptions) : evaluate(prompt))
                 signal?.throwIfAborted()
                 cheapEvalRefused.delete(id)
                 return result

@@ -386,8 +386,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
-    cheapEval: (prompt: string, signal?: AbortSignal) =>
-      oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT, signal),
+    cheapEval: (prompt, options) =>
+      oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT, options?.signal),
     // 守护(评审 #193 P1-1):一次性评估每次都起新子进程,继承此刻的 process.env;会话的目标在
     // spawn 里捕获(见下面 spawnTarget),这里的 'session' 只是还没起来时的预测。
     callTarget(kind, ctx) {

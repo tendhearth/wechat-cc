@@ -8,7 +8,7 @@ import {
 } from '../../domain/notebook'
 import { NOTEBOOK_DEFAULTS, type NotebookConfig } from '../../lib/notebook-config'
 import { localParts } from '../../lib/local-time'
-import type { CheapEval } from '../../ports/agent-provider'
+import type { CheapEval, CheapEvalOptions } from '../../ports/agent-provider'
 import type { Notebook, NotebookCaller, NotebookSettings, NotebookStore } from '../../ports/notebook'
 
 // A valid 4,000-character entry can grow to 24,000 characters through JSON escaping.
@@ -41,7 +41,7 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
   }
 
   let modelActive = false
-  async function ask(model: CheapEval, prompt: string, timeoutMs: number) {
+  async function ask(model: CheapEval, prompt: string, timeoutMs: number, beforeRequest?: CheapEvalOptions['beforeRequest']) {
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<never>((_, reject) => {
@@ -53,7 +53,7 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
       timer.unref?.()
     })
     modelActive = true
-    const request = (async () => model(prompt, controller.signal))().finally(() => { modelActive = false })
+    const request = (async () => model(prompt, { signal: controller.signal, beforeRequest }))().finally(() => { modelActive = false })
     try {
       const result = await Promise.race([request, deadline])
       controller.signal.throwIfAborted()
@@ -125,22 +125,28 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     const model = deps.model()
     if (!model) return
     checking = true
-    const reservation = { ...state, day, attempts: attempts + 1 }
+    let reservation = state
     try {
-      store.set('initiative', reservation)
       const prompt = `${COMMENT_PROMPT}\n${JSON.stringify({
         candidateIds: candidates.map(entry => entry.id),
         entries: recent.filter(entry => entry.struckAt === null).map(({ id, author, body, createdAt }) =>
           ({ id, author, body, day: localParts(createdAt, timezone).day })),
       })}`
-      const result = parseComment(await ask(model, prompt, config.timeoutMs), candidates)
+      const result = parseComment(await ask(model, prompt, config.timeoutMs, () => {
+        const requestDay = localParts(now(), timezone).day
+        const requestAttempts = state.day === requestDay ? state.attempts : 0
+        if (requestAttempts >= config.dailyLimit) throw new Error('Notebook daily budget exhausted')
+        const charged = { ...state, day: requestDay, attempts: requestAttempts + 1 }
+        store.set('initiative', charged)
+        reservation = charged
+      }), candidates)
       store.atomic(() => {
         const finishedAt = now()
         const latest = store.list({ ownerOnly: true, limit: 1 })[0]
         const ref = result && store.byId(result.refId)
         const finishedDay = localParts(finishedAt, timezone).day
         // 宁可丢掉跨日的结果；该次调用属于发起的那一天。
-        const saved = !!(result && ref && ref.struckAt === null && latest && finishedDay === day
+        const saved = !!(result && ref && ref.struckAt === null && latest && finishedDay === reservation.day
           && finishedAt - latest.createdAt >= config.quietMs)
         if (saved) append('cc', result.body, 'desktop', finishedAt, null, result.refId)
         store.set('initiative', { ...reservation, lastAt: saved ? finishedAt : state.lastAt, failures: 0, retryAt: 0 })

@@ -7,13 +7,14 @@ import { makeNotebookStore } from '../../adapters/store/notebook-store'
 import { DEFAULT_OPENING } from '../../domain/notebook'
 import { NOTEBOOK_DEFAULTS, type NotebookConfig } from '../../lib/notebook-config'
 import { makeNotebook, notebookRoutes } from './index'
+import type { CheapEval } from '../../ports/agent-provider'
 import type { RouteHandler } from '../../daemon/internal-api/types'
 
 const BASE = Date.parse('2026-11-19T20:00:00Z')
 const dbs: ReturnType<typeof openTestDb>[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); vi.useRealTimers() })
 
-function fixture(model: (() => ((prompt: string) => Promise<string>) | null) | null = null, notebook: Partial<NotebookConfig> = {}) {
+function fixture(model: (() => CheapEval | null) | null = null, notebook: Partial<NotebookConfig> = {}) {
   const db = openTestDb()
   dbs.push(db)
   const store = makeNotebookStore(db)
@@ -287,6 +288,17 @@ describe('notebook pen', () => {
     expect(f.store.get('pen')).toEqual({ font: 'fangsong', ink: 'ochre', reason: replacement })
   })
 
+  it.each([0, 2])('keeps the corrected reason at opening position %i on the first page', async index => {
+    const reason = '我挑了仿宋和赭石，纸上写的是楷体。'
+    const lines = [selected.lines[0], '想写什么都行。']
+    lines.splice(index, 0, reason)
+    const f = fixture(() => async () => JSON.stringify({ ...selected, reason, lines }))
+    await openPage(f, '')
+    const replacement = '我挑了仿宋和赭石墨水，字清楚，墨色也安静。'
+    lines[index] = replacement
+    expect(f.n.page()).toMatchObject({ pen: { reason: replacement }, entries: lines.map(body => ({ body })) })
+  })
+
   it('sets the default pen without an opening when entries already exist', () => {
     const model = vi.fn(async () => JSON.stringify(selected))
     const { n } = fixture(() => model)
@@ -299,6 +311,10 @@ describe('notebook pen', () => {
 })
 
 describe('quiet notebook comments', () => {
+  const submitted = (model: (prompt: string) => Promise<string>): CheapEval => (prompt, options) => {
+    options?.beforeRequest?.()
+    return model(prompt)
+  }
   const HOUR = 3_600_000
   const fresh = (f: ReturnType<typeof fixture>) => f.n.write('想种一排向日葵。', String(f.n.page().entries.length), 'desktop')
 
@@ -306,7 +322,7 @@ describe('quiet notebook comments', () => {
     let available = false
     let id = ''
     const model = vi.fn(async () => JSON.stringify({ refId: id, body: '我想到窗台上那块下午的光。' }))
-    const f = fixture(() => available ? model : null, { checkIntervalMs: 1 })
+    const f = fixture(() => available ? submitted(model) : null, { checkIntervalMs: 1 })
     f.at(BASE - 8 * HOUR)
     id = fresh(f).id
     await f.n.tick()
@@ -333,12 +349,44 @@ describe('quiet notebook comments', () => {
     expect(model).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps the daily budget after unavailable checks and charges a submitted failure', async () => {
+    let reachable = false
+    let time = BASE
+    const registry = createProviderRegistry({ cheapEvalPreflight: async () => reachable, now: () => time })
+    const evaluate = vi.fn()
+      .mockRejectedValueOnce(new Error('submitted request failed'))
+      .mockResolvedValueOnce('null')
+    registry.register('openai', { spawn: async () => { throw Error('unused') }, cheapEval: evaluate }, { canResume: () => false })
+    const f = fixture(() => registry.getCheapEval({ private: true }), {
+      quietMs: 0, checkIntervalMs: 1, failureBaseMs: 1,
+    })
+    fresh(f)
+    await f.n.tick()
+    f.at(BASE + HOUR)
+    await f.n.tick()
+    expect(evaluate).not.toHaveBeenCalled()
+    expect(f.store.get('initiative')?.attempts ?? 0).toBe(0)
+
+    reachable = true
+    f.at(time = BASE + 2 * HOUR)
+    await f.n.tick()
+    expect(evaluate).toHaveBeenCalledTimes(1)
+    expect(f.store.get('initiative')?.attempts).toBe(1)
+    f.at(time = BASE + 3 * HOUR)
+    await f.n.tick()
+    expect(evaluate).toHaveBeenCalledTimes(2)
+    expect(f.store.get('initiative')?.attempts).toBe(2)
+    f.at(BASE + 4 * HOUR)
+    await f.n.tick()
+    expect(evaluate).toHaveBeenCalledTimes(2)
+  })
+
   it.each(['null', 'long', 'bad-id', 'empty', 'praise', 'rush', 'question', 'echo', 'multiple'])('drops %s and backs off on bad output', async kind => {
     const model = vi.fn(async () => kind === 'null' ? 'null' : JSON.stringify({
       refId: kind === 'bad-id' ? 'other' : id,
       body: { long: '光'.repeat(81), empty: ' ', praise: '真棒啊。', rush: '赶紧写下去。', question: '要不要我来写？', echo: '想种一排向日葵。', multiple: '风来了。云也来了。' }[kind] ?? '光。',
     }))
-    const f = fixture(() => model, { checkIntervalMs: 1, dailyLimit: 5 })
+    const f = fixture(() => submitted(model), { checkIntervalMs: 1, dailyLimit: 5 })
     f.at(BASE - HOUR)
     const id = fresh(f).id
     f.at(BASE)
@@ -359,7 +407,7 @@ describe('quiet notebook comments', () => {
 
   it('rechecks quiet time and strike state after the model returns', async () => {
     let finish!: (raw: string) => void
-    const f = fixture(() => () => new Promise<string>(resolve => { finish = resolve }))
+    const f = fixture(() => submitted(() => new Promise<string>(resolve => { finish = resolve })))
     f.at(BASE - HOUR)
     const id = fresh(f).id
     f.at(BASE)
@@ -434,7 +482,8 @@ it('aborts slow inference and waits for its cleanup before the next tick can sub
   vi.useFakeTimers()
   let finish!: () => void
   const cancelled = vi.fn()
-  const evaluate = vi.fn((_prompt: string, signal?: AbortSignal) => new Promise<string>((resolve, reject) => {
+  const evaluate = vi.fn<CheapEval>((_prompt, options) => new Promise<string>((resolve, reject) => {
+    const signal = options?.signal
     signal?.addEventListener('abort', cancelled, { once: true })
     finish = () => signal?.aborted ? reject(signal.reason) : resolve('null')
   }))

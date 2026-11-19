@@ -137,7 +137,8 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     },
     /** 一次 app-server 冷启动 + 一轮(约 3-5s/次),给 20s 余量。 */
     cheapEvalBudgetMs: 20_000,
-    async cheapEval(prompt: string, signal?: AbortSignal): Promise<string> {
+    async cheapEval(prompt, options): Promise<string> {
+      const signal = options?.signal
       let session: CodexAppServerSession | undefined
       const abort = () => { void session?.close().catch(() => {}) }
       try {

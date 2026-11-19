@@ -53,7 +53,10 @@ export function parseOpening(raw: string, fonts: readonly Font[]) {
   return {
     ...data,
     reason: wrongReason ? fixed.reason : data.reason,
-    lines: data.lines.map((sentence, index) => namesWrongFont(sentence) ? fixed.lines[index]! : sentence),
+    lines: data.lines.map((sentence, index) => {
+      if (!namesWrongFont(sentence)) return sentence
+      return sentence === data.reason ? fixed.reason : fixed.lines[index]!
+    }),
   }
 }
 export function parseComment(raw: string, candidates: NotebookRow[]) {
