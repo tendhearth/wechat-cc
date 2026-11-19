@@ -24,6 +24,7 @@ import { createMainNavigation, createNativeNavigation } from './main-navigation.
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi, invokeWorkbenchApi } from "./api.js"
+import { mountNotebook } from "./modules/notebook.js"
 import { V1, v1 } from "./daemon-client.js"
 import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine, guardRowVisible, hasUsableProvider, providerReady } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
@@ -711,6 +712,9 @@ function setToggle(id, on) {
   el.setAttribute("aria-pressed", on ? "true" : "false")
 }
 
+/** @type {ReturnType<typeof mountNotebook> | undefined} */
+let notebook
+
 // ─── pane switching ──────────────────────────────────────────────────
 
 /** @param {string} name */
@@ -763,6 +767,11 @@ function switchPane(name) {
     htmlEl.hidden = htmlEl.dataset.pane !== name && !(name === 'workbench' && htmlEl.dataset.pane === 'overview')
     if (htmlEl.dataset.pane === 'overview') htmlEl.inert = name === 'workbench'
   })
+  if (name === 'notebook') {
+    const host = document.getElementById('notebook-pane')
+    if (!notebook && host) notebook = mountNotebook(host, invokeApi)
+    notebook?.open()
+  } else notebook?.close()
   // The destination must be visible before navigation transfers keyboard focus.
   // Logs pane gets a 10s auto-refresh tick while active; stop it on
   // pane switch so we don't burn CPU tailing log files no one is reading.

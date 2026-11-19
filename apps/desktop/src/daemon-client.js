@@ -15,7 +15,7 @@
  * 普通对象 ⇒ 按给的顺序、undefined 不带、字符串 encodeURIComponent、数字原样;URLSearchParams ⇒ 原样,空的不带 `?`。
  * scripts/client-paths.guard.test.ts 拿同一组样例比两边的输出。
  */
-import { V1 } from './generated/daemon-calls.js'
+import { V1, OWNER_WORKSPACE_PATHS } from './generated/daemon-calls.js'
 
 export { V1 }
 
@@ -76,4 +76,18 @@ export function v1(transport, key, args, opts) {
   if (opts !== undefined) return transport(r.method, r.path, r.body, opts)
   if ('body' in r) return transport(r.method, r.path, r.body)
   return transport(r.method, r.path)
+}
+
+/**
+ * Notebook routes are already in the generated owner-workspace allowlist.
+ * Use those paths until the protocol's desktop call table includes notebook.
+ * @param {(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>} transport
+ * @param {{ day: string } | { action: 'write' | 'strike' | 'paper', body: Record<string, unknown> }} request
+ */
+export function callNotebook(transport, request) {
+  const route = 'day' in request ? 'notebook' : `notebook/${request.action}`
+  const path = OWNER_WORKSPACE_PATHS.find(path => path.split('/').slice(2).join('/') === route)
+  if (!path) return Promise.reject(new Error('Notebook route unavailable'))
+  if ('day' in request) return transport('GET', path + queryString({ day: request.day }))
+  return transport('POST', path, request.body)
 }
