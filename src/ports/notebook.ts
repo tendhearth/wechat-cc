@@ -26,7 +26,7 @@ export interface NotebookCaller {
   turnChatId?: string
 }
 export interface Notebook {
-  open(origin: 'desktop' | 'app'): Promise<void> | undefined
+  open(origin: 'desktop' | 'app', fonts?: string): Promise<void> | undefined
   page(day?: string): NotebookPageResponseT
   write(body: string, clientId: string, origin: 'desktop' | 'app'): NotebookEntry
   strike(id: string, struck: boolean): 'ok' | 'missing' | 'cc'

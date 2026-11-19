@@ -221,6 +221,7 @@ const ROUTE_TABLE = {
   'POST /v1/places/move': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/places/hide': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/places/seen': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  // NotebookPageQuery also accepts the caller's optional first-open font list.
   'GET /v1/notebook': { module: 'notebook', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
   'POST /v1/notebook/write': { module: 'notebook', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
   'POST /v1/notebook/strike': { module: 'notebook', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },

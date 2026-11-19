@@ -3,7 +3,7 @@ import type { InternalApiLifecycle } from '../../daemon/internal-api/lifecycle'
 import { notebookRoutes } from './routes'
 import { NOTEBOOK_JOT_PREFIX } from '@wechat-cc/protocol'
 import {
-  COMMENT_PROMPT, DEFAULT_OPENING, PEN_PROMPT,
+  COMMENT_PROMPT, DEFAULT_OPENING, availableNotebookFonts, defaultOpening, penPrompt,
   parseComment, parseOpening, type NotebookEntry, type NotebookRow,
 } from '../../domain/notebook'
 import { NOTEBOOK_DEFAULTS, type NotebookConfig } from '../../lib/notebook-config'
@@ -74,21 +74,24 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
   }
 
   let opening: Promise<void> | undefined
-  function open(origin: 'desktop' | 'app') {
+  function open(origin: 'desktop' | 'app', reportedFonts?: string) {
     if (opening || store.get('pen')) return opening
+    const fonts = availableNotebookFonts(reportedFonts)
+    const fallback = defaultOpening(fonts)
     if (store.list({ limit: 1 }).length) {
-      const { font, ink, reason } = DEFAULT_OPENING
+      const { font, ink, reason } = fallback
       store.set('pen', { font, ink, reason })
       return
     }
     const openedAt = now()
     opening = Promise.resolve().then(async () => {
-      let intro = DEFAULT_OPENING
+      let intro: ReturnType<typeof parseOpening> = fallback
       try {
         const model = deps.model()
         const persona = deps.persona?.()
-        const prompt = persona ? `${PEN_PROMPT}\nCC 的性格资料：${JSON.stringify(persona)}` : PEN_PROMPT
-        if (model && !modelActive) intro = parseOpening(await ask(model, prompt, settings().config.openingTimeoutMs))
+        const basePrompt = penPrompt(fonts)
+        const prompt = persona ? `${basePrompt}\nCC 的性格资料：${JSON.stringify(persona)}` : basePrompt
+        if (model && !modelActive) intro = parseOpening(await ask(model, prompt, settings().config.openingTimeoutMs), fonts)
       } catch { /* 用固定开场。 */ }
       store.atomic(() => {
         if (store.get('pen')) return

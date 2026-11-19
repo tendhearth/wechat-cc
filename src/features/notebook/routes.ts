@@ -1,4 +1,4 @@
-import { NotebookChatReadRequest, NotebookJotRequest, NotebookDay, NotebookEntry, NotebookWriteRequest, NotebookStrikeRequest, NotebookPaperRequest, WORKBENCH_ERRORS } from '@wechat-cc/protocol'
+import { NotebookChatReadRequest, NotebookJotRequest, NotebookPageQuery, NotebookWriteRequest, NotebookStrikeRequest, NotebookPaperRequest, WORKBENCH_ERRORS } from '@wechat-cc/protocol'
 import { framedTooLargeFor } from '../../domain/matters/phone-scope'
 import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
 import type { Notebook } from '../../ports/notebook'
@@ -19,14 +19,17 @@ export function notebookRoutes(n: Notebook): RouteTable {
 
   return {
     'GET /v1/notebook': handle('page', (n, query, _body, caller, budget) => {
-      const day = query.get('day') ?? undefined
-      const after = query.get('after')
-      if (day !== undefined && !NotebookDay.safeParse(day).success) return failure('notebook_invalid')
-      if (after !== null && (!day || !NotebookEntry.shape.id.safeParse(after).success)) return failure('notebook_invalid')
-      void n.open(caller.origin === 'device' ? 'app' : 'desktop')?.catch(() => {})
+      const input = NotebookPageQuery.safeParse({
+        day: query.get('day') ?? undefined,
+        after: query.get('after') ?? undefined,
+        fonts: query.get('fonts') ?? undefined,
+      })
+      if (!input.success) return failure('notebook_invalid')
+      const { day, after, fonts } = input.data
+      void n.open(caller.origin === 'device' ? 'app' : 'desktop', fonts)?.catch(() => {})
       const page = n.page(day)
-      const offset = after === null ? 0 : page.entries.findIndex(entry => entry.id === after) + 1
-      if (after !== null && offset === 0) return failure('notebook_not_found')
+      const offset = after === undefined ? 0 : page.entries.findIndex(entry => entry.id === after) + 1
+      if (after !== undefined && offset === 0) return failure('notebook_not_found')
       const entries = page.entries.slice(offset)
       const result = { ...page, entries }
       if (budget === undefined || !framedTooLargeFor(JSON.stringify(result), budget)) return ok(result)

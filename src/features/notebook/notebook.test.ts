@@ -212,6 +212,81 @@ describe('notebook pen', () => {
     expect((await call('POST /v1/notebook/write', { body: '继续写', clientId: 'later' })).status).toBe(200)
   })
 
+  async function openPage(f: ReturnType<typeof fixture>, query: string) {
+    expect((await f.call('GET /v1/notebook', undefined, 'operator', query)).status).toBe(200)
+    await f.n.open('desktop')
+  }
+
+  it('falls back to italic Song when the model returns an unavailable font', async () => {
+    const model = vi.fn(async () => JSON.stringify({
+      ...selected, font: 'kai', reason: '我挑了楷体和赭石。', lines: ['这是我们的本子。', '我挑了楷体和赭石。'],
+    }))
+    const f = fixture(() => model)
+    await openPage(f, 'fonts=songItalic')
+    expect(f.store.get('pen')).toEqual({ font: 'songItalic', ink: 'blueBlack', reason: '我挑了宋体斜和蓝黑墨水，字清楚，墨色也安静。' })
+    expect(f.n.page().entries.map(e => e.body)).toEqual([
+      '这是我们两个人的本子。', '我挑了宋体斜和蓝黑墨水，字清楚，墨色也安静。', '你想写什么都行，不用等我回。',
+    ])
+  })
+
+  it('offers the reported fonts and italic Song, and stores a valid choice', async () => {
+    const reason = '我挑了行楷和赭石。'
+    const model = vi.fn(async (_prompt: string) => JSON.stringify({ ...selected, font: 'xingkai', reason, lines: [selected.lines[0], reason] }))
+    const f = fixture(() => model)
+    await openPage(f, 'fonts=kai,xingkai')
+    expect(model.mock.calls[0]?.[0]).toContain('字体键：{"kai":"楷体","xingkai":"行楷","songItalic":"宋体斜"}')
+    expect(f.store.get('pen')).toEqual({ font: 'xingkai', ink: 'ochre', reason })
+    expect(f.n.page().entries.map(e => e.body)).toEqual([selected.lines[0], reason])
+  })
+
+  it.each([
+    ['fonts=unknown,toString', 'songItalic'],
+    ['fonts=', 'songItalic'],
+    ['fonts=songItalic,' + 'x'.repeat(189), 'songItalic'],
+    ['fonts=songItalic,' + 'x'.repeat(190), 'kai'],
+    ['', 'kai'],
+  ])('chooses the fallback for %s', async (query, font) => {
+    const f = fixture()
+    await openPage(f, query)
+    expect(f.store.get('pen')).toMatchObject({ font, ink: 'blueBlack' })
+  })
+
+  it('uses the available fallback even when the notebook already has entries but no pen', async () => {
+    const f = fixture()
+    f.n.jot('已经有字')
+    await openPage(f, 'fonts=songItalic')
+    expect(f.store.get('pen')).toMatchObject({ font: 'songItalic', ink: 'blueBlack' })
+    expect(f.n.page().entries.map(e => e.body)).toEqual(['你说：已经有字'])
+  })
+
+  it('ignores later fonts after a pen has been stored', async () => {
+    const model = vi.fn(async () => JSON.stringify(selected))
+    const f = fixture(() => model)
+    await openPage(f, '')
+    const page = f.n.page()
+    expect(page.pen).toEqual({ font: 'fangsong', ink: 'ochre', reason: selected.reason })
+    await openPage(f, 'fonts=songItalic')
+    expect(f.n.page()).toEqual(page)
+    expect(model).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['楷体', '行楷', '宋体斜'])('replaces only the opening sentence that names %s instead of 仿宋', async wrongFont => {
+    const lines = [selected.lines[0], selected.reason, `我会用${wrongFont}写。`]
+    const f = fixture(() => async () => JSON.stringify({ ...selected, lines }))
+    await openPage(f, '')
+    expect(f.n.page().entries.map(e => e.body)).toEqual([lines[0], lines[1], '你想写什么都行，不用等我回。'])
+    expect(f.store.get('pen')).toEqual({ font: 'fangsong', ink: 'ochre', reason: selected.reason })
+  })
+
+  it('replaces a reason sentence that names both the selected font and another font', async () => {
+    const reason = '我挑了仿宋和赭石，纸上写的是楷体。'
+    const f = fixture(() => async () => JSON.stringify({ ...selected, reason, lines: [selected.lines[0], reason] }))
+    await openPage(f, '')
+    const replacement = '我挑了仿宋和赭石墨水，字清楚，墨色也安静。'
+    expect(f.n.page().entries.map(e => e.body)).toEqual([selected.lines[0], replacement])
+    expect(f.store.get('pen')).toEqual({ font: 'fangsong', ink: 'ochre', reason: replacement })
+  })
+
   it('sets the default pen without an opening when entries already exist', () => {
     const model = vi.fn(async () => JSON.stringify(selected))
     const { n } = fixture(() => model)
