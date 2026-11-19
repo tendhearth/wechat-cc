@@ -334,10 +334,19 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         const result = await script.onDispatch(text)
         for (const msg of await buildCycle(result)) yield msg
       }
-    })(),{getSettings:async()=>({effective:{},sources:[]})})
+    })(), {
+      getSettings: async () => ({ effective: {}, sources: [] }),
+      supportedModels: async () => [{ value: 'sandbox-claude', displayName: 'Sandbox Claude', description: 'Sandbox model metadata' }],
+      close: () => {},
+    })
   }
 
-  return { query: fakeQuery }
+  return {
+    query: fakeQuery,
+    // History is an SDK filesystem boundary; the sandbox has no native sessions on disk.
+    listSessions: async () => [],
+    getSessionInfo: async () => undefined,
+  }
 })
 
 // ---------------------------------------------------------------------------
