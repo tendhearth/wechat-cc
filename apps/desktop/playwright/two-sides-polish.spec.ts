@@ -179,6 +179,8 @@ test('输入框随内容增长再收回，语音键留可访问名称，回复�
   await routePlaces(page, [])
   await page.goto(shimUrl)
   const input = page.locator('#converse-input')
+  await expect(page.locator('main.dashboard')).toBeVisible()
+  await expect(input).toBeVisible()
   await expect(input).toHaveCSS('resize', 'none')
   const height = () => input.evaluate(el => el.getBoundingClientRect().height)
   const initial = await height()
