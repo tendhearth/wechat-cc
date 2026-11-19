@@ -12,7 +12,7 @@ export interface NotebookStore {
   append(entry: Omit<NotebookEntry, 'id' | 'struckAt'>): NotebookEntry
   strike(id: string, at: number | null): 'ok' | 'missing' | 'cc'
   byId(id: string): NotebookEntry | null
-  timestamps(): number[]
+  occupiedDays(timezone: string): readonly string[]
   list(options?: { since?: number; until?: number; limit?: number; query?: string; olderThan?: string; ownerOnly?: boolean }): NotebookEntry[]
   atomic<T>(fn: () => T): T
 }

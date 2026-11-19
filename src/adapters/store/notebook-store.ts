@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto'
 import type { NotebookEntry } from '../../domain/notebook'
 import type { NotebookSettings, NotebookStore } from '../../ports/notebook'
 import type { Db } from '../../lib/db'
+import { localParts } from '../../lib/local-time'
 
 const columns = 'id, author, body, created_at AS createdAt, ref_id AS refId, struck_at AS struckAt, origin, client_id AS clientId'
 
 const openingEntry = "(author = 'cc' AND origin != 'chat' AND ref_id IS NULL)"
 
 export function makeNotebookStore(db: Db): NotebookStore {
+  let calendar: { timezone: string; days: Set<string>; sorted?: string[] } | undefined
   return {
     get<K extends keyof NotebookSettings>(key: K): NotebookSettings[K] | null {
       const row = db.query<{ value: string }, [string]>('SELECT value FROM notebook_settings WHERE key = ?').get(key)
@@ -21,6 +23,13 @@ export function makeNotebookStore(db: Db): NotebookStore {
         INSERT INTO notebook_entries(id, author, body, created_at, ref_id, origin, client_id)
         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(client_id) DO NOTHING RETURNING ${columns}
       `).get(randomUUID(), entry.author, entry.body, entry.createdAt, entry.refId, entry.origin, entry.clientId)
+      if (result && calendar) {
+        const day = localParts(result.createdAt, calendar.timezone).day
+        if (!calendar.days.has(day)) {
+          calendar.days.add(day)
+          calendar.sorted = undefined
+        }
+      }
       return result ?? db.query<NotebookEntry, [string | null]>(`SELECT ${columns} FROM notebook_entries WHERE client_id = ?`).get(entry.clientId)!
     },
     strike(id, at) {
@@ -31,8 +40,17 @@ export function makeNotebookStore(db: Db): NotebookStore {
     byId(id) {
       return db.query<NotebookEntry, [string]>(`SELECT ${columns} FROM notebook_entries WHERE id = ?`).get(id)
     },
-    timestamps() {
-      return db.query<{ created_at: number }, []>('SELECT DISTINCT created_at FROM notebook_entries ORDER BY created_at DESC').all().map(row => row.created_at)
+    occupiedDays(timezone) {
+      // Build once per timezone from the covering timestamp index. Appends
+      // maintain the calendar so page reads only query the selected day.
+      if (calendar?.timezone !== timezone) {
+        const days = new Set<string>()
+        for (const row of db.query<{ created_at: number }, []>('SELECT DISTINCT created_at FROM notebook_entries').iterate()) {
+          days.add(localParts(row.created_at, timezone).day)
+        }
+        calendar = { timezone, days }
+      }
+      return calendar.sorted ??= [...calendar.days].sort().reverse()
     },
     list({ since = 0, until = Number.MAX_SAFE_INTEGER, limit = -1, query = '', olderThan = null, ownerOnly = false } = {}) {
       return db.query<NotebookEntry, [number, number, string, string | null, string | null, number]>(`
@@ -44,6 +62,14 @@ export function makeNotebookStore(db: Db): NotebookStore {
         ORDER BY created_at DESC, ${openingEntry}, rowid DESC LIMIT ?
       `).all(since, until, query, olderThan, olderThan, limit).reverse()
     },
-    atomic(fn) { return db.transaction(fn).immediate() },
+    atomic(fn) {
+      try {
+        return db.transaction(fn).immediate()
+      } catch (error) {
+        // An append may have updated the calendar before SQLite rolled back.
+        calendar = undefined
+        throw error
+      }
+    },
   }
 }

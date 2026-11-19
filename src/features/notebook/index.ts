@@ -146,14 +146,14 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     page(day?: string) {
       const { timezone } = settings()
       const dayOf = (at: number) => localParts(at, timezone).day
-      const days = [...new Set(store.timestamps().map(dayOf))].sort().reverse()
+      const days = store.occupiedDays(timezone)
       const selected = day ?? days[0] ?? dayOf(now())
       const utc = Date.parse(selected)
       // IANA 偏移小于一天。先按索引缩小范围，再按当地日期精确匹配。
       const entries = store.list({ since: utc - DAY_MS, until: utc + 2 * DAY_MS }).filter(entry => dayOf(entry.createdAt) === selected)
       const pen = store.get('pen')
       const { font, ink, reason } = DEFAULT_OPENING
-      return { day: selected, days, entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
+      return { day: selected, days: [...days], entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
     },
     write: (body: string, clientId: string, origin: 'desktop' | 'app') => append('owner', body, origin, now(), clientId),
     strike: (id: string, struck: boolean) => store.strike(id, struck ? now() : null),

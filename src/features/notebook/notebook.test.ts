@@ -45,6 +45,42 @@ describe('notebook pages', () => {
     expect(n.page('2026-11-20').entries).toEqual([])
   })
 
+  it('reuses occupied days across reads and writes and rebuilds them when the timezone changes', () => {
+    const { store } = fixture()
+    const midnight = Date.parse('2026-11-19T00:00:00Z')
+    let time = midnight
+    let timezone = 'UTC'
+    const n = makeNotebook({ store, settings: () => ({ timezone }), model: () => null, now: () => time })
+    for (let i = 0; i < 3000; i++) {
+      time = midnight + i * 1000
+      n.write('history', String(i), 'desktop')
+    }
+    time = midnight + 3 * 86_400_000
+    const first = n.write('selected', 'selected', 'desktop')
+    expect(n.page().days).toEqual(['2026-11-22', '2026-11-19'])
+
+    const format = vi.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts')
+    try {
+      time = midnight + 6 * 86_400_000
+      expect(n.write('retry', 'selected', 'app')).toEqual(first)
+      time += 12 * 60 * 60 * 1000
+      n.jot('new day')
+      expect(n.page('2026-11-22')).toMatchObject({
+        days: ['2026-11-25', '2026-11-22', '2026-11-19'], entries: [first],
+      })
+      expect(n.page('2026-11-22').entries).toEqual([first])
+      expect(format.mock.calls.length).toBeLessThanOrEqual(8)
+
+      timezone = 'America/Los_Angeles'
+      expect(n.page('2026-11-21')).toMatchObject({
+        days: ['2026-11-25', '2026-11-21', '2026-11-18'], entries: [first],
+      })
+      format.mockClear()
+      expect(n.page('2026-11-21').entries).toEqual([first])
+      expect(format.mock.calls.length).toBeLessThanOrEqual(2)
+    } finally { format.mockRestore() }
+  })
+
   it('authorizes all four routes, counts Unicode code points, retries writes and strikes only owner lines', async () => {
     const { call, n, logs } = fixture()
     const keys = ['GET /v1/notebook', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper']

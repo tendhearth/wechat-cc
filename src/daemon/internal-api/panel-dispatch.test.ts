@@ -12,6 +12,7 @@ import { openTestDb } from '../../lib/db'
  * 正向路径(有 phone 块的 /v1 行)今天表里没有,用 createInternalApi 的 `panelRoutes` 替身名单测。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { request as httpRequest } from 'node:http'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -326,6 +327,50 @@ it('round-trips a notebook line between desktop and a paired phone and keeps bod
     expect((await viaLocal('/v1/notebook/write', guest, post({ body: secret, clientId: 'guest' }))).status).toBe(403)
     expect((await viaLocal('/v1/notebook/write', operatorToken, post({ [secret]: true }))).status).toBe(400)
     expect(logs.join(' ')).not.toContain(secret)
+  } finally { db.close() }
+})
+
+it('rejects oversized local notebook POSTs before parsing and accepts maximally escaped text', async () => {
+  await start()
+  const db = openTestDb()
+  try {
+    api!.mount('notebook', notebookRoutes(makeNotebook({
+      store: makeNotebookStore(db), settings: () => ({ timezone: 'UTC' }),
+      model: () => null, isOwner: caller => caller.chatId === 'owner',
+    })))
+    const session = api!.mintSessionToken('admin', 'claude/x/owner')
+    for (const route of ['write', 'strike', 'paper', 'chat/jot', 'chat/read']) {
+      const response = await viaLocal(`/v1/notebook/${route}`, route.startsWith('chat/') ? session : operatorToken, {
+        method: 'POST', body: 'x'.repeat(64 * 1024),
+      })
+      expect(response.status, route).toBe(413)
+      expect(await response.json()).toEqual({ error: 'request_body_too_large' })
+    }
+
+    const chunked = await new Promise<{ status?: number; body: string }>((resolve, reject) => {
+      const req = httpRequest(`${localBase}/v1/notebook/write`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${operatorToken}`, 'transfer-encoding': 'chunked' },
+      }, res => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', chunk => { body += chunk })
+        res.on('end', () => resolve({ status: res.statusCode, body }))
+        res.on('error', reject)
+      })
+      req.on('error', reject)
+      req.write('x'.repeat(32 * 1024))
+      req.end('x'.repeat(32 * 1024))
+    })
+    expect(chunked.status).toBe(413)
+    expect(JSON.parse(chunked.body)).toEqual({ error: 'request_body_too_large' })
+
+    const response = await viaLocal('/v1/notebook/write', operatorToken, {
+      method: 'POST',
+      body: `{"body":"${'\\ud83d\\ude00'.repeat(4000)}","clientId":"${'\\u0061'.repeat(128)}"}`,
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ entry: { body: '😀'.repeat(4000), clientId: 'a'.repeat(128) } })
   } finally { db.close() }
 })
 
