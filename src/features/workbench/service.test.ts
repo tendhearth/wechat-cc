@@ -725,7 +725,9 @@ describe('persistent workbench', () => {
       async close() {},
     } } }, undefined, undefined, { askOpinion })
     const task = service.create({ path: project, providerId: 'claude', text, title })
-    await expect.poll(() => model.mock.calls.length, { timeout: 4_000 }).toBe(1)
+    // 意见在权限请求出现 2 秒后才问模型;之前只等 4 秒,慢机器(Windows runner)上建任务、起执行者再到请求
+    // 出现就超过 2 秒,红过一次(expected +0 to be 1)。等够 15 秒,仍在 20 秒的用例上限之内。
+    await expect.poll(() => model.mock.calls.length, { timeout: 15_000 }).toBe(1)
     const prompt = model.mock.calls[0]![0]
     expect(prompt).not.toContain(excluded)
     const data = JSON.parse(prompt.split('\n').at(-1)!)
