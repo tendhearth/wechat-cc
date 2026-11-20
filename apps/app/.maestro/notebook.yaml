@@ -18,6 +18,10 @@ appId: com.tendhearth.app
     timeout: 10000
 - assertVisible:
     id: notebook-owner-line
+# 等笔的字体落定再拍(最多等 1.5 秒会先用宋体斜):这张用来看 CC 的字是不是真的用上了它那支笔。
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: nb01-today
 - tapOn:
     id: notebook-input
 - runFlow:
@@ -31,12 +35,14 @@ appId: com.tendhearth.app
 - assertVisible: A line for the notebook
 - assertVisible:
     id: notebook-input
+- takeScreenshot: nb02-written
 - tapOn:
     id: notebook-previous
 - assertNotVisible:
     id: notebook-input
 - assertVisible:
     id: notebook-today
+- takeScreenshot: nb03-previous
 - tapOn:
     id: notebook-today
 - assertVisible:
