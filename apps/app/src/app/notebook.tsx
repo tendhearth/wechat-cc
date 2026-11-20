@@ -1,5 +1,4 @@
-import { NotebookBody, type NotebookEntryT, type NotebookPenT } from '@wechat-cc/protocol'
-import { isLoaded, loadAsync } from 'expo-font'
+import { NotebookBody, type NotebookEntryT } from '@wechat-cc/protocol'
 import { useFocusEffect, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppState, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View, type TextLayoutEvent, type TextStyle } from 'react-native'
@@ -8,37 +7,19 @@ import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useNotebook } from '../state/notebook'
-import { PEN_FONT_FILES } from '../ui/font-files'
 import { useMotionEnabled } from '../ui/motion'
+import { useNotebookPen } from '../ui/useNotebookPen'
 import { TextField } from '../ui/TextField'
 import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
-import { NOTEBOOK_UNSAVED_MS, notebookDate, notebookLineKey, notebookLines, notebookNeighbors, notebookPen, notebookSignature } from '../view/notebook'
+import { NOTEBOOK_UNSAVED_MS, notebookDate, notebookLineKey, notebookLines, notebookNeighbors, notebookSignature } from '../view/notebook'
 
 const LINE = 36
 const ownerText = { fontSize: 17, lineHeight: LINE, includeFontPadding: false, letterSpacing: 0 }
 const ccText = { ...ownerText, fontSize: 19 }
 const metaText = { lineHeight: LINE, includeFontPadding: false }
-
-type PenFamily = keyof typeof PEN_FONT_FILES
-const failedPens = new Set<PenFamily>()
-function usePen(pen: NotebookPenT | undefined, pending: boolean) {
-  const style = pen && notebookPen(pen)
-  const family = pending ? undefined : style?.family
-  const [, update] = useState(0)
-  useEffect(() => {
-    if (!family || failedPens.has(family) || isLoaded(family)) return
-    let mounted = true
-    void loadAsync(family, PEN_FONT_FILES[family])
-      .catch(() => { failedPens.add(family) })
-      .then(() => { if (mounted) update(n => n + 1) })
-    return () => { mounted = false }
-  }, [family])
-  const loaded = family && isLoaded(family)
-  return { ready: !pending && (!family || loaded || failedPens.has(family)), family: loaded ? family : undefined, color: style?.color }
-}
 
 function Rules({ height }: { height: number }) {
   const { c } = useTheme()
@@ -79,7 +60,7 @@ function NotebookScreen({ notebook, value, backend }: ReturnType<typeof useNoteb
   const [keyboard, setKeyboard] = useState(false)
   const [composeHeight, setComposeHeight] = useState(0)
   const seenCc = useRef(new Set<string>())
-  const pen = usePen(value.pen, value.penPending)
+  const pen = useNotebookPen(value.pen, value.penPending)
   const motion = useMotionEnabled()
   const today = value.day === value.today
   const ruled = value.paper === 'ruled'
@@ -155,7 +136,7 @@ function NotebookScreen({ notebook, value, backend }: ReturnType<typeof useNoteb
           <View onLayout={event => setComposeHeight(event.nativeEvent.layout.height)} style={styles.composer}>
             {ruled ? <Rules height={composeHeight} /> : null}
             <TextField testID="notebook-input" accessibilityLabel={t(lang, 'notebook.placeholder')}
-              autoFocus multiline submitBehavior="newline" value={value.draft} onChangeText={notebook.setDraft}
+              multiline submitBehavior="newline" value={value.draft} onChangeText={notebook.setDraft}
               placeholder={t(lang, 'notebook.placeholder')} style={styles.input} />
             {saveable ? <WordButton testID="notebook-write" label={t(lang, 'notebook.write')} emphasis
               onPress={() => notebook.write(() => active.current && AppState.currentState !== 'background')} /> : null}
@@ -178,7 +159,7 @@ function NotebookScreen({ notebook, value, backend }: ReturnType<typeof useNoteb
 
 function NotebookPaper({ entries, pending, now, lang, timeZone, pen, ruled, follow, motion, target, onStrike, onReference }: {
   entries: NotebookEntryT[]; pending: ReadonlyMap<string, { createdAt: number }>; now: number; lang: Lang; timeZone?: string;
-  pen: ReturnType<typeof usePen>; ruled: boolean; follow: boolean; motion: boolean; target?: { id: string };
+  pen: ReturnType<typeof useNotebookPen>; ruled: boolean; follow: boolean; motion: boolean; target?: { id: string };
   onStrike(entry: NotebookEntryT): void; onReference(day: string, id: string): void
 }) {
   const { c } = useTheme()
@@ -255,7 +236,7 @@ function NotebookPaper({ entries, pending, now, lang, timeZone, pen, ruled, foll
   )
 }
 
-function PenText({ body, family, color, signature = false }: { body: string; family?: PenFamily; color?: string; signature?: boolean }) {
+function PenText({ body, family, color, signature = false }: { body: string; family?: ReturnType<typeof useNotebookPen>['family']; color?: string; signature?: boolean }) {
   const testID = signature ? undefined : 'notebook-cc-line'
   const face = { ...ccText, fontSize: signature ? 14 : 19, color }
   if (family) return <Txt content="user" testID={testID} style={{ ...face, fontFamily: family }}>{body}</Txt>
@@ -271,7 +252,7 @@ function SlantedText({ body, testID, face }: { body: string; testID?: string; fa
   }
   return (
     <View accessible accessibilityLabel={body} testID={testID}>
-      <Txt content="user" accessible={false} importantForAccessibility="no" style={[penStyle, styles.measure]}
+      <Txt content="user" accessible={false} importantForAccessibility="no" style={[penStyle, lines.length ? styles.measure : styles.unmeasuredPen]}
         onTextLayout={measure}>{body}</Txt>
       <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFill}>
         {lines.map((line, i) => <Txt key={i} content="user" numberOfLines={1} style={[penStyle, styles.slant, { top: i * LINE }]}>
@@ -298,5 +279,6 @@ const styles = StyleSheet.create({
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.s, paddingHorizontal: space.xl },
   input: { ...ownerText, flex: 1, padding: 0, minHeight: LINE, maxHeight: LINE * 4, textAlignVertical: 'top' },
   measure: { opacity: 0 },
+  unmeasuredPen: { transform: [{ skewX: '-9deg' }] },
   slant: { position: 'absolute', left: 0, right: 0, transform: [{ skewX: '-9deg' }] },
 })

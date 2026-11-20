@@ -20,6 +20,11 @@ appId: com.tendhearth.app
     id: notebook-owner-line
 - tapOn:
     id: notebook-input
+- runFlow:
+    when:
+      visible: "Slide to Type|滑行键入"
+    commands:
+      - tapOn: "Continue|继续"
 - inputText: A line for the notebook
 - tapOn:
     id: notebook-write

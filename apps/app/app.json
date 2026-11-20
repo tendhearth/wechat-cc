@@ -28,6 +28,16 @@
     "plugins": [
       "expo-router",
       [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/THPenKai-Regular.ttf",
+            "./assets/fonts/THPenHand-Regular.ttf",
+            "./assets/fonts/THPenFangsong-Regular.ttf"
+          ]
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#faf7f2",
