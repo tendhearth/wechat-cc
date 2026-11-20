@@ -385,6 +385,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
   const timer = setInterval(() => void refresh(), intervalMs)
   return {
     refresh,
+    closeActions,
     /** @param {boolean} enabled */
     setWide(enabled) {
       if (wide === enabled) return
