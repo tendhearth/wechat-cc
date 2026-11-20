@@ -18,6 +18,7 @@ describe('one set of design tokens across desktop and phone', () => {
 // ---- bundled fonts (spec §3;裁决 D1:Noto Serif SC 只有 Regular;§9-5 CJK 只留常用字) ----
 const APP_FONTS = ['NotoSerifSC-Regular.ttf', 'THSerif4-Regular.ttf', 'THSerif4-Medium.ttf']
 const DESK_FONTS = ['noto-serif-sc-400.woff2', 'th-serif-4-400.woff2', 'th-serif-4-500.woff2']
+const PEN_FONTS = ['th-pen-kai.woff2', 'th-pen-hand.woff2', 'th-pen-fangsong.woff2']
 const MB = 1024 * 1024
 const sizeOf = (dir: URL, names: string[]) => names.reduce((n, f) => n + statSync(new URL(f, dir)).size, 0)
 
@@ -72,10 +73,29 @@ describe('bundled fonts (spec §3)', () => {
     expect(existsSync(new URL('NotoSerifSC-Medium.ttf', app))).toBe(false)
     expect(existsSync(new URL('noto-serif-sc-500.woff2', desk))).toBe(false)
   })
-  // 2026-10-01 主人拍板(spec §9-5)CJK 只留常用字后:手机 10.8 → 3.8 MB、桌面 4.3 → 1.6 MB。预算跟着收紧,只许减不许增。
-  it('stays within the post-subset budget (phone 4.5 MB, desktop 2 MB)', () => {
+  // 桌面保留原 2 MiB 衬线预算。三支同字表的笔实测合计 6.26 MiB,桌面合计 7.74 MiB。
+  it('stays within the post-subset budget (phone 4.5 MiB, desktop serif 2 MiB and serif + pens 8 MiB)', () => {
     expect(sizeOf(app, APP_FONTS)).toBeLessThanOrEqual(4.5 * MB)
     expect(sizeOf(desk, DESK_FONTS)).toBeLessThanOrEqual(2 * MB)
+    expect(sizeOf(desk, [...DESK_FONTS, ...PEN_FONTS])).toBeLessThanOrEqual(8 * MB)
+  })
+  it('desktop pen faces ship with the full pinned OFL notices', () => {
+    const { notebookPens } = JSON.parse(readFileSync(new URL('./fonts/sources.lock.json', import.meta.url), 'utf8'))
+    const ofl = readFileSync(new URL('OFL.txt', desk), 'utf8')
+    const css = readFileSync(new URL('../apps/desktop/src/fonts.css', import.meta.url), 'utf8')
+    const sections = ofl.split(/\n\n----- [^\n]+ -----\n\n/u)
+    for (const [i, key] of ['kai', 'hand', 'fangsong'].entries()) {
+      const pen = notebookPens[key]
+      const section = sections[i + 3]!
+      expect(createHash('sha256').update(section).digest('hex')).toBe(pen.oflSha256)
+      expect(ofl).toContain(`----- ${pen.title} -----`)
+      expect(pen.oflUrl).toContain(`/${pen.oflCommit}/`)
+      expect(pen.oflCommit).toMatch(/^[0-9a-f]{40}$/)
+      expect(pen.sha256).toMatch(/^[0-9a-f]{64}$/)
+      expect(readFileSync(new URL(PEN_FONTS[i]!, desk)).toString('ascii', 0, 4)).toBe('wOF2')
+      expect(css).toContain(`font-family: "${pen.family}"; font-weight: 400; src: url("./fonts/${PEN_FONTS[i]}")`)
+    }
+    expect(notebookPens.fangsong.ttfSha256).toMatch(/^[0-9a-f]{64}$/)
   })
   it('the 通用规范汉字表 list is the pinned one (6500 chars, sha256 in sources.lock.json)', () => {
     const lock = JSON.parse(readFileSync(new URL('./fonts/sources.lock.json', import.meta.url), 'utf8'))

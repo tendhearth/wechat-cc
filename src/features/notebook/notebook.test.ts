@@ -233,13 +233,26 @@ describe('notebook pen', () => {
   })
 
   it('offers the reported fonts and italic Song, and stores a valid choice', async () => {
-    const reason = '我挑了行楷和赭石。'
-    const model = vi.fn(async (_prompt: string) => JSON.stringify({ ...selected, font: 'xingkai', reason, lines: [selected.lines[0], reason] }))
+    const reason = '我挑了手写体和赭石。'
+    const model = vi.fn(async (_prompt: string) => JSON.stringify({ ...selected, font: 'hand', reason, lines: [selected.lines[0], reason] }))
     const f = fixture(() => model)
-    await openPage(f, 'fonts=kai,xingkai')
-    expect(model.mock.calls[0]?.[0]).toContain('字体键：{"kai":"楷体","xingkai":"行楷","songItalic":"宋体斜"}')
-    expect(f.store.get('pen')).toEqual({ font: 'xingkai', ink: 'ochre', reason })
+    await openPage(f, 'fonts=kai,hand')
+    expect(model.mock.calls[0]?.[0]).toContain('字体键：{"kai":"楷体","hand":"手写体","songItalic":"宋体斜"}')
+    expect(f.store.get('pen')).toEqual({ font: 'hand', ink: 'ochre', reason })
     expect(f.n.page().entries.map(e => e.body)).toEqual([selected.lines[0], reason])
+  })
+
+  it('reads a legacy xingkai pen as hand without choosing again or rewriting its text', async () => {
+    const model = vi.fn(async () => JSON.stringify(selected))
+    const f = fixture(() => model)
+    const reason = '我挑了行楷和赭石。'
+    const stored = JSON.stringify({ font: 'xingkai', ink: 'ochre', reason })
+    f.db.query("INSERT INTO notebook_settings (key, value) VALUES ('pen', ?)").run(stored)
+    f.store.append({ author: 'cc', body: reason, createdAt: BASE, refId: null, origin: 'desktop', clientId: null })
+    await openPage(f, 'fonts=kai,songItalic')
+    expect(f.n.page()).toMatchObject({ pen: { font: 'hand', ink: 'ochre', reason }, entries: [{ body: reason }] })
+    expect(model).not.toHaveBeenCalled()
+    expect(f.db.query("SELECT value FROM notebook_settings WHERE key = 'pen'").get()).toEqual({ value: stored })
   })
 
   it.each([
@@ -278,7 +291,7 @@ describe('notebook pen', () => {
     expect(model).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['楷体', '行楷', '宋体斜'])('replaces only the opening sentence that names %s instead of 仿宋', async wrongFont => {
+  it.each(['楷体', '手写体', '宋体斜'])('replaces only the opening sentence that names %s instead of 仿宋', async wrongFont => {
     const lines = [selected.lines[0], selected.reason, `我会用${wrongFont}写。`]
     const f = fixture(() => async () => JSON.stringify({ ...selected, lines }))
     await openPage(f, '')

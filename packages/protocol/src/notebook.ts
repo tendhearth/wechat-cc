@@ -1,12 +1,12 @@
 import z from 'zod'
 
-export const NOTEBOOK_FONTS = { kai: '楷体', fangsong: '仿宋', xingkai: '行楷', songItalic: '宋体斜' } as const
+export const NOTEBOOK_FONTS = { kai: '楷体', hand: '手写体', fangsong: '仿宋', songItalic: '宋体斜' } as const
 export const NOTEBOOK_INKS = { blueBlack: '蓝黑', darkGreen: '墨绿', ochre: '赭石', greyPurple: '灰紫' } as const
 
 export const NotebookBody = z.string().refine(s => !!s.trim() && !s.includes('\0') && Array.from(s).length <= 4000)
 export const NotebookPaper = z.enum(['ruled', 'plain'])
 export const NotebookPen = z.object({
-  font: z.enum(['kai', 'fangsong', 'xingkai', 'songItalic']),
+  font: z.enum(['kai', 'hand', 'fangsong', 'songItalic']),
   ink: z.enum(['blueBlack', 'darkGreen', 'ochre', 'greyPurple']),
   reason: z.string(),
 }).strict()

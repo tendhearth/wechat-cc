@@ -13,7 +13,10 @@ export function makeNotebookStore(db: Db): NotebookStore {
   return {
     get<K extends keyof NotebookSettings>(key: K): NotebookSettings[K] | null {
       const row = db.query<{ value: string }, [string]>('SELECT value FROM notebook_settings WHERE key = ?').get(key)
-      return row ? JSON.parse(row.value) as NotebookSettings[K] : null
+      if (!row) return null
+      const value = JSON.parse(row.value)
+      if (key === 'pen' && value?.font === 'xingkai') value.font = 'hand'
+      return value as NotebookSettings[K]
     },
     set(key, value) {
       db.query('INSERT INTO notebook_settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value))

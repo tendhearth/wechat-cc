@@ -40,3 +40,6 @@ src/test-support/fixtures/memory/** -text
 # CC 活动合同:桌面生成物按字节等于共享源(apps/desktop/src/cc-activity.test.ts),Windows autocrlf 会让两边不一致。
 packages/protocol/src/cc-activity.js text eol=lf
 apps/desktop/src/generated/cc-activity.js text eol=lf
+
+# 桌面随包字体许可:三份笔的上游许可按原字节校验,包含原来的行尾空格。
+apps/desktop/src/fonts/OFL.txt -text whitespace=-blank-at-eol
