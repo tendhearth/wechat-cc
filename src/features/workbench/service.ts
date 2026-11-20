@@ -41,6 +41,7 @@ interface Options {
   /** 这家执行者现在被拒着(出口地区用不了);执行者列表照实带出去。 */
   refusal?: (providerId: string) => { code: string; since: string } | null
   defaultProvider?: string
+  planPlaces?:()=>readonly import('../../adapters/workbench/matter-plan-input').PlanPlace[]
   planConversation?:ServiceCtx['deps']['planConversation']
   registeredProjects?:()=>Array<{alias:string;path:string}>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
@@ -56,6 +57,7 @@ interface Options {
   writerWatchMs?: number
   timeoutMs?: number
   closeTimeoutMs?: number
+  askOpinion?: ServiceCtx['deps']['askOpinion']
   permissionPrompt?: ServiceCtx['deps']['permissionPrompt']
   permissionTimeoutMs?: number; permissionDecide?: ServiceCtx['deps']['permissionDecide']   // 放行规则(2026-10-19);不传 ⇒ 每条权限都问主人
   /** 保留会话安静下来、**没人等这个文件夹**时的空闲自动收工时长(ms;缺省 10 分钟)。
@@ -249,7 +251,7 @@ export function makeWorkbenchService(opts: Options) {
     quota: quotaDomain,
     scripts: scriptsDomain,
   })
-  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain,entry:entryDomain})
+  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain,entry:entryDomain,view:viewDomain})
   const relayDomain=makeRelayDomain(ctx,{admission:admissionDomain,ledger:ledgerDomain})
   const quotaHandoffDomain = makeQuotaHandoffDomain(ctx, { execute: executeDomain, quota: quotaDomain })
   const review = makeReviewDomain(ctx, {
@@ -286,6 +288,7 @@ export function makeWorkbenchService(opts: Options) {
 
   const service={
     ...ledgerDomain,
+    waitingOpinion: (id: string) => opts.askOpinion?.get(id),
     rosterRelay:relayDomain.rosterRelay,
     ...makeShareDomain(ctx,{view:viewDomain}),
     artifactDeliveryStore:store.artifactDeliveries,
@@ -369,6 +372,7 @@ export function makeWorkbenchService(opts: Options) {
       untilDomain.shutdown(),
       Promise.resolve(quotaResumeDomain.shutdown()),
       lifecycleDomain.shutdown(),
+      Promise.resolve(opts.askOpinion?.dispose()),
     ]).then(() => {}),
     changes: {
       /** 这件事每次真的变了(已落库)回调一次。 */

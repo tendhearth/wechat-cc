@@ -38,6 +38,7 @@ import { workbenchModule, workbenchNotificationsModule, workbenchArtifactsModule
 import { lettersModule } from '../features/letters/module'
 import { remindersModule } from '../features/reminders/module'
 import { outputEvalModule } from '../features/output-eval/module'
+import { notebookModule } from '../features/notebook/module'
 import { checkupModule } from '../features/checkup/module'
 
 export function daemonModules(f: Foundation): DaemonModule[] {
@@ -64,6 +65,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     bootApiModule(f),
 
     // —— 功能 ——
+    notebookModule(f),
     terminalModule(f),
     calendarModule(f),
     activityModule(f),

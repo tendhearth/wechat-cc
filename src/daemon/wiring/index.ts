@@ -26,6 +26,7 @@ import { makeMemoryLlmOps } from '../../features/memory'
 import { makeAtelierTick } from '../../features/atelier'
 
 export interface WireMainOpts {
+  notebookTick?: () => Promise<void>
   rosterTerminals?: () => import('../../ports/cli-session').CliSessionView[]
   /** 项目登记(别名 → 文件夹),伙伴那一拍选文件夹用。 */
   projects: import('../projects').Projects
@@ -168,7 +169,7 @@ export interface WiredDeps {
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../../features/memory').MemoryNightlyRuntime
   roster: import('../../ports/roster').RosterReader | null
-  places: import('../../ports/places').PlacesReader | null
+  places: ReturnType<typeof import('../../features/roster').makePlacesReader> | null
   mattersService: import('../../app/matters/service').MattersService | null
   /** 「一件事」活动时间:退订工作台事件 + 清节流定时器;main.ts 登记进 shutdown。 */
   stopMatterActivity: () => void
@@ -220,7 +221,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const lifecycleDeps = buildLifecycleDeps(opts, ticks, speech)
+  const lifecycleDeps = buildLifecycleDeps(opts, ticks, speech, opts.notebookTick)
   return {
     appPush,
     proactive,

@@ -8,10 +8,10 @@ import { workbenchPathHolders } from './path-occupancy'
  * 这几样都不依赖 view,构造时显式传进来。
  */
 import { existsSync } from 'node:fs'
-import { canonicalProject } from '../../../adapters/workbench/artifacts'
 import { readableExecutionEvent } from '../../../adapters/executors/codex/codex-execution-error'
 import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../../../domain/workbench/executor-capabilities'
 import { makeProjectCatalog } from '../../../adapters/workbench/project-catalog'
+import { validateProjectRegistration } from '../../../adapters/workbench/project-registration'
 import { writerAlive } from './writer-exit'
 import { GIT_REVIEW_MIME } from '../git-review'
 import { isRewindParkNote, rewindView } from '../../../adapters/store/workbench/rewind-store'
@@ -166,18 +166,21 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     const rank:Record<PetTaskActivity['phase'],number>={needs_input:0,failed:1,interrupted:1,paused:1,replied:2,working:3,stopping:3,queued:4}
     return activities.sort((a,b)=>rank[a.phase]-rank[b.phase]||b.updatedAt-a.updatedAt||a.taskId.localeCompare(b.taskId)).slice(0,8)
   }
-  function projects(){
+  function projects(forPlan=false){
     const ownerChatId=ctx.deps.ownerChatId();if(!ownerChatId)return[]
     const providers=ctx.deps.registry.list().filter(id=>isWorkbenchProviderId(id)&&isWorkbenchExecutorCapabilities(ctx.deps.registry.get(id)?.opts.workbench))
     // 主人在桌面「添加项目」加的那些也算(2026-10-07):以前只有配置里登记的 + 有过任务的才进交办选项,
     // 新加的项目在第一件事之前选不到 —— 「在独立工作区里做」只对项目有效,于是也开不了。
-    const added=store.projects().map(project=>({path:project.path,providerId:project.providerId}))
-    return makeProjectCatalog({ownerChatId,registered:ctx.deps.registeredProjects?.()??[],known:[...store.ownedProjects(ownerChatId,providers),...added],providers,defaultProvider:ctx.deps.defaultProvider})
+    const added=store.projects().map(project=>({path:project.path,providerId:project.providerId,name:project.name}))
+    return makeProjectCatalog({ownerChatId,registered:ctx.deps.registeredProjects?.()??[],known:[...store.ownedProjects(ownerChatId,providers),...added],providers,defaultProvider:ctx.deps.defaultProvider,includeLookupName:forPlan})
   }
-  function addProject(input:{path:string;name?:string;providerId:string}) {
-    if(typeof input.path!=='string'||input.path.length>4096||typeof input.providerId!=='string'||(input.name!==undefined&&(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)))throw Error('invalid_request')
-    provider(input.providerId)
-    return store.addProject({...input,path:canonicalProject(input.path)})
+  function validateProject(input:{path:string;name?:string;providerId:string},expectedPath?:string) {
+    const path=validateProjectRegistration(input,()=>provider(input.providerId))
+    if(expectedPath!==undefined&&path!==expectedPath)throw Error('invalid_path')
+    return path
+  }
+  function addProject(input:{path:string;name?:string;providerId:string},expectedPath?:string) {
+    return store.addProject({...input,path:validateProject(input,expectedPath)})
   }
   /** 每件事有哪些执行者参与过(matter.agents 同一个出处;一次查一页)。没接 matters / 查不出来 ⇒ 不带,桌面退回任务自己那一家。 */
   // 出生地(2026-10-19)同一个出处:matters.origin_surface;不知道的不带,桌面就不画来源字形。
@@ -227,6 +230,6 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     return result
   }
 
-  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,projectActivity,taskView,attention,petActivities,projects,addProject,list,detail }
+  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,projectActivity,taskView,attention,petActivities,projects,validateProject,addProject,list,detail }
 }
 export type ViewDomain = ReturnType<typeof makeViewDomain>

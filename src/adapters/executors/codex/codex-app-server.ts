@@ -228,7 +228,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
 }
 
 /** 一条 app-server 会话(一个子进程、一个 thread)。工作台和对话侧共用这一份协议客户端;`chat` 见 CodexChatProfile。 */
-export async function spawnCodexAppServerSession(options: Options, project: AgentProject, context: SpawnContext, chat?: CodexChatProfile): Promise<CodexAppServerSession> {
+export async function spawnCodexAppServerSession(options: Options, project: AgentProject, context: SpawnContext, chat?: CodexChatProfile, startupSignal?: AbortSignal): Promise<CodexAppServerSession> {
       const codexPath = (): string => typeof options.codexPathOverride === 'function' ? options.codexPathOverride() : options.codexPathOverride
       const execution = context.execution ? {...context.execution} : undefined
       const model = execution ? execution.model ?? (execution.defaults === 'provider' && !context.resumeSessionId ? context.model ?? options.model : undefined) : context.model ?? options.model
@@ -259,6 +259,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: chat ? chat.config : startupConfig })
       const launchArgs = [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://']
       const launcher = chat ? wrapForProcessTree(binary, launchArgs) : { command: binary, args: launchArgs }
+      startupSignal?.throwIfAborted()
       const child = (options.spawnProcess ?? spawnCodexAppServerProcess)(launcher.command, launcher.args, { cwd: project.path, env: childEnv, detached: process.platform !== 'win32' })
       const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; clear: () => void }>()
       const rejectedRpcs = new WeakSet<Error>()
@@ -1057,7 +1058,10 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         exited = true; resolveExit()
         if (!closing) fatal(`codex_process_exited: ${signal ?? code ?? 'unknown'}${chat && stderrTail.trim() ? `\n${stderrTail.trim().slice(-1000)}` : ''}`)
       })
+      const abortStartup = () => { void close().catch(() => {}) }
+      startupSignal?.addEventListener('abort', abortStartup, { once: true })
       try {
+        startupSignal?.throwIfAborted()
         const initialized = await request('initialize', { clientInfo: chat ? { name: 'tendhearth_cc', title: 'Tendhearth CC', version: APP_VERSION } : { name: 'cc_workbench', title: 'CC Workbench', version: APP_VERSION }, capabilities: { experimentalApi: !!lifetime, requestAttestation: false } })
         // Registration-before-parent-result was verified with this exact native
         // protocol version. New/unknown versions retain instead of claiming EOF.
@@ -1120,6 +1124,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         threadId = response.thread.id
         if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
       } catch (error) { await close(); throw error }
+      finally { startupSignal?.removeEventListener('abort', abortStartup) }
       const launch = (text: string, attachments?: readonly AgentAttachment[], sharedEvents?: EventQueue) => {
         if (active) throw new Error('codex_turn_already_running')
         if (closing || exited || broken || stopped || runtimeEnded) throw broken ?? new Error('codex_session_closed')

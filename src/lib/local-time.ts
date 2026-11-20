@@ -8,8 +8,11 @@ function formatter(tz: string): Intl.DateTimeFormat {
   try { return new Intl.DateTimeFormat('en-CA', { ...opts, timeZone: tz }) } catch { return new Intl.DateTimeFormat('en-CA', { ...opts, timeZone: 'UTC' }) }
 }
 
+let cached: { timezone: string; format: Intl.DateTimeFormat } | undefined
+
 export function localParts(ms: number, tz: string): { day: string; hhmm: string } {
+  if (cached?.timezone !== tz) cached = { timezone: tz, format: formatter(tz) }
   const p: Record<string, string> = {}
-  for (const part of formatter(tz).formatToParts(new Date(ms))) p[part.type] = part.value
+  for (const part of cached.format.formatToParts(new Date(ms))) p[part.type] = part.value
   return { day: `${p.year}-${p.month}-${p.day}`, hhmm: `${p.hour}:${p.minute}` }
 }

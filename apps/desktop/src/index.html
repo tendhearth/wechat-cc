@@ -6,6 +6,7 @@
     <title>Tendhearth CC</title>
     <link rel="icon" href="./wechat-cc-logo.png" />
     <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./notebook-tokens.css" />
     <link rel="stylesheet" href="./fonts.css" />
     <link rel="stylesheet" href="./shared/agent-avatars.css" />
     <link rel="stylesheet" href="./styles.css" />
@@ -23,6 +24,7 @@
     <link rel="stylesheet" href="./styles/pdf-reader.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
     <link rel="stylesheet" href="./styles/desk-two-pane.css" />
+    <link rel="stylesheet" href="./styles/notebook.css" />
     <link rel="stylesheet" href="./styles/record-reader.css" />
     <link rel="stylesheet" href="./styles/todos.css" />
     <link rel="stylesheet" href="./styles/forage.css" />
@@ -392,8 +394,17 @@
     <main class="dashboard">
       <div class="dash-window">
 
+        <div class="desk-heading" data-tauri-drag-region aria-hidden="true"></div>
+        <div class="desk-rail-titlebar" data-tauri-drag-region>
+          <button id="desk-rail-toggle" type="button" aria-label="收起左边" aria-expanded="true" aria-controls="dash-global-rail">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="3"/>
+              <path d="M9 5v14"/>
+            </svg>
+            <span class="topbar-waiting-dot" aria-hidden="true"></span>
+          </button>
+        </div>
         <header id="dash-global-rail" class="dash-topbar">
-          <div class="desk-rail-titlebar" data-tauri-drag-region aria-hidden="true"></div>
           <div class="topbar-home">
             <button id="topbar-cc" class="dash-nav-link active" data-pane="overview" aria-label="跟 CC 说">
               <span class="topbar-figure"><img class="topbar-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" /><img class="topbar-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" /></span>
@@ -411,6 +422,7 @@
           <nav aria-label="主导航">
             <button id="topbar-roster" type="button" aria-controls="roster-aside" aria-expanded="false">在做 0</button>
             <button id="topbar-search" type="button">搜索</button>
+            <button class="dash-nav-link" data-pane="notebook">本子</button>
             <button class="dash-nav-link" data-pane="memory">记忆<span id="memory-count" hidden></span></button>
             <button class="dash-nav-link" data-pane="recollections">回忆</button>
             <details class="topbar-more"><summary aria-label="更多">⋯</summary><div>
@@ -423,7 +435,6 @@
           </nav>
         </header>
 
-        <div class="desk-heading" data-tauri-drag-region aria-hidden="true"></div>
         <section class="dash-main">
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
@@ -487,6 +498,26 @@
           </article>
 
           <!-- ── pane: memory ───────────────────────────────────────── -->
+          <article id="notebook-pane" class="dash-pane" data-pane="notebook" aria-label="本子" hidden>
+            <header class="notebook-header notebook-column">
+              <div class="notebook-date-nav">
+                <button type="button" id="notebook-prev" aria-label="前一页" disabled>‹</button>
+                <span id="notebook-date"></span>
+                <button type="button" id="notebook-next" aria-label="后一页" disabled>›</button>
+              </div>
+              <button type="button" id="notebook-today" hidden>回到今天</button>
+              <button type="button" id="notebook-paper">换成白纸</button>
+            </header>
+            <div class="notebook-scroll">
+              <div class="notebook-sheet">
+                <div class="notebook-column">
+                  <div id="notebook-entries"></div>
+                  <textarea id="notebook-write" rows="1" aria-label="接着写" placeholder="接着写…"></textarea>
+                </div>
+              </div>
+            </div>
+          </article>
+
           <article class="dash-pane" data-pane="memory" hidden>
             <section id="memory-topics" class="memory-topics" aria-label="话题"></section>
             <section class="memory-profile-overview" id="memory-profile-overview">

@@ -33,6 +33,7 @@ export interface ServiceDeps {
   refusal?: (providerId: string) => { code: string; since: string } | null
   /** 权限卡的等待上限(ms);缺省 WORKBENCH_PERMISSION_TIMEOUT_MS。 */
   permissionTimeoutMs?: number
+  askOpinion?: import('../ask-opinion').AskOpinion
   permissionPrompt?: (title: string, permission: import('../../../ports/workbench').PendingWorkbenchPermission, answer: (decision: import('../../../ports/workbench').PermissionDecision, reason?: string) => boolean, deadline: () => number | null) => (() => void)&{replyLine?:string}
   /** 放行规则(2026-10-19):权限卡登记之前先问;不传 ⇒ 每条都问主人(改造前)。 */
   permissionDecide?: (ask: AskSource) => Promise<{ verdict: 'allow' | 'deny' | 'ask'; by: string }>
@@ -40,6 +41,7 @@ export interface ServiceDeps {
   unattendedAck?: { get(): number | null; set(at: number): void }
   /** 原生历史读取器(claude / codex):list 只报名字,native 域真读。 */
   nativeHistory?: Partial<Record<NativeHistoryProvider, NativeHistoryReader>>
+  planPlaces?:()=>readonly import('../../../adapters/workbench/matter-plan-input').PlanPlace[]
   planConversation?: (caller:import('../../../adapters/workbench/matter-plan-input').PlanCaller)=>import('../../../adapters/workbench/matter-plan-input').PlanConversation|null
   registeredProjects?: () => Array<{alias:string;path:string}>
   defaultProvider?: string

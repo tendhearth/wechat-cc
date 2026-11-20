@@ -14,6 +14,8 @@ import type { SessionHandle } from '../session-manager'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from '../../ports/agent-provider'
 import { isAuthErrorCode } from '../../lib/provider-error-code'
 import type { DeliveryReport } from '../../domain/turn-reply'
+import { collectOwnerReply, type OwnerReplySummary } from '../collect-owner-reply'
+import { parseSilence, type ReplyContext } from '../../domain/turn-reply'
 import type { CoordinatorCtx } from './ctx'
 import type { ChatTurnHandle, TurnRecord } from './types'
 
@@ -40,8 +42,13 @@ export interface RunTurn {
   handle: Pick<SessionHandle, 'dispatch' | 'callTarget' | 'model'>
   speaker?: ReplyAttribution['speaker']
   prompt: string
+  signal?: AbortSignal
   /** 'turn' = daemon 的回合看门狗(deps.turnTimeoutMs,缺省不限);'beat' = /chat 的一拍。 */
   budget: 'turn' | 'beat'
+  /** Apply the delivery path's text projection before classifying echoes. */
+  replyTextForInspection?: (segment: string) => string
+  /** 这一轮在哪种场合交付(缺省私聊):回声判定按它决定静默令牌算不算数。 */
+  context?: ReplyContext
   /** 这一轮自己还要看事件(solo 的 daemon 交付收旁白)。先于桌宠的 onTurnEvent。 */
   observe?: (ev: AgentEvent) => void
   /** 一轮超过阈值还没完时调一次(一轮最多一次)。 */
@@ -71,7 +78,7 @@ export interface TurnRecordInput {
 }
 
 export interface TurnRunner {
-  run(t: RunTurn): Promise<TurnSummary>
+  run(t: RunTurn): Promise<OwnerReplySummary>
   /** /stop 够得着这个会话:登记它的 cancel,返回注销。 */
   registerCancel(chatId: string, cancel: () => void): () => void
   /** /chat:这一轮的 aborter 一响就取消这个会话(已经响过就当场取消)。返回解绑。 */
@@ -102,6 +109,15 @@ function deliveryColumns(
     attachments: report.attachmentsSent,
     narrationSegments: summary?.narration?.length ?? 0,
   }
+}
+
+/** 重答(模型把内部注记 / 工具调用当成了回复)的硬上限:只是把同一句话再说一遍,不该占会话锁太久。 */
+export const REPLY_RETRY_MAX_MS = 60_000
+
+function deferredLooksLikeEcho(events: readonly AgentEvent[] | undefined): boolean {
+  if (!events) return false
+  const lead = events.filter((ev): ev is Extract<AgentEvent, { kind: 'text' }> => ev.kind === 'text').map(ev => ev.text).join('').trimStart()
+  return lead.startsWith('[System:') || lead.startsWith('[调用工具')
 }
 
 export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
@@ -163,8 +179,53 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
       if (handle) openTurns.set(t.turn!, handle)
       if (handle?.turnId) { try { t.onTurn?.({ turnId: handle.turnId, ...(handle.matterId ? { matterId: handle.matterId } : {}) }) } catch { /* 来源回填失败不影响这一轮 */ } }
       const log = handle ? (ev: AgentEvent) => { try { handle.event(ev) } catch { /* 只少一步 */ } } : undefined
-      const onEvent = (ev: AgentEvent) => { observe?.(ev); log?.(ev); deps.onTurnEvent?.(t.chatId, ev) }
-      const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, () => collectTurn(t.handle.dispatch(t.prompt, { source: 'inbound' }), { timeoutMs, onEvent }))
+      const stopped = this.stopMark(t.chatId)
+      const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, async () => {
+        let deferred: AgentEvent[] | undefined
+        const flush = (includeText: boolean) => {
+          for (const ev of deferred ?? []) if (includeText || ev.kind !== 'text') log?.(ev)
+          deferred = undefined
+        }
+        const onEvent = (ev: AgentEvent) => {
+          observe?.(ev)
+          if (log) {
+            // The matter stream is visible in the apps. Hold a possible echo
+            // and subsequent events until the full reply can be classified.
+            if (!deferred && ev.kind === 'text') {
+              // 先按交付的规矩剥掉开头的静默令牌:「NO_REPLY\n[System: …]」也要先攒着(独立评审四轮)
+              const lead = parseSilence(ev.text).text.trimStart()
+              if (lead && ['[System:', '[调用工具'].some(prefix => lead.startsWith(prefix) || prefix.startsWith(lead))) deferred = []
+            }
+            if (deferred) deferred.push(ev)
+            else log(ev)
+          }
+          deps.onTurnEvent?.(t.chatId, ev)
+        }
+        try {
+          const summary = await collectOwnerReply(
+            (prompt, retry) => {
+              if (retry) flush(false)
+              // 第一轮和以前一样只有「多久没动静」的看门狗:一直在干活的长轮次不该被掐(WECHAT_TURN_TIMEOUT_MS 是没动静的上限,不是总时长)。
+              // 重答只是让它把同一句话用人话再说一遍,另设一个短的硬上限,免得同一把会话锁被多占一整轮(独立评审两轮)。
+              const idle = timeoutMs !== undefined && timeoutMs > 0 ? { timeoutMs } : {}
+              if (!retry) return collectTurn(t.handle.dispatch(prompt, { source: 'inbound' }), { ...idle, onEvent })
+              const cap = Math.min(timeoutMs !== undefined && timeoutMs > 0 ? timeoutMs : REPLY_RETRY_MAX_MS, REPLY_RETRY_MAX_MS)
+              return collectTurn(t.handle.dispatch(prompt, { source: 'background' }), { ...idle, deadlineAt: Date.now() + cap, onEvent })
+            },
+            t.prompt, ctx.textStrategyFor(t.providerId), deps.log,
+            () => stopped() || t.signal?.aborted === true,
+            t.replyTextForInspection,
+            t.context ?? 'dm',
+          )
+          // 这一轮以出错 / 超时收场时没做过回声判定;攒着的那段若本来就是照回声的样子起头的,别让它进 App 看得见的事件流
+          //(最终交付反正不发失败的轮次)。工具事件照旧留着。
+          const failed = !!(summary.error || summary.errorCode)
+          flush(!summary.replySuppressed && !(failed && deferredLooksLikeEcho(deferred)))
+          return summary
+        } finally {
+          flush(false)
+        }
+      })
       if (progressTimer) {
         // 旁路收尾,不多套一层 then:调用方 await 的还是回合本身,恢复的那一拍不变。
         const clear = () => { if (progressTimer) { clearTimeout(progressTimer); progressTimer = undefined } }

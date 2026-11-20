@@ -2,6 +2,7 @@
  * 单模型:solo、primary_tool,以及 /both、/chat 退成一家的那一轮。只编排 —— acquire、拼 prompt(交接块)、
  * 开交付轮、出错怎么说;跑回合本身交给 TurnRunner。
  */
+import { ownerReplyParts, type OwnerReplySummary } from '../collect-owner-reply'
 import type { ProviderId } from '../../domain/conversation'
 import type { InboundMsg } from '../../domain/prompt-format'
 import { buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from '../../domain/provider-handoff'
@@ -71,7 +72,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
     const startedAt = nowMs()
     const turn = {}  // 这一轮的身份(runner 靠它把 run 和 record 对上,M3a)
     let outcome: TurnRecord['outcome'] = 'error'
-    let summary: TurnSummary | undefined
+    let summary: (TurnSummary & Partial<Pick<OwnerReplySummary, 'replyRetried' | 'replySuppressed'>>) | undefined
     let unregisterCancel: (() => void) | undefined
     // 回复交付(spec §4.3):最后的话经端口送达;report 落进 TurnRecord。
     let delivery: TurnDeliveryHandle | undefined
@@ -184,7 +185,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
         }, onTurn: ids => d.bindTurn?.(ids),
         ...(textStrategy === 'last_segment' ? { progress: () => { const seg = live.latestSegment(); void d.progress(seg ?? LONG_TURN_PROGRESS, seg ? 'model' : 'notice').catch(() => {}) } } : {}),
       })
-      if (rotation && rotateManager && !stopped() && isContextOverflow({code:summary.errorCode,message:summary.error})) {
+      if (rotation && rotateManager && !stopped() && !summary.replyRetried && isContextOverflow({code:summary.errorCode,message:summary.error})) {
         try {
           const carry=await rotation.recoverOverflow(contextKey,rotateManager,currentInput,contextOverflowInputTokens(summary.error??''),contextOverflowLimitTokens(summary.error??''))
           if(carry){
@@ -249,7 +250,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       if (summary.providerFinalText !== undefined && summary.providerFinalText.trim() !== (summary.finalText ?? '').trim()) {
         deps.log('REPLY_FINAL_CHECK', `chat=${msg.chatId} provider=${providerId} match=differs segments_len=${(summary.finalText ?? '').length} sdk_len=${summary.providerFinalText.length}`)
       }
-      report = await d.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+      report = await d.deliver(ownerReplyParts(summary))
       ctx.noteDelivery(providerId, report.delivery)
       rotation?.delivered(contextKey, msg.text, summary.toolCalls.length > 0)
     } catch (err) {

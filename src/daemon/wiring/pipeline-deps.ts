@@ -39,7 +39,7 @@ import { makeModeCommands } from '../mode-commands'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterRecall, makeTopicRecall } from '../threads/recall'
-import { resolveAdminChatId } from '../companion/resolve-admin'
+import { configuredOwnerChatId, resolveAdminChatId } from '../companion/resolve-admin'
 import { makeCheapJudge, type TaskCandidate } from '../../features/workbench'
 import { makeCheapAnswerJudge } from '../inbound/answer-fallback'
 import { scopedSend } from '../inbound/reply-scope'
@@ -456,7 +456,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
 
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
-  const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  const ownerChatId = () => configuredOwnerChatId(stateDir)
   const taskCandidates = ():TaskCandidate[]=>{
     const since=Date.now()-7*24*60*60_000
     const tasks=opts.workbench ? opts.workbench.list({archived:'exclude',limit:50}).tasks : []
@@ -512,7 +512,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   } : null
   const roster = rosterDeps ? makeRosterReader(rosterDeps) : null
   // 「地方」:同一份名单数据,往回看 30 天、按项目归拢;顺序存在 places 表(v117)。
-  const places = rosterDeps ? makePlacesReader({ roster: rosterDeps, store: makePlacesStore(db) }) : null
+  const places = rosterDeps ? makePlacesReader({ roster: rosterDeps, store: makePlacesStore(db), opinion: opts.workbench?.waitingOpinion }) : null
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
     onSayTarget: ({ requestId, matterId }) => recordAnswerTarget(log, requestId, matterAnswerTarget(matterId)),

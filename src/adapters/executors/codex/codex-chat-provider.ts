@@ -1,3 +1,4 @@
+import { privateLoggingSuppressed } from '../../../lib/private-logging'
 import { tmpdir } from 'node:os'
 import { compilePolicy } from '../../../domain/policy'
 import { sessionSubprocessEnv } from '../subprocess-env'
@@ -136,10 +137,14 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     },
     /** 一次 app-server 冷启动 + 一轮(约 3-5s/次),给 20s 余量。 */
     cheapEvalBudgetMs: 20_000,
-    async cheapEval(prompt: string): Promise<string> {
+    async cheapEval(prompt, options): Promise<string> {
+      const signal = options?.signal
       let session: CodexAppServerSession | undefined
+      const abort = () => { void session?.close().catch(() => {}) }
       try {
-        session = await spawnCodexAppServerSession(coreOptions(cheapModel), { alias: 'codex-cheap-eval', path: tmpdir() }, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval' }, cheapProfile())
+        session = await spawnCodexAppServerSession(coreOptions(cheapModel), { alias: 'codex-cheap-eval', path: tmpdir() }, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile(), signal)
+        signal?.throwIfAborted()
+        signal?.addEventListener('abort', abort, { once: true })
         const parts: string[] = []
         for await (const ev of session.dispatch(prompt)) {
           if (ev.kind === 'text') parts.push(ev.text)
@@ -150,6 +155,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
         if (providerErrorCodeOf(err)) throw err
         throw withProviderCode(err, codexErrorCode(err instanceof Error ? err.message : String(err)))
       } finally {
+        signal?.removeEventListener('abort', abort)
         await session?.close().catch(() => {})
       }
     },

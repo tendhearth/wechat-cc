@@ -1,0 +1,7 @@
+/* 桌面本子选笔的墨色。通用色板由共享包生成。 */
+:root {
+  --th-notebook-blue-black: #24405f;
+  --th-notebook-dark-green: #304d3c;
+  --th-notebook-ochre: #744729;
+  --th-notebook-grey-purple: #584863;
+}

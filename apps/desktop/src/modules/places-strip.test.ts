@@ -202,3 +202,45 @@ it('宽窗置顶卡回答后越过已经在途的读取发起新刷新', async (
   expect(reads).toBe(3)
   expect(document.querySelector('#p .place')?.getAttribute('data-waiting')).toBe('false')
 })
+
+
+it('意见纸条标明 CC 只看了这条请求', async () => {
+  const waitingRoot = document.createElement('div')
+  const ccOpinion = '先别删。这条请求要删除备份。'
+  const waiting = { itemKey: 'matter:x', kind: 'permission', summary: '删旧备份？', count: 1, ccOpinion }
+  mount({ places: [place('归档', { waiting })], version: 'v1' }, { waitingRoot })
+  strip!.setWide(true)
+  await strip!.refresh()
+  expect(waitingRoot.querySelector('.desk-waiting-opinion')?.textContent).toBe('我的意见(只看了这条请求)：' + ccOpinion)
+})
+
+it.each(['allow', 'deny', 'open', 'terminal'])('晚到的意见保持等待卡按键焦点（%s）', async action => {
+  const permission = { itemKey: 'matter:a', kind: 'permission', matterId: 'a', requestId: 'req-1', summary: '要删旧表吗？', count: 1 }
+  const question = { itemKey: 'matter:b', kind: 'question', matterId: 'b', requestId: 'req-2', summary: '要选哪个？', count: 1 }
+  const waitingRoot = document.createElement('div')
+  const terminal = { itemKey: 'terminal:s1', kind: 'terminal', sessionId: 's1', summary: '要继续吗？', count: 1 }
+  let places = [place('a', { waiting: permission }), place('b', { waiting: action === 'terminal' ? terminal : question })]
+  mount(() => ({ places, version: JSON.stringify(places) }), { waitingRoot })
+  document.body.append(waitingRoot)
+  strip!.setWide(true)
+  await strip!.refresh()
+  const selector = action === 'open' || action === 'terminal' ? '[data-place-open]' : `[data-place-decision="${action}"]`
+  const button = () => waitingRoot.querySelector<HTMLButtonElement>(selector)!
+  const focused = button()
+  focused.focus()
+  expect(document.activeElement).toBe(button())
+
+  places = [place('a', { waiting: { ...permission, ccOpinion: '先别删。', questionReason: '删了回不来' } }), places[1]]
+  await strip!.refresh()
+  expect(waitingRoot.querySelector('.desk-waiting-opinion')?.textContent).toContain('先别删。')
+  expect(button()).toBe(focused)
+  expect(document.activeElement).toBe(button())
+
+  places = places.map(p => ({
+    ...p, waiting: p.waiting.kind === 'terminal'
+      ? { ...p.waiting, itemKey: 'terminal:s2', sessionId: 's2' }
+      : { ...p.waiting, requestId: p.waiting.requestId + '-new' },
+  }))
+  await strip!.refresh()
+  expect(waitingRoot.contains(document.activeElement)).toBe(false)
+})

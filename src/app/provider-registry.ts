@@ -1,3 +1,4 @@
+import { withoutPrivateLogging } from '../lib/private-logging'
 /**
  * provider-registry — central catalogue of available agent providers
  * (RFC 03 §3.3, Appendix D).
@@ -12,7 +13,7 @@
  * passed via deps. Tests can build their own with mock providers.
  */
 import { noteReplyAttribution } from '../lib/reply-attribution'
-import type { AgentAttachment, AgentDispatchContext, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, SpawnContext } from '../ports/agent-provider'
+import type { AgentAttachment, AgentDispatchContext, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, CheapEvalOptions, SpawnContext } from '../ports/agent-provider'
 import type { WorkbenchExecutorCapabilities } from '../domain/workbench/executor-capabilities'
 import type { ProviderId } from '../domain/conversation'
 import { executorNames, type ExecutorNames } from '../domain/provider-display-names'
@@ -63,6 +64,11 @@ export function withNetworkGate<P extends AgentProvider>(inner: P, gate: Network
         }
         const ctx = prop === 'spawn' ? (args[1] as Partial<SpawnContext> | undefined) : undefined
         await assertCallAllowed(gate, providerCallTarget(target, providerId, prop as CallTargetKind, ctx))
+        if (prop === 'cheapEval') {
+          const options = args[1] as CheapEvalOptions | undefined
+          options?.signal?.throwIfAborted()
+          options?.beforeRequest?.()
+        }
         const out = await (v as (...a: unknown[]) => unknown).apply(target, args)
         if (prop === 'spawn') return guardSession(out as AgentSession, gate, target, providerId, ctx)
         return out
@@ -200,7 +206,7 @@ export interface ProviderRegistry {
    * comparison is fundamentally cross-provider (we can't compare
    * Anthropic's haiku to OpenAI's mini purely from interface metadata).
    */
-  getCheapEval(): CheapEval | null
+  getCheapEval(options?: { private?: boolean; singleAttempt?: boolean; toolFreeOnly?: boolean }): CheapEval | null
   /**
    * 后台判断(getCheapEval 交出去的那些调用)最近的成败。只数**真失败**:网络没受保护、连不上不算 ——
    * 那两样「CC 现在怎么样」里已经有网络守护 / 微信两行在说。2026-10-13 gemini-3.7 下线,后台判断
@@ -234,6 +240,9 @@ export const DEFAULT_CHEAP_EVAL_BUDGET_MS = 12_000
 // quota (no per-token API cost) — spec §2 slots it after openai, before
 // claude. Future providers append here.
 const CHEAP_EVAL_PREFERENCE: ProviderId[] = ['openai', 'agy', 'claude', 'codex', 'gemini']
+// Audited prompt transports: HTTP bodies (OpenAI/Gemini) or stdio (Claude/Codex).
+// AGY and Cursor print mode put the prompt in subprocess argv.
+const PRIVATE_CHEAP_EVAL_PROVIDERS = new Set<ProviderId>(['openai', 'claude', 'codex', 'gemini'])
 
 /** How long a cheapEval provider sits out after throwing. Long enough to
  *  stop hammering a dead credential every 25-minute ingest cycle, short
@@ -285,7 +294,7 @@ export function createProviderRegistry(opts?: {
    * 真拨(那条路直接调各 provider 的 cheapEval,不走这里)。daemon 侧用
    * net-probe 的端点表包一个带 TTL 缓存的实现注入;core 保持纯净。
    */
-  cheapEvalPreflight?: (id: string) => Promise<boolean>
+  cheapEvalPreflight?: (id: string, signal?: AbortSignal) => Promise<boolean>
   /**
    * 诊断采集(可选):一次 cheapEval 失败时,把**真实形状**交出去。
    * 这条路是 agy 唯一真正跑的地方 —— turn_records 里 agy 是零行,不是埋点
@@ -302,44 +311,51 @@ export function createProviderRegistry(opts?: {
 }): ProviderRegistry {
   const now = opts?.now ?? Date.now
   const entries = new Map<ProviderId, { provider: AgentProvider; opts: ProviderRegistration }>()
+  const eligibleEval = (id: ProviderId, toolFreeOnly: boolean): CheapEval | undefined => {
+    const provider = entries.get(id)?.provider
+    if (toolFreeOnly && !provider?.supportsToolFreeCheapEval) return undefined
+    return provider?.cheapEval
+  }
   // 显式指定优先 — 见 opts.cheapEvalProvider 文档。
-  function resolveCheapEval(): CheapEval | null {
+  function resolveCheapEval(singleAttempt: boolean, toolFreeOnly: boolean): CheapEval | null {
     // 可以是 getter(bootstrap 传 mtime 缓存的 config 读法),这样 /set cheap
     // 改完下一次评估就生效,不用重启。
     const pinnedId = readPinnedId()
     if (pinnedId) {
-      const pinned = entries.get(pinnedId as ProviderId)?.provider.cheapEval
+      const pinned = eligibleEval(pinnedId as ProviderId, toolFreeOnly)
       // 钉死的那家也要看被拒:钉了 agy、agy 在这个出口被拒,就不能每次照问(2026-10-23 回忆 28 次)。
-      if (pinned) return guardRefused(pinnedId as ProviderId, pinned)
+      if (pinned) return guardRefused(pinnedId as ProviderId, pinned, singleAttempt)
+      if (toolFreeOnly) return null
       opts?.log?.(`cheap_eval_provider=${pinnedId} 未注册或无 cheapEval — 回落偏好序`)
       // 钉的 provider 此刻没注册(2026-10-04:开机 `--version` 探测一时失败、正在后台
       // 退避重探)。很多调用方在开机时就把这里返回的函数缓存住了(coordinator 的
       // haikuEval、social 的闸门 …),所以不能把「回落」焊死:返回一个**按调用现取**的
       // 派发器 —— 钉的那家晚注册上的那一刻起,每一次评估都回到它。
-      const fallback = resolveUnpinned()
+      const fallback = resolveUnpinned(singleAttempt, toolFreeOnly)
       if (!fallback) return null
       let returned = false
-      return async (prompt: string) => {
+      return async (prompt, options) => {
         const id = readPinnedId()
-        const live = id ? entries.get(id as ProviderId)?.provider.cheapEval : undefined
+        const live = id ? eligibleEval(id as ProviderId, toolFreeOnly) : undefined
         if (live) {
           if (!returned) { returned = true; opts?.log?.(`cheap_eval_provider=${id} 已注册 — 后台评估回到它`) }
-          return guardRefused(id as ProviderId, live)(prompt)
+          return guardRefused(id as ProviderId, live, singleAttempt)(prompt, options)
         }
-        return (resolveUnpinned() ?? fallback)(prompt)
+        return (resolveUnpinned(singleAttempt, toolFreeOnly) ?? fallback)(prompt, options)
       }
     }
-    return resolveUnpinned()
+    return resolveUnpinned(singleAttempt, toolFreeOnly)
   }
 
   const evalHealth: CheapEvalHealth = { consecutiveFailures: 0, lastError: null, lastFailAt: null, lastOkAt: null }
-  const tracked = (fn: CheapEval): CheapEval => async (prompt: string) => {
+  const tracked = (fn: CheapEval): CheapEval => async (prompt, options) => {
     try {
-      const out = await fn(prompt)
+      const out = await fn(prompt, options)
       evalHealth.consecutiveFailures = 0
       evalHealth.lastOkAt = Date.now()
       return out
     } catch (e) {
+      if (options?.signal?.aborted) throw e
       const msg = e instanceof Error ? e.message : String(e)
       if (!isNetworkUnprotectedError(e) && providerErrorCodeOf(e) !== 'network' && !isConnectFailure(msg)) {
         evalHealth.consecutiveFailures++
@@ -365,37 +381,44 @@ export function createProviderRegistry(opts?: {
   }
   const refusedError = (id: ProviderId, r: { until: number; code: string }) =>
     errorWithProviderCode(`${r.code}: ${id} 被服务方拒绝,${new Date(r.until).toISOString()} 之前不再问它`, r.code)
+  const networkGate = opts?.networkGate
+  const dispatchCheapEval = (fn: CheapEval, prompt: string, options?: CheapEvalOptions) => {
+    // With a gate, the provider wrapper calls this after its final network check.
+    if (!networkGate) options?.beforeRequest?.()
+    return fn(prompt, options)
+  }
   /** 包一层:被拒期间不调;成功清零;被拒就记。 */
-  const guardRefused = (id: ProviderId, fn: CheapEval): CheapEval => async (prompt) => {
+  const guardRefused = (id: ProviderId, fn: CheapEval, singleAttempt: boolean): CheapEval => async (prompt, options) => {
+    options?.signal?.throwIfAborted()
     const r = refusedNow(id)
     if (r) throw refusedError(id, r)
     try {
       const model = providerCallTarget(entries.get(id)?.provider, id, 'cheapEval').model
-      const out = await fn(prompt)
+      const out = await dispatchCheapEval(fn, prompt, singleAttempt ? { ...options, singleAttempt } : options)
       noteReplyAttribution({ speaker: 'cc', provider: id, ...(model ? { model } : {}) })
       cheapEvalRefused.delete(id)
       return out
-    } catch (err) { noteRefusal(id, err); throw err }
+    } catch (err) { if (!options?.signal?.aborted) noteRefusal(id, err); throw err }
   }
-  const networkGate = opts?.networkGate
   const readPinnedId = (): string | undefined =>
     typeof opts?.cheapEvalProvider === 'function' ? opts.cheapEvalProvider() : opts?.cheapEvalProvider
   /** 不看钉死项的解析:偏好序 → 其余;多个候选时带运行时故障转移。 */
-  const resolveUnpinned = (): CheapEval | null => {
+  const resolveUnpinned = (singleAttempt: boolean, toolFreeOnly: boolean): CheapEval | null => {
     // Preferred order first, then any other registered provider. The
     // implementations are arrow-like (close over `opts`, never `this`),
     // so calling them unbound is safe.
     const candidates: Array<{ id: ProviderId; fn: CheapEval }> = []
     for (const id of CHEAP_EVAL_PREFERENCE) {
-      const ce = entries.get(id)?.provider.cheapEval
+      const ce = eligibleEval(id, toolFreeOnly)
       if (ce) candidates.push({ id, fn: ce })
     }
-    for (const [id, entry] of entries) {
+    for (const id of entries.keys()) {
       if (CHEAP_EVAL_PREFERENCE.includes(id)) continue
-      if (entry.provider.cheapEval) candidates.push({ id, fn: entry.provider.cheapEval })
+      const ce = eligibleEval(id, toolFreeOnly)
+      if (ce) candidates.push({ id, fn: ce })
     }
     if (candidates.length === 0) return null
-    if (candidates.length === 1) return guardRefused(candidates[0]!.id, candidates[0]!.fn)
+    if (candidates.length === 1) return guardRefused(candidates[0]!.id, candidates[0]!.fn, singleAttempt)
 
     // Runtime failover (2026-08-24): the static preference order once froze
     // the entire ingest pipeline — agy sat at slot 2 with a dead credential
@@ -404,7 +427,7 @@ export function createProviderRegistry(opts?: {
     // the call falls through; only when EVERY candidate fails does the
     // error propagate (callers' watermark-preserving retry semantics rely
     // on that).
-    return async (prompt: string) => {
+    return async (prompt, options) => {
       let lastErr: unknown = new Error('no cheapEval provider available')
       let attempted = 0
       let preflightSkipped = 0
@@ -413,6 +436,7 @@ export function createProviderRegistry(opts?: {
       const coolingEligible: typeof candidates = []
       let refusedErr: Error | null = null
       for (const c of candidates) {
+        options?.signal?.throwIfAborted()
         if (networkGate) {
           const d = await decideCall(networkGate, providerCallTarget(entries.get(c.id)?.provider, c.id, 'cheapEval'))
           if (!d.allowed) {
@@ -438,20 +462,26 @@ export function createProviderRegistry(opts?: {
             continue
           }
         }
+        options?.signal?.throwIfAborted()
         attempted++
         try {
           const model = providerCallTarget(entries.get(c.id)?.provider, c.id, 'cheapEval').model
-          const out = await c.fn(prompt)
+          const out = await dispatchCheapEval(c.fn, prompt, singleAttempt ? { ...options, singleAttempt } : options)
           noteReplyAttribution({ speaker: 'cc', provider: c.id, ...(model ? { model } : {}) })
           cheapEvalRefused.delete(c.id)
           return out
         } catch (err) {
+          if (options?.signal?.aborted) throw err
           // 评估途中网络掉了(闸门在这个候选里拦下):不记冷却,换下一个候选。
-          if (isNetworkUnprotectedError(err)) { attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
-          if (noteRefusal(c.id, err)) { lastErr = err; continue }
+          if (isNetworkUnprotectedError(err)) { if (singleAttempt) throw err; attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
+          if (noteRefusal(c.id, err)) { if (singleAttempt) throw err; lastErr = err; continue }
+          // 单次模式(可有可无的判断,例如等你定的事上 CC 的意见)关掉了参数回退:这一次失败说明不了
+          // 这家对别的后台判断不可用,不记进大家共用的冷却,由调用方自己的退避管。登录失效对谁都一样,照记。
+          if (singleAttempt && !isAuthError(err)) throw err
           const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
           cheapEvalCooldownUntil.set(c.id, now() + cd)
           lastErr = err
+          if (singleAttempt) throw err
           // 只采集,不改判。绝不让采集影响冷却/失败转移。
           try {
             const msg = err instanceof Error ? err.message : String(err)
@@ -460,6 +490,7 @@ export function createProviderRegistry(opts?: {
           } catch { /* 采集永不外泄 */ }
         }
       }
+      options?.signal?.throwIfAborted()
       if (attempted === 0) {
         // 网络预检把所有人都拦了 → 抛错让调用方按「本轮失败,下轮重试」
         // 处理(所有后台 judge 都有这个姿势),绝不硬闯——硬闯正是要防
@@ -470,10 +501,10 @@ export function createProviderRegistry(opts?: {
         // Everyone (still eligible under the network guard) is cooling down —
         // try the first one anyway rather than failing on a stale blacklist.
         const first = coolingEligible[0]
-        if (first) {
+        if (first && !singleAttempt) {
           cheapEvalCooldownUntil.delete(first.id)
           const model = providerCallTarget(entries.get(first.id)?.provider, first.id, 'cheapEval').model
-          const out = await first.fn(prompt)
+          const out = await dispatchCheapEval(first.fn, prompt, options)
           noteReplyAttribution({ speaker: 'cc', provider: first.id, ...(model ? { model } : {}) })
           return out
         }
@@ -509,8 +540,52 @@ export function createProviderRegistry(opts?: {
     cheapEvalHealth() {
       return { ...evalHealth }
     },
-    getCheapEval() {
-      const fn = resolveCheapEval()
+    getCheapEval(options) {
+      if (options?.private) {
+        const pinned = readPinnedId() as ProviderId | undefined
+        const candidates = [...new Set([...CHEAP_EVAL_PREFERENCE, ...entries.keys()])]
+          .filter(id => PRIVATE_CHEAP_EVAL_PROVIDERS.has(id) && entries.get(id)?.provider.cheapEval)
+        const ids = pinned && candidates.includes(pinned) ? [pinned] : candidates
+        if (!ids.length) return null
+
+        return (prompt, requestOptions) => withoutPrivateLogging(async () => {
+          const signal = requestOptions?.signal
+          try {
+            for (const id of ids) {
+              signal?.throwIfAborted()
+              const provider = entries.get(id)?.provider
+              const evaluate = provider?.cheapEval
+              if (!evaluate || refusedNow(id) || (cheapEvalCooldownUntil.get(id) ?? 0) > now()) continue
+              if (networkGate && !(await decideCall(networkGate, providerCallTarget(provider, id, 'cheapEval'))).allowed) continue
+              signal?.throwIfAborted()
+              if (opts?.cheapEvalPreflight) {
+                const preflight = signal ? opts.cheapEvalPreflight(id, signal) : opts.cheapEvalPreflight(id)
+                if (!await preflight.catch(() => false)) continue
+              }
+              signal?.throwIfAborted()
+              if (refusedNow(id)) continue
+
+              // Once the prompt is submitted, never fail over or collect errors containing it.
+              try {
+                const result = await (requestOptions ? dispatchCheapEval(evaluate, prompt, requestOptions) : evaluate(prompt))
+                signal?.throwIfAborted()
+                cheapEvalRefused.delete(id)
+                return result
+              } catch (err) {
+                if (!signal?.aborted && !isNetworkUnprotectedError(err) && !noteRefusal(id, err)) {
+                  const cooldown = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
+                  cheapEvalCooldownUntil.set(id, now() + cooldown)
+                }
+                throw err
+              }
+            }
+          } catch { /* Keep raw errors inside the private evaluation. */ }
+          signal?.throwIfAborted()
+          throw new Error('Private model request failed')
+        })
+      }
+      const toolFreeOnly = options?.toolFreeOnly === true
+      const fn = resolveCheapEval(toolFreeOnly || options?.singleAttempt === true, toolFreeOnly)
       return fn ? tracked(fn) : null
     },
     getStrongEval(id) {

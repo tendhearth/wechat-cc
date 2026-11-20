@@ -1,0 +1,458 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ASK_OPINION_DELAY_MS, ASK_OPINION_TIMEOUT_MS, UNVERIFIED_CLAIMS, makeAskOpinion } from './ask-opinion'
+import type { PermissionAsk } from '../../domain/permission-rules/types'
+import { createApiModel } from '../../adapters/executors/openai/api-model'
+import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
+import { createProviderRegistry } from '../../app/provider-registry'
+import type { CheapEval } from '../../ports/agent-provider'
+
+const MIN = 60_000
+const answer = { say: true, opinion: '允许。这次只读本地的文件。', reason: '执行者需要读取权限' }
+const raw = JSON.stringify(answer)
+const note = { ccOpinion: answer.opinion, questionReason: answer.reason }
+const pending = (override: Partial<PermissionAsk> = {}) => ({
+  kind: 'permission' as const, project: '/projects/Archive', title: '整理备份',
+  ask: { surface: 'workbench', provider: 'codex', tool: 'Bash', command: 'git status', cwd: null, project: '/projects/Archive', isolatedWorktree: false, tier: 'admin', scope: 'task-1', ...override } satisfies PermissionAsk,
+  preview: { command: 'API_TOKEN="synthetic-token" cat "/private/synthetic name"', authorization: 'synthetic-secret', paths: ['/private/synthetic-name with spaces'] },
+})
+const admitted = (model: (prompt: string) => Promise<string>): CheapEval => (prompt, options) => {
+  options?.beforeRequest?.()
+  return model(prompt)
+}
+const tick = () => vi.advanceTimersByTimeAsync(ASK_OPINION_DELAY_MS)
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date(2026, 10, 18, 12))
+})
+afterEach(() => { vi.useRealTimers() })
+
+it('两秒后才问，跨过默认间隔边界才问下一条普通请求', async () => {
+  const model = vi.fn(async () => raw)
+  const opinions = makeAskOpinion({ evaluator: () => admitted(model) })
+  opinions.schedule('first', pending)
+  expect(opinions.get('first')).toBeUndefined()
+  await vi.advanceTimersByTimeAsync(1_999)
+  expect(model).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(1)
+  expect(opinions.get('first')).toEqual(note)
+  const first = Date.now()
+
+  opinions.schedule('too-soon', pending)
+  await tick()
+  expect(model).toHaveBeenCalledTimes(1)
+  vi.setSystemTime(first + 15 * MIN - ASK_OPINION_DELAY_MS)
+  opinions.schedule('on-time', pending)
+  await tick()
+  expect(model).toHaveBeenCalledTimes(2)
+  expect(opinions.get('too-soon')).toBeUndefined()
+})
+
+it('重的事跳过间隔，仍受每日上限，本地跨日恢复', async () => {
+  const model = vi.fn(async () => raw)
+  const opinions = makeAskOpinion({ evaluator: () => admitted(model), settings: () => ({ daily_limit: 2 }) })
+  opinions.schedule('read', pending)
+  await tick()
+  const deleteFile = () => pending({ command: 'rm old.tar' })
+  opinions.schedule('delete', deleteFile)
+  await tick()
+  opinions.schedule('over-cap', deleteFile)
+  await tick()
+  expect(model).toHaveBeenCalledTimes(2)
+  expect(opinions.get('over-cap')).toBeUndefined()
+  vi.setSystemTime(new Date(2026, 10, 19))
+  opinions.schedule('new-day', deleteFile)
+  await tick()
+  expect(model).toHaveBeenCalledTimes(3)
+})
+
+it.each<Partial<PermissionAsk>>([
+  { tool: 'commandExecution', command: 'git push' },
+  { tool: 'commandExecution', command: 'cat ~/Library/Messages/chat.db' },
+  { tool: 'Read', command: undefined, paths: ['/private/other/file.txt'] },
+  { tool: 'Write', command: undefined, paths: ['../other/file.txt'] },
+  { tool: 'mcp__wechat__message', command: undefined },
+])('现有红线、项目范围和工具分类可越过间隔 %j', async override => {
+  const model = vi.fn(async () => raw)
+  const opinions = makeAskOpinion({ evaluator: () => admitted(model) })
+  opinions.schedule('read', pending)
+  await tick()
+  opinions.schedule('heavy', () => pending(override))
+  await tick()
+  expect(model).toHaveBeenCalledTimes(2)
+})
+
+it('默认本地日上限为十条，且同一时刻只发一次判断', async () => {
+  const model = vi.fn(async () => raw)
+  const opinions = makeAskOpinion({ evaluator: () => admitted(model) })
+  const heavy = () => pending({ command: 'rm old.tar' })
+  for (let i = 0; i < 11; i++) {
+    opinions.schedule(String(i), heavy)
+    opinions.schedule('parallel-' + i, heavy)
+    await tick()
+  }
+  expect(model).toHaveBeenCalledTimes(10)
+})
+
+it('失败从一分钟起指数退避，包括重的事', async () => {
+  const model = vi.fn(async () => { throw new Error('synthetic failure') })
+  const opinions = makeAskOpinion({ evaluator: () => admitted(model) })
+  const heavy = () => pending({ command: 'rm old.tar' })
+  opinions.schedule('first', pending)
+  await tick()
+  const first = Date.now()
+  opinions.schedule('within-first', heavy)
+  await tick()
+  vi.setSystemTime(first + MIN - ASK_OPINION_DELAY_MS)
+  opinions.schedule('second', heavy)
+  await tick()
+  const second = Date.now()
+  vi.setSystemTime(second + MIN)
+  opinions.schedule('within-second', heavy)
+  await tick()
+  expect(model).toHaveBeenCalledTimes(2)
+  vi.setSystemTime(second + 2 * MIN - ASK_OPINION_DELAY_MS)
+  opinions.schedule('third', heavy)
+  await tick()
+  expect(model).toHaveBeenCalledTimes(3)
+})
+
+it('设置可关闭意见，且无模型、两秒内已答都没有模型调用', async () => {
+  const model = vi.fn(async () => raw)
+  const evaluator = vi.fn<() => CheapEval | null>().mockReturnValue(null)
+  const opinions = makeAskOpinion({ evaluator })
+  opinions.schedule('no-model', pending)
+  await tick()
+  expect(opinions.get('no-model')).toBeUndefined()
+  evaluator.mockReturnValue(model)
+  opinions.schedule('answered', pending)
+  await vi.advanceTimersByTimeAsync(1_999)
+  opinions.clear('answered')
+  await tick()
+  opinions.schedule('vanished', () => null)
+  await tick()
+  expect(evaluator).toHaveBeenCalledTimes(1)
+  expect(model).not.toHaveBeenCalled()
+
+  const off = makeAskOpinion({ evaluator, settings: () => ({ daily_limit: 0 }) })
+  off.schedule('off', pending)
+  await tick()
+  expect(evaluator).toHaveBeenCalledTimes(1)
+})
+
+it('只把打码后的请求资料发给模型，日志只含结果和长度', async () => {
+  const model = vi.fn(async (_prompt: string) => raw)
+  const log = vi.fn()
+  const opinions = makeAskOpinion({ evaluator: () => admitted(model), log })
+  opinions.schedule('first', pending)
+  await tick()
+  const data = JSON.parse(model.mock.calls[0]![0].split('\n').at(-1)!)
+  expect(data).toMatchObject({ kind: 'permission', tool: 'Bash', place: 'Archive' })
+  expect(data).not.toHaveProperty('title')
+  expect(data.preview).toContain('[credential omitted]')
+  expect(data.preview).toContain('[路径已打码]')
+  expect(data.preview).not.toMatch(/synthetic-secret|synthetic-name|synthetic-token|synthetic name|with spaces/)
+  expect(log.mock.calls).toEqual([['ASK_OPINION', `given opinionLength=${answer.opinion.length} reasonLength=${answer.reason.length}`]])
+  opinions.clear('first')
+  expect(opinions.get('first')).toBeUndefined()
+})
+
+it.each([
+  ['问题', [{ question: '要打开 /Users/alex/Private Clients/payroll.csv 吗？', options: ['打开'] }]],
+  ['选项', [{ question: '要选哪个？', options: ['备份到 D:\\Private Clients\\payroll.csv'] }]],
+])('带空格的路径只向模型提供类别（%s）', async (_label, preview) => {
+  const model = vi.fn(async (_prompt: string) => raw)
+  const opinions = makeAskOpinion({ evaluator: () => admitted(model) })
+  opinions.schedule('question', () => ({ kind: 'question', project: '/projects/Archive', preview }))
+  await tick()
+  const prompt = model.mock.calls[0]![0]
+  expect(prompt).not.toMatch(/Clients|payroll/)
+  expect(prompt).toContain('带路径的提问')
+})
+
+it('无工具的意见评估只使用明确指定的判断器', async () => {
+  let pin: string | undefined = 'claude'
+  const registry = createProviderRegistry({ cheapEvalProvider: () => pin })
+  const spawn = async () => { throw new Error('unused') }
+  const claude = vi.fn(async () => raw)
+  const gateway = vi.fn(async () => raw)
+  registry.register('claude', { spawn, cheapEval: claude }, { canResume: () => false })
+  registry.register('openai', { spawn, cheapEval: gateway, supportsToolFreeCheapEval: true }, { canResume: () => false })
+  const opinions = makeAskOpinion({ evaluator: () => registry.getCheapEval({ toolFreeOnly: true }) })
+  opinions.schedule('pinned', pending)
+  await tick()
+  expect(claude).not.toHaveBeenCalled()
+  expect(gateway).not.toHaveBeenCalled()
+  expect(opinions.get('pinned')).toBeUndefined()
+
+  pin = undefined
+  opinions.schedule('unpinned', pending)
+  await tick()
+  expect(gateway).toHaveBeenCalledTimes(1)
+  expect(opinions.get('unpinned')).toEqual(note)
+})
+
+describe('不显示不合规回答', () => {
+  it.each([
+    ['不想说', '{"say":false,"opinion":"","reason":""}'],
+    ['坏 JSON', 'not JSON'],
+    ['多余字段', JSON.stringify({ ...answer, extra: true })],
+    ['意见超长', JSON.stringify({ ...answer, opinion: '先别。'.repeat(20) })],
+    ['缘由超长', JSON.stringify({ ...answer, reason: '保留档案避免遗漏。'.repeat(6) })],
+    ['只有立场', JSON.stringify({ ...answer, opinion: '允许。' })],
+    ['没立场', JSON.stringify({ ...answer, opinion: '这是只读操作。' })],
+    ['工具名', JSON.stringify({ ...answer, reason: '需要 Bash 权限' })],
+    ['编号', JSON.stringify({ ...answer, reason: '涉及 req-1234' })],
+    ['绝对路径', JSON.stringify({ ...answer, reason: '需要读取 /tmp/report' })],
+  ])('%s', async (_label, result) => {
+    const opinions = makeAskOpinion({ evaluator: () => async () => result })
+    opinions.schedule('request', pending)
+    await tick()
+    expect(opinions.get('request')).toBeUndefined()
+  })
+
+  it.each(UNVERIFIED_CLAIMS)('词表拦住 %s', async word => {
+    const log = vi.fn()
+    const opinions = makeAskOpinion({ evaluator: () => async () => JSON.stringify({ ...answer, reason: word }), log })
+    opinions.schedule('request', pending)
+    await tick()
+    expect(opinions.get('request')).toBeUndefined()
+    expect(log).toHaveBeenCalledWith('ASK_OPINION', expect.stringMatching(/^blocked_words opinionLength=\d+ reasonLength=\d+$/))
+  })
+})
+
+it('超时、回答后才返回以及过期都不会留记录', async () => {
+  let finish!: (text: string) => void
+  const model = vi.fn(() => new Promise<string>(resolve => { finish = resolve }))
+  const opinions = makeAskOpinion({ evaluator: () => admitted(model) })
+  opinions.schedule('timeout', pending)
+  await tick()
+  await vi.advanceTimersByTimeAsync(ASK_OPINION_TIMEOUT_MS)
+  finish(raw)
+  expect(opinions.get('timeout')).toBeUndefined()
+  await vi.advanceTimersByTimeAsync(MIN)
+  opinions.schedule('answered', pending)
+  await tick()
+  opinions.clear('answered')
+  finish(raw)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(opinions.get('answered')).toBeUndefined()
+  opinions.schedule('expires', pending)
+  await tick()
+  finish(raw)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(opinions.get('expires')).toEqual(note)
+  await vi.advanceTimersByTimeAsync(24 * 60 * MIN)
+  expect(opinions.get('expires')).toBeUndefined()
+})
+
+it('每天的判断预算也计入模型选择不说的请求', async () => {
+  const model = vi.fn(async () => '{"say":false,"opinion":"","reason":""}')
+  const opinions = makeAskOpinion({ evaluator: () => admitted(model), settings: () => ({ daily_limit: 1 }) })
+  opinions.schedule('quiet', pending)
+  await tick()
+  opinions.schedule('second', pending)
+  await tick()
+  expect(model).toHaveBeenCalledTimes(1)
+  expect(opinions.get('quiet')).toBeUndefined()
+})
+
+it('重建服务保留当天已发起次数，跨日本地预算恢复', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'cc-opinion-budget-'))
+  const model = vi.fn()
+    .mockResolvedValueOnce(raw)
+    .mockRejectedValueOnce(new Error('synthetic failure'))
+    .mockResolvedValue(raw)
+  const create = () => makeAskOpinion({
+    evaluator: () => admitted(model), stateDir, settings: () => ({ daily_limit: 2, min_interval_ms: 0 }),
+  })
+  try {
+    const first = create()
+    first.schedule('given', pending)
+    await tick()
+    first.schedule('failed', pending)
+    await tick()
+    expect(first.get('given')).toEqual(note)
+    expect(model).toHaveBeenCalledTimes(2)
+    first.dispose()
+
+    const restarted = create()
+    restarted.schedule('new-request', pending)
+    await tick()
+    expect(model).toHaveBeenCalledTimes(2)
+    expect(restarted.get('given')).toBeUndefined()
+    expect(JSON.parse(readFileSync(join(stateDir, 'ask-opinion-budget.json'), 'utf8')))
+      .toEqual({ day: new Date().toDateString(), count: 2 })
+
+    vi.setSystemTime(new Date(2026, 10, 19))
+    restarted.schedule('new-day', pending)
+    await tick()
+    expect(model).toHaveBeenCalledTimes(3)
+    restarted.dispose()
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true })
+  }
+})
+
+it.each([
+  '我已经跑过测试', '我跑了一遍', '我试过了', '我看过文件',
+  '我们已读完文件', '我刚刚查过了', '我有核对过', '我已经验完了', '我，已经确认了',
+  '我已完成测试', '我测完了', '我测试了', '我查看过文件', '我读取了文件', '我刚做了测试', '我已经执行了测试',
+])('驳回第一人称核对声明：%s', async claim => {
+  const opinions = makeAskOpinion({
+    evaluator: () => async () => JSON.stringify({ ...answer, opinion: `允许。${claim}。` }),
+  })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')).toBeUndefined()
+})
+
+it.each(['已运行命令，没有报错', '已跑过测试', '运行了命令', '跑过测试', '命令已执行'])('驳回没有第一人称的执行声明：%s', async claim => {
+  const opinions = makeAskOpinion({
+    evaluator: () => async () => JSON.stringify({ ...answer, opinion: `允许。${claim}。` }),
+  })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')).toBeUndefined()
+})
+
+it.each([
+  '允许。只读取本地改动。', '先别。建议先跑一次测试。', '先问清楚再定。我建议先看文件。',
+  '先别。我还没看过文件。', '先别。这条命令会删除备份。',
+  '允许。文件只读取，不修改。', '先别。命令将执行一次。', '先别。文件还没读过。',
+])('保留基于请求的描述和建议：%s', async opinion => {
+  const opinions = makeAskOpinion({ evaluator: () => async () => JSON.stringify({ ...answer, opinion }) })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')?.ccOpinion).toBe(opinion)
+})
+
+
+it.each([undefined, 'codex'])('只有原生执行者时跳过意见 (pin: %s)', async pin => {
+  const registry = createProviderRegistry({ cheapEvalProvider: pin })
+  const model = vi.fn(async () => raw)
+  for (const id of ['codex', 'cursor', 'claude', 'agy']) {
+    registry.register(id, { spawn: async () => { throw new Error('unused') }, cheapEval: model }, { canResume: () => false })
+  }
+  const opinions = makeAskOpinion({ evaluator: () => registry.getCheapEval({ toolFreeOnly: true }) })
+  opinions.schedule('question', () => ({ kind: 'question', project: '/projects/Archive', preview: [{ question: '要保留备份吗？', options: [] }] }))
+  await tick()
+  expect(model).not.toHaveBeenCalled()
+  expect(opinions.get('question')).toBeUndefined()
+})
+
+it('超时终止在途请求，下一条不重叠，关停时也取消', async () => {
+  let inFlight = 0
+  const fetch = vi.fn((_input, init?: RequestInit) => {
+    inFlight++
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init!.signal!
+      signal.addEventListener('abort', () => {
+        inFlight--
+        reject(signal.reason)
+      }, { once: true })
+    })
+  })
+  const registry = createProviderRegistry()
+  const native = vi.fn(async () => raw)
+  registry.register('codex', { spawn: async () => { throw new Error('unused') }, cheapEval: native }, { canResume: () => false })
+  const api = createApiModel({ baseURL: 'https://offline.invalid/v1', model: 'fixture', apiKey: 'fixture', fetch })
+  registry.register('openai', createOpenAiAgentProvider({
+    makeChatModel: () => api,
+    makeMcpBridge: async () => { throw new Error('unused') },
+  }), { canResume: () => false })
+  const opinions = makeAskOpinion({ evaluator: () => registry.getCheapEval({ toolFreeOnly: true }) })
+  opinions.schedule('timeout', pending)
+  await tick()
+  expect(inFlight).toBe(1)
+  const body = JSON.parse(fetch.mock.calls[0]![1]!.body as string)
+  expect(body).not.toHaveProperty('tools')
+  await vi.advanceTimersByTimeAsync(ASK_OPINION_TIMEOUT_MS)
+  expect(inFlight).toBe(0)
+  expect(opinions.get('timeout')).toBeUndefined()
+  await vi.advanceTimersByTimeAsync(MIN)
+  opinions.schedule('next', pending)
+  await tick()
+  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(inFlight).toBe(1)
+  opinions.dispose()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(inFlight).toBe(0)
+  expect(native).not.toHaveBeenCalled()
+  opinions.schedule('after-close', pending)
+  await tick()
+  expect(fetch).toHaveBeenCalledTimes(2)
+})
+
+it.each(['文件读过了', '日志查看过了', '测试跑完了', '命令执行了', '配置检查过'])('驳回宾语在前的核对声明：%s', async claim => {
+  const opinions = makeAskOpinion({
+    evaluator: () => async () => JSON.stringify({ ...answer, opinion: `先别删。${claim}。` }),
+  })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')).toBeUndefined()
+})
+
+it('网络守护拦住指定评估器时不扣落盘额度，恢复后发起的失败请求仍计数', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'cc-opinion-guard-budget-'))
+  let safe = false
+  const check = vi.fn(async () => ({ safe, source: 'bx' as const, detail: 'offline fixture' }))
+  const registry = createProviderRegistry({ cheapEvalProvider: 'openai', networkGate: { check } })
+  let budgetAtRequest: unknown
+  const model = vi.fn(async () => {
+    budgetAtRequest = JSON.parse(readFileSync(join(stateDir, 'ask-opinion-budget.json'), 'utf8'))
+    throw new Error('synthetic request failure')
+  })
+  registry.register('openai', {
+    spawn: async () => { throw new Error('unused') }, cheapEval: model, supportsToolFreeCheapEval: true,
+  }, { canResume: () => false })
+  const create = () => makeAskOpinion({
+    evaluator: () => registry.getCheapEval({ toolFreeOnly: true }), stateDir, settings: () => ({ daily_limit: 1 }),
+  })
+  let opinions = create()
+  try {
+    opinions.schedule('blocked', pending)
+    await tick()
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(model).not.toHaveBeenCalled()
+    opinions.dispose()
+
+    safe = true
+    opinions = create()
+    opinions.schedule('recovered', pending)
+    await tick()
+    expect(model).toHaveBeenCalledTimes(1)
+    expect(budgetAtRequest).toEqual({ day: new Date().toDateString(), count: 1 })
+    expect(opinions.get('recovered')).toBeUndefined()
+    opinions.dispose()
+
+    opinions = create()
+    opinions.schedule('spent', pending)
+    await tick()
+    expect(check).toHaveBeenCalledTimes(2)
+    expect(model).toHaveBeenCalledTimes(1)
+  } finally {
+    opinions.dispose()
+    rmSync(stateDir, { recursive: true, force: true })
+  }
+})
+
+it.each(['命令执行成功', '测试运行完成', '文件检查无误', '配置检查没问题', '脚本运行正常', '这条命令执行成功', '记录核对无误'])('驳回宾语在前的完成结果：%s', async claim => {
+  const opinions = makeAskOpinion({
+    evaluator: () => async () => JSON.stringify({ ...answer, opinion: `允许。${claim}。` }),
+  })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')).toBeUndefined()
+})
+
+it.each(['这条命令会成功覆盖旧文件', '测试将运行完成', '文件还要检查无误才能提交', '建议先确保命令执行成功'])('保留将来的结果描述：%s', async consequence => {
+  const opinion = `先别。${consequence}。`
+  const opinions = makeAskOpinion({ evaluator: () => async () => JSON.stringify({ ...answer, opinion }) })
+  opinions.schedule('request', pending)
+  await tick()
+  expect(opinions.get('request')?.ccOpinion).toBe(opinion)
+})

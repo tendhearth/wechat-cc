@@ -12,7 +12,7 @@ const unsupported=(text:string)=>/stream_options|include_usage/i.test(text)
   &&/unrecogni[sz]ed|unknown (?:parameter|argument|field)|unsupported (?:parameter|argument|field|stream_options|include_usage)|unexpected (?:keyword|parameter|argument|field)|extra (?:inputs?|fields?)|not (?:supported|permitted|allowed)|does not support/i.test(text)
 
 /** Observe only the serialized body actually sent. A parameter rejection permits one changed request. */
-export function usageFetch(fetch:FetchLike,observe:(bytes:number)=>void,beforeRetry?:(signal:AbortSignal)=>Promise<void>):FetchLike{
+export function usageFetch(fetch:FetchLike,observe:(bytes:number)=>void,beforeRetry?:(signal:AbortSignal)=>Promise<void>,parameterFallback=true):FetchLike{
   return async(input,init)=>{
     const url=typeof input==='string'?input:input instanceof URL?input.href:input.url
     // Official clients retain the SDK's serialized request, including errors.
@@ -34,6 +34,7 @@ export function usageFetch(fetch:FetchLike,observe:(bytes:number)=>void,beforeRe
     const response=await send(omitted?strip():original)
     if(!omitted&&body?.stream_options!==undefined&&[400,422].includes(response.status)&&unsupported(await response.clone().text())){
       withoutStreamOptions.add(key)
+      if(!parameterFallback)return response
       await response.body?.cancel()
       init?.signal?.throwIfAborted()
       await beforeRetry?.(init?.signal??new AbortController().signal)

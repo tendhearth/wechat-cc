@@ -26,11 +26,21 @@ export interface WorkbenchErrorSpec {
 export type WorkbenchErrorSurface = 'desktop' | 'phone'
 
 export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Object.freeze({
+  notebook_invalid: { desktop: 400, phone: 400 },
+  notebook_not_found: { desktop: 404, phone: 404 },
+  notebook_not_owner: { desktop: 403, phone: 403 },
+  notebook_page_too_large: { desktop: 413, phone: 413 },
+  notebook_unavailable: { desktop: 503, phone: 503 },
   checkup_rate_limited: { desktop:429, phone:429 },
   checkup_busy: { desktop:409, phone:[409,'busy'] },
   checkup_invalid_request: { desktop:400, phone:400 },
   checkup_target_changed: { desktop:409, phone:[409,'stale'] },
   checkup_run_unknown: { desktop:404, phone:[404,'not_found'] },
+  matter_place_invalid_path: {desktop: 409, matter: '这个地方的文件夹不存在、无法访问，或已经不是文件夹，请让主人在电脑上检查。'},
+  matter_place_changed: {desktop: 409, matter: '这个文件夹和你确认的那个不是同一个了，请检查后重新确认。'},
+  matter_place_invalid_registration: {desktop: 409, matter: '这个地方的名字或文件夹路径不符合工作项目登记要求，请让主人在电脑上检查。'},
+  matter_place_ambiguous: {desktop: 409, matter: '有多个地方符合这个项目名，请问主人指的是哪一个。'},
+  matter_project_registration_requires_approval: {desktop: 409, matter: '这个项目还没登记，请先让主人在确认卡上批准这个文件夹。'},
   matter_project_ambiguous: {desktop: 409, matter: '这个项目名有重名，无法唯一确定；请改用列表中的精确项目编号或路径。'},
   invalid_request: {desktop: 400, matter: '事项编号或交接参数不正确；请确认事项编号、执行者和具体要求后重试。'},
   invalid_matter_plan: {desktop: 409, matter: '交办参数不正确；请提供标题和按顺序排列的 1–6 棒，每棒都要有具体要求，多棒时每棒都要填已登记的执行者。'},
@@ -277,14 +287,23 @@ export function workbenchErrorHttp(code: string, surface: WorkbenchErrorSurface,
 }
 
 
+export interface MatterPlaceChoice {label:string;selector:string}
+
 /** Relay tool failures retain machine codes and state explicitly whether approval has happened. */
-export function matterToolFailure(code:string,approved:boolean|null,operation:'plan'|'handoff'='plan',projects?:readonly {name:string;path:string;id:string}[],executors?:readonly string[],defaultUnavailableMessage?:string) {
+export function matterToolFailure(code:string,approved:boolean|null,operation:'plan'|'handoff'='plan',projects?:readonly {name:string;path:string;id:string}[],executors?:readonly string[],defaultUnavailableMessage?:string,candidateNames?:readonly string[],placeChoices?:readonly MatterPlaceChoice[]) {
   const known=workbenchErrorSpec(code),error=known?code:operation==='plan'?'matter_plan_failed':'matter_handoff_failed'
   const reason=operation==='plan'&&error==='unavailable_provider'&&executors!==undefined
     ? executors.length
       ? `${defaultUnavailableMessage??'指定的执行者或默认执行者现在用不了。'}当前可用的执行者 id：${executors.join('、')}。请选一个重试。`
       : defaultUnavailableMessage??'现在没有可用的执行者。请在电脑上连接一位工作执行者，再试一次。'
-    : workbenchErrorSpec(error)?.matter??'操作失败，请检查事项、工作区和执行者后重试。'
-  const choices=projects===undefined?'':projects.length?' 可选项目：'+projects.map(p=>`${p.name}（${p.id}，${p.path}）`).join('；')+'。':' 目前没有可选项目，请让主人先登记项目。'
-  return {error,approved,message:`${approved===null?'批准状态未确认，':approved?'主人已批准，但':'本次调用未获得主人批准，'}${operation==='plan'?'没建成':'没接成'}：${reason}${choices}`}
+    : error==='project_stale'&&candidateNames!==undefined
+      ? '没找到这个项目，请向主人确认项目名。'
+      : workbenchErrorSpec(error)?.matter??'操作失败，请检查事项、工作区和执行者后重试。'
+  const choices=candidateNames!==undefined
+    ? candidateNames.length?' 可选项目：'+candidateNames.join('、')+'。':' 目前没有可选项目。'
+    : projects===undefined?'':projects.length?' 可选项目：'+projects.map(p=>`${p.name}（${p.id}，${p.path}）`).join('；')+'。':' 目前没有可选项目，请让主人先登记项目。'
+  const selection=placeChoices?.length
+    ? ' 请用选项名称问主人，选定后把对应的选择器填入 project：'+placeChoices.map(choice=>`${choice.label} = ${choice.selector}`).join('；')+'。'
+    : ''
+  return {error,approved,...(placeChoices?{placeChoices}:{}),message:`${approved===null?'批准状态未确认，':approved?'主人已批准，但':'本次调用未获得主人批准，'}${operation==='plan'?'没建成':'没接成'}：${reason}${choices}${selection}`}
 }

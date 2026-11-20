@@ -16,6 +16,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { routesForToken } from '../internal-api/route-tiers'
+import { REQUEST_SCHEMAS } from '../internal-api/schema'
+import { encodeNativeHistoryKey } from '../../adapters/workbench/native-history'
 import { removeTempDir } from '../../lib/test-temp'
 import { deviceIdOf } from '../../features/phone/device-store'
 import { SANDBOX_OWNER, startRealShapedDaemon, type RealShapedDaemon, type RealShapedOpts } from './real-shaped'
@@ -23,6 +26,7 @@ import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import type { Db } from '../../lib/db'
+import { serve } from '../../lib/runtime/http'
 import { openSqlite } from '../../lib/runtime/sqlite'
 import type { OutboundMsg } from './fake-ilink-server'
 import type { FakeSdkScript } from './fake-sdk'
@@ -34,7 +38,7 @@ import type { FakeSdkScript } from './fake-sdk'
 const ALLOWED_NOT_OK: Record<string, string> = {}
 
 /** 沙盒专门开上的那几样 —— 它们 ok 才说明沙盒还是「真实形状」(配置漂了、开关改名了,这里先红)。 */
-const MUST_BE_ON = ['knowledge', 'social', 'mailbox-poller', 'pairing', 'a2a-server', 'yi', 'self-restart', 'phone', 'letters', 'companion', 'guard', 'cli-upgrade']
+const MUST_BE_ON = ['knowledge', 'social', 'mailbox-poller', 'pairing', 'a2a-server', 'yi', 'self-restart', 'phone', 'letters', 'companion', 'guard', 'cli-upgrade', 'notebook']
 
 /**
  * 真机上本来就会往外打、沙盒的网络围栏(fake-boundaries.ts 的 fenceNetwork)当场拦下的请求。不在这张表里的往外请求 = 红:
@@ -116,11 +120,17 @@ const codexScript: FakeSdkScript = {
     return { toolCalls: [], finalText: 'Codex 在。' }
   },
 }
-const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs'> = {}) => startRealShapedDaemon({
+const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs' | 'recordSessionAuth'> = {}) => startRealShapedDaemon({
   ...more,
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
-  moderatorScript: { onEval: async (prompt) => { if(prompt.startsWith('主人对 CC 说了一句话。判断')&&prompt.includes('快判沙盒配色')){topicJudgeAttempts++;await new Promise(r=>setTimeout(r,5500))}; return JSON.stringify({ add: [], update: [], confirm: [], remove: [] }) } },
+  moderatorScript: { onEval: async (prompt) => {
+    if (prompt.startsWith('主人对 CC 说了一句话。判断') && prompt.includes('快判沙盒配色')) {
+      topicJudgeAttempts++
+      await new Promise(r => setTimeout(r, 5_500))
+    }
+    return JSON.stringify({ add: [], update: [], confirm: [], remove: [] })
+  } },
   recordClaudeSpawnOptions: (o) => { spawnOptions.push(o) },
   recordCodexSpawnOptions: (o) => { codexThreads.push(o) },
   ...(more.stateDir ? {} : { seedFiles: { 'permission-rules.json': RULES, 'projects.json': PROJECTS } }),
@@ -128,22 +138,67 @@ const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'spee
 
 /** 桌面 / CLI 那一侧:operator 令牌(工作台、记忆页那一串路由走它)。 */
 async function desktop<T = Record<string, unknown>>(method: 'GET' | 'POST', path: string, body?: unknown, credential:'operator'|'trusted'='operator'): Promise<{ status: number; body: T }> {
-  const info = JSON.parse(readFileSync(join(d.stateDir, 'internal-api-info.json'), 'utf8')) as { baseUrl: string; operatorTokenFilePath: string; tokenFilePath:string }
-  const r = await fetch(`${info.baseUrl}${path}`, {
-    method,
-    headers: { authorization: `Bearer ${readFileSync(credential==='trusted'?info.tokenFilePath:info.operatorTokenFilePath, 'utf8').trim()}`, 'content-type': 'application/json' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  })
+  const r = await desktopRequest(method, path, body, credential)
   return { status: r.status, body: await r.json() as T }
 }
 
+function desktopRequest(method: 'GET' | 'POST', path: string, body: unknown, credential: 'operator' | 'trusted', signal?: AbortSignal): Promise<Response> {
+  const info = JSON.parse(readFileSync(join(d.stateDir, 'internal-api-info.json'), 'utf8')) as { baseUrl: string; operatorTokenFilePath: string; tokenFilePath:string }
+  return fetch(`${info.baseUrl}${path}`, {
+    method, signal,
+    ...(signal ? { redirect: 'error' as const } : {}),
+    headers: { authorization: `Bearer ${readFileSync(credential==='trusted'?info.tokenFilePath:info.operatorTokenFilePath, 'utf8').trim()}`, 'content-type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+}
+
 let d: RealShapedDaemon
+
+const OPERATOR_GET_ROUTES = [...routesForToken('operator')].filter(key => key.startsWith('GET '))
+const SWEEP_REQUEST_TIMEOUT_MS = 5_000
+
+/** 重启后发一句、等回话。Windows runner 上这一步偶发红过两次(一次什么都没发、一次回了「没接住」),原因没查实:
+ *  所以遇到「没接住」立刻失败,并把现场的几个事实一起打出来,下次红了能定位是哪一路取消的。 */
+async function expectPostRebootCodexReply(d: RealShapedDaemon): Promise<void> {
+  const sentBefore = texts(d.ilink.outbox(), d.owner).length
+  const threadsBefore = codexThreads.length
+  const linesBefore = d.log().length
+  d.sendText(d.owner, '还在吗')
+  const replies = (m: Parameters<typeof texts>[0]) => texts(m, d.owner).slice(sentBefore)
+  const expected = 'Codex 在。'
+  const spawnFailure = 'codex 这次没起来,这条我没接住。'
+  const evidence = () => {
+    // log() captures stderr from this boot, independently of the persistent log files.
+    const bootLog = d.log()
+    const saw = (marker: string) => bootLog.some(l => l.includes(marker))
+    const failure = bootLog.slice(linesBefore).findLast(l => l.includes(`[COORDINATOR] chat=${d.owner} provider=codex spawn failed`))
+    // Some failures (including preparation cancellation) are bare Error messages.
+    // Capture only an identifier, never free-form error detail.
+    const failureCode = failure?.match(/ spawn failed code=([a-z][a-z0-9_]*): /)?.[1]
+      ?? failure?.match(/ spawn failed: ([a-z][a-z0-9_]*)(?:: |$)/)?.[1]
+      ?? null
+    return JSON.stringify({
+      inboundReceived: saw('[POLL] inbound '),
+      spawnFailed: failure !== undefined,
+      spawnFailureCode: failureCode,
+      probePassed: saw('[CODEX_PROBE] ok in '),
+      threadRequested: codexThreads.length > threadsBefore,
+      accessInvalidated: saw('[ACCESS] tier membership changed'),
+      guardSuspended: saw('[GUARD] network unprotected [probe,'),
+      shutdownStarted: saw('[DAEMON] shutdown initiated'),
+    })
+  }
+  const out = await d.waitForOutbound(m => replies(m).some(t => t.includes(expected) || t.includes(spawnFailure)), 15_000)
+    .catch(error => { throw new Error(`Post-reboot reply missing: ${evidence()}`, { cause: error }) })
+  expect(replies(out).filter(t => t.includes(spawnFailure)), evidence()).toEqual([])
+  expect(replies(out).some(t => t.includes(expected))).toBe(true)
+}
 
 /**
  * S2 那几条的起点(关机时写死,不靠上一条留下的):主人的免打扰开(盖住此刻,主人时区)/ 关、配没配一台手机、
  * 待发队列清空(keepPending 的除外 —— 「压着时重启」要的就是它)。然后照真机重启,「待说」那一拍 200ms。
  */
-async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: boolean; beforeBoot?: (stateDir: string) => void; atDesk?: boolean; timedJobs?: boolean }): Promise<string> {
+async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: boolean; beforeBoot?: (stateDir: string) => void; atDesk?: boolean; timedJobs?: boolean; agentConfigPatch?: RealShapedOpts['agentConfigPatch'] }): Promise<string> {
   const stateDir = d.stateDir
   await d.stop({ keepState: true })
   // 免打扰:chat_prefs.json 一个对话一行(值是 JSON 字符串),daemon 开机读一次
@@ -166,7 +221,7 @@ async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: bo
   }
   o.beforeBoot?.(stateDir)
   // 人在不在电脑前(S3b):缺省探不到 = 不在;atDesk ⇒ 本机 5 秒前刚有键鼠输入,「先只在桌面提示」之后 2 秒就推 App(生产 10 分钟)
-  d = await boot({ stateDir, speechFlushIntervalMs: 200, ...(o.timedJobs ? { scheduledJobsIntervalMs: 200 } : {}), ...(o.atDesk ? { machineIdleS: 5, escalateAfterMs: 2_000 } : {}) })
+  d = await boot({ stateDir, agentConfigPatch: o.agentConfigPatch, speechFlushIntervalMs: 200, ...(o.timedJobs ? { scheduledJobsIntervalMs: 200 } : {}), ...(o.atDesk ? { machineIdleS: 5, escalateAfterMs: 2_000 } : {}) })
   expect(await d.moduleProblems()).toEqual([])
   if (o.phone) await expect.poll(() => d.phoneRelay.controls().some(c => (c.push_reg as { device?: string } | undefined)?.device === PHONE_ID), { timeout: 15_000 }).toBe(true)
   return stateDir
@@ -190,6 +245,17 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // 出门也能用:隧道连上替身中继、签了 challenge
     await expect.poll(() => d.phoneRelay.logins(), { timeout: 10_000 }).toBeGreaterThan(0)
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('the desk: 「现在」那一列的两个接口在整只 daemon 上读得出来(名单 + 地方)', async () => {
+    // 这两条以前在真机上一直 503:名单一次向工作台要 500 件任务,真工作台一页最多 100 件、直接抛错;
+    // 单元测试里的工作台替身不查上限,所以只有接上真工作台的整只 daemon 才看得到。
+    const roster = await desktop<{ items?: unknown[]; version?: string; error?: string }>('GET', '/v1/roster')
+    expect(roster.status, JSON.stringify(roster.body.error ?? null)).toBe(200)
+    expect(Array.isArray(roster.body.items)).toBe(true)
+    const places = await desktop<{ places?: unknown[]; version?: string; error?: string }>('GET', '/v1/places')
+    expect(places.status, JSON.stringify(places.body.error ?? null)).toBe(200)
+    expect(Array.isArray(places.body.places)).toBe(true)
   })
 
   it('owner sends text → the reply lands in the WeChat outbox', async () => {
@@ -438,6 +504,103 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(review.body.reviews.flatMap(r => r.files ?? []).map(f => f.path)).toContain('NOTE.md')
   })
 
+  it('operator GET sweep: registered reads respond on the full daemon', async () => {
+    const missingId = '00000000'
+    const missingUuid = '00000000-0000-4000-8000-000000000000'
+    const taskId = d.query<{ id: string }>('SELECT id FROM workbench_tasks WHERE owner_chat_id = ? ORDER BY created_at LIMIT 1', d.owner)[0]?.id ?? missingId
+    const topicId = d.query<{ id: string }>('SELECT id FROM threads WHERE chat_id = ? ORDER BY id LIMIT 1', d.owner)[0]?.id ?? 'sandbox-missing-topic'
+    const chat = encodeURIComponent(d.owner)
+    const task = `id=${taskId}`
+    const artifact = `${task}&artifactId=${missingUuid}`
+    const receipt = `requestId=${missingUuid}`
+    // 对真实独立工作区做回退预览会写检查点，用不存在的任务在那一步之前返回。
+    const rewind = `id=${missingId}&artifactId=${missingUuid}&to=start`
+    const samples: Record<string, string | { path: string }> = {
+      '/v1/matter': `id=${missingId}`, // 读存在的事项会记「桌面看过」
+      '/v1/matter/owner-chat/file': 'id=sandbox-missing-message&i=0',
+      '/v1/matter/owner-chat/search': 'q=' + encodeURIComponent('沙盒你好'),
+      '/v1/matter/notes': `matter=${taskId}`,
+      '/v1/matter/artifact': artifact,
+      '/v1/matter/permission-script': `${task}&requestId=${missingUuid}&path=README.md&sha256=${'0'.repeat(64)}&offset=0`,
+      '/v1/matter/create-receipt': receipt,
+      '/v1/matter/rewind': rewind,
+      '/v1/matter/changes': task,
+      '/v1/matter/shares': `matter=${taskId}`,
+      '/v1/matter/talk': `matter=${taskId}`,
+      '/v1/workbench/entry-receipt': receipt,
+      '/v1/workbench/models': `providerId=claude&path=${encodeURIComponent(project)}`,
+      '/v1/workbench/attachment': `taskId=${taskId}&id=${missingUuid}`,
+      '/v1/workbench/sessions': `providerId=claude&cwd=${encodeURIComponent(project)}`,
+      '/v1/workbench/session': `key=${encodeNativeHistoryKey('claude', missingUuid)}`,
+      '/v1/workbench/task': `${task}&since_cursor=0&wait_ms=0`, // 不挂起，也不记「桌面看过」
+      '/v1/workbench/artifact': artifact,
+      '/v1/workbench/review': task,
+      '/v1/workbench/rewind-preview': rewind,
+      '/v1/workbench/handoff': `taskId=${taskId}&handoffId=${missingUuid}`,
+      '/v1/memory/topics/detail': `id=${encodeURIComponent(topicId)}`,
+      '/v1/subscribe/topics': 'wait_ms=0',
+      '/v1/self-change/decision': 'hash=' + '0'.repeat(64),
+      '/v1/memory/file': `user_id=${chat}&path=memory.md`,
+      '/v1/observations/list': `chat_id=${chat}`,
+      '/v1/milestones/list': `chat_id=${chat}`,
+      '/v1/events/list': `chat_id=${chat}`,
+      '/v1/dialogue/timeline': `chat_id=${chat}`,
+      '/v1/dialogue/threads': `chat_id=${chat}`,
+      '/v1/dialogue/thread': `id=${encodeURIComponent(topicId)}`,
+      '/v1/dialogue/search': `chat_id=${chat}&q=${encodeURIComponent('沙盒你好')}`,
+      '/v1/cli/activity': 'session_id=sandbox-missing-session',
+    }
+    const excluded: Record<string, string> = {
+      '/v1/settings/link': '会启动 LAN 设置面板并轮换单活令牌。',
+    }
+    const allowedUnavailable: Record<string, { error: string; why: string }> = {}
+    const KNOWN_FAILING: Record<string, { status: number; error: string; why: string }> = {}
+
+    const paths = new Set(OPERATOR_GET_ROUTES.map(key => key.slice(4)))
+    for (const path of Object.keys({ ...samples, ...excluded, ...allowedUnavailable, ...KNOWN_FAILING })) {
+      expect(paths.has(path), `GET ${path}: 清理已不在 operator 路由表中的扫测登记`).toBe(true)
+    }
+
+    const failures: string[] = []
+    for (const key of OPERATOR_GET_ROUTES) {
+      const path = key.slice(4)
+      if (excluded[path]) continue
+      const sample = samples[path]
+      const needsSample = `${key}: 给它补一个样例`
+      if (!sample && (/[:*{}]/.test(path) || path.endsWith('/'))) {
+        failures.push(needsSample)
+        continue
+      }
+      const requestPath = typeof sample === 'string' ? `${path}?${sample}` : sample?.path ?? path
+      const signal = AbortSignal.timeout(SWEEP_REQUEST_TIMEOUT_MS)
+      let status: number | undefined
+      try {
+        const response = await desktopRequest('GET', requestPath, undefined, 'operator', signal)
+        status = response.status
+        // 读完整响应也受同一个截止时间约束，不把响应内容带进失败输出。
+        const raw = await response.text()
+        const body = response.headers.get('content-type')?.includes('application/json') && raw
+          ? JSON.parse(raw) as { error?: unknown; method?: unknown; url?: unknown } | null : null
+        const error = typeof body?.error === 'string' ? body.error : ''
+        const result = `${key}: ${status}${error ? ` ${JSON.stringify(error)}` : ''}`
+        // 分发器专门带 method 和 url。处理器查无回执等也可能用 404 not_found。
+        const unmounted = status === 404 && error === 'not_found' && body?.method === 'GET' && typeof body.url === 'string'
+        const expected = KNOWN_FAILING[path]
+        const unavailable = allowedUnavailable[path]
+        if (expected?.status === status && expected.error === error) continue
+        if (status === 503 && unavailable?.error === error) continue
+        if (expected || unavailable || unmounted || status >= 500) failures.push(result)
+        // 老处理器有自己的参数校验，未登记查询 schema 时用空查询的拒绝来发现缺样例。
+        if (!sample && (REQUEST_SCHEMAS[key]?.safeParse({}).success === false || status === 400 || status === 422)) {
+          failures.push(`${result}。 ${needsSample}`)
+        }
+      } catch {
+        failures.push(`${key}: ${status ?? '无状态码'} ${signal.aborted ? '超过 5 秒' : '请求或读取响应失败'}`)
+      }
+    }
+    expect(failures).toEqual([])
+  }, SWEEP_REQUEST_TIMEOUT_MS * (OPERATOR_GET_ROUTES.length + 1))
+
   it('guest path: a stranger writes ⇒ neutral reply + the owner is asked; owner approves ⇒ the stranger is onboarded and talks to CC in a locked-down session that carries none of the owner\'s memory', async () => {
     const before = spawnOptions.length
     d.sendText(STRANGER, '你好呀')
@@ -492,23 +655,35 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
   })
 
   it('graceful stop, then reboot on the same state dir: no re-import, still healthy, no module failures', async () => {
+    const access = await import('../../lib/access')
     const before = d.query<{ n: number }>('SELECT COUNT(*) AS n FROM memory_facts')[0]!.n
     const stateDir = d.stateDir
+    // The harness reseeds access.json on boot. Prime the old process-wide
+    // cache with a different membership to model the preceding guest grant.
+    access.appendAllowFrom('reboot-access-fixture@im.wechat')
+    expect(access.loadAccess().allowFrom).toContain('reboot-access-fixture@im.wechat')
     const firstLog = d.log()
     await d.stop({ keepState: true })
     // 关机干净:每一样都停了,没有哪一步停失败
     expect(firstLog.filter(l => /\[MODULES\] stop .* failed/.test(l))).toEqual([])
     expect(firstLog.some(l => /\[MODULES\] stopped internal-api\/stop/.test(l))).toBe(true)
 
-    d = await boot({ stateDir })
+    let rereadDuringPreparation = false
+    d = await boot({ stateDir, recordSessionAuth: ({ sessionKey }) => {
+      if (rereadDuringPreparation || !sessionKey.startsWith('codex/') || !sessionKey.endsWith(`/${d.owner}`)) return
+      access._clearCache()
+      access.loadAccess()
+      rereadDuringPreparation = true
+    } })
     expect(await d.moduleProblems()).toEqual([])
     expect((await d.health()).ok).toBe(true)
     // 已经导过的不再导:记忆文件和 facts.db 的指纹都没变
     expect(d.log().filter(l => /\[(MEMORY_IMPORT|FACTS_IMPORT)\]/.test(l))).toEqual([])
     expect(d.query<{ n: number }>('SELECT COUNT(*) AS n FROM memory_facts')[0]!.n).toBe(before)
     // 重启后照样收发(对话模式也留住了:还是 Codex)
-    d.sendText(d.owner, '还在吗')
-    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 在。')), 15_000)
+    await expectPostRebootCodexReply(d)
+    expect(rereadDuringPreparation).toBe(true)
+    expect(d.log().some(l => l.includes('[ACCESS] tier membership changed'))).toBe(false)
     // 那件「写一份笔记」是上面派活那条建的;win32 上那条不跑(Codex 工作台在 Windows 上拒绝),没有在办的事 ⇒ 没有这个块。
     if (process.platform !== 'win32') {
       expect(lastCodexEnvelope).toContain('<matters>')
@@ -756,8 +931,35 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
   // S3a(一个事件账上一行;设计稿 docs/superpowers/specs/2026-11-05-s3-one-proposal-design.md):同一件事今天有几条路各自问门
   // (App 推送、微信通知、回原对话的回报),问门时带同一个事件键,speech_log 里就只有一行。
   // win32 不跑:要 Codex 在工作台里做一件事 —— 同上面「workbench from WeChat」那条的理由。
-  it.skipIf(process.platform === 'win32')('one event, one ledger row: a task asks for approval ⇒ the App push and the WeChat notice are one speech_log row (app+wechat); the task finishing ⇒ one row for that turn', async () => {
-    await rebootForS2({ quiet: false, phone: true })
+  it.skipIf(process.platform === 'win32')('one event, one ledger row: a task asks for approval ⇒ the App push and the WeChat notice are one speech_log row (app+wechat); the task finishing ⇒ one row for that turn', async ({ onTestFinished }) => {
+    const requests: Array<{ messages?: Array<{ content: string }>; tools?: unknown }> = []
+    const endpoint = serve({
+      port: 0,
+      async fetch(req) {
+        if (new URL(req.url).pathname !== '/v1/chat/completions') return new Response(null, { status: 404 })
+        const request = await req.json() as (typeof requests)[number]
+        // The pinned HTTP evaluator also receives ordinary background evaluations.
+        if (request.messages?.some(message => message.content.includes('给正在决定这件事的主人留两行话'))) {
+          requests.push(request)
+        }
+        const content = JSON.stringify({ say: true, opinion: '先别删。请求会直接移除构建目录。', reason: '要批准删除目录' })
+        const chunk = JSON.stringify({
+          id: 'opinion-fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture',
+          choices: [{ index: 0, delta: { content }, finish_reason: 'stop' }],
+        })
+        return new Response(`data: ${chunk}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+      },
+    })
+    onTestFinished(() => endpoint.stop(true))
+    await endpoint.ready
+    vi.stubEnv('WECHAT_OPENAI_API_KEY', 'sandbox-opinion')
+    try {
+      await rebootForS2({ quiet: false, phone: true, agentConfigPatch: {
+        openaiBaseUrl: `http://127.0.0.1:${endpoint.port}/v1`, openaiModel: 'fixture', cheapEvalProvider: 'openai',
+      } })
+    } finally {
+      vi.unstubAllEnvs()
+    }
     const since = Date.now()
     d.sendText(d.owner, '任务 项目')
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
@@ -785,6 +987,12 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await expect.poll(() => rows().filter(r => r.ref?.startsWith(`ask:${asking}:`)), { timeout: 15_000 })
       .toEqual([{ kind: 'permission_ask', ref: expect.stringMatching(new RegExp(`^ask:${asking}:`)), outcome: 'allowed', channel: expect.stringMatching(/^(app\+wechat|wechat\+app)$/) }])
     expect(rows().filter(r => r.kind === 'permission_ask')).toHaveLength(1)
+    await expect.poll(() => d.log().some(l => /\[ASK_OPINION\] given opinionLength=\d+ reasonLength=\d+$/.test(l)), { timeout: 15_000 }).toBe(true)
+    const detail = await desktop<{ permissions: Array<{ id: string }> }>('GET', `/v1/workbench/task?id=${asking}`)
+    expect(detail.body.permissions).toHaveLength(1)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).not.toHaveProperty('tools')
+    expect(requests[0]?.messages?.[0]?.content).toContain('给正在决定这件事的主人留两行话')
   })
 
   // S3b(一件事一次提议;主人点头的「任务做完时人在电脑前 ⇒ 先只在桌面提示,10 分钟没看再推手机」):沙盒里 10 分钟缩成 2 秒。

@@ -58,6 +58,8 @@ export interface AgentConfig {
   /** 官方中继 v2 的地址(wss 源,不带路径)。**不设(或空串)⇒ 远程关**(老中继已退休);没有隐式缺省。
    *  桌面点「连接手机」时显式写入官方地址；仍允许维护者保留手动配置。 */
   relay_v2_url?: string
+  /** 「等你定」纸条的意见节奏。 */
+  ask_opinion?: z.infer<typeof AskOpinionSettings>
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
    *  该 provider,openai 注册不再静默劫持。 */
   turnJudgeProvider?: string
@@ -319,6 +321,12 @@ const AcpAgentEntry = z.object({ id: z.string(), name: z.string(), command: z.st
 const ModelContextWindow = z.object({provider:z.string().min(1).max(64),address:z.string().refine(s=>s==='default'||URL.canParse(s)),model:z.string().min(1).max(200),windowTokens:z.number().int().min(1024).max(10_000_000)}).strict()
 const CheckupLimits = z.object({maxOutputTokens:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),maxRequests:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()}).strict()
 const CheckupSettings = z.object({short:CheckupLimits.optional(),full:CheckupLimits.optional()}).strict()
+const AskOpinionSettings = z.object({
+  min_interval_ms: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  daily_limit: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  backoff_base_ms: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  backoff_max_ms: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+})
 const AgentConfigSchema = z.object({
   checkup:CheckupSettings.optional(),
   modelContextWindows:z.array(ModelContextWindow).max(200).optional(),
@@ -339,6 +347,7 @@ const AgentConfigSchema = z.object({
   remote_tunnel: z.boolean().optional(),
   remote_relay_url: z.string().optional(),
   relay_v2_url: z.string().optional(),
+  ask_opinion: AskOpinionSettings.optional(),
   turnJudgeProvider: z.string().optional(),
   cheapEvalProvider: z.string().optional(),
   trusted_providers: z.array(z.string()).optional(),
@@ -416,6 +425,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     // than crashing the entire config load (same lenient posture as the
     // rest of this function).
     const modelContextWindows=Array.isArray(parsed.modelContextWindows)?parsed.modelContextWindows.flatMap(value=>{const r=ModelContextWindow.safeParse(value);return r.success?[r.data]:[]}).slice(0,200):undefined
+    const askOpinion = AskOpinionSettings.safeParse(parsed.ask_opinion).data
     const a2aListen = parsed.a2a_listen != null
       ? A2AListen.safeParse(parsed.a2a_listen).data
       : undefined
@@ -485,6 +495,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.remote_tunnel === 'boolean' ? { remote_tunnel: parsed.remote_tunnel } : {}),
       ...(typeof parsed.remote_relay_url === 'string' ? { remote_relay_url: parsed.remote_relay_url } : {}),
       ...(typeof parsed.relay_v2_url === 'string' ? { relay_v2_url: parsed.relay_v2_url } : {}),
+      ...(askOpinion ? { ask_opinion: askOpinion } : {}),
       ...(typeof parsed.turnJudgeProvider === 'string' ? { turnJudgeProvider: parsed.turnJudgeProvider } : {}),
       ...(typeof parsed.cheapEvalProvider === 'string' ? { cheapEvalProvider: parsed.cheapEvalProvider } : {}),
       ...(Array.isArray(parsed.trusted_providers) ? { trusted_providers: parsed.trusted_providers } : {}),

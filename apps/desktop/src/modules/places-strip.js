@@ -126,15 +126,14 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
     const waiting = wide ? places.filter(p => p.waiting && (!selected || selected === p.key)) : []
     const more = waiting.length - 2
     const toggle = more > 0 ? `<button class="desk-text-button" type="button" data-waiting-toggle aria-expanded="${waitingOpen}">${waitingOpen ? '收起其余等你定的' : `还有 ${more} 件等你定`}</button>` : ''
-    const cards = waiting.slice(0, waitingOpen ? waiting.length : 2).map(p => {
-      const note = /** @type {(NonNullable<Place['waiting']> & {ccOpinion?:string, questionReason?:string})|null} */ (p.waiting)
+    const visibleWaiting = waiting.slice(0, waitingOpen ? waiting.length : 2)
+    const cards = visibleWaiting.map(p => {
+      const note = p.waiting
       return `<div class="desk-waiting-row">
         ${deskSpeakerHtml('cc')}
-        <div class="desk-waiting-card" data-place-key="${escapeHtml(p.key)}">
+        <div class="desk-waiting-card" data-place-key="${escapeHtml(p.key)}" data-item-key="${escapeHtml(note?.itemKey ?? '')}" data-request-id="${escapeHtml(note?.requestId ?? '')}">
           <div class="desk-waiting-label">这件要你定 · ${escapeHtml(p.name)}</div>
           <div class="desk-waiting-question">${escapeHtml(note?.summary ?? '')}</div>
-          ${note?.ccOpinion ? `<div class="desk-waiting-opinion">我的意见：${escapeHtml(note.ccOpinion)}</div>` : ''}
-          ${note?.questionReason ? `<div class="desk-waiting-reason">为什么来问你：${escapeHtml(note.questionReason)}</div>` : ''}
           ${askHtml(p, true)}
         </div>
       </div>`
@@ -144,6 +143,27 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
       waitingMarkup = cards + toggle
       waitingRoot.innerHTML = waitingMarkup
     }
+    // Opinions can arrive on a later poll. Keep the card controls mounted.
+    waitingRoot.querySelectorAll('.desk-waiting-card').forEach((card, index) => {
+      const note = visibleWaiting[index]?.waiting
+      for (const [className, text] of Object.entries({
+        'desk-waiting-opinion': note?.ccOpinion && `我的意见(只看了这条请求)：${note.ccOpinion}`,
+        'desk-waiting-reason': note?.questionReason && `为什么来问你：${note.questionReason}`,
+      })) {
+        let line = card.querySelector(`.${className}`)
+        if (!text) {
+          line?.remove()
+        } else if (!line) {
+          line = card.ownerDocument.createElement('div')
+          line.className = className
+          line.textContent = text
+          if (className === 'desk-waiting-opinion') card.querySelector('.desk-waiting-question')?.after(line)
+          else card.querySelector('.place-ask')?.before(line)
+        } else if (line.textContent !== text) {
+          line.textContent = text
+        }
+      }
+    })
     waitingRoot.querySelectorAll('[data-place-decision]').forEach(b => b.toggleAttribute('disabled', acting))
   }
 
@@ -365,6 +385,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
   const timer = setInterval(() => void refresh(), intervalMs)
   return {
     refresh,
+    closeActions,
     /** @param {boolean} enabled */
     setWide(enabled) {
       if (wide === enabled) return

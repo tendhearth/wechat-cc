@@ -29,7 +29,7 @@ import { join } from 'node:path'
 import { makeSessionStore } from '../../adapters/store/session-store'
 import { loadAgentConfig } from '../../lib/agent-config'
 import { setSessionInvalidator } from '../../lib/access'
-import { resolveAdminChatId } from '../companion/resolve-admin'
+import { configuredOwnerChatId, resolveAdminChatId } from '../companion/resolve-admin'
 import { buildDelegateDispatch } from './delegate'
 import { registerProviders } from './providers'
 import { wirePlugins } from './wire-plugins'
@@ -159,6 +159,7 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
     // Per-session auth token lifecycle — minted once per spawn, revoked on every release/eviction.
     mintSessionToken: deps.mintSessionToken,
     invalidateSessionToken: deps.invalidateSession,
+    isNotebookOwnerChat: chatId => configuredOwnerChatId(deps.stateDir) === chatId,
     buildInstructions,
     currentModelFor,
   })

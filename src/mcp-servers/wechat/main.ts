@@ -30,6 +30,7 @@ if (!baseUrl || !tokenFilePath) {
 const client = createInternalApiClient({ baseUrl, tokenFilePath, logger: logErr })
 const server = await createWechatMcpServer(client, {
   tier: process.env.WECHAT_SESSION_TIER,
+  notebookOwner: process.env.WECHAT_NOTEBOOK_OWNER === '1',
   outputEvalTools: process.env.WECHAT_OUTPUT_EVAL_TOOLS,
   participantTag: process.env.WECHAT_PARTICIPANT_TAG,
   logger: logErr,

@@ -353,6 +353,23 @@ describe('openai provider loop(对话这一份用途)', () => {
     expect(await provider.strongEval!('fixture')).toBe('ready')
     expect(models).toEqual(['Kimi-Code','GLM-FLASH','DeepSeek'])
   })
+  it.each([undefined, 'openai'])('singleAttempt calls only the selected eval model (pin: %s)', async pin => {
+    const calls: Array<string | undefined> = []
+    const registry = createProviderRegistry({ cheapEvalProvider: pin })
+    const provider = createOpenAiAgentProvider({
+      evalModel: () => 'eval-model',
+      evalFallbackModel: () => 'default-model',
+      makeMcpBridge: async () => replyBridge().bridge,
+      makeChatModel: model => scriptedOpenAiModel([], { generate: () => {
+        calls.push(model)
+        if (model === 'eval-model') throw new EvalOutputExhaustedError(model, 4000)
+        return 'fallback'
+      } }).model,
+    })
+    registry.register('openai', provider, { canResume: () => false })
+    await expect(registry.getCheapEval({ singleAttempt: true })!('fixture')).rejects.toBeInstanceOf(EvalOutputExhaustedError)
+    expect(calls).toEqual(['eval-model'])
+  })
   it('does not retry an exhausted current main eval with the stale boot model',async()=>{
     const models:Array<string|undefined>=[]
     const provider=createOpenAiAgentProvider({endpoint:{baseUrl:'https://offline.invalid/v1',model:'old-1'},evalFallbackModel:()=> 'Kimi-Code',makeMcpBridge:async()=>replyBridge().bridge,makeChatModel:model=>{

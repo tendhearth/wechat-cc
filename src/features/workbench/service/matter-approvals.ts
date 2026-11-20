@@ -30,9 +30,11 @@ export function matterApprovals(){
       const tool='mcp__wechat__matter_plan'
       const prior=records.get(key(scope,tool,input))
       if(prior?.target)return
-      const {target:entryTarget,projectName,projectPath,legs}=target
-      const record={scope,approved:false,target:{target:entryTarget,projectName,projectPath,legs}}
+      const {target:entryTarget,projectName,projectPath,registrationPath,legs}=target
+      const record={scope,approved:false,target:{target:entryTarget,projectName,projectPath,registrationPath,legs}}
       records.set(key(scope,tool,input),record)
+      // 待登记的目标还没有工作台编号，批准只认出卡时的原请求。
+      if(registrationPath)return
       const parsed=MatterPlanRequest.parse(input),{project:_project,isolation:_isolation,base:_base,...rest}=parsed
       records.set(key(scope,tool,{...rest,target:target.target,legs:target.legs}),record)
     },

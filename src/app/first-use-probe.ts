@@ -77,7 +77,7 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
       await ensure()
       return inner.spawn(project, ctx)
     },
-    ...(inner.cheapEval && (opts.gate ?? 'all') === 'all' ? { cheapEval: async (prompt: string) => { await ensure(); return inner.cheapEval!(prompt) } } : {}),
+    ...(inner.cheapEval && (opts.gate ?? 'all') === 'all' ? { cheapEval: async (prompt, options) => { if (!options?.singleAttempt) await ensure(); return inner.cheapEval!(prompt, options) } } : {}),
     ...(inner.strongEval && (opts.gate ?? 'all') === 'all' ? { strongEval: async (prompt: string) => { await ensure(); return inner.strongEval!(prompt) } } : {}),
     probeStatus: () => status,
   }

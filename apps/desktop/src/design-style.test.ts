@@ -58,8 +58,9 @@ describe('desktop design style', () => {
     for (const f of ['styles/workbench.css', 'styles/task-entry.css', 'styles/converse.css', 'styles/desk-two-pane.css']) {
       let css = readFileSync(join(ROOT, f), 'utf8')
       if (f === 'styles/desk-two-pane.css') {
-        // 「一页纸」只有 CC 递来的纸条有投影。
+        // 「一页纸」只给 CC 递来的纸条和悬停浮出的左栏留投影。
         css = css.replace(/(\[data-desk-wide\] \.desk-waiting-card \{[^}]*?)box-shadow: 0 1px 0 var\(--th-hair\), 0 8px 18px color-mix\(in srgb, var\(--th-ink\) 7%, transparent\);/, '$1')
+          .replace(/(\[data-desk-collapsed\]\[data-desk-peeking\] #dash-global-rail \{[^}]*?)box-shadow: 4px 0 16px color-mix\(in srgb, var\(--th-ink\) 8%, transparent\);/, '$1')
       }
       expect(css, f).not.toMatch(/box-shadow:\s*(?!none)/)
     }

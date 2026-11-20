@@ -1,3 +1,4 @@
+import { registerNotebookTools } from './tools-notebook'
 import {registerTerminalParticipationTools} from './tools-terminal-participation'
 /** Shared tool registration for stdio and parent-process SDK MCP transports. */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -23,7 +24,7 @@ import { registerPersonTools } from './tools-person'
 import { registerModeTools } from './tools-mode'
 import { registerTurnTools } from './tools-turn'
 
-export async function createWechatMcpServer(client: InternalApiClient, options: { tier?: string; participantTag?: string; logger?: (line: string) => void; parallelSocialProbe?: boolean; outputEvalTools?: string | undefined } = {}): Promise<McpServer> {
+export async function createWechatMcpServer(client: InternalApiClient, options: { tier?: string; participantTag?: string; logger?: (line: string) => void; parallelSocialProbe?: boolean; outputEvalTools?: string | undefined; notebookOwner?: boolean } = {}): Promise<McpServer> {
   const logErr = options.logger ?? (() => {})
   const server = new McpServer(
     { name: 'wechat-mcp', version: '0.1.0' },
@@ -167,6 +168,7 @@ export async function createWechatMcpServer(client: InternalApiClient, options: 
   // Daemon self-diagnosis + remediation — admin-tier sessions only (the
   // provider-agnostic gate; non-admin sessions never see these tools).
   if (SESSION_IS_ADMIN) {
+    if (options.notebookOwner) registerNotebookTools(server, client)
     registerDaemonTools(server, client, options.participantTag)
     registerProjectsActivityTool(server, client)
     registerMatterHandoffTool(server, client)

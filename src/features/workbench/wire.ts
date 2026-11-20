@@ -10,6 +10,7 @@ import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { Db } from '../../lib/db'
 import {join} from 'node:path'
 import {listProjects} from '../../lib/project-registry'
+import { makeAskOpinion } from './ask-opinion'
 import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/agent-config'
 import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
@@ -173,6 +174,7 @@ export function makeUnattendedAckStore(stateDir: string): { get(): number | null
 
 export function wireWorkbench(opts: {
   db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'> & Partial<Pick<InternalApi,'port'>> & { baseUrl?: string }
+  planPlaces?:()=>readonly import('../../adapters/workbench/matter-plan-input').PlanPlace[]
   planConversation?: (caller:import('../../adapters/workbench/matter-plan-input').PlanCaller)=>import('../../adapters/workbench/matter-plan-input').PlanConversation|null
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   permissionRegistry?: Pick<import('../../ports/wechat').WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'>
@@ -316,6 +318,12 @@ export function wireWorkbench(opts: {
   }):undefined
   return makeWorkbenchService({
     ...(opts.permissionRegistry?{permissionPrompt:makeWorkbenchPermissionPrompt(opts.permissionRegistry,ownerChatId)}:{}),
+    askOpinion: makeAskOpinion({
+      evaluator: () => opts.boot.registry.getCheapEval({ toolFreeOnly: true }),
+      settings: () => loadAgentConfig(opts.stateDir).ask_opinion,
+      stateDir: opts.stateDir,
+      log: opts.log,
+    }),
     managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
     ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
     // 项目经验(第二轮对标 ★2):主人在微信「经验 <项目> …」写的,每家执行者的指令里都带上
@@ -328,6 +336,7 @@ export function wireWorkbench(opts: {
     ...(opts.permissionGate?{permissionDecide:(ask:import('../../domain/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,
     planConversation:opts.planConversation,
+    planPlaces:opts.planPlaces,
     // 同一个对象:codex 晚到时 BUILD.codex 往里补,服务侧读的是这份引用。
     nativeHistory,
     store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,
