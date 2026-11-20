@@ -446,6 +446,20 @@ describe('work-first matter details', () => {
     expect(ui.byId('approval-question-reason')).toBeNull()
   })
 
+  it('stops asking after three quiet reads when no opinion ever arrives', async () => {
+    const h = harness()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ui = await mount(Approval)
+    await act(() => h.version(1))
+    const readCount = () => h.requests.filter(request => request.path === '/v1/places').length
+    const before = readCount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+    expect(readCount() - before).toBe(3)
+    expect(ui.byId('approval-cc-opinion')).toBeNull()
+    expect(ui.byId('approval-question-reason')).toBeNull()
+    expect(ui.byId('approval-allow')).toBeTruthy()
+  })
+
   it('keeps selected answers and the Other draft when a question gets late notes', async () => {
     const h = harness()
     h.detail().permissions = []

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -335,28 +335,21 @@ function PermissionCard({ v, taskId, matterTitle, ccOpinion }: { v: CardView; ta
     [t(lang, 'approval.effect'), v.effect, false],
   ]
   const shown = rows.filter(([, body]) => body.trim() !== '')
-  const title = (
-    <View key="title" style={{ gap: space.s }}>
-      <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{v.title}</Txt>
-      <ApprovalNote kind="opinion" text={ccOpinion} />
-      {v.aiSummary ? (
-        <View testID="approval-ai-summary" accessible accessibilityLabel={`${t(lang, 'approval.aiTag')}. ${t(lang, 'approval.aiSummary')}`} style={{ gap: space.xs }}>
-          <Txt role="caption">{t(lang, 'approval.aiTag')}</Txt>
-          <Txt role="small" tone="inkSoft">{t(lang, 'approval.aiSummary')}</Txt>
-        </View>
-      ) : null}
-    </View>
-  )
-  const scripts = (
-    <Fragment key="scripts">
-      {v.scripts?.map(script => <PermissionScriptPreview key={script.path} script={script} taskId={taskId} requestId={v.requestId} />)}
-    </Fragment>
-  )
   return (
     <>
       <MatterContext title={matterTitle} eventKey={v.requestId} />
-      {ccOpinion ? title : scripts}
-      {ccOpinion ? scripts : title}
+      {v.scripts?.map(script => <PermissionScriptPreview key={script.path} script={script} taskId={taskId} requestId={v.requestId} />)}
+      {/* 意见晚到时只在标题下面多一行,上面的内容不挪位置。 */}
+      <View style={{ gap: space.s }}>
+        <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{v.title}</Txt>
+        <ApprovalNote kind="opinion" text={ccOpinion} />
+        {v.aiSummary ? (
+          <View testID="approval-ai-summary" accessible accessibilityLabel={`${t(lang, 'approval.aiTag')}. ${t(lang, 'approval.aiSummary')}`} style={{ gap: space.xs }}>
+            <Txt role="caption">{t(lang, 'approval.aiTag')}</Txt>
+            <Txt role="small" tone="inkSoft">{t(lang, 'approval.aiSummary')}</Txt>
+          </View>
+        ) : null}
+      </View>
 
       {/* 模型写的说明可能不准:原始命令首行与工作目录直接摆出来,不折叠。 */}
       {v.showRawInline ? (
