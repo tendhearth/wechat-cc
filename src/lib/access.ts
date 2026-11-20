@@ -162,6 +162,14 @@ let _accessCachePath = ''
 let _lastSnapshot: Access | null = null
 let _invalidator: (() => void) | null = null
 
+/** Establish the on-disk baseline before the new daemon installs its invalidator. */
+export function initializeAccess(): void {
+  _accessCache = null
+  _lastSnapshot = null
+  _invalidator = null
+  loadAccess()
+}
+
 /**
  * Register a callback to fire when admins / trusted / allowFrom set membership
  * changes between two consecutive disk reads of access.json. Bootstrap wires
