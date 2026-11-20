@@ -26,6 +26,9 @@ appId: com.tendhearth.app
       id: approval-allow
       enabled: true
     timeout: 10000
+- assertVisible:
+    id: approval-cc-opinion
+- takeScreenshot: approve-opinion
 - tapOn:
     id: approval-allow
 - extendedWaitUntil:

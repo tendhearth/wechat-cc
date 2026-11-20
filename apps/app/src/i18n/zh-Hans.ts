@@ -206,6 +206,8 @@ const zh: Record<keyof typeof en, string> = {
   'approval.backToMatter': '回到这件事',
   'approval.chooseOne': '看清楚这一步，再决定。',
   'approval.uncertain': '电脑恢复连接后，需要先刷新这一步的状态，再决定。',
+  'approval.ccOpinion': 'CC 的意见（只看了这条请求）：{text}',
+  'approval.questionReason': '为什么来问你：{text}',
   'approval.aiSummary': '这段说明由模型写成，请对照下面的具体操作。',
   'approval.aiTag': 'AI 概括',
   'approval.chooseTitle': '有几件事等你决定',

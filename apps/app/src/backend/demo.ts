@@ -334,7 +334,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const permission = entries.get(IDS.portfolio)!.detail.permissions[0]
       const places = [
         place('portfolio', [IDS.portfolio], { status: 'waiting', moving: false, line: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio),
-          waiting: { itemKey: `matter:${IDS.portfolio}`, kind: 'permission', matterId: IDS.portfolio, ...(permission ? { requestId: permission.id } : {}), summary: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio), count: 1 } }),
+          waiting: { itemKey: `matter:${IDS.portfolio}`, kind: 'permission', matterId: IDS.portfolio, ...(permission ? {
+            requestId: permission.id,
+            ccOpinion: lastLang === 'zh-Hans' ? '如果要处理图片，可以允许这一步。' : 'Allow if image processing is needed.',
+            questionReason: lastLang === 'zh-Hans' ? '安装会给项目新增依赖。' : 'Adds a dependency.',
+          } : {}), summary: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio), count: 1 } }),
         place('trip', [IDS.trip], {}),
         place('notes', [IDS.report, IDS.notes], { status: 'done', moving: false, unseen: true, alsoChanged: 1, updatedAt: now() - 2 * HOUR }),
       ]
