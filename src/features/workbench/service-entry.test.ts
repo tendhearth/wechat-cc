@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process'
-import { createServer } from 'node:http'
 import { readdirSync } from 'node:fs'
 import * as fsPromises from 'node:fs/promises'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
@@ -18,6 +17,7 @@ import {canonicalEntryHash,type EntryInput} from '../../adapters/workbench/task-
 import {validateApiTaskInput} from '../../adapters/executors/openai/openai-workbench-provider'
 import {preparationJobspawnFixture} from '../../test-support/preparation-jobspawn'
 import {DEPENDENCY_COPY_NOTICE} from '../../adapters/git/worktree-dependencies'
+import {Preparation} from '../../adapters/git/worktree-preparation'
 
 preparationJobspawnFixture()
 
@@ -526,20 +526,35 @@ it('normal shutdown waits for unaccepted worktree fetch preparation to roll back
   const g=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe',encoding:'utf8'}).trim()
   g('init','-q','-b','main');g('config','user.email','fixture@localhost');g('config','user.name','Fixture')
   writeFileSync(join(project,'readme'),'base');g('add','.');g('commit','-qm','initial')
+  g('remote','add','origin','http://127.0.0.1:1/repo')
   let reached!:()=>void
-  const waiting=new Promise<void>(resolve=>{reached=resolve}),server=createServer(()=>reached())
-  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve))
-  g('remote','add','origin',`http://127.0.0.1:${(server.address() as {port:number}).port}/repo`)
+  const waiting=new Promise<void>(resolve=>{reached=resolve})
+  const git=Preparation.prototype.git
+  // Hold the transport at the fetch command. The private object directory
+  // has already been created and the caller still owns the real rollback.
+  vi.spyOn(Preparation.prototype,'git').mockImplementation(async function(this:Preparation,...args:Parameters<Preparation['git']>){
+    if(!args[1].includes('fetch'))return git.apply(this,args)
+    const signal=this.options.signal!
+    await new Promise<void>(resolve=>{
+      if(signal.aborted)resolve()
+      else signal.addEventListener('abort',()=>resolve(),{once:true})
+      reached()
+    })
+    this.check()
+    throw Error('fetch resumed without cancellation')
+  })
+  const stagedObjects=()=>readdirSync(join(project,'.git/objects')).filter(name=>name.startsWith('cc-fetch-'))
   const pending=service.createEntry(input({target:{kind:'project',projectId:service.projects()[0]!.id,isolation:'worktree'}}),context).then(()=>null,error=>error)
   try {
-    await Promise.race([waiting,pending.then(error=>{throw Error(`fetch ended before its HTTP request: ${error?.message ?? 'accepted'}`)})])
+    await Promise.race([waiting,pending.then(error=>{throw Error(`entry ended before its fetch command: ${error?.message ?? 'accepted'}`)})])
+    expect(stagedObjects()).toHaveLength(1)
     await service.shutdown()
-    expect(readdirSync(join(project,'.git/objects')).filter(name=>name.startsWith('cc-fetch-'))).toEqual([])
+    expect(stagedObjects()).toEqual([])
     expect(g('for-each-ref','--format=%(refname)').split('\n').filter(ref=>ref.startsWith('refs/remotes/cc-preparation-'))).toEqual([])
     expect((await pending)?.message).toMatch(/cancelled|stopping/)
     expect(store.list()).toEqual([])
     expect(spawnCount).toBe(0)
-  } finally {await pending;server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()))}
+  } finally {await service.shutdown();await pending}
 })
 
 
