@@ -46,6 +46,7 @@ bun 版本在 workflow 里**钉死**(`bun-version: 1.3.14`),不用 `latest` —�
 | `probe-binary-version` | `probeBinaryVersion` | 探测外部 CLI 版本有 3s 上限,runner 负载高时探不完 |
 | `econnreset-chunked` | `ECONNRESET`(限 `src/features/workbench/routes*.test.ts`) | 分块上传那条 socket 测试偶发 |
 | `node-no-summary` | 作业红了但日志里既没有 FAIL 块也没有 `Test Files` 汇总行(限 `node · core suite`) | 进程收尾丢了汇总 |
+| `win-fetch-stage-left` | `expected [ 'cc-fetch-xxxxxx' ] to deeply equal []`(限 `build · windows-latest`、`src/adapters/git/worktree-security.test.ts`) | 超大 fetch 被丢弃后隔离目录还在:收尾的 5 秒上限在慢机器上用完,按设计保留隔离目录。只见过一次(2026-11-20,那条用例 5.95 秒,平时 1.7 秒),原因是按用时推的、没有直接证据 |
 
 ## 处置
 
