@@ -39,7 +39,8 @@ test('书脊宽 64，右栏变宽，恢复后几何一致', async ({ page, shimU
   const geometry = () => Promise.all([rail(page), main(page), scroll(page)].map(el => el.boundingBox()))
   const expanded = await geometry()
   await toggle(page).click()
-  await expect(page.getByRole('button', { name: '展开左边' })).toHaveAttribute('aria-expanded', 'false')
+  // 收起后书脊上的 CC 叫「CC，展开左边」,名字里也带这四个字;这里要的是箭头那个按钮。
+  await expect(page.getByRole('button', { name: '展开左边', exact: true })).toHaveAttribute('aria-expanded', 'false')
   await expect(toggle(page)).toHaveText('›')
   const [spine, right, talk] = await geometry()
   expect(spine!.width).toBe(64)
