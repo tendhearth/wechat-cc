@@ -2,9 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import type { NotebookEntryT, NotebookPageQueryT, NotebookPageResponseT } from '@wechat-cc/protocol'
 import type { Backend } from '../backend/types'
 import { notebookStorage } from '../net/notebook-storage'
-import { makeNotebook } from './notebook'
+import { makeNotebook } from './notebook-store'
 
-vi.mock('./BackendProvider', () => ({ useBackendCtx: vi.fn() }))
 const disk = vi.hoisted(() => new Map<string, string>())
 const setItem = vi.hoisted(() => vi.fn(async (key: string, value: string) => { disk.set(key, value) }))
 vi.mock('expo-secure-store', () => ({
