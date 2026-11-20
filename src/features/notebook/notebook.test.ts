@@ -4,7 +4,7 @@ import { createProviderRegistry } from "../../app/provider-registry"
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openTestDb } from '../../lib/db'
 import { makeNotebookStore } from '../../adapters/store/notebook-store'
-import { DEFAULT_OPENING } from '../../domain/notebook'
+import { DEFAULT_OPENING, defaultOpening } from '../../domain/notebook'
 import { NOTEBOOK_DEFAULTS, type NotebookConfig } from '../../lib/notebook-config'
 import { makeNotebook, notebookRoutes } from './index'
 import type { CheapEval } from '../../ports/agent-provider'
@@ -152,7 +152,9 @@ describe('notebook pages', () => {
   })
 
   it('authorizes all four routes, counts Unicode code points, retries writes and strikes only owner lines', async () => {
-    const { call, n, logs } = fixture()
+    const { call, n, logs, store } = fixture()
+    // 这条用例先写字再读页;真的本子里字出现之前笔已经挑过了,这里照样先放好,免得读页时写进开场。
+    store.set('pen', { font: DEFAULT_OPENING.font, ink: DEFAULT_OPENING.ink, reason: DEFAULT_OPENING.reason })
     const keys = ['GET /v1/notebook', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper']
     for (const key of keys) {
       expect((await call(key, {}, 'link')).status).toBe(403)
@@ -255,9 +257,14 @@ describe('notebook pen', () => {
   it('uses the available fallback even when the notebook already has entries but no pen', async () => {
     const f = fixture()
     f.n.jot('已经有字')
+    f.at(BASE + 60_000)
     await openPage(f, 'fonts=songItalic')
     expect(f.store.get('pen')).toMatchObject({ font: 'songItalic', ink: 'blueBlack' })
-    expect(f.n.page().entries.map(e => e.body)).toEqual(['你说：已经有字'])
+    // 对话里先记过一笔,不该吃掉第一页:开场照写,排在那一笔之后;说笔的那句跟着实际的笔。
+    const bodies = f.n.page().entries.map(e => e.body)
+    expect(bodies[0]).toBe('你说：已经有字')
+    expect(bodies.slice(1)).toEqual(defaultOpening(['songItalic']).lines)
+    expect(bodies.join('\n')).not.toContain('楷体')
   })
 
   it('ignores later fonts after a pen has been stored', async () => {
@@ -299,14 +306,21 @@ describe('notebook pen', () => {
     expect(f.n.page()).toMatchObject({ pen: { reason: replacement }, entries: lines.map(body => ({ body })) })
   })
 
-  it('sets the default pen without an opening when entries already exist', () => {
+  it('a jot made before the notebook was ever opened does not take away the first page: CC still picks its pen and writes the opening', async () => {
+    // 本子没翻开过时,对话里的「记一笔」可以先写进来。以前这样一来第一次翻开就只补缺省笔、不写开场——
+    // 主人永远看不到 CC 挑笔和它说为什么的那一页。现在只看有没有挑过笔。
     const model = vi.fn(async () => JSON.stringify(selected))
-    const { n } = fixture(() => model)
+    const { n, at } = fixture(() => model)
     n.jot('已经有字')
-    expect(n.open('app')).toBeUndefined()
-    expect(n.page().entries.map(e => e.body)).toEqual(['你说：已经有字'])
-    expect(n.page().pen.font).toBe('kai')
-    expect(model).not.toHaveBeenCalled()
+    at(BASE + 60_000)
+    await n.open('app')
+    expect(model).toHaveBeenCalledTimes(1)
+    expect(n.page().pen).toMatchObject({ font: selected.font, ink: selected.ink, reason: selected.reason })
+    expect(n.page().entries.map(e => e.body)).toEqual(['你说：已经有字', ...selected.lines])
+    // 挑过笔以后再翻开:不重挑、不再写开场。
+    expect(n.open('desktop')).toBeUndefined()
+    expect(model).toHaveBeenCalledTimes(1)
+    expect(n.page().entries).toHaveLength(1 + selected.lines.length)
   })
 })
 
@@ -444,7 +458,9 @@ it('restricts chat tools to the owner and caps literal search by local calendar 
 })
 
 it('pages an oversized paired-device day without splitting entries', async () => {
-  const { n, call } = fixture()
+  const { n, call, store } = fixture()
+  // 同上:字出现之前笔已经挑过了。
+  store.set('pen', { font: DEFAULT_OPENING.font, ink: DEFAULT_OPENING.ink, reason: DEFAULT_OPENING.reason })
   for (let i = 0; i < 3; i++) n.write('字'.repeat(1000), String(i), 'app')
   expect((await call('GET /v1/notebook')).body).toMatchObject({ entries: n.page().entries })
   const route = notebookRoutes(n)['GET /v1/notebook']!
