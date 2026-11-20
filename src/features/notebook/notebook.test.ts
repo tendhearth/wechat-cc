@@ -33,6 +33,14 @@ function fixture(model: (() => CheapEval | null) | null = null, notebook: Partia
 }
 
 describe('notebook pages', () => {
+  it('exposes the time zone used to cut the notebook day on GET', async () => {
+    const { call, at } = fixture()
+    at(Date.parse('2026-11-19T07:59:59Z'))
+    expect((await call('GET /v1/notebook')).body).toMatchObject({
+      today: '2026-11-18', timeZone: 'America/Los_Angeles',
+    })
+  })
+
   it('cuts days at owner midnight, orders same-day entries, returns the latest occupied day', () => {
     const { n, at } = fixture()
     at(Date.parse('2026-11-19T07:59:59Z'))

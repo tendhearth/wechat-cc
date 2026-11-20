@@ -33,6 +33,7 @@ export type NotebookPageQueryT = z.input<typeof NotebookPageQuery>
 export const NotebookPageResponse = z.object({
   day: NotebookDay,
   today: NotebookDay,
+  timeZone: z.string().optional().describe('IANA time zone used for notebook calendar days.'),
   days: z.array(NotebookDay),
   entries: z.array(NotebookEntry),
   nextAfter: z.string().uuid().optional(),

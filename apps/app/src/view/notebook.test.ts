@@ -42,6 +42,18 @@ describe('notebook', () => {
     expect(notebookSignature(entry('owner'), cc, 'en')).toBeNull()
   })
 
+  it('labels and groups signatures in the notebook zone, falling back to device time', () => {
+    const first = { ...entry('first', 'cc'), createdAt: Date.parse('2026-11-04T19:00:00Z') }
+    const next = { ...entry('next', 'cc'), createdAt: Date.parse('2026-11-04T20:00:00Z') }
+    const local = notebookSignature(first, next, 'en')
+    const zone = local === null ? 'UTC' : 'Pacific/Honolulu'
+    expect(notebookSignature(first, next, 'en', zone)).toBe(zone === 'UTC' ? 'CC, in the evening' : null)
+    expect(notebookSignature(first, undefined, 'en', zone)).toBe(zone === 'UTC' ? 'CC, in the evening' : 'CC, in the morning')
+    const localFirst = entry('local-first', 'cc', 11)
+    const localNext = entry('local-next', 'cc', 12)
+    expect(notebookSignature(localFirst, localNext, 'en')).toBe('CC, in the morning')
+  })
+
   it.each([
     ['kai', 'blueBlack', 'THPenKai-Regular', '#24405f'],
     ['hand', 'darkGreen', 'THPenHand-Regular', '#304d3c'],

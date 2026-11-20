@@ -1,3 +1,4 @@
+import type { NotebookPageResponseT } from '@wechat-cc/protocol'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearNotebookStorage, notebookStorage } from './notebook-storage'
 
@@ -38,7 +39,7 @@ describe('notebook SecureStore', () => {
   it('keeps both page and queue scoped to their paired computer and clears on unpair', async () => {
     const storage = notebookStorage('pair-a', active)
     const day = '2026-11-04'
-    const page = { day, today: day, days: [], entries: [], paper: 'plain', penPending: false, pen: { font: 'kai', ink: 'blueBlack', reason: '' } }
+    const page: NotebookPageResponseT = { day, today: day, days: [], entries: [], paper: 'plain', penPending: false, pen: { font: 'kai', ink: 'blueBlack', reason: '' } }
     await storage.savePage(page)
     await storage.saveQueue([row])
     expect(await notebookStorage('pair-a', active).loadPage()).toEqual(page)

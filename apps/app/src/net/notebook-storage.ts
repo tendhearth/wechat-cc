@@ -1,9 +1,9 @@
 import * as SecureStore from 'expo-secure-store'
-import { NotebookBody, NotebookDay, NotebookPageResponse } from '@wechat-cc/protocol'
+import { NotebookBody, NotebookDay, NotebookEntry, NotebookPageResponse, type NotebookEntryT, type NotebookPageResponseT } from '@wechat-cc/protocol'
 import z from 'zod'
 
 const options = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY }
-const keys = { page: 'tendhearth.notebook.page.v1', queue: 'tendhearth.notebook.queue.v1' } as const
+const keys = { page: 'tendhearth.notebook.page.v1', queue: 'tendhearth.notebook.queue.v1', receipts: 'tendhearth.notebook.receipts.v1' } as const
 const pointerSchema = z.object({ scope: z.string(), bank: z.union([z.literal(0), z.literal(1)]), count: z.number().int().nonnegative() })
 const pendingSchema = z.object({ clientId: z.string(), body: NotebookBody, day: NotebookDay.optional(), createdAt: z.number() }).array()
 let operations = Promise.resolve()
@@ -75,16 +75,30 @@ async function write(key: string, scope: string, json: string, current: () => bo
 
 export function notebookStorage(scope: string, current: () => boolean) {
   const committed = new Map<string, string>()
-  const save = (key: string, value: unknown) => serial(async () => {
+  const save = async (key: string, value: unknown) => {
     const json = JSON.stringify(value)
     if (!current() || committed.get(key) === json) return
     await write(key, scope, json, current)
     if (current()) committed.set(key, json)
-  })
+  }
+  const readReceipts = async () => (await read(keys.receipts, scope, value => NotebookEntry.array().parse(value))) ?? []
   return {
     loadPage: () => serial(async () => current() ? read(keys.page, scope, value => NotebookPageResponse.parse(value)) : undefined),
     loadQueue: () => serial(async () => current() ? read(keys.queue, scope, value => pendingSchema.parse(value)) : undefined),
-    savePage: (page: unknown) => save(keys.page, page),
-    saveQueue: (queue: unknown) => save(keys.queue, queue),
+    loadReceipts: () => serial(async () => current() ? readReceipts() : []),
+    saveReceipt: (entry: NotebookEntryT) => serial(async () => {
+      if (!current()) return
+      const receipts = await readReceipts()
+      await save(keys.receipts, [...receipts.filter(row => row.id !== entry.id), entry])
+    }),
+    savePage: (page: NotebookPageResponseT) => serial(async () => {
+      await save(keys.page, page)
+      if (!current()) return
+      const receipts = await readReceipts()
+      const ids = new Set(page.entries.map(entry => entry.id))
+      const remaining = receipts.filter(row => row.day !== page.day || !ids.has(row.id))
+      if (remaining.length !== receipts.length) await save(keys.receipts, remaining)
+    }),
+    saveQueue: (queue: unknown) => serial(() => save(keys.queue, queue)),
   }
 }

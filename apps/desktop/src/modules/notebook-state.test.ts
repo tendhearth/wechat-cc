@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { NotebookEntryT } from '@wechat-cc/protocol'
 import { callNotebook } from '../daemon-client.js'
 import {
-  createNotebookQueue, NOTEBOOK_QUEUE_KEY, notebookDay, notebookDateLabel, notebookPenStyle, notebookPeriod,
+  createNotebookQueue, NOTEBOOK_QUEUE_KEY, notebookDay, notebookDateLabel, notebookPenStyle, notebookPeriod, notebookSignaturePeriod,
 } from './notebook-state.js'
 
 describe('桌面本子', () => {
@@ -17,6 +17,17 @@ describe('桌面本子', () => {
     [0, '夜里'], [4, '夜里'], [5, '清晨'], [8, '上午'], [12, '下午'], [17, '傍晚'], [20, '夜里'],
   ])('本地 %s 点落款为 %s', (hour, label) => {
     expect(notebookPeriod(new Date(2026, 10, 4, hour).getTime())).toBe(label)
+  })
+
+  it('按本子时区决定落款和合并，旧回应沿用本地时间', () => {
+    const first = { author: 'cc', day: '2026-11-04', createdAt: Date.parse('2026-11-04T19:00:00Z') } as NotebookEntryT
+    const next = { ...first, createdAt: Date.parse('2026-11-04T20:00:00Z') }
+    const zone = notebookPeriod(first.createdAt) === notebookPeriod(next.createdAt) ? 'UTC' : 'Pacific/Honolulu'
+    expect(notebookSignaturePeriod(first, next, zone)).toBe(zone === 'UTC' ? '傍晚' : undefined)
+    expect(notebookSignaturePeriod(first, undefined, zone)).toBe(zone === 'UTC' ? '傍晚' : '上午')
+    const localFirst = { ...first, createdAt: new Date(2026, 10, 4, 11).getTime() }
+    const localNext = { ...first, createdAt: new Date(2026, 10, 4, 12).getTime() }
+    expect(notebookSignaturePeriod(localFirst, localNext)).toBe('上午')
   })
 
   it.each([

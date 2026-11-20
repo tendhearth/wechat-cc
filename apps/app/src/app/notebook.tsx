@@ -149,7 +149,7 @@ function NotebookScreen({ notebook, value, backend }: ReturnType<typeof useNoteb
       {!today ? <View style={styles.return}><WordButton testID="notebook-today" label={t(lang, 'notebook.back')} onPress={() => turn(value.today)} /></View> : null}
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <NotebookPaper key={today ? 'today' : value.day} entries={entries} pending={pending} now={clock} lang={lang}
-          pen={pen} ruled={ruled} follow={today} motion={motion} target={ref?.day === value.day ? ref : undefined}
+          timeZone={value.timeZone} pen={pen} ruled={ruled} follow={today} motion={motion} target={ref?.day === value.day ? ref : undefined}
           onStrike={setMenu} onReference={(day, id) => { notebook.select(day); if (day !== value.today) Keyboard.dismiss(); setRef({ id, day }) }} />
         {today ? (
           <View onLayout={event => setComposeHeight(event.nativeEvent.layout.height)} style={styles.composer}>
@@ -176,8 +176,8 @@ function NotebookScreen({ notebook, value, backend }: ReturnType<typeof useNoteb
   )
 }
 
-function NotebookPaper({ entries, pending, now, lang, pen, ruled, follow, motion, target, onStrike, onReference }: {
-  entries: NotebookEntryT[]; pending: ReadonlyMap<string, { createdAt: number }>; now: number; lang: Lang;
+function NotebookPaper({ entries, pending, now, lang, timeZone, pen, ruled, follow, motion, target, onStrike, onReference }: {
+  entries: NotebookEntryT[]; pending: ReadonlyMap<string, { createdAt: number }>; now: number; lang: Lang; timeZone?: string;
   pen: ReturnType<typeof usePen>; ruled: boolean; follow: boolean; motion: boolean; target?: { id: string };
   onStrike(entry: NotebookEntryT): void; onReference(day: string, id: string): void
 }) {
@@ -222,7 +222,7 @@ function NotebookPaper({ entries, pending, now, lang, pen, ruled, follow, motion
           const key = notebookLineKey(entry)
           const waiting = pending.get(key)
           const canStrike = entry.author === 'owner' && !waiting
-          const signature = notebookSignature(entry, entries[i + 1], lang)
+          const signature = notebookSignature(entry, entries[i + 1], lang, timeZone)
           const cc = entry.author === 'cc'
           const reference = entry.refDay && entry.refId ? { day: entry.refDay, id: entry.refId } : undefined
           if (cc && !pen.ready) return null

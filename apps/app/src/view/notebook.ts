@@ -15,8 +15,9 @@ export function notebookDate(day: string | undefined, lang: Lang, today?: string
   return t(lang, 'notebook.date', { month: lang === 'en' ? englishMonth.format(new Date(`${day}T00:00:00Z`)) : Number(month), day: Number(date) })
 }
 
-export function notebookPeriod(timestamp: number) {
-  const hour = new Date(timestamp).getHours()
+export function notebookPeriod(timestamp: number, timeZone?: string) {
+  const hour = timeZone === undefined ? new Date(timestamp).getHours()
+    : Number(new Intl.DateTimeFormat('en', { timeZone, hour: 'numeric', hourCycle: 'h23' }).format(timestamp))
   if (hour < 5 || hour >= 20) return 'night'
   if (hour < 8) return 'dawn'
   if (hour < 12) return 'morning'
@@ -24,10 +25,10 @@ export function notebookPeriod(timestamp: number) {
   return 'evening'
 }
 
-export function notebookSignature(entry: NotebookEntryT, next: NotebookEntryT | undefined, lang: Lang) {
+export function notebookSignature(entry: NotebookEntryT, next: NotebookEntryT | undefined, lang: Lang, timeZone?: string) {
   if (entry.author !== 'cc') return null
-  const period = notebookPeriod(entry.createdAt)
-  if (next?.author === 'cc' && next.day === entry.day && notebookPeriod(next.createdAt) === period) return null
+  const period = notebookPeriod(entry.createdAt, timeZone)
+  if (next?.author === 'cc' && next.day === entry.day && notebookPeriod(next.createdAt, timeZone) === period) return null
   return t(lang, 'notebook.signature', { period: t(lang, `notebook.${period}`) })
 }
 
@@ -68,14 +69,14 @@ export function notebookLines(entries: readonly NotebookEntryT[], pending: reado
 export async function flushNotebookQueue(
   rows: readonly PendingLine[],
   send: (input: { body: string; clientId: string }) => Promise<NotebookEntryT>,
-  acknowledge: (entry: NotebookEntryT) => void,
+  acknowledge: (entry: NotebookEntryT) => void | Promise<void>,
   active: () => boolean = () => true,
 ) {
   for (const { body, clientId } of rows) {
     if (!active()) return
     try {
       const entry = await send({ body, clientId })
-      if (entry.clientId === clientId) acknowledge(entry)
+      if (entry.clientId === clientId) await acknowledge(entry)
     } catch { /* The next flush will reuse the same clientId. */ }
   }
 }
