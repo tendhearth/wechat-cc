@@ -25,7 +25,7 @@ describe('desk collapse preference', () => {
 })
 
 function shortcut(override: Partial<KeyboardEvent>) {
-  return { key: '\\', metaKey: false, ctrlKey: false, ...override } as KeyboardEvent
+  return { key: 'b', metaKey: false, ctrlKey: false, ...override } as KeyboardEvent
 }
 
 describe('desk collapse shortcut', () => {
@@ -36,7 +36,7 @@ describe('desk collapse shortcut', () => {
     expect(isDeskCollapseShortcut(shortcut({ metaKey: true }), false)).toBe(false)
   })
 
-  it.each([{ isComposing: true }, { keyCode: 229 }, { repeat: true }, { shiftKey: true }, { altKey: true }, { key: 'a' }])(
+  it.each([{ isComposing: true }, { keyCode: 229 }, { repeat: true }, { shiftKey: true }, { altKey: true }, { key: '\\' }, { key: 'a' }, { defaultPrevented: true }, { ctrlKey: true }])(
     'ignores composition and other keys or modifiers (%j)', override => {
       expect(isDeskCollapseShortcut(shortcut({ metaKey: true, ...override }), true)).toBe(false)
     },

@@ -15,7 +15,7 @@ export function writeDeskCollapsed(host, collapsed) {
 
 /** @param {KeyboardEvent} event @param {boolean} mac */
 export function isDeskCollapseShortcut(event, mac) {
-  return event.key === '\\' && !event.defaultPrevented && !event.repeat
+  return event.key.toLowerCase() === 'b' && !event.defaultPrevented && !event.repeat
     && !event.isComposing && event.keyCode !== 229 && !event.altKey && !event.shiftKey
     && event.metaKey === mac && event.ctrlKey !== mac
 }

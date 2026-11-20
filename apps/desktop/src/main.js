@@ -192,10 +192,11 @@ subscribeConverseActivity(stream => nowPage?.setConversationActivity(stream))
 function reflectTopbarWaiting() {
   const cc = document.getElementById('topbar-cc')
   if (!cc) return
-  const collapsed = document.documentElement.hasAttribute('data-desk-collapsed')
-  const count = (collapsed || document.body.dataset.pane !== 'overview') && cc.dataset.waiting
-  const label = collapsed ? 'CC，展开左边' : '跟 CC 说'
-  cc.setAttribute('aria-label', count ? `${label}(有 ${count} 件在等你)` : label)
+  const toggle = document.getElementById('desk-rail-toggle')
+  toggle?.toggleAttribute('data-waiting', !!cc.dataset.waiting)
+  const count = (document.documentElement.hasAttribute('data-desk-wide') || document.body.dataset.pane !== 'overview')
+    && cc.dataset.waiting
+  cc.setAttribute('aria-label', count ? `跟 CC 说(有 ${count} 件在等你)` : '跟 CC 说')
 }
 
 function renderRail() {
@@ -1747,27 +1748,79 @@ function mountDeskLayout(strip) {
   const search = document.getElementById('topbar-search')
   const scroll = document.getElementById('converse-scroll')
   const toggle = document.getElementById('desk-rail-toggle')
-  const cc = document.getElementById('topbar-cc')
-  if (!places || !overview || !nav || !more || !moreItems || !roster || !search || !scroll || !toggle || !cc) return
-
+  const heading = document.querySelector('.desk-heading')
+  if (!dashRail || !places || !overview || !nav || !moreItems || !roster || !search || !scroll || !toggle || !heading) return
+  const rail = dashRail
   const root = document.documentElement
+  const hover = window.matchMedia('(hover: hover)')
+  const listeners = new AbortController()
+  const { signal } = listeners
+  const mac = root.dataset.platform === 'macos'
   let collapsed = readDeskCollapsed(window)
+  let peeking = false
+  let pointerInTrigger = false
+  let pointerInRail = false
+  let waitForReentry = false
+  let closeTimer = 0
+
   const renderCollapse = () => {
     const closed = layout.matches && collapsed
-    if (closed) {
+    const visible = !closed || peeking
+    if (!visible) {
+      if (rail.contains(document.activeElement)) toggle.focus({ preventScroll: true })
       strip.closeActions()
-      dashRail?.querySelector('.cc-home-details')?.removeAttribute('open')
+      rail.querySelector('.cc-home-details')?.removeAttribute('open')
+      more?.removeAttribute('open')
     }
     root.toggleAttribute('data-desk-collapsed', closed)
-    toggle.textContent = closed ? '›' : '‹'
-    toggle.setAttribute('aria-expanded', String(!closed))
-    toggle.setAttribute('aria-label', closed ? '展开左边' : '收起左边')
-    if (layout.matches) {
-      if (closed && search.nextElementSibling !== more) more.before(search)
-      if (!closed && nav.firstElementChild !== search) nav.prepend(search)
-    }
-    reflectTopbarWaiting()
+    root.toggleAttribute('data-desk-peeking', closed && peeking)
+    toggle.setAttribute('aria-expanded', String(visible))
+    const label = closed ? '展开左边' : '收起左边'
+    toggle.setAttribute('aria-label', label)
+    toggle.title = `${label} ${mac ? '⌘B' : 'Ctrl+B'}`
   }
+  const cancelClose = () => {
+    window.clearTimeout(closeTimer)
+    closeTimer = 0
+  }
+  const dismissPeek = () => {
+    cancelClose()
+    if (!peeking) return
+    peeking = false
+    pointerInRail = false
+    renderCollapse()
+  }
+  const scheduleClose = () => {
+    if (!peeking || pointerInTrigger || pointerInRail || closeTimer) return
+    closeTimer = window.setTimeout(() => {
+      closeTimer = 0
+      if (!rail.matches(':hover') && !rail.querySelector(':focus-visible')) dismissPeek()
+    }, 300)
+  }
+  // Read the window edge without laying a hit target over the native drag strips.
+  document.addEventListener('pointermove', event => {
+    if (event.pointerType !== 'mouse' || !hover.matches || !layout.matches || root.dataset.mode !== 'dashboard') return
+    pointerInTrigger = toggle.contains(/** @type {Node} */ (event.target))
+      || (event.clientX >= 0 && event.clientX < 8 && event.clientY >= heading.getBoundingClientRect().bottom)
+    pointerInRail = peeking && rail.contains(/** @type {Node} */ (event.target))
+    if (!pointerInTrigger) waitForReentry = false
+    if (pointerInTrigger || pointerInRail) {
+      cancelClose()
+      if (collapsed && !peeking && !waitForReentry) {
+        peeking = true
+        renderCollapse()
+      }
+    } else scheduleClose()
+  }, { signal })
+  document.documentElement.addEventListener('pointerleave', event => {
+    if (event.pointerType !== 'mouse') return
+    pointerInTrigger = pointerInRail = waitForReentry = false
+    scheduleClose()
+  }, { signal })
+  rail.addEventListener('focusout', scheduleClose, { signal })
+  hover.addEventListener('change', () => {
+    if (!hover.matches) dismissPeek()
+  }, { signal })
 
   const today = document.getElementById('desk-today')
   let midnightTimer = 0
@@ -1799,6 +1852,8 @@ function mountDeskLayout(strip) {
     else if (anchor) scroller.scrollTop += anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset
   }
   const apply = () => preserveReadingPosition(() => {
+    dismissPeek()
+    pointerInTrigger = pointerInRail = waitForReentry = false
     const { matches: wide } = layout
     const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
     root.toggleAttribute('data-desk-wide', wide)
@@ -1813,38 +1868,43 @@ function mountDeskLayout(strip) {
       roster.setAttribute('aria-expanded', 'false')
     }
     renderCollapse()
+    reflectTopbarWaiting()
     updateDate()
     strip.setWide(wide)
     const placeList = document.getElementById('places-root')
     if (placeList) placeList.scrollTop = placeTop
   })
   const setCollapsed = (/** @type {boolean} */ next) => {
+    cancelClose()
+    peeking = pointerInRail = false
+    waitForReentry = next && (pointerInTrigger || toggle.matches(':hover'))
     collapsed = next
     preserveReadingPosition(renderCollapse)
     writeDeskCollapsed(window, collapsed)
   }
   const onShortcut = (/** @type {KeyboardEvent} */ event) => {
-    if (!layout.matches || root.dataset.mode !== 'dashboard'
-        || !isDeskCollapseShortcut(event, root.dataset.platform === 'macos')) return
-    event.preventDefault()
-    setCollapsed(!collapsed)
+    if (!layout.matches || root.dataset.mode !== 'dashboard' || event.defaultPrevented) return
+    if (event.key === 'Escape' && peeking && !event.isComposing && !document.querySelector('dialog[open]')) {
+      event.preventDefault()
+      waitForReentry = pointerInTrigger
+      dismissPeek()
+    } else if (isDeskCollapseShortcut(event, mac)) {
+      event.preventDefault()
+      setCollapsed(!collapsed)
+    }
   }
   toggle.addEventListener('click', () => {
     setCollapsed(!collapsed)
     toggle.focus({ preventScroll: true })
-  })
-  cc.addEventListener('click', event => {
-    if (!layout.matches || !collapsed) return
-    event.stopImmediatePropagation()
-    setCollapsed(false)
-  }, { capture: true })
-  document.addEventListener('keydown', onShortcut)
+  }, { signal })
+  document.addEventListener('keydown', onShortcut, { signal })
   if (layout.matches) apply()
   layout.addEventListener('change', apply)
   document.addEventListener('visibilitychange', updateDate)
   window.addEventListener('pagehide', () => {
     layout.removeEventListener('change', apply)
-    document.removeEventListener('keydown', onShortcut)
+    listeners.abort()
+    cancelClose()
     document.removeEventListener('visibilitychange', updateDate)
     window.clearTimeout(midnightTimer)
   }, { once: true })
@@ -1913,7 +1973,7 @@ async function boot() {
       },
       onSelect:place=>setConversationPlace(place?{name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
       onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id),
-      // 非首页和书脊共用 CC 的等待提示点。
+      // 左栏和收起按钮共用 CC 的等待计数。
       onPlaces:places=>{
         updateConversationPlaces(places)
         const count = places.reduce((sum,p)=>sum+(p.waiting?.count??0),0)
