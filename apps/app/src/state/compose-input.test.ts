@@ -3,9 +3,10 @@ import { newReferences } from './conversation-references'
 import { createHash } from 'node:crypto'
 import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
+import { setTimeout as realTimeout } from 'node:timers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '../ui/native-motion.test-support'
-import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolRequest } from '@wechat-cc/protocol'
+import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolRequest, type PlacesResponseT } from '@wechat-cc/protocol'
 import { makeLiveBackend } from '../backend/live'
 import { DETAIL, ID, OPTIONS, RUN, WB_TASK, RECEIPT } from '../backend/fixtures'
 import type { Backend, MatterInputT } from '../backend/types'
@@ -38,7 +39,7 @@ vi.mock('react-native', async () => {
   }))
   const Pressable = ({ children, onPress, disabled, testID, accessibilityLabel, accessibilityRole, accessibilityState }: any) => createElement('button', {
     onClick: onPress, disabled, 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole,
-    'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled,
+    'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled, 'aria-checked': accessibilityState?.checked,
   }, children)
   const Modal = ({ children, visible }: any) => visible ? createElement('div', null, children) : null
   return { ...native, View, Image: () => null, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
@@ -63,6 +64,7 @@ function harness() {
   }
   let create: (request: Request) => Reply | Promise<Reply> = () => ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202)
   let permission: () => Reply | Promise<Reply> = () => ok({ ok: true })
+  let places: PlacesResponseT = { places: [], version: 'empty' }
   let insight: any = { explanations: {}, progress: null }
   let read: (() => Reply | Promise<Reply>) | undefined
   const requests: Request[] = []
@@ -85,6 +87,7 @@ function harness() {
         else if (path === '/m/api/matter/say') reply = await say(request)
         else if (path === '/m/api/matter/create') reply = await create(request)
         else if (path === '/m/api/entry/options') reply = ok({ ok: true, ...OPTIONS })
+        else if (path === '/v1/places') reply = ok(places)
         else if (path === '/m/api/matter/insight') reply = ok({ ok: true, ...insight })
         else if (path === '/m/api/matter/permission') reply = await permission()
         else if (path === '/v1/matter/permission-script') {
@@ -117,6 +120,7 @@ function harness() {
     setSay: (next: typeof say) => { say = next },
     setCreate: (next: typeof create) => { create = next },
     setRead: (next: typeof read) => { read = next },
+    setPlaces: (next: PlacesResponseT) => { places = next },
     setInsight: (next: typeof insight) => { insight = next },
     setPermission: (next: typeof permission) => { permission = next },
     version: (version: number) => clients.at(-1)!.subs.get(`matter/${ID}`)?.({ found: true, kind: 'task', version, phase: 'working' }),
@@ -130,11 +134,12 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   await act(() => { for (const root of roots.splice(0)) root.unmount() })
+  vi.useRealTimers()
   shell = null
   await act(async () => { matterInputState.configure(undefined); await matterInputState.clear() })
   document.body.innerHTML = ''
 })
-async function flush() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }) }
+async function flush() { await act(async () => { await new Promise(resolve => realTimeout(resolve, 0)) }) }
 // 一个测试一棵树:BackendProvider 常驻(跟 app 里一样,离开页面不会拆掉后端和 store),页面在它里面换。
 type Shell = { root: Root; container: HTMLElement; ctx: TestCtx | null; show(component: (() => ReactNode) | null): Promise<void> }
 let shell: Shell | null = null
@@ -366,6 +371,17 @@ describe('real LiveBackend + native compose inputs', () => {
 })
 
 
+function placeWithNotes(kind: 'permission' | 'question', requestId: string): PlacesResponseT {
+  return { version: 'late', places: [{
+    key: 'p:1', name: 'test', line: 'test', status: 'waiting', moving: false, unseen: false,
+    updatedAt: null, matterIds: [ID], messageIds: [], sessionIds: [],
+    waiting: {
+      itemKey: `matter:${ID}`, requestId, kind, summary: 'test', count: 1,
+      ccOpinion: '可以先核对范围。', questionReason: '需要你确认范围。',
+    },
+  }] }
+}
+
 describe('work-first matter details', () => {
   it('keeps a model explanation beside the original operation and waits for the decision result before leaving', async () => {
     const h = harness(), result = gate<Reply>(), requestId = h.detail().permissions[0].id
@@ -392,6 +408,90 @@ describe('work-first matter details', () => {
     const matter = await mount(Matter)
     expect(matter.byId('progress-status').textContent).toContain('在做')
     expect(matter.byId('progress-request-0')).toBeNull()
+  })
+
+  it('adds late notes in place while keeping the approval controls and denial draft', async () => {
+    const h = harness(), requestId = h.detail().permissions[0].id
+    h.detail().permissions[0].canDenyWithReason = true
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ui = await mount(Approval)
+    await act(() => h.version(1))
+    const allow = ui.byId('approval-allow')
+    const reason = ui.byId<HTMLTextAreaElement>('approval-denial-reason')
+    expect(ui.byId('approval-cc-opinion')).toBeNull()
+
+    await act(() => {
+      reason.value = '再想一下'
+      reason.dispatchEvent(new Event('input', { bubbles: true }))
+      h.setPlaces(placeWithNotes('permission', requestId))
+    })
+    expect(ui.byId('approval-cc-opinion')).toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+
+    expect(ui.byId('approval-cc-opinion').textContent).toBe('CC 的意见（只看了这条请求）：可以先核对范围。')
+    expect(ui.byId('approval-question-reason').textContent).toBe('为什么来问你：需要你确认范围。')
+    expect(ui.byId('approval-allow')).toBe(allow)
+    expect(ui.byId('approval-denial-reason')).toBe(reason)
+    expect(reason.value).toBe('再想一下')
+
+    const readCount = () => h.requests.filter(request => request.path === '/v1/places').length
+    const afterOpinion = readCount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(readCount()).toBe(afterOpinion)
+
+    await act(() => { h.detail().permissions = []; h.version(2) })
+    await flush()
+    expect(ui.byId('approval-handled')).toBeTruthy()
+    expect(ui.byId('approval-cc-opinion')).toBeNull()
+    expect(ui.byId('approval-question-reason')).toBeNull()
+  })
+
+  it('stops asking after three quiet reads when no opinion ever arrives', async () => {
+    const h = harness()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ui = await mount(Approval)
+    await act(() => h.version(1))
+    const readCount = () => h.requests.filter(request => request.path === '/v1/places').length
+    const before = readCount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+    expect(readCount() - before).toBe(3)
+    expect(ui.byId('approval-cc-opinion')).toBeNull()
+    expect(ui.byId('approval-question-reason')).toBeNull()
+    expect(ui.byId('approval-allow')).toBeTruthy()
+  })
+
+  it('keeps selected answers and the Other draft when a question gets late notes', async () => {
+    const h = harness()
+    h.detail().permissions = []
+    h.detail().questions = [{
+      id: 'q1', taskId: ID, createdAt: 3,
+      questions: [{
+        id: 'scope', header: '', question: '要检查哪些内容？',
+        options: [{ label: '图片', description: '' }], multiSelect: true, allowOther: true,
+      }],
+    }]
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ui = await mount(Approval)
+    const option = ui.byId<HTMLButtonElement>('answer-option-scope-0')
+    const other = ui.byId<HTMLTextAreaElement>('answer-other-scope')
+    const submit = ui.byId('answer-submit')
+    await act(() => {
+      option.click()
+      other.value = '也看一下说明'
+      other.dispatchEvent(new Event('input', { bubbles: true }))
+      h.setPlaces(placeWithNotes('question', 'q1'))
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+
+    const opinion = ui.byId('approval-cc-opinion')
+    const reason = ui.byId('approval-question-reason')
+    expect(opinion.compareDocumentPosition(reason) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(reason.compareDocumentPosition(option) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(ui.byId('answer-option-scope-0')).toBe(option)
+    expect(ui.byId('answer-other-scope')).toBe(other)
+    expect(ui.byId('answer-submit')).toBe(submit)
+    expect(option.getAttribute('aria-checked')).toBe('true')
+    expect(other.value).toBe('也看一下说明')
   })
 
   it('expands the exact pending script through bounded snapshot reads',async()=>{

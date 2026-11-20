@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useLocalSearchParams, useRouter } from 'expo-router'
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
+import { AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, tCount } from '../../../i18n'
 import { useLang } from '../../../i18n/useLang'
 import { useBackendCtx } from '../../../state/BackendProvider'
 import { useConnection, useQuery, useSubmit, useTopic } from '../../../state/hooks'
+import { usePlaces } from '../../../state/places'
 import type { SubmitResult } from '../../../state/store'
 import { Button } from '../../../ui/Button'
 import { Card } from '../../../ui/Card'
@@ -24,6 +25,7 @@ import { useTheme } from '../../../ui/useTheme'
 import { canSubmit } from '../../../view/connection'
 import { ccPresence } from '../../../view/presence'
 import { ANSWER_MAX_CHARS, ANSWER_MAX_MULTI, answersTooLong, approvalOutcome, approvalView, buildAnswers, multiLimitReached, pinnedRequest, togglePick, type ApprovalView } from '../../../view/approval'
+import { approvalOpinion, scheduleOpinionReads, type ApprovalOpinion } from '../../../view/approval-opinion'
 
 type Outcome = null | { requestId: string; kind: 'handled' | 'uncertain' | 'failed' | 'ccBusy' | 'tooLong' | 'revoked' }
 type CardView = Extract<ApprovalView, { kind: 'card' }>
@@ -42,13 +44,14 @@ export default function Approval() {
   const router = useRouter()
   const conn = useConnection()
   const submit = useSubmit()
-  const { backend } = useBackendCtx()
+  const { backend, store } = useBackendCtx()
   const params = useLocalSearchParams<{ id: string; request?: string }>()
   const id = one(params.id) ?? ''
   const requestParam = one(params.request) || undefined
   const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
   const insight = useQuery(`insight:${id}`, l => backend.insight(id, l), { refreshOnMount: true })
   const online = canSubmit(conn)
+  const { places, refresh: refreshPlaces } = usePlaces()
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
 
@@ -120,9 +123,25 @@ export default function Approval() {
     </SafeAreaView>
   )
 
+  const d = detail.data
+  const v = d ? approvalView(d, insight.data?.explanations ?? {}, requestParam ?? pin.current) : undefined
+  // 第一次从新详情解析出具体一条就钉住。钉住的不在了，approvalView 不会落到别的请求。
+  if (v && !requestParam && !pin.current && detail.fresh) pin.current = pinnedRequest(undefined, undefined, v)
+  const requestId = v?.kind === 'card' || v?.kind === 'question' ? v.requestId : undefined
+  const shownOutcome = outcome && outcome.requestId === requestId ? outcome.kind : null
+  const opinion = approvalOpinion(places, shownOutcome === 'handled' ? undefined : requestId)
+  const pollingRequest = detail.fresh && shownOutcome !== 'handled' && !opinion.ccOpinion ? requestId : undefined
+
+  useFocusEffect(useCallback(() => {
+    if (!pollingRequest || !backend.places) return
+    return scheduleOpinionReads(
+      () => store.connection().get().state === 'online' && AppState.currentState === 'active',
+      () => { void refreshPlaces() },
+    )
+  }, [backend, pollingRequest, refreshPlaces, store]))
+
   // 旧缓存算出来的「已处理」不作数:没拿到新详情前照样显示加载中。
-  const staleNone = !detail.fresh && detail.data !== undefined && approvalView(detail.data, {}, requestParam ?? pin.current).kind === 'none'
-  if (!detail.data || staleNone) {
+  if (!d || !v || (!detail.fresh && v.kind === 'none')) {
     return shell(
       detail.error && !detail.loading ? (
         <StatusHint testID="approval-load-failed" label={t(lang, 'feedback.loadingFailed')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'approval.refreshFailed')}>
@@ -134,13 +153,7 @@ export default function Approval() {
     )
   }
 
-  const d = detail.data
-  const explanations = insight.data?.explanations ?? {}
-  const v = approvalView(d, explanations, requestParam ?? pin.current)
-  // 第一次从新详情(挂载之后拉的)解析出具体一条就钉住(幂等:只在还没钉时写一次)。钉住的不在了 ⇒ approvalView 给 none,不会落到别的请求。
-  if (!requestParam && !pin.current && detail.fresh) pin.current = pinnedRequest(undefined, undefined, v)
   const matterTitle = d.matter.title
-  const shownOutcome = outcome && (v.kind === 'card' || v.kind === 'question') && outcome.requestId === v.requestId ? outcome.kind : null
 
   if (shownOutcome === 'handled' || v.kind === 'none') {
     return shell(
@@ -211,6 +224,7 @@ export default function Approval() {
       <QuestionForm
         key={v.requestId}
         v={v}
+        opinion={opinion}
         matterTitle={matterTitle}
         shell={shell}
         locked={editing}
@@ -230,13 +244,14 @@ export default function Approval() {
     void send(v.requestId, `approve:${v.requestId}`, decision, () => backend.decide({ id, runId: v.runId, requestId: v.requestId, decision, ...(decision === 'deny' && v.canDenyWithReason && denialDraft.requestId === v.requestId && denialDraft.reason.trim() ? { reason: denialDraft.reason.trim() } : {}) }))
 
   return shell(
-    <PermissionCard key={v.requestId} v={v} taskId={id} matterTitle={matterTitle} />,
+    <PermissionCard key={v.requestId} v={v} taskId={id} matterTitle={matterTitle} ccOpinion={opinion.ccOpinion} />,
     <View key={v.requestId} style={{ gap: space.s }}>
       {status}
       {v.canDenyWithReason ? <TextField testID="approval-denial-reason" variant="comment" multiline maxLength={2000}
         accessibilityLabel={t(lang, 'approval.denialReason')} placeholder={t(lang, 'approval.denialReason')}
         value={denialDraft.requestId === v.requestId ? denialDraft.reason : ''} editable={!editing}
         onChangeText={reason => setDenialDraft({ requestId: v.requestId, reason })} /> : null}
+      <ApprovalNote kind="reason" text={opinion.questionReason} />
       <View style={{ flexDirection: 'row', gap: space.m }}>
         <View style={{ flex: 1 }}>
           <Button kind="secondary" testID="approval-deny" label={t(lang, 'approval.deny')} onPress={() => decide('deny')} disabled={locked} busy={pending === 'deny'} />
@@ -296,7 +311,22 @@ function PermissionScriptPreview({script,taskId,requestId}:{script:NonNullable<C
   </Card>
 }
 
-function PermissionCard({ v, taskId, matterTitle }: { v: CardView; taskId: string; matterTitle: string }) {
+function ApprovalNote({ kind, text }: { kind: 'opinion' | 'reason'; text?: string }) {
+  const lang = useLang()
+  if (!text) return null
+  return (
+    <Txt
+      testID={kind === 'opinion' ? 'approval-cc-opinion' : 'approval-question-reason'}
+      role="small"
+      tone="inkSoft"
+      content="user"
+    >
+      {t(lang, kind === 'opinion' ? 'approval.ccOpinion' : 'approval.questionReason', { text })}
+    </Txt>
+  )
+}
+
+function PermissionCard({ v, taskId, matterTitle, ccOpinion }: { v: CardView; taskId: string; matterTitle: string; ccOpinion?: string }) {
   const lang = useLang()
   // 没有模型说明时 what 就是原始命令:等宽、最多 4 行,完整内容在「查看具体操作」里。
   const rows: Array<[string, string, boolean]> = [
@@ -309,8 +339,10 @@ function PermissionCard({ v, taskId, matterTitle }: { v: CardView; taskId: strin
     <>
       <MatterContext title={matterTitle} eventKey={v.requestId} />
       {v.scripts?.map(script => <PermissionScriptPreview key={script.path} script={script} taskId={taskId} requestId={v.requestId} />)}
+      {/* 意见晚到时只在标题下面多一行,上面的内容不挪位置。 */}
       <View style={{ gap: space.s }}>
         <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{v.title}</Txt>
+        <ApprovalNote kind="opinion" text={ccOpinion} />
         {v.aiSummary ? (
           <View testID="approval-ai-summary" accessible accessibilityLabel={`${t(lang, 'approval.aiTag')}. ${t(lang, 'approval.aiSummary')}`} style={{ gap: space.xs }}>
             <Txt role="caption">{t(lang, 'approval.aiTag')}</Txt>
@@ -359,8 +391,9 @@ function PermissionCard({ v, taskId, matterTitle }: { v: CardView; taskId: strin
   )
 }
 
-function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, status, onSkip, onSubmit }: {
+function QuestionForm({ v, opinion, matterTitle, shell, locked, submitLocked, busy, status, onSkip, onSubmit }: {
   v: QuestionView
+  opinion: ApprovalOpinion
   matterTitle: string
   shell: (body: ReactNode, footer?: ReactNode) => ReactNode
   /** 提交中:整张表单锁住。 */
@@ -394,14 +427,16 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
   return shell(
     <>
       <MatterContext title={matterTitle} eventKey={v.requestId} />
-      {v.items.map(item => {
+      {v.items.map((item, index) => {
         const cur = picked[item.id] ?? []
         const full = multiLimitReached(item.multiSelect, cur)
         return (
           <View key={item.id} style={{ gap: space.m }}>
             {item.header ? <Txt role="small" tone="inkSoft" content="user">{item.header}</Txt> : null}
             <Txt role="title" content="user" accessibilityRole="header">{item.question}</Txt>
+            <ApprovalNote kind="opinion" text={index === 0 ? opinion.ccOpinion : undefined} />
             {item.multiSelect ? <Txt role="small" tone="inkSoft">{t(lang, 'approval.multiHint')}</Txt> : null}
+            <ApprovalNote kind="reason" text={index === 0 ? opinion.questionReason : undefined} />
             <View style={{ gap: space.xs }}>
               {item.options.map((o, i) => {
                 const on = cur.includes(o.label)
