@@ -3,6 +3,7 @@
 import { setDockedMatter } from './modules/conversation-matters.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
+import { isDeskCollapseShortcut, readDeskCollapsed, writeDeskCollapsed } from './modules/desk-collapse.js'
 import { deskDate } from './modules/desk-page.js'
 import { mountPlacesStrip } from './modules/places-strip.js'
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
@@ -191,8 +192,10 @@ subscribeConverseActivity(stream => nowPage?.setConversationActivity(stream))
 function reflectTopbarWaiting() {
   const cc = document.getElementById('topbar-cc')
   if (!cc) return
-  const count = document.body.dataset.pane !== 'overview' && cc.dataset.waiting
-  cc.setAttribute('aria-label', count ? `跟 CC 说(有 ${count} 件在等你)` : '跟 CC 说')
+  const collapsed = document.documentElement.hasAttribute('data-desk-collapsed')
+  const count = (collapsed || document.body.dataset.pane !== 'overview') && cc.dataset.waiting
+  const label = collapsed ? 'CC，展开左边' : '跟 CC 说'
+  cc.setAttribute('aria-label', count ? `${label}(有 ${count} 件在等你)` : label)
 }
 
 function renderRail() {
@@ -1743,7 +1746,28 @@ function mountDeskLayout(strip) {
   const roster = document.getElementById('topbar-roster')
   const search = document.getElementById('topbar-search')
   const scroll = document.getElementById('converse-scroll')
-  if (!places || !overview || !nav || !more || !moreItems || !roster || !search || !scroll) return
+  const toggle = document.getElementById('desk-rail-toggle')
+  const cc = document.getElementById('topbar-cc')
+  if (!places || !overview || !nav || !more || !moreItems || !roster || !search || !scroll || !toggle || !cc) return
+
+  const root = document.documentElement
+  let collapsed = readDeskCollapsed(window)
+  const renderCollapse = () => {
+    const closed = layout.matches && collapsed
+    if (closed) {
+      strip.closeActions()
+      dashRail?.querySelector('.cc-home-details')?.removeAttribute('open')
+    }
+    root.toggleAttribute('data-desk-collapsed', closed)
+    toggle.textContent = closed ? '›' : '‹'
+    toggle.setAttribute('aria-expanded', String(!closed))
+    toggle.setAttribute('aria-label', closed ? '展开左边' : '收起左边')
+    if (layout.matches) {
+      if (closed && search.nextElementSibling !== more) more.before(search)
+      if (!closed && nav.firstElementChild !== search) nav.prepend(search)
+    }
+    reflectTopbarWaiting()
+  }
 
   const today = document.getElementById('desk-today')
   let midnightTimer = 0
@@ -1755,18 +1779,31 @@ function mountDeskLayout(strip) {
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
     midnightTimer = window.setTimeout(updateDate, midnight.getTime() - now.getTime())
   }
-  const apply = () => {
-    const { matches: wide } = layout
+  const notebookScroll = document.querySelector('.notebook-scroll')
+  const notebookEntries = document.getElementById('notebook-entries')
+  const preserveReadingPosition = (/** @type {() => void} */ change) => {
     const focus = document.activeElement
-    const top = scroll.getBoundingClientRect().top
-    const anchor = Array.from(scroll.children).find(row => row.hasAttribute('data-converse-message') && row.getBoundingClientRect().bottom > top)
+    const inNotebook = !!notebookScroll?.getClientRects().length
+    const scroller = inNotebook ? notebookScroll : scroll
+    const rows = inNotebook ? notebookEntries?.children : scroll.querySelectorAll(':scope > [data-converse-message]')
+    const top = scroller.getBoundingClientRect().top
+    const anchor = Array.from(rows ?? []).find(row => row.getBoundingClientRect().bottom > top)
     const offset = anchor ? anchor.getBoundingClientRect().top - top : 0
-    const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 1
+    const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+    change()
+    if (focus instanceof HTMLElement && focus !== document.activeElement && focus.isConnected && focus.getClientRects().length) {
+      focus.focus({ preventScroll: true })
+    }
+    if (!scroller.getClientRects().length) return
+    if (atBottom) scroller.scrollTop = scroller.scrollHeight
+    else if (anchor) scroller.scrollTop += anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset
+  }
+  const apply = () => preserveReadingPosition(() => {
+    const { matches: wide } = layout
     const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
-    document.documentElement.toggleAttribute('data-desk-wide', wide)
+    root.toggleAttribute('data-desk-wide', wide)
     if (wide) {
       nav.before(places)
-      more.before(search)
       moreItems.prepend(roster)
     } else {
       overview.prepend(places)
@@ -1775,19 +1812,39 @@ function mountDeskLayout(strip) {
       aside?.removeAttribute('data-open')
       roster.setAttribute('aria-expanded', 'false')
     }
+    renderCollapse()
     updateDate()
     strip.setWide(wide)
     const placeList = document.getElementById('places-root')
     if (placeList) placeList.scrollTop = placeTop
-    if (focus instanceof HTMLElement && focus.isConnected && focus.getClientRects().length) focus.focus({ preventScroll: true })
-    if (atBottom) scroll.scrollTop = scroll.scrollHeight
-    else if (anchor) scroll.scrollTop += anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top - offset
+  })
+  const setCollapsed = (/** @type {boolean} */ next) => {
+    collapsed = next
+    preserveReadingPosition(renderCollapse)
+    writeDeskCollapsed(window, collapsed)
   }
+  const onShortcut = (/** @type {KeyboardEvent} */ event) => {
+    if (!layout.matches || root.dataset.mode !== 'dashboard'
+        || !isDeskCollapseShortcut(event, root.dataset.platform === 'macos')) return
+    event.preventDefault()
+    setCollapsed(!collapsed)
+  }
+  toggle.addEventListener('click', () => {
+    setCollapsed(!collapsed)
+    toggle.focus({ preventScroll: true })
+  })
+  cc.addEventListener('click', event => {
+    if (!layout.matches || !collapsed) return
+    event.stopImmediatePropagation()
+    setCollapsed(false)
+  }, { capture: true })
+  document.addEventListener('keydown', onShortcut)
   if (layout.matches) apply()
   layout.addEventListener('change', apply)
   document.addEventListener('visibilitychange', updateDate)
   window.addEventListener('pagehide', () => {
     layout.removeEventListener('change', apply)
+    document.removeEventListener('keydown', onShortcut)
     document.removeEventListener('visibilitychange', updateDate)
     window.clearTimeout(midnightTimer)
   }, { once: true })
@@ -1856,7 +1913,7 @@ async function boot() {
       },
       onSelect:place=>setConversationPlace(place?{name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
       onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id),
-      // 非首页时沿用 CC 的等待提示点。
+      // 非首页和书脊共用 CC 的等待提示点。
       onPlaces:places=>{
         updateConversationPlaces(places)
         const count = places.reduce((sum,p)=>sum+(p.waiting?.count??0),0)

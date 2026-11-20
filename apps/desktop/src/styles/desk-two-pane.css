@@ -5,11 +5,12 @@
 html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: none; }
 
 [data-desk-wide] .dashboard .dash-window {
+  --desk-rail-width: 304px;
   --desk-page-width: 780px;
   --desk-page-padding: 56px;
   --desk-speaker-offset: 48px;
   --th-weight-desk-emphasis: 600; /* 两栏原型的标题和未读字重 */
-  grid-template-columns: 304px minmax(0, 1fr) auto;
+  grid-template-columns: var(--desk-rail-width) minmax(0, 1fr) auto;
   grid-template-rows: 30px minmax(0, 1fr);
   font-family: var(--th-font-serif);
 }
@@ -25,7 +26,21 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   border-right: 1px solid var(--th-hair);
   background: var(--th-paper);
 }
-[data-desk-wide] .dash-topbar .desk-rail-titlebar { display: block; user-select: none; }
+[data-desk-wide] .dash-topbar .desk-rail-titlebar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding-inline-end: 6px;
+  user-select: none;
+}
+[data-desk-wide] #desk-rail-toggle {
+  width: 28px;
+  height: 28px;
+  color: var(--th-ink-soft);
+  font: 22px / 1 var(--th-font-serif);
+}
+[data-desk-wide] #dash-global-rail:hover #desk-rail-toggle,
+[data-desk-wide] #desk-rail-toggle:focus { color: var(--th-ink); }
 [data-desk-wide][data-platform="macos"] .desk-rail-titlebar { margin-left: 84px; }
 [data-desk-wide] .topbar-home { position: relative; margin: 6px 12px 20px 20px; }
 [data-desk-wide] #topbar-cc {
@@ -365,10 +380,49 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   position: absolute;
   inset: 30px 0 0 auto;
   z-index: 60;
-  width: min(360px, calc(100% - 304px));
+  width: min(360px, calc(100% - var(--desk-rail-width)));
 }
 [data-desk-wide] .dashboard #roster-aside[data-open]:not([data-docked]) #roster-list { display: block; }
 [data-desk-wide] .dash-window:has(#roster-aside[data-open])::after { display: none; }
-[data-desk-wide] .dashboard .dash-main > .workbench-pane { width: min(720px, calc(100% - 336px)); }
+[data-desk-wide] .dashboard .dash-main > .workbench-pane { width: min(720px, calc(100% - var(--desk-rail-width) - 32px)); }
 [data-desk-wide] #settings-drawer { font-family: var(--th-font-serif); }
 [data-desk-wide] body:has(#settings-drawer.is-open) :is(#settings-open, .topbar-more summary) { color: var(--th-ink); }
+
+[data-desk-collapsed] .dashboard .dash-window { --desk-rail-width: 64px; }
+[data-desk-collapsed] #dash-global-rail :is(.places-strip, .desk-cc-copy, .cc-home-details) { display: none; }
+[data-desk-collapsed][data-platform="macos"] .desk-rail-titlebar {
+  /* The native traffic lights extend past the spine. Leave their row clear. */
+  margin: 30px 0 0;
+}
+[data-desk-collapsed][data-platform="macos"] #dash-global-rail {
+  grid-template-rows: 60px auto minmax(0, 1fr) auto;
+}
+[data-desk-collapsed] .topbar-home { margin: 6px auto 0; }
+[data-desk-collapsed] #topbar-cc { min-height: 40px; padding: 0; }
+[data-desk-collapsed] #topbar-cc :is(.topbar-figure, .topbar-figure img, .now-pet-stage, .now-pet-sprite) {
+  width: 40px;
+  height: 40px;
+}
+[data-desk-collapsed] #topbar-cc .now-pet-stage { margin-top: -20px; }
+[data-desk-collapsed] #topbar-cc[data-cc="here"]::before {
+  left: -10px;
+  width: 60px;
+  height: 60px;
+  margin-top: -30px;
+}
+[data-desk-collapsed] #topbar-cc[data-waiting] .topbar-waiting-dot { display: block; left: 32px; }
+[data-desk-collapsed] #dash-global-rail nav {
+  grid-row: 4;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 12px;
+}
+[data-desk-collapsed] #dash-global-rail nav > button {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  min-inline-size: 40px;
+  min-block-size: 32px;
+  white-space: nowrap;
+}
+[data-desk-collapsed] #dash-global-rail nav .topbar-more { margin: 0; }
+[data-desk-collapsed] .topbar-more > div { inset: auto auto 0 calc(100% + 8px); }
