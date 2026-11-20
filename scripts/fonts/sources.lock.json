@@ -35,5 +35,36 @@
     "level1Sha256": "79a6c710013cc86617d5db65871f59b2d67dee72415d380a2cc7145a51450fe4",
     "level2Sha256": "d597a6e99ea7b8c41215081f824c6e8587bf1c9a3f45fb13086a826306789785",
     "sha256": "9631d548834bca79f6db606483a92cc0bf6c2797bc95e5fe7d7d897e0f441dbf"
+  },
+  "notebookPens": {
+    "kai": {
+      "title": "霞鹜文楷 Lite",
+      "family": "TH Pen Kai",
+      "url": "https://github.com/lxgw/LxgwWenKai-Lite/releases/download/v1.530/LXGWWenKaiLite-Regular.ttf",
+      "sha256": "f799a538a3355877e597a0ae04050e897932c9ae7689eb9227c2953c5dd549ea",
+      "oflUrl": "https://raw.githubusercontent.com/lxgw/LxgwWenKai-Lite/b712c83d98acf977bacfb7fb010207802808bda9/OFL.txt",
+      "oflCommit": "b712c83d98acf977bacfb7fb010207802808bda9",
+      "oflSha256": "0333a85fe077b6849f8e417acc44e8bd879442ceb681e271acf93e2d57fd4e2e"
+    },
+    "hand": {
+      "title": "悠哉字体",
+      "family": "TH Pen Hand",
+      "url": "https://github.com/lxgw/yozai-font/releases/download/v0.868/Yozai-Regular.ttf",
+      "sha256": "25071998a0fe6a72f54c235e714986d259633e5ff670b1a2b5e264387f3316ac",
+      "oflUrl": "https://raw.githubusercontent.com/lxgw/yozai-font/90a91ca019faad7b7dae885a4f70a44359021333/OFL.txt",
+      "oflCommit": "90a91ca019faad7b7dae885a4f70a44359021333",
+      "oflSha256": "86b3a0b5162848503241d80ea9a309a6459690ba7dc547940758a6a689a53b02"
+    },
+    "fangsong": {
+      "title": "朱雀仿宋",
+      "family": "TH Pen Fangsong",
+      "url": "https://github.com/TrionesType/zhuque/releases/download/v0.212/ZhuqueFangsong-v0.212.zip",
+      "sha256": "bb8b661a7643d2296a72d9d10530a00949419c4e527fb61783f73c2ba1a8c062",
+      "oflUrl": "https://raw.githubusercontent.com/TrionesType/zhuque/803217b9663d1c6e1402e91acc94e4f572713d73/LICENSE.txt",
+      "oflCommit": "803217b9663d1c6e1402e91acc94e4f572713d73",
+      "oflSha256": "66cc01ad4df62fca6936431a426104cb32a52ce8da49de9a7d643e02d7659043",
+      "ttfMember": "ZhuqueFangsong-Regular.ttf",
+      "ttfSha256": "558c62730844fe54ba220146ed62f859d4e2880188d92d985f8921c6e3743bc4"
+    }
   }
 }

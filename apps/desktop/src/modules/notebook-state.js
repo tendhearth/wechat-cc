@@ -41,40 +41,17 @@ export function notebookPeriod(timestamp) {
 }
 
 const fonts = {
-  kai: "'Kaiti SC', 'STKaiti', 'KaiTi'",
-  fangsong: "'STFangsong', 'FangSong'",
-  xingkai: "'Xingkai SC', 'STXingkai'",
-}
-const fontSample = '這是我們兩個人的本子。春風寫過青山，我还想接着写。'
-
-/**
- * @param {NotebookPen['font']} font
- * @param {(text: string, families: string) => number | string} measure
- */
-export function canWriteNotebookFont(font, measure) {
-  if (font === 'songItalic') return true
-  return ['serif', 'monospace'].some(fallback =>
-    measure(fontSample, `${fonts[font]}, ${fallback}`) !== measure(fontSample, fallback))
+  kai: '"TH Pen Kai"',
+  hand: '"TH Pen Hand"',
+  fangsong: '"TH Pen Fangsong"',
 }
 
-/** @type {ReadonlySet<NotebookPen['font']> | undefined} */
-let availableFonts
+export const NOTEBOOK_FONT_KEYS = [...Object.keys(fonts), 'songItalic'].join(',')
 
-export function notebookFonts() {
-  if (!availableFonts) {
-    const ctx = document.createElement('canvas').getContext('2d')
-    /** @type {(text: string, families: string) => number | string} */
-    const measure = (text, families) => {
-      if (!ctx) return 0
-      ctx.font = `32px ${families}`
-      const metrics = ctx.measureText(text)
-      return [metrics.width, metrics.actualBoundingBoxLeft, metrics.actualBoundingBoxRight,
-        metrics.actualBoundingBoxAscent, metrics.actualBoundingBoxDescent].join(',')
-    }
-    const keys = /** @type {(keyof typeof fonts)[]} */ (Object.keys(fonts))
-    availableFonts = new Set([...keys.filter(font => canWriteNotebookFont(font, measure)), 'songItalic'])
-  }
-  return availableFonts
+/** @param {NotebookPen['font'] | 'xingkai'} font */
+export function notebookPenFamily(font) {
+  const key = font === 'xingkai' ? 'hand' : font
+  return key !== 'songItalic' && Object.hasOwn(fonts, key) ? fonts[key] : undefined
 }
 
 const inks = {
@@ -84,12 +61,12 @@ const inks = {
   greyPurple: 'var(--th-notebook-grey-purple)',
 }
 
-/** @param {Pick<NotebookPen, 'font' | 'ink'>} pen @param {ReadonlySet<NotebookPen['font']>} available */
-export function notebookPenStyle(pen, available) {
-  const font = available.has(pen.font) ? pen.font : 'songItalic'
+/** @param {Pick<NotebookPen, 'font' | 'ink'>} pen @param {boolean} loaded */
+export function notebookPenStyle(pen, loaded) {
+  const family = loaded ? notebookPenFamily(pen.font) : undefined
   return {
-    fontFamily: font === 'songItalic' ? 'var(--th-font-serif)' : `${fonts[font]}, var(--th-font-serif)`,
-    fontStyle: font === 'songItalic' ? 'italic' : 'normal',
+    fontFamily: family ? `${family}, var(--th-font-serif)` : 'var(--th-font-serif)',
+    fontStyle: family ? 'normal' : 'italic',
     color: inks[pen.ink] ?? inks.blueBlack,
   }
 }

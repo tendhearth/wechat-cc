@@ -1,14 +1,14 @@
 // @ts-check
 import { callNotebook } from '../daemon-client.js'
 import {
-  NOTEBOOK_CACHE_KEY, createNotebookQueue, notebookDay, notebookDateLabel, notebookFonts, notebookPenStyle,
+  NOTEBOOK_CACHE_KEY, createNotebookQueue, notebookDay, notebookDateLabel, NOTEBOOK_FONT_KEYS, notebookPenFamily, notebookPenStyle,
   notebookPeriod, readNotebookStorage, writeNotebookStorage,
 } from './notebook-state.js'
 
 /** @typedef {import('@wechat-cc/protocol').NotebookPageResponseT} NotebookPage */
 /** @typedef {import('@wechat-cc/protocol').NotebookEntryT} NotebookEntry */
 /** @typedef {import('@wechat-cc/protocol').NotebookPaperT} NotebookPaper */
-/** @typedef {{ day: string, today?: string, days: string[], entries: NotebookEntry[], pen: NotebookPage['pen'], paper: NotebookPaper }} NotebookCache */
+/** @typedef {{ day: string, today?: string, days: string[], entries: NotebookEntry[], pen: NotebookPage['pen'], penPending?: boolean, paper: NotebookPaper }} NotebookCache */
 
 const LINE_HEIGHT = 36
 const UNSAVED_DELAY = 5000
@@ -37,6 +37,31 @@ export function mountNotebook(host, transport) {
   let days = []
   /** @type {NotebookPage['pen']} */
   let pen = DEFAULT_PEN
+  let penPending = true
+  /** @type {Map<string, { loaded?: boolean, ready: Promise<void> }>} */
+  const penFonts = new Map()
+
+  function preparePen() {
+    const family = !penPending && notebookPenFamily(pen.font)
+    if (!family) return
+    let state = penFonts.get(family)
+    if (!state) {
+      const pending = {
+        /** @type {boolean | undefined} */
+        loaded: undefined,
+        ready: Promise.resolve().then(async () => {
+          try {
+            const faces = await document.fonts.load(`400 19px ${family}`)
+            pending.loaded = faces.some(face => face.status === 'loaded')
+          } catch { pending.loaded = false }
+          render()
+        }),
+      }
+      penFonts.set(family, pending)
+      state = pending
+    }
+    return state
+  }
   /** @type {NotebookPaper} */
   let paper = 'ruled'
   /** @type {Map<string, NotebookEntry[]>} */
@@ -54,7 +79,7 @@ export function mountNotebook(host, transport) {
   let statusTimer = 0
 
   const save = () => writeNotebookStorage(storage, NOTEBOOK_CACHE_KEY,
-    { day, today: knowsToday ? today : undefined, days, entries: pages.get(day) ?? [], pen, paper })
+    { day, today: knowsToday ? today : undefined, days, entries: pages.get(day) ?? [], pen, penPending, paper })
 
   /** @param {string} dateKey */
   function rememberDay(dateKey) {
@@ -67,7 +92,7 @@ export function mountNotebook(host, transport) {
     let request = reads.get(key)
     if (!request) {
       request = (async () => {
-        const result = /** @type {NotebookPage} */ (await callNotebook(transport, { day: dateKey, fonts: [...notebookFonts()].join(',') }))
+        const result = /** @type {NotebookPage} */ (await callNotebook(transport, { day: dateKey, fonts: NOTEBOOK_FONT_KEYS }))
         if (result?.day !== dateKey || !result.today || !Array.isArray(result.entries) || !Array.isArray(result.days)) {
           throw new Error('Notebook page unavailable')
         }
@@ -127,8 +152,8 @@ export function mountNotebook(host, transport) {
     return node
   }
 
-  /** @param {string} key @param {NotebookEntry} entry @param {boolean} pending @param {boolean} overdue @param {string | undefined} period */
-  function makeRow(key, entry, pending, overdue, period) {
+  /** @param {string} key @param {NotebookEntry} entry @param {boolean} pending @param {boolean} overdue @param {string | undefined} period @param {boolean} penLoaded */
+  function makeRow(key, entry, pending, overdue, period, penLoaded) {
     const node = document.createElement('div')
     node.className = 'notebook-entry'
     node.dataset.author = entry.author
@@ -138,7 +163,7 @@ export function mountNotebook(host, transport) {
     text.className = 'notebook-text'
     text.textContent = entry.body
     if (entry.author === 'cc') {
-      Object.assign(node.style, notebookPenStyle(pen, notebookFonts()))
+      Object.assign(node.style, notebookPenStyle(pen, penLoaded))
       node.append(text)
       if (period) {
         const signature = document.createElement('div')
@@ -194,7 +219,12 @@ export function mountNotebook(host, transport) {
     host.dataset.paper = paper
     paperButton.textContent = paper === 'ruled' ? '换成白纸' : '换成横线'
 
-    const saved = pages.get(day) ?? []
+    // Keep the owner's page writable while the chosen face loads. Insert CC's
+    // rows only when their final face (or the italic fallback) is ready.
+    const penFont = preparePen()
+    const penLoaded = penFont?.loaded === true
+    const saved = (pages.get(day) ?? []).filter(entry =>
+      entry.author !== 'cc' || !penFont || penFont.loaded !== undefined)
     const pending = queue.entries().filter(row => row.day === day &&
       ![...pages.values()].some(entries => entries.some(entry => entry.clientId === row.clientId)))
     const pendingIds = new Set(pending.map(row => row.clientId))
@@ -222,8 +252,8 @@ export function mountNotebook(host, transport) {
       const signaturePeriod = nextEntry?.author === 'cc' && nextEntry.day === entry.day
         && notebookPeriod(nextEntry.createdAt) === period ? undefined : period
       const overdue = isPending && remaining <= 0
-      const signature = JSON.stringify([entry, isPending, overdue, signaturePeriod, entry.author === 'cc' ? pen : null])
-      const node = old?.signature === signature ? old.node : makeRow(key, entry, isPending, overdue, signaturePeriod)
+      const signature = JSON.stringify([entry, isPending, overdue, signaturePeriod, entry.author === 'cc' ? [pen, penLoaded] : null])
+      const node = old?.signature === signature ? old.node : makeRow(key, entry, isPending, overdue, signaturePeriod, penLoaded)
       if (old && old.node !== node) {
         const restoreFocus = old.node.contains(document.activeElement)
         if (position === old.node) position = node
@@ -261,6 +291,7 @@ export function mountNotebook(host, transport) {
       pages.set(data.day, data.entries.filter(entry => entry.day === data.day))
       days = [...data.days].sort()
       pen = data.pen ?? DEFAULT_PEN
+      penPending = data.penPending
       if (!changingPaper) paper = data.paper
       const wasToday = day === today
       knowsToday = true
@@ -272,7 +303,10 @@ export function mountNotebook(host, transport) {
       }
       save()
       render()
-      if (target) locate(target)
+      if (target) {
+        await preparePen()?.ready
+        if (active && token === view) locate(target)
+      }
     } catch { /* Keep the last locally available page. */ }
   }
 
@@ -412,6 +446,7 @@ export function mountNotebook(host, transport) {
           days = cached.days
           paper = cached.paper
           pen = cached.pen ?? DEFAULT_PEN
+          penPending = cached.penPending ?? !cached.pen
           if (cached.today) {
             today = cached.today
             knowsToday = true

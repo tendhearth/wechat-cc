@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { NotebookEntryT } from '@wechat-cc/protocol'
 import { callNotebook } from '../daemon-client.js'
 import {
-  canWriteNotebookFont, createNotebookQueue, NOTEBOOK_QUEUE_KEY, notebookDay, notebookDateLabel, notebookPenStyle, notebookPeriod,
+  createNotebookQueue, NOTEBOOK_QUEUE_KEY, notebookDay, notebookDateLabel, notebookPenStyle, notebookPeriod,
 } from './notebook-state.js'
 
 describe('桌面本子', () => {
@@ -20,31 +20,18 @@ describe('桌面本子', () => {
   })
 
   it.each([
-    ['kai', 'blueBlack', "'Kaiti SC', 'STKaiti', 'KaiTi', ", 'normal', 'blue-black'],
-    ['fangsong', 'darkGreen', "'STFangsong', 'FangSong', ", 'normal', 'dark-green'],
-    ['xingkai', 'ochre', "'Xingkai SC', 'STXingkai', ", 'normal', 'ochre'],
+    ['kai', 'blueBlack', '"TH Pen Kai", ', 'normal', 'blue-black'],
+    ['fangsong', 'darkGreen', '"TH Pen Fangsong", ', 'normal', 'dark-green'],
+    ['hand', 'ochre', '"TH Pen Hand", ', 'normal', 'ochre'],
     ['songItalic', 'greyPurple', '', 'italic', 'grey-purple'],
-  ] as const)('把 %s 和 %s 映射到本机字和墨色 token', (font, ink, stack, fontStyle, token) => {
-    expect(notebookPenStyle({ font, ink }, new Set([font]))).toEqual({
+  ] as const)('把 %s 和 %s 映射到随包字和墨色 token', (font, ink, stack, fontStyle, token) => {
+    expect(notebookPenStyle({ font, ink }, true)).toEqual({
       fontFamily: stack + 'var(--th-font-serif)', fontStyle, color: `var(--th-notebook-${token})`,
     })
   })
 
-  it('用同一段中文比较目标字体与兜底，宋体斜无需测量', () => {
-    const measure = vi.fn((_sample: string, families: string) =>
-      families.includes('Kaiti SC') && families.endsWith('monospace') ? 26 : 24)
-    expect(canWriteNotebookFont('kai', measure)).toBe(true)
-    expect(canWriteNotebookFont('fangsong', measure)).toBe(false)
-    expect(canWriteNotebookFont('xingkai', measure)).toBe(false)
-    expect(new Set(measure.mock.calls.map(([sample]) => sample)).size).toBe(1)
-    expect(measure.mock.calls[0]?.[0]).toMatch(/本子/)
-    measure.mockClear()
-    expect(canWriteNotebookFont('songItalic', measure)).toBe(true)
-    expect(measure).not.toHaveBeenCalled()
-  })
-
   it('已存字体不可用时退到宋体斜，保留墨色', () => {
-    expect(notebookPenStyle({ font: 'kai', ink: 'ochre' }, new Set(['songItalic']))).toEqual({
+    expect(notebookPenStyle({ font: 'kai', ink: 'ochre' }, false)).toEqual({
       fontFamily: 'var(--th-font-serif)', fontStyle: 'italic', color: 'var(--th-notebook-ochre)',
     })
   })

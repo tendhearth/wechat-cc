@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { NotebookEntryT, NotebookPaperT } from '@wechat-cc/protocol'
+import type { NotebookEntryT, NotebookPaperT, NotebookPenT } from '@wechat-cc/protocol'
 import { test, expect, clickNav } from './fixtures'
 import { NOTEBOOK_CACHE_KEY } from '../src/modules/notebook-state.js'
 
@@ -9,7 +9,7 @@ const pageDay = '2026-11-19'
 const followingDay = '2026-11-20'
 const writeInput = '#notebook-write'
 const uniqueLine = 'notebook-private-71c6'
-const pen = { font: 'kai', ink: 'blueBlack', reason: '慢一点写' }
+const pen: NotebookPenT = { font: 'kai', ink: 'blueBlack', reason: '慢一点写' }
 
 function row(id: number, author: NotebookEntryT['author'], body: string, date: string, refId: string | null = null, refDay?: string): NotebookEntryT {
   return {
@@ -25,7 +25,7 @@ function gate() {
   return { wait, release }
 }
 
-async function mockNotebook(page: Page, initial: Record<string, NotebookEntryT[]> = {}) {
+async function mockNotebook(page: Page, initial: Record<string, NotebookEntryT[]> = {}, pagePen = pen) {
   const entries = structuredClone(initial)
   const writes: { body: string, clientId: string }[] = []
   const reads: URLSearchParams[] = []
@@ -40,7 +40,7 @@ async function mockNotebook(page: Page, initial: Record<string, NotebookEntryT[]
     await settings.readGate
     await route.fulfill({ json: {
       day, today: settings.today, days: Object.keys(entries).filter(day => entries[day]!.length).sort().reverse(),
-      entries: entries[day] ?? [], pen, penPending: false, paper: settings.paper,
+      entries: entries[day] ?? [], pen: pagePen, penPending: false, paper: settings.paper,
     } })
   })
   await page.route('**/v1/notebook/write', async route => {
@@ -257,29 +257,62 @@ test('六十秒静静刷页，保留焦点和草稿，CC 等主人放下笔再�
   await expect(input).toBeFocused()
 })
 
-test('CC 使用本机可写的笔或宋体斜，字形和墨色都与主人有别', async ({ page, shimUrl }) => {
-  const { reads } = await mockNotebook(page, {
-    [pageDay]: [row(1, 'owner', '主人写字', pageDay), row(2, 'cc', 'CC 写字', pageDay)],
+for (const [font, family] of [
+  ['kai', 'TH Pen Kai'], ['hand', 'TH Pen Hand'], ['fangsong', 'TH Pen Fangsong'], ['songItalic', null],
+] as const) {
+  test(`CC 用 ${font} 写字，桌面报全四支笔`, async ({ page, shimUrl }) => {
+    const { reads } = await mockNotebook(page, {
+      [pageDay]: [row(1, 'owner', '主人写字', pageDay), row(2, 'cc', 'CC 写字', pageDay)],
+    }, { ...pen, font })
+    await page.goto(shimUrl)
+    await clickNav(page, 'notebook')
+    const style = (author: string) => page.locator(`[data-author="${author}"] .notebook-text`).evaluate(el => {
+      const { fontFamily, fontStyle, color } = getComputedStyle(el)
+      return { fontFamily, fontStyle, color }
+    })
+    const owner = await style('owner')
+    const cc = await style('cc')
+    expect(reads[0]?.get('fonts')?.split(',')).toEqual(['kai', 'hand', 'fangsong', 'songItalic'])
+    if (family) {
+      expect(cc.fontFamily.replace(/^"/, '').startsWith(family)).toBe(true)
+      expect(cc.fontStyle).toBe('normal')
+      expect(await page.evaluate(name => document.fonts.check(`400 19px "${name}"`, '写字')
+        && [...document.fonts].some(face => face.family.replaceAll('"', '') === name && face.status === 'loaded'), family)).toBe(true)
+      await expect(page.locator('[data-author="cc"] .notebook-meta')).toHaveCSS('font-family', cc.fontFamily)
+    } else {
+      expect(cc.fontFamily).toBe(owner.fontFamily)
+      expect(cc.fontStyle).toBe('italic')
+    }
+    expect([cc.fontFamily, cc.fontStyle]).not.toEqual([owner.fontFamily, owner.fontStyle])
+    expect(cc.color).not.toBe(owner.color)
   })
-  await page.goto(shimUrl)
-  await clickNav(page, 'notebook')
-  const style = (author: string) => page.locator(`[data-author="${author}"] .notebook-text`).evaluate(el => {
-    const { fontFamily, fontStyle, color } = getComputedStyle(el)
-    return { fontFamily, fontStyle, color }
+}
+
+test('缓存里的 CC 字等随包字体加载，失败后直接画成宋体斜', async ({ page, shimUrl }) => {
+  const font = gate()
+  const cc = row(2, 'cc', '缓存中的 CC 字', pageDay)
+  await page.addInitScript(({ key, entry, pagePen }) => {
+    localStorage.setItem(key, JSON.stringify({
+      day: entry.day, today: entry.day, days: [entry.day], entries: [entry], pen: pagePen, paper: 'ruled',
+    }))
+  }, { key: NOTEBOOK_CACHE_KEY, entry: cc, pagePen: pen })
+  await mockNotebook(page, { [pageDay]: [cc] })
+  await page.route('**/th-pen-kai.woff2', async route => {
+    await font.wait
+    await route.abort()
   })
-  const owner = await style('owner')
-  const cc = await style('cc')
-  const fonts = reads[0]?.get('fonts')?.split(',')
-  expect(fonts).toContain('songItalic')
-  if (fonts?.includes('kai')) {
-    expect(cc.fontFamily).toContain('Kaiti SC')
-    expect(cc.fontStyle).toBe('normal')
-  } else {
-    expect(cc.fontFamily).toBe(owner.fontFamily)
-    expect(cc.fontStyle).toBe('italic')
+  const request = page.waitForRequest('**/th-pen-kai.woff2')
+  try {
+    await page.goto(shimUrl)
+    await clickNav(page, 'notebook')
+    await request
+    await expect(page.locator(writeInput)).toBeFocused()
+    await expect(page.getByText(cc.body)).toHaveCount(0)
+  } finally {
+    font.release()
   }
-  expect([cc.fontFamily, cc.fontStyle]).not.toEqual([owner.fontFamily, owner.fontStyle])
-  expect(cc.color).not.toBe(owner.color)
+  await expect(page.getByText(cc.body)).toHaveCSS('font-style', 'italic')
+  await expect(page.getByText(cc.body)).toHaveCSS('font-family', await page.locator(writeInput).evaluate(el => getComputedStyle(el).fontFamily))
 })
 
 test('静静取页跟着 daemon 跨午夜，保留草稿和焦点，补写按回执挪页', async ({ page, shimUrl }) => {
