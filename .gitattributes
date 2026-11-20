@@ -43,3 +43,4 @@ apps/desktop/src/generated/cc-activity.js text eol=lf
 
 # 桌面随包字体许可:三份笔的上游许可按原字节校验,包含原来的行尾空格。
 apps/desktop/src/fonts/OFL.txt -text whitespace=-blank-at-eol
+apps/app/assets/fonts/OFL.txt -text whitespace=-blank-at-eol
