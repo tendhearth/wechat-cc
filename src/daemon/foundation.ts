@@ -15,7 +15,7 @@ import { acquireInstanceLockWaitingForShutdown, releaseInstanceLock, isHeartbeat
 import { openDb, type Db } from '../lib/db'
 import { log } from '../lib/log'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
-import { loadAccess, AccessConfigCorruptError } from '../lib/access'
+import { initializeAccess, AccessConfigCorruptError } from '../lib/access'
 import { consumePreviousRunEvidence, peekCleanShutdown } from '../lib/restart-markers'
 import { makeMemoryFS } from '../adapters/store/memory-fs'
 import { makeConversationStore } from '../adapters/store/conversation-store'
@@ -94,7 +94,7 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
   dedupeAccountsByUserId(join(stateDir, 'accounts'), {}, { log: (t, l) => log(t, l) })
   // Validate access.json eagerly. If the file is unparseable we refuse
   // to boot — through the typed exception so tests can catch it.
-  try { loadAccess() }
+  try { initializeAccess() }
   catch (err) {
     if (err instanceof AccessConfigCorruptError) {
       // 以前直接 process.exit(1),绕过了 main() 的退避 ⇒ access.json 坏了就是重启风暴。锁由外层放。

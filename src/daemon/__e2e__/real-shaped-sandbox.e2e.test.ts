@@ -120,7 +120,7 @@ const codexScript: FakeSdkScript = {
     return { toolCalls: [], finalText: 'Codex 在。' }
   },
 }
-const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs'> = {}) => startRealShapedDaemon({
+const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs' | 'recordSessionAuth'> = {}) => startRealShapedDaemon({
   ...more,
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
@@ -159,23 +159,35 @@ const SWEEP_REQUEST_TIMEOUT_MS = 5_000
 
 /** 重启后发一句、等回话。Windows runner 上这一步偶发红过两次(一次什么都没发、一次回了「没接住」),原因没查实:
  *  所以遇到「没接住」立刻失败,并把现场的几个事实一起打出来,下次红了能定位是哪一路取消的。 */
-async function expectPostRebootCodexReply(): Promise<void> {
+async function expectPostRebootCodexReply(d: RealShapedDaemon): Promise<void> {
   const sentBefore = texts(d.ilink.outbox(), d.owner).length
   const threadsBefore = codexThreads.length
+  const linesBefore = d.log().length
   d.sendText(d.owner, '还在吗')
   const replies = (m: Parameters<typeof texts>[0]) => texts(m, d.owner).slice(sentBefore)
   const expected = 'Codex 在。'
   const spawnFailure = 'codex 这次没起来,这条我没接住。'
-  const saw = (marker: string) => d.log().some(l => l.includes(marker))
-  const evidence = () => JSON.stringify({
-    inboundReceived: saw('[POLL] inbound '),
-    spawnFailed: d.log().some(l => l.includes('[COORDINATOR]') && l.includes('provider=codex spawn failed')),
-    probePassed: saw('[CODEX_PROBE] ok in '),
-    threadRequested: codexThreads.length > threadsBefore,
-    accessInvalidated: saw('[ACCESS] tier membership changed'),
-    guardSuspended: saw('[GUARD] network unprotected [probe,'),
-    shutdownStarted: saw('[DAEMON] shutdown initiated'),
-  })
+  const evidence = () => {
+    // log() captures stderr from this boot, independently of the persistent log files.
+    const bootLog = d.log()
+    const saw = (marker: string) => bootLog.some(l => l.includes(marker))
+    const failure = bootLog.slice(linesBefore).findLast(l => l.includes(`[COORDINATOR] chat=${d.owner} provider=codex spawn failed`))
+    // Some failures (including preparation cancellation) are bare Error messages.
+    // Capture only an identifier, never free-form error detail.
+    const failureCode = failure?.match(/ spawn failed code=([a-z][a-z0-9_]*): /)?.[1]
+      ?? failure?.match(/ spawn failed: ([a-z][a-z0-9_]*)(?:: |$)/)?.[1]
+      ?? null
+    return JSON.stringify({
+      inboundReceived: saw('[POLL] inbound '),
+      spawnFailed: failure !== undefined,
+      spawnFailureCode: failureCode,
+      probePassed: saw('[CODEX_PROBE] ok in '),
+      threadRequested: codexThreads.length > threadsBefore,
+      accessInvalidated: saw('[ACCESS] tier membership changed'),
+      guardSuspended: saw('[GUARD] network unprotected [probe,'),
+      shutdownStarted: saw('[DAEMON] shutdown initiated'),
+    })
+  }
   const out = await d.waitForOutbound(m => replies(m).some(t => t.includes(expected) || t.includes(spawnFailure)), 15_000)
     .catch(error => { throw new Error(`Post-reboot reply missing: ${evidence()}`, { cause: error }) })
   expect(replies(out).filter(t => t.includes(spawnFailure)), evidence()).toEqual([])
@@ -643,22 +655,35 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
   })
 
   it('graceful stop, then reboot on the same state dir: no re-import, still healthy, no module failures', async () => {
+    const access = await import('../../lib/access')
     const before = d.query<{ n: number }>('SELECT COUNT(*) AS n FROM memory_facts')[0]!.n
     const stateDir = d.stateDir
+    // The harness reseeds access.json on boot. Prime the old process-wide
+    // cache with a different membership to model the preceding guest grant.
+    access.appendAllowFrom('reboot-access-fixture@im.wechat')
+    expect(access.loadAccess().allowFrom).toContain('reboot-access-fixture@im.wechat')
     const firstLog = d.log()
     await d.stop({ keepState: true })
     // 关机干净:每一样都停了,没有哪一步停失败
     expect(firstLog.filter(l => /\[MODULES\] stop .* failed/.test(l))).toEqual([])
     expect(firstLog.some(l => /\[MODULES\] stopped internal-api\/stop/.test(l))).toBe(true)
 
-    d = await boot({ stateDir })
+    let rereadDuringPreparation = false
+    d = await boot({ stateDir, recordSessionAuth: ({ sessionKey }) => {
+      if (rereadDuringPreparation || !sessionKey.startsWith('codex/') || !sessionKey.endsWith(`/${d.owner}`)) return
+      access._clearCache()
+      access.loadAccess()
+      rereadDuringPreparation = true
+    } })
     expect(await d.moduleProblems()).toEqual([])
     expect((await d.health()).ok).toBe(true)
     // 已经导过的不再导:记忆文件和 facts.db 的指纹都没变
     expect(d.log().filter(l => /\[(MEMORY_IMPORT|FACTS_IMPORT)\]/.test(l))).toEqual([])
     expect(d.query<{ n: number }>('SELECT COUNT(*) AS n FROM memory_facts')[0]!.n).toBe(before)
     // 重启后照样收发(对话模式也留住了:还是 Codex)
-    await expectPostRebootCodexReply()
+    await expectPostRebootCodexReply(d)
+    expect(rereadDuringPreparation).toBe(true)
+    expect(d.log().some(l => l.includes('[ACCESS] tier membership changed'))).toBe(false)
     // 那件「写一份笔记」是上面派活那条建的;win32 上那条不跑(Codex 工作台在 Windows 上拒绝),没有在办的事 ⇒ 没有这个块。
     if (process.platform !== 'win32') {
       expect(lastCodexEnvelope).toContain('<matters>')
