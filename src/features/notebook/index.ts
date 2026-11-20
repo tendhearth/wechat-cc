@@ -78,11 +78,8 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     if (opening || store.get('pen')) return opening
     const fonts = availableNotebookFonts(reportedFonts)
     const fallback = defaultOpening(fonts)
-    if (store.list({ limit: 1 }).length) {
-      const { font, ink, reason } = fallback
-      store.set('pen', { font, ink, reason })
-      return
-    }
+    // 只看有没有挑过笔,不看本子里有没有字:没翻开过时,对话里的「记一笔」可以先写进来,
+    // 那不该让主人第一次翻开时既没有开场、笔也不是 CC 挑的。开场落在翻开的这一刻,排在早先那几笔之后。
     const openedAt = now()
     opening = Promise.resolve().then(async () => {
       let intro: ReturnType<typeof parseOpening> = fallback
@@ -97,7 +94,7 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
         if (store.get('pen')) return
         const { font, ink, reason } = intro
         store.set('pen', { font, ink, reason })
-        // 首次打开时为空。写入可以在选笔期间完成，开场仍排在第一页。
+        // 写入可以在选笔期间完成;开场用翻开那一刻的时间,仍排在这些写入之前。
         for (const line of intro.lines) {
           append('cc', line, origin, openedAt)
         }
