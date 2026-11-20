@@ -1,0 +1,39 @@
+# 演示本子：两人的字、立刻落笔、翻日和回到今天。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: home-more
+    timeout: 10000
+- tapOn:
+    id: home-more
+- tapOn:
+    id: conversation-notebook
+- extendedWaitUntil:
+    visible:
+      id: notebook-cc-line
+    timeout: 10000
+- assertVisible:
+    id: notebook-owner-line
+- tapOn:
+    id: notebook-input
+- inputText: A line for the notebook
+- tapOn:
+    id: notebook-write
+- assertVisible: A line for the notebook
+- assertVisible:
+    id: notebook-input
+- tapOn:
+    id: notebook-previous
+- assertNotVisible:
+    id: notebook-input
+- assertVisible:
+    id: notebook-today
+- tapOn:
+    id: notebook-today
+- assertVisible:
+    id: notebook-input
+- assertVisible: A line for the notebook

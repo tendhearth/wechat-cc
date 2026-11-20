@@ -3,7 +3,8 @@
 # 依赖:python3 + `pip install fonttools brotli`(PYTHON 环境变量可指定解释器)。
 # 源字体和许可证固定到提交或发行版,并按 sources.lock.json 校验 sha256;不符即失败。
 # 本子三支笔源自霞鹜文楷 Lite、悠哉字体、朱雀仿宋,与 Noto Serif SC 共用字表。
-# --pens-only 只重建桌面的笔。--app-pens 同时生成这三支笔的 App TTF 和许可证。
+# --pens-only 只重建桌面的笔。--app-pens 只生成 App TTF 和许可证。
+# PEN_SOURCE_DIR 可复用已从锁定地址取得的文件，仍核对每一项 sha256。
 # Noto Serif SC 只出 Regular(裁决 D1);Source Serif 4 出 Regular+Medium。
 #
 # 重新生成(换字体 / 改字表时):
@@ -73,7 +74,13 @@ fi
 # 钉住下载件,压缩包的成员也独立校验。所有来源就绪后才写随包文件。
 for key in kai hand fangsong; do
   entry="d['notebookPens']['$key']"
-  curl -fsSL "$(lock "$entry['url']")" -o "$WORK/$key.download"
+  if [ -n "${PEN_SOURCE_DIR:-}" ]; then
+    suffix=ttf
+    [ "$key" != fangsong ] || suffix=zip
+    cp "$PEN_SOURCE_DIR/$key.$suffix" "$WORK/$key.download"
+  else
+    curl -fsSL "$(lock "$entry['url']")" -o "$WORK/$key.download"
+  fi
   chk "$WORK/$key.download" "$(lock "$entry['sha256']")"
   if [ "$key" = fangsong ]; then
     unzip -p "$WORK/$key.download" "$(lock "$entry['ttfMember']")" > "$WORK/$key.ttf"
@@ -81,7 +88,11 @@ for key in kai hand fangsong; do
   else
     mv "$WORK/$key.download" "$WORK/$key.ttf"
   fi
-  curl -fsSL "$(lock "$entry['oflUrl']")" -o "$WORK/OFL-$key.txt"
+  if [ -n "${PEN_SOURCE_DIR:-}" ]; then
+    cp "$PEN_SOURCE_DIR/OFL-$key.txt" "$WORK/OFL-$key.txt"
+  else
+    curl -fsSL "$(lock "$entry['oflUrl']")" -o "$WORK/OFL-$key.txt"
+  fi
   chk "$WORK/OFL-$key.txt" "$(lock "$entry['oflSha256']")"
 done
 
@@ -91,7 +102,6 @@ for key in kai hand fangsong; do
   # 禁用双向标点镜像闭包,字表外码位仍交给页面衬线体。
   SUB "$WORK/$key.ttf" --no-bidi-closure --unicodes="$CJK_EXTRA" --text-file="$WORK/cjk-chars.txt" --layout-features='*' --output-file="$WORK/pen-$key.ttf"
   "$PY" "$ROOT/scripts/fonts/rename-source.py" "$WORK/pen-$key.ttf" Regular "$family" "$psfamily"
-  "$PY" -m fontTools.ttLib.woff2 compress "$WORK/pen-$key.ttf" -o "$WORK/th-pen-$key.woff2"
   "$PY" - "$WORK" "$key" "$CJK_EXTRA" "$family" "$psfamily" <<'PYTHON_SCRIPT'
 import sys
 from pathlib import Path
@@ -102,7 +112,7 @@ directory, key, extra, family, psfamily = sys.argv[1:]
 work = Path(directory)
 allowed = set(map(ord, (work / "cjk-chars.txt").read_text(encoding="utf-8")))
 allowed.update(parse_unicodes(extra))
-with TTFont(work / f"{key}.ttf") as source, TTFont(work / f"th-pen-{key}.woff2") as output:
+with TTFont(work / f"{key}.ttf") as source, TTFont(work / f"pen-{key}.ttf") as output:
     expected = allowed.intersection(source.getBestCmap())
     actual = set(output.getBestCmap())
     if actual != expected:
@@ -117,6 +127,8 @@ with TTFont(work / f"{key}.ttf") as source, TTFont(work / f"th-pen-{key}.woff2")
 PYTHON_SCRIPT
   if [ "$mode" = --app-pens ]; then
     mv "$WORK/pen-$key.ttf" "$WORK/$psfamily-Regular.ttf"
+  else
+    "$PY" -m fontTools.ttLib.woff2 compress "$WORK/pen-$key.ttf" -o "$WORK/th-pen-$key.woff2"
   fi
 done
 
@@ -134,9 +146,11 @@ for key, pen in papers.items():
     combined += (work / f"OFL-{key}.txt").read_bytes()
 (work / "OFL-pens.txt").write_bytes(combined)
 PYTHON_SCRIPT
-cp "$WORK"/th-pen-*.woff2 "$DESK/"
-cp "$WORK/OFL-pens.txt" "$DESK/OFL.txt"
-wc -c "$DESK"/*-serif-*.woff2 "$DESK"/th-pen-*.woff2
+if [ "$mode" != --app-pens ]; then
+  cp "$WORK"/th-pen-*.woff2 "$DESK/"
+  cp "$WORK/OFL-pens.txt" "$DESK/OFL.txt"
+  wc -c "$DESK"/*-serif-*.woff2 "$DESK"/th-pen-*.woff2
+fi
 
 if [ "$mode" = --app-pens ]; then
   cp "$WORK"/THPen*-Regular.ttf "$APP/"

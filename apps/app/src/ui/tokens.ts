@@ -3,3 +3,11 @@ import { color, radius, space, componentAppearance } from '@wechat-cc/design-tok
 export const palette = color
 export type Palette = typeof color
 export { radius, space, componentAppearance }
+
+// 与桌面 notebook-tokens.css 的四种墨色一致。
+export const notebookInks = {
+  blueBlack: '#24405f',
+  darkGreen: '#304d3c',
+  ochre: '#744729',
+  greyPurple: '#584863',
+} as const

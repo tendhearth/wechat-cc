@@ -1,3 +1,4 @@
+import type { NotebookEntryT, NotebookPageQueryT, NotebookPageResponseT, NotebookPaperT } from '@wechat-cc/protocol'
 import type { TopicsListResponse, TopicDetailResponse, TopicOpenResponse, CheckupView, CheckupEstimate } from '@wechat-cc/protocol'
 import type { z } from 'zod'
 import type {
@@ -172,6 +173,10 @@ export interface Backend {
    *  requestId:只在上次失败 / 不确定时重发同一个;已知回复过的绝不重发(daemon 的去重表 50 条 / 1 小时就过期)。 */
   chatSay(text: string, requestId: string, materials?: PhoneMaterials): Promise<ChatJobT>
   /** CC 记得你(GET /m/api/memory):每晚整理出来的那份记忆。 */
+  notebookPage(query: NotebookPageQueryT): Promise<NotebookPageResponseT>
+  notebookWrite(input: { body: string; clientId: string }): Promise<NotebookEntryT>
+  notebookStrike(id: string, struck: boolean): Promise<void>
+  notebookPaper(paper: NotebookPaperT): Promise<NotebookPaperT>
   memory(): Promise<MemoryViewT>
   /** 逐条纠错(POST /m/api/memory/correct,2026-10-06):立刻拿掉,CC 记下这次纠正、当晚整理不写回。不在了 ⇒ BackendError('not_found')。 */
   correctMemory(id: string, verdict: MemoryVerdict): Promise<void>
