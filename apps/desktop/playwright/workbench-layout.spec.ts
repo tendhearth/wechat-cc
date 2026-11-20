@@ -133,6 +133,7 @@ test('conversation layers preserve the global navigation and restore the convers
 })
 
 test('waiting stays visible on the topbar CC while navigating to other panes',async({page,shimUrl,shim})=>{
+  await page.setViewportSize({ width: 800, height: 820 })
   await routePlaces(page,[askingPlace('portfolio','deadbeef','Bash: bun run test'),askingPlace('interviews','cafefeed','要保留原话吗？')])
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
   await page.route('**/v1/workbench/attention',route=>route.fulfill({json:{tasks:[

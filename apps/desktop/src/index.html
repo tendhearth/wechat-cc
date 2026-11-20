@@ -394,8 +394,17 @@
     <main class="dashboard">
       <div class="dash-window">
 
+        <div class="desk-heading" data-tauri-drag-region aria-hidden="true"></div>
+        <div class="desk-rail-titlebar" data-tauri-drag-region>
+          <button id="desk-rail-toggle" type="button" aria-label="收起左边" aria-expanded="true" aria-controls="dash-global-rail">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="3"/>
+              <path d="M9 5v14"/>
+            </svg>
+            <span class="topbar-waiting-dot" aria-hidden="true"></span>
+          </button>
+        </div>
         <header id="dash-global-rail" class="dash-topbar">
-          <div class="desk-rail-titlebar" data-tauri-drag-region aria-hidden="true"></div>
           <div class="topbar-home">
             <button id="topbar-cc" class="dash-nav-link active" data-pane="overview" aria-label="跟 CC 说">
               <span class="topbar-figure"><img class="topbar-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" /><img class="topbar-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" /></span>
@@ -426,7 +435,6 @@
           </nav>
         </header>
 
-        <div class="desk-heading" data-tauri-drag-region aria-hidden="true"></div>
         <section class="dash-main">
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
