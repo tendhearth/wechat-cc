@@ -140,6 +140,9 @@ test('从左缘浮出可筛选和进本子，离开仍留在本子页', async ({
   await routePlaces(page, [placeItem('菜谱')])
   await page.goto(shimUrl)
   await toggle(page).click()
+  // 点完收起鼠标还停在按钮上:要先离开一下,再回到触发区才会浮出(免得刚收起就又弹出来)。
+  // 真鼠标从按钮移到左边缘会经过中间;这里一步跳过去,所以显式离开一次。
+  await away(page)
   const top = await heading(page).boundingBox()
   await page.mouse.move(2, top!.y + top!.height + 40)
   await expect(peeking(page)).toHaveCount(1)
@@ -179,7 +182,8 @@ test('浮出后点按钮固定展开，移开后右栏仍被推开', async ({ pa
   await away(page)
   await expect(peeking(page)).toHaveCount(0)
   await expect(toggle(page)).toHaveAccessibleName('收起左边')
-  await expect(rail(page)).toHaveCSS('position', 'static')
+  // 固定展开 = 回到版面里(左栏平时就是 relative);浮出时才是 absolute。
+  await expect(rail(page)).not.toHaveCSS('position', 'absolute')
   expect((await main(page).boundingBox())!.x).toBe(304)
 })
 
