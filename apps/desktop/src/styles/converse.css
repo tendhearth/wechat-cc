@@ -185,6 +185,11 @@
 
 .converse-terminal { padding:var(--th-space-l); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); }
 .converse-terminal summary { cursor:pointer; display:flex; gap:var(--th-space-l); justify-content:space-between; }
+.converse-terminal [data-terminal-state] { flex:none; white-space:nowrap; color:var(--th-ink-soft); font-size:var(--th-size-small); }
+/* 「更早的对话」在阅读流的最上面,翻到头才看得见;不压在正文上面。 */
+#converse-earlier { align-self:center; flex:none; border:0; padding:4px 8px; background:transparent; color:var(--th-ink-soft); font:inherit; font-size:var(--th-size-small); cursor:pointer; }
+#converse-earlier:hover:enabled { color:var(--th-ink); text-decoration:underline; }
+#converse-earlier:disabled { cursor:wait; }
 .converse-terminal p { white-space:pre-wrap; overflow-wrap:anywhere; }
 .converse-terminal-note, .converse-terminal small { color:var(--th-ink-soft); font-size:var(--th-size-small); }
 

@@ -195,3 +195,16 @@ it('交办使用「现在」的可见性，收起的地方有事等主人时仍�
   expect(reader.planPlaces()).toEqual([])
   expect(store.list()).toHaveLength(2)
 })
+
+it('只有收起的清单变化时也更新版本和 ETag', async () => {
+  const { reader, store } = setup([m('aaaa0001')])
+  const first = reader.read('operator')
+  const key = placeKey('/w/hidden')
+  store.add([{ key, root: '/w/hidden', name: '收起的地方', hidden: true, position: 1 }], NOW)
+  const second = reader.read('operator')
+  expect(second.places).toEqual(first.places)
+  expect(second.hidden).toEqual([{ key, name: '收起的地方' }])
+  expect(second.version).not.toBe(first.version)
+  const response = await call({ places: reader }, 'GET /v1/places', null, 'operator', new Headers({ 'if-none-match': first.version }))
+  expect(response).toMatchObject({ status: 200, body: second, headers: { etag: second.version } })
+})
