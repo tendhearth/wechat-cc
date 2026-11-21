@@ -207,6 +207,19 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     const agentNames=agentNamesOf([...providers.map(p=>p.id),...historyProviders,...result.tasks.flatMap(task=>[task.providerId,...(agents.agents.get(task.id)??[])])])
     return {projects,tasks:result.tasks.map(task => withAgents(taskView(task,true),agents)),page:result.page,projectProviders,providers,historyProviders,agentNames,defaultProvider:providers.find(p=>p.id===ctx.deps.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!ctx.deps.ownerChatId(),unattendedAcknowledgedAt:ctx.deps.unattendedAck?.get()??null}
   }
+  // The experimental map needs only the roster inputs. Full list/detail reads
+  // also maintain quota state and inspect scripts, neither is part of the map.
+  const rosterRead = {
+    attention,
+    list(query: WorkbenchListQuery) {
+      const { tasks, page } = store.listPage(query)
+      return { tasks: tasks.map(task => ({ id: task.id, status: task.status, phase: phaseOf(task, state.runsByTask.get(task.id)) })), page }
+    },
+    detail(id: string) {
+      const running = state.runsByTask.get(id)
+      return { permissions: running?.permissions.pending() ?? [], questions: running?.questions.pending() ?? [] }
+    },
+  }
   function rewindOf(id:string){
     const times=store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>a.createdAt)
     return rewindView(store.rewinds,id,times,at=>store.steps(id).map(step=>timelineKind(step)==='system'&&step.createdAt>=at?stepPayload(step).text:null).filter((text):text is string=>text!==null&&isRewindParkNote(text)).at(-1)??null)
@@ -230,6 +243,6 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     return result
   }
 
-  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,projectActivity,taskView,attention,petActivities,projects,validateProject,addProject,list,detail }
+  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,projectActivity,taskView,attention,petActivities,projects,validateProject,addProject,list,detail,rosterRead }
 }
 export type ViewDomain = ReturnType<typeof makeViewDomain>
