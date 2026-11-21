@@ -2,6 +2,7 @@
  * reader.ts —— 「地方」读写口(设计稿 docs/superpowers/specs/2026-11-18-cc-two-sides-design.md §3)。
  * 数据和名单同一份(gatherRoster),只是往回看 30 天、再按项目根目录归拢;顺序 / 名字 / 收起读写 places 表。
  */
+import type { makeLabsSettings } from '../../adapters/store/labs-settings'
 import type { Db } from '../../lib/db'
 import { placeMapEntries, placeMapRoster, type MapTopicResolver } from './place-map'
 import { createHash } from 'node:crypto'
@@ -20,6 +21,7 @@ export interface PlacesReaderDeps {
   roster: RosterReaderDeps
   mapWorkbench?: RosterReaderDeps['workbench']
   store: PlacesStore
+  labs?: ReturnType<typeof makeLabsSettings>
   mapTopics?: { db: Db; owner: () => string | null; makeResolver: MapTopicResolver }
   opinion?: (requestId: string) => PlaceOpinionT | undefined
   root?: (path: string | null | undefined) => string | null
@@ -29,6 +31,7 @@ export interface PlacesReaderDeps {
 export const placeKey = (root: string) => `p:${createHash('sha256').update(root).digest('hex').slice(0, 16)}`
 
 export function makePlacesReader(deps: PlacesReaderDeps) {
+  const placeMapEnabled = () => deps.labs?.placeMapEnabled() ?? false
   const root = deps.root ?? makeProjectRoot()
   function collect(scope: 'operator' | 'device', roster = deps.roster) {
     const now = roster.now?.() ?? Date.now()
@@ -85,12 +88,21 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
         const waiting = place.waiting
         if (waiting?.requestId) Object.assign(waiting, deps.opinion?.(waiting.requestId))
       }
-      const version = createHash('sha256').update(JSON.stringify({ places, hidden })).digest('hex').slice(0, 16)
-      return { places, hidden, version }
+      const data = { places, hidden, ...(placeMapEnabled() ? { labs: { placeMap: true as const } } : {}) }
+      const version = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16)
+      return { ...data, version }
+    },
+    placeMapEnabled,
+    setPlaceMap(enabled) {
+      if (!deps.labs) return false
+      deps.labs.setPlaceMap(enabled)
+      return true
     },
     map,
     async pin({ key, itemId, branch }) {
+      if (!placeMapEnabled()) return 'lab_off'
       const current = await map(key)
+      if (!placeMapEnabled()) return 'lab_off'
       if (!current) return 'place_not_found'
       if (!current.items.some(item => item.id === itemId)) return 'place_map_item_not_found'
       if (itemId.startsWith('a:')) return 'place_map_item_fixed'

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { makeLabsSettings } from '../../adapters/store/labs-settings'
 import { afterEach, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -38,7 +40,9 @@ function fixture() {
   const task = (projectPath: string, ownerChatId = owner) => matters.create({ kind:'task', title:'交办的任务', projectPath, ownerChatId })
   const topic = (title: string, privateTopic = false, chatId = owner) =>
     threads.create({ chatId, title, private:privateTopic, summary:'', facets:[], tags:[], episodes:[] })
+  const labs = makeLabsSettings(base)
   const reader = makePlacesReader({
+    labs,
     store, mapTopics: { db, owner: () => owner,
       makeResolver: (db, owner, topics, roots) => makeProjectTopicResolver(db, owner, topics, undefined, roots, { includeDoneHistory:true }),
     },
@@ -48,11 +52,12 @@ function fixture() {
         cwd:repo, stale:false, machine:null, origin_agent:null, last_prompt_at:null, created_at:now },
     ] },
   })
-  return { db, store, reader, key: placeKey(repo), repo, worktree, task, topic, threads }
+  return { base, labs, db, store, reader, key: placeKey(repo), repo, worktree, task, topic, threads }
 }
 
 it('真实迁移库按事项和聊天证据归地方，工作区归主仓，拒绝其他所有者、私有话题和 superseded，不写地方表', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const task = f.task(f.worktree)
   const threadId = await f.topic('melon')
   const add = (line: string, input: Partial<Parameters<typeof f.threads.addEntry>[0]> = {}) =>
@@ -92,6 +97,7 @@ it('真实迁移库按事项和聊天证据归地方，工作区归主仓，拒�
 
 it('上限只算可见条目，更新时间降序，第 61 条才截断', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const matter = f.task(f.repo)
   const threadId = await f.topic('工作')
   const add = (n: number) => f.threads.addEntry({ threadId, kind:'progress', source:'work', matterId:matter.id,
@@ -107,6 +113,7 @@ it('上限只算可见条目，更新时间降序，第 61 条才截断', async 
 
 it('HTTP 只给 operator，未知地方 404，设备与链接在面板入口也到不了', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const stateDir = mkdtempSync(join(tmpdir(),'cc-place-map-http-'))
   cleanups.push(() => rmSync(stateDir,{recursive:true,force:true}))
   const api = createInternalApi({stateDir,daemonPid:1})
@@ -130,6 +137,7 @@ it('HTTP 只给 operator，未知地方 404，设备与链接在面板入口也�
 
 it('operator 可以写、改、放回去，revision 跟随摆放，话题原行逐字段不变', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const matter = f.task(f.repo)
   const threadId = await f.topic('工作')
   const id = await f.threads.addEntry({ threadId, kind:'conclusion', source:'work', matterId:matter.id,
@@ -197,6 +205,7 @@ it('operator 可以写、改、放回去，revision 跟随摆放，话题原行�
 
 it('沿显式归并链读最近摆放，最多八层；放回去会清掉能继承的摆放', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const matter = f.task(f.repo)
   const threadId = await f.topic('工作')
   const add = (line: string) => f.threads.addEntry({ threadId, kind:'progress', source:'work', matterId:matter.id,
@@ -253,4 +262,52 @@ it('CC 回想的原始正文逐字节固定', async () => {
   const result = await recall(owner, 'melon 的验收怎么样')
   expect(result?.block).toBe('话题「melon」\n- [承诺] 补验收')
   expect(result?.entryIds).toEqual([entry])
+})
+
+it('daemon 实验设置默认关闭，只有 operator 能严格写入，关时地方响应与旧版本同字节', async () => {
+  const f = fixture()
+  const api = createInternalApi({ stateDir: f.base, daemonPid: 1 })
+  api.provide({ places: f.reader })
+  cleanups.push(() => api.stop())
+  const started = await api.start()
+  const request = (path: string, body?: unknown, tokenFile = started.operatorTokenFilePath) => fetch(
+    `http://127.0.0.1:${started.port}${path}`, {
+      headers: { authorization: 'Bearer ' + readFileSync(tokenFile, 'utf8').trim(), 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
+    })
+  expect(f.labs.placeMapEnabled()).toBe(false)
+  const raw = await (await request('/v1/places')).text()
+  const { places, hidden, version } = JSON.parse(raw)
+  const legacy = { places, hidden }
+  const oldVersion = createHash('sha256').update(JSON.stringify(legacy)).digest('hex').slice(0, 16)
+  expect(raw).toBe(JSON.stringify({ ...legacy, version: oldVersion }))
+  const mapPath = `/v1/places/map?key=${encodeURIComponent(f.key)}`
+  for (const response of [
+    await request(mapPath),
+    await request('/v1/places/map/pin', { key: f.key, itemId: 'e:missing', branch: 'open' }),
+  ]) {
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({ error: 'lab_off' })
+  }
+  expect((await request('/v1/labs', { placeMap: true }, started.tokenFilePath)).status).toBe(403)
+  for (const origin of ['device', 'link'] as const) {
+    const response = await api.panelDispatch(new Request(`http://127.0.0.1:${started.port}/v1/labs`, {
+      method: 'POST', body: JSON.stringify({ placeMap: true }),
+    }), { tier: 'admin', origin, routeAllow: new Set(['POST /v1/labs']) }, { frameBudget: 100_000, client: 'web' })
+    expect(response.status).toBe(403)
+  }
+  for (const body of [{}, { placeMap: 'true' }, { placeMap: true, extra: 1 }]) {
+    expect((await request('/v1/labs', body)).status).toBe(400)
+  }
+  expect(await (await request('/v1/labs', { placeMap: true })).json()).toEqual({ ok: true, placeMap: true })
+  expect(makeLabsSettings(f.base).placeMapEnabled()).toBe(true)
+  const on = await (await request('/v1/places')).json()
+  expect(on).toEqual({ ...legacy, labs: { placeMap: true }, version: expect.any(String) })
+  expect(on.version).not.toBe(version)
+  const settings = join(f.base, 'labs', 'settings.json')
+  writeFileSync(settings, '{bad-json')
+  expect(f.labs.placeMapEnabled()).toBe(false)
+  expect(await (await request('/v1/places')).text()).toBe(raw)
+  expect(await (await request('/v1/labs', { placeMap: false })).json()).toEqual({ ok: true, placeMap: false })
+  expect(JSON.parse(readFileSync(settings, 'utf8'))).toEqual({ placeMap: false })
 })

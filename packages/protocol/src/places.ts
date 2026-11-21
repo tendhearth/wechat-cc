@@ -54,10 +54,15 @@ export const Place = z.object({
 })
 export type PlaceT = z.infer<typeof Place>
 
+export const LabsRequest = z.object({ placeMap: z.boolean() }).strict()
+export const LabsResponse = LabsRequest.extend({ ok: z.literal(true) })
+export type LabsRequestT = z.infer<typeof LabsRequest>
+
 export const PlacesResponse = z.object({
   places: z.array(Place),
   hidden: z.array(Place.pick({ key: true, name: true })).optional(),
   version: z.string(),
+  labs: z.object({ placeMap: z.literal(true) }).optional(),
 })
 export type PlacesResponseT = z.infer<typeof PlacesResponse>
 

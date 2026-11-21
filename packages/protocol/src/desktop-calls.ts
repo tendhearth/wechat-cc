@@ -11,7 +11,7 @@
  * 返回形状桌面还没用上(`desktop-api.ts` 的 `RESPONSE_SCHEMAS` 键是 string,推不出来),`makeDesktopApi` 先回 unknown。
  * 桌面加一条调用 = 在这里加一行,跑 `bun run gen:routes`。
  */
-import type { PlaceMapPinRequestT } from './places'
+import type { LabsRequestT, PlaceMapPinRequestT } from './places'
 import type { CliActivityQuery } from './api'
 import type { NotebookPageQueryT, NotebookPaperT } from './notebook'
 import type { DeclaredRouteKey } from './routes'
@@ -31,6 +31,7 @@ export const DESKTOP_CALLS = {
   roster: { get: call('GET /v1/roster') },
   places: {
     get: call('GET /v1/places'),
+    labs: call('POST /v1/labs', { body: t<LabsRequestT>() }),
     map: call('GET /v1/places/map', { query: t<{ key: string }>() }),
     mapPin: call('POST /v1/places/map/pin', { body: t<PlaceMapPinRequestT>() }),
     move: call('POST /v1/places/move', { body: t<{ key: string; to: number }>() }),

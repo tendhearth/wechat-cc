@@ -1,17 +1,32 @@
-import { PlaceMapPinRequest, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
+import { LabsRequest, PlaceMapPinRequest, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
 import type { InternalApiDeps, RouteTable } from '../../daemon/internal-api/types'
 import { readFailure } from './routes'
 
 export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): RouteTable {
   const unavailable = { status: 503, body: { error: 'unavailable' } }
+  const labOff = { status: 409, body: { error: 'lab_off' } }
   return {
+    'POST /v1/labs': (_query, body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      const input = LabsRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      try {
+        const { placeMap } = input.data
+        return deps.places?.setPlaceMap(placeMap) ? { status: 200, body: { ok: true, placeMap } } : unavailable
+      } catch {
+        deps.log?.('PLACES', 'labs settings unavailable')
+        return unavailable
+      }
+    },
     'POST /v1/places/map/pin': async (_query, body, caller) => {
       if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      if (!deps.places) return unavailable
+      if (!deps.places.placeMapEnabled()) return labOff
       const input = PlaceMapPinRequest.safeParse(body)
       if (!input.success) return { status: 400, body: { error: 'invalid' } }
-      if (!deps.places) return unavailable
       try {
         const error = await deps.places.pin(input.data)
+        if (error === 'lab_off') return labOff
         if (error) return { status: error === 'place_map_item_fixed' ? 409 : 404, body: { error } }
         return { status: 200, body: { ok: true } }
       } catch {
@@ -23,7 +38,9 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): Rou
       if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
       if (!deps.places) return unavailable
       try {
+        if (!deps.places.placeMapEnabled()) return labOff
         const result = await deps.places.map(query.get('key') ?? '')
+        if (!deps.places.placeMapEnabled()) return labOff
         return result ? { status: 200, body: result } : { status: 404, body: { error: 'place_not_found' } }
       } catch {
         deps.log?.('PLACES', 'map unavailable')
