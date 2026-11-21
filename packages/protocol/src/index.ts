@@ -23,10 +23,10 @@ export {
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
   UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork, PhoneChangesTurn, PhoneRewindPreview, PhoneRewindError,
   ChatMessage, ChatJob, ChatPage, CHAT_PAGE_MAX, CHAT_TEXT_MAX, ChatAttachment, ChatVoice, CHAT_NARRATION_MAX, LetterSummary, PhoneJob, PhoneActivityItem, ConnectionSource, Connections,
-  NativeSessionRow, NativeSessionMessage, NativeSessionPage, CliSessionRow, TodayItem, TodayNeed, TodayStuck, OverseerToday,
+  NativeSessionRow, NativeSessionMessage, NativeSessionPage, CliSessionRow, CliActivityPage, TodayItem, TodayNeed, TodayStuck, OverseerToday,
   MatterNativeStart, SESSION_CONTINUE_STATES, SessionContinue, SessionContinueResult, MatterQuotaHandoff, MatterHandoffResult, MatterActStep, MatterActTurn,
 } from './api'
-export type { MatterKindT, MatterStateT, MatterOriginT, DeviceRowT, ChatAttachmentT, LetterSummaryT, PhoneJobT, PhoneActivityItemT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, CliSessionRowT, CliActivityItemT, TodayItemT, OverseerTodayT, SessionContinueT, MatterQuotaHandoffT, MatterInputReceiptResultT, PhoneRewindPreviewT, MatterActTurnT, MatterEventT } from './api'
+export type { MatterKindT, MatterStateT, MatterOriginT, DeviceRowT, ChatAttachmentT, LetterSummaryT, PhoneJobT, PhoneActivityItemT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, CliSessionRowT, CliActivityItemT, CliActivityPageT, CliActivityQuery, TodayItemT, OverseerTodayT, SessionContinueT, MatterQuotaHandoffT, MatterInputReceiptResultT, PhoneRewindPreviewT, MatterActTurnT, MatterEventT } from './api'
 export {
   base32Lower, RELAY_ID_RE, RELAY_SUBPROTOCOL, relayIdProtocol, relayIdFromPub, relayKeyPair, relayLoginMessage,
   signRelayLogin, verifyRelayLogin, RELAY_ERRORS, PushPlatform, pushTokenValid, PUSH_SEALED_MAX_CHARS, DaemonControl, RoomControl,

@@ -1,6 +1,6 @@
 import type { Db } from '../../lib/db'
 import type { MatterLog } from '../../ports/matters'
-import { STEP_KEY_PREFIX, type TerminalReadState, type TerminalStepStore } from '../../ports/terminal-steps'
+import { STEP_KEY_PREFIX, type TerminalReadState, type TerminalStepStore, type TerminalStepPayload } from '../../ports/terminal-steps'
 
 /**
  * terminal-steps.ts —— 终端会话记录读进来的步存在哪(M4b)。步只经 MatterLog 写(matter_items);读到哪了在 terminal_reads(v98)。
@@ -22,6 +22,10 @@ export function makeTerminalStepStore(deps: { db: Db; log: MatterLog; matters: {
     db.query('INSERT INTO terminal_reads(matter_id,path,offset,gen,pending_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(matter_id) DO UPDATE SET path=excluded.path,offset=excluded.offset,gen=excluded.gen,pending_json=excluded.pending_json,updated_at=excluded.updated_at')
       .run(matterId, state.path, state.offset, state.gen, JSON.stringify(pending), Date.now())
   })
+  // seq 在就地更新时不变。游标绑定这件事,并验证它确实指向一条终端步。
+  const cursor = (matterId: string, seq: number) => Buffer.from(`1:${matterId}:${seq}`).toString('base64url')
+  const anchor = db.query<{ seq: number }, [string, string, number]>('SELECT seq FROM matter_items WHERE matter_id=? AND item_key LIKE ? AND seq=?')
+  const page = db.query<{ seq: number; payload_json: string }, [string, string, number, number]>('SELECT seq, payload_json FROM matter_items WHERE matter_id=? AND item_key LIKE ? AND seq<? ORDER BY seq DESC LIMIT ?')
   return {
     matterOf: (sessionId) => matters.findBySurface('cli', sessionId)?.id ?? null,
     readState(matterId) {
@@ -37,6 +41,17 @@ export function makeTerminalStepStore(deps: { db: Db; log: MatterLog; matters: {
       return r ? { key: r.item_key, payload: JSON.parse(r.payload_json) as Record<string, unknown> } : null
     },
     apply: (matterId, writes, state) => apply(matterId, writes, state),
+    page(matterId, limit, before) {
+      let seq = Number.MAX_SAFE_INTEGER
+      if (before !== undefined) {
+        const decoded = Buffer.from(before, 'base64url').toString('utf8')
+        seq = Number(decoded.slice(decoded.lastIndexOf(':') + 1))
+        if (!Number.isSafeInteger(seq) || seq < 1 || cursor(matterId, seq) !== before || !anchor.get(matterId, like, seq)) return null
+      }
+      const rows = page.all(matterId, like, seq, limit + 1)
+      const earlier = rows.length > limit ? cursor(matterId, rows[limit - 1]!.seq) : null
+      return { items: rows.slice(0, limit).reverse().map(row => ({ ...(JSON.parse(row.payload_json) as TerminalStepPayload), id: row.seq.toString(36) })), earlier }
+    },
     recent(matterId, max) {
       return db.query<{ payload_json: string }, [string, string, number]>('SELECT payload_json FROM matter_items WHERE matter_id=? AND item_key LIKE ? ORDER BY seq DESC LIMIT ?').all(matterId, like, max)
         .reverse().map(r => JSON.parse(r.payload_json) as Record<string, unknown>)

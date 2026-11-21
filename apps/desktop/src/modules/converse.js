@@ -731,8 +731,8 @@ function reflectPlaceFilter() {
 }
 
 /** 上面点了一个地方(或者点回全部)。
- * @param {{key?:string,name:string,matterIds:string[],messageIds:string[],sessionIds:string[]}|null} place */
-export function setConversationPlace(place) {
+ * @param {{key?:string,name:string,matterIds:string[],messageIds:string[],sessionIds:string[]}|null} place @param {{preserve?:boolean}} [options] */
+export function setConversationPlace(place, {preserve = false} = {}) {
   const switched = (placeFilter?.key ?? placeFilter?.name) !== (place?.key ?? place?.name)
   if (switched) {
     placeRevision++
@@ -743,7 +743,7 @@ export function setConversationPlace(place) {
   if (root) { if (placeFilter) root.dataset.place = placeFilter.name; else delete root.dataset.place }
   reflectPlaceFilter()
   reflectSharedControls()
-  renderMessages({ follow: switched })
+  renderMessages({ follow: switched && !preserve, preserve })
 }
 
 /** @param {import('./converse-place.js').RosterItem[]} items */
@@ -1114,7 +1114,7 @@ function wireEvents(root, deps) {
     const placeLabel = target.closest('[data-converse-place]')
     if (placeLabel instanceof HTMLElement && placeLabel.dataset.conversePlace) {
       placeNavigation?.selectKey(placeLabel.dataset.conversePlace)
-      const clear = document.documentElement.hasAttribute('data-desk-wide') ? 'desk-place-clear' : 'converse-place-clear'
+      const clear = document.documentElement.hasAttribute('data-desk-wide') ? 'thing-name' : 'converse-place-clear'
       document.getElementById(clear)?.focus()
       return
     }

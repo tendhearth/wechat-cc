@@ -40,6 +40,7 @@ export function stepPhrase(text: string): { verb: TerminalStepVerb; target: stri
 /** 手机一屏看得完的量:最多这么多步,每句最多这么多字。 */
 export const ACTIVITY_MAX_ITEMS = 40
 export const ACTIVITY_TEXT_MAX = 600
+export const ACTIVITY_FULL_MAX = 40_000
 const STEP_MAX = 120
 /** 点开一步最多看这么多:diff 留开头若干行,输出留结尾若干行(结论通常在最后)。 */
 export const DETAIL_MAX = 1500
@@ -307,8 +308,9 @@ export function feedActivity<R>(jsonl: string, source: CliSource, sink: Activity
     const at = tsOf(d)
     let index = 0
     // 文字:复用 parseTranscript 的一行口径(它会过滤 harness、打码)。
-    for (const t of parseTranscript(line, source)) {
-      sink.push({ kind: t.role === 'user' ? 'you' : 'said', text: clip(t.text, ACTIVITY_TEXT_MAX), at }, { line: here, index: index++ })
+    for (const t of parseTranscript(line, source, ACTIVITY_FULL_MAX)) {
+      const text = clip(t.text, ACTIVITY_TEXT_MAX)
+      sink.push({ kind: t.role === 'user' ? 'you' : 'said', text, at, ...(t.text.length > text.length ? { full: t.text } : {}) }, { line: here, index: index++ })
     }
     for (const s of stepsOf(d, source)) {
       const text = clip(redactSecrets(s.text), STEP_MAX)

@@ -22,7 +22,7 @@ test.beforeEach(async({page,shim})=>{
   await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting',session:{id:task.id,kind:'task',title:task.title,executor:'codex',displayName:'Codex',activity:'waiting',latestStep:'等你批准 · Read',updatedAt:1793923200000,requestId:'permission-backup'}},{id:'b0b0cafe',title:'终端会话',state:'open',session:{id:'b0b0cafe',kind:'terminal',title:'终端会话',executor:'claude',displayName:'Claude',activity:'idle',latestStep:'答完了',updatedAt:Date.now()-600000,requestId:null}}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:2,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
   await page.route('**/v1/subscribe/topics?*',r=>r.fulfill({json:{revision:'2',recentIds:['backup'],openIds:['backup'],hasMoreOpen:false}}))
 })
-test('one conversation, memory topics and dock preserve drafts across wide and narrow layouts',async({page,shimUrl},info)=>{
+test('one conversation and memory topics preserve drafts when a wide place opens its task',async({page,shimUrl},info)=>{
  await page.setViewportSize({width:1440,height:900});await page.goto(shimUrl)
  await expect(page.locator('#converse-scroll')).toContainText('那台机器后来怎么样了？')
  await expect(page.locator('#topbar-cc .topbar-figure')).toHaveCSS('width','60px')
@@ -42,9 +42,10 @@ test('one conversation, memory topics and dock preserve drafts across wide and n
  await panel.getByText('每周核验一次',{exact:false}).click();await expect(panel).toContainText('备份留在本地。')
  await page.screenshot({path:join(info.outputDir,'wide-topic.png')})
  await panel.locator('[data-project-session="aabbccdd"]').click()
- await expect(page.locator('#roster-dock .workbench-pane')).toBeVisible()
+ await expect(page.locator('#thing-thread .workbench-pane')).toBeVisible()
  await expect(page.locator('.wb-sidebar')).toBeHidden()
- await page.locator('#roster-dock').getByRole('button',{name:'收起',exact:true}).click()
+ await page.locator('#desk-back').click()
+ await expect(page.locator('article[data-pane="memory"]')).toBeVisible()
  await expect(panel).toBeVisible();await panel.getByRole('button',{name:'收起',exact:true}).click()
  await clickNav(page,'overview');await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
  await page.locator('#topbar-search').click()
@@ -347,7 +348,7 @@ test('reply attribution keeps one named shared avatar per reply across wide and 
     }
     expect(await matter.locator('.wb-dialogue').evaluate(root=>[...root.querySelectorAll('.wb-message')].every(row=>row.scrollWidth<=row.clientWidth+1))).toBe(true)
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
-    if(width>=1080)await page.locator('#roster-dock').getByRole('button',{name:'收起',exact:true}).click();else await page.locator('#workbench-home').click()
+    if(width>=900)await page.locator('#topbar-cc').click();else await page.locator('#workbench-home').click()
   }
   currentProvider='codex';await page.reload();await checkSources()
 })

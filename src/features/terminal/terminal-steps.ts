@@ -9,7 +9,7 @@
  * 不把几十 MB 的老记录整份导进来(钩子的回包有时限)。
  */
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
-import { STEP_KEY_PREFIX, type TerminalStepPayload, type TerminalStepStore, type TerminalStepWrite } from '../../ports/terminal-steps'
+import { STEP_KEY_PREFIX, type TerminalStepPayload, type TerminalStepPage, type TerminalStepStore, type TerminalStepWrite } from '../../ports/terminal-steps'
 import type { TerminalEventIn, TerminalTurnLog } from '../../ports/terminal-turns'
 import { feedActivity } from './cli-activity'
 
@@ -26,6 +26,7 @@ export interface TerminalSteps {
    * 调用方先挡掉那边(别的机器 / A2A)的会话:记录不在这台机器上。没报记录路径 ⇒ 空。读不了文件 ⇒ 抛。
    */
   view(s: TerminalSessionRef, max: number): TerminalStepPayload[]
+  page(s: TerminalSessionRef, limit: number, before?: string): TerminalStepPage | null
 }
 
 /** 看的时候要的那几样(登记处的 CliSessionInfo 都有):建那件事要 source / cwd / 机器。 */
@@ -101,19 +102,27 @@ export function makeTerminalSteps(deps: {
     store.apply(matterId, writes, { path, offset: Math.min(size, from + lastNl + 1), gen, pending })
     return true
   }
+  const refresh = (s: TerminalSessionRef): string | null => {
+    if (!s.transcript_path) return null
+    let id = store.matterOf(s.session_id)
+    // 记录读不了(文件没了)⇒ 先抛,别为它建一件空的事
+    if (!id) sizeOf(s.transcript_path)
+    id ??= turns.ensure({
+      source: s.source, session_id: s.session_id, cwd: s.cwd ?? '',
+      ...(s.machine ? { machine: s.machine } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}),
+    })
+    ingest(s.session_id, s.transcript_path, s.source)
+    return id
+  }
   return {
     ingest,
     view(s, max) {
-      if (!s.transcript_path) return []
-      let id = store.matterOf(s.session_id)
-      // 记录读不了(文件没了)⇒ 先抛,别为它建一件空的事
-      if (!id) sizeOf(s.transcript_path)
-      id ??= turns.ensure({
-        source: s.source, session_id: s.session_id, cwd: s.cwd ?? '',
-        ...(s.machine ? { machine: s.machine } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}),
-      })
-      ingest(s.session_id, s.transcript_path, s.source)
-      return store.recent(id, max) as unknown as TerminalStepPayload[]
+      const id = refresh(s)
+      return id ? store.recent(id, max).map(({ full: _full, ...item }) => item as unknown as TerminalStepPayload) : []
+    },
+    page(s, limit, before) {
+      const id = refresh(s)
+      return id ? store.page(id, limit, before) : before === undefined ? { items: [], earlier: null } : null
     },
   }
 }

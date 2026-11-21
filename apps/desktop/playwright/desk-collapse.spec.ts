@@ -136,7 +136,7 @@ test('悬停按钮只浮出左栏，移入保持、离开延迟收回，Esc 立�
   await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false')
 })
 
-test('从左缘浮出可筛选和进本子，离开仍留在本子页', async ({ page, shimUrl }) => {
+test('从左缘浮出可进入地方和本子，离开仍留在本子页', async ({ page, shimUrl }) => {
   await routePlaces(page, [placeItem('菜谱')])
   await page.goto(shimUrl)
   await toggle(page).click()
@@ -148,8 +148,8 @@ test('从左缘浮出可筛选和进本子，离开仍留在本子页', async ({
   await expect(peeking(page)).toHaveCount(1)
   const row = rail(page).locator('.place-row').filter({ hasText: '菜谱' })
   await row.click()
-  await expect(page.locator('#desk-place-clear')).toHaveText('回到全部')
-  await expect(page.locator('#desk-place-name')).toHaveText('菜谱')
+  await expect(page.locator('#desk-place-clear')).toBeHidden()
+  await expect(page.locator('#thing-name')).toHaveText('菜谱')
   const notebook = rail(page).getByRole('button', { name: '本子', exact: true })
   await notebook.click()
   await expect(page.locator('#notebook-pane')).toBeVisible()

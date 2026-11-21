@@ -23,7 +23,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  // 在 WORKBENCH_ROUTES 之后登记:Playwright 里后登记的先接,那条宽的正则也匹配 /v1/matter/permission。
  await page.route('**/v1/matter/permission',route=>{decisions.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}})})
  await page.route('**/v1/cli/sessions*',route=>route.fulfill({json:{sessions:[{session_id:'terminal-1',source:'codex',status:'waiting',live_window:true,last_summary:'git status',pending:{actionable:true,tool:'Bash',summary:'git status',hash:'k3x9z'}}]}}))
- await page.route('**/v1/cli/activity*',route=>route.fulfill({json:{items:[{text:'终端原话'}]}}))
+ await page.route('**/v1/cli/activity*',route=>route.fulfill({json:{items:[{id:'msg',kind:'said',text:'终端原话',at:null}],earlier:null}}))
  await page.goto(shimUrl)
  await expect(page.locator('main.dashboard')).toBeVisible()
  await expect(page.locator('#now-waiting')).toHaveCount(0)
@@ -37,15 +37,14 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  const answer=placeAnswerSurface(page,'demo').locator('[data-place-open]')
  await expect(answer).toBeVisible()
  await answer.focus();await answer.press('Enter')
- const detail=width>=1080?page.locator('#roster-dock'):page.locator('dialog.wb-history-dialog')
+ const detail=page.locator('#thing-thread .thing-terminal:visible')
  await expect(detail).toContainText('git status')
  await expect(detail).toContainText('终端原话')
  await expect(detail.getByRole('button',{name:'允许',exact:true})).toBeVisible()
  const out=process.env.WECHAT_CC_DESIGN_SHOTS
  if(out)await page.screenshot({path:join(out,`roster-partial-${width}.png`)})
- if(width>=1080)await detail.getByRole('button',{name:'收起',exact:true}).click()
- else await page.keyboard.press('Escape')
  await clickNav(page,'overview')
+ await expect(detail).toHaveCount(0)
  // 连不上:保留上一次的行,说一句。
  unreadable=true
  await expect(page.locator('#places-root')).toContainText('家里的电脑暂时连不上',{timeout:12000})

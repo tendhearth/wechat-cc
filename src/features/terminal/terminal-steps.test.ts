@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openDb, type Db } from '../../lib/db'
 import { makeMatterStore } from '../../adapters/store/matters-store'
@@ -222,5 +225,80 @@ describe('钩子事件 + 读记录(withTranscriptSteps)', () => {
     turns.event(ev('stop', 'S5', { text: '转来的', origin_agent: 'hand', transcript_path: '/t/x.jsonl' }), 1_000)
     expect(kinds('S6')).toEqual(['agent_message:那边的'])
     expect(kinds('S5')).toEqual(['agent_message:转来的'])
+  })
+})
+
+describe('终端历史', () => {
+  it('长原话另存、短原话省略全文,同一条重读就地更新', () => {
+    const said = (text: string) => L({ type: 'assistant', message: { content: text } }) + '\n'
+    const candidate = '甲'.repeat(40_001)
+    const short = '乙'.repeat(600)
+    const tool = L({ type: 'assistant', message: { content: [
+      { type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'x'.repeat(200) } },
+    ] } }) + '\n'
+    const result = L({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: '丙'.repeat(2000) }] } }) + '\n'
+    file = Buffer.from(said(candidate) + said(short) + tool + result)
+    const steps = makeSteps()
+    steps.ingest('S1', session.transcript_path, 'claude')
+
+    const [long, boundary, step] = log.items(matterId())
+    expect(long?.payload).toEqual({ kind: 'said', text: '甲'.repeat(599) + '…', full: '甲'.repeat(39_999) + '…', at: null })
+    expect(boundary?.payload).toEqual({ kind: 'said', text: short, at: null })
+    expect(step?.payload.text).toBe('运行 ' + 'x'.repeat(116) + '…')
+    expect(step?.payload.detail).toBe('…' + '丙'.repeat(1499))
+    expect(step?.payload).not.toHaveProperty('full')
+
+    // 从原位置重放,走相同的稳定 key 与 apply 更新路径。
+    const store = makeTerminalStepStore({ db, log, matters })
+    const state = store.readState(matterId())!
+    store.apply(matterId(), [], { ...state, offset: 0 })
+    const updated = '丁'.repeat(601)
+    file = Buffer.from(said(updated) + said(short) + tool + result)
+    steps.ingest('S1', session.transcript_path, 'claude')
+    const reread = log.item(matterId(), long!.key!)!
+    expect(reread.seq).toBe(long!.seq)
+    expect(reread.payload).toEqual({ kind: 'said', text: '丁'.repeat(599) + '…', at: null, full: updated })
+    store.apply(matterId(), [], { ...state, offset: 0 })
+    file = Buffer.from(said(short) + tool + result)
+    steps.ingest('S1', session.transcript_path, 'claude')
+    expect(log.item(matterId(), long!.key!)?.payload).toEqual({ kind: 'said', text: short, at: null })
+  })
+
+  it('游标在锚点就地更新及数据库重开后仍可用,只能用于原会话', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'terminal-step-cursor-'))
+    const path = join(dir, 'test.db')
+    let database = openDb({ path })
+    try {
+      const makeStore = () => makeTerminalStepStore({ db: database, log: makeMatterLog(database), matters: makeMatterStore(database) })
+      const repo = makeMatterStore(database)
+      const matter = repo.create({ kind: 'terminal', title: '本会话' })
+      const other = repo.create({ kind: 'terminal', title: '另一会话' })
+      const write = (n: number, text = String(n)) => ({
+        key: `t:0:${n}:0`, kind: 'agent_message' as const, status: 'completed' as const,
+        payload: { kind: 'said', text, at: null },
+      })
+      const state = { path: '/transcript.jsonl', offset: 0, gen: 0, pending: {} }
+      const store = makeStore()
+      store.apply(matter.id, [write(1), write(2), write(3), write(4)], state)
+      store.apply(other.id, [write(1), write(2), write(3)], state)
+      const first = store.page(matter.id, 2)!
+      expect(first.items.map(i => i.text)).toEqual(['3', '4'])
+      expect(typeof first.earlier).toBe('string')
+      store.apply(matter.id, [write(3, '就地更新'), write(5)], state)
+      database.close()
+      database = openDb({ path })
+      const reopened = makeStore()
+      expect(reopened.page(other.id, 2, first.earlier!)).toBeNull()
+      const older = reopened.page(matter.id, 2, first.earlier!)!
+      expect(older.items.map(i => i.text)).toEqual(['1', '2'])
+      expect(older.earlier).toBeNull()
+      const latest = reopened.page(matter.id, 3)!
+      expect(latest.items.map(i => i.text)).toEqual(['就地更新', '4', '5'])
+      expect(latest.items.slice(0, 2).map(i => i.id)).toEqual(first.items.map(i => i.id))
+      expect(new Set([...older.items, ...latest.items].map(i => i.id)).size).toBe(5)
+    } finally {
+      database.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

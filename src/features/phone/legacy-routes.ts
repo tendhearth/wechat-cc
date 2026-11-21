@@ -433,6 +433,9 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
     return ownsMethod(async (url: URL, req: Request, ctx: C) => {
       const next = new URL(url)
       next.pathname = toPath.endsWith('/') ? toPath + url.pathname.slice(fromPath.length) : toPath
+      if (from === 'GET /m/api/cli/activity') {
+        for (const key of ['full', 'limit', 'before']) next.searchParams.delete(key)
+      }
       if((ROUTES as Record<string,{desktop?:unknown}>)[to]?.desktop && deps.v1)return deps.v1(new Request(next,req),ctx.caller,{frameBudget:MAX_MOBILE_DETAIL_BYTES,client:phoneClientOf(req)})
       const h = deps.local ? lookupPhoneRoute(deps.local(), req.method, next.pathname) : null
       return h ? await h(next, req, ctx) : panelJson({ error: 'not_found' }, 404)

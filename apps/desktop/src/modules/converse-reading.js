@@ -3,7 +3,7 @@
 // keyboard focus, disclosure state or horizontal code scrolling.
 import { deskDate, messageDay } from './desk-page.js'
 
-/** @typedef {import('./converse.js').ConverseMsg} Message */
+/** @typedef {Omit<import('./converse.js').ConverseMsg, 'id'|'role'> & {id:number|string,role:string}} Message */
 /** @typedef {{message:Message,signature:string,node:Element}} Row */
 /** @typedef {{rows:Map<number|string,Row>,unread:boolean,following:boolean,owed:boolean,lastTop:number,empty:string,latest:HTMLButtonElement|null}} ReadingState */
 /** @type {WeakMap<HTMLElement,ReadingState>} */
@@ -49,19 +49,26 @@ export function rememberConversationPosition(scroll) {
     (node.hasAttribute('data-converse-message') || node.hasAttribute('data-converse-place-card'))
     && node.getBoundingClientRect().bottom > viewportTop
   )
-  const anchorTop = anchor?.getBoundingClientRect().top ?? 0
+  // 记的是这一条离阅读区顶边多远,不是它在屏幕上的高度:换版式后阅读区自己的位置会变。
+  const anchorTop = anchor && viewportTop !== undefined ? anchor.getBoundingClientRect().top - viewportTop : 0
+  // 重画可能把这一条换成新节点(比如筛选变了,行首的地方名跟着变):按它的编号找回来,别退回旧的滚动数值。
+  const marks = ['data-converse-message', 'data-converse-place-card']
+  const mark = anchor ? marks.find(name => anchor.hasAttribute(name)) : undefined
+  const id = mark ? anchor?.getAttribute(mark) : null
   return () => {
-    if (anchor && scroll.contains(anchor)) scroll.scrollTop += anchor.getBoundingClientRect().top - anchorTop
+    const node = anchor && scroll.contains(anchor) ? anchor
+      : mark ? [...scroll.children].find(child => child.getAttribute(mark) === id) : undefined
+    if (node) scroll.scrollTop += node.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchorTop
     else scroll.scrollTop = top
     const state = states.get(scroll)
     if (state) state.lastTop = scroll.scrollTop
   }
 }
 
-/** @param {HTMLElement} scroll @param {Message[]} messages
- * @param {(message:Message)=>string} render @param {string} empty
- * @param {{follow?:boolean,prepend?:boolean,preserve?:boolean,latest?:HTMLButtonElement|null,decoration?:(message:Message)=>string}} [options] */
-export function paintConversation(scroll, messages, render, empty, {follow=false,prepend=false,preserve=false,latest=null,decoration}={}) {
+/** @template {Message} M @param {HTMLElement} scroll @param {M[]} messages
+ * @param {(message:M)=>string} render @param {string} empty
+ * @param {{update?:(node:Element,message:M)=>boolean|'defer',follow?:boolean,prepend?:boolean,preserve?:boolean,latest?:HTMLButtonElement|null,decoration?:(message:M)=>unknown}} [options] */
+export function paintConversation(scroll, messages, render, empty, {follow=false,prepend=false,preserve=false,latest=null,decoration,update}={}) {
   let state=states.get(scroll)
   if(!state){
     const created=state={rows:new Map(),unread:false,following:true,owed:false,lastTop:scroll.scrollTop,empty:'',latest}
@@ -82,7 +89,8 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
   // 上一次重画说好下一帧跟到最新,那一帧还没到又来一次重画:这次接着欠,不许因为位置没变就当成不用跟。
   const owed = state.owed
   const keepPosition = (prepend || preserve) && !owed
-  const restorePosition = keepPosition ? rememberConversationPosition(scroll) : null
+  // 不跟到最新的重画也按「正在读的那一条」来稳住:上面的行可能变高变矮(行首的地方名出现 / 消失),只记滚动数值会漂。
+  const restorePosition = keepPosition || !(following || owed) ? rememberConversationPosition(scroll) : null
   // 流最上面的常驻节点(「更早的对话」):不是消息,重画时留在原处。
   const head = scroll.firstElementChild
   const lead = head?.hasAttribute?.('data-converse-lead') ? head : null
@@ -108,7 +116,11 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
     const previous=state.rows.get(key)
     const signature=JSON.stringify([message.role,message.text,message.pending,message.speaker,message.provider,message.replyParts,message.attachments,message.attachmentSourceIndexes,message.narration,message.projection,decoration?.(message)])
     let row=previous
-    if(!previous || previous.signature!==signature){
+    const changed = previous && previous.signature !== signature
+    const updated = changed ? update?.(previous.node,message) : false
+    if(updated === true && previous){
+      row={message:{...message},signature,node:previous.node}
+    }else if(!previous || (changed && updated !== 'defer')){
       const template=scroll.ownerDocument.createElement('template')
       template.innerHTML=render(message)
       const node=template.content.firstElementChild
@@ -164,8 +176,9 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
       else{state.following=false;state.lastTop=scroll.scrollTop;if(newReply){state.unread=true;if(latest)latest.hidden=false}}
     })
   }else{
-    scroll.scrollTop=top
-    state.following=false;state.lastTop=top
+    if (restorePosition) restorePosition()
+    else scroll.scrollTop=top
+    state.following=false;state.lastTop=scroll.scrollTop
     if(newReply)state.unread=true
   }
   if(latest)latest.hidden=!state.unread
