@@ -21,12 +21,12 @@ export function outlineData(name, aspects) {
 /** @param {number|undefined} at @param {number} now */
 const time = (at, now) => at !== undefined ? placeTime({ moving: false, updatedAt: at }, now) : ''
 
-/** @param {Leaf} leaf @param {Source} source @param {boolean} canJump @param {number} now */
-export function outlineSource(leaf, source, canJump, now) {
+/** 第一处出处那一行带上状态和「CC 梳理的」;后面几处只写出自哪。 @param {Leaf} leaf @param {Source} source @param {boolean} canJump @param {number} now @param {boolean} [first] */
+export function outlineSource(leaf, source, canJump, now, first = true) {
   const entry = source.kind === 'entry'
   const from = entry ? '出自 CC 记下的一条' : source.agent ? `出自 ${source.agent} 的会话` : '出自终端会话'
   return {
-    text: [branches[leaf.status].label, 'CC 梳理的', from, time(source.at, now)].filter(Boolean).join(' · '),
+    text: [...(first ? [branches[leaf.status].label, 'CC 梳理的'] : []), from, time(source.at, now)].filter(Boolean).join(' · '),
     jump: !entry && canJump,
     missing: !entry && !canJump,
   }

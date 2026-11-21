@@ -33,6 +33,7 @@ it('出处和状态行覆盖条目、会话、有无名字和可跳与不可跳'
   expect(outlineSource(first, first.sources[1]!, true, now)).toEqual({
     text:'没解决的 · CC 梳理的 · 出自 Codex 的会话 · 刚刚', jump:true, missing:false,
   })
+  expect(outlineSource(first, first.sources[1]!, true, now, false).text).toBe('出自 Codex 的会话 · 刚刚')
   expect(outlineSource(first, {kind:'session'}, false, now)).toEqual({
     text:'没解决的 · CC 梳理的 · 出自终端会话', jump:false, missing:true,
   })

@@ -43,10 +43,10 @@ export function mountOutlineMap({host, key, call, loadMap, theme, fitMap, canJum
     line.className = 'lab-map-line'
     line.textContent = selected.line
     details.append(line)
-    for (const source of selected.sources) {
+    for (const [index, source] of selected.sources.entries()) {
       const row = document.createElement('p')
       row.className = 'lab-map-meta'
-      const display = outlineSource(selected, source, canJumpSource(source), Date.now())
+      const display = outlineSource(selected, source, canJumpSource(source), Date.now(), index === 0)
       row.textContent = display.text
       if (display.jump) {
         const button = document.createElement('button')
