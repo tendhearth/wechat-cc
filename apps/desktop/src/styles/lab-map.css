@@ -1,10 +1,12 @@
+/* 「⋯」里归到实验的那一组:一个小标题,下面是还在试的几样。 */
+.desk-labs-title { color: var(--th-ink-soft); font: var(--th-size-meta) var(--th-font-serif); letter-spacing: var(--th-tracking-meta); border-top: 1px solid var(--th-hair); padding-top: 10px; }
 .desk-labs { display: none; }
 @media (min-width: 900px) {
   .desk-labs {
     display: grid;
     gap: 2px;
     min-width: 16em;
-    padding: 8px 8px 4px;
+    padding: 0 0 4px;
     color: var(--th-ink-soft);
     font: var(--th-size-meta) var(--th-font-serif);
   }
@@ -45,7 +47,6 @@
   cursor: pointer;
 }
 .lab-map-seg button[aria-pressed="true"] { color: var(--th-ink); background: var(--th-rail); }
-[data-lab-map] > #desk-waiting { display: none !important; }
 .lab-map {
   display: flex;
   flex: 1;

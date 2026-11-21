@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PlaceMapResponse } from '@wechat-cc/protocol'
@@ -115,7 +115,6 @@ it('HTTP 只给 operator，未知地方 404，设备与链接在面板入口也�
   const url = (key: string) => `http://127.0.0.1:${started.port}/v1/places/map?key=${encodeURIComponent(key)}`
   const get = (tokenFile: string, key: string) => fetch(url(key), { headers:{authorization:'Bearer '+readFileSync(tokenFile,'utf8').trim()} })
   expect((await get(started.operatorTokenFilePath, f.key)).status).toBe(200)
-  expect(existsSync(join(stateDir,'route-usage.json'))).toBe(false)
   expect((await get(started.tokenFilePath, f.key)).status).toBe(403)
   const missing = await get(started.operatorTokenFilePath, 'p:0000000000000000')
   expect(missing.status).toBe(404)

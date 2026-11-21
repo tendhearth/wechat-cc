@@ -1,6 +1,7 @@
 // @ts-check
 import { V1, v1 } from '../daemon-client.js'
 import { branches, leafId, mapBranch, mapData } from './lab-map-model.js'
+import { placeTime } from './places-strip.js'
 
 /** @typedef {import('@wechat-cc/protocol').PlaceMapItemT} Item */
 /** @typedef {import('@wechat-cc/protocol').PlaceMapResponseT} Response */
@@ -89,7 +90,7 @@ export function mountLabMap({host, key, call, agent, canJump, jump}) {
     }
     if (!item || !branch) { p(hint, 'lab-map-meta'); return }
     p(item.line, 'lab-map-line')
-    const date = item.from.at ? new Date(item.from.at).toLocaleDateString('zh-CN') : ''
+    const date = item.from.at ? placeTime({ moving: false, updatedAt: item.from.at }, Date.now()) : ''
     p([branches[branch].label, kinds[item.kind], sources[item.from.source], date].filter(Boolean).join(' · '), 'lab-map-meta')
     if (item.body) p('CC 记的：' + item.body, 'lab-map-body')
     if (canJump(item)) {

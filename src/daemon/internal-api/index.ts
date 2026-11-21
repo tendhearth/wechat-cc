@@ -134,7 +134,6 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
   /** 面板那一口:设备令牌要这一行有 phone 块;链接令牌还要 link 是 read / write。别的 origin 一律不。 */
   const panelAllows = (origin: TokenOrigin, routeKey: string): boolean =>
     origin === 'device' ? panelRoutes.device.has(routeKey) : origin === 'link' ? panelRoutes.link.has(routeKey) : false
-  const placeMapRoute = 'GET /v1/places/map'
   const noteRouteUsage = makeRouteUsage(deps.stateDir)
   const tokenPath = join(deps.stateDir, TOKEN_FILE)
   const operatorTokenPath = join(deps.stateDir, OPERATOR_TOKEN_FILE)
@@ -420,7 +419,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     } catch (err) {
       // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
       // 不是 500,daemon 也不退。
-      if (isNotebook || routeKey === placeMapRoute) return { status: 500, body: { error: 'internal' } }
+      if (isNotebook) return { status: 500, body: { error: 'internal' } }
       const code = (err as { code?: unknown })?.code
       if (code === 'config_unreadable' || code === 'config_busy') {
         deps.log?.('INTERNAL_API', `409 ${method} ${rawUrl}: ${errMsg(err)}`, { event: 'config_write_refused', method, url: rawUrl, error: errMsg(err) })
@@ -493,11 +492,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
 
     const rawUrl = req.url ?? '/'
     const url = new URL(rawUrl, 'http://internal')
-    const routeKey = `${method} ${url.pathname}`
-    // The experimental map is a read-only snapshot, including at the transport boundary.
-    if (routeKey !== placeMapRoute && (caller.origin === 'operator' || DESKTOP_ROUTE_ALIASES.some(r => r.from === routeKey))) {
-      noteRouteUsage('desktop', typeof req.headers['x-cc-desktop-version'] === 'string' ? req.headers['x-cc-desktop-version'] : undefined, routeKey)
-    }
+    if (caller.origin === 'operator' || DESKTOP_ROUTE_ALIASES.some(r => r.from === `${method} ${url.pathname}`)) noteRouteUsage('desktop', typeof req.headers['x-cc-desktop-version'] === 'string' ? req.headers['x-cc-desktop-version'] : undefined, `${method} ${url.pathname}`)
     // 断开信号:处理器开跑那一刻登记(dispatch 调 io.signal())。
     // Bun 的 node:http 客户端断开时不发 res 'close'(10-24 实测),只发 req 'aborted' 与 socket 'close';node 三个都发。
     const ac = new AbortController()

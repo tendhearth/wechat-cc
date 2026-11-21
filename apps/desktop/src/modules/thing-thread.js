@@ -58,6 +58,9 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
   let generation = 0, openEarlier = false, tabsMarkup = ''
   /** @type {{key:string,request?:string}|null} */ let inlineWaiting = null
 
+  // 在图上时线是藏着的,那张就地的卡看不见:这时不拦顶上的纸条。
+  function tellWaiting() { onWaiting(stopMap ? null : inlineWaiting) }
+
   /** @param {import('./lab-map-model.js').MapItem} item */
   function mapTarget(item) {
     if (!place) return undefined
@@ -83,6 +86,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
     tray.hidden = false
     root.removeAttribute('data-lab-map')
     drawTabs()
+    tellWaiting()
     if (reading?.element.isConnected) reading.element.scrollTop = reading.top
     reading = undefined
   }
@@ -118,6 +122,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
             focus.focus({preventScroll:true})
           },
         })
+        tellWaiting()
       }
     } else stopGraph()
     for (const button of switcher.querySelectorAll('button')) {
@@ -190,7 +195,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
         onWaiting: request => {
           if (selected?.key !== key || !place) return
           inlineWaiting = request ? {key,request} : null
-          onWaiting(inlineWaiting)
+          tellWaiting()
         },
       })
       cached = {host,thread}
@@ -210,7 +215,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
       else child.remove()
     }
     inlineWaiting = null
-    onWaiting(null)
+    tellWaiting()
   }
 
   /** @param {Item|undefined} item */
@@ -254,7 +259,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
           loading.remove()
           dispose = closeTask
           inlineWaiting = {key:item.key}
-          onWaiting(inlineWaiting)
+          tellWaiting()
           await openTask(item.id,detailHost)
         } else {
           loading.remove()
@@ -267,7 +272,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
         dispose?.()
         dispose = undefined
         inlineWaiting = null
-        onWaiting(null)
+        tellWaiting()
         loading.textContent = '这件事暂时读不到。'
         detailHost.replaceChildren(loading)
       }

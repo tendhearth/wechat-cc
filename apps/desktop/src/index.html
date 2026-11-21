@@ -433,13 +433,13 @@
             <button class="dash-nav-link" data-pane="memory">记忆<span id="memory-count" hidden></span></button>
             <button class="dash-nav-link" data-pane="recollections">回忆</button>
             <details class="topbar-more"><summary aria-label="更多">⋯</summary><div>
+              <button id="settings-open" type="button">设置</button>
+              <div class="desk-labs-title" id="desk-labs-title">实验</div>
               <button class="dash-nav-link" data-pane="atelier">画室</button>
               <button class="dash-nav-link" data-pane="todos">待办</button>
               <button class="dash-nav-link" data-pane="a2a-agents">觅食</button>
               <button class="dash-nav-link" data-pane="sessions" data-backstage-entry="true">后厨<span id="sessions-count" hidden></span></button>
-              <button id="settings-open" type="button">设置</button>
-              <section class="desk-labs" aria-label="实验">
-                <div>实验</div>
+              <section class="desk-labs" aria-labelledby="desk-labs-title">
                 <button id="desk-lab-map" type="button" role="switch" aria-label="把一件事画成图" aria-checked="false" aria-describedby="desk-lab-map-note">把一件事画成图</button>
                 <p id="desk-lab-map-note">还在试。关掉就没有，不影响别的。</p>
               </section>
