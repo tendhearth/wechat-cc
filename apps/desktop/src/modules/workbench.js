@@ -112,7 +112,7 @@ function providerLabel(p) {
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string,asLesson?:boolean}} ReviewReturnOpen */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],agentNames?:Record<string,string>,replyAgentNames?:Record<string,string>,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,listStatus?:string,listProject?:string,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsLoaded?:boolean,reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,reviewReturnResult?:import('./workbench-review-panel.js').ReviewReturnResult|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
-/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onMatterViewed?:(task:Task)=>void,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
+/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onMatterViewed?:(task:Task)=>void,onTaskNavigation?:()=>void,preserveNavigationFocus?:()=>boolean,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
 /** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
 
 // 一件事都没改过的任务:签名从一开始就是「空」,免得第一次拉回来白重画一整页。
@@ -1169,7 +1169,16 @@ export function initWorkbenchPage(deps) {
     const navigation = ++navigationGeneration
     const layer=/** @type {HTMLElement|null} */(root.closest?.('.workbench-pane'))
     if(layer)layer.dataset.workbenchView='detail'
-    try { await controller.selectTask(id); const task=controller.state.detail?.task;if(task?.id===id)deps.onMatterViewed?.(task);if(layer){const heading=/** @type {HTMLElement|null} */(root.querySelector('.wb-task-head h2'));if(heading){heading.tabIndex=-1;heading.focus()}} }
+    try {
+      await controller.selectTask(id)
+      if (!alive || navigation !== navigationGeneration) return
+      const task = controller.state.detail?.task
+      if (task?.id === id) deps.onMatterViewed?.(task)
+      if (layer && !deps.preserveNavigationFocus?.()) {
+        const heading = /** @type {HTMLElement|null} */ (root.querySelector('.wb-task-head h2'))
+        if (heading) { heading.tabIndex = -1; heading.focus() }
+      }
+    }
     catch (error) { if (alive && navigation === navigationGeneration) fail(error) }
   }
   const refreshInteraction = async (/** @type {string} */ taskId, /** @type {number} */ navigation) => {
@@ -1278,7 +1287,11 @@ export function initWorkbenchPage(deps) {
     const lineRow = !target && event.target instanceof Element ? /** @type {HTMLElement|null} */ (event.target.closest('[data-row]')) : null
     if (lineRow) return selectLine(lineRow, !!(/** @type {MouseEvent} */ (event).shiftKey))
     if (!target) return
-    if (target.dataset.taskId) return openTask(target.dataset.taskId)
+    if (target.dataset.taskId) {
+      await openTask(target.dataset.taskId)
+      if (alive && controller.state.detail?.task.id === target.dataset.taskId) deps.onTaskNavigation?.()
+      return
+    }
     let action = target.dataset.action
     if(action==='terminal-detach'&&target.dataset.participationId){
       target.disabled=true

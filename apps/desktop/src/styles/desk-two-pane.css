@@ -40,8 +40,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   box-sizing: border-box;
   padding-left: 4px;
 }
-[data-desk-wide][data-platform="macos"] .desk-rail-titlebar { padding-left: 84px; }
-[data-desk-wide] #desk-rail-toggle {
+[data-desk-wide][data-platform="macos"]:not([data-desk-fullscreen]) .desk-rail-titlebar { padding-left: 84px; }
+[data-desk-wide] .desk-rail-titlebar > button {
   position: relative;
   display: grid;
   place-items: center;
@@ -54,8 +54,12 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   color: var(--th-ink-soft);
   cursor: pointer;
 }
-[data-desk-wide] #desk-rail-toggle svg { width: 18px; height: 18px; pointer-events: none; }
-[data-desk-wide] #desk-rail-toggle:is(:hover, :focus) { color: var(--th-ink); }
+[data-desk-wide] .desk-rail-titlebar > button svg { width: 18px; height: 18px; pointer-events: none; }
+[data-desk-wide] .desk-rail-titlebar > button:enabled:not([aria-disabled="true"]):is(:hover, :focus) { color: var(--th-ink); }
+[data-desk-wide] .desk-rail-titlebar > button:is(:disabled, [aria-disabled="true"]) {
+  opacity: var(--th-button-disabled-opacity);
+  cursor: default;
+}
 [data-desk-collapsed] #desk-rail-toggle[data-waiting] .topbar-waiting-dot {
   display: block;
   top: 1px;
