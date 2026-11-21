@@ -601,6 +601,15 @@ export const CliActivityItem = z.object({ kind: z.enum(['you', 'said', 'step']),
   // verb + target(2026-10-17):text 是中文成句;按语言显示的端(App)用这两个自己拼。free 文本(模型自己写的说明)没有。
   verb: z.string().optional(), target: z.string().optional() })
 export type CliActivityItemT = z.infer<typeof CliActivityItem>
+/** /v1/cli/activity 的扩展。旧别名和名单行仍用 CliActivityItem。 */
+export type CliActivityQuery = { session_id: string; full?: '1' | 1; before?: string; limit?: number }
+export const CliActivityPage = z.object({
+  ok: z.literal(true),
+  items: z.array(CliActivityItem.extend({ full: z.string().optional() })),
+  earlier: z.string().nullable().optional(),
+})
+export type CliActivityPageT = z.infer<typeof CliActivityPage>
+
 export const CliSessionRow = z.object({
   run_id:z.string().optional(),
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),

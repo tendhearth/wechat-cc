@@ -77,7 +77,7 @@ export function lastAssistantText(jsonl: string, source: CliSource): string | un
   return last && last.role === 'assistant' ? last.text : undefined
 }
 
-export function parseTranscript(jsonl: string, source: CliSource): TranscriptTurn[] {
+export function parseTranscript(jsonl: string, source: CliSource, maxText = TURN_MAX): TranscriptTurn[] {
   const turns: TranscriptTurn[] = []
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue
@@ -109,7 +109,7 @@ export function parseTranscript(jsonl: string, source: CliSource): TranscriptTur
     text = text.trim()
     if (!text || isHarnessText(text)) continue
     text = redactSecrets(text)
-    if (text.length > TURN_MAX) text = text.slice(0, TURN_MAX - 1) + '…'
+    if (text.length > maxText) text = text.slice(0, maxText - 1) + '…'
     turns.push({ role, text })
   }
   return turns

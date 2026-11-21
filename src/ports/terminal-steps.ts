@@ -11,11 +11,15 @@ export type TerminalStepKind = 'you' | 'said' | 'step'
 export type TerminalStepVerb = 'run' | 'edit' | 'write' | 'delete' | 'read' | 'search' | 'find' | 'subtask' | 'web' | 'websearch' | 'todo' | 'todos' | 'plan' | 'tend' | 'tool' | 'bgoutput'
 /**
  * 步的 payload(读进来的那一步,matter_items.payload_json 存的就是它;M6d 起是 src 里唯一的这一份)。
- * 线上 `/m/api/cli/activity` 的 items、`CliSessionRow.now`(packages/protocol/src/api.ts)与它同形,那一份是冻结的线上形状(wire-compat.ts)。
+ * full(只在 you / said 上):超出短句时另存的原文,只有 /v1/cli/activity?full=1 可返回。
  * detail(只在 step 上):点开这一步能看的 —— 改文件是 diff(`- 旧` / `+ 新`),跑命令是输出尾巴。
  * error:这一步的工具报错了(命令非零退出 / 工具 is_error)。
  */
-export interface TerminalStepPayload { kind: TerminalStepKind; text: string; at: number | null; detail?: string; error?: boolean; verb?: TerminalStepVerb; target?: string }
+export interface TerminalStepPayload { kind: TerminalStepKind; text: string; at: number | null; detail?: string; error?: boolean; verb?: TerminalStepVerb; target?: string; full?: string }
+export interface TerminalStepPage {
+  items: TerminalStepPayload[]
+  earlier: string | null
+}
 export interface TerminalReadState {
   path: string
   /** 读到的字节位置(只到最后一个换行;读到一半的那一行留给下一次)。 */
@@ -43,6 +47,8 @@ export interface TerminalStepStore {
   apply(matterId: string, writes: TerminalStepWrite[], state: TerminalReadState): void
   /** 最近 max 步的 payload,旧 → 新。 */
   recent(matterId: string, max: number): Array<Record<string, unknown>>
+  /** 按固定的步序号往前读。游标不属于该会话或锚点不存在 ⇒ null。 */
+  page(matterId: string, limit: number, before?: string): TerminalStepPage | null
 }
 /** 读进来的步的 key 都以它开头(和钩子写的 user_message / agent_message / 权限卡分开)。 */
 export const STEP_KEY_PREFIX = 't:'

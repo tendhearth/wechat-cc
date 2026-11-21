@@ -18,7 +18,7 @@ import type { TerminalSteps } from './terminal-steps'
 export const PHONE_CLI_SAY_MAX = 4000
 
 export type CliPhonePermissionResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_not_actionable' | 'cli_permission_stale' }
-export type CliPhoneActivityResult = { ok: true; items: TerminalStepPayload[] } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' }
+export type CliPhoneActivityResult = { ok: true; items: TerminalStepPayload[]; earlier?: string | null } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' | 'invalid' }
 /** 列表里「此刻那一步」看最近这么多步。 */
 const NOW_STEPS = 20
 
@@ -37,7 +37,7 @@ export interface CliPhoneActions {
   /** 这条会话最近一句送进窗口的结果;没有 ⇒ null。 */
   lastSay?(sessionId: string): CliPhoneSayState | null
   /** 最近几步(跑了什么、改了哪、说了什么)—— 从这件事的步读(M6d:第一次看时建那件事、导入一次),手机上看着它跑(2026-10-17)。 */
-  activity(sessionId: string): CliPhoneActivityResult
+  activity(sessionId: string, page?: { limit: number; before?: string }): CliPhoneActivityResult
   /** 列表一眼(2026-10-17):在跑的会话此刻在做的那一步(从步读)。读不到 / 没有步骤 ⇒ null。 */
   currentStep(sessionId: string): TerminalStepPayload | null
   /** 开在电脑窗口里的 Claude 会话 id(2026-10-18);没接 ⇒ 空。 */
@@ -56,7 +56,7 @@ export interface CliPhoneActionsDeps {
   /** 开着窗口的会话 id(live-window.ts liveSessionIds);缺席 ⇒ 空。 */
   liveIds?: () => Set<string>
   /** 这件事的步(M4b):增量读进来再从步里拿;还没有那件事 ⇒ view 当场建、导入一次(M6d,不再直接解析记录)。 */
-  steps: Pick<TerminalSteps, 'view'>
+  steps: Pick<TerminalSteps, 'view' | 'page'>
 }
 
 export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions {
@@ -130,16 +130,17 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       return { ok: true }
     },
     lastSay(sessionId) { return lastSays.get(sessionId) ?? null },
-    activity(sessionId) {
+    activity(sessionId, page) {
       const s = deps.hub.lookup(sessionId)
       if (!s || s.session_id !== sessionId) return { ok: false, error: 'not_found' }
       // 那边的会话:记录在那台机器上,这里读不到(微信「看 码」会转过去;手机 v1 不转)。
       if (s.origin_agent || (s.machine && deps.localMachine && s.machine !== deps.localMachine)) return { ok: false, error: 'cli_session_remote' }
       if (!s.transcript_path) return { ok: false, error: 'no_transcript' }
-      let items: TerminalStepPayload[]
-      try { items = deps.steps.view(s, ACTIVITY_MAX_ITEMS) }
-      catch { return { ok: false, error: 'no_transcript' } }
-      return { ok: true, items }
+      try {
+        if (!page) return { ok: true, items: deps.steps.view(s, ACTIVITY_MAX_ITEMS) }
+        const result = deps.steps.page(s, page.limit, page.before)
+        return result ? { ok: true, ...result } : { ok: false, error: 'invalid' }
+      } catch { return { ok: false, error: 'no_transcript' } }
     },
     currentStep(sessionId) {
       const s = deps.hub.lookup(sessionId)
@@ -162,7 +163,7 @@ export function currentStepOf(s: CliSessionInfo, opts: { localMachine?: string |
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i]!
       if (it.kind === 'you') return null   // 主人刚说完、还没动手
-      if (it.kind === 'step') { const { detail: _d, ...rest } = it; return rest }
+      if (it.kind === 'step') { const { detail: _d, full: _full, ...rest } = it; return rest }
     }
     return null
   } catch { return null }
