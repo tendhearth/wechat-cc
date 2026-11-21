@@ -1652,3 +1652,18 @@ it.each([0, 118])('creates both notebook tables when migrating from version %i',
       .toEqual([{ name: 'notebook_entries' }, { name: 'notebook_settings' }])
   } finally { db.close() }
 })
+
+it('adds strict map placements when upgrading a real v119 database', () => {
+  const db = migratedTo(119)
+  try {
+    const table = () => db.query("SELECT name, strict FROM pragma_table_list WHERE name='place_map_pins'").get()
+    expect(table()).toBeNull()
+    runMigrations(db, migrations)
+    expect(table()).toEqual({ name:'place_map_pins', strict:1 })
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version:120 })
+    const insert = db.query("INSERT INTO place_map_pins VALUES ('p:test','e:entry',?,?)")
+    expect(() => insert.run('unknown', '2026-11-21')).toThrow()
+    insert.run('open', '2026-11-21')
+    expect(() => insert.run('done', '2026-11-22')).toThrow()
+  } finally { db.close() }
+})
