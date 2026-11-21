@@ -52,9 +52,17 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  padding: 6px var(--desk-page-padding) 12px;
+  padding: 6px 0 12px;
   gap: 6px;
 }
+/* 字的几行和标题行同一条左边线、同一个右边;图本身铺满这一页的宽。 */
+.lab-map-bar, .lab-map-state, .lab-map-details {
+  width: min(100%, var(--desk-page-width));
+  box-sizing: border-box;
+  margin-inline: auto;
+  padding-inline: calc(var(--desk-page-padding) + var(--desk-speaker-offset)) var(--desk-page-padding);
+}
+.lab-map-state { display: grid; justify-items: start; gap: 4px; }
 .lab-map-bar {
   display: flex;
   justify-content: space-between;
@@ -64,7 +72,6 @@
   min-height: 30px;
 }
 .lab-map .desk-text-button { color: var(--th-accent); }
-.lab-map [data-map-retry] { align-self: start; }
 .lab-map-note { margin: 0; color: var(--th-ink-soft); }
 .lab-map-viewport {
   display: flex;

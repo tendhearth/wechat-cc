@@ -55,7 +55,7 @@ function loadStylesheet() {
  */
 export function mountLabMap({host, key, call, agent, canJump, jump}) {
   host.innerHTML = `<div class="lab-map-bar"><span>实验</span><button type="button" class="desk-text-button" data-map-fit hidden>回到中间</button></div>
-    <p class="lab-map-note" role="status">正在读取…</p><button type="button" class="desk-text-button" data-map-retry hidden>再试一次</button>
+    <div class="lab-map-state"><p class="lab-map-note" role="status">正在读取…</p><button type="button" class="desk-text-button" data-map-retry hidden>再试一次</button></div>
     <div class="lab-map-viewport" hidden><div></div></div>
     <div class="lab-map-details" aria-live="polite" hidden></div>`
   const find = (/** @type {string} */ selector) => /** @type {HTMLElement} */ (host.querySelector(selector))

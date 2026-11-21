@@ -20,7 +20,12 @@ const items: PlaceMapItemT[] = [
 const thread = (page:Page) => page.locator('#thing-thread')
 const diagram = (page:Page) => thread(page).locator('.lab-map')
 const leaf = (page:Page, text:string) => diagram(page).locator('me-tpc').filter({hasText:text})
-const select = (page:Page,name:string) => placeRow(page,name).locator('.place-row').click()
+// 这周没动过的地方收在名单末尾那一行里,先点开再选
+const select = async (page:Page,name:string) => {
+  const row = placeRow(page,name).locator('.place-row')
+  if (!(await row.isVisible())) await page.locator('.desk-quiet-toggle').click()
+  await row.click()
+}
 const view = (page:Page,name:string) => thread(page).getByRole('button',{name,exact:true})
 const menu = (page:Page) => page.locator('.topbar-more summary')
 const toggle = (page:Page) => page.getByRole('switch',{name:'把一件事画成图'})
