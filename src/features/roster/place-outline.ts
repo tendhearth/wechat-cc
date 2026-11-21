@@ -18,7 +18,9 @@ type Snapshot = {
 type Stored = { owner: string; aspects: StoredAspect[]; refs: OutlineRef[]; pinnedMatters: PinnedMatter[] }
 type ErrorCode = NonNullable<PlaceOutlineT['error']>
 type State = Exclude<PlaceOutlineT['state'], 'none'>
-type Row = { state: State; fingerprint: string; result_json: string; error: ErrorCode | ''; call_day: string; finished_ts: string }
+type Row = { state: State; fingerprint: string; result_json: string; error: ErrorCode | ''; call_day: string; call_count: number; finished_ts: string }
+/** 一天里同一个地方最多发出几次调用。梳理成一次(ready / empty)当天就停;没成的可以再试,到这个数为止。 */
+export const OUTLINE_CALLS_PER_DAY = 3
 export type OutlineStart = PlaceOutlineRunResponseT | 'outline_quota' | 'lab_off' | 'place_not_found' | 'unavailable'
 
 const short = (s: string, limit: number) => [...s.trim().replace(/\s+/g, ' ')].slice(0, limit).join('')
@@ -76,7 +78,10 @@ export function makePlaceOutlines(deps: PlaceOutlineDeps & {
     ON CONFLICT(place_key) DO UPDATE SET state='running',fingerprint=excluded.fingerprint,
       result_json='', error='', started_ts=excluded.started_ts, finished_ts=''
   `)
-  const charge = db.query("UPDATE place_outlines SET call_day=? WHERE place_key=? AND state='running'")
+  const charge = db.query("UPDATE place_outlines SET call_count=CASE WHEN call_day=?1 THEN call_count+1 ELSE 1 END, call_day=?1 WHERE place_key=?2 AND state='running'")
+  // 今天已经梳理成过一次,或者发出去的次数到顶了
+  const spent = (row: Row | null | undefined) => !!row && row.call_day === day()
+    && (row.call_count >= OUTLINE_CALLS_PER_DAY || row.state === 'ready' || row.state === 'empty')
   const finish = db.query("UPDATE place_outlines SET state=?,result_json=?,error=?,finished_ts=? WHERE place_key=? AND state='running'")
   let epoch = 0
 
@@ -146,14 +151,14 @@ export function makePlaceOutlines(deps: PlaceOutlineDeps & {
       if ((row?.state === 'ready' || row?.state === 'empty') && row.fingerprint === snapshot.input.fingerprint) {
         return { ok: true, state: row.state, unchanged: true }
       }
-      if (row?.call_day === day()) return 'outline_quota'
+      if (spent(row)) return 'outline_quota'
       begin.run(key, snapshot.input.fingerprint, iso())
       void run(key, snapshot, currentEpoch).catch(() => deps.log?.('PLACE_OUTLINE', 'unavailable', { key }))
       return { ok: true, state: 'running' }
     },
     read(key: string, snapshot: Snapshot | null): PlaceOutlineT {
       const row = get.get(key)
-      const canRun = row?.call_day !== day()
+      const canRun = !spent(row) && row?.state !== 'running'
       if (!row || !snapshot) return { state: 'none', canRun }
       const stale = row.fingerprint !== snapshot.input.fingerprint
       const at = row.finished_ts ? Date.parse(row.finished_ts) : undefined
@@ -167,9 +172,11 @@ export function makePlaceOutlines(deps: PlaceOutlineDeps & {
       }
       const publicSource = (source: OutlineRef): PlaceOutlineSourceT => source.kind === 'entry' ? { kind: 'entry' }
         : { kind: 'session', matterId: source.matterId, sessionId: source.sessionId, agent: source.agent, at: source.at }
+      // 出处回到的是会话这一层:同一次会话的几句话只列一次
+      const distinct = (sources: OutlineRef[]) => [...new Map(sources.map(source => [source.kind === 'entry' ? 'entry' : `s:${source.sessionId}`, source])).values()]
       const aspects = stored.aspects.map(aspect => ({
         name: aspect.name,
-        items: aspect.items.map(item => ({ ...item, sources: item.sources.map(publicSource) })),
+        items: aspect.items.map(item => ({ ...item, sources: distinct(item.sources).map(publicSource) })),
       }))
       return { state: 'ready', at, canRun, stale, aspects }
     },

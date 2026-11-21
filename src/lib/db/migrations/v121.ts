@@ -9,6 +9,7 @@ export const migration: Migration = db => {
     result_json TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '',
     call_day TEXT NOT NULL DEFAULT '',
+    call_count INTEGER NOT NULL DEFAULT 0,
     started_ts TEXT NOT NULL,
     finished_ts TEXT NOT NULL DEFAULT ''
   ) STRICT`)

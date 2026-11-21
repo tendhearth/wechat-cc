@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createProviderRegistry } from '../../app/provider-registry'
 import { openTestDb } from '../../lib/db'
 import type { CheapEval } from '../../ports/agent-provider'
-import { makePlaceOutlines, parseOutline } from './place-outline'
+import { OUTLINE_CALLS_PER_DAY, makePlaceOutlines, parseOutline } from './place-outline'
 import type { OutlineRef } from './place-outline-input'
 
 const dbs: ReturnType<typeof openTestDb>[] = []
@@ -110,9 +110,23 @@ it.each([
   const evaluate = vi.fn<CheapEval>(async (_prompt, opts) => { opts?.beforeRequest?.(); return model })
   const service = f.open(() => evaluate)
   await service.start(key)
-  await vi.waitFor(() => expect(service.read(key, f.snapshot())).toMatchObject({ state, error, canRun: false }))
+  await vi.waitFor(() => expect(service.read(key, f.snapshot())).toMatchObject({ state, error, canRun: state === 'failed' }))
   expect(evaluate).toHaveBeenCalledTimes(1)
   if (state === 'empty') expect(await service.start(key)).toEqual({ ok: true, state, unchanged: true })
+})
+
+it('没成的那次不占当天的梳理：可以再试，一天最多发出三次', async () => {
+  const f = fixture()
+  const evaluate = vi.fn<CheapEval>(async (_prompt, opts) => { opts?.beforeRequest?.(); return '{bad' })
+  const service = f.open(() => evaluate)
+  for (let call = 1; call <= OUTLINE_CALLS_PER_DAY; call++) {
+    expect(await service.start(key)).toEqual({ ok: true, state: 'running' })
+    await vi.waitFor(() => expect(service.read(key, f.snapshot())).toMatchObject({ state: 'failed', error: 'bad_output', canRun: call < OUTLINE_CALLS_PER_DAY }))
+  }
+  expect(await service.start(key)).toBe('outline_quota')
+  expect(evaluate).toHaveBeenCalledTimes(OUTLINE_CALLS_PER_DAY)
+  f.tomorrow()
+  expect(service.read(key, f.snapshot())).toMatchObject({ state: 'failed', canRun: true })
 })
 
 it('一两块也算梳理出来了：小项目本来就没几块', async () => {
@@ -160,15 +174,15 @@ it.each(['disable', 'toggle', 'input', 'owner'] as const)('落库前变化会丢
     if (change === 'toggle') f.setEnabled(true)
   }
   finish(reply)
-  await vi.waitFor(() => expect(service.read(key, f.snapshot())).toMatchObject({ state:'failed', error:'stale', canRun:false }))
+  await vi.waitFor(() => expect(service.read(key, f.snapshot())).toMatchObject({ state:'failed', error:'stale', canRun:true }))
   expect(f.db.query('SELECT result_json FROM place_outlines').get()).toEqual({result_json:''})
 })
 
-it('重启把 running 恢复成 interrupted，并保留当天额度', () => {
+it('重启把 running 恢复成 interrupted，没成的这次可以再试', () => {
   const f = fixture()
   f.db.query("INSERT INTO place_outlines (place_key,state,fingerprint,call_day,started_ts) VALUES (?,'running','version1','2026-11-21','')").run(key)
   const service = f.open(() => null)
-  expect(service.read(key, f.snapshot())).toMatchObject({ state:'failed', error:'interrupted', canRun:false })
+  expect(service.read(key, f.snapshot())).toMatchObject({ state:'failed', error:'interrupted', canRun:true })
 })
 
 it('私密请求等待准入期间撤掉条目权限，材料不派发', async () => {

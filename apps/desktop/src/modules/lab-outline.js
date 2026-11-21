@@ -82,7 +82,7 @@ export function mountOutlineMap({host, key, call, loadMap, theme, fitMap, canJum
     action.hidden = !label
     action.onclick = label ? start : null
     info.textContent = next.state === 'none' && next.canRun
-      ? 'CC 会读这件事最近几次会话里你说的和它说的，分成几块。用一次模型；内容没变不会重复算，每天最多一次。'
+      ? 'CC 会读这件事最近几次会话里你说的和它说的，分成几块。要用模型；内容没变不会重复算，一天梳理成一次为止。'
       : reason ?? ''
     info.hidden = !info.textContent
   }

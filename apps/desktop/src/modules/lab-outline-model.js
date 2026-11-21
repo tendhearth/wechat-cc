@@ -47,7 +47,7 @@ export function outlineNotice(outline, now) {
     }
     case 'failed': return {
       text: '这次没梳理出来。',
-      reason: !outline.canRun ? '今天的那一次用掉了。'
+      reason: !outline.canRun ? '今天试过几次都没成，明天再试。'
         : outline.error === 'no_private_model' ? '现在没有可用的私密模型。' : '',
       action: outline.canRun && outline.error !== 'no_private_model' ? '再试一次' : '',
     }
