@@ -158,12 +158,17 @@ it('operator 可以写、改、放回去，revision 跟随摆放，话题原行�
     [{...body, key:'p:0000000000000000'}, 404, 'place_not_found'],
     [{...body, itemId:'e:missing'}, 404, 'place_map_item_not_found'],
     [{...body, itemId:'a:terminal:ask-session'}, 409, 'place_map_item_fixed'],
-    [{...body, branch:'主人原话', body:'正文'}, 400, 'invalid'],
   ] as const) {
     const response = await request(input)
     expect(response.status).toBe(status)
     expect(await response.json()).toEqual({error})
   }
+  // 形状不对走通用的那条回绝:回的话和日志里都不带请求里的字。
+  const malformed = await request({...body, branch:'主人原话', body:'正文'})
+  expect(malformed.status).toBe(400)
+  const refusal = await malformed.text()
+  expect(JSON.parse(refusal).error).toBe('invalid_request')
+  expect(refusal).not.toMatch(/主人原话|正文/)
   expect(JSON.stringify(log)).not.toMatch(/主人原话|正文/)
   expect((await request(body, file)).status).toBe(403)
   const session = api.mintSessionToken('admin', 'codex/default/'+owner)

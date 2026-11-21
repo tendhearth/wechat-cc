@@ -247,7 +247,6 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
   }): Promise<DispatchResult> {
     const { entry, method, url, rawUrl, caller } = inp
     const routeKey = `${method} ${url.pathname}`
-    const isMapPin = routeKey === 'POST /v1/places/map/pin'
     const isNotebook = url.pathname === '/v1/notebook' || url.pathname.startsWith('/v1/notebook/')
     if (!entryAccepts(entry, caller.origin)) return { status: 401, body: { error: 'unauthorized' } }
 
@@ -319,7 +318,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
           : undefined)
       } catch (err) {
         if(err instanceof Error&&err.message==='request_body_too_large') return { status: 413, body: { error: 'request_body_too_large' }, closeConnection: true }
-        return { status: 400, body: { error: 'malformed_json', ...(isNotebook || isMapPin ? {} : { detail: errMsg(err) }) } }
+        return { status: 400, body: { error: 'malformed_json', ...(isNotebook ? {} : { detail: errMsg(err) }) } }
       }
     }
 
@@ -332,7 +331,6 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
       const parsed = reqSchema.safeParse(input)
       if (!parsed.success) {
         if (isNotebook) return { status: 400, body: { error: 'notebook_invalid' } }
-        if (isMapPin) return { status: 400, body: { error: 'invalid' } }
         deps.log?.('INTERNAL_API', `400 ${routeKey} schema mismatch`, {
           path: routeKey,
           issues: parsed.error.issues,
