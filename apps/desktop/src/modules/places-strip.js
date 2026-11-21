@@ -100,6 +100,7 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true,
  *   onSelect: (place: Place | null) => void,
  *   onOpen: (target: {kind:'matter'|'terminal', id:string}) => unknown,
  *   onSituation?: (text:string, stale:boolean) => void,
+ *   onPlaceMap?: (enabled: boolean) => void,
  *   onPlaces?: (places: Place[]) => void,
  *   waitingRoot?: HTMLElement,
  *   onCurrent?: (place: Place | null) => void,
@@ -107,7 +108,7 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true,
  *   intervalMs?: number,
  * }} o
  */
-export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSituation, waitingRoot, onCurrent, now = Date.now, intervalMs = 3000 }) {
+export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPlaceMap, onSituation, waitingRoot, onCurrent, now = Date.now, intervalMs = 3000 }) {
   /** @type {Place[]} */ let places = []
   /** @type {Pick<Place, 'key' | 'name'>[]} */ let hidden = []
   let hiddenOpen = false
@@ -116,6 +117,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
   const supportsPopover = typeof root.showPopover === 'function'
   const openActions = supportsPopover ? '.place-actions:popover-open' : '.place-actions[data-open]'
   let wide = false, quietOpen = false, waitingOpen = false
+  let readEpoch = 0
   let version = '', alive = true, stale = false, acting = false, notified = '', seenMark = ''
   /** @type {{key:string,request?:string}|null} */ let inlineWaiting = null
   let waitingMarkup = ''
@@ -208,15 +210,17 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
   }
 
   async function refreshAfterWrite() {
+    ++readEpoch
     await inFlight
     version = ''
     await refresh()
   }
 
   async function readPlaces() {
+    const epoch = readEpoch
     try {
       const data = await v1(call, V1.places.get, undefined, version ? { ifNoneMatch: version } : undefined)
-      if (!alive) return
+      if (!alive || epoch !== readEpoch) return
       if (data?.notModified) {
         if (stale) { stale = false; draw() }
         else if (wide) {
@@ -231,6 +235,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
       hidden = data.hidden ?? []
       if (!hidden.length) hiddenOpen = false
       places = data.places; version = data.version; stale = false
+      onPlaceMap?.(data.labs?.placeMap === true)
       const current = selected ? places.find(p => p.key === selected) ?? null : null
       if (selected && !current) selected = null
       if (changed) { draw(); onPlaces?.(places) }
@@ -239,7 +244,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
       if (ids !== notified) { notified = ids; onSelect(current) }
       // 选着这一行时它又动了:主人正看着,也算看过。
       if (current) markSeen(current)
-    } catch { if (alive && !stale) { stale = true; draw() } }
+    } catch { if (alive && epoch === readEpoch && !stale) { stale = true; draw() } }
   }
 
   /** 主人看了这一行(点开 / 选着时又动了 / 从这一行打开一件):daemon 记下时刻,下次那一句从这以后说起。 @param {Place} place */
@@ -428,6 +433,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
   const timer = setInterval(() => void refresh(), intervalMs)
   return {
     refresh,
+    refreshAfterWrite,
     closeActions,
     /** @param {boolean} enabled */
     setWide(enabled) {

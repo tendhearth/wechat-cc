@@ -29,22 +29,21 @@ function stateOf(item) {
 
 /**
  * @param {{root:HTMLElement,call:Call,openTask:(id:string,host:HTMLElement)=>Promise<void>,closeTask:()=>void,
- * home:()=>void,onSession:()=>void,onWaiting:(value:{key:string,request?:string}|null)=>void}} options
+ * home:()=>void,onLabWrite?:()=>void,onSession:()=>void,onWaiting:(value:{key:string,request?:string}|null)=>void}} options
  */
-export function mountThingThread({root,call,openTask,closeTask,home,onSession,onWaiting}) {
+export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,onSession,onWaiting}) {
   const heading = /** @type {HTMLElement} */ (root.querySelector('.thing-name'))
   const status = /** @type {HTMLElement} */ (root.querySelector('.thing-status'))
   const tabs = /** @type {HTMLElement} */ (root.querySelector('.thing-sessions'))
   const tray = /** @type {HTMLElement} */ (root.querySelector('.thing-content'))
   const mapHost = /** @type {HTMLElement|null} */ (root.querySelector('.lab-map'))
   const switcher = /** @type {HTMLElement|null} */ (root.querySelector('.lab-map-seg'))
-  const toggle = document.getElementById('desk-lab-map')
+  const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('desk-lab-map'))
+  const note = document.getElementById('desk-lab-map-note')
+  const labDescription = note?.textContent ?? ''
   const wide = window.matchMedia('(min-width: 900px)')
   /** @type {Set<string>} */ const maps = new Set()
-  const storageKey = 'wechat-cc:desk-lab-map'
-  let experiment = false
-  try { experiment = window.localStorage.getItem(storageKey) === 'true' } catch { /* defaults off */ }
-  toggle?.setAttribute('aria-checked', String(experiment))
+  let experiment = false, alive = true
   /** @type {(()=>void)|undefined} */ let stopMap
   /** @type {{element:Element,top:number}|undefined} */ let reading
   /** @type {Map<string,{host:HTMLElement,thread:ReturnType<typeof mountTerminalThread>}>} */
@@ -132,13 +131,32 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
 
   const resize = () => reflectGraph()
   wide.addEventListener('change', resize)
-  toggle?.addEventListener('click', () => {
-    experiment = !experiment
-    try { window.localStorage.setItem(storageKey, String(experiment)) } catch { /* keep window state */ }
-    toggle.setAttribute('aria-checked', String(experiment))
-    if (!experiment) maps.clear()
+  /** @param {boolean} enabled */
+  function setPlaceMap(enabled) {
+    if (enabled === experiment) return
+    experiment = enabled
+    toggle?.setAttribute('aria-checked', String(enabled))
+    if (!enabled) maps.clear()
     reflectGraph()
-  })
+  }
+
+  async function togglePlaceMap() {
+    if (!toggle || toggle.disabled) return
+    toggle.disabled = true
+    if (note) note.textContent = labDescription
+    try {
+      const result = await v1(call, V1.places.labs, { body: { placeMap: !experiment } })
+      if (result?.ok !== true || typeof result.placeMap !== 'boolean') throw Error('invalid_labs')
+      if (!alive) return
+      setPlaceMap(result.placeMap)
+      onLabWrite?.()
+    } catch {
+      if (alive && note) note.textContent = '没改成，再试一次。'
+    } finally {
+      toggle.disabled = false
+    }
+  }
+  toggle?.addEventListener('click', togglePlaceMap)
   switcher?.addEventListener('click', event => {
     const button = event.target instanceof HTMLButtonElement ? event.target : null
     if (!button || !place || !experiment || !wide.matches) return
@@ -352,6 +370,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
         terminals.delete(key)
       }
     },
+    setPlaceMap,
     current: () => selected,
     /** @param {Place} where @param {Target} target */
     find(where, target) {
@@ -360,6 +379,8 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
     },
     linkedItem,
     destroy() {
+      alive = false
+      toggle?.removeEventListener('click', togglePlaceMap)
       wide.removeEventListener('change', resize)
       stopGraph()
       leaveContent()

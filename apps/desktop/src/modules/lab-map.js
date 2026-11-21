@@ -113,7 +113,7 @@ export function mountLabMap({host, key, call, agent, canJump, jump}) {
     const placement = item.pin
       ? '你放的' + (original ? ` · 本来在「${branches[original].label}」` : '')
       : branches[branch].label
-    p([placement, kinds[item.kind], sources[item.from.source], date].filter(Boolean).join(' · '), 'lab-map-meta')
+    p(item.pin ? placement : [placement, kinds[item.kind], sources[item.from.source], date].filter(Boolean).join(' · '), 'lab-map-meta')
     if (item.body) p('CC 记的：' + item.body, 'lab-map-body')
     if (canJump(item)) {
       const button = document.createElement('button')
