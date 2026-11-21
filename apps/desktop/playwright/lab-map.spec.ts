@@ -171,3 +171,28 @@ test('截图：图、点了一条、空的',async ({page,shimUrl})=>{
   await expect(diagram(page)).toContainText('CC 手上还没有这件事的条目。')
   await page.screenshot({path:join(out,'lab-map-empty.png')})
 })
+
+// 主人 2026-11-21:「先都算实验没事，慢慢我来决定」——画室、待办、觅食、后厨归到「实验」下面,照常能点开。
+test('「⋯」里：设置在前，画室、待办、觅食、后厨归在「实验」下面，照常能点开',async ({page,shimUrl})=>{
+  const out = join(process.env.TMPDIR ?? tmpdir(),'shots')
+  await mkdir(out,{recursive:true})
+  await mock(page)
+  await page.goto(shimUrl)
+  await menu(page).click()
+  const box = page.locator('.topbar-more > div')
+  const order = await box.evaluate(el => [...el.children].filter(child => !(child instanceof HTMLElement && child.hidden) && getComputedStyle(child).display !== 'none')
+    .map(child => child.id === 'desk-labs-title' ? '实验' : child.classList.contains('desk-labs') ? '开关' : (child.textContent ?? '').replace(/\s+\d*$/,'').trim()))
+  expect(order.slice(order.indexOf('设置'))).toEqual(['设置','实验','画室','待办','觅食','后厨','开关'])
+  await expect(toggle(page)).toBeVisible()
+  await page.screenshot({path:join(out,'lab-menu-wide.png')})
+  await box.getByRole('button',{name:'待办'}).click()
+  await expect(page.locator('body')).toHaveAttribute('data-pane','todos')
+
+  // 窄窗口:小标题和四样都在,图的开关不出现
+  await page.setViewportSize({width:760,height:820})
+  await menu(page).click()
+  await expect(page.locator('#desk-labs-title')).toBeVisible()
+  for (const name of ['画室','待办','觅食','后厨']) await expect(box.getByRole('button',{name})).toBeVisible()
+  await expect(toggle(page)).toBeHidden()
+  await page.screenshot({path:join(out,'lab-menu-narrow.png')})
+})
