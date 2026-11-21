@@ -448,7 +448,7 @@ test('按方面需要点一下，梳理后看多处出处，回到准确的会�
   await expect(view(page,'重新梳理')).toHaveCount(0)
   await show({state:'failed',canRun:false,error:'bad_output'})
   await expect(diagram(page)).toContainText('这次没梳理出来。')
-  await expect(diagram(page)).toContainText('今天的那一次用掉了。')
+  await expect(diagram(page)).toContainText('今天试过几次都没成，明天再试。')
   await show({state:'failed',canRun:true,error:'no_private_model'})
   await expect(diagram(page)).toContainText('现在没有可用的私密模型。')
   await show({state:'failed',canRun:true,error:'unavailable'})
