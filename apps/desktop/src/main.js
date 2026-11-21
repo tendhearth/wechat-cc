@@ -2089,15 +2089,23 @@ function mountDeskLayout(strip) {
     const top = scroller.getBoundingClientRect().top
     const anchor = Array.from(rows ?? []).find(row => row.getBoundingClientRect().bottom > top)
     const offset = anchor ? anchor.getBoundingClientRect().top - top : 0
-    const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
     // 这一页此刻正藏着(比如在一件事的页面里时,对话那一页不显示):量出来全是 0,会被当成「在底部」。它自己记着位置,这里不插手。
     const measurable = scroller.getClientRects().length > 0
+    const atBottom = measurable && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+    // 对话和一件事的线:换版式会把每一条重画(节点换了、行高变了),按消息的编号记,切之前就记好。
+    const remembered = !inNotebook && measurable && !atBottom ? rememberConversationPosition(scroller) : null
     change()
     if (focus instanceof HTMLElement && focus !== document.activeElement && focus.isConnected && focus.getClientRects().length) {
       focus.focus({ preventScroll: true })
     }
-    if (!measurable || !scroller.getClientRects().length) return
+    if (!measurable) return
+    if (!scroller.getClientRects().length) {
+      // 换完版式这一页被藏起来了(宽窗口里选着一个地方 ⇒ 进它的页):切之前记的位置留到它回来时用。
+      if (scroller === scroll) restoreDeskConversation = remembered ?? (() => { scroll.scrollTop = scroll.scrollHeight })
+      return
+    }
     if (atBottom) scroller.scrollTop = scroller.scrollHeight
+    else if (remembered) remembered()
     else if (anchor) scroller.scrollTop += anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset
   }
   const apply = () => preserveReadingPosition(() => {
