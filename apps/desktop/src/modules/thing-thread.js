@@ -43,6 +43,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   const labDescription = note?.textContent ?? ''
   const wide = window.matchMedia('(min-width: 900px)')
   /** @type {Set<string>} */ const maps = new Set()
+  /** @type {Set<string>} */ const aspectMaps = new Set()
   let experiment = false, alive = true
   /** @type {(()=>void)|undefined} */ let stopMap
   /** @type {{element:Element,top:number}|undefined} */ let reading
@@ -77,6 +78,25 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       ?? (sessionId ? linkedItem(place,{kind:'terminal',id:sessionId}) : undefined)
   }
 
+  /** @param {import('@wechat-cc/protocol').PlaceOutlineSourceT} source */
+  function outlineTarget(source) {
+    if (!place || source.kind !== 'session' || !source.sessionId) return undefined
+    return placeSessions(place, roster).find(row =>
+      (row.terminal?.sessionId ?? (row.kind === 'terminal' ? row.id : undefined)) === source.sessionId)
+  }
+
+  /** @param {Item} target @param {Item|undefined} [link] */
+  function returnToLine(target, link) {
+    if (!place) return
+    maps.delete(place.key)
+    openEarlier ||= splitSessions(placeSessions(place, roster)).earlier.includes(target)
+    open(place, target.key, link)
+    onSession()
+    const tab = tabs.hidden ? null : /** @type {HTMLElement|null} */ (tabs.querySelector('[aria-pressed="true"]'))
+    const focus = tab ?? heading
+    focus.focus({ preventScroll: true })
+  }
+
   function stopGraph() {
     if (!stopMap || !mapHost) return
     stopMap()
@@ -101,7 +121,15 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
         tray.hidden = tabs.hidden = true
         root.setAttribute('data-lab-map', '')
         mapHost.hidden = false
-        stopMap = mountLabMap({host:mapHost,key:place.key,call,
+        const { key } = place
+        stopMap = mountLabMap({host:mapHost,key,call,
+          aspects:aspectMaps.has(key),
+          remember:aspects => { if (aspects) aspectMaps.add(key); else aspectMaps.delete(key) },
+          canJumpSource:source => !!outlineTarget(source),
+          jumpSource:source => {
+            const target = outlineTarget(source)
+            if (target) returnToLine(target)
+          },
           agent:item => {
             const row = mapTarget(item)
             const agent = row && agentOf(row)
@@ -111,14 +139,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
           jump:item => {
             const row = mapTarget(item)
             const target = row ?? mapLink(item)
-            if (!place || !target) return
-            maps.delete(place.key)
-            openEarlier ||= splitSessions(placeSessions(place,roster)).earlier.includes(target)
-            open(place,target.key,row ? undefined : target)
-            onSession()
-            const tab = tabs.hidden ? null : /** @type {HTMLElement|null} */ (tabs.querySelector('[aria-pressed="true"]'))
-            const focus = tab ?? heading
-            focus.focus({preventScroll:true})
+            if (target) returnToLine(target, row ? undefined : target)
           },
         })
         tellWaiting()

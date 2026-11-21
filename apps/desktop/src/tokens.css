@@ -148,3 +148,9 @@
   --th-font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   color-scheme: light;
 }
+.lab-map {
+  --th-map-clay: #a45c40;
+  --th-map-slate: #55708a;
+  --th-map-plum: #7a5c78;
+  --th-map-olive: #7c7250;
+}

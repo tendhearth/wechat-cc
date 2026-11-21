@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { Page, Route, Locator } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { placeItem, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
-import type { PlaceMapItemT, PlaceMapPinRequestT, PlaceMapBranchT } from '@wechat-cc/protocol'
+import type { PlaceMapItemT, PlaceMapPinRequestT, PlaceMapBranchT, PlaceOutlineT } from '@wechat-cc/protocol'
 
 test.use({ viewport:{width:1280,height:820} })
 const now = Date.UTC(2026,10,21)
@@ -364,4 +364,105 @@ test('地方读回的开关决定图入口，写失败保持原值并在开关�
   await expect(toggle(page)).toHaveAttribute('aria-checked','true')
   await expect(view(page,'图')).toBeVisible()
   expect(writes).toHaveLength(0)
+})
+
+test('按方面需要点一下，梳理后看多处出处，回到准确的会话', async ({page,shimUrl}) => {
+  const out = join(process.env.TMPDIR ?? tmpdir(),'shots')
+  await mkdir(out,{recursive:true})
+  const writes = await mock(page, undefined, undefined, false)
+  const requests: string[] = []
+  let starts = 0
+  let outline: PlaceOutlineT = {state:'none',canRun:true}
+  const aspects: NonNullable<PlaceOutlineT['aspects']> = [
+    {name:'整理目录', items:[{id:'o:0',line:'先按月份整理',status:'decided',sources:[
+      {kind:'session',sessionId:'two',agent:'Codex',at:now}, {kind:'entry'}, {kind:'session',sessionId:'gone',agent:'Claude Code',at:now},
+    ]}]},
+    {name:'补缺', items:[{id:'o:1',line:'补去年缺的记录',status:'active',sources:[{kind:'entry'}]}]},
+    {name:'保留', items:[{id:'o:2',line:'原文件还留着',status:'noted',sources:[{kind:'entry'}]}]},
+  ]
+  page.on('request', request => { if (mapPath.test(request.url())) requests.push(request.url()) })
+  await page.route(/\/v1\/places\/map\?.*&outline=1$/, route => route.fulfill({json:{
+    ok:true,place:{key:garden.key,name:garden.name},items,truncated:false,revision:'same-status',outline,
+  }}))
+  await page.route('**/v1/places/map/outline', async route => {
+    starts++
+    expect(route.request().postDataJSON()).toEqual({key:garden.key})
+    outline = {state:'running',canRun:false}
+    await route.fulfill({json:{ok:true,state:'running'}})
+  })
+
+  await page.goto(shimUrl)
+  await select(page,'花园')
+  await expect(view(page,'图')).toBeHidden()
+  expect(requests).toHaveLength(0)
+  await enable(page)
+  await view(page,'图').click()
+  await expect(diagram(page).locator('me-root')).toHaveText('花园')
+  expect(requests.some(url=>url.includes('outline=1'))).toBe(false)
+  await view(page,'按方面').click()
+  const begin = view(page,'让 CC 梳理一下')
+  await expect(diagram(page)).toContainText('CC 还没梳理过这件事。')
+  await expect(diagram(page).locator('me-root')).toHaveCount(0)
+  expect(starts).toBe(0)
+  await page.screenshot({path:join(out,'lab-outline-none.png')})
+  const runningRead = page.waitForResponse(res=>res.url().includes('outline=1'))
+  await begin.click()
+  await runningRead
+  await expect(diagram(page)).toContainText('CC 在梳理…')
+  expect(starts).toBe(1)
+  outline = {state:'ready',at:now,canRun:false,aspects}
+  await expect(diagram(page).locator('me-root')).toHaveText('花园',{timeout:5500})
+  await expect(diagram(page).locator('me-tpc[data-nodeid^="meg:aspect-"]')).toHaveCount(3)
+  await expect(leaf(page,'先按月份整理')).toHaveAttribute('data-outline-status','decided')
+  await page.screenshot({path:join(out,'lab-outline-ready.png')})
+  await leaf(page,'先按月份整理').click()
+  await expect(actions(page)).toContainText('定了的 · CC 梳理的 · 出自 Codex 的会话')
+  await expect(actions(page)).toContainText('出自 CC 记下的一条')
+  await expect(actions(page)).toContainText('那次会话已经翻不到了')
+  await page.screenshot({path:join(out,'lab-outline-selected.png')})
+
+  const branchesBefore = await diagram(page).locator('me-main').allTextContents()
+  await drag(page,leaf(page,'先按月份整理'),leaf(page,'补缺'))
+  await expect(diagram(page).locator('[data-map-pin]')).toHaveCount(0)
+  expect(await diagram(page).locator('me-main').allTextContents()).toEqual(branchesBefore)
+  expect(writes).toEqual([])
+  // Read-only drag pans the viewport. Center again before exercising the source link.
+  await view(page,'回到中间').click()
+  await leaf(page,'先按月份整理').click()
+  await view(page,'去那条线上看 ›').click()
+  await expect(thread(page).locator('[data-thread-session="terminal:two"]')).toHaveAttribute('aria-pressed','true')
+  await expect(thread(page).locator('.thing-terminal:visible')).toContainText('two 的原话')
+
+  outline = { ...outline, stale:true, canRun:true }
+  await view(page,'图').click()
+  await expect(view(page,'按方面')).toHaveAttribute('aria-pressed','true')
+  await expect(view(page,'重新梳理')).toBeVisible()
+  const show = async (next: PlaceOutlineT) => {
+    await view(page,'按状态').click()
+    await expect(diagram(page).locator('me-tpc[data-nodeid^="meg:"]')).toHaveCount(5)
+    outline = next
+    await view(page,'按方面').click()
+  }
+  await show({...outline,canRun:false})
+  await expect(diagram(page)).toContainText('今天梳理过了。')
+  await expect(view(page,'重新梳理')).toHaveCount(0)
+  await show({state:'failed',canRun:false,error:'bad_output'})
+  await expect(diagram(page)).toContainText('这次没梳理出来。')
+  await expect(diagram(page)).toContainText('今天的那一次用掉了。')
+  await show({state:'failed',canRun:true,error:'no_private_model'})
+  await expect(diagram(page)).toContainText('现在没有可用的私密模型。')
+  await show({state:'failed',canRun:true,error:'unavailable'})
+  await expect(view(page,'再试一次')).toBeVisible()
+  await show({state:'empty',canRun:false})
+  await expect(diagram(page)).toContainText('材料太少，CC 没分出几块。')
+
+  await menu(page).click()
+  await toggle(page).click()
+  await expect(view(page,'图')).toBeHidden()
+  const count = requests.length
+  await page.reload()
+  await select(page,'花园')
+  await expect(view(page,'图')).toBeHidden()
+  expect(requests).toHaveLength(count)
+  expect(starts).toBe(1)
 })

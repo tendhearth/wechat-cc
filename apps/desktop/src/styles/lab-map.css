@@ -134,3 +134,21 @@
   color: var(--th-accent);
   font-weight: 400;
 }
+
+.lab-map-bar .lab-map-cut { margin-inline: 8px auto; }
+.lab-outline-state .lab-map-meta { margin: 0; }
+.lab-map-viewport me-tpc[data-outline-status]::before {
+  content: "";
+  display: inline-block;
+  inline-size: .45em;
+  block-size: .45em;
+  margin-inline-end: .45em;
+  border-radius: 50%;
+  background: var(--outline-status);
+  vertical-align: middle;
+}
+.lab-map-viewport me-tpc[data-outline-status="open"] { --outline-status: var(--th-accent); }
+.lab-map-viewport me-tpc[data-outline-status="active"] { --outline-status: var(--th-warn); }
+.lab-map-viewport me-tpc[data-outline-status="decided"] { --outline-status: var(--th-ink); }
+.lab-map-viewport me-tpc[data-outline-status="done"] { --outline-status: var(--th-ink-soft); }
+.lab-map-viewport me-tpc[data-outline-status="noted"] { --outline-status: var(--th-hair); }
