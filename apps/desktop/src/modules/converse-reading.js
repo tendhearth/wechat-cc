@@ -5,7 +5,7 @@ import { deskDate, messageDay } from './desk-page.js'
 
 /** @typedef {import('./converse.js').ConverseMsg} Message */
 /** @typedef {{message:Message,signature:string,node:Element}} Row */
-/** @typedef {{rows:Map<number|string,Row>,unread:boolean,following:boolean,owed:boolean,lastTop:number,empty:string}} ReadingState */
+/** @typedef {{rows:Map<number|string,Row>,unread:boolean,following:boolean,owed:boolean,lastTop:number,empty:string,latest:HTMLButtonElement|null}} ReadingState */
 /** @type {WeakMap<HTMLElement,ReadingState>} */
 const states = new WeakMap()
 
@@ -63,7 +63,17 @@ export function rememberConversationPosition(scroll) {
  * @param {{follow?:boolean,prepend?:boolean,preserve?:boolean,latest?:HTMLButtonElement|null,decoration?:(message:Message)=>string}} [options] */
 export function paintConversation(scroll, messages, render, empty, {follow=false,prepend=false,preserve=false,latest=null,decoration}={}) {
   let state=states.get(scroll)
-  if(!state){state={rows:new Map(),unread:false,following:true,owed:false,lastTop:scroll.scrollTop,empty:''};states.set(scroll,state)}
+  if(!state){
+    const created=state={rows:new Map(),unread:false,following:true,owed:false,lastTop:scroll.scrollTop,empty:'',latest}
+    states.set(scroll,created)
+    // 消息比页面先到(这一栏还没显示出来、高度是 0)时没法滚到最新:等它有了高度再补上。
+    if(typeof ResizeObserver==='function')new ResizeObserver(()=>{
+      if(!created.owed || !created.rows.size || !scroll.clientHeight)return
+      created.owed=false
+      showConversationLatest(scroll,created.latest)
+    }).observe(scroll)
+  }
+  state.latest=latest
   if(scroll.scrollTop<state.lastTop-1)state.following=false
   const following=follow || !state.rows.size || (state.following && conversationAtLatest(scroll) && !conversationInteractionActive(scroll))
   const top=scroll.scrollTop
@@ -146,6 +156,8 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
     requestAnimationFrame(()=>{
       // 这一帧之前又重画过:那一次接手了这笔账(state.owed 还在)。
       if (state.rows !== next || !next.size) return
+      // 这一栏还没显示出来:账先留着,等它有了高度(上面的 ResizeObserver)再跟到最新。
+      if (!scroll.clientHeight && scroll.isConnected && typeof ResizeObserver==='function') return
       state.owed=false
       // A reader can scroll or select between receiving a reply and this frame.
       if(follow || (!conversationInteractionActive(scroll) && scroll.scrollTop===top))showConversationLatest(scroll,latest)

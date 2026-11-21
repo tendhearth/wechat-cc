@@ -163,3 +163,24 @@ it('keeps the earlier-conversation control first in the stream through repaints 
  expect(h.scroll.querySelectorAll('[data-converse-message]')).toHaveLength(2)
  expect(h.scroll.textContent).not.toContain('空白')
 })
+
+it('waits for the pane to get a height before landing on the latest message', () => {
+ const window = new Window(); windows.push(window)
+ const document = window.document, scroll = document.createElement('div'), latest = document.createElement('button')
+ document.body.append(scroll, latest)
+ let top = 0, height = 0
+ Object.defineProperties(scroll, {scrollHeight: {get: () => height && 600 + scroll.childElementCount * 200}, clientHeight: {get: () => height}, scrollTop: {get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, scroll.scrollHeight - height)) }}})
+ const resized: Function[] = []
+ vi.stubGlobal('ResizeObserver', class { constructor(private readonly changed: Function) {} observe() { resized.push(this.changed) } })
+ vi.stubGlobal('requestAnimationFrame', (frame: Function) => frame())
+ const render = (m: Message) => `<article>${m.text}</article>`
+ paintConversation(scroll as any, [{id: 1, role: 'user', text: '问'}, {id: 2, role: 'cc', text: '答'}], render, '<p>空白</p>', {latest: latest as any})
+ expect(scroll.scrollTop).toBe(0)
+ height = 300
+ for (const changed of resized) changed()
+ expect(scroll.scrollTop).toBe(scroll.scrollHeight - 300)
+ // 已经补过一次:之后尺寸再变不再把读到一半的人拉回底部。
+ scroll.scrollTop = 100
+ for (const changed of resized) changed()
+ expect(scroll.scrollTop).toBe(100)
+})

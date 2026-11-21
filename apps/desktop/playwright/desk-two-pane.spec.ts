@@ -168,7 +168,11 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   await row.click()
   await input.fill('这句话还没发')
   await expect(scroll.locator('[data-converse-message]')).toHaveCount(50)
-  await scroll.evaluate(el => { el.scrollTop = 400 })
+  // 让上边缘落在一条消息的中间。流里多了第一天的日期行以后,原来的 400 正好落在两条消息的缝上,换版式时差一个像素就认成上一条。
+  await scroll.evaluate(el => {
+    const row = el.querySelectorAll('[data-converse-message]')[8]!.getBoundingClientRect()
+    el.scrollTop += row.top + row.height / 2 - el.getBoundingClientRect().top
+  })
   const anchor = () => scroll.evaluate(el => {
     const y = el.getBoundingClientRect().top
     const first = Array.from(el.children).find(node => node.getBoundingClientRect().bottom > y)
