@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 import { PRESENCE_OK, routePresenceTopic } from './presence-topic'
-import { answerPlace, placeItem, placeRow, routePlaces, routeRoster, rosterItem, terminalPlace } from './roster-fixture'
+import { placeItem, placeRow, routePlaces, routeRoster, rosterItem, terminalPlace } from './roster-fixture'
 
 test.use({ viewport: { width: 1280, height: 820 } })
 
@@ -173,7 +173,8 @@ test('终端线可后退，名单里的会话消失后跳过', async ({ page, sh
   await row(page, '菜谱').click()
   await row(page, '菜谱').click()
   await expect(row(page,'菜谱')).toHaveAttribute('aria-pressed','true')
-  await answerPlace(page, '花园')
+  // 在菜谱的页面里看不到花园的纸条(别处等你定的不压在正文上);从左栏进花园,它的线里就有。
+  await row(page, '花园').click()
   const draft = page.locator('#thing-thread [data-terminal-input]')
   await draft.fill('终端未发送草稿')
   await page.locator('#topbar-cc').click()
