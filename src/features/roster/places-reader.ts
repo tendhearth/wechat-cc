@@ -57,6 +57,26 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     return { ...result, saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
   }
 
+  async function map(key: string): ReturnType<PlacesReader['map']> {
+    const { places, saved, added, items, rootOf } = collect('operator', { ...deps.roster, workbench: deps.mapWorkbench })
+    const place = places.find(place => place.key === key)
+    const records = [...saved, ...added]
+    const record = records.find(record => record.key === key)
+    if (!place || !record) return null
+    const owner = deps.mapTopics?.owner()
+    const entries = owner && deps.mapTopics
+      ? await placeMapEntries(deps.mapTopics.db, owner, record.root, records.map(record => record.root), rootOf, deps.mapTopics.makeResolver)
+      : { items: [], truncated: false }
+    const data = { place: { key, name: place.name }, items: [...entries.items, ...placeMapRoster(place, items)], truncated: entries.truncated }
+    const pins = deps.store.mapPins(key, data.items.map(item => item.id))
+    for (const item of data.items) {
+      const pin = pins.get(item.id)
+      if (pin && !item.id.startsWith('a:')) item.pin = pin
+    }
+    const revision = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16)
+    return { ok: true, ...data, revision }
+  }
+
   return {
     read(scope) {
       const { places, hidden, added, now } = collect(scope)
@@ -68,19 +88,14 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       const version = createHash('sha256').update(JSON.stringify({ places, hidden })).digest('hex').slice(0, 16)
       return { places, hidden, version }
     },
-    async map(key) {
-      const { places, saved, added, items, rootOf } = collect('operator', { ...deps.roster, workbench: deps.mapWorkbench })
-      const place = places.find(place => place.key === key)
-      const records = [...saved, ...added]
-      const record = records.find(record => record.key === key)
-      if (!place || !record) return null
-      const owner = deps.mapTopics?.owner()
-      const entries = owner && deps.mapTopics
-        ? await placeMapEntries(deps.mapTopics.db, owner, record.root, records.map(record => record.root), rootOf, deps.mapTopics.makeResolver)
-        : { items: [], truncated: false }
-      const data = { place: { key, name: place.name }, items: [...entries.items, ...placeMapRoster(place, items)], truncated: entries.truncated }
-      const revision = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16)
-      return { ok: true, ...data, revision }
+    map,
+    async pin({ key, itemId, branch }) {
+      const current = await map(key)
+      if (!current) return 'place_not_found'
+      if (!current.items.some(item => item.id === itemId)) return 'place_map_item_not_found'
+      if (itemId.startsWith('a:')) return 'place_map_item_fixed'
+      deps.store.setMapPin(key, itemId, branch)
+      return null
     },
     planPlaces() {
       // Planning reads saved roots using the operator view without persisting newly discovered places.
