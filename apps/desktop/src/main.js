@@ -2186,7 +2186,8 @@ async function boot() {
       document.getElementById('converse-input')?.focus()
     })
     homeButton?.addEventListener('click', () => {
-      strip.clear()
+      // 窄窗口里点 CC 只回到说话这一页,不取消选着的地方(和原来一样)。
+      if (document.documentElement.hasAttribute('data-desk-wide')) strip.clear()
       recordDeskNavigation?.()
     })
     placesRoot.addEventListener('click', event => {
