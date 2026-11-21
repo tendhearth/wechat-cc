@@ -106,7 +106,7 @@ async function withPlacedMemory(
   if (started >= deadline) return null
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    if (!places.placeMapEnabled()) return null
+    if (!places.placeMapEnabled() || performance.now() >= deadline) return null
     return await Promise.race([
       Promise.resolve().then(async () => {
         const key = places.placeForPath(request.cwd)
@@ -123,7 +123,7 @@ async function withPlacedMemory(
         log(`place=${key} count=${items.length} elapsedMs=${Math.round(finished - started)}`)
         return context
       }),
-      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), deadline - started) }),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), deadline - performance.now()) }),
     ])
   } catch { return null }
   finally { clearTimeout(timer) }
