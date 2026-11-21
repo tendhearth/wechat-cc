@@ -115,6 +115,15 @@ it.each([
   if (state === 'empty') expect(await service.start(key)).toEqual({ ok: true, state, unchanged: true })
 })
 
+it('一两块也算梳理出来了：小项目本来就没几块', async () => {
+  const f = fixture()
+  const model = '{"aspects":[{"name":"上架","items":[{"line":"等审核","status":"open","refs":["e1"]}]}]}'
+  const service = f.open(() => vi.fn<CheapEval>(async (_prompt, opts) => { opts?.beforeRequest?.(); return model }))
+  await service.start(key)
+  await vi.waitFor(() => expect(service.read(key, f.snapshot())).toMatchObject({ state: 'ready', canRun: false }))
+  expect(service.read(key, f.snapshot()).aspects).toEqual([{ name: '上架', items: [{ id: 'o:0', line: '等审核', status: 'open', sources: [{ kind: 'entry' }] }] }])
+})
+
 it('没有私密模型或网络守护拒绝时没有派发，也不占用额度', async () => {
   const f = fixture()
   const evaluate = vi.fn<CheapEval>(async () => reply)

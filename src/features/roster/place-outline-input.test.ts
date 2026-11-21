@@ -75,6 +75,17 @@ it('只读同地本机主人的四次会话并且有界，按新到旧丢整步'
   expect(batch.refs.size).toBe(batch.counts.steps + batch.counts.entries)
 })
 
+it('选的时候新的优先，给模型看的时候每次会话从早到晚', () => {
+  const f = fixture()
+  const s = f.session('ordered', 5)
+  s.write(0, '第一句'); s.write(1, '第二句', undefined, 'said'); s.write(2, '第三句')
+  const batch = f.read()
+  expect(material(batch.prompt).sessions).toEqual([[
+    { ref: 's3', who: 'you', text: '第一句' }, { ref: 's2', who: 'said', text: '第二句' }, { ref: 's1', who: 'you', text: '第三句' },
+  ]])
+  expect(batch.refs.get('s1')).toMatchObject({ seq: 3 })
+})
+
 it('指纹只跟选进来的内容、条目版本、主人的摆放和提示词版本走', () => {
   const f = fixture()
   const session = f.session('session', 50)

@@ -125,7 +125,8 @@ export function readOutlineInput(
   const render = (keep: number) => outlinePrompt(groups.flatMap(group => {
     const prefix = group.slice(0, Math.max(keep, 0))
     keep -= prefix.length
-    return prefix.length ? [prefix.map(step => step.prompt)] : []
+    // 选的时候新的优先;给模型看的时候每次会话从早到晚
+    return prefix.length ? [prefix.map(step => step.prompt).reverse()] : []
   }), entries.map(entry => entry.prompt), placed)
   // Keep the longest prefix of complete steps, counting JSON escapes and the prompt itself.
   let low = 0, high = all.length

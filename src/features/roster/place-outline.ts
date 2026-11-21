@@ -115,7 +115,7 @@ export function makePlaceOutlines(deps: PlaceOutlineDeps & {
       } else if (!aspects) {
         error = 'bad_output'
       } else {
-        state = aspects.length >= 3 ? 'ready' : 'empty'
+        state = aspects.length ? 'ready' : 'empty'
         error = ''
         // Keep the provenance of the entire batch for later authorization checks.
         if (state === 'ready') result = JSON.stringify({ owner: outlineHash(owner), aspects, refs, pinnedMatters } satisfies Stored)
