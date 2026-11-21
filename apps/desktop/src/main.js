@@ -4,7 +4,6 @@ import { setDockedMatter } from './modules/conversation-matters.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
 import { isDeskCollapseShortcut, readDeskCollapsed, writeDeskCollapsed } from './modules/desk-collapse.js'
-import { deskDate } from './modules/desk-page.js'
 import { mountPlacesStrip } from './modules/places-strip.js'
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
 import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
@@ -49,7 +48,7 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace, connectConversationPlaces, updateConversationPlaces } from "./modules/converse.js"
+import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace, connectConversationPlaces, updateConversationPlaces, updateConversationRoster } from "./modules/converse.js"
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
@@ -1822,16 +1821,6 @@ function mountDeskLayout(strip) {
     if (!hover.matches) dismissPeek()
   }, { signal })
 
-  const today = document.getElementById('desk-today')
-  let midnightTimer = 0
-  const updateDate = () => {
-    window.clearTimeout(midnightTimer)
-    if (!layout.matches || !today) return
-    const now = new Date()
-    today.textContent = deskDate(now)
-    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-    midnightTimer = window.setTimeout(updateDate, midnight.getTime() - now.getTime())
-  }
   const notebookScroll = document.querySelector('.notebook-scroll')
   const notebookEntries = document.getElementById('notebook-entries')
   const preserveReadingPosition = (/** @type {() => void} */ change) => {
@@ -1869,7 +1858,6 @@ function mountDeskLayout(strip) {
     }
     renderCollapse()
     reflectTopbarWaiting()
-    updateDate()
     strip.setWide(wide)
     const placeList = document.getElementById('places-root')
     if (placeList) placeList.scrollTop = placeTop
@@ -1900,13 +1888,10 @@ function mountDeskLayout(strip) {
   document.addEventListener('keydown', onShortcut, { signal })
   if (layout.matches) apply()
   layout.addEventListener('change', apply)
-  document.addEventListener('visibilitychange', updateDate)
   window.addEventListener('pagehide', () => {
     layout.removeEventListener('change', apply)
     listeners.abort()
     cancelClose()
-    document.removeEventListener('visibilitychange', updateDate)
-    window.clearTimeout(midnightTimer)
   }, { once: true })
 }
 
@@ -1946,6 +1931,7 @@ async function boot() {
   if (rosterRoot) {
     const roster = mountRosterPane({root:rosterRoot,call:invokeWorkbenchApi,onOpen:item=>item.kind==='terminal'?deps.onOpenTerminal(item.id):deps.onOpenMatter(item.id),onItems:items=>{
       nowPage?.setRoster(items)
+      updateConversationRoster(items)
       const button=document.getElementById('topbar-roster');if(button)button.textContent=`在做 ${items.length}`
     }})
     window.addEventListener('pagehide',()=>roster.destroy(),{once:true})
@@ -1959,10 +1945,6 @@ async function boot() {
     const homeButton = document.getElementById('topbar-cc')
     const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,waitingRoot:waitingRoot ?? undefined,
       onCurrent: place => {
-        if (clear) {
-          clear.hidden = !place
-          clear.textContent = place ? `只看 ${place.name} · 回到全部` : ''
-        }
         homeButton?.toggleAttribute('data-place-selected', !!place)
       },
       onSituation: (text, stale) => {
@@ -1971,7 +1953,7 @@ async function boot() {
         situation.toggleAttribute('data-stale', stale)
         renderRail()
       },
-      onSelect:place=>setConversationPlace(place?{name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
+      onSelect:place=>setConversationPlace(place?{key:place.key,name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
       onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id),
       // 左栏和收起按钮共用 CC 的等待计数。
       onPlaces:places=>{

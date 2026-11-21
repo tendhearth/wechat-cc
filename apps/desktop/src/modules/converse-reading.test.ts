@@ -15,7 +15,7 @@ function fixture(){
  vi.stubGlobal('requestAnimationFrame',(f:Function)=>f())
  const render=(m:{id:number;role:string;text:string;pending?:boolean})=>`<article>${m.role==='user'?renderWorkbenchUserText(m.text,'c:'+m.id):m.pending?m.text:renderWorkbenchMarkdown(m.text)}</article>`
  const first:Message={id:1,role:'user',text:'**完整要求**\n\n```txt\nlong code\n```'},reply:Message={id:2,role:'cc',text:'已有 [文档](https://example.test) 与正文'}
- const paint=(messages:Message[],follow=false)=>paintConversation(scroll as any,messages,render,'<p>空白</p>',{follow,latest:latest as any})
+ const paint=(messages:Message[],follow=false,options:{prepend?:boolean,preserve?:boolean}={})=>paintConversation(scroll as any,messages,render,'<p>空白</p>',{...options,follow,latest:latest as any})
  paint([first,reply])
  return {window,document,scroll,latest,first,reply,paint}
 }
@@ -62,18 +62,56 @@ it('honors a small upward scroll even while geometrically close to the bottom',(
  expect(h.scroll.scrollTop).toBe(670);expect(h.latest.hidden).toBe(false)
 })
 
-it('marks adjacent dated messages across local midnight without replacing message nodes', () => {
+it('labels the first dated row and each new local day through incremental paints', () => {
  const h = fixture()
  const before = h.scroll.firstElementChild
  const first = {...h.first, at: new Date(2026, 10, 18, 23, 59).getTime()}
  const reply = {...h.reply, at: new Date(2026, 10, 19, 0, 1).getTime()}
  h.paint([first, reply])
- const divider = h.scroll.querySelector('.desk-message-date')
- expect(divider?.textContent).toBe('十一月十九日 周四')
+ const dates = () => [...h.scroll.querySelectorAll('.desk-message-date')]
+ expect(dates().map(node => node.textContent)).toEqual(['十一月十八日 周三', '十一月十九日 周四'])
+ const [initial, divider] = dates()
+ expect(h.scroll.firstElementChild).toBe(initial)
+ expect(initial?.nextElementSibling).toBe(before)
  expect(divider?.nextElementSibling?.getAttribute('data-converse-message')).toBe('2')
- h.paint([first, reply])
- expect(h.scroll.querySelector('.desk-message-date')).toBe(divider)
- h.paint([first, {id: 3, role: 'system', text: '没有时间'}, reply])
- expect(h.scroll.querySelector('.desk-message-date')).toBeNull()
- expect(h.scroll.firstElementChild).toBe(before)
+ const undated: Message = {id: 3, role: 'system', text: '没有时间'}
+ const sameDay = {...reply, id: 4, at: reply.at + 1000}
+ h.paint([first, undated, reply, sameDay])
+ expect(dates()).toEqual([initial, divider])
+ h.paint([{...first, id: 5, at: first.at - 86_400_000}, first, reply, sameDay])
+ expect(dates().map(node => node.nextElementSibling?.getAttribute('data-converse-message'))).toEqual(['5', '1', '2'])
+ h.paint([first, reply, sameDay])
+ expect(dates().map(node => node.nextElementSibling?.getAttribute('data-converse-message'))).toEqual(['1', '2'])
+ expect(initial?.isConnected).toBe(true)
+ expect(h.scroll.querySelector('[data-converse-message="1"]')).toBe(before)
+})
+
+it('keeps supplemental references out of message markers and new-reply notices without moving the reader', () => {
+ const h = fixture()
+ h.scroll.scrollTop = 100
+ const card: Message = {id: 0, role: 'cc', text: '补卡', placeCardKey: 'matter:one'}
+ h.paint([card, h.first, h.reply], false, {preserve: true})
+ expect(h.scroll.querySelector('[data-converse-place-card]')?.textContent?.trim()).toBe('补卡')
+ expect(h.scroll.querySelectorAll('[data-converse-message]')).toHaveLength(2)
+ expect(h.latest.hidden).toBe(true)
+ expect(h.scroll.scrollTop).toBe(100)
+ h.paint([h.first, h.reply], false, {preserve: true})
+ expect(h.scroll.querySelector('[data-converse-place-card]')).toBeNull()
+})
+
+
+it('preserves the first visible message when an earlier page is prepended', () => {
+ const h = fixture()
+ h.scroll.scrollTop = 100
+ const first = h.scroll.firstElementChild!
+ const rect = () => {
+   const top = [...h.scroll.children].indexOf(first) * 200 - h.scroll.scrollTop
+   return {top, bottom: top + 200}
+ }
+ Object.defineProperty(first, 'getBoundingClientRect', {value: rect})
+ const y = rect().top
+ h.paint([{id: 9, role: 'cc', text: '较早的消息'}, h.first, h.reply], false, {prepend: true})
+ expect(rect().top).toBe(y)
+ expect(h.scroll.children[1]).toBe(first)
+ expect(h.latest.hidden).toBe(true)
 })

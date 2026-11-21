@@ -4,7 +4,7 @@
 // (设计稿 docs/superpowers/specs/2026-11-18-cc-two-sides-design.md §3)。
 //
 // 一行三样:名字、一句现状、时间。不给状态起名字,只用三样人人会读的:
-//   圆点 = 它在等你;加粗 = 它说了话你还没看;时间「现在」= 在干。
+//   圆点 = 它在等你;没看过的那一句用墨色,看过后用次墨色;时间「现在」= 在干。
 // 等你批准的,窄窗在行上答,宽窗在置顶卡片答;「去回答」打开那一件。
 // 点一行 = 把下面的说话筛成这个地方;再点一次回到全部。
 import {V1,v1} from '../daemon-client.js'
@@ -252,7 +252,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
     notified = current ? JSON.stringify([current.key, current.name, current.matterIds, current.messageIds, current.sessionIds]) : ''
     onSelect(current)
     if (current) markSeen(current)
-    // 主人看了这个地方的说话,就算看过了:没看过的那几件记一下(加粗跟着消失)。
+    // 主人看了这个地方的说话,就算看过了:没看过的那几件记一下(那一句恢复次墨色)。
     if (current?.unseen) for (const id of current.matterIds.slice(0, 20)) void v1(call, V1.matter.seen, { body: { id, surface: 'desktop' } }).catch(() => {})
   }
 
