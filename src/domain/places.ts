@@ -33,7 +33,7 @@ export interface PlacesInput {
   maxIds?: number
 }
 
-export interface PlacesOutput { places: PlaceT[]; added: PlaceRecord[] }
+export interface PlacesOutput { places: PlaceT[]; hidden: Pick<PlaceT, 'key' | 'name'>[]; added: PlaceRecord[] }
 
 const lineOf = (item: RosterItemT) => item.terminal?.summary?.trim() || item.title
 
@@ -58,10 +58,14 @@ export function buildPlaces(input: PlacesInput): PlacesOutput {
 
   const records = [...input.saved, ...added].sort((a, b) => a.position - b.position || a.key.localeCompare(b.key))
   const places: PlaceT[] = []
+  const hidden: PlacesOutput['hidden'] = []
   for (const rec of records) {
     const items = groups.get(rec.root) ?? []
     const waitingItems = items.filter(i => i.group === 'waiting')
-    if (rec.hidden && waitingItems.length === 0) continue
+    if (rec.hidden && waitingItems.length === 0) {
+      hidden.push({ key: rec.key, name: rec.name })
+      continue
+    }
 
     const first = waitingItems[0]
     const waiting: PlaceT['waiting'] = first ? {
@@ -97,5 +101,5 @@ export function buildPlaces(input: PlacesInput): PlacesOutput {
       sessionIds,
     })
   }
-  return { places, added }
+  return { places, hidden, added }
 }

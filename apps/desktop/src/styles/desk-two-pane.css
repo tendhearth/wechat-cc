@@ -434,3 +434,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   from { transform: translateX(-100%); }
   to { transform: translateX(0); }
 }
+
+[data-desk-wide] .places-root .places-hidden-toggle,
+[data-desk-wide] .places-hidden-list { padding-left: 28px; }

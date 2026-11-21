@@ -75,3 +75,18 @@
 .dashboard #roster-list { display:none; }
 #topbar-roster { display:none !important; }
 .roster-dock-missing { margin:0; padding:var(--th-space-l); color:var(--th-ink-soft); }
+
+.places-root :is(.places-hidden-toggle, [data-place-restore]) {
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--th-accent);
+  font: inherit;
+  font-size: var(--th-size-small);
+  cursor: pointer;
+}
+.places-root :is(.places-hidden-toggle, [data-place-restore]):hover { text-decoration: underline; }
+.places-root .places-hidden-toggle { padding-inline: var(--th-space-l); }
+.places-hidden-list { list-style: none; margin: 0; padding: 0 var(--th-space-l); }
+.places-hidden-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--th-space-s); }
+.places-hidden-list li span { overflow-wrap: anywhere; }

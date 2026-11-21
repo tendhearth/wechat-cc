@@ -109,6 +109,9 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true,
  */
 export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSituation, waitingRoot, onCurrent, now = Date.now, intervalMs = 3000 }) {
   /** @type {Place[]} */ let places = []
+  /** @type {Pick<Place, 'key' | 'name'>[]} */ let hidden = []
+  let hiddenOpen = false
+  let writingHidden = false
   /** @type {string|null} */ let selected = null
   const supportsPopover = typeof root.showPopover === 'function'
   const openActions = supportsPopover ? '.place-actions:popover-open' : '.place-actions[data-open]'
@@ -176,6 +179,11 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
     const count = root.querySelectorAll('[data-quiet="true"]').length
     root.toggleAttribute('data-quiet-expanded', quietOpen)
     if (wide && count) root.insertAdjacentHTML('beforeend', `<button class="desk-text-button desk-quiet-toggle" type="button" data-quiet-toggle aria-expanded="${quietOpen}">${quietOpen ? '收起这周没动的' : `这周没动的 ${count} 处`}</button>`)
+    if (hidden.length) {
+      root.insertAdjacentHTML('beforeend', `<button class="desk-text-button places-hidden-toggle" type="button" data-hidden-toggle aria-expanded="${hiddenOpen}">收起的 ${hidden.length} 处</button>
+        <ul class="places-hidden-list" ${hiddenOpen ? '' : 'hidden'}>${hidden.map(({key, name}) =>
+          `<li><span>${escapeHtml(name)}</span><button class="desk-text-button" type="button" data-place-restore="${escapeHtml(key)}">放回来</button></li>`).join('')}</ul>`)
+    }
     if (wide && focusKey) {
       const control = focused?.classList.contains('place-more') ? '.place-more' : '.place-row'
       root.querySelector(`[data-place-key="${CSS.escape(focusKey)}"] ${control}`)?.closest('button')?.focus({ preventScroll: true })
@@ -217,6 +225,8 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
       }
       if (!Array.isArray(data?.places) || typeof data.version !== 'string') throw Error('invalid_places')
       const changed = data.version !== version || stale
+      hidden = data.hidden ?? []
+      if (!hidden.length) hiddenOpen = false
       places = data.places; version = data.version; stale = false
       const current = selected ? places.find(p => p.key === selected) ?? null : null
       if (selected && !current) selected = null
@@ -260,6 +270,19 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
   async function click(event) {
     const target = event.target instanceof Element ? event.target : null
     if (!target) return
+    const hiddenToggle = target.closest('[data-hidden-toggle]')
+    if (hiddenToggle) {
+      hiddenOpen = !hiddenOpen
+      hiddenToggle.setAttribute('aria-expanded', String(hiddenOpen))
+      root.querySelector('.places-hidden-list')?.toggleAttribute('hidden', !hiddenOpen)
+      reflectOverflow()
+      return
+    }
+    const restore = target.closest('[data-place-restore]')?.getAttribute('data-place-restore')
+    if (restore) {
+      await setHidden(restore, false)
+      return
+    }
     if (target.closest('[data-quiet-toggle]')) {
       quietOpen = !quietOpen
       root.toggleAttribute('data-quiet-expanded', quietOpen)
@@ -324,10 +347,23 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
     }
     if (target.closest('[data-place-hide]')) {
       closeActions()
-      try { await v1(call, V1.places.hide, { body: { key: place.key, hidden: true } }) } catch { /* 下次刷新照旧 */ }
-      if (selected === place.key) select(null)
-      await refreshAfterWrite()
+      await setHidden(place.key, true)
     }
+  }
+
+  /** @param {string} key @param {boolean} hide */
+  async function setHidden(key, hide) {
+    if (writingHidden) return
+    writingHidden = true
+    try {
+      await v1(call, V1.places.hide, { body: { key, hidden: hide } })
+      if (hide && selected === key) select(null)
+      await refreshAfterWrite()
+      if (hide && hidden.some(place => place.key === key)) {
+        root.querySelector('[data-hidden-toggle]')?.scrollIntoView?.({ block: 'nearest' })
+      }
+    } catch { /* 下次刷新照旧 */ }
+    finally { writingHidden = false }
   }
 
   function closeActions() {

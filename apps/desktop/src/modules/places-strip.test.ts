@@ -244,3 +244,30 @@ it.each(['allow', 'deny', 'open', 'terminal'])('晚到的意见保持等待卡�
   await strip!.refresh()
   expect(waitingRoot.contains(document.activeElement)).toBe(false)
 })
+
+it.each([false, true])('名单双布局都能从空状态放回收起的地方（宽窗 %s）', async wide => {
+  const p = place('rici')
+  let restored = false
+  const { calls } = mount(([method, path]: [string, string]) => {
+    if (method === 'POST' && path === '/v1/places/hide') restored = true
+    return restored
+      ? { places: [p], hidden: [], version: 'after' }
+      : { places: [], hidden: [{ key: p.key, name: p.name }], version: 'before' }
+  })
+  strip!.setWide(wide)
+  await strip!.refresh()
+  expect(document.querySelector('.places-empty')?.textContent).toContain('按项目')
+  const toggle = document.querySelector<HTMLButtonElement>('[data-hidden-toggle]')!
+  expect(toggle.textContent).toBe('收起的 1 处')
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  toggle.click()
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  expect(document.querySelector('.places-hidden-list')?.hasAttribute('hidden')).toBe(false)
+  expect(document.querySelector('.places-hidden-list')?.textContent).toContain(p.name)
+  document.querySelector<HTMLButtonElement>('[data-place-restore]')!.click()
+  await vi.waitFor(() => {
+    expect(document.querySelector('[data-hidden-toggle]')).toBeNull()
+    expect(document.querySelector('.place-name')?.textContent).toBe(p.name)
+  })
+  expect(calls.find(c => c[1] === '/v1/places/hide')?.[2]).toEqual({ key: p.key, hidden: false })
+})

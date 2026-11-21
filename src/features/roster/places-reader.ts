@@ -55,14 +55,14 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
 
   return {
     read(scope) {
-      const { places, added, now } = collect(scope)
+      const { places, hidden, added, now } = collect(scope)
       if (added.length) deps.store.add(added, now)
       for (const place of places) {
         const waiting = place.waiting
         if (waiting?.requestId) Object.assign(waiting, deps.opinion?.(waiting.requestId))
       }
-      const version = createHash('sha256').update(JSON.stringify(places)).digest('hex').slice(0, 16)
-      return { places, version }
+      const version = createHash('sha256').update(JSON.stringify({ places, hidden })).digest('hex').slice(0, 16)
+      return { places, hidden, version }
     },
     planPlaces() {
       // Planning reads saved roots using the operator view without persisting newly discovered places.
