@@ -85,7 +85,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   white-space: normal;
   letter-spacing: normal;
 }
-[data-desk-wide] .place[data-selected="true"] { background: var(--th-rail); }
+[data-desk-wide] .place[data-selected="true"],
+[data-desk-wide] body[data-pane="overview"] #topbar-cc:not([data-place-selected]) { background: var(--th-rail); }
 [data-desk-wide] #topbar-cc .topbar-figure,
 [data-desk-wide] #topbar-cc .topbar-figure img { width: 60px; height: 60px; }
 [data-desk-wide] #topbar-cc .topbar-figure { flex: none; }
@@ -175,7 +176,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   display: block;
   user-select: none;
 }
-[data-desk-wide] .desk-date-line:not([hidden]) {
+[data-desk-wide] :is(.desk-date-line, .thing-heading):not([hidden]) {
   display: flex;
   flex: none;
   align-items: baseline;
@@ -285,16 +286,16 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 }
 [data-desk-wide] .desk-waiting > .desk-text-button { justify-self: start; min-height: 32px; margin-left: var(--desk-speaker-offset); }
 
-[data-desk-wide] .cc-now-pane[data-now="chat"] .converse-scroll {
+[data-desk-wide] :is(.cc-now-pane[data-now="chat"], .thing-thread) .converse-scroll {
   box-sizing: border-box;
   width: min(100%, var(--desk-page-width));
   margin: 0 auto;
   padding: 14px var(--desk-page-padding);
   gap: 18px;
 }
-[data-desk-wide] #converse-scroll > :first-child,
-[data-desk-wide] #converse-scroll > [data-converse-lead][hidden] + * { margin-top: auto; } /* 内容不满一屏时沉到底;「更早的对话」藏着时由它后面那个来撑 */
-[data-desk-wide] #converse-scroll > * { flex-shrink: 0; }
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) > :first-child,
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) > [data-converse-lead][hidden] + * { margin-top: auto; } /* 内容不满一屏时沉到底;「更早的对话」藏着时由它后面那个来撑 */
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) > * { flex-shrink: 0; }
 [data-desk-wide] .converse-msg { align-items: flex-start; justify-content: flex-start; gap: 0; }
 [data-desk-wide] .converse-speaker {
   display: flex;
@@ -347,19 +348,19 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 }
 [data-desk-wide] .converse-user-body { align-items: flex-start; }
 [data-desk-wide] .converse-user-images { justify-content: flex-start; }
-[data-desk-wide] #converse-scroll :is(.converse-bubble, .converse-cc-body, .converse-user-body) { max-width: 100%; }
-[data-desk-wide] #converse-scroll .converse-bubble {
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(.converse-bubble, .converse-cc-body, .converse-user-body) { max-width: 100%; }
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) .converse-bubble {
   padding: 0;
   background: transparent;
   font-family: var(--th-font-serif);
   font-size: 16px;
   line-height: 1.85;
 }
-[data-desk-wide] #converse-scroll .converse-msg-user .converse-bubble { color: var(--th-ink-soft); }
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) .converse-msg-user .converse-bubble { color: var(--th-ink-soft); }
 /* 窄窗口里你的话是无衬线的气泡;两栏没有气泡,你和 CC 在同一列里读,用同一种字,只靠墨色分 */
-[data-desk-wide] #converse-scroll :is(.cc-user-reading, .cc-user-reading .cc-readable-markdown.wb-markdown) { font-family: var(--th-font-serif); }
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(.cc-user-reading, .cc-user-reading .cc-readable-markdown.wb-markdown) { font-family: var(--th-font-serif); }
 [data-desk-wide] .converse-msg > .voice-replay-btn { align-self: flex-end; margin-left: 6px; }
-[data-desk-wide] #converse-root .converse-compose {
+[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose {
   position: relative;
   left: calc(var(--desk-speaker-offset) / 2);
   width: calc(min(100%, var(--desk-page-width)) - 2 * var(--desk-page-padding) - var(--desk-speaker-offset));
@@ -371,14 +372,14 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   border-bottom: 1px solid;
   border-radius: 0;
 }
-[data-desk-wide] #converse-root .converse-compose,
-[data-desk-wide] #converse-root .converse-compose:focus-within {
+[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose,
+[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose:focus-within {
   border-color: color-mix(in srgb, var(--th-hair) 75%, var(--th-ink-soft));
 }
 [data-desk-wide] .converse-compose > .desk-speaker { position: absolute; left: calc(-1 * var(--desk-speaker-offset)); bottom: 8px; }
 [data-desk-wide] .converse-compose .converse-draft { flex: 1 1 120px; gap: 12px; }
 [data-desk-wide] .converse-compose .converse-recipient { color: var(--th-accent); font-weight: var(--th-weight-desk-emphasis); }
-[data-desk-wide] #converse-root .converse-compose :is(textarea, .converse-recipient) { font-family: var(--th-font-serif); }
+[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose :is(textarea, .converse-recipient) { font-family: var(--th-font-serif); }
 [data-desk-wide] .converse-compose .conversation-tools { order: 1; }
 [data-desk-wide] .converse-compose .conversation-add[open] { border: 0; background: transparent; }
 [data-desk-wide] .converse-compose .conversation-add[open] .conversation-add-items {
@@ -456,3 +457,144 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] #places-root .places-hidden-list { padding: 0 12px 8px 30px; }
 [data-desk-wide] #places-root .places-hidden-list li { min-height: 32px; font-size: 13.5px; }
 [data-desk-wide] #places-root [data-place-restore] { min-height: 28px; color: var(--th-accent); }
+
+[data-desk-wide] .dashboard .thing-thread { overflow: hidden; font-family: var(--th-font-serif); }
+[data-desk-wide] .thing-heading { padding-top: 8px; }
+[data-desk-wide] .thing-name { margin: 0; font-size: 15px; font-weight: var(--th-weight-desk-emphasis); overflow-wrap: anywhere; }
+[data-desk-wide] .thing-status { color: var(--th-ink-soft); font-size: 13px; }
+[data-desk-wide] :is(.thing-sessions, .thing-empty, .thing-detail) {
+  box-sizing: border-box;
+  width: min(100%, var(--desk-page-width));
+  margin-inline: auto;
+  padding-inline: calc(var(--desk-page-padding) + var(--desk-speaker-offset)) var(--desk-page-padding);
+}
+[data-desk-wide] .thing-sessions:not([hidden]), [data-desk-wide] .thing-earlier-sessions:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+}
+[data-desk-wide] .thing-sessions { padding-block: 6px; flex: none; max-height: 26%; overflow: auto; }
+[data-desk-wide] .thing-earlier-sessions { flex-basis: 100%; }
+[data-desk-wide] body .thing-sessions .th-agents { --th-agent-size: 17px; }
+[data-desk-wide] body .thing-compose .th-agents { --th-agent-size: 21px; }
+[data-desk-wide] .thing-scroll .th-agent svg { width: 70%; height: 70%; }
+[data-desk-wide] .thing-sessions button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  color: var(--th-ink-soft);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
+}
+[data-desk-wide] .thing-sessions button[aria-pressed="true"],
+[data-desk-wide] .thing-sessions button:hover { color: var(--th-accent); text-decoration: underline; text-underline-offset: 4px; }
+[data-desk-wide] .thing-sessions button i { display: none; }
+[data-desk-wide] .thing-sessions button:is([data-group="waiting"], [data-group="working"]) i,
+[data-desk-wide] .thing-steps li[data-error]::before {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--th-warn);
+}
+[data-desk-wide] .thing-sessions button[data-group="waiting"] i { background: var(--th-accent); }
+[data-desk-wide] .thing-content,
+[data-desk-wide] :is(.thing-terminal, .thing-detail):not([hidden]) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+[data-desk-wide] .thing-scroll { overflow-anchor: none; }
+[data-desk-wide] .thing-scroll .converse-msg-user { align-items: flex-start; }
+[data-desk-wide] .thing-scroll .converse-cc-body { flex: 1; }
+[data-desk-wide] .thing-scroll .converse-bubble { overflow-wrap: anywhere; }
+[data-desk-wide] .thing-scroll .converse-bubble pre { max-width: 100%; overflow: auto; }
+[data-desk-wide] .thing-scroll [data-sending] { opacity: var(--th-button-disabled-opacity); }
+[data-desk-wide] .thing-steps {
+  margin-left: var(--desk-speaker-offset);
+  color: var(--th-ink-soft);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+[data-desk-wide] .thing-steps summary { cursor: pointer; }
+[data-desk-wide] .thing-steps > details > summary { list-style: none; }
+[data-desk-wide] .thing-steps > details > summary::-webkit-details-marker { display: none; }
+[data-desk-wide] .thing-steps > details > summary::after { content: ' ›'; }
+[data-desk-wide] .thing-steps > details[open] > summary::after { content: ' ⌄'; }
+[data-desk-wide] .thing-steps ol { list-style: none; margin: 5px 0 0; padding-inline-start: 14px; }
+[data-desk-wide] .thing-steps li { position: relative; }
+[data-desk-wide] .thing-steps li[data-error]::before { content: ''; position: absolute; inset: 8px auto auto -12px; }
+[data-desk-wide] .thing-steps pre {
+  max-height: 16em;
+  max-width: 100%;
+  margin: 4px 0;
+  overflow: auto;
+  font-family: var(--th-font-mono);
+}
+[data-desk-wide] .thing-step-peek { margin: 0; }
+[data-desk-wide] .thing-waiting:not([hidden]) { padding-block: 4px; }
+[data-desk-wide] .thing-compose-status {
+  box-sizing: border-box;
+  width: min(100%, var(--desk-page-width));
+  margin: 0 auto;
+  padding-inline: calc(var(--desk-page-padding) + var(--desk-speaker-offset)) var(--desk-page-padding);
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--th-ink-soft);
+  font-size: 13px;
+}
+[data-desk-wide] .thing-compose-status button { margin-inline-start: auto; }
+[data-desk-wide] .thing-compose .converse-recipient { display: inline-flex; align-items: center; gap: 6px; }
+[data-desk-wide] .thing-compose textarea {
+  flex: 1 1 180px;
+  min-width: 0;
+  resize: vertical;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--th-ink);
+  font: inherit;
+}
+[data-desk-wide] .thing-compose button {
+  border: 0;
+  background: transparent;
+  color: var(--th-accent);
+  font: inherit;
+  cursor: pointer;
+}
+[data-desk-wide] .thing-compose button:disabled { opacity: var(--th-button-disabled-opacity); cursor: default; }
+[data-desk-wide] .thing-empty { padding-block: 20px; color: var(--th-ink-soft); }
+[data-desk-wide] .thing-empty button { color: var(--th-accent); }
+[data-desk-wide] .thing-detail { overflow: auto; }
+[data-desk-wide] .thing-detail-note { color: var(--th-ink-soft); }
+[data-desk-wide] .dashboard .thing-detail > .workbench-pane {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  min-height: 0;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  z-index: auto;
+}
+[data-desk-wide] .thing-detail .workbench-shell { --wb-gutter: 0px; }
+[data-desk-wide] .thing-detail .workbench-shell.has-preview { grid-template-columns: minmax(0, 1fr); }
+[data-desk-wide] .dashboard .thing-detail > .workbench-pane > .cc-life-topline,
+[data-desk-wide] .thing-detail .wb-task-head :is(h2, .wb-task-context),
+[data-desk-wide] .thing-detail .wb-history-dialog > :is(h2, button[hidden]),
+[data-desk-wide] .thing-detail .terminal-direct-heading h2 { display: none !important; }
+[data-desk-wide] .thing-detail .wb-history-dialog { box-sizing: border-box; width: 100%; max-width: 100%; padding-inline: 0; }

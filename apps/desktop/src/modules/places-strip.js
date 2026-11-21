@@ -18,7 +18,7 @@ const WEEK_MS = 7 * 24 * 60 * MIN
 const WEEK = ['周日','周一','周二','周三','周四','周五','周六']
 
 /** 时间:在干 = 现在;一小时内按分钟;今天按钟点;昨天;一周内按星期;更早按日子。
- * @param {Place} place @param {number} now */
+ * @param {Pick<Place,'moving'|'updatedAt'>} place @param {number} now */
 export function placeTime(place, now) {
   if (place.moving) return '现在'
   const at = place.updatedAt
@@ -117,6 +117,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
   const openActions = supportsPopover ? '.place-actions:popover-open' : '.place-actions[data-open]'
   let wide = false, quietOpen = false, waitingOpen = false
   let version = '', alive = true, stale = false, acting = false, notified = '', seenMark = ''
+  /** @type {{key:string,request?:string}|null} */ let inlineWaiting = null
   let waitingMarkup = ''
   /** @type {Promise<void>|null} */ let inFlight = null
   const reflectOverflow = () => {
@@ -126,7 +127,8 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
   }
   function drawWaiting() {
     if (!waitingRoot) return
-    const waiting = wide ? places.filter(p => p.waiting && (!selected || selected === p.key)) : []
+    const waiting = wide ? places.filter(p => p.waiting && !(inlineWaiting?.key === p.waiting.itemKey
+      && (!inlineWaiting.request || !p.waiting.requestId || p.waiting.requestId === inlineWaiting.request))) : []
     const more = waiting.length - 2
     const toggle = more > 0 ? `<button class="desk-text-button" type="button" data-waiting-toggle aria-expanded="${waitingOpen}">${waitingOpen ? '收起其余等你定的' : `还有 ${more} 件等你定`}</button>` : ''
     const visibleWaiting = waiting.slice(0, waitingOpen ? waiting.length : 2)
@@ -249,6 +251,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
 
   /** @param {Place|null} place */
   function select(place) {
+    if (wide && place?.key === selected) { onSelect(place); return }
     selected = place && place.key !== selected ? place.key : null
     const current = selected ? place : null
     if (wide) {
@@ -433,6 +436,12 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
     },
     places: () => places.slice(),
     selected: () => selected,
+    /** @param {{key:string,request?:string}|null} value */
+    setInlineWaiting(value) {
+      if (inlineWaiting?.key === value?.key && inlineWaiting?.request === value?.request) return
+      inlineWaiting = value
+      drawWaiting()
+    },
     clear: () => { if (selected) select(null) },
     /** @param {string} key */
     selectKey(key) {

@@ -7,6 +7,16 @@ const terminalDrafts=new Map()
 /** @type {Map<string,symbol>} */
 const terminalDraftOwners=new Map()
 
+/** @param {string} sessionId @param {HTMLTextAreaElement} input */
+export function bindTerminalDraft(sessionId,input){
+  const owner=Symbol(sessionId)
+  terminalDraftOwners.set(sessionId,owner)
+  input.value=terminalDrafts.get(sessionId)??''
+  const save=()=>{if(terminalDraftOwners.get(sessionId)===owner)terminalDrafts.set(sessionId,input.value)}
+  input.addEventListener('input',save)
+  return save
+}
+
 /** Open the canonical kind first. Terminal/act ids never enter workbench task APIs.
  * @param {(method:any,path:string,body?:any)=>Promise<any>} call @param {string} id @param {(id:string)=>unknown} openTask @param {() => void} [onClose] */
 export async function openConversationWork(call,id,openTask,onClose) {
@@ -49,10 +59,7 @@ export async function showWorkDetail(call,detail,mount,onClose){
   const sessionId=detail.bindings?.find((/** @type {any} */ b)=>b.surface==='cli')?.surfaceKey
   if(!sessionId){note.textContent='这条会话尚未同步';return dispose}
   const input=document.createElement('textarea');input.dataset.terminalInput='';input.ariaLabel='对终端说…';input.placeholder='对终端说…';input.maxLength=4000
-  const draftOwner=Symbol(sessionId);terminalDraftOwners.set(sessionId,draftOwner)
-  input.value=terminalDrafts.get(sessionId)??''
-  saveDraft=()=>{if(terminalDraftOwners.get(sessionId)===draftOwner)terminalDrafts.set(sessionId,input.value)}
-  input.addEventListener('input',saveDraft)
+  saveDraft=bindTerminalDraft(sessionId,input)
   const send=document.createElement('button');send.type='button';send.textContent='发送';send.disabled=true
   const stop=document.createElement('button');stop.type='button';stop.textContent='停止这一轮';stop.hidden=true
   const avatar=document.createElement('span');avatar.className='terminal-input-avatar'

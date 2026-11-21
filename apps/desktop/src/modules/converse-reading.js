@@ -3,7 +3,7 @@
 // keyboard focus, disclosure state or horizontal code scrolling.
 import { deskDate, messageDay } from './desk-page.js'
 
-/** @typedef {import('./converse.js').ConverseMsg} Message */
+/** @typedef {Omit<import('./converse.js').ConverseMsg, 'id'|'role'> & {id:number|string,role:string}} Message */
 /** @typedef {{message:Message,signature:string,node:Element}} Row */
 /** @typedef {{rows:Map<number|string,Row>,unread:boolean,following:boolean,owed:boolean,lastTop:number,empty:string,latest:HTMLButtonElement|null}} ReadingState */
 /** @type {WeakMap<HTMLElement,ReadingState>} */
@@ -58,10 +58,10 @@ export function rememberConversationPosition(scroll) {
   }
 }
 
-/** @param {HTMLElement} scroll @param {Message[]} messages
- * @param {(message:Message)=>string} render @param {string} empty
- * @param {{follow?:boolean,prepend?:boolean,preserve?:boolean,latest?:HTMLButtonElement|null,decoration?:(message:Message)=>string}} [options] */
-export function paintConversation(scroll, messages, render, empty, {follow=false,prepend=false,preserve=false,latest=null,decoration}={}) {
+/** @template {Message} M @param {HTMLElement} scroll @param {M[]} messages
+ * @param {(message:M)=>string} render @param {string} empty
+ * @param {{update?:(node:Element,message:M)=>boolean|'defer',follow?:boolean,prepend?:boolean,preserve?:boolean,latest?:HTMLButtonElement|null,decoration?:(message:M)=>unknown}} [options] */
+export function paintConversation(scroll, messages, render, empty, {follow=false,prepend=false,preserve=false,latest=null,decoration,update}={}) {
   let state=states.get(scroll)
   if(!state){
     const created=state={rows:new Map(),unread:false,following:true,owed:false,lastTop:scroll.scrollTop,empty:'',latest}
@@ -108,7 +108,11 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
     const previous=state.rows.get(key)
     const signature=JSON.stringify([message.role,message.text,message.pending,message.speaker,message.provider,message.replyParts,message.attachments,message.attachmentSourceIndexes,message.narration,message.projection,decoration?.(message)])
     let row=previous
-    if(!previous || previous.signature!==signature){
+    const changed = previous && previous.signature !== signature
+    const updated = changed ? update?.(previous.node,message) : false
+    if(updated === true && previous){
+      row={message:{...message},signature,node:previous.node}
+    }else if(!previous || (changed && updated !== 'defer')){
       const template=scroll.ownerDocument.createElement('template')
       template.innerHTML=render(message)
       const node=template.content.firstElementChild

@@ -13,7 +13,7 @@ function fixture(){
  Object.defineProperties(scroll,{scrollHeight:{get:()=>600+scroll.childElementCount*200},clientHeight:{value:300},scrollTop:{get:()=>top,set:(value:number)=>{top=Math.max(0,Math.min(value,scroll.scrollHeight-300))}}})
  scroll.scrollTop=700
  vi.stubGlobal('requestAnimationFrame',(f:Function)=>f())
- const render=(m:{id:number;role:string;text:string;pending?:boolean})=>`<article>${m.role==='user'?renderWorkbenchUserText(m.text,'c:'+m.id):m.pending?m.text:renderWorkbenchMarkdown(m.text)}</article>`
+ const render=(m:Message)=>`<article>${m.role==='user'?renderWorkbenchUserText(m.text,'c:'+m.id):m.pending?m.text:renderWorkbenchMarkdown(m.text)}</article>`
  const first:Message={id:1,role:'user',text:'**完整要求**\n\n```txt\nlong code\n```'},reply:Message={id:2,role:'cc',text:'已有 [文档](https://example.test) 与正文'}
  const paint=(messages:Message[],follow=false,options:{prepend?:boolean,preserve?:boolean}={})=>paintConversation(scroll as any,messages,render,'<p>空白</p>',{...options,follow,latest:latest as any})
  paint([first,reply])

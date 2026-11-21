@@ -1,0 +1,260 @@
+// @ts-check
+import { executorName } from './executor-names.js'
+import { V1, v1 } from '../daemon-client.js'
+import { createAgentAvatars } from '../shared/agent-avatars.js'
+import { placeTime } from './places-strip.js'
+import { showWorkDetail } from './conversation-work-detail.js'
+import { mountTerminalThread } from './terminal-thread.js'
+import { initialSession, placeSessions, splitSessions } from './thing-thread-model.js'
+import { escapeWorkbenchHtml as esc } from './workbench-markdown.js'
+
+const { agentAvatarsHtml, agentName } = createAgentAvatars()
+/** @typedef {import('./thing-thread-model.js').Place} Place */
+/** @typedef {import('./thing-thread-model.js').RosterItem} Item */
+/** @typedef {import('./desk-history.js').DeskDetail} Target */
+/** @typedef {import('./terminal-thread.js').Call} Call */
+
+/** @param {Item} item */
+function agentOf(item) {
+  return item.agents.find(agent => agent.current) ?? item.agents[0]
+}
+
+/** @param {Item} item */
+function stateOf(item) {
+  if (item.group === 'waiting') return '等你定'
+  if (item.group === 'working') return '正在做'
+  return item.kind === 'terminal' || item.terminal ? item.quiet ? '已经结束' : '停着' : '已经结束'
+}
+
+/**
+ * @param {{root:HTMLElement,call:Call,openTask:(id:string,host:HTMLElement)=>Promise<void>,closeTask:()=>void,
+ * home:()=>void,onSession:()=>void,onWaiting:(value:{key:string,request?:string}|null)=>void}} options
+ */
+export function mountThingThread({root,call,openTask,closeTask,home,onSession,onWaiting}) {
+  const heading = /** @type {HTMLElement} */ (root.querySelector('.thing-name'))
+  const status = /** @type {HTMLElement} */ (root.querySelector('.thing-status'))
+  const tabs = /** @type {HTMLElement} */ (root.querySelector('.thing-sessions'))
+  const tray = /** @type {HTMLElement} */ (root.querySelector('.thing-content'))
+  /** @type {Map<string,{host:HTMLElement,thread:ReturnType<typeof mountTerminalThread>}>} */
+  const terminals = new Map()
+  /** @type {Map<string,string>} */ const remembered = new Map()
+  /** @type {Place|null} */ let place = null
+  /** @type {Item[]} */ let roster = []
+  /** @type {Item|undefined} */ let selected
+  /** @type {(()=>void)|undefined} */ let dispose
+  /** @type {Item|undefined} */ let linked
+  let generation = 0, openEarlier = false, tabsMarkup = ''
+  /** @type {{key:string,request?:string}|null} */ let inlineWaiting = null
+
+  /** @param {string} name @param {string} state */
+  function showStatus(name, state) {
+    const label = [name, state].filter(Boolean).join(' · ')
+    if (status.textContent !== label) status.textContent = label
+  }
+
+  function drawTabs() {
+    if (!place) return
+    const items = placeSessions(place, roster)
+    tabs.hidden = items.length < 2
+    if (tabs.hidden) return
+    const now = Date.now()
+    const {visible, earlier} = splitSessions(items)
+    const button = (/** @type {Item} */ item) => {
+      const agent = agentOf(item)
+      const name = agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? ''))
+      const time = placeTime({ moving:false, updatedAt:item.updatedAt }, now)
+      const title = item.kind === 'terminal' || item.terminal ? [name,time].filter(Boolean).join(' · ') : item.title
+      return `<button type="button" data-thread-session="${esc(item.key)}" data-group="${item.group}" aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}<span>${esc(title)}</span><i aria-hidden="true"></i></button>`
+    }
+    const markup = visible.map(button).join('') + (earlier.length
+      ? `<button type="button" class="desk-text-button" data-thread-more aria-expanded="${openEarlier}">更早的 ${earlier.length} 次</button><div class="thing-earlier-sessions"${openEarlier ? '' : ' hidden'}>${earlier.map(button).join('')}</div>`
+      : '')
+    if (tabsMarkup === markup) return
+    const focus = document.activeElement
+    const key = focus instanceof HTMLButtonElement && tabs.contains(focus) ? focus.dataset.threadSession ?? '' : null
+    tabsMarkup = markup
+    tabs.innerHTML = markup
+    if (key !== null) {
+      const next = /** @type {HTMLElement|null} */ (tabs.querySelector(key ? `[data-thread-session="${CSS.escape(key)}"]` : '[data-thread-more]'))
+      next?.focus({preventScroll:true})
+    }
+  }
+
+  /** @param {Item} item @param {string} id */
+  function showTerminal(item, id) {
+    const key = item.key
+    const homePlace = place
+    let cached = terminals.get(key)
+    if (!cached) {
+      const host = document.createElement('section')
+      host.className = 'thing-terminal'
+      tray.append(host)
+      const thread = mountTerminalThread({host,call,id,agent:agentOf(item)?.id ?? '',place:() => place?.key === homePlace?.key && place ? place : /** @type {Place} */ (homePlace),
+        onStatus: (name,state) => {if (selected?.key === key && place) showStatus(name,state)},
+        onWaiting: request => {
+          if (selected?.key !== key || !place) return
+          inlineWaiting = request ? {key,request} : null
+          onWaiting(inlineWaiting)
+        },
+      })
+      cached = {host,thread}
+      terminals.set(key,cached)
+    }
+    cached.host.hidden = false
+    cached.thread.reflect()
+    void cached.thread.refresh()
+  }
+
+  function leaveContent() {
+    generation++
+    dispose?.()
+    dispose = undefined
+    for (const child of [...tray.children]) {
+      if (child instanceof HTMLElement && child.classList.contains('thing-terminal')) child.hidden = true
+      else child.remove()
+    }
+    inlineWaiting = null
+    onWaiting(null)
+  }
+
+  /** @param {Item|undefined} item */
+  function choose(item) {
+    leaveContent()
+    selected = item
+    if (!place) return
+    if (!item) {
+      showStatus('','')
+      const empty = document.createElement('div')
+      empty.className = 'thing-empty'
+      empty.innerHTML = '<p>这里还没有动过。对 CC 说一声就能开始。</p><button type="button" class="desk-text-button">去和 CC 说</button>'
+      empty.querySelector('button')?.addEventListener('click',home)
+      tray.append(empty)
+      return
+    }
+    const agent = agentOf(item)
+    showStatus(agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? '')), stateOf(item))
+    remembered.set(place.key,item.key)
+    if (item.kind === 'terminal') { showTerminal(item,item.id); return }
+    if (terminals.has(item.key) && item.terminal) { showTerminal(item,item.terminal.sessionId); return }
+    const attempt = generation
+    const detailHost = document.createElement('section')
+    detailHost.className = 'thing-detail'
+    const loading = document.createElement('p')
+    loading.className = 'thing-detail-note'
+    loading.textContent = '正在读取…'
+    detailHost.append(loading)
+    tray.append(detailHost)
+    void (async () => {
+      try {
+        const detail = await v1(call,V1.matter.get,{query:{id:item.id}})
+        if (attempt !== generation) return
+        if (detail.matter?.id !== item.id) throw Error('matter_not_found')
+        const bindings = (detail.bindings ?? []).filter((/** @type {{surface:string}} */ binding) => binding.surface === 'cli')
+        const terminalId = bindings[0]?.surfaceKey ?? item.terminal?.sessionId
+        if (detail.matter.kind === 'terminal' && terminalId && bindings.length <= 1 && !detail.terminalParticipants?.length) {
+          detailHost.remove()
+          showTerminal(item,terminalId)
+        } else if (detail.matter.kind === 'task') {
+          loading.remove()
+          dispose = closeTask
+          inlineWaiting = {key:item.key}
+          onWaiting(inlineWaiting)
+          await openTask(item.id,detailHost)
+        } else {
+          loading.remove()
+          const cleanup = await showWorkDetail(call,detail,detailHost)
+          if (attempt === generation) dispose = cleanup
+          else cleanup?.()
+        }
+      } catch {
+        if (attempt !== generation) return
+        dispose?.()
+        dispose = undefined
+        inlineWaiting = null
+        onWaiting(null)
+        loading.textContent = '这件事暂时读不到。'
+        detailHost.replaceChildren(loading)
+      }
+    })()
+  }
+
+  /** @param {Place} next @param {string} [key] @param {Item} [direct] */
+  function open(next,key,direct) {
+    const changed = place?.key !== next.key
+    if (changed) { openEarlier = false; linked = undefined }
+    if (direct) linked = direct
+    else if (key) linked = undefined
+    place = next
+    if (heading.textContent !== next.name) heading.textContent = next.name
+    const items = placeSessions(next,roster)
+    const wanted = key ?? (changed ? remembered.get(next.key) : selected?.key)
+    const item = items.find(candidate => candidate.key === wanted)
+      ?? (linked?.key === wanted ? linked : undefined) ?? initialSession(items,wanted)
+    if (changed || selected?.key !== item?.key) {
+      choose(item)
+    } else {
+      selected = item
+      const terminal = item && terminals.get(item.key)
+      if (terminal) terminal.thread.reflect()
+      else if (item) showStatus(executorName(agentOf(item)?.id ?? ''),stateOf(item))
+    }
+    drawTabs()
+  }
+
+  tabs.addEventListener('click',event => {
+    const button = event.target instanceof Element ? event.target.closest('button') : null
+    if (!button || !place) return
+    if (button.hasAttribute('data-thread-more')) { openEarlier = !openEarlier; drawTabs(); return }
+    const key = button.dataset.threadSession
+    if (!key || key === selected?.key) return
+    open(place,key)
+    onSession()
+  })
+
+  return {
+    open,
+    close() {
+      if (!place) return
+      leaveContent()
+      place = null
+      selected = undefined
+      linked = undefined
+    },
+    /** @param {Item[]} next */
+    setRoster(next) {
+      roster = next
+      if (place) {
+        const canonical = linked?.kind === 'terminal' && next.find(item => item.terminal?.sessionId === linked?.id && item.key !== linked?.key)
+        open(place,canonical ? canonical.key : undefined)
+      }
+      const active = new Set(next.map(item => item.key))
+      if (selected && linked?.key === selected.key) active.add(selected.key)
+      for (const [key,entry] of terminals) {
+        if (active.has(key)) continue
+        entry.thread.destroy()
+        entry.host.remove()
+        terminals.delete(key)
+      }
+    },
+    current: () => selected,
+    /** @param {Place} where @param {Target} target */
+    find(where, target) {
+      return placeSessions(where, roster).find(item => target.kind === item.kind && target.id === item.id
+        || target.kind === 'terminal' && item.terminal?.sessionId === target.id)
+    },
+    /** @param {Place} where @param {Target} target @returns {Item|undefined} */
+    linkedItem(where, target) {
+      const belongs = target.kind === 'matter' ? where.matterIds.includes(target.id) : where.sessionIds.includes(target.id)
+      if (!belongs) return
+      const key = `${target.kind}:${target.id}`
+      const waiting = where.waiting?.itemKey === key
+      return {...target,key,title:where.name,group:waiting ? 'waiting' : 'back',
+        status:waiting ? 'waiting' : 'replied',agents:[],quiet:false,unseen:where.unseen,updatedAt:where.updatedAt ?? 0}
+    },
+    destroy() {
+      leaveContent()
+      for (const entry of terminals.values()) entry.thread.destroy()
+      terminals.clear()
+    },
+  }
+}

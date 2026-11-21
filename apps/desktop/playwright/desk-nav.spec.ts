@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 import { PRESENCE_OK, routePresenceTopic } from './presence-topic'
-import { answerPlace, placeItem, placeRow, routePlaces, terminalPlace } from './roster-fixture'
+import { answerPlace, placeItem, placeRow, routePlaces, routeRoster, rosterItem, terminalPlace } from './roster-fixture'
 
 test.use({ viewport: { width: 1280, height: 820 } })
 
@@ -51,33 +51,34 @@ test('从全部到两个地方，逐条后退和前进', async ({ page, shimUrl 
   await expectHistory(page, true, false)
 })
 
-test('本子后退回说话并保留地方，新导航清掉前进记录', async ({ page, shimUrl }) => {
+test('本子后退回地方，新导航清掉前进记录', async ({ page, shimUrl }) => {
   await page.goto(shimUrl)
   await row(page, '菜谱').click()
   await page.getByRole('button', { name: '本子', exact: true }).click()
   await expect(page.locator('#notebook-pane')).toBeVisible()
   await back(page).click()
-  await expect(input(page)).toBeVisible()
+  await expect(page.locator('#thing-name')).toHaveText('菜谱')
   await expect(row(page, '菜谱')).toHaveAttribute('aria-pressed', 'true')
   await expectHistory(page, true, true)
   await row(page, '花园').click()
   await expectHistory(page, true, false)
 })
 
-test('快捷键保留输入框草稿和焦点，组字时忽略', async ({ page, shimUrl }) => {
+test('快捷键保留 CC 草稿和历史按钮焦点，组字时忽略', async ({ page, shimUrl }) => {
   await page.goto(shimUrl)
+  await input(page).fill('还没发的话')
   await row(page, '菜谱').click()
   await row(page, '花园').click()
-  await input(page).fill('还没发的话')
   const keys = await shortcuts(page)
   const mac = keys.back.startsWith('Meta')
-  await input(page).dispatchEvent('keydown', { key: mac ? '[' : 'ArrowLeft', metaKey: mac, altKey: !mac, isComposing: true })
+  await back(page).focus()
+  await back(page).dispatchEvent('keydown', { key: mac ? '[' : 'ArrowLeft', metaKey: mac, altKey: !mac, isComposing: true })
   await expect(row(page, '花园')).toHaveAttribute('aria-pressed', 'true')
   for (const [key, place] of [[keys.back, '菜谱'], [keys.forward, '花园']] as const) {
     await page.keyboard.press(key)
     await expect(row(page, place)).toHaveAttribute('aria-pressed', 'true')
     await expect(input(page)).toHaveValue('还没发的话')
-    await expect(input(page)).toBeFocused()
+    await expect(back(page)).toBeFocused()
   }
 })
 
@@ -143,11 +144,11 @@ test('鼠标侧键导航，模态对话框打开时快捷键不导航', async ({
   await page.goto(shimUrl)
   await row(page, '菜谱').click()
   await row(page, '花园').click()
-  await input(page).focus()
-  await input(page).dispatchEvent('mouseup', { button: 3 })
+  await back(page).focus()
+  await back(page).dispatchEvent('mouseup', { button: 3 })
   await expect(row(page, '菜谱')).toHaveAttribute('aria-pressed', 'true')
-  await expect(input(page)).toBeFocused()
-  await input(page).dispatchEvent('mouseup', { button: 4 })
+  await expect(back(page)).toBeFocused()
+  await back(page).dispatchEvent('mouseup', { button: 4 })
   await expect(row(page, '花园')).toHaveAttribute('aria-pressed', 'true')
   await page.evaluate(() => {
     const dialog = document.createElement('dialog')
@@ -158,9 +159,12 @@ test('鼠标侧键导航，模态对话框打开时快捷键不导航', async ({
   await expect(row(page, '花园')).toHaveAttribute('aria-pressed', 'true')
 })
 
-test('终端详情开关可撤回，拿不到会话时跳过', async ({ page, shimUrl }) => {
+test('终端线可后退，名单里的会话消失后跳过', async ({ page, shimUrl }) => {
   await routePlaces(page, [placeItem('菜谱'), terminalPlace('花园', 's1', '要看一下文件')])
+  const item=rosterItem('s1','花园',{key:'terminal:s1',kind:'terminal',updatedAt:Date.now()})
   let available = true
+  await routeRoster(page,[item])
+  await page.route('**/v1/roster',route=>route.fulfill({json:{items:available?[item]:[],version:String(available)}}))
   await page.route('**/v1/cli/sessions?**', route => route.fulfill({
     json: { sessions: available ? [{ session_id: 's1', status: 'idle' }] : [] },
   }))
@@ -168,19 +172,21 @@ test('终端详情开关可撤回，拿不到会话时跳过', async ({ page, sh
   await page.goto(shimUrl)
   await row(page, '菜谱').click()
   await row(page, '菜谱').click()
+  await expect(row(page,'菜谱')).toHaveAttribute('aria-pressed','true')
   await answerPlace(page, '花园')
-  const dock = page.locator('#roster-dock')
-  const draft = dock.locator('[data-terminal-input]')
+  const draft = page.locator('#thing-thread [data-terminal-input]')
   await draft.fill('终端未发送草稿')
-  await dock.getByRole('button', { name: '收起', exact: true }).click()
+  await page.locator('#topbar-cc').click()
   await expectHistory(page, true, false)
   await back(page).click()
+  await expect(draft).toBeVisible()
   await expect(draft).toHaveValue('终端未发送草稿')
   await forward(page).click()
-  await expect(dock).toBeHidden()
+  await expect(draft).toBeHidden()
   available = false
+  await expect(page.locator('#topbar-roster')).toHaveText('在做 0',{timeout:6000})
   await back(page).click()
   await expectHistory(page, true, true)
-  await expect(dock).toBeHidden()
-  await expect(row(page, '菜谱')).toHaveAttribute('aria-pressed', 'false')
+  await expect(draft).toBeHidden()
+  await expect(row(page, '菜谱')).toHaveAttribute('aria-pressed', 'true')
 })
