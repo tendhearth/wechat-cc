@@ -4,11 +4,12 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PlaceMapResponse } from '@wechat-cc/protocol'
 import { createInternalApi } from '../../daemon/internal-api'
+import { makeTopicRecall } from '../../daemon/threads/recall'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import { openTestDb } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
-import { makeProjectTopicResolver } from '../terminal/project-memory'
+import { makeProjectMemory, makeProjectTopicResolver } from '../terminal/project-memory'
 import { makePlacesReader, placeKey } from './places-reader'
 
 const cleanups: Array<() => void | Promise<void>> = []
@@ -233,4 +234,23 @@ it('沿显式归并链读最近摆放，最多八层；放回去会清掉能继�
     expect(await readPin(next)).toBe(depth <= 8 ? 'open' : undefined)
     last = next
   }
+})
+
+it('终端开场的原始正文逐字节固定', async () => {
+  const f = fixture()
+  const topic = await f.topic('melon')
+  await f.threads.addEntry({ threadId: topic, kind: 'commitment', line: '补验收' })
+  const memory = makeProjectMemory({ db: f.db, config: () => ({ enabled: true, owner }), log: () => {} })
+  expect((await memory({ source: 'claude', session_id: 'start', cwd: f.worktree })).context)
+    .toBe('CC 记下的这个项目的近况,可能过时,以仓库为准。\n话题「melon」\n- [承诺] 补验收')
+})
+
+it('CC 回想的原始正文逐字节固定', async () => {
+  const f = fixture()
+  const topic = await f.topic('melon')
+  const entry = await f.threads.addEntry({ threadId: topic, kind: 'commitment', line: '补验收' })
+  const recall = makeTopicRecall({ threads: f.threads, isOwner: () => true, cheapEval: () => null, log: () => {} })
+  const result = await recall(owner, 'melon 的验收怎么样')
+  expect(result?.block).toBe('话题「melon」\n- [承诺] 补验收')
+  expect(result?.entryIds).toEqual([entry])
 })
