@@ -1,6 +1,6 @@
 import {afterEach,expect,it,vi} from 'vitest'
 import {Window} from 'happy-dom'
-import {paintConversation,showConversationLatest,syncConversationLatest} from './converse-reading.js'
+import {paintConversation,rememberConversationPosition,showConversationLatest,syncConversationLatest} from './converse-reading.js'
 import type {Message} from './converse-reading.js'
 import {renderWorkbenchMarkdown,renderWorkbenchUserText} from './workbench-markdown.js'
 const windows:Window[]=[]
@@ -183,4 +183,33 @@ it('waits for the pane to get a height before landing on the latest message', ()
  scroll.scrollTop = 100
  for (const changed of resized) changed()
  expect(scroll.scrollTop).toBe(100)
+})
+
+it('finds the remembered message again after a repaint replaced its node', () => {
+ const window = new Window(); windows.push(window)
+ const document = window.document, scroll = document.createElement('div')
+ document.body.append(scroll)
+ let top = 300
+ Object.defineProperty(scroll, 'scrollTop', {get: () => top, set: (value: number) => { top = value }})
+ Object.defineProperty(scroll, 'getBoundingClientRect', {value: () => ({top: 50, bottom: 650})})
+ // 每条 100 高;换版式后每条变成 60 高(行首的地方名没了,换行少了)。
+ let rowHeight = 100
+ const row = (id: number) => {
+   const node = document.createElement('div')
+   node.setAttribute('data-converse-message', String(id))
+   Object.defineProperty(node, 'getBoundingClientRect', {value: () => {
+     const y = 50 + [...scroll.children].indexOf(node) * rowHeight - top
+     return {top: y, bottom: y + rowHeight}
+   }})
+   return node
+ }
+ scroll.append(...[1, 2, 3, 4, 5, 6, 7, 8].map(row))
+ // 顶边切在第 4 条(下标 3)里:它的 top 是 50 + 300 - 300 = 50,正好贴着顶边。
+ const restore = rememberConversationPosition(scroll as any)
+ rowHeight = 60
+ scroll.replaceChildren(...[1, 2, 3, 4, 5, 6, 7, 8].map(row))
+ restore()
+ const fourth = scroll.children[3]!.getBoundingClientRect()
+ expect(fourth.top).toBe(50)
+ expect(top).toBe(180)
 })

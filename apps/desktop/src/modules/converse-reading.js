@@ -51,8 +51,14 @@ export function rememberConversationPosition(scroll) {
   )
   // 记的是这一条离阅读区顶边多远,不是它在屏幕上的高度:换版式后阅读区自己的位置会变。
   const anchorTop = anchor && viewportTop !== undefined ? anchor.getBoundingClientRect().top - viewportTop : 0
+  // 重画可能把这一条换成新节点(比如筛选变了,行首的地方名跟着变):按它的编号找回来,别退回旧的滚动数值。
+  const marks = ['data-converse-message', 'data-converse-place-card']
+  const mark = anchor ? marks.find(name => anchor.hasAttribute(name)) : undefined
+  const id = mark ? anchor?.getAttribute(mark) : null
   return () => {
-    if (anchor && scroll.contains(anchor)) scroll.scrollTop += anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchorTop
+    const node = anchor && scroll.contains(anchor) ? anchor
+      : mark ? [...scroll.children].find(child => child.getAttribute(mark) === id) : undefined
+    if (node) scroll.scrollTop += node.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchorTop
     else scroll.scrollTop = top
     const state = states.get(scroll)
     if (state) state.lastTop = scroll.scrollTop
