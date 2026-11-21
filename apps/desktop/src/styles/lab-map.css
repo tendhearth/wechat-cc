@@ -73,7 +73,8 @@
   font-size: var(--th-size-meta);
   min-height: 30px;
 }
-.lab-map .desk-text-button { color: var(--th-accent); }
+/* 图里能点的字用强调色。桌面那条通用规则里带着一个 id,这里也得带上才压得过。 */
+#thing-thread .lab-map .desk-text-button { color: var(--th-accent); }
 .lab-map-note { margin: 0; color: var(--th-ink-soft); }
 .lab-map-viewport {
   display: flex;
@@ -108,7 +109,7 @@
   color: var(--th-ink-soft);
   font-size: var(--th-size-meta);
 }
-.lab-map-moves button[aria-disabled="true"] { color: var(--th-ink-soft); }
+#thing-thread .lab-map-moves button[aria-disabled="true"] { color: var(--th-ink-soft); }
 .lab-map-viewport .map-container me-tpc[data-nodeid^="mel:"]:focus-visible {
   outline: 2px solid var(--th-accent);
   outline-offset: 2px;
