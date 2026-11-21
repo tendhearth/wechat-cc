@@ -26,6 +26,7 @@ export function terminalModule(f: Foundation): DaemonModule<TerminalFeature> {
       const wxLink = ctx.get<WechatLinkStatus>(W.link)
       const wxPerm = ctx.get<WechatPermissions>(W.permissions)
       return {
+        places: () => wired()?.places ?? null,
         speech: () => wired()?.speech ?? null,
         stateDir, dangerously, db, projects: f.projects, own: (n, s) => ctx.own(n, s),
         ilink: {

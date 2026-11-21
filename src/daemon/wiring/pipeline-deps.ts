@@ -476,29 +476,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     isOwner: chatId => { const mode = boot.coordinator.getMode(chatId).kind; return chatId === ownerChatId() && (mode === 'solo' || mode === 'primary_tool') },
     executorName: id => boot.registry.namesOf(id).name,
   })
-  // 话题 T2:每一轮按话题调记忆,只在主人自己的对话里(微信入站在 mw-recall,App 那一轮在 wire-converse)。
-  const topicSeen=makeMatterSeen(db,opts.proposals?.desktop),topicExecutorName=(id:string)=>boot.registry.namesOf(id).name
-  const topicRecall = makeTopicRecall({
-    activity: chatId => projectActivities(db, chatId, topicSeen, undefined, opts.workbench?.projectActivity, topicExecutorName),
-    onAdopt: (chatId, requestId, r, messageIds) => makeTopicBubbles(db).adopt(chatId, requestId, 'recall', r.topicIds.map(id => ({ id, entryIds: r.entryIds, messageIds }))),
-    threads: makeThreadsStore(db, { filterSources: true }),
-    isOwner: (chatId) => chatId === ownerChatId(),
-    cheapEval: () => turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log),
-    log,
-  })
-  // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
-  const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
-  // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。stop 退订 + 清定时器,main.ts 登记进 shutdown。
-  const stopMatterActivity = wireMatterActivity(matterActivity, opts.workbench?.changes)
-  // App 里跟 CC 说一句(重构第二批步 6c,wire-converse.ts):提到「一件事」与手机对话之前,两处直接拿它,不再靠「在下面才定义」的捕获。
-  const companionConverse = wireCompanionConverse({
-    stateDir, boot, careLedger, replySinks, messagesStore, ilink, log,
-    appTurn: () => late.appTurn?.() ?? null,
-    matters: opts.matters, petSignals: opts.petSignals, stickers: opts.stickers,
-    topicRecall, matterRecall,
-  })
-
-  // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const rosterDeps: RosterReaderDeps | null = opts.matters ? {
     matters:{list:filter=>{
       const rows=opts.matters!.list(filter),agents=opts.matters!.agents(rows.map(m=>m.id))
@@ -522,6 +499,30 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       makeResolver: (db, owner, topics, roots) => makeProjectTopicResolver(db, owner, topics, undefined, roots, { includeDoneHistory: true }),
     },
   }) : null
+  // 话题 T2:每一轮按话题调记忆,只在主人自己的对话里(微信入站在 mw-recall,App 那一轮在 wire-converse)。
+  const topicSeen=makeMatterSeen(db,opts.proposals?.desktop),topicExecutorName=(id:string)=>boot.registry.namesOf(id).name
+  const topicRecall = makeTopicRecall({
+    places: places ?? undefined,
+    activity: chatId => projectActivities(db, chatId, topicSeen, undefined, opts.workbench?.projectActivity, topicExecutorName),
+    onAdopt: (chatId, requestId, r, messageIds) => makeTopicBubbles(db).adopt(chatId, requestId, 'recall', r.topicIds.map(id => ({ id, entryIds: r.entryIds, messageIds }))),
+    threads: makeThreadsStore(db, { filterSources: true }),
+    isOwner: (chatId) => chatId === ownerChatId(),
+    cheapEval: () => turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log),
+    log,
+  })
+  // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
+  const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
+  // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。stop 退订 + 清定时器,main.ts 登记进 shutdown。
+  const stopMatterActivity = wireMatterActivity(matterActivity, opts.workbench?.changes)
+  // App 里跟 CC 说一句(重构第二批步 6c,wire-converse.ts):提到「一件事」与手机对话之前,两处直接拿它,不再靠「在下面才定义」的捕获。
+  const companionConverse = wireCompanionConverse({
+    stateDir, boot, careLedger, replySinks, messagesStore, ilink, log,
+    appTurn: () => late.appTurn?.() ?? null,
+    matters: opts.matters, petSignals: opts.petSignals, stickers: opts.stickers,
+    topicRecall, matterRecall,
+  })
+
+  // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
     onSayTarget: ({ requestId, matterId }) => recordAnswerTarget(log, requestId, matterAnswerTarget(matterId)),
