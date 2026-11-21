@@ -1,0 +1,91 @@
+.desk-labs { display: none; }
+@media (min-width: 900px) {
+  .desk-labs {
+    display: grid;
+    gap: 2px;
+    min-width: 16em;
+    padding: 8px 8px 4px;
+    color: var(--th-ink-soft);
+    font: var(--th-size-meta) var(--th-font-serif);
+  }
+  .dash-topbar .desk-labs [role="switch"] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 30px;
+    color: var(--th-ink);
+  }
+  .desk-labs [role="switch"]::after {
+    content: "关";
+    color: var(--th-ink-soft);
+  }
+  .desk-labs [role="switch"][aria-checked="true"]::after {
+    content: "开";
+    color: var(--th-accent);
+  }
+  .desk-labs p { margin: 0; }
+}
+
+.lab-map-seg {
+  display: inline-flex;
+  flex: none;
+  margin-inline-start: auto;
+  border: 1px solid var(--th-hair);
+  border-radius: 999px;
+}
+.lab-map-seg button {
+  border: 0;
+  border-radius: inherit;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--th-ink-soft);
+  font: inherit;
+  font-size: var(--th-size-meta);
+  cursor: pointer;
+}
+.lab-map-seg button[aria-pressed="true"] { color: var(--th-ink); background: var(--th-rail); }
+[data-lab-map] > #desk-waiting { display: none !important; }
+.lab-map {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 6px var(--desk-page-padding) 12px;
+  gap: 6px;
+}
+.lab-map-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--th-warn);
+  font-size: var(--th-size-meta);
+  min-height: 30px;
+}
+.lab-map .desk-text-button { color: var(--th-accent); }
+.lab-map [data-map-retry] { align-self: start; }
+.lab-map-note { margin: 0; color: var(--th-ink-soft); }
+.lab-map-viewport {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  border-block: 1px solid var(--th-hair);
+}
+.lab-map-viewport > div { flex: 1; min-width: 0; min-height: 0; }
+.lab-map-viewport .map-container { font: 14px/1.5 var(--th-font-serif); cursor: grab; }
+.lab-map-viewport .map-container:active { cursor: grabbing; }
+.lab-map-viewport .map-container me-tpc { font-weight: 400; }
+.lab-map-viewport .map-container me-root me-tpc { font-size: 18px; font-weight: 500; padding: 6px 18px; }
+.lab-map-viewport .map-container me-main > me-wrapper > me-parent > me-tpc { padding: 3px 12px; font-weight: 500; }
+.lab-map-viewport .map-container me-tpc[data-nodeid^="mel:"] { cursor: pointer; }
+.lab-map-viewport .map-container me-epd { visibility: hidden; pointer-events: none; }
+.lab-map-details {
+  flex: none;
+  height: 10rem;
+  overflow: auto;
+  padding-block: 4px;
+  overflow-wrap: anywhere;
+}
+.lab-map-details p { margin: 0 0 4px; }
+.lab-map-meta, .lab-map-body { color: var(--th-ink-soft); font-size: var(--th-size-meta); }
+.lab-map-body { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
