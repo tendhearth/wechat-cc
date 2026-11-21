@@ -126,3 +126,111 @@ it('HTTP 只给 operator，未知地方 404，设备与链接在面板入口也�
     expect(await blocked.json()).toEqual({error:'route_not_allowed'})
   }
 })
+
+it('operator 可以写、改、放回去，revision 跟随摆放，话题原行逐字段不变', async () => {
+  const f = fixture()
+  const matter = f.task(f.repo)
+  const threadId = await f.topic('工作')
+  const id = await f.threads.addEntry({ threadId, kind:'conclusion', source:'work', matterId:matter.id,
+    line:'主人原话', body:'正文', ts:new Date(now).toISOString() })
+  const before = f.db.query('SELECT * FROM topic_entries WHERE id=?').get(id)
+  const stateDir = mkdtempSync(join(tmpdir(),'cc-place-map-pin-http-'))
+  cleanups.push(() => rmSync(stateDir,{recursive:true,force:true}))
+  const log: unknown[][] = []
+  const api = createInternalApi({stateDir,daemonPid:1, log:(...args) => { log.push(args) }})
+  api.provide({places:f.reader})
+  cleanups.push(() => api.stop())
+  const started = await api.start()
+  const path = '/v1/places/map/pin'
+  const url = `http://127.0.0.1:${started.port}${path}`
+  const operator = readFileSync(started.operatorTokenFilePath,'utf8').trim()
+  const file = readFileSync(started.tokenFilePath,'utf8').trim()
+  const body = { key:f.key, itemId:'e:'+id, branch:'open' }
+  const request = (input: unknown, token = operator) => fetch(url, {
+    method:'POST', headers:{authorization:'Bearer '+token, 'content-type':'application/json'}, body:JSON.stringify(input),
+  })
+  const get = async () => PlaceMapResponse.parse(await (await fetch(
+    `http://127.0.0.1:${started.port}/v1/places/map?key=${encodeURIComponent(f.key)}`,
+    {headers:{authorization:'Bearer '+operator}},
+  )).json())
+  const initial = await get()
+  for (const [input, status, error] of [
+    [{...body, key:'p:0000000000000000'}, 404, 'place_not_found'],
+    [{...body, itemId:'e:missing'}, 404, 'place_map_item_not_found'],
+    [{...body, itemId:'a:terminal:ask-session'}, 409, 'place_map_item_fixed'],
+  ] as const) {
+    const response = await request(input)
+    expect(response.status).toBe(status)
+    expect(await response.json()).toEqual({error})
+  }
+  // 形状不对走通用的那条回绝:回的话和日志里都不带请求里的字。
+  const malformed = await request({...body, branch:'主人原话', body:'正文'})
+  expect(malformed.status).toBe(400)
+  const refusal = await malformed.text()
+  expect(JSON.parse(refusal).error).toBe('invalid_request')
+  expect(refusal).not.toMatch(/主人原话|正文/)
+  expect(JSON.stringify(log)).not.toMatch(/主人原话|正文/)
+  expect((await request(body, file)).status).toBe(403)
+  const session = api.mintSessionToken('admin', 'codex/default/'+owner)
+  expect((await request(body, session)).status).toBe(403)
+  for (const origin of ['device','link'] as const) {
+    const blocked = await api.panelDispatch(new Request(url, {method:'POST', body:JSON.stringify(body)}),
+      {tier:'admin', origin, routeAllow:new Set(['POST '+path])}, {frameBudget:100_000, client:'web'})
+    expect(blocked.status).toBe(403)
+  }
+  expect(f.db.query('SELECT * FROM place_map_pins').all()).toEqual([])
+  let revision = initial.revision
+  for (const branch of ['open','active',null] as const) {
+    const response = await request({...body, branch})
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ok:true})
+    const current = await get()
+    expect(current.revision).not.toBe(revision)
+    expect(current.items.find(item => item.id === body.itemId)?.pin).toBe(branch ?? undefined)
+    expect(f.db.query('SELECT * FROM topic_entries WHERE id=?').get(id)).toEqual(before)
+    revision = current.revision
+  }
+  expect(revision).toBe(initial.revision)
+  expect(f.db.query('SELECT * FROM place_map_pins').all()).toEqual([])
+})
+
+it('沿显式归并链读最近摆放，最多八层；放回去会清掉能继承的摆放', async () => {
+  const f = fixture()
+  const matter = f.task(f.repo)
+  const threadId = await f.topic('工作')
+  const add = (line: string) => f.threads.addEntry({ threadId, kind:'progress', source:'work', matterId:matter.id,
+    line, ts:new Date(now).toISOString() })
+  const first = await add('起点')
+  const other = await add('另一条旧记录')
+  const pin = (id: string, branch: 'open' | 'active' | 'noted' | null) => f.reader.pin({key:f.key,itemId:'e:'+id,branch})
+  const readPin = async (id: string) => (await f.reader.map(f.key))?.items.find(item => item.id === 'e:'+id)?.pin
+  const replace = (old: string, next: string) => f.threads.updateEntry(old, {status:'superseded', supersededBy:next})
+  expect(await pin(first,'open')).toBeNull()
+  expect(await pin(other,'active')).toBeNull()
+  f.db.query("UPDATE place_map_pins SET updated_ts='2000-01-01T00:00:00.000Z' WHERE item_id=?").run('e:'+first)
+  const step = await add('第一层')
+  await replace(first,step)
+  expect(await readPin(step)).toBe('open')
+  const merged = await add('第二层归并')
+  await replace(step,merged)
+  expect(await readPin(merged)).toBe('open')
+  await replace(other,merged)
+  const rows = () => f.db.query('SELECT * FROM place_map_pins ORDER BY item_id').all()
+  const saved = rows()
+  expect(await readPin(merged)).toBe('active')
+  expect(rows()).toEqual(saved)
+  expect(await pin(merged,'noted')).toBeNull()
+  expect(await readPin(merged)).toBe('noted')
+  expect(await pin(merged,null)).toBeNull()
+  expect(await readPin(merged)).toBeUndefined()
+  expect(rows()).toEqual([])
+
+  expect(await pin(merged,'open')).toBeNull()
+  let last = merged
+  for (let depth=1; depth<=9; depth++) {
+    const next = await add('第 '+depth+' 层')
+    await replace(last,next)
+    expect(await readPin(next)).toBe(depth <= 8 ? 'open' : undefined)
+    last = next
+  }
+})

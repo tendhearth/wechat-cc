@@ -27,6 +27,9 @@ export function mapBranch({kind, status}) {
   }
 }
 
+/** @param {MapItem} item */
+export const placedBranch = item => item.pin ?? mapBranch(item)
+
 /** @param {string} line */
 export function mapLabel(line) {
   const chars = [...line]
@@ -38,17 +41,19 @@ export const leafId = id => 'l:' + encodeURIComponent(id)
 
 /** @param {string} name @param {MapItem[]} items @param {(item:MapItem)=>string} agent */
 export function mapData(name, items, agent) {
-  const children = Object.entries(branches).flatMap(([key, {label, color}]) => {
-    const leaves = items.filter(item => mapBranch(item) === key).map(item => {
+  const placed = items.filter(item => placedBranch(item))
+  const children = placed.length ? Object.entries(branches).map(([key, {label, color}]) => {
+    const leaves = placed.filter(item => placedBranch(item) === key).map(item => {
       const family = item.kind === 'session' || item.kind === 'task' ? agent(item) : ''
-      return { id: leafId(item.id), topic: [family, mapLabel(item.line)].filter(Boolean).join(' · ') }
+      return { id: leafId(item.id), topic: [family, mapLabel(item.line)].filter(Boolean).join(' · '),
+        ...(item.pin ? { tags: ['你放的'] } : {}) }
     })
-    return leaves.length ? [{ id: `g:${key}`, topic: label, branchColor: color, style: { border: `1px solid ${color}` }, children: leaves }] : []
-  })
-  const total = children.reduce((weight, branch) => weight + branch.children.length + .6, 0)
+    return { id: `g:${key}`, topic: label, branchColor: color, style: { border: `1px solid ${color}` }, children: leaves }
+  }) : []
+  const total = children.reduce((weight, branch) => weight + Math.max(1, branch.children.length) + .6, 0)
   let before = 0
   const directed = children.map((branch, index) => {
-    const weight = branch.children.length + .6
+    const weight = Math.max(1, branch.children.length) + .6
     /** @type {0 | 1} */ const direction = index === 0 || before + weight / 2 < total / 2 ? 1 : 0
     before += weight
     return { ...branch, direction }

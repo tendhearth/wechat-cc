@@ -1,10 +1,24 @@
-import { PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
+import { PlaceMapPinRequest, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
 import type { InternalApiDeps, RouteTable } from '../../daemon/internal-api/types'
 import { readFailure } from './routes'
 
 export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): RouteTable {
   const unavailable = { status: 503, body: { error: 'unavailable' } }
   return {
+    'POST /v1/places/map/pin': async (_query, body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      const input = PlaceMapPinRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      if (!deps.places) return unavailable
+      try {
+        const error = await deps.places.pin(input.data)
+        if (error) return { status: error === 'place_map_item_fixed' ? 409 : 404, body: { error } }
+        return { status: 200, body: { ok: true } }
+      } catch {
+        deps.log?.('PLACES', 'unavailable')
+        return unavailable
+      }
+    },
     'GET /v1/places/map': async (query, _body, caller) => {
       if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
       if (!deps.places) return unavailable

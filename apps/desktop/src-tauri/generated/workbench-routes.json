@@ -1,6 +1,6 @@
 {
   "_comment": "生成物,别手改:改 packages/protocol/src/routes.ts 后跑 bun run gen:routes",
-  "version": 23,
+  "version": 24,
   "tauri": [
     "GET /v1/access/list",
     "GET /v1/avatar/info",
@@ -100,6 +100,7 @@
     "POST /v1/phone/enable-relay",
     "POST /v1/phone/link",
     "POST /v1/places/hide",
+    "POST /v1/places/map/pin",
     "POST /v1/places/move",
     "POST /v1/places/seen",
     "POST /v1/sessions/delete",
@@ -227,6 +228,7 @@
     "POST /v1/phone/enable-relay",
     "POST /v1/phone/link",
     "POST /v1/places/hide",
+    "POST /v1/places/map/pin",
     "POST /v1/places/move",
     "POST /v1/places/seen",
     "POST /v1/sessions/delete",
