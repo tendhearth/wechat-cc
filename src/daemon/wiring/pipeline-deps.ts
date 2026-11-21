@@ -1,3 +1,4 @@
+import { makeProjectTopicResolver } from '../../features/terminal'
 import { makePlacesReader, makeRosterReader, type RosterReaderDeps } from '../../features/roster'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import { ownerLedgerConversation } from '../../lib/matter-ledger-access'
@@ -512,7 +513,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   } : null
   const roster = rosterDeps ? makeRosterReader(rosterDeps) : null
   // 「地方」:同一份名单数据,往回看 30 天、按项目归拢;顺序存在 places 表(v117)。
-  const places = rosterDeps ? makePlacesReader({ roster: rosterDeps, store: makePlacesStore(db), opinion: opts.workbench?.waitingOpinion }) : null
+  const places = rosterDeps ? makePlacesReader({
+    roster: rosterDeps, store: makePlacesStore(db), opinion: opts.workbench?.waitingOpinion,
+    mapWorkbench: opts.workbench?.rosterRead,
+    mapTopics: {
+      db, owner: ownerChatId,
+      makeResolver: (db, owner, topics, roots) => makeProjectTopicResolver(db, owner, topics, undefined, roots, { includeDoneHistory: true }),
+    },
+  }) : null
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
     onSayTarget: ({ requestId, matterId }) => recordAnswerTarget(log, requestId, matterAnswerTarget(matterId)),

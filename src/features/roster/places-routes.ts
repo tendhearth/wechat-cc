@@ -5,6 +5,17 @@ import { readFailure } from './routes'
 export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): RouteTable {
   const unavailable = { status: 503, body: { error: 'unavailable' } }
   return {
+    'GET /v1/places/map': async (query, _body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      if (!deps.places) return unavailable
+      try {
+        const result = await deps.places.map(query.get('key') ?? '')
+        return result ? { status: 200, body: result } : { status: 404, body: { error: 'place_not_found' } }
+      } catch {
+        deps.log?.('PLACES', 'map unavailable')
+        return unavailable
+      }
+    },
     'GET /v1/places': (_query, _body, caller, ctx) => {
       if (caller?.origin !== 'operator' && caller?.origin !== 'device') return { status: 403, body: { error: 'forbidden' } }
       try {

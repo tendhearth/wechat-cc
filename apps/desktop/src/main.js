@@ -129,6 +129,7 @@ function findThing(target) {
 function openThing({place,item,direct}) {
   rosterDock?.close()
   if (document.body.dataset.pane !== 'thing') switchPane('thing')
+  thingThread?.forgetView(place.key)
   thingThread?.open(place,item.key,direct ? item : undefined)
   deskPlaces?.selectKey(place.key)
 }
@@ -1873,6 +1874,7 @@ function mountDeskHistory(strip, signal) {
       if (!deskWide()) { switchPane('overview'); strip.selectKey(next.key); return true }
       const item = detail && thingThread?.find(next,detail)
       if (detail && !item) return false
+      thingThread?.forgetView(next.key)
       if (item) openThing({place:next,item})
       else { switchPane('thing'); thingThread?.open(next); strip.selectKey(next.key) }
       return true

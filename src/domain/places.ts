@@ -35,7 +35,7 @@ export interface PlacesInput {
 
 export interface PlacesOutput { places: PlaceT[]; hidden: Pick<PlaceT, 'key' | 'name'>[]; added: PlaceRecord[] }
 
-const lineOf = (item: RosterItemT) => item.terminal?.summary?.trim() || item.title
+export const rosterLine = (item: RosterItemT) => item.terminal?.summary?.trim() || item.title
 
 export function buildPlaces(input: PlacesInput): PlacesOutput {
   const max = input.maxIds ?? 50
@@ -74,7 +74,7 @@ export function buildPlaces(input: PlacesInput): PlacesOutput {
       ...(first.kind === 'matter' ? { matterId: first.id } : {}),
       ...(first.waiting ? { requestId: first.waiting.requestId } : {}),
       ...(first.terminal ? { sessionId: first.terminal.sessionId } : {}),
-      summary: first.waiting?.summary || lineOf(first),
+      summary: first.waiting?.summary || rosterLine(first),
       count: waitingItems.reduce((n, i) => n + (i.waiting?.count ?? 1), 0),
     } : null
 
@@ -89,7 +89,7 @@ export function buildPlaces(input: PlacesInput): PlacesOutput {
     places.push({
       key: rec.key,
       name: rec.name,
-      line: head ? (first ? waiting!.summary : lineOf(head)) : null,
+      line: head ? (first ? waiting!.summary : rosterLine(head)) : null,
       status: head ? head.status : null,
       waiting,
       moving: items.some(i => i.group === 'working'),

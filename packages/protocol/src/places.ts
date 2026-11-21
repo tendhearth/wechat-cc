@@ -65,3 +65,28 @@ export const PlaceMoveRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16
 export const PlaceHideRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16}$/), hidden: z.boolean() }).strict()
 export const PlaceSeenRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16}$/) }).strict()
 export const PlaceWriteResponse = z.object({ ok: z.literal(true) })
+
+export const PlaceMapItem = z.object({
+  id: z.string(),
+  kind: z.enum(['fact', 'decision', 'commitment', 'progress', 'conclusion', 'session', 'task', 'ask']),
+  status: z.string(),
+  line: z.string(),
+  body: z.string().optional(),
+  topic: z.object({ id: z.string(), title: z.string() }).optional(),
+  from: z.object({
+    source: z.enum(['chat', 'work', 'delegate', 'terminal', 'task']),
+    matterId: z.string().optional(),
+    sessionId: z.string().optional(),
+    at: z.number(),
+  }),
+})
+export type PlaceMapItemT = z.infer<typeof PlaceMapItem>
+
+export const PlaceMapResponse = z.object({
+  ok: z.literal(true),
+  place: Place.pick({ key: true, name: true }),
+  items: z.array(PlaceMapItem),
+  truncated: z.boolean(),
+  revision: z.string(),
+})
+export type PlaceMapResponseT = z.infer<typeof PlaceMapResponse>

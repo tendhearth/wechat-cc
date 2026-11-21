@@ -2,6 +2,8 @@
  * reader.ts —— 「地方」读写口(设计稿 docs/superpowers/specs/2026-11-18-cc-two-sides-design.md §3)。
  * 数据和名单同一份(gatherRoster),只是往回看 30 天、再按项目根目录归拢;顺序 / 名字 / 收起读写 places 表。
  */
+import type { Db } from '../../lib/db'
+import { placeMapEntries, placeMapRoster, type MapTopicResolver } from './place-map'
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
 import type { PlaceOpinionT, RosterItemT } from '@wechat-cc/protocol'
@@ -16,7 +18,9 @@ export const PLACES_WINDOW_MS = 30 * 24 * 3_600_000
 
 export interface PlacesReaderDeps {
   roster: RosterReaderDeps
+  mapWorkbench?: RosterReaderDeps['workbench']
   store: PlacesStore
+  mapTopics?: { db: Db; owner: () => string | null; makeResolver: MapTopicResolver }
   opinion?: (requestId: string) => PlaceOpinionT | undefined
   root?: (path: string | null | undefined) => string | null
 }
@@ -26,10 +30,10 @@ export const placeKey = (root: string) => `p:${createHash('sha256').update(root)
 
 export function makePlacesReader(deps: PlacesReaderDeps) {
   const root = deps.root ?? makeProjectRoot()
-  function collect(scope: 'operator' | 'device') {
-    const now = deps.roster.now?.() ?? Date.now()
-    const g = gatherRoster(deps.roster, scope, now, PLACES_WINDOW_MS)
-    const items = buildRoster({ ...g.input, seen: deps.roster.seen, now, backWindowMs: PLACES_WINDOW_MS })
+  function collect(scope: 'operator' | 'device', roster = deps.roster) {
+    const now = roster.now?.() ?? Date.now()
+    const g = gatherRoster(roster, scope, now, PLACES_WINDOW_MS)
+    const items = buildRoster({ ...g.input, seen: roster.seen, now, backWindowMs: PLACES_WINDOW_MS })
     const pathOf = (item: RosterItemT): string | null => {
       if (item.kind === 'terminal') return g.sessions.get(item.id)?.project ?? null
       const m = g.matters.get(item.id)
@@ -50,7 +54,7 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       keyOf: placeKey,
       nameOf: r => basename(r) || r,
     })
-    return { ...result, saved, now }
+    return { ...result, saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
   }
 
   return {
@@ -63,6 +67,20 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       }
       const version = createHash('sha256').update(JSON.stringify({ places, hidden })).digest('hex').slice(0, 16)
       return { places, hidden, version }
+    },
+    async map(key) {
+      const { places, saved, added, items, rootOf } = collect('operator', { ...deps.roster, workbench: deps.mapWorkbench })
+      const place = places.find(place => place.key === key)
+      const records = [...saved, ...added]
+      const record = records.find(record => record.key === key)
+      if (!place || !record) return null
+      const owner = deps.mapTopics?.owner()
+      const entries = owner && deps.mapTopics
+        ? await placeMapEntries(deps.mapTopics.db, owner, record.root, records.map(record => record.root), rootOf, deps.mapTopics.makeResolver)
+        : { items: [], truncated: false }
+      const data = { place: { key, name: place.name }, items: [...entries.items, ...placeMapRoster(place, items)], truncated: entries.truncated }
+      const revision = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16)
+      return { ok: true, ...data, revision }
     },
     planPlaces() {
       // Planning reads saved roots using the operator view without persisting newly discovered places.

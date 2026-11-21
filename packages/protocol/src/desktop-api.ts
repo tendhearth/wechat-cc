@@ -1,6 +1,6 @@
 import { NotebookChatReadRequest, NotebookChatReadResponse, NotebookJotRequest, NotebookJotResponse, NotebookPageResponse, NotebookPaperRequest, NotebookPaperResponse, NotebookStrikeRequest, NotebookStrikeResponse, NotebookWriteRequest, NotebookWriteResponse } from './notebook'
 import { RosterResponse } from './roster'
-import { PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest, PlacesResponse, PlaceWriteResponse } from './places'
+import { PlaceMapResponse, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest, PlacesResponse, PlaceWriteResponse } from './places'
 import { OptionalReplyMetadata } from './reply-attribution'
 import {EntryRequestId} from './entry-request-id'
 import { CliProjectMemoryRequest } from './cli-project-memory'
@@ -2710,6 +2710,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/notebook/chat/jot': NotebookJotResponse,
   'POST /v1/notebook/chat/read': NotebookChatReadResponse,
   'GET /v1/places': PlacesResponse,
+  'GET /v1/places/map': PlaceMapResponse,
   'POST /v1/places/move': PlaceWriteResponse,
   'POST /v1/places/hide': PlaceWriteResponse,
   'POST /v1/places/seen': PlaceWriteResponse,

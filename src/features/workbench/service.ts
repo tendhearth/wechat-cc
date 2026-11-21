@@ -290,6 +290,7 @@ export function makeWorkbenchService(opts: Options) {
     ...ledgerDomain,
     waitingOpinion: (id: string) => opts.askOpinion?.get(id),
     rosterRelay:relayDomain.rosterRelay,
+    rosterRead:viewDomain.rosterRead,
     ...makeShareDomain(ctx,{view:viewDomain}),
     artifactDeliveryStore:store.artifactDeliveries,
     setArtifactDelivery:noticesDomain.setArtifactDelivery,
