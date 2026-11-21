@@ -12,6 +12,7 @@ import { makePlacesStore } from '../../adapters/store/places-store'
 import { openTestDb } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeProjectMemory, makeProjectTopicResolver } from '../terminal/project-memory'
+import type { PlaceOutlineDeps } from './place-outline'
 import { makePlacesReader, placeKey } from './places-reader'
 
 const cleanups: Array<() => void | Promise<void>> = []
@@ -19,7 +20,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 const owner = 'map-owner'
 const now = Date.UTC(2026, 10, 21)
 
-function fixture(withSession = false) {
+function fixture(withSession = false, outlines?: PlaceOutlineDeps) {
   // Use a real .git/commondir outside system temp: provenance excludes scratch work.
   const base = mkdtempSync(resolve('.place-map-test-'))
   cleanups.push(() => rmSync(base, { recursive: true, force: true }))
@@ -42,7 +43,7 @@ function fixture(withSession = false) {
     threads.create({ chatId, title, private:privateTopic, summary:'', facets:[], tags:[], episodes:[] })
   const labs = makeLabsSettings(base)
   const reader = makePlacesReader({
-    labs,
+    labs, outlines,
     store, mapTopics: { db, owner: () => owner,
       makeResolver: (db, owner, topics, roots) => makeProjectTopicResolver(db, owner, topics, undefined, roots, { includeDoneHistory:true }),
     },
@@ -409,4 +410,82 @@ it('摆放投影按实际摆放时间排序，包含任务和会话，等你定�
   expect((await f.reader.placedItems(f.key)).map(({ id }) => id)).toEqual([
     'e:' + newer, 'e:' + older, 's:idle-session', 'm:' + task.id, 'e:' + f.moved,
   ])
+})
+
+it('按方面路由只认 operator 和实验开关，普通 GET 在梳理前后逐字节一致', async () => {
+  const sourceText = '这句假原话只给私密梳理'
+  const resultText = '这句假结果只在按方面显示'
+  let finish!: (text: string) => void
+  const evaluator = vi.fn<import('../../ports/agent-provider').CheapEval>(async (_prompt, opts) => {
+    opts?.beforeRequest?.()
+    return new Promise(resolve => { finish = resolve })
+  })
+  const log = vi.fn()
+  const f = fixture(false, { evaluator: () => evaluator, log })
+  const stateDir = mkdtempSync(join(tmpdir(), 'cc-outline-http-'))
+  cleanups.push(() => rmSync(stateDir, { recursive:true, force:true }))
+  const api = createInternalApi({ stateDir, daemonPid:1, log })
+  api.provide({ places:f.reader })
+  cleanups.push(() => api.stop())
+  const started = await api.start()
+  const url = `http://127.0.0.1:${started.port}/v1/places/map`
+  const auth = (tokenFile: string) => `Bearer ${readFileSync(tokenFile,'utf8').trim()}`
+  const operator = { authorization:auth(started.operatorTokenFilePath) }
+  const post = (authorization = operator.authorization) => fetch(url + '/outline', {
+    method:'POST', headers:{authorization, 'content-type':'application/json'}, body:JSON.stringify({key:f.key}),
+  })
+  const get = (outline = false) => fetch(url + `?key=${encodeURIComponent(f.key)}${outline ? '&outline=1' : ''}`, {headers:operator})
+  const entryThread = await f.topic('工作')
+  const entryId = await f.threads.addEntry({threadId:entryThread,kind:'fact',source:'work',matterId:f.task(f.repo).id,
+    line:sourceText,ts:new Date(now).toISOString()})
+  const rowBefore = f.db.query('SELECT * FROM topic_entries WHERE id=?').get(entryId)
+
+  expect((await post(auth(started.tokenFilePath))).status).toBe(403)
+  for (const caller of [{tier:'admin', origin:'device'}, {tier:'admin', origin:'link'}, {tier:'admin', origin:'session'}] as const) {
+    const response = await api.panelDispatch(new Request(url + '/outline', {
+      method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({key:f.key}),
+    }), { ...caller, routeAllow:new Set(['POST /v1/places/map/outline']) }, {frameBudget:100_000,client:'web'})
+    expect(response.status).toBe(caller.origin === 'session' ? 401 : 403)
+  }
+  const off = await post()
+  expect(off.status).toBe(409)
+  expect(await off.json()).toEqual({error:'lab_off'})
+  expect((await get(true)).status).toBe(409)
+  expect(evaluator).not.toHaveBeenCalled()
+
+  f.reader.setPlaceMap(true)
+  const before = await (await get()).text()
+  expect(PlaceMapResponse.parse(JSON.parse(before)).outline).toBeUndefined()
+  expect((await (await get(true)).json() as {outline:unknown}).outline).toEqual({state:'none',canRun:true})
+  const starts = await Promise.all([post(), post()])
+  for (const response of starts) expect(await response.json()).toEqual({ok:true,state:'running'})
+  expect(evaluator).toHaveBeenCalledTimes(1)
+  expect(evaluator.mock.calls[0]?.[0]).toContain(sourceText)
+  expect((await (await get(true)).json() as {outline:unknown}).outline).toMatchObject({state:'running',canRun:false})
+
+  finish(JSON.stringify({aspects:['记录','进展','决定'].map(name => ({name,items:[{line:resultText,status:'noted',refs:['e1']}]}))}))
+  const settled = await vi.waitFor(async () => {
+    const response = PlaceMapResponse.parse(await (await get(true)).json())
+    expect(response.outline?.state).toBe('ready')
+    return response
+  })
+  expect(settled.outline?.aspects?.[0]?.items[0]?.sources).toEqual([{kind:'entry'}])
+  expect(await (await get()).text()).toBe(before)
+  expect(await (await post()).json()).toEqual({ok:true,state:'ready',unchanged:true})
+  expect(evaluator).toHaveBeenCalledTimes(1)
+  expect(f.db.query('SELECT * FROM topic_entries WHERE id=?').get(entryId)).toEqual(rowBefore)
+  expect(JSON.stringify(log.mock.calls)).not.toContain(sourceText)
+  expect(JSON.stringify(log.mock.calls)).not.toContain(resultText)
+
+  await f.threads.updateEntry(entryId, {line:'改过的条目',ts:new Date(now + 1000).toISOString()})
+  expect(PlaceMapResponse.parse(await (await get(true)).json()).outline).toMatchObject({state:'ready',stale:true,canRun:false})
+  const quota = await post()
+  expect(quota.status).toBe(409)
+  expect(await quota.json()).toEqual({error:'outline_quota'})
+  expect(evaluator).toHaveBeenCalledTimes(1)
+
+  f.db.query('UPDATE threads SET private=1 WHERE id=?').run(entryThread)
+  const hidden = await (await get(true)).text()
+  expect(PlaceMapResponse.parse(JSON.parse(hidden)).outline).toMatchObject({state:'failed',error:'stale'})
+  expect(hidden).not.toContain(resultText)
 })

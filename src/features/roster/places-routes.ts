@@ -1,4 +1,4 @@
-import { LabsRequest, PlaceMapPinRequest, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
+import { PlaceOutlineRequest, LabsRequest, PlaceMapPinRequest, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
 import type { InternalApiDeps, RouteTable } from '../../daemon/internal-api/types'
 import { readFailure } from './routes'
 
@@ -34,12 +34,30 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): Rou
         return unavailable
       }
     },
+    'POST /v1/places/map/outline': async (_query, body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      if (!deps.places) return unavailable
+      if (!deps.places.placeMapEnabled()) return labOff
+      const input = PlaceOutlineRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      try {
+        const result = await deps.places.startOutline?.(input.data.key)
+        if (!result || result === 'unavailable') return unavailable
+        if (result === 'lab_off') return labOff
+        if (result === 'place_not_found') return { status: 404, body: { error: result } }
+        if (result === 'outline_quota') return { status: 409, body: { error: result } }
+        return { status: 200, body: result }
+      } catch {
+        deps.log?.('PLACE_OUTLINE', 'unavailable')
+        return unavailable
+      }
+    },
     'GET /v1/places/map': async (query, _body, caller) => {
       if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
       if (!deps.places) return unavailable
       try {
         if (!deps.places.placeMapEnabled()) return labOff
-        const result = await deps.places.map(query.get('key') ?? '')
+        const result = await deps.places.map(query.get('key') ?? '', query.get('outline') === '1')
         if (!deps.places.placeMapEnabled()) return labOff
         return result ? { status: 200, body: result } : { status: 404, body: { error: 'place_not_found' } }
       } catch {
