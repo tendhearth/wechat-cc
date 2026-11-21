@@ -292,7 +292,10 @@ describe('终端历史', () => {
       const older = reopened.page(matter.id, 2, first.earlier!)!
       expect(older.items.map(i => i.text)).toEqual(['1', '2'])
       expect(older.earlier).toBeNull()
-      expect(reopened.page(matter.id, 3)?.items.map(i => i.text)).toEqual(['就地更新', '4', '5'])
+      const latest = reopened.page(matter.id, 3)!
+      expect(latest.items.map(i => i.text)).toEqual(['就地更新', '4', '5'])
+      expect(latest.items.slice(0, 2).map(i => i.id)).toEqual(first.items.map(i => i.id))
+      expect(new Set([...older.items, ...latest.items].map(i => i.id)).size).toBe(5)
     } finally {
       database.close()
       rmSync(dir, { recursive: true, force: true })

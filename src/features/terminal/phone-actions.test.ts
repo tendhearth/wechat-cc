@@ -339,17 +339,22 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
       const [row] = phoneCliSessionRows({ list: () => hub.list(), actions: cliActions }) as Array<{ now?: unknown }>
       expect(row?.now).toEqual(legacyItems[3])
 
-      expect(CliActivityPage.parse(await (await get('&full=1')).json())).toEqual({
-        ok: true, items: [{ ...legacyItems[0], full: tooLong }, { ...legacyItems[1], full: reply }, ...legacyItems.slice(2)], earlier: null,
+      const fullPage = CliActivityPage.parse(await (await get('&full=1')).json())
+      const ids = fullPage.items.map(item => item.id)
+      expect(ids.every(id => typeof id === 'string' && id.length > 0)).toBe(true)
+      expect(new Set(ids).size).toBe(legacyItems.length)
+      const withIds = legacyItems.map((item, i) => ({ ...item, id: ids[i] }))
+      expect(fullPage).toEqual({
+        ok: true, items: [{ ...withIds[0], full: tooLong }, { ...withIds[1], full: reply }, ...withIds.slice(2)], earlier: null,
       })
       const latest = CliActivityPage.parse(await (await get('&limit=2')).json())
-      expect(latest.items).toEqual(legacyItems.slice(2))
+      expect(latest.items).toEqual(withIds.slice(2))
       expect(typeof latest.earlier).toBe('string')
       appendFileSync(path, line('assistant', '新来的步'))
       const middle = CliActivityPage.parse(await (await get('&limit=1&full=1&before=' + latest.earlier)).json())
-      expect(middle.items).toEqual([{ ...legacyItems[1], full: reply }])
+      expect(middle.items).toEqual([{ ...withIds[1], full: reply }])
       expect(typeof middle.earlier).toBe('string')
-      expect(await (await get('&limit=1&before=' + middle.earlier)).json()).toEqual({ ok: true, items: [legacyItems[0]], earlier: null })
+      expect(await (await get('&before=' + middle.earlier)).json()).toEqual({ ok: true, items: [withIds[0]], earlier: null })
 
       for (const query of ['&full=0', '&full=1&full=1', '&limit=1&limit=2', '&limit=', '&limit=0', '&limit=101', '&limit=1.5',
         '&limit=1e1', '&before=', '&before=%3F', '&before=bogus', '&before=x&before=y', '&session_id=A1']) {

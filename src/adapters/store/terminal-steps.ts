@@ -50,7 +50,7 @@ export function makeTerminalStepStore(deps: { db: Db; log: MatterLog; matters: {
       }
       const rows = page.all(matterId, like, seq, limit + 1)
       const earlier = rows.length > limit ? cursor(matterId, rows[limit - 1]!.seq) : null
-      return { items: rows.slice(0, limit).reverse().map(row => JSON.parse(row.payload_json) as TerminalStepPayload), earlier }
+      return { items: rows.slice(0, limit).reverse().map(row => ({ ...(JSON.parse(row.payload_json) as TerminalStepPayload), id: row.seq.toString(36) })), earlier }
     },
     recent(matterId, max) {
       return db.query<{ payload_json: string }, [string, string, number]>('SELECT payload_json FROM matter_items WHERE matter_id=? AND item_key LIKE ? ORDER BY seq DESC LIMIT ?').all(matterId, like, max)

@@ -54,11 +54,12 @@ export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<str
         const cut = (t: string, max: number) => (t.length > max ? t.slice(0, max - 1) + '…' : t)
         return fitted(max => ({
           ok: true,
-          items: r.items.map(({ full: stored, ...i }) => {
+          items: r.items.map(({ full: stored, id: itemId, ...i }) => {
             const text = cut(i.text, Math.min(ACTIVITY_TEXT_MAX, max))
             const expanded = full === '1' && i.kind !== 'step' && stored ? cut(stored, max) : undefined
             return {
               ...i, text,
+              ...(paged ? { id: itemId } : {}),
               ...(i.detail ? { detail: cut(i.detail, full === '1' ? Math.min(DETAIL_MAX, max * 3) : max * 3) } : {}),
               ...(expanded && expanded.length > text.length ? { full: expanded } : {}),
             }
