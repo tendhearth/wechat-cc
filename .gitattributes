@@ -44,3 +44,9 @@ apps/desktop/src/generated/cc-activity.js text eol=lf
 # 桌面随包字体许可:三份笔的上游许可按原字节校验,包含原来的行尾空格。
 apps/desktop/src/fonts/OFL.txt -text whitespace=-blank-at-eol
 apps/app/assets/fonts/OFL.txt -text whitespace=-blank-at-eol
+
+# The vendored release is pinned by byte hashes in SOURCE.txt.
+apps/desktop/src/vendor/mind-elixir/MindElixir.js -text -whitespace
+apps/desktop/src/vendor/mind-elixir/MindElixir.css -text
+apps/desktop/src/vendor/mind-elixir/LICENSE -text
+apps/desktop/src/vendor/mind-elixir/SOURCE.txt -text
