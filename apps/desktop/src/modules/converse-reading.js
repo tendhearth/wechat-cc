@@ -89,7 +89,8 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
   // 上一次重画说好下一帧跟到最新,那一帧还没到又来一次重画:这次接着欠,不许因为位置没变就当成不用跟。
   const owed = state.owed
   const keepPosition = (prepend || preserve) && !owed
-  const restorePosition = keepPosition ? rememberConversationPosition(scroll) : null
+  // 不跟到最新的重画也按「正在读的那一条」来稳住:上面的行可能变高变矮(行首的地方名出现 / 消失),只记滚动数值会漂。
+  const restorePosition = keepPosition || !(following || owed) ? rememberConversationPosition(scroll) : null
   // 流最上面的常驻节点(「更早的对话」):不是消息,重画时留在原处。
   const head = scroll.firstElementChild
   const lead = head?.hasAttribute?.('data-converse-lead') ? head : null
@@ -175,8 +176,9 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
       else{state.following=false;state.lastTop=scroll.scrollTop;if(newReply){state.unread=true;if(latest)latest.hidden=false}}
     })
   }else{
-    scroll.scrollTop=top
-    state.following=false;state.lastTop=top
+    if (restorePosition) restorePosition()
+    else scroll.scrollTop=top
+    state.following=false;state.lastTop=scroll.scrollTop
     if(newReply)state.unread=true
   }
   if(latest)latest.hidden=!state.unread
