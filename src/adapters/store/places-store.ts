@@ -7,6 +7,7 @@ import type { Db } from '../../lib/db'
 import type { PlaceRecord } from '../../domain/places'
 
 export interface PlacesStore {
+  /** Iterates from newest effective placement to oldest. */
   mapPins(key: string, ids: string[]): Map<string, PlaceMapBranchT>
   setMapPin(key: string, id: string, branch: PlaceMapBranchT | null): void
   list(): PlaceRecord[]
@@ -40,9 +41,11 @@ export function makePlacesStore(db: Db): PlacesStore {
         ${mapAncestors}
         SELECT a.root, p.branch FROM ancestors a
         JOIN place_map_pins p ON p.place_key = ? AND p.item_id = a.item_id
-        ORDER BY p.updated_ts, p.rowid
+        ORDER BY p.updated_ts DESC, p.rowid DESC
       `).all(JSON.stringify(ids), key)
-      return new Map(rows.map(row => [row.root, row.branch]))
+      const pins = new Map<string, PlaceMapBranchT>()
+      for (const row of rows) if (!pins.has(row.root)) pins.set(row.root, row.branch)
+      return pins
     },
     setMapPin(key, id, branch) {
       if (branch === null) {

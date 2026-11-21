@@ -1,3 +1,5 @@
+import { placementPriority } from '../../domain/place-map-prompt'
+import { allowedTopicEntryIds, localTopicContext } from '../../lib/topic-provenance'
 /**
  * reader.ts —— 「地方」读写口(设计稿 docs/superpowers/specs/2026-11-18-cc-two-sides-design.md §3)。
  * 数据和名单同一份(gatherRoster),只是往回看 30 天、再按项目根目录归拢;顺序 / 名字 / 收起读写 places 表。
@@ -60,8 +62,9 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     return { ...result, saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
   }
 
-  async function map(key: string): ReturnType<PlacesReader['map']> {
-    const { places, saved, added, items, rootOf } = collect('operator', { ...deps.roster, workbench: deps.mapWorkbench })
+  const collectMapPlaces = () => collect('operator', { ...deps.roster, workbench: deps.mapWorkbench })
+  async function mapProjection(key: string) {
+    const { places, saved, added, items, rootOf } = collectMapPlaces()
     const place = places.find(place => place.key === key)
     const records = [...saved, ...added]
     const record = records.find(record => record.key === key)
@@ -70,12 +73,20 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     const entries = owner && deps.mapTopics
       ? await placeMapEntries(deps.mapTopics.db, owner, record.root, records.map(record => record.root), rootOf, deps.mapTopics.makeResolver)
       : { items: [], truncated: false }
+    if (owner !== deps.mapTopics?.owner()) return null
     const data = { place: { key, name: place.name }, items: [...entries.items, ...placeMapRoster(place, items)], truncated: entries.truncated }
     const pins = deps.store.mapPins(key, data.items.map(item => item.id))
     for (const item of data.items) {
       const pin = pins.get(item.id)
       if (pin && !item.id.startsWith('a:')) item.pin = pin
     }
+    return { data, pins }
+  }
+
+  async function map(key: string): ReturnType<PlacesReader['map']> {
+    const projection = await mapProjection(key)
+    if (!projection) return null
+    const { data } = projection
     const revision = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16)
     return { ok: true, ...data, revision }
   }
@@ -97,6 +108,41 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       if (!deps.labs) return false
       deps.labs.setPlaceMap(enabled)
       return true
+    },
+    placeForPath(path) {
+      const { rootOf, places } = collectMapPlaces()
+      const root = rootOf(path)
+      const key = root && placeKey(root)
+      return key && places.some(place => place.key === key) ? key : null
+    },
+    placeForEntries(owner, entryIds) {
+      if (!deps.mapTopics || deps.mapTopics.owner() !== owner || entryIds.length === 0) return null
+      const { db } = deps.mapTopics
+      const rows = db.query<{ id: string; path: string | null; private: number }, [string, string]>(`
+        SELECT e.id, m.project_path AS path, t.private
+        FROM topic_entries e JOIN threads t ON t.id=e.thread_id
+        LEFT JOIN matters m ON m.id=e.matter_id
+        WHERE e.id IN (SELECT value FROM json_each(?)) AND t.chat_id=?
+          AND e.status='live' AND e.matter_id IS NOT NULL
+      `).all(JSON.stringify(entryIds), owner)
+      if (!rows.length) return null
+      const allowed = allowedTopicEntryIds(db, localTopicContext(owner), rows.map(row => row.id))
+      if (rows.some(row => row.private || !allowed.has(row.id))) return null
+      const { rootOf, places } = collectMapPlaces()
+      const roots = new Set(rows.map(row => rootOf(row.path)))
+      if (roots.size !== 1) return null
+      const [root] = roots
+      const key = root && placeKey(root)
+      return key && places.some(place => place.key === key) ? key : null
+    },
+    async placedItems(key) {
+      const projection = await mapProjection(key)
+      if (!projection) return []
+      const byId = new Map(projection.data.items.map(item => [item.id, item]))
+      return [...projection.pins.keys()].flatMap(id => {
+        const item = byId.get(id)
+        return item?.pin ? [{ id, kind: item.kind, branch: item.pin, line: item.line }] : []
+      }).sort((a, b) => placementPriority(a.branch) - placementPriority(b.branch))
     },
     map,
     async pin({ key, itemId, branch }) {
