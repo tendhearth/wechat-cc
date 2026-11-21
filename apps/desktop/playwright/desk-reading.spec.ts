@@ -56,6 +56,9 @@ test('地方名、首日日期和正文各在自己的位置', async ({ page, sh
   await expect(scroll.locator(':scope > :first-child')).toHaveAttribute('id', 'converse-earlier')
   const first = scroll.locator(':scope > :nth-child(2)')
   await expect(first).toHaveClass('desk-message-date')
+  // 打开时停在最新一条;翻到头才看得见第一天的日期。
+  await expect(scroll.locator('[data-converse-message]').last()).toBeInViewport()
+  await scroll.evaluate(node => { node.scrollTop = 0 })
   await expect(first).toBeInViewport()
   await expectCentered(first, scroll)
   await expect(page.locator('#desk-today')).toHaveCount(0)
