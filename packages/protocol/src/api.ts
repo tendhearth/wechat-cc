@@ -605,7 +605,7 @@ export type CliActivityItemT = z.infer<typeof CliActivityItem>
 export type CliActivityQuery = { session_id: string; full?: '1' | 1; before?: string; limit?: number }
 export const CliActivityPage = z.object({
   ok: z.literal(true),
-  items: z.array(CliActivityItem.extend({ full: z.string().optional() })),
+  items: z.array(CliActivityItem.extend({ full: z.string().optional(), id: z.string().optional() })),
   earlier: z.string().nullable().optional(),
 })
 export type CliActivityPageT = z.infer<typeof CliActivityPage>

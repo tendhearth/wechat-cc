@@ -7,6 +7,8 @@ import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
 import { isDeskCollapseShortcut, readDeskCollapsed, writeDeskCollapsed } from './modules/desk-collapse.js'
 import { mountPlacesStrip } from './modules/places-strip.js'
+import { mountThingThread } from './modules/thing-thread.js'
+import { rememberConversationPosition } from './modules/converse-reading.js'
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
 import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
 import { createMainNavigation, createNativeNavigation } from './main-navigation.js'
@@ -77,7 +79,7 @@ import { createTaskListReader } from "./modules/task-list-reader.js"
 import { homeGroups } from "./modules/home-list.js"
 import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
-import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getViewedWorkbenchTaskId } from "./modules/workbench.js"
+import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getViewedWorkbenchTaskId, setWorkbenchDocked } from "./modules/workbench.js"
 import { isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
 import { createTerminalWaitingPoller } from "./modules/terminal-waiting.js"
@@ -105,14 +107,53 @@ const state = {
 let memoryTopics=null
 /** @type {ReturnType<typeof createRosterDock>|null} */
 let rosterDock=null
+/** @type {ReturnType<typeof mountThingThread>|undefined} */ let thingThread
+/** @type {ReturnType<typeof mountPlacesStrip>|undefined} */ let deskPlaces
+const deskWide = () => document.documentElement.hasAttribute('data-desk-wide')
+
+/** @param {DeskDetail} target */
+function findThing(target) {
+  if (!deskWide()) return
+  const places = deskPlaces?.places() ?? []
+  for (const place of places) {
+    const item = thingThread?.find(place,target)
+    if (item) return {place,item}
+  }
+  for (const place of places) {
+    const item = thingThread?.linkedItem(place,target)
+    if (item) return {place,item,direct:true}
+  }
+}
+
+/** @param {NonNullable<ReturnType<typeof findThing>>} destination */
+function openThing({place,item,direct}) {
+  rosterDock?.close()
+  if (document.body.dataset.pane !== 'thing') switchPane('thing')
+  thingThread?.open(place,item.key,direct ? item : undefined)
+  deskPlaces?.selectKey(place.key)
+}
+
+/** @param {import('../../../packages/protocol/src/places').PlaceT|null} place @param {boolean} [preserve] */
+function showConversationPlace(place, preserve) {
+  setConversationPlace(place ? {key:place.key,name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds} : null, {preserve})
+}
 /** @typedef {import('./modules/desk-history.js').DeskDetail} DeskDetail */
 /** @type {(() => void) | undefined} */ let recordDeskNavigation
 /** @type {DeskDetail|null} */ let expandedDetail = null
 /** @type {(() => void) | undefined} */ let disposeExpandedDetail
 let preserveNavigationFocus = false
+/** @type {(() => void)|undefined} */ let restoreDeskConversation
 
 /** @param {DeskDetail} item */
 async function openDeskDetail(item) {
+  const destination = findThing(item)
+  if (destination) {
+    openThing(destination)
+    document.getElementById('thing-name')?.focus({preventScroll:true})
+    recordDeskNavigation?.()
+    return
+  }
+  if (document.body.dataset.pane === 'thing') switchPane('overview')
   if (await rosterDock?.open(item)) recordDeskNavigation?.()
 }
 
@@ -129,10 +170,15 @@ function navigateDeskPane(pane) {
   recordDeskNavigation?.()
 }
 const mainNavigation = createMainNavigation(destination => {
-  if (typeof destination === 'string') { switchPane(destination); return }
-  switchPane('workbench')
+  if (typeof destination === 'string') { navigateDeskPane(destination); return }
+  const item = {kind: /** @type {const} */ ('matter'), id:destination.taskId}
   void v1(invokeWorkbenchApi, V1.matter.seen, { body: { id: destination.taskId, surface: 'desktop' } }).catch(err => console.warn('mark seen failed', err))
-  void openWorkbenchTask(destination.taskId).catch(err => console.warn('open task failed', err))
+  const thread = findThing(item)
+  if (thread) { openThing(thread); recordDeskNavigation?.(); return }
+  switchPane('workbench')
+  void openWorkbenchTask(destination.taskId).then(() => {
+    if (document.body.dataset.pane === 'workbench' && getViewedWorkbenchTaskId() === destination.taskId) recordDeskNavigation?.()
+  }).catch(err => console.warn('open task failed', err))
 })
 
 const dashWindow = /** @type {HTMLElement|null} */ (document.querySelector('.dash-window'))
@@ -221,6 +267,8 @@ function reflectTopbarWaiting() {
   const count = (document.documentElement.hasAttribute('data-desk-wide') || document.body.dataset.pane !== 'overview')
     && cc.dataset.waiting
   cc.setAttribute('aria-label', count ? `跟 CC 说(有 ${count} 件在等你)` : '跟 CC 说')
+  if (deskWide() && document.body.dataset.pane === 'overview' && !deskPlaces?.selected()) cc.setAttribute('aria-current','page')
+  else cc.removeAttribute('aria-current')
 }
 
 function renderRail() {
@@ -533,7 +581,11 @@ function setMode(mode) {
     else doctorPoller.stop()
     conversationsPoller.stop()
   }
-  mainNavigation.setReady(mode === 'dashboard')
+  if (mode === 'dashboard' && deskWide() && deskPlaces && !deskPlaces.places().length) {
+    void deskPlaces.refresh().then(() => {
+      if (state.mode === 'dashboard') mainNavigation.setReady(true)
+    })
+  } else mainNavigation.setReady(mode === 'dashboard')
   // 主页的一件件事只在此刻开着时读。
   if (mode === 'dashboard' && document.querySelector('.dash-pane[data-pane="overview"]:not([hidden])')) void homeTasks.start()
   else homeTasks.stop()
@@ -753,7 +805,19 @@ function switchPane(name) {
   if(searchRequested)name='workbench'
   const focusConversation = name === "converse" || name === 'chat'
   if(name==='workbench'&&rosterDock?.current())rosterDock.close()
+  const wasThing = document.body.dataset.pane === 'thing'
+  if (name === 'thing' && document.body.dataset.pane === 'overview') {
+    const scroll = document.getElementById('converse-scroll')
+    if (scroll) restoreDeskConversation = rememberConversationPosition(scroll)
+  }
   document.body.dataset.pane = focusConversation ? "overview" : name
+  if (wasThing && name !== 'thing') {
+    thingThread?.close()
+    if (deskWide()) deskPlaces?.clear()
+  }
+  const globalWaiting = document.getElementById('desk-waiting')
+  const destination = document.querySelector(name === 'thing' ? '.thing-content' : '#converse-root')
+  if (globalWaiting && destination && globalWaiting.nextElementSibling !== destination) destination.before(globalWaiting)
   reflectTopbarWaiting()
   if (document.documentElement.hasAttribute('data-desk-wide')) {
     document.getElementById('roster-aside')?.removeAttribute('data-open')
@@ -793,7 +857,7 @@ function switchPane(name) {
   })
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
-    if(htmlEl.closest('#roster-dock'))return
+    if(htmlEl.closest('#roster-dock, .thing-detail'))return
     htmlEl.hidden = htmlEl.dataset.pane !== name && !(name === 'workbench' && htmlEl.dataset.pane === 'overview')
     if (htmlEl.dataset.pane === 'overview') htmlEl.inert = name === 'workbench'
   })
@@ -854,6 +918,8 @@ function switchPane(name) {
     if (focusConversation) nowPage?.setMode("chat")
     else nowPage?.setMode("chat")
     initConversePage(deps, { focus: focusConversation && !preserveNavigationFocus })
+    restoreDeskConversation?.()
+    restoreDeskConversation = undefined
     if(!focusConversation && !preserveNavigationFocus) /** @type {HTMLElement|null} */(document.querySelector('.conversation-topic-panel:not([hidden])'))?.focus()
   }
   if (name === "a2a-agents") {
@@ -1777,6 +1843,10 @@ function mountDeskHistory(strip, signal) {
     const pane = document.body.dataset.pane ?? 'overview'
     const task = pane === 'workbench' && document.querySelector('#conversation-matter-layer[data-workbench-view="detail"]')
       ? getViewedWorkbenchTaskId() : null
+    if (pane === 'thing') {
+      const item = thingThread?.current()
+      return {pane,place:strip.selected(),detail:item ? {kind:item.kind,id:item.id} : null}
+    }
     return { pane, place: strip.selected(), detail: rosterDock?.item() ?? expandedDetail
       ?? (task ? { kind: 'matter', id: task } : null) }
   }
@@ -1797,6 +1867,16 @@ function mountDeskHistory(strip, signal) {
 
   /** @param {import('./modules/desk-history.js').DeskLocation} entry */
   async function applyLocation({ pane, place, detail }) {
+    if (pane === 'thing') {
+      const next = strip.places().find(p => p.key === place)
+      if (!next) return false
+      if (!deskWide()) { switchPane('overview'); strip.selectKey(next.key); return true }
+      const item = detail && thingThread?.find(next,detail)
+      if (detail && !item) return false
+      if (item) openThing({place:next,item})
+      else { switchPane('thing'); thingThread?.open(next); strip.selectKey(next.key) }
+      return true
+    }
     const before = location()
     const sameDetail = pane === before.pane && detail?.kind === before.detail?.kind && detail?.id === before.detail?.id
     if (!sameDetail) {
@@ -1832,7 +1912,11 @@ function mountDeskHistory(strip, signal) {
         if (!hasPlace()) return false
         const before = location()
         const sameDetail = detail?.kind === before.detail?.kind && detail?.id === before.detail?.id && pane === before.pane
-        if (detail && !sameDetail) {
+        if (pane === 'thing' && detail) {
+          const next = strip.places().find(p => p.key === place)
+          if (!next || !thingThread?.find(next,detail)) return false
+        }
+        if (pane !== 'thing' && detail && !sameDetail) {
           // Check existence before touching the currently displayed pane, selection or draft.
           try {
             if (detail.kind === 'matter') {
@@ -1999,18 +2083,29 @@ function mountDeskLayout(strip) {
   const preserveReadingPosition = (/** @type {() => void} */ change) => {
     const focus = document.activeElement
     const inNotebook = !!notebookScroll?.getClientRects().length
-    const scroller = inNotebook ? notebookScroll : scroll
-    const rows = inNotebook ? notebookEntries?.children : scroll.querySelectorAll(':scope > [data-converse-message]')
+    const activeThread = document.querySelector('#thing-thread:not([hidden]) .thing-terminal:not([hidden]) .thing-scroll')
+    const scroller = inNotebook ? notebookScroll : activeThread ?? scroll
+    const rows = inNotebook ? notebookEntries?.children : scroller.querySelectorAll(':scope > [data-converse-message]')
     const top = scroller.getBoundingClientRect().top
     const anchor = Array.from(rows ?? []).find(row => row.getBoundingClientRect().bottom > top)
     const offset = anchor ? anchor.getBoundingClientRect().top - top : 0
-    const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+    // 这一页此刻正藏着(比如在一件事的页面里时,对话那一页不显示):量出来全是 0,会被当成「在底部」。它自己记着位置,这里不插手。
+    const measurable = scroller.getClientRects().length > 0
+    const atBottom = measurable && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+    // 对话和一件事的线:换版式会把每一条重画(节点换了、行高变了),按消息的编号记,切之前就记好。
+    const remembered = !inNotebook && measurable && !atBottom ? rememberConversationPosition(/** @type {HTMLElement} */ (scroller)) : null
     change()
     if (focus instanceof HTMLElement && focus !== document.activeElement && focus.isConnected && focus.getClientRects().length) {
       focus.focus({ preventScroll: true })
     }
-    if (!scroller.getClientRects().length) return
+    if (!measurable) return
+    if (!scroller.getClientRects().length) {
+      // 换完版式这一页被藏起来了(宽窗口里选着一个地方 ⇒ 进它的页):切之前记的位置留到它回来时用。
+      if (scroller === scroll) restoreDeskConversation = remembered ?? (() => { scroll.scrollTop = scroll.scrollHeight })
+      return
+    }
     if (atBottom) scroller.scrollTop = scroller.scrollHeight
+    else if (remembered) remembered()
     else if (anchor) scroller.scrollTop += anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset
   }
   const apply = () => preserveReadingPosition(() => {
@@ -2019,6 +2114,17 @@ function mountDeskLayout(strip) {
     const { matches: wide } = layout
     const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
     root.toggleAttribute('data-desk-wide', wide)
+    const current = strip.places().find(place => place.key === strip.selected()) ?? null
+    if (!wide && document.body.dataset.pane === 'thing') switchPane('overview')
+    if (!wide) showConversationPlace(current, true)
+    if (wide) {
+      showConversationPlace(null, true)
+      if (current && document.body.dataset.pane === 'overview') {
+        rosterDock?.close()
+        switchPane('thing')
+        thingThread?.open(current)
+      }
+    }
     if (wide) {
       nav.before(places)
       moreItems.prepend(roster)
@@ -2127,6 +2233,7 @@ async function boot() {
     const roster = mountRosterPane({root:rosterRoot,call:invokeWorkbenchApi,onOpen:item=>item.kind==='terminal'?deps.onOpenTerminal(item.id):deps.onOpenMatter(item.id),onItems:items=>{
       nowPage?.setRoster(items)
       updateConversationRoster(items)
+      thingThread?.setRoster(items)
       const button=document.getElementById('topbar-roster');if(button)button.textContent=`在做 ${items.length}`
     }})
     window.addEventListener('pagehide',()=>roster.destroy(),{once:true})
@@ -2141,6 +2248,7 @@ async function boot() {
     const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,waitingRoot:waitingRoot ?? undefined,
       onCurrent: place => {
         homeButton?.toggleAttribute('data-place-selected', !!place)
+        if (deskWide()) reflectTopbarWaiting()
       },
       onSituation: (text, stale) => {
         if (!situation) return
@@ -2148,11 +2256,21 @@ async function boot() {
         situation.toggleAttribute('data-stale', stale)
         renderRail()
       },
-      onSelect:place=>setConversationPlace(place?{key:place.key,name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
+      onSelect:place=>{
+        if (!deskWide()) { showConversationPlace(place); return }
+        if (!place) {
+          if (document.body.dataset.pane === 'thing') switchPane('overview')
+          return
+        }
+        if (document.body.dataset.pane !== 'thing') { rosterDock?.close(); switchPane('thing') }
+        thingThread?.open(place)
+      },
       onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id),
       // 左栏和收起按钮共用 CC 的等待计数。
       onPlaces:places=>{
         updateConversationPlaces(places)
+        const current = places.find(place=>place.key === deskPlaces?.selected())
+        if (current && document.body.dataset.pane === 'thing') thingThread?.open(current)
         const count = places.reduce((sum,p)=>sum+(p.waiting?.count??0),0)
         const cc = document.getElementById('topbar-cc')
         if (!cc) return
@@ -2160,7 +2278,39 @@ async function boot() {
         else delete cc.dataset.waiting
         reflectTopbarWaiting()
       }})
-    connectConversationPlaces(strip)
+    deskPlaces = strip
+    const threadRoot = document.getElementById('thing-thread')
+    if (threadRoot && matterLayer instanceof HTMLElement) {
+      const original = document.createComment('工作台详情原位')
+      matterLayer.before(original)
+      thingThread = mountThingThread({root:threadRoot,call:invokeWorkbenchApi,
+        openTask:async (id,host)=>{
+          rosterDock?.close()
+          host.append(matterLayer)
+          matterLayer.setAttribute('role','region')
+          matterLayer.removeAttribute('aria-modal')
+          matterLayer.dataset.workbenchView = 'detail'
+          matterLayer.hidden = false
+          setWorkbenchDocked(true)
+          initWorkbenchPage(deps)
+          await openWorkbenchTask(id)
+        },
+        closeTask:()=>{
+          if (!matterLayer.closest('.thing-detail')) return
+          stopWorkbenchPolling()
+          setWorkbenchDocked(false)
+          matterLayer.hidden = true
+          matterLayer.setAttribute('role','dialog')
+          matterLayer.setAttribute('aria-modal','true')
+          original.after(matterLayer)
+        },
+        home:()=>{strip.clear();switchPane('converse');recordDeskNavigation?.()},
+        onSession:()=>recordDeskNavigation?.(),
+        onWaiting:value=>strip.setInlineWaiting(value),
+      })
+      window.addEventListener('pagehide',()=>thingThread?.destroy(),{once:true})
+    }
+    connectConversationPlaces({clear:strip.clear,selectKey:key=>{strip.selectKey(key);if(deskWide())recordDeskNavigation?.()}})
     mountDeskLayout(strip)
     clear?.addEventListener('click', () => {
       strip.clear()
@@ -2172,10 +2322,6 @@ async function boot() {
       if (document.documentElement.hasAttribute('data-desk-wide')) strip.clear()
       recordDeskNavigation?.()
     })
-    placesRoot.addEventListener('click', event => {
-      if (document.documentElement.hasAttribute('data-desk-wide') && document.body.dataset.pane !== 'overview'
-        && event.target instanceof Element && event.target.closest('.place-row')) switchPane('overview')
-    }, true)
     placesRoot.addEventListener('click', event => {
       if (event.target instanceof Element && event.target.closest('.place-row')) recordDeskNavigation?.()
     })
@@ -2233,7 +2379,7 @@ boot()
 // A detail layer owns keyboard input until it closes; drafts remain in their original scopes.
 window.addEventListener('keydown',event=>{
   const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane:not([hidden])'))
-  if(!layer||event.defaultPrevented||document.querySelector('dialog[open]'))return
+  if(!layer||layer.closest('.thing-detail')||event.defaultPrevented||document.querySelector('dialog[open]'))return
   if(event.key==='Escape'){
     event.preventDefault()
     if (rosterDock?.item()) {

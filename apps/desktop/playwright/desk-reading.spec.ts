@@ -69,29 +69,35 @@ test('地方名、首日日期和正文各在自己的位置', async ({ page, sh
   expect(await bodyOffset()).toBe(104) // 56px 读栏内边距 + 原有 48px 头像位置
   await select(page, 'rici')
   await expect(placeRow(page, 'melu')).toHaveCSS('opacity', '1')
-  await expect(title.getByRole('heading', { name: '只看 rici' })).toHaveText('rici')
-  expect(await bodyOffset()).toBe(104)
-  await title.getByRole('button', { name: '回到全部', exact: true }).click()
+  const heading = page.locator('#thing-name')
+  await expect(heading).toHaveText('rici')
+  expect((await heading.boundingBox())!.x - (await page.locator('#thing-thread .thing-heading').boundingBox())!.x).toBe(104)
+  await page.locator('#topbar-cc').click()
   await expect.poll(() => title.evaluate(node => node.getBoundingClientRect().height)).toBe(0)
 })
 
-test('只有终端会话的地方也有入口，回到全部时清掉引用', async ({ page, shimUrl }) => {
+test('只有终端会话的地方打开全文，回 CC 保留全部对话', async ({ page, shimUrl }) => {
+  await page.route('**/v1/cli/activity?**', route => route.fulfill({json:{ok:true,items:[{
+    id:'speech',kind:'said',text:'短摘要',full:summary,at:day,
+  }],earlier:null}}))
   await page.goto(shimUrl)
   await expect(earlier(page)).toBeVisible()
   await select(page, 'melu')
+  const thread = page.locator('#thing-thread')
   const card = reading(page).locator(`[data-terminal-reference="${session}"]`)
-  await expect(card.locator('[data-terminal-title]')).toHaveText(summary)
+  await expect(thread).toContainText(summary)
   await expect(reading(page).locator('.converse-place-empty')).toHaveCount(0)
   await expect(earlier(page)).toBeHidden()
-  await expect(page.locator('#converse-latest')).toBeHidden()
-  await card.locator('summary').click()
-  await card.getByRole('button', { name: '看过程、接着说或停止' }).click()
-  await expect(page.locator('#roster-aside .roster-terminal')).toBeVisible()
-  await page.locator('#desk-place-clear').click()
+  await expect(thread.locator('.converse-latest')).toBeHidden()
+  await expect(thread.locator('.thing-sessions')).toBeHidden()
+  await expect(page.locator('#roster-aside')).toBeHidden()
+  await page.locator('#topbar-cc').click()
   await expect(card).toHaveCount(0)
+  await expect(earlier(page)).toBeVisible()
 })
 
 test('筛选后继续跨过无关页，找到才停，查找期间按钮禁用', async ({ page, shimUrl }) => {
+  await page.setViewportSize({width:800,height:820})
   let release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
   const requests: string[] = []

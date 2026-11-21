@@ -17,7 +17,7 @@ export type TerminalStepVerb = 'run' | 'edit' | 'write' | 'delete' | 'read' | 's
  */
 export interface TerminalStepPayload { kind: TerminalStepKind; text: string; at: number | null; detail?: string; error?: boolean; verb?: TerminalStepVerb; target?: string; full?: string }
 export interface TerminalStepPage {
-  items: TerminalStepPayload[]
+  items: Array<TerminalStepPayload & { id: string }>
   earlier: string | null
 }
 export interface TerminalReadState {

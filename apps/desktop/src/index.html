@@ -455,6 +455,15 @@
 
           </article>
 
+          <article id="thing-thread" class="dash-pane thing-thread" data-pane="thing" aria-labelledby="thing-name" hidden>
+            <header class="thing-heading">
+              <h2 id="thing-name" class="thing-name" tabindex="-1"></h2>
+              <span class="thing-status"></span>
+            </header>
+            <div class="thing-sessions" role="group" aria-label="这件事的几次会话" hidden></div>
+            <div class="thing-content"></div>
+          </article>
+
           <!-- Hidden shim: keeps the IDs that JS modules
                (conversations.js, update.js, main.js) look up so
                nothing throws even though moxiuwen retired the

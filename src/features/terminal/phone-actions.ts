@@ -18,7 +18,7 @@ import type { TerminalSteps } from './terminal-steps'
 export const PHONE_CLI_SAY_MAX = 4000
 
 export type CliPhonePermissionResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_not_actionable' | 'cli_permission_stale' }
-export type CliPhoneActivityResult = { ok: true; items: TerminalStepPayload[]; earlier?: string | null } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' | 'invalid' }
+export type CliPhoneActivityResult = { ok: true; items: Array<TerminalStepPayload & { id?: string }>; earlier?: string | null } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' | 'invalid' }
 /** 列表里「此刻那一步」看最近这么多步。 */
 const NOW_STEPS = 20
 
