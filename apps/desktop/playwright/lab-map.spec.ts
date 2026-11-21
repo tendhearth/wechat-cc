@@ -36,7 +36,12 @@ const actions = (page:Page) => diagram(page).locator('.lab-map-details')
 const cspPattern = /(refused|violates|Content[\s-]?Security[\s-]?Policy|CSP)/i
 
 async function mock(page:Page, beforeMap?: (key:string, route:Route) => Promise<void>,
-  acceptPin?: (body:PlaceMapPinRequestT) => boolean | Promise<boolean>) {
+  acceptPin?: (body:PlaceMapPinRequestT) => boolean | Promise<boolean>, initialPlaceMap = true) {
+  let placeMap = initialPlaceMap
+  await page.route('**/v1/labs', async route => {
+    placeMap = route.request().postDataJSON().placeMap
+    await route.fulfill({ json: { ok: true, placeMap } })
+  })
   const pins = new Map<string, PlaceMapBranchT>()
   const writes: PlaceMapPinRequestT[] = []
   let revision = 0
@@ -52,7 +57,7 @@ async function mock(page:Page, beforeMap?: (key:string, route:Route) => Promise<
     revision++
     await route.fulfill({json:{ok:true}})
   })
-  await routePlaces(page,[garden,empty])
+  await routePlaces(page,[garden,empty],{ placeMap: () => placeMap })
   await routeRoster(page,['one','two'].map((id,i)=>rosterItem(id,id,{
     id, kind:'terminal',key:'terminal:'+id,group:'back',status:'replied',
     waiting:undefined,updatedAt:now-i,terminal:{sessionId:id,code:id},
@@ -78,6 +83,7 @@ async function mock(page:Page, beforeMap?: (key:string, route:Route) => Promise<
 async function enable(page:Page) {
   await menu(page).click()
   await toggle(page).click()
+  await expect(toggle(page)).toHaveAttribute('aria-checked','true')
   await menu(page).click()
 }
 
@@ -92,7 +98,7 @@ test('默认不加载，开启后可看出处、跳回线，可拖放并记住�
   })
   page.on('console', msg => { if (msg.type() === 'error' && cspPattern.test(msg.text())) csp.push(msg.text()) })
   page.on('pageerror', err => { if (cspPattern.test(err.message)) csp.push(err.message) })
-  const writes = await mock(page)
+  const writes = await mock(page, undefined, undefined, false)
   await page.goto(shimUrl)
   await select(page,'花园')
   const line = thread(page).locator('.thing-terminal:visible')
@@ -102,7 +108,10 @@ test('默认不加载，开启后可看出处、跳回线，可拖放并记住�
   expect(api).toHaveLength(0)
   expect(writes).toHaveLength(0)
   expect(vendor).toHaveLength(0)
+  const enabled = page.waitForRequest(req => req.url().endsWith('/v1/labs'))
   await enable(page)
+  expect((await enabled).method()).toBe('POST')
+  expect((await enabled).postDataJSON()).toEqual({ placeMap: true })
   await expect(view(page,'图')).toBeVisible()
   expect(api).toHaveLength(0)
   expect(vendor).toHaveLength(0)
@@ -126,7 +135,7 @@ test('默认不加载，开启后可看出处、跳回线，可拖放并记住�
   await reread
   await expect(group(page,'active')).toContainText('先整理去年的记录')
   await expect(decision.locator('.tags')).toHaveText('你放的')
-  await expect(actions(page)).toContainText('你放的 · 本来在「定了的」')
+  await expect(actions(page)).toContainText('你放的 · 本来在「定了的」 · 决定 · ')
 
   await leaf(page,'Codex · 正在核对目录').click()
   await expect(diagram(page).locator('.lab-map-details')).toContainText('在做的 · 会话 · 终端会话')
@@ -139,7 +148,9 @@ test('默认不加载，开启后可看出处、跳回线，可拖放并记住�
   await view(page,'图').click()
   await expect(diagram(page).locator('me-root')).toBeVisible()
   await menu(page).click()
+  const disabled = page.waitForRequest(req => req.url().endsWith('/v1/labs'))
   await toggle(page).press('Space')
+  expect((await disabled).postDataJSON()).toEqual({ placeMap: false })
   await expect(toggle(page)).toHaveAttribute('aria-checked','false')
   await expect(view(page,'图')).toBeHidden()
   await expect(diagram(page).locator('.map-container')).toHaveCount(0)
@@ -157,7 +168,6 @@ test('换地方后丢掉迟到的图，再进原地方重读',async ({page,shimU
   })
   await page.goto(shimUrl)
   await select(page,'花园')
-  await enable(page)
   await view(page,'图').click()
   try {
     await expect.poll(()=>requested).toBe(true)
@@ -180,7 +190,6 @@ test('截图：图、点了一条、拖动、你放的、空的',async ({page,sh
   await mock(page)
   await page.goto(shimUrl)
   await select(page,'花园')
-  await enable(page)
   await view(page,'图').click()
   await expect(diagram(page).locator('me-root')).toHaveText('花园')
   await page.screenshot({path:join(out,'lab-map.png')})
@@ -239,7 +248,6 @@ async function drag(page:Page, from:Locator, to:Locator, preview?:()=>Promise<vo
 async function openMap(page:Page, url:string) {
   await page.goto(url)
   await select(page,'花园')
-  await enable(page)
   await view(page,'图').click()
   await expect(diagram(page).locator('me-root')).toHaveText('花园')
 }
@@ -280,7 +288,7 @@ test('回包前就摆过去，失败退回；用键盘挪到，再点放回去',
     await reread
     await expect.poll(()=>writes).toHaveLength(2)
     expect(writes[1]).toEqual({key:garden.key,itemId:'e:result',branch:'open'})
-    await expect(actions(page)).toContainText('你放的 · 本来在「做过的」')
+    await expect(actions(page)).toContainText('你放的 · 本来在「做过的」 · 结果 · ')
     await expect(diagram(page).locator('.lab-map-write-error')).toBeEmpty()
     const restored = page.waitForResponse(res=>mapPath.test(res.url()))
     await actions(page).getByRole('button',{name:'放回去'}).click()
@@ -340,4 +348,20 @@ test('摆放回包迟到时，另一个地方的图不受影响', async ({page,s
     await select(page,'花园')
     await expect(group(page,'done')).toContainText('找到去年缺的记录')
   } finally { release() }
+})
+
+test('地方读回的开关决定图入口，写失败保持原值并在开关行提示', async ({page,shimUrl}) => {
+  const writes = await mock(page)
+  await page.route('**/v1/labs', route => route.fulfill({ status:503, json:{error:'unavailable'} }))
+  await page.goto(shimUrl)
+  await select(page,'花园')
+  await expect(view(page,'图')).toBeVisible()
+  await menu(page).click()
+  await expect(toggle(page)).toHaveAttribute('aria-checked','true')
+  await expect(page.locator('#desk-lab-map-note')).toHaveText('还在试。关掉就没有，不影响别的。开着时，你在图上摆过的，CC 说话和终端里的 agent 开场时会知道。')
+  await toggle(page).click()
+  await expect(page.locator('#desk-lab-map-note')).toHaveText('没改成，再试一次。')
+  await expect(toggle(page)).toHaveAttribute('aria-checked','true')
+  await expect(view(page,'图')).toBeVisible()
+  expect(writes).toHaveLength(0)
 })

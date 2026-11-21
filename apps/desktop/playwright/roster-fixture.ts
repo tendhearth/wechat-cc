@@ -23,7 +23,7 @@ export const askingPlace=(name:string,matterId:string,summary='要你回答一�
 /** 终端会话自己停着问(「去回答」打开那个会话)。 */
 export const terminalPlace=(name:string,sessionId:string,summary:string,extra:Record<string,unknown>={})=>placeItem(name,{status:'waiting',moving:false,line:summary,sessionIds:[sessionId],waiting:{itemKey:`terminal:${sessionId}`,kind:'terminal',sessionId,summary,count:1},...extra})
 type PlacesSource=ReturnType<typeof placeItem>[]|(()=>ReturnType<typeof placeItem>[]|{status:number})
-export async function routePlaces(page:Page,places:PlacesSource, { writable = false } = {}) {
+export async function routePlaces(page:Page,places:PlacesSource, { writable = false, placeMap = () => false } = {}) {
  const hiddenKeys = new Set<string>()
  if (writable) await page.route('**/v1/places/hide', route => {
   const body = route.request().postDataJSON()
@@ -42,7 +42,10 @@ export async function routePlaces(page:Page,places:PlacesSource, { writable = fa
   const value=typeof places==='function'?places():places
   if(!Array.isArray(value))return route.fulfill({status:value.status,json:{error:'unavailable'}})
   const hidden = value.filter(p => hiddenKeys.has(p.key) && !p.waiting).map(({ key, name }) => ({ key, name }))
-  const payload = writable ? { places: value.filter(p => !hiddenKeys.has(p.key) || p.waiting), hidden } : { places: value }
+  const payload = {
+   ...(writable ? { places: value.filter(p => !hiddenKeys.has(p.key) || p.waiting), hidden } : { places: value }),
+   ...(placeMap() ? { labs: { placeMap: true } } : {}),
+  }
   const version=createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0,16)
   const headers={etag:version}
   if(route.request().headers()['if-none-match']===version)return route.fulfill({status:304,headers})

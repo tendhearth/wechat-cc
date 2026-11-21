@@ -113,7 +113,7 @@ describe('地方:路由', () => {
 
   it('没接上 / 读出错 ⇒ 503,不漏错误内容', async () => {
     expect(await call({}, 'GET /v1/places', null)).toEqual({ status: 503, body: { error: 'unavailable' } })
-    expect(await call({ places: { read: () => { throw Error('secret') }, map: async () => null, pin: async () => null, move: () => true, hide: () => true, seen: () => true } }, 'GET /v1/places', null)).toEqual({ status: 503, body: { error: 'unavailable' } })
+    expect(await call({ places: { ...setup([]).reader, read: () => { throw Error('secret') } } }, 'GET /v1/places', null)).toEqual({ status: 503, body: { error: 'unavailable' } })
   })
 
   it('挪 / 收起:只给 operator;body 不对 400;没有这个 key 404', async () => {

@@ -1,14 +1,17 @@
-import { afterEach, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
+import { makeLabsSettings } from '../../adapters/store/labs-settings'
+import { afterEach, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PlaceMapResponse } from '@wechat-cc/protocol'
 import { createInternalApi } from '../../daemon/internal-api'
+import { makeTopicRecall } from '../../daemon/threads/recall'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import { openTestDb } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
-import { makeProjectTopicResolver } from '../terminal/project-memory'
+import { makeProjectMemory, makeProjectTopicResolver } from '../terminal/project-memory'
 import { makePlacesReader, placeKey } from './places-reader'
 
 const cleanups: Array<() => void | Promise<void>> = []
@@ -16,7 +19,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 const owner = 'map-owner'
 const now = Date.UTC(2026, 10, 21)
 
-function fixture() {
+function fixture(withSession = false) {
   // Use a real .git/commondir outside system temp: provenance excludes scratch work.
   const base = mkdtempSync(resolve('.place-map-test-'))
   cleanups.push(() => rmSync(base, { recursive: true, force: true }))
@@ -37,7 +40,9 @@ function fixture() {
   const task = (projectPath: string, ownerChatId = owner) => matters.create({ kind:'task', title:'交办的任务', projectPath, ownerChatId })
   const topic = (title: string, privateTopic = false, chatId = owner) =>
     threads.create({ chatId, title, private:privateTopic, summary:'', facets:[], tags:[], episodes:[] })
+  const labs = makeLabsSettings(base)
   const reader = makePlacesReader({
+    labs,
     store, mapTopics: { db, owner: () => owner,
       makeResolver: (db, owner, topics, roots) => makeProjectTopicResolver(db, owner, topics, undefined, roots, { includeDoneHistory:true }),
     },
@@ -45,13 +50,17 @@ function fixture() {
       { session_id:'ask-session', code:'ask', project:repo, source:'codex', status:'waiting',
         last_event_at:now, last_summary:'要继续吗', pending:{tool:'Read',summary:'要继续吗',since:now},
         cwd:repo, stale:false, machine:null, origin_agent:null, last_prompt_at:null, created_at:now },
+      ...(withSession ? [{ session_id:'idle-session', code:'idle', project:repo, source:'codex' as const,
+        status:'idle' as const, last_event_at:now, last_summary:'停着的会话', pending:null,
+        cwd:repo, stale:false, machine:null, origin_agent:null, last_prompt_at:null, created_at:now }] : []),
     ] },
   })
-  return { db, store, reader, key: placeKey(repo), repo, worktree, task, topic, threads }
+  return { base, labs, db, store, reader, key: placeKey(repo), repo, worktree, task, topic, threads }
 }
 
 it('真实迁移库按事项和聊天证据归地方，工作区归主仓，拒绝其他所有者、私有话题和 superseded，不写地方表', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const task = f.task(f.worktree)
   const threadId = await f.topic('melon')
   const add = (line: string, input: Partial<Parameters<typeof f.threads.addEntry>[0]> = {}) =>
@@ -91,6 +100,7 @@ it('真实迁移库按事项和聊天证据归地方，工作区归主仓，拒�
 
 it('上限只算可见条目，更新时间降序，第 61 条才截断', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const matter = f.task(f.repo)
   const threadId = await f.topic('工作')
   const add = (n: number) => f.threads.addEntry({ threadId, kind:'progress', source:'work', matterId:matter.id,
@@ -106,6 +116,7 @@ it('上限只算可见条目，更新时间降序，第 61 条才截断', async 
 
 it('HTTP 只给 operator，未知地方 404，设备与链接在面板入口也到不了', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const stateDir = mkdtempSync(join(tmpdir(),'cc-place-map-http-'))
   cleanups.push(() => rmSync(stateDir,{recursive:true,force:true}))
   const api = createInternalApi({stateDir,daemonPid:1})
@@ -129,6 +140,7 @@ it('HTTP 只给 operator，未知地方 404，设备与链接在面板入口也�
 
 it('operator 可以写、改、放回去，revision 跟随摆放，话题原行逐字段不变', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const matter = f.task(f.repo)
   const threadId = await f.topic('工作')
   const id = await f.threads.addEntry({ threadId, kind:'conclusion', source:'work', matterId:matter.id,
@@ -196,6 +208,7 @@ it('operator 可以写、改、放回去，revision 跟随摆放，话题原行�
 
 it('沿显式归并链读最近摆放，最多八层；放回去会清掉能继承的摆放', async () => {
   const f = fixture()
+  f.labs.setPlaceMap(true)
   const matter = f.task(f.repo)
   const threadId = await f.topic('工作')
   const add = (line: string) => f.threads.addEntry({ threadId, kind:'progress', source:'work', matterId:matter.id,
@@ -233,4 +246,167 @@ it('沿显式归并链读最近摆放，最多八层；放回去会清掉能继�
     expect(await readPin(next)).toBe(depth <= 8 ? 'open' : undefined)
     last = next
   }
+})
+
+it.each(['off', 'empty'])('终端开场的原始正文逐字节固定 (%s)', async mode => {
+  const f = fixture()
+  const topic = await f.topic('melon')
+  await f.threads.addEntry({ threadId: topic, kind: 'commitment', line: '补验收' })
+  f.labs.setPlaceMap(mode === 'empty')
+  const unexpectedLookup = vi.fn(() => { throw new Error('查了关闭的实验') })
+  const places = mode === 'empty' ? f.reader : {
+    ...f.reader, placeForPath: unexpectedLookup, placedItems: unexpectedLookup,
+  }
+  const memory = makeProjectMemory({ db: f.db, places: () => places, config: () => ({ enabled: true, owner }), log: () => {} })
+  expect((await memory({ source: 'claude', session_id: 'start', cwd: f.worktree })).context)
+    .toBe('CC 记下的这个项目的近况,可能过时,以仓库为准。\n话题「melon」\n- [承诺] 补验收')
+  expect(unexpectedLookup).not.toHaveBeenCalled()
+})
+
+it.each(['off', 'empty'])('CC 回想的原始正文逐字节固定 (%s)', async mode => {
+  const f = fixture()
+  const topic = await f.topic('melon')
+  const entry = await f.threads.addEntry({ threadId: topic, kind: 'commitment', line: '补验收',
+    matterId: f.task(f.repo).id, source: 'work' })
+  f.labs.setPlaceMap(mode === 'empty')
+  const unexpectedLookup = vi.fn(() => { throw new Error('查了关闭的实验') })
+  const places = mode === 'empty' ? f.reader : {
+    ...f.reader, placeForEntries: unexpectedLookup, placedItems: unexpectedLookup,
+  }
+  const recall = makeTopicRecall({ places, threads: f.threads, isOwner: () => true, cheapEval: () => null, log: () => {} })
+  const result = await recall(owner, 'melon 的验收怎么样')
+  expect(result?.block).toBe('话题「melon」\n- [承诺] 补验收')
+  expect(result?.entryIds).toEqual([entry])
+  expect(unexpectedLookup).not.toHaveBeenCalled()
+})
+
+it('daemon 实验设置默认关闭，只有 operator 能严格写入，关时地方响应与旧版本同字节', async () => {
+  const f = fixture()
+  const api = createInternalApi({ stateDir: f.base, daemonPid: 1 })
+  api.provide({ places: f.reader })
+  cleanups.push(() => api.stop())
+  const started = await api.start()
+  const request = (path: string, body?: unknown, tokenFile = started.operatorTokenFilePath) => fetch(
+    `http://127.0.0.1:${started.port}${path}`, {
+      headers: { authorization: 'Bearer ' + readFileSync(tokenFile, 'utf8').trim(), 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
+    })
+  expect(f.labs.placeMapEnabled()).toBe(false)
+  const raw = await (await request('/v1/places')).text()
+  const { places, hidden, version } = JSON.parse(raw)
+  const legacy = { places, hidden }
+  const oldVersion = createHash('sha256').update(JSON.stringify(legacy)).digest('hex').slice(0, 16)
+  expect(raw).toBe(JSON.stringify({ ...legacy, version: oldVersion }))
+  const mapPath = `/v1/places/map?key=${encodeURIComponent(f.key)}`
+  for (const response of [
+    await request(mapPath),
+    await request('/v1/places/map/pin', { key: f.key, itemId: 'e:missing', branch: 'open' }),
+  ]) {
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({ error: 'lab_off' })
+  }
+  expect((await request('/v1/labs', { placeMap: true }, started.tokenFilePath)).status).toBe(403)
+  for (const origin of ['device', 'link'] as const) {
+    const response = await api.panelDispatch(new Request(`http://127.0.0.1:${started.port}/v1/labs`, {
+      method: 'POST', body: JSON.stringify({ placeMap: true }),
+    }), { tier: 'admin', origin, routeAllow: new Set(['POST /v1/labs']) }, { frameBudget: 100_000, client: 'web' })
+    expect(response.status).toBe(403)
+  }
+  for (const body of [{}, { placeMap: 'true' }, { placeMap: true, extra: 1 }]) {
+    expect((await request('/v1/labs', body)).status).toBe(400)
+  }
+  expect(await (await request('/v1/labs', { placeMap: true })).json()).toEqual({ ok: true, placeMap: true })
+  expect(makeLabsSettings(f.base).placeMapEnabled()).toBe(true)
+  const on = await (await request('/v1/places')).json()
+  expect(on).toEqual({ ...legacy, labs: { placeMap: true }, version: expect.any(String) })
+  expect(on.version).not.toBe(version)
+  const settings = join(f.base, 'labs', 'settings.json')
+  writeFileSync(settings, '{bad-json')
+  expect(f.labs.placeMapEnabled()).toBe(false)
+  expect(await (await request('/v1/places')).text()).toBe(raw)
+  expect(await (await request('/v1/labs', { placeMap: false })).json()).toEqual({ ok: true, placeMap: false })
+  expect(JSON.parse(readFileSync(settings, 'utf8'))).toEqual({ placeMap: false })
+})
+
+const placementHeader = '主人自己在图上摆过的(和上面有出入时以这段为准):'
+const opening = 'CC 记下的这个项目的近况,可能过时,以仓库为准。\n'
+
+async function promptFixture(withSession = false) {
+  const f = fixture(withSession)
+  f.labs.setPlaceMap(true)
+  const matter = f.task(f.worktree)
+  const threadId = await f.topic('melon')
+  const add = (line: string, kind: 'fact' | 'commitment' = 'fact', matterId = matter.id) =>
+    f.threads.addEntry({ threadId, line, kind, source: 'work', matterId })
+  const moved = await add('补验收', 'commitment')
+  const live = await add('保留现况')
+  expect(await f.reader.pin({ key: f.key, itemId: 'e:' + moved, branch: 'done' })).toBeNull()
+  const memoryDeps = { db: f.db, places: () => f.reader, config: () => ({ enabled: true, owner }), log: () => {} }
+  const recall = makeTopicRecall({ places: f.reader, threads: f.threads, isOwner: c => c === owner, cheapEval: () => null, log: () => {} })
+  const request = { source: 'codex' as const, session_id: 'start', cwd: f.worktree }
+  return { ...f, threadId, moved, live, add, memoryDeps, recall, request }
+}
+
+it('终端开场按工作区归主仓，移除已做的承诺，摆放有独立预算并可独立出现', async () => {
+  const f = await promptFixture()
+  const memory = makeProjectMemory(f.memoryDeps)
+  const suffix = placementHeader + '\n- 做过了:补验收'
+  expect((await memory(f.request)).context).toBe(opening + '话题「melon」\n- [事实] 保留现况\n\n' + suffix)
+  expect((await memory({ ...f.request, cwd: join(f.base, 'missing') })).context).toBe('')
+  const tooLong = await f.add('旧记录', 'commitment')
+  f.db.query('UPDATE topic_entries SET line=? WHERE id=?').run('长'.repeat(1500), tooLong)
+  const { context } = await memory(f.request)
+  expect([...context].length).toBe(1200)
+  expect(context.endsWith('\n\n' + suffix)).toBe(true)
+  await f.threads.updateEntry(tooLong, { status: 'done' })
+  await f.threads.updateEntry(f.live, { status: 'done' })
+  expect((await memory(f.request)).context).toBe(opening + suffix)
+})
+
+it('终端摆放超时仍交回原来的近况', async () => {
+  const f = await promptFixture()
+  const slow = vi.fn(() => new Promise<Awaited<ReturnType<typeof f.reader.placedItems>>>(() => {}))
+  const mem = makeProjectMemory({ ...f.memoryDeps, timeoutMs: 160, places: () => ({ ...f.reader, placedItems: slow }) })
+  expect((await mem(f.request)).context).toBe(opening + '话题「melon」\n- [承诺] 补验收\n- [事实] 保留现况')
+  expect(slow).toHaveBeenCalledWith(f.key)
+})
+
+it('CC 回想按事项初始路径归地方，正文与引用一致，两个地方或归不出路径时略过', async () => {
+  const f = await promptFixture()
+  const query = 'melon 的验收怎么样'
+  const placed = await f.recall(owner, query)
+  expect(placed?.block).toBe('话题「melon」\n- [事实] 保留现况\n' + placementHeader + '\n- 做过了:补验收')
+  expect(placed?.entryIds).toEqual([f.live])
+  // A row too large for the remaining budget must not be cited.
+  const oversized = await f.add('旧记录', 'commitment')
+  f.db.query('UPDATE topic_entries SET line=? WHERE id=?').run('验收'.repeat(601), oversized)
+  const bounded = await f.recall(owner, query)
+  expect(bounded?.entryIds).not.toContain(oversized)
+  expect([...(bounded?.block ?? '')].length).toBeLessThanOrEqual(1200)
+  await f.threads.updateEntry(oversized, { status: 'done' })
+  const other = join(f.base, 'other')
+  mkdirSync(join(other, '.git'), { recursive: true })
+  const otherEntry = await f.add('另一个项目的现况', 'fact', f.task(other).id)
+  const legacy = makeTopicRecall({ threads: f.threads, isOwner: () => true, cheapEval: () => null, log: () => {} })
+  expect(await f.recall(owner, query)).toEqual(await legacy(owner, query))
+  await f.threads.updateEntry(otherEntry, { status: 'done' })
+  await f.add('没路径的现况', 'fact', f.task(join(f.base, 'missing')).id)
+  expect(await f.recall(owner, query)).toEqual(await legacy(owner, query))
+})
+
+it('摆放投影按实际摆放时间排序，包含任务和会话，等你定不进入提示', async () => {
+  const f = await promptFixture(true)
+  const task = f.task(f.repo)
+  await f.add('第二条现况')
+  expect(await f.reader.pin({ key: f.key, itemId: 'm:' + task.id, branch: 'noted' })).toBeNull()
+  const older = await f.add('更早的未解决')
+  const newer = await f.add('较新的未解决')
+  for (const id of [older, newer]) {
+    expect(await f.reader.pin({ key: f.key, itemId: 'e:' + id, branch: 'open' })).toBeNull()
+  }
+  expect(await f.reader.pin({ key: f.key, itemId: 's:idle-session', branch: 'active' })).toBeNull()
+  f.store.setMapPin(f.key, 'a:terminal:ask-session', 'open')
+  expect((await f.reader.placedItems(f.key)).map(({ id }) => id)).toEqual([
+    'e:' + newer, 'e:' + older, 's:idle-session', 'm:' + task.id, 'e:' + f.moved,
+  ])
 })

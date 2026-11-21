@@ -2248,6 +2248,7 @@ async function boot() {
     const clear = document.getElementById('desk-place-clear')
     const homeButton = document.getElementById('topbar-cc')
     const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,waitingRoot:waitingRoot ?? undefined,
+      onPlaceMap: enabled => thingThread?.setPlaceMap(enabled),
       onCurrent: place => {
         homeButton?.toggleAttribute('data-place-selected', !!place)
         if (deskWide()) reflectTopbarWaiting()
@@ -2307,6 +2308,7 @@ async function boot() {
           original.after(matterLayer)
         },
         home:()=>{strip.clear();switchPane('converse');recordDeskNavigation?.()},
+        onLabWrite:()=>void strip.refreshAfterWrite(),
         onSession:()=>recordDeskNavigation?.(),
         onWaiting:value=>strip.setInlineWaiting(value),
       })
