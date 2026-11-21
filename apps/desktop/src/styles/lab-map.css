@@ -99,3 +99,37 @@
 .lab-map-details p { margin: 0 0 4px; }
 .lab-map-meta, .lab-map-body { color: var(--th-ink-soft); font-size: var(--th-size-meta); }
 .lab-map-body { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.lab-map-write-error { color: var(--th-ink-soft); }
+.lab-map-moves {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 12px;
+  color: var(--th-ink-soft);
+  font-size: var(--th-size-meta);
+}
+.lab-map-moves button[aria-disabled="true"] { color: var(--th-ink-soft); }
+.lab-map-viewport .map-container me-tpc[data-nodeid^="mel:"]:focus-visible {
+  outline: 2px solid var(--th-accent);
+  outline-offset: 2px;
+}
+.lab-map-viewport .map-container .tags { display: inline-block; }
+.lab-map-viewport .map-container .tags span {
+  background: transparent;
+  color: var(--th-ink-soft);
+  font-size: var(--th-size-meta);
+  font-weight: 400;
+  margin: 0;
+  padding: 0 0 0 .35em;
+}
+.lab-map-viewport .map-container me-tpc .insert-preview.show {
+  background: color-mix(in srgb, var(--th-accent) 24%, transparent);
+}
+.lab-map-viewport .map-container me-tpc[data-nodeid^="meg:"] .insert-preview:not(.in),
+.lab-map-viewport .map-container me-tpc[data-nodeid^="mel:"] .insert-preview.in { display: none; }
+.lab-map-viewport .map-container .mind-elixir-ghost {
+  background: color-mix(in srgb, var(--th-accent) 10%, var(--th-paper));
+  border: 1px solid var(--th-accent);
+  color: var(--th-accent);
+  font-weight: 400;
+}
