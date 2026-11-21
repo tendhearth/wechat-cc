@@ -484,8 +484,9 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   align-items: center;
   min-height: 28px;
   gap: 5px;
-  padding: 0;
+  padding: 0 10px 0 6px;
   border: 0;
+  border-radius: 8px;
   color: var(--th-ink-soft);
   background: transparent;
   font: inherit;
@@ -493,8 +494,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   text-align: start;
   cursor: pointer;
 }
-[data-desk-wide] .thing-sessions button[aria-pressed="true"],
-[data-desk-wide] .thing-sessions button:hover { color: var(--th-accent); text-decoration: underline; text-underline-offset: 4px; }
+[data-desk-wide] .thing-sessions button:hover { color: var(--th-ink); }
+[data-desk-wide] .thing-sessions button[aria-pressed="true"] { color: var(--th-ink); background: var(--th-rail); }
 [data-desk-wide] .thing-sessions button i { display: none; }
 [data-desk-wide] .thing-sessions button:is([data-group="waiting"], [data-group="working"]) i,
 [data-desk-wide] .thing-steps li[data-error]::before {
@@ -560,7 +561,9 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .thing-compose textarea {
   flex: 1 1 180px;
   min-width: 0;
-  resize: vertical;
+  resize: none;
+  field-sizing: content;
+  max-height: 30vh;
   padding: 0;
   border: 0;
   outline: 0;

@@ -116,8 +116,10 @@ test('全局等待卡片钉在上方、切换地方仍可回答、回答后刷�
   await page.getByRole('button', { name: '收起其余等你定的' }).click()
   await expect(cards).toHaveCount(2)
 
+  // 进别的地方的页:别处等你定的纸条不跟过来压在正文上面(左栏的圆点还在)。
   await placeRow(page, 'leni').locator('.place-row').click()
-  await expect(cards).toHaveCount(2)
+  await expect(cards).toHaveCount(0)
+  await expect(placeRow(page, 'rici')).toHaveAttribute('data-waiting', 'true')
   await expect(clear).toBeHidden()
   await expect(page.locator('#thing-name')).toHaveText('leni')
   await page.locator('#topbar-cc').click()
@@ -125,7 +127,7 @@ test('全局等待卡片钉在上方、切换地方仍可回答、回答后刷�
   await placeRow(page, 'rici').locator('.place-row').click()
   await expect(clear).toBeHidden()
   await expect(page.locator('#thing-name')).toHaveText('rici')
-  await expect(cards).toHaveCount(2)
+  await expect(cards).toHaveCount(1)
   await card.getByRole('button', { name: '允许', exact: true }).click()
   expect(decisions).toEqual([{ id: 'deadbeef', requestId: 'req-1', decision: 'allow' }])
   await expect(card).toHaveCount(0)

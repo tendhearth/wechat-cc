@@ -127,7 +127,8 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
   }
   function drawWaiting() {
     if (!waitingRoot) return
-    const waiting = wide ? places.filter(p => p.waiting && !(inlineWaiting?.key === p.waiting.itemKey
+    // 在一件事的页面里(宽窗口选着一个地方):顶上只留这件事自己的纸条;别的地方的看左栏的圆点和 CC 那一句,不压在正文上面。
+    const waiting = wide ? places.filter(p => p.waiting && (!selected || selected === p.key) && !(inlineWaiting?.key === p.waiting.itemKey
       && (!inlineWaiting.request || !p.waiting.requestId || p.waiting.requestId === inlineWaiting.request))) : []
     const more = waiting.length - 2
     const toggle = more > 0 ? `<button class="desk-text-button" type="button" data-waiting-toggle aria-expanded="${waitingOpen}">${waitingOpen ? '收起其余等你定的' : `还有 ${more} 件等你定`}</button>` : ''
