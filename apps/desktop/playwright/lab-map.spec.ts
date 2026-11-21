@@ -135,7 +135,7 @@ test('默认不加载，开启后可看出处、跳回线，可拖放并记住�
   await reread
   await expect(group(page,'active')).toContainText('先整理去年的记录')
   await expect(decision.locator('.tags')).toHaveText('你放的')
-  await expect(actions(page).locator('.lab-map-meta')).toHaveText('你放的 · 本来在「定了的」')
+  await expect(actions(page)).toContainText('你放的 · 本来在「定了的」 · 决定 · ')
 
   await leaf(page,'Codex · 正在核对目录').click()
   await expect(diagram(page).locator('.lab-map-details')).toContainText('在做的 · 会话 · 终端会话')
@@ -288,7 +288,7 @@ test('回包前就摆过去，失败退回；用键盘挪到，再点放回去',
     await reread
     await expect.poll(()=>writes).toHaveLength(2)
     expect(writes[1]).toEqual({key:garden.key,itemId:'e:result',branch:'open'})
-    await expect(actions(page).locator('.lab-map-meta')).toHaveText('你放的 · 本来在「做过的」')
+    await expect(actions(page)).toContainText('你放的 · 本来在「做过的」 · 结果 · ')
     await expect(diagram(page).locator('.lab-map-write-error')).toBeEmpty()
     const restored = page.waitForResponse(res=>mapPath.test(res.url()))
     await actions(page).getByRole('button',{name:'放回去'}).click()
