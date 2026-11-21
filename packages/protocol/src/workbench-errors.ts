@@ -39,6 +39,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   place_not_found: {desktop: 404},
   place_map_item_not_found: {desktop: 404},
   lab_off: {desktop: 409},
+  outline_quota: {desktop: 409},
   place_map_item_fixed: {desktop: 409},
   matter_place_invalid_path: {desktop: 409, matter: '这个地方的文件夹不存在、无法访问，或已经不是文件夹，请让主人在电脑上检查。'},
   matter_place_changed: {desktop: 409, matter: '这个文件夹和你确认的那个不是同一个了，请检查后重新确认。'},

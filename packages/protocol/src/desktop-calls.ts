@@ -32,7 +32,8 @@ export const DESKTOP_CALLS = {
   places: {
     get: call('GET /v1/places'),
     labs: call('POST /v1/labs', { body: t<LabsRequestT>() }),
-    map: call('GET /v1/places/map', { query: t<{ key: string }>() }),
+    map: call('GET /v1/places/map', { query: t<{ key: string; outline?: '1' }>() }),
+    mapOutline: call('POST /v1/places/map/outline', { body: t<{ key: string }>() }),
     mapPin: call('POST /v1/places/map/pin', { body: t<PlaceMapPinRequestT>() }),
     move: call('POST /v1/places/move', { body: t<{ key: string; to: number }>() }),
     hide: call('POST /v1/places/hide', { body: t<{ key: string; hidden: boolean }>() }),

@@ -97,11 +97,45 @@ export const PlaceMapItem = z.object({
 })
 export type PlaceMapItemT = z.infer<typeof PlaceMapItem>
 
+export const PlaceOutlineRequest = PlaceSeenRequest
+export const PlaceOutlineRunResponse = z.object({
+  ok: z.literal(true),
+  state: z.enum(['running', 'ready', 'empty']),
+  unchanged: z.literal(true).optional(),
+})
+export type PlaceOutlineRunResponseT = z.infer<typeof PlaceOutlineRunResponse>
+
+const PlaceOutlineSource = z.object({
+  kind: z.enum(['session', 'entry']),
+  sessionId: z.string().optional(),
+  matterId: z.string().optional(),
+  agent: z.string().optional(),
+  at: z.number().optional(),
+})
+const PlaceOutlineAspects = z.array(z.object({
+  name: z.string(),
+  items: z.array(z.object({
+    id: z.string(), line: z.string(), status: PlaceMapBranch,
+    sources: z.array(PlaceOutlineSource),
+  })),
+}))
+export const PlaceOutline = z.object({
+  state: z.enum(['none', 'running', 'ready', 'empty', 'failed']),
+  at: z.number().optional(),
+  error: z.enum(['no_private_model', 'bad_output', 'stale', 'interrupted', 'unavailable']).optional(),
+  stale: z.boolean().optional(),
+  canRun: z.boolean(),
+  aspects: PlaceOutlineAspects.optional(),
+})
+export type PlaceOutlineT = z.infer<typeof PlaceOutline>
+export type PlaceOutlineSourceT = z.infer<typeof PlaceOutlineSource>
+
 export const PlaceMapResponse = z.object({
   ok: z.literal(true),
   place: Place.pick({ key: true, name: true }),
   items: z.array(PlaceMapItem),
   truncated: z.boolean(),
   revision: z.string(),
+  outline: PlaceOutline.optional(),
 })
 export type PlaceMapResponseT = z.infer<typeof PlaceMapResponse>

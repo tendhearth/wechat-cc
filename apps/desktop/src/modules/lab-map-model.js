@@ -50,13 +50,17 @@ export function mapData(name, items, agent) {
     })
     return { id: `g:${key}`, topic: label, branchColor: color, style: { border: `1px solid ${color}` }, children: leaves }
   }) : []
+  return { nodeData: { id: 'root', topic: name, children: balanceBranches(children) } }
+}
+
+/** @template {{children:MindNode[]}} T @param {T[]} children */
+export function balanceBranches(children) {
   const total = children.reduce((weight, branch) => weight + Math.max(1, branch.children.length) + .6, 0)
   let before = 0
-  const directed = children.map((branch, index) => {
+  return children.map((branch, index) => {
     const weight = Math.max(1, branch.children.length) + .6
     /** @type {0 | 1} */ const direction = index === 0 || before + weight / 2 < total / 2 ? 1 : 0
     before += weight
     return { ...branch, direction }
   })
-  return { nodeData: { id: 'root', topic: name, children: directed } }
 }

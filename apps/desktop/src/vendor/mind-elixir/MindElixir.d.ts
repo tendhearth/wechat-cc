@@ -18,7 +18,7 @@ export interface MoveOperation {
   toObj: MindNode
 }
 
-interface Options {
+export interface Options {
   el: HTMLDivElement
   direction: 2
   editable: boolean
@@ -40,6 +40,7 @@ export default class MindElixir {
   move(dx: number, dy: number): void
   dragged: MindTopic[] | null
   scale(value: number): void
+  linkDiv(): void
   scaleFit(): void
   toCenter(): void
   container: HTMLDivElement

@@ -494,6 +494,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const places = rosterDeps ? makePlacesReader({
     roster: rosterDeps, store: makePlacesStore(db), labs: makeLabsSettings(stateDir), opinion: opts.workbench?.waitingOpinion,
     mapWorkbench: opts.workbench?.rosterRead,
+    outlines: { evaluator: () => boot.registry.getCheapEval({ private: true }), holdBusy: boot.holdBusy, log },
     mapTopics: {
       db, owner: ownerChatId,
       makeResolver: (db, owner, topics, roots) => makeProjectTopicResolver(db, owner, topics, undefined, roots, { includeDoneHistory: true }),

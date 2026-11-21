@@ -2,6 +2,7 @@
 import { V1, v1 } from '../daemon-client.js'
 import { branches, leafId, mapBranch, mapData, placedBranch } from './lab-map-model.js'
 import { placeTime } from './places-strip.js'
+import { mountOutlineMap } from './lab-outline.js'
 
 /** @typedef {import('@wechat-cc/protocol').PlaceMapItemT} Item */
 /** @typedef {import('@wechat-cc/protocol').PlaceMapResponseT} Response */
@@ -67,7 +68,7 @@ function loadStylesheet() {
  * @param {{host:HTMLElement,key:string,call:import('./terminal-thread.js').Call,
  * agent:(item:Item)=>string,canJump:(item:Item)=>boolean,jump:(item:Item)=>void}} options
  */
-export function mountLabMap({host, key, call, agent, canJump, jump}) {
+function mountStatusMap({host, key, call, agent, canJump, jump}) {
   host.innerHTML = `<div class="lab-map-bar"><span>实验 <span class="lab-map-write-error" role="status"></span></span><button type="button" class="desk-text-button" data-map-fit hidden>回到中间</button></div>
     <div class="lab-map-state"><p class="lab-map-note" role="status">正在读取…</p><button type="button" class="desk-text-button" data-map-retry hidden>再试一次</button></div>
     <div class="lab-map-viewport" hidden><div></div></div>
@@ -88,13 +89,7 @@ export function mountLabMap({host, key, call, agent, canJump, jump}) {
   let saving = false, needsRead = false, writeVersion = 0
   /** @type {{ graph:Mind, id:number, x:number, y:number }|undefined} */ let pan
 
-  function fit() {
-    if (!mind) return
-    const { nodes, container } = mind
-    const ratio = Math.max(nodes.offsetWidth / container.offsetWidth, nodes.offsetHeight / container.offsetHeight)
-    if (ratio <= 1 / .82) mind.scaleFit()
-    else { mind.scale(.82); mind.toCenter() }
-  }
+  function fit() { if (mind) fitMap(mind) }
 
   function drawDetails() {
     details.replaceChildren()
@@ -352,4 +347,48 @@ export function mountLabMap({host, key, call, agent, canJump, jump}) {
     clear()
     host.replaceChildren()
   }
+}
+
+/** @param {Mind} mind */
+function fitMap(mind) {
+  const { nodes, container } = mind
+  const ratio = Math.max(nodes.offsetWidth / container.offsetWidth, nodes.offsetHeight / container.offsetHeight)
+  if (ratio <= 1 / .82) mind.scaleFit()
+  else { mind.scale(.82); mind.toCenter() }
+}
+
+/**
+ * @param {Parameters<typeof mountStatusMap>[0] & {aspects:boolean, remember:(value:boolean)=>void,
+ * canJumpSource:Parameters<typeof mountOutlineMap>[0]['canJumpSource'], jumpSource:Parameters<typeof mountOutlineMap>[0]['jumpSource']}} options
+ */
+export function mountLabMap(options) {
+  const { host, remember } = options
+  let aspects = options.aspects
+  /** @type {(() => void)|undefined} */ let stop
+  const segment = document.createElement('span')
+  segment.className = 'lab-map-seg lab-map-cut'
+  segment.setAttribute('role', 'group')
+  segment.setAttribute('aria-label', '图怎么切')
+  const buttons = ['按状态', '按方面'].map((label, index) => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = label
+    button.onclick = () => {
+      if (aspects === Boolean(index)) return
+      aspects = Boolean(index)
+      remember(aspects)
+      render()
+      button.focus({ preventScroll: true })
+    }
+    segment.append(button)
+    return button
+  })
+  function render() {
+    stop?.()
+    stop = aspects ? mountOutlineMap({ ...options, loadMap, theme, fitMap }) : mountStatusMap(options)
+    host.querySelector('.lab-map-bar > span')?.after(segment)
+    buttons.forEach((button, index) => button.setAttribute('aria-pressed', String(Boolean(index) === aspects)))
+  }
+  render()
+  return () => stop?.()
 }

@@ -220,6 +220,7 @@ const ROUTE_TABLE = {
   'POST /v1/labs': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/places/map': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/places/map/pin': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/places/map/outline': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/places': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/places/move': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/places/hide': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },

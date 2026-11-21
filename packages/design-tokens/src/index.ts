@@ -112,3 +112,14 @@ export function renderTokensCss(): string {
   )
   return `/* 生成物:bun scripts/build-design-tokens.ts(出处 packages/design-tokens/src/index.ts)。别手改。 */\n:root {\n${lines.join('\n')}\n}\n`
 }
+
+/** The experimental diagram palette is only shipped in desktop CSS. */
+export function renderDesktopTokensCss(): string {
+  return renderTokensCss() + `.lab-map {
+  --th-map-clay: #a45c40;
+  --th-map-slate: #55708a;
+  --th-map-plum: #7a5c78;
+  --th-map-olive: #7c7250;
+}
+`
+}

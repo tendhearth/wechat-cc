@@ -1,5 +1,5 @@
-import { placementPriority } from '../../domain/place-map-prompt'
-import { allowedTopicEntryIds, localTopicContext } from '../../lib/topic-provenance'
+import { placementPriority, renderPlacedItems } from '../../domain/place-map-prompt'
+import { allowedTopicEntryIds, localTopicContext, topicMatterAccess } from '../../lib/topic-provenance'
 /**
  * reader.ts —— 「地方」读写口(设计稿 docs/superpowers/specs/2026-11-18-cc-two-sides-design.md §3)。
  * 数据和名单同一份(gatherRoster),只是往回看 30 天、再按项目根目录归拢;顺序 / 名字 / 收起读写 places 表。
@@ -15,6 +15,8 @@ import { buildPlaces } from '../../domain/places'
 import { gatherRoster, type RosterReaderDeps } from './reader'
 import type { PlacesStore } from '../../adapters/store/places-store'
 import type { PlacesReader } from '../../ports/places'
+import { makePlaceOutlines, type PlaceOutlineDeps } from './place-outline'
+import { readOutlineInput } from './place-outline-input'
 import { claudeProjectSlug, makeProjectRoot, SCRATCH_PREFIX } from './project-root'
 
 export const PLACES_WINDOW_MS = 30 * 24 * 3_600_000
@@ -24,6 +26,7 @@ export interface PlacesReaderDeps {
   mapWorkbench?: RosterReaderDeps['workbench']
   store: PlacesStore
   labs?: ReturnType<typeof makeLabsSettings>
+  outlines?: PlaceOutlineDeps
   mapTopics?: { db: Db; owner: () => string | null; makeResolver: MapTopicResolver }
   opinion?: (requestId: string) => PlaceOpinionT | undefined
   root?: (path: string | null | undefined) => string | null
@@ -80,15 +83,57 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       const pin = pins.get(item.id)
       if (pin && !item.id.startsWith('a:')) item.pin = pin
     }
-    return { data, pins }
+    return { data, pins, owner, location: { root: record.root, rootOf } }
   }
 
-  async function map(key: string): ReturnType<PlacesReader['map']> {
+  type Projection = NonNullable<Awaited<ReturnType<typeof mapProjection>>>
+  function placedIn({ data, pins }: Projection) {
+    const byId = new Map(data.items.map(item => [item.id, item]))
+    return [...pins.keys()].flatMap(id => {
+      const item = byId.get(id)
+      return item?.pin ? [{ id, kind: item.kind, branch: item.pin, line: item.line }] : []
+    }).sort((a, b) => placementPriority(a.branch) - placementPriority(b.branch))
+  }
+
+  function outlineSnapshot(projection: Projection) {
+    const { data, owner, location } = projection
+    if (!owner || !deps.mapTopics || deps.mapTopics.owner() !== owner) return null
+    const { db } = deps.mapTopics
+    const matterIds = new Map(data.items.map(item => [item.id, item.from.matterId]))
+    const pinned = placedIn(projection)
+    const allowed = topicMatterAccess(db, localTopicContext(owner), pinned.flatMap(item => matterIds.get(item.id) ?? [])).entryAllowed
+    const visible = pinned.filter(item => {
+      const matterId = matterIds.get(item.id)
+      return item.id.startsWith('e:') || (matterId && allowed.has(matterId))
+    }).slice(0, 8)
+    const placed = renderPlacedItems(visible)
+    const placements = placed ? visible.slice(0, placed.split('\n').length - 1) : []
+    const pinnedEntries = placements.flatMap(item => item.id.startsWith('e:') ? [item.id.slice(2)] : [])
+    const pinnedMatters = placements.flatMap(item => {
+      const matterId = matterIds.get(item.id)
+      return !item.id.startsWith('e:') && matterId ? [{ id: item.id, matterId }] : []
+    })
+    return { owner, location, items: data.items, pinnedEntries, pinnedMatters,
+      input: readOutlineInput(db, owner, data.items, placed, deps.roster.executorName ?? (id => id), location) }
+  }
+
+  const outlines = deps.outlines && deps.mapTopics ? makePlaceOutlines({
+    ...deps.outlines, db: deps.mapTopics.db, owner: deps.mapTopics.owner,
+    now: deps.roster.now ?? Date.now, enabled: placeMapEnabled,
+    async load(key) {
+      const projection = await mapProjection(key)
+      return projection && outlineSnapshot(projection)
+    },
+  }) : undefined
+
+  async function map(key: string, includeOutline = false): ReturnType<PlacesReader['map']> {
     const projection = await mapProjection(key)
     if (!projection) return null
     const { data } = projection
     const revision = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16)
-    return { ok: true, ...data, revision }
+    const response = { ok: true as const, ...data, revision }
+    if (!includeOutline || !placeMapEnabled()) return response
+    return { ...response, outline: outlines?.read(key, outlineSnapshot(projection)) ?? { state: 'none', canRun: false } }
   }
 
   return {
@@ -107,6 +152,7 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     setPlaceMap(enabled) {
       if (!deps.labs) return false
       deps.labs.setPlaceMap(enabled)
+      if (!enabled) outlines?.invalidate()
       return true
     },
     placeForPath(path) {
@@ -137,14 +183,10 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     },
     async placedItems(key) {
       const projection = await mapProjection(key)
-      if (!projection) return []
-      const byId = new Map(projection.data.items.map(item => [item.id, item]))
-      return [...projection.pins.keys()].flatMap(id => {
-        const item = byId.get(id)
-        return item?.pin ? [{ id, kind: item.kind, branch: item.pin, line: item.line }] : []
-      }).sort((a, b) => placementPriority(a.branch) - placementPriority(b.branch))
+      return projection ? placedIn(projection) : []
     },
     map,
+    startOutline: key => outlines?.start(key) ?? Promise.resolve('unavailable' as const),
     async pin({ key, itemId, branch }) {
       if (!placeMapEnabled()) return 'lab_off'
       const current = await map(key)
