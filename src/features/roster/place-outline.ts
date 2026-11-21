@@ -23,6 +23,7 @@ export type OutlineStart = PlaceOutlineRunResponseT | 'outline_quota' | 'lab_off
 
 const short = (s: string, limit: number) => [...s.trim().replace(/\s+/g, ' ')].slice(0, limit).join('')
 export function parseOutline(text: string, refs: Map<string, OutlineRef>): StoredAspect[] | null {
+  if (!text.trim()) return []
   const first = text.indexOf('{')
   const last = text.lastIndexOf('}')
   if (first < 0 || last < first) return null

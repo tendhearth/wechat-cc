@@ -101,6 +101,7 @@ it('并发只提交一次，记录本地日，命中同指纹跳过，隔天仍�
 })
 
 it.each([
+  ['', 'empty', undefined],
   ['{"aspects":[]}', 'empty', undefined],
   ['{"aspects":[{"name":"错引","items":[{"line":"原话","status":"open","refs":["s99"]}]}]}', 'empty', undefined],
   ['{bad', 'failed', 'bad_output'],
