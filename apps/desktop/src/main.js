@@ -2090,11 +2090,13 @@ function mountDeskLayout(strip) {
     const anchor = Array.from(rows ?? []).find(row => row.getBoundingClientRect().bottom > top)
     const offset = anchor ? anchor.getBoundingClientRect().top - top : 0
     const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+    // 这一页此刻正藏着(比如在一件事的页面里时,对话那一页不显示):量出来全是 0,会被当成「在底部」。它自己记着位置,这里不插手。
+    const measurable = scroller.getClientRects().length > 0
     change()
     if (focus instanceof HTMLElement && focus !== document.activeElement && focus.isConnected && focus.getClientRects().length) {
       focus.focus({ preventScroll: true })
     }
-    if (!scroller.getClientRects().length) return
+    if (!measurable || !scroller.getClientRects().length) return
     if (atBottom) scroller.scrollTop = scroller.scrollHeight
     else if (anchor) scroller.scrollTop += anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset
   }

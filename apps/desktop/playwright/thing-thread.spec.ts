@@ -237,6 +237,11 @@ test('交办任务复用主区域的工作台详情实例，留在阅读栏内',
 
 test('对话里的真实终端引用打开它的地方和会话',async({page,shimUrl})=>{
   await mockTerminal(page,{withThree:true})
+  // 引用卡上的「看过程、接着说或停止」只在 daemon 报了共享对话能力时才有。
+  await page.route('**/v1/protocol/capabilities',route=>route.fulfill({json:{routes:'v1',topics:'v1'}}))
+  await page.route('**/v1/matter/owner-chat/work',route=>route.fulfill({json:{references:[],results:[]}}))
+  await page.route('**/v1/matter/owner-chat/events**',route=>route.fulfill({json:{running:null,events:[],cursor:0}}))
+  await page.route('**/v1/matter/owner-chat/window**',route=>route.fulfill({json:{messages:[]}}))
   await page.goto(shimUrl)
   await page.locator('.conversation-add summary').click()
   await page.locator('.conversation-add').getByRole('button',{name:'电脑上的会话',exact:true}).click()
