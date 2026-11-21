@@ -1,3 +1,5 @@
+.dashboard { --th-weight-desk-emphasis: 600; }
+
 .desk-rail-titlebar, .desk-heading, .desk-cc-copy, .desk-cc-connections, .desk-speaker,
 .desk-waiting, .desk-quiet-toggle, .desk-date-line, .desk-message-date,
 .desk-inline-place, .desk-process-open, .desk-process-close { display: none; }
@@ -11,7 +13,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   --desk-page-width: 780px;
   --desk-page-padding: 56px;
   --desk-speaker-offset: 48px;
-  --th-weight-desk-emphasis: 600; /* 两栏原型的标题和未读字重 */
   grid-template-columns: var(--desk-rail-space) minmax(0, 1fr) auto;
   grid-template-rows: var(--desk-titlebar-height) minmax(0, 1fr);
   font-family: var(--th-font-serif);
@@ -40,8 +41,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   box-sizing: border-box;
   padding-left: 4px;
 }
-[data-desk-wide][data-platform="macos"] .desk-rail-titlebar { padding-left: 84px; }
-[data-desk-wide] #desk-rail-toggle {
+[data-desk-wide][data-platform="macos"]:not([data-desk-fullscreen]) .desk-rail-titlebar { padding-left: 84px; }
+[data-desk-wide] .desk-rail-titlebar > button {
   position: relative;
   display: grid;
   place-items: center;
@@ -54,8 +55,12 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   color: var(--th-ink-soft);
   cursor: pointer;
 }
-[data-desk-wide] #desk-rail-toggle svg { width: 18px; height: 18px; pointer-events: none; }
-[data-desk-wide] #desk-rail-toggle:is(:hover, :focus) { color: var(--th-ink); }
+[data-desk-wide] .desk-rail-titlebar > button svg { width: 18px; height: 18px; pointer-events: none; }
+[data-desk-wide] .desk-rail-titlebar > button:enabled:not([aria-disabled="true"]):is(:hover, :focus) { color: var(--th-ink); }
+[data-desk-wide] .desk-rail-titlebar > button:is(:disabled, [aria-disabled="true"]) {
+  opacity: var(--th-button-disabled-opacity);
+  cursor: default;
+}
 [data-desk-collapsed] #desk-rail-toggle[data-waiting] .topbar-waiting-dot {
   display: block;
   top: 1px;
@@ -81,7 +86,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   letter-spacing: normal;
 }
 [data-desk-wide] .place[data-selected="true"] { background: var(--th-rail); }
-[data-desk-wide] .places-list:has(.place[data-selected="true"]) .place[data-selected="false"] { opacity: .6; }
 [data-desk-wide] #topbar-cc .topbar-figure,
 [data-desk-wide] #topbar-cc .topbar-figure img { width: 60px; height: 60px; }
 [data-desk-wide] #topbar-cc .topbar-figure { flex: none; }
@@ -138,7 +142,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   [data-desk-wide] #topbar-cc[data-cc="here"]::before,
   [data-desk-wide] .place[data-waiting="false"]:is([data-moving="true"], [data-working]) .place-dot { animation: none; }
 }
-[data-desk-wide] .place-name { font-size: 15px; font-weight: var(--th-weight-desk-emphasis); }
 [data-desk-wide] .place-time { grid-area: 1 / 3; justify-self: end; font-size: 12px; }
 [data-desk-wide] .place .place-line {
   grid-area: 2 / 2 / auto / -1;
@@ -147,13 +150,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   -webkit-line-clamp: 2;
   white-space: normal;
   overflow-wrap: anywhere;
-  font-size: 13.5px;
   line-height: 1.55;
-  color: var(--th-ink-soft);
-  font-weight: 400;
 }
-[data-desk-wide] .place:is([data-moving="true"], [data-waiting="true"], [data-unseen="true"]) .place-line { color: var(--th-ink); }
-[data-desk-wide] .place:is([data-waiting="true"], [data-unseen="true"]) .place-line { font-weight: var(--th-weight-desk-emphasis); }
 [data-desk-wide] .place-more { width: 28px; height: 28px; right: 2px; }
 
 [data-desk-wide] .dash-topbar nav {
@@ -177,7 +175,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   display: block;
   user-select: none;
 }
-[data-desk-wide] .desk-date-line {
+[data-desk-wide] .desk-date-line:not([hidden]) {
   display: flex;
   flex: none;
   align-items: baseline;
@@ -188,14 +186,19 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   margin: 0 auto;
   padding: 0 var(--desk-page-padding) 0 calc(var(--desk-page-padding) + var(--desk-speaker-offset));
 }
-[data-desk-wide] :is(.desk-date-line, .desk-message-date) {
-  color: var(--th-ink-soft);
-  font-size: 13px;
-  letter-spacing: .04em;
+[data-desk-wide] #desk-place-name {
+  color: var(--th-ink);
+  font-size: 15px;
+  font-weight: var(--th-weight-desk-emphasis);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 [data-desk-wide] .desk-message-date {
   display: block;
-  padding-left: var(--desk-speaker-offset);
+  text-align: center;
+  color: var(--th-ink-soft);
+  font-size: 12.5px;
+  padding-block: 8px;
 }
 [data-desk-wide] :is(.desk-text-button, #desk-place-clear) {
   border: 0;
@@ -209,13 +212,25 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] :is(.desk-text-button, #desk-place-clear):hover { color: var(--th-ink); text-decoration: underline; }
 [data-desk-wide] .desk-date-line { white-space: nowrap; }
 [data-desk-wide] #desk-place-clear {
-  min-width: 0;
+  flex: none;
   min-height: 24px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--th-accent);
   font-size: 13px;
+}
+[data-desk-wide] .converse-page-actions { display: contents; }
+[data-desk-wide] .converse-page-actions > button:not([hidden]) { min-height: 28px; }
+[data-desk-wide] :is(#converse-earlier, #converse-later, #converse-place-more) { align-self: center; }
+[data-desk-wide] #converse-earlier:disabled { cursor: wait; }
+[data-desk-wide] #converse-scroll { order: 1; }
+[data-desk-wide] #converse-place-more { order: 2; }
+[data-desk-wide] #converse-later { order: 3; }
+[data-desk-wide] :is(#converse-latest, #converse-stop, #converse-compose) { order: 4; }
+[data-desk-wide] #converse-stop {
+  align-self: center;
+  position: relative;
+  left: calc(var(--desk-speaker-offset) / 2);
+  width: calc(min(100%, var(--desk-page-width)) - 2 * var(--desk-page-padding) - var(--desk-speaker-offset));
+  text-align: start;
 }
 [data-desk-wide] button.desk-quiet-toggle { display: block; min-height: 36px; padding: 0 0 0 28px; } /* 和名字那一列对齐;上面那条通用的文字按钮规则把 padding 清成 0 了 */
 [data-desk-wide] .dashboard .cc-now-pane[data-now="chat"] { gap: 0; }
@@ -277,7 +292,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   padding: 14px var(--desk-page-padding);
   gap: 18px;
 }
-[data-desk-wide] #converse-scroll > :first-child { margin-top: auto; }
+[data-desk-wide] #converse-scroll > :first-child,
+[data-desk-wide] #converse-scroll > [data-converse-lead][hidden] + * { margin-top: auto; } /* 内容不满一屏时沉到底;「更早的对话」藏着时由它后面那个来撑 */
 [data-desk-wide] #converse-scroll > * { flex-shrink: 0; }
 [data-desk-wide] .converse-msg { align-items: flex-start; justify-content: flex-start; gap: 0; }
 [data-desk-wide] .converse-speaker {
@@ -434,3 +450,9 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   from { transform: translateX(-100%); }
   to { transform: translateX(0); }
 }
+
+/* 和名字那一列对齐。带 id 是因为通用的文字按钮规则(里面有 #desk-place-clear)把 padding 清成 0,权重比类选择器高。 */
+[data-desk-wide] #places-root :is(.places-hidden-toggle, .desk-quiet-toggle) { display: block; min-height: 36px; padding: 0 0 0 30px; }
+[data-desk-wide] #places-root .places-hidden-list { padding: 0 12px 8px 30px; }
+[data-desk-wide] #places-root .places-hidden-list li { min-height: 32px; font-size: 13.5px; }
+[data-desk-wide] #places-root [data-place-restore] { min-height: 28px; color: var(--th-accent); }

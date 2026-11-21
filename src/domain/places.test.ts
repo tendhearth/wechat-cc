@@ -95,6 +95,21 @@ describe('buildPlaces', () => {
     expect(buildPlaces(input(items, { saved })).places.map(p => p.name)).toEqual(['h2'])
   })
 
+  it('收起清单只给 key 和 name，按存下的顺序排列，放回后恢复原位', () => {
+    const later = rec('/w/later', 3, { hidden: true })
+    const earlier = rec('/w/earlier', 0, { hidden: true })
+    const waiting = rec('/w/waiting', 1, { hidden: true })
+    roots['waiting-item'] = waiting.root
+    const items = [item('waiting-item', { group: 'waiting', status: 'waiting' })]
+    const saved = [later, waiting, earlier]
+    const before = buildPlaces(input(items, { saved }))
+    expect(before.places.map(p => p.name)).toEqual(['waiting'])
+    expect(before.hidden).toEqual([{ key: earlier.key, name: earlier.name }, { key: later.key, name: later.name }])
+    const after = buildPlaces(input(items, { saved: [later, waiting, { ...earlier, hidden: false }] }))
+    expect(after.places.map(p => p.name)).toEqual(['earlier', 'waiting'])
+    expect(after.hidden).toEqual([{ key: later.key, name: later.name }])
+  })
+
   it('存下的名字优先(主人改过名)', () => {
     roots['g1'] = '/w/long-repo-name'
     const [p] = buildPlaces(input([item('g1')], { saved: [rec('/w/long-repo-name', 0, { name: '长名字' })] })).places

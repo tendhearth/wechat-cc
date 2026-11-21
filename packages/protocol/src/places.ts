@@ -54,7 +54,11 @@ export const Place = z.object({
 })
 export type PlaceT = z.infer<typeof Place>
 
-export const PlacesResponse = z.object({ places: z.array(Place), version: z.string() })
+export const PlacesResponse = z.object({
+  places: z.array(Place),
+  hidden: z.array(Place.pick({ key: true, name: true })).optional(),
+  version: z.string(),
+})
 export type PlacesResponseT = z.infer<typeof PlacesResponse>
 
 export const PlaceMoveRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16}$/), to: z.number().int().min(0) }).strict()

@@ -10,7 +10,7 @@
  * 钩子期间对客户端的一切调用(请求、挂订阅、退订、关)都推到微任务之后。
  */
 import {
-  makeProtocolClient, phoneRouteRequest, RESPONSE_SCHEMAS, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
+  makeProtocolClient, NotebookPageResponse, NotebookWriteResponse, NotebookPaperResponse, NotebookStrikeResponse, phoneRouteRequest, RESPONSE_SCHEMAS, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
   HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic, TopicsSnapshot, Matter,
   type ClientOpts, type ProtocolClient, type ProtocolSocket, type PhoneTransport,
 } from '@wechat-cc/protocol'
@@ -134,9 +134,9 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     for (const r of regs.values()) attach(r)
   }
 
-  /** 类型化客户端的传输(F3):经中继 v2 送、按状态码 / 错误码挡失败、过 PHONE_API_SCHEMAS。路径由 `PHONE_CALLS` 拼。 */
-  const send: PhoneTransport = async req => {
-    let selected = phoneRouteRequest(req, client?.routes?.())
+  type WireCall = Parameters<typeof toProtocolRequest>[0]
+  async function requestJson(select: (routes?: 'v1') => WireCall) {
+    let selected = select(client?.routes?.())
     let key = selected.key
     if (hookDepth > 0) await new Promise<void>(r => queueMicrotask(r))
     if (conn.state === 'revoked') throw new BackendError('revoked')
@@ -146,7 +146,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     let res: Awaited<ReturnType<ProtocolClient['request']>>
     try {
       res = await c.request({ ...toProtocolRequest(selected), forRoutes: routes => {
-        selected = phoneRouteRequest(req, routes)
+        selected = select(routes)
         key = selected.key
         return toProtocolRequest(selected)
       } })
@@ -173,6 +173,12 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       else log(`${key}: ${res.status} ${mapped}`)
       throw new BackendError(mapped)
     }
+    return { key, json }
+  }
+
+  /** 类型化客户端的传输(F3):路径由 PHONE_CALLS 拼，响应过 PHONE_API_SCHEMAS。 */
+  const send: PhoneTransport = async req => {
+    const { key, json } = await requestJson(routes => phoneRouteRequest(req, routes))
     const schema = key === req.key
       ? PHONE_API_SCHEMAS[req.key] : RESPONSE_SCHEMAS[key]
     const p = schema ? schema.safeParse(json) : null
@@ -194,6 +200,14 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     return phone.data
   }
   const api = makePhoneApi(send)
+  // 已配对设备可走这四条共同路由。目前 PHONE_CALLS 还没有本子的声明。
+  async function notebookResult<T>(call: WireCall, schema: { safeParse(input: unknown): { success: true; data: T } | { success: false } }): Promise<T> {
+    const { json } = await requestJson(() => call)
+    const parsed = schema.safeParse(json)
+    if (!parsed.success) throw new BackendError('unknown')
+    dispatch({ t: 'synced', at: now() })
+    return parsed.data
+  }
   function strip<T extends { ok: true }>(r: T): Omit<T, 'ok'> {
     const { ok: _ok, ...rest } = r
     return rest
@@ -325,6 +339,28 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (!query || query.length > 200) throw new BackendError('invalid')
       if(before){const w=await api.conversation.window({query:{q:query,before,limit:30}});return w.messages.reverse().map(m=>({id:m.messageId,role:m.kind==='user'?'me' as const:'cc' as const,text:m.text.slice(0,600),truncated:m.text.length>600,at:m.createdAt,source:m.source}))}
       return (await api.chat.search({ query: { q: query } })).hits
+    },
+    async notebookPage(query) {
+      const params = new URLSearchParams()
+      if (query.day) params.set('day', query.day)
+      if (query.after) params.set('after', query.after)
+      if (query.fonts) params.set('fonts', query.fonts)
+      /* link-scan: device-only */
+      return notebookResult({ method: 'GET', key: 'GET /v1/notebook', path: `/v1/notebook?${params}` }, NotebookPageResponse)
+    },
+    async notebookWrite(body) {
+      /* link-scan: device-only */
+      const result = await notebookResult({ method: 'POST', key: 'POST /v1/notebook/write', path: '/v1/notebook/write', body }, NotebookWriteResponse)
+      return result.entry
+    },
+    async notebookStrike(id, struck) {
+      /* link-scan: device-only */
+      await notebookResult({ method: 'POST', key: 'POST /v1/notebook/strike', path: '/v1/notebook/strike', body: { id, struck } }, NotebookStrikeResponse)
+    },
+    async notebookPaper(paper) {
+      /* link-scan: device-only */
+      const result = await notebookResult({ method: 'POST', key: 'POST /v1/notebook/paper', path: '/v1/notebook/paper', body: { paper } }, NotebookPaperResponse)
+      return result.paper
     },
     async memory() {
       return strip(await api.memory.get())

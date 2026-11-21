@@ -63,7 +63,7 @@ export function createOfflineSession({ bundleId, appPath, stateRoot }) {
   } } }
 }
 
-export const APP_FLOWS = Object.freeze(['roster-direct', 'butler-checkup', 'cc-motion', 'agent-avatars', 'approve', 'chat', 'chat-extras', 'connections', 'compose', 'worktree', 'quota-handoff', 'demo-walkthrough', 'pair-invalid', 'pair-link', 'terminal-sessions', 'push-open', 'cc-acts', 'continue-session', 'design-shots', 'codex-connection', 'design-b3-shots', 'reply-speaker'])
+export const APP_FLOWS = Object.freeze(['roster-direct', 'butler-checkup', 'cc-motion', 'agent-avatars', 'approve', 'chat', 'chat-extras', 'connections', 'compose', 'worktree', 'quota-handoff', 'demo-walkthrough', 'pair-invalid', 'pair-link', 'terminal-sessions', 'push-open', 'cc-acts', 'continue-session', 'design-shots', 'codex-connection', 'design-b3-shots', 'reply-speaker', 'notebook'])
 
 export function appFlow(value = 'all') {
   if (value !== 'all' && !APP_FLOWS.includes(value)) throw Error('Unsupported App flow')

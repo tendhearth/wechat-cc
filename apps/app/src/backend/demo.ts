@@ -1,3 +1,4 @@
+import { demoNotebook } from './demo-notebook'
 import { checkupEstimateSummary, replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protocol'
 import { demoTopics } from './demo-topics'
 import { checkupReview, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, type CheckupView, type CheckupProfile, type CheckupAttempt } from '@wechat-cc/protocol'
@@ -27,6 +28,7 @@ export const DEMO_CHAT_REPLY_MS = 5000
 
 export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang; chatFixture?: 'reply-speaker' } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
+  const notebook = demoNotebook(now, () => lastLang)
   const topicOpened = new Map<string, string>()
   const topicTitles = new Map<string,string>(), topicDeleted = new Set<string>(), topicMerged = new Map<string,string>()
   let topicWrong = false
@@ -332,7 +334,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const permission = entries.get(IDS.portfolio)!.detail.permissions[0]
       const places = [
         place('portfolio', [IDS.portfolio], { status: 'waiting', moving: false, line: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio),
-          waiting: { itemKey: `matter:${IDS.portfolio}`, kind: 'permission', matterId: IDS.portfolio, ...(permission ? { requestId: permission.id } : {}), summary: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio), count: 1 } }),
+          waiting: { itemKey: `matter:${IDS.portfolio}`, kind: 'permission', matterId: IDS.portfolio, ...(permission ? {
+            requestId: permission.id,
+            ccOpinion: lastLang === 'zh-Hans' ? '如果要处理图片，可以允许这一步。' : 'Allow if image processing is needed.',
+            questionReason: lastLang === 'zh-Hans' ? '安装会给项目新增依赖。' : 'Adds a dependency.',
+          } : {}), summary: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio), count: 1 } }),
         place('trip', [IDS.trip], {}),
         place('notes', [IDS.report, IDS.notes], { status: 'done', moving: false, unseen: true, alsoChanged: 1, updatedAt: now() - 2 * HOUR }),
       ]
@@ -707,6 +713,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
     // 演示:材料只记在内存里,按 offset 续传的规矩与 daemon 一样(每块 128 KiB)。
+    ...notebook.backend,
     async memory() {
       return { updated_at: new Date(now() - 6 * 3600_000).toISOString(), when_label: lastLang === 'en' ? 'early this morning' : '今天凌晨', mood: 'steady' as const, failures: 0, changes: [],
         sections: demoMemory.length ? [{ name: '偏好' as const, items: demoMemory.map(m => ({ id: m.id, text: m.text, display: m.text, due: null, due_label: null, person: null, changed: false })) }] : [] }
@@ -870,6 +877,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { seedCheckup(); topicTitles.clear();topicDeleted.clear();topicMerged.clear();topicWrong=false;topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
+    reset() { notebook.reset(); seedCheckup(); topicTitles.clear();topicDeleted.clear();topicMerged.clear();topicWrong=false;topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }

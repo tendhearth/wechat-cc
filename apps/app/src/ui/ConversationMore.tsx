@@ -16,6 +16,7 @@ export function ConversationMore() {
       <LinkRow testID="home-sessions" label={t(lang, 'sessions.title')} onPress={() => { close(); router.push('/sessions') }} />
       <LinkRow testID="conversation-cc-acts" label={zh ? 'CC 自己做的事' : 'CC’s own activities'} onPress={() => { close(); router.push('/cc-activity') }} />
       <LinkRow testID="conversation-letters" label={t(lang, 'letters.title')} onPress={() => { close(); router.push('/letters') }} />
+      <LinkRow testID="conversation-notebook" label={t(lang, 'notebook.title')} onPress={() => { close(); router.push('/notebook') }} />
       <LinkRow testID="conversation-memory" label={t(lang, 'memory.title')} onPress={() => { close(); router.push('/memory') }} />
       <LinkRow testID="conversation-activity" label={zh ? '活动记录' : 'Activity'} onPress={() => { close(); router.push('/activity') }} />
       <LinkRow testID="conversation-settings" label={t(lang, 'settings.title')} onPress={() => { close(); router.push('/settings') }} />

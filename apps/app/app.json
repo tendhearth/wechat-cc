@@ -13,7 +13,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.tendhearth.app",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "config": { "usesNonExemptEncryption": false }
     },
     "android": {
@@ -27,6 +27,16 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/THPenKai-Regular.ttf",
+            "./assets/fonts/THPenHand-Regular.ttf",
+            "./assets/fonts/THPenFangsong-Regular.ttf"
+          ]
+        }
+      ],
       [
         "expo-splash-screen",
         {

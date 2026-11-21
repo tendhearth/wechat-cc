@@ -34,9 +34,8 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   await expect(heading).toBeEmpty()
   await expect(heading).toHaveCSS('border-bottom-width', '0px')
   const date = page.locator('.desk-date-line')
-  await expect(page.locator('#desk-today')).toHaveText(datePattern)
-  const [dateBox, scrollBox] = await Promise.all([date.boundingBox(), scroll.boundingBox()])
-  expect(dateBox!.y + dateBox!.height).toBeLessThanOrEqual(scrollBox!.y)
+  await expect(date).toBeHidden()
+  await expect(scroll.locator('.desk-message-date').first()).toBeVisible()
   // 说话的人用头像:你的是「还没画」的铅笔稿,CC 的是它自己那一张
   await expect(scroll.locator('.desk-speaker:visible').first()).toHaveAttribute('data-speaker', 'you')
   await expect(scroll.locator('.desk-speaker[data-speaker="you"]:visible svg').first()).toBeVisible()
@@ -78,7 +77,7 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   await expect(rail.getByRole('button', { name: '记忆' })).toHaveAttribute('aria-current', 'page')
   await expect(main.locator('article[data-pane="memory"]')).toBeVisible()
   await page.locator('#topbar-cc').click()
-  await expect(page.locator('#desk-today')).toHaveText(datePattern)
+  await expect(page.locator('.desk-date-line')).toBeHidden()
   await expect(page.locator('#converse-input')).toBeVisible()
 })
 
@@ -107,8 +106,8 @@ test('等待卡片钉在上方、跟地方筛选联动、回答后刷新', async
   const deny = card.getByRole('button', { name: '不允许' })
   await expect(deny).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
   await expect(deny).toHaveCSS('text-decoration-line', 'underline')
-  const [cardBox, dateBox, scrollBox] = await Promise.all([card.boundingBox(), date.boundingBox(), scroll.boundingBox()])
-  expect(cardBox!.y).toBeGreaterThanOrEqual(dateBox!.y + dateBox!.height)
+  await expect(date).toBeHidden()
+  const [cardBox, scrollBox] = await Promise.all([card.boundingBox(), scroll.boundingBox()])
   expect(cardBox!.y + cardBox!.height).toBeLessThanOrEqual(scrollBox!.y)
   await expect(scroll.locator('.desk-waiting-card')).toHaveCount(0)
   await expect(placeRow(page, 'rici').locator('.place-ask')).toHaveCount(0)
@@ -119,18 +118,20 @@ test('等待卡片钉在上方、跟地方筛选联动、回答后刷新', async
 
   await placeRow(page, 'leni').locator('.place-row').click()
   await expect(cards).toHaveCount(0)
-  await expect(clear).toHaveText('只看 leni · 回到全部')
+  await expect(clear).toHaveText('回到全部')
+  await expect(page.locator('#desk-place-name')).toHaveText('leni')
   await clear.click()
-  await expect(page.locator('#desk-today')).toHaveText(datePattern)
+  await expect(page.locator('.desk-date-line')).toBeHidden()
   await placeRow(page, 'rici').locator('.place-row').click()
-  await expect(clear).toHaveText('只看 rici · 回到全部')
+  await expect(clear).toHaveText('回到全部')
+  await expect(page.locator('#desk-place-name')).toHaveText('rici')
   await expect(cards).toHaveCount(1)
   await card.getByRole('button', { name: '允许', exact: true }).click()
   expect(decisions).toEqual([{ id: 'deadbeef', requestId: 'req-1', decision: 'allow' }])
   await expect(card).toHaveCount(0)
   await expect(placeRow(page, 'rici')).toHaveAttribute('data-waiting', 'false')
   await page.locator('#topbar-cc').click()
-  await expect(page.locator('#desk-today')).toHaveText(datePattern)
+  await expect(page.locator('.desk-date-line')).toBeHidden()
   await expect(clear).toBeHidden()
 })
 
@@ -167,7 +168,11 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   await row.click()
   await input.fill('这句话还没发')
   await expect(scroll.locator('[data-converse-message]')).toHaveCount(50)
-  await scroll.evaluate(el => { el.scrollTop = 400 })
+  // 让上边缘落在一条消息的中间。流里多了第一天的日期行以后,原来的 400 正好落在两条消息的缝上,换版式时差一个像素就认成上一条。
+  await scroll.evaluate(el => {
+    const row = el.querySelectorAll('[data-converse-message]')[8]!.getBoundingClientRect()
+    el.scrollTop += row.top + row.height / 2 - el.getBoundingClientRect().top
+  })
   const anchor = () => scroll.evaluate(el => {
     const y = el.getBoundingClientRect().top
     const first = Array.from(el.children).find(node => node.getBoundingClientRect().bottom > y)
@@ -193,14 +198,15 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   await expect(rail).toHaveCSS('width', '304px')
   await page.setViewportSize({ width: 1280, height: 820 })
   await expect(clear).toBeHidden()
-  await expect(page.locator('#desk-place-clear')).toHaveText('只看 rici · 回到全部')
+  await expect(page.locator('#desk-place-clear')).toHaveText('回到全部')
+  await expect(page.locator('#desk-place-name')).toHaveText('rici')
   await expect(row).toHaveAttribute('aria-pressed', 'true')
   await expect(input).toHaveValue('这句话还没发')
   await expect.poll(anchor).toBe(before)
 
 })
 
-test('两栏的拖拽区：两侧空白各起一次拖拽，日期行的筛选按钮照常点', async ({ page, shimUrl }) => {
+test('两栏的拖拽区：两侧空白各起一次拖拽，标题行的筛选按钮照常点', async ({ page, shimUrl }) => {
   await routePlaces(page, [placeItem('rici'), placeItem('leni')])
   await page.goto(shimUrl)
   await expect(page.locator('.desk-heading')).toBeVisible()
@@ -216,14 +222,15 @@ test('两栏的拖拽区：两侧空白各起一次拖拽，日期行的筛选�
   // 右栏顶部的空白
   await page.locator('.desk-heading').dispatchEvent('mousedown', { button: 0 })
   await expect.poll(calls).toBe(2)
-  // 日期行的按钮能清筛选，点击时不会拖窗口。
+  // 标题行的按钮能清筛选，点击时不会拖窗口。
   await placeRow(page, 'rici').locator('.place-row').click()
   const clear = page.locator('#desk-place-clear')
   await expect(clear).toBeVisible()
-  await expect(clear).toHaveText('只看 rici · 回到全部')
+  await expect(clear).toHaveText('回到全部')
+  await expect(page.locator('#desk-place-name')).toHaveText('rici')
   await clear.dispatchEvent('mousedown', { button: 0 })
   await clear.click()
-  await expect(page.locator('#desk-today')).toHaveText(datePattern)
+  await expect(page.locator('.desk-date-line')).toBeHidden()
   expect(await calls()).toBe(2)
 })
 
@@ -253,7 +260,7 @@ test('CC 用新鲜数据说现状，状态点和选中行跟随列表', async ({
   await expect.poll(breathing).toBe('none')
   await expect(moving.locator('.place-dot')).toHaveCSS('animation-name', 'none')
   await waiting.locator('.place-row').click()
-  await expect(moving).toHaveCSS('opacity', '0.6')
+  await expect(moving).toHaveCSS('opacity', '1')
   await page.locator('#desk-place-clear').click()
   await expect(moving).toHaveCSS('opacity', '1')
   places = []
@@ -272,8 +279,8 @@ test('地方名与正文同起一行，跨天有日期，输入工具留在线�
   ] } }))
   await page.goto(shimUrl)
   const scroll = page.locator('#converse-scroll')
-  await expect(scroll.locator('.desk-message-date')).toHaveCount(1)
-  await expect(scroll.locator('.desk-message-date')).toHaveText(datePattern)
+  await expect(scroll.locator('.desk-message-date')).toHaveCount(2)
+  await expect(scroll.locator('.desk-message-date')).toHaveText([datePattern, datePattern])
   const label = scroll.locator('.desk-inline-place')
   await expect(label).toHaveText('rici')
   await expect(label).toBeVisible()
@@ -287,7 +294,8 @@ test('地方名与正文同起一行，跨天有日期，输入工具留在线�
   })).toBe(true)
   await label.click()
   const clear = page.locator('#desk-place-clear')
-  await expect(clear).toHaveText('只看 rici · 回到全部')
+  await expect(clear).toHaveText('回到全部')
+  await expect(page.locator('#desk-place-name')).toHaveText('rici')
   await expect(label).toHaveCount(0)
   await clear.click()
 
@@ -305,14 +313,18 @@ test('地方名与正文同起一行，跨天有日期，输入工具留在线�
   await expect(send).toHaveCSS('color', 'rgb(79, 107, 79)')
 })
 
-test('宽窗的页首日期在本地午夜更新', async ({ page, shimUrl }) => {
+test('宽窗跨午夜仍按消息当天标注日期', async ({ page, shimUrl }) => {
   await page.clock.install({ time: new Date(2026, 10, 19, 23, 59) })
+  await page.route('**/v1/matter/owner-chat/window**', route => route.fulfill({ json: { messages: [
+    { kind: 'text', text: '留给明天的话。', messageId: 'yesterday', createdAt: new Date(2026, 10, 19, 23, 50).getTime() },
+  ] } }))
   await routePlaces(page, [])
   await page.goto(shimUrl)
-  const today = page.locator('#desk-today')
-  await expect(today).toHaveText('十一月十九日 周四')
+  const date = page.locator('#converse-scroll .desk-message-date')
+  await expect(date).toHaveText('十一月十九日 周四')
   await page.clock.fastForward(60_000)
-  await expect(today).toHaveText('十一月二十日 周五')
+  await expect(date).toHaveText('十一月十九日 周四')
+  await expect(page.locator('#desk-today')).toHaveCount(0)
 })
 
 test('等待纸条有 CC 意见时只多两行', async ({ page, shimUrl }) => {

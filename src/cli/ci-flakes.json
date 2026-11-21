@@ -5,6 +5,7 @@
     { "id": "win-test-timeout", "jobs": ["build · windows-latest"], "symptom": "Test timed out in \\d+ms", "note": "同上,单条测试超时", "since": "2026-09-16" },
     { "id": "probe-binary-version", "symptom": "probeBinaryVersion", "note": "探测外部 CLI 版本有 3s 上限,runner 负载高时探不完", "since": "2026-09-10" },
     { "id": "econnreset-chunked", "files": ["src/features/workbench/routes*.test.ts"], "symptom": "ECONNRESET", "note": "分块上传那条 socket 测试偶发", "since": "2026-09-10" },
-    { "id": "node-no-summary", "jobs": ["node · core suite"], "symptom": "__NO_SUMMARY__", "note": "node 作业跑完没有 Test Files 汇总行,进程收尾丢了汇总", "since": "2026-09-16" }
+    { "id": "node-no-summary", "jobs": ["node · core suite"], "symptom": "__NO_SUMMARY__", "note": "node 作业跑完没有 Test Files 汇总行,进程收尾丢了汇总", "since": "2026-09-16" },
+    { "id": "win-fetch-stage-left", "jobs": ["build · windows-latest"], "files": ["src/adapters/git/worktree-security.test.ts"], "symptom": "expected \\[ 'cc-fetch-\\w{6}' \\] to deeply equal \\[\\]", "note": "超大 fetch 被丢弃后,隔离目录 cc-fetch-* 还留在 .git/objects。worktree-fetch.ts 收尾有 5 秒上限,用完就按设计保留隔离目录(keepStage);红的那次这条用例用了 5.95 秒(平时 1.7 秒左右),对得上「收尾超时」,但没有直接证据。工作台在 Windows 上没启用;主人机器的仓库里没有遗留的 cc-fetch-*。再红就当真的查", "since": "2026-11-20" }
   ]
 }

@@ -983,3 +983,39 @@ describe('task network pause is separate from phone connectivity',()=>{
   expect(h.b.connection().state).toBe('online')
  })
 })
+
+describe('paired notebook', () => {
+  const day = '2026-11-04'
+  const entry = { id: '45600000-0000-4000-8000-000000000001', createdAt: 100, day, body: 'private synthetic line',
+    author: 'owner', origin: 'app', clientId: 'test-client', struckAt: null, refId: null }
+  it('uses the common routes, serializes writes without origin and validates replies', async () => {
+    const page = { day, today: day, days: [day], entries: [entry], pen: { font: 'kai', ink: 'blueBlack', reason: '' }, penPending: false, paper: 'ruled', nextAfter: entry.id }
+    const { b, reqs, logs } = harness({
+      'GET /v1/notebook': ok(page),
+      'POST /v1/notebook/write': ok({ entry }),
+      'POST /v1/notebook/strike': ok({ ok: true }),
+      'POST /v1/notebook/paper': ok({ paper: 'plain' }),
+    }, 'v1')
+    expect(await b.notebookPage({ day, after: entry.id, fonts: 'kai,hand,fangsong,songItalic' })).toEqual(page)
+    expect(await b.notebookWrite({ body: entry.body, clientId: entry.clientId })).toEqual(entry)
+    await b.notebookStrike(entry.id, true)
+    expect(await b.notebookPaper('plain')).toBe('plain')
+    expect(reqs.map(r => [r.key, r.body])).toEqual([
+      ['GET /v1/notebook', undefined],
+      ['POST /v1/notebook/write', { body: entry.body, clientId: entry.clientId }],
+      ['POST /v1/notebook/strike', { id: entry.id, struck: true }],
+      ['POST /v1/notebook/paper', { paper: 'plain' }],
+    ])
+    expect(new URL(reqs[0]!.path, 'https://example.test').searchParams.get('fonts')).toBe('kai,hand,fangsong,songItalic')
+    expect(logs.join(' ')).not.toContain(entry.body)
+  })
+  it('drops malformed and failed responses without including notebook text in errors or logs', async () => {
+    const { b, logs } = harness({
+      'GET /v1/notebook': ok({ entries: [entry] }),
+      'POST /v1/notebook/write': ok({ error: entry.body }, 500),
+    })
+    await expect(b.notebookPage({})).rejects.toMatchObject({ code: 'unknown', message: 'unknown' })
+    await expect(b.notebookWrite({ body: entry.body, clientId: entry.clientId })).rejects.toMatchObject({ code: 'unknown', message: 'unknown' })
+    expect(logs.join(' ')).not.toContain(entry.body)
+  })
+})

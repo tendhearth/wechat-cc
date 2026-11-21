@@ -1,0 +1,50 @@
+# 演示本子：两人的字、立刻落笔、翻日和回到今天。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: home-more
+    timeout: 10000
+- tapOn:
+    id: home-more
+- tapOn:
+    id: conversation-notebook
+- extendedWaitUntil:
+    visible:
+      id: notebook-cc-line
+    timeout: 10000
+- assertVisible:
+    id: notebook-owner-line
+# 等笔的字体落定再拍(最多等 1.5 秒会先用宋体斜):这张用来看 CC 的字是不是真的用上了它那支笔。
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: nb01-today
+- tapOn:
+    id: notebook-input
+- runFlow:
+    when:
+      visible: "Slide to Type|滑行键入"
+    commands:
+      - tapOn: "Continue|继续"
+- inputText: A line for the notebook
+- tapOn:
+    id: notebook-write
+- assertVisible: A line for the notebook
+- assertVisible:
+    id: notebook-input
+- takeScreenshot: nb02-written
+- tapOn:
+    id: notebook-previous
+- assertNotVisible:
+    id: notebook-input
+- assertVisible:
+    id: notebook-today
+- takeScreenshot: nb03-previous
+- tapOn:
+    id: notebook-today
+- assertVisible:
+    id: notebook-input
+- assertVisible: A line for the notebook

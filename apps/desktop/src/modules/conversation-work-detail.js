@@ -8,19 +8,19 @@ const terminalDrafts=new Map()
 const terminalDraftOwners=new Map()
 
 /** Open the canonical kind first. Terminal/act ids never enter workbench task APIs.
- * @param {(method:any,path:string,body?:any)=>Promise<any>} call @param {string} id @param {(id:string)=>unknown} openTask */
-export async function openConversationWork(call,id,openTask) {
+ * @param {(method:any,path:string,body?:any)=>Promise<any>} call @param {string} id @param {(id:string)=>unknown} openTask @param {() => void} [onClose] */
+export async function openConversationWork(call,id,openTask,onClose) {
   const detail=await v1(call,V1.matter.get,{query:{id}})
   if(detail.matter?.id!==id)throw Error('matter_not_found')
   if(detail.matter.kind==='task')return openTask(id)
-  return showWorkDetail(call,detail)
+  return showWorkDetail(call,detail,undefined,onClose)
 }
 
-/** @param {(method:any,path:string,body?:any)=>Promise<any>} call @param {string} sessionId */
-export function openConversationTerminal(call,sessionId){return showWorkDetail(call,{matter:{kind:'terminal',title:'电脑上的会话'},bindings:[{surface:'cli',surfaceKey:sessionId}]})}
+/** @param {(method:any,path:string,body?:any)=>Promise<any>} call @param {string} sessionId @param {() => void} [onClose] */
+export function openConversationTerminal(call,sessionId,onClose){return showWorkDetail(call,{matter:{kind:'terminal',title:'电脑上的会话'},bindings:[{surface:'cli',surfaceKey:sessionId}]},undefined,onClose)}
 
-/** @param {(method:any,path:string,body?:any)=>Promise<any>} call @param {any} detail @param {HTMLElement} [mount] */
-export async function showWorkDetail(call,detail,mount){
+/** @param {(method:any,path:string,body?:any)=>Promise<any>} call @param {any} detail @param {HTMLElement} [mount] @param {() => void} [onClose] */
+export async function showWorkDetail(call,detail,mount,onClose){
   const dialog=document.createElement(mount?'section':'dialog');dialog.className='wb-history-dialog';dialog.ariaLabel=detail.matter.title
   const title=document.createElement('h2');title.textContent=detail.matter.title
   const close=document.createElement('button');close.type='button';close.textContent='关闭';close.onclick=()=>{ if(dialog instanceof HTMLDialogElement)dialog.close();else{dispose();dialog.remove()} }
@@ -30,7 +30,7 @@ export async function showWorkDetail(call,detail,mount){
   let alive=true,busy=false,confirmed='',timer=0
   let saveDraft=()=>{}
   const dispose=()=>{saveDraft();alive=false;clearInterval(timer);dialog.remove()}
-  if(mount){close.hidden=true;mount.append(dialog)}else{dialog.addEventListener('close',dispose,{once:true});document.body.append(dialog);if(dialog instanceof HTMLDialogElement)dialog.showModal()}
+  if(mount){close.hidden=true;mount.append(dialog)}else{dialog.addEventListener('close',()=>{dispose();onClose?.()},{once:true});document.body.append(dialog);if(dialog instanceof HTMLDialogElement)dialog.showModal()}
   if(detail.terminalParticipants?.length){
     const ledger=document.createElement('div')
     ledger.innerHTML=renderWorkbenchLedger({...detail,task:{id:detail.matter.id}},id=>detail.matter.agentNames?.[id])

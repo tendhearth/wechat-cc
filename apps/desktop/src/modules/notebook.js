@@ -2,13 +2,13 @@
 import { callNotebook } from '../daemon-client.js'
 import {
   NOTEBOOK_CACHE_KEY, createNotebookQueue, notebookDay, notebookDateLabel, NOTEBOOK_FONT_KEYS, notebookPenFamily, notebookPenStyle,
-  notebookPeriod, readNotebookStorage, writeNotebookStorage,
+  notebookSignaturePeriod, readNotebookStorage, writeNotebookStorage,
 } from './notebook-state.js'
 
 /** @typedef {import('@wechat-cc/protocol').NotebookPageResponseT} NotebookPage */
 /** @typedef {import('@wechat-cc/protocol').NotebookEntryT} NotebookEntry */
 /** @typedef {import('@wechat-cc/protocol').NotebookPaperT} NotebookPaper */
-/** @typedef {{ day: string, today?: string, days: string[], entries: NotebookEntry[], pen: NotebookPage['pen'], penPending?: boolean, paper: NotebookPaper }} NotebookCache */
+/** @typedef {{ day: string, today?: string, timeZone?: string, days: string[], entries: NotebookEntry[], pen: NotebookPage['pen'], penPending?: boolean, paper: NotebookPaper }} NotebookCache */
 
 const LINE_HEIGHT = 36
 const UNSAVED_DELAY = 5000
@@ -33,6 +33,8 @@ export function mountNotebook(host, transport) {
   let day = notebookDay()
   let today = day
   let knowsToday = false
+  /** @type {string | undefined} */
+  let timeZone
   /** @type {string[]} */
   let days = []
   /** @type {NotebookPage['pen']} */
@@ -79,7 +81,7 @@ export function mountNotebook(host, transport) {
   let statusTimer = 0
 
   const save = () => writeNotebookStorage(storage, NOTEBOOK_CACHE_KEY,
-    { day, today: knowsToday ? today : undefined, days, entries: pages.get(day) ?? [], pen, penPending, paper })
+    { day, today: knowsToday ? today : undefined, timeZone, days, entries: pages.get(day) ?? [], pen, penPending, paper })
 
   /** @param {string} dateKey */
   function rememberDay(dateKey) {
@@ -248,9 +250,7 @@ export function mountNotebook(host, transport) {
       const remaining = entry.createdAt + UNSAVED_DELAY - now
       if (isPending && remaining > 0) nextStatus = Math.min(nextStatus, remaining)
       const nextEntry = entries[index + 1]
-      const period = entry.author === 'cc' ? notebookPeriod(entry.createdAt) : undefined
-      const signaturePeriod = nextEntry?.author === 'cc' && nextEntry.day === entry.day
-        && notebookPeriod(nextEntry.createdAt) === period ? undefined : period
+      const signaturePeriod = notebookSignaturePeriod(entry, nextEntry, timeZone)
       const overdue = isPending && remaining <= 0
       const signature = JSON.stringify([entry, isPending, overdue, signaturePeriod, entry.author === 'cc' ? [pen, penLoaded] : null])
       const node = old?.signature === signature ? old.node : makeRow(key, entry, isPending, overdue, signaturePeriod, penLoaded)
@@ -296,6 +296,7 @@ export function mountNotebook(host, transport) {
       const wasToday = day === today
       knowsToday = true
       today = data.today
+      timeZone = data.timeZone
       if (wasToday && day !== today) {
         selectDay(today)
         scroll.scrollTop = scroll.scrollHeight
@@ -445,6 +446,7 @@ export function mountNotebook(host, transport) {
           day = cached.day
           days = cached.days
           paper = cached.paper
+          timeZone = cached.timeZone
           pen = cached.pen ?? DEFAULT_PEN
           penPending = cached.penPending ?? !cached.pen
           if (cached.today) {

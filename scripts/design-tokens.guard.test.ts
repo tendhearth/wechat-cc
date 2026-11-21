@@ -19,6 +19,12 @@ describe('one set of design tokens across desktop and phone', () => {
 const APP_FONTS = ['NotoSerifSC-Regular.ttf', 'THSerif4-Regular.ttf', 'THSerif4-Medium.ttf']
 const DESK_FONTS = ['noto-serif-sc-400.woff2', 'th-serif-4-400.woff2', 'th-serif-4-500.woff2']
 const PEN_FONTS = ['th-pen-kai.woff2', 'th-pen-hand.woff2', 'th-pen-fangsong.woff2']
+// cmap SHA-256 of each pinned source intersected with the shared notebook corpus.
+const APP_PENS = [
+  ['THPenKai-Regular.ttf', '000e5ae2158c61eb86c5cf2b7233ae273829765a5a9fccce8573aa63620520ca'],
+  ['THPenHand-Regular.ttf', 'a71360060d2c46574d472dde7595660f71fde9851ff58b1c2e64f83768ec0a77'],
+  ['THPenFangsong-Regular.ttf', 'cd6fd11048965a56aa631181e864b6224afbee8dd404bb96fe787c42ca4e49bf'],
+] as const
 const MB = 1024 * 1024
 const sizeOf = (dir: URL, names: string[]) => names.reduce((n, f) => n + statSync(new URL(f, dir)).size, 0)
 
@@ -78,6 +84,28 @@ describe('bundled fonts (spec §3)', () => {
     expect(sizeOf(app, APP_FONTS)).toBeLessThanOrEqual(4.5 * MB)
     expect(sizeOf(desk, DESK_FONTS)).toBeLessThanOrEqual(2 * MB)
     expect(sizeOf(desk, [...DESK_FONTS, ...PEN_FONTS])).toBeLessThanOrEqual(8 * MB)
+  })
+  // The phone needs TTFs for the same faces and corpus. Together the three add 13,066,980 bytes.
+  it('budgets 12.5 MiB for the App pens and 16.25 MiB for all App fonts', () => {
+    const pens = APP_PENS.map(([file]) => file)
+    expect(sizeOf(app, pens)).toBeLessThanOrEqual(12.5 * MB)
+    expect(sizeOf(app, [...APP_FONTS, ...pens])).toBeLessThanOrEqual(16.25 * MB)
+  })
+  it('ships the App pen cmaps, renamed families and pinned licenses', () => {
+    const { notebookPens } = JSON.parse(readFileSync(new URL('./fonts/sources.lock.json', import.meta.url), 'utf8'))
+    const ofl = readFileSync(new URL('OFL.txt', app), 'utf8')
+    const sections = ofl.split(/\n\n----- [^\n]+ -----\n\n/u)
+    for (const [i, key] of ['kai', 'hand', 'fangsong'].entries()) {
+      const [file, digest] = APP_PENS[i]!
+      const pen = notebookPens[key]
+      const ttf = readFileSync(new URL(file, app))
+      const codepoints = [...cmapOf(ttf)].sort((a, b) => a - b).join(',')
+      expect(createHash('sha256').update(codepoints).digest('hex'), file).toBe(digest)
+      expect(ttf.includes(Buffer.from(pen.family, 'utf16le').swap16()), file).toBe(true)
+      expect(ttf.includes(Buffer.from(file.slice(0, -4), 'utf16le').swap16()), file).toBe(true)
+      expect(ofl).toContain(`----- ${pen.title} -----`)
+      expect(createHash('sha256').update(sections[i + 3]!).digest('hex')).toBe(pen.oflSha256)
+    }
   })
   it('desktop pen faces ship with the full pinned OFL notices', () => {
     const { notebookPens } = JSON.parse(readFileSync(new URL('./fonts/sources.lock.json', import.meta.url), 'utf8'))

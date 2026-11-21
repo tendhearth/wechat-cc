@@ -30,14 +30,23 @@ export function notebookDateLabel(day, today) {
   return `${Number(month)} 月 ${Number(date)} 日`
 }
 
-/** @param {number} timestamp */
-export function notebookPeriod(timestamp) {
-  const hour = new Date(timestamp).getHours()
+/** @param {number} timestamp @param {string} [timeZone] */
+export function notebookPeriod(timestamp, timeZone) {
+  const hour = timeZone === undefined ? new Date(timestamp).getHours()
+    : Number(new Intl.DateTimeFormat('en', { timeZone, hour: 'numeric', hourCycle: 'h23' }).format(timestamp))
   if (hour < 5 || hour >= 20) return '夜里'
   if (hour < 8) return '清晨'
   if (hour < 12) return '上午'
   if (hour < 17) return '下午'
   return '傍晚'
+}
+
+/** @param {NotebookEntry} entry @param {NotebookEntry | undefined} next @param {string} [timeZone] */
+export function notebookSignaturePeriod(entry, next, timeZone) {
+  if (entry.author !== 'cc') return
+  const period = notebookPeriod(entry.createdAt, timeZone)
+  if (next?.author === 'cc' && next.day === entry.day && notebookPeriod(next.createdAt, timeZone) === period) return
+  return period
 }
 
 const fonts = {

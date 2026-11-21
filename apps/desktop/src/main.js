@@ -1,10 +1,11 @@
 // @ts-check
 /// <reference lib="dom" />
 import { setDockedMatter } from './modules/conversation-matters.js'
+import { createDeskHistory, deskHistoryShortcut } from './modules/desk-history.js'
+import { watchDeskFullscreen } from './modules/desk-fullscreen.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
 import { isDeskCollapseShortcut, readDeskCollapsed, writeDeskCollapsed } from './modules/desk-collapse.js'
-import { deskDate } from './modules/desk-page.js'
 import { mountPlacesStrip } from './modules/places-strip.js'
 import { openCliChoices, startCliSetup, recheckCliSetup } from './modules/cli-setup.js'
 import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
@@ -49,7 +50,7 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace, connectConversationPlaces, updateConversationPlaces } from "./modules/converse.js"
+import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace, connectConversationPlaces, updateConversationPlaces, updateConversationRoster } from "./modules/converse.js"
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
@@ -104,6 +105,29 @@ const state = {
 let memoryTopics=null
 /** @type {ReturnType<typeof createRosterDock>|null} */
 let rosterDock=null
+/** @typedef {import('./modules/desk-history.js').DeskDetail} DeskDetail */
+/** @type {(() => void) | undefined} */ let recordDeskNavigation
+/** @type {DeskDetail|null} */ let expandedDetail = null
+/** @type {(() => void) | undefined} */ let disposeExpandedDetail
+let preserveNavigationFocus = false
+
+/** @param {DeskDetail} item */
+async function openDeskDetail(item) {
+  if (await rosterDock?.open(item)) recordDeskNavigation?.()
+}
+
+/** @param {string} id */
+async function openDeskTask(id) {
+  switchPane('workbench')
+  await openWorkbenchTask(id)
+  if (document.body.dataset.pane === 'workbench' && getViewedWorkbenchTaskId() === id) recordDeskNavigation?.()
+}
+
+/** @param {string} pane */
+function navigateDeskPane(pane) {
+  switchPane(pane)
+  recordDeskNavigation?.()
+}
 const mainNavigation = createMainNavigation(destination => {
   if (typeof destination === 'string') { switchPane(destination); return }
   switchPane('workbench')
@@ -167,7 +191,7 @@ presencePoller.start()
 const nowRoot = /** @type {HTMLElement|null} */ (document.querySelector('.cc-now-pane'))
 const nowPage = nowRoot ? mountNowPage({
   root: nowRoot, presencePoller,
-  onOpenTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
+  onOpenTask: openDeskTask,
   // 终端里等批准的会话:与桌宠权限卡、微信「y 码」同一条拍板路(POST /v1/permissions/resolve,凭据在原生宿主)。
   onResolveTerminal: async (hash, decision) => {
     try { return (await invoke('pet_permission_resolve', { hash, decision })) === true }
@@ -181,7 +205,7 @@ const nowPage = nowRoot ? mountNowPage({
       const off = subscribeConverse(msgs => nowPage?.setConversationSnapshot(msgs.filter(m=>!m.matterId&&!m.terminalId)))
       off()
     }
-    if (m === 'chat') document.getElementById('converse-input')?.focus()
+    if (m === 'chat' && !preserveNavigationFocus) document.getElementById('converse-input')?.focus()
   },
 }) : null
 if (nowPage) setConverseMode('chat')
@@ -334,9 +358,11 @@ const deps = {
   invoke,
   invokeApi,
   invokeWorkbenchApi,
+  preserveNavigationFocus: () => preserveNavigationFocus,
+  onTaskNavigation: () => recordDeskNavigation?.(),
   onMatterViewed: (/** @type {import('./modules/workbench.js').Task} */ task) => { addConversationMatter(task.id,task.title); updateConversationMatters([task]) },
-  onOpenMatter: async (/** @type {string} */ id) => { await rosterDock?.open({kind:'matter',id}) },
-  onOpenTerminal:(/** @type {string} */ id)=>rosterDock?.open({kind:'terminal',id}),
+  onOpenMatter: (/** @type {string} */ id) => openDeskDetail({kind:'matter',id}),
+  onOpenTerminal: (/** @type {string} */ id) => openDeskDetail({kind:'terminal',id}),
   onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
@@ -812,7 +838,7 @@ function switchPane(name) {
     if(layer) layer.dataset.workbenchView=searchRequested?'search':'detail'
     initWorkbenchPage(deps)
     const back=document.getElementById('workbench-home')
-    if(back){back.textContent=document.querySelector('.conversation-topic-panel:not([hidden])')?'‹ 返回话题':'‹ 返回对话';back.focus()}
+    if(back){back.textContent=document.querySelector('.conversation-topic-panel:not([hidden])')?'‹ 返回话题':'‹ 返回对话';if(!preserveNavigationFocus)back.focus()}
   } else if(!rosterDock?.current()) {
     stopWorkbenchPolling()
   }
@@ -827,8 +853,8 @@ function switchPane(name) {
     // 「跟 CC 说」⇒ chat;已经在此刻时再点「此刻」⇒ 回 home;从别处回来保持原来那一态(草稿与对话都还在)。
     if (focusConversation) nowPage?.setMode("chat")
     else nowPage?.setMode("chat")
-    initConversePage(deps, { focus: focusConversation })
-    if(!focusConversation) /** @type {HTMLElement|null} */(document.querySelector('.conversation-topic-panel:not([hidden])'))?.focus()
+    initConversePage(deps, { focus: focusConversation && !preserveNavigationFocus })
+    if(!focusConversation && !preserveNavigationFocus) /** @type {HTMLElement|null} */(document.querySelector('.conversation-topic-panel:not([hidden])'))?.focus()
   }
   if (name === "a2a-agents") {
     activateHuntBag()
@@ -874,7 +900,7 @@ function wireEvents() {
     const category = target?.closest("[data-life-category]")
     if (go) {
       if (go.getAttribute("data-life-start") === "postcards") lifeCategory = "postcards"
-      switchPane(go.getAttribute("data-life-pane") || "overview")
+      navigateDeskPane(go.getAttribute("data-life-pane") || "overview")
     }
     if (category) void loadLifeCategory(category.getAttribute("data-life-category") || "postcards")
   })
@@ -956,7 +982,7 @@ function wireEvents() {
   document.querySelectorAll(".dialogue-workspace-tab[data-backstage-pane]").forEach(tab => {
     tab.addEventListener("click", () => {
       const el = /** @type {HTMLElement} */ (tab)
-      if (el.dataset.backstagePane) switchPane(el.dataset.backstagePane)
+      if (el.dataset.backstagePane) navigateDeskPane(el.dataset.backstagePane)
     })
   })
   // `data-tauri-drag-region` alone is not reliable with the macOS overlay
@@ -1435,7 +1461,8 @@ function wireEvents() {
     const el = /** @type {HTMLElement} */ (btn)
     el.addEventListener("click", () => {
       if (el.classList.contains("disabled")) return
-      switchPane(el.dataset.pane ?? "")
+      if (el.id === 'topbar-cc') switchPane('overview')
+      else navigateDeskPane(el.dataset.pane ?? "")
     })
   })
 
@@ -1736,6 +1763,145 @@ function trackTopbarBottom() {
   window.addEventListener('resize', write)
 }
 
+/** @param {ReturnType<typeof mountPlacesStrip>} strip @param {AbortSignal} signal */
+function mountDeskHistory(strip, signal) {
+  const root = document.documentElement
+  const mac = root.dataset.platform === 'macos'
+  const back = /** @type {HTMLButtonElement} */ (document.getElementById('desk-back'))
+  const forward = /** @type {HTMLButtonElement} */ (document.getElementById('desk-forward'))
+  back.title = `后退 ${mac ? '⌘[' : 'Alt+←'}`
+  forward.title = `前进 ${mac ? '⌘]' : 'Alt+→'}`
+
+  /** @returns {import('./modules/desk-history.js').DeskLocation} */
+  function location() {
+    const pane = document.body.dataset.pane ?? 'overview'
+    const task = pane === 'workbench' && document.querySelector('#conversation-matter-layer[data-workbench-view="detail"]')
+      ? getViewedWorkbenchTaskId() : null
+    return { pane, place: strip.selected(), detail: rosterDock?.item() ?? expandedDetail
+      ?? (task ? { kind: 'matter', id: task } : null) }
+  }
+  const history = createDeskHistory(location())
+  const buttons = /** @type {const} */ ([[back, -1], [forward, 1]])
+  const reflect = () => {
+    for (const [button, direction] of buttons) {
+      const disabled = !history.canMove(direction)
+      // Native disabling blurs a focused button. Keep it in place until focus leaves.
+      button.disabled = disabled && document.activeElement !== button
+      if (disabled && !button.disabled) button.setAttribute('aria-disabled', 'true')
+      else button.removeAttribute('aria-disabled')
+    }
+  }
+  recordDeskNavigation = () => { history.push(location()); reflect() }
+  let moving = false
+  const available = () => root.dataset.mode === 'dashboard' && !document.querySelector('dialog[open]')
+
+  /** @param {import('./modules/desk-history.js').DeskLocation} entry */
+  async function applyLocation({ pane, place, detail }) {
+    const before = location()
+    const sameDetail = pane === before.pane && detail?.kind === before.detail?.kind && detail?.id === before.detail?.id
+    if (!sameDetail) {
+      rosterDock?.close()
+      disposeExpandedDetail?.()
+      disposeExpandedDetail = undefined
+      expandedDetail = null
+    }
+    if (pane !== before.pane) switchPane(pane === 'workbench' && !detail ? 'all' : pane)
+    if (pane === 'workbench' && !detail) {
+      const layer = document.getElementById('conversation-matter-layer')
+      if (layer) layer.dataset.workbenchView = 'search'
+    }
+    if (place) strip.selectKey(place)
+    else strip.clear()
+    if (!detail || sameDetail) return true
+    if (pane === 'workbench' && detail.kind === 'matter') {
+      await openWorkbenchTask(detail.id)
+      return getViewedWorkbenchTaskId() === detail.id
+    }
+    return await rosterDock?.open(detail) === true
+  }
+
+  /** @param {import('./modules/desk-history.js').Direction} direction */
+  async function move(direction) {
+    if (moving || !available() || !history.canMove(direction)) return
+    moving = true
+    const focus = document.activeElement
+    try {
+      await history.move(direction, async (entry, current) => {
+        const { pane, place, detail } = entry
+        const hasPlace = () => !place || strip.places().some(p => p.key === place)
+        if (!hasPlace()) return false
+        const before = location()
+        const sameDetail = detail?.kind === before.detail?.kind && detail?.id === before.detail?.id && pane === before.pane
+        if (detail && !sameDetail) {
+          // Check existence before touching the currently displayed pane, selection or draft.
+          try {
+            if (detail.kind === 'matter') {
+              const data = await v1(invokeWorkbenchApi, V1.matter.get, { query: { id: detail.id } })
+              if (data.matter?.id !== detail.id) return false
+              if (data.matter.kind === 'task') {
+                const task = /** @type {{task?: {id:string}}} */ (
+                  await v1(invokeWorkbenchApi, V1.workbench.task, { query: { id: detail.id } }))
+                if (task.task?.id !== detail.id) return false
+              }
+            } else {
+              const data = await v1(invokeWorkbenchApi, V1.cli.sessions, { query: { owner: 1, session_id: detail.id } })
+              if (!data.sessions?.some((/** @type {{session_id:string}} */ session) => session.session_id === detail.id)) return false
+            }
+          } catch { return false }
+        }
+        if (!current() || !available()) return
+        if (!hasPlace()) return false
+        preserveNavigationFocus = true
+        try {
+          try {
+            if (await applyLocation(entry)) return true
+          } catch { /* The detail may disappear between validation and opening. */ }
+          if (!current()) return
+          await applyLocation(before).catch(() => {})
+          return false
+        } finally {
+          preserveNavigationFocus = false
+        }
+      })
+    } finally {
+      moving = false
+      if (focus instanceof HTMLElement && focus !== document.activeElement && focus.getClientRects().length
+        && !focus.closest('[hidden], [inert]')) focus.focus({ preventScroll: true })
+      reflect()
+    }
+  }
+  for (const [button, direction] of buttons) {
+    button.addEventListener('blur', () => {
+      if (!history.canMove(direction)) {
+        button.disabled = true
+        button.removeAttribute('aria-disabled')
+      }
+    }, { signal })
+    button.addEventListener('click', () => {
+      if (!history.canMove(direction)) return
+      button.focus({ preventScroll: true })
+      void move(direction)
+    }, { signal })
+  }
+  document.addEventListener('keydown', event => {
+    if (!available()) return
+    const direction = deskHistoryShortcut(event, mac)
+    if (!direction) return
+    event.preventDefault()
+    void move(direction)
+  }, { signal, capture: true })
+  const sideButton = (/** @type {MouseEvent} */ event) => {
+    if (event.button !== 3 && event.button !== 4) return
+    if (!available()) return
+    event.preventDefault()
+    if (event.type === 'mouseup') void move(event.button === 3 ? -1 : 1)
+  }
+  document.addEventListener('mousedown', sideButton, { signal, capture: true })
+  document.addEventListener('mouseup', sideButton, { signal, capture: true })
+  document.addEventListener('auxclick', sideButton, { signal, capture: true })
+  signal.addEventListener('abort', () => { recordDeskNavigation = undefined }, { once: true })
+}
+
 /** @param {ReturnType<typeof mountPlacesStrip>} strip */
 function mountDeskLayout(strip) {
   const layout = window.matchMedia('(min-width: 900px)')
@@ -1755,7 +1921,13 @@ function mountDeskLayout(strip) {
   const hover = window.matchMedia('(hover: hover)')
   const listeners = new AbortController()
   const { signal } = listeners
+  mountDeskHistory(strip, signal)
   const mac = root.dataset.platform === 'macos'
+  const stopFullscreen = mac ? watchDeskFullscreen(
+    /** @type {any} */ (window).__TAURI__?.window?.getCurrentWindow?.(),
+    fullscreen => root.toggleAttribute('data-desk-fullscreen', fullscreen),
+  ) : undefined
+  if (stopFullscreen) signal.addEventListener('abort', stopFullscreen, { once: true })
   let collapsed = readDeskCollapsed(window)
   let peeking = false
   let pointerInTrigger = false
@@ -1822,16 +1994,6 @@ function mountDeskLayout(strip) {
     if (!hover.matches) dismissPeek()
   }, { signal })
 
-  const today = document.getElementById('desk-today')
-  let midnightTimer = 0
-  const updateDate = () => {
-    window.clearTimeout(midnightTimer)
-    if (!layout.matches || !today) return
-    const now = new Date()
-    today.textContent = deskDate(now)
-    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-    midnightTimer = window.setTimeout(updateDate, midnight.getTime() - now.getTime())
-  }
   const notebookScroll = document.querySelector('.notebook-scroll')
   const notebookEntries = document.getElementById('notebook-entries')
   const preserveReadingPosition = (/** @type {() => void} */ change) => {
@@ -1869,7 +2031,6 @@ function mountDeskLayout(strip) {
     }
     renderCollapse()
     reflectTopbarWaiting()
-    updateDate()
     strip.setWide(wide)
     const placeList = document.getElementById('places-root')
     if (placeList) placeList.scrollTop = placeTop
@@ -1900,13 +2061,10 @@ function mountDeskLayout(strip) {
   document.addEventListener('keydown', onShortcut, { signal })
   if (layout.matches) apply()
   layout.addEventListener('change', apply)
-  document.addEventListener('visibilitychange', updateDate)
   window.addEventListener('pagehide', () => {
     layout.removeEventListener('change', apply)
     listeners.abort()
     cancelClose()
-    document.removeEventListener('visibilitychange', updateDate)
-    window.clearTimeout(midnightTimer)
   }, { once: true })
 }
 
@@ -1926,12 +2084,12 @@ async function boot() {
       delegate:()=>openConversationDelegation(deps),
       search,
       projects:openConversationProjects,
-      history:async()=>{await terminalWaiting.refresh();return openComputerSessions(()=>home.sessions,session=>addConversationTerminal(session),async()=>{try{const list=/** @type {import('./modules/workbench.js').ListResult} */(await v1(invokeWorkbenchApi,V1.workbench.list));mountHistoryDialog(invokeWorkbenchApi,list.historyProviders??[],async id=>{switchPane('workbench');await openWorkbenchTask(id)},list.agentNames??{})}catch{showToast('暂时读不到电脑上的会话，请稍后再试')}})},
-      navigate:switchPane})
+      history:async()=>{await terminalWaiting.refresh();return openComputerSessions(()=>home.sessions,session=>addConversationTerminal(session),async()=>{try{const list=/** @type {import('./modules/workbench.js').ListResult} */(await v1(invokeWorkbenchApi,V1.workbench.list));mountHistoryDialog(invokeWorkbenchApi,list.historyProviders??[],openDeskTask,list.agentNames??{})}catch{showToast('暂时读不到电脑上的会话，请稍后再试')}})},
+      navigate:navigateDeskPane})
     const topics=mountMemoryTopics({root:/** @type {HTMLElement} */(document.getElementById('memory-topics')),call:invokeWorkbenchApi,
       openMatter:id=>deps.onOpenMatter(id),
-      locateMessage:(id,excerpt)=>{switchPane('overview');return locateConversationMessage(deps,id,excerpt)},
-      manage:()=>switchPane('memory')})
+      locateMessage:(id,excerpt)=>{navigateDeskPane('overview');return locateConversationMessage(deps,id,excerpt)},
+      manage:()=>navigateDeskPane('memory')})
     memoryTopics=topics
     document.getElementById('topbar-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
     window.addEventListener('pagehide',()=>topics.destroy(),{once:true})
@@ -1939,13 +2097,36 @@ async function boot() {
   const rosterAside=document.getElementById('roster-aside'),matterLayer=document.getElementById('conversation-matter-layer')
   if(rosterAside&&matterLayer)rosterDock=createRosterDock({aside:rosterAside,layer:matterLayer,call:invokeWorkbenchApi,wide:()=>window.innerWidth>=1080,
     openTask:async id=>{initWorkbenchPage(deps);await openWorkbenchTask(id)},
-    onClose:()=>stopWorkbenchPolling(),onChange:setDockedMatter,
-    onExpand:async item=>{rosterAside.removeAttribute('data-open');document.getElementById('topbar-roster')?.setAttribute('aria-expanded','false');if(item.kind==='terminal')await openConversationTerminal(invokeWorkbenchApi,item.id);else await openConversationWork(invokeWorkbenchApi,item.id,async id=>{switchPane('workbench');await openWorkbenchTask(id)})}})
+    onClose:()=>stopWorkbenchPolling(),onChange:setDockedMatter,onUserClose:()=>recordDeskNavigation?.(),
+    onExpand:async item=>{
+      rosterAside.removeAttribute('data-open')
+      document.getElementById('topbar-roster')?.setAttribute('aria-expanded','false')
+      let closed = false
+      const close = () => {
+        closed = true
+        expandedDetail = null
+        disposeExpandedDetail = undefined
+        recordDeskNavigation?.()
+      }
+      const result = item.kind === 'terminal'
+        ? await openConversationTerminal(invokeWorkbenchApi, item.id, close)
+        : await openConversationWork(invokeWorkbenchApi, item.id, async id => {
+          switchPane('workbench')
+          await openWorkbenchTask(id)
+          return getViewedWorkbenchTaskId() === id
+        }, close)
+      if (typeof result !== 'function') return result === true
+      if (closed) return false
+      expandedDetail = item
+      disposeExpandedDetail = /** @type {() => void} */ (result)
+      return true
+    }})
   window.addEventListener('pagehide',()=>rosterDock?.destroy(),{once:true})
   const rosterRoot = document.getElementById('roster-list')
   if (rosterRoot) {
     const roster = mountRosterPane({root:rosterRoot,call:invokeWorkbenchApi,onOpen:item=>item.kind==='terminal'?deps.onOpenTerminal(item.id):deps.onOpenMatter(item.id),onItems:items=>{
       nowPage?.setRoster(items)
+      updateConversationRoster(items)
       const button=document.getElementById('topbar-roster');if(button)button.textContent=`在做 ${items.length}`
     }})
     window.addEventListener('pagehide',()=>roster.destroy(),{once:true})
@@ -1959,10 +2140,6 @@ async function boot() {
     const homeButton = document.getElementById('topbar-cc')
     const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,waitingRoot:waitingRoot ?? undefined,
       onCurrent: place => {
-        if (clear) {
-          clear.hidden = !place
-          clear.textContent = place ? `只看 ${place.name} · 回到全部` : ''
-        }
         homeButton?.toggleAttribute('data-place-selected', !!place)
       },
       onSituation: (text, stale) => {
@@ -1971,7 +2148,7 @@ async function boot() {
         situation.toggleAttribute('data-stale', stale)
         renderRail()
       },
-      onSelect:place=>setConversationPlace(place?{name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
+      onSelect:place=>setConversationPlace(place?{key:place.key,name:place.name,matterIds:place.matterIds,messageIds:place.messageIds,sessionIds:place.sessionIds}:null),
       onOpen:target=>target.kind==='terminal'?deps.onOpenTerminal(target.id):deps.onOpenMatter(target.id),
       // 左栏和收起按钮共用 CC 的等待计数。
       onPlaces:places=>{
@@ -1987,15 +2164,21 @@ async function boot() {
     mountDeskLayout(strip)
     clear?.addEventListener('click', () => {
       strip.clear()
+      recordDeskNavigation?.()
       document.getElementById('converse-input')?.focus()
     })
     homeButton?.addEventListener('click', () => {
+      // 窄窗口里点 CC 只回到说话这一页,不取消选着的地方(和原来一样)。
       if (document.documentElement.hasAttribute('data-desk-wide')) strip.clear()
+      recordDeskNavigation?.()
     })
     placesRoot.addEventListener('click', event => {
       if (document.documentElement.hasAttribute('data-desk-wide') && document.body.dataset.pane !== 'overview'
         && event.target instanceof Element && event.target.closest('.place-row')) switchPane('overview')
     }, true)
+    placesRoot.addEventListener('click', event => {
+      if (event.target instanceof Element && event.target.closest('.place-row')) recordDeskNavigation?.()
+    })
     window.addEventListener('pagehide',()=>strip.destroy(),{once:true})
   }
   document.getElementById('topbar-roster')?.addEventListener('click',()=>{
@@ -2051,7 +2234,14 @@ boot()
 window.addEventListener('keydown',event=>{
   const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane:not([hidden])'))
   if(!layer||event.defaultPrevented||document.querySelector('dialog[open]'))return
-  if(event.key==='Escape'){event.preventDefault();switchPane('overview');return}
+  if(event.key==='Escape'){
+    event.preventDefault()
+    if (rosterDock?.item()) {
+      rosterDock.close()
+      recordDeskNavigation?.()
+    } else navigateDeskPane('overview')
+    return
+  }
   if(event.key==='Tab'){
     const controls=[...layer.querySelectorAll('button,input,textarea,select,summary,[tabindex="0"]')].filter(el=>!el.hasAttribute('disabled')&&el.getClientRects().length)
     const first=/** @type {HTMLElement|undefined} */(controls[0]),last=/** @type {HTMLElement|undefined} */(controls.at(-1))

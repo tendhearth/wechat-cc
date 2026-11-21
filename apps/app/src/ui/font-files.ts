@@ -7,3 +7,10 @@ export const FONT_FILES = {
 
 /** 字体的 SIL OFL 许可证随包发出(OFL 要求再分发时附上;metro.config.js 把 .txt 认作资源)。 */
 export const FONT_LICENSE: number = require('../../assets/fonts/OFL.txt')
+
+// 必须与 app.json 的原生登记及字体的 PostScript 名一致。
+export const PEN_FONT_FILES = {
+  'THPenKai-Regular': require('../../assets/fonts/THPenKai-Regular.ttf'),
+  'THPenHand-Regular': require('../../assets/fonts/THPenHand-Regular.ttf'),
+  'THPenFangsong-Regular': require('../../assets/fonts/THPenFangsong-Regular.ttf'),
+} as const

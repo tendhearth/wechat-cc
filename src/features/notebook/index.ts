@@ -171,7 +171,10 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
       const entries = withReferenceDays(rows.map(entry => ({ ...entry, day: selected })), dayOf)
       const pen = store.get('pen')
       const { font, ink, reason } = DEFAULT_OPENING
-      return { day: selected, today, days: [...days], entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
+      // Match localParts' UTC fallback if the configured zone is invalid.
+      let timeZone = 'UTC'
+      try { timeZone = new Intl.DateTimeFormat('en', { timeZone: timezone }).resolvedOptions().timeZone } catch {}
+      return { day: selected, today, timeZone, days: [...days], entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
     },
     write(body, clientId, origin) {
       const entry = append('owner', body, origin, now(), clientId)

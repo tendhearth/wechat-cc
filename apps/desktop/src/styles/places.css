@@ -20,11 +20,10 @@
 .place-dot { width:8px; height:8px; border-radius:50%; }
 .place[data-waiting="true"] .place-dot { background:var(--th-accent); }
 .place-name, .place-line { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.place-name { font-weight:500; color:var(--th-ink); }
-.place-line { color:var(--th-ink-soft); }
-/* 在动、选中的是墨色；等你的、你没看过的再加一点字重（原型：圆点 / 加粗 / 时间三样）。 */
-.place[data-selected="true"] .place-line, .place[data-moving="true"] .place-line { color:var(--th-ink); }
-.place:is([data-waiting="true"],[data-unseen="true"]) .place-line { color:var(--th-ink); font-weight:500; }
+.place-name { font-size:15px; font-weight:var(--th-weight-desk-emphasis); color:var(--th-ink); }
+.place-line { color:var(--th-ink-soft); font-size:13.5px; font-weight:400; }
+/* 等你、在做、还没看过时，那一句用墨色。 */
+.place:is([data-moving="true"],[data-working],[data-waiting="true"],[data-unseen="true"]) .place-line { color:var(--th-ink); }
 .place-time { color:var(--th-ink-soft); font-size:var(--th-size-small); white-space:nowrap; }
 .place-more {
   position:absolute; right:var(--th-space-s); top:5px; display:grid; place-items:center; width:36px; height:36px;
@@ -75,3 +74,18 @@
 .dashboard #roster-list { display:none; }
 #topbar-roster { display:none !important; }
 .roster-dock-missing { margin:0; padding:var(--th-space-l); color:var(--th-ink-soft); }
+
+.places-root :is(.places-hidden-toggle, [data-place-restore]) {
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--th-accent);
+  font: inherit;
+  font-size: var(--th-size-small);
+  cursor: pointer;
+}
+.places-root :is(.places-hidden-toggle, [data-place-restore]):hover { text-decoration: underline; }
+.places-root .places-hidden-toggle { padding-inline: var(--th-space-l); }
+.places-hidden-list { list-style: none; margin: 0; padding: 0 var(--th-space-l); }
+.places-hidden-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--th-space-s); }
+.places-hidden-list li span { overflow-wrap: anywhere; }

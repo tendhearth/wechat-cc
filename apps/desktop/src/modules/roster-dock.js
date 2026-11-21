@@ -3,8 +3,8 @@ import {V1,v1} from '../daemon-client.js'
 import {showWorkDetail} from './conversation-work-detail.js'
 import {setWorkbenchDocked} from './workbench.js'
 /** @typedef {{kind:'matter'|'terminal',id:string}} DockItem */
-/** @param {{aside:HTMLElement,layer:HTMLElement,call:(method:any,path:string,body?:any)=>Promise<any>,openTask:(id:string)=>Promise<void>,wide:()=>boolean,onExpand?:(item:DockItem)=>Promise<unknown>|void,onChange?:(id:string|null)=>void,onClose?:()=>void}} o */
-export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChange,onClose}) {
+/** @param {{aside:HTMLElement,layer:HTMLElement,call:(method:any,path:string,body?:any)=>Promise<any>,openTask:(id:string)=>Promise<void>,wide:()=>boolean,onExpand?:(item:DockItem)=>Promise<unknown>|void,onChange?:(id:string|null)=>void,onClose?:()=>void,onUserClose?:()=>void}} o */
+export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChange,onClose,onUserClose}) {
  const doc=aside.ownerDocument,view=doc.defaultView
  const dock=/** @type {HTMLElement} */(aside.querySelector('#roster-dock'))
  const list=/** @type {HTMLElement} */(aside.querySelector('#roster-list'))
@@ -30,7 +30,7 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
  async function unfold(){const item=current;if(!item)return;close();await onExpand?.(item)}
  async function open(/** @type {DockItem} */item){
   close();if(!alive)return
-  if(!wide()){await onExpand?.(item);return}
+  if(!wide())return (await onExpand?.(item)) === true
   const generation=ticket;current=item
   list.hidden=true;dock.hidden=false;aside.dataset.docked='1';dock.append(toolbar)
   const loading=doc.createElement('p');loading.textContent='正在读取…';dock.append(loading)
@@ -51,6 +51,7 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
    }
    if(!alive||generation!==ticket)return
    if(item.kind==='matter')void v1(call,V1.matter.seen,{body:{id:item.id,surface:'desktop'}}).catch(()=>{})
+   return true
   }catch(error){
    if(!alive||generation!==ticket)return
    if(/404|not_found/.test(String(error)))missing()
@@ -97,6 +98,6 @@ export function createRosterDock({aside,layer,call,openTask,wide,onExpand,onChan
   const target=event.key==='1'?doc.getElementById('converse-input'):event.key==='2'&&current?dock.querySelector(terminalMode?'[data-terminal-input]':'#wb-followup-text'):null
   if(target instanceof HTMLElement){event.preventDefault();target.focus()}
  }
- back.onclick=close;expand.onclick=()=>void unfold();view?.addEventListener('resize',resize);doc.addEventListener('keydown',keys)
- return {open,close,current:()=>current?.id??null,destroy(){close();alive=false;clearInterval(timer);dock.removeEventListener('click',heavy,true);view?.removeEventListener('resize',resize);doc.removeEventListener('keydown',keys);home.remove()}}
+ back.onclick=()=>{close();onUserClose?.()};expand.onclick=()=>void unfold();view?.addEventListener('resize',resize);doc.addEventListener('keydown',keys)
+ return {open,close,item:()=>current,current:()=>current?.id??null,destroy(){close();alive=false;clearInterval(timer);dock.removeEventListener('click',heavy,true);view?.removeEventListener('resize',resize);doc.removeEventListener('keydown',keys);home.remove()}}
 }

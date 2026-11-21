@@ -1,3 +1,4 @@
+import { NotebookCache } from '../state/notebook'
 import { useFonts } from 'expo-font'
 import { DefaultTheme, Stack, ThemeProvider } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
@@ -41,6 +42,7 @@ function Themed() {
   if (!session.ready || fontGate(loaded, error) === 'wait') return <View style={{ flex: 1, backgroundColor: c.paper, justifyContent: 'center', padding: space.xl, gap: space.l }}>{session.loadError && fontGate(loaded, error) !== 'wait' ? <><Txt role="bubble" tone="inkSoft">{t(lang, 'pair.sessionReadFailed')}</Txt><Button kind="secondary" testID="session-load-retry" label={t(lang, 'input.recoveryRetry')} onPress={session.retryLoad} /></> : null}</View>
   return (
     <BackendProvider lang={lang} pairing={session.pairing} inputScope={session.inputScope} pairingEpoch={session.pairingEpoch} pairingTransition={session.pairingTransition} onRevoked={session.dropStoredPairing} onStale={session.forgetStale}>
+      <NotebookCache />
       <PushProvider>
         <ThemeProvider value={theme}>
           <StatusBar style="dark" />
