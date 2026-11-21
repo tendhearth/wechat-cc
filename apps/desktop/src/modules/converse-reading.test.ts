@@ -115,3 +115,51 @@ it('preserves the first visible message when an earlier page is prepended', () =
  expect(h.scroll.children[1]).toBe(first)
  expect(h.latest.hidden).toBe(true)
 })
+
+it('lands on the latest message even when other repaints arrive before the first frame', () => {
+ const window = new Window(); windows.push(window)
+ const document = window.document, scroll = document.createElement('div'), latest = document.createElement('button')
+ document.body.append(scroll, latest)
+ let top = 0
+ Object.defineProperties(scroll, {scrollHeight: {get: () => 600 + scroll.childElementCount * 200}, clientHeight: {value: 300}, scrollTop: {get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, scroll.scrollHeight - 300)) }}})
+ const frames: Function[] = []
+ vi.stubGlobal('requestAnimationFrame', (frame: Function) => { frames.push(frame) })
+ const render = (m: Message) => `<article>${m.text}</article>`
+ const asked: Message = {id: 1, role: 'user', text: '问'}, answered: Message = {id: 2, role: 'cc', text: '答'}
+ const late: Message = {id: 3, role: 'cc', text: '另一路数据晚一步到'}
+ const paint = (messages: Message[], options: {prepend?: boolean, preserve?: boolean} = {}) =>
+   paintConversation(scroll as any, messages, render, '<p>空白</p>', {...options, latest: latest as any})
+ paint([asked, answered])
+ paint([asked, answered, late])
+ paint([asked, answered, late], {preserve: true})
+ expect(scroll.scrollTop).toBe(0)
+ for (const frame of frames.splice(0)) frame()
+ expect(scroll.scrollTop).toBe(scroll.scrollHeight - 300)
+ expect(latest.hidden).toBe(true)
+ // 往上翻一页是主人自己要看旧的:欠着的「跟到最新」作废,位置留在原处。
+ scroll.scrollTop = 0
+ paint([asked, answered, late, {id: 4, role: 'cc', text: '新的一条'}])
+ paint([{id: 5, role: 'cc', text: '更早的一条'}, asked, answered, late, {id: 4, role: 'cc', text: '新的一条'}], {prepend: true})
+ for (const frame of frames.splice(0)) frame()
+ expect(scroll.scrollTop).toBe(0)
+})
+
+it('keeps the earlier-conversation control first in the stream through repaints and the empty state', () => {
+ const h = fixture()
+ const lead = h.document.createElement('button')
+ lead.setAttribute('data-converse-lead', '')
+ h.scroll.prepend(lead)
+ const dated = {...h.first, at: new Date(2026, 10, 18, 12).getTime()}
+ h.paint([dated, h.reply])
+ expect(h.scroll.firstElementChild).toBe(lead)
+ expect(lead.nextElementSibling?.className).toBe('desk-message-date')
+ h.paint([])
+ expect(h.scroll.firstElementChild).toBe(lead)
+ expect(h.scroll.textContent).toContain('空白')
+ h.paint([])
+ expect(h.scroll.querySelectorAll('p')).toHaveLength(1)
+ h.paint([dated, h.reply])
+ expect(h.scroll.firstElementChild).toBe(lead)
+ expect(h.scroll.querySelectorAll('[data-converse-message]')).toHaveLength(2)
+ expect(h.scroll.textContent).not.toContain('空白')
+})

@@ -292,7 +292,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   padding: 14px var(--desk-page-padding);
   gap: 18px;
 }
-[data-desk-wide] #converse-scroll > :first-child { margin-top: auto; }
+[data-desk-wide] #converse-scroll > :first-child,
+[data-desk-wide] #converse-scroll > [data-converse-lead][hidden] + * { margin-top: auto; } /* 内容不满一屏时沉到底;「更早的对话」藏着时由它后面那个来撑 */
 [data-desk-wide] #converse-scroll > * { flex-shrink: 0; }
 [data-desk-wide] .converse-msg { align-items: flex-start; justify-content: flex-start; gap: 0; }
 [data-desk-wide] .converse-speaker {
@@ -450,5 +451,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   to { transform: translateX(0); }
 }
 
-[data-desk-wide] .places-root .places-hidden-toggle,
-[data-desk-wide] .places-hidden-list { padding-left: 28px; }
+/* 和名字那一列对齐。带 id 是因为通用的文字按钮规则(里面有 #desk-place-clear)把 padding 清成 0,权重比类选择器高。 */
+[data-desk-wide] #places-root :is(.places-hidden-toggle, .desk-quiet-toggle) { display: block; min-height: 36px; padding: 0 0 0 30px; }
+[data-desk-wide] #places-root .places-hidden-list { padding: 0 12px 8px 30px; }
+[data-desk-wide] #places-root .places-hidden-list li { min-height: 32px; font-size: 13.5px; }
+[data-desk-wide] #places-root [data-place-restore] { min-height: 28px; color: var(--th-accent); }

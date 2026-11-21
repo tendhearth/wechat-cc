@@ -52,8 +52,11 @@ test('地方名、首日日期和正文各在自己的位置', async ({ page, sh
   await expect(name).toHaveCSS('font-size', '15px')
   await expect(line).toHaveCSS('font-size', '13.5px')
   const scroll = reading(page)
-  const first = scroll.locator(':scope > :first-child')
+  // 流最上面是「更早的对话」(翻到头才看得见),紧接着就是第一天的日期。
+  await expect(scroll.locator(':scope > :first-child')).toHaveAttribute('id', 'converse-earlier')
+  const first = scroll.locator(':scope > :nth-child(2)')
   await expect(first).toHaveClass('desk-message-date')
+  await expect(first).toBeInViewport()
   await expectCentered(first, scroll)
   await expect(page.locator('#desk-today')).toHaveCount(0)
   const title = page.locator('.desk-date-line')
@@ -125,11 +128,15 @@ test('全部对话往上加一页而阅读锚点不跳，收栏后按钮仍居�
   const scroll = reading(page)
   const visibleRows = scroll.locator('[data-converse-message]')
   await expect(visibleRows).toHaveCount(recent.length)
+  // 打开时停在最新一条;「更早的对话」在流的最上面,不压在正文上。
+  await expect(visibleRows.last()).toBeInViewport()
+  await expect(earlier(page)).not.toBeInViewport()
+  await scroll.evaluate(node => { node.scrollTop = 0 })
   await expectCentered(earlier(page), scroll)
   await page.locator('#desk-rail-toggle').click()
   await expect(page.locator('#desk-rail-toggle')).toHaveAttribute('aria-expanded', 'false')
+  await scroll.evaluate(node => { node.scrollTop = 0 })
   await expectCentered(earlier(page), scroll)
-  await scroll.evaluate(node => { node.scrollTop = 330 })
   const anchor = await scroll.evaluate(node => {
     const y = node.getBoundingClientRect().top
     const message = Array.from(node.querySelectorAll('[data-converse-message]')).find(child => child.getBoundingClientRect().bottom > y)!

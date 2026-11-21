@@ -274,7 +274,10 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onSit
     if (hiddenToggle) {
       hiddenOpen = !hiddenOpen
       hiddenToggle.setAttribute('aria-expanded', String(hiddenOpen))
-      root.querySelector('.places-hidden-list')?.toggleAttribute('hidden', !hiddenOpen)
+      const list = root.querySelector('.places-hidden-list')
+      list?.toggleAttribute('hidden', !hiddenOpen)
+      // 入口在名单最底下:展开出来的清单不滚进视野,看着就像点了没反应。
+      if (hiddenOpen) list?.scrollIntoView?.({ block: 'nearest' })
       reflectOverflow()
       return
     }

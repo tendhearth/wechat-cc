@@ -183,8 +183,8 @@ function renderSkeleton(root, deps) {
       </form>
     </div>
     <div id="converse-search-results" class="converse-search-results" role="region" aria-label="搜索结果" aria-live="polite" hidden></div>
-    <div class="converse-page-actions"><button id="converse-earlier" class="desk-text-button" type="button" hidden>更早的对话</button><button id="converse-later" class="desk-text-button" type="button" hidden>后面的对话</button><button id="converse-stop" class="desk-text-button" type="button" hidden>停止这一轮</button></div>
-    <div id="converse-scroll" class="converse-scroll"></div>
+    <div class="converse-page-actions"><button id="converse-later" class="desk-text-button" type="button" hidden>后面的对话</button><button id="converse-stop" class="desk-text-button" type="button" hidden>停止这一轮</button></div>
+    <div id="converse-scroll" class="converse-scroll"><button id="converse-earlier" class="desk-text-button" type="button" data-converse-lead hidden>更早的对话</button></div>
     <button id="converse-place-more" class="converse-latest desk-text-button" type="button" hidden></button>
     <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
     <div id="converse-compose" class="converse-compose">
