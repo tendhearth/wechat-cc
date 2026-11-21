@@ -49,9 +49,10 @@ export function rememberConversationPosition(scroll) {
     (node.hasAttribute('data-converse-message') || node.hasAttribute('data-converse-place-card'))
     && node.getBoundingClientRect().bottom > viewportTop
   )
-  const anchorTop = anchor?.getBoundingClientRect().top ?? 0
+  // 记的是这一条离阅读区顶边多远,不是它在屏幕上的高度:换版式后阅读区自己的位置会变。
+  const anchorTop = anchor && viewportTop !== undefined ? anchor.getBoundingClientRect().top - viewportTop : 0
   return () => {
-    if (anchor && scroll.contains(anchor)) scroll.scrollTop += anchor.getBoundingClientRect().top - anchorTop
+    if (anchor && scroll.contains(anchor)) scroll.scrollTop += anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchorTop
     else scroll.scrollTop = top
     const state = states.get(scroll)
     if (state) state.lastTop = scroll.scrollTop
