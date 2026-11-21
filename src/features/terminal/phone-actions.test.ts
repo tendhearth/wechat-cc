@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
+import { CliActivityPage, PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
 import { openDb, type Db } from '../../lib/db'
 import { makeCliEventHub, type CliEventHub } from '../../app/cli-events'
 import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
@@ -13,8 +13,10 @@ import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { terminalOwnerHandlers } from './phone-routes'
 import { phoneCliSessionRows } from './phone-sessions'
+import { framedTooLargeFor, PHONE_FRAME_BUDGET_BYTES } from '../../domain/matters/phone-scope'
+import { legacyRoutes } from '../phone/legacy-routes'
 import { routePhone } from '../../lib/phone-route-table'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -54,7 +56,7 @@ let relayResult: { ok: true } | { ok: false; error: string }
 let busy: string[]
 beforeEach(() => { windows = new Map(); relayed = []; relayResult = { ok: true }; busy = [] })
 
-function actions(extra: Partial<Parameters<typeof makeCliPhoneActions>[0]> = {}) {
+function actions(extra: Partial<Omit<Parameters<typeof makeCliPhoneActions>[0], 'steps'>> & { steps?: Pick<ReturnType<typeof makeTerminalSteps>, 'view'> } = {}) {
   const core = makeCliReplyCore({
     hub, log: () => {}, dangerously: false,
     holdBusy: (l) => { busy.push(`+${l}`); return () => busy.push(`-${l}`) },
@@ -77,7 +79,7 @@ function actions(extra: Partial<Parameters<typeof makeCliPhoneActions>[0]> = {})
       return other.delete(h)
     },
     ...extra,
-    steps: extra.steps ?? steps,
+    steps: { ...steps, ...extra.steps },
   })
 }
 
@@ -301,6 +303,102 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
       expect(r!.status).toBe(200)
       PHONE_API_SCHEMAS['GET /m/api/cli/activity']!.parse(body)
       expect(body.items.map((i: { text: string }) => i.text)).toEqual(['跑测试', '运行 bun test'])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('保留旧正文的字节,只有新路由显式请求时出全文,翻页不受新增步影响', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-activity-pages-'))
+    try {
+      const path = join(dir, 's.jsonl')
+      const reply = '回复'.repeat(400)
+      const line = (type: string, content: string) => JSON.stringify({ type, message: { content } }) + '\n'
+      const tooLong = '早'.repeat(601)
+      writeFileSync(path, line('user', tooLong) + line('assistant', reply) + line('user', '跑测试') +
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] } }) + '\n')
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'A1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
+      const cliActions = actions()
+      const handlers = terminalOwnerHandlers({ cliActions })
+      const get = async (query: string) => {
+        const req = new Request('http://x/v1/cli/activity?session_id=A1' + query)
+        return (await routePhone(handlers, new URL(req.url), req))!
+      }
+      const legacyItems = [
+        { kind: 'you', text: '早'.repeat(599) + '…', at: null },
+        { kind: 'said', text: reply.slice(0, 599) + '…', at: null },
+        { kind: 'you', text: '跑测试', at: null },
+        { kind: 'step', text: '运行 bun test', at: null, verb: 'run', target: 'bun test' },
+      ]
+      const oldBytes = JSON.stringify({ ok: true, items: legacyItems })
+      expect(await (await get('')).text()).toBe(oldBytes)
+      const aliases = legacyRoutes({
+        v1: async req => (await routePhone(handlers, new URL(req.url), req))!,
+      })
+      const oldRequest = new Request('http://x/m/api/cli/activity?session_id=A1&full=1&limit=1&before=bogus')
+      const aliasResponse = await routePhone(aliases, new URL(oldRequest.url), oldRequest, { caller: { origin: 'device', tier: 'admin' } })
+      expect(await aliasResponse!.text()).toBe(oldBytes)
+      const [row] = phoneCliSessionRows({ list: () => hub.list(), actions: cliActions }) as Array<{ now?: unknown }>
+      expect(row?.now).toEqual(legacyItems[3])
+
+      expect(CliActivityPage.parse(await (await get('&full=1')).json())).toEqual({
+        ok: true, items: [{ ...legacyItems[0], full: tooLong }, { ...legacyItems[1], full: reply }, ...legacyItems.slice(2)], earlier: null,
+      })
+      const latest = CliActivityPage.parse(await (await get('&limit=2')).json())
+      expect(latest.items).toEqual(legacyItems.slice(2))
+      expect(typeof latest.earlier).toBe('string')
+      appendFileSync(path, line('assistant', '新来的步'))
+      const middle = CliActivityPage.parse(await (await get('&limit=1&full=1&before=' + latest.earlier)).json())
+      expect(middle.items).toEqual([{ ...legacyItems[1], full: reply }])
+      expect(typeof middle.earlier).toBe('string')
+      expect(await (await get('&limit=1&before=' + middle.earlier)).json()).toEqual({ ok: true, items: [legacyItems[0]], earlier: null })
+
+      for (const query of ['&full=0', '&full=1&full=1', '&limit=1&limit=2', '&limit=', '&limit=0', '&limit=101', '&limit=1.5',
+        '&limit=1e1', '&before=', '&before=%3F', '&before=bogus', '&before=x&before=y', '&session_id=A1']) {
+        const response = await get(query)
+        expect(response.status, query).toBe(400)
+        expect(await response.json()).toEqual({ ok: false, error: 'invalid' })
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('全文按帧预算收紧,保留页边界和每一步', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-activity-frame-'))
+    try {
+      const path = join(dir, 's.jsonl')
+      const long = '长文'.repeat(20_000)
+      const line = JSON.stringify({ type: 'assistant', message: { content: long } }) + '\n'
+      writeFileSync(path, line)
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'A1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
+      const cliActions = actions()
+      cliActions.activity('A1')
+      appendFileSync(path, line.repeat(18))
+      const handlers = terminalOwnerHandlers({ cliActions })
+      const get = async (query: string) => {
+        const req = new Request('http://x/v1/cli/activity?session_id=A1&limit=18' + query)
+        return (await routePhone(handlers, new URL(req.url), req))!
+      }
+      const shortPage = CliActivityPage.parse(await (await get('')).json())
+      const raw = await (await get('&full=1')).text()
+      expect(framedTooLargeFor(raw, PHONE_FRAME_BUDGET_BYTES)).toBe(false)
+      const page = CliActivityPage.parse(JSON.parse(raw))
+      expect(page.items).toHaveLength(18)
+      expect(typeof page.earlier).toBe('string')
+      expect(page.earlier).toBe(shortPage.earlier)
+      for (const item of page.items) {
+        expect(item.text).toBe(shortPage.items[0]?.text)
+        expect(item.full?.length).toBeGreaterThan(item.text.length)
+        expect(item.full?.length).toBeLessThan(long.length)
+        expect(item.full?.endsWith('…')).toBe(true)
+      }
+      for (let chunk = 0; chunk < 3; chunk++) {
+        appendFileSync(path, line.repeat(27))
+        cliActions.activity('A1')
+      }
+      const more = new Request('http://x/v1/cli/activity?session_id=A1&limit=100&full=1')
+      const compact = await (await routePhone(handlers, new URL(more.url), more))!.text()
+      expect(framedTooLargeFor(compact, PHONE_FRAME_BUDGET_BYTES)).toBe(false)
+      const compactPage = CliActivityPage.parse(JSON.parse(compact))
+      expect(compactPage.items).toHaveLength(100)
+      expect(compactPage.items.every(item => item.full === undefined)).toBe(true)
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 

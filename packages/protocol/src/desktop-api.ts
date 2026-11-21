@@ -24,7 +24,7 @@ import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 import z from 'zod'
 import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import {
-  PHONE_API_SCHEMAS, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent, MatterPermission, PermissionScript, PermissionScriptChunk,
+  PHONE_API_SCHEMAS, PhoneErrorResponse, CliActivityPage, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent, MatterPermission, PermissionScript, PermissionScriptChunk,
   MatterAgent,MatterNote,MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
@@ -2600,6 +2600,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   // Phone-only and binary chunk routes retain their existing JSON response contracts.
   ...Object.fromEntries(WIRE_ROUTE_ALIASES.filter(a => !a.readers.includes('desktop'))
     .map(a => [a.to, PHONE_API_SCHEMAS[a.from]])),
+  'GET /v1/cli/activity': z.union([CliActivityPage, PhoneErrorResponse]),
   'GET /v1/health': HealthResponse,
   'POST /v1/atelier/share': AtelierShareResponse,
   'POST /v1/memory/read': MemoryReadResponse,

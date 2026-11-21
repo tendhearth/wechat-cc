@@ -1,5 +1,6 @@
 import { PHONE_FRAME_BUDGET_BYTES, framedTooLargeFor } from '../../domain/matters/phone-scope'
 import { ownsMethod, type PhoneHandler } from '../../lib/phone-route-table'
+import { ACTIVITY_FULL_MAX, ACTIVITY_MAX_ITEMS, ACTIVITY_TEXT_MAX, DETAIL_MAX } from './cli-activity'
 import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from './phone-actions'
 
 /**
@@ -40,14 +41,30 @@ export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<str
     'GET /v1/cli/activity': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
       if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
-      const id = url.searchParams.get('session_id')
-      if (!id || !SESSION_ID_RE.test(id) || url.searchParams.getAll('session_id').length > 1) return json({ ok: false, error: 'invalid' }, 400)
+      const q = url.searchParams
+      const id = q.get('session_id'), full = q.get('full'), limit = q.get('limit'), before = q.get('before')
+      if (!id || !SESSION_ID_RE.test(id) || ['session_id', 'full', 'limit', 'before'].some(key => q.getAll(key).length > 1) ||
+        (full !== null && full !== '1') || (limit !== null && !/^(?:[1-9][0-9]?|100)$/.test(limit)) ||
+        (before !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(before))) return json({ ok: false, error: 'invalid' }, 400)
+      const paged = full !== null || limit !== null || before !== null
       try {
-        const r = deps.cliActions.activity(id)
-        if (!r.ok) return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
+        const r = deps.cliActions.activity(id, paged ? { limit: limit === null ? ACTIVITY_MAX_ITEMS : Number(limit), ...(before !== null ? { before } : {}) } : undefined)
+        if (!r.ok) return json({ ok: false, error: r.error }, r.error === 'invalid' ? 400 : r.error === 'not_found' ? 404 : 409)
         // 旧中继一帧 512 KiB:每步文字上限减半直到放得下(不删步)。
         const cut = (t: string, max: number) => (t.length > max ? t.slice(0, max - 1) + '…' : t)
-        return fitted(max => ({ ok: true, items: r.items.map(i => ({ ...i, text: cut(i.text, max), ...(i.detail ? { detail: cut(i.detail, max * 3) } : {}) })) }), 600)
+        return fitted(max => ({
+          ok: true,
+          items: r.items.map(({ full: stored, ...i }) => {
+            const text = cut(i.text, Math.min(ACTIVITY_TEXT_MAX, max))
+            const expanded = full === '1' && i.kind !== 'step' && stored ? cut(stored, max) : undefined
+            return {
+              ...i, text,
+              ...(i.detail ? { detail: cut(i.detail, full === '1' ? Math.min(DETAIL_MAX, max * 3) : max * 3) } : {}),
+              ...(expanded && expanded.length > text.length ? { full: expanded } : {}),
+            }
+          }),
+          ...(paged ? { earlier: r.earlier ?? null } : {}),
+        }), full === '1' ? ACTIVITY_FULL_MAX : ACTIVITY_TEXT_MAX)
       } catch { return json({ ok: false, error: 'unavailable' }, 503) }
     }),
     // 拍板终端会话等批准的那一项 —— 与微信「y/n 码」同一条路(features/terminal/phone-actions.ts)。

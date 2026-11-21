@@ -24,5 +24,5 @@ export function parseAll(jsonl: string, source: CliSource, max = ACTIVITY_MAX_IT
       return { ref: hit.ref, item: items[hit.ref]!, keepOutput: hit.keepOutput }
     },
   })
-  return items.slice(-max)
+  return items.slice(-max).map(({ full: _full, ...item }) => item)
 }
