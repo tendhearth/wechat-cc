@@ -209,7 +209,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       const name = agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? ''))
       const time = placeTime({ moving:false, updatedAt:item.updatedAt }, now)
       const title = item.kind === 'terminal' || item.terminal ? [name,time].filter(Boolean).join(' · ') : item.title
-      return `<button type="button" data-thread-session="${esc(item.key)}" aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}<span>${esc(title)}</span></button>`
+      return `<button type="button" data-thread-session="${esc(item.key)}" data-group="${item.group}" aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}<span>${esc(title)}</span><i aria-hidden="true"></i></button>`
     }
     const markup = visible.map(button).join('') + (earlier.length
       ? `<button type="button" class="desk-text-button" data-thread-more aria-expanded="${openEarlier}">更早的 ${earlier.length} 次</button><div class="thing-earlier-sessions"${openEarlier ? '' : ' hidden'}>${earlier.map(button).join('')}</div>`

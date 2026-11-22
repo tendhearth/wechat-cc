@@ -628,6 +628,10 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 }
 [data-desk-wide] .thing-sessions [data-thread-session] > span:not(.th-agents) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-desk-wide] .thing-sessions [data-thread-session][aria-pressed="true"] { color: var(--th-ink); border-bottom-color: var(--th-ink); }
+/* 页签上的小点:这一次在等你定(强调色)或正在做(暖色),别的不画 */
+[data-desk-wide] .thing-sessions [data-thread-session] i { display: none; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--th-warn); }
+[data-desk-wide] .thing-sessions [data-thread-session]:is([data-group="waiting"], [data-group="working"]) i { display: block; }
+[data-desk-wide] .thing-sessions [data-thread-session][data-group="waiting"] i { background: var(--th-accent); }
 [data-desk-wide] .thing-steps li[data-error]::before {
   display: inline-block;
   flex: none;
