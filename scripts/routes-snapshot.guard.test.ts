@@ -102,6 +102,7 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
       // 主人 2026-11-16 授权桌面一键接入：只新增元数据/白名单计划，终端仍由原生打开；不开放 phone/link/session。
       'GET /v1/llm/setup', 'POST /v1/llm/setup',
       'GET /v1/roster', // 名单只给 operator 与配对设备。
+      'POST /v1/labs', 'GET /v1/places/map', 'POST /v1/places/map/pin', 'POST /v1/places/map/outline', // 桌面导图实验。
       'GET /v1/places', 'POST /v1/places/move', 'POST /v1/places/hide', // 地方:读同名单;顺序 / 收起只给 operator(2026-11-18)。
       'POST /v1/places/seen', // 坐回来:看过这一行,桌面和配好的手机都能记(2026-11-18)。
       'GET /v1/notebook', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper',

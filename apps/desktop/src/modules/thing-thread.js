@@ -1,5 +1,6 @@
 // @ts-check
 import { executorName } from './executor-names.js'
+import { mountLabMap } from './lab-map.js'
 import { V1, v1 } from '../daemon-client.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { placeTime } from './places-strip.js'
@@ -28,13 +29,24 @@ function stateOf(item) {
 
 /**
  * @param {{root:HTMLElement,call:Call,openTask:(id:string,host:HTMLElement)=>Promise<void>,closeTask:()=>void,
- * home:()=>void,onSession:()=>void,onWaiting:(value:{key:string,request?:string}|null)=>void}} options
+ * home:()=>void,onLabWrite?:()=>void,onSession:()=>void,onWaiting:(value:{key:string,request?:string}|null)=>void}} options
  */
-export function mountThingThread({root,call,openTask,closeTask,home,onSession,onWaiting}) {
+export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,onSession,onWaiting}) {
   const heading = /** @type {HTMLElement} */ (root.querySelector('.thing-name'))
   const status = /** @type {HTMLElement} */ (root.querySelector('.thing-status'))
   const tabs = /** @type {HTMLElement} */ (root.querySelector('.thing-sessions'))
   const tray = /** @type {HTMLElement} */ (root.querySelector('.thing-content'))
+  const mapHost = /** @type {HTMLElement|null} */ (root.querySelector('.lab-map'))
+  const switcher = /** @type {HTMLElement|null} */ (root.querySelector('.lab-map-seg'))
+  const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('desk-lab-map'))
+  const note = document.getElementById('desk-lab-map-note')
+  const labDescription = note?.textContent ?? ''
+  const wide = window.matchMedia('(min-width: 900px)')
+  /** @type {Set<string>} */ const maps = new Set()
+  /** @type {Set<string>} */ const aspectMaps = new Set()
+  let experiment = false, alive = true
+  /** @type {(()=>void)|undefined} */ let stopMap
+  /** @type {{element:Element,top:number}|undefined} */ let reading
   /** @type {Map<string,{host:HTMLElement,thread:ReturnType<typeof mountTerminalThread>}>} */
   const terminals = new Map()
   /** @type {Map<string,string>} */ const remembered = new Map()
@@ -46,6 +58,134 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
   let generation = 0, openEarlier = false, tabsMarkup = ''
   /** @type {{key:string,request?:string}|null} */ let inlineWaiting = null
 
+  // 在图上时线是藏着的,那张就地的卡看不见:这时不拦顶上的纸条。
+  function tellWaiting() { onWaiting(stopMap ? null : inlineWaiting) }
+
+  /** @param {import('./lab-map-model.js').MapItem} item */
+  function mapTarget(item) {
+    if (!place) return undefined
+    const { matterId, sessionId } = item.from
+    const items = placeSessions(place, roster)
+    return items.find(row => matterId && row.kind === 'matter' && row.id === matterId)
+      ?? items.find(row => sessionId && (row.terminal?.sessionId === sessionId || row.kind === 'terminal' && row.id === sessionId))
+  }
+
+  /** @param {import('./lab-map-model.js').MapItem} item */
+  function mapLink(item) {
+    if (!place) return undefined
+    const { matterId, sessionId } = item.from
+    return (matterId ? linkedItem(place,{kind:'matter',id:matterId}) : undefined)
+      ?? (sessionId ? linkedItem(place,{kind:'terminal',id:sessionId}) : undefined)
+  }
+
+  /** @param {import('@wechat-cc/protocol').PlaceOutlineSourceT} source */
+  function outlineTarget(source) {
+    if (!place || source.kind !== 'session' || !source.sessionId) return undefined
+    return placeSessions(place, roster).find(row =>
+      (row.terminal?.sessionId ?? (row.kind === 'terminal' ? row.id : undefined)) === source.sessionId)
+  }
+
+  /** @param {Item} target @param {Item|undefined} [link] */
+  function returnToLine(target, link) {
+    if (!place) return
+    maps.delete(place.key)
+    openEarlier ||= splitSessions(placeSessions(place, roster)).earlier.includes(target)
+    open(place, target.key, link)
+    onSession()
+    const tab = tabs.hidden ? null : /** @type {HTMLElement|null} */ (tabs.querySelector('[aria-pressed="true"]'))
+    const focus = tab ?? heading
+    focus.focus({ preventScroll: true })
+  }
+
+  function stopGraph() {
+    if (!stopMap || !mapHost) return
+    stopMap()
+    stopMap = undefined
+    mapHost.hidden = true
+    tray.hidden = false
+    root.removeAttribute('data-lab-map')
+    drawTabs()
+    tellWaiting()
+    if (reading?.element.isConnected) reading.element.scrollTop = reading.top
+    reading = undefined
+  }
+
+  function reflectGraph() {
+    if (!mapHost || !switcher) return
+    const enabled = experiment && wide.matches && !!place
+    switcher.hidden = !enabled
+    if (enabled && place && maps.has(place.key)) {
+      if (!stopMap) {
+        const element = tray.querySelector('.thing-terminal:not([hidden]) .thing-scroll')
+        reading = element ? {element, top:element.scrollTop} : undefined
+        tray.hidden = tabs.hidden = true
+        root.setAttribute('data-lab-map', '')
+        mapHost.hidden = false
+        const { key } = place
+        stopMap = mountLabMap({host:mapHost,key,call,
+          aspects:aspectMaps.has(key),
+          remember:aspects => { if (aspects) aspectMaps.add(key); else aspectMaps.delete(key) },
+          canJumpSource:source => !!outlineTarget(source),
+          jumpSource:source => {
+            const target = outlineTarget(source)
+            if (target) returnToLine(target)
+          },
+          agent:item => {
+            const row = mapTarget(item)
+            const agent = row && agentOf(row)
+            return agent ? agentName(agent.id, () => agent.name || executorName(agent.id)) : ''
+          },
+          canJump:item => !!mapTarget(item) || !!mapLink(item),
+          jump:item => {
+            const row = mapTarget(item)
+            const target = row ?? mapLink(item)
+            if (target) returnToLine(target, row ? undefined : target)
+          },
+        })
+        tellWaiting()
+      }
+    } else stopGraph()
+    for (const button of switcher.querySelectorAll('button')) {
+      button.setAttribute('aria-pressed', String((button.dataset.mapView === 'map') === !!stopMap))
+    }
+  }
+
+  const resize = () => reflectGraph()
+  wide.addEventListener('change', resize)
+  /** @param {boolean} enabled */
+  function setPlaceMap(enabled) {
+    if (enabled === experiment) return
+    experiment = enabled
+    toggle?.setAttribute('aria-checked', String(enabled))
+    if (!enabled) maps.clear()
+    reflectGraph()
+  }
+
+  async function togglePlaceMap() {
+    if (!toggle || toggle.disabled) return
+    toggle.disabled = true
+    if (note) note.textContent = labDescription
+    try {
+      const result = await v1(call, V1.places.labs, { body: { placeMap: !experiment } })
+      if (result?.ok !== true || typeof result.placeMap !== 'boolean') throw Error('invalid_labs')
+      if (!alive) return
+      setPlaceMap(result.placeMap)
+      onLabWrite?.()
+    } catch {
+      if (alive && note) note.textContent = '没改成，再试一次。'
+    } finally {
+      toggle.disabled = false
+    }
+  }
+  toggle?.addEventListener('click', togglePlaceMap)
+  switcher?.addEventListener('click', event => {
+    const button = event.target instanceof HTMLButtonElement ? event.target : null
+    if (!button || !place || !experiment || !wide.matches) return
+    if (button.dataset.mapView === 'map') maps.add(place.key)
+    else maps.delete(place.key)
+    reflectGraph()
+  })
+
   /** @param {string} name @param {string} state */
   function showStatus(name, state) {
     const label = [name, state].filter(Boolean).join(' · ')
@@ -55,7 +195,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
   function drawTabs() {
     if (!place) return
     const items = placeSessions(place, roster)
-    tabs.hidden = items.length < 2
+    tabs.hidden = !!stopMap || items.length < 2
     if (tabs.hidden) return
     const now = Date.now()
     const {visible, earlier} = splitSessions(items)
@@ -94,7 +234,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
         onWaiting: request => {
           if (selected?.key !== key || !place) return
           inlineWaiting = request ? {key,request} : null
-          onWaiting(inlineWaiting)
+          tellWaiting()
         },
       })
       cached = {host,thread}
@@ -114,7 +254,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
       else child.remove()
     }
     inlineWaiting = null
-    onWaiting(null)
+    tellWaiting()
   }
 
   /** @param {Item|undefined} item */
@@ -158,7 +298,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
           loading.remove()
           dispose = closeTask
           inlineWaiting = {key:item.key}
-          onWaiting(inlineWaiting)
+          tellWaiting()
           await openTask(item.id,detailHost)
         } else {
           loading.remove()
@@ -171,7 +311,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
         dispose?.()
         dispose = undefined
         inlineWaiting = null
-        onWaiting(null)
+        tellWaiting()
         loading.textContent = '这件事暂时读不到。'
         detailHost.replaceChildren(loading)
       }
@@ -181,7 +321,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
   /** @param {Place} next @param {string} [key] @param {Item} [direct] */
   function open(next,key,direct) {
     const changed = place?.key !== next.key
-    if (changed) { openEarlier = false; linked = undefined }
+    if (changed) { stopGraph(); openEarlier = false; linked = undefined }
     if (direct) linked = direct
     else if (key) linked = undefined
     place = next
@@ -199,6 +339,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
       else if (item) showStatus(executorName(agentOf(item)?.id ?? ''),stateOf(item))
     }
     drawTabs()
+    reflectGraph()
   }
 
   tabs.addEventListener('click',event => {
@@ -211,14 +352,28 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
     onSession()
   })
 
+  /** @param {Place} where @param {Target} target @returns {Item|undefined} */
+  function linkedItem(where, target) {
+    const belongs = target.kind === 'matter' ? where.matterIds.includes(target.id) : where.sessionIds.includes(target.id)
+    if (!belongs) return
+    const key = `${target.kind}:${target.id}`
+    const waiting = where.waiting?.itemKey === key
+    return {...target,key,title:where.name,group:waiting ? 'waiting' : 'back',
+      status:waiting ? 'waiting' : 'replied',agents:[],quiet:false,unseen:where.unseen,updatedAt:where.updatedAt ?? 0}
+  }
+
   return {
     open,
+    /** @param {string} key */
+    forgetView(key) { maps.delete(key); reflectGraph() },
     close() {
       if (!place) return
+      stopGraph()
       leaveContent()
       place = null
       selected = undefined
       linked = undefined
+      reflectGraph()
     },
     /** @param {Item[]} next */
     setRoster(next) {
@@ -236,22 +391,19 @@ export function mountThingThread({root,call,openTask,closeTask,home,onSession,on
         terminals.delete(key)
       }
     },
+    setPlaceMap,
     current: () => selected,
     /** @param {Place} where @param {Target} target */
     find(where, target) {
       return placeSessions(where, roster).find(item => target.kind === item.kind && target.id === item.id
         || target.kind === 'terminal' && item.terminal?.sessionId === target.id)
     },
-    /** @param {Place} where @param {Target} target @returns {Item|undefined} */
-    linkedItem(where, target) {
-      const belongs = target.kind === 'matter' ? where.matterIds.includes(target.id) : where.sessionIds.includes(target.id)
-      if (!belongs) return
-      const key = `${target.kind}:${target.id}`
-      const waiting = where.waiting?.itemKey === key
-      return {...target,key,title:where.name,group:waiting ? 'waiting' : 'back',
-        status:waiting ? 'waiting' : 'replied',agents:[],quiet:false,unseen:where.unseen,updatedAt:where.updatedAt ?? 0}
-    },
+    linkedItem,
     destroy() {
+      alive = false
+      toggle?.removeEventListener('click', togglePlaceMap)
+      wide.removeEventListener('change', resize)
+      stopGraph()
       leaveContent()
       for (const entry of terminals.values()) entry.thread.destroy()
       terminals.clear()

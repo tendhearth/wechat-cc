@@ -217,6 +217,10 @@ const ROUTE_TABLE = {
   'GET /v1/matter/owner-chat/file': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
   'GET /v1/roster': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 「地方」(2026-11-18,设计稿 2026-11-18-cc-two-sides-design.md §3):正面上半那几行。读跟名单一样;顺序 / 收起只在桌面改。
+  'POST /v1/labs': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/places/map': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/places/map/pin': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/places/map/outline': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/places': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/places/move': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/places/hide': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },

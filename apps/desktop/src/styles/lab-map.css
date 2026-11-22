@@ -1,0 +1,154 @@
+/* 「⋯」里归到实验的那一组:一个小标题,下面是还在试的几样。 */
+.desk-labs-title { color: var(--th-ink-soft); font: var(--th-size-meta) var(--th-font-serif); letter-spacing: var(--th-tracking-meta); border-top: 1px solid var(--th-hair); padding-top: 10px; }
+/* 「设置」提到这一组前面以后,窄窗口里它和下面几样同一条左边线。 */
+.topbar-more > div > #settings-open { text-align: start; }
+.desk-labs { display: none; }
+@media (min-width: 900px) {
+  .desk-labs {
+    display: grid;
+    gap: 2px;
+    min-width: 16em;
+    padding: 0 0 4px;
+    color: var(--th-ink-soft);
+    font: var(--th-size-meta) var(--th-font-serif);
+  }
+  .dash-topbar .desk-labs [role="switch"] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 30px;
+    color: var(--th-ink);
+  }
+  .desk-labs [role="switch"]::after {
+    content: "关";
+    color: var(--th-ink-soft);
+  }
+  .desk-labs [role="switch"][aria-checked="true"]::after {
+    content: "开";
+    color: var(--th-accent);
+  }
+  .desk-labs p { margin: 0; }
+}
+
+.lab-map-seg {
+  display: inline-flex;
+  flex: none;
+  margin-inline-start: auto;
+  border: 1px solid var(--th-hair);
+  border-radius: 999px;
+}
+.lab-map-seg button {
+  border: 0;
+  border-radius: inherit;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--th-ink-soft);
+  font: inherit;
+  font-size: var(--th-size-meta);
+  cursor: pointer;
+}
+.lab-map-seg button[aria-pressed="true"] { color: var(--th-ink); background: var(--th-rail); }
+.lab-map {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 6px 0 12px;
+  gap: 6px;
+}
+/* 字的几行和标题行同一条左边线、同一个右边;图本身铺满这一页的宽。 */
+.lab-map-bar, .lab-map-state, .lab-map-details {
+  width: min(100%, var(--desk-page-width));
+  box-sizing: border-box;
+  margin-inline: auto;
+  padding-inline: calc(var(--desk-page-padding) + var(--desk-speaker-offset)) var(--desk-page-padding);
+}
+.lab-map-state { display: grid; justify-items: start; gap: 4px; }
+.lab-map-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--th-warn);
+  font-size: var(--th-size-meta);
+  min-height: 30px;
+}
+/* 图里能点的字用强调色。桌面那条通用规则里带着一个 id,这里也得带上才压得过。 */
+#thing-thread .lab-map .desk-text-button { color: var(--th-accent); }
+.lab-map-note { margin: 0; color: var(--th-ink-soft); }
+.lab-map-viewport {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  border-block: 1px solid var(--th-hair);
+}
+.lab-map-viewport > div { flex: 1; min-width: 0; min-height: 0; }
+.lab-map-viewport .map-container { font: 14px/1.5 var(--th-font-serif); cursor: grab; }
+.lab-map-viewport .map-container:active { cursor: grabbing; }
+.lab-map-viewport .map-container me-tpc { font-weight: 400; }
+.lab-map-viewport .map-container me-root me-tpc { font-size: 18px; font-weight: 500; padding: 6px 18px; }
+.lab-map-viewport .map-container me-main > me-wrapper > me-parent > me-tpc { padding: 3px 12px; font-weight: 500; }
+.lab-map-viewport .map-container me-tpc[data-nodeid^="mel:"] { cursor: pointer; }
+.lab-map-viewport .map-container me-epd { visibility: hidden; pointer-events: none; }
+.lab-map-details {
+  flex: none;
+  height: 10rem;
+  overflow: auto;
+  padding-block: 4px;
+  overflow-wrap: anywhere;
+}
+.lab-map-details p { margin: 0 0 4px; }
+.lab-map-meta, .lab-map-body { color: var(--th-ink-soft); font-size: var(--th-size-meta); }
+.lab-map-body { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.lab-map-write-error { color: var(--th-ink-soft); }
+.lab-map-moves {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 12px;
+  color: var(--th-ink-soft);
+  font-size: var(--th-size-meta);
+}
+#thing-thread .lab-map-moves button[aria-disabled="true"] { color: var(--th-ink-soft); }
+.lab-map-viewport .map-container me-tpc[data-nodeid^="mel:"]:focus-visible {
+  outline: 2px solid var(--th-accent);
+  outline-offset: 2px;
+}
+.lab-map-viewport .map-container .tags { display: inline-block; }
+.lab-map-viewport .map-container .tags span {
+  background: transparent;
+  color: var(--th-ink-soft);
+  font-size: var(--th-size-meta);
+  font-weight: 400;
+  margin: 0;
+  padding: 0 0 0 .35em;
+}
+.lab-map-viewport .map-container me-tpc .insert-preview.show {
+  background: color-mix(in srgb, var(--th-accent) 24%, transparent);
+}
+.lab-map-viewport .map-container me-tpc[data-nodeid^="meg:"] .insert-preview:not(.in),
+.lab-map-viewport .map-container me-tpc[data-nodeid^="mel:"] .insert-preview.in { display: none; }
+.lab-map-viewport .map-container .mind-elixir-ghost {
+  background: color-mix(in srgb, var(--th-accent) 10%, var(--th-paper));
+  border: 1px solid var(--th-accent);
+  color: var(--th-accent);
+  font-weight: 400;
+}
+
+.lab-map-bar .lab-map-cut { margin-inline: 8px auto; }
+.lab-outline-state .lab-map-meta { margin: 0; }
+.lab-map-viewport me-tpc[data-outline-status]::before {
+  content: "";
+  display: inline-block;
+  inline-size: .45em;
+  block-size: .45em;
+  margin-inline-end: .45em;
+  border-radius: 50%;
+  background: var(--outline-status);
+  vertical-align: middle;
+}
+.lab-map-viewport me-tpc[data-outline-status="open"] { --outline-status: var(--th-accent); }
+.lab-map-viewport me-tpc[data-outline-status="active"] { --outline-status: var(--th-warn); }
+.lab-map-viewport me-tpc[data-outline-status="decided"] { --outline-status: var(--th-ink); }
+.lab-map-viewport me-tpc[data-outline-status="done"] { --outline-status: var(--th-ink-soft); }
+.lab-map-viewport me-tpc[data-outline-status="noted"] { --outline-status: var(--th-hair); }

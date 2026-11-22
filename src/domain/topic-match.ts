@@ -173,24 +173,50 @@ export function pickEntries(text: string, t: MatchTopic, max = MAX_ENTRIES, pref
     .map(x => x.e)
 }
 
+type TopicRenderOptions = { bodies?: boolean; preferredEntryIds?: ReadonlyMap<string, string>; ongoingFirst?: boolean }
+
+function topicRows(text: string, picked: readonly MatchTopic[], opts: TopicRenderOptions) {
+  return picked.map(raw => {
+    const t = withoutRoutineTopicNoise(raw)
+    const es = pickEntries(text, t, MAX_ENTRIES, opts.preferredEntryIds?.get(t.id), opts.ongoingFirst)
+    return {
+      title: `话题「${t.title}」${t.summary ? `—— ${t.summary}` : ''}`,
+      rows: es.map((e, i) => {
+        const body = (opts.bodies ?? true) && i < 2 && e.body ? `:${e.body.slice(0, 160)}` : ''
+        return { id: e.id, line: `- [${KIND_LABEL[e.kind] ?? e.kind}] ${e.line}${e.due ? `(期限 ${e.due})` : ''}${body}` }
+      }),
+    }
+  })
+}
+
 /**
  * 信封里 `<topics>` 的正文(不含标签本身)。最相关的两条带细节;`bodies: false` ⇒ 只有索引行
  * (交给执行者的简报:细节里常有账号、地址这类,执行者用不着 —— 整合者 2026-11-05 第 2 条)。
  */
-export function renderTopicsBlock(text: string, picked: readonly MatchTopic[], max = BLOCK_MAX, opts: { bodies?: boolean; preferredEntryIds?: ReadonlyMap<string, string>; ongoingFirst?: boolean } = {}): string {
-  const bodies = opts.bodies ?? true
-  const parts: string[] = []
-  for (const raw of picked) {
-    const t = withoutRoutineTopicNoise(raw)
-    const es = pickEntries(text, t, MAX_ENTRIES, opts.preferredEntryIds?.get(t.id), opts.ongoingFirst)
-    const lines = es.map((e, i) => {
-      const body = bodies && i < 2 && e.body ? `:${e.body.slice(0, 160)}` : ''
-      return `- [${KIND_LABEL[e.kind] ?? e.kind}] ${e.line}${e.due ? `(期限 ${e.due})` : ''}${body}`
-    })
-    parts.push([`话题「${t.title}」${t.summary ? `—— ${t.summary}` : ''}`, ...lines].join('\n'))
-  }
-  const out = parts.join('\n\n')
+export function renderTopicsBlock(text: string, picked: readonly MatchTopic[], max = BLOCK_MAX, opts: TopicRenderOptions = {}): string {
+  const out = topicRows(text, picked, opts).map(({ title, rows }) => [title, ...rows.map(row => row.line)].join('\n')).join('\n\n')
   return [...out].length > max ? [...out].slice(0, max).join('') + '…' : out
+}
+
+/** Keep the ids of rows that fit in the remaining prompt budget. */
+export function renderTopicsWithinBudget(text: string, picked: readonly MatchTopic[], max: number, opts: TopicRenderOptions) {
+  let block = '', remaining = max
+  const entryIds: string[] = []
+  for (const { title, rows } of topicRows(text, picked, opts)) {
+    const heading = (block ? '\n\n' : '') + title
+    const size = [...heading].length
+    if (size > remaining) break
+    block += heading
+    remaining -= size
+    for (const { id, line } of rows) {
+      const size = [...line].length + 1
+      if (size > remaining) return { block, entryIds }
+      block += '\n' + line
+      remaining -= size
+      entryIds.push(id)
+    }
+  }
+  return { block, entryIds }
 }
 
 export interface TopicSearchHit {

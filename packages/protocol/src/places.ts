@@ -54,10 +54,15 @@ export const Place = z.object({
 })
 export type PlaceT = z.infer<typeof Place>
 
+export const LabsRequest = z.object({ placeMap: z.boolean() }).strict()
+export const LabsResponse = LabsRequest.extend({ ok: z.literal(true) })
+export type LabsRequestT = z.infer<typeof LabsRequest>
+
 export const PlacesResponse = z.object({
   places: z.array(Place),
   hidden: z.array(Place.pick({ key: true, name: true })).optional(),
   version: z.string(),
+  labs: z.object({ placeMap: z.literal(true) }).optional(),
 })
 export type PlacesResponseT = z.infer<typeof PlacesResponse>
 
@@ -65,3 +70,72 @@ export const PlaceMoveRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16
 export const PlaceHideRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16}$/), hidden: z.boolean() }).strict()
 export const PlaceSeenRequest = z.object({ key: z.string().regex(/^p:[a-f0-9]{16}$/) }).strict()
 export const PlaceWriteResponse = z.object({ ok: z.literal(true) })
+
+export const PlaceMapBranch = z.enum(['open','active','decided','done','noted'])
+export type PlaceMapBranchT = z.infer<typeof PlaceMapBranch>
+export const PlaceMapPinRequest = z.object({
+  key: PlaceMoveRequest.shape.key,
+  itemId: z.string().min(1),
+  branch: PlaceMapBranch.nullable(),
+}).strict()
+export type PlaceMapPinRequestT = z.infer<typeof PlaceMapPinRequest>
+
+export const PlaceMapItem = z.object({
+  id: z.string(),
+  kind: z.enum(['fact', 'decision', 'commitment', 'progress', 'conclusion', 'session', 'task', 'ask']),
+  status: z.string(),
+  pin: PlaceMapBranch.optional(),
+  line: z.string(),
+  body: z.string().optional(),
+  topic: z.object({ id: z.string(), title: z.string() }).optional(),
+  from: z.object({
+    source: z.enum(['chat', 'work', 'delegate', 'terminal', 'task']),
+    matterId: z.string().optional(),
+    sessionId: z.string().optional(),
+    at: z.number(),
+  }),
+})
+export type PlaceMapItemT = z.infer<typeof PlaceMapItem>
+
+export const PlaceOutlineRequest = PlaceSeenRequest
+export const PlaceOutlineRunResponse = z.object({
+  ok: z.literal(true),
+  state: z.enum(['running', 'ready', 'empty']),
+  unchanged: z.literal(true).optional(),
+})
+export type PlaceOutlineRunResponseT = z.infer<typeof PlaceOutlineRunResponse>
+
+const PlaceOutlineSource = z.object({
+  kind: z.enum(['session', 'entry']),
+  sessionId: z.string().optional(),
+  matterId: z.string().optional(),
+  agent: z.string().optional(),
+  at: z.number().optional(),
+})
+const PlaceOutlineAspects = z.array(z.object({
+  name: z.string(),
+  items: z.array(z.object({
+    id: z.string(), line: z.string(), status: PlaceMapBranch,
+    sources: z.array(PlaceOutlineSource),
+  })),
+}))
+export const PlaceOutline = z.object({
+  state: z.enum(['none', 'running', 'ready', 'empty', 'failed']),
+  at: z.number().optional(),
+  error: z.enum(['no_private_model', 'bad_output', 'stale', 'interrupted', 'unavailable']).optional(),
+  stale: z.boolean().optional(),
+  canRun: z.boolean(),
+  aspects: PlaceOutlineAspects.optional(),
+})
+export type PlaceOutlineT = z.infer<typeof PlaceOutline>
+export type PlaceOutlineSourceT = z.infer<typeof PlaceOutlineSource>
+
+export const PlaceMapResponse = z.object({
+  ok: z.literal(true),
+  place: Place.pick({ key: true, name: true }),
+  items: z.array(PlaceMapItem),
+  truncated: z.boolean(),
+  revision: z.string(),
+  outline: PlaceOutline.optional(),
+})
+export type PlaceMapResponseT = z.infer<typeof PlaceMapResponse>

@@ -3,12 +3,12 @@ import { isTaskCachePath } from './task-cache-paths'
 import { describe, it, expect } from 'vitest'
 import { readFileSync, statSync, existsSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { color, fontFamily, renderTokensCss } from '../packages/design-tokens/src/index'
+import { color, fontFamily, renderDesktopTokensCss } from '../packages/design-tokens/src/index'
 import { palette } from '../apps/app/src/ui/tokens'
 
 describe('one set of design tokens across desktop and phone', () => {
   it('apps/desktop/src/tokens.css is up to date (run: bun scripts/build-design-tokens.ts)', () => {
-    expect(readFileSync(new URL('../apps/desktop/src/tokens.css', import.meta.url), 'utf8')).toBe(renderTokensCss())
+    expect(readFileSync(new URL('../apps/desktop/src/tokens.css', import.meta.url), 'utf8')).toBe(renderDesktopTokensCss())
   })
   it('phone palette is the shared palette (no mirror to drift)', () => {
     expect(palette).toBe(color)

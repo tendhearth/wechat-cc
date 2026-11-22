@@ -24,6 +24,7 @@
     <link rel="stylesheet" href="./styles/pdf-reader.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
     <link rel="stylesheet" href="./styles/desk-two-pane.css" />
+    <link rel="stylesheet" href="./styles/lab-map.css" />
     <link rel="stylesheet" href="./styles/notebook.css" />
     <link rel="stylesheet" href="./styles/record-reader.css" />
     <link rel="stylesheet" href="./styles/todos.css" />
@@ -432,11 +433,16 @@
             <button class="dash-nav-link" data-pane="memory">记忆<span id="memory-count" hidden></span></button>
             <button class="dash-nav-link" data-pane="recollections">回忆</button>
             <details class="topbar-more"><summary aria-label="更多">⋯</summary><div>
+              <button id="settings-open" type="button">设置</button>
+              <div class="desk-labs-title" id="desk-labs-title">实验</div>
               <button class="dash-nav-link" data-pane="atelier">画室</button>
               <button class="dash-nav-link" data-pane="todos">待办</button>
               <button class="dash-nav-link" data-pane="a2a-agents">觅食</button>
               <button class="dash-nav-link" data-pane="sessions" data-backstage-entry="true">后厨<span id="sessions-count" hidden></span></button>
-              <button id="settings-open" type="button">设置</button>
+              <section class="desk-labs" aria-labelledby="desk-labs-title">
+                <button id="desk-lab-map" type="button" role="switch" aria-label="把一件事画成图" aria-checked="false" aria-describedby="desk-lab-map-note">把一件事画成图</button>
+                <p id="desk-lab-map-note" aria-live="polite">还在试。关掉就没有，不影响别的。开着时，你在图上摆过的，CC 说话和终端里的 agent 开场时会知道。</p>
+              </section>
             </div></details>
           </nav>
         </header>
@@ -459,9 +465,14 @@
             <header class="thing-heading">
               <h2 id="thing-name" class="thing-name" tabindex="-1"></h2>
               <span class="thing-status"></span>
+              <div class="lab-map-seg" role="group" aria-label="一件事的视图" hidden>
+                <button type="button" data-map-view="line" aria-pressed="true">线</button>
+                <button type="button" data-map-view="map" aria-pressed="false">图</button>
+              </div>
             </header>
             <div class="thing-sessions" role="group" aria-label="这件事的几次会话" hidden></div>
             <div class="thing-content"></div>
+            <section class="lab-map" aria-label="一件事的图" hidden></section>
           </article>
 
           <!-- Hidden shim: keeps the IDs that JS modules

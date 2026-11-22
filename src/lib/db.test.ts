@@ -1652,3 +1652,38 @@ it.each([0, 118])('creates both notebook tables when migrating from version %i',
       .toEqual([{ name: 'notebook_entries' }, { name: 'notebook_settings' }])
   } finally { db.close() }
 })
+
+it('adds strict map placements when upgrading a real v119 database', () => {
+  const db = migratedTo(119)
+  try {
+    const table = () => db.query("SELECT name, strict FROM pragma_table_list WHERE name='place_map_pins'").get()
+    expect(table()).toBeNull()
+    runMigrations(db, migrations)
+    expect(table()).toEqual({ name:'place_map_pins', strict:1 })
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version:migrations.length })
+    const insert = db.query("INSERT INTO place_map_pins VALUES ('p:test','e:entry',?,?)")
+    expect(() => insert.run('unknown', '2026-11-21')).toThrow()
+    insert.run('open', '2026-11-21')
+    expect(() => insert.run('done', '2026-11-22')).toThrow()
+  } finally { db.close() }
+})
+
+it('adds one strict outline row per place when upgrading a real v120 database', () => {
+  const db = migratedTo(120)
+  try {
+    const table = () => db.query("SELECT name, strict FROM pragma_table_list WHERE name='place_outlines'").get()
+    expect(table()).toBeNull()
+    db.query("INSERT INTO place_map_pins VALUES ('p:test','e:old','done','2026-11-21')").run()
+    runMigrations(db, migrations)
+    expect(table()).toEqual({ name:'place_outlines', strict:1 })
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version:migrations.length })
+    expect(db.query('SELECT branch FROM place_map_pins').get()).toEqual({branch:'done'})
+    const add = db.query("INSERT INTO place_outlines(place_key,state,fingerprint,started_ts) VALUES ('p:test',?,'test','2026-11-21')")
+    expect(() => add.run('unknown')).toThrow()
+    add.run('running')
+    expect(() => add.run('ready')).toThrow()
+    expect(db.query('SELECT result_json, call_day, error, finished_ts FROM place_outlines').get()).toEqual({
+      result_json:'', call_day:'', error:'', finished_ts:'',
+    })
+  } finally { db.close() }
+})

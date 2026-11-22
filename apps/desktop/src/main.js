@@ -129,6 +129,7 @@ function findThing(target) {
 function openThing({place,item,direct}) {
   rosterDock?.close()
   if (document.body.dataset.pane !== 'thing') switchPane('thing')
+  thingThread?.forgetView(place.key)
   thingThread?.open(place,item.key,direct ? item : undefined)
   deskPlaces?.selectKey(place.key)
 }
@@ -1873,6 +1874,7 @@ function mountDeskHistory(strip, signal) {
       if (!deskWide()) { switchPane('overview'); strip.selectKey(next.key); return true }
       const item = detail && thingThread?.find(next,detail)
       if (detail && !item) return false
+      thingThread?.forgetView(next.key)
       if (item) openThing({place:next,item})
       else { switchPane('thing'); thingThread?.open(next); strip.selectKey(next.key) }
       return true
@@ -2246,6 +2248,7 @@ async function boot() {
     const clear = document.getElementById('desk-place-clear')
     const homeButton = document.getElementById('topbar-cc')
     const strip=mountPlacesStrip({root:placesRoot,call:invokeWorkbenchApi,waitingRoot:waitingRoot ?? undefined,
+      onPlaceMap: enabled => thingThread?.setPlaceMap(enabled),
       onCurrent: place => {
         homeButton?.toggleAttribute('data-place-selected', !!place)
         if (deskWide()) reflectTopbarWaiting()
@@ -2305,6 +2308,7 @@ async function boot() {
           original.after(matterLayer)
         },
         home:()=>{strip.clear();switchPane('converse');recordDeskNavigation?.()},
+        onLabWrite:()=>void strip.refreshAfterWrite(),
         onSession:()=>recordDeskNavigation?.(),
         onWaiting:value=>strip.setInlineWaiting(value),
       })

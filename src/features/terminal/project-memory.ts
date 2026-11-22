@@ -1,3 +1,6 @@
+import { performance } from 'node:perf_hooks'
+import { placedPastEntryIds, renderPlacedItems } from '../../domain/place-map-prompt'
+import type { PlaceMapPromptReader, PlacesReader } from '../../ports/places'
 import { allowedTopicEntryIds, localTopicContext, sameTopicMachine, readableTopicMetadata } from '../../lib/topic-provenance'
 /** SessionStart memory: local evidence only, no model calls or production-state reads in the hook. */
 import { readFile, realpath, stat, readdir } from 'node:fs/promises'
@@ -85,10 +88,45 @@ export function resolveProjectTopic(cwd: string, identity: ProjectIdentity | nul
     : { topicId: null, reason: ids.length > 1 ? 'ambiguous' : 'no_match' }
 }
 
-export function renderProjectMemory(topic: MatchTopic): string {
-  const header = 'CC 记下的这个项目的近况,可能过时,以仓库为准。\n'
-  const block = renderTopicsBlock('', [{ ...topic, summary: '' }], 1200 - [...header].length - 1, { bodies: false, ongoingFirst: true })
-  return header + block
+const memoryHeader = 'CC 记下的这个项目的近况,可能过时,以仓库为准。\n'
+const memoryMax = 1200
+
+export function renderProjectMemory(topic: MatchTopic, suffix = ''): string {
+  const max = memoryMax - [...memoryHeader].length - 1 - (suffix ? [...suffix].length + 2 : 0)
+  const block = renderTopicsBlock('', [{ ...topic, summary: '' }], max, { bodies: false, ongoingFirst: true })
+  return memoryHeader + block + (suffix ? '\n\n' + suffix : '')
+}
+
+async function withPlacedMemory(
+  places: PlaceMapPromptReader & Pick<PlacesReader, 'placeForPath'>,
+  request: ProjectMemoryRequest, topic: MatchTopic | null, deadline: number,
+  allowed: () => boolean, log: (line: string) => void,
+): Promise<string | null> {
+  const started = performance.now()
+  if (started >= deadline) return null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    if (!places.placeMapEnabled() || performance.now() >= deadline) return null
+    return await Promise.race([
+      Promise.resolve().then(async () => {
+        const key = places.placeForPath(request.cwd)
+        if (!key || performance.now() >= deadline) return null
+        const items = await places.placedItems(key)
+        if (performance.now() >= deadline || !places.placeMapEnabled() || !allowed()) return null
+        const suffix = renderPlacedItems(items)
+        if (!suffix) return null
+        const hidden = placedPastEntryIds(items)
+        const entries = topic?.entries.filter(entry => !hidden.has(entry.id))
+        const context = topic && entries?.length ? renderProjectMemory({ ...topic, entries }, suffix) : memoryHeader + suffix
+        const finished = performance.now()
+        if (finished >= deadline) return null
+        log(`place=${key} count=${items.length} elapsedMs=${Math.round(finished - started)}`)
+        return context
+      }),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), deadline - performance.now()) }),
+    ])
+  } catch { return null }
+  finally { clearTimeout(timer) }
 }
 
 /** Shared evidence resolver. Provenance is anchored to the original matter project,
@@ -179,10 +217,13 @@ export function makeProjectTopicResolver(db: Db, owner: string, topics: readonly
   },{current})
 }
 
-export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; owner: string | null }; identity?: typeof projectIdentity; timeoutMs?: number; log(line: string): void }) {
+export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; owner: string | null }; identity?: typeof projectIdentity; timeoutMs?: number; places?: () => (PlaceMapPromptReader & Pick<PlacesReader, 'placeForPath'>) | null; log(line: string): void }) {
   const threads = makeThreadsStore(d.db, { filterSources: true })
   return async (request: ProjectMemoryRequest): Promise<{ context: string; reason: string }> => {
+    const timeoutMs = Math.min(d.timeoutMs ?? 400, 400)
+    const deadline = performance.now() + timeoutMs
     const compute = async () => {
+      let placement: { topic: MatchTopic | null; allowed: () => boolean } | undefined
       let context = '', reason = 'error', topicId: string | null = null
       try {
         const cfg = d.config()
@@ -201,18 +242,30 @@ export function makeProjectMemory(d: { db: Db; config(): { enabled: boolean; own
           if(resolver.current(request.cwd)?.topicId!==topicId){topicId=null;reason='no_match'}
           else if (topic?.entries.length) context = renderProjectMemory(topic)
           else if (topic) reason = 'no_live_entries'
+          const owner = cfg.owner
+          placement = { topic: topicId ? topic : null, allowed: () => {
+            const current = d.config()
+            return current.enabled && current.owner === owner
+              && (!topic || threads.contextAllowed?.(owner, [topic], topic.entries.map(e => e.id)) !== false)
+          } }
         }
       } catch { reason = 'error' }
-      return { context, reason, topicId }
+      return { context, reason, topicId, placement }
     }
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       const result = await Promise.race([
         compute(),
-        new Promise<{ context: string; reason: string; topicId: string | null }>(resolve => {
-          timer = setTimeout(() => resolve({ context: '', reason: 'timeout', topicId: null }), Math.min(d.timeoutMs ?? 400, 400))
+        new Promise<Awaited<ReturnType<typeof compute>>>(resolve => {
+          timer = setTimeout(() => resolve({ context: '', reason: 'timeout', topicId: null, placement: undefined }), timeoutMs)
         }),
       ])
+      clearTimeout(timer)
+      const places = result.placement && d.places?.()
+      if (places && result.placement) {
+        const context = await withPlacedMemory(places, request, result.placement.topic, deadline, result.placement.allowed, d.log)
+        if (context) result.context = context
+      }
       d.log(`session=${JSON.stringify(request.session_id)} source=${request.source} topic=${result.topicId ?? '-'} chars=${[...result.context].length} reason=${result.reason}`)
       return { context: result.context, reason: result.reason }
     } finally { if (timer !== undefined) clearTimeout(timer) }

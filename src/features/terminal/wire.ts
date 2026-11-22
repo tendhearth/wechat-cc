@@ -63,6 +63,7 @@ import { makeProjectMemory } from './project-memory'
 export type CliSessionsWorkbench = TodayWorkbench & {matterApprovalStatus?(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller):boolean;matterApprovalConsume?(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller):void} & { conflictsExternal(cwd: string, source: string, sessionId: string): boolean }
 
 export interface WireTerminalDeps {
+  places?: () => import('../../ports/places').PlacesReader | null
   stateDir: string
   dangerously: boolean
   db: Db
@@ -381,7 +382,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     actions: phoneActions,
     executorName: (id: string) => boot.registry.namesOf(id).name,
   })
-  const projectMemory = makeProjectMemory({ db, config: () => {
+  const projectMemory = makeProjectMemory({ db, places: d.places, config: () => {
     const cfg = loadCompanionConfig(stateDir)
     return { enabled: cfg.project_memory_into_sessions !== false, owner: cfg.default_chat_id }
   }, log: line => log('PROJECT_MEMORY', line) })

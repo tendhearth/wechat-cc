@@ -1,10 +1,70 @@
-import { PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
+import { PlaceOutlineRequest, LabsRequest, PlaceMapPinRequest, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
 import type { InternalApiDeps, RouteTable } from '../../daemon/internal-api/types'
 import { readFailure } from './routes'
 
 export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): RouteTable {
   const unavailable = { status: 503, body: { error: 'unavailable' } }
+  const labOff = { status: 409, body: { error: 'lab_off' } }
   return {
+    'POST /v1/labs': (_query, body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      const input = LabsRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      try {
+        const { placeMap } = input.data
+        return deps.places?.setPlaceMap(placeMap) ? { status: 200, body: { ok: true, placeMap } } : unavailable
+      } catch {
+        deps.log?.('PLACES', 'labs settings unavailable')
+        return unavailable
+      }
+    },
+    'POST /v1/places/map/pin': async (_query, body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      if (!deps.places) return unavailable
+      if (!deps.places.placeMapEnabled()) return labOff
+      const input = PlaceMapPinRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      try {
+        const error = await deps.places.pin(input.data)
+        if (error === 'lab_off') return labOff
+        if (error) return { status: error === 'place_map_item_fixed' ? 409 : 404, body: { error } }
+        return { status: 200, body: { ok: true } }
+      } catch {
+        deps.log?.('PLACES', 'unavailable')
+        return unavailable
+      }
+    },
+    'POST /v1/places/map/outline': async (_query, body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      if (!deps.places) return unavailable
+      if (!deps.places.placeMapEnabled()) return labOff
+      const input = PlaceOutlineRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      try {
+        const result = await deps.places.startOutline?.(input.data.key)
+        if (!result || result === 'unavailable') return unavailable
+        if (result === 'lab_off') return labOff
+        if (result === 'place_not_found') return { status: 404, body: { error: result } }
+        if (result === 'outline_quota') return { status: 409, body: { error: result } }
+        return { status: 200, body: result }
+      } catch {
+        deps.log?.('PLACE_OUTLINE', 'unavailable')
+        return unavailable
+      }
+    },
+    'GET /v1/places/map': async (query, _body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      if (!deps.places) return unavailable
+      try {
+        if (!deps.places.placeMapEnabled()) return labOff
+        const result = await deps.places.map(query.get('key') ?? '', query.get('outline') === '1')
+        if (!deps.places.placeMapEnabled()) return labOff
+        return result ? { status: 200, body: result } : { status: 404, body: { error: 'place_not_found' } }
+      } catch {
+        deps.log?.('PLACES', 'map unavailable')
+        return unavailable
+      }
+    },
     'GET /v1/places': (_query, _body, caller, ctx) => {
       if (caller?.origin !== 'operator' && caller?.origin !== 'device') return { status: 403, body: { error: 'forbidden' } }
       try {

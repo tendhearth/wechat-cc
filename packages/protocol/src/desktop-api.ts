@@ -1,6 +1,6 @@
 import { NotebookChatReadRequest, NotebookChatReadResponse, NotebookJotRequest, NotebookJotResponse, NotebookPageResponse, NotebookPaperRequest, NotebookPaperResponse, NotebookStrikeRequest, NotebookStrikeResponse, NotebookWriteRequest, NotebookWriteResponse } from './notebook'
 import { RosterResponse } from './roster'
-import { PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest, PlacesResponse, PlaceWriteResponse } from './places'
+import { PlaceOutlineRequest, PlaceOutlineRunResponse, LabsRequest, LabsResponse, PlaceMapPinRequest, PlaceMapResponse, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest, PlacesResponse, PlaceWriteResponse } from './places'
 import { OptionalReplyMetadata } from './reply-attribution'
 import {EntryRequestId} from './entry-request-id'
 import { CliProjectMemoryRequest } from './cli-project-memory'
@@ -2497,6 +2497,9 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/places/move': PlaceMoveRequest,
   'POST /v1/places/hide': PlaceHideRequest,
   'POST /v1/places/seen': PlaceSeenRequest,
+  'POST /v1/labs': LabsRequest,
+  'POST /v1/places/map/pin': PlaceMapPinRequest,
+  'POST /v1/places/map/outline': PlaceOutlineRequest,
   // atelier
   'POST /v1/atelier/share': AtelierShareRequest,
 
@@ -2710,6 +2713,10 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/notebook/chat/jot': NotebookJotResponse,
   'POST /v1/notebook/chat/read': NotebookChatReadResponse,
   'GET /v1/places': PlacesResponse,
+  'GET /v1/places/map': PlaceMapResponse,
+  'POST /v1/labs': LabsResponse,
+  'POST /v1/places/map/pin': PlaceWriteResponse,
+  'POST /v1/places/map/outline': PlaceOutlineRunResponse,
   'POST /v1/places/move': PlaceWriteResponse,
   'POST /v1/places/hide': PlaceWriteResponse,
   'POST /v1/places/seen': PlaceWriteResponse,

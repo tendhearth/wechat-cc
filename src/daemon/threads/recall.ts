@@ -1,3 +1,5 @@
+import { placedPastEntryIds, renderPlacedItems, type PlacedItem } from '../../domain/place-map-prompt'
+import type { PlaceMapPromptReader, PlacesReader } from '../../ports/places'
 import { PHASE_NAME } from '../../domain/task-phase'
 import type { TaskCandidate } from '../../features/workbench'
 /**
@@ -11,7 +13,7 @@ import {LEDGER_DATA_HEAD,LEDGER_DATA_END} from '../../adapters/store/matter-ledg
 import { TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
 import type { ProjectActivity } from '../../ports/topic-activity'
 import type { ThreadsStore, TopicEntry, ThreadRecord } from '../../lib/threads-store'
-import { isSubstantiveTopicQuery, matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, searchTopics, topicJudgePrompt, withoutRoutineTopicNoise, MAX_TOPICS, MAX_ENTRIES, TOPIC_FALLBACK_MAX_CANDIDATES, type MatchTopic, type TopicJudgeSelection, type TopicSearchHit } from '../../domain/topic-match'
+import { isSubstantiveTopicQuery, matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, renderTopicsWithinBudget, BLOCK_MAX, searchTopics, topicJudgePrompt, withoutRoutineTopicNoise, MAX_TOPICS, MAX_ENTRIES, TOPIC_FALLBACK_MAX_CANDIDATES, type MatchTopic, type TopicJudgeSelection, type TopicSearchHit } from '../../domain/topic-match'
 
 /** 快判预算小于 mw-recall 的 4 秒总限，为读索引和记忆留出余量。 */
 export const TOPIC_JUDGE_TIMEOUT_MS = TURN_JUDGE_TIMEOUT_MS
@@ -36,6 +38,7 @@ export interface ResolveOpts {
   log?: (tag: string, line: string) => void
   /** false ⇒ 只放索引行、不带细节(交给执行者的简报)。缺省带。 */
   bodies?: boolean
+  placements?: (picked: readonly MatchTopic[]) => Promise<PlacedItem[]>
 }
 
 async function judge(text: string, cands: MatchTopic[], reason: 'ambiguous' | 'zero-candidates', o: ResolveOpts): Promise<TopicJudgeSelection | null> {
@@ -89,9 +92,21 @@ export async function resolveTopicRecall(text: string, topics: readonly MatchTop
     return [`项目「${t.title}」此刻：${a.waiting} 个等你，${a.running} 个在跑，${a.unread} 个做完未看。`,
       ...value.sessions.slice(0,3).map(s => `- ${s.executor}：${s.latestStep}（${new Date(s.updatedAt).toISOString()}）`)]
   }).join('\n').slice(0,600)
-  const rendered = [renderTopicsBlock(text, picked, live ? 600 : undefined, { bodies: o.bodies ?? true, preferredEntryIds }),live].filter(Boolean).join('\n')
-  // 渲染里挑了哪几条,跟 renderTopicsBlock 用同一个挑法
-  const entryIds = picked.flatMap(t => pickEntries(text, t, MAX_ENTRIES, preferredEntryIds.get(t.id)).map(e => e.id))
+  const items = o.placements ? await o.placements(picked) : undefined
+  const suffix = items ? renderPlacedItems(items) : ''
+  const renderOptions = { bodies: o.bodies ?? true, preferredEntryIds }
+  let rendered: string, entryIds: string[]
+  if (suffix && items) {
+    const hidden = placedPastEntryIds(items)
+    const filtered = picked.map(topic => ({ ...topic, entries: topic.entries.filter(e => !hidden.has(e.id)) }))
+    const max = BLOCK_MAX - [...suffix].length - (live ? [...live].length + 2 : 1)
+    const fitted = renderTopicsWithinBudget(text, filtered, live ? Math.min(600, max) : max, renderOptions)
+    rendered = [fitted.block, live, suffix].filter(Boolean).join('\n')
+    entryIds = fitted.entryIds
+  } else {
+    rendered = [renderTopicsBlock(text, picked, live ? 600 : undefined, renderOptions),live].filter(Boolean).join('\n')
+    entryIds = picked.flatMap(t => pickEntries(text, t, MAX_ENTRIES, preferredEntryIds.get(t.id)).map(e => e.id))
+  }
   // A readable relay title still contains executor data. Index-only recall must
   // retain its data boundary even though it omits the fenced body.
   const relayed=picked.some(t=>t.entries.some(e=>entryIds.includes(e.id)&&e.body?.startsWith(LEDGER_DATA_HEAD)))
@@ -113,6 +128,7 @@ export async function loadMatchTopics(threads: ThreadsStore, chatId: string): Pr
 }
 
 export interface TopicRecallDeps {
+  places?: PlaceMapPromptReader & Pick<PlacesReader, 'placeForEntries'>
   activity?: (chatId:string) => Promise<Map<string, ProjectActivity>>
   onAdopt?: (chatId: string, requestId: string, result: TopicRecallResult, messageIds: string[]) => void
   threads: ThreadsStore
@@ -135,7 +151,20 @@ export function makeTopicRecall(d: TopicRecallDeps): TopicRecall {
       const contextAllowed = () => d.isOwner(chatId) && (d.threads.contextAllowed?.(chatId, topics, topics.flatMap(t=>t.entries.map(e=>e.id))) ?? true)
       const activity = await d.activity?.(chatId)
       if (!contextAllowed()) return null
-      const r = await resolveTopicRecall(text, topics, { activity, bodies:false, cheapEval: d.cheapEval(), ...(d.timeoutMs !== undefined ? { timeoutMs: d.timeoutMs } : {}), log: d.log })
+      const places = d.places
+      const placements = places?.placeMapEnabled() ? async (picked: readonly MatchTopic[]) => {
+        const started = Date.now()
+        try {
+          if (!places.placeMapEnabled() || !contextAllowed()) return []
+          const key = places.placeForEntries(chatId, picked.flatMap(t => t.entries.map(e => e.id)))
+          if (!key) return []
+          const items = await places.placedItems(key)
+          if (!places.placeMapEnabled() || !contextAllowed()) return []
+          if (items.length) d.log('PLACES', `place=${key} count=${items.length} elapsedMs=${Date.now() - started}`)
+          return items
+        } catch { return [] }
+      } : undefined
+      const r = await resolveTopicRecall(text, topics, { activity, bodies:false, placements, cheapEval: d.cheapEval(), ...(d.timeoutMs !== undefined ? { timeoutMs: d.timeoutMs } : {}), log: d.log })
       if (!contextAllowed()) return null
       d.log('TOPICS', `recall chat=${chatId} via=${r?.via ?? 'index-none'} elapsedMs=${Date.now() - started} topics=${r?.topicIds.join(',') ?? ''}`)
       if (r && d.onAdopt) r.adopt = (requestId, messageIds = []) => {

@@ -13,7 +13,7 @@
 // 后加的几条各自的红 / 绿写在 README 的场景表下面。
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { routesForToken } from '../internal-api/route-tiers'
@@ -600,6 +600,63 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     }
     expect(failures).toEqual([])
   }, SWEEP_REQUEST_TIMEOUT_MS * (OPERATOR_GET_ROUTES.length + 1))
+
+  it('lab map: 实验「把一件事画成图」的开关、读图、挪、梳理在整只 daemon 上走得通,关掉就没有', async () => {
+    // 这四条接口(#1021–#1024)的单元测试都是手拼的 reader;名单和地方那两条就是这样带着 503 发过两版。
+    type Places = { places?: { key: string; name: string }[]; labs?: { placeMap?: boolean }; error?: string }
+    type MapBody = { items?: { id: string; kind: string; pin?: string }[]; outline?: { state?: string; canRun?: boolean; error?: string }; error?: string }
+    const mapOf = (key: string, outline = false) => desktop<MapBody>('GET', `/v1/places/map?key=${encodeURIComponent(key)}${outline ? '&outline=1' : ''}`)
+    // 主人在一个项目里开过一次终端会话。临时目录不算「地方」,所以用这份仓库自己的目录;只有一句话,不会推「完成了」。
+    const session = 'sandbox-lab-map-session'
+    const event = (kind: 'prompt' | 'session_end') => desktop('POST', '/v1/cli/event',
+      { source: 'claude', kind, session_id: session, cwd: process.cwd(), machine: hostname(), idle_s: 0, ...(kind === 'prompt' ? { text: '沙盒里的一句话' } : {}) }, 'trusted')
+    const before = new Set((await desktop<Places>('GET', '/v1/places')).body.places?.map(p => p.key))
+    expect((await event('prompt')).status).toBe(200)
+
+    // 关着:地方列表不带 labs,图的接口说实验没开
+    const off = await desktop<Places>('GET', '/v1/places')
+    expect(off.status, JSON.stringify(off.body.error ?? null)).toBe(200)
+    expect(off.body.labs).toBeUndefined()
+    const place = off.body.places?.find(p => !before.has(p.key))
+    expect(place, '那次会话所在的项目应该成了一个地方(仓库放在临时目录下时不成立)').toBeTruthy()
+    const key = place!.key
+    expect([(await mapOf(key)).status, (await mapOf(key)).body.error]).toEqual([409, 'lab_off'])
+
+    expect((await desktop('POST', '/v1/labs', { placeMap: true })).status).toBe(200)
+    try {
+      const on = await desktop<Places>('GET', '/v1/places')
+      expect(on.body.labs).toEqual({ placeMap: true })
+      const missing = await mapOf('sandbox-missing-place', true)
+      expect([missing.status, missing.body.error]).toEqual([404, 'place_not_found'])
+
+      const map = await mapOf(key, true)
+      expect(map.status, JSON.stringify(map.body.error ?? null)).toBe(200)
+      const item = map.body.items?.find(i => i.kind === 'session')
+      expect(item, '那次终端会话应该在图上').toBeTruthy()
+      expect(map.body.outline).toMatchObject({ state: 'none', canRun: true })
+
+      // 挪到「没解决的」,再放回去
+      expect((await desktop('POST', '/v1/places/map/pin', { key, itemId: item!.id, branch: 'open' })).status).toBe(200)
+      expect((await mapOf(key)).body.items?.find(i => i.id === item!.id)?.pin).toBe('open')
+      expect((await desktop('POST', '/v1/places/map/pin', { key, itemId: item!.id, branch: null })).status).toBe(200)
+      expect((await mapOf(key)).body.items?.find(i => i.id === item!.id)?.pin).toBeUndefined()
+
+      // 梳理:真的走到了私密通道上的模型替身。替身回的不是 JSON ⇒「这次没梳理出来」,当天还能再试;不碰外网
+      const start = await desktop<{ ok?: boolean; state?: string; error?: string }>('POST', '/v1/places/map/outline', { key })
+      expect([start.status, start.body.state]).toEqual([200, 'running'])
+      await expect.poll(async () => (await mapOf(key, true)).body.outline?.state, { timeout: 15_000 }).not.toBe('running')
+      expect((await mapOf(key, true)).body.outline).toMatchObject({ state: 'failed', error: 'bad_output', canRun: true })
+      expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+    } finally {
+      expect((await desktop('POST', '/v1/labs', { placeMap: false })).status).toBe(200)
+      await event('session_end')
+    }
+    const after = await desktop<Places>('GET', '/v1/places')
+    expect(after.body.labs).toBeUndefined()
+    expect((await mapOf(key)).status).toBe(409)
+    expect((await desktop('POST', '/v1/places/map/pin', { key, itemId: 'x', branch: 'open' })).status).toBe(409)
+    expect((await desktop('POST', '/v1/places/map/outline', { key })).status).toBe(409)
+  })
 
   it('guest path: a stranger writes ⇒ neutral reply + the owner is asked; owner approves ⇒ the stranger is onboarded and talks to CC in a locked-down session that carries none of the owner\'s memory', async () => {
     const before = spawnOptions.length

@@ -1,0 +1,6 @@
+mind-elixir 5.15.1 (MIT) — https://github.com/SSShooter/mind-elixir-core
+取自 https://cdn.jsdelivr.net/npm/mind-elixir@5.15.1/dist/ (npm 包的发行文件,2026-08-05 发布),2026-11-21 取。
+sha256:
+ec31b5fe4986a89a1a195b90f8f557f6c2ebb27e9ae815b9cf03930dc365111a  MindElixir.js
+56bf9a67508c618c0b56883f638f350c2fc1b931fa5a071902b7e20679393ae0  MindElixir.css
+945ce1477efcf5e45be0b8901176a5b0361215df462961f6b6d0f7370f8a5a4d  LICENSE

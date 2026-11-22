@@ -1,3 +1,5 @@
+import { makeLabsSettings } from '../../adapters/store/labs-settings'
+import { makeProjectTopicResolver } from '../../features/terminal'
 import { makePlacesReader, makeRosterReader, type RosterReaderDeps } from '../../features/roster'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import { ownerLedgerConversation } from '../../lib/matter-ledger-access'
@@ -474,9 +476,34 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     isOwner: chatId => { const mode = boot.coordinator.getMode(chatId).kind; return chatId === ownerChatId() && (mode === 'solo' || mode === 'primary_tool') },
     executorName: id => boot.registry.namesOf(id).name,
   })
+  const rosterDeps: RosterReaderDeps | null = opts.matters ? {
+    matters:{list:filter=>{
+      const rows=opts.matters!.list(filter),agents=opts.matters!.agents(rows.map(m=>m.id))
+      return rows.map(m=>({...m,agents:agents.get(m.id)??[]}))
+    },get:id=>{
+      const m=opts.matters!.get(id)
+      return m?{...m,agents:opts.matters!.agents([id]).get(id)??[]}:null
+    }},
+    terminals:opts.rosterTerminals??(()=>[]),
+    seen:makeMatterSeen(db,opts.proposals?.desktop),
+    executorName:id=>boot.registry.namesOf(id).name,
+    ...(opts.workbench?{workbench:opts.workbench,relay:opts.workbench.rosterRelay}:{}),
+  } : null
+  const roster = rosterDeps ? makeRosterReader(rosterDeps) : null
+  // 「地方」:同一份名单数据,往回看 30 天、按项目归拢;顺序存在 places 表(v117)。
+  const places = rosterDeps ? makePlacesReader({
+    roster: rosterDeps, store: makePlacesStore(db), labs: makeLabsSettings(stateDir), opinion: opts.workbench?.waitingOpinion,
+    mapWorkbench: opts.workbench?.rosterRead,
+    outlines: { evaluator: () => boot.registry.getCheapEval({ private: true }), holdBusy: boot.holdBusy, log },
+    mapTopics: {
+      db, owner: ownerChatId,
+      makeResolver: (db, owner, topics, roots) => makeProjectTopicResolver(db, owner, topics, undefined, roots, { includeDoneHistory: true }),
+    },
+  }) : null
   // 话题 T2:每一轮按话题调记忆,只在主人自己的对话里(微信入站在 mw-recall,App 那一轮在 wire-converse)。
   const topicSeen=makeMatterSeen(db,opts.proposals?.desktop),topicExecutorName=(id:string)=>boot.registry.namesOf(id).name
   const topicRecall = makeTopicRecall({
+    places: places ?? undefined,
     activity: chatId => projectActivities(db, chatId, topicSeen, undefined, opts.workbench?.projectActivity, topicExecutorName),
     onAdopt: (chatId, requestId, r, messageIds) => makeTopicBubbles(db).adopt(chatId, requestId, 'recall', r.topicIds.map(id => ({ id, entryIds: r.entryIds, messageIds }))),
     threads: makeThreadsStore(db, { filterSources: true }),
@@ -497,22 +524,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   })
 
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
-  const rosterDeps: RosterReaderDeps | null = opts.matters ? {
-    matters:{list:filter=>{
-      const rows=opts.matters!.list(filter),agents=opts.matters!.agents(rows.map(m=>m.id))
-      return rows.map(m=>({...m,agents:agents.get(m.id)??[]}))
-    },get:id=>{
-      const m=opts.matters!.get(id)
-      return m?{...m,agents:opts.matters!.agents([id]).get(id)??[]}:null
-    }},
-    terminals:opts.rosterTerminals??(()=>[]),
-    seen:makeMatterSeen(db,opts.proposals?.desktop),
-    executorName:id=>boot.registry.namesOf(id).name,
-    ...(opts.workbench?{workbench:opts.workbench,relay:opts.workbench.rosterRelay}:{}),
-  } : null
-  const roster = rosterDeps ? makeRosterReader(rosterDeps) : null
-  // 「地方」:同一份名单数据,往回看 30 天、按项目归拢;顺序存在 places 表(v117)。
-  const places = rosterDeps ? makePlacesReader({ roster: rosterDeps, store: makePlacesStore(db), opinion: opts.workbench?.waitingOpinion }) : null
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
     onSayTarget: ({ requestId, matterId }) => recordAnswerTarget(log, requestId, matterAnswerTarget(matterId)),
