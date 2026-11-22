@@ -1276,3 +1276,29 @@ html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[da
   font: 400 13px/1.4 var(--th-font-desk-ui);
 }
 [data-desk-wide] #settings-drawer .license-row input::placeholder { font-family: inherit; }
+
+/* The only action on an empty place has to read as one. */
+[data-desk-wide] .thing-empty > button.desk-text-button {
+  display: inline-block;
+  min-height: 30px;
+  margin-top: 10px;
+  padding: 3px 12px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 8px;
+  background: var(--th-desk-raised);
+  color: var(--th-ink);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+  text-decoration: none;
+}
+/* Narrow search fills the area under the top bar; line its contents up with the page's own 48px inset. */
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] > .cc-life-topline {
+  padding-left: 48px;
+}
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] .wb-sidebar {
+  box-sizing: border-box;
+  padding-inline: 28px;
+}
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] .wb-sidebar > header,
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] .wb-list-controls {
+  padding-inline: 20px;
+}
