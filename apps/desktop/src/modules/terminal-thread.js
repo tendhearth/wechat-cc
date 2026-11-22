@@ -274,7 +274,11 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
         }
         items = mergeActivity(items, fresh, 'latest')
         empty = '这次会话还没有内容。'
-      } else if (!items.length) empty = '这次会话还没有内容。'
+      } else {
+        // A session without a readable transcript answers 200 only while it has a recap.
+        if (version === recapVersion && /no_transcript/.test(String(activity.reason?.message))) recap = undefined
+        if (!items.length) empty = '这次会话还没有内容。'
+      }
       if (sessions.status === 'rejected' || (activity.status === 'rejected'
         && !/no_transcript|cli_session_remote/.test(String(activity.reason?.message)))) {
         if (!note.textContent) setText(note, '尚未同步，请重试')

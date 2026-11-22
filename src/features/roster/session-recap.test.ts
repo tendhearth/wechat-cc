@@ -70,7 +70,7 @@ function setup(output = recap) {
     holdBusy: () => { busy = true; return () => { busy = false } },
   }
   const service = makeSessionRecaps(deps)
-  const add = (id: string, options: { source?: 'claude' | 'codex'; path?: string; owner?: string; machine?: string; agent?: string; title?: string; turns?: number; running?: boolean; waiting?: boolean } = {}) => {
+  const add = (id: string, options: { source?: 'claude' | 'codex'; path?: string; owner?: string; machine?: string; agent?: string; title?: string; turns?: number; running?: boolean; waiting?: boolean; ask?: { tool: string; summary?: string } } = {}) => {
     const path = options.path ?? process.cwd()
     const source = options.source ?? 'codex'
     const matter = matters.create({ kind: 'terminal', projectPath: path, ownerChatId: options.owner ?? owner, title: options.title ?? '画册' })
@@ -83,7 +83,7 @@ function setup(output = recap) {
     for (let i = 0; i < (options.turns ?? 3); i++) write('user_message', `样例 ${i}`)
     write('agent_message', '画册已排插图')
     if (options.running) log.startTurn({ matterId: matter.id, executor: source, startedAt: time })
-    if (options.waiting) log.writeItem({ matterId: matter.id, kind: 'permission', status: 'started', key: 'card', payload: {} })
+    if (options.waiting) log.writeItem({ matterId: matter.id, kind: 'permission', status: 'started', key: 'card', payload: options.ask ?? {} })
     return { write, decide: () => log.writeItem({ matterId: matter.id, kind: 'permission', key: 'card', status: 'completed', payload: {} }) }
   }
   const advance = (ms = RECAP_IDLE_MS) => { time += ms }
@@ -118,6 +118,21 @@ describe('终端小结后台', () => {
     await t.service.check()
     t.seen.mockReturnValue(true)
     expect(t.service.read('s')).toMatchObject({ source: 'cc', awayMs: RECAP_IDLE_MS })
+  })
+
+  it('等主人批准的那个请求排在材料最后，提示词要求说清在等什么', async () => {
+    const t = setup()
+    t.add('waiting', { running: true, waiting: true, ask: { tool: 'Bash', summary: '推到远端 ' + '长'.repeat(600) } })
+    t.add('idle')
+    t.advance()
+    await t.service.check()
+    const prompts = t.evaluate.mock.calls.map(([prompt]) => prompt)
+    const steps = prompts.map(prompt => JSON.parse(prompt.split('\n')[5]!) as { who: string; text: string }[])
+    const asked = steps.find(list => list.at(-1)?.who === 'asks')!
+    expect(asked.at(-1)!.text).toBe('Bash: 推到远端 ' + '长'.repeat(495))
+    expect(asked.filter(step => step.who === 'asks')).toHaveLength(1)
+    expect(steps.filter(list => list.some(step => step.who === 'asks'))).toHaveLength(1)
+    expect(prompts[0]).toContain('有 asks 时，要说清它在等主人定什么')
   })
 
   it('待批可以写；拍板及主人下一句话分别收起当前小结', async () => {

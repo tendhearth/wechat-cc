@@ -249,9 +249,10 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   }
 
   /** 主人看了这一行(点开 / 选着时又动了 / 从这一行打开一件):daemon 记下时刻,下次那一句从这以后说起。 @param {Place} place */
-  function markSeen(place) {
+  function markSeen(place, opened = false) {
     const mark = `${place.key}@${place.updatedAt ?? ''}`
-    if (mark === seenMark) return
+    // Polls are deduplicated; coming back to an unchanged place in the wide window is still the owner looking.
+    if (mark === seenMark && !(opened && wide)) return
     seenMark = mark
     void v1(call, V1.places.seen, { body: { key: place.key }, ...(wide ? { query: { recap: 1 } } : {}) }).catch(() => { seenMark = '' })
   }
@@ -271,7 +272,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     }
     notified = current ? JSON.stringify([current.key, current.name, current.matterIds, current.messageIds, current.sessionIds]) : ''
     onSelect(current)
-    if (current) markSeen(current)
+    if (current) markSeen(current, true)
     // 主人看了这个地方的说话,就算看过了:没看过的那几件记一下(那一句恢复次墨色)。
     if (current?.unseen) for (const id of current.matterIds.slice(0, 20)) void v1(call, V1.matter.seen, { body: { id, surface: 'desktop' } }).catch(() => {})
   }

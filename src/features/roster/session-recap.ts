@@ -73,6 +73,13 @@ export function makeSessionRecaps(deps: {
     `).iterate(matterId)
     let left = 6000
     const steps: RecapStep[] = []
+    // What it is waiting on may exist only in the request itself; it goes last and is budgeted first.
+    const ask = db.query<{ tool: string | null; summary: string | null }, [string]>(`
+      SELECT json_extract(payload_json,'$.tool') AS tool,substr(json_extract(payload_json,'$.summary'),1,500) AS summary
+      FROM matter_items WHERE matter_id=? AND kind='permission' AND status='started' ORDER BY seq DESC LIMIT 1
+    `).get(matterId)
+    const asks = [ask?.tool, ask?.summary].filter(part => typeof part === 'string' && part.trim()).join(': ')
+    if (asks) left -= [...asks].length
     for (const row of rows) {
       const text = [...row.text.trim()].slice(0, left).join('')
       if (!text) continue
@@ -80,7 +87,9 @@ export function makeSessionRecaps(deps: {
       left -= [...text].length
       if (!left) break
     }
-    return steps.reverse()
+    steps.reverse()
+    if (asks) steps.push({ who: 'asks', text: asks })
+    return steps
   }
 
   const day = () => {

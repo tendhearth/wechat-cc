@@ -89,6 +89,17 @@ it('坐回来:点一行记成看过这个地方;选着时它又动了再记一�
   expect(seen()).toEqual(['p:rici000000000000', 'p:rici000000000000'])
 })
 
+it.each([[true, 2], [false, 1]])('离开再点回没动过的那一行：宽窗口再记一次看过，窄窗口照旧不重复（宽窗 %s）', async (wide, times) => {
+  const { calls } = mount({ places: [place('rici'), place('melu')], version: 'v1' })
+  strip!.setWide(wide)
+  await strip!.refresh()
+  const row = () => document.querySelector<HTMLButtonElement>('[data-place-key="p:rici000000000000"] .place-row')!
+  row().click()
+  strip!.clear()
+  row().click()
+  expect(calls.filter(c => c[1].split('?')[0] === '/v1/places/seen')).toHaveLength(times)
+})
+
 it('刷新拿到同一个选中地方、它带的 id 没变 ⇒ 不再通知说话', async () => {
   let version = 'v1'
   const { onSelect } = mount(() => ({ places: [place('rici', { line: version })], version }))
