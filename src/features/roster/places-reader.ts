@@ -300,7 +300,12 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       return deps.store.setHidden(key, hidden)
     },
     seen(key, desktop = false) {
-      if (!deps.store.markSeen(key, deps.roster.now?.() ?? Date.now())) return false
+      if (!deps.store.markSeen(key, deps.roster.now?.() ?? Date.now())) {
+        // 历史地方可以临时出现在桌面，打开它不创建共享设置。
+        if (!desktop) return false
+        const { places, added } = collect('operator', deps.roster, undefined, true, false)
+        return places.some(place => place.key === key) && !added.some(place => place.key === key)
+      }
       if (desktop && deps.recaps?.enabled() && deps.noteDesktopSeen) {
         const place = collect('operator').places.find(place => place.key === key)
         for (const id of place?.matterIds ?? []) deps.noteDesktopSeen(id)

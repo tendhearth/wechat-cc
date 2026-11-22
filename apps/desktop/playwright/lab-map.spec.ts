@@ -386,6 +386,36 @@ test('地方读回的开关决定图入口，写失败保持原值并在开关�
   expect(writes).toHaveLength(0)
 })
 
+for (const inRoster of [true, false]) {
+  test(`按方面能打开三十项以外的出处（名单里有：${inRoster}）`, async ({page,shimUrl}) => {
+    await mock(page)
+    const sessions = Array.from({length:30}, (_, i) => placeSession(`recent-${i}`, 'replied', now - i))
+    await routePlaces(page,[{...garden,sessions,sessionIds:[...sessions.map(s=>s.sessionId),'two']}],{placeMap:()=>true})
+    if (!inRoster) await routeRoster(page,[])
+    const outline: PlaceOutlineT = {state:'ready',canRun:true,aspects:[
+      {name:'整理目录',items:[{id:'o:0',line:'先按月份整理',status:'decided',sources:[{kind:'session',sessionId:'two',agent:'Codex',at:now}]}]},
+    ]}
+    await page.route(/\/v1\/places\/map\?.*&outline=1$/, route => route.fulfill({json:{
+      ok:true,place:{key:garden.key,name:garden.name},items,truncated:false,revision:'outside-tabs',outline,
+    }}))
+    await page.goto(shimUrl)
+    await select(page,'花园')
+    const visibleTabs = thread(page).locator('.thing-sessions > [data-thread-session]')
+    await expect(visibleTabs.first()).toBeVisible()
+    const count = await visibleTabs.count()
+    expect(count).toBeGreaterThan(1)
+    await expect(thread(page).locator('[data-thread-session="terminal:two"]')).toHaveCount(0)
+    await view(page,'图').click()
+    await view(page,'按方面').click()
+    await leaf(page,'先按月份整理').click()
+    await view(page,'去线上看').click()
+    await expect(visibleTabs).toHaveCount(count)
+    await expect(visibleTabs.last()).toHaveAttribute('data-thread-session','terminal:two')
+    await expect(visibleTabs.last()).toHaveAttribute('aria-pressed','true')
+    await expect(thread(page).locator('.thing-terminal:visible')).toContainText('two 的原话')
+  })
+}
+
 test('按方面需要点一下，梳理后看多处出处，回到准确的会话', async ({page,shimUrl}) => {
   const out = join(process.env.TMPDIR ?? tmpdir(),'shots')
   await mkdir(out,{recursive:true})

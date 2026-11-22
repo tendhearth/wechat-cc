@@ -87,8 +87,11 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   /** @param {import('@wechat-cc/protocol').PlaceOutlineSourceT} source */
   function outlineTarget(source) {
     if (!place || source.kind !== 'session' || !source.sessionId) return undefined
-    return rowsFor(place).find(row =>
-      (row.terminal?.sessionId ?? (row.kind === 'terminal' ? row.id : undefined)) === source.sessionId)
+    const id = source.sessionId
+    const matches = (/** @type {Item} */ row) => (row.terminal?.sessionId ?? (row.kind === 'terminal' ? row.id : undefined)) === id
+    return rowsFor(place).find(matches)
+      ?? placeSessions({...place,sessions:undefined}, roster).find(matches)
+      ?? linkedItem(place,{kind:'terminal',id})
   }
 
   /** @param {Item} target @param {Item|undefined} [link] */
@@ -133,7 +136,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
           canJumpSource:source => !!outlineTarget(source),
           jumpSource:source => {
             const target = outlineTarget(source)
-            if (target) returnToLine(target)
+            if (target && place) returnToLine(target, rowsFor(place).some(row => row.key === target.key) ? undefined : target)
           },
           agent:item => {
             const row = mapTarget(item)
@@ -209,6 +212,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   function drawTabs() {
     if (!place) return
     const items = rowsFor(place)
+    if (wide.matches && linked && selected?.key === linked.key && !items.some(item => item.key === linked?.key)) items.push(linked)
     tabs.hidden = !!stopMap || items.length < (wide.matches && items[0]?.endedAt != null ? 1 : 2)
     if (tabs.hidden) return
     const now = Date.now()

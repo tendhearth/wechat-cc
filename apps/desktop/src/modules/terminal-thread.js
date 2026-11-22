@@ -105,6 +105,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   /** @type {HTMLElement|null} */ let memo = null
   let dismissedAt = -1, recapVersion = 0
   /** @type {string|undefined} */ let activitySource
+  let activityEnded = false
   const redrawFrame = () => { if (memo) sketchRecap(memo, id) }
   const memoSize = typeof ResizeObserver === 'function' ? new ResizeObserver(redrawFrame) : null
   const fonts = document.fonts
@@ -257,7 +258,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     const version = recapVersion
     // A cached ended status can lock the composer, but only the place list stops status polling.
     const archived = archivedInPlaces()
-    let sourceChanged = false
+    let historyChanged = false
     try {
       const [sessions, activity] = await Promise.allSettled([
         archived ? Promise.resolve(null) : v1(call,V1.cli.sessions,{query:{owner:1,session_id:id}}), read(),
@@ -274,9 +275,11 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
         const page = activity.value
         if (version === recapVersion) recap = wide.matches && page.recap?.text ? page.recap : undefined
         const source = page.source ?? (archived ? 'archive' : 'live')
-        sourceChanged = activitySource !== undefined && activitySource !== source
+        // A missing transcript can already be using the archive before the final import.
+        historyChanged = activitySource !== undefined && (activitySource !== source || activityEnded !== archived)
         activitySource = source
-        if (sourceChanged) {
+        activityEnded = archived
+        if (historyChanged) {
           items = []
           stepKeys.clear()
           before = undefined
@@ -317,7 +320,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
       if (alive) {
         reflect()
         draw()
-        if (sourceChanged) showConversationLatest(scroll, latest)
+        if (historyChanged) showConversationLatest(scroll, latest)
       }
     }
   }
@@ -326,10 +329,11 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     if (!before || paging) return
     const cursor = before
     const source = activitySource
+    const archived = activityEnded
     paging = earlier.disabled = true
     try {
       const page = await read(cursor)
-      if (!alive || source !== activitySource || (page.source && page.source !== source)) return
+      if (!alive || source !== activitySource || archived !== activityEnded || (page.source && page.source !== source)) return
       items = mergeActivity(items, stepsIn(page), 'earlier')
       before = page.earlier ?? null
       draw(true)

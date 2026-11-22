@@ -255,6 +255,7 @@ it('只有 operator 地方展示七天内的已结束会话，手机地方与默
   const { reader } = setup([], [], () => NOW, { roster: rosterDeps })
   const legacy = setup([], live)
   const device = await call({ places: legacy.reader }, 'GET /v1/places', null, 'device')
+  expect((await call({ places: reader }, 'POST /v1/places/seen', { key: placeKey('/w/live') })).status).toBe(404)
   const operator = await call({ places: reader }, 'GET /v1/places', null)
   const places = PlacesResponse.parse(operator.body)
   expect(places.places.find(p => p.name === 'rici')?.sessions?.map(s => s.sessionId)).toEqual(['waiting', 'working', 'paused', 'newest-history', 'ended'])
@@ -287,6 +288,9 @@ it('历史地方可以往下挪过另一条历史记录，手机只看到明确�
   const phone = async () => JSON.stringify((await call({ places: reader }, 'GET /v1/places', null, 'device')).body)
   const before = await phone()
   expect(desktop()).toEqual([first, second])
+  expect(store.list()).toEqual([])
+  expect(await call({ places: reader }, 'POST /v1/places/seen', { key: first })).toEqual({ status: 200, body: { ok: true } })
+  expect((await call({ places: reader }, 'POST /v1/places/seen', { key: first }, 'device')).status).toBe(404)
   expect(store.list()).toEqual([])
   expect(await phone()).toBe(before)
 

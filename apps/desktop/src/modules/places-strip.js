@@ -119,7 +119,8 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   const openActions = supportsPopover ? '.place-actions:popover-open' : '.place-actions[data-open]'
   let wide = false, quietOpen = false, waitingOpen = false
   let readEpoch = 0
-  let version = '', alive = true, stale = false, acting = false, notified = '', seenMark = ''
+  let version = '', alive = true, stale = false, acting = false, notified = ''
+  /** @type {{mark:string}|undefined} */ let seenAttempt
   /** @type {{key:string,request?:string}|null} */ let inlineWaiting = null
   let waitingMarkup = ''
   /** @type {Promise<void>|null} */ let inFlight = null
@@ -270,9 +271,11 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   function markSeen(place, opened = false) {
     const mark = `${place.key}@${place.updatedAt ?? ''}`
     // Polls are deduplicated; coming back to an unchanged place is still the owner looking.
-    if (mark === seenMark && !opened) return
-    seenMark = mark
-    void v1(call, V1.places.seen, { body: { key: place.key } }).catch(() => { seenMark = '' })
+    if (mark === seenAttempt?.mark && !opened) return
+    const attempt = seenAttempt = { mark }
+    void v1(call, V1.places.seen, { body: { key: place.key } }).catch(() => {
+      if (seenAttempt === attempt) seenAttempt = undefined
+    })
   }
 
   /** @param {Place|null} place */

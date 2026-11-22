@@ -417,40 +417,42 @@ test('停着的会话可输入；八次会话并排四次、收起四次，选�
   await expect(terminal(page).getByText('存档前一页')).toBeVisible()
 })
 
-test('选中的会话结束后留在原处，重新从存档最新一页翻阅', async ({page,shimUrl}) => {
-  let ended = false
-  const primary = () => placeSession('primary',ended?'done':'working',now)
-  const other = placeSession('other','replied',now-1000)
-  await routePlaces(page,()=>[placeItem('花园',{updatedAt:now,sessions:ended?[other,primary()]:[primary(),other]})])
-  await routeRoster(page,[])
-  await page.route('**/v1/cli/sessions**',route=>route.fulfill({json:{sessions:[session('other'),...(ended?[]:[session('primary',{status:'running',live_window:true})])]}}))
-  await page.route('**/v1/cli/activity**',route=>{
-    const query = new URL(route.request().url()).searchParams
-    const reply = step('reply','said',query.get('session_id') + ' 的原话')
-    if (!ended) return route.fulfill({json:{ok:true,source:'live',items:[step('live','said','实时旧页'),reply],earlier:'live-cursor'}})
-    if (query.has('before')) {
-      expect(query.get('before')).toBe('archive-cursor')
-      return route.fulfill({json:{ok:true,source:'archive',items:[step('older','you','存档里漏掉的一步')],earlier:null}})
-    }
-    return route.fulfill({json:{ok:true,source:'archive',items:[step('missing','you','存档最新页多出的一步'),reply],earlier:'archive-cursor'}})
+for (const initialSource of ['live', 'archive'] as const) {
+  test(`选中的会话结束后留在原处，重新从存档最新一页翻阅（之前读 ${initialSource}）`, async ({page,shimUrl}) => {
+    let ended = false
+    const primary = () => placeSession('primary',ended?'done':'working',now)
+    const other = placeSession('other','replied',now-1000)
+    await routePlaces(page,()=>[placeItem('花园',{updatedAt:now,sessions:ended?[other,primary()]:[primary(),other]})])
+    await routeRoster(page,[])
+    await page.route('**/v1/cli/sessions**',route=>route.fulfill({json:{sessions:[session('other'),...(ended?[]:[session('primary',{status:'running',live_window:true})])]}}))
+    await page.route('**/v1/cli/activity**',route=>{
+      const query = new URL(route.request().url()).searchParams
+      const reply = step('reply','said',query.get('session_id') + ' 的原话')
+      if (!ended) return route.fulfill({json:{ok:true,source:initialSource,items:[step('live','said','实时旧页'),reply],earlier:'live-cursor'}})
+      if (query.has('before')) {
+        expect(query.get('before')).toBe('archive-cursor')
+        return route.fulfill({json:{ok:true,source:'archive',items:[step('older','you','存档里漏掉的一步')],earlier:null}})
+      }
+      return route.fulfill({json:{ok:true,source:'archive',items:[step('missing','you','存档最新页多出的一步'),reply],earlier:'archive-cursor'}})
+    })
+    await page.goto(shimUrl)
+    await select(page,'花园')
+    const tab = thread(page).locator('[data-thread-session="terminal:primary"]')
+    await expect(tab).toHaveAttribute('aria-pressed','true')
+    await expect(terminal(page)).toContainText('primary 的原话')
+    await expect(terminal(page).locator('textarea')).toBeEnabled()
+    ended = true
+    await expect(terminal(page).getByText('这次会话已经结束了，只能看。')).toBeVisible({timeout:9000})
+    await expect(tab).toHaveAttribute('aria-pressed','true')
+    await expect(thread(page).locator('.thing-state')).toHaveText('已经结束')
+    await expect(terminal(page)).toContainText('primary 的原话')
+    await expect(terminal(page).locator('textarea')).toHaveCount(0)
+    await expect(terminal(page).getByText('实时旧页')).toHaveCount(0)
+    await expect(terminal(page).getByText('存档最新页多出的一步')).toBeVisible()
+    await terminal(page).getByRole('button',{name:'更早的',exact:true}).click()
+    await expect(terminal(page).getByText('存档里漏掉的一步')).toBeVisible()
   })
-  await page.goto(shimUrl)
-  await select(page,'花园')
-  const tab = thread(page).locator('[data-thread-session="terminal:primary"]')
-  await expect(tab).toHaveAttribute('aria-pressed','true')
-  await expect(terminal(page)).toContainText('primary 的原话')
-  await expect(terminal(page).locator('textarea')).toBeEnabled()
-  ended = true
-  await expect(terminal(page).getByText('这次会话已经结束了，只能看。')).toBeVisible({timeout:9000})
-  await expect(tab).toHaveAttribute('aria-pressed','true')
-  await expect(thread(page).locator('.thing-state')).toHaveText('已经结束')
-  await expect(terminal(page)).toContainText('primary 的原话')
-  await expect(terminal(page).locator('textarea')).toHaveCount(0)
-  await expect(terminal(page).getByText('实时旧页')).toHaveCount(0)
-  await expect(terminal(page).getByText('存档最新页多出的一步')).toBeVisible()
-  await terminal(page).getByRole('button',{name:'更早的',exact:true}).click()
-  await expect(terminal(page).getByText('存档里漏掉的一步')).toBeVisible()
-})
+}
 
 test('名单恢复活会话后，选中的会话恢复输入和审批', async ({page,shimUrl}) => {
   let status: 'running' | 'ended' | 'waiting' = 'running'

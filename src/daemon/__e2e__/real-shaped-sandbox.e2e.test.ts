@@ -754,6 +754,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       expect(saved(hide!)).toHaveLength(0)
       expect(saved(untouched!)).toHaveLength(0)
 
+      expect((await desktop('POST', '/v1/places/seen', { key: untouched })).status).toBe(200)
+      expect(saved(untouched!)).toHaveLength(0)
       expect((await desktop('POST', '/v1/places/move', { key: move, to: 0 })).status).toBe(200)
       expect((await read()).places[0]?.key).toBe(move)
       expect((await desktop('POST', '/v1/places/hide', { key: hide, hidden: true })).status).toBe(200)
@@ -764,6 +766,53 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       expect(saved(move!)).toHaveLength(1)
       expect(saved(hide!)).toHaveLength(1)
       expect(saved(untouched!)).toHaveLength(0)
+    } finally {
+      removeTempDir(fixture)
+    }
+  })
+
+  it('结束时补读原话，同轮只留记录里的步，其余兜底跨页保留', async () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'sandbox-late-transcript-'))
+    try {
+      const session_id = 'sandbox-late-transcript'
+      const transcript_path = join(fixture, 'session.jsonl')
+      const event = async (kind: 'prompt' | 'stop' | 'session_end', text?: string) => {
+        const result = await desktop('POST', '/v1/cli/event', {
+          source: 'claude', kind, session_id, cwd: process.cwd(),
+          machine: hostname(), idle_s: 0, transcript_path, ...(text ? { text } : {}),
+        }, 'trusted')
+        expect(result.status).toBe(200)
+      }
+      const repeated = '样例一'.repeat(250), unmatched = '样例二'
+      await event('prompt')
+      await new Promise(resolve => setTimeout(resolve, 5))
+      const timestamp = new Date().toISOString()
+      await event('stop', repeated)
+      await event('prompt')
+      await event('stop', repeated)
+      await event('prompt')
+      await event('stop', unmatched)
+      writeFileSync(transcript_path, JSON.stringify({ type: 'assistant', timestamp, message: { content: repeated } }) + '\n')
+      await event('session_end')
+
+      const read = async (before?: string) => {
+        const query = new URLSearchParams({ session_id, full: '1', limit: '1', ...(before ? { before } : {}) })
+        const result = await desktop<import('@wechat-cc/protocol').CliActivityPageT & { source?: string }>('GET', '/v1/cli/activity?' + query)
+        expect(result.status).toBe(200)
+        expect(result.body.source).toBe('archive')
+        expect(result.body.items).toHaveLength(1)
+        return result.body
+      }
+      const latest = await read()
+      expect(latest.items[0]?.full === repeated && latest.items[0]?.at === Date.parse(timestamp)).toBe(true)
+      expect(latest.earlier).toBeTruthy()
+      const middle = await read(latest.earlier!)
+      expect(middle.items[0]?.text === unmatched).toBe(true)
+      expect(middle.earlier).toBeTruthy()
+      const oldest = await read(middle.earlier!)
+      expect(oldest.items[0]?.full === repeated).toBe(true)
+      expect(oldest.earlier).toBeNull()
+      expect(new Set([latest, middle, oldest].map(page => page.items[0]?.id)).size).toBe(3)
     } finally {
       removeTempDir(fixture)
     }
