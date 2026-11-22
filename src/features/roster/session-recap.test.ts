@@ -37,6 +37,8 @@ describe('Claude Code 小结尾读', () => {
     expect(findAwaySummary(tail, start + 4)).toBeNull()
     expect(findAwaySummary([away('太早', start), reply(start + 1)].join('\n'))).toBeNull()
     expect(findAwaySummary('bad\nnull\n' + reply(start))).toBeNull()
+    const prompt = JSON.stringify({ type: 'user', timestamp: new Date(start + 2).toISOString() })
+    expect(findAwaySummary([reply(start), away('上一轮的', start + 1), prompt].join('\n'))).toBeNull()
   })
 
   it('文件读取有界，忽略窗口前的材料，按字符截断并去空白', () => {
@@ -117,7 +119,7 @@ describe('终端小结后台', () => {
     t.seen.mockReturnValue(false)
     await t.service.check()
     t.seen.mockReturnValue(true)
-    expect(t.service.read('s')).toMatchObject({ source: 'cc', awayMs: RECAP_IDLE_MS })
+    expect(t.service.read('s')).toMatchObject({ source: 'cc', awayFrom: start })
   })
 
   it('等主人批准的那个请求排在材料最后，提示词要求说清在等什么', async () => {

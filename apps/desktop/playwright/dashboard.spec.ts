@@ -171,7 +171,7 @@ test('「地方」里终端停着问的行亮点，只有可拍板的请求才�
   const localOnly = terminalPlace('melu', 'cd34e5-full', '要改 package.json')
   const running = placeItem('leni', { line: '在跑测试', sessionIds: ['ef56g7-full'] })
   let approved = false
-  await page.route(url => url.pathname.endsWith('/v1/places'), route => route.fulfill({ json: {
+  await page.route('**/v1/places', route => route.fulfill({ json: {
     places: approved ? [{ ...actionable, waiting: null, status: 'working', moving: true }, localOnly, running] : [actionable, localOnly, running],
     version: approved ? 'approved' : 'waiting',
   } }))

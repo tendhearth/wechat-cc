@@ -10,7 +10,8 @@ export function findAwaySummary(tail: string, lastReplyAt = 0): string | null {
       const entry = JSON.parse(line)
       const at = typeof entry?.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN
       if (!Number.isFinite(at)) continue
-      if (entry.type === 'assistant') lastReplyAt = Math.max(lastReplyAt, at)
+      // Anything said after the summary, by either side, means it describes an earlier stop.
+      if (entry.type === 'assistant' || entry.type === 'user') lastReplyAt = Math.max(lastReplyAt, at)
       if (entry.type !== 'system' || entry.subtype !== 'away_summary' || typeof entry.content !== 'string') continue
       const text = clipRecap(entry.content)
       if (text && (!latest || at >= latest.at)) latest = { at, text }

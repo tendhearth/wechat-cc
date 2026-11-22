@@ -89,7 +89,7 @@ it('坐回来:点一行记成看过这个地方;选着时它又动了再记一�
   expect(seen()).toEqual(['p:rici000000000000', 'p:rici000000000000'])
 })
 
-it.each([[true, 2], [false, 1]])('离开再点回没动过的那一行：宽窗口再记一次看过，窄窗口照旧不重复（宽窗 %s）', async (wide, times) => {
+it.each([true, false])('离开再点回没动过的那一行，也再记一次看过（宽窗 %s）', async wide => {
   const { calls } = mount({ places: [place('rici'), place('melu')], version: 'v1' })
   strip!.setWide(wide)
   await strip!.refresh()
@@ -97,7 +97,7 @@ it.each([[true, 2], [false, 1]])('离开再点回没动过的那一行：宽窗�
   row().click()
   strip!.clear()
   row().click()
-  expect(calls.filter(c => c[1].split('?')[0] === '/v1/places/seen')).toHaveLength(times)
+  expect(calls.filter(c => c[1] === '/v1/places/seen')).toHaveLength(2)
 })
 
 it('刷新拿到同一个选中地方、它带的 id 没变 ⇒ 不再通知说话', async () => {
@@ -194,7 +194,7 @@ it('宽窗置顶卡回答后越过已经在途的读取发起新刷新', async (
   let reads = 0
   let releaseRead: (() => void) | undefined
   const { call } = mount(([, path]: string[]) => {
-    if (path?.split('?')[0] !== '/v1/places') return { ok: true }
+    if (path !== '/v1/places') return { ok: true }
     reads++
     if (reads === 1) return { places: [waiting], version: 'before' }
     if (reads === 2) return new Promise(resolve => { releaseRead = () => resolve({ notModified: true }) })

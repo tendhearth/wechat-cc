@@ -295,8 +295,8 @@ test('800px 保留筛选条和补引用卡',async({page,shimUrl})=>{
 })
 
 test('小结跟着作者换字体，发话收起便条，偏好关掉后两处都收起', async ({page, shimUrl}) => {
-  const cc = { text: '花园的画册排好了。还要选纸。', source: 'cc', at: now, awayMs: 38 * 60_000 }
-  const claude = { text: '备份文件已经清点。等你决定是否读取目录。', source: 'claude', at: now, awayMs: 38 * 60_000 }
+  const cc = { text: '花园的画册排好了。还要选纸。', source: 'cc', at: now, awayFrom: Date.now() - 38 * 60_000 - 15_000 }
+  const claude = { text: '备份文件已经清点。等你决定是否读取目录。', source: 'claude', at: now, awayFrom: Date.now() - 38 * 60_000 - 15_000 }
   let enabled = true
   let spoke = false
   await mockTerminal(page, {withThree:true})

@@ -220,7 +220,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   async function readPlaces() {
     const epoch = readEpoch
     try {
-      const data = await v1(call, V1.places.get, wide ? undefined : { query: { recap: 0 } }, version ? { ifNoneMatch: version } : undefined)
+      const data = await v1(call, V1.places.get, undefined, version ? { ifNoneMatch: version } : undefined)
       if (!alive || epoch !== readEpoch) return
       if (data?.notModified) {
         if (stale) { stale = false; draw() }
@@ -251,10 +251,10 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   /** 主人看了这一行(点开 / 选着时又动了 / 从这一行打开一件):daemon 记下时刻,下次那一句从这以后说起。 @param {Place} place */
   function markSeen(place, opened = false) {
     const mark = `${place.key}@${place.updatedAt ?? ''}`
-    // Polls are deduplicated; coming back to an unchanged place in the wide window is still the owner looking.
-    if (mark === seenMark && !(opened && wide)) return
+    // Polls are deduplicated; coming back to an unchanged place is still the owner looking.
+    if (mark === seenMark && !opened) return
     seenMark = mark
-    void v1(call, V1.places.seen, { body: { key: place.key }, ...(wide ? { query: { recap: 1 } } : {}) }).catch(() => { seenMark = '' })
+    void v1(call, V1.places.seen, { body: { key: place.key } }).catch(() => { seenMark = '' })
   }
 
   /** @param {Place|null} place */

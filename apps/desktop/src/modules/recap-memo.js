@@ -9,12 +9,12 @@ function awayTime(ms) {
   return `${Math.floor(minutes / 1440)} 天`
 }
 
-/** @param {import('@wechat-cc/protocol').SessionRecapT} recap */
-export function recapMemoHtml({ source, text, awayMs }) {
+/** @param {import('@wechat-cc/protocol').SessionRecapT} recap @param {number} [now] */
+export function recapMemoHtml({ source, text, awayFrom }, now = Date.now()) {
   const fromCC = source === 'cc'
   const credit = fromCC ? 'CC 留了张条' : '这是 Claude Code 自己记的'
   return `<aside class="thing-recap" data-recap-source="${fromCC ? 'cc' : 'claude'}">
-    <svg aria-hidden="true"></svg><small>你 ${awayTime(awayMs)}没来，${credit}</small><p>${esc(text)}</p></aside>`
+    <svg aria-hidden="true"></svg><small>你 ${awayTime(Math.max(0, now - awayFrom))}没来，${credit}</small><p>${esc(text)}</p></aside>`
 }
 
 /** @param {HTMLElement} memo @param {string} id */

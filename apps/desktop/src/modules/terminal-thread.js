@@ -223,7 +223,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   }
 
   /** @param {string} [cursor] */
-  const read = cursor => v1(call, V1.cli.activity, {query:{session_id:id,full:1,limit:40,...(cursor ? {before:cursor} : {}), ...(cursor || !wide.matches ? {recap:0} : {})}})
+  const read = cursor => v1(call, V1.cli.activity, {query:{session_id:id,full:1,limit:40,...(cursor ? {before:cursor} : {})}})
   /** @param {any} page @returns {Activity[]} */
   const stepsIn = page => (page.items ?? []).filter((/** @type {Activity} */ step) => typeof step.id === 'string')
 

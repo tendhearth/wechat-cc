@@ -74,7 +74,7 @@ export function terminalOwnerRoutes(actions?:CliPhoneActions, recap?: TerminalRo
       const response=await handler!(url,new Request(url,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{})}),undefined)
       const result = await response.json() as Record<string, unknown>
       const id = q.get('session_id')
-      if (key === 'GET /v1/cli/activity' && caller.origin === 'operator' && id && q.get('recap') !== '0') {
+      if (key === 'GET /v1/cli/activity' && caller.origin === 'operator' && id && !q.has('before')) {
         const noTranscript = response.status === 409 && result.error === 'no_transcript'
         const note = response.ok || noTranscript ? recap?.(id) : undefined
         if (note && noTranscript) {

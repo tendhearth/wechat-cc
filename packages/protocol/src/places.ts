@@ -35,7 +35,7 @@ export const SessionRecap = z.object({
   text: z.string(),
   source: z.enum(['claude', 'cc']),
   at: z.number(),
-  awayMs: z.number().nonnegative(),
+  awayFrom: z.number(),
 })
 export type SessionRecapT = z.infer<typeof SessionRecap>
 export const RecapSettingsRequest = z.object({ recap: z.boolean() }).strict()

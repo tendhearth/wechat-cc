@@ -217,7 +217,7 @@ it('地方只返回 operator 行标题所对应会话的小结；关掉后字节
   const terminals = [term('head', 'm-head', NOW - 1), term('older', 'm-older', NOW - 2)]
   const matters = [m('m-head', { kind: 'terminal', updatedAt: NOW - 1 }), m('m-older', { kind: 'terminal', updatedAt: NOW - 2 })]
   let enabled = true
-  const recap = { source: 'cc' as const, text: '画册已排完，下一步选封面。', at: NOW, awayMs: 30 * 60_000 }
+  const recap = { source: 'cc' as const, text: '画册已排完，下一步选封面。', at: NOW, awayFrom: NOW - 30 * 60_000 }
   const read = vi.fn(() => recap)
   const { reader } = setup(matters, terminals, () => NOW, {
     recaps: { enabled: () => enabled, setEnabled: value => { enabled = value }, read, check: async () => {}, stop() {} },

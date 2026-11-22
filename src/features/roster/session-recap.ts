@@ -167,9 +167,8 @@ export function makeSessionRecaps(deps: {
         const owner = deps.owner()
         const fresh = owner && session(owner, id)
         if (!owner || !fresh || running(fresh) || position(owner, fresh) !== row.position) return
-        // Match the smallest display unit so a stable recap keeps its places ETag between polls.
-        const awayMs = Math.floor((now() - row.away_from) / 60_000) * 60_000
-        return { text: row.text, source: row.source, at: row.at, awayMs: Math.max(0, awayMs) }
+        // The start of the absence, not its length: the payload stays the same between polls.
+        return { text: row.text, source: row.source, at: row.at, awayFrom: row.away_from }
       } catch { return undefined }
     },
     async check() {

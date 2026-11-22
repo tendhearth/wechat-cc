@@ -5,7 +5,7 @@ export interface PlacesReader {
   recapEnabled?(): boolean
   setRecapEnabled?(enabled: boolean): void
   recap?(id: string): import('@wechat-cc/protocol').SessionRecapT | undefined
-  read(scope: 'operator' | 'device', includeRecap?: boolean): PlacesResponseT
+  read(scope: 'operator' | 'device'): PlacesResponseT
   placeMapEnabled(): boolean
   setPlaceMap(enabled: boolean): boolean
   placeForPath(path: string): string | null

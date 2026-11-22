@@ -143,9 +143,9 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     recapEnabled: () => deps.recaps?.enabled() ?? false,
     setRecapEnabled: deps.recaps?.setEnabled,
     recap: (id: string) => deps.recaps?.enabled() ? deps.recaps.read(id) : undefined,
-    read(scope, includeRecap = true) {
+    read(scope) {
       const heads = new Map<string, string>()
-      const recaps = scope === 'operator' && includeRecap && deps.recaps?.enabled() ? deps.recaps : undefined
+      const recaps = scope === 'operator' && deps.recaps?.enabled() ? deps.recaps : undefined
       const { places, hidden, added, now } = collect(scope, deps.roster, recaps && ((key, item) => {
         if (item.terminal) heads.set(key, item.terminal.sessionId)
       }))

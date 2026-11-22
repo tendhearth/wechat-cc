@@ -78,11 +78,11 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): Rou
         return unavailable
       }
     },
-    'GET /v1/places': (query, _body, caller, ctx) => {
+    'GET /v1/places': (_query, _body, caller, ctx) => {
       if (caller?.origin !== 'operator' && caller?.origin !== 'device') return { status: 403, body: { error: 'forbidden' } }
       try {
         if (!deps.places) return unavailable
-        const body = deps.places.read(caller.origin, query.get('recap') !== '0')
+        const body = deps.places.read(caller.origin)
         const headers = { etag: body.version }
         return ctx?.headers?.get('if-none-match') === body.version ? { status: 304, body: null, headers } : { status: 200, body, headers }
       } catch (error) {
@@ -106,12 +106,12 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): Rou
       return deps.places.hide(input.data.key, input.data.hidden) ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
     },
     // 看过这一行:桌面和手机都是主人自己在看。
-    'POST /v1/places/seen': (query, body, caller) => {
+    'POST /v1/places/seen': (_query, body, caller) => {
       if (caller?.origin !== 'operator' && caller?.origin !== 'device') return { status: 403, body: { error: 'forbidden' } }
       const input = PlaceSeenRequest.safeParse(body)
       if (!input.success) return { status: 400, body: { error: 'invalid' } }
       if (!deps.places) return unavailable
-      return deps.places.seen(input.data.key, caller.origin === 'operator' && query.get('recap') === '1') ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
+      return deps.places.seen(input.data.key, caller.origin === 'operator') ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
     },
   }
 }
