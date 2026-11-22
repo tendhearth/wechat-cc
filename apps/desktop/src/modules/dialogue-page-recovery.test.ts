@@ -14,7 +14,12 @@ it('shows a read failure instead of an empty history, then recovers the chat lis
   const root = { dataset: {}, innerHTML: '', querySelector: () => null }
   const switcher = { innerHTML: '', hidden: false }
   const nodes: Record<string, unknown> = { 'dialogue-root': root, 'dialogue-timeline': stage, 'dialogue-chat-switcher': switcher }
-  vi.stubGlobal('document', { getElementById: (id: string) => nodes[id] ?? null, querySelector: () => null, querySelectorAll: () => [] })
+  vi.stubGlobal('document', {
+    documentElement: { hasAttribute: () => false },
+    getElementById: (id: string) => nodes[id] ?? null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  })
   vi.stubGlobal('HTMLElement', class {})
   vi.useFakeTimers()
   vi.spyOn(console, 'error').mockImplementation(() => {})

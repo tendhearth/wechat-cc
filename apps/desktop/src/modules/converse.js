@@ -187,6 +187,8 @@ function renderSkeleton(root, deps) {
     <div id="converse-scroll" class="converse-scroll"><button id="converse-earlier" class="desk-text-button" type="button" data-converse-lead hidden>更早的对话</button></div>
     <button id="converse-place-more" class="converse-latest desk-text-button" type="button" hidden></button>
     <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
+    <p id="converse-offline-note" class="desk-offline-note" hidden>CC 没在运行，现在说的话送不出去。 <button class="desk-text-button" type="button" data-wake-cc>叫它起来</button></p>
+    <p id="converse-wake-error" class="desk-offline-note" role="status" hidden>没叫起来。</p>
     <div id="converse-compose" class="converse-compose">
       ${deskSpeakerHtml('user')}
       <div id="converse-images" class="converse-images" aria-label="要一起发的图片" hidden></div>
@@ -457,9 +459,9 @@ function reflectMic() {
     resizeDraft(input)
   }
   const send = document.getElementById("converse-send")
-  if (send) send.toggleAttribute("disabled", busy || sending || delegating)
+  if (send) send.toggleAttribute("disabled", busy || sending || delegating || ccIsStopped())
   const delegate = document.getElementById("converse-delegate")
-  if (delegate) delegate.toggleAttribute("disabled", busy || sending || delegating || !input?.value.trim())
+  if (delegate) delegate.toggleAttribute("disabled", busy || sending || delegating || ccIsStopped() || !input?.value.trim())
 }
 
 /** 等系统麦克风授权的上限:系统弹框等人点,给足时间;超时就说清楚去哪儿看。 */
@@ -634,14 +636,23 @@ function resizeDraft(input) {
   input.style.height = `${input.scrollHeight}px`
 }
 
+const ccIsStopped = () => document.documentElement.hasAttribute('data-desk-cc-stopped')
+
+export function reflectConversationAvailability() {
+  reflectMic()
+  reflectPlaceFilter()
+  renderReading({preserve: true})
+}
+
 function emptyStateHtml() {
+  const stopped = ccIsStopped()
   return `<div class="converse-empty">
-    <img class="converse-empty-art" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="190" height="190" />
-    <h2>CC 在这儿</h2>
-    <p>想说什么都可以。</p>
-    <div class="converse-starters">
+    <img class="converse-empty-art" src="./assets/pet/cc-v1/canonical/${stopped ? "unlit" : "lit"}/front.png" alt="CC" width="190" height="190" />
+    <h2>${stopped ? 'CC 没在运行' : 'CC 在这儿'}</h2>
+    <p>${stopped ? '它起来之前，这里说的话送不出去。' : '想说什么都可以。'}</p>
+    ${stopped ? '<button class="btn primary" type="button" data-wake-cc>叫 CC 起来</button>' : `<div class="converse-starters">
       ${STARTERS.map(t => `<button class="converse-starter" type="button" data-starter="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join("")}
-    </div>
+    </div>`}
   </div>`
 }
 
@@ -726,7 +737,7 @@ function reflectPlaceFilter() {
   if (defaultRecipient) defaultRecipient.hidden = !!name
   const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('converse-input'))
   if (input) {
-    input.placeholder = name ? `说说 ${name} 的事` : '随便说，CC 自己分得清'
+    input.placeholder = ccIsStopped() ? 'CC 没在运行' : name ? `说说 ${name} 的事` : '随便说，CC 自己分得清'
     resizeDraft(input)
   }
 }
@@ -768,6 +779,8 @@ function renderReading({ follow = false, prepend = false, preserve = false } = {
     const rows = projections.length
       ? [...shown, ...projections].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity))
       : shown
+    const offlineNote = document.getElementById('converse-offline-note')
+    if (offlineNote) offlineNote.hidden = !ccIsStopped() || !rows.length
     paintConversation(scroll,rows,messageHtml,placeFilter?placeEmptyHtml():emptyStateHtml(),{
       follow, prepend, preserve, decoration:placeLabelHtml,
       latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))
@@ -804,7 +817,7 @@ export function setConverseMode(mode) {
 
 /** @param {Deps} deps */
 async function sendMessage(deps) {
-  if (sending || delegating || recording || transcribing || requestingMic) return
+  if (ccIsStopped() || sending || delegating || recording || transcribing || requestingMic) return
   const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
   const sendBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById("converse-send"))
   if (!input || !sendBtn) return
@@ -878,7 +891,6 @@ async function sendMessage(deps) {
   } finally {
     sending = false
     reflectMic()
-    sendBtn.disabled = false
     input.disabled = false
     renderMessages()
     const scroll=document.getElementById("converse-scroll")
@@ -937,7 +949,7 @@ export async function addImages(files) {
 /** Offer visible public discussion as unchecked preview candidates.
  * @param {Deps} deps */
 async function delegateDraft(deps) {
-  if (!deps.onDelegate || sending || delegating || recording || transcribing || requestingMic) return
+  if (ccIsStopped() || !deps.onDelegate || sending || delegating || recording || transcribing || requestingMic) return
   const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
   if (!input?.value.trim()) return
   const draft = input.value
@@ -1179,6 +1191,7 @@ export function initConversePage(deps, { focus = true } = {}) {
   root.dataset.ready = "true"
   renderSkeleton(root, deps)
   wireEvents(root, deps)
+  if (ccIsStopped()) reflectConversationAvailability()
   root.querySelector('#converse-earlier')?.addEventListener('click', async () => {
     const reader = ownerReader
     if (!reader || searchingEarlier !== null || !canReadEarlier(earlierCursor, placeFilter?.messageIds ?? null, messages)) return

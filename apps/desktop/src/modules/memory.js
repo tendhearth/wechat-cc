@@ -153,7 +153,7 @@ let storedFactsReviewPending = false
 function showStoredFactsError() {
   storedFactsFailed = true
   const records = document.getElementById('memory-facts-records')
-  if (records) records.innerHTML = '<p role="status">暂时无法读取记下的事。可以展开记忆库重新读取。</p>'
+  if (records) records.innerHTML = '<p role="status"><span class="memory-facts-compact-hint">暂时无法读取记下的事。可以展开记忆库重新读取。</span><span class="memory-facts-wide-hint" hidden>暂时没能读取记下的事。</span> <button class="btn" type="button" data-memory-facts-retry hidden>重新读取</button></p>'
   const edit = /** @type {HTMLButtonElement|null} */ (document.getElementById('memory-facts-edit'))
   if (edit) edit.disabled = true
 }
@@ -660,6 +660,14 @@ export function wireMemoryButtons(deps) {
     memoryPaneObserver.observe(pane, { attributes: true, attributeFilter: ['hidden'] })
   }
   document.getElementById('memory-facts-search')?.addEventListener('input', paintStoredFacts)
+  document.getElementById('memory-facts-records')?.addEventListener('click', async event => {
+    const button = event.target
+    if (!(button instanceof HTMLButtonElement) || !button.hasAttribute('data-memory-facts-retry') || button.disabled) return
+    button.disabled = true
+    try { await loadMemoryPane(deps) }
+    catch { /* The facts loader keeps the retry message visible. */ }
+    finally { button.disabled = false }
+  })
   document.getElementById('memory-facts-edit')?.addEventListener('click', () => { void reviewStoredFacts(deps) })
   document.getElementById("memory-edit-btn")?.addEventListener("click", () => {
     if (!memoryState.selected) return

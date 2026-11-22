@@ -130,7 +130,12 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
     setText(opinion, ccOpinion ? `我的意见(只看了这条请求)：${ccOpinion}` : '')
     setText(reason, questionReason ? `为什么来问你：${questionReason}` : '')
     onWaiting(request?.hash ?? (answered || null))
-    for (const button of card.querySelectorAll('button')) button.disabled = deciding
+    const stopped = document.documentElement.hasAttribute('data-desk-cc-stopped')
+    for (const button of card.querySelectorAll('button')) {
+      button.disabled = deciding || stopped
+      if (stopped) button.title = 'CC 没在运行'
+      else button.removeAttribute('title')
+    }
     const state = session?.status
     if (session || loaded) onStatus(who, request || (state === 'waiting' && !answered) ? '等你定'
       : !session || session.stale || state === 'ended' ? '已经结束' : state === 'running' ? '正在做' : '停着')
@@ -139,8 +144,8 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
     const blocked = !session && !loaded ? '正在读取…' : terminalInputReason(session, who, !!request)
     input.disabled = !!blocked
     input.ariaLabel = `对 ${who} 说`
-    input.placeholder = blocked || `接着对 ${who} 说…`
-    send.disabled = !!blocked || sending || !!outgoing || !input.value.trim()
+    input.placeholder = stopped ? 'CC 没在运行' : blocked || `接着对 ${who} 说…`
+    send.disabled = stopped || !!blocked || sending || !!outgoing || !input.value.trim()
     stop.hidden = !session?.run_id
     stop.disabled = stopping
     setText(stop, confirmed && confirmed === session?.run_id ? '再点一次，确认停止' : '停止这一轮')
@@ -339,7 +344,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   card.onclick = async event => {
     const button = event.target instanceof Element ? event.target.closest('button') : null
     const hash = pending()?.hash
-    if (!button || !hash || deciding) return
+    if (!button || button.disabled || !hash || deciding) return
     deciding = true
     reflect()
     draw()
@@ -369,6 +374,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   void refresh()
   const timer = window.setInterval(refresh, 3000)
   document.addEventListener('visibilitychange', refresh)
+  document.addEventListener('desk-cc-availability', reflect)
   return {
     reflect,
     refresh,
@@ -386,6 +392,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
       wide.removeEventListener('change', resized)
       clearInterval(timer)
       document.removeEventListener('visibilitychange', refresh)
+      document.removeEventListener('desk-cc-availability', reflect)
     },
   }
 }

@@ -1,4 +1,5 @@
 // @ts-check
+import { wireDeskDisclosure } from './desk-disclosure.js'
 /** Tools live above the conversation, never as an alternate owner conversation.
  * @param {{root:HTMLElement,delegate:()=>unknown,search:()=>unknown,history:()=>unknown,projects:()=>unknown,navigate:(name:string)=>unknown}} deps */
 export function mountConversationTools({root,delegate,search,history,projects,navigate}) {
@@ -14,5 +15,10 @@ export function mountConversationTools({root,delegate,search,history,projects,na
   plus.append(items); bar.append(plus); root.querySelector('.converse-compose')?.prepend(bar)
   const close = (/** @type {Event} */ event) => { const button=/** @type {HTMLElement} */(event.target).closest('button'); if(button){plus.open=false} }
   bar.addEventListener('click',close)
-  return ()=>bar.remove()
+  const listeners = new AbortController()
+  wireDeskDisclosure(plus, listeners.signal)
+  return () => {
+    listeners.abort()
+    bar.remove()
+  }
 }

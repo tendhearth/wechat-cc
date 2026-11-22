@@ -29,13 +29,22 @@ export function outlineSource(source, canJump, now, first = true) {
   }
 }
 
-/** @param {Outline} outline @param {number} now */
-export function outlineNotice(outline, now) {
+/** @param {number|undefined} at @param {number} now */
+function outlineDay(at, now) {
+  if (at === undefined) return ''
+  const date = new Date(at), today = new Date(now)
+  if (date.toDateString() === today.toDateString()) return '今天'
+  // Compare calendar dates at noon so a result before midnight reads 「昨天」.
+  return time(date.setHours(12, 0, 0, 0), today.setHours(12, 0, 0, 0))
+}
+
+/** @param {Outline} outline @param {number} now @param {boolean} [wide] */
+export function outlineNotice(outline, now, wide = false) {
   switch (outline.state) {
     case 'none': return { text: 'CC 还没梳理过这件事。', action: outline.canRun ? '让 CC 梳理一下' : '' }
     case 'running': return { text: 'CC 在梳理…', action: '' }
     case 'ready': return {
-      text: ['CC 梳理的', time(outline.at, now), outline.stale && !outline.canRun && '今天梳理过了。'].filter(Boolean).join(' · '),
+      text: wide ? (`CC ${outlineDay(outline.at, now)}梳理的` + (outline.stale && !outline.canRun ? '。今天梳理过了。' : '')) : ['CC 梳理的', time(outline.at, now), outline.stale && !outline.canRun && '今天梳理过了。'].filter(Boolean).join(' · '),
       action: outline.stale && outline.canRun ? '重新梳理' : '',
     }
     case 'empty': return {

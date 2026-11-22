@@ -130,8 +130,28 @@ test('画室空态提供实际设置入口，读取失败可以恢复，站外�
  await clickNav(page,'atelier');await expect(page.locator('#atelier-gallery')).toContainText('画室尚未开启')
  await page.locator('[data-atelier-status-action="home"]').click();await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
  await page.locator('#settings-close').click()
- mode='broken';await page.locator('#atelier-refresh').click();await expect(page.locator('#atelier-gallery')).toContainText('暂时无法确认')
+ mode='broken';await page.locator('#atelier-refresh').click();await expect(page.locator('#atelier-gallery').getByText('暂时无法确认画室状态')).toBeVisible()
+ await page.setViewportSize({width:1280,height:1000})
+ await expect(page.locator('#atelier-gallery').getByText('暂时没能确认画室的状态。已有作品仍保存在这台 Mac。')).toBeVisible()
+ await expect(page.locator('#atelier-gallery').getByText('暂时无法确认画室状态')).toBeHidden()
+ await expect(page.getByRole('button',{name:'重新检查',exact:true})).toBeVisible()
  mode='loaded';await page.locator('[data-atelier-status-action="retry"]').click();await page.locator('#atelier-gallery [data-atelier-open]').click()
  await expect(page.locator('dialog.cc-record-reader')).toContainText('图片暂时无法显示')
  expect(external).toBe(0)
+})
+
+test('宽窗回忆标题、筛选、错误行和页脚都在同一栏', async ({ page, shimUrl, shim }) => {
+  await page.setViewportSize({ width: 1280, height: 820 })
+  await boot(page, shimUrl, shim)
+  await page.route('**/v1/journal/postcards?**', route => route.fulfill({ json: { error: 'unavailable' } }))
+  await clickNav(page, 'recollections')
+  const pane = page.locator('.cc-recollections')
+  const status = pane.locator('.pc-empty[role="status"]')
+  await expect(status.getByRole('button', { name: '重新读取', exact: true })).toBeVisible()
+  await expect(pane.locator('.pc-count')).toBeHidden()
+  const [heading, categories, filters, failure, footer] = await Promise.all([
+    pane.getByRole('heading', { name: '回忆', exact: true }), pane.locator('.cc-memory-tabs'),
+    pane.locator('.pc-toolbar'), status, pane.locator('footer'),
+  ].map(locator => locator.boundingBox()))
+  for (const bounds of [categories, filters, failure, footer]) expect(bounds!.x).toBeCloseTo(heading!.x, 0)
 })

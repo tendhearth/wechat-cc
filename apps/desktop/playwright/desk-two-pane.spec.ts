@@ -408,7 +408,137 @@ test('另一张等待纸条收到意见时保留去回答的键盘焦点', async
   const answer = cards.filter({ hasText: '菜谱' }).getByRole('button', { name: '去回答' })
   await answer.focus()
   await expect(answer).toBeFocused()
-  places = [{ ...archive, waiting: { ...waiting, ccOpinion: '先别删。这是唯一一份备份。', questionReason: '删了回不来' } }, recipe]
+  places = [placeItem('归档', { ...archive, waiting: { ...waiting, ccOpinion: '先别删。这是唯一一份备份。', questionReason: '删了回不来' } }), recipe]
   await expect(cards.filter({ hasText: '归档' }).locator('.desk-waiting-opinion')).toContainText('先别删')
   await expect(answer).toBeFocused()
+})
+
+test('CC 停止时空对话提示实情，保留草稿，恢复后可以发送', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { daemonAlive: false, presenceDown: true })
+  await page.route('**/v1/matter/owner-chat/window**', route => route.fulfill({ json: { messages: [] } }))
+  await routePlaces(page, [])
+  await page.goto(shimUrl)
+  const empty = page.locator('.converse-empty')
+  const input = page.locator('#converse-input')
+  const send = page.locator('#converse-send')
+  await expect(page.locator('#desk-cc-presence')).toHaveText('CC 没在运行')
+  await expect(empty.getByRole('heading')).toHaveText('CC 没在运行')
+  await expect(empty.getByRole('img')).toHaveAttribute('src', /\/unlit\/front\.png$/)
+  await expect(empty).toContainText('它起来之前，这里说的话送不出去。')
+  await expect(empty.getByRole('button', { name: '叫 CC 起来' })).toBeEnabled()
+  await expect(empty.locator('.converse-starter')).toHaveCount(0)
+  await expect(input).toHaveAttribute('placeholder', 'CC 没在运行')
+  await input.fill('回来再发')
+  await input.press('Enter')
+  await expect(input).toHaveValue('回来再发')
+  await expect(send).toBeDisabled()
+
+  await shim.invoke('demo.seed', { daemonAlive: true })
+  await expect(empty.getByRole('heading')).toHaveText('CC 在这儿', { timeout: 10_000 })
+  await expect(empty.locator('.converse-starter')).toHaveCount(3)
+  await expect(input).not.toHaveAttribute('placeholder', 'CC 没在运行')
+  await expect(input).toHaveValue('回来再发')
+  await expect(send).toBeEnabled()
+})
+
+test('CC 停止时已有对话和决定仍可读，发送和决定等恢复', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { daemonAlive: false, presenceDown: true })
+  await routePlaces(page, [
+    askingPlace('访谈', 'aaaa0001'),
+    placeItem('归档', {
+      waiting: { kind: 'permission', itemKey: 'matter:deadbeef', matterId: 'deadbeef', requestId: 'req-1', summary: '保留备份吗？', count: 1 },
+    }),
+  ])
+  await page.goto(shimUrl)
+  const note = page.locator('#converse-offline-note')
+  await expect(note).toContainText('CC 没在运行，现在说的话送不出去。')
+  await expect(note.getByRole('button', { name: '叫它起来' })).toBeVisible()
+  await expect(page.locator('#converse-scroll [data-converse-message]').first()).toBeVisible()
+  await expect(page.locator('#converse-scroll')).toHaveCSS('mask-image', /linear-gradient.*16px/)
+  await expect(page.locator('#converse-send')).toBeDisabled()
+  const buttons = page.locator('.desk-waiting-card').getByRole('button')
+  await expect(buttons).toHaveCount(3)
+  for (const button of await buttons.all()) {
+    await expect(button).toBeDisabled()
+    await expect(button).toHaveAttribute('title', 'CC 没在运行')
+  }
+  await shim.invoke('demo.seed', { daemonAlive: true })
+  await expect(note).toBeHidden({ timeout: 10_000 })
+  await expect(page.locator('#converse-send')).toBeEnabled()
+  for (const button of await buttons.all()) {
+    await expect(button).toBeEnabled()
+    await expect(button).not.toHaveAttribute('title', 'CC 没在运行')
+  }
+})
+
+test('宽窗次要页面共用纸底，内容栏留在纸内', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  const paper = page.locator('.dash-main')
+  await expect(paper).toHaveCSS('background-color', 'rgb(253, 251, 247)')
+  for (const [name, column, max] of [
+    ['notebook', '.notebook-header', 712], ['memory', '.memory-profile-overview', 712],
+    ['recollections', 'header', 860], ['atelier', '.atelier-gallery', 860],
+    ['todos', '.todos-head', 712], ['sessions', '.dialogue-page', 960],
+  ] as const) {
+    await clickNav(page, name)
+    const pane = paper.locator(`:scope > [data-pane="${name}"]`)
+    await expect(pane).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    const content = pane.locator(column).first()
+    await expect(content).toBeVisible()
+    const [bounds, body] = await Promise.all([paper.boundingBox(), content.boundingBox()])
+    expect(body!.width).toBeLessThanOrEqual(max)
+    expect(body!.x - bounds!.x).toBeGreaterThanOrEqual(36)
+    expect(bounds!.x + bounds!.width - body!.x - body!.width).toBeGreaterThanOrEqual(36)
+    await expect.poll(() => pane.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
+  }
+  for (const [name, column] of [
+    ['sessions', '.dialogue-page'], ['plugins', '.a2a-agents-body'], ['logs', '.logs-body'],
+  ] as const) {
+    if (name !== 'sessions') await paper.locator(`[role="tab"][data-backstage-pane="${name}"]:visible`).click()
+    const pane = paper.locator(`:scope > [data-pane="${name}"]`)
+    const title = pane.getByRole('heading', { name: '后厨', exact: true, level: 1 })
+    await expect(title).toBeVisible()
+    const [heading, tabs, body] = await Promise.all([
+      title, pane.getByRole('tablist', { name: '后厨视图' }), pane.locator(column),
+    ].map(locator => locator.boundingBox()))
+    expect(heading!.x).toBeCloseTo(tabs!.x, 0)
+    expect(heading!.x).toBeCloseTo(body!.x, 0)
+    await expect(pane).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect.poll(() => pane.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
+    if (name === 'sessions') {
+      await expect(pane.locator('.dialogue-sidebar')).toHaveCSS('width', '260px')
+      const views = pane.locator('#dialogue-views button')
+      await expect(views).toHaveCount(4)
+      expect(await views.evaluateAll(buttons => buttons.map(button => {
+        const text = document.createRange()
+        text.selectNodeContents(button)
+        return text.getClientRects().length
+      }))).toEqual([1, 1, 1, 1])
+    } else {
+      await expect(pane.locator(column)).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    }
+  }
+})
+
+test('更多打开设置后收起，两个菜单都能按 Esc 或点外关闭并还原焦点', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  const more = page.locator('.topbar-more')
+  const add = page.locator('.conversation-add')
+  for (const menu of [more, add]) {
+    const trigger = menu.locator('summary')
+    await trigger.click()
+    await expect(menu).toHaveAttribute('open', '')
+    await page.keyboard.press('Escape')
+    await expect(menu).not.toHaveAttribute('open', '')
+    await expect(trigger).toBeFocused()
+    await trigger.click()
+    await expect(menu).toHaveAttribute('open', '')
+    await page.locator('#converse-scroll').click()
+    await expect(menu).not.toHaveAttribute('open', '')
+    await expect(trigger).toBeFocused()
+  }
+  await more.locator('summary').click()
+  await more.getByRole('button', { name: '设置', exact: true }).click()
+  await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
+  await expect(more).not.toHaveAttribute('open', '')
 })
