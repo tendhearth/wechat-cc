@@ -10,13 +10,6 @@ var HOME_STALE = { stale: true }
 // 的 ACTIVE_WINDOW_MS 对齐(3 分钟)。
 var PRESENCE_TTL_MS = 3 * 60 * 1000
 var presenceAt = null
-function ago(iso) {
-  var d = Math.max(0, Date.now() - Date.parse(iso)) / 1000
-  if (d < 60) return "刚刚"
-  if (d < 3600) return Math.floor(d / 60) + " 分钟前"
-  if (d < 86400) return Math.floor(d / 3600) + " 小时前"
-  return Math.floor(d / 86400) + " 天前"
-}
 function readCache() { try { var s = localStorage.getItem(HOME_KEY); return s ? JSON.parse(s) : null } catch (e) { return null } }
 // 只存此刻页用得上的几项(收敛 5b 起不再显示动态,不把整份 events 塞进本机存储)
 function writeCache(s) { try { localStorage.setItem(HOME_KEY, JSON.stringify({ ok: true, synced_at: s.synced_at, presence: s.presence, work: s.work })) } catch (e) {} }
@@ -61,7 +54,7 @@ function loadHome() {
     if(seq!==homeSeq)return
     if (sent !== T) { loadHome(); return }
     var previous=homeState||cached
-    if (previous) {renderHome(previous,true);showBanner("家里的电脑暂时连不上 · 你看到的是 " + new Date(previous.synced_at).toLocaleString() + " 的样子")}
+    if (previous) {renderHome(previous,true);showBanner("家里的电脑暂时连不上 · 你看到的是 " + mobileTime(previous.synced_at) + " 的样子")}
     else {renderPresenceHome({work:{focus:null,partial:true}},true);showBanner('家里的电脑暂时连不上，看看它开着没。');document.getElementById("pres-txt").textContent = "暂时不知道 CC 在做什么"}
   })
 }

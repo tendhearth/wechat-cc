@@ -79,9 +79,17 @@ test('low height: status controls reachable, unknown/offline, waiting and empty 
 
 test('settings normal data, long device name, keyboard, rejected switch rollback and low viewport', async ({ page }, info) => {
   const h = await fixture(page); await page.goto(HOST + '/set'); await expect(page.locator('#f-name')).toHaveValue('Nate'); await fits(page); await targets(page); await shot(page, info, 'settings-390')
-  await expect(page.getByRole('button', { name: '准备失败,点此重试' })).toBeVisible();
-  await expect(page.locator('#models-table')).toContainText('还没测过'); await expect(page.locator('#models-table')).toContainText('不通'); await expect(page.locator('#devices-list')).toContainText('English')
-  const retry = page.getByRole('button', { name: '准备失败,点此重试' }); await retry.focus(); await expect(retry).toBeFocused(); await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: '准备失败，点此重试' })).toBeVisible();
+  await expect(page.locator('#models-table')).toContainText('还没测过'); await expect(page.locator('#models-table .model-broken')).toHaveText('不通：请求没成功，检查一下地址'); await expect(page.locator('#devices-list')).toContainText('English')
+  await expect(page.locator('#f-persona')).toHaveCSS('resize', 'none')
+  for (const id of ['f-default-provider', 'f-cheap']) await expect(page.locator('#' + id)).toHaveCSS('appearance', 'none')
+  await expect(page.locator('#f-cheap option:checked')).toHaveText('自动（按偏好的先后）')
+  const summary = page.locator('details > summary')
+  await expect(summary).toHaveCSS('list-style-type', 'none')
+  expect((await summary.boundingBox()).height).toBeGreaterThanOrEqual(44)
+  await expect(page.locator('#tp-list input:checked')).toHaveCount(2)
+  expect(await page.locator('#tp-list label').evaluateAll(labels => labels.every(label => label.getBoundingClientRect().height >= 44))).toBe(true)
+  const retry = page.getByRole('button', { name: '准备失败，点此重试' }); await retry.focus(); await expect(retry).toBeFocused(); await page.keyboard.press('Enter');
   await expect.poll(() => h.posts.length).toBe(2); expect(h.posts.map(p => p.body)).toEqual([{ op: 'set_config', key: 'companion.atelier_mode', value: 'off' }, { op: 'set_config', key: 'companion.atelier_mode', value: 'private' }]);
   await page.locator('#f-split').focus(); await page.keyboard.press('Space'); await expect(page.locator('#f-split')).toBeChecked(); expect(h.posts.at(-1)).toEqual({ path: '/set/api/apply', body: { op: 'set_pref', key: 'split', value: false } })
   await page.setViewportSize({ width: 390, height: 280 }); await page.locator('summary').focus(); await page.keyboard.press('Enter'); await expect(page.locator('#f-autostart')).toBeVisible(); await page.locator('#f-autostart').focus(); await expect(page.locator('#f-autostart')).toBeInViewport(); await fits(page); await shot(page, info, 'settings-low')

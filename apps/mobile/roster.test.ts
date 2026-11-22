@@ -6,7 +6,7 @@ function fixture(device=false){
  const w=new Window();w.document.body.innerHTML='<nav id="roster-strip" hidden></nav>'
  const timers:Function[]=[];let response:any={status:200,json:async()=>({places:[]}),headers:{get:()=> 'v1'}};const calls:any[]=[];const opened:any[]=[];let rendered=0
  const env={document:w.document,isDevice:device,esc:(s:any)=>String(s).replace(/</g,'&lt;'),setTimeout:(f:Function)=>{timers.push(f);return 1},clearTimeout:()=>{},onUnauthorized:()=>{},T:'d',api:async(p:any,o:any)=>{calls.push([p,o]);return response},openMatter:(id:string)=>opened.push(id),mRosterTarget:null,cRender:()=>{rendered++}}
- const f=new Function(...Object.keys(env),readMobileSource('roster.js')+';return {renderPlacesStrip,startRoster,rTime,rLine,rTarget,cInPlace,cRefInPlace,place:function(){return cPlace}}')(...Object.values(env))
+ const f=new Function(...Object.keys(env),readMobileSource('time.js')+'\n'+readMobileSource('roster.js')+';return {renderPlacesStrip,startRoster,rTime,rLine,rTarget,cInPlace,cRefInPlace,place:function(){return cPlace}}')(...Object.values(env))
  return {w,calls,timers,opened,rendered:()=>rendered,...f,respond(r:any){response=r}}
 }
 const NOW=new Date('2026-11-18T16:10:00').getTime()
@@ -16,10 +16,10 @@ it('时间与现状不用状态词',()=>{
  const h=fixture()
  expect(h.rTime(place('a',{moving:true}),NOW)).toBe('现在')
  expect(h.rTime(place('a'),NOW)).toBe('30 分钟前')
- expect(h.rTime(place('a',{updatedAt:new Date('2026-11-17T22:00:00').getTime()}),NOW)).toBe('昨天')
+ expect(h.rTime(place('a',{updatedAt:new Date('2026-11-17T22:00:00').getTime()}),NOW)).toBe('昨天 22:00')
  expect(h.rLine(place('a',{status:'working'}))).toBe('a 的事…')
- expect(h.rLine(place('a',{status:'failed'}))).toBe('a 的事(没做成)')
- expect(h.rLine(place('a',{alsoChanged:2}))).toBe('a 的事,另有 2 件也动过')
+ expect(h.rLine(place('a',{status:'failed'}))).toBe('a 的事（没做成）')
+ expect(h.rLine(place('a',{alsoChanged:2}))).toBe('a 的事，另有 2 件也动过')
 })
 it('一行一个地方;在等你的有点;连不上时说一句、不亮点;名字转义',()=>{
  const h=fixture()

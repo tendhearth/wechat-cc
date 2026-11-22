@@ -15,7 +15,7 @@ async function cSearch(){
   if(seq!==cSearchSeq||!isDevice)return
   cSearchRows=cSearchCursor?cSearchRows.concat(b.matters):b.matters;cSearchCursor=b.nextCursor
   cSearchRows.forEach(function(m){if(!(mMatters||[]).some(function(row){return row.id===m.id})){if(!mMatters)mMatters=[];mMatters.push(m)}})
-  document.getElementById('chat-search-results').innerHTML=(hits.length?'<h3>对话</h3>'+hits.map(function(m){return '<button type="button" data-message="'+esc(m.id)+'" data-at="'+esc(new Date(m.createdAt).toISOString())+'">'+esc(m.text)+'</button>'}).join(''):'')+(cSearchRows.length?'<h3>以前交办的事</h3>'+cSearchRows.map(function(m){return '<button type="button" data-mid="'+esc(m.id)+'">'+esc(ccPlain(m.title))+' · '+esc(m.projectPath||'')+' · '+esc(mStatusKey(m)==='waiting'?'等你决定':CCP.STATUS_WORDS[mStatusKey(m)]||m.state||m.status)+' · '+esc(new Date(m.createdAt).toLocaleString())+'</button>'}).join(''):'')||'<p>没有找到；可以换种说法，或在更多话题里找。</p>'
+  document.getElementById('chat-search-results').innerHTML=(hits.length?'<h3>对话</h3>'+hits.map(function(m){return '<button type="button" data-message="'+esc(m.id)+'" data-at="'+esc(new Date(m.createdAt).toISOString())+'">'+esc(m.text)+'</button>'}).join(''):'')+(cSearchRows.length?'<h3>以前交办的事</h3>'+cSearchRows.map(function(m){return '<button type="button" data-mid="'+esc(m.id)+'">'+esc(ccPlain(m.title))+' · '+esc(m.projectPath||'')+' · '+esc(mStatusKey(m)==='waiting'?'等你决定':CCP.STATUS_WORDS[mStatusKey(m)]||m.state||m.status)+' · '+esc(mobileTime(m.createdAt))+'</button>'}).join(''):'')||'<p>没有找到；可以换种说法，或在更多话题里找。</p>'
   document.getElementById('chat-search-more').hidden=!cSearchCursor
 
  }catch(e){if(seq===cSearchSeq)document.getElementById('chat-search-results').textContent='尚未同步 · 暂时读不到，请重试。'}

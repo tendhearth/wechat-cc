@@ -35,7 +35,26 @@ async function fixture(page,{link=false,old=false}={}){
 }
 test('device enters the one conversation, drafts survive topic and matter layers; narrow/wide screenshots',async({page},info)=>{
  const h=await fixture(page);await page.goto(HOST+'/m');await expect(page.locator('#chat-messages')).toContainText('交给 Codex');await expect(page.locator('#m-list')).toBeHidden()
+ await expect(page.locator('.chat-message > small').first()).toHaveText(/\d{4} 年 \d{1,2} 月 \d{1,2} 日$/)
+ expect((await page.locator('.chat-message > small').allTextContents()).join(' ')).not.toMatch(/\/|PM/)
+ await expect(page.locator('#chat-input')).toHaveCSS('resize','none')
+ for(const id of ['chat-search-open','topic-open','chat-refresh']){
+  const button=page.locator('#'+id)
+  await expect(button).toHaveCSS('border-top-width','0px')
+  expect((await button.boundingBox()).height).toBeGreaterThanOrEqual(44)
+ }
+ const reference=page.locator('.cc-reference > details > summary').first()
+ await expect(reference).toHaveCSS('list-style-type','none')
+ expect((await reference.boundingBox()).height).toBeGreaterThanOrEqual(44)
+ await expect(page.getByRole('button',{name:'发送',exact:true})).toHaveCSS('border-top-left-radius','50%')
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
  await page.locator('#chat-input').fill('保留这句草稿');await page.locator('#topic-open').click();await page.getByRole('button',{name:'服务器',exact:true}).click();await expect(page.locator('#topic-body')).toContainText('这次想起');await page.screenshot({path:info.outputPath('topic-390.png'),fullPage:true})
+ const topicSummaries=page.locator('#topic-body details > summary:visible')
+ await expect(topicSummaries).toHaveCount(2)
+ for(const summary of await topicSummaries.all()){
+  await expect(summary).toHaveCSS('list-style-type','none')
+  expect((await summary.boundingBox()).height).toBeGreaterThanOrEqual(44)
+ }
  await page.locator('#topic-body [data-mid]').click();await expect(page.locator('#m-title')).toHaveText('检查备份');await page.locator('#m-back').click();await expect(page.locator('#topic-body')).toContainText('每周核验一次');await page.locator('#topic-close').click();await expect(page.locator('#topic-panel')).toBeHidden();await expect(page.locator('#chat-input')).toHaveValue('保留这句草稿')
  await page.screenshot({path:info.outputPath('conversation-390.png'),fullPage:true});await page.setViewportSize({width:1280,height:900});await page.locator('#topic-open').click();await page.getByRole('button',{name:'服务器',exact:true}).click();await expect(page.locator('#topic-body')).toContainText('这次想起');await page.screenshot({path:info.outputPath('topic-1280.png'),fullPage:true});expect(h.errors).toEqual([])
 })
@@ -68,6 +87,7 @@ test('an older daemon keeps its limited status detail and hides unsupported conv
 for(const width of [390,1280])test('roster direct send and browser Back preserve drafts at '+width,async({page})=>{
  const h=await fixture(page);await page.setViewportSize({width,height:900});await page.goto(HOST+'/m');await expect(page.locator('#chat-messages')).toContainText('交给 Codex')
  await page.locator('#chat-input').fill('给 CC 的草稿');await page.locator('#roster-strip [data-place-open]').click();await expect(page.locator('#m-title')).toHaveText('检查备份');await expect(page.locator('#m-say-text')).toHaveAttribute('placeholder','对 Codex 说…')
+ await expect(page.locator('#m-say-text')).toHaveCSS('resize','none')
  await page.locator('#m-say-text').fill('直接核对第二份');await page.locator('#m-say button[type=submit]').click();await expect.poll(()=>h.posts.filter(p=>p.path==='/v1/matter/say').length).toBe(1)
  expect(h.posts.find(p=>p.path==='/v1/matter/say').body).toEqual({id,text:'直接核对第二份',requestId:expect.any(String)});expect(h.posts.filter(p=>p.path==='/v1/matter/owner-chat/say')).toEqual([])
  await page.locator('#m-say-text').fill('下一句草稿');await page.goBack();await expect(page.locator('#m-detail')).toBeHidden();await expect(page.locator('#chat-input')).toHaveValue('给 CC 的草稿')

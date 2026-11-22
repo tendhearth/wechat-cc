@@ -1,7 +1,7 @@
 body{max-width:680px;margin:auto;padding-bottom:calc(84px + env(safe-area-inset-bottom));line-height:1.65}
 body>header{display:flex;align-items:center;justify-content:space-between;padding:20px 22px 4px}
 body>header h1{font-size:23px;font-weight:500;letter-spacing:-.04em}
-#nav-set,#refresh{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;background:none;color:var(--soft);font:inherit;font-size:13px;min-height:44px;min-width:44px;padding:8px}
+#nav-set,#refresh,#conversation .conversation-tools button{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;background:none;color:var(--soft);font:inherit;font-size:13px;min-height:44px;min-width:44px;padding:8px}
 button svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .pane{padding:8px 22px 24px}
 .card{background:none;border:0;border-bottom:1px solid var(--line-soft);border-radius:0;box-shadow:none;padding:20px 0;margin:0}
