@@ -658,6 +658,29 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect((await desktop('POST', '/v1/places/map/outline', { key })).status).toBe(409)
   })
 
+  it('桌面小结设置与地方列表在整只 daemon 上接通', async () => {
+    const session = 'sandbox-clean-desk-recap'
+    const event = (kind: 'prompt' | 'session_end') => desktop('POST', '/v1/cli/event', {
+      source: 'codex', kind, session_id: session, cwd: process.cwd(), machine: hostname(), idle_s: 0,
+      ...(kind === 'prompt' ? { text: '沙盒里的画册样例' } : {}),
+    }, 'trusted')
+    expect((await event('prompt')).status).toBe(200)
+    try {
+      expect((await desktop('GET', '/v1/settings/recap')).body).toEqual({ ok: true, recap: true })
+      expect((await desktop('POST', '/v1/settings/recap', { recap: false })).status).toBe(200)
+      type Places = { places: { sessionIds: string[]; recap?: unknown }[] }
+      const off = await desktop<Places>('GET', '/v1/places')
+      expect(off.status).toBe(200)
+      expect(off.body.places.some(place => place.sessionIds.includes(session))).toBe(true)
+      expect(off.body.places.some(place => 'recap' in place)).toBe(false)
+      expect((await desktop('POST', '/v1/settings/recap', { recap: true })).status).toBe(200)
+      expect((await desktop<Places>('GET', '/v1/places')).status).toBe(200)
+    } finally {
+      await desktop('POST', '/v1/settings/recap', { recap: true })
+      await event('session_end')
+    }
+  })
+
   it('guest path: a stranger writes ⇒ neutral reply + the owner is asked; owner approves ⇒ the stranger is onboarded and talks to CC in a locked-down session that carries none of the owner\'s memory', async () => {
     const before = spawnOptions.length
     d.sendText(STRANGER, '你好呀')

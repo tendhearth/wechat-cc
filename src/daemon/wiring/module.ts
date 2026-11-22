@@ -8,6 +8,7 @@ import { log } from '../../lib/log'
 import { loadAccess } from '../../lib/access'
 import type { Lifecycle } from '../../lib/lifecycle'
 import { pick } from '../../lib/pick'
+import { RECAP_INTERVAL_MS } from '../../features/roster'
 import type { WorkbenchService } from '../../features/workbench'
 import type { registerIngest } from '../../features/companion'
 import type { TerminalFeature } from '../../features/terminal'
@@ -114,6 +115,11 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
       internalApi.provide({ connections: wired.connections })
       // 「一件事」活动时间:先于工作台停,退订 changes + 清节流定时器。
       ctx.own('matter-activity', async () => wired.stopMatterActivity())
+      const recaps = wired.recaps
+      if (recaps) {
+        ctx.interval('session-recaps', RECAP_INTERVAL_MS, () => recaps.check().catch(() => log('RECAP', 'check_unavailable')))
+        ctx.own('session-recaps-request', () => recaps.stop())
+      }
       // 手机那一簇(隧道 / notifier / 订阅 / 设置面板):比 polling 晚停 ⇒ 入站先停,App 在途的回复还能经隧道送完。
       ctx.own('phone', () => wired.stopPhone())
       // 推后了的 report / blocking 补说的那一拍(speech/pending-notices.ts):门这一层唯一的触发点

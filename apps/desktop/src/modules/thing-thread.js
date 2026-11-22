@@ -396,6 +396,9 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
         terminals.delete(key)
       }
     },
+    refreshRecap() {
+      for (const entry of terminals.values()) entry.thread.refreshRecap()
+    },
     setPlaceMap,
     current: () => selected,
     /** @param {Place} where @param {Target} target */

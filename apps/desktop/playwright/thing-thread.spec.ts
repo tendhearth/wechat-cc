@@ -293,3 +293,58 @@ test('800px 保留筛选条和补引用卡',async({page,shimUrl})=>{
   await expect(page.locator('#converse-place-clear')).toHaveText('只看 花园 · 回到全部')
   await expect(page.locator('#converse-scroll [data-terminal-reference="solo"]')).toBeVisible()
 })
+
+test('小结跟着作者换字体，发话收起便条，偏好关掉后两处都收起', async ({page, shimUrl}) => {
+  const cc = { text: '花园的画册排好了。还要选纸。', source: 'cc', at: now, awayFrom: Date.now() - 38 * 60_000 - 15_000 }
+  const claude = { text: '备份文件已经清点。等你决定是否读取目录。', source: 'claude', at: now, awayFrom: Date.now() - 38 * 60_000 - 15_000 }
+  let enabled = true
+  let spoke = false
+  await mockTerminal(page, {withThree:true})
+  await routePlaces(page, () => enabled ? [{...solo, ...(!spoke ? {recap:cc} : {})}, {...three, recap:claude}] : [solo, three])
+  await page.route('**/v1/settings/recap', route => {
+    if (route.request().method() === 'POST') enabled = route.request().postDataJSON().recap
+    return route.fulfill({json:{ok:true, recap:enabled}})
+  })
+  await page.route('**/v1/cli/activity**', route => {
+    const id = new URL(route.request().url()).searchParams.get('session_id')
+    return route.fulfill({json:{ok:true,items:entries,earlier:null,
+      ...(enabled && (id === 'ask' || !spoke) ? {recap: id === 'ask' ? claude : cc} : {})}})
+  })
+  await page.route('**/v1/cli/session-say', route => {
+    spoke = true
+    return route.fulfill({json:{ok:true,accepted:true}})
+  })
+  await page.goto(shimUrl)
+  const ccLine = placeRow(page,'花园').locator('.place-line')
+  const claudeLine = placeRow(page,'备份').locator('.place-line')
+  await expect(ccLine).toHaveText(cc.text)
+  await expect(claudeLine).toHaveText(claude.text)
+  await expect(ccLine).toHaveCSS('font-size','14.5px')
+  await expect(claudeLine).toHaveCSS('font-size','12.5px')
+  const hand = await ccLine.evaluate(node => getComputedStyle(node).fontFamily)
+  expect(await claudeLine.evaluate(node => getComputedStyle(node).fontFamily)).not.toBe(hand)
+  await select(page,'花园')
+  let memo = terminal(page).locator('.thing-recap')
+  await expect(memo).toBeVisible()
+  await expect(memo.locator('small')).toHaveText('你 38 分钟没来，CC 留了张条')
+  await expect(memo.locator('p')).toHaveCSS('font-family', hand)
+  await expect(memo.locator('svg[aria-hidden=true] path')).toHaveCount(2)
+  await terminal(page).locator('textarea').fill('用厚一点的纸')
+  await terminal(page).getByRole('button',{name:'发送',exact:true}).click()
+  await expect(memo).toHaveCount(0)
+
+  await select(page,'备份')
+  memo = terminal(page).locator('.thing-recap')
+  await expect(memo).toBeVisible()
+  await expect(memo.locator('small')).toHaveText('你 38 分钟没来，这是 Claude Code 自己记的')
+  await expect(memo.locator('p')).toHaveCSS('font-size','14.5px')
+  await expect(memo.locator('svg path')).toHaveCount(2)
+  await expect(terminal(page).locator('.desk-waiting-card')).toBeVisible()
+  await page.locator('.topbar-more summary').click()
+  await page.locator('#settings-open').click()
+  const toggle = page.getByRole('button',{name:'小结',exact:true})
+  await expect(toggle).toBeEnabled()
+  await toggle.click()
+  await expect(memo).toHaveCount(0)
+  await expect(claudeLine).not.toHaveAttribute('data-recap-source')
+})

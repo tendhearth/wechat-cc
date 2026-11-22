@@ -31,6 +31,8 @@ export const DESKTOP_CALLS = {
   roster: { get: call('GET /v1/roster') },
   places: {
     get: call('GET /v1/places'),
+    recapSettings: call('GET /v1/settings/recap'),
+    setRecap: call('POST /v1/settings/recap', { body: t<{ recap: boolean }>() }),
     labs: call('POST /v1/labs', { body: t<LabsRequestT>() }),
     map: call('GET /v1/places/map', { query: t<{ key: string; outline?: '1' }>() }),
     mapOutline: call('POST /v1/places/map/outline', { body: t<{ key: string }>() }),

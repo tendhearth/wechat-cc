@@ -72,13 +72,14 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true,
   const rows = places.map((p, i) => {
     const time = placeTime(p, now)
     const quiet = isQuiet(p, selected, now)
+    const recap = wide ? p.recap : undefined
     const actionsId = `place-actions-${i}`
     const control = popover ? `popovertarget="${actionsId}"` : `aria-controls="${actionsId}" aria-expanded="false"`
     return `<li class="place" data-place-key="${escapeHtml(p.key)}" data-quiet="${quiet}" data-waiting="${!!p.waiting}" data-unseen="${p.unseen}" data-moving="${p.moving}"${wide && p.status === 'working' ? ' data-working' : ''} data-selected="${p.key === selected}">
       <button type="button" class="place-row" aria-pressed="${p.key === selected}">
         <span class="place-dot" aria-hidden="true"></span>
         <span class="place-name">${escapeHtml(p.name)}</span>
-        <span class="place-line">${escapeHtml(placeLine(p))}</span>
+        <span class="place-line"${recap ? ` data-recap-source="${recap.source === 'cc' ? 'cc' : 'claude'}"` : ''}>${escapeHtml(recap?.text ?? placeLine(p))}</span>
         <span class="place-time">${escapeHtml(time)}</span>
       </button>
       <button class="place-more" type="button" ${control} aria-label="${escapeHtml(p.name)} 的更多操作">⋯</button>
@@ -248,9 +249,10 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   }
 
   /** 主人看了这一行(点开 / 选着时又动了 / 从这一行打开一件):daemon 记下时刻,下次那一句从这以后说起。 @param {Place} place */
-  function markSeen(place) {
+  function markSeen(place, opened = false) {
     const mark = `${place.key}@${place.updatedAt ?? ''}`
-    if (mark === seenMark) return
+    // Polls are deduplicated; coming back to an unchanged place is still the owner looking.
+    if (mark === seenMark && !opened) return
     seenMark = mark
     void v1(call, V1.places.seen, { body: { key: place.key } }).catch(() => { seenMark = '' })
   }
@@ -270,7 +272,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     }
     notified = current ? JSON.stringify([current.key, current.name, current.matterIds, current.messageIds, current.sessionIds]) : ''
     onSelect(current)
-    if (current) markSeen(current)
+    if (current) markSeen(current, true)
     // 主人看了这个地方的说话,就算看过了:没看过的那几件记一下(那一句恢复次墨色)。
     if (current?.unseen) for (const id of current.matterIds.slice(0, 20)) void v1(call, V1.matter.seen, { body: { id, surface: 'desktop' } }).catch(() => {})
   }

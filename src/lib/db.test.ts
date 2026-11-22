@@ -1687,3 +1687,20 @@ it('adds one strict outline row per place when upgrading a real v120 database', 
     })
   } finally { db.close() }
 })
+
+it('adds the strict recap table after v121 and removes its row when the session is pruned', () => {
+  const db = migratedTo(121)
+  try {
+    const table = () => db.query("SELECT name, strict FROM pragma_table_list WHERE name='terminal_recaps'").get()
+    expect(table()).toBeNull()
+    db.query("INSERT INTO cli_sessions(session_id,source,cwd,last_event_at,created_at) VALUES('recap','codex','/work/fixture',1,1)").run()
+    runMigrations(db, migrations)
+    expect(table()).toEqual({ name: 'terminal_recaps', strict: 1 })
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(() => db.query("INSERT INTO terminal_recaps(session_id,source) VALUES('recap','unknown')").run()).toThrow()
+    db.query("INSERT INTO terminal_recaps(session_id) VALUES('recap')").run()
+    expect(db.query('SELECT text,call_day,call_count FROM terminal_recaps').get()).toEqual({ text: null, call_day: '', call_count: 0 })
+    db.query("DELETE FROM cli_sessions WHERE session_id='recap'").run()
+    expect(db.query('SELECT 1 FROM terminal_recaps').get()).toBeNull()
+  } finally { db.close() }
+})

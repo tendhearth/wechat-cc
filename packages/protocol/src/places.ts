@@ -31,6 +31,16 @@ export const PlaceWaiting = z.object({
 })
 export type PlaceWaitingT = z.infer<typeof PlaceWaiting>
 
+export const SessionRecap = z.object({
+  text: z.string(),
+  source: z.enum(['claude', 'cc']),
+  at: z.number(),
+  awayFrom: z.number(),
+})
+export type SessionRecapT = z.infer<typeof SessionRecap>
+export const RecapSettingsRequest = z.object({ recap: z.boolean() }).strict()
+export const RecapSettingsResponse = RecapSettingsRequest.extend({ ok: z.literal(true) })
+
 export const Place = z.object({
   /** "p:<16 位 hex>",由项目根目录算出,三端拿它当行的稳定身份。 */
   key: z.string(),
@@ -40,6 +50,7 @@ export const Place = z.object({
   /** line 那件事现在的状态(端上查 STATUS_TABLE 出词);line 为 null 时也为 null。 */
   status: z.enum(STATUS_KEYS).nullable(),
   waiting: PlaceWaiting.nullable(),
+  recap: SessionRecap.optional(),
   /** 有至少一件在干。 */
   moving: z.boolean(),
   /** 带回来了、哪一端都还没看过。 */
