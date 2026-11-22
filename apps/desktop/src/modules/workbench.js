@@ -629,8 +629,8 @@ export function createWorkbenchController(deps) {
     get listPages() { return loadedPages },
     invalidateList() { listRequest++; state.loadingMore = false },
     getTargetTaskId() { return desiredId ?? failedTarget ?? state.selectedId },
-    /** @param {{force?:boolean,firstPage?:boolean}} [options] */
-    async refresh({ force = false, firstPage = false } = {}) {
+    /** @param {{force?:boolean}} [options] */
+    async refresh({ force = false } = {}) {
       if (!alive) return
       if (force) state.loadingMore = false
       if (state.loadingMore) {
@@ -644,7 +644,7 @@ export function createWorkbenchController(deps) {
       try {
         result = /** @type {ListResult} */ (await listTasks())
         if (!alive || request !== listRequest) return
-        while (!firstPage && pages < loadedPages && result.page?.hasMore && result.page.nextCursor) {
+        while (pages < loadedPages && result.page?.hasMore && result.page.nextCursor) {
           const next = /** @type {ListResult} */ (await listTasks(result.page.nextCursor))
           if (!alive || request !== listRequest) return
           result = { ...next, tasks: dedupe([...result.tasks, ...next.tasks]), projectProviders: { ...result.projectProviders, ...next.projectProviders }, agentNames: { ...result.agentNames, ...next.agentNames } }
@@ -769,7 +769,7 @@ export function syncWorkbenchProviderLabel(root) {
   if (label) label.textContent = `当前使用 ${select?.selectedOptions?.[0]?.textContent || '尚未选择服务'}`
 }
 
-/** @type {{query:TaskQuery,list:Partial<ListResult>,pages:number,project?:string,status?:string}|undefined} */
+/** @type {{query:TaskQuery,list:Partial<ListResult>,pages:number,scrollTop:number,project?:string,status?:string}|undefined} */
 let deskSearchList
 /** @param {WorkbenchDeps} deps @param {{focusSearch?:boolean}} [options] */
 export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
@@ -805,6 +805,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   const initialScope = resumeScope
   let searchDraft = resumeSearch
   let renderedScope = initialScope ?? 'new'
+  let searchScroll = retained?.scrollTop ?? 0
   let hasPainted = false
   const interactions = createWorkbenchInteractions({ invokeWorkbenchApi: deps.invokeWorkbenchApi, storage: windowStorage, inputAttempts: pageInputAttempts, changed: () => { if (alive) controller.paint(true) } })
   /** @type {Map<string, Map<string, boolean>>} */
@@ -1042,7 +1043,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       if (wideSearchVisible()
         && (document.activeElement === previousFocus || document.activeElement === document.body)) search?.focus({preventScroll: true})
     }
-    const sidebar = root.querySelector('.wb-sidebar'); if (sidebar) sidebar.scrollTop = sidebarScroll
+    const sidebar = root.querySelector('.wb-sidebar'); if (sidebar) sidebar.scrollTop = deskSearch ? searchScroll : sidebarScroll
     for (const [id, open] of disclosures.get(scopeFor(state)) ?? []) {
       if (id === 'wb-artifacts' && root.querySelector('#wb-artifacts.is-outcome') && !artifactDisclosureChoices.has(nextScope)) continue
       root.querySelector(`#${id}`)?.toggleAttribute('open', open)
@@ -1681,7 +1682,9 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       navigationGeneration++; artifactRequest++
       return controller.newTask(path)
     }
-    if (action === 'load-more') return controller.loadMore().catch(fail)
+    if (action === 'load-more') return deskSearch
+      ? deskSearch.loadMoreTasks(() => controller.loadMore())
+      : controller.loadMore().catch(fail)
     if (action === 'clear-search') {
       if (deskSearch?.clear()) return
       searchDraft = ''
@@ -2022,6 +2025,9 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     }
   }
   const onScroll = (/** @type {Event} */ event) => {
+    if (deskSearch && wideSearchVisible() && event.target instanceof HTMLElement && event.target.matches('.wb-sidebar')) {
+      searchScroll = event.target.scrollTop
+    }
     const content = root.querySelector('.wb-content')
     if (event.target !== content || !content) return
     if (content.scrollTop !== pendingOutcomeDiscovery.get(renderedScope)) pendingOutcomeDiscovery.delete(renderedScope)
@@ -2114,19 +2120,18 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     controller.state.listStatus = deskSearchList?.status
     deskSearch.mount({ root, visible: wideSearchVisible,
       filter: (q) => controller.filterTasks({ q, archived: controller.state.query?.archived ?? 'exclude' }),
-      invalidateTasks: () => controller.invalidateList(),
+      invalidateTasks: () => { searchScroll = 0; controller.invalidateList() },
       loadingMore: () => !!controller.state.loadingMore,
     })
     controller.paint(true)
-    // Keep the retained rows during re-entry, then take a fresh first page and cursor.
-    deskSearch.refreshTasks(() => controller.refresh({ firstPage: !!deskSearch.query }))
+    // Keep the retained rows while refreshing the same number of pages with fresh cursors.
+    deskSearch.refreshTasks(() => controller.refresh())
   } else controller.refresh().catch(fail)
   const timer = setInterval(() => {
     // 面板被藏起来就别占着长连接;重新露面时把它接回来。
     if (root.closest('[hidden]')) { controller.stopLive(); return }
     controller.resumeLive()
-    if (deskSearch) deskSearch.refreshTasks(() => controller.refresh())
-    else controller.refresh().catch(fail)
+    if (!deskSearch) controller.refresh().catch(fail)
   }, deps.pollMs ?? 3000)
   const openDraft = async (/** @type {IncomingDraft} */ incoming) => {
     if (!incoming.text.trim()) return false
@@ -2154,7 +2159,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     saveWindowState()
     if (deskSearch) {
       const { query, tasks, page, projects, projectProviders, agentNames, historyProviders, listProject, listStatus } = controller.state
-      if (query) deskSearchList = { query, list: { tasks, page, projects, projectProviders, agentNames, historyProviders }, pages: controller.listPages,
+      if (query) deskSearchList = { query, list: { tasks, page, projects, projectProviders, agentNames, historyProviders }, pages: controller.listPages, scrollTop: searchScroll,
         project: listProject, status: listStatus }
       deskSearch.unmount(root)
     } else {

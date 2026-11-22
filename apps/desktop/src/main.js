@@ -441,6 +441,7 @@ const taskEntry = createTaskEntry({invokeWorkbenchApi, onAccepted: openAcceptedE
 const deskSearch = createDeskSearch({
   call: invokeWorkbenchApi,
   openProject: place => {
+    recordDeskNavigation?.()
     rosterDock?.close()
     switchPane('thing')
     deskPlaces?.selectKey(place.key)
@@ -463,6 +464,7 @@ const deskSearch = createDeskSearch({
     try {
       return await locateConversationMessage(id, () => {
         if (!current()) return false
+        recordDeskNavigation?.()
         navigateDeskPane('overview')
         return true
       })
@@ -479,7 +481,10 @@ const deps = {
   preserveNavigationFocus: () => preserveNavigationFocus,
   onTaskNavigation: () => recordDeskNavigation?.(),
   deskSearch,
-  onOpenSearchTask: openDeskTask,
+  onOpenSearchTask: (/** @type {string} */ id) => {
+    recordDeskNavigation?.()
+    return openDeskTask(id)
+  },
   onMatterViewed: (/** @type {import('./modules/workbench.js').Task} */ task) => { addConversationMatter(task.id,task.title); updateConversationMatters([task]) },
   onOpenMatter: (/** @type {string} */ id) => openDeskDetail({kind:'matter',id}),
   onOpenTerminal: (/** @type {string} */ id) => openDeskDetail({kind:'terminal',id}),
@@ -1947,9 +1952,12 @@ function mountDeskHistory(strip, signal) {
   back.title = `后退 ${mac ? '⌘[' : 'Alt+←'}`
   forward.title = `前进 ${mac ? '⌘]' : 'Alt+→'}`
 
+  const searching = () => !!document.querySelector('.dash-main > #conversation-matter-layer[data-workbench-view="search"]:not([hidden])')
+
   /** @returns {import('./modules/desk-history.js').DeskLocation} */
   function location() {
     const pane = document.body.dataset.pane ?? 'overview'
+    if (deskWide() && searching()) return { pane, place: null, detail: null, searchQuery: deskSearch.query }
     const task = pane === 'workbench' && document.querySelector('#conversation-matter-layer[data-workbench-view="detail"]')
       ? getViewedWorkbenchTaskId() : null
     if (pane === 'thing') {
@@ -1982,7 +1990,12 @@ function mountDeskHistory(strip, signal) {
   const available = () => root.dataset.mode === 'dashboard' && !document.querySelector('dialog[open]')
 
   /** @param {import('./modules/desk-history.js').DeskLocation} entry */
-  async function applyLocation({ pane, place, detail, terminalPlace }) {
+  async function applyLocation({ pane, place, detail, terminalPlace, searchQuery }) {
+    if (deskWide() && searchQuery !== undefined) {
+      deskSearch.restoreQuery(searchQuery)
+      switchPane('all')
+      return true
+    }
     if (pane === 'thing') {
       if (deskWide() && terminalPlace && detail?.kind === 'terminal') {
         const destination = searchTerminalDestination(detail, terminalPlace)
@@ -2022,7 +2035,6 @@ function mountDeskHistory(strip, signal) {
 
   /** @type {{entry: ReturnType<typeof location>, focus: Element|null}|undefined} */
   let beforeSearch
-  const searching = () => !!document.querySelector('.dash-main > #conversation-matter-layer[data-workbench-view="search"]:not([hidden])')
   openDeskSearch = () => {
     if (!searching()) {
       beforeSearch = {entry: location(), focus: document.activeElement}

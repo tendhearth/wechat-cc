@@ -17,13 +17,13 @@ afterEach(() => {
 })
 
 const paths = ['/v1/places', '/v1/terminal/search', '/v1/matter/owner-chat/window', '/v1/workbench']
-function setup(read: (path: string) => Promise<unknown> = async () => ({ places: [], hits: [], messages: [], tasks: [] })) {
+function setup(read: (path: string, params: URLSearchParams) => Promise<unknown> = async () => ({ places: [], hits: [], messages: [], tasks: [] })) {
   const requests: string[] = []
   const call = vi.fn(async (_method: string, path: string) => {
     const url = new URL(path, 'http://localhost')
     if (url.pathname === paths[0] || url.searchParams.get('q') === '花园') {
       requests.push(url.pathname)
-      return read(url.pathname)
+      return read(url.pathname, url.searchParams)
     }
     return { tasks: [] }
   })
@@ -147,4 +147,50 @@ it('清除按钮清空搜索框并将焦点留在框内', async () => {
   expect(document.activeElement).toBe(search.field())
   expect(document.querySelector<HTMLButtonElement>('.desk-search-clear')?.hidden).toBe(true)
   expect(search.requests).toEqual([])
+})
+
+it('交办分页失败保留列表，重试成功后可按原页数和滚动位置返回', async () => {
+  const first = { id: 'first', title: '花园交办', path: '/offline/garden', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2 }
+  const older = { ...first, id: 'older', title: '早一些的花园交办', updatedAt: 1 }
+  const cursors: (string | null)[] = []
+  let round = 0
+  let fail = true
+  const search = setup(async (path, params) => {
+    if (path !== '/v1/workbench') return { places: [], hits: [], messages: [] }
+    const cursor = params.get('cursor')
+    cursors.push(cursor)
+    if (!cursor) round++
+    if (cursor && fail) { fail = false; throw new Error('unavailable') }
+    return {
+      tasks: cursor ? [older] : [first],
+      page: { limit: 1, total: 2, hasMore: !cursor, nextCursor: cursor ? null : `older-${round}` },
+    }
+  })
+  const more = () => document.querySelector<HTMLButtonElement>('.desk-search-tasks .wb-load-more')
+  const note = () => document.querySelector('.desk-search-task-page-error')
+  const sidebar = () => document.querySelector<HTMLElement>('.wb-sidebar')!
+  const rows = () => [...document.querySelectorAll<HTMLElement>('.desk-search-tasks .wb-task')].map(row => row.dataset.taskId)
+
+  search.input('花园')
+  await vi.advanceTimersByTimeAsync(250)
+  more()?.click()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(note()?.textContent).toBe('没读到更早的。')
+  expect(more()?.disabled).toBe(false)
+  expect(rows()).toEqual(['first'])
+
+  more()?.click()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(note()).toBeNull()
+  expect(rows()).toEqual(['first', 'older'])
+  sidebar().scrollTop = 120
+  sidebar().dispatchEvent(new Event('scroll'))
+  stopWorkbenchPolling()
+
+  search.mount()
+  expect(rows()).toEqual(['first', 'older'])
+  await vi.advanceTimersByTimeAsync(6_000)
+  expect(rows()).toEqual(['first', 'older'])
+  expect(sidebar().scrollTop).toBe(120)
+  expect(cursors).toEqual([null, 'older-1', 'older-1', null, 'older-2'])
 })

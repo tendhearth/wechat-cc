@@ -255,3 +255,75 @@ test('旧后台只按消息编号定位，缺失时提示留在点中的那行�
   await row(page, 'chat').filter({ hasText: 'CC 说的' }).click()
   await expect(page.locator('#converse-scroll [data-converse-message].converse-msg-cc:focus')).toContainText('好的')
 })
+
+for (const kind of ['projects', 'terminals', 'chat', 'tasks'] as const) {
+  test(`打开搜索结果后可以后退到原搜索（${kind}）`, async ({ page, shimUrl }) => {
+    await page.goto(shimUrl)
+    await page.locator('#topbar-search').click()
+    await search(page).fill('花园')
+    const taskRow = page.locator('.desk-search-tasks [data-task-id="aabbccdd"]')
+    const result = kind === 'tasks' ? taskRow : row(page, kind)
+    await expect(page.locator('.desk-search-section-title')).toHaveText(['项目1', '会话里说过的1', '和 CC 的对话1', '交办的事1'])
+    await result.click()
+    if (kind === 'projects') await expect(page.locator('#thing-name')).toHaveText(place.name)
+    if (kind === 'terminals') await expect(page.locator('#thing-thread .thing-terminal:visible')).toContainText('找到指定会话的原话')
+    if (kind === 'chat') await expect(page.locator('#converse-scroll [data-converse-message]:focus')).toContainText(chat.text)
+    if (kind === 'tasks') await expect(page.locator('.wb-task-head h2')).toHaveText(task.title)
+    await page.locator('#desk-back').click()
+    await expect(search(page)).toBeVisible()
+    await expect(search(page)).toHaveValue('花园')
+    await expect(result).toBeVisible()
+    await expect(page.locator('.desk-search-section-title')).toHaveText(['项目1', '会话里说过的1', '和 CC 的对话1', '交办的事1'])
+  })
+}
+
+test('加载更早的交办失败可以重试，返回后沿新游标重读已加载的页', async ({ page, shimUrl }) => {
+  const older = { ...task, id: 'bbccddee', title: '更早的花园交办' }
+  const oldest = { ...task, id: 'ccddeeaa', title: '最早的花园交办', status: 'queued' }
+  const reads: string[] = []
+  let round = 0
+  let fail = true
+  await page.route(/\/v1\/workbench(?:\?.*)?$/, route => {
+    const params = query(route.request().url())
+    if (params.get('q') !== '花园') return route.fallback()
+    const cursor = params.get('cursor')
+    reads.push(cursor ?? 'first')
+    if (!cursor) round++
+    if (cursor === 'older-1' && fail) {
+      fail = false
+      return route.fulfill({ status: 503, json: { error: 'unavailable' } })
+    }
+    const next = !cursor ? `older-${round}` : cursor.startsWith('older-') ? `oldest-${round}` : null
+    const item = !cursor ? task : next ? older : { ...oldest, title: round === 1 ? oldest.title : '重新读到最早的花园交办' }
+    return route.fulfill({ json: { tasks: [item], page: { limit: 1, total: 3, hasMore: !!next, nextCursor: next } } })
+  })
+  await page.route('**/v1/workbench/task?*', route => query(route.request().url()).get('id') === oldest.id
+    ? route.fulfill({ json: { task: oldest, runId: 'run', events: [], permissions: [], artifacts: [], questions: [] } })
+    : route.fallback())
+
+  await page.goto(shimUrl)
+  await shortcut(page)
+  await search(page).fill('花园')
+  const tasks = page.locator('.desk-search-tasks')
+  const more = tasks.getByRole('button', { name: '加载更早的任务' })
+  const note = tasks.getByText('没读到更早的。')
+  await more.click()
+  await expect(note).toBeVisible()
+  await expect(more).toBeEnabled()
+  await expect(tasks.getByText(task.title, { exact: true })).toBeVisible()
+  await more.click()
+  await expect(tasks.getByText(older.title, { exact: true })).toBeVisible()
+  await expect(note).toBeHidden()
+  await more.click()
+  await tasks.locator('#wb-filter-status').selectOption('working')
+  await expect(tasks.locator('.desk-search-section-title')).toHaveText('交办的事1')
+  await tasks.getByText(oldest.title, { exact: true }).click()
+  await expect(page.locator('.wb-task-head h2')).toHaveText(oldest.title)
+
+  await page.locator('#desk-back').click()
+  await expect(search(page)).toHaveValue('花园')
+  await expect(tasks.locator('#wb-filter-status')).toHaveValue('working')
+  await expect(tasks.getByText('重新读到最早的花园交办', { exact: true })).toBeVisible()
+  await expect(tasks.locator('.desk-search-section-title')).toHaveText('交办的事1')
+  expect(reads).toEqual(['first', 'older-1', 'older-1', 'oldest-1', 'first', 'older-2', 'oldest-2'])
+})

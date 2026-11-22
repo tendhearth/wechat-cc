@@ -17,8 +17,8 @@ export function terminalSearchRoutes(deps: InternalApiDeps): RouteTable {
       const start = performance.now()
       let hitCount = 0
       try {
-        const owner = deps.resolveAdminChatId?.()
-        const hits = owner ? searchTerminalSpeech(deps.db, owner, hostname(), q, Math.min(limit, TERMINAL_SEARCH_MAX_LIMIT)) : []
+        const owner = deps.resolveAdminChatId?.() || null
+        const hits = searchTerminalSpeech(deps.db, owner, hostname(), q, Math.min(limit, TERMINAL_SEARCH_MAX_LIMIT))
         hitCount = hits.length
         return { status: 200, body: { ok: true, hits } }
       } catch {

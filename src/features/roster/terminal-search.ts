@@ -40,14 +40,14 @@ interface Session {
   path: string | null
 }
 
-export function searchTerminalSpeech(db: Db, owner: string, machine: string, q: string, limit: number, root = projectRoot) {
+export function searchTerminalSpeech(db: Db, owner: string | null, machine: string, q: string, limit: number, root = projectRoot) {
   const matcher = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu')
   // seq is per matter. The INTEGER PRIMARY KEY gives a global insertion order
   // and lets SQLite walk backwards without scanning or sorting older steps.
   const steps = db.query<{ matter_id: string; kind: string; payload_json: string; created_at: number }, [number]>(
     'SELECT matter_id, kind, payload_json, created_at FROM matter_items ORDER BY id DESC LIMIT ?',
   )
-  const session = db.query<Session, [string, string]>(`
+  const session = db.query<Session, [string, string | null]>(`
     SELECT c.session_id AS sessionId, c.cwd, c.source, c.machine, c.origin_agent AS origin,
            m.title, m.project_path AS path
     FROM matters m JOIN matter_bindings b ON b.matter_id=m.id AND b.surface='cli'

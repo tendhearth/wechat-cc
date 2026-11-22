@@ -68,7 +68,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
   /** @type {View|undefined} */ let view
   /** @type {Partial<Record<SectionKey,Section>>} */ let sections = {}
   /** @type {Status|undefined} */ let taskStatus
-  let taskBusy = false, launching = false
+  let taskBusy = false, taskPageError = false, launching = false
   /** @type {{key:string, response:Promise<unknown>, settled:boolean}|undefined} */ let taskRead
   const unavailableMessages = new Set()
   const current = () => view?.visible()
@@ -119,7 +119,15 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
       const filtered = [.../** @type {NodeListOf<HTMLSelectElement>} */ (taskArea.querySelectorAll('select'))].some(select => select.value)
         || !!taskArea.querySelector('[data-action="toggle-archived"][aria-pressed="true"]')
       const more = /** @type {HTMLButtonElement|null} */ (taskArea.querySelector('.wb-load-more'))
-      if (more) more.disabled = taskBusy || view.loadingMore()
+      if (more) {
+        more.disabled = taskBusy || view.loadingMore()
+        const pageError = taskArea.querySelector('.desk-search-task-page-error')
+        if (taskPageError && !pageError) {
+          const line = node('p', 'desk-search-task-page-error desk-search-note', '没读到更早的。')
+          line.setAttribute('role', 'status')
+          more.after(line)
+        } else if (!taskPageError) pageError?.remove()
+      }
       keepTaskSection = filtered || !!more
       taskArea.hidden = !!q && !failed && !keepTaskSection && !taskRows
       const count = taskArea.querySelector('.desk-search-section-title span')
@@ -290,7 +298,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
       unavailableMessages.clear()
       taskRead = taskStatus = undefined
       launching = true
-      taskBusy = false
+      taskBusy = taskPageError = false
       view?.invalidateTasks()
       for (const key of sectionKeys) paintSection(key)
     }
@@ -367,6 +375,26 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
   return {
     get query() { return q },
     get composing() { return composing },
+    /** @param {string} query */
+    restoreQuery(query) {
+      if (query === q) return
+      const input = field()
+      if (input) input.value = query
+      schedule(query)
+    },
+    /** @param {()=>Promise<void>} load */
+    async loadMoreTasks(load) {
+      if (!view?.visible() || taskBusy || view.loadingMore()) return
+      const seq = revision, target = view
+      taskPageError = false
+      syncSummary()
+      try {
+        await load()
+      } catch {
+        if (seq === revision && view === target) taskPageError = true
+      }
+      syncSummary()
+    },
     /** Keep the first page available if the workbench is replaced while it is loading.
      * @param {URLSearchParams} query */
     readTaskList(query) {
