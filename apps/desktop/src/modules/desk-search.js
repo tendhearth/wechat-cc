@@ -13,7 +13,7 @@ const weekday = new Intl.DateTimeFormat('zh-CN', { weekday: 'short' })
 /** @typedef {Place | TerminalHit | ChatHit} Hit */
 /** @typedef {'ready'|'pending'|'error'} Status */
 /** @typedef {{status:Status,rows?:Hit[],paging?:boolean,pageError?:boolean}} Section */
-/** @typedef {{root:HTMLElement,visible:()=>boolean,filter:(q:string)=>Promise<void>,invalidateTasks:()=>void}} View */
+/** @typedef {{root:HTMLElement,visible:()=>boolean,filter:(q:string)=>Promise<void>,invalidateTasks:()=>void,loadingMore:()=>boolean}} View */
 const sectionKeys = /** @type {SectionKey[]} */ (Object.keys(labels))
 const time = (/** @type {number} */ at) => Number.isFinite(at) ? weekday.format(at) : ''
 
@@ -60,7 +60,7 @@ function readRows(result, key) {
  * @param {{call:typeof import('../api.js').invokeWorkbenchApi,
  * openProject:(place:Place)=>void,
  * openTerminal:(hit:TerminalHit)=>void,
- * openMessage:(id:string,excerpt:string)=>void}} deps
+ * openMessage:(id:string,reveal:()=>boolean)=>Promise<boolean|undefined>}} deps
  */
 export function createDeskSearch({ call, openProject, openTerminal, openMessage }) {
   let raw = '', q = '', revision = 0, composing = false, earlier = '', active = ''
@@ -69,7 +69,8 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
   /** @type {Partial<Record<SectionKey,Section>>} */ let sections = {}
   /** @type {Status|undefined} */ let taskStatus
   let taskBusy = false, launching = false
-  /** @type {{key:string, response:Promise<unknown>}|undefined} */ let taskRead
+  /** @type {{key:string, response:Promise<unknown>, settled:boolean}|undefined} */ let taskRead
+  const unavailableMessages = new Set()
   const current = () => view?.visible()
   const field = () => /** @type {HTMLInputElement|null|undefined} */ (view?.root.querySelector('#wb-search'))
   const tasks = () => /** @type {HTMLElement|null|undefined} */ (view?.root.querySelector('.desk-search-tasks'))
@@ -111,20 +112,32 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
     if (clearButton) clearButton.toggleAttribute('hidden', !raw)
     const taskArea = tasks()
     const clearing = !q && (launching || taskStatus === 'pending')
-    const taskRows = clearing ? 0 : taskArea?.querySelectorAll('.wb-task-list .wb-task').length ?? 0
+    const taskRows = launching || clearing ? 0 : taskArea?.querySelectorAll('.wb-task-list .wb-task').length ?? 0
     const failed = taskStatus === 'error'
+    let keepTaskSection = false
     if (taskArea) {
-      taskArea.hidden = !!q && !failed && (taskStatus !== 'ready' || !taskRows)
+      const filtered = [.../** @type {NodeListOf<HTMLSelectElement>} */ (taskArea.querySelectorAll('select'))].some(select => select.value)
+        || !!taskArea.querySelector('[data-action="toggle-archived"][aria-pressed="true"]')
+      const more = /** @type {HTMLButtonElement|null} */ (taskArea.querySelector('.wb-load-more'))
+      if (more) more.disabled = taskBusy || view.loadingMore()
+      keepTaskSection = filtered || !!more
+      taskArea.hidden = !!q && !failed && !keepTaskSection && !taskRows
       const count = taskArea.querySelector('.desk-search-section-title span')
       if (count) count.textContent = String(taskRows)
       const content = /** @type {HTMLElement} */ (taskArea.querySelector('.desk-search-task-content'))
-      content.hidden = failed || clearing
+      content.hidden = failed || clearing || launching
+      const list = content.querySelector('.wb-task-list')
+      const filteredEmpty = !taskRows && keepTaskSection && !launching && taskStatus === 'ready'
+      list?.toggleAttribute('hidden', filteredEmpty)
+      const emptyNote = content.querySelector('.desk-search-task-empty')
+      if (filteredEmpty && !emptyNote) list?.after(node('p', 'desk-search-task-empty desk-search-note', '这个筛选下没有。'))
+      if (!filteredEmpty) emptyNote?.remove()
       const error = taskArea.querySelector('.desk-search-task-error')
       if (failed && error && !error.firstChild) error.append(notice(runTasks))
       if (!failed) error?.replaceChildren()
     }
     const empty = view.root.querySelector('.desk-search-empty')
-    if (empty) empty.textContent = q && taskStatus === 'ready' && !taskRows &&
+    if (empty) empty.textContent = q && taskStatus === 'ready' && !taskRows && !keepTaskSection &&
       sectionKeys.every(key => sections[key]?.status === 'ready' && !sections[key]?.rows?.length)
       ? `没有找到「${q}」。` : ''
     syncOptions()
@@ -141,6 +154,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
     host.append(title(labels[key], section.status === 'error' ? null : section.rows?.length ?? 0))
     if (section.status === 'error') { host.append(notice(() => void read(key))); return }
     section.rows?.forEach((hit, index) => {
+      /** @type {HTMLElement|undefined} */ let note
       const button = node('button', 'desk-search-row')
       button.type = 'button'
       button.id = `desk-search-${key}-${index}`
@@ -162,11 +176,26 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
         highlight(text, excerpt.text, excerpt.start, excerpt.length)
         sub.textContent = [message.kind === 'user' ? '你说的' : 'CC 说的', time(message.createdAt)].filter(Boolean).join(' · ')
         const id = message.messageId ?? message.id
-        if (id) button.onclick = () => openMessage(id, message.text)
+        if (id) {
+          const hint = '这一句在更早的地方，这个版本的后台翻不到。'
+          if (unavailableMessages.has(id)) note = node('p', 'desk-search-note', hint)
+          button.onclick = async () => {
+            const target = view, seq = revision
+            const currentHit = () => target === view && seq === revision && !!current()
+            if (await openMessage(id, currentHit) !== false || !currentHit()) return
+            if (unavailableMessages.has(id)) return
+            unavailableMessages.add(id)
+            const row = target?.root.querySelector('#' + button.id)
+            const messageNote = node('p', 'desk-search-note', hint)
+            messageNote.setAttribute('role', 'status')
+            row?.after(messageNote)
+          }
+        }
       }
       button.append(text)
       if (sub.textContent) button.append(sub)
       host.append(button)
+      if (note) host.append(note)
     })
     if (key === 'chat' && earlier) {
       if (section.pageError) host.append(notice(() => void read('chat', earlier)))
@@ -258,6 +287,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
       revision++
       active = earlier = ''
       sections = {}
+      unavailableMessages.clear()
       taskRead = taskStatus = undefined
       launching = true
       taskBusy = false
@@ -341,7 +371,10 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
      * @param {URLSearchParams} query */
     readTaskList(query) {
       const key = query.toString()
-      if (taskRead?.key !== key) taskRead = { key, response: v1(call, V1.workbench.list, { query }) }
+      if (taskRead?.key !== key) {
+        const read = { key, settled: false, response: v1(call, V1.workbench.list, { query }).finally(() => { read.settled = true }) }
+        taskRead = read
+      }
       return taskRead.response
     },
     /** @param {()=>Promise<void>} refresh */
@@ -349,6 +382,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
       if (!view?.visible() || composing || taskBusy || launching || taskStatus === 'error' || (q && taskStatus === 'ready')) return
       const seq = revision, target = view
       taskBusy = true
+      syncSummary()
       try {
         await refresh()
         if (seq === revision && view === target) taskStatus = 'ready'
@@ -362,6 +396,11 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
     /** @param {View} next */
     mount(next) {
       view = next
+      if (q && taskStatus !== 'error') {
+        // A returning view may still be waiting for the same first page.
+        if (taskRead?.settled) taskRead = undefined
+        taskStatus = undefined
+      }
       paint()
       queueSearch()
     },

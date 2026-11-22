@@ -127,10 +127,28 @@ function findThing(target) {
   }
 }
 
-/** @param {NonNullable<ReturnType<typeof findThing>>} destination */
-function openThing({place,item,direct}) {
+/** @typedef {import('./modules/desk-history.js').TerminalPlace} TerminalPlace */
+/** @typedef {{id:string, place:TerminalPlace}} SearchTerminal */
+/** @type {SearchTerminal|undefined} */ let searchTerminal
+
+/** @param {DeskDetail} target @param {TerminalPlace} hint */
+function searchTerminalDestination(target, hint) {
+  const destination = findThing(target)
+  if (destination) return destination
+  const existing = deskPlaces?.places().find(place => place.key === hint.key)
+  const place = {
+    ...(existing ?? { ...hint, line: null, status: null, waiting: null, moving: false, unseen: false, matterIds: [], messageIds: [] }),
+    sessionIds: [...new Set([...(existing?.sessionIds ?? []), target.id])],
+  }
+  const item = thingThread?.linkedItem(place, target)
+  if (item) return { place, item, direct: true }
+}
+
+/** @param {NonNullable<ReturnType<typeof findThing>>} destination @param {SearchTerminal} [terminal] */
+function openThing({place,item,direct}, terminal) {
   rosterDock?.close()
   if (document.body.dataset.pane !== 'thing') switchPane('thing')
+  searchTerminal = terminal
   thingThread?.forgetView(place.key)
   thingThread?.open(place,item.key,direct ? item : undefined)
   deskPlaces?.selectKey(place.key)
@@ -432,23 +450,25 @@ const deskSearch = createDeskSearch({
   },
   openTerminal: hit => {
     const target = { kind: /** @type {const} */ ('terminal'), id: hit.sessionId }
-    const destination = findThing(target)
-    if (destination) { void openDeskDetail(target); return }
-    const existing = deskPlaces?.places().find(place => place.key === hit.placeKey)
-    const place = {
-      ...(existing ?? { key: hit.placeKey ?? `terminal:${hit.sessionId}`, name: hit.project, line: null,
-        status: null, waiting: null, moving: false, unseen: false, updatedAt: hit.at, matterIds: [], messageIds: [] }),
-      sessionIds: [...new Set([...(existing?.sessionIds ?? []), hit.sessionId])],
-    }
-    const item = thingThread?.linkedItem(place, target)
-    if (!item) return
-    openThing({ place, item, direct: true })
+    const hint = { key: hit.placeKey ?? `terminal:${hit.sessionId}`, name: hit.project, updatedAt: hit.at }
+    const destination = searchTerminalDestination(target, hint)
+    if (!destination) return
+    recordDeskNavigation?.()
+    const { key, name, updatedAt } = destination.place
+    openThing(destination, { id: target.id, place: { key, name, updatedAt } })
     document.getElementById('thing-name')?.focus({ preventScroll: true })
     recordDeskNavigation?.()
   },
-  openMessage: (id, excerpt) => {
-    navigateDeskPane('overview')
-    void locateConversationMessage(deps, id, excerpt).catch(() => showToast('暂时打不开这句对话'))
+  openMessage: async (id, current) => {
+    try {
+      return await locateConversationMessage(id, () => {
+        if (!current()) return false
+        navigateDeskPane('overview')
+        return true
+      })
+    } catch {
+      if (current()) showToast('暂时打不开这句对话')
+    }
   },
 })
 
@@ -877,6 +897,7 @@ function switchPane(name) {
   }
   document.body.dataset.pane = focusConversation ? "overview" : name
   if (wasThing && name !== 'thing') {
+    searchTerminal = undefined
     thingThread?.close()
     if (deskWide()) deskPlaces?.clear()
   }
@@ -1933,6 +1954,10 @@ function mountDeskHistory(strip, signal) {
       ? getViewedWorkbenchTaskId() : null
     if (pane === 'thing') {
       const item = thingThread?.current()
+      const sessionId = item?.kind === 'terminal' ? item.id : item?.terminal?.sessionId
+      if (searchTerminal && searchTerminal.id === sessionId) {
+        return { pane, place: searchTerminal.place.key, detail: { kind: 'terminal', id: sessionId }, terminalPlace: searchTerminal.place }
+      }
       return {pane,place:strip.selected(),detail:item ? {kind:item.kind,id:item.id} : null}
     }
     return { pane, place: strip.selected(), detail: rosterDock?.item() ?? expandedDetail
@@ -1957,8 +1982,14 @@ function mountDeskHistory(strip, signal) {
   const available = () => root.dataset.mode === 'dashboard' && !document.querySelector('dialog[open]')
 
   /** @param {import('./modules/desk-history.js').DeskLocation} entry */
-  async function applyLocation({ pane, place, detail }) {
+  async function applyLocation({ pane, place, detail, terminalPlace }) {
     if (pane === 'thing') {
+      if (deskWide() && terminalPlace && detail?.kind === 'terminal') {
+        const destination = searchTerminalDestination(detail, terminalPlace)
+        if (!destination) return false
+        openThing(destination, { id: detail.id, place: terminalPlace })
+        return true
+      }
       const next = strip.places().find(p => p.key === place)
       if (!next) return false
       if (!deskWide()) { switchPane('overview'); strip.selectKey(next.key); return true }
@@ -2017,12 +2048,13 @@ function mountDeskHistory(strip, signal) {
     const focus = document.activeElement
     try {
       await history.move(direction, async (entry, current) => {
-        const { pane, place, detail } = entry
-        const hasPlace = () => !place || strip.places().some(p => p.key === place)
+        const { pane, place, detail, terminalPlace } = entry
+        const searchTerminalEntry = pane === 'thing' && deskWide() && detail?.kind === 'terminal' && terminalPlace
+        const hasPlace = () => searchTerminalEntry || !place || strip.places().some(p => p.key === place)
         if (!hasPlace()) return false
         const before = location()
         const sameDetail = detail?.kind === before.detail?.kind && detail?.id === before.detail?.id && pane === before.pane
-        if (pane === 'thing' && detail) {
+        if (pane === 'thing' && detail && !searchTerminalEntry) {
           const next = strip.places().find(p => p.key === place)
           if (!next || !thingThread?.find(next,detail)) return false
         }
@@ -2349,7 +2381,7 @@ async function boot() {
       navigate:navigateDeskPane})
     const topics=mountMemoryTopics({root:/** @type {HTMLElement} */(document.getElementById('memory-topics')),call:invokeWorkbenchApi,
       openMatter:id=>deps.onOpenMatter(id),
-      locateMessage:(id,excerpt)=>{navigateDeskPane('overview');return locateConversationMessage(deps,id,excerpt)},
+      locateMessage:id=>{navigateDeskPane('overview');return locateConversationMessage(id)},
       manage:()=>navigateDeskPane('memory')})
     memoryTopics=topics
     document.getElementById('topbar-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})

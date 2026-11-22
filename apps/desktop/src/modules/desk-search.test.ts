@@ -17,7 +17,7 @@ afterEach(() => {
 })
 
 const paths = ['/v1/places', '/v1/terminal/search', '/v1/matter/owner-chat/window', '/v1/workbench']
-function setup(read = (_path: string) => Promise.resolve({ places: [], hits: [], messages: [], tasks: [] })) {
+function setup(read: (path: string) => Promise<unknown> = async () => ({ places: [], hits: [], messages: [], tasks: [] })) {
   const requests: string[] = []
   const call = vi.fn(async (_method: string, path: string) => {
     const url = new URL(path, 'http://localhost')
@@ -69,16 +69,30 @@ it('组字时不搜，组字结束和随后的同词输入只触发一轮', asyn
   search.expectOneRound()
 })
 
-it('交办列表回来后重新挂载，沿用同一轮结果', async () => {
-  const search = setup()
+it('回到同词搜索时交办重读一次，其他段和停留期间都不重读', async () => {
+  let archived = false
+  const search = setup(async path => ({
+    places: [], hits: [], messages: [],
+    tasks: path === '/v1/workbench' && !archived ? [{
+      id: 'aabbccdd', title: '花园交办', path: '/offline/garden', providerId: 'codex',
+      status: 'completed', createdAt: 1, updatedAt: 2,
+    }] : [],
+  }))
   await vi.advanceTimersByTimeAsync(0)
   search.input('花园')
   await vi.advanceTimersByTimeAsync(250)
   search.expectOneRound()
+  expect(document.querySelector('.desk-search-tasks .wb-task')?.textContent).toContain('花园交办')
+  stopWorkbenchPolling()
+  archived = true
   search.mount()
-  await vi.advanceTimersByTimeAsync(250)
+  await vi.advanceTimersByTimeAsync(0)
   expect(search.field().value).toBe('花园')
-  search.expectOneRound()
+  expect(document.querySelector('.desk-search-tasks .wb-task')).toBeNull()
+  const afterReturn = [...paths, '/v1/workbench'].toSorted()
+  expect(search.requests.toSorted()).toEqual(afterReturn)
+  await vi.advanceTimersByTimeAsync(30_000)
+  expect(search.requests.toSorted()).toEqual(afterReturn)
 })
 
 it('交办读取尚未完成时重新挂载，接回原请求', async () => {
@@ -110,12 +124,13 @@ it.each([
   search.mount()
   search.input('花园')
   await vi.advanceTimersByTimeAsync(3_000)
-  search.expectOneRound()
+  const onReturn = route === '/v1/workbench' ? paths : [...paths, '/v1/workbench']
+  expect(search.requests.toSorted()).toEqual(onReturn.toSorted())
   const retry = document.querySelector<HTMLButtonElement>(section + ' .desk-search-note button')
   expect(retry?.textContent).toBe('重新读取')
   retry?.click()
   await vi.advanceTimersByTimeAsync(0)
-  expect(search.requests.toSorted()).toEqual([...paths, route].toSorted())
+  expect(search.requests.toSorted()).toEqual([...onReturn, route].toSorted())
   expect(document.querySelector(section + ' .desk-search-note')).toBeNull()
 })
 

@@ -175,3 +175,83 @@ test('旧后台的对话搜索回退，交办读取失败可单独复试', async
   await tasks.getByRole('button', { name: '重新读取' }).click()
   await expect(tasks.locator('[data-task-id="aabbccdd"]')).toBeVisible()
 })
+
+test('交办筛空后仍可改筛选并加载更早的匹配任务', async ({ page, shimUrl }) => {
+  const older = { ...task, id: 'bbccddee', title: '更早的花园交办', status: 'queued' }
+  await page.route(/\/v1\/workbench(?:\?.*)?$/, route => {
+    const params = query(route.request().url())
+    if (params.get('q') !== '花园') return route.fallback()
+    const more = !params.has('cursor')
+    return route.fulfill({ json: { tasks: more ? [task] : [older],
+      page: { limit: 1, total: 2, hasMore: more, nextCursor: more ? 'older' : null } } })
+  })
+  await page.goto(shimUrl)
+  await page.locator('#topbar-search').click()
+  await search(page).fill('花园')
+  const tasks = page.locator('.desk-search-tasks')
+  const status = tasks.locator('#wb-filter-status')
+  const project = tasks.locator('#wb-filter-project')
+  const more = tasks.getByRole('button', { name: '加载更早的任务' })
+  await expect(tasks.locator('[data-task-id="aabbccdd"]')).toBeVisible()
+
+  await status.selectOption('working')
+  await expect(tasks.locator('.desk-search-section-title')).toHaveText('交办的事0')
+  await expect(project).toBeVisible()
+  await expect(status).toBeVisible()
+  await expect(tasks.getByText('这个筛选下没有。')).toBeVisible()
+  await more.click()
+  await expect(tasks.locator('[data-task-id="bbccddee"]')).toBeVisible()
+  await expect(tasks.getByText('这个筛选下没有。')).toBeHidden()
+
+  await project.selectOption('__managed__')
+  await expect(tasks.getByText('这个筛选下没有。')).toBeVisible()
+  await expect(more).toBeHidden()
+  await project.selectOption('')
+  await expect(tasks.locator('[data-task-id="bbccddee"]')).toBeVisible()
+})
+
+test('从名单外的会话后退保留搜索，再前进打开同一次会话', async ({ page, shimUrl }) => {
+  await routePlaces(page, [])
+  await routeRoster(page, [])
+  const activitySessions: string[] = []
+  await page.route('**/v1/cli/activity**', route => {
+    activitySessions.push(query(route.request().url()).get('session_id') ?? '')
+    return route.fallback()
+  })
+  await page.goto(shimUrl)
+  await page.locator('#topbar-search').click()
+  await search(page).fill('花园')
+  const terminal = page.locator('#thing-thread .thing-terminal:visible')
+  await row(page, 'terminals').click()
+  await expect(page.locator('#thing-name')).toHaveText(hit.project)
+  await expect(terminal).toContainText('找到指定会话的原话')
+  await page.locator('#desk-back').click()
+  await expect(search(page)).toBeVisible()
+  await expect(search(page)).toHaveValue('花园')
+  await expect(row(page, 'terminals')).toContainText(hit.snippet)
+  await page.locator('#desk-forward').click()
+  await expect(page.locator('#thing-name')).toHaveText(hit.project)
+  await expect(terminal).toContainText('找到指定会话的原话')
+  expect(activitySessions.length).toBeGreaterThan(0)
+  expect([...new Set(activitySessions)]).toEqual([hit.sessionId])
+})
+
+test('旧后台只按消息编号定位，缺失时提示留在点中的那行下', async ({ page, shimUrl }) => {
+  const user = { messageId: 'recent-user', kind: 'user', text: '好的', createdAt: 10 }
+  const cc = { messageId: 'recent-cc', kind: 'text', text: '好的', createdAt: 20 }
+  const old = { ...user, messageId: 'older-user', createdAt: 1 }
+  await page.route('**/v1/matter/owner-chat/window**', route =>
+    route.fulfill({ status: 404, json: { error: 'not_found' } }))
+  await page.route('**/v1/matter/owner-chat', route => route.fulfill({ json: { events: [user, cc] } }))
+  await page.route('**/v1/matter/owner-chat/search?*', route => route.fulfill({ json: { hits: [cc, old] } }))
+  await page.goto(shimUrl)
+  await page.locator('#topbar-search').click()
+  await search(page).fill('好的')
+  const missing = row(page, 'chat').filter({ hasText: '你说的' })
+  await missing.click()
+  await expect(missing.locator('xpath=following-sibling::*[1]')).toHaveText('这一句在更早的地方，这个版本的后台翻不到。')
+  await expect(search(page)).toBeVisible()
+  await expect(search(page)).toHaveValue('好的')
+  await row(page, 'chat').filter({ hasText: 'CC 说的' }).click()
+  await expect(page.locator('#converse-scroll [data-converse-message].converse-msg-cc:focus')).toContainText('好的')
+})

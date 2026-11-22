@@ -1,7 +1,8 @@
 // @ts-check
 
 /** @typedef {{kind:'matter'|'terminal', id:string}} DeskDetail */
-/** @typedef {{pane:string, place:string|null, detail:DeskDetail|null}} DeskLocation */
+/** @typedef {Pick<import('@wechat-cc/protocol').PlaceT,'key'|'name'|'updatedAt'>} TerminalPlace */
+/** @typedef {{pane:string, place:string|null, detail:DeskDetail|null, terminalPlace?:TerminalPlace}} DeskLocation */
 /** @typedef {-1|1} Direction */
 
 /** @param {DeskLocation} initial */

@@ -629,8 +629,8 @@ export function createWorkbenchController(deps) {
     get listPages() { return loadedPages },
     invalidateList() { listRequest++; state.loadingMore = false },
     getTargetTaskId() { return desiredId ?? failedTarget ?? state.selectedId },
-    /** @param {{force?:boolean}} [options] */
-    async refresh({ force = false } = {}) {
+    /** @param {{force?:boolean,firstPage?:boolean}} [options] */
+    async refresh({ force = false, firstPage = false } = {}) {
       if (!alive) return
       if (force) state.loadingMore = false
       if (state.loadingMore) {
@@ -644,7 +644,7 @@ export function createWorkbenchController(deps) {
       try {
         result = /** @type {ListResult} */ (await listTasks())
         if (!alive || request !== listRequest) return
-        while (pages < loadedPages && result.page?.hasMore && result.page.nextCursor) {
+        while (!firstPage && pages < loadedPages && result.page?.hasMore && result.page.nextCursor) {
           const next = /** @type {ListResult} */ (await listTasks(result.page.nextCursor))
           if (!alive || request !== listRequest) return
           result = { ...next, tasks: dedupe([...result.tasks, ...next.tasks]), projectProviders: { ...result.projectProviders, ...next.projectProviders }, agentNames: { ...result.agentNames, ...next.agentNames } }
@@ -2053,7 +2053,23 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       return
     }
     if(event.target===input('wb-attachment-files')){const picker=/** @type {HTMLInputElement} */(event.target);const files=Array.from(picker.files??[]);picker.value='';addFiles(files);return}
-    if(event.target===input('wb-filter-project')||event.target===input('wb-filter-status')){controller.state.listProject=input('wb-filter-project')?.value??'';controller.state.listStatus=input('wb-filter-status')?.value??'';controller.paint(true);const query=controller.state.query;void(async()=>{const cursors=new Set();while(alive&&controller.state.query===query&&controller.state.page?.hasMore){const cursor=controller.state.page.nextCursor;if(cursors.has(cursor))break;cursors.add(cursor);await controller.loadMore()}})().catch(fail);return}
+    if (event.target === input('wb-filter-project') || event.target === input('wb-filter-status')) {
+      controller.state.listProject = input('wb-filter-project')?.value ?? ''
+      controller.state.listStatus = input('wb-filter-status')?.value ?? ''
+      controller.paint(true)
+      if (deskSearch) return
+      const query = controller.state.query
+      void (async () => {
+        const cursors = new Set()
+        while (alive && controller.state.query === query && controller.state.page?.hasMore) {
+          const cursor = controller.state.page.nextCursor
+          if (cursors.has(cursor)) break
+          cursors.add(cursor)
+          await controller.loadMore()
+        }
+      })().catch(fail)
+      return
+    }
     const executionEdit=event.target===input('wb-provider')||event.target===input('wb-model')||event.target===input('wb-reasoning-effort')
     if(event.target===input('wb-provider')){const model=input('wb-model'),effort=input('wb-reasoning-effort');if(model)model.value='';if(effort)effort.value=''}
     if(event.target===input('wb-model')){const effort=input('wb-reasoning-effort');if(effort)effort.value=''}
@@ -2099,9 +2115,11 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     deskSearch.mount({ root, visible: wideSearchVisible,
       filter: (q) => controller.filterTasks({ q, archived: controller.state.query?.archived ?? 'exclude' }),
       invalidateTasks: () => controller.invalidateList(),
+      loadingMore: () => !!controller.state.loadingMore,
     })
     controller.paint(true)
-    deskSearch.refreshTasks(() => controller.refresh())
+    // Keep the retained rows during re-entry, then take a fresh first page and cursor.
+    deskSearch.refreshTasks(() => controller.refresh({ firstPage: !!deskSearch.query }))
   } else controller.refresh().catch(fail)
   const timer = setInterval(() => {
     // 面板被藏起来就别占着长连接;重新露面时把它接回来。
