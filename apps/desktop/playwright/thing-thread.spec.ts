@@ -70,7 +70,7 @@ test('一次会话直接读原话；重复点击不取消，回 CC 草稿还在�
   const line = terminal(page)
   await expect(line.getByText('做了 2 步')).toBeVisible()
   await expect(line.locator('.desk-speaker:visible')).toHaveCount(0)
-  await expect(line.locator('.converse-msg-user .converse-bubble')).toHaveCSS('border-radius', '18px 18px 6px 18px')
+  await expect(line.locator('.converse-msg-user .converse-bubble')).toHaveCSS('border-radius', '18px 18px 6px')
   await expect(line.locator('.converse-msg-cc .converse-bubble')).toHaveCSS('line-height', '26.25px')
   await expect(line.locator('.thing-compose')).toHaveCSS('border-radius', '20px')
   await expect(line.getByRole('button', {name:'发送', exact:true})).toHaveCSS('background-color', 'rgb(243, 238, 230)')

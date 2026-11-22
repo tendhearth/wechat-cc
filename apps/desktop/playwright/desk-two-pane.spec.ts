@@ -43,7 +43,7 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   await expect(scroll.locator('.converse-msg[data-same-speaker] .desk-speaker')).toBeHidden()
   await expect(compose.locator('.desk-speaker')).toBeHidden()
   const userBubble = scroll.locator('.converse-msg-user .converse-bubble')
-  await expect(userBubble).toHaveCSS('border-radius', '18px 18px 6px 18px')
+  await expect(userBubble).toHaveCSS('border-radius', '18px 18px 6px')
   await expect(userBubble).toHaveCSS('font-size', '15px')
   await expect(scroll.locator('.converse-msg-cc .converse-bubble').first()).toHaveCSS('font-size', '18.5px')
   const [left, right, talk, input, name, status, dashboard] = await Promise.all([
