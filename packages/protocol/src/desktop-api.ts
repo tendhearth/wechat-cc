@@ -2583,6 +2583,16 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/reminders/list': ReminderListQuery,
 }
 
+export const TerminalSearchResponse = z.object({
+  ok: z.literal(true),
+  hits: z.array(z.object({
+    sessionId: z.string(), placeKey: z.string().optional(), project: z.string(), source: z.string(),
+    who: z.enum(['you', 'said']), at: z.number(), snippet: z.string(),
+    matchStart: z.number().int().nonnegative(), matchLength: z.number().int().positive(),
+  })).max(50),
+})
+export type TerminalSearchHitT = z.infer<typeof TerminalSearchResponse>['hits'][number]
+
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   // 令牌只在 url 里出现这一次;列表里没有。
   'POST /v1/matter/share':z.object({share:MatterShareRow,url:z.string()}).strict(),
@@ -2714,6 +2724,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/notebook/chat/jot': NotebookJotResponse,
   'POST /v1/notebook/chat/read': NotebookChatReadResponse,
   'GET /v1/places': PlacesResponse,
+  'GET /v1/terminal/search': TerminalSearchResponse,
   'GET /v1/places/map': PlaceMapResponse,
   'POST /v1/labs': LabsResponse,
   'GET /v1/settings/recap': RecapSettingsResponse,

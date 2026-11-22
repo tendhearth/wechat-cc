@@ -82,6 +82,7 @@ const listeners = new Set()
 /** @type {import('../generated/cc-activity.js').CCStream|null} */ let currentActivity = null
 
 /** @type {ReturnType<typeof mountOwnerConversation>|null} */ let ownerReader=null
+/** @type {Promise<void>|undefined} */ let sharedHistoryReady
 let sharedSupported=false,earlierCursor='',laterCursor='',reconcileAfter=0,ownerScope=''
 /** @type {Map<string,any>} */const streamRows=new Map()
 /** @type {Set<string>} */const latestMessageIds=new Set()
@@ -1040,7 +1041,7 @@ function wireEvents(root, deps) {
   {const stop=mountMatterReferences(root,id=>deps.onOpenMatter?.(id));window.addEventListener?.('pagehide',stop,{once:true})}
   root.addEventListener('click', event => {
     const locate=/** @type {HTMLElement|null} */(/** @type {HTMLElement} */(event.target).closest('[data-locate-message]'))?.dataset.locateMessage
-    if(locate){setSearchOpen(false);void locateConversationMessage(deps,locate)}
+    if(locate){setSearchOpen(false);void locateConversationMessage(locate)}
     if(/** @type {HTMLElement} */(event.target).closest('[data-search-earlier]'))void runSearch(deps,searchQuery,searchBefore)
     const terminal=/** @type {HTMLElement|null} */(/** @type {HTMLElement} */(event.target).closest('[data-open-terminal]'))?.dataset.openTerminal
     if(terminal)deps.onOpenTerminal?.(terminal)
@@ -1237,7 +1238,7 @@ export function initConversePage(deps, { focus = true } = {}) {
   reflectPlaceFilter()
   reflectMic()
   renderMessages()
-  void loadSharedHistory(deps)
+  sharedHistoryReady = loadSharedHistory(deps)
   if (deps.invokeWorkbenchApi) void loadReplyAgentNames(deps.invokeWorkbenchApi).then(names => {
     if (document.getElementById('converse-root') !== root) return
     replyAgentNames = names; updateReplyAvatarNames(root,names)
@@ -1255,22 +1256,22 @@ export function addConversationMatter(id,title,historical = true) {
   // Opening a process or topic must not force the underlying conversation to the end.
 }
 
-/** Locate an already loaded source; older sources use the existing text search until
- * the daemon supplies an anchor/window read contract.
- * @param {Deps} deps @param {string} messageId @param {string} [excerpt] */
-export async function locateConversationMessage(deps,messageId,excerpt='') {
-  const message = messages.find(m=>m.messageId===messageId)
-  if (message) {
-    const node = document.querySelector(`[data-converse-message="${message.id}"]`)
-    node?.scrollIntoView?.({block:'center'})
-    if (node instanceof HTMLElement) { node.tabIndex=-1; node.focus({preventScroll:true}) }
-    return
+/** Returns false when a legacy daemon cannot reach the requested message.
+ * @param {string} messageId @param {()=>boolean} [reveal] */
+export async function locateConversationMessage(messageId, reveal) {
+  if (!messageId) return
+  await sharedHistoryReady
+  let message = messages.find(m => m.messageId === messageId)
+  if (!message) {
+    if (!ownerReader || !sharedSupported) return false
+    await ownerReader.read({ anchor: messageId })
+    message = messages.find(m => m.messageId === messageId)
   }
-  if(!ownerReader||!sharedSupported)return
-  await ownerReader.read({anchor:messageId})
-  const found=messages.find(m=>m.messageId===messageId)
-  if(found){const node=document.querySelector(`[data-converse-message="${found.id}"]`);node?.scrollIntoView?.({block:'center'});if(node instanceof HTMLElement){node.tabIndex=-1;node.focus({preventScroll:true})}}
-
+  if (!message || (reveal && !reveal())) return
+  const node = document.querySelector(`[data-converse-message="${message.id}"]`)
+  node?.scrollIntoView?.({ block: 'center' })
+  if (node instanceof HTMLElement) { node.tabIndex = -1; node.focus({ preventScroll: true }) }
+  return true
 }
 
 /** The plus menu is the visible home of delegation; retain the same draft/receipt logic.

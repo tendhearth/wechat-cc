@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -67,6 +68,12 @@ describe('Codex version checks do not spend the SessionStart response budget', (
     const binary = join(home, 'codex'), gate = join(home, 'release')
     // Offline CLI fixture; never execute the installed Codex binary.
     writeFileSync(binary, '#!/bin/sh\nwhile [ ! -f "$0.release" ]; do /bin/sleep 0.02; done\nprintf "codex-cli 0.167.0\\n"\n', { mode: 0o700 })
+    // A new executable's first run can take seconds on a busy macOS machine, longer than the probe's own
+    // 3 s limit, and a failed probe stays cached for five minutes. Pay for that first run here, outside
+    // what this test measures.
+    writeFileSync(`${binary}.release`, gate)
+    execFileSync(binary, [], { timeout: 30_000 })
+    rmSync(`${binary}.release`)
     installHooks(join(home, 'hooks.json'), 'codex', 'cc hook codex')
     const previousPath = process.env.PATH
     process.env.PATH = home
