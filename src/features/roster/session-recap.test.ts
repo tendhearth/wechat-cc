@@ -184,14 +184,30 @@ describe('终端小结后台', () => {
     expect(t.evaluate).not.toHaveBeenCalled()
   })
 
+  it('模型那一路被拦住时不占名额、这一轮不再试，带着自己小结的会话照样写上', async () => {
+    const t = setup()
+    t.add('a'); t.add('b'); t.add('c', { source: 'claude' })
+    t.transcript.mockReturnValue('Claude Code 自己记的一段')
+    t.evaluate.mockImplementation(async () => { throw Error('gate_closed') })
+    t.advance()
+    await t.service.check()
+    expect(t.evaluate).toHaveBeenCalledTimes(1)
+    expect(t.service.read('c')).toMatchObject({ source: 'claude' })
+    expect([t.service.read('a'), t.service.read('b')]).toEqual([undefined, undefined])
+    expect(t.db.query<{ n: number }, []>('SELECT coalesce(sum(call_count),0) AS n FROM terminal_recaps').get()!.n).toBe(0)
+    t.evaluate.mockImplementation(async (_prompt, opts) => { opts?.beforeRequest?.(); return recap })
+    await t.service.check()
+    expect([!!t.service.read('a'), !!t.service.read('b')]).toEqual([true, true])
+  })
+
   it('每次检查最多发两次，即使输出失败；每天每个会话只计已发出去的八次', async () => {
     const t = setup('')
     t.add('first'); t.add('second'); t.add('third')
     t.advance()
     t.evaluate.mockImplementationOnce(async () => '')
     await t.service.check()
-    // 第一次没过发送闸，占本轮一个处理名额，但不占每天的发送额度。
-    expect(t.evaluate).toHaveBeenCalledTimes(2)
+    // 第一次没过发送闸：不占本轮的名额，也不占每天的发送额度，这一轮不再试模型。
+    expect(t.evaluate).toHaveBeenCalledTimes(1)
     for (let i = 0; i < 16; i++) await t.service.check()
     expect(t.evaluate).toHaveBeenCalledTimes(25)
     expect(t.db.query('SELECT min(call_count) AS lo, max(call_count) AS hi FROM terminal_recaps').get()).toEqual({ lo: 8, hi: 8 })

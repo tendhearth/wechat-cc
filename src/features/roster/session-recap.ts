@@ -104,11 +104,12 @@ export function makeSessionRecaps(deps: {
       WHERE call_day<>excluded.call_day OR call_count<?`).run(id, day(), CALL_LIMIT).changes > 0
   }
 
-  async function write(row: Session, owner: string, epoch: number) {
+  // saved and called use up the scan's budget; blocked means the model route is shut for now.
+  async function write(row: Session, owner: string, epoch: number, allowModel: boolean): Promise<'saved' | 'called' | 'blocked' | 'none'> {
     const start = now()
     let source: SessionRecapT['source'] = 'claude'
     let code = 'unavailable'
-    let attempted = false, dispatched = false
+    let attempted = false, dispatched = false, declined = false
     let release: (() => void) | undefined
     const current = () => {
       if (stopped || generation !== epoch || !settings.enabled() || deps.owner() !== owner) return false
@@ -120,35 +121,39 @@ export function makeSessionRecaps(deps: {
         ? (deps.transcript ?? readAwaySummary)(row.path, row.replyAt) : null
       if (!text) {
         source = 'cc'
+        if (!allowModel) { code = 'deferred'; return 'none' }
         const quota = db.query<{ call_count: number }, [string, string]>('SELECT call_count FROM terminal_recaps WHERE session_id=? AND call_day=?').get(row.id, day())
-        if ((quota?.call_count ?? 0) >= CALL_LIMIT) { code = 'quota'; return false }
+        if ((quota?.call_count ?? 0) >= CALL_LIMIT) { code = 'quota'; return 'none' }
         const evaluate = deps.evaluator()
-        if (!evaluate) { code = 'no_private_model'; return false }
+        if (!evaluate) { code = 'no_private_model'; return 'none' }
         const steps = material(row.matterId)
-        if (!steps.length) { code = 'no_material'; return false }
+        if (!steps.length) { code = 'no_material'; return 'none' }
         const controller = request = new AbortController()
         release = deps.holdBusy('session-recap')
         attempted = true
         const output = await evaluate(recapPrompt(steps), { singleAttempt: true, signal: controller.signal, beforeRequest() {
-          if (dispatched || !current() || !reserve(row.id)) controller.abort()
+          if (dispatched || !current() || !reserve(row.id)) { declined = true; controller.abort() }
           controller.signal.throwIfAborted()
           dispatched = true
         } })
-        if (!dispatched) return attempted
+        if (!dispatched) { code = declined ? 'stale' : 'blocked'; return declined ? 'none' : 'blocked' }
         text = parseRecap(output)
       }
-      if (!text) { code = 'bad_output'; return attempted }
-      if (!current()) { code = 'stale'; return attempted }
+      if (!text) { code = 'bad_output'; return 'called' }
+      if (!current()) { code = 'stale'; return dispatched ? 'called' : 'none' }
       db.query(`INSERT INTO terminal_recaps(session_id,text,source,at,position,away_from) VALUES(?,?,?,?,?,?)
         ON CONFLICT(session_id) DO UPDATE SET text=excluded.text,source=excluded.source,at=excluded.at,
           position=excluded.position,away_from=excluded.away_from`).run(row.id, text, source, now(), position(owner, row), row.activity)
       code = 'ready'
-      return true
-    } catch { return attempted }
-    finally {
+      return 'saved'
+    } catch {
+      if (dispatched) return 'called'
+      if (attempted && !declined) { code = 'blocked'; return 'blocked' }
+      return 'none'
+    } finally {
       request = undefined
       release?.()
-      deps.log?.('RECAP', `${row.id.slice(0, 6)} ${source} ${now() - start}ms ${code}`)
+      if (code !== 'deferred') deps.log?.('RECAP', `${row.id.slice(0, 6)} ${source} ${now() - start}ms ${code}`)
     }
   }
 
@@ -187,15 +192,17 @@ export function makeSessionRecaps(deps: {
            ORDER BY coalesce(r.call_count,0), s.activity, s.id`,
         ).all(startedAt - RECAP_IDLE_MS, at - RECAP_IDLE_MS)
         const permitted = allowed(owner, rows)
-        let attempted = 0
+        // A shut model route is not retried within the scan and takes no slot, so sessions
+        // that carry their own summary are still served behind ones that need the model.
+        let used = 0, allowModel = true
         for (const row of rows) {
           if (stopped || epoch !== generation || !settings.enabled() || deps.owner() !== owner) break
           if (!permitted.has(row.matterId) || !eligible(row, owner, now())) continue
           const fresh = session(owner, row.id)
           if (!fresh || fresh.position !== row.position) continue
-          if (await write(row, owner, epoch)) {
-            if (++attempted === 2) break
-          }
+          const outcome = await write(row, owner, epoch, allowModel)
+          if (outcome === 'blocked') allowModel = false
+          else if (outcome !== 'none' && ++used === 2) break
         }
       } finally { active = false }
     },
