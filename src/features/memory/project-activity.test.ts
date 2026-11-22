@@ -401,6 +401,35 @@ it('a nonresponding identity path is bounded independently of healthy projects',
 },3000)
 
 
+it('an unrelated writer landing during every identity lookup cannot keep the projection recomputing forever',async()=>{
+ // 2026-11-21 整只 daemon 的沙盒里重启后第一句话 68 秒才回:微信轮询每次都写一行心跳(不走事项 feed、不发写提示),
+ // 快过这里的一遍计算,每一遍都以为「库被别人改过」从头再算,两分钟算了五万遍。
+ const f=await fixture();f.terminal('busy-writer')
+ f.db.exec('CREATE TABLE unrelated_heartbeat(id INTEGER PRIMARY KEY,at INTEGER)')
+ let lookups=0,writing=true
+ const seen=()=>null // 同一份缓存要同一个 seen
+ const identify=async(_path:string)=>{
+  lookups++
+  await new Promise(resolve=>setTimeout(resolve,1))
+  // 200 遍之后不再写,没有上限的实现也能收场,测试红在断言上而不是挂住
+  if(writing&&lookups<=200)f.db.query('INSERT OR REPLACE INTO unrelated_heartbeat(id,at) VALUES(1,?)').run(lookups)
+  return identity
+ }
+ const value=await projectActivities(f.db,'owner',seen,identify)
+ expect(value.get(f.id)!.sessions).toHaveLength(1)
+ expect(lookups).toBeLessThanOrEqual(8)
+ // 到上限交出去的那份不算「当前」:写入停了以后,下一次读照样重算一遍
+ writing=false
+ const settled=lookups
+ expect((await projectActivities(f.db,'owner',seen,identify)).get(f.id)!.sessions).toHaveLength(1)
+ expect(lookups).toBeGreaterThan(settled)
+ // 这一遍安静地算完了,再读就是缓存
+ const quiet=lookups
+ await projectActivities(f.db,'owner',seen,identify)
+ expect(lookups).toBe(quiet)
+},5000)
+
+
 it('one step and repeated pages avoid scanning 1500 unrelated linked historical matters',async()=>{
  const f=await fixture(),m=f.terminal('live-linked'),seen=()=>null
  await f.threads.addEntry({threadId:f.id,kind:'progress',line:'来源',source:'work',matterId:m.id})

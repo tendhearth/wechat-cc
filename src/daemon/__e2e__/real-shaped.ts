@@ -145,6 +145,10 @@ function writeConfig(stateDir: string, fakes: { internet: FakeInternet; mailbox:
     // 出门也能用(手机中继 v2)
     remote_tunnel: true,
     relay_v2_url: fakes.phoneRelay.url,
+    // CLI 自动升级照真机开着,只关 agy:它没有只读的「最新版本」来源,定时检查是直接跑 `agy update`。
+    // 那是个子进程,进程内的网络围栏拦不住;开机满一分钟,装了 agy 的开发机上就会跑真的升级器、连真的外网(2026-11-21 抓到)。
+    // 另外三家查最新走 fetch,被围栏挡下。
+    cli_auto_upgrade: { per_cli: { agy: { enabled: false } } },
     ...patch,
   })
   writeJson(join(stateDir, 'companion', 'config.json'), {
