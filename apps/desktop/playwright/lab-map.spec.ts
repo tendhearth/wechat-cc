@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Page, Route, Locator } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { placeItem, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
+import { placeItem, placeSession, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
 import type { PlaceMapItemT, PlaceMapPinRequestT, PlaceMapBranchT, PlaceOutlineT } from '@wechat-cc/protocol'
 
 test.use({ viewport:{width:1280,height:820} })
 const now = Date.UTC(2026,10,21)
-const garden = placeItem('花园',{sessionIds:['one','two'],updatedAt:now})
+const garden = placeItem('花园',{sessionIds:['one','two'],updatedAt:now,sessions:[placeSession('one','replied',now),placeSession('two','replied',now-1)]})
 const empty = placeItem('空地方',{line:null,status:null,moving:false,updatedAt:null})
 const items: PlaceMapItemT[] = [
   {id:'a:terminal:one',kind:'ask',status:'waiting',line:'要继续整理吗',from:{source:'terminal',sessionId:'one',at:now}},

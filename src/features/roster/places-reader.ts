@@ -9,7 +9,8 @@ import type { Db } from '../../lib/db'
 import { placeMapEntries, placeMapRoster, type MapTopicResolver } from './place-map'
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
-import type { PlaceOpinionT, RosterItemT } from '@wechat-cc/protocol'
+import { terminalStatusKey, type PlaceOpinionT, type PlaceT, type RosterItemT } from '@wechat-cc/protocol'
+import { CLI_SESSION_ENDED_RETAIN_MS } from '../../adapters/store/cli-session-store'
 import { buildRoster } from '../../domain/roster'
 import { buildPlaces } from '../../domain/places'
 import { gatherRoster, type RosterReaderDeps } from './reader'
@@ -41,10 +42,12 @@ export const placeKey = (root: string) => `p:${createHash('sha256').update(root)
 export function makePlacesReader(deps: PlacesReaderDeps) {
   const placeMapEnabled = () => deps.labs?.placeMapEnabled() ?? false
   const root = deps.root ?? makeProjectRoot()
-  function collect(scope: 'operator' | 'device', roster = deps.roster, onHead?: (key: string, item: RosterItemT) => void) {
+  function collect(scope: 'operator' | 'device', roster = deps.roster, onHead?: (key: string, item: RosterItemT) => void, includeEnded = false) {
     const now = roster.now?.() ?? Date.now()
-    const g = gatherRoster(roster, scope, now, PLACES_WINDOW_MS)
-    const items = buildRoster({ ...g.input, seen: roster.seen, now, backWindowMs: PLACES_WINDOW_MS })
+    const g = gatherRoster(roster, scope, now, PLACES_WINDOW_MS, includeEnded)
+    const terminals = includeEnded ? g.input.terminals.filter(t => t.status !== 'ended'
+      || t.last_event_at >= now - CLI_SESSION_ENDED_RETAIN_MS) : g.input.terminals
+    const items = buildRoster({ ...g.input, terminals, seen: roster.seen, now, backWindowMs: PLACES_WINDOW_MS, includeEnded })
     const pathOf = (item: RosterItemT): string | null => {
       if (item.kind === 'terminal') return g.sessions.get(item.id)?.project ?? null
       const m = g.matters.get(item.id)
@@ -65,7 +68,30 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       keyOf: placeKey,
       nameOf: r => basename(r) || r,
     })
-    return { ...result, saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
+    const persistable = new Set<string>()
+    if (includeEnded) {
+      const sessionsByPlace = new Map<string, NonNullable<PlaceT['sessions']>>()
+      for (const item of items) {
+        const r = resolved(raw.get(item.key))
+        if (!r) continue
+        const key = placeKey(r)
+        const s = item.terminal && g.sessions.get(item.terminal.sessionId)
+        if (s?.status !== 'ended') persistable.add(key)
+        if (!s || s.last_event_at < now - PLACES_WINDOW_MS) continue
+        const status = terminalStatusKey(s.status) as NonNullable<PlaceT['sessions']>[number]['status']
+        const list = sessionsByPlace.get(key) ?? []
+        list.push({ sessionId: s.session_id, ...(item.kind === 'matter' ? { matterId: item.id } : {}),
+          agent: s.source, status, updatedAt: s.last_event_at, endedAt: s.status === 'ended' ? s.last_event_at : null })
+        sessionsByPlace.set(key, list)
+      }
+      const order = { waiting: 0, working: 1, replied: 2, done: 3 }
+      for (const place of result.places) {
+        place.sessions = (sessionsByPlace.get(place.key) ?? [])
+          .sort((a, b) => order[a.status] - order[b.status] || b.updatedAt - a.updatedAt || a.sessionId.localeCompare(b.sessionId))
+          .slice(0, 30)
+      }
+    }
+    return { ...result, persistable, saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
   }
 
   const collectMapPlaces = () => collect('operator', { ...deps.roster, workbench: deps.mapWorkbench })
@@ -146,10 +172,12 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     read(scope) {
       const heads = new Map<string, string>()
       const recaps = scope === 'operator' && deps.recaps?.enabled() ? deps.recaps : undefined
-      const { places, hidden, added, now } = collect(scope, deps.roster, recaps && ((key, item) => {
+      const { places, hidden, added, now, persistable } = collect(scope, deps.roster, recaps && ((key, item) => {
         if (item.terminal) heads.set(key, item.terminal.sessionId)
-      }))
-      if (added.length) deps.store.add(added, now)
+      }), scope === 'operator')
+      // A place discovered solely through ended history must not create a new empty row on phones.
+      const discovered = scope === 'operator' ? added.filter(place => persistable.has(place.key)) : added
+      if (discovered.length) deps.store.add(discovered, now)
       for (const place of places) {
         const id = heads.get(place.key)
         const recap = id && recaps?.read(id)

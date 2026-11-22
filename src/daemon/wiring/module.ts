@@ -78,7 +78,7 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
         terminalHooks: cli.terminalHooks,
         // 手机拍板 / 说一句(终端会话那个功能造好的):拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
         cliActions: cli.phoneActions,
-        rosterTerminals: () => cli.cliEvents.list({limit:500}).map(v => {const id=cli.terminalMatterOf(v.session_id);return id?{...v,matter_id:id}:v}),
+        rosterTerminals: options => cli.cliEvents.list({limit:500,...options}).map(v => {const id=cli.terminalMatterOf(v.session_id);return id?{...v,matter_id:id}:v}),
         matters: f.matters, guardRuntime: guardRt, subsystems: () => f.sup.statuses(), providerRefusals: () => f.providerRefusals.all(),
         // 一件事的提议(S3b):人在电脑前 = 本机空闲不足 2 分钟(和终端会话同一个判法)
         proposals: { atDesk: () => makeOwnerPresence({ machineIdle: f.machineIdle ?? (() => machineIdleSeconds()) }).atDesk(), desktop: f.desktopSurface, ...(f.escalateAfterMs !== undefined ? { escalateAfterMs: f.escalateAfterMs } : {}), ...(f.desktopNotify ? { notify: f.desktopNotify } : {}) },

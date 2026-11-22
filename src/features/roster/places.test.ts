@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { openTestDb } from '../../lib/db'
 import { makePlacesStore } from '../../adapters/store/places-store'
+import type { CliSessionView } from '../../ports/cli-session'
 import type { Matter } from '../../ports/matters'
 import type { InternalApiDeps } from '../../daemon/internal-api/types'
 import { makePlacesReader, placeKey, PLACES_WINDOW_MS } from './places-reader'
 import { placesRoutes } from './places-routes'
+import { makeRosterReader } from './reader'
+import { rosterRoutes } from './routes'
 import { ASK_OPINION_DELAY_MS, makeAskOpinion } from '../workbench/ask-opinion'
 import { PlacesResponse } from '@wechat-cc/protocol'
 
@@ -234,4 +237,48 @@ it('地方只返回 operator 行标题所对应会话的小结；关掉后字节
   enabled = false
   expect(JSON.stringify(await get(reader, 'operator'))).toBe(JSON.stringify(before))
   expect(read).not.toHaveBeenCalled()
+})
+
+it('只有 operator 地方展示七天内的已结束会话，手机地方与默认名单保持原样', async () => {
+  const term = (id: string, status: CliSessionView['status'], age: number, project = '/w/rici'): CliSessionView => ({
+    session_id: id, code: id, source: 'codex', status, project, last_summary: '沙盒回话',
+    last_event_at: NOW - age, pending: null, stale: id === 'paused', cwd: project, machine: null,
+    origin_agent: null, created_at: NOW - age, last_prompt_at: null,
+  })
+  const live = [term('paused', 'idle', 3 * DAY), term('working', 'running', DAY), term('waiting', 'waiting', DAY)]
+  const ended = [term('ended', 'ended', DAY), term('expired', 'ended', 8 * DAY), term('other', 'ended', DAY, '/w/other')]
+  const rosterDeps = { matters: { list: () => [] }, terminals: (opts?: { includeEnded?: boolean }) => opts?.includeEnded ? [...live, ...ended] : live, seen: () => null, now: () => NOW }
+  const { reader } = setup([], [], () => NOW, { roster: rosterDeps })
+  const legacy = setup([], live)
+  const device = await call({ places: legacy.reader }, 'GET /v1/places', null, 'device')
+  const operator = await call({ places: reader }, 'GET /v1/places', null)
+  const places = PlacesResponse.parse(operator.body)
+  expect(places.places.find(p => p.name === 'rici')?.sessions?.map(s => s.sessionId)).toEqual(['waiting', 'working', 'paused', 'ended'])
+  const historical = places.places.find(p => p.name === 'other')
+  expect(historical?.status).toBe('done')
+  expect(historical?.line === '沙盒回话').toBe(true)
+  expect(historical?.sessions).toEqual([{ sessionId: 'other', agent: 'codex', status: 'done', updatedAt: NOW - DAY, endedAt: NOW - DAY }])
+  expect(JSON.stringify((await call({ places: reader }, 'GET /v1/places', null, 'device')).body)).toBe(JSON.stringify(device.body))
+  const api = rosterRoutes({ roster: makeRosterReader(rosterDeps) })['GET /v1/roster']!
+  const baseline = rosterRoutes({ roster: makeRosterReader({ ...rosterDeps, terminals: () => live }) })['GET /v1/roster']!
+  for (const origin of ['device', 'operator'] as const) {
+    const request = [new URLSearchParams(), null, { tier: 'admin', origin }] as const
+    const result = await api(...request)
+    expect(JSON.stringify(result)).toBe(JSON.stringify(await baseline(...request)))
+    expect((result.body as {items: {id:string}[]}).items.map(item => item.id)).toEqual(['waiting', 'working'])
+  }
+})
+
+it('页签只取三十天内的活会话，按档内时间排序并封顶三十次', () => {
+  const session = (id: string, status: CliSessionView['status'], days: number): CliSessionView => ({
+    session_id: id, code: id, source: 'codex', status, project: '/w/rici', cwd: '/w/rici', stale: false,
+    machine: null, origin_agent: null, last_summary: null, last_prompt_at: null, pending: null,
+    last_event_at: NOW - days * DAY, created_at: NOW - days * DAY,
+  })
+  const paused = Array.from({ length: 29 }, (_, i) => session('paused-' + i, 'idle', i))
+  const { reader } = setup([], [session('too-old', 'running', 31), session('working', 'running', 25),
+    session('ended', 'ended', 0), ...paused.reverse(), session('waiting', 'waiting', 29)])
+  const { sessions } = reader.read('operator').places[0]!
+  expect(sessions).toHaveLength(30)
+  expect(sessions?.map(row => row.sessionId)).toEqual(['waiting', 'working', ...paused.slice(1).reverse().map(row => row.session_id)])
 })

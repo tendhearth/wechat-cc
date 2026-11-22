@@ -19,7 +19,7 @@ export type PipelineWechat =
   & { voice: WechatVoice }
 
 export interface PipelineDepsOpts {
-  rosterTerminals?: () => import('../../ports/cli-session').CliSessionView[]
+  rosterTerminals?: (options?: { includeEnded?: boolean }) => import('../../ports/cli-session').CliSessionView[]
   workbench?: import('../../features/workbench').WorkbenchService
   /** 「CC 做过的事」(B9):main 拼好来源,这里只透传给手机面板。 */
   activity?: import('../../features/phone').MobileActivityDeps

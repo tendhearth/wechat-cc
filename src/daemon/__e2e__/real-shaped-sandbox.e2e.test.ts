@@ -703,6 +703,32 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     }
   })
 
+  it('会话结束后地方仍列出它，原话可从存下的步翻阅', async () => {
+    const session_id = 'sandbox-ended-history'
+    const event = (kind: 'prompt' | 'stop' | 'session_end', text?: string) =>
+      desktop('POST', '/v1/cli/event', { source: 'claude', kind, session_id, cwd: process.cwd(),
+        machine: hostname(), idle_s: 0, ...(text ? { text } : {}) }, 'trusted')
+    const replies = ['沙盒历史一', '沙盒历史二', '沙盒历史三']
+    for (const reply of replies) {
+      expect((await event('prompt')).status).toBe(200)
+      expect((await event('stop', reply)).status).toBe(200)
+    }
+    expect((await event('session_end')).status).toBe(200)
+    const places = await desktop<import('@wechat-cc/protocol').PlacesResponseT>('GET', '/v1/places')
+    expect(places.status).toBe(200)
+    const archived = places.body.places.flatMap(place => place.sessions ?? []).find(s => s.sessionId === session_id)
+    expect(archived?.status).toBe('done')
+    expect(typeof archived?.endedAt).toBe('number')
+    const roster = await desktop<import('@wechat-cc/protocol').RosterResponseT>('GET', '/v1/roster')
+    expect(roster.status).toBe(200)
+    expect(roster.body.items.some(item => item.terminal?.sessionId === session_id)).toBe(false)
+    const activity = await desktop<import('@wechat-cc/protocol').CliActivityPageT>('GET', '/v1/cli/activity?full=1&session_id=' + session_id)
+    expect(activity.status).toBe(200)
+    expect(activity.body.items.filter(item => item.kind === 'said').map(item => item.text).join() === replies.join()).toBe(true)
+    expect((await desktop('POST', '/v1/cli/session-say', { session_id, text: '样例' })).status).toBe(409)
+    expect((await desktop('POST', '/v1/cli/decide', { session_id, decision: 'allow' })).status).toBe(404)
+  })
+
   it('guest path: a stranger writes ⇒ neutral reply + the owner is asked; owner approves ⇒ the stranger is onboarded and talks to CC in a locked-down session that carries none of the owner\'s memory', async () => {
     const before = spawnOptions.length
     d.sendText(STRANGER, '你好呀')

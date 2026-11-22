@@ -19,15 +19,15 @@ describe('桌面一件事', () => {
     expect(groupActivity([])).toEqual([])
   })
 
-  it('按最近活动排序，只先露五次，保留较早的次数和顺序', () => {
+  it('按最近活动排序，只先露六次，保留较早的次数和顺序', () => {
     const place: Place = {key:'p:test', name:'工作区', line:null, status:null, waiting:null, unseen:false,
       moving:false,updatedAt:null,matterIds:['task'],messageIds:[],sessionIds:['a','b','c','d','e','f']}
     const task:RosterItem = {...rosterItem('task',12), key:'matter:task', kind:'matter'}
     const items = placeSessions(place,[rosterItem('a',0),rosterItem('b',3),rosterItem('c',9),
       rosterItem('d',6),rosterItem('e',2),rosterItem('f',1),rosterItem('g',99),task])
     const {visible,earlier} = splitSessions(items)
-    expect(visible.map(item=>item.id)).toEqual(['task','c','d','b','e'])
-    expect(earlier.map(item=>item.id)).toEqual(['f','a'])
+    expect(visible.map(item=>item.id)).toEqual(['task','c','d','b','e','f'])
+    expect(earlier.map(item=>item.id)).toEqual(['a'])
   })
 
   it('先用本窗口记住的，再用在等你定的，最后按最近活动', () => {
@@ -45,7 +45,8 @@ describe('桌面一件事', () => {
     expect(terminalInputReason({...session,status:'running',live_window:true},'Codex',false)).toBe('')
     expect(terminalInputReason({...session,status:'running'},'Codex',false)).toBe('Codex 正在做，等这一轮停了再说')
     expect(terminalInputReason({...session,status:'waiting'},'Codex',true)).toBe('先定上面这件，它才往下走')
-    expect(terminalInputReason({...session,stale:true,live_window:true},'Codex',false)).toBe('这次会话已经结束，接着做要在终端里重新打开')
+    expect(terminalInputReason({...session,stale:true,live_window:true},'Codex',false)).toBe('')
+    expect(terminalInputReason({...session,status:'ended'},'Codex',false)).toBe('这次会话已经结束，接着做要在终端里重新打开')
   })
 
   it('翻页加在前面，最新页接在后面，重叠的 ID 原位更新', () => {

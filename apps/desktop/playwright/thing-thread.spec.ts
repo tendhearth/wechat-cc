@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { placeItem, placeRow, rosterItem, routePlaces, routeRoster, terminalPlace } from './roster-fixture'
+import { placeItem, placeSession, placeRow, rosterItem, routePlaces, routeRoster, terminalPlace } from './roster-fixture'
 
 test.use({viewport:{width:1280,height:820}})
 const now = Date.now()
@@ -16,9 +16,10 @@ const thread = (page:Page) => page.locator('#thing-thread')
 const terminal = (page:Page) => thread(page).locator('.thing-terminal:visible')
 const select = (page:Page,name:string) => placeRow(page,name).locator('.place-row').click()
 const home = (page:Page) => page.locator('#topbar-cc')
-const solo = placeItem('花园',{sessionIds:['solo'],updatedAt:now})
+const solo = placeItem('花园',{sessionIds:['solo'],updatedAt:now,sessions:[placeSession('solo','replied',now)]})
 const three = terminalPlace('备份','ask','读备份目录？',{
   updatedAt:now,sessionIds:['ask','new','run'],
+  sessions:[placeSession('ask','waiting',now+1000),placeSession('run','working',now+2000),placeSession('new','replied',now+3000)],
   waiting:{kind:'terminal',itemKey:'terminal:ask',sessionId:'ask',requestId:'a1234',summary:'读备份目录？',
     count:1,ccOpinion:'可以读备份目录。',questionReason:'需要访问另一个目录。'},
 })
@@ -31,9 +32,16 @@ const entries = [
 ]
 
 async function mockTerminal(page:Page,{withThree=false,waiting=true,long=false,older=false}={}) {
+  const currentThree = (approved: boolean) => {
+    if (waiting && !approved) return three
+    const run = placeSession('run','working',now+2000)
+    const fresh = placeSession('new','replied',now+3000)
+    const ask = placeSession('ask',approved?'working':'replied',now+1000)
+    return {...three,waiting:null,sessions:approved?[run,ask,fresh]:[run,fresh,ask]}
+  }
   const model = {activities:long ? [...Array.from({length:30},(_,index)=>step('fill'+index,'said',`读到第 ${index} 条记录`)),...entries] : [...entries],
     reads:0,approved:false}
-  await routePlaces(page,()=>[solo,...(withThree?[model.approved||!waiting?{...three,waiting:null}:three]:[])])
+  await routePlaces(page,()=>[solo,...(withThree?[currentThree(model.approved)]:[])])
   await routeRoster(page,[roster('solo'),...(withThree?[roster('new','back',now+3000),roster('run','working',now+2000),roster('ask',waiting?'waiting':'back',now+1000)]:[])])
   await page.route('**/v1/cli/sessions**',route=>{
     const all = [session('solo'),session('new'),session('run',{status:'running',live_window:false}),
@@ -104,10 +112,10 @@ test('三次会话优先等你定，换会话以及回到原处都可后退；�
   await select(page,'备份')
   const tabs = thread(page).locator('[data-thread-session]')
   await expect(tabs).toHaveCount(3)
-  await expect(tabs.last()).toHaveAttribute('aria-pressed','true')
-  await expect(tabs.last()).toHaveCSS('border-bottom-color','rgb(42, 38, 34)')
-  await expect(tabs.last()).toHaveCSS('background-color','rgba(0, 0, 0, 0)')
-  await expect(tabs.last().locator('.th-agents')).toHaveCSS('--th-agent-size','14px')
+  await expect(tabs.first()).toHaveAttribute('aria-pressed','true')
+  await expect(tabs.first()).toHaveCSS('border-bottom-color','rgb(42, 38, 34)')
+  await expect(tabs.first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)')
+  await expect(tabs.first().locator('.th-agents')).toHaveCSS('--th-agent-size','14px')
   const heading = thread(page).locator('.thing-heading')
   await expect(heading).toHaveCSS('height','52px')
   await expect(heading.locator('.thing-agent')).toHaveText('Codex')
@@ -134,13 +142,13 @@ test('三次会话优先等你定，换会话以及回到原处都可后退；�
   await expect(thread(page).getByRole('heading',{name:'花园'})).toBeVisible()
 })
 
-test('没有等你定时默认最近，重进地方恢复上次选择',async({page,shimUrl})=>{
+test('没有等你定时优先正在做，重进地方恢复上次选择',async({page,shimUrl})=>{
   await mockTerminal(page,{withThree:true,waiting:false})
   await page.goto(shimUrl)
   await select(page,'备份')
   const tabs=thread(page).locator('[data-thread-session]')
   await expect(tabs.first()).toHaveAttribute('aria-pressed','true')
-  await expect(terminal(page)).toContainText('new 的原话')
+  await expect(terminal(page)).toContainText('run 的原话')
   await tabs.last().click()
   await select(page,'花园')
   await select(page,'备份')
@@ -347,4 +355,74 @@ test('小结跟着作者换字体，发话收起便条，偏好关掉后两处�
   await toggle.click()
   await expect(memo).toHaveCount(0)
   await expect(claudeLine).not.toHaveAttribute('data-recap-source')
+})
+
+test('停着的会话可输入；八次会话收起两次，选更早的存档可翻阅', async ({page,shimUrl}) => {
+  const history = Array.from({length:7}, (_, i) => placeSession('history-' + i, 'done', now - i * 86400000))
+  const paused = placeSession('paused', 'replied', now - 3 * 86400000)
+  await routePlaces(page,[placeItem('花园',{updatedAt:now,sessions:[paused,...history]})])
+  await routeRoster(page,[])
+  await page.route('**/v1/cli/sessions**', route => route.fulfill({json:{sessions:[session('paused',{stale:true,live_window:true})]}}))
+  await page.route('**/v1/cli/activity**',route=>{
+    const params = new URL(route.request().url()).searchParams
+    const earlier = params.has('before')
+    return route.fulfill({json:{ok:true,items:[step(earlier?'earlier':'reply','said',earlier?'存档前一页':params.get('session_id') + ' 的原话')],earlier:earlier?null:'earlier'}})
+  })
+  await page.goto(shimUrl)
+  await select(page,'花园')
+  const bar = thread(page).locator('.thing-sessions')
+  const visible = bar.locator(':scope > [data-thread-session]')
+  const menu = bar.locator('details')
+  const trigger = menu.locator('summary')
+  await expect(visible).toHaveCount(6)
+  await expect(trigger).toHaveText('更早的 2 次')
+  await expect(thread(page).locator('.thing-state')).toHaveText('停着')
+  await terminal(page).locator('textarea').fill('接着做')
+  await expect(terminal(page).locator('textarea')).toHaveValue('接着做')
+  await expect(visible.nth(1)).toHaveCSS('opacity','0.75')
+  await expect(visible.nth(1).locator('i')).toHaveCount(0)
+  await trigger.click()
+  await expect(menu).toHaveAttribute('open','')
+  await page.keyboard.press('Escape')
+  await expect(menu).not.toHaveAttribute('open','')
+  await trigger.click()
+  await thread(page).locator('.thing-name').click()
+  await expect(menu).not.toHaveAttribute('open','')
+  await trigger.click()
+  const older = menu.locator('[data-thread-session="terminal:history-6"]')
+  await expect(older).toHaveText(/Codex · .* · 已经结束/)
+  await older.click()
+  await expect(menu).not.toHaveAttribute('open','')
+  await expect(visible).toHaveCount(6)
+  await expect(visible.last()).toHaveAttribute('data-thread-session','terminal:history-6')
+  await expect(visible.last()).toHaveAccessibleName(/已经结束/)
+  await expect(visible.last()).toHaveAttribute('aria-pressed','true')
+  await expect(terminal(page)).toContainText('history-6 的原话')
+  await expect(terminal(page).getByText('这次会话已经结束了，只能看。')).toBeVisible()
+  await expect(terminal(page).locator('textarea')).toHaveCount(0)
+  await expect(terminal(page).getByText('尚未同步，请重试')).toHaveCount(0)
+  await terminal(page).getByRole('button',{name:'更早的',exact:true}).click()
+  await expect(terminal(page).getByText('存档前一页')).toBeVisible()
+})
+
+test('选中的会话结束后留在原处并转为只读', async ({page,shimUrl}) => {
+  let ended = false
+  const primary = () => placeSession('primary',ended?'done':'working',now)
+  const other = placeSession('other','replied',now-1000)
+  await routePlaces(page,()=>[placeItem('花园',{updatedAt:now,sessions:ended?[other,primary()]:[primary(),other]})])
+  await routeRoster(page,[])
+  await page.route('**/v1/cli/sessions**',route=>route.fulfill({json:{sessions:[session('other'),...(ended?[]:[session('primary',{status:'running',live_window:true})])]}}))
+  await page.route('**/v1/cli/activity**',route=>route.fulfill({json:{ok:true,items:[step('reply','said',new URL(route.request().url()).searchParams.get('session_id') + ' 的原话')],earlier:null}}))
+  await page.goto(shimUrl)
+  await select(page,'花园')
+  const tab = thread(page).locator('[data-thread-session="terminal:primary"]')
+  await expect(tab).toHaveAttribute('aria-pressed','true')
+  await expect(terminal(page)).toContainText('primary 的原话')
+  await expect(terminal(page).locator('textarea')).toBeEnabled()
+  ended = true
+  await expect(terminal(page).getByText('这次会话已经结束了，只能看。')).toBeVisible({timeout:9000})
+  await expect(tab).toHaveAttribute('aria-pressed','true')
+  await expect(thread(page).locator('.thing-state')).toHaveText('已经结束')
+  await expect(terminal(page)).toContainText('primary 的原话')
+  await expect(terminal(page).locator('textarea')).toHaveCount(0)
 })

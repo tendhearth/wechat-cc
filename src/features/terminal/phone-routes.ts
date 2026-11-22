@@ -29,7 +29,7 @@ function fitted(build: (max: number) => object, max: number): Response {
   return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 }
 
-export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<string,PhoneHandler> {
+export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<string,PhoneHandler<{ operator: boolean } | undefined>> {
   return {
     'POST /v1/cli/session-stop': ownsMethod(async(_url,req)=>{
       if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
@@ -38,7 +38,7 @@ export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<str
       return deps.cliActions?.stop?.(b.session_id,b.run_id)?json({ok:true}):json({ok:false,error:'input_stale'},409)
     }),
     // 看着它跑(2026-10-17):一条终端会话最近几步。手机展开那一行时每几秒拉一次;只读,和「看 码」同一份记录。
-    'GET /v1/cli/activity': ownsMethod(async (url: URL, req: Request) => {
+    'GET /v1/cli/activity': ownsMethod(async (url: URL, req: Request, ctx?: { operator: boolean }) => {
       if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
       if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
       const q = url.searchParams
@@ -48,7 +48,8 @@ export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<str
         (before !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(before))) return json({ ok: false, error: 'invalid' }, 400)
       const paged = full !== null || limit !== null || before !== null
       try {
-        const r = deps.cliActions.activity(id, paged ? { limit: limit === null ? ACTIVITY_MAX_ITEMS : Number(limit), ...(before !== null ? { before } : {}) } : undefined)
+        const page = paged ? { limit: limit === null ? ACTIVITY_MAX_ITEMS : Number(limit), ...(before !== null ? { before } : {}) } : undefined
+        const r = ctx?.operator ? deps.cliActions.activity(id, page, true) : deps.cliActions.activity(id, page)
         if (!r.ok) return json({ ok: false, error: r.error }, r.error === 'invalid' ? 400 : r.error === 'not_found' ? 404 : 409)
         // 旧中继一帧 512 KiB:每步文字上限减半直到放得下(不删步)。
         const cut = (t: string, max: number) => (t.length > max ? t.slice(0, max - 1) + '…' : t)

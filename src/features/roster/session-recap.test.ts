@@ -86,7 +86,7 @@ function setup(output = recap) {
     write('agent_message', '画册已排插图')
     if (options.running) log.startTurn({ matterId: matter.id, executor: source, startedAt: time })
     if (options.waiting) log.writeItem({ matterId: matter.id, kind: 'permission', status: 'started', key: 'card', payload: options.ask ?? {} })
-    return { write, decide: () => log.writeItem({ matterId: matter.id, kind: 'permission', key: 'card', status: 'completed', payload: {} }) }
+    return { write, end: () => log.setState(matter.id, 'done'), decide: () => log.writeItem({ matterId: matter.id, kind: 'permission', key: 'card', status: 'completed', payload: {} }) }
   }
   const advance = (ms = RECAP_IDLE_MS) => { time += ms }
   return { add, advance, service, deps, transcript, seen, evaluate, evaluator, trace, db }
@@ -104,6 +104,16 @@ describe('终端小结后台', () => {
     await t.service.check()
     expect(t.transcript).not.toHaveBeenCalled()
     expect(t.evaluator).not.toHaveBeenCalled()
+  })
+
+  it('已经结束的会话不再读小结材料或调用模型', async () => {
+    const t = setup()
+    t.add('ended', { source: 'claude' }).end()
+    t.advance()
+    await t.service.check()
+    expect(t.transcript).not.toHaveBeenCalled()
+    expect(t.evaluator).not.toHaveBeenCalled()
+    expect(t.service.read('ended')).toBeUndefined()
   })
 
   it('不到半小时或最近看过均不写；写完后再次打开仍然可读', async () => {

@@ -62,6 +62,14 @@ export const Place = z.object({
   matterIds: z.array(z.string()),
   messageIds: z.array(z.string()),
   sessionIds: z.array(z.string()),
+  sessions: z.array(z.object({
+    sessionId: z.string(),
+    matterId: z.string().optional(),
+    agent: z.string(),
+    status: z.enum(['waiting', 'working', 'replied', 'done']),
+    updatedAt: z.number(),
+    endedAt: z.number().nullable(),
+  })).max(30).optional(),
 })
 export type PlaceT = z.infer<typeof Place>
 

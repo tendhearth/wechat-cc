@@ -529,3 +529,45 @@ describe('送进窗口的结果(10-20 真机:手机先说「已送进」,其实�
     expect(a.lastSay!('R3')).toBeNull()
   })
 })
+
+it('operator 精确读取已结束的存档，设备仍按旧协议，清理登记后拒读', async () => {
+  const store = makeCliSessionStore(db)
+  const dir = mkdtempSync(join(tmpdir(), 'cli-ended-'))
+  try {
+    const path = join(dir, 'session.jsonl')
+    const session_id = 'archived'
+    const base = { source: 'claude' as const, session_id, cwd: '/w/proj', machine: 'mac', transcript_path: path }
+    const sample = ['甲', '乙', '丙']
+    writeFileSync(path, sample.map(content => JSON.stringify({ type: 'assistant', message: { content } })).join('\n'))
+    hub.observe({ ...base, kind: 'prompt' })
+    const cliActions = actions({ exactSession: store.get })
+    const phone = terminalOwnerHandlers({ cliActions })
+    const run = async (operator: boolean, suffix: string, body?: object) => {
+      const req = new Request('http://x/v1/cli/' + suffix, body ? { method: 'POST', body: JSON.stringify(body) } : {})
+      return (await routePhone(phone, new URL(req.url), req, { operator }))!
+    }
+    const activity = 'activity?session_id=' + session_id
+    const legacyBytes = await (await run(false, activity)).text()
+    expect(await (await run(true, activity)).text() === legacyBytes).toBe(true)
+    rmSync(path)
+    expect(await (await run(true, activity)).text() === legacyBytes).toBe(true)
+    expect(await (await run(false, activity)).text()).toBe('{"ok":false,"error":"no_transcript"}')
+    hub.observe({ ...base, kind: 'session_end' })
+    // 后来落到文件的字不再导入已经结束的会话。
+    writeFileSync(path, JSON.stringify({ type: 'assistant', message: { content: '迟到的样例' } }))
+    const newest = CliActivityPage.parse(await (await run(true, activity + '&limit=1')).json())
+    rmSync(path)
+    expect(newest.items.length).toBe(1)
+    expect(newest.items[0]?.text === sample[2]).toBe(true)
+    const earlier = CliActivityPage.parse(await (await run(true, activity + '&before=' + newest.earlier)).json())
+    expect(earlier.items.map(item => item.text).join() === sample.slice(0, 2).join()).toBe(true)
+    expect(earlier.earlier).toBe(null)
+    expect(await (await run(false, activity)).text()).toBe('{"ok":false,"error":"not_found"}')
+    const say = await run(true, 'session-say', { session_id, text: '样例' })
+    expect(say.status).toBe(409)
+    expect(await say.json()).toEqual({ ok: false, error: 'cli_session_ended' })
+    expect((await run(true, 'decide', { session_id, decision: 'allow' })).status).toBe(404)
+    store.prune(Date.now() + 8 * 24 * 3600_000)
+    expect(await (await run(true, activity)).text()).toBe('{"ok":false,"error":"not_found"}')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
