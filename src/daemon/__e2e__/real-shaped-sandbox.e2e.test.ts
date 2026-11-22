@@ -519,6 +519,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       '/v1/matter': `id=${missingId}`, // 读存在的事项会记「桌面看过」
       '/v1/matter/owner-chat/file': 'id=sandbox-missing-message&i=0',
       '/v1/matter/owner-chat/search': 'q=' + encodeURIComponent('沙盒你好'),
+      '/v1/terminal/search': 'q=' + encodeURIComponent('蓝色风筝'),
       '/v1/matter/notes': `matter=${taskId}`,
       '/v1/matter/artifact': artifact,
       '/v1/matter/permission-script': `${task}&requestId=${missingUuid}&path=README.md&sha256=${'0'.repeat(64)}&offset=0`,
@@ -656,6 +657,27 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect((await mapOf(key)).status).toBe(409)
     expect((await desktop('POST', '/v1/places/map/pin', { key, itemId: 'x', branch: 'open' })).status).toBe(409)
     expect((await desktop('POST', '/v1/places/map/outline', { key })).status).toBe(409)
+  })
+
+  it('桌面能搜到真实目录中终端会话说过的一句', async () => {
+    const session = 'sandbox-terminal-search'
+    const event = (kind: 'prompt' | 'stop' | 'session_end', text?: string) => desktop('POST', '/v1/cli/event', {
+      source: 'codex', kind, session_id: session, cwd: process.cwd(), machine: hostname(), idle_s: 0,
+      ...(text ? { text } : {}),
+    }, 'trusted')
+    expect((await event('prompt')).status).toBe(200)
+    try {
+      expect((await event('stop', '沙盒索引中的蓝色风筝')).status).toBe(200)
+      expect((await event('prompt')).status).toBe(200)
+      expect((await event('stop', '沙盒索引中的橙色花盆')).status).toBe(200)
+      const path = '/v1/terminal/search?q=' + encodeURIComponent('蓝色风筝')
+      const result = await desktop<{ hits: Array<{ sessionId: string; placeKey?: string; who: string }> }>('GET', path)
+      expect(result.status).toBe(200)
+      expect(result.body.hits).toEqual([expect.objectContaining({ sessionId: session, placeKey: expect.stringMatching(/^p:/), who: 'said' })])
+      expect((await desktop('GET', path, undefined, 'trusted')).status).toBe(403)
+    } finally {
+      expect((await event('session_end')).status).toBe(200)
+    }
   })
 
   it('桌面小结设置与地方列表在整只 daemon 上接通', async () => {

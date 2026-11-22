@@ -1418,6 +1418,7 @@ async fn workbench_call_conditional(method: String, path: String, body: Option<S
     let daemon = daemon_info::DaemonInfo::read(&state_dir)?;
     let base_url = daemon.base_url.as_str();
     let token = daemon.operator_token;
+    let terminal_search = path.split('?').next() == Some("/v1/terminal/search");
     let url = format!("{base_url}{path}");
     let response = timeout(Duration::from_secs(35), async {
         let client = reqwest::Client::new();
@@ -1427,7 +1428,7 @@ async fn workbench_call_conditional(method: String, path: String, body: Option<S
         let request = if let Some(etag) = etag { request.header("If-None-Match", etag) } else { request };
         request.header("x-cc-desktop-version", env!("CARGO_PKG_VERSION")).bearer_auth(token).send().await
     }).await.map_err(|_| "request timed out".to_string())?
-      .map_err(|e| format!("request error: {e}"))?;
+      .map_err(|e| if terminal_search { "terminal_search_unavailable".to_owned() } else { format!("request error: {e}") })?;
     let status = response.status();
     if status == reqwest::StatusCode::NOT_MODIFIED { return Ok("{\"notModified\":true}".into()); }
     let response_body = response.text().await.map_err(|e| format!("failed to read response body ({status}): {e}"))?;

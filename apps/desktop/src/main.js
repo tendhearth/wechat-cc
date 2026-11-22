@@ -80,6 +80,7 @@ import { createTaskListReader } from "./modules/task-list-reader.js"
 import { homeGroups } from "./modules/home-list.js"
 import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
+import { createDeskSearch } from './modules/desk-search.js'
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getViewedWorkbenchTaskId, setWorkbenchDocked } from "./modules/workbench.js"
 import { isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
@@ -419,12 +420,46 @@ function openConversationProjects(){
 }
 const taskEntry = createTaskEntry({invokeWorkbenchApi, onAccepted: openAcceptedEntry,onManageProjects:openConversationProjects})
 
+const deskSearch = createDeskSearch({
+  call: invokeWorkbenchApi,
+  openProject: place => {
+    rosterDock?.close()
+    switchPane('thing')
+    deskPlaces?.selectKey(place.key)
+    thingThread?.open(place)
+    document.getElementById('thing-name')?.focus({ preventScroll: true })
+    recordDeskNavigation?.()
+  },
+  openTerminal: hit => {
+    const target = { kind: /** @type {const} */ ('terminal'), id: hit.sessionId }
+    const destination = findThing(target)
+    if (destination) { void openDeskDetail(target); return }
+    const existing = deskPlaces?.places().find(place => place.key === hit.placeKey)
+    const place = {
+      ...(existing ?? { key: hit.placeKey ?? `terminal:${hit.sessionId}`, name: hit.project, line: null,
+        status: null, waiting: null, moving: false, unseen: false, updatedAt: hit.at, matterIds: [], messageIds: [] }),
+      sessionIds: [...new Set([...(existing?.sessionIds ?? []), hit.sessionId])],
+    }
+    const item = thingThread?.linkedItem(place, target)
+    if (!item) return
+    openThing({ place, item, direct: true })
+    document.getElementById('thing-name')?.focus({ preventScroll: true })
+    recordDeskNavigation?.()
+  },
+  openMessage: (id, excerpt) => {
+    navigateDeskPane('overview')
+    void locateConversationMessage(deps, id, excerpt).catch(() => showToast('暂时打不开这句对话'))
+  },
+})
+
 const deps = {
   invoke,
   invokeApi,
   invokeWorkbenchApi,
   preserveNavigationFocus: () => preserveNavigationFocus,
   onTaskNavigation: () => recordDeskNavigation?.(),
+  deskSearch,
+  onOpenSearchTask: openDeskTask,
   onMatterViewed: (/** @type {import('./modules/workbench.js').Task} */ task) => { addConversationMatter(task.id,task.title); updateConversationMatters([task]) },
   onOpenMatter: (/** @type {string} */ id) => openDeskDetail({kind:'matter',id}),
   onOpenTerminal: (/** @type {string} */ id) => openDeskDetail({kind:'terminal',id}),
@@ -873,8 +908,10 @@ function switchPane(name) {
   }
   if (isCurrentWorkbenchPane(name, currentPane)) {
     if (deskWide() && currentPane) {
+      const wasSearch = currentPane.dataset.workbenchView === 'search'
       currentPane.dataset.workbenchView = searchRequested ? 'search' : 'detail'
       reflectWorkbenchSearchRole()
+      if (wasSearch !== searchRequested) initWorkbenchPage(deps, { focusSearch: searchRequested && !preserveNavigationFocus })
     }
     return
   }
@@ -1940,13 +1977,8 @@ function mountDeskHistory(strip, signal) {
       disposeExpandedDetail = undefined
       expandedDetail = null
     }
-    if (pane === 'workbench' && detail && before.pane === pane) switchPane('workbench')
-    if (pane !== before.pane) switchPane(pane === 'workbench' && !detail ? 'all' : pane)
-    if (pane === 'workbench' && !detail) {
-      const layer = document.getElementById('conversation-matter-layer')
-      if (layer) layer.dataset.workbenchView = 'search'
-      reflectWorkbenchSearchRole()
-    }
+    if (pane === 'workbench' && !detail) switchPane('all')
+    else if (pane !== before.pane || pane === 'workbench') switchPane(pane)
     if (place) strip.selectKey(place)
     else strip.clear()
     if (!detail || sameDetail) return true
@@ -2050,10 +2082,11 @@ function mountDeskHistory(strip, signal) {
     if (deskWide() && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229) {
       const shortcut = !event.altKey && !event.shiftKey && event.metaKey === mac && event.ctrlKey === !mac
         && event.key.toLowerCase() === 'k'
+      if (event.key === 'Escape' && searching() && deskSearch.composing) return
       if (shortcut || (event.key === 'Escape' && searching())) {
         event.preventDefault()
         if (!event.repeat) {
-          if (searching()) void closeSearch()
+          if (searching()) { if (event.key !== 'Escape' || !deskSearch.clear()) void closeSearch() }
           else openDeskSearch?.()
         }
         return
@@ -2206,7 +2239,11 @@ function mountDeskLayout(strip) {
     pointerInTrigger = pointerInRail = waitForReentry = false
     const { matches: wide } = layout
     const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
+    const changed = deskWide() !== wide
     root.toggleAttribute('data-desk-wide', wide)
+    if (changed && document.querySelector('.dash-main > #conversation-matter-layer[data-workbench-view="search"]:not([hidden])')) {
+      initWorkbenchPage(deps)
+    }
     positionDialogueTools(wide)
     reflectDeskConnection()
     reflectWorkbenchSearchRole()

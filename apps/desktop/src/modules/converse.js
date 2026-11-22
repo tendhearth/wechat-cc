@@ -1260,6 +1260,7 @@ export function addConversationMatter(id,title,historical = true) {
  * @param {Deps} deps @param {string} messageId @param {string} [excerpt] */
 export async function locateConversationMessage(deps,messageId,excerpt='') {
   const message = messages.find(m=>m.messageId===messageId)
+    ?? (!sharedSupported && excerpt ? messages.find(m=>m.text===excerpt) : undefined)
   if (message) {
     const node = document.querySelector(`[data-converse-message="${message.id}"]`)
     node?.scrollIntoView?.({block:'center'})

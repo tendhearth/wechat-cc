@@ -112,7 +112,7 @@ function providerLabel(p) {
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string,asLesson?:boolean}} ReviewReturnOpen */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],agentNames?:Record<string,string>,replyAgentNames?:Record<string,string>,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,listStatus?:string,listProject?:string,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsLoaded?:boolean,reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,reviewReturnResult?:import('./workbench-review-panel.js').ReviewReturnResult|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
-/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onMatterViewed?:(task:Task)=>void,onTaskNavigation?:()=>void,preserveNavigationFocus?:()=>boolean,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
+/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onMatterViewed?:(task:Task)=>void,onTaskNavigation?:()=>void,onOpenSearchTask?:(id:string)=>Promise<void>,deskSearch?:ReturnType<typeof import('./desk-search.js').createDeskSearch>,preserveNavigationFocus?:()=>boolean,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
 /** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
 
 // 一件事都没改过的任务:签名从一开始就是「空」,免得第一次拉回来白重画一整页。
@@ -503,13 +503,14 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar" aria-labelledby="wb-all-title"><header><h2 id="wb-all-title"><span class="wb-search-wide-title" hidden>搜索</span><span class="wb-search-compact-title">搜索事项</span></h2><button type="button" class="wb-delegate" data-action="task-entry" aria-label="交办" title="交办一件事">${icon('add-01', {size:16})}<span aria-hidden="true">交办</span></button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${directHeader}${taskHeader}<div class="wb-content"><div class="wb-content-inner" data-task-focus="${taskFocus}">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
 }
 
-/** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,isTaskVisible?:()=>boolean,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
+/** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,initialList?:Partial<ListResult>,initialPages?:number,listOnly?:boolean,isTaskVisible?:()=>boolean,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
 export function createWorkbenchController(deps) {
   /** @type {WorkbenchState} */
   const state = { reviewsLoaded: false, reviews: /** @type {ReviewTurn[]} */ ([]), reviewsSignature: EMPTY_REVIEWS, reviewsError: false, reviewReturnOpen: /** @type {ReviewReturnOpen|null} */ (null), version: 0, tasks: [], providers: [], defaultProvider: '', canWechat: false, selectedId: null, loadingId: null, detail: null, selectedArtifactId: null, error: '', detailDisconnected:false, preview: null, query: { ...(deps.initialQuery ?? { q: '', archived: 'exclude' }) }, loadingMore: false, newScope: deps.initialScope?.startsWith('new:') ? deps.initialScope : 'new' }
   let detailRequest = 0
   let listRequest = 0
-  let loadedPages = 1
+  let loadedPages = deps.initialPages ?? 1
+  Object.assign(state, deps.initialList)
   /** @type {string|null} */
   let desiredId = null
   /** A failed explicit target must not become permission to open another task. @type {string|null} */
@@ -621,6 +622,8 @@ export function createWorkbenchController(deps) {
   const dedupe = tasks => [...new Map(tasks.map(task => [task.id, task])).values()]
   return {
     state,
+    get listPages() { return loadedPages },
+    invalidateList() { listRequest++; state.loadingMore = false },
     getTargetTaskId() { return desiredId ?? failedTarget ?? state.selectedId },
     /** @param {{force?:boolean}} [options] */
     async refresh({ force = false } = {}) {
@@ -654,7 +657,7 @@ export function createWorkbenchController(deps) {
         return
       }
       state.error = ''
-      if (desiredId) paint()
+      if (desiredId || deps.listOnly) paint()
       // 选中任务的详情归长轮询管;列表这条腿只管列表,免得每 3 秒把流打断一次。
       else if (state.selectedId && livePoll.active && !force) paint()
       else if (state.selectedId) await this.selectTask(state.selectedId)
@@ -762,6 +765,8 @@ export function syncWorkbenchProviderLabel(root) {
   if (label) label.textContent = `当前使用 ${select?.selectedOptions?.[0]?.textContent || '尚未选择服务'}`
 }
 
+/** @type {{query:TaskQuery,list:Partial<ListResult>,pages:number,project?:string,status?:string}|undefined} */
+let deskSearchList
 /** @param {WorkbenchDeps} deps @param {{focusSearch?:boolean}} [options] */
 export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   stopWorkbenchPolling()
@@ -770,6 +775,8 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   const previousFocus = focusSearch ? document.activeElement : null
   const wideSearchVisible = () => !!root.closest?.('.dash-main > .workbench-pane[data-workbench-view="search"]:not([hidden])')
     && document.documentElement.hasAttribute('data-desk-wide')
+  const deskSearch = wideSearchVisible() ? deps.deskSearch : undefined
+  const retained = deskSearchList?.query.q === deskSearch?.query && deskSearch ? deskSearchList : undefined
   /** @type {Set<string>} */
   const busy = new Set()
   let forking = false
@@ -933,8 +940,9 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       }
     }
   }
-  const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, isTaskVisible:()=>root.closest?.('.workbench-pane')?.getAttribute('data-workbench-view')!=='search', initialScope, initialQuery: resumeQuery, patchLive, render: state => {
-    if (!alive) return
+  const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, isTaskVisible:()=>root.closest?.('.workbench-pane')?.getAttribute('data-workbench-view')!=='search', initialScope, initialQuery: deskSearch ? retained?.query ?? { q: deskSearch.query, archived: deskSearchList?.query.archived ?? 'exclude' } : resumeQuery,
+    initialList: retained?.list, initialPages: retained?.pages, listOnly: !!deskSearch, patchLive, render: state => {
+    if (!alive || deskSearch?.composing) return
     if (hasPainted) { captureDraft(); searchDraft = input('wb-search')?.value ?? searchDraft }
     if (state.detail) {
       const taskScope = `task:${state.detail.task.id}`
@@ -1024,6 +1032,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     if (questionPanel && sameScope) questionPanel.scrollTop = questionPanelScroll
     hasPainted = true
     const search = input('wb-search'); if (search) search.value = searchDraft
+    deskSearch?.paint()
     if (focusSearch) {
       focusSearch = false
       if (wideSearchVisible()
@@ -1065,7 +1074,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     const taskInfoBody = root.querySelector('.wb-task-info-body')
     if (taskInfoBody) taskInfoBody.scrollTop = taskInfoScrollPositions.get(nextScope) ?? 0
     renderedScope = scopeFor(state)
-    if (!state.loadingId) saveWorkbenchView(windowStorage,{scope:renderedScope,query:state.query ?? {q:'',archived:'exclude'},search:searchDraft})
+    if (!state.loadingId && !deskSearch) saveWorkbenchView(windowStorage,{scope:renderedScope,query:state.query ?? {q:'',archived:'exclude'},search:searchDraft})
     showReadingNotice()
     restoreDraft(renderedScope)
     syncWorkbenchProviderLabel(root)
@@ -1332,6 +1341,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     if (lineRow) return selectLine(lineRow, !!(/** @type {MouseEvent} */ (event).shiftKey))
     if (!target || target.dataset.deskOfflineDisabled !== undefined) return
     if (target.dataset.taskId) {
+      if (deskSearch && target.closest('.wb-task-list') && deps.onOpenSearchTask) return deps.onOpenSearchTask(target.dataset.taskId)
       await openTask(target.dataset.taskId)
       if (alive && controller.state.detail?.task.id === target.dataset.taskId) deps.onTaskNavigation?.()
       return
@@ -1669,6 +1679,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     }
     if (action === 'load-more') return controller.loadMore().catch(fail)
     if (action === 'clear-search') {
+      if (deskSearch?.clear()) return
       searchDraft = ''
       const field = input('wb-search'); if (field) field.value = ''
       return controller.filterTasks({ q: '', archived: controller.state.query?.archived ?? 'exclude' }).catch(fail)
@@ -1906,6 +1917,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       return
     }
     if (form.id === 'wb-search-form') {
+      if (deskSearch) return
       searchDraft = input('wb-search')?.value ?? ''
       return controller.filterTasks({ q: searchDraft, archived: controller.state.query?.archived ?? 'exclude' }).catch(fail)
     }
@@ -2016,10 +2028,15 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   root.addEventListener('scroll', onScroll, true)
   const saveWindowState = () => {
     captureDraft()
+    if (deskSearch) return
     saveWorkbenchView(windowStorage,{scope:renderedScope,query:controller.state.query ?? {q:'',archived:'exclude'},search:input('wb-search')?.value ?? searchDraft})
   }
   const onInput = (/** @type {Event} */ event) => {
     pendingOutcomeDiscovery.delete(renderedScope)
+    if (deskSearch && event.target === input('wb-search')) {
+      if (!(/** @type {InputEvent} */ (event).isComposing)) deskSearch.update(input('wb-search')?.value ?? '')
+      return
+    }
     if (event.target instanceof Element && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) syncWorkbenchQuestionChoice(/** @type {HTMLInputElement|HTMLTextAreaElement} */ (event.target))
     if (event.target === input('wb-followup-text') && controller.state.selectedId) interactions.editInputDraft(controller.state.selectedId, input('wb-followup-text')?.value ?? '',pageDrafts.get(renderedScope).attachments,pageDrafts.get(renderedScope).execution)
     saveWindowState()
@@ -2057,17 +2074,34 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   document.addEventListener?.('desk-cc-availability', reflectThingAvailability)
   root.addEventListener('toggle',onToggle,true)
   root.addEventListener('paste',onPaste);root.addEventListener('drop',onDrop);root.addEventListener('dragover',onDragOver)
+  const onSearchKey = (/** @type {KeyboardEvent} */ event) => deskSearch?.keydown(event)
+  const onComposition = (/** @type {CompositionEvent} */ event) => {
+    if (event.target === input('wb-search')) deskSearch?.compose(event.type === 'compositionstart', input('wb-search')?.value ?? '')
+  }
+  root.addEventListener('keydown', onSearchKey)
+  root.addEventListener('compositionstart', onComposition)
+  root.addEventListener('compositionend', onComposition)
   root.addEventListener('input', onInput)
   window.addEventListener?.('pagehide', saveWindowState)
   root.addEventListener('change', onChange)
   root.addEventListener('click', onClick, true)
   root.addEventListener('submit', onSubmit)
-  controller.refresh().catch(fail)
+  if (deskSearch) {
+    controller.state.listProject = deskSearchList?.project
+    controller.state.listStatus = deskSearchList?.status
+    deskSearch.mount({ root, visible: wideSearchVisible,
+      filter: (q) => controller.filterTasks({ q, archived: controller.state.query?.archived ?? 'exclude' }),
+      invalidateTasks: () => controller.invalidateList(),
+    })
+    controller.paint(true)
+    deskSearch.refreshTasks(() => controller.refresh())
+  } else controller.refresh().catch(fail)
   const timer = setInterval(() => {
     // 面板被藏起来就别占着长连接;重新露面时把它接回来。
     if (root.closest('[hidden]')) { controller.stopLive(); return }
     controller.resumeLive()
-    controller.refresh().catch(fail)
+    if (deskSearch) deskSearch.refreshTasks(() => controller.refresh())
+    else controller.refresh().catch(fail)
   }, deps.pollMs ?? 3000)
   const openDraft = async (/** @type {IncomingDraft} */ incoming) => {
     if (!incoming.text.trim()) return false
@@ -2093,8 +2127,18 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   active = { timer, openTask, openDraft, getTaskId: () => controller.getTargetTaskId(), getViewedTaskId: () => controller.state.detail?.task.id ?? null, cleanup: () => {
     document.removeEventListener?.('desk-cc-availability', reflectThingAvailability)
     saveWindowState()
-    resumeQuery = { ...(controller.state.query ?? { q: '', archived: 'exclude' }) }
-    resumeSearch = input('wb-search')?.value ?? searchDraft
+    if (deskSearch) {
+      const { query, tasks, page, projects, projectProviders, agentNames, historyProviders, listProject, listStatus } = controller.state
+      if (query) deskSearchList = { query, list: { tasks, page, projects, projectProviders, agentNames, historyProviders }, pages: controller.listPages,
+        project: listProject, status: listStatus }
+      deskSearch.unmount(root)
+    } else {
+      resumeQuery = { ...(controller.state.query ?? { q: '', archived: 'exclude' }) }
+      resumeSearch = input('wb-search')?.value ?? searchDraft
+    }
+    root.removeEventListener('keydown', onSearchKey)
+    root.removeEventListener('compositionstart', onComposition)
+    root.removeEventListener('compositionend', onComposition)
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
     releaseHostedPreview();pdfCleanup?.();clearLiveTimelinePatches(root);thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.();quotaHandoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick, true); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)

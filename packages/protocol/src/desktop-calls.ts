@@ -29,6 +29,9 @@ const body = () => ({ body: t<Body>() })
 
 export const DESKTOP_CALLS = {
   roster: { get: call('GET /v1/roster') },
+  terminal: {
+    search: call('GET /v1/terminal/search', { query: t<{ q: string; limit?: number }>() }),
+  },
   places: {
     get: call('GET /v1/places'),
     recapSettings: call('GET /v1/settings/recap'),
