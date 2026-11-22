@@ -809,7 +809,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .thing-detail .terminal-direct-heading h2 { display: none !important; }
 [data-desk-wide] .thing-detail .wb-history-dialog { box-sizing: border-box; width: 100%; max-width: 100%; padding-inline: 0; }
 
-:root:not([data-desk-wide]) #recap-settings-row { display: none; }
 [data-desk-wide] .place .place-line[data-recap-source="cc"] { font: 400 14.5px/1.5 var(--th-font-cc-hand); }
 .thing-recap { display: none; }
 [data-desk-wide] .thing-recap {

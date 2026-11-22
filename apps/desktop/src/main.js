@@ -1161,7 +1161,6 @@ function wireEvents() {
     deps: { invokeWorkbenchApi },
     onOpen: () => {
       void refreshGuardStatus()
-      if (!deskWide()) return
       const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('recap-toggle'))
       if (!toggle) return
       toggle.disabled = true
