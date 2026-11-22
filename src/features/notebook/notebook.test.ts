@@ -571,7 +571,7 @@ it.each(['', '%'])('bounds and continues chat reads for literal query %j', async
   expect(pages).toBeGreaterThan(1)
 })
 
-describe('notebook reply watermark', () => {
+describe('notebook reply read state', () => {
   const unseen = 'GET /v1/notebook/unseen'
   const page = 'GET /v1/notebook'
   const empty = { ok: true, unseen: false, day: null }
@@ -592,7 +592,7 @@ describe('notebook reply watermark', () => {
     const beforeMidnight = Date.parse('2026-11-20T07:59:59Z')
     const nextDay = beforeMidnight + 1000
     append(beforeMidnight, owner.id)
-    append(nextDay, owner.id)
+    const newer = append(nextDay, owner.id)
     at(nextDay + 1)
     expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-19' })
     expect((await call(page, null, 'operator', 'day=2026-11-18')).status).toBe(200)
@@ -600,32 +600,88 @@ describe('notebook reply watermark', () => {
     expect((await call(page, null, 'session', 'day=2026-11-19', 'admin', 'owner')).status).toBe(403)
     expect((await call(unseen, null, 'session', '', 'admin', 'owner')).status).toBe(403)
     expect(store.get('repliesSeenAt')).toBe(BASE)
-    expect((await call(page, null, 'device', 'day=2026-11-19')).status).toBe(200)
-    expect(store.get('repliesSeenAt')).toBe(beforeMidnight)
-    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-20' })
     expect((await call(page, null, 'operator', 'day=2026-11-20')).status).toBe(200)
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-19' })
+    expect(store.get('repliesSeenAt')).toBe(beforeMidnight - 1)
+    expect(store.get('repliesSeenIds')).toEqual([newer.id])
+    expect((await call(page, null, 'device', 'day=2026-11-19')).status).toBe(200)
+    expect(store.get('repliesSeenIds')).toEqual([])
+    expect(store.get('repliesSeenAt')).toBe(nextDay)
+    expect((await call(unseen)).body).toEqual(empty)
+
+    const later = nextDay + 86_400_000
+    append(later, owner.id)
+    append(nextDay + 1, owner.id)
+    expect((await call(page, null, 'device', 'day=2026-11-20')).status).toBe(200)
+    expect(store.get('repliesSeenAt')).toBe(later - 1)
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-21' })
+    expect((await call(page, null, 'operator', 'day=2026-11-21')).status).toBe(200)
     expect((await call(unseen)).body).toEqual(empty)
     expect((await call(page, null, 'operator', 'day=2026-11-19')).status).toBe(200)
-    expect(store.get('repliesSeenAt')).toBe(nextDay)
+    expect(store.get('repliesSeenAt')).toBe(later)
   })
 
-  it('only advances past replies carried in the paired-device frame', async () => {
+  it('marks the entire day only when the paired device gets the final frame', async () => {
     const { n, store } = fixture()
     store.set('pen', DEFAULT_OPENING)
     store.set('repliesSeenAt', BASE)
-    const owner = n.write('字'.repeat(1000), 'watermark-frame', 'app')
-    const reply = store.append({
+    const owner = n.write('fixture', 'watermark-frame', 'app')
+    const early = store.append({
       author: 'cc', body: '字'.repeat(1000), origin: 'desktop', createdAt: BASE + 1,
+      refId: owner.id, clientId: null,
+    })
+    const reply = store.append({
+      author: 'cc', body: '字'.repeat(1000), origin: 'desktop', createdAt: BASE + 2,
       refId: owner.id, clientId: null,
     })
     const route = notebookRoutes(n)[page]!
     const device = { tier: 'admin', origin: 'device', frameBudget: 5000 } as const
     const first = await route(new URLSearchParams(), null, device)
-    expect(first.body).toHaveProperty('nextAfter', owner.id)
+    expect(first.body).toHaveProperty('nextAfter', early.id)
     expect(store.get('repliesSeenAt')).toBe(BASE)
-    const second = await route(new URLSearchParams({ day: owner.day, after: owner.id }), null, device)
+    expect(store.get('repliesSeenIds')).toBeNull()
+    expect(n.unseen()).toEqual({ ok: true, unseen: true, day: owner.day })
+    const second = await route(new URLSearchParams({ day: owner.day, after: early.id }), null, device)
     expect(second.status).toBe(200)
+    expect(second.body).not.toHaveProperty('nextAfter')
     expect(store.get('repliesSeenAt')).toBe(reply.createdAt)
+    expect(store.get('repliesSeenIds')).toEqual([])
+    expect(n.unseen()).toEqual(empty)
+  })
+
+  it('reads the legacy baseline and bounds the seen IDs by dropping the oldest first', async () => {
+    const { n, call, store } = fixture()
+    const owner = n.write('fixture', 'seen-cap', 'desktop')
+    const append = (createdAt: number) => store.append({
+      author: 'cc', body: 'fixture', origin: 'desktop', createdAt, refId: owner.id, clientId: null,
+    })
+    append(BASE)
+    store.set('repliesSeenAt', BASE)
+    expect((await call(unseen)).body).toEqual(empty)
+    append(BASE + 1)
+    const newer = BASE + 86_400_000
+    const seen = Array.from({ length: 201 }, (_, i) => append(newer + i))
+    const stillUnread = append(newer + 201)
+    const entries = n.page('2026-11-20').entries
+    n.markRepliesSeen(entries.filter(entry => entry.id !== stillUnread.id).reverse())
+    expect(store.get('repliesSeenAt')).toBe(newer)
+    expect(store.get('repliesSeenIds')).toEqual(seen.slice(1).map(entry => entry.id))
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-20' })
+  })
+
+  it('keeps an unread reply when a seen reply has the same timestamp', () => {
+    const { n, store } = fixture()
+    const owner = n.write('fixture', 'seen-tie', 'desktop')
+    expect(n.unseen()).toEqual(empty)
+    const append = () => store.append({
+      author: 'cc', body: 'fixture', origin: 'desktop', createdAt: BASE + 1, refId: owner.id, clientId: null,
+    })
+    const seen = append()
+    append()
+    n.markRepliesSeen(n.page().entries.filter(entry => entry.id === seen.id))
+    expect(store.get('repliesSeenAt')).toBe(BASE)
+    expect(store.get('repliesSeenIds')).toEqual([seen.id])
+    expect(n.unseen()).toEqual({ ok: true, unseen: true, day: owner.day })
   })
 
   it('isolates setting read and write failures from page reads', async () => {

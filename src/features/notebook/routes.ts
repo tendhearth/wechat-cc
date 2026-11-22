@@ -32,12 +32,12 @@ export function notebookRoutes(n: Notebook): RouteTable {
       const offset = after === undefined ? 0 : page.entries.findIndex(entry => entry.id === after) + 1
       if (after !== undefined && offset === 0) return failure('notebook_not_found')
       const entries = page.entries.slice(offset)
-      const reply = (result: typeof page) => {
-        try { n.markRepliesSeen(result.entries) } catch { /* Reading still succeeds if the watermark cannot be saved. */ }
+      const result = { ...page, entries }
+      if (budget === undefined || !framedTooLargeFor(JSON.stringify(result), budget)) {
+        // The client can display the day once it has the final frame.
+        try { n.markRepliesSeen(page.entries) } catch { /* Reading still succeeds if read state cannot be saved. */ }
         return ok(result)
       }
-      const result = { ...page, entries }
-      if (budget === undefined || !framedTooLargeFor(JSON.stringify(result), budget)) return reply(result)
 
       // The paired-phone relay carries one response per frame. Keep whole
       // entries and continue the same day with an authenticated entry cursor.
@@ -49,7 +49,7 @@ export function notebookRoutes(n: Notebook): RouteTable {
         if (framedTooLargeFor(JSON.stringify(part), budget)) high = count - 1
         else low = count
       }
-      return low ? reply({ ...result, entries: entries.slice(0, low), nextAfter: entries[low - 1]!.id }) : failure('notebook_page_too_large')
+      return low ? ok({ ...result, entries: entries.slice(0, low), nextAfter: entries[low - 1]!.id }) : failure('notebook_page_too_large')
     }),
     'POST /v1/notebook/write': handle('page', (n, _query, body, caller) => {
       const input = NotebookWriteRequest.safeParse(body)

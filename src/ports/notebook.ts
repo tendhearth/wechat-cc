@@ -3,6 +3,7 @@ import type { NotebookEntry, NotebookPaper, NotebookPen, NotebookRow } from '../
 
 export interface NotebookSettings {
   repliesSeenAt: number
+  repliesSeenIds: string[]
   pen: NotebookPen
   paper: NotebookPaper
   initiative: { lastAt: number; day: string; attempts: number; failures: number; retryAt: number }
@@ -14,7 +15,7 @@ export interface NotebookStore {
   strike(id: string, at: number | null): 'ok' | 'missing' | 'cc'
   byId(id: string): NotebookRow | null
   referenceTimestamps(ids: readonly string[]): { id: string; createdAt: number }[]
-  firstReplyAfter(at: number): number | null
+  firstUnseenReplyAfter(at: number, seenIds: readonly string[]): number | null
   occupiedDays(timezone: string): readonly string[]
   list(options?: { since?: number; until?: number; limit?: number; query?: string; olderThan?: string; ownerOnly?: boolean }): NotebookRow[]
   atomic<T>(fn: () => T): T

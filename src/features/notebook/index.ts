@@ -15,6 +15,7 @@ import type { Notebook, NotebookCaller, NotebookSettings, NotebookStore } from '
 const CHAT_READ_MAX_CHARS = 26_000
 const CHAT_READ_BATCH = 32
 const DAY_MS = 86_400_000
+const MAX_SEEN_REPLY_IDS = 200
 const EMPTY_INITIATIVE: NotebookSettings['initiative'] = { lastAt: 0, day: '', attempts: 0, failures: 0, retryAt: 0 }
 
 interface NotebookDeps {
@@ -38,6 +39,13 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     const entry = store.append({ author, body, origin, createdAt, clientId, refId })
     deps.log?.(1, Array.from(entry.body).length)
     return entry
+  }
+  function replyBaseline() {
+    const previous = store.get('repliesSeenAt')
+    if (previous !== null) return previous
+    const baseline = now()
+    store.set('repliesSeenAt', baseline)
+    return baseline
   }
 
   let modelActive = false
@@ -177,20 +185,27 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
       return { day: selected, today, timeZone, days: [...days], entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
     },
     markRepliesSeen(entries) {
-      const previous = store.get('repliesSeenAt')
-      let latest = previous ?? now()
-      for (const entry of entries) {
-        if (entry.author === 'cc' && entry.refId !== null) latest = Math.max(latest, entry.createdAt)
-      }
-      if (latest !== previous) store.set('repliesSeenAt', latest)
+      store.atomic(() => {
+        const baseline = replyBaseline()
+        const replies = entries.filter(entry => entry.author === 'cc' && entry.refId !== null && entry.createdAt > baseline)
+        if (!replies.length) return
+        const ids = new Set(store.get('repliesSeenIds') ?? [])
+        const previousSize = ids.size
+        for (const reply of replies) ids.add(reply.id)
+        if (ids.size === previousSize) return
+
+        const firstUnread = store.firstUnseenReplyAfter(baseline, [...ids])
+        const seen = store.referenceTimestamps([...ids]).sort((a, b) => a.createdAt - b.createdAt)
+        // Keep every reply at the earliest unread millisecond above the baseline.
+        let nextBaseline = firstUnread === null ? (seen.at(-1)?.createdAt ?? baseline) : firstUnread - 1
+        const cutoff = seen[seen.length - MAX_SEEN_REPLY_IDS - 1]
+        if (cutoff) nextBaseline = Math.max(nextBaseline, cutoff.createdAt)
+        if (nextBaseline > baseline) store.set('repliesSeenAt', nextBaseline)
+        store.set('repliesSeenIds', seen.filter(reply => reply.createdAt > nextBaseline).map(reply => reply.id))
+      })
     },
     unseen() {
-      let seenAt = store.get('repliesSeenAt')
-      if (seenAt === null) {
-        seenAt = now()
-        store.set('repliesSeenAt', seenAt)
-      }
-      const at = store.firstReplyAfter(seenAt)
+      const at = store.firstUnseenReplyAfter(replyBaseline(), store.get('repliesSeenIds') ?? [])
       return { ok: true, unseen: at !== null, day: at === null ? null : localParts(at, settings().timezone).day }
     },
     write(body, clientId, origin) {
