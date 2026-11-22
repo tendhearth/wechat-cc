@@ -1454,3 +1454,14 @@ html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[da
   color: var(--th-ink-soft);
   font: 400 13px/1.5 var(--th-font-desk-ui);
 }
+
+/* A session tab: the owner's first sentence gives way, the time stays. */
+[data-desk-wide] .thing-sessions > [data-thread-session] > span:not(.th-agents) { max-width: 11em; }
+[data-desk-wide] .thing-sessions > [data-thread-session] > .thing-session-time {
+  flex: none;
+  margin-left: -4px;
+  color: var(--th-desk-faint);
+  font: 400 12px/1.4 var(--th-font-desk-ui);
+  white-space: pre;
+}
+
