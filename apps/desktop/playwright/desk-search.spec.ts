@@ -302,6 +302,8 @@ test('加载更早的交办失败可以重试，返回后沿新游标重读已�
     : route.fallback())
 
   await page.goto(shimUrl)
+  // The shortcut only works once the desk has mounted its key handler.
+  await expect(page.locator('#topbar-search')).toBeVisible()
   await shortcut(page)
   await search(page).fill('花园')
   const tasks = page.locator('.desk-search-tasks')
