@@ -22,6 +22,8 @@ exports[`daemon shutdown order (snapshot) > stops every subsystem in the recorde
   "module companion.push/stop",
   "module wired/speech-pending-flush",
   "module wired/phone",
+  "module wired/session-recaps-request",
+  "module wired/session-recaps",
   "module wired/matter-activity",
   "module checkup/cancel-checkup",
   "module checkup/small-probe",
