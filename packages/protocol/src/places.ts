@@ -65,6 +65,7 @@ export const Place = z.object({
   sessions: z.array(z.object({
     sessionId: z.string(),
     matterId: z.string().optional(),
+    title: z.string().optional(),
     agent: z.string(),
     status: z.enum(['waiting', 'working', 'replied', 'done']),
     updatedAt: z.number(),

@@ -1,7 +1,7 @@
 // @ts-check
 import { messageDay } from './desk-page.js'
 
-/** @typedef {import('../../../../packages/protocol/src/roster').RosterItemT & {endedAt?:number|null}} RosterItem */
+/** @typedef {import('../../../../packages/protocol/src/roster').RosterItemT & {endedAt?:number|null, sessionTitle?:string}} RosterItem */
 /** @typedef {import('../../../../packages/protocol/src/places').PlaceT} Place */
 /** @typedef {import('@wechat-cc/protocol').CliSessionRowT} Session */
 /** @typedef {import('@wechat-cc/protocol').CliActivityPageT['items'][number] & {id:string}} Activity */
@@ -15,7 +15,7 @@ export function placeSessions(place, roster) {
     const sessions = place.sessions.map(s => ({
       key: s.matterId ? `matter:${s.matterId}` : `terminal:${s.sessionId}`,
       id: s.matterId ?? s.sessionId, kind: s.matterId ? 'matter' : 'terminal',
-      title: place.name, status: s.status, updatedAt: s.updatedAt, endedAt: s.endedAt,
+      title: place.name, sessionTitle: s.title, status: s.status, updatedAt: s.updatedAt, endedAt: s.endedAt,
       group: s.status === 'waiting' ? 'waiting' : s.status === 'working' ? 'working' : 'back',
       quiet: false, unseen: false, agents: [{ id: s.agent, current: true }],
       terminal: { sessionId: s.sessionId, code: s.sessionId.slice(0, 6), summary: null },
@@ -51,6 +51,8 @@ export function terminalInputReason(session, name, waiting, wide = true) {
     ? '先定上面这件，它才往下走' : '先在终端里定下这件，它才往下走'
   if (wide && !session) return '暂时读不到这次会话'
   if (!session || (!wide && session.stale) || session.status === 'ended') return '这次会话已经结束，接着做要在终端里重新打开'
+  if (session.stale && !session.live_window) return '它的窗口不在了，回终端里接着说'
+  if (session.stale) return ''
   if (!session.live_window && session.status !== 'idle') return `${name} 正在做，等这一轮停了再说`
   return ''
 }

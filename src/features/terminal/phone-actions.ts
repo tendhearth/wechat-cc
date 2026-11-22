@@ -18,7 +18,7 @@ import type { TerminalSteps } from './terminal-steps'
 export const PHONE_CLI_SAY_MAX = 4000
 
 export type CliPhonePermissionResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_not_actionable' | 'cli_permission_stale' }
-export type CliPhoneActivityResult = { ok: true; items: Array<TerminalStepPayload & { id?: string }>; earlier?: string | null } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' | 'invalid' }
+export type CliPhoneActivityResult = { ok: true; items: Array<TerminalStepPayload & { id?: string }>; earlier?: string | null; source?: 'live' | 'archive' } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' | 'invalid' }
 /** 列表里「此刻那一步」看最近这么多步。 */
 const NOW_STEPS = 20
 
@@ -33,7 +33,7 @@ export interface CliPhoneActions {
   /** 这条会话挂着的、手机能拍的码(中继开出去的那个);没有 ⇒ null。 */
   pendingHash(sessionId: string): string | null
   permission(target: { hash?: string; session_id?: string }, decision: 'allow' | 'deny'): CliPhonePermissionResult
-  say(sessionId: string, text: string): CliPhoneSayResult
+  say(sessionId: string, text: string, operator?: boolean): CliPhoneSayResult
   /** 这条会话最近一句送进窗口的结果;没有 ⇒ null。 */
   lastSay?(sessionId: string): CliPhoneSayState | null
   /** 最近几步(跑了什么、改了哪、说了什么)—— 从这件事的步读(M6d:第一次看时建那件事、导入一次),手机上看着它跑(2026-10-17)。 */
@@ -88,10 +88,10 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       deps.log('CLI_PERMISSION', `${decision} from phone hash=${hash}`)
       return { ok: true }
     },
-    say(sessionId, text) {
+    say(sessionId, text, operator) {
       const v = view(sessionId)
       if (!v) return { ok: false, error: 'not_found' }
-      if (v.status === 'ended') return { ok: false, error: 'cli_session_ended' }
+      if (operator && v.status === 'ended') return { ok: false, error: 'cli_session_ended' }
       // 开在电脑的窗口里(2026-10-18):在跑也能说,它下一步就读到。
       const s0 = deps.hub.lookup(sessionId)
       const local0 = !!s0 && s0.session_id === sessionId && !s0.origin_agent && !(s0.machine && deps.localMachine && s0.machine !== deps.localMachine)
@@ -116,6 +116,7 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
         })
         return { ok: true, say_id: sayId }
       }
+      if (v.status === 'ended') return { ok: false, error: 'cli_session_ended' }
       // 在跑或在等批准:终端那头这一轮还没完,再起一个 resume 会和它抢同一条会话。
       if (v.status === 'running' || v.status === 'waiting') return { ok: false, error: 'cli_session_busy' }
       // 30 分钟没事件被折算成 idle 的(stale):可能只是一步长构建 / 长工具调用还在跑,
@@ -139,7 +140,7 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       const stored = (): CliPhoneActivityResult => {
         const result = deps.steps.storedPage?.(sessionId, page?.limit ?? ACTIVITY_MAX_ITEMS, page?.before)
         if (!result) return { ok: false, error: 'invalid' }
-        return page ? { ok: true, ...result }
+        return page ? { ok: true, ...result, source: 'archive' }
           : { ok: true, items: result.items.map(({ id: _id, full: _full, ...item }) => item) }
       }
       if (row?.status === 'ended') return stored()
@@ -149,7 +150,7 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       try {
         if (!page) return { ok: true, items: deps.steps.view(s, ACTIVITY_MAX_ITEMS) }
         const result = deps.steps.page(s, page.limit, page.before)
-        return result ? { ok: true, ...result } : { ok: false, error: 'invalid' }
+        return result ? { ok: true, ...result, ...(operator ? { source: 'live' as const } : {}) } : { ok: false, error: 'invalid' }
       } catch (error) {
         const code = (error as NodeJS.ErrnoException)?.code
         if (row && (code === 'ENOENT' || code === 'ENOTDIR')) return stored()
@@ -162,7 +163,7 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       return currentStepOf(s, { localMachine: deps.localMachine, steps: deps.steps })
     },
   }
-  return {...actions,say(id,text){const result=actions.say(id,text);if(result.ok)deps.recordReference?.(id,text);return result}}
+  return {...actions,say(id,text,operator){const result=actions.say(id,text,operator);if(result.ok)deps.recordReference?.(id,text);return result}}
 }
 
 /**

@@ -66,6 +66,7 @@ export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<str
             }
           }),
           ...(paged ? { earlier: r.earlier ?? null } : {}),
+          ...(ctx?.operator && r.source ? { source: r.source } : {}),
         }), full === '1' ? ACTIVITY_FULL_MAX : ACTIVITY_TEXT_MAX)
       } catch { return json({ ok: false, error: 'unavailable' }, 503) }
     }),
@@ -86,14 +87,14 @@ export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<str
       } catch { return json({ ok: false, error: 'unavailable' }, 503) }
     }),
     // 对终端会话接着说一句 —— 与微信「@码」同一个 core;收下即回,结果成为这条会话的下一句。
-    'POST /v1/cli/session-say': ownsMethod(async (url: URL, req: Request) => {
+    'POST /v1/cli/session-say': ownsMethod(async (url: URL, req: Request, ctx?: { operator: boolean }) => {
       if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
       if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
       const b = await bodyOf(req)
       const sessionId = b?.['session_id'], text = typeof b?.['text'] === 'string' ? (b['text'] as string).trim() : ''
       if (!b || typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId) || !text || text.length > PHONE_CLI_SAY_MAX || text.includes('\0')) return json({ ok: false, error: 'invalid' }, 400)
       try {
-        const r = deps.cliActions.say(sessionId, text)
+        const r = deps.cliActions.say(sessionId, text, ctx?.operator)
         if (r.ok) return json({ ok: true, accepted: true, ...(r.say_id ? { say_id: r.say_id } : {}) })
         return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
       } catch { return json({ ok: false, error: 'unavailable' }, 503) }

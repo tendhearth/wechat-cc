@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { openTestDb } from '../../lib/db'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
+import { makeFirstTerminalMessageReader } from '../../adapters/store/terminal-steps'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import type { CliSessionView } from '../../ports/cli-session'
 import type { Matter } from '../../ports/matters'
@@ -282,4 +285,47 @@ it('页签只取三十天内的活会话，按档内时间排序并封顶三十�
   const { sessions } = reader.read('operator').places[0]!
   expect(sessions).toHaveLength(30)
   expect(sessions?.map(row => row.sessionId)).toEqual(['waiting', 'working', ...paused.slice(1).reverse().map(row => row.session_id)])
+})
+
+it('页签标题取第一句，压成一行并按字符截断，只为桌面查且命中后不重查', async () => {
+  const db = openTestDb()
+  try {
+    const matters = makeMatterStore(db, () => NOW)
+    const log = makeMatterLog(db)
+    const create = () => matters.create({ kind: 'terminal', title: '终端', projectPath: '/w/rici' })
+    const first = create(), empty = create()
+    const add = (matterId: string, kind: 'agent_message' | 'user_message', payload: Record<string, unknown>) =>
+      log.writeItem({ matterId, kind, status: 'completed', payload })
+    add(first.id, 'agent_message', { text: '先说的 agent' })
+    add(first.id, 'user_message', {})
+    add(first.id, 'user_message', { text: '短摘要', full: '  第一行\n\t第二行   ' + '🐈'.repeat(55) + '末尾' })
+    add(first.id, 'user_message', { text: '主人的第二句' })
+    const query = vi.fn(makeFirstTerminalMessageReader(db))
+    const terminals = [first, empty].map(({ id }): CliSessionView => ({
+      session_id: id, code: id, matter_id: id, source: 'codex', status: 'idle', project: '/w/rici',
+      cwd: '/w/rici', stale: false, machine: null, origin_agent: null, pending: null,
+      last_summary: null, last_event_at: NOW, created_at: NOW, last_prompt_at: NOW,
+    }))
+    const { reader } = setup([], [], () => NOW, {
+      roster: { matters, terminals: () => terminals, seen: () => null, now: () => NOW },
+      firstTerminalMessage: query,
+    })
+    const read = async (origin: 'operator' | 'device') =>
+      PlacesResponse.parse((await call({ places: reader }, 'GET /v1/places', null, origin)).body)
+    expect((await read('device')).places[0]).not.toHaveProperty('sessions')
+    expect(query).not.toHaveBeenCalled()
+    const initial = await read('operator')
+    const initialSessions = initial.places[0]?.sessions
+    expect(initialSessions?.find(s => s.matterId === first.id)?.title === '第一行 第二行 ' + '🐈'.repeat(52)).toBe(true)
+    expect(initialSessions?.find(s => s.matterId === empty.id)).not.toHaveProperty('title')
+    expect(query).toHaveBeenCalledTimes(2)
+    add(empty.id, 'user_message', { text: '现在有了' })
+    const updated = await read('operator')
+    expect(updated.places[0]?.sessions?.find(s => s.matterId === empty.id)?.title === '现在有了').toBe(true)
+    expect(updated.version).not.toBe(initial.version)
+    expect((await read('operator')).version).toBe(updated.version)
+    expect((await read('device')).places[0]).not.toHaveProperty('sessions')
+    expect(query.mock.calls.map(([id]) => id).filter(id => id === first.id)).toHaveLength(1)
+    expect(query).toHaveBeenCalledTimes(3)
+  } finally { db.close() }
 })

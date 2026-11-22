@@ -46,6 +46,7 @@ describe('桌面一件事', () => {
     expect(terminalInputReason({...session,status:'running'},'Codex',false)).toBe('Codex 正在做，等这一轮停了再说')
     expect(terminalInputReason({...session,status:'waiting'},'Codex',true)).toBe('先定上面这件，它才往下走')
     expect(terminalInputReason({...session,stale:true,live_window:true},'Codex',false)).toBe('')
+    expect(terminalInputReason({...session,stale:true,live_window:false},'Codex',false)).toBe('它的窗口不在了，回终端里接着说')
     expect(terminalInputReason({...session,status:'ended'},'Codex',false)).toBe('这次会话已经结束，接着做要在终端里重新打开')
   })
 

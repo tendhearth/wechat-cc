@@ -358,11 +358,15 @@ test('小结跟着作者换字体，发话收起便条，偏好关掉后两处�
 })
 
 test('停着的会话可输入；八次会话收起两次，选更早的存档可翻阅', async ({page,shimUrl}) => {
-  const history = Array.from({length:7}, (_, i) => placeSession('history-' + i, 'done', now - i * 86400000))
-  const paused = placeSession('paused', 'replied', now - 3 * 86400000)
+  let liveWindow = true
+  const history = Array.from({length:7}, (_, i) => ({
+    ...placeSession('history-' + i, 'done', now - i * 86400000),
+    ...(i === 6 ? {title:'核对第三批备份'} : {}),
+  }))
+  const paused = {...placeSession('paused', 'replied', now - 86400000), title:'把这周的记录整理一下'}
   await routePlaces(page,[placeItem('花园',{updatedAt:now,sessions:[paused,...history]})])
   await routeRoster(page,[])
-  await page.route('**/v1/cli/sessions**', route => route.fulfill({json:{sessions:[session('paused',{stale:true,live_window:true})]}}))
+  await page.route('**/v1/cli/sessions**', route => route.fulfill({json:{sessions:[session('paused',{stale:true,live_window:liveWindow})]}}))
   await page.route('**/v1/cli/activity**',route=>{
     const params = new URL(route.request().url()).searchParams
     const earlier = params.has('before')
@@ -375,10 +379,17 @@ test('停着的会话可输入；八次会话收起两次，选更早的存档�
   const menu = bar.locator('details')
   const trigger = menu.locator('summary')
   await expect(visible).toHaveCount(6)
+  const pausedTab = visible.first()
+  await expect(pausedTab).toHaveText('把这周的记录整理一下 · 昨天')
+  await expect(pausedTab).toHaveAttribute('title','Codex · 把这周的记录整理一下 · 昨天')
+  await expect(pausedTab).toHaveAccessibleName('Codex，把这周的记录整理一下，昨天，停着')
   await expect(trigger).toHaveText('更早的 2 次')
   await expect(thread(page).locator('.thing-state')).toHaveText('停着')
   await terminal(page).locator('textarea').fill('接着做')
   await expect(terminal(page).locator('textarea')).toHaveValue('接着做')
+  liveWindow = false
+  await expect(terminal(page).locator('textarea')).toBeDisabled()
+  await expect(terminal(page).locator('textarea')).toHaveAttribute('placeholder','它的窗口不在了，回终端里接着说')
   await expect(visible.nth(1)).toHaveCSS('opacity','0.75')
   await expect(visible.nth(1).locator('i')).toHaveCount(0)
   await trigger.click()
@@ -390,7 +401,7 @@ test('停着的会话可输入；八次会话收起两次，选更早的存档�
   await expect(menu).not.toHaveAttribute('open','')
   await trigger.click()
   const older = menu.locator('[data-thread-session="terminal:history-6"]')
-  await expect(older).toHaveText(/Codex · .* · 已经结束/)
+  await expect(older).toHaveText(/核对第三批备份 · .* · 已经结束/)
   await older.click()
   await expect(menu).not.toHaveAttribute('open','')
   await expect(visible).toHaveCount(6)
@@ -405,14 +416,23 @@ test('停着的会话可输入；八次会话收起两次，选更早的存档�
   await expect(terminal(page).getByText('存档前一页')).toBeVisible()
 })
 
-test('选中的会话结束后留在原处并转为只读', async ({page,shimUrl}) => {
+test('选中的会话结束后留在原处，重新从存档最新一页翻阅', async ({page,shimUrl}) => {
   let ended = false
   const primary = () => placeSession('primary',ended?'done':'working',now)
   const other = placeSession('other','replied',now-1000)
   await routePlaces(page,()=>[placeItem('花园',{updatedAt:now,sessions:ended?[other,primary()]:[primary(),other]})])
   await routeRoster(page,[])
   await page.route('**/v1/cli/sessions**',route=>route.fulfill({json:{sessions:[session('other'),...(ended?[]:[session('primary',{status:'running',live_window:true})])]}}))
-  await page.route('**/v1/cli/activity**',route=>route.fulfill({json:{ok:true,items:[step('reply','said',new URL(route.request().url()).searchParams.get('session_id') + ' 的原话')],earlier:null}}))
+  await page.route('**/v1/cli/activity**',route=>{
+    const query = new URL(route.request().url()).searchParams
+    const reply = step('reply','said',query.get('session_id') + ' 的原话')
+    if (!ended) return route.fulfill({json:{ok:true,source:'live',items:[step('live','said','实时旧页'),reply],earlier:'live-cursor'}})
+    if (query.has('before')) {
+      expect(query.get('before')).toBe('archive-cursor')
+      return route.fulfill({json:{ok:true,source:'archive',items:[step('older','you','存档里漏掉的一步')],earlier:null}})
+    }
+    return route.fulfill({json:{ok:true,source:'archive',items:[step('missing','you','存档最新页多出的一步'),reply],earlier:'archive-cursor'}})
+  })
   await page.goto(shimUrl)
   await select(page,'花园')
   const tab = thread(page).locator('[data-thread-session="terminal:primary"]')
@@ -425,4 +445,8 @@ test('选中的会话结束后留在原处并转为只读', async ({page,shimUrl
   await expect(thread(page).locator('.thing-state')).toHaveText('已经结束')
   await expect(terminal(page)).toContainText('primary 的原话')
   await expect(terminal(page).locator('textarea')).toHaveCount(0)
+  await expect(terminal(page).getByText('实时旧页')).toHaveCount(0)
+  await expect(terminal(page).getByText('存档最新页多出的一步')).toBeVisible()
+  await terminal(page).getByRole('button',{name:'更早的',exact:true}).click()
+  await expect(terminal(page).getByText('存档里漏掉的一步')).toBeVisible()
 })

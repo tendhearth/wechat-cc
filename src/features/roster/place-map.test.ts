@@ -14,13 +14,14 @@ import { makeThreadsStore } from '../../lib/threads-store'
 import { makeProjectMemory, makeProjectTopicResolver } from '../terminal/project-memory'
 import type { PlaceOutlineDeps } from './place-outline'
 import { makePlacesReader, placeKey } from './places-reader'
+import { placesRoutes } from './places-routes'
 
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 const owner = 'map-owner'
 const now = Date.UTC(2026, 10, 21)
 
-function fixture(withSession = false, outlines?: PlaceOutlineDeps) {
+function fixture(withSession = false, outlines?: PlaceOutlineDeps, historyOnly = false) {
   // Use a real .git/commondir outside system temp: provenance excludes scratch work.
   const base = mkdtempSync(resolve('.place-map-test-'))
   cleanups.push(() => rmSync(base, { recursive: true, force: true }))
@@ -47,9 +48,9 @@ function fixture(withSession = false, outlines?: PlaceOutlineDeps) {
     store, mapTopics: { db, owner: () => owner,
       makeResolver: (db, owner, topics, roots) => makeProjectTopicResolver(db, owner, topics, undefined, roots, { includeDoneHistory:true }),
     },
-    roster: { matters, seen: () => null, now: () => now, terminals: () => [
-      { session_id:'ask-session', code:'ask', project:repo, source:'codex', status:'waiting',
-        last_event_at:now, last_summary:'要继续吗', pending:{tool:'Read',summary:'要继续吗',since:now},
+    roster: { matters, seen: () => null, now: () => now, terminals: options => historyOnly && !options?.includeEnded ? [] : [
+      { session_id:'ask-session', code:'ask', project:repo, source:'codex', status:historyOnly ? 'ended' : 'waiting',
+        last_event_at:now, last_summary:'要继续吗', pending:historyOnly ? null : {tool:'Read',summary:'要继续吗',since:now},
         cwd:repo, stale:false, machine:null, origin_agent:null, last_prompt_at:null, created_at:now },
       ...(withSession ? [{ session_id:'idle-session', code:'idle', project:repo, source:'codex' as const,
         status:'idle' as const, last_event_at:now, last_summary:'停着的会话', pending:null,
@@ -488,4 +489,23 @@ it('按方面路由只认 operator 和实验开关，普通 GET 在梳理前后�
   const hidden = await (await get(true)).text()
   expect(PlaceMapResponse.parse(JSON.parse(hidden)).outline).toMatchObject({state:'failed',error:'stale'})
   expect(hidden).not.toContain(resultText)
+})
+
+it('仅由结束会话发现的地方能读图、摆放和梳理，且不写入共享地方表', async () => {
+  const f = fixture(false, { evaluator: () => null }, true)
+  f.labs.setPlaceMap(true)
+  const routes = placesRoutes({ places: f.reader })
+  const caller = { tier: 'admin', origin: 'operator' } as const
+  const query = new URLSearchParams({ key: f.key, outline: '1' })
+  const read = () => routes['GET /v1/places/map']!(query, null, caller)
+  expect(f.reader.read('operator').places.map(p => p.key)).toEqual([f.key])
+  expect((await read()).status).toBe(200)
+  expect(PlaceMapResponse.parse((await read()).body).items).toContainEqual(expect.objectContaining({ id: 's:ask-session', status: 'done' }))
+  const pin = await routes['POST /v1/places/map/pin']!(query, { key: f.key, itemId: 's:ask-session', branch: 'done' }, caller)
+  expect(pin.status).toBe(200)
+  expect(PlaceMapResponse.parse((await read()).body).items[0]?.pin).toBe('done')
+  const outline = await routes['POST /v1/places/map/outline']!(query, { key: f.key }, caller)
+  expect(outline.status).toBe(200)
+  expect(f.reader.read('device').places).toEqual([])
+  expect(f.store.list()).toEqual([])
 })

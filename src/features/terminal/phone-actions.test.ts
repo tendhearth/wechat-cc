@@ -169,6 +169,34 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
     expect(status('W1')).toBe('running')
     expect(a.say('W1', '又一句')).toMatchObject({ ok: true })   // 不排他:窗口按顺序读
   })
+  it('登记已结束但窗口仍可送达时，设备照常收下，桌面拒绝', async () => {
+    const session_id = 'W-ended'
+    const identity = { source: 'claude' as const, session_id, cwd: '/w/proj', machine: 'mac' }
+    hub.ingest({ ...identity, kind: 'prompt' })
+    const windowSession = hub.lookup(session_id)
+    hub.ingest({ ...identity, kind: 'session_end' })
+    expect(hub.list({ includeEnded: true }).find(row => row.session_id === session_id)?.status).toBe('ended')
+    const lookup = vi.spyOn(hub, 'lookup').mockReturnValue(windowSession)
+    try {
+      windows.set(session_id, 'proj-ended')
+      const handlers = terminalOwnerHandlers({ cliActions: actions() })
+      const say = (operator: boolean) => {
+        const url = new URL('http://x/v1/cli/session-say')
+        return routePhone(handlers, url, new Request(url, {
+          method: 'POST', body: JSON.stringify({ session_id, text: '接着说' }),
+        }), { operator })
+      }
+      const operator = await say(true)
+      expect(operator?.status).toBe(409)
+      expect(await operator?.json()).toEqual({ ok: false, error: 'cli_session_ended' })
+      expect(lookup).not.toHaveBeenCalled()
+      const device = await say(false)
+      expect(device?.status).toBe(200)
+      expect(await device?.json()).toEqual({ ok: true, accepted: true, say_id: expect.any(String) })
+      await vi.waitFor(() => expect(relayed).toEqual([{ name: 'proj-ended', text: '接着说' }]))
+      expect(runs).toHaveLength(0)
+    } finally { lookup.mockRestore() }
+  })
   it('发信小进程跑着时登记 busy,完了就放(空闲自动重启别杀在半路,评审 10-19 #2)', async () => {
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W5', cwd: '/w/proj', machine: 'mac', text: '上一轮' })
     windows.set('W5', 'proj-w5')
@@ -549,13 +577,19 @@ it('operator 精确读取已结束的存档，设备仍按旧协议，清理登�
     const activity = 'activity?session_id=' + session_id
     const legacyBytes = await (await run(false, activity)).text()
     expect(await (await run(true, activity)).text() === legacyBytes).toBe(true)
+    const livePage = await (await run(true, activity + '&limit=1')).json()
+    const devicePage = await (await run(false, activity + '&limit=1')).json()
+    expect(livePage.source).toBe('live')
+    expect(devicePage).not.toHaveProperty('source')
     rmSync(path)
     expect(await (await run(true, activity)).text() === legacyBytes).toBe(true)
     expect(await (await run(false, activity)).text()).toBe('{"ok":false,"error":"no_transcript"}')
     hub.observe({ ...base, kind: 'session_end' })
     // 后来落到文件的字不再导入已经结束的会话。
     writeFileSync(path, JSON.stringify({ type: 'assistant', message: { content: '迟到的样例' } }))
-    const newest = CliActivityPage.parse(await (await run(true, activity + '&limit=1')).json())
+    const archivedPage = await (await run(true, activity + '&limit=1')).json()
+    expect(archivedPage.source).toBe('archive')
+    const newest = CliActivityPage.parse(archivedPage)
     rmSync(path)
     expect(newest.items.length).toBe(1)
     expect(newest.items[0]?.text === sample[2]).toBe(true)

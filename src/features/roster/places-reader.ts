@@ -26,6 +26,7 @@ export const PLACES_WINDOW_MS = 30 * 24 * 3_600_000
 export interface PlacesReaderDeps {
   roster: RosterReaderDeps
   mapWorkbench?: RosterReaderDeps['workbench']
+  firstTerminalMessage?: (matterId: string) => string | undefined
   store: PlacesStore
   labs?: ReturnType<typeof makeLabsSettings>
   outlines?: PlaceOutlineDeps
@@ -42,7 +43,22 @@ export const placeKey = (root: string) => `p:${createHash('sha256').update(root)
 export function makePlacesReader(deps: PlacesReaderDeps) {
   const placeMapEnabled = () => deps.labs?.placeMapEnabled() ?? false
   const root = deps.root ?? makeProjectRoot()
-  function collect(scope: 'operator' | 'device', roster = deps.roster, onHead?: (key: string, item: RosterItemT) => void, includeEnded = false) {
+  const titles = new Map<string, string>()
+  function sessionTitle(matterId: string) {
+    const cached = titles.get(matterId)
+    if (cached) return cached
+    const text = deps.firstTerminalMessage?.(matterId)?.trim().replace(/\s+/gu, ' ')
+    if (!text) return undefined
+    const title = Array.from(text).slice(0, 60).join('')
+    titles.set(matterId, title)
+    if (titles.size > 500) {
+      const oldest = titles.keys().next()
+      if (!oldest.done) titles.delete(oldest.value)
+    }
+    return title
+  }
+
+  function collect(scope: 'operator' | 'device', roster = deps.roster, onHead?: (key: string, item: RosterItemT) => void, includeEnded = false, includeSessions = includeEnded) {
     const now = roster.now?.() ?? Date.now()
     const g = gatherRoster(roster, scope, now, PLACES_WINDOW_MS, includeEnded)
     const terminals = includeEnded ? g.input.terminals.filter(t => t.status !== 'ended'
@@ -81,7 +97,7 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     const shared = hasHistory ? buildPlaces({ ...placeInput, items: sharedItems,
       rootOf: item => sharedRoot(raw.get(item.key)), onHead: undefined }).added : []
     const result = buildPlaces({ ...placeInput, saved: [...saved, ...shared] })
-    if (includeEnded) {
+    if (includeSessions) {
       const sessionsByPlace = new Map<string, NonNullable<PlaceT['sessions']>>()
       for (const item of items) {
         const r = resolved(raw.get(item.key))
@@ -100,16 +116,20 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
         place.sessions = (sessionsByPlace.get(place.key) ?? [])
           .sort((a, b) => order[a.status] - order[b.status] || b.updatedAt - a.updatedAt || a.sessionId.localeCompare(b.sessionId))
           .slice(0, 30)
+          .map(session => {
+            const title = session.matterId && sessionTitle(session.matterId)
+            return title ? { ...session, title } : session
+          })
       }
     }
-    return { ...result, added: hasHistory ? shared : result.added, saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
+    return { ...result, added: hasHistory ? shared : result.added, records: [...saved, ...shared, ...result.added], saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
   }
 
-  const collectMapPlaces = () => collect('operator', { ...deps.roster, workbench: deps.mapWorkbench })
+  const collectMapPlaces = (includeEnded = false) =>
+    collect('operator', { ...deps.roster, workbench: deps.mapWorkbench }, undefined, includeEnded, false)
   async function mapProjection(key: string) {
-    const { places, saved, added, items, rootOf } = collectMapPlaces()
+    const { places, records, items, rootOf } = collectMapPlaces(true)
     const place = places.find(place => place.key === key)
-    const records = [...saved, ...added]
     const record = records.find(record => record.key === key)
     if (!place || !record) return null
     const owner = deps.mapTopics?.owner()

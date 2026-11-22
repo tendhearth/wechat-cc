@@ -6,6 +6,16 @@ import { STEP_KEY_PREFIX, type TerminalReadState, type TerminalStepStore, type T
  * terminal-steps.ts —— 终端会话记录读进来的步存在哪(M4b)。步只经 MatterLog 写(matter_items);读到哪了在 terminal_reads(v98)。
  * 新的步挂在这件事正在跑的那一轮上(没有就不挂)。apply 一个事务:步和读到哪了一起落,不会读过了却没写上。
  */
+export function makeFirstTerminalMessageReader(db: Db) {
+  const first = db.query<{ text: string }, [string]>(`
+    SELECT COALESCE(json_extract(payload_json, '$.full'), json_extract(payload_json, '$.text')) AS text
+    FROM matter_items
+    WHERE matter_id=? AND kind='user_message' AND json_type(payload_json, '$.text')='text'
+    ORDER BY seq LIMIT 1
+  `)
+  return (matterId: string) => first.get(matterId)?.text
+}
+
 const PENDING_MAX = 500
 export function makeTerminalStepStore(deps: { db: Db; log: MatterLog; matters: { findBySurface(surface: 'cli', key: string): { id: string } | null } }): TerminalStepStore {
   const { db, log, matters } = deps

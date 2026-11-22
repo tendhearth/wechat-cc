@@ -211,10 +211,15 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       const agent = agentOf(item)
       const name = agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? ''))
       const time = placeTime({ moving:false, updatedAt:item.updatedAt }, now)
-      const title = item.kind === 'terminal' || item.terminal ? [name,time].filter(Boolean).join(' · ') : item.title
+      const terminal = item.kind === 'terminal' || item.terminal
+      const title = terminal ? [item.sessionTitle || name, time].filter(Boolean).join(' · ') : item.title
       const ended = item.endedAt != null
-      const label = ended ? `${title} · 已经结束` : title
-      return `<button type="button" data-thread-session="${esc(item.key)}" data-group="${item.group}"${ended ? ` data-ended aria-label="${esc(label)}"` : ''} aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}<span>${esc(inMenu ? label : title)}</span>${ended ? '' : '<i aria-hidden="true"></i>'}</button>`
+      const state = ended ? '已经结束' : item.status === 'waiting' ? '等你定' : item.status === 'working' ? '正在做' : '停着'
+      const wideTerminal = wide.matches && terminal
+      const label = wideTerminal ? `${title} · ${state}` : title
+      const accessible = wideTerminal ? [name, item.sessionTitle, time, state].filter(Boolean).join('，') : ''
+      const tooltip = wideTerminal ? [name, item.sessionTitle, time].filter(Boolean).join(' · ') : ''
+      return `<button type="button" data-thread-session="${esc(item.key)}" data-group="${item.group}"${ended ? ' data-ended' : ''}${accessible ? ` aria-label="${esc(accessible)}"` : ''}${tooltip ? ` title="${esc(tooltip)}"` : ''} aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}<span>${esc(inMenu ? label : title)}</span>${ended ? '' : '<i aria-hidden="true"></i>'}</button>`
     }
     const markup = visible.map(item => button(item)).join('') + (earlier.length
       ? wide.matches

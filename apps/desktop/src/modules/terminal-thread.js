@@ -103,7 +103,8 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   const wide = window.matchMedia('(min-width: 900px)')
   /** @type {import('@wechat-cc/protocol').SessionRecapT|undefined} */ let recap
   /** @type {HTMLElement|null} */ let memo = null
-  let dismissedAt = -1, recapVersion = 0, archiveLoaded = false
+  let dismissedAt = -1, recapVersion = 0
+  /** @type {string|undefined} */ let activitySource
   const redrawFrame = () => { if (memo) sketchRecap(memo, id) }
   const memoSize = typeof ResizeObserver === 'function' ? new ResizeObserver(redrawFrame) : null
   const fonts = document.fonts
@@ -254,6 +255,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     polling = true
     const version = recapVersion
     const archived = readOnly()
+    let sourceChanged = false
     try {
       const [sessions, activity] = await Promise.allSettled([
         archived ? Promise.resolve(null) : v1(call,V1.cli.sessions,{query:{owner:1,session_id:id}}), read(),
@@ -269,19 +271,26 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
       if (activity.status === 'fulfilled') {
         const page = activity.value
         if (version === recapVersion) recap = wide.matches && page.recap?.text ? page.recap : undefined
+        const source = page.source ?? (archived ? 'archive' : 'live')
+        sourceChanged = activitySource !== undefined && activitySource !== source
+        activitySource = source
+        if (sourceChanged) {
+          items = []
+          stepKeys.clear()
+          before = undefined
+        }
         let fresh = stepsIn(page)
         const known = new Set(items.map(item => item.id))
         // If more than a page arrived between polls, bridge to the last known page.
         let cursor = page.earlier
         while (known.size && fresh.length && !fresh.some(item => known.has(item.id)) && cursor) {
           const bridge = await read(cursor)
-          if (!alive) return
+          if (!alive || (bridge.source && bridge.source !== source)) return
           fresh = mergeActivity(fresh, stepsIn(bridge), 'earlier')
           if (bridge.earlier === cursor) break
           cursor = bridge.earlier
         }
-        if (before === undefined || !items.length || (archived && !archiveLoaded && !before)) before = page.earlier ?? null
-        archiveLoaded = archived
+        if (before === undefined || !items.length) before = page.earlier ?? null
         if (outgoing) {
           const {after, text, sentAt} = outgoing
           const newestKnown = fresh.findLastIndex(step => after.has(step.id))
@@ -303,17 +312,22 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
       if (alive && !readOnly()) setText(note, '尚未同步，请重试')
     } finally {
       polling = false
-      if (alive) { reflect(); draw() }
+      if (alive) {
+        reflect()
+        draw()
+        if (sourceChanged) showConversationLatest(scroll, latest)
+      }
     }
   }
 
   earlier.onclick = async () => {
     if (!before || paging) return
     const cursor = before
+    const source = activitySource
     paging = earlier.disabled = true
     try {
       const page = await read(cursor)
-      if (!alive) return
+      if (!alive || source !== activitySource || (page.source && page.source !== source)) return
       items = mergeActivity(items, stepsIn(page), 'earlier')
       before = page.earlier ?? null
       draw(true)

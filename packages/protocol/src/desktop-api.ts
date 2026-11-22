@@ -2614,7 +2614,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   // Phone-only and binary chunk routes retain their existing JSON response contracts.
   ...Object.fromEntries(WIRE_ROUTE_ALIASES.filter(a => !a.readers.includes('desktop'))
     .map(a => [a.to, PHONE_API_SCHEMAS[a.from]])),
-  'GET /v1/cli/activity': z.union([CliActivityPage.extend({ recap: SessionRecap.optional() }), PhoneErrorResponse]),
+  'GET /v1/cli/activity': z.union([CliActivityPage.extend({ recap: SessionRecap.optional(), source: z.enum(['live', 'archive']).optional() }), PhoneErrorResponse]),
   'GET /v1/health': HealthResponse,
   'POST /v1/atelier/share': AtelierShareResponse,
   'POST /v1/memory/read': MemoryReadResponse,
