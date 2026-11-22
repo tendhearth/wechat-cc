@@ -13,8 +13,10 @@ export interface PlacesStore {
   list(): PlaceRecord[]
   /** 新见到的地方;已有(同 key 或同 root)的不动。 */
   add(records: PlaceRecord[], now: number): void
-  /** 挪到第 `to` 位(从 0 数,超出就放最后);其余按原顺序顺下去。没有这个 key ⇒ false。 */
-  move(key: string, to: number): boolean
+  /** 挪到第 `to` 位(从 0 数,超出就放最后);其余按原顺序顺下去。没有这个 key ⇒ false。
+   * 桌面提供可见顺序时，同一事务中只补存被挪动的行，其他临时行的排序位置留空。
+   */
+  move(key: string, to: number, layout?: { rows: PlaceRecord[]; visible: ReadonlySet<string>; now: number }): boolean
   setHidden(key: string, hidden: boolean): boolean
   /** 主人看了这一行(v118)。时间只往后走。没有这个 key ⇒ false。 */
   markSeen(key: string, at: number): boolean
@@ -34,6 +36,11 @@ const mapAncestors = `WITH RECURSIVE ancestors(root, item_id, depth) AS (
 export function makePlacesStore(db: Db): PlacesStore {
   const list = (): PlaceRecord[] => db.query<Row, []>('SELECT key, root, name, position, hidden, seen_at FROM places ORDER BY position, key').all()
     .map(r => ({ key: r.key, root: r.root, name: r.name, position: r.position, hidden: r.hidden === 1, seenAt: r.seen_at }))
+  function add(records: PlaceRecord[], now: number) {
+    if (!records.length) return
+    const ins = db.query('INSERT OR IGNORE INTO places(key, root, name, position, hidden, created_at) VALUES(?, ?, ?, ?, ?, ?)')
+    db.transaction(() => { for (const r of records) ins.run(r.key, r.root, r.name, r.position, r.hidden ? 1 : 0, now) })()
+  }
   return {
     list,
     mapPins(key, ids) {
@@ -57,19 +64,21 @@ export function makePlacesStore(db: Db): PlacesStore {
           VALUES (?, ?, ?, ?)`).run(key, id, branch, new Date().toISOString())
       }
     },
-    add(records, now) {
-      if (!records.length) return
-      const ins = db.query('INSERT OR IGNORE INTO places(key, root, name, position, hidden, created_at) VALUES(?, ?, ?, ?, ?, ?)')
-      db.transaction(() => { for (const r of records) ins.run(r.key, r.root, r.name, r.position, r.hidden ? 1 : 0, now) })()
-    },
-    move(key, to) {
-      const rows = list()
-      const at = rows.findIndex(r => r.key === key)
+    add,
+    move(key, to, layout) {
+      const rows = layout?.rows ?? list()
+      const visible = layout ? rows.filter(row => layout.visible.has(row.key)) : [...rows]
+      const at = visible.findIndex(r => r.key === key)
       if (at < 0) return false
-      const [row] = rows.splice(at, 1)
-      rows.splice(Math.min(Math.max(0, to), rows.length), 0, row!)
+      const row = visible[at]!
+      visible.splice(at, 1)
+      visible.splice(Math.min(Math.max(0, to), visible.length), 0, row)
       const upd = db.query('UPDATE places SET position = ? WHERE key = ?')
-      db.transaction(() => { rows.forEach((r, i) => upd.run(i, r.key)) })()
+      db.transaction(() => {
+        if (layout) add([row], layout.now)
+        let index = 0
+        rows.forEach((r, i) => upd.run(i, layout && !layout.visible.has(r.key) ? r.key : visible[index++]!.key))
+      })()
       return true
     },
     setHidden(key, hidden) {

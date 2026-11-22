@@ -66,8 +66,8 @@ function updateSteps(row, message) {
   return true
 }
 
-/** @param {{host:HTMLElement,call:Call,id:string,agent:string,place:()=>Place,onStatus:(name:string,status:string)=>void,onWaiting:(request:string|null)=>void}} options */
-export function mountTerminalThread({host, call, id, agent, place, onStatus, onWaiting}) {
+/** @param {{host:HTMLElement,call:Call,id:string,agent:string,place:()=>Place,ended:()=>boolean,onStatus:(name:string,status:string)=>void,onWaiting:(request:string|null)=>void}} options */
+export function mountTerminalThread({host, call, id, agent, place, ended, onStatus, onWaiting}) {
   host.innerHTML = `<div class="converse-scroll thing-scroll"><button type="button" class="converse-earlier" data-converse-lead hidden>更早的</button></div>
     <button type="button" class="converse-latest" hidden>有新回复 · 回到最新</button>
     <div class="desk-waiting thing-waiting" hidden><div class="desk-waiting-row">${deskSpeakerHtml('cc')}<div class="desk-waiting-card">
@@ -76,6 +76,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
       <div class="place-ask"><button type="button" class="place-allow" data-place-decision="allow">允许</button><button type="button" data-place-decision="deny">不允许</button></div>
     </div></div></div>
     <div class="thing-compose-status"><span role="status"></span><button class="desk-text-button" type="button" hidden>停止这一轮</button></div>
+    <p class="thing-ended-note" hidden>这次会话已经结束了，只能看。</p>
     <form class="converse-compose thing-compose">${deskSpeakerHtml('user')}<span class="converse-recipient"></span>
       <textarea rows="1" maxlength="4000" data-terminal-input disabled></textarea><button type="submit" aria-label="发送" disabled>↑</button></form>`
   /** @template {Element} T @param {string} selector @returns {T} */
@@ -90,6 +91,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   const stop = /** @type {HTMLButtonElement} */ (find('.thing-compose-status button'))
   const note = find('.thing-compose-status [role=status]')
   const recipient = find('.converse-recipient')
+  const endedNote = /** @type {HTMLElement} */ (find('.thing-ended-note'))
   const saveDraft = bindTerminalDraft(id, input)
   /** @type {Activity[]} */ let items = []
   /** @type {Session|null} */ let session = null
@@ -102,19 +104,29 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   /** @type {import('@wechat-cc/protocol').SessionRecapT|undefined} */ let recap
   /** @type {HTMLElement|null} */ let memo = null
   let dismissedAt = -1, recapVersion = 0
+  /** @type {string|undefined} */ let activitySource
+  let activityEnded = false
   const redrawFrame = () => { if (memo) sketchRecap(memo, id) }
   const memoSize = typeof ResizeObserver === 'function' ? new ResizeObserver(redrawFrame) : null
   const fonts = document.fonts
   fonts?.addEventListener?.('loadingdone', redrawFrame)
-  const resized = () => { draw(); void refresh() }
+  const resized = () => { reflect(); draw(); void refresh() }
   wide.addEventListener('change', resized)
   let empty = '正在读取…'
   const isVisible = () => document.visibilityState === 'visible' && !host.closest('[hidden], [inert]')
   const name = () => session?.displayName || executorName(session?.source || agent) || '终端'
-  const pending = () => session?.pending?.actionable && session.pending.hash !== answered ? session.pending : null
+  const archivedInPlaces = () => wide.matches && ended()
+  const readOnly = () => archivedInPlaces() || (wide.matches && session?.status === 'ended')
+  const pending = () => !readOnly() && session?.pending?.actionable && session.pending.hash !== answered ? session.pending : null
 
   function reflect() {
     const who = name()
+    const locked = readOnly()
+    endedNote.hidden = !locked
+    if (locked) {
+      form.remove()
+      setText(note, '')
+    } else if (!form.isConnected) host.append(form)
     const request = pending()
     const waiting = place().waiting
     const matched = request?.hash && waiting?.requestId === request.hash && (!waiting.sessionId || waiting.sessionId === id)
@@ -137,16 +149,16 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
       else button.removeAttribute('title')
     }
     const state = session?.status
-    if (session || loaded) onStatus(who, request || (state === 'waiting' && !answered) ? '等你定'
-      : !session || session.stale || state === 'ended' ? '已经结束' : state === 'running' ? '正在做' : '停着')
+    if (locked || session || loaded) onStatus(who, locked ? '已经结束' : request || (state === 'waiting' && !answered) ? '等你定'
+      : (!wide.matches && (!session || session.stale)) || state === 'ended' ? '已经结束' : state === 'running' ? '正在做' : '停着')
     const target = agentAvatarsHtml([session?.source || agent]) + ' ' + esc(who) + ' ›'
     if (lastRecipient !== target) { recipient.innerHTML = target; lastRecipient = target }
-    const blocked = !session && !loaded ? '正在读取…' : terminalInputReason(session, who, !!request)
-    input.disabled = !!blocked
+    const blocked = !session && !loaded ? '正在读取…' : terminalInputReason(session, who, !!request, wide.matches)
+    input.disabled = locked || !!blocked
     input.ariaLabel = `对 ${who} 说`
     input.placeholder = stopped ? 'CC 没在运行' : blocked || `接着对 ${who} 说…`
     send.disabled = stopped || !!blocked || sending || !!outgoing || !input.value.trim()
-    stop.hidden = !session?.run_id
+    stop.hidden = locked || !session?.run_id
     stop.disabled = stopping
     setText(stop, confirmed && confirmed === session?.run_id ? '再点一次，确认停止' : '停止这一轮')
     restore()
@@ -162,14 +174,14 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
       if (steps) {
         const key = steps.map(step => stepKeys.get(step.id)).find(Boolean) ?? item.id
         for (const step of steps) keys.set(step.id, key)
-        const running = session?.status === 'running' && index === groups.length - 1 && !outgoing
+        const running = !readOnly() && session?.status === 'running' && index === groups.length - 1 && !outgoing
         return { id:key, role:'step', text:running ? `正在做，已经 ${steps.length} 步` : `做了 ${steps.length} 步`, steps, running, at:item.at ?? steps.find(step => step.at != null)?.at ?? undefined }
       }
       return {id:item.id, role:item.kind === 'you' ? 'user' : 'cc', text:item.full ?? item.text, at:item.at ?? undefined}
     })
     stepKeys = keys
-    if (outgoing) rows.push({id:'pending', role:'user', text:outgoing.text, at:outgoing.sentAt, pending:true})
-    if (recap && wide.matches && recap.at > dismissedAt && !sending && !deciding) {
+    if (outgoing && !readOnly()) rows.push({id:'pending', role:'user', text:outgoing.text, at:outgoing.sentAt, pending:true})
+    if (recap && !readOnly() && wide.matches && recap.at > dismissedAt && !sending && !deciding) {
       rows.push({ id: 'session-recap', role: 'recap', text: recap.text, recap })
     }
     const restore = prepend ? rememberConversationPosition(scroll) : null
@@ -244,12 +256,15 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
     if (!alive || polling || !isVisible()) return
     polling = true
     const version = recapVersion
+    // A cached ended status can lock the composer, but only the place list stops status polling.
+    const archived = archivedInPlaces()
+    let historyChanged = false
     try {
       const [sessions, activity] = await Promise.allSettled([
-        v1(call,V1.cli.sessions,{query:{owner:1,session_id:id}}), read(),
+        archived ? Promise.resolve(null) : v1(call,V1.cli.sessions,{query:{owner:1,session_id:id}}), read(),
       ])
       if (!alive) return
-      if (sessions.status === 'fulfilled') {
+      if (sessions.status === 'fulfilled' && sessions.value) {
         session = sessions.value.sessions?.find((/** @type {Session} */ entry) => entry.session_id === id) ?? null
         loaded = true
         if (session?.pending?.hash && session.pending.hash !== answered) answered = ''
@@ -259,13 +274,23 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
       if (activity.status === 'fulfilled') {
         const page = activity.value
         if (version === recapVersion) recap = wide.matches && page.recap?.text ? page.recap : undefined
+        const source = page.source ?? (archived ? 'archive' : 'live')
+        // A missing transcript can already be using the archive before the final import.
+        historyChanged = activitySource !== undefined && (activitySource !== source || activityEnded !== archived)
+        activitySource = source
+        activityEnded = archived
+        if (historyChanged) {
+          items = []
+          stepKeys.clear()
+          before = undefined
+        }
         let fresh = stepsIn(page)
         const known = new Set(items.map(item => item.id))
         // If more than a page arrived between polls, bridge to the last known page.
         let cursor = page.earlier
         while (known.size && fresh.length && !fresh.some(item => known.has(item.id)) && cursor) {
           const bridge = await read(cursor)
-          if (!alive) return
+          if (!alive || (bridge.source && bridge.source !== source)) return
           fresh = mergeActivity(fresh, stepsIn(bridge), 'earlier')
           if (bridge.earlier === cursor) break
           cursor = bridge.earlier
@@ -284,29 +309,35 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
         if (version === recapVersion && /no_transcript/.test(String(activity.reason?.message))) recap = undefined
         if (!items.length) empty = '这次会话还没有内容。'
       }
-      if (sessions.status === 'rejected' || (activity.status === 'rejected'
-        && !/no_transcript|cli_session_remote/.test(String(activity.reason?.message)))) {
+      if (!readOnly() && (sessions.status === 'rejected' || (activity.status === 'rejected'
+        && !/no_transcript|cli_session_remote/.test(String(activity.reason?.message))))) {
         if (!note.textContent) setText(note, '尚未同步，请重试')
       } else if (note.textContent === '尚未同步，请重试') setText(note, '')
     } catch {
-      if (alive) setText(note, '尚未同步，请重试')
+      if (alive && !readOnly()) setText(note, '尚未同步，请重试')
     } finally {
       polling = false
-      if (alive) { reflect(); draw() }
+      if (alive) {
+        reflect()
+        draw()
+        if (historyChanged) showConversationLatest(scroll, latest)
+      }
     }
   }
 
   earlier.onclick = async () => {
     if (!before || paging) return
     const cursor = before
+    const source = activitySource
+    const archived = activityEnded
     paging = earlier.disabled = true
     try {
       const page = await read(cursor)
-      if (!alive) return
+      if (!alive || source !== activitySource || archived !== activityEnded || (page.source && page.source !== source)) return
       items = mergeActivity(items, stepsIn(page), 'earlier')
       before = page.earlier ?? null
       draw(true)
-    } catch { if (alive) setText(note, '尚未同步，请重试') }
+    } catch { if (alive && !readOnly()) setText(note, '尚未同步，请重试') }
     finally { paging = earlier.disabled = false }
   }
   scroll.addEventListener('scroll', () => syncConversationLatest(scroll, latest))
@@ -321,7 +352,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   form.onsubmit = async event => {
     event.preventDefault()
     const text = input.value.trim()
-    if (!text || send.disabled) return
+    if (!text || send.disabled || readOnly()) return
     const message = {text, sentAt:Date.now(), after:new Set(items.map(item => item.id))}
     outgoing = message
     sending = true
@@ -354,7 +385,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
       answered = hash
       dismissedAt = Date.now()
       setText(note, '')
-    } catch { if (alive) setText(note, '尚未同步，请重试') }
+    } catch { if (alive && !readOnly()) setText(note, '尚未同步，请重试') }
     finally { deciding = false; if (alive) { reflect(); draw(); void refresh() } }
   }
   stop.onclick = async () => {
@@ -376,7 +407,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   document.addEventListener('visibilitychange', refresh)
   document.addEventListener('desk-cc-availability', reflect)
   return {
-    reflect,
+    reflect() { reflect(); if (readOnly()) draw() },
     refresh,
     refreshRecap() {
       recapVersion++

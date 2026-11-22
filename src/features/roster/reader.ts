@@ -17,7 +17,7 @@ export interface RosterReaderDeps {
       questions:Array<{id:string;questions:Array<{question:string}>;createdAt:number}>
     }
   }
-  terminals: () => CliSessionView[]
+  terminals: (options?: { includeEnded?: boolean }) => CliSessionView[]
   seen: MatterSeen
   relay?: (matterId: string) => { index: number; total: number; currentAgent: string } | null
   executorName?: (id: string) => string
@@ -37,10 +37,10 @@ export interface RosterGathered {
 const TASK_PAGE = 100, TASK_PAGES_MAX = 20
 
 /** 名单要的那几份数据;`windowMs` 管「带回来的」往回看多远(名单 24 小时,地方更长)。 */
-export function gatherRoster(deps: RosterReaderDeps, scope: 'operator' | 'device', now: number, windowMs: number): RosterGathered {
+export function gatherRoster(deps: RosterReaderDeps, scope: 'operator' | 'device', now: number, windowMs: number, includeEnded = false): RosterGathered {
   const wb = deps.workbench
   const attention = wb ? wb.attention().tasks.map(t => t.id) : []
-  const sessions = deps.terminals()
+  const sessions = includeEnded ? deps.terminals({ includeEnded }) : deps.terminals()
   // 只读可能进名单的那几份,不翻全部历史(桌面每 3 秒拉一次):没完的(open / working / waiting,不论多旧)+ 窗口内动过的;
   // 等你的任务和挂着活会话的终端事不论多旧也要在,按 id 补。
   const byId = new Map<string, MatterRow>()

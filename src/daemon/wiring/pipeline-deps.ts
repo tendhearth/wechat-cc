@@ -2,6 +2,7 @@ import { makeLabsSettings } from '../../adapters/store/labs-settings'
 import { makeProjectTopicResolver } from '../../features/terminal'
 import { makeRecapSettings } from '../../adapters/store/recap-settings'
 import { makeSessionRecaps, type SessionRecaps, makePlacesReader, makeRosterReader, type RosterReaderDeps } from '../../features/roster'
+import { makeFirstTerminalMessageReader } from '../../adapters/store/terminal-steps'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import { ownerLedgerConversation } from '../../lib/matter-ledger-access'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
@@ -503,6 +504,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const places = rosterDeps ? makePlacesReader({
     roster: rosterDeps, store: makePlacesStore(db), labs: makeLabsSettings(stateDir), opinion: opts.workbench?.waitingOpinion,
     mapWorkbench: opts.workbench?.rosterRead,
+    firstTerminalMessage: makeFirstTerminalMessageReader(db),
     recaps, noteDesktopSeen: id => desktop?.noteSeen(placeSeenKey(id)),
     outlines: { evaluator: () => boot.registry.getCheapEval({ private: true }), holdBusy: boot.holdBusy, log },
     mapTopics: {

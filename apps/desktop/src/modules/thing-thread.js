@@ -1,4 +1,5 @@
 // @ts-check
+import { wireDeskDisclosure } from './desk-disclosure.js'
 import { executorName } from './executor-names.js'
 import { mountLabMap } from './lab-map.js'
 import { V1, v1 } from '../daemon-client.js'
@@ -20,11 +21,11 @@ function agentOf(item) {
   return item.agents.find(agent => agent.current) ?? item.agents[0]
 }
 
-/** @param {Item} item */
-function stateOf(item) {
+/** @param {Item} item @param {boolean} wide */
+function stateOf(item, wide) {
   if (item.group === 'waiting') return '等你定'
   if (item.group === 'working') return '正在做'
-  return item.kind === 'terminal' || item.terminal ? item.quiet ? '已经结束' : '停着' : '已经结束'
+  return item.endedAt != null || (!wide && item.quiet) || !(item.kind === 'terminal' || item.terminal) ? '已经结束' : '停着'
 }
 
 /**
@@ -58,6 +59,9 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   /** @type {(()=>void)|undefined} */ let dispose
   /** @type {Item|undefined} */ let linked
   let generation = 0, openEarlier = false, tabsMarkup = ''
+  /** @type {AbortController|undefined} */ let menuListeners
+  /** @param {Place} where */
+  const rowsFor = where => placeSessions(wide.matches ? where : {...where,sessions:undefined}, roster)
   /** @type {{key:string,request?:string}|null} */ let inlineWaiting = null
 
   // 在图上时线是藏着的,那张就地的卡看不见:这时不拦顶上的纸条。
@@ -67,7 +71,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   function mapTarget(item) {
     if (!place) return undefined
     const { matterId, sessionId } = item.from
-    const items = placeSessions(place, roster)
+    const items = rowsFor(place)
     return items.find(row => matterId && row.kind === 'matter' && row.id === matterId)
       ?? items.find(row => sessionId && (row.terminal?.sessionId === sessionId || row.kind === 'terminal' && row.id === sessionId))
   }
@@ -83,15 +87,17 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   /** @param {import('@wechat-cc/protocol').PlaceOutlineSourceT} source */
   function outlineTarget(source) {
     if (!place || source.kind !== 'session' || !source.sessionId) return undefined
-    return placeSessions(place, roster).find(row =>
-      (row.terminal?.sessionId ?? (row.kind === 'terminal' ? row.id : undefined)) === source.sessionId)
+    const id = source.sessionId
+    const matches = (/** @type {Item} */ row) => (row.terminal?.sessionId ?? (row.kind === 'terminal' ? row.id : undefined)) === id
+    return rowsFor(place).find(matches)
+      ?? placeSessions({...place,sessions:undefined}, roster).find(matches)
+      ?? linkedItem(place,{kind:'terminal',id})
   }
 
   /** @param {Item} target @param {Item|undefined} [link] */
   function returnToLine(target, link) {
     if (!place) return
     maps.delete(place.key)
-    openEarlier ||= splitSessions(placeSessions(place, roster)).earlier.includes(target)
     open(place, target.key, link)
     onSession()
     const tab = tabs.hidden ? null : /** @type {HTMLElement|null} */ (tabs.querySelector('[aria-pressed="true"]'))
@@ -130,7 +136,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
           canJumpSource:source => !!outlineTarget(source),
           jumpSource:source => {
             const target = outlineTarget(source)
-            if (target) returnToLine(target)
+            if (target && place) returnToLine(target, rowsFor(place).some(row => row.key === target.key) ? undefined : target)
           },
           agent:item => {
             const row = mapTarget(item)
@@ -152,7 +158,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
     }
   }
 
-  const resize = () => reflectGraph()
+  const resize = () => { if (place) open(place); else reflectGraph() }
   wide.addEventListener('change', resize)
   /** @param {boolean} enabled */
   function setPlaceMap(enabled) {
@@ -197,28 +203,57 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
     stateLabel.dataset.tone = state === '等你定' ? 'waiting' : state === '正在做' ? 'working' : 'idle'
   }
 
+  // A tab needs room for a readable first sentence, so how many sit side by side follows the width.
+  let slots = 0
+  const tabSlots = () => !wide.matches ? 5 : Math.max(2, Math.min(6, Math.floor(((tabs.clientWidth || 880) - 96) / 190)))
+  const tabSize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (alive && place && !tabs.hidden && tabSlots() !== slots) drawTabs() }) : null
+  tabSize?.observe(tabs)
+
   function drawTabs() {
     if (!place) return
-    const items = placeSessions(place, roster)
-    tabs.hidden = !!stopMap || items.length < 2
+    const items = rowsFor(place)
+    if (wide.matches && linked && selected?.key === linked.key && !items.some(item => item.key === linked?.key)) items.push(linked)
+    tabs.hidden = !!stopMap || items.length < (wide.matches && items[0]?.endedAt != null ? 1 : 2)
     if (tabs.hidden) return
     const now = Date.now()
-    const {visible, earlier} = splitSessions(items)
-    const button = (/** @type {Item} */ item) => {
+    slots = tabSlots()
+    const {visible, earlier} = splitSessions(items, wide.matches ? selected?.key : undefined, slots)
+    const button = (/** @type {Item} */ item, inMenu = false) => {
       const agent = agentOf(item)
       const name = agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? ''))
       const time = placeTime({ moving:false, updatedAt:item.updatedAt }, now)
-      const title = item.kind === 'terminal' || item.terminal ? [name,time].filter(Boolean).join(' · ') : item.title
-      return `<button type="button" data-thread-session="${esc(item.key)}" data-group="${item.group}" aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}<span>${esc(title)}</span><i aria-hidden="true"></i></button>`
+      const terminal = item.kind === 'terminal' || item.terminal
+      const title = terminal ? [item.sessionTitle || name, time].filter(Boolean).join(' · ') : item.title
+      const ended = item.endedAt != null
+      const state = ended ? '已经结束' : item.status === 'waiting' ? '等你定' : item.status === 'working' ? '正在做' : '停着'
+      const wideTerminal = wide.matches && terminal
+      const label = wideTerminal ? `${title} · ${state}` : title
+      const accessible = wideTerminal ? [name, item.sessionTitle, time, state].filter(Boolean).join('，') : ''
+      const tooltip = wideTerminal ? [name, item.sessionTitle, time].filter(Boolean).join(' · ') : ''
+      // The first sentence may be cut short; the time beside it is not.
+      const body = !inMenu && wideTerminal && item.sessionTitle && time
+        ? `<span>${esc(item.sessionTitle)}</span><small class="thing-session-time"> · ${esc(time)}</small>`
+        : `<span>${esc(inMenu ? label : title)}</span>`
+      return `<button type="button" data-thread-session="${esc(item.key)}" data-group="${item.group}"${ended ? ' data-ended' : ''}${accessible ? ` aria-label="${esc(accessible)}"` : ''}${tooltip ? ` title="${esc(tooltip)}"` : ''} aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}${body}${ended ? '' : '<i aria-hidden="true"></i>'}</button>`
     }
-    const markup = visible.map(button).join('') + (earlier.length
-      ? `<button type="button" class="desk-text-button" data-thread-more aria-expanded="${openEarlier}">更早的 ${earlier.length} 次</button><div class="thing-earlier-sessions"${openEarlier ? '' : ' hidden'}>${earlier.map(button).join('')}</div>`
+    const markup = visible.map(item => button(item)).join('') + (earlier.length
+      ? wide.matches
+        ? `<details class="thing-session-menu"><summary data-thread-more>更早的 ${earlier.length} 次</summary><div>${earlier.map(item => button(item, true)).join('')}</div></details>`
+        : `<button type="button" class="desk-text-button" data-thread-more aria-expanded="${openEarlier}">更早的 ${earlier.length} 次</button><div class="thing-earlier-sessions"${openEarlier ? '' : ' hidden'}>${earlier.map(item => button(item)).join('')}</div>`
       : '')
     if (tabsMarkup === markup) return
     const focus = document.activeElement
-    const key = focus instanceof HTMLButtonElement && tabs.contains(focus) ? focus.dataset.threadSession ?? '' : null
+    const key = focus instanceof HTMLElement && tabs.contains(focus) ? focus.dataset.threadSession ?? '' : null
+    const menuWasOpen = !!tabs.querySelector('.thing-session-menu[open]')
+    menuListeners?.abort()
     tabsMarkup = markup
     tabs.innerHTML = markup
+    const menu = tabs.querySelector('details')
+    if (menu) {
+      menu.open = menuWasOpen
+      menuListeners = new AbortController()
+      wireDeskDisclosure(menu, menuListeners.signal)
+    }
     if (key !== null) {
       const next = /** @type {HTMLElement|null} */ (tabs.querySelector(key ? `[data-thread-session="${CSS.escape(key)}"]` : '[data-thread-more]'))
       next?.focus({preventScroll:true})
@@ -234,7 +269,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       const host = document.createElement('section')
       host.className = 'thing-terminal'
       tray.append(host)
-      const thread = mountTerminalThread({host,call,id,agent:agentOf(item)?.id ?? '',place:() => place?.key === homePlace?.key && place ? place : /** @type {Place} */ (homePlace),
+      const thread = mountTerminalThread({host,call,id,agent:agentOf(item)?.id ?? '',ended:() => selected?.key === key && selected.endedAt != null,place:() => place?.key === homePlace?.key && place ? place : /** @type {Place} */ (homePlace),
         onStatus: (name,state) => {if (selected?.key === key && place) showStatus(name,state)},
         onWaiting: request => {
           if (selected?.key !== key || !place) return
@@ -277,8 +312,9 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       return
     }
     const agent = agentOf(item)
-    showStatus(agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? '')), stateOf(item))
+    showStatus(agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? '')), stateOf(item, wide.matches))
     remembered.set(place.key,item.key)
+    if (item.endedAt != null && item.terminal) { showTerminal(item,item.terminal.sessionId); return }
     if (item.kind === 'terminal') { showTerminal(item,item.id); return }
     if (terminals.has(item.key) && item.terminal) { showTerminal(item,item.terminal.sessionId); return }
     const attempt = generation
@@ -331,7 +367,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
     else if (key) linked = undefined
     place = next
     if (heading.textContent !== next.name) heading.textContent = next.name
-    const items = placeSessions(next,roster)
+    const items = rowsFor(next)
     const wanted = key ?? (changed ? remembered.get(next.key) : selected?.key)
     const item = items.find(candidate => candidate.key === wanted)
       ?? (linked?.key === wanted ? linked : undefined) ?? initialSession(items,wanted)
@@ -341,7 +377,8 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       selected = item
       const terminal = item && terminals.get(item.key)
       if (terminal) terminal.thread.reflect()
-      else if (item) showStatus(executorName(agentOf(item)?.id ?? ''),stateOf(item))
+      else if (item?.endedAt != null) choose(item)
+      else if (item) showStatus(executorName(agentOf(item)?.id ?? ''),stateOf(item, wide.matches))
     }
     drawTabs()
     reflectGraph()
@@ -354,6 +391,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
     const key = button.dataset.threadSession
     if (!key || key === selected?.key) return
     open(place,key)
+    if (wide.matches) /** @type {HTMLElement|null} */ (tabs.querySelector(`[data-thread-session="${CSS.escape(key)}"]`))?.focus({preventScroll:true})
     onSession()
   })
 
@@ -384,10 +422,10 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
     setRoster(next) {
       roster = next
       if (place) {
-        const canonical = linked?.kind === 'terminal' && next.find(item => item.terminal?.sessionId === linked?.id && item.key !== linked?.key)
+        const canonical = linked?.kind === 'terminal' && rowsFor(place).find(item => item.terminal?.sessionId === linked?.id && item.key !== linked?.key)
         open(place,canonical ? canonical.key : undefined)
       }
-      const active = new Set(next.map(item => item.key))
+      const active = new Set([...next, ...(place ? rowsFor(place) : [])].map(item => item.key))
       if (selected && linked?.key === selected.key) active.add(selected.key)
       for (const [key,entry] of terminals) {
         if (active.has(key)) continue
@@ -403,12 +441,14 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
     current: () => selected,
     /** @param {Place} where @param {Target} target */
     find(where, target) {
-      return placeSessions(where, roster).find(item => target.kind === item.kind && target.id === item.id
+      return rowsFor(where).find(item => target.kind === item.kind && target.id === item.id
         || target.kind === 'terminal' && item.terminal?.sessionId === target.id)
     },
     linkedItem,
     destroy() {
       alive = false
+      tabSize?.disconnect()
+      menuListeners?.abort()
       toggle?.removeEventListener('click', togglePlaceMap)
       wide.removeEventListener('change', resize)
       stopGraph()

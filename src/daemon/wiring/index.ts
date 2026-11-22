@@ -27,7 +27,7 @@ import { makeAtelierTick } from '../../features/atelier'
 
 export interface WireMainOpts {
   notebookTick?: () => Promise<void>
-  rosterTerminals?: () => import('../../ports/cli-session').CliSessionView[]
+  rosterTerminals?: (options?: { includeEnded?: boolean }) => import('../../ports/cli-session').CliSessionView[]
   /** 项目登记(别名 → 文件夹),伙伴那一拍选文件夹用。 */
   projects: import('../projects').Projects
   /** 比 wireMain 晚才有的几样(拉消息、入站管道、App 一轮、知识库催一下):调用时现取,模块容器的 ctx.late。 */

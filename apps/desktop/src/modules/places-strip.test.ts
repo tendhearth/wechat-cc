@@ -100,6 +100,20 @@ it.each([true, false])('离开再点回没动过的那一行，也再记一次�
   expect(calls.filter(c => c[1] === '/v1/places/seen')).toHaveLength(2)
 })
 
+it('临时显示的历史地方看过后，连续两次刷新不重发', async () => {
+  const p = place('history', { sessionIds: ['old'], sessions: [
+    { sessionId: 'old', agent: 'codex', status: 'done', updatedAt: NOW, endedAt: NOW },
+  ] })
+  let version = 0
+  const { calls } = mount(([method]: [string]) => method === 'POST' ? { ok: true } : { places: [p], version: String(++version) })
+  strip!.setWide(true)
+  await strip!.refresh()
+  document.querySelector<HTMLButtonElement>('.place-row')!.click()
+  await strip!.refresh()
+  await strip!.refresh()
+  expect(calls.filter(c => c[1] === '/v1/places/seen')).toEqual([['POST', '/v1/places/seen', { key: p.key }]])
+})
+
 it('刷新拿到同一个选中地方、它带的 id 没变 ⇒ 不再通知说话', async () => {
   let version = 'v1'
   const { onSelect } = mount(() => ({ places: [place('rici', { line: version })], version }))

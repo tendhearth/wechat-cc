@@ -43,7 +43,7 @@ export function makeSessionRecaps(deps: {
     json_array(m.id,m.cursor,c.last_event_at,c.last_prompt_at,m.updated_at) AS position
     FROM cli_sessions c JOIN matter_bindings b ON b.surface='cli' AND b.surface_key=c.session_id
     JOIN matters m ON m.id=b.matter_id AND m.kind='terminal'
-    WHERE m.archived_at IS NULL
+    WHERE m.archived_at IS NULL AND m.state <> 'done'
       AND (SELECT count(*) FROM matter_bindings WHERE surface='cli' AND surface_key=c.session_id)=1
       AND (SELECT count(*) FROM matter_bindings WHERE surface='cli' AND matter_id=m.id)=1`
 

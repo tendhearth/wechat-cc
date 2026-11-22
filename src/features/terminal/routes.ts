@@ -71,7 +71,7 @@ export function terminalOwnerRoutes(actions?:CliPhoneActions, recap?: TerminalRo
     shared[key]=async(q,body,caller)=>{
       if(caller?.tier!=='admin'||!['operator','device'].includes(caller.origin))return {status:403,body:{error:'forbidden'}}
       const [method,path]=key.split(' '),url=new URL(path!,'http://127.0.0.1');url.search=String(q)
-      const response=await handler!(url,new Request(url,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{})}),undefined)
+      const response=await handler(url,new Request(url,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{})}),{operator:caller.origin === 'operator'})
       const result = await response.json() as Record<string, unknown>
       const id = q.get('session_id')
       if (key === 'GET /v1/cli/activity' && caller.origin === 'operator' && id && !q.has('before')) {

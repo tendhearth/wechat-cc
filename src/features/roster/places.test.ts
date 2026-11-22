@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import { openTestDb } from '../../lib/db'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
+import { makeFirstTerminalMessageReader } from '../../adapters/store/terminal-steps'
 import { makePlacesStore } from '../../adapters/store/places-store'
+import type { CliSessionView } from '../../ports/cli-session'
 import type { Matter } from '../../ports/matters'
 import type { InternalApiDeps } from '../../daemon/internal-api/types'
 import { makePlacesReader, placeKey, PLACES_WINDOW_MS } from './places-reader'
 import { placesRoutes } from './places-routes'
+import { makeRosterReader } from './reader'
+import { rosterRoutes } from './routes'
 import { ASK_OPINION_DELAY_MS, makeAskOpinion } from '../workbench/ask-opinion'
 import { PlacesResponse } from '@wechat-cc/protocol'
 
@@ -234,4 +240,128 @@ it('地方只返回 operator 行标题所对应会话的小结；关掉后字节
   enabled = false
   expect(JSON.stringify(await get(reader, 'operator'))).toBe(JSON.stringify(before))
   expect(read).not.toHaveBeenCalled()
+})
+
+it('只有 operator 地方展示七天内的已结束会话，手机地方与默认名单保持原样', async () => {
+  const term = (id: string, status: CliSessionView['status'], age: number, project = '/w/rici'): CliSessionView => ({
+    session_id: id, code: id, source: 'codex', status, project, last_summary: '沙盒回话',
+    last_event_at: NOW - age, pending: null, stale: id === 'paused', cwd: project, machine: null,
+    origin_agent: null, created_at: NOW - age, last_prompt_at: null,
+  })
+  const live = [term('paused', 'idle', 3 * DAY), term('working', 'running', DAY), term('waiting', 'waiting', DAY),
+    term('other-live', 'idle', DAY / 2, '/w/live')]
+  const ended = [term('ended', 'ended', DAY), term('newest-history', 'ended', 0), term('expired', 'ended', 8 * DAY), term('other', 'ended', DAY, '/w/other')]
+  const rosterDeps = { matters: { list: () => [] }, terminals: (opts?: { includeEnded?: boolean }) => opts?.includeEnded ? [...live, ...ended] : live, seen: () => null, now: () => NOW }
+  const { reader } = setup([], [], () => NOW, { roster: rosterDeps })
+  const legacy = setup([], live)
+  const device = await call({ places: legacy.reader }, 'GET /v1/places', null, 'device')
+  expect((await call({ places: reader }, 'POST /v1/places/seen', { key: placeKey('/w/live') })).status).toBe(404)
+  const operator = await call({ places: reader }, 'GET /v1/places', null)
+  const places = PlacesResponse.parse(operator.body)
+  expect(places.places.find(p => p.name === 'rici')?.sessions?.map(s => s.sessionId)).toEqual(['waiting', 'working', 'paused', 'newest-history', 'ended'])
+  const historical = places.places.find(p => p.name === 'other')
+  expect(historical?.status).toBe('done')
+  expect(historical?.line === '沙盒回话').toBe(true)
+  expect(historical?.sessions).toEqual([{ sessionId: 'other', agent: 'codex', status: 'done', updatedAt: NOW - DAY, endedAt: NOW - DAY }])
+  expect(JSON.stringify((await call({ places: reader }, 'GET /v1/places', null, 'device')).body)).toBe(JSON.stringify(device.body))
+  const api = rosterRoutes({ roster: makeRosterReader(rosterDeps) })['GET /v1/roster']!
+  const baseline = rosterRoutes({ roster: makeRosterReader({ ...rosterDeps, terminals: () => live }) })['GET /v1/roster']!
+  for (const origin of ['device', 'operator'] as const) {
+    const request = [new URLSearchParams(), null, { tier: 'admin', origin }] as const
+    const result = await api(...request)
+    expect(JSON.stringify(result)).toBe(JSON.stringify(await baseline(...request)))
+    expect((result.body as {items: {id:string}[]}).items.map(item => item.id)).toEqual(['waiting', 'working', 'other-live'])
+  }
+})
+
+it('历史地方可以往下挪过另一条历史记录，手机只看到明确保存过的地方', async () => {
+  const ended = ['/w/first', '/w/second'].map((project, i): CliSessionView => ({
+    session_id: 'ended-' + i, code: 'ended-' + i, source: 'codex', status: 'ended', project, cwd: project,
+    pending: null, last_event_at: NOW - i, stale: false, machine: null, origin_agent: null, last_summary: null,
+    created_at: NOW - i, last_prompt_at: null,
+  }))
+  const roster = { matters: { list: () => [] }, terminals: (opts?: { includeEnded?: boolean }) => opts?.includeEnded ? ended : [],
+    seen: () => null, now: () => NOW }
+  const { reader, store } = setup([], [], () => NOW, { roster })
+  const first = placeKey('/w/first'), second = placeKey('/w/second')
+  const desktop = () => reader.read('operator').places.map(place => place.key)
+  const phone = async () => JSON.stringify((await call({ places: reader }, 'GET /v1/places', null, 'device')).body)
+  const before = await phone()
+  expect(desktop()).toEqual([first, second])
+  expect(store.list()).toEqual([])
+  expect(await call({ places: reader }, 'POST /v1/places/seen', { key: first })).toEqual({ status: 200, body: { ok: true } })
+  expect((await call({ places: reader }, 'POST /v1/places/seen', { key: first }, 'device')).status).toBe(404)
+  expect(store.list()).toEqual([])
+  expect(await phone()).toBe(before)
+
+  expect(reader.move(first, 1)).toBe(true)
+  expect(desktop()).toEqual([second, first])
+  expect(store.list().map(place => place.key)).toEqual([first])
+  const phoneWithSavedPlace = await phone()
+  expect(phoneWithSavedPlace.includes(first)).toBe(true)
+  expect(phoneWithSavedPlace.includes(second)).toBe(false)
+
+  expect(reader.move(first, 0)).toBe(true)
+  expect(desktop()).toEqual([first, second])
+  expect(await phone()).toBe(phoneWithSavedPlace)
+})
+
+it('页签只取三十天内的活会话，封顶三十次；等你定的在最前，其余按开始的先后、新的在前', () => {
+  const session = (id: string, status: CliSessionView['status'], days: number): CliSessionView => ({
+    session_id: id, code: id, source: 'codex', status, project: '/w/rici', cwd: '/w/rici', stale: false,
+    machine: null, origin_agent: null, last_summary: null, last_prompt_at: null, pending: null,
+    last_event_at: NOW - days * DAY, created_at: NOW - days * DAY,
+  })
+  const paused = Array.from({ length: 29 }, (_, i) => session('paused-' + i, 'idle', i))
+  const { reader } = setup([], [session('too-old', 'running', 31), session('working', 'running', 25),
+    session('ended', 'ended', 0), ...paused.reverse(), session('waiting', 'waiting', 29)])
+  const { sessions } = reader.read('operator').places[0]!
+  expect(sessions).toHaveLength(30)
+  // Kept: the waiting one, the working one, and the 28 most recently active of the rest (the ended one gives way).
+  // Shown: waiting first; then by when each session began, newest first. The working one keeps its place (day 25).
+  const name = (i: number) => 'paused-' + i
+  expect(sessions?.map(row => row.sessionId)).toEqual(['waiting', ...Array.from({ length: 26 }, (_, i) => name(i)), 'working', name(26), name(27)])
+})
+
+it('页签标题取第一句，压成一行并按字符截断，只为桌面查且命中后不重查', async () => {
+  const db = openTestDb()
+  try {
+    const matters = makeMatterStore(db, () => NOW)
+    const log = makeMatterLog(db)
+    const create = () => matters.create({ kind: 'terminal', title: '终端', projectPath: '/w/rici' })
+    const first = create(), empty = create()
+    const add = (matterId: string, kind: 'agent_message' | 'user_message', payload: Record<string, unknown>) =>
+      log.writeItem({ matterId, kind, status: 'completed', payload })
+    add(first.id, 'agent_message', { text: '先说的 agent' })
+    add(first.id, 'user_message', {})
+    add(first.id, 'user_message', { text: '短摘要', full: '  第一行\n\t第二行   ' + '🐈'.repeat(55) + '末尾' })
+    add(first.id, 'user_message', { text: '主人的第二句' })
+    const query = vi.fn(makeFirstTerminalMessageReader(db))
+    const terminals = [first, empty].map(({ id }): CliSessionView => ({
+      session_id: id, code: id, matter_id: id, source: 'codex', status: 'idle', project: '/w/rici',
+      cwd: '/w/rici', stale: false, machine: null, origin_agent: null, pending: null,
+      last_summary: null, last_event_at: NOW, created_at: NOW, last_prompt_at: NOW,
+    }))
+    const { reader } = setup([], [], () => NOW, {
+      roster: { matters, terminals: () => terminals, seen: () => null, now: () => NOW },
+      firstTerminalMessage: query,
+    })
+    const read = async (origin: 'operator' | 'device') =>
+      PlacesResponse.parse((await call({ places: reader }, 'GET /v1/places', null, origin)).body)
+    expect((await read('device')).places[0]).not.toHaveProperty('sessions')
+    expect(query).not.toHaveBeenCalled()
+    const initial = await read('operator')
+    const initialSessions = initial.places[0]?.sessions
+    expect(initialSessions?.find(s => s.matterId === first.id)?.title === '第一行 第二行 ' + '🐈'.repeat(52)).toBe(true)
+    expect(initialSessions?.find(s => s.matterId === empty.id)).not.toHaveProperty('title')
+    expect(query).toHaveBeenCalledTimes(2)
+    add(empty.id, 'user_message', { text: '现在有了' })
+    const updated = await read('operator')
+    expect(updated.places[0]?.sessions?.find(s => s.matterId === empty.id)?.title === '现在有了').toBe(true)
+    expect(updated.version).not.toBe(initial.version)
+    expect((await read('operator')).version).toBe(updated.version)
+    expect((await read('device')).places[0]).not.toHaveProperty('sessions')
+    expect(query.mock.calls.map(([id]) => id).filter(id => id === first.id)).toHaveLength(1)
+    expect(query).toHaveBeenCalledTimes(3)
+  } finally { db.close() }
 })

@@ -48,7 +48,7 @@ export interface TerminalStepStore {
   /** 最近 max 步的 payload,旧 → 新。 */
   recent(matterId: string, max: number): Array<Record<string, unknown>>
   /** 按固定的步序号往前读。游标不属于该会话或锚点不存在 ⇒ null。 */
-  page(matterId: string, limit: number, before?: string): TerminalStepPage | null
+  page(matterId: string, limit: number, before?: string, includeHookMessages?: boolean): TerminalStepPage | null
 }
 /** 读进来的步的 key 都以它开头(和钩子写的 user_message / agent_message / 权限卡分开)。 */
 export const STEP_KEY_PREFIX = 't:'

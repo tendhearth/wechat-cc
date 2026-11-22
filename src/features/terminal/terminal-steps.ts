@@ -27,6 +27,7 @@ export interface TerminalSteps {
    */
   view(s: TerminalSessionRef, max: number): TerminalStepPayload[]
   page(s: TerminalSessionRef, limit: number, before?: string): TerminalStepPage | null
+  storedPage(sessionId: string, limit: number, before?: string): TerminalStepPage | null
 }
 
 /** 看的时候要的那几样(登记处的 CliSessionInfo 都有):建那件事要 source / cwd / 机器。 */
@@ -119,6 +120,10 @@ export function makeTerminalSteps(deps: {
     view(s, max) {
       const id = refresh(s)
       return id ? store.recent(id, max).map(({ full: _full, ...item }) => item as unknown as TerminalStepPayload) : []
+    },
+    storedPage(sessionId, limit, before) {
+      const id = store.matterOf(sessionId)
+      return id ? store.page(id, limit, before, true) : before === undefined ? { items: [], earlier: null } : null
     },
     page(s, limit, before) {
       const id = refresh(s)

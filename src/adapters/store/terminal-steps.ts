@@ -6,6 +6,16 @@ import { STEP_KEY_PREFIX, type TerminalReadState, type TerminalStepStore, type T
  * terminal-steps.ts —— 终端会话记录读进来的步存在哪(M4b)。步只经 MatterLog 写(matter_items);读到哪了在 terminal_reads(v98)。
  * 新的步挂在这件事正在跑的那一轮上(没有就不挂)。apply 一个事务:步和读到哪了一起落,不会读过了却没写上。
  */
+export function makeFirstTerminalMessageReader(db: Db) {
+  const first = db.query<{ text: string }, [string]>(`
+    SELECT COALESCE(json_extract(payload_json, '$.full'), json_extract(payload_json, '$.text')) AS text
+    FROM matter_items
+    WHERE matter_id=? AND kind='user_message' AND json_type(payload_json, '$.text')='text'
+    ORDER BY seq LIMIT 1
+  `)
+  return (matterId: string) => first.get(matterId)?.text
+}
+
 const PENDING_MAX = 500
 export function makeTerminalStepStore(deps: { db: Db; log: MatterLog; matters: { findBySurface(surface: 'cli', key: string): { id: string } | null } }): TerminalStepStore {
   const { db, log, matters } = deps
@@ -24,8 +34,27 @@ export function makeTerminalStepStore(deps: { db: Db; log: MatterLog; matters: {
   })
   // seq 在就地更新时不变。游标绑定这件事,并验证它确实指向一条终端步。
   const cursor = (matterId: string, seq: number) => Buffer.from(`1:${matterId}:${seq}`).toString('base64url')
-  const anchor = db.query<{ seq: number }, [string, string, number]>('SELECT seq FROM matter_items WHERE matter_id=? AND item_key LIKE ? AND seq=?')
-  const page = db.query<{ seq: number; payload_json: string }, [string, string, number, number]>('SELECT seq, payload_json FROM matter_items WHERE matter_id=? AND item_key LIKE ? AND seq<? ORDER BY seq DESC LIMIT ?')
+  const hookMessage = "kind IN ('user_message', 'agent_message') AND json_type(payload_json, '$.text') = 'text'"
+  const visible = `(item_key LIKE ?2 OR (?3 AND ${hookMessage}))`
+  // 补读后被隐藏的兜底步仍可作为此前发出的游标锚点。
+  const anchor = db.query<{ seq: number }, [string, string, number, number]>(`SELECT seq FROM matter_items WHERE matter_id=?1 AND ${visible} AND seq=?4`)
+  // 补读可能在轮收掉以后才发生，入库时没有原来的 turn_id。用记录自己的时间认回那一轮。
+  // 没有时间时只信明确的轮；只比较完整的文字，保留记录中真正说了两次的步。
+  const page = db.query<{ seq: number; payload_json: string; kind: string; created_at: number }, [string, string, number, number, number]>(`
+    SELECT seq, payload_json, kind, created_at FROM matter_items AS item
+    WHERE matter_id=?1 AND ${visible} AND seq<?4
+      AND (NOT ?3 OR item.kind != 'agent_message' OR item.item_key IS NOT NULL OR NOT EXISTS (
+        SELECT 1 FROM matter_turns AS turn JOIN matter_items AS step ON step.matter_id=item.matter_id
+        WHERE turn.id=item.turn_id AND step.item_key LIKE ?2 AND step.kind='agent_message'
+          AND COALESCE(json_extract(step.payload_json, '$.full'), json_extract(step.payload_json, '$.text'))
+            = json_extract(item.payload_json, '$.text')
+          AND CASE WHEN json_type(step.payload_json, '$.at') IN ('integer','real')
+            THEN json_extract(step.payload_json, '$.at') > turn.started_at
+             AND json_extract(step.payload_json, '$.at') <= turn.ended_at
+            ELSE step.turn_id=turn.id END
+      ))
+    ORDER BY seq DESC LIMIT ?5
+  `)
   return {
     matterOf: (sessionId) => matters.findBySurface('cli', sessionId)?.id ?? null,
     readState(matterId) {
@@ -41,16 +70,22 @@ export function makeTerminalStepStore(deps: { db: Db; log: MatterLog; matters: {
       return r ? { key: r.item_key, payload: JSON.parse(r.payload_json) as Record<string, unknown> } : null
     },
     apply: (matterId, writes, state) => apply(matterId, writes, state),
-    page(matterId, limit, before) {
+    page(matterId, limit, before, includeHookMessages = false) {
+      const include = Number(includeHookMessages)
       let seq = Number.MAX_SAFE_INTEGER
       if (before !== undefined) {
         const decoded = Buffer.from(before, 'base64url').toString('utf8')
         seq = Number(decoded.slice(decoded.lastIndexOf(':') + 1))
-        if (!Number.isSafeInteger(seq) || seq < 1 || cursor(matterId, seq) !== before || !anchor.get(matterId, like, seq)) return null
+        if (!Number.isSafeInteger(seq) || seq < 1 || cursor(matterId, seq) !== before || !anchor.get(matterId, like, include, seq)) return null
       }
-      const rows = page.all(matterId, like, seq, limit + 1)
+      const rows = page.all(matterId, like, include, seq, limit + 1)
       const earlier = rows.length > limit ? cursor(matterId, rows[limit - 1]!.seq) : null
-      return { items: rows.slice(0, limit).reverse().map(row => ({ ...(JSON.parse(row.payload_json) as TerminalStepPayload), id: row.seq.toString(36) })), earlier }
+      return { items: rows.slice(0, limit).reverse().map(row => {
+        const payload = JSON.parse(row.payload_json) as TerminalStepPayload
+        const step = !includeHookMessages || payload.kind ? payload : { kind: row.kind === 'user_message' ? 'you' as const : 'said' as const,
+          text: payload.text, full: payload.full ?? payload.text, at: row.created_at }
+        return { ...step, id: row.seq.toString(36) }
+      }), earlier }
     },
     recent(matterId, max) {
       return db.query<{ payload_json: string }, [string, string, number]>('SELECT payload_json FROM matter_items WHERE matter_id=? AND item_key LIKE ? ORDER BY seq DESC LIMIT ?').all(matterId, like, max)

@@ -9,7 +9,8 @@ import type { Db } from '../../lib/db'
 import { placeMapEntries, placeMapRoster, type MapTopicResolver } from './place-map'
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
-import type { PlaceOpinionT, RosterItemT } from '@wechat-cc/protocol'
+import { terminalStatusKey, type PlaceOpinionT, type PlaceT, type RosterItemT } from '@wechat-cc/protocol'
+import { CLI_SESSION_ENDED_RETAIN_MS } from '../../adapters/store/cli-session-store'
 import { buildRoster } from '../../domain/roster'
 import { buildPlaces } from '../../domain/places'
 import { gatherRoster, type RosterReaderDeps } from './reader'
@@ -25,6 +26,7 @@ export const PLACES_WINDOW_MS = 30 * 24 * 3_600_000
 export interface PlacesReaderDeps {
   roster: RosterReaderDeps
   mapWorkbench?: RosterReaderDeps['workbench']
+  firstTerminalMessage?: (matterId: string) => string | undefined
   store: PlacesStore
   labs?: ReturnType<typeof makeLabsSettings>
   outlines?: PlaceOutlineDeps
@@ -41,10 +43,27 @@ export const placeKey = (root: string) => `p:${createHash('sha256').update(root)
 export function makePlacesReader(deps: PlacesReaderDeps) {
   const placeMapEnabled = () => deps.labs?.placeMapEnabled() ?? false
   const root = deps.root ?? makeProjectRoot()
-  function collect(scope: 'operator' | 'device', roster = deps.roster, onHead?: (key: string, item: RosterItemT) => void) {
+  const titles = new Map<string, string>()
+  function sessionTitle(matterId: string) {
+    const cached = titles.get(matterId)
+    if (cached) return cached
+    const text = deps.firstTerminalMessage?.(matterId)?.trim().replace(/\s+/gu, ' ')
+    if (!text) return undefined
+    const title = Array.from(text).slice(0, 60).join('')
+    titles.set(matterId, title)
+    if (titles.size > 500) {
+      const oldest = titles.keys().next()
+      if (!oldest.done) titles.delete(oldest.value)
+    }
+    return title
+  }
+
+  function collect(scope: 'operator' | 'device', roster = deps.roster, onHead?: (key: string, item: RosterItemT) => void, includeEnded = false, includeSessions = includeEnded) {
     const now = roster.now?.() ?? Date.now()
-    const g = gatherRoster(roster, scope, now, PLACES_WINDOW_MS)
-    const items = buildRoster({ ...g.input, seen: roster.seen, now, backWindowMs: PLACES_WINDOW_MS })
+    const g = gatherRoster(roster, scope, now, PLACES_WINDOW_MS, includeEnded)
+    const terminals = includeEnded ? g.input.terminals.filter(t => t.status !== 'ended'
+      || t.last_event_at >= now - CLI_SESSION_ENDED_RETAIN_MS) : g.input.terminals
+    const items = buildRoster({ ...g.input, terminals, seen: roster.seen, now, backWindowMs: PLACES_WINDOW_MS, includeEnded })
     const pathOf = (item: RosterItemT): string | null => {
       if (item.kind === 'terminal') return g.sessions.get(item.id)?.project ?? null
       const m = g.matters.get(item.id)
@@ -53,26 +72,73 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     }
     const saved = deps.store.list()
     const raw = new Map(items.map(item => [item.key, root(pathOf(item))]))
-    // Claude Code 在临时目录里干活:路径里编码着原目录,对回已知的项目(这一批里认出来的 + 存下的);对不上就不算。
-    const bySlug = new Map<string, string>()
-    for (const r of [...saved.map(x => x.root), ...raw.values()]) if (r && !r.startsWith(SCRATCH_PREFIX)) bySlug.set(claudeProjectSlug(r), r)
-    const resolved = (r: string | null | undefined) => (r?.startsWith(SCRATCH_PREFIX) ? bySlug.get(r.slice(SCRATCH_PREFIX.length)) ?? null : r ?? null)
-    const result = buildPlaces({
-      items, onHead,
-      rootOf: item => resolved(raw.get(item.key)),
-      originOf: id => g.matters.get(id)?.originMessageId ?? null,
-      saved,
+    const sessionOf = (item: RosterItemT) => item.terminal && g.sessions.get(item.terminal.sessionId)
+    // Claude Code 临时目录的名字编码了原项目,只对回已经认出的项目根。
+    const resolver = (rows: RosterItemT[]) => {
+      const bySlug = new Map<string, string>()
+      for (const r of [...saved.map(x => x.root), ...rows.map(item => raw.get(item.key))]) {
+        if (r && !r.startsWith(SCRATCH_PREFIX)) bySlug.set(claudeProjectSlug(r), r)
+      }
+      return (r: string | null | undefined) => r?.startsWith(SCRATCH_PREFIX)
+        ? bySlug.get(r.slice(SCRATCH_PREFIX.length)) ?? null : r ?? null
+    }
+    const resolved = resolver(items)
+    const placeInput = {
+      items, onHead, saved,
+      rootOf: (item: RosterItemT) => resolved(raw.get(item.key)),
+      originOf: (id: string) => g.matters.get(id)?.originMessageId ?? null,
       keyOf: placeKey,
-      nameOf: r => basename(r) || r,
-    })
-    return { ...result, saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
+      nameOf: (r: string) => basename(r) || r,
+    }
+    // Shared settings keep the original discovery order and roots, including on a phone's first read.
+    const sharedItems = includeEnded ? items.filter(item => sessionOf(item)?.status !== 'ended') : items
+    const hasHistory = sharedItems.length !== items.length
+    const sharedRoot = hasHistory ? resolver(sharedItems) : resolved
+    const shared = hasHistory ? buildPlaces({ ...placeInput, items: sharedItems,
+      rootOf: item => sharedRoot(raw.get(item.key)), onHead: undefined }).added : []
+    const result = buildPlaces({ ...placeInput, saved: [...saved, ...shared], fillOpenPositions: hasHistory })
+    if (includeSessions) {
+      type Tab = NonNullable<PlaceT['sessions']>[number] & { createdAt: number }
+      const sessionsByPlace = new Map<string, Tab[]>()
+      for (const item of items) {
+        const r = resolved(raw.get(item.key))
+        if (!r) continue
+        const key = placeKey(r)
+        const s = sessionOf(item)
+        if (!s || s.last_event_at < now - PLACES_WINDOW_MS) continue
+        const status = terminalStatusKey(s.status) as NonNullable<PlaceT['sessions']>[number]['status']
+        const list = sessionsByPlace.get(key) ?? []
+        list.push({ sessionId: s.session_id, ...(item.kind === 'matter' ? { matterId: item.id } : {}),
+          agent: s.source, status, updatedAt: s.last_event_at, endedAt: s.status === 'ended' ? s.last_event_at : null, createdAt: s.created_at })
+        sessionsByPlace.set(key, list)
+      }
+      const order = { waiting: 0, working: 1, replied: 2, done: 3 }
+      const byId = (a: Tab, b: Tab) => a.sessionId.localeCompare(b.sessionId)
+      for (const place of result.places) {
+        // Which thirty: the ones that need the owner or are moving first, then by recent activity.
+        const kept = (sessionsByPlace.get(place.key) ?? [])
+          .sort((a, b) => order[a.status] - order[b.status] || b.updatedAt - a.updatedAt || byId(a, b))
+          .slice(0, 30)
+        // Where each sits: tabs keep their place while a session works and rests, so live ones go
+        // newest session first; only one waiting for the owner comes to the front. Ended ones follow.
+        const rank = (tab: Tab) => tab.status === 'waiting' ? 0 : tab.endedAt == null ? 1 : 2
+        place.sessions = kept
+          .sort((a, b) => rank(a) - rank(b)
+            || (rank(a) === 1 ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt) || byId(a, b))
+          .map(({ createdAt: _createdAt, ...session }) => {
+            const title = session.matterId && sessionTitle(session.matterId)
+            return title ? { ...session, title } : session
+          })
+      }
+    }
+    return { ...result, added: hasHistory ? shared : result.added, records: [...saved, ...shared, ...result.added], saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
   }
 
-  const collectMapPlaces = () => collect('operator', { ...deps.roster, workbench: deps.mapWorkbench })
+  const collectMapPlaces = (includeEnded = false) =>
+    collect('operator', { ...deps.roster, workbench: deps.mapWorkbench }, undefined, includeEnded, false)
   async function mapProjection(key: string) {
-    const { places, saved, added, items, rootOf } = collectMapPlaces()
+    const { places, records, items, rootOf } = collectMapPlaces(true)
     const place = places.find(place => place.key === key)
-    const records = [...saved, ...added]
     const record = records.find(record => record.key === key)
     if (!place || !record) return null
     const owner = deps.mapTopics?.owner()
@@ -148,7 +214,7 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       const recaps = scope === 'operator' && deps.recaps?.enabled() ? deps.recaps : undefined
       const { places, hidden, added, now } = collect(scope, deps.roster, recaps && ((key, item) => {
         if (item.terminal) heads.set(key, item.terminal.sessionId)
-      }))
+      }), scope === 'operator')
       if (added.length) deps.store.add(added, now)
       for (const place of places) {
         const id = heads.get(place.key)
@@ -216,10 +282,30 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       const visible = new Set(places.map(place => place.key))
       return saved.filter(place => visible.has(place.key))
     },
-    move: (key, to) => deps.store.move(key, to),
-    hide: (key, hidden) => deps.store.setHidden(key, hidden),
+    move(key, to) {
+      const { places, records, now } = collect('operator', deps.roster, undefined, true, false)
+      return deps.store.move(key, to, {
+        rows: records.sort((a, b) => a.position - b.position || a.key.localeCompare(b.key)),
+        visible: new Set(places.map(place => place.key)),
+        now,
+      })
+    },
+    hide(key, hidden) {
+      if (deps.store.setHidden(key, hidden)) return true
+      if (!hidden) return false
+      const { records, now } = collect('operator', deps.roster, undefined, true, false)
+      const record = records.find(record => record.key === key)
+      if (!record) return false
+      deps.store.add([{ ...record, hidden }], now)
+      return deps.store.setHidden(key, hidden)
+    },
     seen(key, desktop = false) {
-      if (!deps.store.markSeen(key, deps.roster.now?.() ?? Date.now())) return false
+      if (!deps.store.markSeen(key, deps.roster.now?.() ?? Date.now())) {
+        // 历史地方可以临时出现在桌面，打开它不创建共享设置。
+        if (!desktop) return false
+        const { places, added } = collect('operator', deps.roster, undefined, true, false)
+        return places.some(place => place.key === key) && !added.some(place => place.key === key)
+      }
       if (desktop && deps.recaps?.enabled() && deps.noteDesktopSeen) {
         const place = collect('operator').places.find(place => place.key === key)
         for (const id of place?.matterIds ?? []) deps.noteDesktopSeen(id)

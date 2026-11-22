@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 import { PRESENCE_OK, routePresenceTopic } from './presence-topic'
-import { placeItem, placeRow, routePlaces, routeRoster, rosterItem, terminalPlace } from './roster-fixture'
+import { placeItem, placeSession, placeRow, routePlaces, routeRoster, rosterItem, terminalPlace } from './roster-fixture'
 
 test.use({ viewport: { width: 1280, height: 820 } })
 
@@ -159,10 +159,14 @@ test('鼠标侧键导航，模态对话框打开时快捷键不导航', async ({
   await expect(row(page, '花园')).toHaveAttribute('aria-pressed', 'true')
 })
 
-test('终端线可后退，名单里的会话消失后跳过', async ({ page, shimUrl }) => {
-  await routePlaces(page, [placeItem('菜谱'), terminalPlace('花园', 's1', '要看一下文件')])
-  const item=rosterItem('s1','花园',{key:'terminal:s1',kind:'terminal',updatedAt:Date.now()})
+test('终端线可后退，地方页签里的会话消失后跳过', async ({ page, shimUrl }) => {
+  const updatedAt = Date.now()
   let available = true
+  await routePlaces(page, () => [placeItem('菜谱'), terminalPlace('花园', 's1', '要看一下文件', {
+    sessions: available ? [placeSession('s1', 'waiting', updatedAt)] : [],
+    ...(!available ? { waiting:null, status:null, line:'没有会话' } : {}),
+  })])
+  const item=rosterItem('s1','花园',{key:'terminal:s1',kind:'terminal',updatedAt})
   await routeRoster(page,[item])
   await page.route('**/v1/roster',route=>route.fulfill({json:{items:available?[item]:[],version:String(available)}}))
   await page.route('**/v1/cli/sessions?**', route => route.fulfill({
@@ -186,6 +190,7 @@ test('终端线可后退，名单里的会话消失后跳过', async ({ page, sh
   await expect(draft).toBeHidden()
   available = false
   await expect(page.locator('#topbar-roster')).toHaveText('在做 0',{timeout:6000})
+  await expect(placeRow(page, '花园').locator('.place-line')).toHaveText('没有会话',{timeout:9000})
   await back(page).click()
   await expectHistory(page, true, true)
   await expect(draft).toBeHidden()
