@@ -5,9 +5,9 @@
 export const branches = {
   open: { label: '没解决的', color: 'var(--th-accent)' },
   active: { label: '在做的', color: 'var(--th-warn)' },
-  decided: { label: '定了的', color: 'var(--th-ink)' },
-  done: { label: '做过的', color: 'var(--th-ink-soft)' },
-  noted: { label: '记下的', color: 'var(--th-hair)' },
+  decided: { label: '定了的', color: 'var(--th-desk-line)' },
+  done: { label: '做过的', color: 'var(--th-desk-line)' },
+  noted: { label: '记下的', color: 'var(--th-desk-line)' },
 }
 
 /** @param {MapItem} item @returns {keyof typeof branches | undefined} */
@@ -48,7 +48,7 @@ export function mapData(name, items, agent) {
       return { id: leafId(item.id), topic: [family, mapLabel(item.line)].filter(Boolean).join(' · '),
         ...(item.pin ? { tags: ['你放的'] } : {}) }
     })
-    return { id: `g:${key}`, topic: label, branchColor: color, style: { border: `1px solid ${color}` }, children: leaves }
+    return { id: `g:${key}`, topic: label, branchColor: color, children: leaves }
   }) : []
   return { nodeData: { id: 'root', topic: name, children: balanceBranches(children) } }
 }

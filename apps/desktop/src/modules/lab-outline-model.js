@@ -1,32 +1,29 @@
 // @ts-check
-import { balanceBranches, branches, leafId } from './lab-map-model.js'
+import { balanceBranches, leafId } from './lab-map-model.js'
 import { placeTime } from './places-strip.js'
 
 /** @typedef {import('@wechat-cc/protocol').PlaceOutlineT} Outline */
 /** @typedef {import('@wechat-cc/protocol').PlaceOutlineSourceT} Source */
 /** @typedef {NonNullable<Outline['aspects']>[number]['items'][number]} Leaf */
 
-const colors = ['--th-map-clay', '--th-map-slate', '--th-map-plum', '--th-map-olive', '--th-accent', '--th-warn']
-
 /** @param {string} name @param {NonNullable<Outline['aspects']>} aspects */
 export function outlineData(name, aspects) {
-  const children = aspects.map((aspect, index) => {
-    const color = `var(${colors[index % colors.length]})`
-    return { id: `g:aspect-${index}`, topic: aspect.name, branchColor: color, style: { border: `1px solid ${color}` },
-      children: aspect.items.map(leaf => ({ id: leafId(leaf.id), topic: leaf.line })) }
-  })
+  const children = aspects.map((aspect, index) => ({
+    id: `g:aspect-${index}`, topic: aspect.name, branchColor: 'var(--th-desk-line)',
+    children: aspect.items.map(leaf => ({ id: leafId(leaf.id), topic: leaf.line })),
+  }))
   return { nodeData: { id: 'root', topic: name, children: balanceBranches(children) } }
 }
 
 /** @param {number|undefined} at @param {number} now */
 const time = (at, now) => at !== undefined ? placeTime({ moving: false, updatedAt: at }, now) : ''
 
-/** 第一处出处那一行带上状态和「CC 梳理的」;后面几处只写出自哪。 @param {Leaf} leaf @param {Source} source @param {boolean} canJump @param {number} now @param {boolean} [first] */
-export function outlineSource(leaf, source, canJump, now, first = true) {
+/** 第一处出处那一行带上「CC 梳理的」;后面几处只写出自哪。 @param {Source} source @param {boolean} canJump @param {number} now @param {boolean} [first] */
+export function outlineSource(source, canJump, now, first = true) {
   const entry = source.kind === 'entry'
   const from = entry ? '出自 CC 记下的一条' : source.agent ? `出自 ${source.agent} 的会话` : '出自终端会话'
   return {
-    text: [...(first ? [branches[leaf.status].label, 'CC 梳理的'] : []), from, time(source.at, now)].filter(Boolean).join(' · '),
+    text: [...(first ? ['CC 梳理的'] : []), from, time(source.at, now)].filter(Boolean).join('，'),
     jump: !entry && canJump,
     missing: !entry && !canJump,
   }
