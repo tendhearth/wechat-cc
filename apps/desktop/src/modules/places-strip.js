@@ -184,7 +184,13 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     reflectWaitingAvailability()
   }
 
-  const draw = () => {
+  let redrawPending = false
+  const drawRows = () => {
+    if (root.querySelector(openActions)) {
+      redrawPending = true
+      return
+    }
+    redrawPending = false
     const active = root.ownerDocument.activeElement
     const focused = active?.closest('.place-row, .place-more')
     const focusKey = focused?.closest('[data-place-key]')?.getAttribute('data-place-key')
@@ -203,12 +209,16 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       root.querySelector(`[data-place-key="${CSS.escape(focusKey)}"] ${control}`)?.closest('button')?.focus({ preventScroll: true })
     }
     if (acting) root.querySelectorAll('[data-place-decision]').forEach(b => b.setAttribute('disabled', ''))
+    reflectOverflow()
+  }
+
+  const draw = () => {
+    drawRows()
     drawWaiting()
     const waitingCount = places.reduce((sum, p) => sum + (p.waiting?.count ?? 0), 0)
     const movingCount = places.filter(p => p.moving || p.status === 'working').length
     onSituation?.(version && !stale ? deskSituation(waitingCount, movingCount) : '', stale)
     onCurrent?.(places.find(p => p.key === selected) ?? null)
-    reflectOverflow()
   }
   const placeOf = (/** @type {Element|null} */ el) => places.find(p => p.key === el?.closest('[data-place-key]')?.getAttribute('data-place-key'))
 
@@ -324,22 +334,26 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       if (toggle instanceof HTMLButtonElement) toggle.focus()
       return
     }
-    const place = placeOf(target)
-    if (!place) return
-    if (target.closest('.place-row')) { select(place); return }
     const more = target.closest('.place-more')
     const actions = more?.nextElementSibling
     if (!supportsPopover && actions instanceof HTMLElement) {
       const wasOpen = actions.hasAttribute('data-open')
-      closeActions()
+      closeActions(false)
       if (!wasOpen) {
         actions.hidden = false
         actions.setAttribute('data-open', '')
         more?.setAttribute('aria-expanded', 'true')
         positionActions()
       }
+      flushPendingDraw()
       return
     }
+    const place = placeOf(target)
+    if (!place) {
+      if (target.closest('.place-actions')) closeActions()
+      return
+    }
+    if (target.closest('.place-row')) { select(place); return }
     if (waitingRoot?.contains(target) && target.closest('.place-ask')
       && root.ownerDocument.documentElement.hasAttribute('data-desk-cc-stopped')) return
     const decision = target.closest('[data-place-decision]')?.getAttribute('data-place-decision')
@@ -391,7 +405,12 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     finally { writingHidden = false }
   }
 
-  function closeActions() {
+  function flushPendingDraw() {
+    if (alive && redrawPending && !root.querySelector(openActions)) drawRows()
+  }
+
+  /** @param {boolean} [flush] */
+  function closeActions(flush = true) {
     const actions = root.querySelector(openActions)
     if (!(actions instanceof HTMLElement)) return
     if (supportsPopover) actions.hidePopover()
@@ -402,6 +421,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       actions.removeAttribute('data-open')
       actions.hidden = true
     }
+    if (flush) flushPendingDraw()
   }
 
   function positionActions() {
@@ -424,12 +444,18 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   resize?.observe(root)
   const scroll = () => { reflectOverflow(); positionActions() }
   root.addEventListener('scroll', scroll)
-  root.addEventListener('toggle', positionActions, true)
+  const onActionsToggle = (/** @type {Event} */ event) => {
+    if (!(event.target instanceof Element) || !event.target.matches('.place-actions')) return
+    positionActions()
+    flushPendingDraw()
+  }
+  root.addEventListener('toggle', onActionsToggle, true)
   root.ownerDocument.defaultView?.addEventListener('resize', scroll)
   const dismissOutside = (/** @type {Event} */ event) => {
     const actions = root.querySelector(openActions)
     const target = event.target
-    if (actions && target instanceof Node && !actions.contains(target) && !actions.previousElementSibling?.contains(target)) closeActions()
+    if (target instanceof Element && root.contains(target) && target.closest('.place-more')) return
+    if (actions && target instanceof Node && !actions.contains(target)) closeActions()
   }
   const dismissOnEscape = (/** @type {KeyboardEvent} */ event) => {
     if (event.key === 'Escape') closeActions()
@@ -479,7 +505,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       root.ownerDocument.removeEventListener('click', dismissOutside, true)
       root.ownerDocument.removeEventListener('keydown', dismissOnEscape)
       root.removeEventListener('scroll', scroll)
-      root.removeEventListener('toggle', positionActions, true)
+      root.removeEventListener('toggle', onActionsToggle, true)
       root.ownerDocument.defaultView?.removeEventListener('resize', scroll)
       root.removeEventListener('click', click)
       waitingRoot?.removeEventListener('click', click)

@@ -333,11 +333,11 @@
           <div class="toggle-row">
             <div>
               <div class="lab">开机自启</div>
-              <div class="sub">登录系统时自动启动 CC。</div>
+              <div class="sub">登录系统时自动启动 CC。<span class="desk-wide-copy" hidden>默认随系统启动，关掉窗口也照样收消息。</span></div>
             </div>
             <button class="toggle" id="autostart-toggle" type="button" data-toggle aria-pressed="false" aria-label="开机自启" aria-describedby="autostart-toggle-feedback"></button><span class="setting-feedback" id="autostart-toggle-feedback" role="status"></span>
           </div>
-          <p class="drawer-section-help">默认随系统启动，关掉窗口也照样收消息。</p>
+          <p class="drawer-section-help desk-compact-copy">默认随系统启动，关掉窗口也照样收消息。</p>
           <div class="toggle-row toggle-row--danger">
             <div>
               <div class="lab">自动同意工具调用</div>
@@ -519,7 +519,7 @@
                 </section>
             </section>
             <section id="cc-memory-records" hidden></section>
-            <footer><button type="button" data-life-pane="atelier">去 CC 的画室 →</button><button type="button" data-life-pane="a2a-agents">去觅食 →</button><button type="button" data-life-pane="memory">关于你 ↗</button></footer>
+            <footer><button type="button" data-life-pane="atelier">去 CC 的画室<span class="desk-compact-copy"> →</span></button><button type="button" data-life-pane="a2a-agents">去觅食<span class="desk-compact-copy"> →</span></button><button type="button" data-life-pane="memory">关于你<span class="desk-compact-copy"> ↗</span></button></footer>
           </article>
 
           <!-- ── pane: atelier ─────────────────────────────────────── -->
@@ -711,13 +711,14 @@
 
           <!-- ── pane: logs ─────────────────────────────────────────── -->
           <article class="dash-pane" data-pane="logs" hidden>
+            <h1 class="desk-backstage-title" hidden>后厨</h1>
             <div class="dialogue-workspace-tabs" role="tablist" aria-label="后厨视图">
               <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="sessions" aria-selected="false">会话</button>
               <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="plugins" aria-selected="false">插件</button>
               <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-backstage-pane="logs" aria-selected="true">日志</button>
             </div>
             <div class="topbar">
-              <span class="crumb">日志 · Logs <span class="meta" id="logs-meta">—</span></span>
+              <span class="crumb"><span class="desk-compact-copy">日志 · Logs </span><span class="meta" id="logs-meta">—</span></span>
               <div class="actions">
                 <input id="logs-filter" class="logs-select" type="search" placeholder="筛选（如 tools=）" aria-label="筛选日志" />
                 <select id="logs-tail-select" class="logs-select">
@@ -851,13 +852,14 @@
 
           <!-- ── pane: plugins ─────────────────────────────────────────── -->
           <article class="dash-pane" data-pane="plugins" hidden>
+            <h1 class="desk-backstage-title" hidden>后厨</h1>
             <div class="dialogue-workspace-tabs" role="tablist" aria-label="后厨视图">
               <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="sessions" aria-selected="false">会话</button>
               <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-backstage-pane="plugins" aria-selected="true">插件</button>
               <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="logs" aria-selected="false">日志</button>
             </div>
             <div class="topbar">
-              <span class="crumb">插件</span>
+              <span class="crumb desk-compact-copy">插件</span>
               <div class="actions">
                 <button id="plugins-refresh-btn" class="btn ghost"><span class="ic" data-hg-icon="refresh" data-hg-size="16"></span> 刷新</button>
               </div>

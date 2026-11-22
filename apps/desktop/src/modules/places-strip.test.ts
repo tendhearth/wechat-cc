@@ -162,6 +162,36 @@ it('按地方键选中和清除都更新地方条的选中状态', async () => {
   expect(row.getAttribute('aria-pressed')).toBe('false')
 })
 
+it.each([false, true])('行菜单打开时保留节点，关闭后补画最新数据（宽窗 %s）', async wide => {
+  const root = document.createElement('div')
+  document.body.replaceChildren(root)
+  Object.defineProperty(root, 'showPopover', { value: undefined })
+  let version = 1
+  strip = mountPlacesStrip({
+    root,
+    call: async () => ({ places: [place('rici', { line: `进度 ${version}` })], version: String(version) }),
+    onSelect: vi.fn(),
+    onOpen: vi.fn(),
+  })
+  strip.setWide(wide)
+  await strip.refresh()
+  const trigger = root.querySelector<HTMLButtonElement>('.place-more')!
+  trigger.click()
+  const menu = root.querySelector<HTMLElement>('.place-actions')!
+  expect(menu.hidden).toBe(false)
+
+  for (version of [2, 3]) await strip.refresh()
+  expect(root.querySelector('.place-actions')).toBe(menu)
+  expect(menu.hidden).toBe(false)
+  expect(root.textContent).toContain('进度 1')
+  expect(root.textContent).not.toContain('进度 3')
+
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+  expect(root.querySelector<HTMLElement>('.place-actions')!.hidden).toBe(true)
+  expect(root.querySelector('.place-actions')).not.toBe(menu)
+  expect(root.textContent).toContain('进度 3')
+})
+
 it('旧 WebView 的固定菜单支持展开、Esc 和点外关闭', async () => {
   document.body.innerHTML = '<div id="p"></div><button id="outside">外面</button>'
   const root = document.getElementById('p')!

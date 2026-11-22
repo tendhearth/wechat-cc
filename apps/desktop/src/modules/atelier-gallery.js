@@ -84,7 +84,9 @@ function renderAtelierEmpty(data) {
   const box = document.getElementById("atelier-gallery")
   if (!box || box.dataset.empty !== "1") return
   const state = atelierEmptyState(data)
-  box.innerHTML = `<div class="cc-page-status" role="status"><h2>${escapeHtml(state.title)}</h2><p>${escapeHtml(state.detail)}</p><button type="button" data-atelier-status-action="${state.action}">${state.action === "home" ? "连接手机与设置画室" : "重新检查"}</button></div>`
+  box.innerHTML = `<div class="cc-page-status" role="status">${data
+    ? `<h2>${escapeHtml(state.title)}</h2><p>${escapeHtml(state.detail)}</p>`
+    : `<h2 class="desk-compact-copy">${escapeHtml(state.title)}</h2><p class="desk-compact-copy">${escapeHtml(state.detail)}</p><p class="desk-wide-copy" hidden>暂时没能确认画室的状态。已有作品仍保存在这台 Mac。</p>`}<button type="button" data-atelier-status-action="${state.action}">${state.action === "home" ? "连接手机与设置画室" : "重新检查"}</button></div>`
 }
 
 /** @type {ReturnType<typeof setTimeout> | null} */

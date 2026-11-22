@@ -23,7 +23,7 @@ export const askingPlace=(name:string,matterId:string,summary='要你回答一�
 /** 终端会话自己停着问(「去回答」打开那个会话)。 */
 export const terminalPlace=(name:string,sessionId:string,summary:string,extra:Record<string,unknown>={})=>placeItem(name,{status:'waiting',moving:false,line:summary,sessionIds:[sessionId],waiting:{itemKey:`terminal:${sessionId}`,kind:'terminal',sessionId,summary,count:1},...extra})
 type PlacesSource=ReturnType<typeof placeItem>[]|(()=>ReturnType<typeof placeItem>[]|{status:number})
-export async function routePlaces(page:Page,places:PlacesSource, { writable = false, placeMap = () => false } = {}) {
+export async function routePlaces(page:Page,places:PlacesSource, { writable = false, placeMap = (): boolean => false } = {}) {
  const hiddenKeys = new Set<string>()
  if (writable) await page.route('**/v1/places/hide', route => {
   const body = route.request().postDataJSON()

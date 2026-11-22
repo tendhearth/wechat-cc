@@ -49,11 +49,12 @@ import { executorName, haveExecutorNames, loadExecutorNames } from "./modules/ex
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, loadMemoryRetractions, restoreMemoryRetraction, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
-import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
+import { initDialoguePage, positionDialogueTools, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
 import { reflectConversationAvailability, initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace, connectConversationPlaces, updateConversationPlaces, updateConversationRoster } from "./modules/converse.js"
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
+import { wireDeskDisclosure } from './modules/desk-disclosure.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
 import { mountMemoryTopics } from './modules/conversation-topics.js'
@@ -2096,6 +2097,7 @@ function mountDeskLayout(strip) {
   const hover = window.matchMedia('(hover: hover)')
   const listeners = new AbortController()
   const { signal } = listeners
+  if (more instanceof HTMLDetailsElement) wireDeskDisclosure(more, signal)
   mountDeskHistory(strip, signal)
   const mac = root.dataset.platform === 'macos'
   const stopFullscreen = mac ? watchDeskFullscreen(
@@ -2205,6 +2207,7 @@ function mountDeskLayout(strip) {
     const { matches: wide } = layout
     const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
     root.toggleAttribute('data-desk-wide', wide)
+    positionDialogueTools(wide)
     reflectDeskConnection()
     reflectWorkbenchSearchRole()
     for (const label of wideLabels) label.toggleAttribute('hidden', !wide)

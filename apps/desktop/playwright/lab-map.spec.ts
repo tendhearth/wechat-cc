@@ -28,7 +28,7 @@ const select = async (page:Page,name:string) => {
 }
 const view = (page:Page,name:string) => thread(page).getByRole('button',{name,exact:true})
 const menu = (page:Page) => page.locator('.topbar-more summary')
-const toggle = (page:Page) => page.getByRole('switch',{name:'把一件事画成图'})
+const toggle = (page:Page) => page.getByRole('switch',{name:'把一件事画成图',includeHidden:true})
 const mapPath = /\/v1\/places\/map\?/
 const pinPath = '**/v1/places/map/pin'
 const group = (page:Page, branch:PlaceMapBranchT) => diagram(page).locator(`me-wrapper:has(> me-parent > [data-nodeid="meg:${branch}"])`)
@@ -84,8 +84,8 @@ async function mock(page:Page, beforeMap?: (key:string, route:Route) => Promise<
 async function enable(page:Page) {
   await menu(page).click()
   await toggle(page).click()
+  await expect(menu(page).locator('..')).not.toHaveAttribute('open','')
   await expect(toggle(page)).toHaveAttribute('aria-checked','true')
-  await menu(page).click()
 }
 
 test.beforeEach(async ({shim})=>{ await shim.invoke('demo.seed',{daemonAlive:true}) })
@@ -377,6 +377,9 @@ test('地方读回的开关决定图入口，写失败保持原值并在开关�
   await expect(toggle(page)).toHaveAttribute('aria-checked','true')
   await expect(page.locator('#desk-lab-map-note')).toHaveText('还在试。关掉就没有，不影响别的。开着时，你在图上摆过的，CC 说话和终端里的 agent 开场时会知道。')
   await toggle(page).click()
+  await expect(menu(page).locator('..')).not.toHaveAttribute('open','')
+  await menu(page).click()
+  await expect(page.locator('#desk-lab-map-note')).toBeVisible()
   await expect(page.locator('#desk-lab-map-note')).toHaveText('没改成，再试一次。')
   await expect(toggle(page)).toHaveAttribute('aria-checked','true')
   await expect(view(page,'图')).toBeVisible()

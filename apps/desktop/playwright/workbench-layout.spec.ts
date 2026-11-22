@@ -126,6 +126,16 @@ test('conversation layers preserve the global navigation and restore the convers
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('inert','')
   await expect(page.locator('#dash-global-rail')).not.toHaveAttribute('aria-hidden','true')
   await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toBeVisible()
+  await page.setViewportSize({width:800,height:844})
+  await expect(page.locator('#workbench-home')).toBeVisible()
+  const narrowSearch = page.locator('#conversation-matter-layer[data-workbench-view="search"]')
+  await expect(narrowSearch.locator('#wb-filter-project')).toHaveCSS('appearance', 'none')
+  await expect(narrowSearch.locator('#wb-filter-status')).toHaveCSS('appearance', 'none')
+  await expect.poll(() => narrowSearch.evaluate(el => {
+    const rect = el.getBoundingClientRect()
+    const topbar = getComputedStyle(document.documentElement).getPropertyValue('--topbar-bottom')
+    return [rect.left, rect.right, rect.top - parseFloat(topbar), rect.bottom]
+  })).toEqual([0, 800, 0, 844])
   await page.setViewportSize({width:390,height:844})
   await expect(page.locator('#workbench-home')).toBeVisible()
   await page.locator('#workbench-home').click()
@@ -183,6 +193,13 @@ test('宽窗搜索占整张纸，快捷键聚焦并返回原页，组字时不�
   await expect(search.getByRole('heading', { name: '搜索', exact: true })).toBeVisible()
   await expect(search.locator('#wb-search')).toBeFocused()
   await expect(search.locator('.wb-search')).toHaveCSS('height', '40px')
+  await expect(page.locator('.dash-main')).toHaveCSS('background-color', 'rgb(253, 251, 247)')
+  for (const layer of [search, search.locator('.workbench-shell'), search.locator('.wb-sidebar')]) {
+    await expect(layer).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  }
+  await expect(search.locator('#wb-search')).toHaveCSS('outline-style', 'none')
+  await expect(search.locator('.wb-search')).toHaveCSS('border-top-color', 'rgb(79, 107, 79)')
+  await expect(search.locator('.wb-search')).not.toHaveCSS('box-shadow', 'none')
   await expect(search.locator('#workbench-home')).toBeHidden()
   await expect(page.locator('.cc-now-pane')).toBeHidden()
   const [paper, pane, form, project, status] = await Promise.all([

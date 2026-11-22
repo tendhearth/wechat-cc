@@ -962,6 +962,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 :is(button.btn, .atelier-pane-head button, .cc-page-status button, .dialogue-action-pill, [data-life-retry], .pc-more, .pc-empty button, .cc-recollections > footer button),
 [data-desk-wide] .dash-main > #notebook-pane .notebook-header button,
 [data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] :is(.wb-new, .wb-sidebar > header .wb-delegate),
+[data-desk-wide] .thing-empty button,
+[data-desk-wide] #settings-drawer :is(button:not(.toggle), a.btn),
 [data-desk-wide] .converse-empty button[data-wake-cc] {
   box-sizing: border-box;
   min-height: 30px;
@@ -974,7 +976,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 }
 [data-desk-wide] .dash-main :is(.cc-recollections, [data-pane="memory"], .todos-page, [data-pane="sessions"], [data-pane="logs"], [data-pane="plugins"])
 :is(button.btn.primary, button.btn.todo-complete),
-[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-sidebar > header .wb-delegate,
 [data-desk-wide] .converse-empty button[data-wake-cc] {
   border-color: transparent;
   background: var(--th-accent);
@@ -1081,22 +1082,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   color: var(--th-ink-soft);
   font-size: 13px;
 }
-[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-list-controls select {
-  appearance: none;
-  box-sizing: border-box;
-  min-width: 0;
-  max-width: 180px;
-  height: 30px;
-  padding: 0 26px 0 10px;
-  border: 0.5px solid var(--th-desk-edge);
-  border-radius: 8px;
-  background:
-    linear-gradient(45deg, transparent 50%, var(--th-ink-soft) 50%) right 13px center / 4px 4px no-repeat,
-    linear-gradient(135deg, var(--th-ink-soft) 50%, transparent 50%) right 9px center / 4px 4px no-repeat,
-    var(--th-desk-raised);
-  color: var(--th-ink);
-  font: inherit;
-}
 [data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-task-list { padding-inline: 0; }
 
 [data-desk-wide] .cc-now-pane:has(> .desk-waiting:not([hidden])) #converse-scroll {
@@ -1118,3 +1103,176 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   cursor: default;
   pointer-events: auto;
 }
+
+
+/* Screenshot follow-up. Compact copy stays in the original narrow layouts. */
+[data-desk-wide] .desk-compact-copy { display: none; }
+[data-desk-wide] .desk-wide-copy[hidden] { display: inline !important; }
+
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .workbench-shell {
+  background: transparent;
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-search input:focus {
+  outline: none;
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-search:focus-within {
+  border-color: var(--th-accent);
+  box-shadow: var(--th-desk-shadow-selection);
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-list-retry[hidden] {
+  display: inline-block !important;
+  margin-inline-start: 8px;
+}
+
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] {
+  inset: var(--topbar-bottom, 72px) 0 0;
+  width: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+.dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] .wb-list-controls select,
+[data-desk-wide] .dashboard .dash-main [data-pane="logs"] #logs-tail-select {
+  appearance: none;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 180px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 26px 0 10px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 8px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--th-ink-soft) 50%) right 13px center / 4px 4px no-repeat,
+    linear-gradient(135deg, var(--th-ink-soft) 50%, transparent 50%) right 9px center / 4px 4px no-repeat,
+    var(--th-desk-raised);
+  color: var(--th-ink);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+}
+
+[data-desk-wide] .dashboard .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) {
+  --desk-secondary-max: 960px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 14px 12px;
+  padding-inline: max(36px, calc((100% - 960px) / 2));
+}
+[data-desk-wide] .dash-main > [data-pane="sessions"] { grid-template-rows: auto auto minmax(380px, 1fr); }
+[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > .desk-backstage-title {
+  grid-area: 1 / 1 / 2 / -1;
+  justify-self: start;
+}
+[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > .dialogue-workspace-tabs {
+  grid-area: 2 / 1;
+  align-self: center;
+  width: auto;
+  margin: 0;
+}
+[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > :is(.topbar, #dialogue-tools) {
+  grid-area: 2 / 2;
+  align-self: center;
+  position: static;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+}
+[data-desk-wide] .dash-main #dialogue-tools::before { display: none; }
+[data-desk-wide] .dash-main #dialogue-tools > button { left: auto; }
+[data-desk-wide] .dash-main [data-pane="logs"] > .topbar { flex-wrap: nowrap; }
+[data-desk-wide] .dash-main [data-pane="logs"] > .topbar .actions { margin-inline-start: 0; min-width: 0; }
+[data-desk-wide] .dash-main [data-pane="logs"] > .topbar .crumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 12px/1.4 var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main #logs-meta {
+  margin: 0;
+  color: var(--th-desk-faint);
+  font: inherit;
+}
+[data-desk-wide] .dash-main #logs-filter { width: 138px; min-width: 80px; }
+[data-desk-wide] .dash-main #logs-refresh { white-space: nowrap; }
+
+[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > :is(.dialogue-page, .a2a-agents-body, .logs-body) {
+  grid-area: 3 / 1 / 4 / -1;
+  background: transparent;
+}
+[data-desk-wide] .dash-main > [data-pane="sessions"] > .dialogue-page {
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+[data-desk-wide] .dash-main .dialogue-views button { white-space: nowrap; }
+[data-desk-wide] .dash-main .dialogue-search #dialogue-search { padding-inline-start: 34px; }
+
+[data-desk-wide] .dash-main .cc-recollections > :is(#cc-memory-postcards, #cc-memory-records) {
+  max-width: var(--desk-secondary-max);
+}
+[data-desk-wide] .dash-main .cc-recollections :is(.pc-empty, .cc-life-empty[role="status"]) {
+  padding: 12px 0;
+  color: var(--th-ink-soft);
+  font: 400 13.5px/1.6 var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main .cc-recollections :is(.pc-empty, .cc-life-empty)[role="status"] {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+[data-desk-wide] .dash-main .cc-recollections :is(.pc-empty, .cc-life-empty)[role="status"] button { margin: 0; }
+[data-desk-wide] .dash-main .cc-recollections > footer { border: 0; padding-top: 0; gap: 20px; }
+[data-desk-wide] .dash-main .cc-recollections > footer button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--th-accent);
+}
+[data-desk-wide] .dash-main .cc-recollections > footer button:hover { text-decoration: underline; }
+
+[data-desk-wide] .dash-main .atelier-pane .cc-page-status { grid-column: 1 / -1; }
+[data-desk-wide] .dash-main .todos-page .cc-page-status h2::after { content: '。'; }
+[data-desk-wide] .thing-empty {
+  padding-inline: var(--desk-page-padding);
+  text-align: center;
+  font: 400 14px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] .desk-offline-note button[data-wake-cc] { color: var(--th-accent); }
+[data-desk-wide] .desk-offline-note button[data-wake-cc]:hover { text-decoration: underline; }
+
+[data-desk-wide] #settings-drawer {
+  background: var(--th-desk-raised);
+  border-left: 0.5px solid var(--th-desk-edge);
+  box-shadow: var(--th-desk-shadow-raised);
+  color: var(--th-ink);
+  font: 400 14px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer .drawer-head h2 { font-family: var(--th-font-desk-ui); }
+[data-desk-wide] #settings-drawer .drawer-section h3 {
+  color: var(--th-desk-faint);
+  font: 400 12px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer :is(.toggle-row .lab, .user-name, .provider-chip, .project-admin-alias, .moment-users h2, .b3-disclosure, #hero-headline) {
+  color: var(--th-ink);
+  font: 400 14px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer :is(.sub, .user-sub, .role-pill, .drawer-section-help, .license-status, .setting-feedback,
+  .connection-options, .connection-history, .sub-user-empty-copy, .moment-subhead .meta, .settings-confirm p, .connection-history p, #hero-meta) {
+  color: var(--th-ink-soft);
+  font: 400 12.5px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer .role-pill { height: auto; }
+[data-desk-wide] #settings-drawer :is(.moment-connect-btn, .drawer-close) { height: auto; }
+[data-desk-wide] #settings-drawer .license-row input {
+  box-sizing: border-box;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 10px;
+  background: var(--th-desk-raised);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer .license-row input::placeholder { font-family: inherit; }

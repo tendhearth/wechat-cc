@@ -115,7 +115,7 @@ function renderSkeleton(root) {
     </aside>
     <section class="dialogue-stage">
       <div class="dialogue-document">
-        <div class="dialogue-document-head">
+        <div class="dialogue-document-head" id="dialogue-tools">
           <button class="dialogue-action-pill" id="dialogue-export" type="button">
             ${icon("download-01", { size: 16 })}<span>导出 Markdown</span>
           </button>
@@ -990,5 +990,20 @@ export function initDialoguePage(deps) {
   root.dataset.ready = "true"
   renderSkeleton(root)
   wireEvents(root, deps)
+  positionDialogueTools(document.documentElement.hasAttribute("data-desk-wide"))
   loadDialogue(deps)
+}
+
+/** Keep the original controls and listeners when the window changes width. @param {boolean} wide */
+export function positionDialogueTools(wide) {
+  const tools = document.getElementById("dialogue-tools")
+  if (!tools) return
+  const root = document.getElementById("dialogue-root")
+  if (wide) {
+    const tabs = root?.parentElement?.querySelector(".dialogue-workspace-tabs")
+    if (tabs && tools.previousElementSibling !== tabs) tabs.after(tools)
+  } else {
+    const documentBody = root?.querySelector(".dialogue-document")
+    if (documentBody && tools.parentElement !== documentBody) documentBody.prepend(tools)
+  }
 }
