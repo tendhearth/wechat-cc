@@ -72,13 +72,14 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true,
   const rows = places.map((p, i) => {
     const time = placeTime(p, now)
     const quiet = isQuiet(p, selected, now)
+    const recap = wide ? p.recap : undefined
     const actionsId = `place-actions-${i}`
     const control = popover ? `popovertarget="${actionsId}"` : `aria-controls="${actionsId}" aria-expanded="false"`
     return `<li class="place" data-place-key="${escapeHtml(p.key)}" data-quiet="${quiet}" data-waiting="${!!p.waiting}" data-unseen="${p.unseen}" data-moving="${p.moving}"${wide && p.status === 'working' ? ' data-working' : ''} data-selected="${p.key === selected}">
       <button type="button" class="place-row" aria-pressed="${p.key === selected}">
         <span class="place-dot" aria-hidden="true"></span>
         <span class="place-name">${escapeHtml(p.name)}</span>
-        <span class="place-line">${escapeHtml(placeLine(p))}</span>
+        <span class="place-line"${recap ? ` data-recap-source="${recap.source === 'cc' ? 'cc' : 'claude'}"` : ''}>${escapeHtml(recap?.text ?? placeLine(p))}</span>
         <span class="place-time">${escapeHtml(time)}</span>
       </button>
       <button class="place-more" type="button" ${control} aria-label="${escapeHtml(p.name)} 的更多操作">⋯</button>
@@ -219,7 +220,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   async function readPlaces() {
     const epoch = readEpoch
     try {
-      const data = await v1(call, V1.places.get, undefined, version ? { ifNoneMatch: version } : undefined)
+      const data = await v1(call, V1.places.get, wide ? undefined : { query: { recap: 0 } }, version ? { ifNoneMatch: version } : undefined)
       if (!alive || epoch !== readEpoch) return
       if (data?.notModified) {
         if (stale) { stale = false; draw() }
@@ -252,7 +253,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     const mark = `${place.key}@${place.updatedAt ?? ''}`
     if (mark === seenMark) return
     seenMark = mark
-    void v1(call, V1.places.seen, { body: { key: place.key } }).catch(() => { seenMark = '' })
+    void v1(call, V1.places.seen, { body: { key: place.key }, ...(wide ? { query: { recap: 1 } } : {}) }).catch(() => { seenMark = '' })
   }
 
   /** @param {Place|null} place */

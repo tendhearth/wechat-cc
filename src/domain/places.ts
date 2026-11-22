@@ -31,6 +31,7 @@ export interface PlacesInput {
   nameOf: (root: string) => string
   /** 每个地方最多带多少件事的 id 去筛说话。 */
   maxIds?: number
+  onHead?: (key: string, item: RosterItemT) => void
 }
 
 export interface PlacesOutput { places: PlaceT[]; hidden: Pick<PlaceT, 'key' | 'name'>[]; added: PlaceRecord[] }
@@ -82,6 +83,7 @@ export function buildPlaces(input: PlacesInput): PlacesOutput {
     const seenAt = rec.seenAt ?? null
     const changed = seenAt == null ? [] : recent.filter(i => i.updatedAt > seenAt)
     const head = first ?? changed[0] ?? recent.find(i => i.group === 'working') ?? recent[0]
+    if (head) input.onHead?.(rec.key, head)
     const matterIds = recent.filter(i => i.kind === 'matter').slice(0, max).map(i => i.id)
     const messageIds = [...new Set(matterIds.map(id => input.originOf(id)).filter((m): m is string => !!m))]
     const sessionIds = [...new Set(recent.flatMap(i => i.terminal ? [i.terminal.sessionId] : []))].slice(0, max)

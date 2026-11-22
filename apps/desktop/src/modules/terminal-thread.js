@@ -6,13 +6,14 @@ import { bindTerminalDraft } from './conversation-work-detail.js'
 import { deskSpeakerHtml } from './desk-page.js'
 import { paintConversation, rememberConversationPosition, showConversationLatest, syncConversationLatest } from './converse-reading.js'
 import { escapeWorkbenchHtml as esc, renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from './workbench-markdown.js'
+import { recapMemoHtml, sketchRecap } from './recap-memo.js'
 import { groupActivity, mergeActivity, terminalInputReason } from './thing-thread-model.js'
 
 const { agentAvatarsHtml } = createAgentAvatars()
 /** @typedef {import('./thing-thread-model.js').Activity} Activity */
 /** @typedef {import('./thing-thread-model.js').Session} Session */
 /** @typedef {import('./thing-thread-model.js').Place} Place */
-/** @typedef {Omit<import('./converse.js').ConverseMsg,'id'|'role'> & {id:string,role:string} & {steps?:Activity[],running?:boolean}} ThreadRow */
+/** @typedef {Omit<import('./converse.js').ConverseMsg,'id'|'role'> & {id:string,role:string} & {steps?:Activity[],running?:boolean,recap?:import('@wechat-cc/protocol').SessionRecapT}} ThreadRow */
 /** @typedef {(method:any,path:string,body?:any)=>Promise<any>} Call */
 
 /** @param {Element} element @param {string} value */
@@ -97,6 +98,16 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   /** @type {{text:string,sentAt:number,after:Set<string>,receipt?:string}|null} */ let outgoing = null
   let alive = true, polling = false, paging = false, sending = false, deciding = false, stopping = false
   let confirmed = '', answered = '', lastRecipient = '', loaded = false
+  const wide = window.matchMedia('(min-width: 900px)')
+  /** @type {import('@wechat-cc/protocol').SessionRecapT|undefined} */ let recap
+  /** @type {HTMLElement|null} */ let memo = null
+  let dismissedAt = -1, recapVersion = 0
+  const redrawFrame = () => { if (memo) sketchRecap(memo, id) }
+  const memoSize = typeof ResizeObserver === 'function' ? new ResizeObserver(redrawFrame) : null
+  const fonts = document.fonts
+  fonts?.addEventListener?.('loadingdone', redrawFrame)
+  const resized = () => { draw(); void refresh() }
+  wide.addEventListener('change', resized)
   let empty = '正在读取…'
   const isVisible = () => document.visibilityState === 'visible' && !host.closest('[hidden], [inert]')
   const name = () => session?.displayName || executorName(session?.source || agent) || '终端'
@@ -153,14 +164,19 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
     })
     stepKeys = keys
     if (outgoing) rows.push({id:'pending', role:'user', text:outgoing.text, at:outgoing.sentAt, pending:true})
+    if (recap && wide.matches && recap.at > dismissedAt && !sending && !deciding) {
+      rows.push({ id: 'session-recap', role: 'recap', text: recap.text, recap })
+    }
     const restore = prepend ? rememberConversationPosition(scroll) : null
     earlier.hidden = !before
     paintConversation(scroll, rows, render, `<p class="empty-state">${esc(empty)}</p>`, {
       latest, prepend, decoration: row => {
+        if (row.recap) return row.recap
         const {steps, running} = /** @type {ThreadRow} */ (row)
         return steps ? [steps, running] : session?.source || agent
       },
       update: (node,row) => {
+        if (row.recap) return false
         const selection = node.ownerDocument.getSelection()
         if (selection && !selection.isCollapsed && (node.contains(selection.anchorNode) || node.contains(selection.focusNode))) return 'defer'
         if (updateSteps(node, row)) return true
@@ -174,11 +190,18 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
         return true
       },
     })
+    const nextMemo = /** @type {HTMLElement|null} */ (scroll.querySelector('.thing-recap'))
+    if (nextMemo !== memo) {
+      memoSize?.disconnect()
+      memo = nextMemo
+      if (memo) { redrawFrame(); memoSize?.observe(memo) }
+    }
     if (restore) restore()
   }
 
   /** @param {ThreadRow} row */
   function render(row) {
+    if (row.recap) return recapMemoHtml(row.recap)
     if (row.steps) {
       const shell = document.createElement('div')
       shell.className = 'thing-steps'
@@ -200,7 +223,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   }
 
   /** @param {string} [cursor] */
-  const read = cursor => v1(call, V1.cli.activity, {query:{session_id:id,full:1,limit:40,...(cursor ? {before:cursor} : {})}})
+  const read = cursor => v1(call, V1.cli.activity, {query:{session_id:id,full:1,limit:40,...(cursor ? {before:cursor} : {}), ...(cursor || !wide.matches ? {recap:0} : {})}})
   /** @param {any} page @returns {Activity[]} */
   const stepsIn = page => (page.items ?? []).filter((/** @type {Activity} */ step) => typeof step.id === 'string')
 
@@ -215,6 +238,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   async function refresh() {
     if (!alive || polling || !isVisible()) return
     polling = true
+    const version = recapVersion
     try {
       const [sessions, activity] = await Promise.allSettled([
         v1(call,V1.cli.sessions,{query:{owner:1,session_id:id}}), read(),
@@ -229,6 +253,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
       }
       if (activity.status === 'fulfilled') {
         const page = activity.value
+        if (version === recapVersion) recap = wide.matches && page.recap?.text ? page.recap : undefined
         let fresh = stepsIn(page)
         const known = new Set(items.map(item => item.id))
         // If more than a page arrived between polls, bridge to the last known page.
@@ -298,6 +323,7 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
     draw()
     try {
       const result = await v1(call,V1.cli.sessionSay,{body:{session_id:id,text}})
+      dismissedAt = Date.now()
       if (outgoing === message) Object.assign(outgoing,{receipt:result.say_id})
     } catch {
       if (alive && outgoing === message) returnDraft()
@@ -312,13 +338,15 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
     if (!button || !hash || deciding) return
     deciding = true
     reflect()
+    draw()
     try {
       await v1(call,V1.cli.decide,{body:{session_id:id,hash,decision:button.dataset.placeDecision}})
       if (!alive) return
       answered = hash
+      dismissedAt = Date.now()
       setText(note, '')
     } catch { if (alive) setText(note, '尚未同步，请重试') }
-    finally { deciding = false; if (alive) { reflect(); void refresh() } }
+    finally { deciding = false; if (alive) { reflect(); draw(); void refresh() } }
   }
   stop.onclick = async () => {
     const run = session?.run_id
@@ -340,9 +368,18 @@ export function mountTerminalThread({host, call, id, agent, place, onStatus, onW
   return {
     reflect,
     refresh,
+    refreshRecap() {
+      recapVersion++
+      recap = undefined
+      draw()
+      void refresh()
+    },
     destroy() {
       alive = false
       saveDraft()
+      memoSize?.disconnect()
+      fonts?.removeEventListener?.('loadingdone', redrawFrame)
+      wide.removeEventListener('change', resized)
       clearInterval(timer)
       document.removeEventListener('visibilitychange', refresh)
     },

@@ -38,7 +38,7 @@ export async function routePlaces(page:Page,places:PlacesSource, { writable = fa
   else hiddenKeys.delete(body.key)
   return route.fulfill({ json: { ok: true } })
  })
- await page.route('**/v1/places',route=>{
+ await page.route(url => url.pathname.endsWith('/v1/places'),route=>{
   const value=typeof places==='function'?places():places
   if(!Array.isArray(value))return route.fulfill({status:value.status,json:{error:'unavailable'}})
   const hidden = value.filter(p => hiddenKeys.has(p.key) && !p.waiting).map(({ key, name }) => ({ key, name }))

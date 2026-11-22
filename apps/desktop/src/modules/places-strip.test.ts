@@ -183,7 +183,7 @@ it('宽窗置顶卡回答后越过已经在途的读取发起新刷新', async (
   let reads = 0
   let releaseRead: (() => void) | undefined
   const { call } = mount(([, path]: string[]) => {
-    if (path !== '/v1/places') return { ok: true }
+    if (path?.split('?')[0] !== '/v1/places') return { ok: true }
     reads++
     if (reads === 1) return { places: [waiting], version: 'before' }
     if (reads === 2) return new Promise(resolve => { releaseRead = () => resolve({ notModified: true }) })

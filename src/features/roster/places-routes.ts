@@ -1,4 +1,4 @@
-import { PlaceOutlineRequest, LabsRequest, PlaceMapPinRequest, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
+import { RecapSettingsRequest, PlaceOutlineRequest, LabsRequest, PlaceMapPinRequest, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest } from '@wechat-cc/protocol'
 import type { InternalApiDeps, RouteTable } from '../../daemon/internal-api/types'
 import { readFailure } from './routes'
 
@@ -6,6 +6,19 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): Rou
   const unavailable = { status: 503, body: { error: 'unavailable' } }
   const labOff = { status: 409, body: { error: 'lab_off' } }
   return {
+    'GET /v1/settings/recap': (_query, _body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      if (!deps.places?.recapEnabled) return unavailable
+      return { status: 200, body: { ok: true, recap: deps.places.recapEnabled() } }
+    },
+    'POST /v1/settings/recap': (_query, body, caller) => {
+      if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
+      const input = RecapSettingsRequest.safeParse(body)
+      if (!input.success) return { status: 400, body: { error: 'invalid' } }
+      if (!deps.places?.setRecapEnabled) return unavailable
+      try { deps.places.setRecapEnabled(input.data.recap) } catch { return unavailable }
+      return { status: 200, body: { ok: true, recap: input.data.recap } }
+    },
     'POST /v1/labs': (_query, body, caller) => {
       if (caller?.origin !== 'operator') return { status: 403, body: { error: 'forbidden' } }
       const input = LabsRequest.safeParse(body)
@@ -65,11 +78,11 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): Rou
         return unavailable
       }
     },
-    'GET /v1/places': (_query, _body, caller, ctx) => {
+    'GET /v1/places': (query, _body, caller, ctx) => {
       if (caller?.origin !== 'operator' && caller?.origin !== 'device') return { status: 403, body: { error: 'forbidden' } }
       try {
         if (!deps.places) return unavailable
-        const body = deps.places.read(caller.origin)
+        const body = deps.places.read(caller.origin, query.get('recap') !== '0')
         const headers = { etag: body.version }
         return ctx?.headers?.get('if-none-match') === body.version ? { status: 304, body: null, headers } : { status: 200, body, headers }
       } catch (error) {
@@ -93,12 +106,12 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): Rou
       return deps.places.hide(input.data.key, input.data.hidden) ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
     },
     // 看过这一行:桌面和手机都是主人自己在看。
-    'POST /v1/places/seen': (_query, body, caller) => {
+    'POST /v1/places/seen': (query, body, caller) => {
       if (caller?.origin !== 'operator' && caller?.origin !== 'device') return { status: 403, body: { error: 'forbidden' } }
       const input = PlaceSeenRequest.safeParse(body)
       if (!input.success) return { status: 400, body: { error: 'invalid' } }
       if (!deps.places) return unavailable
-      return deps.places.seen(input.data.key) ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
+      return deps.places.seen(input.data.key, caller.origin === 'operator' && query.get('recap') === '1') ? { status: 200, body: { ok: true } } : { status: 404, body: { error: 'not_found' } }
     },
   }
 }

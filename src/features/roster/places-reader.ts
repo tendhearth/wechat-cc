@@ -17,6 +17,7 @@ import type { PlacesStore } from '../../adapters/store/places-store'
 import type { PlacesReader } from '../../ports/places'
 import { makePlaceOutlines, type PlaceOutlineDeps } from './place-outline'
 import { readOutlineInput } from './place-outline-input'
+import type { SessionRecaps } from './session-recap'
 import { claudeProjectSlug, makeProjectRoot, SCRATCH_PREFIX } from './project-root'
 
 export const PLACES_WINDOW_MS = 30 * 24 * 3_600_000
@@ -27,6 +28,8 @@ export interface PlacesReaderDeps {
   store: PlacesStore
   labs?: ReturnType<typeof makeLabsSettings>
   outlines?: PlaceOutlineDeps
+  recaps?: SessionRecaps
+  noteDesktopSeen?: (id: string) => void
   mapTopics?: { db: Db; owner: () => string | null; makeResolver: MapTopicResolver }
   opinion?: (requestId: string) => PlaceOpinionT | undefined
   root?: (path: string | null | undefined) => string | null
@@ -38,7 +41,7 @@ export const placeKey = (root: string) => `p:${createHash('sha256').update(root)
 export function makePlacesReader(deps: PlacesReaderDeps) {
   const placeMapEnabled = () => deps.labs?.placeMapEnabled() ?? false
   const root = deps.root ?? makeProjectRoot()
-  function collect(scope: 'operator' | 'device', roster = deps.roster) {
+  function collect(scope: 'operator' | 'device', roster = deps.roster, onHead?: (key: string, item: RosterItemT) => void) {
     const now = roster.now?.() ?? Date.now()
     const g = gatherRoster(roster, scope, now, PLACES_WINDOW_MS)
     const items = buildRoster({ ...g.input, seen: roster.seen, now, backWindowMs: PLACES_WINDOW_MS })
@@ -55,7 +58,7 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     for (const r of [...saved.map(x => x.root), ...raw.values()]) if (r && !r.startsWith(SCRATCH_PREFIX)) bySlug.set(claudeProjectSlug(r), r)
     const resolved = (r: string | null | undefined) => (r?.startsWith(SCRATCH_PREFIX) ? bySlug.get(r.slice(SCRATCH_PREFIX.length)) ?? null : r ?? null)
     const result = buildPlaces({
-      items,
+      items, onHead,
       rootOf: item => resolved(raw.get(item.key)),
       originOf: id => g.matters.get(id)?.originMessageId ?? null,
       saved,
@@ -137,10 +140,20 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
   }
 
   return {
-    read(scope) {
-      const { places, hidden, added, now } = collect(scope)
+    recapEnabled: () => deps.recaps?.enabled() ?? false,
+    setRecapEnabled: deps.recaps?.setEnabled,
+    recap: (id: string) => deps.recaps?.enabled() ? deps.recaps.read(id) : undefined,
+    read(scope, includeRecap = true) {
+      const heads = new Map<string, string>()
+      const recaps = scope === 'operator' && includeRecap && deps.recaps?.enabled() ? deps.recaps : undefined
+      const { places, hidden, added, now } = collect(scope, deps.roster, recaps && ((key, item) => {
+        if (item.terminal) heads.set(key, item.terminal.sessionId)
+      }))
       if (added.length) deps.store.add(added, now)
       for (const place of places) {
+        const id = heads.get(place.key)
+        const recap = id && recaps?.read(id)
+        if (recap) place.recap = recap
         const waiting = place.waiting
         if (waiting?.requestId) Object.assign(waiting, deps.opinion?.(waiting.requestId))
       }
@@ -205,6 +218,13 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     },
     move: (key, to) => deps.store.move(key, to),
     hide: (key, hidden) => deps.store.setHidden(key, hidden),
-    seen: key => deps.store.markSeen(key, deps.roster.now?.() ?? Date.now()),
+    seen(key, desktop = false) {
+      if (!deps.store.markSeen(key, deps.roster.now?.() ?? Date.now())) return false
+      if (desktop && deps.recaps?.enabled() && deps.noteDesktopSeen) {
+        const place = collect('operator').places.find(place => place.key === key)
+        for (const id of place?.matterIds ?? []) deps.noteDesktopSeen(id)
+      }
+      return true
+    },
   } satisfies PlacesReader & { planPlaces(): ReturnType<PlacesStore['list']> }
 }

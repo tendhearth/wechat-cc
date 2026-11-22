@@ -53,6 +53,7 @@ export interface TerminalRoutesDeps {
    */
   phoneSessions?: (sessionId?:string) => object[]
   ownerActions?: CliPhoneActions
+  recap?: (id: string) => import('@wechat-cc/protocol').SessionRecapT | undefined
 }
 
 /** GET /v1/cli/sessions 默认给多少条。 */
@@ -64,14 +65,26 @@ export const CLI_PERMISSION_POLL_CAP_MS = 25_000
 /** 手机设置面板那一口的令牌(设备 / 链接)。 */
 const fromPhone = (caller: Parameters<RouteHandler>[2]): boolean => caller?.origin === 'device' || caller?.origin === 'link'
 
-export function terminalOwnerRoutes(actions?:CliPhoneActions):RouteTable {
+export function terminalOwnerRoutes(actions?:CliPhoneActions, recap?: TerminalRoutesDeps['recap']):RouteTable {
   const shared:RouteTable={}
   for(const [key,handler] of Object.entries(terminalOwnerHandlers({cliActions:actions}))) {
     shared[key]=async(q,body,caller)=>{
       if(caller?.tier!=='admin'||!['operator','device'].includes(caller.origin))return {status:403,body:{error:'forbidden'}}
       const [method,path]=key.split(' '),url=new URL(path!,'http://127.0.0.1');url.search=String(q)
       const response=await handler!(url,new Request(url,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{})}),undefined)
-      return {status:response.status,body:await response.json() as Record<string,unknown>}
+      const result = await response.json() as Record<string, unknown>
+      const id = q.get('session_id')
+      if (key === 'GET /v1/cli/activity' && caller.origin === 'operator' && id && q.get('recap') !== '0') {
+        const noTranscript = response.status === 409 && result.error === 'no_transcript'
+        const note = response.ok || noTranscript ? recap?.(id) : undefined
+        if (note && noTranscript) {
+          // Hook-backed sessions can have a stored recap even when their transcript is unavailable.
+          const paged = q.has('full') || q.has('limit') || q.has('before')
+          return { status: 200, body: { ok: true, items: [], ...(paged ? { earlier: null } : {}), recap: note } }
+        }
+        if (note) result.recap = note
+      }
+      return { status: response.status, body: result }
     }
   }
   return shared
@@ -82,7 +95,7 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
     caller?.origin === 'session' && caller.tier === 'admin' && !!caller.chatId && deps.terminalSay.isOwnerChat(caller.chatId)
   const sayError = (code: string) => { const h = workbenchErrorHttp(code, 'desktop'); return { status: h.status, body: { ok: false, error: h.error } } }
   return {
-    ...terminalOwnerRoutes(deps.ownerActions),
+    ...terminalOwnerRoutes(deps.ownerActions, deps.recap),
     ...(deps.participation?participationRoutes(deps.participation):{}),
     'POST /v1/cli/project-memory': async (_q, body, caller) => {
       if (caller?.origin !== 'file') return { status: 403, body: { error: 'forbidden' } }

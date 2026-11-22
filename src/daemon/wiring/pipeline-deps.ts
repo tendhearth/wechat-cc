@@ -1,6 +1,7 @@
 import { makeLabsSettings } from '../../adapters/store/labs-settings'
 import { makeProjectTopicResolver } from '../../features/terminal'
-import { makePlacesReader, makeRosterReader, type RosterReaderDeps } from '../../features/roster'
+import { makeRecapSettings } from '../../adapters/store/recap-settings'
+import { makeSessionRecaps, RECAP_INTERVAL_MS, makePlacesReader, makeRosterReader, type RosterReaderDeps } from '../../features/roster'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import { ownerLedgerConversation } from '../../lib/matter-ledger-access'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
@@ -490,10 +491,22 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     ...(opts.workbench?{workbench:opts.workbench,relay:opts.workbench.rosterRelay}:{}),
   } : null
   const roster = rosterDeps ? makeRosterReader(rosterDeps) : null
+  const desktop = opts.proposals?.desktop
+  const placeSeenKey = (id: string) => `recap-place:${id}`
+  const recaps = rosterDeps ? makeSessionRecaps({
+    db, owner: ownerChatId, settings: makeRecapSettings(stateDir),
+    seenSince: (id, at) => !!desktop && (desktop.seenSince(id, at) || desktop.seenSince(placeSeenKey(id), at)),
+    evaluator: () => boot.registry.getCheapEval({ private: true }), holdBusy: boot.holdBusy, log,
+  }) : undefined
+  const recapTimer = recaps && setInterval(() => {
+    void recaps.check().catch(() => log('RECAP', 'check_unavailable'))
+  }, RECAP_INTERVAL_MS)
+  recapTimer?.unref()
   // 「地方」:同一份名单数据,往回看 30 天、按项目归拢;顺序存在 places 表(v117)。
   const places = rosterDeps ? makePlacesReader({
     roster: rosterDeps, store: makePlacesStore(db), labs: makeLabsSettings(stateDir), opinion: opts.workbench?.waitingOpinion,
     mapWorkbench: opts.workbench?.rosterRead,
+    recaps, noteDesktopSeen: id => desktop?.noteSeen(placeSeenKey(id)),
     outlines: { evaluator: () => boot.registry.getCheapEval({ private: true }), holdBusy: boot.holdBusy, log },
     mapTopics: {
       db, owner: ownerChatId,
@@ -514,7 +527,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
   const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
   // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。stop 退订 + 清定时器,main.ts 登记进 shutdown。
-  const stopMatterActivity = wireMatterActivity(matterActivity, opts.workbench?.changes)
+  const stopActivity = wireMatterActivity(matterActivity, opts.workbench?.changes)
+  const stopMatterActivity = () => {
+    clearInterval(recapTimer)
+    recaps?.stop()
+    stopActivity()
+  }
   // App 里跟 CC 说一句(重构第二批步 6c,wire-converse.ts):提到「一件事」与手机对话之前,两处直接拿它,不再靠「在下面才定义」的捕获。
   const companionConverse = wireCompanionConverse({
     stateDir, boot, careLedger, replySinks, messagesStore, ilink, log,

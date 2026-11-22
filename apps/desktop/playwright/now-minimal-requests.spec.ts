@@ -11,7 +11,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
   terminalPlace('demo','terminal-1','git status'),
  ]
  const decisions:unknown[]=[]
- await page.route('**/v1/places',route=>unreadable?route.fulfill({status:503,json:{error:'unavailable'}}):route.fulfill({json:{places,version:'two'}}))
+ await page.route(url => url.pathname.endsWith('/v1/places'),route=>unreadable?route.fulfill({status:503,json:{error:'unavailable'}}):route.fulfill({json:{places,version:'two'}}))
  await page.route(WORKBENCH_ROUTES,route=>{
   const path=new URL(route.request().url()).pathname
   if(path==='/v1/workbench/task')return route.fulfill({json:{task,events:[{id:1,taskId:task.id,kind:'text',text:'想运行测试，确认排版。',createdAt:2}],artifacts:[],questions:[],permissions:[{id:'p1',taskId:task.id,tool:'Bash',description:'bun run test',createdAt:2}]}})

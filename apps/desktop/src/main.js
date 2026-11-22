@@ -1159,10 +1159,27 @@ function wireEvents() {
 
   wireSettingsDrawer({
     deps: { invokeWorkbenchApi },
-    onOpen: () => { void refreshGuardStatus() },
+    onOpen: () => {
+      void refreshGuardStatus()
+      if (!deskWide()) return
+      const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('recap-toggle'))
+      if (!toggle) return
+      toggle.disabled = true
+      void v1(invokeWorkbenchApi, V1.places.recapSettings).then(result => {
+        if (typeof result?.recap !== 'boolean') return
+        toggle.classList.toggle('on', result.recap)
+        toggle.setAttribute('aria-pressed', String(result.recap))
+        toggle.disabled = false
+      }).catch(() => {})
+    },
     onToggleChange: async (id, on) => {
       // 返回 false → 持久化失败,让 settings-drawer 回滚开关(别让 UI 撒谎)。
-      if (id === "unattended-toggle") {
+      if (id === "recap-toggle") {
+        const result = await v1(invokeWorkbenchApi, V1.places.setRecap, { body: { recap: on } })
+        if (result?.recap !== on) return false
+        void deskPlaces?.refreshAfterWrite()
+        thingThread?.refreshRecap()
+      } else if (id === "unattended-toggle") {
         state.unattended = on
         try {
           await invoke("wechat_cli_text", { args: ["provider", "set", state.selectedProvider || "claude", "--unattended", on ? "true" : "false"] })

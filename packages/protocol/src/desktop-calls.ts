@@ -30,14 +30,16 @@ const body = () => ({ body: t<Body>() })
 export const DESKTOP_CALLS = {
   roster: { get: call('GET /v1/roster') },
   places: {
-    get: call('GET /v1/places'),
+    get: call('GET /v1/places', { query: t<{ recap?: 0 }>() }),
+    recapSettings: call('GET /v1/settings/recap'),
+    setRecap: call('POST /v1/settings/recap', { body: t<{ recap: boolean }>() }),
     labs: call('POST /v1/labs', { body: t<LabsRequestT>() }),
     map: call('GET /v1/places/map', { query: t<{ key: string; outline?: '1' }>() }),
     mapOutline: call('POST /v1/places/map/outline', { body: t<{ key: string }>() }),
     mapPin: call('POST /v1/places/map/pin', { body: t<PlaceMapPinRequestT>() }),
     move: call('POST /v1/places/move', { body: t<{ key: string; to: number }>() }),
     hide: call('POST /v1/places/hide', { body: t<{ key: string; hidden: boolean }>() }),
-    seen: call('POST /v1/places/seen', { body: t<{ key: string }>() }),
+    seen: call('POST /v1/places/seen', { query: t<{ recap?: 1 }>(), body: t<{ key: string }>() }),
   },
   checkup: {
     get:call('GET /v1/checkup'),
@@ -95,7 +97,7 @@ export const DESKTOP_CALLS = {
   cli: {
     detach:call('POST /v1/cli/detach',{body:t<{participationId:string}>()}),
     stop:call('POST /v1/cli/session-stop',{body:t<{session_id:string;run_id:string;confirmed:true}>()}),
-    activity:call('GET /v1/cli/activity',{query:t<CliActivityQuery>()}),
+    activity:call('GET /v1/cli/activity',{query:t<CliActivityQuery & { recap?: 0 }>()}),
     sessionSay:call('POST /v1/cli/session-say',body()),
     decide:call('POST /v1/cli/decide',body()),
     hooksInstall: call('POST /v1/cli/hooks/install', body()),

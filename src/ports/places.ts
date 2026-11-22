@@ -2,7 +2,10 @@ import type { PlacedItem } from '../domain/place-map-prompt'
 import type { PlacesResponseT, PlaceMapResponseT, PlaceMapPinRequestT, PlaceOutlineRunResponseT } from '@wechat-cc/protocol'
 /** 「地方」读写口(设计稿 2026-11-18-cc-two-sides-design.md §3):读同名单;顺序 / 收起存 places 表。 */
 export interface PlacesReader {
-  read(scope: 'operator' | 'device'): PlacesResponseT
+  recapEnabled?(): boolean
+  setRecapEnabled?(enabled: boolean): void
+  recap?(id: string): import('@wechat-cc/protocol').SessionRecapT | undefined
+  read(scope: 'operator' | 'device', includeRecap?: boolean): PlacesResponseT
   placeMapEnabled(): boolean
   setPlaceMap(enabled: boolean): boolean
   placeForPath(path: string): string | null
@@ -14,7 +17,7 @@ export interface PlacesReader {
   move(key: string, to: number): boolean
   hide(key: string, hidden: boolean): boolean
   /** 主人看了这一行:之后那一句先说从这以后变了什么(「坐回来」)。 */
-  seen(key: string): boolean
+  seen(key: string, desktop?: boolean): boolean
 }
 
 export type PlaceMapPromptReader = Pick<PlacesReader, 'placeMapEnabled' | 'placedItems'>

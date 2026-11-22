@@ -663,12 +663,12 @@ describe('schema lookup tables', () => {
       'POST /v1/notebook/chat/jot', 'POST /v1/notebook/chat/read', 'POST /v1/notebook/paper',
       'POST /v1/notebook/strike', 'POST /v1/notebook/write',
     ])
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(77)   // +6:分享一件事(主人侧开 / 列 / 撤 / 换档,读和说那段对话);+2:地方挪 / 收起;+1:地方看过(坐回来);+1:图上摆放;+1:按方面梳理
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(78)   // +6:分享一件事(主人侧开 / 列 / 撤 / 换档,读和说那段对话);+2:地方挪 / 收起;+1:地方看过(坐回来);+1:图上摆放;+1:按方面梳理
   })
   it('RESPONSE_SCHEMAS has one entry per route', () => {
     // F1(架构终态):每一条 /v1 路由都有响应契约 —— 257 条(P3f 补齐手机专用与文件块的 29 条契约;G6 加了收回的话两条,S5 加了 presence 主题一条,P3e-1 / P3e-2 加了 /v1/matter/* 八条 + 七条),与路由表里 /v1 的条数相同。
     // 本机体检新增五条响应契约；记录本与原有响应契约完整保留。分享一件事(主人侧开 / 列 / 撤 / 换档,读和说那段对话)六条。地方看过(坐回来)一条。一件事的图(实验)读取、摆放和梳理各一条。
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(304)
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(306)
     expect(Object.keys(RESPONSE_SCHEMAS).filter(key => / \/v1\/notebook(?:\/|$)/.test(key)).sort()).toEqual([
       'GET /v1/notebook', 'POST /v1/notebook/chat/jot', 'POST /v1/notebook/chat/read',
       'POST /v1/notebook/paper', 'POST /v1/notebook/strike', 'POST /v1/notebook/write',
