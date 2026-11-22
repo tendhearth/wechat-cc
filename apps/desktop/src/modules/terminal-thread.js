@@ -114,7 +114,8 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   let empty = '正在读取…'
   const isVisible = () => document.visibilityState === 'visible' && !host.closest('[hidden], [inert]')
   const name = () => session?.displayName || executorName(session?.source || agent) || '终端'
-  const readOnly = () => wide.matches && (ended() || session?.status === 'ended')
+  const archivedInPlaces = () => wide.matches && ended()
+  const readOnly = () => archivedInPlaces() || (wide.matches && session?.status === 'ended')
   const pending = () => !readOnly() && session?.pending?.actionable && session.pending.hash !== answered ? session.pending : null
 
   function reflect() {
@@ -254,7 +255,8 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     if (!alive || polling || !isVisible()) return
     polling = true
     const version = recapVersion
-    const archived = readOnly()
+    // A cached ended status can lock the composer, but only the place list stops status polling.
+    const archived = archivedInPlaces()
     let sourceChanged = false
     try {
       const [sessions, activity] = await Promise.allSettled([

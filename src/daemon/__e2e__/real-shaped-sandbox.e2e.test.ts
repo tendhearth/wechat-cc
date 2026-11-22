@@ -729,6 +729,46 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect((await desktop('POST', '/v1/cli/decide', { session_id, decision: 'allow' })).status).toBe(404)
   })
 
+  it('桌面挪动和收起历史地方时只保存操作过的行', async () => {
+    const fixture = mkdtempSync(join(process.cwd(), 'sandbox-ended-places-'))
+    try {
+      const ids = ['sandbox-place-move', 'sandbox-place-hide', 'sandbox-place-untouched']
+      for (const session_id of ids) {
+        const cwd = join(fixture, session_id)
+        mkdirSync(join(cwd, '.git'), { recursive: true })
+        for (const kind of ['prompt', 'session_end']) {
+          expect((await desktop('POST', '/v1/cli/event', {
+            source: 'claude', kind, session_id, cwd, machine: hostname(), idle_s: 0,
+          }, 'trusted')).status).toBe(200)
+        }
+      }
+      const read = async () => {
+        const response = await desktop<import('@wechat-cc/protocol').PlacesResponseT>('GET', '/v1/places')
+        expect(response.status).toBe(200)
+        return response.body
+      }
+      const before = await read()
+      const [move, hide, untouched] = ids.map(id => before.places.find(place => place.sessionIds.includes(id))!.key)
+      const saved = (key: string) => d.query('SELECT key FROM places WHERE key = ?', key)
+      expect(saved(move!)).toHaveLength(0)
+      expect(saved(hide!)).toHaveLength(0)
+      expect(saved(untouched!)).toHaveLength(0)
+
+      expect((await desktop('POST', '/v1/places/move', { key: move, to: 0 })).status).toBe(200)
+      expect((await read()).places[0]?.key).toBe(move)
+      expect((await desktop('POST', '/v1/places/hide', { key: hide, hidden: true })).status).toBe(200)
+      const after = await read()
+      expect(after.hidden?.map(place => place.key)).toContain(hide)
+      expect(after.places.map(place => place.key)).not.toContain(hide)
+      expect(after.places.map(place => place.key)).toContain(untouched)
+      expect(saved(move!)).toHaveLength(1)
+      expect(saved(hide!)).toHaveLength(1)
+      expect(saved(untouched!)).toHaveLength(0)
+    } finally {
+      removeTempDir(fixture)
+    }
+  })
+
   it('guest path: a stranger writes ⇒ neutral reply + the owner is asked; owner approves ⇒ the stranger is onboarded and talks to CC in a locked-down session that carries none of the owner\'s memory', async () => {
     const before = spawnOptions.length
     d.sendText(STRANGER, '你好呀')

@@ -450,3 +450,43 @@ test('选中的会话结束后留在原处，重新从存档最新一页翻阅',
   await terminal(page).getByRole('button',{name:'更早的',exact:true}).click()
   await expect(terminal(page).getByText('存档里漏掉的一步')).toBeVisible()
 })
+
+test('名单恢复活会话后，选中的会话恢复输入和审批', async ({page,shimUrl}) => {
+  let status: 'running' | 'ended' | 'waiting' = 'running'
+  let archived = false
+  await routePlaces(page,()=>[placeItem('花园',{updatedAt:now,sessions:[
+    placeSession('solo',archived?'done':'working',now),placeSession('other','replied',now-1000),
+  ]})])
+  await routeRoster(page,[])
+  await page.route('**/v1/cli/sessions**',route=>route.fulfill({json:{sessions:[
+    session('solo',{status,live_window:true,pending:status==='waiting'?approval:null}),
+  ]}}))
+  await page.route('**/v1/cli/activity**',route=>route.fulfill({json:{ok:true,items:[],earlier:null}}))
+  await page.goto(shimUrl)
+  await select(page,'花园')
+  const input = terminal(page).locator('textarea')
+  const tab = thread(page).locator('[data-thread-session="terminal:solo"]')
+  const endedNote = terminal(page).getByText('这次会话已经结束了，只能看。')
+  await expect(input).toBeEnabled()
+
+  // The session endpoint can report the end before the place list catches up.
+  status = 'ended'
+  await expect(endedNote).toBeVisible({timeout:9000})
+  await expect(input).toHaveCount(0)
+  archived = true
+  await expect(tab).toHaveAccessibleName(/已经结束/,{timeout:9000})
+  archived = false
+  status = 'running'
+  await expect(input).toBeEnabled({timeout:9000})
+  await expect(tab).toHaveAttribute('aria-pressed','true')
+  await expect(endedNote).toBeHidden()
+  await input.fill('接着整理')
+  await expect(input).toHaveValue('接着整理')
+
+  status = 'waiting'
+  for (const name of ['允许','不允许']) {
+    const button = terminal(page).getByRole('button',{name,exact:true})
+    await expect(button).toBeVisible({timeout:9000})
+    await expect(button).toBeEnabled()
+  }
+})

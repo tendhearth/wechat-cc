@@ -96,7 +96,7 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     const sharedRoot = hasHistory ? resolver(sharedItems) : resolved
     const shared = hasHistory ? buildPlaces({ ...placeInput, items: sharedItems,
       rootOf: item => sharedRoot(raw.get(item.key)), onHead: undefined }).added : []
-    const result = buildPlaces({ ...placeInput, saved: [...saved, ...shared] })
+    const result = buildPlaces({ ...placeInput, saved: [...saved, ...shared], fillOpenPositions: hasHistory })
     if (includeSessions) {
       const sessionsByPlace = new Map<string, NonNullable<PlaceT['sessions']>>()
       for (const item of items) {
@@ -273,8 +273,23 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       const visible = new Set(places.map(place => place.key))
       return saved.filter(place => visible.has(place.key))
     },
-    move: (key, to) => deps.store.move(key, to),
-    hide: (key, hidden) => deps.store.setHidden(key, hidden),
+    move(key, to) {
+      const { places, records, now } = collect('operator', deps.roster, undefined, true, false)
+      return deps.store.move(key, to, {
+        rows: records.sort((a, b) => a.position - b.position || a.key.localeCompare(b.key)),
+        visible: new Set(places.map(place => place.key)),
+        now,
+      })
+    },
+    hide(key, hidden) {
+      if (deps.store.setHidden(key, hidden)) return true
+      if (!hidden) return false
+      const { records, now } = collect('operator', deps.roster, undefined, true, false)
+      const record = records.find(record => record.key === key)
+      if (!record) return false
+      deps.store.add([{ ...record, hidden }], now)
+      return deps.store.setHidden(key, hidden)
+    },
     seen(key, desktop = false) {
       if (!deps.store.markSeen(key, deps.roster.now?.() ?? Date.now())) return false
       if (desktop && deps.recaps?.enabled() && deps.noteDesktopSeen) {

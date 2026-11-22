@@ -273,6 +273,35 @@ it('只有 operator 地方展示七天内的已结束会话，手机地方与默
   }
 })
 
+it('历史地方可以往下挪过另一条历史记录，手机只看到明确保存过的地方', async () => {
+  const ended = ['/w/first', '/w/second'].map((project, i): CliSessionView => ({
+    session_id: 'ended-' + i, code: 'ended-' + i, source: 'codex', status: 'ended', project, cwd: project,
+    pending: null, last_event_at: NOW - i, stale: false, machine: null, origin_agent: null, last_summary: null,
+    created_at: NOW - i, last_prompt_at: null,
+  }))
+  const roster = { matters: { list: () => [] }, terminals: (opts?: { includeEnded?: boolean }) => opts?.includeEnded ? ended : [],
+    seen: () => null, now: () => NOW }
+  const { reader, store } = setup([], [], () => NOW, { roster })
+  const first = placeKey('/w/first'), second = placeKey('/w/second')
+  const desktop = () => reader.read('operator').places.map(place => place.key)
+  const phone = async () => JSON.stringify((await call({ places: reader }, 'GET /v1/places', null, 'device')).body)
+  const before = await phone()
+  expect(desktop()).toEqual([first, second])
+  expect(store.list()).toEqual([])
+  expect(await phone()).toBe(before)
+
+  expect(reader.move(first, 1)).toBe(true)
+  expect(desktop()).toEqual([second, first])
+  expect(store.list().map(place => place.key)).toEqual([first])
+  const phoneWithSavedPlace = await phone()
+  expect(phoneWithSavedPlace.includes(first)).toBe(true)
+  expect(phoneWithSavedPlace.includes(second)).toBe(false)
+
+  expect(reader.move(first, 0)).toBe(true)
+  expect(desktop()).toEqual([first, second])
+  expect(await phone()).toBe(phoneWithSavedPlace)
+})
+
 it('页签只取三十天内的活会话，按档内时间排序并封顶三十次', () => {
   const session = (id: string, status: CliSessionView['status'], days: number): CliSessionView => ({
     session_id: id, code: id, source: 'codex', status, project: '/w/rici', cwd: '/w/rici', stale: false,
