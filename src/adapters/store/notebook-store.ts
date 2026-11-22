@@ -50,6 +50,13 @@ export function makeNotebookStore(db: Db): NotebookStore {
         CROSS JOIN notebook_entries AS entry ON entry.id = ref.value
       `).all(JSON.stringify(ids))
     },
+    firstReplyAfter(at) {
+      return db.query<{ createdAt: number }, [number]>(`
+        SELECT created_at AS createdAt FROM notebook_entries
+        WHERE created_at > ? AND author = 'cc' AND ref_id IS NOT NULL
+        ORDER BY created_at LIMIT 1
+      `).get(at)?.createdAt ?? null
+    },
     occupiedDays(timezone) {
       // Build once per timezone from the covering timestamp index. Appends
       // maintain the calendar so page reads only query the selected day.

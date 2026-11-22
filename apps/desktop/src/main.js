@@ -28,6 +28,7 @@ import { createMainNavigation, createNativeNavigation } from './main-navigation.
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi, invokeWorkbenchApi } from "./api.js"
+import { mountNotebookMail } from "./modules/notebook-mail.js"
 import { mountNotebook } from "./modules/notebook.js"
 import { V1, v1 } from "./daemon-client.js"
 import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine, guardRowVisible, hasUsableProvider, providerReady } from "./view.js"
@@ -186,9 +187,9 @@ async function openDeskTask(id) {
   if (document.body.dataset.pane === 'workbench' && getViewedWorkbenchTaskId() === id) recordDeskNavigation?.()
 }
 
-/** @param {string} pane */
-function navigateDeskPane(pane) {
-  switchPane(pane)
+/** @param {string} pane @param {string} [notebookDay] */
+function navigateDeskPane(pane, notebookDay) {
+  switchPane(pane, notebookDay)
   recordDeskNavigation?.()
 }
 const mainNavigation = createMainNavigation(destination => {
@@ -293,7 +294,14 @@ function reflectTopbarWaiting() {
   else cc.removeAttribute('aria-current')
 }
 
+const notebookMail = mountNotebookMail(invokeApi, day => navigateDeskPane('notebook', day))
+function syncNotebookMail() {
+  notebookMail.sync(deskWide() && document.documentElement.dataset.mode === 'dashboard'
+    && lastDaemon?.alive === true && !!lastPresence && lastPresence.presence !== 'down')
+}
+
 function reflectDeskConnection() {
+  syncNotebookMail()
   const root = document.documentElement
   const stopped = deskWide() && !!lastPresence && lastDaemon?.alive === false
   if (stopped === root.hasAttribute('data-desk-cc-stopped')) return
@@ -640,6 +648,7 @@ function setMode(mode) {
   if (mode !== 'wizard') stopQr(state)
   state.mode = mode
   document.documentElement.dataset.mode = mode
+  syncNotebookMail()
   syncOnboardPhone()
   if (mode === "dashboard") {
     doctorPoller.start()
@@ -889,8 +898,8 @@ function reflectWorkbenchSearchRole() {
   else layer.setAttribute('aria-modal', 'true')
 }
 
-/** @param {string} name */
-function switchPane(name) {
+/** @param {string} name @param {string} [notebookDay] */
+function switchPane(name, notebookDay) {
   const searchRequested = name === 'all' || name === 'together'
   if(searchRequested)name='workbench'
   const focusConversation = name === "converse" || name === 'chat'
@@ -960,8 +969,8 @@ function switchPane(name) {
   })
   if (name === 'notebook') {
     const host = document.getElementById('notebook-pane')
-    if (!notebook && host) notebook = mountNotebook(host, invokeApi)
-    notebook?.open()
+    if (!notebook && host) notebook = mountNotebook(host, invokeApi, notebookMail)
+    notebook?.open(notebookDay)
   } else notebook?.close()
   // The destination must be visible before navigation transfers keyboard focus.
   // Logs pane gets a 10s auto-refresh tick while active; stop it on
@@ -1642,7 +1651,7 @@ function wireEvents() {
     el.addEventListener("click", () => {
       if (el.classList.contains("disabled")) return
       if (el.id === 'topbar-cc') switchPane('overview')
-      else navigateDeskPane(el.dataset.pane ?? "")
+      else navigateDeskPane(el.dataset.pane ?? "", el.dataset.pane === "notebook" ? notebookMail.day() : undefined)
     })
   })
 
@@ -2200,6 +2209,7 @@ function mountDeskLayout(strip) {
     }
     root.toggleAttribute('data-desk-collapsed', closed)
     root.toggleAttribute('data-desk-peeking', closed && peeking)
+    syncNotebookMail()
     toggle.setAttribute('aria-expanded', String(visible))
     const label = closed ? '展开左边' : '收起左边'
     toggle.setAttribute('aria-label', label)

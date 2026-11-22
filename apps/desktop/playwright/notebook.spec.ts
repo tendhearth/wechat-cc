@@ -404,3 +404,93 @@ for (const width of [1280, 800]) {
     }
   })
 }
+
+const mailPath = '**/v1/notebook/unseen'
+const mailName = '本子上有 CC 的回信'
+const mailDot = '#desk-notebook-dot'
+const emptyMail = { ok: true, unseen: false, day: null }
+
+for (const via of ['信封', '本子行'] as const) {
+  test(`点${via}翻到回信那天，读回来以后信封和小点消失`, async ({ page, shimUrl }) => {
+    await page.setViewportSize({ width: 1280, height: 820 })
+    const owner = row(901, 'owner', 'fixture', october)
+    const reply = row(902, 'cc', 'fixture', october, owner.id)
+    const { reads, settings } = await mockNotebook(page, { [october]: [owner, reply] })
+    const read = gate()
+    settings.readGate = read.wait
+    await page.route(mailPath, route => route.fulfill({ json: reads.some(q => q.get('day') === october)
+      ? emptyMail : { ok: true, unseen: true, day: october } }))
+    try {
+      await page.goto(shimUrl)
+      await expect(page.locator('#dash-global-rail')).toBeVisible()
+      const envelope = page.getByRole('button', { name: mailName, exact: true })
+      const notebook = page.getByRole('button', { name: '本子，有回信', exact: true })
+      await expect(envelope).toBeVisible()
+      await expect(envelope).toHaveAttribute('title', mailName)
+      await expect(envelope.locator('img')).toHaveCSS('width', '22px')
+      await expect(page.locator(mailDot)).toBeVisible()
+      await page.locator('#topbar-cc').focus()
+      await page.keyboard.press('Tab')
+      await expect(envelope).toBeFocused()
+      if (via === '信封') await page.keyboard.press('Enter')
+      else await notebook.click()
+      await expect(page.locator('#notebook-date')).toHaveText('10 月 28 日')
+      await expect.poll(() => reads.map(q => q.get('day'))).toEqual([october])
+      await expect(envelope).toBeVisible()
+      read.release()
+      await expect(envelope).toBeHidden()
+      await expect(page.locator(mailDot)).toBeHidden()
+      await expect(page.getByRole('button', { name: '本子', exact: true })).toBeVisible()
+    } finally {
+      read.release()
+    }
+  })
+}
+
+test('宽窗口没有回信就不摆信，写成功后每 20 秒查一次', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 1280, height: 820 })
+  await mockNotebook(page)
+  let checks = 0
+  await page.route(mailPath, route => {
+    checks++
+    return route.fulfill({ json: emptyMail })
+  })
+  await page.goto(shimUrl)
+  await expect(page.locator('#dash-global-rail')).toBeVisible()
+  await clickNav(page, 'notebook')
+  await expect.poll(() => checks).toBeGreaterThanOrEqual(2)
+  await expect(page.locator('#desk-notebook-envelope')).toBeHidden()
+  await expect(page.locator(mailDot)).toBeHidden()
+  const saved = page.waitForResponse('**/v1/notebook/write')
+  await page.locator(writeInput).fill('fixture')
+  await page.locator(writeInput).press('Enter')
+  expect((await saved).ok()).toBe(true)
+  await expect(page.locator('.notebook-strike')).toBeVisible()
+  const before = checks
+  await page.clock.fastForward(20_100)
+  await expect.poll(() => checks).toBe(before + 1)
+  await page.clock.fastForward(20_000)
+  await expect.poll(() => checks).toBe(before + 2)
+})
+
+for (const [surface, width, alive] of [['窄窗口', 760, true], ['CC 停止的宽窗口', 1280, false]] as const) {
+  test(`${surface}没有信，也不查回信`, async ({ page, shim, shimUrl }) => {
+    await shim.invoke('demo.seed', { daemonAlive: alive })
+    await page.setViewportSize({ width, height: 820 })
+    await mockNotebook(page)
+    let checks = 0
+    await page.route(mailPath, route => {
+      checks++
+      return route.fulfill({ json: { ok: true, unseen: true, day: october } })
+    })
+    await page.goto(shimUrl)
+    await expect(page.locator('#dash-global-rail')).toBeVisible()
+    if (!alive) await expect(page.locator('#desk-cc-presence')).toHaveText('CC 没在运行')
+    await clickNav(page, 'notebook')
+    await expect(page.locator('#notebook-date')).toHaveText('今天')
+    await page.clock.fastForward(61_000)
+    await expect(page.locator('#desk-notebook-envelope')).toBeHidden()
+    await expect(page.locator(mailDot)).toBeHidden()
+    expect(checks).toBe(0)
+  })
+}

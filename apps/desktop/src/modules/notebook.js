@@ -14,8 +14,12 @@ const LINE_HEIGHT = 36
 const UNSAVED_DELAY = 5000
 const DEFAULT_PEN = /** @type {const} */ ({ font: 'kai', ink: 'blueBlack', reason: '' })
 
-/** @param {HTMLElement} host @param {Parameters<typeof callNotebook>[0]} transport */
-export function mountNotebook(host, transport) {
+/**
+ * @param {HTMLElement} host
+ * @param {Parameters<typeof callNotebook>[0]} transport
+ * @param {{ pageRead?: () => void, wrote?: () => void }} [mail]
+ */
+export function mountNotebook(host, transport, mail) {
   const input = /** @type {HTMLTextAreaElement} */ (host.querySelector('#notebook-write'))
   const list = /** @type {HTMLElement} */ (host.querySelector('#notebook-entries'))
   const scroll = /** @type {HTMLElement} */ (host.querySelector('.notebook-scroll'))
@@ -98,6 +102,7 @@ export function mountNotebook(host, transport) {
         if (result?.day !== dateKey || !result.today || !Array.isArray(result.entries) || !Array.isArray(result.days)) {
           throw new Error('Notebook page unavailable')
         }
+        mail?.pageRead?.()
         return result
       })().finally(() => reads.delete(key))
       reads.set(key, request)
@@ -109,6 +114,7 @@ export function mountNotebook(host, transport) {
     const reply = /** @type {{ entry: NotebookEntry }} */ (await callNotebook(transport, { action: 'write', body }))
     return reply?.entry
   }, (pending, entry) => {
+    mail?.wrote?.()
     revision++
     for (const [dateKey, entries] of pages) {
       if (dateKey === entry.day) continue
@@ -279,15 +285,15 @@ export function mountNotebook(host, transport) {
     if (Number.isFinite(nextStatus)) statusTimer = window.setTimeout(render, nextStatus)
   }
 
-  /** @param {string} [target] */
-  async function refresh(target) {
+  /** @param {string} [target] @param {boolean} [keepDay] */
+  async function refresh(target, keepDay = false) {
     const token = view
     const stamp = revision
     const selected = day
     try {
       const data = await readDay(selected)
       if (!active || token !== view) return
-      if (stamp !== revision) return void refresh(target)
+      if (stamp !== revision) return void refresh(target, keepDay)
       pages.set(data.day, data.entries.filter(entry => entry.day === data.day))
       days = [...data.days].sort()
       pen = data.pen ?? DEFAULT_PEN
@@ -297,7 +303,7 @@ export function mountNotebook(host, transport) {
       knowsToday = true
       today = data.today
       timeZone = data.timeZone
-      if (wasToday && day !== today) {
+      if (!keepDay && wasToday && day !== today) {
         selectDay(today)
         scroll.scrollTop = scroll.scrollHeight
         return void refresh()
@@ -337,15 +343,15 @@ export function mountNotebook(host, transport) {
     save()
   }
 
-  /** @param {string} selected @param {string} [target] */
-  function showDay(selected, target) {
+  /** @param {string} selected @param {string} [target] @param {boolean} [keepDay] */
+  function showDay(selected, target, keepDay = false) {
     if (selected !== day) {
       selectDay(selected)
       scroll.scrollTop = selected === today && !target ? scroll.scrollHeight : 0
       if (selected === today && !target) input.focus({ preventScroll: true })
     }
     const located = target && locate(target)
-    void refresh(located ? undefined : target)
+    void refresh(located ? undefined : target, keepDay)
   }
 
   /** @param {NotebookEntry} entry */
@@ -434,8 +440,12 @@ export function mountNotebook(host, transport) {
   })
 
   return {
-    open() {
-      if (active) return
+    /** @param {string} [targetDay] */
+    open(targetDay) {
+      if (active) {
+        if (targetDay) showDay(targetDay, undefined, true)
+        return
+      }
       active = true
       view++
       if (!initialized) {
@@ -457,10 +467,11 @@ export function mountNotebook(host, transport) {
         }
       }
       syncOfflineDate()
+      if (targetDay && targetDay !== day) selectDay(targetDay)
       render()
       resizeInput()
       if (day === today) input.focus({ preventScroll: true })
-      void refresh()
+      void refresh(undefined, !!targetDay)
       void retry()
       pollTimer = window.setInterval(() => {
         syncOfflineDate()

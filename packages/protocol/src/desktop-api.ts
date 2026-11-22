@@ -1,4 +1,4 @@
-import { NotebookChatReadRequest, NotebookChatReadResponse, NotebookJotRequest, NotebookJotResponse, NotebookPageResponse, NotebookPaperRequest, NotebookPaperResponse, NotebookStrikeRequest, NotebookStrikeResponse, NotebookWriteRequest, NotebookWriteResponse } from './notebook'
+import { NotebookChatReadRequest, NotebookChatReadResponse, NotebookJotRequest, NotebookJotResponse, NotebookPageResponse, NotebookUnseenResponse, NotebookPaperRequest, NotebookPaperResponse, NotebookStrikeRequest, NotebookStrikeResponse, NotebookWriteRequest, NotebookWriteResponse } from './notebook'
 import { RosterResponse } from './roster'
 import { RecapSettingsRequest, RecapSettingsResponse, SessionRecap, PlaceOutlineRequest, PlaceOutlineRunResponse, LabsRequest, LabsResponse, PlaceMapPinRequest, PlaceMapResponse, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest, PlacesResponse, PlaceWriteResponse } from './places'
 import { OptionalReplyMetadata } from './reply-attribution'
@@ -2718,6 +2718,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   // 一件事 / 连接 / 手机 / 插件 / 许可 / 终端会话 / 日历 / 信
   'GET /v1/roster': RosterResponse,
   'GET /v1/notebook': NotebookPageResponse,
+  'GET /v1/notebook/unseen': NotebookUnseenResponse,
   'POST /v1/notebook/write': NotebookWriteResponse,
   'POST /v1/notebook/strike': NotebookStrikeResponse,
   'POST /v1/notebook/paper': NotebookPaperResponse,

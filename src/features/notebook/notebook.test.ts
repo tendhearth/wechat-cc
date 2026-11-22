@@ -570,3 +570,90 @@ it.each(['', '%'])('bounds and continues chat reads for literal query %j', async
   expect(received).toEqual(expected)
   expect(pages).toBeGreaterThan(1)
 })
+
+describe('notebook reply watermark', () => {
+  const unseen = 'GET /v1/notebook/unseen'
+  const page = 'GET /v1/notebook'
+  const empty = { ok: true, unseen: false, day: null }
+
+  it('initializes at now and uses the oldest unread reply’s local day, including replies to struck entries', async () => {
+    const { n, call, store, at } = fixture()
+    const owner = n.write('owner', 'owner-watermark', 'desktop')
+    n.strike(owner.id, true)
+    const append = (createdAt: number, refId: string | null) => store.append({
+      author: 'cc', body: 'fixture', origin: 'desktop', createdAt, refId, clientId: null,
+    })
+    append(BASE - 1, owner.id)
+    expect((await call(unseen)).body).toEqual(empty)
+    expect(store.get('repliesSeenAt')).toBe(BASE)
+    append(BASE + 1, null)
+    expect((await call(unseen, null, 'device')).body).toEqual(empty)
+
+    const beforeMidnight = Date.parse('2026-11-20T07:59:59Z')
+    const nextDay = beforeMidnight + 1000
+    append(beforeMidnight, owner.id)
+    append(nextDay, owner.id)
+    at(nextDay + 1)
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-19' })
+    expect((await call(page, null, 'operator', 'day=2026-11-18')).status).toBe(200)
+    expect(store.get('repliesSeenAt')).toBe(BASE)
+    expect((await call(page, null, 'session', 'day=2026-11-19', 'admin', 'owner')).status).toBe(403)
+    expect((await call(unseen, null, 'session', '', 'admin', 'owner')).status).toBe(403)
+    expect(store.get('repliesSeenAt')).toBe(BASE)
+    expect((await call(page, null, 'device', 'day=2026-11-19')).status).toBe(200)
+    expect(store.get('repliesSeenAt')).toBe(beforeMidnight)
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-20' })
+    expect((await call(page, null, 'operator', 'day=2026-11-20')).status).toBe(200)
+    expect((await call(unseen)).body).toEqual(empty)
+    expect((await call(page, null, 'operator', 'day=2026-11-19')).status).toBe(200)
+    expect(store.get('repliesSeenAt')).toBe(nextDay)
+  })
+
+  it('only advances past replies carried in the paired-device frame', async () => {
+    const { n, store } = fixture()
+    store.set('pen', DEFAULT_OPENING)
+    store.set('repliesSeenAt', BASE)
+    const owner = n.write('字'.repeat(1000), 'watermark-frame', 'app')
+    const reply = store.append({
+      author: 'cc', body: '字'.repeat(1000), origin: 'desktop', createdAt: BASE + 1,
+      refId: owner.id, clientId: null,
+    })
+    const route = notebookRoutes(n)[page]!
+    const device = { tier: 'admin', origin: 'device', frameBudget: 5000 } as const
+    const first = await route(new URLSearchParams(), null, device)
+    expect(first.body).toHaveProperty('nextAfter', owner.id)
+    expect(store.get('repliesSeenAt')).toBe(BASE)
+    const second = await route(new URLSearchParams({ day: owner.day, after: owner.id }), null, device)
+    expect(second.status).toBe(200)
+    expect(store.get('repliesSeenAt')).toBe(reply.createdAt)
+  })
+
+  it('isolates setting read and write failures from page reads', async () => {
+    const { call, store } = fixture()
+    store.set('pen', DEFAULT_OPENING)
+    const get = store.get
+    const read = vi.spyOn(store, 'get').mockImplementation(key => {
+      if (key === 'repliesSeenAt') throw Error('setting read failed')
+      return get(key)
+    })
+    expect((await call(page)).status).toBe(200)
+    read.mockRestore()
+    const write = vi.spyOn(store, 'set').mockImplementation(() => { throw Error('setting write failed') })
+    expect((await call(page)).status).toBe(200)
+    expect(write).toHaveBeenCalledWith('repliesSeenAt', BASE)
+  })
+
+  it('queries unseen status without opening, picking a pen, or appending', async () => {
+    const model = vi.fn(() => { throw Error('unexpected model lookup') })
+    const { n, call, store } = fixture(model)
+    const open = vi.spyOn(n, 'open').mockImplementation(() => { throw Error('unexpected open') })
+    const append = vi.spyOn(store, 'append').mockImplementation(() => { throw Error('unexpected append') })
+    expect((await call(unseen)).body).toEqual(empty)
+    expect((await call(unseen)).body).toEqual(empty)
+    expect(store.get('pen')).toBeNull()
+    expect(store.get('paper')).toBeNull()
+    expect(model).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
+    expect(append).not.toHaveBeenCalled()
+  })
+})

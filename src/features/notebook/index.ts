@@ -176,6 +176,23 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
       try { timeZone = new Intl.DateTimeFormat('en', { timeZone: timezone }).resolvedOptions().timeZone } catch {}
       return { day: selected, today, timeZone, days: [...days], entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
     },
+    markRepliesSeen(entries) {
+      const previous = store.get('repliesSeenAt')
+      let latest = previous ?? now()
+      for (const entry of entries) {
+        if (entry.author === 'cc' && entry.refId !== null) latest = Math.max(latest, entry.createdAt)
+      }
+      if (latest !== previous) store.set('repliesSeenAt', latest)
+    },
+    unseen() {
+      let seenAt = store.get('repliesSeenAt')
+      if (seenAt === null) {
+        seenAt = now()
+        store.set('repliesSeenAt', seenAt)
+      }
+      const at = store.firstReplyAfter(seenAt)
+      return { ok: true, unseen: at !== null, day: at === null ? null : localParts(at, settings().timezone).day }
+    },
     write(body, clientId, origin) {
       const entry = append('owner', body, origin, now(), clientId)
       return { ...entry, day: localParts(entry.createdAt, settings().timezone).day }
