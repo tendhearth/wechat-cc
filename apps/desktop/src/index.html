@@ -428,11 +428,11 @@
           </div>
           <nav aria-label="主导航">
             <button id="topbar-roster" type="button" aria-controls="roster-aside" aria-expanded="false">在做 0</button>
-            <button id="topbar-search" type="button">搜索</button>
-            <button class="dash-nav-link" data-pane="notebook">本子</button>
-            <button class="dash-nav-link" data-pane="memory">记忆<span id="memory-count" hidden></span></button>
-            <button class="dash-nav-link" data-pane="recollections">回忆</button>
-            <details class="topbar-more"><summary aria-label="更多">⋯</summary><div>
+            <button id="topbar-search" type="button"><svg class="desk-nav-icon" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/></svg>搜索</button>
+            <button class="dash-nav-link" data-pane="notebook"><svg class="desk-nav-icon" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 17 20H7z"/><path d="M7 4v16M4.5 8H7M4.5 12H7M4.5 16H7M11 9h4"/></svg>本子</button>
+            <button class="dash-nav-link" data-pane="memory"><svg class="desk-nav-icon" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 4 8 4-8 4-8-4z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/></svg>记忆<span id="memory-count" hidden></span></button>
+            <button class="dash-nav-link" data-pane="recollections"><svg class="desk-nav-icon" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5"/><path d="M4.5 5v4h4M12 8.5V12l2.6 1.8"/></svg>回忆</button>
+            <details class="topbar-more"><summary aria-label="更多"><span class="desk-more-compact" aria-hidden="true">⋯</span><svg class="desk-nav-icon" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="18" cy="12" r=".9" fill="currentColor"/></svg><span class="desk-more-label" hidden>更多</span></summary><div>
               <button id="settings-open" type="button">设置</button>
               <div class="desk-labs-title" id="desk-labs-title">实验</div>
               <button class="dash-nav-link" data-pane="atelier">画室</button>
@@ -445,6 +445,7 @@
               </section>
             </div></details>
           </nav>
+          <div class="desk-project-label" hidden>项目</div>
         </header>
 
         <section class="dash-main">
@@ -464,7 +465,10 @@
           <article id="thing-thread" class="dash-pane thing-thread" data-pane="thing" aria-labelledby="thing-name" hidden>
             <header class="thing-heading">
               <h2 id="thing-name" class="thing-name" tabindex="-1"></h2>
-              <span class="thing-status"></span>
+              <span class="thing-status">
+                <span class="thing-agent"></span>
+                <span class="thing-state" hidden></span>
+              </span>
               <div class="lab-map-seg" role="group" aria-label="一件事的视图" hidden>
                 <button type="button" data-map-view="line" aria-pressed="true">线</button>
                 <button type="button" data-map-view="map" aria-pressed="false">图</button>

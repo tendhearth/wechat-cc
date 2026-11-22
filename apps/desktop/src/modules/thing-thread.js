@@ -34,6 +34,8 @@ function stateOf(item) {
 export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,onSession,onWaiting}) {
   const heading = /** @type {HTMLElement} */ (root.querySelector('.thing-name'))
   const status = /** @type {HTMLElement} */ (root.querySelector('.thing-status'))
+  const agentLabel = /** @type {HTMLElement} */ (status.querySelector('.thing-agent'))
+  const stateLabel = /** @type {HTMLElement} */ (status.querySelector('.thing-state'))
   const tabs = /** @type {HTMLElement} */ (root.querySelector('.thing-sessions'))
   const tray = /** @type {HTMLElement} */ (root.querySelector('.thing-content'))
   const mapHost = /** @type {HTMLElement|null} */ (root.querySelector('.lab-map'))
@@ -188,8 +190,11 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
 
   /** @param {string} name @param {string} state */
   function showStatus(name, state) {
-    const label = [name, state].filter(Boolean).join(' · ')
-    if (status.textContent !== label) status.textContent = label
+    if (agentLabel.textContent !== name) agentLabel.textContent = name
+    if (stateLabel.textContent === state) return
+    stateLabel.textContent = state
+    stateLabel.hidden = !state
+    stateLabel.dataset.tone = state === '等你定' ? 'waiting' : state === '正在做' ? 'working' : 'idle'
   }
 
   function drawTabs() {
@@ -204,7 +209,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       const name = agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? ''))
       const time = placeTime({ moving:false, updatedAt:item.updatedAt }, now)
       const title = item.kind === 'terminal' || item.terminal ? [name,time].filter(Boolean).join(' · ') : item.title
-      return `<button type="button" data-thread-session="${esc(item.key)}" data-group="${item.group}" aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}<span>${esc(title)}</span><i aria-hidden="true"></i></button>`
+      return `<button type="button" data-thread-session="${esc(item.key)}" aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}<span>${esc(title)}</span></button>`
     }
     const markup = visible.map(button).join('') + (earlier.length
       ? `<button type="button" class="desk-text-button" data-thread-more aria-expanded="${openEarlier}">更早的 ${earlier.length} 次</button><div class="thing-earlier-sessions"${openEarlier ? '' : ' hidden'}>${earlier.map(button).join('')}</div>`

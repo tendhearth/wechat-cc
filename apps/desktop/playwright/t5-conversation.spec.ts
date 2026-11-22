@@ -25,7 +25,7 @@ test.beforeEach(async({page,shim})=>{
 test('one conversation and memory topics preserve drafts when a wide place opens its task',async({page,shimUrl},info)=>{
  await page.setViewportSize({width:1440,height:900});await page.goto(shimUrl)
  await expect(page.locator('#converse-scroll')).toContainText('那台机器后来怎么样了？')
- await expect(page.locator('#topbar-cc .topbar-figure')).toHaveCSS('width','60px')
+ await expect(page.locator('#topbar-cc .topbar-figure')).toHaveCSS('width','46px')
  await expect(page.locator('.converse-avatar')).toHaveCount(0)
  await expect(page.locator('.converse-msg-cc').first()).toHaveAttribute('role','group')
  await expect(page.locator('.converse-msg-cc').first()).toHaveAttribute('aria-label','CC')
