@@ -23,7 +23,10 @@ const leaf = (page:Page, text:string) => diagram(page).locator('me-tpc').filter(
 // 这周没动过的地方收在名单末尾那一行里,先点开再选
 const select = async (page:Page,name:string) => {
   const row = placeRow(page,name).locator('.place-row')
-  if (!(await row.isVisible())) await page.locator('.desk-quiet-toggle').click()
+  // 名单画出来以前哪一行都看不见:先等到这一行、或者收着它的那个按钮出现,再决定点不点开
+  const quiet = page.locator('.desk-quiet-toggle')
+  await expect.poll(async () => (await row.isVisible()) || (await quiet.isVisible())).toBe(true)
+  if (!(await row.isVisible())) await quiet.click()
   await row.click()
 }
 const view = (page:Page,name:string) => thread(page).getByRole('button',{name,exact:true})
