@@ -11,8 +11,9 @@ function awayTime(ms) {
 
 /** @param {import('@wechat-cc/protocol').SessionRecapT} recap */
 export function recapMemoHtml({ source, text, awayMs }) {
-  const credit = source === 'claude' ? '这是 Claude Code 自己记的' : 'CC 留了张条'
-  return `<aside class="thing-recap" data-recap-source="${source === 'claude' ? 'claude' : 'cc'}">
+  const fromCC = source === 'cc'
+  const credit = fromCC ? 'CC 留了张条' : '这是 Claude Code 自己记的'
+  return `<aside class="thing-recap" data-recap-source="${fromCC ? 'cc' : 'claude'}">
     <svg aria-hidden="true"></svg><small>你 ${awayTime(awayMs)}没来，${credit}</small><p>${esc(text)}</p></aside>`
 }
 
