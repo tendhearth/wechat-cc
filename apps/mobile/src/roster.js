@@ -3,20 +3,16 @@ var rPlaces=[],rStop=null,rSelected=null,cPlace=null
 function rTime(p,now){
  if(p.moving)return '现在'
  if(p.updatedAt==null)return ''
- var d=now-p.updatedAt,a=new Date(p.updatedAt),n=new Date(now),day=function(x){return new Date(x.getFullYear(),x.getMonth(),x.getDate()).getTime()},days=Math.round((day(n)-day(a))/864e5)
- if(d<6e4)return '刚刚'
- if(d<36e5)return Math.floor(d/6e4)+' 分钟前'
- if(!days)return String(a.getHours()).padStart(2,'0')+':'+String(a.getMinutes()).padStart(2,'0')
- if(days===1)return '昨天'
- return days<7?'周'+'日一二三四五六'[a.getDay()]:(a.getMonth()+1)+' 月 '+a.getDate()+' 日'
+ if(now-p.updatedAt<36e5)return ago(p.updatedAt,now)
+ return mobileTime(p.updatedAt,now)
 }
-function rLine(p){var l=(p.line||'').trim();return !l?l:(p.waiting?l:p.status==='working'?(/…$/.test(l)?l:l+'…'):p.status==='failed'?l+'(没做成)':p.status==='stopped'?l+'(停了)':l)+(p.alsoChanged?',另有 '+p.alsoChanged+' 件也动过':'')}
+function rLine(p){var l=(p.line||'').trim();return !l?l:(p.waiting?l:p.status==='working'?(/…$/.test(l)?l:l+'…'):p.status==='failed'?l+'（没做成）':p.status==='stopped'?l+'（停了）':l)+(p.alsoChanged?'，另有 '+p.alsoChanged+' 件也动过':'')}
 function rTarget(p){var w=p.waiting||{};return w.matterId?{kind:'matter',id:w.matterId}:w.sessionId?{kind:'terminal',id:w.sessionId}:p.matterIds[0]?{kind:'matter',id:p.matterIds[0]}:p.sessionIds[0]?{kind:'terminal',id:p.sessionIds[0]}:null}
 function renderPlacesStrip(places,o){
  var stale=!!o.stale
- return (stale?'<small role="status">家里的电脑暂时连不上,下面是上一次的样子</small>':'')+places.map(function(p){
+ return (stale?'<small role="status">家里的电脑暂时连不上，下面是上一次的样子</small>':'')+places.map(function(p){
   var on=p.key===o.selected,w=!!p.waiting&&!stale,l=rLine(p),k=esc(p.key)
-  return '<div class="place'+(w?' waiting':'')+(p.unseen?' unseen':'')+(p.moving?' moving':'')+(on?' selected':'')+'"><button type="button" data-place="'+k+'" aria-pressed="'+on+'" aria-label="'+esc(p.name+(w?',在等你':'')+(l?','+l:''))+'"><i></i><b>'+esc(p.name)+'</b><span>'+esc(l)+'</span><small>'+esc(rTime(p,o.now||Date.now()))+'</small></button>'+(rTarget(p)?'<button type="button" data-place-open="'+k+'" aria-label="打开 '+esc(p.name)+' 那一件">›</button>':'')+'</div>'
+  return '<div class="place'+(w?' waiting':'')+(p.unseen?' unseen':'')+(p.moving?' moving':'')+(on?' selected':'')+'"><button type="button" data-place="'+k+'" aria-pressed="'+on+'" aria-label="'+esc(p.name+(w?'，在等你':'')+(l?'，'+l:''))+'"><i></i><b>'+esc(p.name)+'</b><span>'+esc(l)+'</span><small>'+esc(rTime(p,o.now||Date.now()))+'</small></button>'+(rTarget(p)?'<button type="button" data-place-open="'+k+'" aria-label="打开 '+esc(p.name)+' 那一件">›</button>':'')+'</div>'
  }).join('')
 }
 function cInPlace(m){return !cPlace||cPlace.messageIds.indexOf(m.id)>=0||!!m.matterId&&cPlace.matterIds.indexOf(m.matterId)>=0}

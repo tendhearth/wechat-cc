@@ -80,7 +80,7 @@ function mStatusKey(m) {
 function mRow(m, key) {
   // 三端同一句(状态表):等你好几项 ⇒「共 N 项」;在做却 30 分钟没动静 ⇒「可能卡住」
   var pending = (m.taskState && m.taskState.pending) || 0
-  var caption = m.networkSuspended ? "已暂停(网络未受保护)"
+  var caption = m.networkSuspended ? "已暂停（网络未受保护）"
     : key === "working" ? (Date.now() - (m.updatedAt || Date.now()) > CCP.QUIET_AFTER_MS ? CCP.ROW_HINT_WORDS.quiet : "")
     : key === "waiting" && pending > 1 ? CCP.STATUS_WORDS[key] + " · " + CCP.ROW_HINT_WORDS.pendingTotal.replace("{n}", String(pending))
     : CCP.STATUS_WORDS[key]
