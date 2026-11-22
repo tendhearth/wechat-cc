@@ -357,7 +357,7 @@ test('小结跟着作者换字体，发话收起便条，偏好关掉后两处�
   await expect(claudeLine).not.toHaveAttribute('data-recap-source')
 })
 
-test('停着的会话可输入；八次会话收起两次，选更早的存档可翻阅', async ({page,shimUrl}) => {
+test('停着的会话可输入；八次会话并排四次、收起四次，选更早的存档可翻阅', async ({page,shimUrl}) => {
   let liveWindow = true
   const history = Array.from({length:7}, (_, i) => ({
     ...placeSession('history-' + i, 'done', now - i * 86400000),
@@ -378,12 +378,12 @@ test('停着的会话可输入；八次会话收起两次，选更早的存档�
   const visible = bar.locator(':scope > [data-thread-session]')
   const menu = bar.locator('details')
   const trigger = menu.locator('summary')
-  await expect(visible).toHaveCount(6)
+  await expect(visible).toHaveCount(4)
   const pausedTab = visible.first()
   await expect(pausedTab).toHaveText('把这周的记录整理一下 · 昨天')
   await expect(pausedTab).toHaveAttribute('title','Codex · 把这周的记录整理一下 · 昨天')
   await expect(pausedTab).toHaveAccessibleName('Codex，把这周的记录整理一下，昨天，停着')
-  await expect(trigger).toHaveText('更早的 2 次')
+  await expect(trigger).toHaveText('更早的 4 次')
   await expect(thread(page).locator('.thing-state')).toHaveText('停着')
   await terminal(page).locator('textarea').fill('接着做')
   await expect(terminal(page).locator('textarea')).toHaveValue('接着做')
@@ -404,7 +404,7 @@ test('停着的会话可输入；八次会话收起两次，选更早的存档�
   await expect(older).toHaveText(/核对第三批备份 · .* · 已经结束/)
   await older.click()
   await expect(menu).not.toHaveAttribute('open','')
-  await expect(visible).toHaveCount(6)
+  await expect(visible).toHaveCount(4)
   await expect(visible.last()).toHaveAttribute('data-thread-session','terminal:history-6')
   await expect(visible.last()).toHaveAccessibleName(/已经结束/)
   await expect(visible.last()).toHaveAttribute('aria-pressed','true')

@@ -200,13 +200,20 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
     stateLabel.dataset.tone = state === '等你定' ? 'waiting' : state === '正在做' ? 'working' : 'idle'
   }
 
+  // A tab needs room for a readable first sentence, so how many sit side by side follows the width.
+  let slots = 0
+  const tabSlots = () => !wide.matches ? 5 : Math.max(2, Math.min(6, Math.floor(((tabs.clientWidth || 880) - 96) / 190)))
+  const tabSize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (alive && place && !tabs.hidden && tabSlots() !== slots) drawTabs() }) : null
+  tabSize?.observe(tabs)
+
   function drawTabs() {
     if (!place) return
     const items = rowsFor(place)
     tabs.hidden = !!stopMap || items.length < (wide.matches && items[0]?.endedAt != null ? 1 : 2)
     if (tabs.hidden) return
     const now = Date.now()
-    const {visible, earlier} = splitSessions(items, wide.matches ? selected?.key : undefined, wide.matches ? 6 : 5)
+    slots = tabSlots()
+    const {visible, earlier} = splitSessions(items, wide.matches ? selected?.key : undefined, slots)
     const button = (/** @type {Item} */ item, inMenu = false) => {
       const agent = agentOf(item)
       const name = agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? ''))
@@ -436,6 +443,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
     linkedItem,
     destroy() {
       alive = false
+      tabSize?.disconnect()
       menuListeners?.abort()
       toggle?.removeEventListener('click', togglePlaceMap)
       wide.removeEventListener('change', resize)

@@ -1456,7 +1456,7 @@ html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[da
 }
 
 /* A session tab: the owner's first sentence gives way, the time stays. */
-[data-desk-wide] .thing-sessions > [data-thread-session] > span:not(.th-agents) { max-width: 11em; }
+[data-desk-wide] .thing-sessions > [data-thread-session] > span:not(.th-agents) { flex: 0 1 auto; max-width: 12em; }
 [data-desk-wide] .thing-sessions > [data-thread-session] > .thing-session-time {
   flex: none;
   margin-left: -4px;
