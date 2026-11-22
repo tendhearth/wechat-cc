@@ -59,10 +59,26 @@ test('reply object: collapsed 过程 above the reply, voice / sticker / file bel
   const [rb, bb, ab] = await Promise.all([replay.boundingBox(), cc.locator('.converse-bubble').boundingBox(), cc.locator('.converse-attachments').boundingBox()])
   expect(Math.abs((rb!.y + rb!.height) - (bb!.y + bb!.height))).toBeLessThanOrEqual(8)
   expect(rb!.y + rb!.height).toBeLessThanOrEqual(ab!.y)
-  // 展开指示与文字同一层级:看得见、不是一个小点
-  const marker = await process.locator('summary').evaluate(el => { const s = getComputedStyle(el, '::before'); return { w: parseFloat(s.borderLeftWidth), h: parseFloat(s.borderTopWidth) * 2 } })
-  expect(marker.w).toBeGreaterThanOrEqual(6)
-  expect(marker.h).toBeGreaterThanOrEqual(8)
+  const summary = process.locator('summary')
+  if (await page.locator('html').getAttribute('data-desk-wide') !== null) {
+    await expect(summary).toHaveCSS('font-size', '12.5px')
+    await expect(process.locator('.converse-process-lines')).toHaveCSS('border-radius', '10px')
+    const arrowAngle = () => summary.evaluate(el => {
+      const matrix = new DOMMatrixReadOnly(getComputedStyle(el, '::after').transform)
+      return Math.round(Math.atan2(matrix.b, matrix.a) * 180 / Math.PI)
+    })
+    expect(await arrowAngle()).toBe(135)
+    await summary.click()
+    expect(await arrowAngle()).toBe(45)
+    await summary.click()
+  } else {
+    const marker = await summary.evaluate(el => {
+      const style = getComputedStyle(el, '::before')
+      return { w: parseFloat(style.borderLeftWidth), h: parseFloat(style.borderTopWidth) * 2 }
+    })
+    expect(marker.w).toBeGreaterThanOrEqual(6)
+    expect(marker.h).toBeGreaterThanOrEqual(8)
+  }
 
   // 附件:语音一行、本地表情是图(在 CSP 下用 data: 显示得出来)、联网表情只写情绪、文件名 + 在访达中显示
   await expect(cc.locator('.converse-att-voice')).toContainText('明天上午十点前都空着。')

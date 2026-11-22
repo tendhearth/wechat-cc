@@ -23,11 +23,18 @@ function setText(element, value) {
   else element.textContent = value
 }
 
-/** @param {Activity} item */
-function stepHtml(item) {
-  return item.detail
-    ? `<details><summary>${esc(item.text)}</summary><pre>${esc(item.detail)}</pre></details>`
-    : `<span>${esc(item.text)}</span>`
+/** @param {Element} label @param {Activity} item */
+function updateStepLabel(label, item) {
+  const target = item.target
+  if (!target || target === item.text || !item.text.endsWith(` ${target}`)) {
+    if (label.lastElementChild) label.textContent = item.text
+    else setText(label, item.text)
+    return
+  }
+  if (label.lastElementChild?.matches('code') && label.textContent === item.text) return
+  const code = document.createElement('code')
+  code.textContent = target
+  label.replaceChildren(item.text.slice(0, -target.length), code)
 }
 
 /** @param {Element} row @param {ThreadRow} message */
@@ -45,13 +52,11 @@ function updateSteps(row, message) {
     const node = existing.get(item.id) ?? document.createElement('li')
     node.setAttribute('data-step-id', item.id)
     node.toggleAttribute('data-error', !!item.error)
-    const detail = node.querySelector('details')
-    if (detail && item.detail) {
-      setText(/** @type {Element} */ (detail.querySelector('summary')), item.text)
-      setText(/** @type {Element} */ (detail.querySelector('pre')), item.detail)
-    } else if (!detail && !item.detail && node.firstElementChild) {
-      setText(node.firstElementChild, item.text)
-    } else node.innerHTML = stepHtml(item)
+    if (!node.firstElementChild || !!node.querySelector('details') !== !!item.detail) {
+      node.innerHTML = item.detail ? '<details><summary></summary><pre></pre></details>' : '<span></span>'
+    }
+    updateStepLabel(/** @type {Element} */ (node.querySelector('summary') ?? node.firstElementChild), item)
+    if (item.detail) setText(/** @type {Element} */ (node.querySelector('pre')), item.detail)
     if (node !== cursor) list.insertBefore(node, cursor)
     cursor = node.nextElementSibling
     existing.delete(item.id)

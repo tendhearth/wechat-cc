@@ -20,8 +20,9 @@ it.each([
 it('按叶子分量先右后左，保留空支，显示执行者', () => {
   const entries = [item('ask','waiting'), item('task','working','工作一'), item('decision','live'), item('fact','live')]
   const tree = mapData('花园', entries, () => 'Codex')
-  expect(tree.nodeData.children.map(({topic,direction}) => [topic,direction])).toEqual([
-    ['没解决的',1], ['在做的',1], ['定了的',0], ['做过的',0], ['记下的',0],
+  expect(tree.nodeData.children.map(({topic,direction,branchColor}) => [topic,direction,branchColor])).toEqual([
+    ['没解决的',1,'var(--th-accent)'], ['在做的',1,'var(--th-warn)'],
+    ['定了的',0,'var(--th-desk-line)'], ['做过的',0,'var(--th-desk-line)'], ['记下的',0,'var(--th-desk-line)'],
   ])
   expect(tree.nodeData.children[1]?.children[0]?.topic).toBe('Codex · 工作一')
   const heavy = Array.from({length:7}, (_,i) => ({...item('fact','live'), id:'heavy'+i}))

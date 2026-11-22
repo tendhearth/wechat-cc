@@ -34,6 +34,8 @@ function stateOf(item) {
 export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,onSession,onWaiting}) {
   const heading = /** @type {HTMLElement} */ (root.querySelector('.thing-name'))
   const status = /** @type {HTMLElement} */ (root.querySelector('.thing-status'))
+  const agentLabel = /** @type {HTMLElement} */ (status.querySelector('.thing-agent'))
+  const stateLabel = /** @type {HTMLElement} */ (status.querySelector('.thing-state'))
   const tabs = /** @type {HTMLElement} */ (root.querySelector('.thing-sessions'))
   const tray = /** @type {HTMLElement} */ (root.querySelector('.thing-content'))
   const mapHost = /** @type {HTMLElement|null} */ (root.querySelector('.lab-map'))
@@ -188,8 +190,11 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
 
   /** @param {string} name @param {string} state */
   function showStatus(name, state) {
-    const label = [name, state].filter(Boolean).join(' · ')
-    if (status.textContent !== label) status.textContent = label
+    if (agentLabel.textContent !== name) agentLabel.textContent = name
+    if (stateLabel.textContent === state) return
+    stateLabel.textContent = state
+    stateLabel.hidden = !state
+    stateLabel.dataset.tone = state === '等你定' ? 'waiting' : state === '正在做' ? 'working' : 'idle'
   }
 
   function drawTabs() {

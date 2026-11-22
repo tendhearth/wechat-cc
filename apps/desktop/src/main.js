@@ -1994,15 +1994,17 @@ function mountDeskLayout(strip) {
   const places = document.querySelector('.places-strip')
   const overview = document.querySelector('.cc-now-pane')
   const nav = dashRail?.querySelector('nav')
-  const more = nav?.querySelector('.topbar-more')
+  const more = dashRail?.querySelector('.topbar-more')
+  const projects = dashRail?.querySelector('.desk-project-label')
   const moreItems = more?.querySelector('div')
   const roster = document.getElementById('topbar-roster')
   const search = document.getElementById('topbar-search')
   const scroll = document.getElementById('converse-scroll')
   const toggle = document.getElementById('desk-rail-toggle')
   const heading = document.querySelector('.desk-heading')
-  if (!dashRail || !places || !overview || !nav || !moreItems || !roster || !search || !scroll || !toggle || !heading) return
+  if (!dashRail || !places || !overview || !nav || !more || !projects || !moreItems || !roster || !search || !scroll || !toggle || !heading) return
   const rail = dashRail
+  const wideLabels = rail.querySelectorAll('.desk-nav-icon, .desk-project-label, .desk-more-label')
   const root = document.documentElement
   const hover = window.matchMedia('(hover: hover)')
   const listeners = new AbortController()
@@ -2116,6 +2118,7 @@ function mountDeskLayout(strip) {
     const { matches: wide } = layout
     const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
     root.toggleAttribute('data-desk-wide', wide)
+    for (const label of wideLabels) label.toggleAttribute('hidden', !wide)
     const current = strip.places().find(place => place.key === strip.selected()) ?? null
     if (!wide && document.body.dataset.pane === 'thing') switchPane('overview')
     if (!wide) showConversationPlace(current, true)
@@ -2128,11 +2131,12 @@ function mountDeskLayout(strip) {
       }
     }
     if (wide) {
-      nav.before(places)
+      projects.after(places, more)
       moreItems.prepend(roster)
     } else {
       overview.prepend(places)
       nav.prepend(roster, search)
+      nav.append(more)
       const aside = document.getElementById('roster-aside')
       aside?.removeAttribute('data-open')
       roster.setAttribute('aria-expanded', 'false')

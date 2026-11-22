@@ -25,11 +25,13 @@ test.beforeEach(async({page,shim})=>{
 test('one conversation and memory topics preserve drafts when a wide place opens its task',async({page,shimUrl},info)=>{
  await page.setViewportSize({width:1440,height:900});await page.goto(shimUrl)
  await expect(page.locator('#converse-scroll')).toContainText('那台机器后来怎么样了？')
- await expect(page.locator('#topbar-cc .topbar-figure')).toHaveCSS('width','60px')
+ await expect(page.locator('#topbar-cc .topbar-figure')).toHaveCSS('width','46px')
  await expect(page.locator('.converse-avatar')).toHaveCount(0)
  await expect(page.locator('.converse-msg-cc').first()).toHaveAttribute('role','group')
  await expect(page.locator('.converse-msg-cc').first()).toHaveAttribute('aria-label','CC')
- await expect(page.locator('.converse-compose')).toHaveCSS('border-bottom-width','1px')
+ await expect(page.locator('.converse-compose')).toHaveCSS('border-bottom-width','0px')
+ await expect(page.locator('.converse-compose')).toHaveCSS('border-radius','20px')
+ await expect(page.locator('.converse-compose')).not.toHaveCSS('box-shadow','none')
  await expect(page.locator('.converse-compose')).toHaveCSS('border-top-width','0px')
  await page.locator('#converse-input').fill('还没发出的草稿')
  await expect(page.locator('#now-waiting')).toHaveCount(0)
@@ -331,6 +333,22 @@ test('reply attribution keeps one named shared avatar per reply across wide and 
   for(const width of [1280,390]){
     await page.setViewportSize({width,height:844});await page.goto(shimUrl)
     await checkSources()
+    const notice = row('这一轮的通知')
+    await expect(notice).toHaveAttribute('aria-label', '通知')
+    if (width === 1280) {
+      await expect(notice.locator('.converse-bubble')).toHaveCSS('font-size', '12px')
+      await expect(notice.locator('.converse-bubble')).toHaveCSS('text-align', 'center')
+      await expect(notice.locator('.voice-replay-btn')).toBeHidden()
+      const reply = row('Claude 直接答')
+      const mark = reply.locator('.th-agent')
+      const body = reply.locator('.converse-bubble')
+      await expect(mark).toHaveCSS('width', '14px')
+      await expect(mark).toHaveCSS('height', '14px')
+      const [avatarBox, bodyBox] = await Promise.all([mark.boundingBox(), body.boundingBox()])
+      expect(avatarBox!.x + avatarBox!.width).toBeLessThan(bodyBox!.x)
+      expect(avatarBox!.y - bodyBox!.y).toBeGreaterThanOrEqual(0)
+      expect(avatarBox!.y + avatarBox!.height - bodyBox!.y).toBeLessThan(26.25)
+    }
     expect(await page.locator('#converse-scroll').evaluate(root=>{
       const bounds=root.getBoundingClientRect()
       return [...root.querySelectorAll('.converse-msg')].every(row=>{const box=row.getBoundingClientRect();return box.left>=bounds.left-1&&box.right<=bounds.right+1&&row.scrollWidth<=row.clientWidth+1})

@@ -197,7 +197,8 @@ test('输入框随内容增长再收回，语音键留可访问名称，回复�
   await input.fill('更多文字\n'.repeat(24))
   const cap = await input.evaluate(el => {
     const css = getComputedStyle(el)
-    return { height: el.clientHeight, scroll: el.scrollHeight, eight: parseFloat(css.lineHeight) * 8 + 16 }
+    const padding = parseFloat(css.paddingTop) + parseFloat(css.paddingBottom)
+    return { height: el.clientHeight, scroll: el.scrollHeight, eight: parseFloat(css.lineHeight) * 8 + padding }
   })
   expect(cap.height).toBeCloseTo(cap.eight, 0)
   expect(cap.scroll).toBeGreaterThan(cap.height)

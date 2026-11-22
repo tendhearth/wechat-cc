@@ -2,7 +2,7 @@
 import { V1, v1 } from '../daemon-client.js'
 import { branches, leafId, mapBranch, mapData, placedBranch } from './lab-map-model.js'
 import { placeTime } from './places-strip.js'
-import { mountOutlineMap } from './lab-outline.js'
+import { mapCardTitle, mapFitButton, mapJumpButton, mapStatusChip, mountOutlineMap } from './lab-outline.js'
 
 /** @typedef {import('@wechat-cc/protocol').PlaceMapItemT} Item */
 /** @typedef {import('@wechat-cc/protocol').PlaceMapResponseT} Response */
@@ -12,7 +12,6 @@ import { mountOutlineMap } from './lab-outline.js'
 
 const kinds = { decision:'决定', commitment:'说好要做的', progress:'进展', conclusion:'结果', fact:'记下的事', session:'会话', task:'任务', ask:'等你定' }
 const sources = { chat:'和 CC 聊的', work:'交办的活', delegate:'交办的活', task:'交办的活', terminal:'终端会话' }
-const hint = '点一条看它是什么、哪来的；按住一条拖到另一支上，就是把它挪过去。按住空白处能拖动整张图，捏合或按住 ⌘ 滚动能放大缩小。'
 const deny = () => /** @type {const} */ (false)
 /** @param {Topic} topic */
 const isLeaf = topic => topic.nodeObj.id.startsWith('l:')
@@ -33,13 +32,14 @@ const mapGuards = canMove => ({
 })
 const theme = {
   name: 'Tendhearth', type: /** @type {const} */ ('light'),
-  palette: Object.values(branches).map(branch => branch.color),
+  palette: ['var(--th-desk-line)'],
   cssVar: {
     '--node-gap-x': '18px', '--node-gap-y': '5px', '--main-gap-x': '24px', '--main-gap-y': '18px',
     '--root-radius': '999px', '--main-radius': '999px', '--topic-padding': '3px 4px',
-    '--root-color': 'var(--th-on-accent)', '--root-bgcolor': 'var(--th-accent)', '--root-border-color': 'transparent',
-    '--main-color': 'var(--th-ink)', '--main-bgcolor': 'var(--th-paper)', '--color': 'var(--th-ink)',
-    '--bgcolor': 'var(--th-paper)', '--selected': 'var(--th-accent)', '--accent-color': 'var(--th-accent)',
+    '--root-color': 'var(--th-ink)', '--root-bgcolor': 'var(--th-desk-raised)',
+    '--map-padding': '14px 18px',
+    '--main-color': 'var(--th-ink-soft)', '--main-bgcolor': 'var(--th-desk-sheet)', '--color': 'var(--th-ink)',
+    '--bgcolor': 'transparent', '--selected': 'var(--th-accent)', '--accent-color': 'var(--th-accent)',
   },
 }
 
@@ -69,13 +69,18 @@ function loadStylesheet() {
  * agent:(item:Item)=>string,canJump:(item:Item)=>boolean,jump:(item:Item)=>void}} options
  */
 function mountStatusMap({host, key, call, agent, canJump, jump}) {
-  host.innerHTML = `<div class="lab-map-bar"><span>实验 <span class="lab-map-write-error" role="status"></span></span><button type="button" class="desk-text-button" data-map-fit hidden>回到中间</button></div>
+  host.innerHTML = `<div class="lab-map-bar"><span>实验</span><span class="lab-map-write-error" role="status"></span></div>
+    ${mapFitButton}
     <div class="lab-map-state"><p class="lab-map-note" role="status">正在读取…</p><button type="button" class="desk-text-button" data-map-retry hidden>再试一次</button></div>
     <div class="lab-map-viewport" hidden><div></div></div>
-    <div class="lab-map-details" aria-live="polite" hidden></div>`
+    <p class="lab-map-hint" hidden>点一条看它的出处；拖到另一支上就是挪过去</p>
+    <span class="wb-sr-only" data-map-gestures hidden>按住空白处能拖动整张图，捏合或按住 ⌘ 滚动能放大缩小。</span>
+    <div aria-live="polite"><div class="lab-map-details" hidden></div></div>`
   const find = (/** @type {string} */ selector) => /** @type {HTMLElement} */ (host.querySelector(selector))
   const viewport = find('.lab-map-viewport')
   const element = /** @type {HTMLDivElement} */ (viewport.firstElementChild)
+  const hint = find('.lab-map-hint')
+  const gestures = find('[data-map-gestures]')
   const details = find('.lab-map-details')
   const note = find('.lab-map-note')
   const writeError = find('.lab-map-write-error')
@@ -101,24 +106,27 @@ function mountStatusMap({host, key, call, agent, canJump, jump}) {
       row.textContent = text
       details.append(row)
     }
-    if (!item || !branch) { p(hint, 'lab-map-meta'); return }
-    p(item.line, 'lab-map-line')
-    const date = item.from.at ? placeTime({ moving: false, updatedAt: item.from.at }, Date.now()) : ''
+    details.hidden = !item || !branch
+    hint.hidden = !mind || !details.hidden
+    if (!item || !branch) return
+    const top = mapCardTitle(details, item.line)
+    if (canJump(item)) {
+      const button = mapJumpButton(() => jump(item))
+      button.dataset.mapJump = ''
+      top.append(button)
+    }
+    const date = item.from.at != null ? placeTime({ moving: false, updatedAt: item.from.at }, Date.now()) : ''
     const original = mapBranch(item)
     const placement = item.pin
-      ? '你放的' + (original ? ` · 本来在「${branches[original].label}」` : '')
-      : branches[branch].label
-    p([placement, kinds[item.kind], sources[item.from.source], date].filter(Boolean).join(' · '), 'lab-map-meta')
+      ? '；你放到这儿的' + (original ? `，本来在「${branches[original].label}」` : '')
+      : ''
+    const meta = document.createElement('p')
+    meta.className = 'lab-map-meta'
+    const from = document.createElement('span')
+    from.textContent = [kinds[item.kind], sources[item.from.source], date].filter(Boolean).join('，') + placement
+    meta.append(mapStatusChip(branch), from)
+    details.append(meta)
     if (item.body) p('CC 记的：' + item.body, 'lab-map-body')
-    if (canJump(item)) {
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.className = 'desk-text-button'
-      button.textContent = '去那条线上看 ›'
-      button.dataset.mapJump = ''
-      button.onclick = () => jump(item)
-      details.append(button)
-    }
     if (item.id.startsWith('a:')) {
       p('这件要你定，去那条线上答。', 'lab-map-meta')
       return
@@ -225,7 +233,7 @@ function mountStatusMap({host, key, call, agent, canJump, jump}) {
     pan = undefined
     data = undefined
     selected = undefined
-    viewport.hidden = details.hidden = fitButton.hidden = true
+    viewport.hidden = details.hidden = hint.hidden = gestures.hidden = fitButton.hidden = true
     details.replaceChildren()
   }
 
@@ -257,7 +265,7 @@ function mountStatusMap({host, key, call, agent, canJump, jump}) {
       data = next
       selected = kept
       note.hidden = true
-      viewport.hidden = details.hidden = fitButton.hidden = false
+      viewport.hidden = gestures.hidden = fitButton.hidden = false
       if (!mind) {
         mind = new MindElixir({ el: element, direction: 2, editable: true, contextMenu: false,
           toolBar: false, keypress: false, allowUndo: false, before: mapGuards(() => !saving && !stopped), theme })
@@ -386,7 +394,7 @@ export function mountLabMap(options) {
   function render() {
     stop?.()
     stop = aspects ? mountOutlineMap({ ...options, loadMap, theme, fitMap }) : mountStatusMap(options)
-    host.querySelector('.lab-map-bar > span')?.after(segment)
+    host.querySelector('.lab-map-bar')?.prepend(segment)
     buttons.forEach((button, index) => button.setAttribute('aria-pressed', String(Boolean(index) === aspects)))
   }
   render()

@@ -17,25 +17,25 @@ const aspects: NonNullable<PlaceOutlineT['aspects']> = [
   {name:'审核',items:[{...first,id:'o:5',status:'noted'}]},
 ]
 
-it('按叶子的数量左右分支，方面颜色独立，节点文本保持原字', () => {
+it('按叶子的数量左右分支，方面用同一灰线，节点文本保持原字', () => {
   const tree = outlineData('花园', aspects)
   expect(tree.nodeData.topic).toBe('花园')
   expect(tree.nodeData.children.map(b => [b.topic, b.direction, b.branchColor])).toEqual([
-    ['界面', 1, 'var(--th-map-clay)'], ['同步', 0, 'var(--th-map-slate)'], ['审核', 0, 'var(--th-map-plum)'],
+    ['界面', 1, 'var(--th-desk-line)'], ['同步', 0, 'var(--th-desk-line)'], ['审核', 0, 'var(--th-desk-line)'],
   ])
   expect(tree.nodeData.children[0]?.children[0]).toEqual({id:leafId(first.id),topic:first.line})
 })
 
 it('出处和状态行覆盖条目、会话、有无名字和可跳与不可跳', () => {
-  expect(outlineSource(first, first.sources[0]!, false, now)).toEqual({
-    text:'没解决的 · CC 梳理的 · 出自 CC 记下的一条', jump:false, missing:false,
+  expect(outlineSource(first.sources[0]!, false, now)).toEqual({
+    text:'CC 梳理的，出自 CC 记下的一条', jump:false, missing:false,
   })
-  expect(outlineSource(first, first.sources[1]!, true, now)).toEqual({
-    text:'没解决的 · CC 梳理的 · 出自 Codex 的会话 · 刚刚', jump:true, missing:false,
+  expect(outlineSource(first.sources[1]!, true, now)).toEqual({
+    text:'CC 梳理的，出自 Codex 的会话，刚刚', jump:true, missing:false,
   })
-  expect(outlineSource(first, first.sources[1]!, true, now, false).text).toBe('出自 Codex 的会话 · 刚刚')
-  expect(outlineSource(first, {kind:'session'}, false, now)).toEqual({
-    text:'没解决的 · CC 梳理的 · 出自终端会话', jump:false, missing:true,
+  expect(outlineSource(first.sources[1]!, true, now, false).text).toBe('出自 Codex 的会话，刚刚')
+  expect(outlineSource({kind:'session'}, false, now)).toEqual({
+    text:'CC 梳理的，出自终端会话', jump:false, missing:true,
   })
   expect(outlineNotice({state:'ready', at:now, stale:true, canRun:true},now)).toEqual({text:'CC 梳理的 · 刚刚',action:'重新梳理'})
   expect(outlineNotice({state:'ready', at:now, stale:true, canRun:false},now).text).toContain('今天梳理过了。')
@@ -59,7 +59,9 @@ it('挂载实际只读图，状态圆点来自叶子的 data 属性，选中显�
     expect(leaf.textContent).toBe(first.line)
     expect(host.querySelector('img, [onerror]')).toBeNull()
     leaf.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))
-    const details = host.querySelector('.lab-map-details')!
+    const details = host.querySelector<HTMLElement>('.lab-map-details')!
+    expect(details.hidden).toBe(false)
+    expect(details.querySelector('[data-map-status="open"]')?.textContent).toBe('没解决的')
     expect(details.textContent).toContain('出自 CC 记下的一条')
     expect(details.textContent).toContain('出自 Codex 的会话')
     expect(details.textContent).toContain('那次会话已经翻不到了')
