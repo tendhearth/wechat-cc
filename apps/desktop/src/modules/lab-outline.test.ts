@@ -73,3 +73,13 @@ it('挂载实际只读图，状态圆点来自叶子的 data 属性，选中显�
     host.remove()
   }
 })
+
+it('宽窗按本地日历写梳理时间，保留较早日期格式', () => {
+  const now = new Date(2026, 10, 22, 0, 10).getTime()
+  const notice = (day: number, hour: number) =>
+    outlineNotice({state:'ready', at:new Date(2026, 10, day, hour).getTime(), stale:true, canRun:true}, now, true)
+  expect(notice(22, 0)).toEqual({text:'CC 今天梳理的', action:'重新梳理'})
+  expect(notice(21, 23).text).toBe('CC 昨天梳理的')
+  expect(notice(20, 23).text).toBe('CC 周五梳理的')
+  expect(notice(10, 23).text).toBe('CC 11 月 10 日梳理的')
+})
