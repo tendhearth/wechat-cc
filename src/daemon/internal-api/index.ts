@@ -248,6 +248,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     const { entry, method, url, rawUrl, caller } = inp
     const routeKey = `${method} ${url.pathname}`
     const isNotebook = url.pathname === '/v1/notebook' || url.pathname.startsWith('/v1/notebook/')
+    const isTerminalSearch = url.pathname === '/v1/terminal/search'
     if (!entryAccepts(entry, caller.origin)) return { status: 401, body: { error: 'unauthorized' } }
 
     if (entry === 'panel') {
@@ -263,7 +264,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     const route = ROUTES[routeKey] ?? MOUNTED[routeKey]
 
     if (!route && !moduleFor(routeKey)) {
-      return { status: 404, body: { error: 'not_found', method, url: rawUrl } }
+      return { status: 404, body: { error: 'not_found', method, url: isTerminalSearch ? url.pathname : rawUrl } }
     }
 
     // Tier gate: the caller's tier (from its token) must meet the route's
@@ -318,7 +319,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
           : undefined)
       } catch (err) {
         if(err instanceof Error&&err.message==='request_body_too_large') return { status: 413, body: { error: 'request_body_too_large' }, closeConnection: true }
-        return { status: 400, body: { error: 'malformed_json', ...(isNotebook ? {} : { detail: errMsg(err) }) } }
+        return { status: 400, body: { error: 'malformed_json', ...(isNotebook || isTerminalSearch ? {} : { detail: errMsg(err) }) } }
       }
     }
 
@@ -419,7 +420,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     } catch (err) {
       // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
       // 不是 500,daemon 也不退。
-      if (isNotebook) return { status: 500, body: { error: 'internal' } }
+      if (isNotebook || isTerminalSearch) return { status: 500, body: { error: 'internal' } }
       const code = (err as { code?: unknown })?.code
       if (code === 'config_unreadable' || code === 'config_busy') {
         deps.log?.('INTERNAL_API', `409 ${method} ${rawUrl}: ${errMsg(err)}`, { event: 'config_write_refused', method, url: rawUrl, error: errMsg(err) })
@@ -461,10 +462,12 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     // 127.0.0.1 这一口只认 file / session / operator:手机的 device / link 令牌在这里和不认识的令牌一样 401
     // (P3b:它们的 routeAllow 以后会带 /v1 键,只能经面板那一口进,内部 API 不替手机开第二个门)。
     if (!caller || !entryAccepts('local', caller.origin)) {
-      deps.log?.('INTERNAL_API', `401 ${req.method} ${req.url}`, {
+      const path = (req.url ?? '/').split('?')[0]
+      const safeUrl = URL.parse(path ?? '/', 'http://internal')?.pathname === '/v1/terminal/search' ? '/v1/terminal/search' : req.url
+      deps.log?.('INTERNAL_API', `401 ${req.method} ${safeUrl}`, {
         event: 'auth_rejected',
         method: req.method,
-        url: req.url,
+        url: safeUrl,
       })
       return send(res, 401, { error: 'unauthorized' }, origin)
     }

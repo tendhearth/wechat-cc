@@ -1307,3 +1307,99 @@ html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[da
 /* Fields you write a sentence into stay at 16px; the 13px above is for search and filter fields. */
 [data-desk-wide] .dash-main [data-pane="memory"] input.memory-line-input,
 [data-desk-wide] .dash-main .todos-page #todo-remind-pop input { font-size: 16px; }
+
+/* Wide search */
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] .wb-search > button[type="submit"],
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] [data-action="clear-search"] { display: none; }
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] .wb-list-controls { display: block; }
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] .wb-search { margin-bottom: 12px; }
+.desk-search-section:not(:empty), .desk-search-tasks:not([hidden]) { margin-block-start: 18px; }
+.desk-search-section-title {
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--th-desk-faint);
+  font: 400 12px/1.5 var(--th-font-desk-ui);
+}
+.desk-search-section-title span { margin-inline-start: 8px; }
+.desk-search-task-header, .desk-search-task-filters, .desk-search-task-filters label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.desk-search-task-header { justify-content: space-between; }
+.desk-search-task-filters label { color: var(--th-ink-soft); font: 400 12.5px/1.5 var(--th-font-desk-ui); }
+.desk-search-row {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--th-ink);
+  font: 400 14px/1.5 var(--th-font-desk-ui);
+  text-align: start;
+  cursor: pointer;
+}
+.desk-search-row:is(:hover, [aria-selected="true"]),
+.desk-search-tasks .wb-task:is(:hover, [aria-selected="true"]) { background: var(--th-desk-hover); }
+.desk-search-text, .desk-search-meta { overflow: hidden; overflow-wrap: anywhere; }
+.desk-search-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.desk-search-text strong { font-weight: var(--th-weight-desk-emphasis); }
+.desk-search-meta, .desk-search-note { color: var(--th-ink-soft); font: 400 12.5px/1.5 var(--th-font-desk-ui); }
+.desk-search-meta { display: block; white-space: nowrap; text-overflow: ellipsis; }
+.desk-search-note { margin: 6px 10px; }
+.desk-search-note button, .desk-search-earlier { margin-inline-start: 8px; }
+.desk-search-empty:empty { display: none; }
+.desk-search-task-header { flex-wrap: wrap; }
+.desk-search-task-filters { flex-wrap: wrap; }
+.desk-search-task-filters .wb-list-filters { padding: 0; }
+.desk-search-task-filters .wb-delegate { display: inline-flex; align-items: center; gap: 4px; }
+.desk-search-task-filters select {
+  appearance: none;
+  min-width: 0;
+  max-width: 150px;
+  min-height: 30px;
+  padding: 0 25px 0 10px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 8px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--th-ink-soft) 50%) right 13px center / 4px 4px no-repeat,
+    linear-gradient(135deg, var(--th-ink-soft) 50%, transparent 50%) right 9px center / 4px 4px no-repeat,
+    var(--th-desk-raised);
+  color: var(--th-ink);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+}
+
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] .wb-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.desk-search-clear:not([hidden]) {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--th-ink-soft);
+  cursor: pointer;
+}
+.desk-search-clear:is(:hover, :focus-visible) { color: var(--th-ink); }
+.desk-search-tasks .wb-task.now-row {
+  min-height: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+}
+.desk-search-tasks .wb-task.now-row .wb-task-title {
+  color: var(--th-ink);
+  font: 400 14px/1.5 var(--th-font-desk-ui);
+}
+.desk-search-tasks .wb-task-meta {
+  margin: 0;
+  color: var(--th-ink-soft);
+  font: 400 12.5px/1.5 var(--th-font-desk-ui);
+}
+.desk-search-tasks .wb-task-meta .wb-status { color: inherit; }
