@@ -245,15 +245,16 @@ it('只有 operator 地方展示七天内的已结束会话，手机地方与默
     last_event_at: NOW - age, pending: null, stale: id === 'paused', cwd: project, machine: null,
     origin_agent: null, created_at: NOW - age, last_prompt_at: null,
   })
-  const live = [term('paused', 'idle', 3 * DAY), term('working', 'running', DAY), term('waiting', 'waiting', DAY)]
-  const ended = [term('ended', 'ended', DAY), term('expired', 'ended', 8 * DAY), term('other', 'ended', DAY, '/w/other')]
+  const live = [term('paused', 'idle', 3 * DAY), term('working', 'running', DAY), term('waiting', 'waiting', DAY),
+    term('other-live', 'idle', DAY / 2, '/w/live')]
+  const ended = [term('ended', 'ended', DAY), term('newest-history', 'ended', 0), term('expired', 'ended', 8 * DAY), term('other', 'ended', DAY, '/w/other')]
   const rosterDeps = { matters: { list: () => [] }, terminals: (opts?: { includeEnded?: boolean }) => opts?.includeEnded ? [...live, ...ended] : live, seen: () => null, now: () => NOW }
   const { reader } = setup([], [], () => NOW, { roster: rosterDeps })
   const legacy = setup([], live)
   const device = await call({ places: legacy.reader }, 'GET /v1/places', null, 'device')
   const operator = await call({ places: reader }, 'GET /v1/places', null)
   const places = PlacesResponse.parse(operator.body)
-  expect(places.places.find(p => p.name === 'rici')?.sessions?.map(s => s.sessionId)).toEqual(['waiting', 'working', 'paused', 'ended'])
+  expect(places.places.find(p => p.name === 'rici')?.sessions?.map(s => s.sessionId)).toEqual(['waiting', 'working', 'paused', 'newest-history', 'ended'])
   const historical = places.places.find(p => p.name === 'other')
   expect(historical?.status).toBe('done')
   expect(historical?.line === '沙盒回话').toBe(true)
@@ -265,7 +266,7 @@ it('只有 operator 地方展示七天内的已结束会话，手机地方与默
     const request = [new URLSearchParams(), null, { tier: 'admin', origin }] as const
     const result = await api(...request)
     expect(JSON.stringify(result)).toBe(JSON.stringify(await baseline(...request)))
-    expect((result.body as {items: {id:string}[]}).items.map(item => item.id)).toEqual(['waiting', 'working'])
+    expect((result.body as {items: {id:string}[]}).items.map(item => item.id)).toEqual(['waiting', 'working', 'other-live'])
   }
 })
 

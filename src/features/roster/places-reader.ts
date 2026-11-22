@@ -56,27 +56,38 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     }
     const saved = deps.store.list()
     const raw = new Map(items.map(item => [item.key, root(pathOf(item))]))
-    // Claude Code 在临时目录里干活:路径里编码着原目录,对回已知的项目(这一批里认出来的 + 存下的);对不上就不算。
-    const bySlug = new Map<string, string>()
-    for (const r of [...saved.map(x => x.root), ...raw.values()]) if (r && !r.startsWith(SCRATCH_PREFIX)) bySlug.set(claudeProjectSlug(r), r)
-    const resolved = (r: string | null | undefined) => (r?.startsWith(SCRATCH_PREFIX) ? bySlug.get(r.slice(SCRATCH_PREFIX.length)) ?? null : r ?? null)
-    const result = buildPlaces({
-      items, onHead,
-      rootOf: item => resolved(raw.get(item.key)),
-      originOf: id => g.matters.get(id)?.originMessageId ?? null,
-      saved,
+    const sessionOf = (item: RosterItemT) => item.terminal && g.sessions.get(item.terminal.sessionId)
+    // Claude Code 临时目录的名字编码了原项目,只对回已经认出的项目根。
+    const resolver = (rows: RosterItemT[]) => {
+      const bySlug = new Map<string, string>()
+      for (const r of [...saved.map(x => x.root), ...rows.map(item => raw.get(item.key))]) {
+        if (r && !r.startsWith(SCRATCH_PREFIX)) bySlug.set(claudeProjectSlug(r), r)
+      }
+      return (r: string | null | undefined) => r?.startsWith(SCRATCH_PREFIX)
+        ? bySlug.get(r.slice(SCRATCH_PREFIX.length)) ?? null : r ?? null
+    }
+    const resolved = resolver(items)
+    const placeInput = {
+      items, onHead, saved,
+      rootOf: (item: RosterItemT) => resolved(raw.get(item.key)),
+      originOf: (id: string) => g.matters.get(id)?.originMessageId ?? null,
       keyOf: placeKey,
-      nameOf: r => basename(r) || r,
-    })
-    const persistable = new Set<string>()
+      nameOf: (r: string) => basename(r) || r,
+    }
+    // Shared settings keep the original discovery order and roots, including on a phone's first read.
+    const sharedItems = includeEnded ? items.filter(item => sessionOf(item)?.status !== 'ended') : items
+    const hasHistory = sharedItems.length !== items.length
+    const sharedRoot = hasHistory ? resolver(sharedItems) : resolved
+    const shared = hasHistory ? buildPlaces({ ...placeInput, items: sharedItems,
+      rootOf: item => sharedRoot(raw.get(item.key)), onHead: undefined }).added : []
+    const result = buildPlaces({ ...placeInput, saved: [...saved, ...shared] })
     if (includeEnded) {
       const sessionsByPlace = new Map<string, NonNullable<PlaceT['sessions']>>()
       for (const item of items) {
         const r = resolved(raw.get(item.key))
         if (!r) continue
         const key = placeKey(r)
-        const s = item.terminal && g.sessions.get(item.terminal.sessionId)
-        if (s?.status !== 'ended') persistable.add(key)
+        const s = sessionOf(item)
         if (!s || s.last_event_at < now - PLACES_WINDOW_MS) continue
         const status = terminalStatusKey(s.status) as NonNullable<PlaceT['sessions']>[number]['status']
         const list = sessionsByPlace.get(key) ?? []
@@ -91,7 +102,7 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
           .slice(0, 30)
       }
     }
-    return { ...result, persistable, saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
+    return { ...result, added: hasHistory ? shared : result.added, saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
   }
 
   const collectMapPlaces = () => collect('operator', { ...deps.roster, workbench: deps.mapWorkbench })
@@ -172,12 +183,10 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     read(scope) {
       const heads = new Map<string, string>()
       const recaps = scope === 'operator' && deps.recaps?.enabled() ? deps.recaps : undefined
-      const { places, hidden, added, now, persistable } = collect(scope, deps.roster, recaps && ((key, item) => {
+      const { places, hidden, added, now } = collect(scope, deps.roster, recaps && ((key, item) => {
         if (item.terminal) heads.set(key, item.terminal.sessionId)
       }), scope === 'operator')
-      // A place discovered solely through ended history must not create a new empty row on phones.
-      const discovered = scope === 'operator' ? added.filter(place => persistable.has(place.key)) : added
-      if (discovered.length) deps.store.add(discovered, now)
+      if (added.length) deps.store.add(added, now)
       for (const place of places) {
         const id = heads.get(place.key)
         const recap = id && recaps?.read(id)
