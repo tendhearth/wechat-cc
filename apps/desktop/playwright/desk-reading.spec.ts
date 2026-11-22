@@ -66,7 +66,9 @@ test('地方名、首日日期和正文各在自己的位置', async ({ page, sh
   await expect.poll(() => title.evaluate(node => node.getBoundingClientRect().height)).toBe(0)
   const bubble = scroll.locator('.converse-bubble').first()
   const bodyOffset = async () => (await bubble.boundingBox())!.x - (await scroll.boundingBox())!.x
-  expect(await bodyOffset()).toBe(104) // 56px 读栏内边距 + 原有 48px 头像位置
+  const inset = await scroll.evaluate(el => Math.max(36, (el.clientWidth - 712) / 2))
+  expect(Math.abs(await bodyOffset() - inset)).toBeLessThanOrEqual(1)
+  await expect(scroll.locator('.desk-speaker:visible')).toHaveCount(0)
   await select(page, 'rici')
   await expect(placeRow(page, 'melu')).toHaveCSS('opacity', '1')
   const heading = page.locator('#thing-name')

@@ -342,6 +342,7 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex, showInli
   const avatar = provider ? replyAvatarHtml(m,replyAgentNames) : ''
   const roleCls = m.role === "user" ? "converse-msg-user" : "converse-msg-cc"
   const pendingCls = m.pending ? " is-pending" : ""
+  const noticeCls = m.speaker === 'notice' ? ' converse-msg-notice' : ''
   // Replay is only meaningful for a real CC reply — not the "…" placeholder
   // and not the user's own bubble.
   const replayBtn = m.role === "cc" && !m.pending
@@ -367,7 +368,7 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex, showInli
   const body = grouped
     ? `<div class="converse-cc-body">${label}${m.role === "cc" ? narrationHtml(m,narrationIndexes) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m,attachmentIndexes)}</div>`
     : bubble
-  return `<div class="converse-msg ${roleCls}${pendingCls}${avatar ? ' has-reply-avatar' : ''}" role="group" aria-label="${escapeHtml(name)}">
+  return `<div class="converse-msg ${roleCls}${pendingCls}${noticeCls}${avatar ? ' has-reply-avatar' : ''}" role="group" aria-label="${escapeHtml(name)}">
     <span class="converse-speaker">${deskSpeakerHtml(m.role)}${avatar}</span>
     ${userImages ? `<div class="converse-user-body">${userImages}${m.text.trim() ? body : ""}</div>` : body}
     ${m.legacyMedia ? '<small class="converse-legacy-media">这条记录只保存了附件数量，原附件未保存在对话中。</small>' : ""}

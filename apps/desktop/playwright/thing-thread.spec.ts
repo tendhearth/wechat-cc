@@ -26,7 +26,7 @@ const approval = {actionable:true,tool:'Read',summary:'读备份目录？',hash:
 const entries = [
   step('you','you','把这周的记录整理一下'),
   step('reply','said','这是短摘要',{full:'这是 **完整原话**，包含记录。'}),
-  step('one','step','读了记录',{detail:'这里是工具输出'}),
+  step('one','step','读 records.md',{detail:'这里是工具输出',verb:'read',target:'records.md'}),
   step('two','step','核对目录',{error:true}),
 ]
 
@@ -67,7 +67,13 @@ test('一次会话直接读原话；重复点击不取消，回 CC 草稿还在�
   await expect(thread(page)).toBeVisible()
   await expect(terminal(page)).toContainText('把这周的记录整理一下')
   await expect(terminal(page).locator('strong')).toHaveText('完整原话')
-  await expect(terminal(page).getByText('做了 2 步')).toBeVisible()
+  const line = terminal(page)
+  await expect(line.getByText('做了 2 步')).toBeVisible()
+  await expect(line.locator('.desk-speaker:visible')).toHaveCount(0)
+  await expect(line.locator('.converse-msg-user .converse-bubble')).toHaveCSS('border-radius', '18px 18px 6px 18px')
+  await expect(line.locator('.converse-msg-cc .converse-bubble')).toHaveCSS('line-height', '26.25px')
+  await expect(line.locator('.thing-compose')).toHaveCSS('border-radius', '20px')
+  await expect(line.getByRole('button', {name:'发送', exact:true})).toHaveCSS('background-color', 'rgb(243, 238, 230)')
   await expect(thread(page).locator('.thing-sessions')).toBeHidden()
   await expect(thread(page).locator('.thing-agent')).toHaveText('Codex')
   await expect(thread(page).locator('.thing-state')).toHaveText('停着')
@@ -110,6 +116,10 @@ test('三次会话优先等你定，换会话以及回到原处都可后退；�
   await expect(state).toHaveText('等你定')
   await expect(state).toHaveAttribute('data-tone','waiting')
   await expect(terminal(page)).toContainText('ask 的原话')
+  const card = terminal(page).locator('.desk-waiting-card')
+  await expect(card).toHaveCSS('border-radius', '14px')
+  await expect(card.locator('.desk-waiting-opinion')).toHaveCSS('font-family', /TH Pen Hand/)
+  await expect(card.locator('.desk-waiting-reason')).toHaveCSS('font-size', '13px')
   await tabs.nth(1).click()
   await expect(terminal(page)).toContainText('run 的原话')
   await expect(state).toHaveText('正在做')
@@ -146,6 +156,9 @@ test('展开两层后重读保持节点，往上读时新回复提示且位置�
   const group=scroll.locator('.thing-steps > details')
   const detail=group.locator('li details')
   await group.locator(':scope > summary').click()
+  await expect(group.locator('ol')).toHaveCSS('border-radius', '10px')
+  await expect(detail.locator('summary code')).toHaveText('records.md')
+  await expect(detail.locator('summary code')).toHaveCSS('font-size', '12px')
   await detail.locator('summary').click()
   await detail.locator('summary').focus()
   await expect(detail.locator('pre')).toBeVisible()
