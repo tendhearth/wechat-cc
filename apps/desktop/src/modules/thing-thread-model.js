@@ -41,8 +41,11 @@ export function splitSessions(items, selected, limit = VISIBLE_SESSIONS) {
 
 /** @param {RosterItem[]} ordered @param {string|null|undefined} remembered */
 export function initialSession(ordered, remembered = null) {
+  // Tabs keep a stable order, so "the latest" is found by time, not by position.
+  const latest = ordered.filter(item => item.endedAt == null)
+    .reduce((/** @type {RosterItem|undefined} */ best, item) => !best || item.updatedAt > best.updatedAt ? item : best, undefined)
   return ordered.find(item => item.key === remembered)
-    ?? ordered.find(item => item.group === 'waiting') ?? ordered[0]
+    ?? ordered.find(item => item.group === 'waiting') ?? latest ?? ordered[0]
 }
 
 /** @param {Session|null} session @param {string} name @param {boolean} waiting @param {boolean} [wide] */

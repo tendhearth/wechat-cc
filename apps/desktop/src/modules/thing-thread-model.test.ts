@@ -36,6 +36,10 @@ describe('桌面一件事', () => {
     expect(initialSession([recent,waiting],recent.key)?.id).toBe('recent')
     expect(initialSession([recent],'lost')?.id).toBe('recent')
     expect(initialSession([])).toBeUndefined()
+    // Tabs are not ordered by activity any more: the latest live one is found by time, an ended one never wins over it.
+    const old = rosterItem('old',5), fresh = rosterItem('fresh',30), ended = {...rosterItem('ended',40), endedAt:40}
+    expect(initialSession([old,fresh,ended])?.id).toBe('fresh')
+    expect(initialSession([ended])?.id).toBe('ended')
   })
 
   it('运行中只在窗口开着时能送话，等待和结束说明原因', () => {

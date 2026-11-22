@@ -302,7 +302,7 @@ it('历史地方可以往下挪过另一条历史记录，手机只看到明确�
   expect(await phone()).toBe(phoneWithSavedPlace)
 })
 
-it('页签只取三十天内的活会话，按档内时间排序并封顶三十次', () => {
+it('页签只取三十天内的活会话，封顶三十次；等你定的在最前，其余按开始的先后、新的在前', () => {
   const session = (id: string, status: CliSessionView['status'], days: number): CliSessionView => ({
     session_id: id, code: id, source: 'codex', status, project: '/w/rici', cwd: '/w/rici', stale: false,
     machine: null, origin_agent: null, last_summary: null, last_prompt_at: null, pending: null,
@@ -313,7 +313,10 @@ it('页签只取三十天内的活会话，按档内时间排序并封顶三十�
     session('ended', 'ended', 0), ...paused.reverse(), session('waiting', 'waiting', 29)])
   const { sessions } = reader.read('operator').places[0]!
   expect(sessions).toHaveLength(30)
-  expect(sessions?.map(row => row.sessionId)).toEqual(['waiting', 'working', ...paused.slice(1).reverse().map(row => row.session_id)])
+  // Kept: the waiting one, the working one, and the 28 most recently active of the rest (the ended one gives way).
+  // Shown: waiting first; then by when each session began, newest first. The working one keeps its place (day 25).
+  const name = (i: number) => 'paused-' + i
+  expect(sessions?.map(row => row.sessionId)).toEqual(['waiting', ...Array.from({ length: 26 }, (_, i) => name(i)), 'working', name(26), name(27)])
 })
 
 it('页签标题取第一句，压成一行并按字符截断，只为桌面查且命中后不重查', async () => {

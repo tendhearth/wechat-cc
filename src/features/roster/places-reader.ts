@@ -98,7 +98,8 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
       rootOf: item => sharedRoot(raw.get(item.key)), onHead: undefined }).added : []
     const result = buildPlaces({ ...placeInput, saved: [...saved, ...shared], fillOpenPositions: hasHistory })
     if (includeSessions) {
-      const sessionsByPlace = new Map<string, NonNullable<PlaceT['sessions']>>()
+      type Tab = NonNullable<PlaceT['sessions']>[number] & { createdAt: number }
+      const sessionsByPlace = new Map<string, Tab[]>()
       for (const item of items) {
         const r = resolved(raw.get(item.key))
         if (!r) continue
@@ -108,15 +109,23 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
         const status = terminalStatusKey(s.status) as NonNullable<PlaceT['sessions']>[number]['status']
         const list = sessionsByPlace.get(key) ?? []
         list.push({ sessionId: s.session_id, ...(item.kind === 'matter' ? { matterId: item.id } : {}),
-          agent: s.source, status, updatedAt: s.last_event_at, endedAt: s.status === 'ended' ? s.last_event_at : null })
+          agent: s.source, status, updatedAt: s.last_event_at, endedAt: s.status === 'ended' ? s.last_event_at : null, createdAt: s.created_at })
         sessionsByPlace.set(key, list)
       }
       const order = { waiting: 0, working: 1, replied: 2, done: 3 }
+      const byId = (a: Tab, b: Tab) => a.sessionId.localeCompare(b.sessionId)
       for (const place of result.places) {
-        place.sessions = (sessionsByPlace.get(place.key) ?? [])
-          .sort((a, b) => order[a.status] - order[b.status] || b.updatedAt - a.updatedAt || a.sessionId.localeCompare(b.sessionId))
+        // Which thirty: the ones that need the owner or are moving first, then by recent activity.
+        const kept = (sessionsByPlace.get(place.key) ?? [])
+          .sort((a, b) => order[a.status] - order[b.status] || b.updatedAt - a.updatedAt || byId(a, b))
           .slice(0, 30)
-          .map(session => {
+        // Where each sits: tabs keep their place while a session works and rests, so live ones go
+        // newest session first; only one waiting for the owner comes to the front. Ended ones follow.
+        const rank = (tab: Tab) => tab.status === 'waiting' ? 0 : tab.endedAt == null ? 1 : 2
+        place.sessions = kept
+          .sort((a, b) => rank(a) - rank(b)
+            || (rank(a) === 1 ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt) || byId(a, b))
+          .map(({ createdAt: _createdAt, ...session }) => {
             const title = session.matterId && sessionTitle(session.matterId)
             return title ? { ...session, title } : session
           })

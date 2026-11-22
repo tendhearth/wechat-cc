@@ -142,13 +142,14 @@ test('三次会话优先等你定，换会话以及回到原处都可后退；�
   await expect(thread(page).getByRole('heading',{name:'花园'})).toBeVisible()
 })
 
-test('没有等你定时优先正在做，重进地方恢复上次选择',async({page,shimUrl})=>{
+test('没有等你定时默认最近，重进地方恢复上次选择',async({page,shimUrl})=>{
   await mockTerminal(page,{withThree:true,waiting:false})
   await page.goto(shimUrl)
   await select(page,'备份')
   const tabs=thread(page).locator('[data-thread-session]')
-  await expect(tabs.first()).toHaveAttribute('aria-pressed','true')
-  await expect(terminal(page)).toContainText('run 的原话')
+  // 页签的先后不跟着谁刚动过走；默认打开的是最近动过的那一次（new），不一定是第一个。
+  await expect(thread(page).locator('[data-thread-session="terminal:new"]')).toHaveAttribute('aria-pressed','true')
+  await expect(terminal(page)).toContainText('new 的原话')
   await tabs.last().click()
   await select(page,'花园')
   await select(page,'备份')
