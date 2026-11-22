@@ -17,7 +17,8 @@ const halfwidth = /(?<=\p{Script=Han})[,:;()?!]|[,:;()?!](?=\p{Script=Han})/u
 function punctuationIssues(source: string) {
   // Mark literal commands, API paths and code explicitly with <code> or <kbd>.
   // Keep their contents on one line so diagnostics retain the source line number.
-  const withoutBlockComments = source.replace(/^[ \t]*\/\*(?:(?!\*\/)[\s\S])*\*\/(?=[ \t]*$)/gm,
+  // A Windows checkout has CRLF line endings; a stray \r would keep the end-of-line patterns below from matching.
+  const withoutBlockComments = source.replace(/\r\n?/g, '\n').replace(/^[ \t]*\/\*(?:(?!\*\/)[\s\S])*\*\/(?=[ \t]*$)/gm,
     comment => comment.replace(/[^\n]/g, ''))
   return withoutBlockComments.split('\n').flatMap((line, index) => {
     if (/^\s*(?:\/\/|\/\*|\*(?:\s|\/|$)|<!--)/.test(line)) return []
@@ -39,4 +40,9 @@ it('checks Chinese copy around explicitly marked code', () => {
   expect(punctuationIssues('用 <code>/api 短名(test)</code> 切换。')).toEqual([])
   expect(punctuationIssues('<kbd>切换(test)</kbd>，现在可以重试;或返回。')).toHaveLength(1)
   expect(punctuationIssues('准备失败,点此重试')).toHaveLength(1)
+})
+
+it('skips comments the same way on a CRLF checkout', () => {
+  const source = ['  }  // 网络/过期:别静默,让调用方回滚', '  // 整行注释:也不查', "  x = '准备失败,点此重试'"].join('\r\n') + '\r\n'
+  expect(punctuationIssues(source)).toEqual(["3:   x = '准备失败,点此重试'"])
 })
