@@ -51,7 +51,14 @@ test('整个收起让出全宽，按钮位置固定，展开还原几何', async
   const [, right, talk, button] = await geometry()
   expect(right!.x).toBe(8)
   expect(right!.width).toBe(1264)
-  expect(talk!.width).toBeLessThanOrEqual(780)
+  // 滚动区占满整张纸(滚动条贴着纸边),里面的正文一栏最宽 712、居中
+  const column = await scroll(page).evaluate(el => {
+    const style = getComputedStyle(el), box = el.getBoundingClientRect()
+    const left = box.left + parseFloat(style.paddingLeft), end = box.right - parseFloat(style.paddingRight)
+    return { x: left, width: end - left }
+  })
+  expect(column.width).toBeLessThanOrEqual(712)
+  expect(column.x + column.width / 2).toBeCloseTo(right!.x + right!.width / 2)
   expect(talk!.x + talk!.width / 2).toBeCloseTo(right!.x + right!.width / 2)
   expect(button).toEqual(expanded[3])
   await page.mouse.move(button!.x + 5, button!.y + 5)
