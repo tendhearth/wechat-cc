@@ -7,34 +7,40 @@
 html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: none; }
 
 [data-desk-wide] .dashboard .dash-window {
-  --desk-rail-width: 304px;
+  --desk-rail-width: 284px;
   --desk-titlebar-height: 30px;
   --desk-rail-space: var(--desk-rail-width);
   --desk-page-width: 780px;
   --desk-page-padding: 56px;
-  --desk-speaker-offset: 48px;
+  --desk-detail-inset: 104px;
+  --desk-thread-gutter: 36px;
+  --desk-thread-max: 712px;
+  --desk-thread-width: min(var(--desk-thread-max), calc(100% - 2 * var(--desk-thread-gutter)));
   grid-template-columns: var(--desk-rail-space) minmax(0, 1fr) auto;
   grid-template-rows: var(--desk-titlebar-height) minmax(0, 1fr);
   font-family: var(--th-font-serif);
+  background: var(--th-ground);
 }
 [data-desk-wide] #dash-global-rail {
   grid-area: 1 / 1 / -1 / 2;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   align-items: stretch;
   justify-content: normal; /* 原页头是 space-between,留着会把这一列缩成内容宽 */
-  padding: 44px 0 0;
+  padding: 50px 0 0;
   border: 0;
-  border-right: 1px solid var(--th-hair);
-  background: var(--th-paper);
+  background: var(--th-ground);
+  font-family: var(--th-font-desk-ui);
+  font-size: 13.5px;
+  line-height: 1.5;
 }
 [data-desk-wide] .desk-rail-titlebar {
   display: flex;
   align-items: center;
   position: absolute;
   inset: 0 auto auto 0;
-  /* 要压在左栏上面(左栏是 110,浮出时也是):否则按钮被左栏的纸色底盖住,看不见也点不到。 */
+  /* 按钮和拖动区压在浮出的左栏之上。 */
   z-index: 111;
   height: var(--desk-titlebar-height);
   width: var(--desk-rail-width);
@@ -70,49 +76,36 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   pointer-events: none;
 }
 [data-desk-wide] #topbar-cc[data-waiting] .topbar-waiting-dot { display: block; }
-[data-desk-wide] .topbar-home { position: relative; margin: 6px 12px 20px 20px; }
+[data-desk-wide] .topbar-home { position: relative; margin: 0 10px 8px; }
 [data-desk-wide] #topbar-cc {
   flex: 1;
-  gap: 14px;
+  gap: 10px;
   align-items: center;
   min-width: 0;
-  min-height: 60px;
-  padding: 0 32px 0 0;
-  border-radius: 9px;
+  min-height: 62px;
+  padding: 8px 36px 8px 8px;
+  border-radius: 14px;
   color: var(--th-ink);
   background: transparent;
   text-align: left;
   white-space: normal;
   letter-spacing: normal;
 }
-[data-desk-wide] .place[data-selected="true"],
-[data-desk-wide] body[data-pane="overview"] #topbar-cc:not([data-place-selected]) { background: var(--th-rail); }
-[data-desk-wide] #topbar-cc .topbar-figure,
-[data-desk-wide] #topbar-cc .topbar-figure img { width: 60px; height: 60px; }
+[data-desk-wide] #topbar-cc:hover { background: var(--th-desk-hover-cc); }
+[data-desk-wide] #topbar-cc :is(.topbar-figure, .topbar-figure img, .now-pet-stage, .now-pet-sprite, .roster-glance) { width: 46px; height: 46px; }
 [data-desk-wide] #topbar-cc .topbar-figure { flex: none; }
-/* 呼吸的光挂在这一行上(不挂在静态图上):运行时就绪后静态图会隐藏,换成活的 CC(now-pet-stage),光还在 */
-[data-desk-wide] #topbar-cc[data-cc="here"]::before {
-  content: '';
-  position: absolute;
-  left: -6px;
-  top: 50%;
-  width: 72px;
-  height: 72px;
-  margin-top: -36px;
-  background: radial-gradient(circle, var(--th-glow), transparent 68%);
-  animation: desk-breathe 5.5s ease-in-out infinite;
-  pointer-events: none;
-}
-/* 活的 CC 和它的道具(连接异常时的感叹号等)照旧显示,只是放大到这一行的尺寸 */
-[data-desk-wide] #topbar-cc .now-pet-stage { left: 0; top: 50%; width: 60px; height: 60px; margin-top: -30px; }
-[data-desk-wide] #topbar-cc .now-pet-sprite { width: 60px; height: 60px; }
-[data-desk-wide] #topbar-cc .topbar-waiting-dot { right: auto; left: 49px; }
-[data-desk-wide] .desk-cc-copy { display: grid; gap: 3px; min-width: 0; font-size: 17px; }
-[data-desk-wide] .desk-cc-copy strong { font-weight: var(--th-weight-desk-emphasis); }
-[data-desk-wide] .desk-cc-copy small { color: var(--th-ink-soft); font-size: 13.5px; line-height: 1.5; }
-@keyframes desk-breathe {
-  0%, 100% { opacity: .55; }
-  50% { opacity: 1; }
+[data-desk-wide] #topbar-cc :is(.now-pet-stage, .roster-glance) { left: 8px; top: 50%; margin-top: -23px; }
+[data-desk-wide] #topbar-cc .topbar-waiting-dot { top: 8px; right: auto; left: 43px; }
+[data-desk-wide] .desk-cc-copy { display: grid; gap: 1px; min-width: 0; }
+[data-desk-wide] .desk-cc-copy strong { font-size: 15px; line-height: 1.4; font-weight: var(--th-weight-desk-emphasis); }
+[data-desk-wide] #desk-cc-situation {
+  color: var(--th-ink-soft);
+  font-family: var(--th-font-cc-hand);
+  font-size: 14.5px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 [data-desk-wide] #dash-global-rail .cc-home-details { position: absolute; inset: 0 4px 0 auto; display: flex; align-items: center; }
 [data-desk-wide] #dash-global-rail .cc-home-details > summary { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; }
@@ -120,55 +113,123 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .desk-cc-connections { display: inline; }
 [data-desk-wide] :is(#topbar-presence, #topbar-presence-dot) { display: none; }
 
-[data-desk-wide] .places-strip { display: flex; min-height: 0; padding: 0 12px; }
-[data-desk-wide] .places-root { flex: 1; max-height: none; border: 0; background: var(--th-paper); }
-[data-desk-wide] .places-strip[data-more-below]::after { inset-inline: 12px; background: linear-gradient(transparent, var(--th-paper)); }
-[data-desk-wide] .place { margin-bottom: 2px; border-radius: 9px; }
+[data-desk-wide] #dash-global-rail > nav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  padding: 0 10px;
+}
+[data-desk-wide] #dash-global-rail :is(nav > button, .topbar-more > summary) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  letter-spacing: normal;
+  text-align: left;
+}
+[data-desk-wide] #dash-global-rail nav > button { color: var(--th-ink); }
+[data-desk-wide] #dash-global-rail :is(nav > button:hover, .topbar-more > summary:hover) { background: var(--th-desk-hover); }
+[data-desk-wide] #dash-global-rail .desk-nav-icon { display: block; width: 16px; height: 16px; flex: none; color: var(--th-ink-soft); }
+[data-desk-wide] #memory-count { margin-inline-start: auto; color: var(--th-desk-faint); font-size: 11.5px; }
+[data-desk-wide] #dash-global-rail .desk-project-label { padding: 16px 20px 6px; font-size: 11.5px; color: var(--th-desk-faint); }
+
+[data-desk-wide] .places-strip { display: flex; min-height: 0; padding: 0 9px; }
+[data-desk-wide] .places-root { flex: 1; max-height: none; padding: 1px 1px 6px; border: 0; background: transparent; }
+[data-desk-wide] .places-strip[data-more-below]::after { inset-inline: 10px; background: linear-gradient(transparent, var(--th-ground)); }
+[data-desk-wide] .place { margin-bottom: 1px; border-radius: 9px; }
+[data-desk-wide] .place:hover { background: var(--th-desk-hover); }
+[data-desk-wide] .place[data-selected="true"] { background: var(--th-desk-sheet); box-shadow: var(--th-desk-shadow-selection); }
 [data-desk-wide] .place[data-waiting="true"] { display: block; }
 [data-desk-wide] .places-root:not([data-quiet-expanded]) .place[data-quiet="true"] { display: none; }
 [data-desk-wide] .place .place-row {
-  grid-template-columns: 12px minmax(0, 1fr) auto;
+  grid-template-columns: 6px minmax(0, 1fr) auto;
   gap: 1px 8px;
-  align-items: baseline;
-  padding: 9px 34px 9px 10px;
+  align-items: center;
+  min-height: 0;
+  padding: 7px 32px 8px 8px;
   border-radius: inherit;
 }
-[data-desk-wide] .place-dot { width: 7px; height: 7px; }
-[data-desk-wide] .place[data-waiting="false"]:is([data-moving="true"], [data-working]) .place-dot {
+[data-desk-wide] .place-dot { width: 6px; height: 6px; }
+[data-desk-wide] .place[data-waiting="false"]:is([data-moving="true"], [data-working]) .place-dot,
+[data-desk-wide] .thing-state[data-tone="working"]::before {
   background: var(--th-warn);
-  filter: drop-shadow(0 0 4px var(--th-glow));
-  animation: desk-breathe 4.5s ease-in-out infinite;
+  outline: 3px solid var(--th-desk-warn-halo);
 }
-@media (prefers-reduced-motion: reduce) {
-  [data-desk-wide] #topbar-cc[data-cc="here"]::before,
-  [data-desk-wide] .place[data-waiting="false"]:is([data-moving="true"], [data-working]) .place-dot { animation: none; }
+[data-desk-wide] .place-name { font-size: 13.5px; font-weight: 500; }
+[data-desk-wide] .place[data-unseen="true"] .place-name { font-weight: var(--th-weight-desk-emphasis); }
+[data-desk-wide] .place-time {
+  grid-area: 1 / 3;
+  justify-self: end;
+  font-size: 11.5px;
+  color: var(--th-desk-faint);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
 }
-[data-desk-wide] .place-time { grid-area: 1 / 3; justify-self: end; font-size: 12px; }
+[data-desk-wide] .place:is(:hover, [data-selected="true"]) .place-time { opacity: 1; }
 [data-desk-wide] .place .place-line {
   grid-area: 2 / 2 / auto / -1;
+  margin-inline: 10px -22px; /* 菜单只占标题行的右侧。 */
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   white-space: normal;
   overflow-wrap: anywhere;
-  line-height: 1.55;
+  color: var(--th-ink-soft);
+  font-size: 12.5px;
+  line-height: 1.5;
 }
-[data-desk-wide] .place-more { width: 28px; height: 28px; right: 2px; }
+[data-desk-wide] .place-more { width: 28px; height: 28px; top: 3px; right: 2px; }
+[data-desk-wide] .place-actions { background: var(--th-desk-raised); border: 0; border-radius: 12px; box-shadow: var(--th-desk-shadow-raised); }
 
-[data-desk-wide] .dash-topbar nav {
-  justify-content: flex-start;
-  gap: 20px;
-  padding: 12px 22px 16px;
+[data-desk-wide] #dash-global-rail > .topbar-more { margin: 4px 10px 10px; }
+[data-desk-wide] .desk-more-compact { display: none; }
+[data-desk-wide] .topbar-more > div {
+  inset: auto auto calc(100% + 4px) 0;
+  width: 236px;
+  box-sizing: border-box;
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  gap: 1px;
+  padding: 6px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--th-desk-raised);
+  box-shadow: var(--th-desk-shadow-raised);
 }
-[data-desk-wide] .dash-topbar nav :is(button, summary) { min-height: 32px; font-size: 14px; letter-spacing: normal; }
-[data-desk-wide] .dash-topbar nav :is(.active, [aria-current], summary:hover),
-[data-desk-wide] .topbar-more:has(.active) summary { color: var(--th-ink); background: transparent; }
-[data-desk-wide] .topbar-more > div { inset: auto 0 calc(100% + 8px) auto; gap: 4px; padding: 8px; }
 [data-desk-wide] .topbar-more[open] #topbar-roster { display: block !important; }
-[data-desk-wide] .dash-topbar nav .topbar-more { margin-left: auto; }
-[data-desk-wide] .topbar-more > div button { justify-self: stretch; text-align: left; }
+[data-desk-wide] #dash-global-rail .topbar-more > div :is(button, .desk-labs-title) {
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  font: inherit;
+  text-align: left;
+}
+[data-desk-wide] #dash-global-rail .topbar-more > div button:hover { background: var(--th-rail); }
+[data-desk-wide] #dash-global-rail .topbar-more .desk-labs-title {
+  min-height: 0;
+  border: 0;
+  padding: 8px 10px 2px;
+  color: var(--th-desk-faint);
+  font-size: 11.5px;
+}
+[data-desk-wide] #dash-global-rail .desk-labs { min-width: 0; font: inherit; }
+[data-desk-wide] #dash-global-rail .desk-labs p { padding: 0 10px; font-size: 12px; }
 
-[data-desk-wide] .dashboard .dash-main { grid-area: 2 / 2; }
+[data-desk-wide] .dashboard .dash-main {
+  grid-area: 1 / 2 / -1;
+  margin: 8px 8px 8px 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--th-desk-sheet);
+  box-shadow: var(--th-desk-shadow-sheet);
+}
+[data-desk-wide][data-desk-collapsed] .dashboard .dash-main { margin-inline-start: 8px; }
+[data-desk-wide] .dash-main > .dash-pane:not(.thing-thread) { margin-top: 22px; }
+[data-desk-wide] .dash-main > .cc-now-pane { min-height: 0; margin-top: 52px; background: transparent; }
+[data-desk-wide] .dash-main > .thing-thread { background: transparent; }
 [data-desk-wide] .desk-heading {
   grid-area: 1 / 1 / 2 / -1;
   position: relative;
@@ -185,7 +246,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   width: min(100%, var(--desk-page-width));
   box-sizing: border-box;
   margin: 0 auto;
-  padding: 0 var(--desk-page-padding) 0 calc(var(--desk-page-padding) + var(--desk-speaker-offset));
+  padding: 0 var(--desk-page-padding) 0 var(--desk-detail-inset);
 }
 [data-desk-wide] #desk-place-name {
   color: var(--th-ink);
@@ -194,13 +255,14 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   overflow: hidden;
   text-overflow: ellipsis;
 }
-[data-desk-wide] .desk-message-date {
+[data-desk-wide] :is(.desk-message-date, .converse-msg-notice) {
   display: block;
   text-align: center;
-  color: var(--th-ink-soft);
-  font-size: 12.5px;
-  padding-block: 8px;
+  color: var(--th-desk-faint);
+  font-size: 12px;
+  letter-spacing: .02em;
 }
+[data-desk-wide] .desk-message-date { padding-block: 8px; }
 [data-desk-wide] :is(.desk-text-button, #desk-place-clear) {
   border: 0;
   padding: 0;
@@ -228,9 +290,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] :is(#converse-latest, #converse-stop, #converse-compose) { order: 4; }
 [data-desk-wide] #converse-stop {
   align-self: center;
-  position: relative;
-  left: calc(var(--desk-speaker-offset) / 2);
-  width: calc(min(100%, var(--desk-page-width)) - 2 * var(--desk-page-padding) - var(--desk-speaker-offset));
+  width: var(--desk-thread-width);
   text-align: start;
 }
 [data-desk-wide] button.desk-quiet-toggle { display: block; min-height: 36px; padding: 0 0 0 28px; } /* 和名字那一列对齐;上面那条通用的文字按钮规则把 padding 清成 0 了 */
@@ -242,84 +302,81 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   gap: 10px;
   flex: none;
   box-sizing: border-box;
-  width: min(100%, var(--desk-page-width));
+  width: min(100%, calc(var(--desk-thread-max) + 2 * var(--desk-thread-gutter)));
   max-height: 42%;
   overflow: auto;
   margin: 0 auto;
-  padding: 14px var(--desk-page-padding) 18px;
+  padding: 14px var(--desk-thread-gutter) 18px;
+  font-family: var(--th-font-desk-ui);
 }
-[data-desk-wide] .desk-waiting-row {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  column-gap: 16px;
-  align-items: start;
-}
-[data-desk-wide] .desk-waiting-row > .desk-speaker { margin-top: 12px; }
 [data-desk-wide] .desk-waiting-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px 20px;
-  align-items: center;
-  padding: 12px 16px 12px 20px;
-  border-radius: 3px;
-  background: var(--th-on-accent);
-  box-shadow: 0 1px 0 var(--th-hair), 0 8px 18px color-mix(in srgb, var(--th-ink) 7%, transparent);
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--th-desk-raised);
+  box-shadow: var(--th-desk-shadow-selection);
+  color: var(--th-ink);
   overflow-wrap: anywhere;
 }
-[data-desk-wide] .desk-waiting-label { color: var(--th-ink-soft); font-size: 12.5px; letter-spacing: .06em; }
-[data-desk-wide] .desk-waiting-question { font-size: 18.5px; line-height: 1.55; }
-[data-desk-wide] .desk-waiting-opinion { font-size: 15px; line-height: 1.8; }
-[data-desk-wide] .desk-waiting-reason { color: var(--th-ink-soft); font-size: 14px; line-height: 1.7; }
-[data-desk-wide] .desk-waiting-card :is(.desk-waiting-label, .desk-waiting-opinion, .desk-waiting-reason) { grid-column: 1 / -1; }
-[data-desk-wide] .desk-waiting-card .desk-waiting-question { grid-column: 1; }
-[data-desk-wide] .desk-waiting-card .place-ask { grid-column: 2; grid-row: 2; flex-wrap: nowrap; gap: 18px; padding: 0; }
-[data-desk-wide] .desk-waiting-row + .desk-waiting-row > .desk-speaker { visibility: hidden; }
-[data-desk-wide] .desk-waiting-card .place-ask button { min-height: 36px; font-size: 15px; }
-[data-desk-wide] .desk-waiting-card .place-allow { padding-inline: 22px; border-radius: 8px; }
-[data-desk-wide] .desk-waiting-card [data-place-decision="deny"] {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  text-decoration: underline;
-  text-decoration-color: var(--th-hair);
-  text-underline-offset: 5px;
+[data-desk-wide] .desk-waiting-label {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--th-accent);
+  font-size: 12px;
+  font-weight: var(--th-weight-desk-emphasis);
 }
-[data-desk-wide] .desk-waiting > .desk-text-button { justify-self: start; min-height: 32px; margin-left: var(--desk-speaker-offset); }
+[data-desk-wide] .desk-waiting-label::before {
+  content: '';
+  flex: none;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+[data-desk-wide] .desk-waiting-question { font-size: 15.5px; line-height: 1.6; font-weight: var(--th-weight-desk-emphasis); }
+[data-desk-wide] .desk-waiting-opinion { font: 400 15.5px/1.7 var(--th-font-cc-hand); }
+[data-desk-wide] .desk-waiting-reason { color: var(--th-ink-soft); font-size: 13px; line-height: 1.6; }
+[data-desk-wide] .desk-waiting-card .place-ask { gap: 8px; margin-top: 6px; padding: 0; }
+[data-desk-wide] .desk-waiting-card .place-ask button {
+  min-height: 30px;
+  padding-inline: 16px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 13px;
+}
+[data-desk-wide] .desk-waiting-card [data-place-decision="deny"] {
+  background: var(--th-desk-raised);
+  box-shadow: var(--th-desk-shadow-selection);
+}
+[data-desk-wide] .desk-waiting-card [data-place-decision="deny"]:hover:enabled { background: var(--th-rail); }
+[data-desk-wide] .desk-waiting-card .place-allow:hover:enabled { filter: brightness(1.07); }
+[data-desk-wide] .desk-waiting > .desk-text-button { justify-self: start; min-height: 32px; }
 
 [data-desk-wide] :is(.cc-now-pane[data-now="chat"], .thing-thread) .converse-scroll {
   box-sizing: border-box;
-  width: min(100%, var(--desk-page-width));
+  width: 100%;
   margin: 0 auto;
-  padding: 14px var(--desk-page-padding);
+  padding: 14px max(var(--desk-thread-gutter), calc((100% - var(--desk-thread-max)) / 2));
   gap: 18px;
+  font-family: var(--th-font-desk-ui);
 }
 [data-desk-wide] :is(#converse-scroll, .thing-scroll) > :first-child,
 [data-desk-wide] :is(#converse-scroll, .thing-scroll) > [data-converse-lead][hidden] + * { margin-top: auto; } /* 内容不满一屏时沉到底;「更早的对话」藏着时由它后面那个来撑 */
 [data-desk-wide] :is(#converse-scroll, .thing-scroll) > * { flex-shrink: 0; }
-[data-desk-wide] .converse-msg { align-items: flex-start; justify-content: flex-start; gap: 0; }
-[data-desk-wide] .converse-speaker {
-  display: flex;
-  flex: 0 0 32px;
-  flex-direction: column;
-  align-items: flex-start;
-  margin-right: 16px;
+[data-desk-wide] .converse-msg { align-items: flex-start; gap: 0; }
+[data-desk-wide] .converse-reply-parts { gap: 14px; }
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(details.converse-terminal, a.converse-matter) {
+  font: 400 15px/1.6 var(--th-font-desk-ui);
+  color: var(--th-ink);
+  border-color: var(--th-desk-edge);
 }
-[data-desk-wide] .desk-speaker {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
+[data-desk-wide] :is(.converse-latest, .converse-earlier, #converse-earlier, #converse-later, #converse-stop, #converse-place-more) {
+  font: 400 12.5px/1.6 var(--th-font-desk-ui);
   color: var(--th-ink-soft);
 }
-[data-desk-wide] .desk-speaker :is(img, svg) { display: block; width: 28px; height: 28px; object-fit: contain; }
-/* CC 那张图四周留了白,放大一圈才和你的头像一样大 */
-[data-desk-wide] .desk-speaker[data-speaker="cc"] img { width: 36px; height: 36px; margin: -2px; max-width: none; }
-/* CC 是白的,纸也是浅的:身后一圈它自己的暖光,小尺寸下才看得见它 */
-[data-desk-wide] .desk-speaker[data-speaker="cc"] { border-radius: 50%; background: radial-gradient(circle at 50% 56%, var(--th-glow), transparent 70%); }
-[data-desk-wide] [data-same-speaker] .desk-speaker,
-[data-desk-wide] .converse-reply-parts .converse-msg + .converse-msg .desk-speaker { visibility: hidden; }
-[data-desk-wide] .converse-reply-parts { gap: 14px; }
-[data-desk-wide] .converse-msg > .converse-terminal { margin-left: 48px; }
 [data-desk-wide] .converse-place-label { display: none; }
 [data-desk-wide] .desk-inline-place {
   display: inline;
@@ -334,57 +391,131 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   cursor: pointer;
 }
 [data-desk-wide] .desk-inline-place:hover { text-decoration: underline; }
-[data-desk-wide] .converse-process { font-size: 13px; }
-[data-desk-wide] .converse-process summary::before,
+[data-desk-wide] :is(.converse-process, .thing-steps) {
+  color: var(--th-ink-soft);
+  font: 400 12.5px/1.65 var(--th-font-desk-ui);
+  overflow-wrap: anywhere;
+}
+[data-desk-wide] :is(.converse-process, .thing-steps > details) > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 2px 9px 2px 10px;
+  margin-left: -10px;
+  border-radius: 999px;
+  list-style: none;
+  cursor: pointer;
+}
+[data-desk-wide] :is(.converse-process, .thing-steps > details) > summary:hover { background: var(--th-rail); }
+[data-desk-wide] :is(.converse-process, .thing-steps > details) > summary::-webkit-details-marker { display: none; }
+[data-desk-wide] :is(.converse-process, .thing-steps > details) > summary::before,
 [data-desk-wide] .converse-process-label { display: none; }
+[data-desk-wide] :is(.converse-process, .thing-steps > details) > summary::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border: solid currentColor;
+  border-width: 1px 1px 0 0;
+  transform: rotate(45deg);
+}
+[data-desk-wide] :is(.converse-process, .thing-steps > details)[open] > summary::after { transform: rotate(135deg); }
 [data-desk-wide] .converse-process:not([open]) .desk-process-open,
 [data-desk-wide] .converse-process[open] .desk-process-close { display: inline; }
-[data-desk-wide] .converse-process-lines {
-  padding: 4px 0 4px 14px;
+[data-desk-wide] :is(.converse-process-lines, .thing-steps ol) {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 12px;
+  padding: 10px 14px;
+  list-style: none;
   border: 0;
-  border-left: 1px solid var(--th-hair);
-  background: transparent;
-  font: 400 13.5px/1.8 var(--th-font-serif);
+  border-radius: 10px;
+  background: var(--th-rail);
+  font: inherit;
 }
-[data-desk-wide] .converse-user-body { align-items: flex-start; }
-[data-desk-wide] .converse-user-images { justify-content: flex-start; }
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(.converse-bubble, .converse-cc-body, .converse-user-body) { max-width: 100%; }
+[data-desk-wide] .converse-process-lines > li { margin: 0; }
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(.converse-bubble, .converse-cc-body) { max-width: 100%; }
 [data-desk-wide] :is(#converse-scroll, .thing-scroll) .converse-bubble {
   padding: 0;
   background: transparent;
-  font-family: var(--th-font-serif);
-  font-size: 16px;
-  line-height: 1.85;
+  color: var(--th-ink);
+  font: 400 15px/1.75 var(--th-font-desk-ui);
+  overflow-wrap: anywhere;
 }
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) .converse-msg-user .converse-bubble { color: var(--th-ink-soft); }
-/* 窄窗口里你的话是无衬线的气泡;两栏没有气泡,你和 CC 在同一列里读,用同一种字,只靠墨色分 */
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(.cc-user-reading, .cc-user-reading .cc-readable-markdown.wb-markdown) { font-family: var(--th-font-serif); }
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(.converse-msg-user > .converse-cc-body, .converse-msg-user > .converse-user-body, .converse-msg-user > .converse-bubble) { max-width: 78%; }
+[data-desk-wide] :is(#converse-scroll, .thing-scroll) .converse-msg-user .converse-bubble {
+  padding: 9px 15px;
+  border-radius: 18px 18px 6px 18px;
+  background: var(--th-message-user-background);
+  line-height: 1.6;
+}
+[data-desk-wide] #converse-scroll .converse-msg-cc:not(.has-reply-avatar, .converse-msg-notice) .converse-bubble {
+  font: 400 18.5px/1.7 var(--th-font-cc-hand);
+}
+[data-desk-wide] #converse-scroll .converse-msg-notice .converse-bubble {
+  max-width: 100%;
+  color: inherit;
+  font: inherit;
+}
+[data-desk-wide] .converse-msg-notice :is(.converse-cc-body, .converse-cc-line) { display: block; }
+[data-desk-wide] .converse-msg-notice > small,
+[data-desk-wide] .converse-msg-notice .converse-cc-line > small,
+[data-desk-wide] .converse-msg-notice .voice-replay-btn { display: none; }
+[data-desk-wide] .converse-msg-user .cc-user-reading,
+[data-desk-wide] .converse-msg-user .cc-user-reading .cc-readable-markdown.wb-markdown { font: inherit; }
+[data-desk-wide] .converse-bubble :is(code, pre) { font-family: var(--th-font-mono); }
+/* Keep process above the text and attachments below it. The mark and replay share the text row. */
+[data-desk-wide] #converse-scroll .converse-msg.has-reply-avatar {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 6px;
+}
+[data-desk-wide] #converse-scroll .has-reply-avatar :is(.converse-cc-body, .converse-cc-line) { display: contents; }
+[data-desk-wide] #converse-scroll .has-reply-avatar :is(.converse-process, .converse-attachments, .converse-cc-line > small, .has-reply-avatar > small) { grid-column: 1 / -1; }
+[data-desk-wide] #converse-scroll .has-reply-avatar :is(.converse-process, .converse-cc-line > small, .has-reply-avatar > small) { order: -2; }
+[data-desk-wide] #converse-scroll .has-reply-avatar .converse-speaker > .th-agents {
+  --th-agent-size: 14px;
+  order: -1;
+  margin-top: 6px;
+}
+[data-desk-wide] #converse-scroll .has-reply-avatar .converse-bubble { grid-column: 2; }
+[data-desk-wide] #converse-scroll .has-reply-avatar .voice-replay-btn { align-self: end; }
 [data-desk-wide] .converse-msg > .voice-replay-btn { align-self: flex-end; margin-left: 6px; }
+
 [data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose {
   position: relative;
-  left: calc(var(--desk-speaker-offset) / 2);
-  width: calc(min(100%, var(--desk-page-width)) - 2 * var(--desk-page-padding) - var(--desk-speaker-offset));
-  min-height: 48px;
-  gap: 8px;
-  margin: 4px auto 28px;
-  padding: 0;
+  width: var(--desk-thread-width);
+  gap: 8px 2px;
+  margin: 4px auto 20px;
+  padding: 14px 12px 10px 18px;
   border: 0;
-  border-bottom: 1px solid;
-  border-radius: 0;
+  border-radius: 20px;
+  background: var(--th-desk-raised);
+  box-shadow: var(--th-desk-shadow-raised);
+  font-family: var(--th-font-desk-ui);
 }
-[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose,
-[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose:focus-within {
-  border-color: color-mix(in srgb, var(--th-hair) 75%, var(--th-ink-soft));
+[data-desk-wide] .converse-compose .converse-draft { display: contents; }
+[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose textarea {
+  order: 0;
+  flex: 0 0 100%;
+  min-height: 24px;
+  padding: 0;
+  font: 400 15px/24px var(--th-font-desk-ui);
 }
-[data-desk-wide] .converse-compose > .desk-speaker { position: absolute; left: calc(-1 * var(--desk-speaker-offset)); bottom: 8px; }
-[data-desk-wide] .converse-compose .converse-draft { flex: 1 1 120px; gap: 12px; }
-[data-desk-wide] .converse-compose .converse-recipient { color: var(--th-accent); font-weight: var(--th-weight-desk-emphasis); }
-[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose :is(textarea, .converse-recipient) { font-family: var(--th-font-serif); }
-[data-desk-wide] .converse-compose .conversation-tools { order: 1; }
+[data-desk-wide] #converse-input { max-height: 8lh; }
+[data-desk-wide] .converse-compose textarea::placeholder { color: var(--th-desk-faint); }
+[data-desk-wide] .converse-compose .converse-recipient {
+  order: 2;
+  padding-block: 0;
+  color: var(--th-ink-soft);
+  font: 400 12.5px/1.6 var(--th-font-desk-ui);
+}
+[data-desk-wide] #converse-compose .conversation-tools { order: 1; margin-left: -8px; }
 [data-desk-wide] .converse-compose .conversation-add[open] { border: 0; background: transparent; }
 [data-desk-wide] .converse-compose .conversation-add[open] .conversation-add-items {
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: calc(100% + var(--th-space-s));
   display: grid;
   width: max-content;
@@ -394,27 +525,50 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   background: var(--th-paper);
 }
 [data-desk-wide] .conversation-add-items button { text-align: left; }
-[data-desk-wide] .converse-compose :is(.converse-images, .converse-image-note) { flex-basis: 100%; }
-[data-desk-wide] .converse-compose .converse-toolbar { order: 2; gap: 0; }
-[data-desk-wide] .converse-compose .converse-recording-hint { order: 3; }
-[data-desk-wide] #converse-root .converse-toolbar button,
+[data-desk-wide] .converse-compose :is(.converse-images, .converse-image-note, .converse-recording, .converse-recording-hint) { flex-basis: 100%; }
+[data-desk-wide] .converse-compose .converse-toolbar { order: 3; gap: 2px; margin-left: auto; }
+[data-desk-wide] .converse-compose .converse-recording-hint { order: 4; }
+[data-desk-wide] #converse-root .converse-toolbar :is(.converse-mic, .converse-voice-toggle),
 [data-desk-wide] .converse-compose .conversation-add summary {
-  min-width: 32px;
-  width: 32px;
-  min-height: 36px;
-  height: 36px;
-  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-height: 30px;
+  height: 30px;
   padding: 0;
   border: 0;
-  background: transparent;
+  border-radius: 8px;
   color: var(--th-ink-soft);
-  transition: none;
 }
-[data-desk-wide] .converse-compose .conversation-add summary { display: grid; place-items: center; }
-[data-desk-wide] #converse-root .converse-compose:is(:focus-within, :hover) :is(.converse-toolbar button, .conversation-add summary) { color: var(--th-ink); }
-[data-desk-wide] #converse-root .converse-toolbar :is(.is-on, .is-recording) { text-decoration: underline; color: var(--th-accent); }
+[data-desk-wide] #converse-root .converse-toolbar :is(.is-on, .is-recording) { color: var(--th-accent); background: var(--th-desk-accent-wash); }
+[data-desk-wide] .converse-compose .conversation-add summary:hover { background: var(--th-rail); }
 [data-desk-wide] .converse-toolbar svg { width: 16px; height: 16px; }
-[data-desk-wide] #converse-root .converse-compose:is([data-has-text], :has(#converse-images:not([hidden]))) #converse-send { color: var(--th-accent); }
+[data-desk-wide] #converse-root .converse-toolbar #converse-send,
+[data-desk-wide] .thing-compose button[type="submit"] {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--th-accent);
+  color: var(--th-on-accent);
+  cursor: pointer;
+}
+[data-desk-wide] #converse-root .converse-toolbar #converse-send:disabled,
+[data-desk-wide] #converse-root .converse-compose:not([data-has-text], :has(#converse-images:not([hidden]))) #converse-send,
+[data-desk-wide] .thing-compose button[type="submit"]:disabled {
+  background: var(--th-rail);
+  color: var(--th-desk-faint);
+  opacity: 1;
+  cursor: default;
+}
+[data-desk-wide] #converse-send svg { display: none; }
+[data-desk-wide] #converse-send::after { content: "↑"; font-size: 15px; }
+[data-desk-wide] .thing-compose button[type="submit"] { order: 3; margin-inline-start: auto; font-size: 15px; }
 
 [data-desk-wide] #roster-aside[data-docked] { grid-area: 2 / 3; }
 [data-desk-wide] .dashboard #roster-aside[data-open]:not([data-docked]) {
@@ -453,32 +607,98 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 }
 
 /* 和名字那一列对齐。带 id 是因为通用的文字按钮规则(里面有 #desk-place-clear)把 padding 清成 0,权重比类选择器高。 */
-[data-desk-wide] #places-root :is(.places-hidden-toggle, .desk-quiet-toggle) { display: block; min-height: 36px; padding: 0 0 0 30px; }
-[data-desk-wide] #places-root .places-hidden-list { padding: 0 12px 8px 30px; }
+[data-desk-wide] #places-root :is(.places-hidden-toggle, .desk-quiet-toggle) { display: block; min-height: 36px; padding: 0 0 0 22px; }
+[data-desk-wide] #places-root .places-hidden-list { padding: 0 12px 8px 22px; }
 [data-desk-wide] #places-root .places-hidden-list li { min-height: 32px; font-size: 13.5px; }
 [data-desk-wide] #places-root [data-place-restore] { min-height: 28px; color: var(--th-accent); }
 
+
 [data-desk-wide] .dashboard .thing-thread { overflow: hidden; font-family: var(--th-font-serif); }
-[data-desk-wide] .thing-heading { padding-top: 8px; }
-[data-desk-wide] .thing-name { margin: 0; font-size: 15px; font-weight: var(--th-weight-desk-emphasis); overflow-wrap: anywhere; }
-[data-desk-wide] .thing-status { color: var(--th-ink-soft); font-size: 13px; }
+[data-desk-wide] .thing-heading:not([hidden]) {
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 14px 0 28px;
+  font-family: var(--th-font-desk-ui);
+}
+[data-desk-wide][data-desk-collapsed] .thing-heading:not([hidden]) { padding-inline-start: 168px; }
+[data-desk-wide] .thing-name {
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: var(--th-weight-desk-emphasis);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-desk-wide] .thing-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  max-width: 45%;
+  color: var(--th-ink-soft);
+  font-size: 13px;
+}
+[data-desk-wide] .thing-agent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-desk-wide] .thing-state:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 22px;
+  padding: 0 9px 0 8px;
+  border-radius: 999px;
+  background: var(--th-rail);
+  font-size: 12px;
+  white-space: nowrap;
+}
+[data-desk-wide] .thing-state::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--th-desk-line);
+}
+[data-desk-wide] .thing-state[data-tone="waiting"] { background: var(--th-desk-accent-wash); color: var(--th-accent); }
+[data-desk-wide] .thing-state[data-tone="waiting"]::before { background: var(--th-accent); }
+[data-desk-wide] .thing-heading .lab-map-seg {
+  position: relative;
+  z-index: 103; /* 开关的上沿与窗口拖动区重叠。 */
+  gap: 2px;
+  padding: 2px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--th-rail);
+}
+[data-desk-wide] .thing-heading .lab-map-seg button {
+  padding: 2px 11px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  line-height: 20px;
+}
+[data-desk-wide] .thing-heading .lab-map-seg button[aria-pressed="true"] {
+  background: var(--th-desk-raised);
+  box-shadow: var(--th-desk-shadow-selection);
+}
 [data-desk-wide] :is(.thing-sessions, .thing-empty, .thing-detail) {
   box-sizing: border-box;
   width: min(100%, var(--desk-page-width));
   margin-inline: auto;
-  padding-inline: calc(var(--desk-page-padding) + var(--desk-speaker-offset)) var(--desk-page-padding);
+  padding-inline: var(--desk-detail-inset) var(--desk-page-padding);
 }
 [data-desk-wide] .thing-sessions:not([hidden]), [data-desk-wide] .thing-earlier-sessions:not([hidden]) {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 16px;
+  gap: 4px 20px;
 }
-[data-desk-wide] .thing-sessions { padding-block: 6px; flex: none; max-height: 26%; overflow: auto; }
+[data-desk-wide] .thing-sessions { width: 100%; padding: 0 28px 2px; flex: none; max-height: 26%; overflow: auto; font-family: var(--th-font-desk-ui); }
 [data-desk-wide] .thing-earlier-sessions { flex-basis: 100%; }
-[data-desk-wide] body .thing-sessions .th-agents { --th-agent-size: 17px; }
-[data-desk-wide] body .thing-compose .th-agents { --th-agent-size: 21px; }
-[data-desk-wide] .thing-scroll .th-agent svg { width: 70%; height: 70%; }
+[data-desk-wide] body .thing-sessions .th-agents { --th-agent-size: 14px; }
+[data-desk-wide] .thing-compose .converse-recipient .th-agents { display: none; }
 [data-desk-wide] .thing-sessions button {
   display: inline-flex;
   align-items: center;
@@ -495,9 +715,19 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   cursor: pointer;
 }
 [data-desk-wide] .thing-sessions button:hover { color: var(--th-ink); }
-[data-desk-wide] .thing-sessions button[aria-pressed="true"] { color: var(--th-ink); background: var(--th-rail); }
-[data-desk-wide] .thing-sessions button i { display: none; }
-[data-desk-wide] .thing-sessions button:is([data-group="waiting"], [data-group="working"]) i,
+[data-desk-wide] .thing-sessions [data-thread-session] {
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 0 6px;
+  border-bottom: 1.5px solid transparent;
+  border-radius: 0;
+}
+[data-desk-wide] .thing-sessions [data-thread-session] > span:not(.th-agents) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-desk-wide] .thing-sessions [data-thread-session][aria-pressed="true"] { color: var(--th-ink); border-bottom-color: var(--th-ink); }
+/* 页签上的小点:这一次在等你定(强调色)或正在做(暖色),别的不画 */
+[data-desk-wide] .thing-sessions [data-thread-session] i { display: none; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--th-warn); }
+[data-desk-wide] .thing-sessions [data-thread-session]:is([data-group="waiting"], [data-group="working"]) i { display: block; }
+[data-desk-wide] .thing-sessions [data-thread-session][data-group="waiting"] i { background: var(--th-accent); }
 [data-desk-wide] .thing-steps li[data-error]::before {
   display: inline-block;
   flex: none;
@@ -506,7 +736,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   border-radius: 50%;
   background: var(--th-warn);
 }
-[data-desk-wide] .thing-sessions button[data-group="waiting"] i { background: var(--th-accent); }
 [data-desk-wide] .thing-content,
 [data-desk-wide] :is(.thing-terminal, .thing-detail):not([hidden]) {
   display: flex;
@@ -516,25 +745,11 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   min-height: 0;
 }
 [data-desk-wide] .thing-scroll { overflow-anchor: none; }
-[data-desk-wide] .thing-scroll .converse-msg-user { align-items: flex-start; }
-[data-desk-wide] .thing-scroll .converse-cc-body { flex: 1; }
 [data-desk-wide] .thing-scroll .converse-bubble { overflow-wrap: anywhere; }
 [data-desk-wide] .thing-scroll .converse-bubble pre { max-width: 100%; overflow: auto; }
 [data-desk-wide] .thing-scroll [data-sending] { opacity: var(--th-button-disabled-opacity); }
-[data-desk-wide] .thing-steps {
-  margin-left: var(--desk-speaker-offset);
-  color: var(--th-ink-soft);
-  font-size: 13px;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
-}
-[data-desk-wide] .thing-steps summary { cursor: pointer; }
-[data-desk-wide] .thing-steps > details > summary { list-style: none; }
-[data-desk-wide] .thing-steps > details > summary::-webkit-details-marker { display: none; }
-[data-desk-wide] .thing-steps > details > summary::after { content: ' ›'; }
-[data-desk-wide] .thing-steps > details[open] > summary::after { content: ' ⌄'; }
-[data-desk-wide] .thing-steps ol { list-style: none; margin: 5px 0 0; padding-inline-start: 14px; }
 [data-desk-wide] .thing-steps li { position: relative; }
+[data-desk-wide] .thing-steps li code { color: var(--th-ink); font: 400 12px/1.65 var(--th-font-mono); }
 [data-desk-wide] .thing-steps li[data-error]::before { content: ''; position: absolute; inset: 8px auto auto -12px; }
 [data-desk-wide] .thing-steps pre {
   max-height: 16em;
@@ -547,10 +762,11 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .thing-waiting:not([hidden]) { padding-block: 4px; }
 [data-desk-wide] .thing-compose-status {
   box-sizing: border-box;
-  width: min(100%, var(--desk-page-width));
+  width: var(--desk-thread-width);
   margin: 0 auto;
-  padding-inline: calc(var(--desk-page-padding) + var(--desk-speaker-offset)) var(--desk-page-padding);
+  padding: 0;
   display: flex;
+  font-family: var(--th-font-desk-ui);
   justify-content: space-between;
   gap: 10px;
   color: var(--th-ink-soft);
@@ -559,7 +775,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .thing-compose-status button { margin-inline-start: auto; }
 [data-desk-wide] .thing-compose .converse-recipient { display: inline-flex; align-items: center; gap: 6px; }
 [data-desk-wide] .thing-compose textarea {
-  flex: 1 1 180px;
   min-width: 0;
   resize: none;
   field-sizing: content;
@@ -571,14 +786,6 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   color: var(--th-ink);
   font: inherit;
 }
-[data-desk-wide] .thing-compose button {
-  border: 0;
-  background: transparent;
-  color: var(--th-accent);
-  font: inherit;
-  cursor: pointer;
-}
-[data-desk-wide] .thing-compose button:disabled { opacity: var(--th-button-disabled-opacity); cursor: default; }
 [data-desk-wide] .thing-empty { padding-block: 20px; color: var(--th-ink-soft); }
 [data-desk-wide] .thing-empty button { color: var(--th-accent); }
 [data-desk-wide] .thing-detail { overflow: auto; }
@@ -601,3 +808,502 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .thing-detail .wb-history-dialog > :is(h2, button[hidden]),
 [data-desk-wide] .thing-detail .terminal-direct-heading h2 { display: none !important; }
 [data-desk-wide] .thing-detail .wb-history-dialog { box-sizing: border-box; width: 100%; max-width: 100%; padding-inline: 0; }
+
+[data-desk-wide] .place .place-line[data-recap-source="cc"] { font: 400 14.5px/1.5 var(--th-font-cc-hand); }
+.thing-recap { display: none; }
+[data-desk-wide] .thing-recap {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  align-self: flex-start;
+  max-width: min(100%, 37em);
+  margin-block: 12px 4px;
+  padding: 11px 18px 13px;
+  overflow-wrap: anywhere;
+}
+[data-desk-wide] .thing-recap svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: none;
+  stroke: var(--th-desk-pencil);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+[data-desk-wide] .thing-recap small { color: var(--th-desk-faint); font: 400 12px/1.5 var(--th-font-sans); }
+[data-desk-wide] .thing-recap p {
+  margin: 0;
+  color: var(--th-ink-soft);
+  font: 400 14.5px/1.7 var(--th-font-sans);
+  white-space: pre-wrap;
+}
+[data-desk-wide] .thing-recap[data-recap-source="cc"] p { font: 400 16.5px/1.65 var(--th-font-cc-hand); }
+
+/* Secondary pages, search and CC availability on the wide paper. */
+[data-desk-wide] .dashboard .dash-main > :is([data-pane="notebook"], [data-pane="memory"], .cc-recollections, .atelier-pane, [data-pane="todos"], [data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) {
+  --desk-secondary-max: 712px;
+  box-sizing: border-box;
+  margin-top: 0;
+  padding: 56px 36px 40px;
+  background: transparent;
+  font-family: var(--th-font-desk-ui);
+  overflow: auto;
+}
+[data-desk-wide] .dashboard .dash-main > :is(.cc-recollections, .atelier-pane) { --desk-secondary-max: 860px; }
+[data-desk-wide] .dashboard .dash-main > #notebook-pane {
+  padding: 48px 0 0;
+  overflow: hidden;
+}
+[data-desk-wide] #notebook-pane > .notebook-header {
+  width: var(--desk-thread-width);
+  padding-inline: 0;
+  font-family: var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main > :is([data-pane="memory"], .cc-recollections, .atelier-pane, [data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > :not(dialog),
+[data-desk-wide] .dash-main > [data-pane="todos"] :is(.todos-head, .todos-list) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: var(--desk-secondary-max);
+  margin-inline: auto;
+}
+[data-desk-wide] .dash-main > [data-pane="memory"] > :is(.memory-profile-overview, .memory-topics),
+[data-desk-wide] .dash-main > [data-pane="todos"] > .todos-page {
+  flex: none;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  font-family: var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main > [data-pane="memory"] > .memory-topics { order: 1; }
+[data-desk-wide] .dash-main .memory-facts-compact-hint { display: none; }
+[data-desk-wide] .dash-main :is(.memory-facts-wide-hint, [data-memory-facts-retry])[hidden] { display: inline-block !important; }
+[data-desk-wide] .dash-main #memory-facts-records > p { color: var(--th-ink-soft); font-size: 13.5px; }
+[data-desk-wide] .dash-main #memory-topics:has(.conversation-topics[hidden]):not(.has-topic) { display: none; }
+[data-desk-wide] .dash-main .atelier-gallery-page {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  margin-block: 0;
+}
+[data-desk-wide] .dash-main :is(.cc-recollections, .atelier-pane, [data-pane="memory"], [data-pane="todos"]) h1,
+[data-desk-wide] .dash-main :is(.desk-backstage-title, [data-pane="plugins"] > .topbar .crumb, [data-pane="logs"] > .topbar .crumb) {
+  margin: 0;
+  font: var(--th-weight-desk-emphasis) var(--th-size-title)/1.3 var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main :is(.cc-recollections > header, .atelier-pane-head, .todos-head) p {
+  margin: 6px 0 0;
+  color: var(--th-ink-soft);
+  font: 400 13.5px/1.6 var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main :is(.memory-facts-list li, .memory-facts-file, .cc-thought-notes p, .cc-memory-entry p,
+  .dialogue-turn :is(p, li), .dialogue-message-text, .dialogue-page .cc-readable-markdown.wb-markdown) {
+  font: 400 15px/1.7 var(--th-font-desk-ui);
+}
+/* A whole piece read in the reader keeps its 16px. */
+[data-desk-wide] .cc-record-reader .cc-record-content p { font: 400 16px/1.75 var(--th-font-desk-ui); }
+[data-desk-wide] .dash-main :is(.cc-recollections, .atelier-pane, .todos-page) h2,
+[data-desk-wide] .cc-record-reader { font-family: var(--th-font-desk-ui); }
+
+[data-desk-wide] .dash-main > [data-pane="sessions"]::before { display: none; }
+[data-desk-wide] .dash-main .desk-backstage-title[hidden] { display: block !important; }
+[data-desk-wide] .dash-main > :is([data-pane="plugins"], [data-pane="logs"]) > .topbar {
+  order: -1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+[data-desk-wide] .dash-main > [data-pane="plugins"] > .a2a-agents-body,
+[data-desk-wide] .dash-main > [data-pane="logs"] > .logs-body { padding-inline: 0; }
+[data-desk-wide] .dash-main > [data-pane="sessions"] > .dialogue-page {
+  grid-template-columns: minmax(145px, 28%) minmax(0, 1fr);
+  flex: 1 0 380px;
+}
+[data-desk-wide] .dash-main .dialogue-page :is(.dialogue-sidebar, .dialogue-stage) { background: transparent; padding-inline: 0; }
+[data-desk-wide] .dash-main .dialogue-page { gap: 20px; }
+[data-desk-wide] .dash-main .dialogue-search { border: 0; background: transparent; }
+[data-desk-wide] .dash-main .dialogue-search input { padding-inline-start: 30px; }
+[data-desk-wide] .dash-main .dialogue-document-head { position: static; flex-wrap: wrap; padding: 0 0 8px; }
+[data-desk-wide] .dash-main .dialogue-document-head::before { display: none; }
+[data-desk-wide] .dash-main .dialogue-action-pill { left: auto; max-width: 100%; }
+[data-desk-wide] .dash-main .dialogue-scroll { padding: 12px 0 24px; }
+[data-desk-wide] .dash-main .dialogue-latest-button { right: 4px; }
+[data-desk-wide] .dash-main .dialogue-page :is(.dialogue-message-text, .dialogue-turn, .dialogue-stage) { min-width: 0; overflow-wrap: anywhere; }
+
+[data-desk-wide] .dash-main :is(.dialogue-workspace-tabs, .cc-memory-tabs, .cc-recollections .pc-toolbar) {
+  position: static;
+  align-self: auto;
+  transform: none;
+  backdrop-filter: none;
+  margin-block: 14px 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+[data-desk-wide] .dash-main :is(.dialogue-workspace-tabs, .cc-memory-tabs, .cc-recollections .pc-toolbar, .dialogue-views) button {
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 0;
+  border-bottom: 1.5px solid transparent;
+  border-radius: 0;
+  color: var(--th-ink-soft);
+  background: transparent;
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main :is(.dialogue-workspace-tabs, .cc-memory-tabs, .cc-recollections .pc-toolbar, .dialogue-views) button:is(.is-active, [aria-selected="true"], [aria-pressed="true"]) {
+  color: var(--th-ink);
+  border-bottom-color: var(--th-accent);
+  font-weight: 500;
+}
+
+[data-desk-wide] .dash-main :is([data-pane="memory"], .cc-recollections, .atelier-pane, .todos-page, [data-pane="sessions"], [data-pane="logs"], [data-pane="plugins"])
+:is(button.btn, .atelier-pane-head button, .cc-page-status button, .dialogue-action-pill, [data-life-retry], .pc-more, .pc-empty button, .cc-recollections > footer button),
+[data-desk-wide] .dash-main > #notebook-pane .notebook-header button,
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] :is(.wb-new, .wb-sidebar > header .wb-delegate),
+[data-desk-wide] .thing-empty button,
+[data-desk-wide] #settings-drawer :is(button:not(.toggle), a.btn),
+[data-desk-wide] .converse-empty button[data-wake-cc] {
+  box-sizing: border-box;
+  min-height: 30px;
+  padding: 3px 10px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 8px;
+  background: var(--th-desk-raised);
+  color: var(--th-ink);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main :is(.cc-recollections, [data-pane="memory"], .todos-page, [data-pane="sessions"], [data-pane="logs"], [data-pane="plugins"])
+:is(button.btn.primary, button.btn.todo-complete),
+[data-desk-wide] .converse-empty button[data-wake-cc] {
+  border-color: transparent;
+  background: var(--th-accent);
+  color: var(--th-on-accent);
+}
+[data-desk-wide] .dash-main :is([data-pane="memory"], .todos-page, [data-pane="sessions"], [data-pane="logs"], [data-pane="plugins"])
+:is(input[type="search"], input[type="text"], input[type="number"], select) {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 10px;
+  background: var(--th-desk-raised);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+}
+
+[data-desk-wide] .dash-main :is(.atelier-pane, .todos-page, [data-pane="sessions"]) :is(.cc-page-status, .atelier-empty),
+[data-desk-wide] .dash-main .cc-recollections .cc-life-empty,
+[data-desk-wide] .dash-main :is(.logs-body, .a2a-agents-body) :is(.empty, .empty-state) {
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  color: var(--th-ink-soft);
+  font: 400 13.5px/1.6 var(--th-font-desk-ui);
+  text-align: start;
+}
+[data-desk-wide] .dash-main :is(.atelier-pane, .todos-page, [data-pane="sessions"]) .cc-page-status {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+[data-desk-wide] .dash-main :is(.atelier-pane, .todos-page, [data-pane="sessions"]) .cc-page-status :is(h2, p) {
+  margin: 0;
+  color: inherit;
+  font: inherit;
+}
+[data-desk-wide] .dash-main :is(.todos-page, [data-pane="sessions"]) .cc-page-status p { display: none; }
+[data-desk-wide] .dash-main .cc-recollections .cc-life-empty button { margin-inline-start: 10px; }
+
+[data-desk-wide] #dash-global-rail #desk-search-shortcut[hidden] {
+  display: inline !important;
+  margin-inline-start: auto;
+  color: var(--th-desk-faint);
+  font-size: 11.5px;
+}
+[data-desk-wide] .dash-main:has(> .workbench-pane[data-workbench-view="search"]:not([hidden])) > .cc-now-pane { display: none; }
+[data-desk-wide] .dashboard .dash-main > .workbench-pane[data-workbench-view="search"] {
+  position: static;
+  inset: auto;
+  width: 100%;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--th-font-desk-ui);
+}
+[data-desk-wide] .dashboard .dash-main > .workbench-pane[data-workbench-view="search"] > .cc-life-topline,
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-artifact-panel { display: none !important; }
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .workbench-shell { grid-template-columns: minmax(0, 1fr); }
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-sidebar {
+  box-sizing: border-box;
+  padding: 56px max(36px, calc((100% - 712px) / 2)) 40px;
+  background: transparent;
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-sidebar > header {
+  position: static;
+  min-height: 0;
+  padding: 0;
+  margin-bottom: 14px;
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] #wb-all-title {
+  font: var(--th-weight-desk-emphasis) var(--th-size-title)/1.3 var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-search-wide-title[hidden] { display: inline !important; }
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-search-compact-title { display: none; }
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-list-controls {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content) minmax(0, 1fr);
+  gap: 10px 14px;
+  padding: 0;
+  reading-flow: grid-rows;
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] :is(.wb-search, .wb-list-filters, .wb-archive-label) { grid-column: 1 / -1; }
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-search {
+  grid-row: 1;
+  box-sizing: border-box;
+  height: 40px;
+  padding-inline-end: 4px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 10px;
+  background: var(--th-desk-raised);
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-list-controls > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--th-ink-soft);
+  font-size: 13px;
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-task-list { padding-inline: 0; }
+
+[data-desk-wide] .cc-now-pane:has(> .desk-waiting:not([hidden])) #converse-scroll {
+  mask-image: linear-gradient(to bottom, transparent, var(--th-ink) 16px);
+}
+[data-desk-wide][data-desk-cc-stopped] .converse-empty { font-family: var(--th-font-desk-ui); }
+[data-desk-wide][data-desk-cc-stopped] .converse-empty h2 { font-size: 20px; font-weight: var(--th-weight-desk-emphasis); }
+[data-desk-wide] .desk-offline-note {
+  order: 4;
+  flex: none;
+  margin: 0 auto 8px;
+  padding-inline: 16px;
+  text-align: center;
+  color: var(--th-ink-soft);
+  font: 400 13px/1.5 var(--th-font-desk-ui);
+}
+[data-desk-wide][data-desk-cc-stopped] :is(.desk-waiting-card, .thing-terminal, .thing-detail) button[title="CC 没在运行"]:disabled {
+  opacity: .55;
+  cursor: default;
+  pointer-events: auto;
+}
+
+
+/* Screenshot follow-up. Compact copy stays in the original narrow layouts. */
+[data-desk-wide] .desk-compact-copy { display: none; }
+[data-desk-wide] .desk-wide-copy[hidden] { display: inline !important; }
+
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .workbench-shell {
+  background: transparent;
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-search input:focus {
+  outline: none;
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-search:focus-within {
+  border-color: var(--th-accent);
+  box-shadow: var(--th-desk-shadow-selection);
+}
+[data-desk-wide] .dash-main > .workbench-pane[data-workbench-view="search"] .wb-list-retry[hidden] {
+  display: inline-block !important;
+  margin-inline-start: 8px;
+}
+
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] {
+  inset: var(--topbar-bottom, 72px) 0 0;
+  width: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+.dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] .wb-list-controls select,
+[data-desk-wide] .dashboard .dash-main [data-pane="logs"] #logs-tail-select {
+  appearance: none;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 180px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 26px 0 10px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 8px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--th-ink-soft) 50%) right 13px center / 4px 4px no-repeat,
+    linear-gradient(135deg, var(--th-ink-soft) 50%, transparent 50%) right 9px center / 4px 4px no-repeat,
+    var(--th-desk-raised);
+  color: var(--th-ink);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+}
+
+[data-desk-wide] .dashboard .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) {
+  --desk-secondary-max: 960px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 14px 12px;
+  padding-inline: max(36px, calc((100% - 960px) / 2));
+}
+[data-desk-wide] .dash-main > [data-pane="sessions"] { grid-template-rows: auto auto minmax(380px, 1fr); }
+[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > .desk-backstage-title {
+  grid-area: 1 / 1 / 2 / -1;
+  justify-self: start;
+}
+[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > .dialogue-workspace-tabs {
+  grid-area: 2 / 1;
+  align-self: center;
+  width: auto;
+  margin: 0;
+}
+[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > :is(.topbar, #dialogue-tools) {
+  grid-area: 2 / 2;
+  align-self: center;
+  position: static;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+}
+[data-desk-wide] .dash-main #dialogue-tools::before { display: none; }
+[data-desk-wide] .dash-main #dialogue-tools > button { left: auto; }
+[data-desk-wide] .dash-main [data-pane="logs"] > .topbar { flex-wrap: nowrap; }
+[data-desk-wide] .dash-main [data-pane="logs"] > .topbar .actions { margin-inline-start: 0; min-width: 0; }
+[data-desk-wide] .dash-main [data-pane="logs"] > .topbar .crumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 12px/1.4 var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main #logs-meta {
+  margin: 0;
+  color: var(--th-desk-faint);
+  font: inherit;
+}
+[data-desk-wide] .dash-main #logs-filter { width: 138px; min-width: 80px; }
+[data-desk-wide] .dash-main #logs-refresh { white-space: nowrap; }
+
+[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > :is(.dialogue-page, .a2a-agents-body, .logs-body) {
+  grid-area: 3 / 1 / 4 / -1;
+  background: transparent;
+}
+[data-desk-wide] .dash-main > [data-pane="sessions"] > .dialogue-page {
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+[data-desk-wide] .dash-main .dialogue-views button { white-space: nowrap; }
+[data-desk-wide] .dash-main .dialogue-search #dialogue-search { padding-inline-start: 34px; }
+
+[data-desk-wide] .dash-main .cc-recollections > :is(#cc-memory-postcards, #cc-memory-records) {
+  max-width: var(--desk-secondary-max);
+}
+[data-desk-wide] .dash-main .cc-recollections :is(.pc-empty, .cc-life-empty[role="status"]) {
+  padding: 12px 0;
+  color: var(--th-ink-soft);
+  font: 400 13.5px/1.6 var(--th-font-desk-ui);
+}
+[data-desk-wide] .dash-main .cc-recollections :is(.pc-empty, .cc-life-empty)[role="status"] {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+[data-desk-wide] .dash-main .cc-recollections :is(.pc-empty, .cc-life-empty)[role="status"] button { margin: 0; }
+[data-desk-wide] .dash-main .cc-recollections > footer { border: 0; padding-top: 0; gap: 20px; }
+[data-desk-wide] .dash-main .cc-recollections > footer button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--th-accent);
+}
+[data-desk-wide] .dash-main .cc-recollections > footer button:hover { text-decoration: underline; }
+
+[data-desk-wide] .dash-main .atelier-pane .cc-page-status { grid-column: 1 / -1; }
+[data-desk-wide] .dash-main .todos-page .cc-page-status h2::after { content: '。'; }
+[data-desk-wide] .thing-empty {
+  padding-inline: var(--desk-page-padding);
+  text-align: center;
+  font: 400 14px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] .desk-offline-note button[data-wake-cc] { color: var(--th-accent); }
+[data-desk-wide] .desk-offline-note button[data-wake-cc]:hover { text-decoration: underline; }
+
+[data-desk-wide] #settings-drawer {
+  background: var(--th-desk-raised);
+  border-left: 0.5px solid var(--th-desk-edge);
+  box-shadow: var(--th-desk-shadow-raised);
+  color: var(--th-ink);
+  font: 400 14px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer .drawer-head h2 { font-family: var(--th-font-desk-ui); }
+[data-desk-wide] #settings-drawer .drawer-section h3 {
+  color: var(--th-desk-faint);
+  font: 400 12px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer :is(.toggle-row .lab, .user-name, .provider-chip, .project-admin-alias, .moment-users h2, .b3-disclosure, #hero-headline) {
+  color: var(--th-ink);
+  font: 400 14px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer :is(.sub, .user-sub, .role-pill, .drawer-section-help, .license-status, .setting-feedback,
+  .connection-options, .connection-history, .sub-user-empty-copy, .moment-subhead .meta, .settings-confirm p, .connection-history p, #hero-meta) {
+  color: var(--th-ink-soft);
+  font: 400 12.5px/1.55 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer .role-pill { height: auto; }
+[data-desk-wide] #settings-drawer :is(.moment-connect-btn, .drawer-close) { height: auto; }
+[data-desk-wide] #settings-drawer .license-row input {
+  box-sizing: border-box;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 10px;
+  background: var(--th-desk-raised);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+}
+[data-desk-wide] #settings-drawer .license-row input::placeholder { font-family: inherit; }
+
+/* The only action on an empty place has to read as one. */
+[data-desk-wide] .thing-empty > button.desk-text-button {
+  display: inline-block;
+  min-height: 30px;
+  margin-top: 10px;
+  padding: 3px 12px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 8px;
+  background: var(--th-desk-raised);
+  color: var(--th-ink);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+  text-decoration: none;
+}
+/* Narrow search fills the area under the top bar; line its contents up with the page's own 48px inset. */
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] > .cc-life-topline {
+  padding-left: 48px;
+}
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] .wb-sidebar {
+  box-sizing: border-box;
+  padding-inline: 28px;
+}
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] .wb-sidebar > header,
+html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[data-workbench-view="search"] .wb-list-controls {
+  padding-inline: 20px;
+}
+
+/* Fields you write a sentence into stay at 16px; the 13px above is for search and filter fields. */
+[data-desk-wide] .dash-main [data-pane="memory"] input.memory-line-input,
+[data-desk-wide] .dash-main .todos-page #todo-remind-pop input { font-size: 16px; }

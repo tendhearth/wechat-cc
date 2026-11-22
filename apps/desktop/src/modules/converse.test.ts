@@ -35,10 +35,10 @@ beforeEach(async () => {
   vi.resetModules()
   vi.useFakeTimers()
   dom=new Window()
-  els = Object.fromEntries(['root', 'scroll', 'latest', 'input', 'send', 'delegate', 'voice-toggle', 'mic', 'cancel-recording', 'recording', 'recording-label', 'recording-time', 'recording-hint'].map(id => [`converse-${id}`, new El()]))
+  els = Object.fromEntries(['root', 'scroll', 'latest', 'offline-note', 'input', 'send', 'delegate', 'voice-toggle', 'mic', 'cancel-recording', 'recording', 'recording-label', 'recording-time', 'recording-hint'].map(id => [`converse-${id}`, new El()]))
   vi.stubGlobal('window', {})
   vi.stubGlobal('localStorage', { getItem: () => null, setItem() {} })
-  vi.stubGlobal('document', { getElementById: (id: string) => els[id], querySelectorAll: (selector:string) => els['converse-scroll']!.node.querySelectorAll(selector), querySelector: (selector:string) => els['converse-scroll']!.node.querySelector(selector) })
+  vi.stubGlobal('document', { documentElement: dom.document.documentElement, getElementById: (id: string) => els[id], querySelectorAll: (selector:string) => els['converse-scroll']!.node.querySelectorAll(selector), querySelector: (selector:string) => els['converse-scroll']!.node.querySelector(selector) })
   vi.stubGlobal('CSS', dom.CSS)
   vi.stubGlobal('HTMLElement', El)
   vi.stubGlobal('requestAnimationFrame', (fn: Function) => fn())
@@ -453,4 +453,24 @@ it('连续切换没有对话的地方也会更新空状态', async () => {
   expect(scroll.innerHTML).toContain('最近还没聊过 leni 的事。')
   setConversationPlace(null)
   expect(scroll.innerHTML).toContain('CC 在这儿')
+})
+
+it('宽窗 CC 停止时不发送草稿，恢复后沿原入口发送', async () => {
+  const { reflectConversationAvailability } = await import('./converse.js')
+  dom.document.documentElement.setAttribute('data-desk-cc-stopped', '')
+  reflectConversationAvailability()
+  const input = els['converse-input']!, send = els['converse-send']!
+  input.value = '等 CC 回来再发'
+  expect(send.disabled).toBe(true)
+  send.handlers.click!()
+  await settle()
+  expect(input.value).toBe('等 CC 回来再发')
+  expect(invoke).not.toHaveBeenCalledWith('agent_converse', expect.anything())
+
+  dom.document.documentElement.removeAttribute('data-desk-cc-stopped')
+  reflectConversationAvailability()
+  expect(send.disabled).toBe(false)
+  send.handlers.click!()
+  await settle()
+  expect(invoke).toHaveBeenCalledWith('agent_converse', { text: '等 CC 回来再发' })
 })

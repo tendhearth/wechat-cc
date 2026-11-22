@@ -49,10 +49,17 @@ test('整个收起让出全宽，按钮位置固定，展开还原几何', async
   await expect(toggle(page)).toHaveAccessibleName('展开左边')
   await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false')
   const [, right, talk, button] = await geometry()
-  expect(right!.x).toBe(0)
-  expect(right!.width).toBe(1280)
-  expect(talk!.width).toBeLessThanOrEqual(780)
-  expect(talk!.x + talk!.width / 2).toBeCloseTo(right!.width / 2)
+  expect(right!.x).toBe(8)
+  expect(right!.width).toBe(1264)
+  // 滚动区占满整张纸(滚动条贴着纸边),里面的正文一栏最宽 712、居中
+  const column = await scroll(page).evaluate(el => {
+    const style = getComputedStyle(el), box = el.getBoundingClientRect()
+    const left = box.left + parseFloat(style.paddingLeft), end = box.right - parseFloat(style.paddingRight)
+    return { x: left, width: end - left }
+  })
+  expect(column.width).toBeLessThanOrEqual(712)
+  expect(column.x + column.width / 2).toBeCloseTo(right!.x + right!.width / 2)
+  expect(talk!.x + talk!.width / 2).toBeCloseTo(right!.x + right!.width / 2)
   expect(button).toEqual(expanded[3])
   await page.mouse.move(button!.x + 5, button!.y + 5)
   await expect(rail(page)).toBeHidden()
@@ -106,14 +113,14 @@ test('悬停按钮只浮出左栏，移入保持、离开延迟收回，Esc 立�
   await toggle(page).hover()
   await expect(rail(page)).toBeVisible()
   await expect(rail(page)).toHaveCSS('position', 'absolute')
-  await expect(rail(page)).toHaveCSS('width', '304px')
+  await expect(rail(page)).toHaveCSS('width', '284px')
   await expect(toggle(page)).toHaveAttribute('aria-expanded', 'true')
   const { mac } = await platformShortcut(page)
   await expect(toggle(page)).toHaveAttribute('title', mac ? '展开左边 ⌘B' : '展开左边 Ctrl+B')
   expect(await geometry()).toEqual(before)
   await expect.poll(async () => (await rail(page).boundingBox())?.x).toBe(0)
   const box = await rail(page).boundingBox()
-  expect(box!.y).toBe(before[0]!.y)
+  expect(box!.y).toBe(before[0]!.y + 22)
   expect(box!.x + box!.width).toBeGreaterThan(before[0]!.x)
 
   await cc(page).hover()
@@ -185,7 +192,7 @@ test('浮出后点按钮固定展开，移开后右栏仍被推开', async ({ pa
   await expect(toggle(page)).toHaveAccessibleName('收起左边')
   // 固定展开 = 回到版面里(左栏平时就是 relative);浮出时才是 absolute。
   await expect(rail(page)).not.toHaveCSS('position', 'absolute')
-  expect((await main(page).boundingBox())!.x).toBe(304)
+  expect((await main(page).boundingBox())!.x).toBe(284)
 })
 
 test('收起后等待绿点用 CC 的同一计数，展开只在 CC 上显示', async ({ page, shimUrl }) => {
@@ -239,7 +246,7 @@ test('刷新记住两种状态，800px 下忽略收起选择和快捷键', async
   await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false')
   await toggle(page).click()
   await page.reload()
-  await expect(rail(page)).toHaveCSS('width', '304px')
+  await expect(rail(page)).toHaveCSS('width', '284px')
   await expect(toggle(page)).toHaveAttribute('aria-expanded', 'true')
   await toggle(page).click()
   await page.setViewportSize({ width: 800, height: 820 })

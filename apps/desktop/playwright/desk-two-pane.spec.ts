@@ -36,28 +36,49 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   const date = page.locator('.desk-date-line')
   await expect(date).toBeHidden()
   await expect(scroll.locator('.desk-message-date').first()).toBeVisible()
-  // 说话的人用头像:你的是「还没画」的铅笔稿,CC 的是它自己那一张
-  await expect(scroll.locator('.desk-speaker:visible').first()).toHaveAttribute('data-speaker', 'you')
-  await expect(scroll.locator('.desk-speaker[data-speaker="you"]:visible svg').first()).toBeVisible()
-  const ccFace = scroll.locator('.desk-speaker[data-speaker="cc"]:visible img').first()
-  await expect(ccFace).toBeVisible()
-  expect(await ccFace.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
+  await expect(scroll.locator('.desk-message-date').first()).toHaveCSS('font-size', '12px')
+  await expect(scroll.locator('.desk-speaker:visible')).toHaveCount(0)
+  await expect(scroll.locator('.desk-speaker[data-speaker="you"]:visible svg')).toHaveCount(0)
+  await expect(scroll.locator('.desk-speaker[data-speaker="cc"]:visible img')).toHaveCount(0)
   await expect(scroll.locator('.converse-msg[data-same-speaker] .desk-speaker')).toBeHidden()
+  await expect(compose.locator('.desk-speaker')).toBeHidden()
+  const userBubble = scroll.locator('.converse-msg-user .converse-bubble')
+  await expect(userBubble).toHaveCSS('border-radius', '18px 18px 6px')
+  await expect(userBubble).toHaveCSS('font-size', '15px')
+  await expect(scroll.locator('.converse-msg-cc .converse-bubble').first()).toHaveCSS('font-size', '18.5px')
   const [left, right, talk, input, name, status, dashboard] = await Promise.all([
     rail, main, scroll, compose, row.locator('.place-name'), row.locator('.place-line'), page.locator('main.dashboard'),
   ].map(locator => locator.boundingBox()))
-  expect(Math.abs(left!.width - 304)).toBeLessThanOrEqual(2)
+  expect(Math.abs(left!.width - 284)).toBeLessThanOrEqual(2)
   expect(left!.x).toBe(0)
   // The shim's development banner reserves its own row above the dashboard.
   expect(left!.y).toBe(dashboard!.y)
   expect(left!.y + left!.height).toBe(820)
   expect(left!.height).toBe(dashboard!.height)
-  expect(talk!.width).toBeLessThanOrEqual(780)
+  expect(right!.x).toBe(left!.x + left!.width)
+  expect(right!.y - dashboard!.y).toBe(8)
+  expect(dashboard!.x + dashboard!.width - right!.x - right!.width).toBe(8)
+  expect(dashboard!.y + dashboard!.height - right!.y - right!.height).toBe(8)
+  await expect(main).toHaveCSS('border-radius', '12px')
+  await expect(main).toHaveCSS('background-color', 'rgb(253, 251, 247)')
+  await expect(rail).toHaveCSS('border-right-width', '0px')
+  expect(input!.width).toBe(712)
   expect(Math.abs(talk!.x + talk!.width / 2 - (right!.x + right!.width / 2))).toBeLessThanOrEqual(2)
   expect(input!.x).toBeGreaterThanOrEqual(right!.x)
   expect(input!.x + input!.width).toBeLessThanOrEqual(right!.x + right!.width)
   expect(input!.height).toBeGreaterThanOrEqual(48)
   expect(status!.y).toBeGreaterThanOrEqual(name!.y + name!.height)
+  expect(status!.x - name!.x).toBe(10)
+  const time = row.locator('.place-time')
+  await expect(time).toHaveCSS('opacity', '0')
+  await row.hover()
+  await expect(time).toHaveCSS('opacity', '1')
+  const more = rail.locator('.topbar-more')
+  await expect(more.getByText('更多', { exact: true })).toBeVisible()
+  await more.locator('summary').click()
+  const [footer, menu] = await Promise.all([more.boundingBox(), more.locator(':scope > div').boundingBox()])
+  expect(menu!.y + menu!.height).toBeLessThan(footer!.y)
+  await more.locator('summary').click()
   await expect(page.getByRole('button', { name: /这周没动的/ })).toHaveCount(0)
 
   await page.locator('#topbar-cc').focus()
@@ -68,6 +89,15 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
   await expect(rail.locator('#now-connections')).toBeVisible()
   await expect(rail.locator('#companion-desktop-start')).toBeVisible()
   await page.keyboard.press('Enter')
+  const nav = rail.getByRole('navigation', { name: '主导航' })
+  for (const name of ['搜索', '本子', '记忆', '回忆']) {
+    const entry = nav.getByRole('button', { name })
+    await page.keyboard.press('Tab')
+    await expect(entry).toBeFocused()
+    await expect(entry).toHaveCSS('height', '30px')
+    await expect(entry.locator('svg')).toHaveCSS('width', '16px')
+  }
+  await expect(rail.getByText('项目', { exact: true })).toBeVisible()
   await page.keyboard.press('Tab')
   await expect(row.locator('.place-row')).toBeFocused()
 
@@ -102,10 +132,15 @@ test('全局等待卡片钉在上方、切换地方仍可回答、回答后刷�
   await expect(card).toContainText('旧表留着吗？')
   await expect(card).toBeVisible()
   for (const edge of ['top', 'right', 'bottom', 'left']) await expect(card).toHaveCSS(`border-${edge}-width`, '0px')
-  await expect(card).not.toHaveCSS('box-shadow', 'none')
+  await expect(card).toHaveCSS('border-radius', '14px')
+  await expect(card).toHaveCSS('box-shadow', /0px 0px 0px 0\.5px,.*0px 1px 2px 0px/)
+  await expect(card.locator('.desk-waiting-question')).toHaveCSS('font-size', '15.5px')
+  await expect(card.locator('.place-allow')).toHaveCSS('background-color', 'rgb(79, 107, 79)')
+  await expect(page.locator('#desk-waiting .desk-speaker:visible')).toHaveCount(0)
   const deny = card.getByRole('button', { name: '不允许' })
-  await expect(deny).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-  await expect(deny).toHaveCSS('text-decoration-line', 'underline')
+  await expect(deny).toHaveCSS('background-color', 'rgb(255, 254, 251)')
+  await expect(deny).toHaveCSS('text-decoration-line', 'none')
+  await expect(deny).not.toHaveCSS('box-shadow', 'none')
   await expect(date).toBeHidden()
   const [cardBox, scrollBox] = await Promise.all([card.boundingBox(), scroll.boundingBox()])
   expect(cardBox!.y + cardBox!.height).toBeLessThanOrEqual(scrollBox!.y)
@@ -184,6 +219,8 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   await expect(page.locator('#thing-thread')).toBeVisible()
   await page.setViewportSize({ width: 800, height: 820 })
   await expect(rail).toHaveCSS('height', '72px')
+  await expect(rail.locator('nav .desk-nav-icon:visible')).toHaveCount(0)
+  await expect(rail.locator('.desk-project-label')).toBeHidden()
   await expect(page.locator('.desk-date-line')).toBeHidden()
   await expect(page.locator('.desk-heading')).toBeHidden()
   await expect(scroll.locator('.converse-msg-user .converse-bubble')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
@@ -198,7 +235,7 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   await expect.poll(anchor).toBe(before)
 
   await page.setViewportSize({ width: 900, height: 820 })
-  await expect(rail).toHaveCSS('width', '304px')
+  await expect(rail).toHaveCSS('width', '284px')
   await page.setViewportSize({ width: 1280, height: 820 })
   await expect(clear).toBeHidden()
   await expect(page.locator('#desk-place-clear')).toBeHidden()
@@ -248,20 +285,24 @@ test('CC 用新鲜数据说现状，状态点和选中行跟随列表', async ({
   await page.goto(shimUrl)
   const situation = page.locator('#desk-cc-situation')
   const figure = page.locator('#topbar-cc .topbar-figure')
-  // 呼吸的光挂在这一行上:活的 CC 和静态图谁在显示都有
-  const breathing = () => page.locator('#topbar-cc').evaluate(el => getComputedStyle(el, '::before').animationName)
+  const glow = () => page.locator('#topbar-cc').evaluate(el => {
+    const style = getComputedStyle(el, '::before')
+    return [style.content, style.animationName]
+  })
   const waiting = placeRow(page, 'rici')
   const moving = placeRow(page, 'melu')
   await expect(page.locator('#desk-cc-presence')).toHaveText('CC 在家')
   await expect(situation).toHaveText('两件要你定，一件在做。')
   await expect(situation).toBeVisible()
-  await expect(figure).toHaveCSS('width', '60px')
-  await expect.poll(breathing).not.toBe('none')
-  await expect(moving.locator('.place-dot')).not.toHaveCSS('animation-name', 'none')
+  await expect(figure).toHaveCSS('width', '46px')
+  await expect.poll(glow).toEqual(['none', 'none'])
+  await expect(moving.locator('.place-dot')).toHaveCSS('animation-name', 'none')
+  await expect(moving.locator('.place-dot')).toHaveCSS('outline-width', '3px')
+  await expect(moving.locator('.place-dot')).toHaveCSS('width', '6px')
   await expect(waiting.locator('.place-dot')).toHaveCSS('animation-name', 'none')
   await expect(waiting.locator('.place-dot')).toHaveCSS('background-color', 'rgb(79, 107, 79)')
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await expect.poll(breathing).toBe('none')
+  await expect.poll(glow).toEqual(['none', 'none'])
   await expect(moving.locator('.place-dot')).toHaveCSS('animation-name', 'none')
   await waiting.locator('.place-row').click()
   await expect(moving).toHaveCSS('opacity', '1')
@@ -304,17 +345,26 @@ test('地方名与正文同起一行，跨天有日期，输入工具留在线�
   await page.locator('#topbar-cc').click()
 
   const compose = page.locator('.converse-compose')
-  for (const edge of ['top', 'right', 'left']) await expect(compose).toHaveCSS(`border-${edge}-width`, '0px')
-  await expect(compose).toHaveCSS('border-bottom-width', '1px')
+  for (const edge of ['top', 'right', 'bottom', 'left']) await expect(compose).toHaveCSS(`border-${edge}-width`, '0px')
+  await expect(compose).toHaveCSS('border-radius', '20px')
+  await expect(compose).not.toHaveCSS('box-shadow', 'none')
   // 功能按钮一个不少、也没多:更多(交办 / 项目 / 会话 / 搜索)、语音、朗读、发送
   for (const id of ['converse-mic', 'converse-voice-toggle', 'converse-send']) {
     await compose.locator('#' + id).click({ trial: true })
   }
   await expect(compose.locator('#desk-attach')).toHaveCount(0)
   const send = compose.locator('#converse-send')
-  await expect(send).not.toHaveCSS('color', 'rgb(79, 107, 79)')
+  await expect(send).toHaveCSS('width', '30px')
+  await expect(send).toHaveCSS('height', '30px')
+  await expect(send).toHaveCSS('color', 'rgb(168, 159, 148)')
   await compose.locator('#converse-input').fill('写')
-  await expect(send).toHaveCSS('color', 'rgb(79, 107, 79)')
+  await expect(send).toHaveCSS('background-color', 'rgb(79, 107, 79)')
+  const [draft, plus, recipient, sendBox] = await Promise.all([
+    compose.locator('textarea'), compose.locator('.conversation-add summary'), compose.locator('#converse-recipient-default'), send,
+  ].map(locator => locator.boundingBox()))
+  expect(draft!.y + draft!.height).toBeLessThan(plus!.y)
+  expect(plus!.x + plus!.width).toBeLessThan(recipient!.x)
+  expect(recipient!.x + recipient!.width).toBeLessThan(sendBox!.x)
 })
 
 test('宽窗跨午夜仍按消息当天标注日期', async ({ page, shimUrl }) => {
@@ -358,7 +408,137 @@ test('另一张等待纸条收到意见时保留去回答的键盘焦点', async
   const answer = cards.filter({ hasText: '菜谱' }).getByRole('button', { name: '去回答' })
   await answer.focus()
   await expect(answer).toBeFocused()
-  places = [{ ...archive, waiting: { ...waiting, ccOpinion: '先别删。这是唯一一份备份。', questionReason: '删了回不来' } }, recipe]
+  places = [placeItem('归档', { ...archive, waiting: { ...waiting, ccOpinion: '先别删。这是唯一一份备份。', questionReason: '删了回不来' } }), recipe]
   await expect(cards.filter({ hasText: '归档' }).locator('.desk-waiting-opinion')).toContainText('先别删')
   await expect(answer).toBeFocused()
+})
+
+test('CC 停止时空对话提示实情，保留草稿，恢复后可以发送', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { daemonAlive: false, presenceDown: true })
+  await page.route('**/v1/matter/owner-chat/window**', route => route.fulfill({ json: { messages: [] } }))
+  await routePlaces(page, [])
+  await page.goto(shimUrl)
+  const empty = page.locator('.converse-empty')
+  const input = page.locator('#converse-input')
+  const send = page.locator('#converse-send')
+  await expect(page.locator('#desk-cc-presence')).toHaveText('CC 没在运行')
+  await expect(empty.getByRole('heading')).toHaveText('CC 没在运行')
+  await expect(empty.getByRole('img')).toHaveAttribute('src', /\/unlit\/front\.png$/)
+  await expect(empty).toContainText('它起来之前，这里说的话送不出去。')
+  await expect(empty.getByRole('button', { name: '叫 CC 起来' })).toBeEnabled()
+  await expect(empty.locator('.converse-starter')).toHaveCount(0)
+  await expect(input).toHaveAttribute('placeholder', 'CC 没在运行')
+  await input.fill('回来再发')
+  await input.press('Enter')
+  await expect(input).toHaveValue('回来再发')
+  await expect(send).toBeDisabled()
+
+  await shim.invoke('demo.seed', { daemonAlive: true })
+  await expect(empty.getByRole('heading')).toHaveText('CC 在这儿', { timeout: 10_000 })
+  await expect(empty.locator('.converse-starter')).toHaveCount(3)
+  await expect(input).not.toHaveAttribute('placeholder', 'CC 没在运行')
+  await expect(input).toHaveValue('回来再发')
+  await expect(send).toBeEnabled()
+})
+
+test('CC 停止时已有对话和决定仍可读，发送和决定等恢复', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { daemonAlive: false, presenceDown: true })
+  await routePlaces(page, [
+    askingPlace('访谈', 'aaaa0001'),
+    placeItem('归档', {
+      waiting: { kind: 'permission', itemKey: 'matter:deadbeef', matterId: 'deadbeef', requestId: 'req-1', summary: '保留备份吗？', count: 1 },
+    }),
+  ])
+  await page.goto(shimUrl)
+  const note = page.locator('#converse-offline-note')
+  await expect(note).toContainText('CC 没在运行，现在说的话送不出去。')
+  await expect(note.getByRole('button', { name: '叫它起来' })).toBeVisible()
+  await expect(page.locator('#converse-scroll [data-converse-message]').first()).toBeVisible()
+  await expect(page.locator('#converse-scroll')).toHaveCSS('mask-image', /linear-gradient.*16px/)
+  await expect(page.locator('#converse-send')).toBeDisabled()
+  const buttons = page.locator('.desk-waiting-card').getByRole('button')
+  await expect(buttons).toHaveCount(3)
+  for (const button of await buttons.all()) {
+    await expect(button).toBeDisabled()
+    await expect(button).toHaveAttribute('title', 'CC 没在运行')
+  }
+  await shim.invoke('demo.seed', { daemonAlive: true })
+  await expect(note).toBeHidden({ timeout: 10_000 })
+  await expect(page.locator('#converse-send')).toBeEnabled()
+  for (const button of await buttons.all()) {
+    await expect(button).toBeEnabled()
+    await expect(button).not.toHaveAttribute('title', 'CC 没在运行')
+  }
+})
+
+test('宽窗次要页面共用纸底，内容栏留在纸内', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  const paper = page.locator('.dash-main')
+  await expect(paper).toHaveCSS('background-color', 'rgb(253, 251, 247)')
+  for (const [name, column, max] of [
+    ['notebook', '.notebook-header', 712], ['memory', '.memory-profile-overview', 712],
+    ['recollections', 'header', 860], ['atelier', '.atelier-gallery', 860],
+    ['todos', '.todos-head', 712], ['sessions', '.dialogue-page', 960],
+  ] as const) {
+    await clickNav(page, name)
+    const pane = paper.locator(`:scope > [data-pane="${name}"]`)
+    await expect(pane).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    const content = pane.locator(column).first()
+    await expect(content).toBeVisible()
+    const [bounds, body] = await Promise.all([paper.boundingBox(), content.boundingBox()])
+    expect(body!.width).toBeLessThanOrEqual(max)
+    expect(body!.x - bounds!.x).toBeGreaterThanOrEqual(36)
+    expect(bounds!.x + bounds!.width - body!.x - body!.width).toBeGreaterThanOrEqual(36)
+    await expect.poll(() => pane.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
+  }
+  for (const [name, column] of [
+    ['sessions', '.dialogue-page'], ['plugins', '.a2a-agents-body'], ['logs', '.logs-body'],
+  ] as const) {
+    if (name !== 'sessions') await paper.locator(`[role="tab"][data-backstage-pane="${name}"]:visible`).click()
+    const pane = paper.locator(`:scope > [data-pane="${name}"]`)
+    const title = pane.getByRole('heading', { name: '后厨', exact: true, level: 1 })
+    await expect(title).toBeVisible()
+    const [heading, tabs, body] = await Promise.all([
+      title, pane.getByRole('tablist', { name: '后厨视图' }), pane.locator(column),
+    ].map(locator => locator.boundingBox()))
+    expect(heading!.x).toBeCloseTo(tabs!.x, 0)
+    expect(heading!.x).toBeCloseTo(body!.x, 0)
+    await expect(pane).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect.poll(() => pane.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
+    if (name === 'sessions') {
+      await expect(pane.locator('.dialogue-sidebar')).toHaveCSS('width', '260px')
+      const views = pane.locator('#dialogue-views button')
+      await expect(views).toHaveCount(4)
+      expect(await views.evaluateAll(buttons => buttons.map(button => {
+        const text = document.createRange()
+        text.selectNodeContents(button)
+        return text.getClientRects().length
+      }))).toEqual([1, 1, 1, 1])
+    } else {
+      await expect(pane.locator(column)).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    }
+  }
+})
+
+test('更多打开设置后收起，两个菜单都能按 Esc 或点外关闭并还原焦点', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  const more = page.locator('.topbar-more')
+  const add = page.locator('.conversation-add')
+  for (const menu of [more, add]) {
+    const trigger = menu.locator('summary')
+    await trigger.click()
+    await expect(menu).toHaveAttribute('open', '')
+    await page.keyboard.press('Escape')
+    await expect(menu).not.toHaveAttribute('open', '')
+    await expect(trigger).toBeFocused()
+    await trigger.click()
+    await expect(menu).toHaveAttribute('open', '')
+    await page.locator('#converse-scroll').click()
+    await expect(menu).not.toHaveAttribute('open', '')
+    await expect(trigger).toBeFocused()
+  }
+  await more.locator('summary').click()
+  await more.getByRole('button', { name: '设置', exact: true }).click()
+  await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
+  await expect(more).not.toHaveAttribute('open', '')
 })

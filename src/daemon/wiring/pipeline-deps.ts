@@ -1,6 +1,7 @@
 import { makeLabsSettings } from '../../adapters/store/labs-settings'
 import { makeProjectTopicResolver } from '../../features/terminal'
-import { makePlacesReader, makeRosterReader, type RosterReaderDeps } from '../../features/roster'
+import { makeRecapSettings } from '../../adapters/store/recap-settings'
+import { makeSessionRecaps, type SessionRecaps, makePlacesReader, makeRosterReader, type RosterReaderDeps } from '../../features/roster'
 import { makePlacesStore } from '../../adapters/store/places-store'
 import { ownerLedgerConversation } from '../../lib/matter-ledger-access'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
@@ -156,6 +157,7 @@ export interface BuildPipelineDepsResult {
   mattersService: import('../../app/matters/service').MattersService | null
   /** 退订工作台事件 + 清「一件事」活动时间的节流定时器;main.ts 登记进 shutdown。可重复调用。 */
   stopMatterActivity: () => void
+  recaps: SessionRecaps | undefined
   /**
    * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
    * Late-bound onto internal-api by main.ts via setCompanionConverse()
@@ -490,10 +492,18 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     ...(opts.workbench?{workbench:opts.workbench,relay:opts.workbench.rosterRelay}:{}),
   } : null
   const roster = rosterDeps ? makeRosterReader(rosterDeps) : null
+  const desktop = opts.proposals?.desktop
+  const placeSeenKey = (id: string) => `recap-place:${id}`
+  const recaps = rosterDeps ? makeSessionRecaps({
+    db, owner: ownerChatId, settings: makeRecapSettings(stateDir),
+    seenSince: (id, at) => !!desktop && (desktop.seenSince(id, at) || desktop.seenSince(placeSeenKey(id), at)),
+    evaluator: () => boot.registry.getCheapEval({ private: true }), holdBusy: boot.holdBusy, log,
+  }) : undefined
   // 「地方」:同一份名单数据,往回看 30 天、按项目归拢;顺序存在 places 表(v117)。
   const places = rosterDeps ? makePlacesReader({
     roster: rosterDeps, store: makePlacesStore(db), labs: makeLabsSettings(stateDir), opinion: opts.workbench?.waitingOpinion,
     mapWorkbench: opts.workbench?.rosterRead,
+    recaps, noteDesktopSeen: id => desktop?.noteSeen(placeSeenKey(id)),
     outlines: { evaluator: () => boot.registry.getCheapEval({ private: true }), holdBusy: boot.holdBusy, log },
     mapTopics: {
       db, owner: ownerChatId,
@@ -885,5 +895,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       tellOwner: (text) => { const owner = ownerChatId(); if (owner) void speech.tell('share_talk', owner, text).catch(err => log('SHARE', `tell owner failed: ${err instanceof Error ? err.message : String(err)}`)) },
     })
   }
-  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, roster, places, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices(), ...(opts.workbench ? { share: { link: (id: string, name: unknown, mode?: unknown) => settingsPanel.shareLink(id, name, mode), list: (id: string) => opts.workbench!.shareList(id), revoke: (id: string, shareId: string) => opts.workbench!.shareRevoke(id, shareId), setMode: (id: string, shareId: string, mode: unknown) => opts.workbench!.shareSetMode(id, shareId, mode), talk: (id: string) => opts.workbench!.shareTalk(id), say: (id: string, text: string) => opts.workbench!.shareTalkAdd(id, 'owner', '', text), ownerConversation: (caller: unknown) => ownerLedgerConversation(ownerChatId(), caller as Parameters<typeof ownerLedgerConversation>[1]), titleOf: (id: string) => opts.workbench!.shareTitle(id), consume: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalConsume('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]), approved: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalStatus('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]) } } : {}) } }
+  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, roster, places, memoryNightly, recaps, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices(), ...(opts.workbench ? { share: { link: (id: string, name: unknown, mode?: unknown) => settingsPanel.shareLink(id, name, mode), list: (id: string) => opts.workbench!.shareList(id), revoke: (id: string, shareId: string) => opts.workbench!.shareRevoke(id, shareId), setMode: (id: string, shareId: string, mode: unknown) => opts.workbench!.shareSetMode(id, shareId, mode), talk: (id: string) => opts.workbench!.shareTalk(id), say: (id: string, text: string) => opts.workbench!.shareTalkAdd(id, 'owner', '', text), ownerConversation: (caller: unknown) => ownerLedgerConversation(ownerChatId(), caller as Parameters<typeof ownerLedgerConversation>[1]), titleOf: (id: string) => opts.workbench!.shareTitle(id), consume: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalConsume('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]), approved: (input: unknown, caller: unknown) => opts.workbench!.matterApprovalStatus('mcp__wechat__matter_share', input, (caller ?? {}) as Parameters<NonNullable<typeof opts.workbench>['matterApprovalStatus']>[2]) } } : {}) } }
 }

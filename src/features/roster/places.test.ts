@@ -208,3 +208,30 @@ it('只有收起的清单变化时也更新版本和 ETag', async () => {
   const response = await call({ places: reader }, 'GET /v1/places', null, 'operator', new Headers({ 'if-none-match': first.version }))
   expect(response).toMatchObject({ status: 200, body: second, headers: { etag: second.version } })
 })
+
+it('地方只返回 operator 行标题所对应会话的小结；关掉后字节与旧接口一致', async () => {
+  const term = (id: string, matter: string, at: number) => ({
+    session_id: id, code: id, source: 'codex', status: 'idle', project: '/w/rici',
+    matter_id: matter, last_summary: '样例', last_event_at: at, pending: null,
+  })
+  const terminals = [term('head', 'm-head', NOW - 1), term('older', 'm-older', NOW - 2)]
+  const matters = [m('m-head', { kind: 'terminal', updatedAt: NOW - 1 }), m('m-older', { kind: 'terminal', updatedAt: NOW - 2 })]
+  let enabled = true
+  const recap = { source: 'cc' as const, text: '画册已排完，下一步选封面。', at: NOW, awayFrom: NOW - 30 * 60_000 }
+  const read = vi.fn(() => recap)
+  const { reader } = setup(matters, terminals, () => NOW, {
+    recaps: { enabled: () => enabled, setEnabled: value => { enabled = value }, read, check: async () => {}, stop() {} },
+  })
+  const baseline = setup(matters, terminals).reader
+  const get = (reader: ReturnType<typeof makePlacesReader>, origin: 'operator' | 'device') => call({ places: reader }, 'GET /v1/places', null, origin)
+  const before = await get(baseline, 'operator')
+  const view = await get(reader, 'operator')
+  expect(view.body).toMatchObject({ places: [{ recap }] })
+  expect(view.headers).not.toEqual(before.headers)
+  expect(read.mock.calls).toEqual([['head']])
+  read.mockClear().mockImplementation(() => { throw Error('disabled_read') })
+  expect(JSON.stringify(await get(reader, 'device'))).toBe(JSON.stringify(await get(baseline, 'device')))
+  enabled = false
+  expect(JSON.stringify(await get(reader, 'operator'))).toBe(JSON.stringify(before))
+  expect(read).not.toHaveBeenCalled()
+})

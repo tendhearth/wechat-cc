@@ -386,7 +386,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     const cfg = loadCompanionConfig(stateDir)
     return { enabled: cfg.project_memory_into_sessions !== false, owner: cfg.default_chat_id }
   }, log: line => log('PROJECT_MEMORY', line) })
-  const routes: TerminalRoutesDeps = { projectMemory, cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions }
+  const routes: TerminalRoutesDeps = { projectMemory, cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions, recap: id => d.places?.()?.recap?.(id) }
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     participationConflict:(path:string)=>participations.conflicts(path),

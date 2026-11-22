@@ -1,6 +1,6 @@
 // @ts-check
 import { V1, v1 } from '../daemon-client.js'
-import { leafId } from './lab-map-model.js'
+import { branches, leafId } from './lab-map-model.js'
 import { outlineData, outlineNotice, outlineSource } from './lab-outline-model.js'
 
 /** @typedef {import('./lab-outline-model.js').Leaf} Leaf */
@@ -9,19 +9,58 @@ import { outlineData, outlineNotice, outlineSource } from './lab-outline-model.j
 /** @typedef {import('@wechat-cc/protocol').PlaceMapResponseT} Response */
 /** @typedef {import('../vendor/mind-elixir/MindElixir.js').default} Mind */
 
+export const mapFitButton = `<button type="button" class="lab-map-fit" data-map-fit aria-label="回到中间" hidden>
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round" aria-hidden="true">
+    <circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v2.5m0 8v2.5M1.5 8H4m8 0h2.5"/>
+  </svg>
+</button>`
+
+/** @param {keyof typeof branches} status */
+export function mapStatusChip(status) {
+  const chip = document.createElement('span')
+  chip.className = 'lab-map-chip'
+  chip.dataset.mapStatus = status
+  chip.textContent = branches[status].label
+  return chip
+}
+
+/** @param {HTMLElement} details @param {string} text */
+export function mapCardTitle(details, text) {
+  const top = document.createElement('div')
+  top.className = 'lab-map-card-top'
+  const line = document.createElement('p')
+  line.className = 'lab-map-line'
+  line.textContent = text
+  top.append(line)
+  details.append(top)
+  return top
+}
+
+/** @param {() => void} jump */
+export function mapJumpButton(jump) {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'desk-text-button'
+  button.textContent = '去线上看'
+  button.onclick = jump
+  return button
+}
+
 /**
  * @param {{ host:HTMLElement, key:string, call:import('./terminal-thread.js').Call,
  * loadMap:()=>Promise<typeof import('../vendor/mind-elixir/MindElixir.js').default>, theme:import('../vendor/mind-elixir/MindElixir.js').Options['theme'],
  * fitMap:(mind:Mind)=>void, canJumpSource:(source:Source)=>boolean, jumpSource:(source:Source)=>void }} options
  */
 export function mountOutlineMap({host, key, call, loadMap, theme, fitMap, canJumpSource, jumpSource}) {
-  host.innerHTML = `<div class="lab-map-bar"><span>实验</span><button type="button" class="desk-text-button" data-map-fit hidden>回到中间</button></div>
+  host.innerHTML = `<div class="lab-map-bar"><span>实验</span></div>
+    ${mapFitButton}
     <div class="lab-map-state lab-outline-state">
       <div><span class="lab-map-note" role="status">正在读取…</span> <button type="button" class="desk-text-button" data-outline-action hidden></button></div>
       <p class="lab-map-meta" data-outline-info hidden></p>
     </div>
     <div class="lab-map-viewport" hidden><div></div></div>
-    <div class="lab-map-details" aria-live="polite" hidden></div>`
+    <p class="lab-map-hint" hidden>点一条看它的出处</p>
+    <div aria-live="polite"><div class="lab-map-details" hidden></div></div>`
   const find = (/** @type {string} */ selector) => /** @type {HTMLElement} */ (host.querySelector(selector))
   const note = find('.lab-map-note')
   const info = find('[data-outline-info]')
@@ -29,6 +68,7 @@ export function mountOutlineMap({host, key, call, loadMap, theme, fitMap, canJum
   const fit = find('[data-map-fit]')
   const viewport = find('.lab-map-viewport')
   const element = /** @type {HTMLDivElement} */ (viewport.firstElementChild)
+  const hint = find('.lab-map-hint')
   const details = find('.lab-map-details')
   /** @type {Mind|undefined} */ let mind
   /** @type {Leaf|undefined} */ let selected
@@ -38,28 +78,27 @@ export function mountOutlineMap({host, key, call, loadMap, theme, fitMap, canJum
 
   function drawDetails() {
     details.replaceChildren()
+    details.hidden = !selected
+    hint.hidden = Boolean(selected)
     if (!selected) return
-    const line = document.createElement('p')
-    line.className = 'lab-map-line'
-    line.textContent = selected.line
-    details.append(line)
+    const top = mapCardTitle(details, selected.line)
+    const chip = mapStatusChip(selected.status)
+    if (!selected.sources.length) details.append(chip)
     for (const [index, source] of selected.sources.entries()) {
       const row = document.createElement('p')
       row.className = 'lab-map-meta'
-      const display = outlineSource(selected, source, canJumpSource(source), Date.now(), index === 0)
-      row.textContent = display.text
+      const display = outlineSource(source, canJumpSource(source), Date.now(), index === 0)
+      if (index === 0) row.append(chip)
+      const from = document.createElement('span')
+      from.textContent = display.text + (display.missing ? '，那次会话已经翻不到了' : '')
+      row.append(from)
       if (display.jump) {
-        const button = document.createElement('button')
-        button.type = 'button'
-        button.className = 'desk-text-button'
-        button.textContent = '去那条线上看 ›'
-        button.onclick = () => {
+        const button = mapJumpButton(() => {
           if (canJumpSource(source)) jumpSource(source)
           else drawDetails()
-        }
-        row.append(' ', button)
-      } else if (display.missing) {
-        row.append(' · 那次会话已经翻不到了')
+        })
+        const target = index === 0 ? top : row
+        target.append(button)
       }
       details.append(row)
     }
@@ -69,14 +108,14 @@ export function mountOutlineMap({host, key, call, loadMap, theme, fitMap, canJum
     mind?.destroy()
     mind = selected = undefined
     graphVersion = ''
-    viewport.hidden = details.hidden = fit.hidden = true
+    viewport.hidden = details.hidden = hint.hidden = fit.hidden = true
     details.replaceChildren()
   }
 
   /** @param {Outline} next */
   function showNotice(next) {
     outline = next
-    const { text, action: label, reason } = outlineNotice(next, Date.now())
+    const { text, action: label, reason } = outlineNotice(next, Date.now(), document.documentElement.hasAttribute('data-desk-wide'))
     note.textContent = text
     action.textContent = label
     action.hidden = !label
@@ -124,7 +163,7 @@ export function mountOutlineMap({host, key, call, loadMap, theme, fitMap, canJum
       const MindElixir = await loadMap()
       if (stopped || version !== readVersion) return
       clear()
-      viewport.hidden = details.hidden = fit.hidden = false
+      viewport.hidden = hint.hidden = fit.hidden = false
       const graph = new MindElixir({ el: element, direction: 2, editable: false, contextMenu: false,
         toolBar: false, keypress: false, allowUndo: false, before: {}, theme })
       mind = graph

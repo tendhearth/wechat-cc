@@ -113,9 +113,27 @@ export function renderTokensCss(): string {
   return `/* 生成物:bun scripts/build-design-tokens.ts(出处 packages/design-tokens/src/index.ts)。别手改。 */\n:root {\n${lines.join('\n')}\n}\n`
 }
 
-/** The experimental diagram palette is only shipped in desktop CSS. */
+/** The desk and experimental diagram palettes are only shipped in desktop CSS. */
 export function renderDesktopTokensCss(): string {
-  return renderTokensCss() + `.lab-map {
+  return renderTokensCss() + `:root {
+  --th-desk-sheet: #fdfbf7;
+  --th-desk-raised: #fffefb;
+  --th-desk-faint: #a89f94;
+  --th-desk-hair: rgba(42, 38, 34, .09);
+  --th-desk-edge: rgba(42, 38, 34, .16);
+  --th-desk-line: #d6cec2;
+  --th-desk-pencil: #b9ae9f;
+  --th-desk-hover: rgba(42, 38, 34, .05);
+  --th-desk-hover-cc: rgba(42, 38, 34, .04);
+  --th-desk-accent-wash: rgba(79, 107, 79, .1);
+  --th-desk-warn-halo: rgba(176, 122, 42, .16);
+  --th-desk-shadow-sheet: 0 0 0 .5px var(--th-desk-hair), 0 1px 2px rgba(42, 38, 34, .04), 0 10px 30px rgba(42, 38, 34, .05);
+  --th-desk-shadow-raised: 0 0 0 .5px var(--th-desk-edge), 0 12px 32px rgba(42, 38, 34, .14);
+  --th-desk-shadow-selection: 0 0 0 .5px var(--th-desk-hair), 0 1px 2px rgba(42, 38, 34, .04);
+  --th-font-desk-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", "Segoe UI", "Noto Sans SC", sans-serif;
+  --th-font-cc-hand: "TH Pen Hand", "TH Pen Kai", "Kaiti SC", "STKaiti", "KaiTi", serif;
+}
+.lab-map {
   --th-map-clay: #a45c40;
   --th-map-slate: #55708a;
   --th-map-plum: #7a5c78;

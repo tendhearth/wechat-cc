@@ -395,7 +395,7 @@ for (const width of [1280, 800]) {
     const box = (await panel.boundingBox())!
     if (width === 1280) {
       await expect(rail.locator('.places-strip')).toBeVisible()
-      expect(box.x).toBeGreaterThanOrEqual(304)
+      expect(box.x).toBeGreaterThanOrEqual(284)
     } else {
       const topbar = (await rail.boundingBox())!
       expect(box.x).toBe(0)

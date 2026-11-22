@@ -26,7 +26,7 @@ const approval = {actionable:true,tool:'Read',summary:'读备份目录？',hash:
 const entries = [
   step('you','you','把这周的记录整理一下'),
   step('reply','said','这是短摘要',{full:'这是 **完整原话**，包含记录。'}),
-  step('one','step','读了记录',{detail:'这里是工具输出'}),
+  step('one','step','读 records.md',{detail:'这里是工具输出',verb:'read',target:'records.md'}),
   step('two','step','核对目录',{error:true}),
 ]
 
@@ -67,8 +67,16 @@ test('一次会话直接读原话；重复点击不取消，回 CC 草稿还在�
   await expect(thread(page)).toBeVisible()
   await expect(terminal(page)).toContainText('把这周的记录整理一下')
   await expect(terminal(page).locator('strong')).toHaveText('完整原话')
-  await expect(terminal(page).getByText('做了 2 步')).toBeVisible()
+  const line = terminal(page)
+  await expect(line.getByText('做了 2 步')).toBeVisible()
+  await expect(line.locator('.desk-speaker:visible')).toHaveCount(0)
+  await expect(line.locator('.converse-msg-user .converse-bubble')).toHaveCSS('border-radius', '18px 18px 6px')
+  await expect(line.locator('.converse-msg-cc .converse-bubble')).toHaveCSS('line-height', '26.25px')
+  await expect(line.locator('.thing-compose')).toHaveCSS('border-radius', '20px')
+  await expect(line.getByRole('button', {name:'发送', exact:true})).toHaveCSS('background-color', 'rgb(243, 238, 230)')
   await expect(thread(page).locator('.thing-sessions')).toBeHidden()
+  await expect(thread(page).locator('.thing-agent')).toHaveText('Codex')
+  await expect(thread(page).locator('.thing-state')).toHaveText('停着')
   await expect(page.getByRole('button',{name:'回到全部',exact:true})).toHaveCount(0)
   await expect(terminal(page).locator('.converse-recipient')).toHaveText('Codex ›')
   await expect(terminal(page).locator('textarea')).toHaveAttribute('placeholder','接着对 Codex 说…')
@@ -80,9 +88,12 @@ test('一次会话直接读原话；重复点击不取消，回 CC 草稿还在�
     return Math.abs(box.x+box.width/2-640)
   }).toBeLessThanOrEqual(2)
   await page.locator('#desk-rail-toggle').click()
-  const selectedColor=await placeRow(page,'花园').evaluate(el=>getComputedStyle(el).backgroundColor)
+  await expect(placeRow(page,'花园')).toHaveCSS('background-color','rgb(253, 251, 247)')
+  await expect(placeRow(page,'花园')).not.toHaveCSS('box-shadow','none')
   await home(page).click()
-  await expect(home(page)).toHaveCSS('background-color',selectedColor)
+  await expect(home(page)).toHaveCSS('background-color','rgba(42, 38, 34, 0.04)')
+  await page.locator('#converse-input').hover()
+  await expect(home(page)).toHaveCSS('background-color','rgba(0, 0, 0, 0)')
   await expect(page.locator('#converse-input')).toHaveValue('CC 的未发送草稿')
 })
 
@@ -94,9 +105,25 @@ test('三次会话优先等你定，换会话以及回到原处都可后退；�
   const tabs = thread(page).locator('[data-thread-session]')
   await expect(tabs).toHaveCount(3)
   await expect(tabs.last()).toHaveAttribute('aria-pressed','true')
+  await expect(tabs.last()).toHaveCSS('border-bottom-color','rgb(42, 38, 34)')
+  await expect(tabs.last()).toHaveCSS('background-color','rgba(0, 0, 0, 0)')
+  await expect(tabs.last().locator('.th-agents')).toHaveCSS('--th-agent-size','14px')
+  const heading = thread(page).locator('.thing-heading')
+  await expect(heading).toHaveCSS('height','52px')
+  await expect(heading.locator('.thing-agent')).toHaveText('Codex')
+  await expect(heading.locator('.thing-status')).not.toContainText('·')
+  const state = heading.locator('.thing-state')
+  await expect(state).toHaveText('等你定')
+  await expect(state).toHaveAttribute('data-tone','waiting')
   await expect(terminal(page)).toContainText('ask 的原话')
+  const card = terminal(page).locator('.desk-waiting-card')
+  await expect(card).toHaveCSS('border-radius', '14px')
+  await expect(card.locator('.desk-waiting-opinion')).toHaveCSS('font-family', /TH Pen Hand/)
+  await expect(card.locator('.desk-waiting-reason')).toHaveCSS('font-size', '13px')
   await tabs.nth(1).click()
   await expect(terminal(page)).toContainText('run 的原话')
+  await expect(state).toHaveText('正在做')
+  await expect(state).toHaveAttribute('data-tone','working')
   const input=terminal(page).locator('textarea')
   await expect(input).toBeDisabled()
   await expect(input).toHaveAttribute('placeholder','Codex 正在做，等这一轮停了再说')
@@ -129,6 +156,9 @@ test('展开两层后重读保持节点，往上读时新回复提示且位置�
   const group=scroll.locator('.thing-steps > details')
   const detail=group.locator('li details')
   await group.locator(':scope > summary').click()
+  await expect(group.locator('ol')).toHaveCSS('border-radius', '10px')
+  await expect(detail.locator('summary code')).toHaveText('records.md')
+  await expect(detail.locator('summary code')).toHaveCSS('font-size', '12px')
   await detail.locator('summary').click()
   await detail.locator('summary').focus()
   await expect(detail.locator('pre')).toBeVisible()
@@ -262,4 +292,59 @@ test('800px 保留筛选条和补引用卡',async({page,shimUrl})=>{
   await expect(thread(page)).toBeHidden()
   await expect(page.locator('#converse-place-clear')).toHaveText('只看 花园 · 回到全部')
   await expect(page.locator('#converse-scroll [data-terminal-reference="solo"]')).toBeVisible()
+})
+
+test('小结跟着作者换字体，发话收起便条，偏好关掉后两处都收起', async ({page, shimUrl}) => {
+  const cc = { text: '花园的画册排好了。还要选纸。', source: 'cc', at: now, awayFrom: Date.now() - 38 * 60_000 - 15_000 }
+  const claude = { text: '备份文件已经清点。等你决定是否读取目录。', source: 'claude', at: now, awayFrom: Date.now() - 38 * 60_000 - 15_000 }
+  let enabled = true
+  let spoke = false
+  await mockTerminal(page, {withThree:true})
+  await routePlaces(page, () => enabled ? [{...solo, ...(!spoke ? {recap:cc} : {})}, {...three, recap:claude}] : [solo, three])
+  await page.route('**/v1/settings/recap', route => {
+    if (route.request().method() === 'POST') enabled = route.request().postDataJSON().recap
+    return route.fulfill({json:{ok:true, recap:enabled}})
+  })
+  await page.route('**/v1/cli/activity**', route => {
+    const id = new URL(route.request().url()).searchParams.get('session_id')
+    return route.fulfill({json:{ok:true,items:entries,earlier:null,
+      ...(enabled && (id === 'ask' || !spoke) ? {recap: id === 'ask' ? claude : cc} : {})}})
+  })
+  await page.route('**/v1/cli/session-say', route => {
+    spoke = true
+    return route.fulfill({json:{ok:true,accepted:true}})
+  })
+  await page.goto(shimUrl)
+  const ccLine = placeRow(page,'花园').locator('.place-line')
+  const claudeLine = placeRow(page,'备份').locator('.place-line')
+  await expect(ccLine).toHaveText(cc.text)
+  await expect(claudeLine).toHaveText(claude.text)
+  await expect(ccLine).toHaveCSS('font-size','14.5px')
+  await expect(claudeLine).toHaveCSS('font-size','12.5px')
+  const hand = await ccLine.evaluate(node => getComputedStyle(node).fontFamily)
+  expect(await claudeLine.evaluate(node => getComputedStyle(node).fontFamily)).not.toBe(hand)
+  await select(page,'花园')
+  let memo = terminal(page).locator('.thing-recap')
+  await expect(memo).toBeVisible()
+  await expect(memo.locator('small')).toHaveText('你 38 分钟没来，CC 留了张条')
+  await expect(memo.locator('p')).toHaveCSS('font-family', hand)
+  await expect(memo.locator('svg[aria-hidden=true] path')).toHaveCount(2)
+  await terminal(page).locator('textarea').fill('用厚一点的纸')
+  await terminal(page).getByRole('button',{name:'发送',exact:true}).click()
+  await expect(memo).toHaveCount(0)
+
+  await select(page,'备份')
+  memo = terminal(page).locator('.thing-recap')
+  await expect(memo).toBeVisible()
+  await expect(memo.locator('small')).toHaveText('你 38 分钟没来，这是 Claude Code 自己记的')
+  await expect(memo.locator('p')).toHaveCSS('font-size','14.5px')
+  await expect(memo.locator('svg path')).toHaveCount(2)
+  await expect(terminal(page).locator('.desk-waiting-card')).toBeVisible()
+  await page.locator('.topbar-more summary').click()
+  await page.locator('#settings-open').click()
+  const toggle = page.getByRole('button',{name:'小结',exact:true})
+  await expect(toggle).toBeEnabled()
+  await toggle.click()
+  await expect(memo).toHaveCount(0)
+  await expect(claudeLine).not.toHaveAttribute('data-recap-source')
 })

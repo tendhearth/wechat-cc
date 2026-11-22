@@ -89,6 +89,17 @@ it('坐回来:点一行记成看过这个地方;选着时它又动了再记一�
   expect(seen()).toEqual(['p:rici000000000000', 'p:rici000000000000'])
 })
 
+it.each([true, false])('离开再点回没动过的那一行，也再记一次看过（宽窗 %s）', async wide => {
+  const { calls } = mount({ places: [place('rici'), place('melu')], version: 'v1' })
+  strip!.setWide(wide)
+  await strip!.refresh()
+  const row = () => document.querySelector<HTMLButtonElement>('[data-place-key="p:rici000000000000"] .place-row')!
+  row().click()
+  strip!.clear()
+  row().click()
+  expect(calls.filter(c => c[1] === '/v1/places/seen')).toHaveLength(2)
+})
+
 it('刷新拿到同一个选中地方、它带的 id 没变 ⇒ 不再通知说话', async () => {
   let version = 'v1'
   const { onSelect } = mount(() => ({ places: [place('rici', { line: version })], version }))
@@ -149,6 +160,36 @@ it('按地方键选中和清除都更新地方条的选中状态', async () => {
   strip!.clear()
   expect(onSelect).toHaveBeenLastCalledWith(null)
   expect(row.getAttribute('aria-pressed')).toBe('false')
+})
+
+it.each([false, true])('行菜单打开时保留节点，关闭后补画最新数据（宽窗 %s）', async wide => {
+  const root = document.createElement('div')
+  document.body.replaceChildren(root)
+  Object.defineProperty(root, 'showPopover', { value: undefined })
+  let version = 1
+  strip = mountPlacesStrip({
+    root,
+    call: async () => ({ places: [place('rici', { line: `进度 ${version}` })], version: String(version) }),
+    onSelect: vi.fn(),
+    onOpen: vi.fn(),
+  })
+  strip.setWide(wide)
+  await strip.refresh()
+  const trigger = root.querySelector<HTMLButtonElement>('.place-more')!
+  trigger.click()
+  const menu = root.querySelector<HTMLElement>('.place-actions')!
+  expect(menu.hidden).toBe(false)
+
+  for (version of [2, 3]) await strip.refresh()
+  expect(root.querySelector('.place-actions')).toBe(menu)
+  expect(menu.hidden).toBe(false)
+  expect(root.textContent).toContain('进度 1')
+  expect(root.textContent).not.toContain('进度 3')
+
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+  expect(root.querySelector<HTMLElement>('.place-actions')!.hidden).toBe(true)
+  expect(root.querySelector('.place-actions')).not.toBe(menu)
+  expect(root.textContent).toContain('进度 3')
 })
 
 it('旧 WebView 的固定菜单支持展开、Esc 和点外关闭', async () => {

@@ -75,7 +75,7 @@ test('CC listens only to input and responds only to fresh running output, includ
 })
 
 test('home uses Light/Dark connection forms, one breathing layer and stable keyboard navigation', async ({ page, shimUrl }) => {
-  // 窄窗保留原来的动作头像；宽窗的暖光和尺寸由 desk-two-pane.spec.ts 检查。
+  // 窄窗保留原来的动作头像；宽窗去掉光晕后的尺寸和样式由 desk-two-pane.spec.ts 检查。
   await page.setViewportSize({ width: 800, height: 820 })
   let down = false
   await page.route('**/v1/workbench/attention', route => route.fulfill({ json: { tasks: [] } }))

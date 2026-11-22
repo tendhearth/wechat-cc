@@ -385,7 +385,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   }
   const otherId = 'wb-other-projects'
   const otherList = otherProjects.length ? `<details id="${otherId}" class="wb-other-projects" data-sidebar-disclosure${query.q || executionView.sidebarDisclosures?.get(otherId) ? ' open' : ''}><summary>其他项目 <small>${otherProjects.length}</small></summary><div>${otherProjects.map(project => `<section class="wb-project wb-project-empty"><h3 title="${escapeWorkbenchHtml(project.path)}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="task-entry" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 交办">＋ 交办</button></section>`).join('')}</div></details>` : ''
-  const taskList = visibleProjects.length || otherProjects.length || attentionTasks.length ? attentionList + visibleProjects.map(renderProject).join('') + otherList : `<p class="wb-empty-copy">${listEmptyCopy}</p>`
+  const taskList = visibleProjects.length || otherProjects.length || attentionTasks.length ? attentionList + visibleProjects.map(renderProject).join('') + otherList : `<p class="wb-empty-copy">${listEmptyCopy}${state.error && !detail ? ' <button class="wb-new wb-list-retry" type="button" data-action="refresh" hidden>重新读取</button>' : ''}</p>`
   // 「一件事」:在桌面露过面的对话(主人跟 CC 说的那条)也在这张列表里,排在任务上面。
   const listControls = `<div class="wb-list-controls"><label>项目<select id="wb-filter-project"><option value="">所有项目</option><option value="__managed__"${state.listProject==='__managed__'?' selected':''}>随手交办</option>${(state.projects??[]).map(project=>`<option value="${escapeWorkbenchHtml(project.path)}"${state.listProject===project.path?' selected':''}>${escapeWorkbenchHtml(project.name)}</option>`).join('')}</select></label><label>状态<select id="wb-filter-status"><option value="">所有状态</option>${Object.entries(STATUS_WORDS).map(([key,label])=>`<option value="${key}"${state.listStatus===key?' selected':''}>${escapeWorkbenchHtml(label)}</option>`).join('')}</select></label><form id="wb-search-form" class="wb-search"><label class="wb-sr-only" for="wb-search">搜索任务名称、文件夹或任务编号</label><input id="wb-search" name="q" type="search" maxlength="200" placeholder="搜索任务或项目" value="${escapeWorkbenchHtml(query.q)}"><button class="wb-new" type="submit" aria-label="搜索任务">搜索</button></form><div class="wb-list-filters">${query.archived === 'only' ? '<button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="true">返回任务</button>' : ''}${query.q ? '<button class="wb-new" type="button" data-action="clear-search">清除搜索</button>' : ''}<details id="wb-list-more" class="wb-list-more" data-sidebar-disclosure${executionView.sidebarDisclosures?.get('wb-list-more') ? ' open' : ''}><summary>更多</summary><div><button type="button" class="wb-new" data-action="add-project">添加项目</button>${query.archived === 'only' ? '' : '<button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="false">已归档的任务</button>'}${state.historyProviders?.length?'<button class="wb-new" type="button" data-action="native-history">导入已有会话</button>':''}</div></details></div>${query.archived === 'only' ? '<p class="wb-archive-label">已归档的任务</p>' : ''}</div>`
   const pagination = state.page?.hasMore ? `<button type="button" class="wb-new wb-load-more" data-action="load-more"${state.loadingMore ? ' disabled' : ''}>${state.loadingMore ? '正在加载…' : '加载更早的任务'}</button>` : ''
@@ -500,7 +500,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const chosenContinuation=executionView.restartPreview?(executionView.restartPreview.status==='ready'?executionView.restartPreview.continuation??undefined:{mode:'restart_required'}):detail?.continuation
   const previewError=executionView.restartPreview?.error?`<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(executionView.restartPreview.error)} <button type="button" class="wb-new" data-action="retry-continuation-preview">重新读取恢复说明</button></p>`:''
   const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null,providerName:state.nativeResume?.taskId===detail.task.id?providerNameOf(state)(state.nativeResume.providerId):undefined},{taskId:detail.task.id,providerId:detail.task.providerId,providerName:providerNameOf(state)(detail.task.providerId),runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
-  return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar" aria-labelledby="wb-all-title"><header><h2 id="wb-all-title">搜索事项</h2><button type="button" class="wb-delegate" data-action="task-entry" aria-label="交办" title="交办一件事">${icon('add-01', {size:16})}<span aria-hidden="true">交办</span></button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${directHeader}${taskHeader}<div class="wb-content"><div class="wb-content-inner" data-task-focus="${taskFocus}">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
+  return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar" aria-labelledby="wb-all-title"><header><h2 id="wb-all-title"><span class="wb-search-wide-title" hidden>搜索</span><span class="wb-search-compact-title">搜索事项</span></h2><button type="button" class="wb-delegate" data-action="task-entry" aria-label="交办" title="交办一件事">${icon('add-01', {size:16})}<span aria-hidden="true">交办</span></button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${directHeader}${taskHeader}<div class="wb-content"><div class="wb-content-inner" data-task-focus="${taskFocus}">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
 }
 
 /** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,isTaskVisible?:()=>boolean,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
@@ -762,11 +762,14 @@ export function syncWorkbenchProviderLabel(root) {
   if (label) label.textContent = `当前使用 ${select?.selectedOptions?.[0]?.textContent || '尚未选择服务'}`
 }
 
-/** @param {WorkbenchDeps} deps */
-export function initWorkbenchPage(deps) {
+/** @param {WorkbenchDeps} deps @param {{focusSearch?:boolean}} [options] */
+export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   stopWorkbenchPolling()
   const root = document.getElementById('workbench-root')
   if (!root) return
+  const previousFocus = focusSearch ? document.activeElement : null
+  const wideSearchVisible = () => !!root.closest?.('.dash-main > .workbench-pane[data-workbench-view="search"]:not([hidden])')
+    && document.documentElement.hasAttribute('data-desk-wide')
   /** @type {Set<string>} */
   const busy = new Set()
   let forking = false
@@ -905,6 +908,31 @@ export function initWorkbenchPage(deps) {
     showReadingNotice()
     return true
   }
+  const thingStopped = () => !!root.closest?.('.thing-detail')
+    && document.documentElement.hasAttribute('data-desk-cc-stopped')
+  const reflectThingAvailability = () => {
+    const stopped = thingStopped()
+    const followup = input('wb-followup-text')
+    if (followup && stopped && followup.dataset.connectedPlaceholder === undefined) {
+      followup.dataset.connectedPlaceholder = followup.getAttribute('placeholder') ?? ''
+      followup.setAttribute('placeholder', 'CC 没在运行')
+    } else if (followup && !stopped && followup.dataset.connectedPlaceholder !== undefined) {
+      followup.setAttribute('placeholder', followup.dataset.connectedPlaceholder)
+      delete followup.dataset.connectedPlaceholder
+    }
+    const controls = root.querySelectorAll?.('.wb-followup button[type="submit"], .wb-permission-actions button, form[data-action="answer-question"] button[type="submit"]') ?? []
+    for (const button of controls) {
+      if (stopped && !button.hasAttribute('disabled')) {
+        button.setAttribute('data-desk-offline-disabled', '')
+        button.setAttribute('disabled', '')
+        button.setAttribute('title', 'CC 没在运行')
+      } else if (!stopped && button.hasAttribute('data-desk-offline-disabled')) {
+        button.removeAttribute('data-desk-offline-disabled')
+        button.removeAttribute('disabled')
+        button.removeAttribute('title')
+      }
+    }
+  }
   const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, isTaskVisible:()=>root.closest?.('.workbench-pane')?.getAttribute('data-workbench-view')!=='search', initialScope, initialQuery: resumeQuery, patchLive, render: state => {
     if (!alive) return
     if (hasPainted) { captureDraft(); searchDraft = input('wb-search')?.value ?? searchDraft }
@@ -981,6 +1009,7 @@ export function initWorkbenchPage(deps) {
       if(full!==undefined){s.content=full;s.truncated=false;s.expanded=true}
     }
     paintWorkbenchWithPreview(root, renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{quotaAttempt:quotaHandoffAttempts.get(state.detail?.task.id??''),sidebarDisclosures,catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')}))
+    reflectThingAvailability()
     for (const field of /** @type {NodeListOf<HTMLTextAreaElement>} */ (root.querySelectorAll?.('[data-denial-reason]') ?? [])) field.value = permissionReasonDrafts.get(field.id) ?? ''
     const nextPreview = root.querySelector('#wb-preview')
     if (nextPreview && sameScope) nextPreview.scrollTop = previewScroll
@@ -995,6 +1024,11 @@ export function initWorkbenchPage(deps) {
     if (questionPanel && sameScope) questionPanel.scrollTop = questionPanelScroll
     hasPainted = true
     const search = input('wb-search'); if (search) search.value = searchDraft
+    if (focusSearch) {
+      focusSearch = false
+      if (wideSearchVisible()
+        && (document.activeElement === previousFocus || document.activeElement === document.body)) search?.focus({preventScroll: true})
+    }
     const sidebar = root.querySelector('.wb-sidebar'); if (sidebar) sidebar.scrollTop = sidebarScroll
     for (const [id, open] of disclosures.get(scopeFor(state)) ?? []) {
       if (id === 'wb-artifacts' && root.querySelector('#wb-artifacts.is-outcome') && !artifactDisclosureChoices.has(nextScope)) continue
@@ -1041,7 +1075,9 @@ export function initWorkbenchPage(deps) {
       const summary = /** @type {HTMLElement|null} */ (root.querySelector(`#${focusedDisclosure} > summary`))
       summary?.focus({ preventScroll: true })
     }
-    const nextFocus = focused && sameScope ? input(focused.id) : null
+    // Search fields belong to the page even when the worker paints a different task.
+    const searchField = focused && ['wb-search', 'wb-filter-project', 'wb-filter-status'].includes(focused.id) && wideSearchVisible()
+    const nextFocus = focused && (sameScope || searchField) ? input(focused.id) : null
     if(permissionFocus&&sameScope)restorePermissionFocus(root,permissionFocus)
     else if (focusedPreviewAction && sameScope) /** @type {HTMLElement|null} */ (root.querySelector(`.wb-artifact-panel [data-action="${focusedPreviewAction}"]`))?.focus({preventScroll:true})
     else if (nextFocus) { nextFocus.focus({ preventScroll: true }); if (focused && focused.start !== null && focused.end !== null && 'setSelectionRange' in nextFocus) nextFocus.setSelectionRange(focused.start, focused.end) }
@@ -1168,7 +1204,15 @@ export function initWorkbenchPage(deps) {
     captureDraft();quotaHandoffCleanup?.();quotaHandoffCleanup=null; artifactRequest++
     const navigation = ++navigationGeneration
     const layer=/** @type {HTMLElement|null} */(root.closest?.('.workbench-pane'))
-    if(layer)layer.dataset.workbenchView='detail'
+    if (layer) {
+      if (layer.parentElement?.classList.contains('dash-main') && layer.dataset.workbenchView === 'search'
+        && document.documentElement.hasAttribute('data-desk-wide')) {
+        layer.setAttribute('role', 'dialog')
+        layer.setAttribute('aria-modal', 'true')
+        layer.setAttribute('aria-label', '事项')
+      }
+      layer.dataset.workbenchView = 'detail'
+    }
     try {
       await controller.selectTask(id)
       if (!alive || navigation !== navigationGeneration) return
@@ -1286,7 +1330,7 @@ export function initWorkbenchPage(deps) {
     // 行评论(2026-10-21):点一行选中,Shift 点扩到同一块里(≤ 40 行);再点同一行取消
     const lineRow = !target && event.target instanceof Element ? /** @type {HTMLElement|null} */ (event.target.closest('[data-row]')) : null
     if (lineRow) return selectLine(lineRow, !!(/** @type {MouseEvent} */ (event).shiftKey))
-    if (!target) return
+    if (!target || target.dataset.deskOfflineDisabled !== undefined) return
     if (target.dataset.taskId) {
       await openTask(target.dataset.taskId)
       if (alive && controller.state.detail?.task.id === target.dataset.taskId) deps.onTaskNavigation?.()
@@ -1729,6 +1773,7 @@ export function initWorkbenchPage(deps) {
     event.preventDefault()
     const form = event.target instanceof Element && event.target.tagName === 'FORM' ? /** @type {HTMLFormElement} */ (event.target) : null
     if (!form) return
+    if (thingStopped() && form.matches('.wb-followup, [data-action="answer-question"]')) return
     if (form.dataset.action === 'answer-question') return answerQuestion(form.dataset.ownerTask, form.dataset.requestId)
     // 行评论:存草稿(新建带客户端 id,改只带 id + 正文);被拒的原因留在输入框里,字不丢
     if (form.dataset.action === 'line-comment-save') {
@@ -2009,6 +2054,7 @@ export function initWorkbenchPage(deps) {
     const content=root.querySelector('.wb-content'),current=reading.get(renderedScope)
     if(current&&content){current.following=atEnd(content)&&!browsingResults();if(current.following){current.unread=false;showReadingNotice()}}
   }
+  document.addEventListener?.('desk-cc-availability', reflectThingAvailability)
   root.addEventListener('toggle',onToggle,true)
   root.addEventListener('paste',onPaste);root.addEventListener('drop',onDrop);root.addEventListener('dragover',onDragOver)
   root.addEventListener('input', onInput)
@@ -2045,6 +2091,7 @@ export function initWorkbenchPage(deps) {
     return true
   }
   active = { timer, openTask, openDraft, getTaskId: () => controller.getTargetTaskId(), getViewedTaskId: () => controller.state.detail?.task.id ?? null, cleanup: () => {
+    document.removeEventListener?.('desk-cc-availability', reflectThingAvailability)
     saveWindowState()
     resumeQuery = { ...(controller.state.query ?? { q: '', archived: 'exclude' }) }
     resumeSearch = input('wb-search')?.value ?? searchDraft

@@ -28,11 +28,12 @@ const select = async (page:Page,name:string) => {
 }
 const view = (page:Page,name:string) => thread(page).getByRole('button',{name,exact:true})
 const menu = (page:Page) => page.locator('.topbar-more summary')
-const toggle = (page:Page) => page.getByRole('switch',{name:'把一件事画成图'})
+const toggle = (page:Page) => page.getByRole('switch',{name:'把一件事画成图',includeHidden:true})
 const mapPath = /\/v1\/places\/map\?/
 const pinPath = '**/v1/places/map/pin'
 const group = (page:Page, branch:PlaceMapBranchT) => diagram(page).locator(`me-wrapper:has(> me-parent > [data-nodeid="meg:${branch}"])`)
 const actions = (page:Page) => diagram(page).locator('.lab-map-details')
+const statusChip = (page:Page) => actions(page).locator('.lab-map-chip')
 const cspPattern = /(refused|violates|Content[\s-]?Security[\s-]?Policy|CSP)/i
 
 async function mock(page:Page, beforeMap?: (key:string, route:Route) => Promise<void>,
@@ -83,8 +84,8 @@ async function mock(page:Page, beforeMap?: (key:string, route:Route) => Promise<
 async function enable(page:Page) {
   await menu(page).click()
   await toggle(page).click()
+  await expect(menu(page).locator('..')).not.toHaveAttribute('open','')
   await expect(toggle(page)).toHaveAttribute('aria-checked','true')
-  await menu(page).click()
 }
 
 test.beforeEach(async ({shim})=>{ await shim.invoke('demo.seed',{daemonAlive:true}) })
@@ -125,9 +126,21 @@ test('默认不加载，开启后可看出处、跳回线，可拖放并记住�
   await expect(leaf(page,'<img onerror=alert(1)>')).toHaveCount(1)
   await expect(diagram(page).locator('img,[onerror]')).toHaveCount(0)
 
+  await expect(actions(page)).toBeHidden()
+  await expect(diagram(page).locator('.lab-map-hint')).toHaveText('点一条看它的出处；拖到另一支上就是挪过去')
+  await expect(view(page,'回到中间')).toHaveAttribute('aria-label','回到中间')
+  await expect(view(page,'回到中间')).toHaveText('')
+  await expect(leaf(page,'在做的')).toHaveCSS('padding','6px 10px')
+  await expect(diagram(page).locator('svg.lines path').first()).toHaveCSS('stroke-width','1.75px')
+  await expect(diagram(page).locator('svg.subLines path').first()).toHaveCSS('stroke-width','1.25px')
   const decision = leaf(page,'先整理去年的记录')
   await decision.click()
-  await expect(diagram(page).locator('.lab-map-details')).toContainText('定了的 · 决定 · 和 CC 聊的')
+  await expect(diagram(page).locator('.lab-map-hint')).toBeHidden()
+  const viewport = (await diagram(page).locator('.lab-map-viewport').boundingBox())!
+  const card = (await actions(page).boundingBox())!
+  expect(viewport.y + viewport.height).toBeLessThan(card.y)
+  await expect(statusChip(page)).toHaveText('定了的')
+  await expect(actions(page)).toContainText('决定，和 CC 聊的，')
   await expect(diagram(page).getByText('CC 记的：先按月份归档。')).toBeVisible()
   const reread = page.waitForResponse(res => mapPath.test(res.url()))
   await drag(page, decision, leaf(page,'在做的'))
@@ -135,11 +148,13 @@ test('默认不加载，开启后可看出处、跳回线，可拖放并记住�
   await reread
   await expect(group(page,'active')).toContainText('先整理去年的记录')
   await expect(decision.locator('.tags')).toHaveText('你放的')
-  await expect(actions(page)).toContainText('你放的 · 本来在「定了的」 · 决定 · ')
+  await expect(statusChip(page)).toHaveText('在做的')
+  await expect(actions(page)).toContainText('；你放到这儿的，本来在「定了的」')
 
   await leaf(page,'Codex · 正在核对目录').click()
-  await expect(diagram(page).locator('.lab-map-details')).toContainText('在做的 · 会话 · 终端会话')
-  await diagram(page).getByRole('button',{name:'去那条线上看 ›'}).press('Enter')
+  await expect(statusChip(page)).toHaveText('在做的')
+  await expect(actions(page)).toContainText('会话，终端会话，')
+  await diagram(page).getByRole('button',{name:'去线上看'}).press('Enter')
   await expect(diagram(page)).toBeHidden()
   await expect(line).toContainText('two 的原话')
   await expect(thread(page).locator('[data-thread-session="terminal:two"]')).toHaveAttribute('aria-pressed','true')
@@ -279,7 +294,8 @@ test('回包前就摆过去，失败退回；用键盘挪到，再点放回去',
     for (let i=0; i<5 && !await result.evaluate(el=>el===document.activeElement); i++) await page.keyboard.press('Tab')
     await expect(result).toBeFocused()
     await page.keyboard.press('Enter')
-    await expect(actions(page)).toContainText('做过的 · 结果')
+    await expect(statusChip(page)).toHaveText('做过的')
+    await expect(actions(page)).toContainText('结果，交办的活，')
     const move = actions(page).getByRole('button',{name:'没解决的',exact:true})
     for (let i=0; i<6 && !await move.evaluate(el=>el===document.activeElement); i++) await page.keyboard.press('Tab')
     await expect(move).toBeFocused()
@@ -288,7 +304,8 @@ test('回包前就摆过去，失败退回；用键盘挪到，再点放回去',
     await reread
     await expect.poll(()=>writes).toHaveLength(2)
     expect(writes[1]).toEqual({key:garden.key,itemId:'e:result',branch:'open'})
-    await expect(actions(page)).toContainText('你放的 · 本来在「做过的」 · 结果 · ')
+    await expect(statusChip(page)).toHaveText('没解决的')
+    await expect(actions(page)).toContainText('；你放到这儿的，本来在「做过的」')
     await expect(diagram(page).locator('.lab-map-write-error')).toBeEmpty()
     const restored = page.waitForResponse(res=>mapPath.test(res.url()))
     await actions(page).getByRole('button',{name:'放回去'}).click()
@@ -360,6 +377,9 @@ test('地方读回的开关决定图入口，写失败保持原值并在开关�
   await expect(toggle(page)).toHaveAttribute('aria-checked','true')
   await expect(page.locator('#desk-lab-map-note')).toHaveText('还在试。关掉就没有，不影响别的。开着时，你在图上摆过的，CC 说话和终端里的 agent 开场时会知道。')
   await toggle(page).click()
+  await expect(menu(page).locator('..')).not.toHaveAttribute('open','')
+  await menu(page).click()
+  await expect(page.locator('#desk-lab-map-note')).toBeVisible()
   await expect(page.locator('#desk-lab-map-note')).toHaveText('没改成，再试一次。')
   await expect(toggle(page)).toHaveAttribute('aria-checked','true')
   await expect(view(page,'图')).toBeVisible()
@@ -416,7 +436,8 @@ test('按方面需要点一下，梳理后看多处出处，回到准确的会�
   await expect(leaf(page,'先按月份整理')).toHaveAttribute('data-outline-status','decided')
   await page.screenshot({path:join(out,'lab-outline-ready.png')})
   await leaf(page,'先按月份整理').click()
-  await expect(actions(page)).toContainText('定了的 · CC 梳理的 · 出自 Codex 的会话')
+  await expect(statusChip(page)).toHaveText('定了的')
+  await expect(actions(page)).toContainText('CC 梳理的，出自 Codex 的会话，')
   await expect(actions(page)).toContainText('出自 CC 记下的一条')
   await expect(actions(page)).toContainText('那次会话已经翻不到了')
   await page.screenshot({path:join(out,'lab-outline-selected.png')})
@@ -429,7 +450,7 @@ test('按方面需要点一下，梳理后看多处出处，回到准确的会�
   // Read-only drag pans the viewport. Center again before exercising the source link.
   await view(page,'回到中间').click()
   await leaf(page,'先按月份整理').click()
-  await view(page,'去那条线上看 ›').click()
+  await view(page,'去线上看').click()
   await expect(thread(page).locator('[data-thread-session="terminal:two"]')).toHaveAttribute('aria-pressed','true')
   await expect(thread(page).locator('.thing-terminal:visible')).toContainText('two 的原话')
 

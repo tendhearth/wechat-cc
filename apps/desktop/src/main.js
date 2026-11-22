@@ -49,11 +49,12 @@ import { executorName, haveExecutorNames, loadExecutorNames } from "./modules/ex
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, loadMemoryRetractions, restoreMemoryRetraction, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
-import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
+import { initDialoguePage, positionDialogueTools, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace, connectConversationPlaces, updateConversationPlaces, updateConversationRoster } from "./modules/converse.js"
+import { reflectConversationAvailability, initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages, setConversationPlace, connectConversationPlaces, updateConversationPlaces, updateConversationRoster } from "./modules/converse.js"
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
+import { wireDeskDisclosure } from './modules/desk-disclosure.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
 import { mountMemoryTopics } from './modules/conversation-topics.js'
@@ -140,6 +141,7 @@ function showConversationPlace(place, preserve) {
 }
 /** @typedef {import('./modules/desk-history.js').DeskDetail} DeskDetail */
 /** @type {(() => void) | undefined} */ let recordDeskNavigation
+/** @type {(() => void) | undefined} */ let openDeskSearch
 /** @type {DeskDetail|null} */ let expandedDetail = null
 /** @type {(() => void) | undefined} */ let disposeExpandedDetail
 let preserveNavigationFocus = false
@@ -272,8 +274,22 @@ function reflectTopbarWaiting() {
   else cc.removeAttribute('aria-current')
 }
 
+function reflectDeskConnection() {
+  const root = document.documentElement
+  const stopped = deskWide() && !!lastPresence && lastDaemon?.alive === false
+  if (stopped === root.hasAttribute('data-desk-cc-stopped')) return
+  root.toggleAttribute('data-desk-cc-stopped', stopped)
+  if (!stopped) {
+    const error = document.getElementById('converse-wake-error')
+    if (error) error.hidden = true
+  }
+  reflectConversationAvailability()
+  document.dispatchEvent(new Event('desk-cc-availability'))
+}
+
 function renderRail() {
   const line = nowStatusLine(lastDaemon, lastPresence)
+  reflectDeskConnection()
   const dot = document.getElementById('topbar-presence-dot'); if (dot) dot.className = `dot ${line.cls}`
   const label = document.getElementById('topbar-presence'); if (label) label.textContent = line.cls === 'ok' ? 'CC 在家' : line.text
   const deskLabel = document.getElementById('desk-cc-presence')
@@ -800,6 +816,19 @@ let notebook
 
 // ─── pane switching ──────────────────────────────────────────────────
 
+function reflectWorkbenchSearchRole() {
+  const layer = document.querySelector('.dash-main > #conversation-matter-layer')
+  if (!(layer instanceof HTMLElement)) return
+  const page = deskWide() && layer.dataset.workbenchView === 'search'
+  layer.setAttribute('role', page ? 'region' : 'dialog')
+  layer.setAttribute('aria-label', page ? '搜索' : '事项')
+  if (!layer.hidden && layer.dataset.workbenchView === 'search') {
+    document.getElementById('topbar-cc')?.classList.toggle('active', !page)
+  }
+  if (page) layer.removeAttribute('aria-modal')
+  else layer.setAttribute('aria-modal', 'true')
+}
+
 /** @param {string} name */
 function switchPane(name) {
   const searchRequested = name === 'all' || name === 'together'
@@ -843,6 +872,10 @@ function switchPane(name) {
     }
   }
   if (isCurrentWorkbenchPane(name, currentPane)) {
+    if (deskWide() && currentPane) {
+      currentPane.dataset.workbenchView = searchRequested ? 'search' : 'detail'
+      reflectWorkbenchSearchRole()
+    }
     return
   }
   document.querySelector(".topbar-more")?.removeAttribute("open")
@@ -851,7 +884,7 @@ function switchPane(name) {
     const htmlEl = /** @type {HTMLElement} */ (el)
     const hit = htmlEl.dataset.backstageEntry === "true"
       ? backstagePanes.has(name)
-      : htmlEl.dataset.pane === name || (name === "workbench" && htmlEl.dataset.pane === "overview")
+      : htmlEl.dataset.pane === name || (name === 'workbench' && !(deskWide() && searchRequested) && htmlEl.dataset.pane === 'overview')
     htmlEl.classList.toggle("active", hit && !htmlEl.classList.contains("disabled"))
     if (hit && htmlEl.id !== 'topbar-cc') htmlEl.setAttribute('aria-current', 'page')
     else if (htmlEl.id !== 'topbar-cc') htmlEl.removeAttribute('aria-current')
@@ -901,9 +934,10 @@ function switchPane(name) {
   if (name === "workbench") {
     const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane'))
     if(layer) layer.dataset.workbenchView=searchRequested?'search':'detail'
-    initWorkbenchPage(deps)
+    reflectWorkbenchSearchRole()
+    initWorkbenchPage(deps, {focusSearch: deskWide() && searchRequested && !preserveNavigationFocus})
     const back=document.getElementById('workbench-home')
-    if(back){back.textContent=document.querySelector('.conversation-topic-panel:not([hidden])')?'‹ 返回话题':'‹ 返回对话';if(!preserveNavigationFocus)back.focus()}
+    if(back){back.textContent=document.querySelector('.conversation-topic-panel:not([hidden])')?'‹ 返回话题':'‹ 返回对话';if(!preserveNavigationFocus && !(deskWide() && searchRequested))back.focus()}
   } else if(!rosterDock?.current()) {
     stopWorkbenchPolling()
   }
@@ -1159,10 +1193,26 @@ function wireEvents() {
 
   wireSettingsDrawer({
     deps: { invokeWorkbenchApi },
-    onOpen: () => { void refreshGuardStatus() },
+    onOpen: () => {
+      void refreshGuardStatus()
+      const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('recap-toggle'))
+      if (!toggle) return
+      toggle.disabled = true
+      void v1(invokeWorkbenchApi, V1.places.recapSettings).then(result => {
+        if (typeof result?.recap !== 'boolean') return
+        toggle.classList.toggle('on', result.recap)
+        toggle.setAttribute('aria-pressed', String(result.recap))
+        toggle.disabled = false
+      }).catch(() => {})
+    },
     onToggleChange: async (id, on) => {
       // 返回 false → 持久化失败,让 settings-drawer 回滚开关(别让 UI 撒谎)。
-      if (id === "unattended-toggle") {
+      if (id === "recap-toggle") {
+        const result = await v1(invokeWorkbenchApi, V1.places.setRecap, { body: { recap: on } })
+        if (result?.recap !== on) return false
+        void deskPlaces?.refreshAfterWrite()
+        thingThread?.refreshRecap()
+      } else if (id === "unattended-toggle") {
         state.unattended = on
         try {
           await invoke("wechat_cli_text", { args: ["provider", "set", state.selectedProvider || "claude", "--unattended", on ? "true" : "false"] })
@@ -1852,6 +1902,9 @@ function mountDeskHistory(strip, signal) {
       ?? (task ? { kind: 'matter', id: task } : null) }
   }
   const history = createDeskHistory(location())
+  const searchShortcut = document.getElementById('desk-search-shortcut')
+  if (searchShortcut) searchShortcut.textContent = mac ? '⌘K' : 'Ctrl K'
+
   const buttons = /** @type {const} */ ([[back, -1], [forward, 1]])
   const reflect = () => {
     for (const [button, direction] of buttons) {
@@ -1887,10 +1940,12 @@ function mountDeskHistory(strip, signal) {
       disposeExpandedDetail = undefined
       expandedDetail = null
     }
+    if (pane === 'workbench' && detail && before.pane === pane) switchPane('workbench')
     if (pane !== before.pane) switchPane(pane === 'workbench' && !detail ? 'all' : pane)
     if (pane === 'workbench' && !detail) {
       const layer = document.getElementById('conversation-matter-layer')
       if (layer) layer.dataset.workbenchView = 'search'
+      reflectWorkbenchSearchRole()
     }
     if (place) strip.selectKey(place)
     else strip.clear()
@@ -1900,6 +1955,27 @@ function mountDeskHistory(strip, signal) {
       return getViewedWorkbenchTaskId() === detail.id
     }
     return await rosterDock?.open(detail) === true
+  }
+
+  /** @type {{entry: ReturnType<typeof location>, focus: Element|null}|undefined} */
+  let beforeSearch
+  const searching = () => !!document.querySelector('.dash-main > #conversation-matter-layer[data-workbench-view="search"]:not([hidden])')
+  openDeskSearch = () => {
+    if (!searching()) {
+      beforeSearch = {entry: location(), focus: document.activeElement}
+      switchPane('all')
+    }
+    document.getElementById('wb-search')?.focus()
+  }
+  async function closeSearch() {
+    const destination = beforeSearch
+    beforeSearch = undefined
+    let restored = false
+    try { restored = !!destination && await applyLocation(destination.entry) }
+    catch { /* The item may have disappeared while search was open. */ }
+    if (!restored) switchPane('converse')
+    const focus = destination?.focus
+    if (focus instanceof HTMLElement && focus.getClientRects().length) focus.focus({preventScroll: true})
   }
 
   /** @param {import('./modules/desk-history.js').Direction} direction */
@@ -1971,6 +2047,18 @@ function mountDeskHistory(strip, signal) {
   }
   document.addEventListener('keydown', event => {
     if (!available()) return
+    if (deskWide() && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229) {
+      const shortcut = !event.altKey && !event.shiftKey && event.metaKey === mac && event.ctrlKey === !mac
+        && event.key.toLowerCase() === 'k'
+      if (shortcut || (event.key === 'Escape' && searching())) {
+        event.preventDefault()
+        if (!event.repeat) {
+          if (searching()) void closeSearch()
+          else openDeskSearch?.()
+        }
+        return
+      }
+    }
     const direction = deskHistoryShortcut(event, mac)
     if (!direction) return
     event.preventDefault()
@@ -1985,7 +2073,7 @@ function mountDeskHistory(strip, signal) {
   document.addEventListener('mousedown', sideButton, { signal, capture: true })
   document.addEventListener('mouseup', sideButton, { signal, capture: true })
   document.addEventListener('auxclick', sideButton, { signal, capture: true })
-  signal.addEventListener('abort', () => { recordDeskNavigation = undefined }, { once: true })
+  signal.addEventListener('abort', () => { recordDeskNavigation = openDeskSearch = undefined }, { once: true })
 }
 
 /** @param {ReturnType<typeof mountPlacesStrip>} strip */
@@ -1994,19 +2082,22 @@ function mountDeskLayout(strip) {
   const places = document.querySelector('.places-strip')
   const overview = document.querySelector('.cc-now-pane')
   const nav = dashRail?.querySelector('nav')
-  const more = nav?.querySelector('.topbar-more')
+  const more = dashRail?.querySelector('.topbar-more')
+  const projects = dashRail?.querySelector('.desk-project-label')
   const moreItems = more?.querySelector('div')
   const roster = document.getElementById('topbar-roster')
   const search = document.getElementById('topbar-search')
   const scroll = document.getElementById('converse-scroll')
   const toggle = document.getElementById('desk-rail-toggle')
   const heading = document.querySelector('.desk-heading')
-  if (!dashRail || !places || !overview || !nav || !moreItems || !roster || !search || !scroll || !toggle || !heading) return
+  if (!dashRail || !places || !overview || !nav || !more || !projects || !moreItems || !roster || !search || !scroll || !toggle || !heading) return
   const rail = dashRail
+  const wideLabels = rail.querySelectorAll('.desk-nav-icon, .desk-project-label, .desk-more-label')
   const root = document.documentElement
   const hover = window.matchMedia('(hover: hover)')
   const listeners = new AbortController()
   const { signal } = listeners
+  if (more instanceof HTMLDetailsElement) wireDeskDisclosure(more, signal)
   mountDeskHistory(strip, signal)
   const mac = root.dataset.platform === 'macos'
   const stopFullscreen = mac ? watchDeskFullscreen(
@@ -2116,6 +2207,10 @@ function mountDeskLayout(strip) {
     const { matches: wide } = layout
     const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
     root.toggleAttribute('data-desk-wide', wide)
+    positionDialogueTools(wide)
+    reflectDeskConnection()
+    reflectWorkbenchSearchRole()
+    for (const label of wideLabels) label.toggleAttribute('hidden', !wide)
     const current = strip.places().find(place => place.key === strip.selected()) ?? null
     if (!wide && document.body.dataset.pane === 'thing') switchPane('overview')
     if (!wide) showConversationPlace(current, true)
@@ -2128,11 +2223,12 @@ function mountDeskLayout(strip) {
       }
     }
     if (wide) {
-      nav.before(places)
+      projects.after(places, more)
       moreItems.prepend(roster)
     } else {
       overview.prepend(places)
       nav.prepend(roster, search)
+      nav.append(more)
       const aside = document.getElementById('roster-aside')
       aside?.removeAttribute('data-open')
       roster.setAttribute('aria-expanded', 'false')
@@ -2186,7 +2282,27 @@ async function boot() {
   initConversePage(deps, { focus: false })
   const conversationRoot=document.getElementById('converse-root')
   if(conversationRoot){
-    const search=()=>{ switchPane('workbench'); const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane')); if(layer)layer.dataset.workbenchView='search'; document.getElementById('wb-search')?.focus() }
+    let waking = false
+    conversationRoot.addEventListener('click', async event => {
+      const button = event.target instanceof Element ? event.target.closest('button[data-wake-cc]') : null
+      if (!(button instanceof HTMLButtonElement) || waking || !document.documentElement.hasAttribute('data-desk-cc-stopped')) return
+      const label = button.textContent
+      const failure = document.getElementById('converse-wake-error')
+      waking = true
+      button.disabled = true
+      button.textContent = '在叫…'
+      if (failure) failure.hidden = true
+      try {
+        await restartDaemon(deps)
+        if (lastDaemon?.alive) await presencePoller.refresh()
+      } catch { /* Keep the retry available when the connection check fails. */ } finally {
+        waking = false
+        button.disabled = false
+        button.textContent = label
+        if (failure) failure.hidden = !document.documentElement.hasAttribute('data-desk-cc-stopped')
+      }
+    })
+    const search=()=>{ if (deskWide() && openDeskSearch) { openDeskSearch(); return } switchPane('workbench'); const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane')); if(layer)layer.dataset.workbenchView='search'; document.getElementById('wb-search')?.focus() }
     document.getElementById('topbar-search')?.addEventListener('click',search)
     mountConversationTools({root:conversationRoot,
       delegate:()=>openConversationDelegation(deps),
@@ -2383,7 +2499,7 @@ boot()
 // A detail layer owns keyboard input until it closes; drafts remain in their original scopes.
 window.addEventListener('keydown',event=>{
   const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane:not([hidden])'))
-  if(!layer||layer.closest('.thing-detail')||event.defaultPrevented||document.querySelector('dialog[open]'))return
+  if(!layer||layer.closest('.thing-detail')||(deskWide() && layer.dataset.workbenchView === 'search')||event.defaultPrevented||document.querySelector('dialog[open]'))return
   if(event.key==='Escape'){
     event.preventDefault()
     if (rosterDock?.item()) {

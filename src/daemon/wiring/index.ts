@@ -173,6 +173,7 @@ export interface WiredDeps {
   mattersService: import('../../app/matters/service').MattersService | null
   /** 「一件事」活动时间:退订工作台事件 + 清节流定时器;main.ts 登记进 shutdown。 */
   stopMatterActivity: () => void
+  recaps: import('../../features/roster').SessionRecaps | undefined
   /** 关机时停手机那一簇(重构第二批步 6d);main.ts 在 polling 之前登记。 */
   stopPhone: () => Promise<void>
   companionPushDeps: CompanionPushDeps
@@ -207,7 +208,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     log: (tag, line) => opts.log(tag, line),
   })
   // pipeline-deps 先造:App 那条路(companionApp)在它里面,伙伴的 tick 要用。buildTickBodies 构造时只是闭包。
-  const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, roster, places, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, opts.late)
+  const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, roster, places, memoryNightly, recaps, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, opts.late)
   const ticks = buildTickBodies({
     ...opts,
     proactive,
@@ -237,6 +238,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     roster,
     places,
     memoryNightly,
+    recaps,
     stopMatterActivity,
     stopPhone,
     ...lifecycleDeps,

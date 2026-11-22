@@ -113,18 +113,29 @@ test('conversation layers preserve the global navigation and restore the convers
   await page.setViewportSize({width:1440,height:900})
   await setup(page,shimUrl,shim)
   await expect(page.locator('#dash-global-rail')).toBeVisible()
-  // 会话工具层保留此刻的导航归属；中等宽度主导航仍可用，手机宽度从返回按钮回到对话。
-  await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toHaveClass(/active/)
+  await expect(page.locator('#topbar-search')).toHaveAttribute('aria-current', 'page')
+  await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).not.toHaveClass(/active/)
+  await expect(page.locator('.cc-now-pane')).toBeHidden()
   await expect(page.locator('#workbench-nav-toggle')).toHaveCount(0)
   await expect(page.locator('#dash-global-rail')).toBeVisible()
   await expect(page.locator('.wb-chats')).toHaveCount(0)
   await page.setViewportSize({width:1000,height:900})
   await expect(page.locator('#workbench-nav-toggle')).toHaveCount(0)
   await expect(page.locator('#dash-global-rail')).toBeVisible()
-  await expect(page.locator('#workbench-home')).toBeVisible()
+  await expect(page.locator('#workbench-home')).toBeHidden()
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('inert','')
   await expect(page.locator('#dash-global-rail')).not.toHaveAttribute('aria-hidden','true')
   await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toBeVisible()
+  await page.setViewportSize({width:800,height:844})
+  await expect(page.locator('#workbench-home')).toBeVisible()
+  const narrowSearch = page.locator('#conversation-matter-layer[data-workbench-view="search"]')
+  await expect(narrowSearch.locator('#wb-filter-project')).toHaveCSS('appearance', 'none')
+  await expect(narrowSearch.locator('#wb-filter-status')).toHaveCSS('appearance', 'none')
+  await expect.poll(() => narrowSearch.evaluate(el => {
+    const rect = el.getBoundingClientRect()
+    const topbar = getComputedStyle(document.documentElement).getPropertyValue('--topbar-bottom')
+    return [rect.left, rect.right, rect.top - parseFloat(topbar), rect.bottom]
+  })).toEqual([0, 800, 0, 844])
   await page.setViewportSize({width:390,height:844})
   await expect(page.locator('#workbench-home')).toBeVisible()
   await page.locator('#workbench-home').click()
@@ -160,4 +171,51 @@ test('waiting stays visible on the topbar CC while navigating to other panes',as
   expect(badge!.y).toBeLessThan(avatar!.y + avatar!.height / 2)
   await clickNav(page,'overview')
   await expect(dot).toBeHidden()
+})
+
+test('宽窗搜索占整张纸，快捷键聚焦并返回原页，组字时不触发', async ({ page, shimUrl, shim }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await setup(page, shimUrl, shim)
+  await clickNav(page, 'memory')
+  const mac = await page.locator('html').getAttribute('data-platform') === 'macos'
+  const shortcut = mac ? 'Meta+k' : 'Control+k'
+  const search = page.getByRole('region', { name: '搜索', exact: true })
+  const memory = page.locator('.dash-pane[data-pane="memory"]')
+  await expect(page.locator('#desk-search-shortcut')).toHaveText(mac ? '⌘K' : 'Ctrl K')
+  await page.locator('#memory-facts-search').dispatchEvent('keydown', {
+    key: 'k', metaKey: mac, ctrlKey: !mac, isComposing: true, bubbles: true,
+  })
+  await expect(memory).toBeVisible()
+  await expect(search).toBeHidden()
+
+  await page.keyboard.press(shortcut)
+  await expect(search).toBeVisible()
+  await expect(search.getByRole('heading', { name: '搜索', exact: true })).toBeVisible()
+  await expect(search.locator('#wb-search')).toBeFocused()
+  await expect(search.locator('.wb-search')).toHaveCSS('height', '40px')
+  await expect(page.locator('.dash-main')).toHaveCSS('background-color', 'rgb(253, 251, 247)')
+  for (const layer of [search, search.locator('.workbench-shell'), search.locator('.wb-sidebar')]) {
+    await expect(layer).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  }
+  await expect(search.locator('#wb-search')).toHaveCSS('outline-style', 'none')
+  await expect(search.locator('.wb-search')).toHaveCSS('border-top-color', 'rgb(79, 107, 79)')
+  await expect(search.locator('.wb-search')).not.toHaveCSS('box-shadow', 'none')
+  await expect(search.locator('#workbench-home')).toBeHidden()
+  await expect(page.locator('.cc-now-pane')).toBeHidden()
+  const [paper, pane, form, project, status] = await Promise.all([
+    page.locator('.dash-main'), search, search.locator('.wb-search'),
+    search.locator('#wb-filter-project'), search.locator('#wb-filter-status'),
+  ].map(locator => locator.boundingBox()))
+  expect(pane).toEqual(paper)
+  expect(form!.width).toBeCloseTo(712, 0)
+  expect(form!.y + form!.height).toBeLessThan(project!.y)
+  expect(project!.y).toBe(status!.y)
+
+  await page.keyboard.press(shortcut)
+  await expect(memory).toBeVisible()
+  await expect(search).toBeHidden()
+  await page.keyboard.press(shortcut)
+  await expect(search.locator('#wb-search')).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(memory).toBeVisible()
 })

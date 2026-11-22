@@ -68,17 +68,18 @@ function isQuiet(place, selected, now) {
 /** @param {Place[]} places @param {{selected:string|null,stale:boolean,now:number,popover?:boolean,wide?:boolean}} o */
 export function renderPlacesHtml(places, { selected, stale, now, popover = true, wide = false }) {
   const notice = stale ? '<p class="places-stale" role="status">家里的电脑暂时连不上,下面是上一次的样子</p>' : ''
-  if (!places.length) return `${notice}<p class="places-empty">交代给 CC 的事,会按项目一行一行排在这里。</p>`
+  if (!places.length) return `${notice}<p class="places-empty">交代给 CC 的事${wide ? '，' : ','}会按项目一行一行排在这里。</p>`
   const rows = places.map((p, i) => {
     const time = placeTime(p, now)
     const quiet = isQuiet(p, selected, now)
+    const recap = wide ? p.recap : undefined
     const actionsId = `place-actions-${i}`
     const control = popover ? `popovertarget="${actionsId}"` : `aria-controls="${actionsId}" aria-expanded="false"`
     return `<li class="place" data-place-key="${escapeHtml(p.key)}" data-quiet="${quiet}" data-waiting="${!!p.waiting}" data-unseen="${p.unseen}" data-moving="${p.moving}"${wide && p.status === 'working' ? ' data-working' : ''} data-selected="${p.key === selected}">
       <button type="button" class="place-row" aria-pressed="${p.key === selected}">
         <span class="place-dot" aria-hidden="true"></span>
         <span class="place-name">${escapeHtml(p.name)}</span>
-        <span class="place-line">${escapeHtml(placeLine(p))}</span>
+        <span class="place-line"${recap ? ` data-recap-source="${recap.source === 'cc' ? 'cc' : 'claude'}"` : ''}>${escapeHtml(recap?.text ?? placeLine(p))}</span>
         <span class="place-time">${escapeHtml(time)}</span>
       </button>
       <button class="place-more" type="button" ${control} aria-label="${escapeHtml(p.name)} 的更多操作">⋯</button>
@@ -127,6 +128,14 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     root.toggleAttribute('data-more-below', moreBelow)
     if (root.parentElement?.classList.contains('places-strip')) root.parentElement.toggleAttribute('data-more-below', moreBelow)
   }
+  function reflectWaitingAvailability() {
+    const stopped = root.ownerDocument.documentElement.hasAttribute('data-desk-cc-stopped')
+    waitingRoot?.querySelectorAll('.place-ask button').forEach(button => {
+      button.toggleAttribute('disabled', stopped || (acting && button.hasAttribute('data-place-decision')))
+      if (stopped) button.setAttribute('title', 'CC 没在运行')
+      else button.removeAttribute('title')
+    })
+  }
   function drawWaiting() {
     if (!waitingRoot) return
     // 在一件事的页面里(宽窗口选着一个地方):顶上只留这件事自己的纸条;别的地方的看左栏的圆点和 CC 那一句,不压在正文上面。
@@ -172,10 +181,16 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
         }
       }
     })
-    waitingRoot.querySelectorAll('[data-place-decision]').forEach(b => b.toggleAttribute('disabled', acting))
+    reflectWaitingAvailability()
   }
 
-  const draw = () => {
+  let redrawPending = false
+  const drawRows = () => {
+    if (root.querySelector(openActions)) {
+      redrawPending = true
+      return
+    }
+    redrawPending = false
     const active = root.ownerDocument.activeElement
     const focused = active?.closest('.place-row, .place-more')
     const focusKey = focused?.closest('[data-place-key]')?.getAttribute('data-place-key')
@@ -194,12 +209,16 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       root.querySelector(`[data-place-key="${CSS.escape(focusKey)}"] ${control}`)?.closest('button')?.focus({ preventScroll: true })
     }
     if (acting) root.querySelectorAll('[data-place-decision]').forEach(b => b.setAttribute('disabled', ''))
+    reflectOverflow()
+  }
+
+  const draw = () => {
+    drawRows()
     drawWaiting()
     const waitingCount = places.reduce((sum, p) => sum + (p.waiting?.count ?? 0), 0)
     const movingCount = places.filter(p => p.moving || p.status === 'working').length
     onSituation?.(version && !stale ? deskSituation(waitingCount, movingCount) : '', stale)
     onCurrent?.(places.find(p => p.key === selected) ?? null)
-    reflectOverflow()
   }
   const placeOf = (/** @type {Element|null} */ el) => places.find(p => p.key === el?.closest('[data-place-key]')?.getAttribute('data-place-key'))
 
@@ -248,9 +267,10 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   }
 
   /** 主人看了这一行(点开 / 选着时又动了 / 从这一行打开一件):daemon 记下时刻,下次那一句从这以后说起。 @param {Place} place */
-  function markSeen(place) {
+  function markSeen(place, opened = false) {
     const mark = `${place.key}@${place.updatedAt ?? ''}`
-    if (mark === seenMark) return
+    // Polls are deduplicated; coming back to an unchanged place is still the owner looking.
+    if (mark === seenMark && !opened) return
     seenMark = mark
     void v1(call, V1.places.seen, { body: { key: place.key } }).catch(() => { seenMark = '' })
   }
@@ -270,7 +290,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     }
     notified = current ? JSON.stringify([current.key, current.name, current.matterIds, current.messageIds, current.sessionIds]) : ''
     onSelect(current)
-    if (current) markSeen(current)
+    if (current) markSeen(current, true)
     // 主人看了这个地方的说话,就算看过了:没看过的那几件记一下(那一句恢复次墨色)。
     if (current?.unseen) for (const id of current.matterIds.slice(0, 20)) void v1(call, V1.matter.seen, { body: { id, surface: 'desktop' } }).catch(() => {})
   }
@@ -314,22 +334,28 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       if (toggle instanceof HTMLButtonElement) toggle.focus()
       return
     }
-    const place = placeOf(target)
-    if (!place) return
-    if (target.closest('.place-row')) { select(place); return }
     const more = target.closest('.place-more')
     const actions = more?.nextElementSibling
     if (!supportsPopover && actions instanceof HTMLElement) {
       const wasOpen = actions.hasAttribute('data-open')
-      closeActions()
+      closeActions(false)
       if (!wasOpen) {
         actions.hidden = false
         actions.setAttribute('data-open', '')
         more?.setAttribute('aria-expanded', 'true')
         positionActions()
       }
+      flushPendingDraw()
       return
     }
+    const place = placeOf(target)
+    if (!place) {
+      if (target.closest('.place-actions')) closeActions()
+      return
+    }
+    if (target.closest('.place-row')) { select(place); return }
+    if (waitingRoot?.contains(target) && target.closest('.place-ask')
+      && root.ownerDocument.documentElement.hasAttribute('data-desk-cc-stopped')) return
     const decision = target.closest('[data-place-decision]')?.getAttribute('data-place-decision')
     if (decision && place.waiting?.matterId && place.waiting.requestId && !acting) {
       acting = true
@@ -338,7 +364,8 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       catch { /* 下次刷新照旧 */ } finally {
         await refreshAfterWrite()
         acting = false
-        for (const host of [root, waitingRoot]) host?.querySelectorAll('[data-place-decision]').forEach(b => b.removeAttribute('disabled'))
+        root.querySelectorAll('[data-place-decision]').forEach(b => b.removeAttribute('disabled'))
+        reflectWaitingAvailability()
       }
       return
     }
@@ -378,7 +405,12 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     finally { writingHidden = false }
   }
 
-  function closeActions() {
+  function flushPendingDraw() {
+    if (alive && redrawPending && !root.querySelector(openActions)) drawRows()
+  }
+
+  /** @param {boolean} [flush] */
+  function closeActions(flush = true) {
     const actions = root.querySelector(openActions)
     if (!(actions instanceof HTMLElement)) return
     if (supportsPopover) actions.hidePopover()
@@ -389,6 +421,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       actions.removeAttribute('data-open')
       actions.hidden = true
     }
+    if (flush) flushPendingDraw()
   }
 
   function positionActions() {
@@ -411,12 +444,18 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   resize?.observe(root)
   const scroll = () => { reflectOverflow(); positionActions() }
   root.addEventListener('scroll', scroll)
-  root.addEventListener('toggle', positionActions, true)
+  const onActionsToggle = (/** @type {Event} */ event) => {
+    if (!(event.target instanceof Element) || !event.target.matches('.place-actions')) return
+    positionActions()
+    flushPendingDraw()
+  }
+  root.addEventListener('toggle', onActionsToggle, true)
   root.ownerDocument.defaultView?.addEventListener('resize', scroll)
   const dismissOutside = (/** @type {Event} */ event) => {
     const actions = root.querySelector(openActions)
     const target = event.target
-    if (actions && target instanceof Node && !actions.contains(target) && !actions.previousElementSibling?.contains(target)) closeActions()
+    if (target instanceof Element && root.contains(target) && target.closest('.place-more')) return
+    if (actions && target instanceof Node && !actions.contains(target)) closeActions()
   }
   const dismissOnEscape = (/** @type {KeyboardEvent} */ event) => {
     if (event.key === 'Escape') closeActions()
@@ -428,6 +467,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   const visibility = () => { if (root.ownerDocument.visibilityState === 'visible') void refresh() }
   root.addEventListener('click', click)
   waitingRoot?.addEventListener('click', click)
+  if (waitingRoot) root.ownerDocument.addEventListener('desk-cc-availability', reflectWaitingAvailability)
   root.ownerDocument.addEventListener('visibilitychange', visibility)
   draw(); void refresh()
   const timer = setInterval(() => void refresh(), intervalMs)
@@ -465,10 +505,11 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       root.ownerDocument.removeEventListener('click', dismissOutside, true)
       root.ownerDocument.removeEventListener('keydown', dismissOnEscape)
       root.removeEventListener('scroll', scroll)
-      root.removeEventListener('toggle', positionActions, true)
+      root.removeEventListener('toggle', onActionsToggle, true)
       root.ownerDocument.defaultView?.removeEventListener('resize', scroll)
       root.removeEventListener('click', click)
       waitingRoot?.removeEventListener('click', click)
+      if (waitingRoot) root.ownerDocument.removeEventListener('desk-cc-availability', reflectWaitingAvailability)
       root.ownerDocument.removeEventListener('visibilitychange', visibility)
     },
   }
