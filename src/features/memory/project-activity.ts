@@ -70,6 +70,9 @@ const token=(db:Db)=>{
   return `${r.n}:${r.v}`
 }
 const IDENTITY_TTL=60_000
+// A pass that saw a write is rerun at once, but only this many times in a row: a writer faster than
+// one pass (the poll heartbeat touches the same connection without a feed signal) must not spin it forever.
+const SETTLE_PASSES=4
 interface Cache {
   seen:MatterSeen;identify:typeof projectIdentity;source?:ProjectTaskActivitySource;name:(id:string)=>string
   dispose():void
@@ -91,7 +94,7 @@ function createCache(db:Db,owner:string,seen:MatterSeen,identify:typeof projectI
   })
   const pathsOf=(m:Row)=>m.kind==='terminal'?[...new Set([m.cwd||m.policy_cwd||m.project_path,m.policy_cwd].filter((p):p is string=>!!p))]:[...new Set([m.project_path,m.project,m.repo,m.root].filter((p):p is string=>!!p))]
   const signature=(m:Row)=>JSON.stringify(pathsOf(m))
-  async function compute():Promise<Map<string,ProjectActivity>> {
+  async function compute(pass=1):Promise<Map<string,ProjectActivity>> {
     // Feed/hints flush before checking the O(1) SQLite token, including same-stack writes.
     await Promise.resolve()
     const now=Date.now(),current=token(db)
@@ -175,7 +178,9 @@ function createCache(db:Db,owner:string,seen:MatterSeen,identify:typeof projectI
     }
     stamp=current
     // Writes that landed while identities were resolving are not cached as current.
-    if(token(db)!==current||dirty.size||mappingDirty)return compute()
+    // At the limit this pass's result is returned as-is; stamp still names the token this pass started
+    // from and dirty/mappingDirty stay set, so the next read recomputes instead of trusting it.
+    if((token(db)!==current||dirty.size||mappingDirty)&&pass<SETTLE_PASSES)return compute(pass+1)
     return result
   }
   return {seen,identify,source,name,dispose(){offFeed();offHints()},read(){return busy??=(compute().finally(()=>{busy=undefined}))}}
