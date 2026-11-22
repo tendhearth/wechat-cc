@@ -118,6 +118,7 @@ test('空段收起，失败能重读，旧回包和组字不打断新结果', as
   await expect(part(page, 'terminals')).toContainText('这一段暂时没能读取。')
   await expect(row(page, 'projects')).toHaveCount(1)
   await expect(row(page, 'chat')).toHaveCount(1)
+  expect(seen.filter(q => q === '花园')).toHaveLength(1)
   await part(page, 'terminals').getByRole('button', { name: '重新读取' }).click()
   await expect(row(page, 'terminals')).toContainText(hit.snippet)
   const oldReply = page.waitForResponse(response => {
@@ -155,8 +156,11 @@ test('旧后台的对话搜索回退，交办读取失败可单独复试', async
     ? route.fulfill({ status: 404, json: { error: 'not_found' } }) : route.fallback())
   await page.route('**/v1/matter/owner-chat/search?*', route => route.fulfill({ json: { hits: [chat] } }))
   let failed = false
+  let gardenReads = 0
   await page.route(/\/v1\/workbench(?:\?.*)?$/, route => {
-    if (failed || query(route.request().url()).get('q') !== '花园') return route.fallback()
+    if (query(route.request().url()).get('q') !== '花园') return route.fallback()
+    gardenReads++
+    if (failed) return route.fallback()
     failed = true
     return route.fulfill({ status: 503, json: { error: 'unavailable' } })
   })
@@ -167,6 +171,7 @@ test('旧后台的对话搜索回退，交办读取失败可单独复试', async
   await expect(tasks).toContainText('这一段暂时没能读取。')
   await expect(row(page, 'chat')).toContainText(chat.text)
   await expect(row(page, 'terminals')).toContainText(hit.snippet)
+  expect(gardenReads).toBe(1)
   await tasks.getByRole('button', { name: '重新读取' }).click()
   await expect(tasks.locator('[data-task-id="aabbccdd"]')).toBeVisible()
 })

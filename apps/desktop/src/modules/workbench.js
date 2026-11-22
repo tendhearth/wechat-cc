@@ -503,7 +503,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar" aria-labelledby="wb-all-title"><header><h2 id="wb-all-title"><span class="wb-search-wide-title" hidden>搜索</span><span class="wb-search-compact-title">搜索事项</span></h2><button type="button" class="wb-delegate" data-action="task-entry" aria-label="交办" title="交办一件事">${icon('add-01', {size:16})}<span aria-hidden="true">交办</span></button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${directHeader}${taskHeader}<div class="wb-content"><div class="wb-content-inner" data-task-focus="${taskFocus}">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
 }
 
-/** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,initialList?:Partial<ListResult>,initialPages?:number,listOnly?:boolean,isTaskVisible?:()=>boolean,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
+/** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,initialList?:Partial<ListResult>,initialPages?:number,readSearchList?:(query:URLSearchParams)=>Promise<unknown>,listOnly?:boolean,isTaskVisible?:()=>boolean,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
 export function createWorkbenchController(deps) {
   /** @type {WorkbenchState} */
   const state = { reviewsLoaded: false, reviews: /** @type {ReviewTurn[]} */ ([]), reviewsSignature: EMPTY_REVIEWS, reviewsError: false, reviewReturnOpen: /** @type {ReviewReturnOpen|null} */ (null), version: 0, tasks: [], providers: [], defaultProvider: '', canWechat: false, selectedId: null, loadingId: null, detail: null, selectedArtifactId: null, error: '', detailDisconnected:false, preview: null, query: { ...(deps.initialQuery ?? { q: '', archived: 'exclude' }) }, loadingMore: false, newScope: deps.initialScope?.startsWith('new:') ? deps.initialScope : 'new' }
@@ -617,7 +617,11 @@ export function createWorkbenchController(deps) {
     return params
   }
   /** @param {string|null} [cursor] */
-  const listTasks = cursor => v1(deps.invokeWorkbenchApi, V1.workbench.list, { query: listQuery(cursor) })
+  const listTasks = cursor => {
+    const query = listQuery(cursor)
+    if (!cursor && query.has('q') && deps.readSearchList) return deps.readSearchList(query)
+    return v1(deps.invokeWorkbenchApi, V1.workbench.list, { query })
+  }
   /** @param {Task[]} tasks */
   const dedupe = tasks => [...new Map(tasks.map(task => [task.id, task])).values()]
   return {
@@ -941,7 +945,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     }
   }
   const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, isTaskVisible:()=>root.closest?.('.workbench-pane')?.getAttribute('data-workbench-view')!=='search', initialScope, initialQuery: deskSearch ? retained?.query ?? { q: deskSearch.query, archived: deskSearchList?.query.archived ?? 'exclude' } : resumeQuery,
-    initialList: retained?.list, initialPages: retained?.pages, listOnly: !!deskSearch, patchLive, render: state => {
+    initialList: retained?.list, initialPages: retained?.pages, readSearchList: deskSearch?.readTaskList, listOnly: !!deskSearch, patchLive, render: state => {
     if (!alive || deskSearch?.composing) return
     if (hasPainted) { captureDraft(); searchDraft = input('wb-search')?.value ?? searchDraft }
     if (state.detail) {
@@ -2076,7 +2080,10 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   root.addEventListener('paste',onPaste);root.addEventListener('drop',onDrop);root.addEventListener('dragover',onDragOver)
   const onSearchKey = (/** @type {KeyboardEvent} */ event) => deskSearch?.keydown(event)
   const onComposition = (/** @type {CompositionEvent} */ event) => {
-    if (event.target === input('wb-search')) deskSearch?.compose(event.type === 'compositionstart', input('wb-search')?.value ?? '')
+    if (!deskSearch || event.target !== input('wb-search')) return
+    const start = event.type === 'compositionstart', previous = deskSearch.query
+    deskSearch.compose(start, input('wb-search')?.value ?? '')
+    if (!start && previous === deskSearch.query) controller.paint(true)
   }
   root.addEventListener('keydown', onSearchKey)
   root.addEventListener('compositionstart', onComposition)

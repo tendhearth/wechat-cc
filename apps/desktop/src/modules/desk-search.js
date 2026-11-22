@@ -1,6 +1,7 @@
 // @ts-check
 import { V1, v1 } from '../daemon-client.js'
 import { executorName } from './executor-names.js'
+import { icon } from './icons.js'
 
 export const DESK_SEARCH_HINT = '搜项目、会话里说过的话、和 CC 的对话、交办的事'
 const labels = { projects: '项目', terminals: '会话里说过的', chat: '和 CC 的对话' }
@@ -68,6 +69,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
   /** @type {Partial<Record<SectionKey,Section>>} */ let sections = {}
   /** @type {Status|undefined} */ let taskStatus
   let taskBusy = false, launching = false
+  /** @type {{key:string, response:Promise<unknown>}|undefined} */ let taskRead
   const current = () => view?.visible()
   const field = () => /** @type {HTMLInputElement|null|undefined} */ (view?.root.querySelector('#wb-search'))
   const tasks = () => /** @type {HTMLElement|null|undefined} */ (view?.root.querySelector('.desk-search-tasks'))
@@ -104,7 +106,9 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
   }
 
   function syncSummary() {
-    if (!view?.visible()) return
+    if (!view?.visible() || composing) return
+    const clearButton = view.root.querySelector('.desk-search-clear')
+    if (clearButton) clearButton.toggleAttribute('hidden', !raw)
     const taskArea = tasks()
     const clearing = !q && (launching || taskStatus === 'pending')
     const taskRows = clearing ? 0 : taskArea?.querySelectorAll('.wb-task-list .wb-task').length ?? 0
@@ -128,7 +132,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
 
   /** @param {SectionKey} key */
   function paintSection(key) {
-    if (!view?.visible()) return
+    if (!view?.visible() || composing) return
     const host = view.root.querySelector(`[data-desk-search-section="${key}"]`)
     if (!host) return
     const section = sections[key]
@@ -220,6 +224,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
   async function runTasks() {
     if (!view?.visible()) return
     const target = view, seq = revision
+    if (taskStatus === 'error') taskRead = undefined
     taskBusy = true
     taskStatus = 'pending'
     syncSummary()
@@ -233,27 +238,43 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
     syncSummary()
   }
 
+  function queueSearch() {
+    clearTimeout(timer)
+    if (!launching || !current() || composing) return
+    timer = setTimeout(() => {
+      if (!current() || composing) return
+      launching = false
+      if (q) for (const key of sectionKeys) void read(key)
+      void runTasks()
+    }, 250)
+  }
+
   /** @param {string} value */
   function schedule(value) {
     raw = value
-    q = value.trim()
-    revision++
-    active = earlier = ''
-    sections = {}
-    taskStatus = undefined
-    launching = true
-    taskBusy = false
-    clearTimeout(timer)
-    view?.invalidateTasks()
-    for (const key of sectionKeys) paintSection(key)
+    const query = value.trim().slice(0, 200)
+    if (query !== q) {
+      q = query
+      revision++
+      active = earlier = ''
+      sections = {}
+      taskRead = taskStatus = undefined
+      launching = true
+      taskBusy = false
+      view?.invalidateTasks()
+      for (const key of sectionKeys) paintSection(key)
+    }
     syncSummary()
-    timer = setTimeout(() => {
-      launching = false
-      if (current() && !composing) {
-        if (q) for (const key of sectionKeys) void read(key)
-        void runTasks()
-      }
-    }, 250)
+    queueSearch()
+  }
+
+  function clear() {
+    const input = field()
+    if (!current() || !input?.value || composing) return false
+    input.value = ''
+    input.focus()
+    schedule('')
+    return true
   }
 
   function paint() {
@@ -270,6 +291,12 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
       input.setAttribute('role', 'combobox')
       input.setAttribute('aria-autocomplete', 'list')
       input.setAttribute('aria-controls', 'desk-search-options')
+      const clearButton = node('button', 'desk-search-clear')
+      clearButton.type = 'button'
+      clearButton.setAttribute('aria-label', '清除')
+      clearButton.innerHTML = icon('cancel-01', { size: 16 })
+      clearButton.onclick = clear
+      input.after(clearButton)
       const targets = node('div')
       targets.id = 'desk-search-options'
       targets.setAttribute('role', 'listbox')
@@ -310,9 +337,16 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
   return {
     get query() { return q },
     get composing() { return composing },
+    /** Keep the first page available if the workbench is replaced while it is loading.
+     * @param {URLSearchParams} query */
+    readTaskList(query) {
+      const key = query.toString()
+      if (taskRead?.key !== key) taskRead = { key, response: v1(call, V1.workbench.list, { query }) }
+      return taskRead.response
+    },
     /** @param {()=>Promise<void>} refresh */
     async refreshTasks(refresh) {
-      if (!view?.visible() || composing || taskBusy || launching || taskStatus === 'error') return
+      if (!view?.visible() || composing || taskBusy || launching || taskStatus === 'error' || (q && taskStatus === 'ready')) return
       const seq = revision, target = view
       taskBusy = true
       try {
@@ -329,7 +363,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
     mount(next) {
       view = next
       paint()
-      if (q && sectionKeys.some(key => !sections[key])) schedule(raw)
+      queueSearch()
     },
     /** @param {HTMLElement} next */
     unmount(next) {
@@ -337,7 +371,7 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
       view = undefined
       composing = false
       clearTimeout(timer)
-      launching = taskBusy = false
+      taskBusy = false
       if (taskStatus === 'pending') taskStatus = undefined
     },
     paint,
@@ -346,17 +380,10 @@ export function createDeskSearch({ call, openProject, openTerminal, openMessage 
     /** @param {boolean} start @param {string} value */
     compose(start, value) {
       composing = start
-      if (start) { clearTimeout(timer); revision++; taskBusy = false; view?.invalidateTasks() }
+      if (start) clearTimeout(timer)
       else schedule(value)
     },
-    clear() {
-      const input = field()
-      if (!current() || !input?.value || composing) return false
-      input.value = ''
-      input.focus()
-      schedule('')
-      return true
-    },
+    clear,
     /** @param {KeyboardEvent} event */
     keydown(event) {
       if (!current() || event.target !== field() || composing || event.isComposing || event.keyCode === 229) return
