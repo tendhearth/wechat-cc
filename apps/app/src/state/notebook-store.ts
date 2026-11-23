@@ -156,17 +156,22 @@ export function makeNotebook(backend: Backend, scope: string | null, current: ()
     finally { flushing = false }
   }
 
+  function chooseDay(day?: string) {
+    locallyChanged = true
+    selected = day
+    revision++
+    publish()
+    void savePage()?.catch(() => {})
+  }
+
   return {
     id: ++notebookId,
     getSnapshot: () => value,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
     refresh, flush,
+    open: chooseDay,
     select(day?: string) {
-      locallyChanged = true
-      selected = day === metadata?.today ? undefined : day
-      revision++
-      publish()
-      void savePage()?.catch(() => {})
+      chooseDay(day === metadata?.today ? undefined : day)
       void refresh()
     },
     setDraft(text: string) { locallyChanged = true; draft = text; publish() },

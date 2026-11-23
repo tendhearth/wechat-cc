@@ -78,6 +78,24 @@ it('follows midnight with an explicit day and reads the explicit day when return
   expect(read.mock.calls.slice(3).map(([query]) => query.day)).toEqual([yesterday, tomorrow])
 })
 
+it('honors the reply day even when the cached calendar still calls it today', async () => {
+  await notebookStorage('pair', active).savePage(page(yesterday, yesterday))
+  const read = vi.fn(async ({ day }: NotebookPageQueryT) => page(day ?? today))
+  const notebook = makeNotebook(backend(read), 'pair', active)
+  await notebook.refresh()
+  read.mockClear()
+  notebook.open(today)
+  await Promise.resolve()
+  expect(read).not.toHaveBeenCalled()
+
+  const tomorrow = '2026-11-05'
+  read.mockImplementation(async ({ day }) => page(day ?? tomorrow, tomorrow))
+  await notebook.refresh()
+  expect(read.mock.calls.map(([query]) => query.day)).toEqual([today])
+  expect(notebook.getSnapshot().day).toBe(today)
+  expect(notebook.getSnapshot().today).toBe(tomorrow)
+})
+
 it('keeps the original queue until the receipt is durable and prunes the receipt after caching its day', async () => {
   const storage = notebookStorage('pair', active)
   const queued = { clientId: receipt.clientId, body: receipt.body, createdAt: 1, day: yesterday }

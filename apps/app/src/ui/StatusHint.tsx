@@ -3,13 +3,17 @@ import { AccessibilityInfo, Modal, Pressable, ScrollView, View, findNodeHandle }
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { Icon, type IconName } from './Icon'
+import { Dot } from './Dot'
 import { Txt } from './Txt'
 import { radius, space } from './tokens'
 import { useTheme } from './useTheme'
 
 /** An explanation entry. Recovery controls are explicit children; opening never performs writes.
  *  Pass children as `close => …` when an action should also close the dialog (its result shows behind it). */
-export function StatusHint({ label, description, icon = 'info', shortLabel, value, testID, children }: { label: string; description: string; icon?: IconName; shortLabel?: string; value?: number | string; testID?: string; children?: ReactNode | ((close: () => void) => ReactNode) }) {
+export function StatusHint({ label, accessibilityLabel = label, description, icon = 'info', shortLabel, value, dotTestID, testID, children }: {
+  label: string; accessibilityLabel?: string; description: string; icon?: IconName; shortLabel?: string; value?: number | string
+  dotTestID?: string; testID?: string; children?: ReactNode | ((close: () => void) => ReactNode)
+}) {
   const { c } = useTheme()
   const lang = useLang()
   const [open, setOpen] = useState(false)
@@ -21,10 +25,15 @@ export function StatusHint({ label, description, icon = 'info', shortLabel, valu
   }
   return (
     <>
-      <Pressable ref={entry} testID={testID} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ expanded: open }} onPress={() => setOpen(true)} style={({ pressed }) => ({ minWidth: 44, minHeight: 44, paddingHorizontal: shortLabel ? space.s : 0, flexDirection: 'row', gap: space.s, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}>
-        {shortLabel ? <Txt role="meta" tone="inkSoft">{shortLabel}</Txt> : <Icon name={icon} color={c.inkSoft} />}
-        {value !== undefined ? <Txt role="meta" tone="inkSoft">{value}</Txt> : null}
-      </Pressable>
+      <View>
+        <Pressable ref={entry} testID={testID} accessibilityRole="button" accessibilityLabel={accessibilityLabel} accessibilityState={{ expanded: open }} onPress={() => setOpen(true)} style={({ pressed }) => ({ minWidth: 44, minHeight: 44, paddingHorizontal: shortLabel ? space.s : 0, flexDirection: 'row', gap: space.s, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}>
+          {shortLabel ? <Txt role="meta" tone="inkSoft">{shortLabel}</Txt> : <Icon name={icon} color={c.inkSoft} />}
+          {value !== undefined ? <Txt role="meta" tone="inkSoft">{value}</Txt> : null}
+        </Pressable>
+        {dotTestID && value === undefined ? <View testID={dotTestID} pointerEvents="none" accessible={false} style={{ position: 'absolute', top: 8, right: 6 }}>
+          <Dot kind="accent" size={6} />
+        </View> : null}
+      </View>
       <Modal visible={open} transparent animationType="none" onRequestClose={() => setOpen(false)} onShow={() => focus(heading.current)} onDismiss={() => focus(entry.current)}>
         <View style={{ flex: 1, justifyContent: 'center', backgroundColor: c.paper, padding: space.xl }}>
           <View accessibilityViewIsModal accessibilityLabel={label} testID={testID ? `${testID}-dialog` : undefined} style={{ maxHeight: '90%', borderRadius: radius.sheet }}>
