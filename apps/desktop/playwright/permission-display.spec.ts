@@ -58,7 +58,7 @@ async function openFixture(page: Page, { wide = false, terminal = false } = {}) 
   await page.route(`${origin}/**`, async route => {
     const path = new URL(route.request().url()).pathname
     if (path === '/') {
-      const styles = ['tokens.css', 'styles.css', 'cc-now.css', 'styles/workbench.css', 'styles/desk-two-pane.css']
+      const styles = ['tokens.css', 'fonts.css', 'styles.css', 'shared/agent-avatars.css', 'cc-now.css', 'styles/workbench.css', 'styles/desk-two-pane.css']
       await route.fulfill({
         contentType: 'text/html',
         headers: { 'Content-Security-Policy': "script-src 'self'; object-src 'none'" },
@@ -72,7 +72,7 @@ async function openFixture(page: Page, { wide = false, terminal = false } = {}) 
     } else {
       try {
         const body = await readFile(new URL(path.slice(1), source))
-        const contentType = path.endsWith('.js') ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : 'application/octet-stream'
+        const contentType = /\.m?js$/.test(path) ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : 'application/octet-stream'
         await route.fulfill({ body, contentType })
       } catch {
         await route.fulfill({ status: 404, body: 'missing fixture asset' })
