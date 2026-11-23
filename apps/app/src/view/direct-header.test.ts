@@ -11,5 +11,7 @@ it('relay switches speaker and placeholder with the current run',()=>{
  expect(directHeaderView(d,'zh-Hans').current).toBe('claude')
  const next={...d,task:{...d.task!,providerId:'codex'}}
  expect(directHeaderView(next,'zh-Hans').placeholder).toBe('对 Codex 说…')
- expect(directHeaderView(next,'zh-Hans').title).toContain('在跟 Codex 说')
+ expect(directHeaderView(next,'zh-Hans').title).toBe(next.matter.title)
+ expect(directHeaderView(next,'en').title).toBe(next.matter.title)
+ expect(directHeaderView(next,'zh-Hans').titleLines).toBe(2)
 })

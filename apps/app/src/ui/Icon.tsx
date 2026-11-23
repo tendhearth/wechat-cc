@@ -1,7 +1,7 @@
 import { Image } from 'react-native'
 import { useTheme } from './useTheme'
 
-export type IconName = 'arrowUp' | 'mic' | 'stop' | 'close' | 'help' | 'check' | 'chevronDown' | 'chevronRight' | 'refresh' | 'info' | 'alert' | 'clock' | 'pause' | 'back' | 'settings' | 'monitor' | 'plus' | 'search' | 'more' | 'shield' | 'book' | 'mail' | 'folder' | 'calendar' | 'terminal' | 'device' | 'link' | 'image' | 'camera' | 'done' | 'message' | 'restore' | 'edit' | 'unlink'
+export type IconName = 'arrowUp' | 'mic' | 'stop' | 'close' | 'help' | 'check' | 'chevronDown' | 'chevronRight' | 'refresh' | 'info' | 'alert' | 'clock' | 'pause' | 'back' | 'settings' | 'monitor' | 'plus' | 'search' | 'more' | 'shield' | 'book' | 'mail' | 'folder' | 'calendar' | 'terminal' | 'device' | 'link' | 'image' | 'camera' | 'done' | 'message' | 'restore' | 'edit' | 'unlink' | 'globe' | 'lock'
 
 // Literal requires let Metro collect every bundled asset; no runtime SVG renderer or network.
 const sources: Record<IconName, number> = {
@@ -39,6 +39,8 @@ const sources: Record<IconName, number> = {
   restore: require('../../assets/icons/undo-2.png'),
   edit: require('../../assets/icons/pencil-line.png'),
   unlink: require('../../assets/icons/unlink.png'),
+  globe: require('../../assets/icons/globe.png'),
+  lock: require('../../assets/icons/lock.png'),
 }
 
 /** Decorative: the enclosing control/status owns the complete accessible label. */

@@ -32,6 +32,12 @@
 | | **完成** | 终端会话 session_end(结束了的不在列表里) | 结束了 |
 | (不进三组) | **已归档** | archived | |
 
+「电脑上的会话」列表另说明电脑上的运行状况。刚确认时写 **正在电脑上跑**（Running on your computer），只知道上次情况时写 **上次看到时还在电脑上跑**（Still running on your computer when last checked）。
+
+## 图片
+
+有加号图标的添加按钮写 **图片**（Photo），只有文字的按钮写 **＋ 图片**（+ Photo）。添加按钮的读屏名称统一为 **添加图片**（Add photo）。
+
 ## 连接
 
 | 场合 | 用 | 不用 |

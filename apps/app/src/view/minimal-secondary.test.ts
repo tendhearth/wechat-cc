@@ -87,6 +87,10 @@ it('settings keeps language, full privacy disclosure, and licences behind short 
   const ui = await mount(node); await flush()
   const click = async (id: string) => { await act(() => ui.byId(id).click()); await flush() }
   expect(ui.byId('settings-memory').textContent).toContain('记忆')
+  const iconOf = (id: string) => ui.byId(id).querySelector('img')?.getAttribute('src')
+  expect(iconOf('settings-memory')).toMatch(/book-open\.png$/)
+  expect(iconOf('settings-language-toggle')).toMatch(/globe\.png$/)
+  expect(iconOf('settings-privacy-toggle')).toMatch(/lock\.png$/)
   for (const id of ['settings-memory', 'settings-connections', 'settings-language-toggle', 'settings-about-toggle']) expect(ui.style(id)).toMatchObject({ minHeight: componentAppearance.matterRow.minHeight.phone, paddingVertical: componentAppearance.matterRow.paddingY, gap: componentAppearance.matterRow.gap })
   expect(ui.byId('settings-connections').textContent).toContain('CC 的连接')
   expect(ui.byId('settings-language')).toBeNull()

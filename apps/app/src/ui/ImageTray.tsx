@@ -37,7 +37,7 @@ export function AddImageButton({ lang, disabled, onPress, testID }: { lang: Lang
     <Pressable
       testID={testID}
       accessibilityRole="button"
-      accessibilityLabel={t(lang, 'images.add')}
+      accessibilityLabel={t(lang, 'images.addLabel')}
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}

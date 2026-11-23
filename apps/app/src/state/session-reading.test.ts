@@ -12,7 +12,7 @@ import SessionReader from '../app/sessions/[key]'
 import { ConversationMore } from '../ui/ConversationMore'
 import { ConversationAdd } from '../ui/ConversationAdd'
 const Home = () => createElement('div', null, createElement(ConversationMore), createElement(ConversationAdd, { onImages() {} }))
-import { palette } from '../ui/tokens'
+import { componentAppearance, palette } from '../ui/tokens'
 
 type Root = { render(node: ReactNode): void; unmount(): void }
 type FocusEntry = { run(): void | (() => void); cleanup?: void | (() => void) }
@@ -27,9 +27,9 @@ vi.mock('react-native', async () => {
   const View = ({ children, testID, style }: any) => {
     const flat = Object.assign({}, ...(Array.isArray(style) ? style : [style]))
     if (flat.width === 8 && flat.height === 8) host.dotColours.push(flat.backgroundColor)
-    return createElement('div', { 'data-testid': testID, 'data-dot': flat.width === 8 && flat.height === 8 ? flat.backgroundColor : undefined }, children)
+    return createElement('div', { 'data-testid': testID, 'data-style': JSON.stringify(flat), 'data-dot': flat.width === 8 && flat.height === 8 ? flat.backgroundColor : undefined }, children)
   }
-  const Text = ({ children, onPress, testID, accessibilityRole }: any) => createElement('span', { 'data-testid': testID, onClick: onPress, role: accessibilityRole }, children)
+  const Text = ({ children, onPress, testID, accessibilityRole, style }: any) => createElement('span', { 'data-testid': testID, onClick: onPress, role: accessibilityRole, 'data-style': JSON.stringify(Object.assign({}, ...style)) }, children)
   const TextInput = forwardRef<any, any>(({ value, onChangeText, testID, accessibilityLabel, maxLength }: any, ref) => createElement('textarea', { ref, value, maxLength, 'data-testid': testID, 'aria-label': accessibilityLabel, onInput: (event: any) => onChangeText(event.currentTarget.value) }))
   const Pressable = ({ children, onPress, disabled, testID, accessibilityLabel, accessibilityRole, accessibilityState }: any) => createElement('button', { onClick: onPress, disabled, 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole, 'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled }, children)
   const Modal = ({ visible, children }: any) => visible ? createElement('div', null, children) : null
@@ -130,6 +130,22 @@ async function mount(component: () => ReactNode) {
 function gate<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(run => { resolve = run }); return { promise, resolve } }
 
 describe('session reading with real LiveBackend and native UI', () => {
+  it('uses the chat bubble and right-aligned owner label while leaving assistant messages bare', async () => {
+    harness()
+    const ui = await mount(SessionReader)
+    const mine = ui.byId('session-message-0')
+    const assistant = ui.byId('session-message-1')
+    expect(JSON.parse(mine.getAttribute('data-style')!)).toMatchObject({
+      alignSelf: 'flex-end', backgroundColor: palette[componentAppearance.message.userBackground],
+      borderRadius: componentAppearance.message.radius, paddingHorizontal: componentAppearance.message.paddingX,
+    })
+    const label = mine.firstElementChild!
+    expect(label.textContent).toBe('我')
+    expect(JSON.parse(label.getAttribute('data-style')!).textAlign).toBe('right')
+    expect(JSON.parse(assistant.getAttribute('data-style')!)).not.toHaveProperty('backgroundColor')
+    expect(assistant.firstElementChild!.textContent).toBe('Claude')
+  })
+
   it('defaults to confirmed recent 20; from-head paging deduplicates overlap', async () => {
     const h = harness(), ui = await mount(SessionReader)
     expect(h.requests.some(request => request.path === '/m/api/session?key=k1&window=recent')).toBe(true)
@@ -300,6 +316,8 @@ describe('session reading with real LiveBackend and native UI', () => {
     await ui.click('home-sessions')
     expect(host.push).toHaveBeenCalledWith('/sessions')
     await ui.click('chat-plus')
+    expect(ui.byId('chat-add-image').textContent).toBe('＋ 图片')
+    expect(ui.byId('chat-add-image').getAttribute('aria-label')).toBe('添加图片')
     await ui.click('chat-handoff')
     expect(host.push).toHaveBeenCalledWith('/compose')
     expect(h.posts()).toHaveLength(0)
@@ -323,16 +341,16 @@ describe('session list search and observations', () => {
   })
   it('shows cache/last-seen wording and neutral dots after cached refresh failure or disconnect', async () => {
     const h = harness(), ui = await mount(Sessions)
-    expect(ui.container.textContent).toContain('原工具报告正在执行')
+    expect(ui.container.textContent).toContain('正在电脑上跑')
     expect(ui.container.querySelector('[data-dot]')!.getAttribute('data-dot')).toBe(palette.ok)
     await focus(false); h.setList(() => new Error('daemon_offline')); await focus(true)
     expect(ui.byId('sessions-cached').textContent).toContain('上次读到')
-    expect(ui.container.textContent).toContain('上次看到正在执行')
-    expect(ui.container.textContent).not.toContain('原工具报告正在执行')
+    expect(ui.container.textContent).toContain('上次看到时还在电脑上跑')
+    expect(ui.container.textContent).not.toContain('正在电脑上跑')
     expect(ui.container.querySelector('[data-dot]')!.getAttribute('data-dot')).toBe(palette.unknown)
     expect(ui.byId('sessions-refresh')).not.toBeNull()
     await act(() => h.status('down')); await flush()
-    expect(ui.container.textContent).toContain('上次看到正在执行')
+    expect(ui.container.textContent).toContain('上次看到时还在电脑上跑')
   })
   it('rejects stale search/provider appended pages, including switching away and back before reply', async () => {
     const h = harness(), extra = gate<Reply>()

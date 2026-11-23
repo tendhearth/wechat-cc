@@ -267,7 +267,7 @@ export default function Matter() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {header}
       <KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}>
-      <ScrollView ref={scrollRef} contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
+      <ScrollView ref={scrollRef} testID="progress-scroll" style={{ flex: 1, overflow: 'hidden' }} contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
 
         <View testID="progress-status"><StatusPill status={v.status} label={taskDetailLabel(d.task,v.pendingCount,lang,v.status)} /></View>
         {untilRow ? (
@@ -510,7 +510,7 @@ export default function Matter() {
           )}
         </View>
       )}
-      <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
+      <View testID="progress-composer" style={{ flexShrink: 0, backgroundColor: c.paper, paddingHorizontal: space.xl, paddingTop: space.s, paddingBottom: space.m }}>
         <MatterDirectComposer key={id} id={id} view={direct!} />
       </View>
 
