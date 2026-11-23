@@ -104,14 +104,16 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
         <Txt testID="approval-model-note" role="small" tone="inkSoft">{t(lang, 'approval.aiSummary')}</Txt>
       </View> : null}
       <ApprovalNote kind="opinion" text={ccOpinion} />
-      {details.length ? <Sheet testID="approval-details" title={t(lang, 'approval.details')}>
+      {/* 次要的两条入口挨在一起,不和上面的块抢 */}
+      <View>
+      {details.length ? <Sheet quiet testID="approval-details" title={t(lang, 'approval.details')}>
         <View style={{ gap: space.m }}>{details.map(({ key, label, value }) => <View key={key} style={{ gap: space.xs }}>
           <Txt role="caption" tone="inkSoft">{label}</Txt>
           <Txt testID={key === 'reason' ? 'approval-question-reason' : undefined} role="body" content="user">{value}</Txt>
         </View>)}</View>
       </Sheet> : null}
       <View collapsable={false} onLayout={e => { exactY.current = e.nativeEvent.layout.y }}>
-        <Sheet testID="approval-view-exact" title={t(lang, 'approval.viewExact')} expanded={exactOpen} onExpandedChange={open => {
+        <Sheet quiet testID="approval-view-exact" title={t(lang, 'approval.viewExact')} expanded={exactOpen} onExpandedChange={open => {
           jumpOnLayout.current = false
           setExactOpen(open)
         }}>
@@ -123,6 +125,7 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
             <Txt selectable role="code" testID="approval-exact-source">{v.rawFull}</Txt>
           </ScrollView>
         </Sheet>
+      </View>
       </View>
     </View>
   )

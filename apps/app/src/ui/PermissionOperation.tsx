@@ -169,6 +169,7 @@ export function PermissionOperation({ display, cwd, lang, open }: {
     </Panel>
     {body.kind === 'command' && cwd ? <Visual><Txt selectable testID="approval-operation-cwd" role="small" tone="inkSoft">{t(lang, 'approval.inDirectory', { path: cwd })}</Txt></Visual> : null}
     {body.kind === 'url' && body.prompt ? <Visual><Txt selectable role="small" tone="inkSoft">{t(lang, 'approval.fetchPrompt', { prompt: body.prompt })}</Txt></Visual> : null}
-    {extra?.length ? <Panel testID="approval-operation-extra"><FieldTable fields={extra} lang={lang} open={open} /></Panel> : null}
+    {/* 多出来的字段一个都不吞,但不和主体抢:不带底,小字表 */}
+    {extra?.length ? <View testID="approval-operation-extra"><FieldTable fields={extra} lang={lang} open={open} /></View> : null}
   </View>
 }

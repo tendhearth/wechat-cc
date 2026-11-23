@@ -1,7 +1,21 @@
 # T5: 原有功能验收移到唯一对话、搜索引用与原详情。
 appId: com.tendhearth.app
 ---
-- runFlow: subflows/_start.yaml
+# 用启动参数出中文(Mac mini 的 lab 改不了模拟器的系统语言);别的流程照模拟器的英文跑,两种语言都有覆盖。
+- launchApp:
+    clearState: true
+    arguments:
+      AppleLanguages: "(zh-Hans)"
+      AppleLocale: "zh_CN"
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Cancel"
+- extendedWaitUntil:
+    visible:
+      id: welcome-look-first
+    timeout: 30000
 - tapOn:
     id: welcome-look-first
 - runFlow: subflows/_work.yaml

@@ -54,8 +54,10 @@ export function Expansion({ open, children, onClosed, keepMounted = false }: { o
 }
 
 // 可展开区块:标题一行,点开看内容;沿用页面纸色与留白,不再画一层卡片。
-export function Sheet({ title, children, defaultOpen = false, testID, expanded, onExpandedChange }: {
+export function Sheet({ title, children, defaultOpen = false, testID, expanded, onExpandedChange, quiet = false }: {
   title: string; children: ReactNode; defaultOpen?: boolean; testID?: string
+  /** 次要的入口:标题小一号、灰一级,行矮一点。 */
+  quiet?: boolean
   expanded?: boolean; onExpandedChange?: (open: boolean) => void
 }) {
   const { c } = useTheme()
@@ -69,9 +71,9 @@ export function Sheet({ title, children, defaultOpen = false, testID, expanded, 
         accessibilityState={{ expanded: open }}
         accessibilityLabel={title}
         onPress={() => (onExpandedChange ?? setOpen)(!open)}
-        style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+        style={{ minHeight: quiet ? 44 : 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
       >
-        <Txt role="bubble" style={{ flex: 1 }}>{title}</Txt>
+        <Txt role={quiet ? 'small' : 'bubble'} tone={quiet ? 'inkSoft' : 'ink'} style={{ flex: 1 }}>{title}</Txt>
         <Icon name={open ? 'chevronDown' : 'chevronRight'} color={c.inkSoft} />
       </Pressable>
       <Expansion open={open}><View style={{ paddingVertical: space.l }}>{children}</View></Expansion>
