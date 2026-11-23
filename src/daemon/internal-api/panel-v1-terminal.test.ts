@@ -19,6 +19,7 @@ import { phoneCliSessionRows } from '../../features/terminal/phone-sessions'
 import { buildOverseerToday } from '../../domain/overseer-today'
 import type { ConnectionsSnapshot } from '../connections'
 import type { CliSessionView } from '../../ports/cli-session'
+import type { CliSessionRowT } from '@wechat-cc/protocol'
 
 const NOW = 1_800_000_000_000
 const view = (i: number, over: Partial<CliSessionView> = {}): CliSessionView => ({
@@ -51,8 +52,9 @@ beforeEach(async () => {
   api.mount('terminal', terminalRoutes({
     cliEvents: { ingest: () => 'noop', list: (o?: { limit?: number }) => spies.list().slice(0, o?.limit ?? 100) },
     overseerToday: spies.today,
-    phoneSessions: () => phoneCliSessionRows({
-      list: () => spies.list(),
+    phoneSessions: (sessionId, frameBudget) => phoneCliSessionRows({
+      list: () => spies.list().filter(v => !sessionId || v.session_id === sessionId),
+      frameBudget,
       actions: { pendingHash: (id: string) => (id === 'sess-0' ? 'abcde' : null), liveWindows: () => new Set<string>() } as never,
       executorName: () => 'Claude',
     }),
@@ -98,6 +100,27 @@ describe('GET /v1/cli/sessions:手机令牌只拿手机那一份', () => {
     const opRows = ((await op.json()) as { sessions: Row[] }).sessions
     expect(opRows).toHaveLength(80)
     expect(opRows[0]).toEqual(VIEWS[0])
+  })
+
+  it.each(['/v1/cli/sessions', '/m/api/cli/sessions'])('%s 按会话单读保留列表因帧预算省掉的预览', async path => {
+    const command = 'x'.repeat(8192)
+    spies.list.mockReturnValue(Array.from({ length: 50 }, (_, i) => view(i, {
+      status: 'waiting',
+      pending: { tool: 'Bash', summary: 'preview', since: NOW, display: { body: { kind: 'command', command } } },
+    })))
+    const list = await viaPanel(path, device)
+    expect(list.status).toBe(200)
+    const read = async (response: Response) => (await response.json() as { sessions: CliSessionRowT[] }).sessions
+    const rows = await read(list)
+    expect(rows).toHaveLength(50)
+    expect(rows[0]?.pending?.display).toBeUndefined()
+
+    const detail = await viaPanel(path + '?session_id=sess-0', device)
+    expect(detail.status).toBe(200)
+    const single = await read(detail)
+    expect(single.map(row => row.session_id)).toEqual(['sess-0'])
+    const body = single[0]?.pending?.display?.body
+    expect(body?.kind === 'command' && body.command === command).toBe(true)
   })
 
   it('链接令牌两条路都 403,处理器不跑', async () => {

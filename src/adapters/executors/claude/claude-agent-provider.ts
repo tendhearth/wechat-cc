@@ -1,3 +1,5 @@
+import { toolApprovalInput } from '../../../domain/workbench/tool-input-preview'
+import { permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
 import type { ChatApprovalLifecycle } from '../chat-approval'
 import { claudeResultUsage } from '../../../domain/turn-usage'
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
@@ -70,9 +72,13 @@ function taskInputPreview(input: Record<string, unknown>): string | null {
   }
 }
 
+function claudePermissionNote(options: { title?: string; description?: string; decisionReason?: string }): string {
+  return options.title?.trim() || options.description?.trim() || options.decisionReason?.trim() || ''
+}
+
 export function claudeTaskPermissionDescription(toolName: string, input: Record<string, unknown>, options: { title?: string; description?: string; decisionReason?: string }): string | null {
   const inputPreview = taskInputPreview(input)
-  const context = options.title?.trim() || options.description?.trim() || options.decisionReason?.trim() || ''
+  const context = claudePermissionNote(options)
   const description = [context, inputPreview].filter(Boolean).join('\n') || `Run ${toolName}`
   return inputPreview === null ? null : description
 }
@@ -156,7 +162,12 @@ export function makeWorkbenchClaudeCanUseTool(
       if (description === null) return denied
       try {
         let feedback: string | undefined
-        const allowed = await requestPermission({tool:toolName,description,onDenied:reason=>{feedback=permissionDenialMessage(description,reason)}}, options.signal)
+        const note = claudePermissionNote(options)
+        const reviewDescription = note && note.length + description.length + 1 <= WORKBENCH_PERMISSION_DESCRIPTION_MAX
+          ? `${note}\n${description}` : undefined
+        const display = toolPermissionDisplay(toolName, toolApprovalInput(input), reviewDescription ? note : undefined)
+        const allowed = await requestPermission({tool:toolName,description,...(display ? { display } : {}),
+          ...(display && reviewDescription ? { reviewDescription } : {}),onDenied:reason=>{feedback=permissionDenialMessage(description,reason)}}, options.signal)
         return allowed && !options.signal.aborted ? {behavior:'allow'} : feedback ? {behavior:'deny',message:feedback} : denied
       } catch { return denied }
     }
@@ -181,9 +192,13 @@ export function makeWorkbenchClaudeCanUseTool(
     try {
       // 放行规则(2026-10-19)要原文:命令、文件路径(拿不到就不给)。
       const facts = toolInputFacts(input, true)
+      const display = toolPermissionDisplay(toolName, typeof input.command === 'string' ? input.command : input, claudePermissionNote(options))
+      const cwd = display?.body.kind === 'command' ? permissionCwd(input.cwd) : undefined
       allowed = await requestPermission({
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,
+        ...(display ? { display } : {}),
+        ...(cwd ? { displayCwd: cwd, reviewDescription: `${description}\nWorking directory: ${cwd}` } : {}),
         onDenied: reason => { feedback = permissionDenialMessage(`${toolName}\n${description}`, reason) },
         ...(facts.command ? { command: facts.command } : {}),
         ...(facts.paths.length ? { paths: facts.paths } : {}),

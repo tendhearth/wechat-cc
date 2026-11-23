@@ -38,7 +38,7 @@ export const CLI_SESSION_MAX_ROWS = 500
 /** 每写这么多次修剪一次(建 store 时也修一次)。 */
 const PRUNE_EVERY = 50
 
-const COLS = 'session_id,source,cwd,machine,transcript_path,origin_agent,status,last_event_at,last_prompt_at,last_summary,pending_tool,pending_summary,pending_at,created_at'
+const COLS = 'session_id,source,cwd,machine,transcript_path,origin_agent,status,last_event_at,last_prompt_at,last_summary,pending_tool,pending_summary,pending_at,pending_display_json,pending_cwd,pending_truncated,created_at'
 
 /** 那件事里开着的权限卡 / 最后一句。最近一次发问照旧读列:一轮里可能发问好几次,轮的开始时间不是最近那一次(Codex 评审)。 */
 const CARD = "SELECT %s FROM matter_items i WHERE i.matter_id = b.matter_id AND i.kind = 'permission' AND i.status = 'started' ORDER BY i.seq DESC LIMIT 1"
@@ -52,6 +52,9 @@ const DERIVED = `SELECT c.session_id, c.source, c.cwd, c.machine, c.transcript_p
     CASE WHEN m.id IS NULL THEN NULL ELSE (${SAID}) END AS last_summary,
     CASE WHEN m.id IS NULL THEN NULL ELSE (${CARD.replace('%s', "json_extract(i.payload_json, '$.tool')")}) END AS pending_tool,
     CASE WHEN m.id IS NULL THEN NULL ELSE (${CARD.replace('%s', "json_extract(i.payload_json, '$.summary')")}) END AS pending_summary,
+    CASE WHEN m.id IS NULL THEN NULL ELSE (${CARD.replace('%s', "json_extract(i.payload_json, '$.display')")}) END AS pending_display_json,
+    CASE WHEN m.id IS NULL THEN NULL ELSE (${CARD.replace('%s', "json_extract(i.payload_json, '$.cwd')")}) END AS pending_cwd,
+    CASE WHEN m.id IS NULL THEN NULL ELSE (${CARD.replace('%s', "json_extract(i.payload_json, '$.truncated')")}) END AS pending_truncated,
     CASE WHEN m.id IS NULL THEN NULL ELSE (${CARD.replace('%s', 'i.created_at')}) END AS pending_at
   FROM cli_sessions c
   LEFT JOIN matter_bindings b ON b.surface = 'cli' AND b.surface_key = c.session_id

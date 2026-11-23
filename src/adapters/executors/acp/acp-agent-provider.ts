@@ -23,7 +23,7 @@ import { isAuthFail } from '../../../domain/auth-fail'
 import { acpErrorCode, cursorAcpInbandError } from './cursor-errors'
 import { withProviderCode, errorWithProviderCode, providerErrorCodeOf } from '../../../lib/provider-error-code'
 import { AcpRequestError, createAcpConnection, type AcpConnection } from './rpc'
-import { acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './events'
+import { acpApprovalDetails, acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './events'
 import { workbenchSubprocessEnv } from '../subprocess-env'
 import { APP_VERSION } from '../../../lib/app-version'
 import { grokSubprocessEnv } from '../../../lib/grok-home'
@@ -346,7 +346,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             const entry: PendingPermission = { controller, respond: resolve }
             permissions.set(key, entry)
             let feedback: string | undefined
-            void Promise.resolve().then(() => context.requestPermission ? context.requestPermission({ tool, description, ...acpRuleFacts(toolCall, true), onDenied: reason => {
+            void Promise.resolve().then(() => context.requestPermission ? context.requestPermission({ tool, ...acpApprovalDetails(toolCall, description), ...acpRuleFacts(toolCall, true), onDenied: reason => {
               if (reason) { feedback = permissionDenialMessage(description, reason); (turn.denialFeedback ??= []).push(feedback) }
             } }, controller.signal) : false)
               .catch(() => false)

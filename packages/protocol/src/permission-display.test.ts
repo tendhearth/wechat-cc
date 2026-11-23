@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { permissionDisplay } from './permission-display'
+import { CliPermissionRequest } from './desktop-api'
+import { boundedPermissionDisplay, permissionDisplay, PermissionDisplaySchema, PERMISSION_DISPLAY_LIMITS, toolPermissionDisplay } from './permission-display'
 
 function same(actual: unknown, expected: unknown) {
   // Never print the source on an assertion failure.
@@ -134,4 +135,61 @@ describe('permissionDisplay', () => {
     }
   })
 
+})
+
+
+describe('bounded structured permission display', () => {
+  const max = PERMISSION_DISPLAY_LIMITS
+  const bytes = (input: unknown) => new TextEncoder().encode(JSON.stringify(input)).length
+
+  it.each([0, 1, 100_000])('enforces the string limit with %i excess characters', excess => {
+    const command = 'x'.repeat(max.string + excess)
+    const built = toolPermissionDisplay('Bash', { command })
+    expect(built?.truncated === true).toBe(excess > 0)
+    expect(built?.body.kind === 'command' && built.body.command === command.slice(0, max.string)).toBe(true)
+  })
+
+  it('accepts the exact JSON byte boundary and bounds escaped UTF-8 above it', () => {
+    const shape = (pad: string) => ({ body: { kind: 'edit' as const, path: '/sample/example', changes: [
+      { before: '好'.repeat(8192), after: '\r'.repeat(3000) }, { before: pad, after: '' },
+    ] } })
+    const pad = 'x'.repeat(max.bytes - bytes(shape('')))
+    const boundary = shape(pad)
+    expect(bytes(boundary)).toBe(max.bytes)
+    same(boundedPermissionDisplay(() => boundary), boundary)
+    const over = shape(pad + 'x')
+    expect(PermissionDisplaySchema.safeParse(over).success).toBe(false)
+    const bounded = boundedPermissionDisplay(() => over)
+    expect(bounded?.truncated).toBe(true)
+    expect(bytes(bounded)).toBeLessThanOrEqual(max.bytes)
+    expect(PermissionDisplaySchema.safeParse(bounded).success).toBe(true)
+  })
+
+  it('counts display separately from the unchanged hook summary budget', () => {
+    const legacy = { source: 'claude', session_id: 'sample', cwd: '/sample', tool_name: 'Write', summary: 'x'.repeat(2000) }
+    expect(CliPermissionRequest.safeParse(legacy).success).toBe(true)
+    const display = toolPermissionDisplay('Write', { file_path: '/sample/demo.txt', content: '字'.repeat(8192) })
+    const request = CliPermissionRequest.parse({ ...legacy, execution_cwd: '/sample', display, truncated: false })
+    same(request.display, display)
+    expect(request.truncated).toBe(false)
+    expect(CliPermissionRequest.safeParse({ ...legacy, display, summary: legacy.summary + 'x' }).success).toBe(false)
+    expect(CliPermissionRequest.parse({ ...legacy, display: { body: { kind: 'write' } } }).display).toBeUndefined()
+  })
+
+  it('bounds all collections and omits a preview when the source cannot be serialized', () => {
+    const edits = Array.from({ length: max.changes + 1 }, () => ({ old_string: 'a', new_string: 'b', hint: true }))
+    const edit = toolPermissionDisplay('MultiEdit', { file_path: 'file', edits })
+    expect(edit?.body.kind === 'edit' && edit.body.changes.length === max.changes).toBe(true)
+    expect(edit?.extra).toHaveLength(max.fields)
+    expect(edit?.truncated).toBe(true)
+    const patch = boundedPermissionDisplay(() => ({ body: { kind: 'patch', files: Array.from({ length: max.files + 1 }, () => ({
+      path: 'file', change: 'add', diff: '\u0000'.repeat(50_000),
+    })) } }))
+    expect(patch?.body.kind === 'patch' && patch.body.files.length === max.files).toBe(true)
+    expect(patch?.truncated).toBe(true)
+    expect(bytes(patch)).toBeLessThanOrEqual(max.bytes)
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+    expect(toolPermissionDisplay('Unknown', cyclic)).toBeUndefined()
+  })
 })

@@ -91,7 +91,8 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
         <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{title}</Txt>
         {v.display.note ? <Txt selectable role="body" tone="inkSoft" content="user">{v.display.note}</Txt> : null}
       </View>
-      <PermissionOperation display={v.display} projectPath={v.projectPath} lang={lang} open={sheet.openFromPreview} />
+      <PermissionOperation display={v.display} projectPath={v.projectPath} cwd={v.cwd} lang={lang} open={sheet.openFromPreview} />
+      {v.display.truncated ? <Txt testID="approval-display-truncated" role="small" tone="inkSoft">{t(lang, 'terminal.pendingTruncated')}</Txt> : null}
       {v.scripts?.map(script => <PermissionScriptPreview key={script.path} script={script} taskId={taskId} requestId={v.requestId} />)}
       {v.effect.trim() ? <View testID="approval-effect" style={{ gap: space.xs }}>
         <Markdown text={v.effect} />
@@ -106,7 +107,7 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
           <Txt testID={key === 'reason' ? 'approval-question-reason' : undefined} role="body" content="user">{value}</Txt>
         </View>)}</View>
       </Sheet> : null}
-      <PermissionSource source={v.rawFull} projectPath={v.projectPath} lang={lang} sheet={sheet} />
+      <PermissionSource source={v.rawFull} projectPath={v.projectPath} cwd={v.cwd} lang={lang} sheet={sheet} />
       </View>
     </View>
   )

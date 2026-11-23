@@ -202,11 +202,12 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
   // ── P3c-2 终端与总览:三条只读,手机那一份由 /v1 处理器按 caller 收(cli/sessions 只给目录名、connections 去掉 detail)。
   // 别名只做:方法不对 405、`{ ok }` 信封、「没接上」码、内部失败一律 503 unavailable(裁定 7)、带 no-store(mobile-reads 的 json())。
   /** `notWired`:手机原来「没接上」的那个码;/v1 回同一个码、或模块门(module_*,模块此刻不是 ok / 还没挂上)⇒ 回它。 */
-  const readAlias = (path: string, notWired: string, ok: (body: Record<string, unknown>) => object | null): PhoneHandler<Ctx> =>
-    ownsMethod(async (_url: URL, req: Request, { caller }: Ctx) => {
+  const readAlias = (path: string, notWired: string, ok: (body: Record<string, unknown>) => object | null, queryKey?: string): PhoneHandler<Ctx> =>
+    ownsMethod(async (url: URL, req: Request, { caller }: Ctx) => {
       if (req.method !== 'GET') return chatErr('method_not_allowed', 405)
       if (!deps.v1) return chatErr(notWired, 503)
-      const out = await v1(req, caller, 'GET', path, {})
+      const value = queryKey ? url.searchParams.get(queryKey) : null
+      const out = await v1(req, caller, 'GET', path, queryKey && value !== null ? { [queryKey]: value } : {})
       const body = out.status === 200 && obj(out.body) ? ok(out.body) : null
       if (body) return noStore({ ok: true, ...body })
       const code = errorOf(out.body)
@@ -214,7 +215,7 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
     })
 
   // ── GET /m/api/cli/sessions → GET /v1/cli/sessions ────────────────────
-  const phoneCliSessions = readAlias('/v1/cli/sessions', 'cli_sessions_not_wired', b => Array.isArray(b.sessions) ? { sessions: b.sessions } : null)
+  const phoneCliSessions = readAlias('/v1/cli/sessions', 'cli_sessions_not_wired', b => Array.isArray(b.sessions) ? { sessions: b.sessions } : null, 'session_id')
   // ── GET /m/api/today → GET /v1/overseer/today ─────────────────────────
   const phoneToday = readAlias('/v1/overseer/today', 'today_not_wired', b => 'today' in b ? { today: b.today } : null)
   // ── GET /m/api/connections → GET /v1/connections ──────────────────────

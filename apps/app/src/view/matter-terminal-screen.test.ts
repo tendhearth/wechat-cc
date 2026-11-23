@@ -1,3 +1,4 @@
+import { terminalPermission } from './terminal'
 // @vitest-environment happy-dom
 import { act, createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -120,4 +121,25 @@ describe('终端会话的那件事 → 终端详情', () => {
     }
   })
 
+})
+
+
+describe('wire terminal approvals', () => {
+  it.each([true, false, undefined])('uses the summary truncation flag %s only when structured approval is unavailable', truncated => {
+    const summary = 'x'.repeat(200)
+    const command = 'printf "example"\r\nprintf "next"\n'
+    const cwd = 'C:\\project\\work'
+    const pending = { tool: 'Bash', summary, display: { body: { kind: 'command' as const, command } }, cwd, truncated }
+    const result = terminalPermission(pending, 'Codex', 'zh-Hans')
+    expect(result.mayBeIncomplete).toBe(false)
+    expect(result.hasFullSource).toBe(true)
+    expect(result.raw === command && result.cwd === cwd && result.display?.body.kind === 'command').toBe(true)
+    const cut = terminalPermission({ ...pending, truncated: false, display: { ...pending.display, truncated: true } }, 'Codex', 'zh-Hans')
+    expect(cut.mayBeIncomplete).toBe(true)
+    expect(cut.hasFullSource).toBe(false)
+    const fallback = terminalPermission({ ...pending, display: { body: { kind: 'command' } } } as typeof pending, 'Codex', 'zh-Hans')
+    expect(fallback.display?.body.kind === 'command' && fallback.raw === summary).toBe(true)
+    expect(fallback.mayBeIncomplete).toBe(truncated ?? true)
+    expect(fallback.hasFullSource).toBe(!(truncated ?? true))
+  })
 })

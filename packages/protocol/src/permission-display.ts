@@ -1,18 +1,100 @@
-type Field = { name: string; value: string }
-type Change = { before: string; after: string }
+import z from 'zod'
 
-export type PermissionDisplay = {
-  note?: string
-  body:
-    | { kind: 'command'; command: string; cwd?: string }
-    | { kind: 'edit'; path: string; changes: Change[]; replaceAll?: boolean }
-    | { kind: 'write'; path: string; content: string }
-    | { kind: 'patch'; files: Array<{ path: string; change: string; diff: string }> }
-    | { kind: 'url'; url: string; prompt?: string }
-    | { kind: 'query'; query: string }
-    | { kind: 'fields'; fields: Field[] }
-    | { kind: 'text'; text: string }
-  extra?: Field[]
+export const PERMISSION_DISPLAY_LIMITS = {
+  string: 8192, changes: 16, files: 16, fields: 16, bytes: 32 * 1024,
+} as const
+
+const max = PERMISSION_DISPLAY_LIMITS
+const value = z.string().max(max.string)
+const field = z.strictObject({ name: value, value })
+const change = z.strictObject({ before: value, after: value, path: value.optional() })
+const fieldList = z.array(field).max(max.fields)
+const edit = z.strictObject({ kind: z.literal('edit'), path: value, changes: z.array(change).min(1).max(max.changes), replaceAll: z.boolean().optional() })
+
+const displayShape = z.strictObject({
+  note: value.optional(),
+  body: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('command'), command: value, cwd: value.optional() }),
+    edit,
+    z.strictObject({ kind: z.literal('write'), path: value, content: value }),
+    z.strictObject({ kind: z.literal('patch'), files: z.array(z.strictObject({
+      path: value, change: value, movePath: value.optional(), diff: value,
+    })).min(1).max(max.files) }),
+    z.strictObject({ kind: z.literal('url'), url: value, prompt: value.optional() }),
+    z.strictObject({ kind: z.literal('query'), query: value }),
+    z.strictObject({ kind: z.literal('fields'), fields: fieldList }),
+    z.strictObject({ kind: z.literal('text'), text: value }),
+  ]),
+  extra: fieldList.optional(),
+  truncated: z.boolean().optional(),
+})
+
+const wireBytes = (data: unknown) => new TextEncoder().encode(JSON.stringify(data)).length
+export const PermissionDisplaySchema = displayShape.refine(data => wireBytes(data) <= max.bytes, { message: 'permission_display_too_large' })
+export type PermissionDisplay = z.infer<typeof PermissionDisplaySchema>
+type Field = z.infer<typeof field>
+type Change = z.infer<typeof change>
+
+// A malformed optional preview must not invalidate an approval or its containing response.
+export const permissionDisplayWire = PermissionDisplaySchema.optional().catch(undefined)
+export const permissionCwdWire = z.string().max(4096)
+  .refine(path => /^(?:\/|[a-z]:[\\/]|\\\\)/i.test(path) && !/[\u0000-\u001f]/.test(path))
+  .optional().catch(undefined)
+
+export function permissionCwd(input: unknown): string | undefined {
+  return permissionCwdWire.safeParse(input).data
+}
+
+export function boundedPermissionDisplay(build: () => PermissionDisplay | undefined): PermissionDisplay | undefined {
+  try {
+    const source = build()
+    if (!source) return
+    let truncated = source.truncated === true
+    const cap = (input: unknown, limit: number, key = ''): unknown => {
+      if (typeof input === 'string' && key !== 'kind' && input.length > limit) {
+        truncated = true
+        // Keep the prefix byte-for-byte and avoid breaking a UTF-16 pair.
+        const end = /[\uD800-\uDBFF]/.test(input.charAt(limit - 1)) && /[\uDC00-\uDFFF]/.test(input.charAt(limit)) ? limit - 1 : limit
+        return input.slice(0, end)
+      }
+      if (Array.isArray(input)) {
+        const count = key === 'files' ? max.files : key === 'changes' ? max.changes : max.fields
+        if (input.length > count) truncated = true
+        return input.slice(0, count).map(item => cap(item, limit))
+      }
+      if (object(input)) return Object.fromEntries(Object.entries(input).map(([name, item]) => [name, cap(item, limit, name)]))
+      return input
+    }
+    const candidate = (limit: number) => {
+      const data = cap(source, limit) as PermissionDisplay
+      return truncated ? { ...data, truncated: true as const } : data
+    }
+    let data = candidate(max.string)
+    // Find the largest shared string limit that fits the UTF-8 JSON budget.
+    if (wireBytes(data) > max.bytes) {
+      truncated = true
+      let low = 0, high: number = max.string - 1
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2)
+        if (wireBytes(candidate(mid)) <= max.bytes) low = mid
+        else high = mid - 1
+      }
+      data = candidate(low)
+    }
+    return PermissionDisplaySchema.safeParse(data).data
+  } catch {
+    return undefined
+  }
+}
+
+export function toolPermissionDisplay(tool: string, input: unknown, note?: string): PermissionDisplay | undefined {
+  return boundedPermissionDisplay(() => {
+    const result = object(input) && isPermissionCommandTool(tool) && Array.isArray(input.command) && input.command.every(string)
+      ? { body: { kind: 'fields' as const, fields: fields(input) } }
+      : object(input) ? jsonDisplay(tool, input)
+      : string(input) && isPermissionCommandTool(tool) ? { body: { kind: 'command' as const, command: input } } : undefined
+    return result && (note ? { ...result, note } : result)
+  })
 }
 
 type Input = Record<string, unknown>

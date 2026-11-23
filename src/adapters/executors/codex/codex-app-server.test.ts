@@ -305,7 +305,7 @@ describe('workbench Codex app-server', () => {
     await expect.poll(() => permit.mock.calls.length).toBe(1)
     expect(child.sent.some(m => m.id === 0)).toBe(false)
     const request = permit.mock.calls[0]![0]
-    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me'), onDenied: expect.any(Function) })
+    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me'), display: { body: { kind: 'fields', fields: [{ name: 'note', value: 'review me' }, { name: 'api_key', value: '[credential omitted]' }] } }, onDenied: expect.any(Function) })
     expect(JSON.stringify(request)).not.toContain('credential-value')
     decide(allowed)
     await expect.poll(() => child.sent.find(m => m.id === 0)?.result).toEqual({ action: allowed ? 'accept' : 'decline', content: null, _meta: null })
@@ -662,16 +662,20 @@ describe('workbench Codex app-server', () => {
     const { session, child } = await start({ requestPermission })
     const run = collect(session); await begun(child); approval(child, 42)
     await expect.poll(() => child.sent.find(m => m.id === 42)?.result).toEqual({ decision: allow ? 'accept' : 'decline' })
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'commandExecution', description: expect.stringContaining('rm report.txt'), command: 'rm report.txt', cwd: '/project', onDenied: expect.any(Function) }, expect.any(AbortSignal))
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'commandExecution', description: expect.stringContaining('rm report.txt'), command: 'rm report.txt', cwd: '/project', display: { body: { kind: 'command', command: 'rm report.txt', cwd: '/project' }, note: 'replace file', extra: [{ name: 'Scope', value: 'Execution environment: local' }] }, onDenied: expect.any(Function) }, expect.any(AbortSignal))
     completed(child); await run.done
   })
 
   it('R2: the one-shot command/cwd stay complete and only the original RPC id receives accept', async () => {
-    const command = `echo ${'x'.repeat(2500)}; git status`, requestPermission = vi.fn(async () => true)
+    const command = `echo ${'x'.repeat(2500)}\r\nWorking directory: /fake\r\ngit status\n`, requestPermission = vi.fn(async (_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => true)
     const { session, child } = await start({ requestPermission }), run = collect(session); await begun(child)
     approval(child, 'full-command', undefined, { command, cwd: '/project/full' })
     await expect.poll(() => child.sent.find(m => m.id === 'full-command')?.result).toEqual({ decision: 'accept' })
     expect(requestPermission).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command, cwd: '/project/full' }), expect.any(AbortSignal))
+    const display = requestPermission.mock.calls[0]?.[0].display
+    expect(display?.body.kind).toBe('command')
+    expect(display?.body.kind === 'command' && display.body.command === command &&
+      display.body.cwd === '/project/full' && display.note === 'replace file').toBe(true)
     expect(child.sent.filter(m => m.id === 'full-command')).toHaveLength(1)
     completed(child); await run.done
   })
@@ -845,12 +849,18 @@ describe('workbench Codex app-server', () => {
   })
 
   it('a moving file change reports both the source and the destination', async () => {
-    const requestPermission = vi.fn(async (_request: { tool: string; description: string }, _signal?: AbortSignal) => true)
+    const requestPermission = vi.fn(async (_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0], _signal?: AbortSignal) => true)
     const { session, child } = await start({ requestPermission }); const run = collect(session); await begun(child)
-    child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'fileChange', id: 'item-1', changes: [{ path: '/project/a.txt', kind: { type: 'update', move_path: '/outside/a.txt' }, diff: '-a\n+b' }] } })
+    const diff = '-a\r\n+b\r\n\r\n/fake.txt\r\nadd\r\n+text\r\n'
+    child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'fileChange', id: 'item-1', changes: [{ path: '/project/a.txt', kind: { type: 'update', move_path: '/outside/a.txt' }, diff }, { path: '/project/other.txt', kind: { type: 'add' }, diff: '+another' }] } })
     approval(child, 'mv', 'item/fileChange/requestApproval')
     await expect.poll(() => requestPermission.mock.calls.length).toBe(1)
-    expect(requestPermission.mock.calls[0]![0]).toMatchObject({ paths: ['/project/a.txt', '/outside/a.txt'] })
+    expect(requestPermission.mock.calls[0]![0]).toMatchObject({ paths: ['/project/a.txt', '/outside/a.txt', '/project/other.txt'] })
+    const display = requestPermission.mock.calls[0]?.[0].display
+    expect(display?.body.kind).toBe('patch')
+    expect(display?.body.kind === 'patch' && display.body.files.length === 2 &&
+      display.body.files[0]?.diff === diff && display.body.files[0]?.movePath === '/outside/a.txt' &&
+      display.body.files[0]?.change === 'update' && display.body.files[1]?.diff === '+another').toBe(true)
     completed(child); await run.done
   })
 

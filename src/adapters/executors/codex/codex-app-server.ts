@@ -1,3 +1,5 @@
+import { toolApprovalInput } from '../../../domain/workbench/tool-input-preview'
+import { boundedPermissionDisplay, permissionCwd, toolPermissionDisplay, type PermissionDisplay } from '@wechat-cc/protocol'
 import { taskEnvironment } from '../task-environment'
 import { makePausableTimers, type PausableTimer } from '../../../lib/pausable-timers'
 import { codexBreakdown, sumTurnUsage, type TurnUsage } from '../../../domain/turn-usage'
@@ -221,6 +223,25 @@ export function codexPermissionDescription(file: boolean, params: ObjectValue, i
     : [command, params.cwd && `Working directory: ${params.cwd}`, params.reason, scope]
   ).filter(Boolean).join('\n')
   return { validChanges, command, scope, description }
+}
+
+function codexApprovalDisplay(file: boolean, params: ObjectValue, item: ObjectValue | undefined, command: unknown, scope: string): PermissionDisplay | undefined {
+  return boundedPermissionDisplay(() => {
+    if (params.reason != null && typeof params.reason !== 'string') return
+    const cwd = permissionCwd(params.cwd)
+    const body: PermissionDisplay['body'] = file
+      ? { kind: 'patch', files: item!.changes.map((change: ObjectValue) => {
+        const kind = change.kind
+        const movePath = object(kind) ? kind.move_path ?? kind.movePath : undefined
+        const known = object(kind) && Object.keys(kind).length <= 2 && typeof kind.type === 'string' && onlyKeys(kind, ['type', 'move_path', 'movePath']) &&
+          (movePath == null || typeof movePath === 'string')
+        return { path: change.path, change: known ? kind.type : preview(kind), diff: change.diff,
+          ...(known && typeof movePath === 'string' ? { movePath } : {}) }
+      }) }
+      : { kind: 'command', command: command as string, ...(cwd ? { cwd } : {}) }
+    return { body, ...(typeof params.reason === 'string' && params.reason ? { note: params.reason } : {}),
+      extra: [{ name: 'Scope', value: scope }] }
+  })
 }
 
 /** Native app-server protocol adapter: the workbench provider below, and Codex chat (codex-chat-provider.ts) via spawnCodexAppServerSession. */
@@ -646,8 +667,13 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         let feedback: string | undefined
         const onDenied = (reason: string) => { feedback = permissionDenialMessage(description, reason); (turn.denialFeedback ??= []).push(feedback) }
         const ask = chat ? chat.approve : context.requestPermission
+        const display = chat ? undefined : codexApprovalDisplay(file, params, item, command, scope)
+        const cwd = chat ? undefined : permissionCwd(params.cwd)
+        const reviewDescription = file && cwd ? `${description}\nWorking directory: ${cwd}` : undefined
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && ask
           ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts, ...(!chat ? { onDenied } : {}),
+              ...(display ? { display } : {}), ...(cwd && !ruleFacts.cwd ? { displayCwd: cwd } : {}),
+              ...(reviewDescription ? { reviewDescription } : {}),
               ...(!chat && !file && typeof command === 'string' && needsBoundExecution(command) ? { requiresBoundExecution: true as const } : {}),
             }, controller.signal)
           : false,
@@ -727,10 +753,11 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         const controller = new AbortController(), entry: Approval = { controller, turn, rejection: 'decline', mcp: true }
         approvals.set(id, entry)
         const { input, ...request } = permission
+        const display = chat ? undefined : toolPermissionDisplay(request.tool, toolApprovalInput(input))
         let feedback: string | undefined
         const onDenied = (reason: string) => { feedback = permissionDenialMessage(request.description, reason); (turn.denialFeedback ??= []).push(feedback) }
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && (chat ? chat.approve : context.requestPermission)
-          ? chat ? chat.approve!({ ...request, input, ...(request.tool==='mcp__wechat__matter_plan'?{onDenied}:{}) }, controller.signal) : context.requestPermission!({ ...request, onDenied }, controller.signal) : false,
+          ? chat ? chat.approve!({ ...request, input, ...(request.tool==='mcp__wechat__matter_plan'?{onDenied}:{}) }, controller.signal) : context.requestPermission!({ ...request, ...(display ? { display } : {}), onDenied }, controller.signal) : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
           // The native turn can complete while the decline is being written.

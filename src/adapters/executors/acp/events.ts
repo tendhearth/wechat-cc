@@ -1,3 +1,4 @@
+import { boundedPermissionDisplay, permissionCwd, type PermissionDisplay } from '@wechat-cc/protocol'
 import type { AgentActivity, AgentEvent } from '../../../ports/agent-provider'
 import { normalizeWechatMcpServer } from '../../../ports/agent-provider'
 import { isQuotaRefusalText } from '../../../domain/provider-quota'
@@ -154,6 +155,54 @@ export function acpPermissionDescription(params: unknown): string | null {
   const parts = [command ?? (typeof call.title === 'string' ? call.title : ''), ...notes, ...paths(call.locations)].filter(Boolean)
   const description = parts.join('\n')
   return description && description.length <= 20_000 ? description : null
+}
+
+/** Workbench review uses the tool call, including diff content omitted from older descriptions. */
+export function acpApprovalDetails(call: Obj, description: string): {
+  description: string; display?: PermissionDisplay; reviewDescription?: string; displayCwd?: string
+} {
+  try {
+    const raw = object(call.rawInput) ? call.rawInput : undefined
+    const command = call.kind === 'execute' && typeof raw?.command === 'string' ? raw.command : undefined
+    const cwd = command !== undefined ? permissionCwd(raw?.cwd) : undefined
+    const locations = Array.isArray(call.locations) ? call.locations : []
+    const content = Array.isArray(call.content) ? call.content : []
+    const diffs: Array<{ path: string; oldText: string | null; newText: string }> = []
+    for (const item of content) {
+      if (!object(item) || item.type !== 'diff') continue
+      const { path, oldText, newText } = item
+      if (typeof path !== 'string' || (oldText != null && typeof oldText !== 'string') || typeof newText !== 'string') return { description }
+      diffs.push({ path, oldText: oldText ?? null, newText })
+    }
+    const notes = content.flatMap((item: unknown) =>
+      object(item) && item.type === 'content' && object(item.content) && item.content.type === 'text' && typeof item.content.text === 'string'
+        ? [item.content.text] : [])
+    const body: PermissionDisplay['body'] | undefined = command !== undefined && !diffs.length
+      ? { kind: 'command', command, ...(cwd ? { cwd } : {}) }
+      : command === undefined && diffs.length
+        ? { kind: 'edit', path: diffs[0]!.path, changes: diffs.map((diff, i) => ({
+          before: diff.oldText ?? '', after: diff.newText, ...(i ? { path: diff.path } : {}),
+        })) }
+        : undefined
+    if (!body) return { description }
+    const extra = locations.flatMap((loc: unknown) => object(loc) && typeof loc.path === 'string' ? [{
+      name: 'Location', value: JSON.stringify(loc),
+    }] : [])
+    const note = [body.kind === 'edit' && typeof call.title === 'string' ? call.title : '', ...notes].filter(Boolean).join('\n')
+    const details = [
+      ...(cwd ? [`Working directory: ${cwd}`] : []),
+      ...diffs.map(({ path, oldText, newText }) => [path, 'Before:', oldText ?? '', 'After:', newText].join('\n')),
+      ...extra.map(field => `${field.name}: ${field.value}`),
+    ]
+    const full = [description, ...details].join('\n')
+    // Keep the existing approval channel available if the complete source
+    // cannot fit its description. Never send a partial edit as full evidence.
+    if (full.length > 20_000) return { description }
+    const display = boundedPermissionDisplay(() => ({ body, ...(note ? { note } : {}), ...(extra.length ? { extra } : {}) }))
+    return display ? { description, display, ...(details.length ? { reviewDescription: full } : {}), ...(cwd ? { displayCwd: cwd } : {}) } : { description }
+  } catch {
+    return { description }
+  }
 }
 
 /** 只认 once 档:daemon 的权限桥是逐次布尔,永远不替主人做长期授权。找不到 ⇒ null(调用方回 cancelled)。 */

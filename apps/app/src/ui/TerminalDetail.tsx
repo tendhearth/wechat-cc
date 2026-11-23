@@ -59,7 +59,7 @@ export function TerminalDetail({ sessionId, projectPath }: { sessionId: string; 
   const [said, setSaid] = useState<SayView | null>(null)
   const [tick, setTick] = useState(0)
   const sendingLive = said?.kind === 'sending'
-  const terminal = useTerminalSessions(sendingLive ? { fastMs: SAY_FAST_POLL_MS } : {})
+  const terminal = useTerminalSessions({ sessionId: id, ...(sendingLive ? { fastMs: SAY_FAST_POLL_MS } : {}) })
   // 点开的那几步(按「时间|这一步」记,4 秒刷新不收起)
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const s = terminal.sessions.find(x => x.session_id === id)
@@ -89,6 +89,7 @@ export function TerminalDetail({ sessionId, projectPath }: { sessionId: string; 
     if (!s) return
     setNote(null); setTrack(null); setSaid(null)
     const err = await actions.decide(s, d)
+    void terminal.refresh()
     setNote(err === null ? t(lang, d === 'allow' ? 'terminal.decided' : 'terminal.denied') : err === 'busy' ? null : t(lang, terminalErrorKey(err)))
   }
   const send = async () => {
@@ -100,6 +101,7 @@ export function TerminalDetail({ sessionId, projectPath }: { sessionId: string; 
     const live = !!row?.live
     const sentAt = Date.now()
     const { error: err, sayId } = await say.sendTerminal(id, body)
+    void terminal.refresh()
     if (!alive.current || view.current !== owner || pairingGen() !== atGen) return
     if (err === null) {
       if (draftRevision.current === revision) setText('')

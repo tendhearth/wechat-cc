@@ -206,6 +206,7 @@ const en = {
   'approval.ask.url': 'May I open this URL?',
   'approval.ask.query': 'May I search for this?',
   'approval.ask.tool': 'May I use this tool?',
+  'approval.executionFolder': 'In {path}',
   'approval.projectFolder': 'Project folder {path}',
   'approval.replaceAll': '(replace all)',
   'approval.fetchPrompt': 'What to do with it: {prompt}',

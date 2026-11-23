@@ -12,11 +12,12 @@ import { useConnection, useQuery } from './hooks'
 export const TERMINAL_POLL_MS = 15_000
 const NONE: CliSessionRowT[] = []
 
-export function useTerminalSessions(opts: { poll?: boolean; fastMs?: number } = {}) {
+export function useTerminalSessions(opts: { poll?: boolean; fastMs?: number; sessionId?: string } = {}) {
   const { backend } = useBackendCtx()
   const conn = useConnection()
   const online = backend.mode === 'demo' || conn.state === 'online'
-  const q = useQuery<CliSessionRowT[]>('cli:sessions', () => backend.cliSessions())
+  const { sessionId } = opts
+  const q = useQuery<CliSessionRowT[]>(sessionId ? `cli:sessions:${sessionId}` : 'cli:sessions', () => backend.cliSessions(sessionId))
   const { refresh } = q
   const poll = opts.poll !== false
   // fastMs:刚说的一句还在送进窗口时,页面临时要快拉(有上限,由页面收)

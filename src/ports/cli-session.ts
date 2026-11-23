@@ -1,3 +1,4 @@
+import { type PermissionDisplay } from '@wechat-cc/protocol'
 /**
  * 终端会话登记处的口(架构终态 E5):库里一行、对外的一条、身份、store。实现在
  * src/adapters/store/cli-session-store.ts(v76 `cli_sessions`);app 的 hook 事件判定(cli-events)只经这里认它们的形状。
@@ -23,6 +24,9 @@ export interface CliSessionRow {
   pending_tool: string | null
   pending_summary: string | null
   pending_at: number | null
+  pending_display_json?: string | null
+  pending_cwd?: string | null
+  pending_truncated?: number | null
   created_at: number
 }
 
@@ -44,7 +48,7 @@ export interface CliSessionView {
   last_prompt_at: number | null
   created_at: number
   /** 等批准的那一项;只在 status='waiting' 时有。 */
-  pending: { tool: string; summary: string | null; since: number } | null
+  pending: { tool: string; summary: string | null; since: number; display?: PermissionDisplay; cwd?: string; truncated?: boolean } | null
   /** 这条会话的那件事(kind='terminal',M4a 起);还没有 ⇒ 不带。App 的终端行点进 /matter/<id>(M4c)。 */
   matter_id?: string
 }

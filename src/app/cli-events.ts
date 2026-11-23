@@ -1,3 +1,4 @@
+import { type PermissionDisplay } from '@wechat-cc/protocol'
 /**
  * cli-events.ts — 主人自己在终端开的 claude / codex 会话,经两家的 hooks 报进来的
  * 事件,在这里决定「发不发、发到哪个面、怎么措辞」(spec 2026-09-09-cli-hook-push-design)。
@@ -135,6 +136,9 @@ export interface CliPermissionAsk {
   cwd: string
   tool_name: string
   summary?: string | undefined
+  display?: PermissionDisplay | undefined
+  execution_cwd?: string | undefined
+  truncated?: boolean | undefined
   machine?: string | undefined
 }
 

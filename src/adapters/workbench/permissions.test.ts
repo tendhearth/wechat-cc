@@ -93,6 +93,24 @@ describe('run-bound Workbench permissions', () => {
     expect(outcomeFailure.pending()).toEqual([])
   })
 
+  it('shows full review details without feeding them or the display cwd to the decision rules', async () => {
+    const decide = vi.fn(async () => ({ verdict: 'ask' as const, by: 'default' }))
+    const audit = vi.fn()
+    const permissions = makeRunPermissions({ taskId: 'sample', decide, audit })
+    const cwd = '/sample/work', fallback = '/sample/project', description = 'Review edit'
+    const display = { body: { kind: 'edit' as const, path: cwd + '/file', changes: [{ before: 'old', after: 'new' }] } }
+    const reviewDescription = 'Review edit\nold\r\nnew\n'
+    const pending = permissions.request({ tool: 'Edit', description, reviewDescription, display, displayCwd: cwd }, undefined, fallback)
+    await expect.poll(() => permissions.pending().length).toBe(1)
+    const card = permissions.pending()[0]!
+    expect(card.display?.body.kind).toBe('edit')
+    expect(card.description === reviewDescription && card.cwd === cwd).toBe(true)
+    expect(decide).toHaveBeenCalledWith({ tool: 'Edit', description, cwd: fallback })
+    expect(audit.mock.calls[0]?.[0].legacyDescription === description).toBe(true)
+    permissions.resolve(card.id, 'deny')
+    await expect(pending).resolves.toBe(false)
+  })
+
   it('cannot allow after the absolute expiry even when the timer callback is delayed', async () => {
     vi.useFakeTimers()
     try {
