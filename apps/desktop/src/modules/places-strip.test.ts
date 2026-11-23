@@ -332,11 +332,23 @@ it.each([false, true])('名单双布局都能从空状态放回收起的地方�
 const compactPermission = { itemKey: 'matter:a', kind: 'permission', matterId: 'a', requestId: 'req-1', summary: '执行示例？', count: 1 } as const
 const shortDisplay = { body: { kind: 'command', command: 'printf sample' } } as const
 
+// 终端那一行摘要被截(200 字)不等于纸片上画的结构化展示不全:以展示自己的 truncated 为准(独立评审 P3)
+it('终端摘要被截但结构化展示完整时，纸片不说「不是全部内容」', async () => {
+  const waitingRoot = document.createElement('div')
+  mount({ places: [place('a', { waiting: { ...compactPermission, kind: 'terminal', matterId: undefined, requestId: undefined,
+    itemKey: 'terminal:t1', sessionId: 't1', display: shortDisplay, truncated: true } })], version: 'v1' }, { waitingRoot })
+  strip!.setWide(true)
+  await strip!.refresh()
+  expect(waitingRoot.textContent?.includes('这里不是全部内容')).toBe(false)
+  expect(waitingRoot.querySelector('.place-ask [data-place-open]')?.textContent).toBe('去回答')
+  expect(waitingRoot.querySelector('.approval-command')?.textContent?.includes('printf sample')).toBe(true)
+})
+
 it.each([
   { label: '预览收起', display: { body: { kind: 'command', command: 'x\n'.repeat(10) } } },
   { label: '展示截断', display: { ...shortDisplay, truncated: true } },
-  { label: '终端摘要截断', kind: 'terminal', matterId: undefined, requestId: undefined, itemKey: 'terminal:t1',
-    sessionId: 't1', display: shortDisplay, truncated: true },
+  { label: '终端的展示截断', kind: 'terminal', matterId: undefined, requestId: undefined, itemKey: 'terminal:t1',
+    sessionId: 't1', display: { ...shortDisplay, truncated: true } },
   { label: '空白改动', display: { body: { kind: 'edit', path: 'sample', changes: [{ before: 'old ', after: 'old' }] } } },
   { label: '脚本快照', display: shortDisplay, showSnapshotNotice: true, hasScriptPreview: true },
 ])('紧凑纸片需要打开再定（$label）', async ({ label: _, ...fields }) => {

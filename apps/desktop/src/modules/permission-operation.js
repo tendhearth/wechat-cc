@@ -186,7 +186,7 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
       break
   }
   const directory = cwd ? `在 ${cwd}` : projectPath ? `项目目录 ${projectPath}` : ''
-  const noteHtml = note ? (compact ? `<div class="approval-meta approval-note">${text(note)}</div>` : meta(note)) : ''
+  const noteHtml = note ? (compact ? `<div class="approval-meta approval-note" data-approval-fit>${text(note)}</div>` : meta(note)) : ''
   const directoryHtml = directory ? meta(directory, true) : ''
   const promptHtml = body.kind === 'url' && body.prompt ? (compact
     ? preview(permissionLines(body.prompt), 4, lines => meta(lines.join('\n'), true))

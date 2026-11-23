@@ -164,7 +164,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     const cards = visibleWaiting.map(p => {
       const note = p.waiting
       const operation = note?.display && renderCompactPermissionOperation(note.display, {
-        cwd: note.cwd, summaryTruncated: note.truncated, showSnapshotNotice: note.showSnapshotNotice, hasScriptPreview: note.hasScriptPreview,
+        cwd: note.cwd, showSnapshotNotice: note.showSnapshotNotice, hasScriptPreview: note.hasScriptPreview,
       })
       const question = operation ? note?.summary.split('\n', 1)[0] : note?.summary
       return `<div class="desk-waiting-row">

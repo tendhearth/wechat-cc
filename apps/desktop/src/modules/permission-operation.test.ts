@@ -235,3 +235,12 @@ it('marks whitespace-only and final newline patch changes as needing the full vi
     expect(needsFullView).toBe(true)
   }
 })
+
+// 执行者给的原因在紧凑卡上只有一行:它也要参加「显示不全就得打开看全」的遮挡检查(独立评审 P2)
+it('compact note takes part in the clipping check', () => {
+  const { html } = renderCompactPermissionOperation({ body: { kind: 'command', command: 'printf sample' }, note: '一段很长的原因\n第二行' }, {})
+  const root = document.createElement('div')
+  root.innerHTML = html
+  expect(root.querySelector('.approval-note')?.hasAttribute('data-approval-fit')).toBe(true)
+})
+
