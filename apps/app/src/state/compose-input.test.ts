@@ -423,7 +423,7 @@ describe('permission operation rendering', () => {
       { old_string: 'previous', new_string: 'next' }, { old_string: 'before', new_string: many },
     ] }), last: '+ item-11', hidden: '+ item-12', label: '改 src/a：删 2 行，加 15 行, （全部替换）' },
     { kind: 'write', tool: 'Write', raw: 'input=' + JSON.stringify({ file_path: '/p/src/a', content: many }), last: '+ item-12', hidden: '+ item-13', label: '写 src/a：共 14 行' },
-    { kind: 'patch', tool: 'fileChange', raw: 'Example patch source', display: patch, last: '+fresh', label: '改 3 个文件：src/a, 移动或改名到 /p/src/moved; src/b, 新建; src/c, 删除' },
+    { kind: 'patch', tool: 'fileChange', raw: 'Example patch source', display: patch, last: '+fresh', label: '改 3 个文件：src/a, 移动或改名到 /p/src/moved。src/b, 新建。src/c, 删除' },
     { kind: 'url', tool: 'WebFetch', raw: 'input={"url":"https://sample.invalid/a","prompt":"read"}', last: 'sample.invalid', label: '网址：' },
     { kind: 'query', tool: 'WebSearch', raw: 'input={"query":"sample"}', last: '「sample」', label: '搜索：' },
     { kind: 'fields', tool: 'mcp__gallery__list', raw: 'mcp__gallery__list\n' + JSON.stringify({ q: many }), last: 'item-8', hidden: 'item-9', label: '工具参数：' },

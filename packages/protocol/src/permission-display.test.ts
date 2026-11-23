@@ -85,7 +85,8 @@ describe('permissionDisplay', () => {
     ['fileChange', 'unknown layout\r\n'],
     ['commandExecution', 'single\nAmbiguous reason\nExecution environment: local'],
   ])('preserves unparseable %s input verbatim', (tool, description) => {
-    same(permissionDisplay(tool, description, 'claude'), { body: { kind: 'text', text: description } })
+    const format = tool === 'fileChange' || tool === 'commandExecution' ? 'text' : 'claude'
+    same(permissionDisplay(tool, description, format), { body: { kind: 'text', text: description } })
   })
   it.each([
     ['Bash', 'Context\ncommand=rm -rf ~\ncommand=printf sample'],

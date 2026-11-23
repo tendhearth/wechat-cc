@@ -26,7 +26,10 @@ function operationLabel(body: Body, cwd: string, lang: Lang): string {
       after: body.changes.reduce((n, edit) => n + approvalLines(edit.after).length, 0),
     }), body.replaceAll && t(lang, 'approval.replaceAll')].filter(Boolean).join(', ')
     case 'write': return t(lang, 'approval.readWrite', { path: path(body.path), n: approvalLines(body.content).length })
-    case 'patch': return t(lang, 'approval.readPatch', { n: body.files.length, paths: body.files.map(file => `${path(file.path)}, ${changeLabel(file.change, lang, true)}`).join('; ') })
+    case 'patch': return t(lang, 'approval.readPatch', {
+      n: body.files.length,
+      paths: body.files.map(file => `${path(file.path)}, ${changeLabel(file.change, lang, true)}`).join(lang === 'zh-Hans' ? '。' : '. '),
+    })
     case 'url': return [t(lang, 'approval.readUrl', { value: body.url }), body.prompt && t(lang, 'approval.fetchPrompt', { prompt: body.prompt })].filter(Boolean).join(', ')
     case 'query': return t(lang, 'approval.readQuery', { value: body.query })
     case 'fields': return t(lang, 'approval.readFields', { value: readFields(body.fields) })

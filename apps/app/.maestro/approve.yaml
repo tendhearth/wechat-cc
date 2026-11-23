@@ -80,28 +80,29 @@ appId: com.tendhearth.app
 - takeScreenshot: approve-kinds-3
 - scrollUntilVisible:
     element:
-      id: approval-example-codex-command
+      id: approval-example-text
     direction: DOWN
-    centerElement: true
 - takeScreenshot: approve-kinds-4
 - scrollUntilVisible:
     element:
-      id: approval-example-codex-file
+      id: approval-example-codex-command
     direction: DOWN
     centerElement: true
 - takeScreenshot: approve-kinds-5
 - scrollUntilVisible:
     element:
-      id: approval-example-text
-    direction: DOWN
-- scrollUntilVisible:
-    element:
-      id: approval-example-terminal-command
+      id: approval-example-codex-file
     direction: DOWN
     centerElement: true
 - takeScreenshot: approve-kinds-6
 - scrollUntilVisible:
     element:
+      id: approval-example-terminal-command
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: approve-kinds-7
+- scrollUntilVisible:
+    element:
       id: terminal-detail-pending-truncated
     direction: DOWN
-- takeScreenshot: approve-kinds-7
+- takeScreenshot: approve-kinds-8

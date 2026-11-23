@@ -20,7 +20,8 @@ export function usePermissionSource(scroll: RefObject<ScrollView | null> | undef
   const scrollToSource = () => {
     if (!jump.current) return
     const target = scroll?.current as ScrollWithContent | null | undefined
-    const content = target?.getInnerViewRef()
+    if (!target) return
+    const content = target.getInnerViewRef?.()
     if (content) anchor.current?.measureLayout(content, (_x, y) => {
       if (jump.current) {
         jump.current = false

@@ -29,7 +29,7 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
     const { current: executor, name: executorName } = directHeaderView(detail, 'en')
     const format = executor === 'claude' ? 'claude' : executor === 'openai' ? 'api' : 'text'
     const display = permissionDisplay(p.tool, p.description, format)
-    const workingDir = (display.body.kind === 'command' ? display.body.cwd : undefined) ?? detail.task?.path ?? detail.matter.projectPath ?? ''
+    const workingDir = (display.body.kind === 'command' ? display.body.cwd : undefined) || detail.task?.path || detail.matter.projectPath || ''
     const model = ex?.source === 'model' ? ex : undefined
     return {
       kind: 'card', requestId: p.id, runId, tool: p.tool, display, workingDir, executor, executorName,

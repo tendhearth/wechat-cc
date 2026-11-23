@@ -29,6 +29,10 @@ describe('approvalView', () => {
     expect(v.display.body.command === base.permissions[0].description.slice('command='.length) && v.rawFull === base.permissions[0].description).toBe(true)
     expect(v.workingDir === base.task.path).toBe(true)
   })
+  it('uses the matter directory when the task path is empty', () => {
+    const card = approvalView({ ...base, task: { ...base.task, path: '' } }, {})
+    expect(card.kind === 'card' && card.workingDir === base.matter.projectPath).toBe(true)
+  })
   it('没有模型标题 ⇒ 显示操作对应的问题', () => {
     const v = approvalView(base, {})
     expect(v).toMatchObject({ kind: 'card', title: '', what: '', scope: '', effect: '' })
