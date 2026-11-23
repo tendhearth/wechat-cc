@@ -14,7 +14,9 @@ appId: com.tendhearth.app
     visible:
       id: direct-title
     timeout: 10000
-- assertVisible: '在跟 Codex 说.*|Talking to Codex.*'
+- assertVisible:
+    id: direct-title
+    text: '整理下周出差安排|Plan next week’s trip'
 - tapOn:
     id: direct-input
 - inputText: 'Please keep the existing draft and continue.'

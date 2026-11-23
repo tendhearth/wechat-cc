@@ -12,7 +12,9 @@ import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { IconButton } from '../../ui/IconButton'
 import { Dot } from '../../ui/Dot'
 import { MessageText } from '../../ui/Markdown'
-import { radius, space } from '../../ui/tokens'
+import { MessageBubble } from '../../ui/MessageBubble'
+import { ReplySpeaker } from '../../ui/ReplySpeaker'
+import { componentAppearance, radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
@@ -195,16 +197,20 @@ export default function SessionReader() {
         ) : null}
         {state === 'ok' && window === 'recent' && confirmedWindow !== 'recent' ? <Txt testID="session-window-unconfirmed" role="meta" tone="inkSoft">{t(lang, 'sessions.recentUnavailable')}</Txt> : null}
         {msgs.map((m, i) => {
-          const mine = m.role === 'user'
-          return (
-            <View
-              key={`${m.id}:${i}`}
-              testID={`session-message-${i}`}
-              style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: mine ? '88%' : '100%', paddingVertical: space.m, gap: space.s }}
-            >
-              <Txt role="caption" tone="inkSoft">{mine ? t(lang, 'chat.me') : rowProvider ? providerName(rowProvider, names) : t(lang, 'cc.label')}</Txt>
-              <MessageText role={mine ? 'user' : 'assistant'} text={m.text} />
-              {m.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
+          const key = `${m.id}:${i}`
+          const testID = `session-message-${i}`
+          const truncated = m.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null
+          return m.role === 'user' ? (
+            <MessageBubble key={key} testID={testID} mine>
+              <ReplySpeaker role="me" reply={{}} />
+              <MessageText role="user" typeRole={componentAppearance.message.userRole} text={m.text} />
+              {truncated}
+            </MessageBubble>
+          ) : (
+            <View key={key} testID={testID} style={{ alignSelf: 'flex-start', maxWidth: '100%', paddingVertical: space.m, gap: space.s }}>
+              <Txt role="caption" tone="inkSoft">{rowProvider ? providerName(rowProvider, names) : t(lang, 'cc.label')}</Txt>
+              <MessageText role="assistant" text={m.text} />
+              {truncated}
             </View>
           )
         })}

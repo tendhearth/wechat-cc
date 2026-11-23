@@ -19,3 +19,6 @@ navigation and secondary entry icons share the same 1.65 logical stroke width.
 
 App names map to Lucide names in Icon.tsx: stop = square, close = x, help = circle-help,
 refresh = refresh-cw, alert = circle-alert; remaining names use the corresponding kebab-case names.
+
+The App's globe and lock use locally drawn outlines with the same 24pt canvas,
+1.65pt strokes, rounded ends and transparent 4× PNG export.

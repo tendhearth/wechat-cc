@@ -22,6 +22,7 @@ import { IconButton } from '../ui/IconButton'
 import { BusyIndicator } from '../ui/motion'
 import { StatusHint } from '../ui/StatusHint'
 import { MessageText } from '../ui/Markdown'
+import { MessageBubble } from './MessageBubble'
 import { ReplyAttachments, ReplyProcess } from '../ui/ReplyExtras'
 import { ReplySpeaker } from './ReplySpeaker'
 import { replyProvider } from '../view/reply-speaker'
@@ -307,7 +308,6 @@ export default function Chat() {
 
 // 用户消息用浅底，CC 回复为透明正文；左右与留白区分说话人,文件先于可展开的执行过程。
 function ChatBubble({ b, providers, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; providers?: ChatModelViewT['providers']; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
-  const { c } = useTheme()
   const appearance = componentAppearance.message
   const me = b.side === 'me'
   if (b.state === 'thinking') return <Thinking lang={lang} />
@@ -315,18 +315,11 @@ function ChatBubble({ b, providers, lang, canRetry, onRetry, onDismiss, checking
   // 只有附件的回复不画空文字区;过程仍可展开查看。
   return (
     <View testID={`chat-message-${b.key}`} style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
-      {hasBubbleText(b) ? <View
-        testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'}
-        style={{
-          maxWidth: '88%', paddingVertical: appearance.paddingY, paddingHorizontal: me ? appearance.paddingX : 0, gap: space.s,
-          borderRadius: appearance.radius, backgroundColor: me ? c[appearance.userBackground] : appearance.replyBackground,
-          opacity: b.state === 'failed' ? 0.8 : 1,
-        }}
-      >
+      {hasBubbleText(b) ? <MessageBubble testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'} mine={me} failed={b.state === 'failed'}>
         <ReplySpeaker role={b.side} reply={b} providers={providers} />
         <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} voice={!me && b.speaker !== 'notice' && !replyProvider(b.side, b) ? 'cc' : undefined} text={b.text} />
         {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
-      </View> : null}
+      </MessageBubble> : null}
       {!hasBubbleText(b) ? <ReplySpeaker role={b.side} reply={b} providers={providers} showFallback={false} /> : null}
       {b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}
       {b.originalUnavailable ? <Txt testID="chat-original-unavailable" role="meta" tone="inkSoft" style={{ maxWidth: '88%' }}>{t(lang, 'chat.originalUnavailable')}</Txt> : null}

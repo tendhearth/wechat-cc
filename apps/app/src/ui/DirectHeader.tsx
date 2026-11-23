@@ -13,7 +13,7 @@ export function DirectHeader({view,onMore,onProject}: {view:DirectHeaderView;onM
     <View style={{flexDirection:'row',alignItems:'center',gap:space.s}}>
       <Pressable testID="topbar-back" accessibilityRole="button" accessibilityLabel="CC" onPress={()=>router.canGoBack()?router.back():router.replace('/')} style={{minHeight:44,minWidth:44,justifyContent:'center'}}><Txt role="meta">‹ CC</Txt></Pressable>
       <AgentAvatar id={view.current} size={36} border="ink" />
-      <View style={{flex:1}}><Txt testID="direct-title" role="item" content="user" numberOfLines={1}>{view.title}</Txt>
+      <View style={{flex:1}}><Txt testID="direct-title" role="item" content="user" numberOfLines={view.titleLines}>{view.title}</Txt>
         {onProject?<Pressable testID="direct-project" accessibilityRole="button" onPress={onProject} style={{minHeight:44,justifyContent:'center'}}><Txt role="caption" tone="inkSoft">{view.subtitle}</Txt></Pressable>:<Txt role="caption" tone="inkSoft">{view.subtitle}</Txt>}
       </View>
       <IconButton name="more" label="⋯" testID="direct-more" onPress={onMore} />

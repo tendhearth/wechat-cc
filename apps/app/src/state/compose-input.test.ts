@@ -11,7 +11,7 @@ import { makeLiveBackend } from '../backend/live'
 import { DETAIL, ID, OPTIONS, RUN, WB_TASK, RECEIPT } from '../backend/fixtures'
 import type { Backend, MatterInputT } from '../backend/types'
 import { clearDrafts, getDraft, setDraft } from '../state/drafts'
-import { withProviders, type TestCtx } from './providers.test-support'
+import { withLang, withProviders, type TestCtx } from './providers.test-support'
 import { makeInputJournal } from './input-journal'
 import { matterInputState, matterInputs } from '../state/matter-inputs'
 import Compose from '../app/compose'
@@ -178,6 +178,18 @@ async function mount(component: () => ReactNode = Compose) {
 function gate<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r }); return { promise, resolve } }
 
 describe('real LiveBackend + native compose inputs', () => {
+  it.each([
+    ['zh-Hans', '图片', '添加图片'],
+    ['en', 'Photo', 'Add photo'],
+  ] as const)('labels the plus-icon image control in %s', async (lang, label, spoken) => {
+    harness()
+    const ui = await mount(() => withLang(lang, createElement(Compose)))
+    const button = ui.byId('compose-add-image')
+    expect(button.textContent).toBe(label)
+    expect(button.getAttribute('aria-label')).toBe(spoken)
+  })
+
+
   it('sends a running steer supplement to the current run and displays its actual receipt without claiming completion', async () => {
     const h = harness()
     const ui = await mount()

@@ -1,5 +1,6 @@
 import { AgentAvatars } from './AgentAvatars'
 import { progressView } from '../view/progress'
+import { phoneTime } from '../view/phone-time'
 import { useRouter } from 'expo-router'
 import { View } from 'react-native'
 import { useLang } from '../i18n/useLang'
@@ -19,8 +20,9 @@ import { space } from './tokens'
 export function DelegationMessage({ row, historical = false, synced, live = false }: { row: HomeRow; historical?: boolean; synced: boolean; live?: boolean }) {
   const lang = useLang(), router = useRouter(), { backend } = useBackendCtx()
   const zh = lang === 'zh-Hans'
+  const when = phoneTime(row.updatedAt, Date.now(), lang)
   return <View testID={`delegation-${row.source}-${row.id}`} style={{ gap: space.xs }}>
-    <Txt role="caption" tone="inkSoft">{historical ? (zh ? '以前交办的事' : 'Previously delegated') : 'CC'} · {new Date(row.updatedAt).toLocaleString(lang)}</Txt>
+    <Txt role="caption" tone="inkSoft">{historical ? (zh ? '以前交办的事' : 'Previously delegated') : 'CC'}{when ? ` · ${when}` : ''}</Txt>
     {row.agents.length ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}><AgentAvatars ids={row.agents} names={row.agentNames} size={18} /><Txt role="meta" tone="inkSoft">{agentsLabel(row.agents, row.agentNames)}</Txt></View> : null}
     <MatterRow row={row} fetchTitle onOpen={() => { rememberReference(backend, row.id, row.source); router.push(row.href) }} />
     {live && row.source === 'matter' ? <ReferenceProgress row={row} /> : null}
