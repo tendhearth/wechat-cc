@@ -92,8 +92,8 @@ describe('native chat feedback', () => {
     expect(JSON.parse(cc.getAttribute('data-style')!).backgroundColor).toBe('transparent')
     const textStyle=(node:HTMLElement,text:string)=>JSON.parse([...node.querySelectorAll('span')].find(n=>n.textContent===text)!.getAttribute('data-style')!)
     expect(textStyle(me,'我的消息').fontSize).toBe(typeScale.bubble.phone)
-    // CC 的回复用它自己的字,比正文大一档(桌面 15 → 18.5 的比例)
-    expect(textStyle(cc,'CC 的回复')).toMatchObject({ fontFamily: 'THPenHand-Regular', fontSize: 19.5 })
+    // CC 的回复用它自己的字;手写字字面小,放大到 18 看起来和正文一样大
+    expect(textStyle(cc,'CC 的回复')).toMatchObject({ fontFamily: 'THPenHand-Regular', fontSize: 18 })
     expect(JSON.parse(byId('now-cc').getAttribute('data-style')!)).toMatchObject({minWidth:44,minHeight:44})
   })
 

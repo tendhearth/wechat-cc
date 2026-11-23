@@ -1,40 +1,27 @@
 import { typeScale, type TypeRole } from '@wechat-cc/design-tokens'
 
-export type TextVoice = 'cc'
+/** cc:CC 自己说的、写的话,用它的手写字。brand:品牌的字标(欢迎页上的名字),留原来的衬线字。别的一律系统字。 */
+export type TextVoice = 'cc' | 'brand'
 
-// 手写字字面偏小，沿用桌面 15 → 18.5 的比例，取半点并按角色放开行高。
-// 手机回复 16 → 19.5，审批卡上 CC 的意见 13 → 16。
-const CC_VOICE_SCALE = 18.5 / 15
+// 手写字的字面比系统字小一圈:同一个角色下放大 1.125 倍(正文 16 → 18,小字 13 → 14.5),看起来和正文一样大。
+// 桌面是 15 → 18.5,有意比正文大;手机一行只有十几个字,再大,长一点的回复就太碎。
+const CC_VOICE_SCALE = 1.125
 const CC_VOICE_FAMILY = 'THPenHand-Regular'
 
-export function phoneFont(role: TypeRole | 'code', { content = 'ui', text, voice }: {
-  content?: 'ui' | 'user'; text?: string; voice?: TextVoice
-} = {}) {
+/** 字体只看角色和「谁的话」,不看文字内容。 */
+export function phoneFont(role: TypeRole | 'code', { content = 'ui', voice }: { content?: 'ui' | 'user'; voice?: TextVoice } = {}) {
   if (role === 'code') return { fontFamily: 'mono', fontSize: 13, lineHeight: 19, letterSpacing: 0 }
   const s = typeScale[role]
-  // 顶栏的普通标题也沿用 wordmark 的字号阶梯，只有字标本身保留原字体。
-  const wordmark = role === 'wordmark' && content === 'ui' && text === 'Tendhearth'
-  const hand = voice === 'cc' && !wordmark
+  const brand = voice === 'brand' && content === 'ui'
+  const hand = voice === 'cc'
   const fontSize = hand ? Math.round(s.phone * CC_VOICE_SCALE * 2) / 2 : s.phone
   return {
-    fontFamily: wordmark ? 'THSerif4-Medium' : hand ? CC_VOICE_FAMILY : undefined,
-    ...(s.weight === 'medium' && !wordmark && !hand ? { fontWeight: '500' as const } : {}),
+    fontFamily: brand ? (s.weight === 'medium' ? 'THSerif4-Medium' : 'THSerif4-Regular') : hand ? CC_VOICE_FAMILY : undefined,
+    ...(s.weight === 'medium' && !brand && !hand ? { fontWeight: '500' as const } : {}),
     fontSize,
     lineHeight: Math.round(fontSize * s.lineHeight),
     letterSpacing: s.phone * s.tracking,
   }
-}
-
-/** Txt 的 children 里能读出的纯文本(字符串 / 数字 / 它们的数组);有别的节点 ⇒ undefined(不知道内容)。 */
-export function plainText(children: unknown): string | undefined {
-  if (typeof children === 'string' || typeof children === 'number') return String(children)
-  if (children === null || children === undefined || typeof children === 'boolean') return ''
-  if (Array.isArray(children)) {
-    let out = ''
-    for (const ch of children) { const s = plainText(ch); if (s === undefined) return undefined; out += s }
-    return out
-  }
-  return undefined
 }
 
 /** 字体没好也没错 ⇒ 等;好了或出错 ⇒ 放行(出错时 fontFamily 找不到,iOS / Android 退回系统无衬线,绝不卡住页面)。 */

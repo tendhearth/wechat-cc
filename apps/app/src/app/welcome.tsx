@@ -27,7 +27,7 @@ export default function Welcome() {
       <ScrollView testID="welcome-scroll" contentContainerStyle={{ flexGrow: 1 }}>
       <View style={{ flexGrow: 1, paddingVertical: space.xl, justifyContent: 'center', alignItems: 'center', paddingHorizontal: space.xl, gap: space.l }}>
         <CCFigure size={144} presence={ccPresence(conn, { demo })} />
-        <Txt role="display" accessibilityRole="header" style={{ textAlign: 'center' }}>{st(lang, 'welcome')}</Txt>
+        <Txt role="display" voice="brand" accessibilityRole="header" style={{ textAlign: 'center' }}>{st(lang, 'welcome')}</Txt>
         <Txt role="body" tone="inkSoft" style={{ textAlign: 'center' }}>{st(lang, 'welcomeBody')}</Txt>
         {staleNotice ? <Txt testID="welcome-stale" role="body" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'welcome.stale')}</Txt> : null}
       </View>

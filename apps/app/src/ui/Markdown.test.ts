@@ -84,8 +84,8 @@ describe('native Markdown reader', () => {
     const text = '## 标题\n\n> **正文** `pwd`\n\n```sh\nls\n```'
     render(createElement(MessageText, { role: 'assistant', text, voice: 'cc' }))
     const stylesFor = (value: string) => native.texts.flatMap((node, i) => node.value === value ? [native.textStyles[i]] : [])
-    expect(stylesFor('标题')).toEqual([expect.objectContaining({ fontFamily: 'THPenHand-Regular', fontSize: 24.5 })])
-    expect(stylesFor('正文')).toEqual([expect.objectContaining({ fontFamily: 'THPenHand-Regular', fontSize: 19.5 })])
+    expect(stylesFor('标题')).toEqual([expect.objectContaining({ fontFamily: 'THPenHand-Regular', fontSize: 22.5 })])
+    expect(stylesFor('正文')).toEqual([expect.objectContaining({ fontFamily: 'THPenHand-Regular', fontSize: 18 })])
     for (const code of ['pwd', 'ls']) expect(stylesFor(code)).toEqual([expect.objectContaining({ fontFamily: 'Menlo', fontSize: 13 })])
   })
 
