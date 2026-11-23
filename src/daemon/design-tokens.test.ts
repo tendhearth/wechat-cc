@@ -32,7 +32,8 @@ describe('one design language across the owner-facing web pages', () => {
       '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", "Segoe UI", "Noto Sans SC", sans-serif',
     ])
     expect([...css.matchAll(/--hand\s*:\s*([^;]+);/g)].map(m => m[1])).toEqual([
-      '"Kaiti SC", "STKaiti", "KaiTi", serif',
+      // 楷体在手机浏览器里通常没有:没有就落回正文的无衬线,不落到 serif(中文黑体 + 英文 Times 混排)
+      '"Kaiti SC",STKaiti,KaiTi,var(--font)',
     ])
     expect(css).toMatch(/(?:^|[}\s])body\s*\{[^}]*font-family:\s*var\(--font\)/)
     const handRules: string[] = []

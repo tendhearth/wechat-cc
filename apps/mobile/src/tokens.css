@@ -5,5 +5,5 @@
   --danger:var(--th-bad); --wash:rgba(42,38,34,.05); --scene:var(--th-ground);
   --r-s:10px; --r-m:14px; --r-l:16px; --r-pill:999px;
   --font:-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", "Segoe UI", "Noto Sans SC", sans-serif;
-  --hand:"Kaiti SC", "STKaiti", "KaiTi", serif; --hand-ink:var(--th-ink-soft);
+  --hand:"Kaiti SC",STKaiti,KaiTi,var(--font); --hand-ink:var(--th-ink-soft);
 }
