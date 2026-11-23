@@ -515,6 +515,68 @@ for (const leaveNotebook of [false, true]) {
   })
 }
 
+test('刷新后回信还在滚动区下方，滚到眼前才确认并收起信', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 1280, height: 820 })
+  const owners = Array.from({ length: 40 }, (_, index) => row(1000 + index, 'owner', 'fixture', pageDay))
+  const reply = row(1050, 'cc', 'fixture', pageDay, owners[0]!.id)
+  const { entries } = await mockNotebook(page, { [pageDay]: owners })
+  const confirmed: string[][] = []
+  await page.route(seenPath, route => {
+    confirmed.push(route.request().postDataJSON().ids)
+    return route.fulfill({ json: { ok: true } })
+  })
+  await page.route(mailPath, route => route.fulfill({ json: entries[pageDay]!.includes(reply) && !confirmed.length
+    ? { ok: true, unseen: true, day: pageDay } : emptyMail }))
+
+  await page.goto(shimUrl)
+  await expect(page.locator('#dash-global-rail')).toBeVisible()
+  await clickNav(page, 'notebook')
+  await expect(page.locator('.notebook-entry[data-author="owner"]')).toHaveCount(owners.length)
+  const scroll = page.locator('.notebook-scroll')
+  await scroll.evaluate(node => { node.scrollTop = 0 })
+  entries[pageDay]!.push(reply)
+  await page.clock.fastForward(60_000)
+  const replyRow = page.locator('.notebook-entry[data-author="cc"]')
+  await expect(replyRow).toHaveCount(1)
+  await expect(replyRow).not.toBeInViewport()
+  await page.clock.runFor(100)
+  const envelope = page.getByRole('button', { name: mailName, exact: true })
+  await expect(envelope).toBeVisible()
+  await expect(page.locator(mailDot)).toBeVisible()
+  expect(confirmed).toEqual([])
+
+  await scroll.evaluate(node => { node.scrollTop = node.scrollHeight })
+  await expect(replyRow).toBeInViewport({ ratio: 0.5 })
+  await expect(envelope).toBeHidden()
+  await expect(page.locator(mailDot)).toBeHidden()
+  expect(confirmed).toEqual([[reply.id]])
+})
+
+test('800 像素宽的本子确认眼前的回信，仍不查询未读', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 800, height: 820 })
+  const owner = row(1060, 'owner', 'fixture', pageDay)
+  const reply = row(1061, 'cc', 'fixture', pageDay, owner.id)
+  await mockNotebook(page, { [pageDay]: [owner, reply] })
+  let checks = 0
+  await page.route(mailPath, route => {
+    checks++
+    return route.fulfill({ json: emptyMail })
+  })
+  await page.route(seenPath, route => route.fulfill({ json: { ok: true } }))
+
+  await page.goto(shimUrl)
+  await expect(page.locator('#dash-global-rail')).toBeVisible()
+  const seen = page.waitForResponse(seenPath)
+  await clickNav(page, 'notebook')
+  await expect(page.locator('.notebook-entry[data-author="cc"]')).toBeInViewport({ ratio: 0.5 })
+  const response = await seen
+  expect(response.ok()).toBe(true)
+  expect(response.request().method()).toBe('POST')
+  expect(response.request().postDataJSON()).toEqual({ ids: [reply.id] })
+  await page.clock.fastForward(61_000)
+  expect(checks).toBe(0)
+})
+
 test('宽窗口没有回信就不摆信，写成功后每 20 秒查一次', async ({ page, shimUrl }) => {
   await page.setViewportSize({ width: 1280, height: 820 })
   const { reads } = await mockNotebook(page)

@@ -17,7 +17,7 @@ const DEFAULT_PEN = /** @type {const} */ ({ font: 'kai', ink: 'blueBlack', reaso
 /**
  * @param {HTMLElement} host
  * @param {Parameters<typeof callNotebook>[0]} transport
- * @param {Pick<ReturnType<typeof import("./notebook-mail.js").mountNotebookMail>, "canConfirm" | "markSeen" | "wrote">} [mail]
+ * @param {Pick<ReturnType<typeof import("./notebook-mail.js").mountNotebookMail>, "markSeen" | "wrote">} [mail]
  */
 export function mountNotebook(host, transport, mail) {
   const input = /** @type {HTMLTextAreaElement} */ (host.querySelector('#notebook-write'))
@@ -85,17 +85,55 @@ export function mountNotebook(host, transport, mail) {
   let statusTimer = 0
   let seenScheduled = false
   let seenInFlight = false
-  /** @type {string[]} */
-  let renderedReplies = []
+  /** @type {Map<Element, string>} */
+  let renderedReplies = new Map()
   const confirmed = new Set()
+  const exposedReplies = new Set()
+  /** @type {Set<Element>} */
+  const observedReplies = new Set()
+  const replyObserver = mail && typeof IntersectionObserver === 'function'
+    ? new IntersectionObserver(entries => {
+      if (!canConfirm()) return
+      for (const entry of entries) {
+        const id = renderedReplies.get(entry.target)
+        if (id && entry.isIntersecting && entry.intersectionRatio >= 0.5) exposedReplies.add(id)
+      }
+      scheduleSeen()
+    }, { root: scroll, threshold: 0.5 })
+    : undefined
 
   function canConfirm() {
-    return active && !host.hidden && document.body.dataset.pane === 'notebook'
-      && document.visibilityState === 'visible' && mail?.canConfirm()
+    return !!mail && active && !host.hidden && document.body.dataset.pane === 'notebook'
+      && document.documentElement.dataset.mode === 'dashboard'
+      && document.visibilityState === 'visible'
+  }
+
+  function stopObservingReplies() {
+    replyObserver?.disconnect()
+    replyObserver?.takeRecords()
+    observedReplies.clear()
+  }
+
+  function observeReplies() {
+    if (!replyObserver || !canConfirm()) return
+    for (const node of observedReplies) {
+      if (renderedReplies.has(node)) continue
+      replyObserver.unobserve(node)
+      observedReplies.delete(node)
+    }
+    for (const [node, id] of renderedReplies) {
+      if (confirmed.has(id) || observedReplies.has(node)) continue
+      observedReplies.add(node)
+      replyObserver.observe(node)
+    }
+  }
+
+  function repliesToConfirm() {
+    return [...renderedReplies.values()].filter(id => !confirmed.has(id) && (!replyObserver || exposedReplies.has(id)))
   }
 
   function scheduleSeen() {
-    if (seenScheduled || seenInFlight || !canConfirm() || renderedReplies.every(id => confirmed.has(id))) return
+    if (seenScheduled || seenInFlight || !canConfirm() || !repliesToConfirm().length) return
     seenScheduled = true
     // Give the current rows a frame to paint. A render or pane change in
     // between invalidates that frame and schedules a new confirmation.
@@ -110,7 +148,7 @@ export function mountNotebook(host, transport, mail) {
 
   async function confirmRenderedReplies() {
     if (!mail || !canConfirm()) return
-    const ids = renderedReplies.filter(id => !confirmed.has(id)).slice(0, 50)
+    const ids = repliesToConfirm().slice(0, 50)
     if (!ids.length) return
     const selected = day
     seenInFlight = true
@@ -284,6 +322,8 @@ export function mountNotebook(host, transport, mail) {
     const now = Date.now()
     let nextStatus = Infinity
     const retain = new Set()
+    /** @type {Map<Element, string>} */
+    const replies = new Map()
     let position = list.firstChild
     for (const [index, entry] of entries.entries()) {
       const key = entry.clientId ?? entry.id
@@ -306,6 +346,7 @@ export function mountNotebook(host, transport, mail) {
       if (node !== position) list.insertBefore(node, position)
       position = node.nextSibling
       rows.set(key, { node, signature })
+      if (entry.author === 'cc' && entry.refId !== null) replies.set(node, entry.id)
     }
     for (const [key, row] of rows) {
       if (retain.has(key)) continue
@@ -320,7 +361,8 @@ export function mountNotebook(host, transport, mail) {
     }
     window.clearTimeout(statusTimer)
     if (Number.isFinite(nextStatus)) statusTimer = window.setTimeout(render, nextStatus)
-    renderedReplies = entries.filter(entry => entry.author === 'cc' && entry.refId !== null).map(entry => entry.id)
+    renderedReplies = replies
+    observeReplies()
     scheduleSeen()
   }
 
@@ -375,6 +417,8 @@ export function mountNotebook(host, transport, mail) {
   function selectDay(selected) {
     day = selected
     confirmed.clear()
+    exposedReplies.clear()
+    stopObservingReplies()
     view++
     rows.clear()
     list.replaceChildren()
@@ -474,7 +518,12 @@ export function mountNotebook(host, transport, mail) {
 
   const observer = new ResizeObserver(resizeInput)
   observer.observe(scroll)
-  document.addEventListener('visibilitychange', scheduleSeen)
+  document.addEventListener('visibilitychange', () => {
+    // Reobserve on return so even an unchanged intersection is reported again.
+    stopObservingReplies()
+    observeReplies()
+    scheduleSeen()
+  })
   window.addEventListener('online', () => {
     if (initialized) void retry()
     if (active) void refresh()
@@ -523,6 +572,7 @@ export function mountNotebook(host, transport, mail) {
       if (!active) return
       active = false
       view++
+      stopObservingReplies()
       window.clearInterval(pollTimer)
       window.clearTimeout(statusTimer)
     },

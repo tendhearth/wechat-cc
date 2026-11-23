@@ -89,7 +89,6 @@ export function mountNotebookMail(transport, open) {
       render()
     },
     day: () => enabled && !document.documentElement.hasAttribute('data-desk-collapsed') ? day : undefined,
-    canConfirm: () => enabled,
     /** @param {string[]} ids */
     async markSeen(ids) {
       const result = /** @type {{ ok?: boolean } | null} */ (await v1(transport, V1.notebook.seen, { body: { ids } }))
