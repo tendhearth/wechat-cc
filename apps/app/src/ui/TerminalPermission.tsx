@@ -15,10 +15,10 @@ export function TerminalPermission({ pending, source, projectPath, scroll }: {
 }) {
   const lang = useLang()
   const { c } = useTheme()
-  const { display, raw, cwd, action, summaryTruncated, hasFullSource } = terminalPermission(pending, source, lang)
+  const { display, raw, received, summary, cwd, action, summaryTruncated } = terminalPermission(pending, source, lang)
   const sheet = usePermissionSource(scroll)
-  const warning = summaryTruncated ? 'terminal.pendingTruncated'
-    : display?.truncated ? (hasFullSource ? 'approval.previewTruncated' : 'terminal.pendingTruncated') : null
+  const summarySheet = usePermissionSource(scroll)
+  const warning = raw === undefined && (summaryTruncated || display?.truncated)
 
   return <View style={{ gap: space.s }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
@@ -27,8 +27,13 @@ export function TerminalPermission({ pending, source, projectPath, scroll }: {
       </View>
       <Txt testID="terminal-detail-pending-actor" role="small" tone="inkSoft" style={{ flex: 1 }}>{action}</Txt>
     </View>
-    {display ? <PermissionOperation testID="terminal-detail-pending" display={display} projectPath={projectPath} cwd={cwd} lang={lang} open={hasFullSource ? sheet.openFromPreview : undefined} /> : null}
-    {warning ? <Txt testID="terminal-detail-pending-truncated" role="small" tone="inkSoft">{t(lang, warning)}</Txt> : null}
-    {hasFullSource ? <PermissionSource source={raw} projectPath={projectPath} cwd={cwd} lang={lang} sheet={sheet} /> : null}
+    {display?.note ? <Txt selectable role="small" tone="inkSoft" content="user">{display.note}</Txt> : null}
+    {display ? <PermissionOperation testID="terminal-detail-pending" display={display} projectPath={projectPath} cwd={cwd} lang={lang}
+      moreLabel={raw === undefined ? t(lang, 'terminal.expandReceived') : undefined}
+      open={raw !== undefined || received !== undefined ? sheet.openFromPreview : summary ? summarySheet.openFromPreview : undefined} /> : null}
+    {warning ? <Txt testID="terminal-detail-pending-truncated" role="small" tone="inkSoft">{t(lang, 'terminal.pendingTruncated')}</Txt> : null}
+    {raw !== undefined || received !== undefined ? <PermissionSource source={raw ?? received ?? ''} projectPath={projectPath} cwd={cwd}
+      lang={lang} sheet={sheet} kind={raw === undefined ? 'received' : 'original'} /> : null}
+    {summary ? <PermissionSource source={summary} projectPath={projectPath} cwd={cwd} lang={lang} sheet={summarySheet} kind="summary" /> : null}
   </View>
 }

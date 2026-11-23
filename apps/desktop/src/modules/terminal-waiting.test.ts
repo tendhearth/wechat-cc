@@ -14,8 +14,8 @@ describe('terminalWaitingRows', () => {
       s({ session_id: 'x', status: 'running', pending: null }),
       s({ session_id: 'y', status: 'idle' }),
     ])).toEqual([
-      { id: 'ab12c3-full', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude', hash: 'k3x9z', tool: 'Bash', display: { body: { kind: 'command', command: 'npm publish' } }, summaryTruncated: false, raw: 'npm publish', projectPath: 'wechat-cc' },
-      { id: 'cd34e5-full', title: '要改 package.json', detail: 'melu', agent: 'codex', source: 'Codex', hash: null, tool: '', display: { body: { kind: 'text', text: '要改 package.json' } }, summaryTruncated: false, raw: '要改 package.json', projectPath: 'melu' },
+      { id: 'ab12c3-full', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude', hash: 'k3x9z', tool: 'Bash', display: { body: { kind: 'command', command: 'npm publish' } }, summaryTruncated: false, summary: 'npm publish', projectPath: 'wechat-cc' },
+      { id: 'cd34e5-full', title: '要改 package.json', detail: 'melu', agent: 'codex', source: 'Codex', hash: null, tool: '', display: { body: { kind: 'text', text: '要改 package.json' } }, summaryTruncated: false, summary: '要改 package.json', projectPath: 'melu' },
     ])
   })
 
@@ -37,9 +37,9 @@ describe('terminalWaitingRows', () => {
     const pending = { tool: 'Edit', summary: 'opaque…', since: 1, truncated: true, display, cwd: '/work/run' }
     const row = (over: Record<string, unknown>) => terminalWaitingRows([s({ cwd: '/work', pending: { ...pending, ...over } })])[0]
     expect(row({})).toMatchObject({ title: '想改 opaque…', display, cwd: '/work/run', projectPath: '/work', summaryTruncated: true })
-    expect(row({})?.raw).toBeUndefined()
+    expect(row({})?.raw === '/work/a\nBefore: "old"\nAfter: "new"').toBe(true)
     expect(row({ display: { ...display, truncated: true }, truncated: false })).toMatchObject({
-      display: { truncated: true }, summaryTruncated: false, raw: 'opaque…',
+      display: { truncated: true }, summaryTruncated: false, summary: 'opaque…',
     })
     expect(row({ display: { body: { kind: 'edit', changes: [] } }, cwd: 'relative' })).toMatchObject({
       display: { body: { kind: 'text', text: 'opaque…' }, truncated: true }, cwd: undefined, projectPath: '/work', summaryTruncated: true,

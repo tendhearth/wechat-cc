@@ -3,7 +3,8 @@ import type { PermissionPromptContext, ServiceDeps } from './service/ctx'
 import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../../adapters/workbench/permissions'
 import { PERMISSION_SNAPSHOT_NOTICE, permissionCwd } from '@wechat-cc/protocol'
 import {
-  normalizePermissionLines, permissionActionZh, permissionLines, permissionPatchLabel,
+  normalizePermissionLines, permissionActionZh, permissionEditPreview, permissionLines, permissionPatchLabel,
+  PERMISSION_NO_FINAL_NEWLINE_ZH, PERMISSION_WHITESPACE_NOTICE_ZH,
   permissionRelativePath, resolvePermissionDisplay,
 } from '../../../packages/protocol/src/permission-presentation'
 import type { PendingWorkbenchPermission } from '../../ports/workbench'
@@ -23,6 +24,7 @@ function renderWorkbenchPermission(title: string, permission: PendingWorkbenchPe
   const cwd = permissionCwd(permission.cwd)
   const path = (value: string) => permissionRelativePath(value, cwd ?? '')
   let complete = display.truncated !== true && !permission.scripts?.length
+  let whitespaceChange = false
   function diffPreview(lines: string[]) {
     const hidden = lines.length - DIFF_LINES
     if (hidden <= 0) return lines
@@ -36,10 +38,23 @@ function renderWorkbenchPermission(title: string, permission: PendingWorkbenchPe
     case 'command': content = [`$ ${body.command}`]; break
     case 'edit':
       action = `${who}改 ${path(body.path)}（${body.changes.length} 处）${body.replaceAll ? '（全部替换）' : ''}`
-      content = body.changes.flatMap(({ path: changePath, before, after }) => [
-        ...(changePath && changePath !== body.path ? [path(changePath)] : []),
-        ...diffPreview([...permissionLines(before).map(line => `- ${line}`), ...permissionLines(after).map(line => `+ ${line}`)]),
-      ])
+      content = body.changes.flatMap(({ path: changePath, before, after }) => {
+        const edit = permissionEditPreview(before, after)
+        whitespaceChange ||= edit.whitespaceChange
+        const lines = [
+          ...edit.before.map(line => `- ${line}`),
+          ...(edit.noFinalNewline === 'before' ? [PERMISSION_NO_FINAL_NEWLINE_ZH] : []),
+          ...edit.after.map(line => `+ ${line}`),
+          ...(edit.noFinalNewline === 'after' ? [PERMISSION_NO_FINAL_NEWLINE_ZH] : []),
+        ]
+        const markerHidden = lines.indexOf(PERMISSION_NO_FINAL_NEWLINE_ZH) >= DIFF_LINES
+        return [
+          ...(changePath && changePath !== body.path ? [path(changePath)] : []),
+          ...diffPreview(lines),
+          ...(markerHidden ? [`${edit.noFinalNewline === 'before' ? '修改前' : '修改后'}${PERMISSION_NO_FINAL_NEWLINE_ZH}`] : []),
+          ...(edit.whitespaceChange ? [PERMISSION_WHITESPACE_NOTICE_ZH] : []),
+        ]
+      })
       break
     case 'write':
       action = `${who}写 ${path(body.path)}`
@@ -63,7 +78,7 @@ function renderWorkbenchPermission(title: string, permission: PendingWorkbenchPe
   ].join('\n'))
   const message = permission.showSnapshotNotice && !text.includes(PERMISSION_SNAPSHOT_NOTICE)
     ? `${text}\n${PERMISSION_SNAPSHOT_NOTICE}` : text
-  return { message, complete }
+  return { message, complete: complete && !whitespaceChange, whitespaceChange }
 }
 
 /** The review and both WeChat approval entry points use the same message budget. */
@@ -75,11 +90,12 @@ export function wechatPermissionReview(title: string, permission: PendingWorkben
   const notice = permission.showSnapshotNotice ? `\n${PERMISSION_SNAPSHOT_NOTICE}` : ''
   const fallback = `任务 ${taskId}：${PERMISSION_TOO_LONG}${notice}\n可${deny}`
   if (permission.description.length > REQUEST_MAX) return { reply: fallback, blocked: PERMISSION_APPROVAL_TOO_LONG }
-  const { message, complete } = renderWorkbenchPermission(title, permission, context)
+  const { message, complete, whitespaceChange } = renderWorkbenchPermission(title, permission, context)
   if (message.length + controls.length > REQUEST_MAX) return { reply: fallback, blocked: PERMISSION_APPROVAL_TOO_LONG }
   if (complete) return { reply: message + controls }
   const reply = `${message}\n\n${PERMISSION_APPROVAL_INCOMPLETE}\n${deny}`
-  return { reply: reply.length <= REQUEST_MAX ? reply : fallback, blocked: PERMISSION_APPROVAL_INCOMPLETE }
+  const blocked = whitespaceChange ? `${PERMISSION_WHITESPACE_NOTICE_ZH}${PERMISSION_APPROVAL_INCOMPLETE}` : PERMISSION_APPROVAL_INCOMPLETE
+  return { reply: reply.length <= REQUEST_MAX ? reply : fallback, blocked }
 }
 
 function permissionPromptHeader(title: string, taskId: string) {

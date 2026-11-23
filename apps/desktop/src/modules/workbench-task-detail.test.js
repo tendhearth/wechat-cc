@@ -55,6 +55,18 @@ describe('task detail follows authoritative current state',()=>{
   expect(root.querySelector('.approval-meta').textContent).toBe('在 /work/verified')
   expect(root.querySelector('.wb-permission details .approval-source').textContent).toBe(permission.description)
  })
+ it('shows the executor note before the operation as plain text',()=>{
+  const note = '<img src=x onerror="window.approvalInjected=1">'
+  const permission = {id:'p',taskId:'A',tool:'Bash',description:'command=sample',createdAt:1,
+   display:{note,body:{kind:'command',command:'sample'}}}
+  const root = render(page({}, {permissions:[permission]}))
+  const reason = root.querySelector('.wb-permission .approval-panel').previousElementSibling
+  expect(reason.textContent === note).toBe(true)
+  expect(reason.className).toBe('approval-meta')
+  expect(reason.closest('details')).toBeNull()
+  expect(reason.childElementCount).toBe(0)
+  expect(root.querySelector('[data-action="allow-permission"]')).not.toBeNull()
+ })
  it.each([true, false])('keeps the snapshot notice visible before approval (script: %s)', script=>{
   const description = `command=bun run sample\n\n${PERMISSION_SNAPSHOT_NOTICE}`
   const permission = {id:'p',taskId:'A',tool:'Bash',description,createdAt:1,showSnapshotNotice:true,

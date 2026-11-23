@@ -8,10 +8,10 @@
 // 桌面上只写「项目」,哪家画成行尾的圆头像(2026-10-19,同手机 app;名字进读屏标签和小窗):
 // 「终端」和微信回话用的码是微信那头的东西,桌面用不上(2026-10-16)。
 import { V1, v1 } from '../daemon-client.js'
-import { normalizePermissionLines, permissionCwd, PermissionDisplaySchema, permissionDisplay } from '../generated/permission-display.js'
+import { normalizePermissionLines, permissionCwd, PermissionDisplaySchema, permissionDisplay, permissionOperationSource } from '../generated/permission-display.js'
 
 /** @typedef {{session_id:string,code:string,source:string,displayName?:string,status:string,project:string,cwd?:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null,display?:unknown,cwd?:unknown,truncated?:boolean}|null}} CliSession */
-/** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,tool:string,display?:import('./permission-operation.js').PermissionDisplay,cwd?:string,projectPath?:string,raw?:string,summaryTruncated?:boolean}} TerminalRow */
+/** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,tool:string,display?:import('./permission-operation.js').PermissionDisplay,cwd?:string,projectPath?:string,raw?:string,summary?:string,summaryTruncated?:boolean}} TerminalRow */
 
 const TITLE_MAX = 120
 const SUMMARY_LIMIT = 200
@@ -66,7 +66,8 @@ export function terminalWaitingRows(sessions) {
       title: terminalTitle(tool, titleSummary, source),
       detail, agent, source,
       hash, tool, display, summaryTruncated,
-      ...(summary && !summaryTruncated ? { raw: summary } : {}),
+      ...(structured && !structured.truncated ? { raw: permissionOperationSource(structured) }
+        : summary && !summaryTruncated ? { summary } : {}),
       cwd: permissionCwd(s.pending.cwd), projectPath: permissionCwd(s.cwd) ?? detail,
     })
   }

@@ -50,17 +50,22 @@ export function usePermissionSource(scroll: RefObject<ScrollView | null> | undef
   }
 }
 
-export function PermissionSource({ source, projectPath, cwd, lang, sheet }: {
+export function PermissionSource({ source, projectPath, cwd, lang, sheet, kind = 'original' }: {
   source: string; projectPath: string; cwd?: string | undefined; lang: Lang; sheet: ReturnType<typeof usePermissionSource>
+  kind?: 'original' | 'received' | 'summary'
 }) {
   const { anchor, expanded, onExpandedChange, onOpened } = sheet
   const directory = approvalDirectory(cwd, projectPath, lang)
+  const title = kind === 'summary' ? 'terminal.viewSummary' : kind === 'received' ? 'terminal.expandReceived' : 'approval.viewExact'
+  const testID = kind === 'original' ? 'approval-view-exact' : `terminal-view-${kind}`
+  const sourceID = kind === 'original' ? 'approval-exact-source' : `terminal-${kind}-source`
   return <View ref={anchor} collapsable={false}>
-    <Sheet quiet testID="approval-view-exact" title={t(lang, 'approval.viewExact')} expanded={expanded}
+    <Sheet quiet testID={testID} title={t(lang, title)} expanded={expanded}
       onExpandedChange={onExpandedChange} onOpened={onOpened}>
       <View style={{ gap: space.s }}>
+        {kind === 'summary' ? <Txt role="small" tone="inkSoft">{t(lang, 'terminal.summaryWhitespace')}</Txt> : null}
         <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
-          <Txt selectable accessible accessibilityRole="text" role="code" testID="approval-exact-source">{source}</Txt>
+          <Txt selectable accessible accessibilityRole="text" role="code" testID={sourceID}>{source}</Txt>
         </ScrollView>
         {directory ? <Txt selectable testID="approval-exact-cwd" role="small" tone="inkSoft">{directory}</Txt> : null}
       </View>

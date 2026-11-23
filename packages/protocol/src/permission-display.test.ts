@@ -1,11 +1,27 @@
 import { describe, expect, it } from 'vitest'
 import { CliPermissionRequest } from './desktop-api'
 import { boundedPermissionDisplay, permissionDisplay, PermissionDisplaySchema, PERMISSION_DISPLAY_LIMITS, toolPermissionDisplay } from './permission-display'
+import { permissionEditPreview } from './permission-presentation'
 
 function same(actual: unknown, expected: unknown) {
   // Never print the source on an assertion failure.
   expect(JSON.stringify(actual) === JSON.stringify(expected)).toBe(true)
 }
+
+it.each([
+  ['final newline removed', 'abc\n', 'abc', true, 'after'],
+  ['final newline added', 'abc', 'abc\n', true, 'before'],
+  ['tabs replaced', '\tabc', '    abc', true, undefined],
+  ['trailing spaces', 'abc  ', 'abc ', true, undefined],
+  ['CRLF changed to LF', 'abc\r\ndef\r\n', 'abc\ndef\n', true, undefined],
+  ['mixed edit with a shifted line', 'old\nkeep  \nstable', 'new\nextra\nkeep \nstable', true, undefined],
+  ['visible edit with unchanged whitespace', 'old\nkeep  \nstable', 'new\nextra\nkeep  \nstable', false, undefined],
+  ['identical inputs', 'abc\n', 'abc\n', false, undefined],
+])('classifies whitespace differences (%s)', (_, before, after, whitespaceChange, noFinalNewline) => {
+  const preview = permissionEditPreview(before, after)
+  expect(preview.whitespaceChange).toBe(whitespaceChange)
+  expect(preview.noFinalNewline).toBe(noFinalNewline)
+})
 
 describe('permissionDisplay', () => {
   it('preserves context, multiline commands and trailing newlines across line endings', () => {

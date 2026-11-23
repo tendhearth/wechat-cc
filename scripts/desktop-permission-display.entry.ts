@@ -3,6 +3,7 @@ import './desktop-permission-csp'
 
 export { PERMISSION_SNAPSHOT_NOTICE, PermissionDisplaySchema, permissionCwd, permissionDisplay } from '../packages/protocol/src/permission-display'
 export {
-  normalizePermissionLines, permissionActionZh, permissionLines, permissionPatchLabel,
+  normalizePermissionLines, permissionActionZh, permissionEditPreview, permissionLines, permissionOperationSource, permissionPatchLabel,
+  PERMISSION_NO_FINAL_NEWLINE_ZH, PERMISSION_WHITESPACE_NOTICE_ZH,
   permissionRelativePath, resolvePermissionDisplay,
 } from '../packages/protocol/src/permission-presentation'

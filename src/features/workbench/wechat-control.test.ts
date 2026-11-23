@@ -396,6 +396,37 @@ describe('WeChat task control through the shared service',()=>{
     expect(await service.handleWechat('owner',`任务 ${task.id} 拒绝 ${request.id}`)).toContain('已拒绝')
   })
 
+  it.each([
+    ['final newline removed', 'abc\n', 'abc', '（文件末尾没有换行）'],
+    ['final newline added below the fold', 'abc\n'.repeat(6) + 'abc', 'abc\n'.repeat(7), '修改前（文件末尾没有换行）'],
+    ['tabs replaced', '\tabc', '    abc', null],
+    ['trailing spaces', 'abc  ', 'abc ', null],
+    ['CRLF changed to LF', 'abc\r\ndef\r\n', 'abc\ndef\n', null],
+    ['mixed edit', 'old\nkeep  \nstable', 'new\nextra\nkeep \nstable', null],
+  ])('allows only denial in WeChat for whitespace edits (%s)', async (_, before, after, marker) => {
+    const notice = '这处改动只在换行或空白上有差别，这里看不出来。'
+    setup({async spawn(_project, ctx) { return {async *dispatch() {
+      await ctx.requestPermission!({ tool: 'Edit', description: 'edit sample',
+        display: { body: { kind: 'edit', path: 'sample', changes: [{ before, after }] } },
+      })
+      yield result
+    }, async close() {}} }})
+    const task = create()
+    await expect.poll(() => service.detail(task.id).permissions.length).toBe(1)
+    const request = service.detail(task.id).permissions[0]!
+    const review = await service.handleWechat('owner', `任务 ${task.id} 权限 ${request.id}`)
+    const shown = typeof review === 'string' ? review : ''
+    expect(shown.includes(notice)).toBe(true)
+    expect(shown.includes(marker ?? '（文件末尾没有换行）')).toBe(marker !== null)
+    expect(shown.includes('允许：')).toBe(false)
+    expect(shown.includes('拒绝：')).toBe(true)
+    expect(shown.includes('桌面工作台查看')).toBe(true)
+    const allow = await service.handleWechat('owner', `任务 ${task.id} 允许 ${request.id}`)
+    expect(typeof allow === 'string' && allow.includes(notice)).toBe(true)
+    expect(service.detail(task.id).permissions.some(p => p.id === request.id)).toBe(true)
+    expect(await service.handleWechat('owner', `任务 ${task.id} 拒绝 ${request.id}`)).toContain('已拒绝')
+  })
+
   it('refuses WeChat approval when only the raw description fits the message budget', async () => {
     const command = 'printf '.padEnd(REQUEST_MAX - PERMISSION_SNAPSHOT_NOTICE.length - 70, 'x')
     const description = `command=${command}`

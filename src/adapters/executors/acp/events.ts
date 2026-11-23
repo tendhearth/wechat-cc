@@ -1,4 +1,4 @@
-import { boundedPermissionDisplay, permissionCwd, type PermissionDisplay } from '@wechat-cc/protocol'
+import { boundedPermissionDisplay, permissionCwd, permissionEditPreview, type PermissionDisplay } from '@wechat-cc/protocol'
 import type { AgentActivity, AgentEvent } from '../../../ports/agent-provider'
 import { normalizeWechatMcpServer } from '../../../ports/agent-provider'
 import { isQuotaRefusalText } from '../../../domain/provider-quota'
@@ -189,17 +189,23 @@ export function acpApprovalDetails(call: Obj, description: string): {
       name: 'Location', value: JSON.stringify(loc),
     }] : [])
     const note = [body.kind === 'edit' && typeof call.title === 'string' ? call.title : '', ...notes].filter(Boolean).join('\n')
-    const details = [
-      ...(cwd ? [`Working directory: ${cwd}`] : []),
-      ...diffs.map(({ path, oldText, newText }) => [path, 'Before:', oldText ?? '', 'After:', newText].join('\n')),
+    const review = (quoteWhitespace: boolean) => [
+      description, ...(cwd ? [`Working directory: ${cwd}`] : []),
+      ...diffs.map(({ path, oldText, newText }) => {
+        const before = oldText ?? ''
+        return quoteWhitespace && permissionEditPreview(before, newText).whitespaceChange
+          ? [path, `Before: ${JSON.stringify(oldText)}`, `After: ${JSON.stringify(newText)}`].join('\n')
+          : [path, 'Before:', before, 'After:', newText].join('\n')
+      }),
       ...extra.map(field => `${field.name}: ${field.value}`),
-    ]
-    const full = [description, ...details].join('\n')
+    ].join('\n')
+    const quoted = review(true)
+    const full = quoted.length <= 20_000 ? quoted : review(false)
     // Keep the existing approval channel available if the complete source
     // cannot fit its description. Never send a partial edit as full evidence.
     if (full.length > 20_000) return { description }
     const display = boundedPermissionDisplay(() => ({ body, ...(note ? { note } : {}), ...(extra.length ? { extra } : {}) }))
-    return display ? { description, display, ...(details.length ? { reviewDescription: full } : {}), ...(cwd ? { displayCwd: cwd } : {}) } : { description }
+    return display ? { description, display, ...(full !== description ? { reviewDescription: full } : {}), ...(cwd ? { displayCwd: cwd } : {}) } : { description }
   } catch {
     return { description }
   }

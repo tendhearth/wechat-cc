@@ -91,7 +91,7 @@ describe('终端会话的那件事 → 终端详情', () => {
     expect(ui.byId('terminal-detail-pending-actor')?.textContent === action).toBe(true)
     const warning = ui.byId('terminal-detail-pending-truncated')
     expect(Boolean(warning)).toBe(truncated)
-    if (warning) expect(warning.textContent === 'This may be incomplete. See the full details in the terminal.').toBe(true)
+    if (warning) expect(warning.textContent === 'This is incomplete. See the full details in the terminal.').toBe(true)
     expect(Boolean(ui.byId('terminal-detail-allow'))).toBe(actionable)
     expect(Boolean(ui.byId('terminal-detail-local'))).toBe(!actionable)
     expect(Boolean(ui.byId('terminal-detail-pending'))).toBe(kind !== null)
@@ -107,11 +107,12 @@ describe('终端会话的那件事 → 终端详情', () => {
     expect(ui.byId('approval-operation-more')).toBeNull()
     expect(ui.byId('approval-exact-source')).toBeNull()
     if (summary && !truncated) {
-      const entry = ui.byId('approval-view-exact')
+      const entry = ui.byId('terminal-view-summary')
       expect(entry.tagName).toBe('BUTTON')
-      expect(entry.getAttribute('aria-label')).toBe('See the full original')
+      expect(entry.getAttribute('aria-label')).toBe('See summary')
       await act(() => entry.click())
-      const original = ui.byId('approval-exact-source')
+      expect(ui.container.textContent?.includes('The summary may collapse line breaks and repeated spaces.')).toBe(true)
+      const original = ui.byId('terminal-summary-source')
       expect(original.textContent === summary).toBe(true)
       expect(original.getAttribute('role')).toBe('text')
       expect(original.closest('[data-selectable="true"]')).not.toBeNull()
@@ -133,13 +134,12 @@ describe('wire terminal approvals', () => {
       pending: { tool: 'Bash', summary, display, truncated }, source: 'Claude', projectPath: '/sample', scroll: { current: null },
     }), { backend: makeDemoBackend({ lang: 'en' }), lang: 'en' }))
     const warning = ui.byId('terminal-detail-pending-truncated')
-    expect(warning.textContent).toBe(truncated
-      ? 'This may be incomplete. See the full details in the terminal.'
-      : 'This preview is incomplete. See the full original below.')
-    if (truncated) expect(ui.byId('approval-view-exact')).toBeNull()
+    expect(warning.textContent).toBe('This is incomplete. See the full details in the terminal.')
+    expect(ui.byId('approval-view-exact')).toBeNull()
+    if (truncated) expect(ui.byId('terminal-view-summary')).toBeNull()
     else {
-      await act(() => ui.byId('approval-view-exact').click())
-      expect(ui.byId('approval-exact-source').textContent === summary).toBe(true)
+      await act(() => ui.byId('terminal-view-summary').click())
+      expect(ui.byId('terminal-summary-source').textContent === summary).toBe(true)
     }
   })
 
@@ -150,16 +150,54 @@ describe('wire terminal approvals', () => {
     const pending = { tool: 'Bash', summary, display: { body: { kind: 'command' as const, command } }, cwd, truncated }
     const result = terminalPermission(pending, 'Codex', 'zh-Hans')
     expect(result.summaryTruncated).toBe(truncated ?? true)
-    expect(result.hasFullSource).toBe(!(truncated ?? true))
-    expect(result.raw === ((truncated ?? true) ? summary : command) && result.cwd === cwd && result.display?.body.kind === 'command' &&
+    expect(result.raw === command && result.cwd === cwd && result.display?.body.kind === 'command' &&
       result.display.body.command === command).toBe(true)
     const cut = terminalPermission({ ...pending, truncated: false, display: { ...pending.display, truncated: true } }, 'Codex', 'zh-Hans')
     expect(cut.display?.truncated).toBe(true)
     expect(cut.summaryTruncated).toBe(false)
-    expect(cut.hasFullSource && cut.raw === summary).toBe(true)
+    expect(cut.raw === undefined && cut.summary === summary && cut.received === command).toBe(true)
     const fallback = terminalPermission({ ...pending, display: { body: { kind: 'command' } } } as typeof pending, 'Codex', 'zh-Hans')
-    expect(fallback.display?.body.kind === 'command' && fallback.raw === summary).toBe(true)
+    expect(fallback.display?.body.kind === 'command' && fallback.display.body.command === summary).toBe(true)
     expect(fallback.summaryTruncated).toBe(truncated ?? true)
-    expect(fallback.hasFullSource).toBe(!(truncated ?? true))
+    expect(fallback.raw === undefined && fallback.summary === ((truncated ?? true) ? '' : summary)).toBe(true)
   })
+})
+
+
+it.each([false, true])('opens every received command line with a cut summary (preview cut: %s)', async truncated => {
+  const command = Array.from({ length: 12 }, (_, i) => `printf "sample  line number ${i}"`).join('\n')
+  expect(command.length).toBeGreaterThan(200)
+  const ui = await mount(withProviders(createElement(TerminalPermission, {
+    pending: { tool: 'Bash', summary: 'shortened…', truncated: true, display: { body: { kind: 'command', command }, truncated } },
+    source: 'Claude', projectPath: '/sample', scroll: { current: null },
+  }), { backend: makeDemoBackend({ lang: 'en' }), lang: 'en' }))
+  expect(ui.byId('approval-operation-source').textContent === command.split('\n').slice(0, 8).join('\n')).toBe(true)
+  const entry = ui.byId('approval-view-exact')
+  const more = ui.byId('approval-operation-more')
+  expect(more.getAttribute('aria-label')).toBe(truncated ? 'Expand received content' : '4 more lines · See all')
+  expect(Boolean(ui.byId('terminal-detail-pending-truncated'))).toBe(truncated)
+  if (truncated) expect(entry).toBeNull()
+  else expect(entry.getAttribute('aria-label')).toBe('See the full original')
+  await act(() => more.click())
+  expect(ui.byId(truncated ? 'terminal-received-source' : 'approval-exact-source').textContent === command).toBe(true)
+})
+
+it.each([
+  ['final newline removed', 'abc\n', 'abc', '(No newline at end of file)'],
+  ['final newline removed below the fold', 'abc\n'.repeat(13), 'abc\n'.repeat(12) + 'abc', 'After the edit (no newline at end of file)'],
+  ['tabs replaced', '\tabc', '    abc', null],
+  ['trailing spaces', 'abc  ', 'abc ', null],
+  ['CRLF changed to LF', 'abc\r\ndef\r\n', 'abc\ndef\n', null],
+  ['mixed edit', 'old\nkeep  \nstable', 'new\nextra\nkeep \nstable', null],
+])('warns about whitespace edits and preserves exact edit inputs (%s)', async (_, before, after, marker) => {
+  const ui = await mount(withProviders(createElement(TerminalPermission, {
+    pending: { tool: 'Edit', summary: 'collapsed…', truncated: true,
+      display: { body: { kind: 'edit', path: 'sample', changes: [{ before, after }] } } },
+    source: 'Claude', projectPath: '/sample', scroll: { current: null },
+  }), { backend: makeDemoBackend({ lang: 'en' }), lang: 'en' }))
+  const change = ui.byId('approval-edit-0')
+  expect(change.textContent?.includes('This change includes differences in line breaks or whitespace that this preview cannot show.')).toBe(true)
+  expect(change.textContent?.includes(marker ?? 'newline at end of file')).toBe(marker !== null)
+  await act(() => ui.byId('approval-view-exact').click())
+  expect(ui.byId('approval-exact-source').textContent === `sample\nBefore: ${JSON.stringify(before)}\nAfter: ${JSON.stringify(after)}`).toBe(true)
 })

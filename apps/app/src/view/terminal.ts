@@ -1,4 +1,4 @@
-import { permissionCwd, permissionDisplay, PermissionDisplaySchema, type PermissionDisplay } from '@wechat-cc/protocol'
+import { permissionCwd, permissionDisplay, PermissionDisplaySchema, permissionOperationSource } from '@wechat-cc/protocol'
 import type { CliSessionRowT } from '../backend/types'
 import { hasMessage, t, type Lang, type MessageKey } from '../i18n'
 import { permissionAction } from './approval'
@@ -71,25 +71,6 @@ export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): Termina
 // 老 daemon 没有 truncation 标记，继续用长度和省略号判断。
 export const TERMINAL_PERMISSION_SUMMARY_LIMIT = 200
 
-function fullOperation(display: PermissionDisplay): string {
-  const { body, note, extra } = display
-  const fields = (values: NonNullable<PermissionDisplay['extra']>) => values.map(({ name, value }) => `${name}: ${value}`)
-  let source: string[]
-  switch (body.kind) {
-    case 'command': source = [body.command]; break
-    case 'edit': source = body.changes.flatMap(({ path, before, after }) => [
-      path ?? body.path, ...(body.replaceAll !== undefined ? [`replace_all: ${body.replaceAll}`] : []), 'Before:', before, 'After:', after,
-    ]); break
-    case 'write': source = [body.path, body.content]; break
-    case 'patch': source = body.files.flatMap(({ path, change, movePath, diff }) => [path, change, ...(movePath ? [movePath] : []), diff]); break
-    case 'url': source = [body.url, ...(body.prompt !== undefined ? [body.prompt] : [])]; break
-    case 'query': source = [body.query]; break
-    case 'fields': source = fields(body.fields); break
-    case 'text': source = [body.text]; break
-  }
-  return [...(note ? [note] : []), ...source, ...fields(extra ?? [])].join('\n')
-}
-
 export function terminalPermission(pending: Pick<NonNullable<CliSessionRowT['pending']>, 'tool' | 'summary' | 'display' | 'cwd' | 'truncated'>, source: string, lang: Lang) {
   const summary = pending.summary ?? ''
   const structured = PermissionDisplaySchema.safeParse(pending.display).data
@@ -98,9 +79,10 @@ export function terminalPermission(pending: Pick<NonNullable<CliSessionRowT['pen
   const action = display ? permissionAction(display.body, pending.tool, source, lang)
     : t(lang, 'approval.actor.tool', { actor: source, tool: pending.tool })
   const summaryTruncated = pending.truncated ?? (summary.length >= TERMINAL_PERMISSION_SUMMARY_LIMIT || /(?:…|\.\.\.)\s*$/.test(summary))
-  const hasFullSource = summary.length > 0 && !summaryTruncated
-  const raw = hasFullSource && structured && !structured.truncated ? fullOperation(structured) : summary
-  return { display, raw, cwd, action, summaryTruncated, hasFullSource }
+  const raw = structured && !structured.truncated ? permissionOperationSource(structured) : undefined
+  const received = structured?.truncated ? permissionOperationSource(structured)
+    : raw === undefined && summaryTruncated && summary ? summary : undefined
+  return { display, raw, received, summary: raw === undefined && !summaryTruncated ? summary : '', cwd, action, summaryTruncated }
 }
 
 /** 等你、而且手机上拍得了的那几条(「此刻」的数与行)。够不着电脑时这份是旧的 ⇒ 0。 */

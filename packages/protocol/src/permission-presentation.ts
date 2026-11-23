@@ -14,6 +14,65 @@ export function permissionLines(value: string): string[] {
   return lines
 }
 
+export const PERMISSION_WHITESPACE_NOTICE_ZH = '这处改动只在换行或空白上有差别，这里看不出来。'
+export const PERMISSION_NO_FINAL_NEWLINE_ZH = '（文件末尾没有换行）'
+
+const withoutWhitespace = (value: string) => value.replace(/\s/g, '')
+
+// Cancel unchanged lines before looking for matching text with different whitespace.
+// Keep line endings in the comparison so CRLF and LF remain distinguishable.
+function hasWhitespaceChange(before: string, after: string): boolean {
+  if (before === after) return false
+  if (withoutWhitespace(before) === withoutWhitespace(after)) return true
+  const counts = new Map<string, number>()
+  const lines = (value: string) => value.match(/[^\r\n]*(?:\r\n?|\n)|[^\r\n]+$/g) ?? []
+  for (const line of lines(before)) counts.set(line, (counts.get(line) ?? 0) + 1)
+  const added: string[] = []
+  for (const line of lines(after)) {
+    const count = counts.get(line) ?? 0
+    if (count > 0) counts.set(line, count - 1)
+    else added.push(line)
+  }
+  const removedText = new Set([...counts].filter(([, count]) => count > 0).map(([line]) => withoutWhitespace(line)))
+  return added.some(line => removedText.has(withoutWhitespace(line)))
+}
+
+export function permissionEditPreview(before: string, after: string) {
+  const beforeEndsWithNewline = /[\r\n]$/.test(before)
+  const afterEndsWithNewline = /[\r\n]$/.test(after)
+  const newlineChanged = beforeEndsWithNewline !== afterEndsWithNewline
+  const noFinalNewline = before.length > 0 && after.length > 0 && newlineChanged
+    ? (beforeEndsWithNewline ? 'after' : 'before') : undefined
+  return {
+    before: permissionLines(before),
+    after: permissionLines(after),
+    whitespaceChange: hasWhitespaceChange(before, after),
+    noFinalNewline,
+  }
+}
+
+/** Full terminal contents reconstructed from the received structured input. */
+export function permissionOperationSource(display: PermissionDisplay): string {
+  const { body, note, extra } = display
+  const fields = (values: NonNullable<PermissionDisplay['extra']>) => values.map(({ name, value }) => `${name}: ${value}`)
+  let source: string[]
+  switch (body.kind) {
+    case 'command': source = [body.command, ...(body.cwd !== undefined ? [`Working directory: ${body.cwd}`] : [])]; break
+    case 'edit': source = body.changes.flatMap(({ path, before, after }) => [
+      path ?? body.path, ...(body.replaceAll !== undefined ? [`replace_all: ${body.replaceAll}`] : []),
+      // Quoting makes tabs, CRLF and the exact end of each value inspectable.
+      `Before: ${JSON.stringify(before)}`, `After: ${JSON.stringify(after)}`,
+    ]); break
+    case 'write': source = [body.path, body.content]; break
+    case 'patch': source = body.files.flatMap(({ path, change, movePath, diff }) => [path, change, ...(movePath !== undefined ? [movePath] : []), diff]); break
+    case 'url': source = [body.url, ...(body.prompt !== undefined ? [body.prompt] : [])]; break
+    case 'query': source = [body.query]; break
+    case 'fields': source = fields(body.fields); break
+    case 'text': source = [body.text]; break
+  }
+  return [...(note ? [note] : []), ...source, ...fields(extra ?? [])].join('\n')
+}
+
 /** Only shorten descendants. Keep the spelling and separators in the visible suffix. */
 export function permissionRelativePath(path: string, cwd: string): string {
   const windows = /^(?:[a-z]:[\\/]|\\\\)/i.test(cwd)

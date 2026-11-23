@@ -165,14 +165,44 @@ describe('mountNowPage', () => {
     expect(dialog.querySelector('.wb-review-diff [data-line="deleted"]')?.textContent).toBe('− old')
     expect(dialog.querySelector('.wb-review-diff [data-line="added"]')?.textContent).toBe('+ new')
     expect(dialog.querySelector('.approval-meta')?.textContent).toBe('在 /work')
-    expect(dialog.querySelector('.approval-meta:last-of-type')?.textContent).toBe(summaryTruncated
-      ? '这里可能不是全部内容，完整的请在终端里看。' : '这里不是全部内容，完整的在下面『看完整原文』里。')
+    expect(dialog.querySelector('.approval-meta:last-of-type')?.textContent).toBe('这里不是全部内容，完整的请在终端里看。')
     const source = dialog.querySelector<HTMLDetailsElement>('details')
     if (summaryTruncated) expect(source).toBeNull()
     else {
-      expect(source?.querySelector('summary')?.textContent).toBe('看完整原文')
+      expect(source?.querySelector('summary')?.textContent).toBe('看摘要')
+      expect(source?.querySelector('.approval-meta')?.textContent).toBe('摘要里的换行和连续空格可能被并掉了。')
       source!.open = true
       expect(source?.querySelector('.approval-source')?.textContent === '完整修改原文').toBe(true)
+    }
+    page.destroy()
+  })
+  it.each([false, true])('keeps the structured command available when the summary is truncated (preview cut: %s)', truncated => {
+    const root = dom()
+    const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: vi.fn() })
+    const command = Array.from({ length: 12 }, (_, i) => `printf "sample  line ${i}"`).join('\n')
+    const note = '<img src=x onerror="window.approvalInjected=1">'
+    page.setTerminal(terminalWaitingRows([{ session_id: 'command', source: 'codex', status: 'waiting', project: 'sample',
+      pending: { tool: 'Bash', summary: 'shortened…', truncated: true, hash: 'cmd01',
+        display: { note, truncated, body: { kind: 'command', command } } },
+    }]))
+    root.querySelector<HTMLButtonElement>('.now-terminal button')!.click()
+    const dialog = document.querySelector('.now-terminal-dialog')!
+    const panel = dialog.querySelector('.approval-panel')!
+    expect(panel.previousElementSibling?.textContent === note).toBe(true)
+    expect(dialog.querySelector('img[onerror]')).toBeNull()
+    const more = panel.querySelector('details')!
+    expect(more.querySelector('summary')?.textContent).toBe(truncated ? '还有 4 行 · 展开收到的部分' : '还有 4 行 · 看全部')
+    more.querySelector('summary')?.click()
+    expect(more.open).toBe(true)
+    expect(more.querySelector('.approval-source')?.textContent === command.split('\n').slice(8).join('\n')).toBe(true)
+    const original = dialog.querySelector('.approval-operation > details')
+    if (truncated) {
+      expect(original).toBeNull()
+      expect(dialog.textContent?.includes('这里不是全部内容，完整的请在终端里看。')).toBe(true)
+    } else {
+      expect(original?.querySelector('summary')?.textContent).toBe('看完整原文')
+      expect(original?.querySelector('.approval-source')?.textContent === `${note}\n${command}`).toBe(true)
+      expect(dialog.textContent?.includes('这里不是全部内容')).toBe(false)
     }
     page.destroy()
   })

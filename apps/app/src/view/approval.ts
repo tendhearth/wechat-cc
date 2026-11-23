@@ -91,12 +91,7 @@ export function approvalDirectory(cwd: string | undefined, projectPath: string, 
     : projectPath ? t(lang, 'approval.projectFolder', { path: projectPath }) : ''
 }
 
-export function approvalLines(value: string): string[] {
-  if (!value) return []
-  const lines = value.replace(/\r\n?/g, '\n').split('\n')
-  if (lines.at(-1) === '') lines.pop()
-  return lines
-}
+export { permissionLines as approvalLines } from '@wechat-cc/protocol'
 
 type QuestionItem = Extract<ApprovalView, { kind: 'question' }>['items'][number]
 

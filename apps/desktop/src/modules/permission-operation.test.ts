@@ -63,7 +63,7 @@ it('renders a full URL, a quoted query, an extra table without the panel and raw
   const text = render({ kind: 'text', text: '\r\nopaque' }, { raw: '\r\nopaque' })
   expect(text.querySelector('[data-kind="text"] .approval-source')?.textContent).toBe('\nopaque')
   expect(text.querySelector('details summary')?.textContent).toBe('看完整原文')
-  expect(text.querySelector('details .approval-source')?.textContent).toBe('\nopaque')
+  expect(text.querySelector('details .approval-source')?.textContent === '\r\nopaque').toBe(true)
 })
 
 it('uses only the supplied directory and keeps the complete original when the preview is cut', () => {
@@ -74,8 +74,8 @@ it('uses only the supplied directory and keeps the complete original when the pr
   const root = document.createElement('div')
   root.innerHTML = renderPermissionOperation({ body, truncated: true }, { raw: 'legacy' })
   expect(root.querySelector('.approval-meta')?.textContent).toBe('这里不是全部内容，完整的在下面『看完整原文』里。')
-  expect([...root.querySelectorAll('summary')].map(s => s.textContent)).toEqual(['看完整原文'])
-  expect(root.querySelector('details .approval-source')?.textContent === 'legacy').toBe(true)
+  expect([...root.querySelectorAll('summary')].map(s => s.textContent)).toEqual(['还有 2 行 · 展开收到的部分', '看完整原文'])
+  expect(root.querySelector('.approval-operation > details .approval-source')?.textContent === 'legacy').toBe(true)
   expect(root.querySelector('.approval-source')?.textContent?.replace(/\r\n?/g, '\n').split('\n')).toHaveLength(8)
 })
 
@@ -121,4 +121,20 @@ it('folds text and field values at eight lines and keeps the rest in the disclos
     expect(panel.querySelector('details summary')?.textContent).toBe('还有 1 行 · 看全部')
     expect(panel.querySelector('details .approval-source')?.textContent).toBe('line 9')
   }
+})
+
+
+it.each([
+  ['final newline removed', 'abc\n', 'abc', 'added'],
+  ['final newline added', 'abc', 'abc\n', 'deleted'],
+  ['tab changed to spaces', '\tabc', '    abc', null],
+  ['trailing spaces', 'abc  ', 'abc ', null],
+  ['CRLF changed to LF', 'abc\r\ndef\r\n', 'abc\ndef\n', null],
+  ['visible edit and shifted whitespace-only line', 'old\nkeep  \nstable', 'new\nextra\nkeep \nstable', null],
+])('marks whitespace differences in an edit preview (%s)', (_, before, after, side) => {
+  const root = render({ kind: 'edit', path: 'sample', changes: [{ before, after }] })
+  expect(root.querySelector('.approval-change > .approval-meta')?.textContent).toBe('这处改动只在换行或空白上有差别，这里看不出来。')
+  const marker = root.querySelector('.approval-diff [data-line="context"]')
+  expect(marker?.textContent ?? null).toBe(side ? '（文件末尾没有换行）' : null)
+  expect(marker?.previousElementSibling?.getAttribute('data-line') ?? null).toBe(side)
 })

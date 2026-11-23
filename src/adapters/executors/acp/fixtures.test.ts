@@ -115,6 +115,13 @@ describe('ACP 真机报文回放(cursor-agent 2026-09-17)', () => {
     }
   })
 
+  it('makes whitespace in ACP diff inputs visible in the full review text', () => {
+    const path = 'sample', oldText = 'abc\r\n', newText = 'abc\n'
+    const result = acpApprovalDetails({ kind: 'edit', content: [{ type: 'diff', path, oldText, newText }] }, 'Edit sample')
+    expect(result.reviewDescription === `Edit sample\n${path}\nBefore: ${JSON.stringify(oldText)}\nAfter: ${JSON.stringify(newText)}`).toBe(true)
+    expect(result.display?.body.kind).toBe('edit')
+  })
+
   it('toolCallId 里嵌着字面换行,活动 id 清洗掉它', () => {
     const ids = [...new Set(updatesOf(records).map(update => update.toolCallId).filter((id): id is string => typeof id === 'string'))]
     const multiline = ids.filter(id => id.includes('\n'))

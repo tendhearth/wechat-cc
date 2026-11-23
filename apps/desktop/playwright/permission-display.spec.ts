@@ -9,12 +9,18 @@ const snapshotNotice = '预览是批准时的快照，运行以当时内容为�
 const completeSource = `command=${command}\necho original-tail\n\n${snapshotNotice}`
 const cwd = '/demo/portfolio'
 const task = { id: 'A', title: '画作品集', path: cwd, providerId: 'claude', status: 'running', createdAt: 1, updatedAt: 2, error: null }
-const edit = { body: { kind: 'edit', path: cwd + '/src/a.ts', changes: [{ before: 'const a = 1', after: 'const a = 2\n' + hostile }] } }
+const note = '校对示例后继续 ' + hostile
+const whitespaceNotice = '这处改动只在换行或空白上有差别，这里看不出来。'
+const edit = { note, body: { kind: 'edit', path: cwd + '/src/a.ts', changes: [
+  { before: 'const a = 1', after: 'const a = 2\n' + hostile },
+  { before: 'const b = 3\n', after: 'const b = 3' },
+] } }
+const editSource = 'input=' + JSON.stringify(edit.body)
 const data = {
   task, version: 1, runId: 'run-A', events: [], artifacts: [], questions: [],
   permissions: [
     { id: 'p1', taskId: 'A', tool: 'Bash', description: 'legacy command', cwd, display: { body: { kind: 'command', command } }, createdAt: 1 },
-    { id: 'p2', taskId: 'A', tool: 'Edit', description: 'legacy edit', cwd, display: edit, createdAt: 1 },
+    { id: 'p2', taskId: 'A', tool: 'Edit', description: editSource, cwd, display: edit, createdAt: 1 },
     { id: 'p3', taskId: 'A', tool: 'Bash', description: completeSource, cwd, display: { body: { kind: 'command', command }, truncated: true },
       showSnapshotNotice: true, scripts: [{ path: 'sample.ts', content: 'export {}' }], createdAt: 1 },
   ],
@@ -47,6 +53,13 @@ const page = mountNowPage({
 page.setTerminal(terminalWaitingRows([{
   session_id: 'fixture-edit', source: 'claude', displayName: 'Claude', status: 'waiting', project: 'portfolio',
   pending: { tool: 'Edit', summary: 'src/a.ts…', hash: 'ed1t1', truncated: true, cwd: ${JSON.stringify(cwd)}, display: ${JSON.stringify(edit)} },
+}, {
+  session_id: 'fixture-summary', source: 'claude', displayName: 'Claude', status: 'waiting', project: 'portfolio',
+  pending: { tool: 'Bash', summary: 'echo sample', hash: 'leg01', truncated: false },
+}, {
+  session_id: 'fixture-partial', source: 'claude', displayName: 'Claude', status: 'waiting', project: 'portfolio',
+  pending: { tool: 'Bash', summary: 'partial…', hash: 'cut01', truncated: true,
+    display: ${JSON.stringify({ body: { kind: 'command', command }, truncated: true })} },
 }]))
 `
 const terminalMarkup = `<article class="cc-now-pane" data-now="home">
@@ -106,9 +119,18 @@ for (const width of [1440, 760]) {
     const editPanel = cards.nth(1).locator('[data-kind="edit"]')
     await editPanel.scrollIntoViewIfNeeded()
     await expect(editPanel.locator('.approval-path')).toHaveText('src/a.ts')
-    await expect(editPanel.locator('[data-line="deleted"]')).toHaveText('− const a = 1')
+    await expect(editPanel.locator('[data-line="deleted"]').first()).toHaveText('− const a = 1')
     await expect(editPanel.locator('[data-line="added"]').first()).toHaveText('+ const a = 2')
-    await expect(cards.nth(1).locator('.approval-meta')).toHaveText('在 /demo/portfolio')
+    const reason = cards.nth(1).locator('.approval-operation > .approval-meta:first-child')
+    await expect(reason).toBeVisible()
+    expect(await reason.textContent() === note).toBe(true)
+    await expect(cards.nth(1).getByText('在 /demo/portfolio', { exact: true })).toBeVisible()
+    await expect(editPanel.getByText(whitespaceNotice, { exact: true })).toBeVisible()
+    await expect(editPanel.getByText('（文件末尾没有换行）', { exact: true })).toBeVisible()
+    const editOriginal = cards.nth(1).getByText('看完整原文', { exact: true })
+    await editOriginal.click()
+    expect(await cards.nth(1).locator('.approval-operation > details .approval-source').textContent() === editSource).toBe(true)
+    await editOriginal.click()
     const truncated = cards.nth(2)
     const notice = truncated.locator('.wb-permission-snapshot')
     await notice.scrollIntoViewIfNeeded()
@@ -118,7 +140,7 @@ for (const width of [1440, 760]) {
     const fullOriginal = truncated.getByText('看完整原文', { exact: true })
     await expect(fullOriginal).toBeVisible()
     await fullOriginal.click()
-    const fullSource = truncated.locator('details .approval-source')
+    const fullSource = truncated.locator('.approval-operation > details .approval-source')
     await expect(fullSource).toBeVisible()
     expect(await fullSource.textContent() === completeSource).toBe(true)
     await expect(cards.locator('script, img, [onerror]')).toHaveCount(0)
@@ -130,18 +152,42 @@ for (const width of [1440, 760]) {
 
 test('terminal waiting row opens its structured edit under the desktop CSP', async ({ page }) => {
   await openFixture(page, { terminal: true })
-  const row = page.locator('.now-terminal button')
+  const row = page.locator('.now-terminal[data-hash="ed1t1"] button')
   await expect(row).toHaveCount(1)
   await row.click()
   const dialog = page.locator('dialog.now-terminal-dialog')
   await expect(dialog.getByRole('heading')).toHaveText('想改 src/a.ts…')
-  await expect(dialog.locator('[data-line="deleted"]')).toHaveText('− const a = 1')
+  await expect(dialog.locator('[data-line="deleted"]').first()).toHaveText('− const a = 1')
   await expect(dialog.locator('[data-line="added"]').first()).toHaveText('+ const a = 2')
-  await expect(dialog.locator('.approval-meta')).toHaveText(['在 /demo/portfolio', '这里可能不是全部内容，完整的请在终端里看。'])
-  await expect(dialog.getByText('看完整原文', { exact: true })).toHaveCount(0)
+  const reason = dialog.locator('.approval-operation > .approval-meta:first-child')
+  await expect(reason).toBeVisible()
+  expect(await reason.textContent() === note).toBe(true)
+  await expect(dialog.getByText('在 /demo/portfolio', { exact: true })).toBeVisible()
+  await expect(dialog.getByText(whitespaceNotice, { exact: true })).toBeVisible()
+  await dialog.getByText('看完整原文', { exact: true }).click()
+  const original = dialog.locator('.approval-operation > details .approval-source')
+  await expect(original).toBeVisible()
+  expect((await original.textContent())?.includes('Before: "const b = 3\\n"')).toBe(true)
+  await expect(dialog.getByText('看摘要', { exact: true })).toHaveCount(0)
   await expect(dialog.locator('script, img, [onerror]')).toHaveCount(0)
   expect(await page.evaluate(() => 'approvalInjected' in window)).toBe(false)
   await expect(page.locator('html')).not.toHaveAttribute('data-csp-violation', 'true')
   await expect(dialog.getByRole('button', { name: '允许', exact: true })).toBeVisible()
   await expect(dialog.getByRole('button', { name: '拒绝', exact: true })).toBeVisible()
+})
+
+test('terminal calls a legacy summary a summary and expands received preview lines', async ({ page }) => {
+  await openFixture(page, { terminal: true })
+  const dialog = page.locator('dialog.now-terminal-dialog')
+  await page.locator('.now-terminal[data-hash="leg01"] button').click()
+  await dialog.getByText('看摘要', { exact: true }).click()
+  await expect(dialog.getByText('摘要里的换行和连续空格可能被并掉了。', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('看完整原文', { exact: true })).toHaveCount(0)
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await page.locator('.now-terminal[data-hash="cut01"] button').click()
+  await dialog.getByText('还有 2 行 · 展开收到的部分', { exact: true }).click()
+  await expect(dialog.getByText('echo example-7', { exact: false })).toBeVisible()
+  await expect(dialog.getByText('这里不是全部内容，完整的请在终端里看。', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('看完整原文', { exact: true })).toHaveCount(0)
 })
