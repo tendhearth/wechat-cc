@@ -6,7 +6,7 @@ const source = new URL('../src/', import.meta.url)
 const hostile = '<script>window.approvalInjected=1</script><img src=x onerror="window.approvalInjected=2">\' "'
 const command = `npm install sharp\n${hostile}\n${Array.from({ length: 8 }, (_, i) => `echo example-${i}`).join('\n')}`
 const snapshotNotice = '预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。'
-const completeSource = `command=${command}\necho original-tail\n\n${snapshotNotice}`
+const completeSource = `command=${command}\necho original-tail\r\n\n${snapshotNotice}`
 const cwd = '/demo/portfolio'
 const task = { id: 'A', title: '画作品集', path: cwd, providerId: 'claude', status: 'running', createdAt: 1, updatedAt: 2, error: null }
 const note = '校对示例后继续 ' + hostile
@@ -21,7 +21,7 @@ const data = {
   permissions: [
     { id: 'p1', taskId: 'A', tool: 'Bash', description: 'legacy command', cwd, display: { body: { kind: 'command', command } }, createdAt: 1 },
     { id: 'p2', taskId: 'A', tool: 'Edit', description: editSource, cwd, display: edit, createdAt: 1 },
-    { id: 'p3', taskId: 'A', tool: 'Bash', description: completeSource, cwd, display: { body: { kind: 'command', command }, truncated: true },
+    { id: 'p3', taskId: 'A', tool: 'Bash', description: completeSource, cwd, display: { body: { kind: 'command', command: command.replace('sharp', 'sharp\r') }, truncated: true },
       showSnapshotNotice: true, scripts: [{ path: 'sample.ts', content: 'export {}' }], createdAt: 1 },
   ],
 }
@@ -126,7 +126,7 @@ for (const width of [1440, 760]) {
     expect(await reason.textContent() === note).toBe(true)
     await expect(cards.nth(1).getByText('在 /demo/portfolio', { exact: true })).toBeVisible()
     await expect(editPanel.getByText(whitespaceNotice, { exact: true })).toBeVisible()
-    await expect(editPanel.getByText('（文件末尾没有换行）', { exact: true })).toBeVisible()
+    await expect(editPanel.getByText('这一段的末尾少了一个换行。', { exact: true })).toBeVisible()
     const editOriginal = cards.nth(1).getByText('看完整原文', { exact: true })
     await editOriginal.click()
     expect(await cards.nth(1).locator('.approval-operation > details .approval-source').textContent() === editSource).toBe(true)
@@ -137,12 +137,15 @@ for (const width of [1440, 760]) {
     await expect(notice).toBeVisible()
     await expect(notice).toHaveText(snapshotNotice)
     await expect(truncated.getByText('这里不是全部内容，完整的在下面『看完整原文』里。', { exact: true })).toBeVisible()
+    await expect(truncated.locator('.approval-invisible-notice')).toBeVisible()
+    await expect(truncated.locator('.approval-panel .approval-invisible')).toHaveAttribute('aria-label', '不可见字符 \\r')
     const fullOriginal = truncated.getByText('看完整原文', { exact: true })
     await expect(fullOriginal).toBeVisible()
     await fullOriginal.click()
     const fullSource = truncated.locator('.approval-operation > details .approval-source')
     await expect(fullSource).toBeVisible()
-    expect(await fullSource.textContent() === completeSource).toBe(true)
+    await expect(fullSource.locator('.approval-invisible')).toBeVisible()
+    expect(await fullSource.textContent() === completeSource.replace('\r', '\\r')).toBe(true)
     await expect(cards.locator('script, img, [onerror]')).toHaveCount(0)
     expect(await page.evaluate(() => 'approvalInjected' in window)).toBe(false)
     expect(await editPanel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
@@ -180,8 +183,9 @@ test('terminal calls a legacy summary a summary and expands received preview lin
   await openFixture(page, { terminal: true })
   const dialog = page.locator('dialog.now-terminal-dialog')
   await page.locator('.now-terminal[data-hash="leg01"] button').click()
-  await dialog.getByText('看摘要', { exact: true }).click()
+  await expect(dialog.getByText('摘要', { exact: true })).toBeVisible()
   await expect(dialog.getByText('摘要里的换行和连续空格可能被并掉了。', { exact: true })).toBeVisible()
+  await dialog.getByText('看摘要', { exact: true }).click()
   await expect(dialog.getByText('看完整原文', { exact: true })).toHaveCount(0)
   await dialog.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(dialog).toHaveCount(0)

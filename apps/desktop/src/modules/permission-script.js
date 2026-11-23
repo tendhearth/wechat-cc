@@ -1,5 +1,6 @@
 // @ts-check
 import { V1, v1 } from '../daemon-client.js'
+import { renderPermissionText } from './permission-operation.js'
 /** Re-find the live control: progress updates may replace the clicked node while reading.
  * @param {HTMLElement} root @param {{id:string,requestId:string,path:string,sha256:string}} query @param {string} content */
 export function presentPermissionScript(root,query,content){
@@ -7,8 +8,11 @@ export function presentPermissionScript(root,query,content){
     const b=/** @type {HTMLButtonElement} */(node)
     return b.dataset.ownerTask===query.id&&b.dataset.requestId===query.requestId&&b.dataset.scriptPath===query.path&&b.dataset.scriptSha===query.sha256
   })
-  const pre=button?.closest('.wb-permission-script')?.querySelector('pre')
-  if(pre)pre.textContent=content
+  const card = button?.closest('.wb-permission-script')
+  const pre = card?.querySelector('pre')
+  if (pre) pre.innerHTML = `<code>${renderPermissionText(content)}</code>`
+  const notice = card?.querySelector('.approval-invisible-notice')
+  if (notice) notice.toggleAttribute('hidden', !card?.querySelector('.approval-invisible'))
   button?.remove()
 }
 /** @param {(method:any,path:string,body?:any,opts?:any)=>Promise<any>} invoke @param {{id:string,requestId:string,path:string,sha256:string}} query */

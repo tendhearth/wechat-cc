@@ -151,6 +151,19 @@ describe('mountNowPage', () => {
     expect(document.querySelector('dialog.now-terminal-dialog')).toBeNull()
     page.setTerminal([]); expect(document.getElementById('now-waiting')!.hidden).toBe(true)
   })
+  it('labels an untruncated legacy summary in the terminal approval dialog', () => {
+    const root = dom()
+    const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: vi.fn() })
+    page.setTerminal(terminalWaitingRows([{ session_id: 'legacy', source: 'claude', status: 'waiting', project: 'sample',
+      pending: { tool: 'Bash', summary: 'echo first echo second', hash: 'leg01', truncated: false },
+    }]))
+    root.querySelector<HTMLButtonElement>('.now-terminal button')!.click()
+    const panel = document.querySelector('.now-terminal-dialog .approval-panel')!
+    expect(panel.previousElementSibling?.textContent).toBe('摘要')
+    expect(panel.nextElementSibling?.textContent).toBe('摘要里的换行和连续空格可能被并掉了。')
+    expect(panel.parentElement?.querySelector('details')?.open).toBe(false)
+    page.destroy()
+  })
   it.each([true, false])('opens a structured terminal edit as review-style diff rows (summary truncated: %s)', summaryTruncated => {
     const root = dom()
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: vi.fn() })

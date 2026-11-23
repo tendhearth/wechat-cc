@@ -158,20 +158,6 @@ export function makeIlinkAdapter(opts: {
     },
   })
 
-  function replyToPermission(chatId: string, text: string): void {
-    void adapter.sendMessage(chatId, text)
-  }
-
-  function consumeWechatPermission(hash: string, decision: 'allow' | 'deny' | 'allow_task', reason?: string): boolean {
-    const blocked = decision === 'deny' ? undefined : pending.wechatApprovalBlockOf(hash)
-    const approver = pending.approverOf(hash)
-    if (blocked && approver) {
-      replyToPermission(approver, blocked)
-      return true
-    }
-    return pending.consume(hash, decision, reason)
-  }
-
   const adapter: IlinkAdapter = {
     async sendMessage(chatId, text, metadata) {
       const attribution = { ...currentReplyAttribution() ?? { speaker: 'notice' as const } }
@@ -443,7 +429,7 @@ export function makeIlinkAdapter(opts: {
         if (hash) {
           const approver = pending.approverOf(hash)
           if (approver !== null && approver !== fromChatId) return false
-          return consumeWechatPermission(hash, parsed.decision, parsed.reason)
+          return pending.consume(hash, parsed.decision, parsed.reason)
         }
         if (isPermissionCardQuote(quoted)) return false
         // 引用的是无关消息：保留原来的裸回复语义。
@@ -453,11 +439,9 @@ export function makeIlinkAdapter(opts: {
       if (!parsed.ref) {
         const mine = pending.list().filter(p => p.chatId === fromChatId)
         if (mine.length === 0) return false
-        if (mine.length === 1) return consumeWechatPermission(mine[0]!.hash, parsed.decision, parsed.reason)
+        if (mine.length === 1) return pending.consume(mine[0]!.hash, parsed.decision, parsed.reason)
         const lines = mine.map(p => `${p.code}:${(p.prompt.split('\n')[0] ?? '').slice(0, 40)}`)
-        const first = mine[0]!
-        const example = pending.wechatApprovalBlockOf(first.hash) ? 'n' : 'y'
-        replyToPermission(fromChatId ?? first.chatId, `有 ${mine.length} 条在等你,带上码回:\n${lines.join('\n')}\n例如「${example} ${first.code}」`)
+        void adapter.sendMessage(fromChatId ?? mine[0]!.chatId, `有 ${mine.length} 条在等你,带上码回:\n${lines.join('\n')}\n例如「y ${mine[0]!.code}」`)
         log('PERMISSION', `bare reply with ${mine.length} pending for chat=${fromChatId}: asked for a code`)
         return true
       }
@@ -467,7 +451,7 @@ export function makeIlinkAdapter(opts: {
       // 或 hash 根本不存在)⇒ 走旧路径:不存在的 hash 由 consume 报 false。
       const approver = pending.approverOf(hash)
       if (approver !== null && approver !== fromChatId) return false
-      return consumeWechatPermission(hash, parsed.decision, parsed.reason)
+      return pending.consume(hash, parsed.decision, parsed.reason)
     },
 
     listPendingPermissions() { return pending.list() },

@@ -26,3 +26,18 @@ it('shows the completed script in the current card after progress replaces its D
   expect(root.querySelector('pre')?.textContent).toBe('preview')
   await window.happyDOM.abort()
 })
+
+it('marks invisible characters after loading script source and escapes it as text', () => {
+  const window = new Window()
+  const root = window.document.createElement('div')
+  root.innerHTML = `<div class="wb-permission-script"><pre>preview</pre>
+    <button data-action="expand-permission-script" data-owner-task="task" data-request-id="req" data-script-path="sample" data-script-sha="hash">展开</button>
+    <div class="approval-invisible-notice" hidden></div></div>`
+  const value = '\n\t<script>\r\u202e'
+  presentPermissionScript(root as unknown as HTMLElement, { id: 'task', requestId: 'req', path: 'sample', sha256: 'hash' }, value)
+  expect(root.querySelector('script')).toBeNull()
+  expect(root.querySelector('pre')?.textContent === '\n\t<script>\\r\\u{202E}').toBe(true)
+  expect(root.querySelectorAll('.approval-invisible')).toHaveLength(2)
+  expect(root.querySelector('.approval-invisible-notice')?.hasAttribute('hidden')).toBe(false)
+  window.close()
+})

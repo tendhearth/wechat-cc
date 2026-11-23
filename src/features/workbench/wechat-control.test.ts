@@ -10,18 +10,15 @@ import type {AgentEvent,AgentProvider} from '../../ports/agent-provider'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
-import { PERMISSION_SNAPSHOT_NOTICE } from '@wechat-cc/protocol'
-import type { ServiceDeps } from './service/ctx'
-import { REQUEST_MAX } from './permission-prompt'
 import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService,owner:string|null
 const result:AgentEvent={kind:'result',sessionId:'native-one',numTurns:1,durationMs:1}
 const identity={accountId:'account',userId:'owner',msgId:'message-one',createTimeMs:1}
 const gate=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>{resolve=r});return{promise,resolve}}
-function setup(provider:AgentProvider, permissionPrompt?: ServiceDeps['permissionPrompt']){
+function setup(provider:AgentProvider){
   const registry=createProviderRegistry();registry.register('claude',provider,{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-  service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>owner,permissionPrompt})
+  service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>owner})
 }
 const create=(text='整理周报')=>service.create({path:project,providerId:'claude',text})
 const settled=async(id:string)=>{await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
@@ -371,100 +368,6 @@ describe('WeChat task control through the shared service',()=>{
     const task=create();await expect.poll(()=>service.detail(task.id).inputMode).toBe('steer')
     const reply=await service.handleWechat('owner',`任务 ${task.id} 补充 缩短摘要`,identity)
     expect(reply).toContain('未确认');expect(reply).not.toContain('已传达');expect(service.detail(task.id).inputs[0]?.status).toBe('held')
-  })
-
-  it.each([false, true])('shows the structured WeChat permission within the existing budget (long=%s)', async long=>{
-    setup({async spawn(_project,ctx){return{async *dispatch(){
-      await ctx.requestPermission!({
-        tool:'Edit',cwd:project,description:long?'x'.repeat(6001):'legacy edit',
-        display:{body:{kind:'edit',path:join(project,'demo.ts'),changes:[{before:'old',after:'new'}]}},
-      })
-      yield result
-    },async close(){}}}})
-    const task=create()
-    await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
-    const request=service.detail(task.id).permissions[0]!
-    const reply=await service.handleWechat('owner',`任务 ${task.id} 权限 ${request.id}`)
-    if(long){
-      expect(reply).toContain('权限内容较长，请在桌面工作台完整查看。')
-      expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toContain('微信仍可拒绝')
-      expect(service.detail(task.id).permissions).toHaveLength(1)
-    }else{
-      expect(reply).toContain('Claude 想改 demo.ts（1 处）：\n- old\n+ new')
-      expect(reply).not.toContain('legacy edit')
-    }
-    expect(await service.handleWechat('owner',`任务 ${task.id} 拒绝 ${request.id}`)).toContain('已拒绝')
-  })
-
-  it.each([
-    ['final newline removed', 'abc\n', 'abc', '（文件末尾没有换行）'],
-    ['final newline added below the fold', 'abc\n'.repeat(6) + 'abc', 'abc\n'.repeat(7), '修改前（文件末尾没有换行）'],
-    ['tabs replaced', '\tabc', '    abc', null],
-    ['trailing spaces', 'abc  ', 'abc ', null],
-    ['CRLF changed to LF', 'abc\r\ndef\r\n', 'abc\ndef\n', null],
-    ['mixed edit', 'old\nkeep  \nstable', 'new\nextra\nkeep \nstable', null],
-  ])('allows only denial in WeChat for whitespace edits (%s)', async (_, before, after, marker) => {
-    const notice = '这处改动只在换行或空白上有差别，这里看不出来。'
-    setup({async spawn(_project, ctx) { return {async *dispatch() {
-      await ctx.requestPermission!({ tool: 'Edit', description: 'edit sample',
-        display: { body: { kind: 'edit', path: 'sample', changes: [{ before, after }] } },
-      })
-      yield result
-    }, async close() {}} }})
-    const task = create()
-    await expect.poll(() => service.detail(task.id).permissions.length).toBe(1)
-    const request = service.detail(task.id).permissions[0]!
-    const review = await service.handleWechat('owner', `任务 ${task.id} 权限 ${request.id}`)
-    const shown = typeof review === 'string' ? review : ''
-    expect(shown.includes(notice)).toBe(true)
-    expect(shown.includes(marker ?? '（文件末尾没有换行）')).toBe(marker !== null)
-    expect(shown.includes('允许：')).toBe(false)
-    expect(shown.includes('拒绝：')).toBe(true)
-    expect(shown.includes('桌面工作台查看')).toBe(true)
-    const allow = await service.handleWechat('owner', `任务 ${task.id} 允许 ${request.id}`)
-    expect(typeof allow === 'string' && allow.includes(notice)).toBe(true)
-    expect(service.detail(task.id).permissions.some(p => p.id === request.id)).toBe(true)
-    expect(await service.handleWechat('owner', `任务 ${task.id} 拒绝 ${request.id}`)).toContain('已拒绝')
-  })
-
-  it('refuses WeChat approval when only the raw description fits the message budget', async () => {
-    const command = 'printf '.padEnd(REQUEST_MAX - PERMISSION_SNAPSHOT_NOTICE.length - 70, 'x')
-    const description = `command=${command}`
-    setup({async spawn(_project, ctx) { return {async *dispatch() {
-      await ctx.requestPermission!({ tool: 'Bash', description, command, display: { body: { kind: 'command', command } } })
-      yield result
-    }, async close() {}} }})
-    const task = create()
-    await expect.poll(() => service.detail(task.id).permissions.length).toBe(1)
-    const request = service.detail(task.id).permissions[0]!
-    const formatted = `${task.title} · ${task.id}\nClaude 想运行一条命令：\n$ ${command}\n${PERMISSION_SNAPSHOT_NOTICE}`
-    const controls = `\n\n允许：任务 ${task.id} 允许 ${request.id}\n拒绝：任务 ${task.id} 拒绝 ${request.id}`
-    expect(request.description.length).toBeLessThanOrEqual(REQUEST_MAX)
-    expect(formatted.length).toBeLessThanOrEqual(REQUEST_MAX)
-    expect(formatted.length + controls.length).toBeGreaterThan(REQUEST_MAX)
-    const review = await service.handleWechat('owner', `任务 ${task.id} 权限 ${request.id}`)
-    expect(review).toContain('请在桌面工作台完整查看')
-    expect(review).toContain('可拒绝')
-    expect(review).not.toContain('允许：')
-    expect(await service.handleWechat('owner', `任务 ${task.id} 允许 ${request.id}`)).toContain('请在桌面工作台完整查看后处理。微信仍可拒绝。')
-    expect(service.detail(task.id).permissions.some(p => p.id === request.id)).toBe(true)
-    expect(await service.handleWechat('owner', `任务 ${task.id} 拒绝 ${request.id}`)).toContain('已拒绝')
-  })
-
-  it('hands the full review description to the shared pending card registry', async () => {
-    const prompt = vi.fn<NonNullable<ServiceDeps['permissionPrompt']>>(() => () => {})
-    const description = 'Edit sample'
-    const reviewDescription = `${description}\nBefore: previous text\nAfter: replacement text`
-    setup({async spawn(_project, ctx) { return {async *dispatch() {
-      await ctx.requestPermission!({ tool: 'Edit', description, reviewDescription,
-        display: { body: { kind: 'edit', path: 'sample.txt', changes: [{ before: 'previous text', after: 'replacement text' }] } },
-      })
-      yield result
-    }, async close() {}} }}, prompt)
-    const task = create()
-    await expect.poll(() => service.detail(task.id).permissions.length).toBe(1)
-    expect(prompt).toHaveBeenCalledTimes(1)
-    expect(prompt.mock.calls[0]?.[1].description === reviewDescription).toBe(true)
   })
 
   it('shows and resolves only the exact permission, rejecting wrong task, owner and duplicate grants',async()=>{

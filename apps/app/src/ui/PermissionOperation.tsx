@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
-import { permissionEditPreview, type PermissionDisplay } from '@wechat-cc/protocol'
+import { hasInvisiblePermissionText, permissionEditPreview, permissionOperationSource, type PermissionDisplay } from '@wechat-cc/protocol'
 import { Pressable, View } from 'react-native'
 import { labelJoin, t, tCount, type Lang } from '../i18n'
 import { approvalDirectory, approvalLines, approvalRelativePath } from '../view/approval'
 import { DiffLine } from './DiffLine'
+import { PermissionInvisibleNotice, PermissionText, PermissionTextRuns, spokenPermissionText } from './PermissionText'
 import { monoFamily } from './fonts'
 import { Txt } from './Txt'
 import { componentAppearance, space } from './tokens'
@@ -69,15 +70,20 @@ function FieldTable({ fields, lang, open, label, moreLabel }: { fields: Field[];
     remaining -= count
     if (!visible) return []
     return [<View key={index} style={{ flexDirection: 'row', gap: space.m, paddingBottom: space.xs }}>
-      <Txt selectable role="small" tone="inkSoft" style={{ flex: 1 }}>{name}</Txt>
-      <Txt selectable role="code" style={{ flex: 2 }}>{lines.length > visible ? lines.slice(0, visible).join('\n') : value}</Txt>
+      <PermissionText selectable role="small" tone="inkSoft" style={{ flex: 1 }} value={name} lang={lang} />
+      <PermissionText selectable role="code" style={{ flex: 2 }} value={lines.length > visible ? lines.slice(0, visible).join('\n') : value} lang={lang} />
     </View>]
   })
   return <><Visual label={label}>{rows}</Visual>{remaining < 0 ? <More label={moreLabel ?? t(lang, 'approval.full')} open={open} /> : null}</>
 }
 
-function FilePath({ path, detail }: { path: string; detail?: string }) {
-  return <Txt selectable role="caption" tone="inkSoft" style={{ fontFamily: monoFamily, marginBottom: space.xs }}>{path}{detail ? ` ${detail}` : ''}</Txt>
+function FilePath({ path, detail, lang }: { path: string; detail?: string; lang: Lang }) {
+  return <PermissionText selectable role="caption" tone="inkSoft" style={{ fontFamily: monoFamily, marginBottom: space.xs }}
+    value={detail ? `${path} ${detail}` : path} lang={lang} />
+}
+
+function ApprovalDiffLine({ line, kind }: { line: string; kind?: 'add' | 'remove' }) {
+  return <DiffLine line={line} kind={kind} highlight selectable><PermissionTextRuns value={line || ' '} /></DiffLine>
 }
 
 function changeLabel(kind: string, destination: string | undefined, lang: Lang, spoken = false) {
@@ -91,11 +97,11 @@ function changeLabel(kind: string, destination: string | undefined, lang: Lang, 
 function UrlText({ url }: { url: string }) {
   const parts = /^([a-z][\w+.-]*:\/\/)([^/?#]*@)?(\[[^\]]+\]|[^:/?#]+)([\s\S]*)$/i.exec(url)
   return <Txt selectable role="code" tone="inkSoft">{parts
-    ? <>{parts[1]}{parts[2]}<Txt role="code" tone="ink">{parts[3]}</Txt>{parts[4]}</>
-    : url}</Txt>
+    ? <><PermissionTextRuns value={parts[1] + (parts[2] ?? '')} /><Txt role="code" tone="ink"><PermissionTextRuns value={parts[3]} /></Txt><PermissionTextRuns value={parts[4]} /></>
+    : <PermissionTextRuns value={url} />}</Txt>
 }
 
-function OperationBody({ body, projectPath, lang, open, label, moreLabel }: { body: Body; projectPath: string; lang: Lang; open?: () => void; label: string; moreLabel?: string }) {
+function OperationBody({ body, truncated, projectPath, lang, open, label, moreLabel }: { body: Body; truncated?: boolean; projectPath: string; lang: Lang; open?: () => void; label: string; moreLabel?: string }) {
   const path = (value: string) => approvalRelativePath(value, projectPath)
   switch (body.kind) {
     case 'command':
@@ -108,26 +114,23 @@ function OperationBody({ body, projectPath, lang, open, label, moreLabel }: { bo
       return <>
         <Visual label={label}><View style={{ flexDirection: 'row' }}>
           {command ? <Txt role="code" tone="inkSoft">{'$ '}</Txt> : null}
-          <Txt selectable role="code" testID="approval-operation-source" style={{ flex: 1 }}>{preview}</Txt>
+          <PermissionText selectable role="code" testID="approval-operation-source" style={{ flex: 1 }} value={preview} lang={lang} />
         </View></Visual>
         {hidden > 0 ? <More label={moreLabel ?? tCount(lang, 'approval.moreLines', hidden)} open={open} /> : null}
       </>
     }
     case 'edit': return <>
-      <Visual label={label}><FilePath path={path(body.path)} detail={body.replaceAll ? t(lang, 'approval.replaceAll') : undefined} /></Visual>
+      <Visual label={label}><FilePath lang={lang} path={path(body.path)} detail={body.replaceAll ? t(lang, 'approval.replaceAll') : undefined} /></Visual>
       {body.changes.map(({ before, after, path: changePath }, i) => {
         const edit = permissionEditPreview(before, after)
-        const noNewline = { line: t(lang, 'approval.noFinalNewline'), kind: undefined }
         const rows = [
           ...edit.before.map(line => ({ line: `− ${line}`, kind: 'remove' as const })),
-          ...(edit.noFinalNewline === 'before' ? [noNewline] : []),
           ...edit.after.map(line => ({ line: `+ ${line}`, kind: 'add' as const })),
-          ...(edit.noFinalNewline === 'after' ? [noNewline] : []),
         ]
         return <View key={i} testID={`approval-edit-${i}`}>
-          <Visual>{changePath && changePath !== body.path ? <FilePath path={path(changePath)} /> : null}{rows.slice(0, 12).map(({ line, kind }, j) => <DiffLine key={j} line={line} kind={kind} highlight selectable />)}</Visual>
-          {rows.indexOf(noNewline) >= 12 ? <Txt role="small" tone="inkSoft">{t(lang,
-            edit.noFinalNewline === 'before' ? 'approval.noFinalNewlineBefore' : 'approval.noFinalNewlineAfter')}</Txt> : null}
+          <Visual>{changePath && changePath !== body.path ? <FilePath lang={lang} path={path(changePath)} /> : null}{rows.slice(0, 12).map(({ line, kind }, j) => <ApprovalDiffLine key={j} line={line} kind={kind} />)}</Visual>
+          {edit.finalNewlineChange ? <Txt role="small" tone="inkSoft">{t(lang,
+            edit.finalNewlineChange === 'removed' ? 'approval.fragmentNewlineRemoved' : 'approval.fragmentNewlineAdded')}</Txt> : null}
           {edit.whitespaceChange ? <Txt role="small" tone="inkSoft">{t(lang, 'approval.whitespaceChange')}</Txt> : null}
           {rows.length > 12 ? <More label={moreLabel ?? t(lang, 'approval.full')} open={open} /> : null}
         </View>
@@ -136,7 +139,8 @@ function OperationBody({ body, projectPath, lang, open, label, moreLabel }: { bo
     case 'write': {
       const lines = approvalLines(body.content)
       return <>
-        <Visual label={label}><FilePath path={path(body.path)} />{lines.slice(0, 12).map((line, i) => <DiffLine key={i} line={`+ ${line}`} kind="add" highlight selectable />)}</Visual>
+        <Visual label={label}><FilePath lang={lang} path={path(body.path)} />{lines.slice(0, 12).map((line, i) => <ApprovalDiffLine key={i} line={`+ ${line}`} kind="add" />)}</Visual>
+        {body.content && !body.content.endsWith('\n') && !truncated ? <Txt role="small" tone="inkSoft">{t(lang, 'approval.noFinalNewline')}</Txt> : null}
         {lines.length > 12 ? <More label={moreLabel ?? t(lang, 'approval.allLines', { n: lines.length })} open={open} /> : null}
       </>
     }
@@ -144,8 +148,8 @@ function OperationBody({ body, projectPath, lang, open, label, moreLabel }: { bo
       const lines = approvalLines(file.diff)
       return <View key={i} testID={`approval-patch-${i}`}>
         <Visual label={i === 0 ? label : undefined}>
-          <FilePath path={path(file.path)} detail={`(${changeLabel(file.change, file.movePath === undefined ? undefined : path(file.movePath), lang)})`} />
-          {lines.slice(0, 12).map((line, j) => <DiffLine key={j} line={line} selectable highlight kind={
+          <FilePath lang={lang} path={path(file.path)} detail={`(${changeLabel(file.change, file.movePath === undefined ? undefined : path(file.movePath), lang)})`} />
+          {lines.slice(0, 12).map((line, j) => <ApprovalDiffLine key={j} line={line} kind={
             line.startsWith('+') ? 'add' : line.startsWith('-') ? 'remove' : undefined
           } />)}
         </Visual>
@@ -153,25 +157,33 @@ function OperationBody({ body, projectPath, lang, open, label, moreLabel }: { bo
       </View>
     })}</>
     case 'url': return <Visual label={label}><UrlText url={body.url} /></Visual>
-    case 'query': return <Visual label={label}><Txt selectable role="code">{lang === 'zh-Hans' ? `「${body.query}」` : `“${body.query}”`}</Txt></Visual>
+    case 'query': return <Visual label={label}><PermissionText selectable role="code" lang={lang} value={lang === 'zh-Hans' ? `「${body.query}」` : `“${body.query}”`} /></Visual>
     case 'fields': return <FieldTable fields={body.fields} lang={lang} open={open} label={label} moreLabel={moreLabel} />
   }
 }
 
-export function PermissionOperation({ display, projectPath, cwd, lang, open, testID, moreLabel }: {
-  display: PermissionDisplay; projectPath: string; cwd?: string | undefined; lang: Lang; open?: () => void; testID?: string; moreLabel?: string
+export function PermissionOperation({ display, projectPath, cwd, lang, open, testID, moreLabel, source, summaryOnly }: {
+  display: PermissionDisplay; projectPath: string; cwd?: string | undefined; lang: Lang; open?: () => void; testID?: string; moreLabel?: string; source?: string; summaryOnly?: boolean
 }) {
   const { body, extra } = display
   const directory = approvalDirectory(cwd, projectPath, lang)
   const pathBase = cwd ?? projectPath
-  const spoken = [operationLabel(body, pathBase, lang), directory, extra?.length ? readFields(extra) : ''].filter(Boolean).join(', ')
+  const diff = body.kind === 'edit' ? body.changes.flatMap(({ before, after }) => [...approvalLines(before), ...approvalLines(after)])
+    : body.kind === 'write' ? approvalLines(body.content)
+    : body.kind === 'patch' ? body.files.flatMap(file => approvalLines(file.diff)) : []
+  const spoken = spokenPermissionText([operationLabel(body, pathBase, lang), extra?.length ? readFields(extra) : '',
+    ...diff.filter(hasInvisiblePermissionText), directory].filter(Boolean).join(', '), lang)
+  const marked = [permissionOperationSource(display), directory, source ?? ''].some(hasInvisiblePermissionText)
   return <View testID={testID} style={{ gap: space.s }}>
+    {summaryOnly ? <Txt testID="terminal-summary-label" role="small" tone="inkSoft">{t(lang, 'terminal.summary')}</Txt> : null}
     <Panel testID={`approval-operation-${body.kind}`}>
-      <OperationBody body={body} projectPath={pathBase} lang={lang} open={open} label={spoken} moreLabel={moreLabel} />
+      <OperationBody body={body} truncated={display.truncated || summaryOnly} projectPath={pathBase} lang={lang} open={open} label={spoken} moreLabel={moreLabel} />
     </Panel>
-    {directory ? <Visual><Txt selectable testID="approval-operation-cwd" role="small" tone="inkSoft">{directory}</Txt></Visual> : null}
-    {body.kind === 'url' && body.prompt ? <Visual><Txt selectable role="small" tone="inkSoft">{t(lang, 'approval.fetchPrompt', { prompt: body.prompt })}</Txt></Visual> : null}
+    {summaryOnly ? <Txt testID="terminal-summary-whitespace" role="small" tone="inkSoft">{t(lang, 'terminal.summaryWhitespace')}</Txt> : null}
+    {directory ? <Visual><PermissionText selectable testID="approval-operation-cwd" role="small" tone="inkSoft" lang={lang} value={directory} /></Visual> : null}
+    {body.kind === 'url' && body.prompt ? <Visual><PermissionText selectable role="small" tone="inkSoft" lang={lang} value={t(lang, 'approval.fetchPrompt', { prompt: body.prompt })} /></Visual> : null}
     {/* 多出来的字段一个都不吞,但不和主体抢:不带底,小字表 */}
     {extra?.length ? <View testID="approval-operation-extra"><FieldTable fields={extra} lang={lang} open={open} moreLabel={moreLabel} /></View> : null}
+    {marked ? <PermissionInvisibleNotice lang={lang} /> : null}
   </View>
 }

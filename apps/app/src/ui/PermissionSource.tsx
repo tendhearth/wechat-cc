@@ -3,6 +3,7 @@ import { ScrollView, View } from 'react-native'
 import { t, type Lang } from '../i18n'
 import { approvalDirectory } from '../view/approval'
 import { useMotionEnabled } from './motion'
+import { PermissionText } from './PermissionText'
 import { Sheet } from './Sheet'
 import { space } from './tokens'
 import { Txt } from './Txt'
@@ -50,9 +51,9 @@ export function usePermissionSource(scroll: RefObject<ScrollView | null> | undef
   }
 }
 
-export function PermissionSource({ source, projectPath, cwd, lang, sheet, kind = 'original' }: {
+export function PermissionSource({ source, projectPath, cwd, lang, sheet, kind = 'original', summaryOnly = false }: {
   source: string; projectPath: string; cwd?: string | undefined; lang: Lang; sheet: ReturnType<typeof usePermissionSource>
-  kind?: 'original' | 'received' | 'summary'
+  kind?: 'original' | 'received' | 'summary'; summaryOnly?: boolean
 }) {
   const { anchor, expanded, onExpandedChange, onOpened } = sheet
   const directory = approvalDirectory(cwd, projectPath, lang)
@@ -63,11 +64,11 @@ export function PermissionSource({ source, projectPath, cwd, lang, sheet, kind =
     <Sheet quiet testID={testID} title={t(lang, title)} expanded={expanded}
       onExpandedChange={onExpandedChange} onOpened={onOpened}>
       <View style={{ gap: space.s }}>
-        {kind === 'summary' ? <Txt role="small" tone="inkSoft">{t(lang, 'terminal.summaryWhitespace')}</Txt> : null}
+        {kind === 'summary' && !summaryOnly ? <Txt role="small" tone="inkSoft">{t(lang, 'terminal.summaryWhitespace')}</Txt> : null}
         <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
-          <Txt selectable accessible accessibilityRole="text" role="code" testID={sourceID}>{source}</Txt>
+          <PermissionText selectable accessible accessibilityRole="text" role="code" testID={sourceID} lang={lang} value={source} />
         </ScrollView>
-        {directory ? <Txt selectable testID="approval-exact-cwd" role="small" tone="inkSoft">{directory}</Txt> : null}
+        {directory ? <PermissionText selectable testID="approval-exact-cwd" role="small" tone="inkSoft" lang={lang} value={directory} /> : null}
       </View>
     </Sheet>
   </View>

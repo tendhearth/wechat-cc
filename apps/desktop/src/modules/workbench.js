@@ -31,8 +31,8 @@ import { REWIND_STALE_NOTICE, isRewindStale, renderRewindBlocked, rewindErrorMes
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
 import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOperation, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
 import { currentActivityLabel, mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, clearLiveTimelinePatches, hasLiveTimelineInteraction } from './workbench-live.js'
-import { PERMISSION_SNAPSHOT_NOTICE, permissionActionZh, permissionCwd, resolvePermissionDisplay } from '../generated/permission-display.js'
-import { renderPermissionOperation } from './permission-operation.js'
+import { PERMISSION_INVISIBLE_NOTICE_ZH, PERMISSION_SNAPSHOT_NOTICE, permissionActionZh, permissionCwd, resolvePermissionDisplay } from '../generated/permission-display.js'
+import { renderPermissionOperation, renderPermissionText } from './permission-operation.js'
 import {permissionControlId,capturePermissionFocus,restorePermissionFocus} from './workbench-permission-focus.js'
 import {captureTimelineReading,restoreTimelineReading} from './workbench-reading-dom.js'
 import { saveFile } from './save-file.js'
@@ -2214,7 +2214,21 @@ export function getActiveWorkbenchTaskId() { return active?.getTaskId() ?? null 
 export function getViewedWorkbenchTaskId() { return active?.getViewedTaskId() ?? null }
 
 /** @param {Array<{path:string,content:string,error?:string,sha256?:string,truncated?:boolean,expanded?:boolean}>|undefined} scripts @param {string} taskId @param {string} requestId */
-function renderPermissionScripts(scripts,taskId,requestId) { return (scripts??[]).map(s=>`<div class="wb-permission-script"><span>脚本 · ${escapeWorkbenchHtml(s.path)}</span><pre>${escapeWorkbenchHtml(s.error??(s.expanded?s.content:s.content.slice(0,2000)))}</pre>${s.truncated?`<button type="button" class="wb-btn" data-action="expand-permission-script" data-owner-task="${escapeWorkbenchHtml(taskId)}" data-request-id="${escapeWorkbenchHtml(requestId)}" data-script-path="${escapeWorkbenchHtml(s.path)}" data-script-sha="${escapeWorkbenchHtml(s.sha256)}">展开全文</button>`:!s.expanded&&s.content.length>2000?`<details><summary>展开全文</summary><pre>${escapeWorkbenchHtml(s.content)}</pre></details>`:''}</div>`).join('') }
+function renderPermissionScripts(scripts,taskId,requestId) {
+  return (scripts??[]).map(s=>{
+    let marked = false
+    const render = (/** @type {string} */ value) => renderPermissionText(value, () => { marked = true })
+    const title = render(`脚本 · ${s.path}`)
+    const content = render(s.error??(s.expanded?s.content:s.content.slice(0,2000)))
+    const full = !s.truncated && !s.expanded && s.content.length > 2000 ? render(s.content) : ''
+    const pathAttr = escapeWorkbenchHtml(s.path).replace(/\r/g, '&#13;')
+    const expand = s.truncated
+      ? `<button type="button" class="wb-btn" data-action="expand-permission-script" data-owner-task="${escapeWorkbenchHtml(taskId)}" data-request-id="${escapeWorkbenchHtml(requestId)}" data-script-path="${pathAttr}" data-script-sha="${escapeWorkbenchHtml(s.sha256)}">展开全文</button>`
+      : full ? `<details><summary>展开全文</summary><pre><code>${full}</code></pre></details>` : ''
+    const notice = `<div class="approval-meta approval-invisible-notice"${marked ? '' : ' hidden'}>${PERMISSION_INVISIBLE_NOTICE_ZH}</div>`
+    return `<div class="wb-permission-script"><span>${title}</span><pre><code>${content}</code></pre>${expand}${notice}</div>`
+  }).join('')
+}
 
 /** The same detail layer serves the dock and the full-screen tools. @param {boolean} docked */
 export function setWorkbenchDocked(docked) {

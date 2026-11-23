@@ -3,16 +3,7 @@ import { permissionReason } from '../domain/permission-denial'
 export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 
 /** Desktop-facing description of a pending permission ask (CC 桌宠 Phase B). */
-export interface PendingPermissionMeta {
-  chatId: string
-  prompt: string
-  taskId?: string
-  canAllowTask?: boolean
-  canDenyWithReason?: boolean
-  scripts?: import('../ports/workbench').PermissionScript[]
-  /** In-memory reason for declining a WeChat allow reply. */
-  wechatApprovalBlock?: string
-}
+export interface PendingPermissionMeta { chatId: string; prompt: string; taskId?: string; canAllowTask?: boolean; canDenyWithReason?: boolean; scripts?: import('../ports/workbench').PermissionScript[] }
 
 /** 登记处的留痕口(构造参数):开卡写一行、了结删一行 —— 实现在 pending-cards.ts(v91 pending_cards)。 */
 export interface PendingCardJournal {
@@ -22,7 +13,7 @@ export interface PendingCardJournal {
 
 /** Row shape returned by PendingPermissions.list(). */
 /** `code` 是主人在微信里回的两位数(01–99,滚动分配);`hash` 是调用方的原 id,桌面卡片与 hook 轮询仍用它。 */
-export interface PendingPermissionView extends Omit<PendingPermissionMeta, 'wechatApprovalBlock'> { hash: string; code: string; since: string; expires_at: string }
+export interface PendingPermissionView extends Omit<PendingPermissionMeta, 'chatId' | 'prompt'> { hash: string; code: string; chatId: string; prompt: string; since: string; expires_at: string }
 
 interface Entry {
   /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
@@ -161,13 +152,6 @@ export class PendingPermissions {
    */
   approverOf(hash: string): string | null {
     return this.entries.get(hash)?.meta?.chatId ?? null
-  }
-
-  wechatApprovalBlockOf(hash: string): string | undefined {
-    const entry = this.entries.get(hash)
-    if (!entry?.meta?.wechatApprovalBlock) return
-    const expiresAt = entry.deadline ? entry.deadline() : entry.expiresAt
-    if (expiresAt === null || Date.now() < expiresAt) return entry.meta.wechatApprovalBlock
   }
 
   consume(hash: string, decision: 'allow' | 'deny' | 'allow_task', rawReason?: string): boolean {

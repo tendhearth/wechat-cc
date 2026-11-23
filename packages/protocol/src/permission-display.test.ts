@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CliPermissionRequest } from './desktop-api'
 import { boundedPermissionDisplay, permissionDisplay, PermissionDisplaySchema, PERMISSION_DISPLAY_LIMITS, toolPermissionDisplay } from './permission-display'
-import { permissionEditPreview } from './permission-presentation'
+import { hasInvisiblePermissionText, permissionEditPreview, permissionTextSegments } from './permission-presentation'
 
 function same(actual: unknown, expected: unknown) {
   // Never print the source on an assertion failure.
@@ -9,18 +9,34 @@ function same(actual: unknown, expected: unknown) {
 }
 
 it.each([
-  ['final newline removed', 'abc\n', 'abc', true, 'after'],
-  ['final newline added', 'abc', 'abc\n', true, 'before'],
+  ['final newline removed', 'abc\n', 'abc', true, 'removed'],
+  ['final newline added', 'abc', 'abc\n', true, 'added'],
   ['tabs replaced', '\tabc', '    abc', true, undefined],
   ['trailing spaces', 'abc  ', 'abc ', true, undefined],
   ['CRLF changed to LF', 'abc\r\ndef\r\n', 'abc\ndef\n', true, undefined],
   ['mixed edit with a shifted line', 'old\nkeep  \nstable', 'new\nextra\nkeep \nstable', true, undefined],
   ['visible edit with unchanged whitespace', 'old\nkeep  \nstable', 'new\nextra\nkeep  \nstable', false, undefined],
   ['identical inputs', 'abc\n', 'abc\n', false, undefined],
-])('classifies whitespace differences (%s)', (_, before, after, whitespaceChange, noFinalNewline) => {
+])('classifies whitespace differences (%s)', (_, before, after, whitespaceChange, finalNewlineChange) => {
   const preview = permissionEditPreview(before, after)
   expect(preview.whitespaceChange).toBe(whitespaceChange)
-  expect(preview.noFinalNewline).toBe(noFinalNewline)
+  expect(preview.finalNewlineChange).toBe(finalNewlineChange)
+})
+
+it('marks the control, bidi and zero-width ranges and keeps ordinary text intact', () => {
+  const controls = [
+    ...Array.from({ length: 32 }, (_, i) => i).filter(i => i !== 9 && i !== 10),
+    ...Array.from({ length: 33 }, (_, i) => 0x7f + i),
+    0x61c, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e,
+    0x2060, 0x2066, 0x2067, 0x2068, 0x2069, 0xfeff,
+  ]
+  const plain = '中文🙂\n\t'
+  const segments = permissionTextSegments(plain + String.fromCharCode(...controls) + plain)
+  same(segments.filter(segment => !segment.marked), [{ text: plain, marked: false }, { text: plain, marked: false }])
+  expect(segments.filter(segment => segment.marked)).toHaveLength(controls.length)
+  same(permissionTextSegments('\r\x1b\u202e\u200b').map(segment => segment.text),
+    ['\\r', '\\x1b', '\\u{202E}', '\\u{200B}'])
+  expect(hasInvisiblePermissionText(plain)).toBe(false)
 })
 
 describe('permissionDisplay', () => {

@@ -100,7 +100,10 @@ describe('终端会话的那件事 → 终端详情', () => {
       if (kind === 'edit') {
         const edit = ui.byId('approval-operation-edit')
         expect(['notes.txt', '− Draft', '+ Ready'].every(value => edit.textContent?.includes(value))).toBe(true)
-      } else expect(ui.byId('approval-operation-source')?.textContent === summary).toBe(true)
+      } else expect(ui.byId('approval-operation-source')?.textContent === summary.replaceAll('\r', '\\r')).toBe(true)
+      const panel = ui.byId(`approval-operation-${kind}`)
+      expect(panel.previousElementSibling?.textContent).toBe('Summary')
+      expect(panel.nextElementSibling?.textContent).toBe('The summary may collapse line breaks and repeated spaces.')
       expect(ui.byId('approval-operation-cwd')?.textContent === `Project folder ${projectPath}`).toBe(true)
       expect(ui.byId('approval-operation-label').getAttribute('aria-label')?.endsWith(`Project folder ${projectPath}`)).toBe(true)
     }
@@ -143,22 +146,25 @@ describe('wire terminal approvals', () => {
     }
   })
 
-  it.each([true, false, undefined])('uses the summary truncation flag %s independently from structured approval', truncated => {
+  it.each([true, false, undefined])('uses the summary truncation flag %s only when structured approval is unavailable', truncated => {
     const summary = 'x'.repeat(200)
     const command = 'printf "example"\r\nprintf "next"\n'
     const cwd = 'C:\\project\\work'
     const pending = { tool: 'Bash', summary, display: { body: { kind: 'command' as const, command } }, cwd, truncated }
     const result = terminalPermission(pending, 'Codex', 'zh-Hans')
     expect(result.summaryTruncated).toBe(truncated ?? true)
+    expect(result.summaryOnly).toBe(false)
     expect(result.raw === command && result.cwd === cwd && result.display?.body.kind === 'command' &&
       result.display.body.command === command).toBe(true)
     const cut = terminalPermission({ ...pending, truncated: false, display: { ...pending.display, truncated: true } }, 'Codex', 'zh-Hans')
     expect(cut.display?.truncated).toBe(true)
     expect(cut.summaryTruncated).toBe(false)
+    expect(cut.summaryOnly).toBe(false)
     expect(cut.raw === undefined && cut.summary === summary && cut.received === command).toBe(true)
     const fallback = terminalPermission({ ...pending, display: { body: { kind: 'command' } } } as typeof pending, 'Codex', 'zh-Hans')
     expect(fallback.display?.body.kind === 'command' && fallback.display.body.command === summary).toBe(true)
     expect(fallback.summaryTruncated).toBe(truncated ?? true)
+    expect(fallback.summaryOnly).toBe(true)
     expect(fallback.raw === undefined && fallback.summary === ((truncated ?? true) ? '' : summary)).toBe(true)
   })
 })
@@ -183,8 +189,9 @@ it.each([false, true])('opens every received command line with a cut summary (pr
 })
 
 it.each([
-  ['final newline removed', 'abc\n', 'abc', '(No newline at end of file)'],
-  ['final newline removed below the fold', 'abc\n'.repeat(13), 'abc\n'.repeat(12) + 'abc', 'After the edit (no newline at end of file)'],
+  ['final newline removed', 'abc\n', 'abc', 'This fragment ends with one fewer line break.'],
+  ['final newline removed below the fold', 'abc\n'.repeat(13), 'abc\n'.repeat(12) + 'abc', 'This fragment ends with one fewer line break.'],
+  ['final newline added', 'abc', 'abc\n', 'This fragment ends with one more line break.'],
   ['tabs replaced', '\tabc', '    abc', null],
   ['trailing spaces', 'abc  ', 'abc ', null],
   ['CRLF changed to LF', 'abc\r\ndef\r\n', 'abc\ndef\n', null],
@@ -197,7 +204,38 @@ it.each([
   }), { backend: makeDemoBackend({ lang: 'en' }), lang: 'en' }))
   const change = ui.byId('approval-edit-0')
   expect(change.textContent?.includes('This change includes differences in line breaks or whitespace that this preview cannot show.')).toBe(true)
-  expect(change.textContent?.includes(marker ?? 'newline at end of file')).toBe(marker !== null)
+  expect(change.textContent?.includes(marker ?? 'This fragment ends with one')).toBe(marker !== null)
   await act(() => ui.byId('approval-view-exact').click())
   expect(ui.byId('approval-exact-source').textContent === `sample\nBefore: ${JSON.stringify(before)}\nAfter: ${JSON.stringify(after)}`).toBe(true)
+})
+
+it.each(['Bash', 'Edit'] as const)('marks unsafe characters in the %s preview and its full source', async tool => {
+  const value = '中文🙂\n\t\r\x1b\u202e\u200b'
+  const marks = ['\\r', '\\x1b', '\\u{202E}', '\\u{200B}']
+  const body = tool === 'Bash' ? { kind: 'command' as const, command: value }
+    : { kind: 'edit' as const, path: value, changes: [{ before: value, after: 'sample' }] }
+  const ui = await mount(withProviders(createElement(TerminalPermission, {
+    pending: { tool, summary: null, display: { body } }, source: 'Claude', projectPath: '/sample', scroll: { current: null },
+  }), { backend: makeDemoBackend({ lang: 'en' }), lang: 'en' }))
+  const panel = ui.byId(`approval-operation-${body.kind}`)
+  const visibleMarks = (node: Element) => [...node.querySelectorAll('[data-testid="approval-invisible"]')].map(mark => mark.textContent)
+  expect(visibleMarks(panel)).toEqual(tool === 'Bash' ? marks : [...marks, ...marks])
+  expect(panel.textContent?.includes('中文🙂')).toBe(true)
+  for (const mark of marks) expect(ui.byId('approval-operation-label').getAttribute('aria-label')?.includes('Invisible character ' + mark)).toBe(true)
+  expect(ui.byId('approval-invisible-notice')?.textContent).toBe('This content contains invisible characters, marked above or in the expanded text.')
+  await act(() => ui.byId('approval-view-exact').click())
+  const original = ui.byId('approval-exact-source')
+  expect(visibleMarks(original)).toEqual(tool === 'Bash' ? marks : [...marks, ...marks])
+  for (const mark of marks) expect(original.getAttribute('aria-label')?.includes('Invisible character ' + mark)).toBe(true)
+})
+
+it('identifies a short untruncated legacy command as a summary before any expansion', async () => {
+  const ui = await mount(withProviders(createElement(TerminalPermission, {
+    pending: { tool: 'Bash', summary: 'echo first echo second', truncated: false },
+    source: 'Claude', projectPath: '/sample', scroll: { current: null },
+  }), { backend: makeDemoBackend({ lang: 'en' }), lang: 'en' }))
+  expect(ui.byId('terminal-summary-label')?.textContent).toBe('Summary')
+  expect(ui.byId('terminal-summary-whitespace')?.textContent).toBe('The summary may collapse line breaks and repeated spaces.')
+  expect(ui.byId('terminal-detail-pending-truncated')).toBeNull()
+  expect(ui.byId('terminal-summary-source')).toBeNull()
 })

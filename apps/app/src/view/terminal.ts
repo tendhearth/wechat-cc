@@ -82,7 +82,7 @@ export function terminalPermission(pending: Pick<NonNullable<CliSessionRowT['pen
   const raw = structured && !structured.truncated ? permissionOperationSource(structured) : undefined
   const received = structured?.truncated ? permissionOperationSource(structured)
     : raw === undefined && summaryTruncated && summary ? summary : undefined
-  return { display, raw, received, summary: raw === undefined && !summaryTruncated ? summary : '', cwd, action, summaryTruncated }
+  return { display, raw, received, summary: raw === undefined && !summaryTruncated ? summary : '', cwd, action, summaryTruncated, summaryOnly: !structured && !!display }
 }
 
 /** 等你、而且手机上拍得了的那几条(「此刻」的数与行)。够不着电脑时这份是旧的 ⇒ 0。 */

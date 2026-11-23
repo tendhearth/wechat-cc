@@ -455,7 +455,7 @@ describe('permission operation rendering', () => {
       await ui.click('approval-operation-more')
     } else await ui.click('approval-view-exact')
     expect(ui.byId('approval-view-exact').getAttribute('aria-expanded')).toBe('true')
-    expect(ui.byId('approval-exact-source').textContent === raw).toBe(true)
+    expect(ui.byId('approval-exact-source').textContent === raw.replaceAll('\r', '\\r')).toBe(true)
     expect(ui.byId('approval-exact-source').getAttribute('role')).toBe('text')
     expect(ui.byId('approval-exact-cwd').textContent === '项目目录 /p').toBe(true)
     expect(host.sources.some(source => source.id === 'approval-exact-source' && source.selectable === true && source.accessible === true)).toBe(true)
@@ -481,7 +481,7 @@ describe('permission operation rendering', () => {
     expect(notice.closest('[aria-hidden="true"]')).toBeNull()
     expect(ui.byId('approval-exact-source')).toBeNull()
     await ui.click('approval-view-exact')
-    expect(ui.byId('approval-exact-source').textContent === raw).toBe(true)
+    expect(ui.byId('approval-exact-source').textContent === raw.replaceAll('\r', '\\r')).toBe(true)
   })
 
   it('keeps the legacy snapshot notice visible inside the operation', async () => {
@@ -491,6 +491,21 @@ describe('permission operation rendering', () => {
     expect(ui.byId('approval-operation-command').textContent?.includes(SNAPSHOT_NOTICE)).toBe(true)
     expect(ui.byId('approval-exact-source')).toBeNull()
     expect(ui.byId('approval-snapshot-notice')).toBeNull()
+  })
+
+  it('marks hidden characters found only in the full workbench original', async () => {
+    const h = harness()
+    const permission = h.detail().permissions[0]
+    permission.display = { body: { kind: 'fields', fields: [{ name: '样例', value: '中文🙂\n\t普通内容' }] } }
+    permission.description = '中文🙂\n\t\r\x1b\u202e\u200b'
+    const ui = await mount(Approval)
+    expect(ui.byId('approval-operation-fields').querySelector('[data-testid="approval-invisible"]')).toBeNull()
+    expect(ui.byId('approval-invisible-notice')?.textContent).toBe('这里有看不见的字符，已经标出来了。')
+    await ui.click('approval-view-exact')
+    const source = ui.byId('approval-exact-source')
+    expect([...source.querySelectorAll('[data-testid="approval-invisible"]')].map(node => node.textContent))
+      .toEqual(['\\r', '\\x1b', '\\u{202E}', '\\u{200B}'])
+    expect(source.textContent?.startsWith('中文🙂\n\t')).toBe(true)
   })
 
   it.each([true, false])('waits for the visible sheet layout before scrolling (motion enabled: %s)', async animated => {

@@ -182,6 +182,7 @@
 .approval-fields dt { color:var(--th-ink-soft); overflow-wrap:anywhere; }
 .approval-fields dd { margin:0; min-width:0; }
 .approval-extra,.approval-meta,.approval-disclosure { color:var(--th-ink-soft); font:12px/1.55 var(--th-font-sans); overflow-wrap:anywhere; }
+.approval-invisible { color:var(--th-ink-soft); background:var(--th-ground); direction:ltr; unicode-bidi:isolate; }
 .approval-meta { white-space:pre-wrap; user-select:text; }
 .approval-disclosure>summary { width:fit-content; cursor:pointer; }
 .approval-operation .approval-disclosure>summary { padding:2px 0; }

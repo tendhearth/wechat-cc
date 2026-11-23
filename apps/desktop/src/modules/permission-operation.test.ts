@@ -11,7 +11,7 @@ function render(body: PermissionDisplay['body'], options?: Parameters<typeof ren
 
 it('lays out the command prompt separately and expands everything after eight lines', () => {
   const lines = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`)
-  const root = render({ kind: 'command', command: lines.join('\r\n') })
+  const root = render({ kind: 'command', command: lines.join('\n') })
   expect(root.querySelector('[data-kind="command"] .approval-command > span')?.textContent).toBe('$ ')
   expect(root.querySelector('.approval-source')?.textContent).toBe(lines.slice(0, 8).join('\n'))
   const more = root.querySelector('details')!
@@ -23,7 +23,7 @@ it('lays out the command prompt separately and expands everything after eight li
 })
 
 it('folds each edit independently after twelve lines and keeps the replace-all label', () => {
-  const before = Array.from({ length: 12 }, (_, i) => `old ${i + 1}`).join('\r')
+  const before = Array.from({ length: 12 }, (_, i) => `old ${i + 1}`).join('\n')
   const root = render({ kind: 'edit', path: '/work/src/a.ts', replaceAll: true,
     changes: [{ before, after: 'new' }, { before: 'old', after: 'next', path: '/work/src/b.ts' }],
   }, { cwd: '/work' })
@@ -39,9 +39,9 @@ it('folds each edit independently after twelve lines and keeps the replace-all l
 it('renders writes and each patch file with the review diff classes and shows rename destinations', () => {
   const write = render({ kind: 'write', path: '/work/a', content: 'new\r\nnext' }, { projectPath: '/work' })
   expect(write.querySelector('[data-kind="write"] .approval-path')?.textContent).toBe('a')
-  expect([...write.querySelectorAll('.wb-review-diff [data-line="added"]')].map(row => row.textContent)).toEqual(['+ new', '+ next'])
+  expect([...write.querySelectorAll('.wb-review-diff [data-line="added"]')].map(row => row.textContent)).toEqual(['+ new\\r', '+ next'])
   const patch = render({ kind: 'patch', files: [
-    { path: '/work/a', movePath: '/work/b', change: 'move', diff: '@@\r-old\r+new' },
+    { path: '/work/a', movePath: '/work/b', change: 'move', diff: '@@\n-old\n+new' },
     { path: '/elsewhere/c', change: 'delete', diff: '-gone' },
   ] }, { projectPath: '/work' })
   expect([...patch.querySelectorAll('[data-kind="patch"] .approval-path')].map(path => path.textContent)).toEqual(['a（改名 → b）', '/elsewhere/c（删除）'])
@@ -57,17 +57,17 @@ it('renders a full URL, a quoted query, an extra table without the panel and raw
   const fields = render({ kind: 'fields', fields: [{ name: 'mode', value: 'read\r\nonly' }] },
     {}, [{ name: 'limit', value: '10' }])
   expect(fields.querySelector('[data-kind="fields"] dl dt')?.textContent).toBe('mode')
-  expect(fields.querySelector('[data-kind="fields"] dl dd')?.textContent).toBe('read\nonly')
+  expect(fields.querySelector('[data-kind="fields"] dl dd')?.textContent).toBe('read\\r\nonly')
   expect(fields.querySelector('.approval-panel .approval-extra')).toBeNull()
   expect(fields.querySelector('.approval-extra dl dd')?.textContent).toBe('10')
   const text = render({ kind: 'text', text: '\r\nopaque' }, { raw: '\r\nopaque' })
-  expect(text.querySelector('[data-kind="text"] .approval-source')?.textContent).toBe('\nopaque')
+  expect(text.querySelector('[data-kind="text"] .approval-source')?.textContent).toBe('\\r\nopaque')
   expect(text.querySelector('details summary')?.textContent).toBe('看完整原文')
-  expect(text.querySelector('details .approval-source')?.textContent === '\r\nopaque').toBe(true)
+  expect(text.querySelector('details .approval-source')?.textContent === '\\r\nopaque').toBe(true)
 })
 
 it('uses only the supplied directory and keeps the complete original when the preview is cut', () => {
-  const body = { kind: 'command', command: 'line\r\n'.repeat(10), cwd: '/unverified' } as const
+  const body = { kind: 'command', command: 'line\n'.repeat(10), cwd: '/unverified' } as const
   expect(render(body, { cwd: '/verified', projectPath: '/project' }).querySelector('.approval-meta')?.textContent).toBe('在 /verified')
   expect(render(body, { projectPath: '/project' }).querySelector('.approval-meta')?.textContent).toBe('项目目录 /project')
   expect(render(body).querySelector('.approval-meta')).toBeNull()
@@ -114,7 +114,7 @@ it('folds writes and patch files at twelve diff lines, with the last line availa
 
 it('folds text and field values at eight lines and keeps the rest in the disclosure', () => {
   const lines = Array.from({ length: 9 }, (_, i) => `line ${i + 1}`)
-  const raw = lines.join('\r\n')
+  const raw = lines.join('\n')
   const panels = [render({ kind: 'text', text: raw }), render({ kind: 'fields', fields: [{ name: 'field', value: raw }] })]
   for (const panel of panels) {
     expect(panel.querySelector('.approval-source')?.textContent).toBe(lines.slice(0, 8).join('\n'))
@@ -133,8 +133,37 @@ it.each([
   ['visible edit and shifted whitespace-only line', 'old\nkeep  \nstable', 'new\nextra\nkeep \nstable', null],
 ])('marks whitespace differences in an edit preview (%s)', (_, before, after, side) => {
   const root = render({ kind: 'edit', path: 'sample', changes: [{ before, after }] })
-  expect(root.querySelector('.approval-change > .approval-meta')?.textContent).toBe('这处改动只在换行或空白上有差别，这里看不出来。')
-  const marker = root.querySelector('.approval-diff [data-line="context"]')
-  expect(marker?.textContent ?? null).toBe(side ? '（文件末尾没有换行）' : null)
-  expect(marker?.previousElementSibling?.getAttribute('data-line') ?? null).toBe(side)
+  const messages = [...root.querySelectorAll('.approval-change > .approval-meta')].map(node => node.textContent)
+  expect(messages).toContain('这处改动只在换行或空白上有差别，这里看不出来。')
+  expect(messages.includes('这一段的末尾少了一个换行。')).toBe(side === 'added')
+  expect(messages.includes('这一段的末尾多了一个换行。')).toBe(side === 'deleted')
+  expect(root.textContent?.includes('文件末尾没有换行')).toBe(false)
+})
+
+it('marks controls in commands, paths, diffs, fields and the complete original', () => {
+  const value = '中文🙂\n\t\r\x1b\u202e\u200b'
+  const visible = ['\\r', '\\x1b', '\\u{202E}', '\\u{200B}']
+  const command = render({ kind: 'command', command: value }, { raw: value })
+  const edit = render({ kind: 'edit', path: value, changes: [{ before: value, after: 'safe' }] })
+  const fields = render({ kind: 'fields', fields: [{ name: 'field', value }] })
+  const original = command.querySelector('details')!
+  original.querySelector('summary')?.click()
+  for (const node of [
+    command.querySelector('.approval-command'), original, edit.querySelector('.approval-path'),
+    edit.querySelector('.approval-diff'), fields.querySelector('dd'),
+  ]) {
+    const marks = [...node!.querySelectorAll('.approval-invisible')]
+    expect(marks.map(mark => mark.textContent)).toEqual(visible)
+    expect(marks.map(mark => mark.getAttribute('aria-label'))).toEqual(visible.map(text => '不可见字符 ' + text))
+    expect(node!.textContent?.includes('中文🙂')).toBe(true)
+  }
+  for (const root of [command, edit, fields])
+    expect(root.querySelector('.approval-invisible-notice')?.textContent).toBe('这里有看不见的字符，已经标出来了。')
+})
+
+it('only labels the end of a complete Write as the end of the file', () => {
+  const body = { kind: 'write', path: 'a', content: 'sample' } as const
+  expect(render(body).textContent?.includes('文件末尾没有换行')).toBe(true)
+  expect(render({ ...body, content: 'sample\n' }).textContent?.includes('文件末尾没有换行')).toBe(false)
+  expect(render({ ...body, content: '' }).textContent?.includes('文件末尾没有换行')).toBe(false)
 })

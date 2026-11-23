@@ -5,17 +5,35 @@ export function resolvePermissionDisplay(tool: string, description: string, disp
   return PermissionDisplaySchema.safeParse(display).data ?? permissionDisplay(tool, description, format)
 }
 
-export const normalizePermissionLines = (value: string) => value.replace(/\r\n?/g, '\n')
+const invisibleCharacter = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g
+
+export function permissionTextSegments(value: string): { text: string; marked: boolean }[] {
+  const segments: { text: string; marked: boolean }[] = []
+  let from = 0
+  for (const match of value.matchAll(invisibleCharacter)) {
+    const index = match.index
+    if (index > from) segments.push({ text: value.slice(from, index), marked: false })
+    const hex = match[0].charCodeAt(0).toString(16)
+    const text = match[0] === '\r' ? '\\r' : hex.length <= 2 ? `\\x${hex.padStart(2, '0')}` : `\\u{${hex.toUpperCase()}}`
+    segments.push({ text, marked: true })
+    from = index + 1
+  }
+  if (from < value.length) segments.push({ text: value.slice(from), marked: false })
+  return segments
+}
+
+export const hasInvisiblePermissionText = (value: string) => value.search(invisibleCharacter) !== -1
 
 export function permissionLines(value: string): string[] {
   if (!value) return []
-  const lines = normalizePermissionLines(value).split('\n')
+  const lines = value.split('\n')
   if (lines.at(-1) === '') lines.pop()
   return lines
 }
 
 export const PERMISSION_WHITESPACE_NOTICE_ZH = '这处改动只在换行或空白上有差别，这里看不出来。'
 export const PERMISSION_NO_FINAL_NEWLINE_ZH = '（文件末尾没有换行）'
+export const PERMISSION_INVISIBLE_NOTICE_ZH = '这里有看不见的字符，已经标出来了。'
 
 const withoutWhitespace = (value: string) => value.replace(/\s/g, '')
 
@@ -38,16 +56,16 @@ function hasWhitespaceChange(before: string, after: string): boolean {
 }
 
 export function permissionEditPreview(before: string, after: string) {
-  const beforeEndsWithNewline = /[\r\n]$/.test(before)
-  const afterEndsWithNewline = /[\r\n]$/.test(after)
+  const beforeEndsWithNewline = before.endsWith('\n')
+  const afterEndsWithNewline = after.endsWith('\n')
   const newlineChanged = beforeEndsWithNewline !== afterEndsWithNewline
-  const noFinalNewline = before.length > 0 && after.length > 0 && newlineChanged
-    ? (beforeEndsWithNewline ? 'after' : 'before') : undefined
+  const finalNewlineChange = before.length > 0 && after.length > 0 && newlineChanged
+    ? (beforeEndsWithNewline ? 'removed' : 'added') : undefined
   return {
     before: permissionLines(before),
     after: permissionLines(after),
     whitespaceChange: hasWhitespaceChange(before, after),
-    noFinalNewline,
+    finalNewlineChange,
   }
 }
 
@@ -55,13 +73,19 @@ export function permissionEditPreview(before: string, after: string) {
 export function permissionOperationSource(display: PermissionDisplay): string {
   const { body, note, extra } = display
   const fields = (values: NonNullable<PermissionDisplay['extra']>) => values.map(({ name, value }) => `${name}: ${value}`)
+  // Keep control characters available to the display renderer. The other JSON
+  // escapes still distinguish a literal backslash from a tab or line break.
+  const quoteEdit = (value: string) => JSON.stringify(value).replace(/\\(?:[\\"]|[bfr]|u00[\da-f]{2})/g, escape => {
+    const decoded = JSON.parse(`"${escape}"`) as string
+    return hasInvisiblePermissionText(decoded) ? decoded : escape
+  })
   let source: string[]
   switch (body.kind) {
     case 'command': source = [body.command, ...(body.cwd !== undefined ? [`Working directory: ${body.cwd}`] : [])]; break
     case 'edit': source = body.changes.flatMap(({ path, before, after }) => [
       path ?? body.path, ...(body.replaceAll !== undefined ? [`replace_all: ${body.replaceAll}`] : []),
       // Quoting makes tabs, CRLF and the exact end of each value inspectable.
-      `Before: ${JSON.stringify(before)}`, `After: ${JSON.stringify(after)}`,
+      `Before: ${quoteEdit(before)}`, `After: ${quoteEdit(after)}`,
     ]); break
     case 'write': source = [body.path, body.content]; break
     case 'patch': source = body.files.flatMap(({ path, change, movePath, diff }) => [path, change, ...(movePath !== undefined ? [movePath] : []), diff]); break
