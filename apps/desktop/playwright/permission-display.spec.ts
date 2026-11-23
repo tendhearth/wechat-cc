@@ -137,7 +137,7 @@ for (const width of [1440, 760]) {
     await expect(notice).toBeVisible()
     await expect(notice).toHaveText(snapshotNotice)
     await expect(truncated.getByText('这里不是全部内容，完整的在下面『看完整原文』里。', { exact: true })).toBeVisible()
-    await expect(truncated.locator('.approval-invisible-notice')).toBeVisible()
+    await expect(truncated.locator('.approval-operation .approval-invisible-notice').first()).toBeVisible()
     await expect(truncated.locator('.approval-panel .approval-invisible')).toHaveAttribute('aria-label', '不可见字符 \\r')
     const fullOriginal = truncated.getByText('看完整原文', { exact: true })
     await expect(fullOriginal).toBeVisible()
