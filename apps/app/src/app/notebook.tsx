@@ -81,7 +81,8 @@ function NotebookScreen({ notebook, value, backend, openingDay, mailEnabled }: R
   const notebookVisible = useCallback(() => mailEnabled && active.current && !menuOpen.current, [mailEnabled])
   const retrySeen = useCallback(() => { void mail.flush(notebookVisible, foreground) }, [mail, notebookVisible])
 
-  useLayoutEffect(() => { notebook.open(openingDay) }, [notebook, openingDay])
+  // 只有从「有回信」进来、带着那一天时才翻页;平时打开不碰选中的那一天(离线时要能恢复上次存下的那一页)。
+  useLayoutEffect(() => { if (openingDay) notebook.open(openingDay) }, [notebook, openingDay])
 
   useFocusEffect(useCallback(() => {
     active.current = true

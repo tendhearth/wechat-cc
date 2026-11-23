@@ -155,6 +155,37 @@ it('opens the requested day, and sends only a drawn reply at least halfway onscr
   expect(unseen).toHaveBeenCalledTimes(1)
 })
 
+it('leaves the chosen day alone on an ordinary open (no reply date in the route)', async () => {
+  vi.useFakeTimers()
+  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(callback, 1))
+  vi.stubGlobal('cancelAnimationFrame', clearTimeout)
+  const today = '2026-11-22', day = '2026-11-21'
+  const demo = makeDemoBackend({ now: () => Date.parse(today), lang: 'en' })
+  const read = vi.fn(async () => ({ today, day, days: [day, today], entries: [],
+    paper: 'ruled' as const, pen: { font: 'kai' as const, ink: 'blueBlack' as const, reason: '' }, penPending: false }))
+  const backend = { ...demo, notebookPage: read, notebookSeen: vi.fn(async () => {}), notebookUnseen: vi.fn(async () => undefined) }
+  const { default: Notebook } = await import('../app/notebook')
+  const screen = () => withProviders(createElement(Fragment, null, createElement(NotebookCache), createElement(Notebook)), { backend, lang: 'en' })
+
+  // 从「有回信」进来:翻到那一天。
+  route.day = day
+  await mount(screen())
+  await advance(2)
+  expect(read.mock.calls.at(-1)).toEqual([{ day, fonts: 'kai,hand,fangsong,songItalic' }])
+  await cleanup()
+
+  // 平时再打开(路由上没有日期):不许把选中的那一天清回今天。
+  route.day = undefined
+  read.mockClear()
+  vi.useFakeTimers()
+  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(callback, 1))
+  vi.stubGlobal('cancelAnimationFrame', clearTimeout)
+  await mount(screen())
+  await advance(2)
+  expect(read.mock.calls.length).toBeGreaterThan(0)
+  for (const call of read.mock.calls as unknown[][]) expect(call[0]).toMatchObject({ day })
+})
+
 it('refreshes Home on focus, foreground and the 60-second tick, and binds the reply to all three indicators', async () => {
   vi.useFakeTimers()
   const { ConversationMore } = await import('../ui/ConversationMore')
