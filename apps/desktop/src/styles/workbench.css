@@ -164,8 +164,7 @@
 .wb-queue-guidance { border-left:2px solid var(--th-warn); padding:10px 12px; margin-bottom:18px; color:var(--th-ink-soft); font-size:12px; line-height:1.65; }
 .wb-controls { flex:none; padding:12px var(--wb-gutter) 18px; border-top:1px solid var(--wb-line); background:var(--wb-surface); }
 .wb-controls>* { width:min(780px,100%); margin-right:auto; margin-left:auto; }
-/* 有东西等你定时它是主角:给够地方,一条命令加按钮不用在小框里滚。 */
-.wb-permissions { max-height:min(52vh,520px); overflow:auto; margin-bottom:10px; border:1px solid var(--th-hair); border-radius:9px; padding:12px 14px; background:var(--th-paper); }
+.wb-permissions { max-height:min(32vh,300px); overflow:auto; margin-bottom:10px; border:1px solid var(--th-hair); border-radius:9px; padding:12px 14px; background:var(--th-paper); }
 .wb-permissions>header { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--th-ink-soft); }
 .wb-permissions h3 { margin:0; font-size:12px; font-weight:500; }
 .wb-permissions>header>span { font-size:11px; }
