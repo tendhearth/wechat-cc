@@ -1,4 +1,4 @@
-import { PermissionDisplaySchema, permissionCwd } from '@wechat-cc/protocol'
+import { PERMISSION_SNAPSHOT_NOTICE, PermissionDisplaySchema, permissionCwd } from '@wechat-cc/protocol'
 import { randomUUID } from 'node:crypto'
 import { authorize, type AuthSubject } from '../../domain/authorize'
 import { TIER_PROFILES } from '../../domain/user-tier'
@@ -142,9 +142,8 @@ export function makeRunPermissions(opts: {
     const cwd = permissionCwd(raw.displayCwd ?? raw.cwd)
     const proposedReview = raw.reviewDescription ?? raw.description
     const review = display && typeof proposedReview === 'string' && proposedReview.length <= WORKBENCH_PERMISSION_DESCRIPTION_MAX ? proposedReview : description
-    const withSnapshot = (text: string) => snapshot.scripts.length || snapshot.requiresBoundExecution
-      ? `${text}\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。`
-      : text
+    const showSnapshotNotice = snapshot.scripts.length > 0 || snapshot.requiresBoundExecution
+    const withSnapshot = (text: string) => showSnapshotNotice ? `${text}\n\n${PERMISSION_SNAPSHOT_NOTICE}` : text
     const legacyDescription = review !== description ? withSnapshot(description) : undefined
     const permission: PendingWorkbenchPermission = {
       id: randomUUID(),
@@ -154,6 +153,7 @@ export function makeRunPermissions(opts: {
       createdAt: Date.now(),
       ...(display ? { display } : {}),
       ...(cwd ? { cwd } : {}),
+      ...(showSnapshotNotice ? { showSnapshotNotice } : {}),
       ...(onDenied ? { canDenyWithReason: true } : {}),
       ...(snapshot.hash ? { canAllowTask: true } : {}),
       ...(snapshot.scripts.length ? { scripts: snapshot.scripts.map(s => s.content.length > 2000 ? { ...s, content: s.content.slice(0, 2000), truncated: true } : { ...s }) } : {}),

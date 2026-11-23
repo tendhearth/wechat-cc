@@ -105,7 +105,6 @@ button.now-row:focus-visible { outline: 2px solid var(--th-accent); outline-offs
 .now-all:hover, .now-all:focus-visible { color: var(--th-ink); }
 div.now-terminal-row:hover .t { color: var(--th-ink); }
 .now-terminal-dialog { height: auto; }
-.now-terminal-dialog .now-terminal-command { margin: var(--th-space-s) 0 0; padding: var(--th-space-m); border: 1px solid var(--th-hair); border-radius: var(--th-radius-nav); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--th-size-small)/1.7 var(--th-font-mono); color: var(--th-ink); }
 .now-terminal-actions { display: flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
 .now-terminal-note { color: var(--th-ink-soft); font-size: var(--th-size-meta); }
 .now-terminal-note:empty { display: none; }

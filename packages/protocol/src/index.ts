@@ -64,4 +64,5 @@ export * from './roster'
 export * from './places'
 export * from './notebook'
 
-export { isPermissionCommandTool, permissionDisplay, PermissionDisplaySchema, permissionCwd, boundedPermissionDisplay, toolPermissionDisplay, PERMISSION_DISPLAY_LIMITS, type PermissionDisplay } from './permission-display'
+export { isPermissionCommandTool, permissionDisplay, PermissionDisplaySchema, permissionCwd, boundedPermissionDisplay, toolPermissionDisplay, PERMISSION_SNAPSHOT_NOTICE, PERMISSION_DISPLAY_LIMITS, type PermissionDisplay } from './permission-display'
+export { hasInvisiblePermissionText, permissionEditPreview, permissionLines, permissionOperationSource, permissionTextSegments } from './permission-presentation'

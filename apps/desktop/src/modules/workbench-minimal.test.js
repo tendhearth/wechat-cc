@@ -24,7 +24,7 @@ describe('workbench decision hierarchy in the rendered page',()=>{
   expect(root.querySelector('.wb-task-head').textContent).not.toContain('等你处理')
   for(const id of ['p1','p2']){
    const article=root.querySelector(`[data-request-id="${id}"]`).closest('article')
-   expect(article.querySelector('p').textContent).toBe(`bun run test -- ${id}\ncwd: /work/project\n仅允许这一次请求`)
+   expect(article.querySelector('[data-kind="text"] .approval-source').textContent).toBe(`bun run test -- ${id}\ncwd: /work/project\n仅允许这一次请求`)
    expect(article.querySelector('[data-action="deny-permission"]').textContent).toBe('拒绝')
    expect(article.querySelector('[data-action="allow-permission"]').textContent).toBe('允许')
   }

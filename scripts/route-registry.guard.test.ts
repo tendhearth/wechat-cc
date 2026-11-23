@@ -18,11 +18,12 @@
  * FORMER_OWNER_WORKSPACE(改造前三处手写名单的原样)证明。
  */
 import { describe, it, expect } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '../packages/protocol/src/routes'
-import { DAEMON_CALLS_JS, renderDaemonCalls, renderStatusTable, renderWorkbenchRoutes, STATUS_TABLE_JS, WORKBENCH_ROUTES_JSON } from './gen-routes'
+import { DAEMON_CALLS_JS, PERMISSION_DISPLAY_JS, renderDaemonCalls, renderPermissionDisplay, renderStatusTable, renderWorkbenchRoutes, STATUS_TABLE_JS, WORKBENCH_ROUTES_JSON } from './gen-routes'
 import { makeTokenRegistry } from '../src/daemon/internal-api/token-registry'
 import { ROUTE_MIN_TIER, TIER_RANK } from '../src/daemon/internal-api/route-tiers'
 
@@ -55,6 +56,22 @@ describe('桌面白名单生成物与路由表一致', () => {
   })
   it('apps/desktop/src/generated/daemon-calls.js 是最新的(否则跑 bun run gen:routes)', () => {
     expect(readFileSync(DAEMON_CALLS_JS, 'utf8').replace(/\r\n/g, '\n'), '跑 bun run gen:routes 再提交').toBe(renderDaemonCalls())
+  })
+  it('桌面审批展示生成物是最新的', () => {
+    const checkedIn = readFileSync(PERMISSION_DISPLAY_JS, 'utf8').replace(/\r\n/g, '\n')
+    expect(checkedIn === renderPermissionDisplay(), '跑 bun run gen:routes 再提交').toBe(true)
+  })
+  it('桌面审批展示在禁止运行时编译的环境里加载和校验', () => {
+    execFileSync('bun', ['-e', `
+      import assert from 'node:assert/strict'
+      let attempts = 0
+      const blocked = () => { attempts++; throw Error('runtime compilation blocked') }
+      globalThis.Function = new Proxy(globalThis.Function, { apply: blocked, construct: blocked })
+      const { PermissionDisplaySchema } = await import('./apps/desktop/src/generated/permission-display.js')
+      assert.equal(PermissionDisplaySchema.safeParse({ body: { kind: 'command', command: 'echo fixture' } }).success, true)
+      assert.equal(PermissionDisplaySchema.safeParse({ body: { kind: 'command', command: 1 } }).success, false)
+      assert.equal(attempts, 0)
+    `], { cwd: ROOT, stdio: 'pipe' })
   })
   it('apps/desktop/src/generated/status-table.js 是最新的(状态表 + 中文词,否则跑 bun run gen:routes)', () => {
     expect(readFileSync(STATUS_TABLE_JS, 'utf8').replace(/\r\n/g, '\n'), '跑 bun run gen:routes 再提交').toBe(renderStatusTable())

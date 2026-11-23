@@ -1,3 +1,4 @@
+import { hasInvisiblePermissionText } from '@wechat-cc/protocol'
 import { useState, type RefObject } from 'react'
 import { ScrollView, View } from 'react-native'
 import { t } from '../i18n'
@@ -11,6 +12,7 @@ import { Button } from './Button'
 import { Card } from './Card'
 import { CCFigure } from './CCFigure'
 import { Markdown } from './Markdown'
+import { PermissionInvisibleNotice, PermissionText } from './PermissionText'
 import { PermissionOperation } from './PermissionOperation'
 import { PermissionSource, usePermissionSource } from './PermissionSource'
 import { Sheet } from './Sheet'
@@ -45,9 +47,11 @@ function PermissionScriptPreview({script,taskId,requestId}:{script:NonNullable<C
       setFull(text);setExpanded(true)
     }catch{setFailed(true)}finally{setBusy(false)}
   }
+  const value = script.error ?? (expanded ? (full ?? script.content) : script.content.slice(0, 2000))
   return <Card style={{gap:space.s}}>
-    <Txt role="caption">{t(lang,'approval.script')} · {script.path}</Txt>
-    <Txt selectable role="code">{script.error??(expanded?(full??script.content):script.content.slice(0,2000))}</Txt>
+    <PermissionText role="caption" value={`${t(lang,'approval.script')} · ${script.path}`} lang={lang} />
+    <PermissionText selectable role="code" value={value} lang={lang} />
+    {[script.path, value].some(hasInvisiblePermissionText) ? <PermissionInvisibleNotice lang={lang} /> : null}
     {!script.error&&(script.truncated||script.content.length>2000)?<Button kind="secondary" testID={`approval-script-expand-${script.path}`} label={t(lang,expanded?'approval.collapseScript':'approval.expandScript')} onPress={()=>void toggle()} busy={busy} disabled={busy}/>:null}
     {failed?<Txt role="small">{t(lang,'approval.refreshFailed')}</Txt>:null}
   </Card>
@@ -86,14 +90,15 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
           {v.executor ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <AgentAvatar id={v.executor} size={20} names={{ [v.executor]: v.executorName }} />
           </View> : null}
-          <Txt testID="approval-actor" role="small" tone="inkSoft" style={{ flex: 1 }}>{action}</Txt>
+          <PermissionText testID="approval-actor" role="small" tone="inkSoft" style={{ flex: 1 }} value={action} lang={lang} />
         </View>
-        <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{title}</Txt>
-        {v.display.note ? <Txt selectable role="body" tone="inkSoft" content="user">{v.display.note}</Txt> : null}
+        <PermissionText testID="approval-title" role="title" content="user" accessibilityRole="header" value={title} lang={lang} />
+        {v.display.note ? <PermissionText selectable role="body" tone="inkSoft" content="user" value={v.display.note} lang={lang} /> : null}
       </View>
-      <PermissionOperation display={v.display} projectPath={v.projectPath} cwd={v.cwd} lang={lang} open={sheet.openFromPreview} />
-      {v.display.truncated ? <Txt testID="approval-display-truncated" role="small" tone="inkSoft">{t(lang, 'terminal.pendingTruncated')}</Txt> : null}
+      <PermissionOperation display={v.display} projectPath={v.projectPath} cwd={v.cwd} lang={lang} open={sheet.openFromPreview} source={v.rawFull} />
+      {v.display.truncated ? <Txt testID="approval-display-truncated" role="small" tone="inkSoft">{t(lang, 'approval.previewTruncated')}</Txt> : null}
       {v.scripts?.map(script => <PermissionScriptPreview key={script.path} script={script} taskId={taskId} requestId={v.requestId} />)}
+      {v.showSnapshotNotice ? <Txt testID="approval-snapshot-notice" role="small" tone="inkSoft">{t(lang, 'approval.snapshotNotice')}</Txt> : null}
       {v.effect.trim() ? <View testID="approval-effect" style={{ gap: space.xs }}>
         <Markdown text={v.effect} />
         <Txt testID="approval-model-note" role="small" tone="inkSoft">{t(lang, 'approval.aiSummary')}</Txt>
@@ -104,7 +109,7 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
       {details.length ? <Sheet quiet testID="approval-details" title={t(lang, 'approval.details')}>
         <View style={{ gap: space.m }}>{details.map(({ key, label, value }) => <View key={key} style={{ gap: space.xs }}>
           <Txt role="caption" tone="inkSoft">{label}</Txt>
-          <Txt testID={key === 'reason' ? 'approval-question-reason' : undefined} role="body" content="user">{value}</Txt>
+          <PermissionText testID={key === 'reason' ? 'approval-question-reason' : undefined} role="body" content="user" value={value ?? ''} lang={lang} />
         </View>)}</View>
       </Sheet> : null}
       <PermissionSource source={v.rawFull} projectPath={v.projectPath} cwd={v.cwd} lang={lang} sheet={sheet} />

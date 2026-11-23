@@ -22,6 +22,8 @@ export interface PendingWorkbenchPermission {
   createdAt: number
   display?: PermissionDisplay
   cwd?: string
+  /** The description includes the execution snapshot notice. */
+  showSnapshotNotice?: boolean
   canAllowTask?: boolean
   canDenyWithReason?: boolean
   scripts?: PermissionScript[]
