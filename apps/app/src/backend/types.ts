@@ -174,6 +174,8 @@ export interface Backend {
   chatSay(text: string, requestId: string, materials?: PhoneMaterials): Promise<ChatJobT>
   /** CC 记得你(GET /m/api/memory):每晚整理出来的那份记忆。 */
   notebookPage(query: NotebookPageQueryT): Promise<NotebookPageResponseT>
+  notebookUnseen(): Promise<string | undefined>
+  notebookSeen(ids: string[]): Promise<void>
   notebookWrite(input: { body: string; clientId: string }): Promise<NotebookEntryT>
   notebookStrike(id: string, struck: boolean): Promise<void>
   notebookPaper(paper: NotebookPaperT): Promise<NotebookPaperT>
