@@ -3,6 +3,7 @@ import { ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { permissionDisplay } from '@wechat-cc/protocol'
 import { makeDemoBackend } from '../backend/demo'
+import { demoName } from '../backend/demo-data'
 import { useLang } from '../i18n/useLang'
 import { OfflineReviewProvider } from '../state/BackendProvider'
 import { PermissionCard } from './PermissionCard'
@@ -46,7 +47,7 @@ export function ApprovalKindsReview() {
           return <View key={id} testID={`approval-example-${id}`} onLayout={e => { positions.current[id] = e.nativeEvent.layout.y }}>
             <PermissionCard taskId="sample" matterTitle={lang === 'zh-Hans' ? '纸风车展览' : 'Paper windmill exhibition'}
               onShowExact={y => scroll.current?.scrollTo({ y: (positions.current[id] ?? 0) + y, animated: true })}
-              v={{ kind: 'card', requestId: id, runId: 'sample', executor, executorName: executor === 'codex' ? 'Codex' : 'Claude',
+              v={{ kind: 'card', requestId: id, runId: 'sample', executor, executorName: demoName(executor),
                 tool, rawFull: raw, display: permissionDisplay(tool, raw), workingDir: cwd, title: '', what: '', effect: '', scope: '', canDenyWithReason: false }} />
           </View>
         })}
