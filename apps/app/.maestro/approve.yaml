@@ -117,4 +117,4 @@ appId: com.tendhearth.app
     centerElement: true
 - assertVisible:
     id: terminal-detail-pending-truncated
-    text: "这里可能不是全部内容；完整的请在电脑上看。|This may be incomplete\\. See the full details on your computer\\."
+    text: "这里不是全部内容，完整的请在终端里看。|This is incomplete\\. See the full details in the terminal\\."
