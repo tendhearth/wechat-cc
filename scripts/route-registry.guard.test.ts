@@ -155,7 +155,7 @@ const FORMER_OWNER_WORKSPACE = {
   shimPost: ['/v1/knowledge/facts/find_facts', '/v1/llm/keys', '/v1/knowledge/facts/set_fact_status', '/v1/knowledge/graph/top_contacts', '/v1/reminders/schedule'],
   shimGet: ['/v1/companion/thoughts'],
 }
-const NOTEBOOK_OWNER_ROUTES = ['GET /v1/notebook', 'GET /v1/notebook/unseen', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper']
+const NOTEBOOK_OWNER_ROUTES = ['GET /v1/notebook', 'GET /v1/notebook/unseen', 'POST /v1/notebook/seen', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper']
 const pathOf = (key: string) => key.slice(key.indexOf(' ') + 1)
 
 describe('主人工作区名单(desktop.ownerWorkspace)只在路由表里声明一次', () => {

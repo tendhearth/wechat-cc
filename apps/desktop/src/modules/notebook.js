@@ -17,7 +17,7 @@ const DEFAULT_PEN = /** @type {const} */ ({ font: 'kai', ink: 'blueBlack', reaso
 /**
  * @param {HTMLElement} host
  * @param {Parameters<typeof callNotebook>[0]} transport
- * @param {{ pageRead?: () => void, wrote?: () => void }} [mail]
+ * @param {Pick<ReturnType<typeof import("./notebook-mail.js").mountNotebookMail>, "canConfirm" | "markSeen" | "wrote">} [mail]
  */
 export function mountNotebook(host, transport, mail) {
   const input = /** @type {HTMLTextAreaElement} */ (host.querySelector('#notebook-write'))
@@ -83,6 +83,44 @@ export function mountNotebook(host, transport, mail) {
   let revision = 0
   let pollTimer = 0
   let statusTimer = 0
+  let seenScheduled = false
+  let seenInFlight = false
+  /** @type {string[]} */
+  let renderedReplies = []
+  const confirmed = new Set()
+
+  function canConfirm() {
+    return active && !host.hidden && document.body.dataset.pane === 'notebook'
+      && document.visibilityState === 'visible' && mail?.canConfirm()
+  }
+
+  function scheduleSeen() {
+    if (seenScheduled || seenInFlight || !canConfirm() || renderedReplies.every(id => confirmed.has(id))) return
+    seenScheduled = true
+    // Give the current rows a frame to paint. A render or pane change in
+    // between invalidates that frame and schedules a new confirmation.
+    const rowsToConfirm = renderedReplies
+    const pane = view
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      seenScheduled = false
+      if (pane !== view || rowsToConfirm !== renderedReplies) scheduleSeen()
+      else void confirmRenderedReplies()
+    }))
+  }
+
+  async function confirmRenderedReplies() {
+    if (!mail || !canConfirm()) return
+    const ids = renderedReplies.filter(id => !confirmed.has(id)).slice(0, 50)
+    if (!ids.length) return
+    const selected = day
+    seenInFlight = true
+    try {
+      if (!await mail.markSeen(ids)) return
+      if (selected === day) for (const id of ids) confirmed.add(id)
+    } catch { return /* Retry on the next render or visibility change. */ }
+    finally { seenInFlight = false }
+    scheduleSeen()
+  }
 
   const save = () => writeNotebookStorage(storage, NOTEBOOK_CACHE_KEY,
     { day, today: knowsToday ? today : undefined, timeZone, days, entries: pages.get(day) ?? [], pen, penPending, paper })
@@ -102,7 +140,6 @@ export function mountNotebook(host, transport, mail) {
         if (result?.day !== dateKey || !result.today || !Array.isArray(result.entries) || !Array.isArray(result.days)) {
           throw new Error('Notebook page unavailable')
         }
-        mail?.pageRead?.()
         return result
       })().finally(() => reads.delete(key))
       reads.set(key, request)
@@ -283,6 +320,8 @@ export function mountNotebook(host, transport, mail) {
     }
     window.clearTimeout(statusTimer)
     if (Number.isFinite(nextStatus)) statusTimer = window.setTimeout(render, nextStatus)
+    renderedReplies = entries.filter(entry => entry.author === 'cc' && entry.refId !== null).map(entry => entry.id)
+    scheduleSeen()
   }
 
   /** @param {string} [target] @param {boolean} [keepDay] */
@@ -335,6 +374,7 @@ export function mountNotebook(host, transport, mail) {
   /** @param {string} selected */
   function selectDay(selected) {
     day = selected
+    confirmed.clear()
     view++
     rows.clear()
     list.replaceChildren()
@@ -434,6 +474,7 @@ export function mountNotebook(host, transport, mail) {
 
   const observer = new ResizeObserver(resizeInput)
   observer.observe(scroll)
+  document.addEventListener('visibilitychange', scheduleSeen)
   window.addEventListener('online', () => {
     if (initialized) void retry()
     if (active) void refresh()

@@ -50,13 +50,33 @@ export function makeNotebookStore(db: Db): NotebookStore {
         CROSS JOIN notebook_entries AS entry ON entry.id = ref.value
       `).all(JSON.stringify(ids))
     },
-    firstUnseenReplyAfter(at, seenIds) {
-      return db.query<{ createdAt: number }, [number, string]>(`
-        SELECT created_at AS createdAt FROM notebook_entries
-        WHERE created_at > ? AND author = 'cc' AND ref_id IS NOT NULL
+    replyTimestamps(ids) {
+      return db.query<{ id: string; createdAt: number }, [string]>(`
+        SELECT entry.id, entry.created_at AS createdAt
+        FROM json_each(?) AS ref
+        CROSS JOIN notebook_entries AS entry ON entry.id = ref.value
+        WHERE entry.author = 'cc' AND entry.ref_id IS NOT NULL
+      `).all(JSON.stringify(ids))
+    },
+    missedReplyIds(after, through, missedIds, seenIds, limit) {
+      return db.query<{ id: string }, [number, number, string, string, number]>(`
+        SELECT id FROM notebook_entries
+        WHERE ((created_at > ? AND created_at <= ?) OR id IN (SELECT value FROM json_each(?)))
+          AND author = 'cc' AND ref_id IS NOT NULL
           AND id NOT IN (SELECT value FROM json_each(?))
-        ORDER BY created_at LIMIT 1
-      `).get(at, JSON.stringify(seenIds))?.createdAt ?? null
+        ORDER BY created_at DESC, rowid DESC LIMIT ?
+      `).all(after, through, JSON.stringify(missedIds), JSON.stringify(seenIds), limit).map(row => row.id)
+    },
+    firstUnseenReplyAfter(at, missedIds) {
+      return db.query<{ createdAt: number | null }, [number, string]>(`
+        SELECT MIN(createdAt) AS createdAt FROM (
+          SELECT MIN(created_at) AS createdAt FROM notebook_entries
+          WHERE created_at > ? AND author = 'cc' AND ref_id IS NOT NULL
+          UNION ALL
+          SELECT MIN(created_at) AS createdAt FROM notebook_entries
+          WHERE id IN (SELECT value FROM json_each(?)) AND author = 'cc' AND ref_id IS NOT NULL
+        )
+      `).get(at, JSON.stringify(missedIds))?.createdAt ?? null
     },
     occupiedDays(timezone) {
       // Build once per timezone from the covering timestamp index. Appends

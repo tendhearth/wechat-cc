@@ -232,6 +232,7 @@ const ROUTE_TABLE = {
   'GET /v1/notebook': { module: 'notebook', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
   'GET /v1/notebook/unseen': { module: 'notebook', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
   'POST /v1/notebook/write': { module: 'notebook', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
+  'POST /v1/notebook/seen': { module: 'notebook', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
   'POST /v1/notebook/strike': { module: 'notebook', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
   'POST /v1/notebook/paper': { module: 'notebook', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
   'POST /v1/notebook/chat/jot': { module: 'notebook', desktop: { tier: 'admin' } },

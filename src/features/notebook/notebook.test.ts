@@ -574,6 +574,7 @@ it.each(['', '%'])('bounds and continues chat reads for literal query %j', async
 describe('notebook reply read state', () => {
   const unseen = 'GET /v1/notebook/unseen'
   const page = 'GET /v1/notebook'
+  const seen = 'POST /v1/notebook/seen'
   const empty = { ok: true, unseen: false, day: null }
 
   it('initializes at now and uses the oldest unread reply’s local day, including replies to struck entries', async () => {
@@ -585,40 +586,48 @@ describe('notebook reply read state', () => {
     })
     append(BASE - 1, owner.id)
     expect((await call(unseen)).body).toEqual(empty)
-    expect(store.get('repliesSeenAt')).toBe(BASE)
-    append(BASE + 1, null)
+    expect(store.get('replyReadState')).toEqual({ highWater: BASE, missedIds: [] })
+    const opening = append(BASE + 1, null)
     expect((await call(unseen, null, 'device')).body).toEqual(empty)
 
     const beforeMidnight = Date.parse('2026-11-20T07:59:59Z')
     const nextDay = beforeMidnight + 1000
-    append(beforeMidnight, owner.id)
+    const older = append(beforeMidnight, owner.id)
     const newer = append(nextDay, owner.id)
     at(nextDay + 1)
     expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-19' })
     expect((await call(page, null, 'operator', 'day=2026-11-18')).status).toBe(200)
-    expect(store.get('repliesSeenAt')).toBe(BASE)
+    expect(store.get('replyReadState')).toEqual({ highWater: BASE, missedIds: [] })
     expect((await call(page, null, 'session', 'day=2026-11-19', 'admin', 'owner')).status).toBe(403)
     expect((await call(unseen, null, 'session', '', 'admin', 'owner')).status).toBe(403)
-    expect(store.get('repliesSeenAt')).toBe(BASE)
+    expect(store.get('replyReadState')).toEqual({ highWater: BASE, missedIds: [] })
     expect((await call(page, null, 'operator', 'day=2026-11-20')).status).toBe(200)
     expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-19' })
-    expect(store.get('repliesSeenAt')).toBe(beforeMidnight - 1)
-    expect(store.get('repliesSeenIds')).toEqual([newer.id])
+    expect((await call(seen, { ids: [newer.id] }, 'session', '', 'admin', 'owner')).status).toBe(403)
+    expect((await call(seen, { ids: [owner.id, opening.id, 'missing'] })).body).toEqual({ ok: true })
+    for (const ids of [[], [123], Array(51).fill(newer.id)]) {
+      expect((await call(seen, { ids })).status).toBe(400)
+    }
+    expect(store.get('replyReadState')).toEqual({ highWater: BASE, missedIds: [] })
+    expect((await call(seen, { ids: [newer.id] })).body).toEqual({ ok: true })
+    expect(store.get('replyReadState')).toEqual({ highWater: nextDay, missedIds: [older.id] })
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-19' })
     expect((await call(page, null, 'device', 'day=2026-11-19')).status).toBe(200)
-    expect(store.get('repliesSeenIds')).toEqual([])
-    expect(store.get('repliesSeenAt')).toBe(nextDay)
+    expect(store.get('replyReadState')).toEqual({ highWater: nextDay, missedIds: [] })
     expect((await call(unseen)).body).toEqual(empty)
 
     const later = nextDay + 86_400_000
-    append(later, owner.id)
+    const latest = append(later, owner.id)
     append(nextDay + 1, owner.id)
     expect((await call(page, null, 'device', 'day=2026-11-20')).status).toBe(200)
-    expect(store.get('repliesSeenAt')).toBe(later - 1)
+    expect(store.get('replyReadState')).toEqual({ highWater: nextDay + 1, missedIds: [] })
     expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-21' })
     expect((await call(page, null, 'operator', 'day=2026-11-21')).status).toBe(200)
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-21' })
+    expect((await call(seen, { ids: [latest.id] }, 'device')).body).toEqual({ ok: true })
     expect((await call(unseen)).body).toEqual(empty)
     expect((await call(page, null, 'operator', 'day=2026-11-19')).status).toBe(200)
-    expect(store.get('repliesSeenAt')).toBe(later)
+    expect(store.get('replyReadState')).toEqual({ highWater: later, missedIds: [] })
   })
 
   it('marks the entire day only when the paired device gets the final frame', async () => {
@@ -639,17 +648,16 @@ describe('notebook reply read state', () => {
     const first = await route(new URLSearchParams(), null, device)
     expect(first.body).toHaveProperty('nextAfter', early.id)
     expect(store.get('repliesSeenAt')).toBe(BASE)
-    expect(store.get('repliesSeenIds')).toBeNull()
+    expect(store.get('replyReadState')).toBeNull()
     expect(n.unseen()).toEqual({ ok: true, unseen: true, day: owner.day })
     const second = await route(new URLSearchParams({ day: owner.day, after: early.id }), null, device)
     expect(second.status).toBe(200)
     expect(second.body).not.toHaveProperty('nextAfter')
-    expect(store.get('repliesSeenAt')).toBe(reply.createdAt)
-    expect(store.get('repliesSeenIds')).toEqual([])
+    expect(store.get('replyReadState')).toEqual({ highWater: reply.createdAt, missedIds: [] })
     expect(n.unseen()).toEqual(empty)
   })
 
-  it('reads the legacy baseline and bounds the seen IDs by dropping the oldest first', async () => {
+  it('converts a legacy baseline and keeps an older unread reply after confirming over 200 newer replies', async () => {
     const { n, call, store } = fixture()
     const owner = n.write('fixture', 'seen-cap', 'desktop')
     const append = (createdAt: number) => store.append({
@@ -658,14 +666,42 @@ describe('notebook reply read state', () => {
     append(BASE)
     store.set('repliesSeenAt', BASE)
     expect((await call(unseen)).body).toEqual(empty)
-    append(BASE + 1)
+    expect(store.get('replyReadState')).toEqual({ highWater: BASE, missedIds: [] })
+    const older = append(BASE + 1)
     const newer = BASE + 86_400_000
-    const seen = Array.from({ length: 201 }, (_, i) => append(newer + i))
+    const confirmed = Array.from({ length: 201 }, (_, i) => append(newer + i))
     const stillUnread = append(newer + 201)
-    const entries = n.page('2026-11-20').entries
-    n.markRepliesSeen(entries.filter(entry => entry.id !== stillUnread.id).reverse())
-    expect(store.get('repliesSeenAt')).toBe(newer)
-    expect(store.get('repliesSeenIds')).toEqual(seen.slice(1).map(entry => entry.id))
+    const ids = confirmed.map(entry => entry.id).reverse()
+    for (let i = 0; i < ids.length; i += 50) {
+      expect((await call(seen, { ids: ids.slice(i, i + 50) })).status).toBe(200)
+    }
+    expect(store.get('replyReadState')).toEqual({ highWater: newer + 200, missedIds: [older.id] })
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: owner.day })
+    expect((await call(seen, { ids: [older.id] })).status).toBe(200)
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-20' })
+    expect((await call(seen, { ids: [stillUnread.id] })).status).toBe(200)
+    expect((await call(unseen)).body).toEqual(empty)
+  })
+
+  it('converts legacy seen IDs and caps the missed list by dropping the oldest unread replies', async () => {
+    const { n, call, store } = fixture()
+    const owner = n.write('fixture', 'legacy-seen', 'desktop')
+    const append = (createdAt: number) => store.append({
+      author: 'cc', body: 'fixture', origin: 'desktop', createdAt, refId: owner.id, clientId: null,
+    })
+    const older = append(BASE + 1)
+    const legacySeen = append(BASE + 2)
+    store.set('repliesSeenAt', BASE)
+    store.set('repliesSeenIds', [legacySeen.id, owner.id, 'missing'])
+    expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: owner.day })
+    expect(store.get('replyReadState')).toEqual({ highWater: BASE + 2, missedIds: [older.id] })
+
+    const missed = Array.from({ length: 201 }, (_, i) => append(BASE + 86_400_000 + i))
+    const latest = append(missed.at(-1)!.createdAt + 1)
+    expect((await call(seen, { ids: [latest.id] })).status).toBe(200)
+    expect(store.get('replyReadState')).toEqual({
+      highWater: latest.createdAt, missedIds: missed.slice(1).reverse().map(entry => entry.id),
+    })
     expect((await call(unseen)).body).toEqual({ ok: true, unseen: true, day: '2026-11-20' })
   })
 
@@ -677,10 +713,9 @@ describe('notebook reply read state', () => {
       author: 'cc', body: 'fixture', origin: 'desktop', createdAt: BASE + 1, refId: owner.id, clientId: null,
     })
     const seen = append()
-    append()
-    n.markRepliesSeen(n.page().entries.filter(entry => entry.id === seen.id))
-    expect(store.get('repliesSeenAt')).toBe(BASE)
-    expect(store.get('repliesSeenIds')).toEqual([seen.id])
+    const missed = append()
+    n.markRepliesSeen([seen.id])
+    expect(store.get('replyReadState')).toEqual({ highWater: BASE + 1, missedIds: [missed.id] })
     expect(n.unseen()).toEqual({ ok: true, unseen: true, day: owner.day })
   })
 
@@ -689,14 +724,18 @@ describe('notebook reply read state', () => {
     store.set('pen', DEFAULT_OPENING)
     const get = store.get
     const read = vi.spyOn(store, 'get').mockImplementation(key => {
-      if (key === 'repliesSeenAt') throw Error('setting read failed')
+      if (key === 'replyReadState') throw Error('setting read failed')
       return get(key)
     })
     expect((await call(page)).status).toBe(200)
+    expect(read.mock.calls).not.toContainEqual(['replyReadState'])
+    expect((await call(page, null, 'device')).status).toBe(200)
     read.mockRestore()
     const write = vi.spyOn(store, 'set').mockImplementation(() => { throw Error('setting write failed') })
     expect((await call(page)).status).toBe(200)
-    expect(write).toHaveBeenCalledWith('repliesSeenAt', BASE)
+    expect(write).not.toHaveBeenCalled()
+    expect((await call(page, null, 'device')).status).toBe(200)
+    expect(write).toHaveBeenCalledWith('replyReadState', { highWater: BASE, missedIds: [] })
   })
 
   it('queries unseen status without opening, picking a pen, or appending', async () => {

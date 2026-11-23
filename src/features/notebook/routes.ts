@@ -1,4 +1,4 @@
-import { NotebookChatReadRequest, NotebookJotRequest, NotebookPageQuery, NotebookWriteRequest, NotebookStrikeRequest, NotebookPaperRequest, WORKBENCH_ERRORS } from '@wechat-cc/protocol'
+import { NotebookChatReadRequest, NotebookJotRequest, NotebookPageQuery, NotebookSeenRequest, NotebookWriteRequest, NotebookStrikeRequest, NotebookPaperRequest, WORKBENCH_ERRORS } from '@wechat-cc/protocol'
 import { framedTooLargeFor } from '../../domain/matters/phone-scope'
 import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
 import type { Notebook } from '../../ports/notebook'
@@ -19,6 +19,12 @@ export function notebookRoutes(n: Notebook): RouteTable {
 
   return {
     'GET /v1/notebook/unseen': handle('page', n => ok(n.unseen())),
+    'POST /v1/notebook/seen': handle('page', (n, _query, body) => {
+      const input = NotebookSeenRequest.safeParse(body)
+      if (!input.success) return failure('notebook_invalid')
+      n.markRepliesSeen(input.data.ids)
+      return ok({ ok: true })
+    }),
     'GET /v1/notebook': handle('page', (n, query, _body, caller, budget) => {
       const input = NotebookPageQuery.safeParse({
         day: query.get('day') ?? undefined,
@@ -34,8 +40,12 @@ export function notebookRoutes(n: Notebook): RouteTable {
       const entries = page.entries.slice(offset)
       const result = { ...page, entries }
       if (budget === undefined || !framedTooLargeFor(JSON.stringify(result), budget)) {
-        // The client can display the day once it has the final frame.
-        try { n.markRepliesSeen(page.entries) } catch { /* Reading still succeeds if read state cannot be saved. */ }
+        // The phone can display the day once it has the final frame.
+        if (caller.origin === 'device') {
+          try {
+            n.markRepliesSeen(page.entries.filter(entry => entry.author === 'cc' && entry.refId !== null).map(entry => entry.id))
+          } catch { /* Reading still succeeds if read state cannot be saved. */ }
+        }
         return ok(result)
       }
 

@@ -30,6 +30,8 @@ export const NotebookPageQuery = z.object({
   fonts: z.string().optional().describe('Comma-separated font keys available to the caller. Values over 200 characters are ignored.'),
 }).refine(query => query.after === undefined || query.day !== undefined)
 export type NotebookPageQueryT = z.input<typeof NotebookPageQuery>
+export const NotebookSeenRequest = z.object({ ids: z.array(z.string()).min(1).max(50) }).strict()
+export const NotebookSeenResponse = z.object({ ok: z.literal(true) })
 export const NotebookUnseenResponse = z.object({ ok: z.literal(true), unseen: z.boolean(), day: NotebookDay.nullable() })
 
 export const NotebookPageResponse = z.object({
