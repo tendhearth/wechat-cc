@@ -1,6 +1,7 @@
 import { test, expect, clickNav } from './fixtures'
 import { PRESENCE_OK, routePresenceTopic } from './presence-topic'
-import { askingPlace, placeItem, placeRow, routePlaces } from './roster-fixture'
+import { askingPlace, placeItem, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
+import type { PermissionDisplay } from '../../../packages/protocol/src/permission-display'
 
 test.use({ viewport: { width: 1280, height: 820 } })
 
@@ -171,6 +172,57 @@ test('全局等待卡片钉在上方、切换地方仍可回答、回答后刷�
   await expect(page.locator('.desk-date-line')).toBeHidden()
   await expect(clear).toBeHidden()
 })
+
+const commandLines = Array.from({ length: 10 }, (_, i) => `printf line-${i + 1}`)
+const waitingPreviews: Array<[string, PermissionDisplay['body']]> = [
+  ['短命令', { kind: 'command', command: 'printf sample' }],
+  ['十行命令', { kind: 'command', command: commandLines.join('\n') }],
+  ['改文件', { kind: 'edit', path: '/offline/project/sample.txt', changes: [{ before: 'first', after: 'second' }] }],
+]
+
+for (const [label, body] of waitingPreviews) {
+  test(`宽窗等待纸片画出${label}`, async ({ page, shimUrl }) => {
+    const task = { id: 'deadbeef', title: '校对示例', path: '/offline/project', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2 }
+    const display = { body }
+    const permission = { id: 'p1', taskId: task.id, tool: body.kind === 'edit' ? 'Edit' : 'Bash',
+      description: '校对示例？', display, cwd: task.path, createdAt: 1 }
+    await routePlaces(page, [placeItem('示例', { matterIds: [task.id], status: 'waiting', moving: false,
+      waiting: { itemKey: `matter:${task.id}`, kind: 'permission', matterId: task.id, requestId: permission.id, summary: permission.description,
+        count: 1, tool: permission.tool, display, cwd: permission.cwd },
+    })])
+    await routeRoster(page, [rosterItem(task.id, task.title)])
+    await page.route('**/v1/matter?id=*', route => route.fulfill({ json: { matter: { ...task, kind: 'task' } } }))
+    await page.route(/\/v1\/workbench(?:\?.*)?$/, route => route.fulfill({ json: { tasks: [task], projects: [], providers: [{ id: 'codex', displayName: 'Codex' }] } }))
+    await page.route('**/v1/workbench/task?*', route => route.fulfill({
+      json: { task, runId: 'example-run', events: [], artifacts: [], questions: [], permissions: [permission] },
+    }))
+    await page.goto(shimUrl)
+    await expect(placeRow(page, '示例')).toBeVisible()
+    const card = page.locator('#desk-waiting .desk-waiting-card')
+    const panel = card.locator(`.approval-panel[data-kind="${body.kind}"]`)
+    await expect(panel).toBeVisible()
+    await expect(card.getByText('在 /offline/project', { exact: true })).toBeVisible()
+    if (label === '十行命令') {
+      expect(await panel.locator('.approval-source').textContent() === commandLines.slice(0, 4).join('\n')).toBe(true)
+      await expect(card.getByRole('button', { name: '还有 6 行' })).toBeVisible()
+      await expect(card.getByRole('button', { name: '允许', exact: true })).toHaveCount(0)
+      await card.getByRole('button', { name: '打开看全再定' }).click()
+      await expect(page.locator('#thing-name')).toHaveText('示例')
+      const full = page.locator('#thing-thread .wb-permission')
+      await full.getByText('还有 2 行 · 看全部', { exact: true }).click()
+      await expect(full.getByText('printf line-10', { exact: false })).toBeVisible()
+    } else {
+      await expect(card.getByRole('button', { name: '允许', exact: true })).toBeEnabled()
+      if (body.kind === 'edit') {
+        expect(await panel.locator('.approval-path').textContent() === 'sample.txt').toBe(true)
+        await expect(panel.locator('[data-line="deleted"]')).toHaveCount(1)
+        await expect(panel.locator('[data-line="added"]')).toHaveCount(1)
+      } else {
+        expect(await panel.locator('.approval-source').textContent() === 'printf sample').toBe(true)
+      }
+    }
+  })
+}
 
 test('一周没动的地方默认收起，展开仍按原顺序，未读和正在动的保留', async ({ page, shimUrl }) => {
   const old = { updatedAt: weekAgo(), moving: false, status: 'done' }

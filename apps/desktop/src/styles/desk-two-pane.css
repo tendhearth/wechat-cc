@@ -1509,3 +1509,32 @@ html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[da
   padding-inline: 0;
 }
 
+
+[data-desk-wide] .desk-waiting-card:has(> .approval-compact) { grid-template-columns: minmax(0, 1fr); }
+[data-desk-wide] .desk-waiting-card .approval-compact { gap: 4px; }
+[data-desk-wide] .approval-compact .approval-panel { padding: 6px 8px; }
+[data-desk-wide] .approval-compact :is(.approval-source, .approval-path, .approval-diff, .approval-command > span) {
+  font-size: 11px;
+  line-height: 1.55;
+}
+[data-desk-wide] .approval-compact [data-approval-fit] {
+  min-width: 0;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+[data-desk-wide] .approval-compact .approval-diff [data-line] { min-height: 1.55em; }
+[data-desk-wide] .approval-compact .approval-note,
+[data-desk-wide] .desk-waiting-question-compact {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-desk-wide] .approval-compact .approval-more {
+  justify-self: start;
+  display: block;
+  color: var(--th-ink-soft);
+  font-size: 11px;
+  text-decoration: underline;
+}

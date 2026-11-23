@@ -17,7 +17,7 @@ import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parsePermissionRequest } from '../../cli/hook'
-import { CliSessionRow, makeProtocolClient, MatterDetail, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
+import { CliSessionRow, makeProtocolClient, MatterDetail, PlacesResponse, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
 import { routesForToken } from '../internal-api/route-tiers'
 import { REQUEST_SCHEMAS } from '../internal-api/schema'
 import { encodeNativeHistoryKey } from '../../adapters/workbench/native-history'
@@ -65,7 +65,8 @@ const RULES = JSON.stringify({
 })
 
 /** 主人在桌面上登记过的一个项目(projects.json):一个干净的 git 仓库,工作台的「改动」靠 git 比对。 */
-const project = realpathSync(mkdtempSync(join(tmpdir(), 'wechat-cc-sandbox-project-')))
+// 「地方」排除系统临时目录。这个 git 夹具仍独立，afterAll 会收掉。
+const project = realpathSync(mkdtempSync(join(process.cwd(), 'wechat-cc-sandbox-project-')))
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=sandbox@example.invalid', '-c', 'user.name=sandbox', ...args], { cwd: project, stdio: 'pipe' })
 git('init', '-q'); writeFileSync(join(project, 'README.md'), 'sandbox project\n'); git('add', '.'); git('commit', '-qm', 'init')
 // Chat and delegated work must have separate directories even when TMPDIR is
@@ -765,6 +766,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: NOTEBOOK_PHONE_TOKEN })
     const session_id = 'sandbox-structured-approval'
     const cwd = join(project, 'preview')
+    mkdirSync(cwd)
     const input = { file_path: join(cwd, 'sample.txt'), old_string: 'preview before\r\n', new_string: 'preview after\n'.repeat(30) }
     const req = parsePermissionRequest('claude', { hook_event_name: 'PermissionRequest', session_id, cwd, tool_name: 'Edit', tool_input: input })
     const post = await desktop<{ status: string }>('POST', '/v1/cli/permission', { ...req, idle_s: 3600, machine: hostname() }, 'trusted')
@@ -784,6 +786,12 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       }
       verify(desk.body.sessions)
       verify(mobile.json<{ sessions: CliSessionRowT[] }>().sessions)
+      const places = await desktop('GET', '/v1/places')
+      expect(places.status).toBe(200)
+      const waiting = PlacesResponse.parse(places.body).places.find(p => p.waiting?.sessionId === session_id)?.waiting
+      expect(waiting).toMatchObject({ kind: 'terminal', tool: 'Edit', truncated: true })
+      expect(waiting?.cwd === cwd && JSON.stringify(waiting.display) === JSON.stringify(req?.display)).toBe(true)
+      expect((await desktop('GET', '/v1/places', undefined, 'trusted')).status).toBe(403)
       expect(d.log().some(line => line.includes(input.old_string.trim()) || line.includes(input.new_string.trim()))).toBe(false)
     } finally {
       await desktop('POST', '/v1/cli/decide', { session_id, decision: 'deny' })
@@ -1296,6 +1304,13 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await expect.poll(() => d.log().some(l => /\[ASK_OPINION\] given opinionLength=\d+ reasonLength=\d+$/.test(l)), { timeout: 15_000 }).toBe(true)
     const detail = await desktop<Pick<ReturnType<typeof MatterDetail.parse>, 'permissions'>>('GET', `/v1/workbench/task?id=${asking}`)
     expect(detail.body.permissions).toHaveLength(1)
+    const places = await desktop('GET', '/v1/places')
+    expect(places.status).toBe(200)
+    const waiting = PlacesResponse.parse(places.body).places.find(p => p.waiting?.matterId === asking)?.waiting
+    const approval = detail.body.permissions[0]!
+    expect(waiting).toMatchObject({ kind: 'permission', requestId: approval.id, tool: approval.tool })
+    expect(waiting?.cwd === approval.cwd && waiting?.showSnapshotNotice === approval.showSnapshotNotice &&
+      JSON.stringify(waiting?.display) === JSON.stringify(approval.display)).toBe(true)
     const detailPath = `/v1/matter?id=${asking}`
     const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
     try {

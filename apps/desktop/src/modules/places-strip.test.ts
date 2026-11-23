@@ -328,3 +328,101 @@ it.each([false, true])('名单双布局都能从空状态放回收起的地方�
   })
   expect(calls.find(c => c[1] === '/v1/places/hide')?.[2]).toEqual({ key: p.key, hidden: false })
 })
+
+const compactPermission = { itemKey: 'matter:a', kind: 'permission', matterId: 'a', requestId: 'req-1', summary: '执行示例？', count: 1 } as const
+const shortDisplay = { body: { kind: 'command', command: 'printf sample' } } as const
+
+it.each([
+  { label: '预览收起', display: { body: { kind: 'command', command: 'x\n'.repeat(10) } } },
+  { label: '展示截断', display: { ...shortDisplay, truncated: true } },
+  { label: '终端摘要截断', kind: 'terminal', matterId: undefined, requestId: undefined, itemKey: 'terminal:t1',
+    sessionId: 't1', display: shortDisplay, truncated: true },
+  { label: '空白改动', display: { body: { kind: 'edit', path: 'sample', changes: [{ before: 'old ', after: 'old' }] } } },
+  { label: '脚本快照', display: shortDisplay, showSnapshotNotice: true, hasScriptPreview: true },
+])('紧凑纸片需要打开再定（$label）', async ({ label: _, ...fields }) => {
+  const waitingRoot = document.createElement('div')
+  const { onOpen, calls } = mount({ places: [place('a', { waiting: { ...compactPermission, ...fields } })], version: 'v1' }, { waitingRoot })
+  strip!.setWide(true)
+  await strip!.refresh()
+  expect(waitingRoot.querySelector('[data-place-decision="allow"]')).toBeNull()
+  const open = waitingRoot.querySelector<HTMLButtonElement>('.place-ask [data-place-open]')!
+  expect(open.textContent).toBe('打开看全再定')
+  open.click()
+  expect(onOpen).toHaveBeenCalledWith(fields.kind === 'terminal' ? { kind: 'terminal', id: 't1' } : { kind: 'matter', id: 'a' })
+  expect(calls.some(call => call[1] === '/v1/matter/permission')).toBe(false)
+  if (fields.showSnapshotNotice)
+    expect(waitingRoot.querySelector('.wb-permission-snapshot')?.textContent).toBe('预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。')
+  if (fields.kind !== 'terminal') {
+    const deny = waitingRoot.querySelector<HTMLButtonElement>('[data-place-decision="deny"]')!
+    expect(deny.disabled).toBe(false)
+    deny.click()
+    expect(calls.find(call => call[1] === '/v1/matter/permission')?.[2]).toEqual({ id: 'a', requestId: 'req-1', decision: 'deny' })
+  }
+})
+
+it('完整的紧凑预览能直接批准，晚到的意见保留操作块和按钮', async () => {
+  const waitingRoot = document.createElement('div')
+  const waiting = { ...compactPermission, display: shortDisplay, showSnapshotNotice: true, hasScriptPreview: false }
+  let data = { places: [place('a', { waiting })], version: 'v1' }
+  const { calls } = mount(() => data, { waitingRoot })
+  document.body.append(waitingRoot)
+  strip!.setWide(true)
+  await strip!.refresh()
+  const operation = waitingRoot.querySelector('.approval-operation')
+  const allow = waitingRoot.querySelector<HTMLButtonElement>('[data-place-decision="allow"]')!
+  expect(allow.disabled).toBe(false)
+  expect(waitingRoot.querySelector('.wb-permission-snapshot')).not.toBeNull()
+  allow.focus()
+  data = { places: [place('a', { waiting: { ...waiting, ccOpinion: '可以。', questionReason: '需要一次允许' } })], version: 'v2' }
+  await strip!.refresh()
+  const opinion = waitingRoot.querySelector('.desk-waiting-opinion')
+  expect(opinion?.previousElementSibling).toBe(operation)
+  expect(opinion?.nextElementSibling?.className).toBe('desk-waiting-reason')
+  expect(waitingRoot.querySelector('[data-place-decision="allow"]')).toBe(allow)
+  expect(document.activeElement).toBe(allow)
+  expect(operation?.textContent?.includes('项目目录')).toBe(false)
+  allow.click()
+  expect(calls.find(call => call[1] === '/v1/matter/permission')?.[2]).toEqual({ id: 'a', requestId: 'req-1', decision: 'allow' })
+})
+
+it('紧凑操作块的命令和路径都是文字，剩余行打开原事项', async () => {
+  const waitingRoot = document.createElement('div')
+  const hostile = '<script>sample</script><img src=x onerror="sample()">'
+  const command = { ...compactPermission, display: { body: { kind: 'command', command: hostile + '\nx\nx\nx\nx' } } }
+  const edit = { ...compactPermission, matterId: 'b', itemKey: 'matter:b', display: { body: { kind: 'write', path: '/work/' + hostile, content: 'sample' } } }
+  const { onOpen } = mount({ places: [place('a', { waiting: command }), place('b', { waiting: edit })], version: 'v1' }, { waitingRoot })
+  strip!.setWide(true)
+  await strip!.refresh()
+  expect(waitingRoot.querySelectorAll('.approval-operation script, .approval-operation img, .approval-operation [onerror]')).toHaveLength(0)
+  expect(waitingRoot.querySelector('.approval-source')?.firstChild?.nodeType).toBe(Node.TEXT_NODE)
+  expect(waitingRoot.querySelector('.approval-source')?.textContent?.startsWith(hostile)).toBe(true)
+  expect(waitingRoot.querySelector('.approval-path')?.textContent === '/work/' + hostile).toBe(true)
+  const more = waitingRoot.querySelector<HTMLButtonElement>('.approval-more')!
+  expect(more.textContent).toBe('还有 1 行')
+  more.click()
+  expect(onOpen).toHaveBeenCalledExactlyOnceWith({ kind: 'matter', id: 'a' })
+})
+
+it('操作块横向放不全时隐藏允许，宽度恢复后保留同一个按钮', async () => {
+  const waitingRoot = document.createElement('div')
+  const waiting = { ...compactPermission, display: shortDisplay }
+  let data = { places: [place('a', { waiting })], version: 'v1' }
+  const { calls } = mount(() => data, { waitingRoot })
+  strip!.setWide(true)
+  await strip!.refresh()
+  const line = waitingRoot.querySelector('.approval-source')!
+  const allow = waitingRoot.querySelector<HTMLButtonElement>('[data-place-decision="allow"]')!
+  const open = waitingRoot.querySelector<HTMLButtonElement>('[data-place-open-if-clipped]')!
+  let width = 10
+  Object.defineProperties(line, { scrollWidth: { value: 100 }, clientWidth: { get: () => width } })
+  allow.click()
+  expect(calls.some(call => call[1] === '/v1/matter/permission')).toBe(false)
+  expect(allow.hidden).toBe(true)
+  expect(open.hidden).toBe(false)
+  width = 100
+  data = { places: [place('a', { waiting: { ...waiting, ccOpinion: '可以。' } })], version: 'v2' }
+  await strip!.refresh()
+  expect(waitingRoot.querySelector('[data-place-decision="allow"]')).toBe(allow)
+  expect(allow.hidden).toBe(false)
+  expect(open.hidden).toBe(true)
+})

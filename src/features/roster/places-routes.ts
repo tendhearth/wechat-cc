@@ -82,7 +82,7 @@ export function placesRoutes(deps: Pick<InternalApiDeps, 'places' | 'log'>): Rou
       if (caller?.origin !== 'operator' && caller?.origin !== 'device') return { status: 403, body: { error: 'forbidden' } }
       try {
         if (!deps.places) return unavailable
-        const body = deps.places.read(caller.origin)
+        const body = deps.places.read(caller.origin, caller.frameBudget)
         const headers = { etag: body.version }
         return ctx?.headers?.get('if-none-match') === body.version ? { status: 304, body: null, headers } : { status: 200, body, headers }
       } catch (error) {
