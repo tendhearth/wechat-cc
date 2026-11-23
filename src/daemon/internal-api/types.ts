@@ -651,6 +651,8 @@ export type RouteHandler = (
     recordMatterPlan?: import('./token-registry').RecordMatterPlan
     /** 经令牌注册表认证的会话键,仅供绑定当前主人轮次。 */
     sessionKey?: string
+    /** 本子路由使用的配对设备 ID，来自已认证的设备令牌。 */
+    deviceId?: string
     /**
      * 共享令牌(`agy-static`)在 daemon 交付模式下绑定到的那一轮的聊天(回复交付第 2 步):令牌里读不出 chat,
      * daemon 按「这家 provider 此刻正在跑的那一轮」认。`sharedTurn` 说明绑定结果(bound / none / ambiguous)。

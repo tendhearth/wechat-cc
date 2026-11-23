@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { makeProtocolClient, type NotebookPageResponseT } from '@wechat-cc/protocol'
 import { routesForToken } from '../internal-api/route-tiers'
 import { REQUEST_SCHEMAS } from '../internal-api/schema'
 import { encodeNativeHistoryKey } from '../../adapters/workbench/native-history'
@@ -24,6 +25,8 @@ import { deviceIdOf } from '../../features/phone/device-store'
 import { SANDBOX_OWNER, startRealShapedDaemon, type RealShapedDaemon, type RealShapedOpts } from './real-shaped'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterStore } from '../../adapters/store/matters-store'
+import { makeNotebookStore } from '../../adapters/store/notebook-store'
+import { DEFAULT_OPENING } from '../../domain/notebook'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import type { Db } from '../../lib/db'
 import { serve } from '../../lib/runtime/http'
@@ -79,6 +82,7 @@ const said = (text: string): string => [...text.matchAll(/<wechat [^>]*>\n([\s\S
 /** S2 那几条:配对过的一台手机、免打扰里压着的那一句、那件事的编号。 */
 const PHONE_TOKEN = 'sandbox-phone-device-token-0001'
 const PHONE_ID = deviceIdOf(PHONE_TOKEN)
+const NOTEBOOK_PHONE_TOKEN = 'd-sandbox-notebook-device-token'
 const QUIET_NOTE = '自改进展:免打扰里做完的那一步'
 /** 主人时区(Asia/Shanghai)的 HH:MM,给「/set 免打扰」用。 */
 const shanghaiHHMM = (ms: number): string => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(ms))
@@ -133,7 +137,10 @@ const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'spee
   } },
   recordClaudeSpawnOptions: (o) => { spawnOptions.push(o) },
   recordCodexSpawnOptions: (o) => { codexThreads.push(o) },
-  ...(more.stateDir ? {} : { seedFiles: { 'permission-rules.json': RULES, 'projects.json': PROJECTS } }),
+  ...(more.stateDir ? {} : { seedFiles: {
+    'permission-rules.json': RULES, 'projects.json': PROJECTS,
+    'settings-devices.json': JSON.stringify({ [NOTEBOOK_PHONE_TOKEN]: { created_at: '2026-11-01T00:00:00.000Z' } }),
+  } }),
 })
 
 /** 桌面 / CLI 那一侧:operator 令牌(工作台、记忆页那一串路由走它)。 */
@@ -511,6 +518,47 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(await desktop('POST', '/v1/notebook/seen', { ids: ['missing'] })).toEqual({
       status: 200, body: { ok: true },
     })
+  })
+
+  it('keeps a notebook reply unseen after a paired phone has confirmed another reply', async () => {
+    await expect.poll(() => d.phoneRelay.logins(), { timeout: 10_000 }).toBeGreaterThan(0)
+    const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: NOTEBOOK_PHONE_TOKEN })
+    const path = '/v1/notebook'
+    const confirm = async (id: string) => {
+      const response = await phone.request({ method: 'POST', path: `${path}/seen`, body: JSON.stringify({ ids: [id] }) })
+      expect(response.status).toBe(200)
+      expect(response.json()).toEqual({ ok: true })
+    }
+    const unseen = async () => {
+      const response = await phone.request({ method: 'GET', path: `${path}/unseen` })
+      expect(response.status).toBe(200)
+      return response.json<{ unseen: boolean }>().unseen
+    }
+    try {
+      expect(await unseen()).toBe(false)
+      const db = openSqlite(join(d.stateDir, 'wechat-cc.db')) as unknown as Db
+      const { first, second } = (() => {
+        try {
+          const store = makeNotebookStore(db)
+          const { font, ink, reason } = DEFAULT_OPENING
+          store.set('pen', { font, ink, reason })
+          const now = Date.now()
+          const owner = store.append({ author: 'owner', origin: 'app', body: 'fixture', createdAt: now, refId: null, clientId: null })
+          const reply = (createdAt: number) => store.append({
+            author: 'cc', origin: 'desktop', body: 'fixture', createdAt, refId: owner.id, clientId: null,
+          }).id
+          return { first: reply(now + 1), second: reply(now + 2) }
+        } finally { db.close() }
+      })()
+      await confirm(first)
+      expect(await unseen()).toBe(true)
+      const page = await phone.request({ method: 'GET', path })
+      expect(page.status).toBe(200)
+      expect(page.json<NotebookPageResponseT>().entries.some(entry => entry.id === second)).toBe(true)
+      expect(await unseen()).toBe(true)
+      await confirm(second)
+      expect(await unseen()).toBe(false)
+    } finally { phone.close() }
   })
 
   it('operator GET sweep: registered reads respond on the full daemon', async () => {
