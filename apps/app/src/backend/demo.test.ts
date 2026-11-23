@@ -628,7 +628,7 @@ it('topic demo activity uses approval metadata while original matter keeps the a
   expect(session.latestStep).toBe('Approval needed · Bash')
   expect(session.latestStep).not.toContain('npm install sharp')
   const original=await backend.matter(session.id,'en')
-  expect(original.permissions[0]?.description).toBe('npm install sharp')
+  expect(original.permissions[0]?.description === 'command=npm install sharp').toBe(true)
  }finally{backend.dispose()}
 })
 

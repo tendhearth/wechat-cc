@@ -18,7 +18,9 @@ import { DirectHeader } from './DirectHeader'
 import { DirectComposer } from './DirectComposer'
 import { directHeaderView } from '../view/direct-header'
 import { useMatterSay } from '../state/matter-say'
+import { DiffLine } from './DiffLine'
 import { Txt } from '../ui/Txt'
+import { TerminalPermission } from './TerminalPermission'
 import { useTheme } from '../ui/useTheme'
 import { Icon } from '../ui/Icon'
 import { canSayTo, relAgo, stepLabel, terminalErrorKey, terminalRow } from '../view/terminal'
@@ -32,7 +34,7 @@ const SAY_MAX = 4000
 // 说一句走的是微信「@码」同一条路:收下即回,跑完的结果成为这里的「最后一句」。在跑 / 在等批准时不能说。
 // 看着它跑(2026-10-17):读得到过程就显示最近几步(最后一句就在里面),在跑时最后一步标「正在」;读不到退回最后一句。
 // 送进窗口(2026-10-20):daemon 只回收下、后台送;拿 say_id 对会话行的 last_say 才说送到 / 没送进去,在送时 2 秒拉一次、最多一分钟。
-export function TerminalDetail({ sessionId }: { sessionId: string }) {
+export function TerminalDetail({ sessionId, projectPath }: { sessionId: string; projectPath?: string | null }) {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
@@ -62,6 +64,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const s = terminal.sessions.find(x => x.session_id === id)
   const row = s ? terminalRow(s, Date.now(), lang) : null
+  const pending = s?.status === 'waiting' ? s.pending : null
   // 登记处的时间只在 hook 事件时更新;一轮跑很久时过程里的时间更新 ⇒ 页头取较新的那个,也不算「有一阵没动静」。
   const newest = activity.items.reduce((m, i) => (i.at !== null && i.at > m ? i.at : m), s?.last_event_at ?? 0)
   const fresher = !!s && newest > s.last_event_at
@@ -125,9 +128,10 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
                   <Txt role="small" tone="inkSoft" style={{ flex: 1 }}>{`${row.source} · ${row.stale && !fresher ? t(lang, 'terminal.stale.hint') : fresher ? relAgo(newest, Date.now(), lang) : row.ago}`}</Txt>
                 </View>
               </View>
-              {row.pendingText ? (
+              {pending ? (
                 <View style={{ gap: space.m }}>
-                  <Txt testID="terminal-detail-pending" role="body" content="user">{row.pendingText}</Txt>
+                  <TerminalPermission key={`${id}:${pending.since}:${pending.hash ?? ''}`} pending={pending}
+                    source={row.source} projectPath={projectPath || row.project} scroll={scrollRef} />
                   {row.actionable ? (
                     // 用词表:先不做在左(次要),允许这一步在右(主按钮),下面一行「只对这一次请求」
                     <View style={{ gap: space.s }}>
@@ -159,7 +163,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
                           {open[k] ? (
                             <View testID={`terminal-step-detail-${i}`} style={{ paddingVertical: space.s, gap: space.xs }}>
                               {it.detail.split('\n').map((l, j) => (
-                                <Txt key={j} role="code" content="user" style={isDiff && l.startsWith('+ ') ? { color: c.accent } : isDiff && l.startsWith('- ') ? { color: c.bad } : undefined}>{l || ' '}</Txt>
+                                <DiffLine key={j} line={l} kind={isDiff && l.startsWith('+ ') ? 'add' : isDiff && l.startsWith('- ') ? 'remove' : undefined} />
                               ))}
                             </View>
                           ) : null}

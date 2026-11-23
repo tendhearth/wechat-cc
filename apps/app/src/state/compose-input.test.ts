@@ -5,8 +5,8 @@ import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { setTimeout as realTimeout } from 'node:timers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import '../ui/native-motion.test-support'
-import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolRequest, type PlacesResponseT } from '@wechat-cc/protocol'
+import { reduce } from '../ui/native-motion.test-support'
+import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolRequest, type PlacesResponseT, type PermissionDisplay } from '@wechat-cc/protocol'
 import { makeLiveBackend } from '../backend/live'
 import { DETAIL, ID, OPTIONS, RUN, WB_TASK, RECEIPT } from '../backend/fixtures'
 import type { Backend, MatterInputT } from '../backend/types'
@@ -17,20 +17,35 @@ import { matterInputState, matterInputs } from '../state/matter-inputs'
 import Compose from '../app/compose'
 import Matter from '../app/matter/[id]/index'
 import Approval from '../app/matter/[id]/decide'
+import { PermissionCard } from '../ui/PermissionCard'
 
 type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
 const roots: Root[] = []
-const host = vi.hoisted(() => ({ backend: null as unknown as Backend, params: {} as Record<string, string>, back: vi.fn(), push: vi.fn(), replace: vi.fn(), dismissTo: vi.fn(), sources: [] as { text: unknown; selectable?: boolean; id?: string }[] }))
+const host = vi.hoisted(() => ({
+  backend: null as unknown as Backend, params: {} as Record<string, string>,
+  back: vi.fn(), push: vi.fn(), replace: vi.fn(), dismissTo: vi.fn(), scrollTo: vi.fn(),
+  layouts: new WeakMap<Element, (event: { nativeEvent: { layout: { height: number } } }) => void>(),
+  sources: [] as { text: unknown; selectable?: boolean; id?: string; accessible?: boolean }[],
+}))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 // 只替换原生宿主、路由与会话(钥匙串那层);真 BackendProvider、真实请求、缓存、订阅、文本与回执组件一起执行。
 vi.mock('react-native', async () => {
   const native = (await import('../ui/native-motion.test-support')).nativeBoundary()
-  const { createElement, forwardRef } = await import('react')
-  const View = ({ children, testID, accessibilityLabel }: any) => createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel }, children)
-  const Text = ({ children, onPress, testID, accessibilityRole, selectable }: any) => {
-    host.sources.push({ text: children, selectable, id: testID })
+  const { createElement, forwardRef, useImperativeHandle } = await import('react')
+  const View = forwardRef<any, any>(({ children, testID, accessibilityLabel, accessibilityElementsHidden, onLayout }, ref) => {
+    useImperativeHandle(ref, () => ({ measureLayout: (_content: unknown, done: (x: number, y: number) => void) => done(0, 680) }))
+    return createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel, 'aria-hidden': accessibilityElementsHidden,
+      ref: (node: HTMLElement | null) => { if (node && onLayout) host.layouts.set(node, onLayout) },
+    }, children)
+  })
+  const ScrollView = forwardRef<any, any>(({ children }, ref) => {
+    useImperativeHandle(ref, () => ({ getInnerViewRef: () => ({}), scrollTo: host.scrollTo }))
+    return createElement('div', null, children)
+  })
+  const Text = ({ children, onPress, testID, accessibilityRole, selectable, accessible }: any) => {
+    host.sources.push({ text: children, selectable, id: testID, accessible })
     return createElement('span', { 'data-testid': testID, role: accessibilityRole, onClick: onPress }, children)
   }
   const TextInput = forwardRef<any, any>(({ value, onChangeText, testID, accessibilityLabel }: any, ref) => createElement('textarea', {
@@ -42,7 +57,7 @@ vi.mock('react-native', async () => {
     'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled, 'aria-checked': accessibilityState?.checked,
   }, children)
   const Modal = ({ children, visible }: any) => visible ? createElement('div', null, children) : null
-  return { ...native, View, Image: () => null, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
+  return { ...native, View, Image: () => null, Text, TextInput, Pressable, Modal, ScrollView, Animated: { ...native.Animated, View }, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
 })
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('react-native-safe-area-context', async () => {
@@ -127,7 +142,8 @@ function harness() {
   }
 }
 beforeEach(async () => {
-  clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.dismissTo.mockClear(); host.sources.length = 0
+  clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.dismissTo.mockClear(); host.scrollTo.mockClear(); host.sources.length = 0
+  await reduce(false)
   const disk = new Map<string,string>()
   matterInputState.configure(makeInputJournal({ getItemAsync: async k => disk.get(k) ?? null, setItemAsync: async (k,v) => { disk.set(k,v) }, deleteItemAsync: async k => { disk.delete(k) } }, async s => createHash('sha256').update(s).digest('hex')))
   await matterInputState.activate({ v: 1, relayHost: 'test', relayUrl: 'wss://test', daemonId: 'test', deviceId: 'test', deviceToken: 'private-test-token', pairedAt: 1 })
@@ -394,17 +410,120 @@ function placeWithNotes(kind: 'permission' | 'question', requestId: string): Pla
   }] }
 }
 
+describe('permission operation rendering', () => {
+  const many = Array.from({ length: 14 }, (_, i) => `item-${i + 1}`).join('\r\n')
+  const patch: PermissionDisplay = { body: { kind: 'patch', files: [
+    { path: '/p/src/a', change: JSON.stringify({ type: 'update', move_path: '/p/src/moved' }), diff: '-old\n+new' },
+    { path: '/p/src/b', change: 'add', diff: '+fresh' },
+    { path: '/p/src/c', change: 'delete', diff: '-gone' },
+  ] } }
+  it.each([
+    { kind: 'command', tool: 'Bash', raw: 'command=' + many, last: 'item-8', hidden: 'item-9', label: '命令：' },
+    { kind: 'edit', tool: 'MultiEdit', raw: 'input=' + JSON.stringify({ file_path: '/p/src/a', replace_all: true, edits: [
+      { old_string: 'previous', new_string: 'next' }, { old_string: 'before', new_string: many },
+    ] }), last: '+ item-11', hidden: '+ item-12', label: '改 src/a：删 2 行，加 15 行, （全部替换）' },
+    { kind: 'write', tool: 'Write', raw: 'input=' + JSON.stringify({ file_path: '/p/src/a', content: many }), last: '+ item-12', hidden: '+ item-13', label: '写 src/a：共 14 行' },
+    { kind: 'patch', tool: 'fileChange', raw: 'Example patch source', display: patch, last: '+fresh', label: '改 3 个文件：src/a, 移动或改名到 /p/src/moved。src/b, 新建。src/c, 删除' },
+    { kind: 'url', tool: 'WebFetch', raw: 'input={"url":"https://sample.invalid/a","prompt":"read"}', last: 'sample.invalid', label: '网址：' },
+    { kind: 'query', tool: 'WebSearch', raw: 'input={"query":"sample"}', last: '「sample」', label: '搜索：' },
+    { kind: 'fields', tool: 'mcp__gallery__list', raw: 'mcp__gallery__list\n' + JSON.stringify({ q: many }), last: 'item-8', hidden: 'item-9', label: '工具参数：' },
+    { kind: 'text', tool: 'Unknown', raw: many, last: 'item-8', hidden: 'item-9', label: 'item-1' },
+  ])('shows $kind with a single accessibility label and the exact original', async ({ kind, tool, raw, display, last, hidden, label }) => {
+    const h = harness()
+    const request = h.detail().permissions[0]
+    request.tool = tool
+    request.description = raw
+    h.setInsight({ progress: null, explanations: { [request.id]: { title: tool, what: raw, scope: '', effect: 'raw fallback', source: 'raw' } } })
+    const ui = await mount(display ? () => createElement(PermissionCard, {
+      taskId: ID, matterTitle: 'Sample',
+      v: { kind: 'card', requestId: request.id, runId: RUN, tool, display, projectPath: '/p', rawFull: raw,
+        executor: 'codex', executorName: 'Codex', title: '', what: '', scope: '', effect: '', canDenyWithReason: false },
+    }) : Approval)
+    const panel = ui.byId(`approval-operation-${kind}`)
+    expect(panel.textContent?.includes(last)).toBe(true)
+    expect(ui.byId('approval-operation-label').getAttribute('aria-label')?.startsWith(label)).toBe(true)
+    expect(ui.byId('approval-operation-cwd')?.textContent === '项目目录 /p').toBe(true)
+    expect(ui.byId('approval-operation-label').getAttribute('aria-label')?.endsWith('项目目录 /p')).toBe(true)
+    expect(ui.byId('approval-effect')).toBeNull()
+    expect(ui.byId('approval-model-note')).toBeNull()
+    expect(ui.byId('approval-details')).toBeNull()
+    expect(ui.byId('approval-exact-source')).toBeNull()
+    if (hidden) {
+      expect(panel.textContent?.includes(hidden)).toBe(false)
+      await ui.click('approval-operation-more')
+    } else await ui.click('approval-view-exact')
+    expect(ui.byId('approval-view-exact').getAttribute('aria-expanded')).toBe('true')
+    expect(ui.byId('approval-exact-source').textContent === raw).toBe(true)
+    expect(ui.byId('approval-exact-source').getAttribute('role')).toBe('text')
+    expect(ui.byId('approval-exact-cwd').textContent === '项目目录 /p').toBe(true)
+    expect(host.sources.some(source => source.id === 'approval-exact-source' && source.selectable === true && source.accessible === true)).toBe(true)
+    expect(ui.byId('approval-exact-source').closest('[aria-hidden="true"]')).toBeNull()
+  })
+
+  it.each([true, false])('waits for the visible sheet layout before scrolling (motion enabled: %s)', async animated => {
+    const h = harness()
+    h.detail().permissions[0].description = 'command=' + many
+    const ui = await mount(Approval)
+    await reduce(!animated)
+    await ui.click('approval-operation-more')
+    const header = ui.byId('approval-view-exact')
+    const wrapper = header.nextElementSibling!
+    const inner = wrapper.firstElementChild!
+    const layout = async (node: Element, height: number) => {
+      const notify = host.layouts.get(node)
+      if (!notify) throw Error('missing native layout listener')
+      await act(() => notify({ nativeEvent: { layout: { height } } }))
+    }
+
+    if (animated) {
+      await layout(wrapper, 0)
+      await layout(inner, 280)
+      await layout(wrapper, 120)
+      expect(host.scrollTo).not.toHaveBeenCalled()
+      await layout(wrapper, 280)
+    } else {
+      // Native layout can dispatch the outer callback first.
+      await layout(wrapper, 280)
+      expect(host.scrollTo).not.toHaveBeenCalled()
+      await layout(inner, 280)
+    }
+    expect(host.scrollTo).toHaveBeenCalledExactlyOnceWith({ y: 680, animated })
+    await layout(wrapper, 280)
+    expect(host.scrollTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('only shows distinct, present details', async () => {
+    const h = harness()
+    h.setInsight({ progress: null, explanations: { [h.detail().permissions[0].id]: {
+      title: '检查项目', what: '  检查项目  ', scope: '示例范围', effect: '', source: 'model',
+    } } })
+    const ui = await mount(Approval)
+    await ui.click('approval-details')
+    expect(ui.container.textContent).toContain('示例范围')
+    expect(ui.container.textContent).not.toContain('要做的事')
+    expect(ui.byId('approval-model-note')).toBeNull()
+  })
+})
+
 describe('work-first matter details', () => {
   it('keeps a model explanation beside the original operation and waits for the decision result before leaving', async () => {
     const h = harness(), result = gate<Reply>(), requestId = h.detail().permissions[0].id
-    h.detail().permissions[0].description = 'npm test\nsecond command'
-    h.setInsight({ progress: null, explanations: { [requestId]: { title: '检查项目', what: '模型的说明', scope: '当前项目', effect: '运行检查', source: 'model' } } })
+    h.detail().permissions[0].description = 'command=npm test\nsecond command'
+    h.setInsight({ progress: null, explanations: { [requestId]: { title: '检查项目', what: '模型的说明', scope: '当前项目', effect: '运行 `check`', source: 'model' } } })
     h.setPermission(() => result.promise)
     const ui = await mount(Approval)
-    expect(ui.byId('approval-raw-inline').textContent).toContain('npm test')
-    expect(ui.byId('approval-raw-inline').textContent).toContain('/p')
+    expect(ui.byId('approval-operation-command').textContent?.includes('npm test')).toBe(true)
+    expect(ui.byId('approval-operation-cwd').textContent?.includes('/p')).toBe(true)
+    expect(ui.byId('approval-effect').textContent).toContain('运行 check')
+    expect(ui.byId('approval-model-note').textContent).toBe('这段是模型概括的，以上面的原文为准。')
     expect(ui.container.textContent).toContain('只对这一次请求')
+    expect(ui.byId('approval-details').getAttribute('aria-expanded')).toBe('false')
+    expect(ui.container.textContent).not.toContain('当前项目')
+    await ui.click('approval-details')
+    expect(ui.byId('approval-details').getAttribute('aria-expanded')).toBe('true')
     expect(ui.container.textContent).toContain('当前项目')
+    await ui.click('approval-details')
+    expect(ui.byId('approval-details').getAttribute('aria-expanded')).toBe('false')
     await ui.click('approval-allow')
     await ui.click('approval-deny')
     const decisions = h.requests.filter(r => r.path === '/m/api/matter/permission')
@@ -428,6 +547,8 @@ describe('work-first matter details', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const ui = await mount(Approval)
     await act(() => h.version(1))
+    const operation = ui.byId('approval-operation-command')
+    const title = ui.byId('approval-title')
     const allow = ui.byId('approval-allow')
     const reason = ui.byId<HTMLTextAreaElement>('approval-denial-reason')
     expect(ui.byId('approval-cc-opinion')).toBeNull()
@@ -444,7 +565,11 @@ describe('work-first matter details', () => {
     expect(ui.byId('approval-cc-opinion-label').textContent).toBe('CC 的意见（只看了这条请求）')
     expect(ui.byId('approval-cc-opinion-text').textContent).toBe('可以先核对范围。')
     expect(ui.byId('approval-cc-opinion').getAttribute('aria-label')).toBe('CC 的意见（只看了这条请求）：可以先核对范围。')
-    expect(ui.byId('approval-question-reason').textContent).toBe('为什么来问你：需要你确认范围。')
+    expect(ui.byId('approval-title')).toBe(title)
+    expect(ui.byId('approval-operation-command')).toBe(operation)
+    expect(ui.byId('approval-question-reason')).toBeNull()
+    await ui.click('approval-details')
+    expect(ui.byId('approval-question-reason').textContent).toBe('需要你确认范围。')
     expect(ui.byId('approval-allow')).toBe(allow)
     expect(ui.byId('approval-denial-reason')).toBe(reason)
     expect(reason.value).toBe('再想一下')

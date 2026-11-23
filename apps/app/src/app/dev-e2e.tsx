@@ -8,6 +8,7 @@ import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { CCMotionReview } from '../ui/CCMotionReview'
 import { CodexConnectionReview } from '../ui/CodexConnectionReview'
+import { ApprovalKindsReview } from '../ui/ApprovalKindsReview'
 import { ReplySpeakerReview } from '../ui/ReplySpeakerReview'
 
 // 只在开发构建与真机验收构建(src/e2e-build.ts)里生效(文案豁免 i18n,同 dev-push-key):真机验收脚本(scripts/device-e2e.ts)用它把主人的配对收起来 / 放回去。
@@ -22,7 +23,7 @@ export default function DevE2E() {
   const done = useRef<string | null>(null)
   useEffect(() => {
     if (!__DEV__ && !E2E_BUILD) return
-    if (op === 'cc-motion' || op === 'codex-connection' || op === 'reply-speaker') return // isolated visual fixtures; never touch pairing or SecureStore
+    if (op === 'cc-motion' || op === 'codex-connection' || op === 'reply-speaker' || op === 'approval-kinds') return // isolated visual fixtures; never touch pairing or SecureStore
     // 同一个 op 只做一次(重渲染 / effect 重跑时第二次「收」会报 already_stashed,把真实结果盖掉)
     if (done.current === (op ?? '')) return
     done.current = op ?? ''
@@ -34,6 +35,7 @@ export default function DevE2E() {
   if (!__DEV__ && !E2E_BUILD) return <Redirect href="/" />
   if (op === 'cc-motion') return <CCMotionReview />
   if (op === 'codex-connection') return <CodexConnectionReview />
+  if (op === 'approval-kinds') return <ApprovalKindsReview />
   if (op === 'reply-speaker') return <ReplySpeakerReview />
   return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: c.paper }}><Txt testID={`dev-e2e-${state}`} role="small" tone="inkSoft">{state}</Txt></View>
 }

@@ -1,7 +1,21 @@
 # T5: 原有功能验收移到唯一对话、搜索引用与原详情。
 appId: com.tendhearth.app
 ---
-- runFlow: subflows/_start.yaml
+# 用启动参数出中文(Mac mini 的 lab 改不了模拟器的系统语言);别的流程照模拟器的英文跑,两种语言都有覆盖。
+- launchApp:
+    clearState: true
+    arguments:
+      AppleLanguages: "(zh-Hans)"
+      AppleLocale: "zh_CN"
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Cancel"
+- extendedWaitUntil:
+    visible:
+      id: welcome-look-first
+    timeout: 30000
 - tapOn:
     id: welcome-look-first
 - runFlow: subflows/_work.yaml
@@ -18,9 +32,12 @@ appId: com.tendhearth.app
 - assertVisible:
     text: 可以安装图片处理组件吗？|May I add an image-processing package\?
 - assertVisible:
-    id: approval-ai-summary
+    id: approval-model-note
 - assertVisible:
-    id: approval-raw-inline
+    id: approval-operation-command
+- assertVisible:
+    id: approval-operation-label
+    text: ".*(项目目录|Project folder) .+"
 - extendedWaitUntil:
     visible:
       id: approval-allow
@@ -38,3 +55,65 @@ appId: com.tendhearth.app
 - extendedWaitUntil:
     visible: 这一轮做完了|Done for this round
     timeout: 8000
+- openLink: "tendhearth://dev-e2e?op=approval-kinds"
+# 开发构建打开深链时系统会问一句「Open in "Tendhearth"?」
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    visible:
+      id: approval-operation-command
+    timeout: 10000
+- assertVisible:
+    text: 可以运行这条命令吗？|May I run this command\?
+- takeScreenshot: approve-kinds-1
+- scrollUntilVisible:
+    element:
+      id: approval-operation-edit
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: approve-kinds-2
+- scrollUntilVisible:
+    element:
+      id: approval-operation-patch
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: approve-kinds-3
+- scrollUntilVisible:
+    element:
+      id: approval-example-text
+    direction: DOWN
+- takeScreenshot: approve-kinds-4
+- scrollUntilVisible:
+    element:
+      id: approval-example-codex-command
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: approve-kinds-5
+- scrollUntilVisible:
+    element:
+      id: approval-example-codex-file
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: approve-kinds-6
+- scrollUntilVisible:
+    element:
+      id: approval-example-terminal-command
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: approve-kinds-7
+- scrollUntilVisible:
+    element:
+      id: terminal-detail-pending-truncated
+    direction: DOWN
+- takeScreenshot: approve-kinds-8
+- scrollUntilVisible:
+    element:
+      id: approval-example-terminal-command-at-limit
+    direction: DOWN
+    centerElement: true
+- assertVisible:
+    id: terminal-detail-pending-truncated
+    text: "这里可能不是全部内容；完整的请在电脑上看。|This may be incomplete\\. See the full details on your computer\\."

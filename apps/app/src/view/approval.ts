@@ -1,6 +1,7 @@
-import { PHONE_ANSWER_MAX_JSON } from '@wechat-cc/protocol'
-import { labelJoin } from '../i18n'
+import { permissionDisplay, PHONE_ANSWER_MAX_JSON, type PermissionDisplay } from '@wechat-cc/protocol'
+import { labelJoin, t, type Lang } from '../i18n'
 import type { MatterDetailT, ApprovalExplanationT } from '../backend/types'
+import { directHeaderView } from './direct-header'
 
 export type ApprovalView =
   | { kind: 'choose'; items: Array<{ requestId: string; kind: 'permission' | 'question'; summary: string }> }
@@ -8,11 +9,10 @@ export type ApprovalView =
   | { kind: 'question'; requestId: string; runId: string
       items: Array<{ id: string; header: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean; allowOther: boolean }> }
   | { kind: 'card'; requestId: string; runId: string; title: string; what: string; scope: string; effect: string
-      aiSummary: boolean; rawFirstLine: string; rawFull: string; workingDir: string; showRawInline: boolean
-      /** 首行之后还有几行(结尾空行不算);首行是否被截到 120 字。 */
-      rawMoreLines: number; rawFirstLineCut: boolean; canAllowTask?: boolean; canDenyWithReason: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
+      tool: string; display: PermissionDisplay; rawFull: string; projectPath: string; executor: string; executorName: string
+      canAllowTask?: boolean; canDenyWithReason: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
 
-const firstLine = (s: string, max: number) => (s.split('\n')[0] ?? '').slice(0, max)
+const firstLine = (s: string, max: number) => (s.split(/\r?\n/, 1)[0] ?? '').slice(0, max)
 
 export function approvalView(detail: MatterDetailT, explanations: Record<string, ApprovalExplanationT>, requestId?: string): ApprovalView {
   const perms = detail.permissions
@@ -26,14 +26,15 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
   })
   const cardView = (p: (typeof perms)[number]): ApprovalView => {
     const ex = explanations[p.id]
-    const workingDir = detail.task?.path ?? ''
-    const aiSummary = ex?.source === 'model'
-    const lines = p.description.replace(/\n+$/, '').split('\n')
+    const { current: executor, name: executorName } = directHeaderView(detail, 'en')
+    const format = executor === 'claude' ? 'claude' : executor === 'openai' ? 'api' : 'text'
+    const display = permissionDisplay(p.tool, p.description, format)
+    const projectPath = detail.task?.path || detail.matter.projectPath || ''
+    const model = ex?.source === 'model' ? ex : undefined
     return {
-      kind: 'card', requestId: p.id, runId,
-      title: ex?.title ?? p.tool, what: ex?.what ?? p.description, scope: ex?.scope ?? workingDir, effect: ex?.effect ?? '',
-      aiSummary, rawFirstLine: firstLine(p.description, 120), rawFull: p.description, workingDir, showRawInline: aiSummary,
-      rawMoreLines: lines.length - 1, rawFirstLineCut: (lines[0] ?? '').length > 120,
+      kind: 'card', requestId: p.id, runId, tool: p.tool, display, projectPath, executor, executorName,
+      title: model?.title.trim() || '', what: model?.what ?? '', scope: model?.scope ?? '', effect: model?.effect ?? '',
+      rawFull: p.description,
       canDenyWithReason: p.canDenyWithReason === true, ...(p.canAllowTask ? { canAllowTask: true } : {}), ...(p.scripts ? { scripts: p.scripts } : {}),
     }
   }
@@ -52,6 +53,42 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
       ...questions.map(x => ({ requestId: x.id, kind: 'question' as const, summary: labelJoin(x.questions[0]?.header ?? '', x.questions[0]?.question ?? '').slice(0, 80) })),
     ],
   }
+}
+
+type Body = PermissionDisplay['body']
+
+export function permissionAction(body: Body | undefined, tool: string, actor: string, lang: Lang) {
+  if (!body || body.kind === 'fields' || body.kind === 'text') {
+    const mcp = /^mcp__(.+?)__(.+)$/.exec(tool)
+    return t(lang, mcp ? 'approval.actor.mcp' : 'approval.actor.tool', { actor, service: mcp?.[1] ?? '', tool: mcp?.[2] ?? tool })
+  }
+  return t(lang, body.kind === 'edit' && body.changes.length > 1 ? 'approval.actor.multiEdit'
+    : body.kind === 'patch' && body.files.length === 1 ? 'approval.actor.patchOne' : `approval.actor.${body.kind}`,
+  { actor, n: body.kind === 'edit' ? body.changes.length : body.kind === 'patch' ? body.files.length : 1 })
+}
+
+export function approvalHeading(v: Extract<ApprovalView, { kind: 'card' }>, lang: Lang) {
+  const body = v.display.body
+  const action = permissionAction(body, v.tool, v.executorName || t(lang, 'approval.executor'), lang)
+  const title = v.title || t(lang, body.kind === 'fields' || body.kind === 'text' ? 'approval.ask.tool'
+    : body.kind === 'patch' && body.files.length === 1 ? 'approval.ask.edit' : `approval.ask.${body.kind}`)
+  return { action, title }
+}
+
+/** Only shorten descendants. Keep the original spelling and separators in the visible suffix. */
+export function approvalRelativePath(path: string, cwd: string): string {
+  const windows = /^(?:[a-z]:[\\/]|\\\\)/i.test(cwd)
+  const normalize = (value: string) => windows ? value.replace(/\\/g, '/').toLowerCase() : value
+  const base = cwd.replace(windows ? /[\\/]+$/ : /\/+$/, '')
+  if (!cwd || /^[a-z]:$/i.test(cwd) || path.split(windows ? /[\\/]/ : '/').includes('..')) return path
+  return normalize(path).startsWith(`${normalize(base)}/`) && path.length > base.length + 1 ? path.slice(base.length + 1) : path
+}
+
+export function approvalLines(value: string): string[] {
+  if (!value) return []
+  const lines = value.replace(/\r\n?/g, '\n').split('\n')
+  if (lines.at(-1) === '') lines.pop()
+  return lines
 }
 
 type QuestionItem = Extract<ApprovalView, { kind: 'question' }>['items'][number]

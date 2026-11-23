@@ -92,6 +92,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     const base = { stale: false, machine: null, last_prompt_at: null }
     return [
       { ...base, session_id: 'demo-cli-blog', code: 'democl', source: 'claude', status: 'waiting', project: 'blog', summaryKey: 'cliBlogLast', last_event_at: n - 90_000, created_at: n - HOUR, live_window: true,
+        // The hook sends the bare command in summary. The list adds the tool name.
         pending: { tool: 'Bash', summary: 'npm run deploy', since: n - 90_000, hash: 'dm0a1', actionable: true } },
       { ...base, session_id: 'demo-cli-docs', code: 'democr', source: 'claude', status: 'running', project: 'docs', summaryKey: 'cliDocsLast', last_event_at: n - 40_000, created_at: n - 2 * HOUR, last_prompt_at: n - 5 * 60_000, pending: null },
       { ...base, session_id: 'demo-cli-api', code: 'democx', source: 'codex', status: 'idle', project: 'api-server', summaryKey: 'cliApiLast', last_event_at: n - 25 * 60_000, created_at: n - 3 * HOUR, pending: null },
@@ -131,7 +132,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       // 用了多少额度(#437):演示给一行合计;cache 这类这家没报 ⇒ null(界面写「不报」)
       { ...taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), usage: { turns: 3, input: 48_210, output: 6_120, cacheRead: null, cacheWrite: null, reasoning: null, costUsd: null } }, {
         runId: RUN_IDS[IDS.portfolio], inputMode: 'steer',
-        permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'npm install sharp', createdAt: n - 60_000 }],
+        permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'command=npm install sharp', createdAt: n - 60_000 }],
       }), 'pending', [
       { kind: 'tool_call', key: 'ev1', createdAt: n - 500_000 },
       { kind: 'tool_call', key: 'ev2', createdAt: n - 300_000 },

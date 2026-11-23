@@ -70,6 +70,19 @@ function taskInputPreview(input: Record<string, unknown>): string | null {
   }
 }
 
+export function claudeTaskPermissionDescription(toolName: string, input: Record<string, unknown>, options: { title?: string; description?: string; decisionReason?: string }): string | null {
+  const inputPreview = taskInputPreview(input)
+  const context = options.title?.trim() || options.description?.trim() || options.decisionReason?.trim() || ''
+  const description = [context, inputPreview].filter(Boolean).join('\n') || `Run ${toolName}`
+  return inputPreview === null ? null : description
+}
+
+export function claudeMcpPermissionDescription(toolName: string, input: unknown): string | null {
+  const inputPreview = nativeMcpInputPreview(input)
+  if (!inputPreview || inputPreview.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX - 256) return null
+  return `${toolName}\n${inputPreview}`
+}
+
 /** Claude's task-only permission gate. Workbench has no CC-private messaging
  * or personal-memory MCP surface; local built-ins retain trusted/solo/strict
  * allow/relay/deny policy, with relay decisions owned by the active task run.
@@ -139,11 +152,11 @@ export function makeWorkbenchClaudeCanUseTool(
       if (auth.verdict === 'deny') return denied
       // 问:没有问的通道 / 名字太长装不下 ⇒ 拒(通道上的事,不是策略)。
       if (!requestPermission || toolName.length > WORKBENCH_PERMISSION_TOOL_MAX) return denied
-      const inputPreview = nativeMcpInputPreview(input)
-      if (!inputPreview || inputPreview.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX - 256) return denied
+      const description = claudeMcpPermissionDescription(toolName, input)
+      if (description === null) return denied
       try {
         let feedback: string | undefined
-        const allowed = await requestPermission({tool:toolName,description:`${toolName}\n${inputPreview}`,onDenied:reason=>{feedback=permissionDenialMessage(`${toolName}\n${inputPreview}`,reason)}}, options.signal)
+        const allowed = await requestPermission({tool:toolName,description,onDenied:reason=>{feedback=permissionDenialMessage(description,reason)}}, options.signal)
         return allowed && !options.signal.aborted ? {behavior:'allow'} : feedback ? {behavior:'deny',message:feedback} : denied
       } catch { return denied }
     }
@@ -159,10 +172,8 @@ export function makeWorkbenchClaudeCanUseTool(
     if (!requestPermission || options.signal.aborted) {
       return { behavior: 'deny', message: 'This task permission request is no longer active.' } satisfies PermissionResult
     }
-    const inputPreview=taskInputPreview(input)
-    const context=options.title?.trim() || options.description?.trim() || options.decisionReason?.trim() || ''
-    const description=[context,inputPreview].filter(Boolean).join('\n') || `Run ${toolName}`
-    if (toolName.length > WORKBENCH_PERMISSION_TOOL_MAX || inputPreview === null || description.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX) {
+    const description = claudeTaskPermissionDescription(toolName, input, options)
+    if (toolName.length > WORKBENCH_PERMISSION_TOOL_MAX || description === null || description.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX) {
       return { behavior:'deny', message:'The complete permission detail is too large to review safely.' } satisfies PermissionResult
     }
     let allowed = false

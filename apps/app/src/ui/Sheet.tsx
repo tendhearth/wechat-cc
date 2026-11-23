@@ -7,7 +7,7 @@ import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 
 /** Mount lazily; optionally retain stateful editors after closing, while immediately hiding their controls. */
-export function Expansion({ open, children, onClosed, keepMounted = false }: { open: boolean; children: ReactNode; onClosed?: () => void; keepMounted?: boolean }) {
+export function Expansion({ open, children, onClosed, onOpened, keepMounted = false }: { open: boolean; children: ReactNode; onClosed?: () => void; onOpened?: () => void; keepMounted?: boolean }) {
   const enabled = useMotionEnabled()
   const [rendered, setRendered] = useState(open)
   const [measured, setMeasured] = useState(0)
@@ -45,18 +45,48 @@ export function Expansion({ open, children, onClosed, keepMounted = false }: { o
     animation.start(({ finished }) => { if (finished) finishClose() })
     return () => { generation.current += 1; animation.stop() }
   }, [open, enabled, measured, height, opacity, keepMounted])
+  const visibleHeight = useRef(0)
+  const contentHeight = useRef(0)
+  const notified = useRef(false)
+  if (!open) {
+    notified.current = false
+    visibleHeight.current = 0
+  }
+  const notifyWhenVisible = () => {
+    // The inner view is measured before the animated wrapper grows. Wait for
+    // the wrapper's native layout as well, including when motion is disabled.
+    if (open && onOpened && !notified.current && contentHeight.current > 0 &&
+        visibleHeight.current >= contentHeight.current - 0.5) {
+      notified.current = true
+      onOpened()
+    }
+  }
   if (!rendered) return null
   return <Animated.View pointerEvents={open ? 'auto' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}
-    style={{ overflow: 'hidden', height: enabled && interacted.current ? height : open ? undefined : 0, opacity }}>
+    onLayout={onOpened ? e => {
+      visibleHeight.current = e.nativeEvent.layout.height
+      notifyWhenVisible()
+    } : undefined} style={{ overflow: 'hidden', height: enabled && interacted.current ? height : open ? undefined : 0, opacity }}>
     <View style={enabled && interacted.current ? { position: 'absolute', top: 0, left: 0, right: 0 } : undefined}
-      onLayout={e => setMeasured(e.nativeEvent.layout.height)}>{children}</View>
+      onLayout={e => {
+        const height = e.nativeEvent.layout.height
+        setMeasured(height)
+        contentHeight.current = height
+        notifyWhenVisible()
+      }}>{children}</View>
   </Animated.View>
 }
 
 // 可展开区块:标题一行,点开看内容;沿用页面纸色与留白,不再画一层卡片。
-export function Sheet({ title, children, defaultOpen = false, testID }: { title: string; children: ReactNode; defaultOpen?: boolean; testID?: string }) {
+export function Sheet({ title, children, defaultOpen = false, testID, expanded, onExpandedChange, onOpened, quiet = false }: {
+  title: string; children: ReactNode; defaultOpen?: boolean; testID?: string
+  /** 次要的入口:标题小一号、灰一级,行矮一点。 */
+  quiet?: boolean
+  expanded?: boolean; onExpandedChange?: (open: boolean) => void; onOpened?: () => void
+}) {
   const { c } = useTheme()
-  const [open, setOpen] = useState(defaultOpen)
+  const [internalOpen, setOpen] = useState(defaultOpen)
+  const open = expanded ?? internalOpen
   return (
     <View style={{ backgroundColor: c.paper, overflow: 'hidden' }}>
       <Pressable
@@ -64,13 +94,13 @@ export function Sheet({ title, children, defaultOpen = false, testID }: { title:
         testID={testID}
         accessibilityState={{ expanded: open }}
         accessibilityLabel={title}
-        onPress={() => setOpen((v) => !v)}
-        style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+        onPress={() => (onExpandedChange ?? setOpen)(!open)}
+        style={{ minHeight: quiet ? 44 : 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
       >
-        <Txt role="bubble" style={{ flex: 1 }}>{title}</Txt>
+        <Txt role={quiet ? 'small' : 'bubble'} tone={quiet ? 'inkSoft' : 'ink'} style={{ flex: 1 }}>{title}</Txt>
         <Icon name={open ? 'chevronDown' : 'chevronRight'} color={c.inkSoft} />
       </Pressable>
-      <Expansion open={open}><View style={{ paddingVertical: space.l }}>{children}</View></Expansion>
+      <Expansion open={open} onOpened={onOpened}><View style={{ paddingVertical: space.l }}>{children}</View></Expansion>
     </View>
   )
 }
