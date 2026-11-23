@@ -2,7 +2,7 @@ import { type PermissionDisplay } from '@wechat-cc/protocol'
 /**
  * 工作台零件的口(架构终态 E5):附件、成果、权限卡与提问卡、对正在跑的任务「补一句」。实现在 src/adapters/workbench/
  * (attachments / permissions / user-input)与 src/adapters/store/workbench/(store / live-inputs);app 的「一件事」服务
- * 只经这里认它们的形状。只有类型,没有逻辑。
+ * 只经这里认它们的形状。
  */
 import type { AgentExecutionChoice, AgentUserInputRequest } from './agent-provider'
 
@@ -11,11 +11,14 @@ export interface Artifact { id: string; taskId: string; name: string; mime: stri
 
 export type PermissionDecision = 'allow' | 'deny' | 'allow_task'
 export interface PermissionScript { path: string; content: string; sha256?: string; error?: string; truncated?: boolean }
+/** 手机详情超出帧预算时用的原描述。Symbol 字段只在进程内传递。 */
+export const legacyPermissionDescription = Symbol('legacyPermissionDescription')
 export interface PendingWorkbenchPermission {
   id: string
   taskId: string
   tool: string
   description: string
+  [legacyPermissionDescription]?: string
   createdAt: number
   display?: PermissionDisplay
   cwd?: string

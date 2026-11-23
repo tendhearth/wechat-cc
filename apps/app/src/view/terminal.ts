@@ -98,9 +98,9 @@ export function terminalPermission(pending: Pick<NonNullable<CliSessionRowT['pen
   const action = display ? permissionAction(display.body, pending.tool, source, lang)
     : t(lang, 'approval.actor.tool', { actor: source, tool: pending.tool })
   const summaryTruncated = pending.truncated ?? (summary.length >= TERMINAL_PERMISSION_SUMMARY_LIMIT || /(?:…|\.\.\.)\s*$/.test(summary))
-  const mayBeIncomplete = display?.truncated === true || summaryTruncated
-  const raw = structured && !structured.truncated ? fullOperation(structured) : summary
-  const hasFullSource = structured ? !structured.truncated : !summaryTruncated
+  const mayBeIncomplete = structured ? structured.truncated === true : summaryTruncated
+  const hasFullSource = !mayBeIncomplete
+  const raw = structured && hasFullSource ? fullOperation(structured) : summary
   return { display, raw, cwd, action, mayBeIncomplete, hasFullSource }
 }
 

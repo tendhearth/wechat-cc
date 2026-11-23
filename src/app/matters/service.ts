@@ -1,7 +1,7 @@
 import {replyMetadataFields} from '@wechat-cc/protocol'
 import type { ListMatters, Matter, MatterActStep, MatterActTurn, MatterBinding, MatterLog, MatterOrigin, MatterSession, MatterStore, MatterTurn, SayReceipts, MatterAgent, MatterNote } from '../../ports/matters'
 import {randomUUID} from '../../lib/random'
-import type { PendingWorkbenchPermission, PermissionDecision, PendingUserInput, Artifact, LiveInput, Attachment } from '../../ports/workbench'
+import { legacyPermissionDescription, type PendingWorkbenchPermission, type PermissionDecision, type PendingUserInput, type Artifact, type LiveInput, type Attachment } from '../../ports/workbench'
 import { normalizeInputRequestId } from '../../domain/workbench/input-request-id'
 import { sayTextHash } from '../../lib/content-hash'
 import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts'
@@ -320,7 +320,10 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
         try{
           const d=taskDetail(matter.id);ledger={...(d.agentRuns?.length?{agentRuns:d.agentRuns,notes:d.notes??[],notesTotal:d.notesTotal}: {})};const wt=(d.task as {worktree?:{base?:string;baseSha?:string;branch:string;projectPath?:string;removed:boolean;merged?:boolean;port?:number;scripts?:unknown}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{...(wt.base&&wt.baseSha?{base:wt.base,baseSha:wt.baseSha}:{}),branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{}),...(wt.removed?{}:phoneScripts(wt.scripts as never,wt.port,d.events as never,[d.task.path,wt.projectPath??'']))}}:{}),...(d.rewind?.blocked?{rewind:{blocked:true}}:{})};events=d.events.slice(-50).map(publicEvent)
           controls={...(d.runId?{runId:d.runId}:{}),...(d.inputMode?{inputMode:d.inputMode}:{}),
-            permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt,canAllowTask,scripts,display,cwd})=>({id,taskId,tool,description,createdAt,...(display?{display}:{}),...(cwd?{cwd}:{}),...(canAllowTask?{canAllowTask}:{}),...(scripts?{scripts}:{})})),
+            permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt,canAllowTask,scripts,display,cwd,[legacyPermissionDescription]:legacyDescription})=>({
+              id,taskId,tool,description,createdAt,...(display?{display}:{}),...(cwd?{cwd}:{}),...(canAllowTask?{canAllowTask}:{}),...(scripts?{scripts}:{}),
+              ...(legacyDescription!==undefined?{[legacyPermissionDescription]:legacyDescription}:{}),
+            })),
             questions:(d.questions??[]).filter(q=>q.taskId===id).map(({id,taskId,createdAt,questions})=>({id,taskId,createdAt,questions:questions.map(({id,header,question,options,multiSelect,allowOther})=>({id,header,question,options:options.map(({label,description})=>({label,description})),multiSelect,allowOther}))})),
             artifacts:(d.artifacts??[]).filter(a=>a.taskId===id).map(({id,taskId,name,mime,size,sha256,createdAt,approvedAt})=>({id,taskId,name,mime,size,sha256,createdAt,approvedAt})),
             inputs:(d.inputs??[]).filter(input=>input.taskId===id).map(publicInput),

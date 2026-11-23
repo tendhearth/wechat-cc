@@ -698,6 +698,16 @@ describe('durable single input receipt', () => {
 
 describe('终端里的会话(2026-10-14)', () => {
   const CLI = { session_id: 'sess-1', code: 'sess-1', source: 'claude', status: 'waiting', stale: false, project: 'blog', machine: null, last_summary: null, last_event_at: 5, last_prompt_at: null, created_at: 1, pending: { tool: 'Bash', summary: 'ls', since: 5, hash: 'ab12c', actionable: true } }
+  it.each([undefined, 'v1'] as const)('按会话单读在 %s 路由族上传 session_id 并保留预览', async family => {
+    const path = family === 'v1' ? '/v1/cli/sessions' : '/m/api/cli/sessions'
+    const command = 'cat ./sample.txt'
+    const session = { ...CLI, pending: { ...CLI.pending, display: { body: { kind: 'command', command } } } }
+    const { b, reqs } = harness({ [`GET ${path}`]: ok({ ok: true, sessions: [session] }) }, family)
+    const rows = await b.cliSessions(CLI.session_id)
+    expect(reqs.at(-1)?.path).toBe(path + '?session_id=sess-1')
+    const body = rows[0]?.pending?.display?.body
+    expect(body?.kind === 'command' && body.command === command).toBe(true)
+  })
   it('列表过 schema;拍板带码、不自动重试;码失效 ⇒ stale;终端自己在问 ⇒ cli_not_actionable', async () => {
     let n = 0
     const { b, reqs } = harness({

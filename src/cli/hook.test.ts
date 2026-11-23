@@ -75,6 +75,20 @@ describe('parsePermissionRequest', () => {
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'Stop' })).toBeNull()
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest' })).toBeNull()
   })
+  it.each(['claude', 'codex'] as const)('uses the validated tool cwd for %s command previews only', source => {
+    const command = 'cat ./sample.txt'
+    const toolCwd = 'C:\\example\\work'
+    const parse = (cwd: unknown) => parsePermissionRequest(source, {
+      ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command, cwd },
+    })
+    const req = parse(toolCwd)
+    expect(req?.execution_cwd === toolCwd).toBe(true)
+    expect(req?.cwd === common.cwd && req?.session_id === common.session_id && req?.command === command && req?.summary === command).toBe(true)
+    expect(req?.display?.body.kind === 'command' && req.display.body.command === command).toBe(true)
+    for (const invalid of ['relative/work', '/example/\nwork', 42, undefined]) {
+      expect(parse(invalid)?.execution_cwd === common.cwd).toBe(true)
+    }
+  })
   it('records the exact hook cut and preserves the complete edit independently', () => {
     const path = 'C:\\sample\\a.ts'
     const old = 'before\r\nline'

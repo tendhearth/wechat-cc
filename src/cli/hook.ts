@@ -1,4 +1,4 @@
-import { permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
+import { isPermissionCommandTool, permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
 /**
  * hook.ts — `wechat-cc hook …`:终端 claude / codex / cursor 会话的 hooks 出口
  * (spec docs/superpowers/specs/2026-09-09-cli-hook-push-design.md)。
@@ -130,7 +130,9 @@ export function parsePermissionRequest(source: HookSource, raw: unknown): CliPer
   const input = r['tool_input']
   const { summary, truncated } = toolSummary(input)
   const display = toolPermissionDisplay(tool_name, input)
-  const executionCwd = permissionCwd(cwd)
+  const toolCwd = isPermissionCommandTool(tool_name) && input && typeof input === 'object'
+    ? permissionCwd((input as Raw)['cwd']) : undefined
+  const executionCwd = toolCwd ?? permissionCwd(cwd)
   const req: CliPermissionRequest = { source, session_id, cwd, tool_name, truncated,
     ...(summary ? { summary } : {}), ...(display ? { display } : {}), ...(executionCwd ? { execution_cwd: executionCwd } : {}),
   }

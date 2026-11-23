@@ -15,8 +15,11 @@ import { removeTempDir } from '../../lib/test-temp'
 import { createInternalApi, type InternalApi } from './index'
 import { makeSettingsPanel, type SettingsPanel } from '../../features/phone/settings-panel'
 import { voiceRoutes } from '../../features/voice/routes'
-import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
-import type { MattersService } from '../../app/matters/service'
+import { framedTooLargeFor, PHONE_FRAME_BUDGET_BYTES, phoneMayOpenMatter } from '../../domain/matters/phone-scope'
+import { makeMattersService, type MattersService } from '../../app/matters/service'
+import { makeRunPermissions } from '../../adapters/workbench/permissions'
+import { makeMatterStore } from '../../adapters/store/matters-store'
+import { openDb } from '../../lib/db'
 
 const OWNER = 'owner@im.wechat', GUEST = 'guest@im.wechat'
 const TASK = 'aaaa0001', MINE = 'cccc0001', THEIRS = 'dddd0001', BIG = 'eeee0001', HUGE = 'ffff0001'
@@ -155,6 +158,58 @@ describe('GET /v1/matter:别人的聊天按 id 也打不开;链接令牌不读�
     const op = await (await viaOperator(`/v1/matter?id=${BIG}`)).json() as { events: Array<{ replyExtras: Record<string, unknown> }> }
     expect(op.events[0]!.replyExtras).toHaveProperty('narration')
     expect((await viaOperator(`/v1/matter?id=${HUGE}`)).status).toBe(200)
+  })
+
+  it('新增审批正文把手机详情顶过帧预算时，仍能读到原描述', async () => {
+    const db = openDb({ path: ':memory:' })
+    const permissions = makeRunPermissions({ taskId: TASK })
+    try {
+      const store = makeMatterStore(db)
+      store.create({ id: TASK, kind: 'task', title: 'Review', ownerChatId: OWNER })
+      const task = { id: TASK, title: 'Review', status: 'running', providerId: 'codex', path: '/example', error: null, updatedAt: 1 }
+      const description = 'Review file'
+      const content = 'x'.repeat(512)
+      const reviewDescription = description + '\n\n' + content
+      const ask = permissions.request({ tool: 'Write', description, reviewDescription,
+        display: { body: { kind: 'write', path: 'sample.txt', content } },
+      })
+      const event = { kind: 'text' as const, text: '', createdAt: 2 }
+      const realService = makeMattersService({ store, workbench: {
+        detail: () => ({ task, events: [event], permissions: permissions.pending() }),
+        continueTask: () => task,
+      } })
+      const detail = await realService.detail(TASK)
+      expect(detail.permissions).toHaveLength(1)
+      const { display, ...permission } = detail.permissions[0]!
+      const frameBudget = PHONE_FRAME_BUDGET_BYTES
+      const oldBody = { ...detail, permissions: [{ ...permission, description }] }
+      const overhead = Buffer.byteLength(JSON.stringify({ rid: 'r'.repeat(64), status: 200, body: JSON.stringify(oldBody) }))
+      event.text = 'x'.repeat(frameBudget - overhead - 128)
+      oldBody.events = [event]
+      expect(framedTooLargeFor(JSON.stringify(oldBody), frameBudget)).toBe(false)
+      expect(framedTooLargeFor(JSON.stringify({ ...oldBody, permissions: [permission] }), frameBudget)).toBe(true)
+      expect(display?.body.kind).toBe('write')
+      vi.mocked(service.detail).mockImplementation(realService.detail)
+
+      for (const path of ['/v1/matter', '/m/api/matter']) {
+        const response = await viaPanel(`${path}?id=${TASK}`, device)
+        expect(response.status, path).toBe(200)
+        const body = await response.json() as typeof detail
+        expect(body.permissions[0]?.id).toBe(permission.id)
+        expect(body.permissions[0]?.description === description).toBe(true)
+        expect(body.permissions[0]?.display === undefined).toBe(true)
+      }
+      const desktop = await viaOperator(`/v1/matter?id=${TASK}`)
+      expect(desktop.status).toBe(200)
+      const desktopBody = await desktop.json() as typeof detail
+      expect(desktopBody.permissions[0]?.description === reviewDescription).toBe(true)
+      expect(desktopBody.permissions[0]?.display?.body.kind).toBe('write')
+      permissions.rejectAll()
+      await expect(ask).resolves.toBe(false)
+    } finally {
+      permissions.rejectAll()
+      db.close()
+    }
   })
 })
 

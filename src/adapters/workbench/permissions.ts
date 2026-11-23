@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { authorize, type AuthSubject } from '../../domain/authorize'
 import { TIER_PROFILES } from '../../domain/user-tier'
 import type { SpawnContext } from '../../ports/agent-provider'
-import type { PendingWorkbenchPermission, PermissionDecision } from '../../ports/workbench'
+import { legacyPermissionDescription, type PendingWorkbenchPermission, type PermissionDecision } from '../../ports/workbench'
 import { inspectPermissionCommand, literalCommand, type CommandSnapshot } from './permission-command'
 import { matchRule } from '../permission-rules/rules-file'
 import type { Rule } from '../../domain/permission-rules/types'
@@ -41,6 +41,7 @@ interface Entry {
   facts: PermissionFacts
   snapshot: CommandSnapshot
   permission: PendingWorkbenchPermission
+  legacyDescription: string | undefined
   expiresAt: number
   finish: (allowed: boolean, outcome: PermissionOutcome, reason?: string) => boolean
   /** 冻住期间撤掉的到期计时器,放开时按剩下的时间重起(网络守护暂停,2026-10-03)。 */
@@ -144,6 +145,7 @@ export function makeRunPermissions(opts: {
     const withSnapshot = (text: string) => snapshot.scripts.length || snapshot.requiresBoundExecution
       ? `${text}\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。`
       : text
+    const legacyDescription = review !== description ? withSnapshot(description) : undefined
     const permission: PendingWorkbenchPermission = {
       id: randomUUID(),
       taskId: opts.taskId,
@@ -178,11 +180,11 @@ export function makeRunPermissions(opts: {
       const timeoutMs = opts.timeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS
       const rearm = (ms: number) => { if (timer) clearTimeout(timer); timer = setTimeout(() => finish(false, 'expired'), Math.max(0, ms)); timer.unref?.() }
       const disarm = () => { if (timer) clearTimeout(timer); timer = undefined }
-      const entry: Entry = { permission, facts, snapshot, expiresAt:permission.createdAt + Math.max(0,timeoutMs), finish, rearm, disarm }
+      const entry: Entry = { permission, legacyDescription, facts, snapshot, expiresAt:permission.createdAt + Math.max(0,timeoutMs), finish, rearm, disarm }
       entries.set(permission.id, entry)
       signal?.addEventListener('abort', onAbort, { once: true })
       if (pausedAt === null) rearm(timeoutMs)
-      if (!audit({ type: 'request', permission, ...(review !== description ? { legacyDescription: withSnapshot(description) } : {}) })) finish(false,'ended')
+      if (!audit({ type: 'request', permission, ...(legacyDescription !== undefined ? { legacyDescription } : {}) })) finish(false,'ended')
     })
   }
 
@@ -225,7 +227,10 @@ export function makeRunPermissions(opts: {
       return { content: script.content.slice(offset, end), nextOffset: end < script.content.length ? end : null }
     },
     deadline: (id: string): number | null => pausedAt !== null ? null : entries.get(id)?.expiresAt ?? 0,
-    pending: (): PendingWorkbenchPermission[] => Array.from(entries.values(), entry => ({ ...entry.permission })),
+    pending: (): PendingWorkbenchPermission[] => Array.from(entries.values(), ({ permission, legacyDescription }) => ({
+      ...permission,
+      ...(legacyDescription !== undefined ? { [legacyPermissionDescription]: legacyDescription } : {}),
+    })),
     /** 网络守护冻住执行者:批准期限停表(到期计时器撤掉;放开时期限按冻住的时长顺延)。 */
     pause(): void {
       if (pausedAt !== null) return

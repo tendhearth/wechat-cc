@@ -3,6 +3,7 @@ import { ConversationWindowQuery,ConversationWorkQuery } from '../../../packages
 import type { ListMatters, MatterKind, MatterSurface } from '../../ports/matters'
 import { LEGACY_MATTER_STATUSES, type LegacyMatterStatus, type WireMatter } from '../../domain/matters/legacy-status'
 import type { MatterSayInput } from '../../app/matters/service'
+import {legacyPermissionDescription} from '../../ports/workbench'
 import {MATTER_KINDS} from '@wechat-cc/protocol'
 import {framedTooLargeFor,withoutOldNarrationFor,linkMatterSummary,linkMatterStatus} from '../../domain/matters/phone-scope'
 import type {InternalApiDeps,RouteHandler,RouteTable} from './types'
@@ -16,7 +17,7 @@ import type {InternalApiDeps,RouteHandler,RouteTable} from './types'
  * 手机令牌看到的范围按 caller 收,一处一个函数(domain/matters/phone-scope.ts),不看路径:
  *   - 能看哪些:device / link 只见主人能在手机上打开的(别人的聊天不给,按 id 打开也回「没有这件」);operator 见全部;
  *   - 链接令牌读得少一点:详情去掉 replyExtras / messageId;
- *   - 帧预算:从面板进来的(caller.frameBudget)详情按帧裁旁白,还装不下 ⇒ 413 detail_too_large;
+ *   - 帧预算:从面板进来的(caller.frameBudget)详情按帧裁旁白,必要时用原审批描述,还装不下 ⇒ 413 detail_too_large;
  *   - 出生地:手机令牌读列表 / 详情记一次「在手机露过面」;说一句按手机表面说(附件策略、出生地)。
  */
 const ID=/^[a-f0-9]{8}$/
@@ -200,7 +201,9 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       if(caller?.frameBudget===undefined)return {status:200,body:scoped}
       let fitted=withoutOldNarrationFor(scoped,caller.frameBudget)
       if (framedTooLargeFor(fitted,caller.frameBudget) && scoped.permissions?.some(p => p.display)) {
-        const permissions=scoped.permissions.map(({display:_display,...permission})=>permission)
+        const permissions=scoped.permissions.map(({display:_display,[legacyPermissionDescription]:legacyDescription,...permission})=>({
+          ...permission,description:legacyDescription??permission.description,
+        }))
         fitted=withoutOldNarrationFor({...scoped,permissions},caller.frameBudget)
       }
       return framedTooLargeFor(fitted,caller.frameBudget)?{status:413,body:{error:'detail_too_large'}}:{status:200,body:JSON.parse(fitted)}
