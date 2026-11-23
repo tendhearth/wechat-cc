@@ -1,6 +1,7 @@
-import { permissionCwd, permissionDisplay, PermissionDisplaySchema, permissionOperationSource } from '@wechat-cc/protocol'
+import { isPermissionCommandTool, permissionTextSegments, permissionCwd, permissionDisplay, PermissionDisplaySchema, permissionOperationSource } from '@wechat-cc/protocol'
 import type { CliSessionRowT } from '../backend/types'
 import { hasMessage, t, type Lang, type MessageKey } from '../i18n'
+import { sessionAgentName } from './agents'
 import { permissionAction } from './approval'
 import { formatSynced } from './connection'
 
@@ -12,7 +13,7 @@ export type TerminalStatus = CliSessionRowT['status']
 export type TerminalRow = {
   id: string
   project: string
-  /** 执行者正式名字(daemon 给的 displayName,收敛清单 ⑥;老 daemon 不带 ⇒ id):只给读屏和详情页,行里画头像。 */
+  /** 执行者正式名字(daemon 给的 displayName,收敛清单 ⑥;老 daemon 不带时沿用执行者常用名):只给读屏和详情页,行里画头像。 */
   source: string
   /** 执行者 id(claude / codex / cursor),画头像用。 */
   agent: string
@@ -20,8 +21,8 @@ export type TerminalRow = {
   stale: boolean
   summary: string | null
   ago: string
-  /** 等批准的那一项(「Bash: npm run deploy」);不在等 ⇒ null。 */
-  pendingText: string | null
+  /** 列表里等批准的那一步;不在等 ⇒ null。 */
+  pendingTitle: string | null
   /** 中继在微信里开了码(主人不在电脑前)⇒ 手机上能拍;终端自己在问 ⇒ false。 */
   actionable: boolean
   hash: string | null
@@ -47,18 +48,37 @@ export function relAgo(ts: number, now: number, lang: Lang): string {
   return formatSynced(ts, now, lang)
 }
 
+function terminalWaitingTitle(pending: NonNullable<CliSessionRowT['pending']>, agent: string, lang: Lang): string {
+  const singleLine = (value: string) => permissionTextSegments(value.replace(/\s+/g, ' ').trim()).map(part => part.text).join('')
+  const body = PermissionDisplaySchema.safeParse(pending.display).data?.body
+  const tool = pending.tool === 'permission' ? '' : singleLine(pending.tool)
+  const summary = singleLine(pending.summary ?? '')
+  let title: string
+  if (body?.kind === 'command') title = t(lang, 'terminal.waiting.run', { target: singleLine(body.command) })
+  else if (body?.kind === 'edit' || (body?.kind === 'patch' && body.files.length === 1)) {
+    const path = body.kind === 'edit' ? body.path : body.files[0]!.path
+    title = t(lang, 'terminal.waiting.edit', { target: singleLine(path) })
+  } else if (body?.kind === 'write') title = t(lang, 'terminal.waiting.write', { target: singleLine(body.path) })
+  else if (!body && summary && (isPermissionCommandTool(tool) || tool === 'local_shell')) title = t(lang, 'terminal.waiting.run', { target: summary })
+  else if (tool) title = t(lang, !body && summary ? 'terminal.waiting.toolSummary' : 'terminal.waiting.tool', { tool, summary })
+  else title = summary || t(lang, 'terminal.waiting.approval', { agent })
+  const chars = Array.from(title)
+  return chars.length <= 120 ? title : `${chars.slice(0, 119).join('')}…`
+}
+
 export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): TerminalRow {
   const p = s.pending
+  const source = sessionAgentName(s.source, s.displayName)
   return {
     id: s.session_id,
     project: s.project,
-    source: s.displayName || s.source,
+    source,
     agent: s.source === 'codex' || s.source === 'cursor' ? s.source : 'claude',
     status: s.status,
     stale: s.stale,
     summary: s.last_summary,
     ago: relAgo(s.last_event_at, now, lang),
-    pendingText: s.status === 'waiting' && p ? (p.summary ? `${p.tool}: ${p.summary}` : p.tool) : null,
+    pendingTitle: s.status === 'waiting' && p ? terminalWaitingTitle(p, source, lang) : null,
     // 老 daemon 不带 actionable ⇒ 当作不可拍
     actionable: s.status === 'waiting' && p?.actionable === true && typeof p.hash === 'string',
     hash: p?.hash ?? null,

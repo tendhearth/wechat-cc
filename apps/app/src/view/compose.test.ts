@@ -59,8 +59,8 @@ describe('接着做电脑会话的失败码(spec D11)', () => {
   })
   it('composeOutcomeText:一句话;没装执行者时有名字说名字,没有就说「这个执行者」;旧的几种不变', () => {
     expect(composeOutcomeText('providerMissing', 'zh-Hans', 'claude', true, { claude: 'Claude' })).toBe('电脑上没装 Claude')
-    // 老 daemon 没给名字 ⇒ 说 id,不猜
-    expect(composeOutcomeText('providerMissing', 'zh-Hans', 'claude', true)).toBe('电脑上没装 claude')
+    // 老 daemon 没给名字 ⇒ 常见 ID 沿用显示大小写
+    expect(composeOutcomeText('providerMissing', 'zh-Hans', 'claude', true)).toBe('电脑上没装 Claude')
     expect(composeOutcomeText('providerMissing', 'zh-Hans', null, true)).toBe('电脑上没装这个执行者')
     expect(composeOutcomeText('sessionBusy', 'zh-Hans', null, true)).toBe('这个会话正在电脑上跑，停下后才能接着做')
     expect(composeOutcomeText('ccBusy', 'zh-Hans', null, true)).toBe('CC 还在忙这件事，等这一轮做完再说。')

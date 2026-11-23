@@ -64,3 +64,15 @@
 
 - emoji(#369 定的;网页 home.js 里残留的一并去掉)。
 - 强调色只给「等你」那一组的标题、主按钮和 diff 的加行;状态文字本身不上强调色。
+
+## App 搜索和终端会话
+
+| 场合 | 中文 | English |
+|---|---|---|
+| 搜索切到「事项」 | 搜事项 · 搜交办过的事（输入提示） | Search work · Search previously delegated work (placeholder) |
+| 事项列表说明 | 以前交办的事 · 按原时间保留 | Previously delegated · Original dates retained |
+| 终端会话详情 | 标题用项目名，副标题如「Claude · 终端会话」 | Project name, with a subtitle such as “Claude · terminal session” |
+| 终端等你决定的列表标题 | 想运行 npm run deploy / 想改 src/a.ts / 想写 notes.txt / 想用工具名 | Wants to run npm run deploy / Wants to edit src/a.ts / Wants to write notes.txt / Wants to use tool name |
+| 配对第一步 | 打开电脑上的 Tendhearth CC | Open Tendhearth CC on your computer |
+
+执行者优先用电脑发来的显示名。界面称执行者「Claude」，需要指明要打开或安装的终端程序时称「Claude Code」。

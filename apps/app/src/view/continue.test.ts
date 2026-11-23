@@ -97,9 +97,9 @@ describe('nativeStartLines / providerName', () => {
     expect(nativeStartLines({ mode: 'native_resume', providerId: 'codex' }, 'en', NAMES)[1]).toBe('When this was picked up, CC didn’t see the original Codex running. If you have it open somewhere, stop it first.')
     expect(nativeStartLines({ mode: 'fresh_context', providerId: 'claude' }, 'en', NAMES)[0]).toBe('Your first message starts a new round with the earlier conversation attached.')
   })
-  it('名字只读 daemon 给的,没给 ⇒ id', () => {
+  it('执行者优先使用 daemon 给的名字，并兼容旧版会话', () => {
     expect(providerName('claude', { claude: 'Claude' })).toBe('Claude')
-    expect(providerName('codex', { claude: 'Claude' })).toBe('codex')
-    expect(providerName('cursor')).toBe('cursor')
+    expect(providerName('codex', { claude: 'Claude' })).toBe('Codex')
+    expect(providerName('cursor')).toBe('Cursor')
   })
 })

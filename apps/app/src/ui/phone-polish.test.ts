@@ -6,6 +6,7 @@ import { withProviders } from '../state/providers.test-support'
 import type { HomeRow } from '../view/home'
 import { ButlerStatus } from './ButlerStatus'
 import { DelegationMessage } from './DelegationMessage'
+import { WorkSearchRow } from './WorkSearchRow'
 import { DemoBanner } from './DemoBanner'
 import { cleanup, mount } from './native-motion.test-support'
 import { palette, space } from './tokens'
@@ -57,4 +58,29 @@ it('shows checkup grades in one right column and reads each item as label, grade
   expect(ui.byId('checkup-speed').firstElementChild!.children).toHaveLength(1)
   expect(ui.byId('checkup-speed').getAttribute('aria-label')).toBe('快慢，首字约 250 毫秒，完成约 1000 毫秒')
   expect(styleOf(memory.parentElement!).gap).toBe(space.m)
+})
+
+it.each([
+  ['zh-Hans', 'Claude、Codex · 等你决定 · 尚未同步 · 昨天 19:30', 'Sample，Claude、Codex，等你决定，尚未同步，昨天 19:30'],
+  ['en', 'Claude、Codex · Waiting on you · Not synced · Yesterday 7:30 PM', 'Sample, Claude、Codex, Waiting on you, Not synced, Yesterday 7:30 PM'],
+] as const)('shows work search as one two-line target in %s', async (lang, caption, label) => {
+  const row: HomeRow = {
+    id: 'sample', source: 'matter', href: '/matter/sample', title: 'Sample', status: 'waiting',
+    updatedAt: new Date(2026, 10, 21, 19, 30).getTime(), agents: ['claude', 'codex', 'claude'],
+    caption: 'Original matter title', detail: 'Latest step', note: null, pendingRequestId: null, origin: null,
+  }
+  const onOpen = vi.fn()
+  const ui = await mount(withProviders(createElement(WorkSearchRow, {
+    row, synced: false, now: new Date(2026, 10, 22, 8).getTime(), onOpen,
+  }), { backend: makeDemoBackend(), lang }))
+  const entry = ui.byId('row-matter-sample')
+  expect(entry.getAttribute('aria-label')).toBe(label)
+  expect(entry.querySelector('button')).toBeNull()
+  expect(entry.querySelectorAll('[role="image"] img')).toHaveLength(2)
+  expect(ui.byId('work-search-title-sample').textContent).toBe('Sample')
+  expect(ui.byId('row-caption-sample').textContent).toBe(caption)
+  expect(entry.textContent).toBe('Sample' + caption)
+  expect(ui.style('row-matter-sample')).toMatchObject({ minHeight: 48, paddingVertical: space.xs })
+  await act(() => entry.click())
+  expect(onOpen).toHaveBeenCalledTimes(1)
 })

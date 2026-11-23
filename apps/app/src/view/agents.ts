@@ -3,8 +3,7 @@
  * 每件事 / 每条终端会话在行尾画一组圆头像,正在做的在最上。名字只进读屏标签和详情页,行里不再写名字。
  * 纯函数;画法在 ui/AgentAvatars.tsx。
  *
- * 名字(收敛清单 ⑥):只由 daemon 定 —— matter.agentNames、终端 / 会话行的 displayName。App **不存名字表**;
- * 图形按 id 认(下面 AGENT_GLYPHS),名字按调用方给的 `names` 查,查不到(老 daemon)⇒ 退回 id。
+ * 名字优先用 daemon 给的 matter.agentNames 或 displayName。老 daemon 漏传时，已知执行者用常用写法。
  */
 
 /** 有图标的那几家(图形来自 lobe-icons,MIT;单色、按 ink 着色)。别的执行者画首字母。 */
@@ -15,7 +14,14 @@ export type AgentGlyph = typeof AGENT_GLYPHS[number]
 export type AgentNames = Readonly<Record<string, string>> | undefined
 
 export function agentName(id: string, names?: AgentNames): string {
-  return names?.[id] || id
+  const name = names && Object.hasOwn(names, id) ? names[id]?.trim() : undefined
+  if (name) return name
+  // 这些老 id 只差首字母大小写。其他执行者的正式名字仍等 daemon 给。
+  return /^(claude|codex|cursor|grok|gemini|kimi|qwen)$/.test(id) ? id.charAt(0).toUpperCase() + id.slice(1) : id
+}
+
+export function sessionAgentName(id: string, displayName?: string): string {
+  return displayName?.trim() || agentName(id)
 }
 
 export function agentGlyph(id: string): AgentGlyph | null {

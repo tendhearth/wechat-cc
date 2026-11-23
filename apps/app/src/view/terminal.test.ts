@@ -18,14 +18,14 @@ describe('终端里的会话(手机视图)', () => {
     expect(PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.safeParse({ ok: true, sessions: [row(), waiting(true), waiting(false)] }).success).toBe(true)
   })
   it('一行:项目、哪家、多久前、等批准的那一项;只有中继开了码的才能拍', () => {
-    expect(terminalRow(row({ source: 'codex', displayName: 'Codex' }), NOW, 'zh-Hans')).toMatchObject({ project: 'blog', source: 'Codex', agent: 'codex', status: 'idle', ago: '5 分钟前', pendingText: null, actionable: false })
+    expect(terminalRow(row({ source: 'codex', displayName: 'Codex' }), NOW, 'zh-Hans')).toMatchObject({ project: 'blog', source: 'Codex', agent: 'codex', status: 'idle', ago: '5 分钟前', pendingTitle: null, actionable: false })
     expect(terminalRow(row({ source: 'cursor', displayName: 'Cursor' }), NOW, 'zh-Hans')).toMatchObject({ source: 'Cursor', agent: 'cursor' })
-    // 名字只由 daemon 给(收敛清单 ⑥);老 daemon 不带 ⇒ 写 id
-    expect(terminalRow(row({ source: 'cursor' }), NOW, 'zh-Hans')).toMatchObject({ source: 'cursor', agent: 'cursor' })
-    expect(terminalRow(waiting(true), NOW, 'en')).toMatchObject({ pendingText: 'Bash: npm run deploy', actionable: true, hash: 'ab12c', source: 'claude' })
+    // 优先用 daemon 给的名字，也兼容漏传名字的旧会话
+    expect(terminalRow(row({ source: 'cursor' }), NOW, 'zh-Hans')).toMatchObject({ source: 'Cursor', agent: 'cursor' })
+    expect(terminalRow(waiting(true), NOW, 'en')).toMatchObject({ pendingTitle: 'Wants to run npm run deploy', actionable: true, hash: 'ab12c', source: 'Claude' })
     expect(terminalRow(waiting(false), NOW, 'en').actionable).toBe(false)
     // 老 daemon:pending 不带 hash / actionable ⇒ 不可拍
-    expect(terminalRow(row({ status: 'waiting', pending: { tool: 'Bash', summary: null, since: 1 } }), NOW, 'en')).toMatchObject({ pendingText: 'Bash', actionable: false })
+    expect(terminalRow(row({ status: 'waiting', pending: { tool: 'Bash', summary: null, since: 1 } }), NOW, 'en')).toMatchObject({ pendingTitle: 'Wants to use Bash', actionable: false })
   })
   it('「此刻」的数:只算手机拍得了的;够不着电脑 ⇒ 0', () => {
     const list = [waiting(true, { session_id: 'a' }), waiting(false, { session_id: 'b' }), row({ session_id: 'c' })]
@@ -64,5 +64,28 @@ describe('终端里的会话(手机视图)', () => {
     expect(terminalRow(row({ status: 'running', now }), NOW, 'zh-Hans').nowText).toBe('运行 npm test')
     expect(terminalRow(row({ status: 'running', now: { ...now, verb: 'teleport' } }), NOW, 'en').nowText).toBe('运行 npm test')
     expect(terminalRow(row({ status: 'idle', now }), NOW, 'en').nowText).toBeNull()
+  })
+})
+
+describe('等你决定的列表标题', () => {
+  const title = (tool: string, summary: string | null, display?: NonNullable<CliSessionRowT['pending']>['display']) =>
+    terminalRow(waiting(true, { pending: { tool, summary, display, since: NOW } }), NOW, 'zh-Hans').pendingTitle
+
+  it('uses structured commands and paths before the legacy summary', () => {
+    expect(title('Bash', 'older summary', { body: { kind: 'command', command: 'npm test\n  npm run deploy' } })).toBe('想运行 npm test npm run deploy')
+    expect(title('Edit', 'older summary', { body: { kind: 'edit', path: 'src/a.ts', changes: [{ before: 'a', after: 'b' }] } })).toBe('想改 src/a.ts')
+    expect(title('Write', null, { body: { kind: 'write', path: 'notes.txt', content: 'Draft' } })).toBe('想写 notes.txt')
+    expect(title('apply_patch', 'older summary', { body: { kind: 'patch', files: [{ path: 'src/a.ts', change: 'update', diff: 'sample' }] } })).toBe('想改 src/a.ts')
+    expect(title('WebSearch', 'older summary', { body: { kind: 'query', query: 'notes' } })).toBe('想用 WebSearch')
+  })
+
+  it('falls back to a command or tool summary on legacy rows', () => {
+    expect(title('local_shell', 'npm run deploy')).toBe('想运行 npm run deploy')
+    expect(title('mcp__notes', '  读笔记\n下一行 ')).toBe('想用 mcp__notes：读笔记 下一行')
+    expect(title('Bash', null)).toBe('想用 Bash')
+    expect(title('permission', null)).toBe('Claude 要你批准')
+    const short = title('Bash', '😀'.repeat(180))!
+    expect(Array.from(short)).toHaveLength(120)
+    expect(short).toMatch(/😀…$/u)
   })
 })

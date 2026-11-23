@@ -114,6 +114,10 @@ appId: com.tendhearth.app
     visible:
       id: row-matter-a1b2c3d4
     timeout: 5000
+- assertVisible: 搜事项|Search work
+- assertVisible:
+    id: row-matter-a1b2c3d4
+    text: ".*Claude、Codex.*(等你决定|Waiting on you).*"
 - takeScreenshot: p09-home-all
 - tapOn:
     id: row-matter-a1b2c3d4

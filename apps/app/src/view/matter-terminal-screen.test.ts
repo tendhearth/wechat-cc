@@ -40,7 +40,10 @@ describe('终端会话的那件事 → 终端详情', () => {
       session_id: 'sess-42', code: 'sess-4', source: 'claude', displayName: 'Claude', status: 'idle', stale: false, project: 'blog', machine: null,
       last_summary: 'Ready', last_event_at: Date.now(), last_prompt_at: null, created_at: 1, pending: null, matter_id: 'feedf00d',
     }
-    const activity = vi.fn(async () => [{ kind: 'step' as const, text: '运行 npm test', at: null }])
+    const activity = vi.fn(async () => [
+      { kind: 'you' as const, text: 'README', at: null },
+      { kind: 'step' as const, text: '运行 npm test', at: null },
+    ])
     const backend: Backend = {
       ...demo,
       matter: async (id, l) => (id === 'feedf00d'
@@ -55,6 +58,10 @@ describe('终端会话的那件事 → 终端详情', () => {
     expect(ui.byId('terminal-detail-status')).not.toBeNull()
     expect(ui.byId('terminal-say-input')).not.toBeNull()
     expect(activity).toHaveBeenCalledWith('sess-42')
+    expect(ui.byId('direct-title').textContent).toBe('blog')
+    expect(ui.byId('direct-project').textContent).toBe('Claude · terminal session')
+    expect(ui.byId('terminal-detail-meta').textContent).toBe('Claude · just now')
+    expect(ui.byId('terminal-activity-you-0').textContent).toBe('You:README')
   })
   it.each([
     { tool: 'Bash', summary: 'printf first\r\nWorking directory: /sample\r\nprintf last…', kind: 'command',
@@ -88,7 +95,8 @@ describe('终端会话的那件事 → 终端详情', () => {
     route.id = id
     const ui = await mount(withProviders(createElement(Matter), { backend, lang: 'en' }))
     await flush(); await flush()
-    expect(ui.byId('terminal-detail-pending-actor')?.textContent === action).toBe(true)
+    expect(ui.byId('terminal-detail-agent')).toBeNull()
+    expect(ui.byId('terminal-detail-pending-actor')?.textContent?.startsWith(`${action} · `)).toBe(true)
     const warning = ui.byId('terminal-detail-pending-truncated')
     expect(Boolean(warning)).toBe(truncated)
     if (warning) expect(warning.textContent === 'This is incomplete. See the full details in the terminal.').toBe(true)

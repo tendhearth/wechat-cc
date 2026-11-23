@@ -11,8 +11,8 @@ import { space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 
-export function TerminalPermission({ pending, source, projectPath, scroll }: {
-  pending: Parameters<typeof terminalPermission>[0]; source: string; projectPath: string; scroll: RefObject<ScrollView | null>
+export function TerminalPermission({ pending, source, ago, projectPath, scroll }: {
+  pending: Parameters<typeof terminalPermission>[0]; source: string; ago?: string; projectPath: string; scroll: RefObject<ScrollView | null>
 }) {
   const lang = useLang()
   const { c } = useTheme()
@@ -26,7 +26,7 @@ export function TerminalPermission({ pending, source, projectPath, scroll }: {
       <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         <Icon name="terminal" color={c.inkSoft} />
       </View>
-      <PermissionText testID="terminal-detail-pending-actor" role="small" tone="inkSoft" style={{ flex: 1 }} value={action} lang={lang} />
+      <PermissionText testID="terminal-detail-pending-actor" role="small" tone="inkSoft" style={{ flex: 1 }} value={ago ? `${action} · ${ago}` : action} lang={lang} />
     </View>
     {display?.note ? <PermissionText selectable role="small" tone="inkSoft" content="user" value={display.note} lang={lang} /> : null}
     {display ? <PermissionOperation testID="terminal-detail-pending" display={display} projectPath={projectPath} cwd={cwd} lang={lang} source={[raw ?? received, summary].filter(Boolean).join('\n')} summaryOnly={summaryOnly}
