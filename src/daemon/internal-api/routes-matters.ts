@@ -199,7 +199,7 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       const scoped=caller?.origin==='link'?linkMatterStatus(detail):detail
       if(caller?.frameBudget===undefined)return {status:200,body:scoped}
       let fitted=withoutOldNarrationFor(scoped,caller.frameBudget)
-      if (framedTooLargeFor(fitted,caller.frameBudget) && scoped.permissions.some(p => p.display)) {
+      if (framedTooLargeFor(fitted,caller.frameBudget) && scoped.permissions?.some(p => p.display)) {
         const permissions=scoped.permissions.map(({display:_display,...permission})=>permission)
         fitted=withoutOldNarrationFor({...scoped,permissions},caller.frameBudget)
       }
