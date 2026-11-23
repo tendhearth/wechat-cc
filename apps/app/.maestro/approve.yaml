@@ -35,6 +35,9 @@ appId: com.tendhearth.app
     id: approval-model-note
 - assertVisible:
     id: approval-operation-command
+- assertVisible:
+    id: approval-operation-label
+    text: ".*(项目目录|Project folder) .+"
 - extendedWaitUntil:
     visible:
       id: approval-allow
@@ -106,3 +109,11 @@ appId: com.tendhearth.app
       id: terminal-detail-pending-truncated
     direction: DOWN
 - takeScreenshot: approve-kinds-8
+- scrollUntilVisible:
+    element:
+      id: approval-example-terminal-command-at-limit
+    direction: DOWN
+    centerElement: true
+- assertVisible:
+    id: terminal-detail-pending-truncated
+    text: "这里可能不是全部内容；完整的请在电脑上看。|This may be incomplete\\. See the full details on your computer\\."

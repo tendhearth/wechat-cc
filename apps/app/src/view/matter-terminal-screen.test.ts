@@ -14,7 +14,10 @@ vi.mock('react-native', async () => {
   const TextInput = forwardRef<any, any>(({ value, onChangeText, testID }: any, ref) => createElement('textarea', {
     ref, value, 'data-testid': testID, onInput: (event: any) => onChangeText(event.currentTarget.value),
   }))
-  return { ...native, ScrollView: native.View, KeyboardAvoidingView: native.View, TextInput, ActivityIndicator: () => null, Linking: { openURL: vi.fn() } }
+  const Text = ({ selectable, accessible, ...props }: any) => createElement('span', {
+    'data-selectable': selectable, 'aria-hidden': accessible === false || undefined,
+  }, createElement(native.Text, props))
+  return { ...native, ScrollView: native.View, KeyboardAvoidingView: native.View, Text, TextInput, ActivityIndicator: () => null, Linking: { openURL: vi.fn() } }
 })
 vi.mock('react-native-safe-area-context', async () => ({ SafeAreaProvider: ({ children }: any) => children, SafeAreaView: (await import('../ui/native-motion.test-support')).View }))
 vi.mock('expo-router', async () => ({
@@ -53,9 +56,15 @@ describe('终端会话的那件事 → 终端详情', () => {
   })
   it.each([
     { tool: 'Bash', summary: 'printf first\r\nWorking directory: /sample\r\nprintf last…', kind: 'command',
+      action: 'Claude Code wants to run a command', truncated: true, actionable: true },
+    { tool: 'Bash', summary: 'printf %s ' + 'x'.repeat(190), kind: 'command',
+      action: 'Claude Code wants to run a command', truncated: true, actionable: true },
+    { tool: 'Bash', summary: 'printf %s ' + 'x'.repeat(189), kind: 'command',
       action: 'Claude Code wants to run a command', truncated: false, actionable: true },
     { tool: 'Edit', summary: '{"file_path":"notes.txt","old_string":"…', kind: 'text',
       action: 'Claude Code wants to use “Edit”', truncated: true, actionable: false },
+    { tool: 'Edit', summary: '{"file_path":"/sample/blog/notes.txt","old_string":"Draft","new_string":"Ready"}', kind: 'edit',
+      action: 'Claude Code wants to edit a file', truncated: false, actionable: true },
     { tool: 'Bash', summary: null, kind: null,
       action: 'Claude Code wants to use “Bash”', truncated: false, actionable: true },
   ])('shows the pending operation and its controls through the terminal matter route ($tool / $kind)', async ({
@@ -78,14 +87,36 @@ describe('终端会话的那件事 → 终端详情', () => {
     const ui = await mount(withProviders(createElement(Matter), { backend, lang: 'en' }))
     await flush(); await flush()
     expect(ui.byId('terminal-detail-pending-actor')?.textContent === action).toBe(true)
-    expect(Boolean(ui.byId('terminal-detail-pending-truncated'))).toBe(truncated)
+    const warning = ui.byId('terminal-detail-pending-truncated')
+    expect(Boolean(warning)).toBe(truncated)
+    if (warning) expect(warning.textContent === 'This may be incomplete. See the full details on your computer.').toBe(true)
     expect(Boolean(ui.byId('terminal-detail-allow'))).toBe(actionable)
     expect(Boolean(ui.byId('terminal-detail-local'))).toBe(!actionable)
     expect(Boolean(ui.byId('terminal-detail-pending'))).toBe(kind !== null)
     if (kind) {
       expect(ui.byId('terminal-detail-pending').contains(ui.byId(`approval-operation-${kind}`))).toBe(true)
-      expect(ui.byId('approval-operation-source')?.textContent === summary).toBe(true)
-      expect(ui.byId('approval-operation-cwd')?.textContent === `In ${projectPath}`).toBe(true)
+      if (kind === 'edit') {
+        const edit = ui.byId('approval-operation-edit')
+        expect(['notes.txt', '− Draft', '+ Ready'].every(value => edit.textContent?.includes(value))).toBe(true)
+      } else expect(ui.byId('approval-operation-source')?.textContent === summary).toBe(true)
+      expect(ui.byId('approval-operation-cwd')?.textContent === `Project folder ${projectPath}`).toBe(true)
+      expect(ui.byId('approval-operation-label').getAttribute('aria-label')?.endsWith(`Project folder ${projectPath}`)).toBe(true)
+    }
+    expect(ui.byId('approval-operation-more')).toBeNull()
+    expect(ui.byId('approval-exact-source')).toBeNull()
+    if (summary && !truncated) {
+      const entry = ui.byId('approval-view-exact')
+      expect(entry.tagName).toBe('BUTTON')
+      expect(entry.getAttribute('aria-label')).toBe('See the full original')
+      await act(() => entry.click())
+      const original = ui.byId('approval-exact-source')
+      expect(original.textContent === summary).toBe(true)
+      expect(original.getAttribute('role')).toBe('text')
+      expect(original.closest('[data-selectable="true"]')).not.toBeNull()
+      expect(original.closest('[aria-hidden="true"]')).toBeNull()
+      expect(ui.byId('approval-exact-cwd')?.textContent === `Project folder ${projectPath}`).toBe(true)
+    } else {
+      expect(ui.byId('approval-view-exact')).toBeNull()
     }
   })
 

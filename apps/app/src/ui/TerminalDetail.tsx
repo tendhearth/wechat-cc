@@ -131,7 +131,7 @@ export function TerminalDetail({ sessionId, projectPath }: { sessionId: string; 
               {pending ? (
                 <View style={{ gap: space.m }}>
                   <TerminalPermission key={`${id}:${pending.since}:${pending.hash ?? ''}`} pending={pending}
-                    source={row.source} cwd={projectPath || row.project} scroll={scrollRef} />
+                    source={row.source} projectPath={projectPath || row.project} scroll={scrollRef} />
                   {row.actionable ? (
                     // 用词表:先不做在左(次要),允许这一步在右(主按钮),下面一行「只对这一次请求」
                     <View style={{ gap: space.s }}>

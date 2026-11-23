@@ -436,16 +436,14 @@ describe('permission operation rendering', () => {
     h.setInsight({ progress: null, explanations: { [request.id]: { title: tool, what: raw, scope: '', effect: 'raw fallback', source: 'raw' } } })
     const ui = await mount(display ? () => createElement(PermissionCard, {
       taskId: ID, matterTitle: 'Sample',
-      v: { kind: 'card', requestId: request.id, runId: RUN, tool, display, workingDir: '/p', rawFull: raw,
+      v: { kind: 'card', requestId: request.id, runId: RUN, tool, display, projectPath: '/p', rawFull: raw,
         executor: 'codex', executorName: 'Codex', title: '', what: '', scope: '', effect: '', canDenyWithReason: false },
     }) : Approval)
     const panel = ui.byId(`approval-operation-${kind}`)
     expect(panel.textContent?.includes(last)).toBe(true)
     expect(ui.byId('approval-operation-label').getAttribute('aria-label')?.startsWith(label)).toBe(true)
-    const hasCwd = kind !== 'url' && kind !== 'query'
-    expect((ui.byId('approval-operation-cwd')?.textContent === '在 /p') === hasCwd).toBe(true)
-    expect(Boolean(ui.byId('approval-operation-cwd'))).toBe(hasCwd)
-    expect(Boolean(ui.byId('approval-operation-label').getAttribute('aria-label')?.endsWith('在 /p'))).toBe(hasCwd)
+    expect(ui.byId('approval-operation-cwd')?.textContent === '项目目录 /p').toBe(true)
+    expect(ui.byId('approval-operation-label').getAttribute('aria-label')?.endsWith('项目目录 /p')).toBe(true)
     expect(ui.byId('approval-effect')).toBeNull()
     expect(ui.byId('approval-model-note')).toBeNull()
     expect(ui.byId('approval-details')).toBeNull()
@@ -457,7 +455,7 @@ describe('permission operation rendering', () => {
     expect(ui.byId('approval-view-exact').getAttribute('aria-expanded')).toBe('true')
     expect(ui.byId('approval-exact-source').textContent === raw).toBe(true)
     expect(ui.byId('approval-exact-source').getAttribute('role')).toBe('text')
-    expect(ui.byId('approval-exact-cwd').textContent === '执行位置：/p').toBe(true)
+    expect(ui.byId('approval-exact-cwd').textContent === '项目目录 /p').toBe(true)
     expect(host.sources.some(source => source.id === 'approval-exact-source' && source.selectable === true && source.accessible === true)).toBe(true)
     expect(ui.byId('approval-exact-source').closest('[aria-hidden="true"]')).toBeNull()
   })

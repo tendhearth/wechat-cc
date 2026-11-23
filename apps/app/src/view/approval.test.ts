@@ -27,11 +27,17 @@ describe('approvalView', () => {
     expect(v).toMatchObject({ kind: 'card', requestId: 'p1', runId: 'run-1', title: '可以清理旧文件吗?' })
     if (v.kind !== 'card' || v.display.body.kind !== 'command') throw Error('expected command card')
     expect(v.display.body.command === base.permissions[0].description.slice('command='.length) && v.rawFull === base.permissions[0].description).toBe(true)
-    expect(v.workingDir === base.task.path).toBe(true)
+    expect(v.projectPath === base.task.path).toBe(true)
   })
   it('uses the matter directory when the task path is empty', () => {
     const card = approvalView({ ...base, task: { ...base.task, path: '' } }, {})
-    expect(card.kind === 'card' && card.workingDir === base.matter.projectPath).toBe(true)
+    expect(card.kind === 'card' && card.projectPath === base.matter.projectPath).toBe(true)
+  })
+  it('uses the project folder even when the command carries a different directory', () => {
+    const description = 'input={"command":"pwd","cwd":"/sample/subfolder"}'
+    const card = approvalView({ ...base, permissions: [{ ...base.permissions[0], description }] }, {})
+    expect(card.kind === 'card' && card.projectPath === base.task.path && card.display.body.kind === 'command' &&
+      card.display.body.cwd === '/sample/subfolder' && card.rawFull === description).toBe(true)
   })
   it('没有模型标题 ⇒ 显示操作对应的问题', () => {
     const v = approvalView(base, {})
@@ -231,7 +237,7 @@ describe('approval headings and paths', () => {
     if (card.kind !== 'card') throw Error('expected permission card')
     expect(card.display.body.kind === 'text' && card.display.body.text === description).toBe(true)
     expect(card.display.note === undefined && card.display.extra === undefined).toBe(true)
-    expect(card.workingDir === base.task.path).toBe(true)
+    expect(card.projectPath === base.task.path).toBe(true)
   })
   it('localizes the heading of a directly constructed structured patch', () => {
     const card = approvalView(base, {})

@@ -9,7 +9,7 @@ export type ApprovalView =
   | { kind: 'question'; requestId: string; runId: string
       items: Array<{ id: string; header: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean; allowOther: boolean }> }
   | { kind: 'card'; requestId: string; runId: string; title: string; what: string; scope: string; effect: string
-      tool: string; display: PermissionDisplay; rawFull: string; workingDir: string; executor: string; executorName: string
+      tool: string; display: PermissionDisplay; rawFull: string; projectPath: string; executor: string; executorName: string
       canAllowTask?: boolean; canDenyWithReason: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
 
 const firstLine = (s: string, max: number) => (s.split(/\r?\n/, 1)[0] ?? '').slice(0, max)
@@ -29,10 +29,10 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
     const { current: executor, name: executorName } = directHeaderView(detail, 'en')
     const format = executor === 'claude' ? 'claude' : executor === 'openai' ? 'api' : 'text'
     const display = permissionDisplay(p.tool, p.description, format)
-    const workingDir = (display.body.kind === 'command' ? display.body.cwd : undefined) || detail.task?.path || detail.matter.projectPath || ''
+    const projectPath = detail.task?.path || detail.matter.projectPath || ''
     const model = ex?.source === 'model' ? ex : undefined
     return {
-      kind: 'card', requestId: p.id, runId, tool: p.tool, display, workingDir, executor, executorName,
+      kind: 'card', requestId: p.id, runId, tool: p.tool, display, projectPath, executor, executorName,
       title: model?.title.trim() || '', what: model?.what ?? '', scope: model?.scope ?? '', effect: model?.effect ?? '',
       rawFull: p.description,
       canDenyWithReason: p.canDenyWithReason === true, ...(p.canAllowTask ? { canAllowTask: true } : {}), ...(p.scripts ? { scripts: p.scripts } : {}),

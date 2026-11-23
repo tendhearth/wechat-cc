@@ -37,6 +37,9 @@ appId: com.tendhearth.app
 - assertVisible:
     id: approval-operation-command
 - assertVisible:
+    id: approval-operation-label
+    text: ".*(项目目录|Project folder) .+"
+- assertVisible:
     id: terminal-say-send
     enabled: false
 - assertVisible: 它在等你决定，先拍板再说下一句。|It’s waiting for your approval. Decide first,

@@ -1,6 +1,6 @@
 import { useRef, useState, type RefObject } from 'react'
 import { ScrollView, View } from 'react-native'
-import { labelJoin, t, type Lang } from '../i18n'
+import { t, type Lang } from '../i18n'
 import { useMotionEnabled } from './motion'
 import { Sheet } from './Sheet'
 import { space } from './tokens'
@@ -49,8 +49,8 @@ export function usePermissionSource(scroll: RefObject<ScrollView | null> | undef
   }
 }
 
-export function PermissionSource({ source, cwd, lang, sheet }: {
-  source: string; cwd: string; lang: Lang; sheet: ReturnType<typeof usePermissionSource>
+export function PermissionSource({ source, projectPath, lang, sheet }: {
+  source: string; projectPath: string; lang: Lang; sheet: ReturnType<typeof usePermissionSource>
 }) {
   const { anchor, expanded, onExpandedChange, onOpened } = sheet
   return <View ref={anchor} collapsable={false}>
@@ -60,7 +60,7 @@ export function PermissionSource({ source, cwd, lang, sheet }: {
         <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
           <Txt selectable accessible accessibilityRole="text" role="code" testID="approval-exact-source">{source}</Txt>
         </ScrollView>
-        {cwd ? <Txt selectable testID="approval-exact-cwd" role="small" tone="inkSoft">{labelJoin(t(lang, 'approval.workingDir'), cwd)}</Txt> : null}
+        {projectPath ? <Txt selectable testID="approval-exact-cwd" role="small" tone="inkSoft">{t(lang, 'approval.projectFolder', { path: projectPath })}</Txt> : null}
       </View>
     </Sheet>
   </View>

@@ -16,8 +16,8 @@ function readFields(fields: Field[]): string {
   return fields.map(({ name, value }) => labelJoin(name, value)).join(', ')
 }
 
-function operationLabel(body: Body, cwd: string, lang: Lang): string {
-  const path = (value: string) => approvalRelativePath(value, cwd)
+function operationLabel(body: Body, projectPath: string, lang: Lang): string {
+  const path = (value: string) => approvalRelativePath(value, projectPath)
   switch (body.kind) {
     case 'command': return t(lang, 'approval.readCommand', { command: body.command })
     case 'edit': return [t(lang, 'approval.readEdit', {
@@ -52,14 +52,15 @@ function Visual({ children, label }: { children: ReactNode; label?: string }) {
   return label ? <View testID="approval-operation-label" accessible accessibilityRole="text" accessibilityLabel={label}>{visual}</View> : visual
 }
 
-function More({ label, open }: { label: string; open: () => void }) {
+function More({ label, open }: { label: string; open?: () => void }) {
+  if (!open) return null
   return <Pressable testID="approval-operation-more" accessibilityRole="button" accessibilityLabel={label}
     onPress={open} style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}>
     <Txt role="small" tone="inkSoft">{label}</Txt>
   </Pressable>
 }
 
-function FieldTable({ fields, lang, open, label }: { fields: Field[]; lang: Lang; open: () => void; label?: string }) {
+function FieldTable({ fields, lang, open, label }: { fields: Field[]; lang: Lang; open?: () => void; label?: string }) {
   let remaining = 8
   const rows = fields.flatMap(({ name, value }, index) => {
     const lines = approvalLines(value)
@@ -106,8 +107,8 @@ function UrlText({ url }: { url: string }) {
     : url}</Txt>
 }
 
-function OperationBody({ body, cwd, lang, open, label }: { body: Body; cwd: string; lang: Lang; open: () => void; label: string }) {
-  const path = (value: string) => approvalRelativePath(value, cwd)
+function OperationBody({ body, projectPath, lang, open, label }: { body: Body; projectPath: string; lang: Lang; open?: () => void; label: string }) {
+  const path = (value: string) => approvalRelativePath(value, projectPath)
   switch (body.kind) {
     case 'command':
     case 'text': {
@@ -162,15 +163,15 @@ function OperationBody({ body, cwd, lang, open, label }: { body: Body; cwd: stri
   }
 }
 
-export function PermissionOperation({ display, cwd, lang, open, testID }: {
-  display: PermissionDisplay; cwd: string; lang: Lang; open: () => void; testID?: string
+export function PermissionOperation({ display, projectPath, lang, open, testID }: {
+  display: PermissionDisplay; projectPath: string; lang: Lang; open?: () => void; testID?: string
 }) {
   const { body, extra } = display
-  const directory = cwd && body.kind !== 'url' && body.kind !== 'query' ? t(lang, 'approval.inDirectory', { path: cwd }) : ''
-  const spoken = [operationLabel(body, cwd, lang), directory, extra?.length ? readFields(extra) : ''].filter(Boolean).join(', ')
+  const directory = projectPath ? t(lang, 'approval.projectFolder', { path: projectPath }) : ''
+  const spoken = [operationLabel(body, projectPath, lang), directory, extra?.length ? readFields(extra) : ''].filter(Boolean).join(', ')
   return <View testID={testID} style={{ gap: space.s }}>
     <Panel testID={`approval-operation-${body.kind}`}>
-      <OperationBody body={body} cwd={cwd} lang={lang} open={open} label={spoken} />
+      <OperationBody body={body} projectPath={projectPath} lang={lang} open={open} label={spoken} />
     </Panel>
     {directory ? <Visual><Txt selectable testID="approval-operation-cwd" role="small" tone="inkSoft">{directory}</Txt></Visual> : null}
     {body.kind === 'url' && body.prompt ? <Visual><Txt selectable role="small" tone="inkSoft">{t(lang, 'approval.fetchPrompt', { prompt: body.prompt })}</Txt></Visual> : null}
