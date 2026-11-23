@@ -30,7 +30,7 @@ export function StatusHint({ label, accessibilityLabel = label, description, ico
           {shortLabel ? <Txt role="meta" tone="inkSoft">{shortLabel}</Txt> : <Icon name={icon} color={c.inkSoft} />}
           {value !== undefined ? <Txt role="meta" tone="inkSoft">{value}</Txt> : null}
         </Pressable>
-        {dotTestID && value === undefined ? <View testID={dotTestID} pointerEvents="none" accessible={false} style={{ position: 'absolute', top: 8, right: 6 }}>
+        {dotTestID && value === undefined ? <View testID={dotTestID} pointerEvents="none" accessible={false} style={{ position: 'absolute', top: 12, right: 7 }}>
           <Dot kind="accent" size={6} />
         </View> : null}
       </View>

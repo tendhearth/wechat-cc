@@ -16,6 +16,7 @@ import { makeCCMotionTracker, type CCMotionEvent } from '../view/cc-motion'
 import { componentAppearance } from './tokens'
 import { CCFigure } from './CCFigure'
 import { Icon } from './Icon'
+import { useTheme } from './useTheme'
 import { useMotionState } from './motion'
 import type { CCStream } from '@wechat-cc/protocol'
 import { useCCActivity } from './useCCActivity'
@@ -50,11 +51,13 @@ export function ConversationPresence({ onPress = () => {}, stream, typing = fals
   }, [tracker, snapshot, work.matters, terminal.sessions])
   const label = [t(lang, 'now.openChat'), phase !== 'idle' ? t(lang, `cc.${phase}`) : undefined].filter(Boolean).join(lang === 'en' ? ', ' : '，')
   const size = componentAppearance.identity.headerImage.phone
+  const { c } = useTheme()
   return <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={{ minWidth: componentAppearance.identity.headerTarget, minHeight: componentAppearance.identity.headerTarget, justifyContent: 'center' }}>
     <View style={{ width: size }}>
       <CCFigure size={size} presence={presence} mood={statusKey ? t(lang, statusKey) : undefined} behavior={motion?.behavior} eventKey={motion?.eventKey} phase={phase} />
       {notebookReply ? <View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
-        style={{ position: 'absolute', right: -2, bottom: -2 }}>
+        style={{ position: 'absolute', right: -4, bottom: -3, padding: 1, borderRadius: 3, backgroundColor: c.paper }}>
+        {/* 纸色垫底:信封压在小像上的那一角不会和深色的身体糊在一起 */}
         <Icon name="mail" size={Math.round(size * 0.36)} testID="home-notebook-envelope" />
       </View> : null}
     </View>
