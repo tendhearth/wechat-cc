@@ -11,7 +11,7 @@ describe('phoneFont', () => {
   })
   it('字标保留原字，普通标题的 medium 用 500 表达', () => {
     expect(phoneFont('wordmark', { text: 'Tendhearth' }).fontFamily).toBe('THSerif4-Medium')
-    expect(phoneFont('wordmark', { text: 'CC' }).fontFamily).toBe('THSerif4-Medium')
+    expect(phoneFont('wordmark', { text: 'CC' })).toMatchObject({ fontFamily: undefined, fontWeight: '500' })
     expect(phoneFont('wordmark', { text: '设置' }).fontFamily).toBe(undefined)
     expect(phoneFont('wordmark', { content: 'user', text: 'Tendhearth' }).fontFamily).toBe(undefined)
     expect(phoneFont('title', { text: '设置' }).fontFamily).toBe(undefined)

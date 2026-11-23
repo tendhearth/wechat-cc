@@ -92,7 +92,8 @@ describe('native chat feedback', () => {
     expect(JSON.parse(cc.getAttribute('data-style')!).backgroundColor).toBe('transparent')
     const textStyle=(node:HTMLElement,text:string)=>JSON.parse([...node.querySelectorAll('span')].find(n=>n.textContent===text)!.getAttribute('data-style')!)
     expect(textStyle(me,'我的消息').fontSize).toBe(typeScale.bubble.phone)
-    expect(textStyle(cc,'CC 的回复').fontSize).toBe(typeScale.body.phone)
+    // CC 的回复用它自己的字,比正文大一档(桌面 15 → 18.5 的比例)
+    expect(textStyle(cc,'CC 的回复')).toMatchObject({ fontFamily: 'THPenHand-Regular', fontSize: 19.5 })
     expect(JSON.parse(byId('now-cc').getAttribute('data-style')!)).toMatchObject({minWidth:44,minHeight:44})
   })
 
@@ -259,14 +260,14 @@ describe('reply attribution avatars', () => {
     expect(row('legacy message').textContent).toContain('CC')
   })
 
-  it('uses the hand for CC’s reply body only', async () => {
+  it('uses the hand for CC’s reply body (unattributed old replies included), never for a named agent or a notice', async () => {
     await attributedScreen([
       reply('cc', { speaker: 'cc', provider: 'claude', text: '我来看看' }),
       reply('agent', { speaker: 'agent', provider: 'codex', text: '我来看看' }),
       reply('legacy', { text: '我来看看' }),
       reply('notice', { speaker: 'notice', text: '我来看看' }),
     ])
-    for (const [id, expected] of [['cc', 'THPenHand-Regular'], ['agent', undefined], ['legacy', undefined], ['notice', undefined]] as const) {
+    for (const [id, expected] of [['cc', 'THPenHand-Regular'], ['agent', undefined], ['legacy', 'THPenHand-Regular'], ['notice', undefined]] as const) {
       const body = [...byId(`chat-message-${id}`).querySelectorAll('span[data-style]')].find(node => node.textContent === '我来看看')!
       expect(JSON.parse(body.getAttribute('data-style')!).fontFamily).toBe(expected)
     }

@@ -30,7 +30,7 @@ export function PlacesStrip({ places, stale, selected, onSelect, onOpen, now = D
             style={{ flex: 1, minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: space.m, paddingLeft: space.l }}>
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: waiting ? c.accent : 'transparent' }} />
             <Txt role="item" numberOfLines={1} style={{ maxWidth: '35%' }}>{p.name}</Txt>
-            <Txt role="small" voice="cc" tone={strong || p.moving ? 'ink' : 'inkSoft'} numberOfLines={1} content="user" style={{ flex: 1 }}>{line}</Txt>
+            <Txt role="small" tone={strong || p.moving ? 'ink' : 'inkSoft'} numberOfLines={1} content="user" style={{ flex: 1 }}>{line}</Txt>
             <Txt role="caption" tone="inkSoft">{placeTime(p, now, lang)}</Txt>
           </Pressable>
           {href ? <Pressable testID={`place-open-${i}`} accessibilityRole="button" accessibilityLabel={zh ? `打开 ${p.name} 那一件` : `Open ${p.name}`} onPress={() => onOpen(href, p)}

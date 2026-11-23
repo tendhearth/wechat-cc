@@ -20,7 +20,7 @@ describe('one design language across the owner-facing web pages', () => {
       expect(MOBILE_TOKENS_CSS.replace(/\s+/g, '')).toContain(v.replace(/\s+/g, ''))
   })
   it.each([
-    ['/m', () => mobilePhoneHtml('dTOKEN', null), ['.cc-voice,#roster-strip .place span,.home-arrived #pres-txt']],
+    ['/m', () => mobilePhoneHtml('dTOKEN', null), ['.cc-voice,.home-arrived #pres-txt']],
     ['/set', () => pageHtml('tTOKEN'), []],
     ['expired', () => EXPIRED_HTML, []],
     ['/m bootstrap', () => MOBILE_BOOTSTRAP_HTML, []],

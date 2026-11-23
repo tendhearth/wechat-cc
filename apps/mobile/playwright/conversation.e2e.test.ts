@@ -64,6 +64,8 @@ test('sending uses one owner-chat request, approval binds exact current run, bro
 })
 test('uses system sans for the interface and agents, and Kaiti for CC’s words',async({page})=>{
  const h=await fixture(page)
+ h.messages.push({id:'old-reply',role:'cc',text:'以前的一句。',at:2})
+ h.messages.push({id:'notice-reply',role:'cc',speaker:'notice',text:'电脑重启过。',at:2})
  h.messages[1].speaker='cc'
  h.messages.push({id:'agent-reply',role:'cc',speaker:'agent',provider:'codex',text:'备份核对好了。',at:3})
  await page.goto(HOST+'/m')
@@ -73,7 +75,9 @@ test('uses system sans for the interface and agents, and Kaiti for CC’s words'
  await expect(page.locator('#message-agent-reply > div')).toHaveCSS('font-family',sans)
  await expect(page.locator('#message-cc1 > small')).toHaveCSS('font-family',sans)
  await expect(page.locator('#message-cc1 > div')).toHaveCSS('font-family',kaiti)
- await expect(page.locator('#roster-strip [data-place] > span')).toHaveCSS('font-family',kaiti)
+ await expect(page.locator('#message-old-reply > div')).toHaveCSS('font-family',kaiti)
+ await expect(page.locator('#message-notice-reply > div')).toHaveCSS('font-family',sans)
+ await expect(page.locator('#roster-strip [data-place] > span')).toHaveCSS('font-family',sans)
 })
 
 test('link identity never requests private conversation, topics or approval',async({page})=>{

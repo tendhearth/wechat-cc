@@ -3,7 +3,7 @@ import { typeScale, type TypeRole } from '@wechat-cc/design-tokens'
 export type TextVoice = 'cc'
 
 // 手写字字面偏小，沿用桌面 15 → 18.5 的比例，取半点并按角色放开行高。
-// 手机回复 16 → 19.5，「地方」现状和审批意见 13 → 16。
+// 手机回复 16 → 19.5，审批卡上 CC 的意见 13 → 16。
 const CC_VOICE_SCALE = 18.5 / 15
 const CC_VOICE_FAMILY = 'THPenHand-Regular'
 
@@ -13,7 +13,7 @@ export function phoneFont(role: TypeRole | 'code', { content = 'ui', text, voice
   if (role === 'code') return { fontFamily: 'mono', fontSize: 13, lineHeight: 19, letterSpacing: 0 }
   const s = typeScale[role]
   // 顶栏的普通标题也沿用 wordmark 的字号阶梯，只有字标本身保留原字体。
-  const wordmark = role === 'wordmark' && content === 'ui' && (text === 'Tendhearth' || text === 'CC')
+  const wordmark = role === 'wordmark' && content === 'ui' && text === 'Tendhearth'
   const hand = voice === 'cc' && !wordmark
   const fontSize = hand ? Math.round(s.phone * CC_VOICE_SCALE * 2) / 2 : s.phone
   return {
