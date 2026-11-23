@@ -230,9 +230,10 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       const label = wideTerminal ? `${title} · ${state}` : title
       const accessible = wideTerminal ? [name, item.sessionTitle, time, state].filter(Boolean).join('，') : ''
       const tooltip = wideTerminal ? [name, item.sessionTitle, time].filter(Boolean).join(' · ') : ''
-      // The first sentence may be cut short; the time beside it is not.
-      const body = !inMenu && wideTerminal && item.sessionTitle && time
-        ? `<span>${esc(item.sessionTitle)}</span><small class="thing-session-time"> · ${esc(time)}</small>`
+      // The first sentence may be cut short; the time (and, in the menu, the state) beside it is not.
+      const lead = item.sessionTitle || name
+      const body = wideTerminal && lead && time
+        ? `<span>${esc(lead)}</span><small class="thing-session-time"> · ${esc(inMenu ? `${time} · ${state}` : time)}</small>`
         : `<span>${esc(inMenu ? label : title)}</span>`
       return `<button type="button" data-thread-session="${esc(item.key)}" data-group="${item.group}"${ended ? ' data-ended' : ''}${accessible ? ` aria-label="${esc(accessible)}"` : ''}${tooltip ? ` title="${esc(tooltip)}"` : ''} aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}${body}${ended ? '' : '<i aria-hidden="true"></i>'}</button>`
     }

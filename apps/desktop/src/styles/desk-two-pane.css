@@ -1484,3 +1484,28 @@ html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[da
   border-radius: 50%;
   background: var(--th-accent);
 }
+
+/* Small alignments after the first rounds. */
+/* A tab's time sits right after its (possibly shortened) first sentence. */
+[data-desk-wide] .thing-sessions [data-thread-session] > .thing-session-time { margin-left: -6px; }
+/* In the "earlier" menu the first sentence gives way too, so the day and the state stay readable. */
+[data-desk-wide] .thing-session-menu [data-thread-session] > span:not(.th-agents) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-desk-wide] .thing-session-menu [data-thread-session] > .thing-session-time {
+  flex: none;
+  color: var(--th-desk-faint);
+  font: 400 12px/1.4 var(--th-font-desk-ui);
+  white-space: pre;
+}
+/* The notebook's writing column lines up with its own header and with every other page:
+   it no longer leaves room for the speaker column that conversations gave up. */
+[data-desk-wide] #notebook-pane .notebook-column {
+  width: var(--desk-thread-width);
+  padding-inline: 0;
+}
+
