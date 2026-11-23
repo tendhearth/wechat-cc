@@ -314,16 +314,14 @@ function PermissionScriptPreview({script,taskId,requestId}:{script:NonNullable<C
 function ApprovalNote({ kind, text }: { kind: 'opinion' | 'reason'; text?: string }) {
   const lang = useLang()
   if (!text) return null
-  return (
-    <Txt
-      testID={kind === 'opinion' ? 'approval-cc-opinion' : 'approval-question-reason'}
-      role="small"
-      tone="inkSoft"
-      content="user"
-    >
-      {t(lang, kind === 'opinion' ? 'approval.ccOpinion' : 'approval.questionReason', { text })}
-    </Txt>
+  // CC 的意见:标签一行(界面的字),意见一行(CC 自己的字)。读屏读成原来那一整句。
+  if (kind === 'opinion') return (
+    <View testID="approval-cc-opinion" accessible accessibilityLabel={t(lang, 'approval.ccOpinion', { text })} style={{ gap: space.xs }}>
+      <Txt testID="approval-cc-opinion-label" role="caption" tone="inkSoft">{t(lang, 'approval.ccOpinionLabel')}</Txt>
+      <Txt testID="approval-cc-opinion-text" role="small" voice="cc" content="user">{text}</Txt>
+    </View>
   )
+  return <Txt testID="approval-question-reason" role="small" tone="inkSoft" content="user">{t(lang, 'approval.questionReason', { text })}</Txt>
 }
 
 function PermissionCard({ v, taskId, matterTitle, ccOpinion }: { v: CardView; taskId: string; matterTitle: string; ccOpinion?: string }) {

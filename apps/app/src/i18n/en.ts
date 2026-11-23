@@ -205,6 +205,7 @@ const en = {
   'approval.chooseOne': 'Review this step before deciding.',
   'approval.uncertain': 'When your computer reconnects, refresh this step before making a decision.',
   'approval.ccOpinion': "CC's take (from this request alone): {text}",
+  'approval.ccOpinionLabel': "CC's take (from this request alone)",
   'approval.questionReason': 'Why this is yours to decide: {text}',
   'approval.aiSummary': 'Summary written by a model. Check the exact operation below.',
   'approval.aiTag': 'AI summary',

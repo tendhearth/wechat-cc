@@ -428,7 +428,10 @@ describe('work-first matter details', () => {
     expect(ui.byId('approval-cc-opinion')).toBeNull()
     await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
 
-    expect(ui.byId('approval-cc-opinion').textContent).toBe('CC 的意见（只看了这条请求）：可以先核对范围。')
+    // 标签一行、意见一行;读屏仍是原来那一整句
+    expect(ui.byId('approval-cc-opinion-label').textContent).toBe('CC 的意见（只看了这条请求）')
+    expect(ui.byId('approval-cc-opinion-text').textContent).toBe('可以先核对范围。')
+    expect(ui.byId('approval-cc-opinion').getAttribute('aria-label')).toBe('CC 的意见（只看了这条请求）：可以先核对范围。')
     expect(ui.byId('approval-question-reason').textContent).toBe('为什么来问你：需要你确认范围。')
     expect(ui.byId('approval-allow')).toBe(allow)
     expect(ui.byId('approval-denial-reason')).toBe(reason)

@@ -74,10 +74,19 @@ describe('native Markdown reader', () => {
     expect(html).toContain('2.')
     expect(html).not.toMatch(/\*\*|##|\[现有功能说明\]/)
     expect(html).toContain('/Users/owner/docs/cc-workbench.md:13')
-    expect(native.textStyles).toContainEqual(expect.objectContaining({ fontSize: 20, fontFamily: 'NotoSerifSC-Regular' }))
+    expect(native.textStyles).toContainEqual(expect.objectContaining({ fontSize: 20, fontFamily: undefined }))
     expect(native.textStyles).toContainEqual(expect.objectContaining({ color: palette.ink, backgroundColor: palette.hair }))
-    expect(native.textStyles.every(s => s.fontFamily !== undefined)).toBe(true)
+    expect(native.textStyles.every(s => s.fontFamily === undefined)).toBe(true)
     expect(native.presses).toHaveLength(0)
+  })
+
+  it('uses CC’s hand in nested Markdown while keeping inline and fenced code monospaced', () => {
+    const text = '## 标题\n\n> **正文** `pwd`\n\n```sh\nls\n```'
+    render(createElement(MessageText, { role: 'assistant', text, voice: 'cc' }))
+    const stylesFor = (value: string) => native.texts.flatMap((node, i) => node.value === value ? [native.textStyles[i]] : [])
+    expect(stylesFor('标题')).toEqual([expect.objectContaining({ fontFamily: 'THPenHand-Regular', fontSize: 22.5 })])
+    expect(stylesFor('正文')).toEqual([expect.objectContaining({ fontFamily: 'THPenHand-Regular', fontSize: 18 })])
+    for (const code of ['pwd', 'ls']) expect(stylesFor(code)).toEqual([expect.objectContaining({ fontFamily: 'Menlo', fontSize: 13 })])
   })
 
   it('opens only approved absolute HTTP/S links, never local files or app/script links', () => {

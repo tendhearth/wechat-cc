@@ -13,7 +13,7 @@ function cReplyAvatar(m){
 }
 function cMessageHtml(m){
   var avatar=cReplyAvatar(m),who=m.role==='me'?'你':avatar?'':'CC'
-  return '<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+avatar+who+(who?' · ':'')+esc(mobileTime(m.at))+'</small><div>'+esc(m.text)+'</div>'+(typeof cAttachmentHtml==='function'?cAttachmentHtml(m):'')+'</article>'
+  return '<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+avatar+who+(who?' · ':'')+esc(mobileTime(m.at))+'</small><div'+(m.role==='cc'&&m.speaker!=='agent'&&m.speaker!=='notice'?' class="cc-voice"':'')+'>'+esc(m.text)+'</div>'+(typeof cAttachmentHtml==='function'?cAttachmentHtml(m):'')+'</article>'
 }
 async function cLoadAgentNames(){
   if(!isDevice||!cReady||cAgentNamesRequested)return
