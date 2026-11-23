@@ -39,6 +39,12 @@ appId: com.tendhearth.app
     visible: 这一轮做完了|Done for this round
     timeout: 8000
 - openLink: "tendhearth://dev-e2e?op=approval-kinds"
+# 开发构建打开深链时系统会问一句「Open in "Tendhearth"?」
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Open"
 - extendedWaitUntil:
     visible:
       id: approval-operation-command
