@@ -1,3 +1,4 @@
+import { type PermissionDisplay } from '@wechat-cc/protocol'
 /**
  * cli-permission-relay.ts — 终端 claude / codex 的 PermissionRequest hook 把「要不要
  * 放行」送到微信里问主人(spec 2026-09-09-cli-hook-push-design §6.3)。
@@ -19,6 +20,9 @@ export interface CliPermissionRequest {
   tool_name: string
   /** 工具参数摘要(hook 侧已压好)。 */
   summary?: string
+  display?: PermissionDisplay | undefined
+  execution_cwd?: string | undefined
+  truncated?: boolean | undefined
   /** 命令原文(截 2000)与涉及的文件 —— 放行规则只认这两样,不从 summary 猜(2026-10-19)。 */
   command?: string
   paths?: string[]

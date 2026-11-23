@@ -319,7 +319,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
           : undefined)
       } catch (err) {
         if(err instanceof Error&&err.message==='request_body_too_large') return { status: 413, body: { error: 'request_body_too_large' }, closeConnection: true }
-        return { status: 400, body: { error: 'malformed_json', ...(isNotebook || isTerminalSearch ? {} : { detail: errMsg(err) }) } }
+        return { status: 400, body: { error: 'malformed_json', ...(isNotebook || isTerminalSearch || url.pathname === '/v1/cli/permission' ? {} : { detail: errMsg(err) }) } }
       }
     }
 

@@ -15,7 +15,7 @@ export function TerminalPermission({ pending, source, projectPath, scroll }: {
 }) {
   const lang = useLang()
   const { c } = useTheme()
-  const { display, raw, action, mayBeIncomplete } = terminalPermission(pending, source, lang)
+  const { display, raw, cwd, action, mayBeIncomplete, hasFullSource } = terminalPermission(pending, source, lang)
   const sheet = usePermissionSource(scroll)
 
   return <View style={{ gap: space.s }}>
@@ -26,10 +26,9 @@ export function TerminalPermission({ pending, source, projectPath, scroll }: {
       <Txt testID="terminal-detail-pending-actor" role="small" tone="inkSoft" style={{ flex: 1 }}>{action}</Txt>
     </View>
     {display ? <>
-      <PermissionOperation testID="terminal-detail-pending" display={display} projectPath={projectPath} lang={lang} open={mayBeIncomplete ? undefined : sheet.openFromPreview} />
-      {mayBeIncomplete
-        ? <Txt testID="terminal-detail-pending-truncated" role="small" tone="inkSoft">{t(lang, 'terminal.pendingTruncated')}</Txt>
-        : <PermissionSource source={raw} projectPath={projectPath} lang={lang} sheet={sheet} />}
+      <PermissionOperation testID="terminal-detail-pending" display={display} projectPath={projectPath} cwd={cwd} lang={lang} open={hasFullSource ? sheet.openFromPreview : undefined} />
+      {mayBeIncomplete ? <Txt testID="terminal-detail-pending-truncated" role="small" tone="inkSoft">{t(lang, 'terminal.pendingTruncated')}</Txt> : null}
+      {hasFullSource ? <PermissionSource source={raw} projectPath={projectPath} cwd={cwd} lang={lang} sheet={sheet} /> : null}
     </> : null}
   </View>
 }

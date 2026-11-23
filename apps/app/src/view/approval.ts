@@ -1,4 +1,4 @@
-import { permissionDisplay, PHONE_ANSWER_MAX_JSON, type PermissionDisplay } from '@wechat-cc/protocol'
+import { permissionCwd, PermissionDisplaySchema, permissionDisplay, PHONE_ANSWER_MAX_JSON, type PermissionDisplay } from '@wechat-cc/protocol'
 import { labelJoin, t, type Lang } from '../i18n'
 import type { MatterDetailT, ApprovalExplanationT } from '../backend/types'
 import { directHeaderView } from './direct-header'
@@ -9,10 +9,10 @@ export type ApprovalView =
   | { kind: 'question'; requestId: string; runId: string
       items: Array<{ id: string; header: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean; allowOther: boolean }> }
   | { kind: 'card'; requestId: string; runId: string; title: string; what: string; scope: string; effect: string
-      tool: string; display: PermissionDisplay; rawFull: string; projectPath: string; executor: string; executorName: string
+      tool: string; display: PermissionDisplay; rawFull: string; projectPath: string; cwd?: string; executor: string; executorName: string
       canAllowTask?: boolean; canDenyWithReason: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
 
-const firstLine = (s: string, max: number) => (s.split(/\r?\n/, 1)[0] ?? '').slice(0, max)
+const firstLine = (s: string, max: number) => (s.replace(/\r\n?/g, '\n').split('\n', 1)[0] ?? '').slice(0, max)
 
 export function approvalView(detail: MatterDetailT, explanations: Record<string, ApprovalExplanationT>, requestId?: string): ApprovalView {
   const perms = detail.permissions
@@ -28,11 +28,12 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
     const ex = explanations[p.id]
     const { current: executor, name: executorName } = directHeaderView(detail, 'en')
     const format = executor === 'claude' ? 'claude' : executor === 'openai' ? 'api' : 'text'
-    const display = permissionDisplay(p.tool, p.description, format)
+    const display = PermissionDisplaySchema.safeParse(p.display).data ?? permissionDisplay(p.tool, p.description, format)
+    const cwd = permissionCwd(p.cwd)
     const projectPath = detail.task?.path || detail.matter.projectPath || ''
     const model = ex?.source === 'model' ? ex : undefined
     return {
-      kind: 'card', requestId: p.id, runId, tool: p.tool, display, projectPath, executor, executorName,
+      kind: 'card', requestId: p.id, runId, tool: p.tool, display, projectPath, ...(cwd ? { cwd } : {}), executor, executorName,
       title: model?.title.trim() || '', what: model?.what ?? '', scope: model?.scope ?? '', effect: model?.effect ?? '',
       rawFull: p.description,
       canDenyWithReason: p.canDenyWithReason === true, ...(p.canAllowTask ? { canAllowTask: true } : {}), ...(p.scripts ? { scripts: p.scripts } : {}),
@@ -82,6 +83,11 @@ export function approvalRelativePath(path: string, cwd: string): string {
   const base = cwd.replace(windows ? /[\\/]+$/ : /\/+$/, '')
   if (!cwd || /^[a-z]:$/i.test(cwd) || path.split(windows ? /[\\/]/ : '/').includes('..')) return path
   return normalize(path).startsWith(`${normalize(base)}/`) && path.length > base.length + 1 ? path.slice(base.length + 1) : path
+}
+
+export function approvalDirectory(cwd: string | undefined, projectPath: string, lang: Lang): string {
+  return cwd ? t(lang, 'approval.executionFolder', { path: cwd })
+    : projectPath ? t(lang, 'approval.projectFolder', { path: projectPath }) : ''
 }
 
 export function approvalLines(value: string): string[] {

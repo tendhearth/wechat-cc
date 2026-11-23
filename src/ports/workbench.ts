@@ -1,3 +1,4 @@
+import { type PermissionDisplay } from '@wechat-cc/protocol'
 /**
  * 工作台零件的口(架构终态 E5):附件、成果、权限卡与提问卡、对正在跑的任务「补一句」。实现在 src/adapters/workbench/
  * (attachments / permissions / user-input)与 src/adapters/store/workbench/(store / live-inputs);app 的「一件事」服务
@@ -16,6 +17,8 @@ export interface PendingWorkbenchPermission {
   tool: string
   description: string
   createdAt: number
+  display?: PermissionDisplay
+  cwd?: string
   canAllowTask?: boolean
   canDenyWithReason?: boolean
   scripts?: PermissionScript[]

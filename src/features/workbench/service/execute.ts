@@ -259,7 +259,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         requestPermission:(request,signal) => {
           if(running.permissionDenialLimit)return Promise.resolve(false)
           running.interactionAt=Date.now();ctx.hub.bumped(task.id)
-          return running.permissions.request({...request,cwd:request.cwd??running.path},signal).then(allowed=>{
+          return running.permissions.request(request,signal,running.path).then(allowed=>{
             if(running.permissions.denialLimitReached()&&!running.permissionDenialLimit) {
               running.permissionDenialLimit=true
               running.stopNotice='已连续拒绝三次，任务已停下等待你的下一步说明。原会话和记录已保留。'
@@ -595,10 +595,11 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       taskId:task.id,root:task.path,provider:task.providerId,stateDir:ctx.stateDir,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
       audit:event => {
         if(event.type==='request'){
-          addRunEvent('system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
+          const description=event.legacyDescription??event.permission.description
+          addRunEvent('system',`权限请求：${event.permission.tool} · ${description} · ${event.permission.id}`)
           let replyLine=''
           if(ctx.deps.permissionPrompt){
-            const close=ctx.deps.permissionPrompt(task.title,event.permission,(decision,reason)=>{
+            const close=ctx.deps.permissionPrompt(task.title,{...event.permission,description},(decision,reason)=>{
               const resolved=permissions.resolve(event.permission.id,decision,reason)
               if(resolved)ctx.hub.bumped(task.id)
               return resolved

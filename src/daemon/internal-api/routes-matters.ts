@@ -198,7 +198,11 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       try{service.seenOnPhone(id)}catch{/* 只是露面登记 */}
       const scoped=caller?.origin==='link'?linkMatterStatus(detail):detail
       if(caller?.frameBudget===undefined)return {status:200,body:scoped}
-      const fitted=withoutOldNarrationFor(scoped,caller.frameBudget)
+      let fitted=withoutOldNarrationFor(scoped,caller.frameBudget)
+      if (framedTooLargeFor(fitted,caller.frameBudget) && scoped.permissions.some(p => p.display)) {
+        const permissions=scoped.permissions.map(({display:_display,...permission})=>permission)
+        fitted=withoutOldNarrationFor({...scoped,permissions},caller.frameBudget)
+      }
       return framedTooLargeFor(fitted,caller.frameBudget)?{status:413,body:{error:'detail_too_large'}}:{status:200,body:JSON.parse(fitted)}
     },
     'GET /v1/matter/permission-script': async (q,_b,caller) => {

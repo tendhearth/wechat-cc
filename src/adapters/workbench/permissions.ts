@@ -1,6 +1,8 @@
+import { PermissionDisplaySchema, permissionCwd } from '@wechat-cc/protocol'
 import { randomUUID } from 'node:crypto'
 import { authorize, type AuthSubject } from '../../domain/authorize'
 import { TIER_PROFILES } from '../../domain/user-tier'
+import type { SpawnContext } from '../../ports/agent-provider'
 import type { PendingWorkbenchPermission, PermissionDecision } from '../../ports/workbench'
 import { inspectPermissionCommand, literalCommand, type CommandSnapshot } from './permission-command'
 import { matchRule } from '../permission-rules/rules-file'
@@ -26,7 +28,7 @@ export const WORKBENCH_PERMISSION_DESCRIPTION_MAX = 20_000
 export type PermissionOutcome = PermissionDecision | 'aborted' | 'expired' | 'cancelled' | 'ended'
 
 export type WorkbenchPermissionAudit =
-  | { type: 'request'; permission: PendingWorkbenchPermission }
+  | { type: 'request'; permission: PendingWorkbenchPermission; legacyDescription?: string }
   | { type: 'outcome'; permission: PendingWorkbenchPermission; outcome: PermissionOutcome; reason?: string; /** 放行规则替主人拿的主意(没有 = 主人 / 到期 / 取消)。 */ by?: RuleDecider }
 
 /** 放行规则(2026-10-19)谁拿的主意:规则表 / 初审 / 红线。 */
@@ -89,8 +91,9 @@ export function makeRunPermissions(opts: {
   }
 
   function request(
-    raw: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string; requiresBoundExecution?: true; onDenied?: (reason: string) => void },
+    raw: Parameters<NonNullable<SpawnContext['requestPermission']>>[0],
     signal?: AbortSignal,
+    ruleDefaultCwd?: string,
   ): Promise<boolean> {
     if (closed || typeof raw?.tool !== 'string' || typeof raw?.description !== 'string') return Promise.resolve(false)
     const tool = raw.tool.trim()
@@ -102,7 +105,8 @@ export function makeRunPermissions(opts: {
     const facts: PermissionFacts = { tool, description }
     if (typeof raw.command === 'string' && raw.command.trim()) facts.command = raw.command
     if (Array.isArray(raw.paths) && raw.paths.length && raw.paths.every(p => typeof p === 'string' && p)) facts.paths = [...raw.paths]
-    if (typeof raw.cwd === 'string' && raw.cwd) facts.cwd = raw.cwd
+    const ruleCwd = raw.cwd ?? ruleDefaultCwd
+    if (typeof ruleCwd === 'string' && ruleCwd) facts.cwd = ruleCwd
     if (raw.requiresBoundExecution === true) facts.requiresBoundExecution = true
     const registerOrReuse = (reuse = true, snapshot = inspectPermissionCommand(facts, opts)) => {
       // The shared gate may have awaited a review: inspect the bytes only now.
@@ -112,7 +116,7 @@ export function makeRunPermissions(opts: {
         const allowed = audit({ type: 'outcome', permission, outcome: 'allow', by: 'rule' })
         return Promise.resolve(allowed)
       }
-      return register(facts, reuse ? snapshot : { ...snapshot, hash: undefined }, signal, raw.onDenied)
+      return register(facts, reuse ? snapshot : { ...snapshot, hash: undefined }, raw, signal)
     }
     if (!opts.decide || !first.consultOwnerRules) return registerOrReuse()
     return opts.decide(facts).catch(() => ({ verdict: 'ask' as const, by: 'unavailable' })).then(d => {
@@ -130,14 +134,24 @@ export function makeRunPermissions(opts: {
     })
   }
 
-  function register(facts: PermissionFacts, snapshot: CommandSnapshot, signal?: AbortSignal, onDenied?: (reason: string) => void): Promise<boolean> {
+  function register(facts: PermissionFacts, snapshot: CommandSnapshot, raw: Parameters<typeof request>[0], signal?: AbortSignal): Promise<boolean> {
     const { tool, description = '' } = facts
+    const { onDenied } = raw
+    const display = PermissionDisplaySchema.safeParse(raw.display).data
+    const cwd = permissionCwd(raw.displayCwd ?? raw.cwd)
+    const proposedReview = raw.reviewDescription ?? raw.description
+    const review = display && typeof proposedReview === 'string' && proposedReview.length <= WORKBENCH_PERMISSION_DESCRIPTION_MAX ? proposedReview : description
+    const withSnapshot = (text: string) => snapshot.scripts.length || snapshot.requiresBoundExecution
+      ? `${text}\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。`
+      : text
     const permission: PendingWorkbenchPermission = {
       id: randomUUID(),
       taskId: opts.taskId,
       tool,
-      description: snapshot.scripts.length || snapshot.requiresBoundExecution ? `${description}\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。` : description,
+      description: withSnapshot(review),
       createdAt: Date.now(),
+      ...(display ? { display } : {}),
+      ...(cwd ? { cwd } : {}),
       ...(onDenied ? { canDenyWithReason: true } : {}),
       ...(snapshot.hash ? { canAllowTask: true } : {}),
       ...(snapshot.scripts.length ? { scripts: snapshot.scripts.map(s => s.content.length > 2000 ? { ...s, content: s.content.slice(0, 2000), truncated: true } : { ...s }) } : {}),
@@ -168,7 +182,7 @@ export function makeRunPermissions(opts: {
       entries.set(permission.id, entry)
       signal?.addEventListener('abort', onAbort, { once: true })
       if (pausedAt === null) rearm(timeoutMs)
-      if (!audit({ type: 'request', permission })) finish(false,'ended')
+      if (!audit({ type: 'request', permission, ...(review !== description ? { legacyDescription: withSnapshot(description) } : {}) })) finish(false,'ended')
     })
   }
 

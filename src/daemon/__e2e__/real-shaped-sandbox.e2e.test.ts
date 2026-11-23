@@ -16,7 +16,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { makeProtocolClient, type NotebookPageResponseT } from '@wechat-cc/protocol'
+import { parsePermissionRequest } from '../../cli/hook'
+import { CliSessionRow, makeProtocolClient, MatterDetail, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
 import { routesForToken } from '../internal-api/route-tiers'
 import { REQUEST_SCHEMAS } from '../internal-api/schema'
 import { encodeNativeHistoryKey } from '../../adapters/workbench/native-history'
@@ -80,7 +81,7 @@ const STRANGER = 'o9fixture-stranger@im.wechat'
 const said = (text: string): string => [...text.matchAll(/<wechat [^>]*>\n([\s\S]*?)\n<\/wechat>/g)].at(-1)?.[1]?.replace(/<matters>[\s\S]*?<\/matters>\n?/g, '').trim() ?? text.trim()
 
 /** S2 那几条:配对过的一台手机、免打扰里压着的那一句、那件事的编号。 */
-const PHONE_TOKEN = 'sandbox-phone-device-token-0001'
+const PHONE_TOKEN = 'd-sandbox-phone-device-token-0001'
 const PHONE_ID = deviceIdOf(PHONE_TOKEN)
 const NOTEBOOK_PHONE_TOKEN = 'd-sandbox-notebook-device-token'
 const QUIET_NOTE = '自改进展:免打扰里做完的那一步'
@@ -760,6 +761,37 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     }
   })
 
+  it('carries a structured terminal hook approval to desktop and a paired phone', async () => {
+    const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: NOTEBOOK_PHONE_TOKEN })
+    const session_id = 'sandbox-structured-approval'
+    const cwd = join(project, 'preview')
+    const input = { file_path: join(cwd, 'sample.txt'), old_string: 'preview before\r\n', new_string: 'preview after\n'.repeat(30) }
+    const req = parsePermissionRequest('claude', { hook_event_name: 'PermissionRequest', session_id, cwd, tool_name: 'Edit', tool_input: input })
+    const post = await desktop<{ status: string }>('POST', '/v1/cli/permission', { ...req, idle_s: 3600, machine: hostname() }, 'trusted')
+    try {
+      expect(post.status).toBe(200)
+      expect(post.body.status).toBe('pending')
+      const path = '/v1/cli/sessions'
+      const desk = await desktop<{ sessions: CliSessionRowT[] }>('GET', path)
+      const mobile = await phone.request({ method: 'GET', path: path + '?session_id=' + session_id })
+      expect([desk.status, mobile.status]).toEqual([200, 200])
+      const verify = (sessions: CliSessionRowT[]) => {
+        const row = CliSessionRow.parse(sessions.find(row => row.session_id === session_id))
+        const pending = row.pending
+        expect(pending?.display?.body.kind).toBe('edit')
+        expect(pending?.cwd === cwd && pending?.truncated === true && pending?.display?.truncated !== true &&
+          JSON.stringify(pending.display) === JSON.stringify(req?.display)).toBe(true)
+      }
+      verify(desk.body.sessions)
+      verify(mobile.json<{ sessions: CliSessionRowT[] }>().sessions)
+      expect(d.log().some(line => line.includes(input.old_string.trim()) || line.includes(input.new_string.trim()))).toBe(false)
+    } finally {
+      await desktop('POST', '/v1/cli/decide', { session_id, decision: 'deny' })
+      await desktop('POST', '/v1/cli/event', { source: 'claude', kind: 'session_end', session_id, cwd }, 'trusted')
+      phone.close()
+    }
+  })
+
   it('会话结束后地方仍列出它，原话可从存下的步翻阅', async () => {
     const session_id = 'sandbox-ended-history'
     const event = (kind: 'prompt' | 'stop' | 'session_end', text?: string) =>
@@ -1262,8 +1294,20 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       .toEqual([{ kind: 'permission_ask', ref: expect.stringMatching(new RegExp(`^ask:${asking}:`)), outcome: 'allowed', channel: expect.stringMatching(/^(app\+wechat|wechat\+app)$/) }])
     expect(rows().filter(r => r.kind === 'permission_ask')).toHaveLength(1)
     await expect.poll(() => d.log().some(l => /\[ASK_OPINION\] given opinionLength=\d+ reasonLength=\d+$/.test(l)), { timeout: 15_000 }).toBe(true)
-    const detail = await desktop<{ permissions: Array<{ id: string }> }>('GET', `/v1/workbench/task?id=${asking}`)
+    const detail = await desktop<Pick<ReturnType<typeof MatterDetail.parse>, 'permissions'>>('GET', `/v1/workbench/task?id=${asking}`)
     expect(detail.body.permissions).toHaveLength(1)
+    const detailPath = `/v1/matter?id=${asking}`
+    const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    try {
+      const desk = await desktop('GET', detailPath)
+      const mobile = await phone.request({ method: 'GET', path: detailPath })
+      expect([desk.status, mobile.status]).toEqual([200, 200])
+      for (const permission of [detail.body.permissions[0], MatterDetail.parse(desk.body).permissions[0], MatterDetail.parse(mobile.json()).permissions[0]]) {
+        expect(permission?.display?.body.kind).toBe('command')
+        expect(permission?.cwd === '/tmp' && permission.display?.body.kind === 'command' &&
+          permission.display.body.command === 'rm -rf build').toBe(true)
+      }
+    } finally { phone.close() }
     expect(requests).toHaveLength(1)
     expect(requests[0]).not.toHaveProperty('tools')
     expect(requests[0]?.messages?.[0]?.content).toContain('给正在决定这件事的主人留两行话')

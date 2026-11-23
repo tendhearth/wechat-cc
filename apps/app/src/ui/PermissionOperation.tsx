@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import type { PermissionDisplay } from '@wechat-cc/protocol'
 import { Pressable, View } from 'react-native'
 import { labelJoin, t, tCount, type Lang } from '../i18n'
-import { approvalLines, approvalRelativePath } from '../view/approval'
+import { approvalDirectory, approvalLines, approvalRelativePath } from '../view/approval'
 import { DiffLine } from './DiffLine'
 import { monoFamily } from './fonts'
 import { Txt } from './Txt'
@@ -21,14 +21,14 @@ function operationLabel(body: Body, projectPath: string, lang: Lang): string {
   switch (body.kind) {
     case 'command': return t(lang, 'approval.readCommand', { command: body.command })
     case 'edit': return [t(lang, 'approval.readEdit', {
-      path: path(body.path),
+      path: [...new Set(body.changes.map(edit => path(edit.path ?? body.path)))].join(', '),
       before: body.changes.reduce((n, edit) => n + approvalLines(edit.before).length, 0),
       after: body.changes.reduce((n, edit) => n + approvalLines(edit.after).length, 0),
     }), body.replaceAll && t(lang, 'approval.replaceAll')].filter(Boolean).join(', ')
     case 'write': return t(lang, 'approval.readWrite', { path: path(body.path), n: approvalLines(body.content).length })
     case 'patch': return t(lang, 'approval.readPatch', {
       n: body.files.length,
-      paths: body.files.map(file => `${path(file.path)}, ${changeLabel(file.change, lang, true)}`).join(lang === 'zh-Hans' ? '。' : '. '),
+      paths: body.files.map(file => `${path(file.path)}, ${changeLabel(file.change, file.movePath === undefined ? undefined : path(file.movePath), lang, true)}`).join(lang === 'zh-Hans' ? '。' : '. '),
     })
     case 'url': return [t(lang, 'approval.readUrl', { value: body.url }), body.prompt && t(lang, 'approval.fetchPrompt', { prompt: body.prompt })].filter(Boolean).join(', ')
     case 'query': return t(lang, 'approval.readQuery', { value: body.query })
@@ -80,24 +80,12 @@ function FilePath({ path, detail }: { path: string; detail?: string }) {
   return <Txt selectable role="caption" tone="inkSoft" style={{ fontFamily: monoFamily, marginBottom: space.xs }}>{path}{detail ? ` ${detail}` : ''}</Txt>
 }
 
-function changeLabel(change: string, lang: Lang, spoken = false) {
-  let kind = change
-  try {
-    const parsed = JSON.parse(change)
-    if (parsed && typeof parsed === 'object') {
-      const keys = Object.keys(parsed)
-      // Show the full descriptor if this version carries unfamiliar metadata.
-      if (keys.some(key => !['type', 'move_path', 'movePath'].includes(key)) || keys.length > 2) return change
-      const destination = parsed.move_path ?? parsed.movePath
-      if (typeof destination === 'string') return spoken ? t(lang, 'approval.change.destination', { path: destination })
-        : `${t(lang, 'approval.change.rename')} → ${destination}`
-      if (destination != null) return change
-      kind = parsed.type
-    }
-  } catch { /* Older entries use a plain change name. */ }
+function changeLabel(kind: string, destination: string | undefined, lang: Lang, spoken = false) {
+  if (destination !== undefined) return spoken ? t(lang, 'approval.change.destination', { path: destination })
+    : `${t(lang, 'approval.change.rename')} → ${destination}`
   if (kind === 'add' || kind === 'update' || kind === 'delete') return t(lang, `approval.change.${kind}`)
   if (kind === 'move' || kind === 'rename') return t(lang, 'approval.change.rename')
-  return change
+  return kind
 }
 
 function UrlText({ url }: { url: string }) {
@@ -127,13 +115,13 @@ function OperationBody({ body, projectPath, lang, open, label }: { body: Body; p
     }
     case 'edit': return <>
       <Visual label={label}><FilePath path={path(body.path)} detail={body.replaceAll ? t(lang, 'approval.replaceAll') : undefined} /></Visual>
-      {body.changes.map(({ before, after }, i) => {
+      {body.changes.map(({ before, after, path: changePath }, i) => {
         const rows = [
           ...approvalLines(before).map(line => ({ line: `− ${line}`, kind: 'remove' as const })),
           ...approvalLines(after).map(line => ({ line: `+ ${line}`, kind: 'add' as const })),
         ]
         return <View key={i} testID={`approval-edit-${i}`}>
-          <Visual>{rows.slice(0, 12).map(({ line, kind }, j) => <DiffLine key={j} line={line} kind={kind} highlight selectable />)}</Visual>
+          <Visual>{changePath && changePath !== body.path ? <FilePath path={path(changePath)} /> : null}{rows.slice(0, 12).map(({ line, kind }, j) => <DiffLine key={j} line={line} kind={kind} highlight selectable />)}</Visual>
           {rows.length > 12 ? <More label={t(lang, 'approval.full')} open={open} /> : null}
         </View>
       })}
@@ -149,7 +137,7 @@ function OperationBody({ body, projectPath, lang, open, label }: { body: Body; p
       const lines = approvalLines(file.diff)
       return <View key={i} testID={`approval-patch-${i}`}>
         <Visual label={i === 0 ? label : undefined}>
-          <FilePath path={path(file.path)} detail={`(${changeLabel(file.change, lang)})`} />
+          <FilePath path={path(file.path)} detail={`(${changeLabel(file.change, file.movePath === undefined ? undefined : path(file.movePath), lang)})`} />
           {lines.slice(0, 12).map((line, j) => <DiffLine key={j} line={line} selectable highlight kind={
             line.startsWith('+') ? 'add' : line.startsWith('-') ? 'remove' : undefined
           } />)}
@@ -163,15 +151,16 @@ function OperationBody({ body, projectPath, lang, open, label }: { body: Body; p
   }
 }
 
-export function PermissionOperation({ display, projectPath, lang, open, testID }: {
-  display: PermissionDisplay; projectPath: string; lang: Lang; open?: () => void; testID?: string
+export function PermissionOperation({ display, projectPath, cwd, lang, open, testID }: {
+  display: PermissionDisplay; projectPath: string; cwd?: string | undefined; lang: Lang; open?: () => void; testID?: string
 }) {
   const { body, extra } = display
-  const directory = projectPath ? t(lang, 'approval.projectFolder', { path: projectPath }) : ''
-  const spoken = [operationLabel(body, projectPath, lang), directory, extra?.length ? readFields(extra) : ''].filter(Boolean).join(', ')
+  const directory = approvalDirectory(cwd, projectPath, lang)
+  const pathBase = cwd ?? projectPath
+  const spoken = [operationLabel(body, pathBase, lang), directory, extra?.length ? readFields(extra) : ''].filter(Boolean).join(', ')
   return <View testID={testID} style={{ gap: space.s }}>
     <Panel testID={`approval-operation-${body.kind}`}>
-      <OperationBody body={body} projectPath={projectPath} lang={lang} open={open} label={spoken} />
+      <OperationBody body={body} projectPath={pathBase} lang={lang} open={open} label={spoken} />
     </Panel>
     {directory ? <Visual><Txt selectable testID="approval-operation-cwd" role="small" tone="inkSoft">{directory}</Txt></Visual> : null}
     {body.kind === 'url' && body.prompt ? <Visual><Txt selectable role="small" tone="inkSoft">{t(lang, 'approval.fetchPrompt', { prompt: body.prompt })}</Txt></Visual> : null}

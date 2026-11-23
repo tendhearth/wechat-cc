@@ -12,13 +12,13 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { AgentEvent } from '../../../ports/agent-provider'
 import { acpImageCapable } from './acp-agent-provider'
-import { acpActivityId, createAcpTranslator } from './events'
+import { acpActivityId, acpApprovalDetails, acpPermissionDescription, createAcpTranslator } from './events'
 
 type Obj = Record<string, unknown>
 const obj = (value: unknown): Obj => (!!value && typeof value === 'object' && !Array.isArray(value) ? value as Obj : {})
 
 const FIXTURE = fileURLToPath(new URL('../../../test-support/fixtures/cursor-acp-2026-09-17.jsonl', import.meta.url))
-const records = readFileSync(FIXTURE, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line) as Obj)
+const records = readFileSync(FIXTURE, 'utf8').replace(/\r\n?/g, '\n').split('\n').filter(line => line.trim()).map(line => JSON.parse(line) as Obj)
 const scenarios = [...new Set(records.map(record => String(record.scenario)))]
 const of = (scenario: string): Obj[] => records.filter(record => record.scenario === scenario)
 const payloadOf = (record: Obj): Obj => obj(record.payload)
@@ -100,6 +100,18 @@ describe('ACP 真机报文回放(cursor-agent 2026-09-17)', () => {
       for (const option of options as unknown[]) {
         expect(['allow_once', 'allow_always', 'reject_once']).toContain(obj(option).kind)
       }
+    }
+  })
+
+  it('录下来的 Cursor 权限请求缺少命令或 diff 结构，保留原描述', () => {
+    const approvals = records.map(payloadOf).filter(payload => payload.method === 'session/request_permission')
+    expect(approvals.length).toBeGreaterThan(0)
+    for (const { params } of approvals) {
+      const description = acpPermissionDescription(params)
+      expect(description).not.toBeNull()
+      const details = acpApprovalDetails(obj(obj(params).toolCall), description!)
+      expect(details.description === description).toBe(true)
+      expect(details.display).toBeUndefined()
     }
   })
 

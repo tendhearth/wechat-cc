@@ -1,3 +1,4 @@
+import { permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
 /**
  * hook.ts — `wechat-cc hook …`:终端 claude / codex / cursor 会话的 hooks 出口
  * (spec docs/superpowers/specs/2026-09-09-cli-hook-push-design.md)。
@@ -63,16 +64,21 @@ export function isAutomatedPrompt(prompt: string): boolean {
 }
 
 /** 工具参数摘要:有 command 就用 command(数组拼空格),否则 JSON 截断。 */
-export function summarizeToolInput(input: unknown): string {
-  if (input === null || input === undefined) return ''
+function toolSummary(input: unknown): { summary: string; truncated: boolean } {
+  if (input === null || input === undefined) return { summary: '', truncated: false }
   if (typeof input === 'object') {
     const cmd = (input as Raw)['command']
-    if (typeof cmd === 'string') return cmd
-    if (Array.isArray(cmd)) return cmd.map(String).join(' ')
+    if (typeof cmd === 'string') return { summary: cmd, truncated: false }
+    if (Array.isArray(cmd)) return { summary: cmd.map(String).join(' '), truncated: false }
   }
   let s: string
   try { s = typeof input === 'string' ? input : JSON.stringify(input) } catch { s = String(input) }
-  return s.length > TOOL_SUMMARY_MAX ? s.slice(0, TOOL_SUMMARY_MAX - 1) + '…' : s
+  const truncated = s.length > TOOL_SUMMARY_MAX
+  return { summary: truncated ? s.slice(0, TOOL_SUMMARY_MAX - 1) + '…' : s, truncated }
+}
+
+export function summarizeToolInput(input: unknown): string {
+  return toolSummary(input).summary
 }
 
 /**
@@ -121,8 +127,13 @@ export function parsePermissionRequest(source: HookSource, raw: unknown): CliPer
   const cwd = str(r['cwd'])
   const tool_name = str(r['tool_name'])
   if (!session_id || !cwd || !tool_name) return null
-  const summary = summarizeToolInput(r['tool_input'])
-  const req: CliPermissionRequest = summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
+  const input = r['tool_input']
+  const { summary, truncated } = toolSummary(input)
+  const display = toolPermissionDisplay(tool_name, input)
+  const executionCwd = permissionCwd(cwd)
+  const req: CliPermissionRequest = { source, session_id, cwd, tool_name, truncated,
+    ...(summary ? { summary } : {}), ...(display ? { display } : {}), ...(executionCwd ? { execution_cwd: executionCwd } : {}),
+  }
   // 放行规则(2026-10-19)要原文:命令不压缩(截 2000),文件路径单列。拿不到就不给,daemon 那头不猜。
   const facts = toolInputFacts(r['tool_input'])
   if (facts.command) req.command = facts.command
@@ -171,16 +182,24 @@ export function parseCursorPermission(r: Raw): CliPermissionRequest | null {
   if (event === 'beforeShellExecution') {
     const command = str(r['command'])
     if (!command) return null
-    return { source: 'cursor', session_id, cwd, tool_name: 'Shell', summary: summarizeToolInput(command) }
+    const display = toolPermissionDisplay('Shell', command)
+    const executionCwd = permissionCwd(r['cwd'])
+    return { source: 'cursor', session_id, cwd, tool_name: 'Shell', ...toolSummary(command),
+      ...(display ? { display } : {}), ...(executionCwd ? { execution_cwd: executionCwd } : {}),
+    }
   }
   const tool = str(r['tool_name'])
   if (!tool) return null
   const server = str(r['mcp_server_name'])
   let input: unknown = r['tool_input']
   if (typeof input === 'string') { try { input = JSON.parse(input) } catch { /* 原样当文字 */ } }
-  const summary = summarizeToolInput(input)
+  const { summary, truncated } = toolSummary(input)
   const tool_name = server ? `${server}:${tool}` : tool
-  return summary ? { source: 'cursor', session_id, cwd, tool_name, summary } : { source: 'cursor', session_id, cwd, tool_name }
+  const display = typeof r['tool_input'] === 'object' ? toolPermissionDisplay(tool_name, input) : undefined
+  const executionCwd = permissionCwd(r['cwd'])
+  return { source: 'cursor', session_id, cwd, tool_name, truncated,
+    ...(summary ? { summary } : {}), ...(display ? { display } : {}), ...(executionCwd ? { execution_cwd: executionCwd } : {}),
+  }
 }
 
 const CURSOR_TRANSCRIPT_READ_MAX = 256 * 1024

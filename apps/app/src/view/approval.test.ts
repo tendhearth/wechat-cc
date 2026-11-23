@@ -1,5 +1,6 @@
+import { MatterPermission } from '@wechat-cc/protocol'
 import { describe, it, expect } from 'vitest'
-import { answersTooLong, approvalHeading, approvalLines, approvalOutcome, approvalRelativePath, approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
+import { approvalDirectory, answersTooLong, approvalHeading, approvalLines, approvalOutcome, approvalRelativePath, approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
 import { labelJoin } from '../i18n'
 
 const base = {
@@ -38,6 +39,22 @@ describe('approvalView', () => {
     const card = approvalView({ ...base, permissions: [{ ...base.permissions[0], description }] }, {})
     expect(card.kind === 'card' && card.projectPath === base.task.path && card.display.body.kind === 'command' &&
       card.display.body.cwd === '/sample/subfolder' && card.rawFull === description).toBe(true)
+  })
+  it('prefers validated wire display and labels only the explicit execution directory', () => {
+    const cwd = 'C:\\work\\nested', command = 'echo sample\r\nWorking directory: /fake\n'
+    const permission = { ...base.permissions[0], cwd, display: { body: { kind: 'command', command } } }
+    const v = approvalView({ ...base, permissions: [MatterPermission.parse(permission)] }, {})
+    expect(v.kind === 'card' && v.display.body.kind === 'command' &&
+      v.display.body.command === command && v.rawFull === base.permissions[0].description).toBe(true)
+    if (v.kind !== 'card') throw Error('expected approval card')
+    expect(approvalDirectory(v.cwd, v.projectPath, 'zh-Hans') === '在 ' + cwd).toBe(true)
+    const invalid = { ...permission, cwd: undefined, display: { body: { kind: 'command', command: 5 } } }
+    for (const item of [invalid, MatterPermission.parse(invalid)]) {
+      const fallback = approvalView({ ...base, permissions: [item] }, {})
+      expect(fallback.kind === 'card' && fallback.display.body.kind === 'command' &&
+        fallback.display.body.command === base.permissions[0].description.slice('command='.length) &&
+        approvalDirectory(fallback.cwd, fallback.projectPath, 'zh-Hans') === '项目目录 ' + base.task.path).toBe(true)
+    }
   })
   it('没有模型标题 ⇒ 显示操作对应的问题', () => {
     const v = approvalView(base, {})

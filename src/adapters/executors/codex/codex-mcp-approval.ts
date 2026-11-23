@@ -24,7 +24,7 @@ export function codexMcpApproval(params: Value, items: Iterable<Value>, complete
     if (argumentsPreview === null) return null
     const description = `MCP server: ${params.serverName}\nTool: ${item.tool}\nArguments:\n${argumentsPreview}\nApprove this invocation only.`
     if (description.length > 20_000) return null
-    // input:对上的那次调用的参数(对话侧按档位分类要用;工作台不转给审批卡)。
+    // input:对上的那次调用的参数(对话侧按档位分类;工作台展示用同一份脱敏规则)。
     return { tool: `mcp__${params.serverName}__${item.tool}`, description, input: object(item.arguments) ? item.arguments : {} }
   } catch { return null }
 }

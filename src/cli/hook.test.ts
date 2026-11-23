@@ -68,12 +68,28 @@ describe('normalizeHookPayload — codex', () => {
 describe('parsePermissionRequest', () => {
   it('两家形状相同:tool_name + tool_input 摘要;子代理 / 别的事件 / 缺字段 → null', () => {
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -rf ./tmp' }, permission_suggestions: [] }))
-      .toEqual({ source: 'claude', session_id: 'abc-123', cwd: '/w/p', tool_name: 'Bash', summary: 'rm -rf ./tmp', command: 'rm -rf ./tmp' })
+      .toEqual({ source: 'claude', session_id: 'abc-123', cwd: '/w/p', tool_name: 'Bash', summary: 'rm -rf ./tmp', command: 'rm -rf ./tmp', truncated: false, execution_cwd: '/w/p', display: { body: { kind: 'command', command: 'rm -rf ./tmp' } } })
     expect(parsePermissionRequest('codex', { ...common, turn_id: 't', hook_event_name: 'PermissionRequest', tool_name: 'apply_patch', tool_input: null }))
-      .toEqual({ source: 'codex', session_id: 'abc-123', cwd: '/w/p', tool_name: 'apply_patch' })
+      .toEqual({ source: 'codex', session_id: 'abc-123', cwd: '/w/p', tool_name: 'apply_patch', truncated: false, execution_cwd: '/w/p' })
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', agent_id: 'sub' })).toBeNull()
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'Stop' })).toBeNull()
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest' })).toBeNull()
+  })
+  it('records the exact hook cut and preserves the complete edit independently', () => {
+    const path = 'C:\\sample\\a.ts'
+    const old = 'before\r\nline'
+    const input = { file_path: path, old_string: old, new_string: '后'.repeat(250) + '\r\n' }
+    const raw = { ...common, cwd: 'C:\\sample', hook_event_name: 'PermissionRequest', tool_name: 'Edit', tool_input: input }
+    const req = parsePermissionRequest('claude', raw)!
+    expect(req.display?.body.kind).toBe('edit')
+    expect(req.display?.body.kind === 'edit' && req.display.body.path === path &&
+      req.display.body.changes[0]?.before === old && req.display.body.changes[0]?.after === input.new_string).toBe(true)
+    expect(req.execution_cwd === raw.cwd && req.summary === summarizeToolInput(input)).toBe(true)
+    expect(req.truncated).toBe(true)
+    for (const n of [200, 201]) {
+      const shell = parsePermissionRequest('cursor', { ...raw, conversation_id: 'sample', hook_event_name: 'beforeShellExecution', command: 'x'.repeat(n) })
+      expect(shell?.truncated).toBe(n > 200)
+    }
   })
   it('放行规则要的原文:命令(数组拼空格,截 2000)与文件路径', () => {
     const p = (tool_name: string, tool_input: unknown) => parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name, tool_input })
@@ -267,16 +283,16 @@ describe('Cursor — payload 归一化', () => {
   })
   it('beforeShellExecution → Shell 权限请求,摘要就是命令;目录用 workspace_roots[0](不是命令的 cwd)', () => {
     expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeShellExecution', command: 'rm -rf build', cwd: '/w/cur/sub', sandbox: false }))
-      .toEqual({ source: 'cursor', session_id: 'conv-1', cwd: '/w/cur', tool_name: 'Shell', summary: 'rm -rf build' })
+      .toEqual({ source: 'cursor', session_id: 'conv-1', cwd: '/w/cur', tool_name: 'Shell', summary: 'rm -rf build', truncated: false, execution_cwd: '/w/cur/sub', display: { body: { kind: 'command', command: 'rm -rf build' } } })
     expect(parsePermissionRequest('cursor', { ...cc, workspace_roots: undefined, cwd: '/only/cwd', hook_event_name: 'beforeShellExecution', command: 'ls' }))
       .toMatchObject({ cwd: '/only/cwd' })
     expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeShellExecution' })).toBeNull()
   })
   it('beforeMCPExecution → server:tool,tool_input 是 JSON 字符串也拆得开', () => {
     expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeMCPExecution', mcp_server_name: 'github', tool_name: 'create_issue', tool_input: '{"title":"bug"}' }))
-      .toEqual({ source: 'cursor', session_id: 'conv-1', cwd: '/w/cur', tool_name: 'github:create_issue', summary: '{"title":"bug"}' })
+      .toEqual({ source: 'cursor', session_id: 'conv-1', cwd: '/w/cur', tool_name: 'github:create_issue', summary: '{"title":"bug"}', truncated: false })
     expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeMCPExecution', tool_name: 'run', tool_input: { command: ['make', 'test'] } }))
-      .toEqual({ source: 'cursor', session_id: 'conv-1', cwd: '/w/cur', tool_name: 'run', summary: 'make test' })
+      .toEqual({ source: 'cursor', session_id: 'conv-1', cwd: '/w/cur', tool_name: 'run', summary: 'make test', truncated: false, display: { body: { kind: 'fields', fields: [{ name: 'command', value: JSON.stringify(['make', 'test'], null, 2) }] } } })
     expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeMCPExecution' })).toBeNull()
     expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'stop' })).toBeNull()
   })

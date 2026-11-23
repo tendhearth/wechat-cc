@@ -237,7 +237,7 @@ export interface Backend {
    *  电脑那边情况变了(额度恢复 / 接手人变了 / 没人能接)⇒ BackendError('handoff_changed')。 */
   handoff(p: { id: string; requestId: string; providerId: string }): Promise<{ matterId: string }>
   /** 终端里的会话(GET /m/api/cli/sessions,2026-10-14):主人在 CC 外面开的 Claude Code / Codex。等你批准的在前。 */
-  cliSessions(): Promise<CliSessionRowT[]>
+  cliSessions(sessionId?: string): Promise<CliSessionRowT[]>
   /** 拍板终端会话等批准的那一项(同微信「y/n 码」)。码已失效 ⇒ 'stale';终端自己在问(主人在电脑前)⇒ 'cli_not_actionable'。 */
   cliPermission(p: { sessionId: string; hash?: string; decision: 'allow' | 'deny' }): Promise<void>
   /** 对终端会话接着说一句(同微信「@码」):收下即回,结果成为这条会话的下一句。在跑 ⇒ 'busy';已结束 ⇒ 'cli_ended';在别的电脑上 ⇒ 'cli_remote'。 

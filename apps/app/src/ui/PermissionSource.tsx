@@ -1,6 +1,7 @@
 import { useRef, useState, type RefObject } from 'react'
 import { ScrollView, View } from 'react-native'
 import { t, type Lang } from '../i18n'
+import { approvalDirectory } from '../view/approval'
 import { useMotionEnabled } from './motion'
 import { Sheet } from './Sheet'
 import { space } from './tokens'
@@ -49,10 +50,11 @@ export function usePermissionSource(scroll: RefObject<ScrollView | null> | undef
   }
 }
 
-export function PermissionSource({ source, projectPath, lang, sheet }: {
-  source: string; projectPath: string; lang: Lang; sheet: ReturnType<typeof usePermissionSource>
+export function PermissionSource({ source, projectPath, cwd, lang, sheet }: {
+  source: string; projectPath: string; cwd?: string | undefined; lang: Lang; sheet: ReturnType<typeof usePermissionSource>
 }) {
   const { anchor, expanded, onExpandedChange, onOpened } = sheet
+  const directory = approvalDirectory(cwd, projectPath, lang)
   return <View ref={anchor} collapsable={false}>
     <Sheet quiet testID="approval-view-exact" title={t(lang, 'approval.viewExact')} expanded={expanded}
       onExpandedChange={onExpandedChange} onOpened={onOpened}>
@@ -60,7 +62,7 @@ export function PermissionSource({ source, projectPath, lang, sheet }: {
         <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
           <Txt selectable accessible accessibilityRole="text" role="code" testID="approval-exact-source">{source}</Txt>
         </ScrollView>
-        {projectPath ? <Txt selectable testID="approval-exact-cwd" role="small" tone="inkSoft">{t(lang, 'approval.projectFolder', { path: projectPath })}</Txt> : null}
+        {directory ? <Txt selectable testID="approval-exact-cwd" role="small" tone="inkSoft">{directory}</Txt> : null}
       </View>
     </Sheet>
   </View>

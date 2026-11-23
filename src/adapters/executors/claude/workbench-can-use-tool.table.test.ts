@@ -161,7 +161,8 @@ describe('MCP:放进来的才问,问的是「工具名 + 去掉凭据的参数�
   it.each(ROWS)('%s 放进来 %j 问的通道 %s', async (tool, admitted, permit, want, asked) => {
     const g = setup({ admitted, permit })
     expect(await g.call(tool, { query: 'x', api_key: 'secret' })).toEqual(want)
-    expect(g.requests).toEqual(asked ? [{ tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x","api_key":"[credential omitted]"}` }] : [])
+    expect(g.requests).toEqual(asked ? [{ tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x","api_key":"[credential omitted]"}`,
+      display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }, { name: 'api_key', value: '[credential omitted]' }] } } }] : [])
   })
 
   it('名字 160 字可以问,161 字装不下 ⇒ 拒,不问', async () => {
@@ -204,7 +205,19 @@ describe('内置工具:trusted × solo × strict;要问的交给问的通道,带
   it.each(ASK)('%s', async (_why, input, opts, request) => {
     const g = setup()
     expect(await g.call('Bash', input, opts)).toEqual(ALLOW)
-    expect(g.requests).toEqual([{...request,onDenied:expect.any(Function)}])
+    const note = [opts.title, opts.description, opts.decisionReason].find(value => typeof value === 'string' && value.trim())
+    expect(g.requests).toEqual([{ ...request, onDenied: expect.any(Function), display: {
+      body: { kind: 'command', command: input.command }, ...(typeof note === 'string' ? { note: note.trim() } : {}),
+    } }])
+  })
+
+  it('sends a structured command with its explicit working directory and exact CRLF', async () => {
+    const g = setup()
+    const command = 'rm -rf build\r\nprintf done\n', cwd = 'C:\\sample\\nested'
+    expect(await g.call('Bash', { command, cwd }, { decisionReason: 'Review' })).toEqual(ALLOW)
+    const request = g.requests[0] as Parameters<NonNullable<SpawnContext['requestPermission']>>[0]
+    expect(request.display?.body.kind).toBe('command')
+    expect(request.display?.body.kind === 'command' && request.display.body.command === command && request.displayCwd === cwd).toBe(true)
   })
 
   it.each([['no', REFUSED], ['throws', REFUSED], ['missing', NO_CHANNEL]] as const)('问的通道 %s ⇒ 拒', async (permit, want) => {

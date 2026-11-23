@@ -1,13 +1,15 @@
+import type { CliSessionRowT } from '@wechat-cc/protocol'
 /**
  * 手机令牌(设备 / 链接)看终端会话登记处的那一份(P3c-2,设计稿 2026-11-05-p3-one-route-family「按范围不按路径的差别」)。
  *
  * 以前写在手机处理器里(features/phone/mobile-reads.ts 的 `/m/api/cli/sessions`);P3c-2 起 `GET /v1/cli/sessions` 是这份数据
  * 唯一的处理器,手机令牌从面板那一口进来也走它 —— 处理器看 caller,是手机令牌就回这里拼的行。规矩原样搬来:
- *   - 项目只给目录名(`project`),**不给**完整路径 `cwd`、也不给 `origin_agent`(哪台手报来的);
+ *   - 项目会话只给目录名(`project`),不带 `cwd`、`origin_agent`;权限请求可带自己报告的执行目录;
  *   - 最多 50 条;等批准的那一项带上中继开的码(`hash` / `actionable`),主人在场时没有码 ⇒ 手机只显示「在终端里等你」;
  *   - 在跑的前 8 条带此刻那一步(`now`)、开在电脑窗口里的 Claude 会话带 `live_window`、最近一句送进窗口的结果 `last_say`;
  *   - 行里带执行者正式名字(`displayName`)与这条会话的那件事(`matter_id`)。
  */
+import { framedTooLargeFor } from '../../domain/matters/phone-scope'
 import type { CliSessionView } from '../../ports/cli-session'
 import type { CliPhoneActions } from './phone-actions'
 
@@ -29,7 +31,11 @@ export function phoneCliSession(v: CliSessionView, pendingHash?: (sessionId: str
     session_id: v.session_id, code: v.code, source: v.source, status: v.status, stale: v.stale,
     project: v.project, machine: v.machine, last_summary: v.last_summary,
     last_event_at: v.last_event_at, last_prompt_at: v.last_prompt_at, created_at: v.created_at,
-    pending: v.pending ? { tool: v.pending.tool, summary: v.pending.summary, since: v.pending.since, hash, actionable: hash !== null } : null,
+    pending: v.pending ? {
+      tool: v.pending.tool, summary: v.pending.summary, since: v.pending.since, hash, actionable: hash !== null,
+      ...(v.pending.display ? { display: v.pending.display } : {}), ...(v.pending.cwd ? { cwd: v.pending.cwd } : {}),
+      ...(v.pending.truncated !== undefined ? { truncated: v.pending.truncated } : {}),
+    } : null,
     ...(v.matter_id ? { matter_id: v.matter_id } : {}),
   }
 }
@@ -41,17 +47,18 @@ export interface PhoneCliSessionsDeps {
   actions?: CliPhoneActions
   /** 执行者 id → 正式名字(收敛清单 ⑥);缺 ⇒ 行里不带 displayName,App 退回 id。 */
   executorName?: (id: string) => string
+  frameBudget?: number | undefined
 }
 
 /** 手机那一份列表(抛 ⇒ 由路由回 503 unavailable)。 */
-export function phoneCliSessionRows(deps: PhoneCliSessionsDeps): object[] {
+export function phoneCliSessionRows(deps: PhoneCliSessionsDeps): CliSessionRowT[] {
   const actions = deps.actions
   const ph = actions ? (id: string) => actions.pendingHash(id) : undefined
   // 在跑的会话带上此刻那一步(列表一眼看到谁在做什么);最多前 PHONE_CLI_NOW_MAX 条,读不到就不带。
   let budget = PHONE_CLI_NOW_MAX
   // 开在电脑窗口里的 Claude 会话(2026-10-18):手机上在跑时也能接着说(话送进那个窗口)。
   const live = actions?.liveWindows?.() ?? new Set<string>()
-  return deps.list().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
+  const rows = deps.list().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
     const runId=actions?.activeRun?.(v.session_id)
     const plain = {...phoneCliSession(v, ph),...(runId?{run_id:runId}:{})}
     const base = deps.executorName ? { ...plain, displayName: deps.executorName(v.source) } : plain
@@ -64,5 +71,13 @@ export function phoneCliSessionRows(deps: PhoneCliSessionsDeps): object[] {
     let now: ReturnType<CliPhoneActions['currentStep']> = null
     try { now = actions.currentStep(v.session_id) } catch { now = null }
     return now ? { ...row, now } : row
+  })
+  // Approval cards stay readable even when many terminal sessions are waiting.
+  // Keep every summary and decision; the detail view reads one session at a time.
+  if (deps.frameBudget === undefined || !framedTooLargeFor(JSON.stringify({ ok: true, sessions: rows }), deps.frameBudget)) return rows
+  return rows.map(row => {
+    if (!row.pending?.display) return row
+    const { display: _display, ...pending } = row.pending
+    return { ...row, pending }
   })
 }

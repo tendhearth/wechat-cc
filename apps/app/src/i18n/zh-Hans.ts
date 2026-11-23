@@ -208,6 +208,7 @@ const zh: Record<keyof typeof en, string> = {
   'approval.ask.url': '可以打开这个网址吗？',
   'approval.ask.query': '可以搜这个吗？',
   'approval.ask.tool': '可以用这个工具吗？',
+  'approval.executionFolder': '在 {path}',
   'approval.projectFolder': '项目目录 {path}',
   'approval.replaceAll': '（全部替换）',
   'approval.fetchPrompt': '要它做的：{prompt}',

@@ -51,7 +51,7 @@ export interface TerminalRoutesDeps {
    * 只给目录名、不给 cwd / origin_agent,最多 50 条,带拍板的码与此刻那一步。缺 ⇒ 手机令牌 503 cli_sessions_not_wired
    * (绝不退回桌面那一份)。
    */
-  phoneSessions?: (sessionId?:string) => object[]
+  phoneSessions?: (sessionId?:string, frameBudget?:number) => object[]
   ownerActions?: CliPhoneActions
   recap?: (id: string) => import('@wechat-cc/protocol').SessionRecapT | undefined
 }
@@ -123,7 +123,7 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
     'GET /v1/cli/sessions': async (q, _body, caller) => {
       if (fromPhone(caller)||(caller?.origin==='operator'&&q.get('owner')==='1')) {
         if (!deps.phoneSessions) return { status: 503, body: { error: 'cli_sessions_not_wired' } }
-        try { return { status: 200, body: { ok: true, sessions: deps.phoneSessions(q.get('session_id')??undefined) } } }
+        try { return { status: 200, body: { ok: true, sessions: deps.phoneSessions(q.get('session_id')??undefined,caller?.frameBudget) } } }
         catch { return { status: 503, body: { error: 'unavailable' } } }
       }
       const limitRaw = Number(q.get('limit') ?? CLI_SESSIONS_DEFAULT_LIMIT)

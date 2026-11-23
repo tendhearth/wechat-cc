@@ -106,8 +106,9 @@ appId: com.tendhearth.app
 - takeScreenshot: approve-kinds-7
 - scrollUntilVisible:
     element:
-      id: terminal-detail-pending-truncated
+      id: approval-example-terminal-edit
     direction: DOWN
+    centerElement: true
 - takeScreenshot: approve-kinds-8
 - scrollUntilVisible:
     element:

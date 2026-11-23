@@ -484,8 +484,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       const r = await api.matters.handoff({ body: { id: p.id, requestId: p.requestId, providerId: p.providerId }, retry: true })
       return { matterId: r.matterId }
     },
-    async cliSessions() {
-      return (await api.cli.sessions()).sessions
+    async cliSessions(sessionId) {
+      return (await api.cli.sessions({ query: sessionId ? { session_id: sessionId } : {} })).sessions
     },
     async cliPermission(p) {
       // 有码就带码:防止这期间换了一项待批,手机批到了没看过的那一项。
