@@ -1,43 +1,43 @@
-import z from 'zod'
+import { array, boolean, discriminatedUnion, literal, strictObject, string as zString, type infer as Infer } from 'zod'
 
 export const PERMISSION_DISPLAY_LIMITS = {
   string: 8192, changes: 16, files: 16, fields: 16, bytes: 32 * 1024,
 } as const
 
 const max = PERMISSION_DISPLAY_LIMITS
-const value = z.string().max(max.string)
-const field = z.strictObject({ name: value, value })
-const change = z.strictObject({ before: value, after: value, path: value.optional() })
-const fieldList = z.array(field).max(max.fields)
-const edit = z.strictObject({ kind: z.literal('edit'), path: value, changes: z.array(change).min(1).max(max.changes), replaceAll: z.boolean().optional() })
+const value = zString().max(max.string)
+const field = strictObject({ name: value, value })
+const change = strictObject({ before: value, after: value, path: value.optional() })
+const fieldList = array(field).max(max.fields)
+const edit = strictObject({ kind: literal('edit'), path: value, changes: array(change).min(1).max(max.changes), replaceAll: boolean().optional() })
 
-const displayShape = z.strictObject({
+const displayShape = strictObject({
   note: value.optional(),
-  body: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('command'), command: value, cwd: value.optional() }),
+  body: discriminatedUnion('kind', [
+    strictObject({ kind: literal('command'), command: value, cwd: value.optional() }),
     edit,
-    z.strictObject({ kind: z.literal('write'), path: value, content: value }),
-    z.strictObject({ kind: z.literal('patch'), files: z.array(z.strictObject({
+    strictObject({ kind: literal('write'), path: value, content: value }),
+    strictObject({ kind: literal('patch'), files: array(strictObject({
       path: value, change: value, movePath: value.optional(), diff: value,
     })).min(1).max(max.files) }),
-    z.strictObject({ kind: z.literal('url'), url: value, prompt: value.optional() }),
-    z.strictObject({ kind: z.literal('query'), query: value }),
-    z.strictObject({ kind: z.literal('fields'), fields: fieldList }),
-    z.strictObject({ kind: z.literal('text'), text: value }),
+    strictObject({ kind: literal('url'), url: value, prompt: value.optional() }),
+    strictObject({ kind: literal('query'), query: value }),
+    strictObject({ kind: literal('fields'), fields: fieldList }),
+    strictObject({ kind: literal('text'), text: value }),
   ]),
   extra: fieldList.optional(),
-  truncated: z.boolean().optional(),
+  truncated: boolean().optional(),
 })
 
 const wireBytes = (data: unknown) => new TextEncoder().encode(JSON.stringify(data)).length
 export const PermissionDisplaySchema = displayShape.refine(data => wireBytes(data) <= max.bytes, { message: 'permission_display_too_large' })
-export type PermissionDisplay = z.infer<typeof PermissionDisplaySchema>
-type Field = z.infer<typeof field>
-type Change = z.infer<typeof change>
+export type PermissionDisplay = Infer<typeof PermissionDisplaySchema>
+type Field = Infer<typeof field>
+type Change = Infer<typeof change>
 
 // A malformed optional preview must not invalidate an approval or its containing response.
 export const permissionDisplayWire = PermissionDisplaySchema.optional().catch(undefined)
-export const permissionCwdWire = z.string().max(4096)
+export const permissionCwdWire = zString().max(4096)
   .refine(path => /^(?:\/|[a-z]:[\\/]|\\\\)/i.test(path) && !/[\u0000-\u001f]/.test(path))
   .optional().catch(undefined)
 

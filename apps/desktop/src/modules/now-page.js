@@ -5,6 +5,7 @@ import { mountNowHero } from './now-hero.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { icon } from './icons.js'
 import { HOME_GROUP_WORDS } from '../generated/status-table.js'
+import { renderPermissionOperation } from './permission-operation.js'
 import { statusGlyphHtml } from './matter-status.js'
 
 const AGENTS = createAgentAvatars()
@@ -86,10 +87,8 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     close.addEventListener('click', () => dialog.close())
     head.append(hd, close)
     const body = document.createElement('div'); body.className = 'wb-handoff-body'
-    if (r.command) {
-      const label = document.createElement('p'); label.className = 'wb-history-note'; label.textContent = r.commandLabel ?? '具体内容'
-      const pre = document.createElement('pre'); pre.className = 'now-terminal-command'; pre.textContent = r.command
-      body.append(label, pre)
+    if (r.display) {
+      body.innerHTML = renderPermissionOperation(r.display, r)
     } else {
       const p = document.createElement('p'); p.className = 'wb-history-note'; p.textContent = r.tool ? `${r.tool} 没说具体要做什么。` : '它没说具体要做什么。'
       body.append(p)

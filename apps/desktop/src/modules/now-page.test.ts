@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { terminalWaitingRows } from './terminal-waiting.js'
 import { mountNowPage as mount } from './now-page.js'
 import { readFileSync } from 'node:fs'
 const manifest = readFileSync(`${__dirname}/../assets/pet/cc-v1/manifest.json`, 'utf8')
@@ -94,7 +95,7 @@ describe('mountNowPage', () => {
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: vi.fn(async () => true) })
     page.setAttention({ stale: true, tasks: [{ id: 'old', title: '旧任务', pendingPermissionCount: 1, pendingQuestionCount: 0 }] })
     expect(root.querySelector('#now-waiting-title')!.classList.contains('now-sr')).toBe(false)
-    page.setTerminal([{ id: 'terminal', title: '想运行 ls', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'ls' }])
+    page.setTerminal([{ id: 'terminal', title: '想运行 ls', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', display: { body: { kind: 'command', command: 'ls' } } }])
     expect((root.querySelector('#now-waiting') as HTMLElement).dataset.state).toBe('partial')
     expect(root.querySelector('#now-waiting-title')!.textContent).toContain('其余的暂时读不到')
     expect(root.querySelector('#now-waiting-title')!.classList.contains('now-sr')).toBe(false)
@@ -103,7 +104,7 @@ describe('mountNowPage', () => {
     expect(row.title).toBe('看清楚：想运行 ls · wechat-cc · Claude Code')
     expect(row.querySelector('.go .now-sr')!.textContent).toBe('看清楚 ›')
     row.click()
-    expect(document.querySelector('.now-terminal-command')!.textContent).toBe('ls')
+    expect(document.querySelector('.approval-command .approval-source')!.textContent).toBe('ls')
     page.setAttention({ stale: false, tasks: [] })
     expect((root.querySelector('#now-waiting') as HTMLElement).dataset.state).toBeUndefined()
     expect(root.querySelector('#now-waiting-title')!.classList.contains('now-sr')).toBe(true)
@@ -116,8 +117,8 @@ describe('mountNowPage', () => {
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: open, onResolveTerminal: resolve })
     page.setAttention({ stale: false, tasks: [{ id: 'a', title: '作品集', providerId: 'c', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["r"]' }] } as any)
     page.setTerminal([
-      { id: 's1', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'npm publish' },
-      { id: 's2', title: '要改 <b>x</b>', detail: 'melu', agent: 'codex', source: 'Codex', hash: null, tool: '', command: '要改 <b>x</b>' },
+      { id: 's1', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', display: { body: { kind: 'command', command: 'npm publish' } } },
+      { id: 's2', title: '要改 <b>x</b>', detail: 'melu', agent: 'codex', source: 'Codex', hash: null, tool: '', display: { body: { kind: 'text', text: '要改 <b>x</b>' } } },
     ])
     expect(document.getElementById('now-waiting-title')!.textContent).toBe('3 件事等你')
     expect(document.querySelectorAll('#now-waiting-list > li').length).toBe(3)
@@ -137,7 +138,7 @@ describe('mountNowPage', () => {
     expect(dlg).not.toBeNull()
     expect(dlg.querySelector('h2')!.textContent).toBe('想运行 npm publish')
     expect(dlg.querySelector('header p')!.textContent).toBe('wechat-cc · Claude Code')
-    expect(dlg.querySelector('.now-terminal-command')!.textContent).toBe('npm publish')
+    expect(dlg.querySelector('.approval-command .approval-source')!.textContent).toBe('npm publish')
     ;(dlg.querySelector('[data-decision="allow"]') as HTMLButtonElement).click()
     expect(resolve).toHaveBeenCalledWith('k3x9z', 'allow')
     expect(open).not.toHaveBeenCalled()
@@ -150,11 +151,27 @@ describe('mountNowPage', () => {
     expect(document.querySelector('dialog.now-terminal-dialog')).toBeNull()
     page.setTerminal([]); expect(document.getElementById('now-waiting')!.hidden).toBe(true)
   })
+  it('opens a structured terminal edit as review-style diff rows', () => {
+    const root = dom()
+    const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: vi.fn() })
+    page.setTerminal(terminalWaitingRows([{ session_id: 'edit', source: 'claude', status: 'waiting', project: 'sample',
+      pending: { tool: 'Edit', summary: '旧摘要…', hash: 'edit1', truncated: true, cwd: '/work',
+        display: { body: { kind: 'edit', path: '/work/a.ts', changes: [{ before: 'old', after: 'new' }] } } },
+    }]))
+    root.querySelector<HTMLButtonElement>('.now-terminal button')!.click()
+    const dialog = document.querySelector('.now-terminal-dialog')!
+    expect(dialog.querySelector('h2')?.textContent).toBe('想改 旧摘要…')
+    expect(dialog.querySelector('.approval-path')?.textContent).toBe('a.ts')
+    expect(dialog.querySelector('.wb-review-diff [data-line="deleted"]')?.textContent).toBe('− old')
+    expect(dialog.querySelector('.wb-review-diff [data-line="added"]')?.textContent).toBe('+ new')
+    expect(dialog.querySelector('.approval-meta')?.textContent).toBe('在 /work')
+    page.destroy()
+  })
   it('终端拍板没送出去 ⇒ 小窗里按钮回来 + 说再试;那一项已不在 ⇒ 说处理过了;没有 onResolveTerminal ⇒ 行不能点', async () => {
     const root = dom()
     const resolve = vi.fn().mockRejectedValueOnce(new Error('403')).mockResolvedValueOnce(false)
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: resolve })
-    page.setTerminal([{ id: 's1', title: '想用 Bash', detail: 'd', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: '' }])
+    page.setTerminal([{ id: 's1', title: '想用 Bash', detail: 'd', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash' }])
     ;(document.querySelector('.now-terminal button') as HTMLButtonElement).click()
     const dlg = () => document.querySelector('dialog.now-terminal-dialog') as HTMLDialogElement
     ;(dlg().querySelector('[data-decision="deny"]') as HTMLButtonElement).click()
@@ -167,14 +184,14 @@ describe('mountNowPage', () => {
     expect(document.querySelector('.now-terminal .go')!.textContent).toBe('这一项已经处理过了')
     const root2 = dom()
     const page2 = mountNowPage({ root: root2, presencePoller: poller(), onOpenTask: vi.fn() })
-    page2.setTerminal([{ id: 's1', title: 'Bash', detail: 'd', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: '' }])
+    page2.setTerminal([{ id: 's1', title: 'Bash', detail: 'd', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash' }])
     expect(document.querySelectorAll('.now-terminal button').length).toBe(0)
     void page
   })
   it('小窗开着时那一项被别处拍掉(列表里没了)⇒ 小窗自己关掉', () => {
     const root = dom()
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: vi.fn(async () => true) })
-    page.setTerminal([{ id: 's1', title: '想运行 ls', detail: 'd', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'ls' }])
+    page.setTerminal([{ id: 's1', title: '想运行 ls', detail: 'd', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', display: { body: { kind: 'command', command: 'ls' } } }])
     ;(document.querySelector('.now-terminal button') as HTMLButtonElement).click()
     expect(document.querySelector('dialog.now-terminal-dialog')).not.toBeNull()
     page.setTerminal([])
@@ -223,7 +240,7 @@ describe('mountNowPage', () => {
     expect(root.querySelector('.now-pet-stage')?.getAttribute('data-behavior')).toBe('idle')
     page.setConversationActivity({ running: { turnId: 'actual' }, events: [] })
     expect(root.querySelector('.now-pet-stage')?.getAttribute('data-cc-phase')).toBe('thinking')
-    page.setTerminal([{ id: 's', title: 'permission', detail: '', agent: 'codex', source: 'Codex', hash: 'p', tool: '', command: '' }])
+    page.setTerminal([{ id: 's', title: 'permission', detail: '', agent: 'codex', source: 'Codex', hash: 'p', tool: '' }])
     expect(root.querySelector('.now-pet-stage')?.getAttribute('data-behavior')).toBe('permission')
     page.setConversationSnapshot([{ id: 2, role: 'cc', text: '回复了' }])
     expect(root.querySelector('.now-pet-stage')?.getAttribute('data-behavior')).toBe('permission')

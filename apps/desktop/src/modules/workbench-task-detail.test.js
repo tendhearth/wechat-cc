@@ -36,9 +36,23 @@ describe('task detail follows authoritative current state',()=>{
   expect(root.querySelector('.wb-task-progress .wb-status').textContent).toBe('等你决定')
   expect(root.querySelector('#wb-artifacts').open).toBe(false)
   expect(root.querySelectorAll('[data-request-id="foreign"]')).toHaveLength(0)
-  expect(root.querySelector('.wb-permission p').textContent).toBe(permission.description)
+  expect(root.querySelector('.wb-permission [data-kind="text"] .approval-source').textContent).toBe(permission.description)
+  expect(root.querySelector('.wb-permission details summary').textContent).toBe('看完整原文')
+  expect(root.querySelector('.wb-permission details .approval-source').textContent).toBe(permission.description)
   expect(root.querySelector('.wb-controls-inner').firstElementChild.className).toBe('wb-permissions')
   expect(root.querySelectorAll('.wb-question-form')).toHaveLength(1)
+ })
+ it.each([
+  ['valid', {body:{kind:'command',command:'npm install sharp'}}, 'npm install sharp'],
+  ['absent', undefined, 'npm run sample'],
+  ['invalid', {body:{kind:'command',command:12}}, 'npm run sample'],
+ ])('uses %s wire data or the Claude parser inside the permission panel',(_name,display,command)=>{
+  const permission={id:'p',taskId:'A',tool:'Bash',description:'command=npm run sample',display,cwd:'/work/verified',createdAt:1}
+  const root=render({...page({providerId:'claude'},{permissions:[permission]}),providers:[{id:'claude',displayName:'Claude'}]})
+  expect(root.querySelector('.wb-permission-tool').textContent).toBe('Claude 想运行一条命令')
+  expect(root.querySelector('.wb-permission [data-kind="command"] .approval-source').textContent).toBe(command)
+  expect(root.querySelector('.approval-meta').textContent).toBe('在 /work/verified')
+  expect(root.querySelector('.wb-permission details .approval-source').textContent).toBe(permission.description)
  })
  it('promotes saved JSON output but keeps known review-only artifacts review-first',()=>{
   expect(render(page({status:'completed'})).querySelector('#wb-artifacts').classList.contains('is-outcome')).toBe(true)

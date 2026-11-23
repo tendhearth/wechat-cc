@@ -603,7 +603,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
               const resolved=permissions.resolve(event.permission.id,decision,reason)
               if(resolved)ctx.hub.bumped(task.id)
               return resolved
-            },()=>permissions.deadline(event.permission.id))
+            },()=>permissions.deadline(event.permission.id),{
+              executor:task.providerId,actor:ctx.deps.registry.namesOf(task.providerId).short,projectPath:task.path,
+            })
             permissionPrompts.set(event.permission.id,close);replyLine=close.replyLine??''
           }
           requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'))

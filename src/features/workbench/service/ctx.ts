@@ -21,6 +21,12 @@ export interface ServiceHub {
   /** 收尾:叫醒所有挂着的长轮询、退掉经 service 订的回调(shutdown 最后一步)。 */
   dispose():void
 }
+export interface PermissionPromptContext {
+  executor: string
+  actor: string
+  projectPath?: string
+}
+
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {
   /** 主人身份的唯一来源(材料作用域、微信投递、entry 校验都看它)。 */
@@ -34,7 +40,7 @@ export interface ServiceDeps {
   /** 权限卡的等待上限(ms);缺省 WORKBENCH_PERMISSION_TIMEOUT_MS。 */
   permissionTimeoutMs?: number
   askOpinion?: import('../ask-opinion').AskOpinion
-  permissionPrompt?: (title: string, permission: import('../../../ports/workbench').PendingWorkbenchPermission, answer: (decision: import('../../../ports/workbench').PermissionDecision, reason?: string) => boolean, deadline: () => number | null) => (() => void)&{replyLine?:string}
+  permissionPrompt?: (title: string, permission: import('../../../ports/workbench').PendingWorkbenchPermission, answer: (decision: import('../../../ports/workbench').PermissionDecision, reason?: string) => boolean, deadline: () => number | null, context?: PermissionPromptContext) => (() => void)&{replyLine?:string}
   /** 放行规则(2026-10-19):权限卡登记之前先问;不传 ⇒ 每条都问主人(改造前)。 */
   permissionDecide?: (ask: AskSource) => Promise<{ verdict: 'allow' | 'deny' | 'ask'; by: string }>
   /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */

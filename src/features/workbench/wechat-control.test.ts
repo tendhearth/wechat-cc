@@ -370,6 +370,29 @@ describe('WeChat task control through the shared service',()=>{
     expect(reply).toContain('未确认');expect(reply).not.toContain('已传达');expect(service.detail(task.id).inputs[0]?.status).toBe('held')
   })
 
+  it.each([false, true])('shows the structured WeChat permission within the existing budget (long=%s)', async long=>{
+    setup({async spawn(_project,ctx){return{async *dispatch(){
+      await ctx.requestPermission!({
+        tool:'Edit',cwd:project,description:long?'x'.repeat(6001):'legacy edit',
+        display:{body:{kind:'edit',path:join(project,'demo.ts'),changes:[{before:'old',after:'new'}]}},
+      })
+      yield result
+    },async close(){}}}})
+    const task=create()
+    await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
+    const request=service.detail(task.id).permissions[0]!
+    const reply=await service.handleWechat('owner',`任务 ${task.id} 权限 ${request.id}`)
+    if(long){
+      expect(reply).toContain('权限内容较长，请在桌面工作台完整查看。')
+      expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toContain('微信仍可拒绝')
+      expect(service.detail(task.id).permissions).toHaveLength(1)
+    }else{
+      expect(reply).toContain('Claude 想改 demo.ts（1 处）：\n- old\n+ new')
+      expect(reply).not.toContain('legacy edit')
+    }
+    expect(await service.handleWechat('owner',`任务 ${task.id} 拒绝 ${request.id}`)).toContain('已拒绝')
+  })
+
   it('shows and resolves only the exact permission, rejecting wrong task, owner and duplicate grants',async()=>{
     const allowed:boolean[]=[]
     setup({async spawn(_p,ctx){return{async *dispatch(){allowed.push(await ctx.requestPermission!({tool:'Bash',command:'cat report.txt',description:'读取项目中的报告文件'}));yield result},async close(){}}}})

@@ -170,8 +170,22 @@
 .wb-permissions>header>span { font-size:11px; }
 .wb-permission { padding-top:12px; }
 .wb-permission+.wb-permission { margin-top:12px; border-top:1px solid var(--th-hair); }
-.wb-permission-tool { color:var(--th-ink-soft); font:500 11px/1.5 var(--mono); }
-.wb-permission p { margin:5px 0; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--th-ink); font:12px/1.65 var(--mono); }
+.wb-permission-tool { display:block; margin-bottom:5px; color:var(--th-ink-soft); font:500 12px/1.5 var(--th-font-sans); overflow-wrap:anywhere; }
+.approval-operation { display:grid; min-width:0; gap:5px; color:var(--th-ink); }
+.approval-panel { min-width:0; padding:8px 10px; border-radius:var(--th-radius-control); background:var(--th-rail); }
+.approval-source,.approval-path,.approval-diff { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 var(--th-font-mono); user-select:text; }
+.approval-command { display:grid; grid-template-columns:auto minmax(0,1fr); }
+.approval-command>span { white-space:pre; color:var(--th-ink-soft); font:12px/1.65 var(--th-font-mono); }
+.approval-path { margin-bottom:4px; color:var(--th-ink-soft); }
+.approval-change+.approval-change { margin-top:6px; }
+.approval-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:3px 12px; margin:0; }
+.approval-fields dt { color:var(--th-ink-soft); overflow-wrap:anywhere; }
+.approval-fields dd { margin:0; min-width:0; }
+.approval-extra,.approval-meta,.approval-disclosure { color:var(--th-ink-soft); font:12px/1.55 var(--th-font-sans); overflow-wrap:anywhere; }
+.approval-meta { white-space:pre-wrap; user-select:text; }
+.approval-disclosure>summary { width:fit-content; cursor:pointer; }
+.approval-operation .approval-disclosure>summary { padding:2px 0; }
+.approval-disclosure>.approval-source { color:var(--th-ink); }
 .wb-permission time { color:var(--wb-muted); font-size:10px; }
 .wb-permission-actions,.wb-control-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
 .wb-permission-actions { margin-top:9px; flex-wrap:wrap; }
@@ -244,6 +258,7 @@
 .wb-preview pre.wb-review-diff { margin:10px 0 0; padding:8px 0; white-space:pre; overflow:auto; font:11px/1.7 var(--mono); }
 .wb-review-diff code { display:block; min-width:100%; width:max-content; }
 .wb-review-diff [data-line] { display:block; min-height:1.7em; padding:0 12px; }
+.approval-diff [data-line] { padding:0 6px; }
 .wb-review-diff [data-line=added] { background:color-mix(in srgb, var(--th-ok) 12%, var(--th-paper)); color:var(--th-ink); }
 .wb-review-diff [data-line=deleted] { background:color-mix(in srgb, var(--th-bad) 12%, var(--th-paper)); color:var(--th-bad); }
 .wb-review-diff [data-line=hunk] { background:var(--th-rail); color:var(--th-ink-soft); }
