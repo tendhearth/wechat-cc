@@ -504,6 +504,15 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(review.body.reviews.flatMap(r => r.files ?? []).map(f => f.path)).toContain('NOTE.md')
   })
 
+  it('reads and confirms notebook replies through the operator routes', async () => {
+    expect(await desktop('GET', '/v1/notebook/unseen')).toEqual({
+      status: 200, body: { ok: true, unseen: false, day: null },
+    })
+    expect(await desktop('POST', '/v1/notebook/seen', { ids: ['missing'] })).toEqual({
+      status: 200, body: { ok: true },
+    })
+  })
+
   it('operator GET sweep: registered reads respond on the full daemon', async () => {
     const missingId = '00000000'
     const missingUuid = '00000000-0000-4000-8000-000000000000'

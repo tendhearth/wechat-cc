@@ -14,8 +14,12 @@ const LINE_HEIGHT = 36
 const UNSAVED_DELAY = 5000
 const DEFAULT_PEN = /** @type {const} */ ({ font: 'kai', ink: 'blueBlack', reason: '' })
 
-/** @param {HTMLElement} host @param {Parameters<typeof callNotebook>[0]} transport */
-export function mountNotebook(host, transport) {
+/**
+ * @param {HTMLElement} host
+ * @param {Parameters<typeof callNotebook>[0]} transport
+ * @param {Pick<ReturnType<typeof import("./notebook-mail.js").mountNotebookMail>, "markSeen" | "wrote">} [mail]
+ */
+export function mountNotebook(host, transport, mail) {
   const input = /** @type {HTMLTextAreaElement} */ (host.querySelector('#notebook-write'))
   const list = /** @type {HTMLElement} */ (host.querySelector('#notebook-entries'))
   const scroll = /** @type {HTMLElement} */ (host.querySelector('.notebook-scroll'))
@@ -79,6 +83,82 @@ export function mountNotebook(host, transport) {
   let revision = 0
   let pollTimer = 0
   let statusTimer = 0
+  let seenScheduled = false
+  let seenInFlight = false
+  /** @type {Map<Element, string>} */
+  let renderedReplies = new Map()
+  const confirmed = new Set()
+  const exposedReplies = new Set()
+  /** @type {Set<Element>} */
+  const observedReplies = new Set()
+  const replyObserver = mail && typeof IntersectionObserver === 'function'
+    ? new IntersectionObserver(entries => {
+      if (!canConfirm()) return
+      for (const entry of entries) {
+        const id = renderedReplies.get(entry.target)
+        if (id && entry.isIntersecting && entry.intersectionRatio >= 0.5) exposedReplies.add(id)
+      }
+      scheduleSeen()
+    }, { root: scroll, threshold: 0.5 })
+    : undefined
+
+  function canConfirm() {
+    return !!mail && active && !host.hidden && document.body.dataset.pane === 'notebook'
+      && document.documentElement.dataset.mode === 'dashboard'
+      && document.visibilityState === 'visible'
+  }
+
+  function stopObservingReplies() {
+    replyObserver?.disconnect()
+    replyObserver?.takeRecords()
+    observedReplies.clear()
+  }
+
+  function observeReplies() {
+    if (!replyObserver || !canConfirm()) return
+    for (const node of observedReplies) {
+      if (renderedReplies.has(node)) continue
+      replyObserver.unobserve(node)
+      observedReplies.delete(node)
+    }
+    for (const [node, id] of renderedReplies) {
+      if (confirmed.has(id) || observedReplies.has(node)) continue
+      observedReplies.add(node)
+      replyObserver.observe(node)
+    }
+  }
+
+  function repliesToConfirm() {
+    return [...renderedReplies.values()].filter(id => !confirmed.has(id) && (!replyObserver || exposedReplies.has(id)))
+  }
+
+  function scheduleSeen() {
+    if (seenScheduled || seenInFlight || !canConfirm() || !repliesToConfirm().length) return
+    seenScheduled = true
+    // Give the current rows a frame to paint. A render or pane change in
+    // between invalidates that frame and schedules a new confirmation.
+    const rowsToConfirm = renderedReplies
+    const pane = view
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      seenScheduled = false
+      if (pane !== view || rowsToConfirm !== renderedReplies) scheduleSeen()
+      else void confirmRenderedReplies()
+    }))
+  }
+
+  async function confirmRenderedReplies() {
+    if (!mail || !canConfirm()) return
+    const ids = repliesToConfirm().slice(0, 50)
+    if (!ids.length) return
+    const selected = day
+    seenInFlight = true
+    try {
+      if (!await mail.markSeen(ids)) return
+      if (selected === day) for (const id of ids) confirmed.add(id)
+    } catch { return /* Retry on the next render or visibility change. */ }
+    finally { seenInFlight = false }
+    scheduleSeen()
+  }
 
   const save = () => writeNotebookStorage(storage, NOTEBOOK_CACHE_KEY,
     { day, today: knowsToday ? today : undefined, timeZone, days, entries: pages.get(day) ?? [], pen, penPending, paper })
@@ -109,6 +189,7 @@ export function mountNotebook(host, transport) {
     const reply = /** @type {{ entry: NotebookEntry }} */ (await callNotebook(transport, { action: 'write', body }))
     return reply?.entry
   }, (pending, entry) => {
+    mail?.wrote?.()
     revision++
     for (const [dateKey, entries] of pages) {
       if (dateKey === entry.day) continue
@@ -241,6 +322,8 @@ export function mountNotebook(host, transport) {
     const now = Date.now()
     let nextStatus = Infinity
     const retain = new Set()
+    /** @type {Map<Element, string>} */
+    const replies = new Map()
     let position = list.firstChild
     for (const [index, entry] of entries.entries()) {
       const key = entry.clientId ?? entry.id
@@ -263,6 +346,7 @@ export function mountNotebook(host, transport) {
       if (node !== position) list.insertBefore(node, position)
       position = node.nextSibling
       rows.set(key, { node, signature })
+      if (entry.author === 'cc' && entry.refId !== null) replies.set(node, entry.id)
     }
     for (const [key, row] of rows) {
       if (retain.has(key)) continue
@@ -277,17 +361,20 @@ export function mountNotebook(host, transport) {
     }
     window.clearTimeout(statusTimer)
     if (Number.isFinite(nextStatus)) statusTimer = window.setTimeout(render, nextStatus)
+    renderedReplies = replies
+    observeReplies()
+    scheduleSeen()
   }
 
-  /** @param {string} [target] */
-  async function refresh(target) {
+  /** @param {string} [target] @param {boolean} [keepDay] */
+  async function refresh(target, keepDay = false) {
     const token = view
     const stamp = revision
     const selected = day
     try {
       const data = await readDay(selected)
       if (!active || token !== view) return
-      if (stamp !== revision) return void refresh(target)
+      if (stamp !== revision) return void refresh(target, keepDay)
       pages.set(data.day, data.entries.filter(entry => entry.day === data.day))
       days = [...data.days].sort()
       pen = data.pen ?? DEFAULT_PEN
@@ -297,7 +384,7 @@ export function mountNotebook(host, transport) {
       knowsToday = true
       today = data.today
       timeZone = data.timeZone
-      if (wasToday && day !== today) {
+      if (!keepDay && wasToday && day !== today) {
         selectDay(today)
         scroll.scrollTop = scroll.scrollHeight
         return void refresh()
@@ -329,6 +416,9 @@ export function mountNotebook(host, transport) {
   /** @param {string} selected */
   function selectDay(selected) {
     day = selected
+    confirmed.clear()
+    exposedReplies.clear()
+    stopObservingReplies()
     view++
     rows.clear()
     list.replaceChildren()
@@ -337,15 +427,15 @@ export function mountNotebook(host, transport) {
     save()
   }
 
-  /** @param {string} selected @param {string} [target] */
-  function showDay(selected, target) {
+  /** @param {string} selected @param {string} [target] @param {boolean} [keepDay] */
+  function showDay(selected, target, keepDay = false) {
     if (selected !== day) {
       selectDay(selected)
       scroll.scrollTop = selected === today && !target ? scroll.scrollHeight : 0
       if (selected === today && !target) input.focus({ preventScroll: true })
     }
     const located = target && locate(target)
-    void refresh(located ? undefined : target)
+    void refresh(located ? undefined : target, keepDay)
   }
 
   /** @param {NotebookEntry} entry */
@@ -428,14 +518,24 @@ export function mountNotebook(host, transport) {
 
   const observer = new ResizeObserver(resizeInput)
   observer.observe(scroll)
+  document.addEventListener('visibilitychange', () => {
+    // Reobserve on return so even an unchanged intersection is reported again.
+    stopObservingReplies()
+    observeReplies()
+    scheduleSeen()
+  })
   window.addEventListener('online', () => {
     if (initialized) void retry()
     if (active) void refresh()
   })
 
   return {
-    open() {
-      if (active) return
+    /** @param {string} [targetDay] */
+    open(targetDay) {
+      if (active) {
+        if (targetDay) showDay(targetDay, undefined, true)
+        return
+      }
       active = true
       view++
       if (!initialized) {
@@ -457,10 +557,11 @@ export function mountNotebook(host, transport) {
         }
       }
       syncOfflineDate()
+      if (targetDay && targetDay !== day) selectDay(targetDay)
       render()
       resizeInput()
       if (day === today) input.focus({ preventScroll: true })
-      void refresh()
+      void refresh(undefined, !!targetDay)
       void retry()
       pollTimer = window.setInterval(() => {
         syncOfflineDate()
@@ -471,6 +572,7 @@ export function mountNotebook(host, transport) {
       if (!active) return
       active = false
       view++
+      stopObservingReplies()
       window.clearInterval(pollTimer)
       window.clearTimeout(statusTimer)
     },

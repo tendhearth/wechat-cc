@@ -53,6 +53,8 @@ export const DESKTOP_CALLS = {
   },
   notebook: {
     get: call('GET /v1/notebook', { query: t<NotebookPageQueryT>() }),
+    unseen: call('GET /v1/notebook/unseen', {}),
+    seen: call('POST /v1/notebook/seen', { body: t<{ ids: string[] }>() }),
     write: call('POST /v1/notebook/write', { body: t<{ body: string; clientId: string }>() }),
     strike: call('POST /v1/notebook/strike', { body: t<{ id: string; struck: boolean }>() }),
     paper: call('POST /v1/notebook/paper', { body: t<{ paper: NotebookPaperT }>() }),

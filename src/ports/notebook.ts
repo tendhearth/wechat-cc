@@ -2,6 +2,9 @@ import type { NotebookChatReadResponseT, NotebookPageResponseT } from '@wechat-c
 import type { NotebookEntry, NotebookPaper, NotebookPen, NotebookRow } from '../domain/notebook'
 
 export interface NotebookSettings {
+  replyReadState: { highWater: number; missedIds: string[] }
+  repliesSeenAt: number
+  repliesSeenIds: string[]
   pen: NotebookPen
   paper: NotebookPaper
   initiative: { lastAt: number; day: string; attempts: number; failures: number; retryAt: number }
@@ -13,6 +16,9 @@ export interface NotebookStore {
   strike(id: string, at: number | null): 'ok' | 'missing' | 'cc'
   byId(id: string): NotebookRow | null
   referenceTimestamps(ids: readonly string[]): { id: string; createdAt: number }[]
+  replyTimestamps(ids: readonly string[]): { id: string; createdAt: number }[]
+  missedReplyIds(after: number, through: number, missedIds: readonly string[], seenIds: readonly string[], limit: number): string[]
+  firstUnseenReplyAfter(at: number, missedIds: readonly string[]): number | null
   occupiedDays(timezone: string): readonly string[]
   list(options?: { since?: number; until?: number; limit?: number; query?: string; olderThan?: string; ownerOnly?: boolean }): NotebookRow[]
   atomic<T>(fn: () => T): T
@@ -28,6 +34,8 @@ export interface NotebookCaller {
 export interface Notebook {
   open(origin: 'desktop' | 'app', fonts?: string): Promise<void> | undefined
   page(day?: string): NotebookPageResponseT
+  markRepliesSeen(ids: readonly string[]): void
+  unseen(): { ok: true; unseen: boolean; day: string | null }
   write(body: string, clientId: string, origin: 'desktop' | 'app'): NotebookEntry
   strike(id: string, struck: boolean): 'ok' | 'missing' | 'cc'
   paper(paper: NotebookPaper): NotebookPaper

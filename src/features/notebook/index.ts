@@ -15,6 +15,7 @@ import type { Notebook, NotebookCaller, NotebookSettings, NotebookStore } from '
 const CHAT_READ_MAX_CHARS = 26_000
 const CHAT_READ_BATCH = 32
 const DAY_MS = 86_400_000
+const MAX_MISSED_REPLY_IDS = 200
 const EMPTY_INITIATIVE: NotebookSettings['initiative'] = { lastAt: 0, day: '', attempts: 0, failures: 0, retryAt: 0 }
 
 interface NotebookDeps {
@@ -38,6 +39,24 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     const entry = store.append({ author, body, origin, createdAt, clientId, refId })
     deps.log?.(1, Array.from(entry.body).length)
     return entry
+  }
+  function advanceReplyReadState(state: NotebookSettings['replyReadState'], ids: readonly string[]) {
+    const replies = store.replyTimestamps(ids)
+    const highWater = replies.reduce((latest, reply) => Math.max(latest, reply.createdAt), state.highWater)
+    const missedIds = store.missedReplyIds(state.highWater, highWater, state.missedIds,
+      replies.map(reply => reply.id), MAX_MISSED_REPLY_IDS)
+    return { highWater, missedIds }
+  }
+
+  // Called inside the same transaction as the first read or confirmation.
+  function replyReadState() {
+    const saved = store.get('replyReadState')
+    if (saved !== null) return saved
+    const baseline = { highWater: store.get('repliesSeenAt') ?? now(), missedIds: [] }
+    const legacyIds = store.get('repliesSeenIds') ?? []
+    const state = legacyIds.length ? advanceReplyReadState(baseline, legacyIds) : baseline
+    store.set('replyReadState', state)
+    return state
   }
 
   let modelActive = false
@@ -175,6 +194,20 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
       let timeZone = 'UTC'
       try { timeZone = new Intl.DateTimeFormat('en', { timeZone: timezone }).resolvedOptions().timeZone } catch {}
       return { day: selected, today, timeZone, days: [...days], entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
+    },
+    markRepliesSeen(ids) {
+      store.atomic(() => {
+        const state = replyReadState()
+        const next = advanceReplyReadState(state, ids)
+        if (next.highWater !== state.highWater || next.missedIds.length !== state.missedIds.length) {
+          store.set('replyReadState', next)
+        }
+      })
+    },
+    unseen() {
+      const state = store.get('replyReadState') ?? store.atomic(replyReadState)
+      const at = store.firstUnseenReplyAfter(state.highWater, state.missedIds)
+      return { ok: true, unseen: at !== null, day: at === null ? null : localParts(at, settings().timezone).day }
     },
     write(body, clientId, origin) {
       const entry = append('owner', body, origin, now(), clientId)

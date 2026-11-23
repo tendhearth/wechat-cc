@@ -1465,3 +1465,22 @@ html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[da
   white-space: pre;
 }
 
+[data-desk-wide] #desk-notebook-envelope {
+  position: absolute;
+  left: 37px;
+  bottom: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+[data-desk-wide] #desk-notebook-envelope:focus-visible { outline: 2px solid var(--th-accent); }
+[data-desk-wide] #desk-notebook-envelope img { display: block; width: 22px; }
+[data-desk-wide] #desk-notebook-dot:not([hidden]) {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  margin-inline-start: auto;
+  border-radius: 50%;
+  background: var(--th-accent);
+}

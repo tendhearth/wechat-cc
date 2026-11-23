@@ -404,3 +404,224 @@ for (const width of [1280, 800]) {
     }
   })
 }
+
+const mailPath = '**/v1/notebook/unseen'
+const seenPath = '**/v1/notebook/seen'
+const mailName = '本子上有 CC 的回信'
+const mailDot = '#desk-notebook-dot'
+const emptyMail = { ok: true, unseen: false, day: null }
+
+for (const via of ['信封', '本子行'] as const) {
+  test(`点${via}翻到回信那天，读回来以后信封和小点消失`, async ({ page, shimUrl }) => {
+    await page.setViewportSize({ width: 1280, height: 820 })
+    const owner = row(901, 'owner', 'fixture', october)
+    const reply = row(902, 'cc', 'fixture', october, owner.id)
+    const { reads, settings } = await mockNotebook(page, { [october]: [owner, reply] })
+    const read = gate()
+    settings.readGate = read.wait
+    const confirmed: string[][] = []
+    await page.route(seenPath, route => {
+      confirmed.push(route.request().postDataJSON().ids)
+      return route.fulfill({ json: { ok: true } })
+    })
+    await page.route(mailPath, route => route.fulfill({ json: confirmed.length
+      ? emptyMail : { ok: true, unseen: true, day: october } }))
+    try {
+      await page.goto(shimUrl)
+      await expect(page.locator('#dash-global-rail')).toBeVisible()
+      const envelope = page.getByRole('button', { name: mailName, exact: true })
+      const notebook = page.getByRole('button', { name: '本子，有回信', exact: true })
+      await expect(envelope).toBeVisible()
+      await expect(envelope).toHaveAttribute('title', mailName)
+      await expect(envelope.locator('img')).toHaveCSS('width', '22px')
+      await expect(page.locator(mailDot)).toBeVisible()
+      await page.locator('#topbar-cc').focus()
+      await page.keyboard.press('Tab')
+      await expect(envelope).toBeFocused()
+      if (via === '信封') await page.keyboard.press('Enter')
+      else await notebook.click()
+      await expect(page.locator('#notebook-date')).toHaveText('10 月 28 日')
+      await expect.poll(() => reads.map(q => q.get('day'))).toEqual([october])
+      await expect(envelope).toBeVisible()
+      read.release()
+      await expect(envelope).toBeHidden()
+      expect(confirmed).toEqual([[reply.id]])
+      await expect(page.locator(mailDot)).toBeHidden()
+      await expect(page.getByRole('button', { name: '本子', exact: true })).toBeVisible()
+    } finally {
+      read.release()
+    }
+  })
+}
+
+for (const leaveNotebook of [false, true]) {
+  test(leaveNotebook ? '切到别页后窗口回到前台也不确认回信' : '后台刷出回信后，等窗口可见再确认', async ({ page, shimUrl }) => {
+    await page.setViewportSize({ width: 1280, height: 820 })
+    await page.addInitScript(() => {
+      let visible = true
+      Object.defineProperties(document, {
+        visibilityState: { get: () => visible ? 'visible' : 'hidden' },
+        hidden: { get: () => !visible },
+      })
+      document.addEventListener('test-visibility', event => {
+        visible = (event as CustomEvent<boolean>).detail
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+    })
+    const setVisible = (visible: boolean) => page.evaluate(value => {
+      document.dispatchEvent(new CustomEvent('test-visibility', { detail: value }))
+    }, visible)
+    const owner = row(903, 'owner', 'fixture', pageDay)
+    const reply = row(904, 'cc', 'fixture', pageDay, owner.id)
+    const { entries } = await mockNotebook(page, { [pageDay]: [owner] })
+    const confirmed: string[][] = []
+    await page.route(seenPath, route => {
+      confirmed.push(route.request().postDataJSON().ids)
+      return route.fulfill({ json: { ok: true } })
+    })
+    await page.route(mailPath, route => route.fulfill({ json: confirmed.length
+      ? emptyMail : { ok: true, unseen: true, day: pageDay } }))
+
+    await page.goto(shimUrl)
+    await expect(page.locator('#dash-global-rail')).toBeVisible()
+    const envelope = page.getByRole('button', { name: mailName, exact: true })
+    await expect(envelope).toBeVisible()
+    await envelope.click()
+    await expect(page.locator('.notebook-entry[data-author="owner"]')).toBeVisible()
+
+    await setVisible(false)
+    entries[pageDay]!.push(reply)
+    await page.clock.fastForward(60_000)
+    await expect(page.locator('.notebook-entry[data-author="cc"]')).toBeVisible()
+    await page.clock.runFor(100)
+    expect(confirmed).toEqual([])
+    await expect(envelope).toBeVisible()
+    await expect(page.locator(mailDot)).toBeVisible()
+
+    if (leaveNotebook) await clickNav(page, 'overview')
+    const recheck = page.waitForResponse(mailPath)
+    await setVisible(true)
+    await recheck
+    if (leaveNotebook) {
+      await page.clock.runFor(100)
+      expect(confirmed).toEqual([])
+      await expect(envelope).toBeVisible()
+      await expect(page.locator(mailDot)).toBeVisible()
+      await envelope.click()
+    }
+    await expect(envelope).toBeHidden()
+    await expect(page.locator(mailDot)).toBeHidden()
+    expect(confirmed).toEqual([[reply.id]])
+  })
+}
+
+test('刷新后回信还在滚动区下方，滚到眼前才确认并收起信', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 1280, height: 820 })
+  const owners = Array.from({ length: 40 }, (_, index) => row(1000 + index, 'owner', 'fixture', pageDay))
+  const reply = row(1050, 'cc', 'fixture', pageDay, owners[0]!.id)
+  const { entries } = await mockNotebook(page, { [pageDay]: owners })
+  const confirmed: string[][] = []
+  await page.route(seenPath, route => {
+    confirmed.push(route.request().postDataJSON().ids)
+    return route.fulfill({ json: { ok: true } })
+  })
+  await page.route(mailPath, route => route.fulfill({ json: entries[pageDay]!.includes(reply) && !confirmed.length
+    ? { ok: true, unseen: true, day: pageDay } : emptyMail }))
+
+  await page.goto(shimUrl)
+  await expect(page.locator('#dash-global-rail')).toBeVisible()
+  await clickNav(page, 'notebook')
+  await expect(page.locator('.notebook-entry[data-author="owner"]')).toHaveCount(owners.length)
+  const scroll = page.locator('.notebook-scroll')
+  await scroll.evaluate(node => { node.scrollTop = 0 })
+  entries[pageDay]!.push(reply)
+  await page.clock.fastForward(60_000)
+  const replyRow = page.locator('.notebook-entry[data-author="cc"]')
+  await expect(replyRow).toHaveCount(1)
+  await expect(replyRow).not.toBeInViewport()
+  await page.clock.runFor(100)
+  const envelope = page.getByRole('button', { name: mailName, exact: true })
+  await expect(envelope).toBeVisible()
+  await expect(page.locator(mailDot)).toBeVisible()
+  expect(confirmed).toEqual([])
+
+  await scroll.evaluate(node => { node.scrollTop = node.scrollHeight })
+  await expect(replyRow).toBeInViewport({ ratio: 0.5 })
+  await expect(envelope).toBeHidden()
+  await expect(page.locator(mailDot)).toBeHidden()
+  expect(confirmed).toEqual([[reply.id]])
+})
+
+test('800 像素宽的本子确认眼前的回信，仍不查询未读', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 800, height: 820 })
+  const owner = row(1060, 'owner', 'fixture', pageDay)
+  const reply = row(1061, 'cc', 'fixture', pageDay, owner.id)
+  await mockNotebook(page, { [pageDay]: [owner, reply] })
+  let checks = 0
+  await page.route(mailPath, route => {
+    checks++
+    return route.fulfill({ json: emptyMail })
+  })
+  await page.route(seenPath, route => route.fulfill({ json: { ok: true } }))
+
+  await page.goto(shimUrl)
+  await expect(page.locator('#dash-global-rail')).toBeVisible()
+  const seen = page.waitForResponse(seenPath)
+  await clickNav(page, 'notebook')
+  await expect(page.locator('.notebook-entry[data-author="cc"]')).toBeInViewport({ ratio: 0.5 })
+  const response = await seen
+  expect(response.ok()).toBe(true)
+  expect(response.request().method()).toBe('POST')
+  expect(response.request().postDataJSON()).toEqual({ ids: [reply.id] })
+  await page.clock.fastForward(61_000)
+  expect(checks).toBe(0)
+})
+
+test('宽窗口没有回信就不摆信，写成功后每 20 秒查一次', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 1280, height: 820 })
+  const { reads } = await mockNotebook(page)
+  let checks = 0
+  await page.route(mailPath, route => {
+    checks++
+    return route.fulfill({ json: emptyMail })
+  })
+  await page.goto(shimUrl)
+  await expect(page.locator('#dash-global-rail')).toBeVisible()
+  await clickNav(page, 'notebook')
+  await expect.poll(() => reads.length).toBeGreaterThan(0)
+  await expect.poll(() => checks).toBeGreaterThanOrEqual(1)
+  await expect(page.locator('#desk-notebook-envelope')).toBeHidden()
+  await expect(page.locator(mailDot)).toBeHidden()
+  const saved = page.waitForResponse('**/v1/notebook/write')
+  await page.locator(writeInput).fill('fixture')
+  await page.locator(writeInput).press('Enter')
+  expect((await saved).ok()).toBe(true)
+  await expect(page.locator('.notebook-strike')).toBeVisible()
+  const before = checks
+  await page.clock.fastForward(20_100)
+  await expect.poll(() => checks).toBe(before + 1)
+  await page.clock.fastForward(20_000)
+  await expect.poll(() => checks).toBe(before + 2)
+})
+
+for (const [surface, width, alive] of [['窄窗口', 760, true], ['CC 停止的宽窗口', 1280, false]] as const) {
+  test(`${surface}没有信，也不查回信`, async ({ page, shim, shimUrl }) => {
+    await shim.invoke('demo.seed', { daemonAlive: alive })
+    await page.setViewportSize({ width, height: 820 })
+    await mockNotebook(page)
+    let checks = 0
+    await page.route(mailPath, route => {
+      checks++
+      return route.fulfill({ json: { ok: true, unseen: true, day: october } })
+    })
+    await page.goto(shimUrl)
+    await expect(page.locator('#dash-global-rail')).toBeVisible()
+    if (!alive) await expect(page.locator('#desk-cc-presence')).toHaveText('CC 没在运行')
+    await clickNav(page, 'notebook')
+    await expect(page.locator('#notebook-date')).toHaveText('今天')
+    await page.clock.fastForward(61_000)
+    await expect(page.locator('#desk-notebook-envelope')).toBeHidden()
+    await expect(page.locator(mailDot)).toBeHidden()
+    expect(checks).toBe(0)
+  })
+}
