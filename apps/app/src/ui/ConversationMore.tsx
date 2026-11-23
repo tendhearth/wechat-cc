@@ -6,17 +6,22 @@ import { useAllMatterInputs, useInputRecovery } from '../state/useMatterInputs'
 import { inputNeedsChecking } from '../state/matter-inputs'
 import { LinkRow } from './Rows'
 import { StatusHint } from './StatusHint'
-export function ConversationMore() {
+export function ConversationMore({ notebookReplyDay }: { notebookReplyDay?: string }) {
   const lang = useLang(), zh = lang === 'zh-Hans', router = useRouter()
   const saved = useAllMatterInputs().filter(inputNeedsChecking).length
   const recovery = useInputRecovery()
-  return <StatusHint testID="home-more" icon="more" value={saved || undefined} label={t(lang, 'minimal.more')} description="">
+  return <StatusHint testID="home-more" icon="more" value={saved || undefined} label={t(lang, 'minimal.more')}
+    accessibilityLabel={notebookReplyDay ? t(lang, 'notebook.moreWithReply') : undefined}
+    dotTestID={notebookReplyDay ? 'home-notebook-reply-dot' : undefined} description="">
     {close => <View>
       <LinkRow testID="home-saved-inputs" label={`${t(lang, 'input.savedTitle')}${saved ? ` · ${saved}` : ''}`} detail={recovery.phase !== 'ready' ? t(lang, 'feedback.stale') : undefined} onPress={() => { close(); router.push('/inputs') }} />
       <LinkRow testID="home-sessions" label={t(lang, 'sessions.title')} onPress={() => { close(); router.push('/sessions') }} />
       <LinkRow testID="conversation-cc-acts" label={zh ? 'CC 自己做的事' : 'CC’s own activities'} onPress={() => { close(); router.push('/cc-activity') }} />
       <LinkRow testID="conversation-letters" label={t(lang, 'letters.title')} onPress={() => { close(); router.push('/letters') }} />
-      <LinkRow testID="conversation-notebook" label={t(lang, 'notebook.title')} onPress={() => { close(); router.push('/notebook') }} />
+      <LinkRow testID="conversation-notebook" label={t(lang, 'notebook.title')}
+        accessibilityLabel={notebookReplyDay ? t(lang, 'notebook.withReply') : undefined}
+        trailing={notebookReplyDay ? t(lang, 'notebook.hasReply') : undefined}
+        onPress={() => { close(); router.push(notebookReplyDay ? { pathname: '/notebook', params: { day: notebookReplyDay } } : '/notebook') }} />
       <LinkRow testID="conversation-memory" label={t(lang, 'memory.title')} onPress={() => { close(); router.push('/memory') }} />
       <LinkRow testID="conversation-activity" label={zh ? '活动记录' : 'Activity'} onPress={() => { close(); router.push('/activity') }} />
       <LinkRow testID="conversation-settings" label={t(lang, 'settings.title')} onPress={() => { close(); router.push('/settings') }} />

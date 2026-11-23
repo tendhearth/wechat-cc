@@ -50,6 +50,7 @@ import { PlacesStrip } from './PlacesStrip'
 import { usePlaces } from '../state/places'
 import { inPlace } from '../view/places'
 import { ConversationMore } from '../ui/ConversationMore'
+import { useNotebookMailDay } from '../state/useNotebookMail'
 import { canSubmit } from '../view/connection'
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -67,6 +68,7 @@ export default function Chat() {
   const online = canSubmit(conn)
   const chat = useChat()
   const { backend } = useBackendCtx()
+  const notebookReplyDay = useNotebookMailDay()
   const { message, reference, locate } = useLocalSearchParams<{ message?: string; reference?: string; locate?: string }>()
   const listRef = useRef<FlatList<import('../view/conversation-work').ConversationItem>>(null)
   const located = useRef<string | null>(null)
@@ -211,9 +213,9 @@ export default function Chat() {
       <TopBar
         title="CC" showStatus onAvatar={() => router.push('/settings')}
         onConnection={() => router.push('/connections')} connectionTestID="now-connections"
-        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused}  />}
+        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused} notebookReply={!!notebookReplyDay} />}
         actions={<View style={{ flexDirection: 'row' }}><IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />
-          <ConversationMore /></View>}
+          <ConversationMore notebookReplyDay={notebookReplyDay} /></View>}
       />
       <PlacesStrip places={places.places} stale={places.stale} selected={place?.key ?? null} onSelect={p => setPlaceKey(p?.key ?? null)} onOpen={(href, p) => { places.seen(p); router.push(href as never) }} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{backend.mode === 'demo' ? <DemoBanner /> : null}</View>

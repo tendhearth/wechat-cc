@@ -10,7 +10,7 @@
  * 钩子期间对客户端的一切调用(请求、挂订阅、退订、关)都推到微任务之后。
  */
 import {
-  makeProtocolClient, NotebookPageResponse, NotebookWriteResponse, NotebookPaperResponse, NotebookStrikeResponse, phoneRouteRequest, RESPONSE_SCHEMAS, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
+  makeProtocolClient, NotebookPageResponse, NotebookUnseenResponse, NotebookSeenRequest, NotebookSeenResponse, NotebookWriteResponse, NotebookPaperResponse, NotebookStrikeResponse, phoneRouteRequest, RESPONSE_SCHEMAS, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
   HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic, TopicsSnapshot, Matter,
   type ClientOpts, type ProtocolClient, type ProtocolSocket, type PhoneTransport,
 } from '@wechat-cc/protocol'
@@ -56,6 +56,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
   let gen = 0
   let disposed = false
   let hookDepth = 0
+  let notebookUnseenMissing = false
 
   /** 在协议客户端的钩子里跑:期间对客户端的调用一律推迟(见文件头「重入」)。 */
   function hooked(fn: () => void): void {
@@ -167,6 +168,14 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     if (my !== gen || connection().state === 'revoked') throw new BackendError('revoked')
     let json: unknown = null
     try { json = res.json() } catch { /* 非 JSON:交给状态码判断 */ }
+    if (key === 'GET /v1/notebook/unseen') {
+      const error = typeof json === 'object' && json !== null && 'error' in json ? json.error : undefined
+      // Old phone panels reject unregistered routes before dispatching them.
+      if (res.status === 404 || error === 'unknown_route' || (res.status === 403 && error === 'route_not_allowed')) {
+        notebookUnseenMissing = true
+        return { key, json: null }
+      }
+    }
     const mapped = key === 'POST /v1/knowledge/facts/set_fact_status' && res.status < 400 ? null : mapPhoneError(res.status, json)
     if (mapped) {
       if (mapped === 'revoked') revoke()
@@ -200,7 +209,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     return phone.data
   }
   const api = makePhoneApi(send)
-  // 已配对设备可走这四条共同路由。目前 PHONE_CALLS 还没有本子的声明。
+  // 已配对设备走共同路由。目前 PHONE_CALLS 还没有本子的声明。
   async function notebookResult<T>(call: WireCall, schema: { safeParse(input: unknown): { success: true; data: T } | { success: false } }): Promise<T> {
     const { json } = await requestJson(() => call)
     const parsed = schema.safeParse(json)
@@ -347,6 +356,21 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (query.fonts) params.set('fonts', query.fonts)
       /* link-scan: device-only */
       return notebookResult({ method: 'GET', key: 'GET /v1/notebook', path: `/v1/notebook?${params}` }, NotebookPageResponse)
+    },
+    async notebookUnseen() {
+      if (notebookUnseenMissing) return undefined
+      try {
+        /* link-scan: device-only */
+        const { json } = await requestJson(() => ({ method: 'GET', key: 'GET /v1/notebook/unseen', path: '/v1/notebook/unseen' }))
+        const result = NotebookUnseenResponse.safeParse(json)
+        return result.success && result.data.unseen ? result.data.day ?? undefined : undefined
+      } catch { return undefined }
+    },
+    async notebookSeen(ids) {
+      const body = { ids }
+      if (!NotebookSeenRequest.safeParse(body).success) throw new BackendError('invalid')
+      /* link-scan: device-only */
+      await notebookResult({ method: 'POST', key: 'POST /v1/notebook/seen', path: '/v1/notebook/seen', body }, NotebookSeenResponse)
     },
     async notebookWrite(body) {
       /* link-scan: device-only */

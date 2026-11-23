@@ -24,18 +24,21 @@ export function ChoiceRow({ label, on, onPress, testID, content = 'ui' }: { labe
 }
 
 // 进下一页的一行:文字 + 行尾 ›(设置里的「CC 的连接」「电脑上的会话」等)。
-export function LinkRow({ label, onPress, testID, icon, detail, style }: { label: string; onPress: () => void; testID?: string; icon?: IconName; detail?: string; style?: StyleProp<ViewStyle> }) {
+export function LinkRow({ label, accessibilityLabel = label, onPress, testID, icon, detail, trailing, style }: {
+  label: string; accessibilityLabel?: string; onPress: () => void; testID?: string; icon?: IconName; detail?: string; trailing?: string; style?: StyleProp<ViewStyle>
+}) {
   const { c } = useTheme()
   return (
     <Pressable
       testID={testID}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel}
       onPress={onPress}
       style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 56, paddingVertical: space.s, opacity: pressed ? 0.7 : 1 }, style]}
     >
       {icon ? <Icon name={icon} color={c.inkSoft} /> : null}
       <View style={{ flex: 1 }}><Txt role="body">{label}</Txt>{detail ? <Txt role="meta" tone="inkSoft">{detail}</Txt> : null}</View>
+      {trailing ? <Txt role="meta" tone="inkSoft">{trailing}</Txt> : null}
       <Icon name="chevronRight" size={16} color={c.inkSoft} />
     </Pressable>
   )

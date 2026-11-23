@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Pressable } from 'react-native'
+import { Pressable, View } from 'react-native'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { useBackendCtx } from '../state/BackendProvider'
@@ -15,12 +15,14 @@ import { companionStatus } from '../view/companion'
 import { makeCCMotionTracker, type CCMotionEvent } from '../view/cc-motion'
 import { componentAppearance } from './tokens'
 import { CCFigure } from './CCFigure'
+import { Icon } from './Icon'
+import { useTheme } from './useTheme'
 import { useMotionState } from './motion'
 import type { CCStream } from '@wechat-cc/protocol'
 import { useCCActivity } from './useCCActivity'
 
 /** Same presence signals and motion as the former home hero, now a small header companion. */
-export function ConversationPresence({ onPress = () => {}, stream, typing = false, topics }: { onPress?: () => void; stream?: CCStream; typing?: boolean; topics?: readonly string[] }) {
+export function ConversationPresence({ onPress = () => {}, stream, typing = false, topics, notebookReply = false }: { onPress?: () => void; stream?: CCStream; typing?: boolean; topics?: readonly string[]; notebookReply?: boolean }) {
   const lang = useLang(), conn = useConnection(), { backend } = useBackendCtx(), work = useWork()
   const terminal = useTerminalSessions({ poll: false }), companion = useCompanion(), now = Date.now()
   const view = homeView({ ...work, terminal: terminal.sessions, known: work.demo || conn.state === 'online', now, lang })
@@ -48,5 +50,16 @@ export function ConversationPresence({ onPress = () => {}, stream, typing = fals
     else if (!current.active || current.waiting?.length === 0) setMotion(previous => previous?.behavior === 'wait' || !current.active ? undefined : previous)
   }, [tracker, snapshot, work.matters, terminal.sessions])
   const label = [t(lang, 'now.openChat'), phase !== 'idle' ? t(lang, `cc.${phase}`) : undefined].filter(Boolean).join(lang === 'en' ? ', ' : '，')
-  return <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={{ minWidth: componentAppearance.identity.headerTarget, minHeight: componentAppearance.identity.headerTarget, justifyContent: 'center' }}><CCFigure size={componentAppearance.identity.headerImage.phone} presence={presence} mood={statusKey ? t(lang, statusKey) : undefined} behavior={motion?.behavior} eventKey={motion?.eventKey} phase={phase} /></Pressable>
+  const size = componentAppearance.identity.headerImage.phone
+  const { c } = useTheme()
+  return <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={{ minWidth: componentAppearance.identity.headerTarget, minHeight: componentAppearance.identity.headerTarget, justifyContent: 'center' }}>
+    <View style={{ width: size }}>
+      <CCFigure size={size} presence={presence} mood={statusKey ? t(lang, statusKey) : undefined} behavior={motion?.behavior} eventKey={motion?.eventKey} phase={phase} />
+      {notebookReply ? <View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+        style={{ position: 'absolute', right: -4, bottom: -3, padding: 1, borderRadius: 3, backgroundColor: c.paper }}>
+        {/* 纸色垫底:信封压在小像上的那一角不会和深色的身体糊在一起 */}
+        <Icon name="mail" size={Math.round(size * 0.36)} testID="home-notebook-envelope" />
+      </View> : null}
+    </View>
+  </Pressable>
 }

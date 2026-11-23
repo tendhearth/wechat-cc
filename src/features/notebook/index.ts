@@ -16,6 +16,7 @@ const CHAT_READ_MAX_CHARS = 26_000
 const CHAT_READ_BATCH = 32
 const DAY_MS = 86_400_000
 const MAX_MISSED_REPLY_IDS = 200
+const MAX_EXPLICIT_ACK_DEVICES = 50
 const EMPTY_INITIATIVE: NotebookSettings['initiative'] = { lastAt: 0, day: '', attempts: 0, failures: 0, retryAt: 0 }
 
 interface NotebookDeps {
@@ -40,8 +41,7 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     deps.log?.(1, Array.from(entry.body).length)
     return entry
   }
-  function advanceReplyReadState(state: NotebookSettings['replyReadState'], ids: readonly string[]) {
-    const replies = store.replyTimestamps(ids)
+  function advanceReplyReadState(state: NotebookSettings['replyReadState'], replies: ReturnType<NotebookStore['replyTimestamps']>) {
     const highWater = replies.reduce((latest, reply) => Math.max(latest, reply.createdAt), state.highWater)
     const missedIds = store.missedReplyIds(state.highWater, highWater, state.missedIds,
       replies.map(reply => reply.id), MAX_MISSED_REPLY_IDS)
@@ -54,9 +54,23 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
     if (saved !== null) return saved
     const baseline = { highWater: store.get('repliesSeenAt') ?? now(), missedIds: [] }
     const legacyIds = store.get('repliesSeenIds') ?? []
-    const state = legacyIds.length ? advanceReplyReadState(baseline, legacyIds) : baseline
+    const state = legacyIds.length ? advanceReplyReadState(baseline, store.replyTimestamps(legacyIds)) : baseline
     store.set('replyReadState', state)
     return state
+  }
+
+  function touchExplicitAckDevice(deviceId: string, learn: boolean): boolean {
+    let known = false
+    try {
+      store.atomic(() => {
+        const devices = store.get('explicitAckDevices') ?? []
+        known = devices.includes(deviceId)
+        if ((!known && !learn) || devices.at(-1) === deviceId) return
+        // Oldest use first. GET refreshes known devices; only explicit confirmation can add one.
+        store.set('explicitAckDevices', [...devices.filter(id => id !== deviceId), deviceId].slice(-MAX_EXPLICIT_ACK_DEVICES))
+      })
+    } catch { /* Capability bookkeeping is best effort, including refreshes of known devices. */ }
+    return known
   }
 
   let modelActive = false
@@ -195,15 +209,19 @@ export function makeNotebook(deps: NotebookDeps): Notebook {
       try { timeZone = new Intl.DateTimeFormat('en', { timeZone: timezone }).resolvedOptions().timeZone } catch {}
       return { day: selected, today, timeZone, days: [...days], entries, pen: pen ?? { font, ink, reason }, penPending: !!opening, paper: store.get('paper') ?? 'ruled' }
     },
-    markRepliesSeen(ids) {
-      store.atomic(() => {
+    markRepliesSeen(ids, explicitDeviceId) {
+      const confirmed = store.atomic(() => {
         const state = replyReadState()
-        const next = advanceReplyReadState(state, ids)
+        const replies = store.replyTimestamps(ids)
+        const next = advanceReplyReadState(state, replies)
         if (next.highWater !== state.highWater || next.missedIds.length !== state.missedIds.length) {
           store.set('replyReadState', next)
         }
+        return replies.length > 0
       })
+      if (explicitDeviceId && confirmed) touchExplicitAckDevice(explicitDeviceId, true)
     },
+    usesExplicitAck: deviceId => touchExplicitAckDevice(deviceId, false),
     unseen() {
       const state = store.get('replyReadState') ?? store.atomic(replyReadState)
       const at = store.firstUnseenReplyAfter(state.highWater, state.missedIds)
