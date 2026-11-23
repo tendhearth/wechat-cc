@@ -30,8 +30,8 @@ describe('token-registry', () => {
     expect(opInfo?.tier).toBe('admin')
     expect(opInfo?.origin).toBe('operator')
     expect(opInfo?.routeAllow).toEqual(new Set([
-      'GET /v1/permissions/pending', 'GET /v1/roster', 'GET /v1/places', 'GET /v1/settings/recap', 'POST /v1/settings/recap', 'POST /v1/labs', 'GET /v1/places/map', 'POST /v1/places/map/pin', 'POST /v1/places/map/outline', 'POST /v1/places/move', 'POST /v1/places/hide', 'POST /v1/places/seen',
-      'GET /v1/notebook', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper',
+      'GET /v1/permissions/pending', 'GET /v1/roster', 'GET /v1/places', 'GET /v1/terminal/search', 'GET /v1/settings/recap', 'POST /v1/settings/recap', 'POST /v1/labs', 'GET /v1/places/map', 'POST /v1/places/map/pin', 'POST /v1/places/map/outline', 'POST /v1/places/move', 'POST /v1/places/hide', 'POST /v1/places/seen',
+      'GET /v1/notebook', 'GET /v1/notebook/unseen', 'POST /v1/notebook/seen', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper',
       'POST /v1/companion/converse',
       'POST /v1/companion/speak',
       'POST /v1/companion/transcribe',

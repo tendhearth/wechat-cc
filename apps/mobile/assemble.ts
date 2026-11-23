@@ -17,6 +17,7 @@ export interface MobilePage {
   /** 单一色板(spec 2026-09-26-web-design-unify),daemon 侧 /set 与过期页也内联它。 */
   tokens: string
   transport: string
+  time: string
   scripts: { workbench: string; presence: string }
 }
 
@@ -50,9 +51,10 @@ export function assembleMobilePage(read: (name: string) => string): MobilePage {
     share: expand('share.html', read, []),
     tokens: expand('tokens.css', read, []),
     transport: expand('transport.js', read, []),
+    time: expand('time.js', read, []),
     scripts: { workbench: expand('workbench.js', read, []), presence: expand('presence.js', read, []) },
   }
-  for (const text of [page.phone, page.sw, page.bootstrap, page.share, page.tokens, page.transport, page.scripts.workbench, page.scripts.presence]) {
+  for (const text of [page.phone, page.sw, page.bootstrap, page.share, page.tokens, page.transport, page.time, page.scripts.workbench, page.scripts.presence]) {
     for (const m of text.matchAll(RUNTIME)) {
       if (!(RUNTIME_VARS as readonly string[]).includes(m[1]!)) throw new Error(`mobile page: unknown runtime marker {{${m[1]}}}`)
     }

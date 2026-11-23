@@ -18,6 +18,8 @@ export async function showRoster(page:Page) {
 // ── 「地方」(正面上半,2026-11-18):名单的列表已由它代替,打开一件事从这里的「去回答」进 ──
 const hex16=(s:string)=>[...new TextEncoder().encode(s)].map(b=>b.toString(16).padStart(2,'0')).join('').padEnd(16,'0').slice(0,16)
 export const placeItem=(name:string,extra:Record<string,unknown>={})=>({key:`p:${hex16(name)}`,name,line:`${name} 的事`,status:'working',waiting:null,moving:true,unseen:false,updatedAt:2,matterIds:[],messageIds:[],sessionIds:[],...extra})
+export const placeSession = (sessionId: string, status: 'waiting' | 'working' | 'replied' | 'done', updatedAt: number) =>
+ ({sessionId, status, updatedAt, agent:'codex', endedAt:status === 'done' ? updatedAt : null})
 /** 等你回答的一件事(「去回答」打开它)。 */
 export const askingPlace=(name:string,matterId:string,summary='要你回答一个问题',extra:Record<string,unknown>={})=>placeItem(name,{status:'waiting',moving:false,line:summary,matterIds:[matterId],waiting:{itemKey:`matter:${matterId}`,kind:'question',matterId,requestId:'q1',summary,count:1},...extra})
 /** 终端会话自己停着问(「去回答」打开那个会话)。 */

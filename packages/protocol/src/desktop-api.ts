@@ -1,4 +1,4 @@
-import { NotebookChatReadRequest, NotebookChatReadResponse, NotebookJotRequest, NotebookJotResponse, NotebookPageResponse, NotebookPaperRequest, NotebookPaperResponse, NotebookStrikeRequest, NotebookStrikeResponse, NotebookWriteRequest, NotebookWriteResponse } from './notebook'
+import { NotebookChatReadRequest, NotebookChatReadResponse, NotebookJotRequest, NotebookJotResponse, NotebookPageResponse, NotebookUnseenResponse, NotebookSeenRequest, NotebookSeenResponse, NotebookPaperRequest, NotebookPaperResponse, NotebookStrikeRequest, NotebookStrikeResponse, NotebookWriteRequest, NotebookWriteResponse } from './notebook'
 import { RosterResponse } from './roster'
 import { RecapSettingsRequest, RecapSettingsResponse, SessionRecap, PlaceOutlineRequest, PlaceOutlineRunResponse, LabsRequest, LabsResponse, PlaceMapPinRequest, PlaceMapResponse, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest, PlacesResponse, PlaceWriteResponse } from './places'
 import { OptionalReplyMetadata } from './reply-attribution'
@@ -2491,6 +2491,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/matter/seen': z.object({ id: z.string().regex(/^[a-f0-9]{8}$/), surface: z.literal('desktop').optional() }).strict(),
   'POST /v1/notebook/write': NotebookWriteRequest,
   'POST /v1/notebook/strike': NotebookStrikeRequest,
+  'POST /v1/notebook/seen': NotebookSeenRequest,
   'POST /v1/notebook/paper': NotebookPaperRequest,
   'POST /v1/notebook/chat/jot': NotebookJotRequest,
   'POST /v1/notebook/chat/read': NotebookChatReadRequest,
@@ -2583,6 +2584,16 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/reminders/list': ReminderListQuery,
 }
 
+export const TerminalSearchResponse = z.object({
+  ok: z.literal(true),
+  hits: z.array(z.object({
+    sessionId: z.string(), placeKey: z.string().optional(), project: z.string(), source: z.string(),
+    who: z.enum(['you', 'said']), at: z.number(), snippet: z.string(),
+    matchStart: z.number().int().nonnegative(), matchLength: z.number().int().positive(),
+  })).max(50),
+})
+export type TerminalSearchHitT = z.infer<typeof TerminalSearchResponse>['hits'][number]
+
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   // 令牌只在 url 里出现这一次;列表里没有。
   'POST /v1/matter/share':z.object({share:MatterShareRow,url:z.string()}).strict(),
@@ -2604,7 +2615,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   // Phone-only and binary chunk routes retain their existing JSON response contracts.
   ...Object.fromEntries(WIRE_ROUTE_ALIASES.filter(a => !a.readers.includes('desktop'))
     .map(a => [a.to, PHONE_API_SCHEMAS[a.from]])),
-  'GET /v1/cli/activity': z.union([CliActivityPage.extend({ recap: SessionRecap.optional() }), PhoneErrorResponse]),
+  'GET /v1/cli/activity': z.union([CliActivityPage.extend({ recap: SessionRecap.optional(), source: z.enum(['live', 'archive']).optional() }), PhoneErrorResponse]),
   'GET /v1/health': HealthResponse,
   'POST /v1/atelier/share': AtelierShareResponse,
   'POST /v1/memory/read': MemoryReadResponse,
@@ -2708,12 +2719,15 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   // 一件事 / 连接 / 手机 / 插件 / 许可 / 终端会话 / 日历 / 信
   'GET /v1/roster': RosterResponse,
   'GET /v1/notebook': NotebookPageResponse,
+  'GET /v1/notebook/unseen': NotebookUnseenResponse,
   'POST /v1/notebook/write': NotebookWriteResponse,
   'POST /v1/notebook/strike': NotebookStrikeResponse,
+  'POST /v1/notebook/seen': NotebookSeenResponse,
   'POST /v1/notebook/paper': NotebookPaperResponse,
   'POST /v1/notebook/chat/jot': NotebookJotResponse,
   'POST /v1/notebook/chat/read': NotebookChatReadResponse,
   'GET /v1/places': PlacesResponse,
+  'GET /v1/terminal/search': TerminalSearchResponse,
   'GET /v1/places/map': PlaceMapResponse,
   'POST /v1/labs': LabsResponse,
   'GET /v1/settings/recap': RecapSettingsResponse,

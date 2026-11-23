@@ -474,3 +474,32 @@ it('宽窗 CC 停止时不发送草稿，恢复后沿原入口发送', async () 
   await settle()
   expect(invoke).toHaveBeenCalledWith('agent_converse', { text: '等 CC 回来再发' })
 })
+
+it('uses exact message identity on a legacy daemon and reveals only a loaded hit', async () => {
+  const { initConversePage, locateConversationMessage } = await import('./converse.js')
+  delete els['converse-root']!.dataset.ready
+  initConversePage({
+    invoke,
+    invokeWorkbenchApi: async (_method, path) => {
+      if (path === '/v1/protocol/capabilities') return { routes: 'v1', topics: 'v1' }
+      if (path.startsWith('/v1/matter/owner-chat/window')) throw new Error('not_found')
+      if (path === '/v1/matter/owner-chat') return { events: [
+        { messageId: 'recent-user', kind: 'user', text: '好的', createdAt: 10 },
+        { messageId: 'recent-cc', kind: 'text', text: '好的', createdAt: 20 },
+      ] }
+      return {}
+    },
+  })
+  const reveal = vi.fn(() => true)
+  await expect(locateConversationMessage('older-user', reveal)).resolves.toBe(false)
+  expect(reveal).not.toHaveBeenCalled()
+  const scroll = els['converse-scroll']!.node
+  const owner = scroll.querySelector('.converse-msg-user')!.closest('[data-converse-message]')!
+  const cc = scroll.querySelector('.converse-msg-cc')!.closest('[data-converse-message]')!
+  const scrollOwner = vi.spyOn(owner, 'scrollIntoView')
+  const scrollCC = vi.spyOn(cc, 'scrollIntoView')
+  await expect(locateConversationMessage('recent-cc', reveal)).resolves.toBe(true)
+  expect(reveal).toHaveBeenCalledOnce()
+  expect(scrollOwner).not.toHaveBeenCalled()
+  expect(scrollCC).toHaveBeenCalledExactlyOnceWith({ block: 'center' })
+})

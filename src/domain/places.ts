@@ -31,6 +31,8 @@ export interface PlacesInput {
   nameOf: (root: string) => string
   /** 每个地方最多带多少件事的 id 去筛说话。 */
   maxIds?: number
+  /** 桌面排序为未保存的历史地方留出的空位。 */
+  fillOpenPositions?: boolean
   onHead?: (key: string, item: RosterItemT) => void
 }
 
@@ -55,7 +57,15 @@ export function buildPlaces(input: PlacesInput): PlacesOutput {
   const fresh = [...groups.entries()].filter(([root]) => !byRoot.has(root) && !byKey.has(input.keyOf(root)))
     .sort((a, b) => latest(b[1]) - latest(a[1]) || a[0].localeCompare(b[0]))
   let next = input.saved.reduce((m, r) => Math.max(m, r.position + 1), 0)
-  const added: PlaceRecord[] = fresh.map(([root]) => ({ key: input.keyOf(root), root, name: input.nameOf(root), position: next++, hidden: false }))
+  const occupied = new Set(input.saved.map(r => r.position))
+  let open = 0
+  const added: PlaceRecord[] = fresh.map(([root]) => {
+    if (input.fillOpenPositions) {
+      while (occupied.has(open)) open++
+      return { key: input.keyOf(root), root, name: input.nameOf(root), position: open++, hidden: false }
+    }
+    return { key: input.keyOf(root), root, name: input.nameOf(root), position: next++, hidden: false }
+  })
 
   const records = [...input.saved, ...added].sort((a, b) => a.position - b.position || a.key.localeCompare(b.key))
   const places: PlaceT[] = []

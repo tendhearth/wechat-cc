@@ -18,7 +18,7 @@ import type { TerminalSteps } from './terminal-steps'
 export const PHONE_CLI_SAY_MAX = 4000
 
 export type CliPhonePermissionResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_not_actionable' | 'cli_permission_stale' }
-export type CliPhoneActivityResult = { ok: true; items: Array<TerminalStepPayload & { id?: string }>; earlier?: string | null } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' | 'invalid' }
+export type CliPhoneActivityResult = { ok: true; items: Array<TerminalStepPayload & { id?: string }>; earlier?: string | null; source?: 'live' | 'archive' } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' | 'invalid' }
 /** 列表里「此刻那一步」看最近这么多步。 */
 const NOW_STEPS = 20
 
@@ -33,11 +33,11 @@ export interface CliPhoneActions {
   /** 这条会话挂着的、手机能拍的码(中继开出去的那个);没有 ⇒ null。 */
   pendingHash(sessionId: string): string | null
   permission(target: { hash?: string; session_id?: string }, decision: 'allow' | 'deny'): CliPhonePermissionResult
-  say(sessionId: string, text: string): CliPhoneSayResult
+  say(sessionId: string, text: string, operator?: boolean): CliPhoneSayResult
   /** 这条会话最近一句送进窗口的结果;没有 ⇒ null。 */
   lastSay?(sessionId: string): CliPhoneSayState | null
   /** 最近几步(跑了什么、改了哪、说了什么)—— 从这件事的步读(M6d:第一次看时建那件事、导入一次),手机上看着它跑(2026-10-17)。 */
-  activity(sessionId: string, page?: { limit: number; before?: string }): CliPhoneActivityResult
+  activity(sessionId: string, page?: { limit: number; before?: string }, operator?: boolean): CliPhoneActivityResult
   /** 列表一眼(2026-10-17):在跑的会话此刻在做的那一步(从步读)。读不到 / 没有步骤 ⇒ null。 */
   currentStep(sessionId: string): TerminalStepPayload | null
   /** 开在电脑窗口里的 Claude 会话 id(2026-10-18);没接 ⇒ 空。 */
@@ -56,7 +56,8 @@ export interface CliPhoneActionsDeps {
   /** 开着窗口的会话 id(live-window.ts liveSessionIds);缺席 ⇒ 空。 */
   liveIds?: () => Set<string>
   /** 这件事的步(M4b):增量读进来再从步里拿;还没有那件事 ⇒ view 当场建、导入一次(M6d,不再直接解析记录)。 */
-  steps: Pick<TerminalSteps, 'view' | 'page'>
+  steps: Pick<TerminalSteps, 'view' | 'page'> & Partial<Pick<TerminalSteps, 'storedPage'>>
+  exactSession?: import('../../ports/cli-session').CliSessionStore['get']
 }
 
 export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions {
@@ -87,11 +88,11 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       deps.log('CLI_PERMISSION', `${decision} from phone hash=${hash}`)
       return { ok: true }
     },
-    say(sessionId, text) {
+    say(sessionId, text, operator) {
       const v = view(sessionId)
       if (!v) return { ok: false, error: 'not_found' }
-      // 开在电脑的窗口里(2026-10-18):话送进那个窗口 —— 在跑也能说(它下一步就读到),
-      // 登记处说 ended 也以窗口还开着为准。
+      if (operator && v.status === 'ended') return { ok: false, error: 'cli_session_ended' }
+      // 开在电脑的窗口里(2026-10-18):在跑也能说,它下一步就读到。
       const s0 = deps.hub.lookup(sessionId)
       const local0 = !!s0 && s0.session_id === sessionId && !s0.origin_agent && !(s0.machine && deps.localMachine && s0.machine !== deps.localMachine)
       const w = local0 ? deps.core.live?.(s0!) ?? null : null
@@ -130,17 +131,31 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       return { ok: true }
     },
     lastSay(sessionId) { return lastSays.get(sessionId) ?? null },
-    activity(sessionId, page) {
-      const s = deps.hub.lookup(sessionId)
+    activity(sessionId, page, operator) {
+      const exact = operator && deps.exactSession
+      const row = exact ? exact(sessionId) : null
+      const s = exact ? row && { ...row, machine: row.machine ?? undefined, origin_agent: row.origin_agent ?? undefined }
+        : deps.hub.lookup(sessionId)
       if (!s || s.session_id !== sessionId) return { ok: false, error: 'not_found' }
+      const stored = (): CliPhoneActivityResult => {
+        const result = deps.steps.storedPage?.(sessionId, page?.limit ?? ACTIVITY_MAX_ITEMS, page?.before)
+        if (!result) return { ok: false, error: 'invalid' }
+        return page ? { ok: true, ...result, source: 'archive' }
+          : { ok: true, items: result.items.map(({ id: _id, full: _full, ...item }) => item) }
+      }
+      if (row?.status === 'ended') return stored()
       // 那边的会话:记录在那台机器上,这里读不到(微信「看 码」会转过去;手机 v1 不转)。
       if (s.origin_agent || (s.machine && deps.localMachine && s.machine !== deps.localMachine)) return { ok: false, error: 'cli_session_remote' }
-      if (!s.transcript_path) return { ok: false, error: 'no_transcript' }
+      if (!s.transcript_path) return row ? stored() : { ok: false, error: 'no_transcript' }
       try {
         if (!page) return { ok: true, items: deps.steps.view(s, ACTIVITY_MAX_ITEMS) }
         const result = deps.steps.page(s, page.limit, page.before)
-        return result ? { ok: true, ...result } : { ok: false, error: 'invalid' }
-      } catch { return { ok: false, error: 'no_transcript' } }
+        return result ? { ok: true, ...result, ...(operator ? { source: 'live' as const } : {}) } : { ok: false, error: 'invalid' }
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code
+        if (row && (code === 'ENOENT' || code === 'ENOTDIR')) return stored()
+        return { ok: false, error: 'no_transcript' }
+      }
     },
     currentStep(sessionId) {
       const s = deps.hub.lookup(sessionId)
@@ -148,7 +163,7 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       return currentStepOf(s, { localMachine: deps.localMachine, steps: deps.steps })
     },
   }
-  return {...actions,say(id,text){const result=actions.say(id,text);if(result.ok)deps.recordReference?.(id,text);return result}}
+  return {...actions,say(id,text,operator){const result=actions.say(id,text,operator);if(result.ok)deps.recordReference?.(id,text);return result}}
 }
 
 /**

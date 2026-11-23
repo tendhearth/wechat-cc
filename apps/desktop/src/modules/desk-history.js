@@ -1,7 +1,8 @@
 // @ts-check
 
 /** @typedef {{kind:'matter'|'terminal', id:string}} DeskDetail */
-/** @typedef {{pane:string, place:string|null, detail:DeskDetail|null}} DeskLocation */
+/** @typedef {Pick<import('@wechat-cc/protocol').PlaceT,'key'|'name'|'updatedAt'>} TerminalPlace */
+/** @typedef {{pane:string, place:string|null, detail:DeskDetail|null, terminalPlace?:TerminalPlace, searchQuery?:string}} DeskLocation */
 /** @typedef {-1|1} Direction */
 
 /** @param {DeskLocation} initial */
@@ -13,7 +14,7 @@ export function createDeskHistory(initial) {
     push(next) {
       revision++
       const current = entries[index]
-      if (current && current.pane === next.pane && current.place === next.place
+      if (current && current.pane === next.pane && current.place === next.place && current.searchQuery === next.searchQuery
         && current.detail?.kind === next.detail?.kind && current.detail?.id === next.detail?.id) return
       entries.splice(index + 1, entries.length, next)
       if (entries.length > 50) entries.shift()

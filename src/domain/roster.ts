@@ -38,6 +38,7 @@ export interface RosterInput {
   now: number
   /** 「带回来的」留多久;不给 = ROSTER_BACK_WINDOW_MS。地方(places)按更长的窗口借用同一套行。 */
   backWindowMs?: number
+  includeEnded?: boolean
 }
 
 type Row = RosterItemT & { waitingSince: number }
@@ -54,7 +55,7 @@ function terminalPart(t: RosterTerminal): NonNullable<RosterItemT['terminal']> {
 
 function matterRow(m: RosterInput['matters'][number], input: RosterInput, session: RosterTerminal | undefined): Row {
   const pend = [...(input.pending.get(m.id) ?? [])].sort((a, b) => a.since - b.since)
-  const status: StatusKey = session && pend.length === 0
+  const status: StatusKey = session && (session.status === 'ended' || pend.length === 0)
     ? terminalStatusKey(session.status)
     : statusOfMatter({ state: m.state, archivedAt: m.archivedAt ?? null, kind: m.kind }, input.tasks.get(m.id) ?? null, pend.length)
   const group = groupOf(status)
@@ -62,7 +63,7 @@ function matterRow(m: RosterInput['matters'][number], input: RosterInput, sessio
   const ids = session ? [session.source] : m.agents ?? []
   const name = (id: string) => (session && id === session.source ? session.displayName : m.agentNames?.[id])
   const updatedAt = session ? Math.max(m.updatedAt, session.last_event_at) : m.updatedAt
-  const first = pend[0]
+  const first = session?.status === 'ended' ? undefined : pend[0]
   const waitingSince = first?.since ?? (session?.status === 'waiting' ? session.pending?.since ?? updatedAt : updatedAt)
   return {
     key: `matter:${m.id}`, kind: 'matter', id: m.id, title: m.title,
@@ -94,7 +95,7 @@ function terminalRow(t: RosterTerminal, now: number): Row {
 }
 
 export function buildRoster(input: RosterInput): RosterItemT[] {
-  const live = input.terminals.filter(t => t.status !== 'ended')
+  const live = input.terminals.filter(t => input.includeEnded || t.status !== 'ended')
   const byMatter = new Map(live.filter(t => t.matter_id).map(t => [t.matter_id!, t]))
   const listed = new Set<string>()
   const rows: Row[] = []

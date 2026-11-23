@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Page, Route, Locator } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { placeItem, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
+import { placeItem, placeSession, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
 import type { PlaceMapItemT, PlaceMapPinRequestT, PlaceMapBranchT, PlaceOutlineT } from '@wechat-cc/protocol'
 
 test.use({ viewport:{width:1280,height:820} })
 const now = Date.UTC(2026,10,21)
-const garden = placeItem('花园',{sessionIds:['one','two'],updatedAt:now})
+const garden = placeItem('花园',{sessionIds:['one','two'],updatedAt:now,sessions:[placeSession('one','replied',now),placeSession('two','replied',now-1)]})
 const empty = placeItem('空地方',{line:null,status:null,moving:false,updatedAt:null})
 const items: PlaceMapItemT[] = [
   {id:'a:terminal:one',kind:'ask',status:'waiting',line:'要继续整理吗',from:{source:'terminal',sessionId:'one',at:now}},
@@ -23,7 +23,10 @@ const leaf = (page:Page, text:string) => diagram(page).locator('me-tpc').filter(
 // 这周没动过的地方收在名单末尾那一行里,先点开再选
 const select = async (page:Page,name:string) => {
   const row = placeRow(page,name).locator('.place-row')
-  if (!(await row.isVisible())) await page.locator('.desk-quiet-toggle').click()
+  // 名单画出来以前哪一行都看不见:先等到这一行、或者收着它的那个按钮出现,再决定点不点开
+  const quiet = page.locator('.desk-quiet-toggle')
+  await expect.poll(async () => (await row.isVisible()) || (await quiet.isVisible())).toBe(true)
+  if (!(await row.isVisible())) await quiet.click()
   await row.click()
 }
 const view = (page:Page,name:string) => thread(page).getByRole('button',{name,exact:true})
@@ -385,6 +388,36 @@ test('地方读回的开关决定图入口，写失败保持原值并在开关�
   await expect(view(page,'图')).toBeVisible()
   expect(writes).toHaveLength(0)
 })
+
+for (const inRoster of [true, false]) {
+  test(`按方面能打开三十项以外的出处（名单里有：${inRoster}）`, async ({page,shimUrl}) => {
+    await mock(page)
+    const sessions = Array.from({length:30}, (_, i) => placeSession(`recent-${i}`, 'replied', now - i))
+    await routePlaces(page,[{...garden,sessions,sessionIds:[...sessions.map(s=>s.sessionId),'two']}],{placeMap:()=>true})
+    if (!inRoster) await routeRoster(page,[])
+    const outline: PlaceOutlineT = {state:'ready',canRun:true,aspects:[
+      {name:'整理目录',items:[{id:'o:0',line:'先按月份整理',status:'decided',sources:[{kind:'session',sessionId:'two',agent:'Codex',at:now}]}]},
+    ]}
+    await page.route(/\/v1\/places\/map\?.*&outline=1$/, route => route.fulfill({json:{
+      ok:true,place:{key:garden.key,name:garden.name},items,truncated:false,revision:'outside-tabs',outline,
+    }}))
+    await page.goto(shimUrl)
+    await select(page,'花园')
+    const visibleTabs = thread(page).locator('.thing-sessions > [data-thread-session]')
+    await expect(visibleTabs.first()).toBeVisible()
+    const count = await visibleTabs.count()
+    expect(count).toBeGreaterThan(1)
+    await expect(thread(page).locator('[data-thread-session="terminal:two"]')).toHaveCount(0)
+    await view(page,'图').click()
+    await view(page,'按方面').click()
+    await leaf(page,'先按月份整理').click()
+    await view(page,'去线上看').click()
+    await expect(visibleTabs).toHaveCount(count)
+    await expect(visibleTabs.last()).toHaveAttribute('data-thread-session','terminal:two')
+    await expect(visibleTabs.last()).toHaveAttribute('aria-pressed','true')
+    await expect(thread(page).locator('.thing-terminal:visible')).toContainText('two 的原话')
+  })
+}
 
 test('按方面需要点一下，梳理后看多处出处，回到准确的会话', async ({page,shimUrl}) => {
   const out = join(process.env.TMPDIR ?? tmpdir(),'shots')

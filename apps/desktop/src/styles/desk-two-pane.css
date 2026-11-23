@@ -1307,3 +1307,205 @@ html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[da
 /* Fields you write a sentence into stay at 16px; the 13px above is for search and filter fields. */
 [data-desk-wide] .dash-main [data-pane="memory"] input.memory-line-input,
 [data-desk-wide] .dash-main .todos-page #todo-remind-pop input { font-size: 16px; }
+
+/* Wide search */
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] .wb-search > button[type="submit"],
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] [data-action="clear-search"] { display: none; }
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] .wb-list-controls { display: block; }
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] .wb-search { margin-bottom: 12px; }
+.desk-search-section:not(:empty), .desk-search-tasks:not([hidden]) { margin-block-start: 18px; }
+.desk-search-section-title {
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--th-desk-faint);
+  font: 400 12px/1.5 var(--th-font-desk-ui);
+}
+.desk-search-section-title span { margin-inline-start: 8px; }
+.desk-search-task-header, .desk-search-task-filters, .desk-search-task-filters label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.desk-search-task-header { justify-content: space-between; }
+.desk-search-task-filters label { color: var(--th-ink-soft); font: 400 12.5px/1.5 var(--th-font-desk-ui); }
+.desk-search-row {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--th-ink);
+  font: 400 14px/1.5 var(--th-font-desk-ui);
+  text-align: start;
+  cursor: pointer;
+}
+.desk-search-row:is(:hover, [aria-selected="true"]),
+.desk-search-tasks .wb-task:is(:hover, [aria-selected="true"]) { background: var(--th-desk-hover); }
+.desk-search-text, .desk-search-meta { overflow: hidden; overflow-wrap: anywhere; }
+.desk-search-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.desk-search-text strong { font-weight: var(--th-weight-desk-emphasis); }
+.desk-search-meta, .desk-search-note { color: var(--th-ink-soft); font: 400 12.5px/1.5 var(--th-font-desk-ui); }
+.desk-search-meta { display: block; white-space: nowrap; text-overflow: ellipsis; }
+.desk-search-note { margin: 6px 10px; }
+.desk-search-note button, .desk-search-earlier { margin-inline-start: 8px; }
+.desk-search-empty:empty { display: none; }
+.desk-search-task-header { flex-wrap: wrap; }
+.desk-search-task-filters { flex-wrap: wrap; }
+.desk-search-task-filters .wb-list-filters { padding: 0; }
+.desk-search-task-filters .wb-delegate { display: inline-flex; align-items: center; gap: 4px; }
+.desk-search-task-filters select {
+  appearance: none;
+  min-width: 0;
+  max-width: 150px;
+  min-height: 30px;
+  padding: 0 25px 0 10px;
+  border: 0.5px solid var(--th-desk-edge);
+  border-radius: 8px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--th-ink-soft) 50%) right 13px center / 4px 4px no-repeat,
+    linear-gradient(135deg, var(--th-ink-soft) 50%, transparent 50%) right 9px center / 4px 4px no-repeat,
+    var(--th-desk-raised);
+  color: var(--th-ink);
+  font: 400 13px/1.4 var(--th-font-desk-ui);
+}
+
+[data-desk-wide] .workbench-pane[data-workbench-view="search"] .wb-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.desk-search-clear:not([hidden]) {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--th-ink-soft);
+  cursor: pointer;
+}
+.desk-search-clear:is(:hover, :focus-visible) { color: var(--th-ink); }
+.desk-search-tasks .wb-task.now-row {
+  min-height: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+}
+.desk-search-tasks .wb-task.now-row .wb-task-title {
+  color: var(--th-ink);
+  font: 400 14px/1.5 var(--th-font-desk-ui);
+}
+.desk-search-tasks .wb-task-meta {
+  margin: 0;
+  color: var(--th-ink-soft);
+  font: 400 12.5px/1.5 var(--th-font-desk-ui);
+}
+.desk-search-tasks .wb-task-meta .wb-status { color: inherit; }
+
+[data-desk-wide] .thing-sessions:not([hidden]) { flex-wrap: nowrap; gap: 4px 12px; }
+[data-desk-wide] .thing-sessions:has(.thing-session-menu) { overflow: visible; }
+[data-desk-wide] .thing-sessions > [data-thread-session] { min-width: 0; }
+[data-desk-wide] .thing-sessions [data-ended] { color: var(--th-ink-soft); opacity: 0.75; }
+[data-desk-wide] .thing-session-menu { position: relative; flex: none; margin-left: auto; }
+[data-desk-wide] .thing-session-menu > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--th-ink-soft);
+  font-size: 12.5px;
+}
+[data-desk-wide] .thing-session-menu > summary::-webkit-details-marker { display: none; }
+[data-desk-wide] .thing-session-menu > summary:hover { color: var(--th-ink); }
+[data-desk-wide] .thing-session-menu > summary::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border: solid currentColor;
+  border-width: 1px 1px 0 0;
+  transform: rotate(135deg);
+}
+[data-desk-wide] .thing-session-menu[open] > summary::after { transform: rotate(315deg); }
+[data-desk-wide] .thing-sessions > [data-thread-session] > span:not(.th-agents) { max-width: 14em; }
+[data-desk-wide] .thing-session-menu > div {
+  position: absolute;
+  z-index: 5;
+  top: 100%;
+  right: 0;
+  width: max-content;
+  max-width: 320px;
+  box-sizing: border-box;
+  max-height: 45vh;
+  overflow-y: auto;
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: var(--th-desk-raised);
+  box-shadow: var(--th-desk-shadow-raised);
+}
+[data-desk-wide] .thing-session-menu [data-thread-session] { display: flex; width: 100%; }
+[data-desk-wide] .thing-ended-note {
+  flex: none;
+  margin: 0;
+  padding: 10px 16px 16px;
+  text-align: center;
+  color: var(--th-ink-soft);
+  font: 400 13px/1.5 var(--th-font-desk-ui);
+}
+
+/* A session tab: the owner's first sentence gives way, the time stays. */
+[data-desk-wide] .thing-sessions > [data-thread-session] > span:not(.th-agents) { flex: 0 1 auto; max-width: 12em; }
+[data-desk-wide] .thing-sessions > [data-thread-session] > .thing-session-time {
+  flex: none;
+  margin-left: -4px;
+  color: var(--th-desk-faint);
+  font: 400 12px/1.4 var(--th-font-desk-ui);
+  white-space: pre;
+}
+
+[data-desk-wide] #desk-notebook-envelope {
+  position: absolute;
+  left: 37px;
+  bottom: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+[data-desk-wide] #desk-notebook-envelope:focus-visible { outline: 2px solid var(--th-accent); }
+[data-desk-wide] #desk-notebook-envelope img { display: block; width: 22px; }
+[data-desk-wide] #desk-notebook-dot:not([hidden]) {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  margin-inline-start: auto;
+  border-radius: 50%;
+  background: var(--th-accent);
+}
+
+/* Small alignments after the first rounds. */
+/* A tab's time sits right after its (possibly shortened) first sentence. */
+[data-desk-wide] .thing-sessions [data-thread-session] > .thing-session-time { margin-left: -6px; }
+/* In the "earlier" menu the first sentence gives way too, so the day and the state stay readable. */
+[data-desk-wide] .thing-session-menu [data-thread-session] > span:not(.th-agents) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-desk-wide] .thing-session-menu [data-thread-session] > .thing-session-time {
+  flex: none;
+  color: var(--th-desk-faint);
+  font: 400 12px/1.4 var(--th-font-desk-ui);
+  white-space: pre;
+}
+/* The notebook's writing column lines up with its own header and with every other page:
+   it no longer leaves room for the speaker column that conversations gave up. */
+[data-desk-wide] #notebook-pane .notebook-column {
+  width: var(--desk-thread-width);
+  padding-inline: 0;
+}
+

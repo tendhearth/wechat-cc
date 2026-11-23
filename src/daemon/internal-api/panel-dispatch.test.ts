@@ -134,7 +134,7 @@ describe('两个监听各认各的令牌', () => {
 })
 
 /** P3c-1 / P3c-2 / P3c-3 / P3c-4 起路由表里带 phone 块的 /v1 行(一份数据一个处理器,手机的旧路径是别名);链接令牌只读其中两条。 */
-const NOTEBOOK_DEVICE = ['GET /v1/notebook', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper',]
+const NOTEBOOK_DEVICE = ['GET /v1/notebook', 'GET /v1/notebook/unseen', 'POST /v1/notebook/seen', 'POST /v1/notebook/write', 'POST /v1/notebook/strike', 'POST /v1/notebook/paper',]
 const CHECKUP_DEVICE = ['GET /v1/checkup', 'POST /v1/checkup/estimate', 'POST /v1/checkup/run', 'POST /v1/checkup/cancel', 'POST /v1/checkup/settings']
 const T4_DEVICE = ['GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop','GET /v1/cli/activity','POST /v1/cli/decide','POST /v1/cli/session-say','POST /v1/cli/session-stop','GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics']
 const P3C1_DEVICE = ['GET /v1/roster', 'GET /v1/places', 'POST /v1/places/seen', 'GET /v1/cli/sessions', 'GET /v1/connections', 'GET /v1/matter', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/retractions', 'GET /v1/overseer/today', 'GET /v1/workbench/entry-options', 'GET /v1/workbench/models', 'GET /v1/workbench/session', 'GET /v1/workbench/sessions', 'POST /v1/companion/transcribe', 'POST /v1/journal/seen', 'POST /v1/knowledge/facts/set_fact_status', 'POST /v1/matter/say', 'POST /v1/memory/retractions/restore', 'POST /v1/workbench/discard-attachment']
@@ -312,6 +312,11 @@ it('round-trips a notebook line between desktop and a paired phone and keeps bod
       log: (count, length) => logs.push(`count=${count} length=${length}`),
     })))
     const device = await pairDevice()
+    const unseen = '/v1/notebook/unseen'
+    const status = await viaPanel(unseen, device)
+    expect(status.status).toBe(200)
+    expect(await status.json()).toEqual({ ok: true, unseen: false, day: null })
+    expect((await viaPanel(unseen, panel!.issueToken())).status).toBe(403)
     const secret = 'unique-notebook-dispatch-probe'
     const created = await viaLocal('/v1/notebook/write', operatorToken, post({ body: secret, clientId: 'desktop-1' }))
     expect(created.status).toBe(200)
@@ -319,11 +324,18 @@ it('round-trips a notebook line between desktop and a paired phone and keeps bod
     const page = await viaPanel('/v1/notebook', device)
     expect(page.status).toBe(200)
     expect(await page.json()).toMatchObject({ entries: [entry] })
+    const seen = '/v1/notebook/seen'
+    const ids = post({ ids: [entry.id] })
+    const confirmation = await viaPanel(seen, device, ids)
+    expect(confirmation.status).toBe(200)
+    expect(await confirmation.json()).toEqual({ ok: true })
+    expect((await viaPanel(seen, panel!.issueToken(), ids)).status).toBe(403)
     const struck = await viaPanel('/v1/notebook/strike', device, post({ id: entry.id, struck: true }))
     expect(struck.status).toBe(200)
     expect((await viaLocal('/v1/notebook/paper', operatorToken, post({ paper: 'plain' }))).status).toBe(200)
     expect((await viaPanel('/v1/notebook', panel!.issueToken())).status).toBe(403)
     const guest = api!.mintSessionToken('guest', 'claude/x/guest')
+    expect((await viaLocal(seen, guest, ids)).status).toBe(403)
     expect((await viaLocal('/v1/notebook/write', guest, post({ body: secret, clientId: 'guest' }))).status).toBe(403)
     expect((await viaLocal('/v1/notebook/write', operatorToken, post({ [secret]: true }))).status).toBe(400)
     expect(logs.join(' ')).not.toContain(secret)
@@ -339,7 +351,7 @@ it('rejects oversized local notebook POSTs before parsing and accepts maximally 
       model: () => null, isOwner: caller => caller.chatId === 'owner',
     })))
     const session = api!.mintSessionToken('admin', 'claude/x/owner')
-    for (const route of ['write', 'strike', 'paper', 'chat/jot', 'chat/read']) {
+    for (const route of ['write', 'strike', 'paper', 'seen', 'chat/jot', 'chat/read']) {
       const response = await viaLocal(`/v1/notebook/${route}`, route.startsWith('chat/') ? session : operatorToken, {
         method: 'POST', body: 'x'.repeat(64 * 1024),
       })
@@ -380,6 +392,9 @@ it('uses the module availability gate for notebook routes', async () => {
   const pending = await viaLocal('/v1/notebook', operatorToken)
   expect(pending.status).toBe(503)
   expect(await pending.json()).toEqual({ error: 'module_starting', module: 'notebook' })
+  const unseen = await viaLocal('/v1/notebook/unseen', operatorToken)
+  expect(unseen.status).toBe(503)
+  expect(await unseen.json()).toEqual({ error: 'module_starting', module: 'notebook' })
   subsystems = [{ name: 'notebook', state: 'degraded', sinceIso: '2026-01-01T00:00:00.000Z', error: 'test failure' }]
   const degraded = await viaLocal('/v1/notebook/write', operatorToken, post({ body: 'test', clientId: 'test' }))
   expect(degraded.status).toBe(503)

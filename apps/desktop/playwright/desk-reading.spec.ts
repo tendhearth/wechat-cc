@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { placeItem, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
+import { placeItem, placeSession, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
 
 test.use({ viewport: { width: 1280, height: 820 } })
 
@@ -30,7 +30,7 @@ test.beforeEach(async ({ page, shim }) => {
   })
   await routePlaces(page, [
     placeItem('rici', { unseen: true, moving: false, status: 'done', updatedAt: Date.now(), messageIds: ['recent-0', old.messageId] }),
-    placeItem('melu', { line: summary, moving: false, status: 'done', updatedAt: Date.now(), sessionIds: [session] }),
+    placeItem('melu', { line: summary, moving: false, status: 'done', updatedAt: Date.now(), sessionIds: [session], sessions: [placeSession(session, 'replied', day)] }),
   ])
   await routeRoster(page, [rosterItem(session, 'melu', {
     key: `terminal:${session}`, kind: 'terminal', status: 'replied', group: 'back', project: 'melu',

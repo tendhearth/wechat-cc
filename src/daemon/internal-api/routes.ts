@@ -1,3 +1,4 @@
+import { terminalSearchRoutes } from './routes-terminal-search'
 import { cliSetupId } from '../../lib/executor-cli-setup'
 import { cliSetupRoutes } from './routes-cli-setup'
 import { placesRoutes, rosterRoutes } from '../../features/roster'
@@ -82,6 +83,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     ...mattersRoutes(deps),
     ...rosterRoutes(deps),
     ...placesRoutes(deps),
+    ...terminalSearchRoutes(deps),
     // 一件事上的动作(P3e):/v1/matter/<动词> 一个处理器;桌面还在调的 /v1/workbench/* 双胞胎挂同一个函数(下面 withDesktopAliases)
     ...matterActionRoutes(deps),
     ...connectionsRoutes(deps),

@@ -29,7 +29,7 @@ function fixture(device=true,fail=false,scriptReader?:(path:string)=>Promise<{co
  const request='11111111-1111-4111-8111-111111111111',run='22222222-2222-4222-8222-222222222222',posts:any[]=[],reads:string[]=[]
  const detail={matter:{id:'deadbeef'},runId:run,permissions:[{id:request,taskId:'deadbeef',tool:'read',canDenyWithReason:true,description:'<script>unsafe</script>',createdAt:1}],questions:[{id:'33333333-3333-4333-8333-333333333333',taskId:'deadbeef',questions:[{id:'q',header:'方案',question:'选哪个',multiSelect:false,allowOther:true,options:[{label:'A',description:'第一个'}]}]}]}
  const env={document:w.document,isDevice:device,cReady:true,mDetail:detail,mCurrent:'deadbeef',mDetailFresh:true,mOffline:false,esc:(s:any)=>String(s).replace(/</g,'&lt;').replace(/"/g,'&quot;'),mNotice:()=>{},mRefresh:async()=>{},onUnauthorized:()=>{},T:'dTEST',mApi:async(path:string)=>{reads.push(path);if(scriptReader)return await scriptReader(path);return {content:'full snapshot <script>literal</script>',nextOffset:null}},mPostOnce:async(p:string,o:any)=>{posts.push({p,body:JSON.parse(o.body)});if(fail)throw Error('lost reply');return {status:200,json:async()=>({ok:true})}}}
- const f=new Function(...Object.keys(env),readMobileSource('responses.js')+'\nreturn {cRenderResponses,cRespond,cExpandScript}')(...Object.values(env));f.cRenderResponses(detail)
+ const f=new Function(...Object.keys(env),readMobileSource('time.js')+'\n'+readMobileSource('responses.js')+'\nreturn {cRenderResponses,cRespond,cExpandScript}')(...Object.values(env));f.cRenderResponses(detail)
  return {w,posts,reads,detail,request,run,...f}
 }
 it('permission is safe text and uses the exact matter, run and request; lost reply never retries itself',async()=>{

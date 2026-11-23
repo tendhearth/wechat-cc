@@ -29,6 +29,9 @@ const body = () => ({ body: t<Body>() })
 
 export const DESKTOP_CALLS = {
   roster: { get: call('GET /v1/roster') },
+  terminal: {
+    search: call('GET /v1/terminal/search', { query: t<{ q: string; limit?: number }>() }),
+  },
   places: {
     get: call('GET /v1/places'),
     recapSettings: call('GET /v1/settings/recap'),
@@ -50,6 +53,8 @@ export const DESKTOP_CALLS = {
   },
   notebook: {
     get: call('GET /v1/notebook', { query: t<NotebookPageQueryT>() }),
+    unseen: call('GET /v1/notebook/unseen', {}),
+    seen: call('POST /v1/notebook/seen', { body: t<{ ids: string[] }>() }),
     write: call('POST /v1/notebook/write', { body: t<{ body: string; clientId: string }>() }),
     strike: call('POST /v1/notebook/strike', { body: t<{ id: string; struck: boolean }>() }),
     paper: call('POST /v1/notebook/paper', { body: t<{ paper: NotebookPaperT }>() }),

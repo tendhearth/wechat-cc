@@ -110,6 +110,7 @@ export function wireTerminal(d: WireTerminalDeps) {
   const terminalSteps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log: matterLog, matters: matterStore }), turns: terminalTurns })
   let lookupSession: (id: string) => CliSessionInfo | null = () => null
   const turnsWithSteps = withTranscriptSteps({ turns: terminalTurns, steps: terminalSteps, localMachine: osHostname(), lookup: (id) => lookupSession(id), log: (l) => log('CLI_TURNS', l) })
+  const cliSessionStore = makeCliSessionStore(db)
   const cliEvents = makeCliEventHub({
     // 经 CC 开口那道门(cli_session,report;汇总里可能带 y/n 码 ⇒ expiring,不进待说队列),
     // 投递仍走 sendAssistantText;没说出去 ⇒ 'rejected',hub 照旧落到 App 推送 / 桌面通知。
@@ -140,7 +141,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     },
     localMachine: osHostname(),
     // 终端会话登记处(v76):状态落库,重启后「看 码」「@码」照样认得;GET /v1/cli/sessions、手机都读它。
-    store: makeCliSessionStore(db),
+    store: cliSessionStore,
     // 终端会话成为一件事(M4a):钩子事件同时写进这件事的轮与步(和登记处并行;读的人 M4b 再切过来)
     turns: turnsWithSteps,
   })
@@ -370,6 +371,7 @@ export function wireTerminal(d: WireTerminalDeps) {
         db.query('INSERT INTO conversation_work_references VALUES(?,?,?)').run(owner,matter.id,id)
       })()
     },
+    exactSession: cliSessionStore.get,
     hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l), liveIds: () => liveSessionIds(), steps: terminalSteps,
     resolve: (h, dec) => d.resolvePermission(h, dec),
   })

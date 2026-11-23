@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { safeSvg } from '../../lib/svg-sanitize'
-import { MOBILE_TOKENS_CSS, TUNNEL_CLIENT_JS } from './mobile-page'
+import { MOBILE_TIME_JS, MOBILE_TOKENS_CSS, TUNNEL_CLIENT_JS } from './mobile-page'
 
 // 手机页三件现在由 apps/mobile 生成;这里保留旧名字转出口,settings-panel.ts 与测试不用改。
 export { mobilePhoneHtml as phoneHtml, MOBILE_SW_JS as SW_JS, MOBILE_BOOTSTRAP_HTML as M_BOOTSTRAP_HTML } from './mobile-page'
@@ -35,6 +35,7 @@ ${MOBILE_TOKENS_CSS}
   .sub { color:var(--soft); font-size:12.5px; margin-bottom:18px }
   section { background:none; border:0; border-radius:0; padding:24px 0; margin:0; border-top:1px solid var(--line-soft) }
   section h2 { font-size:20px; font-weight:500; margin:0 0 2px; color:var(--ink) }
+  code { font:inherit }
   .hint { font-size:12px; color:var(--soft); margin:0 0 10px }
   .row { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:60px; padding:14px 0; border-top:0 }
   label.row:first-of-type { border-top:0 }
@@ -44,8 +45,11 @@ ${MOBILE_TOKENS_CSS}
   input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
   input[type=text] { width:150px }
   .row > span:first-child { flex:1; min-width:0; overflow-wrap:anywhere }
-  .row > input[type=text], .row > input[type=password], .row > select { max-width:48%; flex-shrink:0 }
-  textarea { width:100%; min-height:110px; resize:vertical; margin-top:8px }
+  .row > input[type=text], .row > input[type=password] { max-width:48%; flex-shrink:0 }
+  textarea { width:100%; height:110px; resize:none; overflow:auto; margin-top:8px }
+  .select-wrap { position:relative; min-width:0; max-width:56%; flex-shrink:0 }
+  .select-wrap select { display:block; appearance:none; width:100%; padding-right:26px; text-overflow:ellipsis; cursor:pointer }
+  .select-wrap::after { content:""; position:absolute; top:calc(50% - 5px); right:11px; width:7px; height:7px; border:solid var(--soft); border-width:0 1px 1px 0; transform:rotate(45deg); pointer-events:none }
   .switch { appearance:none; width:44px; height:26px; border-radius:var(--r-pill); background:var(--line-soft); box-shadow:inset 0 0 0 1px var(--faint); position:relative; cursor:pointer; transition:.15s; flex-shrink:0; margin:0 }
   .switch:checked { background:var(--accent); box-shadow:none }
   .switch:disabled { opacity:.45; cursor:not-allowed }
@@ -54,7 +58,12 @@ ${MOBILE_TOKENS_CSS}
   .seg { display:flex; gap:6px }
   .seg button { font:inherit; font-size:13px; min-height:44px; padding:8px 12px; border:1px solid var(--line); background:var(--card); border-radius:var(--r-pill); color:var(--soft); cursor:pointer }
   .seg button.on { background:var(--accent); border-color:var(--accent); color:var(--card) }
-  details { margin-top:2px } summary { color:var(--soft); font-size:13.5px; cursor:pointer; padding:10px 0; min-height:44px }
+  details { margin-top:2px }
+  details > summary { position:relative; display:block; list-style:none; color:var(--soft); font-size:13.5px; cursor:pointer; padding:10px 28px 10px 0; min-height:44px; align-content:center }
+  details > summary::-webkit-details-marker { display:none }
+  details > summary::after { content:""; position:absolute; top:calc(50% - 4px); right:8px; width:7px; height:7px; border:solid var(--soft); border-width:1px 1px 0 0; transform:rotate(45deg); pointer-events:none }
+  details[open] > summary::after { transform:rotate(135deg) }
+  .model-broken::before { content:""; display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--danger); margin-right:6px; vertical-align:middle }
   .say { font-size:12.5px; color:var(--soft); background:none; border-radius:0; padding:0; margin-top:12px; line-height:1.8 }
   #toast { position:fixed; left:50%; bottom:calc(24px + env(safe-area-inset-bottom)); max-width:calc(100% - 40px); width:max-content; text-align:center; z-index:10; transform:translateX(-50%); background:var(--ink); color:var(--paper); padding:8px 18px; border-radius:var(--r-pill); font-size:13px; opacity:0; transition:.25s; pointer-events:none }
   #toast.show { opacity:1 }
@@ -73,8 +82,8 @@ ${MOBILE_TOKENS_CSS}
   .switch::after { top:12px; box-shadow:none }
   #atelier-status { font:inherit; font-size:13px; color:var(--soft); border:0; background:none; text-align:left; padding:8px 0; cursor:pointer }
   #atelier-status:disabled { cursor:default }
-  #tp-list label { min-height:44px; padding:6px 0 }
-  #tp-list input { width:20px; height:20px }
+  #tp-list label { display:flex; align-items:center; gap:8px; min-height:44px; padding:6px 0; cursor:pointer }
+  #tp-list input { width:20px; height:20px; margin:0; flex:none; accent-color:var(--accent) }
   .row > button { flex-shrink:0; white-space:nowrap }
   .row, .hint, .say, summary { overflow-wrap:anywhere }
   @media(max-width:420px) { body { padding-left:22px; padding-right:22px } .seg { gap:2px } .seg button { padding:8px } .row { gap:10px } }
@@ -89,14 +98,14 @@ ${MOBILE_TOKENS_CSS}
 <section id="sec-persona">
   <h2>称呼与性格</h2>
   <p class="hint">CC 是谁、该怎么叫你</p>
-  <label class="row"><span><b>CC 怎么称呼你</b><small>只填称呼本身,比如「大人」</small></span><input type="text" id="f-name"></label>
+  <label class="row"><span><b>CC 怎么称呼你</b><small>只填称呼本身，比如「大人」</small></span><input type="text" id="f-name"></label>
   <label class="row"><span><b>CC 叫什么名字</b></span><input type="text" id="f-botname"></label>
   <div class="row" style="display:block;border-top:1px solid var(--line-soft);padding-top:10px">
-    <b>CC 的性格</b><small style="color:var(--soft)">写给 CC 的性格说明,每次聊天都会带上</small>
-    <textarea id="f-persona" aria-label="CC 的性格" placeholder="比如:说话温柔,偶尔损我一句,别太啰嗦…"></textarea>
+    <b>CC 的性格</b><small style="color:var(--soft)">写给 CC 的性格说明，每次聊天都会带上</small>
+    <textarea id="f-persona" aria-label="CC 的性格" placeholder="比如：说话温柔，偶尔损我一句，别太啰嗦…"></textarea>
     <button class="save" id="save-persona">保存性格</button>
   </div>
-  <div class="say">也可以直接跟 CC 说:「以后叫我大人」「说话毒舌一点」</div>
+  <div class="say">也可以直接跟 CC 说：「以后叫我大人」「说话毒舌一点」</div>
 </section>
 
 <section id="sec-companion">
@@ -109,49 +118,49 @@ ${MOBILE_TOKENS_CSS}
   <label class="row"><span><b>回复拆成小气泡</b><small>像真人一样分几条发</small></span><input type="checkbox" class="switch" id="f-split"></label>
   <label class="row"><span><b>表情包</b></span><input type="checkbox" class="switch" id="f-stickers"></label>
   <label class="row"><span><b>每日打猎</b><small>早上主动分享它发现的东西</small></span><input type="checkbox" class="switch" id="f-hunt"></label>
-  <label class="row"><span><b>让 CC 自己画画</b><small>CC 有感觉时用你的电脑画画,只存在本机。首次需下载约 5GB</small></span><input type="checkbox" class="switch" id="f-atelier"></label>
+  <label class="row"><span><b>让 CC 自己画画</b><small>CC 有感觉时用你的电脑画画，只存在本机。首次需下载约 5GB</small></span><input type="checkbox" class="switch" id="f-atelier"></label>
   <button type="button" class="say" id="atelier-status" hidden></button>
-  <div class="say">也可以直接说:「别拆分回复了」「关心档位调低点」</div>
+  <div class="say">也可以直接说：「别拆分回复了」「关心档位调低点」</div>
 </section>
 
 <section id="sec-remote" hidden>
   <h2>随身 CC</h2>
   <p class="hint">出门也能查看 CC 和事情的状态。可把网页加到手机主屏。</p>
-  <label class="row"><span><b>出门也能用</b><small>经加密中继回家,数据只在你自己电脑上,中间人看不到</small></span><input type="checkbox" class="switch" id="f-remote"></label>
-  <div class="say" id="remote-hint">开启需要重启一下 CC(约十几秒),之后在同一 Wi-Fi 下打开随身 CC,点「把 CC 带在身上」即可</div>
+  <label class="row"><span><b>出门也能用</b><small>经加密中继回家，数据只在你自己电脑上，中间人看不到</small></span><input type="checkbox" class="switch" id="f-remote"></label>
+  <div class="say" id="remote-hint">开启需要重启一下 CC（约十几秒），之后在同一 Wi-Fi 下打开随身 CC，点「把 CC 带在身上」即可</div>
   <label class="row" id="row-devices" hidden><span><b>已配对设备</b><small id="devices-count"></small></span><button type="button" id="forget-devices" style="font:inherit;font-size:12.5px;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent);cursor:pointer">全部忘掉</button></label>
   <div id="devices-list"></div>
 </section>
 
 <section id="sec-models">
   <h2>AI 服务</h2>
-  <p class="hint">CC 有哪些大脑、各自通不通。这里改的是全局默认;单个对话换脑子在微信里发 /api /agy /cc</p>
+  <p class="hint">CC 有哪些大脑、各自通不通。这里改的是全局默认；单个对话换脑子在微信里发 <code>/api</code> <code>/agy</code> <code>/cc</code></p>
   <div id="models-table"></div>
-  <label class="row"><span><b>默认大脑</b><small>没在微信里单独切过的对话、还有 CC 主动找你时,用这家。改完 CC 会自己重启(十几秒)</small></span><select id="f-default-provider"></select></label>
+  <label class="row"><span><b>默认大脑</b><small>没在微信里单独切过的对话、还有 CC 主动找你时，用这家。改完 CC 会自己重启（十几秒）</small></span><span class="select-wrap"><select id="f-default-provider"></select></span></label>
   <div class="row" style="display:block;border-top:1px solid var(--line-soft);padding-top:10px">
-    <b>自配 API(/api)</b><small style="color:var(--soft)">OpenAI 兼容网关 —— DeepSeek / Kimi / Qwen 这类都从这扇门进</small>
-    <label class="row"><span><b>地址</b><small>以 /v1 结尾</small></span><input type="text" id="f-api-base" style="width:190px" placeholder="https://…/v1"></label>
+    <b>自配 API（<code>/api</code>）</b><small style="color:var(--soft)">OpenAI 兼容网关 —— DeepSeek / Kimi / Qwen 这类都从这扇门进</small>
+    <label class="row"><span><b>地址</b><small>以 <code>/v1</code> 结尾</small></span><input type="text" id="f-api-base" style="width:190px" placeholder="https://…/v1"></label>
     <label class="row"><span><b>默认模型</b><small>没按对话钉时用它</small></span><input type="text" id="f-api-model" style="width:150px" placeholder="DeepSeek"></label>
     <label class="row"><span><b>API Key</b><small id="api-key-hint"></small></span><input type="password" id="f-api-key" style="width:150px" placeholder="sk-…" autocomplete="off"></label>
-    <button class="save" id="save-api-key">保存 Key(之后重启一下 CC)</button>
+    <button class="save" id="save-api-key">保存 Key（之后重启一下 CC)</button>
     <div style="border-top:1px solid var(--line-soft);padding-top:10px;margin-top:10px">
-      <b>短名</b><small style="color:var(--soft);display:block">起了短名,微信里 /api ds 就切;网关上的原名照样能用</small>
+      <b>短名</b><small style="color:var(--soft);display:block">起了短名，微信里 <code>/api ds</code> 就切；网关上的原名照样能用</small>
       <div id="alias-list" style="margin:6px 0"></div>
       <div style="display:flex;gap:6px;align-items:center"><input type="text" id="f-alias-name" aria-label="模型短名" style="width:70px" placeholder="ds"><span>→</span><input type="text" id="f-alias-model" aria-label="短名对应的模型" style="width:120px" placeholder="DeepSeek"><button type="button" class="seg-btn" id="add-alias" style="font:inherit;font-size:13px;padding:6px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent)">加</button></div>
     </div>
   </div>
-  <label class="row"><span><b>后台评估用</b><small>记忆整理 / 辩论主持 / introspect 这些幕后活儿走哪家;auto = 偏好序</small></span><select id="f-cheap"></select></label>
+  <label class="row"><span><b>后台评估用</b><small>整理记忆、主持辩论、回想这些幕后的活儿交给哪家</small></span><span class="select-wrap"><select id="f-cheap"></select></span></label>
   <div class="row" style="display:block;border-top:1px solid var(--line-soft);padding-top:10px">
-    <b>非管理员能用哪些</b><small style="color:var(--soft);display:block">信任/访客对话只能切到勾选的;🔑共享钥匙的(agy)对访客永远不开放</small>
+    <b>非管理员能用哪些</b><small style="color:var(--soft);display:block">访客的对话只能换到这里勾选的；用共享登录的那一家（agy）对访客永远不开放</small>
     <div id="tp-list" style="margin-top:6px"></div>
   </div>
-  <div class="say">也可以直接跟 CC 说:「换成 DeepSeek」「用 opus 5」「你现在是哪个模型」</div>
+  <div class="say">也可以直接跟 CC 说：「换成 DeepSeek」「用 opus 5」「你现在是哪个模型」</div>
 </section>
 
 <section>
-  <details><summary>技术详情(好奇再点)</summary>
+  <details><summary>技术详情（好奇再点）</summary>
     <label class="row"><span><b>知识库</b><small>长期记忆检索</small></span><input type="checkbox" class="switch" id="f-knowledge"></label>
-    <label class="row"><span><b>终端里的项目近况</b><small>新开 Claude Code / Codex 时,带上 CC 记下的这个项目的近况</small></span><input type="checkbox" class="switch" id="f-project-memory"></label>
+    <label class="row"><span><b>终端里的项目近况</b><small>新开 Claude Code / Codex 时，带上 CC 记下的这个项目的近况</small></span><input type="checkbox" class="switch" id="f-project-memory"></label>
     <label class="row"><span><b>社交能力</b><small>替你和别人的 CC 打交道</small></span><input type="checkbox" class="switch" id="f-social"></label>
     <label class="row"><span><b>开机自启</b></span><input type="checkbox" class="switch" id="f-autostart"></label>
   </details>
@@ -160,6 +169,7 @@ ${MOBILE_TOKENS_CSS}
 </fieldset>
 <div id="toast"></div>
 <script>
+${MOBILE_TIME_JS}
 var T = ${JSON.stringify(token)};
 var REMOTE = null;
 try { var rr = localStorage.getItem("ccRemote"); if (rr) REMOTE = JSON.parse(rr) } catch (e) {}
@@ -176,8 +186,8 @@ async function sapi(path, body) {
 async function apply(op, extra, okMsg) {
   let r
   try { r = await sapi("/set/api/apply", Object.assign({ op }, extra)) }
-  catch (e) { toast("没连上 — 待在家里(和电脑同一网络)再试"); return false }  // 网络/过期:别静默,让调用方回滚
-  toast(r.ok ? (okMsg || "已保存 ✓") : (r.error === "lan_only" ? "这个开关要在家里(和电脑同一网络)才能动" : "没改成: " + (r.error || "unknown")))
+  catch (e) { toast("没连上 — 待在家里（和电脑同一网络）再试"); return false }  // 网络/过期:别静默,让调用方回滚
+  toast(r.ok ? (okMsg || "已保存 ✓") : (r.error === "lan_only" ? "这个开关要在家里（和电脑同一网络）才能动" : "没改成：" + (r.error || "unknown")))
   return r.ok
 }
 function wireSwitch(id, kind, key) {
@@ -198,7 +208,7 @@ function atelierLabel(st) {
   if (st.state === "checking") return { label: "正在检查画笔…", done: false, failed: false }
   if (st.state === "downloading") { if (!(st.total > 0)) return { label: "正在下载画笔…", done: false, failed: false }; var pct = Math.min(100, Math.round(st.received / st.total * 100)); return { label: "正在下载画笔… " + pct + "%", done: false, failed: false } }
   if (st.state === "ready") return { label: "画笔就绪 ✓", done: true, failed: false }
-  if (st.state === "failed") return { label: "准备失败,点此重试", done: false, failed: true }
+  if (st.state === "failed") return { label: "准备失败，点此重试", done: false, failed: true }
   return { label: "", done: false, failed: false }
 }
 function showAtelier(st) {
@@ -219,9 +229,13 @@ var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", grok:
 var PROVIDER_NAME = {};
 function esc(t) { return String(t == null ? "" : t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] }) }
 function statusText(p) {
-  if (p.status === "ok") return "✓ 通" + (p.latency_ms != null ? "(" + p.latency_ms + "ms)" : "")
-  if (p.status === "broken") return "✗ 不通" + (p.error ? ":" + p.error : "")
-  if (p.status === "unknown") return "已接入,还没测过(桌面「大脑」卡可测)"
+  if (p.status === "ok") return "✓ 通" + (p.latency_ms != null ? "（" + p.latency_ms + "ms）" : "")
+  if (p.status === "broken") {
+    if (!p.error) return "不通"
+    if (/^请求未成功[，、,]请检查地址[。]?$/.test(p.error)) return "不通：请求没成功，检查一下地址"
+    return "不通：" + p.error
+  }
+  if (p.status === "unknown") return "已接入，还没测过（桌面「大脑」卡可测）"
   return "未接入 · 到电脑上点一下接入"
 }
 function renderModels(m) {
@@ -235,7 +249,7 @@ function renderModels(m) {
       ? '<input type="text" data-model-key="' + key + '" value="' + esc(p.model || "") + '" style="width:150px" placeholder="默认">'
       : '<small style="color:var(--soft)">' + esc(p.model || (p.id === "codex" ? "同 Claude 那格" : "—")) + '</small>'
     var shared = (m.shared_token || []).indexOf(p.id) >= 0
-    html += '<label class="row"><span><b>' + esc(PROVIDER_NAME[p.id] || p.id) + (isDefault ? ' <small style="display:inline;color:var(--accent)">默认</small>' : "") + (shared ? ' <small style="display:inline" title="所有对话共用一把 trusted 钥匙,不能按对话分权限">🔑共享钥匙</small>' : "") + '</b><small>' + esc(statusText(p)) + '</small></span>' + input + '</label>'
+    html += '<label class="row"><span><b>' + esc(PROVIDER_NAME[p.id] || p.id) + (isDefault ? ' <small style="display:inline;color:var(--accent)">默认</small>' : "") + (shared ? ' <small style="display:inline" title="所有对话共用一把 trusted 钥匙，不能按对话分权限">🔑共享钥匙</small>' : "") + '</b><small' + (p.status === 'broken' ? ' class="model-broken"' : '') + '>' + esc(statusText(p)) + '</small></span>' + input + '</label>'
   }
   $("models-table").innerHTML = html
   // 非管理员能用哪些(勾选 = 允许;全勾 = 不限制)
@@ -243,7 +257,7 @@ function renderModels(m) {
   for (var q = 0; q < m.providers.length; q++) {
     var pp = m.providers[q]; if (!pp.registered) continue
     var on = tp == null || tp.indexOf(pp.id) >= 0
-    tpHtml += '<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0"><input type="checkbox" data-tp="' + esc(pp.id) + '"' + (on ? " checked" : "") + '> ' + esc(PROVIDER_NAME[pp.id] || pp.id) + '</label>'
+    tpHtml += '<label><input type="checkbox" data-tp="' + esc(pp.id) + '"' + (on ? " checked" : "") + '> ' + esc(PROVIDER_NAME[pp.id] || pp.id) + '</label>'
   }
   $("tp-list").innerHTML = tpHtml || '<small style="color:var(--soft)">没有已注册的 provider</small>'
   var tps = $("tp-list").querySelectorAll("input[data-tp]")
@@ -258,7 +272,7 @@ function renderModels(m) {
   })(inputs[j])
   $("f-api-base").value = m.openai.base_url || ""
   $("f-api-model").value = m.openai.model || ""
-  $("api-key-hint").textContent = m.openai.has_key ? "已配好(只能覆盖,不显示)" : "还没配 —— 配好才会接入"
+  $("api-key-hint").textContent = m.openai.has_key ? "已配好（只能覆盖，不显示）" : "还没配 —— 配好才会接入"
   var al = "", names = Object.keys(m.openai.aliases || {}).sort()
   for (var k = 0; k < names.length; k++) al += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0"><span><b>' + esc(names[k]) + '</b> → ' + esc(m.openai.aliases[names[k]]) + '</span><button type="button" data-del-alias="' + esc(names[k]) + '" style="font:inherit;font-size:12px;padding:3px 10px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--soft)">删</button></div>'
   $("alias-list").innerHTML = al || '<small style="color:var(--soft)">还没有短名</small>'
@@ -272,20 +286,20 @@ function renderModels(m) {
     // 访客不可用 = 共享钥匙的 + 约束不住自己工具面的(ACP 的 cursor);🔑 徽章只跟前者。
     var dshared = (m.shared_token || []).indexOf(dp.id) >= 0
     var dblocked = (m.guest_blocked || []).indexOf(dp.id) >= 0
-    dopts += '<option value="' + esc(dp.id) + '"' + (dp.id === m.default_provider ? " selected" : "") + '>' + esc(PROVIDER_NAME[dp.id] || dp.id) + (dshared ? "(共享钥匙,访客不可用)" : dblocked ? "(访客不可用)" : "") + (dp.registered ? "" : "(未接入)") + '</option>'
+    dopts += '<option value="' + esc(dp.id) + '"' + (dp.id === m.default_provider ? " selected" : "") + '>' + esc(PROVIDER_NAME[dp.id] || dp.id) + (dshared ? "（共享钥匙，访客不可用）" : dblocked ? "（访客不可用）" : "") + (dp.registered ? "" : "（未接入）") + '</option>'
   }
   dsel.innerHTML = dopts
   var sel = $("f-cheap"), opts = ["auto"]
   for (var r = 0; r < m.providers.length; r++) if (m.providers[r].registered) opts.push(m.providers[r].id)
   if (opts.indexOf(m.cheap) < 0) opts.push(m.cheap)
-  sel.innerHTML = opts.map(function (o) { return '<option value="' + esc(o) + '"' + (o === m.cheap ? " selected" : "") + '>' + esc(o === "auto" ? "auto(偏好序)" : (PROVIDER_NAME[o] || o)) + '</option>' }).join("")
+  sel.innerHTML = opts.map(function (o) { return '<option value="' + esc(o) + '"' + (o === m.cheap ? " selected" : "") + '>' + esc(o === "auto" ? "自动（按偏好的先后）" : (PROVIDER_NAME[o] || o)) + '</option>' }).join("")
 }
 async function reloadModels() { var s = await sapi("/set/api/state"); if (s.ok) renderModels(s.models) }
 wireText("f-api-base", v => apply("set_config", { key: "openaiBaseUrl", value: v }))
 wireText("f-api-model", v => apply("set_config", { key: "openaiModel", value: v }))
 $("save-api-key").addEventListener("click", async function () {
   var key = $("f-api-key").value.trim(); if (!key) { toast("先填 Key"); return }
-  var ok = await apply("set_llm_key", { provider: "openai", key: key, base_url: $("f-api-base").value.trim(), model: $("f-api-model").value.trim() }, "Key 已存好,重启 CC 后接入 ✓")
+  var ok = await apply("set_llm_key", { provider: "openai", key: key, base_url: $("f-api-base").value.trim(), model: $("f-api-model").value.trim() }, "Key 已存好，重启 CC 后接入 ✓")
   if (ok) { $("f-api-key").value = ""; reloadModels() }
 })
 $("add-alias").addEventListener("click", async function () {
@@ -296,7 +310,7 @@ $("add-alias").addEventListener("click", async function () {
 $("f-cheap").addEventListener("change", function (e) { apply("set_config", { key: "cheap_eval_provider", value: e.target.value }, "后台评估改走 " + e.target.value + " ✓") })
 $("f-default-provider").addEventListener("change", async function (e) {
   var v = e.target.value
-  var ok = await apply("set_config", { key: "provider", value: v }, "默认大脑改为 " + (PROVIDER_NAME[v] || v) + ",CC 重启中(十几秒)…")
+  var ok = await apply("set_config", { key: "provider", value: v }, "默认大脑改为 " + (PROVIDER_NAME[v] || v) + "，CC 重启中（十几秒）…")
   if (!ok) reloadModels()
 })
 
@@ -325,7 +339,7 @@ async function load() {
     $("f-remote").checked = s.remote.enabled === true
     if (window.__CC_SHELL__ || preferTunnel) {
       $("f-remote").disabled = true
-      $("remote-hint").textContent = "出门在外不能动这个开关 — 回家(和电脑同一网络)再改"
+      $("remote-hint").textContent = "出门在外不能动这个开关 — 回家（和电脑同一网络）再改"
     }
     renderDevices(Array.isArray(s.remote.devices) ? s.remote.devices : [])
     remoteReady = true
@@ -353,7 +367,7 @@ async function load() {
 }
 $("f-atelier").addEventListener("change", async e => {
   const on = e.target.checked
-  const ok = await apply("set_config", { key: "companion.atelier_mode", value: on ? "private" : "off" }, on ? "开了,正在准备画笔… ✓" : "已关闭")
+  const ok = await apply("set_config", { key: "companion.atelier_mode", value: on ? "private" : "off" }, on ? "开了，正在准备画笔… ✓" : "已关闭")
   if (!ok) { e.target.checked = !on; return }
   if (on) { showAtelier({ state: "checking" }); startAtelierPoll() }
   else { if (atelierPoll) { clearInterval(atelierPoll); atelierPoll = null } showAtelier(null) }
@@ -380,10 +394,10 @@ wireSwitch("f-project-memory", "config", "companion.project_memory_into_sessions
 wireSwitch("f-social", "config", "social_enabled")
 wireSwitch("f-autostart", "config", "autoStart")
 $("forget-devices").addEventListener("click", async () => {
-  if (!confirm("忘掉所有已配对设备?手机上的随身 CC 会立即失效,需要重新配对。")) return
+  if (!confirm("忘掉所有已配对设备？手机上的随身 CC 会立即失效，需要重新配对。")) return
   const r = await sapi("/set/api/apply", { op: "forget_devices" })
-  if (r.ok) { renderDevices([]); toast("都忘掉了,手机要重新配对") }
-  else if (r.error === "lan_only") toast("忘掉设备要在家里(和电脑同一网络)做")
+  if (r.ok) { renderDevices([]); toast("都忘掉了，手机要重新配对") }
+  else if (r.error === "lan_only") toast("忘掉设备要在家里（和电脑同一网络）做")
 })
 // 逐台列表(梳理第 6 步):标签是用户输入,一律 textContent,不拼 HTML。
 function renderDevices(list) {
@@ -391,7 +405,6 @@ function renderDevices(list) {
   box.replaceChildren()
   $("row-devices").hidden = list.length === 0
   $("devices-count").textContent = list.length + " 台手机拿着长期钥匙"
-  const day = iso => (iso || "").slice(0, 10)
   for (const d of list) {
     const row = document.createElement("div")
     row.className = "row"
@@ -399,17 +412,17 @@ function renderDevices(list) {
     const name = document.createElement("b")
     name.textContent = (d.label || d.id) + (d.current ? " · 这台" : "")
     const meta = document.createElement("small")
-    meta.textContent = "配对 " + day(d.created_at) + " · 最近 " + day(d.last_seen_at)
+    meta.textContent = "配对 " + mobileTime(d.created_at) + " · 最近 " + mobileTime(d.last_seen_at)
     info.append(name, meta)
     const btn = document.createElement("button")
     btn.type = "button"
     btn.textContent = "忘掉"
     btn.style.cssText = "font:inherit;font-size:12.5px;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent);cursor:pointer"
     btn.addEventListener("click", async () => {
-      if (!confirm(d.current ? "忘掉这台手机?它会立即失效,要重新配对。" : "忘掉这台设备?它会立即失效。")) return
+      if (!confirm(d.current ? "忘掉这台手机？它会立即失效，要重新配对。" : "忘掉这台设备？它会立即失效。")) return
       const r = await sapi("/set/api/apply", { op: "revoke_device", id: d.id })
       if (r.ok) { renderDevices(list.filter(x => x.id !== d.id)); toast(d.current ? "这台手机需要重新配对" : "已忘掉") }
-      else toast(r.error === "lan_only" ? "忘掉设备要在家里(和电脑同一网络)做" : "没忘掉: " + (r.error || "unknown"))
+      else toast(r.error === "lan_only" ? "忘掉设备要在家里（和电脑同一网络）做" : "没忘掉：" + (r.error || "unknown"))
     })
     row.append(info, btn)
     box.append(row)
@@ -418,11 +431,11 @@ function renderDevices(list) {
 $("f-remote").addEventListener("change", async e => {
   const on = e.target.checked
   const h = $("remote-hint")
-  h.textContent = on ? "正在开启并重启 CC…十几秒后回来,在同一 Wi-Fi 下打开随身 CC 点「把 CC 带在身上」" : "已关闭出门访问"
+  h.textContent = on ? "正在开启并重启 CC…十几秒后回来，在同一 Wi-Fi 下打开随身 CC 点「把 CC 带在身上」" : "已关闭出门访问"
   let r
   try { r = await sapi("/set/api/apply", { op: "set_remote", enabled: on }) }
   catch (err) { h.textContent = "没连上 — 待在家里再试"; e.target.checked = !on; return }
-  if (!r.ok) { h.textContent = "没改成:" + (r.error || ""); e.target.checked = !on }
+  if (!r.ok) { h.textContent = "没改成：" + (r.error || ""); e.target.checked = !on }
 })
 $("settings-retry").addEventListener("click", () => {
   $("settings-retry").hidden = true
