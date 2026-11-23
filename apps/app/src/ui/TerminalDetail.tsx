@@ -18,6 +18,7 @@ import { DirectHeader } from './DirectHeader'
 import { DirectComposer } from './DirectComposer'
 import { directHeaderView } from '../view/direct-header'
 import { useMatterSay } from '../state/matter-say'
+import { DiffLine } from './DiffLine'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { Icon } from '../ui/Icon'
@@ -159,7 +160,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
                           {open[k] ? (
                             <View testID={`terminal-step-detail-${i}`} style={{ paddingVertical: space.s, gap: space.xs }}>
                               {it.detail.split('\n').map((l, j) => (
-                                <Txt key={j} role="code" content="user" style={isDiff && l.startsWith('+ ') ? { color: c.accent } : isDiff && l.startsWith('- ') ? { color: c.bad } : undefined}>{l || ' '}</Txt>
+                                <DiffLine key={j} line={l} kind={isDiff && l.startsWith('+ ') ? 'add' : isDiff && l.startsWith('- ') ? 'remove' : undefined} />
                               ))}
                             </View>
                           ) : null}

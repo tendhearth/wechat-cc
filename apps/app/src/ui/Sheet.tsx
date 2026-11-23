@@ -54,9 +54,13 @@ export function Expansion({ open, children, onClosed, keepMounted = false }: { o
 }
 
 // 可展开区块:标题一行,点开看内容;沿用页面纸色与留白,不再画一层卡片。
-export function Sheet({ title, children, defaultOpen = false, testID }: { title: string; children: ReactNode; defaultOpen?: boolean; testID?: string }) {
+export function Sheet({ title, children, defaultOpen = false, testID, expanded, onExpandedChange }: {
+  title: string; children: ReactNode; defaultOpen?: boolean; testID?: string
+  expanded?: boolean; onExpandedChange?: (open: boolean) => void
+}) {
   const { c } = useTheme()
-  const [open, setOpen] = useState(defaultOpen)
+  const [internalOpen, setOpen] = useState(defaultOpen)
+  const open = expanded ?? internalOpen
   return (
     <View style={{ backgroundColor: c.paper, overflow: 'hidden' }}>
       <Pressable
@@ -64,7 +68,7 @@ export function Sheet({ title, children, defaultOpen = false, testID }: { title:
         testID={testID}
         accessibilityState={{ expanded: open }}
         accessibilityLabel={title}
-        onPress={() => setOpen((v) => !v)}
+        onPress={() => (onExpandedChange ?? setOpen)(!open)}
         style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
       >
         <Txt role="bubble" style={{ flex: 1 }}>{title}</Txt>

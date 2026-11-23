@@ -211,6 +211,18 @@ function approvalScope(params: ObjectValue): string | null {
   ].filter(Boolean).join('\n')
 }
 
+export function codexPermissionDescription(file: boolean, params: ObjectValue, item?: ObjectValue) {
+  const validChanges = Array.isArray(item?.changes) && item.changes.length > 0 && item.changes.every((change: unknown) => object(change) && typeof change.path === 'string' && typeof change.diff === 'string')
+  const changes = validChanges ? item!.changes.map((change: ObjectValue) => `${preview(change.path)}\n${preview(change.kind)}\n${preview(change.diff)}`).join('\n\n') : null
+  const command = params.command ?? item?.command
+  const scope = approvalScope(params)
+  const description = (file
+    ? [changes, params.reason, scope]
+    : [command, params.cwd && `Working directory: ${params.cwd}`, params.reason, scope]
+  ).filter(Boolean).join('\n')
+  return { validChanges, command, scope, description }
+}
+
 /** Native app-server protocol adapter: the workbench provider below, and Codex chat (codex-chat-provider.ts) via spawnCodexAppServerSession. */
 /** 发完 SIGKILL 之后至少再等多久看它退(关闭期限已经过了也给这一段)。 */
 const KILL_GRACE_MS = 250
@@ -610,14 +622,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         approvals.set(id, entry)
         const file = message.method === 'item/fileChange/requestApproval'
         const item = turn.items.get(params.itemId)
-        const validChanges = Array.isArray(item?.changes) && item.changes.length > 0 && item.changes.every((change: unknown) => object(change) && typeof change.path === 'string' && typeof change.diff === 'string')
-        const changes = validChanges ? item!.changes.map((change: ObjectValue) => `${preview(change.path)}\n${preview(change.kind)}\n${preview(change.diff)}`).join('\n\n') : null
-        const command = params.command ?? item?.command
-        const scope = approvalScope(params)
-        const description = (file
-          ? [changes, params.reason, scope]
-          : [command, params.cwd && `Working directory: ${params.cwd}`, params.reason, scope]
-        ).filter(Boolean).join('\n')
+        const { validChanges, command, scope, description } = codexPermissionDescription(file, params, item)
         // Stdin grants and unknown approval variants lack a reviewed command;
         // do not turn them into blanket/session policy grants.
         const supported = scope !== null && description.length <= 20_000 && (file ? validChanges : (typeof command === 'string' && !!command.trim() && (!params.kind || params.kind === 'command')))

@@ -394,17 +394,74 @@ function placeWithNotes(kind: 'permission' | 'question', requestId: string): Pla
   }] }
 }
 
+describe('permission operation rendering', () => {
+  const many = Array.from({ length: 14 }, (_, i) => `item-${i + 1}`).join('\r\n')
+  it.each([
+    { kind: 'command', tool: 'Bash', raw: 'command=' + many, last: 'item-8', hidden: 'item-9', label: '命令：' },
+    { kind: 'edit', tool: 'MultiEdit', raw: 'input=' + JSON.stringify({ file_path: '/p/src/a', edits: [
+      { old_string: 'previous', new_string: 'next' }, { old_string: 'before', new_string: many },
+    ] }), last: '+ item-11', hidden: '+ item-12', label: '改 src/a：删 2 行，加 15 行' },
+    { kind: 'write', tool: 'Write', raw: 'input=' + JSON.stringify({ file_path: '/p/src/a', content: many }), last: '+ item-12', hidden: '+ item-13', label: '写 src/a：共 14 行' },
+    { kind: 'patch', tool: 'fileChange', raw: 'src/a\nupdate\n-old\n+new\n\nsrc/b\nadd\n+fresh', last: '+fresh', label: '改 2 个文件' },
+    { kind: 'url', tool: 'WebFetch', raw: '{"url":"https://sample.invalid/a","prompt":"read"}', last: 'sample.invalid', label: '网址：' },
+    { kind: 'query', tool: 'WebSearch', raw: '{"query":"sample"}', last: '「sample」', label: '搜索：' },
+    { kind: 'fields', tool: 'mcp__gallery__list', raw: 'input=' + JSON.stringify({ q: many }), last: 'item-8', hidden: 'item-9', label: '工具参数：' },
+    { kind: 'text', tool: 'Unknown', raw: many, last: 'item-8', hidden: 'item-9', label: 'item-1' },
+  ])('shows $kind with a single accessibility label and the exact original', async ({ kind, tool, raw, last, hidden, label }) => {
+    const h = harness()
+    const request = h.detail().permissions[0]
+    request.tool = tool
+    request.description = raw
+    h.setInsight({ progress: null, explanations: { [request.id]: { title: tool, what: raw, scope: '', effect: 'raw fallback', source: 'raw' } } })
+    const ui = await mount(Approval)
+    const panel = ui.byId(`approval-operation-${kind}`)
+    expect(panel.textContent?.includes(last)).toBe(true)
+    expect(ui.byId('approval-operation-label').getAttribute('aria-label')?.startsWith(label)).toBe(true)
+    expect(ui.byId('approval-effect')).toBeNull()
+    expect(ui.byId('approval-model-note')).toBeNull()
+    expect(ui.byId('approval-details')).toBeNull()
+    expect(ui.byId('approval-exact-source')).toBeNull()
+    if (hidden) {
+      expect(panel.textContent?.includes(hidden)).toBe(false)
+      await ui.click('approval-operation-more')
+    } else await ui.click('approval-view-exact')
+    expect(ui.byId('approval-view-exact').getAttribute('aria-expanded')).toBe('true')
+    expect(ui.byId('approval-exact-source').textContent === raw).toBe(true)
+    expect(host.sources.some(source => source.id === 'approval-exact-source' && source.selectable === true)).toBe(true)
+  })
+
+  it('only shows distinct, present details', async () => {
+    const h = harness()
+    h.setInsight({ progress: null, explanations: { [h.detail().permissions[0].id]: {
+      title: '检查项目', what: '  检查项目  ', scope: '示例范围', effect: '', source: 'model',
+    } } })
+    const ui = await mount(Approval)
+    await ui.click('approval-details')
+    expect(ui.container.textContent).toContain('示例范围')
+    expect(ui.container.textContent).not.toContain('要做的事')
+    expect(ui.byId('approval-model-note')).toBeNull()
+  })
+})
+
 describe('work-first matter details', () => {
   it('keeps a model explanation beside the original operation and waits for the decision result before leaving', async () => {
     const h = harness(), result = gate<Reply>(), requestId = h.detail().permissions[0].id
     h.detail().permissions[0].description = 'npm test\nsecond command'
-    h.setInsight({ progress: null, explanations: { [requestId]: { title: '检查项目', what: '模型的说明', scope: '当前项目', effect: '运行检查', source: 'model' } } })
+    h.setInsight({ progress: null, explanations: { [requestId]: { title: '检查项目', what: '模型的说明', scope: '当前项目', effect: '运行 `check`', source: 'model' } } })
     h.setPermission(() => result.promise)
     const ui = await mount(Approval)
-    expect(ui.byId('approval-raw-inline').textContent).toContain('npm test')
-    expect(ui.byId('approval-raw-inline').textContent).toContain('/p')
+    expect(ui.byId('approval-operation-command').textContent?.includes('npm test')).toBe(true)
+    expect(ui.byId('approval-operation-cwd').textContent?.includes('/p')).toBe(true)
+    expect(ui.byId('approval-effect').textContent).toContain('运行 check')
+    expect(ui.byId('approval-model-note').textContent).toBe('这段是模型概括的，以上面的原文为准。')
     expect(ui.container.textContent).toContain('只对这一次请求')
+    expect(ui.byId('approval-details').getAttribute('aria-expanded')).toBe('false')
+    expect(ui.container.textContent).not.toContain('当前项目')
+    await ui.click('approval-details')
+    expect(ui.byId('approval-details').getAttribute('aria-expanded')).toBe('true')
     expect(ui.container.textContent).toContain('当前项目')
+    await ui.click('approval-details')
+    expect(ui.byId('approval-details').getAttribute('aria-expanded')).toBe('false')
     await ui.click('approval-allow')
     await ui.click('approval-deny')
     const decisions = h.requests.filter(r => r.path === '/m/api/matter/permission')
@@ -428,6 +485,8 @@ describe('work-first matter details', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const ui = await mount(Approval)
     await act(() => h.version(1))
+    const operation = ui.byId('approval-operation-command')
+    const title = ui.byId('approval-title')
     const allow = ui.byId('approval-allow')
     const reason = ui.byId<HTMLTextAreaElement>('approval-denial-reason')
     expect(ui.byId('approval-cc-opinion')).toBeNull()
@@ -444,7 +503,11 @@ describe('work-first matter details', () => {
     expect(ui.byId('approval-cc-opinion-label').textContent).toBe('CC 的意见（只看了这条请求）')
     expect(ui.byId('approval-cc-opinion-text').textContent).toBe('可以先核对范围。')
     expect(ui.byId('approval-cc-opinion').getAttribute('aria-label')).toBe('CC 的意见（只看了这条请求）：可以先核对范围。')
-    expect(ui.byId('approval-question-reason').textContent).toBe('为什么来问你：需要你确认范围。')
+    expect(ui.byId('approval-title')).toBe(title)
+    expect(ui.byId('approval-operation-command')).toBe(operation)
+    expect(ui.byId('approval-question-reason')).toBeNull()
+    await ui.click('approval-details')
+    expect(ui.byId('approval-question-reason').textContent).toBe('需要你确认范围。')
     expect(ui.byId('approval-allow')).toBe(allow)
     expect(ui.byId('approval-denial-reason')).toBe(reason)
     expect(reason.value).toBe('再想一下')

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { answersTooLong, approvalOutcome, approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
+import { answersTooLong, approvalHeading, approvalLines, approvalOutcome, approvalRelativePath, approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
 import { labelJoin } from '../i18n'
 
 const base = {
@@ -7,7 +7,7 @@ const base = {
   bindings: [], sessions: [], events: [], artifacts: [], inputs: [], questions: [],
   task: { id: 'ab12cd34', title: '作品集', status: 'running', phase: 'working', providerId: 'claude', path: '/Users/me/portfolio', error: null, updatedAt: 1 },
   runId: 'run-1',
-  permissions: [{ id: 'p1', taskId: 'ab12cd34', tool: 'Bash', description: 'rm -rf ~/Documents/old\n# cleanup', createdAt: 1 }],
+  permissions: [{ id: 'p1', taskId: 'ab12cd34', tool: 'Bash', description: 'printf sample\n# cleanup', createdAt: 1 }],
 } as any
 const model = { title: '可以清理旧文件吗?', what: '清理临时缓存', scope: '作品集', effect: '删除一些文件', source: 'model' as const }
 
@@ -22,35 +22,42 @@ describe('approvalView', () => {
     expect(approvalView(detail,{p1:model})).toMatchObject({kind:'card',canAllowTask:true,scripts})
     expect(approvalView(base,{})).not.toHaveProperty('canAllowTask')
   })
-  it('模型说明 ⇒ 原始命令首行与目录直接可见(aiSummary + showRawInline)', () => {
+  it('模型说明与结构化原始命令同时可用', () => {
     const v = approvalView(base, { p1: model })
-    expect(v).toMatchObject({ kind: 'card', requestId: 'p1', runId: 'run-1', aiSummary: true, showRawInline: true, rawFirstLine: 'rm -rf ~/Documents/old', workingDir: '/Users/me/portfolio', rawFull: 'rm -rf ~/Documents/old\n# cleanup', title: '可以清理旧文件吗?' })
+    expect(v).toMatchObject({ kind: 'card', requestId: 'p1', runId: 'run-1', title: '可以清理旧文件吗?' })
+    if (v.kind !== 'card' || v.display.body.kind !== 'command') throw Error('expected command card')
+    expect(v.display.body.command === base.permissions[0].description && v.rawFull === base.permissions[0].description).toBe(true)
+    expect(v.workingDir === base.task.path).toBe(true)
   })
-  it('没有说明 ⇒ 用原文,不是 AI 概括', () => {
+  it('没有模型标题 ⇒ 显示操作对应的问题', () => {
     const v = approvalView(base, {})
-    expect(v).toMatchObject({ kind: 'card', title: 'Bash', what: 'rm -rf ~/Documents/old\n# cleanup', scope: '/Users/me/portfolio', effect: '', aiSummary: false, showRawInline: false })
+    expect(v).toMatchObject({ kind: 'card', title: '', what: '', scope: '', effect: '' })
+    if (v.kind === 'card') expect(approvalHeading(v, 'zh-Hans').title).toBe('可以运行这条命令吗？')
   })
   it('raw 来源的说明不算 AI 概括', () => {
     const v = approvalView(base, { p1: { ...model, source: 'raw' } })
-    expect(v).toMatchObject({ aiSummary: false, showRawInline: false })
+    expect(v).toMatchObject({ title: '', effect: '' })
   })
   it('同一件事两条、没指定 ⇒ 让用户选', () => {
     const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'ls', createdAt: 2 }] }
-    expect(approvalView(d, {})).toEqual({ kind: 'choose', items: [{ requestId: 'p1', kind: 'permission', summary: 'Bash: rm -rf ~/Documents/old' }, { requestId: 'p2', kind: 'permission', summary: 'Bash: ls' }] })
+    expect(approvalView(d, {})).toEqual({ kind: 'choose', items: [{ requestId: 'p1', kind: 'permission', summary: 'Bash: printf sample' }, { requestId: 'p2', kind: 'permission', summary: 'Bash: ls' }] })
   })
   it('多条但指定了 ⇒ 那一条', () => {
     const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'ls', createdAt: 2 }] }
-    expect(approvalView(d, {}, 'p2')).toMatchObject({ kind: 'card', requestId: 'p2', rawFirstLine: 'ls' })
+    const selected = approvalView(d, {}, 'p2')
+    expect(selected).toMatchObject({ kind: 'card', requestId: 'p2', display: { body: { kind: 'command' } } })
+    expect(selected.kind === 'card' && selected.display.body.kind === 'command' && selected.display.body.command === 'ls').toBe(true)
   })
   it('指定了但已不存在 / 没有待处理 / 没有 runId ⇒ none', () => {
     expect(approvalView(base, {}, 'gone')).toEqual({ kind: 'none' })
     expect(approvalView({ ...base, permissions: [] }, {})).toEqual({ kind: 'none' })
     expect(approvalView({ ...base, runId: undefined }, {})).toEqual({ kind: 'none' })
   })
-  it('首行最多 120 字,choose 摘要最多 80 字', () => {
+  it('操作保留完整长行，choose 摘要最多 80 字', () => {
     const long = 'x'.repeat(300)
     const d = { ...base, permissions: [{ ...base.permissions[0], description: long }] }
-    expect((approvalView(d, {}) as any).rawFirstLine).toHaveLength(120)
+    const card = approvalView(d, {})
+    expect(card.kind === 'card' && card.display.body.kind === 'command' && card.display.body.command === long).toBe(true)
     const d2 = { ...base, permissions: [d.permissions[0], { ...d.permissions[0], id: 'p2' }] }
     expect((approvalView(d2, {}) as any).items[0].summary).toHaveLength(80)
   })
@@ -125,17 +132,17 @@ describe('pinnedRequest:钉住后刷新不换成别的请求', () => {
   })
 })
 
-describe('原始命令直接可见:多出来的行数', () => {
-  it('两行命令 ⇒ 首行 + 还有 1 行;首行没截', () => {
-    expect(approvalView(base, { p1: model })).toMatchObject({ rawFirstLine: 'rm -rf ~/Documents/old', rawMoreLines: 1, rawFirstLineCut: false })
+describe('审批预览的文本行', () => {
+  it('两行命令处理 CRLF，末尾空行保持可见', () => {
+    expect(approvalLines('one\r\ntwo\r\n\r\n')).toHaveLength(3)
   })
-  it('一行命令 ⇒ 0 行;结尾换行不算一行', () => {
-    const d = { ...base, permissions: [{ ...base.permissions[0], description: 'ls -la\n\n' }] }
-    expect(approvalView(d, { p1: model })).toMatchObject({ rawFirstLine: 'ls -la', rawMoreLines: 0, rawFirstLineCut: false })
+  it('一行命令带换行仍是一行', () => {
+    expect(approvalLines('one\r\n')).toHaveLength(1)
   })
-  it('首行超过 120 字 ⇒ 截断标记;四行 ⇒ 还有 3 行', () => {
-    const d = { ...base, permissions: [{ ...base.permissions[0], description: `${'x'.repeat(130)}\na\nb\nc` }] }
-    expect(approvalView(d, { p1: model })).toMatchObject({ rawMoreLines: 3, rawFirstLineCut: true })
+  it('长行不截字，后续行各自计数', () => {
+    const lines = approvalLines(`${'x'.repeat(130)}\na\nb\nc`)
+    expect(lines[0]).toHaveLength(130)
+    expect(lines).toHaveLength(4)
   })
 })
 
@@ -184,5 +191,40 @@ describe('labelJoin', () => {
   it('中文小标题用全角冒号,英文用「: 」', () => {
     expect(labelJoin('出发时间', '去哪天出发？')).toBe('出发时间：去哪天出发？')
     expect(labelJoin('Departure', 'Which day?')).toBe('Departure: Which day?')
+  })
+})
+
+describe('approval headings and paths', () => {
+  const cases = [
+    ['Bash', 'command=echo hello', 'Claude 想运行一条命令', '可以运行这条命令吗？', 'Claude wants to run a command', 'May I run this command?'],
+    ['Edit', '{"file_path":"a","old_string":"x","new_string":"y"}', 'Claude 想改一个文件', '可以改这个文件吗？', 'Claude wants to edit a file', 'May I edit this file?'],
+    ['MultiEdit', '{"file_path":"a","edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_string":"d"}]}', 'Claude 想改一个文件的 2 处', '可以改这个文件吗？', 'Claude wants to make 2 edits in one file', 'May I edit this file?'],
+    ['Write', '{"file_path":"a","content":"x"}', 'Claude 想写一个文件', '可以写这个文件吗？', 'Claude wants to write a file', 'May I write this file?'],
+    ['fileChange', 'a\nadd\n+x\n\nb\ndelete\n-x', 'Codex 想改 2 个文件', '可以改这些文件吗？', 'Codex wants to change 2 files', 'May I change these files?'],
+    ['WebFetch', '{"url":"https://example.invalid"}', 'Claude 想打开一个网址', '可以打开这个网址吗？', 'Claude wants to open a URL', 'May I open this URL?'],
+    ['WebSearch', '{"query":"x"}', 'Claude 想上网搜一下', '可以搜这个吗？', 'Claude wants to search the web', 'May I search for this?'],
+    ['mcp__a__b', '{"key":"x"}', 'Claude 想用 a 的「b」', '可以用这个工具吗？', 'Claude wants to use a’s “b”', 'May I use this tool?'],
+    ['Other', 'unknown input', 'Claude 想用「Other」', '可以用这个工具吗？', 'Claude wants to use “Other”', 'May I use this tool?'],
+  ]
+  it.each(cases)('localizes %s using the current executor', (tool, description, zhAction, zhTitle, enAction, enTitle) => {
+    const d = { ...base, matter: { ...base.matter, agentNames: { claude: 'Claude', codex: 'Codex' } },
+      task: { ...base.task, providerId: tool === 'fileChange' ? 'codex' : 'claude' },
+      permissions: [{ ...base.permissions[0], tool, description }] }
+    const v = approvalView(d, {})
+    if (v.kind !== 'card') throw Error('expected card')
+    expect(approvalHeading(v, 'zh-Hans')).toEqual({ action: zhAction, title: zhTitle })
+    expect(approvalHeading(v, 'en')).toEqual({ action: enAction, title: enTitle })
+  })
+  it.each([
+    ['/sample/project/src/a', '/sample/project', 'src/a'],
+    ['/sample/project2/src/a', '/sample/project', '/sample/project2/src/a'],
+    ['/sample/project/../src/a', '/sample/project', '/sample/project/../src/a'],
+    ['/sample/project/src/a', '', '/sample/project/src/a'],
+    ['/src/a', '/', 'src/a'],
+    ['C:\\Sample\\Project\\Src\\a', 'c:\\sample\\project\\', 'Src\\a'],
+    ['D:\\Sample\\a', 'C:\\Sample', 'D:\\Sample\\a'],
+    ['\\\\server\\share\\src\\a', '\\\\SERVER\\share', 'src\\a'],
+  ])('shows a relative path only inside the working directory', (path, cwd, expected) => {
+    expect(approvalRelativePath(path, cwd) === expected).toBe(true)
   })
 })

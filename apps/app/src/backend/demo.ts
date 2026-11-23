@@ -131,7 +131,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       // 用了多少额度(#437):演示给一行合计;cache 这类这家没报 ⇒ null(界面写「不报」)
       { ...taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), usage: { turns: 3, input: 48_210, output: 6_120, cacheRead: null, cacheWrite: null, reasoning: null, costUsd: null } }, {
         runId: RUN_IDS[IDS.portfolio], inputMode: 'steer',
-        permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'npm install sharp', createdAt: n - 60_000 }],
+        permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'command=npm install sharp', createdAt: n - 60_000 }],
       }), 'pending', [
       { kind: 'tool_call', key: 'ev1', createdAt: n - 500_000 },
       { kind: 'tool_call', key: 'ev2', createdAt: n - 300_000 },

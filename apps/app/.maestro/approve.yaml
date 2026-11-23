@@ -18,9 +18,9 @@ appId: com.tendhearth.app
 - assertVisible:
     text: 可以安装图片处理组件吗？|May I add an image-processing package\?
 - assertVisible:
-    id: approval-ai-summary
+    id: approval-model-note
 - assertVisible:
-    id: approval-raw-inline
+    id: approval-operation-command
 - extendedWaitUntil:
     visible:
       id: approval-allow
@@ -38,3 +38,28 @@ appId: com.tendhearth.app
 - extendedWaitUntil:
     visible: 这一轮做完了|Done for this round
     timeout: 8000
+- openLink: "tendhearth://dev-e2e?op=approval-kinds"
+- extendedWaitUntil:
+    visible:
+      id: approval-operation-command
+    timeout: 10000
+- assertVisible:
+    text: 可以运行这条命令吗？|May I run this command\?
+- takeScreenshot: approve-kinds-1
+- scrollUntilVisible:
+    element:
+      id: approval-operation-edit
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: approve-kinds-2
+- scrollUntilVisible:
+    element:
+      id: approval-operation-patch
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: approve-kinds-3
+- scrollUntilVisible:
+    element:
+      id: approval-operation-text
+    direction: DOWN
+- takeScreenshot: approve-kinds-4
