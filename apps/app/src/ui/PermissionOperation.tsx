@@ -19,14 +19,14 @@ function readFields(fields: Field[]): string {
 function operationLabel(body: Body, cwd: string, lang: Lang): string {
   const path = (value: string) => approvalRelativePath(value, cwd)
   switch (body.kind) {
-    case 'command': return [t(lang, 'approval.readCommand', { command: body.command }), cwd && t(lang, 'approval.inDirectory', { path: cwd })].filter(Boolean).join(', ')
-    case 'edit': return t(lang, 'approval.readEdit', {
+    case 'command': return t(lang, 'approval.readCommand', { command: body.command })
+    case 'edit': return [t(lang, 'approval.readEdit', {
       path: path(body.path),
       before: body.changes.reduce((n, edit) => n + approvalLines(edit.before).length, 0),
       after: body.changes.reduce((n, edit) => n + approvalLines(edit.after).length, 0),
-    })
+    }), body.replaceAll && t(lang, 'approval.replaceAll')].filter(Boolean).join(', ')
     case 'write': return t(lang, 'approval.readWrite', { path: path(body.path), n: approvalLines(body.content).length })
-    case 'patch': return t(lang, 'approval.readPatch', { n: body.files.length, paths: body.files.map(file => path(file.path)).join(', ') })
+    case 'patch': return t(lang, 'approval.readPatch', { n: body.files.length, paths: body.files.map(file => `${path(file.path)}, ${changeLabel(file.change, lang, true)}`).join('; ') })
     case 'url': return [t(lang, 'approval.readUrl', { value: body.url }), body.prompt && t(lang, 'approval.fetchPrompt', { prompt: body.prompt })].filter(Boolean).join(', ')
     case 'query': return t(lang, 'approval.readQuery', { value: body.query })
     case 'fields': return t(lang, 'approval.readFields', { value: readFields(body.fields) })
@@ -76,7 +76,7 @@ function FilePath({ path, detail }: { path: string; detail?: string }) {
   return <Txt selectable role="caption" tone="inkSoft" style={{ fontFamily: monoFamily, marginBottom: space.xs }}>{path}{detail ? ` ${detail}` : ''}</Txt>
 }
 
-function changeLabel(change: string, lang: Lang) {
+function changeLabel(change: string, lang: Lang, spoken = false) {
   let kind = change
   try {
     const parsed = JSON.parse(change)
@@ -85,7 +85,8 @@ function changeLabel(change: string, lang: Lang) {
       // Show the full descriptor if this version carries unfamiliar metadata.
       if (keys.some(key => !['type', 'move_path', 'movePath'].includes(key)) || keys.length > 2) return change
       const destination = parsed.move_path ?? parsed.movePath
-      if (typeof destination === 'string') return `${t(lang, 'approval.change.rename')} → ${destination}`
+      if (typeof destination === 'string') return spoken ? t(lang, 'approval.change.destination', { path: destination })
+        : `${t(lang, 'approval.change.rename')} → ${destination}`
       if (destination != null) return change
       kind = parsed.type
     }
@@ -158,16 +159,17 @@ function OperationBody({ body, cwd, lang, open, label }: { body: Body; cwd: stri
   }
 }
 
-export function PermissionOperation({ display, cwd, lang, open }: {
-  display: PermissionDisplay; cwd: string; lang: Lang; open: () => void
+export function PermissionOperation({ display, cwd, lang, open, testID }: {
+  display: PermissionDisplay; cwd: string; lang: Lang; open: () => void; testID?: string
 }) {
   const { body, extra } = display
-  const spoken = [operationLabel(body, cwd, lang), extra?.length ? readFields(extra) : ''].filter(Boolean).join(', ')
-  return <View style={{ gap: space.s }}>
+  const directory = cwd && body.kind !== 'url' && body.kind !== 'query' ? t(lang, 'approval.inDirectory', { path: cwd }) : ''
+  const spoken = [operationLabel(body, cwd, lang), directory, extra?.length ? readFields(extra) : ''].filter(Boolean).join(', ')
+  return <View testID={testID} style={{ gap: space.s }}>
     <Panel testID={`approval-operation-${body.kind}`}>
       <OperationBody body={body} cwd={cwd} lang={lang} open={open} label={spoken} />
     </Panel>
-    {body.kind === 'command' && cwd ? <Visual><Txt selectable testID="approval-operation-cwd" role="small" tone="inkSoft">{t(lang, 'approval.inDirectory', { path: cwd })}</Txt></Visual> : null}
+    {directory ? <Visual><Txt selectable testID="approval-operation-cwd" role="small" tone="inkSoft">{directory}</Txt></Visual> : null}
     {body.kind === 'url' && body.prompt ? <Visual><Txt selectable role="small" tone="inkSoft">{t(lang, 'approval.fetchPrompt', { prompt: body.prompt })}</Txt></Visual> : null}
     {/* 多出来的字段一个都不吞,但不和主体抢:不带底,小字表 */}
     {extra?.length ? <View testID="approval-operation-extra"><FieldTable fields={extra} lang={lang} open={open} /></View> : null}

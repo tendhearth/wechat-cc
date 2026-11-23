@@ -51,4 +51,42 @@ describe('终端会话的那件事 → 终端详情', () => {
     expect(ui.byId('terminal-say-input')).not.toBeNull()
     expect(activity).toHaveBeenCalledWith('sess-42')
   })
+  it.each([
+    { tool: 'Bash', summary: 'printf first\r\nWorking directory: /sample\r\nprintf last…', kind: 'command',
+      action: 'Claude Code wants to run a command', truncated: false, actionable: true },
+    { tool: 'Edit', summary: '{"file_path":"notes.txt","old_string":"…', kind: 'text',
+      action: 'Claude Code wants to use “Edit”', truncated: true, actionable: false },
+    { tool: 'Bash', summary: null, kind: null,
+      action: 'Claude Code wants to use “Bash”', truncated: false, actionable: true },
+  ])('shows the pending operation and its controls through the terminal matter route ($tool / $kind)', async ({
+    tool, summary, kind, action, truncated, actionable,
+  }) => {
+    const demo = makeDemoBackend({ lang: 'en' })
+    const base = await demo.matter('a1b2c3d4', 'en')
+    const [fixture] = await demo.cliSessions()
+    if (!fixture) throw Error('missing terminal fixture')
+    const id = 'feedf00d', projectPath = '/sample/blog'
+    const backend: Backend = {
+      ...demo,
+      matter: async () => ({ ...base, matter: { ...base.matter, id, projectPath, kind: 'terminal' },
+        bindings: [{ matterId: id, surface: 'cli', surfaceKey: fixture.session_id, lastSeenAt: 1 }] }),
+      cliSessions: async () => [{ ...fixture, status: 'waiting', displayName: 'Claude Code', project: 'blog',
+        pending: { tool, summary, since: 1, hash: actionable ? 'demo' : null, actionable } }],
+      cliActivity: async () => [],
+    }
+    route.id = id
+    const ui = await mount(withProviders(createElement(Matter), { backend, lang: 'en' }))
+    await flush(); await flush()
+    expect(ui.byId('terminal-detail-pending-actor')?.textContent === action).toBe(true)
+    expect(Boolean(ui.byId('terminal-detail-pending-truncated'))).toBe(truncated)
+    expect(Boolean(ui.byId('terminal-detail-allow'))).toBe(actionable)
+    expect(Boolean(ui.byId('terminal-detail-local'))).toBe(!actionable)
+    expect(Boolean(ui.byId('terminal-detail-pending'))).toBe(kind !== null)
+    if (kind) {
+      expect(ui.byId('terminal-detail-pending').contains(ui.byId(`approval-operation-${kind}`))).toBe(true)
+      expect(ui.byId('approval-operation-source')?.textContent === summary).toBe(true)
+      expect(ui.byId('approval-operation-cwd')?.textContent === `In ${projectPath}`).toBe(true)
+    }
+  })
+
 })

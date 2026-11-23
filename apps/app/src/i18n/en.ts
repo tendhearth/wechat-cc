@@ -218,6 +218,8 @@ const en = {
   'approval.change.update': 'Modified',
   'approval.change.delete': 'Deleted',
   'approval.change.rename': 'Renamed',
+  'approval.change.destination': 'Moved or renamed to {path}',
+  'terminal.pendingTruncated': 'Only the beginning is shown here. See the full details on your computer.',
   'approval.readCommand': 'Command: {command}',
   'approval.readEdit': 'Edit {path}: remove {before} lines, add {after} lines',
   'approval.readWrite': 'Write {path}: {n} lines',

@@ -1,5 +1,7 @@
+import { isPermissionCommandTool, permissionDisplay } from '@wechat-cc/protocol'
 import type { CliSessionRowT } from '../backend/types'
 import { hasMessage, t, type Lang, type MessageKey } from '../i18n'
+import { permissionAction } from './approval'
 import { formatSynced } from './connection'
 
 /**
@@ -63,6 +65,14 @@ export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): Termina
     nowText: s.status === 'running' && s.now ? stepLabel(s.now, lang) : null,
     live: s.live_window === true,
   }
+}
+
+export function terminalPermission(pending: Pick<NonNullable<CliSessionRowT['pending']>, 'tool' | 'summary'>, source: string, lang: Lang) {
+  const raw = pending.summary ?? ''
+  const display = raw ? permissionDisplay(pending.tool, raw) : undefined
+  const action = display ? permissionAction(display.body, pending.tool, source, lang)
+    : t(lang, 'approval.actor.tool', { actor: source, tool: pending.tool })
+  return { display, raw, action, truncated: raw.endsWith('…') && !isPermissionCommandTool(pending.tool) }
 }
 
 /** 等你、而且手机上拍得了的那几条(「此刻」的数与行)。够不着电脑时这份是旧的 ⇒ 0。 */

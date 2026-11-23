@@ -26,9 +26,10 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
   })
   const cardView = (p: (typeof perms)[number]): ApprovalView => {
     const ex = explanations[p.id]
-    const display = permissionDisplay(p.tool, p.description)
-    const workingDir = (display.body.kind === 'command' ? display.body.cwd : undefined) ?? detail.task?.path ?? detail.matter.projectPath ?? ''
     const { current: executor, name: executorName } = directHeaderView(detail, 'en')
+    const format = executor === 'claude' ? 'claude' : executor === 'openai' ? 'api' : 'text'
+    const display = permissionDisplay(p.tool, p.description, format)
+    const workingDir = (display.body.kind === 'command' ? display.body.cwd : undefined) ?? detail.task?.path ?? detail.matter.projectPath ?? ''
     const model = ex?.source === 'model' ? ex : undefined
     return {
       kind: 'card', requestId: p.id, runId, tool: p.tool, display, workingDir, executor, executorName,
@@ -54,17 +55,22 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
   }
 }
 
+type Body = PermissionDisplay['body']
+
+export function permissionAction(body: Body | undefined, tool: string, actor: string, lang: Lang) {
+  if (!body || body.kind === 'fields' || body.kind === 'text') {
+    const mcp = /^mcp__(.+?)__(.+)$/.exec(tool)
+    return t(lang, mcp ? 'approval.actor.mcp' : 'approval.actor.tool', { actor, service: mcp?.[1] ?? '', tool: mcp?.[2] ?? tool })
+  }
+  return t(lang, body.kind === 'edit' && body.changes.length > 1 ? 'approval.actor.multiEdit'
+    : body.kind === 'patch' && body.files.length === 1 ? 'approval.actor.patchOne' : `approval.actor.${body.kind}`,
+  { actor, n: body.kind === 'edit' ? body.changes.length : body.kind === 'patch' ? body.files.length : 1 })
+}
+
 export function approvalHeading(v: Extract<ApprovalView, { kind: 'card' }>, lang: Lang) {
   const body = v.display.body
-  const actor = v.executorName || t(lang, 'approval.executor')
-  const mcp = /^mcp__(.+?)__(.+)$/.exec(v.tool)
-  const generic = body.kind === 'fields' || body.kind === 'text'
-  const action = generic
-    ? t(lang, mcp ? 'approval.actor.mcp' : 'approval.actor.tool', { actor, service: mcp?.[1] ?? '', tool: mcp?.[2] ?? v.tool })
-    : t(lang, body.kind === 'edit' && body.changes.length > 1 ? 'approval.actor.multiEdit'
-      : body.kind === 'patch' && body.files.length === 1 ? 'approval.actor.patchOne' : `approval.actor.${body.kind}`,
-    { actor, n: body.kind === 'edit' ? body.changes.length : body.kind === 'patch' ? body.files.length : 1 })
-  const title = v.title || t(lang, generic ? 'approval.ask.tool'
+  const action = permissionAction(body, v.tool, v.executorName || t(lang, 'approval.executor'), lang)
+  const title = v.title || t(lang, body.kind === 'fields' || body.kind === 'text' ? 'approval.ask.tool'
     : body.kind === 'patch' && body.files.length === 1 ? 'approval.ask.edit' : `approval.ask.${body.kind}`)
   return { action, title }
 }

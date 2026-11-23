@@ -1,12 +1,14 @@
 import { useMemo, useRef } from 'react'
 import { ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { permissionDisplay } from '@wechat-cc/protocol'
+import { permissionDisplay, type PermissionDisplay } from '@wechat-cc/protocol'
 import { makeDemoBackend } from '../backend/demo'
 import { demoName } from '../backend/demo-data'
 import { useLang } from '../i18n/useLang'
 import { OfflineReviewProvider } from '../state/BackendProvider'
 import { PermissionCard } from './PermissionCard'
+import { TerminalPermission } from './TerminalPermission'
+import { Txt } from './Txt'
 import { space } from './tokens'
 import { useTheme } from './useTheme'
 
@@ -15,6 +17,14 @@ const edits = [
   { old_string: 'label = "Draft"', new_string: 'label = "Ready"' },
   { old_string: 'cards = 2\ncolumns = 1', new_string: 'cards = 4\ncolumns = 2' },
 ]
+const patch: PermissionDisplay = { body: { kind: 'patch', files: [
+  { path: cwd + '/src/cards.ts', change: JSON.stringify({ type: 'update', move_path: cwd + '/src/gallery-cards.ts' }),
+    diff: '@@ -1 +1 @@\n-export const cards = 2\n+export const cards = 4' },
+  { path: cwd + '/src/labels.ts', change: 'add', diff: '+export const label = "Ready"' },
+] } }
+const patchRaw = patch.body.kind === 'patch' ? patch.body.files.map(file => [file.path, file.change, file.diff].join('\n')).join('\n\n') : ''
+const codexScope = '\nExecution environment: local'
+const longEdit = JSON.stringify({ file_path: cwd + '/src/gallery.ts', old_string: 'draft '.repeat(30), new_string: 'ready' })
 const samples = [
   { id: 'command', tool: 'Bash', raw: 'command=' + [
     'printf "%s\\n" "Preparing the sample gallery with a longer label that wraps on a phone"',
@@ -23,10 +33,9 @@ const samples = [
   ].join('\n') },
   { id: 'edit', tool: 'MultiEdit', raw: 'input=' + JSON.stringify({ file_path: cwd + '/src/gallery.ts', edits }) },
   { id: 'write', tool: 'Write', raw: 'input=' + JSON.stringify({ file_path: cwd + '/notes.txt', content: 'Gallery checklist\nSort the cards\nReview the labels\n' }) },
-  { id: 'patch', tool: 'fileChange', raw: [
-    cwd + '/src/cards.ts\n{"type":"update"}\n@@ -1 +1 @@\n-export const cards = 2\n+export const cards = 4',
-    cwd + '/src/labels.ts\n{"type":"add"}\n+export const label = "Ready"',
-  ].join('\n\n') + '\nExecution environment: local' },
+  { id: 'patch', tool: 'fileChange', raw: patchRaw, display: patch },
+  { id: 'codex-command', tool: 'commandExecution', raw: 'npm test\nnpm run preview\nWorking directory: ' + cwd + codexScope },
+  { id: 'codex-file', tool: 'fileChange', raw: patchRaw + codexScope },
   { id: 'fields', tool: 'mcp__gallery__list', raw: 'mcp__gallery__list\n{"collection":"Windmill","limit":4,"filters":{"season":"spring"}}' },
   { id: 'url', tool: 'WebFetch', raw: 'input={"url":"https://gallery.example/collections/windmill","prompt":"List the collection names."}' },
   { id: 'query', tool: 'WebSearch', raw: 'input={"query":"paper windmill exhibition"}' },
@@ -38,19 +47,27 @@ export function ApprovalKindsReview() {
   const { c } = useTheme()
   const backend = useMemo(() => makeDemoBackend({ lang }), [lang])
   const scroll = useRef<ScrollView>(null)
-  const positions = useRef<Record<string, number>>({})
   return <OfflineReviewProvider backend={backend} lang={lang}>
     <SafeAreaView style={{ flex: 1, backgroundColor: c.paper }}>
       <ScrollView ref={scroll} testID="approval-kinds" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.xxl }}>
-        {samples.map(({ id, tool, raw }) => {
-          const executor = id === 'patch' ? 'codex' : 'claude'
-          return <View key={id} testID={`approval-example-${id}`} onLayout={e => { positions.current[id] = e.nativeEvent.layout.y }}>
+        {samples.map(({ id, tool, raw, display }) => {
+          const executor = id === 'patch' || id.startsWith('codex-') ? 'codex' : 'claude'
+          return <View key={id} testID={`approval-example-${id}`}>
+            {id === 'patch' ? <Txt role="small" tone="inkSoft">{lang === 'zh-Hans'
+              ? '结构化补丁示例 · daemon 提供结构化数据后'
+              : 'Structured patch example · once supplied by the daemon'}</Txt> : null}
             <PermissionCard taskId="sample" matterTitle={lang === 'zh-Hans' ? '纸风车展览' : 'Paper windmill exhibition'}
-              onShowExact={y => scroll.current?.scrollTo({ y: (positions.current[id] ?? 0) + y, animated: true })}
+              scroll={scroll}
               v={{ kind: 'card', requestId: id, runId: 'sample', executor, executorName: demoName(executor),
-                tool, rawFull: raw, display: permissionDisplay(tool, raw), workingDir: cwd, title: '', what: '', effect: '', scope: '', canDenyWithReason: false }} />
+                tool, rawFull: raw, display: display ?? permissionDisplay(tool, raw, executor === 'claude' ? 'claude' : 'text'), workingDir: cwd, title: '', what: '', effect: '', scope: '', canDenyWithReason: false }} />
           </View>
         })}
+        <View testID="approval-example-terminal-command">
+          <TerminalPermission pending={{ tool: 'Bash', summary: 'npm test\nnpm run preview' }} source="Claude Code" cwd={cwd} scroll={scroll} />
+        </View>
+        <View testID="approval-example-terminal-edit">
+          <TerminalPermission pending={{ tool: 'Edit', summary: longEdit.slice(0, 199) + '…' }} source="Claude Code" cwd={cwd} scroll={scroll} />
+        </View>
       </ScrollView>
     </SafeAreaView>
   </OfflineReviewProvider>

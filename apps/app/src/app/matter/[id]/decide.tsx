@@ -245,7 +245,7 @@ export default function Approval() {
 
   return shell(
     <PermissionCard key={v.requestId} v={v} taskId={id} matterTitle={matterTitle} ccOpinion={opinion.ccOpinion}
-      questionReason={opinion.questionReason} onShowExact={y => scroll.current?.scrollTo?.({ y, animated: true })} />,
+      questionReason={opinion.questionReason} scroll={scroll} />,
     <View key={v.requestId} style={{ gap: space.s }}>
       {status}
       {v.canDenyWithReason ? <TextField testID="approval-denial-reason" variant="comment" multiline maxLength={2000}

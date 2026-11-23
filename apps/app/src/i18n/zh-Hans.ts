@@ -220,6 +220,8 @@ const zh: Record<keyof typeof en, string> = {
   'approval.change.update': '修改',
   'approval.change.delete': '删除',
   'approval.change.rename': '改名',
+  'approval.change.destination': '移动或改名到 {path}',
+  'terminal.pendingTruncated': '内容太长，这里只有开头；完整的请在电脑上看。',
   'approval.readCommand': '命令：{command}',
   'approval.readEdit': '改 {path}：删 {before} 行，加 {after} 行',
   'approval.readWrite': '写 {path}：共 {n} 行',

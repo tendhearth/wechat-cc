@@ -64,4 +64,4 @@ export * from './roster'
 export * from './places'
 export * from './notebook'
 
-export { permissionDisplay, type PermissionDisplay } from './permission-display'
+export { isPermissionCommandTool, permissionDisplay, type PermissionDisplay } from './permission-display'

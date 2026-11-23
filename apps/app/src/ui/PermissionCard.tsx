@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState, type RefObject } from 'react'
 import { ScrollView, View } from 'react-native'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -12,6 +12,7 @@ import { Card } from './Card'
 import { CCFigure } from './CCFigure'
 import { Markdown } from './Markdown'
 import { PermissionOperation } from './PermissionOperation'
+import { PermissionSource, usePermissionSource } from './PermissionSource'
 import { Sheet } from './Sheet'
 import { space } from './tokens'
 import { Txt } from './Txt'
@@ -65,19 +66,12 @@ export function ApprovalNote({ kind, text }: { kind: 'opinion' | 'reason'; text?
   return <Txt testID="approval-question-reason" role="small" tone="inkSoft" content="user">{t(lang, 'approval.questionReason', { text })}</Txt>
 }
 
-export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReason, onShowExact }: {
-  v: CardView; taskId: string; matterTitle: string; ccOpinion?: string; questionReason?: string; onShowExact?: (y: number) => void
+export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReason, scroll }: {
+  v: CardView; taskId: string; matterTitle: string; ccOpinion?: string; questionReason?: string; scroll?: RefObject<ScrollView | null>
 }) {
   const lang = useLang()
   const { action, title } = approvalHeading(v, lang)
-  const [exactOpen, setExactOpen] = useState(false)
-  const exactY = useRef(0)
-  const jumpOnLayout = useRef(false)
-  const openExact = () => {
-    jumpOnLayout.current = !exactOpen
-    setExactOpen(true)
-    onShowExact?.(exactY.current)
-  }
+  const sheet = usePermissionSource(scroll)
   const details = [
     { key: 'what', label: t(lang, 'approval.what'), value: v.what.trim() === title.trim() ? '' : v.what },
     { key: 'scope', label: t(lang, 'approval.scope'), value: v.scope },
@@ -97,7 +91,7 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
         <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{title}</Txt>
         {v.display.note ? <Txt selectable role="body" tone="inkSoft" content="user">{v.display.note}</Txt> : null}
       </View>
-      <PermissionOperation display={v.display} cwd={v.workingDir} lang={lang} open={openExact} />
+      <PermissionOperation display={v.display} cwd={v.workingDir} lang={lang} open={sheet.openFromPreview} />
       {v.scripts?.map(script => <PermissionScriptPreview key={script.path} script={script} taskId={taskId} requestId={v.requestId} />)}
       {v.effect.trim() ? <View testID="approval-effect" style={{ gap: space.xs }}>
         <Markdown text={v.effect} />
@@ -112,20 +106,7 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
           <Txt testID={key === 'reason' ? 'approval-question-reason' : undefined} role="body" content="user">{value}</Txt>
         </View>)}</View>
       </Sheet> : null}
-      <View collapsable={false} onLayout={e => { exactY.current = e.nativeEvent.layout.y }}>
-        <Sheet quiet testID="approval-view-exact" title={t(lang, 'approval.viewExact')} expanded={exactOpen} onExpandedChange={open => {
-          jumpOnLayout.current = false
-          setExactOpen(open)
-        }}>
-          <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }} onLayout={() => {
-            if (!jumpOnLayout.current) return
-            jumpOnLayout.current = false
-            onShowExact?.(exactY.current)
-          }}>
-            <Txt selectable role="code" testID="approval-exact-source">{v.rawFull}</Txt>
-          </ScrollView>
-        </Sheet>
-      </View>
+      <PermissionSource source={v.rawFull} cwd={v.workingDir} lang={lang} sheet={sheet} />
       </View>
     </View>
   )

@@ -30,7 +30,12 @@ appId: com.tendhearth.app
       id: terminal-detail-allow
     timeout: 5000
 - assertVisible:
+    id: terminal-detail-pending-actor
+    text: "Claude (想运行一条命令|wants to run a command)"
+- assertVisible:
     id: terminal-detail-pending
+- assertVisible:
+    id: approval-operation-command
 - assertVisible:
     id: terminal-say-send
     enabled: false

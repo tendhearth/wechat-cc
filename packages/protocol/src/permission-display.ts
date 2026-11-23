@@ -22,18 +22,33 @@ const fields = (input: Input, used: string[] = []): Field[] => Object.entries(in
   .filter(([name]) => !used.includes(name))
   .map(([name, value]) => ({ name, value: string(value) ? value : JSON.stringify(value, null, 2) }))
 const text = (value: string): PermissionDisplay => ({ body: { kind: 'text', text: value } })
-const parseInput = (raw: string): unknown => JSON.parse(raw, (_key, value: unknown) => {
-  if (typeof value === 'number' && !Number.isFinite(value)) throw Error('invalid_permission_number')
-  return value
-})
-const commandTool = /^(?:bash|shell|exec_command|run_terminal_cmd|run_command)$/i
+function parseInput(raw: string): Input | undefined {
+  // JSON.parse erases duplicate members before its reviver runs. Count the
+  // source keys (ignoring string contents) and compare with the decoded tree.
+  if (!raw.startsWith('{') || !raw.endsWith('}')) return
+  let decodedKeys = 0
+  const result: unknown = JSON.parse(raw, (_key, value: unknown) => {
+    if (typeof value === 'number' && !Number.isFinite(value)) throw Error('invalid_permission_number')
+    if (object(value)) decodedKeys += Object.keys(value).length
+    return value
+  })
+  if (!object(result)) return
+  let sourceKeys = 0
+  for (const token of raw.matchAll(/"(?:[^"\\]|\\[\s\S])*"\s*(:)?/g)) {
+    if (token[1]) sourceKeys++
+  }
+  if (sourceKeys === decodedKeys) return result
+}
+
+const commandTools = new Set(['bash', 'shell', 'exec_command', 'run_terminal_cmd', 'run_command'])
+export const isPermissionCommandTool = (tool: string): boolean => commandTools.has(tool.toLowerCase())
 
 function jsonDisplay(tool: string, input: Input): PermissionDisplay | undefined {
   const withExtra = (body: PermissionDisplay['body'], used: string[], nested: Field[] = []) => {
     const extra = [...nested, ...fields(input, used)]
     return { body, ...(extra.length ? { extra } : {}) }
   }
-  if (commandTool.test(tool)) {
+  if (isPermissionCommandTool(tool)) {
     if (!string(input.command) || (input.cwd !== undefined && !string(input.cwd))) return
     return withExtra({ kind: 'command', command: input.command, ...(string(input.cwd) ? { cwd: input.cwd } : {}) }, ['command', 'cwd'])
   }
@@ -80,105 +95,59 @@ function jsonDisplay(tool: string, input: Input): PermissionDisplay | undefined 
   }
 }
 
-// Recognize framing with either newline convention, and slice from the original
-// string so a command, path or diff never inherits the parser's newline convention.
-const newline = '\\r?\\n'
-const patchKind = '(?:add|delete|update|move|rename|\\{[^\\r\\n]*"type"\\s*:\\s*"(?:add|delete|update|move|rename)"[^\\r\\n]*\\})'
-const fileHeader = `([^\\r\\n]+)${newline}(${patchKind})${newline}`
+type DescriptionFormat = 'hook' | 'claude' | 'api' | 'text'
 
-function codexDisplay(tool: string, description: string): PermissionDisplay {
-  const scopeMatches = [...description.matchAll(/\r?\nExecution environment: local(?=\r?\n|$)/g)]
-  if (scopeMatches.length > 1) return text(description)
-  const scopeAt = scopeMatches[0]?.index ?? description.length
-  const payload = description.slice(0, scopeAt)
-  const scope = description.slice(scopeAt).replace(/^\r?\n/, '')
-  const extra = scope ? [{ name: 'Execution environment', value: scope.slice('Execution environment: '.length) }] : undefined
-  const withNote = (body: PermissionDisplay['body'], note: string) => ({
-    body, ...(note ? { note } : {}), ...(extra ? { extra } : {}),
-  })
-  if (tool === 'commandExecution') {
-    const directories = [...payload.matchAll(/\r?\nWorking directory: ([^\r\n]+)(?:\r?\n|$)/g)]
-    if (directories.length > 1) return text(description)
-    const directory = directories[0]
-    if (directory && directory.index > 0) return withNote(
-      { kind: 'command', command: payload.slice(0, directory.index), cwd: directory[1]! },
-      payload.slice(directory.index + directory[0].length))
-    // With no directory delimiter, a multiline command and an appended reason
-    // have the same wire shape. Keep both visible as supplied.
-    return payload && (!scope || !/[\r\n]/.test(payload)) ? withNote({ kind: 'command', command: payload }, '') : text(description)
+function claudeDisplay(tool: string, description: string): PermissionDisplay | undefined {
+  if (tool.startsWith('mcp__')) {
+    const header = /^([^\r\n]*)\r?\n/.exec(description)
+    if (header?.[1] !== tool) return
+    const input = parseInput(description.slice(header[0].length))
+    if (input) return { body: { kind: 'fields', fields: fields(input) } }
+    return
   }
-  const first = new RegExp(`^${fileHeader}`).exec(payload)
-  if (!first) return text(description)
-  const subsequent = [...payload.matchAll(new RegExp(`${newline}${newline}${fileHeader}`, 'g'))]
-  const headers = [first, ...subsequent]
-  let note = ''
-  const files = headers.map((header, index) => {
-    let diff = payload.slice(header.index + header[0].length, headers[index + 1]?.index)
-    if (index === headers.length - 1 && scope) {
-      // Native unified diff lines have conventional prefixes. A trailing prose
-      // reason can be shown separately when the diff has those prefixes.
-      const reason = /\r?\n(?=[^ +\-@\\\r\n])/.exec(diff)
-      if (reason && /^[ +\-@\\]/.test(diff)) {
-        note = diff.slice(reason.index + reason[0].length)
-        diff = diff.slice(0, reason.index)
-      }
+  // More than one marker could mean a forged context line or a command line.
+  const markers = [...description.matchAll(/(?:^|\r\n?|\n)(command=|input=)/g)]
+  if (markers.length !== 1) return
+  const marker = markers[0]!
+  const note = description.slice(0, marker.index)
+  const payload = description.slice(marker.index + marker[0].length)
+  if (marker[1] === 'command=') return { body: { kind: 'command', command: payload }, ...(note ? { note } : {}) }
+  const input = parseInput(payload)
+  const display = input && jsonDisplay(tool, input)
+  if (display) return { ...display, ...(note ? { note } : {}) }
+}
+
+function apiDisplay(tool: string, description: string): PermissionDisplay | undefined {
+  if (tool === 'ReadFile' || tool === 'ListFiles') {
+    const prefix = tool + ' '
+    const path = description.slice(prefix.length)
+    if (description.startsWith(prefix) && path && !/[\u0000-\u001f\u007f]/.test(path)) {
+      return { body: { kind: 'fields', fields: [{ name: 'path', value: path }] } }
     }
-    return { path: header[1]!, change: header[2]!, diff }
-  })
-  return withNote({ kind: 'patch', files }, note)
+  }
+  if (tool === 'SaveArtifact') {
+    // Only the fixed, terminal byte count and digest are metadata. The entire
+    // preceding filename remains the path, even if it contains a lookalike.
+    const match = /^SaveArtifact (\.cc-workbench\/[a-f0-9]{8}\/[^/\\\u0000-\u001f\u007f]+) \((\d+) bytes; SHA256 ([a-f0-9]{64})\)$/.exec(description)
+    if (match?.[0] === description) return { body: { kind: 'fields', fields: [
+      { name: 'path', value: match[1]! }, { name: 'bytes', value: match[2]! }, { name: 'SHA256', value: match[3]! },
+    ] } }
+  }
 }
 
-function acpCommand(description: string): PermissionDisplay {
-  if (!/[\r\n]/.test(description)) return { body: { kind: 'command', command: description } }
-  // Cursor's captured execute request has this reason after the command or
-  // SDK title. ACP has no delimiter for arbitrary notes or locations.
-  const marker = /\r?\nNot in allowlist: [^\r\n]+(?=\r?\n|$)/.exec(description)
-  if (!marker || marker.index === 0) return text(description)
-  const command = description.slice(0, marker.index)
-  const [note, ...locations] = description.slice(marker.index + (marker[0].startsWith('\r') ? 2 : 1)).split(/\r?\n/)
-  // An absolute location can follow the reason. Anything else might still
-  // be part of a multiline command, so preserve that description as text.
-  if (locations.some(line => !/^(?:\/|[a-z]:[\\/]|\\\\)/i.test(line))) return text(description)
-  return { body: { kind: 'command', command }, note, ...(locations.length
-    ? { extra: locations.map(value => ({ name: 'path', value })) } : {}) }
-}
-
-export function permissionDisplay(tool: string, description: string): PermissionDisplay {
+export function permissionDisplay(tool: string, description: string, format: DescriptionFormat = 'hook'): PermissionDisplay {
   if (!description) return text(description)
   try {
-    if (tool === 'commandExecution' || tool === 'fileChange') return codexDisplay(tool, description)
-    const mcp = tool.startsWith('mcp__')
-    if (mcp) {
-      const codex = /^MCP server: ([^\r\n]+)\r?\nTool: ([^\r\n]+)\r?\nArguments:\r?\n([\s\S]+)\r?\n(Approve this invocation only\.)$/.exec(description)
-      if (codex) {
-        const input = parseInput(codex[3]!)
-        return object(input) ? { body: { kind: 'fields', fields: fields(input) }, note: codex[4],
-          extra: [{ name: 'MCP server', value: codex[1]! }, { name: 'Tool', value: codex[2]! }] } : text(description)
+    switch (format) {
+      case 'claude': return claudeDisplay(tool, description) ?? text(description)
+      case 'api': return apiDisplay(tool, description) ?? text(description)
+      case 'text': return text(description)
+      case 'hook': {
+        if (isPermissionCommandTool(tool)) return { body: { kind: 'command', command: description } }
+        const input = parseInput(description)
+        return (input && jsonDisplay(tool, input)) ?? text(description)
       }
     }
-    const prefix = /(?:^|\r?\n)(command=|input=)/.exec(description)
-    const note = prefix ? description.slice(0, prefix.index) : ''
-    const inputText = prefix ? description.slice(prefix.index + prefix[0].length)
-      : mcp && description.startsWith(`${tool}\n`) ? description.slice(tool.length + 1)
-      : mcp && description.startsWith(`${tool}\r\n`) ? description.slice(tool.length + 2)
-      : description
-    if (prefix?.[1] === 'command=') return { body: { kind: 'command', command: inputText }, ...(note ? { note } : {}) }
-    const looksJson = commandTool.test(tool) ? /^\s*\{\s*(?:["}]|$)/.test(inputText) : /^\s*[\[{]/.test(inputText)
-    if (prefix || looksJson) {
-      const input = parseInput(inputText)
-      const result = object(input) ? jsonDisplay(tool, input) : undefined
-      return result ? { ...result, ...(note ? { note } : {}) } : text(description)
-    }
-    if (commandTool.test(tool)) return { body: { kind: 'command', command: description } }
-    if (tool === 'execute') return acpCommand(description)
-    const artifact = tool === 'SaveArtifact' && /^SaveArtifact (.+) \((\d+) bytes; SHA256 ([a-f0-9]{64})\)$/.exec(description)
-    if (artifact) return { body: { kind: 'fields', fields: [
-      { name: 'path', value: artifact[1]! }, { name: 'bytes', value: artifact[2]! }, { name: 'SHA256', value: artifact[3]! },
-    ] } }
-    if ((tool === 'ReadFile' || tool === 'ListFiles') && description.startsWith(`${tool} `)) {
-      return { body: { kind: 'fields', fields: [{ name: 'path', value: description.slice(tool.length + 1) }] } }
-    }
-    return text(description)
   } catch {
     return text(description)
   }
