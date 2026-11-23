@@ -10,15 +10,18 @@ import type {AgentEvent,AgentProvider} from '../../ports/agent-provider'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
+import { PERMISSION_SNAPSHOT_NOTICE } from '@wechat-cc/protocol'
+import type { ServiceDeps } from './service/ctx'
+import { REQUEST_MAX } from './permission-prompt'
 import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService,owner:string|null
 const result:AgentEvent={kind:'result',sessionId:'native-one',numTurns:1,durationMs:1}
 const identity={accountId:'account',userId:'owner',msgId:'message-one',createTimeMs:1}
 const gate=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>{resolve=r});return{promise,resolve}}
-function setup(provider:AgentProvider){
+function setup(provider:AgentProvider, permissionPrompt?: ServiceDeps['permissionPrompt']){
   const registry=createProviderRegistry();registry.register('claude',provider,{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-  service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>owner})
+  service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>owner,permissionPrompt})
 }
 const create=(text='整理周报')=>service.create({path:project,providerId:'claude',text})
 const settled=async(id:string)=>{await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
@@ -391,6 +394,46 @@ describe('WeChat task control through the shared service',()=>{
       expect(reply).not.toContain('legacy edit')
     }
     expect(await service.handleWechat('owner',`任务 ${task.id} 拒绝 ${request.id}`)).toContain('已拒绝')
+  })
+
+  it('refuses WeChat approval when only the raw description fits the message budget', async () => {
+    const command = 'printf '.padEnd(REQUEST_MAX - PERMISSION_SNAPSHOT_NOTICE.length - 70, 'x')
+    const description = `command=${command}`
+    setup({async spawn(_project, ctx) { return {async *dispatch() {
+      await ctx.requestPermission!({ tool: 'Bash', description, command, display: { body: { kind: 'command', command } } })
+      yield result
+    }, async close() {}} }})
+    const task = create()
+    await expect.poll(() => service.detail(task.id).permissions.length).toBe(1)
+    const request = service.detail(task.id).permissions[0]!
+    const formatted = `${task.title} · ${task.id}\nClaude 想运行一条命令：\n$ ${command}\n${PERMISSION_SNAPSHOT_NOTICE}`
+    const controls = `\n\n允许：任务 ${task.id} 允许 ${request.id}\n拒绝：任务 ${task.id} 拒绝 ${request.id}`
+    expect(request.description.length).toBeLessThanOrEqual(REQUEST_MAX)
+    expect(formatted.length).toBeLessThanOrEqual(REQUEST_MAX)
+    expect(formatted.length + controls.length).toBeGreaterThan(REQUEST_MAX)
+    const review = await service.handleWechat('owner', `任务 ${task.id} 权限 ${request.id}`)
+    expect(review).toContain('请在桌面工作台完整查看')
+    expect(review).toContain('可拒绝')
+    expect(review).not.toContain('允许：')
+    expect(await service.handleWechat('owner', `任务 ${task.id} 允许 ${request.id}`)).toContain('请在桌面工作台完整查看后处理。微信仍可拒绝。')
+    expect(service.detail(task.id).permissions.some(p => p.id === request.id)).toBe(true)
+    expect(await service.handleWechat('owner', `任务 ${task.id} 拒绝 ${request.id}`)).toContain('已拒绝')
+  })
+
+  it('hands the full review description to the shared pending card registry', async () => {
+    const prompt = vi.fn<NonNullable<ServiceDeps['permissionPrompt']>>(() => () => {})
+    const description = 'Edit sample'
+    const reviewDescription = `${description}\nBefore: previous text\nAfter: replacement text`
+    setup({async spawn(_project, ctx) { return {async *dispatch() {
+      await ctx.requestPermission!({ tool: 'Edit', description, reviewDescription,
+        display: { body: { kind: 'edit', path: 'sample.txt', changes: [{ before: 'previous text', after: 'replacement text' }] } },
+      })
+      yield result
+    }, async close() {}} }}, prompt)
+    const task = create()
+    await expect.poll(() => service.detail(task.id).permissions.length).toBe(1)
+    expect(prompt).toHaveBeenCalledTimes(1)
+    expect(prompt.mock.calls[0]?.[1].description === reviewDescription).toBe(true)
   })
 
   it('shows and resolves only the exact permission, rejecting wrong task, owner and duplicate grants',async()=>{

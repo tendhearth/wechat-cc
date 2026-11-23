@@ -599,12 +599,12 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           addRunEvent('system',`权限请求：${event.permission.tool} · ${description} · ${event.permission.id}`)
           let replyLine=''
           if(ctx.deps.permissionPrompt){
-            const close=ctx.deps.permissionPrompt(task.title,{...event.permission,description},(decision,reason)=>{
+            const close=ctx.deps.permissionPrompt(task.title,event.permission,(decision,reason)=>{
               const resolved=permissions.resolve(event.permission.id,decision,reason)
               if(resolved)ctx.hub.bumped(task.id)
               return resolved
             },()=>permissions.deadline(event.permission.id),{
-              executor:task.providerId,actor:ctx.deps.registry.namesOf(task.providerId).short,projectPath:task.path,
+              executor:task.providerId,actor:ctx.deps.registry.namesOf(task.providerId).name,
             })
             permissionPrompts.set(event.permission.id,close);replyLine=close.replyLine??''
           }

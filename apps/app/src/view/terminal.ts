@@ -98,10 +98,9 @@ export function terminalPermission(pending: Pick<NonNullable<CliSessionRowT['pen
   const action = display ? permissionAction(display.body, pending.tool, source, lang)
     : t(lang, 'approval.actor.tool', { actor: source, tool: pending.tool })
   const summaryTruncated = pending.truncated ?? (summary.length >= TERMINAL_PERMISSION_SUMMARY_LIMIT || /(?:…|\.\.\.)\s*$/.test(summary))
-  const mayBeIncomplete = structured ? structured.truncated === true : summaryTruncated
-  const hasFullSource = !mayBeIncomplete
-  const raw = structured && hasFullSource ? fullOperation(structured) : summary
-  return { display, raw, cwd, action, mayBeIncomplete, hasFullSource }
+  const hasFullSource = summary.length > 0 && !summaryTruncated
+  const raw = hasFullSource && structured && !structured.truncated ? fullOperation(structured) : summary
+  return { display, raw, cwd, action, summaryTruncated, hasFullSource }
 }
 
 /** 等你、而且手机上拍得了的那几条(「此刻」的数与行)。够不着电脑时这份是旧的 ⇒ 0。 */

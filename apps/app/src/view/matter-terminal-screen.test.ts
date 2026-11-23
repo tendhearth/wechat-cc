@@ -1,11 +1,12 @@
-import { terminalPermission } from './terminal'
 // @vitest-environment happy-dom
+import { terminalPermission } from './terminal'
 import { act, createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeDemoBackend } from '../backend/demo'
 import type { Backend, CliSessionRowT } from '../backend/types'
 import Matter from '../app/matter/[id]/index'
 import { withProviders } from '../state/providers.test-support'
+import { TerminalPermission } from '../ui/TerminalPermission'
 import { cleanup, mount } from '../ui/native-motion.test-support'
 
 const route = vi.hoisted(() => ({ id: 'a1b2c3d4' }))
@@ -90,7 +91,7 @@ describe('终端会话的那件事 → 终端详情', () => {
     expect(ui.byId('terminal-detail-pending-actor')?.textContent === action).toBe(true)
     const warning = ui.byId('terminal-detail-pending-truncated')
     expect(Boolean(warning)).toBe(truncated)
-    if (warning) expect(warning.textContent === 'This may be incomplete. See the full details on your computer.').toBe(true)
+    if (warning) expect(warning.textContent === 'This may be incomplete. See the full details in the terminal.').toBe(true)
     expect(Boolean(ui.byId('terminal-detail-allow'))).toBe(actionable)
     expect(Boolean(ui.byId('terminal-detail-local'))).toBe(!actionable)
     expect(Boolean(ui.byId('terminal-detail-pending'))).toBe(kind !== null)
@@ -125,21 +126,40 @@ describe('终端会话的那件事 → 终端详情', () => {
 
 
 describe('wire terminal approvals', () => {
-  it.each([true, false, undefined])('uses the summary truncation flag %s only when structured approval is unavailable', truncated => {
+  it.each([true, false])('shows the right disclosure for a truncated preview (summary truncated: %s)', async truncated => {
+    const display = { body: { kind: 'command' as const, command: 'sample preview' }, truncated: true }
+    const summary = 'sample original'
+    const ui = await mount(withProviders(createElement(TerminalPermission, {
+      pending: { tool: 'Bash', summary, display, truncated }, source: 'Claude', projectPath: '/sample', scroll: { current: null },
+    }), { backend: makeDemoBackend({ lang: 'en' }), lang: 'en' }))
+    const warning = ui.byId('terminal-detail-pending-truncated')
+    expect(warning.textContent).toBe(truncated
+      ? 'This may be incomplete. See the full details in the terminal.'
+      : 'This preview is incomplete. See the full original below.')
+    if (truncated) expect(ui.byId('approval-view-exact')).toBeNull()
+    else {
+      await act(() => ui.byId('approval-view-exact').click())
+      expect(ui.byId('approval-exact-source').textContent === summary).toBe(true)
+    }
+  })
+
+  it.each([true, false, undefined])('uses the summary truncation flag %s independently from structured approval', truncated => {
     const summary = 'x'.repeat(200)
     const command = 'printf "example"\r\nprintf "next"\n'
     const cwd = 'C:\\project\\work'
     const pending = { tool: 'Bash', summary, display: { body: { kind: 'command' as const, command } }, cwd, truncated }
     const result = terminalPermission(pending, 'Codex', 'zh-Hans')
-    expect(result.mayBeIncomplete).toBe(false)
-    expect(result.hasFullSource).toBe(true)
-    expect(result.raw === command && result.cwd === cwd && result.display?.body.kind === 'command').toBe(true)
+    expect(result.summaryTruncated).toBe(truncated ?? true)
+    expect(result.hasFullSource).toBe(!(truncated ?? true))
+    expect(result.raw === ((truncated ?? true) ? summary : command) && result.cwd === cwd && result.display?.body.kind === 'command' &&
+      result.display.body.command === command).toBe(true)
     const cut = terminalPermission({ ...pending, truncated: false, display: { ...pending.display, truncated: true } }, 'Codex', 'zh-Hans')
-    expect(cut.mayBeIncomplete).toBe(true)
-    expect(cut.hasFullSource).toBe(false)
+    expect(cut.display?.truncated).toBe(true)
+    expect(cut.summaryTruncated).toBe(false)
+    expect(cut.hasFullSource && cut.raw === summary).toBe(true)
     const fallback = terminalPermission({ ...pending, display: { body: { kind: 'command' } } } as typeof pending, 'Codex', 'zh-Hans')
     expect(fallback.display?.body.kind === 'command' && fallback.raw === summary).toBe(true)
-    expect(fallback.mayBeIncomplete).toBe(truncated ?? true)
+    expect(fallback.summaryTruncated).toBe(truncated ?? true)
     expect(fallback.hasFullSource).toBe(!(truncated ?? true))
   })
 })

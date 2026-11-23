@@ -197,6 +197,7 @@ export const PermissionScriptChunk = z.object({ content: z.string(), nextOffset:
 export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
   display: permissionDisplayWire, cwd: permissionCwdWire,
+  showSnapshotNotice: z.boolean().optional(),
   canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
 })
 

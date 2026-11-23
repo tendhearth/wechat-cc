@@ -18,7 +18,7 @@ import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
 import type {ReviewTurn} from './review'
 import {providerDisplayName} from '../../domain/provider-display-names'
-import {formatWorkbenchPermission, PERMISSION_TOO_LONG, REQUEST_MAX} from './permission-prompt'
+import {wechatPermissionReview, REQUEST_MAX} from './permission-prompt'
 
 /** origin(2026-10-19):只在 App 一轮(桌面 / 手机说的话过同一张消费者表)时由 daemon 填;省略 ⇒ 真的是微信入站。不进回执身份。 */
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number;origin?:MatterOrigin|null}
@@ -398,15 +398,14 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
           if(answer)return usage(id)
           const request=detail.permissions.find(p=>p.id===requestId)
           if(!detail.runId||!request)return stale
-          if(verb==='权限'){
-            const controls=`\n\n允许：任务 ${id} 允许 ${requestId}\n拒绝：任务 ${id} 拒绝 ${requestId}`
+          if(verb!=='拒绝'){
             const executor=detail.task.providerId
-            const prompt=request.description.length>REQUEST_MAX?undefined:formatWorkbenchPermission(detail.task.title,request,{
-              executor,actor:detail.agentNames?.[executor]??providerDisplayName(executor),projectPath:detail.task.path,
-            },REQUEST_MAX-controls.length)
-            return prompt===undefined?`任务 ${id}：${PERMISSION_TOO_LONG}\n可拒绝：任务 ${id} 拒绝 ${requestId}`:prompt+controls
+            const review=wechatPermissionReview(detail.task.title,request,{
+              executor,actor:detail.agentNames?.[executor]??providerDisplayName(executor),
+            })
+            if(verb==='权限')return review.reply
+            if(review.blocked)return review.blocked
           }
-          if(verb==='允许'&&request.description.length>REQUEST_MAX)return '这项权限内容较长，请在桌面工作台完整查看后处理。微信仍可拒绝。'
           opts.actions.resolvePermission(id,requestId,verb==='允许'?'allow':'deny')
           return `任务 ${id}：已${verb}这项请求。`
         }

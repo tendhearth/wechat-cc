@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import {afterEach,describe,expect,it,vi} from 'vitest'
+import {PERMISSION_SNAPSHOT_NOTICE} from '../../../../packages/protocol/src/permission-display'
 import {renderWorkbench} from './workbench.js'
 import {mergeEvents} from './workbench-live.js'
 const task={id:'A',title:'准备交付',path:'/work/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
@@ -53,6 +54,31 @@ describe('task detail follows authoritative current state',()=>{
   expect(root.querySelector('.wb-permission [data-kind="command"] .approval-source').textContent).toBe(command)
   expect(root.querySelector('.approval-meta').textContent).toBe('在 /work/verified')
   expect(root.querySelector('.wb-permission details .approval-source').textContent).toBe(permission.description)
+ })
+ it.each([true, false])('keeps the snapshot notice visible before approval (script: %s)', script=>{
+  const description = `command=bun run sample\n\n${PERMISSION_SNAPSHOT_NOTICE}`
+  const permission = {id:'p',taskId:'A',tool:'Bash',description,createdAt:1,showSnapshotNotice:true,
+   display:{body:{kind:'command',command:'bun run sample'},truncated:true},
+   ...(script ? {scripts:[{path:'sample.ts',content:'export {}'}]} : {}),
+  }
+  const root = render(page({}, {permissions:[permission]}))
+  const notice = root.querySelector('.wb-permission-snapshot')
+  expect(notice.textContent === PERMISSION_SNAPSHOT_NOTICE).toBe(true)
+  expect(notice.closest('details')).toBeNull()
+  expect(notice.previousElementSibling.className).toBe(script ? 'wb-permission-script' : 'approval-operation')
+  const source = root.querySelector('.approval-operation details')
+  expect(source.querySelector('summary').textContent).toBe('看完整原文')
+  source.open = true
+  expect(source.querySelector('.approval-source').textContent === description).toBe(true)
+ })
+ it('keeps the legacy snapshot notice in the visible parsed description',()=>{
+  const description = `command=bun run sample\n\n${PERMISSION_SNAPSHOT_NOTICE}`
+  const permission = {id:'p',taskId:'A',tool:'Bash',description,createdAt:1}
+  const root = render(page({providerId:'claude'}, {permissions:[permission]}))
+  const preview = root.querySelector('.approval-command .approval-source')
+  expect(preview.textContent.includes(PERMISSION_SNAPSHOT_NOTICE)).toBe(true)
+  expect(preview.closest('details')).toBeNull()
+  expect(root.querySelector('.wb-permission-snapshot')).toBeNull()
  })
  it('promotes saved JSON output but keeps known review-only artifacts review-first',()=>{
   expect(render(page({status:'completed'})).querySelector('#wb-artifacts').classList.contains('is-outcome')).toBe(true)

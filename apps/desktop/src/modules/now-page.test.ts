@@ -151,20 +151,29 @@ describe('mountNowPage', () => {
     expect(document.querySelector('dialog.now-terminal-dialog')).toBeNull()
     page.setTerminal([]); expect(document.getElementById('now-waiting')!.hidden).toBe(true)
   })
-  it('opens a structured terminal edit as review-style diff rows', () => {
+  it.each([true, false])('opens a structured terminal edit as review-style diff rows (summary truncated: %s)', summaryTruncated => {
     const root = dom()
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: vi.fn() })
     page.setTerminal(terminalWaitingRows([{ session_id: 'edit', source: 'claude', status: 'waiting', project: 'sample',
-      pending: { tool: 'Edit', summary: '旧摘要…', hash: 'edit1', truncated: true, cwd: '/work',
-        display: { body: { kind: 'edit', path: '/work/a.ts', changes: [{ before: 'old', after: 'new' }] } } },
+      pending: { tool: 'Edit', summary: summaryTruncated ? '旧摘要…' : '完整修改原文', hash: 'edit1', truncated: summaryTruncated, cwd: '/work',
+        display: { truncated: true, body: { kind: 'edit', path: '/work/a.ts', changes: [{ before: 'old', after: 'new' }] } } },
     }]))
     root.querySelector<HTMLButtonElement>('.now-terminal button')!.click()
     const dialog = document.querySelector('.now-terminal-dialog')!
-    expect(dialog.querySelector('h2')?.textContent).toBe('想改 旧摘要…')
+    expect(dialog.querySelector('h2')?.textContent).toBe(summaryTruncated ? '想改 旧摘要…' : '想改 完整修改原文')
     expect(dialog.querySelector('.approval-path')?.textContent).toBe('a.ts')
     expect(dialog.querySelector('.wb-review-diff [data-line="deleted"]')?.textContent).toBe('− old')
     expect(dialog.querySelector('.wb-review-diff [data-line="added"]')?.textContent).toBe('+ new')
     expect(dialog.querySelector('.approval-meta')?.textContent).toBe('在 /work')
+    expect(dialog.querySelector('.approval-meta:last-of-type')?.textContent).toBe(summaryTruncated
+      ? '这里可能不是全部内容，完整的请在终端里看。' : '这里不是全部内容，完整的在下面『看完整原文』里。')
+    const source = dialog.querySelector<HTMLDetailsElement>('details')
+    if (summaryTruncated) expect(source).toBeNull()
+    else {
+      expect(source?.querySelector('summary')?.textContent).toBe('看完整原文')
+      source!.open = true
+      expect(source?.querySelector('.approval-source')?.textContent === '完整修改原文').toBe(true)
+    }
     page.destroy()
   })
   it('终端拍板没送出去 ⇒ 小窗里按钮回来 + 说再试;那一项已不在 ⇒ 说处理过了;没有 onResolveTerminal ⇒ 行不能点', async () => {

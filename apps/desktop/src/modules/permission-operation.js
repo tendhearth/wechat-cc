@@ -3,14 +3,15 @@ import { normalizePermissionLines, permissionLines as bundledLines, permissionPa
 import { escapeWorkbenchHtml as escape } from './workbench-markdown.js'
 
 /** @typedef {import('../../../../packages/protocol/src/permission-display').PermissionDisplay} PermissionDisplay */
-/** @typedef {{cwd?:string,projectPath?:string,raw?:string,incomplete?:boolean,disclosureId?:string}} OperationOptions */
+/** @typedef {{cwd?:string,projectPath?:string,raw?:string,summaryTruncated?:boolean,disclosureId?:string}} OperationOptions */
 /** @typedef {{name:string,value:string}} Field */
 
 /** @type {typeof import('../../../../packages/protocol/src/permission-presentation').permissionLines} */
 const permissionLines = bundledLines
 
 /** @param {PermissionDisplay} display @param {OperationOptions} [options] */
-export function renderPermissionOperation(display, { cwd, projectPath = '', raw, incomplete = display.truncated === true, disclosureId } = {}) {
+export function renderPermissionOperation(display, { cwd, projectPath = '', raw, summaryTruncated = false, disclosureId } = {}) {
+  const incomplete = display.truncated === true
   const { body, extra } = display
   const path = (/** @type {string} */ value) => permissionRelativePath(value, cwd ?? projectPath)
   let disclosureIndex = 0
@@ -94,7 +95,8 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
     ${directory ? meta(directory) : ''}
     ${body.kind === 'url' && body.prompt ? meta(body.prompt) : ''}
     ${extra?.length ? `<div class="approval-extra">${fieldList(extra)}</div>` : ''}
-    ${incomplete ? meta('这里可能不是全部内容。') : ''}
-    ${raw !== undefined && !incomplete ? disclosure('看完整原文', source(raw)) : ''}
+    ${summaryTruncated || (incomplete && raw === undefined) ? meta('这里可能不是全部内容，完整的请在终端里看。')
+      : incomplete ? meta('这里不是全部内容，完整的在下面『看完整原文』里。') : ''}
+    ${raw !== undefined && !summaryTruncated ? disclosure('看完整原文', source(raw)) : ''}
   </div>`
 }

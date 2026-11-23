@@ -24,7 +24,6 @@ export interface ServiceHub {
 export interface PermissionPromptContext {
   executor: string
   actor: string
-  projectPath?: string
 }
 
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */

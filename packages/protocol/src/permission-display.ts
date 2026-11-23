@@ -1,5 +1,7 @@
 import { array, boolean, discriminatedUnion, literal, strictObject, string as zString, type infer as Infer } from 'zod'
 
+export const PERMISSION_SNAPSHOT_NOTICE = '预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。'
+
 export const PERMISSION_DISPLAY_LIMITS = {
   string: 8192, changes: 16, files: 16, fields: 16, bytes: 32 * 1024,
 } as const

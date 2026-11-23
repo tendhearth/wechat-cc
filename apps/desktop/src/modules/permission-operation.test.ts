@@ -66,15 +66,16 @@ it('renders a full URL, a quoted query, an extra table without the panel and raw
   expect(text.querySelector('details .approval-source')?.textContent).toBe('\nopaque')
 })
 
-it('uses only the supplied directory, and hides full-content controls for incomplete data', () => {
+it('uses only the supplied directory and keeps the complete original when the preview is cut', () => {
   const body = { kind: 'command', command: 'line\r\n'.repeat(10), cwd: '/unverified' } as const
   expect(render(body, { cwd: '/verified', projectPath: '/project' }).querySelector('.approval-meta')?.textContent).toBe('在 /verified')
   expect(render(body, { projectPath: '/project' }).querySelector('.approval-meta')?.textContent).toBe('项目目录 /project')
   expect(render(body).querySelector('.approval-meta')).toBeNull()
   const root = document.createElement('div')
   root.innerHTML = renderPermissionOperation({ body, truncated: true }, { raw: 'legacy' })
-  expect(root.querySelector('.approval-meta')?.textContent).toBe('这里可能不是全部内容。')
-  expect(root.querySelectorAll('summary')).toHaveLength(0)
+  expect(root.querySelector('.approval-meta')?.textContent).toBe('这里不是全部内容，完整的在下面『看完整原文』里。')
+  expect([...root.querySelectorAll('summary')].map(s => s.textContent)).toEqual(['看完整原文'])
+  expect(root.querySelector('details .approval-source')?.textContent === 'legacy').toBe(true)
   expect(root.querySelector('.approval-source')?.textContent?.replace(/\r\n?/g, '\n').split('\n')).toHaveLength(8)
 })
 

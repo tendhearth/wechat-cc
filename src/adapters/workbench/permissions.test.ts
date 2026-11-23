@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { PERMISSION_SNAPSHOT_NOTICE, MatterPermission, boundedPermissionDisplay } from '@wechat-cc/protocol'
 import { makeRunPermissions } from './permissions'
 
 describe('run-bound Workbench permissions', () => {
@@ -42,6 +43,20 @@ describe('run-bound Workbench permissions', () => {
     expect(permissions.pending()).toEqual([])
     expect(permissions.resolve(pending!.id, 'deny')).toBe(false)
     expect(audit.mock.calls.map(call => call[0].type)).toEqual(['request', 'outcome'])
+  })
+
+  it('keeps the full command and snapshot notice when the wire preview is truncated', async () => {
+    const permissions = makeRunPermissions({ taskId: 'sample' })
+    const command = 'printf '.padEnd(9000, 'x')
+    const description = `command=${command}`
+    const display = boundedPermissionDisplay(() => ({ body: { kind: 'command', command } }))
+    const answer = permissions.request({ tool: 'Bash', description, command, display })
+    const card = MatterPermission.parse(permissions.pending()[0])
+    expect(card.showSnapshotNotice).toBe(true)
+    expect(card.display?.truncated).toBe(true)
+    expect(card.description === `${description}\n\n${PERMISSION_SNAPSHOT_NOTICE}`).toBe(true)
+    permissions.resolve(card.id, 'deny')
+    await expect(answer).resolves.toBe(false)
   })
 
   it('denies and removes requests on SDK abort', async () => {

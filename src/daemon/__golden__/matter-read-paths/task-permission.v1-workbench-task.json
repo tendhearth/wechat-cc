@@ -101,7 +101,8 @@
         "tool": "Bash",
         "description": "Run the migration against the local db\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。",
         "createdAt": 1793412600000,
-        "cwd": "<tmp>/projects/permission"
+        "cwd": "<tmp>/projects/permission",
+        "showSnapshotNotice": true
       }
     ]
   }

@@ -5,6 +5,8 @@ const origin = 'http://127.0.0.1:4213'
 const source = new URL('../src/', import.meta.url)
 const hostile = '<script>window.approvalInjected=1</script><img src=x onerror="window.approvalInjected=2">\' "'
 const command = `npm install sharp\n${hostile}\n${Array.from({ length: 8 }, (_, i) => `echo example-${i}`).join('\n')}`
+const snapshotNotice = '预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。'
+const completeSource = `command=${command}\necho original-tail\n\n${snapshotNotice}`
 const cwd = '/demo/portfolio'
 const task = { id: 'A', title: '画作品集', path: cwd, providerId: 'claude', status: 'running', createdAt: 1, updatedAt: 2, error: null }
 const edit = { body: { kind: 'edit', path: cwd + '/src/a.ts', changes: [{ before: 'const a = 1', after: 'const a = 2\n' + hostile }] } }
@@ -13,6 +15,8 @@ const data = {
   permissions: [
     { id: 'p1', taskId: 'A', tool: 'Bash', description: 'legacy command', cwd, display: { body: { kind: 'command', command } }, createdAt: 1 },
     { id: 'p2', taskId: 'A', tool: 'Edit', description: 'legacy edit', cwd, display: edit, createdAt: 1 },
+    { id: 'p3', taskId: 'A', tool: 'Bash', description: completeSource, cwd, display: { body: { kind: 'command', command }, truncated: true },
+      showSnapshotNotice: true, scripts: [{ path: 'sample.ts', content: 'export {}' }], createdAt: 1 },
   ],
 }
 
@@ -87,7 +91,7 @@ for (const width of [1440, 760]) {
     await page.setViewportSize({ width, height: 900 })
     await openFixture(page, { wide: width === 1440 })
     const cards = page.locator('.wb-permission')
-    await expect(cards).toHaveCount(2)
+    await expect(cards).toHaveCount(3)
     const commandPanel = cards.first().locator('[data-kind="command"]')
     await expect(cards.first().locator('.wb-permission-tool')).toHaveText('Claude 想运行一条命令')
     await expect(commandPanel.locator('.approval-command > span')).toHaveText('$')
@@ -105,6 +109,18 @@ for (const width of [1440, 760]) {
     await expect(editPanel.locator('[data-line="deleted"]')).toHaveText('− const a = 1')
     await expect(editPanel.locator('[data-line="added"]').first()).toHaveText('+ const a = 2')
     await expect(cards.nth(1).locator('.approval-meta')).toHaveText('在 /demo/portfolio')
+    const truncated = cards.nth(2)
+    const notice = truncated.locator('.wb-permission-snapshot')
+    await notice.scrollIntoViewIfNeeded()
+    await expect(notice).toBeVisible()
+    await expect(notice).toHaveText(snapshotNotice)
+    await expect(truncated.getByText('这里不是全部内容，完整的在下面『看完整原文』里。', { exact: true })).toBeVisible()
+    const fullOriginal = truncated.getByText('看完整原文', { exact: true })
+    await expect(fullOriginal).toBeVisible()
+    await fullOriginal.click()
+    const fullSource = truncated.locator('details .approval-source')
+    await expect(fullSource).toBeVisible()
+    expect(await fullSource.textContent() === completeSource).toBe(true)
     await expect(cards.locator('script, img, [onerror]')).toHaveCount(0)
     expect(await page.evaluate(() => 'approvalInjected' in window)).toBe(false)
     expect(await editPanel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
@@ -121,7 +137,8 @@ test('terminal waiting row opens its structured edit under the desktop CSP', asy
   await expect(dialog.getByRole('heading')).toHaveText('想改 src/a.ts…')
   await expect(dialog.locator('[data-line="deleted"]')).toHaveText('− const a = 1')
   await expect(dialog.locator('[data-line="added"]').first()).toHaveText('+ const a = 2')
-  await expect(dialog.locator('.approval-meta')).toHaveText('在 /demo/portfolio')
+  await expect(dialog.locator('.approval-meta')).toHaveText(['在 /demo/portfolio', '这里可能不是全部内容，完整的请在终端里看。'])
+  await expect(dialog.getByText('看完整原文', { exact: true })).toHaveCount(0)
   await expect(dialog.locator('script, img, [onerror]')).toHaveCount(0)
   expect(await page.evaluate(() => 'approvalInjected' in window)).toBe(false)
   await expect(page.locator('html')).not.toHaveAttribute('data-csp-violation', 'true')

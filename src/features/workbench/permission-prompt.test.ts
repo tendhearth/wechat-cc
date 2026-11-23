@@ -6,9 +6,12 @@ import { randomUUID } from 'node:crypto'
 import { openTestDb } from '../../lib/db'
 import { makeConversationStore } from '../../adapters/store/conversation-store'
 import { makeIlinkAdapter } from '../../daemon/ilink-glue'
-import type { PermissionDisplay } from '@wechat-cc/protocol'
+import { permissionRoutes } from '../../daemon/internal-api/routes-permissions'
+import type { InternalApiDeps } from '../../daemon/internal-api/types'
+import { PermissionsPendingResponse } from '@wechat-cc/protocol/desktop-api'
+import { PERMISSION_SNAPSHOT_NOTICE, type PermissionDisplay } from '@wechat-cc/protocol'
 import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../../adapters/workbench/permissions'
-import { formatWorkbenchPermission, makeWorkbenchPermissionPrompt, REQUEST_MAX } from './permission-prompt'
+import { makeWorkbenchPermissionPrompt, REQUEST_MAX, wechatPermissionReview } from './permission-prompt'
 
 it('strict WeChat reason replies consume only a capable owner card; ordinary chat stays ordinary',async()=>{
   const root=mkdtempSync(join(tmpdir(),'cc-reason-format-')),db=openTestDb()
@@ -48,11 +51,12 @@ it.each(['wechat', 'pet'] as const)('R2: %s waits for the server decision before
   } finally { for (const close of closes) close(); await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
 })
 
-const syntheticContext = { executor: 'claude', actor: 'Claude', projectPath: '/demo' }
+const syntheticContext = { executor: 'claude', actor: 'Claude' }
 const synthetic = { id: 'p', taskId: 'task', tool: 'Bash', description: 'legacy', createdAt: 1, cwd: '/demo' }
 const title = '整理样例'
-const format = (body: PermissionDisplay['body'], tool = 'Bash', extra?: PermissionDisplay['extra']) =>
-  formatWorkbenchPermission(title, { ...synthetic, tool, display: { body, extra } }, syntheticContext)
+const review = (body: PermissionDisplay['body'], tool = 'Bash', extra?: PermissionDisplay['extra']) =>
+  wechatPermissionReview(title, { ...synthetic, tool, display: { body, extra } }, syntheticContext)
+const format = (...args: Parameters<typeof review>) => review(...args).reply.split('\n\n', 1)[0]
 
 it('formats a command and the verified directory with normalized line breaks', () => {
   expect(format({ kind: 'command', command: 'npm install sharp\r\nnpm test' })).toBe(
@@ -90,23 +94,77 @@ it.each([
 it('falls back to the known source format, keeps opaque Codex text, and caps the total', () => {
   const description = 'command=npm test'
   const invalid = { ...synthetic, description, display: { body: { kind: 'command', command: 1 } } as unknown as PermissionDisplay }
-  expect(formatWorkbenchPermission(title, invalid, syntheticContext)).toContain('\n$ npm test\n')
-  expect(formatWorkbenchPermission(title, { ...synthetic, description }, syntheticContext)).toContain('\n$ npm test\n')
-  expect(formatWorkbenchPermission(title, invalid, { executor: 'codex', actor: 'Codex' })).toContain('\ncommand=npm test\n')
-  const bare = format({ kind: 'text', text: '' })!
-  expect(format({ kind: 'text', text: 'x'.repeat(REQUEST_MAX - bare.length) })?.length).toBe(REQUEST_MAX)
-  expect(format({ kind: 'text', text: 'x'.repeat(REQUEST_MAX - bare.length + 1) })).toBeUndefined()
-  expect(format({ kind: 'fields', fields: [{ name: 'a', value: 'x'.repeat(REQUEST_MAX) }] })).toBeUndefined()
+  expect(wechatPermissionReview(title, invalid, syntheticContext).reply).toContain('\n$ npm test\n')
+  expect(wechatPermissionReview(title, { ...synthetic, description }, syntheticContext).reply).toContain('\n$ npm test\n')
+  expect(wechatPermissionReview(title, invalid, { executor: 'codex', actor: 'Codex' }).reply).toContain('\ncommand=npm test\n')
+  const bare = review({ kind: 'text', text: '' }).reply
+  expect(review({ kind: 'text', text: 'x'.repeat(REQUEST_MAX - bare.length) }).reply.length).toBe(REQUEST_MAX)
+  expect(review({ kind: 'text', text: 'x'.repeat(REQUEST_MAX - bare.length + 1) }).blocked).toContain('桌面工作台')
+  expect(review({ kind: 'fields', fields: [{ name: 'a', value: 'x'.repeat(REQUEST_MAX) }] }).blocked).toContain('桌面工作台')
 })
 
-it('uses the long-content notice and keeps the exact code reply line and deadline', () => {
+it('shows the snapshot notice in WeChat even when a script must be reviewed on the desktop', () => {
+  const permission = {
+    ...synthetic, showSnapshotNotice: true, description: `command=bun run sample\n\n${PERMISSION_SNAPSHOT_NOTICE}`,
+    display: { body: { kind: 'command' as const, command: 'bun run sample' } },
+    scripts: [{ path: 'sample.ts', content: 'export {}' }],
+  }
+  const result = wechatPermissionReview(title, permission, syntheticContext)
+  expect(result.reply.split(PERMISSION_SNAPSHOT_NOTICE)).toHaveLength(2)
+  expect(result.reply).toContain('在桌面工作台查看')
+  expect(result.reply).not.toContain('允许：')
+  expect(result.blocked).toContain('微信仍可拒绝')
+  const boundOnly = wechatPermissionReview(title, { ...permission, scripts: [] }, syntheticContext)
+  expect(boundOnly.reply.split(PERMISSION_SNAPSHOT_NOTICE)).toHaveLength(2)
+  expect(boundOnly.blocked).toBeUndefined()
+})
+
+it('keeps the exact reply line and deadline for a request that fits in WeChat', () => {
   const registry = { registerPendingPermission: vi.fn(async () => 'deny' as const), resolvePermission: vi.fn(() => true), pendingPermissionCodeOf: vi.fn(() => '07') }
   const answer = vi.fn(() => true), deadline = () => 123
   const close = makeWorkbenchPermissionPrompt(registry, () => 'owner')(title, {
-    ...synthetic, description: 'x'.repeat(REQUEST_MAX + 1), canAllowTask: true, canDenyWithReason: true,
+    ...synthetic, canAllowTask: true, canDenyWithReason: true,
   }, answer, deadline, syntheticContext)
   expect(registry.registerPendingPermission).toHaveBeenCalledWith(synthetic.id, WORKBENCH_PERMISSION_TIMEOUT_MS,
-    expect.objectContaining({ prompt: '整理样例 · task\n权限内容较长，请在桌面工作台完整查看。' }), expect.objectContaining({ deadline }))
+    expect.objectContaining({ prompt: '整理样例 · task\nBash\nlegacy' }), expect.objectContaining({ deadline }))
   expect(close.replyLine).toBe('回「y 07」允许这一步、「n 07」拒绝。拒绝理由选填：「n 07 理由」。回「yt 07」本任务同命令都允许，任务结束失效。')
   close()
+})
+
+it.each(['patch', 'long command'] as const)('keeps the complete %s in the pet response and prevents WeChat approval codes from bypassing review', async kind => {
+  const root = mkdtempSync(join(tmpdir(), 'cc-permission-review-')), db = openTestDb()
+  const ilink = makeIlinkAdapter({ stateDir: root, db, conversationStore: makeConversationStore(db), accounts: [] })
+  const sent = vi.spyOn(ilink, 'sendMessage').mockResolvedValue({ msgId: 'sample' })
+  const answer = vi.fn(() => true), id = randomUUID()
+  const diff = '-previous text\n+replacement text'
+  const description = kind === 'patch' ? `sample patch\n${diff}` : 'x'.repeat(REQUEST_MAX + 1)
+  const display: PermissionDisplay | undefined = kind === 'patch'
+    ? { body: { kind: 'patch', files: [{ path: 'sample.txt', change: 'update', diff }] } } : undefined
+  const permission = { ...synthetic, id, tool: kind === 'patch' ? 'fileChange' : 'Bash', description, display, canAllowTask: true }
+  const close = makeWorkbenchPermissionPrompt(ilink, () => 'owner')(title, permission, answer, () => Date.now() + 10000)
+  try {
+    const code = ilink.pendingPermissionCodeOf(id)
+    expect(close.replyLine).not.toContain(`y ${code}`)
+    expect(close.replyLine).toContain(`n ${code}`)
+    const routes = permissionRoutes({ permissions: { list: ilink.listPendingPermissions, resolve: ilink.resolvePermission } } as InternalApiDeps)
+    const response = await routes['GET /v1/permissions/pending']!(new URLSearchParams(), undefined)
+    expect(response.status).toBe(200)
+    expect(response.body).not.toHaveProperty('items.0.wechatApprovalBlock')
+    const [card] = PermissionsPendingResponse.parse(response.body).items
+    expect(card?.prompt === `${title} · task\n${permission.tool}\n${description}`).toBe(true)
+    expect(ilink.handlePermissionReply(`y ${code}`, 'owner')).toBe(true)
+    expect(ilink.handlePermissionReply(`yt ${code}`, 'owner')).toBe(true)
+    expect(ilink.handlePermissionReply('y', 'owner')).toBe(true)
+    expect(ilink.handlePermissionReply('y', 'owner', `${title} · task`)).toBe(true)
+    expect(sent).toHaveBeenCalledTimes(4)
+    expect(sent).toHaveBeenLastCalledWith('owner', expect.stringContaining('在桌面工作台'))
+    expect(answer).not.toHaveBeenCalled()
+    if (kind === 'patch') {
+      expect(ilink.resolvePermission(id, 'allow')).toBe(true)
+      expect(answer).toHaveBeenCalledExactlyOnceWith('allow')
+    } else {
+      expect(ilink.handlePermissionReply(`n ${code}`, 'owner')).toBe(true)
+      expect(answer).toHaveBeenCalledExactlyOnceWith('deny')
+    }
+  } finally { close(); await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
 })

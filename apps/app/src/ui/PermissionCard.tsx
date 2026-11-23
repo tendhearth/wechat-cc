@@ -92,8 +92,9 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
         {v.display.note ? <Txt selectable role="body" tone="inkSoft" content="user">{v.display.note}</Txt> : null}
       </View>
       <PermissionOperation display={v.display} projectPath={v.projectPath} cwd={v.cwd} lang={lang} open={sheet.openFromPreview} />
-      {v.display.truncated ? <Txt testID="approval-display-truncated" role="small" tone="inkSoft">{t(lang, 'terminal.pendingTruncated')}</Txt> : null}
+      {v.display.truncated ? <Txt testID="approval-display-truncated" role="small" tone="inkSoft">{t(lang, 'approval.previewTruncated')}</Txt> : null}
       {v.scripts?.map(script => <PermissionScriptPreview key={script.path} script={script} taskId={taskId} requestId={v.requestId} />)}
+      {v.showSnapshotNotice ? <Txt testID="approval-snapshot-notice" role="small" tone="inkSoft">{t(lang, 'approval.snapshotNotice')}</Txt> : null}
       {v.effect.trim() ? <View testID="approval-effect" style={{ gap: space.xs }}>
         <Markdown text={v.effect} />
         <Txt testID="approval-model-note" role="small" tone="inkSoft">{t(lang, 'approval.aiSummary')}</Txt>

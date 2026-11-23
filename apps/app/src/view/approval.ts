@@ -10,7 +10,7 @@ export type ApprovalView =
       items: Array<{ id: string; header: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean; allowOther: boolean }> }
   | { kind: 'card'; requestId: string; runId: string; title: string; what: string; scope: string; effect: string
       tool: string; display: PermissionDisplay; rawFull: string; projectPath: string; cwd?: string; executor: string; executorName: string
-      canAllowTask?: boolean; canDenyWithReason: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
+      canAllowTask?: boolean; canDenyWithReason: boolean; showSnapshotNotice?: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
 
 const firstLine = (s: string, max: number) => (s.replace(/\r\n?/g, '\n').split('\n', 1)[0] ?? '').slice(0, max)
 
@@ -36,6 +36,7 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
       kind: 'card', requestId: p.id, runId, tool: p.tool, display, projectPath, ...(cwd ? { cwd } : {}), executor, executorName,
       title: model?.title.trim() || '', what: model?.what ?? '', scope: model?.scope ?? '', effect: model?.effect ?? '',
       rawFull: p.description,
+      ...(p.showSnapshotNotice ? { showSnapshotNotice: true } : {}),
       canDenyWithReason: p.canDenyWithReason === true, ...(p.canAllowTask ? { canAllowTask: true } : {}), ...(p.scripts ? { scripts: p.scripts } : {}),
     }
   }

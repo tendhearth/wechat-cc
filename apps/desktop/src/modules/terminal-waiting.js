@@ -11,7 +11,7 @@ import { V1, v1 } from '../daemon-client.js'
 import { normalizePermissionLines, permissionCwd, PermissionDisplaySchema, permissionDisplay } from '../generated/permission-display.js'
 
 /** @typedef {{session_id:string,code:string,source:string,displayName?:string,status:string,project:string,cwd?:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null,display?:unknown,cwd?:unknown,truncated?:boolean}|null}} CliSession */
-/** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,tool:string,display?:import('./permission-operation.js').PermissionDisplay,cwd?:string,projectPath?:string,incomplete?:boolean}} TerminalRow */
+/** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,tool:string,display?:import('./permission-operation.js').PermissionDisplay,cwd?:string,projectPath?:string,raw?:string,summaryTruncated?:boolean}} TerminalRow */
 
 const TITLE_MAX = 120
 const SUMMARY_LIMIT = 200
@@ -52,9 +52,8 @@ export function terminalWaitingRows(sessions) {
     const summary = normalizePermissionLines(rawSummary)
     const titleSummary = summary.trim()
     const structured = /** @type {import('./permission-operation.js').PermissionDisplay|undefined} */ (PermissionDisplaySchema.safeParse(s.pending.display).data)
-    const display = structured ?? (titleSummary ? permissionDisplay(tool, summary) : undefined)
     const summaryTruncated = s.pending.truncated ?? (rawSummary.length >= SUMMARY_LIMIT || /(?:…|\.\.\.)\s*$/.test(summary))
-    const incomplete = structured ? structured.truncated === true : summaryTruncated
+    const display = structured ?? (titleSummary ? { ...permissionDisplay(tool, summary), ...(summaryTruncated ? { truncated: true } : {}) } : undefined)
     // 没写 source 的是老 daemon(那时只有 Claude);写了个不认识的 ⇒ 照它的名字画首字母,别冒充 Claude。
     const said = typeof s.source === 'string' ? s.source.trim() : ''
     const agent = said || 'claude'
@@ -66,7 +65,8 @@ export function terminalWaitingRows(sessions) {
       id: s.session_id,
       title: terminalTitle(tool, titleSummary, source),
       detail, agent, source,
-      hash, tool, display, incomplete,
+      hash, tool, display, summaryTruncated,
+      ...(summary && !summaryTruncated ? { raw: summary } : {}),
       cwd: permissionCwd(s.pending.cwd), projectPath: permissionCwd(s.cwd) ?? detail,
     })
   }

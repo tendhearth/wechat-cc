@@ -410,6 +410,8 @@ function placeWithNotes(kind: 'permission' | 'question', requestId: string): Pla
   }] }
 }
 
+const SNAPSHOT_NOTICE = '预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。'
+
 describe('permission operation rendering', () => {
   const many = Array.from({ length: 14 }, (_, i) => `item-${i + 1}`).join('\r\n')
   const patch: PermissionDisplay = { body: { kind: 'patch', files: [
@@ -458,6 +460,37 @@ describe('permission operation rendering', () => {
     expect(ui.byId('approval-exact-cwd').textContent === '项目目录 /p').toBe(true)
     expect(host.sources.some(source => source.id === 'approval-exact-source' && source.selectable === true && source.accessible === true)).toBe(true)
     expect(ui.byId('approval-exact-source').closest('[aria-hidden="true"]')).toBeNull()
+  })
+
+  it.each([true, false])('shows the snapshot notice and complete original for a truncated wire preview (script: %s)', async script => {
+    const h = harness()
+    const request = h.detail().permissions[0]
+    const raw = `command=${many}\nlast source line\n\n${SNAPSHOT_NOTICE}`
+    Object.assign(request, {
+      description: raw,
+      display: { body: { kind: 'command', command: many }, truncated: true },
+      showSnapshotNotice: true,
+      ...(script ? { scripts: [{ path: 'sample.ts', content: 'export {}' }] } : {}),
+    })
+    const ui = await mount(Approval)
+    const preview = ui.byId('approval-operation-command')
+    expect(preview.textContent?.includes('last source line')).toBe(false)
+    expect(ui.byId('approval-display-truncated').textContent).toBe('这里不是全部内容，完整的在下面『看完整原文』里。')
+    const notice = ui.byId('approval-snapshot-notice')
+    expect(notice.textContent === SNAPSHOT_NOTICE).toBe(true)
+    expect(notice.closest('[aria-hidden="true"]')).toBeNull()
+    expect(ui.byId('approval-exact-source')).toBeNull()
+    await ui.click('approval-view-exact')
+    expect(ui.byId('approval-exact-source').textContent === raw).toBe(true)
+  })
+
+  it('keeps the legacy snapshot notice visible inside the operation', async () => {
+    const h = harness()
+    h.detail().permissions[0].description = `command=bun run sample\n\n${SNAPSHOT_NOTICE}`
+    const ui = await mount(Approval)
+    expect(ui.byId('approval-operation-command').textContent?.includes(SNAPSHOT_NOTICE)).toBe(true)
+    expect(ui.byId('approval-exact-source')).toBeNull()
+    expect(ui.byId('approval-snapshot-notice')).toBeNull()
   })
 
   it.each([true, false])('waits for the visible sheet layout before scrolling (motion enabled: %s)', async animated => {

@@ -90,7 +90,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     if (r.display) {
       body.innerHTML = renderPermissionOperation(r.display, r)
     } else {
-      const p = document.createElement('p'); p.className = 'wb-history-note'; p.textContent = r.tool ? `${r.tool} 没说具体要做什么。` : '它没说具体要做什么。'
+      const p = document.createElement('p'); p.className = 'wb-history-note'; p.textContent = r.summaryTruncated ? '完整的请在终端里看。' : r.tool ? `${r.tool} 没说具体要做什么。` : '它没说具体要做什么。'
       body.append(p)
     }
     const foot = document.createElement('footer'); foot.className = 'wb-handoff-footer'
