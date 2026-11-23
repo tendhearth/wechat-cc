@@ -5,6 +5,7 @@
 .chat-message { margin:24px 0; overflow-wrap:anywhere; white-space:pre-wrap; line-height:1.65 }
 .chat-message small { display:block; color:var(--soft); font-size:12px }
 .chat-message .chat-reply-avatar { vertical-align:middle; margin-right:8px; --th-agent-ring:var(--paper) }
+.cc-voice,#roster-strip .place span,.home-arrived #pres-txt{font-family:var(--hand)}
 #chat-form { position:relative; display:flex; padding:12px 0 calc(10px + env(safe-area-inset-bottom)); background:var(--paper) }
 #chat-input { flex:1; min-width:0; height:84px; font:inherit; border:1px solid var(--line); border-radius:var(--r-s); padding:12px 64px 12px 12px; color:var(--ink); background:var(--card) }
 .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%) }

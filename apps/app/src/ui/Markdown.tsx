@@ -5,6 +5,7 @@ import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { radius, space } from './tokens'
 import { Txt, type Tone } from './Txt'
+import type { TextVoice } from './type'
 import { useTheme } from './useTheme'
 
 type BodyRole = 'body' | 'bubble'
@@ -13,17 +14,17 @@ type InlineRole = BodyRole | 'title' | 'item'
 // are not local paths; displaying them as an affordance would imply unsupported access.
 const localTarget = (href: string): string | null => !/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href) || /^[a-z]:[\\/]/i.test(href) ? href : null
 
-type Props = { text: string; typeRole?: BodyRole }
+type Props = { text: string; typeRole?: BodyRole; voice?: TextVoice }
 
 /** 助手正文的原生阅读出口。解析结果只随原文改变;链接只接受共享策略批准的绝对网址。 */
-export const Markdown = memo(function Markdown({ text, typeRole = 'body' }: Props) {
+export const Markdown = memo(function Markdown({ text, typeRole = 'body', voice }: Props) {
   const tokens = useMemo(() => parseMarkdown(text), [text])
-  return <View style={{ maxWidth: '100%', minWidth: 0, gap: space.s }}><Blocks tokens={tokens} typeRole={typeRole} /><ImageActions tokens={tokens} /></View>
+  return <View style={{ maxWidth: '100%', minWidth: 0, gap: space.s }}><Blocks tokens={tokens} typeRole={typeRole} voice={voice} /><ImageActions tokens={tokens} /></View>
 })
 
 /** 用户与助手共用阅读格式;用户原文只在需要时展开。系统、错误、工具日志不进入此组件。 */
-export function MessageText({ text, role, typeRole = 'body', userAlign = 'left' }: Props & { role: 'user' | 'assistant'; userAlign?: 'left' | 'right' }) {
-  return role === 'assistant' ? <Markdown text={text} typeRole={typeRole} /> : <UserMessage text={text} typeRole={typeRole} userAlign={userAlign} />
+export function MessageText({ text, role, typeRole = 'body', userAlign = 'left', voice }: Props & { role: 'user' | 'assistant'; userAlign?: 'left' | 'right' }) {
+  return role === 'assistant' ? <Markdown text={text} typeRole={typeRole} voice={voice} /> : <UserMessage text={text} typeRole={typeRole} userAlign={userAlign} />
 }
 
 const UserMessage = memo(function UserMessage({ text, typeRole = 'body', userAlign }: Props & { userAlign: 'left' | 'right' }) {
@@ -46,62 +47,62 @@ const UserMessage = memo(function UserMessage({ text, typeRole = 'body', userAli
   )
 })
 
-function Inline({ tokens, typeRole, tone = 'ink' }: { tokens: Token[]; typeRole: InlineRole; tone?: Tone }): ReactNode {
+function Inline({ tokens, typeRole, tone = 'ink', voice }: { tokens: Token[]; typeRole: InlineRole; tone?: Tone; voice?: TextVoice }): ReactNode {
   const { c } = useTheme()
   return tokens.map((token, i) => {
-    const nested = (nextTone = tone) => <Inline tokens={(token as { tokens?: Token[] }).tokens ?? []} typeRole={typeRole} tone={nextTone} />
+    const nested = (nextTone = tone) => <Inline voice={voice} tokens={(token as { tokens?: Token[] }).tokens ?? []} typeRole={typeRole} tone={nextTone} />
     switch (token.type) {
       case 'checkbox': return null // 列表行的标记已经展示状态,宽松列表的段内 token 不再重复。
       case 'strong':
-        // 中文使用已打包的衬线家族,中性底色也要能在用户气泡中辨认;强调色只给可点击动作。
-        return <Txt key={i} role={typeRole} content="user" tone={tone} style={{ backgroundColor: c.hair }}>{nested()}</Txt>
+        // 中性底色也要能在用户气泡中辨认;强调色只给可点击动作。
+        return <Txt voice={voice} key={i} role={typeRole} content="user" tone={tone} style={{ backgroundColor: c.hair }}>{nested()}</Txt>
       case 'em':
-        return <Txt key={i} role={typeRole} content="user" tone={tone} style={{ textDecorationLine: 'underline' }}>{nested()}</Txt>
+        return <Txt voice={voice} key={i} role={typeRole} content="user" tone={tone} style={{ textDecorationLine: 'underline' }}>{nested()}</Txt>
       case 'del':
-        return <Txt key={i} role={typeRole} content="user" tone={tone} style={{ textDecorationLine: 'line-through' }}>{nested()}</Txt>
+        return <Txt voice={voice} key={i} role={typeRole} content="user" tone={tone} style={{ textDecorationLine: 'line-through' }}>{nested()}</Txt>
       case 'link': {
         const link = token as Tokens.Link
         const url = safeMarkdownUrl(link.href)
         return url ? (
-          <Txt key={i} role={typeRole} content="user" tone="accent" accessibilityRole="link"
+          <Txt voice={voice} key={i} role={typeRole} content="user" tone="accent" accessibilityRole="link"
             onPress={() => { void Linking.openURL(url).catch(() => {}) }} style={{ textDecorationLine: 'underline' }}>
             {nested('accent')}
           </Txt>
-        ) : <Txt key={i} role={typeRole} content="user" tone={tone}>{nested()}{localTarget(link.href) ? ` (${link.href})` : ''}</Txt>
+        ) : <Txt voice={voice} key={i} role={typeRole} content="user" tone={tone}>{nested()}{localTarget(link.href) ? ` (${link.href})` : ''}</Txt>
       }
       case 'image': {
         const picture = token as Tokens.Image
-        return <Txt key={i} role={typeRole} content="user" tone="inkSoft">{decodeMarkdownEntities(picture.text)}{localTarget(picture.href) ? ` (${picture.href})` : ''}</Txt>
+        return <Txt voice={voice} key={i} role={typeRole} content="user" tone="inkSoft">{decodeMarkdownEntities(picture.text)}{localTarget(picture.href) ? ` (${picture.href})` : ''}</Txt>
       }
       case 'codespan':
         return <Txt key={i} role="code" content="user" tone={tone} style={{ backgroundColor: c.rail }}>{(token as Tokens.Codespan).text}</Txt>
       case 'br': return '\n'
       case 'text':
-        return token.tokens ? <Inline key={i} tokens={token.tokens} typeRole={typeRole} tone={tone} />
-          : <Txt key={i} role={typeRole} content="user" tone={tone}>{decodeMarkdownEntities((token as Tokens.Text).text)}</Txt>
+        return token.tokens ? <Inline voice={voice} key={i} tokens={token.tokens} typeRole={typeRole} tone={tone} />
+          : <Txt voice={voice} key={i} role={typeRole} content="user" tone={tone}>{decodeMarkdownEntities((token as Tokens.Text).text)}</Txt>
       case 'escape':
-        return <Txt key={i} role={typeRole} content="user" tone={tone}>{(token as Tokens.Escape).text}</Txt>
+        return <Txt voice={voice} key={i} role={typeRole} content="user" tone={tone}>{(token as Tokens.Escape).text}</Txt>
       default:
         // HTML 是文字,不会创建原生控件或执行脚本;未知扩展也不会吞掉原文。
-        return <Txt key={i} role={typeRole} content="user" tone={tone}>{token.raw}</Txt>
+        return <Txt voice={voice} key={i} role={typeRole} content="user" tone={tone}>{token.raw}</Txt>
     }
   })
 }
 
-function Blocks({ tokens, typeRole }: { tokens: Token[]; typeRole: BodyRole }): ReactNode {
+function Blocks({ tokens, typeRole, voice }: { tokens: Token[]; typeRole: BodyRole; voice?: TextVoice }): ReactNode {
   const { c } = useTheme()
   const { fontScale } = useWindowDimensions()
   return tokens.map((token, i) => {
     switch (token.type) {
       case 'space': case 'def': case 'checkbox': return null
       case 'paragraph': case 'text':
-        return <Txt key={i} selectable role={typeRole} content="user">
-          {token.tokens ? <Inline tokens={token.tokens} typeRole={typeRole} /> : decodeMarkdownEntities((token as Tokens.Text).text)}
+        return <Txt voice={voice} key={i} selectable role={typeRole} content="user">
+          {token.tokens ? <Inline voice={voice} tokens={token.tokens} typeRole={typeRole} /> : decodeMarkdownEntities((token as Tokens.Text).text)}
         </Txt>
       case 'heading': {
         const heading = token as Tokens.Heading
-        return <Txt key={i} selectable role={heading.depth <= 2 ? 'title' : 'item'} content="user" accessibilityRole="header" style={{ paddingTop: space.s }}>
-          <Inline tokens={heading.tokens} typeRole={heading.depth <= 2 ? 'title' : 'item'} />
+        return <Txt voice={voice} key={i} selectable role={heading.depth <= 2 ? 'title' : 'item'} content="user" accessibilityRole="header" style={{ paddingTop: space.s }}>
+          <Inline voice={voice} tokens={heading.tokens} typeRole={heading.depth <= 2 ? 'title' : 'item'} />
         </Txt>
       }
       case 'code':
@@ -110,7 +111,7 @@ function Blocks({ tokens, typeRole }: { tokens: Token[]; typeRole: BodyRole }): 
         </ScrollView>
       case 'blockquote':
         return <View key={i} style={{ borderLeftWidth: 2, borderLeftColor: c.hair, paddingLeft: space.m, gap: space.s }}>
-          <Blocks tokens={(token as Tokens.Blockquote).tokens} typeRole={typeRole} />
+          <Blocks voice={voice} tokens={(token as Tokens.Blockquote).tokens} typeRole={typeRole} />
         </View>
       case 'list': {
         const list = token as Tokens.List
@@ -120,7 +121,7 @@ function Blocks({ tokens, typeRole }: { tokens: Token[]; typeRole: BodyRole }): 
               <Txt role={typeRole} content="user" tone="inkSoft" style={{ minWidth: space.l }}>
                 {item.task ? item.checked ? '☑' : '☐' : list.ordered ? `${Number(list.start) + j}.` : '•'}
               </Txt>
-              <View style={{ flex: 1, minWidth: 0, gap: space.s }}><Blocks tokens={item.tokens} typeRole={typeRole} /></View>
+              <View style={{ flex: 1, minWidth: 0, gap: space.s }}><Blocks voice={voice} tokens={item.tokens} typeRole={typeRole} /></View>
             </View>
           ))}
         </View>
@@ -133,8 +134,8 @@ function Blocks({ tokens, typeRole }: { tokens: Token[]; typeRole: BodyRole }): 
               <View key={j} style={{ flexDirection: 'row', backgroundColor: j === 0 ? c.rail : c.paper, borderTopWidth: j === 0 ? 0 : 1, borderTopColor: c.hair }}>
                 {row.map((cell, k) => (
                   <View key={k} style={{ width: 160 * Math.max(1, fontScale), padding: space.s, borderLeftWidth: k === 0 ? 0 : 1, borderLeftColor: c.hair }}>
-                    <Txt selectable role={typeRole} content="user" style={{ textAlign: cell.align ?? 'left' }}>
-                      <Inline tokens={cell.tokens} typeRole={typeRole} tone={j === 0 ? 'accent' : 'ink'} />
+                    <Txt voice={voice} selectable role={typeRole} content="user" style={{ textAlign: cell.align ?? 'left' }}>
+                      <Inline voice={voice} tokens={cell.tokens} typeRole={typeRole} tone={j === 0 ? 'accent' : 'ink'} />
                     </Txt>
                   </View>
                 ))}
@@ -144,7 +145,7 @@ function Blocks({ tokens, typeRole }: { tokens: Token[]; typeRole: BodyRole }): 
         </ScrollView>
       }
       case 'hr': return <View key={i} style={{ height: 1, backgroundColor: c.hair, marginVertical: space.xs }} />
-      default: return <Txt key={i} selectable role={typeRole} content="user">{token.raw}</Txt>
+      default: return <Txt voice={voice} key={i} selectable role={typeRole} content="user">{token.raw}</Txt>
     }
   })
 }

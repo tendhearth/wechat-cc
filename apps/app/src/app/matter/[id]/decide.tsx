@@ -321,7 +321,9 @@ function ApprovalNote({ kind, text }: { kind: 'opinion' | 'reason'; text?: strin
       tone="inkSoft"
       content="user"
     >
-      {t(lang, kind === 'opinion' ? 'approval.ccOpinion' : 'approval.questionReason', { text })}
+      {kind === 'opinion'
+        ? <>{t(lang, 'approval.ccOpinion', { text: '' })}<Txt role="small" tone="inkSoft" voice="cc">{text}</Txt></>
+        : t(lang, 'approval.questionReason', { text })}
     </Txt>
   )
 }

@@ -62,6 +62,20 @@ test('sending uses one owner-chat request, approval binds exact current run, bro
  const h=await fixture(page);await page.goto(HOST+'/m');await expect(page.locator('#chat-messages')).toContainText('交给 Codex');await page.locator('#chat-input').fill('看看结果');await page.locator('#chat-send').click();await expect.poll(()=>h.posts.filter(p=>p.path.endsWith('/say')).length).toBe(1)
  await page.locator('#roster-strip [data-place-open]').click();await page.getByRole('button',{name:'允许这一步',exact:true}).click();await expect.poll(()=>h.posts.filter(p=>p.path.endsWith('/permission')).length).toBe(1);expect(h.posts.find(p=>p.path.endsWith('/permission')).body).toEqual({id,runId:run,requestId:run,decision:'allow'});await page.goBack();await expect(page.locator('#conversation')).toBeVisible();expect(h.errors).toEqual([])
 })
+test('uses system sans for the interface and agents, and Kaiti for CC’s words',async({page})=>{
+ const h=await fixture(page)
+ h.messages[1].speaker='cc'
+ h.messages.push({id:'agent-reply',role:'cc',speaker:'agent',provider:'codex',text:'备份核对好了。',at:3})
+ await page.goto(HOST+'/m')
+ const sans=/^["']?-apple-system["']?,/,kaiti=/^["']?Kaiti SC["']?,/
+ await expect(page.locator('#chat-input')).toHaveCSS('font-family',sans)
+ await expect(page.locator('#message-me1 > div')).toHaveCSS('font-family',sans)
+ await expect(page.locator('#message-agent-reply > div')).toHaveCSS('font-family',sans)
+ await expect(page.locator('#message-cc1 > small')).toHaveCSS('font-family',sans)
+ await expect(page.locator('#message-cc1 > div')).toHaveCSS('font-family',kaiti)
+ await expect(page.locator('#roster-strip [data-place] > span')).toHaveCSS('font-family',kaiti)
+})
+
 test('link identity never requests private conversation, topics or approval',async({page})=>{
  const h=await fixture(page,{link:true});await page.goto(HOST+'/m');await expect(page.locator('#pairbar')).toBeVisible();await expect(page.locator('#conversation')).toBeHidden();expect(h.requests.filter(p=>/owner-chat|topics|permission|answer|roster|session-say/.test(p))).toEqual([])
 })

@@ -259,6 +259,19 @@ describe('reply attribution avatars', () => {
     expect(row('legacy message').textContent).toContain('CC')
   })
 
+  it('uses the hand for CC’s reply body only', async () => {
+    await attributedScreen([
+      reply('cc', { speaker: 'cc', provider: 'claude', text: '我来看看' }),
+      reply('agent', { speaker: 'agent', provider: 'codex', text: '我来看看' }),
+      reply('legacy', { text: '我来看看' }),
+      reply('notice', { speaker: 'notice', text: '我来看看' }),
+    ])
+    for (const [id, expected] of [['cc', 'THPenHand-Regular'], ['agent', undefined], ['legacy', undefined], ['notice', undefined]] as const) {
+      const body = [...byId(`chat-message-${id}`).querySelectorAll('span[data-style]')].find(node => node.textContent === '我来看看')!
+      expect(JSON.parse(body.getAttribute('data-style')!).fontFamily).toBe(expected)
+    }
+  })
+
   it('keeps the transcript and provider-id accessible name when model settings cannot load', async () => {
     await attributedScreen([reply('offline reply', { speaker: 'agent', provider: 'claude' })], true)
     expect(avatar('offline reply')?.getAttribute('aria-label')).toBe('claude')

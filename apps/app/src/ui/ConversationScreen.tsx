@@ -324,7 +324,7 @@ function ChatBubble({ b, providers, lang, canRetry, onRetry, onDismiss, checking
         }}
       >
         <ReplySpeaker role={b.side} reply={b} providers={providers} />
-        <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} text={b.text} />
+        <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} voice={!me && b.speaker === 'cc' ? 'cc' : undefined} text={b.text} />
         {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
       </View> : null}
       {!hasBubbleText(b) ? <ReplySpeaker role={b.side} reply={b} providers={providers} showFallback={false} /> : null}

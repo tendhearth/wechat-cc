@@ -2,39 +2,51 @@ import { describe, it, expect } from 'vitest'
 import { phoneFont, fontGate, plainText } from './type'
 
 describe('phoneFont', () => {
-  it('中文界面用 Noto Serif SC,英文界面用 TH Serif 4(Source Serif 4 的子集)', () => {
-    expect(phoneFont('body', 'zh-Hans').fontFamily).toBe('NotoSerifSC-Regular')
-    expect(phoneFont('body', 'en').fontFamily).toBe('THSerif4-Regular')
+  it('中英文界面正文走系统字', () => {
+    expect(phoneFont('body', { text: '设置' }).fontFamily).toBe(undefined)
+    expect(phoneFont('body', { text: 'Settings' }).fontFamily).toBe(undefined)
   })
-  it('用户内容一律 Noto Serif SC(英文界面里的中文标题不落到无衬线)', () => {
-    expect(phoneFont('item', 'en', 'user').fontFamily).toBe('NotoSerifSC-Regular')
+  it('用户内容走系统字，即使没传原文', () => {
+    expect(phoneFont('item', { content: 'user' }).fontFamily).toBe(undefined)
   })
-  it('中等字重靠换家族名,不靠 fontWeight;中文只有 Regular(裁决 D1)', () => {
-    expect(phoneFont('wordmark', 'en').fontFamily).toBe('THSerif4-Medium')
-    // 没有 CJK Medium:中文界面 / 用户内容里即使是 medium 角色也落到 Regular
-    expect(phoneFont('wordmark', 'zh-Hans').fontFamily).toBe('NotoSerifSC-Regular')
-    expect(phoneFont('wordmark', 'en', 'user').fontFamily).toBe('NotoSerifSC-Regular')
-    expect(phoneFont('title', 'zh-Hans').fontFamily).toBe('NotoSerifSC-Regular')
-    expect(Object.keys(phoneFont('title', 'zh-Hans'))).not.toContain('fontWeight')
-    expect(Object.keys(phoneFont('wordmark', 'en'))).not.toContain('fontWeight')
+  it('字标保留原字，普通标题的 medium 用 500 表达', () => {
+    expect(phoneFont('wordmark', { text: 'Tendhearth' }).fontFamily).toBe('THSerif4-Medium')
+    expect(phoneFont('wordmark', { text: 'CC' }).fontFamily).toBe('THSerif4-Medium')
+    expect(phoneFont('wordmark', { text: '设置' }).fontFamily).toBe(undefined)
+    expect(phoneFont('wordmark', { content: 'user', text: 'Tendhearth' }).fontFamily).toBe(undefined)
+    expect(phoneFont('title', { text: '设置' }).fontFamily).toBe(undefined)
+    expect(Object.keys(phoneFont('title', { text: '设置' }))).not.toContain('fontWeight')
+    expect(Object.keys(phoneFont('wordmark', { text: 'Tendhearth' }))).not.toContain('fontWeight')
+    expect(phoneFont('wordmark', { text: '设置' })).toMatchObject({ fontWeight: '500' })
+    expect(phoneFont('wordmark', { text: 'Settings' })).toMatchObject({ fontWeight: '500' })
   })
   it('字号与行高来自共用 token(手机列)', () => {
-    expect(phoneFont('display', 'zh-Hans')).toMatchObject({ fontSize: 36, lineHeight: Math.round(36 * 1.15) })
-    expect(phoneFont('meta', 'en').letterSpacing).toBeCloseTo(14 * 0.04)
+    expect(phoneFont('display')).toMatchObject({ fontSize: 36, lineHeight: Math.round(36 * 1.15) })
+    expect(phoneFont('meta').letterSpacing).toBeCloseTo(14 * 0.04)
   })
-  it('用户内容若一个中文字都没有 ⇒ 拉丁衬线(弯引号 ’ “ ” 不落到中文全角字形)', () => {
-    expect(phoneFont('item', 'en', 'user', 'Plan next week’s trip').fontFamily).toBe('THSerif4-Regular')
-    expect(phoneFont('item', 'zh-Hans', 'user', 'It’s colder today.').fontFamily).toBe('THSerif4-Regular')
-    expect(phoneFont('item', 'en', 'user', '整理下周出差安排').fontFamily).toBe('NotoSerifSC-Regular')
-    expect(phoneFont('item', 'en', 'user', 'Let’s 改一下').fontFamily).toBe('NotoSerifSC-Regular')
-    // 没给文本(不知道内容)⇒ 照旧 Noto(安全:中文永不落到无衬线)
-    expect(phoneFont('item', 'en', 'user').fontFamily).toBe('NotoSerifSC-Regular')
+  it('用户内容无论语言、混排或弯引号都走系统字', () => {
+    expect(phoneFont('item', { content: 'user', text: 'Plan next week’s trip' }).fontFamily).toBe(undefined)
+    expect(phoneFont('item', { content: 'user', text: 'It’s colder today.' }).fontFamily).toBe(undefined)
+    expect(phoneFont('item', { content: 'user', text: '整理下周出差安排' }).fontFamily).toBe(undefined)
+    expect(phoneFont('item', { content: 'user', text: 'Let’s 改一下' }).fontFamily).toBe(undefined)
+    expect(phoneFont('item', { content: 'user' }).fontFamily).toBe(undefined)
   })
-  it('中文界面文案里的拉丁弯引号(没有中文字)同样走拉丁衬线', () => {
-    expect(phoneFont('body', 'zh-Hans', 'ui', 'Tendhearth’s').fontFamily).toBe('THSerif4-Regular')
-    expect(phoneFont('body', 'zh-Hans', 'ui', '设置').fontFamily).toBe('NotoSerifSC-Regular')
+  it('界面文案中的拉丁弯引号和中文都走系统字', () => {
+    expect(phoneFont('body', { content: 'ui', text: 'Tendhearth’s' }).fontFamily).toBe(undefined)
+    expect(phoneFont('body', { content: 'ui', text: '设置' }).fontFamily).toBe(undefined)
   })
-  it('代码用等宽', () => { expect(phoneFont('code', 'en').fontFamily).toBe('mono') })
+  it('CC 的字按角色放大，行高跟着放开', () => {
+    expect(phoneFont('body', { voice: 'cc', content: 'user', text: '我回来啦' })).toEqual({
+      fontFamily: 'THPenHand-Regular', fontSize: 19.5, lineHeight: 31, letterSpacing: 0,
+    })
+    expect(phoneFont('small', { voice: 'cc', text: 'Back home' })).toEqual({
+      fontFamily: 'THPenHand-Regular', fontSize: 16, lineHeight: 24, letterSpacing: 0,
+    })
+  })
+  it('代码用等宽，CC 的代码也是', () => {
+    expect(phoneFont('code').fontFamily).toBe('mono')
+    expect(phoneFont('code', { voice: 'cc', content: 'user', text: 'ls' })).toEqual(phoneFont('code'))
+  })
 })
 
 describe('plainText', () => {
