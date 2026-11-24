@@ -45,7 +45,7 @@ export const WECHAT_PORTS = {
 
 /** 往微信发东西。 */
 export interface WechatSend {
-  sendMessage(chatId: string, text: string, metadata?: { source: 'workbench' | `speech:${string}`; historyText?: string }): Promise<{ msgId: string; error?: string }>
+  sendMessage(chatId: string, text: string, metadata?: { source?: 'workbench' | `speech:${string}`; historyText?: string; replyRoute?: WechatReplyRoute }): Promise<{ msgId: string; error?: string }>
   /** `mirror: false` ⇒ 成功之后不报给媒体镜像(调用方自己记,如一封信的几页记成一行)。 */
   sendFile(chatId: string, path: string, opts?: { mirror?: boolean }): Promise<void>
   /** ilink 没有真的编辑:发一条带「(编辑后)」前缀的新消息。 */
@@ -180,6 +180,8 @@ export interface WechatPages {
 /** 拍板卡与待批登记处:微信「y/n 码」、桌宠权限卡、手机拍板、自改流水线共用同一份。 */
 export const WECHAT_PERMISSION_INCOMPLETE = '内容在微信里看不全，请到电脑或手机上看全再定。'
 
+export interface WechatReplyRoute { accountId: string; contextToken?: string }
+
 export interface WechatPermissions {
   /**
    * 发拍板卡到 chatId 并等 y/n。卡片没送到(errcode=-2 等)默认立刻 resolve 'undelivered'(没人能回,别死等);
@@ -189,8 +191,9 @@ export interface WechatPermissions {
   /**
    * 微信侧的「y/n <hash>」。`fromChatId` 是发这句话的 chat —— 条目带 meta 时
    * **只有当初被问的那个 chat** 能拍板。老条目(无 meta)保持原行为。
+   * 拍板同步返回。只需回复说明时等待送达结果，失败返回 false。
    */
-  handlePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
+  handlePermissionReply(text: string, fromChatId?: string, quoted?: string, replyRoute?: WechatReplyRoute): boolean | Promise<boolean>
   /** 只读版 handlePermissionReply:同样的判定,不 consume、不发消息。 */
   probePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
   /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */

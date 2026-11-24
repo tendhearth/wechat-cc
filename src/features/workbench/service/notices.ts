@@ -7,6 +7,7 @@
  */
 import { executionFailureMessage } from '../../../adapters/store/workbench/execution-settings'
 import { normalizeInputRequestId } from '../../../domain/workbench/input-request-id'
+import { wechatPermissionHeader } from '../../../domain/workbench/wechat-permission-header'
 import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../../../adapters/workbench/permissions'
 import { providerDisplayName } from '../../../domain/provider-display-names'
 import { redactSecrets } from '../../../domain/cli-transcript'
@@ -63,7 +64,9 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
   }
   function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string,marker?:string){
     const requestMarker = marker ? `\n〔请求 ${marker}〕` : ''
-    enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}${requestMarker}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${redactSecrets(label).slice(0,kind==='permission'?3500:600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
+    const title = task.title.replace(/[\r\n]+/g,' ')
+    const header = kind === 'permission' ? wechatPermissionHeader(title, task.id) : `${title} · ${task.id}`
+    enqueueNotice(task,runId,kind,`${header}${requestMarker}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${redactSecrets(label).slice(0,kind==='permission'?3500:600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
   }
   /**
    * 终审后修复第二轮 Important②b:非 retained 执行者 completed 终态时,

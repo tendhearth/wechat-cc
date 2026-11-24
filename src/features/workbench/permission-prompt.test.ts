@@ -56,7 +56,7 @@ async function withRegistry(run: (ilink: ReturnType<typeof makeIlinkAdapter>, se
 }
 
 it.each(['allow', 'deny', 'cancel', 'expired', 'overdue'] as const)('quotes for a %s request cannot approve the next card in the same task', async settlement => {
-  await withRegistry((ilink, sent) => {
+  await withRegistry(async (ilink, sent) => {
     const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
     const old = randomUUID(), fresh = randomUUID()
     let deadline = Date.now() + 10_000
@@ -71,8 +71,8 @@ it.each(['allow', 'deny', 'cancel', 'expired', 'overdue'] as const)('quotes for 
     } else expect(ilink.resolvePermission(old, settlement)).toBe(true)
     prompt('同一件事', { ...task, id: fresh }, newAnswer, () => Date.now() + 10_000)
     expect(ilink.probePermissionReply('y', 'owner', quoted)).toBe(true)
-    expect(ilink.handlePermissionReply('y', 'owner', quoted)).toBe(true)
-    expect(sent.at(-1)).toBe('这条请求已经处理过了或已经过期。')
+    expect(await ilink.handlePermissionReply('y', 'owner', quoted)).toBe(true)
+    expect(sent.at(-1)).toBe('这条请求已经处理过了或已经过期。请直接回「y 码」或「n 码」处理仍在等待的请求。')
     expect(newAnswer).not.toHaveBeenCalled()
     expect(ilink.listPendingPermissions().some(card => card.hash === fresh)).toBe(true)
     expect(ilink.handlePermissionReply('y', 'owner', ilink.pendingWechatPermissionCard(fresh)!.text)).toBe(true)
@@ -81,7 +81,7 @@ it.each(['allow', 'deny', 'cancel', 'expired', 'overdue'] as const)('quotes for 
 })
 
 it('binds to the complete quote and its owner even if a different request code appears in the reply', async () => {
-  await withRegistry((ilink, sent) => {
+  await withRegistry(async (ilink, sent) => {
     const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
     const first = randomUUID(), second = randomUUID(), answer = vi.fn(() => true), otherAnswer = vi.fn(() => true)
     const request = { tool: 'Bash', description: 'command=printf test', cwd: '/demo', createdAt: 0 }
@@ -95,15 +95,15 @@ it('binds to the complete quote and its owner even if a different request code a
       'printf test',
     ]) {
       expect(ilink.probePermissionReply('y', 'owner', altered)).toBe(true)
-      expect(ilink.handlePermissionReply('y', 'owner', altered)).toBe(true)
-      expect(sent.at(-1)).toBe('引用的权限提示不完整或不匹配，请重新查阅后再回复。')
+      expect(await ilink.handlePermissionReply('y', 'owner', altered)).toBe(true)
+      expect(sent.at(-1)).toBe('认不出引用的是哪条待批请求。请重新查阅，直接回「y 码」或「n 码」。')
     }
     expect(ilink.probePermissionReply('y', 'stranger', card)).toBe(false)
     expect(ilink.handlePermissionReply('y', 'stranger', card)).toBe(false)
     prompt('二号事项', { ...request, id: second, taskId: 'aabbccdd' }, otherAnswer, () => Date.now() + 10_000)
     const otherCard = ilink.pendingWechatPermissionCard(second)!.text
-    expect(ilink.handlePermissionReply('y', 'owner', card.replace('112233aa', 'aabbccdd'))).toBe(true)
-    expect(ilink.handlePermissionReply(`y ${ilink.pendingPermissionCodeOf(first)}`, 'owner', otherCard)).toBe(true)
+    expect(await ilink.handlePermissionReply('y', 'owner', card.replace('112233aa', 'aabbccdd'))).toBe(true)
+    expect(await ilink.handlePermissionReply(`y ${ilink.pendingPermissionCodeOf(first)}`, 'owner', otherCard)).toBe(true)
     expect(answer).not.toHaveBeenCalled()
     expect(otherAnswer).not.toHaveBeenCalled()
     expect(ilink.handlePermissionReply('n', 'owner', card)).toBe(true)
@@ -113,7 +113,7 @@ it('binds to the complete quote and its owner even if a different request code a
 })
 
 it('blocks y and yt before the decision callback without changing the code, clock or pet access', async () => {
-  await withRegistry((ilink, sent) => {
+  await withRegistry(async (ilink, sent) => {
     const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
     const id = randomUUID(), answer = vi.fn(() => true)
     const close = prompt('示例', { id, taskId: '112233aa', tool: 'Bash', description: 'command=printf unrelated', cwd: '/demo', createdAt: 0,
@@ -123,13 +123,50 @@ it('blocks y and yt before the decision callback without changing the code, cloc
     const card = ilink.pendingWechatPermissionCard(id)!.text
     expect(close.replyLine).toBe(`这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`)
     for (const [text, quote] of [[`y ${code}`, undefined], [`yt ${code}`, undefined], ['y', undefined], ['y', card], ['yt', card]]) {
-      expect(ilink.handlePermissionReply(text!, 'owner', quote)).toBe(true)
+      expect(await ilink.handlePermissionReply(text!, 'owner', quote)).toBe(true)
       expect(sent.at(-1)).toBe('内容在微信里看不全，请到电脑或手机上看全再定。')
     }
     expect(answer).not.toHaveBeenCalled()
     expect(ilink.pendingPermissionCodeOf(id)).toBe(code)
     expect(ilink.resolvePermission(id, 'allow')).toBe(true)
     expect(answer).toHaveBeenCalledExactlyOnceWith('allow')
+  })
+})
+
+it.each([false, true])('a header-only approval quote cannot decide a live card or a legacy card after settlement (complete=%s)', async complete => {
+  await withRegistry(async (ilink, sent) => {
+    const id = randomUUID(), answer = vi.fn(() => true)
+    const command = 'printf fixture'
+    makeWorkbenchPermissionPrompt(ilink, () => 'owner')('示例', {
+      id, taskId: '112233aa', tool: 'Bash', description: 'command=' + command, cwd: '/demo', createdAt: 0,
+      display: { body: { kind: 'command', command }, ...(!complete ? { truncated: true } : {}) },
+    }, answer, () => null)
+    const card = ilink.pendingWechatPermissionCard(id)!
+    expect(card.complete).toBe(complete)
+    const header = card.text.split('\n')[0]!
+    expect(header).toBe('待批 / Approval · 示例 · 112233aa')
+    const legacy = ilink.registerPendingPermission('abc12', 10_000, { chatId: 'owner', prompt: 'Legacy approval' })
+    const legacyCode = ilink.pendingPermissionCodeOf('abc12')
+    const expectBlocked = async (text: string) => {
+      expect(ilink.probePermissionReply(text, 'owner', header)).toBe(true)
+      expect(await ilink.handlePermissionReply(text, 'owner', header)).toBe(true)
+      expect(sent.at(-1)).toContain('直接回「y 码」或「n 码」')
+      expect(ilink.pendingPermissionCodeOf('abc12')).toBe(legacyCode)
+    }
+    await expectBlocked('y')
+    await expectBlocked(`y ${ilink.pendingPermissionCodeOf(id)}`)
+    expect(answer).not.toHaveBeenCalled()
+    expect(await ilink.handlePermissionReply('y', 'owner', card.text)).toBe(true)
+    if (!complete) {
+      expect(sent.at(-1)).toBe('内容在微信里看不全，请到电脑或手机上看全再定。')
+      expect(answer).not.toHaveBeenCalled()
+      expect(ilink.resolvePermission(id, 'deny')).toBe(true)
+    }
+    expect(answer).toHaveBeenCalledExactlyOnceWith(complete ? 'allow' : 'deny')
+    await expectBlocked('y')
+    await expectBlocked(`y ${legacyCode}`)
+    expect(ilink.handlePermissionReply('y', 'owner', '示例 · 112233aa')).toBe(true)
+    await expect(legacy).resolves.toBe('allow')
   })
 })
 

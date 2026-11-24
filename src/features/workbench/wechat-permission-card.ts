@@ -6,6 +6,7 @@ import {
 } from '@wechat-cc/protocol'
 import { MAX_TEXT_CHUNK } from '../../lib/config'
 import { providerDisplayName } from '../../domain/provider-display-names'
+import { wechatPermissionHeader } from '../../domain/workbench/wechat-permission-header'
 import { wechatPermissionSource, type PendingWorkbenchPermission } from '../../ports/workbench'
 import { WECHAT_PERMISSION_INCOMPLETE, type WechatPermissionCard } from '../../ports/wechat'
 
@@ -69,7 +70,7 @@ export function renderWechatPermissionCard(
     !invisible && !hasUnpairedSurrogate(securityText) && !hasControlCopy(securityText) && (!needsCwd || !!cwd) && commandShown
 
   const marker = createHash('sha256').update('workbench-wechat-permission\0').update(permission.id).digest('hex').slice(0, 16)
-  const header = [`${oneLine(visible(title))} · ${permission.taskId}`, `〔请求 ${marker}〕`]
+  const header = [wechatPermissionHeader(oneLine(visible(title)), permission.taskId), `〔请求 ${marker}〕`]
   const actor = providerDisplayName(provider)
   const action = oneLine(visible(opaqueCommand
     ? permissionActionZh({ kind: 'command', command: '' }, '', actor)
@@ -180,7 +181,7 @@ export function renderWechatPermissionCard(
   const summary = [...header, ...footer].join('\n')
   return {
     text: preview.length <= MAX_TEXT_CHUNK ? preview : summary.length <= MAX_TEXT_CHUNK ? summary
-      : [`任务 ${permission.taskId}`, header[1], ...footer].join('\n'),
+      : [wechatPermissionHeader('', permission.taskId), header[1], ...footer].join('\n'),
     marker,
     historyText,
     complete: false,

@@ -204,20 +204,21 @@ export function makeWorkbenchClaudeCanUseTool(
     try {
       // 放行规则(2026-10-19)要原文:命令、文件路径(拿不到就不给)。
       const facts = toolInputFacts(input, true)
-      const display = toolPermissionDisplay(toolName, typeof input.command === 'string' ? input.command : input, claudePermissionNote(options))
-      const cwd = display?.body.kind === 'command' ? permissionCwd(input.cwd) : undefined
+      const note = claudePermissionNote(options)
       const hasCommandExtras = typeof input.command === 'string' && Object.keys(input).some(key => key !== 'command')
+      const fullDisplay = hasCommandExtras ? toolPermissionDisplay(toolName, input, note) : undefined
+      const display = fullDisplay ?? toolPermissionDisplay(toolName, typeof input.command === 'string' ? input.command : input, note)
+      const cwd = display?.body.kind === 'command' ? permissionCwd(input.cwd) : undefined
       const evidence = toolArgumentEvidence(input)
-      const wechatDisplay = hasCommandExtras ? toolPermissionDisplay(toolName, input, claudePermissionNote(options)) : undefined
+      const incomplete = incompleteReason || !display || (hasCommandExtras && !fullDisplay)
       allowed = await requestPermission({
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,
         ...(display ? { display } : {}),
-        ...(hasCommandExtras || incompleteReason || !display || Object.keys(evidence).length ? { wechatReview: {
+        ...(incomplete || Object.keys(evidence).length ? { wechatReview: {
           ...evidence,
-          ...(wechatDisplay ? { display: wechatDisplay } : {}),
           ...(typeof input.cwd === 'string' && !cwd ? { cwd: input.cwd } : {}),
-          ...(incompleteReason || !display || (hasCommandExtras && !wechatDisplay) ? { incomplete: true as const } : {}),
+          ...(incomplete ? { incomplete: true as const } : {}),
         } } : {}),
         ...(cwd ? { displayCwd: cwd, reviewDescription: `${description}\nWorking directory: ${cwd}` } : {}),
         onDenied: reason => { feedback = permissionDenialMessage(`${toolName}\n${description}`, reason) },

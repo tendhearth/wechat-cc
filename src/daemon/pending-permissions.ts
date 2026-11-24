@@ -1,4 +1,5 @@
 import { permissionReason } from '../domain/permission-denial'
+import { hasWechatPermissionHeader } from '../domain/workbench/wechat-permission-header'
 
 export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 export interface WechatPermissionCard { readonly text: string; readonly marker: string; readonly complete: boolean; readonly historyText: string }
@@ -51,10 +52,11 @@ export function classifyWorkbenchQuote(text: string): WorkbenchQuote | null {
   const marker = workbenchMarkerLine.exec(lines[1] ?? '')?.[1]
   const markerElsewhere = lines.some((line, i) => i !== 1 && workbenchMarkerLine.test(line.trim()))
   const visibleLines = lines.map(line => line.trim()).filter(Boolean)
-  const taskId = workbenchHeader.exec(lines[0]?.trim() ?? '')?.[1]
+  const head = lines[0]?.trim() ?? ''
+  const taskId = workbenchHeader.exec(head)?.[1]
   if (marker && !markerElsewhere) return { marker, taskId }
   if (visibleLines.length === 0) return null
-  if (markerElsewhere ||
+  if (hasWechatPermissionHeader(head) || markerElsewhere ||
       visibleLines.some(line => workbenchMarkerLine.test(line) || workbenchCommandBoundary.test(line) || workbenchReplyLine.test(line)) ||
       visibleLines.every(line => workbenchCommandLine.test(line))) return { taskId }
   return null

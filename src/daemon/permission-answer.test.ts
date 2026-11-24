@@ -20,6 +20,7 @@ describe('makePermissionAnswer — the one consumer of a WeChat answer to a pend
   })
 
   it.each([
+    '待批 / Approval · Fixture · abcdef12',
     'Fixture · abcdef12\nprivate fixture\n回「n 08」拒绝。',
     'Fixture · abcdef12\n〔请求 损坏〕\n〔命令开始〕\n│ private fixture',
     '任务 abcdef12\n回「y 08」允许这一步、「n 08」拒绝。',

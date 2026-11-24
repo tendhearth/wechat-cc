@@ -10,7 +10,7 @@
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { WECHAT_PORTS, WECHAT_PERMISSION_INCOMPLETE, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling } from '../ports/wechat'
+import { WECHAT_PORTS, WECHAT_PERMISSION_INCOMPLETE, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling, type WechatReplyRoute } from '../ports/wechat'
 import { howToReplyLine, isPermissionCardQuote, isSummarizedWorkbenchQuote, parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
@@ -163,14 +163,10 @@ export function makeIlinkAdapter(opts: {
     const approver = pending.approverOf(hash)
     return approver === null || approver === chatId
   }
-  const sendPermissionFeedback = scopedSend((chatId: string, message: string) => adapter.sendMessage(chatId, message))
-  const permissionFeedback = (chatId: string | undefined, message: string): boolean => {
-    if (!chatId) return false
-    void sendPermissionFeedback(chatId, message).catch(() => {})
-    return true
-  }
-  const badQuote = '引用的权限提示不完整或不匹配，请重新查阅后再回复。'
-  const staleQuote = '这条请求已经处理过了或已经过期。'
+  const sendPermissionFeedback = scopedSend((chatId: string, message: string, metadata?: Parameters<WechatSend['sendMessage']>[2]) =>
+    adapter.sendMessage(chatId, message, metadata))
+  const badQuote = '认不出引用的是哪条待批请求。请重新查阅，直接回「y 码」或「n 码」。'
+  const staleQuote = '这条请求已经处理过了或已经过期。请直接回「y 码」或「n 码」处理仍在等待的请求。'
 
   const adapter: IlinkAdapter = {
     async sendMessage(chatId, text, metadata) {
@@ -185,9 +181,11 @@ export function makeIlinkAdapter(opts: {
         // that were just captured (state-store debounces disk writes
         // 500ms). The CLI fallback still uses sendReplyOnce since it
         // runs out-of-process and has nothing in memory.
-        assertChatRoutable(chatId)
-        const acct = resolveAccount(chatId)
-        const ctxToken = ctxStore.get(chatId)
+        const route = metadata?.replyRoute
+        if (!route) assertChatRoutable(chatId)
+        const acct = route ? accounts.find(account => account.id === route.accountId) : resolveAccount(chatId)
+        const ctxToken = route ? route.contextToken : ctxStore.get(chatId)
+        if (!acct || !ctxToken) throw new Error('missing reply route')
         const chunks = chunk(text, MAX_TEXT_CHUNK)
         reachedWire = true
         for (const part of chunks) {
@@ -443,11 +441,20 @@ export function makeIlinkAdapter(opts: {
       const hash = parsed.ref.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref.value
       return !!hash && permissionOwner(hash, fromChatId) && pending.list().some(p => p.hash === hash)
     },
-    handlePermissionReply(text, fromChatId, quoted) {
+    handlePermissionReply(text, fromChatId, quoted, replyRoute) {
       const parsed = parsePermissionReply(text)
       if (!parsed || (quoted !== undefined && isSummarizedWorkbenchQuote(quoted))) return false
+      const permissionFeedback = async (chatId: string | undefined, message: string): Promise<boolean> => {
+        if (!chatId) return false
+        try {
+          const result = await sendPermissionFeedback(chatId, message, { historyText: message, replyRoute })
+          if (result.error === undefined) return true
+        } catch { /* The sender can also throw before delivery. */ }
+        log('PERMISSION', 'reply feedback delivery failed')
+        return false
+      }
       const byRef = parsed.ref?.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref?.value
-      const decide = (hash: string, matchedQuote = false): boolean => {
+      const decide = (hash: string, matchedQuote = false): boolean | Promise<boolean> => {
         if (!permissionOwner(hash, fromChatId)) return false
         const card = pending.wechatCardOf(hash)
         if (card) {

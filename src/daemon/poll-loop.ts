@@ -278,7 +278,7 @@ export interface PollLoopOptions {
    * 没处理完的普通消息最多攒 READ_AHEAD_MAX 条,攒满了就等它们跑完再拉。不给 ⇒ 老的整轮内联行为。
    * 抛了当没消费(排队)。
    */
-  fastLane?: (msg: InboundMsg) => boolean
+  fastLane?: (msg: InboundMsg) => boolean | Promise<boolean>
   /** Test injection point; defaults to this file's sleep(). */
   sleepFn?: (ms: number, signal: AbortSignal) => Promise<void>
   /** 停止宽限:abort 后最多等这么久让 loop 自然退出,超时也返回(见 stop()）。 */
@@ -468,7 +468,7 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
               // 停下了:这一批剩下的不再处理(包括快车道),游标停在它们之前,重启后重放。
               if (sig.aborted) { skipped = true; continue }
               let consumed = false
-              try { consumed = fastLane(msg) === true } catch { consumed = false }
+              try { consumed = await fastLane(msg) === true } catch { consumed = false }
               // 快车道:拍板卡的回答当场消费(放开在等它的那一轮),不排在前面的普通消息后面;没消费 ⇒ 普通队列,按到达顺序。
               if (consumed) { try { onPollCycle?.() } catch { /* never throw into the loop */ } }
               else enqueue(msg)

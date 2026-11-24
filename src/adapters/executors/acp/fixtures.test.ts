@@ -164,6 +164,8 @@ describe('ACP 真机报文回放(cursor-agent 2026-09-17)', () => {
   it('marks ACP command arguments missing from the text preview as incomplete for WeChat', () => {
     const details = acpApprovalDetails({ kind: 'execute', rawInput: { command: 'printf sample', env: { DEMO: 'value' } } }, 'printf sample')
     expect(details.display?.body.kind).toBe('command')
+    expect(details.display?.extra).toEqual([{ name: 'env', value: '{"DEMO":"value"}' }])
+    expect(details.description).toBe('printf sample')
     expect(details.wechatReview).toEqual({ incomplete: true })
   })
 

@@ -1058,6 +1058,20 @@ describe('startLongPollLoops — fastLane (permission answers while a turn await
     expect(seen).toEqual(['hi'])
     await handle.stop()
   })
+
+  it('queues a message normally when the fast lane cannot deliver its reply', async () => {
+    const seen: string[] = []
+    const getUpdates = batches([{ updates: [text('c1', 'y 01'), text('c1', 'y 02'), text('c1', 'after')], sync_buf: 'b1' }])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: msg => msg.text.startsWith('y ') ? Promise.resolve(msg.text === 'y 02') : false,
+      onInbound: async msg => { seen.push(msg.text) },
+    })
+    try {
+      await waitFor(() => seen.length === 2)
+      expect(seen).toEqual(['y 01', 'after'])
+    } finally { await handle.stop() }
+  })
 })
 
 // 2026-10 变异测试第二轮:parseUpdates 的语音 / 文件 / 视频三类、消息 id、状态过滤在基线里一条都没跑到(NoCoverage),

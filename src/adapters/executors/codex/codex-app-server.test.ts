@@ -847,7 +847,7 @@ describe('workbench Codex app-server', () => {
   })
 
   it('shows every recognized requested per-command permission with its command before one-shot approval', async () => {
-    const requestPermission = vi.fn(async (_request: { tool: string; description: string }) => true)
+    const requestPermission = vi.fn(async (_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => true)
     const { session, child } = await start({ requestPermission }); const run = collect(session); await begun(child)
     const extra = {
       additionalPermissions: { network: { enabled: true }, fileSystem: { read: ['/private/reference'], write: ['/outside/report'] } },
@@ -856,9 +856,12 @@ describe('workbench Codex app-server', () => {
     }
     approval(child, 'scope', undefined, extra)
     await expect.poll(() => child.sent.find(m => m.id === 'scope')?.result).toEqual({ decision: 'accept' })
-    const description = requestPermission.mock.calls[0]![0].description
+    const { description, display } = requestPermission.mock.calls[0]![0]
     for (const visible of ['rm report.txt', '/private/reference', '/outside/report', 'uploads.example', 'https', '"enabled": true']) expect(description).toContain(visible)
     expect(description).toContain('not applied')
+    expect(display?.body.kind).toBe('command')
+    const scope = display?.extra?.find(field => field.name === 'Scope')?.value
+    for (const visible of ['/private/reference', '/outside/report', 'uploads.example', 'https', '"enabled": true', 'not applied']) expect(scope).toContain(visible)
     completed(child); await run.done
   })
 

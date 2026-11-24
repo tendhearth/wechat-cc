@@ -124,7 +124,24 @@ function captureApprovalFollowUp(text: string): void {
 let codexDecision: unknown
 let lastCodexEnvelope = ''
 let topicJudgeAttempts=0,topicRoundDispatches=0
-const claudeScript: FakeSdkScript = { async onDispatch(text) { captureApprovalFollowUp(text); if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
+const claudeApprovalTitle = '沙盒 Claude 命令附加参数'
+const claudeApprovalDescription = 'sandboxapprovaldescriptionfixture'
+let claudeApprovalDispatched = false
+const claudeScript: FakeSdkScript = { async onDispatch(text) {
+  captureApprovalFollowUp(text)
+  if (text.includes('快判沙盒配色')) topicRoundDispatches++
+  if (!claudeApprovalDispatched && text.includes(claudeApprovalTitle) && !text.includes('<wechat ')) {
+    claudeApprovalDispatched = true
+    return {
+      toolCalls: [], finalText: '沙盒审批已结束。',
+      claudeApproval: { tool: 'Bash', input: {
+        command: "rm -rf build\nprintf '%s' '" + 'fixture '.repeat(550) + "'",
+        run_in_background: true, timeout: 72543, description: claudeApprovalDescription,
+      } },
+    }
+  }
+  return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' }
+} }
 const approval = (command: string, finalText: string, cwd: string | null = '/tmp') => ({
   toolCalls: [], finalText,
   codexSteps: [{
@@ -1339,7 +1356,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       .toEqual([{ kind: 'permission_ask', ref: expect.stringMatching(new RegExp(`^ask:${asking}:`)), outcome: 'allowed', channel: expect.stringMatching(/^(app\+wechat|wechat\+app)$/) }])
     expect(rows().filter(r => r.kind === 'permission_ask')).toHaveLength(1)
     await expect.poll(() => d.log().some(l => /\[ASK_OPINION\] given opinionLength=\d+ reasonLength=\d+$/.test(l)), { timeout: 15_000 }).toBe(true)
-    const detail = await desktop<Pick<ReturnType<typeof MatterDetail.parse>, 'permissions'>>('GET', `/v1/workbench/task?id=${asking}`)
+    const detail = await desktop<{ task: { title: string }; permissions: ReturnType<typeof MatterDetail.parse>['permissions'] }>('GET', `/v1/workbench/task?id=${asking}`)
     expect(detail.body.permissions).toHaveLength(1)
     const places = await desktop('GET', '/v1/places')
     expect(places.status).toBe(200)
@@ -1385,6 +1402,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(completeText.endsWith(instruction(complete.code))).toBe(true)
     const markerLine = completeText.split('\n')[1]!
     const completeNotice = texts(d.ilink.outbox(), d.owner).find(t => t.includes(`· ${asking}`) && t.includes('需要你批准'))!
+    const noticeHeader = completeNotice.split('\n')[0]!
+    expect(noticeHeader).toBe(`待批 / Approval · ${detail.body.task.title} · ${asking}`)
     expect(completeNotice.split('\n')[1]).toBe(markerLine)
     expect(completeNotice.includes(instruction(complete.code))).toBe(true)
     const alteredText = completeText.replace('〔命令结束〕', '〔命令结束〕（已编辑）')
@@ -1420,7 +1439,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await askAboutQuote(7, commandBlock, null)
     await askAboutQuote(8, forgedMarker, null)
     await askAboutQuote(9, completeNotice.replace(markerLine + '\n', ''), null)
-    for (const quote of [withoutMarker, brokenMarker, commandBlock, forgedMarker]) {
+    for (const quote of [withoutMarker, brokenMarker, commandBlock, forgedMarker, noticeHeader]) {
       await outbound(() => d.sendText(d.owner, 'y ' + complete.code, { quote }), reply => reply.includes('重新查阅'))
       expect(decisions.has(scopedApprovalCommand)).toBe(false)
     }
@@ -1483,6 +1502,15 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     }
     const statusText = await outbound(() => d.sendText(d.owner, `任务 ${asking}`),
       text => text.split('\n')[0]?.endsWith(` · ${asking}`) === true && text.includes('查看结果：'))
+    expect(await desktop('POST', '/v1/self-change/ask', { prompt: 'Sandbox legacy approval', timeoutMs: 60_000 }))
+      .toMatchObject({ status: 200, body: { delivered: true } })
+    const legacyQueue = async () => (await desktop<Queue>('GET', '/v1/permissions/pending')).body.items
+    const [legacyApproval] = await legacyQueue()
+    expect(legacyApproval?.hash).toBeDefined()
+    await outbound(() => d.sendText(d.owner, 'y', { quote: noticeHeader }), reply => reply.includes('直接回「y 码」或「n 码」'))
+    expect((await legacyQueue()).map(card => card.hash)).toEqual([legacyApproval!.hash])
+    d.sendText(d.owner, 'y', { quote: statusText.split('\n')[0] })
+    await expect.poll(legacyQueue).toHaveLength(0)
     for (const quote of [statusText, completeText, completeText.split('\n').slice(0, 2).join('\n')]) {
       await outbound(() => d.sendText(d.owner, '看看', { quote }),
         reply => reply.includes(` · ${asking}\n`) && reply.includes('查看结果：'))
@@ -1490,12 +1518,12 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await cancel(asking)
     await cancel(taskId)
 
-    const next = async (taskText: string) => {
-      const ack = await outbound(() => d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex ${taskText}`), t => t.startsWith('已接下这件事'))
+    const next = async (taskText: string, provider = 'codex') => {
+      const ack = await outbound(() => d.sendText(d.owner, `任务 新建 ${projectId} 用 @${provider} ${taskText}`), t => t.startsWith('已接下这件事'))
       const id = ack.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
       await expect.poll(async () => (await queued(id))?.hash).toMatch(/^[a-f0-9-]{36}$/)
       const isNotice = (t: string) => t.includes(`· ${id}`) && t.includes('需要你批准')
-      await d.waitForOutbound(m => texts(m, d.owner).some(isNotice), 15_000)
+      await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(isNotice), { timeout: 15_000 }).toBe(true)
       const detail = await desktop<{ task: { title: string } }>('GET', `/v1/workbench/task?id=${id}`)
       const card = (await queued(id))!
       const notice = texts(d.ilink.outbox(), d.owner).find(isNotice)!
@@ -1549,7 +1577,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
 
     const patch = await next('沙盒权限改文件')
     await outbound(() => d.sendText(d.owner, `y ${patch.card.code}`, { quote: completeNotice }),
-      reply => reply === '这条请求已经处理过了或已经过期。')
+      reply => reply === '这条请求已经处理过了或已经过期。请直接回「y 码」或「n 码」处理仍在等待的请求。')
     expect((await queued(patch.id))?.hash).toBe(patch.card.hash)
     expect(patch.card.prompt === `${patch.title} · ${patch.id}\nfileChange\n${patchFile}\n{"type":"update"}\n${patchDiff}\nExecution environment: local`).toBe(true)
     const patchText = await lookup(patch.id, patch.card.hash)
@@ -1560,6 +1588,38 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await expect.poll(() => decisions.get(patchFile)).toBe('accept')
     expect(await queued(patch.id)).toBeUndefined()
     expect(d.log().some(line => line.includes(privateApprovalEvidence) || /SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(line))).toBe(false)
+    // The same owner routes must carry Claude's command options through a long, reject-only card.
+    const claude = await next(claudeApprovalTitle, 'claude')
+    expect(claude.notice).not.toMatch(/run_in_background|timeout|description|72543|sandboxapprovaldescriptionfixture/)
+
+    const at = d.ilink.outbox().length
+    d.sendText(d.owner, `y ${claude.card.code}`, { contextToken: 'approval-fresh-context' })
+    const feedback = () => d.ilink.outbox().slice(at).find(m => m.text === WECHAT_PERMISSION_INCOMPLETE)
+    await expect.poll(() => Boolean(feedback())).toBe(true)
+    expect(feedback()?.raw).toMatchObject({ msg: { context_token: 'approval-fresh-context' } })
+
+    const claudeDetailPath = `/v1/matter?id=${claude.id}`
+    const claudePhone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    try {
+      const desk = await desktop('GET', claudeDetailPath)
+      const mobile = await claudePhone.request({ method: 'GET', path: claudeDetailPath })
+      expect([desk.status, mobile.status]).toEqual([200, 200])
+      for (const body of [desk.body, mobile.json()]) {
+        const [permission] = MatterDetail.parse(body).permissions
+        expect(permission?.display?.body.kind).toBe('command')
+        expect(permission?.display?.extra).toEqual([
+          { name: 'run_in_background', value: 'true' }, { name: 'timeout', value: '72543' },
+          { name: 'description', value: claudeApprovalDescription },
+        ])
+      }
+      d.sendText(d.owner, `n ${claude.card.code}`)
+      await expect.poll(async () => MatterDetail.parse((await desktop('GET', claudeDetailPath)).body).permissions).toHaveLength(0)
+      const history = await desktop('GET', '/v1/matter/owner-chat')
+      expect(history.status).toBe(200)
+      expect(JSON.stringify(history.body)).not.toMatch(/run_in_background|72543|sandboxapprovaldescriptionfixture/)
+      expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0 OR instr(text,?) > 0 OR instr(text,?) > 0',
+        'run_in_background', '72543', claudeApprovalDescription)).toEqual([])
+    } finally { claudePhone.close() }
   })
 
   // S3b(一件事一次提议;主人点头的「任务做完时人在电脑前 ⇒ 先只在桌面提示,10 分钟没看再推手机」):沙盒里 10 分钟缩成 2 秒。

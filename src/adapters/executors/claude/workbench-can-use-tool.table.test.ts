@@ -244,14 +244,18 @@ describe('内置工具:trusted × solo × strict;要问的交给问的通道,带
     expect(request.display?.body.kind === 'command' && request.display.body.command === command && request.displayCwd === cwd).toBe(true)
   })
 
-  it('keeps command arguments visible in WeChat and marks a redacted MCP argument incomplete', async () => {
+  it('shares the command arguments with every approval surface and marks a redacted MCP argument incomplete', async () => {
     const g = setup({ registered: ['catalog'], admitted: ['catalog'] })
     const command = 'rm -rf build'
-    expect(await g.call('Bash', { command, run_in_background: true })).toEqual(ALLOW)
+    const input = { command, run_in_background: true, timeout: 3500, description: 'Update fixture' }
+    expect(await g.call('Bash', input)).toEqual(ALLOW)
     expect(g.requests[0]).toMatchObject({
-      display: { body: { kind: 'command', command } },
-      wechatReview: { display: { body: { kind: 'command', command }, extra: [{ name: 'run_in_background', value: 'true' }] } },
+      display: { body: { kind: 'command', command }, extra: [
+        { name: 'run_in_background', value: 'true' }, { name: 'timeout', value: '3500' }, { name: 'description', value: 'Update fixture' },
+      ] },
+      wechatReview: { argumentJson: JSON.stringify(input) },
     })
+    expect(g.requests[0]?.wechatReview?.display).toBeUndefined()
     expect(await g.call('mcp__catalog__lookup', { api_key: 'fixture-secret' })).toEqual(ALLOW)
     expect(g.requests[1]).toMatchObject({ wechatReview: { incomplete: true } })
     expect(JSON.stringify(g.requests[1]).includes('fixture-secret')).toBe(false)

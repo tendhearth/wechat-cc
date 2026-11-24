@@ -168,8 +168,11 @@ export function acpApprovalDetails(call: Obj, description: string): {
     const command = call.kind === 'execute' && typeof raw?.command === 'string' ? raw.command : undefined
     const rawCwd = command !== undefined && typeof raw?.cwd === 'string' ? raw.cwd : undefined
     const cwd = command !== undefined ? permissionCwd(raw?.cwd) : undefined
+    const commandExtras = command === undefined ? [] : Object.entries(raw ?? {})
+      .filter(([key]) => key !== 'command' && key !== 'cwd')
+      .map(([name, value]) => ({ name, value: JSON.stringify(value) }))
     const omittedArgs = call.rawInput !== undefined && (!raw ||
-      Object.keys(raw).some(key => command === undefined || (key !== 'command' && key !== 'cwd')))
+      (command === undefined ? Object.keys(raw).length > 0 : commandExtras.length > 0))
     const locations = Array.isArray(call.locations) ? call.locations : []
     const content = Array.isArray(call.content) ? call.content : []
     const extra = locations.flatMap((loc: unknown) => object(loc) && typeof loc.path === 'string' ? [{
@@ -215,7 +218,7 @@ export function acpApprovalDetails(call: Obj, description: string): {
     if (!body) return incomplete
     const note = typeof call.title === 'string' ? call.title : undefined
     // Each content part has its own boundary, even if it contains newlines.
-    const fields = [...extra, ...notes.map((value, i) => ({ name: `Content ${i + 1}`, value }))]
+    const fields = [...commandExtras, ...extra, ...notes.map((value, i) => ({ name: `Content ${i + 1}`, value }))]
     const details = [
       ...(cwd ? [`Working directory: ${cwd}`] : []),
       ...diffs.map(({ path, oldText, newText }) => [path, 'Before:', oldText ?? '', 'After:', newText].join('\n')),

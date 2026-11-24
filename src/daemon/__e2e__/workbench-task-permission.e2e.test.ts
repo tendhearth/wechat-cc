@@ -193,7 +193,7 @@ it('Claude Bash uses the spawned run directory and fails closed in every WeChat 
     expect(lookup.card.text.includes(incomplete) && !lookup.card.text.includes('回「y ')).toBe(true)
     expect(await command('允许')).toBe(incomplete)
     for (const [text, quote] of [[`y ${unverified.code}`, undefined], [`yt ${unverified.code}`, undefined], ['y', lookup.card.text]] as const) {
-      expect(ilink.handlePermissionReply(text, 'owner', quote)).toBe(true)
+      expect(await ilink.handlePermissionReply(text, 'owner', quote)).toBe(true)
       expect(feedback.at(-1)).toBe(incomplete)
       expect(answers).toEqual([true])
     }
