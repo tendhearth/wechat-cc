@@ -92,7 +92,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     const foot = document.createElement('footer'); foot.className = 'wb-handoff-footer'
     const note = document.createElement('span'); note.className = 'now-terminal-note'; note.setAttribute('aria-live', 'polite')
     const actions = document.createElement('div'); actions.className = 'now-terminal-actions'
-    for (const [decision, label] of /** @type {const} */ ([['deny', '拒绝'], ['allow', '允许']])) {
+    for (const [decision, label] of /** @type {const} */ ([['deny', '先不做'], ['allow', '允许这一步']])) {
       if (decision === 'allow' && operation.needsFullView) continue
       const b = document.createElement('button')
       b.type = 'button'; b.className = `wb-btn now-terminal-decide${decision === 'allow' ? ' wb-btn-primary' : ''}`; b.dataset.decision = decision; b.textContent = label

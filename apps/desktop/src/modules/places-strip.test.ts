@@ -370,6 +370,9 @@ it.each([
     expect(waitingRoot.querySelector('.wb-permission-snapshot')?.textContent).toBe('预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。')
   if (fields.kind !== 'terminal') {
     const deny = waitingRoot.querySelector<HTMLButtonElement>('[data-place-decision="deny"]')!
+    expect(deny.textContent).toBe('先不做')
+    expect(deny.nextElementSibling).toBe(open)
+    expect(open.classList.contains('place-allow')).toBe(true)
     expect(deny.disabled).toBe(false)
     deny.click()
     expect(calls.find(call => call[1] === '/v1/matter/permission')?.[2]).toEqual({ id: 'a', requestId: 'req-1', decision: 'deny' })
@@ -404,6 +407,8 @@ it('完整的紧凑预览能直接批准，晚到的意见保留操作块和按�
   await strip!.refresh()
   const operation = waitingRoot.querySelector('.approval-operation')
   const allow = waitingRoot.querySelector<HTMLButtonElement>('[data-place-decision="allow"]')!
+  expect([...waitingRoot.querySelectorAll('.place-ask button:not([hidden])')].map(button => button.textContent)).toEqual(['先不做', '允许这一步'])
+  expect(allow.classList.contains('place-allow')).toBe(true)
   expect(allow.disabled).toBe(false)
   expect(waitingRoot.querySelector('.wb-permission-snapshot')).not.toBeNull()
   allow.focus()
@@ -458,6 +463,7 @@ it.each([
   expect(calls.some(call => call[1] === '/v1/matter/permission')).toBe(false)
   expect(allow.hidden).toBe(true)
   expect(open.hidden).toBe(false)
+  expect([...waitingRoot.querySelectorAll('.place-ask button:not([hidden])')].map(button => button.textContent)).toEqual(['先不做', '打开看全再定'])
   width = 100
   data = { places: [place('a', { waiting: { ...waiting, ccOpinion: '可以。' } })], version: 'v2' }
   await strip!.refresh()

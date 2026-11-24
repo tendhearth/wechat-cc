@@ -31,7 +31,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  const row=placeRow(page,'portfolio')
  await expect(row).toContainText('Bash: bun run test')
  // 等批准的从当前窗口的应答入口发给那一件的那一条。
- await placeAnswerSurface(page,'portfolio').getByRole('button',{name:'允许',exact:true}).click()
+ await placeAnswerSurface(page,'portfolio').getByRole('button',{name:'允许这一步',exact:true}).click()
  await expect.poll(()=>decisions).toEqual([{id:task.id,requestId:'0f0f0f0f-0000-4000-8000-000000000001',decision:'allow'}])
  // 终端停着问:键盘能到「去回答」,打开的是那个会话。
  const answer=placeAnswerSurface(page,'demo').locator('[data-place-open]')
@@ -40,7 +40,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  const detail=page.locator('#thing-thread .thing-terminal:visible')
  await expect(detail).toContainText('git status')
  await expect(detail).toContainText('终端原话')
- await expect(detail.getByRole('button',{name:'允许',exact:true})).toBeVisible()
+ await expect(detail.getByRole('button',{name:'允许这一步',exact:true})).toBeVisible()
  const out=process.env.WECHAT_CC_DESIGN_SHOTS
  if(out)await page.screenshot({path:join(out,`roster-partial-${width}.png`)})
  await clickNav(page,'overview')

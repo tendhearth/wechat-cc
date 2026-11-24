@@ -57,10 +57,10 @@ function askHtml(p, card = false, needsFullView = false) {
   const more = w.count > 1 ? `<small>还有 ${w.count - 1} 件</small>` : ''
   const open = `<button type="button" ${card ? 'class="place-allow" ' : ''}data-place-open>${needsFullView ? '打开看全再定' : '去回答'}</button>`
   if (w.kind === 'permission' && w.matterId && w.requestId) {
-    const allow = '<button type="button" class="place-allow" data-place-decision="allow">允许</button>'
+    const allow = '<button type="button" class="place-allow" data-place-decision="allow">允许这一步</button>'
     const openWhenClipped = card && !needsFullView
       ? '<button type="button" class="place-allow" data-place-open data-place-open-if-clipped hidden>打开看全再定</button>' : ''
-    return `<div class="place-ask">${needsFullView ? open : allow}${openWhenClipped}<button type="button" data-place-decision="deny">不允许</button>${more}</div>`
+    return `<div class="place-ask"><button type="button" data-place-decision="deny">先不做</button>${needsFullView ? open : allow}${openWhenClipped}${more}</div>`
   }
   return `<div class="place-ask">${open}${more}</div>`
 }

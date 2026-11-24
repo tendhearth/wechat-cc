@@ -19,6 +19,15 @@ function find(el: any, sel: string): any { const cls = sel.replace(/^\./, ''); i
 const item = { hash: 'abcde', prompt: 'Bash: rm -rf ./tmp', since: 's', expires_at: 'e' }
 
 describe('createPermissionCard', () => {
+  it('shows the secondary decision first and still focuses allow by default', () => {
+    const root = makeEl()
+    const card = createPermissionCard({ el: root, makeEl }, { canResolve: true, onResolve: vi.fn(async () => 'resolved' as const) })
+    card.show({ ...item, canAllowTask: true }, 1)
+    const actions = root.querySelector('.pet-card-actions')
+    expect(actions.children.map((button: ReturnType<typeof makeEl>) => button.textContent)).toEqual(['先不做', '允许这一步', '本任务同命令都允许', '查看'])
+    expect(root.querySelector('.pet-card-allow').focused).toBe(true)
+    expect(root.querySelector('.pet-card-deny').focused).toBeUndefined()
+  })
   it('review P2 capability: a plain conversation or terminal card has no reason field',()=>{
     const root=makeEl(),card=createPermissionCard({el:root,makeEl},{canResolve:true,onResolve:vi.fn(async()=> 'resolved' as const)})
     card.show(item,1)

@@ -186,7 +186,7 @@ const setPermissionCount = (page: Page, count: number) => page.evaluate(count =>
 }, count)
 
 async function expectDecisionButtons(card: Locator) {
-  for (const name of ['拒绝', '允许']) {
+  for (const name of ['先不做', '允许这一步']) {
     const button = card.getByRole('button', { name, exact: true })
     await expect(button).toBeInViewport({ ratio: 1 })
     // Verify hit-testing without letting Playwright scroll the button into view first.
@@ -410,8 +410,8 @@ test('terminal waiting row opens its structured edit under the desktop CSP', asy
   expect(await page.evaluate(() => 'approvalInjected' in window)).toBe(false)
   await expect(page.locator('html')).not.toHaveAttribute('data-csp-violation', 'true')
   await expect(dialog.getByText('这里不是全部内容，完整的请在终端里看。', { exact: true })).toBeVisible()
-  await expect(dialog.getByRole('button', { name: '允许', exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('button', { name: '拒绝', exact: true })).toBeEnabled()
+  await expect(dialog.getByRole('button', { name: '允许这一步', exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '先不做', exact: true })).toBeEnabled()
 })
 
 test('terminal calls a legacy summary a summary and expands received preview lines', async ({ page }) => {
@@ -430,6 +430,6 @@ test('terminal calls a legacy summary a summary and expands received preview lin
   await expect(dialog.getByText('echo example-7', { exact: false })).toBeVisible()
   await expect(dialog.getByText('这里不是全部内容，完整的请在终端里看。', { exact: true })).toBeVisible()
   await expect(dialog.getByText('看完整原文', { exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('button', { name: '允许', exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('button', { name: '拒绝', exact: true })).toBeEnabled()
+  await expect(dialog.getByRole('button', { name: '允许这一步', exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '先不做', exact: true })).toBeEnabled()
 })
