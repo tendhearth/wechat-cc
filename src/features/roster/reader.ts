@@ -6,6 +6,9 @@ import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
 import type { MatterStore } from '../../ports/matters'
 import type { CliSessionView } from '../../ports/cli-session'
 import type { MatterSeen } from '../../adapters/store/matter-seen'
+import type { PendingWorkbenchPermission } from '../../ports/workbench'
+
+type RosterPermission = Pick<PendingWorkbenchPermission, 'id' | 'tool' | 'description' | 'createdAt' | 'display' | 'cwd' | 'showSnapshotNotice' | 'scripts'>
 
 export interface RosterReaderDeps {
   matters: Pick<MatterStore, 'list'> & Partial<Pick<MatterStore, 'get'>>
@@ -13,7 +16,7 @@ export interface RosterReaderDeps {
     list(query: {archived:'exclude';limit:number;cursor?:string}): {tasks:Array<{id:string;status:string;phase?:string}>;page?:{nextCursor:string|null}}
     attention(): {tasks:Array<{id:string}>}
     detail(id:string): {
-      permissions:Array<{id:string;tool:string;description:string;createdAt:number}>
+      permissions:RosterPermission[]
       questions:Array<{id:string;questions:Array<{question:string}>;createdAt:number}>
     }
   }
@@ -31,6 +34,7 @@ export interface RosterGathered {
   matters: Map<string, MatterRow>
   /** 终端会话,原样(project 是完整 cwd)。 */
   sessions: Map<string, CliSessionView>
+  permissions: Map<string, RosterPermission[]>
 }
 
 /** 工作台列表接口的页上限(`listFilters` 里那条 `limit>100`);没归档的任务最多翻这么多页。 */
@@ -62,6 +66,7 @@ export function gatherRoster(deps: RosterReaderDeps, scope: 'operator' | 'device
   const shown = new Set(matters.map(m => m.id))
   const tasks = new Map<string, {status:string;phase?:string}>()
   const pending = new Map<string,RosterPending[]>()
+  const permissions = new Map<string, RosterPermission[]>()
   if (wb) {
     // 工作台的列表一页最多 TASK_PAGE 件,多要会直接抛错(真机上名单因此整个读不出来过);按页翻。
     let cursor: string | undefined
@@ -78,6 +83,7 @@ export function gatherRoster(deps: RosterReaderDeps, scope: 'operator' | 'device
           ...d.permissions.map(p => ({kind:'permission' as const,id:p.id,summary:`${p.tool}: ${p.description}`,since:p.createdAt})),
           ...d.questions.map(q => ({kind:'question' as const,id:q.id,summary:q.questions[0]?.question ?? '',since:q.createdAt})),
         ])
+        if (shown.has(id) && d.permissions.length) permissions.set(id, d.permissions)
       } catch { tasks.delete(id) } // 刚被清掉:这件事按 matter 自己判,其余照常。
     }
   }
@@ -93,6 +99,7 @@ export function gatherRoster(deps: RosterReaderDeps, scope: 'operator' | 'device
     input: {matters,tasks,pending,relays,terminals},
     matters: new Map(kept.map(m => [m.id, m])),
     sessions: new Map(liveSessions.map(t => [t.session_id, t])),
+    permissions,
   }
 }
 

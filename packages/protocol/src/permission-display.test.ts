@@ -9,6 +9,19 @@ function same(actual: unknown, expected: unknown) {
 }
 
 it.each([
+  ['insertion with final newline', '', 'sample\n', true],
+  ['insertion without final newline', '', 'sample', false],
+  ['deletion with final newline', 'sample\r\n', '', true],
+  ['deletion without final newline', 'sample', '', false],
+  ['both sides empty', '', '', undefined],
+  ['both sides present', 'sample', 'replacement', undefined],
+] as const)('describes the fragment ending for %s', (_, before, after, endsWithNewline) => {
+  const preview = permissionEditPreview(before, after)
+  expect(preview.fragmentEndsWithNewline).toBe(endsWithNewline)
+  expect(preview.finalNewlineChange).toBeUndefined()
+})
+
+it.each([
   ['final newline removed', 'abc\n', 'abc', true, 'removed'],
   ['final newline added', 'abc', 'abc\n', true, 'added'],
   ['tabs replaced', '\tabc', '    abc', true, undefined],

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { expect, it } from 'vitest'
 import type { PermissionDisplay } from '../../../../packages/protocol/src/permission-display'
-import { renderPermissionOperation } from './permission-operation.js'
+import { renderCompactPermissionOperation, renderPermissionOperation } from './permission-operation.js'
 
 function render(body: PermissionDisplay['body'], options?: Parameters<typeof renderPermissionOperation>[1], extra?: PermissionDisplay['extra']) {
   const root = document.createElement('div')
@@ -161,9 +161,113 @@ it('marks controls in commands, paths, diffs, fields and the complete original',
     expect(root.querySelector('.approval-invisible-notice')?.textContent).toBe('这里有看不见的字符，已经标出来了。')
 })
 
+it.each([
+  ['', 'sample\n', '这一段末尾有换行'],
+  ['', 'sample', '这一段末尾没有换行'],
+  ['sample\n', '', '这一段末尾有换行'],
+  ['sample', '', '这一段末尾没有换行'],
+] as const)('shows the ending of a one-sided edit (case %#)', (before, after, notice) => {
+  const body = { kind: 'edit' as const, path: 'sample', changes: [{ before, after }] }
+  const full = render(body)
+  expect(full.querySelector('.approval-change > .approval-meta')?.textContent).toBe(notice)
+  const compact = renderCompactPermissionOperation({ body }, {})
+  const root = document.createElement('div')
+  root.innerHTML = compact.html
+  expect(root.querySelector('.approval-change > .approval-meta[data-approval-fit]')?.textContent).toBe(notice)
+  expect(compact.needsFullView).toBe(false)
+})
+
+it('counts a hidden fragment ending in the compact preview line limit', () => {
+  const body = { kind: 'edit' as const, path: 'sample', changes: [{ before: '', after: 'a\nb\nc\nd\n' }] }
+  const result = renderCompactPermissionOperation({ body }, {})
+  const root = document.createElement('div')
+  root.innerHTML = result.html
+  expect(root.querySelectorAll('.approval-diff [data-line]')).toHaveLength(4)
+  expect(root.querySelector('.approval-change > .approval-meta')).toBeNull()
+  expect(root.querySelector('.approval-more')?.textContent).toBe('还有 1 行')
+  expect(result.needsFullView).toBe(true)
+})
+
 it('only labels the end of a complete Write as the end of the file', () => {
   const body = { kind: 'write', path: 'a', content: 'sample' } as const
   expect(render(body).textContent?.includes('文件末尾没有换行')).toBe(true)
   expect(render({ ...body, content: 'sample\n' }).textContent?.includes('文件末尾没有换行')).toBe(false)
   expect(render({ ...body, content: '' }).textContent?.includes('文件末尾没有换行')).toBe(false)
 })
+
+const rows = ['first', 'second', 'third', 'fourth', 'fifth']
+const multiline = rows.join('\n')
+const compactCases: Array<[PermissionDisplay['body'], string, string]> = [
+  [{ kind: 'command', command: multiline }, '.approval-command .approval-source', rows.slice(0, 4).join('\n')],
+  [{ kind: 'text', text: multiline }, '.approval-source', rows.slice(0, 4).join('\n')],
+  [{ kind: 'url', url: multiline }, '.approval-source', rows.slice(0, 4).join('\n')],
+  [{ kind: 'query', query: multiline }, '.approval-source', '“' + rows.slice(0, 4).join('\n')],
+  [{ kind: 'fields', fields: [{ name: 'field', value: multiline }] }, 'dd .approval-source', rows.slice(0, 4).join('\n')],
+]
+it.each(compactCases.map(data => [data[0].kind, ...data] as const))('caps a compact %s preview at four lines', (_, body, selector, shown) => {
+  const result = renderCompactPermissionOperation({ body }, {})
+  const root = document.createElement('div')
+  root.innerHTML = result.html
+  expect(root.querySelector(selector)?.textContent === shown).toBe(true)
+  expect(root.querySelector('button[data-place-open]')?.textContent).toBe('还有 1 行')
+  expect(root.querySelector('details')).toBeNull()
+  expect(root.textContent?.includes(rows[4]!)).toBe(false)
+  expect(result.needsFullView).toBe(true)
+})
+
+const fileCases: Array<[PermissionDisplay['body'], string, string[]]> = [
+  [{ kind: 'write', path: '/work/first', content: multiline }, 'first', rows.slice(0, 4).map(line => '+ ' + line)],
+  [{ kind: 'edit', path: '/work/first', changes: [
+    { before: 'old', after: multiline }, { before: '', after: 'hidden edit', path: '/work/second' },
+  ] }, 'first', ['− old', '+ first', '+ second', '+ third']],
+  [{ kind: 'patch', files: [
+    { path: '/work/first', change: 'update', diff: rows.map(line => '+' + line).join('\n') },
+    { path: '/work/second', change: 'add', diff: '+hidden file' },
+  ] }, 'first（修改）', rows.slice(0, 4).map(line => '+' + line)],
+]
+it.each(fileCases.map(data => [data[0].kind, ...data] as const))('shows one path and up to four diff lines for compact %s', (kind, body, path, shown) => {
+  const result = renderCompactPermissionOperation({ body, note: '示例原因' }, { cwd: '/work' })
+  const root = document.createElement('div')
+  root.innerHTML = result.html
+  expect(root.querySelectorAll('.approval-path')).toHaveLength(1)
+  expect(root.querySelector('.approval-path')?.textContent === path).toBe(true)
+  expect(JSON.stringify([...root.querySelectorAll('.approval-diff [data-line]')].map(line => line.textContent)) === JSON.stringify(shown)).toBe(true)
+  const more = [...root.querySelectorAll('button[data-place-open]')].map(button => button.textContent)
+  expect(more).toEqual(kind === 'edit' ? ['还有 2 行', '还有 1 处'] : kind === 'patch' ? ['还有 1 行', '共 2 个文件'] : ['还有 1 行'])
+  expect(root.textContent?.includes('hidden')).toBe(false)
+  expect(root.querySelector('.approval-panel')?.nextElementSibling?.textContent === '在 /work').toBe(true)
+  expect(root.querySelector('.approval-note')?.textContent).toBe('示例原因')
+  expect(result.needsFullView).toBe(true)
+})
+
+it('shares the compact line limit between the URL, prompt and extra scope', () => {
+  const { html, needsFullView } = renderCompactPermissionOperation({
+    body: { kind: 'url', url: 'https://example.test', prompt: 'one\ntwo' },
+    extra: [{ name: 'scope', value: 'local\nhidden' }],
+  }, {})
+  const root = document.createElement('div')
+  root.innerHTML = html
+  expect(root.querySelector('.approval-extra dd')?.textContent).toBe('local')
+  expect(root.querySelector('.approval-extra button')?.textContent).toBe('还有 1 行')
+  expect(root.textContent?.includes('hidden')).toBe(false)
+  expect(needsFullView).toBe(true)
+})
+
+it('marks whitespace-only and final newline patch changes as needing the full view', () => {
+  for (const diff of ['@@\n-old \n+old', '@@\n-old\n+old\n\\ No newline at end of file']) {
+    const { html, needsFullView } = renderCompactPermissionOperation({
+      body: { kind: 'patch', files: [{ path: 'sample', change: 'update', diff }] },
+    }, {})
+    expect(html.includes('这处改动只在换行或空白上有差别')).toBe(true)
+    expect(needsFullView).toBe(true)
+  }
+})
+
+// 执行者给的原因在紧凑卡上只有一行:它也要参加「显示不全就得打开看全」的遮挡检查(独立评审 P2)
+it('compact note takes part in the clipping check', () => {
+  const { html } = renderCompactPermissionOperation({ body: { kind: 'command', command: 'printf sample' }, note: '一段很长的原因\n第二行' }, {})
+  const root = document.createElement('div')
+  root.innerHTML = html
+  expect(root.querySelector('.approval-note')?.hasAttribute('data-approval-fit')).toBe(true)
+})
+

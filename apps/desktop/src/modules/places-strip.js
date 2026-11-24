@@ -10,6 +10,8 @@
 import {V1,v1} from '../daemon-client.js'
 import {escapeHtml} from '../view.js'
 import {deskSituation, deskSpeakerHtml} from './desk-page.js'
+import {permissionCwd} from '../generated/permission-display.js'
+import {renderCompactPermissionOperation, renderPermissionText} from './permission-operation.js'
 
 /** @typedef {import('../../../../packages/protocol/src/places').PlaceT} Place */
 
@@ -49,14 +51,23 @@ export function placeLine(place) {
 }
 
 /** @param {Place} p */
-function askHtml(p, card = false) {
+function askHtml(p, card = false, needsFullView = false) {
   const w = p.waiting
   if (!w) return ''
   const more = w.count > 1 ? `<small>还有 ${w.count - 1} 件</small>` : ''
+  const open = `<button type="button" ${card ? 'class="place-allow" ' : ''}data-place-open>${needsFullView ? '打开看全再定' : '去回答'}</button>`
   if (w.kind === 'permission' && w.matterId && w.requestId) {
-    return `<div class="place-ask"><button type="button" class="place-allow" data-place-decision="allow">允许</button><button type="button" data-place-decision="deny">不允许</button>${more}</div>`
+    const allow = '<button type="button" class="place-allow" data-place-decision="allow">允许</button>'
+    const openWhenClipped = card && !needsFullView
+      ? '<button type="button" class="place-allow" data-place-open data-place-open-if-clipped hidden>打开看全再定</button>' : ''
+    return `<div class="place-ask">${needsFullView ? open : allow}${openWhenClipped}<button type="button" data-place-decision="deny">不允许</button>${more}</div>`
   }
-  return `<div class="place-ask"><button type="button" ${card ? 'class="place-allow" ' : ''}data-place-open>去回答</button>${more}</div>`
+  return `<div class="place-ask">${open}${more}</div>`
+}
+
+/** @param {Element|null} card */
+function operationClipped(card) {
+  return [...(card?.querySelectorAll('[data-approval-fit]') ?? [])].some(part => part.scrollWidth > part.clientWidth)
 }
 
 /** @param {Place} place @param {string|null} selected @param {number} now */
@@ -131,10 +142,16 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   }
   function reflectWaitingAvailability() {
     const stopped = root.ownerDocument.documentElement.hasAttribute('data-desk-cc-stopped')
-    waitingRoot?.querySelectorAll('.place-ask button').forEach(button => {
+    waitingRoot?.querySelectorAll('.place-ask button, .approval-more').forEach(button => {
       button.toggleAttribute('disabled', stopped || (acting && button.hasAttribute('data-place-decision')))
       if (stopped) button.setAttribute('title', 'CC 没在运行')
       else button.removeAttribute('title')
+    })
+    waitingRoot?.querySelectorAll('[data-place-open-if-clipped]').forEach(open => {
+      const card = open.closest('.desk-waiting-card')
+      const clipped = operationClipped(card)
+      open.toggleAttribute('hidden', !clipped)
+      card?.querySelector('[data-place-decision="allow"]')?.toggleAttribute('hidden', clipped)
     })
   }
   function drawWaiting() {
@@ -147,12 +164,20 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     const visibleWaiting = waiting.slice(0, waitingOpen ? waiting.length : 2)
     const cards = visibleWaiting.map(p => {
       const note = p.waiting
+      const cwd = permissionCwd(note?.cwd)
+      const operation = note?.display && renderCompactPermissionOperation(note.display, {
+        cwd, showSnapshotNotice: note.showSnapshotNotice, hasScriptPreview: note.hasScriptPreview,
+      })
+      const directory = !operation && cwd ? `<div class="approval-meta" data-approval-fit>在 ${renderPermissionText(cwd)}</div>` : ''
+      const needsFullView = note?.hasScriptPreview === true || operation?.needsFullView || (note?.kind === 'permission' && !cwd)
+      const question = operation ? note?.summary.split('\n', 1)[0] : note?.summary
       return `<div class="desk-waiting-row">
         ${deskSpeakerHtml('cc')}
         <div class="desk-waiting-card" data-place-key="${escapeHtml(p.key)}" data-item-key="${escapeHtml(note?.itemKey ?? '')}" data-request-id="${escapeHtml(note?.requestId ?? '')}">
           <div class="desk-waiting-label">这件要你定 · ${escapeHtml(p.name)}</div>
-          <div class="desk-waiting-question">${escapeHtml(note?.summary ?? '')}</div>
-          ${askHtml(p, true)}
+          <div class="desk-waiting-question${operation ? ' desk-waiting-question-compact' : ''}">${escapeHtml(question ?? '')}</div>
+          ${operation?.html ?? directory}
+          ${askHtml(p, true, needsFullView)}
         </div>
       </div>`
     }).join('')
@@ -175,7 +200,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
           line = card.ownerDocument.createElement('div')
           line.className = className
           line.textContent = text
-          if (className === 'desk-waiting-opinion') card.querySelector('.desk-waiting-question')?.after(line)
+          if (className === 'desk-waiting-opinion') card.querySelector('.desk-waiting-reason, .place-ask')?.before(line)
           else card.querySelector('.place-ask')?.before(line)
         } else if (line.textContent !== text) {
           line.textContent = text
@@ -357,10 +382,14 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       return
     }
     if (target.closest('.place-row')) { select(place); return }
-    if (waitingRoot?.contains(target) && target.closest('.place-ask')
+    if (waitingRoot?.contains(target) && target.closest('.place-ask, .approval-more')
       && root.ownerDocument.documentElement.hasAttribute('data-desk-cc-stopped')) return
     const decision = target.closest('[data-place-decision]')?.getAttribute('data-place-decision')
     if (decision && place.waiting?.matterId && place.waiting.requestId && !acting) {
+      if (decision === 'allow' && operationClipped(target.closest('.desk-waiting-card'))) {
+        reflectWaitingAvailability()
+        return
+      }
       acting = true
       for (const host of [root, waitingRoot]) host?.querySelectorAll('[data-place-decision]').forEach(b => b.setAttribute('disabled', ''))
       try { await v1(call, V1.workbench.permission, { body: { id: place.waiting.matterId, requestId: place.waiting.requestId, decision } }) }
@@ -443,8 +472,12 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     actions.style.top = `${Math.max(edge, flip ? anchor.top - gap - height : Math.min(anchor.bottom + gap, viewport.clientHeight - edge - height))}px`
   }
 
-  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(reflectOverflow) : null
+  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+    reflectOverflow()
+    reflectWaitingAvailability()
+  }) : null
   resize?.observe(root)
+  if (waitingRoot) resize?.observe(waitingRoot)
   const scroll = () => { reflectOverflow(); positionActions() }
   root.addEventListener('scroll', scroll)
   const onActionsToggle = (/** @type {Event} */ event) => {

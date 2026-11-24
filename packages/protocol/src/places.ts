@@ -6,6 +6,7 @@
  * daemon 的 src/domain/places.ts 算;不带本地化文字,状态词由端上按 STATUS_TABLE 查。
  */
 import z from 'zod'
+import { permissionCwdWire, permissionDisplayWire } from './permission-display'
 import { STATUS_KEYS } from './status-table'
 
 export const PLACE_OPINION_MAX = 40
@@ -25,6 +26,13 @@ export const PlaceWaiting = z.object({
   requestId: z.string().optional(),
   sessionId: z.string().optional(),
   ...PlaceOpinion.partial().shape,
+  tool: z.string().optional(),
+  display: permissionDisplayWire,
+  cwd: permissionCwdWire,
+  truncated: z.boolean().optional(),
+  showSnapshotNotice: z.boolean().optional(),
+  /** The notice can also describe mutable execution without an attached script. */
+  hasScriptPreview: z.boolean().optional(),
   summary: z.string(),
   /** 这个地方一共有几条在等你。 */
   count: z.number().int().min(1),

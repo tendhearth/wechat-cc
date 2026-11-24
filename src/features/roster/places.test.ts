@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { openTestDb } from '../../lib/db'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeMatterStore } from '../../adapters/store/matters-store'
@@ -7,12 +10,14 @@ import { makePlacesStore } from '../../adapters/store/places-store'
 import type { CliSessionView } from '../../ports/cli-session'
 import type { Matter } from '../../ports/matters'
 import type { InternalApiDeps } from '../../daemon/internal-api/types'
+import { createInternalApi } from '../../daemon/internal-api'
+import { framedTooLargeFor, PHONE_FRAME_BUDGET_BYTES } from '../../domain/matters/phone-scope'
 import { makePlacesReader, placeKey, PLACES_WINDOW_MS } from './places-reader'
 import { placesRoutes } from './places-routes'
 import { makeRosterReader } from './reader'
 import { rosterRoutes } from './routes'
 import { ASK_OPINION_DELAY_MS, makeAskOpinion } from '../workbench/ask-opinion'
-import { PlacesResponse } from '@wechat-cc/protocol'
+import { PlacesResponse, type PermissionDisplay } from '@wechat-cc/protocol'
 
 const DAY = 24 * 3_600_000
 const NOW = 100 * DAY
@@ -364,4 +369,133 @@ it('页签标题取第一句，压成一行并按字符截断，只为桌面查�
     expect(query.mock.calls.map(([id]) => id).filter(id => id === first.id)).toHaveLength(1)
     expect(query).toHaveBeenCalledTimes(3)
   } finally { db.close() }
+})
+
+it('同一地方的等待目录跟着请求走，旧请求不会借用地方根目录', () => {
+  const worktrees = ['/w/rici/.claude/worktrees/one', '/w/rici/.claude/worktrees/two']
+  const rows = worktrees.map((projectPath, i) => m(String(i), { projectPath }))
+  const display = { body: { kind: 'command', command: 'printf sample' } } satisfies PermissionDisplay
+  let next = 0
+  const { reader } = setup(rows, [], () => NOW, {
+    roster: {
+      matters: { list: () => rows }, seen: () => null, now: () => NOW, terminals: () => [],
+      workbench: {
+        list: () => ({ tasks: rows.map(({ id }) => ({ id, status: 'running' })) }),
+        attention: () => ({ tasks: rows }),
+        detail: id => ({ questions: [], permissions: id === rows[next % rows.length]?.id
+          ? [{ id: 'req', tool: 'Bash', description: 'Sample', createdAt: NOW, display, cwd: worktrees[next] }] : [] }),
+      },
+    },
+  })
+  for (const cwd of [...worktrees, undefined]) {
+    const { places } = reader.read('operator')
+    expect(places).toHaveLength(1)
+    expect(places[0]?.waiting?.display?.body.kind).toBe('command')
+    expect(places[0]?.waiting?.cwd === cwd).toBe(true)
+    next++
+  }
+})
+
+it('地方只投影实际排在纸片上的那条请求，终端取 pending，提问不带审批字段', async () => {
+  const display = { body: { kind: 'command', command: 'printf sample' } } satisfies PermissionDisplay
+  const rows = [m('old'), m('new'), m('question', { projectPath: '/w/question' })]
+  const pending = { tool: 'Edit', cwd: '/w/terminal/worktree', truncated: true, summary: 'sample…', since: NOW - 10,
+    display: { body: { kind: 'text', text: 'terminal input' } } satisfies PermissionDisplay }
+  const session = (id: string, request: typeof pending): CliSessionView => ({
+    session_id: id, code: id, source: 'claude', status: 'waiting', stale: false, project: '/w/terminal',
+    cwd: '/w/terminal', machine: null, origin_agent: null, last_summary: 'terminal summary',
+    last_event_at: NOW, last_prompt_at: null, created_at: NOW - 20, pending: request,
+  })
+  const { reader } = setup([], [], () => NOW, {
+    opinion: () => ({ ccOpinion: '请核对。', questionReason: '需要批准' }),
+    roster: {
+      matters: { list: () => rows }, seen: () => null, now: () => NOW,
+      terminals: () => [session('terminal-old', pending), session('terminal-new', { ...pending, since: NOW - 1, tool: 'Write' })],
+      workbench: {
+        list: () => ({ tasks: rows.map(({ id }) => ({ id, status: 'running' })) }),
+        attention: () => ({ tasks: rows }),
+        detail: id => ({
+          permissions: [
+            { id: 'later', tool: 'Write', description: 'later', createdAt: NOW, display },
+            { id: 'earlier', tool: 'Bash', description: 'earlier', createdAt: id === 'old' ? NOW - 7 : NOW - 4,
+              cwd: '/w/rici/worktree', display, showSnapshotNotice: true,
+              ...(id === 'old' ? { scripts: [{ path: 'sample.sh', content: 'sample' }] } : {}) },
+          ],
+          questions: id === 'question' ? [{ id: 'q', createdAt: NOW - 15, questions: [{ question: '选哪个？' }] }] : [],
+        }),
+      },
+    },
+  })
+  for (const origin of ['operator', 'device'] as const) {
+    const { places } = PlacesResponse.parse((await call({ places: reader }, 'GET /v1/places', null, origin)).body)
+    const byName = (name: string) => places.find(place => place.name === name)?.waiting
+    const approval = byName('rici')
+    expect(approval).toMatchObject({ itemKey: 'matter:old', requestId: 'earlier', summary: 'Bash: earlier',
+      count: 4, tool: 'Bash', showSnapshotNotice: true, hasScriptPreview: true, ccOpinion: '请核对。' })
+    expect(approval).not.toHaveProperty('scripts')
+    expect(approval?.cwd === '/w/rici/worktree' && JSON.stringify(approval.display) === JSON.stringify(display)).toBe(true)
+    const terminal = byName('terminal')
+    expect(terminal).toMatchObject({ sessionId: 'terminal-old', kind: 'terminal', count: 2, truncated: true, tool: 'Edit' })
+    expect(terminal?.cwd === pending.cwd && JSON.stringify(terminal.display) === JSON.stringify(pending.display)).toBe(true)
+    expect(terminal).not.toHaveProperty('showSnapshotNotice')
+    const question = byName('question')
+    expect(question).toMatchObject({ kind: 'question', requestId: 'q', count: 3 })
+    for (const key of ['tool', 'cwd', 'display', 'truncated', 'showSnapshotNotice', 'hasScriptPreview']) expect(question).not.toHaveProperty(key)
+  }
+})
+
+it('手机面板在转义后的名单超出帧预算时退回原形状，ETag 随所发内容', async () => {
+  const rows = Array.from({ length: 24 }, (_, i) => m('task-' + i, { projectPath: '/w/sample-' + i }))
+  const display = { body: { kind: 'command', command: '"\\'.repeat(4096) } } satisfies PermissionDisplay
+  const { reader } = setup([], [], () => NOW, {
+    opinion: () => ({ ccOpinion: '请核对。', questionReason: '需要批准' }),
+    roster: {
+      matters: { list: () => rows }, seen: () => null, now: () => NOW, terminals: () => [],
+      workbench: {
+        list: () => ({ tasks: rows.map(({ id }) => ({ id, status: 'running' })) }),
+        attention: () => ({ tasks: rows }),
+        detail: () => ({
+          permissions: [{ id: 'r', tool: 'Bash', description: 'sample', createdAt: NOW, display, cwd: '/w/sample', showSnapshotNotice: true }],
+          questions: [],
+        }),
+      },
+    },
+  })
+  const stateDir = mkdtempSync(join(tmpdir(), 'cc-places-frame-'))
+  const api = createInternalApi({ stateDir, daemonPid: 1 })
+  try {
+    api.provide({ places: reader })
+    const dispatch = (origin: 'device' | 'link', frameBudget: number, version = '') =>
+      api.panelDispatch(new Request('http://127.0.0.1/v1/places', { headers: { 'if-none-match': version } }),
+        { tier: 'admin', origin, routeAllow: new Set(['GET /v1/places']) }, { frameBudget, client: 'app' })
+    const full = await dispatch('device', 1_000_000)
+    expect(full.status).toBe(200)
+    const raw = await full.text()
+    expect(framedTooLargeFor(raw, PHONE_FRAME_BUDGET_BYTES)).toBe(true)
+    const places = PlacesResponse.parse(JSON.parse(raw))
+    expect(places.places.every(place => place.waiting?.display?.body.kind === 'command')).toBe(true)
+    expect(places.places.every(place => place.waiting?.showSnapshotNotice && place.waiting.hasScriptPreview === false)).toBe(true)
+
+    const fitted = await dispatch('device', PHONE_FRAME_BUDGET_BYTES, places.version)
+    expect(fitted.status).toBe(200)
+    const text = await fitted.text()
+    expect(framedTooLargeFor(text, PHONE_FRAME_BUDGET_BYTES)).toBe(false)
+    const compact = PlacesResponse.parse(JSON.parse(text))
+    expect(compact.places.map(place => place.key)).toEqual(places.places.map(place => place.key))
+    for (const place of compact.places) {
+      expect(place.waiting).toMatchObject({ requestId: 'r', summary: 'Bash: sample', count: 1, ccOpinion: '请核对。' })
+      for (const key of ['tool', 'cwd', 'display', 'truncated', 'showSnapshotNotice', 'hasScriptPreview']) expect(place.waiting).not.toHaveProperty(key)
+    }
+    expect(compact.version).not.toBe(places.version)
+    expect(fitted.headers.get('etag')).toBe(compact.version)
+    expect((await dispatch('device', PHONE_FRAME_BUDGET_BYTES, compact.version)).status).toBe(304)
+    expect((await dispatch('device', 1_000_000, compact.version)).status).toBe(200)
+
+    const blocked = await dispatch('link', 1_000_000)
+    expect(blocked.status).toBe(403)
+    expect(await blocked.json()).toEqual({ error: 'route_not_allowed' })
+  } finally {
+    await api.stop()
+    rmSync(stateDir, { recursive: true, force: true })
+  }
 })

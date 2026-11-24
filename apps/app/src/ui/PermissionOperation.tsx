@@ -131,6 +131,8 @@ function OperationBody({ body, truncated, projectPath, lang, open, label, moreLa
           <Visual>{changePath && changePath !== body.path ? <FilePath lang={lang} path={path(changePath)} /> : null}{rows.slice(0, 12).map(({ line, kind }, j) => <ApprovalDiffLine key={j} line={line} kind={kind} />)}</Visual>
           {edit.finalNewlineChange ? <Txt role="small" tone="inkSoft">{t(lang,
             edit.finalNewlineChange === 'removed' ? 'approval.fragmentNewlineRemoved' : 'approval.fragmentNewlineAdded')}</Txt> : null}
+          {!truncated && edit.fragmentEndsWithNewline !== undefined ? <Txt role="small" tone="inkSoft">{t(lang,
+            edit.fragmentEndsWithNewline ? 'approval.fragmentHasNewline' : 'approval.fragmentNoNewline')}</Txt> : null}
           {edit.whitespaceChange ? <Txt role="small" tone="inkSoft">{t(lang, 'approval.whitespaceChange')}</Txt> : null}
           {rows.length > 12 ? <More label={moreLabel ?? t(lang, 'approval.full')} open={open} /> : null}
         </View>

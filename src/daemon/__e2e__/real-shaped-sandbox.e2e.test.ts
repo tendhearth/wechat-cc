@@ -13,11 +13,11 @@
 // 后加的几条各自的红 / 绿写在 README 的场景表下面。
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { hostname, tmpdir } from 'node:os'
+import { homedir, hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parsePermissionRequest } from '../../cli/hook'
-import { CliSessionRow, makeProtocolClient, MatterDetail, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
+import { CliSessionRow, makeProtocolClient, MatterDetail, PlacesResponse, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
 import { routesForToken } from '../internal-api/route-tiers'
 import { REQUEST_SCHEMAS } from '../internal-api/schema'
 import { encodeNativeHistoryKey } from '../../adapters/workbench/native-history'
@@ -65,7 +65,8 @@ const RULES = JSON.stringify({
 })
 
 /** 主人在桌面上登记过的一个项目(projects.json):一个干净的 git 仓库,工作台的「改动」靠 git 比对。 */
-const project = realpathSync(mkdtempSync(join(tmpdir(), 'wechat-cc-sandbox-project-')))
+// 仓库本身也可能检出在「地方」排除的系统临时目录。夹具留在用户主目录下，afterAll 会收掉。
+const project = realpathSync(mkdtempSync(join(homedir(), 'wechat-cc-sandbox-project-')))
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=sandbox@example.invalid', '-c', 'user.name=sandbox', ...args], { cwd: project, stdio: 'pipe' })
 git('init', '-q'); writeFileSync(join(project, 'README.md'), 'sandbox project\n'); git('add', '.'); git('commit', '-qm', 'init')
 // Chat and delegated work must have separate directories even when TMPDIR is
@@ -101,10 +102,10 @@ let codexDecision: unknown
 let lastCodexEnvelope = ''
 let topicJudgeAttempts=0,topicRoundDispatches=0
 const claudeScript: FakeSdkScript = { async onDispatch(text) { if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
-const approval = (command: string, finalText: string) => ({
+const approval = (command: string, finalText: string, cwd: string | null = '/tmp') => ({
   toolCalls: [], finalText,
   codexSteps: [{
-    request: { method: 'item/commandExecution/requestApproval', params: { itemId: `c-${command}`, command, cwd: '/tmp', availableDecisions: ['accept', 'decline'] } },
+    request: { method: 'item/commandExecution/requestApproval', params: { itemId: `c-${command}`, command, ...(cwd === null ? {} : { cwd }), availableDecisions: ['accept', 'decline'] } },
     onResponse: (r: { result?: unknown }) => {
       const d = (r.result as { decision?: unknown } | undefined)?.decision
       decisions.set(command, d)
@@ -117,6 +118,7 @@ const codexScript: FakeSdkScript = {
     lastCodexEnvelope = text
     const s = said(text)
     if (s === '把 build 删了') return approval('rm -rf build', '删好了。')
+    if (s === '在本轮目录把 build 删了') return approval('rm -rf build', '删好了。', null)
     if (s === '列一下目录') return approval('ls', '列好了。')
     if (s === '推一下') return approval('git push origin main', '推不了,被拒了。')
     if (s === '再清一次 dist') return approval('rm -rf dist', '清好了。')
@@ -765,6 +767,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: NOTEBOOK_PHONE_TOKEN })
     const session_id = 'sandbox-structured-approval'
     const cwd = join(project, 'preview')
+    mkdirSync(cwd)
     const input = { file_path: join(cwd, 'sample.txt'), old_string: 'preview before\r\n', new_string: 'preview after\n'.repeat(30) }
     const req = parsePermissionRequest('claude', { hook_event_name: 'PermissionRequest', session_id, cwd, tool_name: 'Edit', tool_input: input })
     const post = await desktop<{ status: string }>('POST', '/v1/cli/permission', { ...req, idle_s: 3600, machine: hostname() }, 'trusted')
@@ -784,6 +787,12 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       }
       verify(desk.body.sessions)
       verify(mobile.json<{ sessions: CliSessionRowT[] }>().sessions)
+      const places = await desktop('GET', '/v1/places')
+      expect(places.status).toBe(200)
+      const waiting = PlacesResponse.parse(places.body).places.find(p => p.waiting?.sessionId === session_id)?.waiting
+      expect(waiting).toMatchObject({ kind: 'terminal', tool: 'Edit', truncated: true })
+      expect(waiting?.cwd === cwd && JSON.stringify(waiting.display) === JSON.stringify(req?.display)).toBe(true)
+      expect((await desktop('GET', '/v1/places', undefined, 'trusted')).status).toBe(403)
       expect(d.log().some(line => line.includes(input.old_string.trim()) || line.includes(input.new_string.trim()))).toBe(false)
     } finally {
       await desktop('POST', '/v1/cli/decide', { session_id, decision: 'deny' })
@@ -819,7 +828,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
   })
 
   it('桌面挪动和收起历史地方时只保存操作过的行', async () => {
-    const fixture = mkdtempSync(join(process.cwd(), 'sandbox-ended-places-'))
+    const fixture = mkdtempSync(join(homedir(), 'sandbox-ended-places-'))
     try {
       const ids = ['sandbox-place-move', 'sandbox-place-hide', 'sandbox-place-untouched']
       for (const session_id of ids) {
@@ -1285,7 +1294,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(pushesFor(taskId)).toHaveLength(1)
 
     // 「等你批准」(blocking,照旧各处都推):App 推一次、微信里一张卡,账上一行,通道两个
-    d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 把 build 删了`)
+    d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 在本轮目录把 build 删了`)
     const ack2 = await d.waitForOutbound(m => texts(m, d.owner).filter(t => t.startsWith('已接下这件事')).length >= 2, 15_000)
     const asking = texts(ack2, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes(`· ${asking}`) && t.includes('需要你批准')), 30_000)
@@ -1296,6 +1305,13 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await expect.poll(() => d.log().some(l => /\[ASK_OPINION\] given opinionLength=\d+ reasonLength=\d+$/.test(l)), { timeout: 15_000 }).toBe(true)
     const detail = await desktop<Pick<ReturnType<typeof MatterDetail.parse>, 'permissions'>>('GET', `/v1/workbench/task?id=${asking}`)
     expect(detail.body.permissions).toHaveLength(1)
+    const places = await desktop('GET', '/v1/places')
+    expect(places.status).toBe(200)
+    const waiting = PlacesResponse.parse(places.body).places.find(p => p.waiting?.matterId === asking)?.waiting
+    const approval = detail.body.permissions[0]!
+    expect(waiting).toMatchObject({ kind: 'permission', requestId: approval.id, tool: approval.tool })
+    expect(waiting?.cwd === approval.cwd && waiting?.showSnapshotNotice === approval.showSnapshotNotice &&
+      JSON.stringify(waiting?.display) === JSON.stringify(approval.display)).toBe(true)
     const detailPath = `/v1/matter?id=${asking}`
     const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
     try {
@@ -1304,7 +1320,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       expect([desk.status, mobile.status]).toEqual([200, 200])
       for (const permission of [detail.body.permissions[0], MatterDetail.parse(desk.body).permissions[0], MatterDetail.parse(mobile.json()).permissions[0]]) {
         expect(permission?.display?.body.kind).toBe('command')
-        expect(permission?.cwd === '/tmp' && permission.display?.body.kind === 'command' &&
+        expect(permission?.cwd === project && permission.display?.body.kind === 'command' &&
           permission.display.body.command === 'rm -rf build').toBe(true)
       }
     } finally { phone.close() }

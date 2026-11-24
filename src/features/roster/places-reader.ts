@@ -9,11 +9,12 @@ import type { Db } from '../../lib/db'
 import { placeMapEntries, placeMapRoster, type MapTopicResolver } from './place-map'
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
-import { terminalStatusKey, type PlaceOpinionT, type PlaceT, type RosterItemT } from '@wechat-cc/protocol'
+import { permissionCwd, PermissionDisplaySchema, terminalStatusKey, type PlaceOpinionT, type PlaceT, type PlaceWaitingT, type RosterItemT } from '@wechat-cc/protocol'
 import { CLI_SESSION_ENDED_RETAIN_MS } from '../../adapters/store/cli-session-store'
 import { buildRoster } from '../../domain/roster'
 import { buildPlaces } from '../../domain/places'
-import { gatherRoster, type RosterReaderDeps } from './reader'
+import { framedTooLargeFor } from '../../domain/matters/phone-scope'
+import { gatherRoster, type RosterGathered, type RosterReaderDeps } from './reader'
 import type { PlacesStore } from '../../adapters/store/places-store'
 import type { PlacesReader } from '../../ports/places'
 import { makePlaceOutlines, type PlaceOutlineDeps } from './place-outline'
@@ -39,6 +40,25 @@ export interface PlacesReaderDeps {
 
 
 export const placeKey = (root: string) => `p:${createHash('sha256').update(root).digest('hex').slice(0, 16)}`
+
+function waitingOperation(waiting: PlaceWaitingT, { permissions, sessions }: Pick<RosterGathered, 'permissions' | 'sessions'>) {
+  const permission = waiting.kind === 'permission' && waiting.matterId
+    ? permissions.get(waiting.matterId)?.find(p => p.id === waiting.requestId) : undefined
+  const terminal = waiting.kind === 'terminal' && waiting.sessionId ? sessions.get(waiting.sessionId)?.pending : undefined
+  const operation = permission ?? terminal
+  if (!operation) return
+  const display = PermissionDisplaySchema.safeParse(operation.display).data
+  const cwd = permissionCwd(operation.cwd)
+  const hasScriptPreview = !!permission?.scripts?.length
+  return {
+    tool: operation.tool,
+    ...(display ? { display } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(terminal?.truncated !== undefined ? { truncated: terminal.truncated } : {}),
+    ...(permission?.showSnapshotNotice !== undefined ? { showSnapshotNotice: permission.showSnapshotNotice } : {}),
+    ...(permission && (permission.showSnapshotNotice || hasScriptPreview) ? { hasScriptPreview } : {}),
+  }
+}
 
 export function makePlacesReader(deps: PlacesReaderDeps) {
   const placeMapEnabled = () => deps.labs?.placeMapEnabled() ?? false
@@ -131,7 +151,8 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
           })
       }
     }
-    return { ...result, added: hasHistory ? shared : result.added, records: [...saved, ...shared, ...result.added], saved, now, items, rootOf: (path: string | null) => resolved(root(path)) }
+    return { ...result, added: hasHistory ? shared : result.added, records: [...saved, ...shared, ...result.added], saved, now, items,
+      waitingSources: g, rootOf: (path: string | null) => resolved(root(path)) }
   }
 
   const collectMapPlaces = (includeEnded = false) =>
@@ -209,21 +230,33 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
     recapEnabled: () => deps.recaps?.enabled() ?? false,
     setRecapEnabled: deps.recaps?.setEnabled,
     recap: (id: string) => deps.recaps?.enabled() ? deps.recaps.read(id) : undefined,
-    read(scope) {
+    read(scope, frameBudget?: number) {
       const heads = new Map<string, string>()
       const recaps = scope === 'operator' && deps.recaps?.enabled() ? deps.recaps : undefined
-      const { places, hidden, added, now } = collect(scope, deps.roster, recaps && ((key, item) => {
+      const { places, hidden, added, now, waitingSources } = collect(scope, deps.roster, recaps && ((key, item) => {
         if (item.terminal) heads.set(key, item.terminal.sessionId)
       }), scope === 'operator')
       if (added.length) deps.store.add(added, now)
+      const withOperations = []
       for (const place of places) {
         const id = heads.get(place.key)
         const recap = id && recaps?.read(id)
         if (recap) place.recap = recap
         const waiting = place.waiting
         if (waiting?.requestId) Object.assign(waiting, deps.opinion?.(waiting.requestId))
+        if (!waiting) continue
+        const operation = waitingOperation(waiting, waitingSources)
+        if (operation) {
+          withOperations.push({ place, waiting })
+          place.waiting = { ...waiting, ...operation }
+        }
       }
       const data = { places, hidden, ...(placeMapEnabled() ? { labs: { placeMap: true as const } } : {}) }
+      // Count the ETag's fixed-length body field and the phone tunnel's escaping.
+      if (frameBudget !== undefined && withOperations.length
+        && framedTooLargeFor(JSON.stringify({ ...data, version: '0'.repeat(16) }), frameBudget)) {
+        for (const { place, waiting } of withOperations) place.waiting = waiting
+      }
       const version = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16)
       return { ...data, version }
     },
