@@ -400,7 +400,10 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
           if(answer)return usage(id)
           const request=detail.permissions.find(p=>p.id===requestId)
           if(!detail.runId||!request)return stale
-          if(verb==='权限' && identity?.origin !== undefined && identity.origin !== 'desktop') return approvalLookupReply(id,requestId)
+          if(verb==='权限'){
+            if(identity?.origin==='app')return approvalLookupReply(id,requestId)
+            if(identity?.origin==='web'||identity?.origin===null)return '请到电脑或手机 App 上看全再定。'
+          }
           if(verb!=='拒绝'){
             const card=opts.actions.pendingWechatPermissionCard
               ? opts.actions.pendingWechatPermissionCard(requestId)

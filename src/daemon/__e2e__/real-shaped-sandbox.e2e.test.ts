@@ -1467,6 +1467,22 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(parseApprovalLookupReply(phoneReply)).toMatchObject({ taskId: asking, requestId: complete.hash })
     expect(d.query<{ count: number }>('SELECT count(*) AS count FROM matter_say_receipts WHERE request_id=? AND instr(reply,?)>0',
       phoneRequestId, privateApprovalEvidence)[0]?.count).toBe(0)
+    const webRequestId = 'b6419095-70fa-41f3-bdbb-578f233fa011'
+    const webPhone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN, client: 'web' })
+    try {
+      const accepted = await webPhone.request({
+        method: 'POST', path: '/v1/matter/owner-chat/say',
+        body: JSON.stringify({ requestId: webRequestId, text: lookupText }),
+      })
+      expect(accepted.status).toBe(200)
+      const webReply = '请到电脑或手机 App 上看全再定。'
+      await expect.poll(() => d.query('SELECT status, reply FROM matter_say_receipts WHERE request_id = ?', webRequestId))
+        .toEqual([{ status: 'replied', reply: webReply }])
+      const page = await webPhone.request({ method: 'GET', path: '/v1/matter/owner-chat/page' })
+      expect(page.status).toBe(200)
+      const messages = page.json<{ messages: Array<{ text: string; speaker?: string }> }>().messages
+      expect(messages.some(m => m.speaker === 'notice' && m.text === webReply)).toBe(true)
+    } finally { webPhone.close() }
     decisions.delete(scopedApprovalCommand)
     d.sendText(d.owner, `y ${complete.code}`, { quote: completeNotice })
     await expect.poll(() => decisions.get(scopedApprovalCommand)).toBe('accept')

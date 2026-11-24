@@ -2,16 +2,14 @@ var cResponseSignature=null,cResponding=false,cResponseUnknown=new Set()
 function cResponseHtml(d){
  if(!isDevice||!cReady)return ''
  var id=d.matter.id,run=d.runId,html=''
- if(!run&&mApproval)return '<p>这项请求已处理或失效。</p>'
  if(!run)return '<p>这项响应请在手机 App 或电脑上处理。</p>'
- ;(d.permissions||[]).filter(function(p){return p.taskId===id&&(!mApproval||p.id===mApproval)}).forEach(function(p){html+='<section class="response"><h3>等你决定</h3><p>'+esc(p.tool)+'</p><pre>'+esc(p.description)+'</pre>'+cScriptHtml(p,id)+(p.canDenyWithReason===true?'<label>拒绝理由（选填）<textarea maxlength="2000" data-denial-reason="'+esc(p.id)+'"></textarea></label>':'')+'<small>提出于 '+esc(mobileTime(p.createdAt))+' · 仅此请求、当前轮次有效</small><div><button type="button" data-decision="deny" data-request="'+esc(p.id)+'">先不做</button> <button type="button" data-decision="allow" data-request="'+esc(p.id)+'">允许这一步</button>'+(p.canAllowTask?' <button type="button" data-decision="allow_task" data-request="'+esc(p.id)+'">本任务同命令都允许</button>':'')+'</div></section>'})
- if(mApproval)return html||'<p>这项请求已处理或失效。</p>'
+ ;(d.permissions||[]).filter(function(p){return p.taskId===id}).forEach(function(p){html+='<section class="response"><h3>等你决定</h3><p>'+esc(p.tool)+'</p><pre>'+esc(p.description)+'</pre>'+cScriptHtml(p,id)+(p.canDenyWithReason===true?'<label>拒绝理由（选填）<textarea maxlength="2000" data-denial-reason="'+esc(p.id)+'"></textarea></label>':'')+'<small>提出于 '+esc(mobileTime(p.createdAt))+' · 仅此请求、当前轮次有效</small><div><button type="button" data-decision="deny" data-request="'+esc(p.id)+'">先不做</button> <button type="button" data-decision="allow" data-request="'+esc(p.id)+'">允许这一步</button>'+(p.canAllowTask?' <button type="button" data-decision="allow_task" data-request="'+esc(p.id)+'">本任务同命令都允许</button>':'')+'</div></section>'})
  ;(d.questions||[]).filter(function(q){return q.taskId===id}).forEach(function(q){html+='<form class="response" data-question="'+esc(q.id)+'"><h3>等你回答</h3>';q.questions.forEach(function(item,index){html+='<fieldset><legend>'+esc(item.header)+' · '+esc(item.question)+'</legend>';item.options.forEach(function(o,i){html+='<label><input type="'+(item.multiSelect?'checkbox':'radio')+'" name="answer-'+index+'" value="'+i+'">'+esc(o.label)+' '+esc(o.description)+'</label>'});if(item.allowOther)html+='<label>补充<input type="text" maxlength="4000" data-other="'+index+'"></label>';html+='</fieldset>'});html+='<button type="submit">提交回答</button></form>'})
  return html||'<p>没有可在网页处理的请求。其他响应请在手机 App 或电脑上处理。</p>'
 }
 function cResponseButtons(){document.querySelectorAll('#m-response [data-decision],#m-response .response button').forEach(function(/** @type {HTMLButtonElement} */ b){var form=b.closest('form'),request=b.dataset.request||(form&&form.dataset.question);b.disabled=cResponding||!mDetailFresh||mOffline||cResponseUnknown.has(request)})}
 async function cRespond(request,decision,answers){
- if(!isDevice||!cReady||!mDetailFresh||mOffline||cResponding||cResponseUnknown.has(request)||!mDetail||(mApproval&&request!==mApproval))return
+ if(!isDevice||!cReady||!mDetailFresh||mOffline||cResponding||cResponseUnknown.has(request)||!mDetail)return
  var id=mCurrent,run=mDetail.runId,known=(decision?mDetail.permissions:mDetail.questions)||[]
  if(!known.some(function(p){return p.id===request&&p.taskId===id}))return
  var reasonField=/** @type {HTMLTextAreaElement|null} */ (document.querySelector('[data-denial-reason="'+request+'"]'))
@@ -33,7 +31,7 @@ document.getElementById('m-response').addEventListener('submit',function(ev){var
 
 function cRenderResponses(d){
  if(!isDevice||!cReady)return
- var signature=JSON.stringify([d.matter.id,d.runId,mApproval,d.permissions||[],d.questions||[]])
+ var signature=JSON.stringify([d.matter.id,d.runId,d.permissions||[],d.questions||[]])
  if(signature!==cResponseSignature){
   var drafts=new Map();document.querySelectorAll('#m-response [data-denial-reason]').forEach(function(/** @type {HTMLTextAreaElement} */ f){drafts.set(f.dataset.denialReason,f.value)})
   cResponseSignature=signature;document.getElementById('m-response').innerHTML=cResponseHtml(d)

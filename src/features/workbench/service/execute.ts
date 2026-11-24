@@ -51,7 +51,7 @@ import type { CreateWechatTask } from '../wechat-types'
 import { checkedText } from './checked-text'
 import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
-import type { Active, AcceptedContinuation } from './state'
+import type { Active, AcceptedContinuation, PermissionPromptHandle } from './state'
 import type { CreateTask, InputMaterials, WorkbenchTaskView } from './types'
 import type { AdmissionDomain } from './admission'
 import type { AttachmentsDomain } from './attachments'
@@ -159,7 +159,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
   const {validateNativeDecision}=domains.native
   const {holdInputs,drainInputs,settleRuntimeInput}=domains.inputs
   const {revokeCredentials,cancelIdleClose,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump}=domains.lifecycle
-  const {requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=domains.notices
+  const {requestNotice,requestPermissionNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=domains.notices
   const {collect,retakeBaseline,takeBaseline}=domains.artifacts
   const {afterTurn:untilAfterTurn,stop:untilStop}=domains.until
   async function execute(task:StoredTask,text:string,running:Active) {
@@ -589,7 +589,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const ruleDecide=ctx.deps.permissionDecide
     const opinion=ctx.deps.askOpinion
     const opinionProject=()=>store.worktrees.get(task.id)?.repoRoot??task.path
-    const permissionPrompts=new Map<string,()=>void>()
+    const permissionPrompts=new Map<string,PermissionPromptHandle>()
     const permissions=makeRunPermissions({
       initialDenials,
       taskId:task.id,root:task.path,provider:task.providerId,stateDir:ctx.stateDir,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
@@ -597,17 +597,15 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         if(event.type==='request'){
           const description=event.legacyDescription??event.permission.description
           addRunEvent('system',`权限请求：${event.permission.id}`)
-          let replyLine=''
-          let marker: string | undefined
           if(ctx.deps.permissionPrompt){
             const close=ctx.deps.permissionPrompt(task.title,event.permission,(decision,reason)=>{
               const resolved=permissions.resolve(event.permission.id,decision,reason)
               if(resolved)ctx.hub.bumped(task.id)
               return resolved
             },()=>permissions.deadline(event.permission.id),task.providerId,description)
-            permissionPrompts.set(event.permission.id,close);replyLine=close.replyLine??'';marker=close.marker
+            permissionPrompts.set(event.permission.id,close)
           }
-          requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'),marker)
+          requestPermissionNotice(task,running,event.permission.id)
           opinion?.schedule(event.permission.id, () => {
             const input = permissions.pendingOpinionInput(event.permission.id)
             return input && { kind: 'permission', project: opinionProject(), ...input }
@@ -643,7 +641,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       execution,
       attachments:dispatchAttachments,
       ledgerOpening:acceptance?.ledgerOpening??false,ledgerRunId:store.ledger.agents(task.id).at(-1)?.runId,interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
-      cancelled:false,spawnAttempted:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
+      cancelled:false,spawnAttempted:false,done,resolveDone,stop,signalStop,permissions,permissionPrompts,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
       ...(firstTurn?{turn:{id:firstTurn,open:true}}:{}),
     }
     const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}

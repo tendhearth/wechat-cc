@@ -24,7 +24,6 @@ interface CCPClient {
   close(): void
 }
 declare var CCP: {
-  parseApprovalLookupReply: typeof import('../../../packages/protocol/src/approval-lookup').parseApprovalLookupReply
   CC_ACTIVITY: typeof import('../../../packages/protocol/src/cc-activity.js').CC_ACTIVITY
   CC_RESPONSE: typeof import('../../../packages/protocol/src/cc-activity.js').CC_RESPONSE
   createCCActivity: typeof import('../../../packages/protocol/src/cc-activity.js').createCCActivity

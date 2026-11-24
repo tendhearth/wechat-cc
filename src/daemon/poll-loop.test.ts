@@ -1072,6 +1072,41 @@ describe('startLongPollLoops — fastLane (permission answers while a turn await
       expect(seen).toEqual(['y 01', 'after'])
     } finally { await handle.stop() }
   })
+
+  it('settles a later approval immediately while feedback takes 90 seconds, then queues the failed message', async () => {
+    vi.useFakeTimers()
+    const seen: string[] = [], saved: string[] = []
+    const card = pendingCard()
+    const getUpdates = vi.fn(async (_id, _url, _token, cursor, signal?: AbortSignal) => {
+      if (cursor !== 'b1') return { updates: [text('c1', 'y 01'), text('c1', 'y'), text('c1', 'after')], sync_buf: 'b1' }
+      await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }))
+      return { updates: [], sync_buf: cursor }
+    })
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: parseUpdates,
+      fastLane: msg => msg.text === 'y 01'
+        ? new Promise<boolean>(resolve => setTimeout(() => resolve(false), 90_000))
+        : card.fastLane(msg),
+      onInbound: async msg => { seen.push(msg.text) },
+      onSyncBuf: (_id, cursor) => { saved.push(cursor) },
+    })
+    const decision = vi.fn()
+    void card.answered.then(decision)
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(decision).toHaveBeenCalledExactlyOnceWith('allow')
+      expect(seen).toEqual([])
+      expect(saved).toEqual([])
+      await vi.advanceTimersByTimeAsync(90_000)
+      expect(seen).toEqual(['y 01', 'after'])
+      expect(saved).toEqual(['b1'])
+    } finally {
+      const stopped = handle.stop()
+      await vi.advanceTimersByTimeAsync(92_000)
+      await stopped
+      vi.useRealTimers()
+    }
+  })
 })
 
 // 2026-10 变异测试第二轮:parseUpdates 的语音 / 文件 / 视频三类、消息 id、状态过滤在基线里一条都没跑到(NoCoverage),

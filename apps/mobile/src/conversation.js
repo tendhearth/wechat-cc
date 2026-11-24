@@ -13,14 +13,8 @@ function cReplyAvatar(m){
 }
 function cMessageHtml(m){
   var avatar=cReplyAvatar(m),who=m.role==='me'?'你':avatar?'':'CC'
-  var approval=m.role==='cc'&&m.speaker==='notice'&&typeof CCP!=='undefined'&&CCP.parseApprovalLookupReply(m.text)
-  var body=approval?esc(approval.text)+' <button type="button" data-chat-approval="'+approval.taskId+'" data-request="'+approval.requestId+'">打开审批页</button>':esc(m.text)
-  return '<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+avatar+who+(who?' · ':'')+esc(mobileTime(m.at))+'</small><div'+(m.role==='cc'&&m.speaker!=='agent'&&m.speaker!=='notice'?' class="cc-voice"':'')+'>'+body+'</div>'+(typeof cAttachmentHtml==='function'?cAttachmentHtml(m):'')+'</article>'
+  return '<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+avatar+who+(who?' · ':'')+esc(mobileTime(m.at))+'</small><div'+(m.role==='cc'&&m.speaker!=='agent'&&m.speaker!=='notice'?' class="cc-voice"':'')+'>'+esc(m.text)+'</div>'+(typeof cAttachmentHtml==='function'?cAttachmentHtml(m):'')+'</article>'
 }
-document.getElementById('chat-messages').addEventListener('click',function(ev){
-  var b=/** @type {HTMLElement|null} */ (/** @type {Element} */ (ev.target).closest('[data-chat-approval]'))
-  if(isDevice&&b)void openMatter(b.dataset.chatApproval,b.dataset.request)
-})
 async function cLoadAgentNames(){
   if(!isDevice||!cReady||cAgentNamesRequested)return
   cAgentNamesRequested=true

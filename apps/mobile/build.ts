@@ -25,7 +25,7 @@ export const PSET_SHELL_OUT = new URL('../../relay/pset.html', import.meta.url)
 /**
  * Compact only the shipped /m classic script. Source assembly stays readable for
  * the device-only route scanner; /set's separately embedded scripts stay intact.
- * Keep global names and credential declarations verbatim: even an older PWA service worker
+ * Keep the credential declarations verbatim: even an older PWA service worker
  * must be able to strip the token before caching its public offline shell.
  */
 export function compactMobilePage(page: MobilePage): MobilePage {
@@ -34,20 +34,15 @@ export function compactMobilePage(page: MobilePage): MobilePage {
   if (scripts.length !== 1 || !scripts[0]![1]!.startsWith(prologue) || !/^;?\n/.test(scripts[0]![1]!.slice(prologue.length))) {
     throw new Error('compactMobilePage: expected one classic script with the T/REMOTE prologue')
   }
-  // Bun supports the grouped minify options at runtime. Its TranspilerOptions
-  // declaration still exposes only the older minifyWhitespace option.
-  const options = {
-    loader: 'js', target: 'browser', minify: { syntax: true, whitespace: true },
+  const transpiler = new Bun.Transpiler({
+    loader: 'js', target: 'browser', minifyWhitespace: true,
     treeShaking: false, deadCodeElimination: false, inline: false, trimUnusedImports: false,
-  } as const
-  const transpiler = new Bun.Transpiler(options)
+  })
   const script = transpiler.transformSync(scripts[0]![1]!.slice(prologue.length))
   // A JS printer may unescape a string's end tag, or join `< /script/` into
   // `</script/`. Reject unsafe HTML raw text rather than rewriting JS tokens.
   if (/<\/script|<!--/i.test(script)) throw new Error('compactMobilePage: unsafe HTML raw text in compact script')
-  // HTML comments explain the source; the relay frame only needs the markup.
-  const phone = page.phone.replace(/<!--[\s\S]*?-->/g, '')
-  return { ...page, phone: phone.replace(/<script>[\s\S]*?<\/script>/, () => `<script>${prologue};\n${script}</script>`) }
+  return { ...page, phone: page.phone.replace(/<script>[\s\S]*?<\/script>/, () => `<script>${prologue};\n${script}</script>`) }
 }
 
 export function buildMobilePage(): MobilePage {
