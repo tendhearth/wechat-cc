@@ -470,6 +470,9 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   if (waitingRoot) resize?.observe(waitingRoot)
   const scroll = () => { reflectOverflow(); positionActions() }
   root.addEventListener('scroll', scroll)
+  // 矮窗口里整条左栏会滚(#places-root 外面那一层);菜单是 fixed 定位,跟着它重新对齐那一行。
+  const railScroll = root.closest('.desk-rail-scroll')
+  railScroll?.addEventListener('scroll', scroll)
   const onActionsToggle = (/** @type {Event} */ event) => {
     if (!(event.target instanceof Element) || !event.target.matches('.place-actions')) return
     positionActions()
@@ -525,6 +528,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       root.ownerDocument.removeEventListener('click', dismissOutside, true)
       root.ownerDocument.removeEventListener('keydown', dismissOnEscape)
       root.removeEventListener('scroll', scroll)
+      railScroll?.removeEventListener('scroll', scroll)
       root.removeEventListener('toggle', onActionsToggle, true)
       root.ownerDocument.defaultView?.removeEventListener('resize', scroll)
       root.removeEventListener('click', click)
