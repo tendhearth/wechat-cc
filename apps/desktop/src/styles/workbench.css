@@ -171,6 +171,12 @@
   box-sizing:border-box;
   padding-bottom:0;
 }
+@media (height < 700px) {
+  /* Keep the scrollport for restoration and use the task header's divider. */
+  .wb-main:has(.wb-permissions):not(#roster-dock *)>.wb-content { flex-basis:0; visibility:hidden; }
+  .wb-main:has(.wb-permissions):not(#roster-dock *)>.wb-reading-bar { display:none; }
+  .wb-controls:has(.wb-permissions):not(#roster-dock *) { border-top:0; }
+}
 .wb-controls:has(.wb-permissions) { display:flex; flex:1; flex-direction:column; min-height:0; max-height:none; }
 .wb-controls:has(.wb-permissions)>.wb-controls-inner { display:flex; flex:1; flex-direction:column; min-height:0; }
 .wb-controls-inner:has(.wb-permissions)>* { flex:none; }
@@ -596,6 +602,35 @@
 }
 .wb-followup-live .wb-control-actions>.wb-btn { display:inline-flex; align-items:center; gap:5px; }
 .wb-followup.wb-followup-live { gap:6px; }
+/* Keep a row for the field and share one toolbar while a request is pending. */
+.wb-permissions~.wb-followup:not(#roster-dock *) {
+  grid-template-columns:auto auto minmax(0,1fr);
+  align-items:center;
+  gap:6px 8px;
+  padding-block:6px;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *)>textarea {
+  grid-area:1 / 1 / 2 / -1;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *)>textarea:placeholder-shown:not(:focus) {
+  height:calc(1.6em + 6px);
+  min-height:0;
+  resize:none;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *)>.th-agents { grid-area:2 / 1; }
+.wb-permissions~.wb-followup:not(#roster-dock *)>.wb-compose-attachments { display:contents; }
+.wb-permissions~.wb-followup:not(#roster-dock *) .wb-attach-button {
+  grid-area:2 / 2;
+  margin:0;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *)>:is(.wb-control-actions,.wb-btn) {
+  grid-area:2 / 3;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *) .wb-input-help:not([open]) { flex-basis:auto; }
+.wb-permissions~.wb-followup:not(#roster-dock *) .wb-attachment-chips:empty { display:none; }
+.wb-permissions~.wb-followup:not(#roster-dock *) :is(.wb-attachment-chips,.wb-interaction-error) {
+  grid-column:1 / -1;
+}
 @media(max-height:360px) {
   .wb-controls { max-height:40%; }
   .wb-artifacts.is-outcome { margin-top:8px; margin-bottom:8px; }

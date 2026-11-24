@@ -197,17 +197,45 @@ async function expectDecisionButtons(card: Locator) {
   }
 }
 
+async function expectFirstThreeCommandLines(card: Locator) {
+  const source = card.locator('.approval-command .approval-source').first()
+  const visible = await source.evaluate(el => {
+    const text = el.firstChild
+    if (!(text instanceof Text)) return []
+    const panel = el.closest('.wb-permissions')!.getBoundingClientRect()
+    const actions = el.closest('.wb-permission')!.querySelector('.wb-permission-actions')!.getBoundingClientRect()
+    const range = document.createRange()
+    let start = 0
+    return text.data.split('\n').slice(0, 3).map(line => {
+      range.setStart(text, start)
+      range.setEnd(text, start + line.length)
+      start += line.length + 1
+      const rects = Array.from(range.getClientRects())
+      return rects.length > 0 && rects.every(rect =>
+        rect.top >= Math.max(0, panel.top) &&
+        rect.bottom <= Math.min(window.innerHeight, panel.bottom, actions.top) &&
+        rect.left >= Math.max(0, panel.left) &&
+        rect.right <= Math.min(window.innerWidth, panel.right))
+    })
+  })
+  expect(visible).toEqual([true, true, true])
+}
+
 for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]] as const) {
   test(`task detail gives permissions room at ${width}×${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height })
     await openFixture(page, { wide: width >= 900, layout: true })
     const composer = page.locator('.wb-followup')
+    const field = composer.getByRole('textbox')
     const content = page.locator('.wb-content')
     const panel = page.locator('.wb-permissions')
     const request = panel.locator('.wb-permission')
     await expect(composer).toBeInViewport({ ratio: 1 })
     await page.evaluate(() => document.fonts.ready.then(() => undefined))
     const fullConversationHeight = await content.evaluate(el => el.getBoundingClientRect().height)
+    const normalComposerHeight = (await composer.boundingBox())!.height
+    const normalFieldHeight = (await field.boundingBox())!.height
+    const normalFontSize = await field.evaluate(el => getComputedStyle(el).fontSize)
     // In the normal layout the conversation fills the space between the header and controls.
     const normalGap = await page.locator('.wb-main').evaluate(main => {
       const header = main.querySelector('.wb-task-head')!.getBoundingClientRect()
@@ -224,7 +252,8 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]]
     const conversationBox = (await content.boundingBox())!
     const panelBox = (await panel.boundingBox())!
     const composerBox = (await composer.boundingBox())!
-    expect(conversationBox.height).toBeGreaterThanOrEqual(48)
+    if (height < 700) expect(conversationBox.height).toBe(0)
+    else expect(conversationBox.height).toBeGreaterThanOrEqual(48)
     expect(conversationBox.height).toBeLessThan(fullConversationHeight)
     expect(conversationBox.y + conversationBox.height).toBeLessThanOrEqual(panelBox.y + 1)
     expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(composerBox.y + 1)
@@ -235,6 +264,43 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]]
       el.scrollTop = 80
       return el.scrollTop
     })).toBe(80)
+
+    if (width === 760 && height === 600) {
+      await expect(panel.getByRole('heading', { name: '需要你的决定' })).toBeInViewport({ ratio: 1 })
+      const operation = request.locator('.wb-permission-tool')
+      await expect(operation).toHaveText('Claude 想运行一条命令')
+      await expect(operation).toBeInViewport({ ratio: 1 })
+      await expectFirstThreeCommandLines(request)
+      expect(composerBox.height).toBeLessThanOrEqual(96)
+      await expect(field).toBeInViewport({ ratio: 1 })
+      await expect(field).toHaveCSS('font-size', normalFontSize)
+      const singleLineHeight = await field.evaluate(el => {
+        const style = getComputedStyle(el)
+        return parseFloat(style.lineHeight) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+      })
+      expect((await field.boundingBox())!.height).toBeCloseTo(singleLineHeight, 0)
+
+      const attach = (await composer.getByRole('button', { name: /添加附件/ }).boundingBox())!
+      const help = (await composer.getByText('补充说明', { exact: true }).boundingBox())!
+      const send = (await composer.getByRole('button', { name: '发送补充' }).boundingBox())!
+      expect(attach.y + attach.height / 2).toBeCloseTo(send.y + send.height / 2, 0)
+      expect(help.y + help.height / 2).toBeCloseTo(send.y + send.height / 2, 0)
+
+      await field.click()
+      await expect(field).toBeFocused()
+      expect((await field.boundingBox())!.height).toBeCloseTo(normalFieldHeight, 0)
+      await field.pressSequentially('draft')
+      await field.blur()
+      await expect(field).toHaveValue('draft')
+      expect((await field.boundingBox())!.height).toBeCloseTo(normalFieldHeight, 0)
+      await expect(field).toBeInViewport({ ratio: 1 })
+      await expect(composer).toBeInViewport({ ratio: 1 })
+      await expectFirstThreeCommandLines(request)
+      await expectDecisionButtons(request)
+      await field.fill('')
+      await field.blur()
+      expect((await composer.boundingBox())!.height).toBeCloseTo(composerBox.height, 0)
+    }
 
     // Expand the ten-line preview and a much longer original at the top of the scrollport.
     const allLines = request.getByText('还有 2 行 · 看全部', { exact: true })
@@ -254,6 +320,8 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]]
     await expect(panel).toHaveCount(0)
     expect(await content.evaluate(el => el.getBoundingClientRect().height)).toBeCloseTo(fullConversationHeight, 0)
     await expect(composer).toBeInViewport({ ratio: 1 })
+    expect((await composer.boundingBox())!.height).toBeCloseTo(normalComposerHeight, 0)
+    expect((await field.boundingBox())!.height).toBeCloseTo(normalFieldHeight, 0)
   })
 }
 
