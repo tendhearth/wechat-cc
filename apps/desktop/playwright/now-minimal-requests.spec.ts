@@ -22,7 +22,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  await page.route('**/v1/matter?id=*',route=>route.fulfill({json:{matter:{...task,kind:'task'}}}))
  // 在 WORKBENCH_ROUTES 之后登记:Playwright 里后登记的先接,那条宽的正则也匹配 /v1/matter/permission。
  await page.route('**/v1/matter/permission',route=>{decisions.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}})})
- await page.route('**/v1/cli/sessions*',route=>route.fulfill({json:{sessions:[{session_id:'terminal-1',source:'codex',status:'waiting',live_window:true,last_summary:'git status',pending:{actionable:true,tool:'Bash',summary:'git status',hash:'k3x9z'}}]}}))
+ await page.route('**/v1/cli/sessions*',route=>route.fulfill({json:{sessions:[{session_id:'terminal-1',source:'codex',status:'waiting',live_window:true,last_summary:'git status',pending:{actionable:true,tool:'Bash',summary:'git status',hash:'k3x9z',cwd:'/demo/portfolio'}}]}}))
  await page.route('**/v1/cli/activity*',route=>route.fulfill({json:{items:[{id:'msg',kind:'said',text:'终端原话',at:null}],earlier:null}}))
  await page.goto(shimUrl)
  await expect(page.locator('main.dashboard')).toBeVisible()

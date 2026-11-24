@@ -779,6 +779,9 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   margin-top: 0;
   padding: 8px 18px 16px;
 }
+[data-desk-wide] .thing-waiting .place-ask { align-items: center; }
+[data-desk-wide] .thing-waiting-note { color: var(--th-ink-soft); font-size: var(--th-size-meta); line-height: var(--th-lh-meta); }
+[data-desk-wide] .thing-waiting-note[hidden] { display: none; }
 [data-desk-wide] .thing-compose-status {
   box-sizing: border-box;
   width: var(--desk-thread-width);

@@ -242,6 +242,7 @@ test('会话卡画出短命令和执行目录，允许提交本次请求',async(
   expect(await directory.textContent() === `在 ${sampleCwd}`).toBe(true)
   await expect(card.getByText('看完整原文',{exact:true})).toBeVisible()
   const decision = page.waitForRequest('**/v1/cli/decide')
+  await expect(page.locator('#thing-thread .thing-waiting-note')).toBeHidden()
   await card.getByRole('button',{name:'允许',exact:true}).click()
   expect((await decision).postDataJSON()).toEqual({session_id:'ask',hash:'a1234',decision:'allow'})
   await expect(card).toBeHidden()
@@ -268,6 +269,9 @@ for (const {label, options} of [
     await expect(card.locator('.approval-command')).toBeVisible()
     await expect(card.getByRole('button',{name:'允许',exact:true})).toHaveCount(0)
     await expect(card.getByText(needsTerminal,{exact:true})).toBeVisible()
+    // 原因写在「不允许」旁边,不用在卡片里滚就看得见。
+    await expect(card.locator('.thing-waiting-note')).toHaveText('这里看不全，请到终端里看全再定。')
+    await expect(card.locator('.thing-waiting-note')).toBeInViewport({ratio:1})
     if (options.truncated) {
       await card.getByText('还有 2 行 · 展开收到的部分',{exact:true}).click()
       expect((await card.locator('.approval-command details .approval-source').textContent()) === command.split('\n').slice(8).join('\n')).toBe(true)
