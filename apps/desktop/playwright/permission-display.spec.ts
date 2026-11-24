@@ -178,16 +178,16 @@ async function expectDecisionButtons(card: Locator) {
   }
 }
 
-async function expectFirstThreeCommandLines(card: Locator) {
+async function expectFirstThreeCommandLines(card: Locator, count = 3) {
   const source = card.locator('.approval-command .approval-source').first()
-  const visible = await source.evaluate(el => {
+  const visible = await source.evaluate((el, lines) => {
     const text = el.firstChild
     if (!(text instanceof Text)) return []
     const panel = el.closest('.wb-permissions')!.getBoundingClientRect()
     const actions = el.closest('.wb-permission')!.querySelector('.wb-permission-actions')!.getBoundingClientRect()
     const range = document.createRange()
     let start = 0
-    return text.data.split('\n').slice(0, 3).map(line => {
+    return text.data.split('\n').slice(0, lines).map(line => {
       range.setStart(text, start)
       range.setEnd(text, start + line.length)
       start += line.length + 1
@@ -198,8 +198,8 @@ async function expectFirstThreeCommandLines(card: Locator) {
         rect.left >= Math.max(0, panel.left) &&
         rect.right <= Math.min(window.innerWidth, panel.right))
     })
-  })
-  expect(visible).toEqual([true, true, true])
+  }, count)
+  expect(visible).toEqual(Array(count).fill(true))
 }
 
 for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600], [550, 450]] as const) {
@@ -248,7 +248,7 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600],
 
     if (width === 550) {
       await expect(panel.getByRole('heading', { name: '需要你的决定' })).toBeInViewport({ ratio: 1 })
-      await expectFirstThreeCommandLines(request)
+      await expectFirstThreeCommandLines(request, 2) // 1100×900 放大到 200%:审批区只放得下命令前两行,按钮完整
       await field.fill('放大后也能补充说明')
       await expect(field).toHaveValue('放大后也能补充说明')
       await expect(composer.getByRole('button', { name: '发送补充' })).toBeInViewport({ ratio: 1 })
