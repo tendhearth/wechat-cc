@@ -108,6 +108,10 @@
 .wb-archived-controls p { margin:0; color:var(--wb-text); font-size:12px; }
 .wb-archived-controls span { margin-left:8px; color:var(--wb-muted); }
 .wb-path { color:var(--wb-secondary); font:12px/1.6 var(--mono); overflow-wrap:anywhere; }
+/* Failures sit outside the scrolling conversation, so they stay visible when it is scrolled or collapsed for a decision. */
+.wb-alerts { flex:none; padding:0 var(--wb-gutter); }
+.wb-alerts>* { width:min(780px,100%); margin-right:auto; margin-left:auto; }
+.wb-alerts>.wb-error { margin-top:10px; margin-bottom:6px; }
 .wb-content { flex:1; min-height:0; min-width:0; overflow:auto; overscroll-behavior:contain; padding:0 var(--wb-gutter) 24px; scroll-padding-block:20px; }
 .wb-content>* { width:min(780px,100%); margin-right:auto; margin-left:auto; }
 .wb-dialogue { display:grid; gap:24px; padding:30px 0 24px; }

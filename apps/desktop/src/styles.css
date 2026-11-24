@@ -5079,6 +5079,7 @@ body:not([data-pane="overview"]) #topbar-cc[data-waiting] .topbar-waiting-dot { 
 #roster-dock .workbench-pane > .cc-life-topline { display: none !important; }
 #roster-dock .wb-main { min-width: 0; }
 #roster-dock .wb-content-inner, #roster-dock .wb-controls-inner { width: 100%; padding: 16px; }
+#roster-dock .wb-alerts { padding: 0 16px; }
 #roster-dock .wb-task-head { padding: 16px; }
 #roster-dock .wb-sidebar { display: none; }
 #roster-dock .wb-controls { position: relative; }
