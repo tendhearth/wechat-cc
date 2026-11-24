@@ -418,31 +418,33 @@
           </button>
         </div>
         <header id="dash-global-rail" class="dash-topbar">
-          <div class="topbar-home">
-            <button id="topbar-cc" class="dash-nav-link active" data-pane="overview" aria-label="跟 CC 说">
-              <span class="topbar-figure"><img class="topbar-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" /><img class="topbar-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" /></span>
-              <span class="topbar-waiting-dot" aria-hidden="true"></span>
-              <span class="desk-cc-copy"><strong id="desk-cc-presence">正在连接…</strong><small id="desk-cc-situation" hidden></small></span>
-            </button>
-            <button id="desk-notebook-envelope" type="button" aria-label="本子上有 CC 的回信" title="本子上有 CC 的回信" hidden>
-              <img src="./assets/pet/props/envelope.png" alt="" width="22" />
-            </button>
-            <details class="cc-home-details">
-              <summary><span class="now-sr">CC 的连接:</span><span class="desk-cc-connections" aria-hidden="true">⋯</span></summary>
-              <div class="now-panel">
-                <div id="now-connections" class="now-connections"></div>
-                <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
-              </div>
-            </details>
+          <div class="desk-rail-scroll">
+            <div class="topbar-home">
+              <button id="topbar-cc" class="dash-nav-link active" data-pane="overview" aria-label="跟 CC 说">
+                <span class="topbar-figure"><img class="topbar-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" /><img class="topbar-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" /></span>
+                <span class="topbar-waiting-dot" aria-hidden="true"></span>
+                <span class="desk-cc-copy"><strong id="desk-cc-presence">正在连接…</strong><small id="desk-cc-situation" hidden></small></span>
+              </button>
+              <button id="desk-notebook-envelope" type="button" aria-label="本子上有 CC 的回信" title="本子上有 CC 的回信" hidden>
+                <img src="./assets/pet/props/envelope.png" alt="" width="22" />
+              </button>
+              <details class="cc-home-details">
+                <summary><span class="now-sr">CC 的连接:</span><span class="desk-cc-connections" aria-hidden="true">⋯</span></summary>
+                <div class="now-panel">
+                  <div id="now-connections" class="now-connections"></div>
+                  <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
+                </div>
+              </details>
+            </div>
+            <nav aria-label="主导航">
+              <button id="topbar-search" type="button"><svg class="desk-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/></svg>搜索<span id="desk-search-shortcut" aria-hidden="true" hidden></span></button>
+              <button class="dash-nav-link" data-pane="notebook"><svg class="desk-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 17 20H7z"/><path d="M7 4v16M4.5 8H7M4.5 12H7M4.5 16H7M11 9h4"/></svg>本子<span id="desk-notebook-dot" aria-hidden="true" hidden></span></button>
+              <button class="dash-nav-link" data-pane="memory"><svg class="desk-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 4 8 4-8 4-8-4z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/></svg>记忆<span id="memory-count" hidden></span></button>
+              <button class="dash-nav-link" data-pane="recollections"><svg class="desk-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5"/><path d="M4.5 5v4h4M12 8.5V12l2.6 1.8"/></svg>回忆</button>
+            </nav>
+            <div class="desk-project-label">项目</div>
+            <div class="places-strip"><div id="places-root" class="places-root"></div></div>
           </div>
-          <nav aria-label="主导航">
-            <button id="topbar-search" type="button"><svg class="desk-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/></svg>搜索<span id="desk-search-shortcut" aria-hidden="true" hidden></span></button>
-            <button class="dash-nav-link" data-pane="notebook"><svg class="desk-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 17 20H7z"/><path d="M7 4v16M4.5 8H7M4.5 12H7M4.5 16H7M11 9h4"/></svg>本子<span id="desk-notebook-dot" aria-hidden="true" hidden></span></button>
-            <button class="dash-nav-link" data-pane="memory"><svg class="desk-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 4 8 4-8 4-8-4z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/></svg>记忆<span id="memory-count" hidden></span></button>
-            <button class="dash-nav-link" data-pane="recollections"><svg class="desk-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5"/><path d="M4.5 5v4h4M12 8.5V12l2.6 1.8"/></svg>回忆</button>
-          </nav>
-          <div class="desk-project-label">项目</div>
-          <div class="places-strip"><div id="places-root" class="places-root"></div></div>
           <details class="topbar-more"><summary aria-label="更多"><svg class="desk-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="18" cy="12" r=".9" fill="currentColor"/></svg><span class="desk-more-label">更多</span></summary><div>
             <button id="topbar-roster" type="button" aria-controls="roster-aside" aria-expanded="false">在做</button>
             <button id="settings-open" type="button">设置</button>

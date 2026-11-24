@@ -385,9 +385,12 @@ for (const width of [1280, 760]) {
     await page.goto(shimUrl)
     const rail = page.locator('#dash-global-rail')
     const entry = rail.getByRole('button', { name: '本子' })
+    if (width === 760) {
+      await expect(rail).toBeHidden()
+      await page.locator('#desk-rail-toggle').click()
+    }
     await expect(entry).toHaveCount(1)
     expect(await entry.evaluate(el => (el.nextElementSibling as HTMLElement)?.dataset.pane)).toBe('memory')
-    if (width === 760) await page.locator('#desk-rail-toggle').click()
     await clickNav(page, 'notebook')
     await expect(entry).toHaveAttribute('aria-current', 'page')
     const panel = page.locator('#notebook-pane')

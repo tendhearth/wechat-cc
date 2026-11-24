@@ -133,7 +133,7 @@ test('画室空态提供实际设置入口，读取失败可以恢复，站外�
  mode='broken';await page.locator('#atelier-refresh').click();await expect(page.locator('#atelier-gallery').getByText('暂时没能确认画室的状态。已有作品仍保存在这台 Mac。')).toBeVisible()
  await page.setViewportSize({width:1280,height:1000})
  await expect(page.locator('#atelier-gallery').getByText('暂时没能确认画室的状态。已有作品仍保存在这台 Mac。')).toBeVisible()
- await expect(page.locator('#atelier-gallery').getByText('暂时没能确认画室的状态。已有作品仍保存在这台 Mac。')).toBeHidden()
+ await expect(page.locator('#atelier-gallery').getByText('暂时无法确认画室状态', { exact: true })).toBeHidden()
  await expect(page.getByRole('button',{name:'重新检查',exact:true})).toBeVisible()
  mode='loaded';await page.locator('[data-atelier-status-action="retry"]').click();await page.locator('#atelier-gallery [data-atelier-open]').click()
  await expect(page.locator('dialog.cc-record-reader')).toContainText('图片暂时无法显示')

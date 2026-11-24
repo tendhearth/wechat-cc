@@ -70,6 +70,13 @@ function layoutMarkup() {
 }
 
 async function openFixture(page: Page, { layout = false } = {}) {
+  const width = page.viewportSize()!.width
+  // Mirror the initial dashboard state in this fixture, which loads workbench without main.js.
+  const layoutAttrs = layout ? [
+    'data-mode="dashboard"',
+    ...(width < 900 ? ['data-desk-compact', 'data-desk-collapsed'] : []),
+    ...(width < 700 ? ['data-desk-overlay'] : []),
+  ].join(' ') : ''
   await page.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', () => { document.documentElement.dataset.cspViolation = 'true' })
   })
@@ -81,7 +88,7 @@ async function openFixture(page: Page, { layout = false } = {}) {
       await route.fulfill({
         contentType: 'text/html',
         headers: { 'Content-Security-Policy': "script-src 'self'; object-src 'none'" },
-        body: `<!doctype html><html lang="zh" data-desk-wide${layout ? ' data-mode="dashboard"' : ''}><head><meta charset="utf-8">
+        body: `<!doctype html><html lang="zh" data-desk-wide ${layoutAttrs}><head><meta charset="utf-8">
           ${styles.map(css => `<link rel="stylesheet" href="/${css}">`).join('')}
           ${layout ? '' : '<style>html, body, .dashboard, .dash-main, .thing-detail, .workbench-pane, #workbench-root { height: 100%; margin: 0; }</style>'}
           </head><body>${layout ? layoutMarkup() : taskMarkup}<script type="module" src="/fixture.js"></script></body></html>`,
@@ -195,7 +202,7 @@ async function expectFirstThreeCommandLines(card: Locator) {
   expect(visible).toEqual([true, true, true])
 }
 
-for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]] as const) {
+for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600], [550, 450]] as const) {
   test(`task detail gives permissions room at ${width}×${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height })
     await openFixture(page, { layout: true })
@@ -239,6 +246,15 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]]
       return el.scrollTop
     })).toBe(80)
 
+    if (width === 550) {
+      await expect(panel.getByRole('heading', { name: '需要你的决定' })).toBeInViewport({ ratio: 1 })
+      await expectFirstThreeCommandLines(request)
+      await field.fill('放大后也能补充说明')
+      await expect(field).toHaveValue('放大后也能补充说明')
+      await expect(composer.getByRole('button', { name: '发送补充' })).toBeInViewport({ ratio: 1 })
+      await field.fill('')
+      await field.blur()
+    }
     if (width === 760 && height === 600) {
       await expect(panel.getByRole('heading', { name: '需要你的决定' })).toBeInViewport({ ratio: 1 })
       const operation = request.locator('.wb-permission-tool')

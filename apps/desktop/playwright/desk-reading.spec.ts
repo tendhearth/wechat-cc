@@ -63,7 +63,7 @@ test('地方名、首日日期和正文各在自己的位置', async ({ page, sh
   await expectCentered(first, scroll)
   await expect(page.locator('#desk-today')).toHaveCount(0)
   const title = page.locator('.desk-date-line')
-  await expect.poll(() => title.evaluate(node => node.getBoundingClientRect().height)).toBe(0)
+  await expect(title).toHaveCount(0)
   const bubble = scroll.locator('.converse-bubble').first()
   const bodyOffset = async () => (await bubble.boundingBox())!.x - (await scroll.boundingBox())!.x
   const inset = await scroll.evaluate(el => Math.max(36, (el.clientWidth - 712) / 2))
@@ -75,7 +75,7 @@ test('地方名、首日日期和正文各在自己的位置', async ({ page, sh
   await expect(heading).toHaveText('rici')
   expect((await heading.boundingBox())!.x - (await page.locator('#thing-thread .thing-heading').boundingBox())!.x).toBe(28)
   await page.locator('#topbar-cc').click()
-  await expect.poll(() => title.evaluate(node => node.getBoundingClientRect().height)).toBe(0)
+  await expect(title).toHaveCount(0)
 })
 
 test('只有终端会话的地方打开全文，回 CC 保留全部对话', async ({ page, shimUrl }) => {

@@ -17,7 +17,10 @@ test.beforeEach(async ({ page, shim }) => {
 test('内滚地方条靠下的菜单可 Tab 到达、完整显示、关闭和操作，中文数据能条件轮询', async ({ page, shimUrl }) => {
   await page.setViewportSize({ width: 900, height: 560 })
   const names = ['甲地', ...Array.from({ length: 13 }, (_, i) => `地方${i + 1}`), '己地', '庚地']
-  await routePlaces(page, names.map(name => placeItem(name)))
+  // 末行占两行摘要，为倒数第二行菜单留出向下展开并越过滚动区的空间。
+  await routePlaces(page, names.map(name => name === '庚地'
+    ? placeItem(name, { line: '已经核对这一批结果，剩下的内容会在整理完以后一起带回来。'.repeat(3) })
+    : placeItem(name)))
   await page.route('**/v1/places/move', route => route.fulfill({ json: { ok: true } }))
   const rerender = page.waitForResponse(response => response.url().endsWith('/v1/places')
     && /^[0-9a-f]{16}$/.test(response.request().headers()['if-none-match'] ?? ''))

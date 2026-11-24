@@ -6,7 +6,7 @@ import { watchDeskFullscreen } from './modules/desk-fullscreen.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
 import { isDeskCollapseShortcut, readDeskCollapsed, writeDeskCollapsed } from './modules/desk-collapse.js'
-import { DESK_EXPANDED_RAIL_QUERY } from './modules/desk-layout.js'
+import { DESK_EXPANDED_RAIL_QUERY, DESK_OVERLAY_RAIL_QUERY } from './modules/desk-layout.js'
 import { mountPlacesStrip } from './modules/places-strip.js'
 import { mountThingThread } from './modules/thing-thread.js'
 import { rememberConversationPosition } from './modules/converse-reading.js'
@@ -2117,6 +2117,7 @@ function mountDeskHistory(strip, signal) {
 /** @param {ReturnType<typeof mountPlacesStrip>} strip */
 function mountDeskLayout(strip) {
   const expandedRail = window.matchMedia(DESK_EXPANDED_RAIL_QUERY)
+  const overlayRail = window.matchMedia(DESK_OVERLAY_RAIL_QUERY)
   const more = dashRail?.querySelector('.topbar-more')
   const scroll = document.getElementById('converse-scroll')
   const toggle = document.getElementById('desk-rail-toggle')
@@ -2153,6 +2154,7 @@ function mountDeskLayout(strip) {
     }
     root.toggleAttribute('data-desk-collapsed', closed)
     root.toggleAttribute('data-desk-peeking', closed && peeking)
+    root.toggleAttribute('data-desk-overlay', overlayRail.matches)
     syncNotebookMail()
     toggle.setAttribute('aria-expanded', String(visible))
     const label = closed ? '展开左边' : '收起左边'
@@ -2241,10 +2243,13 @@ function mountDeskLayout(strip) {
   }
   const onShortcut = (/** @type {KeyboardEvent} */ event) => {
     if (root.dataset.mode !== 'dashboard' || event.defaultPrevented) return
-    if (event.key === 'Escape' && peeking && !event.isComposing && !document.querySelector('dialog[open]')) {
+    if (event.key === 'Escape' && (peeking || (overlayRail.matches && !collapsed))
+      && !event.isComposing && !document.querySelector('dialog[open]')) {
       event.preventDefault()
-      waitForReentry = pointerInTrigger
-      dismissPeek()
+      if (collapsed) {
+        waitForReentry = pointerInTrigger
+        dismissPeek()
+      } else setCollapsed(true)
     } else if (isDeskCollapseShortcut(event, mac)) {
       event.preventDefault()
       setCollapsed(!collapsed)
@@ -2254,6 +2259,12 @@ function mountDeskLayout(strip) {
     setCollapsed(!collapsed)
     toggle.focus({ preventScroll: true })
   }, { signal })
+  document.addEventListener('click', event => {
+    if (overlayRail.matches && !collapsed
+      && event.composedPath().some(node => node instanceof Element && node.matches('.dash-main'))) {
+      setCollapsed(true)
+    }
+  }, { signal })
   document.addEventListener('keydown', onShortcut, { signal })
   root.toggleAttribute('data-desk-compact', !expandedRail.matches)
   renderCollapse()
@@ -2262,6 +2273,7 @@ function mountDeskLayout(strip) {
     root.toggleAttribute('data-desk-compact', !expandedRail.matches)
     renderRailState(!expandedRail.matches)
   }), { signal })
+  overlayRail.addEventListener('change', () => preserveReadingPosition(renderCollapse), { signal })
   window.addEventListener('pagehide', () => {
     listeners.abort()
     cancelClose()

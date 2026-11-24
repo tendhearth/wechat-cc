@@ -111,7 +111,13 @@ test('完成时禁止重复修改，最近了结能恢复回待办',async({page,
 
 test('读取失败可以恢复，空态和错误态在窄窗口都能读',async({page,shimUrl,shim})=>{
  await page.setViewportSize({width:900,height:1000});const state=await boot(page,shimUrl,shim);state.mode='error'
- await clickNav(page,'todos');await expect(page.locator('#todos-list')).toContainText('暂时没能读取待办');await expect(page.locator('.cc-page-status p')).toHaveCSS('font-size','16px');await saveShot(page,'todos-error-900.png')
+ await clickNav(page,'todos')
+ const status=page.locator('#todos-list').getByRole('status')
+ const heading=status.getByRole('heading',{name:/^暂时没能读取待办/})
+ await expect(heading).toBeInViewport({ratio:1})
+ await expect(heading).toHaveCSS('font-size','13.5px')
+ await expect(status.locator('p')).toBeHidden()
+ await saveShot(page,'todos-error-900.png')
  state.mode='loaded';state.active=[];await page.locator('.cc-page-status button').click();await expect(page.locator('.todos-empty')).toContainText('还没有待办');await saveShot(page,'todos-empty-900.png')
  state.active=[fact];await page.locator('#todos-refresh').click();await expect(page.locator('.todo-value')).toContainText(fact.value)
 })

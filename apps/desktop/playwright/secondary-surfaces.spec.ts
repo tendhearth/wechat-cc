@@ -194,7 +194,12 @@ for (const mode of ['empty', 'error'] as const) test(`secondary ${mode} states r
   await expect(page.locator('#memory-profile-content')).toContainText(mode === 'empty' ? '还没有可用的会话' : '暂时无法读取记忆')
   if (mode === 'error') {
     await page.locator('#memory-facts-search').fill('查询不会把失败改为空记录')
-    await expect(page.locator('#memory-facts-records')).toContainText('暂时无法读取')
+    const error = page.locator('#memory-facts-records').getByRole('status')
+    await expect(error.getByText('暂时没能读取记下的事。', { exact: true })).toBeVisible()
+    const retry = error.getByRole('button', { name: '重新读取', exact: true })
+    await expect(retry).toBeEnabled()
+    await retry.click()
+    await expect(error.getByText('暂时没能读取记下的事。', { exact: true })).toBeVisible()
   }
   await shot(page, `memory-${mode}`)
   await clickNav(page, 'todos')
