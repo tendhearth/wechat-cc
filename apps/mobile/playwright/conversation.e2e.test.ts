@@ -62,6 +62,28 @@ test('sending uses one owner-chat request, approval binds exact current run, bro
  const h=await fixture(page);await page.goto(HOST+'/m');await expect(page.locator('#chat-messages')).toContainText('交给 Codex');await page.locator('#chat-input').fill('看看结果');await page.locator('#chat-send').click();await expect.poll(()=>h.posts.filter(p=>p.path.endsWith('/say')).length).toBe(1)
  await page.locator('#roster-strip [data-place-open]').click();await page.getByRole('button',{name:'允许这一步',exact:true}).click();await expect.poll(()=>h.posts.filter(p=>p.path.endsWith('/permission')).length).toBe(1);expect(h.posts.find(p=>p.path.endsWith('/permission')).body).toEqual({id,runId:run,requestId:run,decision:'allow'});await page.goBack();await expect(page.locator('#conversation')).toBeVisible();expect(h.errors).toEqual([])
 })
+test('command approval shows cwd and the background argument before allowing the current request',async({page})=>{
+ const h=await fixture(page)
+ Object.assign(h.detail.permissions[0],{tool:'Bash',description:'command=echo ready',cwd:'/fixture/project',
+  display:{body:{kind:'command',command:'echo ready'},extra:{run_in_background:true}}})
+ await page.goto(HOST+'/m?matter='+id)
+ const card=page.locator('#m-response section.response')
+ await expect(card).toContainText('在 /fixture/project')
+ await expect(card).toContainText('run_in_background：true')
+ await card.getByRole('button',{name:'允许这一步',exact:true}).click()
+ await expect.poll(()=>h.posts.find(p=>p.path.endsWith('/permission'))?.body).toEqual({id,runId:run,requestId:run,decision:'allow'})
+ expect(h.errors).toEqual([])
+})
+test('command approval without cwd offers only rejection and explains where to review it',async({page})=>{
+ const h=await fixture(page)
+ Object.assign(h.detail.permissions[0],{tool:'Bash',description:'command=echo ready',canAllowTask:true})
+ await page.goto(HOST+'/m?matter='+id)
+ const card=page.locator('#m-response section.response')
+ await expect(card.getByRole('button')).toHaveCount(1)
+ await expect(card.getByRole('button',{name:'拒绝',exact:true})).toBeEnabled()
+ await expect(card).toContainText('这条在网页上看不全，请到手机 App 或电脑上看全再定')
+ expect(h.errors).toEqual([])
+})
 test('uses system sans for the interface and agents, and Kaiti for CC’s words',async({page})=>{
  const h=await fixture(page)
  h.messages.push({id:'old-reply',role:'cc',text:'以前的一句。',at:2})
