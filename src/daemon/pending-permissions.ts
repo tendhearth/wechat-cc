@@ -36,16 +36,33 @@ export function isPermissionCardQuote(quoted: string): boolean {
   return /「[yn]\s*(?:[0-9]{2}|[a-z0-9]{5})」|\[approval:[a-z0-9]{5}\]|^(?:Claude|OpenAI|Gemini) wants to run\b/im.test(quoted)
 }
 
-export function workbenchQuoteMarker(text: string): string | undefined {
-  return /^〔请求 ([a-f0-9]{16})〕$/.exec(text.split('\n', 2)[1] ?? '')?.[1]
+const workbenchMarkerLine = /^〔请求 ([a-f0-9]{16})〕$/
+const workbenchHeader = /(?: · |^任务 )[a-f0-9]{8}$/
+const workbenchCommandBoundary = /^(?:〔命令开始〕|〔命令结束〕)$/
+const workbenchCommandLine = /^│(?: .*|$)$/
+const workbenchReminderLookup = /^查看：任务 [a-f0-9]{8} 权限 [a-f0-9-]{36}$/
+const genericWorkbenchQuote = '（引用了一张待批卡）'
+
+/** Recognize fragments for privacy. Only an in-position marker can bind a decision. */
+export function classifyWorkbenchQuote(text: string): { marker?: string } | null {
+  const lines = text.split(/\r?\n/)
+  const marker = workbenchMarkerLine.exec(lines[1] ?? '')?.[1]
+  const markerElsewhere = lines.some((line, i) => i !== 1 && workbenchMarkerLine.test(line.trim()))
+  const visibleLines = lines.map(line => line.trim()).filter(Boolean)
+  if (marker && !markerElsewhere) return { marker }
+  if (visibleLines.length === 0) return null
+  if (markerElsewhere || workbenchHeader.test(visibleLines[0]!) ||
+      visibleLines.some(line => workbenchMarkerLine.test(line) || workbenchCommandBoundary.test(line) || workbenchReminderLookup.test(line)) ||
+      visibleLines.every(line => workbenchCommandLine.test(line))) return {}
+  return null
 }
 
-export function summarizedWorkbenchQuote(marker: string): string {
-  return `（引用了一张待批卡 · 〔请求 ${marker}〕）`
+export function summarizedWorkbenchQuote(marker?: string): string {
+  return marker ? `（引用了一张待批卡 · 〔请求 ${marker}〕）` : genericWorkbenchQuote
 }
 
 export function isSummarizedWorkbenchQuote(text: string): boolean {
-  return /^（引用了一张待批卡 · 〔请求 [a-f0-9]{16}〕）$/.test(text)
+  return text === genericWorkbenchQuote || /^（引用了一张待批卡 · 〔请求 [a-f0-9]{16}〕）$/.test(text)
 }
 
 export class PendingPermissions {
@@ -126,7 +143,7 @@ export class PendingPermissions {
 
   rememberWechatReminder(hash: string, chatId: string, text: string): void {
     const entry = this.entries.get(hash)
-    const marker = workbenchQuoteMarker(text)
+    const marker = classifyWorkbenchQuote(text)?.marker
     if (entry && marker && entry.wechatCard?.marker === marker && entry.meta?.chatId === chatId) {
       entry.wechatReminder = text
     }
@@ -141,7 +158,9 @@ export class PendingPermissions {
 
   /** Even a full code or an old matching title cannot substitute for a request marker. */
   matchWorkbenchQuote(quoted: string): { kind: 'matched'; hash: string } | { kind: 'altered'; hash?: string } | { kind: 'stale' } | null {
-    const marker = workbenchQuoteMarker(quoted)
+    const classification = classifyWorkbenchQuote(quoted)
+    if (!classification) return null
+    const { marker } = classification
     if (marker) {
       const matches = [...this.entries].filter(([, entry]) => entry.wechatCard?.marker === marker)
       if (matches.length === 0) return { kind: 'stale' }
@@ -150,10 +169,7 @@ export class PendingPermissions {
       return entry.wechatCard!.text === quoted || entry.wechatReminder === quoted
         ? { kind: 'matched', hash } : { kind: 'altered', hash }
     }
-    const head = quoted.split('\n', 1)[0]!
-    if (/ · [a-f0-9]{8}$/.test(head))
-      return { kind: 'altered' }
-    return null
+    return { kind: 'altered' }
   }
 
   /**

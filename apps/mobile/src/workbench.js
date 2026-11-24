@@ -222,9 +222,13 @@ function mRefresh() {
   if(mIsDevice()&&mRosterTarget&&mRosterTarget.terminal)return mTerminalRefresh(id,seq)
   return mApi('/v1/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq)mNotice(mError(e.message))}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
 }
-function openMatter(id) {
-  if(typeof cPushLayer==='function')cPushLayer({kind:'matter',id:id})
-  if(typeof cResetResponse==='function'&&id!==mCurrent)cResetResponse()
+/** @type {string|undefined} */ var mApproval
+/** @param {string} id @param {string} [request] */
+function openMatter(id,request) {
+  var focusChanged=request!==mApproval
+  mApproval=request
+  if(typeof cPushLayer==='function')cPushLayer({kind:'matter',id:id,request:request})
+  if(typeof cResetResponse==='function'&&(id!==mCurrent||focusChanged))cResetResponse()
   mDetailFresh=false
   if(mCurrent!==id){var oldSub=document.getElementById('m-sub');if(oldSub){oldSub.innerHTML='';oldSub.hidden=true}mRenderedStatus=null;mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
   if(typeof mSaveDirect==='function')mSaveDirect()

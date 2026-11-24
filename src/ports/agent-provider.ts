@@ -273,7 +273,7 @@ export interface AgentMcpTools {
 }
 
 /** Review details used by the text-only WeChat surface. */
-export interface WechatPermissionReview { display?: PermissionDisplay; cwd?: string; incomplete?: true }
+export interface WechatPermissionReview { display?: PermissionDisplay; argumentJson?: string; cwd?: string; incomplete?: true }
 
 export interface SpawnContext {
   /** 本句一次代答：关闭 provider 自有的自动记忆；CC API 已由临时令牌限权。 */

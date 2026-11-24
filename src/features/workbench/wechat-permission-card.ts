@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
-  PERMISSION_INVISIBLE_NOTICE_ZH, PERMISSION_SNAPSHOT_NOTICE, PERMISSION_WHITESPACE_NOTICE_ZH,
+  PermissionDisplaySchema, PERMISSION_INVISIBLE_NOTICE_ZH, PERMISSION_SNAPSHOT_NOTICE, PERMISSION_WHITESPACE_NOTICE_ZH,
   hasInvisiblePermissionText, isPermissionCommandTool, permissionActionZh, permissionCwd, permissionEditPreview, permissionLines,
   permissionPatchLabel, permissionTextSegments, resolvePermissionDisplay,
 } from '@wechat-cc/protocol'
@@ -25,7 +25,8 @@ const controlCopy = /〔请求|\[approval:|「(?:yt?|n)\s+[a-z0-9]+」|^回「[y
 const hasControlCopy = (text: string) => text.search(controlCopy) !== -1
 const neutralizeControlCopy = (text: string) => text.replace(controlCopy, match =>
   `\\u{${match.charCodeAt(0).toString(16).toUpperCase()}}${match.slice(1)}`)
-const oneLine = (value: string) => value.replaceAll('\n', '\\n').replaceAll('\t', '\\t')
+const escapeLineSeparators = (value: string) => value.replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029')
+const oneLine = (value: string) => escapeLineSeparators(value).replaceAll('\n', '\\n').replaceAll('\t', '\\t')
 const visible = (value: string) => neutralizeControlCopy(escapeInvisible(value)).replace(/[\uD800-\uDFFF]/gu, char =>
   `\\u{${char.charCodeAt(0).toString(16).toUpperCase()}}`)
 const hasUnpairedSurrogate = (value: string) => /[\uD800-\uDFFF]/u.test(value)
@@ -58,12 +59,13 @@ export function renderWechatPermissionCard(
     (body.kind === 'edit' && body.changes.some(change => !permissionCwd(change.path ?? body.path))) ||
     (body.kind !== 'edit' && pathTools.has(tool))
   const cwd = permissionCwd(permission.cwd)
-  const securityText = [...textValues(display), title, permission.tool, permission.cwd ?? '', source?.cwd ?? '', source?.command ?? '',
+  const securityText = [...textValues(display), source?.argumentJson ?? '', title, permission.tool, permission.cwd ?? '', source?.cwd ?? '', source?.command ?? '',
     ...(!suppliedDisplay ? [raw] : [])].join('\n')
   const invisible = hasInvisiblePermissionText(securityText)
   const opaqueCommand = commandRequest && (body.kind === 'text' || body.kind === 'fields')
   const commandShown = !commandRequest || body.kind === 'command' || (opaqueCommand && source?.command !== undefined)
   let complete = !source?.incomplete && !display.truncated && !permission.scripts?.length &&
+    (suppliedDisplay === undefined || PermissionDisplaySchema.safeParse(suppliedDisplay).success) &&
     !invisible && !hasUnpairedSurrogate(securityText) && !hasControlCopy(securityText) && (!needsCwd || !!cwd) && commandShown
 
   const marker = createHash('sha256').update('workbench-wechat-permission\0').update(permission.id).digest('hex').slice(0, 16)
@@ -74,8 +76,10 @@ export function renderWechatPermissionCard(
     : permissionActionZh(body, permission.tool, actor)))
   const historyText = `待批：${commandRequest ? '运行命令' : '工具操作'} · ${header[1]}`
   const lines = [`${action}：`]
-  const inline = (value: string) => /[\n\t\u2028\u2029]|^\s|\s$/.test(value) ? JSON.stringify(visible(value)) : visible(value)
-  const field = (name: string, value: string) => `${name.includes('：') ? JSON.stringify(visible(name)) : inline(name)}：${inline(value)}`
+  // Encode every string value as a JSON string. In particular, literal
+  // backslashes cannot impersonate escapes for real whitespace.
+  const inline = (value: string) => escapeLineSeparators(JSON.stringify(visible(value)))
+  const field = (name: string, value: string) => `${/^[\p{L}\p{N}_-]+$/u.test(name) ? name : inline(name)}：${inline(value)}`
   const commandBlock = (value: string) => {
     const commandLines = value.split('\n')
     if (commandLines.some(line => line.trim() === COMMAND_START || line.trim() === COMMAND_END)) complete = false
@@ -87,7 +91,7 @@ export function renderWechatPermissionCard(
   }
   const excerpt = (value: string, prefix: string, limit: number, ending: string) => {
     const all = permissionLines(value)
-    lines.push(...all.slice(0, limit).map(line => prefix + visible(line)))
+    lines.push(...all.slice(0, limit).map(line => prefix + inline(line)))
     if (all.length > limit) {
       lines.push('…')
       complete = false
@@ -104,7 +108,7 @@ export function renderWechatPermissionCard(
       break
     case 'edit':
       lines[0] = action.replace(/一个文件(?:的 \d+ 处)?$/, () => ` ${inline(body.path)}（${body.changes.length} 处）`) + '：'
-      if (body.replaceAll !== undefined) lines.push(field('replace_all', String(body.replaceAll)))
+      if (body.replaceAll !== undefined) lines.push('replace_all：' + String(body.replaceAll))
       for (const change of body.changes) {
         if (body.changes.length > 1 || change.path !== undefined) lines.push(`改动 ${inline(change.path ?? body.path)}：`)
         const preview = permissionEditPreview(change.before, change.after)
@@ -143,9 +147,11 @@ export function renderWechatPermissionCard(
         if (source?.command !== undefined) commandBlock(source.command)
         if (body.text !== source?.command) lines.push(field('执行者说明', body.text))
       } else lines.push(visible(body.text))
+      complete = false
       break
   }
   lines.push(...(display.extra ?? []).map(item => field(item.name, item.value)))
+  if (source?.argumentJson !== undefined) lines.push('参数 JSON：' + escapeLineSeparators(visible(source.argumentJson)))
   if (display.note !== undefined) lines.push(field('原因', display.note))
   if (cwd !== undefined) lines.push(`在 ${inline(cwd)}`)
   const reportedCwd = source?.cwd ?? (body.kind === 'command' ? body.cwd : undefined)

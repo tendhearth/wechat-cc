@@ -21,6 +21,7 @@ it.each(['Bash','mcp__catalog__lookup'])('owner rejection reaches %s as model-vi
   const gate=makeWorkbenchClaudeCanUseTool(async request=>{request.onDenied?.('不要 SSH');return false},undefined,['catalog'],['catalog'])
   const result=await gate(tool,{command:'rm build'}, {signal:new AbortController().signal} as never)
   expect(result).toEqual({behavior:'deny',message:expect.stringContaining('拒绝理由：不要 SSH')})
+  expect(result.behavior === 'deny' && !result.message.includes('rm build')).toBe(true)
   expect(result).not.toHaveProperty('interrupt')
 })
 
@@ -165,6 +166,12 @@ describe('MCP:放进来的才问,问的是「工具名 + 去掉凭据的参数�
       display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }, { name: 'api_key', value: '[credential omitted]' }] } } }] : [])
   })
 
+  it('treats two matching native MCP server prefixes as incomplete evidence', async () => {
+    const g = setup({ admitted: ['catalog', 'catalog__nested'] })
+    expect(await g.call('mcp__catalog__nested__lookup', { note: 'example' })).toEqual(ALLOW)
+    expect(g.requests[0]).toMatchObject({ wechatReview: { incomplete: true } })
+  })
+
   it('短参数能展示但 MCP 原因放不下时，微信审批不完整', async () => {
     const g = setup({ admitted: ['catalog'] })
     const tool = 'mcp__catalog__lookup'
@@ -217,7 +224,8 @@ describe('内置工具:trusted × solo × strict;要问的交给问的通道,带
     const g = setup()
     expect(await g.call('Bash', input, opts)).toEqual(ALLOW)
     const note = [opts.title, opts.description, opts.decisionReason].find(value => typeof value === 'string' && value.trim())
-    expect(g.requests).toEqual([{ ...request, onDenied: expect.any(Function), display: {
+    expect(g.requests).toEqual([{ ...request, ...(opts.title !== undefined || opts.description !== undefined || opts.decisionReason !== undefined
+      ? { wechatReview: { incomplete: true } } : {}), onDenied: expect.any(Function), display: {
       body: { kind: 'command', command: input.command }, ...(typeof note === 'string' ? { note: note.trim() } : {}),
     } }])
   })

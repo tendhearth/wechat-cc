@@ -167,6 +167,20 @@ describe('ACP 真机报文回放(cursor-agent 2026-09-17)', () => {
     expect(details.wechatReview).toEqual({ incomplete: true })
   })
 
+  it('preserves a command title and separates ACP reason parts with embedded newlines', () => {
+    const description = 'Review example'
+    const text = (value: string) => ({ type: 'content', content: { type: 'text', text: value } })
+    const call = { kind: 'execute', title: 'reason  ', rawInput: { command: 'printf fixture' }, content: [text('one\ntwo'), text('three')] }
+    const details = acpApprovalDetails(call, description)
+    expect(details.wechatReview?.incomplete).not.toBe(true)
+    expect(details.display?.note === call.title).toBe(true)
+    expect(details.display?.extra?.length).toBe(2)
+    expect(details.display?.extra?.[0]?.value === 'one\ntwo').toBe(true)
+    expect(acpApprovalDetails({ ...call, title: ['omitted'] }, description).wechatReview?.incomplete).toBe(true)
+    const misleading = acpApprovalDetails({ kind: 'other', content: [{ type: 'diff', path: 'fixture', oldText: 'a', newText: 'b' }] }, description)
+    expect(misleading.wechatReview?.incomplete).toBe(true)
+  })
+
   it('toolCallId 里嵌着字面换行,活动 id 清洗掉它', () => {
     const ids = [...new Set(updatesOf(records).map(update => update.toolCallId).filter((id): id is string => typeof id === 'string'))]
     const multiline = ids.filter(id => id.includes('\n'))

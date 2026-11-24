@@ -194,10 +194,11 @@ export function acpApprovalDetails(call: Obj, description: string): {
     // An ACP diff has one path and two text buffers. It cannot show a move
     // destination or distinguish deletion from writing an empty file.
     const incompleteOperation = call.kind === 'move' || call.kind === 'delete' ||
-      (call.kind === 'execute' && !command?.trim()) || diffs.some(diff => !diff.path.trim())
+      (call.kind === 'execute' && !command?.trim()) || (diffs.length > 0 && call.kind !== 'edit') || diffs.some(diff => !diff.path.trim())
     const wechatReview: WechatPermissionReview = {
       ...(omittedArgs || omittedContent || incompleteOperation ||
         (raw?.cwd !== undefined && typeof raw.cwd !== 'string') ||
+        (call.title !== undefined && typeof call.title !== 'string') ||
         (call.locations !== undefined && (!Array.isArray(call.locations) || extra.length !== locations.length)) ? { incomplete: true } : {}),
       ...(rawCwd !== undefined && cwd === undefined ? { cwd: rawCwd } : {}),
     }
@@ -212,7 +213,9 @@ export function acpApprovalDetails(call: Obj, description: string): {
     // The fallback can be just a title or explanatory text. Approval needs
     // structured evidence of the operation itself.
     if (!body) return incomplete
-    const note = [body.kind === 'edit' && typeof call.title === 'string' ? call.title : '', ...notes].filter(Boolean).join('\n')
+    const note = typeof call.title === 'string' ? call.title : undefined
+    // Each content part has its own boundary, even if it contains newlines.
+    const fields = [...extra, ...notes.map((value, i) => ({ name: `Content ${i + 1}`, value }))]
     const details = [
       ...(cwd ? [`Working directory: ${cwd}`] : []),
       ...diffs.map(({ path, oldText, newText }) => [path, 'Before:', oldText ?? '', 'After:', newText].join('\n')),
@@ -222,7 +225,7 @@ export function acpApprovalDetails(call: Obj, description: string): {
     // Keep the existing approval channel available if the complete source
     // cannot fit its description. Never send a partial edit as full evidence.
     if (full.length > 20_000) return incomplete
-    const display = boundedPermissionDisplay(() => ({ body, ...(note ? { note } : {}), ...(extra.length ? { extra } : {}) }))
+    const display = boundedPermissionDisplay(() => ({ body, ...(note !== undefined ? { note } : {}), ...(fields.length ? { extra: fields } : {}) }))
     if (!display) return incomplete
     return { ...fallback, display, ...(details.length ? { reviewDescription: full } : {}), ...(cwd ? { displayCwd: cwd } : {}) }
   } catch {

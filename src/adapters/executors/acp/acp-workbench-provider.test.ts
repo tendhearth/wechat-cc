@@ -122,7 +122,7 @@ describe('ACP workbench provider', () => {
     const next=child.sent.filter(m=>m.method==='session/prompt')[1]!
     expect(next.params.sessionId).toBe('sess-1')
     expect(next.params.prompt[0].text).toContain('不要访问其他机器')
-    expect(next.params.prompt[0].text).toContain('uname -a')
+    expect(next.params.prompt[0].text.includes('uname -a')).toBe(false)
     expect(run.events.some(e=>e.kind==='result'||e.kind==='error')).toBe(false)
     child.finishPrompt();await run.done
     expect(run.events.filter(e=>e.kind==='result')).toHaveLength(1)
@@ -246,7 +246,7 @@ describe('ACP workbench provider', () => {
     await prompted(child)
     permission(child, 'perm-1')
     await expect.poll(() => child.sent.some(m => m.id === 'perm-1')).toBe(true)
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'execute', description: 'uname -a', command: 'uname -a', display: { body: { kind: 'command', command: 'uname -a' } }, onDenied: expect.any(Function) }, expect.any(AbortSignal))
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'execute', description: 'uname -a', command: 'uname -a', display: { body: { kind: 'command', command: 'uname -a' }, note: '`uname -a`' }, onDenied: expect.any(Function) }, expect.any(AbortSignal))
     expect(child.sent.find(m => m.id === 'perm-1')).toEqual({ jsonrpc: '2.0', id: 'perm-1', result: { outcome: { outcome: 'selected', optionId: 'allow-once' } } })
     permission(child, 'perm-2', { toolCall: { toolCallId: 'c2', title: '`rm x`', kind: 'execute', status: 'pending', rawInput: { command: 'rm x' } } })
     await expect.poll(() => child.sent.some(m => m.id === 'perm-2')).toBe(true)

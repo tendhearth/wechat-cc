@@ -18,6 +18,27 @@ describe('makePermissionAnswer — the one consumer of a WeChat answer to a pend
     expect(logs).toEqual([])
   })
 
+  it.each([
+    'Fixture · abcdef12\nprivate fixture',
+    'Fixture · abcdef12\n〔请求 损坏〕\nprivate fixture',
+    '任务 abcdef12',
+    '〔命令开始〕\n│ private fixture\n〔命令结束〕',
+    '│ private fixture',
+    'Fixture · abcdef12\nprivate fixture\n 〔请求 1234567890abcdef〕 ',
+    'other text\n〔请求 1234567890abcdef〕\nprivate fixture\n〔请求 0123456789abcdef〕',
+  ])('uses the generic summary for an unbound card fragment', quoted => {
+    const consume = makePermissionAnswer({
+      ilink: { handlePermissionReply: (_text, _chat, input) => {
+        expect(input === quoted).toBe(true)
+        return false
+      } },
+      log: () => {},
+    })
+    const msg = { chatId: 'owner', text: 'follow-up', quote: { text: quoted } }
+    expect(consume(msg)).toBe(false)
+    expect(msg.quote.text).toBe('（引用了一张待批卡）')
+  })
+
   it('consumed ⇒ true + one audit line; not consumed (not an answer, or the pending is gone) ⇒ false, no line', () => {
     const lines: string[] = []
     const calls: unknown[][] = []

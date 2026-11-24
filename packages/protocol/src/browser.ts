@@ -19,6 +19,7 @@
  * 只碰 `globalThis.crypto.getRandomValues`(见 x25519.ts 的随机数来源)——
  * 不碰 Web Crypto 的 subtle 那一块,调用方(浏览器沙箱、中继壳页)可以没有它。
  */
+import { parseApprovalLookupReply } from './approval-lookup'
 import { b64uEncode, b64uDecode } from './b64u'
 import { makeProtocolClient } from './client'
 import { HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, STATUS_WORDS } from './status-table'
@@ -26,7 +27,7 @@ import { CC_ACTIVITY, CC_RESPONSE, createCCActivity, createCCResponsePerformance
 
 const CCP = {
   b64u: { encode: b64uEncode, decode: b64uDecode },
-  makeProtocolClient,
+  makeProtocolClient, parseApprovalLookupReply,
   CC_ACTIVITY, CC_RESPONSE, createCCActivity, createCCResponsePerformance,
   // 一件事的状态怎么说、主页分组叫什么(设计稿 2026-10-31 U5):手机网页跟 App、桌面同一张表,网页只用中文。
   STATUS_TABLE,

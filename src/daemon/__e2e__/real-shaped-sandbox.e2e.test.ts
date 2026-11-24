@@ -17,7 +17,7 @@ import { homedir, hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parsePermissionRequest } from '../../cli/hook'
-import { CliSessionRow, makeProtocolClient, MatterDetail, PERMISSION_SNAPSHOT_NOTICE, PlacesResponse, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
+import { approvalLookupReply, parseApprovalLookupReply, CliSessionRow, makeProtocolClient, MatterDetail, PERMISSION_SNAPSHOT_NOTICE, PlacesResponse, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
 import { WECHAT_PERMISSION_INCOMPLETE } from '../../ports/wechat'
 import { routesForToken } from '../internal-api/route-tiers'
 import { REQUEST_SCHEMAS } from '../internal-api/schema'
@@ -109,6 +109,12 @@ const approvalFollowUps = new Map<string, string>([
   ['引用改过的卡想问，这条是干嘛的？', ''],
   ['引用已了结的卡想问，这条是干嘛的？', ''],
   ['引用另一段命令想问，这条是干嘛的？', ''],
+  ['引用去掉标记的卡，我想问一下。', ''],
+  ['引用坏标记的卡，我想问一下。', ''],
+  ['只引用卡的头两行，我想问一下。', ''],
+  ['只引用命令块，我想问一下。', ''],
+  ['引用夹着其他请求号的卡，我想问一下。', ''],
+  ['引用去掉标记的提醒，我想问一下。', ''],
 ])
 function captureApprovalFollowUp(text: string): void {
   for (const [question, prompt] of approvalFollowUps) {
@@ -1384,12 +1390,13 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const alteredText = completeText.replace('〔命令结束〕', '〔命令结束〕（已编辑）')
     const injectedCommand = 'rm -rf sandbox-quoted-command'
     const questions = [...approvalFollowUps.keys()]
-    const askAboutQuote = async (index: number, quote: string) => {
+    const askAboutQuote = async (index: number, quote: string, marker: string | null = markerLine) => {
       const question = questions[index]!
       d.sendText(d.owner, question, { quote })
       await expect.poll(() => Boolean(approvalFollowUps.get(question)), { timeout: 15_000 }).toBe(true)
       const prompt = approvalFollowUps.get(question)!
-      expect(prompt.includes(`<quote type="text">（引用了一张待批卡 · ${markerLine}）</quote>`)).toBe(true)
+      const summary = marker ? '（引用了一张待批卡 · ' + marker + '）' : '（引用了一张待批卡）'
+      expect(prompt.includes('<quote type="text">' + summary + '</quote>')).toBe(true)
       for (const evidence of ['rm -rf build', privateApprovalEvidence, injectedCommand]) {
         expect(prompt.includes(evidence)).toBe(false)
       }
@@ -1399,6 +1406,20 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await askAboutQuote(0, completeText)
     await askAboutQuote(1, alteredText)
     await askAboutQuote(3, completeText.replace('rm -rf build', injectedCommand))
+    const withoutMarker = completeText.split('\n').filter((_, index) => index !== 1).join('\n')
+    const brokenMarker = completeText.replace(markerLine, '〔请求 损坏〕')
+    const commandBlock = completeText.split('\n').slice(3, 7).join('\n')
+    const forgedMarker = completeText + '\n〔请求 0123456789abcdef〕'
+    await askAboutQuote(4, withoutMarker, null)
+    await askAboutQuote(5, brokenMarker, null)
+    await askAboutQuote(6, completeText.split('\n').slice(0, 2).join('\n'))
+    await askAboutQuote(7, commandBlock, null)
+    await askAboutQuote(8, forgedMarker, null)
+    await askAboutQuote(9, completeNotice.replace(markerLine + '\n', ''), null)
+    for (const quote of [withoutMarker, brokenMarker, commandBlock, forgedMarker]) {
+      await outbound(() => d.sendText(d.owner, 'y ' + complete.code, { quote }), reply => reply.includes('重新查阅'))
+      expect(decisions.has(scopedApprovalCommand)).toBe(false)
+    }
     const lookupText = `任务 ${asking} 权限 ${complete.hash}`
     const chat = await desktop<{ matter: { id: string } }>('GET', '/v1/matter/owner-chat')
     expect(chat.status).toBe(200)
@@ -1415,17 +1436,30 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       })
       expect(accepted.status).toBe(200)
     } finally { appPhone.close() }
+    const phoneReply = approvalLookupReply(asking, complete.hash)
     const historySummary = `待批：运行命令 · ${completeText.split('\n')[1]}`
-    await expect.poll(() => d.query<{ status: string; reply: string }>(
-      'SELECT status, reply FROM matter_say_receipts WHERE request_id IN (?, ?) ORDER BY request_id', desktopRequest.requestId, phoneRequestId,
-    ).filter(row => row.status === 'replied' && row.reply === historySummary).length).toBe(2)
+    await expect.poll(() => d.query<{ id: string; status: string; reply: string }>(
+      'SELECT request_id AS id, status, reply FROM matter_say_receipts WHERE request_id IN (?, ?) ORDER BY request_id', desktopRequest.requestId, phoneRequestId,
+    ).filter(row => row.status === 'replied' && row.reply === (row.id === phoneRequestId ? phoneReply : historySummary)).length).toBe(2)
+    expect(parseApprovalLookupReply(phoneReply)).toMatchObject({ taskId: asking, requestId: complete.hash })
+    expect(d.query<{ count: number }>('SELECT count(*) AS count FROM matter_say_receipts WHERE request_id=? AND instr(reply,?)>0',
+      phoneRequestId, privateApprovalEvidence)[0]?.count).toBe(0)
     decisions.delete(scopedApprovalCommand)
     d.sendText(d.owner, `y ${complete.code}`, { quote: completeNotice })
     await expect.poll(() => decisions.get(scopedApprovalCommand)).toBe('accept')
     expect(await queued(asking)).toBeUndefined()
     await askAboutQuote(2, completeText)
     await expect.poll(() => d.query<{ source: string }>('SELECT source FROM messages WHERE text=? ORDER BY source', historySummary))
-      .toEqual([{ source: 'desktop' }, { source: 'phone' }, { source: 'workbench' }])
+      .toEqual([{ source: 'desktop' }, { source: 'workbench' }])
+    expect(d.query('SELECT source FROM messages WHERE text=?', phoneReply)).toEqual([{ source: 'phone' }])
+    const receiptReader = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    try {
+      const page = await receiptReader.request({ method: 'GET', path: '/v1/matter/owner-chat/page' })
+      expect(page.status).toBe(200)
+      const messages = page.json<{ messages: Array<{ text: string; speaker?: string }> }>().messages
+      expect(messages.some(message => message.text === phoneReply && message.speaker === 'notice')).toBe(true)
+      expect(messages.some(message => message.text.includes(privateApprovalEvidence))).toBe(false)
+    } finally { receiptReader.close() }
     const repeated = await desktop<{ reply: string }>('POST', '/v1/matter/say', desktopRequest)
     expect(repeated).toEqual({ status: 200, body: { kind: 'chat', reply: historySummary } })
     expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0', privateApprovalEvidence)).toEqual([])
@@ -1490,7 +1524,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect((await queued(patch.id))?.hash).toBe(patch.card.hash)
     expect(patch.card.prompt === `${patch.title} · ${patch.id}\nfileChange\n${patchFile}\n{"type":"update"}\n${patchDiff}\nExecution environment: local`).toBe(true)
     const patchText = await lookup(patch.id, patch.card.hash)
-    expect(patchText).toContain(`${patchFile}（修改）`)
+    expect(patchText.includes(JSON.stringify(patchFile) + '（修改）')).toBe(true)
     expect(patchText).toContain(WECHAT_PERMISSION_INCOMPLETE)
     expect(patchText.includes('SANDBOX_PRIVATE_DIFF')).toBe(false)
     expect(await desktop('POST', '/v1/permissions/resolve', { hash: patch.card.hash, decision: 'allow' })).toEqual({ status: 200, body: { ok: true } })

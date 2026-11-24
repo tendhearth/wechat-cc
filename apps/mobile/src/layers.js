@@ -12,7 +12,7 @@ function cRestoreLayer(layer){
  try{
   if(mCurrent&&(!layer||layer.kind!=='matter'))document.getElementById('m-back').click()
   document.getElementById('chat-search').hidden=!(layer&&layer.kind==='search')
-  if(layer&&layer.kind==='matter'){openMatter(layer.id);return}
+  if(layer&&layer.kind==='matter'){openMatter(layer.id,layer.request);return}
   if(layer&&layer.kind==='topic'){
    document.body.classList.add('topic-open');document.getElementById('topic-panel').hidden=false
    if(layer.id){tSelected=layer.id;document.getElementById('topic-all').hidden=true;tRead()}else{document.getElementById('topic-all').hidden=false;tList(true,false)}

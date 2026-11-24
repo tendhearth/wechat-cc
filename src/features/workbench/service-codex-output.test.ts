@@ -62,7 +62,7 @@ it('native rejection keeps the real task running and delivers an immediate follo
   service.resolvePermission(task.id,service.detail(task.id).permissions[0]!.id,'deny','不要 SSH，只在本机验证')
   await expect.poll(()=>native.inputs).toHaveLength(2)
   expect(service.detail(task.id).task.status).toBe('running')
-  expect(native.inputs[1]).toContain('不要 SSH，只在本机验证');expect(native.inputs[1]).toContain('ssh other-host')
+  expect(native.inputs[1]).toContain('不要 SSH，只在本机验证');expect(native.inputs[1]!.includes('ssh other-host')).toBe(false)
   const runId=service.detail(task.id).runId!
   const requestId=randomUUID()
   await service.submitInput(task.id,{runId,requestId,text:'继续本地测试'})

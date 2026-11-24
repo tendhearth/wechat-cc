@@ -160,7 +160,7 @@ function workbenchPurpose(args:{ctx:SpawnContext;sessionId:()=>string;ensureScop
         // 不在文件工具里的名字(Shell、wechat 工具 …)在这里就以 unsupported_api_tool 失败,不问主人、不执行。
         const tool=prepareApiFileTool(binding.path,binding.taskId,call.name,call.input)
         let feedback:string|undefined
-        const accepted=ctx.requestPermission?await withAbort(ctx.requestPermission({tool:call.name,description:tool.description,...(tool.display?{display:tool.display}:{}),...(tool.reviewDescription?{reviewDescription:tool.reviewDescription}:{}),onDenied:reason=>{feedback=permissionDenialMessage(tool.description,reason)}},signal),signal):false
+        const accepted=ctx.requestPermission?await withAbort(ctx.requestPermission({tool:call.name,description:tool.description,...(tool.display?{display:tool.display}:{}),...(tool.reviewDescription?{reviewDescription:tool.reviewDescription}:{}),onDenied:reason=>{feedback=permissionDenialMessage(undefined,reason)}},signal),signal):false
         check(signal);ensureScope()
         if(!accepted&&feedback)return {output:JSON.stringify({error:'permission_denied',message:feedback}),after:{kind:'tool_call',tool:call.name,activity:{...activity,status:'failed'}}}
         if(!accepted)fail('permission_denied')

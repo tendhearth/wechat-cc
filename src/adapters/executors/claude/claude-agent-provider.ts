@@ -1,4 +1,5 @@
 import { toolApprovalInput } from '../../../domain/workbench/tool-input-preview'
+import { toolArgumentEvidence } from '../tool-argument-evidence'
 import { permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
 import type { ChatApprovalLifecycle } from '../chat-approval'
 import { claudeResultUsage } from '../../../domain/turn-usage'
@@ -151,10 +152,15 @@ export function makeWorkbenchClaudeCanUseTool(
         return { behavior: 'allow', updatedInput: { ...input, answers: Object.fromEntries(request.questions.map(question => [question.question, answers[question.id]!.join(', ')])) } } satisfies PermissionResult
       } catch { return denied }
     }
+    const reasonParts = [options.title, options.description, options.decisionReason].filter((part): part is string => part !== undefined)
+    const reason = claudePermissionNote(options)
+    // The desktop keeps its legacy primary reason. WeChat must withhold
+    // approval if that projection dropped any other supplied reason bytes.
+    const incompleteReason = reasonParts.some(part => part !== reason)
     if (toolName.startsWith('mcp__')) {
       const denied = { behavior:'deny',message:'The task tool was not admitted, or approval was denied or expired.' } satisfies PermissionResult
-      const server = admittedMcpServers.find(name => !isCompanionMcp(name) && toolName.startsWith(`mcp__${name}__`) && toolName.length > name.length + 7)
-      const auth = authorize(WORKBENCH_SUBJECT, { name: toolName, kind: WORKBENCH_MCP_KIND, mcp: server ? 'admitted' : 'not_admitted' })
+      const servers = admittedMcpServers.filter(name => !isCompanionMcp(name) && toolName.startsWith(`mcp__${name}__`) && toolName.length > name.length + 7)
+      const auth = authorize(WORKBENCH_SUBJECT, { name: toolName, kind: WORKBENCH_MCP_KIND, mcp: servers.length ? 'admitted' : 'not_admitted' })
       if (auth.verdict === 'deny') return denied
       // 问:没有问的通道 / 名字太长装不下 ⇒ 拒(通道上的事,不是策略)。
       if (!requestPermission || toolName.length > WORKBENCH_PERMISSION_TOOL_MAX) return denied
@@ -162,15 +168,16 @@ export function makeWorkbenchClaudeCanUseTool(
       if (description === null) return denied
       try {
         let feedback: string | undefined
-        const note = claudePermissionNote(options)
+        const note = reason
         const reviewDescription = note && note.length + description.length + 1 <= WORKBENCH_PERMISSION_DESCRIPTION_MAX
           ? `${note}\n${description}` : undefined
-        const previewInput = toolApprovalInput(input)
+        const { input: previewInput, incomplete: redacted } = toolApprovalInput(input)
         const display = toolPermissionDisplay(toolName, previewInput, reviewDescription ? note : undefined)
+        const wechatReview = !display || servers.length !== 1 || incompleteReason || (note && !reviewDescription) || redacted
+          ? { incomplete: true as const } : toolArgumentEvidence(input)
         const allowed = await requestPermission({tool:toolName,description,...(display ? { display } : {}),
-          ...((note && !reviewDescription) || JSON.stringify(previewInput) !== JSON.stringify(input)
-            ? { wechatReview: { incomplete: true as const } } : {}),
-          ...(display && reviewDescription ? { reviewDescription } : {}),onDenied:reason=>{feedback=permissionDenialMessage(description,reason)}}, options.signal)
+          ...(Object.keys(wechatReview).length ? { wechatReview } : {}),
+          ...(display && reviewDescription ? { reviewDescription } : {}),onDenied:reason=>{feedback=permissionDenialMessage(undefined,reason)}}, options.signal)
         return allowed && !options.signal.aborted ? {behavior:'allow'} : feedback ? {behavior:'deny',message:feedback} : denied
       } catch { return denied }
     }
@@ -198,17 +205,20 @@ export function makeWorkbenchClaudeCanUseTool(
       const display = toolPermissionDisplay(toolName, typeof input.command === 'string' ? input.command : input, claudePermissionNote(options))
       const cwd = display?.body.kind === 'command' ? permissionCwd(input.cwd) : undefined
       const hasCommandExtras = typeof input.command === 'string' && Object.keys(input).some(key => key !== 'command')
+      const evidence = toolArgumentEvidence(input)
       const wechatDisplay = hasCommandExtras ? toolPermissionDisplay(toolName, input, claudePermissionNote(options)) : undefined
       allowed = await requestPermission({
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,
         ...(display ? { display } : {}),
-        ...(hasCommandExtras ? { wechatReview: wechatDisplay ? {
-          display: wechatDisplay,
+        ...(hasCommandExtras || incompleteReason || !display || Object.keys(evidence).length ? { wechatReview: {
+          ...evidence,
+          ...(wechatDisplay ? { display: wechatDisplay } : {}),
           ...(typeof input.cwd === 'string' && !cwd ? { cwd: input.cwd } : {}),
-        } : { incomplete: true as const } } : {}),
+          ...(incompleteReason || !display || (hasCommandExtras && !wechatDisplay) ? { incomplete: true as const } : {}),
+        } } : {}),
         ...(cwd ? { displayCwd: cwd, reviewDescription: `${description}\nWorking directory: ${cwd}` } : {}),
-        onDenied: reason => { feedback = permissionDenialMessage(`${toolName}\n${description}`, reason) },
+        onDenied: reason => { feedback = permissionDenialMessage(undefined, reason) },
         ...(facts.command ? { command: facts.command } : {}),
         ...(facts.paths.length ? { paths: facts.paths } : {}),
       }, options.signal)

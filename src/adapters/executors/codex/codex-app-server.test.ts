@@ -305,13 +305,39 @@ describe('workbench Codex app-server', () => {
     await expect.poll(() => permit.mock.calls.length).toBe(1)
     expect(child.sent.some(m => m.id === 0)).toBe(false)
     const request = permit.mock.calls[0]![0]
-    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me'), display: { body: { kind: 'fields', fields: [{ name: 'note', value: 'review me' }, { name: 'api_key', value: '[credential omitted]' }] } }, onDenied: expect.any(Function) })
+    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me'), display: { body: { kind: 'fields', fields: [{ name: 'note', value: 'review me' }, { name: 'api_key', value: '[credential omitted]' }] }, note: 'Run external tool?', extra: [{ name: 'MCP server', value: 'external' }, { name: 'MCP tool', value: 'create_note' }] }, wechatReview: { incomplete: true }, onDenied: expect.any(Function) })
     expect(JSON.stringify(request)).not.toContain('credential-value')
     decide(allowed)
     await expect.poll(() => child.sent.find(m => m.id === 0)?.result).toEqual({ action: allowed ? 'accept' : 'decline', content: null, _meta: null })
     mcpRequest(child); await Promise.resolve()
     expect(child.sent.filter(m => m.id === 0)).toHaveLength(1)
     expect(run.events).toContainEqual(expect.objectContaining({ kind: 'tool_call', activity: expect.objectContaining({ id: 'mcp-1', status: 'running' }) }))
+    completed(child); await run.done
+  })
+
+  it.each([
+    ['plain', { note: 'review' }, false],
+    ['matching redaction placeholder', { api_key: '[credential omitted]' }, true],
+    ['nested header', { headers: [{ name: 'Authorization', value: 'fixture' }] }, true],
+    ['credentials in a URL', { url: 'https://example.invalid/?token=fixture' }, true],
+    ['URL already contains the redaction placeholder', { url: 'https://example.invalid/?token=%5Bcredential+omitted%5D' }, true],
+    ['array', ['hidden argument'], true],
+    ['scalar', 'hidden argument', true],
+    ['null', null, true],
+    ['redacted reason', { note: 'review' }, true],
+  ])('carries exact MCP review eligibility for %s', async (label, args, incomplete) => {
+    enableExternal()
+    const permit = vi.fn((_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => Promise.resolve(false))
+    const { session, child } = await start({ requestPermission: permit })
+    const run = collect(session); await begun(child)
+    mcpItem(child, { arguments: args })
+    mcpRequest(child, 0, {
+      _meta: { codex_approval_kind: 'mcp_tool_call', tool_params: args },
+      ...(label === 'redacted reason' ? { message: 'Bearer fixture' } : {}),
+    })
+    await expect.poll(() => permit.mock.calls.length).toBe(1)
+    expect(permit.mock.calls[0]?.[0].wechatReview?.incomplete === true).toBe(incomplete)
+    await expect.poll(() => child.sent.find(m => m.id === 0)?.result?.action).toBe('decline')
     completed(child); await run.done
   })
 
@@ -710,6 +736,27 @@ describe('workbench Codex app-server', () => {
     } finally { release(); permissions.rejectAll(); removeTempDir(root) }
   })
 
+  it.each(['cwd mismatch', 'command mismatch', 'cwd from item'])(
+    'requires unambiguous native command evidence for WeChat: %s', async mode => {
+      const permit = vi.fn((_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => Promise.resolve(false))
+      const { session, child } = await start({ requestPermission: permit })
+      const run = collect(session); await begun(child)
+      const command = 'printf fixture', cwd = '/project'
+      child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: {
+        id: 'item-1', type: 'commandExecution', status: 'inProgress',
+        command: mode === 'command mismatch' ? 'printf different' : command,
+        cwd: mode === 'cwd mismatch' ? '/elsewhere' : cwd,
+      } })
+      approval(child, 0, undefined, { command, cwd: mode === 'cwd from item' ? undefined : cwd })
+      await expect.poll(() => permit.mock.calls.length).toBe(1)
+      const request = permit.mock.calls[0]![0]
+      expect(request.wechatReview?.incomplete === true).toBe(mode !== 'cwd from item')
+      if (mode === 'cwd from item') expect(request.displayCwd === cwd).toBe(true)
+      await expect.poll(() => child.sent.some(m => m.id === 0)).toBe(true)
+      completed(child); await run.done
+    },
+  )
+
   it.each([true, false])('routes captured native local approval id zero using an offered one-shot decision: %s', async allow => {
     const requestPermission = vi.fn(async (_request: { tool: string; description: string }) => allow)
     const { session, child } = await start({ requestPermission }); const run = collect(session); await begun(child)
@@ -733,7 +780,7 @@ describe('workbench Codex app-server', () => {
     await begun(child, 2)
     const next = child.sent.filter(m => m.method === 'turn/start')[1]!
     expect(next.params.threadId).toBe('thread-1')
-    expect(next.params.input[0].text).toContain('ssh other-host test')
+    expect(next.params.input[0].text.includes('ssh other-host test')).toBe(false)
     expect(next.params.input[0].text).toContain('只在本机验证，不要 SSH')
     expect(run.events.some(e => e.kind === 'error' || e.kind === 'result')).toBe(false)
     child.notify('thread/tokenUsage/updated',{threadId:'thread-1',turnId:'turn-2',tokenUsage:{last:{inputTokens:20,outputTokens:3}}})
@@ -1277,7 +1324,7 @@ describe('Codex retained workbench runtime', () => {
     const next=run.child.sent.filter(m=>m.method==='turn/start')[1]!
     expect(next.params.threadId).toBe('thread-1')
     expect(next.params.input[0].text).toContain('不要 SSH')
-    expect(next.params.input[0].text).toContain('ssh other-host')
+    expect(next.params.input[0].text.includes('ssh other-host')).toBe(false)
     expect(next.params.input[0].text).toContain('child-1')
     expect(run.child.sent.filter(m=>m.method==='turn/start')).toHaveLength(2)
     expect(run.events.some(e=>e.kind==='error')).toBe(false)

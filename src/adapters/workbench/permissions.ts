@@ -166,7 +166,8 @@ export function makeRunPermissions(opts: {
         command: facts.command,
         paths: facts.paths,
         display: raw.wechatReview?.display,
-        incomplete: raw.wechatReview?.incomplete ?? (raw.display !== undefined && !display ? true : undefined),
+        argumentJson: raw.wechatReview?.argumentJson,
+        incomplete: raw.wechatReview?.incomplete || (raw.display !== undefined && !display ? true : undefined),
       } satisfies NonNullable<PendingWorkbenchPermission[typeof wechatPermissionSource]>,
     })
     return new Promise<boolean>(resolve => {

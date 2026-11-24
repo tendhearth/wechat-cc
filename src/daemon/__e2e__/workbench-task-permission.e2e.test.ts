@@ -42,7 +42,11 @@ it.each([false,true])('owner rejection carries its reason through WeChat and the
   registry.register('codex',{async spawn(_project,ctx){return {
     async *dispatch(){
       yield {kind:'init' as const,sessionId:'same-session'}
-      for(let i=0;i<(limit?4:3);i++)answers.push(await ctx.requestPermission!({tool:'commandExecution',command:`printf attempt-${i}`,description:`attempt ${i}`,onDenied:reason=>feedback.push(reason)}))
+      for (let i = 0; i < (limit ? 4 : 3); i++) {
+        const command = 'printf attempt-' + i
+        answers.push(await ctx.requestPermission!({ tool: 'commandExecution', command, description: 'attempt ' + i,
+          display: { body: { kind: 'command', command }, note: 'attempt ' + i }, onDenied: reason => feedback.push(reason) }))
+      }
       yield {kind:'result' as const,sessionId:'same-session',numTurns:1,durationMs:1}
     },async close(){},
   }}},{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
@@ -80,7 +84,7 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
   const registry = createProviderRegistry()
   registry.register('codex', { async spawn(_project, ctx) { return {
     async *dispatch() {
-      const request = (command: string) => ctx.requestPermission!({ tool: 'commandExecution', command, description: command, cwd: project })
+      const request = (command: string) => ctx.requestPermission!({ tool: 'commandExecution', command, description: command, cwd: project, display: { body: { kind: 'command', command } } })
       answers.push(await request('/bin/echo hello'))
       answers.push(await request('/bin/echo   "hello"'))
       answers.push(await request('python3 check.py'))
@@ -173,7 +177,7 @@ it('Claude Bash uses the spawned run directory and fails closed in every WeChat 
     await expect.poll(() => ilink.listPendingPermissions()).toHaveLength(1)
     const inherited = ilink.listPendingPermissions()[0]!
     const inheritedCard = ilink.pendingWechatPermissionCard(inherited.hash)!
-    expect(inheritedCard.complete && inheritedCard.text.includes('在 ' + project)).toBe(true)
+    expect(inheritedCard.complete && inheritedCard.text.includes('在 ' + JSON.stringify(project))).toBe(true)
     const notice = store.wechatNotifications.list(task.id).find(item => item.requestId === inherited.hash)
     expect(notice?.text.includes('cat example.txt')).toBe(false)
     expect(ilink.handlePermissionReply('y', 'owner', inheritedCard.text)).toBe(true)

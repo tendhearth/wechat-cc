@@ -6,6 +6,7 @@ export function permissionReason(value: unknown, decision: string): string | und
   return value.trim() || undefined
 }
 
-export function permissionDenialMessage(operation: string, reason: string): string {
-  return `这个操作被拒绝了：\n${operation}\n\n拒绝理由：${reason || '未填写'}\n\n请遵守这次拒绝，换一种获准的做法继续原任务。不要原样重试被拒绝的操作，也不要扩大权限；确实无法继续时说明缺项并等待主人。`
+export function permissionDenialMessage(operation: string | undefined, reason: string): string {
+  const detail = operation === undefined ? '。' : '：\n' + operation
+  return `这个操作被拒绝了${detail}\n\n拒绝理由：${reason || '未填写'}\n\n请遵守这次拒绝，换一种获准的做法继续原任务。不要原样重试被拒绝的操作，也不要扩大权限；确实无法继续时说明缺项并等待主人。`
 }

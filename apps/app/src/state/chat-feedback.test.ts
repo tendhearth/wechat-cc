@@ -2,6 +2,7 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { approvalLookupReply } from '@wechat-cc/protocol'
 import { color, componentAppearance, typeScale } from '@wechat-cc/design-tokens'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type ChatPageT } from '../backend/types'
@@ -10,10 +11,10 @@ import { withLang, withProviders } from './providers.test-support'
 import Chat from '../ui/ConversationScreen'
 import DevE2E from '../app/dev-e2e'
 const scrollHost = vi.hoisted(() => ({ offset: vi.fn() }))
-const route = vi.hoisted(() => ({ params: {} as { op?: string }, keychainRead: vi.fn(), keychainWrite: vi.fn(), keychainDelete: vi.fn() }))
+const route = vi.hoisted(() => ({ params: {} as { op?: string }, push: vi.fn(), keychainRead: vi.fn(), keychainWrite: vi.fn(), keychainDelete: vi.fn() }))
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => route.params, useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
+vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => route.params, useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push: route.push }) }))
 vi.mock('react-native', async () => {
   const { createElement, forwardRef, useImperativeHandle } = await import('react')
   const { nativeBoundary } = await import('../ui/native-motion.test-support')
@@ -52,7 +53,7 @@ async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = 
   await act(() => root.render(withProviders(createElement(Chat), { backend, lang }))); await flush()
   return { read, say, backend }
 }
-beforeEach(() => { scrollHost.offset.mockClear(); route.params = {}; route.keychainRead.mockClear(); route.keychainWrite.mockClear(); route.keychainDelete.mockClear(); clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
+beforeEach(() => { scrollHost.offset.mockClear(); route.params = {}; route.push.mockClear(); route.keychainRead.mockClear(); route.keychainWrite.mockClear(); route.keychainDelete.mockClear(); clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
 afterEach(async () => { await act(() => root.unmount()); container.remove() })
 
 describe('native chat feedback', () => {
@@ -290,4 +291,18 @@ describe('reply attribution avatars', () => {
     expect(row('streamed reply').textContent).not.toContain('CC')
     expect(row('brought back reply').textContent).not.toContain('CC')
   })
+})
+
+it('opens a history notice directly at its exact approval and performs no write', async () => {
+  const id = 'deadbeef', request = '11111111-1111-4111-8111-111111111111'
+  const text = approvalLookupReply(id, request)
+  const base = { source: 'phone' as const, text, at: Date.now(), truncated: false, kind: 'text' as const }
+  const { say } = await mount({ ...empty(), messages: [
+    { ...base, id: 'notice', role: 'cc', speaker: 'notice' },
+    { ...base, id: 'agent', role: 'cc', speaker: 'agent' },
+  ] })
+  expect(container.querySelectorAll('[data-testid="chat-open-approval"]')).toHaveLength(1)
+  await click('chat-open-approval')
+  expect(route.push).toHaveBeenCalledExactlyOnceWith('/matter/' + id + '/decide?request=' + request)
+  expect(say).not.toHaveBeenCalled()
 })

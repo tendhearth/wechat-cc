@@ -1,7 +1,7 @@
 import {validBaseBranch} from '../../adapters/git/worktree-workspaces'
 import {isRelayContinue} from '../../adapters/store/matter-plans'
 import {parseReviewRequest,reviewMaterial} from './review-request'
-import {WORKBENCH_ERRORS,workbenchErrorSpec} from '@wechat-cc/protocol'
+import {approvalLookupReply,WORKBENCH_ERRORS,workbenchErrorSpec} from '@wechat-cc/protocol'
 import {compareReply} from './wechat-compare'
 import {issueTaskText,parseIssueRef,type IssueData} from './issue-intake'
 import {createHash,randomUUID} from 'node:crypto'
@@ -400,6 +400,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
           if(answer)return usage(id)
           const request=detail.permissions.find(p=>p.id===requestId)
           if(!detail.runId||!request)return stale
+          if(verb==='权限' && identity?.origin !== undefined && identity.origin !== 'desktop') return approvalLookupReply(id,requestId)
           if(verb!=='拒绝'){
             const card=opts.actions.pendingWechatPermissionCard
               ? opts.actions.pendingWechatPermissionCard(requestId)

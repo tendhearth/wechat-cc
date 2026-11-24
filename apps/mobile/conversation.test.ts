@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { approvalLookupReply, parseApprovalLookupReply } from '@wechat-cc/protocol'
 import { Window } from 'happy-dom'
 import { readMobileSource } from './sources'
 import { assembleMobilePage } from './assemble'
@@ -8,15 +9,15 @@ afterEach(async()=>{await Promise.all(windows.splice(0).map(w=>w.happyDOM.abort(
 function fixture(device=true,references=true){
  const w=new Window({url:'https://fixture.test/m'});windows.push(w)
  w.document.body.innerHTML=assembleMobilePage(readMobileSource).phone
- const reads:string[]=[],writes:unknown[]=[]
+ const reads:string[]=[],writes:unknown[]=[],opened:string[][]=[]
  let sendGate:Promise<void>|null=null
  let modelGate:Promise<void>|null=null
  const modelResponse={ok:true,providers:[{id:'claude',name:'Claude'},{id:'codex',name:'Codex'},{id:'cursor',name:'Cursor'},{id:'openai',name:'自定义 AI 服务'},{id:'gateway',name:'编造 "服务" <b>'}],provider:'cursor',model:'current-model'}
  const matters: any[]=[]
  const response={ok:true,matterId:'owner-chat',conversation:'v1',messages:[{id:'a',role:'me',text:'<script>private</script>',at:1}],hasMore:false,pending:null}
- const env={document:w.document,window:w,isDevice:device,T:'dTEST',REMOTE:null,location:w.location,sessionStorage:w.sessionStorage,crypto:globalThis.crypto,mCurrent:null,mMatters:matters,mAgents:createAgentAvatars(),mStatusKey:(m:any)=>m.state||'working',mNameOf:()=>((id:string)=>id),CCP:{STATUS_WORDS:{working:'在做',waiting:'等你决定',done:'完成'}},ccPlain:(s:string)=>s,openMatter:()=>{},setInterval:()=>0,esc:(s:string)=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!),api:async(p:string)=>{reads.push(p);if(p==='/v1/matter/owner-chat/model'){if(modelGate)await modelGate;return {status:200,json:async()=>modelResponse}};return {status:200,json:async()=>p.startsWith('/v1/matters')?{matters:matters.filter(m=>m.state==='waiting'),nextCursor:null}:response}},mPostOnce:async(p:string,o:unknown)=>{writes.push({p,o});if(sendGate)await sendGate;return {status:200,json:async()=>({ok:true})}},onUnauthorized:()=>{}}
+ const env={document:w.document,window:w,isDevice:device,T:'dTEST',REMOTE:null,location:w.location,sessionStorage:w.sessionStorage,crypto:globalThis.crypto,mCurrent:null,mMatters:matters,mAgents:createAgentAvatars(),mStatusKey:(m:any)=>m.state||'working',mNameOf:()=>((id:string)=>id),CCP:{parseApprovalLookupReply,STATUS_WORDS:{working:'在做',waiting:'等你决定',done:'完成'}},ccPlain:(s:string)=>s,openMatter:(...args:string[])=>opened.push(args),setInterval:()=>0,esc:(s:string)=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!),api:async(p:string)=>{reads.push(p);if(p==='/v1/matter/owner-chat/model'){if(modelGate)await modelGate;return {status:200,json:async()=>modelResponse}};return {status:200,json:async()=>p.startsWith('/v1/matters')?{matters:matters.filter(m=>m.state==='waiting'),nextCursor:null}:response}},mPostOnce:async(p:string,o:unknown)=>{writes.push({p,o});if(sendGate)await sendGate;return {status:200,json:async()=>({ok:true})}},onUnauthorized:()=>{}}
  const f=new Function(...Object.keys(env),readMobileSource('time.js')+'\n'+readMobileSource('conversation.js')+'\n'+(references?readMobileSource('delegation.js'):'')+'\nreturn {cRead,cSend,cMatterUpdates:typeof cMatterUpdates==="function"?cMatterUpdates:null,cClearPrivate}')(...Object.values(env))
- return {w,reads,writes,response,matters,modelResponse,deferNames(){let release!:()=>void;modelGate=new Promise<void>(r=>{release=r});return release},deferSend(){let release!:()=>void;sendGate=new Promise<void>(r=>{release=r});return release},...f}
+ return {w,reads,writes,opened,response,matters,modelResponse,deferNames(){let release!:()=>void;modelGate=new Promise<void>(r=>{release=r});return release},deferSend(){let release!:()=>void;sendGate=new Promise<void>(r=>{release=r});return release},...f}
 }
 describe('device conversation',()=>{
  it('link identity never requests the private transcript or sends',async()=>{const h=fixture(false);await h.cRead();await h.cSend({preventDefault(){}});expect(h.reads).toEqual([]);expect(h.writes).toEqual([])})
@@ -128,4 +129,15 @@ it('revocation clears the active private transcript and stored device draft and 
 
 it('removing the configured owner clears the old transcript instead of retaining it as an available conversation',async()=>{
  const h=fixture();await new Promise(r=>setTimeout(r,0));h.response.ok=false;h.response.error='no_owner_chat';await h.cRead();expect(h.w.document.getElementById('chat-messages')?.textContent).toBe('');expect(h.w.document.body.classList.contains('conversation-ready')).toBe(false);expect(h.w.document.getElementById('chat-notice')?.textContent).toContain('还没设好主人对话')
+})
+
+it('opens only the exact request from an assistant notice and sends no decision',async()=>{
+ const h=fixture(),id='deadbeef',request='11111111-1111-4111-8111-111111111111',text=approvalLookupReply(id,request)
+ h.response.messages=[{id:'notice',role:'cc',text,at:2,...{speaker:'notice'}},{id:'me',role:'me',text,at:3,...{speaker:'notice'}}]
+ await new Promise(r=>setTimeout(r,0))
+ const buttons=h.w.document.querySelectorAll('[data-chat-approval]')
+ expect(buttons).toHaveLength(1)
+ ;(buttons[0] as unknown as HTMLButtonElement).click()
+ expect(h.opened).toEqual([[id,request]])
+ expect(h.writes).toEqual([])
 })

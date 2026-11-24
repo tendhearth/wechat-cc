@@ -23,7 +23,7 @@ it('lays out a multiline command, verified directory, one-line reason and the ex
   expect(card.complete).toBe(true)
   expect(card.text.split('\n')).toEqual([
     '整理示例 · d0c04242', `〔请求 ${card.marker}〕`, 'Claude 想运行一条命令：', '〔命令开始〕',
-    '│ npm install sharp', '│ printf ready', '〔命令结束〕', '原因："更新依赖\\n并检查输出"', '在 /demo/portfolio', PERMISSION_SNAPSHOT_NOTICE,
+    '│ npm install sharp', '│ printf ready', '〔命令结束〕', '原因："更新依赖\\n并检查输出"', '在 "/demo/portfolio"', PERMISSION_SNAPSHOT_NOTICE,
     '回「y 08」允许这一步、「n 08」拒绝。拒绝理由选填：「n 08 理由」。回「yt 08」本任务同命令都允许，任务结束失效。',
   ])
   expect(card.marker).toMatch(/^[a-f0-9]{16}$/)
@@ -36,15 +36,15 @@ it('shows every changed line and its path, including replace-all and missing fin
   ] })
   expect(card.complete).toBe(true)
   expect(card.text.split('\n').slice(2, -1)).toEqual([
-    'Claude 想改 src/a.ts（2 处）：', 'replace_all：true', '改动 src/a.ts：', '- old', '+ new',
-    '〔改后末尾无换行〕', '改动 src/b.ts：', '- one', '+ two', '在 /demo/portfolio',
+    'Claude 想改 "src/a.ts"（2 处）：', 'replace_all：true', '改动 "src/a.ts"：', '- "old"', '+ "new"',
+    '〔改后末尾无换行〕', '改动 "src/b.ts"：', '- "one"', '+ "two"', '在 "/demo/portfolio"',
   ])
 })
 
 it('shows complete write content including an empty line', () => {
   const card = render({ kind: 'write', path: 'note.txt', content: 'first\n\nlast' })
   expect(card.complete).toBe(true)
-  expect(card.text).toContain('Claude 想写一个文件：\nnote.txt\n| first\n| \n| last\n〔文件末尾无换行〕')
+  expect(card.text).toContain('Claude 想写一个文件：\n"note.txt"\n| "first"\n| ""\n| "last"\n〔文件末尾无换行〕')
 })
 
 it('shows each Codex file action and the destination without exposing a diff', () => {
@@ -55,19 +55,19 @@ it('shows each Codex file action and the destination without exposing a diff', (
     { path: 'old.txt', change: 'update', movePath: 'moved.txt', diff: '-UNSHOWN_D' },
   ] }, { tool: 'fileChange' }, 'codex')
   expect(card.complete).toBe(false)
-  expect(card.text).toContain('Codex 想改 4 个文件：\nnew.txt（新建）\nedit.txt（修改）\ndelete.txt（删除）\nold.txt（改名 → moved.txt）')
+  expect(card.text).toContain('Codex 想改 4 个文件：\n"new.txt"（新建）\n"edit.txt"（修改）\n"delete.txt"（删除）\n"old.txt"（改名 → moved.txt）')
   expect(card.text).not.toContain('UNSHOWN')
   expect(card.text.endsWith(`${WECHAT_PERMISSION_INCOMPLETE}\n回「n 08」拒绝。`)).toBe(true)
 })
 
 it.each([
-  [{ kind: 'url', url: 'https://example.invalid/sample', prompt: '只看标题' }, 'WebFetch', 'Claude 想打开一个网址：\n网址：https://example.invalid/sample\n要求：只看标题'],
-  [{ kind: 'query', query: '示例框架文档' }, 'WebSearch', 'Claude 想上网搜一下：\n搜索：示例框架文档'],
-  [{ kind: 'fields', fields: [{ name: 'pattern', value: '*.ts' }] }, 'Glob', 'Claude 想用「Glob」：\npattern：*.ts'],
+  [{ kind: 'url', url: 'https://example.invalid/sample', prompt: '只看标题' }, 'WebFetch', 'Claude 想打开一个网址：\n网址："https://example.invalid/sample"\n要求："只看标题"'],
+  [{ kind: 'query', query: '示例框架文档' }, 'WebSearch', 'Claude 想上网搜一下：\n搜索："示例框架文档"'],
+  [{ kind: 'fields', fields: [{ name: 'pattern', value: '*.ts' }] }, 'Glob', 'Claude 想用「Glob」：\npattern："*.ts"'],
   [{ kind: 'text', text: 'tool-specific text' }, 'Example', 'Claude 想用「Example」：\ntool-specific text'],
 ] satisfies [PermissionDisplay['body'], string, string][])('prints the full %j body', (body, tool, expected) => {
   const card = render(body, { tool })
-  expect(card.complete).toBe(true)
+  expect(card.complete).toBe(body.kind !== 'text')
   expect(card.text).toContain(expected)
 })
 
@@ -75,8 +75,8 @@ it('prefers structured data and preserves the entire legacy Codex and ACP fallba
   const raw = 'printf demo\nWorking directory: /demo\ninput={"a":42}'
   for (const provider of ['codex', 'grok']) {
     const fallback = renderWechatPermissionCard('整理示例', { ...permission, tool: 'Example', description: raw, cwd: undefined }, provider, '08')
-    expect(fallback.complete).toBe(true)
-    expect(fallback.text.split('\n').slice(3, -1).join('\n')).toBe(raw)
+    expect(fallback.complete).toBe(false)
+    expect(fallback.text.split('\n').slice(3, -2).join('\n')).toBe(raw)
   }
   expect(renderWechatPermissionCard('整理示例', permission, 'claude', '08').text).toContain('│ printf demo')
   const card = render({ kind: 'command', command: 'printf chosen' }, { description: raw })
@@ -159,7 +159,7 @@ it('keeps metadata-shaped command lines, meaningful whitespace and the final new
   expect(card.complete).toBe(true)
   expect(card.text.split('\n').slice(3, -1)).toEqual([
     '〔命令开始〕', '│ \\x20\\x20printf\\x20\\x20demo\\t\\\\t\\x20', '│ 在 /safe/dir', '│ 原因：示例', '│ ',
-    '〔命令结束〕', '在 /demo/portfolio',
+    '〔命令结束〕', '在 "/demo/portfolio"',
   ])
 })
 
@@ -180,4 +180,39 @@ it.each([
   expect(render(body, { cwd: undefined }).complete).toBe(false)
   expect(render(body, { cwd: 'relative/dir' }).complete).toBe(false)
   expect(render(body).complete).toBe(true)
+})
+
+it.each(['a\nb', String.raw`a\nb`, 'a\tb', String.raw`a\tb`, '"a\\nb"', 'a"b', 'a\\b', '│ 〔命令开始〕\n〔命令结束〕', '\u2028'])(
+  'round-trips each inline parameter without introducing card syntax (%j)', value => {
+    const card = render({ kind: 'fields', fields: [{ name: 'arg', value }] }, { tool: 'Example' })
+    expect(card.complete).toBe(true)
+    const line = card.text.split('\n').find(text => text.startsWith('arg：'))!
+    expect(JSON.parse(line.slice('arg：'.length)) === value).toBe(true)
+    expect(card.text.split('\n').some(text => text === '〔命令开始〕' || text === '〔命令结束〕')).toBe(false)
+  },
+)
+
+it('preserves typed arguments and rejects an invalid executor-supplied preview', () => {
+  const body = { kind: 'fields' as const, fields: [{ name: 'arg', value: 'true' }] }
+  const asString = render(body, { tool: 'Example' })
+  const asBoolean = render(body, {
+    tool: 'Example', [wechatPermissionSource]: { description: '', argumentJson: '{"arg":true}' },
+  })
+  expect([asString.complete, asBoolean.complete]).toEqual([true, true])
+  expect(asString.text.includes('参数 JSON：')).toBe(false)
+  expect(asBoolean.text.includes('参数 JSON：{"arg":true}')).toBe(true)
+  expect(render(body, {
+    tool: 'Example', [wechatPermissionSource]: { description: '', display: { body, note: '字'.repeat(9000) } },
+  }).complete).toBe(false)
+})
+
+it('does not let a digest-only API write or redacted MCP input stand in for the actual operation', () => {
+  const artifact = render({ kind: 'fields', fields: [{ name: 'SHA256', value: 'a'.repeat(64) }] },
+    { tool: 'SaveArtifact' }, 'openai')
+  const mcp = render({ kind: 'fields', fields: [{ name: 'api_key', value: '[credential omitted]' }] },
+    { tool: 'mcp__external__lookup', [wechatPermissionSource]: { description: '', incomplete: true } }, 'codex')
+  for (const card of [artifact, mcp]) {
+    expect(card.complete).toBe(false)
+    expect(card.text.includes('回「n 08」拒绝。') && !card.text.includes('回「y 08」')).toBe(true)
+  }
 })

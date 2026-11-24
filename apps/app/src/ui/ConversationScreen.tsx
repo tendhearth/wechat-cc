@@ -31,7 +31,7 @@ import { ImageTray } from '../ui/ImageTray'
 import { SendTalkButton, TalkStatus, useHoldToTalk } from '../ui/HoldToTalk'
 import { mergeTranscript } from '../view/hold-to-talk'
 import type { PickedImage } from '../state/image-upload'
-import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES, replyAttributionFields } from '@wechat-cc/protocol'
+import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES, replyAttributionFields, parseApprovalLookupReply } from '@wechat-cc/protocol'
 import type { ChatModelViewT } from '../backend/types'
 import { componentAppearance, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
@@ -312,6 +312,8 @@ export default function Chat() {
 function ChatBubble({ b, providers, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; providers?: ChatModelViewT['providers']; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
   const appearance = componentAppearance.message
   const me = b.side === 'me'
+  const router = useRouter()
+  const approval = !me && b.speaker === 'notice' ? parseApprovalLookupReply(b.text) : null
   if (b.state === 'thinking') return <Thinking lang={lang} />
   const from = b.projection && replyProvider(b.side, b) ? null : b.projection==='result'?(lang==='zh-Hans'?'CC 的结果':'CC result'):b.projection==='stream'?'CC':t(lang, `chat.from.${b.source}`)
   // 只有附件的回复不画空文字区;过程仍可展开查看。
@@ -319,7 +321,8 @@ function ChatBubble({ b, providers, lang, canRetry, onRetry, onDismiss, checking
     <View testID={`chat-message-${b.key}`} style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
       {hasBubbleText(b) ? <MessageBubble testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'} mine={me} failed={b.state === 'failed'}>
         <ReplySpeaker role={b.side} reply={b} providers={providers} />
-        <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} voice={!me && b.speaker !== 'notice' && !replyProvider(b.side, b) ? 'cc' : undefined} text={b.text} />
+        <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} voice={!me && b.speaker !== 'notice' && !replyProvider(b.side, b) ? 'cc' : undefined} text={approval?.text ?? b.text} />
+        {approval ? <Button kind="secondary" label={lang === 'zh-Hans' ? '打开审批页' : 'Open approval'} onPress={() => router.push(approval.href)} testID="chat-open-approval" /> : null}
         {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
       </MessageBubble> : null}
       {!hasBubbleText(b) ? <ReplySpeaker role={b.side} reply={b} providers={providers} showFallback={false} /> : null}
