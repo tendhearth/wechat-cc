@@ -99,7 +99,7 @@ test('只有终端会话的地方打开全文，回 CC 保留全部对话', asyn
 })
 
 test('筛选后继续跨过无关页，找到才停，查找期间按钮禁用', async ({ page, shimUrl }) => {
-  await page.setViewportSize({width:800,height:820})
+  await page.setViewportSize({width:690,height:820})
   let release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
   const requests: string[] = []
@@ -162,8 +162,8 @@ test('全部对话往上加一页而阅读锚点不跳，收栏后按钮仍居�
   await expect(page.locator('#converse-latest')).toBeHidden()
 })
 
-test('800px 保留原顶栏、上方地方列表和窄窗筛选条', async ({ page, shimUrl }) => {
-  await page.setViewportSize({ width: 800, height: 820 })
+test('690px 保留原顶栏、上方地方列表和窄窗筛选条', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 690, height: 820 })
   await page.goto(shimUrl)
   await expect(page.locator('#dash-global-rail')).toHaveCSS('height', '72px')
   await expect(page.locator('#desk-rail-toggle')).toBeHidden()

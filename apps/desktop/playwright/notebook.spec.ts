@@ -378,7 +378,7 @@ test('同日同一时段的连续 CC 留言只在末条落款，引用各自保�
   await expect(cc.nth(3).getByRole('button')).toHaveCount(0)
 })
 
-for (const width of [1280, 800]) {
+for (const width of [1280, 690]) {
   test(`${width} 窗口里本子是记忆前面唯一的入口，页面与现有工作台对齐`, async ({ page, shimUrl }) => {
     await page.setViewportSize({ width, height: 820 })
     await mockNotebook(page)
@@ -399,7 +399,7 @@ for (const width of [1280, 800]) {
     } else {
       const topbar = (await rail.boundingBox())!
       expect(box.x).toBe(0)
-      expect(box.width).toBe(800)
+      expect(box.width).toBe(width)
       expect(topbar.y + topbar.height).toBeLessThanOrEqual(box.y)
     }
   })
@@ -552,8 +552,8 @@ test('刷新后回信还在滚动区下方，滚到眼前才确认并收起信',
   expect(confirmed).toEqual([[reply.id]])
 })
 
-test('800 像素宽的本子确认眼前的回信，仍不查询未读', async ({ page, shimUrl }) => {
-  await page.setViewportSize({ width: 800, height: 820 })
+test('690 像素宽的本子确认眼前的回信，仍不查询未读', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 690, height: 820 })
   const owner = row(1060, 'owner', 'fixture', pageDay)
   const reply = row(1061, 'cc', 'fixture', pageDay, owner.id)
   await mockNotebook(page, { [pageDay]: [owner, reply] })
@@ -604,7 +604,7 @@ test('宽窗口没有回信就不摆信，写成功后每 20 秒查一次', asyn
   await expect.poll(() => checks).toBe(before + 2)
 })
 
-for (const [surface, width, alive] of [['窄窗口', 760, true], ['CC 停止的宽窗口', 1280, false]] as const) {
+for (const [surface, width, alive] of [['窄窗口', 690, true], ['CC 停止的宽窗口', 1280, false]] as const) {
   test(`${surface}没有信，也不查回信`, async ({ page, shim, shimUrl }) => {
     await shim.invoke('demo.seed', { daemonAlive: alive })
     await page.setViewportSize({ width, height: 820 })

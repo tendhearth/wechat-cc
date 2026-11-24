@@ -32,7 +32,7 @@ async function snapshot(page:Page,name:string){
  if(out){mkdirSync(out,{recursive:true});await page.screenshot({path:join(out,name+'.png'),fullPage:true})}
 }
 
-for(const width of [1440,760])test(`觅食 ${width}px：列表只打开阅读，正文和联系人能读完，动作与配对层级清楚`,async({page,shimUrl,shim})=>{
+for(const width of [1440,690])test(`觅食 ${width}px：列表只打开阅读，正文和联系人能读完，动作与配对层级清楚`,async({page,shimUrl,shim})=>{
  await page.setViewportSize({width,height:1000});await boot(page,shimUrl,shim)
  await expect(page.locator('#fd-catch [data-hb-action="status"]')).toHaveCount(0)
  await expect(page.locator('#fd-catch .hb-note').first()).toHaveCSS('font-size','16px')
@@ -93,7 +93,7 @@ test('删除最后一条保留记录后，键盘焦点落到仍可见的折叠�
 })
 
 test('读取失败给局部重试，恢复后不冒充零朋友或社交关闭',async({page,shimUrl,shim})=>{
- await page.setViewportSize({width:760,height:1000})
+ await page.setViewportSize({width:690,height:1000})
  await boot(page,shimUrl,shim)
  await page.route('**/v1/journal',r=>r.fulfill({status:503,json:{error:'temporary_unavailable'}}))
  await page.route('**/v1/social/relationships',r=>r.fulfill({status:503,json:{error:'temporary_unavailable'}}))
@@ -108,21 +108,21 @@ test('读取失败给局部重试，恢复后不冒充零朋友或社交关闭',
  await page.locator('#fd-tools-summary').click()
  await expect(page.locator('#fd-mailbox [data-action="mailbox-retry"]')).toBeVisible()
  await expect(page.locator('#fd-mailbox [data-action="social-enable"]')).toHaveCount(0)
- await snapshot(page,'forage-error-760')
+ await snapshot(page,'forage-error-690')
  await page.route('**/v1/journal',r=>r.fulfill({json:{items:catches}}))
  await page.locator('#fd-catch [data-hb-action="retry"]').click()
  await expect(page.locator('#fd-catch .hb-read')).toHaveCount(2)
 })
 
 test('已有心愿继续确认不自动派出，等待时保护卡片与新文字',async({page,shimUrl,shim})=>{
- await page.setViewportSize({width:760,height:1000});await boot(page,shimUrl,shim)
+ await page.setViewportSize({width:690,height:1000});await boot(page,shimUrl,shim)
  let pending:Route|undefined,calls=0,rows=wishes.slice()
  await page.route('**/v1/social/wishes',r=>r.fulfill({json:{wishes:rows}}))
  await page.route('**/v1/social/wish/send',r=>{calls++;pending=r})
  await page.locator('[data-wsh-action="resume"][data-wsh-id="saved"]').click()
  await expect(page.locator('.wsh-draft-text')).toHaveText(wishes[0].text);expect(calls).toBe(0)
  await page.locator('#fd-wish-draft').scrollIntoViewIfNeeded()
- await snapshot(page,'wish-confirm-760')
+ await snapshot(page,'wish-confirm-690')
  await page.locator('[data-wsh-action="send"]').dblclick();await expect.poll(()=>calls).toBe(1)
  await expect(page.locator('[data-wsh-action="send"]')).toBeDisabled()
  await page.locator('#fd-wish-text').fill('下一件想打听的事')
@@ -151,12 +151,12 @@ test('心愿创建跨页保持等待，未知派出结果可以原地重读并�
 })
 
 test('首次寄信等待中改写下一封，成功只清提交的文字，配对刷新保留草稿',async({page,shimUrl,shim})=>{
- await page.setViewportSize({width:760,height:1000});await boot(page,shimUrl,shim)
+ await page.setViewportSize({width:690,height:1000});await boot(page,shimUrl,shim)
  await page.locator('#fd-tools-summary').click();await page.locator('[data-action="mail-toggle"]').click()
  const thread=page.locator('.fd-mail-thread:visible'),input=thread.locator('.fd-mail-input')
  await expect(input).toBeVisible();await expect(thread).toContainText('我给窗台上的花浇了水。')
  await thread.scrollIntoViewIfNeeded()
- await snapshot(page,'mail-reader-760')
+ await snapshot(page,'mail-reader-690')
  let pending:Route|undefined,calls=0,current=letters.slice()
  await page.route('**/v1/penpal/letters?**',r=>r.fulfill({json:{letters:current}}))
  await page.route('**/v1/penpal/letters',r=>{calls++;pending=r})
@@ -203,7 +203,7 @@ test('已知投递失败再次寄出重投同一封，普通读取失败可在�
 })
 
 test('配对生成单飞，离页后迟到码不落到新页面；六位码始终是主入口',async({page,shimUrl,shim})=>{
- await page.setViewportSize({width:760,height:1000});await boot(page,shimUrl,shim)
+ await page.setViewportSize({width:690,height:1000});await boot(page,shimUrl,shim)
  let pending:Route|undefined,calls=0
  await page.route('**/v1/pair/start',r=>{calls++;pending=r})
  await page.locator('#fd-connect-btn').click();await page.locator('#fd-pair-start').dblclick()
@@ -216,7 +216,7 @@ test('配对生成单飞，离页后迟到码不落到新页面；六位码始�
  await expect(page.locator('.fd-pair-code')).toHaveText('654321')
  await expect(page.locator('#fd-pair-panel')).not.toContainText('wechat-cc')
  await page.locator('#fd-pair-panel').scrollIntoViewIfNeeded()
- await snapshot(page,'pair-code-760')
+ await snapshot(page,'pair-code-690')
 })
 
 test('入站开关支持键盘，原生一次激活只更新一次',async({page,shimUrl,shim})=>{

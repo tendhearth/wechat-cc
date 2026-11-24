@@ -15,7 +15,7 @@ test.beforeEach(async ({ page, shim }) => {
 })
 
 test('地方标签、筛选提示与输入框一起切换，草稿随时可以继续写', async ({ page, shimUrl }) => {
-  await page.setViewportSize({ width: 800, height: 820 })
+  await page.setViewportSize({ width: 690, height: 820 })
   await routePlaces(page, [placeItem('rici', { messageIds: ['question', 'rici-reply'] }), placeItem('leni')])
   await page.goto(shimUrl)
   const scroll = page.locator('#converse-scroll')
@@ -53,7 +53,7 @@ test('地方标签、筛选提示与输入框一起切换，草稿随时可以�
 })
 
 test('内滚地方条靠下的菜单可 Tab 到达、完整显示、关闭和操作，中文数据能条件轮询', async ({ page, shimUrl }) => {
-  await page.setViewportSize({ width: 899, height: 760 })
+  await page.setViewportSize({ width: 690, height: 760 })
   const names = ['甲地', '乙地', '丙地', '丁地', '戊地', '己地', '庚地']
   await routePlaces(page, names.map(name => placeItem(name)))
   await page.route('**/v1/places/move', route => route.fulfill({ json: { ok: true } }))
@@ -123,7 +123,7 @@ test('内滚地方条靠下的菜单可 Tab 到达、完整显示、关闭和操
 })
 
 test('窗口底部空间不足时菜单向上翻，实际末行仍能操作', async ({ page, shimUrl }) => {
-  await page.setViewportSize({ width: 899, height: 270 })
+  await page.setViewportSize({ width: 690, height: 270 })
   await routePlaces(page, ['甲地', '乙地', '丙地', '丁地', '戊地', '己地'].map(name => placeItem(name)))
   await page.goto(shimUrl)
   const row = placeRow(page, '己地')
@@ -148,7 +148,7 @@ test('窗口底部空间不足时菜单向上翻，实际末行仍能操作', as
   for (const action of await actions.all()) await action.click({ trial: true })
 })
 
-for (const width of [899, 520]) {
+for (const width of [690, 520]) {
   test(`答复按钮的位置，窗口宽 ${width}px`, async ({ page, shimUrl }) => {
     const line = '要不要先把这份笔记里提到的旧菜谱保留一份，再继续整理剩下的记录？'.repeat(5)
     await page.setViewportSize({ width, height: 800 })
@@ -163,11 +163,12 @@ for (const width of [899, 520]) {
     const [ask, sentence, name, time] = await Promise.all(
       [button, status, row.locator('.place-name'), row.locator('.place-time')].map(item => item.boundingBox()),
     )
-    if (width >= 760) {
-      // 窄窗的横排版本：按钮跟在同一行末尾（时间之后），行不被撑成两层。
-      expect(ask!.height).toBeGreaterThanOrEqual(32)
-      expect(Math.abs((ask!.y + ask!.height / 2) - (sentence!.y + sentence!.height / 2))).toBeLessThan(6)
-      expect(ask!.x).toBeGreaterThan(time!.x + time!.width)
+    if (width === 690) {
+      // 690px 保留名字、现状和时间的一行，答复按钮单独排在下一行。
+      expect(ask!.height).toBe(44)
+      expect(ask!.y).toBeGreaterThanOrEqual(sentence!.y + sentence!.height)
+      expect(ask!.x).toBeCloseTo(sentence!.x, 0)
+      expect(Math.abs((time!.y + time!.height / 2) - (sentence!.y + sentence!.height / 2))).toBeLessThan(6)
       expect(sentence!.x).toBeGreaterThan(name!.x + name!.width)
       await expect(status).toHaveCSS('text-overflow', 'ellipsis')
     } else {

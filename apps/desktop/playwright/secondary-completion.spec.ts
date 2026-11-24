@@ -24,19 +24,19 @@ async function insideViewport(locator: import('@playwright/test').Locator, page:
   expect(box!.y + box!.height).toBeLessThanOrEqual(size.height)
 }
 
-test('real 220px phone QR scrolls at 760×280 with close/copy reachable and modal focus restored', async ({ page, shimUrl, shim }) => {
+test('real 220px phone QR scrolls at 690×280 with close/copy reachable and modal focus restored', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'secondary_completion', phone: { link: [ready()], devices: [[]] } })
   await page.route('**/__invoke', async route => {
     if (route.request().postDataJSON().command === 'render_qr_svg') return route.fulfill({ json: { result: nativeQr } })
     return route.continue()
   })
-  await page.setViewportSize({ width: 760, height: 280 })
+  await page.setViewportSize({ width: 690, height: 280 })
   await boot(page, shimUrl)
   await reveal(page, '#open-phone-settings')
   await page.locator('#open-phone-settings').click()
   await expect(page.locator('#phone-connect-qr svg')).toHaveAttribute('width', '220')
   await insideViewport(page.locator('#phone-settings-modal .qr-card'), page)
-  await shot(page, 'phone-qr-760x280')
+  await shot(page, 'phone-qr-690x280')
   await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('#phone-settings-modal'))).toBe(true)
   for (let i = 0; i < 6; i++) {
     await page.keyboard.press(i % 2 ? 'Shift+Tab' : 'Tab')
@@ -48,13 +48,13 @@ test('real 220px phone QR scrolls at 760×280 with close/copy reachable and moda
   await insideViewport(page.locator('#phone-connect-copy'), page)
   await page.locator('#phone-connect-close').scrollIntoViewIfNeeded()
   await insideViewport(page.locator('#phone-connect-close'), page)
-  await shot(page, 'phone-qr-actions-760x280')
+  await shot(page, 'phone-qr-actions-690x280')
   await page.keyboard.press('Escape')
   await expect(page.locator('#phone-settings-modal')).toHaveCount(0)
   await expect(page.locator('#open-phone-settings')).toBeFocused()
 })
 
-for (const viewport of [{ width: 1400, height: 850 }, { width: 760, height: 280 }]) {
+for (const viewport of [{ width: 1400, height: 850 }, { width: 690, height: 280 }]) {
   test(`AI service menu fits ${viewport.width}×${viewport.height} and keyboard reaches every option`, async ({ page, shimUrl, shim }) => {
     await shim.invoke('demo.seed', { chat_id: 'secondary_completion' })
     await page.setViewportSize(viewport)
@@ -88,7 +88,7 @@ test('service menu survives the real background refresh and returns keyboard foc
   // The production doctor interval is 5s; a rebuilt account row used to detach
   // the opener while a keyboard user was still choosing a service.
   await page.waitForTimeout(5500)
-  await page.setViewportSize({ width: 760, height: 280 })
+  await page.setViewportSize({ width: 690, height: 280 })
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(null))))
   await insideViewport(page.locator('#provider-menu'), page)
   await page.keyboard.press('Escape')
@@ -104,23 +104,23 @@ test('phone loading, request error, expiry and renewal keep the same reachable c
   })
   let pending: import('@playwright/test').Route | undefined
   await page.route('**/v1/phone/link', route => { pending = route })
-  await page.setViewportSize({ width: 760, height: 280 })
+  await page.setViewportSize({ width: 690, height: 280 })
   await boot(page, shimUrl)
   await reveal(page, '#open-phone-settings')
   await page.locator('#open-phone-settings').click()
   await expect.poll(() => !!pending).toBe(true)
   await expect(page.locator('#phone-connect-close')).toBeFocused()
-  await shot(page, 'phone-loading-760x280')
+  await shot(page, 'phone-loading-690x280')
   await pending!.fulfill({ status: 503, json: { error: 'temporary_unavailable' } })
   await expect(page.locator('#phone-connect-error')).toBeVisible()
-  await shot(page, 'phone-error-760x280')
+  await shot(page, 'phone-error-690x280')
   await page.keyboard.press('Escape')
   await page.unroute('**/v1/phone/link')
   await shim.invoke('demo.seed', { chat_id: 'secondary_completion', phone: { link: [{ ...ready(), expires_at: Date.now() + 1200 }], devices: [[]] } })
   await page.locator('#open-phone-settings').click()
   await expect(page.locator('#phone-connect-qr')).toBeVisible()
   await expect(page.locator('#phone-connect-renew')).toBeVisible({ timeout: 7000 })
-  await shot(page, 'phone-expired-760x280')
+  await shot(page, 'phone-expired-690x280')
   await shim.invoke('demo.seed', { chat_id: 'secondary_completion', phone: { link: [ready()], devices: [[]] } })
   await page.locator('#phone-connect-renew').click()
   await expect(page.locator('#phone-connect-qr')).toBeVisible()

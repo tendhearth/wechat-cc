@@ -97,7 +97,7 @@ test('收起左栏时箭头仍可点，悬停不浮出', async ({ page, shimUrl 
   await expectHistory(page, true, false)
 })
 
-for (const width of [1280, 800]) {
+for (const width of [1280, 690]) {
   test(`${width}px 收起一行再放回原位`, async ({ page, shimUrl }) => {
     await page.setViewportSize({ width, height: 820 })
     await page.goto(shimUrl)
@@ -129,8 +129,8 @@ test('macOS 全屏状态去掉红黄绿预留宽度', async ({ page, shimUrl }) 
   expect((await toggle.boundingBox())?.x).toBe(84)
 })
 
-test('800px 沿用原顶栏并支持快捷键', async ({ page, shimUrl }) => {
-  await page.setViewportSize({ width: 800, height: 820 })
+test('690px 沿用原顶栏并支持快捷键', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 690, height: 820 })
   await page.goto(shimUrl)
   await row(page, '菜谱').click()
   await expect(back(page)).toBeHidden()

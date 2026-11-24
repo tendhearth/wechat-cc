@@ -98,7 +98,7 @@ test('project delegation uses the shared dialog, inherits the project executor, 
 })
 
 test('workbench stays readable at a narrow desktop width with no horizontal overflow',async({page,shimUrl,shim})=>{
-  await page.setViewportSize({width:760,height:1100})
+  await page.setViewportSize({width:690,height:1100})
   await setup(page,shimUrl,shim)
   await expect(page.locator('.wb-delegate')).toBeVisible()
   await page.locator('.workbench-pane [data-task-id="deadbeef"]').click()
@@ -126,7 +126,7 @@ test('conversation layers preserve the global navigation and restore the convers
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('inert','')
   await expect(page.locator('#dash-global-rail')).not.toHaveAttribute('aria-hidden','true')
   await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toBeVisible()
-  await page.setViewportSize({width:800,height:844})
+  await page.setViewportSize({width:690,height:844})
   await expect(page.locator('#workbench-home')).toBeVisible()
   const narrowSearch = page.locator('#conversation-matter-layer[data-workbench-view="search"]')
   await expect(narrowSearch.locator('#wb-filter-project')).toHaveCSS('appearance', 'none')
@@ -135,7 +135,7 @@ test('conversation layers preserve the global navigation and restore the convers
     const rect = el.getBoundingClientRect()
     const topbar = getComputedStyle(document.documentElement).getPropertyValue('--topbar-bottom')
     return [rect.left, rect.right, rect.top - parseFloat(topbar), rect.bottom]
-  })).toEqual([0, 800, 0, 844])
+  })).toEqual([0, 690, 0, 844])
   await page.setViewportSize({width:390,height:844})
   await expect(page.locator('#workbench-home')).toBeVisible()
   await page.locator('#workbench-home').click()
@@ -144,7 +144,7 @@ test('conversation layers preserve the global navigation and restore the convers
 })
 
 test('waiting stays visible on the topbar CC while navigating to other panes',async({page,shimUrl,shim})=>{
-  await page.setViewportSize({ width: 800, height: 820 })
+  await page.setViewportSize({ width: 690, height: 820 })
   await routePlaces(page,[askingPlace('portfolio','deadbeef','Bash: bun run test'),askingPlace('interviews','cafefeed','要保留原话吗？')])
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
   await page.route('**/v1/workbench/attention',route=>route.fulfill({json:{tasks:[

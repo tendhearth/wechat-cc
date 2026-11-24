@@ -127,7 +127,7 @@ async function openFixture(page: Page, { wide = false, terminal = false, layout 
   await page.goto(origin)
 }
 
-for (const width of [1440, 760]) {
+for (const width of [1440, 690]) {
   test(`task permissions show a command and an edit at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await openFixture(page, { wide: width === 1440 })
@@ -221,10 +221,10 @@ async function expectFirstThreeCommandLines(card: Locator) {
   expect(visible).toEqual([true, true, true])
 }
 
-for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]] as const) {
+for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [690, 600]] as const) {
   test(`task detail gives permissions room at ${width}×${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height })
-    await openFixture(page, { wide: width >= 900, layout: true })
+    await openFixture(page, { wide: width >= 700, layout: true })
     const composer = page.locator('.wb-followup')
     const field = composer.getByRole('textbox')
     const content = page.locator('.wb-content')
@@ -265,7 +265,7 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]]
       return el.scrollTop
     })).toBe(80)
 
-    if (width === 760 && height === 600) {
+    if (width === 690 && height === 600) {
       await expect(panel.getByRole('heading', { name: '需要你的决定' })).toBeInViewport({ ratio: 1 })
       const operation = request.locator('.wb-permission-tool')
       await expect(operation).toHaveText('Claude 想运行一条命令')
@@ -332,7 +332,7 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]]
 }
 
 test('sticky permission actions reach the bottom of the approval area', async ({ page }) => {
-  await page.setViewportSize({ width: 760, height: 600 })
+  await page.setViewportSize({ width: 690, height: 600 })
   await openFixture(page, { layout: true })
   await expect(page.locator('.wb-followup')).toBeVisible()
   await setPermissionCount(page, 1)
@@ -367,7 +367,7 @@ test('sticky permission actions reach the bottom of the approval area', async ({
 })
 
 test('permission buttons stay with their own request as the list scrolls', async ({ page }) => {
-  await page.setViewportSize({ width: 760, height: 600 })
+  await page.setViewportSize({ width: 690, height: 600 })
   await openFixture(page, { layout: true })
   await expect(page.locator('.wb-followup')).toBeVisible()
   await setPermissionCount(page, 2)
@@ -415,7 +415,7 @@ test('terminal waiting row opens its structured edit under the desktop CSP', asy
 })
 
 test('terminal calls a legacy summary a summary and expands received preview lines', async ({ page }) => {
-  await page.setViewportSize({ width: 760, height: 720 })
+  await page.setViewportSize({ width: 690, height: 720 })
   await openFixture(page, { terminal: true })
   const dialog = page.locator('dialog.now-terminal-dialog')
   await page.locator('.now-terminal[data-hash="leg01"] button').click()

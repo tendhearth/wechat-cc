@@ -237,7 +237,7 @@ test('键盘聚焦按钮不会浮出，隐藏的左栏不可 Tab，浮栏内的�
   await expect(peeking(page)).toHaveCount(0)
 })
 
-test('刷新记住两种状态，800px 下忽略收起选择和快捷键', async ({ page, shimUrl }) => {
+test('刷新记住两种状态，690px 下忽略收起选择和快捷键', async ({ page, shimUrl }) => {
   await routePlaces(page, [])
   await page.goto(shimUrl)
   await toggle(page).click()
@@ -249,7 +249,7 @@ test('刷新记住两种状态，800px 下忽略收起选择和快捷键', async
   await expect(rail(page)).toHaveCSS('width', '284px')
   await expect(toggle(page)).toHaveAttribute('aria-expanded', 'true')
   await toggle(page).click()
-  await page.setViewportSize({ width: 800, height: 820 })
+  await page.setViewportSize({ width: 690, height: 820 })
   await expect(rail(page)).toHaveCSS('height', '72px')
   await expect(toggle(page)).toBeHidden()
   const geometry = () => Promise.all([rail(page), main(page), scroll(page)].map(el => el.boundingBox()))
@@ -257,7 +257,8 @@ test('刷新记住两种状态，800px 下忽略收起选择和快捷键', async
   await page.keyboard.press((await platformShortcut(page)).keys)
   await expect(page.locator('html[data-desk-collapsed]')).toHaveCount(0)
   expect(await geometry()).toEqual(before)
-  await page.setViewportSize({ width: 900, height: 820 })
+  await page.setViewportSize({ width: 700, height: 820 })
+  await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false')
   await expect(rail(page)).toBeHidden()
 })
 

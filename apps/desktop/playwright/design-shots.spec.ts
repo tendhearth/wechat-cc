@@ -23,7 +23,7 @@ async function mockNow(page: any) {
     { id: 't2', title: '整理下周出差安排', providerId: 'claude', pendingPermissionCount: 0, pendingQuestionCount: 1, attentionKey: '["q1"]', first: { kind: 'question', text: '可以安装图片处理组件吗?' } } ] } }))
 }
 
-for (const [label, size] of [['wide', { width: 1440, height: 900 }], ['narrow', { width: 760, height: 1100 }]] as const) {
+for (const [label, size] of [['wide', { width: 1440, height: 900 }], ['narrow', { width: 690, height: 1100 }]] as const) {
   test(`design shots · ${label}`, async ({ page, shimUrl, shim }) => {
     await page.setViewportSize(size)
     await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
