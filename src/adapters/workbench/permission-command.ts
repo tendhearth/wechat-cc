@@ -120,9 +120,27 @@ export function inspectPermissionCommand(facts: { tool: string; command?: string
   // Preview classification must not broaden the old conservative task-grant
   // gate for source-looking data operands or interpreter names in arguments.
   if (argv.some(w => SCRIPT_EXTENSION.test(w)) || argv.slice(start + 1).some(w => INTERPRETER.test(w.split(/[\\/]/).at(-1)!))) eligible = false
-  // Inline programs / modules may load mutable code invisible in the card.
-  if (argv.some(w => /^(?:-[cem]|--eval|--require|--import|--preload)(?:=|$)/.test(w))) return snapshot
+  // Inline programs / modules may load mutable code invisible in the card. For a script preview
+  // this has always stopped here (no preview, no task reuse). For WeChat review it only matters
+  // when the flag goes to an interpreter / shell (`bash -lc "python3 ./x.py"`, `node -r ./hook`):
+  // `wc -c README.md` is fully shown on the card and stays approvable there.
+  const base = (w: string) => w.split(/[\\/]/).at(-1)!
+  const interpreterHead = /^(?:python[\d.]*|node|bun|deno|bash|sh|zsh|dash|ksh|fish|ruby|perl|php|lua)$/
+  if (argv.some(w => /^(?:-[cem]|--eval|--require|--import|--preload)(?:=|$)/.test(w))) {
+    snapshot.scriptInspectionComplete = !argv.some(w => interpreterHead.test(base(w)))
+    return snapshot
+  }
   snapshot.scriptInspectionComplete = true
+  // Shells also take inline code from clustered flags (`bash -lc "python3 ./check.py"`): the code it
+  // runs is never previewed, so it is not reviewable in WeChat. Preview and task reuse are unchanged.
+  if (argv.some(w => /^(?:bash|sh|zsh|dash|ksh|fish)$/.test(base(w))) && argv.some(w => /^-[a-z]*c[a-z]*$/.test(w)))
+    snapshot.scriptInspectionComplete = false
+  // `npm test` / `pnpm start` and friends run package.json scripts the same way `npm run test` does,
+  // but only `run` is resolved and previewed below. Keep those shortcuts out of WeChat approval.
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(program) && /^(?:test|start|stop|restart|t)$/.test(argv[start + 1] ?? '')) {
+    snapshot.scriptInspectionComplete = false
+    eligible = false
+  }
   const runtime = /^(?:python[\d.]*|node|bun|deno|bash|sh|zsh|ruby|perl)$/.test(head.split(/[\\/]/).at(-1)!)
   const candidates: string[] = []
   const add = (name: string | undefined) => {
