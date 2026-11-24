@@ -40,7 +40,7 @@ const oneLine = s => { const t = s.replace(/\s+/g, ' ').trim(); return t.length 
 
 /**
  * 旧版摘要和结构化内容各有自己的截断标记。执行目录只取本次请求里的核实值。
- * @param {Pick<CliSession,'cwd'> & {pending:NonNullable<CliSession['pending']>}} session
+ * @param {Pick<CliSession,'project'|'cwd'> & {pending:NonNullable<CliSession['pending']>}} session
  * @returns {TerminalOperation & {titleSummary:string}}
  */
 export function terminalPendingOperation({ pending, cwd }) {
