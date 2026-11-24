@@ -8,6 +8,9 @@ import { paintConversation, rememberConversationPosition, showConversationLatest
 import { escapeWorkbenchHtml as esc, renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from './workbench-markdown.js'
 import { recapMemoHtml, sketchRecap } from './recap-memo.js'
 import { groupActivity, mergeActivity, terminalInputReason } from './thing-thread-model.js'
+import { permissionActionZh } from '../generated/permission-display.js'
+import { renderTerminalPermissionOperation } from './permission-operation.js'
+import { terminalPendingOperation, terminalTitle } from './terminal-waiting.js'
 
 const { agentAvatarsHtml } = createAgentAvatars()
 /** @typedef {import('./thing-thread-model.js').Activity} Activity */
@@ -71,9 +74,12 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   host.innerHTML = `<div class="converse-scroll thing-scroll"><button type="button" class="converse-earlier" data-converse-lead hidden>更早的</button></div>
     <button type="button" class="converse-latest" hidden>有新回复 · 回到最新</button>
     <div class="desk-waiting thing-waiting" hidden><div class="desk-waiting-row">${deskSpeakerHtml('cc')}<div class="desk-waiting-card">
-      <div class="desk-waiting-label">这件要你定</div><div class="desk-waiting-question"></div>
-      <div class="desk-waiting-opinion" hidden></div><div class="desk-waiting-reason" hidden></div>
-      <div class="place-ask"><button type="button" class="place-allow" data-place-decision="allow">允许</button><button type="button" data-place-decision="deny">不允许</button></div>
+      <div class="thing-waiting-body">
+        <div class="desk-waiting-label">这件要你定</div><div class="desk-waiting-question"></div>
+        <div class="thing-waiting-operation"></div>
+        <div class="desk-waiting-opinion" hidden></div><div class="desk-waiting-reason" hidden></div>
+      </div>
+      <div class="place-ask"><button type="button" class="place-allow" data-place-decision="allow">允许</button><button type="button" data-place-decision="deny">不允许</button><span class="thing-waiting-note" hidden>这里看不全，请到终端里看全再定。</span></div>
     </div></div></div>
     <div class="thing-compose-status"><span role="status"></span><button class="desk-text-button" type="button" hidden>停止这一轮</button></div>
     <p class="thing-ended-note" hidden>这次会话已经结束了，只能看。</p>
@@ -85,6 +91,11 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   const earlier = /** @type {HTMLButtonElement} */ (find('[data-converse-lead]'))
   const latest = /** @type {HTMLButtonElement} */ (find('.converse-latest'))
   const card = /** @type {HTMLElement} */ (find('.thing-waiting'))
+  const cardBody = /** @type {HTMLElement} */ (find('.thing-waiting-body'))
+  const operationView = find('.thing-waiting-operation')
+  const allow = /** @type {HTMLButtonElement} */ (find('[data-place-decision="allow"]'))
+  const deny = find('[data-place-decision="deny"]')
+  const fullNote = /** @type {HTMLElement} */ (find('.thing-waiting-note'))
   const form = /** @type {HTMLFormElement} */ (find('form'))
   const input = /** @type {HTMLTextAreaElement} */ (find('textarea'))
   const send = /** @type {HTMLButtonElement} */ (find('[type=submit]'))
@@ -100,6 +111,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   /** @type {{text:string,sentAt:number,after:Set<string>,receipt?:string}|null} */ let outgoing = null
   let alive = true, polling = false, paging = false, sending = false, deciding = false, stopping = false
   let confirmed = '', answered = '', lastRecipient = '', loaded = false
+  let lastOperation = '', lastRequest = ''
   const wide = window.matchMedia('(min-width: 900px)')
   /** @type {import('@wechat-cc/protocol').SessionRecapT|undefined} */ let recap
   /** @type {HTMLElement|null} */ let memo = null
@@ -134,12 +146,30 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     const question = find('.desk-waiting-question')
     const restore = rememberConversationPosition(scroll)
     card.hidden = !request
-    setText(question, request ? [request.tool, request.summary].filter(Boolean).join(' · ') : '')
+    const operation = request && session ? terminalPendingOperation({ ...session, pending: request }) : null
+    const rendered = operation && renderTerminalPermissionOperation(operation)
+    const action = operation?.display && operation.tool
+      ? permissionActionZh(operation.display.body, operation.tool, who)
+      : undefined
+    setText(question, action ?? (operation ? terminalTitle(operation.tool, operation.titleSummary, who) : ''))
+    const html = rendered?.html ?? ''
+    const requestId = request?.hash ?? ''
+    if (html !== lastOperation || requestId !== lastRequest) {
+      operationView.innerHTML = html
+      if (requestId !== lastRequest) cardBody.scrollTop = 0
+      lastOperation = html
+      lastRequest = requestId
+    }
+    const blind = !rendered || rendered.needsFullView
+    if (blind) allow.remove()
+    else if (!allow.parentElement) deny.before(allow)
+    // 「允许」不在时,原因写在按钮旁边:卡片正文会滚,那里的说明不一定看得见。
+    fullNote.hidden = !blind
     const ccOpinion = matched ? waiting?.ccOpinion : ''
     const questionReason = matched ? waiting?.questionReason : ''
     opinion.toggleAttribute('hidden', !ccOpinion)
     reason.toggleAttribute('hidden', !questionReason)
-    setText(opinion, ccOpinion ? `我的意见(只看了这条请求)：${ccOpinion}` : '')
+    setText(opinion, ccOpinion ? `我的意见（只看了这条请求）：${ccOpinion}` : '')
     setText(reason, questionReason ? `为什么来问你：${questionReason}` : '')
     onWaiting(request?.hash ?? (answered || null))
     const stopped = document.documentElement.hasAttribute('data-desk-cc-stopped')
@@ -373,9 +403,9 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     }
   }
   card.onclick = async event => {
-    const button = event.target instanceof Element ? event.target.closest('button') : null
+    const button = event.target instanceof Element ? event.target.closest('button[data-place-decision]') : null
     const hash = pending()?.hash
-    if (!button || button.disabled || !hash || deciding) return
+    if (!(button instanceof HTMLButtonElement) || button.disabled || !hash || deciding) return
     deciding = true
     reflect()
     draw()

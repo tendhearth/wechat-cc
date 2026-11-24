@@ -7,7 +7,8 @@ import { escapeWorkbenchHtml as escape } from './workbench-markdown.js'
 
 /** @typedef {import('../../../../packages/protocol/src/permission-display').PermissionDisplay} PermissionDisplay */
 /** @typedef {{showSnapshotNotice?:boolean,hasScriptPreview?:boolean}} SnapshotOptions */
-/** @typedef {{cwd?:string,projectPath?:string,raw?:string,summary?:string,summaryTruncated?:boolean,summaryOnly?:boolean,disclosureId?:string,compact?:()=>void} & SnapshotOptions} OperationOptions */
+/** @typedef {{cwd?:string,projectPath?:string,raw?:string,summary?:string,summaryTruncated?:boolean,summaryOnly?:boolean,disclosureId?:string} & SnapshotOptions} OperationOptions */
+/** @typedef {{tool:string,display?:PermissionDisplay} & OperationOptions} TerminalOperation */
 /** @typedef {{name:string,value:string}} Field */
 
 /** @type {typeof import('../../../../packages/protocol/src/permission-presentation').permissionLines} */
@@ -26,12 +27,18 @@ export function renderPermissionText(value, onMarked) {
 }
 
 const SUMMARY_WHITESPACE = '摘要里的换行和连续空格可能被并掉了。'
+const TERMINAL_FULL_VIEW = '这里不是全部内容，完整的请在终端里看。'
 
 /** @param {PermissionDisplay} display @param {{cwd?:string, summaryTruncated?:boolean} & SnapshotOptions} options */
 export function renderCompactPermissionOperation(display, options) {
-  let needsFullView = false
-  const html = renderPermissionOperation(display, { ...options, compact: () => { needsFullView = true } })
-  return { html, needsFullView }
+  return renderOperation(display, options, 'compact')
+}
+
+/** @param {TerminalOperation} operation */
+export function renderTerminalPermissionOperation(operation) {
+  if (operation.display) return renderOperation(operation.display, operation, 'terminal')
+  const message = operation.tool ? `${operation.tool} 没说具体要做什么。` : '它没说具体要做什么。'
+  return { html: `<p class="wb-history-note">${escape(message)} ${TERMINAL_FULL_VIEW}</p>`, needsFullView: true }
 }
 
 /** @param {string[]} lines */
@@ -54,12 +61,20 @@ function patchWhitespaceChange(lines) {
 }
 
 /** @param {PermissionDisplay} display @param {OperationOptions} [options] */
-export function renderPermissionOperation(display, { cwd, projectPath = '', raw, summary, summaryTruncated = false, summaryOnly = false,
-  disclosureId, compact, showSnapshotNotice = false, hasScriptPreview = showSnapshotNotice } = {}) {
+export function renderPermissionOperation(display, options) {
+  return renderOperation(display, options).html
+}
+
+/** @param {PermissionDisplay} display @param {OperationOptions & {tool?:string}} [options] @param {'full'|'compact'|'terminal'} [mode] */
+function renderOperation(display, { cwd, projectPath = '', raw, summary, summaryTruncated = false, summaryOnly = false,
+  disclosureId, showSnapshotNotice = false, hasScriptPreview = showSnapshotNotice, tool = '' } = {}, mode = 'full') {
   const incomplete = display.truncated === true || (summaryTruncated && raw === undefined)
-  if (incomplete || hasScriptPreview) compact?.()
-  let remainingLines = 4
   const { body, extra, note } = display
+  const compact = mode === 'compact'
+  const terminal = mode === 'terminal'
+  const command = body.kind === 'command' || /^(bash|shell|exec_command|local_shell|run_terminal_cmd|run_command)$/i.test(tool)
+  let needsFullView = incomplete || hasScriptPreview || (terminal && command && !cwd)
+  let remainingLines = 4
   const path = (/** @type {string} */ value) => permissionRelativePath(value, cwd ?? projectPath)
   let disclosureIndex = 0
   const disclosure = (/** @type {string} */ label, /** @type {string} */ content) => {
@@ -72,7 +87,7 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
   const source = (/** @type {string} */ value) => `<div class="approval-source"${fit}>${text(value)}</div>`
   const meta = (/** @type {string} */ value, fitted = false) => `<div class="approval-meta"${fitted ? fit : ''}>${text(value)}</div>`
   const compactMore = (/** @type {string} */ label) => {
-    compact?.()
+    needsFullView = true
     return `<button type="button" class="desk-text-button approval-more" data-place-open>${label}</button>`
   }
   const moreLabel = (/** @type {number} */ hidden) => `还有 ${hidden} 行 · ${incomplete ? '展开收到的部分' : '看全部'}`
@@ -101,7 +116,7 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
   }
   const filePath = (/** @type {string} */ value, /** @type {string} */ detail = '') => {
     const label = path(value) + detail
-    if (compact && label.includes('\n')) compact()
+    if (compact && label.includes('\n')) needsFullView = true
     return `<div class="approval-path"${fit}>${text(compact ? label.replaceAll('\n', '\\n') : label)}</div>`
   }
   const diff = (/** @type {string[]} */ lines, /** @type {string} */ trailingNote = '') => {
@@ -156,7 +171,7 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
       const changes = compact ? body.changes.slice(0, 1) : body.changes
       content = filePath(compact ? changes[0]?.path ?? body.path : body.path, body.replaceAll ? '（全部替换）' : '') + changes.map(({ path: changePath, before, after }) => {
         const edit = permissionEditPreview(before, after)
-        if (edit.whitespaceChange || edit.finalNewlineChange) compact?.()
+        if (edit.whitespaceChange || edit.finalNewlineChange) needsFullView = true
         const fragmentNote = incomplete || summaryOnly || edit.fragmentEndsWithNewline === undefined ? ''
           : edit.fragmentEndsWithNewline ? '这一段末尾有换行' : '这一段末尾没有换行'
         return `<div class="approval-change">${!compact && changePath && changePath !== body.path ? filePath(changePath) : ''}${diff([
@@ -176,8 +191,8 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
       const files = compact ? body.files.slice(0, 1) : body.files
       content = files.map(file => {
         const lines = permissionLines(file.diff)
-        const whitespaceChange = compact && patchWhitespaceChange(lines)
-        if (whitespaceChange) compact()
+        const whitespaceChange = (compact || terminal) && patchWhitespaceChange(lines)
+        if (whitespaceChange) needsFullView = true
         return `<div class="approval-change">${filePath(file.path,
           `（${permissionPatchLabel(file.change, file.movePath === undefined ? undefined : path(file.movePath))}）`)}${diff(lines)}${whitespaceChange ? meta(PERMISSION_WHITESPACE_NOTICE_ZH) : ''}</div>`
       }).join('')
@@ -203,7 +218,10 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
   const extraHtml = extra?.length ? `<div class="approval-extra">${fieldList(extra)}</div>` : ''
   const originalHtml = raw !== undefined ? disclosure('看完整原文', source(raw)) : ''
   const summaryHtml = summary !== undefined ? disclosure('看摘要', (summaryOnly ? '' : meta(SUMMARY_WHITESPACE)) + source(summary)) : ''
-  return `<div class="approval-operation${compact ? ' approval-compact' : ''}">
+  const notice = terminal && needsFullView ? TERMINAL_FULL_VIEW : incomplete
+    ? compact ? '这里不是全部内容。' : raw === undefined ? TERMINAL_FULL_VIEW : '这里不是全部内容，完整的在下面『看完整原文』里。'
+    : ''
+  const html = `<div class="approval-operation${compact ? ' approval-compact' : ''}">
     ${compact ? '' : noteHtml}
     ${summaryOnly ? '<div class="approval-meta approval-summary-label">摘要</div>' : ''}
     <div class="approval-panel" data-kind="${body.kind}">${content}</div>
@@ -211,11 +229,11 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
     ${directoryHtml}${compact && noteHtml ? '\n    ' + noteHtml : ''}
     ${promptHtml}
     ${extraHtml}
-    ${incomplete ? meta(compact ? '这里不是全部内容。' : raw === undefined ? '这里不是全部内容，完整的请在终端里看。'
-      : '这里不是全部内容，完整的在下面『看完整原文』里。') : ''}
+    ${notice ? meta(notice) : ''}
     ${marked ? `<div class="approval-meta approval-invisible-notice">${PERMISSION_INVISIBLE_NOTICE_ZH}</div>` : ''}${showSnapshotNotice ? `
     <div class="approval-meta wb-permission-snapshot">${PERMISSION_SNAPSHOT_NOTICE}</div>` : ''}
     ${originalHtml}
     ${summaryHtml}
   </div>`
+  return { html, needsFullView }
 }

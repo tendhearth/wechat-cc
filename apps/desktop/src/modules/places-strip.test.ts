@@ -268,7 +268,7 @@ it('意见纸条标明 CC 只看了这条请求', async () => {
   await strip!.refresh()
   expect(waitingRoot.querySelector('.desk-waiting-question')?.textContent).toBe('删旧备份？')
   expect(waitingRoot.querySelector('.approval-operation')).toBeNull()
-  expect(waitingRoot.querySelector('.desk-waiting-opinion')?.textContent).toBe('我的意见(只看了这条请求)：' + ccOpinion)
+  expect(waitingRoot.querySelector('.desk-waiting-opinion')?.textContent).toBe('我的意见（只看了这条请求）：' + ccOpinion)
 })
 
 it.each(['allow', 'deny', 'open', 'terminal'])('晚到的意见保持等待卡按键焦点（%s）', async action => {

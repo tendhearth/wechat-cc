@@ -759,7 +759,29 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   font-family: var(--th-font-mono);
 }
 [data-desk-wide] .thing-step-peek { margin: 0; }
-[data-desk-wide] .thing-waiting:not([hidden]) { padding-block: 4px; }
+[data-desk-wide] .thing-waiting:not([hidden]) { max-height: none; padding-block: 4px; }
+[data-desk-wide] .thing-waiting .desk-waiting-card {
+  display: flex;
+  flex-direction: column;
+  max-height: 42vh;
+  padding: 0;
+}
+[data-desk-wide] .thing-waiting-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 6px;
+}
+[data-desk-wide] .thing-waiting .desk-waiting-card .place-ask {
+  flex: none;
+  margin-top: 0;
+  padding: 8px 18px 16px;
+}
+[data-desk-wide] .thing-waiting .place-ask { align-items: center; }
+[data-desk-wide] .thing-waiting-note { color: var(--th-ink-soft); font-size: var(--th-size-meta); line-height: var(--th-lh-meta); }
+[data-desk-wide] .thing-waiting-note[hidden] { display: none; }
 [data-desk-wide] .thing-compose-status {
   box-sizing: border-box;
   width: var(--desk-thread-width);

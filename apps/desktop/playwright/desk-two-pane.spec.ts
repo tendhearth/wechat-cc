@@ -455,7 +455,7 @@ test('等待纸条有 CC 意见时只多两行', async ({ page, shimUrl }) => {
   await page.goto(shimUrl)
   const cards = page.locator('.desk-waiting-card')
   const lines = (name: string) => cards.filter({ hasText: name }).locator(':scope > div:not(.place-ask)')
-  await expect(lines('归档')).toHaveText(['这件要你定 · 归档', summary, '我的意见(只看了这条请求)：' + note.ccOpinion, '为什么来问你：' + note.questionReason])
+  await expect(lines('归档')).toHaveText(['这件要你定 · 归档', summary, '我的意见（只看了这条请求）：' + note.ccOpinion, '为什么来问你：' + note.questionReason])
   await expect(lines('菜谱')).toHaveText(['这件要你定 · 菜谱', '要你回答一个问题'])
 })
 

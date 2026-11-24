@@ -177,7 +177,7 @@ test('「地方」里终端停着问的行亮点，只有可拍板的请求才�
   } }))
   await page.route('**/v1/cli/sessions*', route => route.fulfill({ json: { sessions: [
     { session_id: allowed.session_id, source: 'claude', status: approved ? 'running' : 'waiting',
-      pending: approved ? null : { actionable: true, tool: 'Bash', summary: 'npm publish', hash: allowed.hash } },
+      pending: approved ? null : { actionable: true, tool: 'Bash', summary: 'npm publish', hash: allowed.hash, cwd: '/demo/project' } },
     { session_id: 'cd34e5-full', source: 'codex', status: 'waiting', last_summary: '要改 package.json',
       pending: { actionable: false, tool: 'permission', summary: '要改 package.json' } },
   ] } }))
@@ -205,7 +205,9 @@ test('「地方」里终端停着问的行亮点，只有可拍板的请求才�
   await expect(detail).toHaveCount(0)
   await answerPlace(page, 'wechat-cc')
   await expect(detail).toBeVisible()
-  await expect(detail.locator('.desk-waiting-question')).toHaveText('Bash · npm publish')
+  // 卡片标题是人话,命令画在下面的命令块里(#1060)。
+  await expect(detail.locator('.desk-waiting-question')).toHaveText(/想运行一条命令$/)
+  await expect(detail.locator('.thing-waiting-operation')).toContainText('npm publish')
   await detail.getByRole('button', { name: '允许', exact: true }).click()
   await expect(detail.getByRole('button', { name: '允许', exact: true })).toHaveCount(0)
   expect(decisions).toEqual([allowed])
