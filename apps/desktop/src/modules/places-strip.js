@@ -10,7 +10,8 @@
 import {V1,v1} from '../daemon-client.js'
 import {escapeHtml} from '../view.js'
 import {deskSituation, deskSpeakerHtml} from './desk-page.js'
-import {renderCompactPermissionOperation} from './permission-operation.js'
+import {permissionCwd} from '../generated/permission-display.js'
+import {renderCompactPermissionOperation, renderPermissionText} from './permission-operation.js'
 
 /** @typedef {import('../../../../packages/protocol/src/places').PlaceT} Place */
 
@@ -57,7 +58,7 @@ function askHtml(p, card = false, needsFullView = false) {
   const open = `<button type="button" ${card ? 'class="place-allow" ' : ''}data-place-open>${needsFullView ? '打开看全再定' : '去回答'}</button>`
   if (w.kind === 'permission' && w.matterId && w.requestId) {
     const allow = '<button type="button" class="place-allow" data-place-decision="allow">允许</button>'
-    const openWhenClipped = card && w.display && !needsFullView
+    const openWhenClipped = card && !needsFullView
       ? '<button type="button" class="place-allow" data-place-open data-place-open-if-clipped hidden>打开看全再定</button>' : ''
     return `<div class="place-ask">${needsFullView ? open : allow}${openWhenClipped}<button type="button" data-place-decision="deny">不允许</button>${more}</div>`
   }
@@ -163,17 +164,20 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     const visibleWaiting = waiting.slice(0, waitingOpen ? waiting.length : 2)
     const cards = visibleWaiting.map(p => {
       const note = p.waiting
+      const cwd = permissionCwd(note?.cwd)
       const operation = note?.display && renderCompactPermissionOperation(note.display, {
-        cwd: note.cwd, showSnapshotNotice: note.showSnapshotNotice, hasScriptPreview: note.hasScriptPreview,
+        cwd, showSnapshotNotice: note.showSnapshotNotice, hasScriptPreview: note.hasScriptPreview,
       })
+      const directory = !operation && cwd ? `<div class="approval-meta" data-approval-fit>在 ${renderPermissionText(cwd)}</div>` : ''
+      const needsFullView = note?.hasScriptPreview === true || operation?.needsFullView || (note?.kind === 'permission' && !cwd)
       const question = operation ? note?.summary.split('\n', 1)[0] : note?.summary
       return `<div class="desk-waiting-row">
         ${deskSpeakerHtml('cc')}
         <div class="desk-waiting-card" data-place-key="${escapeHtml(p.key)}" data-item-key="${escapeHtml(note?.itemKey ?? '')}" data-request-id="${escapeHtml(note?.requestId ?? '')}">
           <div class="desk-waiting-label">这件要你定 · ${escapeHtml(p.name)}</div>
           <div class="desk-waiting-question${operation ? ' desk-waiting-question-compact' : ''}">${escapeHtml(question ?? '')}</div>
-          ${operation?.html ?? ''}
-          ${askHtml(p, true, operation?.needsFullView)}
+          ${operation?.html ?? directory}
+          ${askHtml(p, true, needsFullView)}
         </div>
       </div>`
     }).join('')

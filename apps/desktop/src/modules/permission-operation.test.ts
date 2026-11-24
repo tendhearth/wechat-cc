@@ -161,6 +161,33 @@ it('marks controls in commands, paths, diffs, fields and the complete original',
     expect(root.querySelector('.approval-invisible-notice')?.textContent).toBe('这里有看不见的字符，已经标出来了。')
 })
 
+it.each([
+  ['', 'sample\n', '这一段末尾有换行'],
+  ['', 'sample', '这一段末尾没有换行'],
+  ['sample\n', '', '这一段末尾有换行'],
+  ['sample', '', '这一段末尾没有换行'],
+] as const)('shows the ending of a one-sided edit (case %#)', (before, after, notice) => {
+  const body = { kind: 'edit' as const, path: 'sample', changes: [{ before, after }] }
+  const full = render(body)
+  expect(full.querySelector('.approval-change > .approval-meta')?.textContent).toBe(notice)
+  const compact = renderCompactPermissionOperation({ body }, {})
+  const root = document.createElement('div')
+  root.innerHTML = compact.html
+  expect(root.querySelector('.approval-change > .approval-meta[data-approval-fit]')?.textContent).toBe(notice)
+  expect(compact.needsFullView).toBe(false)
+})
+
+it('counts a hidden fragment ending in the compact preview line limit', () => {
+  const body = { kind: 'edit' as const, path: 'sample', changes: [{ before: '', after: 'a\nb\nc\nd\n' }] }
+  const result = renderCompactPermissionOperation({ body }, {})
+  const root = document.createElement('div')
+  root.innerHTML = result.html
+  expect(root.querySelectorAll('.approval-diff [data-line]')).toHaveLength(4)
+  expect(root.querySelector('.approval-change > .approval-meta')).toBeNull()
+  expect(root.querySelector('.approval-more')?.textContent).toBe('还有 1 行')
+  expect(result.needsFullView).toBe(true)
+})
+
 it('only labels the end of a complete Write as the end of the file', () => {
   const body = { kind: 'write', path: 'a', content: 'sample' } as const
   expect(render(body).textContent?.includes('文件末尾没有换行')).toBe(true)

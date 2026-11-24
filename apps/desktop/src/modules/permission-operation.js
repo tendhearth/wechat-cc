@@ -104,11 +104,18 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
     if (compact && label.includes('\n')) compact()
     return `<div class="approval-path"${fit}>${text(compact ? label.replaceAll('\n', '\\n') : label)}</div>`
   }
-  const diff = (/** @type {string[]} */ lines) => preview(lines, 12, part => `<div class="wb-review-diff approval-diff"${fit}>${part.map(line => {
-    const kind = line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'added' : line.startsWith('-') ? 'deleted' : 'context'
-    const content = kind === 'deleted' ? '−' + line.slice(1) : line
-    return `<div data-line="${kind}">${text(content)}</div>`
-  }).join('')}</div>`)
+  const diff = (/** @type {string[]} */ lines, /** @type {string} */ trailingNote = '') => {
+    const render = (/** @type {string[]} */ part) => `<div class="wb-review-diff approval-diff"${fit}>${part.map(line => {
+      const kind = line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'added' : line.startsWith('-') ? 'deleted' : 'context'
+      const content = kind === 'deleted' ? '−' + line.slice(1) : line
+      return `<div data-line="${kind}">${text(content)}</div>`
+    }).join('')}</div>`
+    if (compact && trailingNote) {
+      return preview([...lines, trailingNote], 12, part => part.length > lines.length
+        ? render(part.slice(0, -1)) + meta(trailingNote, true) : render(part))
+    }
+    return preview(lines, 12, render) + (trailingNote ? meta(trailingNote) : '')
+  }
   const fieldList = (/** @type {Field[]} */ fields) => {
     const render = (/** @type {Field[]} */ rows) => `<dl class="approval-fields">${rows.map(({ name, value }) =>
       `<dt${fit}>${text(name)}</dt><dd>${source(value)}</dd>`).join('')}</dl>`
@@ -150,10 +157,12 @@ export function renderPermissionOperation(display, { cwd, projectPath = '', raw,
       content = filePath(compact ? changes[0]?.path ?? body.path : body.path, body.replaceAll ? '（全部替换）' : '') + changes.map(({ path: changePath, before, after }) => {
         const edit = permissionEditPreview(before, after)
         if (edit.whitespaceChange || edit.finalNewlineChange) compact?.()
+        const fragmentNote = incomplete || summaryOnly || edit.fragmentEndsWithNewline === undefined ? ''
+          : edit.fragmentEndsWithNewline ? '这一段末尾有换行' : '这一段末尾没有换行'
         return `<div class="approval-change">${!compact && changePath && changePath !== body.path ? filePath(changePath) : ''}${diff([
           ...edit.before.map(line => `- ${line}`),
           ...edit.after.map(line => `+ ${line}`),
-        ])}${edit.finalNewlineChange ? meta(edit.finalNewlineChange === 'removed'
+        ], fragmentNote)}${edit.finalNewlineChange ? meta(edit.finalNewlineChange === 'removed'
           ? '这一段的末尾少了一个换行。' : '这一段的末尾多了一个换行。') : ''}${edit.whitespaceChange ? meta(PERMISSION_WHITESPACE_NOTICE_ZH) : ''}</div>`
       }).join('')
       if (compact && body.changes.length > 1) content += compactMore(`还有 ${body.changes.length - 1} 处`)

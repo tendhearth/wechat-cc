@@ -371,6 +371,31 @@ it('页签标题取第一句，压成一行并按字符截断，只为桌面查�
   } finally { db.close() }
 })
 
+it('同一地方的等待目录跟着请求走，旧请求不会借用地方根目录', () => {
+  const worktrees = ['/w/rici/.claude/worktrees/one', '/w/rici/.claude/worktrees/two']
+  const rows = worktrees.map((projectPath, i) => m(String(i), { projectPath }))
+  const display = { body: { kind: 'command', command: 'printf sample' } } satisfies PermissionDisplay
+  let next = 0
+  const { reader } = setup(rows, [], () => NOW, {
+    roster: {
+      matters: { list: () => rows }, seen: () => null, now: () => NOW, terminals: () => [],
+      workbench: {
+        list: () => ({ tasks: rows.map(({ id }) => ({ id, status: 'running' })) }),
+        attention: () => ({ tasks: rows }),
+        detail: id => ({ questions: [], permissions: id === rows[next % rows.length]?.id
+          ? [{ id: 'req', tool: 'Bash', description: 'Sample', createdAt: NOW, display, cwd: worktrees[next] }] : [] }),
+      },
+    },
+  })
+  for (const cwd of [...worktrees, undefined]) {
+    const { places } = reader.read('operator')
+    expect(places).toHaveLength(1)
+    expect(places[0]?.waiting?.display?.body.kind).toBe('command')
+    expect(places[0]?.waiting?.cwd === cwd).toBe(true)
+    next++
+  }
+})
+
 it('地方只投影实际排在纸片上的那条请求，终端取 pending，提问不带审批字段', async () => {
   const display = { body: { kind: 'command', command: 'printf sample' } } satisfies PermissionDisplay
   const rows = [m('old'), m('new'), m('question', { projectPath: '/w/question' })]

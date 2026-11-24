@@ -61,11 +61,14 @@ export function permissionEditPreview(before: string, after: string) {
   const newlineChanged = beforeEndsWithNewline !== afterEndsWithNewline
   const finalNewlineChange = before.length > 0 && after.length > 0 && newlineChanged
     ? (beforeEndsWithNewline ? 'removed' : 'added') : undefined
+  const fragmentEndsWithNewline = Boolean(before) === Boolean(after) ? undefined
+    : beforeEndsWithNewline || afterEndsWithNewline
   return {
     before: permissionLines(before),
     after: permissionLines(after),
     whitespaceChange: hasWhitespaceChange(before, after),
     finalNewlineChange,
+    fragmentEndsWithNewline,
   }
 }
 

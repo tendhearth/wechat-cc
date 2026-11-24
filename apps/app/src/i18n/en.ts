@@ -228,6 +228,8 @@ const en = {
   'terminal.summary': 'Summary',
   'approval.fragmentNewlineRemoved': 'This fragment ends with one fewer line break.',
   'approval.fragmentNewlineAdded': 'This fragment ends with one more line break.',
+  'approval.fragmentHasNewline': 'This fragment ends with a line break.',
+  'approval.fragmentNoNewline': 'This fragment has no line break at the end.',
   'approval.invisibleCharacter': 'Invisible character {text}',
   'approval.invisibleNotice': 'This content contains invisible characters, marked above or in the expanded text.',
   'approval.previewTruncated': 'This preview is incomplete. See the full original below.',

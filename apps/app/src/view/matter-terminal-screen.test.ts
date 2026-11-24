@@ -217,6 +217,17 @@ it.each([
   expect(ui.byId('approval-exact-source').textContent === `sample\nBefore: ${JSON.stringify(before)}\nAfter: ${JSON.stringify(after)}`).toBe(true)
 })
 
+it.each([true, false])('shows the ending of an inserted fragment (final newline: %s)', async endsWithNewline => {
+  const lang = 'zh-Hans'
+  const ui = await mount(withProviders(createElement(TerminalPermission, {
+    pending: { tool: 'Edit', summary: null, display: {
+      body: { kind: 'edit', path: 'sample', changes: [{ before: '', after: endsWithNewline ? 'sample\n' : 'sample' }] },
+    } },
+    source: 'Claude', projectPath: '/sample', scroll: { current: null },
+  }), { backend: makeDemoBackend({ lang }), lang }))
+  expect(ui.byId('approval-edit-0').textContent?.includes(endsWithNewline ? '这一段末尾有换行' : '这一段末尾没有换行')).toBe(true)
+})
+
 it.each(['Bash', 'Edit'] as const)('marks unsafe characters in the %s preview and its full source', async tool => {
   const value = '中文🙂\n\t\r\x1b\u202e\u200b'
   const marks = ['\\r', '\\x1b', '\\u{202E}', '\\u{200B}']

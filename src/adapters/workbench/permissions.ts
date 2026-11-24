@@ -94,7 +94,7 @@ export function makeRunPermissions(opts: {
   function request(
     raw: Parameters<NonNullable<SpawnContext['requestPermission']>>[0],
     signal?: AbortSignal,
-    ruleDefaultCwd?: string,
+    runCwd?: string,
   ): Promise<boolean> {
     if (closed || typeof raw?.tool !== 'string' || typeof raw?.description !== 'string') return Promise.resolve(false)
     const tool = raw.tool.trim()
@@ -106,7 +106,7 @@ export function makeRunPermissions(opts: {
     const facts: PermissionFacts = { tool, description }
     if (typeof raw.command === 'string' && raw.command.trim()) facts.command = raw.command
     if (Array.isArray(raw.paths) && raw.paths.length && raw.paths.every(p => typeof p === 'string' && p)) facts.paths = [...raw.paths]
-    const ruleCwd = raw.cwd ?? ruleDefaultCwd
+    const ruleCwd = raw.cwd ?? runCwd
     if (typeof ruleCwd === 'string' && ruleCwd) facts.cwd = ruleCwd
     if (raw.requiresBoundExecution === true) facts.requiresBoundExecution = true
     const registerOrReuse = (reuse = true, snapshot = inspectPermissionCommand(facts, opts)) => {
@@ -117,7 +117,7 @@ export function makeRunPermissions(opts: {
         const allowed = audit({ type: 'outcome', permission, outcome: 'allow', by: 'rule' })
         return Promise.resolve(allowed)
       }
-      return register(facts, reuse ? snapshot : { ...snapshot, hash: undefined }, raw, signal)
+      return register(facts, reuse ? snapshot : { ...snapshot, hash: undefined }, raw, runCwd, signal)
     }
     if (!opts.decide || !first.consultOwnerRules) return registerOrReuse()
     return opts.decide(facts).catch(() => ({ verdict: 'ask' as const, by: 'unavailable' })).then(d => {
@@ -135,11 +135,12 @@ export function makeRunPermissions(opts: {
     })
   }
 
-  function register(facts: PermissionFacts, snapshot: CommandSnapshot, raw: Parameters<typeof request>[0], signal?: AbortSignal): Promise<boolean> {
+  function register(facts: PermissionFacts, snapshot: CommandSnapshot, raw: Parameters<typeof request>[0], runCwd?: string, signal?: AbortSignal): Promise<boolean> {
     const { tool, description = '' } = facts
     const { onDenied } = raw
     const display = PermissionDisplaySchema.safeParse(raw.display).data
-    const cwd = permissionCwd(raw.displayCwd ?? raw.cwd)
+    // The caller passes the directory used to spawn this run. The project root is not a fallback.
+    const cwd = permissionCwd(raw.displayCwd ?? raw.cwd ?? runCwd)
     const proposedReview = raw.reviewDescription ?? raw.description
     const review = display && typeof proposedReview === 'string' && proposedReview.length <= WORKBENCH_PERMISSION_DESCRIPTION_MAX ? proposedReview : description
     const showSnapshotNotice = snapshot.scripts.length > 0 || snapshot.requiresBoundExecution

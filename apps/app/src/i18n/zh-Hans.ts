@@ -230,6 +230,8 @@ const zh: Record<keyof typeof en, string> = {
   'terminal.summary': '摘要',
   'approval.fragmentNewlineRemoved': '这一段的末尾少了一个换行。',
   'approval.fragmentNewlineAdded': '这一段的末尾多了一个换行。',
+  'approval.fragmentHasNewline': '这一段末尾有换行',
+  'approval.fragmentNoNewline': '这一段末尾没有换行',
   'approval.invisibleCharacter': '不可见字符 {text}',
   'approval.invisibleNotice': '这里有看不见的字符，已经标出来了。',
   'approval.previewTruncated': '这里不是全部内容，完整的在下面『看完整原文』里。',

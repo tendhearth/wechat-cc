@@ -13,7 +13,7 @@
 // 后加的几条各自的红 / 绿写在 README 的场景表下面。
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { hostname, tmpdir } from 'node:os'
+import { homedir, hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parsePermissionRequest } from '../../cli/hook'
@@ -65,8 +65,8 @@ const RULES = JSON.stringify({
 })
 
 /** 主人在桌面上登记过的一个项目(projects.json):一个干净的 git 仓库,工作台的「改动」靠 git 比对。 */
-// 「地方」排除系统临时目录。这个 git 夹具仍独立，afterAll 会收掉。
-const project = realpathSync(mkdtempSync(join(process.cwd(), 'wechat-cc-sandbox-project-')))
+// 仓库本身也可能检出在「地方」排除的系统临时目录。夹具留在用户主目录下，afterAll 会收掉。
+const project = realpathSync(mkdtempSync(join(homedir(), 'wechat-cc-sandbox-project-')))
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=sandbox@example.invalid', '-c', 'user.name=sandbox', ...args], { cwd: project, stdio: 'pipe' })
 git('init', '-q'); writeFileSync(join(project, 'README.md'), 'sandbox project\n'); git('add', '.'); git('commit', '-qm', 'init')
 // Chat and delegated work must have separate directories even when TMPDIR is
@@ -102,10 +102,10 @@ let codexDecision: unknown
 let lastCodexEnvelope = ''
 let topicJudgeAttempts=0,topicRoundDispatches=0
 const claudeScript: FakeSdkScript = { async onDispatch(text) { if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
-const approval = (command: string, finalText: string) => ({
+const approval = (command: string, finalText: string, cwd: string | null = '/tmp') => ({
   toolCalls: [], finalText,
   codexSteps: [{
-    request: { method: 'item/commandExecution/requestApproval', params: { itemId: `c-${command}`, command, cwd: '/tmp', availableDecisions: ['accept', 'decline'] } },
+    request: { method: 'item/commandExecution/requestApproval', params: { itemId: `c-${command}`, command, ...(cwd === null ? {} : { cwd }), availableDecisions: ['accept', 'decline'] } },
     onResponse: (r: { result?: unknown }) => {
       const d = (r.result as { decision?: unknown } | undefined)?.decision
       decisions.set(command, d)
@@ -118,6 +118,7 @@ const codexScript: FakeSdkScript = {
     lastCodexEnvelope = text
     const s = said(text)
     if (s === '把 build 删了') return approval('rm -rf build', '删好了。')
+    if (s === '在本轮目录把 build 删了') return approval('rm -rf build', '删好了。', null)
     if (s === '列一下目录') return approval('ls', '列好了。')
     if (s === '推一下') return approval('git push origin main', '推不了,被拒了。')
     if (s === '再清一次 dist') return approval('rm -rf dist', '清好了。')
@@ -827,7 +828,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
   })
 
   it('桌面挪动和收起历史地方时只保存操作过的行', async () => {
-    const fixture = mkdtempSync(join(process.cwd(), 'sandbox-ended-places-'))
+    const fixture = mkdtempSync(join(homedir(), 'sandbox-ended-places-'))
     try {
       const ids = ['sandbox-place-move', 'sandbox-place-hide', 'sandbox-place-untouched']
       for (const session_id of ids) {
@@ -1293,7 +1294,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(pushesFor(taskId)).toHaveLength(1)
 
     // 「等你批准」(blocking,照旧各处都推):App 推一次、微信里一张卡,账上一行,通道两个
-    d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 把 build 删了`)
+    d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 在本轮目录把 build 删了`)
     const ack2 = await d.waitForOutbound(m => texts(m, d.owner).filter(t => t.startsWith('已接下这件事')).length >= 2, 15_000)
     const asking = texts(ack2, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes(`· ${asking}`) && t.includes('需要你批准')), 30_000)
@@ -1319,7 +1320,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       expect([desk.status, mobile.status]).toEqual([200, 200])
       for (const permission of [detail.body.permissions[0], MatterDetail.parse(desk.body).permissions[0], MatterDetail.parse(mobile.json()).permissions[0]]) {
         expect(permission?.display?.body.kind).toBe('command')
-        expect(permission?.cwd === '/tmp' && permission.display?.body.kind === 'command' &&
+        expect(permission?.cwd === project && permission.display?.body.kind === 'command' &&
           permission.display.body.command === 'rm -rf build').toBe(true)
       }
     } finally { phone.close() }

@@ -126,6 +126,23 @@ describe('run-bound Workbench permissions', () => {
     await expect(pending).resolves.toBe(false)
   })
 
+  it('publishes the run directory only when the request omits its own directory', async () => {
+    const permissions = makeRunPermissions({ taskId: 'sample', root: '/sample/project' })
+    const runCwd = '/sample/worktree'
+    const request = { tool: 'Bash', command: 'printf sample', description: 'Run a sample' }
+    const answers = [
+      permissions.request(request, undefined, runCwd),
+      permissions.request({ ...request, cwd: '/sample/explicit' }, undefined, runCwd),
+      permissions.request({ ...request, cwd: 'relative' }, undefined, runCwd),
+      permissions.request(request),
+    ]
+    const cards = permissions.pending().map(card => MatterPermission.parse(card))
+    expect(cards.map(card => card.cwd).every((cwd, i) => cwd === [runCwd, '/sample/explicit', undefined, undefined][i])).toBe(true)
+    expect(cards).toHaveLength(4)
+    permissions.rejectAll()
+    await expect(Promise.all(answers)).resolves.toEqual([false, false, false, false])
+  })
+
   it('cannot allow after the absolute expiry even when the timer callback is delayed', async () => {
     vi.useFakeTimers()
     try {
