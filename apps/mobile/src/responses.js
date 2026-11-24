@@ -28,7 +28,7 @@ function cPermissionActions(p){
   (!p.cwd&&(p.display?.body?.kind==='command'||/^(bash|shell)$/i.test(p.tool)))||
   p.scripts?.some(s=>s.error||s.truncated&&cScriptFull(p,s)===undefined)
  function button(decision,label){return '<button type="button" data-decision="'+decision+'" data-request="'+esc(p.id)+'">'+label+'</button>'}
- if(blocked)return '<p>这条在网页上看不全，请到手机 App 或电脑上看全再定</p>'+button('deny','拒绝')
+ if(blocked)return '<p>这条在网页上看不全，请到手机 App 或电脑上看全再定。</p>'+button('deny','先不做')
  return button('deny','先不做')+' '+button('allow','允许这一步')+(p.canAllowTask?' '+button('allow_task','本任务同命令都允许'):'')
 }
 function cResponseButtons(){cResponse.querySelectorAll('[data-decision],.response button').forEach(function(/** @type {HTMLButtonElement} */ b){var form=b.closest('form'),request=b.dataset.request||(form&&form.dataset.question);b.disabled=cResponding||!mDetailFresh||mOffline||cResponseUnknown.has(request)})}

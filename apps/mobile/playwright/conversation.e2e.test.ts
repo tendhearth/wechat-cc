@@ -80,7 +80,7 @@ test('command approval without cwd offers only rejection and explains where to r
  await page.goto(HOST+'/m?matter='+id)
  const card=page.locator('#m-response section.response')
  await expect(card.getByRole('button')).toHaveCount(1)
- await expect(card.getByRole('button',{name:'拒绝',exact:true})).toBeEnabled()
+ await expect(card.getByRole('button',{name:'先不做',exact:true})).toBeEnabled()
  await expect(card).toContainText('这条在网页上看不全，请到手机 App 或电脑上看全再定')
  expect(h.errors).toEqual([])
 })
