@@ -43,7 +43,7 @@ const oneLine = s => { const t = s.replace(/\s+/g, ' ').trim(); return t.length 
  * @param {Pick<CliSession,'project'|'cwd'> & {pending:NonNullable<CliSession['pending']>}} session
  * @returns {TerminalOperation & {titleSummary:string}}
  */
-export function terminalPendingOperation({ pending, cwd, project }) {
+export function terminalPendingOperation({ pending, cwd }) {
   const tool = pending.tool === 'permission' ? '' : String(pending.tool ?? '')
   const summary = String(pending.summary ?? '')
   const titleSummary = permissionTextSegments(summary).map(part => part.text).join('').trim()
@@ -54,7 +54,8 @@ export function terminalPendingOperation({ pending, cwd, project }) {
     tool, titleSummary, display, summaryTruncated, summaryOnly: !structured && !!display,
     ...(structured && !structured.truncated ? { raw: permissionOperationSource(structured) }
       : summary && !summaryTruncated ? { summary } : {}),
-    cwd: permissionCwd(pending.cwd), projectPath: permissionCwd(cwd) ?? String(project ?? ''),
+    // 项目目录只写真的路径:会话没报目录时,项目名不是目录,也不能拿来当相对路径的起点。
+    cwd: permissionCwd(pending.cwd), projectPath: permissionCwd(cwd),
     ...(typeof pending.showSnapshotNotice === 'boolean' ? { showSnapshotNotice: pending.showSnapshotNotice } : {}),
     ...(typeof pending.hasScriptPreview === 'boolean' ? { hasScriptPreview: pending.hasScriptPreview } : {}),
   }

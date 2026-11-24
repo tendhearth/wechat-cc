@@ -15,8 +15,8 @@ describe('terminalWaitingRows', () => {
       s({ session_id: 'x', status: 'running', pending: null }),
       s({ session_id: 'y', status: 'idle' }),
     ])).toEqual([
-      { id: 'ab12c3-full', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude', hash: 'k3x9z', tool: 'Bash', display: { body: { kind: 'command', command: 'npm publish' } }, summaryTruncated: false, summaryOnly: true, summary: 'npm publish', projectPath: 'wechat-cc' },
-      { id: 'cd34e5-full', title: '要改 package.json', detail: 'melu', agent: 'codex', source: 'Codex', hash: null, tool: '', display: { body: { kind: 'text', text: '要改 package.json' } }, summaryTruncated: false, summaryOnly: true, summary: '要改 package.json', projectPath: 'melu' },
+      { id: 'ab12c3-full', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude', hash: 'k3x9z', tool: 'Bash', display: { body: { kind: 'command', command: 'npm publish' } }, summaryTruncated: false, summaryOnly: true, summary: 'npm publish', projectPath: undefined },
+      { id: 'cd34e5-full', title: '要改 package.json', detail: 'melu', agent: 'codex', source: 'Codex', hash: null, tool: '', display: { body: { kind: 'text', text: '要改 package.json' } }, summaryTruncated: false, summaryOnly: true, summary: '要改 package.json', projectPath: undefined },
     ])
   })
 
@@ -31,6 +31,15 @@ describe('terminalWaitingRows', () => {
     expect(terminalTitle('Edit', 'src/a.ts', 'Claude Code')).toBe('想改 src/a.ts')
     expect(terminalTitle('mcp__x__do', 'go', 'Claude Code')).toBe('想用 mcp__x__do：go')
     expect(terminalWaitingRows([null, 3, s({ pending: null })])).toEqual([])
+  })
+
+  it('会话没报目录时不把项目名当「项目目录」写,也不拿它当相对路径的起点', () => {
+    const named = terminalPendingOperation({ ...s({ project: '工作区' }), pending: { tool: 'Read', summary: 'notes/a.md', since: 1 } })
+    expect(named.projectPath).toBeUndefined()
+    expect(renderTerminalPermissionOperation(named).html).not.toContain('项目目录')
+    const located = terminalPendingOperation({ ...s({ cwd: '/work' }), pending: { tool: 'Read', summary: 'notes/a.md', since: 1 } })
+    expect(located.projectPath).toBe('/work')
+    expect(renderTerminalPermissionOperation(located).html).toContain('项目目录 /work')
   })
 
   it('prefers a valid edit display and uses its completeness independently of the summary', () => {
