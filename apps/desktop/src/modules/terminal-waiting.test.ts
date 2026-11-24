@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { terminalWaitingRows, terminalTitle, createTerminalWaitingPoller } from './terminal-waiting.js'
+import { terminalPendingOperation, terminalWaitingRows, terminalTitle, createTerminalWaitingPoller } from './terminal-waiting.js'
+import { renderTerminalPermissionOperation } from './permission-operation.js'
 
 const s = (over: Record<string, unknown> = {}) => ({
   session_id: 'ab12c3-full', code: 'ab12c3', source: 'claude', displayName: 'Claude', status: 'waiting', project: 'wechat-cc', machine: null,
@@ -54,6 +55,34 @@ describe('terminalWaitingRows', () => {
     expect(terminalWaitingRows([s({ source: undefined, displayName: undefined })])[0]).toMatchObject({ agent: 'claude', source: 'claude' })
     expect(terminalWaitingRows([s({ source: 'agy', displayName: 'Gemini(账号)' })])[0]).toMatchObject({ agent: 'agy', source: 'Gemini(账号)' })
     expect(terminalWaitingRows([s({ source: 'kimi', displayName: undefined, pending: { tool: 'permission', summary: null, since: 1, hash: null } })])[0]).toMatchObject({ agent: 'kimi', source: 'kimi', title: 'kimi 要你批准' })
+  })
+})
+
+describe('terminalPendingOperation', () => {
+  const preview = { body: { kind: 'command', command: 'printf "example\r"' } }
+  const edit = { body: { kind: 'edit', path: '/sample/a', changes: [{ before: 'example\n', after: 'example' }] } }
+  const patch = { body: { kind: 'patch', files: [{ path: '/sample/a', change: 'update', diff: '@@\n-example\n+example\n\\ No newline at end of file' }] } }
+  const snapshot = '预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。'
+  const common = { tool: 'Bash', summary: 'sample', since: 1, cwd: '/sample', display: preview }
+
+  it.each([
+    { label: '结构化完整', fields: { truncated: true }, allow: true, includes: ['看完整原文', '在 /sample', 'approval-invisible-notice'] },
+    { label: '结构化被截', fields: { display: { ...preview, truncated: true } }, allow: false, includes: ['看摘要', 'approval-command'] },
+    { label: '只有摘要', fields: { display: undefined }, allow: true, includes: ['approval-summary-label', '看摘要'] },
+    { label: '摘要被截', fields: { display: undefined, summary: 'sample…' }, allow: false, includes: ['approval-summary-label'] },
+    { label: '没有核实的执行目录', fields: { cwd: 'relative' }, allow: false, includes: ['项目目录 /project', 'approval-command'] },
+    { label: '命令工具的结构化文字', fields: { cwd: undefined, display: { body: { kind: 'text', text: 'sample' } } }, allow: false, includes: ['data-kind="text"'] },
+    { label: '带脚本预览', fields: { showSnapshotNotice: true, hasScriptPreview: true }, allow: false, includes: [snapshot] },
+    { label: '只有快照说明', fields: { showSnapshotNotice: true, hasScriptPreview: false }, allow: true, includes: [snapshot] },
+    { label: '编辑只有换行差别', fields: { tool: 'Edit', display: edit }, allow: false, includes: ['这一段的末尾少了一个换行。', 'data-line="deleted"', 'data-line="added"'] },
+    { label: '补丁只有换行差别', fields: { tool: 'apply_patch', display: patch }, allow: false, includes: ['这处改动只在换行或空白上有差别', 'data-line="added"'] },
+  ])('$label', ({ fields, allow, includes }) => {
+    const operation = terminalPendingOperation({ project: 'sample', cwd: '/project', pending: { ...common, ...fields } })
+    const { html, needsFullView } = renderTerminalPermissionOperation(operation)
+    expect(!needsFullView).toBe(allow)
+    expect(html.includes('这里不是全部内容，完整的请在终端里看。')).toBe(!allow)
+    expect(html.includes('approval-compact')).toBe(false)
+    for (const fragment of includes) expect(html.includes(fragment)).toBe(true)
   })
 })
 

@@ -117,7 +117,7 @@ describe('mountNowPage', () => {
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: open, onResolveTerminal: resolve })
     page.setAttention({ stale: false, tasks: [{ id: 'a', title: '作品集', providerId: 'c', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["r"]' }] } as any)
     page.setTerminal([
-      { id: 's1', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', display: { body: { kind: 'command', command: 'npm publish' } } },
+      { id: 's1', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', cwd: '/sample', display: { body: { kind: 'command', command: 'npm publish' } } },
       { id: 's2', title: '要改 <b>x</b>', detail: 'melu', agent: 'codex', source: 'Codex', hash: null, tool: '', display: { body: { kind: 'text', text: '要改 <b>x</b>' } } },
     ])
     expect(document.getElementById('now-waiting-title')!.textContent).toBe('3 件事等你')
@@ -179,6 +179,8 @@ describe('mountNowPage', () => {
     expect(dialog.querySelector('.wb-review-diff [data-line="added"]')?.textContent).toBe('+ new')
     expect(dialog.querySelector('.approval-meta')?.textContent).toBe('在 /work')
     expect(dialog.querySelector('.approval-meta:last-of-type')?.textContent).toBe('这里不是全部内容，完整的请在终端里看。')
+    expect(dialog.querySelector('[data-decision="allow"]')).toBeNull()
+    expect(dialog.querySelector<HTMLButtonElement>('[data-decision="deny"]')?.disabled).toBe(false)
     const source = dialog.querySelector<HTMLDetailsElement>('details')
     if (summaryTruncated) expect(source).toBeNull()
     else {
@@ -195,7 +197,7 @@ describe('mountNowPage', () => {
     const command = Array.from({ length: 12 }, (_, i) => `printf "sample  line ${i}"`).join('\n')
     const note = '<img src=x onerror="window.approvalInjected=1">'
     page.setTerminal(terminalWaitingRows([{ session_id: 'command', source: 'codex', status: 'waiting', project: 'sample',
-      pending: { tool: 'Bash', summary: 'shortened…', truncated: true, hash: 'cmd01',
+      pending: { tool: 'Bash', summary: 'shortened…', truncated: true, hash: 'cmd01', cwd: '/sample',
         display: { note, truncated, body: { kind: 'command', command } } },
     }]))
     root.querySelector<HTMLButtonElement>('.now-terminal button')!.click()
@@ -209,6 +211,7 @@ describe('mountNowPage', () => {
     expect(more.open).toBe(true)
     expect(more.querySelector('.approval-source')?.textContent === command.split('\n').slice(8).join('\n')).toBe(true)
     const original = dialog.querySelector('.approval-operation > details')
+    expect(!!dialog.querySelector('[data-decision="allow"]')).toBe(!truncated)
     if (truncated) {
       expect(original).toBeNull()
       expect(dialog.textContent?.includes('这里不是全部内容，完整的请在终端里看。')).toBe(true)

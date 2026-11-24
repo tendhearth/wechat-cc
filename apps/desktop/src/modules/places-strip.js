@@ -190,7 +190,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     waitingRoot.querySelectorAll('.desk-waiting-card').forEach((card, index) => {
       const note = visibleWaiting[index]?.waiting
       for (const [className, text] of Object.entries({
-        'desk-waiting-opinion': note?.ccOpinion && `我的意见(只看了这条请求)：${note.ccOpinion}`,
+        'desk-waiting-opinion': note?.ccOpinion && `我的意见（只看了这条请求）：${note.ccOpinion}`,
         'desk-waiting-reason': note?.questionReason && `为什么来问你：${note.questionReason}`,
       })) {
         let line = card.querySelector(`.${className}`)

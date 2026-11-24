@@ -10,8 +10,9 @@
 import { V1, v1 } from '../daemon-client.js'
 import { permissionTextSegments, permissionCwd, PermissionDisplaySchema, permissionDisplay, permissionOperationSource } from '../generated/permission-display.js'
 
-/** @typedef {{session_id:string,code:string,source:string,displayName?:string,status:string,project:string,cwd?:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null,display?:unknown,cwd?:unknown,truncated?:boolean}|null}} CliSession */
-/** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,tool:string,display?:import('./permission-operation.js').PermissionDisplay,cwd?:string,projectPath?:string,raw?:string,summary?:string,summaryTruncated?:boolean,summaryOnly?:boolean}} TerminalRow */
+/** @typedef {{session_id:string,code:string,source:string,displayName?:string,status:string,project:string,cwd?:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null,display?:unknown,cwd?:unknown,truncated?:boolean,showSnapshotNotice?:boolean,hasScriptPreview?:boolean}|null}} CliSession */
+/** @typedef {import('./permission-operation.js').TerminalOperation} TerminalOperation */
+/** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null} & TerminalOperation} TerminalRow */
 
 const TITLE_MAX = 120
 const SUMMARY_LIMIT = 200
@@ -38,6 +39,28 @@ export function terminalTitle(tool, summary, source) {
 const oneLine = s => { const t = s.replace(/\s+/g, ' ').trim(); return t.length <= TITLE_MAX ? t : `${t.slice(0, TITLE_MAX - 1)}…` }
 
 /**
+ * 旧版摘要和结构化内容各有自己的截断标记。执行目录只取本次请求里的核实值。
+ * @param {Pick<CliSession,'project'|'cwd'> & {pending:NonNullable<CliSession['pending']>}} session
+ * @returns {TerminalOperation & {titleSummary:string}}
+ */
+export function terminalPendingOperation({ pending, cwd, project }) {
+  const tool = pending.tool === 'permission' ? '' : String(pending.tool ?? '')
+  const summary = String(pending.summary ?? '')
+  const titleSummary = permissionTextSegments(summary).map(part => part.text).join('').trim()
+  const structured = /** @type {TerminalOperation['display']} */ (PermissionDisplaySchema.safeParse(pending.display).data)
+  const summaryTruncated = pending.truncated ?? (summary.length >= SUMMARY_LIMIT || /(?:…|\.\.\.)\s*$/.test(summary))
+  const display = structured ?? (titleSummary ? { ...permissionDisplay(tool, summary), ...(summaryTruncated ? { truncated: true } : {}) } : undefined)
+  return {
+    tool, titleSummary, display, summaryTruncated, summaryOnly: !structured && !!display,
+    ...(structured && !structured.truncated ? { raw: permissionOperationSource(structured) }
+      : summary && !summaryTruncated ? { summary } : {}),
+    cwd: permissionCwd(pending.cwd), projectPath: permissionCwd(cwd) ?? String(project ?? ''),
+    ...(typeof pending.showSnapshotNotice === 'boolean' ? { showSnapshotNotice: pending.showSnapshotNotice } : {}),
+    ...(typeof pending.hasScriptPreview === 'boolean' ? { hasScriptPreview: pending.hasScriptPreview } : {}),
+  }
+}
+
+/**
  * 只要等批准的那几条;别的状态(在跑 / 做完了)不是「等你」。
  * @param {unknown} sessions @returns {TerminalRow[]}
  */
@@ -47,12 +70,7 @@ export function terminalWaitingRows(sessions) {
   for (const raw of sessions) {
     const s = /** @type {CliSession} */ (raw)
     if (!s || s.status !== 'waiting' || typeof s.session_id !== 'string' || !s.pending) continue
-    const tool = s.pending.tool === 'permission' ? '' : String(s.pending.tool ?? '')
-    const summary = String(s.pending.summary ?? '')
-    const titleSummary = permissionTextSegments(summary).map(part => part.text).join('').trim()
-    const structured = /** @type {import('./permission-operation.js').PermissionDisplay|undefined} */ (PermissionDisplaySchema.safeParse(s.pending.display).data)
-    const summaryTruncated = s.pending.truncated ?? (summary.length >= SUMMARY_LIMIT || /(?:…|\.\.\.)\s*$/.test(summary))
-    const display = structured ?? (titleSummary ? { ...permissionDisplay(tool, summary), ...(summaryTruncated ? { truncated: true } : {}) } : undefined)
+    const { titleSummary, ...operation } = terminalPendingOperation({ ...s, pending: s.pending })
     // 没写 source 的是老 daemon(那时只有 Claude);写了个不认识的 ⇒ 照它的名字画首字母,别冒充 Claude。
     const said = typeof s.source === 'string' ? s.source.trim() : ''
     const agent = said || 'claude'
@@ -62,12 +80,9 @@ export function terminalWaitingRows(sessions) {
     const detail = String(s.project ?? '')
     rows.push({
       id: s.session_id,
-      title: terminalTitle(tool, titleSummary, source),
+      title: terminalTitle(operation.tool, titleSummary, source),
       detail, agent, source,
-      hash, tool, display, summaryTruncated, summaryOnly: !structured && !!display,
-      ...(structured && !structured.truncated ? { raw: permissionOperationSource(structured) }
-        : summary && !summaryTruncated ? { summary } : {}),
-      cwd: permissionCwd(s.pending.cwd), projectPath: permissionCwd(s.cwd) ?? detail,
+      hash, ...operation,
     })
   }
   return rows

@@ -5,7 +5,7 @@ import { mountNowHero } from './now-hero.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { icon } from './icons.js'
 import { HOME_GROUP_WORDS } from '../generated/status-table.js'
-import { renderPermissionOperation } from './permission-operation.js'
+import { renderTerminalPermissionOperation } from './permission-operation.js'
 import { statusGlyphHtml } from './matter-status.js'
 
 const AGENTS = createAgentAvatars()
@@ -87,16 +87,13 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     close.addEventListener('click', () => dialog.close())
     head.append(hd, close)
     const body = document.createElement('div'); body.className = 'wb-handoff-body'
-    if (r.display) {
-      body.innerHTML = renderPermissionOperation(r.display, r)
-    } else {
-      const p = document.createElement('p'); p.className = 'wb-history-note'; p.textContent = r.summaryTruncated ? '完整的请在终端里看。' : r.tool ? `${r.tool} 没说具体要做什么。` : '它没说具体要做什么。'
-      body.append(p)
-    }
+    const operation = renderTerminalPermissionOperation(r)
+    body.innerHTML = operation.html
     const foot = document.createElement('footer'); foot.className = 'wb-handoff-footer'
     const note = document.createElement('span'); note.className = 'now-terminal-note'; note.setAttribute('aria-live', 'polite')
     const actions = document.createElement('div'); actions.className = 'now-terminal-actions'
     for (const [decision, label] of /** @type {const} */ ([['deny', '拒绝'], ['allow', '允许']])) {
+      if (decision === 'allow' && operation.needsFullView) continue
       const b = document.createElement('button')
       b.type = 'button'; b.className = `wb-btn now-terminal-decide${decision === 'allow' ? ' wb-btn-primary' : ''}`; b.dataset.decision = decision; b.textContent = label
       b.addEventListener('click', () => { void resolveTerminal(hash, decision) })

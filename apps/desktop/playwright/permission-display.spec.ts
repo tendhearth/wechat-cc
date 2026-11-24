@@ -409,11 +409,13 @@ test('terminal waiting row opens its structured edit under the desktop CSP', asy
   await expect(dialog.locator('script, img, [onerror]')).toHaveCount(0)
   expect(await page.evaluate(() => 'approvalInjected' in window)).toBe(false)
   await expect(page.locator('html')).not.toHaveAttribute('data-csp-violation', 'true')
-  await expect(dialog.getByRole('button', { name: '允许', exact: true })).toBeVisible()
-  await expect(dialog.getByRole('button', { name: '拒绝', exact: true })).toBeVisible()
+  await expect(dialog.getByText('这里不是全部内容，完整的请在终端里看。', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '允许', exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '拒绝', exact: true })).toBeEnabled()
 })
 
 test('terminal calls a legacy summary a summary and expands received preview lines', async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 720 })
   await openFixture(page, { terminal: true })
   const dialog = page.locator('dialog.now-terminal-dialog')
   await page.locator('.now-terminal[data-hash="leg01"] button').click()
@@ -428,4 +430,6 @@ test('terminal calls a legacy summary a summary and expands received preview lin
   await expect(dialog.getByText('echo example-7', { exact: false })).toBeVisible()
   await expect(dialog.getByText('这里不是全部内容，完整的请在终端里看。', { exact: true })).toBeVisible()
   await expect(dialog.getByText('看完整原文', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '允许', exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '拒绝', exact: true })).toBeEnabled()
 })
