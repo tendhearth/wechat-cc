@@ -83,8 +83,8 @@ export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save
     host.innerHTML=`<div class="pc-toolbar" role="group" aria-label="明信片筛选">
       <button type="button" data-pc-action="all" aria-pressed="${!favorites}">全部</button>
       <button type="button" data-pc-action="collected" aria-pressed="${favorites}">已收藏</button>
-      <span class="pc-count${failed ? ' desk-compact-copy' : ''}" aria-live="polite">${busy ? '正在翻开…' : failed ? '读取失败' : `${total} 张`}</span></div>
-      ${failed ? '<div class="pc-empty" role="status">暂时没能打开明信片册，已有记录不会因此丢失。<button type="button" data-pc-action="retry"><span class="desk-compact-copy">重试</span><span class="desk-wide-copy" hidden>重新读取</span></button></div>' : ''}
+      ${failed ? '' : `<span class="pc-count" aria-live="polite">${busy ? '正在翻开…' : `${total} 张`}</span>`}</div>
+      ${failed ? '<div class="pc-empty" role="status">暂时没能打开明信片册，已有记录不会因此丢失。<button type="button" data-pc-action="retry">重新读取</button></div>' : ''}
       ${!busy && !failed && !items.length ? `<div class="pc-empty">${favorites ? '还没有收藏。遇到喜欢的明信片，点一下“收藏”，就会一直留着。' : 'CC 寄回来的图和话，会一起收在这里。还没有明信片时，不用额外配置画室。'}</div>` : ''}
       <div class="pc-grid">${items.map(postcardMarkup).join('')}</div>
       ${items.length<total ? `<button class="pc-more" type="button" data-pc-action="more" ${busy ? 'disabled' : ''}>${busy ? '正在读取…' : '再翻一些'}</button>` : ''}`

@@ -98,9 +98,9 @@ test('project delegation uses the shared dialog, inherits the project executor, 
 })
 
 test('workbench stays readable at a narrow desktop width with no horizontal overflow',async({page,shimUrl,shim})=>{
-  await page.setViewportSize({width:690,height:1100})
+  await page.setViewportSize({width:900,height:1100})
   await setup(page,shimUrl,shim)
-  await expect(page.locator('.wb-delegate')).toBeVisible()
+  await expect(page.locator('#wb-search')).toBeVisible()
   await page.locator('.workbench-pane [data-task-id="deadbeef"]').click()
   await expect(page.locator('.wb-permissions')).toBeVisible()
   const overflow = await page.locator('.workbench-shell').evaluate((el:HTMLElement)=>el.scrollWidth>el.clientWidth+1)
@@ -126,25 +126,20 @@ test('conversation layers preserve the global navigation and restore the convers
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('inert','')
   await expect(page.locator('#dash-global-rail')).not.toHaveAttribute('aria-hidden','true')
   await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toBeVisible()
-  await page.setViewportSize({width:690,height:844})
-  await expect(page.locator('#workbench-home')).toBeVisible()
+  await page.setViewportSize({width:760,height:844})
+  await expect(page.locator('#workbench-home')).toBeHidden()
+  await expect(page.locator('#dash-global-rail')).toBeHidden()
   const narrowSearch = page.locator('#conversation-matter-layer[data-workbench-view="search"]')
   await expect(narrowSearch.locator('#wb-filter-project')).toHaveCSS('appearance', 'none')
   await expect(narrowSearch.locator('#wb-filter-status')).toHaveCSS('appearance', 'none')
-  await expect.poll(() => narrowSearch.evaluate(el => {
-    const rect = el.getBoundingClientRect()
-    const topbar = getComputedStyle(document.documentElement).getPropertyValue('--topbar-bottom')
-    return [rect.left, rect.right, rect.top - parseFloat(topbar), rect.bottom]
-  })).toEqual([0, 690, 0, 844])
-  await page.setViewportSize({width:390,height:844})
-  await expect(page.locator('#workbench-home')).toBeVisible()
-  await page.locator('#workbench-home').click()
+  await expect(narrowSearch).toHaveAttribute('role', 'region')
+  await page.keyboard.press('Escape')
   await expect(page.locator('article.dash-pane[data-pane="overview"]')).toBeVisible()
   await expect(page.locator('.cc-now-pane')).not.toHaveAttribute('inert')
 })
 
 test('waiting stays visible on the topbar CC while navigating to other panes',async({page,shimUrl,shim})=>{
-  await page.setViewportSize({ width: 690, height: 820 })
+  await page.setViewportSize({ width: 900, height: 820 })
   await routePlaces(page,[askingPlace('portfolio','deadbeef','Bash: bun run test'),askingPlace('interviews','cafefeed','要保留原话吗？')])
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
   await page.route('**/v1/workbench/attention',route=>route.fulfill({json:{tasks:[
@@ -156,8 +151,8 @@ test('waiting stays visible on the topbar CC while navigating to other panes',as
   await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
   await expect(page.locator('#places-root .place[data-waiting="true"]')).toHaveCount(2)
   const dot = page.locator('#topbar-cc .topbar-waiting-dot')
-  await expect(dot).toBeHidden()
-  await expect(page.locator('#topbar-cc')).toHaveAttribute('aria-label','跟 CC 说')
+  await expect(dot).toBeVisible()
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('aria-label','跟 CC 说(有 2 件在等你)')
   await expect(page.locator('#workbench-attention')).toHaveCount(0)
   await clickNav(page,'recollections')
   await expect(page.locator('#topbar-cc')).toHaveAttribute('data-waiting','2')
@@ -170,7 +165,7 @@ test('waiting stays visible on the topbar CC while navigating to other panes',as
   expect(badge!.x + badge!.width).toBeLessThanOrEqual(avatar!.x + avatar!.width)
   expect(badge!.y).toBeLessThan(avatar!.y + avatar!.height / 2)
   await clickNav(page,'overview')
-  await expect(dot).toBeHidden()
+  await expect(dot).toBeVisible()
 })
 
 test('宽窗搜索占整张纸，快捷键聚焦并返回原页，组字时不触发', async ({ page, shimUrl, shim }) => {

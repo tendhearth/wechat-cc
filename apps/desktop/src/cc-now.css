@@ -1,6 +1,4 @@
-/* 「此刻」:问候、CC 与最近一句气泡集中为一个场景,输入紧接其后,再列等你的事。
-   CC 明暗只来自 presence,光晕是唯一装饰;右上角状态行打开连接浮层。
-   只用 tokens.css 的变量 —— 本文件零字面色值(design-style.test.ts 守着)。 */
+/* 左栏 CC、连接浮层与总对话的基础样式。 */
 .dashboard .cc-now-pane { display: flex; flex-direction: column; gap: var(--th-space-xxl); padding: 22px 48px 32px; min-height: 100%; position: relative; background: var(--th-paper); color: var(--th-ink); }
 .cc-home-details { position: absolute; top: 18px; right: 48px; z-index: 5; }
 .cc-home-details > summary { list-style: none; display: flex; gap: 8px; align-items: center; font-size: var(--th-size-small); color: var(--th-ink-soft); cursor: pointer; padding: 6px 0; }
@@ -45,159 +43,66 @@
 .now-connections .dot.ok { background: var(--th-ok); }
 .now-connections .dot.warn { background: var(--th-warn); }
 .now-connections .dot.bad { background: var(--th-bad); }
-/* 状态点:≤10px,只有它带状态色;不知道 = 灰。 */
-#topbar-presence-dot { width: 8px; height: 8px; background: var(--th-unknown); }
-#topbar-presence-dot.ok { background: var(--th-ok); }
-#topbar-presence-dot.warn { background: var(--th-warn); }
-#topbar-presence-dot.bad { background: var(--th-bad); }
-.now-hero { display: flex; flex-direction: column; align-items: center; gap: var(--th-space-l); flex: none; width: 100%; max-width: 680px; }
-.now-greeting { font-size: calc(var(--th-size-title) + 10px); line-height: var(--th-lh-title); font-weight: 400; margin: 0; color: var(--th-ink); }
-.now-cc-col { display: flex; align-items: center; justify-content: center; gap: var(--th-space-xl); width: 100%; }
-.now-bubble { appearance: none; font: inherit; border: 1px solid var(--th-hair); background: var(--th-paper); color: var(--th-ink); font-size: var(--th-size-bubble); line-height: var(--th-lh-bubble); text-align: left; padding: 16px 20px; border-radius: var(--th-radius-bubble); width: 320px; max-width: 100%; min-width: 0; cursor: pointer; position: relative; }
-/* 气泡与 CC 在同一场景里,尾巴向左指向它。 */
-.now-bubble::after { content: ""; position: absolute; left: -6px; top: 50%; width: 10px; height: 10px; margin-top: -5px; background: var(--th-paper); border-left: 1px solid var(--th-hair); border-bottom: 1px solid var(--th-hair); transform: rotate(45deg); }
-.now-bubble:hover::after, .now-bubble:focus-visible::after { border-color: var(--th-accent); }
-.now-bubble[hidden] { display: none; }
-.now-bubble:hover, .now-bubble:focus-visible { border-color: var(--th-accent); outline: none; }
-.now-bubble .now-bubble-text { display: block; white-space: normal; overflow-wrap: anywhere; }
-.now-bubble-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--th-space-s); margin-top: var(--th-space-s); color: var(--th-ink-soft); font-size: var(--th-size-caption); }
-.now-bubble small { font-size: inherit; }
-.now-bubble small:empty { display: none; }
-.now-bubble-more[hidden] { display: none; }
-.now-figure { appearance: none; border: 0; padding: 0; background: transparent; cursor: pointer; width: 240px; height: 240px; flex: none; position: relative; border-radius: 50%; }
-.now-figure:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 4px; }
-.now-figure::before { content: ""; position: absolute; inset: 18% 8% 0; background: radial-gradient(closest-side, var(--th-glow), transparent); transition: opacity .6s; }
-.now-figure img { position: relative; display: block; width: 100%; height: 100%; object-fit: contain; }
-.cc-now-pane[data-cc="here"] .now-cc-dark, .cc-now-pane[data-cc="away"] .now-cc-light { display: none; }
-.cc-now-pane[data-cc="away"] .now-figure::before { opacity: 0; }
-.now-waiting[hidden] { display: none; }
-.now-waiting h2 { font-size: var(--th-size-meta); font-weight: 500; color: var(--th-ink-soft); margin: 0 0 6px; letter-spacing: var(--th-tracking-meta); }
-.now-waiting[data-state="unknown"] h2, .now-waiting[data-state="partial"] h2 { font-weight: 400; }
-.now-waiting[data-state="unknown"] h2 { margin: 0; }
-.now-waiting[data-state="unknown"] ul { display: none; }
-.now-waiting ul { list-style: none; margin: 0; padding: 0; }
-.now-waiting-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; cursor: pointer; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 12px 4px; text-align: left; }
-.now-waiting-row .t { font-size: var(--th-size-item); margin: 0; overflow-wrap: anywhere; }
-.now-waiting-row .d { font-size: var(--th-size-meta); color: var(--th-ink-soft); margin: 2px 0 0; overflow-wrap: anywhere; }
-.now-waiting-row .d:empty { display: none; }
-.now-waiting-row .go { display: inline-flex; align-items: center; color: var(--th-ink-soft); font-size: var(--th-size-meta); white-space: nowrap; }
-.now-request-arrow { transform: rotate(180deg); flex: none; }
-.now-waiting-row:hover .t, .now-waiting-row:focus-visible .t { color: var(--th-accent); }
-.now-waiting-row:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
-/* 终端请求点开小窗再拍板;没开码的仍明确写「回终端处理」,不画可点击的箭头。 */
-div.now-terminal-row { cursor: default; }
-/* 一个主页(设计稿 2026-10-31 U4):在做 / 带回来的与等你同一种行 —— 状态记号 · 标题与小字 · 执行者头像。 */
-.now-group[hidden] { display: none; }
-.now-group h2 { font-size: var(--th-size-meta); font-weight: 500; color: var(--th-ink-soft); margin: 0 0 6px; letter-spacing: var(--th-tracking-meta); }
-.now-group ul { list-style: none; margin: 0; padding: 0; }
 .now-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: var(--th-matter-row-gap); min-height:var(--th-matter-row-min-height); align-items: center; padding: var(--th-matter-row-padding-y) 4px; text-align: left; }
 button.now-row { cursor: pointer; }
-.now-row .t { font-size: var(--th-matter-row-role); line-height:var(--th-lh-item); margin: 0; overflow-wrap: anywhere; }
-.now-row .d, .now-row .x { font-size: var(--th-matter-row-caption-role); line-height:var(--th-lh-caption); color: var(--th-ink-soft); margin: 2px 0 0; overflow-wrap: anywhere; }
-.now-row .x { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .now-row-status { display: inline-flex; color: var(--th-ink-soft); }
 /* 色调照状态表:只有「等你」上强调色(phone-wording.md);状态词本身不上。 */
 .now-row-status[data-tone="accent"] { color: var(--th-accent); }
 .now-row-agents { display: inline-flex; }
-button.now-row:hover .t, button.now-row:focus-visible .t { color: var(--th-accent); }
 button.now-row:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
-.now-all { appearance: none; border: 0; background: transparent; padding: 6px 4px; font: inherit; cursor: pointer; align-self: center; color: var(--th-ink-soft); font-size: var(--th-size-meta); }
-.now-all:hover, .now-all:focus-visible { color: var(--th-ink); }
-div.now-terminal-row:hover .t { color: var(--th-ink); }
-.now-terminal-dialog { height: auto; }
-.now-terminal-actions { display: flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
-.now-terminal-note { color: var(--th-ink-soft); font-size: var(--th-size-meta); }
-.now-terminal-note:empty { display: none; }
-.now-back { appearance: none; border: 0; background: transparent; padding: 6px 0; font: inherit; cursor: pointer; align-self: flex-start; color: var(--th-ink-soft); font-size: var(--th-size-meta); }
-.now-back[hidden] { display: none; }
-.now-back:hover, .now-back:focus-visible { color: var(--th-ink); }
-
 /* 输入框:一条胶囊,输入 + 圆形发送(稿里的 composer)。 */
 .dashboard .cc-now-pane #converse-root { background: transparent; color: var(--th-ink); }
 .cc-now-pane .converse-compose { width: auto; margin: 0; }
 
-/* home:对话记录收起,composer 只露输入框 + 发送 */
-.dashboard .cc-now-pane[data-now="home"] { align-items: center; gap: var(--th-space-xl); padding-top: clamp(76px, 12vh, 120px); }
-.cc-now-pane[data-now="home"] .converse-search-bar,
-.cc-now-pane[data-now="home"] #converse-search-results,
-.cc-now-pane[data-now="home"] #converse-scroll,
-.cc-now-pane[data-now="home"] .converse-toolbar > :not(#converse-send) { display: none; }
-.cc-now-pane[data-now="home"] #converse-root { flex: none; width: 100%; max-width: 680px; }
-.cc-now-pane[data-now="home"] .converse-textarea { flex: 1 1 0; height: 48px; min-height: 48px; padding: 10px 0; resize: none; }
-.cc-now-pane[data-now="home"] .converse-toolbar { flex: none; }
-.cc-now-pane[data-now="home"] .now-waiting { width: 100%; max-width: 680px; margin-top: var(--th-space-m); }
-.cc-now-pane[data-now="home"] .now-group { width: 100%; max-width: 680px; }
-.cc-now-pane[data-now="chat"] .now-hero, .cc-now-pane[data-now="chat"] .now-waiting, .cc-now-pane[data-now="chat"] .now-group, .cc-now-pane[data-now="chat"] .now-all { display: none; }
-.cc-now-pane[data-now="chat"] #converse-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.cc-now-pane[data-now="chat"] .converse-scroll { flex: 1; min-height: 0; overflow: auto; padding: 8px 0 16px; }
-.cc-now-pane[data-now="chat"] { gap: var(--th-space-l); }
+.cc-now-pane[data-pane="overview"] #converse-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cc-now-pane[data-pane="overview"] .converse-scroll { flex: 1; min-height: 0; overflow: auto; padding: 8px 0 16px; }
+.cc-now-pane[data-pane="overview"] { gap: var(--th-space-l); }
 
 @media (max-width: 760px) {
   .dashboard .cc-now-pane { padding: 8px 18px 20px; gap: 28px; }
-  .dashboard .cc-now-pane[data-now="home"] { padding-top: 76px; }
-  .now-figure { width: 200px; height: 200px; }
   .cc-home-details { right: 18px; top: 8px; }
   .cc-home-details[open] > .now-panel { width: min(420px, calc(100vw - 110px)); }
   .converse-compose .converse-toolbar { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; }
-  .cc-now-pane[data-now="home"] .converse-compose .converse-toolbar { flex: none; }
 }
-@media (max-width: 640px) {
-  .now-cc-col { flex-direction: column-reverse; gap: var(--th-space-s); }
-  .now-figure { width: 184px; height: 184px; }
-  .now-bubble { width: 100%; max-width: 320px; }
-  .now-bubble::after { left: 50%; top: auto; bottom: -6px; margin-top: 0; margin-left: -5px; border-left: 0; border-right: 1px solid var(--th-hair); }
-}
-@media (prefers-reduced-motion: no-preference) {
-  .cc-now-pane[data-cc="here"] .now-figure:not([data-runtime="ready"]):not([data-motion="reduced"]) > img { animation: now-breathe 6s ease-in-out infinite; transform-origin: 50% 90%; }
-  @keyframes now-breathe { 50% { transform: scaleY(1.015) translateY(-1px); } }
-}
-
 .now-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* Shared pet renderer, scoped to the home button. Keep the full square and anchor;
    importing the transparent companion window stylesheet would alter the whole app. */
-.now-figure[data-runtime="ready"] > .now-cc-light,
-.now-figure[data-runtime="ready"] > .now-cc-dark { display: none; }
-:is(.now-figure, #topbar-cc) .now-pet-stage { position: absolute; inset: 0; display: block; container-type: size; pointer-events: none;
+#topbar-cc .now-pet-stage { position: absolute; inset: 0; display: block; container-type: size; pointer-events: none;
   --pet-side: min(100cqw, 100cqh); --pet-box-x: calc((100cqw - var(--pet-side)) / 2); --pet-box-y: calc((100cqh - var(--pet-side)) / 2);
   --pet-origin-x: calc(var(--pet-box-x) + var(--pet-anchor-x, .5) * var(--pet-side)); --pet-origin-y: calc(var(--pet-box-y) + var(--pet-anchor-y, .92) * var(--pet-side)); }
-:is(.now-figure, #topbar-cc) .now-pet-stage[hidden] { display: none; }
-:is(.now-figure, #topbar-cc) .now-pet-stage .pet-sprite { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: var(--pet-origin-x) var(--pet-origin-y); pointer-events: none; user-select: none; transition: opacity 240ms ease; }
-:is(.now-figure, #topbar-cc) .pet-sprite.pet-fading { opacity: 0; }
-:is(.now-figure, #topbar-cc) .pet-ghost { opacity: 0; transition: none; }
-:is(.now-figure, #topbar-cc) .pet-ghost-out-a { animation: now-pet-ghost-a 160ms ease-out forwards; }
-:is(.now-figure, #topbar-cc) .pet-ghost-out-b { animation: now-pet-ghost-b 160ms ease-out forwards; }
+#topbar-cc .now-pet-stage[hidden] { display: none; }
+#topbar-cc .now-pet-stage .pet-sprite { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: var(--pet-origin-x) var(--pet-origin-y); pointer-events: none; user-select: none; transition: opacity 240ms ease; }
+#topbar-cc .pet-sprite.pet-fading { opacity: 0; }
+#topbar-cc .pet-ghost { opacity: 0; transition: none; }
+#topbar-cc .pet-ghost-out-a { animation: now-pet-ghost-a 160ms ease-out forwards; }
+#topbar-cc .pet-ghost-out-b { animation: now-pet-ghost-b 160ms ease-out forwards; }
 @keyframes now-pet-ghost-a { from { opacity: 1; } to { opacity: 0; } }
 @keyframes now-pet-ghost-b { from { opacity: 1; } to { opacity: 0; } }
-:is(.now-figure, #topbar-cc) .now-pet-props { position: absolute; inset: 0; pointer-events: none; }
-:is(.now-figure, #topbar-cc) .pet-prop { position: absolute; left: calc(var(--pet-origin-x) + var(--slot-dx, 0) * var(--pet-side)); top: calc(var(--pet-origin-y) + var(--slot-dy, 0) * var(--pet-side)); width: calc(var(--slot-scale, .34) * var(--pet-side)); aspect-ratio: 1; transform: translate(-50%, -50%); }
-:is(.now-figure, #topbar-cc) .pet-prop img { display: block; width: 100%; height: 100%; object-fit: contain; }
-:is(.now-figure, #topbar-cc) .pet-prop.pet-prop-motion { transition: opacity 160ms ease; }
-:is(.now-figure, #topbar-cc) .pet-motion-reduced .pet-prop, :is(.now-figure, #topbar-cc) .pet-paused .pet-prop { transition: none; }
-@media (prefers-reduced-motion: reduce) { :is(.now-figure, #topbar-cc) .pet-prop.pet-prop-motion { transition: none; } }
-:is(.now-figure, #topbar-cc) .pet-badge { position: absolute; right: 4%; top: 4%; min-width: 18px; padding: 0 5px; border-radius: var(--th-radius-control); background: var(--th-accent); color: var(--th-paper); font-size: var(--th-size-caption); line-height: 18px; text-align: center; }
+#topbar-cc .now-pet-props { position: absolute; inset: 0; pointer-events: none; }
+#topbar-cc .pet-prop { position: absolute; left: calc(var(--pet-origin-x) + var(--slot-dx, 0) * var(--pet-side)); top: calc(var(--pet-origin-y) + var(--slot-dy, 0) * var(--pet-side)); width: calc(var(--slot-scale, .34) * var(--pet-side)); aspect-ratio: 1; transform: translate(-50%, -50%); }
+#topbar-cc .pet-prop img { display: block; width: 100%; height: 100%; object-fit: contain; }
+#topbar-cc .pet-prop.pet-prop-motion { transition: opacity 160ms ease; }
+#topbar-cc .pet-motion-reduced .pet-prop, #topbar-cc .pet-paused .pet-prop { transition: none; }
+@media (prefers-reduced-motion: reduce) { #topbar-cc .pet-prop.pet-prop-motion { transition: none; } }
+#topbar-cc .pet-badge { position: absolute; right: 4%; top: 4%; min-width: 18px; padding: 0 5px; border-radius: var(--th-radius-control); background: var(--th-accent); color: var(--th-paper); font-size: var(--th-size-caption); line-height: 18px; text-align: center; }
 @media (prefers-reduced-motion: no-preference) {
-  :is(.now-figure, #topbar-cc) .pet-breathing .pet-sprite:not(.pet-ghost) { animation: now-pet-breathe 6s ease-in-out infinite; }
-  :is(.now-figure, #topbar-cc) .pet-breathing .pet-ghost-out-a { animation: now-pet-breathe 6s ease-in-out infinite, now-pet-ghost-a 160ms ease-out forwards; }
-  :is(.now-figure, #topbar-cc) .pet-breathing .pet-ghost-out-b { animation: now-pet-breathe 6s ease-in-out infinite, now-pet-ghost-b 160ms ease-out forwards; }
+  #topbar-cc .pet-breathing .pet-sprite:not(.pet-ghost) { animation: now-pet-breathe 6s ease-in-out infinite; }
+  #topbar-cc .pet-breathing .pet-ghost-out-a { animation: now-pet-breathe 6s ease-in-out infinite, now-pet-ghost-a 160ms ease-out forwards; }
+  #topbar-cc .pet-breathing .pet-ghost-out-b { animation: now-pet-breathe 6s ease-in-out infinite, now-pet-ghost-b 160ms ease-out forwards; }
   @keyframes now-pet-breathe { 50% { transform: scaleY(1.015) translateY(-1px); } }
 }
-:is(.now-figure, #topbar-cc) .pet-motion-reduced .pet-sprite, :is(.now-figure, #topbar-cc) .pet-paused .pet-sprite { animation: none; transition: none; }
-:is(.now-figure, #topbar-cc) .pet-motion-reduced .pet-ghost, :is(.now-figure, #topbar-cc) .pet-paused .pet-ghost { opacity: 0; }
+#topbar-cc .pet-motion-reduced .pet-sprite, #topbar-cc .pet-paused .pet-sprite { animation: none; transition: none; }
+#topbar-cc .pet-motion-reduced .pet-ghost, #topbar-cc .pet-paused .pet-ghost { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
-  :is(.now-figure, #topbar-cc) .pet-sprite { animation: none; transition: none; }
-  :is(.now-figure, #topbar-cc) .pet-ghost { opacity: 0; }
-  .now-figure::before { transition: none; }
+  #topbar-cc .pet-sprite { animation: none; transition: none; }
+  #topbar-cc .pet-ghost { opacity: 0; }
 }
 
-/* T5: CC is the conversation entry, including returns from tools and native links. */
-.dashboard .cc-now-pane[data-conversation="single"] { padding-top: 20px; }
-.cc-now-pane[data-conversation="single"] .now-hero { display:flex; flex-direction:row; justify-content:flex-start; height:var(--th-identity-header-target); }
-.cc-now-pane[data-conversation="single"] .now-greeting,
-.cc-now-pane[data-conversation="single"] .now-bubble,
-.cc-now-pane[data-conversation="single"] #now-back { display:none; }
-.cc-now-pane[data-conversation="single"] .now-figure { width:var(--th-identity-header-target); height:var(--th-identity-header-target); min-height:0; }
-.cc-now-pane[data-conversation="single"] .now-cc-col { width:var(--th-identity-header-target); }
-.cc-now-pane[data-conversation="single"] .now-figure img { width:var(--th-identity-header-image); height:var(--th-identity-header-image); }
+.dashboard .cc-now-pane[data-pane="overview"] { padding-top: 20px; }
 
-.now-row .x { font-size:var(--th-matter-row-detail-role); line-height:var(--th-lh-small); }
+/* scripts/component-appearance.guard.test.ts 的独立身份尺寸夹具。 */
+.cc-now-pane[data-conversation="single"] .now-hero { height: var(--th-identity-header-target); }
+.cc-now-pane[data-conversation="single"] :is(.now-cc-col, .now-figure) { width: var(--th-identity-header-target); }
+.cc-now-pane[data-conversation="single"] .now-figure { height: var(--th-identity-header-target); }
+.cc-now-pane[data-conversation="single"] .now-figure img { width: var(--th-identity-header-image); height: var(--th-identity-header-image); }

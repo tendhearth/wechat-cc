@@ -6,7 +6,7 @@
  */
 export function wireDeskDisclosure(menu, signal) {
   const doc = menu.ownerDocument
-  const active = () => menu.open && doc.documentElement.hasAttribute('data-desk-wide') && menu.getClientRects().length > 0
+  const active = () => menu.open && menu.getClientRects().length > 0
   const dismiss = () => {
     menu.open = false
     menu.querySelector('summary')?.focus({ preventScroll: true })

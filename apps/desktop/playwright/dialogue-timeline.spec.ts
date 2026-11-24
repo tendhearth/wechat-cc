@@ -170,9 +170,10 @@ test('life facet: locked state shows lock row; unlock with correct passphrase re
 })
 
 test('privacy dialog stays usable at a 200% zoom equivalent low-height viewport', async ({ page, shimUrl, shim }) => {
-  // A 1380×560 desktop window at 200% zoom has 690×280 CSS pixels.
-  await page.setViewportSize({ width: 690, height: 280 })
+  // A 1800×560 desktop window at 200% zoom has 900×280 CSS pixels.
+  await page.setViewportSize({ width: 900, height: 820 })
   await bootAndOpenDialogue(page, shimUrl, shim)
+  await page.setViewportSize({ width: 900, height: 280 })
   await page.locator('#dialogue-views [data-view="life"]').click()
   const groups = page.locator('#dialogue-groups')
   await expect(groups.locator('.dialogue-locked-row')).toBeVisible()

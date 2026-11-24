@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { STATUS_ICON, statusGlyphHtml, taskStatusKey, workbenchTaskStatusKey } from './matter-status.js'
 import { STATUS_TABLE } from '../generated/status-table.js'
-import { taskStatusKey as homeTaskStatusKey } from './home-list.js'
 
-describe('matter-status: one status mapping for 此刻, 全部 and the detail (U4, 2026-11-05)', () => {
-  it('主页与「全部」用的是同一个函数', () => {
-    expect(homeTaskStatusKey).toBe(taskStatusKey)
-  })
+describe('matter-status: one status mapping for 全部 and the detail (U4, 2026-11-05)', () => {
+  it.each([
+    [{ status: 'running' }, 'working'],
+    [{ status: 'queued' }, 'working'],
+    [{ status: 'running', phase: 'replied' }, 'replied'],
+    [{ status: 'completed' }, 'done'],
+    [{ status: 'failed' }, 'failed'],
+    [{ status: 'running', phase: 'failed' }, 'failed'],
+    [{ status: 'cancelled' }, 'stopped'],
+    [{ status: 'interrupted' }, 'stopped'],
+    // 老 daemon 不给 phase:会话还留着、前台空着、后台也没活 ⇒ 这一轮做完了,不算在做;后台还有活 ⇒ 在做
+    [{ status: 'running', runtime: { retained: true, foreground: 'idle', backgroundCount: 0 } }, 'replied'],
+    [{ status: 'running', runtime: { retained: true, foreground: 'idle', backgroundCount: 2 } }, 'working'],
+  ])('%j ⇒ %s', (t, key) => { expect(taskStatusKey(t as never)).toBe(key) })
 
   it('pending requests make a task 等你; imported-only is 停下了; archived never waits', () => {
     expect(workbenchTaskStatusKey({ status: 'running', pendingPermissionCount: 1 })).toBe('waiting')

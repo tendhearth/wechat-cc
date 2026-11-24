@@ -15,7 +15,6 @@ import { mountOwnerConversation } from './conversation-contracts.js'
 import {openOwnerChatFile,openConversationImage,openLocalConversationFile} from "./converse-media.js"
 import { terminalReferenceHtml, paintTerminalReferences, setTerminalActionsSupported } from './conversation-sessions.js'
 import { matterReferenceHtml, updateConversationMatters, mountMatterReferences } from './conversation-matters.js'
-import { canReadEarlier, placeCards, shouldReadAnotherPage } from './converse-place.js'
 import { deskSpeakerHtml } from './desk-page.js'
 import { icon } from "./icons.js"
 import { escapeHtml } from "../view.js"
@@ -31,7 +30,7 @@ import { replyAttribution, replyProvider, replyAgentName, replyAvatarHtml, loadR
  * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
  * @typedef {import('./reply-avatar.js').ReplyAttribution & {text:string,truncated?:boolean,attachmentIndexes:number[],narrationIndexes:number[]}} ReplyPart
  * @typedef {import('./reply-avatar.js').ReplyAttribution & {reply:string,attachments:ReplyAttachment[],attachmentSourceIndexes?:number[],narration:string[],replyParts?:ReplyPart[]}} NormalizedReply
- * @typedef {import('./reply-avatar.js').ReplyAttribution & { id: number, role: 'user'|'cc'|'error'|'system', text: string, terminalId?: string, matterId?: string, historical?: boolean, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], attachmentSourceIndexes?:number[], narration?: string[], replyParts?:ReplyPart[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[], contractKey?:string, projection?:string, placeCardKey?:string }} ConverseMsg
+ * @typedef {import('./reply-avatar.js').ReplyAttribution & { id: number, role: 'user'|'cc'|'error'|'system', text: string, terminalId?: string, matterId?: string, historical?: boolean, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], attachmentSourceIndexes?:number[], narration?: string[], replyParts?:ReplyPart[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[], contractKey?:string, projection?:string }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -44,18 +43,9 @@ let nextId = 1
 let sending = false
 let delegating = false
 /** @type {Record<string,string>} */ let replyAgentNames = {}
-// 点了上面某一个地方:说话只看这个地方的(设计稿 2026-11-18-cc-two-sides-design.md §4)。null = 全部。
-/** @type {{key?:string,name:string,matterIds:Set<string>,messageIds:Set<string>,sessionIds:Set<string>}|null} */
-let placeFilter = null
-/** @type {import('./converse-place.js').RosterItem[]} */
-let placeRoster = []
-let expandedPlaceCards = false
-let placeRevision = 0
-/** @type {number|null} */
-let searchingEarlier = null
 /** @typedef {{key:string,name:string,messageIds:string[]}} ConversationPlace */
 /** @type {Map<string,ConversationPlace>} */ let placesByMessage = new Map()
-/** @type {{clear:()=>void,selectKey:(key:string)=>void}|null} */ let placeNavigation = null
+/** @type {{selectKey:(key:string)=>void}|null} */ let placeNavigation = null
 // 此刻里拖进 / 粘进来、还没发出去的图(2026-10-05)。url 是本页的 blob 预览,发出去时只带 mime + base64。
 // 2026-10-06 起也收文档(PDF / 文本 / Markdown / CSV / JSON / Word / Excel / PPT):图显示缩略图,文档显示名字。
 /** @type {{ id: number, mime: string, data_b64: string, url: string, name: string }[]} */
@@ -137,14 +127,10 @@ function acceptStream(data){
 function reflectSharedControls(keepPosition = false){
   const before=/** @type {HTMLButtonElement|null} */(document.getElementById('converse-earlier')),after=/** @type {HTMLButtonElement|null} */(document.getElementById('converse-later')),stop=/** @type {HTMLButtonElement|null} */(document.getElementById('converse-stop'))
   if (before) {
-    const searchingHere = searchingEarlier === placeRevision
-    const hidden = !searchingHere && !canReadEarlier(earlierCursor, placeFilter?.messageIds ?? null, messages)
+    const hidden = !earlierCursor
     const scroll = keepPosition && before.hidden !== hidden ? document.getElementById('converse-scroll') : null
     const restorePosition = scroll && rememberConversationPosition(scroll)
     before.hidden = hidden
-    before.disabled = searchingEarlier !== null
-    const label = searchingHere ? '在往前找…' : '更早的对话'
-    if (before.textContent !== label) before.textContent = label
     restorePosition?.()
   }
   if(after)after.hidden=!laterCursor;if(stop)stop.hidden=!ownerReader?.turn()
@@ -175,7 +161,6 @@ let recordingTimer = null
 /** @param {HTMLElement} root @param {Deps} deps */
 function renderSkeleton(root, deps) {
   root.innerHTML = `
-    <button id="converse-place-clear" class="converse-place-clear" type="button" hidden></button>
     <div class="converse-search-bar">
       <button id="converse-search-open" class="converse-search-open" type="button"${deps.invokeWorkbenchApi ? "" : " hidden"}>搜索对话</button>
       <form id="converse-search" class="converse-search" role="search" hidden>
@@ -186,7 +171,6 @@ function renderSkeleton(root, deps) {
     <div id="converse-search-results" class="converse-search-results" role="region" aria-label="搜索结果" aria-live="polite" hidden></div>
     <div class="converse-page-actions"><button id="converse-later" class="desk-text-button" type="button" hidden>后面的对话</button><button id="converse-stop" class="desk-text-button" type="button" hidden>停止这一轮</button></div>
     <div id="converse-scroll" class="converse-scroll"><button id="converse-earlier" class="desk-text-button" type="button" data-converse-lead hidden>更早的对话</button></div>
-    <button id="converse-place-more" class="converse-latest desk-text-button" type="button" hidden></button>
     <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
     <p id="converse-offline-note" class="desk-offline-note" hidden>CC 没在运行，现在说的话送不出去。 <button class="desk-text-button" type="button" data-wake-cc>叫它起来</button></p>
     <p id="converse-wake-error" class="desk-offline-note" role="status" hidden>没叫起来。</p>
@@ -196,7 +180,6 @@ function renderSkeleton(root, deps) {
       <p id="converse-image-note" class="converse-image-note" role="status" hidden></p>
       <div class="converse-draft">
         <span id="converse-recipient-default" class="converse-recipient">CC ›</span>
-        <button id="converse-recipient" class="converse-recipient" type="button" title="回到全部" hidden></button>
         <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="随便说，CC 自己分得清" rows="1"></textarea>
       </div>
       <div id="converse-recording" class="converse-recording" hidden>
@@ -319,7 +302,7 @@ function attachmentsHtml(m, indexes = (m.attachments ?? []).map((_,i) => i)) {
 
 /** @param {ConverseMsg} m @param {number[]} [attachmentIndexes] @param {number[]} [narrationIndexes] @param {number} [partIndex] @param {boolean} [showInlinePlace] @returns {string} */
 function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex, showInlinePlace = partIndex === undefined) {
-  if(m.terminalId)return terminalReferenceHtml(m.terminalId,m.text,!!m.placeCardKey)
+  if(m.terminalId)return terminalReferenceHtml(m.terminalId,m.text)
   if (m.matterId) return `<div class="converse-msg converse-msg-cc"><span class="converse-speaker">${deskSpeakerHtml('cc')}</span><div class="converse-cc-body">${matterReferenceHtml(m.matterId,m.text,!!m.historical)}</div></div>`
   if (m.role === "error") {
     return `<div class="converse-error-line">${escapeHtml(m.text)}</div>`
@@ -338,7 +321,7 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex, showInli
     const attachments = (m.attachments ?? []).map((_,i) => i).filter(i => !usedAttachments.has(i))
     const narration = (m.narration ?? []).map((_,i) => i).filter(i => !usedNarration.has(i))
     if (attachments.length || narration.length) parts.push(messageHtml({...m,text:'',replyParts:[],projection:''},attachments,narration,parts.length))
-    return `<div class="converse-reply-parts">${placeLabelHtml(m)}${parts.join('')}</div>`
+    return `<div class="converse-reply-parts">${parts.join('')}</div>`
   }
   const provider = m.role === 'cc' ? replyProvider(m) : ''
   const name = provider ? replyAgentName(replyAgentNames,provider) : m.role === 'user' ? '你' : m.speaker === 'notice' ? '通知' : 'CC'
@@ -352,7 +335,7 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex, showInli
     ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}"${partIndex === undefined ? '' : ` data-reply-part="${partIndex}"`} aria-label="朗读这条回复" title="朗读">${icon("play")} </button>`
     : ""
   const markdown = m.role === "cc" && !m.pending
-  const inlineLabel = showInlinePlace ? placeLabelHtml(m, true) : ''
+  const inlineLabel = showInlinePlace ? placeLabelHtml(m) : ''
   let content = markdown ? renderWorkbenchMarkdown(m.text) : m.role === 'user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)
   if (inlineLabel) {
     const opening = content.match(/^<(?:p|h[1-6])>/)?.[0] ?? ''
@@ -366,10 +349,9 @@ function messageHtml(m, attachmentIndexes, narrationIndexes, partIndex, showInli
   const extras = ((attachmentIndexes?.length ?? m.attachments?.length ?? 0) > 0 || (narrationIndexes?.length ?? m.narration?.length ?? 0) > 0)
   // 带附件 / 过程的回复:过程在上、回复居中、附件在下,一列排;没有的照旧(样式与测试不动)。
   // 朗读按钮永远贴着正文最后一行(带附件时放进正文那一行里),不随附件块漂。
-  const label = partIndex === undefined ? placeLabelHtml(m) : ""
-  const grouped = extras || !!label
+  const grouped = extras || (partIndex === undefined && !!inlineLabel)
   const body = grouped
-    ? `<div class="converse-cc-body">${label}${m.role === "cc" ? narrationHtml(m,narrationIndexes) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m,attachmentIndexes)}</div>`
+    ? `<div class="converse-cc-body">${m.role === "cc" ? narrationHtml(m,narrationIndexes) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m,attachmentIndexes)}</div>`
     : bubble
   return `<div class="converse-msg ${roleCls}${pendingCls}${noticeCls}${avatar ? ' has-reply-avatar' : ''}" role="group" aria-label="${escapeHtml(name)}">
     <span class="converse-speaker">${deskSpeakerHtml(m.role)}${avatar}</span>
@@ -639,9 +621,16 @@ function resizeDraft(input) {
 
 const ccIsStopped = () => document.documentElement.hasAttribute('data-desk-cc-stopped')
 
+function reflectComposerPlaceholder() {
+  const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('converse-input'))
+  if (!input) return
+  input.placeholder = ccIsStopped() ? 'CC 没在运行' : '随便说，CC 自己分得清'
+  resizeDraft(input)
+}
+
 export function reflectConversationAvailability() {
   reflectMic()
-  reflectPlaceFilter()
+  reflectComposerPlaceholder()
   renderReading({preserve: true})
 }
 
@@ -683,20 +672,12 @@ async function loadSharedHistory(deps) {
 }
 
 /** @param {ConverseMsg} m */
-function inPlace(m) {
-  if (!placeFilter) return true
-  return (!!m.matterId && placeFilter.matterIds.has(m.matterId)) || (!!m.messageId && placeFilter.messageIds.has(m.messageId)) || (!!m.terminalId && placeFilter.sessionIds.has(m.terminalId)) || m.pending === true
-}
-function placeEmptyHtml() {
-  return `<p class="converse-place-empty">最近还没聊过 ${escapeHtml(placeFilter?.name ?? "")} 的事。</p>`
-}
-/** @param {ConverseMsg} m */
-function placeLabelHtml(m, inline = false) {
-  const place = !placeFilter && m.role === 'cc' && m.messageId ? placesByMessage.get(m.messageId) : null
-  return place ? `<button class="${inline ? 'desk-inline-place' : 'converse-place-label'}" type="button" data-converse-place="${escapeHtml(place.key)}">${escapeHtml(place.name)}</button>` : ''
+function placeLabelHtml(m) {
+  const place = m.role === 'cc' && m.messageId ? placesByMessage.get(m.messageId) : null
+  return place ? `<button class="desk-inline-place" type="button" data-converse-place="${escapeHtml(place.key)}">${escapeHtml(place.name)}</button>` : ''
 }
 
-/** @param {{clear:()=>void,selectKey:(key:string)=>void}} navigation */
+/** @param {{selectKey:(key:string)=>void}} navigation */
 export function connectConversationPlaces(navigation) {
   placeNavigation = navigation
 }
@@ -712,77 +693,15 @@ export function updateConversationPlaces(places) {
     return old?.key !== place.key || old?.name !== place.name
   })
   placesByMessage = next
-  if (changed && !placeFilter) renderMessages()
-}
-
-function reflectPlaceFilter() {
-  const name = placeFilter?.name
-  const heading = document.getElementById('desk-place-name')
-  if (heading) {
-    heading.textContent = name ?? ''
-    heading.parentElement?.toggleAttribute('hidden', !name)
-    heading.setAttribute('aria-label', name ? `只看 ${name}` : '')
-  }
-  const clear = document.getElementById('converse-place-clear')
-  if (clear) {
-    clear.hidden = !name
-    clear.textContent = name ? `只看 ${name} · 回到全部` : ''
-  }
-  const recipient = document.getElementById('converse-recipient')
-  if (recipient) {
-    recipient.hidden = !name
-    recipient.textContent = name ? `${name} ›` : ''
-    if (name) recipient.setAttribute('aria-label', `${name} › 回到全部`)
-  }
-  const defaultRecipient = document.getElementById('converse-recipient-default')
-  if (defaultRecipient) defaultRecipient.hidden = !!name
-  const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById('converse-input'))
-  if (input) {
-    input.placeholder = ccIsStopped() ? 'CC 没在运行' : name ? `说说 ${name} 的事` : '随便说，CC 自己分得清'
-    resizeDraft(input)
-  }
-}
-
-/** 上面点了一个地方(或者点回全部)。
- * @param {{key?:string,name:string,matterIds:string[],messageIds:string[],sessionIds:string[]}|null} place @param {{preserve?:boolean}} [options] */
-export function setConversationPlace(place, {preserve = false} = {}) {
-  const switched = (placeFilter?.key ?? placeFilter?.name) !== (place?.key ?? place?.name)
-  if (switched) {
-    placeRevision++
-    expandedPlaceCards = false
-  }
-  placeFilter = place ? { key: place.key, name: place.name, matterIds: new Set(place.matterIds), messageIds: new Set(place.messageIds), sessionIds: new Set(place.sessionIds) } : null
-  const root = document.getElementById("converse-root")
-  if (root) { if (placeFilter) root.dataset.place = placeFilter.name; else delete root.dataset.place }
-  reflectPlaceFilter()
-  reflectSharedControls()
-  renderMessages({ follow: switched && !preserve, preserve })
-}
-
-/** @param {import('./converse-place.js').RosterItem[]} items */
-export function updateConversationRoster(items) {
-  placeRoster = items
-  if (placeFilter) renderReading({preserve: true})
+  if (changed) renderMessages()
 }
 
 function renderReading({ follow = false, prepend = false, preserve = false } = {}) {
   const scroll = document.getElementById("converse-scroll")
   if (scroll) {
-    const shown = placeFilter ? messages.filter(inPlace) : messages
-    const {cards, remaining} = placeCards(placeFilter, placeRoster, messages, expandedPlaceCards)
-    const more = document.getElementById('converse-place-more')
-    if (more) {
-      more.hidden = !remaining
-      more.textContent = remaining ? `这里还有 ${remaining} 件` : ''
-    }
-    /** @type {ConverseMsg[]} */
-    const projections = cards.map(({key, ...card}) => ({...card, id: 0, role: 'cc', placeCardKey: key}))
-    const rows = projections.length
-      ? [...shown, ...projections].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity))
-      : shown
     const offlineNote = document.getElementById('converse-offline-note')
-    if (offlineNote) offlineNote.hidden = !ccIsStopped() || !rows.length
-    paintConversation(scroll,rows,messageHtml,placeFilter?placeEmptyHtml():emptyStateHtml(),{
+    if (offlineNote) offlineNote.hidden = !ccIsStopped() || !messages.length
+    paintConversation(scroll,messages,messageHtml,emptyStateHtml(),{
       follow, prepend, preserve, decoration:placeLabelHtml,
       latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))
     })
@@ -807,12 +726,6 @@ export function subscribeConverse(cb) {
 }
 /** @param {(stream:import('../generated/cc-activity.js').CCStream|null)=>void} cb */
 export function subscribeConverseActivity(cb) { activityListeners.add(cb); cb(currentActivity); return () => { activityListeners.delete(cb) } }
-
-/** home 只露输入框与发送;chat 是完整对话。 @param {'home'|'chat'} mode */
-export function setConverseMode(mode) {
-  const root = document.getElementById("converse-root")
-  if (root) root.dataset.converseMode = mode
-}
 
 // ── send ───────────────────────────────────────────────────────────────
 
@@ -1052,12 +965,6 @@ function wireEvents(root, deps) {
   })
 
   const input = /** @type {HTMLTextAreaElement|null} */ (root.querySelector("#converse-input"))
-  const clearPlace = () => {
-    placeNavigation?.clear()
-    input?.focus()
-  }
-  root.querySelector('#converse-place-clear')?.addEventListener('click', clearPlace)
-  root.querySelector('#converse-recipient')?.addEventListener('click', clearPlace)
   if (input && typeof ResizeObserver === 'function') {
     let width = 0
     const observer = new ResizeObserver(([entry]) => {
@@ -1128,8 +1035,7 @@ function wireEvents(root, deps) {
     const placeLabel = target.closest('[data-converse-place]')
     if (placeLabel instanceof HTMLElement && placeLabel.dataset.conversePlace) {
       placeNavigation?.selectKey(placeLabel.dataset.conversePlace)
-      const clear = document.documentElement.hasAttribute('data-desk-wide') ? 'thing-name' : 'converse-place-clear'
-      document.getElementById(clear)?.focus()
+      document.getElementById('thing-name')?.focus()
       return
     }
     const starter = target.closest(".converse-starter")
@@ -1194,48 +1100,17 @@ export function initConversePage(deps, { focus = true } = {}) {
   wireEvents(root, deps)
   if (ccIsStopped()) reflectConversationAvailability()
   root.querySelector('#converse-earlier')?.addEventListener('click', async () => {
-    const reader = ownerReader
-    if (!reader || searchingEarlier !== null || !canReadEarlier(earlierCursor, placeFilter?.messageIds ?? null, messages)) return
-    if (!placeFilter) {
-      try { await reader.read({before: earlierCursor}) } catch { /* Keep the cursor for retry. */ }
-      return
-    }
-    const revision = placeRevision
-    const scope = ownerScope
-    const visible = new Set(messages.filter(inPlace).map(message => message.messageId).filter(Boolean))
-    searchingEarlier = revision
-    reflectSharedControls()
-    try {
-      let pages = 0
-      let previousCursor
-      do {
-        previousCursor = earlierCursor
-        await reader.read({before: previousCursor})
-        pages++
-      } while (shouldReadAnotherPage({
-        pages, previousCursor, cursor: earlierCursor,
-        samePlace: revision === placeRevision && scope === ownerScope,
-        canRead: canReadEarlier(earlierCursor, placeFilter?.messageIds ?? null, messages),
-        found: messages.some(message => message.messageId && !visible.has(message.messageId) && inPlace(message)),
-      }))
-    } catch { /* Keep the last successful cursor for retry. */ }
-    finally {
-      searchingEarlier = null
-      reflectSharedControls(true)
-    }
+    if (!ownerReader || !earlierCursor) return
+    try { await ownerReader.read({before: earlierCursor}) } catch { /* Keep the cursor for retry. */ }
   })
   root.querySelector('#converse-later')?.addEventListener('click', async () => {
     if (!laterCursor || !ownerReader) return
     try { await ownerReader.read({after: laterCursor}) } catch { /* Keep the cursor for retry. */ }
   })
-  root.querySelector('#converse-place-more')?.addEventListener('click', () => {
-    expandedPlaceCards = true
-    renderReading({preserve: true})
-  })
   let stopConfirmation=''
   root.querySelector('#converse-stop')?.addEventListener('click',async()=>{const turn=ownerReader?.turn();if(!turn)return;const button=/** @type {HTMLButtonElement} */(root.querySelector('#converse-stop'));if(stopConfirmation!==turn){stopConfirmation=turn;button.textContent='再点一次，确认停止';return}try{await ownerReader?.stop(turn);button.textContent='停止这一轮';stopConfirmation=''}catch{button.textContent='这一轮已经结束或换了一轮，请刷新'}})
   syncVoiceToggleUI()
-  reflectPlaceFilter()
+  reflectComposerPlaceholder()
   reflectMic()
   renderMessages()
   sharedHistoryReady = loadSharedHistory(deps)

@@ -64,6 +64,8 @@ async function stubCliSetup(page: Page, qaBlocked = false) {
 async function openChoices(page: Page, shimUrl: string) {
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible()
+  const rail = page.locator('#dash-global-rail')
+  if (await rail.isHidden()) await page.locator('#desk-rail-toggle').click()
   await page.locator('.topbar-more summary').click()
   await clickRevealed(page, '#settings-open')
   await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)

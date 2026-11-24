@@ -1,5 +1,4 @@
 // @ts-check
-import { DESK_LAYOUT_QUERY } from './desk-layout.js'
 import { executorName } from './executor-names.js'
 import { V1, v1 } from '../daemon-client.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
@@ -113,7 +112,6 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   let alive = true, polling = false, paging = false, sending = false, deciding = false, stopping = false
   let confirmed = '', answered = '', lastRecipient = '', loaded = false
   let lastOperation = '', lastRequest = ''
-  const wide = window.matchMedia(DESK_LAYOUT_QUERY)
   /** @type {import('@wechat-cc/protocol').SessionRecapT|undefined} */ let recap
   /** @type {HTMLElement|null} */ let memo = null
   let dismissedAt = -1, recapVersion = 0
@@ -123,13 +121,11 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   const memoSize = typeof ResizeObserver === 'function' ? new ResizeObserver(redrawFrame) : null
   const fonts = document.fonts
   fonts?.addEventListener?.('loadingdone', redrawFrame)
-  const resized = () => { reflect(); draw(); void refresh() }
-  wide.addEventListener('change', resized)
   let empty = '正在读取…'
   const isVisible = () => document.visibilityState === 'visible' && !host.closest('[hidden], [inert]')
   const name = () => session?.displayName || executorName(session?.source || agent) || '终端'
-  const archivedInPlaces = () => wide.matches && ended()
-  const readOnly = () => archivedInPlaces() || (wide.matches && session?.status === 'ended')
+  const archivedInPlaces = ended
+  const readOnly = () => archivedInPlaces() || session?.status === 'ended'
   const pending = () => !readOnly() && session?.pending?.actionable && session.pending.hash !== answered ? session.pending : null
 
   function reflect() {
@@ -181,10 +177,10 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     }
     const state = session?.status
     if (locked || session || loaded) onStatus(who, locked ? '已经结束' : request || (state === 'waiting' && !answered) ? '等你定'
-      : (!wide.matches && (!session || session.stale)) || state === 'ended' ? '已经结束' : state === 'running' ? '正在做' : '停着')
+      : state === 'ended' ? '已经结束' : state === 'running' ? '正在做' : '停着')
     const target = agentAvatarsHtml([session?.source || agent]) + ' ' + esc(who) + ' ›'
     if (lastRecipient !== target) { recipient.innerHTML = target; lastRecipient = target }
-    const blocked = !session && !loaded ? '正在读取…' : terminalInputReason(session, who, !!request, wide.matches)
+    const blocked = !session && !loaded ? '正在读取…' : terminalInputReason(session, who, !!request)
     input.disabled = locked || !!blocked
     input.ariaLabel = `对 ${who} 说`
     input.placeholder = stopped ? 'CC 没在运行' : blocked || `接着对 ${who} 说…`
@@ -212,7 +208,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     })
     stepKeys = keys
     if (outgoing && !readOnly()) rows.push({id:'pending', role:'user', text:outgoing.text, at:outgoing.sentAt, pending:true})
-    if (recap && !readOnly() && wide.matches && recap.at > dismissedAt && !sending && !deciding) {
+    if (recap && !readOnly() && recap.at > dismissedAt && !sending && !deciding) {
       rows.push({ id: 'session-recap', role: 'recap', text: recap.text, recap })
     }
     const restore = prepend ? rememberConversationPosition(scroll) : null
@@ -304,7 +300,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
       }
       if (activity.status === 'fulfilled') {
         const page = activity.value
-        if (version === recapVersion) recap = wide.matches && page.recap?.text ? page.recap : undefined
+        if (version === recapVersion) recap = page.recap?.text ? page.recap : undefined
         const source = page.source ?? (archived ? 'archive' : 'live')
         // A missing transcript can already be using the archive before the final import.
         historyChanged = activitySource !== undefined && (activitySource !== source || activityEnded !== archived)
@@ -451,7 +447,6 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
       saveDraft()
       memoSize?.disconnect()
       fonts?.removeEventListener?.('loadingdone', redrawFrame)
-      wide.removeEventListener('change', resized)
       clearInterval(timer)
       document.removeEventListener('visibilitychange', refresh)
       document.removeEventListener('desk-cc-availability', reflect)

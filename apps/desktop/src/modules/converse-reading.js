@@ -46,18 +46,16 @@ export function rememberConversationPosition(scroll) {
   const top = scroll.scrollTop
   const viewportTop = scroll.getBoundingClientRect?.().top
   const anchor = viewportTop === undefined ? undefined : [...scroll.children].find(node =>
-    (node.hasAttribute('data-converse-message') || node.hasAttribute('data-converse-place-card'))
+    node.hasAttribute('data-converse-message')
     && node.getBoundingClientRect().bottom > viewportTop
   )
-  // 记的是这一条离阅读区顶边多远,不是它在屏幕上的高度:换版式后阅读区自己的位置会变。
+  // 记的是这一条离阅读区顶边多远,不是它在屏幕上的高度:左栏收展时阅读区自己的位置会变。
   const anchorTop = anchor && viewportTop !== undefined ? anchor.getBoundingClientRect().top - viewportTop : 0
-  // 重画可能把这一条换成新节点(比如筛选变了,行首的地方名跟着变):按它的编号找回来,别退回旧的滚动数值。
-  const marks = ['data-converse-message', 'data-converse-place-card']
-  const mark = anchor ? marks.find(name => anchor.hasAttribute(name)) : undefined
-  const id = mark ? anchor?.getAttribute(mark) : null
+  // 重画可能把这一条换成新节点(比如晚到的地方资料补上行首标签):按它的编号找回来,别退回旧的滚动数值。
+  const id = anchor?.getAttribute('data-converse-message')
   return () => {
     const node = anchor && scroll.contains(anchor) ? anchor
-      : mark ? [...scroll.children].find(child => child.getAttribute(mark) === id) : undefined
+      : id ? [...scroll.children].find(child => child.getAttribute('data-converse-message') === id) : undefined
     if (node) scroll.scrollTop += node.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchorTop
     else scroll.scrollTop = top
     const state = states.get(scroll)
@@ -112,7 +110,7 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
   let previousRole = ''
   let previousDay = null
   for(const message of messages){
-    const key = message.placeCardKey ?? message.id
+    const key = message.id
     const previous=state.rows.get(key)
     const signature=JSON.stringify([message.role,message.text,message.pending,message.speaker,message.provider,message.replyParts,message.attachments,message.attachmentSourceIndexes,message.narration,message.projection,decoration?.(message)])
     let row=previous
@@ -125,8 +123,7 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
       template.innerHTML=render(message)
       const node=template.content.firstElementChild
       if(!node)continue
-      if (message.placeCardKey) node.setAttribute('data-converse-place-card', message.placeCardKey)
-      else node.setAttribute('data-converse-message',String(message.id))
+      node.setAttribute('data-converse-message',String(message.id))
       row={message:{...message},signature,node}
     }
     if(!row)continue
@@ -147,16 +144,16 @@ export function paintConversation(scroll, messages, render, empty, {follow=false
       divider.remove()
     }
     if (day) previousDay = day
-    row.node.toggleAttribute('data-same-speaker', !message.placeCardKey && message.role === previousRole)
-    previousRole = message.placeCardKey ? '' : message.role
+    row.node.toggleAttribute('data-same-speaker', message.role === previousRole)
+    previousRole = message.role
     if(row.node!==cursor)scroll.insertBefore(row.node,cursor)
     cursor=row.node.nextElementSibling
     next.set(key,row)
-    if (!prepend && !previous && !message.placeCardKey && message.role==='cc' && !message.pending) newReply=true
+    if (!prepend && !previous && message.role==='cc' && !message.pending) newReply=true
   }
   while(cursor){const stale=cursor;cursor=cursor.nextElementSibling;stale.remove()}
   state.rows=next
-  if (keepPosition || messages.every(message => message.placeCardKey)) {
+  if (keepPosition) {
     state.owed = false
     if (follow) state.unread = false
     if (restorePosition) restorePosition()

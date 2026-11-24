@@ -389,15 +389,6 @@ test('对话里的真实终端引用打开它的地方和会话',async({page,shi
   await expect(terminal(page)).toContainText('把这周的记录整理一下')
 })
 
-test('690px 保留筛选条和补引用卡',async({page,shimUrl})=>{
-  await page.setViewportSize({width:690,height:820})
-  await mockTerminal(page)
-  await page.goto(shimUrl)
-  await select(page,'花园')
-  await expect(thread(page)).toBeHidden()
-  await expect(page.locator('#converse-place-clear')).toHaveText('只看 花园 · 回到全部')
-  await expect(page.locator('#converse-scroll [data-terminal-reference="solo"]')).toBeVisible()
-})
 
 test('小结跟着作者换字体，发话收起便条，偏好关掉后两处都收起', async ({page, shimUrl}) => {
   const cc = { text: '花园的画册排好了。还要选纸。', source: 'cc', at: now, awayFrom: Date.now() - 38 * 60_000 - 15_000 }

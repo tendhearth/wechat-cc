@@ -123,7 +123,7 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   const activity = mountCCActivity({ stage, onPhase: phase => pet?.setActivity(phase) })
   let topicsKnown = false
   const seenTopics = new Set()
-  const isActive = () => !doc.hidden && !root.hidden && (root.dataset.conversation === 'single' || root.dataset.now !== 'chat') && !root.closest('[hidden]') && (!root.closest('.dashboard') || doc.documentElement.dataset.mode === 'dashboard')
+  const isActive = () => !doc.hidden && !root.hidden && !root.closest('[hidden]') && (!root.closest('.dashboard') || doc.documentElement.dataset.mode === 'dashboard')
   let active = isActive()
   facts.setActive(active)
   /** @type {import('../companion-preferences.js').MotionPreferences} */ let motion
@@ -169,8 +169,8 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
     apply(facts.setActive(active))
   }
   const observer = new MutationObserver(syncVisibility)
-  // The pane itself is what switchPane toggles; ancestors cover a hidden dashboard.
-  for (let el = root; el; el = /** @type {HTMLElement} */ (el.parentElement)) observer.observe(el, { attributes: true, attributeFilter: ['hidden', 'data-now', 'data-mode'] })
+  // Watch the entry and its ancestors when the dashboard becomes visible.
+  for (let el = root; el; el = /** @type {HTMLElement} */ (el.parentElement)) observer.observe(el, { attributes: true, attributeFilter: ['hidden', 'data-mode'] })
   doc.addEventListener('visibilitychange', syncVisibility)
   const storageChanged = (/** @type {StorageEvent} */ event) => {
     if (event.key !== MOTION_STORAGE_KEY && event.key !== null) return

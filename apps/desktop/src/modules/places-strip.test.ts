@@ -36,16 +36,6 @@ it('坐回来:上次看过以后另有几件也动过 ⇒ 现状后面补一句'
   expect(placeLine(place('a', { line: '收藏做好了', alsoChanged: 0 }))).toBe('收藏做好了')
 })
 
-it('等批准的在行上直接答;问题 / 终端是「去回答」;还有几件', () => {
-  const html = renderPlacesHtml([
-    place('1in8b', { waiting: { itemKey: 'matter:x', kind: 'permission', matterId: 'aaaa0001', requestId: 'r', summary: 's', count: 2 } }),
-    place('bx', { waiting: { itemKey: 'terminal:s', kind: 'terminal', sessionId: 's', summary: 's', count: 1 } }),
-  ], { selected: null, stale: false, now: NOW })
-  expect(html).toContain('data-place-decision="allow"')
-  expect(html).toContain('还有 1 件')
-  expect(html).toContain('data-place-open')
-  expect(html).not.toContain('<script>')
-})
 
 it('空 / 连不上:一句说明,不画空表格;名字转义', () => {
   expect(renderPlacesHtml([], { selected: null, stale: false, now: NOW })).toContain('按项目一行一行排在这里')
@@ -62,7 +52,7 @@ function mount(response: any, extra: any = {}) {
   return { call, calls, onSelect, onOpen }
 }
 
-it('点一行 = 选中并把说话筛成它;再点一次回到全部;没看过的记成看过', async () => {
+it('点一行打开它并记成看过，再点仍选中同一地方', async () => {
   const data = { places: [place('rici', { unseen: true }), place('melu')], version: 'v1' }
   const { onSelect, calls } = mount(data)
   await strip!.refresh()
@@ -72,7 +62,8 @@ it('点一行 = 选中并把说话筛成它;再点一次回到全部;没看过�
   expect(row().getAttribute('aria-pressed')).toBe('true')
   expect(calls.some(c => c[1] === '/v1/matter/seen' && c[2]?.id === 'rici-m1')).toBe(true)
   row().click()
-  expect(onSelect).toHaveBeenLastCalledWith(null)
+  expect(onSelect).toHaveBeenLastCalledWith(data.places[0])
+  expect(row().getAttribute('aria-pressed')).toBe('true')
 })
 
 it('坐回来:点一行记成看过这个地方;选着时它又动了再记一次;没动不重复记', async () => {
@@ -89,9 +80,8 @@ it('坐回来:点一行记成看过这个地方;选着时它又动了再记一�
   expect(seen()).toEqual(['p:rici000000000000', 'p:rici000000000000'])
 })
 
-it.each([true, false])('离开再点回没动过的那一行，也再记一次看过（宽窗 %s）', async wide => {
+it('离开再点回没动过的那一行，也再记一次看过', async () => {
   const { calls } = mount({ places: [place('rici'), place('melu')], version: 'v1' })
-  strip!.setWide(wide)
   await strip!.refresh()
   const row = () => document.querySelector<HTMLButtonElement>('[data-place-key="p:rici000000000000"] .place-row')!
   row().click()
@@ -106,7 +96,6 @@ it('临时显示的历史地方看过后，连续两次刷新不重发', async (
   ] })
   let version = 0
   const { calls } = mount(([method]: [string]) => method === 'POST' ? { ok: true } : { places: [p], version: String(++version) })
-  strip!.setWide(true)
   await strip!.refresh()
   document.querySelector<HTMLButtonElement>('.place-row')!.click()
   await strip!.refresh()
@@ -134,21 +123,7 @@ it('选中的地方没了 ⇒ 回到全部', async () => {
   expect(strip!.selected()).toBeNull()
 })
 
-it('行上允许:发给那一件的那一条,然后重新读', async () => {
-  const p = place('1in8b', { waiting: { itemKey: 'matter:aaaa0001', kind: 'permission', matterId: 'aaaa0001', requestId: 'req-1', summary: 's', count: 1 } })
-  const { calls } = mount({ places: [p], version: 'v1' })
-  await strip!.refresh()
-  document.querySelector<HTMLButtonElement>('[data-place-decision="allow"]')!.click()
-  await vi.waitFor(() => expect(calls.some(c => c[1] === '/v1/matter/permission')).toBe(true))
-  expect(calls.find(c => c[1] === '/v1/matter/permission')![2]).toEqual({ id: 'aaaa0001', requestId: 'req-1', decision: 'allow' })
-})
 
-it('去回答:有事 id 开那件事,只有会话开那个会话', async () => {
-  const { onOpen } = mount({ places: [place('bx', { waiting: { itemKey: 'terminal:s1', kind: 'terminal', sessionId: 's1', summary: 's', count: 1 } })], version: 'v1' })
-  await strip!.refresh()
-  document.querySelector<HTMLButtonElement>('[data-place-open]')!.click()
-  await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith({ kind: 'terminal', id: 's1' }))
-})
 
 it('往下挪 / 收起:发给 daemon', async () => {
   const { calls } = mount({ places: [place('a'), place('b')], version: 'v1' })
@@ -164,19 +139,19 @@ it('按地方键选中和清除都更新地方条的选中状态', async () => {
   const rici = place('rici')
   const { onSelect } = mount({ places: [rici], version: 'v1' })
   await strip!.refresh()
-  const row = document.querySelector<HTMLButtonElement>('.place-row')!
+  const row = () => document.querySelector<HTMLButtonElement>('.place-row')!
   strip!.selectKey(rici.key)
   expect(onSelect).toHaveBeenLastCalledWith(rici)
-  expect(row.getAttribute('aria-pressed')).toBe('true')
+  expect(row().getAttribute('aria-pressed')).toBe('true')
   strip!.selectKey(rici.key)
   strip!.selectKey('p:missing')
   expect(onSelect).toHaveBeenCalledTimes(1)
   strip!.clear()
   expect(onSelect).toHaveBeenLastCalledWith(null)
-  expect(row.getAttribute('aria-pressed')).toBe('false')
+  expect(row().getAttribute('aria-pressed')).toBe('false')
 })
 
-it.each([false, true])('行菜单打开时保留节点，关闭后补画最新数据（宽窗 %s）', async wide => {
+it('行菜单打开时保留节点，关闭后补画最新数据', async () => {
   const root = document.createElement('div')
   document.body.replaceChildren(root)
   Object.defineProperty(root, 'showPopover', { value: undefined })
@@ -187,7 +162,6 @@ it.each([false, true])('行菜单打开时保留节点，关闭后补画最新�
     onSelect: vi.fn(),
     onOpen: vi.fn(),
   })
-  strip.setWide(wide)
   await strip.refresh()
   const trigger = root.querySelector<HTMLButtonElement>('.place-more')!
   trigger.click()
@@ -245,7 +219,6 @@ it('宽窗置顶卡回答后越过已经在途的读取发起新刷新', async (
     return { places: [place('rici')], version: 'after' }
   }, { waitingRoot })
   document.body.append(waitingRoot)
-  strip!.setWide(true)
   await strip!.refresh()
   expect(document.querySelector('#p .place-ask')).toBeNull()
   const reading = strip!.refresh()
@@ -264,7 +237,6 @@ it('意见纸条标明 CC 只看了这条请求', async () => {
   const ccOpinion = '先别删。这条请求要删除备份。'
   const waiting = { itemKey: 'matter:x', kind: 'permission', summary: '删旧备份？', count: 1, ccOpinion }
   mount({ places: [place('归档', { waiting })], version: 'v1' }, { waitingRoot })
-  strip!.setWide(true)
   await strip!.refresh()
   expect(waitingRoot.querySelector('.desk-waiting-question')?.textContent).toBe('删旧备份？')
   expect(waitingRoot.querySelector('.approval-operation')).toBeNull()
@@ -279,7 +251,6 @@ it.each(['allow', 'deny', 'open', 'terminal'])('晚到的意见保持等待卡�
   let places = [place('a', { waiting: permission }), place('b', { waiting: action === 'terminal' ? terminal : question })]
   mount(() => ({ places, version: JSON.stringify(places) }), { waitingRoot })
   document.body.append(waitingRoot)
-  strip!.setWide(true)
   await strip!.refresh()
   const selector = action === 'open' || action === 'terminal' ? '[data-place-open]' : `[data-place-decision="${action}"]`
   const button = () => waitingRoot.querySelector<HTMLButtonElement>(selector)!
@@ -302,7 +273,7 @@ it.each(['allow', 'deny', 'open', 'terminal'])('晚到的意见保持等待卡�
   expect(waitingRoot.contains(document.activeElement)).toBe(false)
 })
 
-it.each([false, true])('名单双布局都能从空状态放回收起的地方（宽窗 %s）', async wide => {
+it('名单能从空状态放回收起的地方', async () => {
   const p = place('rici')
   let restored = false
   const { calls } = mount(([method, path]: [string, string]) => {
@@ -311,7 +282,6 @@ it.each([false, true])('名单双布局都能从空状态放回收起的地方�
       ? { places: [p], hidden: [], version: 'after' }
       : { places: [], hidden: [{ key: p.key, name: p.name }], version: 'before' }
   })
-  strip!.setWide(wide)
   await strip!.refresh()
   expect(document.querySelector('.places-empty')?.textContent).toContain('按项目')
   const toggle = document.querySelector<HTMLButtonElement>('[data-hidden-toggle]')!
@@ -337,7 +307,6 @@ it('终端摘要被截但结构化展示完整时，纸片不说「不是全部�
   const waitingRoot = document.createElement('div')
   mount({ places: [place('a', { waiting: { ...compactPermission, kind: 'terminal', matterId: undefined, requestId: undefined,
     itemKey: 'terminal:t1', sessionId: 't1', display: shortDisplay, truncated: true } })], version: 'v1' }, { waitingRoot })
-  strip!.setWide(true)
   await strip!.refresh()
   expect(waitingRoot.textContent?.includes('这里不是全部内容')).toBe(false)
   expect(waitingRoot.querySelector('.place-ask [data-place-open]')?.textContent).toBe('去回答')
@@ -358,7 +327,6 @@ it.each([
 ])('紧凑纸片需要打开再定（$label）', async ({ label: _, ...fields }) => {
   const waitingRoot = document.createElement('div')
   const { onOpen, calls } = mount({ places: [place('a', { waiting: { ...compactPermission, ...fields } })], version: 'v1' }, { waitingRoot })
-  strip!.setWide(true)
   await strip!.refresh()
   expect(waitingRoot.querySelector('[data-place-decision="allow"]')).toBeNull()
   const open = waitingRoot.querySelector<HTMLButtonElement>('.place-ask [data-place-open]')!
@@ -387,7 +355,6 @@ it('同一地方的同一条命令随当前请求显示各自的 worktree', asyn
     places: [place('a', { waiting: { ...compactPermission, display: shortDisplay, cwd: worktrees[index], requestId: `req-${index}` } })],
     version: String(index),
   }), { waitingRoot })
-  strip!.setWide(true)
   for (index = 0; index < worktrees.length; index++) {
     await strip!.refresh()
     const card = waitingRoot.querySelector('.desk-waiting-card')!
@@ -403,7 +370,6 @@ it('完整的紧凑预览能直接批准，晚到的意见保留操作块和按�
   let data = { places: [place('a', { waiting })], version: 'v1' }
   const { calls } = mount(() => data, { waitingRoot })
   document.body.append(waitingRoot)
-  strip!.setWide(true)
   await strip!.refresh()
   const operation = waitingRoot.querySelector('.approval-operation')
   const allow = waitingRoot.querySelector<HTMLButtonElement>('[data-place-decision="allow"]')!
@@ -430,7 +396,6 @@ it('紧凑操作块的命令和路径都是文字，剩余行打开原事项', a
   const command = { ...compactPermission, display: { body: { kind: 'command', command: hostile + '\nx\nx\nx\nx' } } }
   const edit = { ...compactPermission, matterId: 'b', itemKey: 'matter:b', display: { body: { kind: 'write', path: '/work/' + hostile, content: 'sample' } } }
   const { onOpen } = mount({ places: [place('a', { waiting: command }), place('b', { waiting: edit })], version: 'v1' }, { waitingRoot })
-  strip!.setWide(true)
   await strip!.refresh()
   expect(waitingRoot.querySelectorAll('.approval-operation script, .approval-operation img, .approval-operation [onerror]')).toHaveLength(0)
   expect(waitingRoot.querySelector('.approval-source')?.firstChild?.nodeType).toBe(Node.TEXT_NODE)
@@ -452,7 +417,6 @@ it.each([
   const waiting = { ...compactPermission, display }
   let data = { places: [place('a', { waiting })], version: 'v1' }
   const { calls } = mount(() => data, { waitingRoot })
-  strip!.setWide(true)
   await strip!.refresh()
   const line = waitingRoot.querySelector(selector)!
   const allow = waitingRoot.querySelector<HTMLButtonElement>('[data-place-decision="allow"]')!

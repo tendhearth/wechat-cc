@@ -61,41 +61,22 @@ ${layout ? `window.setFixturePermissions = count => {
   controller.paint(true)
 }` : ''}
 `
-const terminalScript = `
-import { mountNowPage } from '/modules/now-page.js'
-import { terminalWaitingRows } from '/modules/terminal-waiting.js'
-const root = document.querySelector('.cc-now-pane')
-const page = mountNowPage({
-  root, presencePoller: { subscribe: () => () => {} }, onOpenTask: () => {},
-  onResolveTerminal: async () => true,
-})
-page.setTerminal(terminalWaitingRows([{
-  session_id: 'fixture-edit', source: 'claude', displayName: 'Claude', status: 'waiting', project: 'portfolio',
-  pending: { tool: 'Edit', summary: 'src/a.ts…', hash: 'ed1t1', truncated: true, cwd: ${JSON.stringify(cwd)}, display: ${JSON.stringify(edit)} },
-}, {
-  session_id: 'fixture-summary', source: 'claude', displayName: 'Claude', status: 'waiting', project: 'portfolio',
-  pending: { tool: 'Bash', summary: 'echo sample', hash: 'leg01', truncated: false },
-}, {
-  session_id: 'fixture-partial', source: 'claude', displayName: 'Claude', status: 'waiting', project: 'portfolio',
-  pending: { tool: 'Bash', summary: 'partial…', hash: 'cut01', truncated: true,
-    display: ${JSON.stringify({ body: { kind: 'command', command }, truncated: true })} },
-}]))
-`
-const terminalMarkup = `<article class="cc-now-pane" data-now="home">
-  <button id="now-cc">CC</button>
-  <section id="now-waiting" hidden><h2 id="now-waiting-title"></h2><ul id="now-waiting-list"></ul></section>
-</article>`
 const taskMarkup = '<main class="dashboard"><div class="dash-main"><div class="thing-detail"><section class="workbench-pane" data-docked><div id="workbench-root"></div></section></div></div></main>'
-function layoutMarkup(wide: boolean) {
+function layoutMarkup() {
   const workbench = `<section class="dash-pane workbench-pane" data-workbench-view="detail">
     <header class="cc-life-topline"><button type="button" class="workbench-home">返回对话</button></header>
     <div id="workbench-root" class="workbench-root"></div></section>`
-  return `<main class="dashboard"><div class="dash-window"><div class="dash-main">${wide
-    ? `<section class="dash-pane thing-thread"><header class="thing-heading">画作品集</header><div class="thing-detail">${workbench}</div></section>`
-    : workbench}</div></div></main>`
+  return `<main class="dashboard"><div class="dash-window"><div class="dash-main"><section class="dash-pane thing-thread"><header class="thing-heading">画作品集</header><div class="thing-detail">${workbench}</div></section></div></div></main>`
 }
 
-async function openFixture(page: Page, { wide = false, terminal = false, layout = false } = {}) {
+async function openFixture(page: Page, { layout = false } = {}) {
+  const width = page.viewportSize()!.width
+  // Mirror the initial dashboard state in this fixture, which loads workbench without main.js.
+  const layoutAttrs = layout ? [
+    'data-mode="dashboard"',
+    ...(width < 900 ? ['data-desk-compact', 'data-desk-collapsed'] : []),
+    ...(width < 700 ? ['data-desk-overlay'] : []),
+  ].join(' ') : ''
   await page.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', () => { document.documentElement.dataset.cspViolation = 'true' })
   })
@@ -107,13 +88,13 @@ async function openFixture(page: Page, { wide = false, terminal = false, layout 
       await route.fulfill({
         contentType: 'text/html',
         headers: { 'Content-Security-Policy': "script-src 'self'; object-src 'none'" },
-        body: `<!doctype html><html lang="zh"${wide ? ' data-desk-wide' : ''}${layout ? ' data-mode="dashboard"' : ''}><head><meta charset="utf-8">
+        body: `<!doctype html><html lang="zh" data-desk-wide ${layoutAttrs}><head><meta charset="utf-8">
           ${styles.map(css => `<link rel="stylesheet" href="/${css}">`).join('')}
           ${layout ? '' : '<style>html, body, .dashboard, .dash-main, .thing-detail, .workbench-pane, #workbench-root { height: 100%; margin: 0; }</style>'}
-          </head><body>${terminal ? terminalMarkup : layout ? layoutMarkup(wide) : taskMarkup}<script type="module" src="/fixture.js"></script></body></html>`,
+          </head><body>${layout ? layoutMarkup() : taskMarkup}<script type="module" src="/fixture.js"></script></body></html>`,
       })
     } else if (path === '/fixture.js') {
-      await route.fulfill({ contentType: 'text/javascript', body: terminal ? terminalScript : taskScript(layout) })
+      await route.fulfill({ contentType: 'text/javascript', body: taskScript(layout) })
     } else {
       try {
         const body = await readFile(new URL(path.slice(1), source))
@@ -127,10 +108,10 @@ async function openFixture(page: Page, { wide = false, terminal = false, layout 
   await page.goto(origin)
 }
 
-for (const width of [1440, 690]) {
+for (const width of [1440, 760]) {
   test(`task permissions show a command and an edit at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
-    await openFixture(page, { wide: width === 1440 })
+    await openFixture(page)
     const cards = page.locator('.wb-permission')
     await expect(cards).toHaveCount(3)
     const commandPanel = cards.first().locator('[data-kind="command"]')
@@ -197,16 +178,16 @@ async function expectDecisionButtons(card: Locator) {
   }
 }
 
-async function expectFirstThreeCommandLines(card: Locator) {
+async function expectFirstThreeCommandLines(card: Locator, count = 3) {
   const source = card.locator('.approval-command .approval-source').first()
-  const visible = await source.evaluate(el => {
+  const visible = await source.evaluate((el, lines) => {
     const text = el.firstChild
     if (!(text instanceof Text)) return []
     const panel = el.closest('.wb-permissions')!.getBoundingClientRect()
     const actions = el.closest('.wb-permission')!.querySelector('.wb-permission-actions')!.getBoundingClientRect()
     const range = document.createRange()
     let start = 0
-    return text.data.split('\n').slice(0, 3).map(line => {
+    return text.data.split('\n').slice(0, lines).map(line => {
       range.setStart(text, start)
       range.setEnd(text, start + line.length)
       start += line.length + 1
@@ -217,14 +198,14 @@ async function expectFirstThreeCommandLines(card: Locator) {
         rect.left >= Math.max(0, panel.left) &&
         rect.right <= Math.min(window.innerWidth, panel.right))
     })
-  })
-  expect(visible).toEqual([true, true, true])
+  }, count)
+  expect(visible).toEqual(Array(count).fill(true))
 }
 
-for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [690, 600]] as const) {
+for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600], [550, 450]] as const) {
   test(`task detail gives permissions room at ${width}×${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height })
-    await openFixture(page, { wide: width >= 700, layout: true })
+    await openFixture(page, { layout: true })
     const composer = page.locator('.wb-followup')
     const field = composer.getByRole('textbox')
     const content = page.locator('.wb-content')
@@ -265,7 +246,16 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [690, 600]]
       return el.scrollTop
     })).toBe(80)
 
-    if (width === 690 && height === 600) {
+    if (width === 550) {
+      await expect(panel.getByRole('heading', { name: '需要你的决定' })).toBeInViewport({ ratio: 1 })
+      await expectFirstThreeCommandLines(request, 2) // 1100×900 放大到 200%:审批区只放得下命令前两行,按钮完整
+      await field.fill('放大后也能补充说明')
+      await expect(field).toHaveValue('放大后也能补充说明')
+      await expect(composer.getByRole('button', { name: '发送补充' })).toBeInViewport({ ratio: 1 })
+      await field.fill('')
+      await field.blur()
+    }
+    if (width === 760 && height === 600) {
       await expect(panel.getByRole('heading', { name: '需要你的决定' })).toBeInViewport({ ratio: 1 })
       const operation = request.locator('.wb-permission-tool')
       await expect(operation).toHaveText('Claude 想运行一条命令')
@@ -332,7 +322,7 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [690, 600]]
 }
 
 test('sticky permission actions reach the bottom of the approval area', async ({ page }) => {
-  await page.setViewportSize({ width: 690, height: 600 })
+  await page.setViewportSize({ width: 760, height: 600 })
   await openFixture(page, { layout: true })
   await expect(page.locator('.wb-followup')).toBeVisible()
   await setPermissionCount(page, 1)
@@ -367,7 +357,7 @@ test('sticky permission actions reach the bottom of the approval area', async ({
 })
 
 test('permission buttons stay with their own request as the list scrolls', async ({ page }) => {
-  await page.setViewportSize({ width: 690, height: 600 })
+  await page.setViewportSize({ width: 760, height: 600 })
   await openFixture(page, { layout: true })
   await expect(page.locator('.wb-followup')).toBeVisible()
   await setPermissionCount(page, 2)
@@ -385,51 +375,4 @@ test('permission buttons stay with their own request as the list scrolls', async
   await expectDecisionButtons(cards.nth(1))
   await expect(cards.first().locator('.wb-permission-actions')).not.toBeInViewport()
   await expect(page.locator('.wb-followup')).toBeInViewport({ ratio: 1 })
-})
-
-test('terminal waiting row opens its structured edit under the desktop CSP', async ({ page }) => {
-  await openFixture(page, { terminal: true })
-  const row = page.locator('.now-terminal[data-hash="ed1t1"] button')
-  await expect(row).toHaveCount(1)
-  await row.click()
-  const dialog = page.locator('dialog.now-terminal-dialog')
-  await expect(dialog.getByRole('heading')).toHaveText('想改 src/a.ts…')
-  await expect(dialog.locator('[data-line="deleted"]').first()).toHaveText('− const a = 1')
-  await expect(dialog.locator('[data-line="added"]').first()).toHaveText('+ const a = 2')
-  const reason = dialog.locator('.approval-operation > .approval-meta:first-child')
-  await expect(reason).toBeVisible()
-  expect(await reason.textContent() === note).toBe(true)
-  await expect(dialog.getByText('在 /demo/portfolio', { exact: true })).toBeVisible()
-  await expect(dialog.getByText(whitespaceNotice, { exact: true })).toBeVisible()
-  await dialog.getByText('看完整原文', { exact: true }).click()
-  const original = dialog.locator('.approval-operation > details .approval-source')
-  await expect(original).toBeVisible()
-  expect((await original.textContent())?.includes('Before: "const b = 3\\n"')).toBe(true)
-  await expect(dialog.getByText('看摘要', { exact: true })).toHaveCount(0)
-  await expect(dialog.locator('script, img, [onerror]')).toHaveCount(0)
-  expect(await page.evaluate(() => 'approvalInjected' in window)).toBe(false)
-  await expect(page.locator('html')).not.toHaveAttribute('data-csp-violation', 'true')
-  await expect(dialog.getByText('这里不是全部内容，完整的请在终端里看。', { exact: true })).toBeVisible()
-  await expect(dialog.getByRole('button', { name: '允许这一步', exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('button', { name: '先不做', exact: true })).toBeEnabled()
-})
-
-test('terminal calls a legacy summary a summary and expands received preview lines', async ({ page }) => {
-  await page.setViewportSize({ width: 690, height: 720 })
-  await openFixture(page, { terminal: true })
-  const dialog = page.locator('dialog.now-terminal-dialog')
-  await page.locator('.now-terminal[data-hash="leg01"] button').click()
-  await expect(dialog.getByText('摘要', { exact: true })).toBeVisible()
-  await expect(dialog.getByText('摘要里的换行和连续空格可能被并掉了。', { exact: true })).toBeVisible()
-  await dialog.getByText('看摘要', { exact: true }).click()
-  await expect(dialog.getByText('看完整原文', { exact: true })).toHaveCount(0)
-  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
-  await expect(dialog).toHaveCount(0)
-  await page.locator('.now-terminal[data-hash="cut01"] button').click()
-  await dialog.getByText('还有 2 行 · 展开收到的部分', { exact: true }).click()
-  await expect(dialog.getByText('echo example-7', { exact: false })).toBeVisible()
-  await expect(dialog.getByText('这里不是全部内容，完整的请在终端里看。', { exact: true })).toBeVisible()
-  await expect(dialog.getByText('看完整原文', { exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('button', { name: '允许这一步', exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('button', { name: '先不做', exact: true })).toBeEnabled()
 })
