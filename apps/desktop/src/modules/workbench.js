@@ -512,7 +512,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const chosenContinuation=executionView.restartPreview?(executionView.restartPreview.status==='ready'?executionView.restartPreview.continuation??undefined:{mode:'restart_required'}):detail?.continuation
   const previewError=executionView.restartPreview?.error?`<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(executionView.restartPreview.error)} <button type="button" class="wb-new" data-action="retry-continuation-preview">重新读取恢复说明</button></p>`:''
   const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null,providerName:state.nativeResume?.taskId===detail.task.id?providerNameOf(state)(state.nativeResume.providerId):undefined},{taskId:detail.task.id,providerId:detail.task.providerId,providerName:providerNameOf(state)(detail.task.providerId),runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
-  return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar" aria-labelledby="wb-all-title"><header><h2 id="wb-all-title"><span class="wb-search-wide-title" hidden>搜索</span><span class="wb-search-compact-title">搜索事项</span></h2><button type="button" class="wb-delegate" data-action="task-entry" aria-label="交办" title="交办一件事">${icon('add-01', {size:16})}<span aria-hidden="true">交办</span></button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${directHeader}${taskHeader}<div class="wb-content"><div class="wb-content-inner" data-task-focus="${taskFocus}">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
+  return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar" aria-labelledby="wb-all-title"><header><h2 id="wb-all-title"><span class="wb-search-wide-title" hidden>搜索</span><span class="wb-search-compact-title">搜索事项</span></h2><button type="button" class="wb-delegate" data-action="task-entry" aria-label="交办" title="交办一件事">${icon('add-01', {size:16})}<span aria-hidden="true">交办</span></button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${directHeader}${taskHeader}${state.error || (detail && state.detailDisconnected) ? `<div class="wb-alerts">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}</div>` : ''}<div class="wb-content"><div class="wb-content-inner" data-task-focus="${taskFocus}">${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
 }
 
 /** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,initialList?:Partial<ListResult>,initialPages?:number,readSearchList?:(query:URLSearchParams)=>Promise<unknown>,listOnly?:boolean,isTaskVisible?:()=>boolean,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
@@ -788,6 +788,19 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   stopWorkbenchPolling()
   const root = document.getElementById('workbench-root')
   if (!root) return
+  /** @param {Element|null} panel */
+  const updatePermissionActionDividers = panel => {
+    for (const actions of panel?.querySelectorAll('.wb-permission-actions') ?? []) {
+      const request = actions.parentElement
+      if (!request) continue
+      // The action row sits at the end of its request when it isn't stuck.
+      const stuck = actions.getBoundingClientRect().bottom < request.getBoundingClientRect().bottom - 0.5
+      actions.classList.toggle('is-stuck', stuck)
+    }
+  }
+  const permissionResize = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(() => updatePermissionActionDividers(root.querySelector('.wb-permissions')))
+    : null
   const previousFocus = focusSearch ? document.activeElement : null
   const wideSearchVisible = () => !!root.closest?.('.dash-main > .workbench-pane[data-workbench-view="search"]:not([hidden])')
     && document.documentElement.hasAttribute('data-desk-wide')
@@ -1082,11 +1095,16 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       }
     }
     const permissionPanel = root.querySelector('.wb-permissions')
+    permissionResize?.disconnect()
     if (permissionPanel) {
       const saved = permissionScrollPositions.get(nextScope)
       const scrollTop = saved?.signature === nextPermissionSignature ? saved.scrollTop : 0
       permissionPanel.scrollTop = scrollTop
       permissionScrollPositions.set(nextScope, { signature: nextPermissionSignature, scrollTop })
+      if (permissionResize) {
+        permissionResize.observe(permissionPanel)
+        for (const request of permissionPanel.querySelectorAll('.wb-permission')) permissionResize.observe(request)
+      }
     } else permissionScrollPositions.delete(nextScope)
     const taskInfoBody = root.querySelector('.wb-task-info-body')
     if (taskInfoBody) taskInfoBody.scrollTop = taskInfoScrollPositions.get(nextScope) ?? 0
@@ -2041,7 +2059,11 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       searchScroll = event.target.scrollTop
     }
     const content = root.querySelector('.wb-content')
-    if (event.target !== content || !content) return
+    if (event.target !== content || !content) {
+      const panel = root.querySelector('.wb-permissions')
+      if (panel && event.target === panel) updatePermissionActionDividers(panel)
+      return
+    }
     if (content.scrollTop !== pendingOutcomeDiscovery.get(renderedScope)) pendingOutcomeDiscovery.delete(renderedScope)
     scrollPositions.set(renderedScope, content.scrollTop)
     const current = reading.get(renderedScope)
@@ -2167,6 +2189,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     return true
   }
   active = { timer, openTask, openDraft, getTaskId: () => controller.getTargetTaskId(), getViewedTaskId: () => controller.state.detail?.task.id ?? null, cleanup: () => {
+    permissionResize?.disconnect()
     document.removeEventListener?.('desk-cc-availability', reflectThingAvailability)
     saveWindowState()
     if (deskSearch) {
