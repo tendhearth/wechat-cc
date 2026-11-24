@@ -11,6 +11,7 @@ import type { AgentAttachment, AgentEvent, AgentSession, SpawnContext } from '..
 import { TIER_PROFILES } from '../../../domain/user-tier'
 import { createWorkbenchCodexProvider, spawnCodexAppServerSession } from './codex-app-server'
 import { makeRunPermissions } from '../../workbench/permissions'
+import { renderWechatPermissionCard } from '../../../features/workbench/wechat-permission-card'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }))
 vi.mock('node:child_process', async importOriginal => {
@@ -741,7 +742,7 @@ describe('workbench Codex app-server', () => {
       approval(child, 'script-barrier', undefined, { command: 'python3 check.py', cwd: root, ...(extraGrant ? { additionalPermissions: { network: { enabled: true } } } : {}) })
       await expect.poll(() => permissions.pending().length).toBe(1)
       const card = permissions.pending()[0]!
-      if (!extraGrant) expect(card.scripts?.[0]?.content).toBe('print("reviewed")\n')
+      expect(card.scripts?.[0]?.content === 'print("reviewed")\n').toBe(true)
       expect(card.canAllowTask).not.toBe(true)
       expect(permissions.resolve(card.id, 'allow')).toBe(true)
       if (change === 'replace') writeFileSync(join(root, 'check.py'), 'print("replaced")\n')
@@ -753,6 +754,59 @@ describe('workbench Codex app-server', () => {
       expect(permissions.resolve(card.id, 'allow')).toBe(false)
       completed(child); await run.done
     } finally { release(); permissions.rejectAll(); removeTempDir(root) }
+  })
+
+  it.each([
+    { mode: 'extra grant', command: './scripts/deploy.sh', preview: true, complete: false },
+    { mode: 'item cwd', command: './scripts/deploy.sh', preview: true, complete: false },
+    { mode: 'unreadable script', command: './scripts/missing.sh', preview: false, complete: false },
+    { mode: 'unreadable package metadata', command: 'npm run missing', preview: false, complete: false },
+    { mode: 'ordinary command', command: 'echo ready', preview: false, complete: true },
+  ])('uses the Codex review evidence for script inspection: $mode', async ({ mode, command, preview, complete }) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-script-review-')))
+    const cwd = join(root, 'work'), script = 'work/scripts/deploy.sh', content = '#!/bin/sh\necho fixture\n'
+    mkdirSync(join(cwd, 'scripts'), { recursive: true })
+    writeFileSync(join(root, script), content)
+    if (mode === 'item cwd') {
+      mkdirSync(join(root, 'scripts'))
+      writeFileSync(join(root, 'scripts/deploy.sh'), '#!/bin/sh\necho decoy\n')
+    }
+    const decide = vi.fn(async (_facts: { command?: string; cwd?: string }) => ({ verdict: 'ask' as const, by: 'default' }))
+    const permissions = makeRunPermissions({ taskId: 'task', root, provider: 'codex', decide })
+    try {
+      const requestPermission: NonNullable<SpawnContext['requestPermission']> = (request, signal) => permissions.request(request, signal, root)
+      const { session, child } = await start({ requestPermission })
+      const run = collect(session); await begun(child)
+      if (mode === 'item cwd') child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: {
+        id: 'item-1', type: 'commandExecution', status: 'inProgress', command, cwd,
+      } })
+      approval(child, 'script-review', undefined, {
+        command, cwd: mode === 'item cwd' ? undefined : cwd,
+        ...(mode === 'extra grant' ? { additionalPermissions: { network: { enabled: true } } } : {}),
+      })
+      await expect.poll(() => permissions.pending().length).toBe(1)
+      const card = permissions.pending()[0]!
+      const facts = decide.mock.calls[0]?.[0]
+      expect(facts?.command === (mode === 'extra grant' ? undefined : command)).toBe(true)
+      expect(facts?.cwd === (mode === 'item cwd' || mode === 'extra grant' ? root : cwd)).toBe(true)
+      expect(card.cwd === cwd).toBe(true)
+      const entry = card.scripts?.[0]
+      expect((entry?.path === script && entry.content === content) === preview).toBe(true)
+      if (preview) {
+        expect(permissions.script(card.id, entry!.path, entry!.sha256!, 0).content === content).toBe(true)
+        const notice = permissions.notice(card.id)
+        expect(notice.includes('脚本 ' + script) && !notice.includes(content)).toBe(true)
+      }
+      if (mode === 'unreadable script') expect(entry?.error === '脚本路径不可读或含链接').toBe(true)
+      if (mode === 'unreadable package metadata') expect(card.scripts).toBeUndefined()
+      const wechat = renderWechatPermissionCard('Fixture', card, 'codex', '42')
+      expect(wechat.complete).toBe(complete)
+      expect(wechat.text.includes('回「y 42」')).toBe(complete)
+      expect(wechat.text.includes('「n 42」')).toBe(true)
+      expect(permissions.resolve(card.id, complete ? 'allow' : 'deny')).toBe(true)
+      await expect.poll(() => child.sent.find(m => m.id === 'script-review')?.result).toEqual({ decision: complete ? 'accept' : 'decline' })
+      completed(child); await run.done
+    } finally { permissions.rejectAll(); removeTempDir(root) }
   })
 
   it.each(['cwd mismatch', 'command mismatch', 'cwd from item'])(

@@ -100,7 +100,7 @@ const codexThreads: Array<Record<string, unknown>> = []
 /** codex 收到的审批应答,按命令记。 */
 const decisions = new Map<string, unknown>()
 const privateApprovalEvidence = 'sandboxapprovalhistoryproof'
-const scopedApprovalCommand = 'rm -rf build\nprintf ' + privateApprovalEvidence
+const scopedApprovalCommand = 'rm -rf build ' + privateApprovalEvidence
 const longApprovalCommand = "printf '%s' '" + 'SANDBOX_INLINE_APPROVAL '.repeat(200) + "'"
 const patchFile = 'SANDBOX_APPROVAL_FILE.txt'
 const patchDiff = '@@ -1 +1 @@\n-old\n+SANDBOX_PRIVATE_DIFF'
@@ -1396,7 +1396,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const complete = (await queued(asking))!
     expect(complete.hash).toBe(detail.body.permissions[0]!.id)
     const completeText = await lookup(asking, complete.hash)
-    expect(completeText.includes(`Codex 想运行一条命令：\n〔命令开始〕\n│ rm -rf build\n│ printf ${privateApprovalEvidence}\n〔命令结束〕`)).toBe(true)
+    expect(completeText.includes(`Codex 想运行一条命令：\n〔命令开始〕\n│ ${scopedApprovalCommand}\n〔命令结束〕`)).toBe(true)
     const instruction = (code: string) => `回「y ${code}」允许这一步、「n ${code}」拒绝。拒绝理由选填：「n ${code} 理由」。`
     const rejectOnlyInstruction = (code: string) => `这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`
     expect(completeText.endsWith(instruction(complete.code))).toBe(true)
@@ -1431,7 +1431,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await askAboutQuote(3, completeText.replace('rm -rf build', injectedCommand))
     const withoutMarker = completeText.split('\n').filter((_, index) => index !== 1).join('\n')
     const brokenMarker = completeText.replace(markerLine, '〔请求 损坏〕')
-    const commandBlock = completeText.split('\n').slice(3, 7).join('\n')
+    const commandBlock = completeText.split('\n').slice(3, 6).join('\n')
     const forgedMarker = completeText + '\n〔请求 0123456789abcdef〕'
     await askAboutQuote(4, withoutMarker, null)
     await askAboutQuote(5, brokenMarker, null)
