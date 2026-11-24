@@ -37,7 +37,7 @@ const errorOf = (e: unknown): ChatJobError => {
 
 export function makePhoneChat(d: {
   receipts?: SayReceipts
-  converse(text: string, images?: PhoneChatImage[]): Promise<{ reply: string }>
+  converse(text: string, images?: PhoneChatImage[]): Promise<{ reply: string; historyReply?: string }>
   /** 按主人校验并取出这一句引用的图(读出字节后暂存即删)。没接 ⇒ 带图的一句 409 不收。 */
   takeImages?(materials: PhoneChatMaterials): PhoneChatImage[]
   peekOwnerMatterId?(): string | null
@@ -91,7 +91,7 @@ export function makePhoneChat(d: {
     // Promise.resolve().then:converse 同步抛错也落成 failed,不会让 pending 卡死。
     Promise.resolve().then(() => { const images = imagesOf.get(job); return images?.length ? d.converse(job.text, images) : d.converse(job.text) }).then(
       result => {
-        try { d.receipts?.settle(job.requestId, result.reply) } catch { log('reply receipt could not be settled; keep the reservation') }
+        try { d.receipts?.settle(job.requestId, result.historyReply ?? result.reply) } catch { log('reply receipt could not be settled; keep the reservation') }
         if (!done) return finish(null)
         // 超时后才回来的成功(终审 I2):这句其实办成了、回复已落进对话 ⇒ 翻成 replied,
         // 同一 requestId 的重试去重成 replied、不起第二轮;它若还挂在 failed 上就撤掉(别人的 failed 不动)。

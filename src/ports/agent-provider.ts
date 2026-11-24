@@ -1,4 +1,4 @@
-import { type PermissionDisplay } from '@wechat-cc/protocol'
+import { type PermissionDisplay, type PermissionMcpTarget } from '@wechat-cc/protocol'
 import type { TierProfile } from '../domain/user-tier'
 import type { PermissionMode } from '../domain/permission-mode'
 import type { ProviderId } from '../domain/conversation'
@@ -272,6 +272,9 @@ export interface AgentMcpTools {
   serverOf(name: string): string | undefined
 }
 
+/** Review details used by the text-only WeChat surface. */
+export interface WechatPermissionReview { display?: PermissionDisplay; argumentJson?: string; cwd?: string; incomplete?: true }
+
 export interface SpawnContext {
   /** 本句一次代答：关闭 provider 自有的自动记忆；CC API 已由临时令牌限权。 */
   oneoff?: boolean
@@ -340,10 +343,14 @@ export interface SpawnContext {
     /** command / paths / cwd:放行规则要的原文(2026-10-19),执行者拿得到就给,拿不到就不给。 */
     request: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string;
       display?: PermissionDisplay;
+      /** MCP target verified by the execution adapter. */
+      mcp?: PermissionMcpTarget;
       /** Keeps extra review material out of rule input and existing notices. */
       reviewDescription?: string;
       /** Explicit execution directory for display when rule facts are withheld. */
       displayCwd?: string;
+      /** Extra evidence needed by WeChat's text-only approval surface. */
+      wechatReview?: WechatPermissionReview;
       /** Requires an owner one-shot decision when execution is dynamic, even
        * when extra grants withhold command facts from automatic allow rules. */
       requiresBoundExecution?: true;

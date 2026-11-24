@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PERMISSION_SNAPSHOT_NOTICE, MatterPermission, boundedPermissionDisplay } from '@wechat-cc/protocol'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { removeTempDir } from '../../lib/test-temp'
+import { renderWechatPermissionCard } from '../../features/workbench/wechat-permission-card'
 import { makeRunPermissions } from './permissions'
 
 describe('run-bound Workbench permissions', () => {
@@ -55,6 +60,18 @@ describe('run-bound Workbench permissions', () => {
     expect(card.showSnapshotNotice).toBe(true)
     expect(card.display?.truncated).toBe(true)
     expect(card.description === `${description}\n\n${PERMISSION_SNAPSHOT_NOTICE}`).toBe(true)
+    permissions.resolve(card.id, 'deny')
+    await expect(answer).resolves.toBe(false)
+  })
+
+  it('keeps a verified MCP target alongside the unchanged operation preview', async () => {
+    const permissions = makeRunPermissions({ taskId: 'sample' })
+    const tool = 'mcp__team__prod__lookup__all'
+    const mcp = { server: 'team__prod', tool: 'lookup__all' }
+    const display = { body: { kind: 'fields' as const, fields: [{ name: 'query', value: 'sample' }] } }
+    const answer = permissions.request({ tool, description: 'sample lookup', display, mcp })
+    const card = MatterPermission.parse(permissions.pending()[0])
+    expect(card).toMatchObject({ tool, display, mcp })
     permissions.resolve(card.id, 'deny')
     await expect(answer).resolves.toBe(false)
   })
@@ -142,6 +159,44 @@ describe('run-bound Workbench permissions', () => {
     permissions.rejectAll()
     await expect(Promise.all(answers)).resolves.toEqual([false, false, false, false])
   })
+
+  it.each([{ provider: 'claude', tool: 'Bash' }, { provider: 'cursor', tool: 'execute' }])(
+    'inspects scripts from the directory shown for $provider and refuses inconsistent WeChat evidence', async ({ provider, tool }) => {
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-review-command-')))
+      const cwd = join(root, 'work'), command = './check.sh', content = '#!/bin/sh\necho fixture\n'
+      mkdirSync(cwd)
+      writeFileSync(join(cwd, 'check.sh'), content)
+      const permissions = makeRunPermissions({ taskId: 'sample', root, provider })
+      try {
+        const request = { tool, command, description: command, displayCwd: cwd, display: { body: { kind: 'command' as const, command, cwd } } }
+        const result = permissions.request(request, undefined, root)
+        const scriptCard = permissions.pending()[0]!
+        expect(scriptCard.scripts?.[0]?.content === content).toBe(true)
+        expect(renderWechatPermissionCard('Fixture', scriptCard, provider).complete).toBe(false)
+        permissions.resolve(scriptCard.id, 'deny')
+        await expect(result).resolves.toBe(false)
+
+        const display = { body: { kind: 'command' as const, command: 'echo fixture', cwd } }
+        const attempts = [
+          { ...request, display },
+          { ...request, command: 'echo fixture', display, cwd: root },
+          { ...request, command: 'echo fixture', displayCwd: join(root, 'missing'), display: { body: { kind: 'command' as const, command: 'echo fixture' } } },
+          { ...request, command: 'echo one && echo two', display: { body: { kind: 'command' as const, command: 'echo one && echo two', cwd } } },
+          { tool, description: 'command=echo fixture', displayCwd: cwd },
+        ]
+        for (const attempt of attempts) {
+          const answer = permissions.request(attempt, undefined, root)
+          const card = permissions.pending()[0]!
+          expect(renderWechatPermissionCard('Fixture', card, provider).complete).toBe(false)
+          permissions.resolve(card.id, 'deny')
+          await expect(answer).resolves.toBe(false)
+        }
+      } finally {
+        permissions.rejectAll()
+        removeTempDir(root)
+      }
+    },
+  )
 
   it('cannot allow after the absolute expiry even when the timer callback is delayed', async () => {
     vi.useFakeTimers()

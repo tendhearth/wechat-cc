@@ -42,7 +42,7 @@ export interface PollingDeps {
    * 试着把这条入站当成对一张待批拍板卡的回答当场消费(daemon/permission-answer.ts),消费了回 true。给了 ⇒ poll loop
    * 不再整轮内联,回答一到就放开在等它的那一轮;没消费的照普通消息排队(poll-loop.ts 的 fastLane)。
    */
-  consumePermissionAnswer?: (msg: InboundMsg) => boolean
+  consumePermissionAnswer?: (msg: InboundMsg) => boolean | Promise<boolean>
 }
 
 export interface PollingLifecycle extends Lifecycle {

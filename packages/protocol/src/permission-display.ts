@@ -39,6 +39,11 @@ type Change = Infer<typeof change>
 
 // A malformed optional preview must not invalidate an approval or its containing response.
 export const permissionDisplayWire = PermissionDisplaySchema.optional().catch(undefined)
+export const permissionMcpTargetWire = strictObject({
+  server: zString().min(1).max(160),
+  tool: zString().min(1).max(160),
+}).optional().catch(undefined)
+export type PermissionMcpTarget = NonNullable<Infer<typeof permissionMcpTargetWire>>
 export const permissionCwdWire = zString().max(4096)
   .refine(path => /^(?:\/|[a-z]:[\\/]|\\\\)/i.test(path) && !/[\u0000-\u001f]/.test(path))
   .optional().catch(undefined)

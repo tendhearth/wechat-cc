@@ -1,4 +1,4 @@
-import { MatterPermission } from '@wechat-cc/protocol'
+import { MatterPermission, type PermissionDisplay, type PermissionMcpTarget } from '@wechat-cc/protocol'
 import { describe, it, expect } from 'vitest'
 import { approvalDirectory, answersTooLong, approvalHeading, approvalLines, approvalOutcome, approvalRelativePath, approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
 import { labelJoin } from '../i18n'
@@ -222,7 +222,7 @@ describe('labelJoin', () => {
 })
 
 describe('approval headings and paths', () => {
-  const cases = [
+  const cases: [string, string, string, string, string, string, PermissionDisplay?, PermissionMcpTarget?][] = [
     ['Bash', 'command=echo hello', 'Claude 想运行一条命令', '可以运行这条命令吗？', 'Claude wants to run a command', 'May I run this command?'],
     ['Edit', 'input={"file_path":"a","old_string":"x","new_string":"y"}', 'Claude 想改一个文件', '可以改这个文件吗？', 'Claude wants to edit a file', 'May I edit this file?'],
     ['MultiEdit', 'input={"file_path":"a","edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_string":"d"}]}', 'Claude 想改一个文件的 2 处', '可以改这个文件吗？', 'Claude wants to make 2 edits in one file', 'May I edit this file?'],
@@ -230,13 +230,15 @@ describe('approval headings and paths', () => {
     ['fileChange', 'a\nadd\n+x\n\nb\ndelete\n-x', 'Codex 想用「fileChange」', '可以用这个工具吗？', 'Codex wants to use “fileChange”', 'May I use this tool?'],
     ['WebFetch', 'input={"url":"https://example.invalid"}', 'Claude 想打开一个网址', '可以打开这个网址吗？', 'Claude wants to open a URL', 'May I open this URL?'],
     ['WebSearch', 'input={"query":"x"}', 'Claude 想上网搜一下', '可以搜这个吗？', 'Claude wants to search the web', 'May I search for this?'],
-    ['mcp__a__b', 'mcp__a__b\n{"key":"x"}', 'Claude 想用 a 的「b」', '可以用这个工具吗？', 'Claude wants to use a’s “b”', 'May I use this tool?'],
+    ['mcp__a__b', 'mcp__a__b\n{"key":"x"}', 'Claude 想用「mcp__a__b」', '可以用这个工具吗？', 'Claude wants to use “mcp__a__b”', 'May I use this tool?'],
+    ['mcp__team__prod__lookup__all', '', 'Claude 想用 team__prod 的「lookup__all」', '可以用这个工具吗？', 'Claude wants to use team__prod’s “lookup__all”', 'May I use this tool?',
+      { body: { kind: 'fields', fields: [{ name: 'key', value: 'x' }] } }, { server: 'team__prod', tool: 'lookup__all' }],
     ['Other', 'unknown input', 'Claude 想用「Other」', '可以用这个工具吗？', 'Claude wants to use “Other”', 'May I use this tool?'],
   ]
-  it.each(cases)('localizes %s using the current executor', (tool, description, zhAction, zhTitle, enAction, enTitle) => {
+  it.each(cases)('localizes %s using the current executor', (tool, description, zhAction, zhTitle, enAction, enTitle, display, mcp) => {
     const d = { ...base, matter: { ...base.matter, agentNames: { claude: 'Claude', codex: 'Codex' } },
       task: { ...base.task, providerId: tool === 'fileChange' ? 'codex' : 'claude' },
-      permissions: [{ ...base.permissions[0], tool, description }] }
+      permissions: [MatterPermission.parse({ ...base.permissions[0], tool, description, display, mcp })] }
     const v = approvalView(d, {})
     if (v.kind !== 'card') throw Error('expected card')
     expect(approvalHeading(v, 'zh-Hans')).toEqual({ action: zhAction, title: zhTitle })

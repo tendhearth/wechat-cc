@@ -8,7 +8,7 @@ describe('reply-scope(App 一轮的回复往哪儿去)', () => {
     expect(scopedReply()).toBeUndefined()
     await send('c', '外发'); expect(wire).toHaveBeenCalledWith('c', '外发')
     const r = await withReplyScope(async () => { await send('c', '一'); await Promise.resolve(); await send('c', '二'); return 42 })
-    expect(r).toEqual({ result: 42, replies: ['一', '二'] })
+    expect(r).toEqual({ result: 42, replies: ['一', '二'], historyReplies: ['一', '二'] })
     expect(wire).toHaveBeenCalledTimes(1)
   })
   it('按异步上下文隔离:两轮交错跑,各收各的;同时外面的一条不受影响', async () => {

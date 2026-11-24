@@ -372,12 +372,18 @@ describe('WeChat task control through the shared service',()=>{
 
   it('shows and resolves only the exact permission, rejecting wrong task, owner and duplicate grants',async()=>{
     const allowed:boolean[]=[]
-    setup({async spawn(_p,ctx){return{async *dispatch(){allowed.push(await ctx.requestPermission!({tool:'Bash',command:'cat report.txt',description:'读取项目中的报告文件'}));yield result},async close(){}}}})
+    setup({async spawn(_p,ctx){return{async *dispatch(){
+      const command='cat report.txt',note='读取项目中的报告文件'
+      allowed.push(await ctx.requestPermission!({tool:'Bash',command,description:note,display:{body:{kind:'command',command},note}}))
+      yield result
+    },async close(){}}}})
     const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
     const request=service.detail(task.id).permissions[0]!
     const other=store.create({title:'其他任务',path:project,providerId:'claude',ownerChatId:'owner'})
     expect(await service.handleWechat('owner',`任务 ${task.id}`)).toContain(request.id)
-    expect(await service.handleWechat('owner',`任务 ${task.id} 权限 ${request.id}`)).toContain('读取项目中的报告文件')
+    const lookup=await service.handleWechat('owner',`任务 ${task.id} 权限 ${request.id}`)
+    expect(lookup).toMatchObject({kind:'permission_card',card:{complete:true}})
+    expect(typeof lookup==='object'&&lookup?.kind==='permission_card'&&lookup.card.text.includes('读取项目中的报告文件')).toBe(true)
     await service.handleWechat('other',`任务 ${task.id} 允许 ${request.id}`)
     expect(await service.handleWechat('owner',`任务 ${other.id} 允许 ${request.id}`)).toContain('已失效')
     expect(allowed).toEqual([])
@@ -393,10 +399,14 @@ describe('WeChat task control through the shared service',()=>{
   })
 
   it('does not allow an oversized permission whose full action cannot be displayed on the phone',async()=>{
-    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestPermission!({tool:'Bash',command:'cat report.txt',description:'x'.repeat(7000)});yield result},async close(){}}}})
+    setup({async spawn(_p,ctx){return{async *dispatch(){
+      const command='cat report.txt',note='x'.repeat(7000)
+      await ctx.requestPermission!({tool:'Bash',command,description:note,display:{body:{kind:'command',command},note}})
+      yield result
+    },async close(){}}}})
     const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
     const request=service.detail(task.id).permissions[0]!
-    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toContain('桌面')
+    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toBe('内容在微信里看不全，请到电脑或手机上看全再定。')
     expect(service.detail(task.id).permissions).toHaveLength(1)
     await service.handleWechat('owner',`任务 ${task.id} 拒绝 ${request.id}`);await settled(task.id)
   })

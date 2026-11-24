@@ -1,5 +1,5 @@
 import { boundedPermissionDisplay, permissionCwd, type PermissionDisplay } from '@wechat-cc/protocol'
-import type { AgentActivity, AgentEvent } from '../../../ports/agent-provider'
+import type { AgentActivity, AgentEvent, WechatPermissionReview } from '../../../ports/agent-provider'
 import { normalizeWechatMcpServer } from '../../../ports/agent-provider'
 import { isQuotaRefusalText } from '../../../domain/provider-quota'
 
@@ -160,23 +160,52 @@ export function acpPermissionDescription(params: unknown): string | null {
 /** Workbench review uses the tool call, including diff content omitted from older descriptions. */
 export function acpApprovalDetails(call: Obj, description: string): {
   description: string; display?: PermissionDisplay; reviewDescription?: string; displayCwd?: string
+  wechatReview?: WechatPermissionReview
 } {
+  const incomplete = { description, wechatReview: { incomplete: true as const } }
   try {
     const raw = object(call.rawInput) ? call.rawInput : undefined
     const command = call.kind === 'execute' && typeof raw?.command === 'string' ? raw.command : undefined
+    const rawCwd = command !== undefined && typeof raw?.cwd === 'string' ? raw.cwd : undefined
     const cwd = command !== undefined ? permissionCwd(raw?.cwd) : undefined
+    const commandExtras = command === undefined ? [] : Object.entries(raw ?? {})
+      .filter(([key]) => key !== 'command' && key !== 'cwd')
+      .map(([name, value]) => ({ name, value: JSON.stringify(value) }))
+    const omittedArgs = call.rawInput !== undefined && (!raw ||
+      (command === undefined ? Object.keys(raw).length > 0 : commandExtras.length > 0))
     const locations = Array.isArray(call.locations) ? call.locations : []
     const content = Array.isArray(call.content) ? call.content : []
+    const extra = locations.flatMap((loc: unknown) => object(loc) && typeof loc.path === 'string' ? [{
+      name: 'Location', value: JSON.stringify(loc),
+    }] : [])
     const diffs: Array<{ path: string; oldText: string | null; newText: string }> = []
+    const notes: string[] = []
+    let omittedContent = call.content !== undefined && !Array.isArray(call.content)
     for (const item of content) {
-      if (!object(item) || item.type !== 'diff') continue
-      const { path, oldText, newText } = item
-      if (typeof path !== 'string' || (oldText != null && typeof oldText !== 'string') || typeof newText !== 'string') return { description }
-      diffs.push({ path, oldText: oldText ?? null, newText })
+      if (object(item) && item.type === 'diff') {
+        const { path, oldText, newText } = item
+        if (typeof path !== 'string' || (oldText != null && typeof oldText !== 'string') || typeof newText !== 'string') return incomplete
+        if (oldText == null || Object.keys(item).some(key => !['type', 'path', 'oldText', 'newText'].includes(key))) omittedContent = true
+        diffs.push({ path, oldText: oldText ?? null, newText })
+      } else if (object(item) && item.type === 'content' && object(item.content) &&
+        item.content.type === 'text' && typeof item.content.text === 'string') {
+        if (Object.keys(item).some(key => !['type', 'content'].includes(key)) ||
+          Object.keys(item.content).some(key => !['type', 'text'].includes(key))) omittedContent = true
+        notes.push(item.content.text)
+      } else omittedContent = true
     }
-    const notes = content.flatMap((item: unknown) =>
-      object(item) && item.type === 'content' && object(item.content) && item.content.type === 'text' && typeof item.content.text === 'string'
-        ? [item.content.text] : [])
+    // An ACP diff has one path and two text buffers. It cannot show a move
+    // destination or distinguish deletion from writing an empty file.
+    const incompleteOperation = call.kind === 'move' || call.kind === 'delete' ||
+      (call.kind === 'execute' && !command?.trim()) || (diffs.length > 0 && call.kind !== 'edit') || diffs.some(diff => !diff.path.trim())
+    const wechatReview: WechatPermissionReview = {
+      ...(omittedArgs || omittedContent || incompleteOperation ||
+        (raw?.cwd !== undefined && typeof raw.cwd !== 'string') ||
+        (call.title !== undefined && typeof call.title !== 'string') ||
+        (call.locations !== undefined && (!Array.isArray(call.locations) || extra.length !== locations.length)) ? { incomplete: true } : {}),
+      ...(rawCwd !== undefined && cwd === undefined ? { cwd: rawCwd } : {}),
+    }
+    const fallback = { description, ...(wechatReview.incomplete || wechatReview.cwd !== undefined ? { wechatReview } : {}) }
     const body: PermissionDisplay['body'] | undefined = command !== undefined && !diffs.length
       ? { kind: 'command', command, ...(cwd ? { cwd } : {}) }
       : command === undefined && diffs.length
@@ -184,11 +213,12 @@ export function acpApprovalDetails(call: Obj, description: string): {
           before: diff.oldText ?? '', after: diff.newText, ...(i ? { path: diff.path } : {}),
         })) }
         : undefined
-    if (!body) return { description }
-    const extra = locations.flatMap((loc: unknown) => object(loc) && typeof loc.path === 'string' ? [{
-      name: 'Location', value: JSON.stringify(loc),
-    }] : [])
-    const note = [body.kind === 'edit' && typeof call.title === 'string' ? call.title : '', ...notes].filter(Boolean).join('\n')
+    // The fallback can be just a title or explanatory text. Approval needs
+    // structured evidence of the operation itself.
+    if (!body) return incomplete
+    const note = typeof call.title === 'string' ? call.title : undefined
+    // Each content part has its own boundary, even if it contains newlines.
+    const fields = [...commandExtras, ...extra, ...notes.map((value, i) => ({ name: `Content ${i + 1}`, value }))]
     const details = [
       ...(cwd ? [`Working directory: ${cwd}`] : []),
       ...diffs.map(({ path, oldText, newText }) => [path, 'Before:', oldText ?? '', 'After:', newText].join('\n')),
@@ -197,11 +227,12 @@ export function acpApprovalDetails(call: Obj, description: string): {
     const full = [description, ...details].join('\n')
     // Keep the existing approval channel available if the complete source
     // cannot fit its description. Never send a partial edit as full evidence.
-    if (full.length > 20_000) return { description }
-    const display = boundedPermissionDisplay(() => ({ body, ...(note ? { note } : {}), ...(extra.length ? { extra } : {}) }))
-    return display ? { description, display, ...(details.length ? { reviewDescription: full } : {}), ...(cwd ? { displayCwd: cwd } : {}) } : { description }
+    if (full.length > 20_000) return incomplete
+    const display = boundedPermissionDisplay(() => ({ body, ...(note !== undefined ? { note } : {}), ...(fields.length ? { extra: fields } : {}) }))
+    if (!display) return incomplete
+    return { ...fallback, display, ...(details.length ? { reviewDescription: full } : {}), ...(cwd ? { displayCwd: cwd } : {}) }
   } catch {
-    return { description }
+    return incomplete
   }
 }
 

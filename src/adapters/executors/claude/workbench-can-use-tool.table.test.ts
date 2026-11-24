@@ -26,7 +26,7 @@ it.each(['Bash','mcp__catalog__lookup'])('owner rejection reaches %s as model-vi
 
 type Permit = 'missing' | 'yes' | 'no' | 'throws'
 function setup(o: { permit?: Permit; admitted?: string[]; registered?: string[] | null; questions?: boolean | 'null' | 'throws' } = {}) {
-  const requests: unknown[] = []
+  const requests: Parameters<NonNullable<SpawnContext['requestPermission']>>[0][] = []
   const questions: unknown[] = []
   const permit = o.permit ?? 'yes'
   const rp: SpawnContext['requestPermission'] = permit === 'missing' ? undefined : async (req) => {
@@ -161,8 +161,31 @@ describe('MCP:放进来的才问,问的是「工具名 + 去掉凭据的参数�
   it.each(ROWS)('%s 放进来 %j 问的通道 %s', async (tool, admitted, permit, want, asked) => {
     const g = setup({ admitted, permit })
     expect(await g.call(tool, { query: 'x', api_key: 'secret' })).toEqual(want)
-    expect(g.requests).toEqual(asked ? [{ tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x","api_key":"[credential omitted]"}`,
-      display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }, { name: 'api_key', value: '[credential omitted]' }] } } }] : [])
+    const server = admitted.find(name => tool.startsWith(`mcp__${name}__`))
+    expect(g.requests).toEqual(asked ? [{ tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x","api_key":"[credential omitted]"}`, wechatReview: { incomplete: true },
+      mcp: { server, tool: tool.slice(`mcp__${server}__`.length) }, display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }, { name: 'api_key', value: '[credential omitted]' }] } } }] : [])
+  })
+
+  it.each([
+    [['team__prod'], { server: 'team__prod', tool: 'lookup__all' }, false],
+    [['team', 'team__prod'], undefined, true],
+    [['team__prod', 'team'], undefined, true],
+  ] as const)('carries a target only for a unique native MCP prefix from %j', async (admitted, target, incomplete) => {
+    const g = setup({ admitted: [...admitted] })
+    expect(await g.call('mcp__team__prod__lookup__all', { query: 'example' })).toEqual(ALLOW)
+    expect(g.requests[0]?.mcp).toEqual(target)
+    expect(g.requests[0]?.wechatReview?.incomplete === true).toBe(incomplete)
+  })
+
+  it('短参数能展示但 MCP 原因放不下时，微信审批不完整', async () => {
+    const g = setup({ admitted: ['catalog'] })
+    const tool = 'mcp__catalog__lookup'
+    expect(await g.call(tool, { query: 'x' }, { decisionReason: '说明'.repeat(10_000) })).toEqual(ALLOW)
+    expect(g.requests).toEqual([{
+      tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x"}`,
+      mcp: { server: 'catalog', tool: 'lookup' }, display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }] } },
+      wechatReview: { incomplete: true },
+    }])
   })
 
   it('名字 160 字可以问,161 字装不下 ⇒ 拒,不问', async () => {
@@ -206,7 +229,8 @@ describe('内置工具:trusted × solo × strict;要问的交给问的通道,带
     const g = setup()
     expect(await g.call('Bash', input, opts)).toEqual(ALLOW)
     const note = [opts.title, opts.description, opts.decisionReason].find(value => typeof value === 'string' && value.trim())
-    expect(g.requests).toEqual([{ ...request, onDenied: expect.any(Function), display: {
+    expect(g.requests).toEqual([{ ...request, ...(opts.title !== undefined || opts.description !== undefined || opts.decisionReason !== undefined
+      ? { wechatReview: { incomplete: true } } : {}), onDenied: expect.any(Function), display: {
       body: { kind: 'command', command: input.command }, ...(typeof note === 'string' ? { note: note.trim() } : {}),
     } }])
   })
@@ -218,6 +242,23 @@ describe('内置工具:trusted × solo × strict;要问的交给问的通道,带
     const request = g.requests[0] as Parameters<NonNullable<SpawnContext['requestPermission']>>[0]
     expect(request.display?.body.kind).toBe('command')
     expect(request.display?.body.kind === 'command' && request.display.body.command === command && request.displayCwd === cwd).toBe(true)
+  })
+
+  it('shares the command arguments with every approval surface and marks a redacted MCP argument incomplete', async () => {
+    const g = setup({ registered: ['catalog'], admitted: ['catalog'] })
+    const command = 'rm -rf build'
+    const input = { command, run_in_background: true, timeout: 3500, description: 'Update fixture' }
+    expect(await g.call('Bash', input)).toEqual(ALLOW)
+    expect(g.requests[0]).toMatchObject({
+      display: { body: { kind: 'command', command }, extra: [
+        { name: 'run_in_background', value: 'true' }, { name: 'timeout', value: '3500' }, { name: 'description', value: 'Update fixture' },
+      ] },
+      wechatReview: { argumentJson: JSON.stringify(input) },
+    })
+    expect(g.requests[0]?.wechatReview?.display).toBeUndefined()
+    expect(await g.call('mcp__catalog__lookup', { api_key: 'fixture-secret' })).toEqual(ALLOW)
+    expect(g.requests[1]).toMatchObject({ wechatReview: { incomplete: true } })
+    expect(JSON.stringify(g.requests[1]).includes('fixture-secret')).toBe(false)
   })
 
   it.each([['no', REFUSED], ['throws', REFUSED], ['missing', NO_CHANNEL]] as const)('问的通道 %s ⇒ 拒', async (permit, want) => {

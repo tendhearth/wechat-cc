@@ -122,6 +122,67 @@ describe('ACP 真机报文回放(cursor-agent 2026-09-17)', () => {
     expect(result.display?.body.kind).toBe('edit')
   })
 
+  it.each(['edit', 'write', 'delete', 'move', 'execute', 'read', 'search', 'other'])(
+    'marks a title-only %s request incomplete even with an empty input object',
+    kind => {
+      for (const input of [{}, { rawInput: {} }]) {
+        const details = acpApprovalDetails({ kind, title: 'Review example', ...input }, 'Review example')
+        expect(details.wechatReview?.incomplete).toBe(true)
+      }
+    },
+  )
+
+  it('requires file changes beyond a location or a diff without a path', () => {
+    for (const evidence of [
+      { locations: [{ path: '/demo/file' }] },
+      { content: [{ type: 'diff', path: '', oldText: 'before', newText: 'after' }] },
+    ]) {
+      const details = acpApprovalDetails({ kind: 'edit', title: 'Review example', ...evidence }, 'Review example')
+      expect(details.wechatReview?.incomplete).toBe(true)
+    }
+  })
+
+  it.each([
+    ['array input', { rawInput: ['withheld'] }],
+    ['string input', { rawInput: 'withheld' }],
+    ['image content', { content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data: 'fixture' } }] }],
+    ['resource link', { content: [{ type: 'content', content: { type: 'resource_link', uri: 'file:///fixture' } }] }],
+    ['unknown content', { content: [{ type: 'future', payload: 'withheld' }] }],
+    ['text with an extra input', { content: [{ type: 'content', content: { type: 'text', text: 'shown', hidden: 'withheld' } }] }],
+  ])('marks the short-title review incomplete with %s', (_, fields) => {
+    const details = acpApprovalDetails({ kind: 'other', title: 'Review example', ...fields }, 'Review example')
+    expect(details.wechatReview?.incomplete).toBe(true)
+  })
+
+  it('marks an ACP diff omitted from the legacy description as incomplete for WeChat', () => {
+    const details = acpApprovalDetails({ kind: 'edit', content: [
+      { type: 'diff', path: 'sample', oldText: 'before', newText: 'a'.repeat(20_000) },
+    ] }, 'Edit sample')
+    expect(details).toEqual({ description: 'Edit sample', wechatReview: { incomplete: true } })
+  })
+
+  it('marks ACP command arguments missing from the text preview as incomplete for WeChat', () => {
+    const details = acpApprovalDetails({ kind: 'execute', rawInput: { command: 'printf sample', env: { DEMO: 'value' } } }, 'printf sample')
+    expect(details.display?.body.kind).toBe('command')
+    expect(details.display?.extra).toEqual([{ name: 'env', value: '{"DEMO":"value"}' }])
+    expect(details.description).toBe('printf sample')
+    expect(details.wechatReview).toEqual({ incomplete: true })
+  })
+
+  it('preserves a command title and separates ACP reason parts with embedded newlines', () => {
+    const description = 'Review example'
+    const text = (value: string) => ({ type: 'content', content: { type: 'text', text: value } })
+    const call = { kind: 'execute', title: 'reason  ', rawInput: { command: 'printf fixture' }, content: [text('one\ntwo'), text('three')] }
+    const details = acpApprovalDetails(call, description)
+    expect(details.wechatReview?.incomplete).not.toBe(true)
+    expect(details.display?.note === call.title).toBe(true)
+    expect(details.display?.extra?.length).toBe(2)
+    expect(details.display?.extra?.[0]?.value === 'one\ntwo').toBe(true)
+    expect(acpApprovalDetails({ ...call, title: ['omitted'] }, description).wechatReview?.incomplete).toBe(true)
+    const misleading = acpApprovalDetails({ kind: 'other', content: [{ type: 'diff', path: 'fixture', oldText: 'a', newText: 'b' }] }, description)
+    expect(misleading.wechatReview?.incomplete).toBe(true)
+  })
+
   it('toolCallId 里嵌着字面换行,活动 id 清洗掉它', () => {
     const ids = [...new Set(updatesOf(records).map(update => update.toolCallId).filter((id): id is string => typeof id === 'string'))]
     const multiline = ids.filter(id => id.includes('\n'))

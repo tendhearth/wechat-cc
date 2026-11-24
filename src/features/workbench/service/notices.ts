@@ -7,6 +7,7 @@
  */
 import { executionFailureMessage } from '../../../adapters/store/workbench/execution-settings'
 import { normalizeInputRequestId } from '../../../domain/workbench/input-request-id'
+import { wechatPermissionHeader } from '../../../domain/workbench/wechat-permission-header'
 import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../../../adapters/workbench/permissions'
 import { providerDisplayName } from '../../../domain/provider-display-names'
 import { redactSecrets } from '../../../domain/cli-transcript'
@@ -25,7 +26,8 @@ const PROVIDER_FAILURE_NOTICE=new Set(['provider_auth_expired','provider_auth_re
 export interface NoticesDomain {
   wakeNotices(context?:{ownerChatId:string;accountId:string}): void
   enqueueNotice(task:StoredTask,runId:string,kind:WechatNoticeKind,text:string,requestId?:string|null): void
-  requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string): void
+  requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string,marker?:string): void
+  requestPermissionNotice(task:StoredTask,run:Active,id:string): void
   terminalReportBody(running:Active): string|undefined
   stageFinishedNotice(running:Active,status:TaskStatus,error?:string|null,suppressCompleted?:boolean): void
   publishFinishedNotices(): void
@@ -61,8 +63,19 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
       try{store.addEvent(task.id,'system','微信提醒未能保存；任务仍可在工作台查看。',null,runId);}catch{}
     }
   }
-  function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){
-    enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${redactSecrets(label).slice(0,kind==='permission'?3500:600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
+  function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string,marker?:string){
+    const requestMarker = marker ? `\n〔请求 ${marker}〕` : ''
+    const title = task.title.replace(/[\r\n]+/g,' ')
+    const header = kind === 'permission' ? wechatPermissionHeader(title, task.id) : `${title} · ${task.id}`
+    enqueueNotice(task,runId,kind,`${header}${requestMarker}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${redactSecrets(label).slice(0,kind==='permission'?3500:600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
+  }
+  function requestPermissionNotice(task:StoredTask,run:Active,id:string){
+    const deadline=run.permissions.deadline(id)
+    if(deadline!==null&&Date.now()>=deadline)return
+    const label=run.permissions.notice(id)
+    if(!label)return
+    const prompt=run.permissionPrompts.get(id)
+    requestNotice(task,run.identity,'permission',id,[prompt?.replyLine,label].filter(Boolean).join('\n\n'),prompt?.marker)
   }
   /**
    * 终审后修复第二轮 Important②b:非 retained 执行者 completed 终态时,
@@ -135,7 +148,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
   }
 
   return {
-    wakeNotices,enqueueNotice,requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices,
+    wakeNotices,enqueueNotice,requestNotice,requestPermissionNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices,
     setArtifactDelivery(deliver:((id:string)=>Promise<ArtifactDeliveryReceipt>)|undefined){state.artifactDelivery=deliver},
     artifactDeliveryEligible(receipt:ArtifactDeliveryReceipt):boolean{
       return !state.stopping&&receipt.ownerChatId===ctx.deps.ownerChatId()&&store.get(receipt.taskId).ownerChatId===receipt.ownerChatId
@@ -176,7 +189,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
       const watch=store.wechatNotifications.watch(id,task.ownerChatId,accountId,enabled)
       const run=ctx.state.runsByTask.get(id)
       if(enabled&&run){
-        for(const p of run.permissions.pending())requestNotice(task,run.identity,'permission',p.id,run.permissions.notice?.(p.id)??`${p.tool} · 详情请在批准卡查看。`)
+        for(const p of run.permissions.pending())requestPermissionNotice(task,run,p.id)
         for(const q of run.questions.pending())requestNotice(task,run.identity,'question',q.id,q.questions.map(q=>q.question).join('\n'))
       }
       wakeNotices();return watch

@@ -1,6 +1,8 @@
 import { permissionReason } from '../domain/permission-denial'
+import { hasWechatPermissionHeader } from '../domain/workbench/wechat-permission-header'
 
 export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
+export interface WechatPermissionCard { readonly text: string; readonly marker: string; readonly complete: boolean; readonly historyText: string }
 
 /** Desktop-facing description of a pending permission ask (CC 桌宠 Phase B). */
 export interface PendingPermissionMeta { chatId: string; prompt: string; taskId?: string; canAllowTask?: boolean; canDenyWithReason?: boolean; scripts?: import('../ports/workbench').PermissionScript[] }
@@ -16,6 +18,8 @@ export interface PendingCardJournal {
 export interface PendingPermissionView extends Omit<PendingPermissionMeta, 'chatId' | 'prompt'> { hash: string; code: string; chatId: string; prompt: string; since: string; expires_at: string }
 
 interface Entry {
+  wechatCard?: WechatPermissionCard
+  wechatReminder?: string
   /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
   deadline?: () => number | null
   onAllowTask?: () => boolean
@@ -31,6 +35,39 @@ interface Entry {
 /** 明确引用旧批准卡时不能退回到“当前唯一待批”。 */
 export function isPermissionCardQuote(quoted: string): boolean {
   return /「[yn]\s*(?:[0-9]{2}|[a-z0-9]{5})」|\[approval:[a-z0-9]{5}\]|^(?:Claude|OpenAI|Gemini) wants to run\b/im.test(quoted)
+}
+
+const workbenchMarkerLine = /^〔请求 ([a-f0-9]{16})〕$/
+const workbenchHeader = /(?: · |^任务 )([a-f0-9]{8})$/
+const workbenchCommandBoundary = /^(?:〔命令开始〕|〔命令结束〕)$/
+const workbenchCommandLine = /^│(?: .*|$)$/
+const workbenchReplyLine = /^(?:回「y [0-9]{2}」允许这一步、「n [0-9]{2}」拒绝。|(?:这条在微信里看不全，到电脑或手机上看全再定；)?回「n [0-9]{2}」拒绝。)/
+const workbenchQuoteSummary = /^（引用了一张待批卡(?: · [a-f0-9]{8})?(?: · 〔请求 [a-f0-9]{16}〕)?）$/
+
+interface WorkbenchQuote { marker?: string; taskId?: string }
+
+/** Recognize fragments for privacy. Only an in-position marker can bind a decision. */
+export function classifyWorkbenchQuote(text: string): WorkbenchQuote | null {
+  const lines = text.split(/\r?\n/)
+  const marker = workbenchMarkerLine.exec(lines[1] ?? '')?.[1]
+  const markerElsewhere = lines.some((line, i) => i !== 1 && workbenchMarkerLine.test(line.trim()))
+  const visibleLines = lines.map(line => line.trim()).filter(Boolean)
+  const head = lines[0]?.trim() ?? ''
+  const taskId = workbenchHeader.exec(head)?.[1]
+  if (marker && !markerElsewhere) return { marker, taskId }
+  if (visibleLines.length === 0) return null
+  if (hasWechatPermissionHeader(head) || markerElsewhere ||
+      visibleLines.some(line => workbenchMarkerLine.test(line) || workbenchCommandBoundary.test(line) || workbenchReplyLine.test(line)) ||
+      visibleLines.every(line => workbenchCommandLine.test(line))) return { taskId }
+  return null
+}
+
+export function summarizedWorkbenchQuote({ marker, taskId }: WorkbenchQuote): string {
+  return `（引用了一张待批卡${taskId ? ` · ${taskId}` : ''}${marker ? ` · 〔请求 ${marker}〕` : ''}）`
+}
+
+export function isSummarizedWorkbenchQuote(text: string): boolean {
+  return workbenchQuoteSummary.test(text)
 }
 
 export class PendingPermissions {
@@ -56,13 +93,15 @@ export class PendingPermissions {
     this.changed()
   }
 
-  register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta, onAllowTask?: () => boolean, deadline?: () => number | null, onDecision?: Entry['onDecision']): Promise<PermissionDecision> {
+  register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta, onAllowTask?: () => boolean, deadline?: () => number | null, onDecision?: Entry['onDecision'], renderWechatCard?: (code: string) => WechatPermissionCard): Promise<PermissionDecision> {
     // 同一个 id 还挂着就又来一条(gemini 重开会话后 seq 从 1 重来;Claude 缺 toolUseID 时都落到同一个 id):
     // 先把旧的按超时了结 —— 原先直接覆盖,旧 promise 永远不 resolve,主人回的「y」也落到新的那条上(2026-10-10)。
     const prev = this.entries.get(hash)
     if (prev) this.settle(hash, prev, 'timeout')
     const now = Date.now()
     const expiresAt = now + timeoutMs
+    const code = this.allocateCode()
+    const wechatCard = renderWechatCard?.(code)
     const promise = new Promise<PermissionDecision>((resolve) => {
       this.entries.set(hash, {
         onAllowTask,
@@ -72,7 +111,8 @@ export class PendingPermissions {
         expiresAt,
         registeredAt: now,
         meta: meta ?? null,
-        code: this.allocateCode(),
+        code,
+        wechatCard,
       })
     })
     if (meta) this.journal?.opened(hash, meta, now, expiresAt)
@@ -102,30 +142,72 @@ export class PendingPermissions {
     return this.entries.get(hash)?.code ?? null
   }
 
+  wechatCardOf(hash: string): WechatPermissionCard | undefined {
+    return this.entries.get(hash)?.wechatCard
+  }
+
+  rememberWechatReminder(hash: string, chatId: string, text: string): void {
+    const entry = this.entries.get(hash)
+    const marker = classifyWorkbenchQuote(text)?.marker
+    if (entry && marker && entry.wechatCard?.marker === marker && entry.meta?.chatId === chatId) {
+      entry.wechatReminder = text
+    }
+  }
+
+  isExpired(hash: string): boolean {
+    const entry = this.entries.get(hash)
+    if (!entry) return true
+    const expiresAt = entry.deadline ? entry.deadline() : entry.expiresAt
+    return expiresAt !== null && Date.now() >= expiresAt
+  }
+
+  // 主动提醒的回码与引用绑定见 docs/maintainer/task-permissions.md#微信主动提醒。
+  matchWorkbenchQuote(quoted: string): { kind: 'matched'; hash: string } | { kind: 'altered'; hash?: string } | { kind: 'stale' } | null {
+    const classification = classifyWorkbenchQuote(quoted)
+    if (!classification) return null
+    const { marker } = classification
+    if (marker) {
+      const matches = [...this.entries].filter(([, entry]) => entry.wechatCard?.marker === marker)
+      if (matches.length === 0) return { kind: 'stale' }
+      if (matches.length > 1) return { kind: 'altered' }
+      const [hash, entry] = matches[0]!
+      return entry.wechatCard!.text === quoted || entry.wechatReminder === quoted
+        ? { kind: 'matched', hash } : { kind: 'altered', hash }
+    }
+    return { kind: 'altered' }
+  }
+
   /**
    * 主人引用了哪张卡片 → hash。先从引用文本里抠「y 07」/「y k3x9z」;微信引用可能把长卡片截断、
    * 把「怎么回」那行截掉,那就退回按卡片正文认:哪条待批的 prompt 开头和引用文本对得上。
    * 都对不上返回 null;对上多条(prompt 完全相同)也返回 null,宁可让主人带码。
    */
   hashOfQuote(quoted: string): string | null {
+    const workbench = this.matchWorkbenchQuote(quoted)
+    if (workbench) return workbench.kind === 'matched' ? workbench.hash : null
     const q = quoted.trim()
     if (!q) return null
     // 只认卡片自己写的「y 07」/「y k3x9z」这种带书名号的形式:正文里的「run 12 tests」不能当成码 12。
     const request = /\[approval:([a-z0-9]{5})\]/i.exec(q)
-    if (request) return this.entries.has(request[1]!) ? request[1]! : null
+    if (request) return this.legacyQuoteHash(request[1]!)
     const byCode = /「[yn]\s*([0-9]{2})」/i.exec(q)
-    if (byCode) return this.hashOfCode(byCode[1]!)
+    if (byCode) return this.legacyQuoteHash(this.hashOfCode(byCode[1]!))
     const byHash = /「[yn]\s+([a-z0-9]{5})」/i.exec(q)
-    if (byHash) return this.entries.has(byHash[1]!) ? byHash[1]! : null
+    if (byHash) return this.legacyQuoteHash(byHash[1]!)
     const head = q.split('\n')[0]!.trim()
     const matches = Array.from(this.entries.entries()).filter(([, e]) => {
-      const p = (e.meta?.prompt ?? '').trim()
+      const p = e.wechatCard ? '' : (e.meta?.prompt ?? '').trim()
       if (!p) return false
       const firstLine = p.split('\n')[0]!.trim()
       if (/\[approval:[a-z0-9]{5}\]/i.test(firstLine)) return firstLine === head || q.startsWith(firstLine)
       return firstLine === head || p.startsWith(q) || q.startsWith(firstLine)
     })
     return matches.length === 1 ? matches[0]![0] : null
+  }
+
+  private legacyQuoteHash(hash: string | null): string | null {
+    const entry = hash ? this.entries.get(hash) : undefined
+    return entry && !entry.wechatCard ? hash : null
   }
 
   /**

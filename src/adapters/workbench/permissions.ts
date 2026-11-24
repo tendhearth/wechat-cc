@@ -1,13 +1,14 @@
-import { PERMISSION_SNAPSHOT_NOTICE, PermissionDisplaySchema, permissionCwd } from '@wechat-cc/protocol'
+import { PERMISSION_SNAPSHOT_NOTICE, PermissionDisplaySchema, isPermissionCommandTool, permissionCwd, permissionMcpTargetWire, resolvePermissionDisplay } from '@wechat-cc/protocol'
 import { randomUUID } from 'node:crypto'
 import { authorize, type AuthSubject } from '../../domain/authorize'
 import { TIER_PROFILES } from '../../domain/user-tier'
 import type { SpawnContext } from '../../ports/agent-provider'
-import { legacyPermissionDescription, type PendingWorkbenchPermission, type PermissionDecision } from '../../ports/workbench'
+import { legacyPermissionDescription, wechatPermissionSource, type PendingWorkbenchPermission, type PermissionDecision } from '../../ports/workbench'
 import { inspectPermissionCommand, literalCommand, type CommandSnapshot } from './permission-command'
 import { matchRule } from '../permission-rules/rules-file'
 import type { Rule } from '../../domain/permission-rules/types'
 import { EDIT_REPORTING_PROVIDERS } from '../permission-rules/decide'
+import { toolClass } from '../permission-rules/floor'
 import { redactSecrets } from '../../domain/cli-transcript'
 import type { PermissionExecutionEnvironment } from './permission-executable'
 import { permissionReason } from '../../domain/permission-denial'
@@ -40,6 +41,7 @@ export type PermissionDecide = (facts: PermissionFacts) => Promise<{ verdict: 'a
 interface Entry {
   facts: PermissionFacts
   snapshot: CommandSnapshot
+  reviewScripts: CommandSnapshot['scripts']
   permission: PendingWorkbenchPermission
   legacyDescription: string | undefined
   expiresAt: number
@@ -139,11 +141,35 @@ export function makeRunPermissions(opts: {
     const { tool, description = '' } = facts
     const { onDenied } = raw
     const display = PermissionDisplaySchema.safeParse(raw.display).data
+    const mcp = permissionMcpTargetWire.safeParse(raw.mcp).data
     // The caller passes the directory used to spawn this run. The project root is not a fallback.
     const cwd = permissionCwd(raw.displayCwd ?? raw.cwd ?? runCwd)
     const proposedReview = raw.reviewDescription ?? raw.description
     const review = display && typeof proposedReview === 'string' && proposedReview.length <= WORKBENCH_PERMISSION_DESCRIPTION_MAX ? proposedReview : description
-    const showSnapshotNotice = snapshot.scripts.length > 0 || snapshot.requiresBoundExecution
+    // Inspect the evidence on the card. The rule snapshot still owns policy,
+    // task fingerprints and opinion input.
+    const cardDisplay = display ?? resolvePermissionDisplay(tool, raw.description, undefined, opts.provider)
+    const body = cardDisplay.body
+    const wechatBody = raw.wechatReview?.display?.body
+    const cardCommand = body.kind === 'command' ? body.command : facts.command
+    const commandRequest = cardCommand !== undefined || wechatBody?.kind === 'command' ||
+      toolClass(tool) === 'shell' || isPermissionCommandTool(tool)
+    const reportedCwds = [raw.cwd, raw.wechatReview?.cwd, body.kind === 'command' ? body.cwd : undefined,
+      wechatBody?.kind === 'command' ? wechatBody.cwd : undefined]
+    const cwdMatches = !!cwd && reportedCwds.every(reported => reported === undefined || reported === cwd)
+    // Only the adapter's command evidence can select a script. A text fallback
+    // or clipped display can still be compared against the full command facts.
+    const reviewCommand = !display?.truncated && display?.body.kind === 'command' ? display.body.command : facts.command
+    const reviewSnapshot = commandRequest && reviewCommand?.trim() && cwdMatches
+      ? reviewCommand === facts.command && cwd === facts.cwd ? snapshot
+        : inspectPermissionCommand({ ...facts, command: reviewCommand, cwd }, { ...opts, executionEnvironment: undefined })
+      : undefined
+    const reviewScripts = reviewSnapshot?.scripts ?? []
+    const incompleteCommand = commandRequest && (!reviewSnapshot?.scriptInspectionComplete ||
+      cardCommand !== reviewSnapshot.ask.command || cwd !== reviewSnapshot.ask.cwd ||
+      (facts.command !== undefined && facts.command !== cardCommand) ||
+      (wechatBody?.kind === 'command' && wechatBody.command !== cardCommand))
+    const showSnapshotNotice = reviewScripts.length > 0 || snapshot.requiresBoundExecution
     const withSnapshot = (text: string) => showSnapshotNotice ? `${text}\n\n${PERMISSION_SNAPSHOT_NOTICE}` : text
     const legacyDescription = review !== description ? withSnapshot(description) : undefined
     const permission: PendingWorkbenchPermission = {
@@ -153,12 +179,24 @@ export function makeRunPermissions(opts: {
       description: withSnapshot(review),
       createdAt: Date.now(),
       ...(display ? { display } : {}),
+      ...(mcp ? { mcp } : {}),
       ...(cwd ? { cwd } : {}),
       ...(showSnapshotNotice ? { showSnapshotNotice } : {}),
       ...(onDenied ? { canDenyWithReason: true } : {}),
       ...(snapshot.hash ? { canAllowTask: true } : {}),
-      ...(snapshot.scripts.length ? { scripts: snapshot.scripts.map(s => s.content.length > 2000 ? { ...s, content: s.content.slice(0, 2000), truncated: true } : { ...s }) } : {}),
+      ...(reviewScripts.length ? { scripts: reviewScripts.map(s => s.content.length > 2000 ? { ...s, content: s.content.slice(0, 2000), truncated: true } : { ...s }) } : {}),
     }
+    Object.defineProperty(permission, wechatPermissionSource, {
+      value: {
+        description: raw.description,
+        cwd: raw.wechatReview?.cwd ?? raw.displayCwd ?? raw.cwd,
+        command: facts.command,
+        paths: facts.paths,
+        display: raw.wechatReview?.display,
+        argumentJson: raw.wechatReview?.argumentJson,
+        incomplete: raw.wechatReview?.incomplete || incompleteCommand || (raw.display !== undefined && !display) || undefined,
+      } satisfies NonNullable<PendingWorkbenchPermission[typeof wechatPermissionSource]>,
+    })
     return new Promise<boolean>(resolve => {
       let settled = false
       let timer: ReturnType<typeof setTimeout> | undefined
@@ -181,7 +219,7 @@ export function makeRunPermissions(opts: {
       const timeoutMs = opts.timeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS
       const rearm = (ms: number) => { if (timer) clearTimeout(timer); timer = setTimeout(() => finish(false, 'expired'), Math.max(0, ms)); timer.unref?.() }
       const disarm = () => { if (timer) clearTimeout(timer); timer = undefined }
-      const entry: Entry = { permission, legacyDescription, facts, snapshot, expiresAt:permission.createdAt + Math.max(0,timeoutMs), finish, rearm, disarm }
+      const entry: Entry = { permission, legacyDescription, facts, snapshot, reviewScripts, expiresAt:permission.createdAt + Math.max(0,timeoutMs), finish, rearm, disarm }
       entries.set(permission.id, entry)
       signal?.addEventListener('abort', onAbort, { once: true })
       if (pausedAt === null) rearm(timeoutMs)
@@ -212,26 +250,28 @@ export function makeRunPermissions(opts: {
     notice(id: string): string {
       const entry = entries.get(id)
       if (!entry) return ''
-      const { permission, snapshot } = entry
+      const { permission, snapshot, reviewScripts } = entry
       const command = approvalPreviewCommand(entry)
+      // A command without recognizable credentials is still approval evidence.
+      const redacted = command !== undefined && redactSecrets(command) !== command
       const label = snapshot.requiresBoundExecution
         ? `${permission.tool} · 需要你单次批准，详情请在批准卡查看。`
-        : `${permission.tool} · ${command ? redactSecrets(command).slice(0, 1200) : '详情请在批准卡查看。'}`
-      const files = snapshot.scripts.filter(s => s.sha256).map(s => `脚本 ${s.path}\nSHA-256: ${s.sha256}\n内容请在桌面或手机批准卡查看。`)
-      if (snapshot.scripts.some(s => !s.sha256)) files.push('有文件无法安全读取，详情请在批准卡查看。')
+        : `${permission.tool} · ${redacted ? '敏感参数[已打码]，' : ''}详情请在批准卡查看。`
+      const files = reviewScripts.filter(s => s.sha256).map(s => `脚本 ${s.path}\nSHA-256: ${s.sha256}\n内容请在桌面或手机批准卡查看。`)
+      if (reviewScripts.some(s => !s.sha256)) files.push('有文件无法安全读取，详情请在批准卡查看。')
       return [label, ...files].join('\n\n')
     },
     script(id: string, path: string, sha256: string, offset: number): { content: string; nextOffset: number | null } {
-      const script = entries.get(id)?.snapshot.scripts.find(s => s.path === path && s.sha256 === sha256)
+      const script = entries.get(id)?.reviewScripts.find(s => s.path === path && s.sha256 === sha256)
       if (!script || !Number.isSafeInteger(offset) || offset < 0 || offset > script.content.length) throw Error('permission_stale')
       const end = Math.min(offset + 8000, script.content.length)
       return { content: script.content.slice(offset, end), nextOffset: end < script.content.length ? end : null }
     },
     deadline: (id: string): number | null => pausedAt !== null ? null : entries.get(id)?.expiresAt ?? 0,
-    pending: (): PendingWorkbenchPermission[] => Array.from(entries.values(), ({ permission, legacyDescription }) => ({
+    pending: (): PendingWorkbenchPermission[] => Array.from(entries.values(), ({ permission, legacyDescription }) => Object.defineProperty({
       ...permission,
       ...(legacyDescription !== undefined ? { [legacyPermissionDescription]: legacyDescription } : {}),
-    })),
+    }, wechatPermissionSource, { value: permission[wechatPermissionSource] })),
     /** 网络守护冻住执行者:批准期限停表(到期计时器撤掉;放开时期限按冻住的时长顺延)。 */
     pause(): void {
       if (pausedAt !== null) return

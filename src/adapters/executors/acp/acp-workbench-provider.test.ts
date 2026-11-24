@@ -246,7 +246,7 @@ describe('ACP workbench provider', () => {
     await prompted(child)
     permission(child, 'perm-1')
     await expect.poll(() => child.sent.some(m => m.id === 'perm-1')).toBe(true)
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'execute', description: 'uname -a', command: 'uname -a', display: { body: { kind: 'command', command: 'uname -a' } }, onDenied: expect.any(Function) }, expect.any(AbortSignal))
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'execute', description: 'uname -a', command: 'uname -a', display: { body: { kind: 'command', command: 'uname -a' }, note: '`uname -a`' }, onDenied: expect.any(Function) }, expect.any(AbortSignal))
     expect(child.sent.find(m => m.id === 'perm-1')).toEqual({ jsonrpc: '2.0', id: 'perm-1', result: { outcome: { outcome: 'selected', optionId: 'allow-once' } } })
     permission(child, 'perm-2', { toolCall: { toolCallId: 'c2', title: '`rm x`', kind: 'execute', status: 'pending', rawInput: { command: 'rm x' } } })
     await expect.poll(() => child.sent.some(m => m.id === 'perm-2')).toBe(true)

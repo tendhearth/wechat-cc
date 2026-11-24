@@ -2,6 +2,27 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { PendingPermissions, parsePermissionReply } from './pending-permissions'
 
 describe('PendingPermissions', () => {
+  it('accepts only the exact reminder registered for the same request and owner', () => {
+    const reg = new PendingPermissions()
+    const marker = '1234567890abcdef'
+    const header = `Fixture · abcdef12\n〔请求 ${marker}〕`
+    const card = `${header}\nCard details`
+    const reminder = `${header}\nApproval reminder`
+    void reg.register('request', 10_000, { chatId: 'owner', prompt: 'p' },
+      undefined, undefined, undefined, () => ({ marker, text: card, historyText: 'Summary', complete: true }))
+    reg.rememberWechatReminder('other-request', 'owner', reminder)
+    reg.rememberWechatReminder('request', 'stranger', reminder)
+    expect(reg.matchWorkbenchQuote(reminder)).toEqual({ kind: 'altered', hash: 'request' })
+    reg.rememberWechatReminder('request', 'owner', reminder)
+    expect(reg.matchWorkbenchQuote(reminder)).toEqual({ kind: 'matched', hash: 'request' })
+    expect(reg.matchWorkbenchQuote(card)).toEqual({ kind: 'matched', hash: 'request' })
+    for (const quote of [`${card}!`, `${reminder}!`]) {
+      expect(reg.matchWorkbenchQuote(quote)).toEqual({ kind: 'altered', hash: 'request' })
+    }
+    reg.consume('request', 'deny')
+    expect(reg.matchWorkbenchQuote(reminder)).toEqual({ kind: 'stale' })
+  })
+
   it('parses only rejection replies with an optional reason and forwards it to the acknowledged card', async () => {
     expect(parsePermissionReply('n 07 不要 SSH\n只在本机')).toEqual({decision:'deny',ref:{kind:'code',value:'07'},reason:'不要 SSH\n只在本机'})
     expect(parsePermissionReply('N 07 原因')).toEqual({decision:'deny',ref:{kind:'code',value:'07'},reason:'原因'})

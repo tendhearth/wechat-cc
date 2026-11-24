@@ -97,6 +97,17 @@ it('denied artifact writes leave no file and return a denial to the model',async
   expect(JSON.stringify(f.seen[1])).toContain('permission_denied');expect(events.at(-1)?.kind).toBe('result')
 })
 
+it('returns the rejected operation and owner reason to the API executor', async () => {
+  const f = scripted([{ call: { id: 'no', name: 'SaveArtifact', input: { name: 'no.txt', content: 'no' } } }, { text: 'Permission was declined.' }])
+  const session = await provider(f.model).spawn({ alias: `workbench:${taskId}`, path: project }, ctx({
+    requestPermission: async request => { request.onDenied?.('请先核对'); return false },
+  }))
+  await collect(session.dispatch('save'))
+  await session.close()
+  const feedback = JSON.stringify(f.seen[1])
+  expect(feedback.includes('no.txt') && feedback.includes('请先核对')).toBe(true)
+})
+
 it.each(['length','unknown','content-filter','error'])('never marks %s finish as task completion',async(finish)=>{
   const f=scripted([{text:'partial',finish}]),p=provider(f.model),s=await p.spawn({alias:`workbench:${taskId}`,path:project},ctx())
   const events=await collect(s.dispatch('write'));await s.close();expect(events.some(e=>e.kind==='result')).toBe(false)

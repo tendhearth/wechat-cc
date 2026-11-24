@@ -28,7 +28,7 @@ function setup(owner: string | null = 'owner', permissionTimeoutMs?: number) {
   const domain = makeNoticesDomain(ctx, { quota: { fallbackExecutor: () => 'claude' }, artifacts: { artifact: () => ({ name: 'a.txt', mime: 'text/plain', size: 1, sha256: 'f'.repeat(64), contentBase64: 'YQ==' }) } })
   const task = store.create({ title: '写周报', path: project, providerId: 'codex', ownerChatId: owner })
   /** 假的 Active:只给 notices 用得到的字段。 */
-  const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1', taskId: task.id, title: task.title, task, cancelled: false, finishing: false, uncertain: false, permissions: { pending: () => [] }, questions: { pending: () => [] }, ...over } as unknown as Active)
+  const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1', taskId: task.id, title: task.title, task, cancelled: false, finishing: false, uncertain: false, permissionPrompts: new Map(), permissions: { pending: () => [] }, questions: { pending: () => [] }, ...over } as unknown as Active)
   /** 真种一份成果(artifact_deliveries.reserve 有外键指向它)。 */
   const plantArtifact = () => { saveArtifactSnapshot(store, task.id, { name: 'a.txt', mime: 'text/plain', bytes: Buffer.from('a') }, stateDir); return store.artifacts(task.id)[0]!.id }
   return { db, store, state, domain, task, noticeWake, running, plantArtifact }
@@ -165,7 +165,11 @@ describe('makeNoticesDomain · 订阅与资格', () => {
   })
   it('setWechatWatch 打开时,正在等的权限卡立刻补一条通知', async () => {
     const { domain, task, store, state, running } = setup()
-    state.runsByTask.set(task.id, running({ permissions: { pending: () => [{ id: 'p9', tool: 'bash', description: 'ls', createdAt: Date.now() }] } } as never))
+    state.runsByTask.set(task.id, running({ permissions: {
+      pending: () => [{ id: 'p9', tool: 'bash', description: 'ls', createdAt: Date.now() }],
+      deadline: () => Date.now() + 1_000,
+      notice: () => 'bash · 详情请在批准卡查看。',
+    } } as never))
     const watch = domain.setWechatWatch(task.id, 'acct', true)
     expect(watch).toMatchObject({ enabled: true, accountId: 'acct' })
     expect(store.wechatNotifications.list(task.id)).toMatchObject([{ kind: 'permission', requestId: 'p9' }])

@@ -10,6 +10,7 @@ import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-cap
 import { makeWorkbenchService } from '../../features/workbench/service'
 import { makeWorkbenchPermissionPrompt } from '../../features/workbench/permission-prompt'
 import { makeIlinkAdapter } from '../ilink-glue'
+import { startFakeIlink } from './fake-ilink-server'
 
 it('review P1 result: executor results cannot erase owner rejection decisions',async()=>{
   const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-denial-result-'))),project=join(root,'project');mkdirSync(project)
@@ -42,7 +43,11 @@ it.each([false,true])('owner rejection carries its reason through WeChat and the
   registry.register('codex',{async spawn(_project,ctx){return {
     async *dispatch(){
       yield {kind:'init' as const,sessionId:'same-session'}
-      for(let i=0;i<(limit?4:3);i++)answers.push(await ctx.requestPermission!({tool:'commandExecution',description:`attempt ${i}`,onDenied:reason=>feedback.push(reason)}))
+      for (let i = 0; i < (limit ? 4 : 3); i++) {
+        const command = 'printf attempt-' + i
+        answers.push(await ctx.requestPermission!({ tool: 'commandExecution', command, description: 'attempt ' + i,
+          display: { body: { kind: 'command', command }, note: 'attempt ' + i }, onDenied: reason => feedback.push(reason) }))
+      }
       yield {kind:'result' as const,sessionId:'same-session',numTurns:1,durationMs:1}
     },async close(){},
   }}},{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
@@ -75,12 +80,18 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
   const project = join(root, 'project'), stateDir = join(root, 'state'); mkdirSync(project); mkdirSync(stateDir)
   const file = join(project, 'check.py'); writeFileSync(file, 'print("first")\n')
   const db = openTestDb(), sent: string[] = [], answers: boolean[] = []
-  const ilink = makeIlinkAdapter({ stateDir, db, conversationStore: makeConversationStore(db), accounts: [] })
+  const transport = await startFakeIlink()
+  const accountId = 'test-account'
+  const ilink = makeIlinkAdapter({ stateDir, db, conversationStore: makeConversationStore(db), accounts: [
+    { id: accountId, botId: 'fixture-bot', userId: 'owner', token: 'fixture-token', baseUrl: transport.baseUrl, syncBuf: '' },
+  ] })
+  ilink.routeChatToAccount('owner', accountId)
+  ilink.captureContextToken('owner', 'fixture-context')
   const delivery = vi.spyOn(ilink, 'sendMessage').mockImplementation(async (_chat, text) => { sent.push(text); return { msgId: 'test-delivery' } })
   const registry = createProviderRegistry()
   registry.register('codex', { async spawn(_project, ctx) { return {
     async *dispatch() {
-      const request = (command: string) => ctx.requestPermission!({ tool: 'commandExecution', command, description: command, cwd: project })
+      const request = (command: string) => ctx.requestPermission!({ tool: 'commandExecution', command, description: command, cwd: project, display: { body: { kind: 'command', command } } })
       answers.push(await request('/bin/echo hello'))
       answers.push(await request('/bin/echo   "hello"'))
       answers.push(await request('python3 check.py'))
@@ -94,9 +105,10 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
   const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner', permissionPrompt: makeWorkbenchPermissionPrompt(ilink, () => 'owner') })
   try {
     const task = service.create({ path: project, providerId: 'codex', text: '检查脚本' })
-    service.setWechatWatch(task.id,'test-account',true)
     await expect.poll(() => ilink.listPendingPermissions()).toHaveLength(1)
     const card = ilink.listPendingPermissions()[0]!
+    expect(store.wechatNotifications.list(task.id)).toEqual([])
+    service.setWechatWatch(task.id, accountId, true)
     expect(card.canAllowTask).not.toBe(true)
     expect(card.scripts).toBeUndefined()
     expect(store.wechatNotifications.list(task.id)[0]?.text).toContain(`y ${card.code}`)
@@ -105,7 +117,13 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
     expect(ilink.handlePermissionReply(`yt ${card.code}`, 'stranger')).toBe(false)
     expect(ilink.handlePermissionReply(`yt ${card.code}`, 'owner')).toBe(false)
     expect(ilink.handlePermissionReply(`y ${card.code}`, 'stranger')).toBe(false)
-    expect(ilink.handlePermissionReply(`y ${card.code}`, 'owner')).toBe(true)
+    const reminder = store.wechatNotifications.list(task.id)[0]!
+    expect(reminder.text.split('\n')[1]).toBe(`〔请求 ${ilink.pendingWechatPermissionCard(card.hash)?.marker}〕`)
+    expect(reminder.text).toContain(`n ${card.code}`)
+    expect(await ilink.sendWorkbenchNotice?.(reminder)).toEqual({ status: 'accepted' })
+    const quoted = transport.outbox()[0]?.text
+    expect(quoted === reminder.text).toBe(true)
+    expect(ilink.handlePermissionReply(`y ${card.code}`, 'owner', quoted)).toBe(true)
     await expect.poll(() => answers.length).toBe(1)
     await expect.poll(() => ilink.listPendingPermissions()).toHaveLength(1)
     const second=ilink.listPendingPermissions()[0]!
@@ -137,5 +155,65 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
     expect(ilink.listPendingPermissions()).toHaveLength(1)
     await service.cancel(other.id)
     expect(ilink.listPendingPermissions()).toEqual([])
-  } finally { await service.shutdown(); delivery.mockRestore(); await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
+    service.setWechatWatch(other.id, accountId, true)
+    expect(store.wechatNotifications.list(other.id).filter(n => n.kind === 'permission')).toEqual([])
+  } finally { await service.shutdown(); delivery.mockRestore(); await ilink.flush(); await transport.stop(); db.close(); rmSync(root, { recursive: true, force: true }) }
+})
+
+it('Claude Bash uses the spawned run directory and fails closed in every WeChat entry when cwd is unverified', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-wechat-verified-cwd-')))
+  const project = join(root, 'project')
+  mkdirSync(project)
+  const db = openTestDb(), registry = createProviderRegistry(), answers: boolean[] = []
+  const ilink = makeIlinkAdapter({ stateDir: root, db, conversationStore: makeConversationStore(db), accounts: [] })
+  const feedback: string[] = []
+  vi.spyOn(ilink, 'sendMessage').mockImplementation(async (_chat, text) => {
+    feedback.push(text)
+    return { msgId: 'fixture' }
+  })
+  registry.register('claude', { async spawn(_project, ctx) { return {
+    async *dispatch() {
+      const command = 'cat example.txt'
+      const request = { tool: 'Bash', command, description: 'command=' + command, display: { body: { kind: 'command' as const, command } } }
+      answers.push(await ctx.requestPermission!(request))
+      answers.push(await ctx.requestPermission!({ ...request, displayCwd: 'unverified/relative' }))
+      yield { kind: 'result' as const, sessionId: 'cwd-session', numTurns: 1, durationMs: 1 }
+    },
+    async close() {},
+  } } }, { displayName: 'Claude', canResume: () => false, workbench: MANAGED_NATIVE_CAPABILITIES })
+  const store = makeWorkbenchStore(db)
+  const service = makeWorkbenchService({
+    store, registry, stateDir: root, ownerChatId: () => 'owner',
+    permissionPrompt: makeWorkbenchPermissionPrompt(ilink, () => 'owner'),
+    pendingWechatPermissionCard: id => ilink.pendingWechatPermissionCard(id),
+  })
+  try {
+    const task = service.create({ path: project, providerId: 'claude', text: '查看示例' })
+    service.setWechatWatch(task.id, 'test-account', true)
+    await expect.poll(() => ilink.listPendingPermissions()).toHaveLength(1)
+    const inherited = ilink.listPendingPermissions()[0]!
+    const inheritedCard = ilink.pendingWechatPermissionCard(inherited.hash)!
+    expect(inheritedCard.complete && inheritedCard.text.includes('在 ' + JSON.stringify(project))).toBe(true)
+    const notice = store.wechatNotifications.list(task.id).find(item => item.requestId === inherited.hash)
+    expect(notice?.text.includes('cat example.txt')).toBe(false)
+    expect(ilink.handlePermissionReply('y', 'owner', inheritedCard.text)).toBe(true)
+    await expect.poll(() => answers).toEqual([true])
+    await expect.poll(() => ilink.listPendingPermissions()[0]?.hash).toMatch(/^[a-f0-9-]{36}$/)
+    const unverified = ilink.listPendingPermissions()[0]!
+    const command = (verb: string) => service.handleWechat('owner', `任务 ${task.id} ${verb} ${unverified.hash}`)
+    const incomplete = '内容在微信里看不全，请到电脑或手机上看全再定。'
+    expect(service.detail(task.id).permissions[0]!.cwd).toBeUndefined()
+    const lookup = await command('权限')
+    if (!lookup || typeof lookup !== 'object' || lookup.kind !== 'permission_card') throw Error('missing lookup card')
+    expect(lookup.card.complete).toBe(false)
+    expect(lookup.card.text.includes(incomplete) && !lookup.card.text.includes('回「y ')).toBe(true)
+    expect(await command('允许')).toBe(incomplete)
+    for (const [text, quote] of [[`y ${unverified.code}`, undefined], [`yt ${unverified.code}`, undefined], ['y', lookup.card.text]] as const) {
+      expect(await ilink.handlePermissionReply(text, 'owner', quote)).toBe(true)
+      expect(feedback.at(-1)).toBe(incomplete)
+      expect(answers).toEqual([true])
+    }
+    expect(await command('拒绝')).toContain('已拒绝')
+    await expect.poll(() => answers).toEqual([true, false])
+  } finally { await service.shutdown(); await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
 })

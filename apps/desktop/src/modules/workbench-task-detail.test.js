@@ -55,6 +55,15 @@ describe('task detail follows authoritative current state',()=>{
   expect(root.querySelector('.approval-meta').textContent).toBe('在 /work/verified')
   expect(root.querySelector('.wb-permission details .approval-source').textContent).toBe(permission.description)
  })
+ it('uses the executor MCP target in the permission heading',()=>{
+  const tool='mcp__team__prod__lookup__all'
+  const permission={id:'p',taskId:'A',tool,description:tool,createdAt:1,
+   display:{body:{kind:'fields',fields:[{name:'query',value:'fixture'}]}}}
+  const heading=mcp=>render({...page({}, {permissions:[{...permission,mcp}]}),providers:[{id:'codex',displayName:'Codex'}]})
+   .querySelector('.wb-permission-tool').textContent
+  expect(heading({server:'team__prod',tool:'lookup__all'})).toBe('Codex 想用 team__prod 的「lookup__all」')
+  expect(heading(undefined)).toBe(`Codex 想用「${tool}」`)
+ })
  it('shows the executor note before the operation as plain text',()=>{
   const note = '<img src=x onerror="window.approvalInjected=1">'
   const permission = {id:'p',taskId:'A',tool:'Bash',description:'command=sample',createdAt:1,

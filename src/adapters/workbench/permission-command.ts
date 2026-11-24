@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, relative, resolve } from 'node:path'
-import { realpathSync } from 'node:fs'
+import { realpathSync, statSync } from 'node:fs'
 import { readAnchoredFile } from './anchored-fs'
 import { floorReason, isLowRisk, toolClass } from '../permission-rules/floor'
 import { EDIT_REPORTING_PROVIDERS } from '../permission-rules/decide'
@@ -10,6 +10,13 @@ import type { PermissionScript } from '../../ports/workbench'
 
 const hash = (s: string | Buffer) => createHash('sha256').update(s).digest('hex')
 export const PERMISSION_SCRIPT_MAX = 128 * 1024
+const SCRIPT_READ_ERRORS = {
+  path: '脚本路径不可读或含链接',
+  size: '脚本不是普通文件或超过 128 KiB',
+  changed: '读取期间脚本已变化',
+}
+const SCRIPT_TEXT_ERROR = '脚本不是文本'
+const SCRIPT_ERRORS = new Set([...Object.values(SCRIPT_READ_ERRORS), SCRIPT_TEXT_ERROR])
 
 /** Only literal argv: preserve argument order, case, assignments and quoted whitespace.
  * Shell expansion, operators, comments and redirection are deliberately ineligible. */
@@ -77,7 +84,7 @@ export function needsBoundExecution(command: string): boolean {
 
 /** requiresBoundExecution is a legacy internal name for the automatic-approval
  * veto. It never vetoes an explicit owner one-shot invocation decision. */
-export interface CommandSnapshot { ask: PermissionAsk; scripts: PermissionScript[]; hash?: string; requiresBoundExecution?: boolean; executable?: PermissionExecutable }
+export interface CommandSnapshot { ask: PermissionAsk; scripts: PermissionScript[]; scriptInspectionComplete?: boolean; hash?: string; requiresBoundExecution?: boolean; executable?: PermissionExecutable }
 export function inspectPermissionCommand(facts: { tool: string; command?: string; paths?: string[]; cwd?: string; requiresBoundExecution?: true }, opts: { taskId: string; root?: string; provider?: string; stateDir?: string; executionEnvironment?: () => PermissionExecutionEnvironment | undefined }, depth = 0): CommandSnapshot {
   const ask: PermissionAsk = { surface: 'workbench', provider: opts.provider ?? '', tool: facts.tool, command: facts.command,
     paths: facts.paths, cwd: facts.cwd ?? null, project: opts.root ?? null, isolatedWorktree: false, tier: 'admin', scope: opts.taskId }
@@ -90,7 +97,10 @@ export function inspectPermissionCommand(facts: { tool: string; command?: string
   let root: string, cwd: string
   try { root = realpathSync.native(opts.root); cwd = realpathSync.native(facts.cwd) } catch { return snapshot }
   const inside = (p: string) => { const r = relative(root, p); return r !== '..' && !r.startsWith('../') && !r.startsWith('..\\') && !isAbsolute(r) }
-  if (!inside(cwd)) return snapshot
+  if (!isAbsolute(facts.cwd) || !inside(cwd)) return snapshot
+  try {
+    if (!statSync(cwd).isDirectory()) return snapshot
+  } catch { return snapshot }
   let eligible = EDIT_REPORTING_PROVIDERS.has(opts.provider ?? '') && !snapshot.requiresBoundExecution && facts.command!.length < 2000 && !floorReason(ask, undefined, { stateDir: opts.stateDir })
   const start = argv.findIndex((_w, i) => !assignments[i])
   const head = argv[start] ?? ''
@@ -110,8 +120,27 @@ export function inspectPermissionCommand(facts: { tool: string; command?: string
   // Preview classification must not broaden the old conservative task-grant
   // gate for source-looking data operands or interpreter names in arguments.
   if (argv.some(w => SCRIPT_EXTENSION.test(w)) || argv.slice(start + 1).some(w => INTERPRETER.test(w.split(/[\\/]/).at(-1)!))) eligible = false
-  // Inline programs / modules may load mutable code invisible in the card.
-  if (argv.some(w => /^(?:-[cem]|--eval|--require|--import|--preload)(?:=|$)/.test(w))) return snapshot
+  // Inline programs / modules may load mutable code invisible in the card. For a script preview
+  // this has always stopped here (no preview, no task reuse). For WeChat review it only matters
+  // when the flag goes to an interpreter / shell (`bash -lc "python3 ./x.py"`, `node -r ./hook`):
+  // `wc -c README.md` is fully shown on the card and stays approvable there.
+  const base = (w: string) => w.split(/[\\/]/).at(-1)!
+  const interpreterHead = /^(?:python[\d.]*|node|bun|deno|bash|sh|zsh|dash|ksh|fish|ruby|perl|php|lua)$/
+  if (argv.some(w => /^(?:-[cem]|--eval|--require|--import|--preload)(?:=|$)/.test(w))) {
+    snapshot.scriptInspectionComplete = !argv.some(w => interpreterHead.test(base(w)))
+    return snapshot
+  }
+  snapshot.scriptInspectionComplete = true
+  // Shells also take inline code from clustered flags (`bash -lc "python3 ./check.py"`): the code it
+  // runs is never previewed, so it is not reviewable in WeChat. Preview and task reuse are unchanged.
+  if (argv.some(w => /^(?:bash|sh|zsh|dash|ksh|fish)$/.test(base(w))) && argv.some(w => /^-[a-z]*c[a-z]*$/.test(w)))
+    snapshot.scriptInspectionComplete = false
+  // `npm test` / `pnpm start` and friends run package.json scripts the same way `npm run test` does,
+  // but only `run` is resolved and previewed below. Keep those shortcuts out of WeChat approval.
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(program) && /^(?:test|start|stop|restart|t)$/.test(argv[start + 1] ?? '')) {
+    snapshot.scriptInspectionComplete = false
+    eligible = false
+  }
   const runtime = /^(?:python[\d.]*|node|bun|deno|bash|sh|zsh|ruby|perl)$/.test(head.split(/[\\/]/).at(-1)!)
   const candidates: string[] = []
   const add = (name: string | undefined) => {
@@ -175,27 +204,42 @@ export function inspectPermissionCommand(facts: { tool: string; command?: string
         if(program!=='bun'){const index=candidates.indexOf(name!);if(index>=0)candidates.splice(index,1)}
         const child = inspectPermissionCommand({ ...facts, command: script }, opts, depth + 1)
         snapshot.scripts.push(...child.scripts)
+        if (!child.scriptInspectionComplete) snapshot.scriptInspectionComplete = false
         if (!child.hash) eligible = false
       }
-    } catch { if(program!=='bun'||!name||!candidates.includes(name))eligible = false }
+    } catch {
+      snapshot.scriptInspectionComplete = false
+      if (program !== 'bun' || !name || !candidates.includes(name)) eligible = false
+    }
   }
   if (['npm', 'pnpm', 'yarn'].includes(program) && argv[start + 1] !== 'run') eligible = false
   if (runtime && !candidates.length && !argv.some(w => ['test', 'vitest', 'run', 'x'].includes(w))) eligible = false
-  if (candidates.length > 8) eligible = false
+  if (candidates.length > 8) {
+    snapshot.scriptInspectionComplete = false
+    eligible = false
+  }
   for (const name of [...new Set(candidates)].slice(0, 8)) {
     const absolute = resolve(cwd, name); const path = relative(root, absolute).replaceAll('\\', '/')
     const script: PermissionScript = { path, content: '' }; snapshot.scripts.push(script)
     // Do not follow lexical .. or symlinks, or attach protected/outside files.
     if (!inside(absolute) || name.split(/[\\/]/).includes('..') || floorReason({ ...ask, command: name }, undefined, { stateDir: opts.stateDir })) {
-      script.error = '无法安全读取此脚本'; eligible = false; continue
+      script.error = '无法安全读取此脚本'
+      snapshot.scriptInspectionComplete = false
+      eligible = false
+      continue
     }
     try {
-      const bytes = readAnchoredFile(root, path, PERMISSION_SCRIPT_MAX, { path: '脚本路径不可读或含链接', size: '脚本不是普通文件或超过 128 KiB', changed: '读取期间脚本已变化' })
+      const bytes = readAnchoredFile(root, path, PERMISSION_SCRIPT_MAX, SCRIPT_READ_ERRORS)
       script.content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-      if (script.content.includes('\0')) throw Error('脚本不是文本')
+      if (script.content.includes('\0')) throw Error(SCRIPT_TEXT_ERROR)
       script.sha256 = hash(bytes)
       if (floorReason({ ...ask, command: script.content }, undefined, { stateDir: opts.stateDir })) eligible = false
-    } catch (e) { script.content = ''; script.error = e instanceof Error ? e.message : '脚本不可读'; eligible = false }
+    } catch (e) {
+      script.content = ''
+      script.error = e instanceof Error && SCRIPT_ERRORS.has(e.message) ? e.message : '脚本不可读'
+      snapshot.scriptInspectionComplete = false
+      eligible = false
+    }
   }
   if (eligible && !snapshot.scripts.length) {
     snapshot.hash = hash(JSON.stringify([cwd, argv, assignments.slice(0, start + 1), executable]))

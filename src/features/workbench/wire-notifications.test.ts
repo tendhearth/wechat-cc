@@ -162,7 +162,10 @@ describe('wireWorkbenchNotifications', () => {
     const registry = createProviderRegistry()
     registry.register('claude', { async spawn(_project, context) { return {
       async *dispatch() {
-        await context.requestPermission!({ tool: 'Write', description: 'write report' })
+        await context.requestPermission!({
+          tool: 'Write', description: 'write report',
+          display: { body: { kind: 'write', path: 'report.txt', content: 'fixture\n' }, note: 'write report' },
+        })
         const answer = await context.requestUserInput!({ questions: [{ id: 'format', header: '格式', question: '选择格式', options: [{ label: 'PDF', description: 'PDF' }] }] })
         yield { kind: 'text' as const, text: `完成：${JSON.stringify(answer)}` }
         yield { kind: 'result' as const, sessionId: 'native-fixture', numTurns: 1, durationMs: 1 }

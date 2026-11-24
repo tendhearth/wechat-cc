@@ -74,3 +74,32 @@ it.each([
   expect(permissions.pending()).toHaveLength(1)
   permissions.rejectAll(); expect(await next).toBe(false)
 })
+
+// WeChat review only (scriptInspectionComplete): a command the card shows in full stays reviewable;
+// one that runs code the card never shows is not. Script previews above are unchanged.
+it.each([
+  ['wc -c README.md', true],
+  ['grep -c needle README.md', true],
+  ['python3 ./x.py', true],
+  ['bash -xe ./scripts/x.sh', true],
+  ['/bin/bash -lc "python3 ./x.py"', false],
+  ['sh -c "./scripts/x.sh"', false],
+  ['zsh -ic "bun ./x.js"', false],
+  ['node -e "require(\'./x.js\')"', false],
+  ['python3 -m http.server', false],
+  ['npm test', false],
+  ['pnpm start', false],
+  ['yarn test', false],
+] as const)('WeChat review: %s is reviewable in full = %s', (command, complete) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-command-review-'))); roots.push(root)
+  mkdirSync(join(root, 'scripts'))
+  writeFileSync(join(root, 'x.py'), 'print("x")\n')
+  writeFileSync(join(root, 'x.js'), 'console.log("x")\n')
+  writeFileSync(join(root, 'README.md'), 'readme\n')
+  writeFileSync(join(root, 'scripts/x.sh'), 'echo x\n')
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node ./x.js', start: 'node ./x.js' } }))
+  const snapshot = inspectPermissionCommand({ tool: 'Bash', command, cwd: root }, { taskId: 'task', provider: 'codex', root,
+    executionEnvironment: () => ({ kind: 'direct' as const, env: { PATH: '/usr/bin:/bin' } }) })
+  expect(snapshot.scriptInspectionComplete === true).toBe(complete)
+})
+

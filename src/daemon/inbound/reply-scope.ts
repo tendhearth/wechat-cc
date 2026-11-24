@@ -11,7 +11,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
  * 有作用域就把文字放进去而不外发。按异步上下文而不是按 chat 记,所以同一时刻微信来的
  * 一条不会被串到 App 的回复里(reply-sinks 是按 chat 记的,只给 LLM 的 reply 工具用)。
  */
-export interface ReplyScope { push(text: string): void }
+export interface ReplyScope { push(text: string, historyText?: string): void }
 
 const als = new AsyncLocalStorage<ReplyScope>()
 
@@ -19,17 +19,21 @@ const als = new AsyncLocalStorage<ReplyScope>()
 export const scopedReply = (): ReplyScope | undefined => als.getStore()
 
 /** 在一个回复作用域里跑 fn;返回 fn 的结果和这一轮被截住的回复(按先后)。 */
-export async function withReplyScope<T>(fn: () => Promise<T>): Promise<{ result: T; replies: string[] }> {
+export async function withReplyScope<T>(fn: () => Promise<T>): Promise<{ result: T; replies: string[]; historyReplies: string[] }> {
   const replies: string[] = []
-  const result = await als.run({ push: (text) => { replies.push(text) } }, fn)
-  return { result, replies }
+  const historyReplies: string[] = []
+  const result = await als.run({ push: (text, historyText) => {
+    replies.push(text)
+    historyReplies.push(historyText ?? text)
+  } }, fn)
+  return { result, replies, historyReplies }
 }
 
 /** 把一个"直发微信"的 sendMessage 包成"有作用域就截住"的版本;返回值形状保持给调用方能用。 */
-export function scopedSend<A extends unknown[], R>(send: (chatId: string, text: string, ...rest: A) => Promise<R>): (chatId: string, text: string, ...rest: A) => Promise<R> {
-  return (chatId, text, ...rest) => {
+export function scopedSend<M extends { historyText?: string }, R>(send: (chatId: string, text: string, metadata?: M) => Promise<R>): (chatId: string, text: string, metadata?: M) => Promise<R> {
+  return (chatId, text, metadata) => {
     const scope = scopedReply()
-    if (scope) { scope.push(text); return Promise.resolve({ msgId: `scoped:${Date.now()}` } as unknown as R) }
-    return send(chatId, text, ...rest)
+    if (scope) { scope.push(text, metadata?.historyText); return Promise.resolve({ msgId: `scoped:${Date.now()}` } as unknown as R) }
+    return metadata === undefined ? send(chatId, text) : send(chatId, text, metadata)
   }
 }

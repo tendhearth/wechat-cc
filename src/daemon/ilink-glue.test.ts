@@ -491,7 +491,7 @@ describe('微信拍板的省事路径(2026-09-10:手机上「y og0ez」太难打
     vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
     const p1 = a.askUser('chat-1', 'Bash: rm -rf ./tmp', 'h0001', 60_000)
     const p2 = a.askUser('chat-1', 'Write: notes.md', 'h0002', 60_000)
-    expect(a.handlePermissionReply('y', 'chat-1')).toBe(true)      // 吃掉了,但没批
+    expect(await a.handlePermissionReply('y', 'chat-1')).toBe(true)      // 吃掉了,但没批
     expect(sent[sent.length - 1]).toContain('有 2 条在等你')
     expect(sent[sent.length - 1]).toContain('01:Bash: rm -rf ./tmp')
     expect(sent[sent.length - 1]).toContain('02:Write: notes.md')
