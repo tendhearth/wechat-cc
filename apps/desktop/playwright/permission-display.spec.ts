@@ -283,6 +283,7 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]]
       const attach = (await composer.getByRole('button', { name: /添加附件/ }).boundingBox())!
       const help = (await composer.getByText('补充说明', { exact: true }).boundingBox())!
       const send = (await composer.getByRole('button', { name: '发送补充' }).boundingBox())!
+      const allowTask = request.getByRole('button', { name: '本任务同命令都允许', exact: true })
       expect(attach.y + attach.height / 2).toBeCloseTo(send.y + send.height / 2, 0)
       expect(help.y + help.height / 2).toBeCloseTo(send.y + send.height / 2, 0)
 
@@ -290,13 +291,18 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]]
       await expect(field).toBeFocused()
       expect((await field.boundingBox())!.height).toBeCloseTo(normalFieldHeight, 0)
       await field.pressSequentially('draft')
+      await expect(field).toBeInViewport({ ratio: 1 })
+      await expect(composer).toBeInViewport({ ratio: 1 })
+      await expectDecisionButtons(request)
+      await expect(allowTask).toBeInViewport({ ratio: 1 })
       await field.blur()
       await expect(field).toHaveValue('draft')
-      expect((await field.boundingBox())!.height).toBeCloseTo(normalFieldHeight, 0)
+      expect((await field.boundingBox())!.height).toBeCloseTo(singleLineHeight, 0)
       await expect(field).toBeInViewport({ ratio: 1 })
       await expect(composer).toBeInViewport({ ratio: 1 })
       await expectFirstThreeCommandLines(request)
       await expectDecisionButtons(request)
+      await expect(allowTask).toBeInViewport({ ratio: 1 })
       await field.fill('')
       await field.blur()
       expect((await composer.boundingBox())!.height).toBeCloseTo(composerBox.height, 0)
@@ -324,6 +330,41 @@ for (const [width, height] of [[1440, 900], [1280, 800], [900, 650], [760, 600]]
     expect((await field.boundingBox())!.height).toBeCloseTo(normalFieldHeight, 0)
   })
 }
+
+test('sticky permission actions reach the bottom of the approval area', async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 600 })
+  await openFixture(page, { layout: true })
+  await expect(page.locator('.wb-followup')).toBeVisible()
+  await setPermissionCount(page, 1)
+  const panel = page.locator('.wb-permissions')
+  const request = panel.locator('.wb-permission')
+  await request.getByText('看完整原文', { exact: true }).evaluate(el => el.parentElement!.setAttribute('open', ''))
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  expect(await panel.evaluate(el => {
+    const maxScroll = el.scrollHeight - el.clientHeight
+    el.scrollTop = maxScroll / 2
+    return el.scrollTop > 0 && el.scrollTop < maxScroll
+  })).toBe(true)
+  await expectDecisionButtons(request)
+  const actions = request.locator('.wb-permission-actions')
+  const dividerWidth = () => actions.evaluate(el => getComputedStyle(el, '::before').borderTopWidth)
+  await expect.poll(dividerWidth).toBe('1px')
+  const { edgeGap, commandBelow } = await actions.evaluate(el => {
+    const panel = el.closest('.wb-permissions')!.getBoundingClientRect()
+    const actions = el.getBoundingClientRect()
+    const visibleBottom = Math.min(panel.bottom, window.innerHeight)
+    const probeY = actions.bottom + 2
+    const hit = probeY < visibleBottom ? document.elementFromPoint(actions.left + actions.width / 2, probeY) : null
+    return {
+      edgeGap: Math.abs(visibleBottom - actions.bottom),
+      commandBelow: !!hit?.closest('.approval-source, .approval-command'),
+    }
+  })
+  expect(edgeGap).toBeLessThanOrEqual(1)
+  expect(commandBelow).toBe(false)
+  await panel.evaluate(el => { el.scrollTop = el.scrollHeight })
+  await expect.poll(dividerWidth).toBe('0px')
+})
 
 test('permission buttons stay with their own request as the list scrolls', async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 600 })

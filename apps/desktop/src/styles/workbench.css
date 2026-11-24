@@ -182,6 +182,7 @@
 .wb-controls-inner:has(.wb-permissions)>* { flex:none; }
 .wb-controls-inner:has(.wb-permissions)>.wb-questions { flex:0 1 auto; min-height:0; max-height:min(34vh,360px,30%); }
 .wb-controls-inner>.wb-permissions {
+  --wb-permission-inset:14px;
   flex:1 0 64px;
   box-sizing:border-box;
   overflow:auto;
@@ -190,9 +191,11 @@
   margin-bottom:10px;
   border:1px solid var(--th-hair);
   border-radius:9px;
-  padding:12px 14px;
+  padding:12px var(--wb-permission-inset) 0;
   background:var(--th-paper);
 }
+/* The end spacing scrolls with the requests, leaving the sticky edge flush. */
+.wb-permissions::after { content:""; display:block; height:12px; }
 .wb-permissions>header { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--th-ink-soft); }
 .wb-permissions h3 { margin:0; font-size:12px; font-weight:500; }
 .wb-permissions>header>span { font-size:11px; }
@@ -218,7 +221,13 @@
 .wb-permission time { color:var(--wb-muted); font-size:10px; }
 .wb-permission-actions,.wb-control-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
 /* Each footer stops at its own article, so an earlier request scrolls away with its buttons. */
-.wb-permission-actions { position:sticky; bottom:0; z-index:1; margin-top:9px; padding-block:4px; flex-wrap:wrap; background:var(--th-paper); }
+.wb-permission-actions {
+  position:sticky; bottom:0; z-index:1; margin-top:9px; flex-wrap:wrap; background:var(--th-paper);
+  margin-inline:calc(-1 * var(--wb-permission-inset)); padding:4px var(--wb-permission-inset);
+}
+.wb-permission-actions.is-stuck::before {
+  content:""; position:absolute; inset:0 0 auto; border-top:1px solid var(--wb-line); pointer-events:none;
+}
 .wb-permission label { display:block; margin-top:8px; font-size:12px; color:var(--th-ink-soft); }
 .wb-permission textarea { box-sizing:border-box; width:100%; min-height:48px; resize:vertical; font:inherit; color:var(--th-ink); background:transparent; border:0; border-bottom:1px solid var(--th-hair); }
 .wb-permission-script pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 var(--mono); }
@@ -612,7 +621,7 @@
 .wb-permissions~.wb-followup:not(#roster-dock *)>textarea {
   grid-area:1 / 1 / 2 / -1;
 }
-.wb-permissions~.wb-followup:not(#roster-dock *)>textarea:placeholder-shown:not(:focus) {
+.wb-permissions~.wb-followup:not(#roster-dock *)>textarea:not(:focus) {
   height:calc(1.6em + 6px);
   min-height:0;
   resize:none;

@@ -788,6 +788,19 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
   stopWorkbenchPolling()
   const root = document.getElementById('workbench-root')
   if (!root) return
+  /** @param {Element|null} panel */
+  const updatePermissionActionDividers = panel => {
+    for (const actions of panel?.querySelectorAll('.wb-permission-actions') ?? []) {
+      const request = actions.parentElement
+      if (!request) continue
+      // The action row sits at the end of its request when it isn't stuck.
+      const stuck = actions.getBoundingClientRect().bottom < request.getBoundingClientRect().bottom - 0.5
+      actions.classList.toggle('is-stuck', stuck)
+    }
+  }
+  const permissionResize = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(() => updatePermissionActionDividers(root.querySelector('.wb-permissions')))
+    : null
   const previousFocus = focusSearch ? document.activeElement : null
   const wideSearchVisible = () => !!root.closest?.('.dash-main > .workbench-pane[data-workbench-view="search"]:not([hidden])')
     && document.documentElement.hasAttribute('data-desk-wide')
@@ -1082,11 +1095,16 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       }
     }
     const permissionPanel = root.querySelector('.wb-permissions')
+    permissionResize?.disconnect()
     if (permissionPanel) {
       const saved = permissionScrollPositions.get(nextScope)
       const scrollTop = saved?.signature === nextPermissionSignature ? saved.scrollTop : 0
       permissionPanel.scrollTop = scrollTop
       permissionScrollPositions.set(nextScope, { signature: nextPermissionSignature, scrollTop })
+      if (permissionResize) {
+        permissionResize.observe(permissionPanel)
+        for (const request of permissionPanel.querySelectorAll('.wb-permission')) permissionResize.observe(request)
+      }
     } else permissionScrollPositions.delete(nextScope)
     const taskInfoBody = root.querySelector('.wb-task-info-body')
     if (taskInfoBody) taskInfoBody.scrollTop = taskInfoScrollPositions.get(nextScope) ?? 0
@@ -2041,7 +2059,11 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       searchScroll = event.target.scrollTop
     }
     const content = root.querySelector('.wb-content')
-    if (event.target !== content || !content) return
+    if (event.target !== content || !content) {
+      const panel = root.querySelector('.wb-permissions')
+      if (panel && event.target === panel) updatePermissionActionDividers(panel)
+      return
+    }
     if (content.scrollTop !== pendingOutcomeDiscovery.get(renderedScope)) pendingOutcomeDiscovery.delete(renderedScope)
     scrollPositions.set(renderedScope, content.scrollTop)
     const current = reading.get(renderedScope)
@@ -2167,6 +2189,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     return true
   }
   active = { timer, openTask, openDraft, getTaskId: () => controller.getTargetTaskId(), getViewedTaskId: () => controller.state.detail?.task.id ?? null, cleanup: () => {
+    permissionResize?.disconnect()
     document.removeEventListener?.('desk-cc-availability', reflectThingAvailability)
     saveWindowState()
     if (deskSearch) {
