@@ -168,7 +168,8 @@ export function makeWorkbenchClaudeCanUseTool(
         const previewInput = toolApprovalInput(input)
         const display = toolPermissionDisplay(toolName, previewInput, reviewDescription ? note : undefined)
         const allowed = await requestPermission({tool:toolName,description,...(display ? { display } : {}),
-          ...(JSON.stringify(previewInput) !== JSON.stringify(input) ? { wechatReview: { incomplete: true as const } } : {}),
+          ...((note && !reviewDescription) || JSON.stringify(previewInput) !== JSON.stringify(input)
+            ? { wechatReview: { incomplete: true as const } } : {}),
           ...(display && reviewDescription ? { reviewDescription } : {}),onDenied:reason=>{feedback=permissionDenialMessage(description,reason)}}, options.signal)
         return allowed && !options.signal.aborted ? {behavior:'allow'} : feedback ? {behavior:'deny',message:feedback} : denied
       } catch { return denied }

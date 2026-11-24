@@ -598,15 +598,16 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           const description=event.legacyDescription??event.permission.description
           addRunEvent('system',`权限请求：${event.permission.id}`)
           let replyLine=''
+          let marker: string | undefined
           if(ctx.deps.permissionPrompt){
             const close=ctx.deps.permissionPrompt(task.title,event.permission,(decision,reason)=>{
               const resolved=permissions.resolve(event.permission.id,decision,reason)
               if(resolved)ctx.hub.bumped(task.id)
               return resolved
             },()=>permissions.deadline(event.permission.id),task.providerId,description)
-            permissionPrompts.set(event.permission.id,close);replyLine=close.replyLine??''
+            permissionPrompts.set(event.permission.id,close);replyLine=close.replyLine??'';marker=close.marker
           }
-          requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'))
+          requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'),marker)
           opinion?.schedule(event.permission.id, () => {
             const input = permissions.pendingOpinionInput(event.permission.id)
             return input && { kind: 'permission', project: opinionProject(), ...input }

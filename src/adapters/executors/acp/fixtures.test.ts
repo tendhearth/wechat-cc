@@ -122,6 +122,26 @@ describe('ACP 真机报文回放(cursor-agent 2026-09-17)', () => {
     expect(result.display?.body.kind).toBe('edit')
   })
 
+  it.each(['edit', 'write', 'delete', 'move', 'execute', 'read', 'search', 'other'])(
+    'marks a title-only %s request incomplete even with an empty input object',
+    kind => {
+      for (const input of [{}, { rawInput: {} }]) {
+        const details = acpApprovalDetails({ kind, title: 'Review example', ...input }, 'Review example')
+        expect(details.wechatReview?.incomplete).toBe(true)
+      }
+    },
+  )
+
+  it('requires file changes beyond a location or a diff without a path', () => {
+    for (const evidence of [
+      { locations: [{ path: '/demo/file' }] },
+      { content: [{ type: 'diff', path: '', oldText: 'before', newText: 'after' }] },
+    ]) {
+      const details = acpApprovalDetails({ kind: 'edit', title: 'Review example', ...evidence }, 'Review example')
+      expect(details.wechatReview?.incomplete).toBe(true)
+    }
+  })
+
   it.each([
     ['array input', { rawInput: ['withheld'] }],
     ['string input', { rawInput: 'withheld' }],

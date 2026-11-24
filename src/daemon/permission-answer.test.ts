@@ -2,6 +2,22 @@ import { describe, expect, it } from 'vitest'
 import { makePermissionAnswer } from './permission-answer'
 
 describe('makePermissionAnswer — the one consumer of a WeChat answer to a pending card', () => {
+  it('keeps ordinary quotes and summarizes marked quotes even if the decision handler throws', () => {
+    const logs: string[] = []
+    const consume = makePermissionAnswer({
+      ilink: { handlePermissionReply: text => { if (text === 'y') throw Error('test decision failure'); return false } },
+      log: (_tag, line) => logs.push(line),
+    })
+    const ordinary = { text: 'ordinary quote' }
+    const msg = { chatId: 'owner', text: 'follow-up', quote: ordinary }
+    expect(consume(msg)).toBe(false)
+    expect(msg.quote).toBe(ordinary)
+    const marked = { chatId: 'owner', text: 'y', quote: { text: 'Fixture\n〔请求 1234567890abcdef〕\nprivate fixture' } }
+    expect(() => consume(marked)).toThrow('test decision failure')
+    expect(marked.quote.text).toBe('（引用了一张待批卡 · 〔请求 1234567890abcdef〕）')
+    expect(logs).toEqual([])
+  })
+
   it('consumed ⇒ true + one audit line; not consumed (not an answer, or the pending is gone) ⇒ false, no line', () => {
     const lines: string[] = []
     const calls: unknown[][] = []

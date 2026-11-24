@@ -104,10 +104,21 @@ const scopedApprovalCommand = 'rm -rf build\nprintf ' + privateApprovalEvidence
 const longApprovalCommand = "printf '%s' '" + 'SANDBOX_INLINE_APPROVAL '.repeat(200) + "'"
 const patchFile = 'SANDBOX_APPROVAL_FILE.txt'
 const patchDiff = '@@ -1 +1 @@\n-old\n+SANDBOX_PRIVATE_DIFF'
+const approvalFollowUps = new Map<string, string>([
+  ['引用完整卡想问，这条是干嘛的？', ''],
+  ['引用改过的卡想问，这条是干嘛的？', ''],
+  ['引用已了结的卡想问，这条是干嘛的？', ''],
+  ['引用另一段命令想问，这条是干嘛的？', ''],
+])
+function captureApprovalFollowUp(text: string): void {
+  for (const [question, prompt] of approvalFollowUps) {
+    if (!prompt && text.includes(question)) approvalFollowUps.set(question, text)
+  }
+}
 let codexDecision: unknown
 let lastCodexEnvelope = ''
 let topicJudgeAttempts=0,topicRoundDispatches=0
-const claudeScript: FakeSdkScript = { async onDispatch(text) { if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
+const claudeScript: FakeSdkScript = { async onDispatch(text) { captureApprovalFollowUp(text); if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
 const approval = (command: string, finalText: string, cwd: string | null = '/tmp') => ({
   toolCalls: [], finalText,
   codexSteps: [{
@@ -121,6 +132,7 @@ const approval = (command: string, finalText: string, cwd: string | null = '/tmp
 })
 const codexScript: FakeSdkScript = {
   async onDispatch(text) {
+    captureApprovalFollowUp(text)
     lastCodexEnvelope = text
     const s = said(text)
     if (s === '把 build 删了') return approval('rm -rf build', '删好了。')
@@ -1365,6 +1377,28 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const instruction = (code: string) => `回「y ${code}」允许这一步、「n ${code}」拒绝。拒绝理由选填：「n ${code} 理由」。`
     const rejectOnlyInstruction = (code: string) => `这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`
     expect(completeText.endsWith(instruction(complete.code))).toBe(true)
+    const markerLine = completeText.split('\n')[1]!
+    const completeNotice = texts(d.ilink.outbox(), d.owner).find(t => t.includes(`· ${asking}`) && t.includes('需要你批准'))!
+    expect(completeNotice.split('\n')[1]).toBe(markerLine)
+    expect(completeNotice.includes(instruction(complete.code))).toBe(true)
+    const alteredText = completeText.replace('〔命令结束〕', '〔命令结束〕（已编辑）')
+    const injectedCommand = 'rm -rf sandbox-quoted-command'
+    const questions = [...approvalFollowUps.keys()]
+    const askAboutQuote = async (index: number, quote: string) => {
+      const question = questions[index]!
+      d.sendText(d.owner, question, { quote })
+      await expect.poll(() => Boolean(approvalFollowUps.get(question)), { timeout: 15_000 }).toBe(true)
+      const prompt = approvalFollowUps.get(question)!
+      expect(prompt.includes(`<quote type="text">（引用了一张待批卡 · ${markerLine}）</quote>`)).toBe(true)
+      for (const evidence of ['rm -rf build', privateApprovalEvidence, injectedCommand]) {
+        expect(prompt.includes(evidence)).toBe(false)
+      }
+      expect(d.query('SELECT text FROM messages WHERE direction = ? AND instr(text, ?) > 0', 'in', question))
+        .toEqual([{ text: question }])
+    }
+    await askAboutQuote(0, completeText)
+    await askAboutQuote(1, alteredText)
+    await askAboutQuote(3, completeText.replace('rm -rf build', injectedCommand))
     const lookupText = `任务 ${asking} 权限 ${complete.hash}`
     const chat = await desktop<{ matter: { id: string } }>('GET', '/v1/matter/owner-chat')
     expect(chat.status).toBe(200)
@@ -1386,14 +1420,17 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       'SELECT status, reply FROM matter_say_receipts WHERE request_id IN (?, ?) ORDER BY request_id', desktopRequest.requestId, phoneRequestId,
     ).filter(row => row.status === 'replied' && row.reply === historySummary).length).toBe(2)
     decisions.delete(scopedApprovalCommand)
-    d.sendText(d.owner, `y ${complete.code}`)
+    d.sendText(d.owner, `y ${complete.code}`, { quote: completeNotice })
     await expect.poll(() => decisions.get(scopedApprovalCommand)).toBe('accept')
     expect(await queued(asking)).toBeUndefined()
+    await askAboutQuote(2, completeText)
     await expect.poll(() => d.query<{ source: string }>('SELECT source FROM messages WHERE text=? ORDER BY source', historySummary))
       .toEqual([{ source: 'desktop' }, { source: 'phone' }, { source: 'workbench' }])
     const repeated = await desktop<{ reply: string }>('POST', '/v1/matter/say', desktopRequest)
     expect(repeated).toEqual({ status: 200, body: { kind: 'chat', reply: historySummary } })
     expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0', privateApprovalEvidence)).toEqual([])
+    expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0', injectedCommand)).toEqual([])
+    expect(d.log().some(line => line.includes(privateApprovalEvidence) || line.includes(injectedCommand))).toBe(false)
     const history = await desktop('GET', '/v1/matter/owner-chat')
     expect(history.status).toBe(200)
     expect(JSON.stringify(history.body).includes(privateApprovalEvidence)).toBe(false)
@@ -1419,10 +1456,11 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       const card = (await queued(id))!
       const notice = texts(d.ilink.outbox(), d.owner).find(isNotice)!
       expect(notice.includes(rejectOnlyInstruction(card.code)) && !notice.includes(`回「y ${card.code}」`)).toBe(true)
-      expect(/〔请求|SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(notice)).toBe(false)
+      expect(/^〔请求 [a-f0-9]{16}〕$/.test(notice.split('\n')[1]!)).toBe(true)
+      expect(/SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(notice)).toBe(false)
       const journal = d.query<{ summary: string }>('SELECT summary FROM pending_cards WHERE hash = ?', card.hash)
       expect(journal).toEqual([{ summary: `${detail.body.task.title} · ${id}` }])
-      return { id, title: detail.body.task.title, card }
+      return { id, title: detail.body.task.title, card, notice }
     }
     const long = await next('沙盒权限长命令')
     // Dev registration strings, including the snapshot suffix and legacy format.
@@ -1430,21 +1468,26 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(Object.keys(long.card).sort()).toEqual(['canDenyWithReason', 'chatId', 'code', 'expires_at', 'hash', 'prompt', 'since', 'taskId'])
     const longText = await lookup(long.id, long.card.hash)
     expect(longText).toContain(WECHAT_PERMISSION_INCOMPLETE)
+    expect(long.notice.split('\n')[1]).toBe(longText.split('\n')[1])
     expect(longText).not.toMatch(/「yt? \d+」/)
     for (const [text, quote] of [
       [`任务 ${long.id} 允许 ${long.card.hash}`, undefined],
       [`y ${long.card.code}`, undefined], [`yt ${long.card.code}`, undefined], ['y', longText],
+      [`y ${long.card.code}`, long.notice],
     ] as const) {
       await outbound(() => d.sendText(d.owner, text, { quote }), reply => reply === WECHAT_PERMISSION_INCOMPLETE)
       expect(decisions.has(longApprovalCommand)).toBe(false)
       expect((await queued(long.id))?.hash).toBe(long.card.hash)
     }
-    d.sendText(d.owner, `n ${long.card.code}`)
+    d.sendText(d.owner, `n ${long.card.code}`, { quote: long.notice })
     await expect.poll(() => decisions.get(longApprovalCommand)).toBe('decline')
     expect(await queued(long.id)).toBeUndefined()
     await cancel(long.id)
 
     const patch = await next('沙盒权限改文件')
+    await outbound(() => d.sendText(d.owner, `y ${patch.card.code}`, { quote: completeNotice }),
+      reply => reply === '这条请求已经处理过了或已经过期。')
+    expect((await queued(patch.id))?.hash).toBe(patch.card.hash)
     expect(patch.card.prompt === `${patch.title} · ${patch.id}\nfileChange\n${patchFile}\n{"type":"update"}\n${patchDiff}\nExecution environment: local`).toBe(true)
     const patchText = await lookup(patch.id, patch.card.hash)
     expect(patchText).toContain(`${patchFile}（修改）`)

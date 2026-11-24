@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { WECHAT_PORTS, WECHAT_PERMISSION_INCOMPLETE, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling } from '../ports/wechat'
-import { howToReplyLine, isPermissionCardQuote, parsePermissionReply } from './pending-permissions'
+import { howToReplyLine, isPermissionCardQuote, isSummarizedWorkbenchQuote, parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
 import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText } from '../lib/ilink-workbench'
@@ -316,6 +316,9 @@ export function makeIlinkAdapter(opts: {
       const contextToken = ctxStore.get(notice.ownerChatId)
       if (!contextToken) return { status: 'deferred', reason: 'missing_context' }
 
+      if (notice.kind === 'permission' && notice.requestId) {
+        pending.rememberWechatReminder(notice.requestId, notice.ownerChatId, notice.text)
+      }
       const outcome = await sendIlinkWorkbenchText({
         baseUrl: account.baseUrl,
         token: account.token,
@@ -424,7 +427,7 @@ export function makeIlinkAdapter(opts: {
 
     probePermissionReply(text, fromChatId, quoted) {
       const parsed = parsePermissionReply(text)
-      if (!parsed) return false
+      if (!parsed || (quoted !== undefined && isSummarizedWorkbenchQuote(quoted))) return false
       const workbench = quoted && pending.matchWorkbenchQuote(quoted)
       if (workbench) return !!fromChatId && (workbench.kind === 'stale' || !workbench.hash || permissionOwner(workbench.hash, fromChatId))
       if (!parsed.ref) {
@@ -440,7 +443,7 @@ export function makeIlinkAdapter(opts: {
     },
     handlePermissionReply(text, fromChatId, quoted) {
       const parsed = parsePermissionReply(text)
-      if (!parsed) return false
+      if (!parsed || (quoted !== undefined && isSummarizedWorkbenchQuote(quoted))) return false
       const byRef = parsed.ref?.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref?.value
       const decide = (hash: string, matchedQuote = false): boolean => {
         if (!permissionOwner(hash, fromChatId)) return false

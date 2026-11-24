@@ -23,6 +23,6 @@ export function makeWorkbenchPermissionPrompt(registry: Pick<WechatPermissions,'
     const card=registry.pendingWechatPermissionCard(permission.id)
     const replyLine=!code || !card ? '' : card.complete ? workbenchPermissionReplyLine(permission,code)
       : `这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`
-    return Object.assign(()=>{closed=true;registry.resolvePermission(permission.id,'deny')},{replyLine})
+    return Object.assign(()=>{closed=true;registry.resolvePermission(permission.id,'deny')},{replyLine, marker: replyLine ? card?.marker : undefined})
   }
 }

@@ -18,6 +18,7 @@ export interface PendingPermissionView extends Omit<PendingPermissionMeta, 'chat
 
 interface Entry {
   wechatCard?: WechatPermissionCard
+  wechatReminder?: string
   /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
   deadline?: () => number | null
   onAllowTask?: () => boolean
@@ -37,6 +38,14 @@ export function isPermissionCardQuote(quoted: string): boolean {
 
 export function workbenchQuoteMarker(text: string): string | undefined {
   return /^〔请求 ([a-f0-9]{16})〕$/.exec(text.split('\n', 2)[1] ?? '')?.[1]
+}
+
+export function summarizedWorkbenchQuote(marker: string): string {
+  return `（引用了一张待批卡 · 〔请求 ${marker}〕）`
+}
+
+export function isSummarizedWorkbenchQuote(text: string): boolean {
+  return /^（引用了一张待批卡 · 〔请求 [a-f0-9]{16}〕）$/.test(text)
 }
 
 export class PendingPermissions {
@@ -115,6 +124,14 @@ export class PendingPermissions {
     return this.entries.get(hash)?.wechatCard
   }
 
+  rememberWechatReminder(hash: string, chatId: string, text: string): void {
+    const entry = this.entries.get(hash)
+    const marker = workbenchQuoteMarker(text)
+    if (entry && marker && entry.wechatCard?.marker === marker && entry.meta?.chatId === chatId) {
+      entry.wechatReminder = text
+    }
+  }
+
   isExpired(hash: string): boolean {
     const entry = this.entries.get(hash)
     if (!entry) return true
@@ -130,7 +147,8 @@ export class PendingPermissions {
       if (matches.length === 0) return { kind: 'stale' }
       if (matches.length > 1) return { kind: 'altered' }
       const [hash, entry] = matches[0]!
-      return entry.wechatCard!.text === quoted ? { kind: 'matched', hash } : { kind: 'altered', hash }
+      return entry.wechatCard!.text === quoted || entry.wechatReminder === quoted
+        ? { kind: 'matched', hash } : { kind: 'altered', hash }
     }
     const head = quoted.split('\n', 1)[0]!
     if (/ · [a-f0-9]{8}$/.test(head))

@@ -165,6 +165,17 @@ describe('MCP:放进来的才问,问的是「工具名 + 去掉凭据的参数�
       display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }, { name: 'api_key', value: '[credential omitted]' }] } } }] : [])
   })
 
+  it('短参数能展示但 MCP 原因放不下时，微信审批不完整', async () => {
+    const g = setup({ admitted: ['catalog'] })
+    const tool = 'mcp__catalog__lookup'
+    expect(await g.call(tool, { query: 'x' }, { decisionReason: '说明'.repeat(10_000) })).toEqual(ALLOW)
+    expect(g.requests).toEqual([{
+      tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x"}`,
+      display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }] } },
+      wechatReview: { incomplete: true },
+    }])
+  })
+
   it('名字 160 字可以问,161 字装不下 ⇒ 拒,不问', async () => {
     const ok = `mcp__catalog__${'x'.repeat(160 - 14)}`, long = `${ok}x`
     const g = setup({ admitted: ['catalog'] })

@@ -229,6 +229,8 @@ export interface WechatWorkbenchTransport {
     id: string
     taskId: string
     runId: string
+    kind?: string
+    requestId?: string | null
     ownerChatId: string
     accountId: string
     text: string

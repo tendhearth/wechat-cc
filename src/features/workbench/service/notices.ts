@@ -25,7 +25,7 @@ const PROVIDER_FAILURE_NOTICE=new Set(['provider_auth_expired','provider_auth_re
 export interface NoticesDomain {
   wakeNotices(context?:{ownerChatId:string;accountId:string}): void
   enqueueNotice(task:StoredTask,runId:string,kind:WechatNoticeKind,text:string,requestId?:string|null): void
-  requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string): void
+  requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string,marker?:string): void
   terminalReportBody(running:Active): string|undefined
   stageFinishedNotice(running:Active,status:TaskStatus,error?:string|null,suppressCompleted?:boolean): void
   publishFinishedNotices(): void
@@ -61,8 +61,9 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
       try{store.addEvent(task.id,'system','微信提醒未能保存；任务仍可在工作台查看。',null,runId);}catch{}
     }
   }
-  function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){
-    enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${redactSecrets(label).slice(0,kind==='permission'?3500:600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
+  function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string,marker?:string){
+    const requestMarker = marker ? `\n〔请求 ${marker}〕` : ''
+    enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}${requestMarker}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${redactSecrets(label).slice(0,kind==='permission'?3500:600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
   }
   /**
    * 终审后修复第二轮 Important②b:非 retained 执行者 completed 终态时,

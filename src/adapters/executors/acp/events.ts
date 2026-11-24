@@ -191,8 +191,13 @@ export function acpApprovalDetails(call: Obj, description: string): {
         notes.push(item.content.text)
       } else omittedContent = true
     }
+    // An ACP diff has one path and two text buffers. It cannot show a move
+    // destination or distinguish deletion from writing an empty file.
+    const incompleteOperation = call.kind === 'move' || call.kind === 'delete' ||
+      (call.kind === 'execute' && !command?.trim()) || diffs.some(diff => !diff.path.trim())
     const wechatReview: WechatPermissionReview = {
-      ...(omittedArgs || omittedContent || (raw?.cwd !== undefined && typeof raw.cwd !== 'string') ||
+      ...(omittedArgs || omittedContent || incompleteOperation ||
+        (raw?.cwd !== undefined && typeof raw.cwd !== 'string') ||
         (call.locations !== undefined && (!Array.isArray(call.locations) || extra.length !== locations.length)) ? { incomplete: true } : {}),
       ...(rawCwd !== undefined && cwd === undefined ? { cwd: rawCwd } : {}),
     }
@@ -204,7 +209,9 @@ export function acpApprovalDetails(call: Obj, description: string): {
           before: diff.oldText ?? '', after: diff.newText, ...(i ? { path: diff.path } : {}),
         })) }
         : undefined
-    if (!body) return diffs.length || locations.length ? incomplete : fallback
+    // The fallback can be just a title or explanatory text. Approval needs
+    // structured evidence of the operation itself.
+    if (!body) return incomplete
     const note = [body.kind === 'edit' && typeof call.title === 'string' ? call.title : '', ...notes].filter(Boolean).join('\n')
     const details = [
       ...(cwd ? [`Working directory: ${cwd}`] : []),
