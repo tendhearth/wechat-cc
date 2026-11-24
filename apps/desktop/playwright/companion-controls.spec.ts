@@ -219,14 +219,14 @@ test('quiet keeps permission controls usable in a small companion window', async
     pending_permissions: [{ hash: 'test-permission', prompt: '确认这次本地操作', since: '2026-10-29T10:00:00Z', expires_at: '2026-10-30T10:00:00Z' }],
   }) })
   await openCompanion(page, shimUrl)
-  await expect(page.getByRole('button', { name: '允许', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '允许这一步', exact: true })).toBeVisible()
   await toggleSettings(page)
   await page.getByRole('button', { name: '安静一小时' }).click()
   await toggleSettings(page)
   await expect.poll(() => page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('permission')
   await page.getByRole('button', { name: '查看', exact: true }).click()
   await expect(page.locator('.pet-card-prompt')).toHaveText('确认这次本地操作')
-  await expect(page.getByRole('button', { name: '允许', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: '允许这一步', exact: true })).toBeEnabled()
   const positions = await page.locator('#pet-stage, #pet-card, #pet-open-main').evaluateAll(nodes => nodes.map(n => {
     const r = n.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }
   }))

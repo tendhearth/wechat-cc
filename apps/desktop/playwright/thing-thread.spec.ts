@@ -212,7 +212,7 @@ test('拍板卡在输入区前并显示同一请求的意见，允许后消失',
   await expect(input).toBeDisabled()
   await expect(input).toHaveAttribute('placeholder','先定上面这件，它才往下走')
   expect((await card.boundingBox())!.y).toBeLessThan((await input.boundingBox())!.y)
-  await card.getByRole('button',{name:'允许',exact:true}).click()
+  await card.getByRole('button',{name:'允许这一步',exact:true}).click()
   expect(decisions).toEqual([{session_id:'ask',hash:'a1234',decision:'allow'}])
   await expect(card).toBeHidden()
 })
@@ -243,7 +243,7 @@ test('会话卡画出短命令和执行目录，允许提交本次请求',async(
   await expect(card.getByText('看完整原文',{exact:true})).toBeVisible()
   const decision = page.waitForRequest('**/v1/cli/decide')
   await expect(page.locator('#thing-thread .thing-waiting-note')).toBeHidden()
-  await card.getByRole('button',{name:'允许',exact:true}).click()
+  await card.getByRole('button',{name:'允许这一步',exact:true}).click()
   expect((await decision).postDataJSON()).toEqual({session_id:'ask',hash:'a1234',decision:'allow'})
   await expect(card).toBeHidden()
 })
@@ -267,7 +267,7 @@ for (const {label, options} of [
     }
     const card = terminal(page).locator('.thing-waiting')
     await expect(card.locator('.approval-command')).toBeVisible()
-    await expect(card.getByRole('button',{name:'允许',exact:true})).toHaveCount(0)
+    await expect(card.getByRole('button',{name:'允许这一步',exact:true})).toHaveCount(0)
     await expect(card.getByText(needsTerminal,{exact:true})).toBeVisible()
     // 原因写在「不允许」旁边,不用在卡片里滚就看得见。
     await expect(card.locator('.thing-waiting-note')).toHaveText('这里看不全，请到终端里看全再定。')
@@ -280,7 +280,7 @@ for (const {label, options} of [
       await expect(card.locator('.approval-meta').filter({hasText:/^在 /})).toHaveCount(0)
     }
     const decision = page.waitForRequest('**/v1/cli/decide')
-    await card.getByRole('button',{name:'不允许',exact:true}).click()
+    await card.getByRole('button',{name:'先不做',exact:true}).click()
     expect((await decision).postDataJSON()).toEqual({session_id:'ask',hash:'a1234',decision:'deny'})
   })
 }
@@ -297,8 +297,8 @@ test('长会话卡内部滚动，展开前后对话、输入框和拍板按钮�
   const inView = [
     panel.locator('.thing-scroll [data-converse-message="reply"]'),
     panel.locator('textarea'),
-    card.getByRole('button',{name:'允许',exact:true}),
-    card.getByRole('button',{name:'不允许',exact:true}),
+    card.getByRole('button',{name:'允许这一步',exact:true}),
+    card.getByRole('button',{name:'先不做',exact:true}),
   ]
   for (const locator of inView) await expect(locator).toBeInViewport({ratio:1})
   await card.getByText('还有 40 行 · 看全部',{exact:true}).click()
@@ -583,7 +583,7 @@ test('名单恢复活会话后，选中的会话恢复输入和审批', async ({
   await expect(input).toHaveValue('接着整理')
 
   status = 'waiting'
-  for (const name of ['允许','不允许']) {
+  for (const name of ['允许这一步','先不做']) {
     const button = terminal(page).getByRole('button',{name,exact:true})
     await expect(button).toBeVisible({timeout:9000})
     await expect(button).toBeEnabled()

@@ -208,8 +208,8 @@ test('「地方」里终端停着问的行亮点，只有可拍板的请求才�
   // 卡片标题是人话,命令画在下面的命令块里(#1060)。
   await expect(detail.locator('.desk-waiting-question')).toHaveText(/想运行一条命令$/)
   await expect(detail.locator('.thing-waiting-operation')).toContainText('npm publish')
-  await detail.getByRole('button', { name: '允许', exact: true }).click()
-  await expect(detail.getByRole('button', { name: '允许', exact: true })).toHaveCount(0)
+  await detail.getByRole('button', { name: '允许这一步', exact: true }).click()
+  await expect(detail.getByRole('button', { name: '允许这一步', exact: true })).toHaveCount(0)
   expect(decisions).toEqual([allowed])
   await page.locator('#topbar-cc').click()
   await expect(detail).toHaveCount(0)

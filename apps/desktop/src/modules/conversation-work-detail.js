@@ -84,7 +84,7 @@ export async function showWorkDetail(call,detail,mount,onClose){
       for(const node of body.querySelectorAll('[data-terminal-approval]'))node.remove()
       const pending=session?.pending
       if(pending?.actionable){const description=document.createElement('p');description.dataset.terminalApproval='description';description.textContent=[pending.tool,pending.summary].filter(Boolean).join(' · ');body.append(description)}
-      if(pending?.actionable)for(const [label,decision] of /** @type {[string,string][]} */([['允许','allow'],['拒绝','deny']])){
+      if(pending?.actionable)for(const [label,decision] of /** @type {[string,string][]} */([['先不做','deny'],['允许这一步','allow']])){
         const button=document.createElement('button');button.type='button';button.textContent=label;button.dataset.terminalApproval=decision
         button.onclick=async()=>{if(!pending?.actionable)return;button.disabled=true;try{await v1(call,V1.cli.decide,{body:{session_id:sessionId,hash:pending.hash,decision}});for(const node of body.querySelectorAll('[data-terminal-approval]'))node.remove();await refresh()}catch{note.textContent='尚未同步，请重试';button.disabled=false}}
         body.append(button)

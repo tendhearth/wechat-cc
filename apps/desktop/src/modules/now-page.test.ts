@@ -139,6 +139,8 @@ describe('mountNowPage', () => {
     expect(dlg.querySelector('h2')!.textContent).toBe('想运行 npm publish')
     expect(dlg.querySelector('header p')!.textContent).toBe('wechat-cc · Claude Code')
     expect(dlg.querySelector('.approval-command .approval-source')!.textContent).toBe('npm publish')
+    expect([...dlg.querySelectorAll('.now-terminal-actions button')].map(button => button.textContent)).toEqual(['先不做', '允许这一步'])
+    expect(dlg.querySelector('.now-terminal-actions .wb-btn-primary')?.textContent).toBe('允许这一步')
     ;(dlg.querySelector('[data-decision="allow"]') as HTMLButtonElement).click()
     expect(resolve).toHaveBeenCalledWith('k3x9z', 'allow')
     expect(open).not.toHaveBeenCalled()

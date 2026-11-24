@@ -79,7 +79,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
         <div class="thing-waiting-operation"></div>
         <div class="desk-waiting-opinion" hidden></div><div class="desk-waiting-reason" hidden></div>
       </div>
-      <div class="place-ask"><button type="button" class="place-allow" data-place-decision="allow">允许</button><button type="button" data-place-decision="deny">不允许</button><span class="thing-waiting-note" hidden>这里看不全，请到终端里看全再定。</span></div>
+      <div class="place-ask"><button type="button" data-place-decision="deny">先不做</button><button type="button" class="place-allow" data-place-decision="allow">允许这一步</button><span class="thing-waiting-note" hidden>这里看不全，请到终端里看全再定。</span></div>
     </div></div></div>
     <div class="thing-compose-status"><span role="status"></span><button class="desk-text-button" type="button" hidden>停止这一轮</button></div>
     <p class="thing-ended-note" hidden>这次会话已经结束了，只能看。</p>
@@ -162,7 +162,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     }
     const blind = !rendered || rendered.needsFullView
     if (blind) allow.remove()
-    else if (!allow.parentElement) deny.before(allow)
+    else if (!allow.parentElement) deny.after(allow)
     // 「允许」不在时,原因写在按钮旁边:卡片正文会滚,那里的说明不一定看得见。
     fullNote.hidden = !blind
     const ccOpinion = matched ? waiting?.ccOpinion : ''
