@@ -136,7 +136,7 @@ test('全局等待卡片钉在上方、切换地方仍可回答、回答后刷�
   await expect(card).toHaveCSS('border-radius', '14px')
   await expect(card).toHaveCSS('box-shadow', /0px 0px 0px 0\.5px,.*0px 1px 2px 0px/)
   await expect(card.locator('.desk-waiting-question')).toHaveCSS('font-size', '15.5px')
-  await expect(card.locator('.place-allow')).toHaveCSS('background-color', 'rgb(79, 107, 79)')
+  await expect(card.getByRole('button', { name: '允许', exact: true })).toHaveCSS('background-color', 'rgb(79, 107, 79)')
   await expect(page.locator('#desk-waiting .desk-speaker:visible')).toHaveCount(0)
   const deny = card.getByRole('button', { name: '不允许' })
   await expect(deny).toHaveCSS('background-color', 'rgb(255, 254, 251)')
