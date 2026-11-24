@@ -164,7 +164,29 @@
 .wb-queue-guidance { border-left:2px solid var(--th-warn); padding:10px 12px; margin-bottom:18px; color:var(--th-ink-soft); font-size:12px; line-height:1.65; }
 .wb-controls { flex:none; padding:12px var(--wb-gutter) 18px; border-top:1px solid var(--wb-line); background:var(--wb-surface); }
 .wb-controls>* { width:min(780px,100%); margin-right:auto; margin-left:auto; }
-.wb-permissions { max-height:min(32vh,300px); overflow:auto; margin-bottom:10px; border:1px solid var(--th-hair); border-radius:9px; padding:12px 14px; background:var(--th-paper); }
+/* While a decision is pending, the conversation leaves the rest of the pane to the controls.
+   Inside the controls, only the request list grows. The composer keeps its intrinsic height. */
+.wb-main:has(.wb-permissions)>.wb-content {
+  flex:0 0 clamp(24px,calc(24vh - 88px),120px);
+  box-sizing:border-box;
+  padding-bottom:0;
+}
+.wb-controls:has(.wb-permissions) { display:flex; flex:1; flex-direction:column; min-height:0; max-height:none; }
+.wb-controls:has(.wb-permissions)>.wb-controls-inner { display:flex; flex:1; flex-direction:column; min-height:0; }
+.wb-controls-inner:has(.wb-permissions)>* { flex:none; }
+.wb-controls-inner:has(.wb-permissions)>.wb-questions { flex:0 1 auto; min-height:0; max-height:min(34vh,360px,30%); }
+.wb-controls-inner>.wb-permissions {
+  flex:1 0 64px;
+  box-sizing:border-box;
+  overflow:auto;
+  scroll-padding-bottom:48px;
+  isolation:isolate;
+  margin-bottom:10px;
+  border:1px solid var(--th-hair);
+  border-radius:9px;
+  padding:12px 14px;
+  background:var(--th-paper);
+}
 .wb-permissions>header { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--th-ink-soft); }
 .wb-permissions h3 { margin:0; font-size:12px; font-weight:500; }
 .wb-permissions>header>span { font-size:11px; }
@@ -189,7 +211,8 @@
 .approval-disclosure>.approval-source { color:var(--th-ink); }
 .wb-permission time { color:var(--wb-muted); font-size:10px; }
 .wb-permission-actions,.wb-control-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
-.wb-permission-actions { margin-top:9px; flex-wrap:wrap; }
+/* Each footer stops at its own article, so an earlier request scrolls away with its buttons. */
+.wb-permission-actions { position:sticky; bottom:0; z-index:1; margin-top:9px; padding-block:4px; flex-wrap:wrap; background:var(--th-paper); }
 .wb-permission label { display:block; margin-top:8px; font-size:12px; color:var(--th-ink-soft); }
 .wb-permission textarea { box-sizing:border-box; width:100%; min-height:48px; resize:vertical; font:inherit; color:var(--th-ink); background:transparent; border:0; border-bottom:1px solid var(--th-hair); }
 .wb-permission-script pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 var(--mono); }
@@ -442,7 +465,6 @@
   .wb-main { flex:1; }
   .wb-task-head { padding-top:12px; padding-bottom:12px; }
   .wb-welcome { padding-top:28px; }
-  .wb-permissions { max-height:25vh; }
 }
 
 /* History is a temporary reader, not another permanent work column. */
