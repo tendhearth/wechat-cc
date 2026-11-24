@@ -59,6 +59,18 @@ describe('run-bound Workbench permissions', () => {
     await expect(answer).resolves.toBe(false)
   })
 
+  it('keeps a verified MCP target alongside the unchanged operation preview', async () => {
+    const permissions = makeRunPermissions({ taskId: 'sample' })
+    const tool = 'mcp__team__prod__lookup__all'
+    const mcp = { server: 'team__prod', tool: 'lookup__all' }
+    const display = { body: { kind: 'fields' as const, fields: [{ name: 'query', value: 'sample' }] } }
+    const answer = permissions.request({ tool, description: 'sample lookup', display, mcp })
+    const card = MatterPermission.parse(permissions.pending()[0])
+    expect(card).toMatchObject({ tool, display, mcp })
+    permissions.resolve(card.id, 'deny')
+    await expect(answer).resolves.toBe(false)
+  })
+
   it('denies and removes requests on SDK abort', async () => {
     const controller = new AbortController()
     const permissions = makeRunPermissions({ taskId: 'deadbeef', timeoutMs: 1000 })

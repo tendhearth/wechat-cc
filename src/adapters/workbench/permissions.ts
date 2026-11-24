@@ -1,4 +1,4 @@
-import { PERMISSION_SNAPSHOT_NOTICE, PermissionDisplaySchema, permissionCwd } from '@wechat-cc/protocol'
+import { PERMISSION_SNAPSHOT_NOTICE, PermissionDisplaySchema, permissionCwd, permissionMcpTargetWire } from '@wechat-cc/protocol'
 import { randomUUID } from 'node:crypto'
 import { authorize, type AuthSubject } from '../../domain/authorize'
 import { TIER_PROFILES } from '../../domain/user-tier'
@@ -139,6 +139,7 @@ export function makeRunPermissions(opts: {
     const { tool, description = '' } = facts
     const { onDenied } = raw
     const display = PermissionDisplaySchema.safeParse(raw.display).data
+    const mcp = permissionMcpTargetWire.safeParse(raw.mcp).data
     // The caller passes the directory used to spawn this run. The project root is not a fallback.
     const cwd = permissionCwd(raw.displayCwd ?? raw.cwd ?? runCwd)
     const proposedReview = raw.reviewDescription ?? raw.description
@@ -153,6 +154,7 @@ export function makeRunPermissions(opts: {
       description: withSnapshot(review),
       createdAt: Date.now(),
       ...(display ? { display } : {}),
+      ...(mcp ? { mcp } : {}),
       ...(cwd ? { cwd } : {}),
       ...(showSnapshotNotice ? { showSnapshotNotice } : {}),
       ...(onDenied ? { canDenyWithReason: true } : {}),

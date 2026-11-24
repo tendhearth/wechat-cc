@@ -122,7 +122,7 @@ describe('ACP workbench provider', () => {
     const next=child.sent.filter(m=>m.method==='session/prompt')[1]!
     expect(next.params.sessionId).toBe('sess-1')
     expect(next.params.prompt[0].text).toContain('不要访问其他机器')
-    expect(next.params.prompt[0].text.includes('uname -a')).toBe(false)
+    expect(next.params.prompt[0].text).toContain('uname -a')
     expect(run.events.some(e=>e.kind==='result'||e.kind==='error')).toBe(false)
     child.finishPrompt();await run.done
     expect(run.events.filter(e=>e.kind==='result')).toHaveLength(1)

@@ -37,32 +37,35 @@ export function isPermissionCardQuote(quoted: string): boolean {
 }
 
 const workbenchMarkerLine = /^〔请求 ([a-f0-9]{16})〕$/
-const workbenchHeader = /(?: · |^任务 )[a-f0-9]{8}$/
+const workbenchHeader = /(?: · |^任务 )([a-f0-9]{8})$/
 const workbenchCommandBoundary = /^(?:〔命令开始〕|〔命令结束〕)$/
 const workbenchCommandLine = /^│(?: .*|$)$/
-const workbenchReminderLookup = /^查看：任务 [a-f0-9]{8} 权限 [a-f0-9-]{36}$/
-const genericWorkbenchQuote = '（引用了一张待批卡）'
+const workbenchReplyLine = /^(?:回「y [0-9]{2}」允许这一步、「n [0-9]{2}」拒绝。|(?:这条在微信里看不全，到电脑或手机上看全再定；)?回「n [0-9]{2}」拒绝。)/
+const workbenchQuoteSummary = /^（引用了一张待批卡(?: · [a-f0-9]{8})?(?: · 〔请求 [a-f0-9]{16}〕)?）$/
+
+interface WorkbenchQuote { marker?: string; taskId?: string }
 
 /** Recognize fragments for privacy. Only an in-position marker can bind a decision. */
-export function classifyWorkbenchQuote(text: string): { marker?: string } | null {
+export function classifyWorkbenchQuote(text: string): WorkbenchQuote | null {
   const lines = text.split(/\r?\n/)
   const marker = workbenchMarkerLine.exec(lines[1] ?? '')?.[1]
   const markerElsewhere = lines.some((line, i) => i !== 1 && workbenchMarkerLine.test(line.trim()))
   const visibleLines = lines.map(line => line.trim()).filter(Boolean)
-  if (marker && !markerElsewhere) return { marker }
+  const taskId = workbenchHeader.exec(lines[0]?.trim() ?? '')?.[1]
+  if (marker && !markerElsewhere) return { marker, taskId }
   if (visibleLines.length === 0) return null
-  if (markerElsewhere || workbenchHeader.test(visibleLines[0]!) ||
-      visibleLines.some(line => workbenchMarkerLine.test(line) || workbenchCommandBoundary.test(line) || workbenchReminderLookup.test(line)) ||
-      visibleLines.every(line => workbenchCommandLine.test(line))) return {}
+  if (markerElsewhere ||
+      visibleLines.some(line => workbenchMarkerLine.test(line) || workbenchCommandBoundary.test(line) || workbenchReplyLine.test(line)) ||
+      visibleLines.every(line => workbenchCommandLine.test(line))) return { taskId }
   return null
 }
 
-export function summarizedWorkbenchQuote(marker?: string): string {
-  return marker ? `（引用了一张待批卡 · 〔请求 ${marker}〕）` : genericWorkbenchQuote
+export function summarizedWorkbenchQuote({ marker, taskId }: WorkbenchQuote): string {
+  return `（引用了一张待批卡${taskId ? ` · ${taskId}` : ''}${marker ? ` · 〔请求 ${marker}〕` : ''}）`
 }
 
 export function isSummarizedWorkbenchQuote(text: string): boolean {
-  return text === genericWorkbenchQuote || /^（引用了一张待批卡 · 〔请求 [a-f0-9]{16}〕）$/.test(text)
+  return workbenchQuoteSummary.test(text)
 }
 
 export class PendingPermissions {
@@ -156,7 +159,7 @@ export class PendingPermissions {
     return expiresAt !== null && Date.now() >= expiresAt
   }
 
-  /** Even a full code or an old matching title cannot substitute for a request marker. */
+  // 主动提醒的回码与引用绑定见 docs/maintainer/task-permissions.md#微信主动提醒。
   matchWorkbenchQuote(quoted: string): { kind: 'matched'; hash: string } | { kind: 'altered'; hash?: string } | { kind: 'stale' } | null {
     const classification = classifyWorkbenchQuote(quoted)
     if (!classification) return null

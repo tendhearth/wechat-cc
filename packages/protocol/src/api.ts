@@ -1,4 +1,4 @@
-import { permissionCwdWire, permissionDisplayWire } from './permission-display'
+import { permissionCwdWire, permissionDisplayWire, permissionMcpTargetWire } from './permission-display'
 import { RosterResponse } from './roster'
 import { PlacesResponse, PlaceWriteResponse } from './places'
 import { OptionalReplyMetadata } from './reply-attribution'
@@ -196,7 +196,7 @@ export const PermissionScript = z.object({ path: z.string(), content: z.string()
 export const PermissionScriptChunk = z.object({ content: z.string(), nextOffset: z.number().nullable() })
 export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
-  display: permissionDisplayWire, cwd: permissionCwdWire,
+  display: permissionDisplayWire, cwd: permissionCwdWire, mcp: permissionMcpTargetWire,
   showSnapshotNotice: z.boolean().optional(),
   canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
 })

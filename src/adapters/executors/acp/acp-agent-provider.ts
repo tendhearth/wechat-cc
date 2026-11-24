@@ -347,7 +347,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             permissions.set(key, entry)
             let feedback: string | undefined
             void Promise.resolve().then(() => context.requestPermission ? context.requestPermission({ tool, ...acpApprovalDetails(toolCall, description), ...acpRuleFacts(toolCall, true), onDenied: reason => {
-              if (reason) { feedback = permissionDenialMessage(undefined, reason); (turn.denialFeedback ??= []).push(feedback) }
+              if (reason) { feedback = permissionDenialMessage(description, reason); (turn.denialFeedback ??= []).push(feedback) }
             } }, controller.signal) : false)
               .catch(() => false)
               .then(allow => {

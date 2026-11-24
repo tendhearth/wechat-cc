@@ -1,4 +1,4 @@
-import { PermissionDisplaySchema, permissionDisplay, type PermissionDisplay } from './permission-display'
+import { PermissionDisplaySchema, permissionDisplay, type PermissionDisplay, type PermissionMcpTarget } from './permission-display'
 
 export function resolvePermissionDisplay(tool: string, description: string, display: unknown, executor?: string) {
   const format = executor === undefined ? 'hook' : executor === 'claude' ? 'claude' : executor === 'openai' ? 'api' : 'text'
@@ -121,8 +121,12 @@ export function permissionPatchLabel(change: string, destination?: string): stri
   }
 }
 
+export function permissionToolTarget(tool: string, mcp?: PermissionMcpTarget) {
+  return { tool: mcp?.tool ?? tool, service: mcp?.server }
+}
+
 /** Chinese approval copy follows the App's approval.actor messages. */
-export function permissionActionZh(body: PermissionDisplay['body'], tool: string, actor: string): string {
+export function permissionActionZh(body: PermissionDisplay['body'], tool: string, actor: string, mcp?: PermissionMcpTarget): string {
   const who = actor ? `${actor} ` : ''
   switch (body.kind) {
     case 'command': return `${who}想运行一条命令`
@@ -133,8 +137,8 @@ export function permissionActionZh(body: PermissionDisplay['body'], tool: string
     case 'query': return `${who}想上网搜一下`
     case 'fields':
     case 'text': {
-      const mcp = /^mcp__(.+?)__(.+)$/.exec(tool)
-      return mcp ? `${who}想用 ${mcp[1]} 的「${mcp[2]}」` : `${who}想用「${tool}」`
+      const target = permissionToolTarget(tool, mcp)
+      return target.service ? `${who}想用 ${target.service} 的「${target.tool}」` : `${who}想用「${target.tool}」`
     }
   }
 }

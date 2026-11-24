@@ -37,6 +37,7 @@ import { EXPIRED_NOTIFY_TEXT, expiredNoticeRecipients } from './ilink/expired-no
 import type { SentMedia } from './companion/media-mirror'
 import { currentReplyAttribution } from '../lib/reply-attribution'
 import { unprefixedReplyText } from '../lib/reply-presentation'
+import { scopedSend } from './inbound/reply-scope'
 
 /**
  * Monotonic counter to keep same-millisecond outbound IDs unique. Module
@@ -162,9 +163,10 @@ export function makeIlinkAdapter(opts: {
     const approver = pending.approverOf(hash)
     return approver === null || approver === chatId
   }
+  const sendPermissionFeedback = scopedSend((chatId: string, message: string) => adapter.sendMessage(chatId, message))
   const permissionFeedback = (chatId: string | undefined, message: string): boolean => {
     if (!chatId) return false
-    void adapter.sendMessage(chatId, message).catch(() => {})
+    void sendPermissionFeedback(chatId, message).catch(() => {})
     return true
   }
   const badQuote = '引用的权限提示不完整或不匹配，请重新查阅后再回复。'

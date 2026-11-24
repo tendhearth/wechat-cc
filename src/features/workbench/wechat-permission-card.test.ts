@@ -216,3 +216,15 @@ it('does not let a digest-only API write or redacted MCP input stand in for the 
     expect(card.text.includes('回「n 08」拒绝。') && !card.text.includes('回「y 08」')).toBe(true)
   }
 })
+
+it.each(['claude', 'codex'])('uses the structured MCP target and requires it for %s approval', provider => {
+  const tool = 'mcp__team__prod__lookup__all'
+  const body: PermissionDisplay['body'] = { kind: 'fields', fields: [{ name: 'query', value: 'example' }] }
+  const complete = render(body, { tool, mcp: { server: 'team__prod', tool: 'lookup__all' } }, provider)
+  expect(complete.text).toContain('想用 team__prod 的「lookup__all」')
+  expect(complete.complete).toBe(true)
+  const ambiguous = render(body, { tool }, provider)
+  expect(ambiguous.text).toContain(`想用「${tool}」`)
+  expect(ambiguous.complete).toBe(false)
+  expect(ambiguous.text).not.toContain('回「y 08」')
+})

@@ -305,7 +305,7 @@ describe('workbench Codex app-server', () => {
     await expect.poll(() => permit.mock.calls.length).toBe(1)
     expect(child.sent.some(m => m.id === 0)).toBe(false)
     const request = permit.mock.calls[0]![0]
-    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me'), display: { body: { kind: 'fields', fields: [{ name: 'note', value: 'review me' }, { name: 'api_key', value: '[credential omitted]' }] }, note: 'Run external tool?', extra: [{ name: 'MCP server', value: 'external' }, { name: 'MCP tool', value: 'create_note' }] }, wechatReview: { incomplete: true }, onDenied: expect.any(Function) })
+    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me'), mcp: { server: 'external', tool: 'create_note' }, display: { body: { kind: 'fields', fields: [{ name: 'note', value: 'review me' }, { name: 'api_key', value: '[credential omitted]' }] }, note: 'Run external tool?', extra: [{ name: 'MCP server', value: 'external' }, { name: 'MCP tool', value: 'create_note' }] }, wechatReview: { incomplete: true }, onDenied: expect.any(Function) })
     expect(JSON.stringify(request)).not.toContain('credential-value')
     decide(allowed)
     await expect.poll(() => child.sent.find(m => m.id === 0)?.result).toEqual({ action: allowed ? 'accept' : 'decline', content: null, _meta: null })
@@ -337,6 +337,25 @@ describe('workbench Codex app-server', () => {
     })
     await expect.poll(() => permit.mock.calls.length).toBe(1)
     expect(permit.mock.calls[0]?.[0].wechatReview?.incomplete === true).toBe(incomplete)
+    await expect.poll(() => child.sent.find(m => m.id === 0)?.result?.action).toBe('decline')
+    completed(child); await run.done
+  })
+
+  it('keeps Codex native MCP service and tool names with overlapping prefixes', async () => {
+    const server = 'team__prod', tool = 'lookup__all', args = { query: 'fixture' }
+    discovery = JSON.stringify([{ name: 'team', enabled: true }, { name: server, enabled: true }])
+    nativeConfig = { mcp_servers: {
+      team: { command: '/tools/team', tools: { prod__lookup__all: { approval_mode: 'approve' } } },
+      [server]: { command: '/tools/external', tools: { [tool]: { approval_mode: 'approve' } } },
+    } }
+    const permit = vi.fn(async (_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => false)
+    const { session, child } = await start({ requestPermission: permit })
+    const run = collect(session); await begun(child)
+    mcpItem(child, { server, tool, arguments: args })
+    mcpRequest(child, 0, { serverName: server, _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: tool, tool_params: args } })
+    await expect.poll(() => permit.mock.calls.length).toBe(1)
+    expect(permit.mock.calls[0]?.[0].mcp).toEqual({ server, tool })
+    expect(permit.mock.calls[0]?.[0].wechatReview?.incomplete).toBeUndefined()
     await expect.poll(() => child.sent.find(m => m.id === 0)?.result?.action).toBe('decline')
     completed(child); await run.done
   })
@@ -780,7 +799,7 @@ describe('workbench Codex app-server', () => {
     await begun(child, 2)
     const next = child.sent.filter(m => m.method === 'turn/start')[1]!
     expect(next.params.threadId).toBe('thread-1')
-    expect(next.params.input[0].text.includes('ssh other-host test')).toBe(false)
+    expect(next.params.input[0].text).toContain('ssh other-host test')
     expect(next.params.input[0].text).toContain('只在本机验证，不要 SSH')
     expect(run.events.some(e => e.kind === 'error' || e.kind === 'result')).toBe(false)
     child.notify('thread/tokenUsage/updated',{threadId:'thread-1',turnId:'turn-2',tokenUsage:{last:{inputTokens:20,outputTokens:3}}})
@@ -1324,7 +1343,7 @@ describe('Codex retained workbench runtime', () => {
     const next=run.child.sent.filter(m=>m.method==='turn/start')[1]!
     expect(next.params.threadId).toBe('thread-1')
     expect(next.params.input[0].text).toContain('不要 SSH')
-    expect(next.params.input[0].text.includes('ssh other-host')).toBe(false)
+    expect(next.params.input[0].text).toContain('ssh other-host')
     expect(next.params.input[0].text).toContain('child-1')
     expect(run.child.sent.filter(m=>m.method==='turn/start')).toHaveLength(2)
     expect(run.events.some(e=>e.kind==='error')).toBe(false)

@@ -59,12 +59,12 @@ export function renderWechatPermissionCard(
     (body.kind === 'edit' && body.changes.some(change => !permissionCwd(change.path ?? body.path))) ||
     (body.kind !== 'edit' && pathTools.has(tool))
   const cwd = permissionCwd(permission.cwd)
-  const securityText = [...textValues(display), source?.argumentJson ?? '', title, permission.tool, permission.cwd ?? '', source?.cwd ?? '', source?.command ?? '',
+  const securityText = [...textValues(display), ...textValues(permission.mcp), source?.argumentJson ?? '', title, permission.tool, permission.cwd ?? '', source?.cwd ?? '', source?.command ?? '',
     ...(!suppliedDisplay ? [raw] : [])].join('\n')
   const invisible = hasInvisiblePermissionText(securityText)
   const opaqueCommand = commandRequest && (body.kind === 'text' || body.kind === 'fields')
   const commandShown = !commandRequest || body.kind === 'command' || (opaqueCommand && source?.command !== undefined)
-  let complete = !source?.incomplete && !display.truncated && !permission.scripts?.length &&
+  let complete = (!tool.startsWith('mcp__') || !!permission.mcp) && !source?.incomplete && !display.truncated && !permission.scripts?.length &&
     (suppliedDisplay === undefined || PermissionDisplaySchema.safeParse(suppliedDisplay).success) &&
     !invisible && !hasUnpairedSurrogate(securityText) && !hasControlCopy(securityText) && (!needsCwd || !!cwd) && commandShown
 
@@ -73,7 +73,7 @@ export function renderWechatPermissionCard(
   const actor = providerDisplayName(provider)
   const action = oneLine(visible(opaqueCommand
     ? permissionActionZh({ kind: 'command', command: '' }, '', actor)
-    : permissionActionZh(body, permission.tool, actor)))
+    : permissionActionZh(body, permission.tool, actor, permission.mcp)))
   const historyText = `待批：${commandRequest ? '运行命令' : '工具操作'} · ${header[1]}`
   const lines = [`${action}：`]
   // Encode every string value as a JSON string. In particular, literal

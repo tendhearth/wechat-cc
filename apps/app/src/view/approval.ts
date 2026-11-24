@@ -1,4 +1,4 @@
-import { permissionCwd, PermissionDisplaySchema, permissionDisplay, PHONE_ANSWER_MAX_JSON, type PermissionDisplay } from '@wechat-cc/protocol'
+import { permissionCwd, PermissionDisplaySchema, permissionDisplay, permissionToolTarget, PHONE_ANSWER_MAX_JSON, type PermissionDisplay, type PermissionMcpTarget } from '@wechat-cc/protocol'
 import { labelJoin, t, type Lang } from '../i18n'
 import type { MatterDetailT, ApprovalExplanationT } from '../backend/types'
 import { directHeaderView } from './direct-header'
@@ -9,7 +9,7 @@ export type ApprovalView =
   | { kind: 'question'; requestId: string; runId: string
       items: Array<{ id: string; header: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean; allowOther: boolean }> }
   | { kind: 'card'; requestId: string; runId: string; title: string; what: string; scope: string; effect: string
-      tool: string; display: PermissionDisplay; rawFull: string; projectPath: string; cwd?: string; executor: string; executorName: string
+      tool: string; display: PermissionDisplay; mcp?: PermissionMcpTarget; rawFull: string; projectPath: string; cwd?: string; executor: string; executorName: string
       canAllowTask?: boolean; canDenyWithReason: boolean; showSnapshotNotice?: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
 
 const firstLine = (s: string, max: number) => (s.replace(/\r\n?/g, '\n').split('\n', 1)[0] ?? '').slice(0, max)
@@ -33,7 +33,7 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
     const projectPath = detail.task?.path || detail.matter.projectPath || ''
     const model = ex?.source === 'model' ? ex : undefined
     return {
-      kind: 'card', requestId: p.id, runId, tool: p.tool, display, projectPath, ...(cwd ? { cwd } : {}), executor, executorName,
+      kind: 'card', requestId: p.id, runId, tool: p.tool, display, ...(p.mcp ? { mcp: p.mcp } : {}), projectPath, ...(cwd ? { cwd } : {}), executor, executorName,
       title: model?.title.trim() || '', what: model?.what ?? '', scope: model?.scope ?? '', effect: model?.effect ?? '',
       rawFull: p.description,
       ...(p.showSnapshotNotice ? { showSnapshotNotice: true } : {}),
@@ -59,10 +59,10 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
 
 type Body = PermissionDisplay['body']
 
-export function permissionAction(body: Body | undefined, tool: string, actor: string, lang: Lang) {
+export function permissionAction(body: Body | undefined, tool: string, actor: string, lang: Lang, mcp?: PermissionMcpTarget) {
   if (!body || body.kind === 'fields' || body.kind === 'text') {
-    const mcp = /^mcp__(.+?)__(.+)$/.exec(tool)
-    return t(lang, mcp ? 'approval.actor.mcp' : 'approval.actor.tool', { actor, service: mcp?.[1] ?? '', tool: mcp?.[2] ?? tool })
+    const target = permissionToolTarget(tool, mcp)
+    return t(lang, target.service ? 'approval.actor.mcp' : 'approval.actor.tool', { actor, tool: target.tool, service: target.service ?? '' })
   }
   return t(lang, body.kind === 'edit' && body.changes.length > 1 ? 'approval.actor.multiEdit'
     : body.kind === 'patch' && body.files.length === 1 ? 'approval.actor.patchOne' : `approval.actor.${body.kind}`,
@@ -71,7 +71,7 @@ export function permissionAction(body: Body | undefined, tool: string, actor: st
 
 export function approvalHeading(v: Extract<ApprovalView, { kind: 'card' }>, lang: Lang) {
   const body = v.display.body
-  const action = permissionAction(body, v.tool, v.executorName || t(lang, 'approval.executor'), lang)
+  const action = permissionAction(body, v.tool, v.executorName || t(lang, 'approval.executor'), lang, v.mcp)
   const title = v.title || t(lang, body.kind === 'fields' || body.kind === 'text' ? 'approval.ask.tool'
     : body.kind === 'patch' && body.files.length === 1 ? 'approval.ask.edit' : `approval.ask.${body.kind}`)
   return { action, title }

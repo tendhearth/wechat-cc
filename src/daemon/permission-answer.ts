@@ -22,7 +22,7 @@ export function makePermissionAnswer(deps: {
       consumed = deps.ilink.handlePermissionReply(m.text ?? '', m.chatId, quoted)
     } finally {
       // The poll fast lane runs before ordinary routing, prompts and history.
-      if (card) m.quote = { type: 'text', text: summarizedWorkbenchQuote(card.marker) }
+      if (card) m.quote = { type: 'text', text: summarizedWorkbenchQuote(card) }
     }
     if (!consumed) return false
     deps.log('PERMISSION', `consumed reply from chat=${m.chatId}`)

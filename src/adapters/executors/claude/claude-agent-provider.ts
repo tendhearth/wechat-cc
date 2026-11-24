@@ -173,11 +173,13 @@ export function makeWorkbenchClaudeCanUseTool(
           ? `${note}\n${description}` : undefined
         const { input: previewInput, incomplete: redacted } = toolApprovalInput(input)
         const display = toolPermissionDisplay(toolName, previewInput, reviewDescription ? note : undefined)
-        const wechatReview = !display || servers.length !== 1 || incompleteReason || (note && !reviewDescription) || redacted
+        const server = servers.length === 1 ? servers[0] : undefined
+        const mcp = server ? { server, tool: toolName.slice(`mcp__${server}__`.length) } : undefined
+        const wechatReview = !display || !mcp || incompleteReason || (note && !reviewDescription) || redacted
           ? { incomplete: true as const } : toolArgumentEvidence(input)
-        const allowed = await requestPermission({tool:toolName,description,...(display ? { display } : {}),
+        const allowed = await requestPermission({tool:toolName,description,...(display ? { display } : {}), ...(mcp ? { mcp } : {}),
           ...(Object.keys(wechatReview).length ? { wechatReview } : {}),
-          ...(display && reviewDescription ? { reviewDescription } : {}),onDenied:reason=>{feedback=permissionDenialMessage(undefined,reason)}}, options.signal)
+          ...(display && reviewDescription ? { reviewDescription } : {}),onDenied:reason=>{feedback=permissionDenialMessage(description,reason)}}, options.signal)
         return allowed && !options.signal.aborted ? {behavior:'allow'} : feedback ? {behavior:'deny',message:feedback} : denied
       } catch { return denied }
     }
@@ -218,7 +220,7 @@ export function makeWorkbenchClaudeCanUseTool(
           ...(incompleteReason || !display || (hasCommandExtras && !wechatDisplay) ? { incomplete: true as const } : {}),
         } } : {}),
         ...(cwd ? { displayCwd: cwd, reviewDescription: `${description}\nWorking directory: ${cwd}` } : {}),
-        onDenied: reason => { feedback = permissionDenialMessage(undefined, reason) },
+        onDenied: reason => { feedback = permissionDenialMessage(`${toolName}\n${description}`, reason) },
         ...(facts.command ? { command: facts.command } : {}),
         ...(facts.paths.length ? { paths: facts.paths } : {}),
       }, options.signal)

@@ -1392,10 +1392,14 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const questions = [...approvalFollowUps.keys()]
     const askAboutQuote = async (index: number, quote: string, marker: string | null = markerLine) => {
       const question = questions[index]!
-      d.sendText(d.owner, question, { quote })
+      // Exercise ordinary chat too. The quoted task is absent from the task resolver.
+      const missingTask = asking === '01234567' ? '89abcdef' : '01234567'
+      const hasTaskHeader = quote.split('\n')[0]?.endsWith(` · ${asking}`)
+      const chatQuote = hasTaskHeader ? quote.replace(` · ${asking}\n`, ` · ${missingTask}\n`) : quote
+      d.sendText(d.owner, question, { quote: chatQuote })
       await expect.poll(() => Boolean(approvalFollowUps.get(question)), { timeout: 15_000 }).toBe(true)
       const prompt = approvalFollowUps.get(question)!
-      const summary = marker ? '（引用了一张待批卡 · ' + marker + '）' : '（引用了一张待批卡）'
+      const summary = `（引用了一张待批卡${hasTaskHeader ? ` · ${missingTask}` : ''}${marker ? ` · ${marker}` : ''}）`
       expect(prompt.includes('<quote type="text">' + summary + '</quote>')).toBe(true)
       for (const evidence of ['rm -rf build', privateApprovalEvidence, injectedCommand]) {
         expect(prompt.includes(evidence)).toBe(false)
@@ -1477,6 +1481,12 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       expect((await desktop('POST', '/v1/workbench/cancel', { id })).status).toBe(202)
       await expect.poll(async () => (await desktop<{ runId?: string }>('GET', `/v1/workbench/task?id=${id}`)).body.runId).toBeUndefined()
     }
+    const statusText = await outbound(() => d.sendText(d.owner, `任务 ${asking}`),
+      text => text.split('\n')[0]?.endsWith(` · ${asking}`) === true && text.includes('查看结果：'))
+    for (const quote of [statusText, completeText, completeText.split('\n').slice(0, 2).join('\n')]) {
+      await outbound(() => d.sendText(d.owner, '看看', { quote }),
+        reply => reply.includes(` · ${asking}\n`) && reply.includes('查看结果：'))
+    }
     await cancel(asking)
     await cancel(taskId)
 
@@ -1513,6 +1523,25 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       expect(decisions.has(longApprovalCommand)).toBe(false)
       expect((await queued(long.id))?.hash).toBe(long.card.hash)
     }
+    const beforeAppFeedback = texts(d.ilink.outbox(), d.owner).filter(text => text === WECHAT_PERMISSION_INCOMPLETE).length
+    const codeReply = `y ${long.card.code}`
+    const desktopFeedback = await desktop<{ reply: string }>('POST', '/v1/matter/say', {
+      ...desktopRequest, requestId: 'b6419095-70fa-41f3-bdbb-578f233fa00f', text: codeReply,
+    })
+    expect(desktopFeedback).toEqual({ status: 200, body: { kind: 'chat', reply: WECHAT_PERMISSION_INCOMPLETE } })
+    const phoneFeedback = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    const feedbackId = 'b6419095-70fa-41f3-bdbb-578f233fa010'
+    try {
+      const accepted = await phoneFeedback.request({
+        method: 'POST', path: '/v1/matter/owner-chat/say', body: JSON.stringify({ requestId: feedbackId, text: codeReply }),
+      })
+      expect(accepted.status).toBe(200)
+      await expect.poll(() => d.query('SELECT status, reply FROM matter_say_receipts WHERE request_id = ?', feedbackId))
+        .toEqual([{ status: 'replied', reply: WECHAT_PERMISSION_INCOMPLETE }])
+    } finally { phoneFeedback.close() }
+    expect(texts(d.ilink.outbox(), d.owner).filter(text => text === WECHAT_PERMISSION_INCOMPLETE)).toHaveLength(beforeAppFeedback)
+    expect(decisions.has(longApprovalCommand)).toBe(false)
+    expect((await queued(long.id))?.hash).toBe(long.card.hash)
     d.sendText(d.owner, `n ${long.card.code}`, { quote: long.notice })
     await expect.poll(() => decisions.get(longApprovalCommand)).toBe('decline')
     expect(await queued(long.id)).toBeUndefined()

@@ -21,13 +21,12 @@ it.each(['Bash','mcp__catalog__lookup'])('owner rejection reaches %s as model-vi
   const gate=makeWorkbenchClaudeCanUseTool(async request=>{request.onDenied?.('不要 SSH');return false},undefined,['catalog'],['catalog'])
   const result=await gate(tool,{command:'rm build'}, {signal:new AbortController().signal} as never)
   expect(result).toEqual({behavior:'deny',message:expect.stringContaining('拒绝理由：不要 SSH')})
-  expect(result.behavior === 'deny' && !result.message.includes('rm build')).toBe(true)
   expect(result).not.toHaveProperty('interrupt')
 })
 
 type Permit = 'missing' | 'yes' | 'no' | 'throws'
 function setup(o: { permit?: Permit; admitted?: string[]; registered?: string[] | null; questions?: boolean | 'null' | 'throws' } = {}) {
-  const requests: unknown[] = []
+  const requests: Parameters<NonNullable<SpawnContext['requestPermission']>>[0][] = []
   const questions: unknown[] = []
   const permit = o.permit ?? 'yes'
   const rp: SpawnContext['requestPermission'] = permit === 'missing' ? undefined : async (req) => {
@@ -162,14 +161,20 @@ describe('MCP:放进来的才问,问的是「工具名 + 去掉凭据的参数�
   it.each(ROWS)('%s 放进来 %j 问的通道 %s', async (tool, admitted, permit, want, asked) => {
     const g = setup({ admitted, permit })
     expect(await g.call(tool, { query: 'x', api_key: 'secret' })).toEqual(want)
+    const server = admitted.find(name => tool.startsWith(`mcp__${name}__`))
     expect(g.requests).toEqual(asked ? [{ tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x","api_key":"[credential omitted]"}`, wechatReview: { incomplete: true },
-      display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }, { name: 'api_key', value: '[credential omitted]' }] } } }] : [])
+      mcp: { server, tool: tool.slice(`mcp__${server}__`.length) }, display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }, { name: 'api_key', value: '[credential omitted]' }] } } }] : [])
   })
 
-  it('treats two matching native MCP server prefixes as incomplete evidence', async () => {
-    const g = setup({ admitted: ['catalog', 'catalog__nested'] })
-    expect(await g.call('mcp__catalog__nested__lookup', { note: 'example' })).toEqual(ALLOW)
-    expect(g.requests[0]).toMatchObject({ wechatReview: { incomplete: true } })
+  it.each([
+    [['team__prod'], { server: 'team__prod', tool: 'lookup__all' }, false],
+    [['team', 'team__prod'], undefined, true],
+    [['team__prod', 'team'], undefined, true],
+  ] as const)('carries a target only for a unique native MCP prefix from %j', async (admitted, target, incomplete) => {
+    const g = setup({ admitted: [...admitted] })
+    expect(await g.call('mcp__team__prod__lookup__all', { query: 'example' })).toEqual(ALLOW)
+    expect(g.requests[0]?.mcp).toEqual(target)
+    expect(g.requests[0]?.wechatReview?.incomplete === true).toBe(incomplete)
   })
 
   it('短参数能展示但 MCP 原因放不下时，微信审批不完整', async () => {
@@ -178,7 +183,7 @@ describe('MCP:放进来的才问,问的是「工具名 + 去掉凭据的参数�
     expect(await g.call(tool, { query: 'x' }, { decisionReason: '说明'.repeat(10_000) })).toEqual(ALLOW)
     expect(g.requests).toEqual([{
       tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x"}`,
-      display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }] } },
+      mcp: { server: 'catalog', tool: 'lookup' }, display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }] } },
       wechatReview: { incomplete: true },
     }])
   })

@@ -666,7 +666,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           return
         }
         let feedback: string | undefined
-        const onDenied = (reason: string) => { feedback = permissionDenialMessage(undefined, reason); (turn.denialFeedback ??= []).push(feedback) }
+        const onDenied = (reason: string) => { feedback = permissionDenialMessage(description, reason); (turn.denialFeedback ??= []).push(feedback) }
         const ask = chat ? chat.approve : context.requestPermission
         const display = chat ? undefined : codexApprovalDisplay(file, params, item, command, scope)
         const cwd = chat ? undefined : permissionCwd(params.cwd)
@@ -776,9 +776,9 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           preview?.incomplete
         const wechatReview = incomplete ? { incomplete: true as const } : toolArgumentEvidence(input)
         let feedback: string | undefined
-        const onDenied = (reason: string) => { feedback = permissionDenialMessage(chat ? request.description : undefined, reason); (turn.denialFeedback ??= []).push(feedback) }
+        const onDenied = (reason: string) => { feedback = permissionDenialMessage(request.description, reason); (turn.denialFeedback ??= []).push(feedback) }
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && (chat ? chat.approve : context.requestPermission)
-          ? chat ? chat.approve!({ ...request, input, ...(request.tool==='mcp__wechat__matter_plan'?{onDenied}:{}) }, controller.signal) : context.requestPermission!({ ...request, ...(display ? { display } : {}),
+          ? chat ? chat.approve!({ ...request, input, ...(request.tool==='mcp__wechat__matter_plan'?{onDenied}:{}) }, controller.signal) : context.requestPermission!({ ...request, mcp: target, ...(display ? { display } : {}),
               ...(Object.keys(wechatReview).length ? { wechatReview } : {}), onDenied }, controller.signal) : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
