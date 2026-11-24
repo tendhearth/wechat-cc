@@ -1230,6 +1230,78 @@ html:not([data-desk-wide]) .dashboard .dash-main > #conversation-matter-layer[da
 [data-desk-wide] .dash-main .dialogue-views button { white-space: nowrap; }
 [data-desk-wide] .dash-main .dialogue-search #dialogue-search { padding-inline-start: 34px; }
 
+/* In split-screen windows, measure the paper with the rail in its current state. */
+[data-desk-compact] .dashboard .dash-main { container: desk-paper / inline-size; }
+[data-desk-compact] #converse-root #converse-compose {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+[data-desk-compact] #converse-compose > :is(.converse-images, .converse-image-note, .converse-recording, .converse-recording-hint),
+[data-desk-compact] #converse-compose textarea { grid-column: 1 / -1; }
+[data-desk-compact] #converse-compose > .conversation-tools { grid-column: 1; }
+[data-desk-compact] #converse-compose .converse-recipient { grid-column: 2; place-self: center start; max-width: 100%; }
+[data-desk-compact] #converse-compose .converse-toolbar { grid-column: 3; flex-wrap: nowrap; }
+[data-desk-compact] .dash-main [data-pane="logs"] > .topbar .actions { width: auto; }
+
+@container desk-paper (width < 750px) {
+  /* The header and its side padding leave less than 680px for the two panes. */
+  [data-desk-wide] .dash-main > [data-pane="sessions"] > .dialogue-page {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  [data-desk-wide] .dash-main .dialogue-page .dialogue-sidebar { max-block-size: min(36vh, 220px); }
+}
+
+@container desk-paper (width < 640px) {
+  [data-desk-wide] .dashboard .dash-main > :is([data-pane="sessions"], [data-pane="logs"]) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(380px, 1fr);
+  }
+  [data-desk-wide] .dashboard .dash-main > [data-pane="logs"] {
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+  }
+  [data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="logs"]) > :is(.topbar, #dialogue-tools) {
+    grid-area: 3 / 1;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  [data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="logs"]) > :is(.dialogue-page, .logs-body) {
+    grid-area: 4 / 1;
+  }
+  [data-desk-wide] .dash-main [data-pane="logs"] > .topbar .actions { width: 100%; }
+  [data-desk-wide] .dash-main [data-pane="logs"] #logs-filter { flex: 1 1 160px; }
+  [data-desk-wide] .dash-main [data-pane="logs"] .logs-row { grid-template-columns: 72px minmax(0, 1fr); gap: 4px 12px; }
+  [data-desk-wide] .dash-main [data-pane="logs"] .logs-row .msg { grid-column: 1 / -1; padding-bottom: 12px; }
+
+  [data-desk-wide] .dash-main :is(.memory-profile-hero, .memory-profile-grid, .memory-sources-panel .mem) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  [data-desk-wide] .dash-main .memory-sources-panel .mem-list {
+    max-height: 180px;
+    border-right: 0;
+    border-bottom: 1px solid var(--th-hair);
+  }
+  [data-desk-wide] .dash-main .memory-sources-panel .mem-doc { max-height: none; }
+
+  [data-desk-wide] .dash-main .cc-recollections .pc-card { grid-template-columns: minmax(0, 1fr) 105px; gap: 12px 16px; }
+  [data-desk-wide] .dash-main .cc-recollections .pc-card time { grid-column: 1; grid-row: 1; }
+  [data-desk-wide] .dash-main .cc-recollections .pc-read { grid-column: 1; grid-row: 2; }
+  [data-desk-wide] .dash-main .cc-recollections .pc-cover { grid-column: 2; grid-row: 2 / 4; }
+  [data-desk-wide] .dash-main .cc-recollections .pc-cover img { height: 90px; }
+  [data-desk-wide] .dash-main .cc-recollections .pc-favorite-indicator { grid-column: 1; grid-row: 3; }
+  [data-desk-wide] .dash-main .cc-memory-entry { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  [data-desk-wide] .dash-main .cc-memory-entry img { width: 100%; max-width: 280px; }
+  [data-desk-wide] .dash-main .cc-thought-day > summary { flex-direction: column; gap: 14px; }
+  [data-desk-wide] .dash-main .cc-thought-notes { margin-inline-start: 0; }
+  [data-desk-wide] .dash-main .cc-recollections > footer { flex-wrap: wrap; }
+
+  [data-desk-wide] .dash-main .todos-head { flex-wrap: wrap; }
+  [data-desk-wide] .dash-main .todo-actions { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+  [data-desk-wide] .dash-main .todo-more > summary { text-align: start; }
+  [data-desk-wide] .dash-main .todo-more-actions { justify-content: flex-start; }
+  [data-desk-wide] .dash-main .fd-wrap :is(.pp-row, .wsh-row, .wsh-offer-row, .wsh-pc-row) { flex-direction: column; }
+}
+
 [data-desk-wide] .dash-main .cc-recollections > :is(#cc-memory-postcards, #cc-memory-records) {
   max-width: var(--desk-secondary-max);
 }

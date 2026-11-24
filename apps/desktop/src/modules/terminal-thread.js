@@ -1,4 +1,5 @@
 // @ts-check
+import { DESK_LAYOUT_QUERY } from './desk-layout.js'
 import { executorName } from './executor-names.js'
 import { V1, v1 } from '../daemon-client.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
@@ -112,7 +113,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   let alive = true, polling = false, paging = false, sending = false, deciding = false, stopping = false
   let confirmed = '', answered = '', lastRecipient = '', loaded = false
   let lastOperation = '', lastRequest = ''
-  const wide = window.matchMedia('(min-width: 900px)')
+  const wide = window.matchMedia(DESK_LAYOUT_QUERY)
   /** @type {import('@wechat-cc/protocol').SessionRecapT|undefined} */ let recap
   /** @type {HTMLElement|null} */ let memo = null
   let dismissedAt = -1, recapVersion = 0

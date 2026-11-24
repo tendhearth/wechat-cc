@@ -1,5 +1,6 @@
 // @ts-check
 import { wireDeskDisclosure } from './desk-disclosure.js'
+import { DESK_LAYOUT_QUERY } from './desk-layout.js'
 import { executorName } from './executor-names.js'
 import { mountLabMap } from './lab-map.js'
 import { V1, v1 } from '../daemon-client.js'
@@ -44,7 +45,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('desk-lab-map'))
   const note = document.getElementById('desk-lab-map-note')
   const labDescription = note?.textContent ?? ''
-  const wide = window.matchMedia('(min-width: 900px)')
+  const wide = window.matchMedia(DESK_LAYOUT_QUERY)
   /** @type {Set<string>} */ const maps = new Set()
   /** @type {Set<string>} */ const aspectMaps = new Set()
   let experiment = false, alive = true

@@ -6,6 +6,7 @@ import { watchDeskFullscreen } from './modules/desk-fullscreen.js'
 import { createRosterDock } from './modules/roster-dock.js'
 import { mountRosterPane } from './modules/roster-pane.js'
 import { isDeskCollapseShortcut, readDeskCollapsed, writeDeskCollapsed } from './modules/desk-collapse.js'
+import { DESK_EXPANDED_RAIL_QUERY, DESK_LAYOUT_QUERY } from './modules/desk-layout.js'
 import { mountPlacesStrip } from './modules/places-strip.js'
 import { mountThingThread } from './modules/thing-thread.js'
 import { rememberConversationPosition } from './modules/converse-reading.js'
@@ -2164,7 +2165,8 @@ function mountDeskHistory(strip, signal) {
 
 /** @param {ReturnType<typeof mountPlacesStrip>} strip */
 function mountDeskLayout(strip) {
-  const layout = window.matchMedia('(min-width: 900px)')
+  const layout = window.matchMedia(DESK_LAYOUT_QUERY)
+  const expandedRail = window.matchMedia(DESK_EXPANDED_RAIL_QUERY)
   const places = document.querySelector('.places-strip')
   const overview = document.querySelector('.cc-now-pane')
   const nav = dashRail?.querySelector('nav')
@@ -2191,7 +2193,7 @@ function mountDeskLayout(strip) {
     fullscreen => root.toggleAttribute('data-desk-fullscreen', fullscreen),
   ) : undefined
   if (stopFullscreen) signal.addEventListener('abort', stopFullscreen, { once: true })
-  let collapsed = readDeskCollapsed(window)
+  let collapsed = !expandedRail.matches || readDeskCollapsed(window)
   let peeking = false
   let pointerInTrigger = false
   let pointerInRail = false
@@ -2295,6 +2297,7 @@ function mountDeskLayout(strip) {
     const placeTop = document.getElementById('places-root')?.scrollTop ?? 0
     const changed = deskWide() !== wide
     root.toggleAttribute('data-desk-wide', wide)
+    root.toggleAttribute('data-desk-compact', wide && !expandedRail.matches)
     if (changed && document.querySelector('.dash-main > #conversation-matter-layer[data-workbench-view="search"]:not([hidden])')) {
       initWorkbenchPage(deps)
     }
@@ -2330,13 +2333,17 @@ function mountDeskLayout(strip) {
     const placeList = document.getElementById('places-root')
     if (placeList) placeList.scrollTop = placeTop
   })
-  const setCollapsed = (/** @type {boolean} */ next) => {
+  const renderRailState = (/** @type {boolean} */ next) => {
     cancelClose()
     peeking = pointerInRail = false
     waitForReentry = next && (pointerInTrigger || toggle.matches(':hover'))
     collapsed = next
-    preserveReadingPosition(renderCollapse)
-    writeDeskCollapsed(window, collapsed)
+    renderCollapse()
+  }
+  const setCollapsed = (/** @type {boolean} */ next) => {
+    preserveReadingPosition(() => renderRailState(next))
+    // Compact-window choices belong to this visit to the size range.
+    if (expandedRail.matches) writeDeskCollapsed(window, next)
   }
   const onShortcut = (/** @type {KeyboardEvent} */ event) => {
     if (!layout.matches || root.dataset.mode !== 'dashboard' || event.defaultPrevented) return
@@ -2356,6 +2363,10 @@ function mountDeskLayout(strip) {
   document.addEventListener('keydown', onShortcut, { signal })
   if (layout.matches) apply()
   layout.addEventListener('change', apply)
+  expandedRail.addEventListener('change', () => preserveReadingPosition(() => {
+    root.toggleAttribute('data-desk-compact', layout.matches && !expandedRail.matches)
+    renderRailState(!expandedRail.matches)
+  }), { signal })
   window.addEventListener('pagehide', () => {
     layout.removeEventListener('change', apply)
     listeners.abort()

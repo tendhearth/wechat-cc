@@ -34,7 +34,7 @@ async function saveShot(page:Page,name:string){
  if(out){mkdirSync(out,{recursive:true});await page.screenshot({path:join(out,name)})}
 }
 
-for(const width of [1440,760])test(`${width}px待办先读内容再完成，次要操作展开后不溢出`,async({page,shimUrl,shim})=>{
+for(const width of [1440,690])test(`${width}px待办先读内容再完成，次要操作展开后不溢出`,async({page,shimUrl,shim})=>{
  await page.setViewportSize({width,height:1000});await boot(page,shimUrl,shim);await clickNav(page,'todos')
  const item=page.locator('.todo-item').first()
  await expect(item.locator('[data-todo-action="resolve"]')).toBeVisible()
@@ -110,9 +110,9 @@ test('完成时禁止重复修改，最近了结能恢复回待办',async({page,
 })
 
 test('读取失败可以恢复，空态和错误态在窄窗口都能读',async({page,shimUrl,shim})=>{
- await page.setViewportSize({width:760,height:1000});const state=await boot(page,shimUrl,shim);state.mode='error'
- await clickNav(page,'todos');await expect(page.locator('#todos-list')).toContainText('暂时没能读取待办');await expect(page.locator('.cc-page-status p')).toHaveCSS('font-size','16px');await saveShot(page,'todos-error-760.png')
- state.mode='loaded';state.active=[];await page.locator('.cc-page-status button').click();await expect(page.locator('.todos-empty')).toContainText('还没有待办');await saveShot(page,'todos-empty-760.png')
+ await page.setViewportSize({width:690,height:1000});const state=await boot(page,shimUrl,shim);state.mode='error'
+ await clickNav(page,'todos');await expect(page.locator('#todos-list')).toContainText('暂时没能读取待办');await expect(page.locator('.cc-page-status p')).toHaveCSS('font-size','16px');await saveShot(page,'todos-error-690.png')
+ state.mode='loaded';state.active=[];await page.locator('.cc-page-status button').click();await expect(page.locator('.todos-empty')).toContainText('还没有待办');await saveShot(page,'todos-empty-690.png')
  state.active=[fact];await page.locator('#todos-refresh').click();await expect(page.locator('.todo-value')).toContainText(fact.value)
 })
 

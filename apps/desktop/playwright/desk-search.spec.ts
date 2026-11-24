@@ -134,7 +134,7 @@ test('空段收起，失败能重读，旧回包和组字不打断新结果', as
 })
 
 test('窄窗口仍然提交后只搜交办的事', async ({ page, shimUrl }) => {
-  await page.setViewportSize({ width: 800, height: 820 })
+  await page.setViewportSize({ width: 690, height: 820 })
   const queried: string[] = []
   page.on('request', req => {
     const url = new URL(req.url())

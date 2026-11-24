@@ -3,33 +3,31 @@
 /* 「设置」提到这一组前面以后,窄窗口里它和下面几样同一条左边线。 */
 .topbar-more > div > #settings-open { text-align: start; }
 .desk-labs { display: none; }
-@media (min-width: 900px) {
-  .desk-labs {
-    display: grid;
-    gap: 2px;
-    min-width: 16em;
-    padding: 0 0 4px;
-    color: var(--th-ink-soft);
-    font: var(--th-size-meta) var(--th-font-serif);
-  }
-  .dash-topbar .desk-labs [role="switch"] {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    min-height: 30px;
-    color: var(--th-ink);
-  }
-  .desk-labs [role="switch"]::after {
-    content: "关";
-    color: var(--th-ink-soft);
-  }
-  .desk-labs [role="switch"][aria-checked="true"]::after {
-    content: "开";
-    color: var(--th-accent);
-  }
-  .desk-labs p { margin: 0; }
+[data-desk-wide] .desk-labs {
+  display: grid;
+  gap: 2px;
+  min-width: 16em;
+  padding: 0 0 4px;
+  color: var(--th-ink-soft);
+  font: var(--th-size-meta) var(--th-font-serif);
 }
+[data-desk-wide] .dash-topbar .desk-labs [role="switch"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  color: var(--th-ink);
+}
+[data-desk-wide] .desk-labs [role="switch"]::after {
+  content: "关";
+  color: var(--th-ink-soft);
+}
+[data-desk-wide] .desk-labs [role="switch"][aria-checked="true"]::after {
+  content: "开";
+  color: var(--th-accent);
+}
+[data-desk-wide] .desk-labs p { margin: 0; }
 
 .lab-map-seg {
   display: inline-flex;

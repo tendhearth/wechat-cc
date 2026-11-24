@@ -243,7 +243,7 @@ test('「⋯」里：设置在前，画室、待办、觅食、后厨归在「�
   await expect(page.locator('body')).toHaveAttribute('data-pane','todos')
 
   // 窄窗口:小标题和四样都在,图的开关不出现
-  await page.setViewportSize({width:760,height:820})
+  await page.setViewportSize({width:690,height:820})
   await menu(page).click()
   await expect(page.locator('#desk-labs-title')).toBeVisible()
   for (const name of ['画室','待办','觅食','后厨']) await expect(box.getByRole('button',{name})).toBeVisible()

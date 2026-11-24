@@ -389,8 +389,8 @@ test('对话里的真实终端引用打开它的地方和会话',async({page,shi
   await expect(terminal(page)).toContainText('把这周的记录整理一下')
 })
 
-test('800px 保留筛选条和补引用卡',async({page,shimUrl})=>{
-  await page.setViewportSize({width:800,height:820})
+test('690px 保留筛选条和补引用卡',async({page,shimUrl})=>{
+  await page.setViewportSize({width:690,height:820})
   await mockTerminal(page)
   await page.goto(shimUrl)
   await select(page,'花园')

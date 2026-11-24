@@ -253,7 +253,7 @@ test('一周没动的地方默认收起，展开仍按原顺序，未读和正�
   await expect(names).toHaveText(['leni', 'ranu', 'cc'])
 })
 
-test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏和筛选条', async ({ page, shimUrl }) => {
+test('跨过 700px 保留筛选、草稿和滚动锚点，690px 还用原顶栏和筛选条', async ({ page, shimUrl }) => {
   const history = Array.from({ length: 50 }, (_, i) => ({
     kind: i === 0 ? 'user' : 'text', text: `第 ${i} 条旧消息，用来确认换宽度后还能接着读。`, messageId: `old-${i}`, createdAt: i + 1,
   }))
@@ -280,7 +280,7 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   const before = await anchor()
   await row.click()
   await expect(page.locator('#thing-thread')).toBeVisible()
-  await page.setViewportSize({ width: 800, height: 820 })
+  await page.setViewportSize({ width: 690, height: 820 })
   await expect(rail).toHaveCSS('height', '72px')
   await expect(rail.locator('nav .desk-nav-icon:visible')).toHaveCount(0)
   await expect(rail.locator('.desk-project-label')).toBeHidden()
@@ -297,9 +297,11 @@ test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏�
   await expect(input).toHaveValue('这句话还没发')
   await expect.poll(anchor).toBe(before)
 
-  await page.setViewportSize({ width: 900, height: 820 })
-  await expect(rail).toHaveCSS('width', '284px')
+  await page.setViewportSize({ width: 700, height: 820 })
+  await expect(page.locator('html')).toHaveAttribute('data-desk-wide', '')
+  await expect(rail).toBeHidden()
   await page.setViewportSize({ width: 1280, height: 820 })
+  await expect(rail).toHaveCSS('width', '284px')
   await expect(clear).toBeHidden()
   await expect(page.locator('#desk-place-clear')).toBeHidden()
   await expect(page.locator('#thing-name')).toHaveText('rici')

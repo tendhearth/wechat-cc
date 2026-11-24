@@ -54,7 +54,7 @@ test('one conversation and memory topics preserve drafts when a wide place opens
  await expect(page.locator('#wb-filter-project')).toBeVisible();await expect(page.locator('#wb-filter-status')).toBeVisible()
  await expect(page.locator('#workbench-home')).toBeHidden()
  await page.locator('#topbar-cc').click()
- await page.setViewportSize({width:899,height:844});await clickNav(page,'memory')
+ await page.setViewportSize({width:690,height:844});await clickNav(page,'memory')
  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click();await expect(panel).toBeVisible()
  await page.screenshot({path:join(info.outputDir,'narrow-topic.png')})
  await panel.getByRole('button',{name:/CC · .*正在核对备份/}).click()
@@ -367,7 +367,7 @@ test('reply attribution keeps one named shared avatar per reply across wide and 
     }
     expect(await matter.locator('.wb-dialogue').evaluate(root=>[...root.querySelectorAll('.wb-message')].every(row=>row.scrollWidth<=row.clientWidth+1))).toBe(true)
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
-    if(width>=900)await page.locator('#topbar-cc').click();else await page.locator('#workbench-home').click()
+    if(width===1280)await page.locator('#topbar-cc').click();else await page.locator('#workbench-home').click()
   }
   currentProvider='codex';await page.reload();await checkSources()
 })
