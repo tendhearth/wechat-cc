@@ -78,7 +78,7 @@
         "id": 4,
         "taskId": "<task:done>",
         "kind": "system",
-        "text": "权限请求：Bash · Delete scratch.txt · <uuid:2>",
+        "text": "权限请求：<uuid:2>",
         "createdAt": 1793412060000,
         "sourceId": null,
         "runId": "<uuid:1>",

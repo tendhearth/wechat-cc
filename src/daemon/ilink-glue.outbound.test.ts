@@ -76,7 +76,7 @@ describe('ilink-glue sendMessage → outboundHealth', () => {
       const text = `示例 · 112233aa\n〔请求 1234567890abcdef〕\n$ ${fixture}`
       fake.failSendMessage({ errcode: -6, errmsg: text })
       for (let attempt = 0; attempt < 2; attempt++) {
-        const result = await adapter.sendMessage('chat-1', text, { source: 'workbench' })
+        const result = await adapter.sendMessage('chat-1', text, { source: 'workbench', historyText: '待批：运行命令' })
         expect(result.error === 'ilink/sendmessage errcode=-6').toBe(true)
       }
       expect(adapter.outboundHealth().lastError).toBe('ilink/sendmessage errcode=-6')

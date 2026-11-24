@@ -1,7 +1,7 @@
 import { permissionReason } from '../domain/permission-denial'
 
 export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
-export interface WechatPermissionCard { readonly text: string; readonly marker: string; readonly complete: boolean }
+export interface WechatPermissionCard { readonly text: string; readonly marker: string; readonly complete: boolean; readonly historyText: string }
 
 /** Desktop-facing description of a pending permission ask (CC 桌宠 Phase B). */
 export interface PendingPermissionMeta { chatId: string; prompt: string; taskId?: string; canAllowTask?: boolean; canDenyWithReason?: boolean; scripts?: import('../ports/workbench').PermissionScript[] }
@@ -133,7 +133,7 @@ export class PendingPermissions {
       return entry.wechatCard!.text === quoted ? { kind: 'matched', hash } : { kind: 'altered', hash }
     }
     const head = quoted.split('\n', 1)[0]!
-    if (/ · [a-f0-9]{8}$/.test(head) || /〔请求|^回「[yn] \w+」(?:允许这一步|拒绝。)/m.test(quoted))
+    if (/ · [a-f0-9]{8}$/.test(head))
       return { kind: 'altered' }
     return null
   }

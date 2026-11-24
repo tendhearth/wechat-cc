@@ -202,7 +202,10 @@ export function makeWorkbenchClaudeCanUseTool(
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,
         ...(display ? { display } : {}),
-        ...(hasCommandExtras ? { wechatReview: wechatDisplay ? { display: wechatDisplay } : { incomplete: true as const } } : {}),
+        ...(hasCommandExtras ? { wechatReview: wechatDisplay ? {
+          display: wechatDisplay,
+          ...(typeof input.cwd === 'string' && !cwd ? { cwd: input.cwd } : {}),
+        } : { incomplete: true as const } } : {}),
         ...(cwd ? { displayCwd: cwd, reviewDescription: `${description}\nWorking directory: ${cwd}` } : {}),
         onDenied: reason => { feedback = permissionDenialMessage(`${toolName}\n${description}`, reason) },
         ...(facts.command ? { command: facts.command } : {}),

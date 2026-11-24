@@ -94,7 +94,7 @@ export interface MattersServiceDeps {
     undoRewind?(id:string,undo:string):Promise<unknown>
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
-  chat?:{events?(owner:string,since:number,limit?:number):unknown;stop?(owner:string,turnId:string):boolean;window?(owner:string,input:import('../../../packages/protocol/src/owner-conversation').ConversationWindowInput):Promise<unknown>;work?(owner:string,input?:{cursor?:string;limit?:number}):unknown;file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterDetailEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterDetailEvent&{id:string})[]>}
+  chat?:{events?(owner:string,since:number,limit?:number):unknown;stop?(owner:string,turnId:string):boolean;window?(owner:string,input:import('../../../packages/protocol/src/owner-conversation').ConversationWindowInput):Promise<unknown>;work?(owner:string,input?:{cursor?:string;limit?:number}):unknown;file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string;historyReply?:string}>;recent?(chatId:string,limit:number):Promise<MatterDetailEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterDetailEvent&{id:string})[]>}
   /** 聊天那件事「说一句」的 requestId 回执(v70);没接 ⇒ 不去重(老行为)。 */
   sayReceipts?:SayReceipts
   /** 主人对话要是在这里首建,出生地记成什么(daemon 按鉴权来源算:桌面 = desktop,手机 = App / 浏览器)。没接 ⇒ 桌面记 desktop,手机不知道就不写。 */
@@ -398,13 +398,14 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
         const boundToOwner=!!owner&&deps.store.bindings(id).some(b=>b.surface==='wechat'&&b.surfaceKey===owner)
         if(!boundToOwner)throw new Error('matter_say_unsupported')
         const chat=deps.chat
-        const speak=async():Promise<{kind:'chat';reply:string}>=>{
-          const {reply}=await chat.say(text,surface)
+        const receipts=deps.sayReceipts
+        const speak=async(receiptId?:string):Promise<{kind:'chat';reply:string}>=>{
+          const {reply,historyReply}=await chat.say(text,surface)
           deps.store.touch(id)
+          if(receiptId)try{receipts?.settle(receiptId,historyReply??reply)}catch{/* 回执写不进不影响这次结果 */}
           return {kind:'chat',reply}
         }
-        // 与工作台输入回执同一规矩:带 requestId ⇒ 同 id 同文的重发拿原来的结果、不再说;同 id 异文 ⇒ input_conflict。
-        const receipts=deps.sayReceipts
+        // 与工作台输入回执同一规矩:带 requestId ⇒ 同 id 同文的重发拿回执、不再说;同 id 异文 ⇒ input_conflict。
         if(!input||!receipts)return speak()
         const requestId=normalizeInputRequestId(input.requestId)
         const {fresh,receipt}=receipts.reserve({requestId,matterId:id,textHash:sayTextHash(text)})
@@ -416,8 +417,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
           // 可能已经进了 CC 的会话,不能再说一遍(同工作台被重启扣下的输入:回执在,重发不再派发)。
           return {kind:'chat',reply:receipt.status==='replied'?receipt.reply??'':''}
         }
-        const flight=speak().then(
-          result=>{chatInFlight.delete(requestId);try{receipts.settle(requestId,result.reply)}catch{/* 回执写不进不影响这次结果 */}return result},
+        const flight=speak(requestId).then(
+          result=>{chatInFlight.delete(requestId);return result},
           error=>{chatInFlight.delete(requestId);try{receipts.drop(requestId)}catch{/* 同上 */}throw error},
         )
         chatInFlight.set(requestId,flight)

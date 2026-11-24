@@ -17,12 +17,12 @@ import { validateUserInputAnswers } from '../../adapters/workbench/user-input'
 import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
 import type {ReviewTurn} from './review'
-import { WECHAT_PERMISSION_INCOMPLETE, type WechatPermissions } from '../../ports/wechat'
+import { WECHAT_PERMISSION_INCOMPLETE, type WechatPermissionCard, type WechatPermissions } from '../../ports/wechat'
 import { renderWechatPermissionCard } from './wechat-permission-card'
 
 /** origin(2026-10-19):只在 App 一轮(桌面 / 手机说的话过同一张消费者表)时由 daemon 填;省略 ⇒ 真的是微信入站。不进回执身份。 */
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number;origin?:MatterOrigin|null}
-export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
+export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}|{kind:'permission_card';card:WechatPermissionCard}
 type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
 interface Actions {
   pendingWechatPermissionCard?: WechatPermissions['pendingWechatPermissionCard']
@@ -150,7 +150,7 @@ function statusReply(detail:Detail){
   if(held.length)lines.push('尚未交付的补充（已保留）：\n'+held.map(input=>'• '+clip(input.text,200)).join('\n'))
   const queued=inputs.filter(input=>input.status==='pending'||input.status==='sending').length
   if(queued)lines.push(`还有 ${queued} 条补充等待交付。`)
-  if(permissions.length)lines.push(`等待权限处理：${permissions.length} 项\n`+permissions.slice(0,4).map(p=>`${singleLine(p.tool,80)} · ${singleLine(p.description,150)}\n查看：任务 ${id} 权限 ${p.id}`).join('\n'))
+  if(permissions.length)lines.push(`等待权限处理：${permissions.length} 项\n`+permissions.slice(0,4).map(p=>`查看：任务 ${id} 权限 ${p.id}`).join('\n'))
   if(questions.length)lines.push(`等待回答：${questions.length} 项\n`+questions.slice(0,4).map(q=>`${singleLine(q.questions.map(item=>item.header).join('、'),80)}\n查看：任务 ${id} 问题 ${q.id}`).join('\n'))
   lines.push(`补充：任务 ${id} 补充 <要求>`,`查看结果：任务 ${id} 结果`)
   return lines.join('\n\n')
@@ -405,7 +405,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
               ? opts.actions.pendingWechatPermissionCard(requestId)
               : renderWechatPermissionCard(detail.task.title,request,detail.task.providerId)
             if(!card)return stale
-            if(verb==='权限')return card.text
+            if(verb==='权限')return {kind:'permission_card',card}
             if(!card.complete)return WECHAT_PERMISSION_INCOMPLETE
           }
           opts.actions.resolvePermission(id,requestId,verb==='允许'?'allow':'deny')

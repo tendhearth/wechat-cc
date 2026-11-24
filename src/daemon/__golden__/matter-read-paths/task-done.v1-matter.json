@@ -97,7 +97,7 @@
       },
       {
         "kind": "system",
-        "text": "权限请求：Bash · Delete scratch.txt · <uuid:2>",
+        "text": "权限请求：<uuid:2>",
         "createdAt": 1793412060000,
         "speaker": "notice",
         "turnId": "<turn:1>"

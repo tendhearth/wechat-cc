@@ -24,7 +24,7 @@ export interface TaskReferenceMwDeps {
   /** 活跃候选(进行中 / 已答复 / 排队),按 chat 给。 */
   candidates(chatId: string): TaskCandidate[]
   handleWechat(chatId: string, text: string, identity?: WechatMessageIdentity): Promise<WechatWorkbenchReply | null>
-  sendMessage(chatId: string, text: string): Promise<unknown>
+  sendMessage(chatId: string, text: string, metadata?: { source: 'workbench'; historyText: string }): Promise<unknown>
   judge?: TaskJudge
   now?(): number
   log(tag: string, line: string): void
@@ -293,12 +293,13 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
       msg.answerRoute.state = 'submitted'
     }
     const reply = await deps.handleWechat(msg.chatId, cmd, identity)
-    if (reply !== null && typeof reply === 'object') return
-    const body = reply ?? '任务控制仅对已绑定的主人开放。'
-    const lines = [header(picked), body]
+    if (reply !== null && typeof reply === 'object' && reply.kind === 'artifact_delivered') return
+    const card = typeof reply === 'object' ? reply?.card : undefined
+    const lines = [header(picked), typeof reply === 'string' ? reply : '任务控制仅对已绑定的主人开放。']
     if (fresh) lines.push('（接下来默认说这件，20 分钟内。）')
     deps.log('WORKBENCH', `task reference task=${picked.id} action=${cmd.startsWith(`任务 ${picked.id} 补充 `) ? 'supplement' : 'control'}`)
-    const sent = await deps.sendMessage(msg.chatId, lines.join('\n'))
+    const sent = await deps.sendMessage(msg.chatId, card?.text ?? lines.join('\n'),
+      ...(card ? [{ source: 'workbench' as const, historyText: card.historyText }] : []))
     if (sent && typeof sent === 'object' && 'error' in sent && (sent as { error?: unknown }).error) throw Error('workbench_reply_failed')
   }
   // choice-invalid 是唯一"判定说是、执行却放行"的分支(数字越界):路由阶段算作 chat,但判定照带,本体好把待选清掉。

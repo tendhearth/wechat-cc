@@ -5,7 +5,7 @@ import { renderWechatPermissionCard, workbenchPermissionReplyLine } from './wech
 
 /** One pending card shared by WeChat codes and the desktop pet; a settlement on
  * any workbench surface removes the code through the returned disposer. */
-export function makeWorkbenchPermissionPrompt(registry: Pick<WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'>, ownerChatId: () => string | null): NonNullable<ServiceDeps['permissionPrompt']> {
+export function makeWorkbenchPermissionPrompt(registry: Pick<WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'|'pendingWechatPermissionCard'>, ownerChatId: () => string | null): NonNullable<ServiceDeps['permissionPrompt']> {
   return (title, permission, answer, deadline, provider = 'claude', legacyDescription = permission.description) => {
     const chatId = ownerChatId(); if (!chatId) return () => {}
     let closed=false
@@ -20,7 +20,9 @@ export function makeWorkbenchPermissionPrompt(registry: Pick<WechatPermissions,'
       onDecision: (decision,reason) => closed ? decision === 'deny' : reason ? answer(decision,reason) : answer(decision),
     }).catch(() => {}) // Explicit decisions run through onDecision; expiry is not an owner rejection.
     const code=registry.pendingPermissionCodeOf(permission.id)
-    const replyLine=workbenchPermissionReplyLine(permission,code)
+    const card=registry.pendingWechatPermissionCard(permission.id)
+    const replyLine=!code || !card ? '' : card.complete ? workbenchPermissionReplyLine(permission,code)
+      : `这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`
     return Object.assign(()=>{closed=true;registry.resolvePermission(permission.id,'deny')},{replyLine})
   }
 }

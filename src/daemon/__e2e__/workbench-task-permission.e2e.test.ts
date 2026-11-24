@@ -42,7 +42,7 @@ it.each([false,true])('owner rejection carries its reason through WeChat and the
   registry.register('codex',{async spawn(_project,ctx){return {
     async *dispatch(){
       yield {kind:'init' as const,sessionId:'same-session'}
-      for(let i=0;i<(limit?4:3);i++)answers.push(await ctx.requestPermission!({tool:'commandExecution',description:`attempt ${i}`,onDenied:reason=>feedback.push(reason)}))
+      for(let i=0;i<(limit?4:3);i++)answers.push(await ctx.requestPermission!({tool:'commandExecution',command:`printf attempt-${i}`,description:`attempt ${i}`,onDenied:reason=>feedback.push(reason)}))
       yield {kind:'result' as const,sessionId:'same-session',numTurns:1,durationMs:1}
     },async close(){},
   }}},{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
@@ -138,4 +138,62 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
     await service.cancel(other.id)
     expect(ilink.listPendingPermissions()).toEqual([])
   } finally { await service.shutdown(); delivery.mockRestore(); await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
+})
+
+it('Claude Bash uses the spawned run directory and fails closed in every WeChat entry when cwd is unverified', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-wechat-verified-cwd-')))
+  const project = join(root, 'project')
+  mkdirSync(project)
+  const db = openTestDb(), registry = createProviderRegistry(), answers: boolean[] = []
+  const ilink = makeIlinkAdapter({ stateDir: root, db, conversationStore: makeConversationStore(db), accounts: [] })
+  const feedback: string[] = []
+  vi.spyOn(ilink, 'sendMessage').mockImplementation(async (_chat, text) => {
+    feedback.push(text)
+    return { msgId: 'fixture' }
+  })
+  registry.register('claude', { async spawn(_project, ctx) { return {
+    async *dispatch() {
+      const command = 'cat example.txt'
+      const request = { tool: 'Bash', command, description: 'command=' + command, display: { body: { kind: 'command' as const, command } } }
+      answers.push(await ctx.requestPermission!(request))
+      answers.push(await ctx.requestPermission!({ ...request, displayCwd: 'unverified/relative' }))
+      yield { kind: 'result' as const, sessionId: 'cwd-session', numTurns: 1, durationMs: 1 }
+    },
+    async close() {},
+  } } }, { displayName: 'Claude', canResume: () => false, workbench: MANAGED_NATIVE_CAPABILITIES })
+  const store = makeWorkbenchStore(db)
+  const service = makeWorkbenchService({
+    store, registry, stateDir: root, ownerChatId: () => 'owner',
+    permissionPrompt: makeWorkbenchPermissionPrompt(ilink, () => 'owner'),
+    pendingWechatPermissionCard: id => ilink.pendingWechatPermissionCard(id),
+  })
+  try {
+    const task = service.create({ path: project, providerId: 'claude', text: '查看示例' })
+    service.setWechatWatch(task.id, 'test-account', true)
+    await expect.poll(() => ilink.listPendingPermissions()).toHaveLength(1)
+    const inherited = ilink.listPendingPermissions()[0]!
+    const inheritedCard = ilink.pendingWechatPermissionCard(inherited.hash)!
+    expect(inheritedCard.complete && inheritedCard.text.includes('在 ' + project)).toBe(true)
+    const notice = store.wechatNotifications.list(task.id).find(item => item.requestId === inherited.hash)
+    expect(notice?.text.includes('cat example.txt')).toBe(false)
+    expect(ilink.handlePermissionReply('y', 'owner', inheritedCard.text)).toBe(true)
+    await expect.poll(() => answers).toEqual([true])
+    await expect.poll(() => ilink.listPendingPermissions()[0]?.hash).toMatch(/^[a-f0-9-]{36}$/)
+    const unverified = ilink.listPendingPermissions()[0]!
+    const command = (verb: string) => service.handleWechat('owner', `任务 ${task.id} ${verb} ${unverified.hash}`)
+    const incomplete = '内容在微信里看不全，请到电脑或手机上看全再定。'
+    expect(service.detail(task.id).permissions[0]!.cwd).toBeUndefined()
+    const lookup = await command('权限')
+    if (!lookup || typeof lookup !== 'object' || lookup.kind !== 'permission_card') throw Error('missing lookup card')
+    expect(lookup.card.complete).toBe(false)
+    expect(lookup.card.text.includes(incomplete) && !lookup.card.text.includes('回「y ')).toBe(true)
+    expect(await command('允许')).toBe(incomplete)
+    for (const [text, quote] of [[`y ${unverified.code}`, undefined], [`yt ${unverified.code}`, undefined], ['y', lookup.card.text]] as const) {
+      expect(ilink.handlePermissionReply(text, 'owner', quote)).toBe(true)
+      expect(feedback.at(-1)).toBe(incomplete)
+      expect(answers).toEqual([true])
+    }
+    expect(await command('拒绝')).toContain('已拒绝')
+    await expect.poll(() => answers).toEqual([true, false])
+  } finally { await service.shutdown(); await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
 })

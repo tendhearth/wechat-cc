@@ -164,6 +164,7 @@ export function makeRunPermissions(opts: {
         description: raw.description,
         cwd: raw.wechatReview?.cwd ?? raw.displayCwd ?? raw.cwd,
         command: facts.command,
+        paths: facts.paths,
         display: raw.wechatReview?.display,
         incomplete: raw.wechatReview?.incomplete ?? (raw.display !== undefined && !display ? true : undefined),
       } satisfies NonNullable<PendingWorkbenchPermission[typeof wechatPermissionSource]>,
@@ -223,9 +224,11 @@ export function makeRunPermissions(opts: {
       if (!entry) return ''
       const { permission, snapshot } = entry
       const command = approvalPreviewCommand(entry)
+      // A command without recognizable credentials is still approval evidence.
+      const redacted = command !== undefined && redactSecrets(command) !== command
       const label = snapshot.requiresBoundExecution
         ? `${permission.tool} · 需要你单次批准，详情请在批准卡查看。`
-        : `${permission.tool} · ${command ? redactSecrets(command).slice(0, 1200) : '详情请在批准卡查看。'}`
+        : `${permission.tool} · ${redacted ? '敏感参数[已打码]，' : ''}详情请在批准卡查看。`
       const files = snapshot.scripts.filter(s => s.sha256).map(s => `脚本 ${s.path}\nSHA-256: ${s.sha256}\n内容请在桌面或手机批准卡查看。`)
       if (snapshot.scripts.some(s => !s.sha256)) files.push('有文件无法安全读取，详情请在批准卡查看。')
       return [label, ...files].join('\n\n')

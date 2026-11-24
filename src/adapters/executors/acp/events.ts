@@ -162,32 +162,41 @@ export function acpApprovalDetails(call: Obj, description: string): {
   description: string; display?: PermissionDisplay; reviewDescription?: string; displayCwd?: string
   wechatReview?: WechatPermissionReview
 } {
-  const omittedDiff = { description, wechatReview: { incomplete: true as const } }
-  let hasDiff = false
+  const incomplete = { description, wechatReview: { incomplete: true as const } }
   try {
     const raw = object(call.rawInput) ? call.rawInput : undefined
     const command = call.kind === 'execute' && typeof raw?.command === 'string' ? raw.command : undefined
     const rawCwd = command !== undefined && typeof raw?.cwd === 'string' ? raw.cwd : undefined
     const cwd = command !== undefined ? permissionCwd(raw?.cwd) : undefined
-    const omittedArgs = raw !== undefined && Object.keys(raw).some(key => command === undefined || (key !== 'command' && key !== 'cwd'))
+    const omittedArgs = call.rawInput !== undefined && (!raw ||
+      Object.keys(raw).some(key => command === undefined || (key !== 'command' && key !== 'cwd')))
+    const locations = Array.isArray(call.locations) ? call.locations : []
+    const content = Array.isArray(call.content) ? call.content : []
+    const extra = locations.flatMap((loc: unknown) => object(loc) && typeof loc.path === 'string' ? [{
+      name: 'Location', value: JSON.stringify(loc),
+    }] : [])
+    const diffs: Array<{ path: string; oldText: string | null; newText: string }> = []
+    const notes: string[] = []
+    let omittedContent = call.content !== undefined && !Array.isArray(call.content)
+    for (const item of content) {
+      if (object(item) && item.type === 'diff') {
+        const { path, oldText, newText } = item
+        if (typeof path !== 'string' || (oldText != null && typeof oldText !== 'string') || typeof newText !== 'string') return incomplete
+        if (oldText == null || Object.keys(item).some(key => !['type', 'path', 'oldText', 'newText'].includes(key))) omittedContent = true
+        diffs.push({ path, oldText: oldText ?? null, newText })
+      } else if (object(item) && item.type === 'content' && object(item.content) &&
+        item.content.type === 'text' && typeof item.content.text === 'string') {
+        if (Object.keys(item).some(key => !['type', 'content'].includes(key)) ||
+          Object.keys(item.content).some(key => !['type', 'text'].includes(key))) omittedContent = true
+        notes.push(item.content.text)
+      } else omittedContent = true
+    }
     const wechatReview: WechatPermissionReview = {
-      ...(omittedArgs || (raw?.cwd !== undefined && typeof raw.cwd !== 'string') ? { incomplete: true } : {}),
+      ...(omittedArgs || omittedContent || (raw?.cwd !== undefined && typeof raw.cwd !== 'string') ||
+        (call.locations !== undefined && (!Array.isArray(call.locations) || extra.length !== locations.length)) ? { incomplete: true } : {}),
       ...(rawCwd !== undefined && cwd === undefined ? { cwd: rawCwd } : {}),
     }
     const fallback = { description, ...(wechatReview.incomplete || wechatReview.cwd !== undefined ? { wechatReview } : {}) }
-    const locations = Array.isArray(call.locations) ? call.locations : []
-    const content = Array.isArray(call.content) ? call.content : []
-    hasDiff = content.some(item => object(item) && item.type === 'diff')
-    const diffs: Array<{ path: string; oldText: string | null; newText: string }> = []
-    for (const item of content) {
-      if (!object(item) || item.type !== 'diff') continue
-      const { path, oldText, newText } = item
-      if (typeof path !== 'string' || (oldText != null && typeof oldText !== 'string') || typeof newText !== 'string') return omittedDiff
-      diffs.push({ path, oldText: oldText ?? null, newText })
-    }
-    const notes = content.flatMap((item: unknown) =>
-      object(item) && item.type === 'content' && object(item.content) && item.content.type === 'text' && typeof item.content.text === 'string'
-        ? [item.content.text] : [])
     const body: PermissionDisplay['body'] | undefined = command !== undefined && !diffs.length
       ? { kind: 'command', command, ...(cwd ? { cwd } : {}) }
       : command === undefined && diffs.length
@@ -195,10 +204,7 @@ export function acpApprovalDetails(call: Obj, description: string): {
           before: diff.oldText ?? '', after: diff.newText, ...(i ? { path: diff.path } : {}),
         })) }
         : undefined
-    if (!body) return hasDiff ? omittedDiff : fallback
-    const extra = locations.flatMap((loc: unknown) => object(loc) && typeof loc.path === 'string' ? [{
-      name: 'Location', value: JSON.stringify(loc),
-    }] : [])
+    if (!body) return diffs.length || locations.length ? incomplete : fallback
     const note = [body.kind === 'edit' && typeof call.title === 'string' ? call.title : '', ...notes].filter(Boolean).join('\n')
     const details = [
       ...(cwd ? [`Working directory: ${cwd}`] : []),
@@ -208,12 +214,12 @@ export function acpApprovalDetails(call: Obj, description: string): {
     const full = [description, ...details].join('\n')
     // Keep the existing approval channel available if the complete source
     // cannot fit its description. Never send a partial edit as full evidence.
-    if (full.length > 20_000) return hasDiff ? omittedDiff : fallback
+    if (full.length > 20_000) return incomplete
     const display = boundedPermissionDisplay(() => ({ body, ...(note ? { note } : {}), ...(extra.length ? { extra } : {}) }))
-    if (!display) return hasDiff ? omittedDiff : fallback
+    if (!display) return incomplete
     return { ...fallback, display, ...(details.length ? { reviewDescription: full } : {}), ...(cwd ? { displayCwd: cwd } : {}) }
   } catch {
-    return hasDiff ? omittedDiff : { description }
+    return incomplete
   }
 }
 

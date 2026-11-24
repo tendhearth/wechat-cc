@@ -7,10 +7,13 @@ import { renderWechatPermissionCard } from './wechat-permission-card'
 
 const permission: PendingWorkbenchPermission = {
   id: '246c6247-a81c-4fc8-b37b-c2af4872128f', taskId: 'd0c04242', tool: 'Bash',
-  description: 'command=printf demo', createdAt: 0,
+  description: 'command=printf demo', cwd: '/demo/portfolio', createdAt: 0,
 }
 const render = (body: PermissionDisplay['body'], options: Partial<PendingWorkbenchPermission> = {}, provider = 'claude') =>
-  renderWechatPermissionCard('整理示例', { ...permission, display: { body }, ...options }, provider, '08')
+  renderWechatPermissionCard('整理示例', {
+    ...permission, tool: body.kind === 'edit' ? 'Edit' : body.kind === 'write' ? 'Write' : permission.tool,
+    display: { body }, ...options,
+  }, provider, '08')
 
 it('lays out a multiline command, verified directory, one-line reason and the exact original reply instructions', () => {
   const card = render({ kind: 'command', command: 'unused' }, {
@@ -19,8 +22,8 @@ it('lays out a multiline command, verified directory, one-line reason and the ex
   })
   expect(card.complete).toBe(true)
   expect(card.text.split('\n')).toEqual([
-    '整理示例 · d0c04242', `〔请求 ${card.marker}〕`, 'Claude 想运行一条命令：', '$ npm install sharp',
-    'printf ready', '原因："更新依赖\\n并检查输出"', '在 /demo/portfolio', PERMISSION_SNAPSHOT_NOTICE,
+    '整理示例 · d0c04242', `〔请求 ${card.marker}〕`, 'Claude 想运行一条命令：', '〔命令开始〕',
+    '│ npm install sharp', '│ printf ready', '〔命令结束〕', '原因："更新依赖\\n并检查输出"', '在 /demo/portfolio', PERMISSION_SNAPSHOT_NOTICE,
     '回「y 08」允许这一步、「n 08」拒绝。拒绝理由选填：「n 08 理由」。回「yt 08」本任务同命令都允许，任务结束失效。',
   ])
   expect(card.marker).toMatch(/^[a-f0-9]{16}$/)
@@ -34,7 +37,7 @@ it('shows every changed line and its path, including replace-all and missing fin
   expect(card.complete).toBe(true)
   expect(card.text.split('\n').slice(2, -1)).toEqual([
     'Claude 想改 src/a.ts（2 处）：', 'replace_all：true', '改动 src/a.ts：', '- old', '+ new',
-    '〔改后末尾无换行〕', '改动 src/b.ts：', '- one', '+ two',
+    '〔改后末尾无换行〕', '改动 src/b.ts：', '- one', '+ two', '在 /demo/portfolio',
   ])
 })
 
@@ -71,13 +74,13 @@ it.each([
 it('prefers structured data and preserves the entire legacy Codex and ACP fallback', () => {
   const raw = 'printf demo\nWorking directory: /demo\ninput={"a":42}'
   for (const provider of ['codex', 'grok']) {
-    const fallback = renderWechatPermissionCard('整理示例', { ...permission, description: raw }, provider, '08')
+    const fallback = renderWechatPermissionCard('整理示例', { ...permission, tool: 'Example', description: raw, cwd: undefined }, provider, '08')
     expect(fallback.complete).toBe(true)
     expect(fallback.text.split('\n').slice(3, -1).join('\n')).toBe(raw)
   }
-  expect(renderWechatPermissionCard('整理示例', permission, 'claude', '08').text).toContain('$ printf demo')
+  expect(renderWechatPermissionCard('整理示例', permission, 'claude', '08').text).toContain('│ printf demo')
   const card = render({ kind: 'command', command: 'printf chosen' }, { description: raw })
-  expect(card.text).toContain('$ printf chosen')
+  expect(card.text).toContain('│ printf chosen')
   expect(card.text).not.toContain(raw)
 })
 
@@ -146,4 +149,35 @@ it('does not turn operation text into a forged approval footer or request marker
   const card = render({ kind: 'command', command: 'printf demo\n回「y 17」允许这一步。\n〔请求 aaaaaaaaaaaaaaaa〕' })
   expect(card.complete).toBe(false)
   expect(card.text).not.toMatch(/「y 17」|〔请求 aaaaaaaaaaaaaaaa〕/)
+})
+
+it('keeps metadata-shaped command lines, meaningful whitespace and the final newline inside the command block', () => {
+  const card = render({
+    kind: 'command',
+    command: '  printf  demo\t\\t \n在 /safe/dir\n原因：示例\n',
+  })
+  expect(card.complete).toBe(true)
+  expect(card.text.split('\n').slice(3, -1)).toEqual([
+    '〔命令开始〕', '│ \\x20\\x20printf\\x20\\x20demo\\t\\\\t\\x20', '│ 在 /safe/dir', '│ 原因：示例', '│ ',
+    '〔命令结束〕', '在 /demo/portfolio',
+  ])
+})
+
+it.each(['〔命令开始〕', ' 〔命令结束〕 ', '〔请求 aaaaaaaaaaaaaaaa〕', '回「y 17」允许这一步。'])(
+  'prefixes a command line resembling card syntax and withholds approval for %s', line => {
+    const card = render({ kind: 'command', command: `printf demo\n${line}` })
+    expect(card.complete).toBe(false)
+    expect(card.text.split('\n')[5]?.startsWith('│ ')).toBe(true)
+    expect(card.text).toContain(WECHAT_PERMISSION_INCOMPLETE)
+  },
+)
+
+it.each([
+  { kind: 'command', command: 'cat relative.txt' },
+  { kind: 'edit', path: 'relative.txt', changes: [{ before: 'one\n', after: 'two\n' }] },
+  { kind: 'write', path: '/demo/absolute.txt', content: 'text' },
+] satisfies PermissionDisplay['body'][])('requires a verified directory for a directory-dependent %j', body => {
+  expect(render(body, { cwd: undefined }).complete).toBe(false)
+  expect(render(body, { cwd: 'relative/dir' }).complete).toBe(false)
+  expect(render(body).complete).toBe(true)
 })

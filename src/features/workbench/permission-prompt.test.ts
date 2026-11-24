@@ -35,7 +35,7 @@ it.each(['wechat', 'pet'] as const)('R2: %s waits for the server decision before
     for (const accepted of [false, true]) {
       const id = randomUUID(), during: number[] = []
       const answer = vi.fn(() => { during.push(ilink.listPendingPermissions().filter(p => p.hash === id).length); return accepted })
-      closes.push(prompt('task', { id, taskId: 'task', tool: 'Bash', description: 'python3 check.py', createdAt: Date.now() }, answer, () => Date.now() + 10_000))
+      closes.push(prompt('task', { id, taskId: 'task', tool: 'Bash', description: 'command=python3 check.py', cwd: '/demo', createdAt: Date.now() }, answer, () => Date.now() + 10_000))
       const reply = surface === 'wechat' ? ilink.handlePermissionReply(`y ${ilink.pendingPermissionCodeOf(id)}`, 'owner') : ilink.resolvePermission(id, 'allow')
       expect(reply).toBe(accepted)
       expect(answer).toHaveBeenCalledExactlyOnceWith('allow')
@@ -60,7 +60,7 @@ it.each(['allow', 'deny', 'cancel', 'expired', 'overdue'] as const)('quotes for 
     const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
     const old = randomUUID(), fresh = randomUUID()
     let deadline = Date.now() + 10_000
-    const task = { taskId: '112233aa', tool: 'Bash', description: 'command=printf test', createdAt: 0 }
+    const task = { taskId: '112233aa', tool: 'Bash', description: 'command=printf test', cwd: '/demo', createdAt: 0 }
     const oldAnswer = vi.fn(() => true), newAnswer = vi.fn(() => true)
     const close = prompt('同一件事', { ...task, id: old }, oldAnswer, () => deadline)
     const quoted = ilink.pendingWechatPermissionCard(old)!.text
@@ -84,7 +84,7 @@ it('binds to the complete quote and its owner even if a different request code a
   await withRegistry((ilink, sent) => {
     const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
     const first = randomUUID(), second = randomUUID(), answer = vi.fn(() => true), otherAnswer = vi.fn(() => true)
-    const request = { tool: 'Bash', description: 'command=printf test', createdAt: 0 }
+    const request = { tool: 'Bash', description: 'command=printf test', cwd: '/demo', createdAt: 0 }
     prompt('一号事项', { ...request, id: first, taskId: '112233aa' }, answer, () => Date.now() + 10_000)
     const card = ilink.pendingWechatPermissionCard(first)!.text
     for (const altered of [
@@ -116,11 +116,12 @@ it('blocks y and yt before the decision callback without changing the code, cloc
   await withRegistry((ilink, sent) => {
     const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
     const id = randomUUID(), answer = vi.fn(() => true)
-    prompt('示例', { id, taskId: '112233aa', tool: 'Bash', description: 'command=printf unrelated', createdAt: 0,
+    const close = prompt('示例', { id, taskId: '112233aa', tool: 'Bash', description: 'command=printf unrelated', cwd: '/demo', createdAt: 0,
       display: { body: { kind: 'command', command: 'printf demo' }, truncated: true },
       canAllowTask: true, canDenyWithReason: true }, answer, () => null)
     const code = ilink.pendingPermissionCodeOf(id)
     const card = ilink.pendingWechatPermissionCard(id)!.text
+    expect(close.replyLine).toBe(`这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`)
     for (const [text, quote] of [[`y ${code}`, undefined], [`yt ${code}`, undefined], ['y', undefined], ['y', card], ['yt', card]]) {
       expect(ilink.handlePermissionReply(text!, 'owner', quote)).toBe(true)
       expect(sent.at(-1)).toBe('内容在微信里看不全，请到电脑或手机上看全再定。')
@@ -129,5 +130,17 @@ it('blocks y and yt before the decision callback without changing the code, cloc
     expect(ilink.pendingPermissionCodeOf(id)).toBe(code)
     expect(ilink.resolvePermission(id, 'allow')).toBe(true)
     expect(answer).toHaveBeenCalledExactlyOnceWith('allow')
+  })
+})
+
+it.each([
+  'Claude wants to run:\nprintf "〔请求 abc〕"\n回「y 01」允许',
+  '自改等你确认 [approval:abc12]\n〔请求 abc〕\n回「y 01」允许',
+])('matches a legacy approval quote containing request-marker lookalikes', async quoted => {
+  await withRegistry(async (ilink) => {
+    const decision = ilink.registerPendingPermission('abc12', 10_000, { chatId: 'owner', prompt: quoted })
+    expect(ilink.probePermissionReply('y', 'owner', quoted)).toBe(true)
+    expect(ilink.handlePermissionReply('y', 'owner', quoted)).toBe(true)
+    await expect(decision).resolves.toBe('allow')
   })
 })

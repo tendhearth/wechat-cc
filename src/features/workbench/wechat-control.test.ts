@@ -377,7 +377,9 @@ describe('WeChat task control through the shared service',()=>{
     const request=service.detail(task.id).permissions[0]!
     const other=store.create({title:'其他任务',path:project,providerId:'claude',ownerChatId:'owner'})
     expect(await service.handleWechat('owner',`任务 ${task.id}`)).toContain(request.id)
-    expect(await service.handleWechat('owner',`任务 ${task.id} 权限 ${request.id}`)).toContain('读取项目中的报告文件')
+    const lookup=await service.handleWechat('owner',`任务 ${task.id} 权限 ${request.id}`)
+    expect(lookup).toMatchObject({kind:'permission_card',card:{complete:true}})
+    expect(typeof lookup==='object'&&lookup?.kind==='permission_card'&&lookup.card.text.includes('读取项目中的报告文件')).toBe(true)
     await service.handleWechat('other',`任务 ${task.id} 允许 ${request.id}`)
     expect(await service.handleWechat('owner',`任务 ${other.id} 允许 ${request.id}`)).toContain('已失效')
     expect(allowed).toEqual([])

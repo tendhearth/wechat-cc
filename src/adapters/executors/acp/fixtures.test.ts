@@ -122,6 +122,18 @@ describe('ACP 真机报文回放(cursor-agent 2026-09-17)', () => {
     expect(result.display?.body.kind).toBe('edit')
   })
 
+  it.each([
+    ['array input', { rawInput: ['withheld'] }],
+    ['string input', { rawInput: 'withheld' }],
+    ['image content', { content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data: 'fixture' } }] }],
+    ['resource link', { content: [{ type: 'content', content: { type: 'resource_link', uri: 'file:///fixture' } }] }],
+    ['unknown content', { content: [{ type: 'future', payload: 'withheld' }] }],
+    ['text with an extra input', { content: [{ type: 'content', content: { type: 'text', text: 'shown', hidden: 'withheld' } }] }],
+  ])('marks the short-title review incomplete with %s', (_, fields) => {
+    const details = acpApprovalDetails({ kind: 'other', title: 'Review example', ...fields }, 'Review example')
+    expect(details.wechatReview?.incomplete).toBe(true)
+  })
+
   it('marks an ACP diff omitted from the legacy description as incomplete for WeChat', () => {
     const details = acpApprovalDetails({ kind: 'edit', content: [
       { type: 'diff', path: 'sample', oldText: 'before', newText: 'a'.repeat(20_000) },

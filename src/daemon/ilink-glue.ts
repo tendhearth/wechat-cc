@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { WECHAT_PORTS, WECHAT_PERMISSION_INCOMPLETE, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling } from '../ports/wechat'
-import { howToReplyLine, isPermissionCardQuote, parsePermissionReply, workbenchQuoteMarker } from './pending-permissions'
+import { howToReplyLine, isPermissionCardQuote, parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
 import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText } from '../lib/ilink-workbench'
@@ -175,7 +175,7 @@ export function makeIlinkAdapter(opts: {
       const attribution = { ...currentReplyAttribution() ?? { speaker: 'notice' as const } }
       // 只有空白也算空:ilink 会照发,微信那头就是一条空气泡(2026-10-02)。
       if (!text.trim()) return { msgId: `err:${Date.now()}`, error: 'empty text' }
-      const privateText = metadata?.source === 'workbench' && workbenchQuoteMarker(text) !== undefined
+      const privateText = metadata?.historyText !== undefined
       let reachedWire = false
       try {
         // Use the in-memory ctxStore / acctStore directly — sendReplyOnce
@@ -193,7 +193,7 @@ export function makeIlinkAdapter(opts: {
         }
         outbound.recordSuccess(new Date().toISOString())
         windowClosed.delete(chatId)
-        // Record ONE row with the full pre-chunk text (fire-and-forget;
+        // Record ONE row with the history projection (fire-and-forget;
         // recording failure must never break the send result).
         void messagesStore.append({
           id: `out:${chatId}:${Date.now()}:${outSeq++}`,
@@ -201,7 +201,7 @@ export function makeIlinkAdapter(opts: {
           ts: new Date().toISOString(),
           direction: 'out',
           kind: 'text',
-          text: unprefixedReplyText(text),
+          text: metadata?.historyText ?? unprefixedReplyText(text),
           ...attribution,
           source: metadata?.source ?? 'live',
         }).catch(err => log('MESSAGES', privateText ? 'workbench permission card record failed' : `outbound record failed: ${err instanceof Error ? err.message : err}`))

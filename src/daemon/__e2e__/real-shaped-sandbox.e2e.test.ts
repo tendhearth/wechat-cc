@@ -99,6 +99,8 @@ const spawnOptions: Array<Record<string, unknown>> = []
 const codexThreads: Array<Record<string, unknown>> = []
 /** codex 收到的审批应答,按命令记。 */
 const decisions = new Map<string, unknown>()
+const privateApprovalEvidence = 'sandboxapprovalhistoryproof'
+const scopedApprovalCommand = 'rm -rf build\nprintf ' + privateApprovalEvidence
 const longApprovalCommand = "printf '%s' '" + 'SANDBOX_INLINE_APPROVAL '.repeat(200) + "'"
 const patchFile = 'SANDBOX_APPROVAL_FILE.txt'
 const patchDiff = '@@ -1 +1 @@\n-old\n+SANDBOX_PRIVATE_DIFF'
@@ -122,7 +124,7 @@ const codexScript: FakeSdkScript = {
     lastCodexEnvelope = text
     const s = said(text)
     if (s === '把 build 删了') return approval('rm -rf build', '删好了。')
-    if (s === '在本轮目录把 build 删了') return approval('rm -rf build', '删好了。', null)
+    if (s === '在本轮目录把 build 删了') return approval(scopedApprovalCommand, '删好了。', null)
     if (s === '列一下目录') return approval('ls', '列好了。')
     if (s === '推一下') return approval('git push origin main', '推不了,被拒了。')
     if (s === '再清一次 dist') return approval('rm -rf dist', '清好了。')
@@ -1337,7 +1339,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       for (const permission of [detail.body.permissions[0], MatterDetail.parse(desk.body).permissions[0], MatterDetail.parse(mobile.json()).permissions[0]]) {
         expect(permission?.display?.body.kind).toBe('command')
         expect(permission?.cwd === project && permission.display?.body.kind === 'command' &&
-          permission.display.body.command === 'rm -rf build').toBe(true)
+          permission.display.body.command === scopedApprovalCommand).toBe(true)
       }
     } finally { phone.close() }
     expect(requests).toHaveLength(1)
@@ -1359,13 +1361,47 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const complete = (await queued(asking))!
     expect(complete.hash).toBe(detail.body.permissions[0]!.id)
     const completeText = await lookup(asking, complete.hash)
-    expect(completeText).toContain('Codex 想运行一条命令：\n$ rm -rf build')
+    expect(completeText.includes(`Codex 想运行一条命令：\n〔命令开始〕\n│ rm -rf build\n│ printf ${privateApprovalEvidence}\n〔命令结束〕`)).toBe(true)
     const instruction = (code: string) => `回「y ${code}」允许这一步、「n ${code}」拒绝。拒绝理由选填：「n ${code} 理由」。`
+    const rejectOnlyInstruction = (code: string) => `这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`
     expect(completeText.endsWith(instruction(complete.code))).toBe(true)
-    decisions.delete('rm -rf build')
+    const lookupText = `任务 ${asking} 权限 ${complete.hash}`
+    const chat = await desktop<{ matter: { id: string } }>('GET', '/v1/matter/owner-chat')
+    expect(chat.status).toBe(200)
+    const desktopRequest = { id: chat.body.matter.id, requestId: 'b6419095-70fa-41f3-bdbb-578f233fa00d', text: lookupText }
+    const appCard = await desktop<{ reply: string }>('POST', '/v1/matter/say', desktopRequest)
+    expect(appCard.status).toBe(200)
+    expect(appCard.body.reply === completeText).toBe(true)
+    const phoneRequestId = 'b6419095-70fa-41f3-bdbb-578f233fa00e'
+    const appPhone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    try {
+      const accepted = await appPhone.request({
+        method: 'POST', path: '/v1/matter/owner-chat/say',
+        body: JSON.stringify({ requestId: phoneRequestId, text: lookupText }),
+      })
+      expect(accepted.status).toBe(200)
+    } finally { appPhone.close() }
+    const historySummary = `待批：运行命令 · ${completeText.split('\n')[1]}`
+    await expect.poll(() => d.query<{ status: string; reply: string }>(
+      'SELECT status, reply FROM matter_say_receipts WHERE request_id IN (?, ?) ORDER BY request_id', desktopRequest.requestId, phoneRequestId,
+    ).filter(row => row.status === 'replied' && row.reply === historySummary).length).toBe(2)
+    decisions.delete(scopedApprovalCommand)
     d.sendText(d.owner, `y ${complete.code}`)
-    await expect.poll(() => decisions.get('rm -rf build')).toBe('accept')
+    await expect.poll(() => decisions.get(scopedApprovalCommand)).toBe('accept')
     expect(await queued(asking)).toBeUndefined()
+    await expect.poll(() => d.query<{ source: string }>('SELECT source FROM messages WHERE text=? ORDER BY source', historySummary))
+      .toEqual([{ source: 'desktop' }, { source: 'phone' }, { source: 'workbench' }])
+    const repeated = await desktop<{ reply: string }>('POST', '/v1/matter/say', desktopRequest)
+    expect(repeated).toEqual({ status: 200, body: { kind: 'chat', reply: historySummary } })
+    expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0', privateApprovalEvidence)).toEqual([])
+    const history = await desktop('GET', '/v1/matter/owner-chat')
+    expect(history.status).toBe(200)
+    expect(JSON.stringify(history.body).includes(privateApprovalEvidence)).toBe(false)
+    const search = await desktop('GET', '/v1/matter/owner-chat/search?q=' + privateApprovalEvidence)
+    expect(search).toEqual({ status: 200, body: { hits: [] } })
+    const audit = d.query<{ text: string }>("SELECT json_extract(payload_json, '$.text') AS text FROM matter_items WHERE matter_id=? AND kind='system'", asking)
+    expect(audit.filter(row => row.text.startsWith('权限请求'))).toEqual([{ text: `权限请求：${complete.hash}` }])
+    expect(audit.some(row => row.text.includes(privateApprovalEvidence))).toBe(false)
     const cancel = async (id: string) => {
       expect((await desktop('POST', '/v1/workbench/cancel', { id })).status).toBe(202)
       await expect.poll(async () => (await desktop<{ runId?: string }>('GET', `/v1/workbench/task?id=${id}`)).body.runId).toBeUndefined()
@@ -1382,7 +1418,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       const detail = await desktop<{ task: { title: string } }>('GET', `/v1/workbench/task?id=${id}`)
       const card = (await queued(id))!
       const notice = texts(d.ilink.outbox(), d.owner).find(isNotice)!
-      expect(notice).toContain(instruction(card.code))
+      expect(notice.includes(rejectOnlyInstruction(card.code)) && !notice.includes(`回「y ${card.code}」`)).toBe(true)
       expect(/〔请求|SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(notice)).toBe(false)
       const journal = d.query<{ summary: string }>('SELECT summary FROM pending_cards WHERE hash = ?', card.hash)
       expect(journal).toEqual([{ summary: `${detail.body.task.title} · ${id}` }])
@@ -1417,7 +1453,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(await desktop('POST', '/v1/permissions/resolve', { hash: patch.card.hash, decision: 'allow' })).toEqual({ status: 200, body: { ok: true } })
     await expect.poll(() => decisions.get(patchFile)).toBe('accept')
     expect(await queued(patch.id)).toBeUndefined()
-    expect(d.log().some(line => /SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(line))).toBe(false)
+    expect(d.log().some(line => line.includes(privateApprovalEvidence) || /SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(line))).toBe(false)
   })
 
   // S3b(一件事一次提议;主人点头的「任务做完时人在电脑前 ⇒ 先只在桌面提示,10 分钟没看再推手机」):沙盒里 10 分钟缩成 2 秒。

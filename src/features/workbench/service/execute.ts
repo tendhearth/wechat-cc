@@ -596,7 +596,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       audit:event => {
         if(event.type==='request'){
           const description=event.legacyDescription??event.permission.description
-          addRunEvent('system',`权限请求：${event.permission.tool} · ${description} · ${event.permission.id}`)
+          addRunEvent('system',`权限请求：${event.permission.id}`)
           let replyLine=''
           if(ctx.deps.permissionPrompt){
             const close=ctx.deps.permissionPrompt(task.title,event.permission,(decision,reason)=>{

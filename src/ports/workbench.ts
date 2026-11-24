@@ -21,7 +21,7 @@ export interface PendingWorkbenchPermission {
   tool: string
   description: string
   [legacyPermissionDescription]?: string
-  [wechatPermissionSource]?: { description: string; cwd?: string; command?: string; display?: PermissionDisplay; incomplete?: true }
+  [wechatPermissionSource]?: { description: string; cwd?: string; command?: string; paths?: readonly string[]; display?: PermissionDisplay; incomplete?: true }
   createdAt: number
   display?: PermissionDisplay
   cwd?: string
