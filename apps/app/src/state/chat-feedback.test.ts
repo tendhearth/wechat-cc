@@ -273,9 +273,9 @@ describe('reply attribution avatars', () => {
     }
   })
 
-  it('keeps the transcript and provider-id accessible name when model settings cannot load', async () => {
+  it('keeps the transcript and readable executor name when model settings cannot load', async () => {
     await attributedScreen([reply('offline reply', { speaker: 'agent', provider: 'claude' })], true)
-    expect(avatar('offline reply')?.getAttribute('aria-label')).toBe('claude')
+    expect(avatar('offline reply')?.getAttribute('aria-label')).toBe('Claude')
     expect(row('offline reply').textContent).toContain('offline reply')
   })
 

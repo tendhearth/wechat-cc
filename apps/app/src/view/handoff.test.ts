@@ -26,7 +26,8 @@ describe('handoffBlock(进展页底部那一块)', () => {
     expect(handoffBlock({ state: 'handed', from: 'claude', to: 'codex', matterId: 'deadbeef' }, 'zh-Hans', NOW, N)).toEqual({ kind: 'handed', note: '已经交给 Codex 继续', open: '打开那件事', matterId: 'deadbeef' })
   })
   it('不认识的执行者名字原样(不假定是 Claude)', () => {
-    expect(handoffBlock({ ...offer, to: 'gemini' }, 'zh-Hans', NOW, N)).toMatchObject({ action: '交给 gemini 继续' })
+    expect(handoffBlock({ ...offer, to: 'my-acp' }, 'zh-Hans', NOW, N)).toMatchObject({ action: '交给 my-acp 继续' })
+    expect(handoffBlock({ ...offer, to: 'gemini' }, 'zh-Hans', NOW, N)).toMatchObject({ action: '交给 Gemini 继续' })
   })
 })
 

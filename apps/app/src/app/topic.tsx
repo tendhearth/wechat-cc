@@ -1,3 +1,4 @@
+import { sessionAgentName } from '../view/agents'
 import { WelcomeGate } from '../ui/WelcomeGate'
 import { BusyIndicator } from '../ui/motion'
 import { t } from '../i18n'
@@ -135,7 +136,7 @@ export function TopicBubble() {
   const sessionSection=(items:TopicDetailT['matters'],title:string)=>(
     <View><Txt accessibilityRole="header">{title}</Txt>
           {!items.length?<Txt role="small" tone="inkSoft">{zh?'这个项目还没有会话':'No sessions in this project yet'}</Txt>:null}
-          {items.map(m=>{const s=m.session!,name=s.displayName||s.executor,time=relAgo(s.updatedAt,Date.now(),lang);return <View key={m.id} testID={`topic-matter-${m.id}`}>
+          {items.map(m=>{const s=m.session!,name=sessionAgentName(s.executor, s.displayName),time=relAgo(s.updatedAt,Date.now(),lang);return <View key={m.id} testID={`topic-matter-${m.id}`}>
             <Pressable testID={`topic-session-${m.id}`} accessibilityRole="button" accessibilityLabel={[s.title,name,s.latestStep,time].filter(Boolean).join(', ')} onPress={()=>{rememberReference(backend,m.id);router.push(`/matter/${encodeURIComponent(m.id)}`)}} style={({pressed})=>({flexDirection:'row',alignItems:'center',gap:space.m,minHeight:componentAppearance.matterRow.minHeight.phone,paddingVertical:space.m,opacity:pressed?0.7:1})}>
               <AgentAvatar id={s.executor} names={{[s.executor]:name}} size={componentAppearance.identity.agentSize.phone} />
               <View style={{flex:1,gap:space.xs}}><Txt role="body" content="user">{s.title}</Txt><Txt role="small" tone="inkSoft" content="user">{name} · {s.latestStep}</Txt><Txt role="caption" tone="inkSoft">{time}</Txt></View>

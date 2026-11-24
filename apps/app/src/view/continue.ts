@@ -7,7 +7,7 @@ import { agentName, type AgentNames } from './agents'
  * 提交失败的那一句、接过来的事「第一句会怎样」。纯函数;页面只照着画。
  */
 
-/** {provider} 填的名字:daemon 给的(收敛清单 ⑥,预览 / 会话行的 displayName、一件事的 agentNames);没有 ⇒ id。 */
+/** {provider} 填的名字:daemon 给的(收敛清单 ⑥,预览 / 会话行的 displayName、一件事的 agentNames);没有 ⇒ 由 agentName 处理旧版 id。 */
 export const providerName = (p: string, names?: AgentNames): string => agentName(p, names)
 /** 预览自己带的名字。 */
 const namesOf = (p: { provider: string; displayName?: string }): AgentNames => (p.displayName ? { [p.provider]: p.displayName } : undefined)

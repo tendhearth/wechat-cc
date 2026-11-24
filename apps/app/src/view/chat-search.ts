@@ -1,3 +1,25 @@
+import { STATUS_TABLE } from '@wechat-cc/protocol'
+import { t, type Lang } from '../i18n'
+import { agentsLabel } from './agents'
+import type { HomeRow } from './home'
+import { phoneTime } from './phone-time'
+
+export type SearchTab = 'messages' | 'work'
+
+export function searchCopy(tab: SearchTab, lang: Lang) {
+  return {
+    title: t(lang, tab === 'work' ? 'chatSearch.workTitle' : 'chatSearch.title'),
+    placeholder: t(lang, tab === 'work' ? 'chatSearch.workPlaceholder' : 'chatSearch.placeholder'),
+  }
+}
+
+export function workSearchRowCopy(row: HomeRow, title: string, synced: boolean, now: number, lang: Lang) {
+  const state = t(lang, STATUS_TABLE[row.status].word)
+  const sync = synced ? null : t(lang, 'chatSearch.workNotSynced')
+  const details = [agentsLabel(row.agents, row.agentNames), state, sync, phoneTime(row.updatedAt, now, lang)].filter(Boolean)
+  return { caption: details.join(' · '), label: [title, ...details].join(lang === 'zh-Hans' ? '，' : ', ') }
+}
+
 /** 把一条结果切成「命中 / 不命中」几段,给阅读视图上底色(不改字色、不加粗:一个强调色只给动作)。 */
 export function searchSegments(text: string, q: string): Array<{ text: string; hit: boolean }> {
   const needle = q.trim()
