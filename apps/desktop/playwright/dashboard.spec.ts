@@ -518,7 +518,7 @@ test.describe('RECONNECT_DIAGNOSE telemetry', () => {
 
 
 test('presence shell keeps one home composer and its draft through navigation', async ({page,shimUrl,shim}) => {
-  await page.setViewportSize({ width: 690, height: 820 })
+  await page.setViewportSize({ width: 900, height: 820 })
   await shim.invoke('demo.seed', {chat_id:'test_chat'})
   await bootIntoDashboard(page,shimUrl)
   await expect(page.locator('#dash-global-rail .cc-home-details')).not.toHaveAttribute('open')
@@ -530,40 +530,35 @@ test('presence shell keeps one home composer and its draft through navigation', 
   await clickNav(page, 'overview')
   await expect(page.locator('article[data-pane="overview"]')).toBeVisible()
   await page.locator('#topbar-cc').click()
-  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#converse-scroll')).toBeVisible()
   await expect(page.locator('#dash-global-rail .cc-home-details')).not.toHaveAttribute('open')
   await expect(page.locator('#converse-input')).toHaveValue('只检查草稿，不发送')
   await expect(page.locator('#converse-input')).toBeFocused()
   await expect(page.locator('#converse-root')).toHaveCount(1)
-  const header = await page.locator('header.dash-topbar').boundingBox()
-  const main = await page.locator('.dash-main').boundingBox()
-  expect(header!.y + header!.height).toBeLessThanOrEqual(main!.y + 1)
-  expect(header!.height).toBe(72)
+
 })
 
 test('conversation opens directly; CC focuses input and draft survives navigation', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  const pane = page.locator('.cc-now-pane')
-  await expect(pane).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#converse-scroll')).toBeVisible()
   // shim 默认 presence ok ⇒ 够得着 ⇒ 亮着的 CC。
-  await expect(pane).toHaveAttribute('data-cc', 'here')
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-cc', 'here')
   // 动画就绪后静态 PNG 让位给 now-pet-stage(cc-now.css),亮着看 stage 的 data-form。
   await expect(page.locator('#topbar-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
   await expect(page.locator('.topbar-cc-dark')).toBeHidden()
   await expect(page.locator('#converse-scroll')).toBeVisible()
   await page.locator('#converse-input').fill('草稿不丢')
   await page.locator('#topbar-cc').click()
-  await expect(pane).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('#converse-scroll')).toBeVisible()
   // 离开对话再回来，草稿仍在同一个输入框里。
   await clickNav(page, 'recollections')
   await clickNav(page, 'overview')
-  await expect(pane).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#converse-scroll')).toBeVisible()
   await expect(page.locator('#converse-input')).toHaveValue('草稿不丢')
   await expect(page.locator('#converse-root')).toHaveCount(1)
   await clickNav(page,'overview')
-  await expect(pane).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#converse-scroll')).toBeVisible()
 })
 
 test('原话只在对话出现,小 CC 聚焦输入,草稿和完整回复保留', async ({ page, shimUrl, shim }) => {
@@ -592,21 +587,18 @@ test('CC goes dark when the daemon cannot be reached', async ({ page, shimUrl, s
   const down = page.waitForResponse(r => r.url().includes('/v1/companion/presence') && r.status() === 503, { timeout: 25_000 })
   await bootIntoDashboard(page, shimUrl)
   await down
-  // index.html 默认就是 away,所以先证明 poller 真的跑过:状态行红点 + 不在身边由同一信号写入。
-  await expect(page.locator('#topbar-presence')).toHaveText('CC 不在身边', { timeout: 10_000 })
-  await expect(page.locator('#topbar-presence-dot')).toHaveClass(/bad/)
-  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'away')
+  // 连接文案和暗形象读同一个状态。
+  await expect(page.locator('#desk-cc-presence')).toHaveText('CC 不在身边', { timeout: 10_000 })
   await expect(page.locator('#topbar-cc')).toHaveAttribute('data-cc', 'away')
   await expect(page.locator('#topbar-cc .now-pet-stage')).toHaveAttribute('data-form', 'unlit')
   await expect(page.locator('.topbar-cc-light')).toBeHidden()
 })
 
-test('CC is lit and the status line is green when presence answers', async ({ page, shimUrl, shim }) => {
+test('CC is lit and shows it is home when presence answers', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'here', { timeout: 25_000 })
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-cc', 'here', { timeout: 25_000 })
   // 动画就绪后静态 PNG 让位给 now-pet-stage(cc-now.css),亮着看 stage 的 data-form。
   await expect(page.locator('#topbar-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
-  await expect(page.locator('#topbar-presence-dot')).toHaveClass(/ok/, { timeout: 15_000 })
-  await expect(page.locator('#topbar-presence')).toHaveText('CC 在家')
+  await expect(page.locator('#desk-cc-presence')).toHaveText('CC 在家')
 })

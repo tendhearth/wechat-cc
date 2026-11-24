@@ -37,7 +37,7 @@ it('出处和状态行覆盖条目、会话、有无名字和可跳与不可跳'
   expect(outlineSource({kind:'session'}, false, now)).toEqual({
     text:'CC 梳理的，出自终端会话', jump:false, missing:true,
   })
-  expect(outlineNotice({state:'ready', at:now, stale:true, canRun:true},now)).toEqual({text:'CC 梳理的 · 刚刚',action:'重新梳理'})
+  expect(outlineNotice({state:'ready', at:now, stale:true, canRun:true},now)).toEqual({text:'CC 今天梳理的',action:'重新梳理'})
   expect(outlineNotice({state:'ready', at:now, stale:true, canRun:false},now).text).toContain('今天梳理过了。')
   expect(outlineNotice({state:'failed', canRun:true, error:'no_private_model'},now).reason).toBe('现在没有可用的私密模型。')
   expect(outlineNotice({state:'failed', canRun:false},now).reason).toBe('今天试过几次都没成，明天再试。')
@@ -77,7 +77,7 @@ it('挂载实际只读图，状态圆点来自叶子的 data 属性，选中显�
 it('宽窗按本地日历写梳理时间，保留较早日期格式', () => {
   const now = new Date(2026, 10, 22, 0, 10).getTime()
   const notice = (day: number, hour: number) =>
-    outlineNotice({state:'ready', at:new Date(2026, 10, day, hour).getTime(), stale:true, canRun:true}, now, true)
+    outlineNotice({state:'ready', at:new Date(2026, 10, day, hour).getTime(), stale:true, canRun:true}, now)
   expect(notice(22, 0)).toEqual({text:'CC 今天梳理的', action:'重新梳理'})
   expect(notice(21, 23).text).toBe('CC 昨天梳理的')
   expect(notice(20, 23).text).toBe('CC 周五梳理的')

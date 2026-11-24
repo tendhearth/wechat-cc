@@ -98,37 +98,6 @@ test('只有终端会话的地方打开全文，回 CC 保留全部对话', asyn
   await expect(earlier(page)).toBeVisible()
 })
 
-test('筛选后继续跨过无关页，找到才停，查找期间按钮禁用', async ({ page, shimUrl }) => {
-  await page.setViewportSize({width:690,height:820})
-  let release!: () => void
-  const held = new Promise<void>(resolve => { release = resolve })
-  const requests: string[] = []
-  await page.route('**/v1/matter/owner-chat/window**', async route => {
-    const before = new URL(route.request().url()).searchParams.get('before')
-    if (!before) return route.fulfill({ json: { messages: recent, earlier: 'p1' } })
-    requests.push(before)
-    if (before === 'p1') {
-      await held
-      return route.fulfill({ json: { messages: [row('other', '别处的话。', day - 60_000)], earlier: 'p2' } })
-    }
-    return route.fulfill({ json: { messages: [old], earlier: null } })
-  })
-  await page.goto(shimUrl)
-  await select(page, 'rici')
-  await expect(earlier(page)).toBeVisible()
-  await earlier(page).click()
-  try {
-    await expect(earlier(page)).toBeDisabled()
-    await expect(earlier(page)).toHaveText('在往前找…')
-    await expect.poll(() => requests.slice()).toEqual(['p1'])
-  } finally {
-    release()
-  }
-  await expect(reading(page).getByText(old.text)).toBeVisible()
-  await expect(reading(page).getByText('别处的话。')).toHaveCount(0)
-  await expect(earlier(page)).toBeHidden()
-  expect(requests).toEqual(['p1', 'p2'])
-})
 
 test('全部对话往上加一页而阅读锚点不跳，收栏后按钮仍居中', async ({ page, shimUrl }) => {
   await page.route('**/v1/matter/owner-chat/window**', route => {
@@ -160,17 +129,4 @@ test('全部对话往上加一页而阅读锚点不跳，收栏后按钮仍居�
     node.querySelector(`[data-converse-message="${id}"]`)!.getBoundingClientRect().top, anchor.id)
   expect(Math.abs(y - anchor.y)).toBeLessThanOrEqual(2)
   await expect(page.locator('#converse-latest')).toBeHidden()
-})
-
-test('690px 保留原顶栏、上方地方列表和窄窗筛选条', async ({ page, shimUrl }) => {
-  await page.setViewportSize({ width: 690, height: 820 })
-  await page.goto(shimUrl)
-  await expect(page.locator('#dash-global-rail')).toHaveCSS('height', '72px')
-  await expect(page.locator('#desk-rail-toggle')).toBeHidden()
-  await select(page, 'rici')
-  await expect(page.locator('#converse-place-clear')).toHaveText('只看 rici · 回到全部')
-  await expect(page.locator('.desk-date-line')).toBeHidden()
-  await expect(reading(page).locator('.desk-message-date').first()).toBeHidden()
-  const [places, scroll] = await Promise.all([page.locator('.places-strip').boundingBox(), reading(page).boundingBox()])
-  expect(places!.y + places!.height).toBeLessThanOrEqual(scroll!.y)
 })

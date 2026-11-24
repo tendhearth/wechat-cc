@@ -990,20 +990,12 @@ export function initDialoguePage(deps) {
   root.dataset.ready = "true"
   renderSkeleton(root)
   wireEvents(root, deps)
-  positionDialogueTools(document.documentElement.hasAttribute("data-desk-wide"))
+  positionDialogueTools()
   loadDialogue(deps)
 }
 
-/** Keep the original controls and listeners when the window changes width. @param {boolean} wide */
-export function positionDialogueTools(wide) {
+function positionDialogueTools() {
   const tools = document.getElementById("dialogue-tools")
-  if (!tools) return
-  const root = document.getElementById("dialogue-root")
-  if (wide) {
-    const tabs = root?.parentElement?.querySelector(".dialogue-workspace-tabs")
-    if (tabs && tools.previousElementSibling !== tabs) tabs.after(tools)
-  } else {
-    const documentBody = root?.querySelector(".dialogue-document")
-    if (documentBody && tools.parentElement !== documentBody) documentBody.prepend(tools)
-  }
+  const tabs = document.getElementById("dialogue-root")?.parentElement?.querySelector(".dialogue-workspace-tabs")
+  if (tools && tabs) tabs.after(tools)
 }

@@ -4,15 +4,16 @@ const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 const start = html.indexOf('id="dash-global-rail"')
 const topbar = html.slice(start, html.indexOf('</header>', start))
 describe('desktop topbar', () => {
-  it('CC 与搜索住在页头', () => {
+  it('CC 与搜索直接挂在桌面左栏', () => {
+    expect(html).toMatch(/<html[^>]*\bdata-desk-wide\s/)
     expect(html).toContain('<header id="dash-global-rail" class="dash-topbar">')
     expect(topbar).toContain('id="topbar-cc"')
     expect(topbar).toContain('topbar-cc-light')
     expect(topbar).toContain('topbar-cc-dark')
     expect(topbar).toContain('id="topbar-search"')
     expect(topbar).toMatch(/id="topbar-cc"[^>]*class="[^"]*\bactive\b/)
-    expect(topbar).toContain('id="topbar-presence-dot"')
-    expect(topbar).toContain('id="topbar-presence"')
+    expect(topbar).toContain('id="desk-cc-presence"')
+    expect(topbar).toContain('id="now-connections"')
   })
   it('七个目的页与设置后厨都可达', () => {
     for (const pane of ['overview','memory','recollections','atelier','todos','a2a-agents','sessions']) expect(topbar).toContain(`data-pane="${pane}"`)
@@ -21,7 +22,7 @@ describe('desktop topbar', () => {
   })
   it('保持一段对话和唯一事项层', () => {
     expect(topbar).not.toContain('data-pane="workbench"')
-    expect(html).toContain('data-conversation="single"')
+    expect(html.match(/id="converse-root"/g)).toHaveLength(1)
     expect(html).toContain('id="conversation-matter-layer"')
     expect(html).toMatch(/id="workbench-home"[^>]*data-life-pane="overview"/)
   })

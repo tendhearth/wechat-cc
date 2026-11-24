@@ -8,7 +8,7 @@
 //   .wizard .screen + .steps .step (step 1-4 nav)
 //   #enter-dashboard (gated on daemon.alive)
 //   #wizard-foot-dot/text (wizard footer status pill). The 此刻 status line
-//   (#topbar-presence-dot/text) is not ours: main.js renders it from nowStatusLine.
+//   (#desk-cc-presence) is not ours: main.js renders it from nowStatusLine.
 // Subscribes to: doctorPoller (renders env list on each successful poll)
 
 import { doctorRows, daemonStatusLine, escapeHtml, hasUsableProvider } from "../view.js"

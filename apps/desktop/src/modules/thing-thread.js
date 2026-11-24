@@ -1,6 +1,5 @@
 // @ts-check
 import { wireDeskDisclosure } from './desk-disclosure.js'
-import { DESK_LAYOUT_QUERY } from './desk-layout.js'
 import { executorName } from './executor-names.js'
 import { mountLabMap } from './lab-map.js'
 import { V1, v1 } from '../daemon-client.js'
@@ -22,11 +21,11 @@ function agentOf(item) {
   return item.agents.find(agent => agent.current) ?? item.agents[0]
 }
 
-/** @param {Item} item @param {boolean} wide */
-function stateOf(item, wide) {
+/** @param {Item} item */
+function stateOf(item) {
   if (item.group === 'waiting') return '等你定'
   if (item.group === 'working') return '正在做'
-  return item.endedAt != null || (!wide && item.quiet) || !(item.kind === 'terminal' || item.terminal) ? '已经结束' : '停着'
+  return item.endedAt != null || !(item.kind === 'terminal' || item.terminal) ? '已经结束' : '停着'
 }
 
 /**
@@ -45,7 +44,6 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('desk-lab-map'))
   const note = document.getElementById('desk-lab-map-note')
   const labDescription = note?.textContent ?? ''
-  const wide = window.matchMedia(DESK_LAYOUT_QUERY)
   /** @type {Set<string>} */ const maps = new Set()
   /** @type {Set<string>} */ const aspectMaps = new Set()
   let experiment = false, alive = true
@@ -59,10 +57,10 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   /** @type {Item|undefined} */ let selected
   /** @type {(()=>void)|undefined} */ let dispose
   /** @type {Item|undefined} */ let linked
-  let generation = 0, openEarlier = false, tabsMarkup = ''
+  let generation = 0, tabsMarkup = ''
   /** @type {AbortController|undefined} */ let menuListeners
   /** @param {Place} where */
-  const rowsFor = where => placeSessions(wide.matches ? where : {...where,sessions:undefined}, roster)
+  const rowsFor = where => placeSessions(where, roster)
   /** @type {{key:string,request?:string}|null} */ let inlineWaiting = null
 
   // 在图上时线是藏着的,那张就地的卡看不见:这时不拦顶上的纸条。
@@ -121,7 +119,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
 
   function reflectGraph() {
     if (!mapHost || !switcher) return
-    const enabled = experiment && wide.matches && !!place
+    const enabled = experiment && !!place
     switcher.hidden = !enabled
     if (enabled && place && maps.has(place.key)) {
       if (!stopMap) {
@@ -159,8 +157,6 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
     }
   }
 
-  const resize = () => { if (place) open(place); else reflectGraph() }
-  wide.addEventListener('change', resize)
   /** @param {boolean} enabled */
   function setPlaceMap(enabled) {
     if (enabled === experiment) return
@@ -189,7 +185,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   toggle?.addEventListener('click', togglePlaceMap)
   switcher?.addEventListener('click', event => {
     const button = event.target instanceof HTMLButtonElement ? event.target : null
-    if (!button || !place || !experiment || !wide.matches) return
+    if (!button || !place || !experiment) return
     if (button.dataset.mapView === 'map') maps.add(place.key)
     else maps.delete(place.key)
     reflectGraph()
@@ -206,19 +202,19 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
 
   // A tab needs room for a readable first sentence, so how many sit side by side follows the width.
   let slots = 0
-  const tabSlots = () => !wide.matches ? 5 : Math.max(2, Math.min(6, Math.floor(((tabs.clientWidth || 880) - 96) / 190)))
+  const tabSlots = () => Math.max(2, Math.min(6, Math.floor(((tabs.clientWidth || 880) - 96) / 190)))
   const tabSize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (alive && place && !tabs.hidden && tabSlots() !== slots) drawTabs() }) : null
   tabSize?.observe(tabs)
 
   function drawTabs() {
     if (!place) return
     const items = rowsFor(place)
-    if (wide.matches && linked && selected?.key === linked.key && !items.some(item => item.key === linked?.key)) items.push(linked)
-    tabs.hidden = !!stopMap || items.length < (wide.matches && items[0]?.endedAt != null ? 1 : 2)
+    if (linked && selected?.key === linked.key && !items.some(item => item.key === linked?.key)) items.push(linked)
+    tabs.hidden = !!stopMap || items.length < (items[0]?.endedAt != null ? 1 : 2)
     if (tabs.hidden) return
     const now = Date.now()
     slots = tabSlots()
-    const {visible, earlier} = splitSessions(items, wide.matches ? selected?.key : undefined, slots)
+    const {visible, earlier} = splitSessions(items, selected?.key, slots)
     const button = (/** @type {Item} */ item, inMenu = false) => {
       const agent = agentOf(item)
       const name = agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? ''))
@@ -227,21 +223,18 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       const title = terminal ? [item.sessionTitle || name, time].filter(Boolean).join(' · ') : item.title
       const ended = item.endedAt != null
       const state = ended ? '已经结束' : item.status === 'waiting' ? '等你定' : item.status === 'working' ? '正在做' : '停着'
-      const wideTerminal = wide.matches && terminal
-      const label = wideTerminal ? `${title} · ${state}` : title
-      const accessible = wideTerminal ? [name, item.sessionTitle, time, state].filter(Boolean).join('，') : ''
-      const tooltip = wideTerminal ? [name, item.sessionTitle, time].filter(Boolean).join(' · ') : ''
+      const label = terminal ? `${title} · ${state}` : title
+      const accessible = terminal ? [name, item.sessionTitle, time, state].filter(Boolean).join('，') : ''
+      const tooltip = terminal ? [name, item.sessionTitle, time].filter(Boolean).join(' · ') : ''
       // The first sentence may be cut short; the time (and, in the menu, the state) beside it is not.
       const lead = item.sessionTitle || name
-      const body = wideTerminal && lead && time
+      const body = terminal && lead && time
         ? `<span>${esc(lead)}</span><small class="thing-session-time"> · ${esc(inMenu ? `${time} · ${state}` : time)}</small>`
         : `<span>${esc(inMenu ? label : title)}</span>`
       return `<button type="button" data-thread-session="${esc(item.key)}" data-group="${item.group}"${ended ? ' data-ended' : ''}${accessible ? ` aria-label="${esc(accessible)}"` : ''}${tooltip ? ` title="${esc(tooltip)}"` : ''} aria-pressed="${selected?.key === item.key}">${agentAvatarsHtml([agent?.id])}${body}${ended ? '' : '<i aria-hidden="true"></i>'}</button>`
     }
     const markup = visible.map(item => button(item)).join('') + (earlier.length
-      ? wide.matches
-        ? `<details class="thing-session-menu"><summary data-thread-more>更早的 ${earlier.length} 次</summary><div>${earlier.map(item => button(item, true)).join('')}</div></details>`
-        : `<button type="button" class="desk-text-button" data-thread-more aria-expanded="${openEarlier}">更早的 ${earlier.length} 次</button><div class="thing-earlier-sessions"${openEarlier ? '' : ' hidden'}>${earlier.map(item => button(item)).join('')}</div>`
+      ? `<details class="thing-session-menu"><summary data-thread-more>更早的 ${earlier.length} 次</summary><div>${earlier.map(item => button(item, true)).join('')}</div></details>`
       : '')
     if (tabsMarkup === markup) return
     const focus = document.activeElement
@@ -314,7 +307,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       return
     }
     const agent = agentOf(item)
-    showStatus(agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? '')), stateOf(item, wide.matches))
+    showStatus(agentName(agent?.id ?? '', () => agent?.name || executorName(agent?.id ?? '')), stateOf(item))
     remembered.set(place.key,item.key)
     if (item.endedAt != null && item.terminal) { showTerminal(item,item.terminal.sessionId); return }
     if (item.kind === 'terminal') { showTerminal(item,item.id); return }
@@ -364,7 +357,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   /** @param {Place} next @param {string} [key] @param {Item} [direct] */
   function open(next,key,direct) {
     const changed = place?.key !== next.key
-    if (changed) { stopGraph(); openEarlier = false; linked = undefined }
+    if (changed) { stopGraph(); linked = undefined }
     if (direct) linked = direct
     else if (key) linked = undefined
     place = next
@@ -380,7 +373,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       const terminal = item && terminals.get(item.key)
       if (terminal) terminal.thread.reflect()
       else if (item?.endedAt != null) choose(item)
-      else if (item) showStatus(executorName(agentOf(item)?.id ?? ''),stateOf(item, wide.matches))
+      else if (item) showStatus(executorName(agentOf(item)?.id ?? ''),stateOf(item))
     }
     drawTabs()
     reflectGraph()
@@ -389,11 +382,11 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
   tabs.addEventListener('click',event => {
     const button = event.target instanceof Element ? event.target.closest('button') : null
     if (!button || !place) return
-    if (button.hasAttribute('data-thread-more')) { openEarlier = !openEarlier; drawTabs(); return }
     const key = button.dataset.threadSession
     if (!key || key === selected?.key) return
     open(place,key)
-    if (wide.matches) /** @type {HTMLElement|null} */ (tabs.querySelector(`[data-thread-session="${CSS.escape(key)}"]`))?.focus({preventScroll:true})
+    const tab = /** @type {HTMLElement|null} */ (tabs.querySelector(`[data-thread-session="${CSS.escape(key)}"]`))
+    tab?.focus({preventScroll:true})
     onSession()
   })
 
@@ -452,7 +445,6 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       tabSize?.disconnect()
       menuListeners?.abort()
       toggle?.removeEventListener('click', togglePlaceMap)
-      wide.removeEventListener('change', resize)
       stopGraph()
       leaveContent()
       for (const entry of terminals.values()) entry.thread.destroy()

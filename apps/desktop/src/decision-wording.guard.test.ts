@@ -6,7 +6,6 @@ const files = [
   'modules/workbench.js',
   'modules/places-strip.js',
   'modules/terminal-thread.js',
-  'modules/now-page.js',
   'modules/conversation-work-detail.js',
   'pet/permission/permission-card.js',
 ]

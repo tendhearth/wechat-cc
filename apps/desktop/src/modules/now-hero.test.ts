@@ -104,7 +104,7 @@ describe('home hero consumes independent true-state streams', () => {
 
 const manifest = JSON.parse(readFileSync(`${__dirname}/../assets/pet/cc-v1/manifest.json`, 'utf8'))
 function dom() {
-  document.body.innerHTML = '<article data-now="home"><button id="hero"><img class="now-cc-light"><img class="now-cc-dark"></button></article>'
+  document.body.innerHTML = '<article><button id="hero"><img class="now-cc-light"><img class="now-cc-dark"></button></article>'
   return { root: document.querySelector('article')!, button: document.querySelector('button')! }
 }
 const fetchManifest = async () => new Response(JSON.stringify(manifest))
@@ -128,7 +128,7 @@ describe('home hero uses the real pet lifecycle', () => {
     hero.setTopics(['hidden']); expect(src()).not.toContain('/attention/')
     add('right', 250); hero.setTopics(['right']); expect(src()).toContain('/attention/lit/right/')
   })
-  it('keeps two canonical fallbacks until a sprite loads and stops picture timers in chat and hidden panes', async () => {
+  it('keeps two canonical fallbacks until a sprite loads and stops picture timers while the entry is hidden', async () => {
     vi.useFakeTimers(); const { root, button } = dom()
     const hero = mountNowHero({ root, button, petOptions: { fetchImpl: fetchManifest as any, preload: () => {} } })
     hero.setPresence(connected as any)
@@ -138,11 +138,11 @@ describe('home hero uses the real pet lifecycle', () => {
     button.querySelector('.now-pet-sprite')!.dispatchEvent(new Event('load'))
     expect(button.dataset.runtime).toBe('ready')
     expect(button.querySelectorAll('.now-cc-light, .now-cc-dark')).toHaveLength(2)
-    root.dataset.now = 'chat'; await Promise.resolve()
+    root.hidden = true; await Promise.resolve()
     expect(button.querySelector('.now-pet-stage')!.classList.contains('pet-paused')).toBe(true)
     expect(vi.getTimerCount()).toBe(0)
     hero.setAttention(attention('working')); hero.setAttention(attention('replied'))
-    root.dataset.now = 'home'; await Promise.resolve()
+    root.hidden = false; await Promise.resolve()
     expect(pet!.machine.snapshot().behavior).toBe('idle')
     expect(pet!.machine.snapshot().transition).toBeNull()
     root.hidden = true; await Promise.resolve()

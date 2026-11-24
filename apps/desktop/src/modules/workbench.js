@@ -803,7 +803,6 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     : null
   const previousFocus = focusSearch ? document.activeElement : null
   const wideSearchVisible = () => !!root.closest?.('.dash-main > .workbench-pane[data-workbench-view="search"]:not([hidden])')
-    && document.documentElement.hasAttribute('data-desk-wide')
   const deskSearch = wideSearchVisible() ? deps.deskSearch : undefined
   const retained = deskSearchList?.query.q === deskSearch?.query && deskSearch ? deskSearchList : undefined
   /** @type {Set<string>} */
@@ -1249,8 +1248,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
     const navigation = ++navigationGeneration
     const layer=/** @type {HTMLElement|null} */(root.closest?.('.workbench-pane'))
     if (layer) {
-      if (layer.parentElement?.classList.contains('dash-main') && layer.dataset.workbenchView === 'search'
-        && document.documentElement.hasAttribute('data-desk-wide')) {
+      if (layer.parentElement?.classList.contains('dash-main') && layer.dataset.workbenchView === 'search') {
         layer.setAttribute('role', 'dialog')
         layer.setAttribute('aria-modal', 'true')
         layer.setAttribute('aria-label', '事项')

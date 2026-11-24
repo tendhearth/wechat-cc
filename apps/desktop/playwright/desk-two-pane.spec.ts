@@ -253,65 +253,6 @@ test('一周没动的地方默认收起，展开仍按原顺序，未读和正�
   await expect(names).toHaveText(['leni', 'ranu', 'cc'])
 })
 
-test('跨过 700px 保留筛选、草稿和滚动锚点，690px 还用原顶栏和筛选条', async ({ page, shimUrl }) => {
-  const history = Array.from({ length: 50 }, (_, i) => ({
-    kind: i === 0 ? 'user' : 'text', text: `第 ${i} 条旧消息，用来确认换宽度后还能接着读。`, messageId: `old-${i}`, createdAt: i + 1,
-  }))
-  await page.route('**/v1/matter/owner-chat/window**', route => route.fulfill({ json: { messages: history } }))
-  await routePlaces(page, [placeItem('rici', { messageIds: history.map(row => row.messageId) })])
-  await page.goto(shimUrl)
-  const row = placeRow(page, 'rici').locator('.place-row')
-  const input = page.locator('#converse-input')
-  const scroll = page.locator('#converse-scroll')
-  const clear = page.locator('#converse-place-clear')
-  const rail = page.locator('#dash-global-rail')
-  await input.fill('这句话还没发')
-  await expect(scroll.locator('[data-converse-message]')).toHaveCount(50)
-  // 让上边缘落在一条消息的中间。流里多了第一天的日期行以后,原来的 400 正好落在两条消息的缝上,换版式时差一个像素就认成上一条。
-  await scroll.evaluate(el => {
-    const row = el.querySelectorAll('[data-converse-message]')[8]!.getBoundingClientRect()
-    el.scrollTop += row.top + row.height / 2 - el.getBoundingClientRect().top
-  })
-  const anchor = () => scroll.evaluate(el => {
-    const y = el.getBoundingClientRect().top
-    const first = Array.from(el.children).find(node => node.getBoundingClientRect().bottom > y)
-    return first?.getAttribute('data-converse-message')
-  })
-  const before = await anchor()
-  await row.click()
-  await expect(page.locator('#thing-thread')).toBeVisible()
-  await page.setViewportSize({ width: 690, height: 820 })
-  await expect(rail).toHaveCSS('height', '72px')
-  await expect(rail.locator('nav .desk-nav-icon:visible')).toHaveCount(0)
-  await expect(rail.locator('.desk-project-label')).toBeHidden()
-  await expect(page.locator('.desk-date-line')).toBeHidden()
-  await expect(page.locator('.desk-heading')).toBeHidden()
-  await expect(scroll.locator('.converse-msg-user .converse-bubble')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-  for (const edge of ['top', 'right', 'bottom', 'left']) await expect(page.locator('.converse-compose')).toHaveCSS(`border-${edge}-width`, '1px')
-  await expect(clear).toBeVisible()
-  await expect(clear).toHaveText('只看 rici · 回到全部')
-  const [top, places, talk] = await Promise.all([rail, page.locator('.places-strip'), scroll].map(locator => locator.boundingBox()))
-  expect(places!.y).toBeGreaterThanOrEqual(top!.y + top!.height)
-  expect(places!.y + places!.height).toBeLessThanOrEqual(talk!.y)
-  await expect(row).toHaveAttribute('aria-pressed', 'true')
-  await expect(input).toHaveValue('这句话还没发')
-  await expect.poll(anchor).toBe(before)
-
-  await page.setViewportSize({ width: 700, height: 820 })
-  await expect(page.locator('html')).toHaveAttribute('data-desk-wide', '')
-  await expect(rail).toBeHidden()
-  await page.setViewportSize({ width: 1280, height: 820 })
-  await expect(rail).toHaveCSS('width', '284px')
-  await expect(clear).toBeHidden()
-  await expect(page.locator('#desk-place-clear')).toBeHidden()
-  await expect(page.locator('#thing-name')).toHaveText('rici')
-  await expect(row).toHaveAttribute('aria-pressed', 'true')
-  await page.locator('#topbar-cc').click()
-  await expect(input).toHaveValue('这句话还没发')
-  await expect.poll(anchor).toBe(before)
-
-})
-
 test('两栏的拖拽区：两侧空白各起一次拖拽，空地方返回 CC 的按钮照常点', async ({ page, shimUrl }) => {
   await routePlaces(page, [placeItem('rici'), placeItem('leni')])
   await page.goto(shimUrl)

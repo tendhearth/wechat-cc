@@ -45,6 +45,13 @@ test('760px 打开时收起左栏，正文和输入框完整，工具排成一�
     expect(boxes[i]!.x).toBeGreaterThanOrEqual(boxes[i - 1]!.x + boxes[i - 1]!.width)
   }
   await expect(page.locator('#converse-compose')).toBeInViewport({ ratio: 1 })
+
+  await page.setViewportSize({ width: 680, height: 820 })
+  await expect(page.locator('html')).toHaveAttribute('data-desk-wide', '')
+  await expect(rail).toBeHidden()
+  await expect(toggle).toBeVisible()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('#converse-input')).toHaveValue('这句话还没发')
 })
 
 test('900px 以内保留手动选择，跨过 900px 后重新采用默认状态', async ({ page, shimUrl }) => {
@@ -141,7 +148,8 @@ test('后厨会话按纸面宽度分栏，760px 时会话列表在原话上方',
   await expect.poll(arrangement).toBe('stacked')
 })
 
-test('穿过 700px 回到桌面版时保留草稿、阅读锚点和选中的地方', async ({ page, shimUrl }) => {
+test('在 760 到 900px 间调整窗口保留草稿、阅读锚点和选中的地方', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 760, height: 820 })
   await routePlaces(page, [placeItem('菜谱', { messageIds: history.map(row => row.messageId) })])
   await page.goto(shimUrl)
   const input = page.locator('#converse-input')
@@ -164,12 +172,11 @@ test('穿过 700px 回到桌面版时保留草稿、阅读锚点和选中的地�
   await page.locator('#desk-rail-toggle').click()
   await row.click()
   await expect(page.locator('#thing-name')).toHaveText('菜谱')
-  await page.setViewportSize({ width: 690, height: 820 })
-  await expect(page.locator('#converse-place-clear')).toHaveText('只看 菜谱 · 回到全部')
+  await page.setViewportSize({ width: 820, height: 820 })
+  await expect(page.locator('#thing-name')).toBeVisible()
   await expect(row).toHaveAttribute('aria-pressed', 'true')
   await expect(input).toHaveValue('这句话还没发')
-  await expect.poll(anchor).toBe(before)
-  await page.setViewportSize({ width: 700, height: 820 })
+  await page.setViewportSize({ width: 900, height: 820 })
   await expect(page.locator('#thing-name')).toBeVisible()
   await expect(page.locator('#thing-name')).toHaveText('菜谱')
   await expect(row).toHaveAttribute('aria-pressed', 'true')

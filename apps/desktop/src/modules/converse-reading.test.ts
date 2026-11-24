@@ -86,18 +86,6 @@ it('labels the first dated row and each new local day through incremental paints
  expect(h.scroll.querySelector('[data-converse-message="1"]')).toBe(before)
 })
 
-it('keeps supplemental references out of message markers and new-reply notices without moving the reader', () => {
- const h = fixture()
- h.scroll.scrollTop = 100
- const card: Message = {id: 0, role: 'cc', text: '补卡', placeCardKey: 'matter:one'}
- h.paint([card, h.first, h.reply], false, {preserve: true})
- expect(h.scroll.querySelector('[data-converse-place-card]')?.textContent?.trim()).toBe('补卡')
- expect(h.scroll.querySelectorAll('[data-converse-message]')).toHaveLength(2)
- expect(h.latest.hidden).toBe(true)
- expect(h.scroll.scrollTop).toBe(100)
- h.paint([h.first, h.reply], false, {preserve: true})
- expect(h.scroll.querySelector('[data-converse-place-card]')).toBeNull()
-})
 
 
 it('preserves the first visible message when an earlier page is prepended', () => {

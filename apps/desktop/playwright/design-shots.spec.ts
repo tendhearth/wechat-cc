@@ -23,20 +23,20 @@ async function mockNow(page: any) {
     { id: 't2', title: '整理下周出差安排', providerId: 'claude', pendingPermissionCount: 0, pendingQuestionCount: 1, attentionKey: '["q1"]', first: { kind: 'question', text: '可以安装图片处理组件吗?' } } ] } }))
 }
 
-for (const [label, size] of [['wide', { width: 1440, height: 900 }], ['narrow', { width: 690, height: 1100 }]] as const) {
+for (const [label, size] of [['wide', { width: 1440, height: 900 }], ['narrow', { width: 900, height: 1100 }]] as const) {
   test(`design shots · ${label}`, async ({ page, shimUrl, shim }) => {
     await page.setViewportSize(size)
     await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
     await mockNow(page)
     await boot(page, shimUrl)
-    await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'here', { timeout: 25_000 })
+    await expect(page.locator('#topbar-cc')).toHaveAttribute('data-cc', 'here', { timeout: 25_000 })
     await expect(page.locator('#topbar-cc')).toBeVisible({ timeout: 10_000 })
     await settle(page)
     await page.screenshot({ path: join(OUT!, `d01-now-here-${label}.png`) })
     await page.locator('#topbar-cc').click()
     await settle(page)
     await page.screenshot({ path: join(OUT!, `d02-now-chat-${label}.png`) })
-    // 一起做放在最后拍(窄窗口里它会收起主导航);编号仍按侧栏顺序。
+    // 搜索放在最后拍，编号沿用原顺序。
     const panes = ['workbench', 'recollections', 'memory', 'todos', 'a2a-agents', 'sessions'] as const
     for (const pane of [...panes.slice(1), panes[0]]) {
       await clickNav(page, pane)
@@ -56,7 +56,7 @@ test('design shots · away', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat', presenceDown: true })
   await mockNow(page)
   await boot(page, shimUrl)
-  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'away', { timeout: 25_000 })
+  await expect(page.locator('#topbar-cc')).toHaveAttribute('data-cc', 'away', { timeout: 25_000 })
   await settle(page)
     await page.screenshot({ path: join(OUT!, 'd10-now-away-wide.png') })
 })
