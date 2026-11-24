@@ -177,7 +177,7 @@ export function wireWorkbench(opts: {
   planPlaces?:()=>readonly import('../../adapters/workbench/matter-plan-input').PlanPlace[]
   planConversation?: (caller:import('../../adapters/workbench/matter-plan-input').PlanCaller)=>import('../../adapters/workbench/matter-plan-input').PlanConversation|null
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
-  permissionRegistry?: Pick<import('../../ports/wechat').WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'>
+  permissionRegistry?: Pick<import('../../ports/wechat').WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'|'pendingWechatPermissionCard'>
   askUser: import('../../ports/wechat').WechatPermissions['askUser']; log: PermissionRelayDeps['log']
   /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
   matters?: import('../../ports/matters').MatterStore
@@ -317,7 +317,10 @@ export function wireWorkbench(opts: {
     holdBusy:opts.boot.holdBusy,
   }):undefined
   return makeWorkbenchService({
-    ...(opts.permissionRegistry?{permissionPrompt:makeWorkbenchPermissionPrompt(opts.permissionRegistry,ownerChatId)}:{}),
+    ...(opts.permissionRegistry?{
+      permissionPrompt:makeWorkbenchPermissionPrompt(opts.permissionRegistry,ownerChatId),
+      pendingWechatPermissionCard:opts.permissionRegistry.pendingWechatPermissionCard,
+    }:{}),
     askOpinion: makeAskOpinion({
       evaluator: () => opts.boot.registry.getCheapEval({ toolFreeOnly: true }),
       settings: () => loadAgentConfig(opts.stateDir).ask_opinion,

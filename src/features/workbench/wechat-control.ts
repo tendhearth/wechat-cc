@@ -17,12 +17,15 @@ import { validateUserInputAnswers } from '../../adapters/workbench/user-input'
 import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
 import type {ReviewTurn} from './review'
+import { WECHAT_PERMISSION_INCOMPLETE, type WechatPermissions } from '../../ports/wechat'
+import { renderWechatPermissionCard } from './wechat-permission-card'
 
 /** origin(2026-10-19):只在 App 一轮(桌面 / 手机说的话过同一张消费者表)时由 daemon 填;省略 ⇒ 真的是微信入站。不进回执身份。 */
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number;origin?:MatterOrigin|null}
 export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
 type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
 interface Actions {
+  pendingWechatPermissionCard?: WechatPermissions['pendingWechatPermissionCard']
   projects():ProjectCatalogEntry[]
   createWechat(input:CreateWechatTask):CreationReceipt|Promise<CreationReceipt>
   setWechatWatch(id:string,accountId:string,enabled:boolean):unknown
@@ -397,8 +400,14 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
           if(answer)return usage(id)
           const request=detail.permissions.find(p=>p.id===requestId)
           if(!detail.runId||!request)return stale
-          if(verb==='权限')return request.description.length>REQUEST_MAX?`任务 ${id}：权限内容较长，请在桌面工作台完整查看。\n可拒绝：任务 ${id} 拒绝 ${requestId}`:`任务 ${id} · 等待权限\n${request.tool}\n${request.description}\n\n允许：任务 ${id} 允许 ${requestId}\n拒绝：任务 ${id} 拒绝 ${requestId}`
-          if(verb==='允许'&&request.description.length>REQUEST_MAX)return '这项权限内容较长，请在桌面工作台完整查看后处理。微信仍可拒绝。'
+          if(verb!=='拒绝'){
+            const card=opts.actions.pendingWechatPermissionCard
+              ? opts.actions.pendingWechatPermissionCard(requestId)
+              : renderWechatPermissionCard(detail.task.title,request,detail.task.providerId)
+            if(!card)return stale
+            if(verb==='权限')return card.text
+            if(!card.complete)return WECHAT_PERMISSION_INCOMPLETE
+          }
           opts.actions.resolvePermission(id,requestId,verb==='允许'?'allow':'deny')
           return `任务 ${id}：已${verb}这项请求。`
         }

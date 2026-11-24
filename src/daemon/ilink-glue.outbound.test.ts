@@ -16,7 +16,7 @@
  * non-retryable code per isRetryableSendError — this keeps the test fast
  * by skipping ilinkSendMessage's 1s retry backoff.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -65,6 +65,27 @@ describe('ilink-glue sendMessage → outboundHealth', () => {
       const rows=await makeMessagesStore(deps.db).listRange('chat-1',{limit:5})
       expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({source:'workbench',text})
     }finally{await adapter.flush();deps.db.close()}
+  })
+
+  it('keeps a wire error that echoes approval content out of logs, health and error replies', async () => {
+    const adapter = newAdapter()
+    const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      adapter.captureContextToken('chat-1', 'tok-1')
+      const fixture = 'PRIVATE_APPROVAL_COMMAND /test/path PRIVATE_FILE_FRAGMENT'
+      const text = `示例 · 112233aa\n〔请求 1234567890abcdef〕\n$ ${fixture}`
+      fake.failSendMessage({ errcode: -6, errmsg: text })
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await adapter.sendMessage('chat-1', text, { source: 'workbench' })
+        expect(result.error === 'ilink/sendmessage errcode=-6').toBe(true)
+      }
+      expect(adapter.outboundHealth().lastError).toBe('ilink/sendmessage errcode=-6')
+      expect(write.mock.calls.some(([line]) => String(line).includes('PRIVATE_APPROVAL_COMMAND'))).toBe(false)
+      expect(write.mock.calls.some(([line]) => String(line).includes('sendmessage gave up'))).toBe(true)
+    } finally {
+      write.mockRestore()
+      await adapter.flush()
+    }
   })
 
   // 2026-10-02 真机:模型调 reply 时 text 只有空白,`!text` 拦不住,微信那头就是一条空气泡。

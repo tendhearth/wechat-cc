@@ -17,7 +17,8 @@ import { homedir, hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parsePermissionRequest } from '../../cli/hook'
-import { CliSessionRow, makeProtocolClient, MatterDetail, PlacesResponse, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
+import { CliSessionRow, makeProtocolClient, MatterDetail, PERMISSION_SNAPSHOT_NOTICE, PlacesResponse, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
+import { WECHAT_PERMISSION_INCOMPLETE } from '../../ports/wechat'
 import { routesForToken } from '../internal-api/route-tiers'
 import { REQUEST_SCHEMAS } from '../internal-api/schema'
 import { encodeNativeHistoryKey } from '../../adapters/workbench/native-history'
@@ -98,6 +99,9 @@ const spawnOptions: Array<Record<string, unknown>> = []
 const codexThreads: Array<Record<string, unknown>> = []
 /** codex 收到的审批应答,按命令记。 */
 const decisions = new Map<string, unknown>()
+const longApprovalCommand = "printf '%s' '" + 'SANDBOX_INLINE_APPROVAL '.repeat(200) + "'"
+const patchFile = 'SANDBOX_APPROVAL_FILE.txt'
+const patchDiff = '@@ -1 +1 @@\n-old\n+SANDBOX_PRIVATE_DIFF'
 let codexDecision: unknown
 let lastCodexEnvelope = ''
 let topicJudgeAttempts=0,topicRoundDispatches=0
@@ -122,6 +126,18 @@ const codexScript: FakeSdkScript = {
     if (s === '列一下目录') return approval('ls', '列好了。')
     if (s === '推一下') return approval('git push origin main', '推不了,被拒了。')
     if (s === '再清一次 dist') return approval('rm -rf dist', '清好了。')
+    if (text.includes('沙盒权限长命令')) return approval(longApprovalCommand, '长命令审批已结束。')
+    if (text.includes('沙盒权限改文件')) return {
+      toolCalls: [], finalText: '改文件审批已结束。',
+      codexSteps: [
+        { notify: { method: 'item/started', params: { item: {
+          type: 'fileChange', id: 'sandbox-edit', status: 'inProgress',
+          changes: [{ path: patchFile, kind: { type: 'update' }, diff: patchDiff }],
+        } } } },
+        { request: { method: 'item/fileChange/requestApproval', params: { itemId: 'sandbox-edit', cwd: '/tmp' } },
+          onResponse: reply => decisions.set(patchFile, (reply.result as { decision?: unknown } | undefined)?.decision) },
+      ],
+    }
     // 工作台派下来的活(执行者在项目里改文件 —— 这是执行者那一侧的事,替身照真 codex 那样直接写盘)
     if (s.includes('写一份笔记')) { writeFileSync(join(project, 'NOTE.md'), '第一行\n第二行\n'); return { toolCalls: [], finalText: '写好了 NOTE.md。' } }
     return { toolCalls: [], finalText: 'Codex 在。' }
@@ -1327,6 +1343,81 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(requests).toHaveLength(1)
     expect(requests[0]).not.toHaveProperty('tools')
     expect(requests[0]?.messages?.[0]?.content).toContain('给正在决定这件事的主人留两行话')
+
+    // Real workbench → registration → WeChat lookup → code reply → native decision.
+    type Queue = { items: Array<{ taskId: string; code: string; prompt: string; hash: string }> }
+    const queued = async (id: string) => (await desktop<Queue>('GET', '/v1/permissions/pending')).body.items.find(card => card.taskId === id)
+    const outbound = async (trigger: () => void, match: (text: string) => boolean) => {
+      const before = texts(d.ilink.outbox(), d.owner).length
+      trigger()
+      const replies = (messages: readonly OutboundMsg[]) => texts(messages, d.owner).slice(before)
+      return replies(await d.waitForOutbound(m => replies(m).some(match), 15_000)).find(match)!
+    }
+    const lookup = (id: string, hash: string) => outbound(
+      () => d.sendText(d.owner, `任务 ${id} 权限 ${hash}`), t => t.split('\n')[1]?.startsWith('〔请求 ') === true,
+    )
+    const complete = (await queued(asking))!
+    expect(complete.hash).toBe(detail.body.permissions[0]!.id)
+    const completeText = await lookup(asking, complete.hash)
+    expect(completeText).toContain('Codex 想运行一条命令：\n$ rm -rf build')
+    const instruction = (code: string) => `回「y ${code}」允许这一步、「n ${code}」拒绝。拒绝理由选填：「n ${code} 理由」。`
+    expect(completeText.endsWith(instruction(complete.code))).toBe(true)
+    decisions.delete('rm -rf build')
+    d.sendText(d.owner, `y ${complete.code}`)
+    await expect.poll(() => decisions.get('rm -rf build')).toBe('accept')
+    expect(await queued(asking)).toBeUndefined()
+    const cancel = async (id: string) => {
+      expect((await desktop('POST', '/v1/workbench/cancel', { id })).status).toBe(202)
+      await expect.poll(async () => (await desktop<{ runId?: string }>('GET', `/v1/workbench/task?id=${id}`)).body.runId).toBeUndefined()
+    }
+    await cancel(asking)
+    await cancel(taskId)
+
+    const next = async (taskText: string) => {
+      const ack = await outbound(() => d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex ${taskText}`), t => t.startsWith('已接下这件事'))
+      const id = ack.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
+      await expect.poll(async () => (await queued(id))?.hash).toMatch(/^[a-f0-9-]{36}$/)
+      const isNotice = (t: string) => t.includes(`· ${id}`) && t.includes('需要你批准')
+      await d.waitForOutbound(m => texts(m, d.owner).some(isNotice), 15_000)
+      const detail = await desktop<{ task: { title: string } }>('GET', `/v1/workbench/task?id=${id}`)
+      const card = (await queued(id))!
+      const notice = texts(d.ilink.outbox(), d.owner).find(isNotice)!
+      expect(notice).toContain(instruction(card.code))
+      expect(/〔请求|SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(notice)).toBe(false)
+      const journal = d.query<{ summary: string }>('SELECT summary FROM pending_cards WHERE hash = ?', card.hash)
+      expect(journal).toEqual([{ summary: `${detail.body.task.title} · ${id}` }])
+      return { id, title: detail.body.task.title, card }
+    }
+    const long = await next('沙盒权限长命令')
+    // Dev registration strings, including the snapshot suffix and legacy format.
+    expect(long.card.prompt === `${long.title} · ${long.id}\ncommandExecution\n${longApprovalCommand}\nWorking directory: /tmp\nExecution environment: local\n\n${PERMISSION_SNAPSHOT_NOTICE}`).toBe(true)
+    expect(Object.keys(long.card).sort()).toEqual(['canDenyWithReason', 'chatId', 'code', 'expires_at', 'hash', 'prompt', 'since', 'taskId'])
+    const longText = await lookup(long.id, long.card.hash)
+    expect(longText).toContain(WECHAT_PERMISSION_INCOMPLETE)
+    expect(longText).not.toMatch(/「yt? \d+」/)
+    for (const [text, quote] of [
+      [`任务 ${long.id} 允许 ${long.card.hash}`, undefined],
+      [`y ${long.card.code}`, undefined], [`yt ${long.card.code}`, undefined], ['y', longText],
+    ] as const) {
+      await outbound(() => d.sendText(d.owner, text, { quote }), reply => reply === WECHAT_PERMISSION_INCOMPLETE)
+      expect(decisions.has(longApprovalCommand)).toBe(false)
+      expect((await queued(long.id))?.hash).toBe(long.card.hash)
+    }
+    d.sendText(d.owner, `n ${long.card.code}`)
+    await expect.poll(() => decisions.get(longApprovalCommand)).toBe('decline')
+    expect(await queued(long.id)).toBeUndefined()
+    await cancel(long.id)
+
+    const patch = await next('沙盒权限改文件')
+    expect(patch.card.prompt === `${patch.title} · ${patch.id}\nfileChange\n${patchFile}\n{"type":"update"}\n${patchDiff}\nExecution environment: local`).toBe(true)
+    const patchText = await lookup(patch.id, patch.card.hash)
+    expect(patchText).toContain(`${patchFile}（修改）`)
+    expect(patchText).toContain(WECHAT_PERMISSION_INCOMPLETE)
+    expect(patchText.includes('SANDBOX_PRIVATE_DIFF')).toBe(false)
+    expect(await desktop('POST', '/v1/permissions/resolve', { hash: patch.card.hash, decision: 'allow' })).toEqual({ status: 200, body: { ok: true } })
+    await expect.poll(() => decisions.get(patchFile)).toBe('accept')
+    expect(await queued(patch.id)).toBeUndefined()
+    expect(d.log().some(line => /SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(line))).toBe(false)
   })
 
   // S3b(一件事一次提议;主人点头的「任务做完时人在电脑前 ⇒ 先只在桌面提示,10 分钟没看再推手机」):沙盒里 10 分钟缩成 2 秒。

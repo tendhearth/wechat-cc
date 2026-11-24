@@ -10,8 +10,8 @@
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { WECHAT_PORTS, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling } from '../ports/wechat'
-import { howToReplyLine, isPermissionCardQuote, parsePermissionReply } from './pending-permissions'
+import { WECHAT_PORTS, WECHAT_PERMISSION_INCOMPLETE, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling } from '../ports/wechat'
+import { howToReplyLine, isPermissionCardQuote, parsePermissionReply, workbenchQuoteMarker } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
 import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText } from '../lib/ilink-workbench'
@@ -158,11 +158,24 @@ export function makeIlinkAdapter(opts: {
     },
   })
 
+  const permissionOwner = (hash: string, chatId?: string) => {
+    const approver = pending.approverOf(hash)
+    return approver === null || approver === chatId
+  }
+  const permissionFeedback = (chatId: string | undefined, message: string): boolean => {
+    if (!chatId) return false
+    void adapter.sendMessage(chatId, message).catch(() => {})
+    return true
+  }
+  const badQuote = '引用的权限提示不完整或不匹配，请重新查阅后再回复。'
+  const staleQuote = '这条请求已经处理过了或已经过期。'
+
   const adapter: IlinkAdapter = {
     async sendMessage(chatId, text, metadata) {
       const attribution = { ...currentReplyAttribution() ?? { speaker: 'notice' as const } }
       // 只有空白也算空:ilink 会照发,微信那头就是一条空气泡(2026-10-02)。
       if (!text.trim()) return { msgId: `err:${Date.now()}`, error: 'empty text' }
+      const privateText = metadata?.source === 'workbench' && workbenchQuoteMarker(text) !== undefined
       let reachedWire = false
       try {
         // Use the in-memory ctxStore / acctStore directly — sendReplyOnce
@@ -176,7 +189,7 @@ export function makeIlinkAdapter(opts: {
         const chunks = chunk(text, MAX_TEXT_CHUNK)
         reachedWire = true
         for (const part of chunks) {
-          await ilinkSendMessage(acct.baseUrl, acct.token, botTextMessage(chatId, part, ctxToken))
+          await ilinkSendMessage(acct.baseUrl, acct.token, botTextMessage(chatId, part, ctxToken), privateText)
         }
         outbound.recordSuccess(new Date().toISOString())
         windowClosed.delete(chatId)
@@ -191,7 +204,7 @@ export function makeIlinkAdapter(opts: {
           text: unprefixedReplyText(text),
           ...attribution,
           source: metadata?.source ?? 'live',
-        }).catch(err => log('MESSAGES', `outbound record failed: ${err instanceof Error ? err.message : err}`))
+        }).catch(err => log('MESSAGES', privateText ? 'workbench permission card record failed' : `outbound record failed: ${err instanceof Error ? err.message : err}`))
         return { msgId: `sent:${Date.now()}` }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -412,52 +425,68 @@ export function makeIlinkAdapter(opts: {
     probePermissionReply(text, fromChatId, quoted) {
       const parsed = parsePermissionReply(text)
       if (!parsed) return false
-      const owned = (hash: string) => { const approver = pending.approverOf(hash); return approver === null || approver === fromChatId }
+      const workbench = quoted && pending.matchWorkbenchQuote(quoted)
+      if (workbench) return !!fromChatId && (workbench.kind === 'stale' || !workbench.hash || permissionOwner(workbench.hash, fromChatId))
       if (!parsed.ref) {
-        if (quoted) { const hash = pending.hashOfQuote(quoted); if (hash) return owned(hash) && pending.list().some(p => p.hash === hash); if (isPermissionCardQuote(quoted)) return false }
+        if (quoted) {
+          const hash = pending.hashOfQuote(quoted)
+          if (hash) return permissionOwner(hash, fromChatId)
+          if (isPermissionCardQuote(quoted)) return false
+        }
         return pending.list().some(p => p.chatId === fromChatId)
       }
       const hash = parsed.ref.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref.value
-      return !!hash && owned(hash) && pending.list().some(p => p.hash === hash)
+      return !!hash && permissionOwner(hash, fromChatId) && pending.list().some(p => p.hash === hash)
     },
     handlePermissionReply(text, fromChatId, quoted) {
       const parsed = parsePermissionReply(text)
       if (!parsed) return false
-      // 引用了卡片回「y」:最顺手的手机操作。引用的原文里有码就按码,截断了就按卡片正文认。
-      if (!parsed.ref && quoted) {
-        const hash = pending.hashOfQuote(quoted)
-        if (hash) {
-          const approver = pending.approverOf(hash)
-          if (approver !== null && approver !== fromChatId) return false
-          return pending.consume(hash, parsed.decision, parsed.reason)
+      const byRef = parsed.ref?.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref?.value
+      const decide = (hash: string, matchedQuote = false): boolean => {
+        if (!permissionOwner(hash, fromChatId)) return false
+        const card = pending.wechatCardOf(hash)
+        if (card) {
+          if (quoted !== undefined && !matchedQuote) return permissionFeedback(fromChatId, badQuote)
+          if (!card.complete && parsed.decision !== 'deny' && !pending.isExpired(hash))
+            return permissionFeedback(fromChatId, WECHAT_PERMISSION_INCOMPLETE)
         }
-        if (isPermissionCardQuote(quoted)) return false
-        // 引用的是无关消息：保留原来的裸回复语义。
+        const accepted = pending.consume(hash, parsed.decision, parsed.reason)
+        if (!accepted && matchedQuote && pending.isExpired(hash)) return permissionFeedback(fromChatId, staleQuote)
+        return accepted
       }
-      // 没带码:看这个 chat 名下现在有几条待批。一条 → 就是它;零条 → 这不是拍板,
-      // 是普通聊天(比如「y」是在回别的事),放行给后面的中间件;多条 → 列出来让主人带码。
-      if (!parsed.ref) {
-        const mine = pending.list().filter(p => p.chatId === fromChatId)
-        if (mine.length === 0) return false
-        if (mine.length === 1) return pending.consume(mine[0]!.hash, parsed.decision, parsed.reason)
-        const lines = mine.map(p => `${p.code}:${(p.prompt.split('\n')[0] ?? '').slice(0, 40)}`)
-        void adapter.sendMessage(fromChatId ?? mine[0]!.chatId, `有 ${mine.length} 条在等你,带上码回:\n${lines.join('\n')}\n例如「y ${mine[0]!.code}」`)
-        log('PERMISSION', `bare reply with ${mine.length} pending for chat=${fromChatId}: asked for a code`)
-        return true
+      if (quoted !== undefined) {
+        const workbench = pending.matchWorkbenchQuote(quoted)
+        if (workbench) {
+          if (workbench.kind === 'stale') return permissionFeedback(fromChatId, staleQuote)
+          if (workbench.hash && !permissionOwner(workbench.hash, fromChatId)) return false
+          if (workbench.kind === 'altered' || (parsed.ref && byRef !== workbench.hash))
+            return permissionFeedback(fromChatId, badQuote)
+          return decide(workbench.hash, true)
+        }
+        if (!parsed.ref) {
+          const hash = pending.hashOfQuote(quoted)
+          if (hash) return decide(hash)
+          if (isPermissionCardQuote(quoted)) return false
+        }
       }
-      const hash = parsed.ref.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref.value
-      if (!hash) return false
-      // 拍板权归当初被问的那个 chat。approverOf 返回 null = 没 meta(老条目
-      // 或 hash 根本不存在)⇒ 走旧路径:不存在的 hash 由 consume 报 false。
-      const approver = pending.approverOf(hash)
-      if (approver !== null && approver !== fromChatId) return false
-      return pending.consume(hash, parsed.decision, parsed.reason)
+      if (parsed.ref) return byRef ? decide(byRef) : false
+
+      // 裸回复仍按这个 chat 名下的待批条数处理。
+      const mine = pending.list().filter(p => p.chatId === fromChatId)
+      if (mine.length === 0) return false
+      if (mine.length === 1) return decide(mine[0]!.hash)
+      const lines = mine.map(p => `${p.code}:${(p.prompt.split('\n')[0] ?? '').slice(0, 40)}`)
+      const first = mine[0]!
+      const example = pending.wechatCardOf(first.hash)?.complete === false ? 'n' : 'y'
+      log('PERMISSION', `bare reply with ${mine.length} pending for chat=${fromChatId}: asked for a code`)
+      return permissionFeedback(fromChatId ?? first.chatId, `有 ${mine.length} 条在等你,带上码回:\n${lines.join('\n')}\n例如「${example} ${first.code}」`)
     },
 
     listPendingPermissions() { return pending.list() },
     resolvePermission(hash, decision, reason) { return pending.consume(hash, decision, reason) },
     pendingPermissionCodeOf(hash) { return pending.codeOf(hash) },
-    registerPendingPermission(hash, timeoutMs, meta, options) { return pending.register(hash, timeoutMs, meta, options?.onAllowTask, options?.deadline, options?.onDecision) },
+    pendingWechatPermissionCard(hash) { return pending.wechatCardOf(hash) },
+    registerPendingPermission(hash, timeoutMs, meta, options) { return pending.register(hash, timeoutMs, meta, options?.onAllowTask, options?.deadline, options?.onDecision, options?.renderWechatCard) },
     sweepPendingPermissions() { pending.sweep() },
 
     async flush() {

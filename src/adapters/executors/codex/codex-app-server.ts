@@ -673,6 +673,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && ask
           ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts, ...(!chat ? { onDenied } : {}),
               ...(display ? { display } : {}), ...(cwd && !ruleFacts.cwd ? { displayCwd: cwd } : {}),
+              ...(!chat && typeof params.cwd === 'string' && !cwd ? { wechatReview: { cwd: params.cwd } } : {}),
               ...(reviewDescription ? { reviewDescription } : {}),
               ...(!chat && !file && typeof command === 'string' && needsBoundExecution(command) ? { requiresBoundExecution: true as const } : {}),
             }, controller.signal)

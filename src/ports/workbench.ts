@@ -13,12 +13,15 @@ export type PermissionDecision = 'allow' | 'deny' | 'allow_task'
 export interface PermissionScript { path: string; content: string; sha256?: string; error?: string; truncated?: boolean }
 /** 手机详情超出帧预算时用的原描述。Symbol 字段只在进程内传递。 */
 export const legacyPermissionDescription = Symbol('legacyPermissionDescription')
+/** Source details for WeChat's approval eligibility. Symbols stay off the wire. */
+export const wechatPermissionSource = Symbol('wechatPermissionSource')
 export interface PendingWorkbenchPermission {
   id: string
   taskId: string
   tool: string
   description: string
   [legacyPermissionDescription]?: string
+  [wechatPermissionSource]?: { description: string; cwd?: string; command?: string; display?: PermissionDisplay; incomplete?: true }
   createdAt: number
   display?: PermissionDisplay
   cwd?: string

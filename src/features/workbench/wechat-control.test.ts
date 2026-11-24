@@ -396,7 +396,7 @@ describe('WeChat task control through the shared service',()=>{
     setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestPermission!({tool:'Bash',command:'cat report.txt',description:'x'.repeat(7000)});yield result},async close(){}}}})
     const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
     const request=service.detail(task.id).permissions[0]!
-    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toContain('桌面')
+    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toBe('内容在微信里看不全，请到电脑或手机上看全再定。')
     expect(service.detail(task.id).permissions).toHaveLength(1)
     await service.handleWechat('owner',`任务 ${task.id} 拒绝 ${request.id}`);await settled(task.id)
   })

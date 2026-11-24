@@ -165,8 +165,10 @@ export function makeWorkbenchClaudeCanUseTool(
         const note = claudePermissionNote(options)
         const reviewDescription = note && note.length + description.length + 1 <= WORKBENCH_PERMISSION_DESCRIPTION_MAX
           ? `${note}\n${description}` : undefined
-        const display = toolPermissionDisplay(toolName, toolApprovalInput(input), reviewDescription ? note : undefined)
+        const previewInput = toolApprovalInput(input)
+        const display = toolPermissionDisplay(toolName, previewInput, reviewDescription ? note : undefined)
         const allowed = await requestPermission({tool:toolName,description,...(display ? { display } : {}),
+          ...(JSON.stringify(previewInput) !== JSON.stringify(input) ? { wechatReview: { incomplete: true as const } } : {}),
           ...(display && reviewDescription ? { reviewDescription } : {}),onDenied:reason=>{feedback=permissionDenialMessage(description,reason)}}, options.signal)
         return allowed && !options.signal.aborted ? {behavior:'allow'} : feedback ? {behavior:'deny',message:feedback} : denied
       } catch { return denied }
@@ -194,10 +196,13 @@ export function makeWorkbenchClaudeCanUseTool(
       const facts = toolInputFacts(input, true)
       const display = toolPermissionDisplay(toolName, typeof input.command === 'string' ? input.command : input, claudePermissionNote(options))
       const cwd = display?.body.kind === 'command' ? permissionCwd(input.cwd) : undefined
+      const hasCommandExtras = typeof input.command === 'string' && Object.keys(input).some(key => key !== 'command')
+      const wechatDisplay = hasCommandExtras ? toolPermissionDisplay(toolName, input, claudePermissionNote(options)) : undefined
       allowed = await requestPermission({
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,
         ...(display ? { display } : {}),
+        ...(hasCommandExtras ? { wechatReview: wechatDisplay ? { display: wechatDisplay } : { incomplete: true as const } } : {}),
         ...(cwd ? { displayCwd: cwd, reviewDescription: `${description}\nWorking directory: ${cwd}` } : {}),
         onDenied: reason => { feedback = permissionDenialMessage(`${toolName}\n${description}`, reason) },
         ...(facts.command ? { command: facts.command } : {}),

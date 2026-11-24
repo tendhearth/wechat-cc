@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { authorize, type AuthSubject } from '../../domain/authorize'
 import { TIER_PROFILES } from '../../domain/user-tier'
 import type { SpawnContext } from '../../ports/agent-provider'
-import { legacyPermissionDescription, type PendingWorkbenchPermission, type PermissionDecision } from '../../ports/workbench'
+import { legacyPermissionDescription, wechatPermissionSource, type PendingWorkbenchPermission, type PermissionDecision } from '../../ports/workbench'
 import { inspectPermissionCommand, literalCommand, type CommandSnapshot } from './permission-command'
 import { matchRule } from '../permission-rules/rules-file'
 import type { Rule } from '../../domain/permission-rules/types'
@@ -159,6 +159,15 @@ export function makeRunPermissions(opts: {
       ...(snapshot.hash ? { canAllowTask: true } : {}),
       ...(snapshot.scripts.length ? { scripts: snapshot.scripts.map(s => s.content.length > 2000 ? { ...s, content: s.content.slice(0, 2000), truncated: true } : { ...s }) } : {}),
     }
+    Object.defineProperty(permission, wechatPermissionSource, {
+      value: {
+        description: raw.description,
+        cwd: raw.wechatReview?.cwd ?? raw.displayCwd ?? raw.cwd,
+        command: facts.command,
+        display: raw.wechatReview?.display,
+        incomplete: raw.wechatReview?.incomplete ?? (raw.display !== undefined && !display ? true : undefined),
+      } satisfies NonNullable<PendingWorkbenchPermission[typeof wechatPermissionSource]>,
+    })
     return new Promise<boolean>(resolve => {
       let settled = false
       let timer: ReturnType<typeof setTimeout> | undefined
@@ -228,10 +237,10 @@ export function makeRunPermissions(opts: {
       return { content: script.content.slice(offset, end), nextOffset: end < script.content.length ? end : null }
     },
     deadline: (id: string): number | null => pausedAt !== null ? null : entries.get(id)?.expiresAt ?? 0,
-    pending: (): PendingWorkbenchPermission[] => Array.from(entries.values(), ({ permission, legacyDescription }) => ({
+    pending: (): PendingWorkbenchPermission[] => Array.from(entries.values(), ({ permission, legacyDescription }) => Object.defineProperty({
       ...permission,
       ...(legacyDescription !== undefined ? { [legacyPermissionDescription]: legacyDescription } : {}),
-    })),
+    }, wechatPermissionSource, { value: permission[wechatPermissionSource] })),
     /** 网络守护冻住执行者:批准期限停表(到期计时器撤掉;放开时期限按冻住的时长顺延)。 */
     pause(): void {
       if (pausedAt !== null) return

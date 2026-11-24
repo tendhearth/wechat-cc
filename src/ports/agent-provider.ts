@@ -272,6 +272,9 @@ export interface AgentMcpTools {
   serverOf(name: string): string | undefined
 }
 
+/** Review details used by the text-only WeChat surface. */
+export interface WechatPermissionReview { display?: PermissionDisplay; cwd?: string; incomplete?: true }
+
 export interface SpawnContext {
   /** 本句一次代答：关闭 provider 自有的自动记忆；CC API 已由临时令牌限权。 */
   oneoff?: boolean
@@ -344,6 +347,8 @@ export interface SpawnContext {
       reviewDescription?: string;
       /** Explicit execution directory for display when rule facts are withheld. */
       displayCwd?: string;
+      /** Extra evidence needed by WeChat's text-only approval surface. */
+      wechatReview?: WechatPermissionReview;
       /** Requires an owner one-shot decision when execution is dynamic, even
        * when extra grants withhold command facts from automatic allow rules. */
       requiresBoundExecution?: true;

@@ -66,3 +66,4 @@ export * from './notebook'
 
 export { isPermissionCommandTool, permissionDisplay, PermissionDisplaySchema, permissionCwd, boundedPermissionDisplay, toolPermissionDisplay, PERMISSION_SNAPSHOT_NOTICE, PERMISSION_DISPLAY_LIMITS, type PermissionDisplay } from './permission-display'
 export { hasInvisiblePermissionText, permissionEditPreview, permissionLines, permissionOperationSource, permissionTextSegments } from './permission-presentation'
+export { permissionActionZh, permissionPatchLabel, resolvePermissionDisplay, PERMISSION_WHITESPACE_NOTICE_ZH, PERMISSION_INVISIBLE_NOTICE_ZH } from './permission-presentation'

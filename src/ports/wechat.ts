@@ -24,7 +24,8 @@
  */
 import type { SentMedia } from '../daemon/companion/media-mirror'
 import type { OutboundHealth } from '../daemon/ilink/outbound-health'
-import type { PendingPermissionMeta, PendingPermissionView, PermissionDecision } from '../daemon/pending-permissions'
+import type { PendingPermissionMeta, PendingPermissionView, PermissionDecision, WechatPermissionCard } from '../daemon/pending-permissions'
+export type { WechatPermissionCard } from '../daemon/pending-permissions'
 import type { SessionStateStore } from '../adapters/store/session-state'
 import type { ArtifactTransportOutcome, WorkbenchMediaItem, WorkbenchNoticeOutcome } from '../lib/ilink-workbench'
 
@@ -177,6 +178,8 @@ export interface WechatPages {
 }
 
 /** 拍板卡与待批登记处:微信「y/n 码」、桌宠权限卡、手机拍板、自改流水线共用同一份。 */
+export const WECHAT_PERMISSION_INCOMPLETE = '内容在微信里看不全，请到电脑或手机上看全再定。'
+
 export interface WechatPermissions {
   /**
    * 发拍板卡到 chatId 并等 y/n。卡片没送到(errcode=-2 等)默认立刻 resolve 'undelivered'(没人能回,别死等);
@@ -196,8 +199,10 @@ export interface WechatPermissions {
   resolvePermission(hash: string, decision: 'allow' | 'deny' | 'allow_task', reason?: string): boolean
   /** 这条待批在微信里的两位数码(自改流水线要把它一起回给 CLI)。= pending.codeOf. */
   pendingPermissionCodeOf(hash: string): string | null
+  /** Workbench card for the owner-facing WeChat lookup. Kept off the desktop API. */
+  pendingWechatPermissionCard(hash: string): WechatPermissionCard | undefined
   /** 只登记一条待批,**不发卡**(外发不通时条目留着,主人换个面拍板)。= pending.register. */
-  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta, opts?: {onAllowTask?:()=>boolean;deadline?:()=>number|null;onDecision?:(decision:'allow'|'deny'|'allow_task',reason?:string)=>boolean}): Promise<PermissionDecision>
+  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta, opts?: {onAllowTask?:()=>boolean;deadline?:()=>number|null;onDecision?:(decision:'allow'|'deny'|'allow_task',reason?:string)=>boolean;renderWechatCard?:(code:string)=>WechatPermissionCard}): Promise<PermissionDecision>
   /** 到点扫一遍待批(把过期的 resolve 成 timeout)。= pending.sweep. */
   sweepPendingPermissions(): void
 }

@@ -161,7 +161,7 @@ describe('MCP:放进来的才问,问的是「工具名 + 去掉凭据的参数�
   it.each(ROWS)('%s 放进来 %j 问的通道 %s', async (tool, admitted, permit, want, asked) => {
     const g = setup({ admitted, permit })
     expect(await g.call(tool, { query: 'x', api_key: 'secret' })).toEqual(want)
-    expect(g.requests).toEqual(asked ? [{ tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x","api_key":"[credential omitted]"}`,
+    expect(g.requests).toEqual(asked ? [{ tool, onDenied: expect.any(Function), description: `${tool}\n{"query":"x","api_key":"[credential omitted]"}`, wechatReview: { incomplete: true },
       display: { body: { kind: 'fields', fields: [{ name: 'query', value: 'x' }, { name: 'api_key', value: '[credential omitted]' }] } } }] : [])
   })
 
@@ -218,6 +218,19 @@ describe('内置工具:trusted × solo × strict;要问的交给问的通道,带
     const request = g.requests[0] as Parameters<NonNullable<SpawnContext['requestPermission']>>[0]
     expect(request.display?.body.kind).toBe('command')
     expect(request.display?.body.kind === 'command' && request.display.body.command === command && request.displayCwd === cwd).toBe(true)
+  })
+
+  it('keeps command arguments visible in WeChat and marks a redacted MCP argument incomplete', async () => {
+    const g = setup({ registered: ['catalog'], admitted: ['catalog'] })
+    const command = 'rm -rf build'
+    expect(await g.call('Bash', { command, run_in_background: true })).toEqual(ALLOW)
+    expect(g.requests[0]).toMatchObject({
+      display: { body: { kind: 'command', command } },
+      wechatReview: { display: { body: { kind: 'command', command }, extra: [{ name: 'run_in_background', value: 'true' }] } },
+    })
+    expect(await g.call('mcp__catalog__lookup', { api_key: 'fixture-secret' })).toEqual(ALLOW)
+    expect(g.requests[1]).toMatchObject({ wechatReview: { incomplete: true } })
+    expect(JSON.stringify(g.requests[1]).includes('fixture-secret')).toBe(false)
   })
 
   it.each([['no', REFUSED], ['throws', REFUSED], ['missing', NO_CHANNEL]] as const)('问的通道 %s ⇒ 拒', async (permit, want) => {

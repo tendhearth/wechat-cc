@@ -45,3 +45,89 @@ it.each(['wechat', 'pet'] as const)('R2: %s waits for the server decision before
     }
   } finally { for (const close of closes) close(); await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
 })
+
+async function withRegistry(run: (ilink: ReturnType<typeof makeIlinkAdapter>, sent: string[]) => void | Promise<void>) {
+  const root = mkdtempSync(join(tmpdir(), 'cc-wechat-quote-')), db = openTestDb()
+  const ilink = makeIlinkAdapter({ stateDir: root, db, conversationStore: makeConversationStore(db), accounts: [] })
+  const sent: string[] = []
+  vi.spyOn(ilink, 'sendMessage').mockImplementation(async (_chat, text) => { sent.push(text); return { msgId: 'offline' } })
+  try { await run(ilink, sent) }
+  finally { await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
+}
+
+it.each(['allow', 'deny', 'cancel', 'expired', 'overdue'] as const)('quotes for a %s request cannot approve the next card in the same task', async settlement => {
+  await withRegistry((ilink, sent) => {
+    const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
+    const old = randomUUID(), fresh = randomUUID()
+    let deadline = Date.now() + 10_000
+    const task = { taskId: '112233aa', tool: 'Bash', description: 'command=printf test', createdAt: 0 }
+    const oldAnswer = vi.fn(() => true), newAnswer = vi.fn(() => true)
+    const close = prompt('同一件事', { ...task, id: old }, oldAnswer, () => deadline)
+    const quoted = ilink.pendingWechatPermissionCard(old)!.text
+    if (settlement === 'cancel') close()
+    else if (settlement === 'expired' || settlement === 'overdue') {
+      deadline = Date.now() - 1
+      if (settlement === 'expired') ilink.sweepPendingPermissions()
+    } else expect(ilink.resolvePermission(old, settlement)).toBe(true)
+    prompt('同一件事', { ...task, id: fresh }, newAnswer, () => Date.now() + 10_000)
+    expect(ilink.probePermissionReply('y', 'owner', quoted)).toBe(true)
+    expect(ilink.handlePermissionReply('y', 'owner', quoted)).toBe(true)
+    expect(sent.at(-1)).toBe('这条请求已经处理过了或已经过期。')
+    expect(newAnswer).not.toHaveBeenCalled()
+    expect(ilink.listPendingPermissions().some(card => card.hash === fresh)).toBe(true)
+    expect(ilink.handlePermissionReply('y', 'owner', ilink.pendingWechatPermissionCard(fresh)!.text)).toBe(true)
+    expect(newAnswer).toHaveBeenCalledExactlyOnceWith('allow')
+  })
+})
+
+it('binds to the complete quote and its owner even if a different request code appears in the reply', async () => {
+  await withRegistry((ilink, sent) => {
+    const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
+    const first = randomUUID(), second = randomUUID(), answer = vi.fn(() => true), otherAnswer = vi.fn(() => true)
+    const request = { tool: 'Bash', description: 'command=printf test', createdAt: 0 }
+    prompt('一号事项', { ...request, id: first, taskId: '112233aa' }, answer, () => Date.now() + 10_000)
+    const card = ilink.pendingWechatPermissionCard(first)!.text
+    for (const altered of [
+      card.replace('printf test', 'printf safe'),
+      card.replace(/\n〔请求 [a-f0-9]+〕/, ''),
+      card.split('\n')[0]!,
+      card.split('\n').slice(0, 2).join('\n'),
+      'printf test',
+    ]) {
+      expect(ilink.probePermissionReply('y', 'owner', altered)).toBe(true)
+      expect(ilink.handlePermissionReply('y', 'owner', altered)).toBe(true)
+      expect(sent.at(-1)).toBe('引用的权限提示不完整或不匹配，请重新查阅后再回复。')
+    }
+    expect(ilink.probePermissionReply('y', 'stranger', card)).toBe(false)
+    expect(ilink.handlePermissionReply('y', 'stranger', card)).toBe(false)
+    prompt('二号事项', { ...request, id: second, taskId: 'aabbccdd' }, otherAnswer, () => Date.now() + 10_000)
+    const otherCard = ilink.pendingWechatPermissionCard(second)!.text
+    expect(ilink.handlePermissionReply('y', 'owner', card.replace('112233aa', 'aabbccdd'))).toBe(true)
+    expect(ilink.handlePermissionReply(`y ${ilink.pendingPermissionCodeOf(first)}`, 'owner', otherCard)).toBe(true)
+    expect(answer).not.toHaveBeenCalled()
+    expect(otherAnswer).not.toHaveBeenCalled()
+    expect(ilink.handlePermissionReply('n', 'owner', card)).toBe(true)
+    expect(answer).toHaveBeenCalledExactlyOnceWith('deny')
+    expect(ilink.listPendingPermissions().map(entry => entry.hash)).toEqual([second])
+  })
+})
+
+it('blocks y and yt before the decision callback without changing the code, clock or pet access', async () => {
+  await withRegistry((ilink, sent) => {
+    const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
+    const id = randomUUID(), answer = vi.fn(() => true)
+    prompt('示例', { id, taskId: '112233aa', tool: 'Bash', description: 'command=printf unrelated', createdAt: 0,
+      display: { body: { kind: 'command', command: 'printf demo' }, truncated: true },
+      canAllowTask: true, canDenyWithReason: true }, answer, () => null)
+    const code = ilink.pendingPermissionCodeOf(id)
+    const card = ilink.pendingWechatPermissionCard(id)!.text
+    for (const [text, quote] of [[`y ${code}`, undefined], [`yt ${code}`, undefined], ['y', undefined], ['y', card], ['yt', card]]) {
+      expect(ilink.handlePermissionReply(text!, 'owner', quote)).toBe(true)
+      expect(sent.at(-1)).toBe('内容在微信里看不全，请到电脑或手机上看全再定。')
+    }
+    expect(answer).not.toHaveBeenCalled()
+    expect(ilink.pendingPermissionCodeOf(id)).toBe(code)
+    expect(ilink.resolvePermission(id, 'allow')).toBe(true)
+    expect(answer).toHaveBeenCalledExactlyOnceWith('allow')
+  })
+})
