@@ -7,7 +7,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  await shim.invoke('demo.seed',{daemonAlive:true})
  let unreadable=false
  const places=[
-  placeItem('portfolio',{status:'waiting',moving:false,line:'Bash: bun run test',matterIds:[task.id],waiting:{itemKey:`matter:${task.id}`,kind:'permission',matterId:task.id,requestId:'0f0f0f0f-0000-4000-8000-000000000001',summary:'Bash: bun run test',count:1}}),
+  placeItem('portfolio',{status:'waiting',moving:false,line:'Bash: bun run test',matterIds:[task.id],waiting:{itemKey:`matter:${task.id}`,kind:'permission',matterId:task.id,requestId:'0f0f0f0f-0000-4000-8000-000000000001',summary:'Bash: bun run test',count:1,cwd:'/demo/portfolio'}}),
   terminalPlace('demo','terminal-1','git status'),
  ]
  const decisions:unknown[]=[]
