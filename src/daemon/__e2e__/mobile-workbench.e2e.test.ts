@@ -71,7 +71,7 @@ describe('phone web page: T5 device conversation and restricted LINK status',()=
 
   it('device exposes the approved permission and question responses',async()=>{
     detail.task.phase='replied'
-    detail.permissions=[{id:'p1',taskId:TASK,tool:'Bash',description:'rm -rf tmp',createdAt:1}]
+    detail.permissions=[{id:'p1',taskId:TASK,tool:'Bash',description:'rm -rf tmp',cwd:'/fixture/project',createdAt:1}]
     detail.questions=[{id:'q1',taskId:TASK,questions:[{id:'choice',header:'选择',question:'继续吗？',options:[{label:'继续',description:'继续处理'}],multiSelect:false,allowOther:true}]}]
     await open(true)
     // T5 决策 4：批准/拒绝及问题回答是设备网页已批准支持的响应类型。

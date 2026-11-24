@@ -70,7 +70,7 @@ it.each([
  const h=fixture()
  h.cRenderResponses({...h.detail,permissions:[{...h.detail.permissions[0],canAllowTask:true,...permission}]})
  const card=h.w.document.querySelector('section.response')!
- expect(Array.from(card.querySelectorAll('[data-decision]'),b=>b.getAttribute('data-decision'))).toEqual(['deny'])
+ expect(Array.from(card.querySelectorAll('[data-decision]'),(b:Element)=>b.getAttribute('data-decision'))).toEqual(['deny'])
  expect(card.textContent).toContain('这条在网页上看不全，请到手机 App 或电脑上看全再定')
  if(kind==='nine extra arguments'){
   expect(card.textContent).toContain('arg8：8')
@@ -99,7 +99,7 @@ it('offers task permission only when eligible and renders a bounded script previ
 it('loads a truncated script from its pending snapshot without inserting HTML',async()=>{
  const h=fixture();h.cRenderResponses({...h.detail,permissions:[{...h.detail.permissions[0],scripts:[{path:'folder/check.py',content:'preview',sha256:'a'.repeat(64),truncated:true}]}]})
  expect(h.w.document.querySelector('[data-decision="allow"]')).toBeNull()
- const draft=h.w.document.querySelector<HTMLInputElement>('[data-other]')!
+ const draft=h.w.document.querySelector('[data-other]') as unknown as HTMLInputElement
  draft.value='草稿'
  const button=h.w.document.querySelector('[data-script-full]');expect(button).not.toBeNull();await h.cExpandScript(button)
  expect(h.reads).toHaveLength(1);expect(h.reads[0]).toContain('path=folder%2Fcheck.py');expect(h.reads[0]).toContain('requestId='+h.request)
