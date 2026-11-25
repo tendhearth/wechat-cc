@@ -64,15 +64,21 @@ describe('e2e: 微信命令路由快照(三档 × 同一份语料)', () => {
   }, 600_000)
 })
 
-// 注:这里假模型只让首次探测失败,llm 子系统并没进「暂停」;§1.5 bug 2(llm 暂停时命令到不了)的证明在
+// 这里的假模型让每一轮对话都收到 529。LLM 子系统暂停时的命令路由由另一条测试覆盖，见
 // src/daemon/wiring/pipeline-deps-llm-down-commands.test.ts(直接把 llm 设成暂停、走完整入站流水线,带对照)。
-describe('e2e: 执行者探测一直失败时,不用模型的命令照常回', () => {
-  it('after repeated first-use probe failures, commands that never call the model still answer', async () => {
+describe('e2e: 对话回合一直失败时，不用模型的命令照常回', () => {
+  it('after repeated chat turn failures, commands that never call the model still answer', async () => {
+    let modelCalls = 0
     const daemon = await startTestDaemon({
       dangerously: true,
       access: { admins: ['owner'], allowFrom: ['owner'] },
       knownUsers: { owner: '主人' },
-      claudeScript: { async onDispatch() { throw Object.assign(new Error('API Error: 529 overloaded'), { status: 529 }) } },
+      claudeScript: {
+        async onDispatch() {
+          modelCalls++
+          throw Object.assign(new Error('API Error: 529 overloaded'), { status: 529 })
+        },
+      },
     })
     const out: Record<string, string> = {}
     try {
@@ -84,8 +90,17 @@ describe('e2e: 执行者探测一直失败时,不用模型的命令照常回', (
         const fresh = (got ?? daemon.ilink.outbox()).filter(m => m.endpoint === 'sendmessage' && m.chatId === 'owner').slice(before).map(m => m.text ?? '').join(' | ')
         return fresh ? stable(fresh.replace(/\s+/g, ' ')).slice(0, 40) : '(没回)'
       }
-      for (let i = 0; i < 4; i++) out[`聊天 ${i}`] = await send(`你好 ${i}`)
-      for (const text of ['邀请码', '待批准', '定时', '日报', '/set', '/health']) out[text] = await send(text)
+      const attempts = 4
+      for (let i = 0; i < attempts; i++) {
+        const reply = await send(`你好 ${i}`)
+        expect(modelCalls).toBe(i + 1)
+        expect(reply).toBe('Claude 暂时忙不过来（529），稍后再发一句就会重试。')
+        out[`聊天 ${i}`] = reply
+      }
+      for (const text of ['邀请码', '待批准', '定时', '日报', '/set', '/health']) {
+        out[text] = await send(text)
+        expect(modelCalls).toBe(attempts)
+      }
     } finally { await daemon.stop() }
     expect(out).toMatchSnapshot()
   }, 120_000)
