@@ -11,8 +11,8 @@
  * that can run new models — a bundled binary would be a floor that only
  * reaches old models. Codex auth lives in `~/.codex/auth.json` regardless of
  * which binary spawns it. Version mismatch is therefore ADVISORY (logged,
- * shown in /mode), not a refusal; compatibility is settled by a real
- * first-use probe (src/app/first-use-probe.ts), and codex-autofix
+ * shown in /mode), not a refusal; compatibility is confirmed by a real
+ * chat turn (src/app/first-use-probe.ts), and codex-autofix
  * (src/lib/codex-autofix.ts) still realigns the SDK in dev checkouts.
  *
  * If the user has never installed codex globally, this returns null and

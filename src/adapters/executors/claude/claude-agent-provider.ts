@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { toolApprovalInput } from '../../../domain/workbench/tool-input-preview'
 import { toolArgumentEvidence } from '../tool-argument-evidence'
 import { permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
@@ -357,18 +360,18 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
   const runQuery: typeof query = input => (opts.queryImpl ?? query)({ ...input, options: {
     ...input.options, env: sessionSubprocessEnv(input.options?.env),
   } })
-  const oneShot = async (prompt: string, model: string, signal?: AbortSignal): Promise<string> => {
+  const oneShot = async (prompt: string, model: string, signal?: AbortSignal, probeCwd?: string): Promise<string> => {
     signal?.throwIfAborted()
     const controller = signal ? new AbortController() : undefined
     const abort = () => controller?.abort(signal?.reason)
     signal?.addEventListener('abort', abort, { once: true })
     try {
-      return await collectOneShot(prompt, model, controller)
+      return await collectOneShot(prompt, model, controller, probeCwd)
     } finally {
       signal?.removeEventListener('abort', abort)
     }
   }
-  const collectOneShot = async (prompt: string, model: string, abortController?: AbortController): Promise<string> => {
+  const collectOneShot = async (prompt: string, model: string, abortController?: AbortController, probeCwd?: string): Promise<string> => {
     const q = runQuery({
       prompt,
       options: {
@@ -381,6 +384,13 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         settingSources: [],
         tools: [],
         persistSession: false,
+        ...(probeCwd ? {
+          cwd: probeCwd,
+          mcpServers: {}, strictMcpConfig: true,
+          hooks: {}, plugins: [],
+          settings: { disableAllHooks: true, disableSkillShellExecution: true, autoMemoryEnabled: false },
+          env: { ...sessionSubprocessEnv(), CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+        } : {}),
         ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
       } as Options,
     })
@@ -446,7 +456,14 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
-    probeModel: (prompt, model, signal) => oneShot(prompt, model ?? opts.strongModel?.() ?? DEFAULT_CLAUDE_MODEL, signal),
+    async probeModel(prompt, model, signal) {
+      const cwd = await mkdtemp(join(tmpdir(), 'cc-claude-probe-'))
+      try {
+        return await oneShot(prompt, model ?? opts.strongModel?.() ?? DEFAULT_CLAUDE_MODEL, signal, cwd)
+      } finally {
+        await rm(cwd, { recursive: true, force: true }).catch(() => {})
+      }
+    },
     cheapEval: (prompt, options) =>
       oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT, options?.signal),
     // 守护(评审 #193 P1-1):一次性评估每次都起新子进程,继承此刻的 process.env;会话的目标在

@@ -47,10 +47,10 @@ import { AGY_STATIC_SESSION_KEY } from '../internal-api/token-registry'
 import appPkg from '../../../package.json' with { type: 'json' }
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
 
-function probeFailureMessage(name: 'Claude' | 'Codex', failure: ProbeFailure, incompatible: () => string): string {
-  if (failure.kind === 'transient') return `${name} ${failure.reason}，过一会儿再用时会自动重试。你不用做什么。`
-  if (failure.kind === 'auth') return `${name} ${failure.reason}，请检查账号或密钥。`
-  if (failure.kind === 'quota') return turnErrorNotice(name === 'Claude' ? 'claude' : 'codex', undefined, 'quota')
+function claudeProbeFailureMessage(failure: ProbeFailure, incompatible: () => string): string {
+  if (failure.kind === 'transient') return `Claude ${failure.reason}，过一会儿再用时会自动重试。你不用做什么。`
+  if (failure.kind === 'auth') return `Claude ${failure.reason}，请检查账号或密钥。`
+  if (failure.kind === 'quota') return turnErrorNotice('claude', undefined, 'quota')
   return incompatible()
 }
 
@@ -159,7 +159,7 @@ export interface ProviderWiring {
   defaultProviderId: ProviderId
   codexBinary: string | null
   codexVersionCheck: ReturnType<typeof checkCodexVersion> | null
-  /** 各 provider 一句话状态(/mode 显示):codex 的版本差 + 首次使用探测结果。 */
+  /** 各 provider 一句话状态(/mode 显示):codex 的版本差和对话确认状态。 */
   providerNotes: () => Partial<Record<ProviderId, string>>
   /** 开机探测失败、正在退避重探(或已晚注册)的外部 CLI provider。进 /v1/health.provider_probes。 */
   providerProbes: () => ProbeRetryStatus[]
@@ -259,10 +259,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       void import('../diagnostics/failure-shapes').then(m => m.recordFailureShape(deps.stateDir, info))
     },
   })
-  // claude 和 codex 是同一个形状:SDK(node_modules 里那份)驱动用户全局装的
-  // `claude` CLI,两者版本之间没有任何检查 —— 一直能用是 Anthropic 协议宽容,
-  // 不是我们做了什么。同样套上首次使用探测(只拦聊天回合,gate:'spawn':
-  // 后台评估开机就可能跑,不让它多一次外呼)。
+  // Claude 在首次聊天前做隔离探测，Codex 用真实对话确认。两家共用成功记录的格式。
   const probeHistory = openFirstUseProbeRecords(deps.stateDir, () => deps.log('FIRST_USE_PROBE', '无法保存首次探测记录'))
   const recordFirstUseProbe = (tag: string, r: ProbeResult): void => {
     deps.log(tag, r.ok ? `ok in ${r.ms}ms` : `FAILED (${r.kind}) in ${r.ms}ms: ${r.reason}`)
@@ -309,7 +306,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       await assertCallAllowed(deps.networkGate, target)
       return claudeInner.probeModel('只回复两个字母:ok', model, signal)
     },
-    failureMessage: (detail, failure, model) => probeFailureMessage('Claude', failure, () =>
+    failureMessage: (detail, failure, model) => claudeProbeFailureMessage(failure, () =>
       `claude 探测没通过:${incompatibleProbeDetail(detail)}\n` +
       `可能是 ${claudeVersionTag} 和 SDK 不合,或者${model ? `模型 ${model}` : claudeModelTag()}已不可用。` +
       `先在终端跑一次 \`claude\` 确认能登录;模型不对就 model_set 换一个。`),
@@ -413,7 +410,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     const codexEnvModel = process.env.CODEX_MODEL
     const codexPinnedModel = () => modelForProvider(readAgentConfig(), 'codex') || codexEnvModel
     const nativeDefaults = new Map<string, string>()
-    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, aligned ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时核对探测记录'})`)
+    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, aligned ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,由真实对话确认'})`)
     const codexInner = createCodexChatProvider({
         codexPathOverride: codexBinary,
         networkGate: deps.networkGate,
@@ -463,10 +460,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       ...codexInner,
       spawn: (project, ctx) => codexInner.spawn(project, { ...ctx, model: ctx.model ?? codexPinnedModel() }),
     }, {
-      gate: 'spawn',
-      probeAfterSpawn: true,
-      networkGate: deps.networkGate,
-      timeoutMs: probeTimeoutMs,
       cache: {
         combination: () => {
           const resolved = resolveCodexTarget()
@@ -481,12 +474,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         },
         history: probeHistory('codex'),
       },
-      probe: (_model, signal, _project, session) => session ? codexInner.probeModel(session, signal) : Promise.resolve(undefined),
-      failureMessage: (detail, failure) => probeFailureMessage('Codex', failure, () =>
-        `codex 探测没通过:${incompatibleProbeDetail(detail)}\n` +
-        `你的 codex CLI(${actual})和 wechat-cc 对齐的版本(${codexVersionCheck.expectedVersion})可能不合。` +
-        `试试 \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`,或者等 wechat-cc 更新。`),
-      onResult: r => recordFirstUseProbe('CODEX_PROBE', r),
     })
     codexNote = () => `你的 CLI ${actual}${gap} · ${probeStatusNote(codexProvider.probeStatus())}`
     registry.register(

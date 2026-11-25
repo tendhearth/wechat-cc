@@ -1,25 +1,13 @@
 /**
- * first-use-probe — 「先真跑一句再信」的 provider 包装。
- *
- * 为 codex 而生(2026-09-09 实测):SDK 0.144.4 驱动用户的 CLI 0.153.4 照样
- * 收到 agent_message,而内置的 0.144.4 二进制被 OpenAI 服务端以「这个模型
- * 需要更新的 Codex」400 拒掉。也就是说**版本号判不出能不能用,只有真跑
- * 一句才知道**;而且要跑就得用用户那个更新的 CLI。于是:
- *
- *  - 开机**不**外呼(主人纪律:网络不稳时的无人值守外呼是风控形状);
- *  - 第一次真要用到(spawn / cheapEval)时探一句「只回复 ok」,通了缓存,
- *    组合没变就沿用上次结果;真实回合也可以确认或撤销这个结果;
- *  - 探测失败 → 这次调用抛带人话的错。瞬时故障从 30 秒起退避,其他
- *    失败等十分钟,额度耗尽等到重置时间。退避结束后由下一次使用触发,没有后台计时器。
- *
- * 并发:同一模型和端点共用一个 in-flight promise,只探一次。
+ * Claude probes on demand in an isolated one-shot call. Codex learns from
+ * real chat turns. Both keep confirmation records by model and endpoint.
  */
 import type { AgentEvent, AgentProvider, AgentProject, AgentSession, SpawnContext } from '../ports/agent-provider'
 import { classifyProviderError, parseResetAt, QUOTA_TTL_MS } from '../domain/provider-quota'
 import { outdatedClientSignal } from '../domain/cli-upgrade/outdated-signal'
 import { looksLikeAuthFailure } from '../lib/auth-failure'
 import { isConnectFailure, isTimeoutFailure } from '../lib/net-errors'
-import { codeForHttpStatus, isAuthErrorCode, isProviderErrorCode, providerErrorCodeOf, withProviderCode } from '../lib/provider-error-code'
+import { codeForHttpStatus, contextOverflowInputTokens, contextOverflowLimitTokens, errorWithProviderCode, isAuthErrorCode, isProviderErrorCode, providerErrorCodeOf, withProviderCode, type ProviderErrorCode } from '../lib/provider-error-code'
 import { assertCallAllowed, isNetworkUnprotectedError, sessionCallTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
 import { sha256Hex } from '../lib/content-hash'
 
@@ -34,6 +22,7 @@ export interface ProbeCombination {
 
 export interface ProbeRecord extends ProbeCombination {
   at: number
+  confirmedByTurn?: true
 }
 
 export interface ProbeHistory {
@@ -58,16 +47,16 @@ function sameProbeCombination(a: ProbeCombination | undefined, b: ProbeCombinati
     a?.model === b?.model && a?.endpoint === b?.endpoint
 }
 
-export type ProbeFailure = { kind: 'transient' | 'auth' | 'incompatible' | 'quota'; reason: string; cause?: 'server_error' }
+export type ProbeFailure = { kind: 'transient' | 'auth' | 'incompatible' | 'quota'; reason: string; cause?: 'server_error'; code: ProviderErrorCode }
 export type ProbeResult = ({ ok: true } | ({ ok: false } & ProbeFailure)) & { detail: string; ms: number }
 export type ProbeStatus =
-  | { state: 'untested' | 'probing' }
+  | { state: 'untested' | 'probing' | 'awaiting_turn' }
   | { state: 'ok'; source: 'probe' | 'history' | 'turn'; detail: string; at: number }
-  | ({ state: 'failed'; detail: string; at: number; retryAt: number } & ProbeFailure)
+  | ({ state: 'failed'; detail: string; at: number; retryAt?: number } & ProbeFailure)
 
 const RETRY_AFTER_MS = 10 * 60_000
 const FIRST_TRANSIENT_RETRY_MS = 30_000
-const INCOMPATIBLE: ProbeFailure = { kind: 'incompatible', reason: '探测失败' }
+const INCOMPATIBLE: ProbeFailure = { kind: 'incompatible', reason: '探测失败', code: 'incompatible' }
 const EMPTY_REPLY = '探测拿到了空回复(协议不合的典型症状)'
 
 function classifyProbeError(error: unknown, detail: string): ProbeFailure {
@@ -80,21 +69,21 @@ function classifyProbeError(error: unknown, detail: string): ProbeFailure {
   const httpCode = codeForHttpStatus(status, detail)
   const code = providerErrorCodeOf(error) ?? (isProviderErrorCode(envelope?.code) ? envelope.code : undefined)
   const timeout = isTimeoutFailure(detail) || isTimeoutFailure(envelope?.code) || status === 408
-  const transient = (reason: string): ProbeFailure => ({ kind: 'transient', reason })
-  const auth = (): ProbeFailure => ({ kind: 'auth', reason: `拒绝了凭证（${status === 401 || status === 403 ? status : '认证'}）` })
+  const transient = (reason: string, code: ProviderErrorCode): ProbeFailure => ({ kind: 'transient', reason, code })
+  const auth = (): ProbeFailure => ({ kind: 'auth', code: code === 'auth_failed' ? code : 'auth_rejected', reason: `拒绝了凭证（${status === 401 || status === 403 ? status : '认证'}）` })
   const quota = classifyProviderError(detail)
 
-  if (code === 'quota' || httpCode === 'quota' || quota === 'quota') return { kind: 'quota', reason: '额度用完了' }
-  if (httpCode === 'server_error' || code === 'server_error') return { ...transient(`暂时忙不过来（${httpCode === 'server_error' ? status : '5xx'}）`), cause: 'server_error' }
-  if (httpCode === 'rate_limited' || code === 'rate_limited') return transient(`暂时限流（${httpCode === 'rate_limited' ? status : 'rate_limit'}）`)
+  if (code === 'quota' || httpCode === 'quota' || quota === 'quota') return { kind: 'quota', code: 'quota', reason: '额度用完了' }
+  if (httpCode === 'server_error' || code === 'server_error') return { ...transient(`暂时忙不过来（${httpCode === 'server_error' ? status : '5xx'}）`, 'server_error'), cause: 'server_error' }
+  if (httpCode === 'rate_limited' || code === 'rate_limited') return transient(`暂时限流（${httpCode === 'rate_limited' ? status : 'rate_limit'}）`, 'rate_limited')
   if (isAuthErrorCode(httpCode)) return auth()
-  if (timeout) return transient(`请求超时（${status === 408 ? status : 'timeout'}）`)
-  if (code === 'network' || isConnectFailure(detail) || isConnectFailure(envelope?.code)) return transient('暂时连不上（网络）')
-  if (quota === 'rate_limit') return transient('暂时忙不过来（rate_limit）')
+  if (timeout) return transient(`请求超时（${status === 408 ? status : 'timeout'}）`, 'network')
+  if (code === 'network' || isConnectFailure(detail) || isConnectFailure(envelope?.code)) return transient('暂时连不上（网络）', 'network')
+  if (quota === 'rate_limit') return transient('暂时忙不过来（rate_limit）', 'rate_limited')
   if (isAuthErrorCode(code) || looksLikeAuthFailure(detail)) return auth()
-  if (outdatedClientSignal('claude', detail) || outdatedClientSignal('codex', detail) ||
+  if (code === 'incompatible' || outdatedClientSignal('claude', detail) || outdatedClientSignal('codex', detail) ||
       /\b(?:model(?:[_ ]not[_ ]found|[_ ]not[_ ]supported|[^\n.]{0,120} (?:does not exist|is not supported|is unavailable))|unsupported model|(?:version|protocol) mismatch|incompatible (?:version|protocol))\b/i.test(detail)) return INCOMPATIBLE
-  return transient('暂时没有回应（原因未明）')
+  return transient('暂时没有回应（原因未明）', code ?? 'provider_error')
 }
 
 /** 暂停期结束后,下一次使用才触发重探。 */
@@ -106,7 +95,14 @@ function firstUseProbeNote(failure: ProbeFailure): string {
 }
 
 export function probeStatusNote(status: ProbeStatus): string {
-  if (status.state === 'failed') return firstUseProbeNote(status)
+  if (status.state === 'failed') {
+    if (status.retryAt === undefined) {
+      if (status.kind === 'auth') return `${status.reason}，请检查账号或密钥`
+      if (status.kind === 'transient') return `${status.reason}，再发一句就会重试`
+    }
+    return firstUseProbeNote(status)
+  }
+  if (status.state === 'awaiting_turn') return '还没用过，第一次对话时确认'
   if (status.state === 'ok') {
     if (status.source === 'history') return `沿用上次的结果（${new Date(status.at).toLocaleString('zh-CN', { hour12: false })}）`
     if (status.source === 'turn') return '已通过对话确认连接'
@@ -116,10 +112,8 @@ export function probeStatusNote(status: ProbeStatus): string {
 }
 
 export interface FirstUseProbeOpts {
-  /** 抛错或空串算失败。undefined 交给真实回合确认。 */
-  probe: (model: string | undefined, signal: AbortSignal, project?: AgentProject, session?: AgentSession) => Promise<string | undefined>
-  /** The native thread reports its effective model before it sends a turn. */
-  probeAfterSpawn?: boolean
+  /** Omit to confirm using the native thread's real chat turns. */
+  probe?: (model: string | undefined, signal: AbortSignal, project?: AgentProject) => Promise<string>
   networkGate?: NetworkGate
   timeoutMs?: number
   /** Omit for callers without a daemon-owned cache. */
@@ -127,7 +121,7 @@ export interface FirstUseProbeOpts {
   /** 探测结果的人话摘要,给 /mode 和日志。 */
   onResult?: (r: ProbeResult) => void
   /** 失败时抛给调用方的信息(会原样进用户提示)。 */
-  failureMessage: (detail: string, failure: ProbeFailure, model?: string) => string
+  failureMessage?: (detail: string, failure: ProbeFailure, model?: string) => string
   /** 认证或不兼容失败后多久允许重探(默认 10 分钟)。 */
   retryAfterMs?: number
   /** 'all'(默认):spawn 和 cheapEval/strongEval 都先过探测;'spawn':只拦聊天
@@ -143,7 +137,7 @@ export function firstUseProbeTimeout(turnTimeoutMs: number): number {
   return turnTimeoutMs > 0 ? Math.min(PROBE_TIMEOUT_MS, turnTimeoutMs / 2) : PROBE_TIMEOUT_MS
 }
 
-async function runProbe(opts: FirstUseProbeOpts, model: string | undefined, project?: AgentProject, session?: AgentSession): Promise<string | undefined> {
+async function runProbe(probe: NonNullable<FirstUseProbeOpts['probe']>, timeoutMs: number, model: string | undefined, project?: AgentProject): Promise<string> {
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<never>((_, reject) => {
@@ -151,13 +145,11 @@ async function runProbe(opts: FirstUseProbeOpts, model: string | undefined, proj
       const error = new Error('first-use probe timed out')
       reject(error)
       controller.abort(error)
-    }, opts.timeoutMs ?? PROBE_TIMEOUT_MS)
+    }, timeoutMs)
   })
   try {
     // Bound the shared wait even when a provider takes longer to stop.
-    return await Promise.race([deadline, Promise.resolve().then(() => session
-      ? opts.probe(model, controller.signal, project, session)
-      : opts.probe(model, controller.signal, project))])
+    return await Promise.race([deadline, Promise.resolve().then(() => probe(model, controller.signal, project))])
   } finally {
     clearTimeout(timer)
   }
@@ -173,6 +165,8 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
   const now = opts.now ?? Date.now
   const retryAfter = opts.retryAfterMs ?? RETRY_AFTER_MS
   const cache = opts.cache
+  const probe = opts.probe
+  const failureMessage = opts.failureMessage ?? ((_detail, failure) => firstUseProbeNote(failure))
   const states = new Map<string | undefined, {
     combination: ProbeCombination | undefined
     status: ProbeStatus
@@ -191,18 +185,19 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
     return state
   }
   const remember = (state: ReturnType<typeof stateFor>, at: number) => {
-    if (!cache || !state.combination || state.combination.endpoint === 'unresolved' ||
+    if (!cache || !state.combination || state.combination.endpoint === 'unresolved' || (!probe && state.combination.model === UNKNOWN_PROBE_FIELD) ||
         state.savedThisRun || states.get(probeTargetKey(state.combination)) !== state) return
-    cache.history.save({ ...state.combination, at })
+    cache.history.save({ ...state.combination, at, ...(!probe ? { confirmedByTurn: true } : {}) })
     state.savedThisRun = true
   }
-  const ensure = (current = cache?.combination(), project?: AgentProject, session?: AgentSession): Promise<void> => {
+  const ensure = (current = cache?.combination(), project?: AgentProject): Promise<void> => {
+    if (!probe) return Promise.resolve()
     const state = stateFor(current)
     const model = current?.model === UNKNOWN_PROBE_FIELD ? undefined : current?.model
     const { status } = state
     if (status.state === 'ok') return Promise.resolve()
-    if (status.state === 'failed' && now() < status.retryAt) {
-      return Promise.reject(probeError(opts.failureMessage(status.detail, status, model), status))
+    if (status.state === 'failed' && status.retryAt !== undefined && now() < status.retryAt) {
+      return Promise.reject(probeError(failureMessage(status.detail, status, model), status))
     }
     if (state.inflight) return state.inflight
     const previous = current && cache?.history.read(current)
@@ -221,14 +216,14 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
         : FIRST_TRANSIENT_RETRY_MS
       state.status = { state: 'failed', ...failure, detail, at, retryAt: at + delay }
       opts.onResult?.({ ok: false, ...failure, detail, ms: at - started })
-      throw probeError(opts.failureMessage(detail, failure, model), failure)
+      throw probeError(failureMessage(detail, failure, model), failure)
     }
 
     state.status = { state: 'probing' }
     state.inflight = Promise.resolve().then(async () => {
-      let text: string | undefined
+      let text: string
       try {
-        text = (await runProbe(opts, model, project, session))?.trim()
+        text = (await runProbe(probe, opts.timeoutMs ?? PROBE_TIMEOUT_MS, model, project)).trim()
       } catch (err) {
         if (isNetworkUnprotectedError(err)) {
           state.status = { state: 'untested' }
@@ -236,10 +231,6 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
         }
         const detail = err instanceof Error ? err.message : String(err)
         return fail(classifyProbeError(err, detail), detail)
-      }
-      if (text === undefined) {
-        state.status = { state: 'untested' }
-        return
       }
       if (text === '') fail(INCOMPATIBLE, EMPTY_REPLY)
       const at = now()
@@ -260,9 +251,34 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
   }
   const incompatibleError = (error: unknown, detail: string) => classifyProbeError(error, detail).kind === 'incompatible'
 
-  const nativeCombination = (session: AgentSession, defaults: ProbeCombination, model = defaults.model): ProbeCombination => {
+  const recordTurnFailure = (target: ProbeCombination | undefined, error: unknown, detail: string) => {
+    const invalidProtocol = /^codex_(?:missing_(?:thread|turn)_id|turn_start_mismatch|rpc_method_not_found)$/.test(detail)
+    const failure = detail === EMPTY_REPLY || invalidProtocol ? INCOMPATIBLE : classifyProbeError(error, detail)
+    const incompatible = failure.kind === 'incompatible'
+    const reason = incompatible ? '模型或 Codex 客户端协议不兼容' : failure.reason
+    if (target && target.model !== UNKNOWN_PROBE_FIELD && target.endpoint !== 'unresolved' && failure.code !== 'context_overflow') {
+      const state = stateFor(target)
+      if (incompatible) {
+        cache?.history.clear(target)
+        state.savedThisRun = false
+      }
+      state.status = { state: 'failed', ...failure, reason, detail: reason, at: now() }
+    }
+    // Preserve the fixed upgrade signal in the error channel without forwarding vendor text.
+    let message = reason
+    if (incompatible && outdatedClientSignal('codex', detail)) message = 'This model requires a newer version of Codex.'
+    if (failure.code === 'context_overflow') {
+      // The conversation's existing overflow recovery uses the input and limit counts.
+      const input = contextOverflowInputTokens(detail)
+      const limit = contextOverflowLimitTokens(detail)
+      message = `context window exceeded${input ? `, requested ${input}` : ''}${limit ? `, model token limit: ${limit}` : ''}`
+    }
+    return { kind: 'error' as const, message, code: failure.code }
+  }
+
+  const nativeCombination = (session: AgentSession, defaults: ProbeCombination): ProbeCombination => {
     const target = sessionCallTarget(session, 'codex')
-    return { ...defaults, model: target.model ?? model, endpoint: probeEndpointKey(target) }
+    return { ...defaults, model: target.model ?? UNKNOWN_PROBE_FIELD, endpoint: probeEndpointKey(target) }
   }
 
   const observeSession = (session: AgentSession, spawnedWith: ProbeCombination, project: AgentProject): AgentSession => {
@@ -278,10 +294,10 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
         }
         const startedCancellation = cancellations
         // SessionManager can reuse a session after an incompatible turn.
-        const current = opts.probeAfterSpawn ? nativeCombination(session, spawnedWith) : spawnedWith
+        const current = probe ? spawnedWith : nativeCombination(session, spawnedWith)
         const state = stateFor(current)
         try {
-          await ensure(current, project, opts.probeAfterSpawn ? session : undefined)
+          if (probe) await ensure(current, project)
           if (startedCancellation !== cancellations) return
           if (opts.networkGate) await assertCallAllowed(opts.networkGate, sessionCallTarget(session, 'unknown'))
         } catch (err) {
@@ -294,8 +310,13 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
         let hasReply = false
         try {
           for await (const event of session.dispatch(...args)) {
-            if (event.kind === 'error') failure ??= event
-            else if (event.kind === 'result') {
+            if (event.kind === 'error') {
+              failure ??= event
+              if (!probe && startedCancellation === cancellations) {
+                if (event === failure) yield recordTurnFailure(nativeCombination(session, current), event, event.message)
+                continue
+              }
+            } else if (event.kind === 'result') {
               completed = true
               hasReply ||= !!event.finalText?.trim()
             } else if (event.kind === 'tool_call' || (event.kind === 'text' && event.text.trim())) hasReply = true
@@ -304,18 +325,24 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
         } catch (err) {
           if (startedCancellation === cancellations) {
             const detail = failure?.message ?? (err instanceof Error ? err.message : String(err))
-            if (incompatibleError(failure ?? err, detail)) invalidate(state, current)
+            if (!probe && !isNetworkUnprotectedError(err)) {
+              if (!failure) yield recordTurnFailure(nativeCombination(session, current), err, detail)
+              return
+            }
+            if (probe && incompatibleError(failure ?? err, detail)) invalidate(state, current)
           }
           throw err
         }
         if (startedCancellation !== cancellations) return
-        const sentTo = opts.probeAfterSpawn ? nativeCombination(session, current) : current
+        const sentTo = probe ? current : nativeCombination(session, current)
         const sentState = sameProbeCombination(sentTo, current) ? state : stateFor(sentTo)
-        if (failure ? incompatibleError(failure, failure.message) : completed && !hasReply) {
+        if (!probe && !failure && completed && !hasReply) {
+          yield recordTurnFailure(sentTo, undefined, EMPTY_REPLY)
+        } else if (probe && (failure ? incompatibleError(failure, failure.message) : completed && !hasReply)) {
           invalidate(sentState, sentTo)
         } else if (!failure && completed) {
           const at = now()
-          if (sentState.status.state === 'untested') sentState.status = { state: 'ok', source: 'turn', detail: '已通过对话确认连接', at }
+          if (sentState.status.state === 'untested' || (!probe && sentState.status.state === 'failed')) sentState.status = { state: 'ok', source: 'turn', detail: '已通过对话确认连接', at }
           remember(sentState, at)
         }
       },
@@ -327,16 +354,14 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       if (ctx.evaluation) return inner.spawn(project, ctx)
       const defaults = cache?.combination()
-      if (opts.probeAfterSpawn && defaults) {
-        const session = await inner.spawn(project, ctx)
+      if (!probe) {
         try {
-          const combination = nativeCombination(session, defaults, ctx.execution?.model ?? ctx.model ?? UNKNOWN_PROBE_FIELD)
-          if (combination.endpoint === 'unresolved' || combination.model === UNKNOWN_PROBE_FIELD) return session
-          await ensure(combination, project, session)
-          return observeSession(session, combination, project)
+          const session = await inner.spawn(project, ctx)
+          return defaults ? observeSession(session, defaults, project) : session
         } catch (err) {
-          await session.close().catch(() => {})
-          throw err
+          if (isNetworkUnprotectedError(err)) throw err
+          const { message, code } = recordTurnFailure(undefined, err, err instanceof Error ? err.message : String(err))
+          throw errorWithProviderCode(message, code)
         }
       }
       const model = ctx.execution?.model ?? ctx.model ?? defaults?.model
@@ -352,12 +377,19 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
         throw err
       }
     },
-    ...(inner.cheapEval && (opts.gate ?? 'all') === 'all' ? { cheapEval: async (prompt, options) => { if (!options?.singleAttempt) await ensure(); return inner.cheapEval!(prompt, options) } } : {}),
-    ...(inner.strongEval && (opts.gate ?? 'all') === 'all' ? { strongEval: async (prompt: string) => { await ensure(); return inner.strongEval!(prompt) } } : {}),
+    ...(probe && inner.cheapEval && (opts.gate ?? 'all') === 'all' ? { cheapEval: async (prompt, options) => { if (!options?.singleAttempt) await ensure(); return inner.cheapEval!(prompt, options) } } : {}),
+    ...(probe && inner.strongEval && (opts.gate ?? 'all') === 'all' ? { strongEval: async (prompt: string) => { await ensure(); return inner.strongEval!(prompt) } } : {}),
     probeStatus: () => {
       const current = cache?.combination()
       const state = states.get(current && probeTargetKey(current))
-      return state && sameProbeCombination(current, state.combination) ? state.status : { state: 'untested' }
+      if (state && state.status.state !== 'untested' && sameProbeCombination(current, state.combination)) return state.status
+      if (probe) return { state: 'untested' }
+      const previous = current && cache?.history.read(current)
+      // Earlier Codex records could come from a gateway request that never used the CLI.
+      if (previous?.confirmedByTurn && sameProbeCombination(current, previous)) {
+        return { state: 'ok', source: 'history', at: previous.at, detail: '沿用上次的结果' }
+      }
+      return { state: 'awaiting_turn' }
     },
   }
   return wrapped

@@ -593,6 +593,7 @@ const zh: Record<keyof typeof en, string> = {
   'cap.brain.probe_busy': '{name} 暂时忙不过来，稍后使用时会自动重试。',
   'cap.brain.probe_quota': '{name} 额度用完了，等额度恢复或换一个脑子。',
   'cap.brain.probing': '正在探测 {name} 的连接。',
+  'cap.brain.probe_awaiting_turn': '还没用过，第一次对话时确认。',
   'cap.brain.probe_pending': '首次使用时会探测 {name} 的连接。',
   'cap.brain.retrying': '{name} 开机时没连上，正在重试。',
   'cap.brain.unavailable': '选的大脑 {name} 用不了。',

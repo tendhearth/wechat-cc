@@ -92,6 +92,7 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
     const reused = status?.state === 'ok' && status.source === 'history'
     const code = status?.state === 'ok' ? (reused ? 'brain.probe_history' : status.source === 'turn' ? 'brain.probe_turn' : 'brain.probe_fresh')
       : status?.state === 'probing' ? 'brain.probing'
+      : status?.state === 'awaiting_turn' ? 'brain.probe_awaiting_turn'
       : status?.state === 'untested' ? 'brain.probe_pending' : 'brain.ok'
     out.push({
       id: 'brain', name: '大脑', state: 'ok', code,

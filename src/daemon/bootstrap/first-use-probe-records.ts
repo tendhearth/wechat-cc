@@ -23,7 +23,9 @@ export function openFirstUseProbeRecords(stateDir: string, onWriteError: () => v
       // The previous format stored a single record per provider.
       const entries = raw[id]
       const valid = (Array.isArray(entries) ? entries : [entries]).filter(validRecord)
-      if (valid.length) records[id] = valid.map(({ cliVersion, sdkVersion, model, endpoint, at }) => ({ cliVersion, sdkVersion, model, endpoint, at }))
+      if (valid.length) records[id] = valid.map(({ cliVersion, sdkVersion, model, endpoint, at, confirmedByTurn }) => ({
+        cliVersion, sdkVersion, model, endpoint, at, ...(confirmedByTurn === true ? { confirmedByTurn } : {}),
+      }))
     }
   } catch { /* A missing or unreadable cache is safe to rebuild. */ }
 

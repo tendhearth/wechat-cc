@@ -245,7 +245,6 @@ async function expectPostRebootCodexReply(d: RealShapedDaemon): Promise<void> {
       inboundReceived: saw('[POLL] inbound '),
       spawnFailed: failure !== undefined,
       spawnFailureCode: failureCode,
-      probePassed: saw('[CODEX_PROBE] ok in '),
       threadRequested: codexThreads.length > threadsBefore,
       accessInvalidated: saw('[ACCESS] tier membership changed'),
       guardSuspended: saw('[GUARD] network unprotected [probe,'),
@@ -1749,6 +1748,53 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     })
     d.sendText(d.owner, '/mode')
     await d.waitForOutbound(msgs => texts(msgs, d.owner).some(text => text.includes(note)), 15_000)
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('confirms Codex through real chat and immediately retries on the next owner message', async () => {
+    await d.stop()
+    const dispatch = vi.fn(async (prompt: string) => {
+      if (said(prompt) === 'Codex 第一句') throw new Error('HTTP error: 529 overloaded')
+      if (said(prompt) === 'Codex 版本') throw new Error('This model requires a newer version of Codex.')
+      if (said(prompt) === 'Codex 额度') throw new Error('HTTP error: 429 insufficient_quota')
+      if (said(prompt) === 'Codex 认证') throw new Error('HTTP error: 403 Forbidden')
+      return { toolCalls: [], finalText: 'Codex 真实回复。' }
+    })
+    const evalPrompt = vi.fn(async () => 'ok')
+    d = await startRealShapedDaemon({
+      claudeScript, codexScript: { onDispatch: dispatch }, moderatorScript: { onEval: evalPrompt },
+      agentConfigPatch: { provider: 'codex', model: 'scripted-model' },
+      modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'codex' } },
+      seedFiles: { 'projects.json': PROJECTS },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    const brain = async () => (await desktop<ConnectionsSnapshot>('GET', '/v1/connections')).body.capabilities?.find(c => c.id === 'brain')
+    expect(await brain()).toMatchObject({
+      code: 'brain.probe_awaiting_turn', reason: expect.stringContaining('还没用过，第一次对话时确认'),
+    })
+    d.sendText(d.owner, '/mode')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('还没用过，第一次对话时确认')), 15_000)
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(evalPrompt).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    const path = join(d.stateDir, 'first-use-probes.json')
+    expect(existsSync(path)).toBe(false)
+
+    d.sendText(d.owner, 'Codex 第一句')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 暂时忙不过来')), 15_000)
+    expect(existsSync(path)).toBe(false)
+    d.sendText(d.owner, 'Codex 第二句')
+    await d.waitForOutbound(m => texts(m, d.owner).includes('Codex 真实回复。'), 15_000)
+    await expect.poll(brain, { timeout: 12_000 }).toMatchObject({ code: 'brain.probe_turn' })
+    expect(JSON.parse(readFileSync(path, 'utf8')).codex).toEqual([expect.objectContaining({ model: 'scripted-model' })])
+
+    d.sendText(d.owner, 'Codex 额度')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('额度用完了')), 15_000)
+    d.sendText(d.owner, 'Codex 版本')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('请检查 CLI 版本或换一个模型')), 15_000)
+    expect(JSON.parse(readFileSync(path, 'utf8')).codex).toBeUndefined()
+    d.sendText(d.owner, 'Codex 认证')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('检查一下账号或密钥')), 15_000)
+    expect(dispatch.mock.calls.map(([prompt]) => said(prompt))).toEqual(['Codex 第一句', 'Codex 第二句', 'Codex 额度', 'Codex 版本', 'Codex 认证'])
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 

@@ -6,6 +6,7 @@ import type { ProviderId } from '../../domain/conversation'
 import { capabilitiesFor } from '../../domain/capability-matrix'
 import { providerDisplayName } from '../../domain/provider-display-names'
 import type { TurnSummary } from '../../ports/agent-provider'
+import { isAuthErrorCode } from '../../lib/provider-error-code'
 import type { CoordinatorCtx } from './ctx'
 
 /** User-facing notice when a provider reports an auth failure.
@@ -46,6 +47,7 @@ export function providerFailureReason(providerId: ProviderId, code: string | und
   if (providerId === 'grok' && code === 'network' && error === 'grok_network_unavailable') return 'Grok 现在连不上（网络），这句我先不转给它。'
   if (error?.startsWith('acp_prompt_idle_timeout: ')) return `${providerDisplayName(providerId)} 没回应，已停下。`
   switch (code) {
+    case 'incompatible': return `这条没接住。当前模型不可用，或 ${providerDisplayName(providerId)} CLI 与 CC 的协议版本不兼容。请检查 CLI 版本或换一个模型。`
     case 'context_overflow': return `${providerId} 的上下文仍然过长，这一轮没有完成。请缩短本次输入后再试。`
     case 'network': {
       // 2026-11-04:主人自己的网关(openai 兼容)110 秒没回,原来说「连不上 openai 的服务」,读起来像 OpenAI 出了事。
@@ -55,7 +57,9 @@ export function providerFailureReason(providerId: ProviderId, code: string | und
         ? `这条没接住:连不上 ${host}(${providerId} 用的那个服务;网络问题,不是你的消息有问题)。网络好了再发我一次就行。`
         : `这条没接住:连不上 ${providerId} 的服务(网络问题,不是你的消息有问题)。网络好了再发我一次就行。`
     }
-    case 'server_error': return `这条没接住:${providerId} 的服务那边出错了(服务端 5xx),通常过一会儿自己会好,稍后再发我一次。`
+    case 'server_error':
+      if (providerId === 'codex') return 'Codex 暂时忙不过来，稍后再发一句就会重试。'
+      return `这条没接住:${providerId} 的服务那边出错了(服务端 5xx),通常过一会儿自己会好,稍后再发我一次。`
     case 'rate_limited': return `这条没接住:${providerId} 暂时限流了,等几分钟再发我一次。`
     case 'quota': return `这条没接住:${providerId} 的额度用完了。等额度恢复,或者先换一个脑子(比如 /cc)。`
     case 'region_unavailable': return `这条没接住:${providerId} 说你现在的网络出口所在地区用不了它(不是登录问题,重发也没用)。换一个出口地区,或者先换一个脑子(比如 /cc)。`
@@ -74,6 +78,7 @@ export function spawnFailedNotice(providerId: ProviderId, detail: string, code?:
 }
 
 export function turnErrorNotice(providerId: ProviderId, error: string | undefined, code?: string): string {
+  if (providerId === 'codex' && isAuthErrorCode(code)) return authFailNotice(providerId, code)
   const reason = providerFailureReason(providerId, code, error)
   if (reason) return reason
   const e = (error ?? '').toLowerCase()

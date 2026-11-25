@@ -369,7 +369,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 //   - one-shot threads (cheapEval: read-only + thread config network_access=false
 //     — sessions never set it, codex-chat-provider.test.ts pins both halves) are
 //     NOT wired to codexScript and never fire the spawn recorder; they answer via
-//     the moderator script (or 'ok', which the first-use probe needs).
+//     the moderator script (or 'ok').
 // ---------------------------------------------------------------------------
 vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
   const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')

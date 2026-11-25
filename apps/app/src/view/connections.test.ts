@@ -94,6 +94,14 @@ describe('capabilities in the connections view (2026-10-06)', () => {
     }
   })
 
+  it('explains that the first Codex conversation will confirm the connection', () => {
+    const data = snap([{ id: 'brain', name: '大脑', state: 'ok', code: 'brain.probe_awaiting_turn', params: { name: 'Codex' }, reason: 'daemon fallback' }])
+    expect(connectionsPage({ data }, 'online', NOW, 'zh-Hans').view?.capabilities[0]?.label)
+      .toBe('还没用过，第一次对话时确认。')
+    expect(connectionsPage({ data }, 'online', NOW, 'en').view?.capabilities[0]?.label)
+      .toBe('The first conversation will confirm the connection to Codex.')
+  })
+
   it('shows quota exhaustion as needing owner attention in both languages', () => {
     const data = snap([{ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.probe_quota', params: { name: 'Claude' }, reason: 'daemon fallback' }])
     expect(connectionsPage({ data }, 'online', NOW, 'zh-Hans').view?.capabilities[0]).toMatchObject({

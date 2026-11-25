@@ -24,8 +24,7 @@ import { CodexChildOccurrence } from './codex-runtime'
 import { codexAppServerErrorCode, codexErrorCode, codexTimeoutsFromEnv, type CodexTimeouts } from './codex-errors'
 import { isAuthFail } from '../../../domain/auth-fail'
 import { APP_VERSION } from '../../../lib/app-version'
-import { codexCallTarget, codexTargetFromConfig, codexTargetToCall, resolveCodexTarget, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
-import { codexConnectivityProbe, type CodexConnectivityProbe } from './codex-connectivity-probe'
+import { codexCallTarget, codexTargetFromConfig, codexTargetToCall, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import type { CallTarget } from '../../../lib/call-classifier'
 import {MATTER_TOOL_NAMES,type MatterMcpFactory} from '../matter-mcp'
 
@@ -77,7 +76,7 @@ export interface CodexChatProfile {
    */
   approve?: CodexChatApprove
   /** Captured from config/read for the optional, separate tool-free connectivity request. */
-  reportProbe?: (probe: CodexConnectivityProbe | undefined, nativeDefault: boolean) => void
+  onNativeDefault?: (target: CallTarget) => void
 }
 
 /**
@@ -475,7 +474,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (event.kind === 'result') return { ...event, numTurns: ++chatTurns }
         if (event.kind !== 'error') return event
         const code = event.code ?? codexErrorCode(event.message) ?? (isAuthFail('sdk-error', event.message) ? 'auth_failed' : undefined)
-        chat?.log?.('SESSION_RESULT', `alias=${project.alias} provider=codex error${code ? ` code=${code}` : ''}: ${event.message.slice(0, 300)}`)
+        chat?.log?.('SESSION_RESULT', `alias=${project.alias} provider=codex error${code ? ` code=${code}` : ''}`)
         return { kind: 'error', message: event.message, ...(code ? { code } : {}) }
       }
       const finish = (turn: Turn, event: AgentEvent) => {
@@ -1083,7 +1082,13 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           const rpc = rpcs.get(message.id)
           if (!rpc) return // A timed-out or cancelled client's late response.
           rpcs.delete(message.id); rpc.clear()
-          if (message.error) { const error=codexRpcError(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'); rejectedRpcs.add(error); rpc.reject(error) }
+          if (message.error) {
+            const detail = chat && message.error.code === -32601 ? 'codex_rpc_method_not_found'
+              : typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'
+            const error = codexRpcError(detail)
+            rejectedRpcs.add(error)
+            rpc.reject(error)
+          }
           else if (object(message.result)) rpc.resolve(message.result)
           else { rpc.reject(new Error('codex_invalid_rpc_response')); fatal('codex_invalid_rpc_response') }
         } else fatal('codex_invalid_protocol_message')
@@ -1185,13 +1190,10 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           spawnTarget = { ...spawnTarget, model: response.model }
           context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
         }
-        if (chat?.reportProbe) {
+        if (chat?.onNativeDefault) {
           const providerMatches = !('unresolved' in route) && (response.modelProvider == null || response.modelProvider === route.providerId)
           if (!providerMatches) spawnTarget = { provider: 'codex', model: spawnTarget.model, unresolved: true }
-          const probe = providerMatches ? codexConnectivityProbe(native.config, route, childEnv,
-            () => resolveCodexTarget({ env: childEnv, ...options.codexTargetOptions?.() })) : undefined
-          chat.reportProbe(probe,
-            !model && configuredModel == null && !context.resumeSessionId)
+          if (!model && configuredModel == null && !context.resumeSessionId) chat.onNativeDefault(spawnTarget)
         }
       } catch (error) { await close(); throw error }
       finally { startupSignal?.removeEventListener('abort', abortStartup) }

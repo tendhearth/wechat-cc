@@ -411,7 +411,7 @@ describe('persistent first-use probe', () => {
       expect(probe).toHaveBeenCalledTimes(1)
       const failed = provider.probeStatus()
       if (failed.state !== 'failed') throw new Error('missing cooldown')
-      expect(failed.retryAt - failed.at).toBe(30_000)
+      expect(failed.retryAt).toBe(failed.at + 30_000)
       await vi.advanceTimersByTimeAsync(30_000)
       expect((await collectTurn(session.dispatch('recovered'))).finalText).toBe('收到')
       finishStale('late reply')
