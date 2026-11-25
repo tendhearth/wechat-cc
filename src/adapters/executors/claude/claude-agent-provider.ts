@@ -341,7 +341,7 @@ export function claudeBaseUrl(env?: Record<string, string | undefined>): string 
   return (env ?? process.env).ANTHROPIC_BASE_URL || null
 }
 
-export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider {
+export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider & { probeModel(prompt: string, model?: string): Promise<string> } {
   const windows=new Map<string,number>()
   const normalized=(model:string)=>model.replace(/\[[^\]]+\]$/,'').toLowerCase()
   const family=(model:string)=>/^(?:claude-)?(opus|sonnet|haiku)(?:-|$)/.exec(normalized(model))?.[1]
@@ -434,6 +434,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
+    probeModel: (prompt, model) => oneShot(prompt, model ?? opts.strongModel?.() ?? DEFAULT_CLAUDE_MODEL),
     cheapEval: (prompt, options) =>
       oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT, options?.signal),
     // 守护(评审 #193 P1-1):一次性评估每次都起新子进程,继承此刻的 process.env;会话的目标在

@@ -12,10 +12,14 @@ import type { McpStdioSpec } from '../../adapters/executors/mcp-stdio-spec'
 import { AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
 import { TIER_PROFILES } from '../../domain/user-tier'
 
-const fakeProbe = vi.hoisted(() => ({ error: null as string | null }))
+const fakeProbe = vi.hoisted(() => ({
+  error: null as string | null,
+  models: {} as Record<string, unknown>,
+}))
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  async *query() {
+  async *query(request: { options?: { model?: string } }) {
+    fakeProbe.models.claude = request.options?.model
     if (fakeProbe.error) throw new Error(fakeProbe.error)
     yield { type: 'result', subtype: 'success', result: '' }
   },
@@ -26,6 +30,7 @@ vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
   const scripted = createScriptedCodex({
     turns: [],
     cheapAnswer: () => '',
+    onThreadStart: (_method, params, cheap) => { if (cheap) fakeProbe.models.codex = params.model },
     rewrite: (msg) => {
       if (msg.method !== 'turn/completed' || !fakeProbe.error) return msg
       return { ...msg, params: { ...msg.params, turn: { ...msg.params.turn, status: 'failed', error: { message: fakeProbe.error } } } }
@@ -123,6 +128,7 @@ describe('registerProviders — first-use probe messages', () => {
       probeVersion: async () => ({ ok: true, firstLine: 'codex-cli 1.2.3', ms: 0 }),
     })
     try {
+      saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: 'codex-default' }))
       const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
       try {
         for (const [id, name] of [['claude', 'Claude'], ['codex', 'Codex']] as const) {
@@ -143,9 +149,11 @@ describe('registerProviders — first-use probe messages', () => {
           expect(providerNotes()[id]).toContain(note)
           expect(logs.find(([tag]) => tag === `${name.toUpperCase()}_PROBE`)?.[1]).toContain(`FAILED (${kind})`)
         }
+        expect(fakeProbe.models).toEqual({ claude: 'claude-x', codex: 'codex-default' })
       } finally { stopProviderProbes() }
     } finally {
       fakeProbe.error = null
+      fakeProbe.models = {}
       vi.unstubAllEnvs()
       rmSync(binDir, { recursive: true, force: true })
     }

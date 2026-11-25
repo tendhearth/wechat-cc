@@ -107,7 +107,7 @@ const errorEvent = (err: unknown): Extract<AgentEvent, { kind: 'error' }> => {
   return { kind: 'error', message, ...(code ? { code } : {}) }
 }
 
-export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): AgentProvider {
+export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): AgentProvider & { probeModel(prompt: string, model?: string): Promise<string> } {
   const binary = (): string => (typeof opts.codexPathOverride === 'function' ? opts.codexPathOverride() : opts.codexPathOverride) || 'codex'
   // 构造时解析一次:codex login 刷新了模型缓存,daemon 重启后生效。
   const cheapModel = resolveCodexCheapModel()
@@ -130,6 +130,28 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } },
   })
 
+  const oneShot = async (prompt: string, model: string | undefined, signal?: AbortSignal): Promise<string> => {
+    let session: CodexAppServerSession | undefined
+    const abort = () => { void session?.close().catch(() => {}) }
+    try {
+      session = await spawnCodexAppServerSession(coreOptions(model), { alias: 'codex-cheap-eval', path: tmpdir() }, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile(), signal)
+      signal?.throwIfAborted()
+      signal?.addEventListener('abort', abort, { once: true })
+      const parts: string[] = []
+      for await (const ev of session.dispatch(prompt)) {
+        if (ev.kind === 'text') parts.push(ev.text)
+        else if (ev.kind === 'error') throw withProviderCode(new Error(ev.message), (ev.code as ReturnType<typeof codexErrorCode>) ?? codexErrorCode(ev.message))
+      }
+      return parts.join('')
+    } catch (err) {
+      if (providerErrorCodeOf(err)) throw err
+      throw withProviderCode(err, codexErrorCode(err instanceof Error ? err.message : String(err)))
+    } finally {
+      signal?.removeEventListener('abort', abort)
+      await session?.close().catch(() => {})
+    }
+  }
+
   return {
     callTarget(kind, ctx) {
       if (kind === 'cheapEval' || kind === 'strongEval') return targetOf(cheapModel ?? null, tmpdir())
@@ -137,28 +159,8 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     },
     /** 一次 app-server 冷启动 + 一轮(约 3-5s/次),给 20s 余量。 */
     cheapEvalBudgetMs: 20_000,
-    async cheapEval(prompt, options): Promise<string> {
-      const signal = options?.signal
-      let session: CodexAppServerSession | undefined
-      const abort = () => { void session?.close().catch(() => {}) }
-      try {
-        session = await spawnCodexAppServerSession(coreOptions(cheapModel), { alias: 'codex-cheap-eval', path: tmpdir() }, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile(), signal)
-        signal?.throwIfAborted()
-        signal?.addEventListener('abort', abort, { once: true })
-        const parts: string[] = []
-        for await (const ev of session.dispatch(prompt)) {
-          if (ev.kind === 'text') parts.push(ev.text)
-          else if (ev.kind === 'error') throw withProviderCode(new Error(ev.message), (ev.code as ReturnType<typeof codexErrorCode>) ?? codexErrorCode(ev.message))
-        }
-        return parts.join('')
-      } catch (err) {
-        if (providerErrorCodeOf(err)) throw err
-        throw withProviderCode(err, codexErrorCode(err instanceof Error ? err.message : String(err)))
-      } finally {
-        signal?.removeEventListener('abort', abort)
-        await session?.close().catch(() => {})
-      }
-    },
+    cheapEval: (prompt, options) => oneShot(prompt, cheapModel, options?.signal),
+    probeModel: (prompt, model) => oneShot(prompt, model),
     supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // read-only does not disable native read/shell tools or inherited project instructions.

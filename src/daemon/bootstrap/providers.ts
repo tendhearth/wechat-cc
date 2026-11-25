@@ -4,7 +4,10 @@ import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
-import { firstUseProbeNote, withFirstUseProbe, type ProbeFailure, type ProbeResult } from '../../app/first-use-probe'
+import { probeStatusNote, UNKNOWN_PROBE_FIELD, withFirstUseProbe, type ProbeFailure, type ProbeResult } from '../../app/first-use-probe'
+import { openFirstUseProbeRecords } from './first-use-probe-records'
+import { APP_VERSION } from '../../lib/app-version'
+import { resolveCodexTarget } from '../../lib/codex-target'
 import { readJsonFile } from '../../lib/read-json-file'
 import { DEFAULT_CLAUDE_MODEL } from '../../adapters/executors/claude/claude-agent-provider'
 import { DEFAULT_AGY_MODEL } from '../../adapters/executors/agy/agy-agent-provider'
@@ -19,7 +22,7 @@ import type { ProviderId } from '../../domain/conversation'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ConversationStore } from '../../ports/conversation-store'
-import { makeMtimeCachedConfigReader, type AgentConfig, type AgentProviderKind } from '../../lib/agent-config'
+import { makeMtimeCachedConfigReader, modelForProvider, type AgentConfig, type AgentProviderKind } from '../../lib/agent-config'
 import type { Access } from '../../lib/access'
 import type { CompanionConfig } from '../../lib/companion-config'
 import { loadAccess } from '../../lib/access'
@@ -37,9 +40,10 @@ import { setupAgyGlobalMcp } from './agy-mcp-config'
 import { probeVersion, describeProbeFailure, createProbeRetrier, type VersionProbeResult, type ProbeRetrierOptions, type ProbeRetryStatus, type ProbeAttempt } from './provider-probe'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import { makeCheapEvalPreflight, grokNetworkPreflight } from './cheap-eval-preflight'
-import { assertCallAllowed } from '../../lib/network-gate'
+import { assertCallAllowed, unresolvedTarget } from '../../lib/network-gate'
 import type { BootstrapDeps } from './types'
 import { AGY_STATIC_SESSION_KEY } from '../internal-api/token-registry'
+import appPkg from '../../../package.json' with { type: 'json' }
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
 
 function probeFailureMessage(name: 'Claude' | 'Codex', failure: ProbeFailure, incompatible: () => string): string {
@@ -251,24 +255,24 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // `claude` CLI,两者版本之间没有任何检查 —— 一直能用是 Anthropic 协议宽容,
   // 不是我们做了什么。同样套上首次使用探测(只拦聊天回合,gate:'spawn':
   // 后台评估开机就可能跑,不让它多一次外呼)。
-  const recordFirstUseProbe = (tag: string, r: ProbeResult): string => {
+  const probeHistory = openFirstUseProbeRecords(deps.stateDir, () => deps.log('FIRST_USE_PROBE', '无法保存首次探测记录'))
+  const recordFirstUseProbe = (tag: string, r: ProbeResult): void => {
     deps.log(tag, r.ok ? `ok in ${r.ms}ms` : `FAILED (${r.kind}) in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
-    return r.ok ? `探测通过 ✓(${(r.ms / 1000).toFixed(1)}s)` : firstUseProbeNote(r)
   }
-  const claudeCliVersion = claudeBin ? (probeBinaryVersion(claudeBin)?.match(/(\d+\.\d+\.\d+)/)?.[1] ?? null) : null
+  const claudeCliVersion = claudeBin ? (probeBinaryVersion(claudeBin)?.match(/(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)/)?.[1] ?? null) : null
   const claudeSdkVersion = (() => {
+    const bundledVersion = appPkg.dependencies['@anthropic-ai/claude-agent-sdk']
     try {
       const root = wechatCcRepoRoot()
-      if (!root) return null
-      return readJsonFile<{ version?: string }>(`${root}/node_modules/@anthropic-ai/claude-agent-sdk/package.json`).version ?? null
-    } catch { return null }
+      if (!root) return bundledVersion
+      return readJsonFile<{ version?: string }>(`${root}/node_modules/@anthropic-ai/claude-agent-sdk/package.json`).version ?? UNKNOWN_PROBE_FIELD
+    } catch { return UNKNOWN_PROBE_FIELD }
   })()
-  const claudeVersionTag = `${claudeCliVersion ? `你的 CLI ${claudeCliVersion}` : 'CLI 版本未知'}${claudeSdkVersion ? `(SDK ${claudeSdkVersion})` : ''}`
+  const claudeVersionTag = `${claudeCliVersion ? `你的 CLI ${claudeCliVersion}` : 'CLI 版本未知'}(SDK ${claudeSdkVersion})`
   const claudeModelTag = () => {
     const c = readAgentConfig()
     return c.provider === 'claude' && c.model ? `模型 ${c.model}` : `模型 ${DEFAULT_CLAUDE_MODEL}(配置里没设,内置兜底 —— /set model 或面板可改)`
   }
-  let claudeProbeNote = '未探测'
   const claudeInner = createClaudeAgentProvider({
       sdkOptionsForProject,
       // Threaded into cheapEval's query() call so the bun-compile
@@ -281,16 +285,25 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     })
   const claudeProvider = withFirstUseProbe(claudeInner, {
     gate: 'spawn',
-    probe: () => claudeInner.cheapEval!('只回复两个字母:ok'),
+    cache: {
+      combination: () => ({
+        cliVersion: claudeCliVersion ?? UNKNOWN_PROBE_FIELD, sdkVersion: claudeSdkVersion,
+        model: currentClaudeModel() || UNKNOWN_PROBE_FIELD,
+      }),
+      history: probeHistory('claude'),
+    },
+    probe: async model => {
+      const target = claudeInner.callTarget?.('spawn', { model }) ?? unresolvedTarget('claude')
+      await assertCallAllowed(deps.networkGate, target)
+      return claudeInner.probeModel('只回复两个字母:ok', model)
+    },
     failureMessage: (detail, failure) => probeFailureMessage('Claude', failure, () =>
       `claude 探测没通过:${detail.slice(0, 200)}\n` +
       `可能是 ${claudeVersionTag} 和 SDK 不合,或者${claudeModelTag()}已不可用。` +
       `先在终端跑一次 \`claude\` 确认能登录;模型不对就 model_set 换一个。`),
-    onResult: (r) => {
-      claudeProbeNote = recordFirstUseProbe('CLAUDE_PROBE', r)
-    },
+    onResult: r => recordFirstUseProbe('CLAUDE_PROBE', r),
   })
-  const claudeNote = () => `${claudeVersionTag} · ${claudeModelTag()} · ${claudeProbeNote}`
+  const claudeNote = () => `${claudeVersionTag} · ${claudeModelTag()} · ${probeStatusNote(claudeProvider.probeStatus())}`
   registry.register(
     'claude',
     claudeProvider,
@@ -381,12 +394,12 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     codexVersionCheck = codexCheckFrom(codexBinary, r)
     if (!r.ok) codexProbeFailure = describeProbeFailure(r)
   }
-  let codexNote: string | null = null
+  let codexNote: (() => string) | undefined
   const registerCodex = (codexBinary: string, codexVersionCheck: ReturnType<typeof checkCodexVersion>) => {
     const actual = codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '?'
-    const gap = codexVersionCheck.ok ? '' : `(与对齐的 codex ${codexVersionCheck.expectedVersion} 不同版,首次使用时真跑一句探测)`
-    codexNote = `你的 CLI ${actual}${gap} · 未探测`
-    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, aligned ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时探测'})`)
+    const gap = codexVersionCheck.ok ? '' : `(对齐版本 ${codexVersionCheck.expectedVersion})`
+    const codexEnvModel = process.env.CODEX_MODEL
+    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, aligned ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时核对探测记录'})`)
     const codexInner = createCodexChatProvider({
         codexPathOverride: codexBinary,
         // Construction-time model default ONLY from CODEX_MODEL. Do NOT fall back
@@ -396,7 +409,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         // (breaks /codex, /both, /chat). When the configured provider IS codex,
         // the pinned model is supplied per-spawn via currentModelFor('codex')
         // (SpawnContext.model); otherwise codex uses its own SDK default.
-        ...(process.env.CODEX_MODEL ? { model: process.env.CODEX_MODEL } : {}),
+        ...(codexEnvModel ? { model: codexEnvModel } : {}),
         // Task 6: sandboxMode + approvalPolicy moved out of CodexAgentProviderOptions —
         // they're now derived per-spawn from spawnOpts.tierProfile inside the provider.
         // strict: admin → workspace-write + on-request (answered by `approvals` below);
@@ -428,15 +441,28 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         },
       })
     const codexProvider = withFirstUseProbe(codexInner, {
-      probe: () => codexInner.cheapEval!('只回复两个字母:ok'),
+      cache: {
+        combination: () => ({
+          cliVersion: codexVersionCheck.actualSemver ?? UNKNOWN_PROBE_FIELD,
+          // Codex 对话走随 CC 发布的 app-server 协议客户端。
+          sdkVersion: APP_VERSION,
+          model: modelForProvider(readAgentConfig(), 'codex') || codexEnvModel ||
+            resolveCodexTarget().model || UNKNOWN_PROBE_FIELD,
+        }),
+        history: probeHistory('codex'),
+      },
+      probe: async model => {
+        const target = codexInner.callTarget?.('cheapEval') ?? unresolvedTarget('codex')
+        await assertCallAllowed(deps.networkGate, { ...target, model: model ?? null })
+        return codexInner.probeModel('只回复两个字母:ok', model)
+      },
       failureMessage: (detail, failure) => probeFailureMessage('Codex', failure, () =>
         `codex 探测没通过:${detail.slice(0, 200)}\n` +
         `你的 codex CLI(${actual})和 wechat-cc 对齐的版本(${codexVersionCheck.expectedVersion})可能不合。` +
         `试试 \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`,或者等 wechat-cc 更新。`),
-      onResult: (r) => {
-        codexNote = `你的 CLI ${actual} · ${recordFirstUseProbe('CODEX_PROBE', r)}`
-      },
+      onResult: r => recordFirstUseProbe('CODEX_PROBE', r),
     })
+    codexNote = () => `你的 CLI ${actual}${gap} · ${probeStatusNote(codexProvider.probeStatus())}`
     registry.register(
       'codex',
       codexProvider,
@@ -902,7 +928,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   return {
     refreshInstalledProvider,
     registry, defaultProviderId, codexBinary, codexVersionCheck,
-    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}), ...(grokBin ? { grok: grokHomeProblem(deps.stateDir) ?? 'CC 专属 HOME 已登录；CC 工具按会话协商。' } : {}) }),
+    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote() } : {}), ...(grokBin ? { grok: grokHomeProblem(deps.stateDir) ?? 'CC 专属 HOME 已登录；CC 工具按会话协商。' } : {}) }),
     providerProbes: () => probeRetrier.status(),
     stopProviderProbes: () => probeRetrier.stop(),
     reprobeProvider: (id) => probeRetrier.reprobeNow(id),

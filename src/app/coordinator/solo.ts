@@ -255,12 +255,12 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       ctx.noteDelivery(providerId, report.delivery)
       rotation?.delivered(contextKey, msg.text, summary.toolCalls.length > 0)
     } catch (err) {
-      if (!oneoff) throw err
+      if (!oneoff && !(err instanceof FirstUseProbeError)) throw err
       const code = providerErrorCodeOf(err)
       summary = { assistantText: [], replyToolCalled: false, toolCalls: [], error: err instanceof Error ? err.message : String(err), ...(code ? { errorCode: code } : {}) }
       outcome = isAuthErrorCode(code) ? 'auth_failed' : 'error'
       if (delivery && !deliverySettled) { deliverySettled = true; delivery.abandon('error') }
-      await failureNotice(turnErrorNotice(providerId, summary.error, summary.errorCode))
+      await failureNotice(err instanceof FirstUseProbeError ? err.message : turnErrorNotice(providerId, summary.error, summary.errorCode))
     } finally {
       unregisterCancel?.()
       if (delivery && !deliverySettled) { deliverySettled = true; try { delivery.abandon(outcome) } catch { /* 记账不影响回合 */ } }

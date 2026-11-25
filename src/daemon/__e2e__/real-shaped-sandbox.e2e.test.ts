@@ -1714,6 +1714,40 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     }
   })
 
+  it('reuses a successful model probe after restart and reports it in connections and /mode', async () => {
+    await d.stop()
+    const probe = vi.fn(async () => 'ok')
+    const moderatorScript = { onEval: async (prompt: string) => prompt === '只回复两个字母:ok' ? probe() : 'ok' }
+    const options = { claudeScript, codexScript, moderatorScript, agentConfigPatch: { model: 'sandbox-default-model' } }
+    d = await startRealShapedDaemon({ ...options, seedFiles: { 'projects.json': PROJECTS } })
+
+    const recordPath = join(d.stateDir, 'first-use-probes.json')
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    d.sendText(d.owner, '沙盒你好，初次探测')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
+    expect(probe).toHaveBeenCalledTimes(1)
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')).claude
+    expect(record).toMatchObject({ model: 'sandbox-default-model', at: expect.any(Number) })
+    const fresh = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
+    expect(fresh.body.capabilities?.find(c => c.id === 'brain')?.reason).toContain('刚探测过 ✓')
+
+    const stateDir = d.stateDir
+    await d.stop({ keepState: true })
+    probe.mockRejectedValue(new Error('API Error: 529 overloaded'))
+    d = await startRealShapedDaemon({ ...options, stateDir })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    d.sendText(d.owner, '沙盒你好，重启后再聊')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
+    expect(probe).toHaveBeenCalledTimes(1)
+    const reused = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
+    const timestamp = new Date(record.at).toLocaleString('zh-CN', { hour12: false })
+    const note = `沿用上次的结果（${timestamp}）`
+    expect(reused.body.capabilities?.find(c => c.id === 'brain')?.reason).toContain(note)
+    d.sendText(d.owner, '/mode')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).some(text => text.includes(note)), 15_000)
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
   it('first-use overload reaches both the owner and the desktop connections card', async () => {
     await d.stop()
     const probe = vi.fn(async () => { throw new Error('API Error: 529 overloaded') })

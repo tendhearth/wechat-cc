@@ -1,6 +1,10 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it, expect, vi } from 'vitest'
-import { withFirstUseProbe } from './first-use-probe'
-import type { AgentProvider } from '../ports/agent-provider'
+import { openFirstUseProbeRecords } from '../daemon/bootstrap/first-use-probe-records'
+import { probeStatusNote, withFirstUseProbe } from './first-use-probe'
+import { collectTurn, type AgentEvent, type AgentProvider } from '../ports/agent-provider'
 import { errorWithProviderCode } from '../lib/provider-error-code'
 
 function inner(): AgentProvider & { spawns: number } {
@@ -79,7 +83,7 @@ describe('withFirstUseProbe', () => {
     }
     probe.mockResolvedValueOnce('ok')
     await Promise.all([spawn(), spawn()])
-    expect(p.probeStatus()).toEqual({ state: 'ok', detail: 'ok', at: t })
+    expect(p.probeStatus()).toEqual({ state: 'ok', source: 'probe', detail: 'ok', at: t })
     t += 600_000
     await spawn()
     expect(probe).toHaveBeenCalledTimes(8)
@@ -138,4 +142,134 @@ describe('gate: spawn', () => {
     await p.spawn({ alias: 'a', path: '/p' }, ctx)
     expect(probe).toHaveBeenCalledTimes(1)
   })
+})
+
+describe('persistent first-use probe', () => {
+  const project = { alias: 'a', path: '/p' }
+  const combination = { cliVersion: '1.2.3', sdkVersion: '2.3.4', model: 'default-model' }
+  const previous = { ...combination, at: 1000 }
+  const other = { ...previous, model: 'other-model' }
+  const completed: AgentEvent = { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }
+  const reply: AgentEvent = { kind: 'text', text: '收到' }
+
+  async function withRecords(run: (dir: string, path: string) => Promise<void>) {
+    const dir = mkdtempSync(join(tmpdir(), 'first-use-probes-'))
+    try { await run(dir, join(dir, 'first-use-probes.json')) }
+    finally { rmSync(dir, { recursive: true, force: true }) }
+  }
+
+  function setup(dir: string, current = combination) {
+    let at = 2000
+    let events: AgentEvent[] = [reply, completed]
+    const probe = vi.fn(async (_model?: string) => 'ok')
+    const history = openFirstUseProbeRecords(dir, () => { throw new Error('fixture write failed') })('claude')
+    const save = vi.spyOn(history, 'save')
+    const provider = inner()
+    provider.spawn = async () => ({
+      async *dispatch() { yield* events },
+      async close() {},
+    })
+    const wrapped = withFirstUseProbe(provider, {
+      probe, failureMessage: d => d, now: () => at,
+      cache: { combination: () => current, history },
+    })
+    return {
+      spawn: () => wrapped.spawn(project, ctx), probe, save,
+      status: wrapped.probeStatus,
+      setEvents: (...next: AgentEvent[]) => { events = next },
+      setTime: (next: number) => { at = next },
+    }
+  }
+
+  it('passes through on the same combination without calling the probe', async () => withRecords(async (dir, path) => {
+    writeFileSync(path, JSON.stringify({ claude: previous }))
+    const fixture = setup(dir)
+    await fixture.spawn()
+    expect(fixture.probe).not.toHaveBeenCalled()
+    expect(fixture.status()).toMatchObject({ state: 'ok', source: 'history', at: previous.at })
+    expect(probeStatusNote(fixture.status())).toContain('沿用上次的结果（')
+    expect(fixture.save).not.toHaveBeenCalled()
+  }))
+
+  it.each(['cliVersion', 'sdkVersion', 'model'] as const)('probes and updates the record when %s changes', async field => withRecords(async (dir, path) => {
+    writeFileSync(path, JSON.stringify({ claude: previous, codex: other }))
+    const current = { ...combination, [field]: 'different' }
+    const fixture = setup(dir, current)
+    await fixture.spawn()
+    await fixture.spawn()
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(current.model)
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: { ...current, at: 2000 }, codex: other })
+    expect(probeStatusNote(fixture.status())).toBe('刚探测过 ✓')
+  }))
+
+  it.each(['{bad json', '{"claude":{"at":1000}}'])('rebuilds an unusable file (%s)', async contents => withRecords(async (dir, path) => {
+    writeFileSync(path, contents)
+    const fixture = setup(dir)
+    await fixture.spawn()
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model)
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: { ...combination, at: 2000 } })
+  }))
+
+  it('records the first successful real turn once, keeping the reused timestamp in status', async () => withRecords(async (dir, path) => {
+    writeFileSync(path, JSON.stringify({ claude: previous, codex: other }))
+    const fixture = setup(dir)
+    const session = await fixture.spawn()
+    await collectTurn(session.dispatch('hello'))
+    fixture.setTime(3000)
+    await collectTurn(session.dispatch('again'))
+    expect(fixture.save).toHaveBeenCalledExactlyOnceWith({ ...combination, at: 2000 })
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: { ...combination, at: 2000 }, codex: other })
+    expect(fixture.status()).toMatchObject({ source: 'history', at: previous.at })
+    expect(fixture.probe).not.toHaveBeenCalled()
+  }))
+
+  it.each([
+    ['empty completed turn', [completed]],
+    ['model not found', [{ kind: 'error', message: 'model not found', code: 'invalid_request' }]],
+    ['protocol mismatch', [{ kind: 'error', message: 'protocol mismatch' }]],
+    ['outdated client', [{ kind: 'error', message: "The 'm' model requires a newer version of Codex." }]],
+  ] satisfies Array<[string, AgentEvent[]]>)('clears the record after %s and reprobes on the next dispatch of a retained session', async (_, events) => withRecords(async (dir, path) => {
+    writeFileSync(path, JSON.stringify({ claude: previous, codex: other }))
+    const fixture = setup(dir)
+    const session = await fixture.spawn()
+    fixture.setEvents(...events)
+    await collectTurn(session.dispatch('hello'))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ codex: other })
+    expect(fixture.status()).toEqual({ state: 'untested' })
+    expect(fixture.probe).not.toHaveBeenCalled()
+
+    fixture.setEvents(reply, completed)
+    await collectTurn(session.dispatch('next'))
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model)
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: { ...combination, at: 2000 }, codex: other })
+  }))
+
+  it.each([
+    { kind: 'error', message: 'API Error: 529 overloaded', code: 'server_error' },
+    { kind: 'error', message: 'HTTP error: 401 Unauthorized', code: 'auth_rejected' },
+    { kind: 'error', message: 'model not found', code: 'auth_rejected' },
+    { kind: 'error', message: 'connection reset' },
+  ] satisfies AgentEvent[])('leaves the record alone on $message ($code)', async event => withRecords(async (dir, path) => {
+    writeFileSync(path, JSON.stringify({ claude: previous, codex: other }))
+    const fixture = setup(dir)
+    const session = await fixture.spawn()
+    fixture.setEvents(event, completed)
+    await collectTurn(session.dispatch('hello'))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: previous, codex: other })
+    expect(fixture.status()).toMatchObject({ state: 'ok', source: 'history' })
+    expect(fixture.save).not.toHaveBeenCalled()
+    expect(fixture.probe).not.toHaveBeenCalled()
+  }))
+
+  it('accepts tool-only completion and never treats reply text as an error', async () => withRecords(async (dir, path) => {
+    writeFileSync(path, JSON.stringify({ claude: previous }))
+    const fixture = setup(dir)
+    const session = await fixture.spawn()
+    fixture.setEvents({ kind: 'tool_call', tool: 'reply', server: 'wechat' }, completed)
+    await collectTurn(session.dispatch('hello'))
+    fixture.setEvents({ kind: 'text', text: 'model not found' }, completed)
+    await collectTurn(session.dispatch('please quote the error'))
+    expect(fixture.save).toHaveBeenCalledTimes(1)
+    expect(fixture.status()).toMatchObject({ state: 'ok', source: 'history' })
+  }))
 })
