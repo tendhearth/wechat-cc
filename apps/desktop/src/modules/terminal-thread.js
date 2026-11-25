@@ -166,7 +166,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     const questionReason = matched ? waiting?.questionReason : ''
     opinion.toggleAttribute('hidden', !ccOpinion)
     reason.toggleAttribute('hidden', !questionReason)
-    setText(opinion, ccOpinion ? `我的意见（只看了这条请求）：${ccOpinion}` : '')
+    setText(opinion, ccOpinion ? `我只看了这条请求，意见是：${ccOpinion}` : '')
     setText(reason, questionReason ? `为什么来问你：${questionReason}` : '')
     onWaiting(request?.hash ?? (answered || null))
     const stopped = document.documentElement.hasAttribute('data-desk-cc-stopped')
