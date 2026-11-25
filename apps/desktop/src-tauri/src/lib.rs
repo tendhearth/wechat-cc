@@ -1419,8 +1419,10 @@ async fn workbench_call_conditional(method: String, path: String, body: Option<S
     let base_url = daemon.base_url.as_str();
     let token = daemon.operator_token;
     let terminal_search = path.split('?').next() == Some("/v1/terminal/search");
+    // EventKit can spend 15s checking permission, then 130s waiting for the user.
+    let timeout_secs = if method == "POST" && path == "/v1/calendar/enabled" { 160 } else { 35 };
     let url = format!("{base_url}{path}");
-    let response = timeout(Duration::from_secs(35), async {
+    let response = timeout(Duration::from_secs(timeout_secs), async {
         let client = reqwest::Client::new();
         let request = if method == "GET" { client.get(url) } else {
             client.post(url).header("Content-Type", "application/json").body(body.unwrap_or_else(|| "{}".into()))

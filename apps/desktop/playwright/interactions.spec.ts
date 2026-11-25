@@ -155,6 +155,82 @@ test('drawer toggle: aria-pressed flips on click', async ({ page, shimUrl, shim 
   await expect(toggle).toHaveAttribute('aria-pressed', initial === 'true' ? 'false' : 'true')
 })
 
+test('日历偏好读取状态，授权成功后开着，关闭后提示去哪里收回授权', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  const posts: unknown[] = []
+  let statusReads = 0
+  await page.route('**/v1/calendar/status', async route => {
+    expect(route.request().method()).toBe('GET')
+    statusReads++
+    await route.fulfill({ json: { enabled: false, permission: 'not_determined' } })
+  })
+  let finishAuthorization!: () => void
+  const authorization = new Promise<void>(resolve => { finishAuthorization = resolve })
+  const offText = 'CC 不再读。系统里的授权要收回，去『系统设置 → 隐私与安全性 → 日历 / 提醒事项』。'
+  await page.route('**/v1/calendar/enabled', async route => {
+    expect(route.request().method()).toBe('POST')
+    const body = route.request().postDataJSON()
+    posts.push(body)
+    if (body.on) {
+      await authorization
+      await route.fulfill({ json: { enabled: true, permission: 'granted', text: '日历和提醒事项开了。' } })
+    } else {
+      await route.fulfill({ json: { enabled: false, text: offText } })
+    }
+  })
+  await bootIntoDashboard(page, shimUrl)
+  await clickRevealed(page, '#settings-open')
+  const drawer = page.locator('#settings-drawer')
+  const toggle = drawer.getByRole('button', { name: '读日历和提醒' })
+  const feedback = drawer.locator('#calendar-toggle-feedback')
+  await expect(drawer.getByText('只读。开了以后早报会带上今天的日程，问 CC 时它也能看。第一次打开时 Mac 会问你给不给权限。', { exact: true })).toBeVisible()
+  await expect(feedback).toHaveText('Mac 还没授权。')
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  expect(statusReads).toBe(1)
+  try {
+    await toggle.click()
+    await expect(feedback).toHaveText('正在请求授权…')
+    await expect(toggle).toBeDisabled()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    await expect.poll(() => posts).toEqual([{ on: true }])
+  } finally {
+    finishAuthorization()
+  }
+  await expect(feedback).toHaveText('开着，Mac 已授权。')
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(toggle).toHaveClass(/\bon\b/)
+  await toggle.click()
+  await expect(feedback).toHaveText(offText)
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  expect(posts).toEqual([{ on: true }, { on: false }])
+})
+
+test('Mac 拒绝日历授权时开关保持关闭，并指向系统设置', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  await page.route('**/v1/calendar/status', route => route.fulfill({ json: { enabled: false, permission: 'not_determined' } }))
+  await page.route('**/v1/calendar/enabled', async route => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().postDataJSON()).toEqual({ on: true })
+    await route.fulfill({ json: { enabled: false, permission: 'denied', text: '没拿到权限。' } })
+  })
+  await bootIntoDashboard(page, shimUrl)
+  await clickRevealed(page, '#settings-open')
+  const toggle = page.locator('#calendar-toggle')
+  await toggle.click()
+  await expect(page.locator('#calendar-toggle-feedback')).toHaveText('Mac 没给权限。要用的话去『系统设置 → 隐私与安全性 → 日历 / 提醒事项』里打开 Tendhearth CC，再回来开一次。')
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(toggle).toBeEnabled()
+})
+
+test('CC 停止时无法点击日历开关', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  await page.route('**/v1/calendar/status', route => route.fulfill({ status: 503, json: { error: 'workbench_connection_unavailable' } }))
+  await bootIntoDashboard(page, shimUrl)
+  await clickRevealed(page, '#settings-open')
+  await expect(page.locator('#calendar-toggle-feedback')).toHaveText('CC 没在运行，启动以后再看。')
+  await expect(page.locator('#calendar-toggle')).toBeDisabled()
+})
+
 // 这条原本用 #guard-toggle 断言"点一下就亮",从 2026-07-08 起在 CI 上长期
 // 红。根因不是 flake:guard 开关会把状态持久化到 daemon,而 v1.6.4 加了
 // 「持久化失败的开关会回滚,不再静默撒谎」—— shim 跑在 mutations=blocked

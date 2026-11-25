@@ -1489,6 +1489,15 @@ export const CliHooksResponse = z.object({
 // ── GET /v1/calendar/agenda ──
 // 就是「日历」命令那段话(没开 / 没授权也照实成句)。
 export const CalendarAgendaResponse = z.object({ ok: z.literal(true), text: z.string() })
+export const CalendarStatusResponse = z.object({
+  enabled: z.boolean(), permission: z.enum(['granted', 'not_determined', 'denied', 'unavailable']),
+})
+export const CalendarEnabledRequest = z.object({ on: z.boolean() }).strict()
+export type CalendarEnabledRequestT = z.infer<typeof CalendarEnabledRequest>
+export const CalendarEnabledResponse = z.union([
+  CalendarStatusResponse.extend({ text: z.string() }),
+  z.object({ enabled: z.literal(false), text: z.string() }).strict(),
+])
 
 // ══ CC 的信(features/letters/routes.ts)════════════════════════════════
 
@@ -2502,6 +2511,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/places/seen': PlaceSeenRequest,
   'POST /v1/labs': LabsRequest,
   'POST /v1/settings/recap': RecapSettingsRequest,
+  'POST /v1/calendar/enabled': CalendarEnabledRequest,
   'POST /v1/places/map/pin': PlaceMapPinRequest,
   'POST /v1/places/map/outline': PlaceOutlineRequest,
   // atelier
@@ -2766,6 +2776,8 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/cli/say': CliSayWaitResponse,
   'GET /v1/overseer/today': OverseerTodayResponse,
   'GET /v1/calendar/agenda': CalendarAgendaResponse,
+  'GET /v1/calendar/status': CalendarStatusResponse,
+  'POST /v1/calendar/enabled': CalendarEnabledResponse,
   'POST /v1/cli/hooks/install': CliHooksResponse,
   'POST /v1/cli/hooks/uninstall': CliHooksResponse,
   'GET /v1/letters': LettersStatusResponse,
