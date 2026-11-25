@@ -1,10 +1,10 @@
-import { permissionCwd, PermissionDisplaySchema, permissionDisplay, permissionToolTarget, PHONE_ANSWER_MAX_JSON, type PermissionDisplay, type PermissionMcpTarget } from '@wechat-cc/protocol'
+import { permissionCwd, PermissionDisplaySchema, permissionDisplay, permissionToolAction, permissionToolTarget, permissionWaitingTitle, permissionWebAction, PHONE_ANSWER_MAX_JSON, type PermissionDisplay, type PermissionMcpTarget } from '@wechat-cc/protocol'
 import { labelJoin, t, type Lang } from '../i18n'
 import type { MatterDetailT, ApprovalExplanationT } from '../backend/types'
 import { directHeaderView } from './direct-header'
 
 export type ApprovalView =
-  | { kind: 'choose'; items: Array<{ requestId: string; kind: 'permission' | 'question'; summary: string }> }
+  | { kind: 'choose'; items: Array<{ requestId: string; kind: 'permission' | 'question'; summary: string; accessibilityLabel: string }> }
   | { kind: 'none' }
   | { kind: 'question'; requestId: string; runId: string
       items: Array<{ id: string; header: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean; allowOther: boolean }> }
@@ -12,9 +12,7 @@ export type ApprovalView =
       tool: string; display: PermissionDisplay; mcp?: PermissionMcpTarget; rawFull: string; projectPath: string; cwd?: string; executor: string; executorName: string
       canAllowTask?: boolean; canDenyWithReason: boolean; showSnapshotNotice?: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
 
-const firstLine = (s: string, max: number) => (s.replace(/\r\n?/g, '\n').split('\n', 1)[0] ?? '').slice(0, max)
-
-export function approvalView(detail: MatterDetailT, explanations: Record<string, ApprovalExplanationT>, requestId?: string): ApprovalView {
+export function approvalView(detail: MatterDetailT, explanations: Record<string, ApprovalExplanationT>, requestId?: string, lang: Lang = 'zh-Hans'): ApprovalView {
   const perms = detail.permissions
   const questions = detail.questions
   const runId = detail.runId
@@ -48,11 +46,27 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
     return q ? questionView(q) : { kind: 'none' }
   }
   if (perms.length + questions.length === 1) return perms[0] ? cardView(perms[0]) : questionView(questions[0]!)
+  const choice = (requestId: string, kind: 'permission' | 'question', summary: string) => ({
+    requestId, kind, summary,
+    accessibilityLabel: `${t(lang, kind === 'permission' ? 'approval.kindPermission' : 'approval.kindQuestion')}: ${summary}`,
+  })
+  const maxSummary = 80
+  const permissionChoices = perms.map(x => {
+    const summary = x.description.split(/[\r\n]/, 1)[0] ?? ''
+    if (!x.mcp && !permissionToolAction(x.tool, lang)) return { id: x.id, title: `${x.tool}: ${summary}`.slice(0, maxSummary) }
+    const display = x.mcp ? undefined : PermissionDisplaySchema.safeParse(x.display).data
+    const titleWithLimit = (limit: number) => permissionWaitingTitle(display, x.tool, summary, lang, '', x.mcp, limit)
+    return { id: x.id, title: titleWithLimit(maxSummary), titleWithLimit }
+  })
+  const titleCounts = new Map<string, number>()
+  for (const { title } of permissionChoices) titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1)
   return {
     kind: 'choose',
     items: [
-      ...perms.map(x => ({ requestId: x.id, kind: 'permission' as const, summary: `${x.tool}: ${firstLine(x.description, 80)}`.slice(0, 80) })),
-      ...questions.map(x => ({ requestId: x.id, kind: 'question' as const, summary: labelJoin(x.questions[0]?.header ?? '', x.questions[0]?.question ?? '').slice(0, 80) })),
+      ...permissionChoices.map(({ id, title, titleWithLimit }) => choice(id, 'permission',
+        // Expand colliding titles so a difference in the elided section is still visible and spoken.
+        titleWithLimit && (titleCounts.get(title) ?? 0) > 1 ? titleWithLimit(Infinity) : title)),
+      ...questions.map(x => choice(x.id, 'question', labelJoin(x.questions[0]?.header ?? '', x.questions[0]?.question ?? '').slice(0, maxSummary))),
     ],
   }
 }
@@ -61,9 +75,12 @@ type Body = PermissionDisplay['body']
 
 export function permissionAction(body: Body | undefined, tool: string, actor: string, lang: Lang, mcp?: PermissionMcpTarget) {
   if (!body || body.kind === 'fields' || body.kind === 'text') {
+    const action = permissionToolAction(tool, lang, actor, mcp)
+    if (action) return action
     const target = permissionToolTarget(tool, mcp)
     return t(lang, target.service ? 'approval.actor.mcp' : 'approval.actor.tool', { actor, tool: target.tool, service: target.service ?? '' })
   }
+  if (body.kind === 'url' || body.kind === 'query') return permissionWebAction(body.kind, lang, actor)
   return t(lang, body.kind === 'edit' && body.changes.length > 1 ? 'approval.actor.multiEdit'
     : body.kind === 'patch' && body.files.length === 1 ? 'approval.actor.patchOne' : `approval.actor.${body.kind}`,
   { actor, n: body.kind === 'edit' ? body.changes.length : body.kind === 'patch' ? body.files.length : 1 })

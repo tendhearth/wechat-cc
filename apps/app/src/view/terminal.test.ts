@@ -76,10 +76,12 @@ describe('等你决定的列表标题', () => {
     expect(title('Edit', 'older summary', { body: { kind: 'edit', path: 'src/a.ts', changes: [{ before: 'a', after: 'b' }] } })).toBe('想改 src/a.ts')
     expect(title('Write', null, { body: { kind: 'write', path: 'notes.txt', content: 'Draft' } })).toBe('想写 notes.txt')
     expect(title('apply_patch', 'older summary', { body: { kind: 'patch', files: [{ path: 'src/a.ts', change: 'update', diff: 'sample' }] } })).toBe('想改 src/a.ts')
-    expect(title('WebSearch', 'older summary', { body: { kind: 'query', query: 'notes' } })).toBe('想用 WebSearch')
+    expect(title('WebSearch', 'older summary', { body: { kind: 'query', query: 'notes' } })).toBe('想上网搜一下：notes')
   })
 
   it('falls back to a command or tool summary on legacy rows', () => {
+    expect(title('Read', '读备份目录？')).toBe('想看一个文件：读备份目录？')
+    expect(title('Read', '读备份目录？', { body: { kind: 'text', text: '读备份目录？' } })).toBe('想看一个文件：读备份目录？')
     expect(title('local_shell', 'npm run deploy')).toBe('想运行 npm run deploy')
     expect(title('mcp__notes', '  读笔记\n下一行 ')).toBe('想用 mcp__notes：读笔记 下一行')
     expect(title('Bash', null)).toBe('想用 Bash')

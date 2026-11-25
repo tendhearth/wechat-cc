@@ -40,6 +40,34 @@ it('终端会话卡在请求补全后把允许这一步放回先不做右边', a
   }
 })
 
+it('终端会话卡用大白话说要做什么，摘要里保留原始工具名', async () => {
+  const host = document.createElement('section')
+  document.body.replaceChildren(host)
+  const place: Place = {
+    key: 'p:0000000000000000', name: '花园', line: null, status: null, waiting: null, unseen: false, moving: false,
+    updatedAt: 100, matterIds: [], messageIds: [], sessionIds: ['terminal'],
+  }
+  const thread = mountTerminalThread({
+    host, id: 'terminal', agent: 'codex', place: () => place, ended: () => false, onStatus() {}, onWaiting() {},
+    call: async (_method, path) => {
+      if (path.startsWith('/v1/cli/sessions')) return { sessions: [{
+        session_id: 'terminal', source: 'codex', displayName: 'Codex', status: 'waiting',
+        pending: { actionable: true, hash: 'req01', tool: 'Read', summary: '读备份目录？' },
+      }] }
+      if (path.startsWith('/v1/cli/activity')) return { items: [] }
+      throw Error(path)
+    },
+  })
+  try {
+    await expect.poll(() => host.querySelector('.desk-waiting-question')?.textContent).toBe('Codex 想看一个文件')
+    expect(host.querySelector('.approval-disclosure')?.textContent).toContain('工具：Read')
+    expect(host.querySelector('.approval-panel')?.textContent).toBe('读备份目录？')
+  } finally {
+    thread.destroy()
+    host.remove()
+  }
+})
+
 it('直接打开页签名单以外的出处时，把它放到并排的最后', () => {
   const root = document.createElement('section')
   root.innerHTML = `<h1 class="thing-name"></h1><div class="thing-status">

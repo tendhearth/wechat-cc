@@ -25,6 +25,16 @@ it('keeps an optional denial reason through polling and sends it only with the e
  await other.cRespond(other.request,'allow',null);expect(other.posts[0].body).not.toHaveProperty('reason')
 })
 afterEach(async()=>{await Promise.all(windows.splice(0).map(w=>w.happyDOM.abort()))})
+it('shows both file paths beside their own approval buttons',()=>{
+ const h=fixture(),paths=['docs/setup.md','docs/release.md']
+ h.cRenderResponses({...h.detail,permissions:paths.map((path,i)=>({
+  ...h.detail.permissions[0],id:`read-${i}`,tool:'ReadFile',description:`ReadFile ${path}`,
+  display:{body:{kind:'fields',fields:[{name:'path',value:path}]}},
+ }))})
+ const cards=Array.from(h.w.document.querySelectorAll('section.response')) as unknown as Element[]
+ expect(cards.map(card=>[card.querySelector('pre')?.textContent,card.querySelector('[data-decision="allow"]')?.getAttribute('data-request')]))
+  .toEqual([['ReadFile docs/setup.md','read-0'],['ReadFile docs/release.md','read-1']])
+})
 function fixture(device=true,fail=false,scriptReader?:(path:string)=>Promise<{content:string;nextOffset:number|null}>){
  const w=new Window({url:'https://fixture.test/m'});windows.push(w);w.document.body.innerHTML=assembleMobilePage(readMobileSource).phone
  const request='11111111-1111-4111-8111-111111111111',run='22222222-2222-4222-8222-222222222222',posts:any[]=[],reads:string[]=[]

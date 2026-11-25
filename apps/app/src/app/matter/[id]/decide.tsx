@@ -124,7 +124,7 @@ export default function Approval() {
   )
 
   const d = detail.data
-  const v = d ? approvalView(d, insight.data?.explanations ?? {}, requestParam ?? pin.current) : undefined
+  const v = d ? approvalView(d, insight.data?.explanations ?? {}, requestParam ?? pin.current, lang) : undefined
   // 第一次从新详情解析出具体一条就钉住。钉住的不在了，approvalView 不会落到别的请求。
   if (v && !requestParam && !pin.current && detail.fresh) pin.current = pinnedRequest(undefined, undefined, v)
   const requestId = v?.kind === 'card' || v?.kind === 'question' ? v.requestId : undefined
@@ -179,7 +179,7 @@ export default function Approval() {
             key={item.requestId}
             testID={`approval-choose-${item.requestId}`}
             accessibilityRole="button"
-            accessibilityLabel={`${item.kind === 'permission' ? t(lang, 'approval.kindPermission') : t(lang, 'approval.kindQuestion')}: ${item.summary}`}
+            accessibilityLabel={item.accessibilityLabel}
             onPress={() => router.push(`/matter/${encodeURIComponent(id)}/decide?request=${encodeURIComponent(item.requestId)}`)}
             style={({ pressed }) => ({ minHeight: 56, paddingVertical: space.s, opacity: pressed ? 0.7 : 1 })}
           >
