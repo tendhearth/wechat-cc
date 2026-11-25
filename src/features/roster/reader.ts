@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
-import type { RosterResponseT } from '@wechat-cc/protocol'
+import { permissionDisplay, permissionWaitingTitle, type RosterResponseT } from '@wechat-cc/protocol'
 import { buildRoster, ROSTER_BACK_WINDOW_MS, type RosterInput, type RosterPending } from '../../domain/roster'
 import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
 import type { MatterStore } from '../../ports/matters'
@@ -80,7 +80,12 @@ export function gatherRoster(deps: RosterReaderDeps, scope: 'operator' | 'device
       try {
         const d = wb.detail(id)
         pending.set(id,[
-          ...d.permissions.map(p => ({kind:'permission' as const,id:p.id,summary:`${p.tool}: ${p.description}`,since:p.createdAt})),
+          ...d.permissions.map(p => {
+            // Older Claude requests carry command= or input= in their description.
+            const parsed = p.display ?? permissionDisplay(p.tool, p.description, 'claude')
+            const display = p.display ?? (parsed.body.kind === 'text' ? undefined : parsed)
+            return { kind: 'permission' as const, id: p.id, summary: permissionWaitingTitle(display, p.tool, p.description, 'zh-Hans'), since: p.createdAt }
+          }),
           ...d.questions.map(q => ({kind:'question' as const,id:q.id,summary:q.questions[0]?.question ?? '',since:q.createdAt})),
         ])
         if (shown.has(id) && d.permissions.length) permissions.set(id, d.permissions)

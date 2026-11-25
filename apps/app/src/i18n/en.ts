@@ -934,11 +934,6 @@ const en = {
   // 终端里的会话(2026-10-14):主人在 CC 外面开的 Claude Code / Codex
   'terminal.title': 'In your terminal',
   'terminal.subtitle': '{agent} · terminal session',
-  'terminal.waiting.run': 'Wants to run {target}',
-  'terminal.waiting.edit': 'Wants to edit {target}',
-  'terminal.waiting.write': 'Wants to write {target}',
-  'terminal.waiting.tool': 'Wants to use {tool}',
-  'terminal.waiting.toolSummary': 'Wants to use {tool}: {summary}',
   'terminal.waiting.approval': '{agent} needs your approval',
   'terminal.askedLocally': 'Asking in the terminal — answer it on your computer.',
   'terminal.allow': 'Allow this step',

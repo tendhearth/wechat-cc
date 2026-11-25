@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { makeRosterReader } from './reader'
+import { makeRosterReader, type RosterReaderDeps } from './reader'
 import { rosterRoutes } from './routes'
 import type { Matter } from '../../ports/matters'
 import type { InternalApiDeps } from '../../daemon/internal-api/types'
 const m = (extra: Partial<Matter> = {}): Matter => ({ id:'12345678', kind:'task', title:'备份', state:'working', archivedAt:null, projectPath:'/work/project', ownerChatId:null, originMatterId:null, originMessageId:null, createdAt:1, updatedAt:10, ...extra })
-const reader = (rows: Matter[] = [m()], workbench?: any) => makeRosterReader({ matters:{ list:() => rows }, terminals:()=>[], seen:()=>null, now:()=>100, workbench })
+const reader = (rows: Matter[] = [m()], workbench?: RosterReaderDeps['workbench']) => makeRosterReader({ matters:{ list:() => rows }, terminals:()=>[], seen:()=>null, now:()=>100, workbench })
 const route = (roster = reader()) => rosterRoutes({ roster } as InternalApiDeps)['GET /v1/roster']!
 const call = (r = route(), origin: 'operator'|'device'|'link' = 'operator', headers = new Headers()) => r(new URLSearchParams(), null, {tier:'admin',origin}, {signal:new AbortController().signal, onSent:()=>{}, headers})
 describe('名单读取与路由', () => {
@@ -29,9 +29,24 @@ describe('名单读取与路由', () => {
   })
   it('没有活着的事返回 200 空名单', async () => { expect(await call(route(reader([])))).toMatchObject({status:200,body:{items:[]}}) })
   it('读取器抛错返回 503', async () => { expect(await call(route({read:()=>{throw Error('private')}}))).toEqual({status:503,body:{error:'unavailable'}}) })
+  it.each([
+    { tool: 'Bash', description: 'command=printf sample', expected: '想运行 printf sample' },
+    { tool: 'exec_command', description: 'git status', expected: '想运行 git status' },
+    { tool: 'Edit', description: '编辑示例', display: { body: { kind: 'edit' as const, path: 'src/a.ts', changes: [{ before: 'a', after: 'b' }] } }, expected: '想改 src/a.ts' },
+  ])('工作台待批用人话写到名单 ($tool)', ({ expected, ...permission }) => {
+    const id = '12345678'
+    const r = reader([m()], {
+      list: () => ({ tasks: [] }),
+      attention: () => ({ tasks: [{ id }] }),
+      detail: () => ({ permissions: [{ id: 'p', createdAt: 5, ...permission }], questions: [] }),
+    })
+    const waiting = r.read('device').items[0]?.waiting
+    expect(waiting?.summary === expected).toBe(true)
+    expect(waiting).toMatchObject({ kind: 'permission', requestId: 'p', count: 1 })
+  })
   it('待批用创建时间排序，并保留 relay 和正式名字', () => {
     const r = makeRosterReader({matters:{list:()=>[m({agents:['claude','codex']})]},terminals:()=>[],seen:()=>null,now:()=>100,executorName:id=>`name:${id}`,relay:()=>({index:2,total:3,currentAgent:'codex'}),workbench:{list:()=>({tasks:[]}),attention:()=>({tasks:[{id:'12345678'}]}),detail:()=>({permissions:[{id:'p',createdAt:20,tool:'read',description:'file'}],questions:[{id:'q',createdAt:5,questions:[{question:'which?'}]}]})} as any})
-    expect(r.read('device').items[0]).toMatchObject({waiting:{requestId:'q',count:2},relay:{index:2,total:3},agents:[{id:'claude',name:'name:claude',current:false},{id:'codex',current:true}]})
+    expect(r.read('device').items[0]).toMatchObject({waiting:{kind:'question',requestId:'q',summary:'which?',count:2},relay:{index:2,total:3},agents:[{id:'claude',name:'name:claude',current:false},{id:'codex',current:true}]})
   })
 })
 

@@ -936,11 +936,6 @@ const zh: Record<keyof typeof en, string> = {
   // 终端里的会话(2026-10-14):主人在 CC 外面开的 Claude Code / Codex
   'terminal.title': '终端里的会话',
   'terminal.subtitle': '{agent} · 终端会话',
-  'terminal.waiting.run': '想运行 {target}',
-  'terminal.waiting.edit': '想改 {target}',
-  'terminal.waiting.write': '想写 {target}',
-  'terminal.waiting.tool': '想用 {tool}',
-  'terminal.waiting.toolSummary': '想用 {tool}：{summary}',
   'terminal.waiting.approval': '{agent} 要你批准',
   'terminal.askedLocally': '正在终端里问，回电脑上答。',
   'terminal.allow': '允许这一步',

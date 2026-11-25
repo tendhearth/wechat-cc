@@ -31,7 +31,7 @@ export function placeLine(place: PlaceT, lang: Lang): string {
   const zh = lang === 'zh-Hans'
   // 坐回来:你上次看过这一行以后,除了这一句,还有几件也动过。
   const n = place.alsoChanged ?? 0
-  const also = n ? (zh ? `,另有 ${n} 件也动过` : ` · ${n} more changed`) : ''
+  const also = n ? (zh ? `，另有 ${n} 件也动过` : ` · ${n} more changed`) : ''
   if (place.waiting) return line + also
   if (place.status === 'working') return (line.endsWith('…') ? line : `${line}…`) + also
   if (place.status === 'failed') return (zh ? `${line}(没做成)` : `${line} (didn't work out)`) + also
