@@ -134,6 +134,8 @@ export interface AgentDispatchContext { source: 'inbound' | 'background' }
 export interface AgentSession {
   /** Native transport metadata for connection records, when the admission target is only a prediction. */
   confirmationTarget?(): CallTarget | null
+  /** Version of the running CLI, with the pre-launch query as a fallback. May still be pending. */
+  confirmationVersion?(): Promise<string | undefined>
   /** Whether the underlying transport can accept another turn. */
   isAlive?(): boolean
   /** Negotiated tool surface for providers with session-scoped transport setup. */
@@ -281,7 +283,7 @@ export interface WechatPermissionReview { display?: PermissionDisplay; argumentJ
 
 export interface SpawnContext {
   /** Effective native target, when known before startup finishes. */
-  reportStartupTarget?: (target: CallTarget | undefined) => void
+  reportStartupTarget?: (target: CallTarget | undefined, cliVersion?: Promise<string | undefined>) => void
   /** 本句一次代答：关闭 provider 自有的自动记忆；CC API 已由临时令牌限权。 */
   oneoff?: boolean
   /** Isolated synthetic evaluation: only these run-owned tools, no private history or native tools.

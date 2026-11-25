@@ -1,3 +1,5 @@
+import { parseVersion } from '../../../domain/cli-upgrade/version'
+import { CLI_SPECS } from '../../../domain/cli-upgrade/specs'
 import { toolApprovalInput } from '../../../domain/workbench/tool-input-preview'
 import { toolArgumentEvidence } from '../tool-argument-evidence'
 import { permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
@@ -50,6 +52,7 @@ export interface ClaudeAgentProviderOptions {
    * history before its deletion in PR F).
    */
   claudeBin?: string
+  confirmationVersion?: (binary: string | undefined) => Promise<string | undefined>
   /**
    * Resolve the STRONG model id for `strongEval` (the /chat verdict). Reads
    * live so a model hot-reload is picked up per call — bootstrap passes
@@ -276,7 +279,7 @@ type ResultMsg = {
   /** HTTP status of the failed API call; null = no HTTP response (refused / reset / timeout). */
   api_error_status?: number | null
 }
-type SystemMsg = { type: 'system'; subtype?: string; session_id?: string; model?: string }
+type SystemMsg = { type: 'system'; subtype?: string; session_id?: string; model?: string; claude_code_version?: unknown }
 type NarrowedMsg = AssistantMsg | UserMsg | ResultMsg | SystemMsg
 
 // Returns null for SDK message types we don't branch on (rate_limit_event,
@@ -575,6 +578,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         } catch (error) { aborter.abort(); throw error }
       }
 
+      const launchVersion = !evaluation && opts.confirmationVersion?.(options.pathToClaudeCodeExecutable)
+      let reportedVersion: string | undefined
       let q: ReturnType<typeof query>
       try { q = runQuery({ prompt: sdkQueue.iterable(), options }) }
       catch (error) { settleQuestion();aborter.abort();await evaluationProxy?.close();throw error }
@@ -619,6 +624,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       }
       let lastInputTokens:number|undefined, firstInputTokens:number|undefined, contextModel:string|undefined,firstRequestSeen=false,lastRequestId:string|undefined,firstRequestId:string|undefined
       let observedSessionId=spawnOpts.resumeSessionId
+      let turnModel: string | undefined
 
       let closed = false
       let transportEnded = false
@@ -663,6 +669,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             }
             const msg = narrow(raw)
             if (!msg) continue
+            if (msg.type === 'system' && msg.subtype === 'init' && typeof msg.claude_code_version === 'string') {
+              reportedVersion ??= parseVersion(CLI_SPECS.claude, msg.claude_code_version) ?? undefined
+            }
 
             if (!activeEventQueue) {
               // No in-flight dispatch — preserves [STREAM_DROP] behavior.
@@ -686,7 +695,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
 
             if (msg.type === 'system' && msg.subtype === 'init') {
               if (nativeModelId(msg.session_id)) observedSessionId=msg.session_id
-              if (nativeModelId(msg.model)&&msg.model!=='<synthetic>') contextModel=msg.model
+              if (nativeModelId(msg.model)&&msg.model!=='<synthetic>') turnModel=contextModel=msg.model
               if (nativeModelId(msg.model)) spawnOpts.reportExecution?.({model:msg.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               // Routed via log() (info-level) so the line lands in
               // channel.log + dashboard, not just stderr.
@@ -707,7 +716,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 }
                 if(!firstRequestSeen){firstRequestSeen=true;firstRequestId=id;firstInputTokens=lastInputTokens}else if(id&&id===firstRequestId)firstInputTokens??=lastInputTokens
                 lastRequestId=id
-                if(nativeModelId(msg.message?.model))contextModel=msg.message.model
+                if(nativeModelId(msg.message?.model))turnModel=contextModel=msg.message.model
               }
               if (!msg.parent_tool_use_id && !msg.error && msg.message?.model!=='<synthetic>' && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               const content = msg.message?.content
@@ -782,7 +791,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               }
               // SDK 自己的「最后的话」(result.result = 最后一条助理消息的文字):只在成功轮带,只用于核对
               // 分段的结果(回复交付第 5 步:交付用分段,见 AgentEvent.result 的注释)。
-              if(!contextModel&&Object.keys(msg.modelUsage??{}).length===1)contextModel=Object.keys(msg.modelUsage!)[0]
+              const usedModels = Object.keys(msg.modelUsage ?? {})
+              if (usedModels.length === 1) turnModel ??= usedModels[0]
+              contextModel ??= turnModel
               const capacities=Object.entries(msg.modelUsage??{}).filter(([,u])=>Number.isSafeInteger(u?.contextWindow)&&u.contextWindow>=1024&&u.contextWindow<=10_000_000)
               for(const [model,usage] of capacities)remember(spawnTarget.baseUrl,model,usage.contextWindow)
               if(contextModel){
@@ -841,7 +852,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         contextUsage: () => ({...(lastInputTokens!==undefined?{tokens:lastInputTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(contextModel?{model:contextModel}:{})}),
         callTarget: () => ({...spawnTarget,...(contextModel?{model:contextModel}:{})}),
         isAlive: () => !closed && !transportEnded,
-        confirmationTarget: () => confirmedTransport && { provider: 'claude', model: contextModel ?? spawnTarget.model, ...confirmedTransport },
+        confirmationTarget: () => confirmedTransport && { provider: 'claude', model: turnModel ?? spawnTarget.model, ...confirmedTransport },
+        ...(launchVersion ? { confirmationVersion: () => reportedVersion ? Promise.resolve(reportedVersion) : launchVersion } : {}),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           if (closed) {
             // Already closed — return an iterable that yields nothing.
@@ -851,7 +863,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             throw new Error(`claude provider: previous dispatch still in flight (alias=${project.alias})`)
           }
           approvalLifecycle?.beginTurn?.()
-          lastInputTokens=undefined;lastRequestId=undefined
+          lastInputTokens=undefined;lastRequestId=undefined;turnModel=undefined
           const content = userContent(text, attachments)
           const queue = new AsyncQueue<AgentEvent>()
           pendingApiError = null

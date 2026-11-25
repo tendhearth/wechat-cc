@@ -1,7 +1,7 @@
 import { lstatSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonObject, writeJsonAtomic } from '../../lib/json-file'
-import { probeTargetKey, type ProbeHistory, type ProbeRecord } from '../../app/first-use-probe'
+import { probeCombinationKey, type ProbeHistory, type ProbeRecord } from '../../app/first-use-probe'
 
 type ProbeProvider = 'claude' | 'codex'
 
@@ -33,17 +33,18 @@ export function openFirstUseProbeRecords(stateDir: string, onWriteError: () => v
     try { writeJsonAtomic(path, records) } catch { onWriteError() }
   }
   return id => ({
-    read: target => records[id]?.find(record => probeTargetKey(record) === probeTargetKey(target)),
+    read: target => records[id]?.find(record => probeCombinationKey(record) === probeCombinationKey(target)),
     save: record => {
       records[id] = [...(records[id] ?? []).filter(entry =>
-        !(entry.endpoint === undefined && entry.model === record.model) &&
-        probeTargetKey(entry) !== probeTargetKey(record)), record]
+        !(entry.model === record.model && (entry.endpoint === undefined ||
+          (entry.endpoint === record.endpoint && (!entry.confirmedByTurn || entry.sdkVersion !== record.sdkVersion)))) &&
+        probeCombinationKey(entry) !== probeCombinationKey(record)), record]
       persist()
     },
     clear: target => {
       const entries = records[id]
       if (!entries) return
-      const remaining = entries.filter(record => probeTargetKey(record) !== probeTargetKey(target))
+      const remaining = entries.filter(record => probeCombinationKey(record) !== probeCombinationKey(target))
       if (remaining.length === entries.length) return
       if (remaining.length) records[id] = remaining
       else delete records[id]

@@ -1,10 +1,11 @@
-import { resolveClaudeBinary } from './claude-env'
+import { resolveClaudeBinary, resolveSdkClaudeBinary } from './claude-env'
 import { cliSetupId, type CliSetupId } from '../../lib/executor-cli-setup'
 import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
 import { probeEndpointKey, probeStatusNote, UNKNOWN_PROBE_FIELD, withTurnConfirmation } from '../../app/first-use-probe'
+import { confirmationCliVersion } from './confirmation-cli-version'
 import { openFirstUseProbeRecords } from './first-use-probe-records'
 import { APP_VERSION, BUILD_SHA } from '../../lib/app-version'
 import { resolveCodexTarget } from '../../lib/codex-target'
@@ -246,7 +247,15 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     },
   })
   const probeHistory = openFirstUseProbeRecords(deps.stateDir, () => deps.log('CONNECTION', '无法保存对话确认记录'))
-  const claudeCliVersion = claudeBin ? (probeBinaryVersion(claudeBin)?.match(/(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)/)?.[1] ?? null) : null
+  const claudeBinary = () => (UNDER_TEST_RUNNER ? undefined : resolveClaudeBinary()) ?? claudeBin
+  const sdkClaudeBinary = UNDER_TEST_RUNNER ? undefined : resolveSdkClaudeBinary()
+  const versionBinary = () => claudeBinary() ?? sdkClaudeBinary
+  const claudeVersions = confirmationCliVersion('claude', probe)
+  await claudeVersions.capture(versionBinary())
+  const installedClaudeVersion = () => {
+    const binary = versionBinary()
+    return binary ? claudeVersions.read(binary) : 'bundled'
+  }
   const claudeSdkVersion = (() => {
     const bundledVersion = appPkg.dependencies['@anthropic-ai/claude-agent-sdk']
     try {
@@ -255,7 +264,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       return readJsonFile<{ version?: string }>(`${root}/node_modules/@anthropic-ai/claude-agent-sdk/package.json`).version ?? UNKNOWN_PROBE_FIELD
     } catch { return UNKNOWN_PROBE_FIELD }
   })()
-  const claudeVersionTag = `${claudeCliVersion ? `你的 CLI ${claudeCliVersion}` : 'CLI 版本未知'}(SDK ${claudeSdkVersion})`
   const claudeModelTag = () => {
     const c = readAgentConfig()
     return c.provider === 'claude' && c.model ? `模型 ${c.model}` : `模型 ${DEFAULT_CLAUDE_MODEL}(配置里没设,内置兜底 —— /set model 或面板可改)`
@@ -266,6 +274,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       // findClaudePath() trap doesn't bite the chatroom moderator path
       // (same protection the legacy haiku-eval helper provided).
       get claudeBin() { return claudeBin ?? (UNDER_TEST_RUNNER ? undefined : resolveClaudeBinary()) },
+      confirmationVersion: binary => {
+        const selected = binary ?? sdkClaudeBinary
+        return selected ? claudeVersions.capture(selected) : Promise.resolve('bundled')
+      },
       // strongEval (the /chat verdict) runs on the live default model, not
       // haiku — synthesis quality matters more than cost there.
       strongModel: currentClaudeModel,
@@ -273,14 +285,18 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const claudeProvider = withTurnConfirmation(claudeInner, {
     provider: 'claude',
     combination: () => ({
-      cliVersion: claudeCliVersion ?? UNKNOWN_PROBE_FIELD,
+      cliVersion: installedClaudeVersion() ?? UNKNOWN_PROBE_FIELD,
       sdkVersion: claudeSdkVersion,
       model: currentClaudeModel() || UNKNOWN_PROBE_FIELD,
       endpoint: probeEndpointKey(claudeInner.callTarget?.('spawn') ?? unresolvedTarget('claude')),
     }),
     history: probeHistory('claude'),
   })
-  const claudeNote = () => `${claudeVersionTag} · ${claudeModelTag()} · ${probeStatusNote(claudeProvider.probeStatus())}`
+  const claudeNote = () => {
+    const version = installedClaudeVersion()
+    const versionTag = version && version !== 'bundled' ? `你的 CLI ${version}` : 'CLI 版本未知'
+    return `${versionTag}(SDK ${claudeSdkVersion}) · ${claudeModelTag()} · ${probeStatusNote(claudeProvider.probeStatus())}`
+  }
   registry.register(
     'claude',
     claudeProvider,
@@ -352,6 +368,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // codex then 4xx's at validateMode (visible in dashboard as a red dropdown
   // border + revert) instead of silently swallowing dispatch errors per turn.
   const codexBinary = findCodexBinary()
+  const codexVersions = confirmationCliVersion('codex', probe)
   // Boot-time SDK ↔ CLI version match. The codex wire protocol is version-
   // locked: a mismatched CLI (e.g. globally-installed `codex` 0.125 paired
   // with our bundled SDK 0.128) silently emits events the SDK can't decode
@@ -367,24 +384,33 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   let codexProbeFailure: string | null = null
   let codexVersionCheck: ReturnType<typeof checkCodexVersion> | null = null
   if (codexBinary) {
-    const r = await probe(codexBinary)
+    const pending = probe(codexBinary)
+    const observed = codexVersions.prime(codexBinary, pending)
+    const r = await pending
+    await observed?.result
     codexVersionCheck = codexCheckFrom(codexBinary, r)
     if (!r.ok) codexProbeFailure = describeProbeFailure(r)
   }
   let codexNote: (() => string) | undefined
   const registerCodex = (codexBinary: string, codexVersionCheck: ReturnType<typeof checkCodexVersion>) => {
     const actual = codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '?'
-    const gap = codexVersionCheck.ok ? '' : `(对齐版本 ${codexVersionCheck.expectedVersion})`
+    const selectedBinary = () => findCodexBinary() ?? codexBinary
     const codexEnvModel = process.env.CODEX_MODEL
     const codexPinnedModel = () => modelForProvider(readAgentConfig(), 'codex') || codexEnvModel
     const nativeDefaults = new Map<string, string>()
     deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, aligned ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,由真实对话确认'})`)
     const codexInner = createCodexChatProvider({
-        codexPathOverride: codexBinary,
+        codexPathOverride: selectedBinary,
+        confirmationVersion: codexVersions.capture,
         networkGate: deps.networkGate,
-        onNativeDefault: target => {
+        onNativeDefault: (target, version) => {
           const endpoint = probeEndpointKey(target)
-          if (target.model && endpoint !== 'unresolved') nativeDefaults.set(endpoint, target.model)
+          const model = target.model
+          if (model && endpoint !== 'unresolved') {
+            void version?.then(cliVersion => {
+              if (cliVersion) nativeDefaults.set(JSON.stringify([endpoint, cliVersion]), model)
+            })
+          }
         },
         // Construction-time model default ONLY from CODEX_MODEL. Do NOT fall back
         // to configuredAgent.model — that is the CONFIGURED provider's model, so
@@ -433,7 +459,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         const resolved = resolveCodexTarget()
         const endpoint = probeEndpointKey('unresolved' in resolved ? resolved : { baseUrl: resolved.baseUrl })
         return {
-          cliVersion: codexVersionCheck.actualSemver ?? UNKNOWN_PROBE_FIELD,
+          cliVersion: codexVersions.read(selectedBinary()) ?? UNKNOWN_PROBE_FIELD,
           // Codex 对话走随 CC 发布的 app-server 协议客户端。
           sdkVersion: `${APP_VERSION}+${BUILD_SHA}`,
           model: codexPinnedModel() || resolved.model || UNKNOWN_PROBE_FIELD,
@@ -441,15 +467,20 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         }
       },
       history: probeHistory('codex'),
-      inferredModel: endpoint => endpoint ? nativeDefaults.get(endpoint) : undefined,
+      inferredModel: ({ endpoint, cliVersion }) => nativeDefaults.get(JSON.stringify([endpoint, cliVersion])),
     })
-    codexNote = () => `你的 CLI ${actual}${gap} · ${probeStatusNote(codexProvider.probeStatus())}`
+    codexNote = () => {
+      const version = codexVersions.read(selectedBinary())
+      const expected = codexVersionCheck.expectedVersion
+      const gap = version && version !== expected ? `(对齐版本 ${expected})` : ''
+      return `${version ? `你的 CLI ${version}` : 'CLI 版本未知'}${gap} · ${probeStatusNote(codexProvider.probeStatus())}`
+    }
     registry.register(
       'codex',
       codexProvider,
       {
         canResume: (_cwd, sid) => codexSessionJsonlPaths(HOME, sid).some(p => existsSync(p)),
-        // 工作台 / 额度查询每次现取(CLI 升级换了路径也跟得上);对话侧仍用开机时验过的那个(两边都是 app-server)。
+        // 工作台 / 额度查询和对话每次起进程时现取。
         bin: () => findCodexBinary(),
       },
     )
