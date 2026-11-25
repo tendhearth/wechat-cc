@@ -219,7 +219,7 @@ export class SessionManager {
     this.checkExecution(req)
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
     const existing = this.sessions.get(k)
-    if (existing) {
+    if (existing && existing.session.isAlive?.() !== false) {
       existing.handle.lastUsedAt = Date.now()
       return existing.handle
     }
@@ -228,7 +228,10 @@ export class SessionManager {
     this.pendingPaths.set(k,req.path)
     const controller = new AbortController()
     this.preparations.set(k, { controller, req })
-    const promise = this.spawn(req, controller.signal).finally(() => {
+    const promise = (async () => {
+      if (existing) await this.release(req)
+      return this.spawn(req, controller.signal)
+    })().finally(() => {
       this.pending.delete(k);this.pendingPaths.delete(k);this.preparations.delete(k)
     })
     this.pending.set(k, promise)

@@ -75,6 +75,8 @@ export interface CodexChatProfile {
    * 不给 ⇒ 审批请求一律拒。signal:这一轮停了 / 会话关了 ⇒ 中止,迟到的答复不再发给 codex。
    */
   approve?: CodexChatApprove
+  /** Captured from config/read for the optional, separate tool-free connectivity request. */
+  onNativeDefault?: (target: CallTarget) => void
 }
 
 /**
@@ -472,7 +474,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (event.kind === 'result') return { ...event, numTurns: ++chatTurns }
         if (event.kind !== 'error') return event
         const code = event.code ?? codexErrorCode(event.message) ?? (isAuthFail('sdk-error', event.message) ? 'auth_failed' : undefined)
-        chat?.log?.('SESSION_RESULT', `alias=${project.alias} provider=codex error${code ? ` code=${code}` : ''}: ${event.message.slice(0, 300)}`)
+        chat?.log?.('SESSION_RESULT', `alias=${project.alias} provider=codex error${code ? ` code=${code}` : ''}`)
         return { kind: 'error', message: event.message, ...(code ? { code } : {}) }
       }
       const finish = (turn: Turn, event: AgentEvent) => {
@@ -1080,7 +1082,13 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           const rpc = rpcs.get(message.id)
           if (!rpc) return // A timed-out or cancelled client's late response.
           rpcs.delete(message.id); rpc.clear()
-          if (message.error) { const error=codexRpcError(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'); rejectedRpcs.add(error); rpc.reject(error) }
+          if (message.error) {
+            const detail = chat && message.error.code === -32601 ? 'codex_rpc_method_not_found'
+              : typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'
+            const error = codexRpcError(detail)
+            rejectedRpcs.add(error)
+            rpc.reject(error)
+          }
           else if (object(message.result)) rpc.resolve(message.result)
           else { rpc.reject(new Error('codex_invalid_rpc_response')); fatal('codex_invalid_rpc_response') }
         } else fatal('codex_invalid_protocol_message')
@@ -1123,10 +1131,13 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (lifetime && !registrationVerified) retained = true
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
+        // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
+        const configuredModel = native.config?.model
+        const route = codexTargetFromConfig(native.config, childEnv)
+        spawnTarget = codexTargetToCall(route, model ?? (nativeModelId(configuredModel) ? configuredModel : null))
+        chat && context.reportStartupTarget?.(context.resumeSessionId && !model ? undefined : spawnTarget)
         const proxy = native.config?.features?.network_proxy
         if (proxy != null && proxy !== false) throw Error('codex_unverified_thread_policy')
-        // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
-        spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? null)
         const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
         let response: ObjectValue
         if (chat) {
@@ -1159,6 +1170,12 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           })
           if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
         }
+        if (chat) {
+          const providerMatches = !('unresolved' in route) && (response.modelProvider == null || response.modelProvider === route.providerId)
+          if (!providerMatches) spawnTarget = { provider: 'codex', model: spawnTarget.model, unresolved: true }
+          if (nativeModelId(response.model)) spawnTarget = { ...spawnTarget, model: response.model }
+          context.reportStartupTarget?.(context.resumeSessionId && !model && !nativeModelId(response.model) ? undefined : spawnTarget)
+        }
         if (typeof response.thread?.id !== 'string' || !response.thread.id) throw new Error('codex_missing_thread_id')
         if (context.resumeSessionId && response.thread.id !== context.resumeSessionId) throw new Error('codex_resume_thread_mismatch')
         if (chat ? !samePath(response.cwd, project.path) : response.cwd !== project.path) throw new Error('codex_unverified_thread_cwd')
@@ -1176,7 +1193,11 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           throw new Error('codex_unverified_thread_policy')
         }
         threadId = response.thread.id
-        if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
+        if (nativeModelId(response.model)) {
+          spawnTarget = { ...spawnTarget, model: response.model }
+          context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
+        }
+        if (!model && configuredModel == null && !context.resumeSessionId) chat?.onNativeDefault?.(spawnTarget)
       } catch (error) { await close(); throw error }
       finally { startupSignal?.removeEventListener('abort', abortStartup) }
       const launch = (text: string, attachments?: readonly AgentAttachment[], sharedEvents?: EventQueue) => {

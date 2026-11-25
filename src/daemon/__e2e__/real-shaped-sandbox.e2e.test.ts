@@ -30,11 +30,13 @@ import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeNotebookStore } from '../../adapters/store/notebook-store'
 import { DEFAULT_OPENING } from '../../domain/notebook'
 import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeFileStateStore } from '../../adapters/cli-upgrade/state'
 import type { Db } from '../../lib/db'
 import { serve } from '../../lib/runtime/http'
 import { openSqlite } from '../../lib/runtime/sqlite'
 import type { OutboundMsg } from './fake-ilink-server'
 import type { FakeSdkScript } from './fake-sdk'
+import type { ConnectionsSnapshot } from '../connections'
 
 /**
  * 沙盒里允许不是 ok 的子系统(名字 → 为什么)。空 = 全部 ok。
@@ -244,7 +246,6 @@ async function expectPostRebootCodexReply(d: RealShapedDaemon): Promise<void> {
       inboundReceived: saw('[POLL] inbound '),
       spawnFailed: failure !== undefined,
       spawnFailureCode: failureCode,
-      probePassed: saw('[CODEX_PROBE] ok in '),
       threadRequested: codexThreads.length > threadsBefore,
       accessInvalidated: saw('[ACCESS] tier membership changed'),
       guardSuspended: saw('[GUARD] network unprotected [probe,'),
@@ -1711,5 +1712,172 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       vi.useRealTimers()
       await d.stop()
     }
+  })
+
+  it('reuses a successful Claude turn confirmation after restart and reports it in connections and /mode', async () => {
+    await d.stop()
+    const backgroundEval = vi.fn(async () => 'ok')
+    const moderatorScript = { onEval: backgroundEval }
+    const options = { claudeScript, codexScript, moderatorScript, agentConfigPatch: { model: 'sandbox-default-model' } }
+    d = await startRealShapedDaemon({ ...options, seedFiles: { 'projects.json': PROJECTS } })
+
+    const recordPath = join(d.stateDir, 'first-use-probes.json')
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    d.sendText(d.owner, '沙盒你好，确认连接')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
+    expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')).claude[0]
+    expect(record).toMatchObject({ model: 'sandbox-default-model', at: expect.any(Number) })
+    const fresh = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
+    expect(fresh.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
+      code: 'brain.probe_turn', reason: expect.stringContaining('已通过对话确认连接'),
+    })
+
+    const stateDir = d.stateDir
+    await d.stop({ keepState: true })
+    d = await startRealShapedDaemon({ ...options, stateDir })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    const reused = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
+    const timestamp = new Date(record.at).toLocaleString('zh-CN', { hour12: false })
+    const note = `沿用上次的结果（${timestamp}）`
+    expect(reused.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
+      code: 'brain.probe_history', params: { at: record.at }, reason: expect.stringContaining(note),
+    })
+    d.sendText(d.owner, '/mode')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).some(text => text.includes(note)), 15_000)
+    d.sendText(d.owner, '沙盒你好，重启后再聊')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
+    expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('confirms Codex through real chat and immediately retries on the next owner message', async () => {
+    await d.stop()
+    const dispatch = vi.fn(async (prompt: string) => {
+      if (said(prompt) === 'Codex 第一句') throw new Error('HTTP error: 529 overloaded')
+      if (said(prompt) === 'Codex 版本') throw new Error('This model requires a newer version of Codex.')
+      if (said(prompt) === 'Codex 额度') throw new Error('HTTP error: 429 insufficient_quota')
+      if (said(prompt) === 'Codex 认证') throw new Error('HTTP error: 403 Forbidden')
+      return { toolCalls: [], finalText: 'Codex 真实回复。' }
+    })
+    const evalPrompt = vi.fn(async () => 'ok')
+    d = await startRealShapedDaemon({
+      claudeScript, codexScript: { onDispatch: dispatch }, moderatorScript: { onEval: evalPrompt },
+      agentConfigPatch: { provider: 'codex', model: 'scripted-model' },
+      modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'codex' } },
+      seedFiles: { 'projects.json': PROJECTS },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    const brain = async () => (await desktop<ConnectionsSnapshot>('GET', '/v1/connections')).body.capabilities?.find(c => c.id === 'brain')
+    expect(await brain()).toMatchObject({
+      code: 'brain.probe_awaiting_turn', reason: expect.stringContaining('还没用过，第一次对话时确认'),
+    })
+    d.sendText(d.owner, '/mode')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('还没用过，第一次对话时确认')), 15_000)
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(evalPrompt).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    const path = join(d.stateDir, 'first-use-probes.json')
+    expect(existsSync(path)).toBe(false)
+
+    d.sendText(d.owner, 'Codex 第一句')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 暂时忙不过来')), 15_000)
+    expect(existsSync(path)).toBe(false)
+    d.sendText(d.owner, 'Codex 第二句')
+    await d.waitForOutbound(m => texts(m, d.owner).includes('Codex 真实回复。'), 15_000)
+    await expect.poll(brain, { timeout: 12_000 }).toMatchObject({ code: 'brain.probe_turn' })
+    expect(JSON.parse(readFileSync(path, 'utf8')).codex).toEqual([expect.objectContaining({ model: 'scripted-model' })])
+
+    d.sendText(d.owner, 'Codex 额度')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('额度用完了')), 15_000)
+    d.sendText(d.owner, 'Codex 版本')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('请检查 CLI 版本或换一个模型')), 15_000)
+    expect(JSON.parse(readFileSync(path, 'utf8')).codex).toBeUndefined()
+    d.sendText(d.owner, 'Codex 认证')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('检查一下账号或密钥')), 15_000)
+    expect(dispatch.mock.calls.map(([prompt]) => said(prompt))).toEqual(['Codex 第一句', 'Codex 第二句', 'Codex 额度', 'Codex 版本', 'Codex 认证'])
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('a first Claude turn overload reaches the owner and connections, then the next sentence confirms', async () => {
+    await d.stop()
+    const backgroundEval = vi.fn(async () => 'ok')
+    const dispatch = vi.fn(async (prompt: string) => {
+      if (said(prompt) === 'Claude 第一句') throw new Error('API Error: 529 overloaded')
+      return { toolCalls: [], finalText: 'Claude 真实回复。' }
+    })
+    d = await startRealShapedDaemon({
+      claudeScript: { onDispatch: dispatch }, codexScript,
+      seedFiles: { 'projects.json': PROJECTS },
+      moderatorScript: { onEval: backgroundEval },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    expect(dispatch).not.toHaveBeenCalled()
+    const brain = async () => (await desktop<ConnectionsSnapshot>('GET', '/v1/connections')).body.capabilities?.find(c => c.id === 'brain')
+    d.sendText(d.owner, '/mode')
+    await d.waitForOutbound(m => texts(m, d.owner).some(text => text.includes('还没用过，第一次对话时确认')), 15_000)
+    d.sendText(d.owner, 'Claude 第一句')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Claude 暂时忙不过来')), 15_000)
+    await expect.poll(brain, { timeout: 12_000 }).toMatchObject({
+      state: 'fallback', code: 'brain.probe_transient', params: { name: 'Claude', cause: 'server_error' },
+      reason: expect.stringContaining('暂时忙不过来（529），再发一句就会重试'),
+    })
+    d.sendText(d.owner, 'Claude 第二句')
+    await d.waitForOutbound(m => texts(m, d.owner).includes('Claude 真实回复。'), 15_000)
+    await expect.poll(brain, { timeout: 12_000 }).toMatchObject({ code: 'brain.probe_turn' })
+    expect(dispatch.mock.calls.map(([prompt]) => said(prompt))).toEqual(['Claude 第一句', 'Claude 第二句'])
+    expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('releases the Codex session after a structured unauthorized error with connection wording', async () => {
+    await d.stop()
+    let sessionStarts = 0
+    d = await startRealShapedDaemon({
+      claudeScript,
+      codexScript: {
+        async onDispatch(prompt) {
+          if (said(prompt) === 'Codex 结构化认证失败') return {
+            toolCalls: [], finalText: '',
+            codexSteps: [{ notify: { method: 'error', params: {
+              willRetry: false, error: { message: 'failed to connect', codexErrorInfo: 'unauthorized' },
+            } } }],
+          }
+          return { toolCalls: [], finalText: 'Codex 新会话已回复。' }
+        },
+      },
+      recordCodexSpawnOptions: () => { sessionStarts++ },
+      moderatorScript: { onEval: async () => 'ok' },
+      agentConfigPatch: { provider: 'codex', model: 'scripted-model' },
+      modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'codex' } },
+      seedFiles: { 'projects.json': PROJECTS },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    d.sendText(d.owner, 'Codex 结构化认证失败')
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(t => t.includes('检查一下账号或密钥')), { timeout: 15_000 }).toBe(true)
+    expect(sessionStarts).toBe(1)
+    d.sendText(d.owner, 'Codex 认证恢复后重试')
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).includes('Codex 新会话已回复。'), { timeout: 15_000 }).toBe(true)
+    expect(sessionStarts).toBe(2)
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('queues a Claude CLI version check through the daemon TurnRecord hook', async () => {
+    await d.stop()
+    d = await startRealShapedDaemon({
+      claudeScript: {
+        async onDispatch() { throw new Error('Please update Claude Code.') },
+      },
+      codexScript,
+      moderatorScript: { onEval: async () => 'ok' },
+      modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'claude' } },
+      seedFiles: { 'projects.json': PROJECTS },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    const state = makeFileStateStore(d.stateDir)
+    expect(state.load().claude.reactiveAt).toBeNull()
+    d.sendText(d.owner, 'Claude 版本检查')
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(t => t.includes('请检查 CLI 版本或换一个模型')), { timeout: 15_000 }).toBe(true)
+    await expect.poll(() => state.load().claude.reactiveAt).toEqual(expect.any(String))
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 })

@@ -120,7 +120,10 @@ describe('claude provider — #188 会话样本重放', () => {
   it.each(replayable.map(s => [s.id, s] as const))('%s ⇒ 一个带码的 error 事件,没有 text 事件', async (_id, s) => {
     const events = await runProviderTurn(sdkScript(s))
     expect(events.filter(e => e.kind === 'text')).toEqual([])
-    expect(events.filter(e => e.kind === 'error')).toEqual([{ kind: 'error', code: s.errorCode, message: s.message }])
+    const status = s.sdkStructure?.['result.api_error_status']
+    expect(events.filter(e => e.kind === 'error')).toEqual([
+      { kind: 'error', code: s.errorCode, message: s.message, ...(typeof status === 'number' ? { httpStatusCode: status } : {}) },
+    ])
     expect(events[events.length - 1]?.kind).toBe('result')
   })
 
@@ -162,7 +165,7 @@ describe('claude provider — #188 会话样本重放', () => {
       { type: 'assistant', error: 'server_error', message: { content: [{ type: 'text', text: 'API Error: 529 Overloaded' }] } },
       { type: 'result', subtype: 'success', session_id: 's', num_turns: 1, duration_ms: 1, is_error: true, api_error_status: 529 },
     ])
-    expect(events.filter(e => e.kind === 'error')).toEqual([{ kind: 'error', code: 'server_error', message: 'API Error: 529 Overloaded' }])
+    expect(events.filter(e => e.kind === 'error')).toEqual([{ kind: 'error', code: 'server_error', message: 'API Error: 529 Overloaded', httpStatusCode: 529 }])
   })
 })
 

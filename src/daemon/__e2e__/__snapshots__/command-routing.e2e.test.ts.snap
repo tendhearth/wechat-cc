@@ -146,17 +146,17 @@ exports[`e2e: 微信命令路由快照(三档 × 同一份语料) > what each me
 }
 `;
 
-exports[`e2e: 执行者探测一直失败时,不用模型的命令照常回 > after repeated first-use probe failures, commands that never call the model still answer 1`] = `
+exports[`e2e: 对话回合一直失败时，不用模型的命令照常回 > after repeated chat turn failures, commands that never call the model still answer 1`] = `
 {
   "/health": "daemon 健康 启动时间: <时间> 活跃 bot (1): bot1 无过",
   "/set": "本对话设置: · 拆分回复: on · 主动关心: 未设置 · 表情包: 未设置",
   "定时": "还没有定时。 定时的写法: · 定时 每天 8:30 <要做的事> · 定时 每",
   "待批准": "目前没有待批准的请求。",
   "日报": "过去 24 小时没有新动静:终端和一起做都没有在跑、等你或做完的事。",
-  "聊天 0": "claude 这次没起来,这条我没接住。claude 探测没通过:API Err",
-  "聊天 1": "claude 这次没起来,这条我没接住。claude 探测没通过:API Err",
-  "聊天 2": "claude 这次没起来,这条我没接住。claude 探测没通过:API Err",
-  "聊天 3": "claude 这次没起来,这条我没接住。claude 探测没通过:API Err",
+  "聊天 0": "Claude 暂时忙不过来（529），稍后再发一句就会重试。",
+  "聊天 1": "Claude 暂时忙不过来（529），稍后再发一句就会重试。",
+  "聊天 2": "Claude 暂时忙不过来（529），稍后再发一句就会重试。",
+  "聊天 3": "Claude 暂时忙不过来（529），稍后再发一句就会重试。",
   "邀请码": "邀请码:<码>(48 小时内有效,一次一人)。把这串数字发给朋友,ta 加我微信",
 }
 `;

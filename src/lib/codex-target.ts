@@ -30,7 +30,7 @@ import { parse as parseToml } from 'smol-toml'
 import type { CallTarget } from './call-classifier'
 
 export type CodexTargetResolution =
-  | { baseUrl: string | null; providerId: string; wireApi?: string }
+  | { baseUrl: string | null; providerId: string; wireApi?: string; envKey?: string }
   | { unresolved: true; reason: string }
 
 export interface ResolveCodexTargetOptions {
@@ -67,7 +67,11 @@ export function codexTargetFromConfig(config: unknown, env: NodeJS.ProcessEnv = 
     if (!isObj(custom)) return unresolved(`model_providers.${id} 形状不对`)
     const base = custom.base_url
     if (typeof base !== 'string' || !base.trim()) return unresolved(`model_providers.${id} 没写 base_url`)
-    return { baseUrl: base.trim(), providerId: id, ...(typeof custom.wire_api === 'string' ? { wireApi: custom.wire_api } : {}) }
+    return {
+      baseUrl: base.trim(), providerId: id,
+      ...(typeof custom.wire_api === 'string' ? { wireApi: custom.wire_api } : {}),
+      ...(typeof custom.env_key === 'string' ? { envKey: custom.env_key } : {}),
+    }
   }
   if (id === 'openai') {
     const b = config.openai_base_url
@@ -129,7 +133,7 @@ export function codexHomeOf(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** 按 codex 自己的规则读配置层,算出这一次会连的端点。拿不准 ⇒ unresolved。 */
-export function resolveCodexTarget(opts: ResolveCodexTargetOptions = {}): CodexTargetResolution {
+export function resolveCodexTarget(opts: ResolveCodexTargetOptions = {}): CodexTargetResolution & { model?: string } {
   const env = opts.env ?? process.env
   const home = codexHomeOf(env)
   const userPath = resolvePath(home, 'config.toml')
@@ -163,7 +167,9 @@ export function resolveCodexTarget(opts: ResolveCodexTargetOptions = {}): CodexT
   for (const p of [join(home, 'managed_config.toml'), ...(systemDir ? [join(systemDir, 'managed_config.toml')] : [])]) {
     if ((err = layer(p))) return unresolved(err)
   }
-  return codexTargetFromConfig(merged, env)
+  const target = codexTargetFromConfig(merged, env)
+  if ('unresolved' in target || typeof merged.model !== 'string' || !merged.model.trim()) return target
+  return { ...target, model: merged.model.trim() }
 }
 
 /** 解析结果 → 守护的 CallTarget(带 exact:不再让 daemon 按此刻的环境变量补)。 */

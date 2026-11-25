@@ -1,3 +1,4 @@
+import { classifyProviderError } from '../../../domain/provider-quota'
 /**
  * codex 边界的错误分类与超时(arch backlog #4 第 2 步;样本见
  * docs/reference/provider-error-shapes.md 的 Codex 一节)。
@@ -71,7 +72,9 @@ export function codexAppServerErrorCode(error: { message?: unknown; codexErrorIn
       if (detail === undefined) continue
       const status = detail?.httpStatusCode
       if (status === null || status === undefined) return 'network'
-      return codeForHttpStatus(status, message) ?? 'provider_error'
+      const code = codeForHttpStatus(status, message) ?? 'provider_error'
+      // 429 既用于短期限流也用于额度用完:正文明写额度用完(insufficient_quota 等)就是额度,不是过几分钟再试。
+      return code === 'rate_limited' && classifyProviderError(message) === 'quota' ? 'quota' : code
     }
   }
   return codexErrorCode(message)
