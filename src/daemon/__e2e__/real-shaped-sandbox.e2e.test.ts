@@ -35,6 +35,7 @@ import { serve } from '../../lib/runtime/http'
 import { openSqlite } from '../../lib/runtime/sqlite'
 import type { OutboundMsg } from './fake-ilink-server'
 import type { FakeSdkScript } from './fake-sdk'
+import type { ConnectionsSnapshot } from '../connections'
 
 /**
  * 沙盒里允许不是 ok 的子系统(名字 → 为什么)。空 = 全部 ok。
@@ -1711,5 +1712,29 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       vi.useRealTimers()
       await d.stop()
     }
+  })
+
+  it('first-use overload reaches both the owner and the desktop connections card', async () => {
+    await d.stop()
+    const probe = vi.fn(async () => { throw new Error('API Error: 529 overloaded') })
+    d = await startRealShapedDaemon({
+      claudeScript, codexScript,
+      seedFiles: { 'projects.json': PROJECTS },
+      moderatorScript: { onEval: async (prompt) => prompt === '只回复两个字母:ok' ? probe() : 'ok' },
+    })
+
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    expect(probe).not.toHaveBeenCalled()
+    d.sendText(d.owner, '沙盒首次探测')
+    const notice = 'Claude 暂时忙不过来（529），过一会儿再用时会自动重试。你不用做什么。'
+    await d.waitForOutbound(m => texts(m, d.owner).includes(notice), 15_000)
+    const connections = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
+    expect(connections.status).toBe(200)
+    expect(connections.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
+      state: 'fallback', code: 'brain.probe_transient',
+      reason: expect.stringContaining('暂时忙不过来（529），稍后使用时自动重试'),
+    })
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 })

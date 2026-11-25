@@ -4,7 +4,7 @@ import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
-import { withFirstUseProbe } from '../../app/first-use-probe'
+import { firstUseProbeNote, withFirstUseProbe, type ProbeFailure, type ProbeResult } from '../../app/first-use-probe'
 import { readJsonFile } from '../../lib/read-json-file'
 import { DEFAULT_CLAUDE_MODEL } from '../../adapters/executors/claude/claude-agent-provider'
 import { DEFAULT_AGY_MODEL } from '../../adapters/executors/agy/agy-agent-provider'
@@ -41,6 +41,12 @@ import { assertCallAllowed } from '../../lib/network-gate'
 import type { BootstrapDeps } from './types'
 import { AGY_STATIC_SESSION_KEY } from '../internal-api/token-registry'
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
+
+function probeFailureMessage(name: 'Claude' | 'Codex', failure: ProbeFailure, incompatible: () => string): string {
+  if (failure.kind === 'transient') return `${name} ${failure.reason}，过一会儿再用时会自动重试。你不用做什么。`
+  if (failure.kind === 'auth') return `${name} ${failure.reason}，请检查账号或密钥。`
+  return incompatible()
+}
 
 // Locate the wechat-cc source-mode install root (where package.json lives).
 // Source mode: derived from this file's path. Compiled-binary mode (Bun's
@@ -244,8 +250,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // claude 和 codex 是同一个形状:SDK(node_modules 里那份)驱动用户全局装的
   // `claude` CLI,两者版本之间没有任何检查 —— 一直能用是 Anthropic 协议宽容,
   // 不是我们做了什么。同样套上首次使用探测(只拦聊天回合,gate:'spawn':
-  // 后台评估开机就可能跑,不让它多一次外呼)。探测失败的两个常见原因都写进
-  // 提示:CLI/SDK 不合、或写死的默认模型不可用了。
+  // 后台评估开机就可能跑,不让它多一次外呼)。
+  const recordFirstUseProbe = (tag: string, r: ProbeResult): string => {
+    deps.log(tag, r.ok ? `ok in ${r.ms}ms` : `FAILED (${r.kind}) in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
+    return r.ok ? `探测通过 ✓(${(r.ms / 1000).toFixed(1)}s)` : firstUseProbeNote(r)
+  }
   const claudeCliVersion = claudeBin ? (probeBinaryVersion(claudeBin)?.match(/(\d+\.\d+\.\d+)/)?.[1] ?? null) : null
   const claudeSdkVersion = (() => {
     try {
@@ -273,13 +282,12 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const claudeProvider = withFirstUseProbe(claudeInner, {
     gate: 'spawn',
     probe: () => claudeInner.cheapEval!('只回复两个字母:ok'),
-    failureMessage: (detail) =>
+    failureMessage: (detail, failure) => probeFailureMessage('Claude', failure, () =>
       `claude 探测没通过:${detail.slice(0, 200)}\n` +
       `可能是 ${claudeVersionTag} 和 SDK 不合,或者${claudeModelTag()}已不可用。` +
-      `先在终端跑一次 \`claude\` 确认能登录;模型不对就 model_set 换一个。`,
+      `先在终端跑一次 \`claude\` 确认能登录;模型不对就 model_set 换一个。`),
     onResult: (r) => {
-      claudeProbeNote = r.ok ? `探测通过 ✓(${(r.ms / 1000).toFixed(1)}s)` : `探测失败 ✗:${r.detail.slice(0, 120)}`
-      deps.log('CLAUDE_PROBE', r.ok ? `ok in ${r.ms}ms (${claudeVersionTag})` : `FAILED in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
+      claudeProbeNote = recordFirstUseProbe('CLAUDE_PROBE', r)
     },
   })
   const claudeNote = () => `${claudeVersionTag} · ${claudeModelTag()} · ${claudeProbeNote}`
@@ -421,15 +429,12 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       })
     const codexProvider = withFirstUseProbe(codexInner, {
       probe: () => codexInner.cheapEval!('只回复两个字母:ok'),
-      failureMessage: (detail) =>
+      failureMessage: (detail, failure) => probeFailureMessage('Codex', failure, () =>
         `codex 探测没通过:${detail.slice(0, 200)}\n` +
         `你的 codex CLI(${actual})和 wechat-cc 对齐的版本(${codexVersionCheck.expectedVersion})可能不合。` +
-        `试试 \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`,或者等 wechat-cc 更新。`,
+        `试试 \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`,或者等 wechat-cc 更新。`),
       onResult: (r) => {
-        codexNote = r.ok
-          ? `你的 CLI ${actual} · 探测通过 ✓(${(r.ms / 1000).toFixed(1)}s)`
-          : `你的 CLI ${actual} · 探测失败 ✗:${r.detail.slice(0, 120)}`
-        deps.log('CODEX_PROBE', r.ok ? `ok in ${r.ms}ms (CLI ${actual}, SDK ${codexVersionCheck.expectedVersion})` : `FAILED in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
+        codexNote = `你的 CLI ${actual} · ${recordFirstUseProbe('CODEX_PROBE', r)}`
       },
     })
     registry.register(

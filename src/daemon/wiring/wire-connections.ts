@@ -4,6 +4,7 @@
  */
 import { hostname } from 'node:os'
 import type { Bootstrap } from '../bootstrap'
+import type { ProbeStatus } from '../../app/first-use-probe'
 import type { WechatLinkStatus } from '../../ports/wechat'
 import { buildConnections, cacheConnections } from '../connections'
 import { buildCapabilities } from '../capabilities'
@@ -47,6 +48,9 @@ return cacheConnections(() => buildConnections({
     const cfg = loadAgentConfig(stateDir) as { provider?: string; knowledge_enabled?: boolean }
     const provider = cfg.provider ?? 'claude'
     const probe = (boot.providerProbes?.() ?? []).find(p => p.id === provider)
+    const agent = boot.registry.get(provider)?.provider
+    const firstUse: ProbeStatus | undefined = agent && 'probeStatus' in agent && typeof agent.probeStatus === 'function'
+      ? agent.probeStatus() : undefined
     const outbound = ilink.outboundHealth()
     const guard = d.guardRuntime?.health()
     const fda = process.platform === 'darwin' ? hasFullDiskAccess() : null
@@ -55,7 +59,7 @@ return cacheConnections(() => buildConnections({
     try { devices = d.phoneDevices() } catch { /* 读不到就当没配对 */ }
     return buildCapabilities({
       wechat: { outbound: outbound.state, expired: ilink.sessionState.listExpired().length, lastError: outbound.lastError ?? null, ownerWindowClosedSince: (() => { const o = ownerChatId(); return o ? ilink.proactiveClosedSince(o) : null })() },
-      brain: { provider, name: boot.registry.namesOf(provider).name, registered: boot.registry.has(provider), retrying: probe?.state === 'retrying', lastError: probe?.last_error ?? null, refused: d.providerRefusals?.()[provider] ?? null },
+      brain: { provider, name: boot.registry.namesOf(provider).name, registered: boot.registry.has(provider), retrying: probe?.state === 'retrying', lastError: probe?.last_error ?? null, refused: d.providerRefusals?.()[provider] ?? null, ...(firstUse?.state === 'failed' ? { firstUseFailure: firstUse } : {}) },
       guard: guard?.enabled ? { safe: guard.safe, paused: !!guard.paused, detail: guard.detail ?? null } : null,
       fullDiskAccess: fda === null ? null : { granted: fda, settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles' },
       knowledge: cfg.knowledge_enabled === true ? { built: !!boot.knowledge, embed: boot.knowledge?.embedStatus?.() ?? (boot.knowledge?.embedder ? 'python' : 'none') } : null,

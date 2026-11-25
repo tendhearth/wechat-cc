@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { writeWarmExecFixture } from '../../lib/test-temp'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { registerProviders, type ProviderDeps } from './providers'
 import { openTestDb } from '../../lib/db'
 import { makeConversationStore } from '../../adapters/store/conversation-store'
@@ -10,6 +10,29 @@ import type { AgentConfig } from '../../lib/agent-config'
 import {saveAgentConfig} from '../../lib/agent-config'
 import type { McpStdioSpec } from '../../adapters/executors/mcp-stdio-spec'
 import { AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
+import { TIER_PROFILES } from '../../domain/user-tier'
+
+const fakeProbe = vi.hoisted(() => ({ error: null as string | null }))
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  async *query() {
+    if (fakeProbe.error) throw new Error(fakeProbe.error)
+    yield { type: 'result', subtype: 'success', result: '' }
+  },
+}))
+
+vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
+  const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')
+  const scripted = createScriptedCodex({
+    turns: [],
+    cheapAnswer: () => '',
+    rewrite: (msg) => {
+      if (msg.method !== 'turn/completed' || !fakeProbe.error) return msg
+      return { ...msg, params: { ...msg.params, turn: { ...msg.params.turn, status: 'failed', error: { message: fakeProbe.error } } } }
+    },
+  })
+  return { spawnCodexAppServerProcess: scripted.spawn }
+})
 
 /**
  * A tiny real executable that exits 0 on `--version` — stands in for the
@@ -83,6 +106,51 @@ const fakeWechatSpec: McpStdioSpec = {
   args: ['/abs/path/src/mcp-servers/wechat/main.ts'],
   env: { WECHAT_INTERNAL_API: 'http://127.0.0.1:1234', WECHAT_INTERNAL_TOKEN_FILE: '/state/internal-token' },
 }
+
+describe('registerProviders — first-use probe messages', () => {
+  it.each([
+    { kind: 'transient', error: 'API Error: 529 overloaded', note: '暂时忙不过来（529），稍后使用时自动重试' },
+    { kind: 'auth', error: 'HTTP error: 403 Forbidden', note: '探测失败，拒绝了凭证（403）' },
+    { kind: 'incompatible', error: null, note: '探测失败' },
+  ])('shows the $kind result for Claude and Codex', async ({ kind, error, note }) => {
+    const binDir = mkdtempSync(join(tmpdir(), 'providers-first-use-bin-'))
+    const bin = join(binDir, process.platform === 'win32' ? 'codex.exe' : 'codex')
+    writeFileSync(bin, '')
+    vi.stubEnv('PATH', [binDir, process.env.PATH].join(delimiter))
+    vi.stubEnv('WECHAT_CC_DISABLE_CODEX_AUTOFIX', '1')
+    fakeProbe.error = error
+    const { deps, logs } = baseDepsWithLogs({
+      probeVersion: async () => ({ ok: true, firstLine: 'codex-cli 1.2.3', ms: 0 }),
+    })
+    try {
+      const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+      try {
+        for (const [id, name] of [['claude', 'Claude'], ['codex', 'Codex']] as const) {
+          const failure = await registry.get(id)!.provider.spawn(
+            { alias: 'probe', path: deps.stateDir },
+            { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest },
+          ).then(() => { throw new Error('probe should have blocked spawn') }, (err: Error) => err.message)
+          if (kind === 'transient') {
+            expect(failure).toBe(`${name} 暂时忙不过来（529），过一会儿再用时会自动重试。你不用做什么。`)
+            expect(failure).not.toMatch(/版本|SDK|模型|登录|npm i/)
+          } else if (kind === 'auth') {
+            expect(failure).toBe(`${name} 拒绝了凭证（403），请检查账号或密钥。`)
+            expect(failure).not.toMatch(/登录|版本|npm i/)
+          } else {
+            expect(failure).toContain(`${id} 探测没通过:探测拿到了空回复`)
+            expect(failure).toContain(id === 'claude' ? '先在终端跑一次 \`claude\` 确认能登录' : '试试 \`npm i -g @openai/codex@')
+          }
+          expect(providerNotes()[id]).toContain(note)
+          expect(logs.find(([tag]) => tag === `${name.toUpperCase()}_PROBE`)?.[1]).toContain(`FAILED (${kind})`)
+        }
+      } finally { stopProviderProbes() }
+    } finally {
+      fakeProbe.error = null
+      vi.unstubAllEnvs()
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('registerProviders — Grok ACP account discovery (no model calls)', () => {
   it('does not probe/register Grok ACP on Windows', async () => {

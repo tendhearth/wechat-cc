@@ -3,6 +3,7 @@
  * 开交付轮、出错怎么说;跑回合本身交给 TurnRunner。
  */
 import { ownerReplyParts, type OwnerReplySummary } from '../collect-owner-reply'
+import { FirstUseProbeError } from '../first-use-probe'
 import type { ProviderId } from '../../domain/conversation'
 import type { InboundMsg } from '../../domain/prompt-format'
 import { buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from '../../domain/provider-handoff'
@@ -124,7 +125,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
         }
         outcome = 'error'
         if (oneoff && providerId === 'grok' && code === 'network' && detail === 'grok_network_unavailable') return 'grok_unreachable'
-        await failureNotice(spawnFailedNotice(providerId, detail, code))
+        await failureNotice(err instanceof FirstUseProbeError ? detail : spawnFailedNotice(providerId, detail, code))
         return
       }
       acquired = handle
