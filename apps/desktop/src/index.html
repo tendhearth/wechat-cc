@@ -194,10 +194,10 @@
 
                 <div class="toggle-row">
                   <div>
-                    <div class="lab">自动同意工具调用<span style="color: var(--th-ink-soft); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
-                    <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。日常会被刷屏，建议保留勾选。</div>
+                    <div class="lab">自动同意 CC 的每一步<span style="color: var(--th-ink-soft); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
+                    <div class="sub">关掉后，CC 每读一个文件、跑一条命令，都要你在微信里回 y 或 n，10 分钟没回就当不同意。平时会被问得很频繁，建议开着。</div>
                   </div>
-                  <button class="toggle on" id="screen-unattended-toggle" data-toggle aria-pressed="true"></button>
+                  <button class="toggle on" id="screen-unattended-toggle" data-toggle aria-pressed="true" aria-label="自动同意 CC 的每一步"></button>
                 </div>
 
                 <div class="toggle-row" id="screen-guard-row" hidden>
@@ -333,16 +333,16 @@
           <div class="toggle-row">
             <div>
               <div class="lab">开机自启</div>
-              <div class="sub">登录系统时自动启动 CC。默认随系统启动，关掉窗口也照样收消息。</div>
+              <div class="sub">登录电脑时自动启动 CC；关掉窗口也照样收微信。</div>
             </div>
             <button class="toggle" id="autostart-toggle" type="button" data-toggle aria-pressed="false" aria-label="开机自启" aria-describedby="autostart-toggle-feedback"></button><span class="setting-feedback" id="autostart-toggle-feedback" role="status"></span>
           </div>
           <div class="toggle-row toggle-row--danger">
             <div>
-              <div class="lab">自动同意工具调用</div>
-              <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。</div>
+              <div class="lab">自动同意 CC 的每一步</div>
+              <div class="sub">关掉后，CC 每读一个文件、跑一条命令，都要你在微信里回 y 或 n，10 分钟没回就当不同意。</div>
             </div>
-            <button class="toggle on" id="unattended-toggle" type="button" data-toggle aria-pressed="true" aria-label="自动同意工具调用" aria-describedby="unattended-toggle-feedback"></button><span class="setting-feedback" id="unattended-toggle-feedback" role="status"></span>
+            <button class="toggle on" id="unattended-toggle" type="button" data-toggle aria-pressed="true" aria-label="自动同意 CC 的每一步" aria-describedby="unattended-toggle-feedback"></button><span class="setting-feedback" id="unattended-toggle-feedback" role="status"></span>
           </div>
           <div class="toggle-row" id="guard-row" hidden>
             <div>
