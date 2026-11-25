@@ -22,7 +22,17 @@ const CAP_NAMES = ['wechat', 'brain', 'guard', 'disk', 'knowledge', 'memory', 'b
 /** 能力行的人话:认得的原因码按本机语言说;认不出的(新 daemon 的新码)用 daemon 给的原文。 */
 function capabilityLabel(c: Capability, lang: Lang): string {
   const key = `cap.${c.code}`
-  return hasMessage(lang, key) ? t(lang, key, c.params) : c.reason
+  if (!hasMessage(lang, key)) return c.reason
+  if (key === 'cap.brain.probe_history') {
+    const at = c.params?.at
+    if (typeof at !== 'number' || !Number.isFinite(new Date(at).getTime())) return c.reason
+    return t(lang, key, { ...c.params, date: new Date(at).toLocaleString(lang, { dateStyle: 'medium', timeStyle: 'short' }) })
+  }
+  if (key === 'cap.brain.probe_transient') {
+    if (!c.params?.name) return c.reason
+    if (c.params.cause === 'server_error') return t(lang, 'cap.brain.probe_busy', c.params)
+  }
+  return t(lang, key, c.params)
 }
 
 /** 动作的字:认得的原因码有本地化的(cap.action.<code>)就用,否则用 daemon 给的原文。 */

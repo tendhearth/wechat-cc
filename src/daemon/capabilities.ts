@@ -82,10 +82,23 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
     const failure = i.brain.firstUse
     out.push({
       id: 'brain', name: '大脑', state: failure.kind === 'transient' ? 'fallback' : 'needs_you',
-      code: `brain.probe_${failure.kind}`, reason: `${i.brain.name} ${probeStatusNote(failure)}。`,
+      code: `brain.probe_${failure.kind}`,
+      params: { name: i.brain.name, ...(failure.cause ? { cause: failure.cause } : {}) },
+      reason: `${i.brain.name} ${probeStatusNote(failure)}。`,
     })
   }
-  else if (i.brain.registered) out.push({ id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', params: { name: i.brain.name }, reason: `在用 ${i.brain.name}。${i.brain.firstUse ? probeStatusNote(i.brain.firstUse) : ''}` })
+  else if (i.brain.registered) {
+    const status = i.brain.firstUse
+    const reused = status?.state === 'ok' && status.source === 'history'
+    const code = status?.state === 'ok' ? (reused ? 'brain.probe_history' : 'brain.probe_fresh')
+      : status?.state === 'probing' ? 'brain.probing'
+      : status?.state === 'untested' ? 'brain.probe_pending' : 'brain.ok'
+    out.push({
+      id: 'brain', name: '大脑', state: 'ok', code,
+      params: { name: i.brain.name, ...(reused ? { at: status.at } : {}) },
+      reason: `在用 ${i.brain.name}。${status ? probeStatusNote(status) : ''}`,
+    })
+  }
   else if (i.brain.retrying) out.push({ id: 'brain', name: '大脑', state: 'fallback', code: 'brain.retrying', params: { name: i.brain.name }, reason: `${i.brain.name} 开机时没连上，正在重试。`, ...(i.brain.lastError ? { detail: i.brain.lastError } : {}) })
   else out.push({ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.unavailable', params: { name: i.brain.name }, reason: `选的大脑 ${i.brain.name} 用不了。`, action: { label: '在设置里换一个大脑', where: 'settings' } })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { connectionsView, shortDate } from './connections'
+import { connectionsPage, connectionsView, shortDate } from './connections'
 import { t } from '../i18n'
 const NOW = new Date(2026, 9, 1, 12).getTime()
 const src = (id: string, state: 'ready' | 'behind' | 'not_loaded' | 'unknown', latestAt: number | null = null, kind: 'wechat_history' | 'knowledge' | 'plugin' = 'plugin') => ({ id, kind, name: id, state, latestAt, syncedAt: null })
@@ -76,6 +76,21 @@ describe('capabilities in the connections view (2026-10-06)', () => {
     expect(v.capabilities[1]!.label).toBe('Using Claude.')
     expect(v.capabilities[0]!.action).toBe('On your computer: Open System Settings')
     expect(v.capabilities[1]!.action).toBeNull()
+  })
+  it.each([
+    { code: 'brain.probe_fresh', state: 'ok', zh: '在用 Claude。刚探测过。', en: 'Using Claude. Connection just checked.' },
+    { code: 'brain.probe_history', state: 'ok', zh: '在用 Claude。沿用上次的结果（{date}）。', en: 'Using Claude. Reusing the last check from {date}.' },
+    { code: 'brain.probe_transient', state: 'fallback', zh: 'Claude 暂时忙不过来，稍后使用时会自动重试。', en: 'Claude is temporarily busy. CC will retry the next time you use it.' },
+  ])('localizes $code on the connections page', ({ code, state, zh, en }) => {
+    const at = new Date(2026, 9, 1, 12, 34).getTime()
+    const params = { name: 'Claude', at, cause: 'server_error' }
+    const data = snap([{ id: 'brain', name: '大脑', state, code, params, reason: 'daemon fallback' }])
+    for (const [lang, expected] of [['zh-Hans', zh], ['en', en]] as const) {
+      const formatted = new Date(at).toLocaleString(lang, { dateStyle: 'medium', timeStyle: 'short' })
+      expect(connectionsPage({ data }, 'online', NOW, lang).view?.capabilities[0]).toMatchObject({
+        dot: state === 'ok' ? 'ok' : 'warn', label: expected.replace('{date}', formatted),
+      })
+    }
   })
   it('an unknown code from a newer daemon falls back to its own text; fallback-only shows the fallback headline', async () => {
     const { connectionsView } = await import('./connections')

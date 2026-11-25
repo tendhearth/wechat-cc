@@ -107,7 +107,7 @@ const errorEvent = (err: unknown): Extract<AgentEvent, { kind: 'error' }> => {
   return { kind: 'error', message, ...(code ? { code } : {}) }
 }
 
-export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): AgentProvider & { probeModel(prompt: string, model?: string): Promise<string> } {
+export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): AgentProvider & { probeModel(prompt: string, model?: string, signal?: AbortSignal): Promise<string> } {
   const binary = (): string => (typeof opts.codexPathOverride === 'function' ? opts.codexPathOverride() : opts.codexPathOverride) || 'codex'
   // 构造时解析一次:codex login 刷新了模型缓存,daemon 重启后生效。
   const cheapModel = resolveCodexCheapModel()
@@ -155,12 +155,12 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
   return {
     callTarget(kind, ctx) {
       if (kind === 'cheapEval' || kind === 'strongEval') return targetOf(cheapModel ?? null, tmpdir())
-      return targetOf(ctx?.model ?? opts.model ?? null, null, opts.dangerouslyBypassApprovalsAndSandbox ? { dangerously_bypass_approvals_and_sandbox: true } : undefined)
+      return targetOf(ctx?.execution?.model ?? ctx?.model ?? opts.model ?? null, null, opts.dangerouslyBypassApprovalsAndSandbox ? { dangerously_bypass_approvals_and_sandbox: true } : undefined)
     },
     /** 一次 app-server 冷启动 + 一轮(约 3-5s/次),给 20s 余量。 */
     cheapEvalBudgetMs: 20_000,
     cheapEval: (prompt, options) => oneShot(prompt, cheapModel, options?.signal),
-    probeModel: (prompt, model) => oneShot(prompt, model),
+    probeModel: oneShot,
     supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // read-only does not disable native read/shell tools or inherited project instructions.
@@ -172,7 +172,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       // on-request 只在有人答的时候开:没接应答者 ⇒ never(不让 codex 停在一个没人回的审批上)。
       const approve = tierOpts.approvalPolicy === 'on-request' ? opts.approvals?.(ctx) : undefined
       const config = codexChatThreadConfig(opts.mcpServers, ctx, bypass, !!approve)
-      const model = ctx.model ?? opts.model
+      const model = ctx.execution?.model ?? ctx.model ?? opts.model
       const approvalPolicy = tierOpts.approvalPolicy === 'on-request' && !approve ? 'never' : tierOpts.approvalPolicy
       const profile: CodexChatProfile = { sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: sessionSubprocessEnv(), log, ...(approve ? { approve } : {}) }
       // 对话只把这几样交给协议客户端;工作台专用的(审批桥、时间线、后台生命周期)一律不带。

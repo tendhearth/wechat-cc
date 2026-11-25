@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { writeWarmExecFixture } from '../../lib/test-temp'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -14,6 +14,8 @@ import { TIER_PROFILES } from '../../domain/user-tier'
 
 const fakeProbe = vi.hoisted(() => ({
   error: null as string | null,
+  brokenCodexModel: null as string | null,
+  claudeResult: null as { result: string; api_error_status: number } | null,
   models: {} as Record<string, unknown>,
 }))
 
@@ -21,7 +23,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   async *query(request: { options?: { model?: string } }) {
     fakeProbe.models.claude = request.options?.model
     if (fakeProbe.error) throw new Error(fakeProbe.error)
-    yield { type: 'result', subtype: 'success', result: '' }
+    yield fakeProbe.claudeResult
+      ? { type: 'result', subtype: 'success', is_error: true, ...fakeProbe.claudeResult }
+      : { type: 'result', subtype: 'success', result: '' }
   },
 }))
 
@@ -29,11 +33,13 @@ vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
   const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')
   const scripted = createScriptedCodex({
     turns: [],
-    cheapAnswer: () => '',
+    cheapAnswer: prompt => prompt === 'evaluate this' ? 'evaluation answer' : '',
     onThreadStart: (_method, params, cheap) => { if (cheap) fakeProbe.models.codex = params.model },
     rewrite: (msg) => {
-      if (msg.method !== 'turn/completed' || !fakeProbe.error) return msg
-      return { ...msg, params: { ...msg.params, turn: { ...msg.params.turn, status: 'failed', error: { message: fakeProbe.error } } } }
+      if (msg.method !== 'turn/completed') return msg
+      const error = fakeProbe.models.codex === fakeProbe.brokenCodexModel ? 'model not found' : fakeProbe.error
+      if (!error) return msg
+      return { ...msg, params: { ...msg.params, turn: { ...msg.params.turn, status: 'failed', error: { message: error } } } }
     },
   })
   return { spawnCodexAppServerProcess: scripted.spawn }
@@ -113,6 +119,68 @@ const fakeWechatSpec: McpStdioSpec = {
 }
 
 describe('registerProviders — first-use probe messages', () => {
+  it('runs a Codex evaluation on its own model while the chat model is unavailable', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'providers-eval-bin-'))
+    writeFileSync(join(binDir, process.platform === 'win32' ? 'codex.exe' : 'codex'), '')
+    vi.stubEnv('PATH', [binDir, process.env.PATH].join(delimiter))
+    vi.stubEnv('WECHAT_CC_DISABLE_CODEX_AUTOFIX', '1')
+    vi.stubEnv('WECHAT_CODEX_CHEAP_MODEL', 'codex-eval')
+    fakeProbe.brokenCodexModel = 'codex-chat'
+    const { deps, logs } = baseDepsWithLogs({
+      probeVersion: async () => ({ ok: true, firstLine: 'codex-cli 1.2.3', ms: 0 }),
+    })
+    try {
+      saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: 'codex-chat' }))
+      const { registry, stopProviderProbes } = await registerProviders(deps)
+      try {
+        const provider = registry.get('codex')!.provider
+        await expect(provider.cheapEval!('evaluate this')).resolves.toBe('evaluation answer')
+        expect(fakeProbe.models.codex).toBe('codex-eval')
+        expect(logs.filter(([tag]) => tag === 'CODEX_PROBE')).toHaveLength(0)
+        await expect(provider.spawn(
+          { alias: 'probe', path: deps.stateDir },
+          { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest },
+        )).rejects.toThrow('model not found')
+        expect(fakeProbe.models.codex).toBe('codex-chat')
+        await expect(provider.cheapEval!('evaluate this')).resolves.toBe('evaluation answer')
+        expect(fakeProbe.models.codex).toBe('codex-eval')
+      } finally { stopProviderProbes() }
+    } finally {
+      fakeProbe.brokenCodexModel = null
+      fakeProbe.models = {}
+      vi.unstubAllEnvs()
+      rmSync(binDir, { recursive: true, force: true })
+      rmSync(deps.stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    { status: 529, result: 'Please try again later', kind: 'transient', note: '暂时忙不过来（529）', code: 'server_error' },
+    { status: 403, result: 'Request not allowed', kind: 'auth', note: '拒绝了凭证（403）', code: 'auth_rejected' },
+    { status: 404, result: 'model not found', kind: 'incompatible', note: '探测失败', code: 'invalid_request' },
+  ])('rejects a Claude SDK result-only failure with status $status without saving it', async ({ status, result, kind, note, code }) => {
+    const { deps, logs } = baseDepsWithLogs({ sdkOptionsForProject: async () => { throw new Error('SDK error must stop spawn') } })
+    fakeProbe.claudeResult = { result, api_error_status: status }
+    try {
+      const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+      try {
+        const provider = registry.get('claude')!.provider
+        await expect(provider.cheapEval!('evaluate this')).rejects.toMatchObject({ message: result, status, providerErrorCode: code })
+        await expect(provider.spawn(
+          { alias: 'probe', path: deps.stateDir },
+          { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest },
+        )).rejects.toThrow(kind === 'incompatible' ? '探测没通过:model not found' : note)
+        expect(providerNotes().claude).toContain(note)
+        expect(logs.find(([tag]) => tag === 'CLAUDE_PROBE')?.[1]).toContain(`FAILED (${kind})`)
+        expect(existsSync(join(deps.stateDir, 'first-use-probes.json'))).toBe(false)
+      } finally { stopProviderProbes() }
+    } finally {
+      fakeProbe.claudeResult = null
+      fakeProbe.models = {}
+      rmSync(deps.stateDir, { recursive: true, force: true })
+    }
+  })
+
   it.each([
     { kind: 'transient', error: 'API Error: 529 overloaded', note: '暂时忙不过来（529），稍后使用时自动重试' },
     { kind: 'auth', error: 'HTTP error: 403 Forbidden', note: '探测失败，拒绝了凭证（403）' },

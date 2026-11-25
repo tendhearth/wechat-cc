@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, vi } from 'vitest'
 import { openFirstUseProbeRecords } from '../daemon/bootstrap/first-use-probe-records'
-import { probeStatusNote, withFirstUseProbe } from './first-use-probe'
+import { firstUseProbeTimeout, probeStatusNote, withFirstUseProbe } from './first-use-probe'
 import { collectTurn, type AgentEvent, type AgentProvider } from '../ports/agent-provider'
 import { errorWithProviderCode } from '../lib/provider-error-code'
 
@@ -174,7 +174,7 @@ describe('persistent first-use probe', () => {
       cache: { combination: () => current, history },
     })
     return {
-      spawn: () => wrapped.spawn(project, ctx), probe, save,
+      spawn: (model?: string) => wrapped.spawn(project, { ...ctx, model }), probe, save,
       status: wrapped.probeStatus,
       setEvents: (...next: AgentEvent[]) => { events = next },
       setTime: (next: number) => { at = next },
@@ -197,8 +197,10 @@ describe('persistent first-use probe', () => {
     const fixture = setup(dir, current)
     await fixture.spawn()
     await fixture.spawn()
-    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(current.model)
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: { ...current, at: 2000 }, codex: other })
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(current.model, expect.any(AbortSignal))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      claude: [...(field === 'model' ? [previous] : []), { ...current, at: 2000 }], codex: [other],
+    })
     expect(probeStatusNote(fixture.status())).toBe('刚探测过 ✓')
   }))
 
@@ -206,8 +208,8 @@ describe('persistent first-use probe', () => {
     writeFileSync(path, contents)
     const fixture = setup(dir)
     await fixture.spawn()
-    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model)
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: { ...combination, at: 2000 } })
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model, expect.any(AbortSignal))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [{ ...combination, at: 2000 }] })
   }))
 
   it('records the first successful real turn once, keeping the reused timestamp in status', async () => withRecords(async (dir, path) => {
@@ -218,7 +220,7 @@ describe('persistent first-use probe', () => {
     fixture.setTime(3000)
     await collectTurn(session.dispatch('again'))
     expect(fixture.save).toHaveBeenCalledExactlyOnceWith({ ...combination, at: 2000 })
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: { ...combination, at: 2000 }, codex: other })
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [{ ...combination, at: 2000 }], codex: [other] })
     expect(fixture.status()).toMatchObject({ source: 'history', at: previous.at })
     expect(fixture.probe).not.toHaveBeenCalled()
   }))
@@ -234,14 +236,14 @@ describe('persistent first-use probe', () => {
     const session = await fixture.spawn()
     fixture.setEvents(...events)
     await collectTurn(session.dispatch('hello'))
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ codex: other })
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ codex: [other] })
     expect(fixture.status()).toEqual({ state: 'untested' })
     expect(fixture.probe).not.toHaveBeenCalled()
 
     fixture.setEvents(reply, completed)
     await collectTurn(session.dispatch('next'))
-    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model)
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: { ...combination, at: 2000 }, codex: other })
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model, expect.any(AbortSignal))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [{ ...combination, at: 2000 }], codex: [other] })
   }))
 
   it.each([
@@ -259,6 +261,82 @@ describe('persistent first-use probe', () => {
     expect(fixture.status()).toMatchObject({ state: 'ok', source: 'history' })
     expect(fixture.save).not.toHaveBeenCalled()
     expect(fixture.probe).not.toHaveBeenCalled()
+  }))
+
+  it('opens pinned A during a failure and cooldown of default B', async () => withRecords(async (dir, path) => {
+    const fixture = setup(dir)
+    fixture.probe.mockImplementation(async model => {
+      if (model === combination.model) throw new Error('API Error: 529 overloaded')
+      return 'ok'
+    })
+    await expect(fixture.spawn()).rejects.toThrow('529')
+    await fixture.spawn(other.model)
+    await expect(fixture.spawn()).rejects.toThrow('529')
+    expect(fixture.probe.mock.calls.map(([model]) => model)).toEqual([combination.model, other.model])
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [{ ...other, at: 2000 }] })
+  }))
+
+  it('clears only pinned A after incompatibility and reprobes A on its retained session', async () => withRecords(async (dir, path) => {
+    writeFileSync(path, JSON.stringify({ claude: [previous, other] }))
+    const fixture = setup(dir)
+    const session = await fixture.spawn(other.model)
+    fixture.setEvents({ kind: 'error', message: 'model not found' })
+    await collectTurn(session.dispatch('hello'))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [previous] })
+    await fixture.spawn()
+    expect(fixture.probe).not.toHaveBeenCalled()
+    fixture.setEvents(reply, completed)
+    await collectTurn(session.dispatch('next'))
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(other.model, expect.any(AbortSignal))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [previous, { ...other, at: 2000 }] })
+  }))
+
+  it('aborts a stuck retained-session reprobe, releases its waiters and retries after cooldown', async () => withRecords(async (dir, path) => {
+    vi.useFakeTimers()
+    try {
+      writeFileSync(path, JSON.stringify({ claude: previous }))
+      let finishStale!: (text: string) => void
+      const stuck = new Promise<string>(resolve => { finishStale = resolve })
+      const probe = vi.fn(async (_model: string | undefined, _signal: AbortSignal) => 'ok').mockReturnValueOnce(stuck)
+      let events = [{ kind: 'error', message: 'model not found' }] as AgentEvent[]
+      const p = inner()
+      p.spawn = async () => ({ async *dispatch() { yield* events }, async close() {} })
+      const timeoutMs = firstUseProbeTimeout(200)
+      const provider = withFirstUseProbe(p, {
+        probe, timeoutMs, cache: { combination: () => combination, history: openFirstUseProbeRecords(dir, () => {})('claude') },
+        failureMessage: (_, failure) => failure.reason,
+      })
+      const session = await provider.spawn(project, ctx)
+      await collectTurn(session.dispatch('invalidate'))
+      events = [reply, completed]
+
+      const errors: string[] = []
+      const dispatch = () => session.dispatch('retry')[Symbol.asyncIterator]().next()
+      const observe = () => dispatch().catch((err: Error) => { errors.push(err.message) })
+      const waiters = Promise.all([observe(), observe()])
+      await vi.advanceTimersByTimeAsync(timeoutMs - 1)
+      expect(errors).toEqual([])
+      expect(probe).toHaveBeenCalledTimes(1)
+      const signal = probe.mock.calls[0]![1]
+      expect(signal.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signal.aborted).toBe(true)
+      expect(errors).toEqual(['请求超时（timeout）', '请求超时（timeout）'])
+      await waiters
+      expect(provider.probeStatus()).toMatchObject({ state: 'failed', kind: 'transient' })
+      await expect(dispatch()).rejects.toThrow('请求超时')
+      expect(probe).toHaveBeenCalledTimes(1)
+      const failed = provider.probeStatus()
+      if (failed.state !== 'failed') throw new Error('missing cooldown')
+      expect(failed.retryAt - failed.at).toBe(30_000)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect((await collectTurn(session.dispatch('recovered'))).finalText).toBe('收到')
+      finishStale('late reply')
+      expect(probe).toHaveBeenCalledTimes(2)
+      expect(provider.probeStatus()).toMatchObject({ state: 'ok', detail: 'ok' })
+    } finally {
+      vi.useRealTimers()
+    }
   }))
 
   it('accepts tool-only completion and never treats reply text as an error', async () => withRecords(async (dir, path) => {

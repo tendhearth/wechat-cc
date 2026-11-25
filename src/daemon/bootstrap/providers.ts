@@ -4,7 +4,7 @@ import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
-import { probeStatusNote, UNKNOWN_PROBE_FIELD, withFirstUseProbe, type ProbeFailure, type ProbeResult } from '../../app/first-use-probe'
+import { firstUseProbeTimeout, probeStatusNote, UNKNOWN_PROBE_FIELD, withFirstUseProbe, type ProbeFailure, type ProbeResult } from '../../app/first-use-probe'
 import { openFirstUseProbeRecords } from './first-use-probe-records'
 import { APP_VERSION } from '../../lib/app-version'
 import { resolveCodexTarget } from '../../lib/codex-target'
@@ -283,8 +283,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       // haiku — synthesis quality matters more than cost there.
       strongModel: currentClaudeModel,
     })
+  const probeTimeoutMs = firstUseProbeTimeout(deps.turnTimeoutMs)
   const claudeProvider = withFirstUseProbe(claudeInner, {
     gate: 'spawn',
+    timeoutMs: probeTimeoutMs,
     cache: {
       combination: () => ({
         cliVersion: claudeCliVersion ?? UNKNOWN_PROBE_FIELD, sdkVersion: claudeSdkVersion,
@@ -292,14 +294,14 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       }),
       history: probeHistory('claude'),
     },
-    probe: async model => {
+    probe: async (model, signal) => {
       const target = claudeInner.callTarget?.('spawn', { model }) ?? unresolvedTarget('claude')
       await assertCallAllowed(deps.networkGate, target)
-      return claudeInner.probeModel('只回复两个字母:ok', model)
+      return claudeInner.probeModel('只回复两个字母:ok', model, signal)
     },
-    failureMessage: (detail, failure) => probeFailureMessage('Claude', failure, () =>
+    failureMessage: (detail, failure, model) => probeFailureMessage('Claude', failure, () =>
       `claude 探测没通过:${detail.slice(0, 200)}\n` +
-      `可能是 ${claudeVersionTag} 和 SDK 不合,或者${claudeModelTag()}已不可用。` +
+      `可能是 ${claudeVersionTag} 和 SDK 不合,或者${model ? `模型 ${model}` : claudeModelTag()}已不可用。` +
       `先在终端跑一次 \`claude\` 确认能登录;模型不对就 model_set 换一个。`),
     onResult: r => recordFirstUseProbe('CLAUDE_PROBE', r),
   })
@@ -441,6 +443,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         },
       })
     const codexProvider = withFirstUseProbe(codexInner, {
+      gate: 'spawn',
+      timeoutMs: probeTimeoutMs,
       cache: {
         combination: () => ({
           cliVersion: codexVersionCheck.actualSemver ?? UNKNOWN_PROBE_FIELD,
@@ -451,10 +455,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         }),
         history: probeHistory('codex'),
       },
-      probe: async model => {
+      probe: async (model, signal) => {
         const target = codexInner.callTarget?.('cheapEval') ?? unresolvedTarget('codex')
         await assertCallAllowed(deps.networkGate, { ...target, model: model ?? null })
-        return codexInner.probeModel('只回复两个字母:ok', model)
+        return codexInner.probeModel('只回复两个字母:ok', model, signal)
       },
       failureMessage: (detail, failure) => probeFailureMessage('Codex', failure, () =>
         `codex 探测没通过:${detail.slice(0, 200)}\n` +

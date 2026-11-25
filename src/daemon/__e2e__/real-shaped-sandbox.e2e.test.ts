@@ -1726,10 +1726,12 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     d.sendText(d.owner, '沙盒你好，初次探测')
     await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
     expect(probe).toHaveBeenCalledTimes(1)
-    const record = JSON.parse(readFileSync(recordPath, 'utf8')).claude
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')).claude[0]
     expect(record).toMatchObject({ model: 'sandbox-default-model', at: expect.any(Number) })
     const fresh = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
-    expect(fresh.body.capabilities?.find(c => c.id === 'brain')?.reason).toContain('刚探测过 ✓')
+    expect(fresh.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
+      code: 'brain.probe_fresh', reason: expect.stringContaining('刚探测过 ✓'),
+    })
 
     const stateDir = d.stateDir
     await d.stop({ keepState: true })
@@ -1742,7 +1744,9 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const reused = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
     const timestamp = new Date(record.at).toLocaleString('zh-CN', { hour12: false })
     const note = `沿用上次的结果（${timestamp}）`
-    expect(reused.body.capabilities?.find(c => c.id === 'brain')?.reason).toContain(note)
+    expect(reused.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
+      code: 'brain.probe_history', params: { at: record.at }, reason: expect.stringContaining(note),
+    })
     d.sendText(d.owner, '/mode')
     await d.waitForOutbound(msgs => texts(msgs, d.owner).some(text => text.includes(note)), 15_000)
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
@@ -1765,7 +1769,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const connections = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
     expect(connections.status).toBe(200)
     expect(connections.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
-      state: 'fallback', code: 'brain.probe_transient',
+      state: 'fallback', code: 'brain.probe_transient', params: { name: 'Claude', cause: 'server_error' },
       reason: expect.stringContaining('暂时忙不过来（529），稍后使用时自动重试'),
     })
     expect(probe).toHaveBeenCalledTimes(1)

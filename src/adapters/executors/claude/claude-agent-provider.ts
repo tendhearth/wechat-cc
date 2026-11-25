@@ -15,7 +15,7 @@ import { isMatterMcpTool } from '../matter-mcp'
 import { log } from '../../../lib/log'
 import { AsyncQueue } from '../../../lib/async-queue'
 import { isAuthFail } from '../../../domain/auth-fail'
-import { isContextOverflow, errorWithProviderCode, type ProviderErrorCode } from '../../../lib/provider-error-code'
+import { codeForHttpStatus, isContextOverflow, errorWithProviderCode } from '../../../lib/provider-error-code'
 import { claudeApiErrorCode } from './claude-api-error-code'
 import { discoverClaudeModels } from './claude-model-catalog'
 import { executionModel, nativeModelId } from '../../../domain/workbench/native-model-catalog'
@@ -341,7 +341,7 @@ export function claudeBaseUrl(env?: Record<string, string | undefined>): string 
   return (env ?? process.env).ANTHROPIC_BASE_URL || null
 }
 
-export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider & { probeModel(prompt: string, model?: string): Promise<string> } {
+export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider & { probeModel(prompt: string, model?: string, signal?: AbortSignal): Promise<string> } {
   const windows=new Map<string,number>()
   const normalized=(model:string)=>model.replace(/\[[^\]]+\]$/,'').toLowerCase()
   const family=(model:string)=>/^(?:claude-)?(opus|sonnet|haiku)(?:-|$)/.exec(normalized(model))?.[1]
@@ -391,12 +391,16 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     // 不抛时(标注了但 result 正常)错误原文还会被当成评估答案返回。
     let apiError: { sdkError: string; text: string } | null = null
     let apiErrorStatus: number | null | undefined
+    let resultFailure: ReturnType<typeof claudeResultFailure> = null
     const coded = (message: string): Error => {
-      const sentinelText = apiError?.text ?? message
-      const code: ProviderErrorCode | undefined = isAuthFail('claude-sentinel', sentinelText) ? 'auth_failed'
-        : isContextOverflow(sentinelText)?'context_overflow':apiError ? claudeApiErrorCode(apiError.sdkError, apiErrorStatus) ?? 'provider_error'
+      const sentinelText = apiError?.text ?? resultFailure?.message ?? message
+      const code = isAuthFail('claude-sentinel', sentinelText) ? 'auth_failed'
+        : resultFailure && !apiError ? codeForHttpStatus(apiErrorStatus, sentinelText) ?? resultFailure.code
+        : isContextOverflow(sentinelText) ? 'context_overflow'
+        : apiError ? claudeApiErrorCode(apiError.sdkError, apiErrorStatus) ?? 'provider_error'
         : undefined
-      return errorWithProviderCode(message, code)
+      const error = errorWithProviderCode(message, code)
+      return apiErrorStatus === undefined ? error : Object.assign(error, { status: apiErrorStatus })
     }
     try {
       for await (const raw of q as AsyncGenerator<SDKMessage>) {
@@ -406,6 +410,13 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           text += extractText(msg.message?.content)
         } else if (msg?.type === 'result') {
           apiErrorStatus = msg.api_error_status
+          if (msg.is_error === true) {
+            resultFailure ??= claudeResultFailure(msg) ?? {
+              code: 'provider_error',
+              message: msg.errors?.join('\n') || (typeof msg.result === 'string' && msg.result.trim()) || 'claude result is_error',
+            }
+            continue
+          }
           // Recent Claude CLI/SDK combinations can emit the final answer only
           // on the result event for one-shot, maxTurns=1 calls. Prefer streamed
           // assistant text when present, but retain this provider-level fallback
@@ -417,6 +428,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       throw coded(err instanceof Error ? err.message : String(err))
     }
     if (apiError) throw coded(apiError.text.trim() || `claude api error: ${apiError.sdkError}`)
+    if (resultFailure) throw coded(resultFailure.message)
     return text.trim().length > 0 ? text : resultText
   }
   return {
@@ -434,7 +446,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
-    probeModel: (prompt, model) => oneShot(prompt, model ?? opts.strongModel?.() ?? DEFAULT_CLAUDE_MODEL),
+    probeModel: (prompt, model, signal) => oneShot(prompt, model ?? opts.strongModel?.() ?? DEFAULT_CLAUDE_MODEL, signal),
     cheapEval: (prompt, options) =>
       oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT, options?.signal),
     // 守护(评审 #193 P1-1):一次性评估每次都起新子进程,继承此刻的 process.env;会话的目标在
@@ -480,6 +492,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
       } : {...await opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
       try {
+        if (spawnOpts.model) options.model = spawnOpts.model
         const execution = spawnOpts.execution ? {...spawnOpts.execution} : undefined
         if (execution) {
           if (execution.model) options.model=execution.model

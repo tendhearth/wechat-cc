@@ -104,6 +104,14 @@ describe('Claude native execution choice',()=>{
   const project={alias:'task',path:'/tmp'}
   const context={tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const,chatId:'task'}
   const options=()=> (sdk as unknown as {__test_last_options:()=>any}).__test_last_options()
+  it('opens a chat with the pinned model selected for the probe', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({ model: 'default-model' }) })
+    const session = await provider.spawn(project, { ...context, model: 'pinned-model' })
+    try {
+      expect(options().model).toBe('pinned-model')
+      expect(session.callTarget?.()?.model).toBe('pinned-model')
+    } finally { await session.close() }
+  })
   it('oneoff disables cwd-based native auto memory while retaining project hard rules',async()=>{
     const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({settingSources:['project','local'],settings:{autoMemoryEnabled:true}})})
     const session=await provider.spawn(project,{...context,ephemeral:true,oneoff:true})

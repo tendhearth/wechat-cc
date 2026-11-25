@@ -12,7 +12,7 @@
  *  - 探测失败 → 这次调用抛带人话的错。瞬时故障从 30 秒起退避,其他
  *    失败等十分钟。退避结束后由下一次使用触发,没有后台计时器。
  *
- * 并发:多个调用同时撞上首次使用,共用同一个 in-flight promise,只探一次。
+ * 并发:多个调用同时撞上首次使用,同一模型共用一个 in-flight promise,只探一次。
  */
 import type { AgentEvent, AgentProvider, AgentProject, AgentSession, SpawnContext } from '../ports/agent-provider'
 import { classifyProviderError } from '../domain/provider-quota'
@@ -35,16 +35,16 @@ export interface ProbeRecord extends ProbeCombination {
 }
 
 export interface ProbeHistory {
-  read(): ProbeRecord | undefined
+  read(model: string): ProbeRecord | undefined
   save(record: ProbeRecord): void
-  clear(): void
+  clear(model: string): void
 }
 
 function sameProbeCombination(a: ProbeCombination | undefined, b: ProbeCombination | undefined): boolean {
   return a?.cliVersion === b?.cliVersion && a?.sdkVersion === b?.sdkVersion && a?.model === b?.model
 }
 
-export type ProbeFailure = { kind: 'transient' | 'auth' | 'incompatible'; reason: string }
+export type ProbeFailure = { kind: 'transient' | 'auth' | 'incompatible'; reason: string; cause?: 'server_error' }
 export type ProbeResult = ({ ok: true } | ({ ok: false } & ProbeFailure)) & { detail: string; ms: number }
 export type ProbeStatus =
   | { state: 'untested' | 'probing' }
@@ -69,7 +69,7 @@ function classifyProbeError(error: unknown, detail: string): ProbeFailure {
   const transient = (reason: string): ProbeFailure => ({ kind: 'transient', reason })
   const auth = (): ProbeFailure => ({ kind: 'auth', reason: `拒绝了凭证（${status === 401 || status === 403 ? status : '认证'}）` })
 
-  if (httpCode === 'server_error' || code === 'server_error') return transient(`暂时忙不过来（${httpCode === 'server_error' ? status : '5xx'}）`)
+  if (httpCode === 'server_error' || code === 'server_error') return { ...transient(`暂时忙不过来（${httpCode === 'server_error' ? status : '5xx'}）`), cause: 'server_error' }
   if (httpCode === 'rate_limited' || code === 'rate_limited') return transient(`暂时限流（${httpCode === 'rate_limited' ? status : 'rate_limit'}）`)
   if (isAuthErrorCode(httpCode)) return auth()
   if (timeout) return transient(`请求超时（${status === 408 ? status : 'timeout'}）`)
@@ -99,13 +99,14 @@ export function probeStatusNote(status: ProbeStatus): string {
 
 export interface FirstUseProbeOpts {
   /** 跑一句探测,返回模型文本;抛错或空串都算失败。 */
-  probe: (model?: string) => Promise<string>
+  probe: (model: string | undefined, signal: AbortSignal) => Promise<string>
+  timeoutMs?: number
   /** Omit for callers without a daemon-owned cache. */
   cache?: { combination: () => ProbeCombination; history: ProbeHistory }
   /** 探测结果的人话摘要,给 /mode 和日志。 */
   onResult?: (r: ProbeResult) => void
   /** 失败时抛给调用方的信息(会原样进用户提示)。 */
-  failureMessage: (detail: string, failure: ProbeFailure) => string
+  failureMessage: (detail: string, failure: ProbeFailure, model?: string) => string
   /** 认证或不兼容失败后多久允许重探(默认 10 分钟)。 */
   retryAfterMs?: number
   /** 'all'(默认):spawn 和 cheapEval/strongEval 都先过探测;'spawn':只拦聊天
@@ -114,71 +115,93 @@ export interface FirstUseProbeOpts {
   now?: () => number
 }
 
+const PROBE_TIMEOUT_MS = 20_000
+
+/** Leave time for the enclosing turn to receive the probe's own error. */
+export function firstUseProbeTimeout(turnTimeoutMs: number): number {
+  return turnTimeoutMs > 0 ? Math.min(PROBE_TIMEOUT_MS, turnTimeoutMs / 2) : PROBE_TIMEOUT_MS
+}
+
+async function runProbe(opts: FirstUseProbeOpts, model: string | undefined): Promise<string> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error('first-use probe timed out')
+      reject(error)
+      controller.abort(error)
+    }, opts.timeoutMs ?? PROBE_TIMEOUT_MS)
+  })
+  try {
+    // Bound the shared wait even when a provider takes longer to stop.
+    return await Promise.race([deadline, Promise.resolve().then(() => opts.probe(model, controller.signal))])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export class FirstUseProbeError extends Error {}
 
 export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts): AgentProvider & { probeStatus(): ProbeStatus } {
   const now = opts.now ?? Date.now
   const retryAfter = opts.retryAfterMs ?? RETRY_AFTER_MS
-  let status: ProbeStatus = { state: 'untested' }
-  let inflight: Promise<void> | null = null
-  let nextTransientDelay = FIRST_TRANSIENT_RETRY_MS
-
-  let combination: ProbeCombination | undefined
-  let generation = 0
-  let savedThisRun = false
   const cache = opts.cache
-
-  const reset = (next: ProbeCombination | undefined) => {
-    combination = next
-    status = { state: 'untested' }
-    nextTransientDelay = FIRST_TRANSIENT_RETRY_MS
-    savedThisRun = false
-    inflight = null
-    generation++
+  const states = new Map<string | undefined, {
+    combination: ProbeCombination | undefined
+    status: ProbeStatus
+    inflight?: Promise<void>
+    nextTransientDelay: number
+    savedThisRun: boolean
+  }>()
+  const stateFor = (combination: ProbeCombination | undefined) => {
+    const key = combination?.model
+    const existing = states.get(key)
+    if (existing && sameProbeCombination(combination, existing.combination)) return existing
+    const state: NonNullable<typeof existing> = {
+      combination, status: { state: 'untested' }, nextTransientDelay: FIRST_TRANSIENT_RETRY_MS, savedThisRun: false,
+    }
+    states.set(key, state)
+    return state
   }
-  const remember = (at: number) => {
-    if (!cache || !combination || savedThisRun) return
-    cache.history.save({ ...combination, at })
-    savedThisRun = true
+  const remember = (state: ReturnType<typeof stateFor>, at: number) => {
+    if (!cache || !state.combination || state.savedThisRun || states.get(state.combination.model) !== state) return
+    cache.history.save({ ...state.combination, at })
+    state.savedThisRun = true
   }
-
   const ensure = (current = cache?.combination()): Promise<void> => {
-    if (!sameProbeCombination(current, combination)) reset(current)
+    const state = stateFor(current)
+    const model = current?.model === UNKNOWN_PROBE_FIELD ? undefined : current?.model
+    const { status } = state
     if (status.state === 'ok') return Promise.resolve()
     if (status.state === 'failed' && now() < status.retryAt) {
-      return Promise.reject(new FirstUseProbeError(opts.failureMessage(status.detail, status)))
+      return Promise.reject(new FirstUseProbeError(opts.failureMessage(status.detail, status, model)))
     }
-    if (inflight) return inflight
-    const previous = cache?.history.read()
+    if (state.inflight) return state.inflight
+    const previous = current && cache?.history.read(current.model)
     if (previous && sameProbeCombination(current, previous)) {
-      status = { state: 'ok', source: 'history', at: previous.at, detail: '沿用上次的结果' }
+      state.status = { state: 'ok', source: 'history', at: previous.at, detail: '沿用上次的结果' }
       return Promise.resolve()
     }
     const started = now()
-    // An older probe may finish after the default model changes.
-    const attempt = generation
     const fail = (failure: ProbeFailure, detail: string): never => {
       const at = now()
-      if (attempt === generation) {
-        const delay = failure.kind === 'transient' ? nextTransientDelay : retryAfter
-        nextTransientDelay = failure.kind === 'transient'
-          ? Math.min(nextTransientDelay * 2, RETRY_AFTER_MS)
-          : FIRST_TRANSIENT_RETRY_MS
-        status = { state: 'failed', ...failure, detail, at, retryAt: at + delay }
-      }
+      const delay = failure.kind === 'transient' ? state.nextTransientDelay : retryAfter
+      state.nextTransientDelay = failure.kind === 'transient'
+        ? Math.min(state.nextTransientDelay * 2, RETRY_AFTER_MS)
+        : FIRST_TRANSIENT_RETRY_MS
+      state.status = { state: 'failed', ...failure, detail, at, retryAt: at + delay }
       opts.onResult?.({ ok: false, ...failure, detail, ms: at - started })
-      throw new FirstUseProbeError(opts.failureMessage(detail, failure))
+      throw new FirstUseProbeError(opts.failureMessage(detail, failure, model))
     }
 
-    status = { state: 'probing' }
-    inflight = Promise.resolve().then(async () => {
+    state.status = { state: 'probing' }
+    state.inflight = Promise.resolve().then(async () => {
       let text: string
       try {
-        const model = current?.model
-        text = (await opts.probe(model === UNKNOWN_PROBE_FIELD ? undefined : model)).trim()
+        text = (await runProbe(opts, model)).trim()
       } catch (err) {
         if (isNetworkUnprotectedError(err)) {
-          if (attempt === generation) status = { state: 'untested' }
+          state.status = { state: 'untested' }
           throw err
         }
         const detail = err instanceof Error ? err.message : String(err)
@@ -187,24 +210,22 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
       if (text === '') fail(INCOMPATIBLE, EMPTY_REPLY)
       const at = now()
       const detail = text.slice(0, 40)
-      if (attempt === generation) {
-        nextTransientDelay = FIRST_TRANSIENT_RETRY_MS
-        status = { state: 'ok', source: 'probe', detail, at }
-        remember(at)
-      }
+      state.nextTransientDelay = FIRST_TRANSIENT_RETRY_MS
+      state.status = { state: 'ok', source: 'probe', detail, at }
+      remember(state, at)
       opts.onResult?.({ ok: true, detail, ms: at - started })
-    }).finally(() => { if (attempt === generation) inflight = null })
-    return inflight
+    }).finally(() => { delete state.inflight })
+    return state.inflight
   }
 
-  const invalidate = (attempt: number) => {
-    if (attempt !== generation) return
-    cache?.history.clear()
-    reset(combination)
+  const invalidate = (state: ReturnType<typeof stateFor>, model: string) => {
+    if (states.get(model) !== state) return
+    cache?.history.clear(model)
+    states.delete(model)
   }
   const incompatibleError = (error: unknown, detail: string) => classifyProbeError(error, detail).kind === 'incompatible'
 
-  const observeSession = (session: AgentSession, spawnedWith: ProbeCombination, requestedModel?: string | null): AgentSession => {
+  const observeSession = (session: AgentSession, spawnedWith: ProbeCombination): AgentSession => {
     let cancellations = 0
     return {
       ...session,
@@ -217,9 +238,9 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
         }
         const startedCancellation = cancellations
         // SessionManager can reuse a session after an incompatible turn.
-        await ensure()
+        const state = stateFor(spawnedWith)
+        await ensure(spawnedWith)
         if (startedCancellation !== cancellations) return
-        const attempt = generation
         let failure: Extract<AgentEvent, { kind: 'error' }> | undefined
         let completed = false
         let hasReply = false
@@ -235,16 +256,15 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
         } catch (err) {
           if (startedCancellation === cancellations) {
             const detail = failure?.message ?? (err instanceof Error ? err.message : String(err))
-            if (incompatibleError(failure ?? err, detail)) invalidate(attempt)
+            if (incompatibleError(failure ?? err, detail)) invalidate(state, spawnedWith.model)
           }
           throw err
         }
-        if (attempt !== generation || startedCancellation !== cancellations) return
+        if (startedCancellation !== cancellations) return
         if (failure ? incompatibleError(failure, failure.message) : completed && !hasReply) {
-          invalidate(attempt)
-        } else if (!failure && completed && sameProbeCombination(spawnedWith, cache?.combination()) &&
-            (!requestedModel || requestedModel === spawnedWith.model)) {
-          remember(now())
+          invalidate(state, spawnedWith.model)
+        } else if (!failure && completed) {
+          remember(state, now())
         }
       },
     }
@@ -253,23 +273,27 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
   const wrapped: AgentProvider & { probeStatus(): ProbeStatus } = {
     ...inner,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
-      const spawnedWith = cache?.combination()
+      const defaults = cache?.combination()
+      const model = ctx.execution?.model ?? ctx.model ?? defaults?.model
+      const spawnedWith = defaults && { ...defaults, model: model ?? defaults.model }
+      const state = stateFor(spawnedWith)
       await ensure(spawnedWith)
-      const attempt = generation
       if (!spawnedWith || ctx.evaluation) return inner.spawn(project, ctx)
       try {
         const session = await inner.spawn(project, ctx)
-        const model = ctx.execution?.model ?? ctx.model ??
-          (spawnedWith.model === UNKNOWN_PROBE_FIELD ? undefined : session.callTarget?.()?.model)
-        return observeSession(session, spawnedWith, model)
+        return observeSession(session, spawnedWith)
       } catch (err) {
-        if (incompatibleError(err, err instanceof Error ? err.message : String(err))) invalidate(attempt)
+        if (incompatibleError(err, err instanceof Error ? err.message : String(err))) invalidate(state, spawnedWith.model)
         throw err
       }
     },
     ...(inner.cheapEval && (opts.gate ?? 'all') === 'all' ? { cheapEval: async (prompt, options) => { if (!options?.singleAttempt) await ensure(); return inner.cheapEval!(prompt, options) } } : {}),
     ...(inner.strongEval && (opts.gate ?? 'all') === 'all' ? { strongEval: async (prompt: string) => { await ensure(); return inner.strongEval!(prompt) } } : {}),
-    probeStatus: () => sameProbeCombination(cache?.combination(), combination) ? status : { state: 'untested' },
+    probeStatus: () => {
+      const current = cache?.combination()
+      const state = states.get(current?.model)
+      return state && sameProbeCombination(current, state.combination) ? state.status : { state: 'untested' }
+    },
   }
   return wrapped
 }
