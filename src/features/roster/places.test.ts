@@ -70,6 +70,14 @@ describe('地方:读', () => {
     })
   })
 
+  it.each(['operator', 'device'] as const)('等待中的终端名单行和纸片都显示当前请求 (%s)', scope => {
+    const term = { session_id: 'sess-1', code: 'sess', source: 'codex', status: 'waiting', project: '/w/backup',
+      last_summary: '上一条进度', last_event_at: NOW, pending: { tool: 'Read', summary: '读备份目录？', since: NOW } }
+    const { reader } = setup([], [term])
+    const title = '想看一个文件：读备份目录？'
+    expect(reader.read(scope).places[0]).toMatchObject({ line: title, waiting: { summary: title } })
+  })
+
   it('Claude Code 临时目录里的会话:对回编码相同的已知项目;对不上的不成行', () => {
     const term = (id: string, project: string) => ({ session_id: id, code: id, source: 'claude', status: 'running', project, last_summary: '在查', last_event_at: NOW, pending: null })
     const { reader } = setup([m('gggg0001', { projectPath: '/w/1in8b' })], [

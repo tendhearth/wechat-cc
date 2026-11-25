@@ -67,7 +67,38 @@ describe('approvalView', () => {
   })
   it('同一件事两条、没指定 ⇒ 让用户选', () => {
     const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'command=ls', createdAt: 2 }] }
-    expect(approvalView(d, {})).toEqual({ kind: 'choose', items: [{ requestId: 'p1', kind: 'permission', summary: 'Bash: command=printf sample' }, { requestId: 'p2', kind: 'permission', summary: 'Bash: command=ls' }] })
+    expect(approvalView(d, {})).toEqual({ kind: 'choose', items: [
+      { requestId: 'p1', kind: 'permission', summary: 'Bash: command=printf sample', accessibilityLabel: '需要你允许: Bash: command=printf sample' },
+      { requestId: 'p2', kind: 'permission', summary: 'Bash: command=ls', accessibilityLabel: '需要你允许: Bash: command=ls' },
+    ] })
+  })
+  it.each([
+    ['zh-Hans', '想看一个文件：', '需要你允许'],
+    ['en', 'Wants to read a file: ', 'Needs your OK'],
+  ] as const)('在选择列表的文字和无障碍标签中区分两条读文件请求 (%s)', (lang, action, label) => {
+    const paths = ['docs/setup.md', 'docs/release.md']
+    const permissions = paths.map((path, i) => MatterPermission.parse({
+      ...base.permissions[0], id: `p${i + 1}`, tool: 'ReadFile', description: `ReadFile ${path}`,
+      display: { body: { kind: 'fields', fields: [{ name: 'path', value: path }] } },
+    }))
+    const view = approvalView({ ...base, permissions }, {}, undefined, lang)
+    if (view.kind !== 'choose') throw Error('expected approval chooser')
+    expect(view.items.map(item => item.summary)).toEqual(paths.map(path => action + path))
+    expect(view.items.map(item => item.accessibilityLabel)).toEqual(paths.map(path => `${label}: ${action}${path}`))
+    const longPermissions = permissions.map((p, i) => ({
+      ...p, display: { body: { kind: 'fields' as const, fields: [{ name: 'path', value: `${'folder/'.repeat(16)}${paths[i]}` }] } },
+    }))
+    const longView = approvalView({ ...base, permissions: longPermissions }, {}, undefined, lang)
+    if (longView.kind !== 'choose') throw Error('expected approval chooser')
+    expect(longView.items.map((item, i) => item.summary.length === 80 && item.summary.endsWith(paths[i]!))).toEqual([true, true])
+    const collisionPaths = paths.map(path => `${'folder/'.repeat(16)}${path}/${'folder/'.repeat(16)}same.md`)
+    const collisionPermissions = permissions.map((p, i) => ({
+      ...p, display: { body: { kind: 'fields' as const, fields: [{ name: 'path', value: collisionPaths[i]! }] } },
+    }))
+    const collisionView = approvalView({ ...base, permissions: collisionPermissions }, {}, undefined, lang)
+    if (collisionView.kind !== 'choose') throw Error('expected approval chooser')
+    expect(collisionView.items.map(item => item.summary)).toEqual(collisionPaths.map(path => action + path))
+    expect(collisionView.items.map(item => item.accessibilityLabel)).toEqual(collisionPaths.map(path => `${label}: ${action}${path}`))
   })
   it('多条但指定了 ⇒ 那一条', () => {
     const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'command=ls', createdAt: 2 }] }

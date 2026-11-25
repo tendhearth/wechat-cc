@@ -1,7 +1,7 @@
 import {validBaseBranch} from '../../adapters/git/worktree-workspaces'
 import {isRelayContinue} from '../../adapters/store/matter-plans'
 import {parseReviewRequest,reviewMaterial} from './review-request'
-import {approvalLookupReply,WORKBENCH_ERRORS,workbenchErrorSpec} from '@wechat-cc/protocol'
+import {approvalLookupReply,permissionToolAction,permissionWaitingTitle,resolvePermissionDisplay,WORKBENCH_ERRORS,workbenchErrorSpec} from '@wechat-cc/protocol'
 import {compareReply} from './wechat-compare'
 import {issueTaskText,parseIssueRef,type IssueData} from './issue-intake'
 import {createHash,randomUUID} from 'node:crypto'
@@ -16,6 +16,7 @@ import type {ProjectCatalogEntry} from '../../adapters/workbench/project-catalog
 import { validateUserInputAnswers } from '../../adapters/workbench/user-input'
 import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
+import {redactSecrets} from '../../domain/cli-transcript'
 import type {ReviewTurn} from './review'
 import { WECHAT_PERMISSION_INCOMPLETE, type WechatPermissionCard, type WechatPermissions } from '../../ports/wechat'
 import { renderWechatPermissionCard } from './wechat-permission-card'
@@ -150,7 +151,16 @@ function statusReply(detail:Detail){
   if(held.length)lines.push('尚未交付的补充（已保留）：\n'+held.map(input=>'• '+clip(input.text,200)).join('\n'))
   const queued=inputs.filter(input=>input.status==='pending'||input.status==='sending').length
   if(queued)lines.push(`还有 ${queued} 条补充等待交付。`)
-  if(permissions.length)lines.push(`等待权限处理：${permissions.length} 项\n`+permissions.slice(0,4).map(p=>`查看：任务 ${id} 权限 ${p.id}`).join('\n'))
+  if(permissions.length)lines.push(`等待权限处理：${permissions.length} 项\n`+permissions.slice(0,4).map(p=>{
+    const lookup=`查看：任务 ${id} 权限 ${p.id}`
+    const action=permissionToolAction(p.tool,'zh-Hans','',p.mcp)
+    if(!action)return lookup
+    const display=resolvePermissionDisplay(p.tool,p.description,p.display,task.providerId)
+    const kind=display.body.kind
+    const title=kind==='fields'||kind==='url'||kind==='query'
+      ?permissionWaitingTitle(display,p.tool,'','zh-Hans','',p.mcp,Infinity):action
+    return `${singleLine(redactSecrets(title),120)}\n${lookup}`
+  }).join('\n'))
   if(questions.length)lines.push(`等待回答：${questions.length} 项\n`+questions.slice(0,4).map(q=>`${singleLine(q.questions.map(item=>item.header).join('、'),80)}\n查看：任务 ${id} 问题 ${q.id}`).join('\n'))
   lines.push(`补充：任务 ${id} 补充 <要求>`,`查看结果：任务 ${id} 结果`)
   return lines.join('\n\n')

@@ -179,7 +179,7 @@ export default function Approval() {
             key={item.requestId}
             testID={`approval-choose-${item.requestId}`}
             accessibilityRole="button"
-            accessibilityLabel={`${item.kind === 'permission' ? t(lang, 'approval.kindPermission') : t(lang, 'approval.kindQuestion')}: ${item.summary}`}
+            accessibilityLabel={item.accessibilityLabel}
             onPress={() => router.push(`/matter/${encodeURIComponent(id)}/decide?request=${encodeURIComponent(item.requestId)}`)}
             style={({ pressed }) => ({ minHeight: 56, paddingVertical: space.s, opacity: pressed ? 0.7 : 1 })}
           >

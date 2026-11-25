@@ -24,9 +24,9 @@ const VERB = {
   Edit: '想改', MultiEdit: '想改', apply_patch: '想改', Write: '想写',
 }
 
-/** 行标题:「Bash: npm publish」⇒「想运行 npm publish」。 @param {string} tool @param {string} summary @param {string} source */
-export function terminalTitle(tool, summary, source) {
-  if (permissionToolAction(tool, 'zh-Hans')) return permissionWaitingTitle(undefined, tool, summary, 'zh-Hans')
+/** 行标题:「Bash: npm publish」⇒「想运行 npm publish」。 @param {string} tool @param {string} summary @param {string} source @param {TerminalOperation['display']} [display] */
+export function terminalTitle(tool, summary, source, display) {
+  if (permissionToolAction(tool, 'zh-Hans')) return permissionWaitingTitle(display, tool, summary, 'zh-Hans')
   const verb = Object.hasOwn(VERB, tool) ? VERB[tool] : undefined
   if (tool && summary) return oneLine(verb ? `${verb} ${summary}` : `想用 ${tool}：${summary}`)
   if (tool) return oneLine(`想用 ${tool}`)
@@ -81,7 +81,7 @@ export function terminalWaitingRows(sessions) {
     const detail = String(s.project ?? '')
     rows.push({
       id: s.session_id,
-      title: terminalTitle(operation.tool, titleSummary, source),
+      title: terminalTitle(operation.tool, titleSummary, source, operation.summaryOnly ? undefined : operation.display),
       detail, agent, source,
       hash, ...operation,
     })

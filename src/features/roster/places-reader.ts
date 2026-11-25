@@ -247,7 +247,7 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
         if (!waiting) continue
         const pending = waiting.kind === 'terminal' && waiting.sessionId ? waitingSources.sessions.get(waiting.sessionId)?.pending : undefined
         if (typeof pending?.tool === 'string' && permissionToolAction(pending.tool, 'zh-Hans')) {
-          waiting.summary = permissionWaitingTitle(PermissionDisplaySchema.safeParse(pending.display).data, pending.tool, pending.summary, 'zh-Hans')
+          place.line = waiting.summary = permissionWaitingTitle(PermissionDisplaySchema.safeParse(pending.display).data, pending.tool, pending.summary, 'zh-Hans')
         }
         const operation = waitingOperation(waiting, waitingSources)
         if (operation) {

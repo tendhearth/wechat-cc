@@ -43,6 +43,14 @@ describe('terminalWaitingRows', () => {
     expect(renderTerminalPermissionOperation(located).html).toContain('项目目录 /work')
   })
 
+  it('用结构化路径区分两条同摘要的读文件请求', () => {
+    const rows = terminalWaitingRows(['docs/setup.md', 'docs/release.md'].map(path => s({
+      session_id: path,
+      pending: { tool: 'ReadFile', summary: '读文件', since: 1, display: { body: { kind: 'fields', fields: [{ name: 'path', value: path }] } } },
+    })))
+    expect(rows.map(row => row.title)).toEqual(['想看一个文件：docs/setup.md', '想看一个文件：docs/release.md'])
+  })
+
   it('prefers a valid edit display and uses its completeness independently of the summary', () => {
     const display = { body: { kind: 'edit', path: '/work/a', changes: [{ before: 'old', after: 'new' }] } }
     const pending = { tool: 'Edit', summary: 'opaque…', since: 1, truncated: true, display, cwd: '/work/run' }

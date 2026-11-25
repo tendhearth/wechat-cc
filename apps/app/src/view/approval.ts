@@ -4,15 +4,13 @@ import type { MatterDetailT, ApprovalExplanationT } from '../backend/types'
 import { directHeaderView } from './direct-header'
 
 export type ApprovalView =
-  | { kind: 'choose'; items: Array<{ requestId: string; kind: 'permission' | 'question'; summary: string }> }
+  | { kind: 'choose'; items: Array<{ requestId: string; kind: 'permission' | 'question'; summary: string; accessibilityLabel: string }> }
   | { kind: 'none' }
   | { kind: 'question'; requestId: string; runId: string
       items: Array<{ id: string; header: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean; allowOther: boolean }> }
   | { kind: 'card'; requestId: string; runId: string; title: string; what: string; scope: string; effect: string
       tool: string; display: PermissionDisplay; mcp?: PermissionMcpTarget; rawFull: string; projectPath: string; cwd?: string; executor: string; executorName: string
       canAllowTask?: boolean; canDenyWithReason: boolean; showSnapshotNotice?: boolean; scripts?: MatterDetailT['permissions'][number]['scripts'] }
-
-const firstLine = (s: string, max: number) => (s.replace(/\r\n?/g, '\n').split('\n', 1)[0] ?? '').slice(0, max)
 
 export function approvalView(detail: MatterDetailT, explanations: Record<string, ApprovalExplanationT>, requestId?: string, lang: Lang = 'zh-Hans'): ApprovalView {
   const perms = detail.permissions
@@ -48,13 +46,27 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
     return q ? questionView(q) : { kind: 'none' }
   }
   if (perms.length + questions.length === 1) return perms[0] ? cardView(perms[0]) : questionView(questions[0]!)
+  const choice = (requestId: string, kind: 'permission' | 'question', summary: string) => ({
+    requestId, kind, summary,
+    accessibilityLabel: `${t(lang, kind === 'permission' ? 'approval.kindPermission' : 'approval.kindQuestion')}: ${summary}`,
+  })
+  const maxSummary = 80
+  const permissionChoices = perms.map(x => {
+    const summary = x.description.split(/[\r\n]/, 1)[0] ?? ''
+    if (!x.mcp && !permissionToolAction(x.tool, lang)) return { id: x.id, title: `${x.tool}: ${summary}`.slice(0, maxSummary) }
+    const display = x.mcp ? undefined : PermissionDisplaySchema.safeParse(x.display).data
+    const titleWithLimit = (limit: number) => permissionWaitingTitle(display, x.tool, summary, lang, '', x.mcp, limit)
+    return { id: x.id, title: titleWithLimit(maxSummary), titleWithLimit }
+  })
+  const titleCounts = new Map<string, number>()
+  for (const { title } of permissionChoices) titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1)
   return {
     kind: 'choose',
     items: [
-      ...perms.map(x => ({ requestId: x.id, kind: 'permission' as const, summary: ((x.mcp || permissionToolAction(x.tool, lang))
-        ? permissionWaitingTitle(PermissionDisplaySchema.safeParse(x.display).data, x.tool, firstLine(x.description, 80), lang, '', x.mcp)
-        : `${x.tool}: ${firstLine(x.description, 80)}`).slice(0, 80) })),
-      ...questions.map(x => ({ requestId: x.id, kind: 'question' as const, summary: labelJoin(x.questions[0]?.header ?? '', x.questions[0]?.question ?? '').slice(0, 80) })),
+      ...permissionChoices.map(({ id, title, titleWithLimit }) => choice(id, 'permission',
+        // Expand colliding titles so a difference in the elided section is still visible and spoken.
+        titleWithLimit && (titleCounts.get(title) ?? 0) > 1 ? titleWithLimit(Infinity) : title)),
+      ...questions.map(x => choice(x.id, 'question', labelJoin(x.questions[0]?.header ?? '', x.questions[0]?.question ?? '').slice(0, maxSummary))),
     ],
   }
 }

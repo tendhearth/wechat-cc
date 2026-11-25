@@ -370,6 +370,28 @@ describe('WeChat task control through the shared service',()=>{
     expect(reply).toContain('未确认');expect(reply).not.toContain('已传达');expect(service.detail(task.id).inputs[0]?.status).toBe('held')
   })
 
+  it('pairs each waiting read request with its own redacted target and lookup command',async()=>{
+    const paths=['docs/setup.md','docs/release.md']
+    setup({async spawn(_p,ctx){return{async *dispatch(){
+      const url='https://fixture:placeholder@docs.example.test'
+      await Promise.all([
+        ...paths.map(path=>ctx.requestPermission!({tool:'ReadFile',description:`ReadFile ${path}`,
+          display:{body:{kind:'fields',fields:[{name:'path',value:path}]}}})),
+        ctx.requestPermission!({tool:'WebFetch',description:url,display:{body:{kind:'url',url}}}),
+      ])
+      yield result
+    },async close(){}}}})
+    const task=create()
+    await expect.poll(()=>service.detail(task.id).permissions.length).toBe(3)
+    const reply=await service.handleWechat('owner',`任务 ${task.id} 待办`,identity)
+    const requests=service.detail(task.id).permissions
+    for(const [i,p] of requests.filter(p=>p.tool==='ReadFile').entries()){
+      expect(reply).toContain(`想看一个文件：${paths[i]}\n查看：任务 ${task.id} 权限 ${p.id}`)
+    }
+    const web=requests.find(p=>p.tool==='WebFetch')!
+    expect(reply).toContain(`想打开一个网址：https://fixture:[已打码]@docs.example.test\n查看：任务 ${task.id} 权限 ${web.id}`)
+  })
+
   it('shows and resolves only the exact permission, rejecting wrong task, owner and duplicate grants',async()=>{
     const allowed:boolean[]=[]
     setup({async spawn(_p,ctx){return{async *dispatch(){
