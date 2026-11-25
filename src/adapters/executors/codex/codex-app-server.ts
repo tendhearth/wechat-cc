@@ -24,7 +24,8 @@ import { CodexChildOccurrence } from './codex-runtime'
 import { codexAppServerErrorCode, codexErrorCode, codexTimeoutsFromEnv, type CodexTimeouts } from './codex-errors'
 import { isAuthFail } from '../../../domain/auth-fail'
 import { APP_VERSION } from '../../../lib/app-version'
-import { codexCallTarget, codexTargetFromConfig, codexTargetToCall, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
+import { codexCallTarget, codexTargetFromConfig, codexTargetToCall, resolveCodexTarget, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
+import { codexConnectivityProbe, type CodexConnectivityProbe } from './codex-connectivity-probe'
 import type { CallTarget } from '../../../lib/call-classifier'
 import {MATTER_TOOL_NAMES,type MatterMcpFactory} from '../matter-mcp'
 
@@ -75,6 +76,8 @@ export interface CodexChatProfile {
    * 不给 ⇒ 审批请求一律拒。signal:这一轮停了 / 会话关了 ⇒ 中止,迟到的答复不再发给 codex。
    */
   approve?: CodexChatApprove
+  /** Captured from config/read for the optional, separate tool-free connectivity request. */
+  reportProbe?: (probe: CodexConnectivityProbe | undefined, nativeDefault: boolean) => void
 }
 
 /**
@@ -1127,7 +1130,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (proxy != null && proxy !== false) throw Error('codex_unverified_thread_policy')
         // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
         const configuredModel = native.config?.model
-        spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? (nativeModelId(configuredModel) ? configuredModel : null))
+        const route = codexTargetFromConfig(native.config, childEnv)
+        spawnTarget = codexTargetToCall(route, model ?? (nativeModelId(configuredModel) ? configuredModel : null))
         const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
         let response: ObjectValue
         if (chat) {
@@ -1180,6 +1184,14 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (nativeModelId(response.model)) {
           spawnTarget = { ...spawnTarget, model: response.model }
           context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
+        }
+        if (chat?.reportProbe) {
+          const providerMatches = !('unresolved' in route) && (response.modelProvider == null || response.modelProvider === route.providerId)
+          if (!providerMatches) spawnTarget = { provider: 'codex', model: spawnTarget.model, unresolved: true }
+          const probe = providerMatches ? codexConnectivityProbe(native.config, route, childEnv,
+            () => resolveCodexTarget({ env: childEnv, ...options.codexTargetOptions?.() })) : undefined
+          chat.reportProbe(probe,
+            !model && configuredModel == null && !context.resumeSessionId)
         }
       } catch (error) { await close(); throw error }
       finally { startupSignal?.removeEventListener('abort', abortStartup) }

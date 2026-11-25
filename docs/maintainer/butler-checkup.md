@@ -40,6 +40,8 @@ CLI 经已运行 daemon 的 operator 路由工作，不自己启动 daemon。默
 
 **后端支持边界：** Claude、OpenAI 兼容、Gemini API 已有隔离适配。Codex、agy、ACP 当前原生接口无法证明只暴露假工具、完全隔离本机读写；本版明确记录 `isolated_evaluation_unavailable`（没测成），不会回落到普通会话，也不会改全局工具配置。新 provider 只有声明并实现 `supportsIsolatedEvaluation` 和 `SpawnContext.evaluation` 后才能运行。题库、评分、档案和预算逻辑没有按后端分支。三端显示「这个后端暂时没法体检」和原因：Codex 继承全局工具且没有关闭原生文件/命令与项目指令的已验证组合；agy 只有全局 MCP 配置；通用 ACP 不声明客户端文件/终端能力也挡不住 agent 自己落盘。没有改全局配置或回落普通 spawn。
 
+对话的首次连接探测同样遵守这个边界。Codex 通过 `config/read` 和原生线程回包解析实际端点和模型。可复现的 Responses 网关用单独的 HTTP 请求探测，只发送固定短句、模型和空工具表，请求没有工作目录、项目指令或会话历史。环境变量密钥只用于用户配置层已绑定到同一网关的凭证，禁止跳转。原生登录及其他无法安全复现的传输用实际对话回合确认连接。Claude 体检直接进入自己的隔离会话和预算。
+
 ## 本机档案和下步接口
 
 `<stateDir>/checkup/` 下有 `profiles.json`（完整档案）、`attempts.json`（最近运行）、`settings.json`（探针开关）、`probes.json`（探针时间与疑似变化）。使用统一 JSON 原子写规矩，坏文件拒写。没有数据库表、没有迁移，不占用 v112 或 v113。

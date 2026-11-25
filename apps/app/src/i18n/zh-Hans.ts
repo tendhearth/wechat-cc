@@ -587,6 +587,7 @@ const zh: Record<keyof typeof en, string> = {
   'cap.wechat.idle': '已连上，还没发过消息。',
   'cap.brain.ok': '在用 {name}。',
   'cap.brain.probe_fresh': '在用 {name}。刚探测过。',
+  'cap.brain.probe_turn': '在用 {name}。已通过对话确认连接。',
   'cap.brain.probe_history': '在用 {name}。沿用上次的结果（{date}）。',
   'cap.brain.probe_transient': '{name} 暂时无法回应，稍后使用时会自动重试。',
   'cap.brain.probe_busy': '{name} 暂时忙不过来，稍后使用时会自动重试。',

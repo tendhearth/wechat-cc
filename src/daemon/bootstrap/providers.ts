@@ -4,7 +4,7 @@ import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
-import { firstUseProbeTimeout, probeStatusNote, UNKNOWN_PROBE_FIELD, withFirstUseProbe, type ProbeFailure, type ProbeResult } from '../../app/first-use-probe'
+import { firstUseProbeTimeout, probeEndpointKey, probeStatusNote, UNKNOWN_PROBE_FIELD, withFirstUseProbe, type ProbeFailure, type ProbeResult } from '../../app/first-use-probe'
 import { turnErrorNotice } from '../../app/coordinator/failures'
 import { openFirstUseProbeRecords } from './first-use-probe-records'
 import { APP_VERSION, BUILD_SHA } from '../../lib/app-version'
@@ -52,6 +52,12 @@ function probeFailureMessage(name: 'Claude' | 'Codex', failure: ProbeFailure, in
   if (failure.kind === 'auth') return `${name} ${failure.reason}，请检查账号或密钥。`
   if (failure.kind === 'quota') return turnErrorNotice(name === 'Claude' ? 'claude' : 'codex', undefined, 'quota')
   return incompatible()
+}
+
+function incompatibleProbeDetail(detail: string): string {
+  if (detail.startsWith('探测拿到了空回复')) return '探测拿到了空回复'
+  if (/\bmodel[_ ]not[_ ]found\b/i.test(detail)) return 'model not found'
+  return '模型或客户端协议不兼容'
 }
 
 // Locate the wechat-cc source-mode install root (where package.json lives).
@@ -259,7 +265,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // 后台评估开机就可能跑,不让它多一次外呼)。
   const probeHistory = openFirstUseProbeRecords(deps.stateDir, () => deps.log('FIRST_USE_PROBE', '无法保存首次探测记录'))
   const recordFirstUseProbe = (tag: string, r: ProbeResult): void => {
-    deps.log(tag, r.ok ? `ok in ${r.ms}ms` : `FAILED (${r.kind}) in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
+    deps.log(tag, r.ok ? `ok in ${r.ms}ms` : `FAILED (${r.kind}) in ${r.ms}ms: ${r.reason}`)
   }
   const claudeCliVersion = claudeBin ? (probeBinaryVersion(claudeBin)?.match(/(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)/)?.[1] ?? null) : null
   const claudeSdkVersion = (() => {
@@ -288,11 +294,13 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const probeTimeoutMs = firstUseProbeTimeout(deps.turnTimeoutMs)
   const claudeProvider = withFirstUseProbe(claudeInner, {
     gate: 'spawn',
+    networkGate: deps.networkGate,
     timeoutMs: probeTimeoutMs,
     cache: {
       combination: () => ({
         cliVersion: claudeCliVersion ?? UNKNOWN_PROBE_FIELD, sdkVersion: claudeSdkVersion,
         model: currentClaudeModel() || UNKNOWN_PROBE_FIELD,
+        endpoint: probeEndpointKey(claudeInner.callTarget?.('spawn') ?? unresolvedTarget('claude')),
       }),
       history: probeHistory('claude'),
     },
@@ -302,7 +310,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       return claudeInner.probeModel('只回复两个字母:ok', model, signal)
     },
     failureMessage: (detail, failure, model) => probeFailureMessage('Claude', failure, () =>
-      `claude 探测没通过:${detail.slice(0, 200)}\n` +
+      `claude 探测没通过:${incompatibleProbeDetail(detail)}\n` +
       `可能是 ${claudeVersionTag} 和 SDK 不合,或者${model ? `模型 ${model}` : claudeModelTag()}已不可用。` +
       `先在终端跑一次 \`claude\` 确认能登录;模型不对就 model_set 换一个。`),
     onResult: r => recordFirstUseProbe('CLAUDE_PROBE', r),
@@ -404,9 +412,15 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     const gap = codexVersionCheck.ok ? '' : `(对齐版本 ${codexVersionCheck.expectedVersion})`
     const codexEnvModel = process.env.CODEX_MODEL
     const codexPinnedModel = () => modelForProvider(readAgentConfig(), 'codex') || codexEnvModel
+    const nativeDefaults = new Map<string, string>()
     deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, aligned ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时核对探测记录'})`)
     const codexInner = createCodexChatProvider({
         codexPathOverride: codexBinary,
+        networkGate: deps.networkGate,
+        onNativeDefault: target => {
+          const endpoint = probeEndpointKey(target)
+          if (target.model && endpoint !== 'unresolved') nativeDefaults.set(endpoint, target.model)
+        },
         // Construction-time model default ONLY from CODEX_MODEL. Do NOT fall back
         // to configuredAgent.model — that is the CONFIGURED provider's model, so
         // on a claude-default install it's a claude id (e.g. claude-opus-4-8),
@@ -451,20 +465,25 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     }, {
       gate: 'spawn',
       probeAfterSpawn: true,
+      networkGate: deps.networkGate,
       timeoutMs: probeTimeoutMs,
       cache: {
-        combination: () => ({
-          cliVersion: codexVersionCheck.actualSemver ?? UNKNOWN_PROBE_FIELD,
-          // Codex 对话走随 CC 发布的 app-server 协议客户端。
-          sdkVersion: `${APP_VERSION}+${BUILD_SHA}`,
-          model: codexPinnedModel() || resolveCodexTarget().model || UNKNOWN_PROBE_FIELD,
-        }),
+        combination: () => {
+          const resolved = resolveCodexTarget()
+          const endpoint = probeEndpointKey('unresolved' in resolved ? resolved : { baseUrl: resolved.baseUrl })
+          return {
+            cliVersion: codexVersionCheck.actualSemver ?? UNKNOWN_PROBE_FIELD,
+            // Codex 对话走随 CC 发布的 app-server 协议客户端。
+            sdkVersion: `${APP_VERSION}+${BUILD_SHA}`,
+            model: codexPinnedModel() || resolved.model || nativeDefaults.get(endpoint) || UNKNOWN_PROBE_FIELD,
+            endpoint,
+          }
+        },
         history: probeHistory('codex'),
       },
-      probe: (model, signal, project) => codexInner.probeModel('只回复两个字母:ok', model, signal, project, target =>
-        assertCallAllowed(deps.networkGate, target ?? unresolvedTarget('codex'))),
+      probe: (_model, signal, _project, session) => session ? codexInner.probeModel(session, signal) : Promise.resolve(undefined),
       failureMessage: (detail, failure) => probeFailureMessage('Codex', failure, () =>
-        `codex 探测没通过:${detail.slice(0, 200)}\n` +
+        `codex 探测没通过:${incompatibleProbeDetail(detail)}\n` +
         `你的 codex CLI(${actual})和 wechat-cc 对齐的版本(${codexVersionCheck.expectedVersion})可能不合。` +
         `试试 \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`,或者等 wechat-cc 更新。`),
       onResult: r => recordFirstUseProbe('CODEX_PROBE', r),

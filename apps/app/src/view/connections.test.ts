@@ -79,6 +79,7 @@ describe('capabilities in the connections view (2026-10-06)', () => {
   })
   it.each([
     { code: 'brain.probe_fresh', state: 'ok', zh: '在用 Claude。刚探测过。', en: 'Using Claude. Connection just checked.' },
+    { code: 'brain.probe_turn', state: 'ok', zh: '在用 Claude。已通过对话确认连接。', en: 'Using Claude. A reply confirmed the connection.' },
     { code: 'brain.probe_history', state: 'ok', zh: '在用 Claude。沿用上次的结果（{date}）。', en: 'Using Claude. Reusing the last check from {date}.' },
     { code: 'brain.probe_transient', state: 'fallback', zh: 'Claude 暂时忙不过来，稍后使用时会自动重试。', en: 'Claude is temporarily busy. CC will retry the next time you use it.' },
   ])('localizes $code on the connections page', ({ code, state, zh, en }) => {

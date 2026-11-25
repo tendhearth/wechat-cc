@@ -13,6 +13,8 @@ import { AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
 import { TIER_PROFILES } from '../../domain/user-tier'
 import { classifyCall, type CallTarget } from '../../lib/call-classifier'
 import { APP_VERSION, BUILD_SHA } from '../../lib/app-version'
+import { collectTurn } from '../../ports/agent-provider'
+import { probeEndpointKey } from '../../app/first-use-probe'
 
 const fakeProbe = vi.hoisted(() => ({
   error: null as string | null,
@@ -20,9 +22,34 @@ const fakeProbe = vi.hoisted(() => ({
   claudeResult: null as { result: string; api_error_status: number; sdkError?: string } | null,
   models: {} as Record<string, unknown>,
   codexConfig: new Map<string, Record<string, unknown>>(),
-  codexProbeCwd: undefined as unknown,
+  codexThreads: [] as Array<{ cwd: unknown; cheap: boolean }>,
+  codexGateway: {} as Record<string, unknown>,
   codexReply: '',
 }))
+
+const probeGateway = 'https://gateway.example/v1'
+function gatewayConfig(baseUrl = probeGateway, model?: string, envKey?: string) {
+  return {
+    ...(model ? { model } : {}),
+    model_provider: 'gateway',
+    model_providers: { gateway: { base_url: baseUrl, wire_api: 'responses', ...(envKey ? { env_key: envKey } : {}) } },
+  }
+}
+function installProbeFetch() {
+  const fetchProbe = vi.fn(async (url: URL, init: RequestInit) => {
+    if (!['gateway.example', 'other-gateway.example'].includes(url.hostname)) throw new Error('unexpected probe destination')
+    const request = JSON.parse(String(init.body))
+    fakeProbe.models.codex = request.model
+    const error = request.model === fakeProbe.brokenCodexModel ? 'model not found' : fakeProbe.error
+    if (error) {
+      const status = Number(error.match(/\b[45]\d\d\b/)?.[0] ?? (error.includes('model not found') ? 404 : 400))
+      return Response.json({ error: { message: error } }, { status })
+    }
+    return Response.json({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: fakeProbe.codexReply }] }] })
+  })
+  vi.stubGlobal('fetch', fetchProbe)
+  return fetchProbe
+}
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   async *query(request: { options?: { model?: string } }) {
@@ -40,13 +67,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
   const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')
   const scripted = createScriptedCodex({
-    turns: [],
+    turns: () => ({ steps: [{ say: 'native reply' }] }),
     cheapAnswer: prompt => prompt === 'evaluate this' ? 'evaluation answer' : fakeProbe.codexReply,
-    configForCwd: cwd => fakeProbe.codexConfig.get(cwd) ?? {},
+    configForCwd: cwd => fakeProbe.codexConfig.get(cwd) ?? fakeProbe.codexGateway,
     onThreadStart: (_method, params, cheap) => {
+      fakeProbe.codexThreads.push({ cwd: params.cwd, cheap })
       if (cheap) {
         fakeProbe.models.codex = params.model
-        fakeProbe.codexProbeCwd = params.cwd
       }
     },
     rewrite: (msg) => {
@@ -133,7 +160,7 @@ const fakeWechatSpec: McpStdioSpec = {
 }
 
 describe('registerProviders — first-use probe messages', () => {
-  async function withCodexProbeFixture(run: (deps: ProviderDeps, logs: Array<[string, string]>) => Promise<void>) {
+  async function withCodexProbeFixture(run: (deps: ProviderDeps, logs: Array<[string, string]>, fetchProbe: ReturnType<typeof installProbeFetch>) => Promise<void>) {
     const { deps, logs } = baseDepsWithLogs({
       probeVersion: async () => ({ ok: true, firstLine: 'codex-cli 1.2.3', ms: 0 }),
     })
@@ -142,31 +169,40 @@ describe('registerProviders — first-use probe messages', () => {
     vi.stubEnv('WECHAT_CC_DISABLE_CODEX_AUTOFIX', '1')
     vi.stubEnv('CODEX_MODEL', undefined)
     vi.stubEnv('CODEX_HOME', deps.stateDir)
+    const fetchProbe = installProbeFetch()
+    fakeProbe.codexGateway = gatewayConfig()
+    const configPath = join(deps.stateDir, 'config.toml')
+    writeFileSync(configPath, `model_provider = "gateway"\n[model_providers.gateway]\nname = "Gateway"\nbase_url = "${probeGateway}"\nwire_api = "responses"\n`)
     fakeProbe.codexReply = 'ok'
-    try { await run(deps, logs) }
+    try { await run(deps, logs, fetchProbe) }
     finally {
+      fakeProbe.error = null
       fakeProbe.brokenCodexModel = null
       fakeProbe.models = {}
       fakeProbe.codexConfig.clear()
-      fakeProbe.codexProbeCwd = undefined
+      fakeProbe.codexThreads = []
+      fakeProbe.codexGateway = {}
       fakeProbe.codexReply = ''
       vi.unstubAllEnvs()
+      vi.unstubAllGlobals()
       rmSync(deps.stateDir, { recursive: true, force: true })
     }
   }
 
   const probeCtx = { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest } as const
 
-  it('uses the native project model and cwd for the Codex gate, probe, and record', () => withCodexProbeFixture(async (deps, logs) => {
+  it('uses the native project model and endpoint with no project directory, instructions or tools in the probe', () => withCodexProbeFixture(async (deps, logs, fetchProbe) => {
     const user = { alias: 'user-default', path: join(deps.stateDir, 'ordinary') }
     const project = { alias: 'project', path: join(deps.stateDir, 'project') }
     mkdirSync(user.path)
     mkdirSync(join(project.path, '.codex'), { recursive: true })
     writeFileSync(join(deps.stateDir, 'config.toml'), 'model = "bad-default"\n')
     writeFileSync(join(project.path, '.codex', 'config.toml'), 'model = "project-model"\n')
+    const projectInstruction = 'project instruction must stay within the owner thread'
+    writeFileSync(join(project.path, 'AGENTS.md'), projectInstruction)
     // Effective native replies represent an ordinary directory and a trusted project.
-    fakeProbe.codexConfig.set(user.path, { model: 'bad-default' })
-    fakeProbe.codexConfig.set(project.path, { model: 'project-model', openai_base_url: 'https://gateway.example/v1' })
+    fakeProbe.codexConfig.set(user.path, gatewayConfig(probeGateway, 'bad-default'))
+    fakeProbe.codexConfig.set(project.path, gatewayConfig(probeGateway, 'project-model'))
     fakeProbe.brokenCodexModel = 'bad-default'
     const targets: CallTarget[] = []
     deps.networkGate = {
@@ -177,11 +213,18 @@ describe('registerProviders — first-use probe messages', () => {
     try {
       const provider = registry.get('codex')!.provider
       await expect(provider.spawn(user, probeCtx)).rejects.toThrow('model not found')
-      const session = await provider.spawn(project, probeCtx)
+      const session = await provider.spawn(project, { ...probeCtx, appendInstructions: projectInstruction })
       try {
         expect(session.callTarget?.()?.model).toBe('project-model')
         expect(fakeProbe.models.codex).toBe('project-model')
-        expect(fakeProbe.codexProbeCwd).toBe(project.path)
+        expect(fakeProbe.codexThreads.every(thread => !thread.cheap)).toBe(true)
+        const [url, request] = fetchProbe.mock.calls.at(-1)!
+        expect(url.href).toBe(`${probeGateway}/responses`)
+        expect(JSON.parse(String(request.body))).toEqual({
+          model: 'project-model', input: '只回复两个字母:ok', tools: [], tool_choice: 'none', store: false,
+        })
+        expect(JSON.stringify(request)).not.toContain(project.path)
+        expect(JSON.stringify(request)).not.toContain(projectInstruction)
         expect(targets).toContainEqual(expect.objectContaining({ model: 'project-model', baseUrl: 'https://gateway.example/v1' }))
         const records = JSON.parse(readFileSync(join(deps.stateDir, 'first-use-probes.json'), 'utf8'))
         expect(records.codex).toEqual([expect.objectContaining({ model: 'project-model' })])
@@ -189,6 +232,71 @@ describe('registerProviders — first-use probe messages', () => {
       const repeated = await provider.spawn(project, probeCtx)
       await repeated.close()
       expect(logs.filter(([tag]) => tag === 'CODEX_PROBE')).toHaveLength(2)
+    } finally { stopProviderProbes() }
+  }))
+
+  it('does not send project-selected credentials in a hidden Codex probe', () => withCodexProbeFixture(async (deps, _logs, fetchProbe) => {
+    const project = { alias: 'project', path: deps.stateDir }
+    vi.stubEnv('PROBE_TEST_ONLY_KEY', 'test-only-value')
+    fakeProbe.codexConfig.set(project.path, gatewayConfig(probeGateway, 'project-model', 'PROBE_TEST_ONLY_KEY'))
+    const { registry, stopProviderProbes } = await registerProviders(deps)
+    try {
+      const session = await registry.get('codex')!.provider.spawn(project, probeCtx)
+      await session.close()
+      expect(fetchProbe).not.toHaveBeenCalled()
+      expect(fakeProbe.codexThreads.every(thread => !thread.cheap)).toBe(true)
+    } finally { stopProviderProbes() }
+  }))
+
+  it('isolates Codex gateway cooldown and history for the same model, including after registration restarts', () => withCodexProbeFixture(async (deps, _logs, fetchProbe) => {
+    const a = { alias: 'A', path: join(deps.stateDir, 'a') }
+    const b = { alias: 'B', path: join(deps.stateDir, 'b') }
+    const model = 'same-model'
+    mkdirSync(a.path)
+    mkdirSync(b.path)
+    fakeProbe.codexConfig.set(a.path, gatewayConfig(probeGateway, model))
+    fakeProbe.codexConfig.set(b.path, gatewayConfig('https://other-gateway.example/v1', model))
+    async function run(check: (spawn: (project: typeof a) => Promise<void>) => Promise<void>) {
+      const { registry, stopProviderProbes } = await registerProviders(deps)
+      try {
+        await check(async project => { await (await registry.get('codex')!.provider.spawn(project, probeCtx)).close() })
+      } finally { stopProviderProbes() }
+    }
+    await run(async spawn => {
+      fakeProbe.error = 'API Error: 529 overloaded'
+      await expect(spawn(a)).rejects.toThrow('529')
+      fakeProbe.error = null
+      await spawn(b)
+      await expect(spawn(a)).rejects.toThrow('529')
+      expect(fetchProbe).toHaveBeenCalledTimes(2)
+    })
+    await run(async spawn => {
+      await spawn(a)
+      await spawn(b)
+      expect(fetchProbe).toHaveBeenCalledTimes(3)
+    })
+    const records = JSON.parse(readFileSync(join(deps.stateDir, 'first-use-probes.json'), 'utf8')).codex
+    expect(records).toHaveLength(2)
+    expect(new Set(records.map((entry: { endpoint: string }) => entry.endpoint)).size).toBe(2)
+    expect(records.every((entry: { endpoint: string }) => /^[a-f0-9]{64}$/.test(entry.endpoint))).toBe(true)
+  }))
+
+  it('reports a successful reply under the unpinned Codex native default model', () => withCodexProbeFixture(async (deps, _logs, fetchProbe) => {
+    writeFileSync(join(deps.stateDir, 'config.toml'), '')
+    fakeProbe.codexGateway = {}
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    try {
+      const provider = registry.get('codex')!.provider
+      const session = await provider.spawn({ alias: 'project', path: deps.stateDir }, probeCtx)
+      try {
+        expect(session.callTarget?.()?.model).toBe('scripted-model')
+        expect(fetchProbe).not.toHaveBeenCalled()
+        expect(fakeProbe.codexThreads.every(thread => !thread.cheap)).toBe(true)
+        await collectTurn(session.dispatch('first real turn'))
+        expect(providerNotes().codex).toContain('已通过对话确认连接')
+        expect(JSON.parse(readFileSync(join(deps.stateDir, 'first-use-probes.json'), 'utf8')).codex)
+          .toEqual([expect.objectContaining({ model: 'scripted-model', endpoint: 'native' })])
+      } finally { await session.close() }
     } finally { stopProviderProbes() }
   }))
 
@@ -205,7 +313,8 @@ describe('registerProviders — first-use probe messages', () => {
       } finally { stopProviderProbes() }
     }
     for (const [index, oldVersion] of [APP_VERSION, `${APP_VERSION}+previous-build`].entries()) {
-      writeFileSync(recordPath, JSON.stringify({ codex: [{ cliVersion: '1.2.3', model, sdkVersion: oldVersion, at: 1000 }] }))
+      const endpoint = index === 0 ? undefined : probeEndpointKey({ baseUrl: probeGateway })
+      writeFileSync(recordPath, JSON.stringify({ codex: [{ cliVersion: '1.2.3', model, endpoint, sdkVersion: oldVersion, at: 1000 }] }))
       await spawn()
       expect(logs.filter(([tag]) => tag === 'CODEX_PROBE')).toHaveLength(index + 1)
       expect(JSON.parse(readFileSync(recordPath, 'utf8')).codex).toEqual([
@@ -230,40 +339,25 @@ describe('registerProviders — first-use probe messages', () => {
     } finally { fakeProbe.error = null; stopProviderProbes() }
   }))
 
-  it('runs a Codex evaluation on its own model while the chat model is unavailable', async () => {
-    const binDir = mkdtempSync(join(tmpdir(), 'providers-eval-bin-'))
-    writeFileSync(join(binDir, process.platform === 'win32' ? 'codex.exe' : 'codex'), '')
-    vi.stubEnv('PATH', [binDir, process.env.PATH].join(delimiter))
-    vi.stubEnv('WECHAT_CC_DISABLE_CODEX_AUTOFIX', '1')
+  it('runs a Codex evaluation on its own model while the chat model is unavailable', () => withCodexProbeFixture(async (deps, logs) => {
     vi.stubEnv('WECHAT_CODEX_CHEAP_MODEL', 'codex-eval')
     fakeProbe.brokenCodexModel = 'codex-chat'
-    const { deps, logs } = baseDepsWithLogs({
-      probeVersion: async () => ({ ok: true, firstLine: 'codex-cli 1.2.3', ms: 0 }),
-    })
+    saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: 'codex-chat' }))
+    const { registry, stopProviderProbes } = await registerProviders(deps)
     try {
-      saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: 'codex-chat' }))
-      const { registry, stopProviderProbes } = await registerProviders(deps)
-      try {
-        const provider = registry.get('codex')!.provider
-        await expect(provider.cheapEval!('evaluate this')).resolves.toBe('evaluation answer')
-        expect(fakeProbe.models.codex).toBe('codex-eval')
-        expect(logs.filter(([tag]) => tag === 'CODEX_PROBE')).toHaveLength(0)
-        await expect(provider.spawn(
-          { alias: 'probe', path: deps.stateDir },
-          { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest },
-        )).rejects.toThrow('model not found')
-        expect(fakeProbe.models.codex).toBe('codex-chat')
-        await expect(provider.cheapEval!('evaluate this')).resolves.toBe('evaluation answer')
-        expect(fakeProbe.models.codex).toBe('codex-eval')
-      } finally { stopProviderProbes() }
-    } finally {
-      fakeProbe.brokenCodexModel = null
-      fakeProbe.models = {}
-      vi.unstubAllEnvs()
-      rmSync(binDir, { recursive: true, force: true })
-      rmSync(deps.stateDir, { recursive: true, force: true })
-    }
-  })
+      const provider = registry.get('codex')!.provider
+      await expect(provider.cheapEval!('evaluate this')).resolves.toBe('evaluation answer')
+      expect(fakeProbe.models.codex).toBe('codex-eval')
+      expect(logs.filter(([tag]) => tag === 'CODEX_PROBE')).toHaveLength(0)
+      await expect(provider.spawn(
+        { alias: 'probe', path: deps.stateDir },
+        { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest },
+      )).rejects.toThrow('model not found')
+      expect(fakeProbe.models.codex).toBe('codex-chat')
+      await expect(provider.cheapEval!('evaluate this')).resolves.toBe('evaluation answer')
+      expect(fakeProbe.models.codex).toBe('codex-eval')
+    } finally { stopProviderProbes() }
+  }))
 
   it.each([
     { status: 529, result: 'Please try again later', kind: 'transient', note: '暂时忙不过来（529）', code: 'server_error' },
@@ -315,47 +409,33 @@ describe('registerProviders — first-use probe messages', () => {
     { kind: 'transient', error: 'API Error: 529 overloaded', note: '暂时忙不过来（529），稍后使用时自动重试' },
     { kind: 'auth', error: 'HTTP error: 403 Forbidden', note: '探测失败，拒绝了凭证（403）' },
     { kind: 'incompatible', error: null, note: '探测失败' },
-  ])('shows the $kind result for Claude and Codex', async ({ kind, error, note }) => {
-    const binDir = mkdtempSync(join(tmpdir(), 'providers-first-use-bin-'))
-    const bin = join(binDir, process.platform === 'win32' ? 'codex.exe' : 'codex')
-    writeFileSync(bin, '')
-    vi.stubEnv('PATH', [binDir, process.env.PATH].join(delimiter))
-    vi.stubEnv('WECHAT_CC_DISABLE_CODEX_AUTOFIX', '1')
+  ])('shows the $kind result for Claude and Codex', ({ kind, error, note }) => withCodexProbeFixture(async (deps, logs) => {
     fakeProbe.error = error
-    const { deps, logs } = baseDepsWithLogs({
-      probeVersion: async () => ({ ok: true, firstLine: 'codex-cli 1.2.3', ms: 0 }),
-    })
+    fakeProbe.codexReply = ''
+    saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: 'codex-default' }))
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
     try {
-      saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: 'codex-default' }))
-      const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
-      try {
-        for (const [id, name] of [['claude', 'Claude'], ['codex', 'Codex']] as const) {
-          const failure = await registry.get(id)!.provider.spawn(
-            { alias: 'probe', path: deps.stateDir },
-            { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest },
-          ).then(() => { throw new Error('probe should have blocked spawn') }, (err: Error) => err.message)
-          if (kind === 'transient') {
-            expect(failure).toBe(`${name} 暂时忙不过来（529），过一会儿再用时会自动重试。你不用做什么。`)
-            expect(failure).not.toMatch(/版本|SDK|模型|登录|npm i/)
-          } else if (kind === 'auth') {
-            expect(failure).toBe(`${name} 拒绝了凭证（403），请检查账号或密钥。`)
-            expect(failure).not.toMatch(/登录|版本|npm i/)
-          } else {
-            expect(failure).toContain(`${id} 探测没通过:探测拿到了空回复`)
-            expect(failure).toContain(id === 'claude' ? '先在终端跑一次 \`claude\` 确认能登录' : '试试 \`npm i -g @openai/codex@')
-          }
-          expect(providerNotes()[id]).toContain(note)
-          expect(logs.find(([tag]) => tag === `${name.toUpperCase()}_PROBE`)?.[1]).toContain(`FAILED (${kind})`)
+      for (const [id, name] of [['claude', 'Claude'], ['codex', 'Codex']] as const) {
+        const failure = await registry.get(id)!.provider.spawn(
+          { alias: 'probe', path: deps.stateDir },
+          { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest },
+        ).then(() => { throw new Error('probe should have blocked spawn') }, (err: Error) => err.message)
+        if (kind === 'transient') {
+          expect(failure).toBe(`${name} 暂时忙不过来（529），过一会儿再用时会自动重试。你不用做什么。`)
+          expect(failure).not.toMatch(/版本|SDK|模型|登录|npm i/)
+        } else if (kind === 'auth') {
+          expect(failure).toBe(`${name} 拒绝了凭证（403），请检查账号或密钥。`)
+          expect(failure).not.toMatch(/登录|版本|npm i/)
+        } else {
+          expect(failure).toContain(`${id} 探测没通过:探测拿到了空回复`)
+          expect(failure).toContain(id === 'claude' ? '先在终端跑一次 \`claude\` 确认能登录' : '试试 \`npm i -g @openai/codex@')
         }
-        expect(fakeProbe.models).toEqual({ claude: 'claude-x', codex: 'codex-default' })
-      } finally { stopProviderProbes() }
-    } finally {
-      fakeProbe.error = null
-      fakeProbe.models = {}
-      vi.unstubAllEnvs()
-      rmSync(binDir, { recursive: true, force: true })
-    }
-  })
+        expect(providerNotes()[id]).toContain(note)
+        expect(logs.find(([tag]) => tag === `${name.toUpperCase()}_PROBE`)?.[1]).toContain(`FAILED (${kind})`)
+      }
+      expect(fakeProbe.models).toEqual({ claude: 'claude-x', codex: 'codex-default' })
+    } finally { fakeProbe.error = null; stopProviderProbes() }
+  }))
 })
 
 describe('registerProviders — Grok ACP account discovery (no model calls)', () => {

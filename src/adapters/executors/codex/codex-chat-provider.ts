@@ -9,18 +9,19 @@ import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from '../mcp-s
 import { isAuthFail } from '../../../domain/auth-fail'
 import { providerErrorCodeOf, withProviderCode, errorWithProviderCode } from '../../../lib/provider-error-code'
 import { log } from '../../../lib/log'
-import type { CallTarget } from '../../../lib/network-gate'
+import { assertCallAllowed, sessionCallTarget, type CallTarget, type NetworkGate } from '../../../lib/network-gate'
 import { codexCallTarget, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import { codexErrorCode, type CodexTimeouts } from './codex-errors'
 import { spawnCodexAppServerSession, type CodexAppServerSession, type CodexChatApprove, type CodexChatProfile } from './codex-app-server'
 import type { CodexAppServerSpawn } from './codex-app-server-process'
+import type { CodexConnectivityProbe } from './codex-connectivity-probe'
 
 export { CODEX_CAPABILITIES } from '../../../domain/provider-capabilities'
 export { codexChatToolCall } from './codex-app-server'
 
 /**
- * Codex 对话侧(微信 / App 的聊天、delegate、首次使用探测、cheapEval)—— 走 `codex app-server`,和工作台同一个
+ * Codex 对话侧(微信 / App 的聊天、delegate、cheapEval)—— 走 `codex app-server`,和工作台同一个
  * 协议客户端(codex-app-server.ts 的 spawnCodexAppServerSession,对话侧的差别见 CodexChatProfile)。
  * B1(主人 2026-10-25 拍板):以前这里是 `@openai/codex-sdk`(每一轮一个 `codex exec`),已删。
  *
@@ -59,6 +60,8 @@ export interface CodexChatProviderOptions {
   closeTimeoutMs?: number
   /** 测试接缝:起 app-server 子进程(src/test-support/executors/codex-scripted.ts 的剧本替身)。生产不传。 */
   spawnProcess?: CodexAppServerSpawn
+  networkGate?: NetworkGate
+  onNativeDefault?: (target: CallTarget) => void
   /**
    * 审批 on-request 的会话:每次 spawn 造一个应答者(codex-chat-gate.ts 的 makeCodexChatGate)。不给 ⇒ 没人可问,
    * compilePolicy 说 on-request 的也落回 never(以前的行为)。
@@ -109,8 +112,9 @@ const errorEvent = (err: unknown): Extract<AgentEvent, { kind: 'error' }> => {
 }
 
 export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): AgentProvider & {
-  probeModel(prompt: string, model: string | undefined, signal: AbortSignal, project: AgentProject | undefined, allow: (target: CallTarget | null) => Promise<void>): Promise<string>
+  probeModel(session: AgentSession, signal: AbortSignal): Promise<string | undefined>
 } {
+  const probes = new WeakMap<AgentSession, () => CodexConnectivityProbe | undefined>()
   const binary = (): string => (typeof opts.codexPathOverride === 'function' ? opts.codexPathOverride() : opts.codexPathOverride) || 'codex'
   // 构造时解析一次:codex login 刷新了模型缓存,daemon 重启后生效。
   const cheapModel = resolveCodexCheapModel()
@@ -133,21 +137,14 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } },
   })
 
-  const oneShot = async (prompt: string, model: string | undefined, signal?: AbortSignal, probe?: {
-    project: AgentProject | undefined
-    allow: (target: CallTarget | null) => Promise<void>
-  }): Promise<string> => {
+  const oneShot = async (prompt: string, model: string | undefined, signal?: AbortSignal): Promise<string> => {
     let session: CodexAppServerSession | undefined
     const abort = () => { void session?.close().catch(() => {}) }
     try {
-      const project = probe?.project ?? { alias: 'codex-cheap-eval', path: tmpdir() }
-      session = await spawnCodexAppServerSession(coreOptions(model), project, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(probe || privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile(), signal)
+      const project = { alias: 'codex-cheap-eval', path: tmpdir() }
+      session = await spawnCodexAppServerSession(coreOptions(model), project, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile(), signal)
       signal?.throwIfAborted()
       signal?.addEventListener('abort', abort, { once: true })
-      if (probe) {
-        await probe.allow(session.callTarget?.() ?? null)
-        signal?.throwIfAborted()
-      }
       const parts: string[] = []
       for await (const ev of session.dispatch(prompt)) {
         if (ev.kind === 'text') parts.push(ev.text)
@@ -171,7 +168,15 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     /** 一次 app-server 冷启动 + 一轮(约 3-5s/次),给 20s 余量。 */
     cheapEvalBudgetMs: 20_000,
     cheapEval: (prompt, options) => oneShot(prompt, cheapModel, options?.signal),
-    probeModel: (prompt, model, signal, project, allow) => oneShot(prompt, model, signal, { project, allow }),
+    async probeModel(session, signal) {
+      const probe = probes.get(session)?.()
+      if (!probe) return
+      const target = sessionCallTarget(session, 'codex')
+      if (target.unresolved || !target.model) return
+      await assertCallAllowed(opts.networkGate, target)
+      signal.throwIfAborted()
+      return probe(target, signal)
+    },
     supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // read-only does not disable native read/shell tools or inherited project instructions.
@@ -185,7 +190,12 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       const config = codexChatThreadConfig(opts.mcpServers, ctx, bypass, !!approve)
       const model = ctx.execution?.model ?? ctx.model ?? opts.model
       const approvalPolicy = tierOpts.approvalPolicy === 'on-request' && !approve ? 'never' : tierOpts.approvalPolicy
-      const profile: CodexChatProfile = { sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: sessionSubprocessEnv(), log, ...(approve ? { approve } : {}) }
+      let probe: CodexConnectivityProbe | undefined
+      let nativeDefault = false
+      const profile: CodexChatProfile = {
+        sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: sessionSubprocessEnv(), log, ...(approve ? { approve } : {}),
+        reportProbe: (resolved, isDefault) => { probe = resolved; nativeDefault = isDefault },
+      }
       // 对话只把这几样交给协议客户端;工作台专用的(审批桥、时间线、后台生命周期)一律不带。
       const base: SpawnContext = {
         tierProfile: ctx.tierProfile, permissionMode: ctx.permissionMode, chatId: ctx.chatId,
@@ -209,17 +219,20 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
         }
       } else core = await open()
       let lastThreadId = core.threadId()
+      if (nativeDefault) opts.onNativeDefault?.(sessionCallTarget(core, 'codex'))
       log('SESSION_INIT', `alias=${project.alias} thread_id=${lastThreadId} provider=codex`)
       let closed = false
+      let cancellations = 0
 
-      return {
+      const session: AgentSession = {
         resumedHistory, resumedHistoryOwnerOnly:true,
         callTarget: () => core.callTarget?.() ?? targetOf(model ?? null, project.path, config),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           return {
             async *[Symbol.asyncIterator](): AsyncGenerator<AgentEvent> {
               if (closed) return
-              let events: AsyncIterable<AgentEvent>
+              const startedCancellation = cancellations
+              let respawned = false
               try {
                 if (!core.alive()) {
                   // 上一个 app-server 没了:换新进程,续接同一个 thread。
@@ -228,8 +241,8 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
                   if (closed) return
                   core = await open(lastThreadId || undefined)
                   lastThreadId = core.threadId()
+                  respawned = true
                 }
-                events = core.dispatch(text, attachments)
               } catch (err) {
                 // 起不来 / 上一轮还没收尾:带码的 error 事件收尾,别抛 —— 抛出去协调器拿不到 summary。
                 const ev = errorEvent(err)
@@ -237,7 +250,14 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
                 yield ev
                 return
               }
-              for await (const ev of events) {
+              try {
+                if (respawned && opts.networkGate) await assertCallAllowed(opts.networkGate, sessionCallTarget(core, 'codex'))
+              } catch (err) {
+                if (closed || startedCancellation !== cancellations) return
+                throw err
+              }
+              if (closed || startedCancellation !== cancellations) return
+              for await (const ev of core.dispatch(text, attachments)) {
                 if (ev.kind === 'init' && ev.sessionId) lastThreadId = ev.sessionId
                 yield ev
               }
@@ -250,6 +270,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
         },
         async cancel(): Promise<void> {
           if (closed) return
+          cancellations++
           // 中断这一轮,会话留着:之后的 dispatch 照常。
           await core.cancel?.().catch(() => {})
         },
@@ -258,6 +279,8 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
           await core.close()
         },
       }
+      probes.set(session, () => probe)
+      return session
     },
   }
 }

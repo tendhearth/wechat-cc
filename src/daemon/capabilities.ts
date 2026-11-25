@@ -90,7 +90,7 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
   else if (i.brain.registered) {
     const status = i.brain.firstUse
     const reused = status?.state === 'ok' && status.source === 'history'
-    const code = status?.state === 'ok' ? (reused ? 'brain.probe_history' : 'brain.probe_fresh')
+    const code = status?.state === 'ok' ? (reused ? 'brain.probe_history' : status.source === 'turn' ? 'brain.probe_turn' : 'brain.probe_fresh')
       : status?.state === 'probing' ? 'brain.probing'
       : status?.state === 'untested' ? 'brain.probe_pending' : 'brain.ok'
     out.push({

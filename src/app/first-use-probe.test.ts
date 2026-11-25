@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, vi } from 'vitest'
 import { openFirstUseProbeRecords } from '../daemon/bootstrap/first-use-probe-records'
-import { firstUseProbeTimeout, probeStatusNote, withFirstUseProbe } from './first-use-probe'
+import { firstUseProbeTimeout, probeEndpointKey, probeStatusNote, withFirstUseProbe } from './first-use-probe'
 import { collectTurn, type AgentEvent, type AgentProvider } from '../ports/agent-provider'
 import { errorWithProviderCode } from '../lib/provider-error-code'
+import { withNetworkGate } from './provider-registry'
+import type { NetworkGate } from '../lib/network-gate'
 
 function inner(): AgentProvider & { spawns: number } {
   const p = {
@@ -18,6 +20,13 @@ function inner(): AgentProvider & { spawns: number } {
 const ctx = { tierProfile: {} as never, permissionMode: 'strict' as const, chatId: 'c' }
 
 describe('withFirstUseProbe', () => {
+  it('keys an endpoint by scheme, host and path without URL credentials or query parameters', () => {
+    const baseUrl = 'https://gateway.example/v1'
+    const key = probeEndpointKey({ baseUrl })
+    expect(key).toMatch(/^[a-f0-9]{64}$/)
+    expect(probeEndpointKey({ baseUrl: 'https://fixture:password@gateway.example/v1/?token=fixture#secret' })).toBe(key)
+    expect(probeEndpointKey({ baseUrl: 'https://gateway.example/v2' })).not.toBe(key)
+  })
   it('probes once on first spawn, then passes through; concurrent first spawns share one probe', async () => {
     const probe = vi.fn(async () => 'ok')
     const results: unknown[] = []
@@ -101,6 +110,8 @@ describe('withFirstUseProbe', () => {
     { error: new Error('unexpected failure'), kind: 'transient', reason: '暂时没有回应（原因未明）', wait: 30_000 },
     { error: errorWithProviderCode('billing error', 'quota'), kind: 'quota', reason: '额度用完了', wait: 3_600_000 },
     { error: errorWithProviderCode('Claude AI usage limit reached|1800000120', 'quota'), kind: 'quota', reason: '额度用完了', wait: 120_000, now: 1_800_000_000_000 },
+    { error: new Error('Claude AI usage limit reached|1800000120'), kind: 'quota', reason: '额度用完了', wait: 120_000, now: 1_800_000_000_000 },
+    { error: errorWithProviderCode('unexpected status 429: insufficient_quota', 'rate_limited'), kind: 'quota', reason: '额度用完了', wait: 3_600_000 },
   ])('uses $kind for $error with a $wait ms cooldown', async ({ error, kind, reason, wait, now = 0 }) => {
     let t = now
     // 同步抛错也会释放 in-flight，下一次可以重探。
@@ -136,6 +147,16 @@ describe('withFirstUseProbe', () => {
 })
 
 describe('gate: spawn', () => {
+  it('opens an isolated checkup even if the selected chat model fails its probe', async () => {
+    const probe = vi.fn(async () => { throw new Error('API Error: 529 overloaded') })
+    const p = inner()
+    const wrapped = withFirstUseProbe(p, { probe, gate: 'spawn', failureMessage: d => d })
+    const project = { alias: 'checkup', path: '/isolated-checkup' }
+    const evaluation = { tools: {} as never, mcpServer: { url: 'http://127.0.0.1:9' }, maxSteps: 3, maxOutputTokens: 4096 }
+    await wrapped.spawn(project, { ...ctx, model: 'checkup-model', evaluation })
+    expect(p.spawns).toBe(1)
+    expect(probe).not.toHaveBeenCalled()
+  })
   it('leaves cheapEval ungated (default provider: background evals must not add a boot-time outbound call)', async () => {
     const probe = vi.fn(async () => 'ok')
     const p = withFirstUseProbe(inner(), { probe, gate: 'spawn', failureMessage: d => d })
@@ -320,6 +341,37 @@ describe('persistent first-use probe', () => {
     await Promise.all([stoppedCheck, otherCheck])
     expect(probe).toHaveBeenCalledTimes(1)
     expect(provider.probeStatus()).toMatchObject({ state: 'failed', kind: 'transient' })
+  }))
+
+  it('blocks the real dispatch if the guard goes down while a retained session is probing', async () => withRecords(async (dir, path) => {
+    writeFileSync(path, JSON.stringify({ claude: previous }))
+    const started = Promise.withResolvers<void>()
+    const result = Promise.withResolvers<string>()
+    const probe = () => { started.resolve(); return result.promise }
+    let safe = true
+    let sends = 0
+    const p = inner()
+    p.callTarget = () => ({ provider: 'claude', baseUrl: 'https://gateway.example' })
+    const actual = { provider: 'claude', model: combination.model, baseUrl: 'https://api.anthropic.com', exact: true }
+    p.spawn = async () => ({
+      callTarget: () => actual,
+      async *dispatch() { sends++; yield { kind: 'error', message: 'model not found' } },
+      async close() {},
+    })
+    const gate: NetworkGate = { check: async () => ({ safe, source: 'bx', detail: 'fixture' }) }
+    const provider = withNetworkGate(withFirstUseProbe(p, {
+      probe, networkGate: gate, failureMessage: d => d,
+      cache: { combination: () => combination, history: openFirstUseProbeRecords(dir, () => {})('claude') },
+    }), gate, 'claude')
+    const session = await provider.spawn(project, ctx)
+    await collectTurn(session.dispatch('invalidate'))
+    const pending = session.dispatch('owner turn')[Symbol.asyncIterator]().next()
+    const blocked = expect(pending).rejects.toMatchObject({ code: 'network_unprotected' })
+    await started.promise
+    safe = false
+    result.resolve('ok')
+    await blocked
+    expect(sends).toBe(1)
   }))
 
   it('aborts a stuck retained-session reprobe, releases its waiters and retries after cooldown', async () => withRecords(async (dir, path) => {

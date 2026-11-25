@@ -30,7 +30,7 @@ import { parse as parseToml } from 'smol-toml'
 import type { CallTarget } from './call-classifier'
 
 export type CodexTargetResolution =
-  | { baseUrl: string | null; providerId: string; wireApi?: string }
+  | { baseUrl: string | null; providerId: string; wireApi?: string; envKey?: string }
   | { unresolved: true; reason: string }
 
 export interface ResolveCodexTargetOptions {
@@ -67,7 +67,11 @@ export function codexTargetFromConfig(config: unknown, env: NodeJS.ProcessEnv = 
     if (!isObj(custom)) return unresolved(`model_providers.${id} 形状不对`)
     const base = custom.base_url
     if (typeof base !== 'string' || !base.trim()) return unresolved(`model_providers.${id} 没写 base_url`)
-    return { baseUrl: base.trim(), providerId: id, ...(typeof custom.wire_api === 'string' ? { wireApi: custom.wire_api } : {}) }
+    return {
+      baseUrl: base.trim(), providerId: id,
+      ...(typeof custom.wire_api === 'string' ? { wireApi: custom.wire_api } : {}),
+      ...(typeof custom.env_key === 'string' ? { envKey: custom.env_key } : {}),
+    }
   }
   if (id === 'openai') {
     const b = config.openai_base_url

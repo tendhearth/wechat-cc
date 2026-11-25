@@ -585,6 +585,7 @@ const en = {
   'cap.wechat.idle': 'Connected, nothing sent yet.',
   'cap.brain.ok': 'Using {name}.',
   'cap.brain.probe_fresh': 'Using {name}. Connection just checked.',
+  'cap.brain.probe_turn': 'Using {name}. A reply confirmed the connection.',
   'cap.brain.probe_history': 'Using {name}. Reusing the last check from {date}.',
   'cap.brain.probe_transient': '{name} is temporarily unavailable. CC will retry the next time you use it.',
   'cap.brain.probe_busy': '{name} is temporarily busy. CC will retry the next time you use it.',
