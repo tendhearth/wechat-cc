@@ -1,4 +1,4 @@
-import { isPermissionCommandTool, permissionTextSegments, permissionCwd, permissionDisplay, PermissionDisplaySchema, permissionOperationSource } from '@wechat-cc/protocol'
+import { permissionCwd, permissionDisplay, PermissionDisplaySchema, permissionOperationSource, permissionWaitingTitle } from '@wechat-cc/protocol'
 import type { CliSessionRowT } from '../backend/types'
 import { hasMessage, t, type Lang, type MessageKey } from '../i18n'
 import { sessionAgentName } from './agents'
@@ -49,21 +49,8 @@ export function relAgo(ts: number, now: number, lang: Lang): string {
 }
 
 function terminalWaitingTitle(pending: NonNullable<CliSessionRowT['pending']>, agent: string, lang: Lang): string {
-  const singleLine = (value: string) => permissionTextSegments(value.replace(/\s+/g, ' ').trim()).map(part => part.text).join('')
-  const body = PermissionDisplaySchema.safeParse(pending.display).data?.body
-  const tool = pending.tool === 'permission' ? '' : singleLine(pending.tool)
-  const summary = singleLine(pending.summary ?? '')
-  let title: string
-  if (body?.kind === 'command') title = t(lang, 'terminal.waiting.run', { target: singleLine(body.command) })
-  else if (body?.kind === 'edit' || (body?.kind === 'patch' && body.files.length === 1)) {
-    const path = body.kind === 'edit' ? body.path : body.files[0]!.path
-    title = t(lang, 'terminal.waiting.edit', { target: singleLine(path) })
-  } else if (body?.kind === 'write') title = t(lang, 'terminal.waiting.write', { target: singleLine(body.path) })
-  else if (!body && summary && (isPermissionCommandTool(tool) || tool === 'local_shell')) title = t(lang, 'terminal.waiting.run', { target: summary })
-  else if (tool) title = t(lang, !body && summary ? 'terminal.waiting.toolSummary' : 'terminal.waiting.tool', { tool, summary })
-  else title = summary || t(lang, 'terminal.waiting.approval', { agent })
-  const chars = Array.from(title)
-  return chars.length <= 120 ? title : `${chars.slice(0, 119).join('')}…`
+  const display = PermissionDisplaySchema.safeParse(pending.display).data
+  return permissionWaitingTitle(display, pending.tool, pending.summary, lang, t(lang, 'terminal.waiting.approval', { agent }))
 }
 
 export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): TerminalRow {

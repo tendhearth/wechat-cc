@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PlaceT } from '@wechat-cc/protocol'
+import { makeDemoBackend } from '../backend/demo'
 import { inPlace, placeHref, placeLine, placeTime } from './places'
 
 const NOW = new Date('2026-11-18T16:10:00').getTime()
@@ -21,9 +22,19 @@ describe('places view', () => {
   })
 
   it('坐回来:上次看过以后另有几件也动过 ⇒ 现状后面补一句', () => {
-    expect(placeLine(place({ status: 'done', alsoChanged: 2 }), 'zh-Hans')).toBe('菜谱导入,另有 2 件也动过')
+    expect(placeLine(place({ status: 'done', alsoChanged: 2 }), 'zh-Hans')).toBe('菜谱导入，另有 2 件也动过')
     expect(placeLine(place({ status: 'working', alsoChanged: 1 }), 'en')).toBe('菜谱导入… · 1 more changed')
     expect(placeLine(place({ status: 'done', alsoChanged: 0 }), 'zh-Hans')).toBe('菜谱导入')
+  })
+
+  it.each([
+    ['zh-Hans', '想运行 npm install sharp'],
+    ['en', 'Wants to run npm install sharp'],
+  ] as const)('演示首页的 portfolio 待批显示请求动作 (%s)', async (lang, title) => {
+    const { places } = await makeDemoBackend({ lang, now: () => NOW }).places!()
+    const portfolio = places.find(p => p.name === 'portfolio')!
+    expect(placeLine(portfolio, lang)).toBe(title)
+    expect(portfolio.waiting?.summary).toBe(title)
   })
 
   it('「›」打开:等你的那件 > 最近的事 > 最近的会话', () => {

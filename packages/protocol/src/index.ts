@@ -68,4 +68,6 @@ export { isPermissionCommandTool, permissionDisplay, PermissionDisplaySchema, pe
 export { hasInvisiblePermissionText, permissionEditPreview, permissionLines, permissionOperationSource, permissionTextSegments } from './permission-presentation'
 export { permissionActionZh, permissionPatchLabel, permissionToolTarget, resolvePermissionDisplay, PERMISSION_WHITESPACE_NOTICE_ZH, PERMISSION_INVISIBLE_NOTICE_ZH } from './permission-presentation'
 
+export { permissionWaitingTitle } from './permission-waiting-title'
+
 export * from './approval-lookup'

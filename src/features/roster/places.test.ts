@@ -169,7 +169,7 @@ it.each(['slow', 'error'] as const)('GET places 不等待意见模型 (%s)', asy
     const first = await read()
     const { places, version } = PlacesResponse.parse(first.body)
     expect(first.status).toBe(200)
-    expect(places[0]?.waiting).toMatchObject({ requestId: 'req-1', summary: 'Bash: 查看变更' })
+    expect(places[0]?.waiting).toMatchObject({ requestId: 'req-1', summary: '想运行 查看变更' })
     expect(places[0]?.waiting).not.toHaveProperty('ccOpinion')
     expect(places[0]?.waiting).not.toHaveProperty('questionReason')
     if (mode === 'error') {
@@ -430,7 +430,7 @@ it('地方只投影实际排在纸片上的那条请求，终端取 pending，�
     const { places } = PlacesResponse.parse((await call({ places: reader }, 'GET /v1/places', null, origin)).body)
     const byName = (name: string) => places.find(place => place.name === name)?.waiting
     const approval = byName('rici')
-    expect(approval).toMatchObject({ itemKey: 'matter:old', requestId: 'earlier', summary: 'Bash: earlier',
+    expect(approval).toMatchObject({ itemKey: 'matter:old', requestId: 'earlier', summary: '想运行 printf sample',
       count: 4, tool: 'Bash', showSnapshotNotice: true, hasScriptPreview: true, ccOpinion: '请核对。' })
     expect(approval).not.toHaveProperty('scripts')
     expect(approval?.cwd === '/w/rici/worktree' && JSON.stringify(approval.display) === JSON.stringify(display)).toBe(true)
@@ -483,7 +483,7 @@ it('手机面板在转义后的名单超出帧预算时退回原形状，ETag �
     const compact = PlacesResponse.parse(JSON.parse(text))
     expect(compact.places.map(place => place.key)).toEqual(places.places.map(place => place.key))
     for (const place of compact.places) {
-      expect(place.waiting).toMatchObject({ requestId: 'r', summary: 'Bash: sample', count: 1, ccOpinion: '请核对。' })
+      expect(place.waiting).toMatchObject({ requestId: 'r', summary: `想运行 ${display.body.command.slice(0, 115)}…`, count: 1, ccOpinion: '请核对。' })
       for (const key of ['tool', 'cwd', 'display', 'truncated', 'showSnapshotNotice', 'hasScriptPreview']) expect(place.waiting).not.toHaveProperty(key)
     }
     expect(compact.version).not.toBe(places.version)

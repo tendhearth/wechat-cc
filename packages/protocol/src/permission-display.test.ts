@@ -1,12 +1,43 @@
 import { describe, expect, it } from 'vitest'
 import { CliPermissionRequest } from './desktop-api'
-import { boundedPermissionDisplay, permissionDisplay, PermissionDisplaySchema, PERMISSION_DISPLAY_LIMITS, toolPermissionDisplay } from './permission-display'
+import { boundedPermissionDisplay, permissionDisplay, PermissionDisplaySchema, PERMISSION_DISPLAY_LIMITS, toolPermissionDisplay, type PermissionDisplay } from './permission-display'
 import { hasInvisiblePermissionText, permissionEditPreview, permissionTextSegments } from './permission-presentation'
+import { permissionWaitingTitle } from './permission-waiting-title'
 
 function same(actual: unknown, expected: unknown) {
   // Never print the source on an assertion failure.
   expect(JSON.stringify(actual) === JSON.stringify(expected)).toBe(true)
 }
+
+describe('permissionWaitingTitle', () => {
+  type TitleCase = [string, string, PermissionDisplay['body'] | undefined, string | null, string, string]
+  const edit = { path: 'src/a.ts', change: 'update', diff: 'sample' }
+  it.each<TitleCase>([
+    ['command', 'Bash', { kind: 'command', command: 'npm test\n\t npm run deploy' }, 'old summary', '想运行 npm test npm run deploy', 'Wants to run npm test npm run deploy'],
+    ['edit', 'Edit', { kind: 'edit', path: 'src/a.ts', changes: [{ before: 'a', after: 'b' }] }, null, '想改 src/a.ts', 'Wants to edit src/a.ts'],
+    ['single-file patch', 'apply_patch', { kind: 'patch', files: [edit] }, null, '想改 src/a.ts', 'Wants to edit src/a.ts'],
+    ['multi-file patch', 'apply_patch', { kind: 'patch', files: [edit, { ...edit, path: 'src/b.ts' }] }, 'old summary', '想用 apply_patch', 'Wants to use apply_patch'],
+    ['write', 'Write', { kind: 'write', path: 'notes.txt', content: 'sample' }, null, '想写 notes.txt', 'Wants to write notes.txt'],
+    ['URL', 'WebFetch', { kind: 'url', url: 'https://example.test' }, 'old summary', '想用 WebFetch', 'Wants to use WebFetch'],
+    ['legacy command', 'exec_command', undefined, 'git status', '想运行 git status', 'Wants to run git status'],
+    ['legacy local shell', 'local_shell', undefined, 'git status', '想运行 git status', 'Wants to run git status'],
+    ['tool with summary', 'Read', undefined, ' notes.txt\n and more ', '想用 Read：notes.txt and more', 'Wants to use Read: notes.txt and more'],
+    ['tool without summary', 'Bash', undefined, null, '想用 Bash', 'Wants to use Bash'],
+    ['invisible characters', 'Read', undefined, 'a\u202Eb\u0000c', '想用 Read：a\\u{202E}b\\x00c', 'Wants to use Read: a\\u{202E}b\\x00c'],
+  ])('%s in both languages', (_, tool, body, summary, zh, en) => {
+    const display = body && { body }
+    same(permissionWaitingTitle(display, tool, summary, 'zh-Hans'), zh)
+    same(permissionWaitingTitle(display, tool, summary, 'en'), en)
+  })
+
+  it.each([['zh-Hans', '想运行 '], ['en', 'Wants to run ']] as const)(
+    'caps the full title at 120 code points (%s)', (lang, prefix) => {
+      const summary = '😀'.repeat(120 - prefix.length)
+      same(permissionWaitingTitle(undefined, 'Bash', summary, lang), prefix + summary)
+      same(permissionWaitingTitle(undefined, 'Bash', summary + ' overflow', lang), prefix + '😀'.repeat(119 - prefix.length) + '…')
+    },
+  )
+})
 
 it.each([
   ['insertion with final newline', '', 'sample\n', true],
