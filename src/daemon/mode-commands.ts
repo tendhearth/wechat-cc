@@ -37,7 +37,7 @@ import type { AgentConfig } from '../lib/agent-config'
 import type { UserTier } from '../domain/user-tier'
 import { noAskNotice } from '../domain/enforcement-matrix'
 import { providerDenialFor, describeProviderDenial, providerForSlash, PROVIDER_SLASH } from '../domain/provider-policy'
-import { PROVIDER_IDS } from '../lib/provider-ids'
+import { isKnownProviderId, PROVIDER_IDS } from '../lib/provider-ids'
 import type { WechatCommand } from './commands/registry'
 
 /** /set 读写的这一对话的偏好(chat-prefs 的子集)。 */
@@ -177,12 +177,19 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   }
 
 
+  function displayName(id: ProviderId): string {
+    return deps.registry.get(id)?.opts.displayName || (isKnownProviderId(id) ? namesIn(deps.registry, id).short : id)
+  }
+
   function describeMode(m: Mode): string {
     switch (m.kind) {
-      case 'solo': return m.model ? `solo · ${m.provider} · 模型 ${m.model}` : `solo · ${m.provider}`
-      case 'primary_tool': return `primary_tool · primary=${m.primary}`
-      case 'parallel': return 'parallel'
-      case 'chatroom': return 'chatroom'
+      case 'solo': return `${displayName(m.provider)} 来答${m.model ? `（模型 ${m.model}）` : ''}`
+      case 'primary_tool': {
+        const peer = defaultDelegatePeer(m.primary)
+        return `${displayName(m.primary)} 来答${peer ? `，需要时叫 ${displayName(peer)} 帮忙` : ''}`
+      }
+      case 'parallel': return '几家一起答'
+      case 'chatroom': return '几家一起讨论'
     }
   }
 
@@ -703,8 +710,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       // the user's chat. (Alternative would be conversationStore.delete
       // but that exposes the daemon-default at a layer above the user.)
       deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: deps.defaultProviderId })
-      const dn = namesIn(deps.registry, deps.defaultProviderId).short
-      await reply(msg.chatId, `这个对话恢复默认 (solo · ${dn})。`)
+      await reply(msg.chatId, `这个对话回到默认，由 ${displayName(deps.defaultProviderId)} 来答。`)
       deps.log('MODE_CMD', `chat=${msg.chatId} → reset to default ${deps.defaultProviderId}`)
       return true
       return false
@@ -712,18 +718,19 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   // /mode — status
     { id: 'mode', words: ['mode'], match: (w, tail) => w.toLowerCase() === 'mode' && tail === '', run: async (msg, slashWord, tail) => {
       const cur = deps.coordinator.getMode(msg.chatId)
+      const registered = deps.registry.list()
+      const allowed = deps.readConfig?.().trusted_providers
+      const punctuation: Record<string, string> = { ',': '，', ';': '；', ':': '：' }
       const lines = [
-        `当前对话模式: ${describeMode(cur)}`,
-        `已注册 provider: ${deps.registry.list().join(', ')}`,
-        `默认: ${deps.defaultProviderId}`,
-        ...(deps.registry.list().some(id => id === 'agy')
-          ? ['订阅 CLI(agy):所有对话共用一把 trusted 钥匙,不能按对话分权限;guest 不可用'] : []),
-        ...(deps.readConfig?.().trusted_providers
-          ? [`非管理员可用(管理员设定): ${deps.readConfig().trusted_providers!.join(', ') || '(无)'}`] : []),
-        ...Object.entries(deps.providerNotes?.() ?? {}).map(([id, note]) => `${id}: ${note}`),
-        '',
-        // Provider checklist: keep this list in sync with /help's mode-switch line above (~:174).
-        '可用命令: /cc /codex /cursor /api /gemini /agy /cc + codex /codex + cc /solo /stop /mode(多模型讨论在桌面上开)',
+        `现在：${describeMode(cur)}`,
+        `能用的：${registered.map(displayName).join('、') || '无'}`,
+        `默认：${displayName(deps.defaultProviderId)}`,
+        ...(registered.includes('agy')
+          ? ['/agy 用的是订阅 CLI：所有对话共用一把钥匙，没法按对话分权限；访客不能用。'] : []),
+        ...(allowed ? [`别人（非管理员）能用的：${allowed.map(displayName).join('、') || '无'}（管理员设的）`] : []),
+        ...Object.entries(deps.providerNotes?.() ?? {}).map(([id, note]) =>
+          `${displayName(id)}：${note?.replace(/(?<=\p{Script=Han}[ \t]*)[,;:]|[,;:](?=[ \t]*\p{Script=Han})/gu, mark => punctuation[mark]!)}`),
+        `换谁来答：${PROVIDER_IDS.map(id => `/${PROVIDER_SLASH[id]}`).join(' ')} /cc + codex /codex + cc　回到默认 /solo · 退出 /stop（几家一起讨论在桌面上开）`,
       ]
       await reply(msg.chatId, lines.join('\n'))
       return true
@@ -744,13 +751,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     { id: 'stop', words: ['stop'], match: (w, tail) => w.toLowerCase() === 'stop' && tail === '', run: async (msg, slashWord, tail) => {
       const wasInFlight = deps.coordinator.cancel(msg.chatId)
       deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: deps.defaultProviderId })
-      const dn = namesIn(deps.registry, deps.defaultProviderId).short
       // Generic copy: coordinator.cancel() now also fires for solo/parallel
       // handle-cancels (post-cancel-review CRITICAL 1), not just chatroom's
       // preempt loop — a chatroom-specific message here would mislead solo
       // users into thinking they were in chatroom mode.
-      const suffix = wasInFlight ? '；已请求中止 in-flight 回合（最多多收到 1 个 turn 的输出后停止）' : ''
-      await reply(msg.chatId, `已退出当前模式，恢复默认 (solo · ${dn})${suffix}。`)
+      const suffix = wasInFlight ? '正在回的那一轮已经叫它停了，可能还会收到一点已经在路上的话。' : ''
+      await reply(msg.chatId, `已退出，回到默认，由 ${displayName(deps.defaultProviderId)} 来答。${suffix}`)
       deps.log('MODE_CMD', `chat=${msg.chatId} → /stop reset to default${wasInFlight ? ' + cancel in-flight' : ''}`)
       return true
       return false

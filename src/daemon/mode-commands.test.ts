@@ -18,6 +18,8 @@ function setup(opts: {
   config?: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string; trusted_providers?: string[] }
   models?: { models: string[]; error?: string; fromCache?: boolean }
   notes?: Partial<Record<ProviderId, string>>
+  displayNames?: Partial<Record<ProviderId, string>>
+  cancel?: () => boolean
   initiativeJobTimes?: Array<{ label: string; at: string }>
   requestRestart?: (reason: string) => void
   socialState?: 'ok' | 'off' | 'degraded' | 'pending'
@@ -59,12 +61,12 @@ function setup(opts: {
     coordinator: {
       getMode: () => stored ?? { kind: 'solo', provider: opts.defaultProviderId ?? 'claude' },
       setMode: (chatId, mode) => { stored = mode; set(chatId, mode) },
-      cancel: () => false,
+      cancel: opts.cancel ?? (() => false),
     },
     registry: {
       has: (id: string) => registered.includes(id),
       get: (id: string) => registered.includes(id)
-        ? { provider: {} as never, opts: { displayName: id[0]!.toUpperCase() + id.slice(1), canResume: () => true } }
+        ? { provider: {} as never, opts: { displayName: opts.displayNames?.[id], canResume: () => true } }
         : null,
       list: () => registered,
     },
@@ -152,7 +154,7 @@ describe('makeModeCommands', () => {
   it('/mode shows the per-chat pinned model', async () => {
     const { cmds, sentMessages } = setup({ registered: ['claude', 'openai'], initialMode: { kind: 'solo', provider: 'openai', model: 'DeepSeek' } })
     await cmds.handle(inbound('/mode'))
-    expect(sentMessages[0]?.[1]).toContain('solo · openai · 模型 DeepSeek')
+    expect(sentMessages[0]?.[1]).toContain('现在：API 来答（模型 DeepSeek）')
   })
 
   it('/api deepseek-chat pins the model AND switches to solo+openai', async () => {
@@ -237,7 +239,7 @@ describe('makeModeCommands', () => {
     const { cmds, set, sentMessages } = setup({ defaultProviderId: 'claude' })
     await cmds.handle(inbound('/solo'))
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'claude' })
-    expect(sentMessages[0]?.[1]).toContain('恢复默认')
+    expect(sentMessages[0]?.[1]).toBe('这个对话回到默认，由 Claude 来答。')
   })
 
   it('/mode shows current mode + registered providers + default', async () => {
@@ -247,9 +249,36 @@ describe('makeModeCommands', () => {
     })
     await cmds.handle(inbound('/mode'))
     const text = sentMessages[0]?.[1] ?? ''
-    expect(text).toContain('solo · claude')   // current
-    expect(text).toContain('claude, codex')   // registered
-    expect(text).toContain('默认: codex')      // default
+    expect(text).toContain('现在：Claude 来答')   // current
+    expect(text).toContain('能用的：Claude、Codex') // registered
+    expect(text).toContain('默认：Codex')         // default
+  })
+
+  it('/mode、/solo、/stop 用微信里好读的文字', async () => {
+    const { cmds, sentMessages } = setup({
+      registered: ['claude', 'codex', 'agy'],
+      config: { trusted_providers: ['claude', 'codex'] },
+      notes: { codex: '版本不同,首次使用时确认' },
+      cancel: () => true,
+    })
+    for (const command of ['/mode', '/solo', '/stop']) {
+      expect(await cmds.handle(inbound(command)), command).toBe(true)
+      const text = sentMessages.at(-1)![1]
+      // /solo is a command in the last line, separate from the old mode label.
+      expect.soft(text, command).not.toMatch(/\b(?:in-flight|turn|provider|trusted|guest)\b|(?<!\/)solo ·|\*\*/)
+      expect.soft(text, command).not.toMatch(/\p{Script=Han}\s*[,;:]|[,;:]\s*\p{Script=Han}/u)
+    }
+  })
+
+  it.each([
+    [{ kind: 'primary_tool', primary: 'claude' }, '主答 来答，需要时叫 帮手 帮忙'],
+    [{ kind: 'parallel' }, '几家一起答'],
+    [{ kind: 'chatroom' }, '几家一起讨论'],
+    [{ kind: 'solo', provider: 'custom-executor' }, 'custom-executor 来答'],
+  ] satisfies Array<[Mode, string]>)('/mode describes %j in plain language', async (initialMode, description) => {
+    const { cmds, sentMessages } = setup({ initialMode, displayNames: { claude: '主答', codex: '帮手' } })
+    await cmds.handle(inbound('/mode'))
+    expect(sentMessages[0]?.[1].split('\n')[0]).toBe(`现在：${description}`)
   })
 
   // ── /both /parallel /chat:10-21 起不在微信里开(主人定:多 agent 交给软件) ──
@@ -273,8 +302,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/stop'))
     expect(consumed).toBe(true)
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'codex' })
-    expect(sentMessages[0]?.[1]).toContain('已退出当前模式')
-    expect(sentMessages[0]?.[1]).toContain('Codex')
+    expect(sentMessages[0]?.[1]).toBe('已退出，回到默认，由 Codex 来答。')
   })
 
   it('/stop also calls coordinator.cancel and notifies on an in-flight turn (RFC 03 review #11; generic copy — not chatroom-specific, since cancel() also fires for solo/parallel)', async () => {
@@ -305,7 +333,7 @@ describe('makeModeCommands', () => {
     })
     await cmds.handle(inbound('/stop'))
     expect(cancel).toHaveBeenCalledWith('chat-1')
-    expect(sentMessages[0]?.[1]).toContain('已请求中止 in-flight 回合')
+    expect(sentMessages[0]?.[1]).toContain('正在回的那一轮已经叫它停了，可能还会收到一点已经在路上的话。')
     expect(sentMessages[0]?.[1]).not.toContain('chatroom')
   })
 
@@ -335,7 +363,7 @@ describe('makeModeCommands', () => {
       resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/stop'))
-    expect(sentMessages[0]?.[1]).not.toContain('已中止')
+    expect(sentMessages[0]?.[1]).toBe('已退出，回到默认，由 Claude 来答。')
   })
 
   it('/mode lists /stop and /cc + codex, and says multi-model discussion is on the desktop (no /both /chat to type)', async () => {
@@ -345,7 +373,7 @@ describe('makeModeCommands', () => {
     expect(text).toContain('/stop')
     expect(text).toContain('/cc + codex')
     expect(text).toContain('/codex + cc')
-    expect(text).toContain('多模型讨论在桌面上开')
+    expect(text).toContain('几家一起讨论在桌面上开')
     expect(text).not.toMatch(/\/both|\/chat\b/)
   })
 
@@ -652,7 +680,7 @@ describe('makeModeCommands', () => {
     expect(reply).toContain('张三')
     expect(reply).toContain('wxid_abc123')   // userId truncated prefix visible
     expect(reply).toContain('8ca10d158998')  // accountId truncated prefix visible
-    expect(reply).toContain('cc')            // bot name from solo+claude default
+    expect(reply).toContain('当前回应: cc (Claude 来答)') // bot name and who answers
     expect(reply).toContain('chat12345')     // chatId truncated prefix visible
   })
 
@@ -1211,8 +1239,8 @@ describe('provider policy in slash commands', () => {
   it('/mode says which providers share one key and what non-admins may use; /help lists what is actually registered', async () => {
     const { cmds, sentMessages } = setup({ registered: ['claude', 'agy'], config: { trusted_providers: ['claude'] } })
     await cmds.handle(inbound('/mode'))
-    expect(sentMessages[0]![1]).toContain('共用一把 trusted 钥匙')
-    expect(sentMessages[0]![1]).toContain('非管理员可用(管理员设定): claude')
+    expect(sentMessages[0]![1]).toContain('/agy 用的是订阅 CLI：所有对话共用一把钥匙，没法按对话分权限；访客不能用。')
+    expect(sentMessages[0]![1]).toContain('别人（非管理员）能用的：Claude（管理员设的）')
     await cmds.handle(inbound('/help'))
     expect(sentMessages[1]![1]).toContain('现在能用：/cc /agy')
     expect(sentMessages[1]![1]).toContain('订阅 CLI')
@@ -1223,8 +1251,7 @@ describe('/mode provider notes', () => {
   it('shows per-provider status lines from bootstrap (codex version gap + probe result)', async () => {
     const { cmds, sentMessages } = setup({ registered: ['claude', 'codex'], notes: { codex: '你的 CLI 0.153.4(与 SDK 0.144.4 不同版,首次使用时真跑一句探测) · 未探测' } })
     await cmds.handle(inbound('/mode'))
-    expect(sentMessages[0]![1]).toContain('codex: 你的 CLI 0.153.4')
-    expect(sentMessages[0]![1]).toContain('未探测')
+    expect(sentMessages[0]![1]).toContain('Codex：你的 CLI 0.153.4(与 SDK 0.144.4 不同版，首次使用时真跑一句探测) · 未探测')
   })
 })
 
