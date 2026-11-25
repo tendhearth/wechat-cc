@@ -577,6 +577,96 @@ describe('notebook reply read state', () => {
   const seen = 'POST /v1/notebook/seen'
   const empty = { ok: true, unseen: false, day: null }
 
+  function pairedFixture() {
+    const f = fixture()
+    f.store.set('pen', DEFAULT_OPENING)
+    const owner = f.n.write('fixture', 'paired-read-state', 'app')
+    f.n.unseen()
+    const reply = (createdAt: number) => f.store.append({
+      author: 'cc', body: 'fixture', origin: 'desktop', createdAt, refId: owner.id, clientId: null,
+    })
+    const routes = notebookRoutes(f.n)
+    const device = (deviceId: string, key: string, body?: unknown, query = '') =>
+      routes[key]!(new URLSearchParams(query), body, { tier: 'admin', origin: 'device', deviceId })
+    return { ...f, device, reply, owner }
+  }
+
+  it('keeps replies unread after GET by a device that explicitly confirmed a reply', async () => {
+    const { call, device, n, owner, reply } = pairedFixture()
+    const first = reply(BASE + 1)
+    expect((await device('modern', page)).status).toBe(200)
+    expect(n.unseen()).toEqual(empty)
+    // A valid confirmation still teaches us about the device after a legacy GET marked the reply.
+    expect((await device('modern', seen, { ids: [first.id] })).body).toEqual({ ok: true })
+
+    const older = reply(BASE + 2)
+    const later = reply(BASE + 86_400_000)
+    expect((await device('modern', page, null, `day=${owner.day}`)).status).toBe(200)
+    expect((await device('modern', page, null, 'day=2026-11-20')).status).toBe(200)
+    expect(n.unseen()).toEqual({ ok: true, unseen: true, day: owner.day })
+    expect((await device('modern', seen, { ids: [older.id] })).status).toBe(200)
+    expect(n.unseen()).toEqual({ ok: true, unseen: true, day: '2026-11-20' })
+
+    expect((await device('legacy', page)).status).toBe(200)
+    expect(n.unseen()).toEqual(empty)
+    reply(later.createdAt + 1)
+    expect((await call(page)).status).toBe(200)
+    expect(n.unseen()).toEqual({ ok: true, unseen: true, day: '2026-11-20' })
+    expect((await device('modern', page)).status).toBe(200)
+    expect(n.unseen()).toEqual({ ok: true, unseen: true, day: '2026-11-20' })
+  })
+
+  it('learns only from a paired device confirming a real reply', async () => {
+    const { call, device, n, owner, reply, store } = pairedFixture()
+    const first = reply(BASE + 1)
+    expect((await call(seen, { ids: [first.id] }, 'link')).status).toBe(403)
+    expect((await call(seen, { ids: [first.id] })).status).toBe(200)
+    expect((await device('phone', seen, { ids: [] })).status).toBe(400)
+    expect((await device('phone', seen, { ids: ['missing', owner.id] })).body).toEqual({ ok: true })
+    expect(store.get('explicitAckDevices')).toBeNull()
+    reply(BASE + 2)
+    expect(n.unseen().unseen).toBe(true)
+    expect((await device('phone', page)).status).toBe(200)
+    expect(n.unseen()).toEqual(empty)
+  })
+
+  it('retains 50 devices, evicting the least recently used and restoring its legacy GET behavior', async () => {
+    const { device, n, reply, store } = pairedFixture()
+    const first = reply(BASE + 1)
+    const confirm = (index: number) => device(`phone-${index}`, seen, { ids: [first.id] })
+    for (let i = 0; i < 50; i++) expect((await confirm(i)).status).toBe(200)
+    expect((await device('phone-0', page)).status).toBe(200)
+    expect((await confirm(50)).status).toBe(200)
+    expect(store.get('explicitAckDevices')).toHaveLength(50)
+    reply(BASE + 2)
+    expect((await device('phone-0', page)).status).toBe(200)
+    expect(n.unseen().unseen).toBe(true)
+    expect((await device('phone-1', page)).status).toBe(200)
+    expect(n.unseen()).toEqual(empty)
+  })
+
+  it('keeps confirmation and page reads working when writing the device marker fails', async () => {
+    const { device, n, reply, store } = pairedFixture()
+    const first = reply(BASE + 1)
+    expect((await device('known', seen, { ids: [first.id] })).status).toBe(200)
+    expect((await device('other', seen, { ids: [first.id] })).status).toBe(200)
+    const set = store.set
+    const write = vi.spyOn(store, 'set').mockImplementation((key, value) => {
+      if (key === 'explicitAckDevices') throw Error('setting write failed')
+      set(key, value)
+    })
+    try {
+      const second = reply(BASE + 2)
+      expect((await device('new', seen, { ids: [second.id] })).body).toEqual({ ok: true })
+      expect(n.unseen()).toEqual(empty)
+      reply(BASE + 3)
+      expect((await device('known', page)).status).toBe(200)
+      expect(n.unseen().unseen).toBe(true)
+      expect((await device('new', page)).status).toBe(200)
+      expect(n.unseen()).toEqual(empty)
+    } finally { write.mockRestore() }
+  })
+
   it('initializes at now and uses the oldest unread reply’s local day, including replies to struck entries', async () => {
     const { n, call, store, at } = fixture()
     const owner = n.write('owner', 'owner-watermark', 'desktop')
@@ -644,7 +734,7 @@ describe('notebook reply read state', () => {
       refId: owner.id, clientId: null,
     })
     const route = notebookRoutes(n)[page]!
-    const device = { tier: 'admin', origin: 'device', frameBudget: 5000 } as const
+    const device = { tier: 'admin', origin: 'device', deviceId: 'legacy', frameBudget: 5000 } as const
     const first = await route(new URLSearchParams(), null, device)
     expect(first.body).toHaveProperty('nextAfter', early.id)
     expect(store.get('repliesSeenAt')).toBe(BASE)

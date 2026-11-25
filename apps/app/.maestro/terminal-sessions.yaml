@@ -22,6 +22,7 @@ appId: com.tendhearth.app
     centerElement: true
 - assertVisible:
     id: row-terminal-demo-cli-blog
+    text: "(想运行|Wants to run) npm run deploy.*"
 - takeScreenshot: t01b-now-waiting-terminal
 - tapOn:
     id: row-terminal-demo-cli-blog
@@ -30,7 +31,17 @@ appId: com.tendhearth.app
       id: terminal-detail-allow
     timeout: 5000
 - assertVisible:
+    id: terminal-detail-pending-actor
+    text: "Claude (想运行一条命令|wants to run a command) · .+"
+- assertNotVisible:
+    id: terminal-detail-agent
+- assertVisible:
     id: terminal-detail-pending
+- assertVisible:
+    id: approval-operation-command
+- assertVisible:
+    id: approval-operation-label
+    text: ".*(项目目录|Project folder) .+"
 - assertVisible:
     id: terminal-say-send
     enabled: false
@@ -55,6 +66,7 @@ appId: com.tendhearth.app
     centerElement: true
 - assertVisible:
     id: row-terminal-demo-cli-blog
+    text: "(想运行|Wants to run) npm run deploy.*"
 - assertNotVisible:
     id: terminal-allow-demo-cli-blog
 - scrollUntilVisible:
@@ -87,6 +99,15 @@ appId: com.tendhearth.app
 - assertVisible:
     id: terminal-say-send
     enabled: false
+- assertVisible:
+    id: direct-title
+    text: docs
+- assertVisible:
+    id: direct-project
+    text: "Claude · (终端会话|terminal session)"
+- assertVisible:
+    id: terminal-activity-you-0
+    text: "(你：|You:).*"
 - takeScreenshot: t03-terminal-running
 - tapOn:
     id: topbar-back
@@ -165,7 +186,7 @@ appId: com.tendhearth.app
 - extendedWaitUntil:
     visible:
       id: row-terminal-demo-cli-blog
-      text: "blog, (这一轮做完了|Done for this round),.*"
+      text: "blog[，,] ?Claude[，,] ?(这一轮做完了|Done for this round)[，,].+"
     timeout: 5000
 # 原 all-group-working 意图：仍有在做的会话可找到，迁到 docs 搜索引用。
 - tapOn:
@@ -181,5 +202,5 @@ appId: com.tendhearth.app
     centerElement: true
 - assertVisible:
     id: row-terminal-demo-cli-docs
-    text: "docs, (在做|Working),.*"
+    text: "docs[，,] ?Claude[，,] ?(在做|Working)[，,].+"
 - takeScreenshot: t06-all-allowed

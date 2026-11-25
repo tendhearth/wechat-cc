@@ -133,23 +133,6 @@ test('空段收起，失败能重读，旧回包和组字不打断新结果', as
   await expect(page.locator('.desk-search-section-title:visible')).toHaveCount(0)
 })
 
-test('窄窗口仍然提交后只搜交办的事', async ({ page, shimUrl }) => {
-  await page.setViewportSize({ width: 800, height: 820 })
-  const queried: string[] = []
-  page.on('request', req => {
-    const url = new URL(req.url())
-    if (url.pathname === '/v1/terminal/search' || url.searchParams.has('q')) queried.push(url.pathname)
-  })
-  await page.goto(shimUrl)
-  await page.locator('#topbar-search').click()
-  await search(page).fill('花园')
-  await page.waitForTimeout(350)
-  expect(queried).toEqual([])
-  await search(page).press('Enter')
-  await expect.poll(() => queried).toContain('/v1/workbench')
-  expect(queried.every(path => path === '/v1/workbench')).toBe(true)
-  await expect(page.locator('.desk-search-section-title')).toHaveCount(0)
-})
 
 test('旧后台的对话搜索回退，交办读取失败可单独复试', async ({ page, shimUrl }) => {
   await page.route('**/v1/matter/owner-chat/window**', route => query(route.request().url()).has('q')

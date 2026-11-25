@@ -63,3 +63,11 @@ export * from './checkup-review'
 export * from './roster'
 export * from './places'
 export * from './notebook'
+
+export { isPermissionCommandTool, permissionDisplay, PermissionDisplaySchema, permissionCwd, permissionMcpTargetWire, boundedPermissionDisplay, toolPermissionDisplay, PERMISSION_SNAPSHOT_NOTICE, PERMISSION_DISPLAY_LIMITS, type PermissionDisplay, type PermissionMcpTarget } from './permission-display'
+export { hasInvisiblePermissionText, permissionEditPreview, permissionLines, permissionOperationSource, permissionTextSegments } from './permission-presentation'
+export { permissionActionZh, permissionPatchLabel, permissionToolTarget, resolvePermissionDisplay, PERMISSION_WHITESPACE_NOTICE_ZH, PERMISSION_INVISIBLE_NOTICE_ZH } from './permission-presentation'
+
+export { permissionWaitingTitle } from './permission-waiting-title'
+
+export * from './approval-lookup'

@@ -19,10 +19,10 @@ export function notebookRoutes(n: Notebook): RouteTable {
 
   return {
     'GET /v1/notebook/unseen': handle('page', n => ok(n.unseen())),
-    'POST /v1/notebook/seen': handle('page', (n, _query, body) => {
+    'POST /v1/notebook/seen': handle('page', (n, _query, body, caller) => {
       const input = NotebookSeenRequest.safeParse(body)
       if (!input.success) return failure('notebook_invalid')
-      n.markRepliesSeen(input.data.ids)
+      n.markRepliesSeen(input.data.ids, caller.origin === 'device' ? caller.deviceId : undefined)
       return ok({ ok: true })
     }),
     'GET /v1/notebook': handle('page', (n, query, _body, caller, budget) => {
@@ -39,9 +39,11 @@ export function notebookRoutes(n: Notebook): RouteTable {
       if (after !== undefined && offset === 0) return failure('notebook_not_found')
       const entries = page.entries.slice(offset)
       const result = { ...page, entries }
+      const explicitAck = caller.origin === 'device' && caller.deviceId && n.usesExplicitAck(caller.deviceId)
       if (budget === undefined || !framedTooLargeFor(JSON.stringify(result), budget)) {
-        // The phone can display the day once it has the final frame.
-        if (caller.origin === 'device') {
+        // Legacy phones count the final frame as read. A new phone's first GET
+        // also takes this path until it has explicitly confirmed a valid reply.
+        if (caller.origin === 'device' && !explicitAck) {
           try {
             n.markRepliesSeen(page.entries.filter(entry => entry.author === 'cc' && entry.refId !== null).map(entry => entry.id))
           } catch { /* Reading still succeeds if read state cannot be saved. */ }

@@ -36,6 +36,8 @@ export const PROVIDER_ERROR_CODES = [
   'quota',
   /** 请求本身不合法(上下文太长、模型不可用等)。 */
   'invalid_request',
+  /** 明确的 CLI / 协议 / 模型不兼容。 */
+  'incompatible',
   /** 输入超过上下文窗口；主人对话立即换段并仅重试一次。 */
   'context_overflow',
   /** provider 明确标了这是一次 API 失败,但没说是哪类。 */

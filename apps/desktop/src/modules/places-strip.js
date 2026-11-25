@@ -10,6 +10,8 @@
 import {V1,v1} from '../daemon-client.js'
 import {escapeHtml} from '../view.js'
 import {deskSituation, deskSpeakerHtml} from './desk-page.js'
+import {permissionCwd} from '../generated/permission-display.js'
+import {renderCompactPermissionOperation, renderPermissionText} from './permission-operation.js'
 
 /** @typedef {import('../../../../packages/protocol/src/places').PlaceT} Place */
 
@@ -48,15 +50,24 @@ export function placeLine(place) {
   return line + also
 }
 
-/** @param {Place} p */
-function askHtml(p, card = false) {
+/** @param {Place} p @param {boolean} needsFullView */
+function askHtml(p, needsFullView) {
   const w = p.waiting
   if (!w) return ''
   const more = w.count > 1 ? `<small>还有 ${w.count - 1} 件</small>` : ''
+  const open = `<button type="button" class="place-allow" data-place-open>${needsFullView ? '打开看全再定' : '去回答'}</button>`
   if (w.kind === 'permission' && w.matterId && w.requestId) {
-    return `<div class="place-ask"><button type="button" class="place-allow" data-place-decision="allow">允许</button><button type="button" data-place-decision="deny">不允许</button>${more}</div>`
+    const allow = '<button type="button" class="place-allow" data-place-decision="allow">允许这一步</button>'
+    const openWhenClipped = !needsFullView
+      ? '<button type="button" class="place-allow" data-place-open data-place-open-if-clipped hidden>打开看全再定</button>' : ''
+    return `<div class="place-ask"><button type="button" data-place-decision="deny">先不做</button>${needsFullView ? open : allow}${openWhenClipped}${more}</div>`
   }
-  return `<div class="place-ask"><button type="button" ${card ? 'class="place-allow" ' : ''}data-place-open>去回答</button>${more}</div>`
+  return `<div class="place-ask">${open}${more}</div>`
+}
+
+/** @param {Element|null} card */
+function operationClipped(card) {
+  return [...(card?.querySelectorAll('[data-approval-fit]') ?? [])].some(part => part.scrollWidth > part.clientWidth)
 }
 
 /** @param {Place} place @param {string|null} selected @param {number} now */
@@ -65,17 +76,17 @@ function isQuiet(place, selected, now) {
     && (place.updatedAt == null || now - place.updatedAt >= WEEK_MS)
 }
 
-/** @param {Place[]} places @param {{selected:string|null,stale:boolean,now:number,popover?:boolean,wide?:boolean}} o */
-export function renderPlacesHtml(places, { selected, stale, now, popover = true, wide = false }) {
+/** @param {Place[]} places @param {{selected:string|null,stale:boolean,now:number,popover?:boolean}} o */
+export function renderPlacesHtml(places, { selected, stale, now, popover = true }) {
   const notice = stale ? '<p class="places-stale" role="status">家里的电脑暂时连不上,下面是上一次的样子</p>' : ''
-  if (!places.length) return `${notice}<p class="places-empty">交代给 CC 的事${wide ? '，' : ','}会按项目一行一行排在这里。</p>`
+  if (!places.length) return `${notice}<p class="places-empty">交代给 CC 的事，会按项目一行一行排在这里。</p>`
   const rows = places.map((p, i) => {
     const time = placeTime(p, now)
     const quiet = isQuiet(p, selected, now)
-    const recap = wide ? p.recap : undefined
+    const recap = p.recap
     const actionsId = `place-actions-${i}`
     const control = popover ? `popovertarget="${actionsId}"` : `aria-controls="${actionsId}" aria-expanded="false"`
-    return `<li class="place" data-place-key="${escapeHtml(p.key)}" data-quiet="${quiet}" data-waiting="${!!p.waiting}" data-unseen="${p.unseen}" data-moving="${p.moving}"${wide && p.status === 'working' ? ' data-working' : ''} data-selected="${p.key === selected}">
+    return `<li class="place" data-place-key="${escapeHtml(p.key)}" data-quiet="${quiet}" data-waiting="${!!p.waiting}" data-unseen="${p.unseen}" data-moving="${p.moving}"${p.status === 'working' ? ' data-working' : ''} data-selected="${p.key === selected}">
       <button type="button" class="place-row" aria-pressed="${p.key === selected}">
         <span class="place-dot" aria-hidden="true"></span>
         <span class="place-name">${escapeHtml(p.name)}</span>
@@ -88,7 +99,6 @@ export function renderPlacesHtml(places, { selected, stale, now, popover = true,
         ${i < places.length - 1 ? '<button type="button" data-place-move="down">往下挪</button>' : ''}
         <button type="button" data-place-hide>收起这一行</button>
       </div>
-      ${wide ? '' : askHtml(p)}
     </li>`
   }).join('')
   return `${notice}<ol class="places-list" aria-label="现在">${rows}</ol>`
@@ -117,7 +127,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   /** @type {string|null} */ let selected = null
   const supportsPopover = typeof root.showPopover === 'function'
   const openActions = supportsPopover ? '.place-actions:popover-open' : '.place-actions[data-open]'
-  let wide = false, quietOpen = false, waitingOpen = false
+  let quietOpen = false, waitingOpen = false
   let readEpoch = 0
   let version = '', alive = true, stale = false, acting = false, notified = ''
   /** @type {{mark:string}|undefined} */ let seenAttempt
@@ -131,28 +141,42 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   }
   function reflectWaitingAvailability() {
     const stopped = root.ownerDocument.documentElement.hasAttribute('data-desk-cc-stopped')
-    waitingRoot?.querySelectorAll('.place-ask button').forEach(button => {
+    waitingRoot?.querySelectorAll('.place-ask button, .approval-more').forEach(button => {
       button.toggleAttribute('disabled', stopped || (acting && button.hasAttribute('data-place-decision')))
       if (stopped) button.setAttribute('title', 'CC 没在运行')
       else button.removeAttribute('title')
+    })
+    waitingRoot?.querySelectorAll('[data-place-open-if-clipped]').forEach(open => {
+      const card = open.closest('.desk-waiting-card')
+      const clipped = operationClipped(card)
+      open.toggleAttribute('hidden', !clipped)
+      card?.querySelector('[data-place-decision="allow"]')?.toggleAttribute('hidden', clipped)
     })
   }
   function drawWaiting() {
     if (!waitingRoot) return
     // 在一件事的页面里(宽窗口选着一个地方):顶上只留这件事自己的纸条;别的地方的看左栏的圆点和 CC 那一句,不压在正文上面。
-    const waiting = wide ? places.filter(p => p.waiting && (!selected || selected === p.key) && !(inlineWaiting?.key === p.waiting.itemKey
-      && (!inlineWaiting.request || !p.waiting.requestId || p.waiting.requestId === inlineWaiting.request))) : []
+    const waiting = places.filter(p => p.waiting && (!selected || selected === p.key) && !(inlineWaiting?.key === p.waiting.itemKey
+      && (!inlineWaiting.request || !p.waiting.requestId || p.waiting.requestId === inlineWaiting.request)))
     const more = waiting.length - 2
     const toggle = more > 0 ? `<button class="desk-text-button" type="button" data-waiting-toggle aria-expanded="${waitingOpen}">${waitingOpen ? '收起其余等你定的' : `还有 ${more} 件等你定`}</button>` : ''
     const visibleWaiting = waiting.slice(0, waitingOpen ? waiting.length : 2)
     const cards = visibleWaiting.map(p => {
       const note = p.waiting
+      const cwd = permissionCwd(note?.cwd)
+      const operation = note?.display && renderCompactPermissionOperation(note.display, {
+        cwd, showSnapshotNotice: note.showSnapshotNotice, hasScriptPreview: note.hasScriptPreview,
+      })
+      const directory = !operation && cwd ? `<div class="approval-meta" data-approval-fit>在 ${renderPermissionText(cwd)}</div>` : ''
+      const needsFullView = note?.hasScriptPreview === true || operation?.needsFullView || (note?.kind === 'permission' && !cwd)
+      const question = operation ? note?.summary.split('\n', 1)[0] : note?.summary
       return `<div class="desk-waiting-row">
         ${deskSpeakerHtml('cc')}
         <div class="desk-waiting-card" data-place-key="${escapeHtml(p.key)}" data-item-key="${escapeHtml(note?.itemKey ?? '')}" data-request-id="${escapeHtml(note?.requestId ?? '')}">
           <div class="desk-waiting-label">这件要你定 · ${escapeHtml(p.name)}</div>
-          <div class="desk-waiting-question">${escapeHtml(note?.summary ?? '')}</div>
-          ${askHtml(p, true)}
+          <div class="desk-waiting-question${operation ? ' desk-waiting-question-compact' : ''}">${escapeHtml(question ?? '')}</div>
+          ${operation?.html ?? directory}
+          ${askHtml(p, !!needsFullView)}
         </div>
       </div>`
     }).join('')
@@ -165,7 +189,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     waitingRoot.querySelectorAll('.desk-waiting-card').forEach((card, index) => {
       const note = visibleWaiting[index]?.waiting
       for (const [className, text] of Object.entries({
-        'desk-waiting-opinion': note?.ccOpinion && `我的意见(只看了这条请求)：${note.ccOpinion}`,
+        'desk-waiting-opinion': note?.ccOpinion && `我的意见（只看了这条请求）：${note.ccOpinion}`,
         'desk-waiting-reason': note?.questionReason && `为什么来问你：${note.questionReason}`,
       })) {
         let line = card.querySelector(`.${className}`)
@@ -175,7 +199,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
           line = card.ownerDocument.createElement('div')
           line.className = className
           line.textContent = text
-          if (className === 'desk-waiting-opinion') card.querySelector('.desk-waiting-question')?.after(line)
+          if (className === 'desk-waiting-opinion') card.querySelector('.desk-waiting-reason, .place-ask')?.before(line)
           else card.querySelector('.place-ask')?.before(line)
         } else if (line.textContent !== text) {
           line.textContent = text
@@ -196,20 +220,19 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     const focused = active?.closest('.place-row, .place-more')
     const focusKey = focused?.closest('[data-place-key]')?.getAttribute('data-place-key')
     const at = now()
-    root.innerHTML = renderPlacesHtml(places, { selected, stale, now: at, popover: supportsPopover, wide })
+    root.innerHTML = renderPlacesHtml(places, { selected, stale, now: at, popover: supportsPopover })
     const count = root.querySelectorAll('[data-quiet="true"]').length
     root.toggleAttribute('data-quiet-expanded', quietOpen)
-    if (wide && count) root.insertAdjacentHTML('beforeend', `<button class="desk-text-button desk-quiet-toggle" type="button" data-quiet-toggle aria-expanded="${quietOpen}">${quietOpen ? '收起这周没动的' : `这周没动的 ${count} 处`}</button>`)
+    if (count) root.insertAdjacentHTML('beforeend', `<button class="desk-text-button desk-quiet-toggle" type="button" data-quiet-toggle aria-expanded="${quietOpen}">${quietOpen ? '收起这周没动的' : `这周没动的 ${count} 处`}</button>`)
     if (hidden.length) {
       root.insertAdjacentHTML('beforeend', `<button class="desk-text-button places-hidden-toggle" type="button" data-hidden-toggle aria-expanded="${hiddenOpen}">收起的 ${hidden.length} 处</button>
         <ul class="places-hidden-list" ${hiddenOpen ? '' : 'hidden'}>${hidden.map(({key, name}) =>
           `<li><span>${escapeHtml(name)}</span><button class="desk-text-button" type="button" data-place-restore="${escapeHtml(key)}">放回来</button></li>`).join('')}</ul>`)
     }
-    if (wide && focusKey) {
+    if (focusKey) {
       const control = focused?.classList.contains('place-more') ? '.place-more' : '.place-row'
       root.querySelector(`[data-place-key="${CSS.escape(focusKey)}"] ${control}`)?.closest('button')?.focus({ preventScroll: true })
     }
-    if (acting) root.querySelectorAll('[data-place-decision]').forEach(b => b.setAttribute('disabled', ''))
     reflectOverflow()
   }
 
@@ -243,7 +266,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       if (!alive || epoch !== readEpoch) return
       if (data?.notModified) {
         if (stale) { stale = false; draw() }
-        else if (wide) {
+        else {
           const at = now()
           const list = root.querySelectorAll('.place')
           if (places.some((p, i) => isQuiet(p, selected, at) && list[i]?.getAttribute('data-quiet') === 'false')) draw()
@@ -280,22 +303,15 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
 
   /** @param {Place|null} place */
   function select(place) {
-    if (wide && place?.key === selected) { onSelect(place); return }
-    selected = place && place.key !== selected ? place.key : null
-    const current = selected ? place : null
-    if (wide) {
-      waitingOpen = false
-      draw()
-    } else for (const row of root.querySelectorAll('.place')) {
-      const active = String(row.getAttribute('data-place-key') === selected)
-      row.setAttribute('data-selected', active)
-      row.querySelector('.place-row')?.setAttribute('aria-pressed', active)
-    }
-    notified = current ? JSON.stringify([current.key, current.name, current.matterIds, current.messageIds, current.sessionIds]) : ''
-    onSelect(current)
-    if (current) markSeen(current, true)
+    if (place?.key === selected) { onSelect(place); return }
+    selected = place?.key ?? null
+    waitingOpen = false
+    draw()
+    notified = place ? JSON.stringify([place.key, place.name, place.matterIds, place.messageIds, place.sessionIds]) : ''
+    onSelect(place)
+    if (place) markSeen(place, true)
     // 主人看了这个地方的说话,就算看过了:没看过的那几件记一下(那一句恢复次墨色)。
-    if (current?.unseen) for (const id of current.matterIds.slice(0, 20)) void v1(call, V1.matter.seen, { body: { id, surface: 'desktop' } }).catch(() => {})
+    if (place?.unseen) for (const id of place.matterIds.slice(0, 20)) void v1(call, V1.matter.seen, { body: { id, surface: 'desktop' } }).catch(() => {})
   }
 
   /** @param {Event} event */
@@ -357,17 +373,20 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       return
     }
     if (target.closest('.place-row')) { select(place); return }
-    if (waitingRoot?.contains(target) && target.closest('.place-ask')
+    if (waitingRoot?.contains(target) && target.closest('.place-ask, .approval-more')
       && root.ownerDocument.documentElement.hasAttribute('data-desk-cc-stopped')) return
     const decision = target.closest('[data-place-decision]')?.getAttribute('data-place-decision')
     if (decision && place.waiting?.matterId && place.waiting.requestId && !acting) {
+      if (decision === 'allow' && operationClipped(target.closest('.desk-waiting-card'))) {
+        reflectWaitingAvailability()
+        return
+      }
       acting = true
-      for (const host of [root, waitingRoot]) host?.querySelectorAll('[data-place-decision]').forEach(b => b.setAttribute('disabled', ''))
+      waitingRoot?.querySelectorAll('[data-place-decision]').forEach(b => b.setAttribute('disabled', ''))
       try { await v1(call, V1.workbench.permission, { body: { id: place.waiting.matterId, requestId: place.waiting.requestId, decision } }) }
       catch { /* 下次刷新照旧 */ } finally {
         await refreshAfterWrite()
         acting = false
-        root.querySelectorAll('[data-place-decision]').forEach(b => b.removeAttribute('disabled'))
         reflectWaitingAvailability()
       }
       return
@@ -443,10 +462,17 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     actions.style.top = `${Math.max(edge, flip ? anchor.top - gap - height : Math.min(anchor.bottom + gap, viewport.clientHeight - edge - height))}px`
   }
 
-  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(reflectOverflow) : null
+  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+    reflectOverflow()
+    reflectWaitingAvailability()
+  }) : null
   resize?.observe(root)
+  if (waitingRoot) resize?.observe(waitingRoot)
   const scroll = () => { reflectOverflow(); positionActions() }
   root.addEventListener('scroll', scroll)
+  // 矮窗口里整条左栏会滚(#places-root 外面那一层);菜单是 fixed 定位,跟着它重新对齐那一行。
+  const railScroll = root.closest('.desk-rail-scroll')
+  railScroll?.addEventListener('scroll', scroll)
   const onActionsToggle = (/** @type {Event} */ event) => {
     if (!(event.target instanceof Element) || !event.target.matches('.place-actions')) return
     positionActions()
@@ -478,12 +504,6 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     refresh,
     refreshAfterWrite,
     closeActions,
-    /** @param {boolean} enabled */
-    setWide(enabled) {
-      if (wide === enabled) return
-      wide = enabled
-      draw()
-    },
     places: () => places.slice(),
     selected: () => selected,
     /** @param {{key:string,request?:string}|null} value */
@@ -508,6 +528,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       root.ownerDocument.removeEventListener('click', dismissOutside, true)
       root.ownerDocument.removeEventListener('keydown', dismissOnEscape)
       root.removeEventListener('scroll', scroll)
+      railScroll?.removeEventListener('scroll', scroll)
       root.removeEventListener('toggle', onActionsToggle, true)
       root.ownerDocument.defaultView?.removeEventListener('resize', scroll)
       root.removeEventListener('click', click)

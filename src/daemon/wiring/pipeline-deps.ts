@@ -193,7 +193,7 @@ export interface BuildPipelineDepsResult {
 export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate): BuildPipelineDepsResult {
   const { stateDir, db, ilink, boot, log, chatPrefs, careLedger, replySinks } = opts
   // 消费者的回话:微信来的一轮直发微信;App 来的一轮(withReplyScope 里)截住交还 App(inbound/reply-scope)。
-  const send = scopedSend((cid: string, txt: string, o?: { source: 'workbench' }) => ilink.sendMessage(cid, txt, o))
+  const send = scopedSend((cid: string, txt: string, o?: { source: 'workbench'; historyText?: string }) => ilink.sendMessage(cid, txt, o))
   const inboxDir = join(stateDir, 'inbox')
 
   // CC 主动找你的出口 + 开口那道门(第三批 3a)。记忆通知在下面就要用,所以在最前面造。
@@ -681,7 +681,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const consumePermissionAnswer = makePermissionAnswer({ ilink, log })
   const commandRegistry = makeCommandRegistry([
     // 「任务 …」(工作台控制,步 4):排第一 —— 以前是单独一种 intent,排在整张命令表之前。
-    ...(opts.workbench ? [makeTaskCommand({ handoffExecutors: () => taskHandoffNames(boot.registry, loadAgentConfig(stateDir)), handleWechat: opts.workbench.handleWechat, sendMessage: (chatId: string, text: string) => send(chatId, text, { source: 'workbench' }) })] : []),
+    ...(opts.workbench ? [makeTaskCommand({ handoffExecutors: () => taskHandoffNames(boot.registry, loadAgentConfig(stateDir)), handleWechat: opts.workbench.handleWechat, sendMessage: (chatId, text, historyText) => send(chatId, text, { source: 'workbench', historyText }) })] : []),
     // 管理员命令一条一行(第三批 3d,admin-commands.ts 的 commands()):admin.owner-only(非主人发显式命令)+ admin.<id>,两两互斥
     ...adminCommandsHandler.commands(),
     // 斜杠命令一条一行(第三批 3d,mode-commands.ts 的 commands()):mode.provider / set / … / help,最后 mode.unknown 是 /词兜底
@@ -746,7 +746,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
         const task=await opts.workbench!.create({...input,origin});return {id:task.id}
       },
       handleWechat:opts.workbench.handleWechat,
-      sendMessage:(chatId:string,text:string)=>send(chatId,text,{source:'workbench'}),
+      sendMessage:(chatId,text,metadata)=>send(chatId,text,metadata??{source:'workbench'}),
       // 便宜模型只在名称命中多件 / 零命中且无焦点时被问,且只能选编号或说 0。没配就只走确定性各层。
       judge: async (input) => { const fast = turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log); return fast ? makeCheapJudge(fast)(input) : {taskId:null,confident:false} },
       log,

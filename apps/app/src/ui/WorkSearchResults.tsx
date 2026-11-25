@@ -10,7 +10,8 @@ import { useWork } from '../state/useWork'
 import { useTerminalSessions } from '../state/useTerminal'
 import { homeView } from '../view/home'
 import { isMatterArchived } from '../view/status'
-import { DelegationMessage } from './DelegationMessage'
+import { rememberReference } from '../state/conversation-references'
+import { WorkSearchRow } from './WorkSearchRow'
 import { WorkList } from './WorkList'
 import { TextField } from './TextField'
 import { Button } from './Button'
@@ -29,7 +30,8 @@ export function WorkSearchResults({ query = '', prefix = 'all', share = false }:
   const known = new Set((history.data ?? work.matters).map(m => m.id))
   const approvals = work.approvals.filter(a => matching.has(a.taskId) || (!known.has(a.taskId) && !project && (!query || a.summary.toLocaleLowerCase().includes(query.toLocaleLowerCase()))))
   // Archived rows are searchable references; opening retains the original archived matter identity.
-  const view = homeView({ ...work, approvals, matters: matters.map(m => isMatterArchived(m) ? { ...m, status: 'done', archivedAt: null } : m), terminal: (terminal.sessions ?? []).filter(s => (!query || `${s.project} ${s.last_summary}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) && (!project || s.project?.toLocaleLowerCase().includes(project.toLocaleLowerCase()))), known: backend.mode === 'demo' || conn.state === 'online', now: Date.now(), lang, backWindowMs: null, keepStaleWaiting: true })
+  const now = Date.now()
+  const view = homeView({ ...work, approvals, matters: matters.map(m => isMatterArchived(m) ? { ...m, status: 'done', archivedAt: null } : m), terminal: (terminal.sessions ?? []).filter(s => (!query || `${s.project} ${s.last_summary}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) && (!project || s.project?.toLocaleLowerCase().includes(project.toLocaleLowerCase()))), known: backend.mode === 'demo' || conn.state === 'online', now, lang, backWindowMs: null, keepStaleWaiting: true })
   const rows = view.groups.flatMap(g => g.rows).filter(r => (!state || r.status === state) && (!share || r.source === 'matter'))
   return <View style={{ gap: space.s }}>
     <Sheet title={zh ? '筛选事项' : 'Filter work'} testID="search-work-filters">
@@ -40,7 +42,12 @@ export function WorkSearchResults({ query = '', prefix = 'all', share = false }:
     <Txt role="caption" tone="inkSoft">{zh ? '以前交办的事 · 按原时间保留' : 'Previously delegated · Original dates retained'}</Txt>
     {/* Preserve loading/stale/empty semantics from the former All page. */}
     <WorkList view={{ ...view, groups: [] }} prefix={prefix} known={history.data !== undefined} loading={history.loading} error={history.error} onRetry={() => void history.refresh()} emptyText={rows.length ? null : t(lang, 'together.empty')} />
-    {rows.map(row => share ? <Button key={`${row.source}:${row.id}`} testID={`row-${row.source}-${row.id}`} kind="secondary" label={row.title} onPress={() => router.push(`/share?matter=${encodeURIComponent(row.id)}`)} /> : <DelegationMessage key={`${row.source}:${row.id}`} row={row} historical synced={conn.state === 'online' && !history.error} />)}
+    <View>
+      {rows.map(row => share
+        ? <Button key={`${row.source}:${row.id}`} testID={`row-${row.source}-${row.id}`} kind="secondary" label={row.title} onPress={() => router.push(`/share?matter=${encodeURIComponent(row.id)}`)} />
+        : <WorkSearchRow key={`${row.source}:${row.id}`} row={row} synced={conn.state === 'online' && !history.error}
+            now={now} onOpen={() => { rememberReference(backend, row.id, row.source); router.push(row.href) }} />)}
+    </View>
     {history.data?.length === 200 ? <Txt role="caption" tone="inkSoft">{zh ? '目前可读取最近 200 件事。更早的事请让 CC 帮你找。' : 'Showing the latest 200 items. Ask CC to find earlier work.'}</Txt> : null}
   </View>
 }

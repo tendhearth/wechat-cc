@@ -34,10 +34,15 @@ export function makeTerminalTurnLog(deps: { db: Db; log: MatterLog; matters: Pic
     for (const r of db.query<{ item_key: string }, [string]>("SELECT item_key FROM matter_items WHERE matter_id=? AND kind='permission' AND status='started' AND item_key IS NOT NULL ORDER BY seq").all(matterId))
       log.writeItem({ matterId, kind: 'permission', status, key: r.item_key, payload: { ...(log.item(matterId, r.item_key)?.payload ?? {}), outcome } })
   }
-  const ask = (matterId: string, tool: string, summary: string | null | undefined, at: number) => {
+  const ask = (matterId: string, req: Pick<Parameters<TerminalTurnLog['permissionAsked']>[0], 'tool_name' | 'summary' | 'display' | 'execution_cwd' | 'truncated'>, at: number) => {
     if (openCard(matterId)) return
     const turnId = runningTurn(matterId)
-    log.writeItem({ matterId, ...(turnId ? { turnId } : {}), kind: 'permission', status: 'started', key: `perm:${at}`, payload: { tool, ...(summary ? { summary: summary.slice(0, SUMMARY_MAX) } : {}) } })
+    const { tool_name: tool, summary, display, execution_cwd: cwd } = req
+    const truncated = (summary?.length ?? 0) > SUMMARY_MAX ? true : req.truncated
+    log.writeItem({ matterId, ...(turnId ? { turnId } : {}), kind: 'permission', status: 'started', key: `perm:${at}`, payload: {
+      tool, ...(summary ? { summary: summary.slice(0, SUMMARY_MAX) } : {}),
+      ...(display ? { display } : {}), ...(cwd ? { cwd } : {}), ...(truncated !== undefined ? { truncated } : {}),
+    } })
   }
   return {
     ensure: (ev) => matterOf(ev),
@@ -60,7 +65,7 @@ export function makeTerminalTurnLog(deps: { db: Db; log: MatterLog; matters: Pic
           else log.setState(matterId, 'open')
           return
         case 'permission':
-          ask(matterId, 'permission', ev.text, at)
+          ask(matterId, { tool_name: 'permission', summary: ev.text }, at)
           return
         case 'session_end':
           closeCards(matterId, 'failed', 'session_end')
@@ -70,7 +75,7 @@ export function makeTerminalTurnLog(deps: { db: Db; log: MatterLog; matters: Pic
       }
     },
     permissionAsked(req, at) {
-      ask(matterOf(req), req.tool_name, req.summary, at)
+      ask(matterOf(req), req, at)
     },
     permissionSettled(sessionId, status) {
       const m = matters.findBySurface('cli', sessionId)

@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import {afterEach,describe,expect,it,vi} from 'vitest'
+import {PERMISSION_SNAPSHOT_NOTICE} from '../../../../packages/protocol/src/permission-display'
 import {renderWorkbench} from './workbench.js'
 import {mergeEvents} from './workbench-live.js'
 const task={id:'A',title:'准备交付',path:'/work/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
@@ -36,9 +37,69 @@ describe('task detail follows authoritative current state',()=>{
   expect(root.querySelector('.wb-task-progress .wb-status').textContent).toBe('等你决定')
   expect(root.querySelector('#wb-artifacts').open).toBe(false)
   expect(root.querySelectorAll('[data-request-id="foreign"]')).toHaveLength(0)
-  expect(root.querySelector('.wb-permission p').textContent).toBe(permission.description)
+  expect(root.querySelector('.wb-permission [data-kind="text"] .approval-source').textContent).toBe(permission.description)
+  expect(root.querySelector('.wb-permission details summary').textContent).toBe('看完整原文')
+  expect(root.querySelector('.wb-permission details .approval-source').textContent).toBe(permission.description)
   expect(root.querySelector('.wb-controls-inner').firstElementChild.className).toBe('wb-permissions')
   expect(root.querySelectorAll('.wb-question-form')).toHaveLength(1)
+ })
+ it.each([
+  ['valid', {body:{kind:'command',command:'npm install sharp'}}, 'npm install sharp'],
+  ['absent', undefined, 'npm run sample'],
+  ['invalid', {body:{kind:'command',command:12}}, 'npm run sample'],
+ ])('uses %s wire data or the Claude parser inside the permission panel',(_name,display,command)=>{
+  const permission={id:'p',taskId:'A',tool:'Bash',description:'command=npm run sample',display,cwd:'/work/verified',createdAt:1}
+  const root=render({...page({providerId:'claude'},{permissions:[permission]}),providers:[{id:'claude',displayName:'Claude'}]})
+  expect(root.querySelector('.wb-permission-tool').textContent).toBe('Claude 想运行一条命令')
+  expect(root.querySelector('.wb-permission [data-kind="command"] .approval-source').textContent).toBe(command)
+  expect(root.querySelector('.approval-meta').textContent).toBe('在 /work/verified')
+  expect(root.querySelector('.wb-permission details .approval-source').textContent).toBe(permission.description)
+ })
+ it('uses the executor MCP target in the permission heading',()=>{
+  const tool='mcp__team__prod__lookup__all'
+  const permission={id:'p',taskId:'A',tool,description:tool,createdAt:1,
+   display:{body:{kind:'fields',fields:[{name:'query',value:'fixture'}]}}}
+  const heading=mcp=>render({...page({}, {permissions:[{...permission,mcp}]}),providers:[{id:'codex',displayName:'Codex'}]})
+   .querySelector('.wb-permission-tool').textContent
+  expect(heading({server:'team__prod',tool:'lookup__all'})).toBe('Codex 想用 team__prod 的「lookup__all」')
+  expect(heading(undefined)).toBe(`Codex 想用「${tool}」`)
+ })
+ it('shows the executor note before the operation as plain text',()=>{
+  const note = '<img src=x onerror="window.approvalInjected=1">'
+  const permission = {id:'p',taskId:'A',tool:'Bash',description:'command=sample',createdAt:1,
+   display:{note,body:{kind:'command',command:'sample'}}}
+  const root = render(page({}, {permissions:[permission]}))
+  const reason = root.querySelector('.wb-permission .approval-panel').previousElementSibling
+  expect(reason.textContent === note).toBe(true)
+  expect(reason.className).toBe('approval-meta')
+  expect(reason.closest('details')).toBeNull()
+  expect(reason.childElementCount).toBe(0)
+  expect(root.querySelector('[data-action="allow-permission"]')).not.toBeNull()
+ })
+ it.each([true, false])('keeps the snapshot notice visible before approval (script: %s)', script=>{
+  const description = `command=bun run sample\n\n${PERMISSION_SNAPSHOT_NOTICE}`
+  const permission = {id:'p',taskId:'A',tool:'Bash',description,createdAt:1,showSnapshotNotice:true,
+   display:{body:{kind:'command',command:'bun run sample'},truncated:true},
+   ...(script ? {scripts:[{path:'sample.ts',content:'export {}'}]} : {}),
+  }
+  const root = render(page({}, {permissions:[permission]}))
+  const notice = root.querySelector('.wb-permission-snapshot')
+  expect(notice.textContent === PERMISSION_SNAPSHOT_NOTICE).toBe(true)
+  expect(notice.closest('details')).toBeNull()
+  expect(notice.previousElementSibling.className).toBe(script ? 'wb-permission-script' : 'approval-operation')
+  const source = root.querySelector('.approval-operation details')
+  expect(source.querySelector('summary').textContent).toBe('看完整原文')
+  source.open = true
+  expect(source.querySelector('.approval-source').textContent === description).toBe(true)
+ })
+ it('keeps the legacy snapshot notice in the visible parsed description',()=>{
+  const description = `command=bun run sample\n\n${PERMISSION_SNAPSHOT_NOTICE}`
+  const permission = {id:'p',taskId:'A',tool:'Bash',description,createdAt:1}
+  const root = render(page({providerId:'claude'}, {permissions:[permission]}))
+  const preview = root.querySelector('.approval-command .approval-source')
+  expect(preview.textContent.includes(PERMISSION_SNAPSHOT_NOTICE)).toBe(true)
+  expect(preview.closest('details')).toBeNull()
+  expect(root.querySelector('.wb-permission-snapshot')).toBeNull()
  })
  it('promotes saved JSON output but keeps known review-only artifacts review-first',()=>{
   expect(render(page({status:'completed'})).querySelector('#wb-artifacts').classList.contains('is-outcome')).toBe(true)

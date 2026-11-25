@@ -19,7 +19,7 @@ export const EXPIRED_HTML = `<!doctype html><meta charset="utf-8"><meta name="vi
 <style>${MOBILE_TOKENS_CSS}
 body{margin:0;min-height:100svh;display:grid;place-items:center;background:var(--paper);color:var(--ink);font-family:var(--font)}
 .box{box-sizing:border-box;text-align:center;width:100%;max-width:360px;padding:calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom))}.box img{width:72px;height:72px;opacity:.9}
-.hand{font-family:var(--hand);color:var(--hand-ink);font-size:17px;margin:12px 0 4px}.msg{color:var(--soft);font-size:14px;line-height:1.7;margin:0}
+.hand{color:var(--hand-ink);font-size:17px;margin:12px 0 4px}.msg{color:var(--soft);font-size:14px;line-height:1.7;margin:0}
 </style><body><div class="box"><img src="/m/icon.png" alt="CC"><p class="hand">这个链接已经用过或过期了，回微信跟 CC 再要一个</p><p class="msg">在微信里跟 CC 说「/set」就行</p></div></body>`
 
 /** The settings page — fully self-contained (WeChat's browser, no CDN). */

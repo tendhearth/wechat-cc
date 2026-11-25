@@ -117,17 +117,17 @@ describe('matter list loading evidence', () => {
 
   it('retains known rows and marks them stale when a later read fails', async () => {
     let fail = false
-    const matter: MatterT = { id: 'a1b2c3d4', kind: 'task', title: 'Keep this task', projectPath: null, status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 }
+    const matter: MatterT = { id: 'c0ffee42', kind: 'task', title: 'Keep this task', projectPath: null, status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 }
     await mount(backendWithMatters(async () => {
       if (fail) throw new BackendError('offline')
       return [matter]
     }), createElement(All))
-    expect(el('row-matter-a1b2c3d4')?.textContent).toContain('Keep this task')
+    expect(el('row-matter-c0ffee42')?.textContent).toContain('Keep this task')
     fail = true
     await act(async () => { host.ctx.store.revalidateAll() }); await flush()
     expect(el('all-stale')).not.toBeNull()
     expect(el('all-unavailable')).toBeNull()
-    expect(el('row-matter-a1b2c3d4')?.textContent).toContain('Keep this task')
+    expect(el('row-matter-c0ffee42')?.textContent).toContain('Keep this task')
   })
 })
 

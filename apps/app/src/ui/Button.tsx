@@ -6,6 +6,7 @@ import { useTheme } from './useTheme'
 export type ButtonProps = {
   kind: 'primary' | 'secondary'
   label: string
+  accessibilityLabel?: string
   onPress: () => void
   disabled?: boolean
   busy?: boolean
@@ -13,7 +14,7 @@ export type ButtonProps = {
 }
 
 // 主 = 唯一的强调色(深绿)实底;次 = 透明底 + 细线。没有阴影、没有渐变。
-export function Button({ kind, label, onPress, disabled, busy, testID }: ButtonProps) {
+export function Button({ kind, label, accessibilityLabel = label, onPress, disabled, busy, testID }: ButtonProps) {
   const { c } = useTheme()
   const inactive = !!disabled || !!busy
   const appearance = componentAppearance.button
@@ -23,7 +24,7 @@ export function Button({ kind, label, onPress, disabled, busy, testID }: ButtonP
     <Pressable
       accessibilityRole="button"
       testID={testID}
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: inactive, busy: !!busy }}
       disabled={inactive}
       onPress={onPress}

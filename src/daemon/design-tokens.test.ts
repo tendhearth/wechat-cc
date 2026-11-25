@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
-import { MOBILE_TOKENS_CSS, mobilePhoneHtml, MOBILE_BOOTSTRAP_HTML } from '../features/phone/mobile-page'
+import { MOBILE_TOKENS_CSS, mobilePhoneHtml, MOBILE_BOOTSTRAP_HTML, MOBILE_SHARE_HTML } from '../features/phone/mobile-page'
 import { pageHtml, EXPIRED_HTML } from '../features/phone/settings-panel-html'
 import { renderTokensCss } from '../../packages/design-tokens/src/index'
 
@@ -15,9 +15,36 @@ const hexes = (s: string) => new Set((s.toLowerCase().match(/#[0-9a-f]{6}\b/g) ?
 describe('one design language across the owner-facing web pages', () => {
   it('tokens define the palette, radii and fonts', () => {
     expect(MOBILE_TOKENS_CSS).toContain(renderTokensCss())
-    // 旧变量名一律指向 --th-*(与桌面、手机 app 同一套,2026-10-16):一个强调色、全衬线。
-    for (const v of ['--paper:var(--th-paper)', '--ink:var(--th-ink)', '--soft:var(--th-ink-soft)', '--accent:var(--th-accent)', '--line:var(--th-hair)', '--font:var(--th-font-serif)', '--r-m:14px', '--hand:'])
+    // 色板继续跟共用 token，正文走系统无衬线，CC 的话用楷体。
+    for (const v of ['--paper:var(--th-paper)', '--ink:var(--th-ink)', '--soft:var(--th-ink-soft)', '--accent:var(--th-accent)', '--line:var(--th-hair)', '--r-m:14px'])
       expect(MOBILE_TOKENS_CSS.replace(/\s+/g, '')).toContain(v.replace(/\s+/g, ''))
+  })
+  it.each([
+    ['/m', () => mobilePhoneHtml('dTOKEN', null), ['.cc-voice,.home-arrived #pres-txt']],
+    ['/set', () => pageHtml('tTOKEN'), []],
+    ['expired', () => EXPIRED_HTML, []],
+    ['/m bootstrap', () => MOBILE_BOOTSTRAP_HTML, []],
+    ['share', () => MOBILE_SHARE_HTML, []],
+  ] as const)('%s confines the Kaiti stack to CC text and uses system sans for the page', (_name, render, handSelectors) => {
+    const html = render().replace(/\r\n?/g, '\n')
+    const css = [...html.matchAll(/<style>([\s\S]*?)<\/style>/gi)].map(match => match[1]).join('\n')
+    expect([...css.matchAll(/--font\s*:\s*([^;]+);/g)].map(m => m[1])).toEqual([
+      '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", "Segoe UI", "Noto Sans SC", sans-serif',
+    ])
+    expect([...css.matchAll(/--hand\s*:\s*([^;]+);/g)].map(m => m[1])).toEqual([
+      // 楷体在手机浏览器里通常没有:没有就落回正文的无衬线,不落到 serif(中文黑体 + 英文 Times 混排)
+      '"Kaiti SC",STKaiti,KaiTi,var(--font)',
+    ])
+    expect(css).toMatch(/(?:^|[}\s])body\s*\{[^}]*font-family:\s*var\(--font\)/)
+    const handRules: string[] = []
+    for (const [, selectors, declarations] of css.matchAll(/([^{}]+)\{([^{}]+)\}/g)) {
+      for (const [, value] of declarations!.matchAll(/(?:^|;)\s*font(?:-family)?\s*:\s*([^;}]+)/gi)) {
+        const font = value!.trim()
+        expect(['inherit', 'var(--font)', 'var(--hand)', 'var(--th-font-mono)'], selectors!.trim()).toContain(font)
+        if (font === 'var(--hand)') handRules.push(selectors!.trim())
+      }
+    }
+    expect(handRules).toEqual(handSelectors)
   })
   it.each([
     ['/m', () => mobilePhoneHtml('dTOKEN', null)],

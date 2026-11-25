@@ -43,9 +43,9 @@ describe('文案表', () => {
     expect(z).toContain('加密')
   })
   it('原始命令多出来的行数:英文单复数', () => {
-    expect(tCount('en', 'approval.moreLines', 1)).toBe('(+1 more line)')
-    expect(tCount('en', 'approval.moreLines', 4)).toBe('(+4 more lines)')
-    expect(tCount('zh-Hans', 'approval.moreLines', 4)).toBe('（还有 4 行）')
+    expect(tCount('en', 'approval.moreLines', 1)).toBe('1 more line · See all')
+    expect(tCount('en', 'approval.moreLines', 4)).toBe('4 more lines · See all')
+    expect(tCount('zh-Hans', 'approval.moreLines', 4)).toBe('还有 4 行 · 看全部')
   })
   it('新增短词:离线、多选上限、版权', () => {
     expect(en['common.computerOfflineShort']).toBe('offline')
@@ -61,6 +61,21 @@ describe('文案表', () => {
     expect(zh['pair.step2']).toBe('选择「连接手机」')
     expect(en['pair.step2']).toBe('Choose “Connect phone”')
     expect(zh['pair.errExpired']).toContain('只能用一次')
+  })
+  it('shows the installed desktop name in pairing instructions and errors', () => {
+    expect(zh['pair.step1']).toBe('打开电脑上的 Tendhearth CC')
+    expect(en['pair.step1']).toBe('Open Tendhearth CC on your computer')
+    for (const key of ['pair.steps', 'pair.errOffline', 'pair.errTooOld'] as const) {
+      expect(zh[key]).toContain('Tendhearth CC')
+      expect(en[key]).toContain('Tendhearth CC')
+    }
+    expect(en['devices.otherHint']).toContain('Tendhearth CC')
+  })
+  it('uses fullwidth punctuation in the Chinese terminal transcript and step labels', () => {
+    expect(t('zh-Hans', 'terminal.activityYou', { text: 'README' })).toBe('你：README')
+    expect(t('en', 'terminal.activityYou', { text: 'README' })).toBe('You:README')
+    expect(t('zh-Hans', 'terminal.verb.subtask', { target: '编译' })).toBe('派子任务：编译')
+    expect(t('zh-Hans', 'terminal.verb.todo', { target: '测试' })).toBe('清单：测试')
   })
   it('确认卡核对码(Task 9 fix round 1):和电脑上「核对码 XXX-XXX」对得上', () => {
     expect(t('zh-Hans', 'pair.checkCode', { code: 'USZ-YAY' })).toBe('核对码 USZ-YAY')

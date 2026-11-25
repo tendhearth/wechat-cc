@@ -203,7 +203,7 @@ export function isRetryableSendError(err: Error): boolean {
   return false
 }
 
-export async function ilinkSendMessage(baseUrl: string, token: string, msg: WeixinMessage): Promise<void> {
+export async function ilinkSendMessage(baseUrl: string, token: string, msg: WeixinMessage, privateText = false): Promise<void> {
   const body = {
     msg: { from_user_id: '', client_id: generateClientId(), ...msg },
     base_info: ILINK_BASE_INFO,
@@ -215,10 +215,14 @@ export async function ilinkSendMessage(baseUrl: string, token: string, msg: Weix
       if (attempt > 1) log('RETRY_OK', `sendmessage succeeded on attempt ${attempt}`)
       return
     } catch (err) {
-      const errmsg = err instanceof Error ? err.message : String(err)
+      const rawError = err instanceof Error ? err.message : String(err)
       const retryable = err instanceof Error && isRetryableSendError(err)
+      // A server can echo the submitted text in HTTP bodies and errmsg.
+      const status = /^(ilink\/bot\/sendmessage \d{3}|ilink\/sendmessage errcode=-?\d+):/.exec(rawError)?.[1]
+      const errmsg = privateText ? status ?? 'private WeChat message send failed' : rawError
       if (!retryable || attempt === 3) {
         log('RETRY_FAIL', `sendmessage gave up after ${attempt} attempt(s): ${errmsg}`)
+        if (privateText) throw new Error(errmsg)
         throw err
       }
       log('RETRY', `sendmessage attempt ${attempt} failed, retrying in 1s: ${errmsg}`)

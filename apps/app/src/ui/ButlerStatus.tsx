@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { useFocusEffect } from 'expo-router'
 import { Pressable, View } from 'react-native'
-import { t } from '../i18n'
+import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection } from '../state/hooks'
@@ -10,6 +10,19 @@ import { butlerActionError, butlerView, type CheckupViewT, type CheckupEstimateT
 import { Button } from './Button'
 import { Txt } from './Txt'
 import { space } from './tokens'
+
+function CheckupRow({ testID, label, grade, detail, lang }: {
+  testID: string; label: string; grade?: string; detail: string; lang: Lang
+}) {
+  return <View testID={testID} accessible accessibilityLabel={[label, grade, detail].filter(Boolean).join(lang === 'zh-Hans' ? '，' : ', ')}
+    style={{ gap: space.xs }}>
+    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.m }}>
+      <Txt role="body" style={{ flex: 1 }}>{label}</Txt>
+      {grade ? <Txt role="meta" tone={grade === '好' || grade === '一般' ? 'inkSoft' : 'ink'} style={{ textAlign: 'right' }}>{grade}</Txt> : null}
+    </View>
+    <Txt role="meta" tone="inkSoft">{detail}</Txt>
+  </View>
+}
 
 /** Read-only until the separate, costed confirmation is pressed. */
 export function ButlerStatus() {
@@ -59,9 +72,14 @@ export function ButlerStatus() {
     <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.xl, marginBottom: space.s }}>{s?.title??t(lang, 'butler.title')}</Txt>
     {!s ? <Txt role="small" tone="inkSoft">{t(lang, failed || !online ? 'butler.unavailable' : 'sessions.loading')}</Txt> : <>
       {!online || failed ? <Txt testID="checkup-stale" role="small" tone="inkSoft">{t(lang, 'butler.stale')}</Txt> : null}
-      {s.rows.length?s.rows.map(row=><Txt key={row.key} testID={`checkup-${row.key}`} role="body">{row.label}: {row.detail}  {row.grade}</Txt>):<>
-      <Txt testID="checkup-memory" role="body">{t(lang, 'butler.memory')}: {s.memory}</Txt>
-      <Txt testID="checkup-tools" role="body">{t(lang, 'butler.tools')}: {s.tools}</Txt></>}
+      <View style={{ gap: space.m }}>
+        {s.rows.length ? s.rows.map(row => (
+          <CheckupRow key={row.key} testID={`checkup-${row.key}`} label={row.label} grade={row.grade} detail={row.detail} lang={lang} />
+        )) : <>
+          <CheckupRow testID="checkup-memory" label={t(lang, 'butler.memory')} detail={s.memory} lang={lang} />
+          <CheckupRow testID="checkup-tools" label={t(lang, 'butler.tools')} detail={s.tools} lang={lang} />
+        </>}
+      </View>
       {s.note ? <Txt testID="checkup-note" role="small" tone="inkSoft">{s.note}</Txt> : null}
       {s.tested ? <Txt role="small" tone="inkSoft">{s.tested}</Txt> : null}
       {s.attempt ? <Txt testID="checkup-attempt" role="small" tone="inkSoft" accessibilityLiveRegion="polite">{s.attempt}</Txt> : null}

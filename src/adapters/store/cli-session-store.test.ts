@@ -167,6 +167,25 @@ describe('终端会话登记处:状态从已有 hook 事件推导(v76;M4d 起经
     h.dispose()
   })
 
+  it.each([[200, false, false], [201, false, true], [301, false, true], [10, true, true], [10, undefined, undefined]])(
+    'carries terminal approval data and records summary cut points (%i, %s)', (length, hookCut, expected) => {
+      const h = hub()
+      const cwd = 'C:\\project\\nested'
+      const summary = 'x'.repeat(length!)
+      const command = 'printf sample\r\nprintf next'
+      const display = { body: { kind: 'command' as const, command } }
+      try {
+        h.permissionAsked({ ...ev(), tool_name: 'Bash', summary, display, execution_cwd: cwd, truncated: hookCut as boolean | undefined })
+        const pending = h.list()[0]?.pending
+        expect(pending?.display?.body.kind === 'command' && pending.display.body.command === command && pending.cwd === cwd).toBe(true)
+        expect(pending?.truncated).toBe(expected)
+        expect(pending?.summary?.length).toBe(Math.min(length!, 200))
+        const row = makeCliSessionStore(db, () => clock).get(SID)
+        expect(row?.pending_truncated).toBe(length! > 300 || hookCut ? 1 : hookCut === false ? 0 : null)
+      } finally { h.dispose() }
+    },
+  )
+
   it('toCliSessionView / sortCliSessionViews 是纯函数', () => {
     const row = { session_id: 'abcdef123', source: 'codex' as const, cwd: 'C:\\w\\proj', machine: null, transcript_path: null, origin_agent: null, status: 'waiting' as const, last_event_at: 5, last_prompt_at: null, last_summary: null, pending_tool: 'shell', pending_summary: 'ls', pending_at: 4, created_at: 1 }
     const v = toCliSessionView(row, 10)

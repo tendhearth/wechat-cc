@@ -48,8 +48,8 @@ test('回忆和画室点画都打开同一个完整作品详情，后台检查�
  await expect(page.locator('#atelier-gallery [data-atelier-open]').first()).toBeFocused()
 })
 
-test('回忆分类只筛选内容，跳页另放；760px阅读没有横向溢出且正文16px',async({page,shimUrl,shim})=>{
- await page.setViewportSize({width:760,height:1000});await boot(page,shimUrl,shim)
+test('回忆分类只筛选内容，跳页另放；900px阅读没有横向溢出且正文16px',async({page,shimUrl,shim})=>{
+ await page.setViewportSize({width:900,height:1000});await boot(page,shimUrl,shim)
  await clickNav(page,'recollections')
  await expect(page.locator('.cc-memory-tabs [data-life-pane]')).toHaveCount(0)
  await page.locator('.pc-read').first().click()
@@ -122,7 +122,7 @@ test('收藏失败能在原详情重试，不会显示已收藏',async({page,shi
 })
 
 test('画室空态提供实际设置入口，读取失败可以恢复，站外图片不加载',async({page,shimUrl,shim})=>{
- await page.setViewportSize({width:760,height:1000});await boot(page,shimUrl,shim)
+ await page.setViewportSize({width:900,height:1000});await boot(page,shimUrl,shim)
  let mode:'empty'|'broken'|'loaded'='empty',external=0
  await page.route('**/v1/atelier/works?**',r=>r.fulfill({json:mode==='empty'?{works:[]}:mode==='broken'?{works:{bad:true}}:{works:[{...work,image_data:'https://tracking.invalid/pixel'}]}}))
  await page.route('**/v1/atelier/model-status',r=>r.fulfill({json:{mode:'off',status:{state:'ready'}}}))
@@ -130,10 +130,10 @@ test('画室空态提供实际设置入口，读取失败可以恢复，站外�
  await clickNav(page,'atelier');await expect(page.locator('#atelier-gallery')).toContainText('画室尚未开启')
  await page.locator('[data-atelier-status-action="home"]').click();await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
  await page.locator('#settings-close').click()
- mode='broken';await page.locator('#atelier-refresh').click();await expect(page.locator('#atelier-gallery').getByText('暂时无法确认画室状态')).toBeVisible()
+ mode='broken';await page.locator('#atelier-refresh').click();await expect(page.locator('#atelier-gallery').getByText('暂时没能确认画室的状态。已有作品仍保存在这台 Mac。')).toBeVisible()
  await page.setViewportSize({width:1280,height:1000})
  await expect(page.locator('#atelier-gallery').getByText('暂时没能确认画室的状态。已有作品仍保存在这台 Mac。')).toBeVisible()
- await expect(page.locator('#atelier-gallery').getByText('暂时无法确认画室状态')).toBeHidden()
+ await expect(page.locator('#atelier-gallery').getByText('暂时无法确认画室状态', { exact: true })).toBeHidden()
  await expect(page.getByRole('button',{name:'重新检查',exact:true})).toBeVisible()
  mode='loaded';await page.locator('[data-atelier-status-action="retry"]').click();await page.locator('#atelier-gallery [data-atelier-open]').click()
  await expect(page.locator('dialog.cc-record-reader')).toContainText('图片暂时无法显示')

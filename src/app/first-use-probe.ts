@@ -1,85 +1,241 @@
-/**
- * first-use-probe — 「先真跑一句再信」的 provider 包装。
- *
- * 为 codex 而生(2026-09-09 实测):SDK 0.144.4 驱动用户的 CLI 0.153.4 照样
- * 收到 agent_message,而内置的 0.144.4 二进制被 OpenAI 服务端以「这个模型
- * 需要更新的 Codex」400 拒掉。也就是说**版本号判不出能不能用,只有真跑
- * 一句才知道**;而且要跑就得用用户那个更新的 CLI。于是:
- *
- *  - 开机**不**外呼(主人纪律:网络不稳时的无人值守外呼是风控形状);
- *  - 第一次真要用到(spawn / cheapEval)时探一句「只回复 ok」,通了缓存,
- *    daemon 生命周期内不再探;
- *  - 探测失败 → 这次调用抛带人话的错(调用方转成给用户的提示),十分钟后
- *    允许再探(网络抖一下不该把这家钉死到重启)。
- *
- * 并发:多个调用同时撞上首次使用,共用同一个 in-flight promise,只探一次。
- */
-import type { AgentProvider, AgentProject, AgentSession, SpawnContext } from '../ports/agent-provider'
+import type { AgentEvent, AgentProvider, AgentSession } from '../ports/agent-provider'
+import { classifyProviderError, parseResetAt } from '../domain/provider-quota'
+import { outdatedClientSignal } from '../domain/cli-upgrade/outdated-signal'
+import { CLI_SPECS } from '../domain/cli-upgrade/specs'
+import { looksLikeAuthFailure } from '../lib/auth-failure'
+import { isConnectFailure, isTimeoutFailure } from '../lib/net-errors'
+import { codeForHttpStatus, contextOverflowInputTokens, contextOverflowLimitTokens, errorWithProviderCode, isAuthErrorCode, isProviderErrorCode, providerErrorCodeOf, type ProviderErrorCode } from '../lib/provider-error-code'
+import { isNetworkUnprotectedError, sessionCallTarget, type CallTarget } from '../lib/network-gate'
+import { sha256Hex } from '../lib/content-hash'
 
-export interface FirstUseProbeOpts {
-  /** 跑一句探测,返回模型文本;抛错或空串都算失败。 */
-  probe: () => Promise<string>
-  /** 探测结果的人话摘要,给 /mode 和日志。 */
-  onResult?: (r: { ok: boolean; detail: string; ms: number }) => void
-  /** 失败时抛给调用方的信息(会原样进用户提示)。 */
-  failureMessage: (detail: string) => string
-  /** 失败后多久允许重探(默认 10 分钟)。 */
-  retryAfterMs?: number
-  /** 'all'(默认):spawn 和 cheapEval/strongEval 都先过探测;'spawn':只拦聊天
-   *  回合 —— 给默认 provider 用,后台评估(开机就可能跑)不因探测多一次外呼。 */
-  gate?: 'spawn' | 'all'
+export const UNKNOWN_PROBE_FIELD = '未知'
+
+export interface ProbeCombination {
+  cliVersion: string
+  sdkVersion: string
+  model: string
+  endpoint?: string
+}
+
+export interface ProbeRecord extends ProbeCombination {
+  at: number
+  confirmedByTurn?: true
+}
+
+export interface ProbeHistory {
+  read(target: Pick<ProbeCombination, 'model' | 'endpoint'>): ProbeRecord | undefined
+  save(record: ProbeRecord): void
+  clear(target: Pick<ProbeCombination, 'model' | 'endpoint'>): void
+}
+
+export function probeEndpointKey(target: Pick<CallTarget, 'baseUrl' | 'unresolved'>): string {
+  if (target.unresolved) return 'unresolved'
+  if (!target.baseUrl) return 'native'
+  try {
+    const url = new URL(target.baseUrl)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'unresolved'
+    return sha256Hex(url.origin + url.pathname.replace(/\/+$/, ''))
+  } catch { return 'unresolved' }
+}
+
+export const probeTargetKey = (target: Pick<ProbeCombination, 'model' | 'endpoint'>) => JSON.stringify([target.model, target.endpoint])
+
+function sameProbeCombination(a: ProbeCombination | undefined, b: ProbeCombination | undefined): boolean {
+  return a?.cliVersion === b?.cliVersion && a?.sdkVersion === b?.sdkVersion &&
+    a?.model === b?.model && a?.endpoint === b?.endpoint
+}
+
+export type ProbeFailure = { kind: 'transient' | 'auth' | 'incompatible' | 'quota'; reason: string; cause?: 'server_error'; code: ProviderErrorCode }
+export type ProbeStatus =
+  | { state: 'awaiting_turn' }
+  | { state: 'ok'; source: 'history' | 'turn'; at: number }
+  | ({ state: 'failed'; at: number; startup?: true; resetAt?: number } & ProbeFailure)
+
+const INCOMPATIBLE: ProbeFailure = { kind: 'incompatible', reason: '模型或客户端协议不兼容', code: 'incompatible' }
+
+function classifyProbeError(provider: ConfirmationOptions['provider'], error: unknown, detail: string): ProbeFailure {
+  // HTTP 状态可能留在抛出物上，也可能只剩 CLI 转述。只从状态字段或错误前缀取数字。
+  const envelope = error !== null && typeof error === 'object'
+    ? error as { status?: unknown; statusCode?: unknown; httpStatusCode?: unknown; code?: unknown }
+    : undefined
+  const status = Number(envelope?.status ?? envelope?.statusCode ?? envelope?.httpStatusCode ??
+    /(?:^\s*|\b(?:API Error:|unexpected status|HTTP(?: error:| status:?|\/\d(?:\.\d)?)?|status code:?)\s+|"status"\s*:\s*)([45]\d\d)\b/i.exec(detail)?.[1])
+  let code = providerErrorCodeOf(error) ?? (isProviderErrorCode(envelope?.code) ? envelope.code : undefined)
+  const timedOut = () => status === 408 || isTimeoutFailure(envelope?.code) || isTimeoutFailure(detail)
+  const transient = (reason: string, code: ProviderErrorCode): ProbeFailure => ({ kind: 'transient', reason, code })
+
+  if (!code || code === 'provider_error') {
+    if (detail === '' || /^codex_(?:missing_(?:thread|turn)_id|turn_start_mismatch|rpc_method_not_found)$/.test(detail)) return INCOMPATIBLE
+    const quota = classifyProviderError(detail)
+    code = quota === 'quota' ? 'quota' : codeForHttpStatus(status, detail)
+    if (!code) {
+      if (timedOut() || isConnectFailure(detail) || isConnectFailure(envelope?.code)) code = 'network'
+      else if (quota === 'rate_limit') return transient('暂时忙不过来（rate_limit）', 'rate_limited')
+      else if (looksLikeAuthFailure(detail)) code = 'auth_rejected'
+    }
+  }
+  if (isAuthErrorCode(code)) return { kind: 'auth', code, reason: `拒绝了凭证（${status === 401 || status === 403 ? status : '认证'}）` }
+  if (code === 'quota') return { kind: 'quota', code, reason: '额度用完了' }
+  if (code === 'server_error') return { ...transient(`暂时忙不过来（${status >= 500 && status <= 599 ? status : '5xx'}）`, code), cause: code }
+  if (code === 'rate_limited') return transient(`暂时限流（${status === 429 ? status : 'rate_limit'}）`, code)
+  if (code === 'context_overflow') return transient('上下文过长', code)
+  if (code === 'network') return transient(timedOut() ? `请求超时（${status === 408 ? status : 'timeout'}）` : '暂时连不上（网络）', code)
+  // invalid_request 包含模型不可用等多种拒绝，明确的兼容性错误可进一步细分。
+  if (code === 'incompatible') return INCOMPATIBLE
+  if ((!code || code === 'invalid_request') && (outdatedClientSignal(provider, detail) ||
+      /\b(?:model(?:[_ ]not[_ ]found|[_ ]not[_ ]supported|[^\n.]{0,120} (?:does not exist|is not supported|is unavailable))|unsupported model|(?:version|protocol) mismatch|incompatible (?:version|protocol))\b/i.test(detail))) return INCOMPATIBLE
+  return transient('暂时没有回应（原因未明）', code ?? 'provider_error')
+}
+
+export function probeStatusNote(status: ProbeStatus): string {
+  if (status.state === 'awaiting_turn') return '还没用过，第一次对话时确认'
+  if (status.state === 'ok') {
+    return status.source === 'history'
+      ? `沿用上次的结果（${new Date(status.at).toLocaleString('zh-CN', { hour12: false })}）`
+      : '已通过对话确认连接'
+  }
+  const prefix = status.startup ? '启动失败，' : ''
+  if (status.kind === 'auth') return `${prefix}${status.reason}，请检查账号或密钥`
+  if (status.kind === 'quota') {
+    const reset = status.resetAt === undefined ? '' : `（预计 ${new Date(status.resetAt).toLocaleString('zh-CN', { hour12: false })} 恢复）`
+    return `${prefix}${status.reason}${reset}，等额度恢复或换一个脑子`
+  }
+  if (status.kind === 'transient') return `${prefix}${status.reason}，再发一句就会重试`
+  return `${prefix}${status.reason}，请检查 CLI 版本或换一个模型`
+}
+
+interface ConfirmationOptions {
+  provider: 'claude' | 'codex'
+  combination: () => ProbeCombination
+  history: ProbeHistory
+  inferredModel?: (endpoint: string | undefined) => string | undefined
   now?: () => number
 }
 
-export interface ProbeStatus { state: 'untested' | 'probing' | 'ok' | 'failed'; detail?: string; at?: number }
-
-export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts): AgentProvider & { probeStatus(): ProbeStatus } {
+/** Observe chat outcomes. Startup, dispatch and evaluation retain their normal admission rules. */
+export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOptions): AgentProvider & { probeStatus(): ProbeStatus } {
   const now = opts.now ?? Date.now
-  const retryAfter = opts.retryAfterMs ?? 10 * 60_000
-  let status: ProbeStatus = { state: 'untested' }
-  let inflight: Promise<void> | null = null
-
-  const ensure = (): Promise<void> => {
-    if (status.state === 'ok') return Promise.resolve()
-    if (status.state === 'failed' && status.at !== undefined && now() - status.at < retryAfter) {
-      return Promise.reject(new Error(opts.failureMessage(status.detail ?? 'probe failed')))
+  const saved = new Set<string>()
+  let latest: { defaults: ProbeCombination; status: ProbeStatus } | undefined
+  const known = (target: CallTarget | null | undefined, defaults: ProbeCombination): ProbeCombination | undefined => {
+    if (!target?.model || target.model === UNKNOWN_PROBE_FIELD) return
+    const endpoint = probeEndpointKey(target)
+    if (endpoint !== 'unresolved') return { ...defaults, model: target.model, endpoint }
+  }
+  const clear = (target: ProbeCombination) => {
+    opts.history.clear(target)
+    saved.delete(probeTargetKey(target))
+  }
+  const failure = (target: ProbeCombination | undefined, error: unknown, detail: string, startup = false) => {
+    const classified = classifyProbeError(opts.provider, error, detail)
+    const at = now()
+    const resetAt = classified.kind === 'quota' ? parseResetAt(detail) : null
+    if (target && (startup || classified.kind === 'incompatible')) clear(target)
+    if (startup || classified.code !== 'context_overflow') {
+      latest = {
+        defaults: opts.combination(),
+        status: {
+          state: 'failed', ...classified, at,
+          ...(startup && !target ? { startup: true } : {}),
+          ...(resetAt !== null && resetAt > at ? { resetAt } : {}),
+        },
+      }
     }
-    if (inflight) return inflight
-    const started = now()
-    status = { state: 'probing' }
-    inflight = (async () => {
-      let text = ''
-      try {
-        text = (await opts.probe()).trim()
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err)
-        status = { state: 'failed', detail, at: now() }
-        opts.onResult?.({ ok: false, detail, ms: now() - started })
-        throw new Error(opts.failureMessage(detail))
-      } finally {
-        inflight = null
-      }
-      if (text === '') {
-        const detail = '探测拿到了空回复(协议不合的典型症状)'
-        status = { state: 'failed', detail, at: now() }
-        opts.onResult?.({ ok: false, detail, ms: now() - started })
-        throw new Error(opts.failureMessage(detail))
-      }
-      status = { state: 'ok', detail: text.slice(0, 40), at: now() }
-      opts.onResult?.({ ok: true, detail: text.slice(0, 40), ms: now() - started })
-    })()
-    return inflight
+    let message = classified.reason
+    // Preserve fixed upgrade and overflow signals used by the coordinator.
+    if (classified.kind === 'incompatible' && outdatedClientSignal(opts.provider, detail)) {
+      message = `This request requires a newer version of ${CLI_SPECS[opts.provider].label}.`
+    }
+    if (classified.code === 'context_overflow') {
+      const input = contextOverflowInputTokens(detail)
+      const limit = contextOverflowLimitTokens(detail)
+      message = `context window exceeded${input ? `, requested ${input}` : ''}${limit ? `, model token limit: ${limit}` : ''}`
+    }
+    return { kind: 'error' as const, message, code: classified.code }
   }
 
-  const wrapped: AgentProvider & { probeStatus(): ProbeStatus } = {
-    ...inner,
-    async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
-      await ensure()
-      return inner.spawn(project, ctx)
-    },
-    ...(inner.cheapEval && (opts.gate ?? 'all') === 'all' ? { cheapEval: async (prompt, options) => { if (!options?.singleAttempt) await ensure(); return inner.cheapEval!(prompt, options) } } : {}),
-    ...(inner.strongEval && (opts.gate ?? 'all') === 'all' ? { strongEval: async (prompt: string) => { await ensure(); return inner.strongEval!(prompt) } } : {}),
-    probeStatus: () => status,
+  const observeSession = (session: AgentSession, defaults: ProbeCombination): AgentSession => {
+    let cancellations = 0
+    const target = () => known(session.confirmationTarget
+      ? session.confirmationTarget()
+      : sessionCallTarget(session, opts.provider), defaults)
+    return {
+      ...session,
+      ...(session.cancel ? { async cancel() { cancellations++; await session.cancel!() } } : {}),
+      async close() { cancellations++; await session.close() },
+      async *dispatch(...args) {
+        if (args[2]?.source === 'background') {
+          yield* session.dispatch(...args)
+          return
+        }
+        const before = cancellations
+        let failed = false
+        let completed = false
+        let hasReply = false
+        try {
+          for await (const event of session.dispatch(...args)) {
+            if (before !== cancellations) continue
+            if (event.kind === 'error') {
+              if (!failed) yield failure(target(), event, event.message || 'provider_error')
+              failed = true
+              continue
+            }
+            if (event.kind === 'tool_call' || (event.kind === 'text' && event.text.trim())) hasReply = true
+            if (event.kind === 'result') {
+              completed = true
+              hasReply ||= !!event.finalText?.trim()
+            }
+            yield event
+          }
+        } catch (err) {
+          if (isNetworkUnprotectedError(err)) throw err
+          if (!failed && before === cancellations) {
+            yield failure(target(), err, err instanceof Error ? err.message : String(err))
+          }
+          return
+        }
+        if (before !== cancellations || failed || !completed) return
+        const sentTo = target()
+        if (!hasReply) {
+          yield failure(sentTo, undefined, '')
+          return
+        }
+        const at = now()
+        const key = sentTo && probeTargetKey(sentTo)
+        if (sentTo && key && !saved.has(key)) {
+          opts.history.save({ ...sentTo, at, confirmedByTurn: true })
+          saved.add(key)
+        }
+        latest = { defaults: opts.combination(), status: { state: 'ok', source: 'turn', at } }
+      },
+    }
   }
-  return wrapped
+
+  return {
+    ...inner,
+    async spawn(project, ctx) {
+      if (ctx.evaluation) return inner.spawn(project, ctx)
+      const defaults = opts.combination()
+      let startupTarget: CallTarget | undefined
+      try {
+        const session = await inner.spawn(project, { ...ctx, reportStartupTarget: target => { startupTarget = target } })
+        return observeSession(session, defaults)
+      } catch (err) {
+        if (isNetworkUnprotectedError(err) || ctx.preparationSignal?.aborted) throw err
+        const { message, code } = failure(known(startupTarget, defaults), err, err instanceof Error ? err.message : String(err), true)
+        throw errorWithProviderCode(message, code)
+      }
+    },
+    probeStatus() {
+      const defaults = opts.combination()
+      if (latest && sameProbeCombination(defaults, latest.defaults)) return latest.status
+      const inferred = defaults.model === UNKNOWN_PROBE_FIELD ? opts.inferredModel?.(defaults.endpoint) : undefined
+      const target = inferred ? { ...defaults, model: inferred } : defaults
+      const previous = opts.history.read(target)
+      // Older records include standalone probes and cannot establish a real turn.
+      return previous?.confirmedByTurn && sameProbeCombination(target, previous)
+        ? { state: 'ok', source: 'history', at: previous.at }
+        : { state: 'awaiting_turn' }
+    },
+  }
 }

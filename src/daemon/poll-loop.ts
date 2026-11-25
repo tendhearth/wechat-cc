@@ -276,9 +276,9 @@ export interface PollLoopOptions {
    * 超时之后才读到(那时已经拒了)。
    * 游标照旧在**处理完之后**才落盘:某一批的游标排在这一批所有普通消息之后写,崩溃了从上一个落盘点重放(至少一次)。
    * 没处理完的普通消息最多攒 READ_AHEAD_MAX 条,攒满了就等它们跑完再拉。不给 ⇒ 老的整轮内联行为。
-   * 抛了当没消费(排队)。
+   * 异步结果是说明的送达回执，普通队列等它，快车道继续处理后面的消息。抛了当没消费(排队)。
    */
-  fastLane?: (msg: InboundMsg) => boolean
+  fastLane?: (msg: InboundMsg) => boolean | Promise<boolean>
   /** Test injection point; defaults to this file's sleep(). */
   sleepFn?: (ms: number, signal: AbortSignal) => Promise<void>
   /** 停止宽限:abort 后最多等这么久让 loop 自然退出,超时也返回(见 stop()）。 */
@@ -382,10 +382,12 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
     let persisted = syncBuf
     // 停下以后还没开始处理的普通消息不再处理(重启后从落盘的游标重放);跳过了一条,后面的游标就不能再落盘。
     let skipped = false
-    const enqueue = (msg: InboundMsg) => {
+    const enqueue = (msg: InboundMsg, delivery?: Promise<boolean>) => {
       queued++
       work = work.then(async () => {
         try {
+          if (sig.aborted) { skipped = true; return }
+          if (delivery && await delivery) return
           if (sig.aborted) { skipped = true; return }
           await handle(msg)
         } finally { queued-- }
@@ -467,11 +469,19 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
             if (fastLane) {
               // 停下了:这一批剩下的不再处理(包括快车道),游标停在它们之前,重启后重放。
               if (sig.aborted) { skipped = true; continue }
-              let consumed = false
-              try { consumed = fastLane(msg) === true } catch { consumed = false }
+              let consumed: boolean | Promise<boolean> = false
+              try { consumed = fastLane(msg) } catch { /* Fall through to the ordinary queue. */ }
               // 快车道:拍板卡的回答当场消费(放开在等它的那一轮),不排在前面的普通消息后面;没消费 ⇒ 普通队列,按到达顺序。
-              if (consumed) { try { onPollCycle?.() } catch { /* never throw into the loop */ } }
-              else enqueue(msg)
+              if (consumed === true) { try { onPollCycle?.() } catch { /* never throw into the loop */ } }
+              else if (consumed === false) enqueue(msg)
+              else {
+                // Give later approvals the fast lane immediately. Reserve this message's
+                // place in the ordinary queue and hold its cursor until delivery settles.
+                enqueue(msg, consumed.then(delivered => {
+                  if (delivered) { try { onPollCycle?.() } catch { /* never throw into the loop */ } }
+                  return delivered
+                }, () => false))
+              }
               continue
             }
             // Stamp the heartbeat after EACH message too (inside handle), not

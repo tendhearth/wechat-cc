@@ -234,11 +234,11 @@ export default function Compose() {
           <View style={{ gap: space.s }}>
               <ImageTray testID="compose-images" images={images} lang={lang} onRemove={id => { setImages(cur => cur.filter(i => i.id !== id)); setImageNote(null) }} />
               {imageNote ? <Txt testID="compose-image-note" role="meta" tone="inkSoft">{imageNote}</Txt> : null}
-              <Pressable testID="compose-add-image" accessibilityRole="button" accessibilityLabel={t(lang, 'images.add')}
+              <Pressable testID="compose-add-image" accessibilityRole="button" accessibilityLabel={t(lang, 'images.addLabel')}
                 disabled={busy || images.length >= MAX_IMAGES} onPress={() => { void addImages() }}
                 style={({ pressed }) => ({ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.s, opacity: busy || images.length >= MAX_IMAGES ? 0.55 : pressed ? 0.7 : 1 })}>
                 <Icon name="plus" color={c.inkSoft} />
-                <Txt role="meta" tone="inkSoft">{t(lang, 'images.add')}</Txt>
+                <Txt role="meta" tone="inkSoft">{t(lang, 'images.photo')}</Txt>
               </Pressable>
           </View>
           {matter ? null : (

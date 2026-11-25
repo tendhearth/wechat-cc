@@ -246,7 +246,7 @@ describe('ACP workbench provider', () => {
     await prompted(child)
     permission(child, 'perm-1')
     await expect.poll(() => child.sent.some(m => m.id === 'perm-1')).toBe(true)
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'execute', description: 'uname -a', command: 'uname -a', onDenied: expect.any(Function) }, expect.any(AbortSignal))
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'execute', description: 'uname -a', command: 'uname -a', display: { body: { kind: 'command', command: 'uname -a' }, note: '`uname -a`' }, onDenied: expect.any(Function) }, expect.any(AbortSignal))
     expect(child.sent.find(m => m.id === 'perm-1')).toEqual({ jsonrpc: '2.0', id: 'perm-1', result: { outcome: { outcome: 'selected', optionId: 'allow-once' } } })
     permission(child, 'perm-2', { toolCall: { toolCallId: 'c2', title: '`rm x`', kind: 'execute', status: 'pending', rawInput: { command: 'rm x' } } })
     await expect.poll(() => child.sent.some(m => m.id === 'perm-2')).toBe(true)
@@ -254,6 +254,25 @@ describe('ACP workbench provider', () => {
     permission(child, 'perm-3', { options: [{ optionId: 'a', kind: 'allow_always' }] })
     await expect.poll(() => child.sent.some(m => m.id === 'perm-3')).toBe(true)
     expect(child.sent.find(m => m.id === 'perm-3')!.result).toEqual({ outcome: { outcome: 'cancelled' } })
+    child.finishPrompt(); await done
+  })
+  it('carries ACP diff content and locations verbatim through the task bridge', async () => {
+    const request = vi.fn(async (_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => true)
+    const { session, child } = await start({ requestPermission: request })
+    const { done } = collect(session)
+    await prompted(child)
+    const path = 'C:\\project\\a.ts', oldText = 'old\r\n', newText = 'new\n'
+    const locations = [{ path, line: 2 }]
+    permission(child, 'diff', { toolCall: { toolCallId: 'c2', title: 'Edit source', kind: 'edit', status: 'pending',
+      locations, content: [{ type: 'diff', path, oldText, newText }] } })
+    await expect.poll(() => request.mock.calls.length).toBe(1)
+    const { reviewDescription, display, cwd, displayCwd } = request.mock.calls[0]![0]
+    expect(display?.body.kind).toBe('edit')
+    expect(display?.body.kind === 'edit' && display.body.path === path &&
+      display.body.changes[0]?.before === oldText && display.body.changes[0]?.after === newText &&
+      display.extra?.[0]?.value === JSON.stringify(locations[0]) &&
+      reviewDescription?.includes(oldText) && reviewDescription.includes(newText)).toBe(true)
+    expect(cwd ?? displayCwd).toBeUndefined()
     child.finishPrompt(); await done
   })
   it('rejects when no bridge is bound, cancels unverifiable requests and stops the task, and answers unknown methods with -32601', async () => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { t, tCount } from '../../../i18n'
+import { t } from '../../../i18n'
 import { useLang } from '../../../i18n/useLang'
 import { useBackendCtx } from '../../../state/BackendProvider'
 import { useConnection, useQuery, useSubmit, useTopic } from '../../../state/hooks'
@@ -13,7 +13,7 @@ import { Card } from '../../../ui/Card'
 import { CCFigure } from '../../../ui/CCFigure'
 import { ConnectionNotice } from '../../../ui/ConnectionNotice'
 import { Dot } from '../../../ui/Dot'
-import { Sheet } from '../../../ui/Sheet'
+import { ApprovalNote, MatterContext, PermissionCard } from '../../../ui/PermissionCard'
 import { Icon } from '../../../ui/Icon'
 import { BusyIndicator } from '../../../ui/motion'
 import { StatusHint } from '../../../ui/StatusHint'
@@ -28,12 +28,11 @@ import { ANSWER_MAX_CHARS, ANSWER_MAX_MULTI, answersTooLong, approvalOutcome, ap
 import { approvalOpinion, scheduleOpinionReads, type ApprovalOpinion } from '../../../view/approval-opinion'
 
 type Outcome = null | { requestId: string; kind: 'handled' | 'uncertain' | 'failed' | 'ccBusy' | 'tooLong' | 'revoked' }
-type CardView = Extract<ApprovalView, { kind: 'card' }>
 type QuestionView = Extract<ApprovalView, { kind: 'question' }>
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
 
-// 批准 / 回答:一件事的一步(设计稿 2026-10-31 U;/approval/<id> 只剩重定向到这里),做完回到这件事的详情。硬要求:说明来自模型时,原始命令首行 + 工作目录直接可见、不折叠;
+// 批准 / 回答:一件事的一步(设计稿 2026-10-31 U;/approval/<id> 只剩重定向到这里),做完回到这件事的详情。
 // 提交中两个按钮都锁;以返回结果为准(不做乐观成功);超时 ⇒「不确定」并重新拉详情。
 // 打开就拉新(有缓存也拉):拿到挂载之后发出的详情之前按钮一直锁,钉住的请求也只从新详情里取。
 // 不在线(连接中 / 离线 / 撤销)⇒ 按钮锁 + ConnectionNotice(离线带上次同步时间,撤销给「重新配对」)。
@@ -48,6 +47,7 @@ export default function Approval() {
   const params = useLocalSearchParams<{ id: string; request?: string }>()
   const id = one(params.id) ?? ''
   const requestParam = one(params.request) || undefined
+  const scroll = useRef<ScrollView>(null)
   const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
   const insight = useQuery(`insight:${id}`, l => backend.insight(id, l), { refreshOnMount: true })
   const online = canSubmit(conn)
@@ -115,7 +115,7 @@ export default function Approval() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {header}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
+        <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
           {body}
         </ScrollView>
         {footer ? <View style={{ paddingHorizontal: space.xl, paddingTop: space.m, paddingBottom: space.m, gap: space.s }}>{footer}</View> : null}
@@ -244,14 +244,14 @@ export default function Approval() {
     void send(v.requestId, `approve:${v.requestId}`, decision, () => backend.decide({ id, runId: v.runId, requestId: v.requestId, decision, ...(decision === 'deny' && v.canDenyWithReason && denialDraft.requestId === v.requestId && denialDraft.reason.trim() ? { reason: denialDraft.reason.trim() } : {}) }))
 
   return shell(
-    <PermissionCard key={v.requestId} v={v} taskId={id} matterTitle={matterTitle} ccOpinion={opinion.ccOpinion} />,
+    <PermissionCard key={v.requestId} v={v} taskId={id} matterTitle={matterTitle} ccOpinion={opinion.ccOpinion}
+      questionReason={opinion.questionReason} scroll={scroll} />,
     <View key={v.requestId} style={{ gap: space.s }}>
       {status}
       {v.canDenyWithReason ? <TextField testID="approval-denial-reason" variant="comment" multiline maxLength={2000}
         accessibilityLabel={t(lang, 'approval.denialReason')} placeholder={t(lang, 'approval.denialReason')}
         value={denialDraft.requestId === v.requestId ? denialDraft.reason : ''} editable={!editing}
         onChangeText={reason => setDenialDraft({ requestId: v.requestId, reason })} /> : null}
-      <ApprovalNote kind="reason" text={opinion.questionReason} />
       <View style={{ flexDirection: 'row', gap: space.m }}>
         <View style={{ flex: 1 }}>
           <Button kind="secondary" testID="approval-deny" label={t(lang, 'approval.deny')} onPress={() => decide('deny')} disabled={locked} busy={pending === 'deny'} />
@@ -274,120 +274,6 @@ function Notice({ text, testID }: { text: string; testID?: string }) {
       <Dot kind="warn" size={8} />
       <Txt testID={testID} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flexShrink: 1 }}>{text}</Txt>
     </View>
-  )
-}
-
-function MatterContext({ title, eventKey }: { title: string; eventKey?: string }) {
-  const conn = useConnection()
-  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m, paddingTop: space.m }}>
-    <CCFigure size={36} presence={ccPresence(conn)} behavior={eventKey ? 'wait' : 'idle'} eventKey={eventKey} />
-    <Txt role="meta" tone="inkSoft" content="user" style={{ flex: 1 }}>{title}</Txt>
-  </View>
-}
-
-function PermissionScriptPreview({script,taskId,requestId}:{script:NonNullable<CardView['scripts']>[number];taskId:string;requestId:string}) {
-  const lang=useLang(),{backend}=useBackendCtx()
-  const [expanded,setExpanded]=useState(false),[full,setFull]=useState<string|null>(null),[busy,setBusy]=useState(false),[failed,setFailed]=useState(false)
-  async function toggle(){
-    if(busy)return
-    if(expanded){setExpanded(false);return}
-    if(!script.truncated||full!==null){setExpanded(true);return}
-    setBusy(true);setFailed(false)
-    try{
-      let text='',offset:number|null=0
-      for(let i=0;offset!==null&&i<32;i++){
-        const part=await backend.permissionScript({id:taskId,requestId,path:script.path,sha256:script.sha256!,offset})
-        text+=part.content;offset=part.nextOffset
-      }
-      if(offset!==null)throw Error('too_large')
-      setFull(text);setExpanded(true)
-    }catch{setFailed(true)}finally{setBusy(false)}
-  }
-  return <Card style={{gap:space.s}}>
-    <Txt role="caption">{t(lang,'approval.script')} · {script.path}</Txt>
-    <Txt selectable role="code">{script.error??(expanded?(full??script.content):script.content.slice(0,2000))}</Txt>
-    {!script.error&&(script.truncated||script.content.length>2000)?<Button kind="secondary" testID={`approval-script-expand-${script.path}`} label={t(lang,expanded?'approval.collapseScript':'approval.expandScript')} onPress={()=>void toggle()} busy={busy} disabled={busy}/>:null}
-    {failed?<Txt role="small">{t(lang,'approval.refreshFailed')}</Txt>:null}
-  </Card>
-}
-
-function ApprovalNote({ kind, text }: { kind: 'opinion' | 'reason'; text?: string }) {
-  const lang = useLang()
-  if (!text) return null
-  return (
-    <Txt
-      testID={kind === 'opinion' ? 'approval-cc-opinion' : 'approval-question-reason'}
-      role="small"
-      tone="inkSoft"
-      content="user"
-    >
-      {t(lang, kind === 'opinion' ? 'approval.ccOpinion' : 'approval.questionReason', { text })}
-    </Txt>
-  )
-}
-
-function PermissionCard({ v, taskId, matterTitle, ccOpinion }: { v: CardView; taskId: string; matterTitle: string; ccOpinion?: string }) {
-  const lang = useLang()
-  // 没有模型说明时 what 就是原始命令:等宽、最多 4 行,完整内容在「查看具体操作」里。
-  const rows: Array<[string, string, boolean]> = [
-    [t(lang, 'approval.what'), v.what, !v.aiSummary],
-    [t(lang, 'approval.scope'), v.scope, false],
-    [t(lang, 'approval.effect'), v.effect, false],
-  ]
-  const shown = rows.filter(([, body]) => body.trim() !== '')
-  return (
-    <>
-      <MatterContext title={matterTitle} eventKey={v.requestId} />
-      {v.scripts?.map(script => <PermissionScriptPreview key={script.path} script={script} taskId={taskId} requestId={v.requestId} />)}
-      {/* 意见晚到时只在标题下面多一行,上面的内容不挪位置。 */}
-      <View style={{ gap: space.s }}>
-        <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{v.title}</Txt>
-        <ApprovalNote kind="opinion" text={ccOpinion} />
-        {v.aiSummary ? (
-          <View testID="approval-ai-summary" accessible accessibilityLabel={`${t(lang, 'approval.aiTag')}. ${t(lang, 'approval.aiSummary')}`} style={{ gap: space.xs }}>
-            <Txt role="caption">{t(lang, 'approval.aiTag')}</Txt>
-            <Txt role="small" tone="inkSoft">{t(lang, 'approval.aiSummary')}</Txt>
-          </View>
-        ) : null}
-      </View>
-
-      {/* 模型写的说明可能不准:原始命令首行与工作目录直接摆出来,不折叠。 */}
-      {v.showRawInline ? (
-        <View testID="approval-raw-inline" style={{ gap: space.s, paddingVertical: space.m }}>
-          <Txt role="caption" tone="inkSoft">{t(lang, 'approval.rawCommand')}</Txt>
-          <Txt selectable role="code">{v.rawFirstLine}{v.rawFirstLineCut ? '…' : ''}</Txt>
-          {v.rawMoreLines > 0 ? <Txt testID="approval-raw-more" role="caption" tone="inkSoft">{tCount(lang, 'approval.moreLines', v.rawMoreLines)}</Txt> : null}
-          <Txt role="caption" tone="inkSoft">{t(lang, 'approval.workingDir')}</Txt>
-          <Txt selectable role="code">{v.workingDir || '—'}</Txt>
-        </View>
-      ) : null}
-
-      {shown.length > 0 ? (
-        <Card style={{ gap: 0, paddingVertical: space.s }}>
-          {shown.map(([label, body, raw]) => (
-            <View key={label} style={{ paddingVertical: space.m, gap: space.xs }}>
-              <Txt role="meta" tone="inkSoft">{label}</Txt>
-              {raw ? (
-                <Txt role="code" numberOfLines={4}>{body}</Txt>
-              ) : (
-                <Txt role="bubble" content="user">{body}</Txt>
-              )}
-            </View>
-          ))}
-        </Card>
-      ) : null}
-
-      <Sheet testID="approval-view-exact" title={t(lang, 'approval.viewExact')}>
-        <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
-          <Txt selectable role="code">{v.rawFull}</Txt>
-        </ScrollView>
-        {v.workingDir ? (
-          <Txt selectable role="code" tone="inkSoft" style={{ marginTop: space.s }}>
-            {t(lang, 'approval.workingDir')}: {v.workingDir}
-          </Txt>
-        ) : null}
-      </Sheet>
-    </>
   )
 }
 

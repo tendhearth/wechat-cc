@@ -2,6 +2,18 @@
 import {afterEach,expect,it,vi} from 'vitest'
 import {openConversationWork} from './conversation-work-detail.js'
 afterEach(()=>{for(const dialog of document.querySelectorAll('dialog'))dialog.dispatchEvent(new Event('close'));document.body.innerHTML=''})
+it('puts the secondary terminal decision before the primary decision',async()=>{
+  const call=async(_method:string,path:string)=>{
+    if(path.startsWith('/v1/matter?'))return {matter:{id:'matter',kind:'terminal',title:'终端'},bindings:[{surface:'cli',surfaceKey:'session'}]}
+    if(path.startsWith('/v1/cli/sessions'))return {sessions:[{session_id:'session',pending:{actionable:true,tool:'Read',summary:'备份目录'}}]}
+    if(path.startsWith('/v1/cli/activity'))return {items:[]}
+    throw Error(path)
+  }
+  await openConversationWork(call,'matter',vi.fn())
+  const buttons=document.querySelectorAll('dialog button[data-terminal-approval]')
+  expect([...buttons].map(button=>button.textContent)).toEqual(['先不做','允许这一步'])
+})
+
 it('terminal and act matter ids never enter task APIs; only task dispatches to the workbench',async()=>{
   const openTask=vi.fn(),call=vi.fn(async(_m:string,path:string)=>{
     if(path.startsWith('/v1/matter?'))return {matter:{id:'terminal-id',kind:'terminal',title:'Terminal'},bindings:[{surface:'cli',surfaceKey:'session-real'}]}

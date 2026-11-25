@@ -1,38 +1,27 @@
-// 纯 TS:字号 / 行高 / 家族的选择(spec §2.2、§3)。字重永远靠家族名,不设 fontWeight。
-// 裁决 D1:只打包 Noto Serif SC Regular ⇒ 中文(界面或用户内容)一律 NotoSerifSC-Regular;只有拉丁界面的 medium 角色用 THSerif4-Medium。
 import { typeScale, type TypeRole } from '@wechat-cc/design-tokens'
-import type { Lang } from '../i18n'
 
-/** 中日韩字(汉字、假名、谚文、全角标点与符号、扩展区)。 */
-const CJK = /[⺀-鿿가-힯豈-﫿︰-﹏＀-￯]|[\u{20000}-\u{3134F}]/u
+/** cc:CC 自己说的、写的话,用它的手写字。brand:品牌的字标(欢迎页上的名字),留原来的衬线字。别的一律系统字。 */
+export type TextVoice = 'cc' | 'brand'
 
-/**
- * `text`:这段字的实际内容(知道就传)。一个中文字都没有 ⇒ 拉丁衬线 —— Noto Serif SC 的弯引号 ’ “ ” 是全角字形,
- * 英文里的 week’s 会被撑开;反过来只要有一个中文字就用 Noto(中文永不落到无衬线)。不知道内容 ⇒ 照语言 / content 定。
- */
-export function phoneFont(role: TypeRole | 'code', lang: Lang, content: 'ui' | 'user' = 'ui', text?: string) {
+// 手写字的字面比系统字小一圈:同一个角色下放大 1.125 倍(正文 16 → 18,小字 13 → 14.5),看起来和正文一样大。
+// 桌面是 15 → 18.5,有意比正文大;手机一行只有十几个字,再大,长一点的回复就太碎。
+const CC_VOICE_SCALE = 1.125
+const CC_VOICE_FAMILY = 'THPenHand-Regular'
+
+/** 字体只看角色和「谁的话」,不看文字内容。 */
+export function phoneFont(role: TypeRole | 'code', { content = 'ui', voice }: { content?: 'ui' | 'user'; voice?: TextVoice } = {}) {
   if (role === 'code') return { fontFamily: 'mono', fontSize: 13, lineHeight: 19, letterSpacing: 0 }
   const s = typeScale[role]
-  const cjk = text !== undefined ? CJK.test(text) : content === 'user' || lang === 'zh-Hans'
-  const fontFamily = cjk ? 'NotoSerifSC-Regular' : s.weight === 'medium' ? 'THSerif4-Medium' : 'THSerif4-Regular'
+  const brand = voice === 'brand' && content === 'ui'
+  const hand = voice === 'cc'
+  const fontSize = hand ? Math.round(s.phone * CC_VOICE_SCALE * 2) / 2 : s.phone
   return {
-    fontFamily,
-    fontSize: s.phone,
-    lineHeight: Math.round(s.phone * s.lineHeight),
+    fontFamily: brand ? (s.weight === 'medium' ? 'THSerif4-Medium' : 'THSerif4-Regular') : hand ? CC_VOICE_FAMILY : undefined,
+    ...(s.weight === 'medium' && !brand && !hand ? { fontWeight: '500' as const } : {}),
+    fontSize,
+    lineHeight: Math.round(fontSize * s.lineHeight),
     letterSpacing: s.phone * s.tracking,
   }
-}
-
-/** Txt 的 children 里能读出的纯文本(字符串 / 数字 / 它们的数组);有别的节点 ⇒ undefined(不知道内容)。 */
-export function plainText(children: unknown): string | undefined {
-  if (typeof children === 'string' || typeof children === 'number') return String(children)
-  if (children === null || children === undefined || typeof children === 'boolean') return ''
-  if (Array.isArray(children)) {
-    let out = ''
-    for (const ch of children) { const s = plainText(ch); if (s === undefined) return undefined; out += s }
-    return out
-  }
-  return undefined
 }
 
 /** 字体没好也没错 ⇒ 等;好了或出错 ⇒ 放行(出错时 fontFamily 找不到,iOS / Android 退回系统无衬线,绝不卡住页面)。 */

@@ -1,6 +1,7 @@
 import { test, expect, clickNav } from './fixtures'
 import { PRESENCE_OK, routePresenceTopic } from './presence-topic'
-import { askingPlace, placeItem, placeRow, routePlaces } from './roster-fixture'
+import { askingPlace, placeItem, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
+import type { PermissionDisplay } from '../../../packages/protocol/src/permission-display'
 
 test.use({ viewport: { width: 1280, height: 820 } })
 
@@ -113,7 +114,7 @@ test('宽窗两栏、地方两层、同一列说话和输入，记忆留在右�
 
 test('全局等待卡片钉在上方、切换地方仍可回答、回答后刷新', async ({ page, shimUrl }) => {
   const waiting = placeItem('rici', { status: 'waiting', moving: false, line: '旧表留着吗？',
-    waiting: { itemKey: 'matter:deadbeef', kind: 'permission', matterId: 'deadbeef', requestId: 'req-1', summary: '旧表留着吗？', count: 1 } })
+    waiting: { itemKey: 'matter:deadbeef', kind: 'permission', matterId: 'deadbeef', requestId: 'req-1', summary: '旧表留着吗？', count: 1, cwd: '/offline/project' } })
   let rici = waiting
   await routePlaces(page, () => [rici, placeItem('leni'), askingPlace('melu', 'aaaa0001'), askingPlace('ranu', 'aaaa0002')])
   const decisions: unknown[] = []
@@ -135,9 +136,9 @@ test('全局等待卡片钉在上方、切换地方仍可回答、回答后刷�
   await expect(card).toHaveCSS('border-radius', '14px')
   await expect(card).toHaveCSS('box-shadow', /0px 0px 0px 0\.5px,.*0px 1px 2px 0px/)
   await expect(card.locator('.desk-waiting-question')).toHaveCSS('font-size', '15.5px')
-  await expect(card.locator('.place-allow')).toHaveCSS('background-color', 'rgb(79, 107, 79)')
+  await expect(card.getByRole('button', { name: '允许这一步', exact: true })).toHaveCSS('background-color', 'rgb(79, 107, 79)')
   await expect(page.locator('#desk-waiting .desk-speaker:visible')).toHaveCount(0)
-  const deny = card.getByRole('button', { name: '不允许' })
+  const deny = card.getByRole('button', { name: '先不做' })
   await expect(deny).toHaveCSS('background-color', 'rgb(255, 254, 251)')
   await expect(deny).toHaveCSS('text-decoration-line', 'none')
   await expect(deny).not.toHaveCSS('box-shadow', 'none')
@@ -163,7 +164,7 @@ test('全局等待卡片钉在上方、切换地方仍可回答、回答后刷�
   await expect(clear).toBeHidden()
   await expect(page.locator('#thing-name')).toHaveText('rici')
   await expect(cards).toHaveCount(1)
-  await card.getByRole('button', { name: '允许', exact: true }).click()
+  await card.getByRole('button', { name: '允许这一步', exact: true }).click()
   expect(decisions).toEqual([{ id: 'deadbeef', requestId: 'req-1', decision: 'allow' }])
   await expect(card).toHaveCount(0)
   await expect(placeRow(page, 'rici')).toHaveAttribute('data-waiting', 'false')
@@ -171,6 +172,68 @@ test('全局等待卡片钉在上方、切换地方仍可回答、回答后刷�
   await expect(page.locator('.desk-date-line')).toBeHidden()
   await expect(clear).toBeHidden()
 })
+
+const commandLines = Array.from({ length: 10 }, (_, i) => `printf line-${i + 1}`)
+const waitingPreviews: Array<[string, PermissionDisplay['body']]> = [
+  ['短命令', { kind: 'command', command: 'printf sample' }],
+  ['目录未知的短命令', { kind: 'command', command: 'printf sample' }],
+  ['十行命令', { kind: 'command', command: commandLines.join('\n') }],
+  ['改文件', { kind: 'edit', path: '/offline/project/sample.txt', changes: [{ before: 'first', after: 'second' }] }],
+]
+
+for (const [label, body] of waitingPreviews) {
+  test(`宽窗等待纸片画出${label}`, async ({ page, shimUrl }) => {
+    const task = { id: 'deadbeef', title: '校对示例', path: '/offline/project', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2 }
+    const display = { body }
+    const cwd = label === '目录未知的短命令' ? undefined : task.path
+    const permission = { id: 'p1', taskId: task.id, tool: body.kind === 'edit' ? 'Edit' : 'Bash',
+      description: '校对示例？', display, cwd, createdAt: 1 }
+    await routePlaces(page, [placeItem('示例', { matterIds: [task.id], status: 'waiting', moving: false,
+      waiting: { itemKey: `matter:${task.id}`, kind: 'permission', matterId: task.id, requestId: permission.id, summary: permission.description,
+        count: 1, tool: permission.tool, display, cwd: permission.cwd },
+    })])
+    await routeRoster(page, [rosterItem(task.id, task.title)])
+    await page.route('**/v1/matter?id=*', route => route.fulfill({ json: { matter: { ...task, kind: 'task' } } }))
+    await page.route(/\/v1\/workbench(?:\?.*)?$/, route => route.fulfill({ json: { tasks: [task], projects: [], providers: [{ id: 'codex', displayName: 'Codex' }] } }))
+    await page.route('**/v1/workbench/task?*', route => route.fulfill({
+      json: { task, runId: 'example-run', events: [], artifacts: [], questions: [], permissions: [permission] },
+    }))
+    await page.goto(shimUrl)
+    await expect(placeRow(page, '示例')).toBeVisible()
+    const card = page.locator('#desk-waiting .desk-waiting-card')
+    const panel = card.locator(`.approval-panel[data-kind="${body.kind}"]`)
+    await expect(panel).toBeVisible()
+    if (!cwd) {
+      await expect(card.getByText('在 /offline/project', { exact: true })).toHaveCount(0)
+      await expect(card.getByRole('button', { name: '允许这一步', exact: true })).toHaveCount(0)
+      await expect(card.getByRole('button', { name: '先不做', exact: true })).toBeEnabled()
+      await card.getByRole('button', { name: '打开看全再定' }).click()
+      await expect(page.locator('#thing-name')).toHaveText('示例')
+      await expect(page.locator('#thing-thread .wb-permission')).toBeVisible()
+      return
+    }
+    await expect(card.getByText('在 /offline/project', { exact: true })).toBeVisible()
+    if (label === '十行命令') {
+      expect(await panel.locator('.approval-source').textContent() === commandLines.slice(0, 4).join('\n')).toBe(true)
+      await expect(card.getByRole('button', { name: '还有 6 行' })).toBeVisible()
+      await expect(card.getByRole('button', { name: '允许这一步', exact: true })).toHaveCount(0)
+      await card.getByRole('button', { name: '打开看全再定' }).click()
+      await expect(page.locator('#thing-name')).toHaveText('示例')
+      const full = page.locator('#thing-thread .wb-permission')
+      await full.getByText('还有 2 行 · 看全部', { exact: true }).click()
+      await expect(full.getByText('printf line-10', { exact: false })).toBeVisible()
+    } else {
+      await expect(card.getByRole('button', { name: '允许这一步', exact: true })).toBeEnabled()
+      if (body.kind === 'edit') {
+        expect(await panel.locator('.approval-path').textContent() === 'sample.txt').toBe(true)
+        await expect(panel.locator('[data-line="deleted"]')).toHaveCount(1)
+        await expect(panel.locator('[data-line="added"]')).toHaveCount(1)
+      } else {
+        expect(await panel.locator('.approval-source').textContent() === 'printf sample').toBe(true)
+      }
+    }
+  })
+}
 
 test('一周没动的地方默认收起，展开仍按原顺序，未读和正在动的保留', async ({ page, shimUrl }) => {
   const old = { updatedAt: weekAgo(), moving: false, status: 'done' }
@@ -188,63 +251,6 @@ test('一周没动的地方默认收起，展开仍按原顺序，未读和正�
   await expect(toggle).toHaveText('收起这周没动的')
   await toggle.click()
   await expect(names).toHaveText(['leni', 'ranu', 'cc'])
-})
-
-test('跨过 900px 保留筛选、草稿和滚动锚点，800px 还用原顶栏和筛选条', async ({ page, shimUrl }) => {
-  const history = Array.from({ length: 50 }, (_, i) => ({
-    kind: i === 0 ? 'user' : 'text', text: `第 ${i} 条旧消息，用来确认换宽度后还能接着读。`, messageId: `old-${i}`, createdAt: i + 1,
-  }))
-  await page.route('**/v1/matter/owner-chat/window**', route => route.fulfill({ json: { messages: history } }))
-  await routePlaces(page, [placeItem('rici', { messageIds: history.map(row => row.messageId) })])
-  await page.goto(shimUrl)
-  const row = placeRow(page, 'rici').locator('.place-row')
-  const input = page.locator('#converse-input')
-  const scroll = page.locator('#converse-scroll')
-  const clear = page.locator('#converse-place-clear')
-  const rail = page.locator('#dash-global-rail')
-  await input.fill('这句话还没发')
-  await expect(scroll.locator('[data-converse-message]')).toHaveCount(50)
-  // 让上边缘落在一条消息的中间。流里多了第一天的日期行以后,原来的 400 正好落在两条消息的缝上,换版式时差一个像素就认成上一条。
-  await scroll.evaluate(el => {
-    const row = el.querySelectorAll('[data-converse-message]')[8]!.getBoundingClientRect()
-    el.scrollTop += row.top + row.height / 2 - el.getBoundingClientRect().top
-  })
-  const anchor = () => scroll.evaluate(el => {
-    const y = el.getBoundingClientRect().top
-    const first = Array.from(el.children).find(node => node.getBoundingClientRect().bottom > y)
-    return first?.getAttribute('data-converse-message')
-  })
-  const before = await anchor()
-  await row.click()
-  await expect(page.locator('#thing-thread')).toBeVisible()
-  await page.setViewportSize({ width: 800, height: 820 })
-  await expect(rail).toHaveCSS('height', '72px')
-  await expect(rail.locator('nav .desk-nav-icon:visible')).toHaveCount(0)
-  await expect(rail.locator('.desk-project-label')).toBeHidden()
-  await expect(page.locator('.desk-date-line')).toBeHidden()
-  await expect(page.locator('.desk-heading')).toBeHidden()
-  await expect(scroll.locator('.converse-msg-user .converse-bubble')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-  for (const edge of ['top', 'right', 'bottom', 'left']) await expect(page.locator('.converse-compose')).toHaveCSS(`border-${edge}-width`, '1px')
-  await expect(clear).toBeVisible()
-  await expect(clear).toHaveText('只看 rici · 回到全部')
-  const [top, places, talk] = await Promise.all([rail, page.locator('.places-strip'), scroll].map(locator => locator.boundingBox()))
-  expect(places!.y).toBeGreaterThanOrEqual(top!.y + top!.height)
-  expect(places!.y + places!.height).toBeLessThanOrEqual(talk!.y)
-  await expect(row).toHaveAttribute('aria-pressed', 'true')
-  await expect(input).toHaveValue('这句话还没发')
-  await expect.poll(anchor).toBe(before)
-
-  await page.setViewportSize({ width: 900, height: 820 })
-  await expect(rail).toHaveCSS('width', '284px')
-  await page.setViewportSize({ width: 1280, height: 820 })
-  await expect(clear).toBeHidden()
-  await expect(page.locator('#desk-place-clear')).toBeHidden()
-  await expect(page.locator('#thing-name')).toHaveText('rici')
-  await expect(row).toHaveAttribute('aria-pressed', 'true')
-  await page.locator('#topbar-cc').click()
-  await expect(input).toHaveValue('这句话还没发')
-  await expect.poll(anchor).toBe(before)
-
 })
 
 test('两栏的拖拽区：两侧空白各起一次拖拽，空地方返回 CC 的按钮照常点', async ({ page, shimUrl }) => {
@@ -392,7 +398,7 @@ test('等待纸条有 CC 意见时只多两行', async ({ page, shimUrl }) => {
   await page.goto(shimUrl)
   const cards = page.locator('.desk-waiting-card')
   const lines = (name: string) => cards.filter({ hasText: name }).locator(':scope > div:not(.place-ask)')
-  await expect(lines('归档')).toHaveText(['这件要你定 · 归档', summary, '我的意见(只看了这条请求)：' + note.ccOpinion, '为什么来问你：' + note.questionReason])
+  await expect(lines('归档')).toHaveText(['这件要你定 · 归档', summary, '我的意见（只看了这条请求）：' + note.ccOpinion, '为什么来问你：' + note.questionReason])
   await expect(lines('菜谱')).toHaveText(['这件要你定 · 菜谱', '要你回答一个问题'])
 })
 

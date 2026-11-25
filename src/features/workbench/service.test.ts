@@ -475,6 +475,7 @@ describe('persistent workbench', () => {
     const one=createAt(project,'one'),two=createAt(other,'two')
     await expect.poll(()=>service.detail(one.id).permissions).toHaveLength(1)
     await expect.poll(()=>service.detail(two.id).permissions).toHaveLength(1)
+    expect(service.detail(one.id).permissions[0]?.cwd === project && service.detail(two.id).permissions[0]?.cwd === other).toBe(true)
     const oneRequest=service.detail(one.id).permissions[0]!.id,twoRequest=service.detail(two.id).permissions[0]!.id
     expect(()=>service.resolvePermission(one.id,twoRequest,'allow')).toThrow('permission_stale')
     await service.cancel(one.id); await settle(one.id)

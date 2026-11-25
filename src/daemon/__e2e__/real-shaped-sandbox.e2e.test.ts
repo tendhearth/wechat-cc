@@ -13,9 +13,12 @@
 // 后加的几条各自的红 / 绿写在 README 的场景表下面。
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { hostname, tmpdir } from 'node:os'
+import { homedir, hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { parsePermissionRequest } from '../../cli/hook'
+import { approvalLookupReply, parseApprovalLookupReply, CliSessionRow, makeProtocolClient, MatterDetail, PERMISSION_SNAPSHOT_NOTICE, PlacesResponse, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
+import { WECHAT_PERMISSION_INCOMPLETE } from '../../ports/wechat'
 import { routesForToken } from '../internal-api/route-tiers'
 import { REQUEST_SCHEMAS } from '../internal-api/schema'
 import { encodeNativeHistoryKey } from '../../adapters/workbench/native-history'
@@ -24,12 +27,16 @@ import { deviceIdOf } from '../../features/phone/device-store'
 import { SANDBOX_OWNER, startRealShapedDaemon, type RealShapedDaemon, type RealShapedOpts } from './real-shaped'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { makeMatterStore } from '../../adapters/store/matters-store'
+import { makeNotebookStore } from '../../adapters/store/notebook-store'
+import { DEFAULT_OPENING } from '../../domain/notebook'
 import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeFileStateStore } from '../../adapters/cli-upgrade/state'
 import type { Db } from '../../lib/db'
 import { serve } from '../../lib/runtime/http'
 import { openSqlite } from '../../lib/runtime/sqlite'
 import type { OutboundMsg } from './fake-ilink-server'
 import type { FakeSdkScript } from './fake-sdk'
+import type { ConnectionsSnapshot } from '../connections'
 
 /**
  * 沙盒里允许不是 ok 的子系统(名字 → 为什么)。空 = 全部 ok。
@@ -61,7 +68,8 @@ const RULES = JSON.stringify({
 })
 
 /** 主人在桌面上登记过的一个项目(projects.json):一个干净的 git 仓库,工作台的「改动」靠 git 比对。 */
-const project = realpathSync(mkdtempSync(join(tmpdir(), 'wechat-cc-sandbox-project-')))
+// 仓库本身也可能检出在「地方」排除的系统临时目录。夹具留在用户主目录下，afterAll 会收掉。
+const project = realpathSync(mkdtempSync(join(homedir(), 'wechat-cc-sandbox-project-')))
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=sandbox@example.invalid', '-c', 'user.name=sandbox', ...args], { cwd: project, stdio: 'pipe' })
 git('init', '-q'); writeFileSync(join(project, 'README.md'), 'sandbox project\n'); git('add', '.'); git('commit', '-qm', 'init')
 // Chat and delegated work must have separate directories even when TMPDIR is
@@ -77,8 +85,9 @@ const STRANGER = 'o9fixture-stranger@im.wechat'
 const said = (text: string): string => [...text.matchAll(/<wechat [^>]*>\n([\s\S]*?)\n<\/wechat>/g)].at(-1)?.[1]?.replace(/<matters>[\s\S]*?<\/matters>\n?/g, '').trim() ?? text.trim()
 
 /** S2 那几条:配对过的一台手机、免打扰里压着的那一句、那件事的编号。 */
-const PHONE_TOKEN = 'sandbox-phone-device-token-0001'
+const PHONE_TOKEN = 'd-sandbox-phone-device-token-0001'
 const PHONE_ID = deviceIdOf(PHONE_TOKEN)
+const NOTEBOOK_PHONE_TOKEN = 'd-sandbox-notebook-device-token'
 const QUIET_NOTE = '自改进展:免打扰里做完的那一步'
 /** 主人时区(Asia/Shanghai)的 HH:MM,给「/set 免打扰」用。 */
 const shanghaiHHMM = (ms: number): string => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(ms))
@@ -92,14 +101,53 @@ const spawnOptions: Array<Record<string, unknown>> = []
 const codexThreads: Array<Record<string, unknown>> = []
 /** codex 收到的审批应答,按命令记。 */
 const decisions = new Map<string, unknown>()
+const privateApprovalEvidence = 'sandboxapprovalhistoryproof'
+const scopedApprovalCommand = 'rm -rf build ' + privateApprovalEvidence
+const longApprovalCommand = "printf '%s' '" + 'SANDBOX_INLINE_APPROVAL '.repeat(200) + "'"
+const patchFile = 'SANDBOX_APPROVAL_FILE.txt'
+const patchDiff = '@@ -1 +1 @@\n-old\n+SANDBOX_PRIVATE_DIFF'
+const approvalFollowUps = new Map<string, string>([
+  ['引用完整卡想问，这条是干嘛的？', ''],
+  ['引用改过的卡想问，这条是干嘛的？', ''],
+  ['引用已了结的卡想问，这条是干嘛的？', ''],
+  ['引用另一段命令想问，这条是干嘛的？', ''],
+  ['引用去掉标记的卡，我想问一下。', ''],
+  ['引用坏标记的卡，我想问一下。', ''],
+  ['只引用卡的头两行，我想问一下。', ''],
+  ['只引用命令块，我想问一下。', ''],
+  ['引用夹着其他请求号的卡，我想问一下。', ''],
+  ['引用去掉标记的提醒，我想问一下。', ''],
+])
+function captureApprovalFollowUp(text: string): void {
+  for (const [question, prompt] of approvalFollowUps) {
+    if (!prompt && text.includes(question)) approvalFollowUps.set(question, text)
+  }
+}
 let codexDecision: unknown
 let lastCodexEnvelope = ''
 let topicJudgeAttempts=0,topicRoundDispatches=0
-const claudeScript: FakeSdkScript = { async onDispatch(text) { if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
-const approval = (command: string, finalText: string) => ({
+const claudeApprovalTitle = '沙盒 Claude 命令附加参数'
+const claudeApprovalDescription = 'sandboxapprovaldescriptionfixture'
+let claudeApprovalDispatched = false
+const claudeScript: FakeSdkScript = { async onDispatch(text) {
+  captureApprovalFollowUp(text)
+  if (text.includes('快判沙盒配色')) topicRoundDispatches++
+  if (!claudeApprovalDispatched && text.includes(claudeApprovalTitle) && !text.includes('<wechat ')) {
+    claudeApprovalDispatched = true
+    return {
+      toolCalls: [], finalText: '沙盒审批已结束。',
+      claudeApproval: { tool: 'Bash', input: {
+        command: "rm -rf build\nprintf '%s' '" + 'fixture '.repeat(550) + "'",
+        run_in_background: true, timeout: 72543, description: claudeApprovalDescription,
+      } },
+    }
+  }
+  return { toolCalls: [], finalText: text.includes('<scheduled_job id="j991"') ? FIXED_BRIEF_REPLY : text.includes('沙盒你好') ? '主人好,我在。' : '好的。' }
+} }
+const approval = (command: string, finalText: string, cwd: string | null = '/tmp') => ({
   toolCalls: [], finalText,
   codexSteps: [{
-    request: { method: 'item/commandExecution/requestApproval', params: { itemId: `c-${command}`, command, cwd: '/tmp', availableDecisions: ['accept', 'decline'] } },
+    request: { method: 'item/commandExecution/requestApproval', params: { itemId: `c-${command}`, command, ...(cwd === null ? {} : { cwd }), availableDecisions: ['accept', 'decline'] } },
     onResponse: (r: { result?: unknown }) => {
       const d = (r.result as { decision?: unknown } | undefined)?.decision
       decisions.set(command, d)
@@ -109,12 +157,26 @@ const approval = (command: string, finalText: string) => ({
 })
 const codexScript: FakeSdkScript = {
   async onDispatch(text) {
+    captureApprovalFollowUp(text)
     lastCodexEnvelope = text
     const s = said(text)
     if (s === '把 build 删了') return approval('rm -rf build', '删好了。')
+    if (s === '在本轮目录把 build 删了') return approval(scopedApprovalCommand, '删好了。', null)
     if (s === '列一下目录') return approval('ls', '列好了。')
     if (s === '推一下') return approval('git push origin main', '推不了,被拒了。')
     if (s === '再清一次 dist') return approval('rm -rf dist', '清好了。')
+    if (text.includes('沙盒权限长命令')) return approval(longApprovalCommand, '长命令审批已结束。')
+    if (text.includes('沙盒权限改文件')) return {
+      toolCalls: [], finalText: '改文件审批已结束。',
+      codexSteps: [
+        { notify: { method: 'item/started', params: { item: {
+          type: 'fileChange', id: 'sandbox-edit', status: 'inProgress',
+          changes: [{ path: patchFile, kind: { type: 'update' }, diff: patchDiff }],
+        } } } },
+        { request: { method: 'item/fileChange/requestApproval', params: { itemId: 'sandbox-edit', cwd: '/tmp' } },
+          onResponse: reply => decisions.set(patchFile, (reply.result as { decision?: unknown } | undefined)?.decision) },
+      ],
+    }
     // 工作台派下来的活(执行者在项目里改文件 —— 这是执行者那一侧的事,替身照真 codex 那样直接写盘)
     if (s.includes('写一份笔记')) { writeFileSync(join(project, 'NOTE.md'), '第一行\n第二行\n'); return { toolCalls: [], finalText: '写好了 NOTE.md。' } }
     return { toolCalls: [], finalText: 'Codex 在。' }
@@ -133,7 +195,10 @@ const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'spee
   } },
   recordClaudeSpawnOptions: (o) => { spawnOptions.push(o) },
   recordCodexSpawnOptions: (o) => { codexThreads.push(o) },
-  ...(more.stateDir ? {} : { seedFiles: { 'permission-rules.json': RULES, 'projects.json': PROJECTS } }),
+  ...(more.stateDir ? {} : { seedFiles: {
+    'permission-rules.json': RULES, 'projects.json': PROJECTS,
+    'settings-devices.json': JSON.stringify({ [NOTEBOOK_PHONE_TOKEN]: { created_at: '2026-11-01T00:00:00.000Z' } }),
+  } }),
 })
 
 /** 桌面 / CLI 那一侧:operator 令牌(工作台、记忆页那一串路由走它)。 */
@@ -181,7 +246,6 @@ async function expectPostRebootCodexReply(d: RealShapedDaemon): Promise<void> {
       inboundReceived: saw('[POLL] inbound '),
       spawnFailed: failure !== undefined,
       spawnFailureCode: failureCode,
-      probePassed: saw('[CODEX_PROBE] ok in '),
       threadRequested: codexThreads.length > threadsBefore,
       accessInvalidated: saw('[ACCESS] tier membership changed'),
       guardSuspended: saw('[GUARD] network unprotected [probe,'),
@@ -412,7 +476,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
 
   it('permission card: owner switches to Codex, a gated command sends a card, owner replies "y" and the command proceeds', async () => {
     d.sendText(d.owner, '/codex')
-    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('切到 Codex')), 10_000)
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('只由 Codex 来答')), 10_000)
     d.sendText(d.owner, '把 build 删了')
     const card = await d.waitForOutbound(m => texts(m, d.owner).some(isCard), 15_000)
     expect(texts(card, d.owner).find(isCard)).toContain('rm -rf build')
@@ -511,6 +575,47 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(await desktop('POST', '/v1/notebook/seen', { ids: ['missing'] })).toEqual({
       status: 200, body: { ok: true },
     })
+  })
+
+  it('keeps a notebook reply unseen after a paired phone has confirmed another reply', async () => {
+    await expect.poll(() => d.phoneRelay.logins(), { timeout: 10_000 }).toBeGreaterThan(0)
+    const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: NOTEBOOK_PHONE_TOKEN })
+    const path = '/v1/notebook'
+    const confirm = async (id: string) => {
+      const response = await phone.request({ method: 'POST', path: `${path}/seen`, body: JSON.stringify({ ids: [id] }) })
+      expect(response.status).toBe(200)
+      expect(response.json()).toEqual({ ok: true })
+    }
+    const unseen = async () => {
+      const response = await phone.request({ method: 'GET', path: `${path}/unseen` })
+      expect(response.status).toBe(200)
+      return response.json<{ unseen: boolean }>().unseen
+    }
+    try {
+      expect(await unseen()).toBe(false)
+      const db = openSqlite(join(d.stateDir, 'wechat-cc.db')) as unknown as Db
+      const { first, second } = (() => {
+        try {
+          const store = makeNotebookStore(db)
+          const { font, ink, reason } = DEFAULT_OPENING
+          store.set('pen', { font, ink, reason })
+          const now = Date.now()
+          const owner = store.append({ author: 'owner', origin: 'app', body: 'fixture', createdAt: now, refId: null, clientId: null })
+          const reply = (createdAt: number) => store.append({
+            author: 'cc', origin: 'desktop', body: 'fixture', createdAt, refId: owner.id, clientId: null,
+          }).id
+          return { first: reply(now + 1), second: reply(now + 2) }
+        } finally { db.close() }
+      })()
+      await confirm(first)
+      expect(await unseen()).toBe(true)
+      const page = await phone.request({ method: 'GET', path })
+      expect(page.status).toBe(200)
+      expect(page.json<NotebookPageResponseT>().entries.some(entry => entry.id === second)).toBe(true)
+      expect(await unseen()).toBe(true)
+      await confirm(second)
+      expect(await unseen()).toBe(false)
+    } finally { phone.close() }
   })
 
   it('operator GET sweep: registered reads respond on the full daemon', async () => {
@@ -712,6 +817,44 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     }
   })
 
+  it('carries a structured terminal hook approval to desktop and a paired phone', async () => {
+    const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: NOTEBOOK_PHONE_TOKEN })
+    const session_id = 'sandbox-structured-approval'
+    const cwd = join(project, 'preview')
+    mkdirSync(cwd)
+    const input = { file_path: join(cwd, 'sample.txt'), old_string: 'preview before\r\n', new_string: 'preview after\n'.repeat(30) }
+    const req = parsePermissionRequest('claude', { hook_event_name: 'PermissionRequest', session_id, cwd, tool_name: 'Edit', tool_input: input })
+    const post = await desktop<{ status: string }>('POST', '/v1/cli/permission', { ...req, idle_s: 3600, machine: hostname() }, 'trusted')
+    try {
+      expect(post.status).toBe(200)
+      expect(post.body.status).toBe('pending')
+      const path = '/v1/cli/sessions'
+      const desk = await desktop<{ sessions: CliSessionRowT[] }>('GET', path)
+      const mobile = await phone.request({ method: 'GET', path: path + '?session_id=' + session_id })
+      expect([desk.status, mobile.status]).toEqual([200, 200])
+      const verify = (sessions: CliSessionRowT[]) => {
+        const row = CliSessionRow.parse(sessions.find(row => row.session_id === session_id))
+        const pending = row.pending
+        expect(pending?.display?.body.kind).toBe('edit')
+        expect(pending?.cwd === cwd && pending?.truncated === true && pending?.display?.truncated !== true &&
+          JSON.stringify(pending.display) === JSON.stringify(req?.display)).toBe(true)
+      }
+      verify(desk.body.sessions)
+      verify(mobile.json<{ sessions: CliSessionRowT[] }>().sessions)
+      const places = await desktop('GET', '/v1/places')
+      expect(places.status).toBe(200)
+      const waiting = PlacesResponse.parse(places.body).places.find(p => p.waiting?.sessionId === session_id)?.waiting
+      expect(waiting).toMatchObject({ kind: 'terminal', tool: 'Edit', truncated: true })
+      expect(waiting?.cwd === cwd && JSON.stringify(waiting.display) === JSON.stringify(req?.display)).toBe(true)
+      expect((await desktop('GET', '/v1/places', undefined, 'trusted')).status).toBe(403)
+      expect(d.log().some(line => line.includes(input.old_string.trim()) || line.includes(input.new_string.trim()))).toBe(false)
+    } finally {
+      await desktop('POST', '/v1/cli/decide', { session_id, decision: 'deny' })
+      await desktop('POST', '/v1/cli/event', { source: 'claude', kind: 'session_end', session_id, cwd }, 'trusted')
+      phone.close()
+    }
+  })
+
   it('会话结束后地方仍列出它，原话可从存下的步翻阅', async () => {
     const session_id = 'sandbox-ended-history'
     const event = (kind: 'prompt' | 'stop' | 'session_end', text?: string) =>
@@ -739,7 +882,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
   })
 
   it('桌面挪动和收起历史地方时只保存操作过的行', async () => {
-    const fixture = mkdtempSync(join(process.cwd(), 'sandbox-ended-places-'))
+    const fixture = mkdtempSync(join(homedir(), 'sandbox-ended-places-'))
     try {
       const ids = ['sandbox-place-move', 'sandbox-place-hide', 'sandbox-place-untouched']
       for (const session_id of ids) {
@@ -1205,7 +1348,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(pushesFor(taskId)).toHaveLength(1)
 
     // 「等你批准」(blocking,照旧各处都推):App 推一次、微信里一张卡,账上一行,通道两个
-    d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 把 build 删了`)
+    d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 在本轮目录把 build 删了`)
     const ack2 = await d.waitForOutbound(m => texts(m, d.owner).filter(t => t.startsWith('已接下这件事')).length >= 2, 15_000)
     const asking = texts(ack2, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes(`· ${asking}`) && t.includes('需要你批准')), 30_000)
@@ -1214,11 +1357,286 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       .toEqual([{ kind: 'permission_ask', ref: expect.stringMatching(new RegExp(`^ask:${asking}:`)), outcome: 'allowed', channel: expect.stringMatching(/^(app\+wechat|wechat\+app)$/) }])
     expect(rows().filter(r => r.kind === 'permission_ask')).toHaveLength(1)
     await expect.poll(() => d.log().some(l => /\[ASK_OPINION\] given opinionLength=\d+ reasonLength=\d+$/.test(l)), { timeout: 15_000 }).toBe(true)
-    const detail = await desktop<{ permissions: Array<{ id: string }> }>('GET', `/v1/workbench/task?id=${asking}`)
+    const detail = await desktop<{ task: { title: string }; permissions: ReturnType<typeof MatterDetail.parse>['permissions'] }>('GET', `/v1/workbench/task?id=${asking}`)
     expect(detail.body.permissions).toHaveLength(1)
+    const places = await desktop('GET', '/v1/places')
+    expect(places.status).toBe(200)
+    const waiting = PlacesResponse.parse(places.body).places.find(p => p.waiting?.matterId === asking)?.waiting
+    const approval = detail.body.permissions[0]!
+    expect(waiting).toMatchObject({ kind: 'permission', requestId: approval.id, tool: approval.tool })
+    expect(waiting?.cwd === approval.cwd && waiting?.showSnapshotNotice === approval.showSnapshotNotice &&
+      JSON.stringify(waiting?.display) === JSON.stringify(approval.display)).toBe(true)
+    const detailPath = `/v1/matter?id=${asking}`
+    const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    try {
+      const desk = await desktop('GET', detailPath)
+      const mobile = await phone.request({ method: 'GET', path: detailPath })
+      expect([desk.status, mobile.status]).toEqual([200, 200])
+      for (const permission of [detail.body.permissions[0], MatterDetail.parse(desk.body).permissions[0], MatterDetail.parse(mobile.json()).permissions[0]]) {
+        expect(permission?.display?.body.kind).toBe('command')
+        expect(permission?.cwd === project && permission.display?.body.kind === 'command' &&
+          permission.display.body.command === scopedApprovalCommand).toBe(true)
+      }
+    } finally { phone.close() }
     expect(requests).toHaveLength(1)
     expect(requests[0]).not.toHaveProperty('tools')
     expect(requests[0]?.messages?.[0]?.content).toContain('给正在决定这件事的主人留两行话')
+
+    // Real workbench → registration → WeChat lookup → code reply → native decision.
+    type Queue = { items: Array<{ taskId: string; code: string; prompt: string; hash: string }> }
+    const queued = async (id: string) => (await desktop<Queue>('GET', '/v1/permissions/pending')).body.items.find(card => card.taskId === id)
+    const outbound = async (trigger: () => void, match: (text: string) => boolean) => {
+      const before = texts(d.ilink.outbox(), d.owner).length
+      trigger()
+      const replies = (messages: readonly OutboundMsg[]) => texts(messages, d.owner).slice(before)
+      return replies(await d.waitForOutbound(m => replies(m).some(match), 15_000)).find(match)!
+    }
+    const lookup = (id: string, hash: string) => outbound(
+      () => d.sendText(d.owner, `任务 ${id} 权限 ${hash}`), t => t.split('\n')[1]?.startsWith('〔请求 ') === true,
+    )
+    const complete = (await queued(asking))!
+    expect(complete.hash).toBe(detail.body.permissions[0]!.id)
+    const completeText = await lookup(asking, complete.hash)
+    expect(completeText.includes(`Codex 想运行一条命令：\n〔命令开始〕\n│ ${scopedApprovalCommand}\n〔命令结束〕`)).toBe(true)
+    const instruction = (code: string) => `回「y ${code}」允许这一步、「n ${code}」拒绝。拒绝理由选填：「n ${code} 理由」。`
+    const rejectOnlyInstruction = (code: string) => `这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`
+    expect(completeText.endsWith(instruction(complete.code))).toBe(true)
+    const markerLine = completeText.split('\n')[1]!
+    const completeNotice = texts(d.ilink.outbox(), d.owner).find(t => t.includes(`· ${asking}`) && t.includes('需要你批准'))!
+    const noticeHeader = completeNotice.split('\n')[0]!
+    expect(noticeHeader).toBe(`待批 / Approval · ${detail.body.task.title} · ${asking}`)
+    expect(completeNotice.split('\n')[1]).toBe(markerLine)
+    expect(completeNotice.includes(instruction(complete.code))).toBe(true)
+    const alteredText = completeText.replace('〔命令结束〕', '〔命令结束〕（已编辑）')
+    const injectedCommand = 'rm -rf sandbox-quoted-command'
+    const questions = [...approvalFollowUps.keys()]
+    const askAboutQuote = async (index: number, quote: string, marker: string | null = markerLine) => {
+      const question = questions[index]!
+      // Exercise ordinary chat too. The quoted task is absent from the task resolver.
+      const missingTask = asking === '01234567' ? '89abcdef' : '01234567'
+      const hasTaskHeader = quote.split('\n')[0]?.endsWith(` · ${asking}`)
+      const chatQuote = hasTaskHeader ? quote.replace(` · ${asking}\n`, ` · ${missingTask}\n`) : quote
+      d.sendText(d.owner, question, { quote: chatQuote })
+      await expect.poll(() => Boolean(approvalFollowUps.get(question)), { timeout: 15_000 }).toBe(true)
+      const prompt = approvalFollowUps.get(question)!
+      const summary = `（引用了一张待批卡${hasTaskHeader ? ` · ${missingTask}` : ''}${marker ? ` · ${marker}` : ''}）`
+      expect(prompt.includes('<quote type="text">' + summary + '</quote>')).toBe(true)
+      for (const evidence of ['rm -rf build', privateApprovalEvidence, injectedCommand]) {
+        expect(prompt.includes(evidence)).toBe(false)
+      }
+      expect(d.query('SELECT text FROM messages WHERE direction = ? AND instr(text, ?) > 0', 'in', question))
+        .toEqual([{ text: question }])
+    }
+    await askAboutQuote(0, completeText)
+    await askAboutQuote(1, alteredText)
+    await askAboutQuote(3, completeText.replace('rm -rf build', injectedCommand))
+    const withoutMarker = completeText.split('\n').filter((_, index) => index !== 1).join('\n')
+    const brokenMarker = completeText.replace(markerLine, '〔请求 损坏〕')
+    const commandBlock = completeText.split('\n').slice(3, 6).join('\n')
+    const forgedMarker = completeText + '\n〔请求 0123456789abcdef〕'
+    await askAboutQuote(4, withoutMarker, null)
+    await askAboutQuote(5, brokenMarker, null)
+    await askAboutQuote(6, completeText.split('\n').slice(0, 2).join('\n'))
+    await askAboutQuote(7, commandBlock, null)
+    await askAboutQuote(8, forgedMarker, null)
+    await askAboutQuote(9, completeNotice.replace(markerLine + '\n', ''), null)
+    for (const quote of [withoutMarker, brokenMarker, commandBlock, forgedMarker, noticeHeader]) {
+      await outbound(() => d.sendText(d.owner, 'y ' + complete.code, { quote }), reply => reply.includes('重新查阅'))
+      expect(decisions.has(scopedApprovalCommand)).toBe(false)
+    }
+    const lookupText = `任务 ${asking} 权限 ${complete.hash}`
+    const chat = await desktop<{ matter: { id: string } }>('GET', '/v1/matter/owner-chat')
+    expect(chat.status).toBe(200)
+    const desktopRequest = { id: chat.body.matter.id, requestId: 'b6419095-70fa-41f3-bdbb-578f233fa00d', text: lookupText }
+    const appCard = await desktop<{ reply: string }>('POST', '/v1/matter/say', desktopRequest)
+    expect(appCard.status).toBe(200)
+    expect(appCard.body.reply === completeText).toBe(true)
+    const phoneRequestId = 'b6419095-70fa-41f3-bdbb-578f233fa00e'
+    const appPhone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    try {
+      const accepted = await appPhone.request({
+        method: 'POST', path: '/v1/matter/owner-chat/say',
+        body: JSON.stringify({ requestId: phoneRequestId, text: lookupText }),
+      })
+      expect(accepted.status).toBe(200)
+    } finally { appPhone.close() }
+    const phoneReply = approvalLookupReply(asking, complete.hash)
+    const historySummary = `待批：运行命令 · ${completeText.split('\n')[1]}`
+    await expect.poll(() => d.query<{ id: string; status: string; reply: string }>(
+      'SELECT request_id AS id, status, reply FROM matter_say_receipts WHERE request_id IN (?, ?) ORDER BY request_id', desktopRequest.requestId, phoneRequestId,
+    ).filter(row => row.status === 'replied' && row.reply === (row.id === phoneRequestId ? phoneReply : historySummary)).length).toBe(2)
+    expect(parseApprovalLookupReply(phoneReply)).toMatchObject({ taskId: asking, requestId: complete.hash })
+    expect(d.query<{ count: number }>('SELECT count(*) AS count FROM matter_say_receipts WHERE request_id=? AND instr(reply,?)>0',
+      phoneRequestId, privateApprovalEvidence)[0]?.count).toBe(0)
+    const webRequestId = 'b6419095-70fa-41f3-bdbb-578f233fa011'
+    const webPhone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN, client: 'web' })
+    try {
+      const accepted = await webPhone.request({
+        method: 'POST', path: '/v1/matter/owner-chat/say',
+        body: JSON.stringify({ requestId: webRequestId, text: lookupText }),
+      })
+      expect(accepted.status).toBe(200)
+      const webReply = '请到电脑或手机 App 上看全再定。'
+      await expect.poll(() => d.query('SELECT status, reply FROM matter_say_receipts WHERE request_id = ?', webRequestId))
+        .toEqual([{ status: 'replied', reply: webReply }])
+      const page = await webPhone.request({ method: 'GET', path: '/v1/matter/owner-chat/page' })
+      expect(page.status).toBe(200)
+      const messages = page.json<{ messages: Array<{ text: string; speaker?: string }> }>().messages
+      expect(messages.some(m => m.speaker === 'notice' && m.text === webReply)).toBe(true)
+    } finally { webPhone.close() }
+    decisions.delete(scopedApprovalCommand)
+    d.sendText(d.owner, `y ${complete.code}`, { quote: completeNotice })
+    await expect.poll(() => decisions.get(scopedApprovalCommand)).toBe('accept')
+    expect(await queued(asking)).toBeUndefined()
+    await askAboutQuote(2, completeText)
+    await expect.poll(() => d.query<{ source: string }>('SELECT source FROM messages WHERE text=? ORDER BY source', historySummary))
+      .toEqual([{ source: 'desktop' }, { source: 'workbench' }])
+    expect(d.query('SELECT source FROM messages WHERE text=?', phoneReply)).toEqual([{ source: 'phone' }])
+    const receiptReader = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    try {
+      const page = await receiptReader.request({ method: 'GET', path: '/v1/matter/owner-chat/page' })
+      expect(page.status).toBe(200)
+      const messages = page.json<{ messages: Array<{ text: string; speaker?: string }> }>().messages
+      expect(messages.some(message => message.text === phoneReply && message.speaker === 'notice')).toBe(true)
+      expect(messages.some(message => message.text.includes(privateApprovalEvidence))).toBe(false)
+    } finally { receiptReader.close() }
+    const repeated = await desktop<{ reply: string }>('POST', '/v1/matter/say', desktopRequest)
+    expect(repeated).toEqual({ status: 200, body: { kind: 'chat', reply: historySummary } })
+    expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0', privateApprovalEvidence)).toEqual([])
+    expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0', injectedCommand)).toEqual([])
+    expect(d.log().some(line => line.includes(privateApprovalEvidence) || line.includes(injectedCommand))).toBe(false)
+    const history = await desktop('GET', '/v1/matter/owner-chat')
+    expect(history.status).toBe(200)
+    expect(JSON.stringify(history.body).includes(privateApprovalEvidence)).toBe(false)
+    const search = await desktop('GET', '/v1/matter/owner-chat/search?q=' + privateApprovalEvidence)
+    expect(search).toEqual({ status: 200, body: { hits: [] } })
+    const audit = d.query<{ text: string }>("SELECT json_extract(payload_json, '$.text') AS text FROM matter_items WHERE matter_id=? AND kind='system'", asking)
+    expect(audit.filter(row => row.text.startsWith('权限请求'))).toEqual([{ text: `权限请求：${complete.hash}` }])
+    expect(audit.some(row => row.text.includes(privateApprovalEvidence))).toBe(false)
+    const cancel = async (id: string) => {
+      expect((await desktop('POST', '/v1/workbench/cancel', { id })).status).toBe(202)
+      await expect.poll(async () => (await desktop<{ runId?: string }>('GET', `/v1/workbench/task?id=${id}`)).body.runId).toBeUndefined()
+    }
+    const statusText = await outbound(() => d.sendText(d.owner, `任务 ${asking}`),
+      text => text.split('\n')[0]?.endsWith(` · ${asking}`) === true && text.includes('查看结果：'))
+    expect(await desktop('POST', '/v1/self-change/ask', { prompt: 'Sandbox legacy approval', timeoutMs: 60_000 }))
+      .toMatchObject({ status: 200, body: { delivered: true } })
+    const legacyQueue = async () => (await desktop<Queue>('GET', '/v1/permissions/pending')).body.items
+    const [legacyApproval] = await legacyQueue()
+    expect(legacyApproval?.hash).toBeDefined()
+    await outbound(() => d.sendText(d.owner, 'y', { quote: noticeHeader }), reply => reply.includes('直接回「y 码」或「n 码」'))
+    expect((await legacyQueue()).map(card => card.hash)).toEqual([legacyApproval!.hash])
+    d.sendText(d.owner, 'y', { quote: statusText.split('\n')[0] })
+    await expect.poll(legacyQueue).toHaveLength(0)
+    for (const quote of [statusText, completeText, completeText.split('\n').slice(0, 2).join('\n')]) {
+      await outbound(() => d.sendText(d.owner, '看看', { quote }),
+        reply => reply.includes(` · ${asking}\n`) && reply.includes('查看结果：'))
+    }
+    await cancel(asking)
+    await cancel(taskId)
+
+    const next = async (taskText: string, provider = 'codex') => {
+      const ack = await outbound(() => d.sendText(d.owner, `任务 新建 ${projectId} 用 @${provider} ${taskText}`), t => t.startsWith('已接下这件事'))
+      const id = ack.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
+      await expect.poll(async () => (await queued(id))?.hash).toMatch(/^[a-f0-9-]{36}$/)
+      const isNotice = (t: string) => t.includes(`· ${id}`) && t.includes('需要你批准')
+      await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(isNotice), { timeout: 15_000 }).toBe(true)
+      const detail = await desktop<{ task: { title: string } }>('GET', `/v1/workbench/task?id=${id}`)
+      const card = (await queued(id))!
+      const notice = texts(d.ilink.outbox(), d.owner).find(isNotice)!
+      expect(notice.includes(rejectOnlyInstruction(card.code)) && !notice.includes(`回「y ${card.code}」`)).toBe(true)
+      expect(/^〔请求 [a-f0-9]{16}〕$/.test(notice.split('\n')[1]!)).toBe(true)
+      expect(/SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(notice)).toBe(false)
+      const journal = d.query<{ summary: string }>('SELECT summary FROM pending_cards WHERE hash = ?', card.hash)
+      expect(journal).toEqual([{ summary: `${detail.body.task.title} · ${id}` }])
+      return { id, title: detail.body.task.title, card, notice }
+    }
+    const long = await next('沙盒权限长命令')
+    // Dev registration strings, including the snapshot suffix and legacy format.
+    expect(long.card.prompt === `${long.title} · ${long.id}\ncommandExecution\n${longApprovalCommand}\nWorking directory: /tmp\nExecution environment: local\n\n${PERMISSION_SNAPSHOT_NOTICE}`).toBe(true)
+    expect(Object.keys(long.card).sort()).toEqual(['canDenyWithReason', 'chatId', 'code', 'expires_at', 'hash', 'prompt', 'since', 'taskId'])
+    const longText = await lookup(long.id, long.card.hash)
+    expect(longText).toContain(WECHAT_PERMISSION_INCOMPLETE)
+    expect(long.notice.split('\n')[1]).toBe(longText.split('\n')[1])
+    expect(longText).not.toMatch(/「yt? \d+」/)
+    for (const [text, quote] of [
+      [`任务 ${long.id} 允许 ${long.card.hash}`, undefined],
+      [`y ${long.card.code}`, undefined], [`yt ${long.card.code}`, undefined], ['y', longText],
+      [`y ${long.card.code}`, long.notice],
+    ] as const) {
+      await outbound(() => d.sendText(d.owner, text, { quote }), reply => reply === WECHAT_PERMISSION_INCOMPLETE)
+      expect(decisions.has(longApprovalCommand)).toBe(false)
+      expect((await queued(long.id))?.hash).toBe(long.card.hash)
+    }
+    const beforeAppFeedback = texts(d.ilink.outbox(), d.owner).filter(text => text === WECHAT_PERMISSION_INCOMPLETE).length
+    const codeReply = `y ${long.card.code}`
+    const desktopFeedback = await desktop<{ reply: string }>('POST', '/v1/matter/say', {
+      ...desktopRequest, requestId: 'b6419095-70fa-41f3-bdbb-578f233fa00f', text: codeReply,
+    })
+    expect(desktopFeedback).toEqual({ status: 200, body: { kind: 'chat', reply: WECHAT_PERMISSION_INCOMPLETE } })
+    const phoneFeedback = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    const feedbackId = 'b6419095-70fa-41f3-bdbb-578f233fa010'
+    try {
+      const accepted = await phoneFeedback.request({
+        method: 'POST', path: '/v1/matter/owner-chat/say', body: JSON.stringify({ requestId: feedbackId, text: codeReply }),
+      })
+      expect(accepted.status).toBe(200)
+      await expect.poll(() => d.query('SELECT status, reply FROM matter_say_receipts WHERE request_id = ?', feedbackId))
+        .toEqual([{ status: 'replied', reply: WECHAT_PERMISSION_INCOMPLETE }])
+    } finally { phoneFeedback.close() }
+    expect(texts(d.ilink.outbox(), d.owner).filter(text => text === WECHAT_PERMISSION_INCOMPLETE)).toHaveLength(beforeAppFeedback)
+    expect(decisions.has(longApprovalCommand)).toBe(false)
+    expect((await queued(long.id))?.hash).toBe(long.card.hash)
+    d.sendText(d.owner, `n ${long.card.code}`, { quote: long.notice })
+    await expect.poll(() => decisions.get(longApprovalCommand)).toBe('decline')
+    expect(await queued(long.id)).toBeUndefined()
+    await cancel(long.id)
+
+    const patch = await next('沙盒权限改文件')
+    await outbound(() => d.sendText(d.owner, `y ${patch.card.code}`, { quote: completeNotice }),
+      reply => reply === '这条请求已经处理过了或已经过期。请直接回「y 码」或「n 码」处理仍在等待的请求。')
+    expect((await queued(patch.id))?.hash).toBe(patch.card.hash)
+    expect(patch.card.prompt === `${patch.title} · ${patch.id}\nfileChange\n${patchFile}\n{"type":"update"}\n${patchDiff}\nExecution environment: local`).toBe(true)
+    const patchText = await lookup(patch.id, patch.card.hash)
+    expect(patchText.includes(JSON.stringify(patchFile) + '（修改）')).toBe(true)
+    expect(patchText).toContain(WECHAT_PERMISSION_INCOMPLETE)
+    expect(patchText.includes('SANDBOX_PRIVATE_DIFF')).toBe(false)
+    expect(await desktop('POST', '/v1/permissions/resolve', { hash: patch.card.hash, decision: 'allow' })).toEqual({ status: 200, body: { ok: true } })
+    await expect.poll(() => decisions.get(patchFile)).toBe('accept')
+    expect(await queued(patch.id)).toBeUndefined()
+    expect(d.log().some(line => line.includes(privateApprovalEvidence) || /SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(line))).toBe(false)
+    // The same owner routes must carry Claude's command options through a long, reject-only card.
+    const claude = await next(claudeApprovalTitle, 'claude')
+    expect(claude.notice).not.toMatch(/run_in_background|timeout|description|72543|sandboxapprovaldescriptionfixture/)
+
+    const at = d.ilink.outbox().length
+    d.sendText(d.owner, `y ${claude.card.code}`, { contextToken: 'approval-fresh-context' })
+    const feedback = () => d.ilink.outbox().slice(at).find(m => m.text === WECHAT_PERMISSION_INCOMPLETE)
+    await expect.poll(() => Boolean(feedback())).toBe(true)
+    expect(feedback()?.raw).toMatchObject({ msg: { context_token: 'approval-fresh-context' } })
+
+    const claudeDetailPath = `/v1/matter?id=${claude.id}`
+    const claudePhone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: PHONE_TOKEN })
+    try {
+      const desk = await desktop('GET', claudeDetailPath)
+      const mobile = await claudePhone.request({ method: 'GET', path: claudeDetailPath })
+      expect([desk.status, mobile.status]).toEqual([200, 200])
+      for (const body of [desk.body, mobile.json()]) {
+        const [permission] = MatterDetail.parse(body).permissions
+        expect(permission?.display?.body.kind).toBe('command')
+        expect(permission?.display?.extra).toEqual([
+          { name: 'run_in_background', value: 'true' }, { name: 'timeout', value: '72543' },
+          { name: 'description', value: claudeApprovalDescription },
+        ])
+      }
+      d.sendText(d.owner, `n ${claude.card.code}`)
+      await expect.poll(async () => MatterDetail.parse((await desktop('GET', claudeDetailPath)).body).permissions).toHaveLength(0)
+      const history = await desktop('GET', '/v1/matter/owner-chat')
+      expect(history.status).toBe(200)
+      expect(JSON.stringify(history.body)).not.toMatch(/run_in_background|72543|sandboxapprovaldescriptionfixture/)
+      expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0 OR instr(text,?) > 0 OR instr(text,?) > 0',
+        'run_in_background', '72543', claudeApprovalDescription)).toEqual([])
+    } finally { claudePhone.close() }
   })
 
   // S3b(一件事一次提议;主人点头的「任务做完时人在电脑前 ⇒ 先只在桌面提示,10 分钟没看再推手机」):沙盒里 10 分钟缩成 2 秒。
@@ -1294,5 +1712,172 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       vi.useRealTimers()
       await d.stop()
     }
+  })
+
+  it('reuses a successful Claude turn confirmation after restart and reports it in connections and /mode', async () => {
+    await d.stop()
+    const backgroundEval = vi.fn(async () => 'ok')
+    const moderatorScript = { onEval: backgroundEval }
+    const options = { claudeScript, codexScript, moderatorScript, agentConfigPatch: { model: 'sandbox-default-model' } }
+    d = await startRealShapedDaemon({ ...options, seedFiles: { 'projects.json': PROJECTS } })
+
+    const recordPath = join(d.stateDir, 'first-use-probes.json')
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    d.sendText(d.owner, '沙盒你好，确认连接')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
+    expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')).claude[0]
+    expect(record).toMatchObject({ model: 'sandbox-default-model', at: expect.any(Number) })
+    const fresh = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
+    expect(fresh.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
+      code: 'brain.probe_turn', reason: expect.stringContaining('已通过对话确认连接'),
+    })
+
+    const stateDir = d.stateDir
+    await d.stop({ keepState: true })
+    d = await startRealShapedDaemon({ ...options, stateDir })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    const reused = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
+    const timestamp = new Date(record.at).toLocaleString('zh-CN', { hour12: false })
+    const note = `沿用上次的结果（${timestamp}）`
+    expect(reused.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
+      code: 'brain.probe_history', params: { at: record.at }, reason: expect.stringContaining(note),
+    })
+    d.sendText(d.owner, '/mode')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).some(text => text.includes(note)), 15_000)
+    d.sendText(d.owner, '沙盒你好，重启后再聊')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
+    expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('confirms Codex through real chat and immediately retries on the next owner message', async () => {
+    await d.stop()
+    const dispatch = vi.fn(async (prompt: string) => {
+      if (said(prompt) === 'Codex 第一句') throw new Error('HTTP error: 529 overloaded')
+      if (said(prompt) === 'Codex 版本') throw new Error('This model requires a newer version of Codex.')
+      if (said(prompt) === 'Codex 额度') throw new Error('HTTP error: 429 insufficient_quota')
+      if (said(prompt) === 'Codex 认证') throw new Error('HTTP error: 403 Forbidden')
+      return { toolCalls: [], finalText: 'Codex 真实回复。' }
+    })
+    const evalPrompt = vi.fn(async () => 'ok')
+    d = await startRealShapedDaemon({
+      claudeScript, codexScript: { onDispatch: dispatch }, moderatorScript: { onEval: evalPrompt },
+      agentConfigPatch: { provider: 'codex', model: 'scripted-model' },
+      modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'codex' } },
+      seedFiles: { 'projects.json': PROJECTS },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    const brain = async () => (await desktop<ConnectionsSnapshot>('GET', '/v1/connections')).body.capabilities?.find(c => c.id === 'brain')
+    expect(await brain()).toMatchObject({
+      code: 'brain.probe_awaiting_turn', reason: expect.stringContaining('还没用过，第一次对话时确认'),
+    })
+    d.sendText(d.owner, '/mode')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('还没用过，第一次对话时确认')), 15_000)
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(evalPrompt).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    const path = join(d.stateDir, 'first-use-probes.json')
+    expect(existsSync(path)).toBe(false)
+
+    d.sendText(d.owner, 'Codex 第一句')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 暂时忙不过来')), 15_000)
+    expect(existsSync(path)).toBe(false)
+    d.sendText(d.owner, 'Codex 第二句')
+    await d.waitForOutbound(m => texts(m, d.owner).includes('Codex 真实回复。'), 15_000)
+    await expect.poll(brain, { timeout: 12_000 }).toMatchObject({ code: 'brain.probe_turn' })
+    expect(JSON.parse(readFileSync(path, 'utf8')).codex).toEqual([expect.objectContaining({ model: 'scripted-model' })])
+
+    d.sendText(d.owner, 'Codex 额度')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('额度用完了')), 15_000)
+    d.sendText(d.owner, 'Codex 版本')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('请检查 CLI 版本或换一个模型')), 15_000)
+    expect(JSON.parse(readFileSync(path, 'utf8')).codex).toBeUndefined()
+    d.sendText(d.owner, 'Codex 认证')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('检查一下账号或密钥')), 15_000)
+    expect(dispatch.mock.calls.map(([prompt]) => said(prompt))).toEqual(['Codex 第一句', 'Codex 第二句', 'Codex 额度', 'Codex 版本', 'Codex 认证'])
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('a first Claude turn overload reaches the owner and connections, then the next sentence confirms', async () => {
+    await d.stop()
+    const backgroundEval = vi.fn(async () => 'ok')
+    const dispatch = vi.fn(async (prompt: string) => {
+      if (said(prompt) === 'Claude 第一句') throw new Error('API Error: 529 overloaded')
+      return { toolCalls: [], finalText: 'Claude 真实回复。' }
+    })
+    d = await startRealShapedDaemon({
+      claudeScript: { onDispatch: dispatch }, codexScript,
+      seedFiles: { 'projects.json': PROJECTS },
+      moderatorScript: { onEval: backgroundEval },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    expect(dispatch).not.toHaveBeenCalled()
+    const brain = async () => (await desktop<ConnectionsSnapshot>('GET', '/v1/connections')).body.capabilities?.find(c => c.id === 'brain')
+    d.sendText(d.owner, '/mode')
+    await d.waitForOutbound(m => texts(m, d.owner).some(text => text.includes('还没用过，第一次对话时确认')), 15_000)
+    d.sendText(d.owner, 'Claude 第一句')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Claude 暂时忙不过来')), 15_000)
+    await expect.poll(brain, { timeout: 12_000 }).toMatchObject({
+      state: 'fallback', code: 'brain.probe_transient', params: { name: 'Claude', cause: 'server_error' },
+      reason: expect.stringContaining('暂时忙不过来（529），再发一句就会重试'),
+    })
+    d.sendText(d.owner, 'Claude 第二句')
+    await d.waitForOutbound(m => texts(m, d.owner).includes('Claude 真实回复。'), 15_000)
+    await expect.poll(brain, { timeout: 12_000 }).toMatchObject({ code: 'brain.probe_turn' })
+    expect(dispatch.mock.calls.map(([prompt]) => said(prompt))).toEqual(['Claude 第一句', 'Claude 第二句'])
+    expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('releases the Codex session after a structured unauthorized error with connection wording', async () => {
+    await d.stop()
+    let sessionStarts = 0
+    d = await startRealShapedDaemon({
+      claudeScript,
+      codexScript: {
+        async onDispatch(prompt) {
+          if (said(prompt) === 'Codex 结构化认证失败') return {
+            toolCalls: [], finalText: '',
+            codexSteps: [{ notify: { method: 'error', params: {
+              willRetry: false, error: { message: 'failed to connect', codexErrorInfo: 'unauthorized' },
+            } } }],
+          }
+          return { toolCalls: [], finalText: 'Codex 新会话已回复。' }
+        },
+      },
+      recordCodexSpawnOptions: () => { sessionStarts++ },
+      moderatorScript: { onEval: async () => 'ok' },
+      agentConfigPatch: { provider: 'codex', model: 'scripted-model' },
+      modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'codex' } },
+      seedFiles: { 'projects.json': PROJECTS },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    d.sendText(d.owner, 'Codex 结构化认证失败')
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(t => t.includes('检查一下账号或密钥')), { timeout: 15_000 }).toBe(true)
+    expect(sessionStarts).toBe(1)
+    d.sendText(d.owner, 'Codex 认证恢复后重试')
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).includes('Codex 新会话已回复。'), { timeout: 15_000 }).toBe(true)
+    expect(sessionStarts).toBe(2)
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('queues a Claude CLI version check through the daemon TurnRecord hook', async () => {
+    await d.stop()
+    d = await startRealShapedDaemon({
+      claudeScript: {
+        async onDispatch() { throw new Error('Please update Claude Code.') },
+      },
+      codexScript,
+      moderatorScript: { onEval: async () => 'ok' },
+      modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'claude' } },
+      seedFiles: { 'projects.json': PROJECTS },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    const state = makeFileStateStore(d.stateDir)
+    expect(state.load().claude.reactiveAt).toBeNull()
+    d.sendText(d.owner, 'Claude 版本检查')
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(t => t.includes('请检查 CLI 版本或换一个模型')), { timeout: 15_000 }).toBe(true)
+    await expect.poll(() => state.load().claude.reactiveAt).toEqual(expect.any(String))
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 })

@@ -129,7 +129,7 @@ export function converseFileStem(name: string | undefined): string {
   return base
 }
 
-export interface ConverseResult extends Partial<ReplyAttribution> { reply: string; attachments?: ConverseAttachment[]; narration?: string[]; replyParts?: ReplyPart[] }
+export interface ConverseResult extends Partial<ReplyAttribution> { reply: string; historyReply?: string; attachments?: ConverseAttachment[]; narration?: string[]; replyParts?: ReplyPart[] }
 
 /** 内联进桌面回包的表情图至多这么大;再大就只显示 label。 */
 export const STICKER_INLINE_MAX_BYTES = 1_048_576

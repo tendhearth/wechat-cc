@@ -691,6 +691,34 @@ describe('ConversationCoordinator', () => {
       expect(c.cancel('chat-1')).toBe(false)
     })
 
+    it('skips a solo provider failure notice after /stop', async () => {
+      const entered = Promise.withResolvers<void>()
+      const finishTurn = Promise.withResolvers<void>()
+      const session: AgentSession = {
+        async *dispatch() { entered.resolve(); await finishTurn.promise; yield { kind: 'error', code: 'server_error', message: 'Claude 暂时忙不过来' } },
+        async cancel() {},
+        async close() {},
+      }
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const sendAssistantText = vi.fn(async () => {})
+      const recordTurn = vi.fn()
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire: async req => makeHandle(req.providerId, session as ReturnType<typeof makeFakeSession>) },
+        conversationStore: makeMockStore(), registry, defaultProviderId: 'claude',
+        format: () => 'x', permissionMode: 'strict', loadAccess: adminAccess, log: () => {},
+        sendAssistantText, recordTurn,
+      })
+      const turn = c.dispatch(inbound('chat-1', 'hi'))
+      await entered.promise
+      expect(c.cancel('chat-1')).toBe(true)
+      finishTurn.resolve()
+      await turn
+      expect(sendAssistantText).not.toHaveBeenCalled()
+      expect(recordTurn).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'error', errorCode: 'server_error' }))
+    })
+
     it('coordinator.cancel(chatId) reaches every in-flight participant of a parallel dispatch', async () => {
       const a = cancellableHangingSession()
       const b = cancellableHangingSession()

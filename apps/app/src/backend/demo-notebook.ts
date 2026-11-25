@@ -7,7 +7,9 @@ export function demoNotebook(now: () => number, lang: () => Lang) {
   const offsetDay = (offset: number) => new Date(now() - offset * 86_400_000).toISOString().slice(0, 10)
   let paper: NotebookPaperT = 'ruled'
   let written: NotebookEntryT[] = []
+  let resetCount = 0
   const strikes = new Map<string, number | null>()
+  const seen = new Set<string>()
   const demoId = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
   function examples(): NotebookEntryT[] {
     const row = (n: number, offset: number, author: NotebookEntryT['author'], zh: string, en: string,
@@ -21,10 +23,12 @@ export function demoNotebook(now: () => number, lang: () => Lang) {
       row(2, 1, 'owner', '窗边那盆薄荷长出新叶了。', 'The mint by the window has new leaves.'),
       row(3, 1, 'owner', '周六去买一盆新的。', 'Buy another pot on Saturday.', { struckAt: now() }),
       row(4, 0, 'owner', '今天走回家，河上有一层雾。', 'I walked home today. A layer of mist hung over the river.'),
-      row(5, 0, 'cc', '你上回说想在河边坐一会儿。我也记得。', 'You wanted to sit by the river the other day. I remember.', { refId: demoId(1), refDay: offsetDay(8) }),
+      row(5, 0, 'cc', '你上回说想在河边坐一会儿。我也记得。', 'You wanted to sit by the river the other day. I remember.', {
+        id: demoId(5 + resetCount * 10), refId: demoId(1), refDay: offsetDay(8),
+      }),
     ]
   }
-  const backend: Pick<Backend, 'notebookPage' | 'notebookWrite' | 'notebookStrike' | 'notebookPaper'> = {
+  const backend: Pick<Backend, 'notebookPage' | 'notebookUnseen' | 'notebookSeen' | 'notebookWrite' | 'notebookStrike' | 'notebookPaper'> = {
     async notebookPage(query) {
       const today = offsetDay(0), day = query.day ?? today
       const all = [...examples(), ...written]
@@ -34,6 +38,10 @@ export function demoNotebook(now: () => number, lang: () => Lang) {
           .map(row => strikes.has(row.id) ? { ...row, struckAt: strikes.get(row.id) ?? null } : row),
         paper, pen: { font: 'kai', ink: 'blueBlack', reason: '' }, penPending: false }
     },
+    async notebookUnseen() {
+      return examples().find(row => row.author === 'cc' && row.refId !== null && !seen.has(row.id))?.day
+    },
+    async notebookSeen(ids) { for (const id of ids) seen.add(id) },
     async notebookWrite({ body, clientId }) {
       const previous = written.find(row => row.clientId === clientId)
       if (previous) return previous
@@ -45,5 +53,5 @@ export function demoNotebook(now: () => number, lang: () => Lang) {
     async notebookStrike(id, struck) { strikes.set(id, struck ? now() : null) },
     async notebookPaper(next) { paper = next; return paper },
   }
-  return { backend, reset() { paper = 'ruled'; written = []; strikes.clear() } }
+  return { backend, reset() { paper = 'ruled'; written = []; strikes.clear(); seen.clear(); resetCount++ } }
 }

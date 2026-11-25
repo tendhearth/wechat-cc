@@ -1,3 +1,6 @@
+import { toolApprovalInput } from '../../../domain/workbench/tool-input-preview'
+import { toolArgumentEvidence } from '../tool-argument-evidence'
+import { permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
 import type { ChatApprovalLifecycle } from '../chat-approval'
 import { claudeResultUsage } from '../../../domain/turn-usage'
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
@@ -9,11 +12,13 @@ import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } f
 import { validateUserInputAnswers, validateUserInputRequest } from '../../workbench/user-input'
 import { isCompanionMcp, nativeMcpInputPreview } from './claude-native-config'
 import { isMatterMcpTool } from '../matter-mcp'
+import type { CallTarget } from '../../../lib/network-gate'
 import { log } from '../../../lib/log'
 import { AsyncQueue } from '../../../lib/async-queue'
 import { isAuthFail } from '../../../domain/auth-fail'
-import { isContextOverflow, errorWithProviderCode, type ProviderErrorCode } from '../../../lib/provider-error-code'
+import { codeForHttpStatus, isContextOverflow, errorWithProviderCode, providerErrorCodeOf } from '../../../lib/provider-error-code'
 import { claudeApiErrorCode } from './claude-api-error-code'
+import { classifyProviderError } from '../../../domain/provider-quota'
 import { discoverClaudeModels } from './claude-model-catalog'
 import { executionModel, nativeModelId } from '../../../domain/workbench/native-model-catalog'
 import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
@@ -68,6 +73,23 @@ function taskInputPreview(input: Record<string, unknown>): string | null {
   } catch {
     return null
   }
+}
+
+function claudePermissionNote(options: { title?: string; description?: string; decisionReason?: string }): string {
+  return options.title?.trim() || options.description?.trim() || options.decisionReason?.trim() || ''
+}
+
+export function claudeTaskPermissionDescription(toolName: string, input: Record<string, unknown>, options: { title?: string; description?: string; decisionReason?: string }): string | null {
+  const inputPreview = taskInputPreview(input)
+  const context = claudePermissionNote(options)
+  const description = [context, inputPreview].filter(Boolean).join('\n') || `Run ${toolName}`
+  return inputPreview === null ? null : description
+}
+
+export function claudeMcpPermissionDescription(toolName: string, input: unknown): string | null {
+  const inputPreview = nativeMcpInputPreview(input)
+  if (!inputPreview || inputPreview.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX - 256) return null
+  return `${toolName}\n${inputPreview}`
 }
 
 /** Claude's task-only permission gate. Workbench has no CC-private messaging
@@ -132,18 +154,34 @@ export function makeWorkbenchClaudeCanUseTool(
         return { behavior: 'allow', updatedInput: { ...input, answers: Object.fromEntries(request.questions.map(question => [question.question, answers[question.id]!.join(', ')])) } } satisfies PermissionResult
       } catch { return denied }
     }
+    const reasonParts = [options.title, options.description, options.decisionReason].filter((part): part is string => part !== undefined)
+    const reason = claudePermissionNote(options)
+    // The desktop keeps its legacy primary reason. WeChat must withhold
+    // approval if that projection dropped any other supplied reason bytes.
+    const incompleteReason = reasonParts.some(part => part !== reason)
     if (toolName.startsWith('mcp__')) {
       const denied = { behavior:'deny',message:'The task tool was not admitted, or approval was denied or expired.' } satisfies PermissionResult
-      const server = admittedMcpServers.find(name => !isCompanionMcp(name) && toolName.startsWith(`mcp__${name}__`) && toolName.length > name.length + 7)
-      const auth = authorize(WORKBENCH_SUBJECT, { name: toolName, kind: WORKBENCH_MCP_KIND, mcp: server ? 'admitted' : 'not_admitted' })
+      const servers = admittedMcpServers.filter(name => !isCompanionMcp(name) && toolName.startsWith(`mcp__${name}__`) && toolName.length > name.length + 7)
+      const auth = authorize(WORKBENCH_SUBJECT, { name: toolName, kind: WORKBENCH_MCP_KIND, mcp: servers.length ? 'admitted' : 'not_admitted' })
       if (auth.verdict === 'deny') return denied
       // 问:没有问的通道 / 名字太长装不下 ⇒ 拒(通道上的事,不是策略)。
       if (!requestPermission || toolName.length > WORKBENCH_PERMISSION_TOOL_MAX) return denied
-      const inputPreview = nativeMcpInputPreview(input)
-      if (!inputPreview || inputPreview.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX - 256) return denied
+      const description = claudeMcpPermissionDescription(toolName, input)
+      if (description === null) return denied
       try {
         let feedback: string | undefined
-        const allowed = await requestPermission({tool:toolName,description:`${toolName}\n${inputPreview}`,onDenied:reason=>{feedback=permissionDenialMessage(`${toolName}\n${inputPreview}`,reason)}}, options.signal)
+        const note = reason
+        const reviewDescription = note && note.length + description.length + 1 <= WORKBENCH_PERMISSION_DESCRIPTION_MAX
+          ? `${note}\n${description}` : undefined
+        const { input: previewInput, incomplete: redacted } = toolApprovalInput(input)
+        const display = toolPermissionDisplay(toolName, previewInput, reviewDescription ? note : undefined)
+        const server = servers.length === 1 ? servers[0] : undefined
+        const mcp = server ? { server, tool: toolName.slice(`mcp__${server}__`.length) } : undefined
+        const wechatReview = !display || !mcp || incompleteReason || (note && !reviewDescription) || redacted
+          ? { incomplete: true as const } : toolArgumentEvidence(input)
+        const allowed = await requestPermission({tool:toolName,description,...(display ? { display } : {}), ...(mcp ? { mcp } : {}),
+          ...(Object.keys(wechatReview).length ? { wechatReview } : {}),
+          ...(display && reviewDescription ? { reviewDescription } : {}),onDenied:reason=>{feedback=permissionDenialMessage(description,reason)}}, options.signal)
         return allowed && !options.signal.aborted ? {behavior:'allow'} : feedback ? {behavior:'deny',message:feedback} : denied
       } catch { return denied }
     }
@@ -159,10 +197,8 @@ export function makeWorkbenchClaudeCanUseTool(
     if (!requestPermission || options.signal.aborted) {
       return { behavior: 'deny', message: 'This task permission request is no longer active.' } satisfies PermissionResult
     }
-    const inputPreview=taskInputPreview(input)
-    const context=options.title?.trim() || options.description?.trim() || options.decisionReason?.trim() || ''
-    const description=[context,inputPreview].filter(Boolean).join('\n') || `Run ${toolName}`
-    if (toolName.length > WORKBENCH_PERMISSION_TOOL_MAX || inputPreview === null || description.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX) {
+    const description = claudeTaskPermissionDescription(toolName, input, options)
+    if (toolName.length > WORKBENCH_PERMISSION_TOOL_MAX || description === null || description.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX) {
       return { behavior:'deny', message:'The complete permission detail is too large to review safely.' } satisfies PermissionResult
     }
     let allowed = false
@@ -170,9 +206,23 @@ export function makeWorkbenchClaudeCanUseTool(
     try {
       // 放行规则(2026-10-19)要原文:命令、文件路径(拿不到就不给)。
       const facts = toolInputFacts(input, true)
+      const note = claudePermissionNote(options)
+      const hasCommandExtras = typeof input.command === 'string' && Object.keys(input).some(key => key !== 'command')
+      const fullDisplay = hasCommandExtras ? toolPermissionDisplay(toolName, input, note) : undefined
+      const display = fullDisplay ?? toolPermissionDisplay(toolName, typeof input.command === 'string' ? input.command : input, note)
+      const cwd = display?.body.kind === 'command' ? permissionCwd(input.cwd) : undefined
+      const evidence = toolArgumentEvidence(input)
+      const incomplete = incompleteReason || !display || (hasCommandExtras && !fullDisplay)
       allowed = await requestPermission({
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,
+        ...(display ? { display } : {}),
+        ...(incomplete || Object.keys(evidence).length ? { wechatReview: {
+          ...evidence,
+          ...(typeof input.cwd === 'string' && !cwd ? { cwd: input.cwd } : {}),
+          ...(incomplete ? { incomplete: true as const } : {}),
+        } } : {}),
+        ...(cwd ? { displayCwd: cwd, reviewDescription: `${description}\nWorking directory: ${cwd}` } : {}),
         onDenied: reason => { feedback = permissionDenialMessage(`${toolName}\n${description}`, reason) },
         ...(facts.command ? { command: facts.command } : {}),
         ...(facts.paths.length ? { paths: facts.paths } : {}),
@@ -343,12 +393,16 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     // 不抛时(标注了但 result 正常)错误原文还会被当成评估答案返回。
     let apiError: { sdkError: string; text: string } | null = null
     let apiErrorStatus: number | null | undefined
+    let resultFailure: ReturnType<typeof claudeResultFailure> = null
     const coded = (message: string): Error => {
-      const sentinelText = apiError?.text ?? message
-      const code: ProviderErrorCode | undefined = isAuthFail('claude-sentinel', sentinelText) ? 'auth_failed'
-        : isContextOverflow(sentinelText)?'context_overflow':apiError ? claudeApiErrorCode(apiError.sdkError, apiErrorStatus) ?? 'provider_error'
+      const sentinelText = apiError?.text ?? resultFailure?.message ?? message
+      const code = isAuthFail('claude-sentinel', sentinelText) ? 'auth_failed'
+        : resultFailure && !apiError ? codeForHttpStatus(apiErrorStatus, sentinelText) ?? resultFailure.code
+        : isContextOverflow(sentinelText) ? 'context_overflow'
+        : apiError ? claudeApiErrorCode(apiError.sdkError, apiErrorStatus) ?? 'provider_error'
         : undefined
-      return errorWithProviderCode(message, code)
+      const error = errorWithProviderCode(message, code)
+      return apiErrorStatus === undefined ? error : Object.assign(error, { status: apiErrorStatus })
     }
     try {
       for await (const raw of q as AsyncGenerator<SDKMessage>) {
@@ -358,6 +412,13 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           text += extractText(msg.message?.content)
         } else if (msg?.type === 'result') {
           apiErrorStatus = msg.api_error_status
+          if (msg.is_error === true) {
+            resultFailure ??= claudeResultFailure(msg) ?? {
+              code: 'provider_error',
+              message: msg.errors?.join('\n') || (typeof msg.result === 'string' && msg.result.trim()) || 'claude result is_error',
+            }
+            continue
+          }
           // Recent Claude CLI/SDK combinations can emit the final answer only
           // on the result event for one-shot, maxTurns=1 calls. Prefer streamed
           // assistant text when present, but retain this provider-level fallback
@@ -369,6 +430,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       throw coded(err instanceof Error ? err.message : String(err))
     }
     if (apiError) throw coded(apiError.text.trim() || `claude api error: ${apiError.sdkError}`)
+    if (resultFailure) throw coded(resultFailure.message)
     return text.trim().length > 0 ? text : resultText
   }
   return {
@@ -431,6 +493,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
       } : {...await opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
       try {
+        if (spawnOpts.model) options.model = spawnOpts.model
         const execution = spawnOpts.execution ? {...spawnOpts.execution} : undefined
         if (execution) {
           if (execution.model) options.model=execution.model
@@ -530,10 +593,35 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           throw Object.assign(Error('This Claude transport cannot enforce the checkup allowance.'),{code:'isolated_evaluation_unavailable'})
         }finally{clearTimeout(timer)}
       }
+      const baseTransportEnv = options.env ?? sessionSubprocessEnv()
+      let confirmedTransport: Pick<CallTarget, 'baseUrl'> | null = null
+      let readingTransport = false
+      const readTransport = async () => {
+        const control = q as unknown as { getSettings?: () => Promise<unknown> }
+        try {
+          const value = await control.getSettings?.()
+          if (value && typeof value === 'object' && 'effective' in value) {
+            const settings = value as { effective?: { env?: Record<string, unknown> }; errors?: unknown }
+            if (!settings.effective || typeof settings.effective !== 'object' || Array.isArray(settings.effective) ||
+                (settings.errors !== undefined && (!Array.isArray(settings.errors) || settings.errors.length))) return
+            const effectiveEnv = settings.effective.env
+            if (effectiveEnv !== undefined && (!effectiveEnv || typeof effectiveEnv !== 'object' || Array.isArray(effectiveEnv))) return
+            const env = (key: string) => effectiveEnv?.[key] ?? baseTransportEnv[key]
+            if (env('ANTHROPIC_UNIX_SOCKET') || [
+              'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
+              'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD', 'CLAUDE_CODE_USE_MANTLE',
+            ].some(key => /^(1|true|yes|on)$/i.test(String(env(key) ?? '')))) return
+            const baseUrl = env('ANTHROPIC_BASE_URL')
+            if (typeof baseUrl === 'string' || baseUrl === undefined) confirmedTransport = { baseUrl: baseUrl || null }
+          }
+        } catch { /* Without native metadata there is no durable endpoint confirmation. */ }
+        finally { readingTransport = false }
+      }
       let lastInputTokens:number|undefined, firstInputTokens:number|undefined, contextModel:string|undefined,firstRequestSeen=false,lastRequestId:string|undefined,firstRequestId:string|undefined
       let observedSessionId=spawnOpts.resumeSessionId
 
       let closed = false
+      let transportEnded = false
       let droppedAssistantChunks = 0
       // A synthetic API-error assistant message (SDK `error` label) is held
       // until the turn's `result` arrives, because the HTTP status that
@@ -543,13 +631,17 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       let turnErrored = false
       let evaluationHasPartialText = false
       let evaluationHasVisibleText = false
+      // Claude 的 429 同时用于短期限流和额度耗尽，发出对话错误前按明确的额度文字区分。
+      const chatErrorCode = (code: string, message: string): string =>
+        !evaluation && code === 'rate_limited' && classifyProviderError(message) === 'quota' ? 'quota' : code
       const flushApiError = (aq: AsyncQueue<AgentEvent>, apiErrorStatus?: number | null): void => {
         if (!pendingApiError) return
         const { sdkError, text } = pendingApiError
         pendingApiError = null
-        const { code, message } = claudeApiFailure(sdkError, text, apiErrorStatus)
-        log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=${sdkError} status=${apiErrorStatus ?? 'none'} code=${code} text=${JSON.stringify(text.slice(0, 200))}`)
-        aq.push({ kind: 'error', code, message })
+        const { code: apiCode, message } = claudeApiFailure(sdkError, text, apiErrorStatus)
+        const code = chatErrorCode(apiCode, message)
+        log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=${sdkError} status=${apiErrorStatus ?? 'none'} code=${code}`)
+        aq.push({ kind: 'error', code, message, ...(apiErrorStatus == null ? {} : { httpStatusCode: apiErrorStatus }) })
       }
       let drainResolve: (() => void) | undefined
       const drainPromise = new Promise<void>(resolve => { drainResolve = resolve })
@@ -580,7 +672,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 const text = extractText(msg.message?.content)
                 if (text) {
                   droppedAssistantChunks++
-                  log('STREAM_DROP', `alias=${project.alias} count=${droppedAssistantChunks} preview=${JSON.stringify(text.slice(0, 80))}`)
+                  log('STREAM_DROP', `alias=${project.alias} count=${droppedAssistantChunks} len=${text.length}`)
                 }
               }
               continue
@@ -668,19 +760,24 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               flushApiError(aq, msg.api_error_status)
               const failed = !!msg.subtype && msg.subtype !== 'success'
               if (failed) {
-                const summary = typeof msg.result === 'string'
-                  ? msg.result.slice(0, 400)
-                  : JSON.stringify(msg).slice(0, 400)
-                log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
-                aq.push({ kind: 'error', message: msg.errors?.join('\n')||`subtype=${msg.subtype}`, ...(isContextOverflow(msg.errors)?{code:'context_overflow' as const}:{}), ...(evaluation && msg.subtype === 'error_max_turns' && !apiErrored && !turnErrored ? { code: usageLimited?'checkup_usage_limit':'checkup_step_budget' } : {}) })
+                log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype}`)
+                if (!apiErrored && !turnErrored) {
+                  const message = msg.errors?.join('\n') || `subtype=${msg.subtype}`
+                  const code = isContextOverflow(msg.errors) ? 'context_overflow'
+                    : evaluation && msg.subtype === 'error_max_turns' ? (usageLimited ? 'checkup_usage_limit' : 'checkup_step_budget')
+                    : codeForHttpStatus(msg.api_error_status, message)
+                  aq.push({ kind: 'error', message, ...(code ? { code: chatErrorCode(code, message) } : {}), ...(msg.api_error_status == null ? {} : { httpStatusCode: msg.api_error_status }) })
+                }
               } else if (!apiErrored && !turnErrored) {
                 // SDK 说这一轮是失败的(is_error),却没有带 error 标注的助理消息(上面那条路没接住):
                 // result.result 就是错误原文。带码收尾,coordinator 只发通知 —— 一个字都不进回复(#190 红线)。
                 // 判法和一起做同一个(claude-sdk-messages.ts 的 claudeResultFailure)。
                 const resultFailure = claudeResultFailure(msg)
                 if (resultFailure) {
-                  log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=none is_error=true status=${msg.api_error_status ?? 'none'} code=${resultFailure.code} text=${JSON.stringify(resultFailure.message.slice(0, 200))}`)
-                  aq.push({ kind: 'error', ...resultFailure })
+                  const code = chatErrorCode(codeForHttpStatus(msg.api_error_status, resultFailure.message) ?? resultFailure.code, resultFailure.message)
+                  log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=none is_error=true status=${msg.api_error_status ?? 'none'} code=${code}`)
+                  aq.push({ kind: 'error', ...resultFailure, code,
+                    ...(msg.api_error_status == null ? {} : { httpStatusCode: msg.api_error_status }) })
                 }
               }
               // SDK 自己的「最后的话」(result.result = 最后一条助理消息的文字):只在成功轮带,只用于核对
@@ -709,18 +806,30 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             }
           }
         } catch (e) {
+          transportEnded = true
           approvalLifecycle?.endTurn?.()
-          log('SESSION_ERROR', `alias=${project.alias} ${e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : String(e)}`)
+          log('SESSION_ERROR', `alias=${project.alias} ${e instanceof Error ? e.name : 'unknown SDK error'}`)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const catchQueue = activeEventQueue as AsyncQueue<AgentEvent> | null
           if (catchQueue) {
             flushApiError(catchQueue)
-            const errMsg = e instanceof Error ? e.message : String(e)
-            catchQueue.push({ kind: 'error', message: errMsg, ...(isContextOverflow(e)?{code:'context_overflow' as const}:{}) })
+            const message = e instanceof Error ? e.message : String(e)
+            const envelope = e && typeof e === 'object' ? e as { status?: unknown; statusCode?: unknown; httpStatusCode?: unknown } : undefined
+            const status = envelope?.status ?? envelope?.statusCode ?? envelope?.httpStatusCode
+            const code = providerErrorCodeOf(e) ?? (isContextOverflow(e) ? 'context_overflow' : undefined)
+            catchQueue.push({ kind: 'error', message, ...(code ? { code } : {}), ...(typeof status === 'number' ? { httpStatusCode: status } : {}) })
             catchQueue.end()
             activeEventQueue = null
           }
         } finally {
+          transportEnded = true
+          const queue = activeEventQueue as AsyncQueue<AgentEvent> | null
+          if (queue) {
+            if (pendingApiError) flushApiError(queue)
+            else queue.push({ kind: 'error', code: 'network', message: 'Claude SDK transport closed' })
+            queue.end()
+            activeEventQueue = null
+          }
           settleQuestion()
           approvalLifecycle?.endTurn?.()
           drainResolve?.()
@@ -731,6 +840,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         resumedHistory: !!spawnOpts.resumeSessionId, resumedHistoryOwnerOnly:true,
         contextUsage: () => ({...(lastInputTokens!==undefined?{tokens:lastInputTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(contextModel?{model:contextModel}:{})}),
         callTarget: () => ({...spawnTarget,...(contextModel?{model:contextModel}:{})}),
+        isAlive: () => !closed && !transportEnded,
+        confirmationTarget: () => confirmedTransport && { provider: 'claude', model: contextModel ?? spawnTarget.model, ...confirmedTransport },
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           if (closed) {
             // Already closed — return an iterable that yields nothing.
@@ -753,6 +864,10 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             parent_tool_use_id: null,
             message: { role: 'user', content },
           } as SDKUserMessage)
+          if (!evaluation && !confirmedTransport && !readingTransport) {
+            readingTransport = true
+            void readTransport()
+          }
           return queue.iterable()
         },
         async cancel() {

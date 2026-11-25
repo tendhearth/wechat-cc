@@ -319,7 +319,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
           : undefined)
       } catch (err) {
         if(err instanceof Error&&err.message==='request_body_too_large') return { status: 413, body: { error: 'request_body_too_large' }, closeConnection: true }
-        return { status: 400, body: { error: 'malformed_json', ...(isNotebook || isTerminalSearch ? {} : { detail: errMsg(err) }) } }
+        return { status: 400, body: { error: 'malformed_json', ...(isNotebook || isTerminalSearch || url.pathname === '/v1/cli/permission' ? {} : { detail: errMsg(err) }) } }
       }
     }
 
@@ -359,8 +359,13 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
       turnChatFor: deps.replyDelivery ? (p) => deps.replyDelivery!.turnChatFor(p) : undefined,
     })
     const turnChatId = sharedTurn?.kind === 'bound' ? sharedTurn.chatId : undefined
+    // Pairing registers the stable device ID as `device:<id>` on the authenticated token.
+    const deviceId = isNotebook && caller.origin === 'device' && caller.sessionKey?.startsWith('device:')
+      ? caller.sessionKey.slice('device:'.length)
+      : undefined
     const callerInfo = {
       tier: caller.tier, origin: caller.origin, chatId: callerChatId, ...(caller.origin === 'session' && caller.sessionKey ? { sessionKey: caller.sessionKey } : {}),
+      ...(deviceId ? { deviceId } : {}),
       ...(routeKey === 'POST /v1/matter/plan' && caller.recordMatterPlan ? { recordMatterPlan: caller.recordMatterPlan } : {}),
       ...(sharedTurn ? { sharedTurn: sharedTurn.kind, ...(turnChatId ? { turnChatId } : {}) } : {}),
       // 面板那一口才有(127.0.0.1 进来的不带,和抽出来之前一字不差):帧预算 ⇒ 要裁的处理器按它裁;出生地 ⇒ app / web。

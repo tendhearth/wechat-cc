@@ -74,10 +74,14 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
     let outcome: TurnRecord['outcome'] = 'error'
     let summary: (TurnSummary & Partial<Pick<OwnerReplySummary, 'replyRetried' | 'replySuppressed'>>) | undefined
     let unregisterCancel: (() => void) | undefined
+    const stopped = runner.stopMark(msg.chatId)
     // 回复交付(spec §4.3):最后的话经端口送达;report 落进 TurnRecord。
     let delivery: TurnDeliveryHandle | undefined
     let report: DeliveryReport | undefined
     let deliverySettled = false
+    const settle = (reason: string) => {
+      if (delivery && !deliverySettled) { deliverySettled = true; delivery.abandon(reason) }
+    }
     let acquired: Awaited<ReturnType<typeof deps.manager.acquire>> | undefined
     try {
       // Per-chat model pin lives on the solo mode row; only solo carries it.
@@ -107,7 +111,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
           ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
         })
       } catch (err) {
-        // spawn 阶段就挂了(二进制不在 / 首次使用探测没过 / SDK 起不来):
+        // spawn 阶段就挂了(二进制不在 / SDK 起不来):
         // 之前这个异常一路冒到 dispatch 外层只记日志,用户端一片沉默。
         // 沉默 = 被无视;把原因用人话交给用户,并记一条 turn。
         const detail = err instanceof Error ? err.message : String(err)
@@ -135,7 +139,6 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       // this turn for its entire lifetime — cleared in the finally below,
       // same lifecycle as chatroom's aborters.
       unregisterCancel = runner.registerCancel(msg.chatId, () => { void handle.cancel?.() })
-      const stopped = runner.stopMark(msg.chatId)
       // 只从本句白名单重建信封；即使上游误带 recall/quote/topics 也不透给代答者。
       let text = deps.format(oneoff ? { chatId: msg.chatId, userId: msg.userId, text: msg.text, msgType: msg.msgType, createTimeMs: msg.createTimeMs, accountId: msg.accountId, ...(msg.attachments ? { attachments: msg.attachments } : {}) } : msg)
       // 换 provider 后的第一条:前置交接块(近况原文 + chat_history 提示)。
@@ -197,8 +200,6 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
           }
         }catch(err){summary={assistantText:[],replyToolCalled:false,toolCalls:[],error:err instanceof Error?err.message:String(err),...(providerErrorCodeOf(err)?{errorCode:providerErrorCodeOf(err)}:{})}}
       }
-      const settle = (reason: string) => { if (!deliverySettled) { deliverySettled = true; d.abandon(reason) } }
-
       // Per-turn watchdog fired: the SDK stream went silent. Discard the
       // wedged session and tell the user to retry — before delivery so a
       // stalled turn never leaks a partial reply.
@@ -255,10 +256,14 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       rotation?.delivered(contextKey, msg.text, summary.toolCalls.length > 0)
     } catch (err) {
       if (!oneoff) throw err
+      if (stopped()) {
+        settle('cancelled')
+        return
+      }
       const code = providerErrorCodeOf(err)
       summary = { assistantText: [], replyToolCalled: false, toolCalls: [], error: err instanceof Error ? err.message : String(err), ...(code ? { errorCode: code } : {}) }
       outcome = isAuthErrorCode(code) ? 'auth_failed' : 'error'
-      if (delivery && !deliverySettled) { deliverySettled = true; delivery.abandon('error') }
+      settle('error')
       await failureNotice(turnErrorNotice(providerId, summary.error, summary.errorCode))
     } finally {
       unregisterCancel?.()

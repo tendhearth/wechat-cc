@@ -24,11 +24,18 @@ describe('workbench decision hierarchy in the rendered page',()=>{
   expect(root.querySelector('.wb-task-head').textContent).not.toContain('等你处理')
   for(const id of ['p1','p2']){
    const article=root.querySelector(`[data-request-id="${id}"]`).closest('article')
-   expect(article.querySelector('p').textContent).toBe(`bun run test -- ${id}\ncwd: /work/project\n仅允许这一次请求`)
-   expect(article.querySelector('[data-action="deny-permission"]').textContent).toBe('拒绝')
-   expect(article.querySelector('[data-action="allow-permission"]').textContent).toBe('允许')
+   expect(article.querySelector('[data-kind="text"] .approval-source').textContent).toBe(`bun run test -- ${id}\ncwd: /work/project\n仅允许这一次请求`)
+   expect(article.querySelector('[data-action="deny-permission"]').textContent).toBe('先不做')
+   expect(article.querySelector('[data-action="allow-permission"]').textContent).toBe('允许这一步')
   }
   expect(root.querySelector('.wb-questions').textContent).toContain('先验证哪个页面？')
+ })
+
+ it('orders secondary, primary and optional task-wide actions',()=>{
+  const detail={...state.detail,permissions:[{...permission('p1'),canAllowTask:true}]}
+  const actions=render({...state,detail}).querySelector('.wb-permission-actions')
+  expect([...actions.querySelectorAll('button')].map(button=>button.textContent)).toEqual(['先不做','允许这一步','本任务同命令都允许'])
+  expect(actions.querySelector('.wb-btn-primary')?.textContent).toBe('允许这一步')
  })
 
  it.each([

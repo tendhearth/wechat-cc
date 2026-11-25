@@ -48,12 +48,12 @@ export function initialSession(ordered, remembered = null) {
     ?? ordered.find(item => item.group === 'waiting') ?? latest ?? ordered[0]
 }
 
-/** @param {Session|null} session @param {string} name @param {boolean} waiting @param {boolean} [wide] */
-export function terminalInputReason(session, name, waiting, wide = true) {
+/** @param {Session|null} session @param {string} name @param {boolean} waiting */
+export function terminalInputReason(session, name, waiting) {
   if (waiting || session?.status === 'waiting') return session?.pending?.actionable || waiting
     ? '先定上面这件，它才往下走' : '先在终端里定下这件，它才往下走'
-  if (wide && !session) return '暂时读不到这次会话'
-  if (!session || (!wide && session.stale) || session.status === 'ended') return '这次会话已经结束，接着做要在终端里重新打开'
+  if (!session) return '暂时读不到这次会话'
+  if (session.status === 'ended') return '这次会话已经结束，接着做要在终端里重新打开'
   if (session.stale && !session.live_window) return '它的窗口不在了，回终端里接着说'
   if (session.stale) return ''
   if (!session.live_window && session.status !== 'idle') return `${name} 正在做，等这一轮停了再说`

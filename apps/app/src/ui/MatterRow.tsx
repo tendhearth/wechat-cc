@@ -35,6 +35,7 @@ export function MatterRow({ row, onOpen, fetchTitle = false }: { row: HomeRow; o
   const lang = useLang()
   const spec = STATUS_TABLE[row.status]
   const word = t(lang, spec.word)
+  const waitingTerminal = row.source === 'terminal' && spec.group === 'waiting'
   const label = [
     row.title,
     word,
@@ -56,7 +57,7 @@ export function MatterRow({ row, onOpen, fetchTitle = false }: { row: HomeRow; o
       <View style={{ flex: 1, gap: space.xs }}>
         {row.pendingRequestId
           ? <WaitingTitle taskId={row.id} requestId={row.pendingRequestId} fallback={row.title} fetch={fetchTitle} />
-          : <Txt role={componentAppearance.matterRow.role} content="user" numberOfLines={2}>{row.title}</Txt>}
+          : <Txt role={componentAppearance.matterRow.role} content="user" numberOfLines={waitingTerminal ? 1 : 2}>{row.title}</Txt>}
         {row.caption ? <Txt testID={`row-caption-${row.id}`} role={componentAppearance.matterRow.captionRole} tone="inkSoft" content="user" numberOfLines={1}>{row.caption}</Txt> : null}
         {row.detail ? <Txt testID={`row-detail-${row.id}`} role={componentAppearance.matterRow.detailRole} tone="inkSoft" content="user" numberOfLines={1}>{row.detail}</Txt> : null}
         {row.note ? <Txt testID={`row-note-${row.id}`} role="meta" tone="inkSoft">{row.note}</Txt> : null}

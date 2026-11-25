@@ -60,7 +60,7 @@
 .converse-att-sticker { display:block; max-width:140px; max-height:140px; object-fit:contain; border-radius:var(--th-radius-bubble); }
 .converse-att-sticker-label { color:var(--th-ink-soft); }
 
-/* 输入:sheet 圆角矩形,输入 + 工具条。一件事的详情之外只有此刻的聊天页会用到;此刻页再按 data-now 收放。 */
+/* 输入:sheet 圆角矩形,输入 + 工具条。用于总对话和一件事的详情。 */
 .converse-compose { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; align-items: center; box-sizing: border-box; flex: none; width: min(780px, calc(100% - 48px)); margin: 12px auto 24px; padding: var(--th-text-field-chat-padding-y) var(--th-text-field-chat-padding-x); border: 1px solid var(--th-text-field-border); border-radius: var(--th-text-field-chat-radius); background: var(--th-paper); }
 .converse-compose:focus-within { border-color: var(--th-text-field-focus-border); }
 .converse-compose [hidden] { display: none !important; }
@@ -80,15 +80,6 @@
 /* 发送:圆形 accent,文字只给读屏 */
 #converse-send, .converse-toolbar #converse-send { width: 40px; height: 40px; min-width: 40px; padding: 0; border: 0; border-radius: 50%; background: var(--th-accent); color: var(--th-on-accent); }
 #converse-send:hover, .converse-toolbar #converse-send:hover { background: var(--th-accent); opacity: .92; }
-.converse-place-clear, .converse-place-label, button.converse-recipient {
-  align-self:flex-start; padding:0; border:0; background:transparent; color:var(--th-accent);
-  font:inherit; font-size:var(--th-size-small); text-align:left; cursor:pointer;
-}
-:is(.converse-place-clear,.converse-place-label,button.converse-recipient):hover { text-decoration:underline; }
-.converse-place-clear { max-width:100%; padding:var(--th-space-s) 0; overflow-wrap:anywhere; }
-.converse-place-clear[hidden] { display:none; }
-.converse-place-label { display:block; width:fit-content; max-width:100%; overflow-wrap:anywhere; }
-.converse-place-empty { margin:0; padding:var(--th-space-m) var(--th-space-l); color:var(--th-ink-soft); }
 .converse-recipient { flex:none; max-width:35%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--th-ink-soft); font-size:var(--th-size-small); }
 .converse-draft .converse-recipient { padding-block:10px; }
 #converse-send span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -151,8 +142,6 @@
 .conversation-tools summary, .conversation-tools button { cursor:pointer; font:inherit; background:transparent; color:var(--th-ink); border:0; padding:8px; }
 .conversation-tools details[open] { z-index:8; background:var(--th-paper); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); }
 .conversation-tools details[open] button { display:block; }
-.cc-now-pane[data-conversation="single"] .now-waiting:not([hidden]) { display:block; margin:0; font-size:var(--th-size-small); }
-.cc-now-pane[data-conversation="single"] .now-waiting > summary { cursor:pointer; color:var(--th-ink-soft); }
 .dashboard .workbench-pane { position:fixed; inset:16px 16px 16px auto; width:min(720px,calc(100vw - 100px)); z-index:20; background:var(--th-paper); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); padding:var(--th-space-l); }
 .workbench-pane[data-workbench-view="detail"] .wb-sidebar,
 .workbench-pane[data-workbench-view="projects"] .wb-sidebar,
@@ -179,8 +168,6 @@
 .dashboard .workbench-pane { top:calc(var(--topbar-bottom, 72px) + 8px); height:auto; min-height:0; max-height:calc(100dvh - var(--topbar-bottom, 72px) - 16px); box-sizing:border-box; }
 @media(max-width:760px) { .dashboard .workbench-pane { top:var(--topbar-bottom, 72px); max-height:calc(100dvh - var(--topbar-bottom, 72px)); } }
 
-.cc-now-pane[data-conversation="single"] #now-waiting-list > li:not(.now-terminal) { display:none; }
-.cc-now-pane[data-conversation="single"] #now-waiting-list { max-height:34vh; overflow:auto; }
 .dashboard .workbench-pane { z-index:100; }
 
 .converse-terminal { padding:var(--th-space-l); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); }
@@ -204,7 +191,6 @@
 #dash-global-rail { position:relative; z-index:110; }
 @media(max-width:1079px) {
   #roster-aside { grid-area:auto; width:360px; box-sizing:border-box; }
-  .dash-window:has(#roster-aside[data-open])::after { content:''; position:absolute; inset:72px 0 0; background:color-mix(in srgb,var(--th-ink) 8%,transparent); z-index:59; }
 }
 #roster-dock .wb-followup { display:flex; align-items:center; gap:8px; padding:10px; border:1px solid var(--th-hair); border-radius:var(--th-radius-bubble); }
 #roster-dock .wb-followup:focus-within { border-color:var(--th-accent); }
@@ -240,8 +226,6 @@
 .topbar-home { display:flex; align-items:center; gap:var(--th-space-s); }
 #dash-global-rail .cc-home-details { position:relative; inset:auto; margin:0; }
 #dash-global-rail .cc-home-details > summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:6px; }
-#topbar-presence { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-#topbar-presence-dot { flex:none; }
 #dash-global-rail .cc-home-details .now-panel { position:absolute; top:32px; left:0; right:auto; max-width:calc(100vw - 32px); }
 .converse-compose .conversation-tools { margin:0; padding:0; }
 

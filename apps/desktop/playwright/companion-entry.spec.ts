@@ -57,7 +57,7 @@ async function nativeEntry(page: import('@playwright/test').Page, options: { doc
 
 async function expectConversation(page: import('@playwright/test').Page) {
   await expect(page.locator('main.dashboard')).toBeVisible()
-  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#converse-scroll')).toBeVisible()
   await expect(page.locator('#converse-input')).toBeFocused()
 }
 

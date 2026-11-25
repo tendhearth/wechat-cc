@@ -1,3 +1,6 @@
+import { redactPreviewText, toolApprovalInput } from '../../../domain/workbench/tool-input-preview'
+import { toolArgumentEvidence } from '../tool-argument-evidence'
+import { boundedPermissionDisplay, permissionCwd, toolPermissionDisplay, type PermissionDisplay } from '@wechat-cc/protocol'
 import { taskEnvironment } from '../task-environment'
 import { makePausableTimers, type PausableTimer } from '../../../lib/pausable-timers'
 import { codexBreakdown, sumTurnUsage, type TurnUsage } from '../../../domain/turn-usage'
@@ -72,6 +75,8 @@ export interface CodexChatProfile {
    * 不给 ⇒ 审批请求一律拒。signal:这一轮停了 / 会话关了 ⇒ 中止,迟到的答复不再发给 codex。
    */
   approve?: CodexChatApprove
+  /** Captured from config/read for the optional, separate tool-free connectivity request. */
+  onNativeDefault?: (target: CallTarget) => void
 }
 
 /**
@@ -209,6 +214,37 @@ function approvalScope(params: ObjectValue): string | null {
     execProposal != null && `Suggested future command policy (not applied by this approval):\n${JSON.stringify(execProposal, null, 2)}`,
     networkProposals != null && `Suggested future network policy (not applied by this approval):\n${JSON.stringify(networkProposals, null, 2)}`,
   ].filter(Boolean).join('\n')
+}
+
+export function codexPermissionDescription(file: boolean, params: ObjectValue, item?: ObjectValue) {
+  const validChanges = Array.isArray(item?.changes) && item.changes.length > 0 && item.changes.every((change: unknown) => object(change) && typeof change.path === 'string' && typeof change.diff === 'string')
+  const changes = validChanges ? item!.changes.map((change: ObjectValue) => `${preview(change.path)}\n${preview(change.kind)}\n${preview(change.diff)}`).join('\n\n') : null
+  const command = params.command ?? item?.command
+  const scope = approvalScope(params)
+  const description = (file
+    ? [changes, params.reason, scope]
+    : [command, params.cwd && `Working directory: ${params.cwd}`, params.reason, scope]
+  ).filter(Boolean).join('\n')
+  return { validChanges, command, scope, description }
+}
+
+function codexApprovalDisplay(file: boolean, params: ObjectValue, item: ObjectValue | undefined, command: unknown, scope: string): PermissionDisplay | undefined {
+  return boundedPermissionDisplay(() => {
+    if (params.reason != null && typeof params.reason !== 'string') return
+    const cwd = permissionCwd(params.cwd)
+    const body: PermissionDisplay['body'] = file
+      ? { kind: 'patch', files: item!.changes.map((change: ObjectValue) => {
+        const kind = change.kind
+        const movePath = object(kind) ? kind.move_path ?? kind.movePath : undefined
+        const known = object(kind) && Object.keys(kind).length <= 2 && typeof kind.type === 'string' && onlyKeys(kind, ['type', 'move_path', 'movePath']) &&
+          (movePath == null || typeof movePath === 'string')
+        return { path: change.path, change: known ? kind.type : preview(kind), diff: change.diff,
+          ...(known && typeof movePath === 'string' ? { movePath } : {}) }
+      }) }
+      : { kind: 'command', command: command as string, ...(cwd ? { cwd } : {}) }
+    return { body, ...(typeof params.reason === 'string' && params.reason ? { note: params.reason } : {}),
+      extra: [{ name: 'Scope', value: scope }] }
+  })
 }
 
 /** Native app-server protocol adapter: the workbench provider below, and Codex chat (codex-chat-provider.ts) via spawnCodexAppServerSession. */
@@ -438,7 +474,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (event.kind === 'result') return { ...event, numTurns: ++chatTurns }
         if (event.kind !== 'error') return event
         const code = event.code ?? codexErrorCode(event.message) ?? (isAuthFail('sdk-error', event.message) ? 'auth_failed' : undefined)
-        chat?.log?.('SESSION_RESULT', `alias=${project.alias} provider=codex error${code ? ` code=${code}` : ''}: ${event.message.slice(0, 300)}`)
+        chat?.log?.('SESSION_RESULT', `alias=${project.alias} provider=codex error${code ? ` code=${code}` : ''}`)
         return { kind: 'error', message: event.message, ...(code ? { code } : {}) }
       }
       const finish = (turn: Turn, event: AgentEvent) => {
@@ -610,14 +646,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         approvals.set(id, entry)
         const file = message.method === 'item/fileChange/requestApproval'
         const item = turn.items.get(params.itemId)
-        const validChanges = Array.isArray(item?.changes) && item.changes.length > 0 && item.changes.every((change: unknown) => object(change) && typeof change.path === 'string' && typeof change.diff === 'string')
-        const changes = validChanges ? item!.changes.map((change: ObjectValue) => `${preview(change.path)}\n${preview(change.kind)}\n${preview(change.diff)}`).join('\n\n') : null
-        const command = params.command ?? item?.command
-        const scope = approvalScope(params)
-        const description = (file
-          ? [changes, params.reason, scope]
-          : [command, params.cwd && `Working directory: ${params.cwd}`, params.reason, scope]
-        ).filter(Boolean).join('\n')
+        const { validChanges, command, scope, description } = codexPermissionDescription(file, params, item)
         // Stdin grants and unknown approval variants lack a reviewed command;
         // do not turn them into blanket/session policy grants.
         const supported = scope !== null && description.length <= 20_000 && (file ? validChanges : (typeof command === 'string' && !!command.trim() && (!params.kind || params.kind === 'command')))
@@ -641,8 +670,22 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         let feedback: string | undefined
         const onDenied = (reason: string) => { feedback = permissionDenialMessage(description, reason); (turn.denialFeedback ??= []).push(feedback) }
         const ask = chat ? chat.approve : context.requestPermission
+        const display = chat ? undefined : codexApprovalDisplay(file, params, item, command, scope)
+        const cwd = chat ? undefined : permissionCwd(params.cwd)
+        const itemCwd = !chat && !file && item?.type === 'commandExecution' ? item.cwd : undefined
+        const cwdEvidence = chat ? undefined : params.cwd ?? itemCwd
+        const verifiedCwd = permissionCwd(cwdEvidence)
+        const mismatched = !chat && !file && item?.type === 'commandExecution' &&
+          ((item.command != null && item.command !== command) || (params.cwd != null && itemCwd != null && itemCwd !== params.cwd))
+        const incomplete = !chat && (!display || mismatched ||
+          (!file && params.command == null && item?.type !== 'commandExecution') || (cwdEvidence != null && !verifiedCwd))
+        const reviewDescription = file && cwd ? `${description}\nWorking directory: ${cwd}` : undefined
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && ask
           ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts, ...(!chat ? { onDenied } : {}),
+              ...(display ? { display } : {}),
+              ...(!ruleFacts.cwd && verifiedCwd ? { displayCwd: verifiedCwd } : {}),
+              ...(incomplete ? { wechatReview: { incomplete: true, ...(typeof cwdEvidence === 'string' ? { cwd: cwdEvidence } : {}) } } : {}),
+              ...(reviewDescription ? { reviewDescription } : {}),
               ...(!chat && !file && typeof command === 'string' && needsBoundExecution(command) ? { requiresBoundExecution: true as const } : {}),
             }, controller.signal)
           : false,
@@ -721,11 +764,24 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (!requestCapacity()) return
         const controller = new AbortController(), entry: Approval = { controller, turn, rejection: 'decline', mcp: true }
         approvals.set(id, entry)
-        const { input, ...request } = permission
+        const { input, inputOmitted, target, ...request } = permission
+        const preview = chat ? undefined : toolApprovalInput(input)
+        let noteRedacted = false
+        const note = typeof params.message === 'string'
+          ? redactPreviewText(params.message, () => { noteRedacted = true }) : undefined
+        const argumentsDisplay = chat ? undefined : toolPermissionDisplay(request.tool, preview?.input, note)
+        const display = boundedPermissionDisplay(() => argumentsDisplay && {
+          ...argumentsDisplay,
+          extra: [{ name: 'MCP server', value: target.server }, { name: 'MCP tool', value: target.tool }],
+        })
+        const incomplete = inputOmitted || !display || noteRedacted || (params.message != null && note === undefined) ||
+          preview?.incomplete
+        const wechatReview = incomplete ? { incomplete: true as const } : toolArgumentEvidence(input)
         let feedback: string | undefined
         const onDenied = (reason: string) => { feedback = permissionDenialMessage(request.description, reason); (turn.denialFeedback ??= []).push(feedback) }
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && (chat ? chat.approve : context.requestPermission)
-          ? chat ? chat.approve!({ ...request, input, ...(request.tool==='mcp__wechat__matter_plan'?{onDenied}:{}) }, controller.signal) : context.requestPermission!({ ...request, onDenied }, controller.signal) : false,
+          ? chat ? chat.approve!({ ...request, input, ...(request.tool==='mcp__wechat__matter_plan'?{onDenied}:{}) }, controller.signal) : context.requestPermission!({ ...request, mcp: target, ...(display ? { display } : {}),
+              ...(Object.keys(wechatReview).length ? { wechatReview } : {}), onDenied }, controller.signal) : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
           // The native turn can complete while the decline is being written.
@@ -1026,7 +1082,13 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           const rpc = rpcs.get(message.id)
           if (!rpc) return // A timed-out or cancelled client's late response.
           rpcs.delete(message.id); rpc.clear()
-          if (message.error) { const error=codexRpcError(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'); rejectedRpcs.add(error); rpc.reject(error) }
+          if (message.error) {
+            const detail = chat && message.error.code === -32601 ? 'codex_rpc_method_not_found'
+              : typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'
+            const error = codexRpcError(detail)
+            rejectedRpcs.add(error)
+            rpc.reject(error)
+          }
           else if (object(message.result)) rpc.resolve(message.result)
           else { rpc.reject(new Error('codex_invalid_rpc_response')); fatal('codex_invalid_rpc_response') }
         } else fatal('codex_invalid_protocol_message')
@@ -1069,10 +1131,13 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (lifetime && !registrationVerified) retained = true
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
+        // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
+        const configuredModel = native.config?.model
+        const route = codexTargetFromConfig(native.config, childEnv)
+        spawnTarget = codexTargetToCall(route, model ?? (nativeModelId(configuredModel) ? configuredModel : null))
+        chat && context.reportStartupTarget?.(context.resumeSessionId && !model ? undefined : spawnTarget)
         const proxy = native.config?.features?.network_proxy
         if (proxy != null && proxy !== false) throw Error('codex_unverified_thread_policy')
-        // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
-        spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? null)
         const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
         let response: ObjectValue
         if (chat) {
@@ -1105,6 +1170,12 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           })
           if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
         }
+        if (chat) {
+          const providerMatches = !('unresolved' in route) && (response.modelProvider == null || response.modelProvider === route.providerId)
+          if (!providerMatches) spawnTarget = { provider: 'codex', model: spawnTarget.model, unresolved: true }
+          if (nativeModelId(response.model)) spawnTarget = { ...spawnTarget, model: response.model }
+          context.reportStartupTarget?.(context.resumeSessionId && !model && !nativeModelId(response.model) ? undefined : spawnTarget)
+        }
         if (typeof response.thread?.id !== 'string' || !response.thread.id) throw new Error('codex_missing_thread_id')
         if (context.resumeSessionId && response.thread.id !== context.resumeSessionId) throw new Error('codex_resume_thread_mismatch')
         if (chat ? !samePath(response.cwd, project.path) : response.cwd !== project.path) throw new Error('codex_unverified_thread_cwd')
@@ -1122,7 +1193,11 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           throw new Error('codex_unverified_thread_policy')
         }
         threadId = response.thread.id
-        if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
+        if (nativeModelId(response.model)) {
+          spawnTarget = { ...spawnTarget, model: response.model }
+          context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
+        }
+        if (!model && configuredModel == null && !context.resumeSessionId) chat?.onNativeDefault?.(spawnTarget)
       } catch (error) { await close(); throw error }
       finally { startupSignal?.removeEventListener('abort', abortStartup) }
       const launch = (text: string, attachments?: readonly AgentAttachment[], sharedEvents?: EventQueue) => {

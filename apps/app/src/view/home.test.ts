@@ -61,12 +61,12 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
   it('终端会话:状态并进同一套词;终端自己在问 ⇒ 等你组里说「回电脑上答」但不计数', () => {
     expect([terminalStatusKey('waiting'), terminalStatusKey('running'), terminalStatusKey('idle'), terminalStatusKey('ended')]).toEqual(['waiting', 'working', 'replied', 'done'])
     const local = term({ session_id: 'L', status: 'waiting', pending: { tool: 'Bash', summary: 'rm', since: NOW, hash: null, actionable: false } })
-    const phone = term({ session_id: 'P', status: 'waiting', pending: { tool: 'Bash', summary: 'deploy', since: NOW, hash: 'ab', actionable: true } })
+    const phone = term({ session_id: 'P', displayName: 'Work account', status: 'waiting', pending: { tool: 'Bash', summary: 'deploy', since: NOW, hash: 'ab', actionable: true } })
     const v = homeView(input({ terminal: [local, phone, term({ session_id: 'E', status: 'ended' })] }))
     const w = v.groups.find(g => g.key === 'waiting')!.rows
     expect(w.map(r => r.id).sort()).toEqual(['L', 'P'])
-    expect(w.find(r => r.id === 'L')).toMatchObject({ source: 'terminal', note: t('zh-Hans', 'terminal.askedLocally'), href: '/terminal/L', title: 'Bash: rm' })
-    expect(w.find(r => r.id === 'P')!.note).toBeNull()
+    expect(w.find(r => r.id === 'L')).toMatchObject({ source: 'terminal', note: t('zh-Hans', 'terminal.askedLocally'), href: '/terminal/L', title: '想运行 rm', agentNames: { claude: 'Claude' } })
+    expect(w.find(r => r.id === 'P')).toMatchObject({ note: null, agents: ['claude'], agentNames: { claude: 'Work account' } })
     expect(v.actionableWaiting).toHaveLength(1)
     expect(v.groups.flatMap(g => g.rows.map(r => r.id))).not.toContain('E')
   })

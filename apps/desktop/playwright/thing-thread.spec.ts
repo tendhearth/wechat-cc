@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
+import type { PermissionDisplay } from '../../../packages/protocol/src/permission-display'
 import { test, expect } from './fixtures'
-import { placeItem, placeSession, placeRow, rosterItem, routePlaces, routeRoster, terminalPlace } from './roster-fixture'
+import { placeAnswerSurface, placeItem, placeSession, placeRow, rosterItem, routePlaces, routeRoster, terminalPlace } from './roster-fixture'
 
 test.use({viewport:{width:1280,height:820}})
 const now = Date.now()
@@ -17,13 +18,15 @@ const terminal = (page:Page) => thread(page).locator('.thing-terminal:visible')
 const select = (page:Page,name:string) => placeRow(page,name).locator('.place-row').click()
 const home = (page:Page) => page.locator('#topbar-cc')
 const solo = placeItem('花园',{sessionIds:['solo'],updatedAt:now,sessions:[placeSession('solo','replied',now)]})
-const three = terminalPlace('备份','ask','读备份目录？',{
+const approval = {actionable:true,tool:'Read',summary:'读备份目录？',hash:'a1234'}
+type Pending = typeof approval & {display?:PermissionDisplay,cwd?:string}
+const backupPlace = (pending:Pending) => terminalPlace('备份','ask',pending.summary,{
   updatedAt:now,sessionIds:['ask','new','run'],
   sessions:[placeSession('ask','waiting',now+1000),placeSession('run','working',now+2000),placeSession('new','replied',now+3000)],
-  waiting:{kind:'terminal',itemKey:'terminal:ask',sessionId:'ask',requestId:'a1234',summary:'读备份目录？',
+  waiting:{kind:'terminal',itemKey:'terminal:ask',sessionId:'ask',requestId:pending.hash,summary:pending.summary,display:pending.display,cwd:pending.cwd,
     count:1,ccOpinion:'可以读备份目录。',questionReason:'需要访问另一个目录。'},
 })
-const approval = {actionable:true,tool:'Read',summary:'读备份目录？',hash:'a1234'}
+const three = backupPlace(approval)
 const entries = [
   step('you','you','把这周的记录整理一下'),
   step('reply','said','这是短摘要',{full:'这是 **完整原话**，包含记录。'}),
@@ -31,9 +34,10 @@ const entries = [
   step('two','step','核对目录',{error:true}),
 ]
 
-async function mockTerminal(page:Page,{withThree=false,waiting=true,long=false,older=false}={}) {
+async function mockTerminal(page:Page,{withThree=false,waiting=true,long=false,older=false,pending=approval}:
+  {withThree?:boolean,waiting?:boolean,long?:boolean,older?:boolean,pending?:Pending}={}) {
   const currentThree = (approved: boolean) => {
-    if (waiting && !approved) return three
+    if (waiting && !approved) return backupPlace(pending)
     const run = placeSession('run','working',now+2000)
     const fresh = placeSession('new','replied',now+3000)
     const ask = placeSession('ask',approved?'working':'replied',now+1000)
@@ -45,7 +49,7 @@ async function mockTerminal(page:Page,{withThree=false,waiting=true,long=false,o
   await routeRoster(page,[roster('solo'),...(withThree?[roster('new','back',now+3000),roster('run','working',now+2000),roster('ask',waiting?'waiting':'back',now+1000)]:[])])
   await page.route('**/v1/cli/sessions**',route=>{
     const all = [session('solo'),session('new'),session('run',{status:'running',live_window:false}),
-      session('ask',{status:model.approved?'running':waiting?'waiting':'idle',pending:model.approved||!waiting?null:approval})]
+      session('ask',{status:model.approved?'running':waiting?'waiting':'idle',pending:model.approved||!waiting?null:pending})]
     const wanted = new URL(route.request().url()).searchParams.get('session_id')
     return route.fulfill({json:{ok:true,sessions:wanted?all.filter(item=>item.session_id===wanted):all}})
   })
@@ -199,17 +203,109 @@ test('拍板卡在输入区前并显示同一请求的意见，允许后消失',
   await select(page,'备份')
   const panel=terminal(page)
   const card=panel.locator('.desk-waiting-card')
-  await expect(card).toContainText('读备份目录？')
-  await expect(card).toContainText('可以读备份目录。')
+  await expect(card.locator('.desk-waiting-question')).toHaveText('Codex 想用「Read」')
+  expect(await card.locator('.approval-panel').textContent() === '读备份目录？').toBe(true)
+  expect(await card.locator('.desk-waiting-opinion').textContent() === '我的意见（只看了这条请求）：可以读备份目录。').toBe(true)
   await expect(card).toContainText('需要访问另一个目录。')
   await expect(page.locator('#desk-waiting .desk-waiting-card')).toHaveCount(0)
   const input=panel.locator('textarea')
   await expect(input).toBeDisabled()
   await expect(input).toHaveAttribute('placeholder','先定上面这件，它才往下走')
   expect((await card.boundingBox())!.y).toBeLessThan((await input.boundingBox())!.y)
-  await card.getByRole('button',{name:'允许',exact:true}).click()
+  await card.getByRole('button',{name:'允许这一步',exact:true}).click()
   expect(decisions).toEqual([{session_id:'ask',hash:'a1234',decision:'allow'}])
   await expect(card).toBeHidden()
+})
+
+const commandApproval = (command:string, options:{cwd?:string,truncated?:boolean}):Pending => ({
+  ...approval, tool:'Bash', summary:'终端命令', cwd:options.cwd,
+  display:{body:{kind:'command', command}, truncated:options.truncated},
+})
+const sampleCwd = '/sample/work'
+const needsTerminal = '这里不是全部内容，完整的请在终端里看。'
+
+test('会话卡画出短命令和执行目录，允许提交本次请求',async({page,shimUrl})=>{
+  const command = 'printf example'
+  const model = await mockTerminal(page,{withThree:true,pending:commandApproval(command,{cwd:sampleCwd})})
+  await page.route('**/v1/cli/decide',route=>{
+    model.approved=true
+    return route.fulfill({json:{ok:true}})
+  })
+  await page.goto(shimUrl)
+  await select(page,'备份')
+  const card = terminal(page).locator('.thing-waiting')
+  await expect(card.locator('.desk-waiting-question')).toHaveText('Codex 想运行一条命令')
+  await expect(card.locator('.approval-command .approval-source')).toBeVisible()
+  expect(await card.locator('.approval-command .approval-source').textContent() === command).toBe(true)
+  const directory = card.locator('.approval-operation > .approval-meta').filter({hasText:/^在 /})
+  await expect(directory).toBeVisible()
+  expect(await directory.textContent() === `在 ${sampleCwd}`).toBe(true)
+  await expect(card.getByText('看完整原文',{exact:true})).toBeVisible()
+  const decision = page.waitForRequest('**/v1/cli/decide')
+  await expect(page.locator('#thing-thread .thing-waiting-note')).toBeHidden()
+  await card.getByRole('button',{name:'允许这一步',exact:true}).click()
+  expect((await decision).postDataJSON()).toEqual({session_id:'ask',hash:'a1234',decision:'allow'})
+  await expect(card).toBeHidden()
+})
+
+for (const {label, options} of [
+  {label:'十行命令被截',options:{cwd:sampleCwd,truncated:true}},
+  {label:'命令没有执行目录',options:{}},
+]) {
+  test(`会话卡提示回终端看全并且仍可拒绝（${label}）`,async({page,shimUrl})=>{
+    const command = Array.from({length:10},(_,i)=>`printf example-${i}`).join('\n')
+    const model = await mockTerminal(page,{withThree:true,pending:commandApproval(command,options)})
+    await page.route('**/v1/cli/decide',route=>{
+      model.approved=true
+      return route.fulfill({json:{ok:true}})
+    })
+    await page.goto(shimUrl)
+    if (options.truncated) {
+      await placeAnswerSurface(page,'备份').getByRole('button',{name:'打开看全再定',exact:true}).click()
+    } else {
+      await select(page,'备份')
+    }
+    const card = terminal(page).locator('.thing-waiting')
+    await expect(card.locator('.approval-command')).toBeVisible()
+    await expect(card.getByRole('button',{name:'允许这一步',exact:true})).toHaveCount(0)
+    await expect(card.getByText(needsTerminal,{exact:true})).toBeVisible()
+    // 原因写在「不允许」旁边,不用在卡片里滚就看得见。
+    await expect(card.locator('.thing-waiting-note')).toHaveText('这里看不全，请到终端里看全再定。')
+    await expect(card.locator('.thing-waiting-note')).toBeInViewport({ratio:1})
+    if (options.truncated) {
+      await card.getByText('还有 2 行 · 展开收到的部分',{exact:true}).click()
+      expect((await card.locator('.approval-command details .approval-source').textContent()) === command.split('\n').slice(8).join('\n')).toBe(true)
+      await expect(card.getByText('看完整原文',{exact:true})).toHaveCount(0)
+    } else {
+      await expect(card.locator('.approval-meta').filter({hasText:/^在 /})).toHaveCount(0)
+    }
+    const decision = page.waitForRequest('**/v1/cli/decide')
+    await card.getByRole('button',{name:'先不做',exact:true}).click()
+    expect((await decision).postDataJSON()).toEqual({session_id:'ask',hash:'a1234',decision:'deny'})
+  })
+}
+
+test('长会话卡内部滚动，展开前后对话、输入框和拍板按钮仍在视口',async({page,shimUrl})=>{
+  await page.setViewportSize({width:1280,height:560})
+  const command = Array.from({length:48},(_,i)=>`printf example-${i}`).join('\n')
+  await mockTerminal(page,{withThree:true,pending:commandApproval(command,{cwd:sampleCwd})})
+  await page.goto(shimUrl)
+  await select(page,'备份')
+  const panel = terminal(page)
+  const card = panel.locator('.thing-waiting')
+  const body = card.locator('.thing-waiting-body')
+  const inView = [
+    panel.locator('.thing-scroll [data-converse-message="reply"]'),
+    panel.locator('textarea'),
+    card.getByRole('button',{name:'允许这一步',exact:true}),
+    card.getByRole('button',{name:'先不做',exact:true}),
+  ]
+  for (const locator of inView) await expect(locator).toBeInViewport({ratio:1})
+  await card.getByText('还有 40 行 · 看全部',{exact:true}).click()
+  expect(await body.evaluate(node=>node.scrollHeight > node.clientHeight)).toBe(true)
+  await body.evaluate(node=>{ node.scrollTop = node.scrollHeight })
+  await expect(card.getByText('看完整原文',{exact:true})).toBeInViewport({ratio:1})
+  for (const locator of inView) await expect(locator).toBeInViewport({ratio:1})
 })
 
 test('发送先显示在路上，读回后只有原话；失败恢复草稿',async({page,shimUrl})=>{
@@ -293,15 +389,6 @@ test('对话里的真实终端引用打开它的地方和会话',async({page,shi
   await expect(terminal(page)).toContainText('把这周的记录整理一下')
 })
 
-test('800px 保留筛选条和补引用卡',async({page,shimUrl})=>{
-  await page.setViewportSize({width:800,height:820})
-  await mockTerminal(page)
-  await page.goto(shimUrl)
-  await select(page,'花园')
-  await expect(thread(page)).toBeHidden()
-  await expect(page.locator('#converse-place-clear')).toHaveText('只看 花园 · 回到全部')
-  await expect(page.locator('#converse-scroll [data-terminal-reference="solo"]')).toBeVisible()
-})
 
 test('小结跟着作者换字体，发话收起便条，偏好关掉后两处都收起', async ({page, shimUrl}) => {
   const cc = { text: '花园的画册排好了。还要选纸。', source: 'cc', at: now, awayFrom: Date.now() - 38 * 60_000 - 15_000 }
@@ -487,7 +574,7 @@ test('名单恢复活会话后，选中的会话恢复输入和审批', async ({
   await expect(input).toHaveValue('接着整理')
 
   status = 'waiting'
-  for (const name of ['允许','不允许']) {
+  for (const name of ['允许这一步','先不做']) {
     const button = terminal(page).getByRole('button',{name,exact:true})
     await expect(button).toBeVisible({timeout:9000})
     await expect(button).toBeEnabled()

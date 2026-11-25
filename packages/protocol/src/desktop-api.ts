@@ -1,3 +1,4 @@
+import { permissionCwdWire, permissionDisplayWire } from './permission-display'
 import { NotebookChatReadRequest, NotebookChatReadResponse, NotebookJotRequest, NotebookJotResponse, NotebookPageResponse, NotebookUnseenResponse, NotebookSeenRequest, NotebookSeenResponse, NotebookPaperRequest, NotebookPaperResponse, NotebookStrikeRequest, NotebookStrikeResponse, NotebookWriteRequest, NotebookWriteResponse } from './notebook'
 import { RosterResponse } from './roster'
 import { RecapSettingsRequest, RecapSettingsResponse, SessionRecap, PlaceOutlineRequest, PlaceOutlineRunResponse, LabsRequest, LabsResponse, PlaceMapPinRequest, PlaceMapResponse, PlaceHideRequest, PlaceMoveRequest, PlaceSeenRequest, PlacesResponse, PlaceWriteResponse } from './places'
@@ -24,7 +25,7 @@ import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 import z from 'zod'
 import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import {
-  PHONE_API_SCHEMAS, PhoneErrorResponse, CliActivityPage, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent, MatterPermission, PermissionScript, PermissionScriptChunk,
+  PHONE_API_SCHEMAS, PhoneErrorResponse, CliActivityPage, CliPendingPermission, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent, MatterPermission, PermissionScript, PermissionScriptChunk,
   MatterAgent,MatterNote,MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
@@ -752,6 +753,7 @@ export const CliPermissionRequest = z.object({
   cwd: z.string().min(1).max(1000),
   tool_name: z.string().min(1).max(200),
   summary: z.string().max(2000).optional(),
+  display: permissionDisplayWire, execution_cwd: permissionCwdWire, truncated: z.boolean().optional().catch(undefined),
   /** 放行规则用的原文(2026-10-19):命令截 2000;文件路径最多 50 条。老 hook 不带 ⇒ allow 规则与初审放不了它。 */
   command: z.string().max(2000).optional(),
   paths: z.array(z.string().min(1).max(1000)).max(50).optional(),
@@ -1400,7 +1402,7 @@ const CliSessionsRowShape = z.object({
   last_event_at: z.number(),
   last_prompt_at: z.number().nullable(),
   created_at: z.number(),
-  pending: z.object({ tool: z.string(), summary: z.string().nullable(), since: z.number() }).nullable(),
+  pending: CliPendingPermission.nullable(),
   live_window: z.boolean().optional(),
   now_step: z.string().nullable().optional(),
 })
@@ -1487,6 +1489,15 @@ export const CliHooksResponse = z.object({
 // ── GET /v1/calendar/agenda ──
 // 就是「日历」命令那段话(没开 / 没授权也照实成句)。
 export const CalendarAgendaResponse = z.object({ ok: z.literal(true), text: z.string() })
+export const CalendarStatusResponse = z.object({
+  enabled: z.boolean(), permission: z.enum(['granted', 'not_determined', 'denied', 'unavailable']),
+})
+export const CalendarEnabledRequest = z.object({ on: z.boolean() }).strict()
+export type CalendarEnabledRequestT = z.infer<typeof CalendarEnabledRequest>
+export const CalendarEnabledResponse = z.union([
+  CalendarStatusResponse.extend({ text: z.string() }),
+  z.object({ enabled: z.literal(false), text: z.string() }).strict(),
+])
 
 // ══ CC 的信(features/letters/routes.ts)════════════════════════════════
 
@@ -2500,6 +2511,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/places/seen': PlaceSeenRequest,
   'POST /v1/labs': LabsRequest,
   'POST /v1/settings/recap': RecapSettingsRequest,
+  'POST /v1/calendar/enabled': CalendarEnabledRequest,
   'POST /v1/places/map/pin': PlaceMapPinRequest,
   'POST /v1/places/map/outline': PlaceOutlineRequest,
   // atelier
@@ -2764,6 +2776,8 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/cli/say': CliSayWaitResponse,
   'GET /v1/overseer/today': OverseerTodayResponse,
   'GET /v1/calendar/agenda': CalendarAgendaResponse,
+  'GET /v1/calendar/status': CalendarStatusResponse,
+  'POST /v1/calendar/enabled': CalendarEnabledResponse,
   'POST /v1/cli/hooks/install': CliHooksResponse,
   'POST /v1/cli/hooks/uninstall': CliHooksResponse,
   'GET /v1/letters': LettersStatusResponse,

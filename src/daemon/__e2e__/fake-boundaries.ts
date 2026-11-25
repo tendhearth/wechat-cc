@@ -6,10 +6,11 @@
  *  - `startFakeMailboxRelay`:笔友信箱中继(`mailbox_relays`)的 `/drop` `/fetch` `/ack`,存在内存里。不验签 ——
  *    验签是中继自己的事(apps/relay 的测试),这里只要 daemon 的社交 / 配对 / 信箱轮询能照真机那样起来、拨得通。
  *  - `startFakePhoneRelay`:手机中继 v2 的 daemon 那一侧(`/v2/daemon` 的 WebSocket):发 challenge、收到签名就回
- *    login_ok,之后的流帧只收不转。手机那一侧不在这里(手机协议的闭环在 src/features/phone 的测试里)。
+ *    login_ok,也能为沙盒里的协议客户端转发流帧。
  *  - `fenceNetwork`:把 `fetch` / `WebSocket` 包一层,只放行本机(127.0.0.1 / localhost / ::1),往外的一律当场失败
  *    并记下来 —— 沙盒「不出网」是被强制的,不是靠自觉;记下来的那张单子让测试能断言「这次开机没想往外打」。
  */
+import type { ProtocolSocket } from '@wechat-cc/protocol'
 import { serve, type Server } from '../../lib/runtime/http'
 
 const LOOPBACK = /^(wss?|https?):\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i
@@ -130,6 +131,7 @@ export interface FakePhoneRelay {
   url: string
   /** 登录成功过几次(daemon 的隧道客户端连上并签了 challenge)。 */
   logins(): number
+  openPhone(): ProtocolSocket
   /** daemon 发上来的控制消息(登录 / ping 以外的:push_sync、push_reg、push …),按到达先后。看 App 推送真发出去没有。 */
   controls(): ReadonlyArray<Record<string, unknown>>
   stop(): void
@@ -138,6 +140,9 @@ export interface FakePhoneRelay {
 /** 手机中继 v2 的 daemon 侧。WebSocket 服务端只有 Bun.serve 有(同 yi-ws-server 的理由),这里是测试代码,直接用。 */
 export function startFakePhoneRelay(): FakePhoneRelay {
   let logins = 0
+  let nextStream = 0
+  let sendToDaemon: ((raw: string) => void) | undefined
+  const phones = new Map<string, (raw: string) => void>()
   const controls: Array<Record<string, unknown>> = []
   const server = Bun.serve({
     port: 0,
@@ -151,15 +156,42 @@ export function startFakePhoneRelay(): FakePhoneRelay {
       message(ws, raw) {
         let msg: Record<string, unknown> = {}
         try { msg = JSON.parse(String(raw)) as Record<string, unknown> } catch { return }
-        if (typeof msg.sig === 'string' && typeof msg.pub === 'string') { logins++; ws.send(JSON.stringify({ login_ok: true })); return }
+        if (typeof msg.sig === 'string' && typeof msg.pub === 'string') {
+          logins++
+          sendToDaemon = raw => { ws.send(raw) }
+          ws.send(JSON.stringify({ login_ok: true }))
+          return
+        }
         if ('ping' in msg) { ws.send(JSON.stringify({ pong: msg.ping })); return }
+        if (typeof msg.stream === 'string' && 'frame' in msg) {
+          phones.get(msg.stream)?.(JSON.stringify(msg.frame))
+          return
+        }
         controls.push(msg)
         const push = msg.push as { device?: unknown; ref?: unknown } | undefined
         if (push && typeof push.ref === 'string') ws.send(JSON.stringify({ push_result: { device: push.device, ok: true, code: 'ok', ref: push.ref } }))
       },
     },
   })
-  return { url: `ws://127.0.0.1:${server.port}`, logins: () => logins, controls: () => [...controls], stop: () => server.stop(true) }
+  return {
+    url: `ws://127.0.0.1:${server.port}`,
+    logins: () => logins,
+    controls: () => [...controls],
+    openPhone() {
+      const stream = `sandbox-phone-${++nextStream}`
+      return {
+        send: raw => sendToDaemon?.(JSON.stringify({ stream, frame: JSON.parse(raw) })),
+        close() {
+          phones.delete(stream)
+          sendToDaemon?.(JSON.stringify({ stream, closed: true }))
+        },
+        onOpen: cb => queueMicrotask(cb),
+        onMessage: cb => { phones.set(stream, cb) },
+        onClose() {},
+      }
+    },
+    stop: () => server.stop(true),
+  }
 }
 
 /** 拿一个此刻空着的本机端口(A2A / 乙 hub 要配死端口,配置里不接受 0)。 */

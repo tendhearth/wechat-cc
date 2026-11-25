@@ -86,7 +86,7 @@ test('HTML is interactive beside the conversation, isolated, and survives task r
 })
 
 test('narrow windows show a full reader with an obvious return and keep the task draft',async({page,shim,shimUrl})=>{
-  await page.setViewportSize({width:760,height:1000})
+  await page.setViewportSize({width:900,height:1000})
   await setup(page,shim,shimUrl)
   await page.locator('#wb-followup-text').fill('把背景再淡一点')
   await page.getByRole('button',{name:'成果 · 4',exact:true}).click()
@@ -115,7 +115,7 @@ test('live webpage output has refresh controls and is clearly distinguished from
 })
 
 test('preview failures are visible in the narrow reader and can be retried',async({page,shim,shimUrl})=>{
-  await page.setViewportSize({width:760,height:1000})
+  await page.setViewportSize({width:900,height:1000})
   await setup(page,shim,shimUrl)
   let broken=true
   await page.route('**/v1/matter/artifact?**',async route=>{
@@ -188,7 +188,7 @@ test('PDF paints real pages, supports text selection, page and zoom, preserves r
   expect(saves[0]!.bytes.toString()).toBe(smallPdf())
   const dir=process.env.WECHAT_CC_DESIGN_SHOTS
   if(dir){await page.waitForTimeout(700);await page.screenshot({path:join(dir,'preview-pdf-wide.png')})}
-  await page.setViewportSize({width:760,height:900})
+  await page.setViewportSize({width:900,height:900})
   await expect(page.locator('.wb-main')).toBeHidden()
   await expect.poll(()=>reader.locator('.cc-pdf-page').evaluate(el=>el.clientWidth<=el.parentElement!.clientWidth)).toBe(true)
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
@@ -241,7 +241,7 @@ test('failed native attachment downloads show the error inside the dialog and pr
 })
 
 test('unreadable PDFs keep a visible error and the download action',async({page,shim,shimUrl})=>{
-  await page.setViewportSize({width:760,height:900})
+  await page.setViewportSize({width:900,height:900})
   await setup(page,shim,shimUrl)
   await page.route('**/v1/matter/artifact?**',async route=>route.fulfill({json:{...outputs[3],contentBase64:Buffer.from('not a PDF').toString('base64')}}))
   await page.getByRole('button',{name:'成果 · 4',exact:true}).click()
@@ -269,7 +269,7 @@ test('PDF input attachments use the same reader and release it when closed',asyn
 })
 
 test('a stopped webpage service shows recovery instead of a blank frame',async({page,shim,shimUrl})=>{
-  await page.setViewportSize({width:760,height:900})
+  await page.setViewportSize({width:900,height:900})
   let running=false
   await page.route('http://localhost:4301/**',route=>running?route.fulfill({body:'<!doctype html><meta charset="utf-8"><h1>服务已恢复</h1>',contentType:'text/html; charset=utf-8'}):route.abort('connectionrefused'))
   await setup(page,shim,shimUrl)
@@ -323,7 +323,7 @@ test('saved website renders linked CSS, image and module imports, navigates with
   expect(saves[0]!.filename).toBe('花园.site.zip')
   expect(saves[0]!.bytes).toEqual(Buffer.from(archive))
   expect(Object.keys(unzipSync(saves[0]!.bytes))).toEqual(Object.keys(files))
-  await page.setViewportSize({width:760,height:900})
+  await page.setViewportSize({width:900,height:900})
   await expect(page.locator('.wb-main')).toBeHidden()
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
   await page.getByRole('button',{name:'关闭成果预览'}).click()

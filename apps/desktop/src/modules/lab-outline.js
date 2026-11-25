@@ -115,7 +115,7 @@ export function mountOutlineMap({host, key, call, loadMap, theme, fitMap, canJum
   /** @param {Outline} next */
   function showNotice(next) {
     outline = next
-    const { text, action: label, reason } = outlineNotice(next, Date.now(), document.documentElement.hasAttribute('data-desk-wide'))
+    const { text, action: label, reason } = outlineNotice(next, Date.now())
     note.textContent = text
     action.textContent = label
     action.hidden = !label

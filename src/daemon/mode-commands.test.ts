@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { makeAdminCommands } from './admin-commands'
+import { makeSessionStateStore } from '../adapters/store/session-state'
+import { openTestDb } from '../lib/db'
 import { MULTI_MODEL_ON_DESKTOP, makeModeCommands } from './mode-commands'
 import type { Mode, ProviderId } from '../domain/conversation'
 import type { InboundMsg } from '../domain/prompt-format'
@@ -18,6 +21,8 @@ function setup(opts: {
   config?: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string; trusted_providers?: string[] }
   models?: { models: string[]; error?: string; fromCache?: boolean }
   notes?: Partial<Record<ProviderId, string>>
+  displayNames?: Partial<Record<ProviderId, string>>
+  cancel?: () => boolean
   initiativeJobTimes?: Array<{ label: string; at: string }>
   requestRestart?: (reason: string) => void
   socialState?: 'ok' | 'off' | 'degraded' | 'pending'
@@ -59,12 +64,12 @@ function setup(opts: {
     coordinator: {
       getMode: () => stored ?? { kind: 'solo', provider: opts.defaultProviderId ?? 'claude' },
       setMode: (chatId, mode) => { stored = mode; set(chatId, mode) },
-      cancel: () => false,
+      cancel: opts.cancel ?? (() => false),
     },
     registry: {
       has: (id: string) => registered.includes(id),
       get: (id: string) => registered.includes(id)
-        ? { provider: {} as never, opts: { displayName: id[0]!.toUpperCase() + id.slice(1), canResume: () => true } }
+        ? { provider: {} as never, opts: { displayName: opts.displayNames?.[id], canResume: () => true } }
         : null,
       list: () => registered,
     },
@@ -101,7 +106,7 @@ describe('makeModeCommands', () => {
     expect(consumed).toBe(true)
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'claude' })
     expect(sentMessages[0]?.[1]).toContain('Claude')
-    expect(sentMessages[0]?.[1]).toContain('solo')
+    expect(sentMessages[0]?.[1]).toContain('开始只由')
   })
 
   it('/codex switches mode to solo+codex', async () => {
@@ -117,7 +122,7 @@ describe('makeModeCommands', () => {
     expect(admin.sentMessages[0]?.[1]).not.toContain('不会逐条问')
     const trusted = setup({ tier: 'trusted' })
     await trusted.cmds.handle(inbound('/codex'))
-    expect(trusted.sentMessages[0]?.[1]).toContain('提醒:它不会逐条问你,删东西也不会。')
+    expect(trusted.sentMessages[0]?.[1]).toContain('提醒：它不会逐条问你，删东西也不会。')
   })
 
   it('/cursor switches mode to solo+cursor', async () => {
@@ -126,7 +131,7 @@ describe('makeModeCommands', () => {
     expect(consumed).toBe(true)
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'cursor' })
     expect(sentMessages[0]?.[1]).toContain('Cursor')
-    expect(sentMessages[0]?.[1]).toContain('solo')
+    expect(sentMessages[0]?.[1]).toContain('开始只由')
   })
 
   it('/api switches mode to solo+openai (the OpenAI-compatible backend)', async () => {
@@ -134,17 +139,17 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/api'))
     expect(consumed).toBe(true)
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
-    expect(sentMessages[0]?.[1]).toContain('solo')
+    expect(sentMessages[0]?.[1]).toContain('开始只由')
     // Bare /api (no model tail) does NOT pin a model — only switches provider.
     expect(pinModel).not.toHaveBeenCalled()
   })
 
-  it('/api replies 未注册 when the openai provider is not configured', async () => {
+  it('/api replies 还没接上 when the openai provider is not configured', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'] })
     const consumed = await cmds.handle(inbound('/api'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('未注册')
+    expect(sentMessages[0]?.[1]).toContain('还没接上')
   })
 
   // ── /api <model> — switch + pin the openai-compatible model in one go ──
@@ -152,7 +157,7 @@ describe('makeModeCommands', () => {
   it('/mode shows the per-chat pinned model', async () => {
     const { cmds, sentMessages } = setup({ registered: ['claude', 'openai'], initialMode: { kind: 'solo', provider: 'openai', model: 'DeepSeek' } })
     await cmds.handle(inbound('/mode'))
-    expect(sentMessages[0]?.[1]).toContain('solo · openai · 模型 DeepSeek')
+    expect(sentMessages[0]?.[1]).toContain('现在：API 来答（模型 DeepSeek）')
   })
 
   it('/api deepseek-chat pins the model AND switches to solo+openai', async () => {
@@ -177,7 +182,7 @@ describe('makeModeCommands', () => {
     expect(pinModel).not.toHaveBeenCalled()
     // 网关列表里的拼法是 KIMI:大小写不同按网关归一,回复里说明主人输的是什么。
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'KIMI' })
-    expect(sentMessages[0]?.[1]).toContain('KIMI(按网关拼法,你输的是 Kimi)')
+    expect(sentMessages[0]?.[1]).toContain('KIMI（按网关拼法，你输的是 Kimi）')
   })
 
   it('/api bad name rejects a model id containing a space — no switch, no pin', async () => {
@@ -189,13 +194,13 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('无效')
   })
 
-  it('/api <model> replies 未注册 when the openai provider is not configured — no pin', async () => {
+  it('/api <model> replies 还没接上 when the openai provider is not configured — no pin', async () => {
     const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex'] })
     const consumed = await cmds.handle(inbound('/api deepseek-chat'))
     expect(consumed).toBe(true)
     expect(pinModel).not.toHaveBeenCalled()
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('未注册')
+    expect(sentMessages[0]?.[1]).toContain('还没接上')
   })
 
   it('/cc deepseek-chat (non-openai provider with a non-"+peer" tail) keeps the existing unsupported-argument error, does NOT pin', async () => {
@@ -212,8 +217,8 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/cursor'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('未注册')
-    expect(sentMessages[0]?.[1]).toContain('cursor')
+    expect(sentMessages[0]?.[1]).toContain('还没接上')
+    expect(sentMessages[0]?.[1]).toContain('还没接上 Cursor。到电脑上点一下接入。现在能用：Claude、Codex。')
   })
 
   it('/cc and /codex are case-insensitive on the slash word', async () => {
@@ -229,15 +234,15 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/cc'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('未注册')
-    expect(sentMessages[0]?.[1]).toContain('codex')
+    expect(sentMessages[0]?.[1]).toContain('还没接上')
+    expect(sentMessages[0]?.[1]).toContain('还没接上 Claude。到电脑上点一下接入。现在能用：Codex。')
   })
 
   it('/solo reverts to default provider', async () => {
     const { cmds, set, sentMessages } = setup({ defaultProviderId: 'claude' })
     await cmds.handle(inbound('/solo'))
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'claude' })
-    expect(sentMessages[0]?.[1]).toContain('恢复默认')
+    expect(sentMessages[0]?.[1]).toBe('这个对话回到默认，由 Claude 来答。')
   })
 
   it('/mode shows current mode + registered providers + default', async () => {
@@ -247,9 +252,36 @@ describe('makeModeCommands', () => {
     })
     await cmds.handle(inbound('/mode'))
     const text = sentMessages[0]?.[1] ?? ''
-    expect(text).toContain('solo · claude')   // current
-    expect(text).toContain('claude, codex')   // registered
-    expect(text).toContain('默认: codex')      // default
+    expect(text).toContain('现在：Claude 来答')   // current
+    expect(text).toContain('能用的：Claude、Codex') // registered
+    expect(text).toContain('默认：Codex')         // default
+  })
+
+  it('/mode、/solo、/stop 用微信里好读的文字', async () => {
+    const { cmds, sentMessages } = setup({
+      registered: ['claude', 'codex', 'agy'],
+      config: { trusted_providers: ['claude', 'codex'] },
+      notes: { codex: '版本不同,首次使用时确认' },
+      cancel: () => true,
+    })
+    for (const command of ['/mode', '/solo', '/stop']) {
+      expect(await cmds.handle(inbound(command)), command).toBe(true)
+      const text = sentMessages.at(-1)![1]
+      // /solo is a command in the last line, separate from the old mode label.
+      expect.soft(text, command).not.toMatch(/\b(?:in-flight|turn|provider|trusted|guest)\b|(?<!\/)solo ·|\*\*/)
+      expect.soft(text, command).not.toMatch(/\p{Script=Han}\s*[,;:]|[,;:]\s*\p{Script=Han}/u)
+    }
+  })
+
+  it.each([
+    [{ kind: 'primary_tool', primary: 'claude' }, '主答 来答，需要时叫 帮手 帮忙'],
+    [{ kind: 'parallel' }, '几家一起答'],
+    [{ kind: 'chatroom' }, '几家一起讨论'],
+    [{ kind: 'solo', provider: 'custom-executor' }, 'custom-executor 来答'],
+  ] satisfies Array<[Mode, string]>)('/mode describes %j in plain language', async (initialMode, description) => {
+    const { cmds, sentMessages } = setup({ initialMode, displayNames: { claude: '主答', codex: '帮手' } })
+    await cmds.handle(inbound('/mode'))
+    expect(sentMessages[0]?.[1].split('\n')[0]).toBe(`现在：${description}`)
   })
 
   // ── /both /parallel /chat:10-21 起不在微信里开(主人定:多 agent 交给软件) ──
@@ -273,8 +305,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/stop'))
     expect(consumed).toBe(true)
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'codex' })
-    expect(sentMessages[0]?.[1]).toContain('已退出当前模式')
-    expect(sentMessages[0]?.[1]).toContain('Codex')
+    expect(sentMessages[0]?.[1]).toBe('已退出，回到默认，由 Codex 来答。')
   })
 
   it('/stop also calls coordinator.cancel and notifies on an in-flight turn (RFC 03 review #11; generic copy — not chatroom-specific, since cancel() also fires for solo/parallel)', async () => {
@@ -305,7 +336,7 @@ describe('makeModeCommands', () => {
     })
     await cmds.handle(inbound('/stop'))
     expect(cancel).toHaveBeenCalledWith('chat-1')
-    expect(sentMessages[0]?.[1]).toContain('已请求中止 in-flight 回合')
+    expect(sentMessages[0]?.[1]).toContain('正在回的那一轮已经叫它停了，可能还会收到一点已经在路上的话。')
     expect(sentMessages[0]?.[1]).not.toContain('chatroom')
   })
 
@@ -335,7 +366,7 @@ describe('makeModeCommands', () => {
       resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/stop'))
-    expect(sentMessages[0]?.[1]).not.toContain('已中止')
+    expect(sentMessages[0]?.[1]).toBe('已退出，回到默认，由 Claude 来答。')
   })
 
   it('/mode lists /stop and /cc + codex, and says multi-model discussion is on the desktop (no /both /chat to type)', async () => {
@@ -345,7 +376,7 @@ describe('makeModeCommands', () => {
     expect(text).toContain('/stop')
     expect(text).toContain('/cc + codex')
     expect(text).toContain('/codex + cc')
-    expect(text).toContain('多模型讨论在桌面上开')
+    expect(text).toContain('几家一起讨论在桌面上开')
     expect(text).not.toMatch(/\/both|\/chat\b/)
   })
 
@@ -356,9 +387,9 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/cc + codex'))
     expect(consumed).toBe(true)
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'primary_tool', primary: 'claude' })
-    expect(sentMessages[0]?.[1]).toContain('主从模式开启')
+    expect(sentMessages[0]?.[1]).toContain('已切换：Claude 来答')
     expect(sentMessages[0]?.[1]).toContain('Claude')
-    expect(sentMessages[0]?.[1]).toContain('delegate_codex')
+    expect(sentMessages[0]?.[1]).toContain('需要时叫 Codex 帮忙')
   })
 
   it('/codex + cc switches to primary_tool with codex primary', async () => {
@@ -366,7 +397,7 @@ describe('makeModeCommands', () => {
     await cmds.handle(inbound('/codex + cc'))
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'primary_tool', primary: 'codex' })
     expect(sentMessages[0]?.[1]).toContain('Codex')
-    expect(sentMessages[0]?.[1]).toContain('delegate_claude')
+    expect(sentMessages[0]?.[1]).toContain('需要时叫 Claude 帮忙')
   })
 
   it('/cc + codex tolerates whitespace variations', async () => {
@@ -381,14 +412,14 @@ describe('makeModeCommands', () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'] })
     await cmds.handle(inbound('/cc + cc'))
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('不能是同一个 provider')
+    expect(sentMessages[0]?.[1]).toContain('两边不能是同一家（你写的是 /cc + cc）')
   })
 
   it('/cc + foo rejects unknown peer with hint', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'] })
     await cmds.handle(inbound('/cc + foo'))
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('未知的 peer')
+    expect(sentMessages[0]?.[1]).toContain('没认出「foo」是哪家。可以试试 cc、codex、cursor 或 gemini。')
   })
 
   it('/cc + codex surfaces validation error when peer missing from registry', async () => {
@@ -404,7 +435,7 @@ describe('makeModeCommands', () => {
       },
       registry: {
         has: (id: string) => id === 'claude',
-        get: () => ({ provider: {} as never, opts: { displayName: 'Claude', canResume: () => true } }),
+        get: (id) => id === 'claude' ? { provider: {} as never, opts: { displayName: 'Claude', canResume: () => true } } : null,
         list: () => ['claude'],
       },
       defaultProviderId: 'claude',
@@ -418,7 +449,7 @@ describe('makeModeCommands', () => {
     })
     await cmds.handle(inbound('/cc + codex'))
     expect(sentMessages[0]?.[1]).toContain('启用失败')
-    expect(sentMessages[0]?.[1]).toContain('missing: codex')
+    expect(sentMessages[0]?.[1]).toContain('还没接上 Codex')
   })
 
   it('/cc + cursor is rejected — delegate peer is wired to codex, not cursor (asymmetric bootstrap wiring)', async () => {
@@ -428,8 +459,8 @@ describe('makeModeCommands', () => {
     // setMode must NOT be called — would silently substitute the wrong peer.
     expect(set).not.toHaveBeenCalled()
     // Reply explains the wired peer.
-    expect(sentMessages[0]?.[1]).toContain('codex')
-    expect(sentMessages[0]?.[1]).toContain('cursor')
+    expect(sentMessages[0]?.[1]).toContain('Claude 主答时只能请 Codex 帮忙')
+    expect(sentMessages[0]?.[1]).toContain('不能请 Cursor')
   })
 
   it('/codex + cursor is rejected — same asymmetry (codex session has delegate_claude)', async () => {
@@ -437,7 +468,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/codex + cursor'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('claude')
+    expect(sentMessages[0]?.[1]).toContain('Codex 主答时只能请 Claude 帮忙')
   })
 
   it('/cursor + cc is rejected — cursor cannot delegate (B2, supportsDelegation=false)', async () => {
@@ -445,7 +476,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/cursor + cc'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
+    expect(sentMessages[0]?.[1]).toContain('不能当主答再叫别家帮忙，这个对话照旧')
   })
 
   it('/cursor + codex is rejected — cursor cannot delegate (B2, supportsDelegation=false)', async () => {
@@ -453,7 +484,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/cursor + codex'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
+    expect(sentMessages[0]?.[1]).toContain('不能当主答再叫别家帮忙，这个对话照旧')
   })
 
   it('/gemini switches mode to solo+gemini', async () => {
@@ -462,7 +493,7 @@ describe('makeModeCommands', () => {
     expect(consumed).toBe(true)
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'gemini' })
     expect(sentMessages[0]?.[1]).toContain('Gemini')
-    expect(sentMessages[0]?.[1]).toContain('solo')
+    expect(sentMessages[0]?.[1]).toContain('开始只由')
   })
 
   it('/gemini rejects with helpful message when gemini is not registered', async () => {
@@ -470,8 +501,8 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/gemini'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('未注册')
-    expect(sentMessages[0]?.[1]).toContain('gemini')
+    expect(sentMessages[0]?.[1]).toContain('还没接上')
+    expect(sentMessages[0]?.[1]).toContain('还没接上 Gemini')
   })
 
   it('/gemini + cc is rejected — gemini cannot delegate (B2, supportsDelegation=false)', async () => {
@@ -479,7 +510,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/gemini + cc'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
+    expect(sentMessages[0]?.[1]).toContain('不能当主答再叫别家帮忙，这个对话照旧')
   })
 
   it('/gemini + codex is rejected — gemini cannot delegate (B2, supportsDelegation=false)', async () => {
@@ -487,7 +518,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/gemini + codex'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
+    expect(sentMessages[0]?.[1]).toContain('不能当主答再叫别家帮忙，这个对话照旧')
   })
 
   // ── /agy — tier-C guest gate (spec 2026-08-17-agy-provider-design.md §3) ──
@@ -498,7 +529,7 @@ describe('makeModeCommands', () => {
     expect(consumed).toBe(true)
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'agy' })
     expect(sentMessages[0]?.[1]).toContain('Gemini')  // 收敛清单 ⑥:agy 对外叫 Gemini
-    expect(sentMessages[0]?.[1]).toContain('solo')
+    expect(sentMessages[0]?.[1]).toContain('开始只由')
   })
 
   it('/agy <model> pins the model AND switches to solo+agy for a trusted chat', async () => {
@@ -515,7 +546,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/agy'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toBe('/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+    expect(sentMessages[0]?.[1]).toBe('访客不能用 /agy：所有对话共用一把钥匙，没法给访客单独设权限。')
   })
 
   it('/agy <model> is rejected for a guest chat (model-pin form) — no pin, no switch', async () => {
@@ -524,16 +555,16 @@ describe('makeModeCommands', () => {
     expect(consumed).toBe(true)
     expect(pinModel).not.toHaveBeenCalled()
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toBe('/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+    expect(sentMessages[0]?.[1]).toBe('访客不能用 /agy：所有对话共用一把钥匙，没法给访客单独设权限。')
   })
 
-  it('/agy replies 未注册 when the agy provider is not configured (non-guest chat)', async () => {
+  it('/agy replies 还没接上 when the agy provider is not configured (non-guest chat)', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'], tier: 'admin' })
     const consumed = await cmds.handle(inbound('/agy'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('未注册')
-    expect(sentMessages[0]?.[1]).toContain('agy')
+    expect(sentMessages[0]?.[1]).toContain('还没接上')
+    expect(sentMessages[0]?.[1]).toContain('还没接上 Gemini')
   })
 
   it('/agy + codex is rejected — agy cannot delegate (B2, supportsDelegation=false)', async () => {
@@ -541,7 +572,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/agy + codex'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
+    expect(sentMessages[0]?.[1]).toContain('不能当主答再叫别家帮忙，这个对话照旧')
   })
 
   // A3 (spec §A3): mw-admin runs BEFORE mw-mode in the real pipeline (see
@@ -652,7 +683,7 @@ describe('makeModeCommands', () => {
     expect(reply).toContain('张三')
     expect(reply).toContain('wxid_abc123')   // userId truncated prefix visible
     expect(reply).toContain('8ca10d158998')  // accountId truncated prefix visible
-    expect(reply).toContain('cc')            // bot name from solo+claude default
+    expect(reply).toContain('当前回应: cc (Claude 来答)') // bot name and who answers
     expect(reply).toContain('chat12345')     // chatId truncated prefix visible
   })
 
@@ -710,8 +741,19 @@ describe('makeModeCommands', () => {
     const { cmds, sentMessages } = setup({ isAdmin: () => false })
     await cmds.handle(inbound('/help'))
     const text = sentMessages[0]?.[1] ?? ''
-    expect(text).toContain('/gemini 是 API key 版(已弃用')
+    expect(text).toContain('/gemini 是 API key 版（已弃用')
     expect(text).toContain('新接入请用 /agy')
+  })
+
+  it('/help has no Markdown markers (WeChat shows them literally) and uses full-width punctuation in its Chinese lines', async () => {
+    for (const admin of [true, false]) {
+      const { cmds, sentMessages } = setup({ isAdmin: () => admin })
+      await cmds.handle(inbound('/help'))
+      const text = sentMessages[0]?.[1] ?? ''
+      expect(text).not.toContain('**')
+      expect(text).toContain('【模式切换】')
+      expect(text).not.toMatch(/[\u4e00-\u9fff][,;:]|[,;:][\u4e00-\u9fff]/)
+    }
   })
 
   it('/帮助 is an alias for /help and produces the same output', async () => {
@@ -731,7 +773,7 @@ describe('makeModeCommands', () => {
     await cmds.handle(inbound('/help'))
     const text = sentMessages[0]?.[1] ?? ''
     // Present: opening blurb, identity, /set split, files.
-    expect(text).toContain('这里是微信通道')
+    expect(text).toContain('这里是微信，直接跟我说话就行')
     expect(text).toContain('/whoami')
     expect(text).toContain('/name <昵称>')
     expect(text).toContain('/set split')
@@ -744,14 +786,14 @@ describe('makeModeCommands', () => {
     expect(text).not.toContain('/both')
     expect(text).not.toContain('/chat ')
     expect(text).not.toContain('/mode')
-    expect(text).not.toContain('主动关心档位')
+    expect(text).not.toContain('主动关心')
     expect(text).not.toContain('care')
     expect(text).not.toContain('关心')
     expect(text).not.toContain('表情包')
     expect(text).not.toContain('打猎')
     expect(text).not.toContain('陪伴')
     expect(text).not.toContain('配对')
-    expect(text).not.toContain('切到 <alias>')
+    expect(text).not.toContain('切到 <项目>')
     // Guest is never admin — admin section stays hidden even if isAdmin
     // somehow said true for this chat's userId (defense-in-depth).
     expect(text).not.toContain('管理员命令')
@@ -913,7 +955,7 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('未设置')
     await cmds.handle(inbound('/set stickers off'))
     await cmds.handle(inbound('/set'))
-    expect(sentMessages[2]?.[1]).toContain('表情包: off')
+    expect(sentMessages[2]?.[1]).toContain('表情包：off')
   })
 
   // ── /set hunt|打猎 — daily hunt toggle (Task 2) ────────────────────────
@@ -938,7 +980,7 @@ describe('makeModeCommands', () => {
     const { cmds, sentMessages } = setup()
     await cmds.handle(inbound('/set avoid 钱'))
     await cmds.handle(inbound('/set'))
-    expect(sentMessages.at(-1)?.[1]).toContain('别主动聊: 钱')
+    expect(sentMessages.at(-1)?.[1]).toContain('别主动聊：钱')
   })
 
   // ── /set 免打扰 — 主人定的一段时间里 CC 不主动找他(10-20,第二轮对标 #5)──
@@ -965,7 +1007,7 @@ describe('makeModeCommands', () => {
     const { cmds, sentMessages } = setup()
     await cmds.handle(inbound('/set 免打扰 22-7'))
     await cmds.handle(inbound('/set'))
-    expect(sentMessages.at(-1)?.[1]).toContain('免打扰: 22:00–07:00')
+    expect(sentMessages.at(-1)?.[1]).toContain('免打扰：22:00–07:00')
   })
 
   it('/set hunt off persists {hunt:false} and confirms', async () => {
@@ -1013,13 +1055,72 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('未设置')
     await cmds.handle(inbound('/set hunt off'))
     await cmds.handle(inbound('/set'))
-    expect(sentMessages[2]?.[1]).toContain('每日打猎: off')
+    expect(sentMessages[2]?.[1]).toContain('每日打猎：off')
   })
 
   it('/help line mentions 每日打猎', async () => {
     const { cmds, sentMessages } = setup()
     await cmds.handle(inbound('/help'))
     expect(sentMessages[0]?.[1]).toContain('每日打猎')
+  })
+
+  it('发给微信的设置、切换和状态回复用大白话和全角标点', async () => {
+    const { cmds, sentMessages } = setup({ isAdmin: () => true })
+    const allowedLiterals = [
+      '/set providers', '/set provider',
+      'WECHAT_OPENAI_API_KEY', 'daemon.env', 'openaiBaseUrl', 'openaiModel',
+    ]
+    const checkReply = (reply: string, expected: string) => {
+      expect(reply).toContain(expected)
+      const prose = allowedLiterals.reduce((body, literal) => body.replaceAll(literal, ''), reply)
+      expect(prose).not.toMatch(/provider|daemon|guest|in-flight|\*\*/i)
+      expect(prose).not.toMatch(/\p{Script=Han}[ \t]*[,;:]|[,;:][ \t]*\p{Script=Han}/u)
+    }
+
+    for (const [command, expected] of [
+      ['/cursor', '还没接上 Cursor。到电脑上点一下接入。现在能用：Claude、Codex。'],
+      ['/cursor + cc', 'Cursor 不能当主答再叫别家帮忙，这个对话照旧。'],
+      ['/cc + cc', '两边不能是同一家'],
+      ['/api list', '把 WECHAT_OPENAI_API_KEY 写进 daemon.env'],
+      ['/set volume 11', '不认识这个设置。可以这样改：'],
+      ['/set provider codex', '要重启 CC 才生效。'],
+      ['/set providers claude,codex', '别人（非管理员）现在只能用：Claude、Codex。马上生效。访客仍不能用 /agy。'],
+      ['/set cheap claude', '后台判断改用 Claude'],
+      ['/set', '别人（非管理员）能用哪几家（所有对话）：Claude、Codex'],
+      ['/set providers all', '别人（非管理员）可以用所有已接上的服务。访客仍不能用 /agy。'],
+    ] as const) {
+      expect(await cmds.handle(inbound(command))).toBe(true)
+      checkReply(sentMessages.at(-1)![1], expected)
+    }
+
+    const db = openTestDb()
+    try {
+      const admin = makeAdminCommands({
+        stateDir: '',
+        isAdmin: () => true,
+        sessionState: makeSessionStateStore(db),
+        pollHandle: { running: () => [], stopAccount: () => {}, stopAccountAndWait: async () => {} },
+        resolveUserName: () => undefined,
+        sendMessage: async (chatId, text) => { sentMessages.push([chatId, text]); return { msgId: 'm-1' } },
+        log: () => {},
+        startedAt: '2026-04-24T00:00:00Z',
+        resolveProject: () => ({ alias: 'demo', path: '/demo' }),
+        registry: { list: () => [] },
+        sessionManager: { release: async () => {}, list: () => [] },
+        sessionStore: { get: () => null, delete: () => {} },
+        getBotName: () => null,
+        setBotName: async () => {},
+        botNameFallback: () => 'CC',
+      })
+      expect(await admin.handle(inbound('/health'))).toBe(true)
+      checkReply(sentMessages.at(-1)![1], 'CC 运行状态')
+      expect(await admin.handle(inbound('/health ai'))).toBe(true)
+      const health = sentMessages.at(-1)![1]
+      checkReply(health, '还没接上任何一家。可以到电脑上查看 CC 的启动日志。')
+      expect(health).toContain('发 /reset 清掉各家在这个对话里的上下文，下一条消息从头开始聊。')
+    } finally {
+      db.close()
+    }
   })
 })
 
@@ -1035,20 +1136,20 @@ describe('/api list / alias / unalias', () => {
     expect(await cmds.handle(inbound('/api list'))).toBe(true)
     const t = sentMessages[0]![1]
     expect(t).toContain('https://llm.example/v1')
-    expect(t).toContain('本对话当前:Qwen3.8')
+    expect(t).toContain('本对话当前：Qwen3.8')
     expect(t).toContain('全局默认 DeepSeek')
     expect(t).toContain('ds → DeepSeek')
     expect(t).toContain('kimi → kimi-k2.7-code')
-    expect(t).toContain('网关上有(3):DeepSeek, KIMI, Qwen3.8')
+    expect(t).toContain('网关上有（3）：DeepSeek、KIMI、Qwen3.8')
     expect(t).toContain('/api alias')
   })
   it('/api list degrades gracefully: gateway unreachable → says so, still lists aliases; provider unregistered → says what\'s missing', async () => {
     const { cmds, sentMessages } = setup({ registered: ['claude'], config: { openaiAliases: { ds: 'DeepSeek' } }, models: { models: [], error: '连不上网关:ECONNREFUSED' } })
     await cmds.handle(inbound('/api list'))
     const t = sentMessages[0]![1]
-    expect(t).toContain('未注册')
+    expect(t).toContain('还没接上')
     expect(t).toContain('WECHAT_OPENAI_API_KEY')
-    expect(t).toContain('网关列表拿不到:连不上网关:ECONNREFUSED')
+    expect(t).toContain('网关列表拿不到：连不上网关:ECONNREFUSED')
     expect(t).toContain('ds → DeepSeek')
   })
   it('/api alias ds=DeepSeek persists; /api ds then resolves the alias into the per-chat pin', async () => {
@@ -1058,7 +1159,7 @@ describe('/api list / alias / unalias', () => {
     expect(sentMessages[0]![1]).toContain('ds')
     await cmds.handle(inbound('/api ds'))
     expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'DeepSeek' })
-    expect(sentMessages[1]![1]).toContain('DeepSeek(别名 ds)')
+    expect(sentMessages[1]![1]).toContain('DeepSeek（别名 ds）')
   })
   it('/api alias accepts `a = b` and `a b` spellings; rejects a subcommand name as alias', async () => {
     const { cmds, cfg, sentMessages } = setup({ registered: reg, isAdmin: () => true })
@@ -1130,11 +1231,11 @@ describe('/set cheap', () => {
     await cmds.handle(inbound('/set cheap agy'))
     expect(setConfig).toHaveBeenCalledWith('cheap_eval_provider', 'agy')
     expect(cfg.cheapEvalProvider).toBe('agy')
-    expect(sentMessages[0]![1]).toContain('agy')
+    expect(sentMessages[0]![1]).toContain('后台判断改用 Gemini')
     expect(sentMessages[0]![1]).toContain('不用重启')
     await cmds.handle(inbound('/set cheap auto'))
     expect(cfg.cheapEvalProvider).toBeUndefined()
-    expect(sentMessages[1]![1]).toContain('偏好序')
+    expect(sentMessages[1]![1]).toContain('自动选。CC 会先试 API、Gemini（账号连接）、Claude、Codex、Gemini（密钥连接）')
   })
   it('non-admin is refused (it is a global knob)', async () => {
     const { cmds, setConfig, sentMessages } = setup({ isAdmin: () => false })
@@ -1145,10 +1246,10 @@ describe('/set cheap', () => {
   it('/set overview shows the global cheap line to admins only', async () => {
     const a = setup({ isAdmin: () => true, config: { cheapEvalProvider: 'agy' } })
     await a.cmds.handle(inbound('/set'))
-    expect(a.sentMessages[0]![1]).toContain('后台评估(全局): agy')
+    expect(a.sentMessages[0]![1]).toContain('后台判断用哪家（所有对话）：Gemini')
     const g = setup({ isAdmin: () => false, config: { cheapEvalProvider: 'agy' } })
     await g.cmds.handle(inbound('/set'))
-    expect(g.sentMessages[0]![1]).not.toContain('后台评估')
+    expect(g.sentMessages[0]![1]).not.toContain('后台判断用哪家')
   })
 })
 
@@ -1158,7 +1259,7 @@ describe('provider policy in slash commands', () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'agy'], tier: 'guest' })
     await cmds.handle(inbound('/agy'))
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]![1]).toBe('/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+    expect(sentMessages[0]![1]).toBe('访客不能用 /agy：所有对话共用一把钥匙，没法给访客单独设权限。')
   })
   it('/cursor is refused for a guest chat — ACP Cursor edits the workspace without a permission card, so a guest tier cannot confine it (guestSafe:false)', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'cursor'], tier: 'guest' })
@@ -1175,8 +1276,8 @@ describe('provider policy in slash commands', () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'agy', 'openai'], tier: 'trusted', config: { trusted_providers: ['claude', 'openai'] } })
     await cmds.handle(inbound('/agy'))
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]![1]).toContain('没把 /agy 开放给非管理员')
-    expect(sentMessages[0]![1]).toContain('claude, openai')
+    expect(sentMessages[0]![1]).toContain('没把 /agy 开放给别人（非管理员）')
+    expect(sentMessages[0]![1]).toContain('现在能用：Claude、API')
     await cmds.handle(inbound('/api'))
     expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
   })
@@ -1189,9 +1290,9 @@ describe('provider policy in slash commands', () => {
     const a = setup({ registered: ['claude', 'agy'], isAdmin: () => true })
     await a.cmds.handle(inbound('/set providers claude,openai'))
     expect(a.setConfig).toHaveBeenCalledWith('trusted_providers', 'claude,openai')
-    expect(a.sentMessages[0]![1]).toContain('非管理员对话现在只能用')
+    expect(a.sentMessages[0]![1]).toContain('别人（非管理员）现在只能用：Claude、API')
     await a.cmds.handle(inbound('/set providers all'))
-    expect(a.sentMessages[1]![1]).toContain('全部已注册')
+    expect(a.sentMessages[1]![1]).toContain('可以用所有已接上的服务')
     const g = setup({ isAdmin: () => false })
     await g.cmds.handle(inbound('/set providers claude'))
     expect(g.setConfig).not.toHaveBeenCalled()
@@ -1200,10 +1301,10 @@ describe('provider policy in slash commands', () => {
   it('/mode says which providers share one key and what non-admins may use; /help lists what is actually registered', async () => {
     const { cmds, sentMessages } = setup({ registered: ['claude', 'agy'], config: { trusted_providers: ['claude'] } })
     await cmds.handle(inbound('/mode'))
-    expect(sentMessages[0]![1]).toContain('共用一把 trusted 钥匙')
-    expect(sentMessages[0]![1]).toContain('非管理员可用(管理员设定): claude')
+    expect(sentMessages[0]![1]).toContain('/agy 用的是订阅 CLI：所有对话共用一把钥匙，没法按对话分权限；访客不能用。')
+    expect(sentMessages[0]![1]).toContain('别人（非管理员）能用的：Claude（管理员设的）')
     await cmds.handle(inbound('/help'))
-    expect(sentMessages[1]![1]).toContain('当前可用: /cc /agy')
+    expect(sentMessages[1]![1]).toContain('现在能用：/cc /agy')
     expect(sentMessages[1]![1]).toContain('订阅 CLI')
   })
 })
@@ -1212,8 +1313,7 @@ describe('/mode provider notes', () => {
   it('shows per-provider status lines from bootstrap (codex version gap + probe result)', async () => {
     const { cmds, sentMessages } = setup({ registered: ['claude', 'codex'], notes: { codex: '你的 CLI 0.153.4(与 SDK 0.144.4 不同版,首次使用时真跑一句探测) · 未探测' } })
     await cmds.handle(inbound('/mode'))
-    expect(sentMessages[0]![1]).toContain('codex: 你的 CLI 0.153.4')
-    expect(sentMessages[0]![1]).toContain('未探测')
+    expect(sentMessages[0]![1]).toContain('Codex：你的 CLI 0.153.4(与 SDK 0.144.4 不同版，首次使用时真跑一句探测) · 未探测')
   })
 })
 
@@ -1223,7 +1323,7 @@ describe('/set provider — 全局默认大脑(管理员)', () => {
     const { cmds, setConfig, sentMessages } = setup({ registered: ['claude', 'agy', 'openai'], isAdmin: () => true, requestRestart })
     await cmds.handle(inbound('/set provider agy'))
     expect(setConfig).toHaveBeenCalledWith('provider', 'agy')
-    expect(sentMessages[0]![1]).toContain('默认大脑改为')
+    expect(sentMessages[0]![1]).toContain('默认改由 Gemini 来答')
     expect(sentMessages[0]![1]).toContain('重启')
     expect(requestRestart).toHaveBeenCalledWith('provider-change')
     await cmds.handle(inbound('/set provider api'))
@@ -1232,9 +1332,9 @@ describe('/set provider — 全局默认大脑(管理员)', () => {
   it('refuses unregistered / non-admin; no-op when already default', async () => {
     const a = setup({ registered: ['claude', 'agy'], isAdmin: () => true })
     await a.cmds.handle(inbound('/set provider cursor'))
-    expect(a.sentMessages[0]![1]).toContain('未注册')
+    expect(a.sentMessages[0]![1]).toContain('还没接上')
     await a.cmds.handle(inbound('/set provider cc'))
-    expect(a.sentMessages[1]![1]).toContain('默认已经是 claude')
+    expect(a.sentMessages[1]![1]).toContain('默认已经由 Claude 来答')
     const g = setup({ isAdmin: () => false })
     await g.cmds.handle(inbound('/set provider agy'))
     expect(g.sentMessages[0]![1]).toContain('仅管理员')

@@ -10,7 +10,13 @@ import type { HomeRow } from '../view/home'
 import { MatterRow } from './MatterRow'
 import { cleanup, mount } from './native-motion.test-support'
 
-vi.mock('react-native', async () => (await import('./native-motion.test-support')).nativeBoundary())
+vi.mock('react-native', async () => {
+  const native = (await import('./native-motion.test-support')).nativeBoundary()
+  return {
+    ...native,
+    Text: ({ numberOfLines, ...props }: any) => createElement('span', { 'data-number-of-lines': numberOfLines }, createElement(native.Text, props)),
+  }
+})
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 afterEach(cleanup)
 
@@ -48,6 +54,13 @@ describe.each(['en', 'zh-Hans'] as const)('一种行 MatterRow(%s)', lang => {
     const ui = await render(row({ source: 'matter', status: 'replied', caption: word }))
     const label = ui.byId('row-matter-x1').getAttribute('aria-label')!
     expect(label.split(word).length - 1).toBe(1)
+  })
+
+  it('only a waiting terminal title is limited to one line', async () => {
+    const limited = await render(row())
+    expect(limited.byId('row-terminal-x1').querySelector('[data-number-of-lines]')?.getAttribute('data-number-of-lines')).toBe('1')
+    const normal = await render(row({ status: 'working' }))
+    expect(normal.byId('row-terminal-x1').querySelector('[data-number-of-lines]')?.getAttribute('data-number-of-lines')).toBe('2')
   })
 
   it('没有 caption / detail / note ⇒ 不画空行', async () => {

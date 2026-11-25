@@ -2,6 +2,7 @@
 import { act, createElement, forwardRef } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { color } from '@wechat-cc/design-tokens'
+import { space } from './tokens'
 import { makeDemoBackend } from '../backend/demo'
 import { IDS } from '../backend/demo-data'
 import { BackendError, type Backend } from '../backend/types'
@@ -18,7 +19,9 @@ import { matterInputState } from '../state/matter-inputs'
 const host=vi.hoisted(()=>({back:vi.fn(),replace:vi.fn(),push:vi.fn(),canGoBack:()=>false,useLocalSearchParams:()=>({id:'e5f6a7b8'})}))
 vi.mock('react-native',async()=>{
  const native=(await import('./native-motion.test-support')).nativeBoundary()
- return {...native,KeyboardAvoidingView:({children,behavior}:any)=>createElement('div',{'data-keyboard':behavior},children),TextInput:forwardRef<any,any>(({value,onChangeText,testID,placeholder,maxLength}:any,ref)=>createElement('textarea',{ref,value,placeholder,maxLength,'data-testid':testID,onInput:(e:any)=>onChangeText(e.currentTarget.value)}))}
+ return {...native,
+  ScrollView: ({children,testID,style,contentContainerStyle}:any)=>createElement('div',{'data-testid':testID,'data-style':JSON.stringify(style??{}),'data-content-style':JSON.stringify(contentContainerStyle??{})},children),
+  KeyboardAvoidingView:({children,behavior}:any)=>createElement('div',{'data-keyboard':behavior},children),TextInput:forwardRef<any,any>(({value,onChangeText,testID,placeholder,maxLength,style,underlineColorAndroid}:any,ref)=>createElement('textarea',{ref,value,placeholder,maxLength,'data-testid':testID,'data-style':JSON.stringify(Object.assign({},...style)),'data-native-underline':underlineColorAndroid,onInput:(e:any)=>onChangeText(e.currentTarget.value)}))}
 })
 vi.mock('react-native-safe-area-context',()=>({SafeAreaView:({children}:any)=>createElement('main',null,children)}))
 vi.mock('expo-localization',()=>({getLocales:()=>[]}))
@@ -39,7 +42,7 @@ it('live relay updates header and composer while keeping the unsent draft',async
  const ui=await mount(withProviders(createElement(Screen),{backend}));await flush()
  await act(()=>hook.setText('还没发出去'))
  changed=true;await act(()=>hook.detail.refresh());await flush()
- expect(ui.byId('direct-title').textContent).toContain('Codex')
+ expect(ui.byId('direct-title').textContent).toBe(original.matter.title)
  expect((ui.byId('direct-input') as HTMLTextAreaElement).placeholder).toBe('对 Codex 说…')
  expect((ui.byId('direct-input') as HTMLTextAreaElement).value).toBe('还没发出去')
  const styles=[...ui.container.querySelectorAll('[data-style]')].map(e=>JSON.parse(e.getAttribute('data-style')!))
@@ -71,6 +74,16 @@ it('roster keeps cached avatars offline but removes waiting accent and opens the
 it('task composer is inside the iOS keyboard avoiding region',async()=>{
  const ui=await mount(withProviders(createElement(Matter),{backend:makeDemoBackend()}));await flush()
  expect(ui.byId('direct-input')?.closest('[data-keyboard="padding"]')).not.toBeNull()
+ const scroll = ui.byId('progress-scroll')
+ const composer = ui.byId('progress-composer')
+ expect(scroll.nextElementSibling).toBe(composer)
+ expect(scroll.contains(ui.byId('progress-changes'))).toBe(true)
+ expect(ui.style('progress-scroll')).toMatchObject({ flex: 1, overflow: 'hidden' })
+ expect(JSON.parse(scroll.getAttribute('data-content-style')!).paddingBottom).toBe(space.xl)
+ expect(ui.style('progress-composer')).toMatchObject({ flexShrink: 0, paddingTop: space.s })
+ expect(ui.style('direct-input').borderWidth).toBe(0)
+ expect(ui.style('direct-input').borderBottomWidth).toBe(0)
+ expect(ui.byId('direct-input').getAttribute('data-native-underline')).toBe('transparent')
 })
 it('terminal composer retains the 4000 character input limit',async()=>{
  const demo=makeDemoBackend(),sessions=await demo.cliSessions()

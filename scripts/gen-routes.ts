@@ -19,6 +19,8 @@
  * `--check`:只比不写,不一致退出 1。`apps/desktop/scripts/build-sidecar.ts`(tauri build 的
  * beforeBuildCommand)也会调一次,保证打出来的包和表一致。
  */
+import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,6 +34,16 @@ export const DAEMON_CALLS_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated',
 export const STATUS_TABLE_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'status-table.js')
 export const CC_ACTIVITY_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'cc-activity.js')
 export const renderCCActivity = () => '// Generated from packages/protocol/src/cc-activity.js; bun run gen:routes\n' + readFileSync(join(ROOT, 'packages/protocol/src/cc-activity.js'), 'utf8')
+
+export const PERMISSION_DISPLAY_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'permission-display.js')
+export function renderPermissionDisplay(): string {
+  const protocolRequire = createRequire(join(ROOT, 'packages', 'protocol', 'package.json'))
+  const license = readFileSync(join(dirname(protocolRequire.resolve('zod/package.json')), 'LICENSE'), 'utf8').replace(/\r\n/g, '\n')
+  const bundle = execFileSync('bun', ['build', 'scripts/desktop-permission-display.entry.ts', '--target=browser', '--minify'], {
+    cwd: ROOT, encoding: 'utf8',
+  })
+  return '// Generated from packages/protocol; bun run gen:routes\n/*! Zod (MIT)\n' + license.trimEnd() + '\n*/\n' + bundle.replace(/\r\n/g, '\n').replace(/^[ \t]+$/gm, '')
+}
 
 export interface WorkbenchRoutesFile {
   _comment: string
@@ -114,7 +126,7 @@ export function renderStatusTable(): string {
   ].join('\n')
 }
 
-/** 写盘(内容没变就不碰文件);返回是否改了。三份生成物一起写。 */
+/** 写盘(内容没变就不碰文件);返回是否改了。桌面生成物一起写。 */
 export function writeWorkbenchRoutes(path = WORKBENCH_ROUTES_JSON): boolean {
   const previous = existsSync(path) ? readFileSync(path, 'utf8') : undefined
   const next = renderWorkbenchRoutes(previous)
@@ -137,6 +149,11 @@ export function writeWorkbenchRoutes(path = WORKBENCH_ROUTES_JSON): boolean {
     if (status !== prevStatus) { writeFileSync(STATUS_TABLE_JS, status); changed = true }
     const activity = renderCCActivity()
     if (!existsSync(CC_ACTIVITY_JS) || readFileSync(CC_ACTIVITY_JS, 'utf8') !== activity) { writeFileSync(CC_ACTIVITY_JS, activity); changed = true }
+    const permissionDisplay = renderPermissionDisplay()
+    if (!existsSync(PERMISSION_DISPLAY_JS) || readFileSync(PERMISSION_DISPLAY_JS, 'utf8') !== permissionDisplay) {
+      writeFileSync(PERMISSION_DISPLAY_JS, permissionDisplay)
+      changed = true
+    }
   }
   return changed
 }
@@ -150,7 +167,11 @@ if (import.meta.main) {
       console.error(`${WORKBENCH_ROUTES_JSON} / ${DAEMON_CALLS_JS} 和路由表不一致:跑 bun run gen:routes`)
       process.exit(1)
     }
-    console.log('workbench-routes.json、daemon-calls.js 与路由表一致')
+    if (!existsSync(PERMISSION_DISPLAY_JS) || readFileSync(PERMISSION_DISPLAY_JS, 'utf8').replace(/\r\n/g, '\n') !== renderPermissionDisplay()) {
+      console.error('桌面审批展示生成物已过期:跑 bun run gen:routes')
+      process.exit(1)
+    }
+    console.log('桌面生成物已是最新')
   } else {
     console.log(writeWorkbenchRoutes() ? '已按路由表更新生成物' : 'workbench-routes.json、daemon-calls.js 已是最新')
   }

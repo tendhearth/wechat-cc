@@ -108,6 +108,10 @@
 .wb-archived-controls p { margin:0; color:var(--wb-text); font-size:12px; }
 .wb-archived-controls span { margin-left:8px; color:var(--wb-muted); }
 .wb-path { color:var(--wb-secondary); font:12px/1.6 var(--mono); overflow-wrap:anywhere; }
+/* Failures sit outside the scrolling conversation, so they stay visible when it is scrolled or collapsed for a decision. */
+.wb-alerts { flex:none; padding:0 var(--wb-gutter); }
+.wb-alerts>* { width:min(780px,100%); margin-right:auto; margin-left:auto; }
+.wb-alerts>.wb-error { margin-top:10px; margin-bottom:6px; }
 .wb-content { flex:1; min-height:0; min-width:0; overflow:auto; overscroll-behavior:contain; padding:0 var(--wb-gutter) 24px; scroll-padding-block:20px; }
 .wb-content>* { width:min(780px,100%); margin-right:auto; margin-left:auto; }
 .wb-dialogue { display:grid; gap:24px; padding:30px 0 24px; }
@@ -164,17 +168,70 @@
 .wb-queue-guidance { border-left:2px solid var(--th-warn); padding:10px 12px; margin-bottom:18px; color:var(--th-ink-soft); font-size:12px; line-height:1.65; }
 .wb-controls { flex:none; padding:12px var(--wb-gutter) 18px; border-top:1px solid var(--wb-line); background:var(--wb-surface); }
 .wb-controls>* { width:min(780px,100%); margin-right:auto; margin-left:auto; }
-.wb-permissions { max-height:min(32vh,300px); overflow:auto; margin-bottom:10px; border:1px solid var(--th-hair); border-radius:9px; padding:12px 14px; background:var(--th-paper); }
+/* While a decision is pending, the conversation leaves the rest of the pane to the controls.
+   Inside the controls, only the request list grows. The composer keeps its intrinsic height. */
+.wb-main:has(.wb-permissions)>.wb-content {
+  flex:0 0 clamp(24px,calc(24vh - 88px),120px);
+  box-sizing:border-box;
+  padding-bottom:0;
+}
+@media (height < 700px) {
+  /* Keep the scrollport for restoration and use the task header's divider. */
+  .wb-main:has(.wb-permissions):not(#roster-dock *)>.wb-content { flex-basis:0; visibility:hidden; }
+  .wb-main:has(.wb-permissions):not(#roster-dock *)>.wb-reading-bar { display:none; }
+  .wb-controls:has(.wb-permissions):not(#roster-dock *) { border-top:0; }
+}
+.wb-controls:has(.wb-permissions) { display:flex; flex:1; flex-direction:column; min-height:0; max-height:none; }
+.wb-controls:has(.wb-permissions)>.wb-controls-inner { display:flex; flex:1; flex-direction:column; min-height:0; }
+.wb-controls-inner:has(.wb-permissions)>* { flex:none; }
+.wb-controls-inner:has(.wb-permissions)>.wb-questions { flex:0 1 auto; min-height:0; max-height:min(34vh,360px,30%); }
+.wb-controls-inner>.wb-permissions {
+  --wb-permission-inset:14px;
+  flex:1 0 64px;
+  box-sizing:border-box;
+  overflow:auto;
+  scroll-padding-bottom:48px;
+  isolation:isolate;
+  margin-bottom:10px;
+  border:1px solid var(--th-hair);
+  border-radius:9px;
+  padding:12px var(--wb-permission-inset) 0;
+  background:var(--th-paper);
+}
+/* The end spacing scrolls with the requests, leaving the sticky edge flush. */
+.wb-permissions::after { content:""; display:block; height:12px; }
 .wb-permissions>header { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--th-ink-soft); }
 .wb-permissions h3 { margin:0; font-size:12px; font-weight:500; }
 .wb-permissions>header>span { font-size:11px; }
 .wb-permission { padding-top:12px; }
 .wb-permission+.wb-permission { margin-top:12px; border-top:1px solid var(--th-hair); }
-.wb-permission-tool { color:var(--th-ink-soft); font:500 11px/1.5 var(--mono); }
-.wb-permission p { margin:5px 0; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--th-ink); font:12px/1.65 var(--mono); }
+.wb-permission-tool { display:block; margin-bottom:5px; color:var(--th-ink-soft); font:500 12px/1.5 var(--th-font-sans); overflow-wrap:anywhere; }
+.approval-operation { display:grid; min-width:0; gap:5px; color:var(--th-ink); }
+.approval-panel { min-width:0; padding:8px 10px; border-radius:var(--th-radius-control); background:var(--th-rail); }
+.approval-source,.approval-path,.approval-diff { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 var(--th-font-mono); user-select:text; }
+.approval-command { display:grid; grid-template-columns:auto minmax(0,1fr); }
+.approval-command>span { white-space:pre; color:var(--th-ink-soft); font:12px/1.65 var(--th-font-mono); }
+.approval-path { margin-bottom:4px; color:var(--th-ink-soft); }
+.approval-change+.approval-change { margin-top:6px; }
+.approval-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:3px 12px; margin:0; }
+.approval-fields dt { color:var(--th-ink-soft); overflow-wrap:anywhere; }
+.approval-fields dd { margin:0; min-width:0; }
+.approval-extra,.approval-meta,.approval-disclosure { color:var(--th-ink-soft); font:12px/1.55 var(--th-font-sans); overflow-wrap:anywhere; }
+.approval-invisible { color:var(--th-ink-soft); background:var(--th-ground); direction:ltr; unicode-bidi:isolate; }
+.approval-meta { white-space:pre-wrap; user-select:text; }
+.approval-disclosure>summary { width:fit-content; cursor:pointer; }
+.approval-operation .approval-disclosure>summary { padding:2px 0; }
+.approval-disclosure>.approval-source { color:var(--th-ink); }
 .wb-permission time { color:var(--wb-muted); font-size:10px; }
 .wb-permission-actions,.wb-control-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
-.wb-permission-actions { margin-top:9px; flex-wrap:wrap; }
+/* Each footer stops at its own article, so an earlier request scrolls away with its buttons. */
+.wb-permission-actions {
+  position:sticky; bottom:0; z-index:1; margin-top:9px; flex-wrap:wrap; background:var(--th-paper);
+  margin-inline:calc(-1 * var(--wb-permission-inset)); padding:4px var(--wb-permission-inset);
+}
+.wb-permission-actions.is-stuck::before {
+  content:""; position:absolute; inset:0 0 auto; border-top:1px solid var(--wb-line); pointer-events:none;
+}
 .wb-permission label { display:block; margin-top:8px; font-size:12px; color:var(--th-ink-soft); }
 .wb-permission textarea { box-sizing:border-box; width:100%; min-height:48px; resize:vertical; font:inherit; color:var(--th-ink); background:transparent; border:0; border-bottom:1px solid var(--th-hair); }
 .wb-permission-script pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 var(--mono); }
@@ -244,6 +301,7 @@
 .wb-preview pre.wb-review-diff { margin:10px 0 0; padding:8px 0; white-space:pre; overflow:auto; font:11px/1.7 var(--mono); }
 .wb-review-diff code { display:block; min-width:100%; width:max-content; }
 .wb-review-diff [data-line] { display:block; min-height:1.7em; padding:0 12px; }
+.approval-diff [data-line] { padding:0 6px; }
 .wb-review-diff [data-line=added] { background:color-mix(in srgb, var(--th-ok) 12%, var(--th-paper)); color:var(--th-ink); }
 .wb-review-diff [data-line=deleted] { background:color-mix(in srgb, var(--th-bad) 12%, var(--th-paper)); color:var(--th-bad); }
 .wb-review-diff [data-line=hunk] { background:var(--th-rail); color:var(--th-ink-soft); }
@@ -426,7 +484,6 @@
   .wb-main { flex:1; }
   .wb-task-head { padding-top:12px; padding-bottom:12px; }
   .wb-welcome { padding-top:28px; }
-  .wb-permissions { max-height:25vh; }
 }
 
 /* History is a temporary reader, not another permanent work column. */
@@ -558,6 +615,35 @@
 }
 .wb-followup-live .wb-control-actions>.wb-btn { display:inline-flex; align-items:center; gap:5px; }
 .wb-followup.wb-followup-live { gap:6px; }
+/* Keep a row for the field and share one toolbar while a request is pending. */
+.wb-permissions~.wb-followup:not(#roster-dock *) {
+  grid-template-columns:auto auto minmax(0,1fr);
+  align-items:center;
+  gap:6px 8px;
+  padding-block:6px;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *)>textarea {
+  grid-area:1 / 1 / 2 / -1;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *)>textarea:not(:focus) {
+  height:calc(1.6em + 6px);
+  min-height:0;
+  resize:none;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *)>.th-agents { grid-area:2 / 1; }
+.wb-permissions~.wb-followup:not(#roster-dock *)>.wb-compose-attachments { display:contents; }
+.wb-permissions~.wb-followup:not(#roster-dock *) .wb-attach-button {
+  grid-area:2 / 2;
+  margin:0;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *)>:is(.wb-control-actions,.wb-btn) {
+  grid-area:2 / 3;
+}
+.wb-permissions~.wb-followup:not(#roster-dock *) .wb-input-help:not([open]) { flex-basis:auto; }
+.wb-permissions~.wb-followup:not(#roster-dock *) .wb-attachment-chips:empty { display:none; }
+.wb-permissions~.wb-followup:not(#roster-dock *) :is(.wb-attachment-chips,.wb-interaction-error) {
+  grid-column:1 / -1;
+}
 @media(max-height:360px) {
   .wb-controls { max-height:40%; }
   .wb-artifacts.is-outcome { margin-top:8px; margin-bottom:8px; }

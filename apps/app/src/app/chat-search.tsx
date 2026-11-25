@@ -5,7 +5,7 @@ import { Button } from '../ui/Button'
 import { LinkRow } from '../ui/Rows'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
-import { FlatList, Keyboard, ScrollView, View } from 'react-native'
+import { FlatList, Keyboard, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { ChatSearchHitT } from '../backend/types'
 import { t } from '../i18n'
@@ -13,11 +13,12 @@ import { useLang } from '../i18n/useLang'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection } from '../state/hooks'
 import { canSubmit } from '../view/connection'
-import { searchSegments } from '../view/chat-search'
+import { searchCopy, searchSegments, type SearchTab } from '../view/chat-search'
 import { TextField } from '../ui/TextField'
 import { TopBar } from '../ui/TopBar'
 import { IconButton } from '../ui/IconButton'
-import { space } from '../ui/tokens'
+import { Icon } from '../ui/Icon'
+import { componentAppearance, space } from '../ui/tokens'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 
@@ -34,7 +35,10 @@ export function ConversationSearch() {
   const { backend } = useBackendCtx()
   const online = canSubmit(useConnection())
   const { scope, share } = useLocalSearchParams<{ scope?: string; share?: string }>()
-  const [tab, setTab] = useState(scope === 'work' ? 'work' : 'messages')
+  const [tab, setTab] = useState<SearchTab>(scope === 'work' ? 'work' : 'messages')
+  const isWork = tab === 'work'
+  const { title, placeholder } = searchCopy(tab, lang)
+  const appearance = componentAppearance.button
   const [q, setQ] = useState('')
   const [asked, setAsked] = useState('')
   const [hits, setHits] = useState<ChatSearchHitT[] | null>(null)
@@ -49,19 +53,39 @@ export function ConversationSearch() {
   }
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={t(lang, 'chatSearch.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/chat'))} />
+      <TopBar title={title} onBack={() => (router.canGoBack() ? router.back() : router.replace('/chat'))} />
       <View style={{ flexDirection: 'row', gap: space.s, paddingHorizontal: space.xl, paddingBottom: space.m }}>
-        <TextField variant="search" testID="chat-search-input" accessibilityLabel={t(lang, 'chatSearch.placeholder')} value={q} onChangeText={setQ} placeholder={t(lang, 'chatSearch.placeholder')}
-          returnKeyType="search" onSubmitEditing={() => void run()} autoFocus maxLength={200}
+        <TextField variant="search" testID="chat-search-input" accessibilityLabel={placeholder} value={q} onChangeText={setQ} placeholder={placeholder}
+          returnKeyType="search" onSubmitEditing={isWork ? Keyboard.dismiss : () => void run()} autoFocus={!isWork} maxLength={200}
           style={{ flex: 1, minHeight: 44, backgroundColor: c.paper }} />
-        <IconButton name="search" label={t(lang, 'chatSearch.go')} testID="chat-search-go" disabled={!q.trim() || !online} busy={busy} onPress={() => void run()} />
+        {!isWork ? <IconButton name="search" label={t(lang, 'chatSearch.go')} testID="chat-search-go" disabled={!q.trim() || !online} busy={busy} onPress={() => void run()} /> : null}
       </View>
-      <View style={{ flexDirection: 'row', paddingHorizontal: space.xl, gap: space.s }}>
-        <Button testID="search-messages" kind="secondary" label={lang === 'zh-Hans' ? '对话' : 'Messages'} onPress={() => setTab('messages')} />
-        <Button testID="search-work" kind="secondary" label={lang === 'zh-Hans' ? '事项' : 'Work'} onPress={() => { Keyboard.dismiss(); setTab('work') }} />
-        <Button testID="search-topics" kind="secondary" label={lang === 'zh-Hans' ? '话题' : 'Topics'} onPress={() => router.push('/topics')} />
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: space.xl, gap: space.s }}>
+        <View accessibilityRole="tablist" style={{ flexDirection: 'row', gap: space.xs }}>
+          {(['messages', 'work'] as const).map(key => {
+            const selected = tab === key
+            return <Pressable key={key} testID={`search-${key}`} accessibilityRole="tab" accessibilityState={{ selected }}
+              onPress={() => { if (key === 'work') Keyboard.dismiss(); setTab(key) }}
+              style={({ pressed }) => ({
+                minHeight: appearance.minHeight.phone, minWidth: 44, paddingHorizontal: space.l, paddingVertical: space.s,
+                justifyContent: 'center', alignItems: 'center', borderRadius: appearance.radius,
+                backgroundColor: selected ? c.rail : undefined, opacity: pressed ? appearance.pressedOpacity : 1,
+              })}>
+              <Txt role="body" tone={selected ? 'ink' : 'inkSoft'}>{t(lang, key === 'work' ? 'chatSearch.workTab' : 'chatSearch.messagesTab')}</Txt>
+            </Pressable>
+          })}
+        </View>
+        <Pressable testID="search-topics" accessibilityRole="link" accessibilityLabel={t(lang, 'chatSearch.topicsLink')}
+          onPress={() => router.push('/topics')}
+          style={({ pressed }) => ({
+            minHeight: appearance.minHeight.phone, minWidth: 44, flexDirection: 'row', alignItems: 'center',
+            justifyContent: 'flex-end', gap: space.xs, opacity: pressed ? appearance.pressedOpacity : 1,
+          })}>
+          <Txt role="body">{t(lang, 'chatSearch.topicsLink')}</Txt>
+          <Icon name="chevronRight" size={14} color={c.inkSoft} />
+        </Pressable>
       </View>
-      {tab === 'work' ? <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl }}><WorkSearchResults query={q} share={share === '1'} /></ScrollView> : <FlatList
+      {isWork ? <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl }}><WorkSearchResults query={q} share={share === '1'} /></ScrollView> : <FlatList
         testID="chat-search-list"
         data={hits ?? []}
         keyExtractor={h => h.id}

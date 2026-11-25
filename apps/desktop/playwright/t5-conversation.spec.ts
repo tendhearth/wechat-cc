@@ -54,13 +54,13 @@ test('one conversation and memory topics preserve drafts when a wide place opens
  await expect(page.locator('#wb-filter-project')).toBeVisible();await expect(page.locator('#wb-filter-status')).toBeVisible()
  await expect(page.locator('#workbench-home')).toBeHidden()
  await page.locator('#topbar-cc').click()
- await page.setViewportSize({width:899,height:844});await clickNav(page,'memory')
+ await page.setViewportSize({width:900,height:844});await clickNav(page,'memory')
  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click();await expect(panel).toBeVisible()
  await page.screenshot({path:join(info.outputDir,'narrow-topic.png')})
  await panel.getByRole('button',{name:/CC · .*正在核对备份/}).click()
  await expect(page.locator('#converse-input')).toBeVisible()
  await expect(page.locator('#converse-scroll')).toContainText('正在核对备份。')
- await expect(page.locator('.converse-compose')).toHaveCSS('border-radius','14px')
+ await expect(page.locator('.converse-compose')).toHaveCSS('border-radius','20px')
  await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
 })
 test('older daemon hides topics and preserves the owner composer',async({page,shimUrl})=>{
@@ -304,7 +304,7 @@ test('PWA shows the answering executor per reply and keeps CC replies unmarked',
   expect(errors).toEqual([])
 })
 
-test('reply attribution keeps one named shared avatar per reply across wide and narrow layouts',async({page,shimUrl},info)=>{
+test('reply attribution keeps one named shared avatar per reply at expanded and compact desktop widths',async({page,shimUrl},info)=>{
   let currentProvider='claude'
   const message=(id:string,text:string,meta:Record<string,unknown>={})=>({messageId:id,kind:'text',text,createdAt:1,source:'desktop',...meta})
   const messages=[
@@ -331,7 +331,7 @@ test('reply attribution keeps one named shared avatar per reply across wide and 
     for(const text of ['CC 自己组织的回复','这一轮的通知','没有来源的旧消息'])await expect(row(text).locator('.th-agent')).toHaveCount(0)
     await expect(row('CC 自己组织的回复')).toHaveAttribute('aria-label','CC')
   }
-  for(const width of [1280,390]){
+  for(const width of [1280,760]){
     await page.setViewportSize({width,height:844});await page.goto(shimUrl)
     await checkSources()
     const notice = row('这一轮的通知')
@@ -367,7 +367,8 @@ test('reply attribution keeps one named shared avatar per reply across wide and 
     }
     expect(await matter.locator('.wb-dialogue').evaluate(root=>[...root.querySelectorAll('.wb-message')].every(row=>row.scrollWidth<=row.clientWidth+1))).toBe(true)
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
-    if(width>=900)await page.locator('#topbar-cc').click();else await page.locator('#workbench-home').click()
+    if (width === 760) await page.locator('#desk-rail-toggle').click()
+    await clickNav(page,'overview')
   }
   currentProvider='codex';await page.reload();await checkSources()
 })

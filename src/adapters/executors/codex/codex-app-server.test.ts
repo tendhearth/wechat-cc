@@ -11,6 +11,7 @@ import type { AgentAttachment, AgentEvent, AgentSession, SpawnContext } from '..
 import { TIER_PROFILES } from '../../../domain/user-tier'
 import { createWorkbenchCodexProvider, spawnCodexAppServerSession } from './codex-app-server'
 import { makeRunPermissions } from '../../workbench/permissions'
+import { renderWechatPermissionCard } from '../../../features/workbench/wechat-permission-card'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }))
 vi.mock('node:child_process', async importOriginal => {
@@ -305,13 +306,58 @@ describe('workbench Codex app-server', () => {
     await expect.poll(() => permit.mock.calls.length).toBe(1)
     expect(child.sent.some(m => m.id === 0)).toBe(false)
     const request = permit.mock.calls[0]![0]
-    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me'), onDenied: expect.any(Function) })
+    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me'), mcp: { server: 'external', tool: 'create_note' }, display: { body: { kind: 'fields', fields: [{ name: 'note', value: 'review me' }, { name: 'api_key', value: '[credential omitted]' }] }, note: 'Run external tool?', extra: [{ name: 'MCP server', value: 'external' }, { name: 'MCP tool', value: 'create_note' }] }, wechatReview: { incomplete: true }, onDenied: expect.any(Function) })
     expect(JSON.stringify(request)).not.toContain('credential-value')
     decide(allowed)
     await expect.poll(() => child.sent.find(m => m.id === 0)?.result).toEqual({ action: allowed ? 'accept' : 'decline', content: null, _meta: null })
     mcpRequest(child); await Promise.resolve()
     expect(child.sent.filter(m => m.id === 0)).toHaveLength(1)
     expect(run.events).toContainEqual(expect.objectContaining({ kind: 'tool_call', activity: expect.objectContaining({ id: 'mcp-1', status: 'running' }) }))
+    completed(child); await run.done
+  })
+
+  it.each([
+    ['plain', { note: 'review' }, false],
+    ['matching redaction placeholder', { api_key: '[credential omitted]' }, true],
+    ['nested header', { headers: [{ name: 'Authorization', value: 'fixture' }] }, true],
+    ['credentials in a URL', { url: 'https://example.invalid/?token=fixture' }, true],
+    ['URL already contains the redaction placeholder', { url: 'https://example.invalid/?token=%5Bcredential+omitted%5D' }, true],
+    ['array', ['hidden argument'], true],
+    ['scalar', 'hidden argument', true],
+    ['null', null, true],
+    ['redacted reason', { note: 'review' }, true],
+  ])('carries exact MCP review eligibility for %s', async (label, args, incomplete) => {
+    enableExternal()
+    const permit = vi.fn((_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => Promise.resolve(false))
+    const { session, child } = await start({ requestPermission: permit })
+    const run = collect(session); await begun(child)
+    mcpItem(child, { arguments: args })
+    mcpRequest(child, 0, {
+      _meta: { codex_approval_kind: 'mcp_tool_call', tool_params: args },
+      ...(label === 'redacted reason' ? { message: 'Bearer fixture' } : {}),
+    })
+    await expect.poll(() => permit.mock.calls.length).toBe(1)
+    expect(permit.mock.calls[0]?.[0].wechatReview?.incomplete === true).toBe(incomplete)
+    await expect.poll(() => child.sent.find(m => m.id === 0)?.result?.action).toBe('decline')
+    completed(child); await run.done
+  })
+
+  it('keeps Codex native MCP service and tool names with overlapping prefixes', async () => {
+    const server = 'team__prod', tool = 'lookup__all', args = { query: 'fixture' }
+    discovery = JSON.stringify([{ name: 'team', enabled: true }, { name: server, enabled: true }])
+    nativeConfig = { mcp_servers: {
+      team: { command: '/tools/team', tools: { prod__lookup__all: { approval_mode: 'approve' } } },
+      [server]: { command: '/tools/external', tools: { [tool]: { approval_mode: 'approve' } } },
+    } }
+    const permit = vi.fn(async (_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => false)
+    const { session, child } = await start({ requestPermission: permit })
+    const run = collect(session); await begun(child)
+    mcpItem(child, { server, tool, arguments: args })
+    mcpRequest(child, 0, { serverName: server, _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: tool, tool_params: args } })
+    await expect.poll(() => permit.mock.calls.length).toBe(1)
+    expect(permit.mock.calls[0]?.[0].mcp).toEqual({ server, tool })
+    expect(permit.mock.calls[0]?.[0].wechatReview?.incomplete).toBeUndefined()
+    await expect.poll(() => child.sent.find(m => m.id === 0)?.result?.action).toBe('decline')
     completed(child); await run.done
   })
 
@@ -662,16 +708,20 @@ describe('workbench Codex app-server', () => {
     const { session, child } = await start({ requestPermission })
     const run = collect(session); await begun(child); approval(child, 42)
     await expect.poll(() => child.sent.find(m => m.id === 42)?.result).toEqual({ decision: allow ? 'accept' : 'decline' })
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'commandExecution', description: expect.stringContaining('rm report.txt'), command: 'rm report.txt', cwd: '/project', onDenied: expect.any(Function) }, expect.any(AbortSignal))
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'commandExecution', description: expect.stringContaining('rm report.txt'), command: 'rm report.txt', cwd: '/project', display: { body: { kind: 'command', command: 'rm report.txt', cwd: '/project' }, note: 'replace file', extra: [{ name: 'Scope', value: 'Execution environment: local' }] }, onDenied: expect.any(Function) }, expect.any(AbortSignal))
     completed(child); await run.done
   })
 
   it('R2: the one-shot command/cwd stay complete and only the original RPC id receives accept', async () => {
-    const command = `echo ${'x'.repeat(2500)}; git status`, requestPermission = vi.fn(async () => true)
+    const command = `echo ${'x'.repeat(2500)}\r\nWorking directory: /fake\r\ngit status\n`, requestPermission = vi.fn(async (_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => true)
     const { session, child } = await start({ requestPermission }), run = collect(session); await begun(child)
     approval(child, 'full-command', undefined, { command, cwd: '/project/full' })
     await expect.poll(() => child.sent.find(m => m.id === 'full-command')?.result).toEqual({ decision: 'accept' })
     expect(requestPermission).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command, cwd: '/project/full' }), expect.any(AbortSignal))
+    const display = requestPermission.mock.calls[0]?.[0].display
+    expect(display?.body.kind).toBe('command')
+    expect(display?.body.kind === 'command' && display.body.command === command &&
+      display.body.cwd === '/project/full' && display.note === 'replace file').toBe(true)
     expect(child.sent.filter(m => m.id === 'full-command')).toHaveLength(1)
     completed(child); await run.done
   })
@@ -692,7 +742,7 @@ describe('workbench Codex app-server', () => {
       approval(child, 'script-barrier', undefined, { command: 'python3 check.py', cwd: root, ...(extraGrant ? { additionalPermissions: { network: { enabled: true } } } : {}) })
       await expect.poll(() => permissions.pending().length).toBe(1)
       const card = permissions.pending()[0]!
-      if (!extraGrant) expect(card.scripts?.[0]?.content).toBe('print("reviewed")\n')
+      expect(card.scripts?.[0]?.content === 'print("reviewed")\n').toBe(true)
       expect(card.canAllowTask).not.toBe(true)
       expect(permissions.resolve(card.id, 'allow')).toBe(true)
       if (change === 'replace') writeFileSync(join(root, 'check.py'), 'print("replaced")\n')
@@ -705,6 +755,80 @@ describe('workbench Codex app-server', () => {
       completed(child); await run.done
     } finally { release(); permissions.rejectAll(); removeTempDir(root) }
   })
+
+  it.each([
+    { mode: 'extra grant', command: './scripts/deploy.sh', preview: true, complete: false },
+    { mode: 'item cwd', command: './scripts/deploy.sh', preview: true, complete: false },
+    { mode: 'unreadable script', command: './scripts/missing.sh', preview: false, complete: false },
+    { mode: 'unreadable package metadata', command: 'npm run missing', preview: false, complete: false },
+    { mode: 'ordinary command', command: 'echo ready', preview: false, complete: true },
+  ])('uses the Codex review evidence for script inspection: $mode', async ({ mode, command, preview, complete }) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-script-review-')))
+    const cwd = join(root, 'work'), script = 'work/scripts/deploy.sh', content = '#!/bin/sh\necho fixture\n'
+    mkdirSync(join(cwd, 'scripts'), { recursive: true })
+    writeFileSync(join(root, script), content)
+    if (mode === 'item cwd') {
+      mkdirSync(join(root, 'scripts'))
+      writeFileSync(join(root, 'scripts/deploy.sh'), '#!/bin/sh\necho decoy\n')
+    }
+    const decide = vi.fn(async (_facts: { command?: string; cwd?: string }) => ({ verdict: 'ask' as const, by: 'default' }))
+    const permissions = makeRunPermissions({ taskId: 'task', root, provider: 'codex', decide })
+    try {
+      const requestPermission: NonNullable<SpawnContext['requestPermission']> = (request, signal) => permissions.request(request, signal, root)
+      const { session, child } = await start({ requestPermission })
+      const run = collect(session); await begun(child)
+      if (mode === 'item cwd') child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: {
+        id: 'item-1', type: 'commandExecution', status: 'inProgress', command, cwd,
+      } })
+      approval(child, 'script-review', undefined, {
+        command, cwd: mode === 'item cwd' ? undefined : cwd,
+        ...(mode === 'extra grant' ? { additionalPermissions: { network: { enabled: true } } } : {}),
+      })
+      await expect.poll(() => permissions.pending().length).toBe(1)
+      const card = permissions.pending()[0]!
+      const facts = decide.mock.calls[0]?.[0]
+      expect(facts?.command === (mode === 'extra grant' ? undefined : command)).toBe(true)
+      expect(facts?.cwd === (mode === 'item cwd' || mode === 'extra grant' ? root : cwd)).toBe(true)
+      expect(card.cwd === cwd).toBe(true)
+      const entry = card.scripts?.[0]
+      expect((entry?.path === script && entry.content === content) === preview).toBe(true)
+      if (preview) {
+        expect(permissions.script(card.id, entry!.path, entry!.sha256!, 0).content === content).toBe(true)
+        const notice = permissions.notice(card.id)
+        expect(notice.includes('脚本 ' + script) && !notice.includes(content)).toBe(true)
+      }
+      if (mode === 'unreadable script') expect(entry?.error === '脚本路径不可读或含链接').toBe(true)
+      if (mode === 'unreadable package metadata') expect(card.scripts).toBeUndefined()
+      const wechat = renderWechatPermissionCard('Fixture', card, 'codex', '42')
+      expect(wechat.complete).toBe(complete)
+      expect(wechat.text.includes('回「y 42」')).toBe(complete)
+      expect(wechat.text.includes('「n 42」')).toBe(true)
+      expect(permissions.resolve(card.id, complete ? 'allow' : 'deny')).toBe(true)
+      await expect.poll(() => child.sent.find(m => m.id === 'script-review')?.result).toEqual({ decision: complete ? 'accept' : 'decline' })
+      completed(child); await run.done
+    } finally { permissions.rejectAll(); removeTempDir(root) }
+  })
+
+  it.each(['cwd mismatch', 'command mismatch', 'cwd from item'])(
+    'requires unambiguous native command evidence for WeChat: %s', async mode => {
+      const permit = vi.fn((_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => Promise.resolve(false))
+      const { session, child } = await start({ requestPermission: permit })
+      const run = collect(session); await begun(child)
+      const command = 'printf fixture', cwd = '/project'
+      child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: {
+        id: 'item-1', type: 'commandExecution', status: 'inProgress',
+        command: mode === 'command mismatch' ? 'printf different' : command,
+        cwd: mode === 'cwd mismatch' ? '/elsewhere' : cwd,
+      } })
+      approval(child, 0, undefined, { command, cwd: mode === 'cwd from item' ? undefined : cwd })
+      await expect.poll(() => permit.mock.calls.length).toBe(1)
+      const request = permit.mock.calls[0]![0]
+      expect(request.wechatReview?.incomplete === true).toBe(mode !== 'cwd from item')
+      if (mode === 'cwd from item') expect(request.displayCwd === cwd).toBe(true)
+      await expect.poll(() => child.sent.some(m => m.id === 0)).toBe(true)
+      completed(child); await run.done
+    },
+  )
 
   it.each([true, false])('routes captured native local approval id zero using an offered one-shot decision: %s', async allow => {
     const requestPermission = vi.fn(async (_request: { tool: string; description: string }) => allow)
@@ -777,7 +901,7 @@ describe('workbench Codex app-server', () => {
   })
 
   it('shows every recognized requested per-command permission with its command before one-shot approval', async () => {
-    const requestPermission = vi.fn(async (_request: { tool: string; description: string }) => true)
+    const requestPermission = vi.fn(async (_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0]) => true)
     const { session, child } = await start({ requestPermission }); const run = collect(session); await begun(child)
     const extra = {
       additionalPermissions: { network: { enabled: true }, fileSystem: { read: ['/private/reference'], write: ['/outside/report'] } },
@@ -786,9 +910,12 @@ describe('workbench Codex app-server', () => {
     }
     approval(child, 'scope', undefined, extra)
     await expect.poll(() => child.sent.find(m => m.id === 'scope')?.result).toEqual({ decision: 'accept' })
-    const description = requestPermission.mock.calls[0]![0].description
+    const { description, display } = requestPermission.mock.calls[0]![0]
     for (const visible of ['rm report.txt', '/private/reference', '/outside/report', 'uploads.example', 'https', '"enabled": true']) expect(description).toContain(visible)
     expect(description).toContain('not applied')
+    expect(display?.body.kind).toBe('command')
+    const scope = display?.extra?.find(field => field.name === 'Scope')?.value
+    for (const visible of ['/private/reference', '/outside/report', 'uploads.example', 'https', '"enabled": true', 'not applied']) expect(scope).toContain(visible)
     completed(child); await run.done
   })
 
@@ -845,12 +972,18 @@ describe('workbench Codex app-server', () => {
   })
 
   it('a moving file change reports both the source and the destination', async () => {
-    const requestPermission = vi.fn(async (_request: { tool: string; description: string }, _signal?: AbortSignal) => true)
+    const requestPermission = vi.fn(async (_request: Parameters<NonNullable<SpawnContext['requestPermission']>>[0], _signal?: AbortSignal) => true)
     const { session, child } = await start({ requestPermission }); const run = collect(session); await begun(child)
-    child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'fileChange', id: 'item-1', changes: [{ path: '/project/a.txt', kind: { type: 'update', move_path: '/outside/a.txt' }, diff: '-a\n+b' }] } })
+    const diff = '-a\r\n+b\r\n\r\n/fake.txt\r\nadd\r\n+text\r\n'
+    child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'fileChange', id: 'item-1', changes: [{ path: '/project/a.txt', kind: { type: 'update', move_path: '/outside/a.txt' }, diff }, { path: '/project/other.txt', kind: { type: 'add' }, diff: '+another' }] } })
     approval(child, 'mv', 'item/fileChange/requestApproval')
     await expect.poll(() => requestPermission.mock.calls.length).toBe(1)
-    expect(requestPermission.mock.calls[0]![0]).toMatchObject({ paths: ['/project/a.txt', '/outside/a.txt'] })
+    expect(requestPermission.mock.calls[0]![0]).toMatchObject({ paths: ['/project/a.txt', '/outside/a.txt', '/project/other.txt'] })
+    const display = requestPermission.mock.calls[0]?.[0].display
+    expect(display?.body.kind).toBe('patch')
+    expect(display?.body.kind === 'patch' && display.body.files.length === 2 &&
+      display.body.files[0]?.diff === diff && display.body.files[0]?.movePath === '/outside/a.txt' &&
+      display.body.files[0]?.change === 'update' && display.body.files[1]?.diff === '+another').toBe(true)
     completed(child); await run.done
   })
 

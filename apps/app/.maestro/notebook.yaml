@@ -1,4 +1,4 @@
-# 演示本子：两人的字、立刻落笔、翻日和回到今天。
+# 演示本子：回信提示、两人的字、立刻落笔、翻日和回到今天。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -6,10 +6,16 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: home-more
+      id: home-notebook-reply-dot
     timeout: 10000
+- assertVisible:
+    id: home-more
+    text: "更多，本子上有 CC 的回信|More, CC replied in the notebook"
 - tapOn:
     id: home-more
+- assertVisible:
+    id: conversation-notebook
+    text: "本子，有回信|Notebook, new reply"
 - tapOn:
     id: conversation-notebook
 - extendedWaitUntil:
@@ -48,3 +54,12 @@ appId: com.tendhearth.app
 - assertVisible:
     id: notebook-input
 - assertVisible: A line for the notebook
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    notVisible:
+      id: home-notebook-reply-dot
+    timeout: 10000
+- assertVisible:
+    id: home-more
+    text: "更多|More"

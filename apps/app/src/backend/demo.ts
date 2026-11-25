@@ -1,5 +1,5 @@
 import { demoNotebook } from './demo-notebook'
-import { checkupEstimateSummary, replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protocol'
+import { checkupEstimateSummary, permissionDisplay, permissionWaitingTitle, replyAttributionFields, type ReplyAttribution } from '@wechat-cc/protocol'
 import { demoTopics } from './demo-topics'
 import { checkupReview, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, type CheckupView, type CheckupProfile, type CheckupAttempt } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
@@ -92,6 +92,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     const base = { stale: false, machine: null, last_prompt_at: null }
     return [
       { ...base, session_id: 'demo-cli-blog', code: 'democl', source: 'claude', status: 'waiting', project: 'blog', summaryKey: 'cliBlogLast', last_event_at: n - 90_000, created_at: n - HOUR, live_window: true,
+        // The hook sends the bare command in summary. The list adds the tool name.
         pending: { tool: 'Bash', summary: 'npm run deploy', since: n - 90_000, hash: 'dm0a1', actionable: true } },
       { ...base, session_id: 'demo-cli-docs', code: 'democr', source: 'claude', status: 'running', project: 'docs', summaryKey: 'cliDocsLast', last_event_at: n - 40_000, created_at: n - 2 * HOUR, last_prompt_at: n - 5 * 60_000, pending: null },
       { ...base, session_id: 'demo-cli-api', code: 'democx', source: 'codex', status: 'idle', project: 'api-server', summaryKey: 'cliApiLast', last_event_at: n - 25 * 60_000, created_at: n - 3 * HOUR, pending: null },
@@ -131,7 +132,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       // 用了多少额度(#437):演示给一行合计;cache 这类这家没报 ⇒ null(界面写「不报」)
       { ...taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), usage: { turns: 3, input: 48_210, output: 6_120, cacheRead: null, cacheWrite: null, reasoning: null, costUsd: null } }, {
         runId: RUN_IDS[IDS.portfolio], inputMode: 'steer',
-        permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'npm install sharp', createdAt: n - 60_000 }],
+        permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'command=npm install sharp', createdAt: n - 60_000 }],
       }), 'pending', [
       { kind: 'tool_call', key: 'ev1', createdAt: n - 500_000 },
       { kind: 'tool_call', key: 'ev2', createdAt: n - 300_000 },
@@ -332,13 +333,16 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         matterIds: ids, messageIds: [], sessionIds: [], ...extra,
       })
       const permission = entries.get(IDS.portfolio)!.detail.permissions[0]
+      const summary = permission
+        ? permissionWaitingTitle(permission.display ?? permissionDisplay(permission.tool, permission.description, 'claude'), permission.tool, permission.description, lastLang)
+        : title(IDS.portfolio)
       const places = [
-        place('portfolio', [IDS.portfolio], { status: 'waiting', moving: false, line: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio),
+        place('portfolio', [IDS.portfolio], { status: 'waiting', moving: false, line: summary,
           waiting: { itemKey: `matter:${IDS.portfolio}`, kind: 'permission', matterId: IDS.portfolio, ...(permission ? {
             requestId: permission.id,
             ccOpinion: lastLang === 'zh-Hans' ? '如果要处理图片，可以允许这一步。' : 'Allow if image processing is needed.',
             questionReason: lastLang === 'zh-Hans' ? '安装会给项目新增依赖。' : 'Adds a dependency.',
-          } : {}), summary: permission ? `${permission.tool}: ${permission.description}` : title(IDS.portfolio), count: 1 } }),
+          } : {}), summary, count: 1 } }),
         place('trip', [IDS.trip], {}),
         place('notes', [IDS.report, IDS.notes], { status: 'done', moving: false, unseen: true, alsoChanged: 1, updatedAt: now() - 2 * HOUR }),
       ]

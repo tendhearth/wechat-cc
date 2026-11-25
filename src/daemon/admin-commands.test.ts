@@ -95,9 +95,9 @@ describe('admin-commands', () => {
     expect(await cmds.handle(msg('/health'))).toBe(true)
     expect(sendMessage).toHaveBeenCalledOnce()
     const body = sentBody()
-    expect(body).toContain('活跃 bot (2)')
+    expect(body).toContain('已连接的微信账号（2）')
     expect(body).toContain('bot-active-1')
-    expect(body).toContain('无过期 bot')
+    expect(body).toContain('没有过期的微信连接。')
   })
 
   it('/health with expired bots shows cleanup hint', async () => {
@@ -105,7 +105,7 @@ describe('admin-commands', () => {
     const cmds = make()
     await cmds.handle(msg('/health'))
     const body = sentBody()
-    expect(body).toContain('过期 bot (1)')
+    expect(body).toContain('连接已过期的微信账号（1）')
     expect(body).toContain('bot-dead-im-bot')
     expect(body).toContain('清理 bot-dead-im-bot')
     expect(body).toContain('清理所有过期')
@@ -360,7 +360,7 @@ describe('admin-commands', () => {
       expect(await cmds.handle(msg('/reset'))).toBe(true)
       expect(release).not.toHaveBeenCalled()
       expect(del).not.toHaveBeenCalled()
-      expect(sentBody()).toMatch(/未绑定|no project|未映射/i)
+      expect(sentBody()).toMatch(/还没关联项目/)
     })
   })
 
@@ -385,11 +385,11 @@ describe('admin-commands', () => {
       expect(await cmds.handle(msg('/health ai'))).toBe(true)
       const body = sentBody()
       // Both providers appear, with their status.
-      expect(body).toContain('claude')
-      expect(body).toContain('codex')
+      expect(body).toContain('Claude：对话编号 sid-1')
+      expect(body).toContain('Codex：没有可接着聊的记录。')
       // claude has a session (5m fresh); codex doesn't.
       expect(body).toMatch(/5m|5 min/i)
-      expect(body).toMatch(/无.*会话|no.*session/i)
+      expect(body).toMatch(/没有可接着聊的记录/)
     })
 
     it('reports gracefully when the chat has no project mapped', async () => {
@@ -400,7 +400,7 @@ describe('admin-commands', () => {
         sessionStore: { get: () => null, delete: () => {} },
       })
       expect(await cmds.handle(msg('/health ai'))).toBe(true)
-      expect(sentBody()).toMatch(/未绑定|no project|未映射/i)
+      expect(sentBody()).toMatch(/还没关联项目/)
     })
   })
 

@@ -147,7 +147,7 @@ export interface DaemonHandle {
   ilink: FakeIlinkHandle
   stateDir: string
   /** Enqueue a text inbound from chatId (default to_user_id is 'bot1'). */
-  sendText(chatId: string, text: string, opts?: { contextToken?: string; createTimeMs?: number; toUserId?: string }): void
+  sendText(chatId: string, text: string, opts?: { contextToken?: string; createTimeMs?: number; toUserId?: string; quote?: string }): void
   /**
    * Enqueue an image inbound (RawUpdate type=2). The fake-media stub
    * materializes a 3-byte stub file at <stateDir>/inbox/<chatId>/, and
@@ -337,7 +337,10 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
         create_time_ms: sendOpts?.createTimeMs ?? Date.now(),
         message_type: 1,
         message_state: 2,
-        item_list: [{ type: 1, msg_id: `m${nextMessageId()}`, text_item: { text } }],
+        item_list: [{
+          type: 1, msg_id: `m${nextMessageId()}`, text_item: { text },
+          ...(sendOpts?.quote !== undefined ? { ref_msg: { message_item: { type: 1, text_item: { text: sendOpts.quote } } } } : {}),
+        }],
         // Mirror real ilink: every inbound carries context_token. Tests that
         // want to exercise the missing-token path can pass `contextToken: ''`
         // explicitly. Without a default, assertChatRoutable would reject

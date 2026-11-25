@@ -1,11 +1,9 @@
 :root{
-  /* 旧变量名留着(页面各处还在用),值一律指向 packages/design-tokens 的 --th-*(与桌面、手机 app 同一套):
-     一个强调色(深绿)、其余灰阶 + 暖纸、全衬线。--faint 只作装饰(描边、点),文字用 --soft。 */
   --paper:var(--th-paper); --card:var(--th-paper); --ink:var(--th-ink); --soft:var(--th-ink-soft); --faint:var(--th-hair);
   --line:var(--th-hair); --line-soft:var(--th-rail);
   --accent:var(--th-accent); --on-accent:var(--th-on-accent); --dot:var(--th-warn); --glow:var(--th-glow);
   --danger:var(--th-bad); --wash:rgba(42,38,34,.05); --scene:var(--th-ground);
   --r-s:10px; --r-m:14px; --r-l:16px; --r-pill:999px;
-  --font:var(--th-font-serif);
-  --hand:var(--th-font-serif); --hand-ink:var(--th-ink-soft);
+  --font:-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", "Segoe UI", "Noto Sans SC", sans-serif;
+  --hand:"Kaiti SC",STKaiti,KaiTi,var(--font); --hand-ink:var(--th-ink-soft);
 }

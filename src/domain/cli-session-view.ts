@@ -1,15 +1,28 @@
+import { permissionCwd, PermissionDisplaySchema } from '@wechat-cc/protocol'
 /**
  * 终端会话的纯规则(架构终态 E5,从 adapters/store/cli-session-store.ts 搬来):读时把库里的状态按 stale 规则折算成
  * 对外的一条、排序。不碰库、不碰 node。
  */
 import type { CliSessionRow, CliSessionStatus, CliSessionView } from '../ports/cli-session'
-import { stripMarkdown, summarizeOneLine } from './one-line'
+import { stripMarkdown, summarizeOneLine, summarizeOneLineWithTruncation } from './one-line'
 
 /** 「最近一句」「等你那一项」压成一行的上限(M4d 起从这件事的步来,是原文;读时压,同以前写 cli_sessions 时)。 */
 export const CLI_SESSION_SUMMARY_MAX = 200
 const said = (text: string | null): string | null => (text ? summarizeOneLine(stripMarkdown(text), CLI_SESSION_SUMMARY_MAX) || null : null)
 /** 等你那一项多半是一条命令(`ls *.ts`):只压成一行,不当 markdown 去星号。 */
-const asked = (text: string | null): string | null => (text ? summarizeOneLine(text, CLI_SESSION_SUMMARY_MAX) || null : null)
+function pendingPermission(row: CliSessionRow): CliSessionView['pending'] {
+  if (!row.pending_tool) return null
+  const summary = summarizeOneLineWithTruncation(row.pending_summary ?? '', CLI_SESSION_SUMMARY_MAX)
+  const truncated = summary.truncated || row.pending_truncated === 1 ? true : row.pending_truncated === 0 ? false : undefined
+  let display: NonNullable<CliSessionView['pending']>['display']
+  try {
+    if (row.pending_display_json) display = PermissionDisplaySchema.safeParse(JSON.parse(row.pending_display_json)).data
+  } catch { /* Old or malformed preview data cannot hide a pending approval. */ }
+  const cwd = permissionCwd(row.pending_cwd)
+  return { tool: row.pending_tool, summary: summary.text || null, since: row.pending_at ?? row.last_event_at,
+    ...(display ? { display } : {}), ...(cwd ? { cwd } : {}), ...(truncated !== undefined ? { truncated } : {}),
+  }
+}
 
 /** running / waiting 多久没事件就当 idle(读时判定,不跑定时器)。 */
 export const CLI_SESSION_STALE_MS = 30 * 60_000
@@ -36,7 +49,7 @@ export function toCliSessionView(row: CliSessionRow, now: number): CliSessionVie
     last_event_at: row.last_event_at,
     last_prompt_at: row.last_prompt_at,
     created_at: row.created_at,
-    pending: status === 'waiting' && row.pending_tool ? { tool: row.pending_tool, summary: asked(row.pending_summary), since: row.pending_at ?? row.last_event_at } : null,
+    pending: status === 'waiting' ? pendingPermission(row) : null,
   }
 }
 

@@ -1,3 +1,4 @@
+import { permissionCwdWire, permissionDisplayWire, permissionMcpTargetWire } from './permission-display'
 import { RosterResponse } from './roster'
 import { PlacesResponse, PlaceWriteResponse } from './places'
 import { OptionalReplyMetadata } from './reply-attribution'
@@ -195,6 +196,8 @@ export const PermissionScript = z.object({ path: z.string(), content: z.string()
 export const PermissionScriptChunk = z.object({ content: z.string(), nextOffset: z.number().nullable() })
 export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
+  display: permissionDisplayWire, cwd: permissionCwdWire, mcp: permissionMcpTargetWire,
+  showSnapshotNotice: z.boolean().optional(),
   canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
 })
 
@@ -610,6 +613,11 @@ export const CliActivityPage = z.object({
 })
 export type CliActivityPageT = z.infer<typeof CliActivityPage>
 
+export const CliPendingPermission = z.object({
+  tool: z.string(), summary: z.string().nullable(), since: z.number(),
+  display: permissionDisplayWire, cwd: permissionCwdWire, truncated: z.boolean().optional(),
+})
+
 export const CliSessionRow = z.object({
   run_id:z.string().optional(),
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
@@ -618,7 +626,7 @@ export const CliSessionRow = z.object({
   status: z.enum(['running', 'waiting', 'idle', 'ended']), stale: z.boolean(),
   project: z.string(), machine: z.string().nullable(), last_summary: z.string().nullable(),
   last_event_at: z.number(), last_prompt_at: z.number().nullable(), created_at: z.number(),
-  pending: z.object({ tool: z.string(), summary: z.string().nullable(), since: z.number(), hash: z.string().nullable().optional(), actionable: z.boolean().optional() }).nullable(),
+  pending: CliPendingPermission.extend({ hash: z.string().nullable().optional(), actionable: z.boolean().optional() }).nullable(),
   // now(2026-10-17):在跑的会话此刻那一步(同 /m/api/cli/activity 的一项,不带 detail)。老 daemon / 读不到不带。
   now: CliActivityItem.optional(),
   // live_window(2026-10-18):这条 Claude 会话开在电脑的终端窗口里 ⇒ 说一句会送进那个窗口,在跑时也能说。老 daemon 不带。

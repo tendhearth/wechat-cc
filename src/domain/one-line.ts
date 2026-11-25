@@ -5,9 +5,13 @@
 
 /** 压成一行、截到上限;空串原样。 */
 export function summarizeOneLine(text: string, max: number): string {
+  return summarizeOneLineWithTruncation(text, max).text
+}
+
+export function summarizeOneLineWithTruncation(text: string, max: number): { text: string; truncated: boolean } {
   const one = text.replace(/\s+/g, ' ').trim()
-  if (one.length <= max) return one
-  return one.slice(0, max - 1) + '…'
+  if (one.length <= max) return { text: one, truncated: false }
+  return { text: one.slice(0, max - 1) + '…', truncated: true }
 }
 
 /**

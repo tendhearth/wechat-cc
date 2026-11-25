@@ -153,7 +153,7 @@ let storedFactsReviewPending = false
 function showStoredFactsError() {
   storedFactsFailed = true
   const records = document.getElementById('memory-facts-records')
-  if (records) records.innerHTML = '<p role="status"><span class="memory-facts-compact-hint">暂时无法读取记下的事。可以展开记忆库重新读取。</span><span class="memory-facts-wide-hint" hidden>暂时没能读取记下的事。</span> <button class="btn" type="button" data-memory-facts-retry hidden>重新读取</button></p>'
+  if (records) records.innerHTML = '<p role="status"><span class="memory-facts-wide-hint" hidden>暂时没能读取记下的事。</span> <button class="btn" type="button" data-memory-facts-retry hidden>重新读取</button></p>'
   const edit = /** @type {HTMLButtonElement|null} */ (document.getElementById('memory-facts-edit'))
   if (edit) edit.disabled = true
 }

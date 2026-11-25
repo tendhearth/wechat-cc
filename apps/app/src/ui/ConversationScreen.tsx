@@ -22,6 +22,7 @@ import { IconButton } from '../ui/IconButton'
 import { BusyIndicator } from '../ui/motion'
 import { StatusHint } from '../ui/StatusHint'
 import { MessageText } from '../ui/Markdown'
+import { MessageBubble } from './MessageBubble'
 import { ReplyAttachments, ReplyProcess } from '../ui/ReplyExtras'
 import { ReplySpeaker } from './ReplySpeaker'
 import { replyProvider } from '../view/reply-speaker'
@@ -30,7 +31,7 @@ import { ImageTray } from '../ui/ImageTray'
 import { SendTalkButton, TalkStatus, useHoldToTalk } from '../ui/HoldToTalk'
 import { mergeTranscript } from '../view/hold-to-talk'
 import type { PickedImage } from '../state/image-upload'
-import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES, replyAttributionFields } from '@wechat-cc/protocol'
+import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES, replyAttributionFields, parseApprovalLookupReply } from '@wechat-cc/protocol'
 import type { ChatModelViewT } from '../backend/types'
 import { componentAppearance, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
@@ -49,6 +50,7 @@ import { PlacesStrip } from './PlacesStrip'
 import { usePlaces } from '../state/places'
 import { inPlace } from '../view/places'
 import { ConversationMore } from '../ui/ConversationMore'
+import { useNotebookMailDay } from '../state/useNotebookMail'
 import { canSubmit } from '../view/connection'
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -66,6 +68,7 @@ export default function Chat() {
   const online = canSubmit(conn)
   const chat = useChat()
   const { backend } = useBackendCtx()
+  const notebookReplyDay = useNotebookMailDay()
   const { message, reference, locate } = useLocalSearchParams<{ message?: string; reference?: string; locate?: string }>()
   const listRef = useRef<FlatList<import('../view/conversation-work').ConversationItem>>(null)
   const located = useRef<string | null>(null)
@@ -210,9 +213,9 @@ export default function Chat() {
       <TopBar
         title="CC" showStatus onAvatar={() => router.push('/settings')}
         onConnection={() => router.push('/connections')} connectionTestID="now-connections"
-        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused}  />}
+        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused} notebookReply={!!notebookReplyDay} />}
         actions={<View style={{ flexDirection: 'row' }}><IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />
-          <ConversationMore /></View>}
+          <ConversationMore notebookReplyDay={notebookReplyDay} /></View>}
       />
       <PlacesStrip places={places.places} stale={places.stale} selected={place?.key ?? null} onSelect={p => setPlaceKey(p?.key ?? null)} onOpen={(href, p) => { places.seen(p); router.push(href as never) }} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{backend.mode === 'demo' ? <DemoBanner /> : null}</View>
@@ -307,26 +310,21 @@ export default function Chat() {
 
 // 用户消息用浅底，CC 回复为透明正文；左右与留白区分说话人,文件先于可展开的执行过程。
 function ChatBubble({ b, providers, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; providers?: ChatModelViewT['providers']; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
-  const { c } = useTheme()
   const appearance = componentAppearance.message
   const me = b.side === 'me'
+  const router = useRouter()
+  const approval = !me && b.speaker === 'notice' ? parseApprovalLookupReply(b.text) : null
   if (b.state === 'thinking') return <Thinking lang={lang} />
   const from = b.projection && replyProvider(b.side, b) ? null : b.projection==='result'?(lang==='zh-Hans'?'CC 的结果':'CC result'):b.projection==='stream'?'CC':t(lang, `chat.from.${b.source}`)
   // 只有附件的回复不画空文字区;过程仍可展开查看。
   return (
     <View testID={`chat-message-${b.key}`} style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
-      {hasBubbleText(b) ? <View
-        testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'}
-        style={{
-          maxWidth: '88%', paddingVertical: appearance.paddingY, paddingHorizontal: me ? appearance.paddingX : 0, gap: space.s,
-          borderRadius: appearance.radius, backgroundColor: me ? c[appearance.userBackground] : appearance.replyBackground,
-          opacity: b.state === 'failed' ? 0.8 : 1,
-        }}
-      >
+      {hasBubbleText(b) ? <MessageBubble testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'} mine={me} failed={b.state === 'failed'}>
         <ReplySpeaker role={b.side} reply={b} providers={providers} />
-        <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} text={b.text} />
+        <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} voice={!me && b.speaker !== 'notice' && !replyProvider(b.side, b) ? 'cc' : undefined} text={approval?.text ?? b.text} />
+        {approval ? <Button kind="secondary" label={lang === 'zh-Hans' ? '打开审批页' : 'Open approval'} onPress={() => router.push(approval.href)} testID="chat-open-approval" /> : null}
         {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
-      </View> : null}
+      </MessageBubble> : null}
       {!hasBubbleText(b) ? <ReplySpeaker role={b.side} reply={b} providers={providers} showFallback={false} /> : null}
       {b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}
       {b.originalUnavailable ? <Txt testID="chat-original-unavailable" role="meta" tone="inkSoft" style={{ maxWidth: '88%' }}>{t(lang, 'chat.originalUnavailable')}</Txt> : null}

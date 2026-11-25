@@ -93,7 +93,7 @@ for(const size of [{width:1400,height:850},{width:900,height:650},{width:390,hei
  await page.getByRole('button',{name:'2 项等你处理，查看请求',exact:true}).click()
  await expect(page.locator('[data-action="deny-permission"]')).toBeFocused()
  await expect(page.locator('[data-action="deny-permission"]')).toBeInViewport()
- await expect(page.locator('.wb-permission p')).toHaveText('bun run verify\ncwd: /synthetic/project\n仅允许本次请求')
+ await expect(page.locator('.wb-permission [data-kind="text"] .approval-source')).toHaveText('bun run verify\ncwd: /synthetic/project\n仅允许本次请求')
  await page.locator('[data-question-other]').fill('保留第二份')
  await page.screenshot({path:testInfo.outputPath('waiting.png')})
  await page.locator('[data-task-id="B"]').click();await page.locator('[data-task-id="A"]').click()

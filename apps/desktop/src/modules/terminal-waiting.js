@@ -8,11 +8,14 @@
 // 桌面上只写「项目」,哪家画成行尾的圆头像(2026-10-19,同手机 app;名字进读屏标签和小窗):
 // 「终端」和微信回话用的码是微信那头的东西,桌面用不上(2026-10-16)。
 import { V1, v1 } from '../daemon-client.js'
+import { permissionTextSegments, permissionCwd, PermissionDisplaySchema, permissionDisplay, permissionOperationSource } from '../generated/permission-display.js'
 
-/** @typedef {{session_id:string,code:string,source:string,displayName?:string,status:string,project:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null}|null}} CliSession */
-/** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,tool:string,command:string,commandLabel?:string}} TerminalRow */
+/** @typedef {{session_id:string,code:string,source:string,displayName?:string,status:string,project:string,cwd?:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null,display?:unknown,cwd?:unknown,truncated?:boolean,showSnapshotNotice?:boolean,hasScriptPreview?:boolean}|null}} CliSession */
+/** @typedef {import('./permission-operation.js').TerminalOperation} TerminalOperation */
+/** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null} & TerminalOperation} TerminalRow */
 
 const TITLE_MAX = 120
+const SUMMARY_LIMIT = 200
 
 // 原始工具名 → 一句人话的动词。认不出的工具照实写「想用 X」,不猜。
 /** @type {Record<string,string>} */
@@ -36,6 +39,29 @@ export function terminalTitle(tool, summary, source) {
 const oneLine = s => { const t = s.replace(/\s+/g, ' ').trim(); return t.length <= TITLE_MAX ? t : `${t.slice(0, TITLE_MAX - 1)}…` }
 
 /**
+ * 旧版摘要和结构化内容各有自己的截断标记。执行目录只取本次请求里的核实值。
+ * @param {Pick<CliSession,'project'|'cwd'> & {pending:NonNullable<CliSession['pending']>}} session
+ * @returns {TerminalOperation & {titleSummary:string}}
+ */
+export function terminalPendingOperation({ pending, cwd }) {
+  const tool = pending.tool === 'permission' ? '' : String(pending.tool ?? '')
+  const summary = String(pending.summary ?? '')
+  const titleSummary = permissionTextSegments(summary).map(part => part.text).join('').trim()
+  const structured = /** @type {TerminalOperation['display']} */ (PermissionDisplaySchema.safeParse(pending.display).data)
+  const summaryTruncated = pending.truncated ?? (summary.length >= SUMMARY_LIMIT || /(?:…|\.\.\.)\s*$/.test(summary))
+  const display = structured ?? (titleSummary ? { ...permissionDisplay(tool, summary), ...(summaryTruncated ? { truncated: true } : {}) } : undefined)
+  return {
+    tool, titleSummary, display, summaryTruncated, summaryOnly: !structured && !!display,
+    ...(structured && !structured.truncated ? { raw: permissionOperationSource(structured) }
+      : summary && !summaryTruncated ? { summary } : {}),
+    // 项目目录只写真的路径:会话没报目录时,项目名不是目录,也不能拿来当相对路径的起点。
+    cwd: permissionCwd(pending.cwd), projectPath: permissionCwd(cwd),
+    ...(typeof pending.showSnapshotNotice === 'boolean' ? { showSnapshotNotice: pending.showSnapshotNotice } : {}),
+    ...(typeof pending.hasScriptPreview === 'boolean' ? { hasScriptPreview: pending.hasScriptPreview } : {}),
+  }
+}
+
+/**
  * 只要等批准的那几条;别的状态(在跑 / 做完了)不是「等你」。
  * @param {unknown} sessions @returns {TerminalRow[]}
  */
@@ -45,20 +71,19 @@ export function terminalWaitingRows(sessions) {
   for (const raw of sessions) {
     const s = /** @type {CliSession} */ (raw)
     if (!s || s.status !== 'waiting' || typeof s.session_id !== 'string' || !s.pending) continue
-    const tool = s.pending.tool === 'permission' ? '' : String(s.pending.tool ?? '')
-    const summary = String(s.pending.summary ?? '').trim()
+    const { titleSummary, ...operation } = terminalPendingOperation({ ...s, pending: s.pending })
     // 没写 source 的是老 daemon(那时只有 Claude);写了个不认识的 ⇒ 照它的名字画首字母,别冒充 Claude。
     const said = typeof s.source === 'string' ? s.source.trim() : ''
     const agent = said || 'claude'
     // 叫什么由 daemon 定(收敛清单 ⑥,行里的 displayName);老 daemon 不带 ⇒ 照 id 写。
     const source = typeof s.displayName === 'string' && s.displayName ? s.displayName : agent
     const hash = typeof s.pending.hash === 'string' && /^[a-z0-9]{5}$/.test(s.pending.hash) ? s.pending.hash : null
+    const detail = String(s.project ?? '')
     rows.push({
       id: s.session_id,
-      title: terminalTitle(tool, summary, source),
-      detail: String(s.project ?? ''), agent, source,
-      hash, tool, command: summary,
-      commandLabel: VERB[tool] === '想运行' ? '要运行的命令' : tool ? `${tool} 要做的是` : '具体内容',
+      title: terminalTitle(operation.tool, titleSummary, source),
+      detail, agent, source,
+      hash, ...operation,
     })
   }
   return rows

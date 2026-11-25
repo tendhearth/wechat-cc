@@ -9,6 +9,7 @@ import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from '../mcp-s
 import { isAuthFail } from '../../../domain/auth-fail'
 import { providerErrorCodeOf, withProviderCode, errorWithProviderCode } from '../../../lib/provider-error-code'
 import { log } from '../../../lib/log'
+import { assertCallAllowed, sessionCallTarget, type CallTarget, type NetworkGate } from '../../../lib/network-gate'
 import { codexCallTarget, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import { codexErrorCode, type CodexTimeouts } from './codex-errors'
@@ -19,7 +20,7 @@ export { CODEX_CAPABILITIES } from '../../../domain/provider-capabilities'
 export { codexChatToolCall } from './codex-app-server'
 
 /**
- * Codex 对话侧(微信 / App 的聊天、delegate、首次使用探测、cheapEval)—— 走 `codex app-server`,和工作台同一个
+ * Codex 对话侧(微信 / App 的聊天、delegate、cheapEval)—— 走 `codex app-server`,和工作台同一个
  * 协议客户端(codex-app-server.ts 的 spawnCodexAppServerSession,对话侧的差别见 CodexChatProfile)。
  * B1(主人 2026-10-25 拍板):以前这里是 `@openai/codex-sdk`(每一轮一个 `codex exec`),已删。
  *
@@ -58,6 +59,8 @@ export interface CodexChatProviderOptions {
   closeTimeoutMs?: number
   /** 测试接缝:起 app-server 子进程(src/test-support/executors/codex-scripted.ts 的剧本替身)。生产不传。 */
   spawnProcess?: CodexAppServerSpawn
+  networkGate?: NetworkGate
+  onNativeDefault?: (target: CallTarget) => void
   /**
    * 审批 on-request 的会话:每次 spawn 造一个应答者(codex-chat-gate.ts 的 makeCodexChatGate)。不给 ⇒ 没人可问,
    * compilePolicy 说 on-request 的也落回 never(以前的行为)。
@@ -130,35 +133,37 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } },
   })
 
+  const oneShot = async (prompt: string, model: string | undefined, signal?: AbortSignal): Promise<string> => {
+    let session: CodexAppServerSession | undefined
+    const abort = () => { void session?.close().catch(() => {}) }
+    try {
+      const project = { alias: 'codex-cheap-eval', path: tmpdir() }
+      session = await spawnCodexAppServerSession(coreOptions(model), project, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile(), signal)
+      signal?.throwIfAborted()
+      signal?.addEventListener('abort', abort, { once: true })
+      const parts: string[] = []
+      for await (const ev of session.dispatch(prompt)) {
+        if (ev.kind === 'text') parts.push(ev.text)
+        else if (ev.kind === 'error') throw withProviderCode(new Error(ev.message), (ev.code as ReturnType<typeof codexErrorCode>) ?? codexErrorCode(ev.message))
+      }
+      return parts.join('')
+    } catch (err) {
+      if (providerErrorCodeOf(err)) throw err
+      throw withProviderCode(err, codexErrorCode(err instanceof Error ? err.message : String(err)))
+    } finally {
+      signal?.removeEventListener('abort', abort)
+      await session?.close().catch(() => {})
+    }
+  }
+
   return {
     callTarget(kind, ctx) {
       if (kind === 'cheapEval' || kind === 'strongEval') return targetOf(cheapModel ?? null, tmpdir())
-      return targetOf(ctx?.model ?? opts.model ?? null, null, opts.dangerouslyBypassApprovalsAndSandbox ? { dangerously_bypass_approvals_and_sandbox: true } : undefined)
+      return targetOf(ctx?.execution?.model ?? ctx?.model ?? opts.model ?? null, null, opts.dangerouslyBypassApprovalsAndSandbox ? { dangerously_bypass_approvals_and_sandbox: true } : undefined)
     },
     /** 一次 app-server 冷启动 + 一轮(约 3-5s/次),给 20s 余量。 */
     cheapEvalBudgetMs: 20_000,
-    async cheapEval(prompt, options): Promise<string> {
-      const signal = options?.signal
-      let session: CodexAppServerSession | undefined
-      const abort = () => { void session?.close().catch(() => {}) }
-      try {
-        session = await spawnCodexAppServerSession(coreOptions(cheapModel), { alias: 'codex-cheap-eval', path: tmpdir() }, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile(), signal)
-        signal?.throwIfAborted()
-        signal?.addEventListener('abort', abort, { once: true })
-        const parts: string[] = []
-        for await (const ev of session.dispatch(prompt)) {
-          if (ev.kind === 'text') parts.push(ev.text)
-          else if (ev.kind === 'error') throw withProviderCode(new Error(ev.message), (ev.code as ReturnType<typeof codexErrorCode>) ?? codexErrorCode(ev.message))
-        }
-        return parts.join('')
-      } catch (err) {
-        if (providerErrorCodeOf(err)) throw err
-        throw withProviderCode(err, codexErrorCode(err instanceof Error ? err.message : String(err)))
-      } finally {
-        signal?.removeEventListener('abort', abort)
-        await session?.close().catch(() => {})
-      }
-    },
+    cheapEval: (prompt, options) => oneShot(prompt, cheapModel, options?.signal),
     supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // read-only does not disable native read/shell tools or inherited project instructions.
@@ -170,17 +175,24 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       // on-request 只在有人答的时候开:没接应答者 ⇒ never(不让 codex 停在一个没人回的审批上)。
       const approve = tierOpts.approvalPolicy === 'on-request' ? opts.approvals?.(ctx) : undefined
       const config = codexChatThreadConfig(opts.mcpServers, ctx, bypass, !!approve)
-      const model = ctx.model ?? opts.model
+      const model = ctx.execution?.model ?? ctx.model ?? opts.model
       const approvalPolicy = tierOpts.approvalPolicy === 'on-request' && !approve ? 'never' : tierOpts.approvalPolicy
-      const profile: CodexChatProfile = { sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: sessionSubprocessEnv(), log, ...(approve ? { approve } : {}) }
+      const profile: CodexChatProfile = {
+        sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: sessionSubprocessEnv(), log, ...(approve ? { approve } : {}),
+        onNativeDefault: target => opts.onNativeDefault?.(target),
+      }
       // 对话只把这几样交给协议客户端;工作台专用的(审批桥、时间线、后台生命周期)一律不带。
       const base: SpawnContext = {
         tierProfile: ctx.tierProfile, permissionMode: ctx.permissionMode, chatId: ctx.chatId,
+        reportStartupTarget: ctx.reportStartupTarget,
         ...(ctx.ephemeral?{ephemeral:true}:{}),
         ...(ctx.appendInstructions ? { appendInstructions: ctx.appendInstructions } : {}),
         ...(model ? { model } : {}),
       }
-      const open = (resumeSessionId?: string) => spawnCodexAppServerSession(coreOptions(opts.model), project, { ...base, ...(resumeSessionId ? { resumeSessionId } : {}) }, profile)
+      const open = (resumeSessionId?: string) => {
+        ctx.reportStartupTarget?.(undefined)
+        return spawnCodexAppServerSession(coreOptions(opts.model), project, { ...base, ...(resumeSessionId ? { resumeSessionId } : {}) }, profile)
+      }
       let core: CodexAppServerSession
       let resumedHistory = false
       if (ctx.resumeSessionId) {
@@ -188,25 +200,27 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
           core = await open(ctx.resumeSessionId)
           resumedHistory = true
           log('SESSION_RESUME', `alias=${project.alias} thread_id=${ctx.resumeSessionId} provider=codex`)
-        } catch (err) {
+        } catch {
           // 续接不上(线程文件没了 / 不认):记下来,起一个新线程 —— 不让这个聊天每一轮都卡在同一个坏 id 上。
           // 起新线程也失败 ⇒ 那是 codex 本身的问题(登录、配置),原样抛给会话管理。
-          log('SESSION_RESUME_FAILED', `alias=${project.alias} thread_id=${ctx.resumeSessionId} provider=codex — ${err instanceof Error ? err.message.slice(0, 200) : String(err)}; starting a new thread`)
+          log('SESSION_RESUME_FAILED', `alias=${project.alias} thread_id=${ctx.resumeSessionId} provider=codex; starting a new thread`)
           core = await open()
         }
       } else core = await open()
       let lastThreadId = core.threadId()
       log('SESSION_INIT', `alias=${project.alias} thread_id=${lastThreadId} provider=codex`)
       let closed = false
+      let cancellations = 0
 
-      return {
+      const session: AgentSession = {
         resumedHistory, resumedHistoryOwnerOnly:true,
         callTarget: () => core.callTarget?.() ?? targetOf(model ?? null, project.path, config),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           return {
             async *[Symbol.asyncIterator](): AsyncGenerator<AgentEvent> {
               if (closed) return
-              let events: AsyncIterable<AgentEvent>
+              const startedCancellation = cancellations
+              let respawned = false
               try {
                 if (!core.alive()) {
                   // 上一个 app-server 没了:换新进程,续接同一个 thread。
@@ -215,16 +229,23 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
                   if (closed) return
                   core = await open(lastThreadId || undefined)
                   lastThreadId = core.threadId()
+                  respawned = true
                 }
-                events = core.dispatch(text, attachments)
               } catch (err) {
                 // 起不来 / 上一轮还没收尾:带码的 error 事件收尾,别抛 —— 抛出去协调器拿不到 summary。
                 const ev = errorEvent(err)
-                log('SESSION_ERROR', `alias=${project.alias} provider=codex dispatch: ${ev.message.slice(0, 300)}`)
+                log('SESSION_ERROR', `alias=${project.alias} provider=codex dispatch${ev.code ? ` code=${ev.code}` : ''}`)
                 yield ev
                 return
               }
-              for await (const ev of events) {
+              try {
+                if (respawned && opts.networkGate) await assertCallAllowed(opts.networkGate, sessionCallTarget(core, 'codex'))
+              } catch (err) {
+                if (closed || startedCancellation !== cancellations) return
+                throw err
+              }
+              if (closed || startedCancellation !== cancellations) return
+              for await (const ev of core.dispatch(text, attachments)) {
                 if (ev.kind === 'init' && ev.sessionId) lastThreadId = ev.sessionId
                 yield ev
               }
@@ -237,6 +258,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
         },
         async cancel(): Promise<void> {
           if (closed) return
+          cancellations++
           // 中断这一轮,会话留着:之后的 dispatch 照常。
           await core.cancel?.().catch(() => {})
         },
@@ -245,6 +267,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
           await core.close()
         },
       }
+      return session
     },
   }
 }

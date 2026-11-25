@@ -1,6 +1,6 @@
 // @ts-check
 // matter-status.js — 一件事的状态 ⇒ 状态表里的哪一格、行首画什么(设计稿 2026-10-31 §4 U4,桌面一套语言 2026-11-05)。无副作用。
-// 主页(now-page.js)、「全部」与详情(workbench.js)都从这里拿,别各自写一份映射:
+// 「全部」与详情(workbench.js)都从这里拿,别各自写一份映射:
 // 词条 / 图标 / 色调 / 分组的源头是 packages/protocol/src/status-table.ts(生成物 ../generated/status-table.js)。
 import { STATUS_TABLE } from '../generated/status-table.js'
 import { icon } from './icons.js'

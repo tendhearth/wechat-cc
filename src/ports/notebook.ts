@@ -3,6 +3,7 @@ import type { NotebookEntry, NotebookPaper, NotebookPen, NotebookRow } from '../
 
 export interface NotebookSettings {
   replyReadState: { highWater: number; missedIds: string[] }
+  explicitAckDevices: string[]
   repliesSeenAt: number
   repliesSeenIds: string[]
   pen: NotebookPen
@@ -34,7 +35,8 @@ export interface NotebookCaller {
 export interface Notebook {
   open(origin: 'desktop' | 'app', fonts?: string): Promise<void> | undefined
   page(day?: string): NotebookPageResponseT
-  markRepliesSeen(ids: readonly string[]): void
+  markRepliesSeen(ids: readonly string[], explicitDeviceId?: string): void
+  usesExplicitAck(deviceId: string): boolean
   unseen(): { ok: true; unseen: boolean; day: string | null }
   write(body: string, clientId: string, origin: 'desktop' | 'app'): NotebookEntry
   strike(id: string, struck: boolean): 'ok' | 'missing' | 'cc'

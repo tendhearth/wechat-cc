@@ -29,6 +29,7 @@
  *     (test-support/executors/codex-scripted.ts). No real codex runs.
  */
 import { vi } from 'vitest'
+import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 
 export interface FakeSdkScript {
   /**
@@ -38,6 +39,7 @@ export interface FakeSdkScript {
   onDispatch(text: string): Promise<{
     toolCalls: Array<{ name: string; input: unknown }>
     finalText: string
+    claudeApproval?: { tool: string; input: Record<string, unknown> }
     /**
      * Codex only: raw scripted app-server steps played BEFORE the tool calls / final text
      * (e.g. a `request` step for an approval — see test-support/executors/codex-scripted.ts).
@@ -256,7 +258,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
    * Accepts both { prompt: string } and { prompt: AsyncIterable<SDKUserMessage> }.
    * Returns an AsyncGenerator of SDKMessage-shaped objects.
    */
-  const fakeQuery = (opts: { prompt: unknown; options?: unknown }) => {
+  const fakeQuery = (opts: { prompt: unknown; options?: { canUseTool?: CanUseTool } }) => {
     return Object.assign((async function* () {
       const { prompt } = opts
 
@@ -332,6 +334,12 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         }
 
         const result = await script.onDispatch(text)
+        if (result.claudeApproval) {
+          if (!opts.options?.canUseTool) throw Error('missing Claude approval callback')
+          await opts.options.canUseTool(result.claudeApproval.tool, result.claudeApproval.input, {
+            signal: new AbortController().signal,
+          } as Parameters<CanUseTool>[2])
+        }
         for (const msg of await buildCycle(result)) yield msg
       }
     })(), {
@@ -361,7 +369,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 //   - one-shot threads (cheapEval: read-only + thread config network_access=false
 //     — sessions never set it, codex-chat-provider.test.ts pins both halves) are
 //     NOT wired to codexScript and never fire the spawn recorder; they answer via
-//     the moderator script (or 'ok', which the first-use probe needs).
+//     the moderator script (or 'ok').
 // ---------------------------------------------------------------------------
 vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
   const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')

@@ -2,6 +2,7 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { approvalLookupReply } from '@wechat-cc/protocol'
 import { color, componentAppearance, typeScale } from '@wechat-cc/design-tokens'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type ChatPageT } from '../backend/types'
@@ -10,10 +11,10 @@ import { withLang, withProviders } from './providers.test-support'
 import Chat from '../ui/ConversationScreen'
 import DevE2E from '../app/dev-e2e'
 const scrollHost = vi.hoisted(() => ({ offset: vi.fn() }))
-const route = vi.hoisted(() => ({ params: {} as { op?: string }, keychainRead: vi.fn(), keychainWrite: vi.fn(), keychainDelete: vi.fn() }))
+const route = vi.hoisted(() => ({ params: {} as { op?: string }, push: vi.fn(), keychainRead: vi.fn(), keychainWrite: vi.fn(), keychainDelete: vi.fn() }))
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => route.params, useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
+vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => route.params, useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push: route.push }) }))
 vi.mock('react-native', async () => {
   const { createElement, forwardRef, useImperativeHandle } = await import('react')
   const { nativeBoundary } = await import('../ui/native-motion.test-support')
@@ -52,7 +53,7 @@ async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = 
   await act(() => root.render(withProviders(createElement(Chat), { backend, lang }))); await flush()
   return { read, say, backend }
 }
-beforeEach(() => { scrollHost.offset.mockClear(); route.params = {}; route.keychainRead.mockClear(); route.keychainWrite.mockClear(); route.keychainDelete.mockClear(); clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
+beforeEach(() => { scrollHost.offset.mockClear(); route.params = {}; route.push.mockClear(); route.keychainRead.mockClear(); route.keychainWrite.mockClear(); route.keychainDelete.mockClear(); clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
 afterEach(async () => { await act(() => root.unmount()); container.remove() })
 
 describe('native chat feedback', () => {
@@ -92,7 +93,8 @@ describe('native chat feedback', () => {
     expect(JSON.parse(cc.getAttribute('data-style')!).backgroundColor).toBe('transparent')
     const textStyle=(node:HTMLElement,text:string)=>JSON.parse([...node.querySelectorAll('span')].find(n=>n.textContent===text)!.getAttribute('data-style')!)
     expect(textStyle(me,'我的消息').fontSize).toBe(typeScale.bubble.phone)
-    expect(textStyle(cc,'CC 的回复').fontSize).toBe(typeScale.body.phone)
+    // CC 的回复用它自己的字;手写字字面小,放大到 18 看起来和正文一样大
+    expect(textStyle(cc,'CC 的回复')).toMatchObject({ fontFamily: 'THPenHand-Regular', fontSize: 18 })
     expect(JSON.parse(byId('now-cc').getAttribute('data-style')!)).toMatchObject({minWidth:44,minHeight:44})
   })
 
@@ -259,9 +261,22 @@ describe('reply attribution avatars', () => {
     expect(row('legacy message').textContent).toContain('CC')
   })
 
-  it('keeps the transcript and provider-id accessible name when model settings cannot load', async () => {
+  it('uses the hand for CC’s reply body (unattributed old replies included), never for a named agent or a notice', async () => {
+    await attributedScreen([
+      reply('cc', { speaker: 'cc', provider: 'claude', text: '我来看看' }),
+      reply('agent', { speaker: 'agent', provider: 'codex', text: '我来看看' }),
+      reply('legacy', { text: '我来看看' }),
+      reply('notice', { speaker: 'notice', text: '我来看看' }),
+    ])
+    for (const [id, expected] of [['cc', 'THPenHand-Regular'], ['agent', undefined], ['legacy', 'THPenHand-Regular'], ['notice', undefined]] as const) {
+      const body = [...byId(`chat-message-${id}`).querySelectorAll('span[data-style]')].find(node => node.textContent === '我来看看')!
+      expect(JSON.parse(body.getAttribute('data-style')!).fontFamily).toBe(expected)
+    }
+  })
+
+  it('keeps the transcript and readable executor name when model settings cannot load', async () => {
     await attributedScreen([reply('offline reply', { speaker: 'agent', provider: 'claude' })], true)
-    expect(avatar('offline reply')?.getAttribute('aria-label')).toBe('claude')
+    expect(avatar('offline reply')?.getAttribute('aria-label')).toBe('Claude')
     expect(row('offline reply').textContent).toContain('offline reply')
   })
 
@@ -276,4 +291,18 @@ describe('reply attribution avatars', () => {
     expect(row('streamed reply').textContent).not.toContain('CC')
     expect(row('brought back reply').textContent).not.toContain('CC')
   })
+})
+
+it('opens a history notice directly at its exact approval and performs no write', async () => {
+  const id = 'deadbeef', request = '11111111-1111-4111-8111-111111111111'
+  const text = approvalLookupReply(id, request)
+  const base = { source: 'phone' as const, text, at: Date.now(), truncated: false, kind: 'text' as const }
+  const { say } = await mount({ ...empty(), messages: [
+    { ...base, id: 'notice', role: 'cc', speaker: 'notice' },
+    { ...base, id: 'agent', role: 'cc', speaker: 'agent' },
+  ] })
+  expect(container.querySelectorAll('[data-testid="chat-open-approval"]')).toHaveLength(1)
+  await click('chat-open-approval')
+  expect(route.push).toHaveBeenCalledExactlyOnceWith('/matter/' + id + '/decide?request=' + request)
+  expect(say).not.toHaveBeenCalled()
 })

@@ -103,6 +103,7 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
       'GET /v1/llm/setup', 'POST /v1/llm/setup',
       'GET /v1/roster', // 名单只给 operator 与配对设备。
       'GET /v1/settings/recap', 'POST /v1/settings/recap', // 桌面偏好。
+      'GET /v1/calendar/status', 'POST /v1/calendar/enabled', // 桌面日历偏好。
       'POST /v1/labs', 'GET /v1/places/map', 'POST /v1/places/map/pin', 'POST /v1/places/map/outline', // 桌面导图实验。
       'GET /v1/terminal/search', // 本机终端发言搜索，仅桌面 operator。
       'GET /v1/places', 'POST /v1/places/move', 'POST /v1/places/hide', // 地方:读同名单;顺序 / 收起只给 operator(2026-11-18)。

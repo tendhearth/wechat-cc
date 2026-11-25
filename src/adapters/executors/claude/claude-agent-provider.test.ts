@@ -104,6 +104,14 @@ describe('Claude native execution choice',()=>{
   const project={alias:'task',path:'/tmp'}
   const context={tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const,chatId:'task'}
   const options=()=> (sdk as unknown as {__test_last_options:()=>any}).__test_last_options()
+  it('opens a chat with the pinned model', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({ model: 'default-model' }) })
+    const session = await provider.spawn(project, { ...context, model: 'pinned-model' })
+    try {
+      expect(options().model).toBe('pinned-model')
+      expect(session.callTarget?.()?.model).toBe('pinned-model')
+    } finally { await session.close() }
+  })
   it('oneoff disables cwd-based native auto memory while retaining project hard rules',async()=>{
     const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({settingSources:['project','local'],settings:{autoMemoryEnabled:true}})})
     const session=await provider.spawn(project,{...context,ephemeral:true,oneoff:true})
@@ -313,7 +321,7 @@ describe('claude-agent-provider', () => {
 
     await expect(gate('Read', { file_path: '/tmp/report.md' }, { signal } as never)).resolves.toEqual({ behavior: 'allow' })
     await expect(gate('Bash', { command: 'rm -rf build' }, { signal, title: 'Remove build output' } as never)).resolves.toEqual({ behavior: 'allow' })
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'Bash', description: 'Remove build output\ncommand=rm -rf build', command: 'rm -rf build', onDenied: expect.any(Function) }, signal)
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'Bash', description: 'Remove build output\ncommand=rm -rf build', command: 'rm -rf build', display: { body: { kind: 'command', command: 'rm -rf build' }, note: 'Remove build output' }, onDenied: expect.any(Function) }, signal)
   })
 
   it('denies task MCP tools and relay requests without an active callback', async () => {

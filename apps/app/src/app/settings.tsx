@@ -105,7 +105,7 @@ export default function Settings() {
         </> : null}
         {!demo ? <LinkRow style={rowStyle} icon="device" testID="settings-devices" label={st(lang, 'devices')} onPress={() => router.push('/devices')} /> : null}
         {heading(st(lang, 'preferences'))}
-        {disclosure('language', t(lang, 'settings.language'), 'book', choices.find(choice => choice.v === langOverride)?.label)}
+        {disclosure('language', t(lang, 'settings.language'), 'globe', choices.find(choice => choice.v === langOverride)?.label)}
         {panel === 'language' ? <View testID="settings-language" accessibilityRole="radiogroup" style={{ paddingLeft: space.xl }}>
           {choices.map(o => <ChoiceRow key={o.id} testID={`settings-language-${o.id}`} label={o.label} on={langOverride === o.v} onPress={() => setLangOverride(o.v)} />)}
         </View> : null}
@@ -117,7 +117,7 @@ export default function Settings() {
             {push.status === 'registered' ? <Button kind="secondary" testID="settings-notif-test" label={t(lang, 'settings.notifTest')} busy={testing} disabled={testing} onPress={sendTest} /> : null}
           </View> : null}
         </> : null}
-        {disclosure('privacy', t(lang, 'settings.privacy'), 'shield')}
+        {disclosure('privacy', t(lang, 'settings.privacy'), 'lock')}
         {panel === 'privacy' ? <Txt testID="settings-privacy" role="bubble" style={{ paddingVertical: space.m }}>{t(lang, 'settings.privacyBody')}</Txt> : null}
         <View style={{ marginTop: space.xl }}>
         {disclosure('about', st(lang, 'about'), 'info')}

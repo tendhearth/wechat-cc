@@ -75,7 +75,13 @@ it('streams progress, requests the exact artifact permission, delivers and resum
   const events=await collect(s.dispatch('Create the report'));await s.close()
   const id=events.find(e=>e.kind==='init')!;if(id.kind!=='init')throw Error('init')
   expect(events.map(e=>e.kind)).toEqual(['init','text','tool_call','tool_call','text','result'])
-  expect(permit.mock.calls[0]?.[0]).toMatchObject({tool:'SaveArtifact',description:expect.stringContaining('report.md')})
+  const request = permit.mock.calls[0]?.[0] as Parameters<NonNullable<SpawnContext['requestPermission']>>[0]
+  expect(request.tool).toBe('SaveArtifact')
+  expect(request.display?.body.kind).toBe('write')
+  expect(request.display?.body.kind === 'write' && request.display.body.path.endsWith('/report.md') && request.display.body.content === '# Result\n42' &&
+    request.reviewDescription?.endsWith(request.display.body.content) &&
+    request.display.extra?.every(({ value }) => request.description.includes(value))).toBe(true)
+  expect(request.cwd).toBeUndefined()
   expect(readFileSync(join(project,'.cc-workbench',taskId,'report.md'),'utf8')).toBe('# Result\n42')
   expect(p.canResume(project,id.sessionId)).toBe(true)
   const resumed=await p.spawn({alias:`workbench:${taskId}`,path:project},ctx({resumeSessionId:id.sessionId}))
@@ -89,6 +95,17 @@ it('denied artifact writes leave no file and return a denial to the model',async
   const s=await p.spawn({alias:`workbench:${taskId}`,path:project},ctx({requestPermission:async()=>false}));const events=await collect(s.dispatch('save'));await s.close()
   expect(existsSync(join(project,'.cc-workbench',taskId,'no.txt'))).toBe(false)
   expect(JSON.stringify(f.seen[1])).toContain('permission_denied');expect(events.at(-1)?.kind).toBe('result')
+})
+
+it('returns the rejected operation and owner reason to the API executor', async () => {
+  const f = scripted([{ call: { id: 'no', name: 'SaveArtifact', input: { name: 'no.txt', content: 'no' } } }, { text: 'Permission was declined.' }])
+  const session = await provider(f.model).spawn({ alias: `workbench:${taskId}`, path: project }, ctx({
+    requestPermission: async request => { request.onDenied?.('请先核对'); return false },
+  }))
+  await collect(session.dispatch('save'))
+  await session.close()
+  const feedback = JSON.stringify(f.seen[1])
+  expect(feedback.includes('no.txt') && feedback.includes('请先核对')).toBe(true)
 })
 
 it.each(['length','unknown','content-filter','error'])('never marks %s finish as task completion',async(finish)=>{

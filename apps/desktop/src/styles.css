@@ -5019,23 +5019,19 @@ b, strong { font-weight: 500; }
 .wb-task-marks .th-origin { --th-origin-size: 14px; }
 .wb-task-agents { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; color: var(--wb-muted); font-size: 12px; line-height: 1.5; }
 .wb-task-agents > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.now-waiting-row.now-terminal-row { grid-template-columns: minmax(0, 1fr) auto auto; }
-.now-terminal-agent { display: inline-flex; }
 
 /* Desktop identity contract; shared avatar CSS also serves the unchanged PWA. */
 body .th-agents { --th-agent-size:var(--th-identity-agent-size); }
 
 /* 管家的屋子：页头是全局导航，内容留给对话。 */
-.dashboard .dash-window { position: relative; grid-template-rows: 72px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) auto; background: var(--th-paper); }
-.dash-topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; border-bottom: 1px solid var(--th-hair); min-width: 0; }
-.dash-topbar nav { display: flex; align-items: center; gap: 24px; }
+.dashboard .dash-window { position: relative; }
+.dash-topbar { min-width: 0; }
 .dash-topbar button, .topbar-more summary { background: transparent; border: 0; padding: 0; color: var(--th-ink-soft); font: inherit; font-size: var(--th-size-meta); letter-spacing: var(--th-tracking-meta); cursor: pointer; }
 #topbar-cc { position:relative; display:flex; flex:none; }
 .topbar-figure { position: relative; width: 48px; height: 48px; }
 .topbar-figure img { position: absolute; inset: 0; width: 48px; height: 48px; object-fit: contain; }
 #topbar-cc[data-cc="here"] .topbar-cc-dark, #topbar-cc:not([data-cc="here"]) .topbar-cc-light { visibility: hidden; }
 .topbar-waiting-dot { display:none; position:absolute; top:4px; right:4px; z-index:1; width:8px; height:8px; border-radius:50%; background:var(--th-accent); }
-body:not([data-pane="overview"]) #topbar-cc[data-waiting] .topbar-waiting-dot { display:block; }
 #topbar-cc:not([data-troubled]) .pet-prop[data-prop="exclamation"] { visibility:hidden; }
 #topbar-cc .now-pet-stage { position: absolute; left: 0; top: 0; width: 48px; height: 48px; pointer-events: none; }
 #topbar-cc .now-pet-sprite { width: 48px; height: 48px; object-fit: contain; }
@@ -5067,8 +5063,6 @@ body:not([data-pane="overview"]) #topbar-cc[data-waiting] .topbar-waiting-dot { 
 @media (max-width: 1079px) {
   .roster-aside { display: none; position: absolute; right: 0; top: 72px; bottom: 0; max-width: 100%; z-index: 60; }
   .roster-aside[data-open] { display: block; }
-  #topbar-roster { display: block; }
-  .dash-topbar nav { gap: 16px; }
 }
 
 #roster-dock { height: 100%; display: flex; flex-direction: column; min-height: 0; }
@@ -5079,6 +5073,7 @@ body:not([data-pane="overview"]) #topbar-cc[data-waiting] .topbar-waiting-dot { 
 #roster-dock .workbench-pane > .cc-life-topline { display: none !important; }
 #roster-dock .wb-main { min-width: 0; }
 #roster-dock .wb-content-inner, #roster-dock .wb-controls-inner { width: 100%; padding: 16px; }
+#roster-dock .wb-alerts { padding: 0 16px; }
 #roster-dock .wb-task-head { padding: 16px; }
 #roster-dock .wb-sidebar { display: none; }
 #roster-dock .wb-controls { position: relative; }
@@ -5091,11 +5086,6 @@ body:not([data-pane="overview"]) #topbar-cc[data-waiting] .topbar-waiting-dot { 
 #topbar-cc .roster-glance { position: absolute; left: 0; top: 0; width: 48px; height: 48px; object-fit: contain; pointer-events: none; }
 #topbar-cc[data-roster-glance] .now-pet-stage, #topbar-cc[data-roster-glance] .topbar-figure { visibility: hidden; }
 
-@media (max-width: 600px) {
-  .dash-topbar { padding: 0 12px; }
-  .dash-topbar nav { gap: 10px; }
-  .topbar-home { min-width:0; }
-}
 @media (max-width: 1079px) and (prefers-reduced-motion: no-preference) {
   .roster-aside[data-open] { animation: roster-enter 180ms ease-out; }
   @keyframes roster-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }

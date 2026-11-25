@@ -40,8 +40,12 @@ describe('phone style guard', () => {
   it('hold-to-talk never sends by itself', () => {
     for (const f of ['ui/HoldToTalk.tsx', 'ui/talk-recorder.ts', 'state/hold-to-talk.ts', 'view/hold-to-talk.ts']) expect(readFileSync(join(SRC, f), 'utf8'), f).not.toMatch(/chatSay|\bsend\(|\.say\(/)
   })
-  it('selected state is restrained (no rail colour block behind a chosen row / tab)', () => {
-    for (const f of TSX) expect(readFileSync(f, 'utf8').match(/on \? c\.rail|focused \? c\.rail|selected \? c\.rail/g) ?? [], rel(f)).toEqual([])
+  it('reserves the rail background for the selected search tab', () => {
+    for (const f of TSX) {
+      const source = readFileSync(f, 'utf8').replace(/\r\n?/g, '\n')
+      const fills = source.match(/(?:on|focused|selected) \? c\.rail/g) ?? []
+      expect(fills, rel(f)).toEqual(rel(f) === 'app/chat-search.tsx' ? ['selected ? c.rail'] : [])
+    }
   })
   it('detail-page titles use the title size, not display (display only for the Now greeting and the welcome hero)', () => {
     for (const f of TSX.filter(f => !['ui/HomeScreen.tsx', 'app/welcome.tsx'].includes(rel(f)))) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/role="display"/)

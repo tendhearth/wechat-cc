@@ -16,6 +16,7 @@ import type { StoredTask } from '../../../adapters/store/workbench/store'
 import type { ArtifactDeliveryReceipt } from '../../../adapters/store/workbench/artifact-deliveries'
 
 export type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
+export type PermissionPromptHandle = (() => void) & { replyLine?: string; marker?: string }
 export interface Active extends PathReservation {
   /** Internal relay closes the retained writer; its terminal close must not decide twice. */
   relayClosing?:boolean
@@ -59,6 +60,7 @@ export interface Active extends PathReservation {
   stop: Promise<null>
   signalStop: () => void
   permissions: RunPermissions
+  permissionPrompts: Map<string, PermissionPromptHandle>
   questions: RunUserInput
   queuedInputId?:string
   finishing?:boolean

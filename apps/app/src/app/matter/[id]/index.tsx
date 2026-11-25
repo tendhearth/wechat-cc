@@ -31,7 +31,7 @@ import { componentAppearance, radius, space } from '../../../ui/tokens'
 import { TopBar } from '../../../ui/TopBar'
 import { AgentAvatars } from '../../../ui/AgentAvatars'
 import { ReplySpeaker } from '../../../ui/ReplySpeaker'
-import { agentsLabel, matterAgents } from '../../../view/agents'
+import { agentName, agentsLabel, matterAgents } from '../../../view/agents'
 import { OriginMark } from '../../../ui/OriginMark'
 import { matterOrigin, originKey } from '../../../view/origin'
 import { Txt } from '../../../ui/Txt'
@@ -146,7 +146,7 @@ export default function Matter() {
   if (detail.data && isOwnerChatMatter(detail.data.matter, ownerChatId)) return <Redirect href="/chat" />
   // 终端会话的那件事(M4c):同一个详情页,按 kind 画终端那一份(最后一句 / 等批准 / 看着它跑 / 说一句,都按会话 id 走)
   const cliSession = detail.data?.matter.kind === 'terminal' ? detail.data.bindings.find(b => b.surface === 'cli')?.surfaceKey : undefined
-  if (cliSession) return <TerminalDetail sessionId={cliSession} />
+  if (cliSession) return <TerminalDetail sessionId={cliSession} projectPath={detail.data?.matter.projectPath} />
   // CC 自己做的事(M5c):同一个详情页,按 kind 画轮的时间线(只读)
   if (detail.data?.matter.kind === 'act') return <ActDetail detail={detail.data} />
   // 聊天类但还不知道主人对话是哪件:等一下再决定改不改道(读失败 / 没主人 ⇒ 当普通的事显示)
@@ -267,7 +267,7 @@ export default function Matter() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {header}
       <KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}>
-      <ScrollView ref={scrollRef} contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
+      <ScrollView ref={scrollRef} testID="progress-scroll" style={{ flex: 1, overflow: 'hidden' }} contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
 
         <View testID="progress-status"><StatusPill status={v.status} label={taskDetailLabel(d.task,v.pendingCount,lang,v.status)} /></View>
         {untilRow ? (
@@ -308,13 +308,13 @@ export default function Matter() {
         {(d.agentRuns?.length??0)>1 ? <View testID="progress-agents" style={{ gap: space.m }}>
           <Txt role="meta" tone="inkSoft">{t(lang,'progress.agents')}</Txt>
           {(d.agentRuns??[]).filter(a=>a.matterId===id).map(a=><View key={a.runId} style={{ flexDirection:'row',gap:space.m,alignItems:'flex-start' }}>
-            <Txt role="meta" tone="inkSoft">{d.matter.agentNames?.[a.executor]??a.executor}</Txt>
+            <Txt role="meta" tone="inkSoft">{agentName(a.executor, d.matter.agentNames)}</Txt>
             <View style={{ flex:1,gap:space.xs }}><Txt role="bubble" content="user">{a.brief}</Txt><Txt role="meta" tone="inkSoft">{t(lang,`progress.agent.${a.status}`)}</Txt></View>
           </View>)}
         </View> : null}
         {(d.agentRuns?.length??0)>1 && d.notes?.length ? <DetailSection key={`ledger:${id}`} testID="progress-ledger" title={t(lang,'progress.records')}>
           {d.notes.filter(n=>n.matterId===id).map(n=><View key={n.id} style={{ gap:space.xs }}>
-            <Txt role="meta" tone="inkSoft">{n.author==='cc'?'CC':n.author==='owner'?t(lang,'chat.me'):d.matter.agentNames?.[n.author]??n.author}</Txt>
+            <Txt role="meta" tone="inkSoft">{n.author==='cc'?'CC':n.author==='owner'?t(lang,'chat.me'):agentName(n.author, d.matter.agentNames)}</Txt>
             <Txt role="body" content="user" selectable>{n.text}</Txt>
           </View>)}
         </DetailSection> : null}
@@ -510,7 +510,7 @@ export default function Matter() {
           )}
         </View>
       )}
-      <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
+      <View testID="progress-composer" style={{ flexShrink: 0, backgroundColor: c.paper, paddingHorizontal: space.xl, paddingTop: space.s, paddingBottom: space.m }}>
         <MatterDirectComposer key={id} id={id} view={direct!} />
       </View>
 

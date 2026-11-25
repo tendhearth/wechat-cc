@@ -7,7 +7,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  await shim.invoke('demo.seed',{daemonAlive:true})
  let unreadable=false
  const places=[
-  placeItem('portfolio',{status:'waiting',moving:false,line:'Bash: bun run test',matterIds:[task.id],waiting:{itemKey:`matter:${task.id}`,kind:'permission',matterId:task.id,requestId:'0f0f0f0f-0000-4000-8000-000000000001',summary:'Bash: bun run test',count:1}}),
+  placeItem('portfolio',{status:'waiting',moving:false,line:'Bash: bun run test',matterIds:[task.id],waiting:{itemKey:`matter:${task.id}`,kind:'permission',matterId:task.id,requestId:'0f0f0f0f-0000-4000-8000-000000000001',summary:'Bash: bun run test',count:1,cwd:'/demo/portfolio'}}),
   terminalPlace('demo','terminal-1','git status'),
  ]
  const decisions:unknown[]=[]
@@ -22,7 +22,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  await page.route('**/v1/matter?id=*',route=>route.fulfill({json:{matter:{...task,kind:'task'}}}))
  // 在 WORKBENCH_ROUTES 之后登记:Playwright 里后登记的先接,那条宽的正则也匹配 /v1/matter/permission。
  await page.route('**/v1/matter/permission',route=>{decisions.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}})})
- await page.route('**/v1/cli/sessions*',route=>route.fulfill({json:{sessions:[{session_id:'terminal-1',source:'codex',status:'waiting',live_window:true,last_summary:'git status',pending:{actionable:true,tool:'Bash',summary:'git status',hash:'k3x9z'}}]}}))
+ await page.route('**/v1/cli/sessions*',route=>route.fulfill({json:{sessions:[{session_id:'terminal-1',source:'codex',status:'waiting',live_window:true,last_summary:'git status',pending:{actionable:true,tool:'Bash',summary:'git status',hash:'k3x9z',cwd:'/demo/portfolio'}}]}}))
  await page.route('**/v1/cli/activity*',route=>route.fulfill({json:{items:[{id:'msg',kind:'said',text:'终端原话',at:null}],earlier:null}}))
  await page.goto(shimUrl)
  await expect(page.locator('main.dashboard')).toBeVisible()
@@ -31,7 +31,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  const row=placeRow(page,'portfolio')
  await expect(row).toContainText('Bash: bun run test')
  // 等批准的从当前窗口的应答入口发给那一件的那一条。
- await placeAnswerSurface(page,'portfolio').getByRole('button',{name:'允许',exact:true}).click()
+ await placeAnswerSurface(page,'portfolio').getByRole('button',{name:'允许这一步',exact:true}).click()
  await expect.poll(()=>decisions).toEqual([{id:task.id,requestId:'0f0f0f0f-0000-4000-8000-000000000001',decision:'allow'}])
  // 终端停着问:键盘能到「去回答」,打开的是那个会话。
  const answer=placeAnswerSurface(page,'demo').locator('[data-place-open]')
@@ -40,7 +40,7 @@ for(const width of [1440,900])test(`places keep request purpose, answer in place
  const detail=page.locator('#thing-thread .thing-terminal:visible')
  await expect(detail).toContainText('git status')
  await expect(detail).toContainText('终端原话')
- await expect(detail.getByRole('button',{name:'允许',exact:true})).toBeVisible()
+ await expect(detail.getByRole('button',{name:'允许这一步',exact:true})).toBeVisible()
  const out=process.env.WECHAT_CC_DESIGN_SHOTS
  if(out)await page.screenshot({path:join(out,`roster-partial-${width}.png`)})
  await clickNav(page,'overview')

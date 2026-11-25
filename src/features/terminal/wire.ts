@@ -379,7 +379,8 @@ export function wireTerminal(d: WireTerminalDeps) {
   const terminalMatterOf = (sessionId: string): string | null => { try { return matterStore.findBySurface('cli', sessionId)?.id ?? null } catch { return null } }
   // 手机令牌读 GET /v1/cli/sessions 的那一份(P3c-2,原 /m/api/cli/sessions 的处理器;接线原在 daemon/wiring/module.ts):
   // 登记处 50 条 + 每行那件事,再按手机口径挑字段(phone-sessions.ts)。
-  const phoneSessions = (sessionId?:string) => phoneCliSessionRows({
+  const phoneSessions = (sessionId?:string, frameBudget?:number) => phoneCliSessionRows({
+    frameBudget,
     list: () => cliEvents.list({ limit:sessionId?500:50,...(sessionId?{includeEnded:true}:{}) }).filter(v=>!sessionId||v.session_id===sessionId).map(v => { const m = terminalMatterOf(v.session_id); return m ? { ...v, matter_id: m } : v }),
     actions: phoneActions,
     executorName: (id: string) => boot.registry.namesOf(id).name,

@@ -3,11 +3,11 @@
  *
  * 这一个目录就是它的全部:
  *  - `calendar.ts`:读 macOS 日历 / 提醒(JXA + EventKit,`core/calendar/eventkit.ts` 是纯解析)、开关、微信「日历」命令;
- *  - `routes.ts`:它的路由(`GET /v1/calendar/agenda`,CC 的 calendar_agenda 工具用),路由表里标了 `module: 'calendar'`;
+ *  - `routes.ts`:工具读日程、桌面偏好读状态和改开关,路由表里标了 `module: 'calendar'`;
  *  - 这个文件:模块清单 —— 要什么(needs)、给什么(provides:日历本身 + 命令)、挂哪些路由。
- * 默认关;「日历 开」才请求授权(Mac 上弹框)。只进主人的轮次:早报素材 + 「日历」命令 + admin 档的工具;不给访客 / trusted / 定时会话 / 社交。
+ * 默认关;主人在桌面打开开关或说「日历 开」才请求授权(Mac 上弹框)。只进主人的轮次:早报素材 + 「日历」命令 + admin 档的工具;不给访客 / trusted / 定时会话 / 社交。
  *
- * 删掉这个功能 = 删掉这个目录 + daemon-modules.ts 里那一行 + 路由表里那一行(typecheck 会指出用到它的地方:早报、命令表)。
+ * 删掉这个功能 = 删掉这个目录 + daemon-modules.ts 里那一行 + 路由表里的日历路由(typecheck 会指出用到它的地方)。
  */
 import { log } from '../../lib/log'
 import type { DaemonModule } from '../../daemon/modules/container'

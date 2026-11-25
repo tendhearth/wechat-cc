@@ -178,8 +178,9 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
       log('APP_INBOUND', `origin=${origin} intent=${ctx.intent?.kind ?? '-'} consumed=${front.result.consumed ? (ctx.consumedBy ?? 'yes') : 'dispatched'}`)
       if (front.result.consumed) {
         const reply = front.replies.join('\n')
-        persistAppTurn(origin, synthetic, text, reply, undefined, images, { speaker: 'notice' })
-        return { reply, speaker: 'notice' }
+        const historyReply = front.historyReplies.join('\n')
+        persistAppTurn(origin, synthetic, text, historyReply, undefined, images, { speaker: 'notice' })
+        return { reply, ...(historyReply !== reply ? { historyReply } : {}), speaker: 'notice' }
       }
     }
     const isolated = synthetic.answerTarget?.kind === 'oneoff' || synthetic.answerTarget?.kind === 'clarify'

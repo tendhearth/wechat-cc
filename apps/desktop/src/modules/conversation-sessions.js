@@ -11,9 +11,9 @@ export function terminalWord(session){
   if(!session||session.stale)return '尚未同步'
   return session.status==='waiting'?STATUS_WORDS.waiting:session.status==='running'?STATUS_WORDS.working:session.status==='idle'?STATUS_WORDS.replied:session.status==='ended'?'会话已结束':'尚未同步'
 }
-/** @param {string} id @param {string} title @param {boolean} keepTitle */
-export function terminalReferenceHtml(id,title,keepTitle = false){
-  return `<div class="converse-msg converse-msg-cc"><details class="converse-terminal" data-terminal-reference="${escapeHtml(id)}"${keepTitle ? " data-terminal-keep-title" : ""}><summary><span data-terminal-title>${escapeHtml(title)}</span><span data-terminal-state>尚未同步</span></summary><p data-terminal-step></p><small data-terminal-source></small><p class="converse-terminal-note">电脑上的会话 · 只读，操作请回原程序；等批准的请求仍从「N 件事等你」打开。</p></details></div>`
+/** @param {string} id @param {string} title */
+export function terminalReferenceHtml(id,title){
+  return `<div class="converse-msg converse-msg-cc"><details class="converse-terminal" data-terminal-reference="${escapeHtml(id)}"><summary><span data-terminal-title>${escapeHtml(title)}</span><span data-terminal-state>尚未同步</span></summary><p data-terminal-step></p><small data-terminal-source></small><p class="converse-terminal-note">电脑上的会话 · 只读，操作请回原程序；等批准的请求仍从「N 件事等你」打开。</p></details></div>`
 }
 /** @param {Session[]} sessions */
 export function updateTerminalReferences(sessions){current=new Map(sessions.map(s=>[s.session_id,s]));paintTerminalReferences()}
@@ -23,7 +23,7 @@ export function paintTerminalReferences(){
     const state=row.querySelector('[data-terminal-state]');if(state)state.textContent=terminalWord(session)
     const note=row.querySelector('.converse-terminal-note');if(note&&actionsSupported&&!note.querySelector('[data-open-terminal]')){const button=document.createElement('button');button.type='button';button.dataset.openTerminal=id;button.textContent='看过程、接着说或停止';note.replaceChildren(button)}
     if(!session)continue
-    const title=row.querySelector('[data-terminal-title]');if(title&&!row.hasAttribute('data-terminal-keep-title'))title.textContent=session.project||'终端会话'
+    const title=row.querySelector('[data-terminal-title]');if(title)title.textContent=session.project||'终端会话'
     const step=row.querySelector('[data-terminal-step]');if(step)step.textContent=session.now?.text||session.last_summary||''
     const source=row.querySelector('[data-terminal-source]');if(source)source.textContent=[session.displayName||session.source||'claude',typeof session.last_event_at==='number'?new Date(session.last_event_at).toLocaleString():''].filter(Boolean).join(' · ')
   }

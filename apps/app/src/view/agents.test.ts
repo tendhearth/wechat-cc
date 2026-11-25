@@ -7,9 +7,9 @@ describe('执行者头像', () => {
     expect(agentGlyph('agy')).toBe('agy')
     expect(agentGlyph('my-acp')).toBeNull()
     expect(agentMonogram('my-acp')).toBe('M')
-    // 名字只由 daemon 给(收敛清单 ⑥):给了就用,没给 ⇒ id;App 不存名字表
+    // 名字只由 daemon 给(收敛清单 ⑥):优先用 daemon 给的；兼容旧版常见 id 的大小写
     expect(agentName('codex', { codex: 'Codex' })).toBe('Codex')
-    expect(agentName('codex')).toBe('codex')
+    expect(agentName('codex')).toBe('Codex')
     expect(agentName('my-acp')).toBe('my-acp')
     expect(agentMonogram('agy', { agy: 'Gemini(账号)' })).toBe('G')
   })

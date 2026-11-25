@@ -59,6 +59,7 @@ interface Options {
   closeTimeoutMs?: number
   askOpinion?: ServiceCtx['deps']['askOpinion']
   permissionPrompt?: ServiceCtx['deps']['permissionPrompt']
+  pendingWechatPermissionCard?: import('../../ports/wechat').WechatPermissions['pendingWechatPermissionCard']
   permissionTimeoutMs?: number; permissionDecide?: ServiceCtx['deps']['permissionDecide']   // 放行规则(2026-10-19);不传 ⇒ 每条权限都问主人
   /** 保留会话安静下来、**没人等这个文件夹**时的空闲自动收工时长(ms;缺省 10 分钟)。
    *  纯粹是别让一个闲着的原生进程占着资源。允许 0(=立刻关)与很大的数(封顶约 24.8 天,即
@@ -393,7 +394,7 @@ export function makeWorkbenchService(opts: Options) {
   const wechatControl=makeWechatWorkbenchControl({
     store,
     ownerChatId:opts.ownerChatId,
-    actions:service,
+    actions:{...service,pendingWechatPermissionCard:opts.pendingWechatPermissionCard},
     hasExecutor:(id)=>{try{admissionDomain.provider(id);return true}catch{return false}},
     ...(opts.fetchIssue?{fetchIssue:opts.fetchIssue}:{}),
     ...(opts.addLesson?{addLesson:opts.addLesson}:{}),

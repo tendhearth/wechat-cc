@@ -20,6 +20,9 @@ describe('e2e: chat mode survives daemon stop+start cycle', () => {
   it('chatroom mode persisted in first boot is honored on the second', async () => {
     // We own the stateDir across both boots so the SQLite db carries over.
     const stateDir = mkdtempSync(join(tmpdir(), 'wechat-cc-e2e-restart-'))
+    // Chatroom needs two admitted providers. Codex is unavailable to guests.
+    const access = { admins: ['chat1'], allowFrom: ['chat1'] }
+    const verdict = '聊天室裁决已完成。'
     let modCalledOnSecondBoot = false
 
     try {
@@ -27,10 +30,10 @@ describe('e2e: chat mode survives daemon stop+start cycle', () => {
       const first = await startTestDaemon({
         dangerously: true,
         stateDirOverride: stateDir,
+        access,
         modes: { chat1: { kind: 'chatroom' } },
         claudeScript: { async onDispatch(_t) { return { toolCalls: [], finalText: '' } } },
         codexScript: { async onDispatch(_t) { return { toolCalls: [], finalText: '' } } },
-        moderatorScript: { async onEval(_p) { return JSON.stringify({ action: 'end', reasoning: 'unused' }) } },
       })
       await first.stop()
 
@@ -40,21 +43,24 @@ describe('e2e: chat mode survives daemon stop+start cycle', () => {
       const second = await startTestDaemon({
         dangerously: true,
         stateDirOverride: stateDir,
+        access,
         // Deliberately omit `modes` — must come from the persisted db.
-        claudeScript: { async onDispatch(_t) { return { toolCalls: [], finalText: '@user 你好' } } },
-        codexScript: { async onDispatch(_t) { return { toolCalls: [], finalText: '' } } },
+        claudeScript: { async onDispatch() { return { toolCalls: [], finalText: 'Claude 开场' } } },
+        codexScript: { async onDispatch() { return { toolCalls: [], finalText: 'Codex 开场' } } },
         moderatorScript: {
-          async onEval(_p) {
+          async onEval(prompt) {
+            if (!prompt.includes('给出最终裁决')) return JSON.stringify({ contested: [], agreed: [] })
             modCalledOnSecondBoot = true
-            return JSON.stringify({ action: 'continue', speaker: 'claude', prompt: 'open', reasoning: 'persisted' })
+            return verdict
           },
         },
       })
       try {
         second.sendText('chat1', '你好')
-        await second.waitForReplyTo('chat1', 8000)
-        // The clincher: moderator was invoked. In solo mode it never is —
-        // solo dispatches format(msg) directly with no haiku call.
+        // Opening replies can arrive before the moderator runs.
+        await expect.poll(() => second.ilink.outbox().some(reply =>
+          reply.endpoint === 'sendmessage' && reply.chatId === 'chat1' && reply.text?.startsWith(`🎯 ${verdict}`),
+        ), { timeout: 8000 }).toBe(true)
         expect(modCalledOnSecondBoot).toBe(true)
       } finally {
         await second.stop()

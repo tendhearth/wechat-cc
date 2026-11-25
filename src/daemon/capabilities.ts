@@ -14,6 +14,7 @@
  */
 
 import { codexTrustMessage, type CodexHookTrust } from '../domain/codex-hook-trust'
+import { probeStatusNote, type ProbeStatus } from '../app/first-use-probe'
 
 export type CapabilityState = 'ok' | 'fallback' | 'needs_you' | 'off'
 /** 桌面按钮直接能跑的动作。cli_hooks_install = POST /v1/cli/hooks/install(接上终端里的 Claude Code / Codex)。 */
@@ -35,7 +36,7 @@ export interface CapabilityInputs {
   /** ownerWindowClosedSince:主人那一路的主动推送窗口关着(errcode=-2)的起始时间。 */
   wechat: { outbound: 'unknown' | 'ok' | 'degraded'; expired: number; lastError?: string | null; ownerWindowClosedSince?: string | null }
   /** refused:真回合里被这一家拒着(provider-refusals.ts;目前只有地区不可用)。注册上了也可能被拒 —— 开机探测只跑 --version。 */
-  brain: { provider: string; name: string; registered: boolean; retrying: boolean; lastError?: string | null; refused?: { code: string; since: string } | null }
+  brain: { provider: string; name: string; registered: boolean; retrying: boolean; lastError?: string | null; refused?: { code: string; since: string } | null; firstUse?: ProbeStatus }
   /** null = 没开网络守护(不出现)。 */
   guard: { safe: boolean; paused: boolean; detail?: string | null } | null
   /** null = 不是 macOS / 判断不了(不出现)。 */
@@ -77,7 +78,26 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
 
   // 大脑:当前选的后端注册上没有。
   if (i.brain.registered && i.brain.refused?.code === 'region_unavailable') out.push({ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.region_unavailable', params: { name: i.brain.name }, reason: `${i.brain.name} 说你现在的网络出口所在地区用不了它(不是登录问题)。`, action: { label: '换一个出口地区,或在设置里换一个大脑', where: 'settings' }, detail: `从 ${i.brain.refused.since} 起;之后有一轮真的答上来了就恢复` })
-  else if (i.brain.registered) out.push({ id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', params: { name: i.brain.name }, reason: `在用 ${i.brain.name}。` })
+  else if (i.brain.registered && i.brain.firstUse?.state === 'failed') {
+    const failure = i.brain.firstUse
+    out.push({
+      id: 'brain', name: '大脑', state: failure.kind === 'transient' ? 'fallback' : 'needs_you',
+      code: `brain.probe_${failure.kind}`,
+      params: { name: i.brain.name, ...(failure.cause ? { cause: failure.cause } : {}), ...(failure.startup ? { startup: 'true' } : {}), ...(failure.resetAt !== undefined ? { resetAt: failure.resetAt } : {}) },
+      reason: `${i.brain.name} ${probeStatusNote(failure)}。`,
+    })
+  }
+  else if (i.brain.registered) {
+    const status = i.brain.firstUse
+    const reused = status?.state === 'ok' && status.source === 'history'
+    const code = status?.state === 'ok' ? (reused ? 'brain.probe_history' : 'brain.probe_turn')
+      : status?.state === 'awaiting_turn' ? 'brain.probe_awaiting_turn' : 'brain.ok'
+    out.push({
+      id: 'brain', name: '大脑', state: 'ok', code,
+      params: { name: i.brain.name, ...(reused ? { at: status.at } : {}) },
+      reason: `在用 ${i.brain.name}。${status ? probeStatusNote(status) : ''}`,
+    })
+  }
   else if (i.brain.retrying) out.push({ id: 'brain', name: '大脑', state: 'fallback', code: 'brain.retrying', params: { name: i.brain.name }, reason: `${i.brain.name} 开机时没连上，正在重试。`, ...(i.brain.lastError ? { detail: i.brain.lastError } : {}) })
   else out.push({ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.unavailable', params: { name: i.brain.name }, reason: `选的大脑 ${i.brain.name} 用不了。`, action: { label: '在设置里换一个大脑', where: 'settings' } })
 

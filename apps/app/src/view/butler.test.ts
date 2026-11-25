@@ -37,3 +37,11 @@ it('explains the daily checkup limit instead of suggesting an immediate retry',(
   expect(butlerActionError('checkup_rate_limited','zh-Hans')).toContain('每日体检次数已用完')
   expect(butlerActionError('checkup_rate_limited','en')).toContain('daily checkup limit')
 })
+
+it('uses the short time in both languages and keeps the short-checkup label', () => {
+  const tested = new Date(2026, 10, 21, 19, 36, 41)
+  const data = { ...base, profile: { ...profile, testedAt: tested.toISOString() } }
+  const now = new Date(2026, 10, 22, 9).getTime()
+  expect(butlerView(data, 'zh-Hans', now).tested).toBe('上次体检 昨天 19:36 · 短版')
+  expect(butlerView(data, 'en', now).tested).toBe('Last checkup Yesterday 7:36 PM · Short checkup')
+})

@@ -18,7 +18,9 @@ import { DirectHeader } from './DirectHeader'
 import { DirectComposer } from './DirectComposer'
 import { directHeaderView } from '../view/direct-header'
 import { useMatterSay } from '../state/matter-say'
+import { DiffLine } from './DiffLine'
 import { Txt } from '../ui/Txt'
+import { TerminalPermission } from './TerminalPermission'
 import { useTheme } from '../ui/useTheme'
 import { Icon } from '../ui/Icon'
 import { canSayTo, relAgo, stepLabel, terminalErrorKey, terminalRow } from '../view/terminal'
@@ -32,7 +34,7 @@ const SAY_MAX = 4000
 // 说一句走的是微信「@码」同一条路:收下即回,跑完的结果成为这里的「最后一句」。在跑 / 在等批准时不能说。
 // 看着它跑(2026-10-17):读得到过程就显示最近几步(最后一句就在里面),在跑时最后一步标「正在」;读不到退回最后一句。
 // 送进窗口(2026-10-20):daemon 只回收下、后台送;拿 say_id 对会话行的 last_say 才说送到 / 没送进去,在送时 2 秒拉一次、最多一分钟。
-export function TerminalDetail({ sessionId }: { sessionId: string }) {
+export function TerminalDetail({ sessionId, projectPath }: { sessionId: string; projectPath?: string | null }) {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
@@ -57,14 +59,16 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
   const [said, setSaid] = useState<SayView | null>(null)
   const [tick, setTick] = useState(0)
   const sendingLive = said?.kind === 'sending'
-  const terminal = useTerminalSessions(sendingLive ? { fastMs: SAY_FAST_POLL_MS } : {})
+  const terminal = useTerminalSessions({ sessionId: id, ...(sendingLive ? { fastMs: SAY_FAST_POLL_MS } : {}) })
   // 点开的那几步(按「时间|这一步」记,4 秒刷新不收起)
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const s = terminal.sessions.find(x => x.session_id === id)
   const row = s ? terminalRow(s, Date.now(), lang) : null
+  const pending = s?.status === 'waiting' ? s.pending : null
   // 登记处的时间只在 hook 事件时更新;一轮跑很久时过程里的时间更新 ⇒ 页头取较新的那个,也不算「有一阵没动静」。
   const newest = activity.items.reduce((m, i) => (i.at !== null && i.at > m ? i.at : m), s?.last_event_at ?? 0)
   const fresher = !!s && newest > s.last_event_at
+  const ago = fresher ? relAgo(newest, Date.now(), lang) : row?.ago
   const sayOpen = !!row && canSayTo(row.status, row.live) && terminal.online
   const sending = say.terminalPending === `cli:say:${id}`
   const last = s?.last_say
@@ -86,6 +90,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
     if (!s) return
     setNote(null); setTrack(null); setSaid(null)
     const err = await actions.decide(s, d)
+    void terminal.refresh()
     setNote(err === null ? t(lang, d === 'allow' ? 'terminal.decided' : 'terminal.denied') : err === 'busy' ? null : t(lang, terminalErrorKey(err)))
   }
   const send = async () => {
@@ -97,6 +102,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
     const live = !!row?.live
     const sentAt = Date.now()
     const { error: err, sayId } = await say.sendTerminal(id, body)
+    void terminal.refresh()
     if (!alive.current || view.current !== owner || pairingGen() !== atGen) return
     if (err === null) {
       if (draftRevision.current === revision) setText('')
@@ -120,14 +126,17 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
             <>
               <View style={{ gap: space.s }}>
                 <StatusWord status={terminalStatusKey(row.status)} testID="terminal-detail-status" />
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
-                  <Icon name="terminal" color={c.inkSoft} testID="terminal-detail-agent" />
-                  <Txt role="small" tone="inkSoft" style={{ flex: 1 }}>{`${row.source} · ${row.stale && !fresher ? t(lang, 'terminal.stale.hint') : fresher ? relAgo(newest, Date.now(), lang) : row.ago}`}</Txt>
-                </View>
+                {!pending ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+                    <Icon name="terminal" color={c.inkSoft} testID="terminal-detail-agent" />
+                    <Txt testID="terminal-detail-meta" role="small" tone="inkSoft" style={{ flex: 1 }}>{`${row.source} · ${row.stale && !fresher ? t(lang, 'terminal.stale.hint') : ago}`}</Txt>
+                  </View>
+                ) : null}
               </View>
-              {row.pendingText ? (
+              {pending ? (
                 <View style={{ gap: space.m }}>
-                  <Txt testID="terminal-detail-pending" role="body" content="user">{row.pendingText}</Txt>
+                  <TerminalPermission key={`${id}:${pending.since}:${pending.hash ?? ''}`} pending={pending}
+                    source={row.source} ago={ago} projectPath={projectPath || row.project} scroll={scrollRef} />
                   {row.actionable ? (
                     // 用词表:先不做在左(次要),允许这一步在右(主按钮),下面一行「只对这一次请求」
                     <View style={{ gap: space.s }}>
@@ -147,7 +156,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
                     {activity.items.map((it, i) => {
                       const now = row.status === 'running' && (!row.stale || fresher) && i === activity.items.length - 1 && it.kind === 'step'
                       const when = it.at === null ? '' : ` · ${relAgo(it.at, Date.now(), lang)}`
-                      if (it.kind !== 'step') return <Txt key={i} role="bubble" content="user">{it.kind === 'you' ? `${t(lang, 'terminal.activityYou')}:${it.text}` : it.text}</Txt>
+                      if (it.kind !== 'step') return <Txt key={i} testID={it.kind === 'you' ? `terminal-activity-you-${i}` : undefined} role="bubble" content="user">{it.kind === 'you' ? t(lang, 'terminal.activityYou', { text: it.text }) : it.text}</Txt>
                       const label = `${now ? `${t(lang, 'terminal.activityNow')} · ` : ''}${it.error ? `${t(lang, 'terminal.activityFailed')} · ` : ''}${stepLabel(it, lang)}${when}`
                       const line = <Txt testID={now ? 'terminal-activity-now' : undefined} role="small" content="user" tone={it.error ? 'bad' : now ? 'ink' : 'inkSoft'}>{it.detail ? `${label}  ${open[`${it.at}|${it.text}`] ? '⌄' : '›'}` : label}</Txt>
                       if (!it.detail) return <View key={i}>{line}</View>
@@ -159,7 +168,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
                           {open[k] ? (
                             <View testID={`terminal-step-detail-${i}`} style={{ paddingVertical: space.s, gap: space.xs }}>
                               {it.detail.split('\n').map((l, j) => (
-                                <Txt key={j} role="code" content="user" style={isDiff && l.startsWith('+ ') ? { color: c.accent } : isDiff && l.startsWith('- ') ? { color: c.bad } : undefined}>{l || ' '}</Txt>
+                                <DiffLine key={j} line={l} kind={isDiff && l.startsWith('+ ') ? 'add' : isDiff && l.startsWith('- ') ? 'remove' : undefined} />
                               ))}
                             </View>
                           ) : null}

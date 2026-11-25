@@ -22,7 +22,21 @@ const CAP_NAMES = ['wechat', 'brain', 'guard', 'disk', 'knowledge', 'memory', 'b
 /** 能力行的人话:认得的原因码按本机语言说;认不出的(新 daemon 的新码)用 daemon 给的原文。 */
 function capabilityLabel(c: Capability, lang: Lang): string {
   const key = `cap.${c.code}`
-  return hasMessage(lang, key) ? t(lang, key, c.params) : c.reason
+  if (!hasMessage(lang, key)) return c.reason
+  if (key === 'cap.brain.probe_history') {
+    const at = c.params?.at
+    if (typeof at !== 'number' || !Number.isFinite(new Date(at).getTime())) return c.reason
+    return t(lang, key, { ...c.params, date: new Date(at).toLocaleString(lang, { dateStyle: 'medium', timeStyle: 'short' }) })
+  }
+  if (key === 'cap.brain.probe_transient' && !c.params?.name) return c.reason
+  const messageKey = key === 'cap.brain.probe_transient' && c.params?.cause === 'server_error' ? 'cap.brain.probe_busy' : key
+  let reason = t(lang, messageKey, c.params)
+  const resetAt = c.params?.resetAt
+  if (key === 'cap.brain.probe_quota' && typeof resetAt === 'number') {
+    const reset = new Date(resetAt)
+    if (Number.isFinite(reset.getTime())) reason += ` ${t(lang, 'cap.brain.probe_reset', { date: reset.toLocaleString(lang, { dateStyle: 'medium', timeStyle: 'short' }) })}`
+  }
+  return c.params?.startup === 'true' ? t(lang, 'cap.brain.probe_startup', { reason }) : reason
 }
 
 /** 动作的字:认得的原因码有本地化的(cap.action.<code>)就用,否则用 daemon 给的原文。 */

@@ -250,6 +250,22 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
     expect(relayed).toHaveLength(0)
     runs[0]!.done({ code: 0, stdout: 'ok', stderr: '', timedOut: false })
   })
+  it('keeps decisions in a full phone list and reads an exact preview for one session', () => {
+    const display = { body: { kind: 'command' as const, command: '示'.repeat(8192) } }
+    const cwd = '/sample/project', ids = Array.from({ length: 24 }, (_, i) => `preview-${i}`)
+    for (const session_id of ids) hub.permissionAsked({ source: 'claude', cwd, session_id,
+      tool_name: 'Bash', summary: 'summary', display, execution_cwd: cwd, truncated: false })
+    const read = (sessionId?: string) => phoneCliSessionRows({
+      frameBudget: PHONE_FRAME_BUDGET_BYTES, list: () => hub.list({ limit: 50 }).filter(row => !sessionId || row.session_id === sessionId),
+    })
+    const list = read()
+    expect(list).toHaveLength(ids.length)
+    expect(framedTooLargeFor(JSON.stringify({ ok: true, sessions: list }), PHONE_FRAME_BUDGET_BYTES)).toBe(false)
+    expect(list.every(row => row.pending?.summary === 'summary' && row.pending.truncated === false && !row.pending.display)).toBe(true)
+    const single = read(ids[0])[0]?.pending
+    expect(single?.display?.body.kind === 'command' && single.display.body.command === display.body.command && single.cwd === cwd).toBe(true)
+  })
+
   it('列表里带 live_window(只给 Claude 会话),过 schema', async () => {
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W3', cwd: '/w/proj' })
     hub.ingest({ source: 'codex', kind: 'stop', session_id: 'W4', cwd: '/w/proj' })

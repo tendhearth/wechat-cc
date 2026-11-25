@@ -58,7 +58,7 @@ function harness(routes: Record<string, Handler | Reply> = {}, family?: 'v1', ca
   }
   return { b, clients, last, reqs, logs, hookCalls, status }
 }
-const ok = (json: unknown, status = 200): Reply => ({ status, json })
+const ok = (json: unknown, status = 200) => ({ status, json })
 
 describe('夹具本身是真形状', () => {
   it.each([
@@ -698,6 +698,16 @@ describe('durable single input receipt', () => {
 
 describe('终端里的会话(2026-10-14)', () => {
   const CLI = { session_id: 'sess-1', code: 'sess-1', source: 'claude', status: 'waiting', stale: false, project: 'blog', machine: null, last_summary: null, last_event_at: 5, last_prompt_at: null, created_at: 1, pending: { tool: 'Bash', summary: 'ls', since: 5, hash: 'ab12c', actionable: true } }
+  it.each([undefined, 'v1'] as const)('按会话单读在 %s 路由族上传 session_id 并保留预览', async family => {
+    const path = family === 'v1' ? '/v1/cli/sessions' : '/m/api/cli/sessions'
+    const command = 'cat ./sample.txt'
+    const session = { ...CLI, pending: { ...CLI.pending, display: { body: { kind: 'command', command } } } }
+    const { b, reqs } = harness({ [`GET ${path}`]: ok({ ok: true, sessions: [session] }) }, family)
+    const rows = await b.cliSessions(CLI.session_id)
+    expect(reqs.at(-1)?.path).toBe(path + '?session_id=sess-1')
+    const body = rows[0]?.pending?.display?.body
+    expect(body?.kind === 'command' && body.command === command).toBe(true)
+  })
   it('列表过 schema;拍板带码、不自动重试;码失效 ⇒ stale;终端自己在问 ⇒ cli_not_actionable', async () => {
     let n = 0
     const { b, reqs } = harness({
@@ -1017,5 +1027,49 @@ describe('paired notebook', () => {
     await expect(b.notebookPage({})).rejects.toMatchObject({ code: 'unknown', message: 'unknown' })
     await expect(b.notebookWrite({ body: entry.body, clientId: entry.clientId })).rejects.toMatchObject({ code: 'unknown', message: 'unknown' })
     expect(logs.join(' ')).not.toContain(entry.body)
+  })
+})
+
+describe('LiveBackend 本子回信', () => {
+  const unseen = 'GET /v1/notebook/unseen'
+  const seen = 'POST /v1/notebook/seen'
+  const day = '2026-11-22'
+
+  it.each([
+    ok(null, 404),
+    ok({ ok: false, error: 'unknown_route' }, 400),
+    ok({ error: 'route_not_allowed' }, 403),
+  ])('只在本次后端请求一次不存在的未读路由 %#', async missing => {
+    const { b, reqs, status } = harness({ [unseen]: missing })
+    status('ready')
+    expect(await b.notebookUnseen()).toBeUndefined()
+    b.setActive(false)
+    b.setActive(true)
+    status('ready')
+    expect(await b.notebookUnseen()).toBeUndefined()
+    expect(reqs.map(r => r.key)).toEqual([unseen])
+    expect(await harness({ [unseen]: ok({ ok: true, unseen: true, day }) }).b.notebookUnseen()).toBe(day)
+  })
+
+  it('坏响应当没有，后续照问；确认走设备路由并检查请求和回执', async () => {
+    const responses = [
+      new Error('timeout'),
+      ok({ ok: true, unseen: true, day: '2026-02-30' }),
+      ok({ ok: true, unseen: false, day: null }),
+      ok({ ok: true, unseen: true, day }),
+    ]
+    const { b, reqs } = harness({
+      [unseen]: () => responses.shift()!,
+      [seen]: ({ body }) => body.ids[0] === 'reply-1' ? ok({ ok: true }) : ok({}),
+    })
+    expect(await b.notebookUnseen()).toBeUndefined()
+    expect(await b.notebookUnseen()).toBeUndefined()
+    expect(await b.notebookUnseen()).toBeUndefined()
+    expect(await b.notebookUnseen()).toBe(day)
+    await expect(b.notebookSeen([])).rejects.toMatchObject({ code: 'invalid' })
+    await expect(b.notebookSeen(Array.from({ length: 51 }, () => 'id'))).rejects.toMatchObject({ code: 'invalid' })
+    await expect(b.notebookSeen(['reply-1'])).resolves.toBeUndefined()
+    await expect(b.notebookSeen(['reply-2'])).rejects.toMatchObject({ code: 'unknown' })
+    expect(reqs.filter(r => r.key === seen).map(r => r.body)).toEqual([{ ids: ['reply-1'] }, { ids: ['reply-2'] }])
   })
 })

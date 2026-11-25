@@ -61,7 +61,7 @@ appId: com.tendhearth.app
       enabled: true
     timeout: 10000
 - assertVisible:
-    id: approval-raw-inline
+    id: approval-operation-command
 - tapOn:
     id: approval-allow
 - extendedWaitUntil:

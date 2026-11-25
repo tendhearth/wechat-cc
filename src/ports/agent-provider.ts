@@ -1,3 +1,4 @@
+import { type PermissionDisplay, type PermissionMcpTarget } from '@wechat-cc/protocol'
 import type { TierProfile } from '../domain/user-tier'
 import type { PermissionMode } from '../domain/permission-mode'
 import type { ProviderId } from '../domain/conversation'
@@ -93,7 +94,7 @@ export type AgentEvent =
   /** `code`:provider 边界产的结构化码 —— lib/provider-error-code 的闭集(另有
    *  collectTurn 自己的 `turn_timeout`)。下游有码就只看码;`message` 只给人/日志看,
    *  **永远不当回复发出去**。 */
-  | { kind: 'error'; message: string; code?: string }
+  | { kind: 'error'; message: string; code?: string; httpStatusCode?: number }
 
 /** Validated task-owned immutable material; image/PDF data is exact base64 bytes. */
 export interface AgentAttachment {
@@ -131,6 +132,10 @@ export interface AgentWorkbenchRuntime {
 export interface AgentDispatchContext { source: 'inbound' | 'background' }
 
 export interface AgentSession {
+  /** Native transport metadata for connection records, when the admission target is only a prediction. */
+  confirmationTarget?(): CallTarget | null
+  /** Whether the underlying transport can accept another turn. */
+  isAlive?(): boolean
   /** Negotiated tool surface for providers with session-scoped transport setup. */
   readonly supportsDelegation?: boolean
   /** Observation only. requestBytes is the actual UTF-8 wire body; historyBytes may be a legacy estimate.
@@ -271,7 +276,12 @@ export interface AgentMcpTools {
   serverOf(name: string): string | undefined
 }
 
+/** Review details used by the text-only WeChat surface. */
+export interface WechatPermissionReview { display?: PermissionDisplay; argumentJson?: string; cwd?: string; incomplete?: true }
+
 export interface SpawnContext {
+  /** Effective native target, when known before startup finishes. */
+  reportStartupTarget?: (target: CallTarget | undefined) => void
   /** 本句一次代答：关闭 provider 自有的自动记忆；CC API 已由临时令牌限权。 */
   oneoff?: boolean
   /** Isolated synthetic evaluation: only these run-owned tools, no private history or native tools.
@@ -338,6 +348,15 @@ export interface SpawnContext {
   requestPermission?: (
     /** command / paths / cwd:放行规则要的原文(2026-10-19),执行者拿得到就给,拿不到就不给。 */
     request: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string;
+      display?: PermissionDisplay;
+      /** MCP target verified by the execution adapter. */
+      mcp?: PermissionMcpTarget;
+      /** Keeps extra review material out of rule input and existing notices. */
+      reviewDescription?: string;
+      /** Explicit execution directory for display when rule facts are withheld. */
+      displayCwd?: string;
+      /** Extra evidence needed by WeChat's text-only approval surface. */
+      wechatReview?: WechatPermissionReview;
       /** Requires an owner one-shot decision when execution is dynamic, even
        * when extra grants withhold command facts from automatic allow rules. */
       requiresBoundExecution?: true;

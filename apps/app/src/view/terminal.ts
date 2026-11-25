@@ -1,5 +1,8 @@
+import { permissionCwd, permissionDisplay, PermissionDisplaySchema, permissionOperationSource, permissionWaitingTitle } from '@wechat-cc/protocol'
 import type { CliSessionRowT } from '../backend/types'
 import { hasMessage, t, type Lang, type MessageKey } from '../i18n'
+import { sessionAgentName } from './agents'
+import { permissionAction } from './approval'
 import { formatSynced } from './connection'
 
 /**
@@ -10,7 +13,7 @@ export type TerminalStatus = CliSessionRowT['status']
 export type TerminalRow = {
   id: string
   project: string
-  /** 执行者正式名字(daemon 给的 displayName,收敛清单 ⑥;老 daemon 不带 ⇒ id):只给读屏和详情页,行里画头像。 */
+  /** 执行者正式名字(daemon 给的 displayName,收敛清单 ⑥;老 daemon 不带时沿用执行者常用名):只给读屏和详情页,行里画头像。 */
   source: string
   /** 执行者 id(claude / codex / cursor),画头像用。 */
   agent: string
@@ -18,8 +21,8 @@ export type TerminalRow = {
   stale: boolean
   summary: string | null
   ago: string
-  /** 等批准的那一项(「Bash: npm run deploy」);不在等 ⇒ null。 */
-  pendingText: string | null
+  /** 列表里等批准的那一步;不在等 ⇒ null。 */
+  pendingTitle: string | null
   /** 中继在微信里开了码(主人不在电脑前)⇒ 手机上能拍;终端自己在问 ⇒ false。 */
   actionable: boolean
   hash: string | null
@@ -45,24 +48,48 @@ export function relAgo(ts: number, now: number, lang: Lang): string {
   return formatSynced(ts, now, lang)
 }
 
+function terminalWaitingTitle(pending: NonNullable<CliSessionRowT['pending']>, agent: string, lang: Lang): string {
+  const display = PermissionDisplaySchema.safeParse(pending.display).data
+  return permissionWaitingTitle(display, pending.tool, pending.summary, lang, t(lang, 'terminal.waiting.approval', { agent }))
+}
+
 export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): TerminalRow {
   const p = s.pending
+  const source = sessionAgentName(s.source, s.displayName)
   return {
     id: s.session_id,
     project: s.project,
-    source: s.displayName || s.source,
+    source,
     agent: s.source === 'codex' || s.source === 'cursor' ? s.source : 'claude',
     status: s.status,
     stale: s.stale,
     summary: s.last_summary,
     ago: relAgo(s.last_event_at, now, lang),
-    pendingText: s.status === 'waiting' && p ? (p.summary ? `${p.tool}: ${p.summary}` : p.tool) : null,
+    pendingTitle: s.status === 'waiting' && p ? terminalWaitingTitle(p, source, lang) : null,
     // 老 daemon 不带 actionable ⇒ 当作不可拍
     actionable: s.status === 'waiting' && p?.actionable === true && typeof p.hash === 'string',
     hash: p?.hash ?? null,
     nowText: s.status === 'running' && s.now ? stepLabel(s.now, lang) : null,
     live: s.live_window === true,
   }
+}
+
+// src/domain/cli-session-view.ts 的 CLI_SESSION_SUMMARY_MAX 与 hook 的 TOOL_SUMMARY_MAX 都是 200。
+// 老 daemon 没有 truncation 标记，继续用长度和省略号判断。
+export const TERMINAL_PERMISSION_SUMMARY_LIMIT = 200
+
+export function terminalPermission(pending: Pick<NonNullable<CliSessionRowT['pending']>, 'tool' | 'summary' | 'display' | 'cwd' | 'truncated'>, source: string, lang: Lang) {
+  const summary = pending.summary ?? ''
+  const structured = PermissionDisplaySchema.safeParse(pending.display).data
+  const display = structured ?? (summary ? permissionDisplay(pending.tool, summary) : undefined)
+  const cwd = permissionCwd(pending.cwd)
+  const action = display ? permissionAction(display.body, pending.tool, source, lang)
+    : t(lang, 'approval.actor.tool', { actor: source, tool: pending.tool })
+  const summaryTruncated = pending.truncated ?? (summary.length >= TERMINAL_PERMISSION_SUMMARY_LIMIT || /(?:…|\.\.\.)\s*$/.test(summary))
+  const raw = structured && !structured.truncated ? permissionOperationSource(structured) : undefined
+  const received = structured?.truncated ? permissionOperationSource(structured)
+    : raw === undefined && summaryTruncated && summary ? summary : undefined
+  return { display, raw, received, summary: raw === undefined && !summaryTruncated ? summary : '', cwd, action, summaryTruncated, summaryOnly: !structured && !!display }
 }
 
 /** 等你、而且手机上拍得了的那几条(「此刻」的数与行)。够不着电脑时这份是旧的 ⇒ 0。 */
