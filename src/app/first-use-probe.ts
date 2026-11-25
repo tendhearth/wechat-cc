@@ -112,10 +112,10 @@ interface ConfirmationOptions {
 /** Observe chat outcomes. Startup, dispatch and evaluation retain their normal admission rules. */
 export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOptions): AgentProvider & { probeStatus(): ProbeStatus } {
   const now = opts.now ?? Date.now
-  const latest = new Map<string, ProbeStatus>()
-  const saved = new Set<string>()
-  const configuredTarget = () => {
-    const defaults = opts.combination()
+  const latest = new Map<string, { order: number; status: ProbeStatus }>()
+  let order = 0
+  const persisted = new Map<string, { order: number; confirmed: boolean }>()
+  const configuredTarget = (defaults: ProbeCombination) => {
     const inferred = defaults.model === UNKNOWN_PROBE_FIELD ? opts.inferredModel?.(defaults) : undefined
     return inferred ? { ...defaults, model: inferred } : defaults
   }
@@ -124,22 +124,33 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
     const endpoint = probeEndpointKey(target)
     if (endpoint !== 'unresolved') return { ...defaults, model: target.model, endpoint }
   }
-  const failure = (target: ProbeCombination | undefined, error: unknown, detail: string, startup = false, startupFallback?: ProbeCombination) => {
+  // The turn owns delivery, while the version lookup and record update run independently.
+  const afterVersion = (version: string | Promise<string | undefined>, apply: (cliVersion: string) => void) => {
+    void Promise.resolve(version).then(cliVersion => {
+      if (cliVersion) apply(cliVersion)
+    }).catch(() => { /* Connection accounting is best effort. */ })
+  }
+  const update = (target: ProbeCombination, observed: number, status: ProbeStatus) => {
+    const key = probeCombinationKey(target)
+    if ((latest.get(key)?.order ?? 0) < observed) latest.set(key, { order: observed, status })
+    return key
+  }
+  // Transient failures can supersede the display while a successful confirmation is still pending.
+  const persist = (target: ProbeCombination, key: string, observed: number, at?: number) => {
+    const previous = persisted.get(key)
+    if (previous && previous.order > observed) return
+    if (at === undefined) opts.history.clear(target)
+    else if (!previous?.confirmed) opts.history.save({ ...target, at, confirmedByTurn: true })
+    persisted.set(key, { order: observed, confirmed: at !== undefined })
+  }
+  const failure = (error: unknown, detail: string, note: (status: Extract<ProbeStatus, { state: 'failed' }>, observed: number) => void) => {
     const classified = classifyProbeError(opts.provider, error, detail)
     const at = now()
     const resetAt = classified.kind === 'quota' ? parseResetAt(detail) : null
-    if (target && (startup || classified.kind === 'incompatible')) {
-      opts.history.clear(target)
-      saved.delete(probeCombinationKey(target))
-    }
-    const displayTarget = target ?? startupFallback
-    if (displayTarget && (startup || classified.code !== 'context_overflow')) {
-      latest.set(probeCombinationKey(displayTarget), {
-        state: 'failed', ...classified, at,
-        ...(startup && !target ? { startup: true } : {}),
-        ...(resetAt !== null && resetAt > at ? { resetAt } : {}),
-      })
-    }
+    note({
+      state: 'failed', ...classified, at,
+      ...(resetAt !== null && resetAt > at ? { resetAt } : {}),
+    }, ++order)
     let message = classified.reason
     // Preserve fixed upgrade and overflow signals used by the coordinator.
     if (classified.kind === 'incompatible' && outdatedClientSignal(opts.provider, detail)) {
@@ -153,16 +164,27 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
     return { kind: 'error' as const, message, code: classified.code }
   }
 
+  const noteFailure = (target: ProbeCombination, status: Extract<ProbeStatus, { state: 'failed' }>, observed: number, startup = false) => {
+    if (!startup && status.code === 'context_overflow') return
+    const key = update(target, observed, status)
+    if (startup || status.kind === 'incompatible') persist(target, key, observed)
+  }
   const observeSession = (session: AgentSession, defaults: ProbeCombination): AgentSession => {
     let cancellations = 0
-    const target = async () => {
-      const route = session.confirmationTarget
-        ? session.confirmationTarget()
-        : sessionCallTarget(session, opts.provider)
-      if (!route) return
-      const cliVersion = session.confirmationVersion ? await session.confirmationVersion() : defaults.cliVersion
-      return cliVersion ? known(route, { ...defaults, cliVersion }) : undefined
+    const target = () => {
+      try {
+        const route = known(session.confirmationTarget
+          ? session.confirmationTarget()
+          : sessionCallTarget(session, opts.provider), defaults)
+        if (!route) return
+        const version = session.confirmationVersion?.().catch(() => undefined) ?? defaults.cliVersion
+        return (apply: (target: ProbeCombination) => void) => {
+          afterVersion(version, cliVersion => apply({ ...route, cliVersion }))
+        }
+      } catch { /* Missing confirmation metadata leaves the turn unchanged. */ }
     }
+    const turnFailure = (error: unknown, detail: string, captured: ReturnType<typeof target>) =>
+      failure(error, detail, (status, observed) => captured?.(sentTo => noteFailure(sentTo, status, observed)))
     return {
       ...session,
       ...(session.cancel ? { async cancel() { cancellations++; await session.cancel!() } } : {}),
@@ -174,22 +196,19 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
         }
         const before = cancellations
         let failed = false
-        let completionTarget: ReturnType<typeof target> | undefined
+        let completion: { target: ReturnType<typeof target> } | undefined
         let hasReply = false
         try {
           for await (const event of session.dispatch(...args)) {
             if (before !== cancellations) continue
             if (event.kind === 'error') {
-              if (!failed) {
-                const sentTo = await target()
-                if (before === cancellations) yield failure(sentTo, event, event.message || 'provider_error')
-              }
+              if (!failed) yield turnFailure(event, event.message || 'provider_error', target())
               failed = true
               continue
             }
             if (event.kind === 'tool_call' || (event.kind === 'text' && event.text.trim())) hasReply = true
             if (event.kind === 'result') {
-              completionTarget = target()
+              completion = { target: target() }
               hasReply ||= !!event.finalText?.trim()
             }
             yield event
@@ -197,27 +216,21 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
         } catch (err) {
           if (isNetworkUnprotectedError(err)) throw err
           if (!failed && before === cancellations) {
-            const sentTo = await target()
-            if (before === cancellations) yield failure(sentTo, err, err instanceof Error ? err.message : String(err))
+            yield turnFailure(err, err instanceof Error ? err.message : String(err), target())
           }
           return
         }
-        if (before !== cancellations || failed || !completionTarget) return
-        const sentTo = await completionTarget
-        if (before !== cancellations) return
+        if (before !== cancellations || failed || !completion) return
         if (!hasReply) {
-          yield failure(sentTo, undefined, '')
+          yield turnFailure(undefined, '', completion.target)
           return
         }
-        if (sentTo) {
-          const at = now()
-          const key = probeCombinationKey(sentTo)
-          if (!saved.has(key)) {
-            opts.history.save({ ...sentTo, at, confirmedByTurn: true })
-            saved.add(key)
-          }
-          latest.set(key, { state: 'ok', source: 'turn', at })
-        }
+        const at = now()
+        const observed = ++order
+        completion.target?.(sentTo => {
+          const key = update(sentTo, observed, { state: 'ok', source: 'turn', at })
+          persist(sentTo, key, observed, at)
+        })
       },
     }
   }
@@ -226,7 +239,7 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
     ...inner,
     async spawn(project, ctx) {
       if (ctx.evaluation) return inner.spawn(project, ctx)
-      const defaults = configuredTarget()
+      const defaults = opts.combination()
       let startupTarget: CallTarget | undefined
       let startupVersion: Promise<string | undefined> | undefined
       try {
@@ -234,20 +247,31 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
         return observeSession(session, defaults)
       } catch (err) {
         if (isNetworkUnprotectedError(err) || ctx.preparationSignal?.aborted) throw err
-        const cliVersion = startupVersion ? await startupVersion : defaults.cliVersion
-        const started = cliVersion ? { ...defaults, cliVersion } : undefined
-        const target = started && known(startupTarget, started)
         const requested = ctx.execution?.model ?? ctx.model
-        const startupFallback = !startupTarget && !ctx.resumeSessionId &&
-          (!requested || requested === defaults.model) ? started : undefined
-        const { message, code } = failure(target, err, err instanceof Error ? err.message : String(err), true, startupFallback)
+        const defaultStartup = !ctx.resumeSessionId && (!requested || requested === defaults.model)
+        const partialDefaultRoute = startupTarget && !startupTarget.model &&
+          defaults.model === UNKNOWN_PROBE_FIELD && !requested && defaults.endpoint !== 'unresolved' &&
+          probeEndpointKey(startupTarget) === defaults.endpoint
+        const { message, code } = failure(err, err instanceof Error ? err.message : String(err), (status, observed) => {
+          afterVersion(startupVersion ?? defaults.cliVersion, cliVersion => {
+            const started = { ...defaults, cliVersion }
+            const target = known(startupTarget, started)
+            if (target) noteFailure(target, status, observed, true)
+            else if (defaultStartup && (!startupTarget || partialDefaultRoute)) {
+              update(started, observed, { ...status, startup: true })
+            }
+          })
+        })
         throw errorWithProviderCode(message, code)
       }
     },
     probeStatus() {
-      const target = configuredTarget()
-      const status = latest.get(probeCombinationKey(target))
-      if (status) return status
+      const defaults = opts.combination()
+      const target = configuredTarget(defaults)
+      const current = latest.get(probeCombinationKey(target))
+      const route = latest.get(probeCombinationKey(defaults))
+      if (route?.status.state === 'failed' && route.status.startup && route.order > (current?.order ?? 0)) return route.status
+      if (current) return current.status
       const previous = target.cliVersion !== UNKNOWN_PROBE_FIELD ? opts.history.read(target) : undefined
       // Older records include standalone probes and cannot establish a real turn.
       return previous?.confirmedByTurn

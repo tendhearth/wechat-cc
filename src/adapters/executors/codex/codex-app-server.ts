@@ -298,7 +298,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       const launchArgs = [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://']
       const launcher = chat ? wrapForProcessTree(binary, launchArgs) : { command: binary, args: launchArgs }
       startupSignal?.throwIfAborted()
-      const cliVersion = chat?.confirmationVersion?.(binary)
+      let cliVersion = chat?.confirmationVersion?.(binary)
       if (cliVersion) context.reportStartupTarget?.(undefined, cliVersion)
       const child = (options.spawnProcess ?? spawnCodexAppServerProcess)(launcher.command, launcher.args, { cwd: project.path, env: childEnv, detached: process.platform !== 'win32' })
       const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; clear: () => void }>()
@@ -1130,6 +1130,14 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       try {
         startupSignal?.throwIfAborted()
         const initialized = await request('initialize', { clientInfo: chat ? { name: 'tendhearth_cc', title: 'Tendhearth CC', version: APP_VERSION } : { name: 'cc_workbench', title: 'CC Workbench', version: APP_VERSION }, capabilities: { experimentalApi: !!lifetime, requestAttestation: false } })
+        if (chat && typeof initialized.userAgent === 'string') {
+          // Only the version token before the platform details identifies the running CLI.
+          const reportedVersion = /^[^/\r\n]+\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+[0-9A-Za-z.-]+)?(?:\s|$)/.exec(initialized.userAgent)?.[1]
+          if (reportedVersion) {
+            cliVersion = Promise.resolve(reportedVersion)
+            context.reportStartupTarget?.(undefined, cliVersion)
+          }
+        }
         // Registration-before-parent-result was verified with this exact native
         // protocol version. New/unknown versions retain instead of claiming EOF.
         registrationVerified = typeof initialized.userAgent === 'string' && /^[^/\r\n]+\/0\.153\.4(?:\s|$)/.test(initialized.userAgent)

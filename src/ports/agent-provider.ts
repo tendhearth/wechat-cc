@@ -134,7 +134,7 @@ export interface AgentDispatchContext { source: 'inbound' | 'background' }
 export interface AgentSession {
   /** Native transport metadata for connection records, when the admission target is only a prediction. */
   confirmationTarget?(): CallTarget | null
-  /** Version snapshot for the executable selected when this session started. */
+  /** Version of the running CLI, with the pre-launch query as a fallback. May still be pending. */
   confirmationVersion?(): Promise<string | undefined>
   /** Whether the underlying transport can accept another turn. */
   isAlive?(): boolean

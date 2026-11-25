@@ -28,6 +28,8 @@ const fakeProbe = vi.hoisted(() => ({
   claudeInputs: [] as string[],
   claudeSettings: {} as Record<string, unknown>,
   claudeCalls: [] as Array<{ cwd?: string; sources?: Options['settingSources']; maxTurns?: number }>,
+  claudeLaunchVersion: null as (() => string) | null,
+  codexUserAgent: null as (() => string) | null,
   codexStartupFailure: null as 'config' | 'thread' | null,
   codexResumeModel: null as string | null,
   claudeResult: null as { result: string; api_error_status: number; sdkError?: string } | null,
@@ -49,6 +51,7 @@ function gatewayConfig(baseUrl = probeGateway, model?: string) {
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query(request: { prompt: string | AsyncIterable<{ message: { content: unknown } }>; options?: Options }) {
     const { prompt, options } = request
+    const claude_code_version = fakeProbe.claudeLaunchVersion?.()
     fakeProbe.claudeCalls.push({ cwd: options?.cwd, sources: options?.settingSources, maxTurns: options?.maxTurns })
     const turn = async function* () {
       if (fakeProbe.error) throw new Error(fakeProbe.error)
@@ -68,7 +71,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       for await (const { message } of prompt) {
         const input = (message.content as Array<{ text?: string }>).map(block => block.text ?? '').join('')
         fakeProbe.claudeInputs.push(input)
-        yield { type: 'system', subtype: 'init', model: 'claude-reported', session_id: 'claude-session' }
+        yield { type: 'system', subtype: 'init', model: 'claude-reported', session_id: 'claude-session', claude_code_version }
         yield* turn()
       }
     })(), { getSettings: async () => ({ effective: fakeProbe.claudeSettings, sources: [] }) })
@@ -91,6 +94,9 @@ vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
     },
     cheapAnswer: () => 'evaluation answer',
     rewrite: message => {
+      if (message.result?.userAgent && fakeProbe.codexUserAgent) {
+        return { ...message, result: { ...message.result, userAgent: fakeProbe.codexUserAgent() } }
+      }
       if (fakeProbe.codexStartupFailure === 'config' && message.result?.config ||
           fakeProbe.codexStartupFailure === 'thread' && message.result?.thread) {
         return { id: message.id, error: { code: -32601, message: 'Method not found' } }
@@ -195,12 +201,14 @@ describe('registerProviders — first-use probe messages', () => {
     const fetchProbe = vi.fn(async () => { throw new Error('daemon must not fetch the Codex gateway') })
     vi.stubGlobal('fetch', fetchProbe)
     fakeProbe.codexGateway = gatewayConfig()
+    fakeProbe.codexUserAgent = () => 'tendhearth_cc/1.2.3 (scripted)'
     const configPath = join(deps.stateDir, 'config.toml')
     writeFileSync(configPath, `model_provider = "gateway"\n[model_providers.gateway]\nname = "Gateway"\nbase_url = "${probeGateway}"\nwire_api = "responses"\n`)
     try { await run(deps, logs, fetchProbe) }
     finally {
       fakeProbe.error = null
       fakeProbe.codexError = null
+      fakeProbe.codexUserAgent = null
       fakeProbe.codexStartupFailure = null
       fakeProbe.codexResumeModel = null
       fakeProbe.codexEmpty = false
@@ -489,6 +497,43 @@ describe('registerProviders — first-use probe messages', () => {
     } finally { stopProviderProbes() }
   }))
 
+  it('shows startup failure on the unpinned Codex default route and preserves model history', () => withCodexFixture(async deps => {
+    const path = join(deps.stateDir, 'first-use-probes.json')
+    fakeProbe.codexGateway = { ...gatewayConfig(), model: null }
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    const provider = registry.get('codex')!.provider
+    const project = { alias: 'probe', path: deps.stateDir }
+    const failStartup = async () => {
+      fakeProbe.codexStartupFailure = 'thread'
+      await expect(provider.spawn(project, probeCtx)).rejects.toMatchObject({ providerErrorCode: 'incompatible' })
+    }
+    const reply = async () => {
+      fakeProbe.codexStartupFailure = null
+      const session = await provider.spawn(project, probeCtx)
+      try { expect((await collectTurn(session.dispatch('test turn'))).error).toBeUndefined() }
+      finally { await session.close() }
+    }
+    try {
+      await failStartup()
+      expect(providerNotes().codex).toContain('启动失败')
+      expect(existsSync(path)).toBe(false)
+      await reply()
+      expect(providerNotes().codex).toContain('已通过对话确认连接')
+      const saved = readFileSync(path, 'utf8')
+
+      fakeProbe.codexGateway = { ...gatewayConfig('https://other-gateway.example/v1'), model: null }
+      await failStartup()
+      expect(providerNotes().codex).toContain('已通过对话确认连接')
+
+      fakeProbe.codexGateway = { ...gatewayConfig(), model: null }
+      await failStartup()
+      expect(providerNotes().codex).toContain('启动失败')
+      expect(readFileSync(path, 'utf8')).toBe(saved)
+      await reply()
+      expect(providerNotes().codex).toContain('已通过对话确认连接')
+    } finally { stopProviderProbes() }
+  }))
+
   it('keeps a resumed Codex reply on its retained model without pinning a new thread', () => withCodexFixture(async deps => {
     writeFileSync(join(deps.stateDir, 'config.toml'), '')
     fakeProbe.codexGateway = {}
@@ -529,6 +574,7 @@ describe('registerProviders — first-use probe messages', () => {
       fakeProbe.claudeOneShots = []
       fakeProbe.claudeCalls = []
       fakeProbe.claudeInputs = []
+      fakeProbe.claudeLaunchVersion = null
       fakeProbe.claudeSettings = {}
       fakeProbe.claudeResult = null
       fakeProbe.error = null
@@ -556,7 +602,10 @@ describe('registerProviders — first-use probe messages', () => {
         deps.currentClaudeModel = () => model
         deps.sdkOptionsForProject = () => ({ model, pathToClaudeCodeExecutable: bin })
         fakeProbe.claudeSettings = {}
-      } else saveAgentConfig(deps.stateDir, baseConfig({ provider: id, model }))
+      } else {
+        fakeProbe.codexUserAgent = () => 'scripted'
+        saveAgentConfig(deps.stateDir, baseConfig({ provider: id, model }))
+      }
       const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
       const provider = registry.get(id)!.provider
       const old = await provider.spawn(project, probeCtx)
@@ -582,6 +631,43 @@ describe('registerProviders — first-use probe messages', () => {
           expect.objectContaining({ model, cliVersion: '2.3.4' }),
         ])
       } finally { releaseVersion(); await old.close(); stopProviderProbes() }
+    }
+    return id === 'claude' ? withClaudeFixture(run) : withCodexFixture(deps => run(deps, { alias: 'probe', path: deps.stateDir }))
+  })
+
+  it.each(['claude', 'codex'] as const)('records the version reported by %s when the executable changes after capture', id => {
+    const run = async (deps: ProviderDeps, project: { alias: string; path: string }) => {
+      const bin = join(deps.stateDir, id === 'codex' && process.platform === 'win32' ? 'codex.exe' : id)
+      const model = id === 'claude' ? 'claude-reported' : 'scripted-model'
+      writeFileSync(bin, '1.2.3')
+      deps.probeVersion = async file => ({ ok: true, firstLine: file === bin ? readFileSync(file, 'utf8') : '1.2.3', ms: 0 })
+      function startReplacement() {
+        const replacement = bin + '.next'
+        writeFileSync(replacement, '2.3.4')
+        renameSync(replacement, bin)
+        return readFileSync(bin, 'utf8')
+      }
+      if (id === 'claude') {
+        deps.claudeBin = bin
+        deps.currentClaudeModel = () => model
+        deps.sdkOptionsForProject = () => ({ model, pathToClaudeCodeExecutable: bin })
+        fakeProbe.claudeSettings = {}
+        fakeProbe.claudeLaunchVersion = startReplacement
+      } else {
+        saveAgentConfig(deps.stateDir, baseConfig({ provider: id, model }))
+        fakeProbe.codexUserAgent = () => `tendhearth_cc/${startReplacement()} (scripted)`
+      }
+      const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+      try {
+        const session = await registry.get(id)!.provider.spawn(project, probeCtx)
+        try { expect((await collectTurn(session.dispatch('reply from replacement'))).error).toBeUndefined() }
+        finally { await session.close() }
+        const path = join(deps.stateDir, 'first-use-probes.json')
+        expect(JSON.parse(readFileSync(path, 'utf8'))[id]).toEqual([
+          expect.objectContaining({ model, cliVersion: '2.3.4' }),
+        ])
+        await expect.poll(() => providerNotes()[id]).toContain('已通过对话确认连接')
+      } finally { stopProviderProbes() }
     }
     return id === 'claude' ? withClaudeFixture(run) : withCodexFixture(deps => run(deps, { alias: 'probe', path: deps.stateDir }))
   })

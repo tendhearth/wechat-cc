@@ -1762,7 +1762,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     })
     const evalPrompt = vi.fn(async () => 'ok')
     d = await startRealShapedDaemon({
-      claudeScript, codexScript: { onDispatch: dispatch }, moderatorScript: { onEval: evalPrompt },
+      // This fixture exercises the --version fallback without binding the test to the host CLI's release.
+      claudeScript, codexScript: { onDispatch: dispatch, codexUserAgent: 'scripted' }, moderatorScript: { onEval: evalPrompt },
       agentConfigPatch: { provider: 'codex', model: 'scripted-model' },
       modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'codex' } },
       seedFiles: { 'projects.json': PROJECTS },

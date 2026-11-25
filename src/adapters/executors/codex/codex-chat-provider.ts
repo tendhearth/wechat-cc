@@ -219,7 +219,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
         resumedHistory, resumedHistoryOwnerOnly:true,
         callTarget: () => core.callTarget?.() ?? targetOf(model ?? null, project.path, config),
         confirmationTarget: () => reopening ? null : core.confirmationTarget?.() ?? null,
-        ...(opts.confirmationVersion ? { confirmationVersion: () => core.confirmationVersion?.() ?? Promise.resolve(undefined) } : {}),
+        ...(core.confirmationVersion ? { confirmationVersion: () => core.confirmationVersion?.() ?? Promise.resolve(undefined) } : {}),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           return {
             async *[Symbol.asyncIterator](): AsyncGenerator<AgentEvent> {

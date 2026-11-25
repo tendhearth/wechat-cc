@@ -1,3 +1,5 @@
+import { parseVersion } from '../../../domain/cli-upgrade/version'
+import { CLI_SPECS } from '../../../domain/cli-upgrade/specs'
 import { toolApprovalInput } from '../../../domain/workbench/tool-input-preview'
 import { toolArgumentEvidence } from '../tool-argument-evidence'
 import { permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
@@ -277,7 +279,7 @@ type ResultMsg = {
   /** HTTP status of the failed API call; null = no HTTP response (refused / reset / timeout). */
   api_error_status?: number | null
 }
-type SystemMsg = { type: 'system'; subtype?: string; session_id?: string; model?: string }
+type SystemMsg = { type: 'system'; subtype?: string; session_id?: string; model?: string; claude_code_version?: unknown }
 type NarrowedMsg = AssistantMsg | UserMsg | ResultMsg | SystemMsg
 
 // Returns null for SDK message types we don't branch on (rate_limit_event,
@@ -576,7 +578,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         } catch (error) { aborter.abort(); throw error }
       }
 
-      const cliVersion = !evaluation && opts.confirmationVersion?.(options.pathToClaudeCodeExecutable)
+      const launchVersion = !evaluation && opts.confirmationVersion?.(options.pathToClaudeCodeExecutable)
+      let reportedVersion: string | undefined
       let q: ReturnType<typeof query>
       try { q = runQuery({ prompt: sdkQueue.iterable(), options }) }
       catch (error) { settleQuestion();aborter.abort();await evaluationProxy?.close();throw error }
@@ -666,6 +669,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             }
             const msg = narrow(raw)
             if (!msg) continue
+            if (msg.type === 'system' && msg.subtype === 'init' && typeof msg.claude_code_version === 'string') {
+              reportedVersion ??= parseVersion(CLI_SPECS.claude, msg.claude_code_version) ?? undefined
+            }
 
             if (!activeEventQueue) {
               // No in-flight dispatch — preserves [STREAM_DROP] behavior.
@@ -847,7 +853,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         callTarget: () => ({...spawnTarget,...(contextModel?{model:contextModel}:{})}),
         isAlive: () => !closed && !transportEnded,
         confirmationTarget: () => confirmedTransport && { provider: 'claude', model: turnModel ?? spawnTarget.model, ...confirmedTransport },
-        ...(cliVersion ? { confirmationVersion: () => cliVersion } : {}),
+        ...(launchVersion ? { confirmationVersion: () => reportedVersion ? Promise.resolve(reportedVersion) : launchVersion } : {}),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           if (closed) {
             // Already closed — return an iterable that yields nothing.

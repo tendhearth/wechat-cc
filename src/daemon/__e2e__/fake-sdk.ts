@@ -32,6 +32,8 @@ import { vi } from 'vitest'
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 
 export interface FakeSdkScript {
+  /** Override the scripted Codex initialize user agent for this daemon run. */
+  codexUserAgent?: string
   /**
    * Called when AgentSession.dispatch(text) runs. Returns what tool calls
    * to "emit" and the final reply text the agent produces.
@@ -387,6 +389,11 @@ vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
       ] }
     },
     cheapAnswer: async (prompt) => moderatorScript ? await moderatorScript.onEval(prompt) : 'ok',
+    rewrite(message) {
+      const userAgent = codexScript?.codexUserAgent
+      if (!userAgent || !message.result?.userAgent) return message
+      return { ...message, result: { ...message.result, userAgent } }
+    },
     onThreadStart: (_method, params, cheap) => {
       if (cheap || !codexSpawnRecorder) return
       try { codexSpawnRecorder({ ...params, sandboxMode: params.sandbox, workingDirectory: params.cwd }) } catch {}
