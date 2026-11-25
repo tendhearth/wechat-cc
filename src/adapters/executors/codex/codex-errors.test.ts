@@ -51,6 +51,9 @@ describe('codexAppServerErrorCode — 工作台 app-server 的结构化 codexErr
     expect(codexAppServerErrorCode({ message: 'x', codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } } })).toBe('network')
     expect(codexAppServerErrorCode({ message: 'x', codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } } })).toBe('auth_rejected')
     expect(codexAppServerErrorCode({ message: 'x', codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 503 } } })).toBe('server_error')
+    // 429 的正文明写额度用完 ⇒ 额度,不是「过几分钟再试」的限流;普通 429 照旧是限流。
+    expect(codexAppServerErrorCode({ message: 'exceeded retry limit, last status: 429 Too Many Requests, insufficient_quota', codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } } })).toBe('quota')
+    expect(codexAppServerErrorCode({ message: 'exceeded retry limit, last status: 429 Too Many Requests', codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } } })).toBe('rate_limited')
   })
   it('other / 缺省 ⇒ 退到文本(额度原文仍认得)', () => {
     expect(codexAppServerErrorCode({ message: byId('codex.quota.workbench').message, codexErrorInfo: 'other' })).toBe('quota')
