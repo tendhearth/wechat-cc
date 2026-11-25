@@ -124,7 +124,7 @@ async function onSocialEnableClick(btn) {
     if (!isPageCurrent(operation.generation)) return
     if (!r || r.enabled !== true) throw new Error('启用未生效')
     btn.textContent = '已启用'
-    showToast(r.restart_required ? '社交已启用 —— 重启守护进程后生效' : '社交已启用')
+    showToast(r.restart_required ? '社交已启用，重启 CC 生效' : '社交已启用')
   } catch (err) {
     if (!isPageCurrent(operation.generation)) return
     btn.disabled = false
@@ -254,7 +254,7 @@ function renderServerBanner(info, banner) {
   if (!info) {
     banner.innerHTML = '<span class="dot off"></span> 暂时连不上 CC，请到首页检查连接。'
   } else if (!info.enabled) {
-    banner.innerHTML = '<span class="dot off"></span> 觅食网还没开通 — 在 <code>agent-config.json</code> 加 <code>"a2a_listen": { "port": 8717 }</code> 后重启 daemon'
+    banner.innerHTML = '<span class="dot off"></span> 觅食网还没开通。在 <code>agent-config.json</code> 里加上 <code>"a2a_listen": { "port": 8717 }</code>，再重启 CC。'
   } else {
     const url = String(info.base_url ?? '')
     banner.innerHTML = `<span class="dot on"></span> 你的 CC 在线，朋友的 CC 能找到它
@@ -731,7 +731,7 @@ async function onInboundToggle() {
     if (note) {
       note.hidden = false
       note.textContent = r.restart_required
-        ? (enabled ? '已开启 —— 需重启守护进程后，别人的心愿才能真正传到你这。' : '已关闭 —— 需重启守护进程后生效。')
+        ? (enabled ? '已开启。重启 CC 后，就能收到别人的心愿。' : '已关闭，重启 CC 生效。')
         : (enabled ? '已开启。' : '已关闭。')
     }
   } catch (err) {

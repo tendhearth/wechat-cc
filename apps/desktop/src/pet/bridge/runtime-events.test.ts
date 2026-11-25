@@ -5,7 +5,7 @@ const T0 = Date.parse('2026-09-05T10:00:00.000Z')
 const iso = (ms: number) => new Date(ms).toISOString()
 // 够得着的 presence 自带 lit(presence-map.js);拉不到的是 unlit + sleep。
 const presenceIdle = { form: 'lit' as const, behavior: 'idle' as const, props: [], badge: 0, hint: null, oneShots: [] }
-const presenceDown = { form: 'unlit' as const, behavior: 'sleep' as const, props: [], badge: 0, hint: 'daemon 没起', oneShots: [] }
+const presenceDown = { form: 'unlit' as const, behavior: 'sleep' as const, props: [], badge: 0, hint: '暂时联系不上 CC', oneShots: [] }
 const turn = (over: Record<string, unknown> = {}) => ({ owner_last_contact_at: null, turn: { phase: 'idle' as const, since: null }, last_done_at: null, pending_permissions: [], ...over }) as any
 
 describe('mergeIntent', () => {

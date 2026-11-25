@@ -56,7 +56,7 @@ async function onActivate() {
     if (r?.ok) {
       if (input) input.value = ''
       await refreshLicense()
-      showToast(r.pro ? '已激活 Pro — 重启 daemon 生效' : `已处理，但当前不是 Pro：${r.reason ?? ''}`)
+      showToast(r.pro ? '已激活 Pro，重启 CC 生效' : `已处理，但当前不是 Pro：${r.reason ?? ''}`)
     } else {
       showToast(`激活失败：${r?.error ?? 'unknown'}`)
     }

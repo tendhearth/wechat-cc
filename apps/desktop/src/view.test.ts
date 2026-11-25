@@ -70,13 +70,13 @@ describe('doctorRows', () => {
     })
     // @ts-expect-error untyped .js return value; will be fixed when view.js gets // @ts-check
     expect(rows.map((r: [string, unknown]) => r[0])).toEqual([
-      'Bun', 'Git', 'Claude', 'Codex', '微信账号', 'Allowlist', 'Provider', 'Daemon',
+      'Bun', 'Git', 'Claude', 'Codex', '微信账号', 'Allowlist', 'AI 服务', 'CC',
     ])
     // toMatchObject — doctorRows now spreads the full check shape so
     // wizard.renderFixHint can see severity / fix metadata. Test only
     // cares about user-visible bits.
     expect(rows[4]![1]).toMatchObject({ ok: true, path: '1 个账号' })
-    expect(rows[7]![1]).toEqual({ ok: false, path: 'stopped' })
+    expect(rows[7]![1]).toEqual({ ok: false, path: '没在运行' })
   })
 
   it('appends Cursor row with composed path when checks.cursor is present', () => {
@@ -126,7 +126,7 @@ describe('doctorRows', () => {
     expect(rows.find((r: [string, unknown]) => r[0] === 'Cursor')).toBeUndefined()
   })
 
-  it('shows live pid in Daemon row when alive', () => {
+  it('shows live pid in CC row when alive', () => {
     const rows = doctorRows({
       checks: {
         bun: { ok: true, path: '' }, git: { ok: true, path: '' }, claude: { ok: true, path: '' }, codex: { ok: true, path: '' },
@@ -159,7 +159,7 @@ describe('doctorRows', () => {
     })
     // @ts-expect-error untyped .js return value; will be fixed when view.js gets // @ts-check
     expect(rows.map((r: [string, unknown]) => r[0])).toEqual([
-      'Claude', 'Codex', '微信账号', 'Allowlist', 'Provider', 'Daemon',
+      'Claude', 'Codex', '微信账号', 'Allowlist', 'AI 服务', 'CC',
     ])
   })
 })
@@ -240,7 +240,7 @@ describe('restartButtonState', () => {
       { installed: true, kind: 'systemd-user' },
     )
     expect(choice.action).toBe('restart')
-    expect(choice.label).toBe('重启 daemon')
+    expect(choice.label).toBe('重启 CC')
     expect(choice.helper).toBeNull()
   })
 
@@ -273,7 +273,7 @@ describe('restartButtonState', () => {
 describe('deleteAccountConfirmCopy', () => {
   it('service installed → restart-daemon hint', () => {
     expect(deleteAccountConfirmCopy('丸子', { installed: true, kind: 'systemd-user' }))
-      .toBe('已删除 丸子 · 重启 daemon 生效')
+      .toBe('已删除 丸子 · 重启 CC 生效')
   })
 
   it('service missing → wizard-service hint', () => {
@@ -638,7 +638,7 @@ describe('updateApplyLine', () => {
       lockfileChanged: false, installRan: false, daemonAction: 'noop', elapsedMs: 0,
     })
     expect(line.tone).toBe('ok')
-    expect(line.body).toContain('未做重启')
+    expect(line.body).toContain('没有重启')
   })
 
   it('dirty_tree reject → warn tone with file list (truncated)', () => {
@@ -758,7 +758,7 @@ describe('diagnose', () => {
       })
       expect(result.code).toBe(1)
       expect(result.title).toBe('后台服务挂了')
-      expect(result.hint).toMatch(/OOM|panic|pid 文件/)
+      expect(result.hint).toBe('CC 意外退出了。日志里可能有线索，例如内存不足、程序崩溃或留下的 pid 文件。')
       expect(result.secondary).toBeDefined()
       expect((result.secondary!.action as any).kind).toBe('open-logs')
       expect((result.primary.action as any).kind).toBe('run-restart-sequence')

@@ -52,7 +52,7 @@ function formatLocalTime(iso) {
 
 /** @param {LogEntry[]} entries */
 function renderRows(entries) {
-  if (!entries.length) return `<p class="empty-state">没有日志（daemon 还没产生事件）。</p>`
+  if (!entries.length) return `<p class="empty-state">CC 还没有写下任何日志。</p>`
   return entries.map(e => {
     const isCont = !e.tag && !e.timestamp
     const cls = isCont ? "logs-row continuation" : "logs-row"

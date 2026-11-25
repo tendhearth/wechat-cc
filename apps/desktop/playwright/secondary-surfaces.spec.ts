@@ -222,7 +222,7 @@ for (const mode of ['empty', 'error'] as const) test(`secondary ${mode} states r
     await expect(page.locator('#plugins-list')).toContainText('花园笔记')
   }
   await backstage(page, 'logs')
-  await expect(page.locator('#logs-body')).toContainText(mode === 'empty' ? '没有日志' : '读取失败')
+  await expect(page.locator('#logs-body')).toContainText(mode === 'empty' ? 'CC 还没有写下任何日志。' : '读取失败')
   await shot(page, `logs-${mode}`)
 })
 
