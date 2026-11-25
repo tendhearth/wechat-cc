@@ -588,6 +588,7 @@ const en = {
   'cap.brain.probe_history': 'Using {name}. Reusing the last check from {date}.',
   'cap.brain.probe_transient': '{name} is temporarily unavailable. CC will retry the next time you use it.',
   'cap.brain.probe_busy': '{name} is temporarily busy. CC will retry the next time you use it.',
+  'cap.brain.probe_quota': '{name} has run out of quota. Wait for it to reset or switch providers.',
   'cap.brain.probing': 'Checking the connection to {name}.',
   'cap.brain.probe_pending': 'The connection to {name} will be checked on first use.',
   'cap.brain.retrying': '{name} did not connect at startup. Retrying.',

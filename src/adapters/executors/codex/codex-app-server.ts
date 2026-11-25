@@ -1126,7 +1126,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         const proxy = native.config?.features?.network_proxy
         if (proxy != null && proxy !== false) throw Error('codex_unverified_thread_policy')
         // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
-        spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? null)
+        const configuredModel = native.config?.model
+        spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? (nativeModelId(configuredModel) ? configuredModel : null))
         const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
         let response: ObjectValue
         if (chat) {
@@ -1176,7 +1177,10 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           throw new Error('codex_unverified_thread_policy')
         }
         threadId = response.thread.id
-        if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
+        if (nativeModelId(response.model)) {
+          spawnTarget = { ...spawnTarget, model: response.model }
+          context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
+        }
       } catch (error) { await close(); throw error }
       finally { startupSignal?.removeEventListener('abort', abortStartup) }
       const launch = (text: string, attachments?: readonly AgentAttachment[], sharedEvents?: EventQueue) => {

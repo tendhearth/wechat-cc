@@ -9,6 +9,7 @@ import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from '../mcp-s
 import { isAuthFail } from '../../../domain/auth-fail'
 import { providerErrorCodeOf, withProviderCode, errorWithProviderCode } from '../../../lib/provider-error-code'
 import { log } from '../../../lib/log'
+import type { CallTarget } from '../../../lib/network-gate'
 import { codexCallTarget, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import { codexErrorCode, type CodexTimeouts } from './codex-errors'
@@ -107,7 +108,9 @@ const errorEvent = (err: unknown): Extract<AgentEvent, { kind: 'error' }> => {
   return { kind: 'error', message, ...(code ? { code } : {}) }
 }
 
-export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): AgentProvider & { probeModel(prompt: string, model?: string, signal?: AbortSignal): Promise<string> } {
+export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): AgentProvider & {
+  probeModel(prompt: string, model: string | undefined, signal: AbortSignal, project: AgentProject | undefined, allow: (target: CallTarget | null) => Promise<void>): Promise<string>
+} {
   const binary = (): string => (typeof opts.codexPathOverride === 'function' ? opts.codexPathOverride() : opts.codexPathOverride) || 'codex'
   // 构造时解析一次:codex login 刷新了模型缓存,daemon 重启后生效。
   const cheapModel = resolveCodexCheapModel()
@@ -130,13 +133,21 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } },
   })
 
-  const oneShot = async (prompt: string, model: string | undefined, signal?: AbortSignal): Promise<string> => {
+  const oneShot = async (prompt: string, model: string | undefined, signal?: AbortSignal, probe?: {
+    project: AgentProject | undefined
+    allow: (target: CallTarget | null) => Promise<void>
+  }): Promise<string> => {
     let session: CodexAppServerSession | undefined
     const abort = () => { void session?.close().catch(() => {}) }
     try {
-      session = await spawnCodexAppServerSession(coreOptions(model), { alias: 'codex-cheap-eval', path: tmpdir() }, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile(), signal)
+      const project = probe?.project ?? { alias: 'codex-cheap-eval', path: tmpdir() }
+      session = await spawnCodexAppServerSession(coreOptions(model), project, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'codex-cheap-eval', ...(probe || privateLoggingSuppressed() ? { ephemeral: true } : {}) }, cheapProfile(), signal)
       signal?.throwIfAborted()
       signal?.addEventListener('abort', abort, { once: true })
+      if (probe) {
+        await probe.allow(session.callTarget?.() ?? null)
+        signal?.throwIfAborted()
+      }
       const parts: string[] = []
       for await (const ev of session.dispatch(prompt)) {
         if (ev.kind === 'text') parts.push(ev.text)
@@ -160,7 +171,7 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
     /** 一次 app-server 冷启动 + 一轮(约 3-5s/次),给 20s 余量。 */
     cheapEvalBudgetMs: 20_000,
     cheapEval: (prompt, options) => oneShot(prompt, cheapModel, options?.signal),
-    probeModel: oneShot,
+    probeModel: (prompt, model, signal, project, allow) => oneShot(prompt, model, signal, { project, allow }),
     supportsEphemeralSessions:true,
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // read-only does not disable native read/shell tools or inherited project instructions.

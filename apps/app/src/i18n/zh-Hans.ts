@@ -590,6 +590,7 @@ const zh: Record<keyof typeof en, string> = {
   'cap.brain.probe_history': '在用 {name}。沿用上次的结果（{date}）。',
   'cap.brain.probe_transient': '{name} 暂时无法回应，稍后使用时会自动重试。',
   'cap.brain.probe_busy': '{name} 暂时忙不过来，稍后使用时会自动重试。',
+  'cap.brain.probe_quota': '{name} 额度用完了，等额度恢复或换一个脑子。',
   'cap.brain.probing': '正在探测 {name} 的连接。',
   'cap.brain.probe_pending': '首次使用时会探测 {name} 的连接。',
   'cap.brain.retrying': '{name} 开机时没连上，正在重试。',

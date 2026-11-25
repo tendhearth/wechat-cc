@@ -99,18 +99,20 @@ describe('withFirstUseProbe', () => {
     { error: new Error('unable to connect'), kind: 'transient', reason: '暂时连不上（网络）', wait: 30_000 },
     { error: new Error('authentication failed or timed out'), kind: 'transient', reason: '请求超时（timeout）', wait: 30_000 },
     { error: new Error('unexpected failure'), kind: 'transient', reason: '暂时没有回应（原因未明）', wait: 30_000 },
-  ])('uses $kind for $error with a $wait ms cooldown', async ({ error, kind, reason, wait }) => {
-    let t = 0
+    { error: errorWithProviderCode('billing error', 'quota'), kind: 'quota', reason: '额度用完了', wait: 3_600_000 },
+    { error: errorWithProviderCode('Claude AI usage limit reached|1800000120', 'quota'), kind: 'quota', reason: '额度用完了', wait: 120_000, now: 1_800_000_000_000 },
+  ])('uses $kind for $error with a $wait ms cooldown', async ({ error, kind, reason, wait, now = 0 }) => {
+    let t = now
     // 同步抛错也会释放 in-flight，下一次可以重探。
     const probe = vi.fn((): Promise<string> => { throw error })
     const p = withFirstUseProbe(inner(), { probe, now: () => t, failureMessage: (_, failure) => failure.reason })
     const spawn = () => p.spawn({ alias: 'a', path: '/p' }, ctx)
     await expect(spawn()).rejects.toThrow(reason)
-    expect(p.probeStatus()).toMatchObject({ state: 'failed', kind, retryAt: wait })
-    t = wait - 1
+    expect(p.probeStatus()).toMatchObject({ state: 'failed', kind, retryAt: now + wait })
+    t = now + wait - 1
     await expect(spawn()).rejects.toThrow(reason)
     expect(probe).toHaveBeenCalledTimes(1)
-    t = wait
+    t = now + wait
     probe.mockResolvedValueOnce('ok')
     await spawn()
     expect(probe).toHaveBeenCalledTimes(2)
@@ -197,7 +199,7 @@ describe('persistent first-use probe', () => {
     const fixture = setup(dir, current)
     await fixture.spawn()
     await fixture.spawn()
-    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(current.model, expect.any(AbortSignal))
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(current.model, expect.any(AbortSignal), project)
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
       claude: [...(field === 'model' ? [previous] : []), { ...current, at: 2000 }], codex: [other],
     })
@@ -208,7 +210,7 @@ describe('persistent first-use probe', () => {
     writeFileSync(path, contents)
     const fixture = setup(dir)
     await fixture.spawn()
-    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model, expect.any(AbortSignal))
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model, expect.any(AbortSignal), project)
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [{ ...combination, at: 2000 }] })
   }))
 
@@ -242,7 +244,7 @@ describe('persistent first-use probe', () => {
 
     fixture.setEvents(reply, completed)
     await collectTurn(session.dispatch('next'))
-    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model, expect.any(AbortSignal))
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(combination.model, expect.any(AbortSignal), project)
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [{ ...combination, at: 2000 }], codex: [other] })
   }))
 
@@ -287,8 +289,37 @@ describe('persistent first-use probe', () => {
     expect(fixture.probe).not.toHaveBeenCalled()
     fixture.setEvents(reply, completed)
     await collectTurn(session.dispatch('next'))
-    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(other.model, expect.any(AbortSignal))
+    expect(fixture.probe).toHaveBeenCalledExactlyOnceWith(other.model, expect.any(AbortSignal), project)
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [previous, { ...other, at: 2000 }] })
+  }))
+
+  it('suppresses a failed reprobe for a stopped retained session and shares it with the other waiter', async () => withRecords(async (dir, path) => {
+    writeFileSync(path, JSON.stringify({ claude: previous }))
+    const started = Promise.withResolvers<void>()
+    const result = Promise.withResolvers<string>()
+    const probe = vi.fn(() => { started.resolve(); return result.promise })
+    let events: AgentEvent[] = [{ kind: 'error', message: 'model not found' }]
+    const p = inner()
+    p.spawn = async () => ({ async *dispatch() { yield* events }, async cancel() {}, async close() {} })
+    const provider = withFirstUseProbe(p, {
+      probe, cache: { combination: () => combination, history: openFirstUseProbeRecords(dir, () => {})('claude') },
+      failureMessage: (_, failure) => failure.reason,
+    })
+    const stopped = await provider.spawn(project, ctx)
+    const otherWaiter = await provider.spawn(project, ctx)
+    await collectTurn(stopped.dispatch('invalidate'))
+    events = [reply, completed]
+
+    const stoppedTurn = stopped.dispatch('stopped')[Symbol.asyncIterator]().next()
+    const otherTurn = otherWaiter.dispatch('still waiting')[Symbol.asyncIterator]().next()
+    const stoppedCheck = expect(stoppedTurn).resolves.toMatchObject({ done: true })
+    const otherCheck = expect(otherTurn).rejects.toThrow('暂时忙不过来（529）')
+    await started.promise
+    await stopped.cancel!()
+    result.reject(new Error('API Error: 529 overloaded'))
+    await Promise.all([stoppedCheck, otherCheck])
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(provider.probeStatus()).toMatchObject({ state: 'failed', kind: 'transient' })
   }))
 
   it('aborts a stuck retained-session reprobe, releases its waiters and retries after cooldown', async () => withRecords(async (dir, path) => {

@@ -71,6 +71,8 @@ export interface ScriptedCodexOptions {
   resumeFails?: boolean
   /** initialize 报的 userAgent。 */
   userAgent?: string
+  /** Effective config for the cwd in config/read and thread/start. */
+  configForCwd?: (cwd: string) => Record<string, unknown>
   /** 一次性评估线程(只读 + 线程配置 network_access=false)的回答;它们不消耗 `turns`。缺省 'ok'。 */
   cheapAnswer?: (prompt: string) => string | Promise<string>
   /** 改写 / 吞掉 / 追加 app-server 发出去的每一条(测试演「codex 报了别的策略」「一直重连」之类)。返回 null ⇒ 不发。 */
@@ -255,7 +257,7 @@ export function createScriptedCodex(opts: ScriptedCodexOptions): ScriptedCodex {
       switch (m.method) {
         case 'initialize': return reply(m, { userAgent: opts.userAgent ?? 'tendhearth_cc/0.153.4 (scripted)' })
         case 'initialized': return
-        case 'config/read': return reply(m, { config: {} })
+        case 'config/read': return reply(m, { config: opts.configForCwd?.(p.cwd) ?? {} })
         case 'thread/start': case 'thread/resume': {
           cheap = p.sandbox === 'read-only' && p.config?.sandbox_workspace_write?.network_access === false && p.config?.model_reasoning_effort === 'low'
           threadStarts.push({ method: m.method, params: p })
@@ -265,7 +267,7 @@ export function createScriptedCodex(opts: ScriptedCodexOptions): ScriptedCodex {
           if (m.method === 'thread/resume') threadId = String(p.threadId)
           else if (cheap) threadId = `cheap-${++cheapSeq}`
           else { const k = threadSeq++; threadId = `${opts.threadId ?? 'scripted-thread'}${k ? `-${k + 1}` : ''}` }
-          return reply(m, { thread: { id: threadId }, cwd: p.cwd, model: p.model ?? 'scripted-model', approvalPolicy: p.approvalPolicy, ...(p.approvalsReviewer ? { approvalsReviewer: p.approvalsReviewer } : {}), sandbox: sandboxOf(p) })
+          return reply(m, { thread: { id: threadId }, cwd: p.cwd, model: p.model ?? opts.configForCwd?.(p.cwd).model ?? 'scripted-model', approvalPolicy: p.approvalPolicy, ...(p.approvalsReviewer ? { approvalsReviewer: p.approvalsReviewer } : {}), sandbox: sandboxOf(p) })
         }
         case 'turn/start': {
           if (current && !current.stopped) return send({ id: m.id, error: { code: -32600, message: 'turn already running' } })

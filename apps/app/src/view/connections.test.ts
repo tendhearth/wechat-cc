@@ -92,6 +92,16 @@ describe('capabilities in the connections view (2026-10-06)', () => {
       })
     }
   })
+
+  it('shows quota exhaustion as needing owner attention in both languages', () => {
+    const data = snap([{ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.probe_quota', params: { name: 'Claude' }, reason: 'daemon fallback' }])
+    expect(connectionsPage({ data }, 'online', NOW, 'zh-Hans').view?.capabilities[0]).toMatchObject({
+      dot: 'bad', label: 'Claude 额度用完了，等额度恢复或换一个脑子。',
+    })
+    expect(connectionsPage({ data }, 'online', NOW, 'en').view?.capabilities[0]).toMatchObject({
+      dot: 'bad', label: 'Claude has run out of quota. Wait for it to reset or switch providers.',
+    })
+  })
   it('an unknown code from a newer daemon falls back to its own text; fallback-only shows the fallback headline', async () => {
     const { connectionsView } = await import('./connections')
     const v = connectionsView(snap([{ id: 'subsystem:new', name: '新东西', state: 'fallback', code: 'brand.new', reason: '原文', }]), 1, 'zh-Hans')

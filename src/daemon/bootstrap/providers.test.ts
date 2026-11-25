@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { writeWarmExecFixture } from '../../lib/test-temp'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -11,18 +11,26 @@ import {saveAgentConfig} from '../../lib/agent-config'
 import type { McpStdioSpec } from '../../adapters/executors/mcp-stdio-spec'
 import { AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
 import { TIER_PROFILES } from '../../domain/user-tier'
+import { classifyCall, type CallTarget } from '../../lib/call-classifier'
+import { APP_VERSION, BUILD_SHA } from '../../lib/app-version'
 
 const fakeProbe = vi.hoisted(() => ({
   error: null as string | null,
   brokenCodexModel: null as string | null,
-  claudeResult: null as { result: string; api_error_status: number } | null,
+  claudeResult: null as { result: string; api_error_status: number; sdkError?: string } | null,
   models: {} as Record<string, unknown>,
+  codexConfig: new Map<string, Record<string, unknown>>(),
+  codexProbeCwd: undefined as unknown,
+  codexReply: '',
 }))
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   async *query(request: { options?: { model?: string } }) {
     fakeProbe.models.claude = request.options?.model
     if (fakeProbe.error) throw new Error(fakeProbe.error)
+    if (fakeProbe.claudeResult?.sdkError) {
+      yield { type: 'assistant', error: fakeProbe.claudeResult.sdkError, message: { content: [{ type: 'text', text: fakeProbe.claudeResult.result }] } }
+    }
     yield fakeProbe.claudeResult
       ? { type: 'result', subtype: 'success', is_error: true, ...fakeProbe.claudeResult }
       : { type: 'result', subtype: 'success', result: '' }
@@ -33,8 +41,14 @@ vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
   const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')
   const scripted = createScriptedCodex({
     turns: [],
-    cheapAnswer: prompt => prompt === 'evaluate this' ? 'evaluation answer' : '',
-    onThreadStart: (_method, params, cheap) => { if (cheap) fakeProbe.models.codex = params.model },
+    cheapAnswer: prompt => prompt === 'evaluate this' ? 'evaluation answer' : fakeProbe.codexReply,
+    configForCwd: cwd => fakeProbe.codexConfig.get(cwd) ?? {},
+    onThreadStart: (_method, params, cheap) => {
+      if (cheap) {
+        fakeProbe.models.codex = params.model
+        fakeProbe.codexProbeCwd = params.cwd
+      }
+    },
     rewrite: (msg) => {
       if (msg.method !== 'turn/completed') return msg
       const error = fakeProbe.models.codex === fakeProbe.brokenCodexModel ? 'model not found' : fakeProbe.error
@@ -119,6 +133,103 @@ const fakeWechatSpec: McpStdioSpec = {
 }
 
 describe('registerProviders — first-use probe messages', () => {
+  async function withCodexProbeFixture(run: (deps: ProviderDeps, logs: Array<[string, string]>) => Promise<void>) {
+    const { deps, logs } = baseDepsWithLogs({
+      probeVersion: async () => ({ ok: true, firstLine: 'codex-cli 1.2.3', ms: 0 }),
+    })
+    writeFileSync(join(deps.stateDir, process.platform === 'win32' ? 'codex.exe' : 'codex'), '')
+    vi.stubEnv('PATH', [deps.stateDir, process.env.PATH].join(delimiter))
+    vi.stubEnv('WECHAT_CC_DISABLE_CODEX_AUTOFIX', '1')
+    vi.stubEnv('CODEX_MODEL', undefined)
+    vi.stubEnv('CODEX_HOME', deps.stateDir)
+    fakeProbe.codexReply = 'ok'
+    try { await run(deps, logs) }
+    finally {
+      fakeProbe.brokenCodexModel = null
+      fakeProbe.models = {}
+      fakeProbe.codexConfig.clear()
+      fakeProbe.codexProbeCwd = undefined
+      fakeProbe.codexReply = ''
+      vi.unstubAllEnvs()
+      rmSync(deps.stateDir, { recursive: true, force: true })
+    }
+  }
+
+  const probeCtx = { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest } as const
+
+  it('uses the native project model and cwd for the Codex gate, probe, and record', () => withCodexProbeFixture(async (deps, logs) => {
+    const user = { alias: 'user-default', path: join(deps.stateDir, 'ordinary') }
+    const project = { alias: 'project', path: join(deps.stateDir, 'project') }
+    mkdirSync(user.path)
+    mkdirSync(join(project.path, '.codex'), { recursive: true })
+    writeFileSync(join(deps.stateDir, 'config.toml'), 'model = "bad-default"\n')
+    writeFileSync(join(project.path, '.codex', 'config.toml'), 'model = "project-model"\n')
+    // Effective native replies represent an ordinary directory and a trusted project.
+    fakeProbe.codexConfig.set(user.path, { model: 'bad-default' })
+    fakeProbe.codexConfig.set(project.path, { model: 'project-model', openai_base_url: 'https://gateway.example/v1' })
+    fakeProbe.brokenCodexModel = 'bad-default'
+    const targets: CallTarget[] = []
+    deps.networkGate = {
+      classify: target => { targets.push(target); return classifyCall(target) },
+      check: async () => ({ safe: true, source: 'off', detail: 'test' }),
+    }
+    const { registry, stopProviderProbes } = await registerProviders(deps)
+    try {
+      const provider = registry.get('codex')!.provider
+      await expect(provider.spawn(user, probeCtx)).rejects.toThrow('model not found')
+      const session = await provider.spawn(project, probeCtx)
+      try {
+        expect(session.callTarget?.()?.model).toBe('project-model')
+        expect(fakeProbe.models.codex).toBe('project-model')
+        expect(fakeProbe.codexProbeCwd).toBe(project.path)
+        expect(targets).toContainEqual(expect.objectContaining({ model: 'project-model', baseUrl: 'https://gateway.example/v1' }))
+        const records = JSON.parse(readFileSync(join(deps.stateDir, 'first-use-probes.json'), 'utf8'))
+        expect(records.codex).toEqual([expect.objectContaining({ model: 'project-model' })])
+      } finally { await session.close() }
+      const repeated = await provider.spawn(project, probeCtx)
+      await repeated.close()
+      expect(logs.filter(([tag]) => tag === 'CODEX_PROBE')).toHaveLength(2)
+    } finally { stopProviderProbes() }
+  }))
+
+  it('reprobes after a Codex client build change at the same app version', () => withCodexProbeFixture(async (deps, logs) => {
+    const project = { alias: 'probe', path: deps.stateDir }
+    const recordPath = join(deps.stateDir, 'first-use-probes.json')
+    const model = 'stable-model'
+    const sdkVersion = `${APP_VERSION}+${BUILD_SHA}`
+    async function spawn() {
+      const { registry, stopProviderProbes } = await registerProviders(deps)
+      try {
+        const session = await registry.get('codex')!.provider.spawn(project, { ...probeCtx, model })
+        await session.close()
+      } finally { stopProviderProbes() }
+    }
+    for (const [index, oldVersion] of [APP_VERSION, `${APP_VERSION}+previous-build`].entries()) {
+      writeFileSync(recordPath, JSON.stringify({ codex: [{ cliVersion: '1.2.3', model, sdkVersion: oldVersion, at: 1000 }] }))
+      await spawn()
+      expect(logs.filter(([tag]) => tag === 'CODEX_PROBE')).toHaveLength(index + 1)
+      expect(JSON.parse(readFileSync(recordPath, 'utf8')).codex).toEqual([
+        expect.objectContaining({ model, sdkVersion }),
+      ])
+      await spawn()
+      expect(logs.filter(([tag]) => tag === 'CODEX_PROBE')).toHaveLength(index + 1)
+    }
+  }))
+
+  it('reports Codex usage exhaustion with the existing quota guidance', () => withCodexProbeFixture(async (deps, logs) => {
+    fakeProbe.error = "You've hit your usage limit."
+    saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: 'stable-model' }))
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    try {
+      await expect(registry.get('codex')!.provider.spawn(
+        { alias: 'probe', path: deps.stateDir }, { ...probeCtx, model: 'stable-model' },
+      )).rejects.toMatchObject({ providerErrorCode: 'quota', message: expect.stringContaining('等额度恢复,或者先换一个脑子') })
+      expect(providerNotes().codex).toContain('额度用完了，等额度恢复或换一个脑子')
+      expect(logs.find(([tag]) => tag === 'CODEX_PROBE')?.[1]).toContain('FAILED (quota)')
+      expect(existsSync(join(deps.stateDir, 'first-use-probes.json'))).toBe(false)
+    } finally { fakeProbe.error = null; stopProviderProbes() }
+  }))
+
   it('runs a Codex evaluation on its own model while the chat model is unavailable', async () => {
     const binDir = mkdtempSync(join(tmpdir(), 'providers-eval-bin-'))
     writeFileSync(join(binDir, process.platform === 'win32' ? 'codex.exe' : 'codex'), '')
@@ -172,6 +283,25 @@ describe('registerProviders — first-use probe messages', () => {
         )).rejects.toThrow(kind === 'incompatible' ? '探测没通过:model not found' : note)
         expect(providerNotes().claude).toContain(note)
         expect(logs.find(([tag]) => tag === 'CLAUDE_PROBE')?.[1]).toContain(`FAILED (${kind})`)
+        expect(existsSync(join(deps.stateDir, 'first-use-probes.json'))).toBe(false)
+      } finally { stopProviderProbes() }
+    } finally {
+      fakeProbe.claudeResult = null
+      fakeProbe.models = {}
+      rmSync(deps.stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a Claude SDK billing error as quota exhaustion without saving a record', async () => {
+    const { deps, logs } = baseDepsWithLogs()
+    fakeProbe.claudeResult = { result: 'Credit balance is too low', api_error_status: 400, sdkError: 'billing_error' }
+    try {
+      const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+      try {
+        await expect(registry.get('claude')!.provider.spawn({ alias: 'probe', path: deps.stateDir }, probeCtx))
+          .rejects.toMatchObject({ providerErrorCode: 'quota', message: expect.stringContaining('等额度恢复,或者先换一个脑子') })
+        expect(providerNotes().claude).toContain('额度用完了，等额度恢复或换一个脑子')
+        expect(logs.find(([tag]) => tag === 'CLAUDE_PROBE')?.[1]).toContain('FAILED (quota)')
         expect(existsSync(join(deps.stateDir, 'first-use-probes.json'))).toBe(false)
       } finally { stopProviderProbes() }
     } finally {

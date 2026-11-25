@@ -5,8 +5,9 @@ import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
 import { firstUseProbeTimeout, probeStatusNote, UNKNOWN_PROBE_FIELD, withFirstUseProbe, type ProbeFailure, type ProbeResult } from '../../app/first-use-probe'
+import { turnErrorNotice } from '../../app/coordinator/failures'
 import { openFirstUseProbeRecords } from './first-use-probe-records'
-import { APP_VERSION } from '../../lib/app-version'
+import { APP_VERSION, BUILD_SHA } from '../../lib/app-version'
 import { resolveCodexTarget } from '../../lib/codex-target'
 import { readJsonFile } from '../../lib/read-json-file'
 import { DEFAULT_CLAUDE_MODEL } from '../../adapters/executors/claude/claude-agent-provider'
@@ -49,6 +50,7 @@ import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
 function probeFailureMessage(name: 'Claude' | 'Codex', failure: ProbeFailure, incompatible: () => string): string {
   if (failure.kind === 'transient') return `${name} ${failure.reason}，过一会儿再用时会自动重试。你不用做什么。`
   if (failure.kind === 'auth') return `${name} ${failure.reason}，请检查账号或密钥。`
+  if (failure.kind === 'quota') return turnErrorNotice(name === 'Claude' ? 'claude' : 'codex', undefined, 'quota')
   return incompatible()
 }
 
@@ -401,6 +403,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     const actual = codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '?'
     const gap = codexVersionCheck.ok ? '' : `(对齐版本 ${codexVersionCheck.expectedVersion})`
     const codexEnvModel = process.env.CODEX_MODEL
+    const codexPinnedModel = () => modelForProvider(readAgentConfig(), 'codex') || codexEnvModel
     deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, aligned ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时核对探测记录'})`)
     const codexInner = createCodexChatProvider({
         codexPathOverride: codexBinary,
@@ -442,24 +445,24 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           ...pluginMcp,
         },
       })
-    const codexProvider = withFirstUseProbe(codexInner, {
+    const codexProvider = withFirstUseProbe({
+      ...codexInner,
+      spawn: (project, ctx) => codexInner.spawn(project, { ...ctx, model: ctx.model ?? codexPinnedModel() }),
+    }, {
       gate: 'spawn',
+      probeAfterSpawn: true,
       timeoutMs: probeTimeoutMs,
       cache: {
         combination: () => ({
           cliVersion: codexVersionCheck.actualSemver ?? UNKNOWN_PROBE_FIELD,
           // Codex 对话走随 CC 发布的 app-server 协议客户端。
-          sdkVersion: APP_VERSION,
-          model: modelForProvider(readAgentConfig(), 'codex') || codexEnvModel ||
-            resolveCodexTarget().model || UNKNOWN_PROBE_FIELD,
+          sdkVersion: `${APP_VERSION}+${BUILD_SHA}`,
+          model: codexPinnedModel() || resolveCodexTarget().model || UNKNOWN_PROBE_FIELD,
         }),
         history: probeHistory('codex'),
       },
-      probe: async (model, signal) => {
-        const target = codexInner.callTarget?.('cheapEval') ?? unresolvedTarget('codex')
-        await assertCallAllowed(deps.networkGate, { ...target, model: model ?? null })
-        return codexInner.probeModel('只回复两个字母:ok', model, signal)
-      },
+      probe: (model, signal, project) => codexInner.probeModel('只回复两个字母:ok', model, signal, project, target =>
+        assertCallAllowed(deps.networkGate, target ?? unresolvedTarget('codex'))),
       failureMessage: (detail, failure) => probeFailureMessage('Codex', failure, () =>
         `codex 探测没通过:${detail.slice(0, 200)}\n` +
         `你的 codex CLI(${actual})和 wechat-cc 对齐的版本(${codexVersionCheck.expectedVersion})可能不合。` +

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator as createCoordinatorRaw, authFailNotice, turnPolicy, turnErrorNotice, type ConversationCoordinatorDeps } from './conversation-coordinator'
 import { spawnFailedNotice } from './coordinator/failures'
+import { FirstUseProbeError } from './first-use-probe'
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 import { errorWithProviderCode } from '../lib/provider-error-code'
 import { createProviderRegistry } from './provider-registry'
@@ -689,6 +690,34 @@ describe('ConversationCoordinator', () => {
 
       // Cleared after the turn settles.
       expect(c.cancel('chat-1')).toBe(false)
+    })
+
+    it('skips a solo probe failure notice after /stop', async () => {
+      const entered = Promise.withResolvers<void>()
+      const reprobe = Promise.withResolvers<void>()
+      const session: AgentSession = {
+        async *dispatch() { entered.resolve(); await reprobe.promise },
+        async cancel() {},
+        async close() {},
+      }
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const sendAssistantText = vi.fn(async () => {})
+      const recordTurn = vi.fn()
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire: async req => makeHandle(req.providerId, session as ReturnType<typeof makeFakeSession>) },
+        conversationStore: makeMockStore(), registry, defaultProviderId: 'claude',
+        format: () => 'x', permissionMode: 'strict', loadAccess: adminAccess, log: () => {},
+        sendAssistantText, recordTurn,
+      })
+      const turn = c.dispatch(inbound('chat-1', 'hi'))
+      await entered.promise
+      expect(c.cancel('chat-1')).toBe(true)
+      reprobe.reject(new FirstUseProbeError('Claude 暂时忙不过来'))
+      await turn
+      expect(sendAssistantText).not.toHaveBeenCalled()
+      expect(recordTurn).toHaveBeenCalledWith(expect.objectContaining({ error: undefined, errorCode: undefined }))
     })
 
     it('coordinator.cancel(chatId) reaches every in-flight participant of a parallel dispatch', async () => {
