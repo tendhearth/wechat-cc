@@ -30,6 +30,7 @@ import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeNotebookStore } from '../../adapters/store/notebook-store'
 import { DEFAULT_OPENING } from '../../domain/notebook'
 import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeFileStateStore } from '../../adapters/cli-upgrade/state'
 import type { Db } from '../../lib/db'
 import { serve } from '../../lib/runtime/http'
 import { openSqlite } from '../../lib/runtime/sqlite'
@@ -1825,6 +1826,58 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await expect.poll(brain, { timeout: 12_000 }).toMatchObject({ code: 'brain.probe_turn' })
     expect(dispatch.mock.calls.map(([prompt]) => said(prompt))).toEqual(['Claude 第一句', 'Claude 第二句'])
     expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('releases the Codex session after a structured unauthorized error with connection wording', async () => {
+    await d.stop()
+    let sessionStarts = 0
+    d = await startRealShapedDaemon({
+      claudeScript,
+      codexScript: {
+        async onDispatch(prompt) {
+          if (said(prompt) === 'Codex 结构化认证失败') return {
+            toolCalls: [], finalText: '',
+            codexSteps: [{ notify: { method: 'error', params: {
+              willRetry: false, error: { message: 'failed to connect', codexErrorInfo: 'unauthorized' },
+            } } }],
+          }
+          return { toolCalls: [], finalText: 'Codex 新会话已回复。' }
+        },
+      },
+      recordCodexSpawnOptions: () => { sessionStarts++ },
+      moderatorScript: { onEval: async () => 'ok' },
+      agentConfigPatch: { provider: 'codex', model: 'scripted-model' },
+      modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'codex' } },
+      seedFiles: { 'projects.json': PROJECTS },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    d.sendText(d.owner, 'Codex 结构化认证失败')
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(t => t.includes('检查一下账号或密钥')), { timeout: 15_000 }).toBe(true)
+    expect(sessionStarts).toBe(1)
+    d.sendText(d.owner, 'Codex 认证恢复后重试')
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).includes('Codex 新会话已回复。'), { timeout: 15_000 }).toBe(true)
+    expect(sessionStarts).toBe(2)
+    expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+  })
+
+  it('queues a Claude CLI version check through the daemon TurnRecord hook', async () => {
+    await d.stop()
+    d = await startRealShapedDaemon({
+      claudeScript: {
+        async onDispatch() { throw new Error('Please update Claude Code.') },
+      },
+      codexScript,
+      moderatorScript: { onEval: async () => 'ok' },
+      modes: { [SANDBOX_OWNER]: { kind: 'solo', provider: 'claude' } },
+      seedFiles: { 'projects.json': PROJECTS },
+    })
+    await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
+    const state = makeFileStateStore(d.stateDir)
+    expect(state.load().claude.reactiveAt).toBeNull()
+    d.sendText(d.owner, 'Claude 版本检查')
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(t => t.includes('请检查 CLI 版本或换一个模型')), { timeout: 15_000 }).toBe(true)
+    await expect.poll(() => state.load().claude.reactiveAt).toEqual(expect.any(String))
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 })

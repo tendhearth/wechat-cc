@@ -31,6 +31,10 @@ import { openDb } from '../lib/db'
 import { makeMatterStore } from '../adapters/store/matters-store'
 import { makeMatterLog } from '../adapters/store/matter-log'
 import { makeChatTurnLog } from '../adapters/store/chat-turns'
+import { makeCliUpgrader } from '../daemon/cli-upgrade/engine'
+import { makeMemoryStateStore } from '../adapters/cli-upgrade/state'
+import { resolveCliUpgradeConfig } from '../domain/cli-upgrade/config'
+import { withTurnConfirmation } from './first-use-probe'
 
 const CHAT = 'chat-1'
 
@@ -40,6 +44,7 @@ interface RigOpts {
   sink?: boolean
   progressAfterMs?: number
   chatTurns?: ConversationCoordinatorDeps['chatTurns']
+  confirmTurns?: boolean
 }
 
 function rig(o: RigOpts) {
@@ -60,7 +65,12 @@ function rig(o: RigOpts) {
     if (call.tool === 'voice') rt.attach(CHAT, { attachment: { kind: 'voice', text: String(call.args.text) }, send: async () => { wechat.push(`[语音] ${String(call.args.text)}`); return { ok: true } } })
   }
   const scripted = createScriptedClaude({ turns: o.turns, onToolCall, shape: o.shape ?? 'recorded' })
-  const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}), queryImpl: scripted.query })
+  const native = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}), queryImpl: scripted.query })
+  const provider = o.confirmTurns ? withTurnConfirmation(native, {
+    provider: 'claude',
+    combination: () => ({ model: 'scripted-model', cliVersion: 'test', sdkVersion: 'test' }),
+    history: { read: () => undefined, save: () => {}, clear: () => {} },
+  }) : native
   const registry = createProviderRegistry()
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true })
   const data = new Map<string, { mode: Mode }>([[CHAT, { mode: { kind: 'solo', provider: 'claude' } }]])
@@ -104,6 +114,51 @@ const ANSWER = '你现在有两个项目:wechat-cc 和 blog。'
 const daemonTurn = (): ClaudeScriptedTurn => ({ steps: [{ think: '用户问项目' }, say(OPENING), wx('list_projects'), say(ANSWER)] })
 
 describe('Claude:双发旁白 / 吞话在 daemon 模式下结构性消失(生产的 Claude provider + Agent SDK 消息形状)', () => {
+
+  it('structured Claude authentication failure takes precedence over timeout and connection wording', async () => {
+    const t = rig({ confirmTurns: true, turns: [{ steps: [], apiError: { sdkError: 'authentication_failed', text: 'failed to connect: timed out' } }] })
+    try {
+      await t.send()
+      expect(t.records[0]).toMatchObject({ outcome: 'auth_failed', errorCode: 'auth_rejected' })
+      expect(t.notices).toEqual([expect.stringContaining('检查一下账号或密钥')])
+    } finally { await t.close() }
+  })
+
+  it('a wrapped outdated Claude error schedules a CLI version check from the failed TurnRecord', async () => {
+    const t = rig({ confirmTurns: true, turns: [{
+      steps: [],
+      apiError: { sdkError: 'invalid_request', text: 'Please update Claude Code. Gateway diagnostic.', status: 400 },
+    }] })
+    const latest = vi.fn(async () => ({ version: '1.1.0', source: 'test' }))
+    const state = makeMemoryStateStore()
+    const up = makeCliUpgrader({
+      config: () => resolveCliUpgradeConfig({}),
+      locate: id => id === 'claude' ? '/fake/claude' : null,
+      run: async () => ({ code: 0, stdout: '1.0.0 (Claude Code)', stderr: '' }),
+      latest,
+      isIdle: () => ({ idle: false }),
+      holdBusy: () => () => {},
+      verify: async () => ({ status: 'pass', detail: 'test' }),
+      notify: () => {},
+      log: () => {},
+      state,
+      localHour: () => 1,
+    })
+    try {
+      await up.tick()
+      expect(latest).not.toHaveBeenCalled()
+      await t.send()
+      const record = t.records[0]!
+      expect(record).toMatchObject({ outcome: 'error', errorCode: 'incompatible' })
+      expect(t.notices).toEqual([expect.stringContaining('请检查 CLI 版本或换一个模型')])
+      expect(record.error).not.toContain('Gateway diagnostic')
+      expect(up.onTurnError(record.provider, record.errorCode, record.error)).toBe(true)
+      expect(up.onTurnError(record.provider, record.errorCode, record.error)).toBe(false)
+      await up.tick()
+      expect(latest).toHaveBeenCalledTimes(1)
+      expect(state.snapshot().claude.pending).toBe('reactive')
+    } finally { await t.close() }
+  })
 
   it('daemon:只交付最后一段,一次;没有 FALLBACK_REPLY;四种外部条件交付一字不差;result.result 与分段一致', async () => {
     for (const shape of ['recorded', 'bundled', 'drift', 'tool_error'] as const) {

@@ -108,6 +108,9 @@ describe('withTurnConfirmation', () => {
     { message: 'unexpected failure', code: 'provider_error', note: '暂时没有回应（原因未明）' },
     { message: 'HTTP error: 401 Unauthorized', code: 'auth_rejected', note: '拒绝了凭证（401）' },
     { message: 'model not found', explicitCode: 'auth_rejected', code: 'auth_rejected', note: '拒绝了凭证（认证）' },
+    { message: 'insufficient_quota', explicitCode: 'auth_rejected', code: 'auth_rejected', note: '拒绝了凭证（认证）' },
+    { message: 'HTTP error: 401 Unauthorized', explicitCode: 'network', code: 'network', note: '暂时连不上（网络）' },
+    { message: 'failed to connect', explicitCode: 'provider_error', code: 'network', note: '暂时连不上（网络）' },
   ])('reports a real turn error and preserves prior confirmation for $message', ({ message, explicitCode, code, note }) => withRecords(async (dir) => {
     const f = fixture(dir)
     const session = await f.provider.spawn(project, ctx)

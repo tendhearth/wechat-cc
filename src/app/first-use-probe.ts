@@ -1,6 +1,7 @@
 import type { AgentEvent, AgentProvider, AgentSession } from '../ports/agent-provider'
 import { classifyProviderError, parseResetAt } from '../domain/provider-quota'
 import { outdatedClientSignal } from '../domain/cli-upgrade/outdated-signal'
+import { CLI_SPECS } from '../domain/cli-upgrade/specs'
 import { looksLikeAuthFailure } from '../lib/auth-failure'
 import { isConnectFailure, isTimeoutFailure } from '../lib/net-errors'
 import { codeForHttpStatus, contextOverflowInputTokens, contextOverflowLimitTokens, errorWithProviderCode, isAuthErrorCode, isProviderErrorCode, providerErrorCodeOf, type ProviderErrorCode } from '../lib/provider-error-code'
@@ -52,31 +53,37 @@ export type ProbeStatus =
 
 const INCOMPATIBLE: ProbeFailure = { kind: 'incompatible', reason: '模型或客户端协议不兼容', code: 'incompatible' }
 
-function classifyProbeError(error: unknown, detail: string): ProbeFailure {
+function classifyProbeError(provider: ConfirmationOptions['provider'], error: unknown, detail: string): ProbeFailure {
   // HTTP 状态可能留在抛出物上，也可能只剩 CLI 转述。只从状态字段或错误前缀取数字。
   const envelope = error !== null && typeof error === 'object'
     ? error as { status?: unknown; statusCode?: unknown; httpStatusCode?: unknown; code?: unknown }
     : undefined
   const status = Number(envelope?.status ?? envelope?.statusCode ?? envelope?.httpStatusCode ??
     /(?:^\s*|\b(?:API Error:|unexpected status|HTTP(?: error:| status:?|\/\d(?:\.\d)?)?|status code:?)\s+|"status"\s*:\s*)([45]\d\d)\b/i.exec(detail)?.[1])
-  const httpCode = codeForHttpStatus(status, detail)
-  const code = providerErrorCodeOf(error) ?? (isProviderErrorCode(envelope?.code) ? envelope.code : undefined)
-  const timeout = isTimeoutFailure(detail) || isTimeoutFailure(envelope?.code) || status === 408
+  let code = providerErrorCodeOf(error) ?? (isProviderErrorCode(envelope?.code) ? envelope.code : undefined)
+  const timedOut = () => status === 408 || isTimeoutFailure(envelope?.code) || isTimeoutFailure(detail)
   const transient = (reason: string, code: ProviderErrorCode): ProbeFailure => ({ kind: 'transient', reason, code })
-  const auth = (): ProbeFailure => ({ kind: 'auth', code: code === 'auth_failed' ? code : 'auth_rejected', reason: `拒绝了凭证（${status === 401 || status === 403 ? status : '认证'}）` })
-  const quota = classifyProviderError(detail)
 
-  if (code === 'quota' || httpCode === 'quota' || quota === 'quota') return { kind: 'quota', code: 'quota', reason: '额度用完了' }
-  if (httpCode === 'server_error' || code === 'server_error') return { ...transient(`暂时忙不过来（${httpCode === 'server_error' ? status : '5xx'}）`, 'server_error'), cause: 'server_error' }
-  if (httpCode === 'rate_limited' || code === 'rate_limited') return transient(`暂时限流（${httpCode === 'rate_limited' ? status : 'rate_limit'}）`, 'rate_limited')
-  if (code === 'context_overflow' || httpCode === 'context_overflow') return transient('上下文过长', 'context_overflow')
-  if (isAuthErrorCode(httpCode)) return auth()
-  if (timeout) return transient(`请求超时（${status === 408 ? status : 'timeout'}）`, 'network')
-  if (code === 'network' || isConnectFailure(detail) || isConnectFailure(envelope?.code)) return transient('暂时连不上（网络）', 'network')
-  if (quota === 'rate_limit') return transient('暂时忙不过来（rate_limit）', 'rate_limited')
-  if (isAuthErrorCode(code) || looksLikeAuthFailure(detail)) return auth()
-  if (code === 'incompatible' || outdatedClientSignal('claude', detail) || outdatedClientSignal('codex', detail) ||
-      /\b(?:model(?:[_ ]not[_ ]found|[_ ]not[_ ]supported|[^\n.]{0,120} (?:does not exist|is not supported|is unavailable))|unsupported model|(?:version|protocol) mismatch|incompatible (?:version|protocol))\b/i.test(detail)) return INCOMPATIBLE
+  if (!code || code === 'provider_error') {
+    if (detail === '' || /^codex_(?:missing_(?:thread|turn)_id|turn_start_mismatch|rpc_method_not_found)$/.test(detail)) return INCOMPATIBLE
+    const quota = classifyProviderError(detail)
+    code = quota === 'quota' ? 'quota' : codeForHttpStatus(status, detail)
+    if (!code) {
+      if (timedOut() || isConnectFailure(detail) || isConnectFailure(envelope?.code)) code = 'network'
+      else if (quota === 'rate_limit') return transient('暂时忙不过来（rate_limit）', 'rate_limited')
+      else if (looksLikeAuthFailure(detail)) code = 'auth_rejected'
+    }
+  }
+  if (isAuthErrorCode(code)) return { kind: 'auth', code, reason: `拒绝了凭证（${status === 401 || status === 403 ? status : '认证'}）` }
+  if (code === 'quota') return { kind: 'quota', code, reason: '额度用完了' }
+  if (code === 'server_error') return { ...transient(`暂时忙不过来（${status >= 500 && status <= 599 ? status : '5xx'}）`, code), cause: code }
+  if (code === 'rate_limited') return transient(`暂时限流（${status === 429 ? status : 'rate_limit'}）`, code)
+  if (code === 'context_overflow') return transient('上下文过长', code)
+  if (code === 'network') return transient(timedOut() ? `请求超时（${status === 408 ? status : 'timeout'}）` : '暂时连不上（网络）', code)
+  // invalid_request 包含模型不可用等多种拒绝，明确的兼容性错误可进一步细分。
+  if (code === 'incompatible') return INCOMPATIBLE
+  if ((!code || code === 'invalid_request') && (outdatedClientSignal(provider, detail) ||
+      /\b(?:model(?:[_ ]not[_ ]found|[_ ]not[_ ]supported|[^\n.]{0,120} (?:does not exist|is not supported|is unavailable))|unsupported model|(?:version|protocol) mismatch|incompatible (?:version|protocol))\b/i.test(detail))) return INCOMPATIBLE
   return transient('暂时没有回应（原因未明）', code ?? 'provider_error')
 }
 
@@ -120,8 +127,7 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
     saved.delete(probeTargetKey(target))
   }
   const failure = (target: ProbeCombination | undefined, error: unknown, detail: string, startup = false) => {
-    const invalidProtocol = /^codex_(?:missing_(?:thread|turn)_id|turn_start_mismatch|rpc_method_not_found)$/.test(detail)
-    const classified = detail === '' || invalidProtocol ? INCOMPATIBLE : classifyProbeError(error, detail)
+    const classified = classifyProbeError(opts.provider, error, detail)
     const at = now()
     const resetAt = classified.kind === 'quota' ? parseResetAt(detail) : null
     if (target && (startup || classified.kind === 'incompatible')) clear(target)
@@ -137,7 +143,9 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
     }
     let message = classified.reason
     // Preserve fixed upgrade and overflow signals used by the coordinator.
-    if (classified.kind === 'incompatible' && outdatedClientSignal('codex', detail)) message = 'This model requires a newer version of Codex.'
+    if (classified.kind === 'incompatible' && outdatedClientSignal(opts.provider, detail)) {
+      message = `This request requires a newer version of ${CLI_SPECS[opts.provider].label}.`
+    }
     if (classified.code === 'context_overflow') {
       const input = contextOverflowInputTokens(detail)
       const limit = contextOverflowLimitTokens(detail)

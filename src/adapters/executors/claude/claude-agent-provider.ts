@@ -18,6 +18,7 @@ import { AsyncQueue } from '../../../lib/async-queue'
 import { isAuthFail } from '../../../domain/auth-fail'
 import { codeForHttpStatus, isContextOverflow, errorWithProviderCode, providerErrorCodeOf } from '../../../lib/provider-error-code'
 import { claudeApiErrorCode } from './claude-api-error-code'
+import { classifyProviderError } from '../../../domain/provider-quota'
 import { discoverClaudeModels } from './claude-model-catalog'
 import { executionModel, nativeModelId } from '../../../domain/workbench/native-model-catalog'
 import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
@@ -630,11 +631,15 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       let turnErrored = false
       let evaluationHasPartialText = false
       let evaluationHasVisibleText = false
+      // Claude 的 429 同时用于短期限流和额度耗尽，发出对话错误前按明确的额度文字区分。
+      const chatErrorCode = (code: string, message: string): string =>
+        !evaluation && code === 'rate_limited' && classifyProviderError(message) === 'quota' ? 'quota' : code
       const flushApiError = (aq: AsyncQueue<AgentEvent>, apiErrorStatus?: number | null): void => {
         if (!pendingApiError) return
         const { sdkError, text } = pendingApiError
         pendingApiError = null
-        const { code, message } = claudeApiFailure(sdkError, text, apiErrorStatus)
+        const { code: apiCode, message } = claudeApiFailure(sdkError, text, apiErrorStatus)
+        const code = chatErrorCode(apiCode, message)
         log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=${sdkError} status=${apiErrorStatus ?? 'none'} code=${code}`)
         aq.push({ kind: 'error', code, message, ...(apiErrorStatus == null ? {} : { httpStatusCode: apiErrorStatus }) })
       }
@@ -761,7 +766,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                   const code = isContextOverflow(msg.errors) ? 'context_overflow'
                     : evaluation && msg.subtype === 'error_max_turns' ? (usageLimited ? 'checkup_usage_limit' : 'checkup_step_budget')
                     : codeForHttpStatus(msg.api_error_status, message)
-                  aq.push({ kind: 'error', message, ...(code ? { code } : {}), ...(msg.api_error_status == null ? {} : { httpStatusCode: msg.api_error_status }) })
+                  aq.push({ kind: 'error', message, ...(code ? { code: chatErrorCode(code, message) } : {}), ...(msg.api_error_status == null ? {} : { httpStatusCode: msg.api_error_status }) })
                 }
               } else if (!apiErrored && !turnErrored) {
                 // SDK 说这一轮是失败的(is_error),却没有带 error 标注的助理消息(上面那条路没接住):
@@ -769,7 +774,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 // 判法和一起做同一个(claude-sdk-messages.ts 的 claudeResultFailure)。
                 const resultFailure = claudeResultFailure(msg)
                 if (resultFailure) {
-                  const code = codeForHttpStatus(msg.api_error_status, resultFailure.message) ?? resultFailure.code
+                  const code = chatErrorCode(codeForHttpStatus(msg.api_error_status, resultFailure.message) ?? resultFailure.code, resultFailure.message)
                   log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=none is_error=true status=${msg.api_error_status ?? 'none'} code=${code}`)
                   aq.push({ kind: 'error', ...resultFailure, code,
                     ...(msg.api_error_status == null ? {} : { httpStatusCode: msg.api_error_status }) })
