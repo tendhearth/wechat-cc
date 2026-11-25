@@ -130,8 +130,12 @@ function permissionStatusFile(path:string):string {
   const drive=/^[a-z]:/i.test(path)
   // A URL (or query/fragment) can also arrive in a field labelled as a path.
   if(/[:?#%]/.test(drive?path.slice(2):path)||path.startsWith('//')||path.includes('://'))return ''
-  const name=drive||path.startsWith('\\\\')?win32.basename(path):basename(path)
-  return name.includes('=')?'':redactSecrets(name)
+  // Cutting to a basename drops context such as `TOKEN=` that marks the rest as a credential:
+  // withhold assignment-shaped values and redact the whole value before cutting.
+  if(path.includes('='))return ''
+  const redacted=redactSecrets(path)
+  const name=drive||redacted.startsWith('\\\\')?win32.basename(redacted):basename(redacted)
+  return name.includes('=')?'':name
 }
 
 function statusPermissionDisplay(body:PermissionDisplay['body']):PermissionDisplay|undefined {

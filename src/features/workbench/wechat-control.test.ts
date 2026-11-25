@@ -428,6 +428,23 @@ describe('WeChat task control through the shared service',()=>{
     expect(lookup).toMatchObject({kind:'permission_card',card:{text:expect.stringContaining(url)}})
   })
 
+  it('withholds assignment-shaped path values instead of cutting them to a bare filename',async()=>{
+    // 截成文件名会丢掉「TOKEN=」这层上下文，后半截就像个普通文件名被发出去；必须在截之前认出来。
+    const assigned='TOKEN=prefix/fake-assigned-value'
+    setup({async spawn(_p,ctx){return{async *dispatch(){
+      await ctx.requestPermission!({tool:'Read',description:assigned,display:{body:{kind:'fields',fields:[{name:'file_path',value:assigned}]}}})
+      yield result
+    },async close(){}}}})
+    const task=create()
+    await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
+    const read=service.detail(task.id).permissions[0]!
+    for(const suffix of ['',' 待办']){
+      const reply=await service.handleWechat('owner',`任务 ${task.id}${suffix}`,identity)
+      expect(reply).toContain(`想看一个文件\n查看：任务 ${task.id} 权限 ${read.id}`)
+      expect(reply).not.toContain('fake-assigned-value')
+    }
+  })
+
   it('redacts before middle-eliding long read targets and preserves both filename endings',async()=>{
     const directory='shared-folder/'.repeat(12)
     const token=`sk-${'fixture'.repeat(24)}`
