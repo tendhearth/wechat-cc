@@ -563,7 +563,7 @@ export const ChatPage = z.object({ receipt: z.object({requestId:z.string(),statu
 
 // ── CC 的连接(spec 2026-10-01):手机拿到的是去掉 detail 的快照 ──────────
 
-export const ConnectionSource = z.object({ id: z.string(), kind: z.enum(['wechat_history', 'knowledge', 'plugin']), name: z.string(), state: z.enum(['ready', 'behind', 'not_loaded', 'unknown']), latestAt: z.number().nullable(), syncedAt: z.number().nullable() })
+export const ConnectionSource = z.object({ id: z.string(), kind: z.enum(['wechat_history', 'knowledge', 'plugin']), name: z.string(), label: z.string().optional(), state: z.enum(['ready', 'behind', 'not_loaded', 'unknown']), latestAt: z.number().nullable(), syncedAt: z.number().nullable() })
 export const Connections = z.object({
   generatedAt: z.number(), sources: z.array(ConnectionSource),
   // 插件快照还没出来 ⇒ daemon 真的还在启动。可选:老 daemon 不带(手机当不知道是否在启动)。

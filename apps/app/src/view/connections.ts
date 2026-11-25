@@ -63,7 +63,7 @@ export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts:
     const label = x.state === 'ready' ? (date ? t(lang, 'links.latestOn', { date }) : t(lang, 'links.ready'))
       : x.state === 'behind' ? (date ? t(lang, 'links.behindSince', { date }) : t(lang, 'links.behind'))
       : x.state === 'not_loaded' ? t(lang, 'links.notLoaded') : t(lang, 'links.unknown')
-    const name = x.kind === 'wechat_history' ? t(lang, 'links.src.wechat') : x.kind === 'knowledge' ? t(lang, 'links.src.knowledge') : x.name
+    const name = x.kind === 'wechat_history' ? t(lang, 'links.src.wechat') : x.kind === 'knowledge' ? t(lang, 'links.src.knowledge') : (lang === 'zh-Hans' && x.label) || x.name
     return { id: x.id, name, dot: DOT[x.state], label }
   })
   // 电脑不在线也并进最坏的严重度(红):不能一边电脑掉线一边说「都连上了」。来源本身有红 ⇒ 按来源说;否则说几台不在线。

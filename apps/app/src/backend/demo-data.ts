@@ -187,8 +187,8 @@ export function demoConnections(lang: Lang, now: number): ConnectionsT {
     sources: [
       { id: 'wechat_history', kind: 'wechat_history', name: 'wxvault', state: 'ready', latestAt: now - DAY, syncedAt: now - 2 * HOUR },
       { id: 'knowledge', kind: 'knowledge', name: 'knowledge', state: 'behind', latestAt: now - 4 * DAY, syncedAt: now - 4 * DAY },
-      { id: 'plugin:wxmedia', kind: 'plugin', name: 'wxmedia', state: 'not_loaded', latestAt: null, syncedAt: null },
-      { id: 'plugin:wxsearch', kind: 'plugin', name: 'wxsearch', state: 'ready', latestAt: null, syncedAt: null },
+      { id: 'plugin:wxmedia', kind: 'plugin', name: 'wxmedia', label: '语音转文字', state: 'not_loaded', latestAt: null, syncedAt: null },
+      { id: 'plugin:wxsearch', kind: 'plugin', name: 'wxsearch', label: '微信语义搜索', state: 'ready', latestAt: null, syncedAt: null },
     ],
     computers: [{ id: 'home', label: 'Mac', online: true, since: now - 3 * DAY, version: null }],
     recent: [
