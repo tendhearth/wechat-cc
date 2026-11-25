@@ -710,8 +710,19 @@ describe('makeModeCommands', () => {
     const { cmds, sentMessages } = setup({ isAdmin: () => false })
     await cmds.handle(inbound('/help'))
     const text = sentMessages[0]?.[1] ?? ''
-    expect(text).toContain('/gemini 是 API key 版(已弃用')
+    expect(text).toContain('/gemini 是 API key 版（已弃用')
     expect(text).toContain('新接入请用 /agy')
+  })
+
+  it('/help has no Markdown markers (WeChat shows them literally) and uses full-width punctuation in its Chinese lines', async () => {
+    for (const admin of [true, false]) {
+      const { cmds, sentMessages } = setup({ isAdmin: () => admin })
+      await cmds.handle(inbound('/help'))
+      const text = sentMessages[0]?.[1] ?? ''
+      expect(text).not.toContain('**')
+      expect(text).toContain('【模式切换】')
+      expect(text).not.toMatch(/[\u4e00-\u9fff][,;:]|[,;:][\u4e00-\u9fff]/)
+    }
   })
 
   it('/帮助 is an alias for /help and produces the same output', async () => {
@@ -731,7 +742,7 @@ describe('makeModeCommands', () => {
     await cmds.handle(inbound('/help'))
     const text = sentMessages[0]?.[1] ?? ''
     // Present: opening blurb, identity, /set split, files.
-    expect(text).toContain('这里是微信通道')
+    expect(text).toContain('这里是微信，直接跟我说话就行')
     expect(text).toContain('/whoami')
     expect(text).toContain('/name <昵称>')
     expect(text).toContain('/set split')
@@ -744,14 +755,14 @@ describe('makeModeCommands', () => {
     expect(text).not.toContain('/both')
     expect(text).not.toContain('/chat ')
     expect(text).not.toContain('/mode')
-    expect(text).not.toContain('主动关心档位')
+    expect(text).not.toContain('主动关心')
     expect(text).not.toContain('care')
     expect(text).not.toContain('关心')
     expect(text).not.toContain('表情包')
     expect(text).not.toContain('打猎')
     expect(text).not.toContain('陪伴')
     expect(text).not.toContain('配对')
-    expect(text).not.toContain('切到 <alias>')
+    expect(text).not.toContain('切到 <项目>')
     // Guest is never admin — admin section stays hidden even if isAdmin
     // somehow said true for this chat's userId (defense-in-depth).
     expect(text).not.toContain('管理员命令')
@@ -1203,7 +1214,7 @@ describe('provider policy in slash commands', () => {
     expect(sentMessages[0]![1]).toContain('共用一把 trusted 钥匙')
     expect(sentMessages[0]![1]).toContain('非管理员可用(管理员设定): claude')
     await cmds.handle(inbound('/help'))
-    expect(sentMessages[1]![1]).toContain('当前可用: /cc /agy')
+    expect(sentMessages[1]![1]).toContain('现在能用：/cc /agy')
     expect(sentMessages[1]![1]).toContain('订阅 CLI')
   })
 })
