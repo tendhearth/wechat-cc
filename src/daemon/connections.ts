@@ -7,7 +7,7 @@ import type { PluginsHealth } from './plugins/health'
 import type { Capability } from './capabilities'
 
 export type SourceState = 'ready' | 'behind' | 'not_loaded' | 'unknown'
-export interface ConnectionSource { id: string; kind: 'wechat_history' | 'knowledge' | 'plugin'; name: string; state: SourceState; latestAt: number | null; syncedAt: number | null; detail?: { reason?: string; dir?: string | null } }
+export interface ConnectionSource { id: string; kind: 'wechat_history' | 'knowledge' | 'plugin'; name: string; /** 给人看的名字(插件清单里的 displayName,去掉重复英文目录名的括号);没有就用 name。 */ label?: string; state: SourceState; latestAt: number | null; syncedAt: number | null; detail?: { reason?: string; dir?: string | null } }
 export interface ConnectionsSnapshot {
   generatedAt: number
   /** 插件快照还没出来 = daemon 真的还在启动(手机只在这时说「电脑还在启动」;别的 unknown 用中性措辞)。 */
@@ -37,6 +37,15 @@ export interface ConnectionsDeps {
   now?: () => number
 }
 const WXVAULT = 'wxvault'
+
+/** 「微信语义搜索 (wxsearch)」⇒「微信语义搜索」:括号里只是重复英文目录名。去掉后和 name 一样或为空 ⇒ 不给。 */
+export function pluginLabel(name: string, displayName?: string): string | undefined {
+  const raw = displayName?.trim()
+  if (!raw) return undefined
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const label = raw.replace(new RegExp(`\\s*[（(]\\s*${escaped}\\s*[)）]\\s*$`, 'iu'), '').trim()
+  return label && label !== name ? label : undefined
+}
 
 export function buildConnections(d: ConnectionsDeps): ConnectionsSnapshot {
   const now = (d.now ?? Date.now)()
@@ -68,7 +77,8 @@ export function buildConnections(d: ConnectionsDeps): ConnectionsSnapshot {
     const rows: ConnectionSource[] = []
     for (const p of h.plugins) {
       if (p.name === WXVAULT || !p.enabled) continue
-      rows.push({ id: `plugin:${p.name}`, kind: 'plugin', name: p.name, state: p.ready ? 'ready' : 'not_loaded', latestAt: null, syncedAt: null, ...(p.ready ? {} : { detail: { reason: p.reason ?? 'not_ready', dir: h.bundled_dir } }) })
+      const label = pluginLabel(p.name, p.displayName)
+      rows.push({ id: `plugin:${p.name}`, kind: 'plugin', name: p.name, ...(label ? { label } : {}), state: p.ready ? 'ready' : 'not_loaded', latestAt: null, syncedAt: null, ...(p.ready ? {} : { detail: { reason: p.reason ?? 'not_ready', dir: h.bundled_dir } }) })
     }
     for (const name of h.expected_missing) {
       if (name === WXVAULT || rows.some(r => r.name === name)) continue

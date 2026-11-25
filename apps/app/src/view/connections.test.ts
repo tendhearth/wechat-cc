@@ -20,6 +20,13 @@ describe('connectionsView', () => {
     expect(connectionsView(snap([]), NOW, 'en').headline).toEqual({ dot: 'unknown', key: 'links.headlineUnknown', n: 0 })
     expect(connectionsView(snap([src('a', 'behind'), src('b', 'behind'), src('c', 'unknown')]), NOW, 'en').headline).toEqual({ dot: 'warn', key: 'links.headlineWarn', n: 2 })
   })
+  it('插件给人看的名字(清单里是中文)只在中文界面用;英文界面和没有名字时用目录名', () => {
+    const labelled = { ...src('plugin:wxsearch', 'ready'), name: 'wxsearch', label: '微信语义搜索' }
+    const s = snap([labelled, { ...src('plugin:plain', 'ready'), name: 'plain' }])
+    expect(connectionsView(s, NOW, 'zh-Hans').sources.map(x => x.name)).toEqual(['微信语义搜索', 'plain'])
+    expect(connectionsView(s, NOW, 'en').sources.map(x => x.name)).toEqual(['wxsearch', 'plain'])
+  })
+
   it('名称、带日期的 ready、电脑、最近、成果', () => {
     const s = { ...snap([src('kb', 'ready', new Date(2026, 8, 30, 9).getTime(), 'knowledge'), src('wxsearch', 'behind')]),
       computers: [{ id: 'home', label: 'Mac', online: true, since: new Date(2026, 8, 30, 9).getTime(), version: null }, { id: 'w', label: 'Win', online: false, since: null, version: null }],

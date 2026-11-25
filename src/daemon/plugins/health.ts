@@ -26,7 +26,7 @@ import { readEnabledMap, type LoadedPlugin, type PluginSource } from './registry
 export interface PluginsHealth {
   bundled_dir: string | null
   via: BundledPluginsVia | null
-  plugins: Array<{ name: string; source: PluginSource; enabled: boolean; ready: boolean; reason?: string }>
+  plugins: Array<{ name: string; source: PluginSource; enabled: boolean; ready: boolean; reason?: string; displayName?: string }>
   /** Expected (see header) but not discovered at all. Sorted. */
   expected_missing: string[]
   /** Registered source dir (bundled-source.json), or null when none registered. */
@@ -63,6 +63,7 @@ export function buildPluginsHealth(input: {
     plugins: input.loaded.map(p => ({
       name: p.name, source: p.source, enabled: p.enabled, ready: p.ready,
       ...(p.notReadyReason ? { reason: p.notReadyReason } : {}),
+      ...(p.manifest.displayName ? { displayName: p.manifest.displayName } : {}),
     })),
     expected_missing: [...expected].filter(n => !found.has(n)).sort(),
     pointer_dir: record?.dir ?? null,

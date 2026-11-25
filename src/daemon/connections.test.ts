@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildConnections, redactConnections, cacheConnections, KNOWLEDGE_STALE_MS, WECHAT_SYNC_STALE_MS, type ConnectionsDeps } from './connections'
+import { buildConnections, redactConnections, cacheConnections, pluginLabel, KNOWLEDGE_STALE_MS, WECHAT_SYNC_STALE_MS, type ConnectionsDeps } from './connections'
 import type { PluginsHealth } from './plugins/health'
 
 const NOW = Date.UTC(2026, 9, 1, 12)
@@ -69,6 +69,27 @@ describe('buildConnections', () => {
     expect(s.recent.map(r => r.matterId)).toEqual(['00000004', '00000003', '00000002'])
     expect(s.outputs.map(o => o.name)).toEqual(['00000004.md', '00000002.md', '00000001.md'])
   })
+  it('插件给人看的名字取清单里的 displayName,去掉重复英文目录名的括号;没有就不给 label,手机快照里照样带着', () => {
+    const s = buildConnections(deps({ plugins: () => health({ plugins: [
+      { name: 'wxsearch', source: 'bundled' as never, enabled: true, ready: true, displayName: '微信语义搜索 (wxsearch)' },
+      { name: 'wxmedia', source: 'bundled' as never, enabled: true, ready: true, displayName: '语音转文字（wxmedia）' },
+      { name: 'plain', source: 'bundled' as never, enabled: true, ready: true },
+    ] }) }))
+    expect(byId(s, 'plugin:wxsearch')).toMatchObject({ name: 'wxsearch', label: '微信语义搜索' })
+    expect(byId(s, 'plugin:wxmedia')).toMatchObject({ name: 'wxmedia', label: '语音转文字' })
+    expect(byId(s, 'plugin:plain')).not.toHaveProperty('label')
+    expect(redactConnections(s).sources.find(x => x.id === 'plugin:wxsearch')).toMatchObject({ label: '微信语义搜索' })
+  })
+
+  it('pluginLabel:只去掉结尾重复目录名的括号;剩下空的或就是目录名 ⇒ 不给', () => {
+    expect(pluginLabel('wxsearch', ' 微信语义搜索 (wxsearch) ')).toBe('微信语义搜索')
+    expect(pluginLabel('wx.search', '搜索 (wx.search)')).toBe('搜索')
+    expect(pluginLabel('wxsearch', '搜索 (别的说明)')).toBe('搜索 (别的说明)')
+    expect(pluginLabel('wxsearch', '(wxsearch)')).toBeUndefined()
+    expect(pluginLabel('wxsearch', 'wxsearch')).toBeUndefined()
+    expect(pluginLabel('wxsearch', undefined)).toBeUndefined()
+  })
+
   it('redactConnections:手机拿到的快照里没有路径与原因原文', () => {
     const s = redactConnections(buildConnections(deps({ plugins: () => health({ plugins: [{ name: 'wxmedia', source: 'bundled' as never, enabled: true, ready: false, reason: 'at /Users/nate/x' }], expected_missing: ['wxvault'] }) })))
     const text = JSON.stringify(s)
