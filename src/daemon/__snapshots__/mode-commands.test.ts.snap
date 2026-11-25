@@ -31,7 +31,7 @@ exports[`makeModeCommands > /help for admin tier is byte-identical to the pre-ti
 /reset（/重置）—— 重置这个对话
 /botname [名字] —— 设置 / 查看 CC 在微信里显示的名字
 /hearth help —— 整理知识库（hearth 子命令）
-清理 <bot> / 清理 all-expired —— 清理过期的 bot
+清理 <账号编号> / 清理 all-expired —— 清理过期的微信账号连接
 整理记忆 / 看记忆 —— 重新整理 / 查看 CC 对你的理解
 让<名字>执行 <任务> —— 派活给配对过的另一台电脑
 「终端」「日报」「看 码」「@码 话」—— 终端里的会话（Claude Code / Codex / Cursor）：列出会话 / 今天的情况 / 看最近的对话 / 接着说一句
