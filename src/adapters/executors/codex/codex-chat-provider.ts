@@ -60,7 +60,8 @@ export interface CodexChatProviderOptions {
   /** 测试接缝:起 app-server 子进程(src/test-support/executors/codex-scripted.ts 的剧本替身)。生产不传。 */
   spawnProcess?: CodexAppServerSpawn
   networkGate?: NetworkGate
-  onNativeDefault?: (target: CallTarget) => void
+  onNativeDefault?: CodexChatProfile['onNativeDefault']
+  confirmationVersion?: CodexChatProfile['confirmationVersion']
   /**
    * 审批 on-request 的会话:每次 spawn 造一个应答者(codex-chat-gate.ts 的 makeCodexChatGate)。不给 ⇒ 没人可问,
    * compilePolicy 说 on-request 的也落回 never(以前的行为)。
@@ -179,7 +180,8 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       const approvalPolicy = tierOpts.approvalPolicy === 'on-request' && !approve ? 'never' : tierOpts.approvalPolicy
       const profile: CodexChatProfile = {
         sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: sessionSubprocessEnv(), log, ...(approve ? { approve } : {}),
-        onNativeDefault: target => opts.onNativeDefault?.(target),
+        onNativeDefault: opts.onNativeDefault,
+        confirmationVersion: opts.confirmationVersion,
       }
       // 对话只把这几样交给协议客户端;工作台专用的(审批桥、时间线、后台生命周期)一律不带。
       const base: SpawnContext = {
@@ -211,10 +213,13 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       log('SESSION_INIT', `alias=${project.alias} thread_id=${lastThreadId} provider=codex`)
       let closed = false
       let cancellations = 0
+      let reopening = false
 
       const session: AgentSession = {
         resumedHistory, resumedHistoryOwnerOnly:true,
         callTarget: () => core.callTarget?.() ?? targetOf(model ?? null, project.path, config),
+        confirmationTarget: () => reopening ? null : core.confirmationTarget?.() ?? null,
+        ...(opts.confirmationVersion ? { confirmationVersion: () => core.confirmationVersion?.() ?? Promise.resolve(undefined) } : {}),
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           return {
             async *[Symbol.asyncIterator](): AsyncGenerator<AgentEvent> {
@@ -227,7 +232,9 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
                   log('SESSION_RESPAWN', `alias=${project.alias} thread_id=${lastThreadId} provider=codex`)
                   await core.close().catch(() => {})
                   if (closed) return
+                  reopening = true
                   core = await open(lastThreadId || undefined)
+                  reopening = false
                   lastThreadId = core.threadId()
                   respawned = true
                 }

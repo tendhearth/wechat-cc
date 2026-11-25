@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { writeWarmExecFixture } from '../../lib/test-temp'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -22,6 +22,7 @@ const fakeProbe = vi.hoisted(() => ({
   error: null as string | null,
   codexError: null as string | null,
   codexEmpty: false,
+  codexReroute: false,
   codexTurns: [] as string[],
   claudeOneShots: [] as string[],
   claudeInputs: [] as string[],
@@ -80,7 +81,13 @@ vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
   const scripted = createScriptedCodex({
     turns: input => {
       fakeProbe.codexTurns.push(input)
-      return { steps: fakeProbe.codexError || fakeProbe.codexEmpty ? [] : [{ say: 'native reply' }], fail: fakeProbe.codexError ?? undefined }
+      return { steps: fakeProbe.codexError || fakeProbe.codexEmpty ? [] : [
+        ...(fakeProbe.codexReroute ? [
+          { notify: { method: 'model/rerouted', params: { turnId: 'stale-turn', toModel: 'stale-model' } } },
+          { notify: { method: 'model/rerouted', params: { toModel: 'rerouted-model' } } },
+        ] : []),
+        { say: 'native reply' },
+      ], fail: fakeProbe.codexError ?? undefined }
     },
     cheapAnswer: () => 'evaluation answer',
     rewrite: message => {
@@ -197,6 +204,7 @@ describe('registerProviders — first-use probe messages', () => {
       fakeProbe.codexStartupFailure = null
       fakeProbe.codexResumeModel = null
       fakeProbe.codexEmpty = false
+      fakeProbe.codexReroute = false
       fakeProbe.codexTurns = []
       fakeProbe.models = {}
       fakeProbe.codexConfig.clear()
@@ -322,6 +330,40 @@ describe('registerProviders — first-use probe messages', () => {
     } finally { stopProviderProbes() }
   }))
 
+  it('confirms the model reported by Codex rerouting without changing the thread default', () => withCodexFixture(async deps => {
+    const project = { alias: 'probe', path: deps.stateDir }
+    const original = 'scripted-model'
+    const path = join(deps.stateDir, 'first-use-probes.json')
+    saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: original }))
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    const provider = registry.get('codex')!.provider
+    const session = await provider.spawn(project, probeCtx)
+    try {
+      fakeProbe.codexReroute = true
+      expect((await collectTurn(session.dispatch('rerouted turn'))).assistantText.join('')).toBe('native reply')
+      expect(JSON.parse(readFileSync(path, 'utf8')).codex).toEqual([expect.objectContaining({ model: 'rerouted-model' })])
+      expect(providerNotes().codex).toContain('还没用过')
+      expect(session.callTarget?.()?.model).toBe(original)
+
+      const restarted = await registerProviders(deps)
+      try {
+        expect(restarted.providerNotes().codex).toContain('还没用过')
+        saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: 'rerouted-model' }))
+        expect(restarted.providerNotes().codex).toContain('沿用上次的结果')
+      } finally { restarted.stopProviderProbes() }
+      saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model: original }))
+      const fresh = await provider.spawn(project, probeCtx)
+      try { expect(fresh.callTarget?.()?.model).toBe(original) }
+      finally { await fresh.close() }
+
+      fakeProbe.codexReroute = false
+      await collectTurn(session.dispatch('ordinary next turn'))
+      expect(providerNotes().codex).toContain('已通过对话确认连接')
+      expect(JSON.parse(readFileSync(path, 'utf8')).codex.map((entry: { model: string }) => entry.model))
+        .toEqual(['rerouted-model', original])
+    } finally { await session.close(); stopProviderProbes() }
+  }))
+
   it('requires a real reply after a Codex build change or a legacy confirmation', () => withCodexFixture(async (deps, _logs, fetchProbe) => {
     const project = { alias: 'probe', path: deps.stateDir }
     const recordPath = join(deps.stateDir, 'first-use-probes.json')
@@ -384,6 +426,7 @@ describe('registerProviders — first-use probe messages', () => {
         else expect(next).toBe(saved)
         fakeProbe.codexError = null
         fakeProbe.codexEmpty = false
+      fakeProbe.codexReroute = false
         expect((await collectTurn(session.dispatch('try again now'))).assistantText.join('')).toBe('native reply')
         expect(fakeProbe.codexTurns).toEqual(['confirm', 'fail', 'try again now'])
         expect(fetchProbe).not.toHaveBeenCalled()
@@ -446,7 +489,7 @@ describe('registerProviders — first-use probe messages', () => {
     } finally { stopProviderProbes() }
   }))
 
-  it('shows a resumed Codex reply after restart without pinning its model on a new thread', () => withCodexFixture(async deps => {
+  it('keeps a resumed Codex reply on its retained model without pinning a new thread', () => withCodexFixture(async deps => {
     writeFileSync(join(deps.stateDir, 'config.toml'), '')
     fakeProbe.codexGateway = {}
     fakeProbe.codexResumeModel = 'retained-model'
@@ -460,13 +503,13 @@ describe('registerProviders — first-use probe messages', () => {
         expect(resumed.resumedHistory).toBe(true)
         expect(resumed.callTarget?.()?.model).toBe('retained-model')
         await collectTurn(resumed.dispatch('continue after restart'))
-        expect(providerNotes().codex).toContain('已通过对话确认连接')
+        expect(providerNotes().codex).toContain('还没用过')
         const saved = JSON.parse(readFileSync(join(deps.stateDir, 'first-use-probes.json'), 'utf8'))
         expect(saved.codex).toEqual([expect.objectContaining({ model: 'retained-model' })])
         const fresh = await provider.spawn(project, probeCtx)
         try {
           expect(fresh.callTarget?.()?.model).toBe('scripted-model')
-          expect(providerNotes().codex).toContain('已通过对话确认连接')
+          expect(providerNotes().codex).toContain('还没用过')
         }
         finally { await fresh.close() }
       } finally { await resumed.close() }
@@ -494,6 +537,55 @@ describe('registerProviders — first-use probe messages', () => {
     }
   }
 
+  it.each(['claude', 'codex'] as const)('invalidates the installed %s version and records the executable version used by each session', id => {
+    const run = async (deps: ProviderDeps, project: { alias: string; path: string }) => {
+      const bin = join(deps.stateDir, id === 'codex' && process.platform === 'win32' ? 'codex.exe' : id)
+      const model = id === 'claude' ? 'claude-reported' : 'scripted-model'
+      writeFileSync(bin, '1.2.3')
+      const originalProbe = deps.probeVersion
+      let releaseVersion!: () => void
+      const versionReady = new Promise<void>(resolve => { releaseVersion = resolve })
+      deps.probeVersion = async file => {
+        if (file !== bin) return originalProbe?.(file) ?? { ok: true, firstLine: '1.2.3', ms: 0 }
+        const firstLine = readFileSync(file, 'utf8')
+        if (firstLine === '2.3.4') await versionReady
+        return { ok: true, firstLine, ms: 0 }
+      }
+      if (id === 'claude') {
+        deps.claudeBin = bin
+        deps.currentClaudeModel = () => model
+        deps.sdkOptionsForProject = () => ({ model, pathToClaudeCodeExecutable: bin })
+        fakeProbe.claudeSettings = {}
+      } else saveAgentConfig(deps.stateDir, baseConfig({ provider: id, model }))
+      const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+      const provider = registry.get(id)!.provider
+      const old = await provider.spawn(project, probeCtx)
+      try {
+        await collectTurn(old.dispatch('old executable'))
+        expect(providerNotes()[id]).toContain('已通过对话确认连接')
+        const pending = bin + '.next'
+        writeFileSync(pending, '2.3.4')
+        renameSync(pending, bin)
+        expect(providerNotes()[id]).toContain('还没用过')
+        await collectTurn(old.dispatch('retained old process'))
+        expect(providerNotes()[id]).toContain('还没用过')
+
+        const fresh = await provider.spawn(project, probeCtx)
+        try {
+          releaseVersion()
+          await collectTurn(fresh.dispatch('new executable'))
+          expect(providerNotes()[id]).toContain('已通过对话确认连接')
+        } finally { await fresh.close() }
+        const path = join(deps.stateDir, 'first-use-probes.json')
+        expect(JSON.parse(readFileSync(path, 'utf8'))[id]).toEqual([
+          expect.objectContaining({ model, cliVersion: '1.2.3' }),
+          expect.objectContaining({ model, cliVersion: '2.3.4' }),
+        ])
+      } finally { releaseVersion(); await old.close(); stopProviderProbes() }
+    }
+    return id === 'claude' ? withClaudeFixture(run) : withCodexFixture(deps => run(deps, { alias: 'probe', path: deps.stateDir }))
+  })
+
   it('sends only real Claude project turns, and immediately retries a first-turn 529 on the project gateway', () => withClaudeFixture(async (deps, project) => {
     const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
     const path = join(deps.stateDir, 'first-use-probes.json')
@@ -510,13 +602,13 @@ describe('registerProviders — first-use probe messages', () => {
         const first = await collectTurn(session.dispatch('first'))
         expect(first.errorCode).toBe('server_error')
         expect(turnErrorNotice('claude', first.error, first.errorCode)).toContain('Claude 暂时忙不过来（529）')
-        expect(providerNotes().claude).toContain('暂时忙不过来（529）')
+        expect(providerNotes().claude).toContain('还没用过')
         expect(existsSync(path)).toBe(false)
         fakeProbe.claudeResult = null
         expect((await collectTurn(session.dispatch('second'))).error).toBeUndefined()
         expect(fakeProbe.claudeInputs).toEqual(['first', 'second'])
         expect(fakeProbe.claudeOneShots).toEqual([])
-        expect(providerNotes().claude).toContain('已通过对话确认连接')
+        expect(providerNotes().claude).toContain('还没用过')
         expect(JSON.parse(readFileSync(path, 'utf8')).claude).toEqual([
           expect.objectContaining({ model: 'claude-reported', endpoint: probeEndpointKey({ baseUrl: 'https://project.example/v1' }), confirmedByTurn: true }),
         ])
@@ -530,6 +622,8 @@ describe('registerProviders — first-use probe messages', () => {
     { status: 400, result: 'Credit balance is too low', sdkError: 'billing_error', code: 'quota', note: '额度用完了', notice: '等额度恢复' },
     { status: 404, result: 'model not found', code: 'incompatible', note: '客户端协议不兼容', notice: '检查 CLI 版本或换一个模型' },
   ])('classifies a real Claude SDK failure with status $status and immediately sends the next sentence', ({ status, result, sdkError, code, note, notice }) => withClaudeFixture(async (deps, project) => {
+    deps.currentClaudeModel = () => 'claude-reported'
+    fakeProbe.claudeSettings = {}
     const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
     const path = join(deps.stateDir, 'first-use-probes.json')
     try {
@@ -555,14 +649,14 @@ describe('registerProviders — first-use probe messages', () => {
     } finally { stopProviderProbes() }
   }))
 
-  it('reports the real Claude reply without persisting a guessed endpoint for an unknown transport', () => withClaudeFixture(async (deps, project) => {
+  it('delivers the real Claude reply without confirming a guessed endpoint for an unknown transport', () => withClaudeFixture(async (deps, project) => {
     fakeProbe.claudeSettings = { env: { CLAUDE_CODE_USE_BEDROCK: '1' } }
     const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
     try {
       const session = await registry.get('claude')!.provider.spawn(project, probeCtx)
       try {
         expect((await collectTurn(session.dispatch('owner question'))).error).toBeUndefined()
-        expect(providerNotes().claude).toContain('已通过对话确认连接')
+        expect(providerNotes().claude).toContain('还没用过')
         expect(existsSync(join(deps.stateDir, 'first-use-probes.json'))).toBe(false)
       } finally { await session.close() }
     } finally { stopProviderProbes() }

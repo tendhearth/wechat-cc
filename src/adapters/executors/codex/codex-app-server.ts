@@ -75,8 +75,9 @@ export interface CodexChatProfile {
    * 不给 ⇒ 审批请求一律拒。signal:这一轮停了 / 会话关了 ⇒ 中止,迟到的答复不再发给 codex。
    */
   approve?: CodexChatApprove
-  /** Captured from config/read for the optional, separate tool-free connectivity request. */
-  onNativeDefault?: (target: CallTarget) => void
+  /** Native default inferred from the configuration and initial thread response. */
+  onNativeDefault?: (target: CallTarget, version?: Promise<string | undefined>) => void
+  confirmationVersion?: (binary: string) => Promise<string | undefined>
 }
 
 /**
@@ -290,12 +291,15 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       const { web_search: _startupSearch, ...startupConfig } = { ...discovery?.config, ...taskConfig, ...(chat ? {features:{network_proxy:false},sandbox_workspace_write:{network_access:false}} : {}) }
       const enabledMcp = new Set<string>()
       const childEnv = chat ? chat.env : workbenchCodexEnv()
+      let turnModel: string | undefined
       // 守护(评审 #193 P1-1 + 2026-10-03):app-server 是常驻子进程,端点在它起来那一刻按配置定下。
       // 先按配置层预测;initialize 之后问 codex 自己(config/read),用它报的有效配置覆盖。
       let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: chat ? chat.config : startupConfig })
       const launchArgs = [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://']
       const launcher = chat ? wrapForProcessTree(binary, launchArgs) : { command: binary, args: launchArgs }
       startupSignal?.throwIfAborted()
+      const cliVersion = chat?.confirmationVersion?.(binary)
+      if (cliVersion) context.reportStartupTarget?.(undefined, cliVersion)
       const child = (options.spawnProcess ?? spawnCodexAppServerProcess)(launcher.command, launcher.args, { cwd: project.path, env: childEnv, detached: process.platform !== 'win32' })
       const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; clear: () => void }>()
       const rejectedRpcs = new WeakSet<Error>()
@@ -943,6 +947,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             return
           }
           if (!turn.occurrence && message.method === 'model/rerouted' && nativeModelId(params.toModel)) {
+            if (chat) turnModel = params.toModel
             context.reportExecution?.({model:params.toModel,sessionId:threadId,source:'native_reroute'})
           }
           if (chat) {
@@ -1135,7 +1140,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         const configuredModel = native.config?.model
         const route = codexTargetFromConfig(native.config, childEnv)
         spawnTarget = codexTargetToCall(route, model ?? (nativeModelId(configuredModel) ? configuredModel : null))
-        chat && context.reportStartupTarget?.(context.resumeSessionId && !model ? undefined : spawnTarget)
+        chat && context.reportStartupTarget?.(context.resumeSessionId && !model ? undefined : spawnTarget, cliVersion)
         const proxy = native.config?.features?.network_proxy
         if (proxy != null && proxy !== false) throw Error('codex_unverified_thread_policy')
         const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
@@ -1174,7 +1179,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           const providerMatches = !('unresolved' in route) && (response.modelProvider == null || response.modelProvider === route.providerId)
           if (!providerMatches) spawnTarget = { provider: 'codex', model: spawnTarget.model, unresolved: true }
           if (nativeModelId(response.model)) spawnTarget = { ...spawnTarget, model: response.model }
-          context.reportStartupTarget?.(context.resumeSessionId && !model && !nativeModelId(response.model) ? undefined : spawnTarget)
+          context.reportStartupTarget?.(context.resumeSessionId && !model && !nativeModelId(response.model) ? undefined : spawnTarget, cliVersion)
         }
         if (typeof response.thread?.id !== 'string' || !response.thread.id) throw new Error('codex_missing_thread_id')
         if (context.resumeSessionId && response.thread.id !== context.resumeSessionId) throw new Error('codex_resume_thread_mismatch')
@@ -1197,7 +1202,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           spawnTarget = { ...spawnTarget, model: response.model }
           context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
         }
-        if (!model && configuredModel == null && !context.resumeSessionId) chat?.onNativeDefault?.(spawnTarget)
+        if (!model && configuredModel == null && !context.resumeSessionId) chat?.onNativeDefault?.(spawnTarget, cliVersion)
       } catch (error) { await close(); throw error }
       finally { startupSignal?.removeEventListener('abort', abortStartup) }
       const launch = (text: string, attachments?: readonly AgentAttachment[], sharedEvents?: EventQueue) => {
@@ -1206,6 +1211,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         validateAttachments(attachments)
         const input = turnInput(text, attachments), turn = makeTurn()
         if (sharedEvents) turn.events = sharedEvents
+        turnModel = undefined
         writerRevision++; active = turn; if (lifetime) pendingStarts.add(turn); turn.events.push({ kind: 'init', sessionId: threadId })
         armWatchdog(turn, 'first_event')
         const accepted = request('turn/start', { threadId, input }).then(response => {
@@ -1268,6 +1274,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       return {
         ...(runtime ? { workbenchRuntime: runtime } : {}),
         callTarget: () => spawnTarget,
+        ...(chat ? { confirmationTarget: () => turnModel ? { ...spawnTarget, model: turnModel } : spawnTarget } : {}),
+        ...(cliVersion ? { confirmationVersion: () => cliVersion } : {}),
         processGroups: () => (!terminated && !freezer.frozen && process.platform !== 'win32' && child.pid ? [child.pid] : []),
         // 沙盒验证过(src/adapters/executors/suspend-resume.sandbox.test.ts):冻住期间被掐断的流,放开后 codex 自己
         // 「Reconnecting… 1/5」重试接上;放开后再收到的 willRetry 由 connect 看门狗照常管。

@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
+import { createRequire } from 'node:module'
 import { findOnPath } from '../../lib/util'
 import { readJsonFile } from '../../lib/read-json-file'
 import type { BootstrapDeps } from './types'
@@ -30,6 +31,19 @@ export function resolveClaudeBinary(): string | undefined {
   const bundled = join(here, '..', '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-linux-x64', 'claude')
   if (existsSync(bundled)) return bundled
   return undefined
+}
+
+/** Resolve the optional native CLI that the SDK uses without an explicit path. */
+export function resolveSdkClaudeBinary(): string | undefined {
+  try {
+    const sdkRequire = createRequire(createRequire(import.meta.url).resolve('@anthropic-ai/claude-agent-sdk'))
+    const { platform, arch } = process
+    const packages = platform === 'linux' ? [`linux-${arch}-musl`, `linux-${arch}`] : [`${platform}-${arch}`]
+    for (const name of packages) {
+      try { return sdkRequire.resolve(`@anthropic-ai/claude-agent-sdk-${name}/claude${platform === 'win32' ? '.exe' : ''}`) }
+      catch { /* Try the next platform package. */ }
+    }
+  } catch { /* The compiled SDK may not have an on-disk package. */ }
 }
 
 const CLAUDE_AUTH_ENV_KEYS = [

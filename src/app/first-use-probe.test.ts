@@ -59,7 +59,29 @@ describe('withTurnConfirmation', () => {
     await collectTurn(session.dispatch('follow up'))
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [record] })
     expect(f.provider.probeStatus()).toEqual({ state: 'ok', source: 'turn', at: 3_000 })
-    expect(fixture(dir).provider.probeStatus()).toEqual({ state: 'ok', source: 'history', at: 2_000 })
+    const restarted = fixture(dir)
+    expect(restarted.provider.probeStatus()).toEqual({ state: 'ok', source: 'history', at: 2_000 })
+    restarted.setNow(4_000)
+    const resumed = await restarted.provider.spawn(project, ctx)
+    await collectTurn(resumed.dispatch('first reply after restart'))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [{ ...record, at: 4_000 }] })
+  }))
+
+  it('keeps an in-flight result on its session model and endpoint when the defaults change', () => withRecords(async (dir, path) => {
+    let configured = defaults
+    const f = fixture(dir, () => configured)
+    const session = await f.provider.spawn(project, ctx)
+    const events = session.dispatch('first turn')[Symbol.asyncIterator]()
+    expect(await events.next()).toMatchObject({ value: { kind: 'text' } })
+    configured = { ...defaults, model: 'new-default' }
+    expect(await events.next()).toMatchObject({ value: { kind: 'result' } })
+    expect(await events.next()).toMatchObject({ done: true })
+    expect(f.provider.probeStatus()).toEqual({ state: 'awaiting_turn' })
+    expect(JSON.parse(readFileSync(path, 'utf8')).claude).toEqual([{ ...defaults, at: 2_000, confirmedByTurn: true }])
+    configured = { ...defaults, endpoint: 'native' }
+    expect(f.provider.probeStatus()).toEqual({ state: 'awaiting_turn' })
+    configured = defaults
+    expect(f.provider.probeStatus()).toEqual({ state: 'ok', source: 'turn', at: 2_000 })
   }))
 
   it.each([
@@ -93,6 +115,7 @@ describe('withTurnConfirmation', () => {
     expect((await collectTurn(pinned.dispatch('failed turn'))).errorCode).toBe('incompatible')
     expect(f.history.read({ ...defaults, model: 'pinned' })).toBeUndefined()
     expect(f.history.read(defaults)).toBeDefined()
+    expect(f.provider.probeStatus()).toEqual({ state: 'ok', source: 'turn', at: 2_000 })
     f.setEvents([{ kind: 'result', sessionId: 'sid', numTurns: 1, durationMs: 2, finalText: 'I saw a protocol mismatch in the log.' }])
     expect((await collectTurn(pinned.dispatch('next turn'))).error).toBeUndefined()
     expect(f.history.read({ ...defaults, model: 'pinned' })).toBeDefined()

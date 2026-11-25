@@ -23,9 +23,9 @@ export interface ProbeRecord extends ProbeCombination {
 }
 
 export interface ProbeHistory {
-  read(target: Pick<ProbeCombination, 'model' | 'endpoint'>): ProbeRecord | undefined
+  read(target: ProbeCombination): ProbeRecord | undefined
   save(record: ProbeRecord): void
-  clear(target: Pick<ProbeCombination, 'model' | 'endpoint'>): void
+  clear(target: ProbeCombination): void
 }
 
 export function probeEndpointKey(target: Pick<CallTarget, 'baseUrl' | 'unresolved'>): string {
@@ -38,12 +38,9 @@ export function probeEndpointKey(target: Pick<CallTarget, 'baseUrl' | 'unresolve
   } catch { return 'unresolved' }
 }
 
-export const probeTargetKey = (target: Pick<ProbeCombination, 'model' | 'endpoint'>) => JSON.stringify([target.model, target.endpoint])
-
-function sameProbeCombination(a: ProbeCombination | undefined, b: ProbeCombination | undefined): boolean {
-  return a?.cliVersion === b?.cliVersion && a?.sdkVersion === b?.sdkVersion &&
-    a?.model === b?.model && a?.endpoint === b?.endpoint
-}
+export const probeCombinationKey = (target: ProbeCombination) => JSON.stringify([
+  target.model, target.endpoint, target.cliVersion, target.sdkVersion,
+])
 
 export type ProbeFailure = { kind: 'transient' | 'auth' | 'incompatible' | 'quota'; reason: string; cause?: 'server_error'; code: ProviderErrorCode }
 export type ProbeStatus =
@@ -108,38 +105,40 @@ interface ConfirmationOptions {
   provider: 'claude' | 'codex'
   combination: () => ProbeCombination
   history: ProbeHistory
-  inferredModel?: (endpoint: string | undefined) => string | undefined
+  inferredModel?: (target: ProbeCombination) => string | undefined
   now?: () => number
 }
 
 /** Observe chat outcomes. Startup, dispatch and evaluation retain their normal admission rules. */
 export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOptions): AgentProvider & { probeStatus(): ProbeStatus } {
   const now = opts.now ?? Date.now
+  const latest = new Map<string, ProbeStatus>()
   const saved = new Set<string>()
-  let latest: { defaults: ProbeCombination; status: ProbeStatus } | undefined
+  const configuredTarget = () => {
+    const defaults = opts.combination()
+    const inferred = defaults.model === UNKNOWN_PROBE_FIELD ? opts.inferredModel?.(defaults) : undefined
+    return inferred ? { ...defaults, model: inferred } : defaults
+  }
   const known = (target: CallTarget | null | undefined, defaults: ProbeCombination): ProbeCombination | undefined => {
     if (!target?.model || target.model === UNKNOWN_PROBE_FIELD) return
     const endpoint = probeEndpointKey(target)
     if (endpoint !== 'unresolved') return { ...defaults, model: target.model, endpoint }
   }
-  const clear = (target: ProbeCombination) => {
-    opts.history.clear(target)
-    saved.delete(probeTargetKey(target))
-  }
-  const failure = (target: ProbeCombination | undefined, error: unknown, detail: string, startup = false) => {
+  const failure = (target: ProbeCombination | undefined, error: unknown, detail: string, startup = false, startupFallback?: ProbeCombination) => {
     const classified = classifyProbeError(opts.provider, error, detail)
     const at = now()
     const resetAt = classified.kind === 'quota' ? parseResetAt(detail) : null
-    if (target && (startup || classified.kind === 'incompatible')) clear(target)
-    if (startup || classified.code !== 'context_overflow') {
-      latest = {
-        defaults: opts.combination(),
-        status: {
-          state: 'failed', ...classified, at,
-          ...(startup && !target ? { startup: true } : {}),
-          ...(resetAt !== null && resetAt > at ? { resetAt } : {}),
-        },
-      }
+    if (target && (startup || classified.kind === 'incompatible')) {
+      opts.history.clear(target)
+      saved.delete(probeCombinationKey(target))
+    }
+    const displayTarget = target ?? startupFallback
+    if (displayTarget && (startup || classified.code !== 'context_overflow')) {
+      latest.set(probeCombinationKey(displayTarget), {
+        state: 'failed', ...classified, at,
+        ...(startup && !target ? { startup: true } : {}),
+        ...(resetAt !== null && resetAt > at ? { resetAt } : {}),
+      })
     }
     let message = classified.reason
     // Preserve fixed upgrade and overflow signals used by the coordinator.
@@ -156,9 +155,14 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
 
   const observeSession = (session: AgentSession, defaults: ProbeCombination): AgentSession => {
     let cancellations = 0
-    const target = () => known(session.confirmationTarget
-      ? session.confirmationTarget()
-      : sessionCallTarget(session, opts.provider), defaults)
+    const target = async () => {
+      const route = session.confirmationTarget
+        ? session.confirmationTarget()
+        : sessionCallTarget(session, opts.provider)
+      if (!route) return
+      const cliVersion = session.confirmationVersion ? await session.confirmationVersion() : defaults.cliVersion
+      return cliVersion ? known(route, { ...defaults, cliVersion }) : undefined
+    }
     return {
       ...session,
       ...(session.cancel ? { async cancel() { cancellations++; await session.cancel!() } } : {}),
@@ -170,19 +174,22 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
         }
         const before = cancellations
         let failed = false
-        let completed = false
+        let completionTarget: ReturnType<typeof target> | undefined
         let hasReply = false
         try {
           for await (const event of session.dispatch(...args)) {
             if (before !== cancellations) continue
             if (event.kind === 'error') {
-              if (!failed) yield failure(target(), event, event.message || 'provider_error')
+              if (!failed) {
+                const sentTo = await target()
+                if (before === cancellations) yield failure(sentTo, event, event.message || 'provider_error')
+              }
               failed = true
               continue
             }
             if (event.kind === 'tool_call' || (event.kind === 'text' && event.text.trim())) hasReply = true
             if (event.kind === 'result') {
-              completed = true
+              completionTarget = target()
               hasReply ||= !!event.finalText?.trim()
             }
             yield event
@@ -190,23 +197,27 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
         } catch (err) {
           if (isNetworkUnprotectedError(err)) throw err
           if (!failed && before === cancellations) {
-            yield failure(target(), err, err instanceof Error ? err.message : String(err))
+            const sentTo = await target()
+            if (before === cancellations) yield failure(sentTo, err, err instanceof Error ? err.message : String(err))
           }
           return
         }
-        if (before !== cancellations || failed || !completed) return
-        const sentTo = target()
+        if (before !== cancellations || failed || !completionTarget) return
+        const sentTo = await completionTarget
+        if (before !== cancellations) return
         if (!hasReply) {
           yield failure(sentTo, undefined, '')
           return
         }
-        const at = now()
-        const key = sentTo && probeTargetKey(sentTo)
-        if (sentTo && key && !saved.has(key)) {
-          opts.history.save({ ...sentTo, at, confirmedByTurn: true })
-          saved.add(key)
+        if (sentTo) {
+          const at = now()
+          const key = probeCombinationKey(sentTo)
+          if (!saved.has(key)) {
+            opts.history.save({ ...sentTo, at, confirmedByTurn: true })
+            saved.add(key)
+          }
+          latest.set(key, { state: 'ok', source: 'turn', at })
         }
-        latest = { defaults: opts.combination(), status: { state: 'ok', source: 'turn', at } }
       },
     }
   }
@@ -215,25 +226,31 @@ export function withTurnConfirmation(inner: AgentProvider, opts: ConfirmationOpt
     ...inner,
     async spawn(project, ctx) {
       if (ctx.evaluation) return inner.spawn(project, ctx)
-      const defaults = opts.combination()
+      const defaults = configuredTarget()
       let startupTarget: CallTarget | undefined
+      let startupVersion: Promise<string | undefined> | undefined
       try {
-        const session = await inner.spawn(project, { ...ctx, reportStartupTarget: target => { startupTarget = target } })
+        const session = await inner.spawn(project, { ...ctx, reportStartupTarget: (target, version) => { startupTarget = target; startupVersion = version } })
         return observeSession(session, defaults)
       } catch (err) {
         if (isNetworkUnprotectedError(err) || ctx.preparationSignal?.aborted) throw err
-        const { message, code } = failure(known(startupTarget, defaults), err, err instanceof Error ? err.message : String(err), true)
+        const cliVersion = startupVersion ? await startupVersion : defaults.cliVersion
+        const started = cliVersion ? { ...defaults, cliVersion } : undefined
+        const target = started && known(startupTarget, started)
+        const requested = ctx.execution?.model ?? ctx.model
+        const startupFallback = !startupTarget && !ctx.resumeSessionId &&
+          (!requested || requested === defaults.model) ? started : undefined
+        const { message, code } = failure(target, err, err instanceof Error ? err.message : String(err), true, startupFallback)
         throw errorWithProviderCode(message, code)
       }
     },
     probeStatus() {
-      const defaults = opts.combination()
-      if (latest && sameProbeCombination(defaults, latest.defaults)) return latest.status
-      const inferred = defaults.model === UNKNOWN_PROBE_FIELD ? opts.inferredModel?.(defaults.endpoint) : undefined
-      const target = inferred ? { ...defaults, model: inferred } : defaults
-      const previous = opts.history.read(target)
+      const target = configuredTarget()
+      const status = latest.get(probeCombinationKey(target))
+      if (status) return status
+      const previous = target.cliVersion !== UNKNOWN_PROBE_FIELD ? opts.history.read(target) : undefined
       // Older records include standalone probes and cannot establish a real turn.
-      return previous?.confirmedByTurn && sameProbeCombination(target, previous)
+      return previous?.confirmedByTurn
         ? { state: 'ok', source: 'history', at: previous.at }
         : { state: 'awaiting_turn' }
     },
