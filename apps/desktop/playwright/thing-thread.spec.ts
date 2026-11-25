@@ -205,7 +205,7 @@ test('拍板卡在输入区前并显示同一请求的意见，允许后消失',
   const card=panel.locator('.desk-waiting-card')
   await expect(card.locator('.desk-waiting-question')).toHaveText('Codex 想用「Read」')
   expect(await card.locator('.approval-panel').textContent() === '读备份目录？').toBe(true)
-  expect(await card.locator('.desk-waiting-opinion').textContent() === '我的意见（只看了这条请求）：可以读备份目录。').toBe(true)
+  expect(await card.locator('.desk-waiting-opinion').textContent() === '我只看了这条请求，意见是：可以读备份目录。').toBe(true)
   await expect(card).toContainText('需要访问另一个目录。')
   await expect(page.locator('#desk-waiting .desk-waiting-card')).toHaveCount(0)
   const input=panel.locator('textarea')
