@@ -16,6 +16,8 @@ import { NICKNAME_RE, NICKNAME_MAX_LEN } from './nickname'
 import { isoFromMs } from '../lib/iso-time'
 import type { InboundMsg } from '../domain/prompt-format'
 import type { WechatCommand } from './commands/registry'
+import { isKnownProviderId } from '../lib/provider-ids'
+import { providerDisplayName } from '../domain/provider-display-names'
 import type { ProviderRegistry } from '../app/provider-registry'
 import type { SessionManager } from '../app/session-manager'
 import type { SessionStore } from '../ports/session-store'
@@ -47,7 +49,7 @@ export interface AdminCommandsDeps {
   startedAt: string
   /** chatId → project alias resolver; same lookup the coordinator uses. */
   resolveProject: (chatId: string) => { alias: string; path: string } | null
-  registry: Pick<ProviderRegistry, 'list'>
+  registry: Pick<ProviderRegistry, 'list'> & Partial<Pick<ProviderRegistry, 'get'>>
   sessionManager: Pick<SessionManager, 'release' | 'list'>
   sessionStore: Pick<SessionStore, 'get' | 'delete'>
   getBotName: () => string | null
@@ -462,7 +464,7 @@ async function runBotname(deps: AdminCommandsDeps, chatId: string, arg: string):
  */
 async function runSelfChangeStart(deps: AdminCommandsDeps, adminChatId: string, request: string): Promise<void> {
   if (!deps.selfChange) {
-    await deps.sendMessage(adminChatId, '这台机器没法自改:daemon 没接自改流水线。').catch(() => {})
+    await deps.sendMessage(adminChatId, '这台机器没法自改。CC 还没开通自己改代码的功能。').catch(() => {})
     return
   }
   const r = deps.selfChange.start(request)
@@ -478,7 +480,7 @@ async function runSelfChangeStart(deps: AdminCommandsDeps, adminChatId: string, 
 /** 「自改 状态」—— 最近五条的 id · 步骤 · 结果。只读,不碰流水线。 */
 async function runSelfChangeStatus(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
   if (!deps.selfChange) {
-    await deps.sendMessage(adminChatId, '这台机器没法自改:daemon 没接自改流水线。').catch(() => {})
+    await deps.sendMessage(adminChatId, '这台机器没法自改。CC 还没开通自己改代码的功能。').catch(() => {})
     return
   }
   let rows: readonly { id: string; step: string; result: string | null }[] = []
@@ -519,7 +521,7 @@ async function runHearthIngest(deps: AdminCommandsDeps, msg: InboundMsg, content
   if (!hearth) return
   const vault = process.env.HEARTH_VAULT
   if (!vault) {
-    await deps.sendMessage(msg.chatId, 'HEARTH_VAULT 未设置。daemon 启动时加 env：HEARTH_VAULT=/path/to/vault')
+    await deps.sendMessage(msg.chatId, '还没告诉 CC 知识库在哪。启动 CC 时加上 HEARTH_VAULT=/path/to/vault。')
     return
   }
   const agent = (process.env.HEARTH_AGENT === 'claude' ? 'claude' : 'mock') as 'mock' | 'claude'
@@ -888,25 +890,25 @@ async function sendHealthReport(deps: AdminCommandsDeps, adminChatId: string): P
   const active = deps.pollHandle.running()
   const expired = deps.sessionState.listExpired()
 
-  const lines: string[] = ['daemon 健康']
-  lines.push(`启动时间: ${deps.startedAt}`)
+  const lines: string[] = ['CC 运行状态']
+  lines.push(`启动时间：${deps.startedAt}`)
   lines.push('')
 
-  lines.push(`活跃 bot (${active.length}):`)
-  if (active.length === 0) lines.push('  (无 — 需要 wechat-cc setup)')
+  lines.push(`已连接的微信账号（${active.length}）：`)
+  if (active.length === 0) lines.push('  还没连上微信。到电脑上运行 wechat-cc setup。')
   else for (const id of active) lines.push(`  ${id}`)
 
   if (expired.length > 0) {
     lines.push('')
-    lines.push(`过期 bot (${expired.length}):`)
-    for (const e of expired) lines.push(`  - ${e.id} (${hoursSince(e.first_seen_expired_at)})`)
+    lines.push(`连接已过期的微信账号（${expired.length}）：`)
+    for (const e of expired) lines.push(`  - ${e.id}（${hoursSince(e.first_seen_expired_at)}）`)
     lines.push('')
     lines.push('清理：')
-    lines.push(`  "清理 ${expired[0]!.id}"  (单个)`)
-    lines.push('  "清理所有过期"            (全部)')
+    lines.push(`  「清理 ${expired[0]!.id}」（只清这一个）`)
+    lines.push('  「清理所有过期」（清理全部过期连接）')
   } else {
     lines.push('')
-    lines.push('无过期 bot')
+    lines.push('没有过期的微信连接。')
   }
 
   const result = await deps.sendMessage(adminChatId, lines.join('\n'))
@@ -931,7 +933,7 @@ async function runCleanup(deps: AdminCommandsDeps, adminChatId: string, target: 
   }
 
   if (victims.length === 0) {
-    await deps.sendMessage(adminChatId, '没有过期 bot 需要清理。')
+    await deps.sendMessage(adminChatId, '没有过期的微信连接需要清理。')
     return
   }
 
@@ -969,7 +971,7 @@ async function runCleanup(deps: AdminCommandsDeps, adminChatId: string, target: 
 async function runReset(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
   const proj = deps.resolveProject(adminChatId)
   if (!proj) {
-    await deps.sendMessage(adminChatId, '本聊天未绑定任何项目，没有可重置的会话。')
+    await deps.sendMessage(adminChatId, '这个对话还没关联项目，没有可以重置的聊天上下文。')
     return
   }
   // Release every registered provider's in-memory session for this alias,
@@ -988,35 +990,42 @@ async function runReset(deps: AdminCommandsDeps, adminChatId: string): Promise<v
   // Matches the release() bucket above — wipe the admin's chat_id rows.
   deps.sessionStore.delete({ alias: proj.alias, chatId: adminChatId })
   deps.log('ADMIN_CMD', `/reset chat=${adminChatId} alias=${proj.alias} providers=${providers.join(',')}`)
+  const names = providers.map(id => healthDisplayName(deps, id, providers))
   await deps.sendMessage(
     adminChatId,
-    `✓ 已重置 AI 会话\n  chat: ${adminChatId}\n  project: ${proj.alias}\n  providers: ${providers.join(', ') || '(无)'}\n\n下一条消息会从干净状态开始。`,
+    `已重置这个对话。\n  对话编号：${adminChatId}\n  项目：${proj.alias}\n  已重置的服务：${names.join('、') || '无'}\n\n下一条消息会从头开始聊。`,
   )
+}
+
+function healthDisplayName(deps: AdminCommandsDeps, id: string, registered: readonly string[]): string {
+  if (isKnownProviderId(id)) return providerDisplayName(id, registered)
+  return deps.registry.get?.(id)?.opts.displayName || id
 }
 
 async function sendAiHealthReport(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
   const proj = deps.resolveProject(adminChatId)
   if (!proj) {
-    await deps.sendMessage(adminChatId, '本聊天未绑定任何项目，无法查询 AI 会话状态。')
+    await deps.sendMessage(adminChatId, '这个对话还没关联项目，查不到各家的聊天状态。')
     return
   }
   const providers = deps.registry.list()
-  const lines: string[] = ['AI 会话状态', `project: ${proj.alias}`, '']
+  const lines: string[] = ['这个对话的聊天状态', `项目：${proj.alias}`, '']
   if (providers.length === 0) {
-    lines.push('(无已注册的 provider — 检查 daemon 启动日志)')
+    lines.push('还没接上任何一家。可以到电脑上查看 CC 的启动日志。')
   } else {
     for (const p of providers) {
       // /health ai inspects the admin's own session row.
       const rec = deps.sessionStore.get({ alias: proj.alias, provider: p, chatId: adminChatId })
+      const name = healthDisplayName(deps, p, providers)
       if (rec) {
         const age = humanAge(Date.parse(rec.last_used_at))
-        lines.push(`  ${p}: 会话 ${rec.session_id.slice(0, 8)}… (${age} 前)`)
+        lines.push(`  ${name}：对话编号 ${rec.session_id.slice(0, 8)}…（${age} 前用过）`)
       } else {
-        lines.push(`  ${p}: 无会话`)
+        lines.push(`  ${name}：没有可接着聊的记录。`)
       }
     }
   }
-  lines.push('', '重置：/reset  （丢掉所有 provider 的会话，下一条从头开始）')
+  lines.push('', '发 /reset 清掉各家在这个对话里的上下文，下一条消息从头开始聊。')
   await deps.sendMessage(adminChatId, lines.join('\n'))
 }
 

@@ -476,7 +476,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
 
   it('permission card: owner switches to Codex, a gated command sends a card, owner replies "y" and the command proceeds', async () => {
     d.sendText(d.owner, '/codex')
-    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('切到 Codex')), 10_000)
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('只由 Codex 来答')), 10_000)
     d.sendText(d.owner, '把 build 删了')
     const card = await d.waitForOutbound(m => texts(m, d.owner).some(isCard), 15_000)
     expect(texts(card, d.owner).find(isCard)).toContain('rm -rf build')
