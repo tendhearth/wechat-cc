@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { CliPermissionRequest } from './desktop-api'
 import { boundedPermissionDisplay, permissionDisplay, PermissionDisplaySchema, PERMISSION_DISPLAY_LIMITS, toolPermissionDisplay, type PermissionDisplay } from './permission-display'
-import { hasInvisiblePermissionText, permissionEditPreview, permissionTextSegments, permissionWaitingTitle } from './permission-presentation'
+import { hasInvisiblePermissionText, permissionEditPreview, permissionTextSegments } from './permission-presentation'
+import { permissionWaitingTitle } from './permission-waiting-title'
 
 function same(actual: unknown, expected: unknown) {
   // Never print the source on an assertion failure.
