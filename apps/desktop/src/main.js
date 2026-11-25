@@ -72,6 +72,7 @@ import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
 import { initLicense, refreshLicense } from "./modules/license.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
+import { wireCalendarSetting } from "./modules/calendar-setting.js"
 import { mountHugeicons } from "./modules/icons.js"
 import { pingHealth, fetchDaemonVersion } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
@@ -1220,10 +1221,12 @@ function wireEvents() {
     })
   })
 
+  const refreshCalendarSetting = wireCalendarSetting(invokeWorkbenchApi)
   wireSettingsDrawer({
     deps: { invokeWorkbenchApi },
     onOpen: () => {
       void refreshGuardStatus()
+      void refreshCalendarSetting()
       const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('recap-toggle'))
       if (!toggle) return
       toggle.disabled = true

@@ -8,6 +8,12 @@ const ROUTES:ReadonlySet<string> = new Set(WORKBENCH_ROUTES.devProxy)
 // 一件事上的动作(P3e-3 起桌面调 /v1/matter/<动词>,同一个处理器,旧的 /v1/workbench/* 双胞胎是 daemon 那边的别名):
 // 名单里 /v1/matter/ 开头的就是它们,按工作台那一类走(方法不对 / 后面多一截 ⇒ 405,mock 模式 ⇒ 503),和双胞胎一样。
 const MATTER_ACTION_PATHS:readonly string[] = [...new Set(WORKBENCH_ROUTES.devProxy.map(k=>k.slice(k.indexOf(' ')+1)).filter(p=>p.startsWith('/v1/matter/')))]
+
+/** EventKit can spend 15s checking permission, then 130s waiting for the user. */
+export function calendarProxyTimeoutMs(method: string, path: string): number | undefined {
+  if (method === 'POST' && path === '/v1/calendar/enabled') return 160_000
+  if (method === 'GET' && path === '/v1/calendar/status') return 30_000
+}
 interface Options {
   stateDir:string; dryRun:boolean; allowWrites:boolean
   fetch?:(url:string,init?:RequestInit)=>Promise<Response>
@@ -54,7 +60,7 @@ export function createWorkbenchProxy(opts:Options) {
       const token=(await readFile(info.operatorTokenFilePath,'utf8')).trim()
       const res=await (opts.fetch??fetch)(base.origin+url.pathname+url.search,{
         method:req.method,headers:{authorization:`Bearer ${token}`,'content-type':'application/json',...((url.pathname==='/v1/roster'||url.pathname==='/v1/places')&&req.headers.has('if-none-match')?{'if-none-match':req.headers.get('if-none-match')!}:{})},
-        ...(body!==undefined?{body}:{}),signal:AbortSignal.timeout(30_000),
+        ...(body!==undefined?{body}:{}),signal:AbortSignal.timeout(calendarProxyTimeoutMs(req.method, url.pathname) ?? 30_000),
       })
       if(res.status===404&&url.pathname==='/v1/workbench')return Response.json({error:'workbench_endpoint_missing'},{status:404})
       return new Response(res.status===304?null:await res.text(),{status:res.status,headers:{'content-type':'application/json',...(res.headers.has('etag')?{etag:res.headers.get('etag')!}:{})}})

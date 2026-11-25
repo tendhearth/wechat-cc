@@ -15,6 +15,7 @@ import type { LabsRequestT, PlaceMapPinRequestT } from './places'
 import type { CliActivityQuery } from './api'
 import type { NotebookPageQueryT, NotebookPaperT } from './notebook'
 import type { DeclaredRouteKey } from './routes'
+import type { CalendarEnabledRequestT } from './desktop-api'
 import { callSpec, makeApi, t, type CallArgs, type CallRequest, type CallSpec } from './calls'
 
 /** 路由表里 `/v1` 那半的键。 */
@@ -29,6 +30,10 @@ const body = () => ({ body: t<Body>() })
 
 export const DESKTOP_CALLS = {
   roster: { get: call('GET /v1/roster') },
+  calendar: {
+    status: call('GET /v1/calendar/status'),
+    setEnabled: call('POST /v1/calendar/enabled', { body: t<CalendarEnabledRequestT>() }),
+  },
   terminal: {
     search: call('GET /v1/terminal/search', { query: t<{ q: string; limit?: number }>() }),
   },

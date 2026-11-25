@@ -27,7 +27,7 @@ import { thoughtRoutes } from '../../src/features/companion/routes-thoughts'
 // against the real .app, but in seconds and with DOM-aware selectors.
 
 import { spawn } from 'bun'
-import { createWorkbenchProxy } from './workbench-proxy'
+import { calendarProxyTimeoutMs, createWorkbenchProxy } from './workbench-proxy'
 import WORKBENCH_ROUTES from './src-tauri/generated/workbench-routes.json'
 import { invokeErrorMessage } from './shim-invoke-error.js'
 import { createHtmlPreviewHost, htmlPreviewParentCsp } from './html-preview'
@@ -532,7 +532,7 @@ Bun.serve({
   hostname: '127.0.0.1',
   port: PORT,
   development: true,
-  async fetch(req) {
+  async fetch(req, server) {
     const url = new URL(req.url)
 
     // Serve the raw document before static HTML/live-reload injection. This
@@ -576,6 +576,8 @@ Bun.serve({
       return new Response(file)
     }
 
+    const calendarTimeout = calendarProxyTimeoutMs(req.method, url.pathname)
+    if (calendarTimeout) server.timeout(req, calendarTimeout / 1000 + 5)
     const workbenchResponse = await workbenchProxy(req)
     if (workbenchResponse) return workbenchResponse
 

@@ -1,6 +1,6 @@
 /**
  * 读日历和提醒(只读,spec 2026-10-20-calendar-read-design,对标 #8)。
- * 开关存 state/calendar.json;授权只在主人「日历 开」时请求;读之前先看状态 —— 没授权时 EventKit 读出来是空的,
+ * 开关存 state/calendar.json;授权只在主人开启时请求;读之前先看状态 —— 没授权时 EventKit 读出来是空的,
  * 绝不能把「没权限」说成「今天没安排」。日志里不写标题。只进主人的轮次(早报 / 「日历」命令)。
  */
 import { writeFileAtomic } from '../../lib/json-file'
@@ -15,6 +15,7 @@ import type { ReplyHandler } from '../../daemon/commands/registry'
 export const CALENDAR_FILE = 'calendar.json'
 const STATUS_MS = 15_000, READ_MS = 20_000, REQUEST_MS = 130_000
 const SETTINGS_HINT = '去「系统设置 → 隐私与安全性 → 日历」和「提醒事项」,把 Tendhearth CC 打开,再说「日历 开」。'
+export const CALENDAR_DISABLED_TEXT = 'CC 不再读。系统里的授权要收回，去『系统设置 → 隐私与安全性 → 日历 / 提醒事项』。'
 
 export interface CalendarDeps {
   stateDir: string
@@ -72,7 +73,7 @@ export function makeCalendar(deps: CalendarDeps) {
   return {
     enabled,
     status,
-    /** 「日历 开」:可能在 Mac 上弹授权框(只有这一处会弹)。 */
+    /** 主人开启时可能在 Mac 上弹授权框(只有这一处会弹)。 */
     async enable(): Promise<{ status: CalendarStatus; text: string }> {
       if (!available()) return { status: 'unavailable', text: unavailableText() }
       let st = await status()
@@ -146,7 +147,7 @@ export function makeCalendarCommand(deps: { calendar: Calendar; isOwner: (chatId
       const c = parseCalendarCommand(text)
       if (!c || !deps.isOwner(chatId)) return false
       if (c.op === 'on') { await deps.say(chatId, (await deps.calendar.enable()).text); return true }
-      if (c.op === 'off') { deps.calendar.disable(); await deps.say(chatId, '日历关了,CC 不再读。系统里的授权要收回,去「系统设置 → 隐私与安全性 → 日历 / 提醒事项」。'); return true }
+      if (c.op === 'off') { deps.calendar.disable(); await deps.say(chatId, CALENDAR_DISABLED_TEXT); return true }
       if (c.op === 'status') {
         const st = await deps.calendar.status()
         const word = { granted: '已授权', not_determined: '还没授权', denied: '被拒了', unavailable: '这台读不了' }[st]
