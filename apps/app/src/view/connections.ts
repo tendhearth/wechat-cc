@@ -28,11 +28,15 @@ function capabilityLabel(c: Capability, lang: Lang): string {
     if (typeof at !== 'number' || !Number.isFinite(new Date(at).getTime())) return c.reason
     return t(lang, key, { ...c.params, date: new Date(at).toLocaleString(lang, { dateStyle: 'medium', timeStyle: 'short' }) })
   }
-  if (key === 'cap.brain.probe_transient') {
-    if (!c.params?.name) return c.reason
-    if (c.params.cause === 'server_error') return t(lang, 'cap.brain.probe_busy', c.params)
+  if (key === 'cap.brain.probe_transient' && !c.params?.name) return c.reason
+  const messageKey = key === 'cap.brain.probe_transient' && c.params?.cause === 'server_error' ? 'cap.brain.probe_busy' : key
+  let reason = t(lang, messageKey, c.params)
+  const resetAt = c.params?.resetAt
+  if (key === 'cap.brain.probe_quota' && typeof resetAt === 'number') {
+    const reset = new Date(resetAt)
+    if (Number.isFinite(reset.getTime())) reason += ` ${t(lang, 'cap.brain.probe_reset', { date: reset.toLocaleString(lang, { dateStyle: 'medium', timeStyle: 'short' }) })}`
   }
-  return t(lang, key, c.params)
+  return c.params?.startup === 'true' ? t(lang, 'cap.brain.probe_startup', { reason }) : reason
 }
 
 /** 动作的字:认得的原因码有本地化的(cap.action.<code>)就用,否则用 daemon 给的原文。 */

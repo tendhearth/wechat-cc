@@ -4,8 +4,7 @@ import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
-import { firstUseProbeTimeout, probeEndpointKey, probeStatusNote, UNKNOWN_PROBE_FIELD, withFirstUseProbe, type ProbeFailure, type ProbeResult } from '../../app/first-use-probe'
-import { turnErrorNotice } from '../../app/coordinator/failures'
+import { probeEndpointKey, probeStatusNote, UNKNOWN_PROBE_FIELD, withTurnConfirmation } from '../../app/first-use-probe'
 import { openFirstUseProbeRecords } from './first-use-probe-records'
 import { APP_VERSION, BUILD_SHA } from '../../lib/app-version'
 import { resolveCodexTarget } from '../../lib/codex-target'
@@ -46,19 +45,6 @@ import type { BootstrapDeps } from './types'
 import { AGY_STATIC_SESSION_KEY } from '../internal-api/token-registry'
 import appPkg from '../../../package.json' with { type: 'json' }
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
-
-function claudeProbeFailureMessage(failure: ProbeFailure, incompatible: () => string): string {
-  if (failure.kind === 'transient') return `Claude ${failure.reason}，过一会儿再用时会自动重试。你不用做什么。`
-  if (failure.kind === 'auth') return `Claude ${failure.reason}，请检查账号或密钥。`
-  if (failure.kind === 'quota') return turnErrorNotice('claude', undefined, 'quota')
-  return incompatible()
-}
-
-function incompatibleProbeDetail(detail: string): string {
-  if (detail.startsWith('探测拿到了空回复')) return '探测拿到了空回复'
-  if (/\bmodel[_ ]not[_ ]found\b/i.test(detail)) return 'model not found'
-  return '模型或客户端协议不兼容'
-}
 
 // Locate the wechat-cc source-mode install root (where package.json lives).
 // Source mode: derived from this file's path. Compiled-binary mode (Bun's
@@ -259,11 +245,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       void import('../diagnostics/failure-shapes').then(m => m.recordFailureShape(deps.stateDir, info))
     },
   })
-  // Claude 在首次聊天前做隔离探测，Codex 用真实对话确认。两家共用成功记录的格式。
-  const probeHistory = openFirstUseProbeRecords(deps.stateDir, () => deps.log('FIRST_USE_PROBE', '无法保存首次探测记录'))
-  const recordFirstUseProbe = (tag: string, r: ProbeResult): void => {
-    deps.log(tag, r.ok ? `ok in ${r.ms}ms` : `FAILED (${r.kind}) in ${r.ms}ms: ${r.reason}`)
-  }
+  const probeHistory = openFirstUseProbeRecords(deps.stateDir, () => deps.log('CONNECTION', '无法保存对话确认记录'))
   const claudeCliVersion = claudeBin ? (probeBinaryVersion(claudeBin)?.match(/(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)/)?.[1] ?? null) : null
   const claudeSdkVersion = (() => {
     const bundledVersion = appPkg.dependencies['@anthropic-ai/claude-agent-sdk']
@@ -288,29 +270,15 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       // haiku — synthesis quality matters more than cost there.
       strongModel: currentClaudeModel,
     })
-  const probeTimeoutMs = firstUseProbeTimeout(deps.turnTimeoutMs)
-  const claudeProvider = withFirstUseProbe(claudeInner, {
-    gate: 'spawn',
-    networkGate: deps.networkGate,
-    timeoutMs: probeTimeoutMs,
-    cache: {
-      combination: () => ({
-        cliVersion: claudeCliVersion ?? UNKNOWN_PROBE_FIELD, sdkVersion: claudeSdkVersion,
-        model: currentClaudeModel() || UNKNOWN_PROBE_FIELD,
-        endpoint: probeEndpointKey(claudeInner.callTarget?.('spawn') ?? unresolvedTarget('claude')),
-      }),
-      history: probeHistory('claude'),
-    },
-    probe: async (model, signal) => {
-      const target = claudeInner.callTarget?.('spawn', { model }) ?? unresolvedTarget('claude')
-      await assertCallAllowed(deps.networkGate, target)
-      return claudeInner.probeModel('只回复两个字母:ok', model, signal)
-    },
-    failureMessage: (detail, failure, model) => claudeProbeFailureMessage(failure, () =>
-      `claude 探测没通过:${incompatibleProbeDetail(detail)}\n` +
-      `可能是 ${claudeVersionTag} 和 SDK 不合,或者${model ? `模型 ${model}` : claudeModelTag()}已不可用。` +
-      `先在终端跑一次 \`claude\` 确认能登录;模型不对就 model_set 换一个。`),
-    onResult: r => recordFirstUseProbe('CLAUDE_PROBE', r),
+  const claudeProvider = withTurnConfirmation(claudeInner, {
+    provider: 'claude',
+    combination: () => ({
+      cliVersion: claudeCliVersion ?? UNKNOWN_PROBE_FIELD,
+      sdkVersion: claudeSdkVersion,
+      model: currentClaudeModel() || UNKNOWN_PROBE_FIELD,
+      endpoint: probeEndpointKey(claudeInner.callTarget?.('spawn') ?? unresolvedTarget('claude')),
+    }),
+    history: probeHistory('claude'),
   })
   const claudeNote = () => `${claudeVersionTag} · ${claudeModelTag()} · ${probeStatusNote(claudeProvider.probeStatus())}`
   registry.register(
@@ -456,24 +424,24 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           ...pluginMcp,
         },
       })
-    const codexProvider = withFirstUseProbe({
+    const codexProvider = withTurnConfirmation({
       ...codexInner,
       spawn: (project, ctx) => codexInner.spawn(project, { ...ctx, model: ctx.model ?? codexPinnedModel() }),
     }, {
-      cache: {
-        combination: () => {
-          const resolved = resolveCodexTarget()
-          const endpoint = probeEndpointKey('unresolved' in resolved ? resolved : { baseUrl: resolved.baseUrl })
-          return {
-            cliVersion: codexVersionCheck.actualSemver ?? UNKNOWN_PROBE_FIELD,
-            // Codex 对话走随 CC 发布的 app-server 协议客户端。
-            sdkVersion: `${APP_VERSION}+${BUILD_SHA}`,
-            model: codexPinnedModel() || resolved.model || nativeDefaults.get(endpoint) || UNKNOWN_PROBE_FIELD,
-            endpoint,
-          }
-        },
-        history: probeHistory('codex'),
+      provider: 'codex',
+      combination: () => {
+        const resolved = resolveCodexTarget()
+        const endpoint = probeEndpointKey('unresolved' in resolved ? resolved : { baseUrl: resolved.baseUrl })
+        return {
+          cliVersion: codexVersionCheck.actualSemver ?? UNKNOWN_PROBE_FIELD,
+          // Codex 对话走随 CC 发布的 app-server 协议客户端。
+          sdkVersion: `${APP_VERSION}+${BUILD_SHA}`,
+          model: codexPinnedModel() || resolved.model || UNKNOWN_PROBE_FIELD,
+          endpoint,
+        }
       },
+      history: probeHistory('codex'),
+      inferredModel: endpoint => endpoint ? nativeDefaults.get(endpoint) : undefined,
     })
     codexNote = () => `你的 CLI ${actual}${gap} · ${probeStatusNote(codexProvider.probeStatus())}`
     registry.register(

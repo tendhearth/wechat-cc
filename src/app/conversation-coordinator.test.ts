@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator as createCoordinatorRaw, authFailNotice, turnPolicy, turnErrorNotice, type ConversationCoordinatorDeps } from './conversation-coordinator'
 import { spawnFailedNotice } from './coordinator/failures'
-import { FirstUseProbeError } from './first-use-probe'
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 import { errorWithProviderCode } from '../lib/provider-error-code'
 import { createProviderRegistry } from './provider-registry'
@@ -692,11 +691,11 @@ describe('ConversationCoordinator', () => {
       expect(c.cancel('chat-1')).toBe(false)
     })
 
-    it('skips a solo probe failure notice after /stop', async () => {
+    it('skips a solo provider failure notice after /stop', async () => {
       const entered = Promise.withResolvers<void>()
-      const reprobe = Promise.withResolvers<void>()
+      const finishTurn = Promise.withResolvers<void>()
       const session: AgentSession = {
-        async *dispatch() { entered.resolve(); await reprobe.promise },
+        async *dispatch() { entered.resolve(); await finishTurn.promise; yield { kind: 'error', code: 'server_error', message: 'Claude 暂时忙不过来' } },
         async cancel() {},
         async close() {},
       }
@@ -714,10 +713,10 @@ describe('ConversationCoordinator', () => {
       const turn = c.dispatch(inbound('chat-1', 'hi'))
       await entered.promise
       expect(c.cancel('chat-1')).toBe(true)
-      reprobe.reject(new FirstUseProbeError('Claude 暂时忙不过来'))
+      finishTurn.resolve()
       await turn
       expect(sendAssistantText).not.toHaveBeenCalled()
-      expect(recordTurn).toHaveBeenCalledWith(expect.objectContaining({ error: undefined, errorCode: undefined }))
+      expect(recordTurn).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'error', errorCode: 'server_error' }))
     })
 
     it('coordinator.cancel(chatId) reaches every in-flight participant of a parallel dispatch', async () => {

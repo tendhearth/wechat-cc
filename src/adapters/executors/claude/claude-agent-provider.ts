@@ -1,6 +1,3 @@
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { toolApprovalInput } from '../../../domain/workbench/tool-input-preview'
 import { toolArgumentEvidence } from '../tool-argument-evidence'
 import { permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
@@ -15,10 +12,11 @@ import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } f
 import { validateUserInputAnswers, validateUserInputRequest } from '../../workbench/user-input'
 import { isCompanionMcp, nativeMcpInputPreview } from './claude-native-config'
 import { isMatterMcpTool } from '../matter-mcp'
+import type { CallTarget } from '../../../lib/network-gate'
 import { log } from '../../../lib/log'
 import { AsyncQueue } from '../../../lib/async-queue'
 import { isAuthFail } from '../../../domain/auth-fail'
-import { codeForHttpStatus, isContextOverflow, errorWithProviderCode } from '../../../lib/provider-error-code'
+import { codeForHttpStatus, isContextOverflow, errorWithProviderCode, providerErrorCodeOf } from '../../../lib/provider-error-code'
 import { claudeApiErrorCode } from './claude-api-error-code'
 import { discoverClaudeModels } from './claude-model-catalog'
 import { executionModel, nativeModelId } from '../../../domain/workbench/native-model-catalog'
@@ -344,7 +342,7 @@ export function claudeBaseUrl(env?: Record<string, string | undefined>): string 
   return (env ?? process.env).ANTHROPIC_BASE_URL || null
 }
 
-export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider & { probeModel(prompt: string, model?: string, signal?: AbortSignal): Promise<string> } {
+export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider {
   const windows=new Map<string,number>()
   const normalized=(model:string)=>model.replace(/\[[^\]]+\]$/,'').toLowerCase()
   const family=(model:string)=>/^(?:claude-)?(opus|sonnet|haiku)(?:-|$)/.exec(normalized(model))?.[1]
@@ -360,18 +358,18 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
   const runQuery: typeof query = input => (opts.queryImpl ?? query)({ ...input, options: {
     ...input.options, env: sessionSubprocessEnv(input.options?.env),
   } })
-  const oneShot = async (prompt: string, model: string, signal?: AbortSignal, probeCwd?: string): Promise<string> => {
+  const oneShot = async (prompt: string, model: string, signal?: AbortSignal): Promise<string> => {
     signal?.throwIfAborted()
     const controller = signal ? new AbortController() : undefined
     const abort = () => controller?.abort(signal?.reason)
     signal?.addEventListener('abort', abort, { once: true })
     try {
-      return await collectOneShot(prompt, model, controller, probeCwd)
+      return await collectOneShot(prompt, model, controller)
     } finally {
       signal?.removeEventListener('abort', abort)
     }
   }
-  const collectOneShot = async (prompt: string, model: string, abortController?: AbortController, probeCwd?: string): Promise<string> => {
+  const collectOneShot = async (prompt: string, model: string, abortController?: AbortController): Promise<string> => {
     const q = runQuery({
       prompt,
       options: {
@@ -384,13 +382,6 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         settingSources: [],
         tools: [],
         persistSession: false,
-        ...(probeCwd ? {
-          cwd: probeCwd,
-          mcpServers: {}, strictMcpConfig: true,
-          hooks: {}, plugins: [],
-          settings: { disableAllHooks: true, disableSkillShellExecution: true, autoMemoryEnabled: false },
-          env: { ...sessionSubprocessEnv(), CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
-        } : {}),
         ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
       } as Options,
     })
@@ -456,14 +447,6 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
-    async probeModel(prompt, model, signal) {
-      const cwd = await mkdtemp(join(tmpdir(), 'cc-claude-probe-'))
-      try {
-        return await oneShot(prompt, model ?? opts.strongModel?.() ?? DEFAULT_CLAUDE_MODEL, signal, cwd)
-      } finally {
-        await rm(cwd, { recursive: true, force: true }).catch(() => {})
-      }
-    },
     cheapEval: (prompt, options) =>
       oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT, options?.signal),
     // 守护(评审 #193 P1-1):一次性评估每次都起新子进程,继承此刻的 process.env;会话的目标在
@@ -609,10 +592,35 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           throw Object.assign(Error('This Claude transport cannot enforce the checkup allowance.'),{code:'isolated_evaluation_unavailable'})
         }finally{clearTimeout(timer)}
       }
+      const baseTransportEnv = options.env ?? sessionSubprocessEnv()
+      let confirmedTransport: Pick<CallTarget, 'baseUrl'> | null = null
+      let readingTransport = false
+      const readTransport = async () => {
+        const control = q as unknown as { getSettings?: () => Promise<unknown> }
+        try {
+          const value = await control.getSettings?.()
+          if (value && typeof value === 'object' && 'effective' in value) {
+            const settings = value as { effective?: { env?: Record<string, unknown> }; errors?: unknown }
+            if (!settings.effective || typeof settings.effective !== 'object' || Array.isArray(settings.effective) ||
+                (settings.errors !== undefined && (!Array.isArray(settings.errors) || settings.errors.length))) return
+            const effectiveEnv = settings.effective.env
+            if (effectiveEnv !== undefined && (!effectiveEnv || typeof effectiveEnv !== 'object' || Array.isArray(effectiveEnv))) return
+            const env = (key: string) => effectiveEnv?.[key] ?? baseTransportEnv[key]
+            if (env('ANTHROPIC_UNIX_SOCKET') || [
+              'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
+              'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD', 'CLAUDE_CODE_USE_MANTLE',
+            ].some(key => /^(1|true|yes|on)$/i.test(String(env(key) ?? '')))) return
+            const baseUrl = env('ANTHROPIC_BASE_URL')
+            if (typeof baseUrl === 'string' || baseUrl === undefined) confirmedTransport = { baseUrl: baseUrl || null }
+          }
+        } catch { /* Without native metadata there is no durable endpoint confirmation. */ }
+        finally { readingTransport = false }
+      }
       let lastInputTokens:number|undefined, firstInputTokens:number|undefined, contextModel:string|undefined,firstRequestSeen=false,lastRequestId:string|undefined,firstRequestId:string|undefined
       let observedSessionId=spawnOpts.resumeSessionId
 
       let closed = false
+      let transportEnded = false
       let droppedAssistantChunks = 0
       // A synthetic API-error assistant message (SDK `error` label) is held
       // until the turn's `result` arrives, because the HTTP status that
@@ -627,8 +635,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         const { sdkError, text } = pendingApiError
         pendingApiError = null
         const { code, message } = claudeApiFailure(sdkError, text, apiErrorStatus)
-        log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=${sdkError} status=${apiErrorStatus ?? 'none'} code=${code} text=${JSON.stringify(text.slice(0, 200))}`)
-        aq.push({ kind: 'error', code, message })
+        log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=${sdkError} status=${apiErrorStatus ?? 'none'} code=${code}`)
+        aq.push({ kind: 'error', code, message, ...(apiErrorStatus == null ? {} : { httpStatusCode: apiErrorStatus }) })
       }
       let drainResolve: (() => void) | undefined
       const drainPromise = new Promise<void>(resolve => { drainResolve = resolve })
@@ -659,7 +667,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 const text = extractText(msg.message?.content)
                 if (text) {
                   droppedAssistantChunks++
-                  log('STREAM_DROP', `alias=${project.alias} count=${droppedAssistantChunks} preview=${JSON.stringify(text.slice(0, 80))}`)
+                  log('STREAM_DROP', `alias=${project.alias} count=${droppedAssistantChunks} len=${text.length}`)
                 }
               }
               continue
@@ -747,19 +755,24 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               flushApiError(aq, msg.api_error_status)
               const failed = !!msg.subtype && msg.subtype !== 'success'
               if (failed) {
-                const summary = typeof msg.result === 'string'
-                  ? msg.result.slice(0, 400)
-                  : JSON.stringify(msg).slice(0, 400)
-                log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
-                aq.push({ kind: 'error', message: msg.errors?.join('\n')||`subtype=${msg.subtype}`, ...(isContextOverflow(msg.errors)?{code:'context_overflow' as const}:{}), ...(evaluation && msg.subtype === 'error_max_turns' && !apiErrored && !turnErrored ? { code: usageLimited?'checkup_usage_limit':'checkup_step_budget' } : {}) })
+                log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype}`)
+                if (!apiErrored && !turnErrored) {
+                  const message = msg.errors?.join('\n') || `subtype=${msg.subtype}`
+                  const code = isContextOverflow(msg.errors) ? 'context_overflow'
+                    : evaluation && msg.subtype === 'error_max_turns' ? (usageLimited ? 'checkup_usage_limit' : 'checkup_step_budget')
+                    : codeForHttpStatus(msg.api_error_status, message)
+                  aq.push({ kind: 'error', message, ...(code ? { code } : {}), ...(msg.api_error_status == null ? {} : { httpStatusCode: msg.api_error_status }) })
+                }
               } else if (!apiErrored && !turnErrored) {
                 // SDK 说这一轮是失败的(is_error),却没有带 error 标注的助理消息(上面那条路没接住):
                 // result.result 就是错误原文。带码收尾,coordinator 只发通知 —— 一个字都不进回复(#190 红线)。
                 // 判法和一起做同一个(claude-sdk-messages.ts 的 claudeResultFailure)。
                 const resultFailure = claudeResultFailure(msg)
                 if (resultFailure) {
-                  log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=none is_error=true status=${msg.api_error_status ?? 'none'} code=${resultFailure.code} text=${JSON.stringify(resultFailure.message.slice(0, 200))}`)
-                  aq.push({ kind: 'error', ...resultFailure })
+                  const code = codeForHttpStatus(msg.api_error_status, resultFailure.message) ?? resultFailure.code
+                  log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=none is_error=true status=${msg.api_error_status ?? 'none'} code=${code}`)
+                  aq.push({ kind: 'error', ...resultFailure, code,
+                    ...(msg.api_error_status == null ? {} : { httpStatusCode: msg.api_error_status }) })
                 }
               }
               // SDK 自己的「最后的话」(result.result = 最后一条助理消息的文字):只在成功轮带,只用于核对
@@ -788,18 +801,30 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             }
           }
         } catch (e) {
+          transportEnded = true
           approvalLifecycle?.endTurn?.()
-          log('SESSION_ERROR', `alias=${project.alias} ${e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : String(e)}`)
+          log('SESSION_ERROR', `alias=${project.alias} ${e instanceof Error ? e.name : 'unknown SDK error'}`)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const catchQueue = activeEventQueue as AsyncQueue<AgentEvent> | null
           if (catchQueue) {
             flushApiError(catchQueue)
-            const errMsg = e instanceof Error ? e.message : String(e)
-            catchQueue.push({ kind: 'error', message: errMsg, ...(isContextOverflow(e)?{code:'context_overflow' as const}:{}) })
+            const message = e instanceof Error ? e.message : String(e)
+            const envelope = e && typeof e === 'object' ? e as { status?: unknown; statusCode?: unknown; httpStatusCode?: unknown } : undefined
+            const status = envelope?.status ?? envelope?.statusCode ?? envelope?.httpStatusCode
+            const code = providerErrorCodeOf(e) ?? (isContextOverflow(e) ? 'context_overflow' : undefined)
+            catchQueue.push({ kind: 'error', message, ...(code ? { code } : {}), ...(typeof status === 'number' ? { httpStatusCode: status } : {}) })
             catchQueue.end()
             activeEventQueue = null
           }
         } finally {
+          transportEnded = true
+          const queue = activeEventQueue as AsyncQueue<AgentEvent> | null
+          if (queue) {
+            if (pendingApiError) flushApiError(queue)
+            else queue.push({ kind: 'error', code: 'network', message: 'Claude SDK transport closed' })
+            queue.end()
+            activeEventQueue = null
+          }
           settleQuestion()
           approvalLifecycle?.endTurn?.()
           drainResolve?.()
@@ -810,6 +835,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         resumedHistory: !!spawnOpts.resumeSessionId, resumedHistoryOwnerOnly:true,
         contextUsage: () => ({...(lastInputTokens!==undefined?{tokens:lastInputTokens}:{}),...(firstRequestSeen?{firstInputTokens:firstInputTokens??null}:{}),...(contextModel?{model:contextModel}:{})}),
         callTarget: () => ({...spawnTarget,...(contextModel?{model:contextModel}:{})}),
+        isAlive: () => !closed && !transportEnded,
+        confirmationTarget: () => confirmedTransport && { provider: 'claude', model: contextModel ?? spawnTarget.model, ...confirmedTransport },
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           if (closed) {
             // Already closed — return an iterable that yields nothing.
@@ -832,6 +859,10 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             parent_tool_use_id: null,
             message: { role: 'user', content },
           } as SDKUserMessage)
+          if (!evaluation && !confirmedTransport && !readingTransport) {
+            readingTransport = true
+            void readTransport()
+          }
           return queue.iterable()
         },
         async cancel() {

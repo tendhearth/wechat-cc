@@ -227,7 +227,8 @@ describe('Claude:#190 的真实错误样本走 daemon ⇒ 一个字都不交付�
     const t = rig({ turns: [{ steps: [{ raw: { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: leak }] } } }, { raw: { type: 'result', subtype: 'success', session_id: 's', num_turns: 1, duration_ms: 1, is_error: true, api_error_status: 529, result: leak } }] }] })
     await t.send(); await t.close()
     expect(t.wechat).toEqual([])
-    expect(t.records[0]).toMatchObject({ outcome: 'error', errorCode: 'provider_error' })
+    expect(t.records[0]).toMatchObject({ outcome: 'error', errorCode: 'server_error' })
+    expect(t.notices.join('\n')).toContain('Claude 暂时忙不过来')
   })
 })
 

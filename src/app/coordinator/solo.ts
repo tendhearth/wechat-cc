@@ -3,7 +3,6 @@
  * 开交付轮、出错怎么说;跑回合本身交给 TurnRunner。
  */
 import { ownerReplyParts, type OwnerReplySummary } from '../collect-owner-reply'
-import { FirstUseProbeError } from '../first-use-probe'
 import type { ProviderId } from '../../domain/conversation'
 import type { InboundMsg } from '../../domain/prompt-format'
 import { buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from '../../domain/provider-handoff'
@@ -112,7 +111,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
           ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
         })
       } catch (err) {
-        // spawn 阶段就挂了(二进制不在 / 首次使用探测没过 / SDK 起不来):
+        // spawn 阶段就挂了(二进制不在 / SDK 起不来):
         // 之前这个异常一路冒到 dispatch 外层只记日志,用户端一片沉默。
         // 沉默 = 被无视;把原因用人话交给用户,并记一条 turn。
         const detail = err instanceof Error ? err.message : String(err)
@@ -129,7 +128,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
         }
         outcome = 'error'
         if (oneoff && providerId === 'grok' && code === 'network' && detail === 'grok_network_unavailable') return 'grok_unreachable'
-        await failureNotice(err instanceof FirstUseProbeError ? detail : spawnFailedNotice(providerId, detail, code))
+        await failureNotice(spawnFailedNotice(providerId, detail, code))
         return
       }
       acquired = handle
@@ -256,7 +255,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       ctx.noteDelivery(providerId, report.delivery)
       rotation?.delivered(contextKey, msg.text, summary.toolCalls.length > 0)
     } catch (err) {
-      if (!oneoff && !(err instanceof FirstUseProbeError)) throw err
+      if (!oneoff) throw err
       if (stopped()) {
         settle('cancelled')
         return
@@ -265,7 +264,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       summary = { assistantText: [], replyToolCalled: false, toolCalls: [], error: err instanceof Error ? err.message : String(err), ...(code ? { errorCode: code } : {}) }
       outcome = isAuthErrorCode(code) ? 'auth_failed' : 'error'
       settle('error')
-      await failureNotice(err instanceof FirstUseProbeError ? err.message : turnErrorNotice(providerId, summary.error, summary.errorCode))
+      await failureNotice(turnErrorNotice(providerId, summary.error, summary.errorCode))
     } finally {
       unregisterCancel?.()
       if (delivery && !deliverySettled) { deliverySettled = true; try { delivery.abandon(outcome) } catch { /* 记账不影响回合 */ } }

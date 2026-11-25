@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { writeWarmExecFixture } from '../../lib/test-temp'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -23,7 +23,12 @@ const fakeProbe = vi.hoisted(() => ({
   codexError: null as string | null,
   codexEmpty: false,
   codexTurns: [] as string[],
-  inspectClaudeProbe: undefined as ((options: Options) => void) | undefined,
+  claudeOneShots: [] as string[],
+  claudeInputs: [] as string[],
+  claudeSettings: {} as Record<string, unknown>,
+  claudeCalls: [] as Array<{ cwd?: string; sources?: Options['settingSources']; maxTurns?: number }>,
+  codexStartupFailure: null as 'config' | 'thread' | null,
+  codexResumeModel: null as string | null,
   claudeResult: null as { result: string; api_error_status: number; sdkError?: string } | null,
   models: {} as Record<string, unknown>,
   codexConfig: new Map<string, Record<string, unknown>>(),
@@ -41,17 +46,33 @@ function gatewayConfig(baseUrl = probeGateway, model?: string) {
 }
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  async *query(request: { prompt: string; options?: Options }) {
-    if (request.prompt === '只回复两个字母:ok' && request.options) fakeProbe.inspectClaudeProbe?.(request.options)
-    fakeProbe.models.claude = request.options?.model
-    if (fakeProbe.error) throw new Error(fakeProbe.error)
-    if (fakeProbe.claudeResult?.sdkError) {
-      yield { type: 'assistant', error: fakeProbe.claudeResult.sdkError, message: { content: [{ type: 'text', text: fakeProbe.claudeResult.result }] } }
+  query(request: { prompt: string | AsyncIterable<{ message: { content: unknown } }>; options?: Options }) {
+    const { prompt, options } = request
+    fakeProbe.claudeCalls.push({ cwd: options?.cwd, sources: options?.settingSources, maxTurns: options?.maxTurns })
+    const turn = async function* () {
+      if (fakeProbe.error) throw new Error(fakeProbe.error)
+      if (fakeProbe.claudeResult?.sdkError) {
+        yield { type: 'assistant', error: fakeProbe.claudeResult.sdkError, message: { content: [{ type: 'text', text: fakeProbe.claudeResult.result }] } }
+      }
+      yield fakeProbe.claudeResult
+        ? { type: 'result', subtype: 'success', is_error: true, ...fakeProbe.claudeResult }
+        : { type: 'result', subtype: 'success', result: 'Claude real reply' }
     }
-    yield fakeProbe.claudeResult
-      ? { type: 'result', subtype: 'success', is_error: true, ...fakeProbe.claudeResult }
-      : { type: 'result', subtype: 'success', result: '' }
+    return Object.assign((async function* () {
+      if (typeof prompt === 'string') {
+        fakeProbe.claudeOneShots.push(prompt)
+        yield* turn()
+        return
+      }
+      for await (const { message } of prompt) {
+        const input = (message.content as Array<{ text?: string }>).map(block => block.text ?? '').join('')
+        fakeProbe.claudeInputs.push(input)
+        yield { type: 'system', subtype: 'init', model: 'claude-reported', session_id: 'claude-session' }
+        yield* turn()
+      }
+    })(), { getSettings: async () => ({ effective: fakeProbe.claudeSettings, sources: [] }) })
   },
+
 }))
 
 vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
@@ -62,6 +83,16 @@ vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
       return { steps: fakeProbe.codexError || fakeProbe.codexEmpty ? [] : [{ say: 'native reply' }], fail: fakeProbe.codexError ?? undefined }
     },
     cheapAnswer: () => 'evaluation answer',
+    rewrite: message => {
+      if (fakeProbe.codexStartupFailure === 'config' && message.result?.config ||
+          fakeProbe.codexStartupFailure === 'thread' && message.result?.thread) {
+        return { id: message.id, error: { code: -32601, message: 'Method not found' } }
+      }
+      if (message.result?.thread?.id === 'resumed-thread' && fakeProbe.codexResumeModel) {
+        return { ...message, result: { ...message.result, model: fakeProbe.codexResumeModel } }
+      }
+      return message
+    },
     configForCwd: cwd => fakeProbe.codexConfig.get(cwd) ?? fakeProbe.codexGateway,
     onThreadStart: (_method, params, cheap) => {
       fakeProbe.codexThreads.push({ cwd: params.cwd, cheap })
@@ -163,6 +194,8 @@ describe('registerProviders — first-use probe messages', () => {
     finally {
       fakeProbe.error = null
       fakeProbe.codexError = null
+      fakeProbe.codexStartupFailure = null
+      fakeProbe.codexResumeModel = null
       fakeProbe.codexEmpty = false
       fakeProbe.codexTurns = []
       fakeProbe.models = {}
@@ -176,6 +209,13 @@ describe('registerProviders — first-use probe messages', () => {
   }
 
   const probeCtx = { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest } as const
+
+  it('documents real-turn confirmation for both providers in the checkup handbook', () => {
+    const handbook = readFileSync(new URL('../../../docs/maintainer/butler-checkup.md', import.meta.url), 'utf8')
+    expect(handbook).toContain('Claude 和 Codex 都由真实的对话回合确认连接')
+    expect(handbook).not.toContain('可复现的 Responses 网关用单独的 HTTP 请求探测')
+    expect(handbook).not.toContain('环境变量密钥只用于用户配置层')
+  })
 
   it('uses the native project model and endpoint without a request before the first real Codex turn', () => withCodexFixture(async (deps, _logs, fetchProbe) => {
     const user = { alias: 'user-default', path: join(deps.stateDir, 'ordinary') }
@@ -375,119 +415,178 @@ describe('registerProviders — first-use probe messages', () => {
     } finally { stopProviderProbes() }
   }))
 
-  it('runs the Claude probe outside the conversation project with tools and instruction loading disabled', async () => {
-    const sdkOptionsForProject = vi.fn(() => ({ mcpServers: { project: { command: 'must-not-start' } } }))
-    const { deps } = baseDepsWithLogs({ sdkOptionsForProject })
+  it.each(['config', 'thread'] as const)('reports startup failure at Codex %s and invalidates only a known target', stage => withCodexFixture(async (deps) => {
+    const model = 'stable-model'
+    saveAgentConfig(deps.stateDir, baseConfig({ provider: 'codex', model }))
+    const path = join(deps.stateDir, 'first-use-probes.json')
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    const provider = registry.get('codex')!.provider
+    const project = { alias: 'probe', path: deps.stateDir }
+    try {
+      const session = await provider.spawn(project, probeCtx)
+      try { await collectTurn(session.dispatch('confirm before failure')) }
+      finally { await session.close() }
+      const saved = readFileSync(path, 'utf8')
+      fakeProbe.codexStartupFailure = stage
+      await expect(provider.spawn(project, probeCtx)).rejects.toMatchObject({ providerErrorCode: 'incompatible' })
+      expect(providerNotes().codex).toContain('模型或客户端协议不兼容')
+      if (stage === 'config') {
+        expect(providerNotes().codex).toContain('启动失败')
+        expect(readFileSync(path, 'utf8')).toBe(saved)
+      } else {
+        expect(providerNotes().codex).not.toContain('启动失败')
+        expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({})
+      }
+      fakeProbe.codexStartupFailure = null
+      const retry = await provider.spawn(project, probeCtx)
+      try {
+        await collectTurn(retry.dispatch('retry now'))
+        expect(providerNotes().codex).toContain('已通过对话确认连接')
+      } finally { await retry.close() }
+    } finally { stopProviderProbes() }
+  }))
+
+  it('shows a resumed Codex reply after restart without pinning its model on a new thread', () => withCodexFixture(async deps => {
+    writeFileSync(join(deps.stateDir, 'config.toml'), '')
+    fakeProbe.codexGateway = {}
+    fakeProbe.codexResumeModel = 'retained-model'
+    const project = { alias: 'probe', path: deps.stateDir }
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    const provider = registry.get('codex')!.provider
+    try {
+      expect(providerNotes().codex).toContain('还没用过')
+      const resumed = await provider.spawn(project, { ...probeCtx, resumeSessionId: 'resumed-thread' })
+      try {
+        expect(resumed.resumedHistory).toBe(true)
+        expect(resumed.callTarget?.()?.model).toBe('retained-model')
+        await collectTurn(resumed.dispatch('continue after restart'))
+        expect(providerNotes().codex).toContain('已通过对话确认连接')
+        const saved = JSON.parse(readFileSync(join(deps.stateDir, 'first-use-probes.json'), 'utf8'))
+        expect(saved.codex).toEqual([expect.objectContaining({ model: 'retained-model' })])
+        const fresh = await provider.spawn(project, probeCtx)
+        try {
+          expect(fresh.callTarget?.()?.model).toBe('scripted-model')
+          expect(providerNotes().codex).toContain('已通过对话确认连接')
+        }
+        finally { await fresh.close() }
+      } finally { await resumed.close() }
+    } finally { stopProviderProbes() }
+  }))
+
+  async function withClaudeFixture(run: (deps: ProviderDeps, project: { alias: string; path: string }) => Promise<void>) {
+    const { deps } = baseDepsWithLogs({
+      sdkOptionsForProject: (_alias, cwd) => ({ cwd, model: 'claude-configured', settingSources: ['project', 'local'] }),
+    })
     const project = { alias: 'project', path: join(deps.stateDir, 'project') }
     mkdirSync(project.path)
-    writeFileSync(join(project.path, 'CLAUDE.md'), 'project-only instruction')
-    let cwd: string | undefined
-    const inspect = vi.fn((options: Options) => {
-      cwd = options.cwd
-      expect(cwd).toBeDefined()
-      expect(cwd).not.toBe(project.path)
-      expect(readdirSync(cwd!)).toEqual([])
-      expect(options.settingSources).toEqual([])
-      expect(options.tools).toEqual([])
-      expect(options.mcpServers).toEqual({})
-      expect(options.strictMcpConfig).toBe(true)
-      expect(options.hooks).toEqual({})
-      expect(options.plugins).toEqual([])
-      expect(options.persistSession).toBe(false)
-      expect(options.systemPrompt).toBeUndefined()
-      expect(options.env?.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBe('1')
-      expect(sdkOptionsForProject).not.toHaveBeenCalled()
-    })
-    fakeProbe.inspectClaudeProbe = inspect
-    const { registry, stopProviderProbes } = await registerProviders(deps)
-    try {
-      await expect(registry.get('claude')!.provider.spawn(project, { ...probeCtx, appendInstructions: 'project-only instruction' }))
-        .rejects.toThrow('探测拿到了空回复')
-      expect(inspect).toHaveBeenCalledOnce()
-      expect(existsSync(cwd!)).toBe(false)
-    } finally {
-      stopProviderProbes()
-      fakeProbe.inspectClaudeProbe = undefined
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://daemon.example/v1')
+    fakeProbe.claudeSettings = { env: { ANTHROPIC_BASE_URL: 'https://project.example/v1' } }
+    try { await run(deps, project) }
+    finally {
+      fakeProbe.claudeOneShots = []
+      fakeProbe.claudeCalls = []
+      fakeProbe.claudeInputs = []
+      fakeProbe.claudeSettings = {}
+      fakeProbe.claudeResult = null
+      fakeProbe.error = null
+      vi.unstubAllEnvs()
       rmSync(deps.stateDir, { recursive: true, force: true })
     }
-  })
+  }
+
+  it('sends only real Claude project turns, and immediately retries a first-turn 529 on the project gateway', () => withClaudeFixture(async (deps, project) => {
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    const path = join(deps.stateDir, 'first-use-probes.json')
+    const provider = registry.get('claude')!.provider
+    try {
+      const session = await provider.spawn(project, probeCtx)
+      try {
+        expect(fakeProbe.claudeCalls).toEqual([{ cwd: project.path, sources: ['project', 'local'], maxTurns: undefined }])
+        expect(fakeProbe.claudeOneShots).toEqual([])
+        expect(fakeProbe.claudeInputs).toEqual([])
+        expect(existsSync(path)).toBe(false)
+        expect(providerNotes().claude).toContain('还没用过，第一次对话时确认')
+        fakeProbe.claudeResult = { result: 'Please try again later', api_error_status: 529 }
+        const first = await collectTurn(session.dispatch('first'))
+        expect(first.errorCode).toBe('server_error')
+        expect(turnErrorNotice('claude', first.error, first.errorCode)).toContain('Claude 暂时忙不过来（529）')
+        expect(providerNotes().claude).toContain('暂时忙不过来（529）')
+        expect(existsSync(path)).toBe(false)
+        fakeProbe.claudeResult = null
+        expect((await collectTurn(session.dispatch('second'))).error).toBeUndefined()
+        expect(fakeProbe.claudeInputs).toEqual(['first', 'second'])
+        expect(fakeProbe.claudeOneShots).toEqual([])
+        expect(providerNotes().claude).toContain('已通过对话确认连接')
+        expect(JSON.parse(readFileSync(path, 'utf8')).claude).toEqual([
+          expect.objectContaining({ model: 'claude-reported', endpoint: probeEndpointKey({ baseUrl: 'https://project.example/v1' }), confirmedByTurn: true }),
+        ])
+      } finally { await session.close() }
+    } finally { stopProviderProbes() }
+  }))
 
   it.each([
-    { status: 529, result: 'Please try again later', kind: 'transient', note: '暂时忙不过来（529）', code: 'server_error' },
-    { status: 403, result: 'Request not allowed', kind: 'auth', note: '拒绝了凭证（403）', code: 'auth_rejected' },
-    { status: 404, result: 'model not found', kind: 'incompatible', note: '探测失败', code: 'invalid_request' },
-  ])('rejects a Claude SDK result-only failure with status $status without saving it', async ({ status, result, kind, note, code }) => {
-    const { deps, logs } = baseDepsWithLogs({ sdkOptionsForProject: async () => { throw new Error('SDK error must stop spawn') } })
-    fakeProbe.claudeResult = { result, api_error_status: status }
+    { status: 403, result: 'Request not allowed', code: 'auth_rejected', note: '拒绝了凭证（403）', notice: '检查一下账号或密钥' },
+    { status: 429, result: 'Claude AI usage limit reached|4102444800', code: 'quota', note: '额度用完了（预计', notice: '等额度恢复' },
+    { status: 400, result: 'Credit balance is too low', sdkError: 'billing_error', code: 'quota', note: '额度用完了', notice: '等额度恢复' },
+    { status: 404, result: 'model not found', code: 'incompatible', note: '客户端协议不兼容', notice: '检查 CLI 版本或换一个模型' },
+  ])('classifies a real Claude SDK failure with status $status and immediately sends the next sentence', ({ status, result, sdkError, code, note, notice }) => withClaudeFixture(async (deps, project) => {
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    const path = join(deps.stateDir, 'first-use-probes.json')
     try {
-      const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+      const session = await registry.get('claude')!.provider.spawn(project, probeCtx)
       try {
-        const provider = registry.get('claude')!.provider
-        await expect(provider.cheapEval!('evaluate this')).rejects.toMatchObject({ message: result, status, providerErrorCode: code })
-        await expect(provider.spawn(
-          { alias: 'probe', path: deps.stateDir },
-          { chatId: 'probe', permissionMode: 'strict', tierProfile: TIER_PROFILES.guest },
-        )).rejects.toThrow(kind === 'incompatible' ? '探测没通过:model not found' : note)
+        await collectTurn(session.dispatch('confirm'))
+        const confirmed = readFileSync(path, 'utf8')
+        fakeProbe.claudeResult = { result, api_error_status: status, sdkError }
+        const summary = await collectTurn(session.dispatch('fail'))
+        expect(summary.errorCode).toBe(code)
+        expect(summary.assistantText).toEqual([])
+        const message = code === 'auth_rejected' ? authFailNotice('claude', code) : turnErrorNotice('claude', summary.error, summary.errorCode)
+        expect(message).toContain(notice)
         expect(providerNotes().claude).toContain(note)
-        expect(logs.find(([tag]) => tag === 'CLAUDE_PROBE')?.[1]).toContain(`FAILED (${kind})`)
-        expect(existsSync(join(deps.stateDir, 'first-use-probes.json'))).toBe(false)
-      } finally { stopProviderProbes() }
-    } finally {
-      fakeProbe.claudeResult = null
-      fakeProbe.models = {}
-      rmSync(deps.stateDir, { recursive: true, force: true })
-    }
-  })
+        if (code === 'incompatible') expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({})
+        else expect(readFileSync(path, 'utf8')).toBe(confirmed)
+        fakeProbe.claudeResult = null
+        expect((await collectTurn(session.dispatch('try again now'))).error).toBeUndefined()
+        expect(fakeProbe.claudeInputs).toEqual(['confirm', 'fail', 'try again now'])
+        expect(fakeProbe.claudeOneShots).toEqual([])
+        expect(JSON.parse(readFileSync(path, 'utf8')).claude).toHaveLength(1)
+      } finally { await session.close() }
+    } finally { stopProviderProbes() }
+  }))
 
-  it('reports a Claude SDK billing error as quota exhaustion without saving a record', async () => {
-    const { deps, logs } = baseDepsWithLogs()
-    fakeProbe.claudeResult = { result: 'Credit balance is too low', api_error_status: 400, sdkError: 'billing_error' }
-    try {
-      const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
-      try {
-        await expect(registry.get('claude')!.provider.spawn({ alias: 'probe', path: deps.stateDir }, probeCtx))
-          .rejects.toMatchObject({ providerErrorCode: 'quota', message: expect.stringContaining('等额度恢复,或者先换一个脑子') })
-        expect(providerNotes().claude).toContain('额度用完了，等额度恢复或换一个脑子')
-        expect(logs.find(([tag]) => tag === 'CLAUDE_PROBE')?.[1]).toContain('FAILED (quota)')
-        expect(existsSync(join(deps.stateDir, 'first-use-probes.json'))).toBe(false)
-      } finally { stopProviderProbes() }
-    } finally {
-      fakeProbe.claudeResult = null
-      fakeProbe.models = {}
-      rmSync(deps.stateDir, { recursive: true, force: true })
-    }
-  })
-
-  it.each([
-    { kind: 'transient', error: 'API Error: 529 overloaded', note: '暂时忙不过来（529），稍后使用时自动重试' },
-    { kind: 'auth', error: 'HTTP error: 403 Forbidden', note: '探测失败，拒绝了凭证（403）' },
-    { kind: 'incompatible', error: null, note: '探测失败' },
-  ])('shows the $kind result for Claude', async ({ kind, error, note }) => {
-    const { deps, logs } = baseDepsWithLogs()
-    fakeProbe.error = error
+  it('reports the real Claude reply without persisting a guessed endpoint for an unknown transport', () => withClaudeFixture(async (deps, project) => {
+    fakeProbe.claudeSettings = { env: { CLAUDE_CODE_USE_BEDROCK: '1' } }
     const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
     try {
-      const failure = await registry.get('claude')!.provider.spawn({ alias: 'probe', path: deps.stateDir }, probeCtx)
-        .then(() => { throw new Error('probe should have blocked spawn') }, (err: Error) => err.message)
-      if (kind === 'transient') {
-        expect(failure).toBe('Claude 暂时忙不过来（529），过一会儿再用时会自动重试。你不用做什么。')
-        expect(failure).not.toMatch(/版本|SDK|模型|登录|npm i/)
-      } else if (kind === 'auth') {
-        expect(failure).toBe('Claude 拒绝了凭证（403），请检查账号或密钥。')
-        expect(failure).not.toMatch(/登录|版本|npm i/)
-      } else {
-        expect(failure).toContain('claude 探测没通过:探测拿到了空回复')
-        expect(failure).toContain('先在终端跑一次 `claude` 确认能登录')
-      }
-      expect(providerNotes().claude).toContain(note)
-      expect(logs.find(([tag]) => tag === 'CLAUDE_PROBE')?.[1]).toContain(`FAILED (${kind})`)
-      expect(fakeProbe.models.claude).toBe('claude-x')
-    } finally {
-      fakeProbe.error = null
-      stopProviderProbes()
-      rmSync(deps.stateDir, { recursive: true, force: true })
-    }
-  })
+      const session = await registry.get('claude')!.provider.spawn(project, probeCtx)
+      try {
+        expect((await collectTurn(session.dispatch('owner question'))).error).toBeUndefined()
+        expect(providerNotes().claude).toContain('已通过对话确认连接')
+        expect(existsSync(join(deps.stateDir, 'first-use-probes.json'))).toBe(false)
+      } finally { await session.close() }
+    } finally { stopProviderProbes() }
+  }))
+
+  it('preserves isolated Claude evaluation and SDK result errors without confirming chat', () => withClaudeFixture(async (deps, project) => {
+    const { registry, providerNotes, stopProviderProbes } = await registerProviders(deps)
+    const provider = registry.get('claude')!.provider
+    try {
+      fakeProbe.claudeResult = { result: 'Please try again later', api_error_status: 529 }
+      await expect(provider.cheapEval!('evaluation')).rejects.toMatchObject({ status: 529, providerErrorCode: 'server_error' })
+      fakeProbe.claudeResult = null
+      const session = await provider.spawn(project, { ...probeCtx, evaluation: {
+        tools: { tools: [], call: async () => '', close: async () => {}, serverOf: () => undefined }, mcpServer: { url: 'http://127.0.0.1:1' }, maxSteps: 3, maxOutputTokens: 128,
+      } })
+      try {
+        await collectTurn(session.dispatch('checkup'))
+        expect(fakeProbe.claudeCalls.at(-1)).toEqual({ cwd: project.path, sources: [], maxTurns: 3 })
+        expect(fakeProbe.claudeOneShots).toEqual(['evaluation'])
+        expect(providerNotes().claude).toContain('还没用过')
+        expect(existsSync(join(deps.stateDir, 'first-use-probes.json'))).toBe(false)
+      } finally { await session.close() }
+    } finally { stopProviderProbes() }
+  }))
 
 })
 

@@ -104,7 +104,7 @@ describe('Claude native execution choice',()=>{
   const project={alias:'task',path:'/tmp'}
   const context={tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const,chatId:'task'}
   const options=()=> (sdk as unknown as {__test_last_options:()=>any}).__test_last_options()
-  it('opens a chat with the pinned model selected for the probe', async () => {
+  it('opens a chat with the pinned model', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({ model: 'default-model' }) })
     const session = await provider.spawn(project, { ...context, model: 'pinned-model' })
     try {

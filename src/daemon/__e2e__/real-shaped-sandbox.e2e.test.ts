@@ -1713,33 +1713,29 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     }
   })
 
-  it('reuses a successful model probe after restart and reports it in connections and /mode', async () => {
+  it('reuses a successful Claude turn confirmation after restart and reports it in connections and /mode', async () => {
     await d.stop()
-    const probe = vi.fn(async () => 'ok')
-    const moderatorScript = { onEval: async (prompt: string) => prompt === '只回复两个字母:ok' ? probe() : 'ok' }
+    const backgroundEval = vi.fn(async () => 'ok')
+    const moderatorScript = { onEval: backgroundEval }
     const options = { claudeScript, codexScript, moderatorScript, agentConfigPatch: { model: 'sandbox-default-model' } }
     d = await startRealShapedDaemon({ ...options, seedFiles: { 'projects.json': PROJECTS } })
 
     const recordPath = join(d.stateDir, 'first-use-probes.json')
     await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
-    d.sendText(d.owner, '沙盒你好，初次探测')
+    d.sendText(d.owner, '沙盒你好，确认连接')
     await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
-    expect(probe).toHaveBeenCalledTimes(1)
+    expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
     const record = JSON.parse(readFileSync(recordPath, 'utf8')).claude[0]
     expect(record).toMatchObject({ model: 'sandbox-default-model', at: expect.any(Number) })
     const fresh = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
     expect(fresh.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
-      code: 'brain.probe_fresh', reason: expect.stringContaining('刚探测过 ✓'),
+      code: 'brain.probe_turn', reason: expect.stringContaining('已通过对话确认连接'),
     })
 
     const stateDir = d.stateDir
     await d.stop({ keepState: true })
-    probe.mockRejectedValue(new Error('API Error: 529 overloaded'))
     d = await startRealShapedDaemon({ ...options, stateDir })
     await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
-    d.sendText(d.owner, '沙盒你好，重启后再聊')
-    await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
-    expect(probe).toHaveBeenCalledTimes(1)
     const reused = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
     const timestamp = new Date(record.at).toLocaleString('zh-CN', { hour12: false })
     const note = `沿用上次的结果（${timestamp}）`
@@ -1748,6 +1744,9 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     })
     d.sendText(d.owner, '/mode')
     await d.waitForOutbound(msgs => texts(msgs, d.owner).some(text => text.includes(note)), 15_000)
+    d.sendText(d.owner, '沙盒你好，重启后再聊')
+    await d.waitForOutbound(msgs => texts(msgs, d.owner).includes('主人好,我在。'), 15_000)
+    expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 
@@ -1798,27 +1797,34 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 
-  it('first-use overload reaches both the owner and the desktop connections card', async () => {
+  it('a first Claude turn overload reaches the owner and connections, then the next sentence confirms', async () => {
     await d.stop()
-    const probe = vi.fn(async () => { throw new Error('API Error: 529 overloaded') })
+    const backgroundEval = vi.fn(async () => 'ok')
+    const dispatch = vi.fn(async (prompt: string) => {
+      if (said(prompt) === 'Claude 第一句') throw new Error('API Error: 529 overloaded')
+      return { toolCalls: [], finalText: 'Claude 真实回复。' }
+    })
     d = await startRealShapedDaemon({
-      claudeScript, codexScript,
+      claudeScript: { onDispatch: dispatch }, codexScript,
       seedFiles: { 'projects.json': PROJECTS },
-      moderatorScript: { onEval: async (prompt) => prompt === '只回复两个字母:ok' ? probe() : 'ok' },
+      moderatorScript: { onEval: backgroundEval },
     })
-
     await expect.poll(async () => (await d.health()).guard).toMatchObject({ safe: true })
-    expect(probe).not.toHaveBeenCalled()
-    d.sendText(d.owner, '沙盒首次探测')
-    const notice = 'Claude 暂时忙不过来（529），过一会儿再用时会自动重试。你不用做什么。'
-    await d.waitForOutbound(m => texts(m, d.owner).includes(notice), 15_000)
-    const connections = await desktop<ConnectionsSnapshot>('GET', '/v1/connections')
-    expect(connections.status).toBe(200)
-    expect(connections.body.capabilities?.find(c => c.id === 'brain')).toMatchObject({
+    expect(dispatch).not.toHaveBeenCalled()
+    const brain = async () => (await desktop<ConnectionsSnapshot>('GET', '/v1/connections')).body.capabilities?.find(c => c.id === 'brain')
+    d.sendText(d.owner, '/mode')
+    await d.waitForOutbound(m => texts(m, d.owner).some(text => text.includes('还没用过，第一次对话时确认')), 15_000)
+    d.sendText(d.owner, 'Claude 第一句')
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Claude 暂时忙不过来')), 15_000)
+    await expect.poll(brain, { timeout: 12_000 }).toMatchObject({
       state: 'fallback', code: 'brain.probe_transient', params: { name: 'Claude', cause: 'server_error' },
-      reason: expect.stringContaining('暂时忙不过来（529），稍后使用时自动重试'),
+      reason: expect.stringContaining('暂时忙不过来（529），再发一句就会重试'),
     })
-    expect(probe).toHaveBeenCalledTimes(1)
+    d.sendText(d.owner, 'Claude 第二句')
+    await d.waitForOutbound(m => texts(m, d.owner).includes('Claude 真实回复。'), 15_000)
+    await expect.poll(brain, { timeout: 12_000 }).toMatchObject({ code: 'brain.probe_turn' })
+    expect(dispatch.mock.calls.map(([prompt]) => said(prompt))).toEqual(['Claude 第一句', 'Claude 第二句'])
+    expect(backgroundEval).not.toHaveBeenCalledWith('只回复两个字母:ok')
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
   })
 })

@@ -1131,12 +1131,13 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (lifetime && !registrationVerified) retained = true
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
-        const proxy = native.config?.features?.network_proxy
-        if (proxy != null && proxy !== false) throw Error('codex_unverified_thread_policy')
         // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
         const configuredModel = native.config?.model
         const route = codexTargetFromConfig(native.config, childEnv)
         spawnTarget = codexTargetToCall(route, model ?? (nativeModelId(configuredModel) ? configuredModel : null))
+        chat && context.reportStartupTarget?.(context.resumeSessionId && !model ? undefined : spawnTarget)
+        const proxy = native.config?.features?.network_proxy
+        if (proxy != null && proxy !== false) throw Error('codex_unverified_thread_policy')
         const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
         let response: ObjectValue
         if (chat) {
@@ -1169,6 +1170,12 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           })
           if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
         }
+        if (chat) {
+          const providerMatches = !('unresolved' in route) && (response.modelProvider == null || response.modelProvider === route.providerId)
+          if (!providerMatches) spawnTarget = { provider: 'codex', model: spawnTarget.model, unresolved: true }
+          if (nativeModelId(response.model)) spawnTarget = { ...spawnTarget, model: response.model }
+          context.reportStartupTarget?.(context.resumeSessionId && !model && !nativeModelId(response.model) ? undefined : spawnTarget)
+        }
         if (typeof response.thread?.id !== 'string' || !response.thread.id) throw new Error('codex_missing_thread_id')
         if (context.resumeSessionId && response.thread.id !== context.resumeSessionId) throw new Error('codex_resume_thread_mismatch')
         if (chat ? !samePath(response.cwd, project.path) : response.cwd !== project.path) throw new Error('codex_unverified_thread_cwd')
@@ -1190,11 +1197,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           spawnTarget = { ...spawnTarget, model: response.model }
           context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
         }
-        if (chat?.onNativeDefault) {
-          const providerMatches = !('unresolved' in route) && (response.modelProvider == null || response.modelProvider === route.providerId)
-          if (!providerMatches) spawnTarget = { provider: 'codex', model: spawnTarget.model, unresolved: true }
-          if (!model && configuredModel == null && !context.resumeSessionId) chat.onNativeDefault(spawnTarget)
-        }
+        if (!model && configuredModel == null && !context.resumeSessionId) chat?.onNativeDefault?.(spawnTarget)
       } catch (error) { await close(); throw error }
       finally { startupSignal?.removeEventListener('abort', abortStartup) }
       const launch = (text: string, attachments?: readonly AgentAttachment[], sharedEvents?: EventQueue) => {

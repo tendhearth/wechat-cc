@@ -81,6 +81,8 @@ describe('capabilities in the connections view (2026-10-06)', () => {
     { code: 'brain.probe_fresh', state: 'ok', zh: '在用 Claude。刚探测过。', en: 'Using Claude. Connection just checked.' },
     { code: 'brain.probe_turn', state: 'ok', zh: '在用 Claude。已通过对话确认连接。', en: 'Using Claude. A reply confirmed the connection.' },
     { code: 'brain.probe_history', state: 'ok', zh: '在用 Claude。沿用上次的结果（{date}）。', en: 'Using Claude. Reusing the last check from {date}.' },
+    { code: 'brain.probe_auth', state: 'needs_you', zh: 'Claude 拒绝了凭证，请检查账号或密钥。', en: 'Claude rejected the credentials. Check your account or key.' },
+    { code: 'brain.probe_incompatible', state: 'needs_you', zh: 'Claude 的模型或客户端协议不兼容，请检查 CLI 版本或换一个模型。', en: 'Claude could not use this model or CLI protocol. Check the CLI version or switch models.' },
     { code: 'brain.probe_transient', state: 'fallback', zh: 'Claude 暂时忙不过来，稍后使用时会自动重试。', en: 'Claude is temporarily busy. CC will retry the next time you use it.' },
   ])('localizes $code on the connections page', ({ code, state, zh, en }) => {
     const at = new Date(2026, 9, 1, 12, 34).getTime()
@@ -89,9 +91,17 @@ describe('capabilities in the connections view (2026-10-06)', () => {
     for (const [lang, expected] of [['zh-Hans', zh], ['en', en]] as const) {
       const formatted = new Date(at).toLocaleString(lang, { dateStyle: 'medium', timeStyle: 'short' })
       expect(connectionsPage({ data }, 'online', NOW, lang).view?.capabilities[0]).toMatchObject({
-        dot: state === 'ok' ? 'ok' : 'warn', label: expected.replace('{date}', formatted),
+        dot: state === 'ok' ? 'ok' : state === 'needs_you' ? 'bad' : 'warn', label: expected.replace('{date}', formatted),
       })
     }
+  })
+
+  it('localizes a startup failure with its cause', () => {
+    const data = snap([{ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.probe_incompatible', params: { name: 'Codex', startup: 'true' }, reason: 'daemon fallback' }])
+    expect(connectionsPage({ data }, 'online', NOW, 'en').view?.capabilities[0]?.label)
+      .toBe('Startup failed. Codex could not use this model or CLI protocol. Check the CLI version or switch models.')
+    expect(connectionsPage({ data }, 'online', NOW, 'zh-Hans').view?.capabilities[0]?.label)
+      .toBe('启动失败。Codex 的模型或客户端协议不兼容，请检查 CLI 版本或换一个模型。')
   })
 
   it('explains that the first Codex conversation will confirm the connection', () => {

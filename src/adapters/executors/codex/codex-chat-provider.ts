@@ -184,11 +184,15 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       // 对话只把这几样交给协议客户端;工作台专用的(审批桥、时间线、后台生命周期)一律不带。
       const base: SpawnContext = {
         tierProfile: ctx.tierProfile, permissionMode: ctx.permissionMode, chatId: ctx.chatId,
+        reportStartupTarget: ctx.reportStartupTarget,
         ...(ctx.ephemeral?{ephemeral:true}:{}),
         ...(ctx.appendInstructions ? { appendInstructions: ctx.appendInstructions } : {}),
         ...(model ? { model } : {}),
       }
-      const open = (resumeSessionId?: string) => spawnCodexAppServerSession(coreOptions(opts.model), project, { ...base, ...(resumeSessionId ? { resumeSessionId } : {}) }, profile)
+      const open = (resumeSessionId?: string) => {
+        ctx.reportStartupTarget?.(undefined)
+        return spawnCodexAppServerSession(coreOptions(opts.model), project, { ...base, ...(resumeSessionId ? { resumeSessionId } : {}) }, profile)
+      }
       let core: CodexAppServerSession
       let resumedHistory = false
       if (ctx.resumeSessionId) {

@@ -83,17 +83,15 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
     out.push({
       id: 'brain', name: '大脑', state: failure.kind === 'transient' ? 'fallback' : 'needs_you',
       code: `brain.probe_${failure.kind}`,
-      params: { name: i.brain.name, ...(failure.cause ? { cause: failure.cause } : {}) },
+      params: { name: i.brain.name, ...(failure.cause ? { cause: failure.cause } : {}), ...(failure.startup ? { startup: 'true' } : {}), ...(failure.resetAt !== undefined ? { resetAt: failure.resetAt } : {}) },
       reason: `${i.brain.name} ${probeStatusNote(failure)}。`,
     })
   }
   else if (i.brain.registered) {
     const status = i.brain.firstUse
     const reused = status?.state === 'ok' && status.source === 'history'
-    const code = status?.state === 'ok' ? (reused ? 'brain.probe_history' : status.source === 'turn' ? 'brain.probe_turn' : 'brain.probe_fresh')
-      : status?.state === 'probing' ? 'brain.probing'
-      : status?.state === 'awaiting_turn' ? 'brain.probe_awaiting_turn'
-      : status?.state === 'untested' ? 'brain.probe_pending' : 'brain.ok'
+    const code = status?.state === 'ok' ? (reused ? 'brain.probe_history' : 'brain.probe_turn')
+      : status?.state === 'awaiting_turn' ? 'brain.probe_awaiting_turn' : 'brain.ok'
     out.push({
       id: 'brain', name: '大脑', state: 'ok', code,
       params: { name: i.brain.name, ...(reused ? { at: status.at } : {}) },
