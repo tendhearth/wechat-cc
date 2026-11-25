@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { expiredNoticeRecipients } from './expired-notice'
+import { EXPIRED_NOTIFY_TEXT, expiredNoticeRecipients } from './expired-notice'
 
 describe('账号被顶替的通知只发给主人', () => {
   it('那个账号下聊过的对话里,只挑 admin;访客拿不到「去桌面重新扫码」这种主人才看得懂的话', () => {
@@ -10,3 +10,13 @@ describe('账号被顶替的通知只发给主人', () => {
     expect(expiredNoticeRecipients(['guest@im.wechat'], () => false)).toEqual([])
   })
 })
+
+describe('账号被顶替的通知说人话', () => {
+  it('用对外的名字、不带行话;告诉主人去哪重新扫码', () => {
+    for (const jargon of ['session', 'dashboard', 'wechat-cc', 'WeChat']) expect(EXPIRED_NOTIFY_TEXT).not.toContain(jargon)
+    expect(EXPIRED_NOTIFY_TEXT).toContain('Tendhearth CC')
+    expect(EXPIRED_NOTIFY_TEXT).toContain('重新扫一次码')
+    expect(EXPIRED_NOTIFY_TEXT).not.toMatch(/[\u4e00-\u9fff][,;:]|[,;:][\u4e00-\u9fff]/)
+  })
+})
+
