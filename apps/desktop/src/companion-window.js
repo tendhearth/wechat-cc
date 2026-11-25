@@ -144,7 +144,7 @@ const apply = (freshTurn = false) => {
     // Permission and connection hints already have their own readable surface.
     activityLabel.hidden = Boolean(selected || r.permission || r.intent.hint) || activity.text === '已连接' || activity.text === '已连接 · 陪伴中'
   }
-  pet.applyIntent({ ...r.intent, hint: r.intent.hint === 'daemon 没起' ? '暂时联系不上 CC' : r.intent.hint })
+  pet.applyIntent(r.intent)
   // 初次观察不播转场(spec §5.2):开窗时 CC 本来就亮着,那是既成事实,不是「主人
   // 刚到」。applyIntent 已经按事实把 form 设过去了,这里立刻把转场判为播完,
   // 状态机直接落到目标形态 —— 省掉那 8 帧点火,而不用改 Phase A 的接口。

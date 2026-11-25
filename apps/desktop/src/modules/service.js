@@ -122,8 +122,9 @@ function startProgressPolling(deps, setBtnLabel, appendPlan) {
           const key = `${p.step}/${p.total}/${p.label}`
           if (key !== lastShown) {
             lastShown = key
-            setBtnLabel(`安装中… (${p.step}/${p.total}) ${escapeHtml(p.label || '')}`)
-            if (appendPlan) appendPlan(`[${nowStamp()}] (${p.step}/${p.total}) ${p.label || ''}`)
+            const label = `正在安装后台服务…（第 ${p.step} 步，共 ${p.total} 步）`
+            setBtnLabel(label)
+            if (appendPlan) appendPlan(`[${nowStamp()}] ${label}${p.label ? ` ${p.label}` : ''}`)
           }
         }
       }
@@ -132,13 +133,6 @@ function startProgressPolling(deps, setBtnLabel, appendPlan) {
   }
   tick()
   return () => { cancelled = true; if (timer) clearTimeout(timer) }
-}
-
-/** @param {unknown} s */
-function escapeHtml(s) {
-  /** @type {Record<string, string>} */
-  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
-  return String(s).replace(/[&<>"']/g, (c) => map[c] ?? c)
 }
 
 /**
@@ -175,10 +169,10 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
     // force-kill before we touch any unit files.
     const status = /** @type {ServiceStatus | null} */ (await deps.invoke("wechat_cli_json", { args: ["service", "status", "--json"] }).catch(() => null))
     if (status && status.alive && !status.installed && status.pid) {
-      summary.textContent = "这台电脑上已经有一个 CC 在运行(不是从这里启动的)，要先停掉它，再安装后台服务。"
+      summary.textContent = "这台电脑上已经有一个 CC 在运行（从别处启动），要先停掉它，再安装后台服务。"
       showPostStopAlert(status.pid)
       const headEl = document.querySelector("#post-stop-alert .h")
-      if (headEl) headEl.textContent = `先停掉正在运行的 CC(进程 ${status.pid})，不然新装的后台服务会和它抢着运行`
+      if (headEl) headEl.textContent = `先停掉正在运行的 CC（pid ${status.pid}），再安装后台服务。`
       return
     }
   }
@@ -196,7 +190,7 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
     summary.textContent = serviceFailureText(action, friendly)
     if (planEl) {
       const errObj = /** @type {Error | null} */ (err instanceof Error ? err : null)
-      planEl.textContent += `\n[${nowStamp()}] ❌ service ${action} 失败：\n${friendly}\n\n— 原始错误 —\n${errObj?.stack || String(err)}\n`
+      planEl.textContent += `\n[${nowStamp()}] ❌ ${summary.textContent}（service ${action}）\n${friendly}\n\n— 原始错误 —\n${errObj?.stack || String(err)}\n`
       planEl.classList.add("show")
       planEl.scrollTop = planEl.scrollHeight
     }
@@ -216,7 +210,7 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
   const dryRun = result.ok ? result.dryRun : false
   if (dryRun) {
     summary.textContent = action === "stop"
-      ? "演示模式：实际未停止 daemon（DRY_RUN）。"
+      ? "演示模式：CC 并没有停止（DRY_RUN）。"
       : "演示模式：实际未执行（DRY_RUN）。"
   } else if (result.ok) {
     summary.textContent = action === "stop" ? "服务已停止。" : "服务已启动。"
@@ -226,7 +220,7 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
   // 500ms (with subscriber notifications) until daemon.alive=true or 8s.
   if (!dryRun && (action === "install" || action === "start")) {
     if (planEl && action === "install") {
-      planEl.textContent += `[${nowStamp()}] ⏳ 等待 daemon 就绪…（最多 ${DAEMON_SETTLE_TIMEOUT_MS / 1000}s）\n`
+      planEl.textContent += `[${nowStamp()}] ⏳ 等 CC 起来…（最多 ${DAEMON_SETTLE_TIMEOUT_MS / 1000} 秒）\n`
       planEl.scrollTop = planEl.scrollHeight
     }
     await deps.doctorPoller.waitForCondition(
@@ -241,15 +235,15 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
   }
   if (!dryRun && (action === "install" || action === "start")) {
     if (post?.checks.daemon.alive) {
-      summary.textContent = `服务已启动 · pid ${post.checks.daemon.pid}`
+      summary.textContent = `CC 已启动（pid ${post.checks.daemon.pid}）`
       if (planEl && action === "install") {
-        planEl.textContent += `[${nowStamp()}] ✓ daemon alive (pid ${post.checks.daemon.pid})\n`
+        planEl.textContent += `[${nowStamp()}] ✓ CC 已启动（pid ${post.checks.daemon.pid}）\n`
         planEl.scrollTop = planEl.scrollHeight
       }
     } else if (post?.checks.service?.installed) {
-      summary.textContent = "后台已安装，正在等待启动。页面会自动检查，也可以点击「重新检查」。"
+      summary.textContent = "后台服务已装好，CC 还没起来。页面会自动检查，也可以点「重新检查」。"
       if (planEl && action === "install") {
-        planEl.textContent += `[${nowStamp()}] ⚠ 服务已注册但 daemon 未起来 — 可能 systemctl/launchd/schtasks 在重试，30s 后查 service status\n`
+        planEl.textContent += `[${nowStamp()}] ⚠ 后台服务已装好，CC 还没起来。（systemctl、launchd 或 schtasks 可能在重试。30 秒后可用 wechat-cc service status 查看。）\n`
         planEl.scrollTop = planEl.scrollHeight
       }
     }
@@ -330,12 +324,12 @@ export async function silentInstallAndStart(deps, onProgress) {
 
   let aliveOk = false
   try {
-    onProgress("等待 daemon 启动…")
+    onProgress("等 CC 起来…")
     aliveOk = await waitDaemonAlive(deps, 15_000)
   } catch (e) {
     return fail("alive", e instanceof Error ? e.message : String(e), null)
   }
-  if (!aliveOk) return fail("alive", "daemon 启动超时", "internal HTTP API did not respond within 15s")
+  if (!aliveOk) return fail("alive", "CC 没能在 15 秒内起来", "内部 HTTP 接口在 15 秒内没有响应")
 
   // doctor lookup for pid is best-effort — failure here doesn't fail
   // the overall install/start path (daemon is already alive).
@@ -398,7 +392,7 @@ export async function forceKillDaemon(deps) {
  */
 export function serviceFailureText(action, raw) {
   const what = /** @type {Record<string,string>} */ ({ install: '后台服务没装好', start: '后台服务没启动起来', stop: '后台服务没停下', uninstall: '后台服务没卸掉' })[action] ?? '后台服务出了问题'
-  if (/无法连接到 wechat-cc CLI/.test(raw)) return `${what}：这个窗口连不上 CC 的命令行组件。关掉 Tendhearth 重新打开再试；还不行就重新安装 Tendhearth。`
+  if (/无法连接到 (?:wechat-cc CLI|CC 的命令行组件)/.test(raw)) return `${what}：这个窗口连不上 CC 的命令行组件。关掉 Tendhearth CC，重新打开再试。还不行就重新安装 Tendhearth CC。`
   if (/EACCES|EPERM|permission denied|Operation not permitted/i.test(raw)) return `${what}：没有权限写入系统的启动项目录。在「系统设置 → 隐私与安全性」里允许 Tendhearth 后再试。`
   if (/Bootstrap failed|already (loaded|bootstrapped)|service already loaded|Input\/output error/i.test(raw)) return `${what}：系统里还挂着一个旧的 CC 后台服务。再点一次「安装并启动」覆盖它；还不行就重启电脑后再试。`
   if (/timed? ?out|超时|health/i.test(raw)) return `${what}：CC 启动后没有按时回应，可能还在准备。等半分钟点「重新检查」；还不行再点一次「安装并启动」。`

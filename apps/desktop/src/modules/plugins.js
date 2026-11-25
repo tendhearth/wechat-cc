@@ -93,7 +93,7 @@ async function refreshInstalled() {
         <strong>${escapeHtml(String(p.display_name ?? p.name))}</strong>
         <span class="plugin-name">${escapeHtml(p.name)}</span>
         ${p.version ? `<span class="plugin-ver">v${escapeHtml(String(p.version))}</span>` : ''}
-        <span class="plugin-source">${retiredInproc ? '已内置到 daemon' : p.source === 'bundled' ? '内置' : '用户'}</span>
+        <span class="plugin-source">${retiredInproc ? '已内置到 CC' : p.source === 'bundled' ? '内置' : '用户'}</span>
       </header>
       ${desc}
       ${tools}
@@ -126,10 +126,8 @@ async function onCardAction(e) {
   const enable = target.dataset.enabled !== 'true'   // flip current state
   target.disabled = true
   try {
-    const r = /** @type {Record<string, any>} */ (
-      await v1(invokeApi, V1.plugins.toggle, { body: { name, enabled: enable } })
-    )
-    showNote(`已${enable ? '启用' : '停用'} ${name} — ${r?.note ?? '重启 daemon 生效'}`)
+    await v1(invokeApi, V1.plugins.toggle, { body: { name, enabled: enable } })
+    showNote(`已${enable ? '启用' : '停用'} ${name}，重启 CC 生效`)
     await refresh()
   } catch (err) {
     target.disabled = false
@@ -196,7 +194,7 @@ async function runSetup(name, btn) {
     await invoke('wechat_cli_text', { args: ['plugin', 'setup', name] })
     const s = await invoke('wechat_cli_json', { args: ['plugin', 'setup-status'] }).catch(() => null)
     showNote(s?.ok
-      ? `${name} 解密完成 — 现在可「启用」并重启 daemon 生效`
+      ? `${name} 解密完成。启用后重启 CC 生效。`
       : `连接失败：${String(s?.error ?? '见日志')}（微信是否已登录？）`, s?.ok ? 'success' : 'error')
   } catch (err) {
     showNote(`连接失败：${err instanceof Error ? err.message : String(err)}`, 'error')
@@ -266,8 +264,8 @@ async function onMarketAction(e) {
     const r = /** @type {Record<string, any>} */ (await v1(invokeApi, action === 'upgrade' ? V1.plugins.upgrade : V1.plugins.install, { body: { name } }))
     if (r?.ok) {
       showNote(action === 'upgrade'
-        ? `已更新 ${name} ${r.from ?? ''}→${r.to ?? ''} — 重启 daemon 生效`
-        : `已安装 ${name} v${r.version ?? ''} — 默认停用，去上面「启用」并完成 setup 后重启 daemon`)
+        ? `已更新 ${name} ${r.from ?? ''}→${r.to ?? ''}，重启 CC 生效`
+        : `已安装 ${name} v${r.version ?? ''}，默认停用。点上方的「启用」，完成设置后重启 CC。`)
     } else {
       showToast(`${verb}失败：${r?.error ?? 'unknown'}`)
     }

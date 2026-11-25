@@ -108,7 +108,7 @@ describe('inbound toggle', () => {
     await __onInboundToggleForTest?.()
     expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/social/inbound', { enabled: true })
     expect(toggle.classList.contains('fd-on')).toBe(true)
-    expect(note.textContent).toContain('需重启')
+    expect(note.textContent).toBe('已开启。重启 CC 后，就能收到别人的心愿。')
   })
 })
 
