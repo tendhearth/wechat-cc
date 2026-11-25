@@ -51,9 +51,9 @@ export function usePermissionSource(scroll: RefObject<ScrollView | null> | undef
   }
 }
 
-export function PermissionSource({ source, projectPath, cwd, lang, sheet, kind = 'original', summaryOnly = false }: {
+export function PermissionSource({ source, projectPath, cwd, lang, sheet, tool, kind = 'original', summaryOnly = false }: {
   source: string; projectPath: string; cwd?: string | undefined; lang: Lang; sheet: ReturnType<typeof usePermissionSource>
-  kind?: 'original' | 'received' | 'summary'; summaryOnly?: boolean
+  tool?: string; kind?: 'original' | 'received' | 'summary'; summaryOnly?: boolean
 }) {
   const { anchor, expanded, onExpandedChange, onOpened } = sheet
   const directory = approvalDirectory(cwd, projectPath, lang)
@@ -64,6 +64,7 @@ export function PermissionSource({ source, projectPath, cwd, lang, sheet, kind =
     <Sheet quiet testID={testID} title={t(lang, title)} expanded={expanded}
       onExpandedChange={onExpandedChange} onOpened={onOpened}>
       <View style={{ gap: space.s }}>
+        {tool ? <PermissionText selectable role="small" tone="inkSoft" lang={lang} value={t(lang, 'approval.toolName', { tool })} /> : null}
         {kind === 'summary' && !summaryOnly ? <Txt role="small" tone="inkSoft">{t(lang, 'terminal.summaryWhitespace')}</Txt> : null}
         <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
           <PermissionText selectable accessible accessibilityRole="text" role="code" testID={sourceID} lang={lang} value={source} />

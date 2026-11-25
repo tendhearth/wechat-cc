@@ -83,8 +83,7 @@ export function terminalPermission(pending: Pick<NonNullable<CliSessionRowT['pen
   const structured = PermissionDisplaySchema.safeParse(pending.display).data
   const display = structured ?? (summary ? permissionDisplay(pending.tool, summary) : undefined)
   const cwd = permissionCwd(pending.cwd)
-  const action = display ? permissionAction(display.body, pending.tool, source, lang)
-    : t(lang, 'approval.actor.tool', { actor: source, tool: pending.tool })
+  const action = permissionAction(display?.body, pending.tool, source, lang)
   const summaryTruncated = pending.truncated ?? (summary.length >= TERMINAL_PERMISSION_SUMMARY_LIMIT || /(?:…|\.\.\.)\s*$/.test(summary))
   const raw = structured && !structured.truncated ? permissionOperationSource(structured) : undefined
   const received = structured?.truncated ? permissionOperationSource(structured)

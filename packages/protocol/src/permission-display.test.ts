@@ -1,13 +1,41 @@
 import { describe, expect, it } from 'vitest'
 import { CliPermissionRequest } from './desktop-api'
 import { boundedPermissionDisplay, permissionDisplay, PermissionDisplaySchema, PERMISSION_DISPLAY_LIMITS, toolPermissionDisplay, type PermissionDisplay } from './permission-display'
-import { hasInvisiblePermissionText, permissionEditPreview, permissionTextSegments } from './permission-presentation'
+import { hasInvisiblePermissionText, permissionActionZh, permissionEditPreview, permissionTextSegments } from './permission-presentation'
+import { permissionToolAction } from './permission-tool-words'
 import { permissionWaitingTitle } from './permission-waiting-title'
 
 function same(actual: unknown, expected: unknown) {
   // Never print the source on an assertion failure.
   expect(JSON.stringify(actual) === JSON.stringify(expected)).toBe(true)
 }
+
+describe('permission tool wording', () => {
+  it.each([
+    [['Read', 'READ_FILE', 'ReadFile', 'view', 'view_file'], '想看一个文件', 'Wants to read a file'],
+    [['LS', 'List_Dir', 'ListFiles', 'Glob'], '想看看文件夹里有什么', 'Wants to see what is in a folder'],
+    [['Grep', 'SEARCH_FILES'], '想在文件里找东西', 'Wants to search within files'],
+    [['WebFetch', 'WEB_FETCH'], '想打开一个网址', 'Wants to open a URL'],
+    [['WebSearch', 'web_search', 'search_web'], '想上网搜一下', 'Wants to search the web'],
+    [['Task', 'Agent', 'spawn_agent'], '想派一个帮手去做', 'Wants to ask a helper to do something'],
+    [['NotebookEdit', 'NOTEBOOK_EDIT'], '想改一个笔记本', 'Wants to edit a notebook'],
+  ] as const)('%j has the same wording across its aliases', (tools, zh, en) => {
+    for (const tool of tools) {
+      expect(permissionActionZh({ kind: 'text', text: 'sample' }, tool, 'Codex')).toBe(`Codex ${zh}`)
+      expect(permissionToolAction(tool, 'en')).toBe(en)
+    }
+  })
+
+  it('preserves unknown and MCP tool names', () => {
+    const body = { kind: 'text' as const, text: 'sample' }
+    expect(permissionActionZh(body, 'ReadAnything', 'Codex')).toBe('Codex 想用「ReadAnything」')
+    expect(permissionToolAction('ReadAnything', 'en')).toBeUndefined()
+    expect(permissionActionZh(body, 'mcp__files__Read', 'Codex')).toBe('Codex 想用「mcp__files__Read」')
+    const mcp = { server: 'team__files', tool: 'Read' }
+    expect(permissionActionZh(body, 'read', 'Codex', mcp)).toBe('Codex 想用 team__files 的「Read」')
+    expect(permissionWaitingTitle(undefined, 'read', null, 'en', '', mcp)).toBe('Wants to use team__files’s “Read”')
+  })
+})
 
 describe('permissionWaitingTitle', () => {
   type TitleCase = [string, string, PermissionDisplay['body'] | undefined, string | null, string, string]
@@ -18,12 +46,12 @@ describe('permissionWaitingTitle', () => {
     ['single-file patch', 'apply_patch', { kind: 'patch', files: [edit] }, null, '想改 src/a.ts', 'Wants to edit src/a.ts'],
     ['multi-file patch', 'apply_patch', { kind: 'patch', files: [edit, { ...edit, path: 'src/b.ts' }] }, 'old summary', '想用 apply_patch', 'Wants to use apply_patch'],
     ['write', 'Write', { kind: 'write', path: 'notes.txt', content: 'sample' }, null, '想写 notes.txt', 'Wants to write notes.txt'],
-    ['URL', 'WebFetch', { kind: 'url', url: 'https://example.test' }, 'old summary', '想用 WebFetch', 'Wants to use WebFetch'],
+    ['URL', 'WebFetch', { kind: 'url', url: 'https://example.test' }, 'old summary', '想打开一个网址', 'Wants to open a URL'],
     ['legacy command', 'exec_command', undefined, 'git status', '想运行 git status', 'Wants to run git status'],
     ['legacy local shell', 'local_shell', undefined, 'git status', '想运行 git status', 'Wants to run git status'],
-    ['tool with summary', 'Read', undefined, ' notes.txt\n and more ', '想用 Read：notes.txt and more', 'Wants to use Read: notes.txt and more'],
+    ['tool with summary', 'Read', undefined, ' notes.txt\n and more ', '想看一个文件：notes.txt and more', 'Wants to read a file: notes.txt and more'],
     ['tool without summary', 'Bash', undefined, null, '想用 Bash', 'Wants to use Bash'],
-    ['invisible characters', 'Read', undefined, 'a\u202Eb\u0000c', '想用 Read：a\\u{202E}b\\x00c', 'Wants to use Read: a\\u{202E}b\\x00c'],
+    ['invisible characters', 'Read', undefined, 'a\u202Eb\u0000c', '想看一个文件：a\\u{202E}b\\x00c', 'Wants to read a file: a\\u{202E}b\\x00c'],
   ])('%s in both languages', (_, tool, body, summary, zh, en) => {
     const display = body && { body }
     same(permissionWaitingTitle(display, tool, summary, 'zh-Hans'), zh)

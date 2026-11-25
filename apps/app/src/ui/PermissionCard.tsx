@@ -112,7 +112,7 @@ export function PermissionCard({ v, taskId, matterTitle, ccOpinion, questionReas
           <PermissionText testID={key === 'reason' ? 'approval-question-reason' : undefined} role="body" content="user" value={value ?? ''} lang={lang} />
         </View>)}</View>
       </Sheet> : null}
-      <PermissionSource source={v.rawFull} projectPath={v.projectPath} cwd={v.cwd} lang={lang} sheet={sheet} />
+      <PermissionSource tool={v.tool} source={v.rawFull} projectPath={v.projectPath} cwd={v.cwd} lang={lang} sheet={sheet} />
       </View>
     </View>
   )

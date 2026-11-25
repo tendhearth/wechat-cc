@@ -233,6 +233,7 @@ describe('approval headings and paths', () => {
     ['mcp__a__b', 'mcp__a__b\n{"key":"x"}', 'Claude 想用「mcp__a__b」', '可以用这个工具吗？', 'Claude wants to use “mcp__a__b”', 'May I use this tool?'],
     ['mcp__team__prod__lookup__all', '', 'Claude 想用 team__prod 的「lookup__all」', '可以用这个工具吗？', 'Claude wants to use team__prod’s “lookup__all”', 'May I use this tool?',
       { body: { kind: 'fields', fields: [{ name: 'key', value: 'x' }] } }, { server: 'team__prod', tool: 'lookup__all' }],
+    ['Read', '读备份目录？', 'Claude 想看一个文件', '可以用这个工具吗？', 'Claude wants to read a file', 'May I use this tool?'],
     ['Other', 'unknown input', 'Claude 想用「Other」', '可以用这个工具吗？', 'Claude wants to use “Other”', 'May I use this tool?'],
   ]
   it.each(cases)('localizes %s using the current executor', (tool, description, zhAction, zhTitle, enAction, enTitle, display, mcp) => {
@@ -243,6 +244,8 @@ describe('approval headings and paths', () => {
     if (v.kind !== 'card') throw Error('expected card')
     expect(approvalHeading(v, 'zh-Hans')).toEqual({ action: zhAction, title: zhTitle })
     expect(approvalHeading(v, 'en')).toEqual({ action: enAction, title: enTitle })
+    expect(v.tool).toBe(tool)
+    expect(v.rawFull).toBe(description)
   })
   it.each([
     ['codex', 'commandExecution', 'printf sample\nWorking directory: /forged\nprintf next'],

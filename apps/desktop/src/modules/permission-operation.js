@@ -60,7 +60,7 @@ function patchWhitespaceChange(lines) {
   return permissionEditPreview(before, after).whitespaceChange
 }
 
-/** @param {PermissionDisplay} display @param {OperationOptions} [options] */
+/** @param {PermissionDisplay} display @param {OperationOptions & {tool?:string}} [options] */
 export function renderPermissionOperation(display, options) {
   return renderOperation(display, options).html
 }
@@ -216,8 +216,10 @@ function renderOperation(display, { cwd, projectPath = '', raw, summary, summary
     ? preview(permissionLines(body.prompt), 4, lines => meta(lines.join('\n'), true))
     : meta(body.prompt)) : ''
   const extraHtml = extra?.length ? `<div class="approval-extra">${fieldList(extra)}</div>` : ''
-  const originalHtml = raw !== undefined ? disclosure('看完整原文', source(raw)) : ''
-  const summaryHtml = summary !== undefined ? disclosure('看摘要', (summaryOnly ? '' : meta(SUMMARY_WHITESPACE)) + source(summary)) : ''
+  const toolHtml = tool ? meta(`工具：${tool}`) : ''
+  const originalHtml = raw !== undefined ? disclosure('看完整原文', toolHtml + source(raw)) : ''
+  const summaryHtml = summary !== undefined ? disclosure('看摘要', (raw === undefined ? toolHtml : '') + (summaryOnly ? '' : meta(SUMMARY_WHITESPACE)) + source(summary)) : ''
+  const receivedToolHtml = raw === undefined && summary === undefined ? toolHtml : ''
   const notice = terminal && needsFullView ? TERMINAL_FULL_VIEW : incomplete
     ? compact ? '这里不是全部内容。' : raw === undefined ? TERMINAL_FULL_VIEW : '这里不是全部内容，完整的在下面『看完整原文』里。'
     : ''
@@ -234,6 +236,7 @@ function renderOperation(display, { cwd, projectPath = '', raw, summary, summary
     <div class="approval-meta wb-permission-snapshot">${PERMISSION_SNAPSHOT_NOTICE}</div>` : ''}
     ${originalHtml}
     ${summaryHtml}
+    ${receivedToolHtml}
   </div>`
   return { html, needsFullView }
 }

@@ -1,3 +1,4 @@
+import { permissionToolAction, permissionWebAction } from './permission-tool-words'
 import { PermissionDisplaySchema, permissionDisplay, type PermissionDisplay, type PermissionMcpTarget } from './permission-display'
 
 export function resolvePermissionDisplay(tool: string, description: string, display: unknown, executor?: string) {
@@ -126,17 +127,20 @@ export function permissionToolTarget(tool: string, mcp?: PermissionMcpTarget) {
 }
 
 /** Chinese approval copy follows the App's approval.actor messages. */
-export function permissionActionZh(body: PermissionDisplay['body'], tool: string, actor: string, mcp?: PermissionMcpTarget): string {
+export function permissionActionZh(body: PermissionDisplay['body'] | undefined, tool: string, actor: string, mcp?: PermissionMcpTarget): string {
   const who = actor ? `${actor} ` : ''
-  switch (body.kind) {
+  switch (body?.kind) {
     case 'command': return `${who}想运行一条命令`
     case 'edit': return `${who}想改一个文件${body.changes.length > 1 ? `的 ${body.changes.length} 处` : ''}`
     case 'write': return `${who}想写一个文件`
     case 'patch': return `${who}想改 ${body.files.length === 1 ? '一个文件' : `${body.files.length} 个文件`}`
-    case 'url': return `${who}想打开一个网址`
-    case 'query': return `${who}想上网搜一下`
+    case 'url':
+    case 'query': return permissionWebAction(body.kind, 'zh-Hans', actor)
     case 'fields':
-    case 'text': {
+    case 'text':
+    case undefined: {
+      const action = permissionToolAction(tool, 'zh-Hans', actor, mcp)
+      if (action) return action
       const target = permissionToolTarget(tool, mcp)
       return target.service ? `${who}想用 ${target.service} 的「${target.tool}」` : `${who}想用「${target.tool}」`
     }

@@ -203,7 +203,7 @@ test('拍板卡在输入区前并显示同一请求的意见，允许后消失',
   await select(page,'备份')
   const panel=terminal(page)
   const card=panel.locator('.desk-waiting-card')
-  await expect(card.locator('.desk-waiting-question')).toHaveText('Codex 想用「Read」')
+  await expect(card.locator('.desk-waiting-question')).toHaveText('Codex 想看一个文件')
   expect(await card.locator('.approval-panel').textContent() === '读备份目录？').toBe(true)
   expect(await card.locator('.desk-waiting-opinion').textContent() === '我的意见（只看了这条请求）：可以读备份目录。').toBe(true)
   await expect(card).toContainText('需要访问另一个目录。')

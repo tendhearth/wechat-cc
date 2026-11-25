@@ -1,10 +1,11 @@
-import { isPermissionCommandTool, type PermissionDisplay } from './permission-display'
+import { isPermissionCommandTool, type PermissionDisplay, type PermissionMcpTarget } from './permission-display'
+import { permissionToolAction, permissionWebAction } from './permission-tool-words'
 import { permissionTextSegments } from './permission-presentation'
 
 /** One-line list title with an optional generic approval label. */
 export function permissionWaitingTitle(
   display: PermissionDisplay | undefined, tool: string, summary: string | null | undefined, lang: 'zh-Hans' | 'en',
-  fallback = '',
+  fallback = '', mcp?: PermissionMcpTarget,
 ): string {
   const singleLine = (value: string) => permissionTextSegments(value.replace(/\s+/g, ' ').trim()).map(part => part.text).join('')
   const body = display?.body
@@ -19,9 +20,13 @@ export function permissionWaitingTitle(
     title = `${zh ? '想改' : 'Wants to edit'} ${singleLine(path)}`
   } else if (body?.kind === 'write') title = `${zh ? '想写' : 'Wants to write'} ${singleLine(body.path)}`
   else if (!body && detail && (isPermissionCommandTool(name) || name === 'local_shell')) title = run(detail)
+  else if (body?.kind === 'url' || body?.kind === 'query') title = permissionWebAction(body.kind, lang)
   else if (name) {
-    title = `${zh ? '想用' : 'Wants to use'} ${name}`
-    if (!body && detail) title += `${zh ? '：' : ': '}${detail}`
+    const action = permissionToolAction(tool, lang, '', mcp)
+    title = action ?? (mcp
+      ? zh ? `想用 ${singleLine(mcp.server)} 的「${singleLine(mcp.tool)}」` : `Wants to use ${singleLine(mcp.server)}’s “${singleLine(mcp.tool)}”`
+      : `${zh ? '想用' : 'Wants to use'} ${name}`)
+    if (detail && (!body || (action && body.kind === 'text'))) title += `${zh ? '：' : ': '}${detail}`
   } else title = detail || fallback
   const chars = Array.from(title)
   return chars.length <= 120 ? title : `${chars.slice(0, 119).join('')}…`

@@ -444,6 +444,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
       cwd: permissionCwd(permission.cwd),
       projectPath: detail?.task.path,
       raw: permission.description,
+      tool: permission.tool,
       disclosureId: permissionControlId(permission.taskId, permission.id, 'operation'),
     })
     const snapshotNotice = permission.showSnapshotNotice === true ? `<div class="approval-meta wb-permission-snapshot">${PERMISSION_SNAPSHOT_NOTICE}</div>` : ''

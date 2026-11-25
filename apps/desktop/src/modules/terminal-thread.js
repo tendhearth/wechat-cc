@@ -8,7 +8,7 @@ import { paintConversation, rememberConversationPosition, showConversationLatest
 import { escapeWorkbenchHtml as esc, renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from './workbench-markdown.js'
 import { recapMemoHtml, sketchRecap } from './recap-memo.js'
 import { groupActivity, mergeActivity, terminalInputReason } from './thing-thread-model.js'
-import { permissionActionZh } from '../generated/permission-display.js'
+import { permissionActionZh, permissionToolAction } from '../generated/permission-display.js'
 import { renderTerminalPermissionOperation } from './permission-operation.js'
 import { terminalPendingOperation, terminalTitle } from './terminal-waiting.js'
 
@@ -145,8 +145,8 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     card.hidden = !request
     const operation = request && session ? terminalPendingOperation({ ...session, pending: request }) : null
     const rendered = operation && renderTerminalPermissionOperation(operation)
-    const action = operation?.display && operation.tool
-      ? permissionActionZh(operation.display.body, operation.tool, who)
+    const action = operation?.tool && (operation.display || permissionToolAction(operation.tool, 'zh-Hans'))
+      ? permissionActionZh(operation.display?.body, operation.tool, who)
       : undefined
     setText(question, action ?? (operation ? terminalTitle(operation.tool, operation.titleSummary, who) : ''))
     const html = rendered?.html ?? ''

@@ -9,7 +9,7 @@ import type { Db } from '../../lib/db'
 import { placeMapEntries, placeMapRoster, type MapTopicResolver } from './place-map'
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
-import { permissionCwd, PermissionDisplaySchema, terminalStatusKey, type PlaceOpinionT, type PlaceT, type PlaceWaitingT, type RosterItemT } from '@wechat-cc/protocol'
+import { permissionCwd, PermissionDisplaySchema, permissionToolAction, permissionWaitingTitle, terminalStatusKey, type PlaceOpinionT, type PlaceT, type PlaceWaitingT, type RosterItemT } from '@wechat-cc/protocol'
 import { CLI_SESSION_ENDED_RETAIN_MS } from '../../adapters/store/cli-session-store'
 import { buildRoster } from '../../domain/roster'
 import { buildPlaces } from '../../domain/places'
@@ -245,6 +245,10 @@ export function makePlacesReader(deps: PlacesReaderDeps) {
         const waiting = place.waiting
         if (waiting?.requestId) Object.assign(waiting, deps.opinion?.(waiting.requestId))
         if (!waiting) continue
+        const pending = waiting.kind === 'terminal' && waiting.sessionId ? waitingSources.sessions.get(waiting.sessionId)?.pending : undefined
+        if (typeof pending?.tool === 'string' && permissionToolAction(pending.tool, 'zh-Hans')) {
+          waiting.summary = permissionWaitingTitle(PermissionDisplaySchema.safeParse(pending.display).data, pending.tool, pending.summary, 'zh-Hans')
+        }
         const operation = waitingOperation(waiting, waitingSources)
         if (operation) {
           withOperations.push({ place, waiting })
