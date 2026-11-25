@@ -17,7 +17,7 @@ export function permissionWaitingTitle(
   const zh = lang === 'zh-Hans'
   const run = (command: string) => `${zh ? '想运行' : 'Wants to run'} ${command}`
   const withDetail = (action: string, target?: string) => {
-    const value = target ? visible(target.replaceAll('\n', '\\n').replaceAll('\t', '\\t')
+    const value = target ? visible(target.replaceAll('\\', '\\\\').replaceAll('\n', '\\n').replaceAll('\t', '\\t')
       .replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029')) : detail
     if (!value) return action
     const prefix = action + (zh ? '：' : ': ')

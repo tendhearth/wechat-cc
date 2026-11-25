@@ -100,6 +100,20 @@ describe('approvalView', () => {
     expect(collisionView.items.map(item => item.summary)).toEqual(collisionPaths.map(path => action + path))
     expect(collisionView.items.map(item => item.accessibilityLabel)).toEqual(collisionPaths.map(path => `${label}: ${action}${path}`))
   })
+  it('在选择列表和读屏标签中区分字面反斜杠、换行和控制字符', () => {
+    const path = `${'folder/'.repeat(16)}notes`
+    const tail = `${'folder/'.repeat(16)}same.md`
+    const paths = [`${path}\\n\\x00/${tail}`, `${path}\n\x00/${tail}`]
+    const permissions = paths.map((value, i) => MatterPermission.parse({
+      ...base.permissions[0], id: `p${i + 1}`, tool: 'ReadFile', description: 'ReadFile',
+      display: { body: { kind: 'fields', fields: [{ name: 'path', value }] } },
+    }))
+    const view = approvalView({ ...base, permissions }, {})
+    if (view.kind !== 'choose') throw Error('expected approval chooser')
+    const summaries = [`想看一个文件：${path}\\\\n\\\\x00/${tail}`, `想看一个文件：${path}\\n\\x00/${tail}`]
+    expect(view.items.map(item => item.summary)).toEqual(summaries)
+    expect(view.items.map(item => item.accessibilityLabel)).toEqual(summaries.map(summary => `需要你允许: ${summary}`))
+  })
   it('多条但指定了 ⇒ 那一条', () => {
     const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'command=ls', createdAt: 2 }] }
     const selected = approvalView(d, {}, 'p2')

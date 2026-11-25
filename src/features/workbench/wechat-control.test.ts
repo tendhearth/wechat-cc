@@ -371,7 +371,8 @@ describe('WeChat task control through the shared service',()=>{
   })
 
   it('pairs each waiting read request with its own redacted target and lookup command',async()=>{
-    const paths=['docs/setup.md','docs/release.md']
+    const names=['setup.md','release.md']
+    const paths=names.map(name=>`docs/${name}`)
     setup({async spawn(_p,ctx){return{async *dispatch(){
       const url='https://fixture:placeholder@docs.example.test'
       await Promise.all([
@@ -386,10 +387,70 @@ describe('WeChat task control through the shared service',()=>{
     const reply=await service.handleWechat('owner',`任务 ${task.id} 待办`,identity)
     const requests=service.detail(task.id).permissions
     for(const [i,p] of requests.filter(p=>p.tool==='ReadFile').entries()){
-      expect(reply).toContain(`想看一个文件：${paths[i]}\n查看：任务 ${task.id} 权限 ${p.id}`)
+      expect(reply).toContain(`想看一个文件：${names[i]}\n查看：任务 ${task.id} 权限 ${p.id}`)
     }
     const web=requests.find(p=>p.tool==='WebFetch')!
-    expect(reply).toContain(`想打开一个网址：https://fixture:[已打码]@docs.example.test\n查看：任务 ${task.id} 权限 ${web.id}`)
+    expect(reply).toContain(`想打开一个网址：docs.example.test\n查看：任务 ${task.id} 权限 ${web.id}`)
+  })
+
+  it('keeps signed links and free-form targets out of WeChat status until explicit lookup',async()=>{
+    const url='https://fixture:fake-user-password@docs.example.test:8443/private/download?X-Amz-Signature=fake-aws-signature&sig=fake-link-signature#fake-fragment'
+    const query='review sig=fake-search-signature'
+    const path='private/fake-directory-credential/notes.md'
+    const pattern='sig=fake-grep-signature'
+    setup({async spawn(_p,ctx){return{async *dispatch(){
+      await Promise.all([
+        ctx.requestPermission!({tool:'WebFetch',description:url,display:{body:{kind:'url',url}}}),
+        ctx.requestPermission!({tool:'WebSearch',description:query,display:{body:{kind:'query',query}}}),
+        ctx.requestPermission!({tool:'Grep',description:pattern,display:{body:{kind:'fields',fields:[{name:'path',value:path},{name:'pattern',value:pattern}]}}}),
+        ctx.requestPermission!({tool:'ReadFile',description:url,display:{body:{kind:'fields',fields:[{name:'path',value:url}]}}}),
+      ])
+      yield result
+    },async close(){}}}})
+    const task=create()
+    await expect.poll(()=>service.detail(task.id).permissions.length).toBe(4)
+    const requests=service.detail(task.id).permissions
+    const web=requests.find(p=>p.tool==='WebFetch')!
+    const search=requests.find(p=>p.tool==='WebSearch')!
+    const grep=requests.find(p=>p.tool==='Grep')!
+    const read=requests.find(p=>p.tool==='ReadFile')!
+    for(const suffix of ['',' 待办']){
+      const reply=await service.handleWechat('owner',`任务 ${task.id}${suffix}`,identity)
+      expect(reply).toContain(`想打开一个网址：docs.example.test\n查看：任务 ${task.id} 权限 ${web.id}`)
+      expect(reply).toContain(`想上网搜一下\n查看：任务 ${task.id} 权限 ${search.id}`)
+      expect(reply).toContain(`想在文件里找东西：notes.md\n查看：任务 ${task.id} 权限 ${grep.id}`)
+      expect(reply).toContain(`想看一个文件\n查看：任务 ${task.id} 权限 ${read.id}`)
+      for(const hidden of ['https://','fixture','8443','/private/download','X-Amz-Signature','fake-aws-signature','fake-link-signature','fake-fragment','fake-directory-credential',query,pattern]){
+        expect(reply).not.toContain(hidden)
+      }
+    }
+    const lookup=await service.handleWechat('owner',`任务 ${task.id} 权限 ${web.id}`,identity)
+    expect(lookup).toMatchObject({kind:'permission_card',card:{text:expect.stringContaining(url)}})
+  })
+
+  it('redacts before middle-eliding long read targets and preserves both filename endings',async()=>{
+    const directory='shared-folder/'.repeat(12)
+    const token=`sk-${'fixture'.repeat(24)}`
+    const names=['setup.md','release.md']
+    const paths=[...names.map(name=>directory+name),...names.map(name=>`${directory}read-${token}.${'notes-'.repeat(24)}${name}`)]
+    setup({async spawn(_p,ctx){return{async *dispatch(){
+      await Promise.all(paths.map(path=>ctx.requestPermission!({tool:'ReadFile',description:`ReadFile ${path}`,
+        display:{body:{kind:'fields',fields:[{name:'path',value:path}]}}})))
+      yield result
+    },async close(){}}}})
+    const task=create()
+    await expect.poll(()=>service.detail(task.id).permissions.length).toBe(4)
+    const reply=await service.handleWechat('owner',`任务 ${task.id} 待办`,identity)
+    const requests=service.detail(task.id).permissions
+    for(const [i,p] of requests.slice(0,2).entries()){
+      expect(reply).toContain(`想看一个文件：${names[i]}\n查看：任务 ${task.id} 权限 ${p.id}`)
+    }
+    for(const [i,p] of requests.slice(2).entries()){
+      const line=typeof reply==='string'?reply.split(`\n查看：任务 ${task.id} 权限 ${p.id}`)[0]?.split('\n').at(-1):undefined
+      expect(line).toMatch(/^想看一个文件：read-\[已打码\].*….*\.md$/)
+      expect(line?.endsWith(names[i]!)).toBe(true)
+      expect(Array.from(line??'')).toHaveLength(120)
+    }
   })
 
   it('shows and resolves only the exact permission, rejecting wrong task, owner and duplicate grants',async()=>{

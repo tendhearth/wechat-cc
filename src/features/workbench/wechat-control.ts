@@ -1,10 +1,11 @@
 import {validBaseBranch} from '../../adapters/git/worktree-workspaces'
 import {isRelayContinue} from '../../adapters/store/matter-plans'
 import {parseReviewRequest,reviewMaterial} from './review-request'
-import {approvalLookupReply,permissionToolAction,permissionWaitingTitle,resolvePermissionDisplay,WORKBENCH_ERRORS,workbenchErrorSpec} from '@wechat-cc/protocol'
+import {approvalLookupReply,permissionToolAction,permissionWaitingTitle,resolvePermissionDisplay,WORKBENCH_ERRORS,workbenchErrorSpec,type PermissionDisplay} from '@wechat-cc/protocol'
 import {compareReply} from './wechat-compare'
 import {issueTaskText,parseIssueRef,type IssueData} from './issue-intake'
 import {createHash,randomUUID} from 'node:crypto'
+import {basename,win32} from 'node:path'
 import type {WorkbenchStore,Task} from '../../adapters/store/workbench/store'
 import type { LiveInput, PendingWorkbenchPermission, PermissionDecision, PendingUserInput } from '../../ports/workbench'
 import type {AgentRuntimeSnapshot} from '../../ports/agent-provider'
@@ -118,6 +119,31 @@ function phoneAnswers(request:PendingUserInput,text:string):unknown {
   }))
   return validateUserInputAnswers(request,answers)
 }
+const permissionPathFields=new Set(['path','file_path','filePath','directory','dir_path','notebook_path'])
+
+function permissionStatusHost(value:string):string {
+  if(!/^https?:\/\//i.test(value))return ''
+  try{return redactSecrets(new URL(value).hostname)}catch{return ''}
+}
+
+function permissionStatusFile(path:string):string {
+  const drive=/^[a-z]:/i.test(path)
+  // A URL (or query/fragment) can also arrive in a field labelled as a path.
+  if(/[:?#%]/.test(drive?path.slice(2):path)||path.startsWith('//')||path.includes('://'))return ''
+  const name=drive||path.startsWith('\\\\')?win32.basename(path):basename(path)
+  return name.includes('=')?'':redactSecrets(name)
+}
+
+function statusPermissionDisplay(body:PermissionDisplay['body']):PermissionDisplay|undefined {
+  // Status carries only a host or file label. Search terms, patterns, notes
+  // and the full target belong to the explicit permission lookup.
+  if(body.kind==='url')return {body:{kind:'url',url:permissionStatusHost(body.url)}}
+  if(body.kind==='fields')return {body:{kind:'fields',fields:body.fields.flatMap(({name,value})=>{
+    const label=name==='url'?permissionStatusHost(value):permissionPathFields.has(name)?permissionStatusFile(value):''
+    return label?[{name,value:label}]:[]
+  })}}
+}
+
 function statusReply(detail:Detail){
   const {task,events,artifacts,permissions,questions,inputs}=detail,id=task.id
   const latest=events.filter(e=>e.kind==='text').at(-1)
@@ -155,11 +181,10 @@ function statusReply(detail:Detail){
     const lookup=`查看：任务 ${id} 权限 ${p.id}`
     const action=permissionToolAction(p.tool,'zh-Hans','',p.mcp)
     if(!action)return lookup
-    const display=resolvePermissionDisplay(p.tool,p.description,p.display,task.providerId)
-    const kind=display.body.kind
-    const title=kind==='fields'||kind==='url'||kind==='query'
-      ?permissionWaitingTitle(display,p.tool,'','zh-Hans','',p.mcp,Infinity):action
-    return `${singleLine(redactSecrets(title),120)}\n${lookup}`
+    const {body}=resolvePermissionDisplay(p.tool,p.description,p.display,task.providerId)
+    const display=statusPermissionDisplay(body)
+    const title=display?permissionWaitingTitle(display,p.tool,'','zh-Hans'):action
+    return `${title}\n${lookup}`
   }).join('\n'))
   if(questions.length)lines.push(`等待回答：${questions.length} 项\n`+questions.slice(0,4).map(q=>`${singleLine(q.questions.map(item=>item.header).join('、'),80)}\n查看：任务 ${id} 问题 ${q.id}`).join('\n'))
   lines.push(`补充：任务 ${id} 补充 <要求>`,`查看结果：任务 ${id} 结果`)
