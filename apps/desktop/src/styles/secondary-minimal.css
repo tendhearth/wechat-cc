@@ -96,7 +96,7 @@
   [data-pane="logs"] #logs-filter { flex: 1 1 160px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  :is(.settings-drawer, .memory-sources-panel, #phone-settings-modal, #provider-menu) * { scroll-behavior: auto; }
+  :is(.settings-drawer, .memory-sources-panel, :where(#phone-settings-modal, #provider-menu)) * { scroll-behavior: auto; }
 }
 
 /* The separate floating window keeps its transparent stage and canonical art. */

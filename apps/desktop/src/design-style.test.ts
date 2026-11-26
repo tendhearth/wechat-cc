@@ -10,7 +10,8 @@ const walk = (d: string, out: string[] = []): string[] => {
   for (const n of readdirSync(d)) { const f = join(d, n); if (isTaskCachePath(f)) continue; statSync(f).isDirectory() ? (n === 'vendor' ? 0 : walk(f, out)) : out.push(f) }
   return out
 }
-const CSS = walk(ROOT).filter(f => f.endsWith('.css') && !f.endsWith('tokens.css'))
+const STYLESHEETS = walk(ROOT).filter(f => f.endsWith('.css'))
+const CSS = STYLESHEETS.filter(f => !f.endsWith('tokens.css'))
 const rel = (f: string) => relative(ROOT, f)
 const hexCount = (s: string) => (s.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d/g) ?? []).length
 /** 三块主界面零字面色值;其余按棘轮。Task 12 / 13 只许把数字往下改。 */
@@ -29,7 +30,89 @@ export const HEX_BUDGET: Record<string, number> = {
 /** Task 10 加 cc-life.css、cc-now.css;Task 12 加工作台三份(styles/workbench*.css、styles/task-entry.css);converse.css 新建即零。 */
 const ZERO_HEX: string[] = ['cc-life.css', 'cc-now.css', 'styles/workbench.css', 'styles/task-entry.css', 'styles/converse.css', 'styles/desk-two-pane.css']
 
+function mixedIdSelectorLists(css: string): string[] {
+  const violations: string[] = []
+  const functions: {
+    name: string
+    line: number
+    zeroSpecificity: boolean
+    currentHasId: boolean
+    previousHasId: boolean
+    previousHasNonId: boolean
+  }[] = []
+  let inComment = false
+  let inAttribute = false
+  const lines = css.replace(/\r\n?/g, '\n').split('\n')
+  for (const [index, line] of lines.entries()) {
+    // 按行找注释边界，保留 */ 后同一行的代码。引号和转义里的标点不是选择器语法。
+    const tokens = /\/\*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|:[a-z-]+\(|[()[\],]|#(?=[\w\\\u0080-\uFFFF-])/gi
+    while (tokens.lastIndex < line.length) {
+      if (inComment) {
+        const end = line.indexOf('*/', tokens.lastIndex)
+        if (end === -1) break
+        tokens.lastIndex = end + 2
+        inComment = false
+      }
+      const token = tokens.exec(line)?.[0]
+      if (!token) break
+      if (token === '/*') inComment = true
+      else if (token === '[') inAttribute = true
+      else if (token === ']') inAttribute = false
+      else if (!inAttribute) {
+        const current = functions.at(-1)
+        if (token.endsWith('(') && (token === '(' || token.startsWith(':'))) {
+          const name = token.slice(0, -1).toLowerCase()
+          functions.push({
+            name, line: index + 1, zeroSpecificity: name === ':where' || (current?.zeroSpecificity ?? false),
+            currentHasId: false, previousHasId: false, previousHasNonId: false,
+          })
+        } else if (current && token === ',') {
+          current.previousHasId ||= current.currentHasId
+          current.previousHasNonId ||= !current.currentHasId
+          current.currentHasId = false
+        } else if (current && token === ')') {
+          functions.pop()
+          if (current.zeroSpecificity) continue
+          const hasId = current.previousHasId || current.currentHasId
+          const hasNonId = current.previousHasNonId || !current.currentHasId
+          if (hasId && hasNonId && [':is', ':not', ':has'].includes(current.name)) {
+            violations.push(`${current.line} ${current.name}()`)
+          }
+          const parent = functions.at(-1)
+          if (parent) parent.currentHasId ||= hasId
+        } else if (current && token === '#') {
+          current.currentHasId = true
+        }
+      }
+    }
+  }
+  return violations
+}
+
 describe('desktop design style', () => {
+  it('selector lists do not lend ID specificity to non-ID branches', () => {
+    const violations = STYLESHEETS.flatMap(f =>
+      mixedIdSelectorLists(readFileSync(f, 'utf8')).map(location => `${rel(f)}:${location}`),
+    )
+    expect(violations, ':is(), :not() and :has() take the specificity of their strongest argument, so an ID also raises the non-ID branches. Wrap the ID in :where() and keep a separate ID selector if its cascade needs it.').toEqual([])
+  })
+
+  it('checks multiline and nested selector lists without counting comments, attributes or :where() IDs', () => {
+    const css = [
+      '/* :is(#comment, .skip)',
+      '   :not(#comment, .skip) */ :is(.thing, #thread) {}',
+      ':not(/* keep scanning */ [hidden],',
+      '  :has(#image:not([hidden]))) {}',
+      ':has(> #thread, > article) {}',
+      ':is(#earlier, #later) {}',
+      ':is(#thread .item) {}',
+      ':is(.item, :where(#earlier, #later)) {}',
+      ':not([data-href="#thread,)"], :has(:where(#image):not([hidden]))) {}',
+      ':has([href=\\#thread], .item) { content: ":is(#fake, .fake)"; }',
+    ].join('\r\n')
+    expect(mixedIdSelectorLists(css)).toEqual(['2 :is()', '3 :not()', '5 :has()'])
+  })
+
   it('no dark mode', () => { for (const f of CSS) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/prefers-color-scheme:\s*dark/) })
   it('font-weight is 400 / 500 / normal only', () => {
     for (const f of CSS) expect(readFileSync(f, 'utf8').match(/font-weight:\s*(?!400\b|500\b|normal\b|var\()[^;}\s]+/g) ?? [], rel(f)).toEqual([])
