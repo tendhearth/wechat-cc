@@ -9,10 +9,12 @@ describe('matter_plan 批准卡', () => {
     expect(card).toContain('第 2 棒 · openai：')
     expect(incomplete).toBe(false)
   })
-  it('特别长的仍然截断,并且看得出被截了', () => {
-    const { prompt: card, incomplete } = renderChatApprovalPrompt('openai', 'matter_plan', { title: '长', legs: [{ executor: 'claude', brief: '字'.repeat(900) }] }, 'r2')
-    expect(card).toContain('…')
-    expect(card.length).toBeLessThan(700)
+  it('特别长的微信预览仍然标出截断，主人待批正文保留全文', () => {
+    const brief = '字'.repeat(900)
+    const { prompt, wechatPrompt = '', incomplete } = renderChatApprovalPrompt('openai', 'matter_plan', { title: '长', legs: [{ executor: 'claude', brief }] }, 'r2')
+    expect(wechatPrompt).toContain('…')
+    expect(wechatPrompt.length).toBeLessThan(700)
+    expect(prompt.includes(brief)).toBe(true)
     expect(incomplete).toBe(true)
   })
 })

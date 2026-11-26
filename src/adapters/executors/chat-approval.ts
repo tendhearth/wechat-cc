@@ -5,9 +5,9 @@ import { toolInputPreview,redactPreviewText } from '../../domain/workbench/tool-
 import { shareName } from '../../domain/matters/share-scope'
 import { redactSecrets } from '../../domain/cli-transcript'
 
-export interface ChatApprovalPrompt { prompt: string; incomplete?: boolean }
+export interface ChatApprovalPrompt { prompt: string; incomplete?: boolean; wechatPrompt?: string }
 
-/** 对话通道用同一份预览；先打码，再截断。 */
+/** 计划正文留给主人审阅，微信预览先打码，再截断。 */
 export function renderChatApprovalPrompt(provider: string, tool: string, input: unknown, requestId: string, title?: string, resolved?: MatterPlanPreview): ChatApprovalPrompt {
   let incomplete = false
   const redact = (value: string) => {
@@ -23,29 +23,42 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
   if (/(?:^|__)matter_plan$/.test(tool) && input && typeof input === 'object') {
     const plan = input as { title?: unknown; target?: unknown; legs?: unknown }
     if (Array.isArray(plan.legs) && plan.legs.length >= 1 && plan.legs.length <= 6) {
-      const field = (value: unknown, limit: number) =>
-        clip(redact(typeof value === 'string' ? value : JSON.stringify(value) ?? '').replace(/\s+/g, ' ').trim(), limit)
+      const fieldText = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value) ?? ''
+      const previewField = (value: unknown, limit: number) => {
+        const safe = redact(fieldText(value))
+        const line = safe.replace(/\s+/g, ' ').trim()
+        if (line !== safe) incomplete = true
+        return clip(line, limit)
+      }
       const legs = resolved?.legs ?? plan.legs
-      const showPath = (path: string) => redact(path).replace(/\r/g, '\\r').replace(/\n/g, '\\n')
-      const workspace = resolved?.registrationPath
-        ? `${field(resolved.projectName, 100)}（${showPath(resolved.registrationPath)}${resolved.projectPath === resolved.registrationPath ? '' : `，由 ${showPath(resolved.projectPath)} 指过去`}）· 还没登记，批准后登记为工作项目`
-        : field(resolved ? `${resolved.projectName}（${resolved.projectPath}）` : plan.target, 320)
-      const start = resolved?.target.kind === 'project' && resolved.target.isolation === 'worktree'
-        ? `\n独立工作区 · 起点：${field(resolved.target.base ?? '项目默认分支', 80)}` : ''
       const single = legs.length === 1
       const briefLimit = Math.min(400, Math.floor(1300 / legs.length))
-      const briefLines = legs.map((leg, i) => {
-        const { executor, brief } = (leg ?? {}) as { executor?: unknown; brief?: unknown }
-        return `第 ${i + 1} 棒 · ${field(executor, 64)}：${field(brief, briefLimit)}`
+      const renderPlan = (field: typeof previewField, showPath: (path: string) => string) => {
+        const workspace = resolved?.registrationPath
+          ? `${field(resolved.projectName, 100)}（${showPath(resolved.registrationPath)}${resolved.projectPath === resolved.registrationPath ? '' : `，由 ${showPath(resolved.projectPath)} 指过去`}）· 还没登记，批准后登记为工作项目`
+          : field(resolved ? `${resolved.projectName}（${resolved.projectPath}）` : plan.target, 320)
+        const start = resolved?.target.kind === 'project' && resolved.target.isolation === 'worktree'
+          ? `\n独立工作区 · 起点：${field(resolved.target.base ?? '项目默认分支', 80)}` : ''
+        const briefLines = legs.map((leg, i) => {
+          const { executor, brief } = (leg ?? {}) as { executor?: unknown; brief?: unknown }
+          return `第 ${i + 1} 棒 · ${field(executor, 64)}：${field(brief, briefLimit)}`
+        })
+        return [
+          `${provider} · matter_plan [approval:${requestId}]`,
+          `${single ? '确认交办' : '确认拆法'}：${field(plan.title, 120)}`,
+          `工作区：${workspace}${start}`,
+          ...briefLines,
+          single ? '批准后开工。' : '批准后按此顺序接力；失败或提问就停。',
+        ].join('\n')
+      }
+      const wechatPrompt = renderPlan(previewField, path => {
+        const safe = redact(path)
+        const line = safe.replace(/\r/g, '\\r').replace(/\n/g, '\\n')
+        if (line !== safe) incomplete = true
+        return line
       })
-      const prompt = [
-        `${provider} · matter_plan [approval:${requestId}]`,
-        `${single ? '确认交办' : '确认拆法'}：${field(plan.title, 120)}`,
-        `工作区：${workspace}${start}`,
-        ...briefLines,
-        single ? '批准后开工。' : '批准后按此顺序接力；失败或提问就停。',
-      ].join('\n')
-      return { prompt, incomplete }
+      if (incomplete) return { prompt: renderPlan(fieldText, path => path), wechatPrompt, incomplete }
+      return { prompt: wechatPrompt, incomplete }
     }
   }
   if (/(?:^|__)matter_share$/.test(tool) && input && typeof input === 'object') {
@@ -68,9 +81,11 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
 }
 
 /** The generic chat preview uses omission markers; specialized previews report omissions directly. */
-export function chatApprovalDelivery({ prompt, incomplete }: ChatApprovalPrompt, cwd?: string): { incomplete: boolean; wechatPrompt?: string } | undefined {
-  incomplete ??= /\[preview truncated\]|\[input omitted:|credential(?: |%20|\+)omitted|已打码/i.test(prompt)
-  if (cwd) return { incomplete, wechatPrompt: `${prompt}\n目录：${JSON.stringify(cwd)}` }
+export function chatApprovalDelivery({ prompt, incomplete, wechatPrompt }: ChatApprovalPrompt, cwd?: string): { incomplete: boolean; wechatPrompt?: string } | undefined {
+  const preview = wechatPrompt ?? prompt
+  incomplete ??= /\[preview truncated\]|\[input omitted:|credential(?: |%20|\+)omitted|已打码/i.test(preview)
+  if (cwd) return { incomplete, wechatPrompt: `${preview}\n目录：${JSON.stringify(cwd)}` }
+  if (wechatPrompt !== undefined) return { incomplete, wechatPrompt }
   return incomplete ? { incomplete } : undefined
 }
 

@@ -47,6 +47,7 @@ export function isPermissionCardQuote(quoted: string): boolean {
 const legacyWechatHeader = '待批：权限请求'
 const legacyWechatMarker = /^待批：权限请求 · 〔请求 ([a-f0-9]{16})〕$/
 const legacyWechatReplyLine = /^(?:回「y」放行、「n」拒绝;同时有几条待批时带码:「y [0-9]{2}」。|回「y [a-z0-9]+」放行、「n [a-z0-9]+」拒绝;|看完回「y [a-z0-9]+」就批。|拒绝请回「n [a-z0-9]+」。)/m
+const legacyCodexHeaderLine = /^Codex 想(?:执行命令|改文件|调用 mcp__\S+__\S+):$/m
 
 function hasLegacyWechatHeader(text: string): boolean {
   return text.trimStart().startsWith(legacyWechatHeader)
@@ -60,8 +61,8 @@ export function summarizeApprovalQuote(text: string): string | undefined {
   const workbench = classifyWorkbenchQuote(text)
   if (workbench) return summarizedWorkbenchQuote(workbench)
   // 已发出的旧卡和被截掉卡头的引用仍可能带着正文。
-  if (legacyWechatReplyLine.test(text) ||
-      /^(?:✋ .* 等你批准 · |Codex 想(?:执行命令|改文件|调用)|(?:Claude|OpenAI|Gemini) wants to run\b|(?:Claude|OpenAI|Gemini|Codex) · .* \[approval:[a-z0-9]{5}\])/m.test(text)) {
+  if (legacyWechatReplyLine.test(text) || legacyCodexHeaderLine.test(text) ||
+      /^(?:✋ .* 等你批准 · |(?:Claude|OpenAI|Gemini) wants to run\b|(?:Claude|OpenAI|Gemini|Codex) · .* \[approval:[a-z0-9]{5}\])/m.test(text)) {
     return summarizedWorkbenchQuote({})
   }
 }

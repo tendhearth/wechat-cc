@@ -28,10 +28,10 @@ const rulesWith = (rules: Rule[], owner = true): ChatOwnerRules & { notes: RuleA
 }
 
 function rig(o: { answer?: 'allow' | 'deny' | 'timeout' | 'undelivered'; rules?: ChatOwnerRules | null; admin?: string | null; tier?: UserTier } = {}) {
-  const cards: Array<{ to: string; prompt: string; hash: string; timeoutMs: number }> = []
+  const cards: Array<{ to: string; prompt: string; hash: string; timeoutMs: number; wechatPrompt?: string; incomplete?: boolean }> = []
   const lines: string[] = []
   const deps: CodexChatGateDeps = {
-    askUser: async (to, prompt, hash, timeoutMs) => { cards.push({ to, prompt, hash, timeoutMs }); return o.answer ?? 'deny' },
+    askUser: async (to, prompt, hash, timeoutMs, opts) => { cards.push({ to, prompt, hash, timeoutMs, ...opts }); return o.answer ?? 'deny' },
     adminFor: () => (o.admin === undefined ? 'owner' : o.admin),
     ...(o.rules ? { ownerRules: () => o.rules! } : {}),
     log: (t, l) => lines.push(`${t} ${l}`),
@@ -48,8 +48,11 @@ describe('Codex 对话审批 → authorize', () => {
     const r=rig({answer:'deny'}),input={target:{kind:'managed'},title:'插图',legs:Array.from({length:6},(_,i)=>({executor:`worker-${i+1}`,brief:`第${i+1}项工作 `+'资料 '.repeat(400)}))}
     expect(await r.approve(mcp('matter_plan',input),signal())).toBe(false)
     expect(r.cards).toHaveLength(1)
-    for(let i=1;i<=6;i++){expect(r.cards[0]!.prompt).toContain(`第 ${i} 棒`);expect(r.cards[0]!.prompt).toContain(`worker-${i}`);expect(r.cards[0]!.prompt).toContain(`第${i}项工作`)}
-    expect(r.cards[0]!.prompt.length).toBeLessThanOrEqual(2000)
+    const { prompt, wechatPrompt = '', incomplete } = r.cards[0]!
+    for(let i=1;i<=6;i++){expect(wechatPrompt).toContain(`第 ${i} 棒`);expect(wechatPrompt).toContain(`worker-${i}`);expect(wechatPrompt).toContain(`第${i}项工作`)}
+    expect(wechatPrompt.length).toBeLessThanOrEqual(2000)
+    expect(incomplete).toBe(true)
+    expect(input.legs.every(leg => prompt.includes(leg.brief))).toBe(true)
   })
   it('交办执行者不认时把可用 id 回给模型，不发确认卡', async () => {
     const askUser = vi.fn(async () => 'allow' as const), onDenied = vi.fn()

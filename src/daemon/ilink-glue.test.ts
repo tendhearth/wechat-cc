@@ -290,7 +290,10 @@ describe('makeIlinkAdapter (composed)', () => {
     }
   })
 
-  it.each([false, true])('checks the rendered Codex plan on WeChat (leg clipped: %s)', async clipped => {
+  it.each(['complete', 'clipped', 'spaces', 'indentation'] as const)('checks the rendered Codex plan on WeChat (%s)', async variant => {
+    const clipped = variant === 'clipped'
+    const whitespace = variant === 'spaces' ? '核对 notes  draft.txt。' : variant === 'indentation' ? '核对片段：\n  nested: value' : ''
+    const incomplete = clipped || Boolean(whitespace)
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
     const sent: string[] = []
     a.captureContextToken('chat-1', 'fixture-context')
@@ -303,7 +306,7 @@ describe('makeIlinkAdapter (composed)', () => {
       askUser: a.askUser, adminFor: () => 'chat-1', log: () => {},
       resolveMatterPlan: () => ({ target: { kind: 'managed' }, projectName: 'Plan fixture', projectPath: '/tmp/plan-fixture' }),
     })({ chatId: 'chat-1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' } as SpawnContext)
-    const legs = Array.from({ length: 4 }, (_, i) => ({ executor: 'codex', brief: '资料'.repeat(clipped && i === 0 ? 200 : 110) + `第 ${i + 1} 棒末尾` }))
+    const legs = Array.from({ length: 4 }, (_, i) => ({ executor: 'codex', brief: '资料'.repeat(clipped && i === 0 ? 200 : 110) + (i === 0 ? whitespace : '') + `第 ${i + 1} 棒末尾` }))
     const input = { title: '离线计划', legs }
     const description = JSON.stringify(input)
     expect(description.length).toBeGreaterThan(800)
@@ -313,15 +316,15 @@ describe('makeIlinkAdapter (composed)', () => {
       expect(await a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'show-plan')).toBe(true)
       expect(a.listPendingPermissions()).toHaveLength(1)
       const shown = sent[1] ?? ''
-      for (const [i, leg] of legs.entries()) expect(shown.includes(leg.brief)).toBe(!clipped || i !== 0)
-      expect(shown.includes('看完回「y 01」就批。')).toBe(!clipped)
-      expect(shown.includes('内容在微信里看不全')).toBe(clipped)
+      for (const [i, leg] of legs.entries()) expect(shown.includes(leg.brief)).toBe(!incomplete || i !== 0)
+      expect(shown.includes('看完回「y 01」就批。')).toBe(!incomplete)
+      expect(shown.includes('内容在微信里看不全')).toBe(incomplete)
       expect(await a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'decide-plan')).toBe(true)
-      if (clipped) {
+      if (incomplete) {
         expect(a.listPendingPermissions()).toHaveLength(1)
         expect(a.handlePermissionReply('n 01', 'chat-1')).toBe(true)
       }
-      await expect(result).resolves.toBe(!clipped)
+      await expect(result).resolves.toBe(!incomplete)
     } finally {
       first.resolve(Response.json({ errcode: 0 }))
       a.handlePermissionReply('n 01', 'chat-1')

@@ -174,6 +174,57 @@ describe('e2e: Codex 对话逐条问(on-request → authorize → 规则 / 拍�
     } finally { await daemon.stop() }
   })
 
+  it('shows the full Codex plan on the desktop route when WeChat clips a leg', async () => {
+    const brief = `核对 notes  draft.txt。\n  ${'资料'.repeat(220)}\n确认计划末尾。`
+    const input = { title: '离线计划', target: { kind: 'managed' }, legs: [{ executor: 'codex', brief }] }
+    let decision: unknown
+    const daemon = await startTestDaemon({
+      dangerously: false,
+      access: { admins: ['chat1'] },
+      modes: { chat1: { kind: 'solo', provider: 'codex' } },
+      claudeScript: { async onDispatch() { return { toolCalls: [], finalText: '' } } },
+      codexScript: { async onDispatch() {
+        return { toolCalls: [], finalText: '计划审批已结束。', codexSteps: [
+          { notify: { method: 'item/started', params: { item: {
+            id: 'plan', type: 'mcpToolCall', status: 'inProgress', server: 'wechat', tool: 'matter_plan', arguments: input,
+          } } } },
+          { request: { method: 'mcpServer/elicitation/request', params: {
+            serverName: 'wechat', mode: 'form', message: '审阅离线计划',
+            requestedSchema: { type: 'object', properties: {} },
+            _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: 'matter_plan', tool_params: input },
+          } }, onResponse: reply => { decision = (reply.result as { action?: string } | undefined)?.action } },
+        ] }
+      } },
+    })
+    try {
+      daemon.sendText('chat1', '审阅离线计划')
+      const wire = await daemon.waitForOutbound(messages => texts(messages).some(t => t.startsWith('待批：权限请求')), 10_000)
+      const card = texts(wire).find(t => t.startsWith('待批：权限请求'))!
+      expect(card.includes('Codex · matter_plan')).toBe(true)
+      expect(card.includes('确认计划末尾。')).toBe(false)
+      expect(card.includes('内容在微信里看不全')).toBe(true)
+      expect(card.includes('拒绝请回')).toBe(true)
+
+      const info = JSON.parse(readFileSync(join(daemon.stateDir, 'internal-api-info.json'), 'utf8')) as { baseUrl: string; tokenFilePath: string; operatorTokenFilePath: string }
+      const bearer = (file: string) => ({ authorization: `Bearer ${readFileSync(file, 'utf8').trim()}` })
+      const url = `${info.baseUrl}/v1/permissions/pending`
+      expect((await fetch(url, { headers: bearer(info.tokenFilePath) })).status).toBe(403)
+      const auth = bearer(info.operatorTokenFilePath)
+      const response = await fetch(url, { headers: auth })
+      expect(response.status).toBe(200)
+      const { items } = await response.json() as { items: { hash: string; prompt: string }[] }
+      const pending = items.find(item => item.prompt.startsWith('Codex · matter_plan'))
+      expect(Boolean(pending?.prompt.includes(brief))).toBe(true)
+      const resolved = await fetch(`${info.baseUrl}/v1/permissions/resolve`, {
+        method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({ hash: pending!.hash, decision: 'allow' }),
+      })
+      expect(await resolved.json()).toEqual({ ok: true })
+      await daemon.waitForOutbound(messages => texts(messages).includes('计划审批已结束。'), 10_000)
+      expect(decision).toBe('accept')
+    } finally { await daemon.stop() }
+  })
+
   it('红线照旧问:有规则说放 git,推送还是弹卡问主人,不出「按规则」那一行', async () => {
     await withDaemon('git push origin main', '推上去了。', async (daemon, decision) => {
       daemon.sendText('chat1', '推一下')
