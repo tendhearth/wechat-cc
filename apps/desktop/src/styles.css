@@ -1321,7 +1321,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .settings-drawer .toggle { background: var(--th-rail); }
 .settings-drawer .toggle.on { background: var(--th-accent); }
 .settings-drawer .toggle::after { background: var(--th-paper); }
-/* 自动同意工具调用 = bypass permissions — the one switch that deserves a
+/* 自动同意 CC 的每一步 = bypass permissions — the one switch that deserves a
    raised eyebrow: terracotta edge + tinted card, warning-colored when on. */
 .settings-drawer .toggle-row--danger {
   border-color: color-mix(in srgb, var(--th-hair) 38%, transparent);
