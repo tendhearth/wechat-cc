@@ -18,13 +18,13 @@ import { authorizeChatCall, authorizeChatToolUse, type ChatAuthorization, type C
 import { classifyToolUse } from '../../../domain/user-tier'
 import type { SpawnContext } from '../../../ports/agent-provider'
 import type { CodexChatApprovalRequest, CodexChatApprove } from './codex-app-server'
-import {renderChatApprovalPrompt,prepareChatApprovalPrompt,noteChatApproval,type MatterPlanResolver} from '../chat-approval'
+import {chatApprovalDelivery,renderChatApprovalPrompt,prepareChatApprovalPrompt,noteChatApproval,type MatterPlanResolver} from '../chat-approval'
 
 export interface CodexChatGateDeps {
   resolveMatterPlan?:MatterPlanResolver
   resolveTerminalParticipation?:import('../chat-approval').TerminalParticipationResolver
   noteMatterApproval?:import('../chat-approval').ChatApprovalChannel['noteMatterApproval']
-  askUser: (adminChatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
+  askUser: import('../chat-approval').ChatApprovalChannel['askUser']
   /** 这个对话的审批卡发给谁(resolveAdminChatId);没有 ⇒ 拒。 */
   adminFor: (chatId: string) => string | null
   /** 主人自己的对话走放行规则(现取:规则那一层比 provider 晚接线)。不给 / 回 null ⇒ 不看规则。 */
@@ -104,7 +104,9 @@ export function makeCodexChatGate(deps: CodexChatGateDeps): (ctx: SpawnContext) 
         if(req.tool==='mcp__wechat__matter_plan'&&error instanceof Error)req.onDenied?.(error.message)
         return req.tool==='mcp__wechat__terminal_attach'||req.tool==='mcp__wechat__terminal_detach'
       }
-      const answer = await deps.askUser(admin, prompt, hash, deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+      const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
+      const opts = req.description.length > PROMPT_MAX ? { incomplete: true } : chatApprovalDelivery(prompt)
+      const answer = await (opts ? deps.askUser(admin, prompt, hash, timeoutMs, opts) : deps.askUser(admin, prompt, hash, timeoutMs))
       if (answer === 'allow'&&!signal.aborted) {noteChatApproval(deps,'Codex',req.tool,req.input,ctx.chatId);return true}
       deps.log('PERMISSION', `${answer}: provider=codex tool=${req.tool} hash=${hash}`)
       return false

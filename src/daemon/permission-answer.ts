@@ -8,7 +8,7 @@
 import type { WechatPermissions, WechatReplyRoute } from '../ports/wechat'
 import { classifyWorkbenchQuote, summarizedWorkbenchQuote } from './pending-permissions'
 
-export interface PermissionAnswerMsg { text?: string; chatId: string; quote?: { type?: string; text?: string }; accountId?: string; contextToken?: string }
+export interface PermissionAnswerMsg { text?: string; chatId: string; quote?: { type?: string; text?: string }; accountId?: string; contextToken?: string; msgId?: string }
 
 export function makePermissionAnswer(deps: {
   ilink: Pick<WechatPermissions, 'handlePermissionReply'>
@@ -20,7 +20,7 @@ export function makePermissionAnswer(deps: {
     const route: WechatReplyRoute | undefined = m.accountId === undefined ? undefined : { accountId: m.accountId, contextToken: m.contextToken }
     let consumed: boolean | Promise<boolean>
     try {
-      consumed = deps.ilink.handlePermissionReply(m.text ?? '', m.chatId, quoted, route)
+      consumed = deps.ilink.handlePermissionReply(m.text ?? '', m.chatId, quoted, route, m.msgId)
     } finally {
       // The poll fast lane runs before ordinary routing, prompts and history.
       if (card) m.quote = { type: 'text', text: summarizedWorkbenchQuote(card) }

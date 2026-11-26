@@ -45,6 +45,8 @@ export interface FakeIlinkHandle {
   failSendMessage(opts?: { errcode?: number; errmsg?: string }): void
   /** Restore sendmessage to success (also cleared by reset()). */
   succeedSendMessage(): void
+  /** Pause the next matching HTTP send before it can be confirmed. */
+  pauseNextSend(match: (text: string) => boolean): { arrived: Promise<void>; release(): void }
   /** 被 failSendMessage 拦下的那几次 sendmessage(对话 + 正文):看断线时有没有在撞墙(no-retry-storm)。 */
   failedSends(): ReadonlyArray<{ chatId: string; text: string | undefined }>
   /** Stop server, free port. */
@@ -55,6 +57,7 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
   const queue: RawUpdate[] = []
   const captured: OutboundMsg[] = []
   let sendMessageFailure: { errcode: number; errmsg: string } | null = null
+  let pausedSend: { match: (text: string) => boolean; wait: () => Promise<void> } | undefined
   const failed: Array<{ chatId: string; text: string | undefined }> = []
 
   const server = serve({
@@ -89,6 +92,12 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
       const msg = (body.msg as Record<string, unknown> | undefined) ?? body
       const itemList = msg.item_list as Array<{ text_item?: { text?: string } }> | undefined
       if (url.pathname === '/ilink/bot/sendmessage') {
+        const text = typeof msg.text === 'string' ? msg.text : itemList?.[0]?.text_item?.text
+        if (pausedSend?.match(text ?? '')) {
+          const { wait } = pausedSend
+          pausedSend = undefined
+          await wait()
+        }
         if (sendMessageFailure) {
           failed.push({ chatId: String(msg.to_user_id ?? ''), text: typeof msg.text === 'string' ? msg.text : itemList?.[0]?.text_item?.text })
           return Response.json({ errcode: sendMessageFailure.errcode, errmsg: sendMessageFailure.errmsg })
@@ -137,6 +146,18 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
     reset() { queue.length = 0; captured.length = 0; sendMessageFailure = null },
     failSendMessage(opts) { sendMessageFailure = { errcode: opts?.errcode ?? -6, errmsg: opts?.errmsg ?? 'auth failed' } },
     succeedSendMessage() { sendMessageFailure = null },
+    pauseNextSend(match) {
+      const arrived = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+      const pending = { match, wait: () => { arrived.resolve(); return release.promise } }
+      pausedSend = pending
+      return {
+        arrived: arrived.promise,
+        release() {
+          if (pausedSend === pending) pausedSend = undefined
+          release.resolve()
+        },
+      }
+    },
     failedSends() { return [...failed] },
     async waitForOutbound(predicate, timeoutMs = 5000) {
       const start = Date.now()

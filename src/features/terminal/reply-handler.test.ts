@@ -59,7 +59,7 @@ describe('reply-handler', () => {
     expect(owner.probe('终端', 'c')).toBe(true)
     expect(await owner.handle('终端', 'c')).toBe(true)
     expect(sent[0]).toContain('等你批准 · wechat-cc · Claude · 码 ab12c3 · 1 分钟前')
-    expect(sent[0]).toContain('回「y k3x9z」放行')
+    expect(sent[0]).toContain('回「y k3x9z」查看请求（看过卡就批准）')
 
     const guest = makeCliReplyHandler({ ...base, isOwner: () => false, listSessions })
     expect(guest.probe('终端', 'c')).toBe(false)

@@ -24,7 +24,7 @@ it('lays out a multiline command, verified directory, one-line reason and the ex
   expect(card.text.split('\n')).toEqual([
     '待批 / Approval · 整理示例 · d0c04242', `〔请求 ${card.marker}〕`, 'Claude 想运行一条命令：', '〔命令开始〕',
     '│ npm install sharp', '│ printf ready', '〔命令结束〕', '原因："更新依赖\\n并检查输出"', '在 "/demo/portfolio"', PERMISSION_SNAPSHOT_NOTICE,
-    '回「y 08」允许这一步、「n 08」拒绝。拒绝理由选填：「n 08 理由」。回「yt 08」本任务同命令都允许，任务结束失效。',
+    '看完回「y 08」就批准这一步，回「n 08」拒绝。拒绝理由选填：「n 08 理由」。回「yt 08」本任务同命令都允许，任务结束失效。',
   ])
   expect(card.marker).toMatch(/^[a-f0-9]{16}$/)
   expect(card.text).not.toContain(permission.id)

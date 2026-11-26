@@ -108,6 +108,31 @@ describe('e2e: Codex 对话逐条问(on-request → authorize → 规则 / 拍�
     })
   })
 
+  it('首张卡未送达时，对话逐工具的回码先送卡，下一条回码才生效', async () => {
+    await withDaemon('rm -rf build', '删好了。', async (daemon, decision) => {
+      const held = daemon.ilink.pauseNextSend(isCard)
+      try {
+        daemon.sendText('chat1', '把 build 删了')
+        await held.arrived
+        const info = JSON.parse(readFileSync(join(daemon.stateDir, 'internal-api-info.json'), 'utf8'))
+        const { items } = await (await fetch(`${info.baseUrl}/v1/permissions/pending`, {
+          headers: { authorization: `Bearer ${readFileSync(info.operatorTokenFilePath, 'utf8').trim()}` },
+        })).json() as { items: { code: string }[] }
+        const code = items[0]?.code
+        expect(code).toMatch(/^\d{2}$/)
+        daemon.sendText('chat1', `y ${code}`)
+        const shown = () => texts(daemon.ilink.outbox()).find(text => isCard(text) && text.includes(`看完回「y ${code}」就批。`))
+        await expect.poll(() => Boolean(shown()), { timeout: 10_000 }).toBe(true)
+        expect(shown()?.includes('Working directory: /tmp')).toBe(true)
+        expect(decision()).toBeUndefined()
+        held.release()
+        daemon.sendText('chat1', `y ${code}`)
+        await daemon.waitForOutbound(m => texts(m).some(text => text.includes('删好了。')), 10_000)
+        expect(decision()).toBe('accept')
+      } finally { held.release() }
+    })
+  })
+
   it('主人拒绝:同一个对话里回「n」⇒ codex 收到 decline,这一轮照常收尾', async () => {
     await withDaemon('rm -rf build', '没删,被拒了。', async (daemon, decision) => {
       daemon.sendText('chat1', '把 build 删了')

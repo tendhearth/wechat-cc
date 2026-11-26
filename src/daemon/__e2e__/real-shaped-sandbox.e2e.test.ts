@@ -817,6 +817,75 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     }
   })
 
+  it('self-change without a delivered WeChat card requires one lookup before approval', async () => {
+    const prompt = 'Sandbox self-change approval'
+    d.ilink.failSendMessage({ errcode: -2 })
+    let opened: { code: string; hash: string }
+    try {
+      const result = await desktop<{ code: string; hash: string }>('POST', '/v1/self-change/ask', { prompt, timeoutMs: 60_000 })
+      expect(result.status).toBe(200)
+      opened = result.body
+    } finally { d.ilink.succeedSendMessage() }
+    const reply = `y ${opened.code}`
+    const pending = async () => (await desktop<{ items: { hash: string }[] }>('GET', '/v1/permissions/pending'))
+      .body.items.some(item => item.hash === opened.hash)
+    d.sendText(d.owner, reply)
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(text => text.includes(prompt) && text.includes(`看完回「y ${opened.code}」就批。`))).toBe(true)
+    expect(await pending()).toBe(true)
+    d.sendText(d.owner, reply)
+    await expect.poll(pending).toBe(false)
+    d.ilink.failSendMessage({ errcode: -2 })
+    try {
+      const result = await desktop<{ code: string; hash: string }>('POST', '/v1/self-change/ask', { prompt, timeoutMs: 60_000 })
+      expect(result.status).toBe(200)
+      opened = result.body
+    } finally { d.ilink.succeedSendMessage() }
+    d.sendText(d.owner, `n ${opened.code}`)
+    await expect.poll(async () => (await desktop<{ decision: string }>('GET', `/v1/self-change/decision?hash=${opened.hash}`)).body.decision).toBe('deny')
+  })
+
+  it('terminal hook: a missed WeChat card is shown on first allow, and the hook sees the second allow', async () => {
+    const session_id = 'sandbox-wechat-hook-approval'
+    const command = 'printf sandbox-hook-fixture'
+    const cwd = project
+    const open = () => desktop<{ status: string; hash: string }>('POST', '/v1/cli/permission', {
+      ...parsePermissionRequest('claude', { hook_event_name: 'PermissionRequest', session_id, cwd,
+        tool_name: 'Bash', tool_input: { command } }), idle_s: 3600, machine: hostname(),
+    }, 'trusted')
+    const codeOf = async (hash: string) => (await desktop<{ items: { hash: string; code: string }[] }>(
+      'GET', '/v1/permissions/pending')).body.items.find(item => item.hash === hash)?.code
+    const hookStatus = (hash: string) => desktop<{ status: string }>('GET', `/v1/cli/permission?hash=${hash}`, undefined, 'trusted')
+    const held = d.ilink.pauseNextSend(text => text.includes(command))
+    try {
+      const opened = await open()
+      expect(opened.body.status).toBe('pending')
+      await held.arrived
+      const hash = opened.body.hash, code = await codeOf(hash)
+      expect(code).toMatch(/^\d{2}$/)
+      const send = (text: string) => d.sendText(d.owner, text, { contextToken: 'hook-approval-context' })
+      send(`y ${code}`)
+      await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(text =>
+        text.includes(command) && text.includes(`看完回「y ${code}」就批。`)), { timeout: 10_000 }).toBe(true)
+      expect((await hookStatus(hash)).body.status).toBe('pending')
+      held.release()
+      send(`y ${code}`)
+      await expect.poll(async () => (await hookStatus(hash)).body.status).toBe('allow')
+
+      const second = await open()
+      await expect.poll(() => codeOf(second.body.hash)).toMatch(/^\d{2}$/)
+      const seenCode = await codeOf(second.body.hash)
+      await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(text => text.includes(command) && text.includes(`「y ${seenCode}」`))).toBe(true)
+      send(`y ${seenCode}`)
+      await expect.poll(async () => (await hookStatus(second.body.hash)).body.status).toBe('allow')
+
+      const third = await open()
+      await expect.poll(() => codeOf(third.body.hash)).toMatch(/^\d{2}$/)
+      const denyCode = await codeOf(third.body.hash)
+      send(`n ${denyCode}`)
+      await expect.poll(async () => (await hookStatus(third.body.hash)).body.status).toBe('deny')
+    } finally { held.release() }
+  })
+
   it('carries a structured terminal hook approval to desktop and a paired phone', async () => {
     const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: NOTEBOOK_PHONE_TOKEN })
     const session_id = 'sandbox-structured-approval'
@@ -1398,7 +1467,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(complete.hash).toBe(detail.body.permissions[0]!.id)
     const completeText = await lookup(asking, complete.hash)
     expect(completeText.includes(`Codex 想运行一条命令：\n〔命令开始〕\n│ ${scopedApprovalCommand}\n〔命令结束〕`)).toBe(true)
-    const instruction = (code: string) => `回「y ${code}」允许这一步、「n ${code}」拒绝。拒绝理由选填：「n ${code} 理由」。`
+    const instruction = (code: string) => `看完回「y ${code}」就批准这一步，回「n ${code}」拒绝。拒绝理由选填：「n ${code} 理由」。`
     const rejectOnlyInstruction = (code: string) => `这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`
     expect(completeText.endsWith(instruction(complete.code))).toBe(true)
     const markerLine = completeText.split('\n')[1]!
@@ -1406,7 +1475,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const noticeHeader = completeNotice.split('\n')[0]!
     expect(noticeHeader).toBe(`待批 / Approval · ${detail.body.task.title} · ${asking}`)
     expect(completeNotice.split('\n')[1]).toBe(markerLine)
-    expect(completeNotice.includes(instruction(complete.code))).toBe(true)
+    expect(completeNotice).toContain(`回「y ${complete.code}」先看完整请求，再回一次就批；回「n ${complete.code}」拒绝。拒绝理由选填：「n ${complete.code} 理由」。`)
     const alteredText = completeText.replace('〔命令结束〕', '〔命令结束〕（已编辑）')
     const injectedCommand = 'rm -rf sandbox-quoted-command'
     const questions = [...approvalFollowUps.keys()]
@@ -1611,7 +1680,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
 
     const at = d.ilink.outbox().length
     d.sendText(d.owner, `y ${claude.card.code}`, { contextToken: 'approval-fresh-context' })
-    const feedback = () => d.ilink.outbox().slice(at).find(m => m.text === WECHAT_PERMISSION_INCOMPLETE)
+    const feedback = () => d.ilink.outbox().slice(at).find(m => m.text?.startsWith('待批 / Approval') && m.text.includes(WECHAT_PERMISSION_INCOMPLETE))
     await expect.poll(() => Boolean(feedback())).toBe(true)
     expect(feedback()?.raw).toMatchObject({ msg: { context_token: 'approval-fresh-context' } })
 

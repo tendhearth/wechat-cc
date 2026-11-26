@@ -14,6 +14,7 @@ export interface PermissionRelayDeps extends ChatApprovalChannel {
    * prompts always go to `adminChatId`.
    */
   initiatingChatId: () => string | null
+  cwd?: string
   /** chatId of an admin to receive prompts. May be null if no admins configured. */
   adminChatId: () => string | null
   /** Returns the tier of the initiating chat — the subject's tier for authorize(). */
@@ -121,7 +122,7 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool & ChatAppr
     let prompt:string
     try{prompt=await prepareChatApprovalPrompt('Claude',toolName,input,hash,deps,deps.initiatingChatId()??'',opts.title)}
     catch(error){return {behavior:'deny',message:error instanceof Error?error.message:'没建成：解析项目失败，请重新选择项目。'}}
-    const answer = await approvalTurn.ask({ channel: deps, target, prompt, hash, timeoutMs: DEFAULT_TIMEOUT_MS, signal, tool: toolName })
+    const answer = await approvalTurn.ask({ channel: deps, target, prompt, hash, timeoutMs: DEFAULT_TIMEOUT_MS, signal, tool: toolName, cwd: deps.cwd })
     if (answer === 'allow' && !signal.aborted) {noteChatApproval(deps,'Claude',toolName,input,deps.initiatingChatId()??'');return { behavior: 'allow',...((toolName==='mcp__wechat__matter_plan'&&deps.resolveMatterPlan||toolName==='mcp__wechat__terminal_attach'||toolName==='mcp__wechat__terminal_detach')?{updatedInput:input}:{}) } satisfies PermissionResult}
     deps.log('PERMISSION', `${answer}: tool=${toolName} hash=${hash}`)
     // 'undelivered' ≠ denied: the approver never saw the prompt (their push

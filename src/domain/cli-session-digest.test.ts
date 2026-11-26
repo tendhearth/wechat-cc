@@ -66,7 +66,7 @@ describe('formatCliSessionDigest', () => {
       '终端里 3 个会话(1 个等你批准、1 个在跑):',
       '· 等你批准 · wechat-cc · Claude · 码 ab12c3 · 2 分钟前',
       '   Bash: rm -rf dist',
-      '   —— 回「y 07」放行、「n 07」拒绝',
+      '   —— 回「y 07」查看请求（看过卡就批准），回「n 07」拒绝',
       '· 在跑 · melu · Codex · 码 9f8e7d · 3 分钟前',
       '· 做完了 · leni · Claude · 码 1a2b3c · 2 小时前',
       '   登录页改好了, 测试也过了',

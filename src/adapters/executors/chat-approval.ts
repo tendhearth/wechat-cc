@@ -33,6 +33,13 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
   return text.length <= 2000 ? text : text.slice(0, 2000 - suffix.length) + suffix
 }
 
+/** The chat preview already marks omissions and stays redacted in WeChat. */
+export function chatApprovalDelivery(prompt: string, cwd?: string): { incomplete: boolean; wechatPrompt?: string } | undefined {
+  const incomplete = /\[preview truncated\]|\[input omitted:|credential(?: |%20|\+)omitted|已打码/i.test(prompt)
+  if (cwd) return { incomplete, wechatPrompt: `${prompt}\n目录：${JSON.stringify(cwd)}` }
+  return incomplete ? { incomplete } : undefined
+}
+
 /** 对话审批的共同等待边界。取消不依赖主人回答，也不接受迟到的批准。 */
 export type ChatApprovalAnswer = 'allow' | 'deny' | 'timeout' | 'undelivered' | 'cancelled'
 export type TerminalParticipationResolver=(action:'attach'|'detach',input:unknown,chatId:string)=>{body:unknown;code:string;cwd:string;title:string}
@@ -43,13 +50,13 @@ export interface ChatApprovalChannel {
   resolveMatterPlan?:MatterPlanResolver
   resolveTerminalParticipation?:TerminalParticipationResolver
   maxCards?: number
-  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number): Promise<Exclude<ChatApprovalAnswer, 'cancelled'>>
+  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { incomplete: boolean; wechatPrompt?: string }): Promise<Exclude<ChatApprovalAnswer, 'cancelled'>>
   /** 删除 pending 登记并让旧卡失效。 */
   revoke?(hash: string): void
 }
 
 export async function askForChatApproval(args: {
-  channel: ChatApprovalChannel; target: string; prompt: string; hash: string; timeoutMs: number; signal?: AbortSignal
+  channel: ChatApprovalChannel; target: string; prompt: string; hash: string; timeoutMs: number; signal?: AbortSignal; cwd?: string
 }): Promise<ChatApprovalAnswer> {
   const { channel, target, prompt, hash, timeoutMs, signal } = args
   if (signal?.aborted) return 'cancelled'
@@ -62,7 +69,8 @@ export async function askForChatApproval(args: {
       }
       signal?.addEventListener('abort', onAbort, { once: true })
       try {
-        const answer = channel.askUser(target, prompt, hash, timeoutMs)
+        const opts = chatApprovalDelivery(prompt, args.cwd)
+        const answer = opts ? channel.askUser(target, prompt, hash, timeoutMs, opts) : channel.askUser(target, prompt, hash, timeoutMs)
         // askUser 可能同步触发取消；登记之后再撤一次，避免留下新卡。
         if (signal?.aborted) onAbort()
         void answer.then(v => resolve(signal?.aborted ? 'cancelled' : v), () => resolve('deny'))

@@ -23,7 +23,7 @@
  * 早被删了没得拍。所以这里改成:自己登记、自己发卡,**发不出去也不动条目**,
  * 只把 `delivered: false` 如实报给 CLI,让它告诉人换个面拍。
  */
-import { howToReplyLine, type PendingPermissionMeta, type PermissionDecision } from './pending-permissions'
+import { renderLegacyWechatCard, type PendingPermissionMeta, type PermissionDecision } from './pending-permissions'
 
 /** `unknown` = 从没问过、或者问过但答案已经过了保留期。 */
 export type SelfChangeDecision = 'pending' | 'allow' | 'deny' | 'timeout' | 'undelivered' | 'unknown'
@@ -108,8 +108,8 @@ export function makeSelfChangeGlue(deps: SelfChangeGlueDeps): SelfChangeDep {
       const t = setTimeout(() => { deps.sweepPending() }, timeoutMs + 1)
       if (typeof t.unref === 'function') t.unref()
 
-      // 发卡。措辞与工具权限卡共用 howToReplyLine —— 主人认的就是这一行。
-      const card = `${prompt}\n${howToReplyLine(code, hash, timeoutMs)}`
+      // 发卡。措辞与工具权限卡共用 —— 主人认的就是这一行。
+      const card = renderLegacyWechatCard(prompt, code, hash, timeoutMs).text
       let delivered = false
       const speech = deps.speech()
       if (!speech) deps.log?.(`self-change 拍板卡没发:门还没接上 —— 条目留在登记处,桌面 / 终端仍可拍板`)
@@ -118,8 +118,8 @@ export function makeSelfChangeGlue(deps: SelfChangeGlueDeps): SelfChangeDep {
           // 拍板卡经门的 say(blocking:别烦我 / 免打扰都不拦),**不进待说队列**(码会过期)
           const o = await speech.say({ kind: 'self_change_ask', chatId: owner }, async (turn) => { delivered = !(await turn.sendText(owner, card)).error })
           if (!delivered) deps.log?.(`self-change 拍板卡没送到 ${owner}:${'allow' in o ? 'send failed' : o.reason} —— 条目留在登记处,桌面 / 终端仍可拍板`)
-        } catch (err) {
-          deps.log?.(`self-change 拍板卡外发抛了 ${owner}:${err instanceof Error ? err.message : String(err)} —— 条目留在登记处,桌面 / 终端仍可拍板`)
+        } catch {
+          deps.log?.(`self-change 拍板卡外发抛了 ${owner}:send failed —— 条目留在登记处,桌面 / 终端仍可拍板`)
         }
       }
       // 注意:这里**不** fail(hash)。卡片没送到 ≠ 没人能拍板。
