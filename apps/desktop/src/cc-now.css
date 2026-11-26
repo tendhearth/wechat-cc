@@ -35,8 +35,8 @@
 .hooks-action .hooks-error { color: var(--th-bad); }
 .hooks-action .hooks-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .hooks-action .hooks-detail { margin: 0 0 8px; font-size: var(--th-size-small); color: var(--th-ink-soft); }
-.hooks-action .hooks-detail > summary { cursor: pointer; width: fit-content; }
-.hooks-action .hooks-detail > summary:hover { color: var(--th-ink); }
+.onboard-terminal .hooks-detail > summary { cursor: pointer; width: fit-content; }
+.onboard-terminal .hooks-detail > summary:hover { color: var(--th-ink); }
 .hooks-action .hooks-detail > p { margin: 4px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
 .hooks-action .nc-action { padding: 3px 10px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: transparent; color: var(--th-ink); cursor: pointer; font-size: var(--th-size-small); }
 .now-connections .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--th-unknown); align-self: center; }

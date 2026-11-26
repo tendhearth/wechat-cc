@@ -32,6 +32,7 @@ const ZERO_HEX: string[] = ['cc-life.css', 'cc-now.css', 'styles/workbench.css',
 
 function mixedIdSelectorLists(css: string): string[] {
   const violations: string[] = []
+  const candidates: string[] = []
   const functions: {
     name: string
     line: number
@@ -42,10 +43,11 @@ function mixedIdSelectorLists(css: string): string[] {
   }[] = []
   let inComment = false
   let inAttribute = false
+  let prelude: 'at-rule' | 'rule' | undefined
   const lines = css.replace(/\r\n?/g, '\n').split('\n')
   for (const [index, line] of lines.entries()) {
     // 按行找注释边界，保留 */ 后同一行的代码。引号和转义里的标点不是选择器语法。
-    const tokens = /\/\*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|:[a-z-]+\(|[()[\],]|#(?=[\w\\\u0080-\uFFFF-])/gi
+    const tokens = /\/\*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|:[a-z-]+\(|[()[\],]|#(?=[\w\\\u0080-\uFFFF-])|[^#\s]/gi
     while (tokens.lastIndex < line.length) {
       if (inComment) {
         const end = line.indexOf('*/', tokens.lastIndex)
@@ -55,8 +57,20 @@ function mixedIdSelectorLists(css: string): string[] {
       }
       const token = tokens.exec(line)?.[0]
       if (!token) break
-      if (token === '/*') inComment = true
-      else if (token === '[') inAttribute = true
+      if (token === '/*') {
+        inComment = true
+        continue
+      }
+      // A style rule ends its selector prelude with an opening brace. At-rule
+      // preludes (including @supports selector()) and declarations are discarded.
+      if (!inAttribute && functions.length === 0 && ['{', '}', ';'].includes(token)) {
+        if (token === '{' && prelude === 'rule') violations.push(...candidates)
+        candidates.length = 0
+        prelude = undefined
+        continue
+      }
+      prelude ??= token === '@' ? 'at-rule' : 'rule'
+      if (token === '[') inAttribute = true
       else if (token === ']') inAttribute = false
       else if (!inAttribute) {
         const current = functions.at(-1)
@@ -76,7 +90,7 @@ function mixedIdSelectorLists(css: string): string[] {
           const hasId = current.previousHasId || current.currentHasId
           const hasNonId = current.previousHasNonId || !current.currentHasId
           if (hasId && hasNonId && [':is', ':not', ':has'].includes(current.name)) {
-            violations.push(`${current.line} ${current.name}()`)
+            candidates.push(`${current.line} ${current.name}()`)
           }
           const parent = functions.at(-1)
           if (parent) parent.currentHasId ||= hasId
@@ -111,6 +125,19 @@ describe('desktop design style', () => {
       ':has([href=\\#thread], .item) { content: ":is(#fake, .fake)"; }',
     ].join('\r\n')
     expect(mixedIdSelectorLists(css)).toEqual(['2 :is()', '3 :not()', '5 :has()'])
+  })
+
+  it('checks rule selectors inside feature queries, skipping the feature tests and declaration values', () => {
+    const css = [
+      '@supports selector(:is(#probe, .probe)) { .thread { display: block } }',
+      '/* feature */ @supports',
+      '  selector(:is(#probe, .probe)) {',
+      '  @media (min-width: 600px) {',
+      '    /* rule */ :is(#thread, .thread) { --example: :is(#value, .value) }',
+      '  }',
+      '}',
+    ].join('\n')
+    expect(mixedIdSelectorLists(css)).toEqual(['5 :is()'])
   })
 
   it('no dark mode', () => { for (const f of CSS) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/prefers-color-scheme:\s*dark/) })

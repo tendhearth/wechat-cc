@@ -141,12 +141,16 @@ test('CC 的连接 never shows green when it cannot be read', async ({ page, shi
   await expect(card.locator('.dot.ok')).toHaveCount(0)
 })
 
-test('CC 现在怎么样:终端里的 Claude Code / Codex 没接上 ⇒「接上」先说会改什么,确定之后才调路由、行变成已接上', async ({ page, shimUrl, shim }) => {
+function disconnectedTerminalConnections() {
   const now = Date.now()
-  await shim.invoke('demo.seed', { chat_id: 'test_chat', connections: {
+  return {
     generatedAt: now, starting: false, sources: [], computers: [{ id: 'home', label: '这台电脑', online: true, since: now, version: '1.7.6' }], recent: [], outputs: [],
     capabilities: [{ id: 'terminal', name: '终端里的 Claude Code / Codex', state: 'off', code: 'terminal.not_connected', reason: '装了 Claude Code / Codex，还没接上：终端里的会话 CC 看不到。', action: { label: '接上', where: 'desktop', run: 'cli_hooks_install' } }],
-  } })
+  }
+}
+
+test('CC 现在怎么样:终端里的 Claude Code / Codex 没接上 ⇒「接上」先说会改什么,确定之后才调路由、行变成已接上', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', connections: disconnectedTerminalConnections() })
   await bootIntoDashboard(page, shimUrl)
   await page.locator('#dash-global-rail .cc-home-details > summary').click()
   const row = page.locator('#now-connections .nc-capability')
@@ -160,6 +164,28 @@ test('CC 现在怎么样:终端里的 Claude Code / Codex 没接上 ⇒「接上
   await expect(row).toContainText('已接上')
   await expect(row.locator('button')).toHaveCount(0)
   expect(((await shim.invoke('mock.hook-calls')) as { result: { calls: unknown[] } }).result.calls).toEqual([{}])
+})
+
+test('CC 的连接:终端接入的「详细」占满整行，点最右侧也会展开', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', connections: disconnectedTerminalConnections() })
+  await bootIntoDashboard(page, shimUrl)
+  await page.locator('#dash-global-rail .cc-home-details > summary').click()
+  const row = page.locator('#now-connections .nc-capability')
+  await row.getByRole('button', { name: '接上', exact: true }).click()
+
+  const details = row.locator('.hooks-detail')
+  const summary = details.locator(':scope > summary')
+  await expect(summary).toHaveText('详细')
+  await expect(details).not.toHaveAttribute('open')
+  await summary.scrollIntoViewIfNeeded()
+  const { width, height, containerWidth } = await summary.evaluate(el => {
+    const { width, height } = el.getBoundingClientRect()
+    return { width, height, containerWidth: el.parentElement!.getBoundingClientRect().width }
+  })
+  expect(width).toBeCloseTo(containerWidth, 1)
+  await summary.click({ position: { x: containerWidth - 2, y: height / 2 } })
+  await expect(details).toHaveAttribute('open', '')
+  await expect(details.locator('p')).toBeVisible()
 })
 
 test('「地方」里终端停着问的行亮点，只有可拍板的请求才显示允许和拒绝', async ({ page, shimUrl, shim }) => {
