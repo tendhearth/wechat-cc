@@ -39,15 +39,16 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
           : field(resolved ? `${resolved.projectName}（${resolved.projectPath}）` : plan.target, 320)
         const start = resolved?.target.kind === 'project' && resolved.target.isolation === 'worktree'
           ? `\n独立工作区 · 起点：${field(resolved.target.base ?? '项目默认分支', 80)}` : ''
-        const briefLines = legs.map((leg, i) => {
+        const legBlocks = legs.map((leg, i) => {
           const { executor, brief } = (leg ?? {}) as { executor?: unknown; brief?: unknown }
-          return `第 ${i + 1} 棒 · ${field(executor, 64)}：${field(brief, briefLimit)}`
+          const body = field(brief, briefLimit).replace(/\r\n|[\r\n\u2028\u2029]/g, '$&│ ')
+          return `第 ${i + 1} 棒 · ${field(executor, 64)}：\n│ ${body}`
         })
         return [
           `${provider} · matter_plan [approval:${requestId}]`,
           `${single ? '确认交办' : '确认拆法'}：${field(plan.title, 120)}`,
           `工作区：${workspace}${start}`,
-          ...briefLines,
+          ...legBlocks,
           single ? '批准后开工。' : '批准后按此顺序接力；失败或提问就停。',
         ].join('\n')
       }

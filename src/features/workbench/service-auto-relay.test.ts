@@ -96,7 +96,7 @@ it('fills the desktop default before showing the approval card and keeps the ori
    resolveMatterPlan:(args,chatId,provider)=>f.service.matterPlanPreview(args as typeof input,{chatId,provider}),
  },'owner')
  expect(card).toContain('确认交办：加个收藏')
- expect(card).toContain('第 1 棒 · claude：加一个收藏按钮')
+ expect(card).toContain('第 1 棒 · claude：\n│ 加一个收藏按钮')
  expect(shown.legs).toEqual([{executor:'claude',brief:'加一个收藏按钮'}])
  expect(f.calls).toEqual([])
  f.service.noteMatterApproval(tool,input,caller)

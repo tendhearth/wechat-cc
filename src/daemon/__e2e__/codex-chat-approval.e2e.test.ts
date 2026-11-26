@@ -174,6 +174,27 @@ describe('e2e: Codex 对话逐条问(on-request → authorize → 规则 / 拍�
     } finally { await daemon.stop() }
   })
 
+  it('summarizes a legacy Codex approval supplied only as a WeChat quote title', async () => {
+    const operation = 'offline-legacy-quote-fixture.txt'
+    let modelPrompt: string | undefined
+    const daemon = await startTestDaemon({
+      dangerously: false,
+      access: { admins: ['chat1'] },
+      modes: { chat1: { kind: 'solo', provider: 'codex' } },
+      claudeScript: { async onDispatch() { return { toolCalls: [], finalText: '' } } },
+      codexScript: { async onDispatch(text) {
+        modelPrompt = text
+        return { toolCalls: [], finalText: '已读到提问。' }
+      } },
+    })
+    try {
+      daemon.sendText('chat1', '请解释一下。', { quoteTitle: `Codex 想改文件:${operation}…` })
+      await daemon.waitForOutbound(messages => texts(messages).includes('已读到提问。'), 10_000)
+      expect(modelPrompt?.includes(operation)).toBe(false)
+      expect(modelPrompt?.includes('<quote type="text">（引用了一张待批卡）</quote>')).toBe(true)
+    } finally { await daemon.stop() }
+  })
+
   it('shows the full Codex plan on the desktop route when WeChat clips a leg', async () => {
     const brief = `核对 notes  draft.txt。\n  ${'资料'.repeat(220)}\n确认计划末尾。`
     const input = { title: '离线计划', target: { kind: 'managed' }, legs: [{ executor: 'codex', brief }] }
@@ -214,7 +235,7 @@ describe('e2e: Codex 对话逐条问(on-request → authorize → 规则 / 拍�
       expect(response.status).toBe(200)
       const { items } = await response.json() as { items: { hash: string; prompt: string }[] }
       const pending = items.find(item => item.prompt.startsWith('Codex · matter_plan'))
-      expect(Boolean(pending?.prompt.includes(brief))).toBe(true)
+      expect(Boolean(pending?.prompt.includes(`第 1 棒 · codex：\n│ ${brief.replaceAll('\n', '\n│ ')}`))).toBe(true)
       const resolved = await fetch(`${info.baseUrl}/v1/permissions/resolve`, {
         method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
         body: JSON.stringify({ hash: pending!.hash, decision: 'allow' }),

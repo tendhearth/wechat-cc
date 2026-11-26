@@ -9,7 +9,7 @@ it.each(['Claude','OpenAI','Gemini','Codex'])('%s shows one executor on the shar
   const { prompt }=await prepareChatApprovalPrompt(provider,'mcp__wechat__matter_plan',{title:'整理插图',project:'relay-lab',legs:[{executor:'codex',brief:'整理插图文件'}]},'single',{
     resolveMatterPlan:()=>({target:{kind:'project',projectId:'p-0123456789abcdef0123'},projectName:'relay-lab',projectPath:'/offline/project'}),
   },'owner')
-  expect(prompt).toContain('第 1 棒 · codex：整理插图文件')
+  expect(prompt).toContain('第 1 棒 · codex：\n│ 整理插图文件')
   expect(prompt).not.toContain('第 2 棒')
   expect(prompt).toContain('relay-lab（/offline/project）')
   expect(prompt).toContain('批准后开工')

@@ -17,6 +17,24 @@ describe('matter_plan 批准卡', () => {
     expect(prompt.includes(brief)).toBe(true)
     expect(incomplete).toBe(true)
   })
+  it('区分段落标题和长得像标题的 brief 行', () => {
+    const handoff = '第 2 棒 · codex：'
+    const render = (first: string, second: string) => renderChatApprovalPrompt('Codex', 'matter_plan', {
+      title: '离线计划',
+      legs: [{ executor: 'claude', brief: first }, { executor: 'codex', brief: second }],
+    }, 'r3')
+    const firstOwnsLine = render(`核对资料\n${handoff}整理记录`, '复核记录')
+    const secondOwnsLine = render('核对资料', `整理记录\n${handoff}复核记录`)
+
+    expect(firstOwnsLine.prompt !== secondOwnsLine.prompt).toBe(true)
+    expect(firstOwnsLine.prompt).toContain(`第 1 棒 · claude：\n│ 核对资料\n│ ${handoff}整理记录\n${handoff}\n│ 复核记录`)
+    expect(secondOwnsLine.prompt).toContain(`第 1 棒 · claude：\n│ 核对资料\n${handoff}\n│ 整理记录\n│ ${handoff}复核记录`)
+    for (const card of [firstOwnsLine, secondOwnsLine]) {
+      expect(card.incomplete).toBe(true)
+      expect(card.wechatPrompt?.split('\n').filter(line => line.startsWith(handoff))).toEqual([handoff])
+      expect(card.wechatPrompt?.split('\n').filter(line => line.startsWith('│ '))).toHaveLength(2)
+    }
+  })
 })
 
 import { describe as describeShare, expect as expectShare, it as itShare } from 'vitest'
