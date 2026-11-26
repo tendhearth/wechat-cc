@@ -118,9 +118,16 @@ const approvalFollowUps = new Map<string, string>([
   ['引用夹着其他请求号的卡，我想问一下。', ''],
   ['引用去掉标记的提醒，我想问一下。', ''],
 ])
+const privateCardFollowUps = new Map<string, string>([
+  ['引用终端命令审批，请解释一下。', ''],
+  ['引用终端改动审批，请解释一下。', ''],
+  ['引用自改审批，请解释一下。', ''],
+])
 function captureApprovalFollowUp(text: string): void {
-  for (const [question, prompt] of approvalFollowUps) {
-    if (!prompt && text.includes(question)) approvalFollowUps.set(question, text)
+  for (const followUps of [approvalFollowUps, privateCardFollowUps]) {
+    for (const [question, prompt] of followUps) {
+      if (!prompt && text.includes(question)) followUps.set(question, text)
+    }
   }
 }
 let codexDecision: unknown
@@ -921,6 +928,47 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       await desktop('POST', '/v1/cli/decide', { session_id, decision: 'deny' })
       await desktop('POST', '/v1/cli/event', { source: 'claude', kind: 'session_end', session_id, cwd }, 'trusted')
       phone.close()
+    }
+  })
+
+  const askAboutPrivateCard = async (question: string, card: string, evidence: string[]) => {
+    d.sendText(d.owner, question, { quote: card })
+    await expect.poll(() => Boolean(privateCardFollowUps.get(question)), { timeout: 15_000 }).toBe(true)
+    const modelPrompt = privateCardFollowUps.get(question)!
+    for (const item of evidence) expect(modelPrompt.includes(item)).toBe(false)
+    expect(/<quote type="text">（引用了一张待批卡 · 〔请求 [a-f0-9]{16}〕）<\/quote>/.test(modelPrompt)).toBe(true)
+  }
+
+  it.each(['command', 'edit'])('ordinary chat summarizes a terminal %s approval quote', async kind => {
+    const [command, before, after] = ['printf offline-terminal-quote', 'offline-edit-before', 'offline-edit-after']
+    const question = kind === 'command' ? '引用终端命令审批，请解释一下。' : '引用终端改动审批，请解释一下。'
+    const req = kind === 'command'
+      ? { tool_name: 'Bash', tool_input: { command }, evidence: [command] }
+      : { tool_name: 'Edit', tool_input: { file_path: join(project, 'quote-fixture.txt'), old_string: before, new_string: after }, evidence: [before, after] }
+    const session_id = `offline-terminal-quote-${kind}`
+    const parsed = parsePermissionRequest('claude', { hook_event_name: 'PermissionRequest', session_id, cwd: project, tool_name: req.tool_name, tool_input: req.tool_input })
+    try {
+      expect((await desktop('POST', '/v1/cli/permission', { ...parsed, idle_s: 3600, machine: hostname() }, 'trusted')).status).toBe(200)
+      const isCard = (text: string) => req.evidence.every(item => text.includes(item))
+      const wire = await d.waitForOutbound(messages => texts(messages, d.owner).some(isCard), 10_000)
+      await askAboutPrivateCard(question, texts(wire, d.owner).find(isCard)!, req.evidence)
+    } finally {
+      await desktop('POST', '/v1/cli/decide', { session_id, decision: 'deny' })
+      await desktop('POST', '/v1/cli/event', { source: 'claude', kind: 'session_end', session_id, cwd: project }, 'trusted')
+    }
+  })
+
+  it('ordinary chat summarizes a self-change decision quote', async () => {
+    const change = 'offline-self-change-details'
+    const opened = await desktop<{ code: string; delivered: boolean }>('POST', '/v1/self-change/ask', {
+      prompt: `离线自改决策\n${change}`, timeoutMs: 60_000,
+    })
+    expect(opened.body.delivered).toBe(true)
+    try {
+      const card = texts(d.ilink.outbox(), d.owner).find(text => text.includes(change))!
+      await askAboutPrivateCard('引用自改审批，请解释一下。', card, [change])
+    } finally {
+      d.sendText(d.owner, `n ${opened.body.code}`)
     }
   })
 

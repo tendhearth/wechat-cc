@@ -1,3 +1,6 @@
+import { makeCodexChatGate } from '../adapters/executors/codex/codex-chat-gate'
+import { TIER_PROFILES } from '../domain/user-tier'
+import type { SpawnContext } from '../ports/agent-provider'
 import { renderChatApprovalPrompt } from '../adapters/executors/chat-approval'
 import { makeProjects } from './projects'
 import { afterEach, describe, it, expect, vi } from 'vitest'
@@ -258,6 +261,71 @@ describe('makeIlinkAdapter (composed)', () => {
       await expect(p).resolves.toBe('undelivered')
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it.each([true, false])('waits for an in-flight resend after initial failure (resend succeeds: %s)', async succeeds => {
+    vi.useFakeTimers()
+    try {
+      const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+      a.captureContextToken('chat-1', 'fixture-context')
+      const first = Promise.withResolvers<Response>()
+      const resend = Promise.withResolvers<Response>()
+      const wire = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(first.promise).mockReturnValueOnce(resend.promise)
+      const decision = a.askUser('chat-1', 'offline approval fixture', 'race1', 60_000)
+      const approve = a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'first-reply')
+      expect(wire).toHaveBeenCalledTimes(2)
+      first.resolve(Response.json({ errcode: -2 }))
+      await vi.advanceTimersByTimeAsync(0)
+      const stillPending = a.listPendingPermissions().some(item => item.hash === 'race1')
+      resend.resolve(Response.json({ errcode: succeeds ? 0 : -2 }))
+      expect(await approve).toBe(succeeds)
+      expect(stillPending).toBe(true)
+      if (succeeds) expect(a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'next-reply')).toBe(true)
+      await expect(decision).resolves.toBe(succeeds ? 'allow' : 'undelivered')
+      expect(a.listPendingPermissions()).toHaveLength(0)
+      await a.flush()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([false, true])('checks the rendered Codex plan on WeChat (leg clipped: %s)', async clipped => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    a.captureContextToken('chat-1', 'fixture-context')
+    const first = Promise.withResolvers<Response>()
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+      sent.push(JSON.parse(String(init?.body)).msg.item_list[0].text_item.text)
+      return sent.length === 1 ? first.promise : Promise.resolve(Response.json({ errcode: 0 }))
+    })
+    const approve = makeCodexChatGate({
+      askUser: a.askUser, adminFor: () => 'chat-1', log: () => {},
+      resolveMatterPlan: () => ({ target: { kind: 'managed' }, projectName: 'Plan fixture', projectPath: '/tmp/plan-fixture' }),
+    })({ chatId: 'chat-1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' } as SpawnContext)
+    const legs = Array.from({ length: 4 }, (_, i) => ({ executor: 'codex', brief: '资料'.repeat(clipped && i === 0 ? 200 : 110) + `第 ${i + 1} 棒末尾` }))
+    const input = { title: '离线计划', legs }
+    const description = JSON.stringify(input)
+    expect(description.length).toBeGreaterThan(800)
+    const result = approve({ tool: 'mcp__wechat__matter_plan', input, description }, new AbortController().signal)
+    try {
+      await expect.poll(() => sent.length > 0).toBe(true)
+      expect(await a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'show-plan')).toBe(true)
+      expect(a.listPendingPermissions()).toHaveLength(1)
+      const shown = sent[1] ?? ''
+      for (const [i, leg] of legs.entries()) expect(shown.includes(leg.brief)).toBe(!clipped || i !== 0)
+      expect(shown.includes('看完回「y 01」就批。')).toBe(!clipped)
+      expect(shown.includes('内容在微信里看不全')).toBe(clipped)
+      expect(await a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'decide-plan')).toBe(true)
+      if (clipped) {
+        expect(a.listPendingPermissions()).toHaveLength(1)
+        expect(a.handlePermissionReply('n 01', 'chat-1')).toBe(true)
+      }
+      await expect(result).resolves.toBe(!clipped)
+    } finally {
+      first.resolve(Response.json({ errcode: 0 }))
+      a.handlePermissionReply('n 01', 'chat-1')
+      await a.flush()
     }
   })
 
@@ -560,11 +628,11 @@ describe('引用卡片回「y」', () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
     const sent: string[] = []
     const wire = fakeApprovalWire(a, 'chat-1', sent)
-    const old = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'old offline action' }, 'old02'), 'old02', 60000)
+    const old = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'old offline action' }, 'old02').prompt, 'old02', 60000)
     await wire.mock.results[0]!.value
     const oldHeader = sent[0]!.split('\n')[0]!
     a.resolvePermission('old02', 'deny'); await old
-    const next = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'new offline action' }, 'new02'), 'new02', 60000)
+    const next = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'new offline action' }, 'new02').prompt, 'new02', 60000)
     await wire.mock.results[1]!.value
     expect(a.probePermissionReply('y', 'chat-1', oldHeader)).toBe(false)
     expect(a.handlePermissionReply('y', 'chat-1', oldHeader)).toBe(false)

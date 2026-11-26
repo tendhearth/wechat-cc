@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { permissionReason } from '../domain/permission-denial'
 import { hasWechatPermissionHeader, WECHAT_PERMISSION_INCOMPLETE } from '../domain/workbench/wechat-permission-header'
 import { MAX_TEXT_CHUNK } from '../lib/config'
@@ -23,6 +24,8 @@ interface Entry {
   wechatReminder?: string
   wechatDelivery?: Set<string>
   wechatRevealReplies?: Map<string, boolean>
+  wechatRevealsInFlight: number
+  onWechatRevealsFinished?: () => void
   legacyWechatCard?: ReturnType<typeof renderLegacyWechatCard>
   /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
   deadline?: () => number | null
@@ -38,7 +41,29 @@ interface Entry {
 
 /** 明确引用旧批准卡时不能退回到“当前唯一待批”。 */
 export function isPermissionCardQuote(quoted: string): boolean {
-  return /「[yn]\s*(?:[0-9]{2}|[a-z0-9]{5})」|\[approval:[a-z0-9]{5}\]|^(?:Claude|OpenAI|Gemini) wants to run\b/im.test(quoted)
+  return hasLegacyWechatHeader(quoted) || /「[yn]\s*(?:[0-9]{2}|[a-z0-9]{5})」|\[approval:[a-z0-9]{5}\]|^(?:Claude|OpenAI|Gemini) wants to run\b/im.test(quoted)
+}
+
+const legacyWechatHeader = '待批：权限请求'
+const legacyWechatMarker = /^待批：权限请求 · 〔请求 ([a-f0-9]{16})〕$/
+const legacyWechatReplyLine = /^(?:回「y」放行、「n」拒绝;同时有几条待批时带码:「y [0-9]{2}」。|回「y [a-z0-9]+」放行、「n [a-z0-9]+」拒绝;|看完回「y [a-z0-9]+」就批。|拒绝请回「n [a-z0-9]+」。)/m
+
+function hasLegacyWechatHeader(text: string): boolean {
+  return text.trimStart().startsWith(legacyWechatHeader)
+}
+
+export function summarizeApprovalQuote(text: string): string | undefined {
+  if (hasLegacyWechatHeader(text)) {
+    const marker = legacyWechatMarker.exec(text.trimStart().split(/\r?\n/)[0]!.trim())?.[1]
+    return summarizedWorkbenchQuote({ marker })
+  }
+  const workbench = classifyWorkbenchQuote(text)
+  if (workbench) return summarizedWorkbenchQuote(workbench)
+  // 已发出的旧卡和被截掉卡头的引用仍可能带着正文。
+  if (legacyWechatReplyLine.test(text) ||
+      /^(?:✋ .* 等你批准 · |Codex 想(?:执行命令|改文件|调用)|(?:Claude|OpenAI|Gemini) wants to run\b|(?:Claude|OpenAI|Gemini|Codex) · .* \[approval:[a-z0-9]{5}\])/m.test(text)) {
+    return summarizedWorkbenchQuote({})
+  }
 }
 
 const workbenchMarkerLine = /^〔请求 ([a-f0-9]{16})〕$/
@@ -121,6 +146,7 @@ export class PendingPermissions {
         code,
         wechatCard,
         legacyWechatCard,
+        wechatRevealsInFlight: 0,
       })
     })
     if (meta) this.journal?.opened(hash, meta, now, expiresAt)
@@ -169,8 +195,10 @@ export class PendingPermissions {
     return accountId !== undefined && this.entries.get(hash)?.wechatDelivery?.has(accountId) === true
   }
 
-  hasAnyWechatDelivery(hash: string): boolean {
-    return (this.entries.get(hash)?.wechatDelivery?.size ?? 0) > 0
+  afterWechatReveals(hash: string, check: () => void): void {
+    const entry = this.entries.get(hash)
+    if (entry?.wechatRevealsInFlight) entry.onWechatRevealsFinished = check
+    else check()
   }
 
   wasWechatRevealReply(hash: string, accountId: string | undefined, messageId: string | undefined): boolean {
@@ -181,14 +209,23 @@ export class PendingPermissions {
 
   beginWechatReveal(hash: string, accountId?: string, messageId?: string): (delivered: boolean) => boolean {
     const entry = this.entries.get(hash)
-    if (!entry || !messageId) return delivered => delivered
-    const key = `${accountId ?? ''}:${messageId}`
-    const replies = entry.wechatRevealReplies ??= new Map()
-    replies.set(key, true)
+    if (!entry) return delivered => delivered
+    const key = messageId && `${accountId ?? ''}:${messageId}`
+    if (key) (entry.wechatRevealReplies ??= new Map()).set(key, true)
+    entry.wechatRevealsInFlight++
     return delivered => {
-      replies.set(key, delivered)
+      if (key) entry.wechatRevealReplies?.set(key, delivered)
+      if (--entry.wechatRevealsInFlight === 0) {
+        const check = entry.onWechatRevealsFinished
+        entry.onWechatRevealsFinished = undefined
+        check?.()
+      }
       return delivered
     }
+  }
+
+  hasAnyWechatDelivery(hash: string): boolean {
+    return (this.entries.get(hash)?.wechatDelivery?.size ?? 0) > 0
   }
 
   wechatReplyCard(hash: string): Pick<WechatPermissionCard, 'text' | 'complete' | 'historyText'> | undefined {
@@ -220,6 +257,7 @@ export class PendingPermissions {
 
   // 主动提醒的回码与引用绑定见 docs/maintainer/task-permissions.md#微信主动提醒。
   matchWorkbenchQuote(quoted: string): { kind: 'matched'; hash: string } | { kind: 'altered'; hash?: string } | { kind: 'stale' } | null {
+    if (hasLegacyWechatHeader(quoted)) return null
     const classification = classifyWorkbenchQuote(quoted)
     if (!classification) return null
     const { marker } = classification
@@ -244,6 +282,13 @@ export class PendingPermissions {
     if (workbench) return workbench.kind === 'matched' ? workbench.hash : null
     const q = quoted.trim()
     if (!q) return null
+    if (hasLegacyWechatHeader(q)) {
+      const header = q.split(/\r?\n/)[0]!.trim()
+      for (const [hash, entry] of this.entries) {
+        if (entry.legacyWechatCard?.header === header) return hash
+      }
+      return null
+    }
     // 只认卡片自己写的「y 07」/「y k3x9z」这种带书名号的形式:正文里的「run 12 tests」不能当成码 12。
     const request = /\[approval:([a-z0-9]{5})\]/i.exec(q)
     if (request) return this.legacyQuoteHash(request[1]!)
@@ -399,13 +444,17 @@ export function howToReplyLine(code: string | null, hash: string, timeoutMs: num
 
 /** Legacy tool, hook and self-change cards share the reply copy and wire size limit. */
 export function renderLegacyWechatCard(prompt: string, code: string | null, hash: string, timeoutMs: number, incomplete = false) {
+  const marker = createHash('sha256').update(JSON.stringify([hash, code])).digest('hex').slice(0, 16)
+  const header = `${legacyWechatHeader} · 〔请求 ${marker}〕`
   const replyLine = howToReplyLine(code, hash, timeoutMs)
   const revealLine = `看完回「y ${code || hash}」就批。`
-  const fits = prompt.length + replyLine.length + revealLine.length + 2 <= MAX_TEXT_CHUNK
+  const body = `${header}\n${prompt}`
+  const rejectLine = `${WECHAT_PERMISSION_INCOMPLETE}\n拒绝请回「n ${code || hash}」。`
+  const fits = body.length + Math.max(replyLine.length + revealLine.length + 2, rejectLine.length + 1) <= MAX_TEXT_CHUNK
   if (incomplete || !prompt.trim() || !fits) {
-    const text = `${fits && prompt.trim() ? prompt : '待批：权限请求'}\n${WECHAT_PERMISSION_INCOMPLETE}\n拒绝请回「n ${code || hash}」。`
-    return { text, revealText: text, complete: false }
+    const text = `${fits && prompt.trim() ? body : header}\n${rejectLine}`
+    return { header, text, revealText: text, complete: false }
   }
-  const text = `${prompt}\n${replyLine}`
-  return { text, revealText: `${text}\n${revealLine}`, complete: true }
+  const text = `${body}\n${replyLine}`
+  return { header, text, revealText: `${text}\n${revealLine}`, complete: true }
 }

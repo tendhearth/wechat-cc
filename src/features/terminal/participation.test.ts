@@ -254,7 +254,7 @@ it('短码歧义拒绝列候选；确认卡用真实目录和事名且绑定完�
   const {prepareChatApprovalPrompt}=await import('../../adapters/executors/chat-approval')
   const f=setup(),input={code:'abcdef',matter:f.target.id}
   const channel={resolveTerminalParticipation:(action:'attach'|'detach',b:unknown,owner:string)=>resolveTerminalParticipation(f.db,action,b,owner)}
-  const text=await prepareChatApprovalPrompt('Claude','mcp__wechat__terminal_attach',input,'req',channel,'owner')
+  const {prompt:text}=await prepareChatApprovalPrompt('Claude','mcp__wechat__terminal_attach',input,'req',channel,'owner')
   expect(text).toContain('/tmp/fixture');expect(text).toContain('target');expect(input).toEqual({sessionId:f.sid,matter:f.target.id})
   f.sessions.touch({session_id:'abcdef-second-session',source:'codex',cwd:'/tmp/second',machine:hostname()},Date.now())
   expect(()=>resolveTerminalParticipation(f.db,'attach',{code:'abcdef',matter:f.target.id},'owner')).toThrow('短码有歧义')

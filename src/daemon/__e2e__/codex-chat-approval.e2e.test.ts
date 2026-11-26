@@ -143,6 +143,37 @@ describe('e2e: Codex 对话逐条问(on-request → authorize → 规则 / 拍�
     })
   })
 
+  it('ordinary chat receives only a summary of a strict-mode approval quote', async () => {
+    const command = 'rm -rf offline-strict-quote-fixture'
+    const question = '引用对话审批，请解释一下。'
+    let modelPrompt: string | undefined
+    const daemon = await startTestDaemon({
+      dangerously: false,
+      access: { admins: ['chat1'] },
+      modes: { chat1: { kind: 'solo', provider: 'codex' } },
+      claudeScript: { async onDispatch() { return { toolCalls: [], finalText: '' } } },
+      codexScript: { async onDispatch(text) {
+        if (text.includes(question)) {
+          modelPrompt = text
+          return { toolCalls: [], finalText: '已读到提问。' }
+        }
+        return { toolCalls: [], finalText: '审批已结束。', codexSteps: [approval(command, () => {})] }
+      } },
+    })
+    try {
+      daemon.sendText('chat1', '请求离线操作')
+      const wire = await daemon.waitForOutbound(messages => texts(messages).some(isCard), 10_000)
+      const card = texts(wire).find(isCard)!
+      expect(card.includes(command)).toBe(true)
+      daemon.sendText('chat1', 'n', { quote: card })
+      await daemon.waitForOutbound(messages => texts(messages).includes('审批已结束。'), 10_000)
+      daemon.sendText('chat1', question, { quote: card })
+      await expect.poll(() => Boolean(modelPrompt), { timeout: 10_000 }).toBe(true)
+      expect(modelPrompt?.includes(command)).toBe(false)
+      expect(/<quote type="text">（引用了一张待批卡 · 〔请求 [a-f0-9]{16}〕）<\/quote>/.test(modelPrompt ?? '')).toBe(true)
+    } finally { await daemon.stop() }
+  })
+
   it('红线照旧问:有规则说放 git,推送还是弹卡问主人,不出「按规则」那一行', async () => {
     await withDaemon('git push origin main', '推上去了。', async (daemon, decision) => {
       daemon.sendText('chat1', '推一下')

@@ -394,15 +394,18 @@ export function makeIlinkAdapter(opts: {
       // approver is usually NOT the chat that triggered this turn — then no
       // reply can EVER come. Don't dead-wait the full 10-min timeout (which
       // races the turn's own no-activity kill → user gets nothing). Resolve
-      // 'undelivered' at once so the turn ends now with an honest reason.
+      // 'undelivered' once there are no more deliveries in flight so the turn can end.
       // 只记账,不拦:permission_ask 是 blocking,判定表里不会推后 / 丢(整合者定的口径,#536)。
       try { speechOf?.()?.ask({ kind: 'permission_ask', chatId }, { channel: 'wechat', deliverable: true }) } catch { log('PERMISSION', 'speech ledger failed') }
       const onUndelivered = () => {
         if (opts?.keepOnUndelivered) { log('PERMISSION', 'approval prompt undelivered; kept pending for another surface'); return }
-        if (card && pending.legacyWechatCardOf(hash) === card && !pending.hasAnyWechatDelivery(hash)) {
-          log('PERMISSION', 'approval prompt undelivered; settling request')
-          pending.fail(hash)
-        }
+        if (!card || pending.legacyWechatCardOf(hash) !== card) return
+        pending.afterWechatReveals(hash, () => {
+          if (pending.legacyWechatCardOf(hash) === card && !pending.hasAnyWechatDelivery(hash)) {
+            log('PERMISSION', 'approval prompt undelivered; settling request')
+            pending.fail(hash)
+          }
+        })
       }
       void adapter.sendMessage(chatId, card?.text ?? prompt).then(result => { if (result?.error) onUndelivered() }, onUndelivered)
       return resultPromise

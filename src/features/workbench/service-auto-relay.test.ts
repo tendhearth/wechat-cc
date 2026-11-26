@@ -92,7 +92,7 @@ it('fills the desktop default before showing the approval card and keeps the ori
  const shown=structuredClone(input),tool='mcp__wechat__matter_plan'
  expect(MatterPlanRequest.safeParse(input).success).toBe(true)
  expect(f.service.entryOptions({ownerKey:'owner',surface:'desktop'}).defaultProviderId).toBe('claude')
- const card=await prepareChatApprovalPrompt('Codex',tool,shown,'test',{
+ const {prompt:card}=await prepareChatApprovalPrompt('Codex',tool,shown,'test',{
    resolveMatterPlan:(args,chatId,provider)=>f.service.matterPlanPreview(args as typeof input,{chatId,provider}),
  },'owner')
  expect(card).toContain('确认交办：加个收藏')
@@ -678,9 +678,9 @@ function registrationSetup(executionConflict=()=>false){
  const route=ledgerRoutes({workbench:f.service,resolveAdminChatId:()=>'owner',planConversation:()=>context})['POST /v1/matter/plan']!
  const input={title:'加个收藏',project:'rici',legs:[{executor:'claude',brief:'添加收藏'}]}
  const call=(body:unknown=input)=>route(new URLSearchParams(),body,caller)
- const card=(body=input)=>prepareChatApprovalPrompt('OpenAI',tool,structuredClone(body),'test',{
+ const card=async(body=input)=>(await prepareChatApprovalPrompt('OpenAI',tool,structuredClone(body),'test',{
   resolveMatterPlan:args=>f.service.matterPlanPreview(MatterPlanRequest.parse(args),caller),
- },'owner')
+ },'owner')).prompt
  const approve=(body=input)=>f.service.noteMatterApproval(tool,body,caller)
  return {f,input,call,card,approve,addPlace,addProject}
 }

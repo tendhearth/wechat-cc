@@ -5,7 +5,7 @@ import { isReplyToolName } from '../../../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type UserTier } from '../../../domain/user-tier'
 import { authorize } from '../../../domain/authorize'
 import { authorizeChatToolUse, type ChatOwnerRules } from '../../permission-rules/chat'
-import { ChatApprovalTurn, newChatApprovalId, type ChatApprovalChannel, type ChatApprovalLifecycle, prepareChatApprovalPrompt, noteChatApproval } from '../chat-approval'
+import { ChatApprovalTurn, newChatApprovalId, type ChatApprovalChannel, type ChatApprovalLifecycle, prepareChatApprovalPrompt, noteChatApproval, type ChatApprovalPrompt } from '../chat-approval'
 
 export interface PermissionRelayDeps extends ChatApprovalChannel {
   /**
@@ -119,10 +119,10 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool & ChatAppr
       } satisfies PermissionResult
     }
     const hash = newChatApprovalId()
-    let prompt:string
-    try{prompt=await prepareChatApprovalPrompt('Claude',toolName,input,hash,deps,deps.initiatingChatId()??'',opts.title)}
+    let card: ChatApprovalPrompt
+    try{card=await prepareChatApprovalPrompt('Claude',toolName,input,hash,deps,deps.initiatingChatId()??'',opts.title)}
     catch(error){return {behavior:'deny',message:error instanceof Error?error.message:'没建成：解析项目失败，请重新选择项目。'}}
-    const answer = await approvalTurn.ask({ channel: deps, target, prompt, hash, timeoutMs: DEFAULT_TIMEOUT_MS, signal, tool: toolName, cwd: deps.cwd })
+    const answer = await approvalTurn.ask({ channel: deps, target, ...card, hash, timeoutMs: DEFAULT_TIMEOUT_MS, signal, tool: toolName, cwd: deps.cwd })
     if (answer === 'allow' && !signal.aborted) {noteChatApproval(deps,'Claude',toolName,input,deps.initiatingChatId()??'');return { behavior: 'allow',...((toolName==='mcp__wechat__matter_plan'&&deps.resolveMatterPlan||toolName==='mcp__wechat__terminal_attach'||toolName==='mcp__wechat__terminal_detach')?{updatedInput:input}:{}) } satisfies PermissionResult}
     deps.log('PERMISSION', `${answer}: tool=${toolName} hash=${hash}`)
     // 'undelivered' ≠ denied: the approver never saw the prompt (their push

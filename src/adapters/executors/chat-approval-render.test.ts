@@ -6,7 +6,7 @@ import { TIER_PROFILES } from '../../domain/user-tier'
 import {prepareChatApprovalPrompt} from './chat-approval'
 
 it.each(['Claude','OpenAI','Gemini','Codex'])('%s shows one executor on the shared card without promising relay',async provider=>{
-  const prompt=await prepareChatApprovalPrompt(provider,'mcp__wechat__matter_plan',{title:'整理插图',project:'relay-lab',legs:[{executor:'codex',brief:'整理插图文件'}]},'single',{
+  const { prompt }=await prepareChatApprovalPrompt(provider,'mcp__wechat__matter_plan',{title:'整理插图',project:'relay-lab',legs:[{executor:'codex',brief:'整理插图文件'}]},'single',{
     resolveMatterPlan:()=>({target:{kind:'project',projectId:'p-0123456789abcdef0123'},projectName:'relay-lab',projectPath:'/offline/project'}),
   },'owner')
   expect(prompt).toContain('第 1 棒 · codex：整理插图文件')
@@ -66,7 +66,7 @@ for(const provider of ['Claude','OpenAI','Gemini'])it(`${provider} resolves the 
 
 it('resolved approval still distinguishes isolated workspaces and their base branch',async()=>{
  const {prepareChatApprovalPrompt}=await import('./chat-approval')
- const prompt=await prepareChatApprovalPrompt('OpenAI','mcp__wechat__matter_plan',{title:'整理',legs:[{executor:'claude',brief:'先做'},{executor:'openai',brief:'后做'}]},'test',{
+ const { prompt }=await prepareChatApprovalPrompt('OpenAI','mcp__wechat__matter_plan',{title:'整理',legs:[{executor:'claude',brief:'先做'},{executor:'openai',brief:'后做'}]},'test',{
   resolveMatterPlan:()=>({target:{kind:'project',projectId:'p-0123456789abcdef0123',isolation:'worktree',base:'dev'},projectName:'relay-lab',projectPath:'/offline/project'}),
  },'owner')
  expect(prompt).toContain('独立工作区')

@@ -18,7 +18,7 @@ import { authorizeChatCall, authorizeChatToolUse, type ChatAuthorization, type C
 import { classifyToolUse } from '../../../domain/user-tier'
 import type { SpawnContext } from '../../../ports/agent-provider'
 import type { CodexChatApprovalRequest, CodexChatApprove } from './codex-app-server'
-import {chatApprovalDelivery,renderChatApprovalPrompt,prepareChatApprovalPrompt,noteChatApproval,type MatterPlanResolver} from '../chat-approval'
+import {chatApprovalDelivery,renderChatApprovalPrompt,prepareChatApprovalPrompt,noteChatApproval,type ChatApprovalPrompt,type MatterPlanResolver} from '../chat-approval'
 
 export interface CodexChatGateDeps {
   resolveMatterPlan?:MatterPlanResolver
@@ -58,11 +58,12 @@ function combine(all: ChatAuthorization[]): ChatAuthorization {
 }
 
 /** 拍板卡上那一段:命令 / 改文件 / 工具 + codex 给的说明(截断)。 */
-function promptOf(req: CodexChatApprovalRequest,hash:string): string {
-  if(req.tool==='mcp__wechat__matter_plan'||req.tool==='mcp__wechat__matter_share')return renderChatApprovalPrompt('Codex',req.tool,req.input,hash)
+function promptOf(req: CodexChatApprovalRequest, hash: string): ChatApprovalPrompt {
+  if (req.tool === 'mcp__wechat__matter_share') return renderChatApprovalPrompt('Codex', req.tool, req.input, hash)
   const what = req.tool === 'commandExecution' ? '执行命令' : req.tool === 'fileChange' ? '改文件' : `调用 ${req.tool}`
-  const body = req.description.length > PROMPT_MAX ? `${req.description.slice(0, PROMPT_MAX - 1)}…` : req.description
-  return `Codex 想${what}:\n${body}`
+  const incomplete = req.description.length > PROMPT_MAX
+  const body = incomplete ? `${req.description.slice(0, PROMPT_MAX - 1)}…` : req.description
+  return { prompt: `Codex 想${what}:\n${body}`, incomplete: incomplete || undefined }
 }
 
 export function makeCodexChatGate(deps: CodexChatGateDeps): (ctx: SpawnContext) => CodexChatApprove {
@@ -99,13 +100,20 @@ export function makeCodexChatGate(deps: CodexChatGateDeps): (ctx: SpawnContext) 
       if (!admin) { deps.log('PERMISSION', `relay-but-no-admin: provider=codex tool=${req.tool} kind=${kind} — denying`); return false }
       if (signal.aborted) return false
       const hash = shortHash(`${ctx.chatId}:codex:${req.tool}:${++seq}:${Date.now()}`)
-      let prompt:string
-      try{prompt=req.tool==='mcp__wechat__matter_plan'||req.tool==='mcp__wechat__terminal_attach'||req.tool==='mcp__wechat__terminal_detach'?await prepareChatApprovalPrompt('Codex',req.tool,req.tool==='mcp__wechat__matter_plan'?structuredClone(req.input):req.input,hash,deps,ctx.chatId):promptOf(req,hash)}catch(error){
-        if(req.tool==='mcp__wechat__matter_plan'&&error instanceof Error)req.onDenied?.(error.message)
-        return req.tool==='mcp__wechat__terminal_attach'||req.tool==='mcp__wechat__terminal_detach'
+      let card: ChatApprovalPrompt
+      const plan = req.tool === 'mcp__wechat__matter_plan'
+      const participation = req.tool === 'mcp__wechat__terminal_attach' || req.tool === 'mcp__wechat__terminal_detach'
+      try {
+        card = plan || participation
+          ? await prepareChatApprovalPrompt('Codex', req.tool, plan ? structuredClone(req.input) : req.input, hash, deps, ctx.chatId)
+          : promptOf(req, hash)
+      } catch (error) {
+        if (plan && error instanceof Error) req.onDenied?.(error.message)
+        return participation
       }
       const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
-      const opts = req.description.length > PROMPT_MAX ? { incomplete: true } : chatApprovalDelivery(prompt)
+      const { prompt } = card
+      const opts = chatApprovalDelivery(card)
       const answer = await (opts ? deps.askUser(admin, prompt, hash, timeoutMs, opts) : deps.askUser(admin, prompt, hash, timeoutMs))
       if (answer === 'allow'&&!signal.aborted) {noteChatApproval(deps,'Codex',req.tool,req.input,ctx.chatId);return true}
       deps.log('PERMISSION', `${answer}: provider=codex tool=${req.tool} hash=${hash}`)
