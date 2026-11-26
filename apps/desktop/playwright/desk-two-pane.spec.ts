@@ -1,4 +1,5 @@
 import { test, expect, clickNav } from './fixtures'
+import type { Page } from '@playwright/test'
 import { PRESENCE_OK, routePresenceTopic } from './presence-topic'
 import { askingPlace, placeItem, placeRow, rosterItem, routePlaces, routeRoster } from './roster-fixture'
 import type { PermissionDisplay } from '../../../packages/protocol/src/permission-display'
@@ -8,6 +9,21 @@ test.use({ viewport: { width: 1280, height: 820 } })
 const datePattern = /^[一二三四五六七八九十]+月[一二三四五六七八九十]+日 周[一二三四五六日]$/
 
 const weekAgo = () => Date.now() - 8 * 86_400_000
+
+async function holdFailedWake(page: Page) {
+  const { promise, resolve } = Promise.withResolvers<void>()
+  let starts = 0
+  await page.route('**/__invoke', async route => {
+    const { command, args } = route.request().postDataJSON()
+    if (command !== 'wechat_cli_json' || args?.args?.[0] !== 'service' || args.args[1] !== 'start') {
+      return route.fallback()
+    }
+    starts++
+    await promise
+    return route.fulfill({ json: { error: '模拟启动失败' } })
+  })
+  return { release: resolve, starts: () => starts }
+}
 
 test.beforeEach(async ({ page, shim }) => {
   await shim.invoke('demo.seed', { daemonAlive: true })
@@ -462,19 +478,108 @@ test('CC 停止时已有对话和决定仍可读，发送和决定等恢复', as
   await expect(page.locator('#converse-scroll [data-converse-message]').first()).toBeVisible()
   await expect(page.locator('#converse-scroll')).toHaveCSS('mask-image', /linear-gradient.*16px/)
   await expect(page.locator('#converse-send')).toBeDisabled()
-  const buttons = page.locator('.desk-waiting-card').getByRole('button')
+  const cards = page.locator('.desk-waiting-card')
+  const buttons = cards.getByRole('button').and(page.locator('button:not([data-wake-cc])'))
+  const wakeButtons = cards.getByRole('button', { name: '叫它起来' })
   await expect(buttons).toHaveCount(3)
+  await expect(wakeButtons).toHaveCount(2)
   for (const button of await buttons.all()) {
     await expect(button).toBeDisabled()
     await expect(button).toHaveAttribute('title', 'CC 没在运行')
   }
   await shim.invoke('demo.seed', { daemonAlive: true })
   await expect(note).toBeHidden({ timeout: 10_000 })
+  await expect(wakeButtons).toHaveCount(0)
   await expect(page.locator('#converse-send')).toBeEnabled()
   for (const button of await buttons.all()) {
     await expect(button).toBeEnabled()
     await expect(button).not.toHaveAttribute('title', 'CC 没在运行')
   }
+})
+
+test('一件事的等你定纸条可以就地叫 CC 起来，失败后可以重试', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { daemonAlive: false, presenceDown: true })
+  await routePlaces(page, [askingPlace('访谈', 'aaaa0001')])
+  const start = await holdFailedWake(page)
+  await page.goto(shimUrl)
+  await placeRow(page, '访谈').locator('.place-row').click()
+  await expect(page.locator('#thing-name')).toHaveText('访谈')
+  const card = page.locator('#thing-thread #desk-waiting .desk-waiting-card')
+  const note = card.locator('.desk-offline-note')
+  const wake = note.locator('button[data-wake-cc]')
+  const answer = card.getByRole('button', { name: '去回答' })
+  try {
+    await expect(answer).toBeDisabled()
+    await expect(note).toBeVisible()
+    await expect(note).toContainText('CC 没在运行，叫它起来以后才能回答。')
+    await expect(wake).toHaveText('叫它起来')
+    await wake.click()
+    await expect(wake).toHaveText('在叫…')
+    await expect(wake).toBeDisabled()
+    await expect.poll(start.starts).toBe(1)
+  } finally {
+    start.release()
+  }
+  await expect(note.getByRole('status')).toHaveText('没叫起来，再点一次试试。')
+  await expect(note.getByRole('status')).toBeVisible()
+  await expect(wake).toHaveText('叫它起来')
+  await expect(wake).toBeEnabled()
+  await wake.click()
+  await expect.poll(start.starts).toBe(2)
+  await expect(wake).toBeEnabled()
+
+  await shim.invoke('demo.seed', { daemonAlive: true })
+  await expect(note).toBeHidden({ timeout: 10_000 })
+  await expect(answer).toBeEnabled()
+})
+
+test('首页纸条叫 CC 失败时，提示留在点过的纸条上', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { daemonAlive: false, presenceDown: true })
+  await routePlaces(page, [askingPlace('访谈', 'aaaa0001'), askingPlace('归档', 'aaaa0002')])
+  const start = await holdFailedWake(page)
+  start.release()
+  await page.goto(shimUrl)
+  const cards = page.locator('#desk-waiting .desk-waiting-card')
+  const source = cards.filter({ hasText: '这件要你定 · 访谈' })
+  const other = cards.filter({ hasText: '这件要你定 · 归档' })
+  await expect(page.locator('#converse-offline-note')).toBeVisible()
+  await source.getByRole('button', { name: '叫它起来' }).click()
+  await expect(source.locator('[data-wake-cc-error]')).toBeVisible()
+  await expect(other.locator('[data-wake-cc-error]')).toBeHidden()
+  await expect(page.locator('#converse-wake-error')).toBeHidden()
+
+  await page.locator('#converse-offline-note').getByRole('button', { name: '叫它起来' }).click()
+  await expect(page.locator('#converse-wake-error')).toBeVisible()
+  await expect(source.locator('[data-wake-cc-error]')).toBeHidden()
+  await expect.poll(start.starts).toBe(2)
+})
+
+test('叫 CC 期间所有唤醒按钮一起等待，展开新纸条也一样', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { daemonAlive: false, presenceDown: true })
+  await routePlaces(page, [
+    askingPlace('访谈', 'aaaa0001'), askingPlace('归档', 'aaaa0002'), askingPlace('备份', 'aaaa0003'),
+  ])
+  const start = await holdFailedWake(page)
+  const buttons = page.locator('button[data-wake-cc]:visible')
+  const source = page.locator('#desk-waiting .desk-waiting-card').filter({ hasText: '这件要你定 · 访谈' })
+  try {
+    await page.goto(shimUrl)
+    await expect(buttons).toHaveCount(3)
+    await source.getByRole('button', { name: '叫它起来' }).click()
+    await expect.poll(start.starts).toBe(1)
+    await expect(buttons).toHaveText(['在叫…', '在叫…', '在叫…'])
+    for (const button of await buttons.all()) await expect(button).toBeDisabled()
+
+    await page.getByRole('button', { name: '还有 1 件等你定' }).click()
+    await expect(buttons).toHaveText(['在叫…', '在叫…', '在叫…', '在叫…'])
+    for (const button of await buttons.all()) await expect(button).toBeDisabled()
+  } finally {
+    start.release()
+  }
+  await expect(source.locator('[data-wake-cc-error]')).toBeVisible()
+  await expect(buttons).toHaveText(['叫它起来', '叫它起来', '叫它起来', '叫它起来'])
+  for (const button of await buttons.all()) await expect(button).toBeEnabled()
+  await expect.poll(start.starts).toBe(1)
 })
 
 test('宽窗次要页面共用纸底，内容栏留在纸内', async ({ page, shimUrl }) => {

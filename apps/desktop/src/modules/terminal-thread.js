@@ -3,7 +3,7 @@ import { executorName } from './executor-names.js'
 import { V1, v1 } from '../daemon-client.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { bindTerminalDraft } from './conversation-work-detail.js'
-import { deskSpeakerHtml } from './desk-page.js'
+import { deskSpeakerHtml, waitingOfflineNoteHtml } from './desk-page.js'
 import { paintConversation, rememberConversationPosition, showConversationLatest, syncConversationLatest } from './converse-reading.js'
 import { escapeWorkbenchHtml as esc, renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from './workbench-markdown.js'
 import { recapMemoHtml, sketchRecap } from './recap-memo.js'
@@ -80,6 +80,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
         <div class="desk-waiting-opinion" hidden></div><div class="desk-waiting-reason" hidden></div>
       </div>
       <div class="place-ask"><button type="button" data-place-decision="deny">先不做</button><button type="button" class="place-allow" data-place-decision="allow">允许这一步</button><span class="thing-waiting-note" hidden>这里看不全，请到终端里看全再定。</span></div>
+      ${waitingOfflineNoteHtml}
     </div></div></div>
     <div class="thing-compose-status"><span role="status"></span><button class="desk-text-button" type="button" hidden>停止这一轮</button></div>
     <p class="thing-ended-note" hidden>这次会话已经结束了，只能看。</p>
@@ -96,6 +97,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   const allow = /** @type {HTMLButtonElement} */ (find('[data-place-decision="allow"]'))
   const deny = find('[data-place-decision="deny"]')
   const fullNote = /** @type {HTMLElement} */ (find('.thing-waiting-note'))
+  const offlineNote = /** @type {HTMLElement} */ (find('[data-waiting-offline]'))
   const form = /** @type {HTMLFormElement} */ (find('form'))
   const input = /** @type {HTMLTextAreaElement} */ (find('textarea'))
   const send = /** @type {HTMLButtonElement} */ (find('[type=submit]'))
@@ -170,7 +172,9 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     setText(reason, questionReason ? `为什么来问你：${questionReason}` : '')
     onWaiting(request?.hash ?? (answered || null))
     const stopped = document.documentElement.hasAttribute('data-desk-cc-stopped')
+    offlineNote.hidden = !stopped
     for (const button of card.querySelectorAll('button')) {
+      if (button.hasAttribute('data-wake-cc')) continue
       button.disabled = deciding || stopped
       if (stopped) button.title = 'CC 没在运行'
       else button.removeAttribute('title')
