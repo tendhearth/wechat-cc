@@ -57,6 +57,7 @@ import { startAppUpdateChecks } from "./modules/app-update.js"
 import { reflectConversationAvailability, initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, addImages as addConverseImages, connectConversationPlaces, updateConversationPlaces } from "./modules/converse.js"
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { wireDeskDisclosure } from './modules/desk-disclosure.js'
+import { hideDeskWakeFailures, wireDeskWake } from './modules/desk-wake.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
 import { mountMemoryTopics } from './modules/conversation-topics.js'
@@ -2280,39 +2281,6 @@ function mountDeskLayout(strip) {
   }, { once: true })
 }
 
-function hideDeskWakeFailures() {
-  document.querySelectorAll('#converse-wake-error, [data-wake-cc-error]').forEach(error => error.setAttribute('hidden', ''))
-}
-
-function wireDeskWake() {
-  let waking = false
-  document.addEventListener('click', async event => {
-    const button = event.target instanceof Element ? event.target.closest('button[data-wake-cc]') : null
-    const root = document.documentElement
-    if (!(button instanceof HTMLButtonElement) || button.disabled || waking || !root.hasAttribute('data-desk-cc-stopped')) return
-    const label = button.textContent
-    waking = true
-    button.disabled = true
-    button.textContent = '在叫…'
-    hideDeskWakeFailures()
-    try {
-      await restartDaemon(deps)
-      if (lastDaemon?.alive) await presencePoller.refresh()
-    } catch { /* Keep the retry available when the connection check fails. */ } finally {
-      waking = false
-      button.disabled = false
-      button.textContent = label
-      if (root.hasAttribute('data-desk-cc-stopped')) {
-        const conversationFailure = document.getElementById('converse-wake-error')
-        const failure = conversationFailure && !conversationFailure.parentElement?.closest('[hidden], [inert]')
-          ? conversationFailure
-          : button.closest('[data-waiting-offline]')?.querySelector('[data-wake-cc-error]')
-        failure?.removeAttribute('hidden')
-      }
-    }
-  })
-}
-
 async function boot() {
   trackTopbarBottom()
   showDevBannerIfShim()
@@ -2321,7 +2289,10 @@ async function boot() {
   wireEvents()
   startWorkbenchAttention()
   initConversePage(deps, { focus: false })
-  wireDeskWake()
+  wireDeskWake(async () => {
+    await restartDaemon(deps)
+    if (lastDaemon?.alive) await presencePoller.refresh()
+  })
   const conversationRoot=document.getElementById('converse-root')
   if(conversationRoot){
     const search = () => openDeskSearch?.()
