@@ -267,7 +267,9 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   letter-spacing: .02em;
 }
 [data-desk-wide] .desk-message-date { padding-block: 8px; }
-[data-desk-wide] :is(.desk-text-button, #converse-earlier, #converse-later) {
+/* :where() keeps the two ids from lifting this base rule to id specificity; otherwise every
+   per-context override (the wake link, the empty place's one action) silently loses to it. */
+[data-desk-wide] :is(.desk-text-button, :where(#converse-earlier, #converse-later)) {
   border: 0;
   padding: 0;
   background: transparent;
@@ -276,7 +278,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   font-size: 12.5px;
   cursor: pointer;
 }
-[data-desk-wide] :is(.desk-text-button, #converse-earlier, #converse-later):hover { color: var(--th-ink); text-decoration: underline; }
+[data-desk-wide] :is(.desk-text-button, :where(#converse-earlier, #converse-later)):hover { color: var(--th-ink); text-decoration: underline; }
 [data-desk-wide] .converse-page-actions { display: contents; }
 [data-desk-wide] .converse-page-actions > button:not([hidden]) { min-height: 28px; }
 [data-desk-wide] :is(#converse-earlier, #converse-later) { align-self: center; }
