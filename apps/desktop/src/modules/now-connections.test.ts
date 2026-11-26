@@ -18,6 +18,11 @@ describe('connectionsView(与手机 /connections 同一套规则)', () => {
     ])
     expect(v.headline).toEqual({ dot: 'bad', text: '1 项没加载' })
   })
+  it('插件有给人看的名字就用它,没有才用目录名', () => {
+    const v = connectionsView(snap([{ ...src('plugin:wxsearch', 'ready'), name: 'wxsearch', label: '微信语义搜索' }, { ...src('plugin:plain', 'ready'), name: 'plain' }]))
+    expect(v.sources.map(x => x.name)).toEqual(['微信语义搜索', 'plain'])
+  })
+
   it('全绿才说都连着;有不知道 ⇒ 灰,绝不默认绿;没有来源也是灰', () => {
     expect(connectionsView(snap([src('a', 'ready')])).headline).toEqual({ dot: 'ok', text: '都连着' })
     expect(connectionsView(snap([src('a', 'ready'), src('b', 'unknown')])).headline).toEqual({ dot: 'unknown', text: '暂时不知道连接情况' })

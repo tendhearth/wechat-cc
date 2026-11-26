@@ -67,7 +67,52 @@ describe('approvalView', () => {
   })
   it('同一件事两条、没指定 ⇒ 让用户选', () => {
     const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'command=ls', createdAt: 2 }] }
-    expect(approvalView(d, {})).toEqual({ kind: 'choose', items: [{ requestId: 'p1', kind: 'permission', summary: 'Bash: command=printf sample' }, { requestId: 'p2', kind: 'permission', summary: 'Bash: command=ls' }] })
+    expect(approvalView(d, {})).toEqual({ kind: 'choose', items: [
+      { requestId: 'p1', kind: 'permission', summary: 'Bash: command=printf sample', accessibilityLabel: '需要你允许: Bash: command=printf sample' },
+      { requestId: 'p2', kind: 'permission', summary: 'Bash: command=ls', accessibilityLabel: '需要你允许: Bash: command=ls' },
+    ] })
+  })
+  it.each([
+    ['zh-Hans', '想看一个文件：', '需要你允许'],
+    ['en', 'Wants to read a file: ', 'Needs your OK'],
+  ] as const)('在选择列表的文字和无障碍标签中区分两条读文件请求 (%s)', (lang, action, label) => {
+    const paths = ['docs/setup.md', 'docs/release.md']
+    const permissions = paths.map((path, i) => MatterPermission.parse({
+      ...base.permissions[0], id: `p${i + 1}`, tool: 'ReadFile', description: `ReadFile ${path}`,
+      display: { body: { kind: 'fields', fields: [{ name: 'path', value: path }] } },
+    }))
+    const view = approvalView({ ...base, permissions }, {}, undefined, lang)
+    if (view.kind !== 'choose') throw Error('expected approval chooser')
+    expect(view.items.map(item => item.summary)).toEqual(paths.map(path => action + path))
+    expect(view.items.map(item => item.accessibilityLabel)).toEqual(paths.map(path => `${label}: ${action}${path}`))
+    const longPermissions = permissions.map((p, i) => ({
+      ...p, display: { body: { kind: 'fields' as const, fields: [{ name: 'path', value: `${'folder/'.repeat(16)}${paths[i]}` }] } },
+    }))
+    const longView = approvalView({ ...base, permissions: longPermissions }, {}, undefined, lang)
+    if (longView.kind !== 'choose') throw Error('expected approval chooser')
+    expect(longView.items.map((item, i) => item.summary.length === 80 && item.summary.endsWith(paths[i]!))).toEqual([true, true])
+    const collisionPaths = paths.map(path => `${'folder/'.repeat(16)}${path}/${'folder/'.repeat(16)}same.md`)
+    const collisionPermissions = permissions.map((p, i) => ({
+      ...p, display: { body: { kind: 'fields' as const, fields: [{ name: 'path', value: collisionPaths[i]! }] } },
+    }))
+    const collisionView = approvalView({ ...base, permissions: collisionPermissions }, {}, undefined, lang)
+    if (collisionView.kind !== 'choose') throw Error('expected approval chooser')
+    expect(collisionView.items.map(item => item.summary)).toEqual(collisionPaths.map(path => action + path))
+    expect(collisionView.items.map(item => item.accessibilityLabel)).toEqual(collisionPaths.map(path => `${label}: ${action}${path}`))
+  })
+  it('在选择列表和读屏标签中区分字面反斜杠、换行和控制字符', () => {
+    const path = `${'folder/'.repeat(16)}notes`
+    const tail = `${'folder/'.repeat(16)}same.md`
+    const paths = [`${path}\\n\\x00/${tail}`, `${path}\n\x00/${tail}`]
+    const permissions = paths.map((value, i) => MatterPermission.parse({
+      ...base.permissions[0], id: `p${i + 1}`, tool: 'ReadFile', description: 'ReadFile',
+      display: { body: { kind: 'fields', fields: [{ name: 'path', value }] } },
+    }))
+    const view = approvalView({ ...base, permissions }, {})
+    if (view.kind !== 'choose') throw Error('expected approval chooser')
+    const summaries = [`想看一个文件：${path}\\\\n\\\\x00/${tail}`, `想看一个文件：${path}\\n\\x00/${tail}`]
+    expect(view.items.map(item => item.summary)).toEqual(summaries)
+    expect(view.items.map(item => item.accessibilityLabel)).toEqual(summaries.map(summary => `需要你允许: ${summary}`))
   })
   it('多条但指定了 ⇒ 那一条', () => {
     const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'command=ls', createdAt: 2 }] }
@@ -233,6 +278,7 @@ describe('approval headings and paths', () => {
     ['mcp__a__b', 'mcp__a__b\n{"key":"x"}', 'Claude 想用「mcp__a__b」', '可以用这个工具吗？', 'Claude wants to use “mcp__a__b”', 'May I use this tool?'],
     ['mcp__team__prod__lookup__all', '', 'Claude 想用 team__prod 的「lookup__all」', '可以用这个工具吗？', 'Claude wants to use team__prod’s “lookup__all”', 'May I use this tool?',
       { body: { kind: 'fields', fields: [{ name: 'key', value: 'x' }] } }, { server: 'team__prod', tool: 'lookup__all' }],
+    ['Read', '读备份目录？', 'Claude 想看一个文件', '可以用这个工具吗？', 'Claude wants to read a file', 'May I use this tool?'],
     ['Other', 'unknown input', 'Claude 想用「Other」', '可以用这个工具吗？', 'Claude wants to use “Other”', 'May I use this tool?'],
   ]
   it.each(cases)('localizes %s using the current executor', (tool, description, zhAction, zhTitle, enAction, enTitle, display, mcp) => {
@@ -243,6 +289,8 @@ describe('approval headings and paths', () => {
     if (v.kind !== 'card') throw Error('expected card')
     expect(approvalHeading(v, 'zh-Hans')).toEqual({ action: zhAction, title: zhTitle })
     expect(approvalHeading(v, 'en')).toEqual({ action: enAction, title: enTitle })
+    expect(v.tool).toBe(tool)
+    expect(v.rawFull).toBe(description)
   })
   it.each([
     ['codex', 'commandExecution', 'printf sample\nWorking directory: /forged\nprintf next'],

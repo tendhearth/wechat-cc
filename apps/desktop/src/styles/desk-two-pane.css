@@ -267,7 +267,9 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   letter-spacing: .02em;
 }
 [data-desk-wide] .desk-message-date { padding-block: 8px; }
-[data-desk-wide] :is(.desk-text-button, #converse-earlier, #converse-later) {
+/* :where() keeps the two ids from lifting this base rule to id specificity; otherwise every
+   per-context override (the wake link, the empty place's one action) silently loses to it. */
+[data-desk-wide] :is(.desk-text-button, :where(#converse-earlier, #converse-later)) {
   border: 0;
   padding: 0;
   background: transparent;
@@ -276,7 +278,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   font-size: 12.5px;
   cursor: pointer;
 }
-[data-desk-wide] :is(.desk-text-button, #converse-earlier, #converse-later):hover { color: var(--th-ink); text-decoration: underline; }
+[data-desk-wide] :is(.desk-text-button, :where(#converse-earlier, #converse-later)):hover { color: var(--th-ink); text-decoration: underline; }
 [data-desk-wide] .converse-page-actions { display: contents; }
 [data-desk-wide] .converse-page-actions > button:not([hidden]) { min-height: 28px; }
 [data-desk-wide] :is(#converse-earlier, #converse-later) { align-self: center; }
@@ -358,17 +360,18 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   gap: 18px;
   font-family: var(--th-font-desk-ui);
 }
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) > :first-child,
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) > [data-converse-lead][hidden] + * { margin-top: auto; } /* 内容不满一屏时沉到底;「更早的对话」藏着时由它后面那个来撑 */
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) > * { flex-shrink: 0; }
+[data-desk-wide] :is(:where(#converse-scroll), .thing-scroll) > :first-child,
+[data-desk-wide] :is(:where(#converse-scroll), .thing-scroll) > [data-converse-lead][hidden] + * { margin-top: auto; } /* 内容不满一屏时沉到底;「更早的对话」藏着时由它后面那个来撑 */
+[data-desk-wide] :is(:where(#converse-scroll), .thing-scroll) > * { flex-shrink: 0; }
 [data-desk-wide] .converse-msg { align-items: flex-start; gap: 0; }
 [data-desk-wide] .converse-reply-parts { gap: 14px; }
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(details.converse-terminal, a.converse-matter) {
+[data-desk-wide] :is(:where(#converse-scroll), .thing-scroll) :is(details.converse-terminal, a.converse-matter) {
   font: 400 15px/1.6 var(--th-font-desk-ui);
   color: var(--th-ink);
   border-color: var(--th-desk-edge);
 }
-[data-desk-wide] :is(.converse-latest, .converse-earlier, #converse-earlier, #converse-later, #converse-stop) {
+[data-desk-wide] :is(#converse-earlier, #converse-later, #converse-stop),
+[data-desk-wide] :is(.converse-latest, .converse-earlier, :where(#converse-earlier, #converse-later, #converse-stop)) {
   font: 400 12.5px/1.6 var(--th-font-desk-ui);
   color: var(--th-ink-soft);
 }
@@ -428,16 +431,16 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   font: inherit;
 }
 [data-desk-wide] .converse-process-lines > li { margin: 0; }
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(.converse-bubble, .converse-cc-body) { max-width: 100%; }
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) .converse-bubble {
+[data-desk-wide] :is(:where(#converse-scroll), .thing-scroll) :is(.converse-bubble, .converse-cc-body) { max-width: 100%; }
+[data-desk-wide] :is(:where(#converse-scroll), .thing-scroll) .converse-bubble {
   padding: 0;
   background: transparent;
   color: var(--th-ink);
   font: 400 15px/1.75 var(--th-font-desk-ui);
   overflow-wrap: anywhere;
 }
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) :is(.converse-msg-user > .converse-cc-body, .converse-msg-user > .converse-user-body, .converse-msg-user > .converse-bubble) { max-width: 78%; }
-[data-desk-wide] :is(#converse-scroll, .thing-scroll) .converse-msg-user .converse-bubble {
+[data-desk-wide] :is(:where(#converse-scroll), .thing-scroll) :is(.converse-msg-user > .converse-cc-body, .converse-msg-user > .converse-user-body, .converse-msg-user > .converse-bubble) { max-width: 78%; }
+[data-desk-wide] :is(:where(#converse-scroll), .thing-scroll) .converse-msg-user .converse-bubble {
   padding: 9px 15px;
   border-radius: 18px 18px 6px 18px;
   background: var(--th-message-user-background);
@@ -477,7 +480,8 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] #converse-scroll .has-reply-avatar .voice-replay-btn { align-self: end; }
 [data-desk-wide] .converse-msg > .voice-replay-btn { align-self: flex-end; margin-left: 6px; }
 
-[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose {
+[data-desk-wide] #converse-root .converse-compose,
+[data-desk-wide] :is(:where(#converse-root), .thing-terminal) .converse-compose {
   position: relative;
   width: var(--desk-thread-width);
   gap: 8px 2px;
@@ -490,7 +494,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   font-family: var(--th-font-desk-ui);
 }
 [data-desk-wide] .converse-compose .converse-draft { display: contents; }
-[data-desk-wide] :is(#converse-root, .thing-terminal) .converse-compose textarea {
+[data-desk-wide] :is(:where(#converse-root), .thing-terminal) .converse-compose textarea {
   order: 0;
   flex: 0 0 100%;
   min-height: 24px;
@@ -553,7 +557,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   cursor: pointer;
 }
 [data-desk-wide] #converse-root .converse-toolbar #converse-send:disabled,
-[data-desk-wide] #converse-root .converse-compose:not([data-has-text], :has(#converse-images:not([hidden]))) #converse-send,
+[data-desk-wide] #converse-root .converse-compose:not([data-has-text], :has(:where(#converse-images):not([hidden]))) #converse-send,
 [data-desk-wide] .thing-compose button[type="submit"]:disabled {
   background: var(--th-rail);
   color: var(--th-desk-faint);
@@ -575,7 +579,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
 [data-desk-wide] .dashboard #roster-aside[data-open]:not([data-docked]) #roster-list { display: block; }
 [data-desk-wide] .dashboard .dash-main > .workbench-pane { width: min(720px, calc(100% - var(--desk-rail-space) - 32px)); }
 [data-desk-wide] #settings-drawer { font-family: var(--th-font-serif); }
-[data-desk-wide] body:has(#settings-drawer.is-open) :is(#settings-open, .topbar-more summary) { color: var(--th-ink); }
+[data-desk-wide] body:has(#settings-drawer.is-open) :is(:where(#settings-open), .topbar-more summary) { color: var(--th-ink); }
 
 :is([data-desk-collapsed], [data-desk-overlay]) .dashboard .dash-window {
   --desk-rail-space: 0px;
@@ -1116,6 +1120,14 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   color: var(--th-ink-soft);
   font: 400 13px/1.5 var(--th-font-desk-ui);
 }
+[data-desk-wide] .desk-waiting-card .desk-offline-note {
+  margin: 0;
+  padding-inline: 0;
+  text-align: start;
+}
+[data-desk-wide] .thing-waiting .desk-waiting-card .desk-offline-note {
+  padding: 0 18px 12px;
+}
 [data-desk-wide][data-desk-cc-stopped] :is(.desk-waiting-card, .thing-terminal, .thing-detail) button[title="CC 没在运行"]:disabled {
   opacity: .55;
   cursor: default;
@@ -1177,7 +1189,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   width: auto;
   margin: 0;
 }
-[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > :is(.topbar, #dialogue-tools) {
+[data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="plugins"], [data-pane="logs"]) > :is(.topbar, :where(#dialogue-tools)) {
   grid-area: 2 / 2;
   align-self: center;
   position: static;
@@ -1245,7 +1257,7 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   [data-desk-wide] .dashboard .dash-main > [data-pane="logs"] {
     grid-template-rows: auto auto auto minmax(0, 1fr);
   }
-  [data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="logs"]) > :is(.topbar, #dialogue-tools) {
+  [data-desk-wide] .dash-main > :is([data-pane="sessions"], [data-pane="logs"]) > :is(.topbar, :where(#dialogue-tools)) {
     grid-area: 3 / 1;
     flex-wrap: wrap;
     justify-content: flex-start;
@@ -1334,12 +1346,12 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   color: var(--th-desk-faint);
   font: 400 12px/1.55 var(--th-font-desk-ui);
 }
-[data-desk-wide] #settings-drawer :is(.toggle-row .lab, .user-name, .provider-chip, .project-admin-alias, .moment-users h2, .b3-disclosure, #hero-headline) {
+[data-desk-wide] #settings-drawer :is(.toggle-row .lab, .user-name, .provider-chip, .project-admin-alias, .moment-users h2, .b3-disclosure, :where(#hero-headline)) {
   color: var(--th-ink);
   font: 400 14px/1.55 var(--th-font-desk-ui);
 }
 [data-desk-wide] #settings-drawer :is(.sub, .user-sub, .role-pill, .drawer-section-help, .license-status, .setting-feedback,
-  .connection-options, .connection-history, .sub-user-empty-copy, .moment-subhead .meta, .settings-confirm p, .connection-history p, #hero-meta) {
+  .connection-options, .connection-history, .sub-user-empty-copy, .moment-subhead .meta, .settings-confirm p, .connection-history p, :where(#hero-meta)) {
   color: var(--th-ink-soft);
   font: 400 12.5px/1.55 var(--th-font-desk-ui);
 }

@@ -21,7 +21,7 @@ async function withRecords(run: (dir: string, path: string) => Promise<void>) {
   finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
-function fixture(dir: string, combination = () => defaults) {
+function fixture(dir: string, combination = () => defaults, confirmationVersion?: () => Promise<string | undefined>) {
   let events: AgentEvent[] = [
     { kind: 'text', text: 'normal reply' },
     { kind: 'result', sessionId: 'sid', numTurns: 1, durationMs: 2 },
@@ -30,7 +30,7 @@ function fixture(dir: string, combination = () => defaults) {
   const dispatch = vi.fn(async function* () { yield* events })
   const inner: AgentProvider = {
     callTarget: () => ({ provider: 'claude', model, baseUrl }),
-    spawn: async (_project, context) => ({ callTarget: () => ({ provider: 'claude', model: context.model ?? model, baseUrl }), dispatch, close: async () => {} }),
+    spawn: async (_project, context) => ({ callTarget: () => ({ provider: 'claude', model: context.model ?? model, baseUrl }), confirmationVersion, dispatch, close: async () => {} }),
     cheapEval: async input => input,
   }
   const history = openFirstUseProbeRecords(dir, () => { throw new Error('unable to write test fixture') })('claude')
@@ -59,7 +59,103 @@ describe('withTurnConfirmation', () => {
     await collectTurn(session.dispatch('follow up'))
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [record] })
     expect(f.provider.probeStatus()).toEqual({ state: 'ok', source: 'turn', at: 3_000 })
-    expect(fixture(dir).provider.probeStatus()).toEqual({ state: 'ok', source: 'history', at: 2_000 })
+    const restarted = fixture(dir)
+    expect(restarted.provider.probeStatus()).toEqual({ state: 'ok', source: 'history', at: 2_000 })
+    restarted.setNow(4_000)
+    const resumed = await restarted.provider.spawn(project, ctx)
+    await collectTurn(resumed.dispatch('first reply after restart'))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ claude: [{ ...record, at: 4_000 }] })
+  }))
+
+  it.each(['a reply', 'an error event', 'a thrown error'] as const)('finishes %s under the turn watchdog with version lookup still pending', outcome => withRecords(async dir => {
+    const { promise, resolve } = Promise.withResolvers<string>()
+    const f = fixture(dir, undefined, () => promise)
+    const session = await f.provider.spawn(project, ctx)
+    try {
+      if (outcome === 'an error event') f.setEvents([{ kind: 'error', message: 'API Error: 503' }])
+      if (outcome === 'a thrown error') f.dispatch.mockImplementationOnce(async function* () { throw new Error('API Error: 503') })
+      const turn = await collectTurn(session.dispatch('test turn'), { timeoutMs: 100 })
+      if (outcome === 'a reply') {
+        expect(turn.assistantText).toEqual(['normal reply'])
+        expect(turn.result?.sessionId).toBe('sid')
+        expect(turn.error).toBeUndefined()
+      } else {
+        expect(turn.errorCode).toBe('server_error')
+      }
+      expect(f.history.read(defaults)).toBeUndefined()
+      expect(f.provider.probeStatus().state).toBe('awaiting_turn')
+      resolve(defaults.cliVersion)
+      if (outcome === 'a reply') {
+        await expect.poll(() => f.history.read(defaults)).toMatchObject({ confirmedByTurn: true, at: 2_000 })
+      } else {
+        await expect.poll(() => f.provider.probeStatus()).toMatchObject({ state: 'failed', code: 'server_error' })
+      }
+    } finally { resolve(defaults.cliVersion); await session.close() }
+  }))
+
+  it.each([
+    { message: 'protocol mismatch', code: 'incompatible', keepsHistory: false },
+    { message: 'API Error: 503', code: 'server_error', keepsHistory: true },
+  ])('keeps a newer $code status when a prior confirmation arrives late', ({ message, code, keepsHistory }) => withRecords(async dir => {
+    const { promise, resolve } = Promise.withResolvers<string>()
+    const version = vi.fn(() => Promise.resolve(defaults.cliVersion)).mockReturnValueOnce(promise)
+    const f = fixture(dir, undefined, version)
+    const session = await f.provider.spawn(project, ctx)
+    expect((await collectTurn(session.dispatch('completed with pending lookup'), { timeoutMs: 100 })).error).toBeUndefined()
+    f.setEvents([{ kind: 'error', message }])
+    expect((await collectTurn(session.dispatch('newer failure'))).errorCode).toBe(code)
+    resolve(defaults.cliVersion)
+    await new Promise<void>(done => setImmediate(done))
+    expect(f.provider.probeStatus()).toMatchObject({ state: 'failed', code })
+    if (keepsHistory) expect(f.history.read(defaults)).toMatchObject({ confirmedByTurn: true, at: 2_000 })
+    else expect(f.history.read(defaults)).toBeUndefined()
+    await session.close()
+  }))
+
+  it('delivers the reply when the version query rejects', () => withRecords(async dir => {
+    const f = fixture(dir, undefined, async () => { throw new Error('version lookup failed') })
+    const session = await f.provider.spawn(project, ctx)
+    const turn = await collectTurn(session.dispatch('test turn'), { timeoutMs: 100 })
+    expect(turn.assistantText).toEqual(['normal reply'])
+    expect(turn.error).toBeUndefined()
+    expect(f.history.read(defaults)).toBeUndefined()
+    await session.close()
+  }))
+
+  it('rejects startup with the provider error while version lookup is still pending', () => withRecords(async dir => {
+    const { promise, resolve } = Promise.withResolvers<string>()
+    const inner: AgentProvider = {
+      async spawn(_project, context) {
+        context.reportStartupTarget?.({ provider: 'claude', model, baseUrl }, promise)
+        throw new Error('API Error: 503')
+      },
+    }
+    const history = openFirstUseProbeRecords(dir, () => { throw new Error('unable to write test fixture') })('claude')
+    const provider = withTurnConfirmation(inner, { provider: 'claude', combination: () => defaults, history })
+    let failure: unknown
+    const startup = provider.spawn(project, ctx).catch(error => { failure = error })
+    try {
+      await expect.poll(() => failure, { timeout: 200 }).toMatchObject({ providerErrorCode: 'server_error' })
+      expect(provider.probeStatus().state).toBe('awaiting_turn')
+    } finally { resolve(defaults.cliVersion); await startup }
+    await expect.poll(() => provider.probeStatus()).toMatchObject({ state: 'failed', code: 'server_error' })
+  }))
+
+  it('keeps an in-flight result on its session model and endpoint when the defaults change', () => withRecords(async (dir, path) => {
+    let configured = defaults
+    const f = fixture(dir, () => configured)
+    const session = await f.provider.spawn(project, ctx)
+    const events = session.dispatch('first turn')[Symbol.asyncIterator]()
+    expect(await events.next()).toMatchObject({ value: { kind: 'text' } })
+    configured = { ...defaults, model: 'new-default' }
+    expect(await events.next()).toMatchObject({ value: { kind: 'result' } })
+    expect(await events.next()).toMatchObject({ done: true })
+    expect(f.provider.probeStatus()).toEqual({ state: 'awaiting_turn' })
+    expect(JSON.parse(readFileSync(path, 'utf8')).claude).toEqual([{ ...defaults, at: 2_000, confirmedByTurn: true }])
+    configured = { ...defaults, endpoint: 'native' }
+    expect(f.provider.probeStatus()).toEqual({ state: 'awaiting_turn' })
+    configured = defaults
+    expect(f.provider.probeStatus()).toEqual({ state: 'ok', source: 'turn', at: 2_000 })
   }))
 
   it.each([
@@ -93,6 +189,7 @@ describe('withTurnConfirmation', () => {
     expect((await collectTurn(pinned.dispatch('failed turn'))).errorCode).toBe('incompatible')
     expect(f.history.read({ ...defaults, model: 'pinned' })).toBeUndefined()
     expect(f.history.read(defaults)).toBeDefined()
+    expect(f.provider.probeStatus()).toEqual({ state: 'ok', source: 'turn', at: 2_000 })
     f.setEvents([{ kind: 'result', sessionId: 'sid', numTurns: 1, durationMs: 2, finalText: 'I saw a protocol mismatch in the log.' }])
     expect((await collectTurn(pinned.dispatch('next turn'))).error).toBeUndefined()
     expect(f.history.read({ ...defaults, model: 'pinned' })).toBeDefined()

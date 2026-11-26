@@ -1,7 +1,9 @@
 // @ts-check
 /// <reference lib="dom" />
-// Pure view-model functions. No DOM, no IPC, no globals — easy to unit-test
-// from Bun (see view.test.ts) without spinning up a browser.
+// View-model helpers. The status and recovery copy can be tested without a
+// browser or IPC (see view.test.ts).
+
+import { executorName } from "./modules/executor-names.js"
 
 // `wechat-cc doctor --json` 的输出(形状见 src/cli/schema 的 DoctorOutputT)。这里故意放宽成 any:
 // 这些纯函数会按 provider 名动态取 `checks[id]`,测试与老 daemon 也只给部分字段。
@@ -47,8 +49,8 @@ export function doctorRows(report) {
   }
   rows.push(["微信账号", { ...accounts, path: `${accounts.count} 个账号` }])
   rows.push(["Allowlist", { ...access, path: `${access.allowFromCount} 个用户` }])
-  rows.push(["Provider", { ...provider, path: provider.provider }])
-  rows.push(["Daemon", { ok: daemon.alive, path: daemon.alive ? `pid ${daemon.pid}` : "stopped" }])
+  rows.push(["AI 服务", { ...provider, path: provider.provider ? executorName(provider.provider) : provider.provider }])
+  rows.push(["CC", { ok: daemon.alive, path: daemon.alive ? `pid ${daemon.pid}` : "没在运行" }])
   return rows
 }
 
@@ -208,13 +210,13 @@ export function afterScanTarget(report) {
 export function restartButtonState(daemon, service) {
   const installed = !!(service && service.installed)
   if (installed) {
-    return { action: "restart", label: "重启 daemon", helper: null }
+    return { action: "restart", label: "重启 CC", helper: null }
   }
   if (daemon && daemon.alive) {
     return {
       action: "install",
       label: "去安装服务",
-      helper: `daemon 在前台跑着 (pid ${daemon.pid})，需要先安装为 service 才能在 GUI 里管它`,
+      helper: `CC 正在前台运行（pid ${daemon.pid}）。装好后台服务后，就能在这里启动或停止 CC。`,
     }
   }
   return { action: "install", label: "去设置向导", helper: "尚未安装为后台服务；点这里走完设置向导。" }
@@ -283,9 +285,9 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
   if (lastError != null && healthOk === true) {
     return {
       code: 7,
-      title: "Dashboard 自己卡了",
-      hint: "本地轮询出错，但 /v1/health 正常 — daemon 没问题，重启 Dashboard 可修复。",
-      primary: { label: "重启 Dashboard", action: { kind: 'restart-dashboard' } },
+      title: "页面没能更新",
+      hint: "CC 还在运行。重新打开 Tendhearth CC，再看看页面有没有更新。",
+      primary: { label: "重新打开 Tendhearth CC", action: { kind: 'restart-dashboard' } },
     }
   }
 
@@ -295,7 +297,7 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
     return {
       code: 3,
       title: "后台服务没安装",
-      hint: "尚未安装为后台服务，daemon 无法随系统启动。",
+      hint: "装好后台服务后，CC 才能随系统启动。",
       primary: { label: "去向导安装服务", action: { kind: 'route-to-wizard', step: 'service' } },
     }
   }
@@ -306,7 +308,7 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
       return {
         code: 1,
         title: "后台服务挂了",
-        hint: "Daemon 进程残留 pid 文件但已死，可能是 OOM 或 panic。",
+        hint: "CC 意外退出了。日志里可能有线索，例如内存不足、程序崩溃或留下的 pid 文件。",
         primary: { label: "一键重启后台", action: { kind: 'run-restart-sequence' } },
         secondary: { label: "查看日志", action: { kind: 'open-logs' } },
       }
@@ -329,15 +331,16 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
   // severity source per the plan spec.
   if (providerCheck?.severity === 'hard') {
     const fix = providerCheck.fix ?? {}
+    const name = executorName(providerName)
     return {
       code: 4,
       title: "AI 工具缺失",
-      hint: `选定的 provider "${providerName}" 不可用，daemon 启动但每次回复都会失败。`,
+      hint: `${name === providerName ? "选中的这家 AI 服务" : name} 现在用不了。CC 已启动，但暂时无法回复。`,
       primary: {
         label: "查看修复方法",
         action: { kind: 'show-fix', ...(fix.command ? { command: fix.command } : {}), ...(fix.link ? { link: fix.link } : {}) },
       },
-      secondary: { label: "切换 provider", action: { kind: 'route-to-settings', section: 'provider' } },
+      secondary: { label: "换一家 AI 服务", action: { kind: 'route-to-settings', section: 'provider' } },
     }
   }
 
@@ -388,8 +391,8 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
   // ── 0: all green ───────────────────────────────────────────────────────
   return {
     code: 0,
-    title: "没事，只是 dashboard 没刷新",
-    hint: "Daemon 运行正常，无需操作。",
+    title: "页面还没刷新",
+    hint: "CC 运行正常，无需操作。",
     primary: { label: "好的", action: { kind: 'auto-dismiss' } },
   }
 }
@@ -422,7 +425,7 @@ export function dashboardHero({ daemonAlive, accountCount, expiredCount = 0, las
 /** @param {string} name @param {ServiceLike | null | undefined} service */
 export function deleteAccountConfirmCopy(name, service) {
   const installed = !!(service && service.installed)
-  if (installed) return `已删除 ${name} · 重启 daemon 生效`
+  if (installed) return `已删除 ${name} · 重启 CC 生效`
   return `已删除 ${name} · 去设置向导启动后台服务以生效`
 }
 
@@ -589,7 +592,7 @@ export const UPDATE_REASON_COPY = {
   },
   daemon_running_not_service: {
     severity: "bad",
-    label: "daemon 不是 service",
+    label: "CC 正在前台运行",
     body: () => "你正在前台跑 wechat-cc run？先 Ctrl+C 停掉再升级。",
   },
   fetch_failed: {
@@ -682,12 +685,12 @@ export function updateApplyLine(result) {
     const to = (result.toCommit || "").slice(0, 7)
     if (result.daemonAction === "restarted") {
       const lock = result.lockfileChanged ? "，依赖已重装" : ""
-      return { tone: "ok", headline: `升级成功 · ${from} → ${to}`, body: `daemon 已重启${lock}。` }
+      return { tone: "ok", headline: `升级成功 · ${from} → ${to}`, body: `CC 已重启${lock}。` }
     }
     if (result.daemonAction === "restart_failed") {
-      return { tone: "warn", headline: `升级成功但 daemon 重启失败 · ${from} → ${to}`, body: "请到「设置向导 → 后台」手动重启服务。" }
+      return { tone: "warn", headline: `升级成功但 CC 没能重启 · ${from} → ${to}`, body: "请到「设置向导 → 后台」手动重启服务。" }
     }
-    return { tone: "ok", headline: `升级成功 · ${from} → ${to}`, body: "daemon 升级前未运行，未做重启。" }
+    return { tone: "ok", headline: `升级成功 · ${from} → ${to}`, body: "CC 升级前没在运行，所以没有重启。" }
   }
   return frameApply(result.reason, result.message, result.details)
 }

@@ -57,6 +57,7 @@ import { startAppUpdateChecks } from "./modules/app-update.js"
 import { reflectConversationAvailability, initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, addImages as addConverseImages, connectConversationPlaces, updateConversationPlaces } from "./modules/converse.js"
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { wireDeskDisclosure } from './modules/desk-disclosure.js'
+import { hideDeskWakeFailures, wireDeskWake } from './modules/desk-wake.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
 import { mountMemoryTopics } from './modules/conversation-topics.js'
@@ -287,10 +288,7 @@ function reflectDeskConnection() {
   const stopped = !!lastPresence && lastDaemon?.alive === false
   if (stopped === root.hasAttribute('data-desk-cc-stopped')) return
   root.toggleAttribute('data-desk-cc-stopped', stopped)
-  if (!stopped) {
-    const error = document.getElementById('converse-wake-error')
-    if (error) error.hidden = true
-  }
+  if (!stopped) hideDeskWakeFailures()
   reflectConversationAvailability()
   document.dispatchEvent(new Event('desk-cc-availability'))
 }
@@ -718,8 +716,8 @@ function checkExpiredDiff(report) {
     if (!lastExpiredIds.has(id)) {
       const shortId = id.replace(/-im-bot$/, "").slice(0, 12)
       invoke("notify_user", {
-        title: `Tendhearth CC: 账号 ${shortId} 已失效`,
-        body: "绑定被另一处替换。点击打开 dashboard 重新扫码。",
+        title: `Tendhearth CC：微信连接已失效（${shortId}）`,
+        body: "这个微信号已经在别处重新扫码绑定了。这台电脑上的 CC 从现在起收不到新消息。点击打开 Tendhearth CC，重新扫一次码。",
       }).catch(err => console.warn("notify_user failed:", err))
     }
   }
@@ -1889,7 +1887,7 @@ function showDevBannerIfShim() {
       ? `<b>开发模式 · 安全阀已关闭</b> · 删账号 / service / setup / update 会真实生效`
       : w.__WECHAT_CC_WORKBENCH_WRITES__
         ? `<b>开发模式</b> · 交给 CC 的事已连接真实执行 · 其他页面保持只读`
-        : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；只放行已知只读的命令`
+        : `<b>开发模式</b> · 操作会使用这台电脑上的 CC 和命令行组件，只允许执行已知的只读命令`
   // 关阀是唯一能毁掉真实状态的模式，颜色上必须一眼可辨（spec §3）。
   banner.classList.toggle("is-unsafe", Boolean(allowMut) && !w.__WECHAT_CC_DRY_RUN__)
   banner.hidden = false
@@ -2291,28 +2289,12 @@ async function boot() {
   wireEvents()
   startWorkbenchAttention()
   initConversePage(deps, { focus: false })
+  wireDeskWake(async () => {
+    await restartDaemon(deps)
+    if (lastDaemon?.alive) await presencePoller.refresh()
+  })
   const conversationRoot=document.getElementById('converse-root')
   if(conversationRoot){
-    let waking = false
-    conversationRoot.addEventListener('click', async event => {
-      const button = event.target instanceof Element ? event.target.closest('button[data-wake-cc]') : null
-      if (!(button instanceof HTMLButtonElement) || waking || !document.documentElement.hasAttribute('data-desk-cc-stopped')) return
-      const label = button.textContent
-      const failure = document.getElementById('converse-wake-error')
-      waking = true
-      button.disabled = true
-      button.textContent = '在叫…'
-      if (failure) failure.hidden = true
-      try {
-        await restartDaemon(deps)
-        if (lastDaemon?.alive) await presencePoller.refresh()
-      } catch { /* Keep the retry available when the connection check fails. */ } finally {
-        waking = false
-        button.disabled = false
-        button.textContent = label
-        if (failure) failure.hidden = !document.documentElement.hasAttribute('data-desk-cc-stopped')
-      }
-    })
     const search = () => openDeskSearch?.()
     document.getElementById('topbar-search')?.addEventListener('click',search)
     mountConversationTools({root:conversationRoot,

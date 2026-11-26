@@ -4,9 +4,9 @@ import { presenceToPet } from './presence-map.js'
 const P = (over: Record<string, unknown> = {}) => ({ presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null }, ...over }) as any
 
 describe('presenceToPet', () => {
-  it('daemon 没起(拉不到)→ unlit sleep + 提示', () => {
-    expect(presenceToPet(null, null)).toEqual({ form: 'unlit', behavior: 'sleep', props: [], badge: 0, hint: 'daemon 没起', oneShots: [] })
-    expect(presenceToPet(P({ presence: 'down' }), null)).toMatchObject({ form: 'unlit', behavior: 'sleep', hint: 'daemon 没起' })
+  it('暂时联系不上 CC(拉不到)→ unlit sleep + 提示', () => {
+    expect(presenceToPet(null, null)).toEqual({ form: 'unlit', behavior: 'sleep', props: [], badge: 0, hint: '暂时联系不上 CC', oneShots: [] })
+    expect(presenceToPet(P({ presence: 'down' }), null)).toMatchObject({ form: 'unlit', behavior: 'sleep', hint: '暂时联系不上 CC' })
   })
   it('够得着 = Light(主人 2026-10-01 拍板,与此刻页同一个信号):ok / degraded / offline 都亮,不只在聊时亮', () => {
     for (const s of ['ok', 'degraded', 'offline']) expect(presenceToPet(P({ presence: s }), null).form).toBe('lit')

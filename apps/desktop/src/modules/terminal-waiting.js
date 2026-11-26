@@ -8,7 +8,7 @@
 // 桌面上只写「项目」,哪家画成行尾的圆头像(2026-10-19,同手机 app;名字进读屏标签和小窗):
 // 「终端」和微信回话用的码是微信那头的东西,桌面用不上(2026-10-16)。
 import { V1, v1 } from '../daemon-client.js'
-import { permissionTextSegments, permissionCwd, PermissionDisplaySchema, permissionDisplay, permissionOperationSource } from '../generated/permission-display.js'
+import { permissionTextSegments, permissionCwd, PermissionDisplaySchema, permissionDisplay, permissionOperationSource, permissionToolAction, permissionWaitingTitle } from '../generated/permission-display.js'
 
 /** @typedef {{session_id:string,code:string,source:string,displayName?:string,status:string,project:string,cwd?:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null,display?:unknown,cwd?:unknown,truncated?:boolean,showSnapshotNotice?:boolean,hasScriptPreview?:boolean}|null}} CliSession */
 /** @typedef {import('./permission-operation.js').TerminalOperation} TerminalOperation */
@@ -21,13 +21,13 @@ const SUMMARY_LIMIT = 200
 /** @type {Record<string,string>} */
 const VERB = {
   Bash: '想运行', shell: '想运行', exec_command: '想运行', local_shell: '想运行', run_terminal_cmd: '想运行',
-  Edit: '想改', MultiEdit: '想改', NotebookEdit: '想改', apply_patch: '想改', Write: '想写',
-  Read: '想读', WebFetch: '想打开', WebSearch: '想搜',
+  Edit: '想改', MultiEdit: '想改', apply_patch: '想改', Write: '想写',
 }
 
-/** 行标题:「Bash: npm publish」⇒「想运行 npm publish」。 @param {string} tool @param {string} summary @param {string} source */
-export function terminalTitle(tool, summary, source) {
-  const verb = VERB[tool]
+/** 行标题:「Bash: npm publish」⇒「想运行 npm publish」。 @param {string} tool @param {string} summary @param {string} source @param {TerminalOperation['display']} [display] */
+export function terminalTitle(tool, summary, source, display) {
+  if (permissionToolAction(tool, 'zh-Hans')) return permissionWaitingTitle(display, tool, summary, 'zh-Hans')
+  const verb = Object.hasOwn(VERB, tool) ? VERB[tool] : undefined
   if (tool && summary) return oneLine(verb ? `${verb} ${summary}` : `想用 ${tool}：${summary}`)
   if (tool) return oneLine(`想用 ${tool}`)
   if (summary) return oneLine(summary)
@@ -81,7 +81,7 @@ export function terminalWaitingRows(sessions) {
     const detail = String(s.project ?? '')
     rows.push({
       id: s.session_id,
-      title: terminalTitle(operation.tool, titleSummary, source),
+      title: terminalTitle(operation.tool, titleSummary, source, operation.summaryOnly ? undefined : operation.display),
       detail, agent, source,
       hash, ...operation,
     })

@@ -23,15 +23,15 @@ export async function invoke(command, args = {}, state) {
 }
 
 // Translate raw invoke errors into copy a user can act on. Network/transport
-// failures become "无法连接到 wechat-cc CLI"; everything else passes through
+// failures name the command-line component; everything else passes through
 // (it's already a string from the Rust shim or test-shim).
 /** @param {any} err */
 export function formatInvokeError(err) {
   const msg = String(err?.message ?? err ?? "未知错误")
   if (/Failed to fetch|NetworkError|ECONNREFUSED|fetch failed/.test(msg)) {
     return /** @type {any} */ (window).__WECHAT_CC_SHIM__
-      ? "无法连接到 wechat-cc CLI（开发 shim 已停止）。"
-      : "无法连接到 wechat-cc CLI。请检查 daemon 进程是否运行。"
+      ? "无法连接到 CC 的命令行组件（开发代理已停止）。"
+      : "无法连接到 CC 的命令行组件。请检查 CC 有没有在运行。"
   }
   if (isDaemonDownError(msg)) return DAEMON_DOWN_TEXT
   return msg

@@ -3,12 +3,12 @@ import { executorName } from './executor-names.js'
 import { V1, v1 } from '../daemon-client.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { bindTerminalDraft } from './conversation-work-detail.js'
-import { deskSpeakerHtml } from './desk-page.js'
+import { deskSpeakerHtml, waitingOfflineNoteHtml } from './desk-page.js'
 import { paintConversation, rememberConversationPosition, showConversationLatest, syncConversationLatest } from './converse-reading.js'
 import { escapeWorkbenchHtml as esc, renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from './workbench-markdown.js'
 import { recapMemoHtml, sketchRecap } from './recap-memo.js'
 import { groupActivity, mergeActivity, terminalInputReason } from './thing-thread-model.js'
-import { permissionActionZh } from '../generated/permission-display.js'
+import { permissionActionZh, permissionToolAction } from '../generated/permission-display.js'
 import { renderTerminalPermissionOperation } from './permission-operation.js'
 import { terminalPendingOperation, terminalTitle } from './terminal-waiting.js'
 
@@ -80,6 +80,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
         <div class="desk-waiting-opinion" hidden></div><div class="desk-waiting-reason" hidden></div>
       </div>
       <div class="place-ask"><button type="button" data-place-decision="deny">先不做</button><button type="button" class="place-allow" data-place-decision="allow">允许这一步</button><span class="thing-waiting-note" hidden>这里看不全，请到终端里看全再定。</span></div>
+      ${waitingOfflineNoteHtml}
     </div></div></div>
     <div class="thing-compose-status"><span role="status"></span><button class="desk-text-button" type="button" hidden>停止这一轮</button></div>
     <p class="thing-ended-note" hidden>这次会话已经结束了，只能看。</p>
@@ -96,6 +97,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   const allow = /** @type {HTMLButtonElement} */ (find('[data-place-decision="allow"]'))
   const deny = find('[data-place-decision="deny"]')
   const fullNote = /** @type {HTMLElement} */ (find('.thing-waiting-note'))
+  const offlineNote = /** @type {HTMLElement} */ (find('[data-waiting-offline]'))
   const form = /** @type {HTMLFormElement} */ (find('form'))
   const input = /** @type {HTMLTextAreaElement} */ (find('textarea'))
   const send = /** @type {HTMLButtonElement} */ (find('[type=submit]'))
@@ -145,8 +147,8 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     card.hidden = !request
     const operation = request && session ? terminalPendingOperation({ ...session, pending: request }) : null
     const rendered = operation && renderTerminalPermissionOperation(operation)
-    const action = operation?.display && operation.tool
-      ? permissionActionZh(operation.display.body, operation.tool, who)
+    const action = operation?.tool && (operation.display || permissionToolAction(operation.tool, 'zh-Hans'))
+      ? permissionActionZh(operation.display?.body, operation.tool, who)
       : undefined
     setText(question, action ?? (operation ? terminalTitle(operation.tool, operation.titleSummary, who) : ''))
     const html = rendered?.html ?? ''
@@ -166,11 +168,13 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     const questionReason = matched ? waiting?.questionReason : ''
     opinion.toggleAttribute('hidden', !ccOpinion)
     reason.toggleAttribute('hidden', !questionReason)
-    setText(opinion, ccOpinion ? `我的意见（只看了这条请求）：${ccOpinion}` : '')
+    setText(opinion, ccOpinion ? `我只看了这条请求，意见是：${ccOpinion}` : '')
     setText(reason, questionReason ? `为什么来问你：${questionReason}` : '')
     onWaiting(request?.hash ?? (answered || null))
     const stopped = document.documentElement.hasAttribute('data-desk-cc-stopped')
+    offlineNote.hidden = !stopped
     for (const button of card.querySelectorAll('button')) {
+      if (button.hasAttribute('data-wake-cc')) continue
       button.disabled = deciding || stopped
       if (stopped) button.title = 'CC 没在运行'
       else button.removeAttribute('title')

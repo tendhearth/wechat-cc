@@ -1321,7 +1321,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .settings-drawer .toggle { background: var(--th-rail); }
 .settings-drawer .toggle.on { background: var(--th-accent); }
 .settings-drawer .toggle::after { background: var(--th-paper); }
-/* 自动同意工具调用 = bypass permissions — the one switch that deserves a
+/* 自动同意 CC 的每一步 = bypass permissions — the one switch that deserves a
    raised eyebrow: terracotta edge + tinted card, warning-colored when on. */
 .settings-drawer .toggle-row--danger {
   border-color: color-mix(in srgb, var(--th-hair) 38%, transparent);
@@ -3144,7 +3144,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .memory-sources-panel .mem-grp .grp,
 .memory-sources-panel .mem-proj-head,
 .memory-sources-panel .mem-file,
-.memory-sources-panel .mem-proj-file > summary,
+.memory-sources-panel .mem-proj-file > summary:not(.b3-disclosure),
 .memory-sources-panel .mem-doc .crumb .mem-actions .btn,
 .memory-sources-panel .decision-row.expanded .summary::after { font-size: var(--th-size-small); }
 .memory-sources-panel .observation .ts,
@@ -3344,9 +3344,9 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   padding: 6px 10px; font-size: 26px; color: var(--ink-2);
 }
 .mem-proj-file > summary::-webkit-details-marker { display: none; }
-.mem-proj-file > summary::before { content: "▸ "; color: var(--ink-4); }
-.mem-proj-file[open] > summary::before { content: "▾ "; }
-.mem-proj-file > summary:hover { background: var(--paper-2); }
+.mem-proj-file > summary:not(.b3-disclosure)::before { content: "▸ "; color: var(--ink-4); }
+.mem-proj-file[open] > summary:not(.b3-disclosure)::before { content: "▾ "; }
+.mem-proj-file > summary:not(.b3-disclosure):hover { background: var(--paper-2); }
 .mem-proj-rendered {
   padding: 4px 12px 12px;
   font-size: 26px; line-height: 1.55; color: var(--ink-2);

@@ -219,8 +219,8 @@ describe('createPet(组装)', () => {
     expect(pet.machine.snapshot()).toMatchObject({ form: 'lit', resting: 'companion' })
     expect(root.props.children[0].attrs['data-prop']).toBe('envelope')
     expect(root.hint.hidden).toBe(true)
-    pet.setHint('daemon 没起')
-    expect(root.hint.hidden).toBe(false); expect(root.hint.textContent).toBe('daemon 没起')
+    pet.setHint('暂时联系不上 CC')
+    expect(root.hint.hidden).toBe(false); expect(root.hint.textContent).toBe('暂时联系不上 CC')
   })
   it('转场里被挡下的一次性行为不会丢:转场落地后补播 error', async () => {
     const { c, root, pet } = await boot()

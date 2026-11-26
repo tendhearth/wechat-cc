@@ -33,8 +33,10 @@ export function TerminalPermission({ pending, source, ago, projectPath, scroll }
       moreLabel={raw === undefined ? t(lang, 'terminal.expandReceived') : undefined}
       open={raw !== undefined || received !== undefined ? sheet.openFromPreview : summary ? summarySheet.openFromPreview : undefined} /> : null}
     {warning ? <Txt testID="terminal-detail-pending-truncated" role="small" tone="inkSoft">{t(lang, 'terminal.pendingTruncated')}</Txt> : null}
-    {raw !== undefined || received !== undefined ? <PermissionSource source={raw ?? received ?? ''} projectPath={projectPath} cwd={cwd}
+    {raw !== undefined || received !== undefined ? <PermissionSource tool={pending.tool} source={raw ?? received ?? ''} projectPath={projectPath} cwd={cwd}
       lang={lang} sheet={sheet} kind={raw === undefined ? 'received' : 'original'} /> : null}
-    {summary ? <PermissionSource source={summary} projectPath={projectPath} cwd={cwd} lang={lang} sheet={summarySheet} kind="summary" summaryOnly={summaryOnly} /> : null}
+    {raw === undefined && received === undefined && !summary ? <PermissionText selectable role="small" tone="inkSoft" lang={lang}
+      value={t(lang, 'approval.toolName', { tool: pending.tool })} /> : null}
+    {summary ? <PermissionSource tool={pending.tool} source={summary} projectPath={projectPath} cwd={cwd} lang={lang} sheet={summarySheet} kind="summary" summaryOnly={summaryOnly} /> : null}
   </View>
 }

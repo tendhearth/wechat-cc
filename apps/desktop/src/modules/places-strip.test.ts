@@ -232,6 +232,43 @@ it('宽窗置顶卡回答后越过已经在途的读取发起新刷新', async (
 })
 
 
+it('CC 停止时每张等你定纸条都有唤醒入口，恢复后一起收起', async () => {
+  const waitingRoot = document.createElement('div')
+  const places = ['归档', '访谈'].map((name, index) => place(name, {
+    waiting: { kind: 'question', summary: '保留备份吗？', count: 1, itemKey: `matter:${index}`, matterId: String(index) },
+  }))
+  const root = document.documentElement
+  const setStopped = (stopped: boolean) => {
+    root.toggleAttribute('data-desk-cc-stopped', stopped)
+    document.dispatchEvent(new Event('desk-cc-availability'))
+  }
+  setStopped(true)
+  try {
+    mount({ places, version: 'v1' }, { waitingRoot })
+    await strip!.refresh()
+    const cards = waitingRoot.querySelectorAll('.desk-waiting-card')
+    expect(cards).toHaveLength(2)
+    for (const card of cards) {
+      const notes = card.querySelectorAll<HTMLElement>('.desk-offline-note')
+      expect(notes).toHaveLength(1)
+      const note = notes[0]!
+      expect(note.hidden).toBe(false)
+      expect(note.textContent).toContain('CC 没在运行，叫它起来以后才能回答。')
+      const wake = note.querySelector<HTMLButtonElement>('[data-wake-cc]')!
+      expect(wake.textContent).toBe('叫它起来')
+      expect(wake.disabled).toBe(false)
+      const answer = card.querySelector<HTMLButtonElement>('[data-place-open]')!
+      expect(answer.disabled).toBe(true)
+      expect(answer.title).toBe('CC 没在运行')
+    }
+    setStopped(false)
+    expect(waitingRoot.querySelectorAll('.desk-offline-note:not([hidden])')).toHaveLength(0)
+    expect(waitingRoot.querySelectorAll('[data-place-open]:not([disabled])')).toHaveLength(2)
+  } finally {
+    setStopped(false)
+  }
+})
+
 it('意见纸条标明 CC 只看了这条请求', async () => {
   const waitingRoot = document.createElement('div')
   const ccOpinion = '先别删。这条请求要删除备份。'
@@ -240,7 +277,7 @@ it('意见纸条标明 CC 只看了这条请求', async () => {
   await strip!.refresh()
   expect(waitingRoot.querySelector('.desk-waiting-question')?.textContent).toBe('删旧备份？')
   expect(waitingRoot.querySelector('.approval-operation')).toBeNull()
-  expect(waitingRoot.querySelector('.desk-waiting-opinion')?.textContent).toBe('我的意见（只看了这条请求）：' + ccOpinion)
+  expect(waitingRoot.querySelector('.desk-waiting-opinion')?.textContent).toBe('我只看了这条请求，意见是：' + ccOpinion)
 })
 
 it.each(['allow', 'deny', 'open', 'terminal'])('晚到的意见保持等待卡按键焦点（%s）', async action => {

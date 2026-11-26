@@ -28,6 +28,7 @@ describe('terminalWaitingRows', () => {
     expect(terminalWaitingRows([s({ pending: { tool: 'permission', summary: null, since: 1, hash: null } })])[0]!.title).toBe('Claude 要你批准')
     expect(terminalWaitingRows([s({ pending: { tool: 'Bash', summary: 'y'.repeat(300), since: 1, hash: null } })])[0]!.title.length).toBe(120)
     expect(terminalWaitingRows(undefined)).toEqual([])
+    expect(terminalTitle('Read', '读备份目录？', 'Codex')).toBe('想看一个文件：读备份目录？')
     expect(terminalTitle('Edit', 'src/a.ts', 'Claude Code')).toBe('想改 src/a.ts')
     expect(terminalTitle('mcp__x__do', 'go', 'Claude Code')).toBe('想用 mcp__x__do：go')
     expect(terminalWaitingRows([null, 3, s({ pending: null })])).toEqual([])
@@ -40,6 +41,14 @@ describe('terminalWaitingRows', () => {
     const located = terminalPendingOperation({ ...s({ cwd: '/work' }), pending: { tool: 'Read', summary: 'notes/a.md', since: 1 } })
     expect(located.projectPath).toBe('/work')
     expect(renderTerminalPermissionOperation(located).html).toContain('项目目录 /work')
+  })
+
+  it('用结构化路径区分两条同摘要的读文件请求', () => {
+    const rows = terminalWaitingRows(['docs/setup.md', 'docs/release.md'].map(path => s({
+      session_id: path,
+      pending: { tool: 'ReadFile', summary: '读文件', since: 1, display: { body: { kind: 'fields', fields: [{ name: 'path', value: path }] } } },
+    })))
+    expect(rows.map(row => row.title)).toEqual(['想看一个文件：docs/setup.md', '想看一个文件：docs/release.md'])
   })
 
   it('prefers a valid edit display and uses its completeness independently of the summary', () => {

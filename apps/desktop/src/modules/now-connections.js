@@ -18,7 +18,7 @@ import { mountButlerStatus } from './butler-status.js'
 /** @typedef {'ok'|'warn'|'bad'|'unknown'} Dot */
 /** @typedef {'ready'|'behind'|'not_loaded'|'unknown'} State */
 /** @typedef {{id:string,name:string,state:'ok'|'fallback'|'needs_you'|'off',code:string,reason:string,action?:{label:string,where:string,url?:string,run?:string}}} Capability */
-/** @typedef {{id:string,kind:string,name:string,state:State,latestAt:number|null,syncedAt:number|null}} Source */
+/** @typedef {{id:string,kind:string,name:string,label?:string,state:State,latestAt:number|null,syncedAt:number|null}} Source */
 /** @typedef {{generatedAt:number,sources:Source[],starting?:boolean,computers:Array<{id:string,label:string,online:boolean,since:number|null,version:string|null}>,recent:Array<{matterId:string,title:string,phase:string,at:number}>,outputs:Array<{matterId:string,name:string,mime:string,at:number}>,capabilities?:Capability[]}} Connections */
 
 const STALE_AFTER_MS = 30_000
@@ -40,7 +40,7 @@ export function connectionsView(s, opts = {}) {
     const label = x.state === 'ready' ? (date ? `最新消息 ${date}` : '已连上')
       : x.state === 'behind' ? (date ? `有一阵没同步 · 最新消息 ${date}` : '有一阵没更新了')
       : x.state === 'not_loaded' ? '没加载' : '不知道'
-    const name = x.kind === 'wechat_history' ? '微信聊天记录' : x.kind === 'knowledge' ? '知识库' : x.name
+    const name = x.kind === 'wechat_history' ? '微信聊天记录' : x.kind === 'knowledge' ? '知识库' : (x.label || x.name)
     return { id: x.id, name, dot: DOT[x.state] ?? /** @type {Dot} */ ('unknown'), label }
   })
   // 「CC 现在怎么样」(2026-10-06):能力四态 —— 要你动手的排第一,退路(凑合着用)其次,没开的不算问题。

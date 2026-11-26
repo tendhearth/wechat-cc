@@ -8,7 +8,7 @@ import type { CliSessionView } from '../../ports/cli-session'
 import type { MatterSeen } from '../../adapters/store/matter-seen'
 import type { PendingWorkbenchPermission } from '../../ports/workbench'
 
-type RosterPermission = Pick<PendingWorkbenchPermission, 'id' | 'tool' | 'description' | 'createdAt' | 'display' | 'cwd' | 'showSnapshotNotice' | 'scripts'>
+type RosterPermission = Pick<PendingWorkbenchPermission, 'id' | 'tool' | 'description' | 'createdAt' | 'display' | 'mcp' | 'cwd' | 'showSnapshotNotice' | 'scripts'>
 
 export interface RosterReaderDeps {
   matters: Pick<MatterStore, 'list'> & Partial<Pick<MatterStore, 'get'>>
@@ -84,7 +84,7 @@ export function gatherRoster(deps: RosterReaderDeps, scope: 'operator' | 'device
             // Older Claude requests carry command= or input= in their description.
             const parsed = p.display ?? permissionDisplay(p.tool, p.description, 'claude')
             const display = p.display ?? (parsed.body.kind === 'text' ? undefined : parsed)
-            return { kind: 'permission' as const, id: p.id, summary: permissionWaitingTitle(display, p.tool, p.description, 'zh-Hans'), since: p.createdAt }
+            return { kind: 'permission' as const, id: p.id, summary: permissionWaitingTitle(display, p.tool, p.description, 'zh-Hans', '', p.mcp), since: p.createdAt }
           }),
           ...d.questions.map(q => ({kind:'question' as const,id:q.id,summary:q.questions[0]?.question ?? '',since:q.createdAt})),
         ])

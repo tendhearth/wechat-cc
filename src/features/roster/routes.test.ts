@@ -51,6 +51,17 @@ describe('名单读取与路由', () => {
 })
 
 describe('名单只读可能进名单的事', () => {
+  it('shows a plain tool action and the summary in the roster', () => {
+    const r = reader([m()], {
+      list: () => ({ tasks: [] }),
+      attention: () => ({ tasks: [{ id: '12345678' }] }),
+      detail: () => ({ permissions: [{ id: 'p', createdAt: 20, tool: 'Read', description: '读备份目录？' }], questions: [] }),
+    })
+    expect(r.read('device').items[0]?.waiting).toMatchObject({
+      kind: 'permission', requestId: 'p', summary: '想看一个文件：读备份目录？',
+    })
+  })
+
   it('没完的(不论多旧)与 24 小时内动过的都在;更早做完的不读;等你的旧任务按 id 补', () => {
     const DAY = 24 * 3_600_000, NOW = 10 * DAY
     const rows = [

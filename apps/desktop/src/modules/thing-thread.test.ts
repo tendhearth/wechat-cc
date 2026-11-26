@@ -40,6 +40,81 @@ it('终端会话卡在请求补全后把允许这一步放回先不做右边', a
   }
 })
 
+it('终端会话卡用大白话说要做什么，摘要里保留原始工具名', async () => {
+  const host = document.createElement('section')
+  document.body.replaceChildren(host)
+  const place: Place = {
+    key: 'p:0000000000000000', name: '花园', line: null, status: null, waiting: null, unseen: false, moving: false,
+    updatedAt: 100, matterIds: [], messageIds: [], sessionIds: ['terminal'],
+  }
+  const thread = mountTerminalThread({
+    host, id: 'terminal', agent: 'codex', place: () => place, ended: () => false, onStatus() {}, onWaiting() {},
+    call: async (_method, path) => {
+      if (path.startsWith('/v1/cli/sessions')) return { sessions: [{
+        session_id: 'terminal', source: 'codex', displayName: 'Codex', status: 'waiting',
+        pending: { actionable: true, hash: 'req01', tool: 'Read', summary: '读备份目录？' },
+      }] }
+      if (path.startsWith('/v1/cli/activity')) return { items: [] }
+      throw Error(path)
+    },
+  })
+  try {
+    await expect.poll(() => host.querySelector('.desk-waiting-question')?.textContent).toBe('Codex 想看一个文件')
+    expect(host.querySelector('.approval-disclosure')?.textContent).toContain('工具：Read')
+    expect(host.querySelector('.approval-panel')?.textContent).toBe('读备份目录？')
+  } finally {
+    thread.destroy()
+    host.remove()
+  }
+})
+
+it('终端会话卡在 CC 停止时仍能叫它起来，恢复后收起提示', async () => {
+  const host = document.createElement('section')
+  document.body.replaceChildren(host)
+  const place: Place = {
+    key: 'p:0000000000000000', name: '花园', line: null, status: null, waiting: null, unseen: false, moving: false,
+    updatedAt: 100, matterIds: [], messageIds: [], sessionIds: ['terminal'],
+  }
+  const thread = mountTerminalThread({
+    host, id: 'terminal', agent: 'codex', place: () => place, ended: () => false, onStatus() {}, onWaiting() {},
+    call: async (_method, path) => {
+      if (path.startsWith('/v1/cli/sessions')) return { sessions: [{
+        session_id: 'terminal', status: 'waiting',
+        pending: { actionable: true, hash: 'req01', tool: 'Read', summary: '读备份目录？' },
+      }] }
+      if (path.startsWith('/v1/cli/activity')) return { items: [] }
+      throw Error(path)
+    },
+  })
+  const setStopped = (stopped: boolean) => {
+    document.documentElement.toggleAttribute('data-desk-cc-stopped', stopped)
+    document.dispatchEvent(new Event('desk-cc-availability'))
+  }
+  try {
+    await expect.poll(() => host.querySelector<HTMLElement>('.thing-waiting')?.hidden).toBe(false)
+    setStopped(true)
+    const notes = host.querySelectorAll<HTMLElement>('.desk-waiting-card .desk-offline-note')
+    expect(notes).toHaveLength(1)
+    const note = notes[0]!
+    expect(note.hidden).toBe(false)
+    expect(note.textContent).toContain('CC 没在运行，叫它起来以后才能回答。')
+    const wake = note.querySelector<HTMLButtonElement>('[data-wake-cc]')!
+    expect(wake.textContent).toBe('叫它起来')
+    expect(wake.disabled).toBe(false)
+    const deny = host.querySelector<HTMLButtonElement>('[data-place-decision="deny"]')!
+    expect(deny.disabled).toBe(true)
+    expect(deny.title).toBe('CC 没在运行')
+    setStopped(false)
+    expect(note.hidden).toBe(true)
+    expect(deny.disabled).toBe(false)
+    expect(deny.hasAttribute('title')).toBe(false)
+  } finally {
+    thread.destroy()
+    setStopped(false)
+    host.remove()
+  }
+})
+
 it('直接打开页签名单以外的出处时，把它放到并排的最后', () => {
   const root = document.createElement('section')
   root.innerHTML = `<h1 class="thing-name"></h1><div class="thing-status">

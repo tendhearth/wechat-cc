@@ -63,7 +63,8 @@ it('shows each Codex file action and the destination without exposing a diff', (
 it.each([
   [{ kind: 'url', url: 'https://example.invalid/sample', prompt: '只看标题' }, 'WebFetch', 'Claude 想打开一个网址：\n网址："https://example.invalid/sample"\n要求："只看标题"'],
   [{ kind: 'query', query: '示例框架文档' }, 'WebSearch', 'Claude 想上网搜一下：\n搜索："示例框架文档"'],
-  [{ kind: 'fields', fields: [{ name: 'pattern', value: '*.ts' }] }, 'Glob', 'Claude 想用「Glob」：\npattern："*.ts"'],
+  [{ kind: 'fields', fields: [{ name: 'pattern', value: '*.ts' }] }, 'Glob', 'Claude 想看看文件夹里有什么：\npattern："*.ts"'],
+  [{ kind: 'text', text: '读备份目录？' }, 'Read', 'Claude 想看一个文件：\n读备份目录？'],
   [{ kind: 'text', text: 'tool-specific text' }, 'Example', 'Claude 想用「Example」：\ntool-specific text'],
 ] satisfies [PermissionDisplay['body'], string, string][])('prints the full %j body', (body, tool, expected) => {
   const card = render(body, { tool })

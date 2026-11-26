@@ -20,7 +20,7 @@ const unreadOf = (p) => Math.max(0, Math.trunc(Number(p?.news?.unread) || 0))
  * @returns {PetIntent}
  */
 export function presenceToPet(p, prev) {
-  if (!p || ccPresence(p) === 'away') return { form: 'unlit', behavior: 'sleep', props: [], badge: 0, hint: 'daemon 没起', oneShots: [] }
+  if (!p || ccPresence(p) === 'away') return { form: 'unlit', behavior: 'sleep', props: [], badge: 0, hint: '暂时联系不上 CC', oneShots: [] }
   const unread = unreadOf(p)
   const badge = unread
   /** @type {string[]} */

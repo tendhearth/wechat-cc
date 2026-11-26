@@ -1,10 +1,11 @@
 import {validBaseBranch} from '../../adapters/git/worktree-workspaces'
 import {isRelayContinue} from '../../adapters/store/matter-plans'
 import {parseReviewRequest,reviewMaterial} from './review-request'
-import {approvalLookupReply,WORKBENCH_ERRORS,workbenchErrorSpec} from '@wechat-cc/protocol'
+import {approvalLookupReply,permissionToolAction,permissionWaitingTitle,resolvePermissionDisplay,WORKBENCH_ERRORS,workbenchErrorSpec,type PermissionDisplay} from '@wechat-cc/protocol'
 import {compareReply} from './wechat-compare'
 import {issueTaskText,parseIssueRef,type IssueData} from './issue-intake'
 import {createHash,randomUUID} from 'node:crypto'
+import {basename,win32} from 'node:path'
 import type {WorkbenchStore,Task} from '../../adapters/store/workbench/store'
 import type { LiveInput, PendingWorkbenchPermission, PermissionDecision, PendingUserInput } from '../../ports/workbench'
 import type {AgentRuntimeSnapshot} from '../../ports/agent-provider'
@@ -16,6 +17,7 @@ import type {ProjectCatalogEntry} from '../../adapters/workbench/project-catalog
 import { validateUserInputAnswers } from '../../adapters/workbench/user-input'
 import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
+import {redactSecrets} from '../../domain/cli-transcript'
 import type {ReviewTurn} from './review'
 import { WECHAT_PERMISSION_INCOMPLETE, type WechatPermissionCard, type WechatPermissions } from '../../ports/wechat'
 import { renderWechatPermissionCard } from './wechat-permission-card'
@@ -117,6 +119,35 @@ function phoneAnswers(request:PendingUserInput,text:string):unknown {
   }))
   return validateUserInputAnswers(request,answers)
 }
+const permissionPathFields=new Set(['path','file_path','filePath','directory','dir_path','notebook_path'])
+
+function permissionStatusHost(value:string):string {
+  if(!/^https?:\/\//i.test(value))return ''
+  try{return redactSecrets(new URL(value).hostname)}catch{return ''}
+}
+
+function permissionStatusFile(path:string):string {
+  const drive=/^[a-z]:/i.test(path)
+  // A URL (or query/fragment) can also arrive in a field labelled as a path.
+  if(/[:?#%]/.test(drive?path.slice(2):path)||path.startsWith('//')||path.includes('://'))return ''
+  // Cutting to a basename drops context such as `TOKEN=` that marks the rest as a credential:
+  // withhold assignment-shaped values and redact the whole value before cutting.
+  if(path.includes('='))return ''
+  const redacted=redactSecrets(path)
+  const name=drive||redacted.startsWith('\\\\')?win32.basename(redacted):basename(redacted)
+  return name.includes('=')?'':name
+}
+
+function statusPermissionDisplay(body:PermissionDisplay['body']):PermissionDisplay|undefined {
+  // Status carries only a host or file label. Search terms, patterns, notes
+  // and the full target belong to the explicit permission lookup.
+  if(body.kind==='url')return {body:{kind:'url',url:permissionStatusHost(body.url)}}
+  if(body.kind==='fields')return {body:{kind:'fields',fields:body.fields.flatMap(({name,value})=>{
+    const label=name==='url'?permissionStatusHost(value):permissionPathFields.has(name)?permissionStatusFile(value):''
+    return label?[{name,value:label}]:[]
+  })}}
+}
+
 function statusReply(detail:Detail){
   const {task,events,artifacts,permissions,questions,inputs}=detail,id=task.id
   const latest=events.filter(e=>e.kind==='text').at(-1)
@@ -150,7 +181,15 @@ function statusReply(detail:Detail){
   if(held.length)lines.push('尚未交付的补充（已保留）：\n'+held.map(input=>'• '+clip(input.text,200)).join('\n'))
   const queued=inputs.filter(input=>input.status==='pending'||input.status==='sending').length
   if(queued)lines.push(`还有 ${queued} 条补充等待交付。`)
-  if(permissions.length)lines.push(`等待权限处理：${permissions.length} 项\n`+permissions.slice(0,4).map(p=>`查看：任务 ${id} 权限 ${p.id}`).join('\n'))
+  if(permissions.length)lines.push(`等待权限处理：${permissions.length} 项\n`+permissions.slice(0,4).map(p=>{
+    const lookup=`查看：任务 ${id} 权限 ${p.id}`
+    const action=permissionToolAction(p.tool,'zh-Hans','',p.mcp)
+    if(!action)return lookup
+    const {body}=resolvePermissionDisplay(p.tool,p.description,p.display,task.providerId)
+    const display=statusPermissionDisplay(body)
+    const title=display?permissionWaitingTitle(display,p.tool,'','zh-Hans'):action
+    return `${title}\n${lookup}`
+  }).join('\n'))
   if(questions.length)lines.push(`等待回答：${questions.length} 项\n`+questions.slice(0,4).map(q=>`${singleLine(q.questions.map(item=>item.header).join('、'),80)}\n查看：任务 ${id} 问题 ${q.id}`).join('\n'))
   lines.push(`补充：任务 ${id} 补充 <要求>`,`查看结果：任务 ${id} 结果`)
   return lines.join('\n\n')

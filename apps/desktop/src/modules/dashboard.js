@@ -243,7 +243,7 @@ export function renderRestartButton(report) {
     stopBtn.hidden = !showOnlineControls
     stopBtn.disabled = false
     if (showOnlineControls) stopBtn.removeAttribute("title")
-    else stopBtn.title = "daemon 未运行"
+    else stopBtn.title = "CC 没在运行"
   }
   btn.hidden = hero.state !== "recovering"
   const detailsBtn = document.getElementById("dash-view-details")
@@ -349,7 +349,7 @@ export async function stopDaemon(deps) {
     deps.markDisconnected?.()
   }
   if (report?.checks.daemon?.alive) {
-    setPending("断开失败：daemon 仍在运行")
+    setPending("没能断开：CC 还在运行")
     return
   }
   if (stopError || killError) {

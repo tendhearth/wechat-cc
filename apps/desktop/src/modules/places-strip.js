@@ -9,7 +9,7 @@
 // 点一行 = 把下面的说话筛成这个地方;再点一次回到全部。
 import {V1,v1} from '../daemon-client.js'
 import {escapeHtml} from '../view.js'
-import {deskSituation, deskSpeakerHtml} from './desk-page.js'
+import {deskSituation, deskSpeakerHtml, waitingOfflineNoteHtml} from './desk-page.js'
 import {permissionCwd} from '../generated/permission-display.js'
 import {renderCompactPermissionOperation, renderPermissionText} from './permission-operation.js'
 
@@ -141,6 +141,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   }
   function reflectWaitingAvailability() {
     const stopped = root.ownerDocument.documentElement.hasAttribute('data-desk-cc-stopped')
+    waitingRoot?.querySelectorAll('[data-waiting-offline]').forEach(note => note.toggleAttribute('hidden', !stopped))
     waitingRoot?.querySelectorAll('.place-ask button, .approval-more').forEach(button => {
       button.toggleAttribute('disabled', stopped || (acting && button.hasAttribute('data-place-decision')))
       if (stopped) button.setAttribute('title', 'CC 没在运行')
@@ -177,6 +178,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
           <div class="desk-waiting-question${operation ? ' desk-waiting-question-compact' : ''}">${escapeHtml(question ?? '')}</div>
           ${operation?.html ?? directory}
           ${askHtml(p, !!needsFullView)}
+          ${waitingOfflineNoteHtml}
         </div>
       </div>`
     }).join('')
@@ -189,7 +191,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     waitingRoot.querySelectorAll('.desk-waiting-card').forEach((card, index) => {
       const note = visibleWaiting[index]?.waiting
       for (const [className, text] of Object.entries({
-        'desk-waiting-opinion': note?.ccOpinion && `我的意见（只看了这条请求）：${note.ccOpinion}`,
+        'desk-waiting-opinion': note?.ccOpinion && `我只看了这条请求，意见是：${note.ccOpinion}`,
         'desk-waiting-reason': note?.questionReason && `为什么来问你：${note.questionReason}`,
       })) {
         let line = card.querySelector(`.${className}`)
