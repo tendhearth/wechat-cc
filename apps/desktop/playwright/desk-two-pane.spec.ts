@@ -462,19 +462,70 @@ test('CC 停止时已有对话和决定仍可读，发送和决定等恢复', as
   await expect(page.locator('#converse-scroll [data-converse-message]').first()).toBeVisible()
   await expect(page.locator('#converse-scroll')).toHaveCSS('mask-image', /linear-gradient.*16px/)
   await expect(page.locator('#converse-send')).toBeDisabled()
-  const buttons = page.locator('.desk-waiting-card').getByRole('button')
+  const cards = page.locator('.desk-waiting-card')
+  const buttons = cards.getByRole('button').and(page.locator('button:not([data-wake-cc])'))
+  const wakeButtons = cards.getByRole('button', { name: '叫它起来' })
   await expect(buttons).toHaveCount(3)
+  await expect(wakeButtons).toHaveCount(2)
   for (const button of await buttons.all()) {
     await expect(button).toBeDisabled()
     await expect(button).toHaveAttribute('title', 'CC 没在运行')
   }
   await shim.invoke('demo.seed', { daemonAlive: true })
   await expect(note).toBeHidden({ timeout: 10_000 })
+  await expect(wakeButtons).toHaveCount(0)
   await expect(page.locator('#converse-send')).toBeEnabled()
   for (const button of await buttons.all()) {
     await expect(button).toBeEnabled()
     await expect(button).not.toHaveAttribute('title', 'CC 没在运行')
   }
+})
+
+test('一件事的等你定纸条可以就地叫 CC 起来，失败后可以重试', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { daemonAlive: false, presenceDown: true })
+  await routePlaces(page, [askingPlace('访谈', 'aaaa0001')])
+  let releaseStart!: () => void
+  const startResponse = new Promise<void>(resolve => { releaseStart = resolve })
+  let starts = 0
+  await page.route('**/__invoke', async route => {
+    const { command, args } = route.request().postDataJSON()
+    if (command !== 'wechat_cli_json' || args?.args?.[0] !== 'service' || args.args[1] !== 'start') {
+      return route.fallback()
+    }
+    starts++
+    await startResponse
+    return route.fulfill({ json: { error: '模拟启动失败' } })
+  })
+  await page.goto(shimUrl)
+  await placeRow(page, '访谈').locator('.place-row').click()
+  await expect(page.locator('#thing-name')).toHaveText('访谈')
+  const card = page.locator('#thing-thread #desk-waiting .desk-waiting-card')
+  const note = card.locator('.desk-offline-note')
+  const wake = note.locator('button[data-wake-cc]')
+  const answer = card.getByRole('button', { name: '去回答' })
+  try {
+    await expect(answer).toBeDisabled()
+    await expect(note).toBeVisible()
+    await expect(note).toContainText('CC 没在运行，叫它起来以后才能回答。')
+    await expect(wake).toHaveText('叫它起来')
+    await wake.click()
+    await expect(wake).toHaveText('在叫…')
+    await expect(wake).toBeDisabled()
+    await expect.poll(() => starts).toBe(1)
+  } finally {
+    releaseStart()
+  }
+  await expect(note.getByRole('status')).toHaveText('没叫起来，再点一次试试。')
+  await expect(note.getByRole('status')).toBeVisible()
+  await expect(wake).toHaveText('叫它起来')
+  await expect(wake).toBeEnabled()
+  await wake.click()
+  await expect.poll(() => starts).toBe(2)
+  await expect(wake).toBeEnabled()
+
+  await shim.invoke('demo.seed', { daemonAlive: true })
+  await expect(note).toBeHidden({ timeout: 10_000 })
+  await expect(answer).toBeEnabled()
 })
 
 test('宽窗次要页面共用纸底，内容栏留在纸内', async ({ page, shimUrl }) => {

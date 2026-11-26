@@ -9,7 +9,7 @@
 // 点一行 = 把下面的说话筛成这个地方;再点一次回到全部。
 import {V1,v1} from '../daemon-client.js'
 import {escapeHtml} from '../view.js'
-import {deskSituation, deskSpeakerHtml} from './desk-page.js'
+import {deskSituation, deskSpeakerHtml, waitingOfflineNoteHtml} from './desk-page.js'
 import {permissionCwd} from '../generated/permission-display.js'
 import {renderCompactPermissionOperation, renderPermissionText} from './permission-operation.js'
 
@@ -141,6 +141,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   }
   function reflectWaitingAvailability() {
     const stopped = root.ownerDocument.documentElement.hasAttribute('data-desk-cc-stopped')
+    waitingRoot?.querySelectorAll('[data-waiting-offline]').forEach(note => note.toggleAttribute('hidden', !stopped))
     waitingRoot?.querySelectorAll('.place-ask button, .approval-more').forEach(button => {
       button.toggleAttribute('disabled', stopped || (acting && button.hasAttribute('data-place-decision')))
       if (stopped) button.setAttribute('title', 'CC 没在运行')
@@ -177,6 +178,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
           <div class="desk-waiting-question${operation ? ' desk-waiting-question-compact' : ''}">${escapeHtml(question ?? '')}</div>
           ${operation?.html ?? directory}
           ${askHtml(p, !!needsFullView)}
+          ${waitingOfflineNoteHtml}
         </div>
       </div>`
     }).join('')

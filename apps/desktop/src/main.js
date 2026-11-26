@@ -287,10 +287,7 @@ function reflectDeskConnection() {
   const stopped = !!lastPresence && lastDaemon?.alive === false
   if (stopped === root.hasAttribute('data-desk-cc-stopped')) return
   root.toggleAttribute('data-desk-cc-stopped', stopped)
-  if (!stopped) {
-    const error = document.getElementById('converse-wake-error')
-    if (error) error.hidden = true
-  }
+  if (!stopped) hideDeskWakeFailures()
   reflectConversationAvailability()
   document.dispatchEvent(new Event('desk-cc-availability'))
 }
@@ -2283,6 +2280,39 @@ function mountDeskLayout(strip) {
   }, { once: true })
 }
 
+function hideDeskWakeFailures() {
+  document.querySelectorAll('#converse-wake-error, [data-wake-cc-error]').forEach(error => error.setAttribute('hidden', ''))
+}
+
+function wireDeskWake() {
+  let waking = false
+  document.addEventListener('click', async event => {
+    const button = event.target instanceof Element ? event.target.closest('button[data-wake-cc]') : null
+    const root = document.documentElement
+    if (!(button instanceof HTMLButtonElement) || button.disabled || waking || !root.hasAttribute('data-desk-cc-stopped')) return
+    const label = button.textContent
+    waking = true
+    button.disabled = true
+    button.textContent = '在叫…'
+    hideDeskWakeFailures()
+    try {
+      await restartDaemon(deps)
+      if (lastDaemon?.alive) await presencePoller.refresh()
+    } catch { /* Keep the retry available when the connection check fails. */ } finally {
+      waking = false
+      button.disabled = false
+      button.textContent = label
+      if (root.hasAttribute('data-desk-cc-stopped')) {
+        const conversationFailure = document.getElementById('converse-wake-error')
+        const failure = conversationFailure && !conversationFailure.parentElement?.closest('[hidden], [inert]')
+          ? conversationFailure
+          : button.closest('[data-waiting-offline]')?.querySelector('[data-wake-cc-error]')
+        failure?.removeAttribute('hidden')
+      }
+    }
+  })
+}
+
 async function boot() {
   trackTopbarBottom()
   showDevBannerIfShim()
@@ -2291,28 +2321,9 @@ async function boot() {
   wireEvents()
   startWorkbenchAttention()
   initConversePage(deps, { focus: false })
+  wireDeskWake()
   const conversationRoot=document.getElementById('converse-root')
   if(conversationRoot){
-    let waking = false
-    conversationRoot.addEventListener('click', async event => {
-      const button = event.target instanceof Element ? event.target.closest('button[data-wake-cc]') : null
-      if (!(button instanceof HTMLButtonElement) || waking || !document.documentElement.hasAttribute('data-desk-cc-stopped')) return
-      const label = button.textContent
-      const failure = document.getElementById('converse-wake-error')
-      waking = true
-      button.disabled = true
-      button.textContent = '在叫…'
-      if (failure) failure.hidden = true
-      try {
-        await restartDaemon(deps)
-        if (lastDaemon?.alive) await presencePoller.refresh()
-      } catch { /* Keep the retry available when the connection check fails. */ } finally {
-        waking = false
-        button.disabled = false
-        button.textContent = label
-        if (failure) failure.hidden = !document.documentElement.hasAttribute('data-desk-cc-stopped')
-      }
-    })
     const search = () => openDeskSearch?.()
     document.getElementById('topbar-search')?.addEventListener('click',search)
     mountConversationTools({root:conversationRoot,

@@ -30,3 +30,5 @@ const DESK_CC_AVATAR = '<img src="./assets/pet/cc-v1/canonical/lit/front.png" al
 const DESK_YOU_AVATAR = '<svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="14" cy="14" r="12.6" stroke-dasharray="2.2 2.6"/><circle cx="14" cy="11.4" r="3.5"/><path d="M7.4 21.6c1.1-3.5 3.6-5.1 6.6-5.1s5.5 1.6 6.6 5.1"/></svg>'
 /** @param {string} role */
 export const deskSpeakerHtml = role => `<span class="desk-speaker" data-speaker="${role === 'user' ? 'you' : 'cc'}" aria-hidden="true">${role === 'user' ? DESK_YOU_AVATAR : DESK_CC_AVATAR}</span>`
+
+export const waitingOfflineNoteHtml = `<p class="desk-offline-note" data-waiting-offline hidden>CC 没在运行，叫它起来以后才能回答。 <button class="desk-text-button" type="button" data-wake-cc>叫它起来</button> <span data-wake-cc-error role="status" hidden>没叫起来，再点一次试试。</span></p>`

@@ -1116,6 +1116,14 @@ html[data-desk-wide][data-mode="dashboard"] .window-drag-titlebar { display: non
   color: var(--th-ink-soft);
   font: 400 13px/1.5 var(--th-font-desk-ui);
 }
+[data-desk-wide] .desk-waiting-card .desk-offline-note {
+  margin: 0;
+  padding-inline: 0;
+  text-align: start;
+}
+[data-desk-wide] .thing-waiting .desk-waiting-card .desk-offline-note {
+  padding: 0 18px 12px;
+}
 [data-desk-wide][data-desk-cc-stopped] :is(.desk-waiting-card, .thing-terminal, .thing-detail) button[title="CC 没在运行"]:disabled {
   opacity: .55;
   cursor: default;
