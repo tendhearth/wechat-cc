@@ -125,7 +125,7 @@ describe('formatOverseerToday', () => {
     }))
     const lines = text.split('\n')
     expect(lines[0]).toBe('今天(过去 24 小时):1 件事等你 · 2 件做完 · 1 件在跑')
-    expect(lines[1]).toBe('等你 · wechat-cc · Claude · 码 ab12c3 · Bash: rm -rf dist · 2 分钟前 · 回「y 07」/「n 07」')
+    expect(lines[1]).toBe('等你 · wechat-cc · Claude · 码 ab12c3 · Bash: rm -rf dist · 2 分钟前 · 回「y 07」查看或批准，回「n 07」拒绝')
     expect(lines[2]).toBe('做完 · 修好打包脚本 · 一起做 a1b2c3d4 · 40 分钟前')
     expect(lines[3]).toBe('做完 · leni · Claude · 码 1a2b3c · 2 小时前 · 登录页改好了, 测试也过了')
     expect(lines[4]).toBe('在跑 · melu · Codex · 码 9f8e7d · 3 分钟前有动静')

@@ -248,7 +248,7 @@ function quietFor(ms: number): string {
 function needLine(n: TodayNeed, now: number): string {
   const what = n.summary ? ` · ${n.summary}` : ''
   const act = n.source === 'terminal'
-    ? (n.replyRef ? `回「y ${n.replyRef}」/「n ${n.replyRef}」` : '回终端处理')
+    ? (n.replyRef ? `回「y ${n.replyRef}」查看或批准，回「n ${n.replyRef}」拒绝` : '回终端处理')
     : `回「任务 ${n.code}」看详情`
   const many = n.count > 1 ? `(${n.count} 条)` : ''
   return `等你 · ${where(n, n.source !== 'together')}${many}${what} · ${relativeTime(n.at, now)} · ${act}`

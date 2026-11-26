@@ -1,5 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { PendingPermissions, parsePermissionReply } from './pending-permissions'
+import { PendingPermissions, parsePermissionReply, summarizeApprovalQuote } from './pending-permissions'
+
+describe('legacy Codex approval quotes', () => {
+  it('leaves ordinary prose intact even when it starts like a card', () => {
+    expect(summarizeApprovalQuote('Codex 想改文件的话，请先保存当前版本。')).toBeUndefined()
+    expect(summarizeApprovalQuote('Codex 想执行命令前，请先看看工作目录。')).toBeUndefined()
+    expect(summarizeApprovalQuote('前文\nCodex 想调用工具时，请先确认。')).toBeUndefined()
+  })
+
+  it.each(['Codex 想改文件:', 'Codex 想执行命令:', 'Codex 想调用 mcp__wechat__ping:'])('summarizes the generated header %s', header => {
+    expect(summarizeApprovalQuote(`${header}\r\n离线审批正文`)).toBe('（引用了一张待批卡）')
+  })
+
+  it.each([
+    'Codex 想改文件:notes.txt…',
+    'Codex 想执行命令: 离线操作…',
+    'Codex 想调用 mcp__wechat__ping:MCP server…',
+    'Codex 想改文件：notes.txt…',
+  ])('summarizes a title that joins the generated header and body', title => {
+    expect(summarizeApprovalQuote(title)).toBe('（引用了一张待批卡）')
+  })
+})
 
 describe('PendingPermissions', () => {
   it('accepts only the exact reminder registered for the same request and owner', () => {

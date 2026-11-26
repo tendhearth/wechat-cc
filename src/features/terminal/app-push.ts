@@ -18,7 +18,9 @@
 import type { CliPushItem } from '../../app/cli-events'
 import type { CliPermissionRequest } from '../../app/cli-permission-relay'
 import type { PendingPermissionMeta, PermissionDecision } from '../../daemon/pending-permissions'
-import type { PushPlaintextT } from '@wechat-cc/protocol'
+import { permissionCwd, type PushPlaintextT } from '@wechat-cc/protocol'
+import { redactSecrets } from '../../domain/cli-transcript'
+import { toolApprovalInput } from '../../domain/workbench/tool-input-preview'
 
 // 推送的形状直接按协议包(和 features/phone 的 PushPayload 是同一个定义):手机的 /m/api/cli/* 处理器要终端会话的类型,
 // 这里再 import 手机功能就成环(A5 · 手机)。
@@ -101,7 +103,7 @@ type Answer = 'allow' | 'deny' | 'timeout' | 'undelivered'
 export interface CliPermissionAskDeps {
   ownerChatId: () => string | null
   /** = ilink.askUser。 */
-  askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { keepOnUndelivered?: boolean }) => Promise<Answer>
+  askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { keepOnUndelivered?: boolean; wechatPrompt?: string; incomplete?: boolean }) => Promise<Answer>
   /** = ilink.registerPendingPermission(只登记、不发卡):没有微信主人 chat、但手机够得着时用。 */
   registerPending: (hash: string, timeoutMs: number, meta: PendingPermissionMeta) => Promise<PermissionDecision>
   /** = ilink.sweepPendingPermissions:到点让条目以 timeout 落定。 */
@@ -130,7 +132,21 @@ export function makeCliPermissionAsk(deps: CliPermissionAskDeps): (prompt: strin
       }
     }
     const owner = deps.ownerChatId()
-    if (owner) return deps.askUser(owner, prompt, hash, timeoutMs, { keepOnUndelivered: phone })
+    if (owner) {
+      const { req } = ctx
+      const cwd = permissionCwd(req.execution_cwd ?? req.cwd)
+      const reportedCwd = req.display?.body.kind === 'command' ? req.display.body.cwd : undefined
+      const { input, incomplete } = toolApprovalInput(req.display)
+      const details = input === undefined ? req.summary ?? '' : JSON.stringify(input, null, 2)
+      const safeDetails = redactSecrets(details)
+      const header = prompt.split('\n')[0]
+      const wechatPrompt = [header, req.tool_name, safeDetails, cwd && `目录：${JSON.stringify(cwd)}`, '过期终端自己会问。'].filter(Boolean).join('\n')
+      return deps.askUser(owner, prompt, hash, timeoutMs, {
+        keepOnUndelivered: phone,
+        wechatPrompt,
+        incomplete: incomplete || !!req.display?.truncated || !cwd || (reportedCwd !== undefined && reportedCwd !== cwd) || safeDetails !== details,
+      })
+    }
     if (!phone) return 'undelivered'
     // 没有微信主人 chat(没绑微信):只登记,手机拍板。chatId 空串 ⇒ 任何微信 chat 都拍不了它。
     const result = deps.registerPending(hash, timeoutMs, { chatId: '', prompt })

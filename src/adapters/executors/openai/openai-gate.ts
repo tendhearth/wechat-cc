@@ -71,8 +71,8 @@ export async function gateTool(args: {
     if (!admin) return { decision: 'deny', message: 'no admin configured to approve permission requests' }
     try {
       const hash = newChatApprovalId()
-      const prompt = await prepareChatApprovalPrompt('OpenAI', sdkName, args.input, hash,args.approval,args.chatId)
-      const answer = await (args.approvalTurn ?? new ChatApprovalTurn(args.approval.maxCards)).ask({ tool: sdkName, channel: args.approval, target: admin, prompt, hash, timeoutMs: 10 * 60_000, signal: args.signal })
+      const card = await prepareChatApprovalPrompt('OpenAI', sdkName, args.input, hash,args.approval,args.chatId)
+      const answer = await (args.approvalTurn ?? new ChatApprovalTurn(args.approval.maxCards)).ask({ tool: sdkName, channel: args.approval, target: admin, ...card, hash, timeoutMs: 10 * 60_000, signal: args.signal })
       if (answer === 'allow' && !args.signal?.aborted) {noteChatApproval(args.approval,'OpenAI',sdkName,args.input,args.chatId);return { decision: 'allow' }}
       return { decision: 'deny', message: answer === 'undelivered' ? 'Could not deliver the approval request to the owner; ask them to try again shortly.' : answer === 'timeout' ? 'User did not reply in time; request denied' : 'User denied the request' }
     } catch(error) { return { decision: 'deny',message:error instanceof Error?error.message:'没建成：解析项目失败，请重新选择项目。' } }

@@ -70,7 +70,7 @@ const hookInstallCmd = defineCommand({
     }
     if (args.json) { console.log(JSON.stringify(out)); return }
     console.log('之后终端里的 claude / codex(装了 --cursor 的话还有 Cursor)跑完一个长回合,主人微信会收到一条(压 45s;期间你再敲一句就不发;一次提问最多推一条)。')
-    console.log('停下来等批准时:你最近 3 分钟没在终端敲过字 ⇒ 微信里收到卡片,回「y 码」/「n 码」就替终端拍板(120s 内);否则终端自己问。')
+    console.log('停下来等批准时:你最近 3 分钟没在终端敲过字 ⇒ 微信里收到卡片,看完卡回「y 码」批准，回「n 码」拒绝(120s 内);否则终端自己问。')
     console.log('daemon 自己拉起的会话不会推(回环守卫)。查看:wechat-cc hook status;撤掉:wechat-cc hook uninstall。')
     console.log('连接完成后，新会话会收到 CC 记下的项目近况；设置中可关闭。')
   },

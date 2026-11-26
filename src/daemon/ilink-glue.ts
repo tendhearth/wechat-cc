@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { WECHAT_PORTS, WECHAT_PERMISSION_INCOMPLETE, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling, type WechatReplyRoute } from '../ports/wechat'
-import { howToReplyLine, isPermissionCardQuote, isSummarizedWorkbenchQuote, parsePermissionReply } from './pending-permissions'
+import { isPermissionCardQuote, isSummarizedWorkbenchQuote, parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
 import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText } from '../lib/ilink-workbench'
@@ -37,7 +37,7 @@ import { EXPIRED_NOTIFY_TEXT, expiredNoticeRecipients } from './ilink/expired-no
 import type { SentMedia } from './companion/media-mirror'
 import { currentReplyAttribution } from '../lib/reply-attribution'
 import { unprefixedReplyText } from '../lib/reply-presentation'
-import { scopedSend } from './inbound/reply-scope'
+import { scopedReply, scopedSend } from './inbound/reply-scope'
 
 /**
  * Monotonic counter to keep same-millisecond outbound IDs unique. Module
@@ -173,7 +173,9 @@ export function makeIlinkAdapter(opts: {
       const attribution = { ...currentReplyAttribution() ?? { speaker: 'notice' as const } }
       // 只有空白也算空:ilink 会照发,微信那头就是一条空气泡(2026-10-02)。
       if (!text.trim()) return { msgId: `err:${Date.now()}`, error: 'empty text' }
-      const privateText = metadata?.historyText !== undefined
+      const delivery = pending.wechatCardDelivery(chatId, text)
+      const historyText = metadata?.historyText ?? (delivery ? '待批：权限请求' : undefined)
+      const privateText = historyText !== undefined
       let reachedWire = false
       try {
         // Use the in-memory ctxStore / acctStore directly — sendReplyOnce
@@ -191,6 +193,7 @@ export function makeIlinkAdapter(opts: {
         for (const part of chunks) {
           await ilinkSendMessage(acct.baseUrl, acct.token, botTextMessage(chatId, part, ctxToken), privateText)
         }
+        delivery?.(acct.id)
         outbound.recordSuccess(new Date().toISOString())
         windowClosed.delete(chatId)
         // Record ONE row with the history projection (fire-and-forget;
@@ -201,10 +204,10 @@ export function makeIlinkAdapter(opts: {
           ts: new Date().toISOString(),
           direction: 'out',
           kind: 'text',
-          text: metadata?.historyText ?? unprefixedReplyText(text),
+          text: historyText ?? unprefixedReplyText(text),
           ...attribution,
           source: metadata?.source ?? 'live',
-        }).catch(err => log('MESSAGES', privateText ? 'workbench permission card record failed' : `outbound record failed: ${err instanceof Error ? err.message : err}`))
+        }).catch(err => log('MESSAGES', privateText ? 'permission card record failed' : `outbound record failed: ${err instanceof Error ? err.message : err}`))
         return { msgId: `sent:${Date.now()}` }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -377,12 +380,9 @@ export function makeIlinkAdapter(opts: {
 
     async askUser(chatId, prompt, hash, timeoutMs, opts) {
       // Register pending entry first so timeout can fire even if send fails.
-      const resultPromise = pending.register(hash, timeoutMs, { chatId, prompt })
-      // 怎么回的那一行在这里统一加,调用方(工具权限 / 终端 hook / gemini)只描述「要批什么」。
-      // 两位数码由登记处分配;手机上回「y」即可,同时几条待批才要带码。
-      const code = pending.codeOf(hash)
-      // 措辞和自改的拍板卡共用一个纯函数(见 pending-permissions.howToReplyLine)。
-      const card = `${prompt}\n${howToReplyLine(code, hash, timeoutMs)}`
+      const resultPromise = pending.register(hash, timeoutMs, { chatId, prompt }, undefined, undefined, undefined, undefined,
+        { prompt: opts?.wechatPrompt, incomplete: opts?.incomplete })
+      const card = pending.legacyWechatCardOf(hash)
       // Schedule a sweep at the timeout boundary so the promise resolves
       // with 'timeout' even when the global 30s sweep interval hasn't fired.
       // Using setTimeout so fake-timer tests can advance past the timeout.
@@ -394,25 +394,20 @@ export function makeIlinkAdapter(opts: {
       // approver is usually NOT the chat that triggered this turn — then no
       // reply can EVER come. Don't dead-wait the full 10-min timeout (which
       // races the turn's own no-activity kill → user gets nothing). Resolve
-      // 'undelivered' at once so the turn ends now with an honest reason.
+      // 'undelivered' once there are no more deliveries in flight so the turn can end.
       // 只记账,不拦:permission_ask 是 blocking,判定表里不会推后 / 丢(整合者定的口径,#536)。
-      try { speechOf?.()?.ask({ kind: 'permission_ask', chatId }, { channel: 'wechat', deliverable: true }) } catch (err) { log('PERMISSION', `speech ledger failed: ${err instanceof Error ? err.message : String(err)}`) }
-      adapter.sendMessage(chatId, card).then(
-        (res) => {
-          const err = (res as { error?: string } | null | undefined)?.error
-          if (err) {
-            if (opts?.keepOnUndelivered) { log('PERMISSION', `approval prompt undelivered to ${chatId}: ${err} — kept pending for another surface (phone)`); return }
-            log('PERMISSION', `approval prompt undelivered to ${chatId}: ${err} — failing fast (not waiting ${Math.round(timeoutMs / 1000)}s)`)
+      try { speechOf?.()?.ask({ kind: 'permission_ask', chatId }, { channel: 'wechat', deliverable: true }) } catch { log('PERMISSION', 'speech ledger failed') }
+      const onUndelivered = () => {
+        if (opts?.keepOnUndelivered) { log('PERMISSION', 'approval prompt undelivered; kept pending for another surface'); return }
+        if (!card || pending.legacyWechatCardOf(hash) !== card) return
+        pending.afterWechatReveals(hash, () => {
+          if (pending.legacyWechatCardOf(hash) === card && !pending.hasAnyWechatDelivery(hash)) {
+            log('PERMISSION', 'approval prompt undelivered; settling request')
             pending.fail(hash)
           }
-        },
-        (err) => {
-          const why = err instanceof Error ? err.message : String(err)
-          if (opts?.keepOnUndelivered) { log('PERMISSION', `approval prompt send threw for ${chatId}: ${why} — kept pending for another surface (phone)`); return }
-          log('PERMISSION', `approval prompt send threw for ${chatId}: ${why} — failing fast`)
-          pending.fail(hash)
-        },
-      )
+        })
+      }
+      void adapter.sendMessage(chatId, card?.text ?? prompt).then(result => { if (result?.error) onUndelivered() }, onUndelivered)
       return resultPromise
     },
 
@@ -441,13 +436,13 @@ export function makeIlinkAdapter(opts: {
       const hash = parsed.ref.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref.value
       return !!hash && permissionOwner(hash, fromChatId) && pending.list().some(p => p.hash === hash)
     },
-    handlePermissionReply(text, fromChatId, quoted, replyRoute) {
+    handlePermissionReply(text, fromChatId, quoted, replyRoute, messageId) {
       const parsed = parsePermissionReply(text)
       if (!parsed || (quoted !== undefined && isSummarizedWorkbenchQuote(quoted))) return false
-      const permissionFeedback = async (chatId: string | undefined, message: string): Promise<boolean> => {
+      const permissionFeedback = async (chatId: string | undefined, message: string, historyText = message): Promise<boolean> => {
         if (!chatId) return false
         try {
-          const result = await sendPermissionFeedback(chatId, message, { historyText: message, replyRoute })
+          const result = await sendPermissionFeedback(chatId, message, { historyText, replyRoute })
           if (result.error === undefined) return true
         } catch { /* The sender can also throw before delivery. */ }
         log('PERMISSION', 'reply feedback delivery failed')
@@ -456,11 +451,23 @@ export function makeIlinkAdapter(opts: {
       const byRef = parsed.ref?.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref?.value
       const decide = (hash: string, matchedQuote = false): boolean | Promise<boolean> => {
         if (!permissionOwner(hash, fromChatId)) return false
-        const card = pending.wechatCardOf(hash)
-        if (card) {
-          if (quoted !== undefined && !matchedQuote) return permissionFeedback(fromChatId, badQuote)
-          if (!card.complete && parsed.decision !== 'deny' && !pending.isExpired(hash))
-            return permissionFeedback(fromChatId, WECHAT_PERMISSION_INCOMPLETE)
+        const workbenchCard = pending.wechatCardOf(hash)
+        if (workbenchCard && quoted !== undefined && !matchedQuote) return permissionFeedback(fromChatId, badQuote)
+        if (parsed.decision !== 'deny' && !pending.isExpired(hash)) {
+          const card = pending.wechatReplyCard(hash)
+          if (scopedReply()) {
+            if (workbenchCard?.complete === false) return permissionFeedback(fromChatId, WECHAT_PERMISSION_INCOMPLETE)
+          } else if (card) {
+            const accountId = replyRoute?.accountId ?? (fromChatId && accounts.length ? resolveAccount(fromChatId).id : undefined)
+            // A redelivery of the message that opened the card is still the
+            // first reply, even after that card has reached WeChat.
+            if (pending.wasWechatRevealReply(hash, accountId, messageId)) return true
+            if (!pending.hasWechatDelivery(hash, accountId)) {
+              const finish = pending.beginWechatReveal(hash, accountId, messageId)
+              return permissionFeedback(fromChatId, card.text, card.historyText).then(finish)
+            }
+            if (!card.complete) return permissionFeedback(fromChatId, WECHAT_PERMISSION_INCOMPLETE)
+          }
         }
         const accepted = pending.consume(hash, parsed.decision, parsed.reason)
         if (!accepted && matchedQuote && pending.isExpired(hash)) return permissionFeedback(fromChatId, staleQuote)
@@ -487,11 +494,11 @@ export function makeIlinkAdapter(opts: {
       const mine = pending.list().filter(p => p.chatId === fromChatId)
       if (mine.length === 0) return false
       if (mine.length === 1) return decide(mine[0]!.hash)
-      const lines = mine.map(p => `${p.code}:${(p.prompt.split('\n')[0] ?? '').slice(0, 40)}`)
+      const lines = mine.map(p => `${p.code || p.hash}:${(p.prompt.split('\n')[0] ?? '').slice(0, 40)}`)
       const first = mine[0]!
-      const example = pending.wechatCardOf(first.hash)?.complete === false ? 'n' : 'y'
+      const example = pending.wechatReplyCard(first.hash)?.complete === false ? 'n' : 'y'
       log('PERMISSION', `bare reply with ${mine.length} pending for chat=${fromChatId}: asked for a code`)
-      return permissionFeedback(fromChatId ?? first.chatId, `有 ${mine.length} 条在等你,带上码回:\n${lines.join('\n')}\n例如「${example} ${first.code}」`)
+      return permissionFeedback(fromChatId ?? first.chatId, `有 ${mine.length} 条在等你,带上码回:\n${lines.join('\n')}\n例如「${example} ${first.code || first.hash}」`)
     },
 
     listPendingPermissions() { return pending.list() },

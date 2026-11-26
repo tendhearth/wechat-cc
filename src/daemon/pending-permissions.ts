@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto'
 import { permissionReason } from '../domain/permission-denial'
-import { hasWechatPermissionHeader } from '../domain/workbench/wechat-permission-header'
+import { hasWechatPermissionHeader, WECHAT_PERMISSION_INCOMPLETE } from '../domain/workbench/wechat-permission-header'
+import { MAX_TEXT_CHUNK } from '../lib/config'
 
 export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 export interface WechatPermissionCard { readonly text: string; readonly marker: string; readonly complete: boolean; readonly historyText: string }
@@ -20,6 +22,11 @@ export interface PendingPermissionView extends Omit<PendingPermissionMeta, 'chat
 interface Entry {
   wechatCard?: WechatPermissionCard
   wechatReminder?: string
+  wechatDelivery?: Set<string>
+  wechatRevealReplies?: Map<string, boolean>
+  wechatRevealsInFlight: number
+  onWechatRevealsFinished?: () => void
+  legacyWechatCard?: ReturnType<typeof renderLegacyWechatCard>
   /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
   deadline?: () => number | null
   onAllowTask?: () => boolean
@@ -34,14 +41,38 @@ interface Entry {
 
 /** 明确引用旧批准卡时不能退回到“当前唯一待批”。 */
 export function isPermissionCardQuote(quoted: string): boolean {
-  return /「[yn]\s*(?:[0-9]{2}|[a-z0-9]{5})」|\[approval:[a-z0-9]{5}\]|^(?:Claude|OpenAI|Gemini) wants to run\b/im.test(quoted)
+  return hasLegacyWechatHeader(quoted) || /「[yn]\s*(?:[0-9]{2}|[a-z0-9]{5})」|\[approval:[a-z0-9]{5}\]|^(?:Claude|OpenAI|Gemini) wants to run\b/im.test(quoted)
+}
+
+const legacyWechatHeader = '待批：权限请求'
+const legacyWechatMarker = /^待批：权限请求 · 〔请求 ([a-f0-9]{16})〕$/
+const legacyWechatReplyLine = /^(?:回「y」放行、「n」拒绝;同时有几条待批时带码:「y [0-9]{2}」。|回「y [a-z0-9]+」放行、「n [a-z0-9]+」拒绝;|看完回「y [a-z0-9]+」就批。|拒绝请回「n [a-z0-9]+」。)/m
+// 微信的短引用标题可能把卡头和正文首行拼在一起。
+const legacyCodexHeader = /^Codex 想(?:执行命令|改文件|调用 mcp__\S+__\S+)[:：]/m
+
+function hasLegacyWechatHeader(text: string): boolean {
+  return text.trimStart().startsWith(legacyWechatHeader)
+}
+
+export function summarizeApprovalQuote(text: string): string | undefined {
+  if (hasLegacyWechatHeader(text)) {
+    const marker = legacyWechatMarker.exec(text.trimStart().split(/\r?\n/)[0]!.trim())?.[1]
+    return summarizedWorkbenchQuote({ marker })
+  }
+  const workbench = classifyWorkbenchQuote(text)
+  if (workbench) return summarizedWorkbenchQuote(workbench)
+  // 已发出的旧卡和被截掉卡头的引用仍可能带着正文。
+  if (legacyWechatReplyLine.test(text) || legacyCodexHeader.test(text) ||
+      /^(?:✋ .* 等你批准 · |(?:Claude|OpenAI|Gemini) wants to run\b|(?:Claude|OpenAI|Gemini|Codex) · .* \[approval:[a-z0-9]{5}\])/m.test(text)) {
+    return summarizedWorkbenchQuote({})
+  }
 }
 
 const workbenchMarkerLine = /^〔请求 ([a-f0-9]{16})〕$/
 const workbenchHeader = /(?: · |^任务 )([a-f0-9]{8})$/
 const workbenchCommandBoundary = /^(?:〔命令开始〕|〔命令结束〕)$/
 const workbenchCommandLine = /^│(?: .*|$)$/
-const workbenchReplyLine = /^(?:回「y [0-9]{2}」允许这一步、「n [0-9]{2}」拒绝。|(?:这条在微信里看不全，到电脑或手机上看全再定；)?回「n [0-9]{2}」拒绝。)/
+const workbenchReplyLine = /^(?:(?:看完回「y [0-9]{2}」就批准这一步，回「n [0-9]{2}」拒绝。|回「y [0-9]{2}」先看完整请求，再回一次就批；回「n [0-9]{2}」拒绝。|回「y [0-9]{2}」允许这一步、「n [0-9]{2}」拒绝。)|(?:这条在微信里看不全，到电脑或手机上看全再定；)?回「n [0-9]{2}」拒绝。)/
 const workbenchQuoteSummary = /^（引用了一张待批卡(?: · [a-f0-9]{8})?(?: · 〔请求 [a-f0-9]{16}〕)?）$/
 
 interface WorkbenchQuote { marker?: string; taskId?: string }
@@ -93,7 +124,7 @@ export class PendingPermissions {
     this.changed()
   }
 
-  register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta, onAllowTask?: () => boolean, deadline?: () => number | null, onDecision?: Entry['onDecision'], renderWechatCard?: (code: string) => WechatPermissionCard): Promise<PermissionDecision> {
+  register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta, onAllowTask?: () => boolean, deadline?: () => number | null, onDecision?: Entry['onDecision'], renderWechatCard?: (code: string) => WechatPermissionCard, legacyWechat?: { prompt?: string; incomplete?: boolean }): Promise<PermissionDecision> {
     // 同一个 id 还挂着就又来一条(gemini 重开会话后 seq 从 1 重来;Claude 缺 toolUseID 时都落到同一个 id):
     // 先把旧的按超时了结 —— 原先直接覆盖,旧 promise 永远不 resolve,主人回的「y」也落到新的那条上(2026-10-10)。
     const prev = this.entries.get(hash)
@@ -102,6 +133,9 @@ export class PendingPermissions {
     const expiresAt = now + timeoutMs
     const code = this.allocateCode()
     const wechatCard = renderWechatCard?.(code)
+    const prompt = legacyWechat?.prompt ?? meta?.prompt
+    const legacyWechatCard = meta?.chatId && !wechatCard
+      ? renderLegacyWechatCard(prompt ?? '', code, hash, timeoutMs, legacyWechat?.incomplete) : undefined
     const promise = new Promise<PermissionDecision>((resolve) => {
       this.entries.set(hash, {
         onAllowTask,
@@ -113,6 +147,8 @@ export class PendingPermissions {
         meta: meta ?? null,
         code,
         wechatCard,
+        legacyWechatCard,
+        wechatRevealsInFlight: 0,
       })
     })
     if (meta) this.journal?.opened(hash, meta, now, expiresAt)
@@ -146,6 +182,66 @@ export class PendingPermissions {
     return this.entries.get(hash)?.wechatCard
   }
 
+  // 在发出前绑定到这一份条目。晚到的发送回执不能标记同 id 的下一条。
+  wechatCardDelivery(chatId: string, text: string): ((accountId: string) => void) | undefined {
+    for (const [hash, entry] of this.entries) {
+      if (entry.meta?.chatId !== chatId) continue
+      if (entry.wechatCard?.text !== text && entry.legacyWechatCard?.text !== text && entry.legacyWechatCard?.revealText !== text) continue
+      return accountId => {
+        if (this.entries.get(hash) === entry) (entry.wechatDelivery ??= new Set()).add(accountId)
+      }
+    }
+  }
+
+  hasWechatDelivery(hash: string, accountId: string | undefined): boolean {
+    return accountId !== undefined && this.entries.get(hash)?.wechatDelivery?.has(accountId) === true
+  }
+
+  afterWechatReveals(hash: string, check: () => void): void {
+    const entry = this.entries.get(hash)
+    if (entry?.wechatRevealsInFlight) entry.onWechatRevealsFinished = check
+    else check()
+  }
+
+  wasWechatRevealReply(hash: string, accountId: string | undefined, messageId: string | undefined): boolean {
+    if (!messageId) return false
+    const revealed = this.entries.get(hash)?.wechatRevealReplies?.get(`${accountId ?? ''}:${messageId}`)
+    return revealed === true || (revealed === false && this.hasWechatDelivery(hash, accountId))
+  }
+
+  beginWechatReveal(hash: string, accountId?: string, messageId?: string): (delivered: boolean) => boolean {
+    const entry = this.entries.get(hash)
+    if (!entry) return delivered => delivered
+    const key = messageId && `${accountId ?? ''}:${messageId}`
+    if (key) (entry.wechatRevealReplies ??= new Map()).set(key, true)
+    entry.wechatRevealsInFlight++
+    return delivered => {
+      if (key) entry.wechatRevealReplies?.set(key, delivered)
+      if (--entry.wechatRevealsInFlight === 0) {
+        const check = entry.onWechatRevealsFinished
+        entry.onWechatRevealsFinished = undefined
+        check?.()
+      }
+      return delivered
+    }
+  }
+
+  hasAnyWechatDelivery(hash: string): boolean {
+    return (this.entries.get(hash)?.wechatDelivery?.size ?? 0) > 0
+  }
+
+  wechatReplyCard(hash: string): Pick<WechatPermissionCard, 'text' | 'complete' | 'historyText'> | undefined {
+    const entry = this.entries.get(hash)
+    if (entry?.wechatCard) return entry.wechatCard
+    if (!entry?.legacyWechatCard) return undefined
+    const { revealText, complete } = entry.legacyWechatCard
+    return { text: revealText, complete, historyText: '待批：权限请求' }
+  }
+
+  legacyWechatCardOf(hash: string) {
+    return this.entries.get(hash)?.legacyWechatCard
+  }
+
   rememberWechatReminder(hash: string, chatId: string, text: string): void {
     const entry = this.entries.get(hash)
     const marker = classifyWorkbenchQuote(text)?.marker
@@ -163,6 +259,7 @@ export class PendingPermissions {
 
   // 主动提醒的回码与引用绑定见 docs/maintainer/task-permissions.md#微信主动提醒。
   matchWorkbenchQuote(quoted: string): { kind: 'matched'; hash: string } | { kind: 'altered'; hash?: string } | { kind: 'stale' } | null {
+    if (hasLegacyWechatHeader(quoted)) return null
     const classification = classifyWorkbenchQuote(quoted)
     if (!classification) return null
     const { marker } = classification
@@ -187,6 +284,13 @@ export class PendingPermissions {
     if (workbench) return workbench.kind === 'matched' ? workbench.hash : null
     const q = quoted.trim()
     if (!q) return null
+    if (hasLegacyWechatHeader(q)) {
+      const header = q.split(/\r?\n/)[0]!.trim()
+      for (const [hash, entry] of this.entries) {
+        if (entry.legacyWechatCard?.header === header) return hash
+      }
+      return null
+    }
     // 只认卡片自己写的「y 07」/「y k3x9z」这种带书名号的形式:正文里的「run 12 tests」不能当成码 12。
     const request = /\[approval:([a-z0-9]{5})\]/i.exec(q)
     if (request) return this.legacyQuoteHash(request[1]!)
@@ -338,4 +442,21 @@ export function howToReplyLine(code: string | null, hash: string, timeoutMs: num
   return code
     ? `回「y」放行、「n」拒绝;同时有几条待批时带码:「y ${code}」。${seconds} 秒内有效。`
     : `回「y ${hash}」放行、「n ${hash}」拒绝;${seconds} 秒内有效。`
+}
+
+/** Legacy tool, hook and self-change cards share the reply copy and wire size limit. */
+export function renderLegacyWechatCard(prompt: string, code: string | null, hash: string, timeoutMs: number, incomplete = false) {
+  const marker = createHash('sha256').update(JSON.stringify([hash, code])).digest('hex').slice(0, 16)
+  const header = `${legacyWechatHeader} · 〔请求 ${marker}〕`
+  const replyLine = howToReplyLine(code, hash, timeoutMs)
+  const revealLine = `看完回「y ${code || hash}」就批。`
+  const body = `${header}\n${prompt}`
+  const rejectLine = `${WECHAT_PERMISSION_INCOMPLETE}\n拒绝请回「n ${code || hash}」。`
+  const fits = body.length + Math.max(replyLine.length + revealLine.length + 2, rejectLine.length + 1) <= MAX_TEXT_CHUNK
+  if (incomplete || !prompt.trim() || !fits) {
+    const text = `${fits && prompt.trim() ? body : header}\n${rejectLine}`
+    return { header, text, revealText: text, complete: false }
+  }
+  const text = `${body}\n${replyLine}`
+  return { header, text, revealText: `${text}\n${revealLine}`, complete: true }
 }

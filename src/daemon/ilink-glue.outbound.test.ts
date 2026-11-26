@@ -106,15 +106,16 @@ describe('ilink-glue sendMessage → outboundHealth', () => {
     try {
       adapter.markChatActive('owner', '0')
       adapter.captureContextToken('owner', 'expired-context')
+      const card = `待批：权限请求\n${WECHAT_PERMISSION_INCOMPLETE}\n回「n 01」拒绝。`
       const decision = adapter.registerPendingPermission('request', 10_000, { chatId: 'owner', prompt: 'fixture' }, {
         onDecision: answer,
-        renderWechatCard: () => ({ text: 'fixture', marker: '1234567890abcdef', complete: false, historyText: 'fixture' }),
+        renderWechatCard: () => ({ text: card, marker: '1234567890abcdef', complete: false, historyText: 'fixture' }),
       })
       const message = { chatId: 'owner', accountId: '1', contextToken: 'fresh-context', text: 'y 01' }
       expect(await consume(message)).toBe(true)
       expect(fake.outbox()).toHaveLength(0)
       expect(inbound.outbox()).toHaveLength(1)
-      expect(inbound.outbox()[0]).toMatchObject({ text: WECHAT_PERMISSION_INCOMPLETE, raw: { msg: { context_token: 'fresh-context' } } })
+      expect(inbound.outbox()[0]).toMatchObject({ text: card, raw: { msg: { context_token: 'fresh-context' } } })
       expect(adapter.resolveAccountId('owner')).toBe('0')
       inbound.failSendMessage()
       expect(await consume({ ...message })).toBe(false)

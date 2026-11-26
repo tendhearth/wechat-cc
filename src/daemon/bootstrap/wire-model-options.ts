@@ -142,7 +142,7 @@ export function wireModelOptions(
     // Build canUseTool with this session's chatId baked in. Done per-call
     // (not once at bootstrap) so concurrent sessions on different chats
     // each get a closure resolving tier/mode for their OWN chatId.
-    const canUseTool = standardTier ? parts.buildCanUseTool(chatId) : profileGate(tierProfile, { root: path, stateDir: ctx.stateDir })
+    const canUseTool = standardTier ? parts.buildCanUseTool(chatId, path) : profileGate(tierProfile, { root: path, stateDir: ctx.stateDir })
     return {
       ...common,
       permissionMode: tierOpts.permissionMode,

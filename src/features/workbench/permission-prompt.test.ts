@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { openTestDb } from '../../lib/db'
 import { makeConversationStore } from '../../adapters/store/conversation-store'
+import { startFakeIlink } from '../../daemon/__e2e__/fake-ilink-server'
 import { makeIlinkAdapter } from '../../daemon/ilink-glue'
 import { makeWorkbenchPermissionPrompt } from './permission-prompt'
 
@@ -28,31 +29,45 @@ it('strict WeChat reason replies consume only a capable owner card; ordinary cha
 })
 
 it.each(['wechat', 'pet'] as const)('R2: %s waits for the server decision before acknowledging or consuming the card', async surface => {
-  const root = mkdtempSync(join(tmpdir(), 'cc-permission-ack-')), db = openTestDb()
-  const ilink = makeIlinkAdapter({ stateDir: root, db, conversationStore: makeConversationStore(db), accounts: [] })
-  const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner'), closes: Array<() => void> = []
-  try {
-    for (const accepted of [false, true]) {
-      const id = randomUUID(), during: number[] = []
-      const answer = vi.fn(() => { during.push(ilink.listPendingPermissions().filter(p => p.hash === id).length); return accepted })
-      closes.push(prompt('task', { id, taskId: 'task', tool: 'Bash', description: 'command=python3 check.py', cwd: '/demo', createdAt: Date.now() }, answer, () => Date.now() + 10_000))
-      const reply = surface === 'wechat' ? ilink.handlePermissionReply(`y ${ilink.pendingPermissionCodeOf(id)}`, 'owner') : ilink.resolvePermission(id, 'allow')
-      expect(reply).toBe(accepted)
-      expect(answer).toHaveBeenCalledExactlyOnceWith('allow')
-      expect(during).toEqual([1])
-      expect(ilink.listPendingPermissions().some(p => p.hash === id)).toBe(!accepted)
-      if (accepted) expect(ilink.resolvePermission(id, 'allow')).toBe(false)
-    }
-  } finally { for (const close of closes) close(); await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
+  await withRegistry(async ilink => {
+    const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner'), closes: Array<() => void> = []
+    try {
+      for (const accepted of [false, true]) {
+        const id = randomUUID(), during: number[] = []
+        const answer = vi.fn(() => { during.push(ilink.listPendingPermissions().filter(p => p.hash === id).length); return accepted })
+        closes.push(prompt('task', { id, taskId: 'task', tool: 'Bash', description: 'command=python3 check.py', cwd: '/demo', createdAt: Date.now() }, answer, () => Date.now() + 10_000))
+        if (surface === 'wechat') {
+          const card = ilink.pendingWechatPermissionCard(id)!
+          expect((await ilink.sendMessage('owner', card.text, { historyText: card.historyText })).error).toBeUndefined()
+        }
+        const reply = surface === 'wechat' ? ilink.handlePermissionReply(`y ${ilink.pendingPermissionCodeOf(id)}`, 'owner') : ilink.resolvePermission(id, 'allow')
+        expect(reply).toBe(accepted)
+        expect(answer).toHaveBeenCalledExactlyOnceWith('allow')
+        expect(during).toEqual([1])
+        expect(ilink.listPendingPermissions().some(p => p.hash === id)).toBe(!accepted)
+        if (accepted) expect(ilink.resolvePermission(id, 'allow')).toBe(false)
+      }
+    } finally { for (const close of closes) close() }
+  })
 })
 
-async function withRegistry(run: (ilink: ReturnType<typeof makeIlinkAdapter>, sent: string[]) => void | Promise<void>) {
+async function withRegistry(run: (ilink: ReturnType<typeof makeIlinkAdapter>, sent: string[], wire: Awaited<ReturnType<typeof startFakeIlink>>) => void | Promise<void>) {
   const root = mkdtempSync(join(tmpdir(), 'cc-wechat-quote-')), db = openTestDb()
-  const ilink = makeIlinkAdapter({ stateDir: root, db, conversationStore: makeConversationStore(db), accounts: [] })
+  const wire = await startFakeIlink()
+  const ilink = makeIlinkAdapter({ stateDir: root, db, conversationStore: makeConversationStore(db), accounts: [
+    { id: 'fixture-account', botId: 'fixture-bot', userId: 'owner', baseUrl: wire.baseUrl, token: 'fixture', syncBuf: '' },
+    { id: 'other-account', botId: 'other-bot', userId: 'owner', baseUrl: wire.baseUrl, token: 'fixture', syncBuf: '' },
+  ] })
+  ilink.captureContextToken('owner', 'fixture-context')
   const sent: string[] = []
-  vi.spyOn(ilink, 'sendMessage').mockImplementation(async (_chat, text) => { sent.push(text); return { msgId: 'offline' } })
-  try { await run(ilink, sent) }
-  finally { await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
+  const send = ilink.sendMessage
+  ilink.sendMessage = async (...args) => {
+    const result = await send(...args)
+    if (!result.error) sent.push(args[1])
+    return result
+  }
+  try { await run(ilink, sent, wire) }
+  finally { await ilink.flush(); await wire.stop(); db.close(); rmSync(root, { recursive: true, force: true }) }
 }
 
 it.each(['allow', 'deny', 'cancel', 'expired', 'overdue'] as const)('quotes for a %s request cannot approve the next card in the same task', async settlement => {
@@ -75,7 +90,9 @@ it.each(['allow', 'deny', 'cancel', 'expired', 'overdue'] as const)('quotes for 
     expect(sent.at(-1)).toBe('这条请求已经处理过了或已经过期。请直接回「y 码」或「n 码」处理仍在等待的请求。')
     expect(newAnswer).not.toHaveBeenCalled()
     expect(ilink.listPendingPermissions().some(card => card.hash === fresh)).toBe(true)
-    expect(ilink.handlePermissionReply('y', 'owner', ilink.pendingWechatPermissionCard(fresh)!.text)).toBe(true)
+    const freshCard = ilink.pendingWechatPermissionCard(fresh)!
+    expect((await ilink.sendMessage('owner', freshCard.text, { historyText: freshCard.historyText })).error).toBeUndefined()
+    expect(ilink.handlePermissionReply('y', 'owner', freshCard.text)).toBe(true)
     expect(newAnswer).toHaveBeenCalledExactlyOnceWith('allow')
   })
 })
@@ -122,6 +139,9 @@ it('blocks y and yt before the decision callback without changing the code, cloc
     const code = ilink.pendingPermissionCodeOf(id)
     const card = ilink.pendingWechatPermissionCard(id)!.text
     expect(close.replyLine).toBe(`这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`)
+    expect(await ilink.handlePermissionReply(`y ${code}`, 'owner')).toBe(true)
+    expect(sent.at(-1) === card).toBe(true)
+    expect(answer).not.toHaveBeenCalled()
     for (const [text, quote] of [[`y ${code}`, undefined], [`yt ${code}`, undefined], ['y', undefined], ['y', card], ['yt', card]]) {
       expect(await ilink.handlePermissionReply(text!, 'owner', quote)).toBe(true)
       expect(sent.at(-1)).toBe('内容在微信里看不全，请到电脑或手机上看全再定。')
@@ -157,6 +177,9 @@ it.each([false, true])('a header-only approval quote cannot decide a live card o
     await expectBlocked(`y ${ilink.pendingPermissionCodeOf(id)}`)
     expect(answer).not.toHaveBeenCalled()
     expect(await ilink.handlePermissionReply('y', 'owner', card.text)).toBe(true)
+    expect(sent.at(-1) === card.text).toBe(true)
+    expect(answer).not.toHaveBeenCalled()
+    expect(await ilink.handlePermissionReply('y', 'owner', card.text)).toBe(true)
     if (!complete) {
       expect(sent.at(-1)).toBe('内容在微信里看不全，请到电脑或手机上看全再定。')
       expect(answer).not.toHaveBeenCalled()
@@ -165,6 +188,8 @@ it.each([false, true])('a header-only approval quote cannot decide a live card o
     expect(answer).toHaveBeenCalledExactlyOnceWith(complete ? 'allow' : 'deny')
     await expectBlocked('y')
     await expectBlocked(`y ${legacyCode}`)
+    expect(await ilink.handlePermissionReply('y', 'owner', '示例 · 112233aa')).toBe(true)
+    expect(ilink.pendingPermissionCodeOf('abc12')).toBe(legacyCode)
     expect(ilink.handlePermissionReply('y', 'owner', '示例 · 112233aa')).toBe(true)
     await expect(legacy).resolves.toBe('allow')
   })
@@ -177,7 +202,46 @@ it.each([
   await withRegistry(async (ilink) => {
     const decision = ilink.registerPendingPermission('abc12', 10_000, { chatId: 'owner', prompt: quoted })
     expect(ilink.probePermissionReply('y', 'owner', quoted)).toBe(true)
+    expect(await ilink.handlePermissionReply('y', 'owner', quoted)).toBe(true)
+    expect(ilink.pendingPermissionCodeOf('abc12')).toBe('01')
     expect(ilink.handlePermissionReply('y', 'owner', quoted)).toBe(true)
     await expect(decision).resolves.toBe('allow')
+  })
+})
+
+
+it.each(['y', 'yt'] as const)('unseen %s waits for delivery in the same account and a new message', async verb => {
+  await withRegistry(async (ilink, sent, wire) => {
+    const prompt = makeWorkbenchPermissionPrompt(ilink, () => 'owner')
+    const id = randomUUID(), answer = vi.fn(() => true)
+    const request = { id, taskId: '112233aa', tool: 'Bash', description: 'command=printf fixture', cwd: '/demo', createdAt: 0, canAllowTask: true }
+    const register = () => prompt('示例', request, answer, () => null)
+    register()
+    const code = ilink.pendingPermissionCodeOf(id)
+    const text = `${verb} ${code}`
+    const route = { accountId: 'fixture-account', contextToken: 'fresh-context' }
+    const reply = (messageId: string) => ilink.handlePermissionReply(text, 'owner', undefined, route, messageId)
+    const card = ilink.pendingWechatPermissionCard(id)!
+    expect(card.complete).toBe(true)
+    await ilink.sendMessage('owner', card.text, { replyRoute: { ...route, accountId: 'other-account' } })
+    wire.failSendMessage()
+    expect(await reply('first')).toBe(false)
+    expect(answer).not.toHaveBeenCalled()
+    expect(wire.failedSends().at(-1)?.text === card.text).toBe(true)
+    wire.succeedSendMessage()
+    expect(await reply('first')).toBe(true)
+    expect(sent.at(-1) === card.text).toBe(true)
+    expect(sent.at(-1)).toContain(`看完回「y ${code}」就批准这一步`)
+    expect(await reply('first')).toBe(true)
+    expect(answer).not.toHaveBeenCalled()
+    expect(await reply('second')).toBe(true)
+    expect(answer).toHaveBeenCalledExactlyOnceWith(verb === 'y' ? 'allow' : 'allow_task')
+    expect(ilink.listPendingPermissions()).toEqual([])
+    register()
+    const newCode = ilink.pendingPermissionCodeOf(id)
+    expect(await ilink.handlePermissionReply(`${verb} ${newCode}`, 'owner', undefined, route)).toBe(true)
+    expect(answer).toHaveBeenCalledTimes(1)
+    expect(await ilink.handlePermissionReply(`n ${newCode}`, 'owner', undefined, route)).toBe(true)
+    expect(answer).toHaveBeenLastCalledWith('deny')
   })
 })

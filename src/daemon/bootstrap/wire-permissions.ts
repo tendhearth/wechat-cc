@@ -24,7 +24,7 @@ export interface PermissionsSlice {
   resolve: Bootstrap['resolve']
   permissionMode: PermissionMode
   conversationStore: ConversationStore
-  buildCanUseTool: (chatId: string) => CanUseTool & Partial<ChatApprovalLifecycle>
+  buildCanUseTool: (chatId: string, cwd?: string) => CanUseTool & Partial<ChatApprovalLifecycle>
 }
 
 export function wirePermissions(
@@ -73,7 +73,8 @@ export function wirePermissions(
   // Binding chatId at spawn time eliminates that race: each session's
   // canUseTool closure resolves tier/mode for its OWN chatId, regardless
   // of what arrived after.
-  const buildCanUseTool = (chatId: string) => makeCanUseTool({
+  const buildCanUseTool = (chatId: string, cwd?: string) => makeCanUseTool({
+    cwd,
     askUser: deps.ilink.askUser,
     resolveMatterPlan:deps.resolveMatterPlan,
     resolveTerminalParticipation:deps.resolveTerminalParticipation,
