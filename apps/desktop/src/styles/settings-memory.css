@@ -12,8 +12,10 @@
 .settings-drawer .toggle-row .lab { font-size: var(--th-size-body); line-height: var(--th-lh-body); font-weight: 400; }
 .settings-drawer :is(.toggle-row .sub, .drawer-section-help, .setting-feedback, .license-status, .user-copy, .plugins-note) { font-size: var(--th-size-small); line-height: var(--th-lh-small); }
 .settings-drawer :is(.current-user-card, .conn-verdict) { padding: var(--th-space-m) 0; }
-.settings-drawer :is(.moment-users h2, #hero-headline) { font-size: var(--th-size-body); line-height: var(--th-lh-body); font-weight: 400; }
-.settings-drawer :is(#hero-meta, .connection-options, .connection-history) { font-size: var(--th-size-small); line-height: var(--th-lh-small); }
+.settings-drawer #hero-headline,
+.settings-drawer :is(.moment-users h2, :where(#hero-headline)) { font-size: var(--th-size-body); line-height: var(--th-lh-body); font-weight: 400; }
+.settings-drawer #hero-meta,
+.settings-drawer :is(:where(#hero-meta), .connection-options, .connection-history) { font-size: var(--th-size-small); line-height: var(--th-lh-small); }
 .settings-drawer .moment-actions { flex-wrap: wrap; gap: var(--th-space-s); }
 .settings-drawer :is(.btn, .phone-settings-btn, .moment-connect-btn) { min-height: var(--th-button-min-height); height: auto; padding: var(--th-button-padding-y) var(--th-button-padding-x); border: var(--th-button-border-width) solid var(--th-button-secondary-border); border-radius: var(--th-button-radius); background: var(--th-button-secondary-background); color: var(--th-button-secondary-text); font: 400 var(--th-button-role)/var(--th-lh-small) var(--th-font-sans); }
 .settings-drawer .license-row { gap: var(--th-space-s); flex-wrap: wrap; }
@@ -82,21 +84,21 @@
 }
 
 /* One summary anatomy for native details and the existing scripted folds. */
-:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure {
+:is(.settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure {
   display: flex; align-items: center; justify-content: space-between; gap: var(--th-matter-row-gap);
   width: 100%; min-height: var(--th-matter-row-min-height); box-sizing: border-box;
   margin: 0; padding: var(--th-matter-row-padding-y) 0; border: 0; border-radius: 0;
   background: transparent; color: var(--th-ink-soft); text-align: left; list-style: none;
   font: 400 var(--th-size-body)/var(--th-lh-body) var(--th-font-sans); cursor: pointer;
 }
-:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure::-webkit-details-marker { display: none; }
-:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure::before,
-:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure::after { content: none; }
-:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure-label { min-width: 0; flex: 1; font-size: inherit; overflow-wrap: anywhere; }
-:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure-chevron { display: inline-block; flex: none; font-size: inherit; transition: transform 150ms ease-out; }
-:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure-chevron::after { content: '›'; }
-:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) :is(details[open] > .b3-disclosure, .b3-disclosure[aria-expanded="true"]) > .b3-disclosure-chevron { transform: rotate(90deg); }
-:is(#settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 3px; }
+:is(.settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure::-webkit-details-marker { display: none; }
+:is(.settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure::before,
+:is(.settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure::after { content: none; }
+:is(.settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure-label { min-width: 0; flex: 1; font-size: inherit; overflow-wrap: anywhere; }
+:is(.settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure-chevron { display: inline-block; flex: none; font-size: inherit; transition: transform 150ms ease-out; }
+:is(.settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure-chevron::after { content: '›'; }
+:is(.settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) :is(details[open] > .b3-disclosure, .b3-disclosure[aria-expanded="true"]) > .b3-disclosure-chevron { transform: rotate(90deg); }
+:is(.settings-drawer, [data-pane="memory"], .now-connections, .memory-evidence-dialog) .b3-disclosure:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 3px; }
 .memory-profile-overview > .memory-library-trigger { align-self: stretch; }
 .memory-profile-overview .decision-row > .b3-disclosure-label { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: var(--th-matter-row-gap); }
 .memory-facts-head h1 { margin-bottom: 0; }

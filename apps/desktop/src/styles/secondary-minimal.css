@@ -96,7 +96,7 @@
   [data-pane="logs"] #logs-filter { flex: 1 1 160px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  :is(.settings-drawer, .memory-sources-panel, #phone-settings-modal, #provider-menu) * { scroll-behavior: auto; }
+  :is(.settings-drawer, .memory-sources-panel, :where(#phone-settings-modal, #provider-menu)) * { scroll-behavior: auto; }
 }
 
 /* The separate floating window keeps its transparent stage and canonical art. */
@@ -134,7 +134,7 @@
 .memory-profile-disclosure { margin: 20px 0; border-top: 1px solid var(--th-hair); }
 .memory-profile-disclosure > summary { padding: 18px 0; color: var(--th-ink-soft); font-size: var(--th-size-body); cursor: pointer; }
 .memory-profile-disclosure > summary > span { font-size: var(--th-size-meta); }
-.memory-profile-disclosure[open] > summary { color: var(--th-ink); }
+.memory-profile-disclosure[open] > summary:not(.b3-disclosure) { color: var(--th-ink); }
 .memory-profile-disclosure #memory-profile-content { padding-top: 20px; }
 @media(max-width:800px) { .memory-facts-head { flex-wrap: wrap; gap: 16px; } }
 .memory-profile-overview > .memory-library-trigger { align-self: flex-start; margin: 0; padding: 12px 0; border: 0; border-radius: 0; font-size: var(--th-size-body); }
