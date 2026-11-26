@@ -34,7 +34,7 @@ export async function initPluginsTab(deps) {
   const list = document.getElementById('plugins-list')
   if (!list) return
   await refresh().catch(err => {
-    list.innerHTML = `<li class="empty">加载失败：${escapeHtml(String(err?.message ?? err))}</li>`
+    list.innerHTML = `<li class="empty">${installedErrorText(err)}</li>`
   })
   document.getElementById('plugins-refresh-btn')?.addEventListener('click', () => {
     refresh().catch(err => console.error('plugins refresh failed', err))
@@ -44,11 +44,17 @@ export async function initPluginsTab(deps) {
   document.getElementById('plugins-market-list')?.addEventListener('click', onMarketAction)
 }
 
+/** 已装插件读不到时给人看的一句；技术原因另起一行用小字（和市场那句一样）。 @param {unknown} err */
+function installedErrorText(err) {
+  const reason = /** @type {{message?: unknown}|null} */ (err)?.message ?? err
+  return `插件列表加载失败，点「刷新」再试。<br><small>原因：${escapeHtml(String(reason))}</small>`
+}
+
 export async function refresh() {
   await Promise.all([
     refreshInstalled().catch(err => {
       const list = document.getElementById('plugins-list')
-      if (list) list.innerHTML = `<li class="empty" role="status">加载失败：${escapeHtml(String(err?.message ?? err))}</li>`
+      if (list) list.innerHTML = `<li class="empty" role="status">${installedErrorText(err)}</li>`
     }),
     refreshMarket(),
   ])
@@ -217,7 +223,8 @@ async function refreshMarket() {
   if (note) {
     if (resp?.error) {
       note.hidden = false
-      note.innerHTML = `市场暂不可用：${escapeHtml(resp.error)}<br>把 <code>WECHAT_CC_PLUGIN_REGISTRY</code> 指向你的 registry.json（见 docs/registry.example.json）。`
+      // 有默认的市场地址；打不开多半是网络或对方一时不在，叫主人改环境变量是错的建议（命令行 `plugin search` 那边照旧给开发者提示）。
+      note.innerHTML = `市场暂时打不开，过一会儿点「刷新」再试；也可以用上面的「手动添加插件」。<br><small>原因：${escapeHtml(resp.error)}</small>`
     } else { note.hidden = true }
   }
   const plugins = resp?.plugins ?? []
