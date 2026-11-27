@@ -1,3 +1,4 @@
+import type { TerminalLocation } from '@wechat-cc/protocol'
 import { type PermissionDisplay } from '@wechat-cc/protocol'
 /**
  * 终端会话登记处的口(架构终态 E5):库里一行、对外的一条、身份、store。实现在
@@ -15,6 +16,7 @@ export interface CliSessionRow {
   source: CliSource
   cwd: string
   machine: string | null
+  terminal_json?: string | null
   transcript_path: string | null
   origin_agent: string | null
   status: CliSessionStatus
@@ -58,6 +60,7 @@ export interface CliSessionIdentity {
   source: CliSource
   cwd: string
   machine?: string | undefined
+  terminal?: TerminalLocation | undefined
   transcript_path?: string | undefined
   origin_agent?: string | undefined
 }

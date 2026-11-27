@@ -1,3 +1,4 @@
+import { TerminalLocationSchema, terminalLocationWire } from './terminal-location'
 import { permissionCwdWire, permissionDisplayWire } from './permission-display'
 import { NotebookChatReadRequest, NotebookChatReadResponse, NotebookJotRequest, NotebookJotResponse, NotebookPageResponse, NotebookUnseenResponse, NotebookSeenRequest, NotebookSeenResponse, NotebookPaperRequest, NotebookPaperResponse, NotebookStrikeRequest, NotebookStrikeResponse, NotebookWriteRequest, NotebookWriteResponse } from './notebook'
 import { RosterResponse } from './roster'
@@ -741,6 +742,7 @@ export const CliEventRequest = z.object({
   automated: z.boolean().optional(),
   transcript_path: z.string().max(1000).optional(),
   idle_s: z.number().min(0).optional(),
+  terminal: terminalLocationWire,
   machine: z.string().max(200).optional(),
 })
 export type CliEventRequestT = z.infer<typeof CliEventRequest>
@@ -758,6 +760,7 @@ export const CliPermissionRequest = z.object({
   command: z.string().max(2000).optional(),
   paths: z.array(z.string().min(1).max(1000)).max(50).optional(),
   idle_s: z.number().min(0).optional(),
+  terminal: terminalLocationWire,
   machine: z.string().max(200).optional(),
 })
 export const CliPermissionQuery = z.object({
@@ -766,6 +769,13 @@ export const CliPermissionQuery = z.object({
 })
 // ── GET /v1/cli/sessions(终端会话登记处,v76)──────────────────────────────
 // ended=1 连已结束的也列;limit 默认 100,封顶 500(= 登记处的行数上限)。
+export const CliFocusRequest = z.object({ session_id: z.string().min(1).max(200) })
+export const CliFocusResponse = z.object({
+  ok: z.boolean(),
+  method: z.enum(['exact', 'app', 'none']),
+  reason: z.enum(['other_machine', 'not_found', 'automation_denied', 'app_unavailable', 'no_location']).optional(),
+})
+export type CliFocusResult = z.infer<typeof CliFocusResponse>
 export const CliSessionsQuery = z.object({
   owner:z.coerce.number().int().min(1).max(1).optional(),session_id:z.string().min(1).max(200).optional(),
   ended: z.enum(['0', '1']).optional(),
@@ -1396,6 +1406,8 @@ const CliSessionsRowShape = z.object({
   stale: z.boolean(),
   project: z.string(),
   cwd: z.string(),
+  terminal: TerminalLocationSchema.optional(),
+  can_focus: z.literal(true).optional(),
   machine: z.string().nullable(),
   origin_agent: z.string().nullable(),
   last_summary: z.string().nullable(),
@@ -1410,7 +1422,7 @@ const CliSessionsRowShape = z.object({
 // 带拍板的码、此刻那一步、displayName)—— 处理器按 caller 选,一次回包里只会是其中一种。
 export const CliSessionsResponse = z.union([
   z.object({ ok: z.literal(true), sessions: z.array(CliSessionsRowShape) }),
-  z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }),
+  z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow.extend({ terminal: TerminalLocationSchema.optional(), can_focus: z.literal(true).optional() })) }),
 ])
 
 // ── POST /v1/cli/say ──
@@ -2563,6 +2575,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/cli/permission': CliPermissionRequest,
   'GET /v1/cli/permission': CliPermissionQuery,
   'GET /v1/cli/sessions': CliSessionsQuery,
+  'POST /v1/cli/focus': CliFocusRequest,
   'POST /v1/cli/say': CliSayRequest,
   'GET /v1/cli/say': CliSayQuery,
   'GET /v1/subscribe/presence': PresenceTopicQuery,
@@ -2772,6 +2785,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/cli/permission': CliPermissionOpenResponse,
   'GET /v1/cli/permission': CliPermissionStatusResponse,
   'GET /v1/cli/sessions': CliSessionsResponse,
+  'POST /v1/cli/focus': CliFocusResponse,
   'POST /v1/cli/say': CliSayStartResponse,
   'GET /v1/cli/say': CliSayWaitResponse,
   'GET /v1/overseer/today': OverseerTodayResponse,

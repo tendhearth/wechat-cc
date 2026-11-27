@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os'
 import { removeTempDir } from '../../lib/test-temp'
 import { createInternalApi, type InternalApi } from './index'
 import { makeSettingsPanel, type SettingsPanel } from '../../features/phone/settings-panel'
+import { makeTerminalFocus } from '../../features/terminal/focus'
+import { PHONE_ROUTES, LINK_WRITE_OK } from '../../features/phone/phone-routes'
 import { terminalRoutes, type TerminalRoutesDeps } from '../../features/terminal/routes'
 import { phoneCliSessionRows } from '../../features/terminal/phone-sessions'
 import { buildOverseerToday } from '../../domain/overseer-today'
@@ -41,6 +43,8 @@ const TODAY = buildOverseerToday({
 
 let stateDir: string, api: InternalApi, panel: SettingsPanel, localBase: string, operator: string
 let device: string, link: string
+const focusRun = vi.fn(async () => ({ ok: true }))
+const terminal = { bundle_id: 'dev.warp.Warp-Stable' }
 let spies: { list: ReturnType<typeof vi.fn<() => CliSessionView[]>>; today: ReturnType<typeof vi.fn<() => typeof TODAY>>; connections: ReturnType<typeof vi.fn<() => ConnectionsSnapshot>> }
 
 beforeEach(async () => {
@@ -49,7 +53,14 @@ beforeEach(async () => {
   spies = { list: vi.fn(() => VIEWS), today: vi.fn(() => TODAY), connections: vi.fn(() => SNAP) }
   api = createInternalApi({ stateDir, daemonPid: 1, connections: spies.connections })
   // 同 features/terminal/wire.ts:operator 读 cliEvents.list(桌面那一份),手机令牌读 phoneSessions(手机那一份)
+  focusRun.mockClear()
   api.mount('terminal', terminalRoutes({
+    terminalFocus: makeTerminalFocus({
+      lookup: id => ['sess-3', 'sess-5'].includes(id)
+        ? { machine: id === 'sess-3' ? 'here' : 'elsewhere', cwd: '/work', origin_agent: null, terminal_json: JSON.stringify(terminal) }
+        : null,
+      machine: 'here', platform: 'darwin', run: focusRun,
+    }),
     cliEvents: { ingest: () => 'noop', list: (o?: { limit?: number }) => spies.list().slice(0, o?.limit ?? 100) },
     overseerToday: spies.today,
     phoneSessions: (sessionId, frameBudget) => phoneCliSessionRows({
@@ -175,4 +186,32 @@ describe('GET /v1/overseer/today:手机令牌与 operator 同一份(本来就只
     for (const path of ['/v1/overseer/today', '/m/api/today']) expect((await viaPanel(path, link)).status, path).toBe(403)
     expect(spies.today).not.toHaveBeenCalled()
   })
+})
+
+it('focus is mounted only for admin/operator and terminal metadata stays off the phone', async () => {
+  const path = '/v1/cli/focus'
+  const request = (id: string) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: id }) })
+  expect(PHONE_ROUTES.has(`POST ${path}`)).toBe(false)
+  expect(LINK_WRITE_OK[`POST ${path}`]).toBeUndefined()
+  for (const token of [device, link]) {
+    expect((await viaPanel(path, token, request('sess-3'))).status).toBe(403)
+  }
+  const post = (id: string) => {
+    const init = request(id)
+    return fetch(`${localBase}${path}`, { ...init, headers: { ...init.headers, Authorization: `Bearer ${operator}` } })
+  }
+  expect((await post('')).status).toBe(400)
+  expect(await (await post('sess-5')).json()).toEqual({ ok: false, method: 'none', reason: 'other_machine' })
+  expect(focusRun).not.toHaveBeenCalled()
+  expect(await (await post('sess-3')).json()).toEqual({ ok: true, method: 'app' })
+  expect(focusRun).toHaveBeenCalledTimes(1)
+  const desktop = (await (await viaOperator('/v1/cli/sessions')).json()).sessions as Row[]
+  expect(desktop.find(row => row.session_id === 'sess-3')).toMatchObject({ terminal, can_focus: true })
+  expect(desktop.find(row => row.session_id === 'sess-5')).toHaveProperty('terminal', terminal)
+  expect(desktop.find(row => row.session_id === 'sess-5')).not.toHaveProperty('can_focus')
+  const detail = await (await viaOperator('/v1/cli/sessions?owner=1&session_id=sess-3')).json()
+  expect(detail.sessions[0]).toMatchObject({ terminal, can_focus: true })
+  const phone = await (await viaPanel('/v1/cli/sessions?session_id=sess-3', device)).json()
+  expect(phone.sessions[0]).not.toHaveProperty('terminal')
+  expect(phone.sessions[0]).not.toHaveProperty('can_focus')
 })

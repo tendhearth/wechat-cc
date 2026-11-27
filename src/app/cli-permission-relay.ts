@@ -29,6 +29,8 @@ export interface CliPermissionRequest {
   /** hook 那头探到的本机空闲秒数(在场判断的主信号)。 */
   idle_s?: number
   /** hook 那头的主机名;与 daemon 不同 ⇒ 卡片写「那边」。 */
+  origin_agent?: string | undefined
+  terminal?: import('@wechat-cc/protocol').TerminalLocation | undefined
   machine?: string
 }
 

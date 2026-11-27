@@ -10,6 +10,7 @@
 import {V1,v1} from '../daemon-client.js'
 import {escapeHtml} from '../view.js'
 import {deskSituation, deskSpeakerHtml, waitingOfflineNoteHtml} from './desk-page.js'
+import {focusTerminalFromButton, terminalFocusHtml} from './terminal-waiting.js'
 import {permissionCwd} from '../generated/permission-display.js'
 import {renderCompactPermissionOperation, renderPermissionText} from './permission-operation.js'
 
@@ -133,6 +134,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
   /** @type {{mark:string}|undefined} */ let seenAttempt
   /** @type {{key:string,request?:string}|null} */ let inlineWaiting = null
   let waitingMarkup = ''
+  /** @type {Set<string>} */ let focusableSessions = new Set()
   /** @type {Promise<void>|null} */ let inFlight = null
   const reflectOverflow = () => {
     const moreBelow = root.scrollHeight - root.clientHeight - root.scrollTop > 1
@@ -178,6 +180,7 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
           <div class="desk-waiting-question${operation ? ' desk-waiting-question-compact' : ''}">${escapeHtml(question ?? '')}</div>
           ${operation?.html ?? directory}
           ${askHtml(p, !!needsFullView)}
+          ${note?.sessionId && focusableSessions.has(note.sessionId) ? terminalFocusHtml(note.sessionId) : ''}
           ${waitingOfflineNoteHtml}
         </div>
       </div>`
@@ -369,6 +372,11 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
       flushPendingDraw()
       return
     }
+    const focus = target.closest('[data-terminal-focus]')
+    if (focus instanceof HTMLButtonElement) {
+      await focusTerminalFromButton(focus, call)
+      return
+    }
     const place = placeOf(target)
     if (!place) {
       if (target.closest('.place-actions')) closeActions()
@@ -508,6 +516,11 @@ export function mountPlacesStrip({ root, call, onSelect, onOpen, onPlaces, onPla
     closeActions,
     places: () => places.slice(),
     selected: () => selected,
+    /** @param {import('./terminal-waiting.js').TerminalRow[]} rows */
+    setTerminalWaitingRows(rows) {
+      focusableSessions = new Set(rows.filter(row => row.canFocus).map(row => row.id))
+      drawWaiting()
+    },
     /** @param {{key:string,request?:string}|null} value */
     setInlineWaiting(value) {
       if (inlineWaiting?.key === value?.key && inlineWaiting?.request === value?.request) return

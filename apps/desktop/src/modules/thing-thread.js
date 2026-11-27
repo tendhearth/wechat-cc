@@ -30,9 +30,9 @@ function stateOf(item) {
 
 /**
  * @param {{root:HTMLElement,call:Call,openTask:(id:string,host:HTMLElement)=>Promise<void>,closeTask:()=>void,
- * home:()=>void,onLabWrite?:()=>void,onSession:()=>void,onWaiting:(value:{key:string,request?:string}|null)=>void}} options
+ * home:()=>void,focusEnabled?:boolean,onLabWrite?:()=>void,onSession:()=>void,onWaiting:(value:{key:string,request?:string}|null)=>void}} options
  */
-export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,onSession,onWaiting}) {
+export function mountThingThread({root,call,openTask,closeTask,home,focusEnabled,onLabWrite,onSession,onWaiting}) {
   const heading = /** @type {HTMLElement} */ (root.querySelector('.thing-name'))
   const status = /** @type {HTMLElement} */ (root.querySelector('.thing-status'))
   const agentLabel = /** @type {HTMLElement} */ (status.querySelector('.thing-agent'))
@@ -264,7 +264,7 @@ export function mountThingThread({root,call,openTask,closeTask,home,onLabWrite,o
       const host = document.createElement('section')
       host.className = 'thing-terminal'
       tray.append(host)
-      const thread = mountTerminalThread({host,call,id,agent:agentOf(item)?.id ?? '',ended:() => selected?.key === key && selected.endedAt != null,place:() => place?.key === homePlace?.key && place ? place : /** @type {Place} */ (homePlace),
+      const thread = mountTerminalThread({host,call,id,focusEnabled,agent:agentOf(item)?.id ?? '',ended:() => selected?.key === key && selected.endedAt != null,place:() => place?.key === homePlace?.key && place ? place : /** @type {Place} */ (homePlace),
         onStatus: (name,state) => {if (selected?.key === key && place) showStatus(name,state)},
         onWaiting: request => {
           if (selected?.key !== key || !place) return

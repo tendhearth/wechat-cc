@@ -147,3 +147,43 @@ it('直接打开页签名单以外的出处时，把它放到并排的最后', (
     thread.destroy()
   }
 })
+
+it.each([false, true])('桌面终端会话头按宿主与会话位置显示「到终端」(native=%s)', async focusEnabled => {
+  const host = document.createElement('section')
+  document.body.replaceChildren(host)
+  const place: Place = {
+    key: 'p:0000000000000000', name: '花园', line: null, status: null, waiting: null, unseen: false, moving: false,
+    updatedAt: 100, matterIds: [], messageIds: [], sessionIds: ['terminal'],
+  }
+  let pos: object = { terminal: { bundle_id: 'com.googlecode.iterm2' } }
+  let denied = false
+  const thread = mountTerminalThread({
+    host, focusEnabled, id: 'terminal', agent: 'claude', place: () => place, ended: () => false, onStatus() {}, onWaiting() {},
+    call: async (_method, path, body) => {
+      if (path.startsWith('/v1/cli/sessions')) return { sessions: [{ session_id: 'terminal', status: 'idle', ...pos }] }
+      if (path === '/v1/cli/focus') {
+        expect(body).toEqual({ session_id: 'terminal' })
+        if (!denied) throw Error('offline')
+        return { ok: true, method: 'app', reason: 'automation_denied' }
+      }
+      return { items: [] }
+    },
+  })
+  const button = () => host.querySelector<HTMLButtonElement>('header:not([hidden]) [data-terminal-focus]')
+  const status = () => host.querySelector('.terminal-focus [role=status]')?.textContent
+  try {
+    await thread.refresh()
+    expect(button()).toBeNull()
+    pos = { ...pos, can_focus: true }
+    await expect.poll(async () => { await thread.refresh(); return !!button() }).toBe(focusEnabled)
+    if (!focusEnabled) return
+    button()!.click()
+    await expect.poll(status).toBe('暂时打不开终端，请重试')
+    denied = true
+    button()!.click()
+    await expect.poll(status).toContain('自动化')
+  } finally {
+    thread.destroy()
+    host.remove()
+  }
+})

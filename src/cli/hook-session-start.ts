@@ -1,3 +1,4 @@
+import { hookTerminalEnvironment } from './hook-terminal-location'
 import { CliProjectMemoryRequest } from '../../packages/protocol/src/cli-project-memory'
 import { readApiInfo, shouldSkipHook } from './hook-api'
 import type { HookSource } from './hook'
@@ -9,7 +10,7 @@ export async function sessionStartOutput(stateDir: string, source: HookSource, r
   if (source === 'cursor' || shouldSkipHook(opts.env ?? process.env) || !raw || typeof raw !== 'object') return ''
   const input = raw as Record<string, unknown>
   if (input['hook_event_name'] !== 'SessionStart' || input['agent_id']) return ''
-  const parsed = CliProjectMemoryRequest.safeParse({ source, session_id: input['session_id'], cwd: input['cwd'] })
+  const parsed = CliProjectMemoryRequest.safeParse({ source, session_id: input['session_id'], cwd: input['cwd'], terminal: hookTerminalEnvironment(opts.env) })
   if (!parsed.success) return ''
   let timer: ReturnType<typeof setTimeout> | undefined
   const controller = new AbortController()

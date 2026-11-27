@@ -472,3 +472,26 @@ it.each([
   expect(allow.hidden).toBe(false)
   expect(open.hidden).toBe(true)
 })
+
+it('终端等待卡只给可聚焦的本机会话显示「到终端」，窗口找不到时就地提示', async () => {
+  const { terminalWaitingRows } = await import('./terminal-waiting.js')
+  const waitingRoot = document.createElement('div')
+  const waiting = { kind: 'terminal', itemKey: 'terminal:t1', sessionId: 't1', summary: '确认一下', count: 1 }
+  const { call } = mount(([method, path]: string[]) => method === 'POST' && path === '/v1/cli/focus'
+    ? { ok: false, method: 'none' }
+    : { places: [place('a', { waiting })], version: 'v1' }, { waitingRoot })
+  document.body.append(waitingRoot)
+  await strip!.refresh()
+  const button = () => waitingRoot.querySelector<HTMLButtonElement>('[data-terminal-focus]')
+  const session = { session_id: 't1', source: 'claude', project: 'a', status: 'waiting', pending: { tool: 'Read', summary: '', since: 1 } }
+  for (const data of [{}, { terminal: { bundle_id: 'com.apple.Terminal' } }, { can_focus: true }]) {
+    strip!.setTerminalWaitingRows(terminalWaitingRows([{ ...session, ...data }]))
+    expect(button()).toBeNull()
+  }
+  strip!.setTerminalWaitingRows(terminalWaitingRows([{ ...session, terminal: { bundle_id: 'com.apple.Terminal' }, can_focus: true }]))
+  expect(button()?.textContent).toBe('到终端')
+  button()!.click()
+  await expect.poll(() => waitingRoot.querySelector('.terminal-focus [role=status]')?.textContent).toBe('找不到那个窗口了')
+  expect(call.mock.calls).toContainEqual(['POST', '/v1/cli/focus', { session_id: 't1' }])
+  expect(button()?.disabled).toBe(false)
+})
