@@ -224,7 +224,7 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
   const phoneToday = readAlias('/v1/overseer/today', 'today_not_wired', b => 'today' in b ? { today: b.today } : null)
   // ── GET /m/api/connections → GET /v1/connections ──────────────────────
   // /v1 回的是裸快照(手机令牌已去掉 detail),手机那一份是 { ok: true, ...快照 }
-  const phoneConnections = readAlias('/v1/connections', 'connections_not_wired', b => b, 'usage')
+  const phoneConnections = readAlias('/v1/connections', 'connections_not_wired', b => b, ['usage'])
 
   // ── P3c-3 记忆、待办、看到哪了:数据由 /v1 那一个处理器给(待办的手机令牌只认三个状态、不认 now —— routes-knowledge.ts)。
   // 别名只做:手机的参数规矩(多一个键就拒、先验再翻)、`{ ok }` 信封、手机那一列的码、不带 cache-control(settings-panel 的 json())。

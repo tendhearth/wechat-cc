@@ -44,6 +44,7 @@ const TODAY = buildOverseerToday({
 let stateDir: string, api: InternalApi, panel: SettingsPanel, localBase: string, operator: string
 let device: string, link: string
 const focusRun = vi.fn(async () => ({ ok: true }))
+const usageGet = vi.fn(async (_id: string) => null)
 const terminal = { bundle_id: 'dev.warp.Warp-Stable' }
 let spies: { list: ReturnType<typeof vi.fn<() => CliSessionView[]>>; today: ReturnType<typeof vi.fn<() => typeof TODAY>>; connections: ReturnType<typeof vi.fn<() => ConnectionsSnapshot>> }
 
@@ -51,7 +52,11 @@ beforeEach(async () => {
   stateDir = mkdtempSync(join(tmpdir(), 'panel-v1-terminal-'))
   writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
   spies = { list: vi.fn(() => VIEWS), today: vi.fn(() => TODAY), connections: vi.fn(() => SNAP) }
-  api = createInternalApi({ stateDir, daemonPid: 1, connections: spies.connections })
+  usageGet.mockClear()
+  api = createInternalApi({
+    stateDir, daemonPid: 1, connections: spies.connections,
+    connectionUsage: { get: usageGet, peek: () => null },
+  })
   // 同 features/terminal/wire.ts:operator 读 cliEvents.list(桌面那一份),手机令牌读 phoneSessions(手机那一份)
   focusRun.mockClear()
   api.mount('terminal', terminalRoutes({
@@ -145,6 +150,12 @@ describe('GET /v1/cli/sessions:手机令牌只拿手机那一份', () => {
 })
 
 describe('GET /v1/connections:手机令牌拿去掉 detail 的那一份', () => {
+  it('旧手机连接路由转发额度刷新参数', async () => {
+    const r = await viaPanel('/m/api/connections?usage=refresh', device)
+    expect(r.status).toBe(200)
+    expect(usageGet.mock.calls).toEqual([['claude'], ['codex']])
+  })
+
   it('设备令牌两条路都没有 detail(插件目录、未就绪原因);operator 照旧有', async () => {
     for (const path of ['/v1/connections', '/m/api/connections']) {
       const r = await viaPanel(path, device)
