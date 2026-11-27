@@ -3,11 +3,12 @@ import { spawn, execFileSync } from 'node:child_process'
 import * as nativeFs from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock as defaultAcquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
 import {removeInactiveSnapshot} from './macmini-source-manifest.mjs'
-import { isInsideLab, miniConfiguration, sshInvocation } from './macmini-ui-protocol.mjs'
+import { isInsideLab, miniConfiguration } from './macmini-ui-protocol.mjs'
 import { receiveBrowserSnapshot, verifiedSourcePayload } from './macmini-browser-snapshot.mjs'
 import { pruneInactiveSnapshots } from './macmini-snapshot-retention.mjs'
 
@@ -40,8 +41,8 @@ export async function receiveAppSnapshot({mini,sha,lifecycle=jobLifecycle(),inpu
     tar = spawnProcess('/usr/bin/tar', ['-xf', '-', '-C', join(root, 'project')], { detached: true, stdio: ['pipe', 'inherit', 'inherit'] })
     lifecycle.track(tar)
     const done = finished(tar)
-    input.pipe(tar.stdin)
-    await done
+    const results = await Promise.allSettled([done, pipeline(input, tar.stdin)])
+    for (const result of results) if (result.status === 'rejected') throw result.reason
     lifecycle.assertRunning()
     await writeFile(join(root, 'snapshot.json'), JSON.stringify({ commit: sha, created: new Date().toISOString() }))
     const config = JSON.parse(await readFile(activePath, 'utf8'))
@@ -70,20 +71,13 @@ export async function main() {
   if (!supportsAppSnapshot(ref)) throw Error('Snapshot ref must be an explicitly authorized UI branch')
   const repo = fileURLToPath(new URL('../../..', import.meta.url))
   const sha = execFileSync('/usr/bin/git', ['-C', repo, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8' }).trim()
-  const transport = sshInvocation('app-status', process.argv[3] ?? 'home', process.env.CC_UI_SSH_CONFIG, undefined, process.env)
-  const args = [...transport.args]
-  // The receiver is installed beside the trusted desktop executor by the integrator.
   const verified=ref==='mini-ui-acceptance'||ref==='cc-alive-2'||ref==='design-b3'||ref==='codex-hook-trust-ux'||ref==='topics-waiting-honest'
-  const payload=verified?verifiedSourcePayload({repo,sha}):undefined
-  const receiver = args.at(-1).replace(/app-run\.mjs$/, `app-snapshot.mjs --receive${verified?'-verified':''} ${sha}`)
-  args[args.length - 1] = receiver
-  const remote = spawn(transport.file, args, { stdio: ['pipe', 'inherit', 'inherit'] })
-  if(verified){remote.stdin.on('error',()=>{});const done=finished(remote);remote.stdin.end(payload);await done;return}
-  const archive = spawn('/usr/bin/git', ['-C', repo, 'archive', '--format=tar', sha], { stdio: ['ignore', 'pipe', 'inherit'] })
-  remote.stdin.on('error', () => {})
-  const done = Promise.all([finished(remote), finished(archive)])
-  archive.stdout.pipe(remote.stdin)
-  await done
+  const { executorInvocation, sendSnapshot } = await import('./macmini-lab-client.mjs')
+  const env = process.env
+  const transport = executorInvocation('app-status', process.argv[3] ?? 'home', undefined, env,
+    { kind: verified ? 'app-verified-snapshot' : 'app-snapshot', sha })
+  if (verified) return sendSnapshot({ transport, payload: verifiedSourcePayload({ repo, sha }), env })
+  return sendSnapshot({ transport, archiveArgs: ['-C', repo, 'archive', '--format=tar', sha], env })
 }
 }
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) await main()
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) process.exitCode = await main()

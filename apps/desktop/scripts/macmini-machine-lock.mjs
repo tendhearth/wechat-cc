@@ -1,6 +1,7 @@
 // Shared wire format with the family's check/runner.sh. Runs on the mini only.
 import { mkdir, readFile, rm } from 'node:fs/promises'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { cpus, loadavg } from 'node:os'
 
@@ -11,6 +12,40 @@ export function lockStale(info, now, alive) {
 }
 const alive = pid => { try { process.kill(pid, 0); return true } catch (error) { return error.code === 'EPERM' } }
 const read = async file => { try { return await readFile(file, 'utf8') } catch (error) { if (error.code === 'ENOENT') return ''; throw error } }
+const readInfoSync = file => {
+  try { return readFileSync(file, 'utf8') } catch (error) { if (error.code === 'ENOENT') return ''; throw error }
+}
+
+async function reclaim(path, info, before, now, isAlive, assertRunning) {
+  // Only reclaimers take this OS-backed lock. It is released if the process
+  // dies, and ordinary family holders still need only mkdir and info.
+  const Database = process.versions.bun
+    ? (await import('bun:sqlite')).Database
+    : (await import('node:sqlite')).DatabaseSync
+  assertRunning()
+  const guard = new Database(path + '.reclaim.sqlite')
+  let tomb
+  try {
+    guard.exec('BEGIN IMMEDIATE')
+    const current = readInfoSync(info)
+    if (current !== before || !lockStale(current, Math.floor(now() / 1000), isAlive)) return false
+    // A legacy runner can be between mkdir and writing its reservation.
+    if (!/^pid=.+/m.test(current) && Date.now() - statSync(path).mtimeMs < 2000) return false
+    const candidate = path + '.stale-' + randomUUID()
+    renameSync(path, candidate)
+    if (readInfoSync(join(candidate, 'info')) !== before) {
+      throw Error('Machine lock owner changed during recovery: ' + candidate)
+    }
+    tomb = candidate
+  } catch (error) {
+    if (error.code === 'ENOENT') return true
+    if (error.errcode === 5 || error.code === 'SQLITE_BUSY') return false
+    throw error
+  } finally { guard.close() }
+  await rm(tomb, { recursive: true, force: true })
+  return true
+}
+
 export async function acquireMachineLock({ path, lane, sha, pid = process.pid,
   now = () => Date.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
   isAlive = alive, load = () => loadavg()[0], cores = cpus().length, log = console.log,
@@ -42,13 +77,11 @@ export async function acquireMachineLock({ path, lane, sha, pid = process.pid,
     const before = await read(info)
     assertRunning()
     if (lockStale(before, Math.floor(now() / 1000), isAlive)) {
-      // Recheck before reclaiming: never delete a changed owner.
-      const unchanged = await read(info) === before
       assertRunning()
-      if (unchanged) await rm(path, { recursive: true, force: true })
-      continue
+      if (await reclaim(path, info, before, now, isAlive, assertRunning)) continue
+    } else {
+      log(`家族 check 在跑 ${before.match(/^owner=(.*)$/m)?.[1] ?? 'unknown'},等它`)
     }
-    log(`家族 check 在跑 ${before.match(/^owner=(.*)$/m)?.[1] ?? 'unknown'},等它`)
     if (now() - start >= waitMs) throw Error('Machine lock queue timed out')
     await sleep(Math.min(pollMs, waitMs - (now() - start)))
   }

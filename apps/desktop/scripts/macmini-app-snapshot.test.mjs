@@ -1,5 +1,6 @@
 import {test,expect} from 'vitest'
 import {EventEmitter} from 'node:events'
+import {Readable, Writable} from 'node:stream'
 import * as fs from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -43,7 +44,7 @@ test('archive App activates through the lab symlink before pruning under the loc
   await fs.writeFile(activePath, '{}')
   const sha = 'b'.repeat(40)
   await receiveAppSnapshot({
-   mini: { labHome, homeDir: temp }, sha, input: { pipe() {} },
+   mini: { labHome, homeDir: temp }, sha, input: Readable.from([Buffer.from('archive')]),
    acquireMachineLock: async options => options.onAcquired(async () => events.push('release')),
    fs: { rm: async (path, options) => {
     expect(path).toBe(stale)
@@ -55,7 +56,8 @@ test('archive App activates through the lab symlink before pruning under the loc
    spawnProcess: () => {
     const child = new EventEmitter()
     child.pid = 123
-    queueMicrotask(() => child.emit('close', 0))
+    child.stdin = new Writable({ write(_chunk, _encoding, done) { done() } })
+    child.stdin.once('finish', () => child.emit('close', 0))
     return child
    },
   })

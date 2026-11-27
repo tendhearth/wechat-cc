@@ -7,16 +7,16 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
-import { isInsideLab, miniConfiguration, sshInvocation } from './macmini-ui-protocol.mjs'
+import { browserHarness, isInsideLab, miniConfiguration } from './macmini-ui-protocol.mjs'
 import { PUBLIC_CACHE_COMMIT, sha256, gitObject, verifySourceManifest, sourcePath, removeInactiveSnapshot } from './macmini-source-manifest.mjs'
 import { pruneInactiveSnapshots } from './macmini-snapshot-retention.mjs'
 const finished = child => new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',code=>code===0?resolve():reject(Error(`Snapshot process exited ${code}`)))})
-export async function receiveBrowserSnapshot({mini,sha,target='browser',selectActiveRoot,lifecycle=jobLifecycle(),input=process.stdin,fs={},spawnProcess=spawn,acquire=acquireMachineLock,exec=execFileSync,log=console.log,removeSnapshot=removeInactiveSnapshot}) {
+export async function receiveBrowserSnapshot({mini,sha,target='browser',harnessRoot,selectActiveRoot,lifecycle=jobLifecycle(),input=process.stdin,fs={},spawnProcess=spawn,acquire=acquireMachineLock,exec=execFileSync,log=console.log,removeSnapshot=removeInactiveSnapshot}) {
  // Every asynchronous filesystem boundary checks cancellation on both sides.
  const guardedFs=Object.fromEntries(Object.entries({...nativeFs,...fs}).map(([name,operation])=>[name,async(...args)=>{
   lifecycle.assertRunning();const value=await operation(...args);lifecycle.assertRunning();return value
  }]))
- const {mkdir,readFile,writeFile,rename,realpath,copyFile,rm,lstat,chmod}=guardedFs
+ const {mkdir,readFile,writeFile,rename,realpath,rm,lstat,chmod}=guardedFs
  let root,activated=false,activation
  const activePath=join(mini.labHome,'active.json')
  let receivingDone
@@ -71,7 +71,12 @@ export async function receiveBrowserSnapshot({mini,sha,target='browser',selectAc
   const tar=spawnProcess('/usr/bin/tar',['-xzf',archive,'-C',project],{detached:true,stdio:'inherit'});lifecycle.track(tar);await finished(tar);lifecycle.assertRunning()
   for(const file of meta.files){const target=join(project,file.path);await chmod(target,file.mode==='100755'?0o755:0o644);const stat=await lstat(target);if(!stat.isFile()||gitObject('blob',await readFile(target))!==file.blob||(stat.mode&0o111)!==(file.mode==='100755'?0o111:0))throw Error(`Target source mismatch: ${file.path}`)}
   const harnessFiles=[]
-  for(const [name,path] of target==='browser'?[['design-unify-shots.spec.ts','apps/desktop/playwright/design-unify-shots.spec.ts'],['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts'],['task-detail-minimal.spec.ts','apps/desktop/playwright/task-detail-minimal.spec.ts'],['playwright.config.ts','apps/desktop/playwright.config.ts']]:[]){const harness=join(mini.labHome,'browser-executor',name),bytes=await readFile(harness);await copyFile(harness,join(project,path));harnessFiles.push({path,sha256:sha256(bytes)})}
+  for (const [name, path] of target === 'browser' ? browserHarness : []) {
+   if (!harnessRoot && name === 'roster-fixture.ts') continue
+   const bytes = await readFile(join(harnessRoot ?? join(mini.labHome, 'browser-executor'), name))
+   await writeFile(join(project, path), bytes)
+   harnessFiles.push({ path, sha256: sha256(bytes) })
+  }
   const profile=await readFile(join(base,'offline-tests.sb'));await writeFile(join(root,'offline-tests.sb'),profile)
   const env={PATH:`${mini.homeDir}/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin`,HOME:join(root,'home'),BUN_INSTALL_CACHE_DIR:join(mini.homeDir,'.bun/install/cache')};await mkdir(env.HOME,{mode:0o700})
   lifecycle.assertRunning()
@@ -115,10 +120,11 @@ export async function main() {
  const baseline=git('branch','--show-current').toString().trim()==='mini-ui-acceptance'?['rev-parse','9547a8c30^']:['merge-base','HEAD','origin/dev']
  const sha=git(...(phase==='before'?baseline:['rev-parse','HEAD'])).toString().trim()
  const payload=verifiedSourcePayload({repo,sha,phase})
- const transport=sshInvocation('browser',process.argv[3]??'home',process.env.CC_UI_SSH_CONFIG,undefined,process.env),args=[...transport.args]
- args[args.length-1]=args.at(-1).replace(/browser-run\.mjs$/,`browser-snapshot.mjs --receive ${sha}`)
- const remote=spawn(transport.file,args,{stdio:['pipe','inherit','inherit']});remote.stdin.on('error',()=>{});const done=finished(remote);remote.stdin.end(payload);await done
+ const { executorInvocation, sendSnapshot } = await import('./macmini-lab-client.mjs')
+ const env = process.env
+ const transport = executorInvocation('browser', process.argv[3] ?? 'home', undefined, env, { kind: 'browser-snapshot', sha })
+ return sendSnapshot({ transport, payload, env })
 }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) await main()
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) process.exitCode = await main()
