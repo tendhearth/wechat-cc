@@ -11,10 +11,11 @@ let labRoots = [
 guard let labRoot = labRoots[NSHomeDirectory()] else {
   preconditionFailure("QA image decoding requires a configured mini account")
 }
+let realLabRoot = URL(fileURLWithPath: labRoot, isDirectory: true).resolvingSymlinksInPath().path + "/"
 var results: [[String: Any]] = []
 for argument in CommandLine.arguments.dropFirst() {
   let file = URL(fileURLWithPath: argument).standardizedFileURL.resolvingSymlinksInPath()
-  precondition(file.path.hasPrefix(labRoot), "QA image must stay inside the mini lab")
+  precondition(file.path.hasPrefix(realLabRoot), "QA image must stay inside the mini lab")
   let source = CGImageSourceCreateWithURL(file as CFURL, nil)!
   let image = CGImageSourceCreateImageAtIndex(source, 0, nil)!
   let width = image.width, height = image.height

@@ -9,7 +9,7 @@ import {PUBLIC_CACHE_COMMIT,gitObject,manifestTree,sha256} from './macmini-sourc
 
 async function fixture() {
  const lab=await realpath(await mkdtemp(join(tmpdir(),'cc-verified-app-'))),cache=join(lab,'cache'),base=join(lab,'base')
- const contents={'README.md':'public','package.json':'{}','bun.lock':'fixture lock','apps/app/package.json':'{}'}
+ const contents={'README.md':'public','package.json':'{}','bun.lock':'fixture lock','apps/app/package.json':'{}','apps/desktop/playwright/fixture.ts':'fixture'}
  for(const name of ['protocol','design-tokens','markdown']) {
   contents[`packages/${name}/package.json`]=JSON.stringify({name:`@wechat-cc/${name}`,main:'index.js'})
   contents[`packages/${name}/index.js`]='export {}'
@@ -57,18 +57,63 @@ test('verified App delta activates only appRoot, preserves Git source and never 
  }finally{await rm(f.lab,{recursive:true,force:true})}
 })
 
-for(const damage of ['before','digest','commit','cache-commit','cache-blob'])test(`verified App rejects ${damage} and cleans its partial snapshot without activation`,async()=>{
+test.each(['app', 'browser'])('%s delta activates through the lab symlink before pruning under the lock', async target => {
+ const f = await fixture()
+ const labHome = join(f.lab, 'legacy')
+ const pointer = `${target}Root`
+ const stale = join(f.lab, `${target}-${'a'.repeat(40)}-1`)
+ try {
+  await symlink(f.lab, labHome, process.platform === 'win32' ? 'junction' : 'dir')
+  for (const timestamp of [1, 2, 3]) await mkdir(join(f.lab, `${target}-${'a'.repeat(40)}-${timestamp}`))
+  await writeFile(f.active, JSON.stringify({
+   ...f.config, root: join(labHome, 'base'), browserRuntimeRoot: join(labHome, 'base'), browserSourceRoot: join(labHome, 'cache'),
+  }))
+  if (target === 'browser') {
+   const executor = join(f.lab, 'browser-executor')
+   await mkdir(executor)
+   for (const name of ['design-unify-shots.spec.ts', 'cc-alive-shots.spec.ts', 'task-detail-minimal.spec.ts', 'playwright.config.ts']) {
+    await writeFile(join(executor, name), 'fixture')
+   }
+  }
+  await f.run({
+   mini: { labHome, homeDir: join(f.lab, 'home'), bun: '/fixture/bun' },
+   target, ...(target === 'browser' ? { selectActiveRoot: undefined } : {}),
+   fs: { rm: async (path, options) => {
+    if (path === stale) {
+     expect(JSON.parse(await readFile(f.active, 'utf8'))[pointer]).toContain(join(labHome, `${target}-${f.meta.commit}-`))
+     expect(f.events).not.toContain('release')
+     f.events.push('pruned')
+    }
+    await rm(path, options)
+   } },
+  })
+  expect(f.events.slice(-2)).toEqual(['pruned', 'release'])
+  expect(await readdir(f.lab)).not.toContain(`${target}-${'a'.repeat(40)}-1`)
+ } finally {
+  await rm(f.lab, { recursive: true, force: true })
+ }
+})
+
+for(const damage of ['before','digest','commit','cache-commit','cache-blob','runtime-escape','source-escape'])test(`verified App rejects ${damage} and cleans its partial snapshot without activation`,async()=>{
  const f=await fixture()
+ const outside=await realpath(await mkdtemp(join(tmpdir(),'cc-verified-app-outside-')))
  try {
   if(damage==='before')f.meta.phase='before'
   if(damage==='digest')f.meta.deltaSha256='0'.repeat(64)
   if(damage==='commit')f.meta.commit='0'.repeat(40)
   if(damage==='cache-commit')await writeFile(join(f.cache,'snapshot.json'),JSON.stringify({commit:'0'.repeat(40)}))
   if(damage==='cache-blob')await writeFile(join(f.cache,'project','README.md'),'changed')
+  if(damage.endsWith('-escape')){
+   const escaped=join(f.lab,'external')
+   await mkdir(join(outside,'project'))
+   await symlink(outside,escaped,process.platform==='win32'?'junction':'dir')
+   f.config[damage==='runtime-escape'?'browserRuntimeRoot':'browserSourceRoot']=escaped
+   await writeFile(f.active,JSON.stringify(f.config))
+  }
   await expect(f.run()).rejects.toThrow()
   expect(JSON.parse(await readFile(f.active,'utf8'))).toEqual(f.config)
   expect((await readdir(f.lab)).filter(name=>name.startsWith('app-'))).toEqual([])
   expect(f.events.at(-1)).toBe('release')
   expect(f.events).not.toContain('offline-install')
- }finally{await rm(f.lab,{recursive:true,force:true})}
+ }finally{await rm(f.lab,{recursive:true,force:true});await rm(outside,{recursive:true,force:true})}
 })
