@@ -63,6 +63,14 @@ export function createOfflineSession({ bundleId, appPath, stateRoot }) {
   } } }
 }
 
+export const browserHarness = [
+  ['design-unify-shots.spec.ts','apps/desktop/playwright/design-unify-shots.spec.ts'],
+  ['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts'],
+  ['task-detail-minimal.spec.ts','apps/desktop/playwright/task-detail-minimal.spec.ts'],
+  ['playwright.config.ts','apps/desktop/playwright.config.ts'],
+  ['roster-fixture.ts','apps/desktop/playwright/roster-fixture.ts'],
+]
+
 export const APP_FLOWS = Object.freeze(['roster-direct', 'butler-checkup', 'cc-motion', 'agent-avatars', 'approve', 'chat', 'chat-extras', 'connections', 'compose', 'worktree', 'quota-handoff', 'demo-walkthrough', 'pair-invalid', 'pair-link', 'terminal-sessions', 'push-open', 'cc-acts', 'continue-session', 'design-shots', 'codex-connection', 'design-b3-shots', 'reply-speaker', 'notebook'])
 
 export function appFlow(value = 'all') {
@@ -78,7 +86,7 @@ export function validateRequest(request) {
   return request
 }
 
-export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv = {}) {
+export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv = {}, useBootstrap = false) {
   if (!COMMANDS.has(command)) throw Error('Unsupported UI lab command')
   if (!Object.hasOwn(MINIS, target)) throw Error('Unsupported UI lab target')
   if (sshConfig !== undefined && (typeof sshConfig !== 'string' || !posix.isAbsolute(sshConfig) || sshConfig.includes('\0'))) throw Error('SSH config must be an absolute local path')
@@ -98,9 +106,11 @@ export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv
     settings.push(`${key}=${value}`)
   }
   const mini = MINIS[target]
+  const entry = useBootstrap ? 'macmini-lab-bootstrap.mjs'
+    : command.startsWith('app-') ? 'app-run.mjs' : command === 'browser' ? 'browser-run.mjs' : 'run.mjs'
   return { file: 'ssh', args: [...(sshConfig ? ['-F', sshConfig] : []), '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=6',
     '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
-    mini.host, `env ${settings.length ? settings.join(' ') + ' ' : ''}PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/${command.startsWith('app-') ? 'app-run.mjs' : command === 'browser' ? 'browser-run.mjs' : 'run.mjs'}`],
+    mini.host, `env ${settings.length ? settings.join(' ') + ' ' : ''}PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/${entry}`],
   input: JSON.stringify(validateRequest({ command, ...(flow !== undefined ? { flow } : {}) })) + '\n' }
 }
 
