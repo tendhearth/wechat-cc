@@ -643,6 +643,8 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     })
     expect((await b.connections()).sources[0]!.state).toBe('ready')
     expect(reqs.at(-1)!.path).toBe('/m/api/connections')
+    await b.connections(true)
+    expect(reqs.at(-1)!.path).toBe('/m/api/connections?usage=refresh')
     expect(await b.sessions('codex', 'c 1')).toEqual({ items: [ROW], nextCursor: 'n' })
     expect(reqs.at(-1)!.path).toBe('/m/api/sessions?provider=codex&cursor=c%201')
     await b.sessions('claude'); expect(reqs.at(-1)!.path).toBe('/m/api/sessions?provider=claude')

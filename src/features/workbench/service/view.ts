@@ -207,6 +207,14 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     const agentNames=agentNamesOf([...providers.map(p=>p.id),...historyProviders,...result.tasks.flatMap(task=>[task.providerId,...(agents.agents.get(task.id)??[])])])
     return {projects,tasks:result.tasks.map(task => withAgents(taskView(task,true),agents)),page:result.page,projectProviders,providers,historyProviders,agentNames,defaultProvider:providers.find(p=>p.id===ctx.deps.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!ctx.deps.ownerChatId(),unattendedAcknowledgedAt:ctx.deps.unattendedAck?.get()??null}
   }
+  // 连接页只读事项和成果，避免 list/detail 间接刷新执行者额度。
+  const connectionsRead = {
+    list(query: WorkbenchListQuery) {
+      const { tasks } = store.listPage(query)
+      return { tasks: tasks.map(task => ({ id: task.id, title: task.title, updatedAt: task.updatedAt, phase: phaseOf(task, state.runsByTask.get(task.id)) })) }
+    },
+    detail: (id: string) => ({ artifacts: store.artifacts(id) }),
+  }
   // The experimental map needs only the roster inputs. Full list/detail reads
   // also maintain quota state and inspect scripts, neither is part of the map.
   const rosterRead = {
@@ -243,6 +251,6 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     return result
   }
 
-  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,projectActivity,taskView,attention,petActivities,projects,validateProject,addProject,list,detail,rosterRead }
+  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,projectActivity,taskView,attention,petActivities,projects,validateProject,addProject,list,detail,rosterRead,connectionsRead }
 }
 export type ViewDomain = ReturnType<typeof makeViewDomain>

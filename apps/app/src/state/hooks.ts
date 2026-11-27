@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { Connection } from '../backend/types'
 import type { Lang } from '../i18n'
 import { useBackendCtx } from './BackendProvider'
-import { isFresh, type QueryState } from './store'
+import { isFresh, type Query, type QueryState } from './store'
 
 type TopicName = Parameters<ReturnType<typeof useBackendCtx>['backend']['subscribe']>[0]
 
@@ -14,7 +14,7 @@ export function useQuery<T>(
   key: string,
   load: (lang: Lang) => Promise<T>,
   opts?: { enabled?: boolean; refreshOnMount?: boolean },
-): QueryState<T> & { refresh(): Promise<void>; fresh: boolean } {
+): QueryState<T> & { refresh: Query<T>['refresh']; fresh: boolean } {
   const { store } = useBackendCtx()
   const [mountedAt] = useState(() => store.clock())
   const q = store.query<T>(key, load)

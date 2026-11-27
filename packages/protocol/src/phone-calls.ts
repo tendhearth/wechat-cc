@@ -125,7 +125,7 @@ export const PHONE_CALLS = {
     page: call('GET /m/api/letters/page', { query: t<{ id: string; p: number; offset: number }>() }),
   },
   stickers: { get: call('GET /m/api/sticker/', { query: t<{ b64: 1 }>() }) },
-  connections: { get: call('GET /m/api/connections') },
+  connections: { get: call('GET /m/api/connections', { query: t<{ usage?: 'refresh' }>() }) },
   sessions: {
     list: call('GET /m/api/sessions', { query: t<{ provider: string; cursor?: string; q?: string }>() }),
     get: call('GET /m/api/session', { query: t<{ key: string; cursor?: string; window?: string }>() }),

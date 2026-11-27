@@ -20,7 +20,16 @@ import type { AgentEvent, AgentRuntimeSnapshot, AgentSession, AgentWorkbenchRunt
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeReportOutboxStore, makeReports } from '../reports'
 import { makeJournal } from '../../adapters/store/journal-store'
+import { readLocalClaudeOAuth } from '../../adapters/executors/claude/claude-oauth-credential'
+import { readCodexRateLimits } from '../../adapters/executors/codex/codex-history-rpc'
+import { classifyCall } from '../../lib/call-classifier'
 import type { Bootstrap } from '../../daemon/bootstrap/types'
+
+vi.mock('../../adapters/executors/claude/claude-oauth-credential', () => ({ readLocalClaudeOAuth: vi.fn(() => null) }))
+vi.mock('../../adapters/executors/codex/codex-history-rpc', async importOriginal => ({
+  ...await importOriginal<typeof import('../../adapters/executors/codex/codex-history-rpc')>(),
+  readCodexRateLimits: vi.fn(async () => null),
+}))
 
 // The paired owner belongs to access.admins, just as the HTTP/mobile resolver requires.
 vi.mock('../../lib/access',async importOriginal=>({...await importOriginal<typeof import('../../lib/access')>(),
@@ -655,4 +664,37 @@ it('pins the Claude task temp/cache in both process and settings environments',a
     expect(options.env).toMatchObject({TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')})
     expect(options.settings).toMatchObject({env:{TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')},permissions:{defaultMode:'default',disableBypassPermissionsMode:'disable'}})
   }finally{removeTempDir(path)}
+})
+
+it('guards official subscription endpoints before reading credentials or starting Codex', async () => {
+  vi.mocked(readLocalClaudeOAuth).mockClear()
+  vi.mocked(readCodexRateLimits).mockClear()
+  const stateDir = mkdtempSync(join(tmpdir(), 'wire-subscription-usage-'))
+  acknowledgeDirs.push(stateDir)
+  const db = openDb({ path: join(stateDir, 'state.db') })
+  const registry = createProviderRegistry()
+  registry.register('claude', fakeProvider(), { canResume: () => true })
+  registry.register('codex', fakeProvider(), { canResume: () => true, bin: () => '/fixture/codex' })
+  const classify = vi.fn((target: Parameters<typeof classifyCall>[0]) => classifyCall(target))
+  const check = vi.fn(async () => ({ safe: false, source: 'bx' as const, detail: 'fixture' }))
+  const service = wireWorkbench({
+    db, stateDir, boot: { registry, defaultProviderId: 'claude', holdBusy: () => () => {} } as unknown as Bootstrap,
+    internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} },
+    askUser: async () => 'allow', log: () => {}, networkGate: { classify, check },
+  })
+  try {
+    expect(service.connectionsRead.list({ limit: 20 }).tasks).toEqual([])
+    expect(check).not.toHaveBeenCalled()
+    expect(await Promise.all([service.subscriptionUsage.get('claude'), service.subscriptionUsage.get('codex')])).toEqual([null, null])
+    expect(classify.mock.calls).toEqual([
+      [{ provider: 'claude', baseUrl: 'https://api.anthropic.com', purpose: 'usage', exact: true }],
+      [{ provider: 'codex', baseUrl: 'https://chatgpt.com', purpose: 'usage', exact: true }],
+    ])
+    expect(check).toHaveBeenCalledTimes(2)
+    expect(readLocalClaudeOAuth).not.toHaveBeenCalled()
+    expect(readCodexRateLimits).not.toHaveBeenCalled()
+  } finally {
+    await service.shutdown()
+    db.close()
+  }
 })

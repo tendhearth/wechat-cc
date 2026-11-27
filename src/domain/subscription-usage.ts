@@ -85,25 +85,30 @@ export interface UsageMonitor {
   get(providerId: UsageProviderId): Promise<UsageSnapshot | null>
   /** 同步取缓存(哪怕过期),过期时顺手在后台刷新。给同步的登记处 / 列表用。 */
   cached(providerId: UsageProviderId): UsageSnapshot | null
+  /** 只看上次读到的额度，不起查询。 */
+  peek(providerId: UsageProviderId): UsageSnapshot | null
 }
 export function makeUsageMonitor(deps: UsageMonitorDeps): UsageMonitor {
   const now = deps.now ?? Date.now, ttl = deps.ttlMs ?? 60_000
   const cache = new Map<UsageProviderId, UsageSnapshot>()
+  const retryAfter = new Map<UsageProviderId, number>()
+  const peek = (id: UsageProviderId) => cache.get(id) ?? null
   const inflight = new Map<UsageProviderId, Promise<UsageSnapshot | null>>()
   const fresh = (id: UsageProviderId): UsageSnapshot | null => { const s = cache.get(id); return s && now() - s.fetchedAt < ttl ? s : null }
   const refresh = (id: UsageProviderId): Promise<UsageSnapshot | null> => {
     const running = inflight.get(id); if (running) return running
     const source = deps.sources[id]
-    if (!source) return Promise.resolve(null)
-    const p = (async () => {
-      try { const s = await source(); if (s) cache.set(id, s); return s ?? cache.get(id) ?? null }
-      catch { return cache.get(id) ?? null }
-      finally { inflight.delete(id) }
-    })()
+    if (!source || now() < (retryAfter.get(id) ?? -Infinity)) return Promise.resolve(peek(id))
+    const p = Promise.resolve().then(source).catch(() => null).then(s => {
+      if (s) { cache.set(id, s); retryAfter.delete(id) }
+      else retryAfter.set(id, now() + ttl)
+      return peek(id)
+    }).finally(() => inflight.delete(id))
     inflight.set(id, p)
     return p
   }
   return {
+    peek,
     get: id => { const s = fresh(id); return s ? Promise.resolve(s) : refresh(id) },
     cached: id => { const s = cache.get(id) ?? null; if (!fresh(id) && deps.sources[id]) void refresh(id); return s },
   }

@@ -454,8 +454,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async sticker(file) {
       return strip(await api.stickers.get({ suffix: file, query: { b64: 1 } }))
     },
-    async connections() {
-      return strip(await api.connections.get())
+    async connections(refreshUsage) {
+      return strip(await api.connections.get(refreshUsage ? { query: { usage: 'refresh' }, retry: false } : { query: {} }))
     },
     checkup:()=>api.checkup.get(),
     checkupEstimate:()=>api.checkup.estimate({body:{full:false}}),
