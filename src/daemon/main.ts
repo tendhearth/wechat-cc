@@ -24,11 +24,14 @@ import { installCrashGuards } from './runtime/crash-guards'
 import { loadDaemonEnv } from './runtime/daemon-env'
 import { waitAfterBootFailure, clearBootFailures } from './runtime/boot-backoff'
 import { installOperatorSignals } from './runtime/operator-signals'
+import { defaultLocalRoots } from './local-import'
 import { resolveDaemonStateDir } from './resolve-state-dir'
 
 export interface BootDaemonOpts {
   stateDir: string
   dangerously: boolean
+  /** CLI 入口给生产记录目录，隔离验收可传临时目录。 */
+  terminalTranscriptRoots?: NonNullable<Foundation['terminalTranscriptRoots']>
   /** 隔离验收的显式依赖;未传入时沿用生产实现。 */
   tokenRegistry?: Foundation['tokenRegistry']
   makeCheckupTurn?: Foundation['makeCheckupTurn']
@@ -74,7 +77,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   const { stateDir, dangerously } = opts
   const base = await openFoundation({ stateDir }, undo)
   const requestRestart = makeRequestRestart(stateDir, () => shutdown())
-  const f: Foundation = { ...base, dangerously, ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), ...(opts.machineIdle ? { machineIdle: opts.machineIdle } : {}), ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}), ...(opts.desktopNotify ? { desktopNotify: opts.desktopNotify } : {}), requestRestart }
+  const f: Foundation = { ...base, dangerously, ...(opts.terminalTranscriptRoots ? { terminalTranscriptRoots: opts.terminalTranscriptRoots } : {}), ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), ...(opts.machineIdle ? { machineIdle: opts.machineIdle } : {}), ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}), ...(opts.desktopNotify ? { desktopNotify: opts.desktopNotify } : {}), requestRestart }
   const modules = createModules(daemonModules(f), { log: (t, l) => log(t, l) })
   // 状态进 /v1/health.subsystems(和 bootstrap 的可选接线块一起)
   f.sup.adopt(modules)
@@ -144,7 +147,7 @@ export async function main() {
   process.on('SIGTERM', () => void cliShutdown('SIGTERM'))
   let handleReady = false
   let handle: DaemonHandle
-  try { handle = await bootDaemon({ stateDir, dangerously, onShutdownReady: (fn) => { shutdownFn = fn } }) } catch (err) {
+  try { handle = await bootDaemon({ stateDir, dangerously, terminalTranscriptRoots: defaultLocalRoots(), onShutdownReady: (fn) => { shutdownFn = fn } }) } catch (err) {
     console.error('[wechat-cc] fatal:', err)
     // 指数退避(重构第二批步 6a):确定性的启动失败(配置坏了、迁移失败)不该变成 launchd / systemd 的重启风暴。
     await waitAfterBootFailure(stateDir, err)

@@ -778,6 +778,7 @@ export const CliFocusResponse = z.object({
 export type CliFocusResult = z.infer<typeof CliFocusResponse>
 export const CliSessionsQuery = z.object({
   owner:z.coerce.number().int().min(1).max(1).optional(),session_id:z.string().min(1).max(200).optional(),
+  unhooked: z.enum(['1']).optional(),
   ended: z.enum(['0', '1']).optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
   // detail=1:每条补开没开着窗口 / 此刻在做哪一步(CC 的 terminal_sessions 用,2026-10-24)
@@ -1415,6 +1416,7 @@ const CliSessionsRowShape = z.object({
   last_prompt_at: z.number().nullable(),
   created_at: z.number(),
   pending: CliPendingPermission.nullable(),
+  unhooked: z.literal(true).optional(),
   live_window: z.boolean().optional(),
   now_step: z.string().nullable().optional(),
 })

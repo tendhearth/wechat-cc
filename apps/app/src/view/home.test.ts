@@ -139,3 +139,9 @@ it('M6f home prefers archivedAt/state/taskState and retains legacy payload behav
   expect(ids(v, 'working')).toEqual(['visible'])
   expect(ids(v, 'back')).toEqual(['replied', 'old'])
 })
+
+it('没接上的终端行显示重开提示，不加入可审批的行', () => {
+  const view = homeView(input({ terminal: [term({ unhooked: true, last_summary: null })] }))
+  expect(view.groups[0]?.rows[0]).toMatchObject({ unhooked: true, note: '开 hook 之前开的，重开这个会话才能接上' })
+  expect(view.actionableWaiting).toEqual([])
+})

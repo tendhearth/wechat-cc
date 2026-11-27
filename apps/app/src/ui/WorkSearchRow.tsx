@@ -15,6 +15,12 @@ type RowProps = { row: HomeRow; synced: boolean; now: number; onOpen: () => void
 
 export function WorkSearchRow(props: RowProps) {
   const { row } = props
+  if (row.unhooked) return (
+    <View testID={`row-${row.source}-${row.id}`} style={{ minHeight: 48, paddingVertical: space.xs, justifyContent: 'center' }}>
+      <Txt role="item" content="user">{row.title}</Txt>
+      <Txt role="caption" tone="inkSoft">{row.note}</Txt>
+    </View>
+  )
   return row.pendingRequestId
     ? <PendingWorkSearchRow {...props} requestId={row.pendingRequestId} />
     : <SearchRow {...props} title={row.title} />

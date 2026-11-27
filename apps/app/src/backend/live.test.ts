@@ -710,6 +710,13 @@ describe('终端里的会话(2026-10-14)', () => {
     const body = rows[0]?.pending?.display?.body
     expect(body?.kind === 'command' && body.command === command).toBe(true)
   })
+  it.each([undefined, 'v1'] as const)('在 %s 列表请求并保留没接上的标记', async family => {
+    const path = family === 'v1' ? '/v1/cli/sessions' : '/m/api/cli/sessions'
+    const session = { ...CLI, status: 'idle', pending: null, unhooked: true }
+    const { b, reqs } = harness({ [`GET ${path}`]: ok({ ok: true, sessions: [session] }) }, family)
+    expect(await b.cliSessions()).toEqual([session])
+    expect(reqs.at(-1)?.path).toBe(path + '?unhooked=1')
+  })
   it('列表过 schema;拍板带码、不自动重试;码失效 ⇒ stale;终端自己在问 ⇒ cli_not_actionable', async () => {
     let n = 0
     const { b, reqs } = harness({

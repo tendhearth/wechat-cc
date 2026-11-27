@@ -60,6 +60,8 @@ import type { NetworkGate } from '../../lib/network-gate'
 import { makeProjectMemory, type ProjectMemoryRequest } from './project-memory'
 import { makeTerminalFocus } from './focus'
 import type { CliSessionIdentity } from '../../ports/cli-session'
+import { discoverPresessions } from './presession'
+import type { LocalHistoryRoots } from '../../daemon/local-import'
 
 /** 工作台里这一块用到的两样:有没有跟外部会话撞文件夹、「今天」里那一节。 */
 export type CliSessionsWorkbench = TodayWorkbench & {matterApprovalStatus?(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller):boolean;matterApprovalConsume?(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller):void} & { conflictsExternal(cwd: string, source: string, sessionId: string): boolean }
@@ -67,6 +69,7 @@ export type CliSessionsWorkbench = TodayWorkbench & {matterApprovalStatus?(tool:
 export interface WireTerminalDeps {
   places?: () => import('../../ports/places').PlacesReader | null
   stateDir: string
+  transcriptRoots?: LocalHistoryRoots
   dangerously: boolean
   db: Db
   /** 微信那一侧(src/ports/wechat.ts 的几口):推送 / 分享页 / 主人那一路关没关 / 拍板卡与待批登记处。 */
@@ -220,7 +223,7 @@ export function wireTerminal(d: WireTerminalDeps) {
   }) : null
   // 登记处列表 + 等批准那一项在微信里怎么回(中继开的 5 位码与卡片上的两位数码)。微信「终端」、
   // GET /v1/cli/sessions(桌面「此刻」、CC 的只读工具 terminal_sessions)都读这一份。
-  const cliSessionViews = (opts?: { includeEnded?: boolean; limit?: number }) =>
+  const cliSessionViews = (opts?: import('../../ports/cli-session').CliSessionListOptions) =>
     withReplyRefs(cliEvents.list(opts), (id) => cliPermissions.pendingHash(id), (h) => ilink.pendingPermissionCodeOf(h))
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):送话用下面「@码」同一个 replyCore,
   // 回话是这条会话 hooks 报来的下一个 Stop(ingest 那一口转给它)。晚绑定:replyCore 在下面才建。
@@ -391,9 +394,9 @@ export function wireTerminal(d: WireTerminalDeps) {
   const terminalMatterOf = (sessionId: string): string | null => { try { return matterStore.findBySurface('cli', sessionId)?.id ?? null } catch { return null } }
   // 手机令牌读 GET /v1/cli/sessions 的那一份(P3c-2,原 /m/api/cli/sessions 的处理器;接线原在 daemon/wiring/module.ts):
   // 登记处 50 条 + 每行那件事,再按手机口径挑字段(phone-sessions.ts)。
-  const phoneSessions = (sessionId?:string, frameBudget?:number) => phoneCliSessionRows({
+  const phoneSessions = (sessionId?:string, frameBudget?:number, includeUnhooked = false) => phoneCliSessionRows({
     frameBudget,
-    list: () => cliEvents.list({ limit:sessionId?500:50,...(sessionId?{includeEnded:true}:{}) }).filter(v=>!sessionId||v.session_id===sessionId).map(v => { const m = terminalMatterOf(v.session_id); return m ? { ...v, matter_id: m } : v }),
+    list: () => cliEvents.list({ limit:sessionId?500:50,includeUnhooked,...(sessionId?{includeEnded:true}:{}) }).filter(v=>!sessionId||v.session_id===sessionId).map(v => { const m = v.unhooked ? null : terminalMatterOf(v.session_id); return m ? { ...v, matter_id: m } : v }),
     actions: phoneActions,
     executorName: (id: string) => boot.registry.namesOf(id).name,
   })
@@ -401,16 +404,32 @@ export function wireTerminal(d: WireTerminalDeps) {
     const cfg = loadCompanionConfig(stateDir)
     return { enabled: cfg.project_memory_into_sessions !== false, owner: cfg.default_chat_id }
   }, log: line => log('PROJECT_MEMORY', line) })
-  const startup = (request: ProjectMemoryRequest) => {
-    rememberLocation({ ...request, machine: osHostname() })
+  const scanPresessions = async () => {
+    if (!d.transcriptRoots) return
+    try {
+      const sessions = await discoverPresessions({
+        roots: d.transcriptRoots, registered: cliSessionStore.registeredIds(),
+        log: line => log('CLI_PRESESSION', line),
+      })
+      cliSessionStore.discover(sessions)
+    } catch { log('CLI_PRESESSION', 'scan failed') }
+  }
+  const sessionStart = (request: ProjectMemoryRequest) => {
+    if (request.terminal) {
+      // touch saves the location and clears the discovery marker in the same write.
+      rememberLocation({ ...request, machine: osHostname() })
+    } else {
+      try { cliSessionStore.connectDiscovered(request, Date.now()) }
+      catch { log('CLI_PRESESSION', 'could not mark SessionStart connected') }
+    }
     return projectMemory(request)
   }
-  const routes: TerminalRoutesDeps = { projectMemory: startup, terminalFocus, cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions, recap: id => d.places?.()?.recap?.(id) }
+  const routes: TerminalRoutesDeps = { scanPresessions, projectMemory: sessionStart, terminalFocus, cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions, recap: id => d.places?.()?.recap?.(id) }
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     participationConflict:(path:string)=>participations.conflicts(path),
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,
-    command, phoneActions, routes,
+    command, phoneActions, routes, scanPresessions,
     terminalMatterOf,
     participation(api:Pick<InternalApiLifecycle,'mintSessionToken'|'invalidateSession'|'baseUrl'>){
       const credentials=terminalCredentials(stateDir,db,api)

@@ -30,6 +30,7 @@ export interface CliSessionRow {
   pending_cwd?: string | null
   pending_truncated?: number | null
   created_at: number
+  unhooked?: 1 | null
 }
 
 /** 对外(内部 API / 手机)的一条:状态已按 stale 规则折算。 */
@@ -49,6 +50,7 @@ export interface CliSessionView {
   last_event_at: number
   last_prompt_at: number | null
   created_at: number
+  unhooked?: true
   /** 等批准的那一项;只在 status='waiting' 时有。 */
   pending: { tool: string; summary: string | null; since: number; display?: PermissionDisplay; cwd?: string; truncated?: boolean } | null
   /** 这条会话的那件事(kind='terminal',M4a 起);还没有 ⇒ 不带。App 的终端行点进 /matter/<id>(M4c)。 */
@@ -65,6 +67,12 @@ export interface CliSessionIdentity {
   origin_agent?: string | undefined
 }
 
+export interface CliSessionListOptions {
+  includeEnded?: boolean
+  includeUnhooked?: boolean
+  limit?: number
+}
+
 export interface CliSessionStore {
   /** 见到一条事件:没有就建,有就刷新身份字段与 last_event_at。 */
   touch(id: CliSessionIdentity, at: number): void
@@ -74,6 +82,6 @@ export interface CliSessionStore {
   /** 按会话 id 前缀找(不分大小写),不含已结束的;多条命中取最近有事件的。 */
   findByPrefix(prefix: string): CliSessionRow | null
   /** 最近有事件的在前。 */
-  list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionRow[]
+  list(opts?: CliSessionListOptions): CliSessionRow[]
   prune(now: number): void
 }

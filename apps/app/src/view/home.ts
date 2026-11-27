@@ -33,6 +33,7 @@ export type HomeRow = {
   /** Canonical matter behind a terminal session, when the daemon provides it. */
   matterId?: string
   href: string
+  unhooked?: true
   title: string
   /** 第二行小字:等你时是这件事的标题,做完类是状态词;终端是 项目 · 状态 · 多久前。没有 ⇒ null。 */
   caption: string | null
@@ -125,13 +126,14 @@ function terminalHomeRows(input: HomeInput): HomeRow[] {
       return {
         id: r.id,
         source: 'terminal' as const,
+        ...(s.unhooked ? { unhooked: true as const } : {}),
         ...(s.matter_id ? { matterId: s.matter_id } : {}),
         // 有那件事 ⇒ 点进同一个详情页(M4c);老 daemon 不带 matter_id ⇒ 旧地址
         href: s.matter_id ? `/matter/${encodeURIComponent(s.matter_id)}` : `/terminal/${encodeURIComponent(r.id)}`,
         title: r.pendingTitle || r.project,
         caption: [r.pendingTitle ? r.project : null, word, r.ago].filter(Boolean).join(' · ') || null,
         detail: !r.pendingTitle && !r.stale ? r.nowText || r.summary : null,
-        note: local,
+        note: s.unhooked ? t(lang, 'terminal.unhooked') : local,
         status,
         pendingRequestId: null,
         agents: [r.agent],

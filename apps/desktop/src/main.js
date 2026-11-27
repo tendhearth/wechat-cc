@@ -352,6 +352,7 @@ const homeTasks = createTaskListReader({
 window.addEventListener('pagehide', () => homeTasks.stop())
 // 终端里等批准的 Claude Code / Codex(GET /v1/cli/sessions,admin,走原生宿主):接在「N 件事等你」后面,不另开一页。
 const terminalWaiting = createTerminalWaitingPoller({
+  includeUnhooked: true,
   call: (method, path) => invokeWorkbenchApi(method, path),
   onChange: rows => {
     deskHero.setTerminal(rows)

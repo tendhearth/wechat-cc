@@ -34,7 +34,7 @@ export function ConversationPresence({ onPress = () => {}, stream, typing = fals
   const [motion, setMotion] = useState<CCMotionEvent>()
   const outcomeReads = useRef({ matters: work.matters, terminal: terminal.sessions, mattersFresh: false, terminalFresh: false })
   const phase = useCCActivity(stream, presence === 'here', active, typing, view.actionableWaiting.length > 0)
-  const snapshot = JSON.stringify({ active: presence === 'here' && enabled, received: chat.data ? (line ? [{ id: line.id, at: line.at }] : []) : undefined, outcomes: work.mattersKnown && terminal.loaded ? view.groups.flatMap(g => g.rows).map(r => ({ id: `${r.source}:${r.id}`, at: r.updatedAt, status: r.status })) : undefined, waiting: view.waitingUnknown ? undefined : view.actionableWaiting, topics })
+  const snapshot = JSON.stringify({ active: presence === 'here' && enabled, received: chat.data ? (line ? [{ id: line.id, at: line.at }] : []) : undefined, outcomes: work.mattersKnown && terminal.loaded ? view.groups.flatMap(g => g.rows).filter(r => !r.unhooked).map(r => ({ id: `${r.source}:${r.id}`, at: r.updatedAt, status: r.status })) : undefined, waiting: view.waitingUnknown ? undefined : view.actionableWaiting, topics })
   useEffect(() => {
     const current = JSON.parse(snapshot), reads = outcomeReads.current
     if (!current.active) {
