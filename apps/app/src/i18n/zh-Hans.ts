@@ -976,6 +976,7 @@ const zh: Record<keyof typeof en, string> = {
   'terminal.activityRemote': '这个会话在另一台电脑上，这里看不到过程。',
   'terminal.lastSaid': '最后一句',
   'terminal.noSummary': '还没有回复',
+  'terminal.unhooked': '开 hook 之前开的，重开这个会话才能接上',
   'terminal.sayPlaceholder': '接下来让它做什么…',
   'terminal.send': '发送',
   'terminal.sayBusy': '它还在跑，这一轮做完再说下一句。',

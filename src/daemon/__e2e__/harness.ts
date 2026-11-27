@@ -38,6 +38,7 @@ export interface TestDaemonAccount {
 }
 
 export interface TestDaemonOpts {
+  terminalTranscriptRoots?: BootDaemonOpts['terminalTranscriptRoots']
   tokenRegistry?: BootDaemonOpts['tokenRegistry']
   makeCheckupTurn?: BootDaemonOpts['makeCheckupTurn']
   claudeScript?: FakeSdkScript
@@ -319,7 +320,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   // NOTE: import is dynamic so vi.mock has time to register before SDK loads.
   const { bootDaemon } = await import('../main')
   // 一件事的提议(S3b)判「人在不在电脑前」、自己弹桌面通知:测试里不去探跑测试那台机器的真键鼠、也不真弹系统通知
-  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
+  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.terminalTranscriptRoots ? { terminalTranscriptRoots: opts.terminalTranscriptRoots } : {}), ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
 
   // Give polling loop a moment to spin up.
   await new Promise(r => setTimeout(r, 50))

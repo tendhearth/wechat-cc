@@ -26,8 +26,13 @@ import { readJsonFile } from '../lib/read-json-file'
 export const LOCAL_CLAUDE_CHAT = 'local:claude'
 export const LOCAL_CODEX_CHAT = 'local:codex'
 
+export interface LocalHistoryRoots {
+  claudeProjectsRoot: string
+  codexRoot: string
+}
+
 /** Production history roots (overridable in deps for tests). */
-export function defaultLocalRoots(): { claudeProjectsRoot: string; codexRoot: string } {
+export function defaultLocalRoots(): LocalHistoryRoots {
   return {
     claudeProjectsRoot: join(homedir(), '.claude', 'projects'),
     codexRoot: join(homedir(), '.codex', 'sessions'),
@@ -117,7 +122,7 @@ export async function runLocalImportIfEnabled(
   stateDir: string,
   db: Db,
   log?: (tag: string, line: string) => void,
-  roots: { claudeProjectsRoot: string; codexRoot: string } = defaultLocalRoots(),
+  roots: LocalHistoryRoots = defaultLocalRoots(),
 ): Promise<void> {
   if (!loadCompanionConfig(stateDir).import_local_history) return
   if (_importInFlight) return _importInFlight

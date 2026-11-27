@@ -624,6 +624,7 @@ export const CliPendingPermission = z.object({
 })
 
 export const CliSessionRow = z.object({
+  unhooked: z.literal(true).optional(),
   run_id:z.string().optional(),
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
   // displayName(收敛清单 ⑥):这家执行者的正式名字,daemon 定;老 daemon 不带 ⇒ 退回 source。

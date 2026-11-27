@@ -485,7 +485,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       return { matterId: r.matterId }
     },
     async cliSessions(sessionId) {
-      return (await api.cli.sessions({ query: sessionId ? { session_id: sessionId } : {} })).sessions
+      return (await api.cli.sessions({ query: sessionId ? { session_id: sessionId } : { unhooked: '1' } })).sessions
     },
     async cliPermission(p) {
       // 有码就带码:防止这期间换了一项待批,手机批到了没看过的那一项。

@@ -11,7 +11,7 @@ import { escapeHtml } from '../view.js'
 import { V1, v1 } from '../daemon-client.js'
 import { permissionTextSegments, permissionCwd, PermissionDisplaySchema, permissionDisplay, permissionOperationSource, permissionToolAction, permissionWaitingTitle } from '../generated/permission-display.js'
 
-/** @typedef {{session_id:string,code:string,source:string,displayName?:string,status:string,project:string,cwd?:string,machine?:string|null,terminal?:object,can_focus?:true,pending:{tool:string,summary:string|null,since:number,hash?:string|null,display?:unknown,cwd?:unknown,truncated?:boolean,showSnapshotNotice?:boolean,hasScriptPreview?:boolean}|null}} CliSession */
+/** @typedef {{session_id:string,code:string,source:string,displayName?:string,unhooked?:true,status:string,project:string,cwd?:string,machine?:string|null,terminal?:object,can_focus?:true,pending:{tool:string,summary:string|null,since:number,hash?:string|null,display?:unknown,cwd?:unknown,truncated?:boolean,showSnapshotNotice?:boolean,hasScriptPreview?:boolean}|null}} CliSession */
 /** @typedef {import('./permission-operation.js').TerminalOperation} TerminalOperation */
 /** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,canFocus?:true} & TerminalOperation} TerminalRow */
 
@@ -71,7 +71,7 @@ export function terminalWaitingRows(sessions) {
   /** @type {TerminalRow[]} */ const rows = []
   for (const raw of sessions) {
     const s = /** @type {CliSession} */ (raw)
-    if (!s || s.status !== 'waiting' || typeof s.session_id !== 'string' || !s.pending) continue
+    if (!s || s.unhooked || s.status !== 'waiting' || typeof s.session_id !== 'string' || !s.pending) continue
     const { titleSummary, ...operation } = terminalPendingOperation({ ...s, pending: s.pending })
     // 没写 source 的是老 daemon(那时只有 Claude);写了个不认识的 ⇒ 照它的名字画首字母,别冒充 Claude。
     const said = typeof s.source === 'string' ? s.source.trim() : ''
@@ -94,9 +94,9 @@ export function terminalWaitingRows(sessions) {
 /**
  * 轮询终端会话登记处。读不到 ⇒ 发空列表(不留上一拍的行冒充现在;工作台那份 attention 管「暂时不知道」)。
  * onSessions:整份会话(在跑 / 歇着的也在),给主页的「在做」「带回来的」(设计稿 2026-10-31 U4);同样只在变化时通知。
- * @param {{call:(method:'GET',path:string)=>Promise<unknown>,onChange:(rows:TerminalRow[])=>void,onSessions?:(sessions:CliSession[])=>void,intervalMs?:number}} o
+ * @param {{call:(method:'GET',path:string)=>Promise<unknown>,onChange:(rows:TerminalRow[])=>void,onSessions?:(sessions:CliSession[])=>void,intervalMs?:number,includeUnhooked?:boolean}} o
  */
-export function createTerminalWaitingPoller({ call, onChange, onSessions, intervalMs = 10_000 }) {
+export function createTerminalWaitingPoller({ call, onChange, onSessions, intervalMs = 10_000, includeUnhooked = false }) {
   /** @type {ReturnType<typeof setTimeout>|null} */ let timer = null
   let stopped = true, ticket = 0
   let last = '[]', lastSessions = '[]'
@@ -112,7 +112,7 @@ export function createTerminalWaitingPoller({ call, onChange, onSessions, interv
     /** @type {TerminalRow[]} */ let rows = []
     /** @type {CliSession[]} */ let sessions = []
     try {
-      const r = /** @type {{sessions?:unknown}} */ (await v1(call, V1.cli.sessions, { query: { limit: 20 } }))
+      const r = /** @type {{sessions?:unknown}} */ (await v1(call, V1.cli.sessions, { query: { limit: 20, ...(includeUnhooked ? { unhooked: '1' } : {}) } }))
       rows = terminalWaitingRows(r?.sessions)
       sessions = Array.isArray(r?.sessions) ? /** @type {CliSession[]} */ (r.sessions.filter(x => x && typeof x.session_id === 'string')) : []
     } catch { rows = []; sessions = [] }

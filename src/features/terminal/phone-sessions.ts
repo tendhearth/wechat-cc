@@ -36,6 +36,7 @@ export function phoneCliSession(v: CliSessionView, pendingHash?: (sessionId: str
       ...(v.pending.display ? { display: v.pending.display } : {}), ...(v.pending.cwd ? { cwd: v.pending.cwd } : {}),
       ...(v.pending.truncated !== undefined ? { truncated: v.pending.truncated } : {}),
     } : null,
+    ...(v.unhooked ? { unhooked: true as const } : {}),
     ...(v.matter_id ? { matter_id: v.matter_id } : {}),
   }
 }
@@ -59,9 +60,11 @@ export function phoneCliSessionRows(deps: PhoneCliSessionsDeps): CliSessionRowT[
   // 开在电脑窗口里的 Claude 会话(2026-10-18):手机上在跑时也能接着说(话送进那个窗口)。
   const live = actions?.liveWindows?.() ?? new Set<string>()
   const rows = deps.list().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
-    const runId=actions?.activeRun?.(v.session_id)
-    const plain = {...phoneCliSession(v, ph),...(runId?{run_id:runId}:{})}
-    const base = deps.executorName ? { ...plain, displayName: deps.executorName(v.source) } : plain
+    const plain = phoneCliSession(v, ph)
+    const named = deps.executorName ? { ...plain, displayName: deps.executorName(v.source) } : plain
+    if (v.unhooked) return named
+    const runId = actions?.activeRun?.(v.session_id)
+    const base = runId ? { ...named, run_id: runId } : named
     const lw = v.source === 'claude' && live.has(v.session_id) ? { ...base, live_window: true } : base
     let said: ReturnType<NonNullable<CliPhoneActions['lastSay']>> = null
     try { said = actions?.lastSay?.(v.session_id) ?? null } catch { said = null }

@@ -41,6 +41,7 @@ export function toCliSessionView(row: CliSessionRow, now: number): CliSessionVie
     source: row.source,
     status,
     stale,
+    ...(row.unhooked ? { unhooked: true as const } : {}),
     project: basename(row.cwd),
     cwd: row.cwd,
     machine: row.machine,

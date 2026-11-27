@@ -189,7 +189,7 @@ const codexScript: FakeSdkScript = {
     return { toolCalls: [], finalText: 'Codex 在。' }
   },
 }
-const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs' | 'recordSessionAuth'> = {}) => startRealShapedDaemon({
+const boot = (more: Pick<RealShapedOpts, 'terminalTranscriptRoots' | 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs' | 'recordSessionAuth'> = {}) => startRealShapedDaemon({
   ...more,
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
@@ -298,10 +298,36 @@ async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: bo
   return stateDir
 }
 // 冷启动要 import 整个 daemon,满载下可以超过 15s 的缺省 hook 上限
-beforeAll(async () => { d = await boot() }, 60_000)
-afterAll(async () => { try { await d?.stop() } finally { removeTempDir(project); removeTempDir(chatProject) } }, 30_000)
+const presessionFixture = mkdtempSync(join(tmpdir(), 'cc-sandbox-presession-'))
+const presessionID = 'sandbox-session-open-before-hook'
+beforeAll(async () => {
+  const claudeProjectsRoot = join(presessionFixture, '.claude', 'projects')
+  const codexRoot = join(presessionFixture, '.codex', 'sessions')
+  const fixtureProject = join(claudeProjectsRoot, 'project')
+  mkdirSync(fixtureProject, { recursive: true })
+  writeFileSync(join(fixtureProject, `${presessionID}.jsonl`), JSON.stringify({ type: 'user', sessionId: presessionID, cwd: project }) + '\n')
+  d = await boot({ terminalTranscriptRoots: { claudeProjectsRoot, codexRoot } })
+}, 60_000)
+afterAll(async () => { try { await d?.stop() } finally { removeTempDir(project); removeTempDir(chatProject); removeTempDir(presessionFixture) } }, 30_000)
 
 describe('real-shaped sandbox: the full daemon, configured like the owner\'s machine', { timeout: 60_000 }, () => {
+  it('开机只把先前开着的会话放进显式列表，SessionStart 接手后仍无 matter', async () => {
+    const rows = async (query: string) => (await desktop<{ sessions: CliSessionRowT[] }>('GET', `/v1/cli/sessions${query}`)).body.sessions
+    await expect.poll(async () => (await rows('?unhooked=1')).find(s => s.session_id === presessionID)).toMatchObject({ status: 'idle', unhooked: true, pending: null })
+    expect((await rows('')).some(s => s.session_id === presessionID)).toBe(false)
+    const say = await desktop('POST', '/v1/cli/session-say', { session_id: presessionID, text: '不能送进未接上的终端' })
+    expect(say.body).toMatchObject({ ok: false, error: 'not_found' })
+    expect((await desktop('POST', '/v1/cli/project-memory', { source: 'claude', session_id: presessionID, cwd: project }, 'trusted')).status).toBe(200)
+    const connected = (await rows('')).find(s => s.session_id === presessionID)
+    expect(connected).toMatchObject({ status: 'idle', pending: null })
+    expect(connected).not.toHaveProperty('unhooked')
+    const db = openSqlite(join(d.stateDir, 'wechat-cc.db'))
+    try {
+      expect(db.query("SELECT matter_id FROM matter_bindings WHERE surface='cli' AND surface_key=?").get(presessionID)).toBeNull()
+      db.query('DELETE FROM cli_sessions WHERE session_id=?').run(presessionID)
+    } finally { db.close() }
+  })
+
   it('boot: every module came up ok, health is green, nothing tried to reach the internet', async () => {
     expect(await d.moduleProblems()).toEqual([])
     const h = await d.health()

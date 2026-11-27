@@ -974,6 +974,7 @@ const en = {
   'terminal.activityRemote': "This session is on another computer, so its steps aren't visible here.",
   'terminal.lastSaid': 'Last reply',
   'terminal.noSummary': 'No reply yet',
+  'terminal.unhooked': 'Opened before hooks were connected. Reopen this session to connect it.',
   'terminal.sayPlaceholder': 'Tell it what to do next…',
   'terminal.send': 'Send',
   'terminal.sayBusy': 'It’s still working. You can send the next message when this round finishes.',

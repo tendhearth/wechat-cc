@@ -134,7 +134,7 @@ export const PHONE_CALLS = {
   },
   cli: {
     stop:call('POST /v1/cli/session-stop',{body:t<{session_id:string;run_id:string;confirmed:true}>()}),
-    sessions: call('GET /m/api/cli/sessions', { query: t<{ session_id?: string }>() }),
+    sessions: call('GET /m/api/cli/sessions', { query: t<{ session_id?: string; unhooked?: '1' }>() }),
     permission: call('POST /m/api/cli/permission', { body: t<{ session_id: string; hash?: string; decision: string }>() }),
     say: call('POST /m/api/cli/say', { body: t<{ session_id: string; text: string }>() }),
     activity: call('GET /m/api/cli/activity', { query: t<{ session_id: string }>() }),

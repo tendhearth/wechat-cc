@@ -112,7 +112,7 @@ export const DESKTOP_CALLS = {
     decide:call('POST /v1/cli/decide',body()),
     hooksInstall: call('POST /v1/cli/hooks/install', body()),
     focus: call('POST /v1/cli/focus', { body: t<{ session_id: string }>() }),
-    sessions: call('GET /v1/cli/sessions', { query: t<{ limit?: number; owner?:1; session_id?:string }>() }),
+    sessions: call('GET /v1/cli/sessions', { query: t<{ limit?: number; owner?:1; session_id?:string; unhooked?:'1' }>() }),
   },
   companion: {
     presence: call('GET /v1/companion/presence'),

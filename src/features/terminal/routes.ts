@@ -16,7 +16,7 @@ import type { CliPhoneActions } from './phone-actions'
 import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
 import type { CliEvent, CliEventAction } from '../../app/cli-events'
 import type { CliPermissionRelay, CliPermissionRequest } from '../../app/cli-permission-relay'
-import type { CliSessionView } from '../../ports/cli-session'
+import type { CliSessionListOptions, CliSessionView } from '../../ports/cli-session'
 import type { OverseerToday } from '../../domain/overseer-today'
 import { workbenchErrorHttp } from '@wechat-cc/protocol'
 import { TERMINAL_SAY_POLL_CAP_MS, type TerminalSay } from './terminal-say'
@@ -28,12 +28,13 @@ import type { ProjectMemoryRequest } from './project-memory'
 export interface TerminalRoutesDeps {
   participation?:ParticipationRoutesDeps
   terminalFocus?: ReturnType<typeof makeTerminalFocus>
+  scanPresessions?: () => Promise<void>
   projectMemory(request: ProjectMemoryRequest): Promise<{ context: string; reason: string }>
   /** 终端 claude / codex 会话的 hook 事件入口 + 登记处(v76)。 */
   cliEvents: {
     ingest(ev: CliEvent): CliEventAction | Promise<CliEventAction>
     /** 终端会话登记处:GET /v1/cli/sessions。 */
-    list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionView[]
+    list(opts?: CliSessionListOptions): CliSessionView[]
     /**
      * GET /v1/cli/sessions?detail=1(CC 的 terminal_sessions,2026-10-24):每条补上开没开着窗口、此刻在做哪一步。
      * 要读记录尾巴,所以只在带 detail 时算;桌面「此刻」不带。缺席 ⇒ 不补。
@@ -53,7 +54,7 @@ export interface TerminalRoutesDeps {
    * 只给目录名、不给 cwd / origin_agent,最多 50 条,带拍板的码与此刻那一步。缺 ⇒ 手机令牌 503 cli_sessions_not_wired
    * (绝不退回桌面那一份)。
    */
-  phoneSessions?: (sessionId?:string, frameBudget?:number) => object[]
+  phoneSessions?: (sessionId?:string, frameBudget?:number, includeUnhooked?:boolean) => object[]
   ownerActions?: CliPhoneActions
   recap?: (id: string) => import('@wechat-cc/protocol').SessionRecapT | undefined
 }
@@ -121,17 +122,18 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
     },
     // 终端会话登记处(v76):主人在 CC 外面开的 claude / codex 会话,等你批准的在前,其余按最近事件
     // 倒序;running / waiting 超过 30 分钟没事件读成 idle(stale=true)。admin 档,operator 凭据。
-    // 手机令牌(P3c-2,原 /m/api/cli/sessions):回手机那一份(phone-sessions.ts),查询参数不看(不给已结束的、不给 detail)。
+    // 手机令牌(P3c-2,原 /m/api/cli/sessions):回手机那一份(phone-sessions.ts),设备可显式请求 unhooked；手机列表不给已结束的和 detail。
     'POST /v1/cli/focus': async (_q, body, caller) => {
       if (caller?.origin !== 'operator' || caller.tier !== 'admin') return { status: 403, body: { error: 'forbidden' } }
       const sessionId = (body as { session_id: string }).session_id
       return { status: 200, body: await deps.terminalFocus?.focus(sessionId) ?? { ok: false, method: 'none', reason: 'no_location' } }
     },
     'GET /v1/cli/sessions': async (q, _body, caller) => {
+      const includeUnhooked = q.get('unhooked') === '1' && (caller?.origin === 'device' || caller?.origin === 'operator')
       if (fromPhone(caller)||(caller?.origin==='operator'&&q.get('owner')==='1')) {
         if (!deps.phoneSessions) return { status: 503, body: { error: 'cli_sessions_not_wired' } }
         try {
-          const rows = deps.phoneSessions(q.get('session_id') ?? undefined, caller?.frameBudget)
+          const rows = deps.phoneSessions(q.get('session_id') ?? undefined, caller?.frameBudget, includeUnhooked)
           const sessions = caller?.origin === 'operator' ? rows.map(row => {
             const id = (row as { session_id?: string }).session_id
             return id ? { ...row, ...deps.terminalFocus?.metadata(id) } : row
@@ -142,13 +144,13 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
       }
       const limitRaw = Number(q.get('limit') ?? CLI_SESSIONS_DEFAULT_LIMIT)
       const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(Math.trunc(limitRaw), 500)) : CLI_SESSIONS_DEFAULT_LIMIT
-      const rows = deps.cliEvents.list({ includeEnded: q.get('ended') === '1', limit })
+      const rows = deps.cliEvents.list({ includeEnded: q.get('ended') === '1', ...(includeUnhooked ? { includeUnhooked } : {}), limit })
       const sessions = caller?.tier === 'admin' && deps.terminalFocus
         ? rows.map(row => ({ ...row, ...deps.terminalFocus?.metadata(row.session_id) })) : rows
       if (q.get('detail') !== '1' || !deps.cliEvents.detail) return { status: 200, body: { ok: true, sessions } }
       // detail=1(CC 的 terminal_sessions):补开没开着窗口、此刻在做哪一步。读不出来就不补,列表照回。
       let extra: Record<string, { live_window: boolean; now_step: string | null }> = {}
-      try { extra = deps.cliEvents.detail(sessions.map(s => s.session_id)) } catch { extra = {} }
+      try { extra = deps.cliEvents.detail(sessions.filter(s => !s.unhooked).map(s => s.session_id)) } catch { extra = {} }
       return { status: 200, body: { ok: true, sessions: sessions.map(s => extra[s.session_id] ? { ...s, ...extra[s.session_id] } : s) } }
     },
     // CC 代主人对终端会话说一句(terminal_say,2026-10-24):送话走「@码」同一个 core,回一张票;GET 带票等回话。
@@ -176,7 +178,9 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
     // CliHooksRequest 校验过。回每一家的结果 + 新的状态(桌面据此刷新「CC 现在怎么样」)。
     'POST /v1/cli/hooks/install': async (_q, body) => {
       const sources = (body as { sources?: Array<'claude' | 'codex' | 'cursor'> } | undefined)?.sources
-      return { status: 200, body: deps.cliHooks.install(sources) }
+      const result = deps.cliHooks.install(sources)
+      if (result.ok) await deps.scanPresessions?.()
+      return { status: 200, body: result }
     },
     'POST /v1/cli/hooks/uninstall': async (_q, body) => {
       const sources = (body as { sources?: Array<'claude' | 'codex' | 'cursor'> } | undefined)?.sources

@@ -17,7 +17,7 @@ import { PRESENT_IDLE_S } from '../lib/owner-presence'
 import { cliSourceLabel } from '../domain/cli-session-digest'
 import { sortCliSessionViews, toCliSessionView } from '../domain/cli-session-view'
 import { stripMarkdown, summarizeOneLine as oneLine } from '../domain/one-line'
-import type { CliSessionIdentity, CliSessionRow, CliSessionStore, CliSessionView } from '../ports/cli-session'
+import type { CliSessionIdentity, CliSessionListOptions, CliSessionRow, CliSessionStore, CliSessionView } from '../ports/cli-session'
 import type { TerminalTurnLog } from '../ports/terminal-turns'
 
 export type CliSource = 'claude' | 'codex' | 'cursor'
@@ -158,7 +158,7 @@ export interface CliEventHub {
   /** 中继有了结果:allow / deny ⇒ 回到 running;过期 / 没送到 ⇒ 终端自己会问,仍是 waiting。 */
   permissionSettled(sessionId: string, status: string): void
   /** 登记处的列表(内部 API / 手机):等你批准的在前,其余按最近事件倒序;stale 已折算。 */
-  list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionView[]
+  list(opts?: CliSessionListOptions): CliSessionView[]
   pending(): { session_id: string; kind: CliEventKind }[]
   /** 把合并窗里攒着的立刻发掉(测试 / 关机用)。 */
   flush(): Promise<void>
