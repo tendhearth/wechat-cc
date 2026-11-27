@@ -18,7 +18,7 @@ export async function boundedProjectIdentity(identify:typeof projectIdentity,pat
   finally{clearTimeout(timer)}
 }
 interface History { topicId: string; cwd: string }
-export interface ProjectMemoryRequest { source: 'claude' | 'codex'; session_id: string; cwd: string }
+export interface ProjectMemoryRequest { source: 'claude' | 'codex'; session_id: string; cwd: string; terminal?: import('@wechat-cc/protocol').TerminalLocation | undefined }
 const norm = (s: string) => s.normalize('NFKC').trim().toLowerCase()
 const within = (path: string, root: string) => { const r = relative(root, path); return r === '' || (!isAbsolute(r) && r !== '..' && !r.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) }
 

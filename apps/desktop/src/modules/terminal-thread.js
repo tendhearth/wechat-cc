@@ -10,11 +10,11 @@ import { recapMemoHtml, sketchRecap } from './recap-memo.js'
 import { groupActivity, mergeActivity, terminalInputReason } from './thing-thread-model.js'
 import { permissionActionZh, permissionToolAction } from '../generated/permission-display.js'
 import { renderTerminalPermissionOperation } from './permission-operation.js'
-import { terminalPendingOperation, terminalTitle } from './terminal-waiting.js'
+import { canFocusTerminal, focusTerminalFromButton, terminalFocusHtml, terminalPendingOperation, terminalTitle } from './terminal-waiting.js'
 
 const { agentAvatarsHtml } = createAgentAvatars()
 /** @typedef {import('./thing-thread-model.js').Activity} Activity */
-/** @typedef {import('./thing-thread-model.js').Session} Session */
+/** @typedef {import('./thing-thread-model.js').Session & {terminal?:object,can_focus?:true}} Session */
 /** @typedef {import('./thing-thread-model.js').Place} Place */
 /** @typedef {Omit<import('./converse.js').ConverseMsg,'id'|'role'> & {id:string,role:string} & {steps?:Activity[],running?:boolean,recap?:import('@wechat-cc/protocol').SessionRecapT}} ThreadRow */
 /** @typedef {(method:any,path:string,body?:any)=>Promise<any>} Call */
@@ -69,9 +69,9 @@ function updateSteps(row, message) {
   return true
 }
 
-/** @param {{host:HTMLElement,call:Call,id:string,agent:string,place:()=>Place,ended:()=>boolean,onStatus:(name:string,status:string)=>void,onWaiting:(request:string|null)=>void}} options */
-export function mountTerminalThread({host, call, id, agent, place, ended, onStatus, onWaiting}) {
-  host.innerHTML = `<div class="converse-scroll thing-scroll"><button type="button" class="converse-earlier" data-converse-lead hidden>更早的</button></div>
+/** @param {{host:HTMLElement,call:Call,id:string,focusEnabled?:boolean,agent:string,place:()=>Place,ended:()=>boolean,onStatus:(name:string,status:string)=>void,onWaiting:(request:string|null)=>void}} options */
+export function mountTerminalThread({host, call, id, focusEnabled = false, agent, place, ended, onStatus, onWaiting}) {
+  host.innerHTML = `${focusEnabled ? `<header class="thing-terminal-header" hidden>${terminalFocusHtml(id)}</header>` : ''}<div class="converse-scroll thing-scroll"><button type="button" class="converse-earlier" data-converse-lead hidden>更早的</button></div>
     <button type="button" class="converse-latest" hidden>有新回复 · 回到最新</button>
     <div class="desk-waiting thing-waiting" hidden><div class="desk-waiting-row">${deskSpeakerHtml('cc')}<div class="desk-waiting-card">
       <div class="thing-waiting-body">
@@ -88,6 +88,9 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
       <textarea rows="1" maxlength="4000" data-terminal-input disabled></textarea><button type="submit" aria-label="发送" disabled>↑</button></form>`
   /** @template {Element} T @param {string} selector @returns {T} */
   const find = selector => /** @type {T} */ (host.querySelector(selector))
+  const focusHeader = host.querySelector('.thing-terminal-header')
+  const focusButton = focusHeader?.querySelector('button')
+  focusButton?.addEventListener('click', () => void focusTerminalFromButton(focusButton, call))
   const scroll = /** @type {HTMLElement} */ (find('.thing-scroll'))
   const earlier = /** @type {HTMLButtonElement} */ (find('[data-converse-lead]'))
   const latest = /** @type {HTMLButtonElement} */ (find('.converse-latest'))
@@ -134,6 +137,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     const who = name()
     const locked = readOnly()
     endedNote.hidden = !locked
+    focusHeader?.toggleAttribute('hidden', locked || !canFocusTerminal(session))
     if (locked) {
       form.remove()
       setText(note, '')

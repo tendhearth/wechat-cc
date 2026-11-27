@@ -1,3 +1,6 @@
+import { execFile } from 'node:child_process'
+import { hookTerminalEnvironment, needsTerminalTty } from './hook-terminal-location'
+import { terminalLocation } from '../../packages/protocol/src/terminal-location'
 import { isPermissionCommandTool, permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
 /**
  * hook.ts — `wechat-cc hook …`:终端 claude / codex / cursor 会话的 hooks 出口
@@ -244,6 +247,46 @@ export function cursorPermissionOutput(decision: 'allow' | 'deny' | null): strin
 export function cursorEventOutput(raw: unknown): string {
   const event = raw && typeof raw === 'object' ? (raw as Raw)['hook_event_name'] : undefined
   return event === 'beforeSubmitPrompt' ? JSON.stringify({ continue: true }) : '{}'
+}
+
+const TTY_PROBE_MS = 35
+type ProcessTtyProbe = (pid: number, timeout: number) => Promise<string>
+
+const probeProcessTty: ProcessTtyProbe = (pid, timeout) => new Promise(resolve => {
+  execFile('/bin/ps', ['-o', 'ppid=', '-o', 'tty=', '-p', String(pid)], { timeout, killSignal: 'SIGKILL' },
+    (error, stdout) => resolve(error ? '' : stdout))
+})
+
+export async function hookTerminalLocation(options: {
+  env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; ppid?: number; probe?: ProcessTtyProbe
+} = {}) {
+  const terminal = hookTerminalEnvironment(options.env, options.platform)
+  if (!terminal || !needsTerminalTty(terminal)) return terminal
+  const deadline = performance.now() + TTY_PROBE_MS
+  let pid = options.ppid ?? process.ppid
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const limit = new Promise<string>(resolve => { timer = setTimeout(() => resolve(''), TTY_PROBE_MS) })
+  try {
+    for (let depth = 0; depth < 6 && pid > 1; depth++) {
+      const remaining = Math.floor(deadline - performance.now())
+      if (remaining <= 0) break
+      const output = await Promise.race([(options.probe ?? probeProcessTty)(pid, remaining), limit])
+      const match = /^(\d+)\s+(\S+)$/.exec(output.trim())
+      if (!match) break
+      const [, parent, tty] = match
+      const name = /^(?:tty)?(s[0-9]{1,8})$/.exec(tty ?? '')?.[1]
+      if (name) return terminalLocation({ ...terminal, tty: `/dev/tty${name}` })
+      pid = Number(parent)
+    }
+  } catch { /* An unavailable tty must never block reporting the event. */ }
+  finally { if (timer !== undefined) clearTimeout(timer) }
+  return terminal
+}
+
+/** 记到了终端位置才带上它和主机名;记不到 ⇒ 原样(别的平台、没从终端起的会话照旧不多带字段)。 */
+export async function withTerminalLocation<T extends object>(payload: T): Promise<T & { machine?: string; terminal?: NonNullable<Awaited<ReturnType<typeof hookTerminalLocation>>> }> {
+  const terminal = await hookTerminalLocation()
+  return terminal ? { ...payload, machine: hostname(), terminal } : payload
 }
 
 /**

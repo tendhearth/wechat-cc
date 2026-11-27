@@ -38,12 +38,12 @@ export const CLI_SESSION_MAX_ROWS = 500
 /** 每写这么多次修剪一次(建 store 时也修一次)。 */
 const PRUNE_EVERY = 50
 
-const COLS = 'session_id,source,cwd,machine,transcript_path,origin_agent,status,last_event_at,last_prompt_at,last_summary,pending_tool,pending_summary,pending_at,pending_display_json,pending_cwd,pending_truncated,created_at'
+const COLS = 'session_id,source,cwd,machine,terminal_json,transcript_path,origin_agent,status,last_event_at,last_prompt_at,last_summary,pending_tool,pending_summary,pending_at,pending_display_json,pending_cwd,pending_truncated,created_at'
 
 /** 那件事里开着的权限卡 / 最后一句。最近一次发问照旧读列:一轮里可能发问好几次,轮的开始时间不是最近那一次(Codex 评审)。 */
 const CARD = "SELECT %s FROM matter_items i WHERE i.matter_id = b.matter_id AND i.kind = 'permission' AND i.status = 'started' ORDER BY i.seq DESC LIMIT 1"
 const SAID = "SELECT json_extract(i.payload_json, '$.text') FROM matter_items i WHERE i.matter_id = b.matter_id AND i.kind = 'agent_message' AND json_extract(i.payload_json, '$.text') IS NOT NULL ORDER BY i.seq DESC LIMIT 1"
-const DERIVED = `SELECT c.session_id, c.source, c.cwd, c.machine, c.transcript_path, c.origin_agent, c.last_event_at, c.created_at, c.last_prompt_at,
+const DERIVED = `SELECT c.session_id, c.source, c.cwd, c.machine, c.terminal_json, c.transcript_path, c.origin_agent, c.last_event_at, c.created_at, c.last_prompt_at,
     CASE WHEN m.id IS NULL THEN 'idle'
          WHEN m.state = 'done' THEN 'ended'
          WHEN EXISTS (${CARD.replace('%s', '1')}) THEN 'waiting'
@@ -81,16 +81,17 @@ export function makeCliSessionStore(db: Db, now: () => number = () => Date.now()
 
   const store: CliSessionStore = {
     touch(id, at) {
-      db.query(`INSERT INTO cli_sessions(session_id,source,cwd,machine,transcript_path,origin_agent,last_event_at,created_at)
-        VALUES(?,?,?,?,?,?,?,?)
+      db.query(`INSERT INTO cli_sessions(session_id,source,cwd,machine,terminal_json,transcript_path,origin_agent,last_event_at,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?)
         ON CONFLICT(session_id) DO UPDATE SET
           source=excluded.source,
           cwd=CASE WHEN excluded.cwd <> '' THEN excluded.cwd ELSE cwd END,
           machine=COALESCE(excluded.machine, machine),
+          terminal_json=COALESCE(excluded.terminal_json, terminal_json),
           transcript_path=COALESCE(excluded.transcript_path, transcript_path),
           origin_agent=COALESCE(excluded.origin_agent, origin_agent),
           last_event_at=MAX(last_event_at, excluded.last_event_at)`)
-        .run(id.session_id, id.source, id.cwd, id.machine || null, id.transcript_path || null, id.origin_agent || null, at, at)
+        .run(id.session_id, id.source, id.cwd, id.machine || null, id.terminal ? JSON.stringify(id.terminal) : null, id.transcript_path || null, id.origin_agent || null, at, at)
       afterWrite(at)
       changed(id.session_id)
     },

@@ -111,6 +111,7 @@ export const DESKTOP_CALLS = {
     sessionSay:call('POST /v1/cli/session-say',body()),
     decide:call('POST /v1/cli/decide',body()),
     hooksInstall: call('POST /v1/cli/hooks/install', body()),
+    focus: call('POST /v1/cli/focus', { body: t<{ session_id: string }>() }),
     sessions: call('GET /v1/cli/sessions', { query: t<{ limit?: number; owner?:1; session_id?:string }>() }),
   },
   companion: {

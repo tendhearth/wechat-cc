@@ -48,6 +48,7 @@ export { isMatterArchived, statusOf, statusOfMatter, terminalStatusKey } from '.
 export type { TaskObservation } from './status-of'
 
 export { RESPONSE_SCHEMAS } from './desktop-api'
+export { terminalBundle, terminalLocation, type TerminalLocation } from './terminal-location'
 
 export * from './topic-bubbles'
 export * from './owner-conversation'

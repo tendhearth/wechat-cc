@@ -237,7 +237,7 @@ describe('M4d:状态 / 最近一句 / 等你那一项从那件 terminal 的事�
   })
   it('登记处只留指针和事实:表里没有 status / last_summary / pending_* 这几列(v100)', () => {
     const cols = db.query<{ name: string }, []>('PRAGMA table_info(cli_sessions)').all().map(c => c.name)
-    expect(cols).toEqual(['session_id', 'source', 'cwd', 'machine', 'transcript_path', 'origin_agent', 'last_event_at', 'last_prompt_at', 'created_at'])
+    expect(cols).toEqual(['session_id', 'source', 'cwd', 'machine', 'transcript_path', 'origin_agent', 'last_event_at', 'last_prompt_at', 'created_at', 'terminal_json'])
   })
   it('没有那件事(写轮失败的那几条;老会话 v100 都补建了)⇒ 当歇着:照样列出来、「@码」认得;没有最近一句 / 等你那一项;下一个钩子事件就建上', () => {
     const store = makeCliSessionStore(db, () => clock)
@@ -276,4 +276,18 @@ describe('终端会话写口提示',()=>{
    expect(hints).toEqual([{kind:'matter',matterId:m.id},{kind:'cli',sessionId:SID}])
   }finally{off()}
  })
+})
+
+it('hook events replace a supplied terminal location and preserve it when omitted', () => {
+  const h = hub()
+  try {
+    const initial = { bundle_id: 'com.apple.Terminal', tty: '/dev/ttys012' }
+    h.ingest(ev({ terminal: initial }))
+    const saved = () => makeCliSessionStore(db, () => clock).get(SID)?.terminal_json
+    expect(saved()).toBe(JSON.stringify(initial))
+    h.observe(ev({ kind: 'stop' }))
+    expect(saved()).toBe(JSON.stringify(initial))
+    h.permissionAsked({ ...ev(), tool_name: 'Bash', terminal: { bundle_id: 'dev.warp.Warp-Stable' } })
+    expect(saved()).toBe(JSON.stringify({ bundle_id: 'dev.warp.Warp-Stable' }))
+  } finally { h.dispose() }
 })

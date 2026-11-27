@@ -57,7 +57,9 @@ import { CliEventRequest, CliPermissionRequest } from '../../daemon/internal-api
 import type { WechatLinkStatus, WechatPages, WechatPermissions, WechatSend } from '../../ports/wechat'
 import type { Bootstrap } from '../../daemon/bootstrap/index'
 import type { NetworkGate } from '../../lib/network-gate'
-import { makeProjectMemory } from './project-memory'
+import { makeProjectMemory, type ProjectMemoryRequest } from './project-memory'
+import { makeTerminalFocus } from './focus'
+import type { CliSessionIdentity } from '../../ports/cli-session'
 
 /** 工作台里这一块用到的两样:有没有跟外部会话撞文件夹、「今天」里那一节。 */
 export type CliSessionsWorkbench = TodayWorkbench & {matterApprovalStatus?(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller):boolean;matterApprovalConsume?(tool:string,input:unknown,caller:import('../../adapters/workbench/matter-plan-input').PlanCaller):void} & { conflictsExternal(cwd: string, source: string, sessionId: string): boolean }
@@ -111,6 +113,14 @@ export function wireTerminal(d: WireTerminalDeps) {
   let lookupSession: (id: string) => CliSessionInfo | null = () => null
   const turnsWithSteps = withTranscriptSteps({ turns: terminalTurns, steps: terminalSteps, localMachine: osHostname(), lookup: (id) => lookupSession(id), log: (l) => log('CLI_TURNS', l) })
   const cliSessionStore = makeCliSessionStore(db)
+  const terminalFocus = makeTerminalFocus({ lookup: id => db.query<
+    Pick<NonNullable<ReturnType<typeof readCliSession>>, 'machine' | 'cwd' | 'terminal_json' | 'origin_agent'>, [string]
+  >('SELECT machine, cwd, terminal_json, origin_agent FROM cli_sessions WHERE session_id = ?').get(id) })
+  const rememberLocation = (event: CliSessionIdentity) => {
+    if (!event.terminal) return
+    try { cliSessionStore.touch(event, Date.now()) }
+    catch { /* A location is optional even when a hook is waiting on an answer. */ }
+  }
   const cliEvents = makeCliEventHub({
     // 经 CC 开口那道门(cli_session,report;汇总里可能带 y/n 码 ⇒ expiring,不进待说队列),
     // 投递仍走 sendAssistantText;没说出去 ⇒ 'rejected',hub 照旧落到 App 推送 / 桌面通知。
@@ -251,6 +261,7 @@ export function wireTerminal(d: WireTerminalDeps) {
   }
   const cliPermissionsRoute: TerminalRoutesDeps['cliPermissions'] = {
     open: async (req) => {
+      rememberLocation(req)
       if (!forwarder?.brain()) return cliPermissions.open(req)
       const fwd = await forwarder.permissionOpen(req)
       if (!fwd) return cliPermissions.open(req)
@@ -323,7 +334,8 @@ export function wireTerminal(d: WireTerminalDeps) {
     onPermissionOpen: async (agent, raw) => {
       const parsed = CliPermissionRequest.safeParse(raw)
       if (!parsed.success) return { error: 'invalid_body' }
-      const req: CliPermissionRequestT = { ...parsed.data, machine: parsed.data.machine || agent.name }
+      const req: CliPermissionRequestT = { ...parsed.data, origin_agent: agent.id, machine: parsed.data.machine || agent.name }
+      rememberLocation(req)
       return cliPermissions.open(req, { forwarded: true })
     },
     onPermissionWait: async (_agent, hash, waitMs) => ({ hash, status: await cliPermissions.wait(hash, waitMs) }),
@@ -389,7 +401,11 @@ export function wireTerminal(d: WireTerminalDeps) {
     const cfg = loadCompanionConfig(stateDir)
     return { enabled: cfg.project_memory_into_sessions !== false, owner: cfg.default_chat_id }
   }, log: line => log('PROJECT_MEMORY', line) })
-  const routes: TerminalRoutesDeps = { projectMemory, cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions, recap: id => d.places?.()?.recap?.(id) }
+  const startup = (request: ProjectMemoryRequest) => {
+    rememberLocation({ ...request, machine: osHostname() })
+    return projectMemory(request)
+  }
+  const routes: TerminalRoutesDeps = { projectMemory: startup, terminalFocus, cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions, recap: id => d.places?.()?.recap?.(id) }
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     participationConflict:(path:string)=>participations.conflicts(path),

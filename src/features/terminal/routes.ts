@@ -21,11 +21,13 @@ import type { OverseerToday } from '../../domain/overseer-today'
 import { workbenchErrorHttp } from '@wechat-cc/protocol'
 import { TERMINAL_SAY_POLL_CAP_MS, type TerminalSay } from './terminal-say'
 import type { TerminalHooksService } from './hooks'
+import type { makeTerminalFocus } from './focus'
 import type { ProjectMemoryRequest } from './project-memory'
 
 /** 这几条路由要的(以前是 InternalApiDeps 的 cliEvents / cliPermissions / terminalSay / cliHooks / overseerToday)。 */
 export interface TerminalRoutesDeps {
   participation?:ParticipationRoutesDeps
+  terminalFocus?: ReturnType<typeof makeTerminalFocus>
   projectMemory(request: ProjectMemoryRequest): Promise<{ context: string; reason: string }>
   /** 终端 claude / codex 会话的 hook 事件入口 + 登记处(v76)。 */
   cliEvents: {
@@ -120,15 +122,29 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
     // 终端会话登记处(v76):主人在 CC 外面开的 claude / codex 会话,等你批准的在前,其余按最近事件
     // 倒序;running / waiting 超过 30 分钟没事件读成 idle(stale=true)。admin 档,operator 凭据。
     // 手机令牌(P3c-2,原 /m/api/cli/sessions):回手机那一份(phone-sessions.ts),查询参数不看(不给已结束的、不给 detail)。
+    'POST /v1/cli/focus': async (_q, body, caller) => {
+      if (caller?.origin !== 'operator' || caller.tier !== 'admin') return { status: 403, body: { error: 'forbidden' } }
+      const sessionId = (body as { session_id: string }).session_id
+      return { status: 200, body: await deps.terminalFocus?.focus(sessionId) ?? { ok: false, method: 'none', reason: 'no_location' } }
+    },
     'GET /v1/cli/sessions': async (q, _body, caller) => {
       if (fromPhone(caller)||(caller?.origin==='operator'&&q.get('owner')==='1')) {
         if (!deps.phoneSessions) return { status: 503, body: { error: 'cli_sessions_not_wired' } }
-        try { return { status: 200, body: { ok: true, sessions: deps.phoneSessions(q.get('session_id')??undefined,caller?.frameBudget) } } }
+        try {
+          const rows = deps.phoneSessions(q.get('session_id') ?? undefined, caller?.frameBudget)
+          const sessions = caller?.origin === 'operator' ? rows.map(row => {
+            const id = (row as { session_id?: string }).session_id
+            return id ? { ...row, ...deps.terminalFocus?.metadata(id) } : row
+          }) : rows
+          return { status: 200, body: { ok: true, sessions } }
+        }
         catch { return { status: 503, body: { error: 'unavailable' } } }
       }
       const limitRaw = Number(q.get('limit') ?? CLI_SESSIONS_DEFAULT_LIMIT)
       const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(Math.trunc(limitRaw), 500)) : CLI_SESSIONS_DEFAULT_LIMIT
-      const sessions = deps.cliEvents.list({ includeEnded: q.get('ended') === '1', limit })
+      const rows = deps.cliEvents.list({ includeEnded: q.get('ended') === '1', limit })
+      const sessions = caller?.tier === 'admin' && deps.terminalFocus
+        ? rows.map(row => ({ ...row, ...deps.terminalFocus?.metadata(row.session_id) })) : rows
       if (q.get('detail') !== '1' || !deps.cliEvents.detail) return { status: 200, body: { ok: true, sessions } }
       // detail=1(CC 的 terminal_sessions):补开没开着窗口、此刻在做哪一步。读不出来就不补,列表照回。
       let extra: Record<string, { live_window: boolean; now_step: string | null }> = {}

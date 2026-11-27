@@ -130,8 +130,8 @@ describe('路由表内的约束(原来四份名单之间的包含关系)', () =>
   it('dev 代理放行的每一条,打包版也放行(别让功能只在浏览器预览里能用)', () => {
     expect(diff(dev, tauri)).toEqual([])
   })
-  it('打包版放行而 dev 代理不放行的,只有 matter 那几条(它们经 test-shim 另一条路)', () => {
-    expect(diff(tauri, dev).filter(k => !k.includes('/v1/matter'))).toEqual([])
+  it('打包版独有的路由是 matter 的宿主入口和本机终端聚焦', () => {
+    expect(diff(tauri, dev).filter(k => !k.includes('/v1/matter'))).toEqual(['POST /v1/cli/focus'])
   })
   it('打包版放行的每一条,operator token 的 routeAllow 都有(否则 daemon 侧 403 route_not_allowed)', () => {
     expect(diff(tauri, op)).toEqual([])

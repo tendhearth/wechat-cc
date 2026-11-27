@@ -340,6 +340,7 @@ const conversationsPoller = createConversationsPoller({ call: (method, path) => 
 let workbenchAttention = null
 /** @type {any[]} */ let homeTasksSnapshot = []
 /** @type {any[]} */ let terminalSessions = []
+/** @type {import('./modules/terminal-waiting.js').TerminalRow[]} */ let terminalWaitingRows = []
 const homeTasks = createTaskListReader({
   call: invokeWorkbenchApi,
   onChange: next => {
@@ -352,7 +353,13 @@ window.addEventListener('pagehide', () => homeTasks.stop())
 // 终端里等批准的 Claude Code / Codex(GET /v1/cli/sessions,admin,走原生宿主):接在「N 件事等你」后面,不另开一页。
 const terminalWaiting = createTerminalWaitingPoller({
   call: (method, path) => invokeWorkbenchApi(method, path),
-  onChange: deskHero.setTerminal,
+  onChange: rows => {
+    deskHero.setTerminal(rows)
+    if (!mock) {
+      terminalWaitingRows = rows
+      deskPlaces?.setTerminalWaitingRows(rows)
+    }
+  },
   onSessions: sessions => { terminalSessions = sessions; updateTerminalReferences(sessions) },
 })
 terminalWaiting.start()
@@ -2388,11 +2395,12 @@ async function boot() {
         reflectTopbarWaiting()
       }})
     deskPlaces = strip
+    strip.setTerminalWaitingRows(terminalWaitingRows)
     const threadRoot = document.getElementById('thing-thread')
     if (threadRoot && matterLayer instanceof HTMLElement) {
       const original = document.createComment('工作台详情原位')
       matterLayer.before(original)
-      thingThread = mountThingThread({root:threadRoot,call:invokeWorkbenchApi,
+      thingThread = mountThingThread({root:threadRoot,call:invokeWorkbenchApi,focusEnabled:!mock,
         openTask:async (id,host)=>{
           rosterDock?.close()
           host.append(matterLayer)

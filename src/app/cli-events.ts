@@ -17,7 +17,7 @@ import { PRESENT_IDLE_S } from '../lib/owner-presence'
 import { cliSourceLabel } from '../domain/cli-session-digest'
 import { sortCliSessionViews, toCliSessionView } from '../domain/cli-session-view'
 import { stripMarkdown, summarizeOneLine as oneLine } from '../domain/one-line'
-import type { CliSessionRow, CliSessionStore, CliSessionView } from '../ports/cli-session'
+import type { CliSessionIdentity, CliSessionRow, CliSessionStore, CliSessionView } from '../ports/cli-session'
 import type { TerminalTurnLog } from '../ports/terminal-turns'
 
 export type CliSource = 'claude' | 'codex' | 'cursor'
@@ -41,6 +41,7 @@ export interface CliEvent {
   /** hook 那头探到的本机空闲秒数;探不到就不带。 */
   idle_s?: number
   /** hook 那头的主机名。与 daemon 所在机器不同 ⇒ 「那边」。 */
+  terminal?: import('@wechat-cc/protocol').TerminalLocation | undefined
   machine?: string
   /** 经 A2A 从哪只手转来的(脑侧由已验证的 agent id 填,永远不信 body 里的)。 */
   origin_agent?: string
@@ -130,16 +131,12 @@ export interface CliPushItem {
 }
 
 /** 权限请求里登记处用得到的那几样(CliPermissionRequest 的子集,不 import 它免得成环)。 */
-export interface CliPermissionAsk {
-  source: CliSource
-  session_id: string
-  cwd: string
+export interface CliPermissionAsk extends CliSessionIdentity {
   tool_name: string
   summary?: string | undefined
   display?: PermissionDisplay | undefined
   execution_cwd?: string | undefined
   truncated?: boolean | undefined
-  machine?: string | undefined
 }
 
 export interface CliEventHub {
