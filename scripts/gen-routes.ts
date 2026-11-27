@@ -35,6 +35,10 @@ export const STATUS_TABLE_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated',
 export const CC_ACTIVITY_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'cc-activity.js')
 export const renderCCActivity = () => '// Generated from packages/protocol/src/cc-activity.js; bun run gen:routes\n' + readFileSync(join(ROOT, 'packages/protocol/src/cc-activity.js'), 'utf8')
 
+export const SUBSCRIPTION_USAGE_DISPLAY_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'subscription-usage-display.js')
+export const renderSubscriptionUsageDisplay = () => '// Generated from packages/protocol/src/subscription-usage-display.js; bun run gen:routes\n'
+  + readFileSync(join(ROOT, 'packages', 'protocol', 'src', 'subscription-usage-display.js'), 'utf8')
+
 export const PERMISSION_DISPLAY_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'permission-display.js')
 export function renderPermissionDisplay(): string {
   const protocolRequire = createRequire(join(ROOT, 'packages', 'protocol', 'package.json'))
@@ -149,6 +153,11 @@ export function writeWorkbenchRoutes(path = WORKBENCH_ROUTES_JSON): boolean {
     if (status !== prevStatus) { writeFileSync(STATUS_TABLE_JS, status); changed = true }
     const activity = renderCCActivity()
     if (!existsSync(CC_ACTIVITY_JS) || readFileSync(CC_ACTIVITY_JS, 'utf8') !== activity) { writeFileSync(CC_ACTIVITY_JS, activity); changed = true }
+    const usageDisplay = renderSubscriptionUsageDisplay()
+    if (!existsSync(SUBSCRIPTION_USAGE_DISPLAY_JS) || readFileSync(SUBSCRIPTION_USAGE_DISPLAY_JS, 'utf8') !== usageDisplay) {
+      writeFileSync(SUBSCRIPTION_USAGE_DISPLAY_JS, usageDisplay)
+      changed = true
+    }
     const permissionDisplay = renderPermissionDisplay()
     if (!existsSync(PERMISSION_DISPLAY_JS) || readFileSync(PERMISSION_DISPLAY_JS, 'utf8') !== permissionDisplay) {
       writeFileSync(PERMISSION_DISPLAY_JS, permissionDisplay)
@@ -169,6 +178,10 @@ if (import.meta.main) {
     }
     if (!existsSync(PERMISSION_DISPLAY_JS) || readFileSync(PERMISSION_DISPLAY_JS, 'utf8').replace(/\r\n/g, '\n') !== renderPermissionDisplay()) {
       console.error('桌面审批展示生成物已过期:跑 bun run gen:routes')
+      process.exit(1)
+    }
+    if (!existsSync(SUBSCRIPTION_USAGE_DISPLAY_JS) || readFileSync(SUBSCRIPTION_USAGE_DISPLAY_JS, 'utf8') !== renderSubscriptionUsageDisplay()) {
+      console.error('桌面额度展示生成物已过期:跑 bun run gen:routes')
       process.exit(1)
     }
     console.log('桌面生成物已是最新')

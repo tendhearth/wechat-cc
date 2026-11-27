@@ -42,7 +42,7 @@ return cacheConnections(() => buildConnections({
   knowledge: () => ({ enabled: (loadAgentConfig(stateDir) as { knowledge_enabled?: boolean }).knowledge_enabled === true, built: !!boot.knowledge, latestAt: boot.knowledge?.store.latestMessageAtMs() ?? null, syncedAt: boot.knowledge?.store.lastSyncAtMs() ?? null }),
   computer: () => ({ label: hostname().replace(/\.local$/, ''), since: startedAt, version: APP_VERSION }),
   detailLimit: 3,
-  ...(d.workbench ? { workbench: d.workbench } : {}),
+  ...(d.workbench ? { workbench: d.workbench.connectionsRead } : {}),
   // 「CC 现在怎么样」(2026-10-06):现有信号拼成四态能力表(capabilities.ts);任何一路读不到就当没有,不让整张卡挂掉。
   capabilities: () => {
     const cfg = loadAgentConfig(stateDir) as { provider?: string; knowledge_enabled?: boolean }

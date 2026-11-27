@@ -1,3 +1,4 @@
+import { usageWindowDisplay } from '@wechat-cc/protocol'
 import { useRouter } from 'expo-router'
 import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -12,7 +13,7 @@ import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Icon } from '../ui/Icon'
 import { IconButton } from '../ui/IconButton'
 import { Dot } from '../ui/Dot'
-import { componentAppearance, space } from '../ui/tokens'
+import { componentAppearance, radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
@@ -29,7 +30,9 @@ export default function Connections() {
   const { backend } = useBackendCtx()
   const q = useConnections()
   // stale 或演示 ⇒ 所有圆点灰(演示没有电脑,不画绿);顶上一行与桌面连接卡同义
-  const { trust, view: v, headline } = connectionsPage(q, conn.state, Date.now(), lang, { demo: backend.mode === 'demo' })
+  const now = Date.now()
+  const { trust, view: v, headline } = connectionsPage(q, conn.state, now, lang, { demo: backend.mode === 'demo' })
+  const usage = q.data?.subscriptionUsage?.filter(provider => provider.windows.length > 0) ?? []
   const appearance = componentAppearance.matterRow
   const heading = (k: Parameters<typeof t>[1]) => <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.xl, marginBottom: space.s }}>{t(lang, k)}</Txt>
   const row = (testID: string, key: string, dot: Parameters<typeof Dot>[0]['kind'] | null, name: string, label: string, onPress?: () => void, user = false) => (
@@ -78,11 +81,27 @@ export default function Connections() {
               {v.computers.map(x => row(x.id === 'home' ? 'connections-computer-home' : `connections-computer-${x.id}`, x.id, x.dot, x.label, x.detail))}
             </View>
             <ButlerStatus />
-            {v.capabilities.length > 0 ? (
+            {v.capabilities.length > 0 || usage.length > 0 ? (
               <>
                 {heading('links.capabilities')}
                 <View testID="connections-capabilities">
                   {v.capabilities.map(x => row(`connections-cap-${x.id}`, `cap:${x.id}`, x.dot, x.name, x.action ? `${x.label}\n${x.action}` : x.label))}
+                  {usage.map(provider => (
+                    <View key={provider.providerId} testID={`connections-usage-${provider.providerId}`} style={{ gap: space.xs, paddingVertical: appearance.paddingY }}>
+                      <Txt role="body">{provider.displayName}</Txt>
+                      {provider.windows.map((window, index) => {
+                        const { label, percent, warning } = usageWindowDisplay(window, now, lang)
+                        return (
+                          <View key={index} style={{ gap: space.xs }}>
+                            <Txt role="small" tone="inkSoft">{label}</Txt>
+                            <View style={{ height: 3, overflow: 'hidden', borderRadius: radius.control, backgroundColor: c.hair }}>
+                              <View style={{ width: `${percent}%`, height: '100%', borderRadius: radius.control, backgroundColor: warning ? c.accent : c.inkSoft }} />
+                            </View>
+                          </View>
+                        )
+                      })}
+                    </View>
+                  ))}
                 </View>
               </>
             ) : null}

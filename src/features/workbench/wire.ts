@@ -206,13 +206,14 @@ export function wireWorkbench(opts: {
     // 每次查都现判 codex 在不在(开机没探到、后来重探成功的,不重启也有额度)。
     codex:async()=>{const bin=opts.boot.registry.get('codex')?.opts.bin?.() ?? null;if(!bin)return null
       return gatedUsage({provider:'codex',baseUrl:'https://chatgpt.com',purpose:'usage',exact:true},async()=>{const r=await readCodexRateLimits({codexPathOverride:bin});return r?parseCodexRateLimits(r,Date.now()):null})()},
-    ...(opts.boot.registry.has('claude')?{claude:gatedUsage({provider:'claude',baseUrl:'https://api.anthropic.com',purpose:'usage'},async()=>{
+    claude:gatedUsage({provider:'claude',baseUrl:'https://api.anthropic.com',purpose:'usage',exact:true},async()=>{
+      if (!opts.boot.registry.has('claude')) return null
       const cred=readLocalClaudeOAuth()
       if(!cred)return null
       const r=await fetch('https://api.anthropic.com/api/oauth/usage',{headers:{authorization:`Bearer ${cred.token}`,'anthropic-beta':'oauth-2025-04-20'},signal:AbortSignal.timeout(8_000)})
       if(!r.ok)return null
       return parseClaudeUsage(await r.json().catch(()=>null),Date.now(),cred.plan)
-    })}:{}),
+    }),
   },ttlMs:5*60_000})
 
   const ownerChatId=() => resolveAdminChatId(loadAccess(),loadCompanionConfig(opts.stateDir),null)
@@ -316,7 +317,7 @@ export function wireWorkbench(opts: {
     // 下面 makeWorkbenchService 传的那个),零新依赖。
     holdBusy:opts.boot.holdBusy,
   }):undefined
-  return makeWorkbenchService({
+  const service = makeWorkbenchService({
     ...(opts.permissionRegistry?{
       permissionPrompt:makeWorkbenchPermissionPrompt(opts.permissionRegistry,ownerChatId),
       pendingWechatPermissionCard:opts.permissionRegistry.pendingWechatPermissionCard,
@@ -359,4 +360,5 @@ export function wireWorkbench(opts: {
     retainedIdleCloseMs:()=>loadAgentConfig(opts.stateDir).workbench_retained_idle_close_ms ?? 600_000,
     handoffGraceMs:()=>loadAgentConfig(opts.stateDir).workbench_handoff_grace_ms ?? 15_000,
   })
+  return Object.assign(service, { subscriptionUsage: usageMonitor })
 }

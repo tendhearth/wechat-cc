@@ -565,6 +565,11 @@ export const ChatPage = z.object({ receipt: z.object({requestId:z.string(),statu
 
 export const ConnectionSource = z.object({ id: z.string(), kind: z.enum(['wechat_history', 'knowledge', 'plugin']), name: z.string(), label: z.string().optional(), state: z.enum(['ready', 'behind', 'not_loaded', 'unknown']), latestAt: z.number().nullable(), syncedAt: z.number().nullable() })
 export const Connections = z.object({
+  subscriptionUsage: z.array(z.object({
+    providerId: z.enum(['claude', 'codex']),
+    displayName: z.string(),
+    windows: z.array(z.object({ usedPercent: z.number(), resetsAt: z.number().nullable(), durationMins: z.number().nullable() })),
+  })).optional(),
   generatedAt: z.number(), sources: z.array(ConnectionSource),
   // 插件快照还没出来 ⇒ daemon 真的还在启动。可选:老 daemon 不带(手机当不知道是否在启动)。
   starting: z.boolean().optional(),

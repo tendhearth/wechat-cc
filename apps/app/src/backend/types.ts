@@ -218,7 +218,7 @@ export interface Backend {
   /** 表情库里的一张图(GET /m/api/sticker/<file>?b64=1)。不在库里 ⇒ BackendError('not_found')。 */
   sticker(file: string): Promise<{ mime: string; data: string }>
   /** CC 的连接快照(手机版,没有 detail)。 */
-  connections(): Promise<ConnectionsT>
+  connections(refreshUsage?: boolean): Promise<ConnectionsT>
   checkup(): Promise<CheckupView>
   checkupEstimate(): Promise<CheckupEstimate>
   checkupRun(expectedTargetKey:string): Promise<CheckupView>
