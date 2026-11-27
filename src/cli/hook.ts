@@ -370,7 +370,8 @@ export async function relayPermission(stateDir: string, req: CliPermissionReques
   let hash: string
   try {
     const res = await f(`${api.baseUrl}/v1/cli/permission`, {
-      method: 'POST', headers, body: JSON.stringify(req), signal: AbortSignal.timeout(5000),
+      method: 'POST', headers, body: JSON.stringify({ ...req, deadline_at: deadline }),
+      signal: AbortSignal.timeout(Math.max(1, Math.min(totalMs, 5000))),
     })
     if (!res.ok) return { decision: null, status: `http_${res.status}` }
     const body = await res.json() as { status?: string; hash?: string }
@@ -379,22 +380,31 @@ export async function relayPermission(stateDir: string, req: CliPermissionReques
   } catch (err) {
     return { decision: null, status: err instanceof Error ? err.message : String(err) }
   }
+  const url = `${api.baseUrl}/v1/cli/permission?hash=${encodeURIComponent(hash)}`
+  const abandon = async (status: string): Promise<RelayPermissionResult> => {
+    try { await f(`${url}&abandon=1`, { method: 'GET', headers, signal: AbortSignal.timeout(1000) }) }
+    catch { /* The server also expires its own copy by the original deadline. */ }
+    return { decision: null, status }
+  }
   while (now() < deadline) {
-    const waitMs = Math.max(1, Math.min(pollMs, deadline - now()))
+    const budget = Math.max(1, deadline - now())
+    const waitMs = Math.min(pollMs, budget)
     let status: CliPermissionStatus
     try {
-      const res = await f(`${api.baseUrl}/v1/cli/permission?hash=${encodeURIComponent(hash)}&wait_ms=${waitMs}`, {
-        method: 'GET', headers, signal: AbortSignal.timeout(waitMs + 5000),
+      const res = await f(`${url}&wait_ms=${waitMs}`, {
+        method: 'GET', headers, signal: AbortSignal.timeout(Math.min(budget, waitMs + 5000)),
       })
-      if (!res.ok) return { decision: null, status: `http_${res.status}` }
+      if (!res.ok) return abandon(`http_${res.status}`)
       status = (await res.json() as { status?: CliPermissionStatus }).status ?? 'unknown'
     } catch (err) {
-      return { decision: null, status: err instanceof Error ? err.message : String(err) }
+      return abandon(now() >= deadline ? 'deadline' : err instanceof Error ? err.message : String(err))
     }
+    if (now() >= deadline) break
     if (status === 'allow' || status === 'deny') return { decision: status, status }
-    if (status !== 'pending') return { decision: null, status }
+    if (status === 'timeout' || status === 'undelivered') return { decision: null, status }
+    if (status !== 'pending') return abandon(status)
   }
-  return { decision: null, status: 'deadline' }
+  return abandon('deadline')
 }
 
 /**

@@ -1,3 +1,4 @@
+import type { PermissionDecision as ExplicitDecision } from '../ports/workbench'
 import { createHash } from 'node:crypto'
 import { permissionReason } from '../domain/permission-denial'
 import { hasWechatPermissionHeader, WECHAT_PERMISSION_INCOMPLETE } from '../domain/workbench/wechat-permission-header'
@@ -7,7 +8,7 @@ export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 export interface WechatPermissionCard { readonly text: string; readonly marker: string; readonly complete: boolean; readonly historyText: string }
 
 /** Desktop-facing description of a pending permission ask (CC 桌宠 Phase B). */
-export interface PendingPermissionMeta { chatId: string; prompt: string; taskId?: string; canAllowTask?: boolean; canDenyWithReason?: boolean; scripts?: import('../ports/workbench').PermissionScript[] }
+export interface PendingPermissionMeta { chatId: string; prompt: string; taskId?: string; canAllowTask?: boolean; rememberRule?: string; canDenyWithReason?: boolean; scripts?: import('../ports/workbench').PermissionScript[] }
 
 /** 登记处的留痕口(构造参数):开卡写一行、了结删一行 —— 实现在 pending-cards.ts(v91 pending_cards)。 */
 export interface PendingCardJournal {
@@ -30,7 +31,7 @@ interface Entry {
   /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
   deadline?: () => number | null
   onAllowTask?: () => boolean
-  onDecision?: (decision: 'allow' | 'deny' | 'allow_task', reason?: string) => boolean
+  onDecision?: (decision: ExplicitDecision, reason?: string) => boolean | string
   consuming?: boolean
   resolve: (d: PermissionDecision) => void
   expiresAt: number
@@ -130,7 +131,7 @@ export class PendingPermissions {
     const prev = this.entries.get(hash)
     if (prev) this.settle(hash, prev, 'timeout')
     const now = Date.now()
-    const expiresAt = now + timeoutMs
+    const expiresAt = Math.min(now + timeoutMs, deadline?.() ?? Infinity)
     const code = this.allocateCode()
     const wechatCard = renderWechatCard?.(code)
     const prompt = legacyWechat?.prompt ?? meta?.prompt
@@ -322,7 +323,7 @@ export class PendingPermissions {
    */
   list(): PendingPermissionView[] {
     return Array.from(this.entries.entries())
-      .map(([hash, e]) => ({ hash, code: e.code, chatId: e.meta?.chatId ?? '', prompt: e.meta?.prompt ?? '', since: new Date(e.registeredAt).toISOString(), expires_at: new Date(e.expiresAt).toISOString(), ...(e.meta?.taskId?{taskId:e.meta.taskId}:{}), ...(e.meta?.canAllowTask?{canAllowTask:true}:{}), ...(e.meta?.canDenyWithReason&&e.onDecision?{canDenyWithReason:true}:{}), ...(e.meta?.scripts?{scripts:e.meta.scripts}:{}) }))
+      .map(([hash, e]) => ({ hash, code: e.code, chatId: e.meta?.chatId ?? '', prompt: e.meta?.prompt ?? '', since: new Date(e.registeredAt).toISOString(), expires_at: new Date(e.expiresAt).toISOString(), ...(e.meta?.taskId?{taskId:e.meta.taskId}:{}), ...(e.meta?.canAllowTask?{canAllowTask:true}:{}), ...(e.meta?.rememberRule?{rememberRule:e.meta.rememberRule}:{}), ...(e.meta?.canDenyWithReason&&e.onDecision?{canDenyWithReason:true}:{}), ...(e.meta?.scripts?{scripts:e.meta.scripts}:{}) }))
       .sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))
   }
 
@@ -340,7 +341,7 @@ export class PendingPermissions {
     return this.entries.get(hash)?.meta?.chatId ?? null
   }
 
-  consume(hash: string, decision: 'allow' | 'deny' | 'allow_task', rawReason?: string): boolean {
+  consume(hash: string, decision: ExplicitDecision, rawReason?: string): boolean | string {
     const reason = permissionReason(rawReason, decision)
     const entry = this.entries.get(hash)
     if (!entry || entry.consuming) return false
@@ -348,11 +349,14 @@ export class PendingPermissions {
     const expiresAt = entry.deadline ? entry.deadline() : entry.expiresAt
     if (expiresAt !== null && Date.now() >= expiresAt) { this.settle(hash, entry, 'timeout'); return false }
     if (decision === 'allow_task' && !entry.meta?.canAllowTask) return false
+    if (decision === 'allow_always' && (!entry.meta?.rememberRule || !entry.onDecision)) return false
+    let receipt: string | undefined
     if (entry.onDecision) {
       entry.consuming = true
-      let accepted = false
+      let accepted: boolean | string = false
       try { accepted = entry.onDecision(decision, reason) } catch { /* server did not acknowledge */ }
       entry.consuming = false
+      if (typeof accepted === 'string') receipt = accepted
       if (!accepted) {
         if (entry.deadline?.() === 0) this.settle(hash, entry, 'deny')
         return false
@@ -365,8 +369,8 @@ export class PendingPermissions {
       entry.consuming = false
       if (!accepted) { this.settle(hash, entry, 'deny'); return false }
     }
-    this.settle(hash, entry, decision === 'allow_task' ? 'allow' : decision)
-    return true
+    this.settle(hash, entry, decision === 'deny' ? 'deny' : 'allow')
+    return receipt ?? true
   }
 
   /**
@@ -386,7 +390,7 @@ export class PendingPermissions {
     const now = Date.now()
     for (const [hash, entry] of Array.from(this.entries.entries())) {
       const expiresAt = entry.deadline ? entry.deadline() : entry.expiresAt
-      if (expiresAt !== null && expiresAt <= now) this.settle(hash, entry, 'timeout')
+      if (!entry.consuming && expiresAt !== null && expiresAt <= now) this.settle(hash, entry, 'timeout')
     }
   }
 

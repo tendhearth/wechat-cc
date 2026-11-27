@@ -3,10 +3,9 @@
  * daemon 按 mtime 在下一条请求时读到。坏文件一律不覆盖(主人手改了一半的东西不能被 CLI 冲掉)。
  * 新规则先过一遍同一个解析器 —— 解析器会丢的规则,这里直接拒,不写进文件。
  */
-import { writeFileAtomic } from '../lib/json-file'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile } from '../adapters/permission-rules/rules-file'
+import { editRulesFile, EMPTY_RULES, parseRulesFile, RULES_FILE } from '../adapters/permission-rules/rules-file'
 import type { Rule, RuleWhen, RulesFile, Verdict } from '../domain/permission-rules/types'
 
 type Result = { ok: true } | { ok: false; error: string }
@@ -21,18 +20,17 @@ export function readRulesForEdit(stateDir: string): { ok: true; file: RulesFile 
   return { ok: true, file }
 }
 
-function write(stateDir: string, f: RulesFile): void {
-  const path = join(stateDir, RULES_FILE)
-  writeFileAtomic(path, serializeRulesFile(f), { mode: 0o600 })
-}
-
 function edit(stateDir: string, fn: (f: RulesFile) => RulesFile | string): Result {
-  const r = readRulesForEdit(stateDir)
-  if (!r.ok) return r
-  const next = fn(r.file)
-  if (typeof next === 'string') return { ok: false, error: next }
-  write(stateDir, next)
-  return { ok: true }
+  try {
+    editRulesFile(join(stateDir, RULES_FILE), current => {
+      const next = fn(current ?? EMPTY_RULES)
+      if (typeof next === 'string') throw Error(next)
+      return next
+    })
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 export function addRule(stateDir: string, input: RuleWhen & { then: Verdict; note?: string }): { ok: true; id: string } | { ok: false; error: string } {

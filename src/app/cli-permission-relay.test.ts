@@ -120,7 +120,7 @@ describe('CliPermissionRelay → 终端会话登记处(v76)', () => {
       projectName: (c) => c,
       onRelayed: () => {},
       onAsked: (r) => asked.push(r.session_id),
-      onSettled: (s, st) => settled.push([s, st]),
+      onSettled: (s, st) => { settled.push([s, st]) },
       log: () => {},
     })
     expect(await mk('present').open(req({ session_id: 'here-1' }))).toEqual({ status: 'owner_present' })
@@ -153,7 +153,7 @@ describe('CliPermissionRelay.expireSession(评审 10-15 #5)', () => {
     const settled: [string, string][] = []
     const relay = makeCliPermissionRelay({
       ask: () => new Promise(() => {}), presence: async () => 'away', projectName: (c) => c, onRelayed: () => {}, log: () => {},
-      onSettled: (s, st) => settled.push([s, st]),
+      onSettled: (s, st) => { settled.push([s, st]) },
     })
     const a = await relay.open(req({ session_id: 'sess-a' })) as { hash: string }
     const b = await relay.open(req({ session_id: 'sess-b' })) as { hash: string }
@@ -199,7 +199,7 @@ describe('CliPermissionRelay × 放行规则', () => {
     const settled: string[] = []
     const relay = makeCliPermissionRelay({
       ask, presence: async () => 'away', projectName: (c) => c, onRelayed: (s) => relayed.push(s),
-      onSettled: (_s, st) => settled.push(st), log: () => {}, decide: vi.fn(decide), localMachine,
+      onSettled: (_s, st) => { settled.push(st) }, log: () => {}, decide: vi.fn(decide), localMachine,
     })
     return { relay, ask, relayed, settled }
   }
@@ -283,4 +283,126 @@ describe('CliPermissionRelay × 放行规则 × 终审', () => {
     await new Promise(res => setTimeout(res, 5))
     expect(decide).not.toHaveBeenCalled()
   })
+})
+
+it('records only explicit local-owner decisions and rejects saving a stale card', async () => {
+  const save = vi.fn(() => ({ line: 'remembered', added: true }))
+  const remember = vi.fn(async () => ({ key: 'class', preview: 'remembered', save }))
+  const onSettled = vi.fn()
+  const onRuleAdded = vi.fn()
+  const ask = vi.fn<import('./cli-permission-relay').CliPermissionRelayDeps['ask']>(() => new Promise(() => {}))
+  const relay = makeCliPermissionRelay({ ask, remember, onSettled, onRuleAdded, presence: async () => 'away', projectName: () => 'repo',
+    onRelayed: () => {}, log: () => {}, localMachine: 'local' })
+  try {
+    await relay.open(req(), { forwarded: true, ownerHook: true })
+    await relay.open(req({ machine: 'elsewhere' }), { ownerHook: true })
+    await relay.open(req())
+    expect(remember).not.toHaveBeenCalled()
+    const active = await relay.open(req(), { ownerHook: true })
+    if (active.status !== 'pending') throw Error('expected card')
+    await expect.poll(() => relay.rememberRule(active.hash)).toBe('remembered')
+    const ctx = ask.mock.calls.at(-1)![3]
+    expect(ctx.rememberRule).toBe('remembered')
+    expect(ctx.onDecision?.('allow_always')).toBe('remembered')
+    expect(relay.status(active.hash)).toBe('allow')
+    expect(onSettled).toHaveBeenLastCalledWith(req().session_id, 'allow', {
+      key: 'class', verdict: 'allow',
+    })
+    expect(onRuleAdded).toHaveBeenCalledExactlyOnceWith(req().session_id, '你加了一条规则：remembered')
+    expect(onSettled.mock.invocationCallOrder.at(-1)!).toBeLessThan(save.mock.invocationCallOrder[0]!)
+    expect(ctx.onDecision?.('allow_always')).toBe(false)
+    expect(save).toHaveBeenCalledTimes(1)
+  } finally { relay.dispose() }
+})
+
+it('starts the card deadline at receipt, including presence and review time', async () => {
+  vi.useFakeTimers()
+  const save = vi.fn(() => ({ line: 'remembered', added: true }))
+  const ask = vi.fn<import('./cli-permission-relay').CliPermissionRelayDeps['ask']>(() => new Promise(() => {}))
+  const relay = makeCliPermissionRelay({
+    ask, remember: async () => ({ key: 'class', preview: 'remembered', save }),
+    presence: async () => { await new Promise(r => setTimeout(r, 2000)); return 'away' },
+    decide: async () => { await new Promise(r => setTimeout(r, 8000)); return 'ask' },
+    projectName: () => 'repo', onRelayed: () => {}, log: () => {},
+  })
+  try {
+    const opening = relay.open(req(), { ownerHook: true })
+    await vi.advanceTimersByTimeAsync(11_000)
+    const { hash } = await opening as { hash: string }
+    const [,, timeout, card] = ask.mock.calls[0]!
+    await vi.advanceTimersByTimeAsync(114_000)
+    expect(card.onDecision?.('allow_always')).toBe(false)
+    expect(relay.status(hash)).toBe('timeout')
+    expect(save).not.toHaveBeenCalled()
+    expect(timeout).toBeLessThanOrEqual(110_000)
+  } finally { relay.dispose(); vi.useRealTimers() }
+})
+
+it.each(['expired', 'abandoned'] as const)('does not accept a hook card after it is %s', async mode => {
+  vi.useFakeTimers()
+  const ask = vi.fn<import('./cli-permission-relay').CliPermissionRelayDeps['ask']>(() => new Promise(() => {}))
+  const save = vi.fn(() => ({ line: 'remembered', added: true }))
+  const relay = makeCliPermissionRelay({
+    ask, remember: async () => ({ key: 'class', preview: 'remembered', save }),
+    onSettled: vi.fn(), presence: async () => 'away', projectName: () => 'repo', onRelayed: () => {}, log: () => {},
+  })
+  try {
+    const { hash } = await relay.open(req({ deadline_at: Date.now() + 10_000 }), { ownerHook: true }) as { hash: string }
+    await Promise.resolve()
+    const [, , timeout, ctx] = ask.mock.calls[0]!
+    expect(timeout).toBe(10_000)
+    if (mode === 'expired') vi.setSystemTime(Date.now() + 10_000) // Race the expiry timer.
+    else relay.expire(hash)
+    expect(ctx.onDecision?.('allow')).toBe(false)
+    expect(ctx.onDecision?.('allow_always')).toBe(false)
+    expect(relay.status(hash)).toBe('timeout')
+    expect(save).not.toHaveBeenCalled()
+  } finally { relay.dispose(); vi.useRealTimers() }
+})
+
+it.each(['audit', 'save', 'streak'])('grants once with a terminal receipt when %s prevents saving', async failure => {
+  const ask = vi.fn<import('./cli-permission-relay').CliPermissionRelayDeps['ask']>(() => new Promise(() => {}))
+  const save = vi.fn(() => null)
+  const onSettled = vi.fn(() => failure !== 'audit')
+  const relay = makeCliPermissionRelay({
+    ask, remember: async () => ({ key: 'class', preview: 'remembered', save, eligible: () => failure !== 'streak' }),
+    onSettled, presence: async () => 'away', projectName: () => 'repo', onRelayed: () => {}, log: () => {},
+  })
+  try {
+    const { hash } = await relay.open(req(), { ownerHook: true }) as { hash: string }
+    await Promise.resolve()
+    expect(ask.mock.calls[0]![3].onDecision?.('allow_always')).toContain('没记住')
+    expect(relay.status(hash)).toBe('allow')
+    expect(onSettled).toHaveBeenCalledWith(req().session_id, 'allow', { key: 'class', verdict: 'allow' })
+    expect(save).toHaveBeenCalledTimes(failure === 'save' ? 1 : 0)
+  } finally { relay.dispose() }
+})
+
+it('remembers a rule only while the hook is still waiting on the card; otherwise the one-shot approval stands and nothing is saved', async () => {
+  vi.useFakeTimers()
+  try {
+    const save = vi.fn(() => ({ line: 'remembered', added: true }))
+    const remember = vi.fn(async () => ({ key: 'class', preview: 'remembered', save }))
+    const ask = vi.fn<import('./cli-permission-relay').CliPermissionRelayDeps['ask']>(() => new Promise(() => {}))
+    const relay = makeCliPermissionRelay({ ask, remember, onSettled: vi.fn(), presence: async () => 'away', projectName: () => 'repo',
+      onRelayed: () => {}, log: () => {}, localMachine: 'local' })
+    // The hook POSTed, then went away without abandoning (killed / cancelled in the terminal).
+    const gone = await relay.open(req(), { ownerHook: true })
+    if (gone.status !== 'pending') throw Error('expected card')
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(ask.mock.calls[0]![3].onDecision?.('allow_always')).toContain('没记住')
+    expect(save).not.toHaveBeenCalled()
+
+    // A hook that is long-polling right now can have the rule saved.
+    const live = await relay.open(req({ session_id: 'live-session' }), { ownerHook: true })
+    if (live.status !== 'pending') throw Error('expected card')
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(2))
+    await vi.advanceTimersByTimeAsync(5_000)
+    void relay.wait(live.hash, 20_000)
+    expect(ask.mock.calls[1]![3].onDecision?.('allow_always')).toBe('remembered')
+    expect(save).toHaveBeenCalledTimes(1)
+  } finally { vi.useRealTimers() }
 })

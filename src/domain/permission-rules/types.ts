@@ -32,6 +32,7 @@ export interface PermissionAsk {
   scope: string
   /** 当前任务精确命令的内容指纹(含 cwd 和脚本快照),由批准适配器生成。 */
   commandHash?: string
+  ambiguousRememberFacts?: true
 }
 
 export interface Decision {
@@ -54,6 +55,10 @@ export interface RuleWhen {
   project?: string
   /** 精确,或 `mcp:server:*`。 */
   tool?: string
+  /** 主人从批准卡保存的精确范围。 */
+  projectExact?: string
+  commandPrefix?: string
+  pathExact?: string
   /** 正则(≤ 200 字)。 */
   command?: string
   /** glob:`**` 任意层、`*` 单层;请求里的每一条路径都要命中。 */
@@ -67,3 +72,17 @@ export interface RulesFile { version: 1; enabled: boolean; review: 'off' | 'low_
 
 /** 请求本身,或造它的函数 —— 规则关着时不造(终端要跑 git、一起做要 realpath 和翻时间线,关着就一样都不做)。 */
 export type AskSource = PermissionAsk | (() => PermissionAsk | Promise<PermissionAsk>)
+
+/** Only explicit owner decisions carry this metadata in existing matter items. */
+export interface RememberHistory { key: string; verdict: 'allow' | 'deny'; ruleAdded?: string }
+export const RULE_NOT_SAVED = '这次已批准，规则没记住'
+export type RememberAudit = RememberHistory | { ruleAdded: string }
+
+export interface RememberApproval {
+  key: string
+  preview?: string
+  /** Check the streak before writing the current decision. */
+  eligible?(): boolean
+  /** Null means the card or its eligibility changed. */
+  save(stillEligible?: () => boolean): { line: string; added: boolean } | null
+}

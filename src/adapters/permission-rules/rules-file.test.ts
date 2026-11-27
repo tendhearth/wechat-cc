@@ -188,3 +188,22 @@ describe('withStarterRules(放行 v2 G1)', () => {
     expect(parseRulesFile(JSON.stringify({ version: 1, rules: STARTER_RULES })).errors).toEqual([])
   })
 })
+
+it.each([null, [], 'bad', 42, undefined, { projectExact: [] }, { commandPrefix: true }, { pathExact: null }].map(when => [when]))(
+  'drops a malformed condition and reports its rule id (%j)', when => {
+    const parsed = parseRulesFile(JSON.stringify({ enabled: true, rules: [
+      { id: 'bad-condition', when, then: 'allow' },
+      { id: 'keep', when: { tool: 'Read' }, then: 'deny' },
+    ] }))
+    expect(parsed.file.rules.map(r => r.id)).toEqual(['keep'])
+    expect(parsed.errors).toEqual([expect.stringContaining('bad-condition')])
+  },
+)
+
+it('rejects a remembered verdict with missing precision, even when the condition looks like a normal rule', () => {
+  for (const when of [{}, { tool: 'Bash' }, { projectExact: '/sample', tool: 'Write', pathExact: null }]) {
+    const parsed = parseRulesFile(JSON.stringify({ enabled: true, rules: [{ id: 'card-damaged', then: 'allow_exact', when }] }))
+    expect(parsed.file.rules).toEqual([])
+    expect(parsed.errors).toEqual([expect.stringContaining('card-damaged')])
+  }
+})

@@ -211,14 +211,21 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
     finally{running.delivering=false}
     return store.liveInputs.get(saved.id)!
   }
-  function resolvePermission(id:string,requestId:string,decision:PermissionDecision,reason?:string):void {
+  function resolvePermission(id:string,requestId:string,decision:PermissionDecision,reason?:string):void|string {
     store.get(id)
-    if (decision!=='allow' && decision!=='deny' && decision!=='allow_task') throw new Error('invalid_decision')
+    if (decision!=='allow' && decision!=='deny' && decision!=='allow_task' && decision!=='allow_always') throw new Error('invalid_decision')
     const running=state.runsByTask.get(id)
-    if (!running || !running.permissions.resolve(requestId,decision,reason)) throw new Error('permission_stale')
-    ctx.hub.bumped(id)
-    // 同 resolveAnswer:静默期里拍的板,得由拍板这一下把落定补上。
-    settleAfterDecision(running)
+    const receipt = running?.permissions.resolve(requestId,decision,reason)
+    if (!running || !receipt) throw new Error('permission_stale')
+    try {
+      ctx.hub.bumped(id)
+      // 同 resolveAnswer:静默期里拍的板,得由拍板这一下把落定补上。
+      settleAfterDecision(running)
+    } catch (error) {
+      if (typeof receipt !== 'string') throw error
+      ctx.log?.('WORKBENCH', `permission follow-up failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (typeof receipt === 'string') return receipt
   }
 
   return { inputReceipt,holdInputs,hasUndeliveredInput,drainInputs,settleRuntimeInput, submitInput,withdrawInput,resolveAnswer,resolvePermission }

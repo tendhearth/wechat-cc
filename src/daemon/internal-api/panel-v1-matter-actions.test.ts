@@ -325,3 +325,17 @@ it('P3h: real panel/local entry records aliases and activity without changing re
   expect(rows.some(r => r.client === 'selftest' && r.version === 'P3d')).toBe(true)
   expect(rows.some(r => r.client === 'app' && r.version === 'selftest-P3d')).toBe(false)
 })
+
+it('only an operator or paired device can request the server-side remember decision', async () => {
+  const line = '以后在 project 里跑「ls」不用问'
+  wb.resolvePermission.mockReturnValue(line)
+  const body = { id: ID, runId: RUN, requestId: REQ, decision: 'allow', remember: true }
+  const route = '/v1/matter/permission'
+  expect((await viaPanel(route, { t: link }, post(body))).status).toBe(403)
+  expect((await fetch(`${localBase}${route}`, { ...post(body), headers: { 'content-type': 'application/json', Authorization: `Bearer ${fileToken}` } })).status).toBe(403)
+  expect(wb.resolvePermission).not.toHaveBeenCalled()
+  expect(await (await viaPanel(route, { d: device }, post(body))).json()).toEqual({ ok: true, rule: line })
+  expect(await (await viaLocal(route, post(body))).json()).toEqual({ ok: true, rule: line })
+  expect(wb.resolvePermission.mock.calls).toEqual([[ID, REQ, 'allow_always'], [ID, REQ, 'allow_always']])
+  expect((await viaPanel(route, { d: device }, post({ ...body, decision: 'deny' }))).status).toBe(400)
+})

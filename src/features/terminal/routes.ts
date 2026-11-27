@@ -42,7 +42,7 @@ export interface TerminalRoutesDeps {
     detail?(sessionIds: string[]): Record<string, { live_window: boolean; now_step: string | null }>
   }
   /** 终端会话权限 → 微信 y/n(§6.3)。 */
-  cliPermissions: Pick<CliPermissionRelay, 'open' | 'status' | 'wait'>
+  cliPermissions: Pick<CliPermissionRelay, 'open' | 'status' | 'wait' | 'expire'>
   /** CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24);只给主人自己那条聊天的 admin 会话(isOwnerChat)。 */
   terminalSay: Pick<TerminalSay, 'say' | 'wait' | 'claim'> & { isOwnerChat(chatId: string): boolean }
   /** 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14)。只在主人点了确认时调,绝不自动装。 */
@@ -111,10 +111,18 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
     // 权限中继(§6.3):PermissionRequest hook 先 POST 登记(主人在场就直接回
     // owner_present,终端自己问),再 GET 轮询到 y/n 或过期。
     'POST /v1/cli/permission': async (_q, body, caller) => {
-      return { status: 200, body: await deps.cliPermissions.open(body as CliPermissionRequest) }
+      const req = body as CliPermissionRequest
+      const fromHook = caller?.origin === 'file'
+      const opened = await (fromHook ? deps.cliPermissions.open(req, { ownerHook: true }) : deps.cliPermissions.open(req))
+      return { status: 200, body: opened }
     },
-    'GET /v1/cli/permission': async (q) => {
+    'GET /v1/cli/permission': async (q, _b, caller) => {
       const hash = q.get('hash') ?? ''
+      if (q.get('abandon') === '1') {
+        if (caller?.origin !== 'file') return { status: 403, body: { error: 'forbidden' } }
+        deps.cliPermissions.expire(hash)
+        return { status: 200, body: { hash, status: deps.cliPermissions.status(hash) } }
+      }
       const waitRaw = Number(q.get('wait_ms') ?? '0')
       const waitMs = Math.max(0, Math.min(Number.isFinite(waitRaw) ? waitRaw : 0, CLI_PERMISSION_POLL_CAP_MS))
       const status = waitMs > 0 ? await deps.cliPermissions.wait(hash, waitMs) : deps.cliPermissions.status(hash)

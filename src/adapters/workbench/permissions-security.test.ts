@@ -152,3 +152,56 @@ it.each(['allow', 'allow_task'] as const)('P1-4: %s distinguishes one-shot scrip
     expect(await answer).toBe(decision === 'allow')
   }
 })
+
+it('keeps the one-shot command boundary even when a learned rule is available', async () => {
+  const f = fixture()
+  const saved = { line: 'same file', added: true }
+  const audit: import('./permissions').WorkbenchPermissionAudit[] = []
+  const approvals = makeRunPermissions({
+    taskId: 'task', provider: 'codex', root: f.root,
+    remember: () => ({ key: 'class', preview: saved.line, save: () => saved }),
+    audit: event => audit.push(event),
+  })
+  try {
+    const command = approvals.request({ tool: 'Bash', command: 'bun test src/a.test.ts', description: 'bun test src/a.test.ts', cwd: f.root })
+    const oneShot = approvals.pending()[0]!
+    expect(oneShot.rememberRule).toBeUndefined()
+    expect(approvals.resolve(oneShot.id, 'allow_always')).toBe(false)
+    expect(approvals.resolve(oneShot.id, 'allow')).toBe(true)
+    expect(await command).toBe(true)
+    const write = approvals.request({ tool: 'Write', description: 'Edit README', paths: [join(f.root, 'README.md')], cwd: f.root })
+    const card = approvals.pending()[0]!
+    expect(card.rememberRule).toBe(saved.line)
+    expect(approvals.resolve(card.id, 'allow_always')).toBe(saved.line)
+    expect(await write).toBe(true)
+    expect(audit.slice(-2)).toMatchObject([
+      { type: 'outcome', outcome: 'allow', ownerPermission: { key: 'class', verdict: 'allow' } },
+      { type: 'rule_added', line: '你加了一条规则：same file' },
+    ])
+  } finally { approvals.rejectAll() }
+})
+
+it.each(['audit', 'save'])('keeps outcome and rule save ordered on %s failure', async failure => {
+  const f = fixture()
+  const order: string[] = []
+  const approvals = makeRunPermissions({
+    taskId: 'task', provider: 'codex', root: f.root,
+    remember: () => ({ key: 'class', preview: 'same file', save: () => {
+      order.push('save')
+      if (failure === 'save') throw Error('disk')
+      return { line: 'saved', added: true }
+    } }),
+    audit: event => {
+      if (event.type !== 'outcome') return
+      order.push('outcome')
+      if (failure === 'audit') throw Error('timeline')
+    },
+  })
+  try {
+    const answer = approvals.request({ tool: 'Write', description: 'Edit README', paths: [join(f.root, 'README.md')], cwd: f.root })
+    const receipt = approvals.resolve(approvals.pending()[0]!.id, 'allow_always')
+    expect(receipt).toEqual(failure === 'audit' ? false : expect.stringContaining('没记住'))
+    expect(await answer).toBe(failure === 'save')
+    expect(order).toEqual(failure === 'audit' ? ['outcome'] : ['outcome', 'save'])
+  } finally { approvals.rejectAll() }
+})

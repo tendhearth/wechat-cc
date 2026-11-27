@@ -17,16 +17,22 @@ export function permissionRoutes(deps: InternalApiDeps): RouteTable {
       if (!deps.permissions) return { status: 503, body: { error: 'permissions_not_wired' } }
       return { status: 200, body: { items: deps.permissions.list() } }
     },
-    'POST /v1/permissions/resolve': async (_query, body) => {
+    'POST /v1/permissions/resolve': async (_query, body, caller) => {
       if (!deps.permissions) return { status: 503, body: { error: 'permissions_not_wired' } }
-      const b = (body ?? {}) as { hash?: unknown; decision?: unknown; reason?: unknown }
+      const b = (body ?? {}) as { hash?: unknown; decision?: unknown; reason?: unknown; remember?: unknown }
       if (typeof b.hash !== 'string' || b.hash === '' || (b.decision !== 'allow' && b.decision !== 'deny' && b.decision !== 'allow_task')) {
         return { status: 400, body: { error: 'bad_request' } }
       }
+      if (b.remember !== undefined && (b.remember !== true || b.decision !== 'allow'))
+        return { status: 400, body: { error: 'bad_request' } }
+      if (b.remember && (caller?.origin !== 'operator' || caller.tier !== 'admin'))
+        return { status: 403, body: { error: 'forbidden' } }
       // ok=false 不是错误:hash 过期 / 已经被微信那边拍过了。桌面据此收掉卡片。
       let reason: string | undefined
       try { reason = permissionReason(b.reason, b.decision) } catch { return { status: 400, body: { error: 'bad_request' } } }
-      return { status: 200, body: { ok: reason ? deps.permissions.resolve(b.hash, b.decision, reason) : deps.permissions.resolve(b.hash, b.decision) } }
+      const decision = b.remember ? 'allow_always' : b.decision
+      const result = reason ? deps.permissions.resolve(b.hash, decision, reason) : deps.permissions.resolve(b.hash, decision)
+      return { status: 200, body: { ok: !!result, ...(typeof result === 'string' ? { rule: result } : {}) } }
     },
   }
 }

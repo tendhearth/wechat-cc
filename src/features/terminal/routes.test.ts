@@ -6,7 +6,7 @@ import { hostname } from 'node:os'
 
 const qs = () => new URLSearchParams()
 // 只给用到的那一项:没接线的分支已经没有了(模块门在 internal-api 那一层回 module_starting,见 say-route.test.ts)
-const deps = (cliEvents?: Partial<TerminalRoutesDeps['cliEvents']>, cliPermissions?: TerminalRoutesDeps['cliPermissions']): TerminalRoutesDeps => ({ cliEvents, cliPermissions } as unknown as TerminalRoutesDeps)
+const deps = (cliEvents?: Partial<TerminalRoutesDeps['cliEvents']>, cliPermissions?: Partial<TerminalRoutesDeps['cliPermissions']>): TerminalRoutesDeps => ({ cliEvents, cliPermissions } as unknown as TerminalRoutesDeps)
 const body = { source: 'claude', kind: 'stop', session_id: 'abc123', cwd: '/w/p', text: 'done' }
 
 describe('SessionStart project memory route', () => {
@@ -152,4 +152,27 @@ it('只有显式请求的桌面和设备列表包含没接上的会话', async (
   expect(phoneSessions).toHaveBeenLastCalledWith(undefined, undefined, false)
   await get(query, undefined, { origin: 'link', tier: 'admin' })
   expect(phoneSessions).toHaveBeenLastCalledWith(undefined, undefined, false)
+})
+
+it('a dropped poll does not withdraw the card (the hook may be retrying); only explicit abandonment from the file token does', async () => {
+  const expire = vi.fn()
+  const status = vi.fn(() => 'timeout' as const)
+  const open = vi.fn(async () => ({ status: 'pending' as const, hash: 'abc12' }))
+  const wait = vi.fn(async () => 'pending' as const)
+  const routes = terminalRoutes(deps(undefined, { expire, open, status, wait } as never))
+  const file = { origin: 'file', tier: 'trusted' } as never
+  const controller = new AbortController()
+  const ctx = { signal: controller.signal, onSent: vi.fn() }
+  await routes['GET /v1/cli/permission']!(new URLSearchParams({ hash: 'abc12', wait_ms: '20000' }), undefined, file, ctx)
+  controller.abort()
+  const lost = new AbortController()
+  lost.abort()
+  await routes['POST /v1/cli/permission']!(qs(), {}, file, { signal: lost.signal, onSent: vi.fn() })
+  expect(expire).not.toHaveBeenCalled()
+
+  const query = new URLSearchParams({ hash: 'abc12', abandon: '1' })
+  expect((await routes['GET /v1/cli/permission']!(query, undefined, { origin: 'operator', tier: 'admin' } as never)).status).toBe(403)
+  expect(expire).not.toHaveBeenCalled()
+  expect(await routes['GET /v1/cli/permission']!(query, undefined, file)).toEqual({ status: 200, body: { hash: 'abc12', status: 'timeout' } })
+  expect(expire).toHaveBeenCalledExactlyOnceWith('abc12')
 })

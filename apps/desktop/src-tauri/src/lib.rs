@@ -1660,7 +1660,7 @@ async fn launch_url_with_initial_status(mut command: tokio::process::Command) ->
 // the full security rationale. Doing it in Rust keeps that token out of the
 // webview entirely; the page only ever names a hash and a decision.
 #[tauri::command]
-async fn pet_permission_resolve(hash: String, decision: String, reason: Option<String>) -> Result<bool, String> {
+async fn pet_permission_resolve(hash: String, decision: String, reason: Option<String>, remember: Option<bool>) -> Result<Value, String> {
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -1680,7 +1680,11 @@ async fn pet_permission_resolve(hash: String, decision: String, reason: Option<S
     let url = format!("{base_url}/v1/permissions/resolve");
     // reqwest's `json` feature is off in this crate (Cargo.toml) — serialize
     // by hand, same as the other commands here.
-    let payload = serde_json::to_string(&serde_json::json!({ "hash": hash, "decision": decision, "reason": reason.unwrap_or_default() }))
+    let mut request = serde_json::json!({ "hash": hash, "decision": decision, "reason": reason.unwrap_or_default() });
+    if remember == Some(true) {
+        request["remember"] = Value::Bool(true);
+    }
+    let payload = serde_json::to_string(&request)
         .map_err(|e| format!("failed to serialize request body: {e}"))?;
 
     // The route only flips an in-memory pending entry and returns; 10s is
@@ -1720,7 +1724,11 @@ async fn pet_permission_resolve(hash: String, decision: String, reason: Option<S
     }
     // `ok:false` is a real answer, not an error: the hash was already consumed
     // (WeChat got there first) or expired. The card re-syncs from the next poll.
-    Ok(body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+    let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    if remember == Some(true) && ok {
+        return Ok(body);
+    }
+    Ok(Value::Bool(ok))
 }
 
 #[tauri::command]

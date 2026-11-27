@@ -86,12 +86,12 @@ export function TerminalDetail({ sessionId, projectPath }: { sessionId: string; 
   const stop=async()=>{const run=s?.run_id;if(!run||!backend.cliStop)return;if(stopRun!==run){setStopRun(run);return}try{await backend.cliStop(id,run);setStopRun(null);await terminal.refresh()}catch{setNote(t(lang,'progress.stopFailed'))}}
   const shown = note ?? (said ? sayNote(said, lang) : null)
 
-  const decide = async (d: 'allow' | 'deny') => {
+  const decide = async (d: 'allow' | 'deny', remember?: true) => {
     if (!s) return
     setNote(null); setTrack(null); setSaid(null)
-    const err = await actions.decide(s, d)
+    const { error: err, rule } = await actions.decide(s, d, remember)
     void terminal.refresh()
-    setNote(err === null ? t(lang, d === 'allow' ? 'terminal.decided' : 'terminal.denied') : err === 'busy' ? null : t(lang, terminalErrorKey(err)))
+    setNote(err === null ? rule ? t(lang, 'approval.remembered', {rule}) : t(lang, d === 'allow' ? 'terminal.decided' : 'terminal.denied') : err === 'busy' ? null : t(lang, terminalErrorKey(err)))
   }
   const send = async () => {
     const body = text.trim()
@@ -145,6 +145,10 @@ export function TerminalDetail({ sessionId, projectPath }: { sessionId: string; 
                         <View style={{ flex: 1 }}><Button kind="primary" testID="terminal-detail-allow" label={t(lang, 'terminal.allow')} busy={deciding} disabled={!terminal.online} onPress={() => void decide('allow')} /></View>
                       </View>
                       <Txt role="small" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'approval.onlyThisRequest')}</Txt>
+                      {pending.rememberRule ? <>
+                        <Txt role="small" tone="inkSoft">{pending.rememberRule}</Txt>
+                        <Button kind="secondary" testID="terminal-detail-remember" label={t(lang, 'approval.remember')} disabled={!terminal.online || deciding} onPress={() => void decide('allow', true)} />
+                      </> : null}
                     </View>
                   ) : <Txt testID="terminal-detail-local" role="meta" tone="inkSoft">{t(lang, 'terminal.askedLocally')}</Txt>}
                 </View>

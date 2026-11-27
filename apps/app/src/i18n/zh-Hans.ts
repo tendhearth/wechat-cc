@@ -244,6 +244,8 @@ const zh: Record<keyof typeof en, string> = {
   'approval.readFields': '工具参数：{value}',
   'approval.denialReason': '拒绝理由（选填）',
   'approval.deny': '先不做',
+  'approval.remember': '以后这类都不用问',
+  'approval.remembered': '好，{rule}。',
   'approval.allowTask': '本任务同命令都允许',
   'approval.taskExpires': '任务结束即失效，脚本变化会重新问你。',
   'approval.script': '脚本',

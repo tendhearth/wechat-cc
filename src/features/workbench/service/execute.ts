@@ -554,7 +554,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     // 把 hub 拱到了那个从没真正落库的 seq,之后 wait 会把这个"幻影 seq"当成已经发生过的事,
     // 一路卡到超时才被 store.version 兜底纠正(纠正见下面 changes.wait);直接调 store.addEvent
     // 就不会发布这个未提交的信号,提交后的 (atomic 块外)会把真实 seq 发出去。
-    const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);return id}
+    const addRunEvent=(kind:'user'|'system',text:string,ownerPermission?:import('../../../domain/permission-rules/types').RememberAudit)=>store.addEvent(task.id,kind,text,null,runId,[],undefined,ownerPermission)
     let firstTurn=null as string|null
     let planCancelled=false
     const handoffPeer=store.atomic(()=>{
@@ -590,6 +590,15 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const opinion=ctx.deps.askOpinion
     const opinionProject=()=>store.worktrees.get(task.id)?.repoRoot??task.path
     const permissionPrompts=new Map<string,PermissionPromptHandle>()
+    const isOwner = () => {
+      const owner = ctx.deps.ownerChatId()
+      return owner ? task.ownerChatId === owner : task.ownerChatId === null && ctx.deps.matters?.get(task.id)?.origin === 'desktop'
+    }
+    const permissionAsk = (facts: PermissionFacts) => {
+      const ask = workbenchAsk(task,store.worktrees.get(task.id),firstUserText(task.id)??null,facts)
+      if (!isOwner() || ask.untrustedIntent) ask.ambiguousRememberFacts = true
+      return ask
+    }
     const permissions=makeRunPermissions({
       initialDenials,
       taskId:task.id,root:task.path,provider:task.providerId,stateDir:ctx.stateDir,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
@@ -610,13 +619,16 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             const input = permissions.pendingOpinionInput(event.permission.id)
             return input && { kind: 'permission', project: opinionProject(), ...input }
           })
-        }else {
+        } else if (event.type === 'rule_added') {
+          addRunEvent('system', event.line, { ruleAdded: event.line })
+        } else {
           opinion?.clear(event.permission.id)
           permissionPrompts.get(event.permission.id)?.();permissionPrompts.delete(event.permission.id)
-          addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}${event.reason?`\n拒绝理由：${event.reason}`:''}`)
+          addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}${event.reason?`\n拒绝理由：${event.reason}`:''}`, event.ownerPermission)
         }
       },
-      ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),firstUserText(task.id)??null,facts))}:{}),
+      ...(ctx.deps.permissionRemember ? { remember: (facts: PermissionFacts) => ctx.deps.permissionRemember!(() => permissionAsk(facts)) } : {}),
+      ...(ruleDecide ? { decide: (facts: PermissionFacts) => ruleDecide(() => permissionAsk(facts)) } : {}),
     })
     const questions=makeRunUserInput({taskId:task.id,audit:event=>{
       if(event.type!=='request')opinion?.clear(event.request.id)

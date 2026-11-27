@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { addRule, removeRule, setEnabled, setReview, formatRules, readRulesForEdit } from './rules'
@@ -55,4 +56,33 @@ describe('wechat-cc rules', () => {
     expect(text).toContain('b')
     expect(text).toContain('正则编不过')
   })
+})
+
+it('leaves a concurrent writer’s file alone while its lock owner is alive', () => {
+  const d = dir()
+  const file = join(d, RULES_FILE)
+  const lock = file + '.lock'
+  mkdirSync(lock)
+  writeFileSync(join(lock, String(process.pid)), '')
+  const before = '{"version":1,"enabled":true,"rules":[]}'
+  writeFileSync(file, before)
+  expect(setEnabled(d, false)).toMatchObject({ ok: false })
+  expect(readFileSync(file, 'utf8')).toBe(before)
+})
+
+it('recovers a lock left by a separate exited process', () => {
+  const d = dir()
+  const lock = join(d, RULES_FILE) + '.lock'
+  const child = spawnSync('bun', ['-e', `
+    const { mkdirSync, writeFileSync } = require('node:fs')
+    const { join } = require('node:path')
+    const lock = process.argv.at(-1)
+    mkdirSync(lock)
+    writeFileSync(join(lock, process.pid + '-deadbeef'), '')
+  `, lock], { encoding: 'utf8', timeout: 5000 })
+  expect(child.status, child.stderr).toBe(0)
+  expect(existsSync(lock)).toBe(true)
+  expect(setEnabled(d, true)).toEqual({ ok: true })
+  expect(existsSync(lock)).toBe(false)
+  expect(readRulesForEdit(d)).toMatchObject({ ok: true, file: { enabled: true } })
 })
