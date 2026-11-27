@@ -145,7 +145,7 @@ const claudeScript: FakeSdkScript = { async onDispatch(text) {
       toolCalls: [], finalText: '沙盒审批已结束。',
       claudeApproval: { tool: 'Bash', input: {
         command: "rm -rf build\nprintf '%s' '" + 'fixture '.repeat(550) + "'",
-        run_in_background: true, timeout: 72543, description: claudeApprovalDescription,
+        run_in_background: true, timeout: 7254319, description: claudeApprovalDescription,
       } },
     }
   }
@@ -1750,7 +1750,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(d.log().some(line => line.includes(privateApprovalEvidence) || /SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(line))).toBe(false)
     // The same owner routes must carry Claude's command options through a long, reject-only card.
     const claude = await next(claudeApprovalTitle, 'claude')
-    expect(claude.notice).not.toMatch(/run_in_background|timeout|description|72543|sandboxapprovaldescriptionfixture/)
+    expect(claude.notice).not.toMatch(/run_in_background|timeout|description|7254319|sandboxapprovaldescriptionfixture/)
 
     const at = d.ilink.outbox().length
     d.sendText(d.owner, `y ${claude.card.code}`, { contextToken: 'approval-fresh-context' })
@@ -1768,7 +1768,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
         const [permission] = MatterDetail.parse(body).permissions
         expect(permission?.display?.body.kind).toBe('command')
         expect(permission?.display?.extra).toEqual([
-          { name: 'run_in_background', value: 'true' }, { name: 'timeout', value: '72543' },
+          { name: 'run_in_background', value: 'true' }, { name: 'timeout', value: '7254319' },
           { name: 'description', value: claudeApprovalDescription },
         ])
       }
@@ -1776,9 +1776,9 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       await expect.poll(async () => MatterDetail.parse((await desktop('GET', claudeDetailPath)).body).permissions).toHaveLength(0)
       const history = await desktop('GET', '/v1/matter/owner-chat')
       expect(history.status).toBe(200)
-      expect(JSON.stringify(history.body)).not.toMatch(/run_in_background|72543|sandboxapprovaldescriptionfixture/)
+      expect(JSON.stringify(history.body)).not.toMatch(/run_in_background|7254319|sandboxapprovaldescriptionfixture/)
       expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0 OR instr(text,?) > 0 OR instr(text,?) > 0',
-        'run_in_background', '72543', claudeApprovalDescription)).toEqual([])
+        'run_in_background', '7254319', claudeApprovalDescription)).toEqual([])
     } finally { claudePhone.close() }
   })
 

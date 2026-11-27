@@ -420,8 +420,10 @@ describe('WeChat task control through the shared service',()=>{
       expect(reply).toContain(`想上网搜一下\n查看：任务 ${task.id} 权限 ${search.id}`)
       expect(reply).toContain(`想在文件里找东西：notes.md\n查看：任务 ${task.id} 权限 ${grep.id}`)
       expect(reply).toContain(`想看一个文件\n查看：任务 ${task.id} 权限 ${read.id}`)
+      // 任务 id、权限 id 是随机生成的,碰巧含「8443」这类片段不算泄漏:先去掉再查。
+      const shown=[task.id,...requests.map(p=>p.id)].reduce((text,id)=>text.replaceAll(id,'<id>'),String(reply))
       for(const hidden of ['https://','fixture','8443','/private/download','X-Amz-Signature','fake-aws-signature','fake-link-signature','fake-fragment','fake-directory-credential',query,pattern]){
-        expect(reply).not.toContain(hidden)
+        expect(shown).not.toContain(hidden)
       }
     }
     const lookup=await service.handleWechat('owner',`任务 ${task.id} 权限 ${web.id}`,identity)
