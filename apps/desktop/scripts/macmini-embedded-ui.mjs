@@ -4,25 +4,32 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile, realpath } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { miniConfiguration, assertEmbeddedEndpoint, createOfflineSession } from './macmini-ui-protocol.mjs'
+import { join, relative } from 'node:path'
+import { isInsideLab, miniConfiguration, assertEmbeddedEndpoint, createOfflineSession } from './macmini-ui-protocol.mjs'
 
 const mini = miniConfiguration({ computerName: execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { encoding: 'utf8' }).trim(),
   homeDir: homedir(), platformName: process.platform })
 const endpoint = assertEmbeddedEndpoint('http://127.0.0.1:4199')
-const lab = mini.root
+const lab = await realpath(mini.labHome)
+const root = await realpath(mini.root)
+assert(isInsideLab(lab, root))
 const output = await realpath(process.env.CC_UI_ARTIFACT_DIR)
-assert(output.startsWith(lab + '/artifacts/'))
-const app = await realpath(join(lab, 'native-target/debug/bundle/macos/Tendhearth CC Motion QA.app'))
+assert(isInsideLab(join(root, 'artifacts'), output))
+const app = await realpath(join(root, 'native-target/debug/bundle/macos/Tendhearth CC Motion QA.app'))
+assert(isInsideLab(root, app))
 const plist = join(app, 'Contents/Info.plist')
 const info = key => execFileSync('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, plist], { encoding: 'utf8' }).trim()
 assert.equal(info('CFBundleIdentifier'), 'com.tendhearth.cc-motion-qa-20261029')
 const name = info('CFBundleExecutable')
 assert(name && !name.includes('/') && name !== '.' && name !== '..')
 const executable = await realpath(join(app, 'Contents/MacOS', name))
-assert(executable.startsWith(app + '/Contents/MacOS/'))
+assert(isInsideLab(join(app, 'Contents/MacOS'), executable))
 const stateRoot = join(output, 'app-state')
-const environment = { ...process.env, ...createOfflineSession({ bundleId: info('CFBundleIdentifier'), appPath: app, stateRoot }).capabilities.alwaysMatch['appium:environment'] }
+const environment = { ...process.env, ...createOfflineSession({
+  bundleId: info('CFBundleIdentifier'),
+  appPath: join(mini.labHome, relative(lab, app)),
+  stateRoot: join(mini.labHome, relative(lab, stateRoot)),
+}).capabilities.alwaysMatch['appium:environment'] }
 for (const folder of ['daemon', 'workbench']) await mkdir(join(stateRoot, folder), { recursive: true, mode: 0o700 })
 
 async function api(path, body, method = body ? 'POST' : 'GET') {

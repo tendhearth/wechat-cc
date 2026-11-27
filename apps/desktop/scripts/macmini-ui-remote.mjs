@@ -6,7 +6,7 @@ import { homedir } from 'node:os'
 import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
 import { createServer } from 'node:net'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { isInsideLab, miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest, assertExpectedSource } from './macmini-ui-protocol.mjs'
 
 const textCommand = (file, args) => execFileSync(file, args, { encoding: 'utf8' }).trim()
@@ -27,12 +27,15 @@ if (['affected', 'full', 'full-platform'].includes(request.command)) throw Error
 // Reuse the same command allowlist at the receiving boundary.
 const config = JSON.parse(await readFile(configPath, 'utf8'))
 const endpoint = assertLoopbackEndpoint(config.endpoint)
+const realLabHome = await realpath(labHome)
 
 async function insideLab(path) {
   const resolved = await realpath(path)
-  if (!isInsideLab(await realpath(labHome), resolved)) throw Error('Configured path leaves the dedicated UI lab')
+  if (!isInsideLab(realLabHome, resolved)) throw Error('Configured path leaves the dedicated UI lab')
   return resolved
 }
+// Appium and Playwright identify the lab by its configured prefix.
+const legacyLabPath = resolved => join(labHome, relative(realLabHome, resolved))
 const root = await insideLab(request.command === 'browser' ? config.browserRoot ?? config.root : config.root)
 const browserSnapshot = request.command === 'browser' && config.browserRoot ? JSON.parse(await readFile(join(root, 'snapshot.json'), 'utf8')) : null
 const project = await insideLab(join(root, 'project'))
@@ -165,7 +168,7 @@ async function browser() {
   const optionalSpecs=new Set(['roster-dock.spec.ts','butler-checkup.spec.ts','phone-connect.spec.ts','cli-setup.spec.ts'])
   const presentSpecs=specs.filter(spec=>!optionalSpecs.has(spec)||existsSync(join(project,'apps/desktop/playwright',spec)))
   const home=join(run,'home');await mkdir(home,{mode:0o700})
-  const browserExecutable=mini.rustc?undefined:await insideLab(join(config.browserRuntimeRoot??config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'))
+  const browserExecutable=mini.rustc?undefined:legacyLabPath(await insideLab(join(config.browserRuntimeRoot??config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell')))
   const acceptance=process.env.CC_UI_BROWSER_SUITE==='mini-ui-acceptance'
   const selectedSpecs=acceptance?(phase==='before'?['task-detail-minimal.spec.ts','--grep','ordinary single-executor']:['task-detail-minimal.spec.ts','butler-checkup.spec.ts']):presentSpecs
   const result=await command('browser',mini.bun,['x','--no-install','playwright','test','-c','playwright.config.ts',...selectedSpecs],{
@@ -182,9 +185,11 @@ async function native() {
   }
   const appPath = await insideLab(join(root, 'Native Input Control.app'))
   const bundleId = textCommand('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', join(appPath, 'Contents/Info.plist')])
-  const caps = createOfflineSession({ bundleId, appPath, stateRoot: join(run, 'state') })
+  const legacyRun = legacyLabPath(await insideLab(run))
+  const caps = createOfflineSession({ bundleId, appPath: legacyLabPath(appPath),
+    stateRoot: join(legacyRun, 'state') })
   for (const folder of ['daemon', 'workbench']) await mkdir(join(run, 'state', folder), { recursive: true, mode: 0o700 })
-  caps.capabilities.alwaysMatch['appium:environment'].CC_UI_CONTROL_LOG = join(run, 'native-events.jsonl')
+  caps.capabilities.alwaysMatch['appium:environment'].CC_UI_CONTROL_LOG = join(legacyRun, 'native-events.jsonl')
   let session
   try {
     const created = await api('/session', caps)

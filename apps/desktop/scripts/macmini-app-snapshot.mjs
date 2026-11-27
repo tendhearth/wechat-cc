@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url'
 import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock as defaultAcquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
 import {removeInactiveSnapshot} from './macmini-source-manifest.mjs'
-import { miniConfiguration, sshInvocation } from './macmini-ui-protocol.mjs'
+import { isInsideLab, miniConfiguration, sshInvocation } from './macmini-ui-protocol.mjs'
 import { receiveBrowserSnapshot, verifiedSourcePayload } from './macmini-browser-snapshot.mjs'
+import { pruneInactiveSnapshots } from './macmini-snapshot-retention.mjs'
 
 const finished = child => new Promise((resolve, reject) => {
   child.once('error', reject)
@@ -28,9 +29,13 @@ export async function receiveAppSnapshot({mini,sha,lifecycle=jobLifecycle(),inpu
     await acquireMachineLock({ path: join(mini.homeDir, 'ci/lock'), lane: 'app-snapshot', sha,
       ...machineGateOptions(), onAcquired: lifecycle.acquired, assertRunning: lifecycle.assertRunning })
     lifecycle.assertRunning()
-    root = join(mini.labHome, `app-${sha}-${Date.now()}`)
-    await mkdir(join(root, 'project'), { recursive: true, mode: 0o700 })
-    if (!(await realpath(root)).startsWith(mini.labHome + '/')) throw Error('Snapshot path leaves lab')
+    const lab = await realpath(mini.labHome)
+    const snapshotRoot = join(mini.labHome, `app-${sha}-${Date.now()}`)
+    // Record ownership even if cancellation arrives during mkdir.
+    await (fs.mkdir ?? nativeFs.mkdir)(snapshotRoot, { mode: 0o700 })
+    root = snapshotRoot
+    if (!isInsideLab(lab, await realpath(root))) throw Error('Snapshot path leaves lab')
+    await mkdir(join(root, 'project'), { mode: 0o700 })
     lifecycle.assertRunning()
     tar = spawnProcess('/usr/bin/tar', ['-xf', '-', '-C', join(root, 'project')], { detached: true, stdio: ['pipe', 'inherit', 'inherit'] })
     lifecycle.track(tar)
@@ -43,6 +48,7 @@ export async function receiveAppSnapshot({mini,sha,lifecycle=jobLifecycle(),inpu
     lifecycle.assertRunning()
     activation=(async()=>{await writeFile(activePath + '.app-next', JSON.stringify({ ...config, appRoot: root }, null, 2), { mode: 0o600 });await rename(activePath + '.app-next', activePath)})()
     await activation;activated=true
+    await pruneInactiveSnapshots(mini.labHome, { fs: guardedFs })
     console.log(JSON.stringify({ appRoot: root, commit: sha }))
   } finally {
     receivingDone()

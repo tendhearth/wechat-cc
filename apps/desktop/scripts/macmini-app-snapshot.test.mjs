@@ -1,5 +1,8 @@
 import {test,expect} from 'vitest'
 import {EventEmitter} from 'node:events'
+import * as fs from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import {jobLifecycle} from './macmini-job-lifecycle.mjs'
 import {receiveAppSnapshot} from './macmini-app-snapshot.mjs'
 for(const stage of ['mkdir','realpath'])test(`App snapshot cancellation in ${stage} never starts tar after releasing ownership`,async()=>{
@@ -26,4 +29,39 @@ test('ledger development is not a blanket authorization for either snapshot path
  expect(supportsAppSnapshot('matter-ledger-step1')).toBe(false)
  const source=await import('node:fs/promises').then(fs=>fs.readFile(new URL('./macmini-app-snapshot.mjs',import.meta.url),'utf8'))
  expect(source).not.toContain("ref === 'matter-ledger-step1'")
+})
+
+test('archive App activates through the lab symlink before pruning under the lock', async () => {
+ const temp = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'cc-archive-app-')))
+ const lab = join(temp, 'disk'), labHome = join(temp, 'legacy'), activePath = join(lab, 'active.json')
+ const stale = join(lab, `app-${'a'.repeat(40)}-1`)
+ const events = []
+ try {
+  await fs.mkdir(lab)
+  await fs.symlink(lab, labHome, process.platform === 'win32' ? 'junction' : 'dir')
+  for (const timestamp of [1, 2, 3]) await fs.mkdir(join(lab, `app-${'a'.repeat(40)}-${timestamp}`))
+  await fs.writeFile(activePath, '{}')
+  const sha = 'b'.repeat(40)
+  await receiveAppSnapshot({
+   mini: { labHome, homeDir: temp }, sha, input: { pipe() {} },
+   acquireMachineLock: async options => options.onAcquired(async () => events.push('release')),
+   fs: { rm: async (path, options) => {
+    expect(path).toBe(stale)
+    expect(JSON.parse(await fs.readFile(activePath, 'utf8')).appRoot).toContain(join(labHome, `app-${sha}-`))
+    expect(events).not.toContain('release')
+    events.push('pruned')
+    await fs.rm(path, options)
+   } },
+   spawnProcess: () => {
+    const child = new EventEmitter()
+    child.pid = 123
+    queueMicrotask(() => child.emit('close', 0))
+    return child
+   },
+  })
+  expect(events).toEqual(['pruned', 'release'])
+  await expect(fs.access(stale)).rejects.toThrow()
+ } finally {
+  await fs.rm(temp, { recursive: true, force: true })
+ }
 })

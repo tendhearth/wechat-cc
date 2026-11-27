@@ -9,6 +9,7 @@ import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
 import { isInsideLab, miniConfiguration, sshInvocation } from './macmini-ui-protocol.mjs'
 import { PUBLIC_CACHE_COMMIT, sha256, gitObject, verifySourceManifest, sourcePath, removeInactiveSnapshot } from './macmini-source-manifest.mjs'
+import { pruneInactiveSnapshots } from './macmini-snapshot-retention.mjs'
 const finished = child => new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',code=>code===0?resolve():reject(Error(`Snapshot process exited ${code}`)))})
 export async function receiveBrowserSnapshot({mini,sha,target='browser',selectActiveRoot,lifecycle=jobLifecycle(),input=process.stdin,fs={},spawnProcess=spawn,acquire=acquireMachineLock,exec=execFileSync,log=console.log,removeSnapshot=removeInactiveSnapshot}) {
  // Every asynchronous filesystem boundary checks cancellation on both sides.
@@ -38,11 +39,18 @@ export async function receiveBrowserSnapshot({mini,sha,target='browser',selectAc
   if(target==='app'&&meta.phase!=='after')throw Error('App snapshot requires a verified candidate')
   if(meta.commit!==sha||sha256(delta)!==meta.deltaSha256)throw Error('Archive identity mismatch')
   const config=JSON.parse(await readFile(activePath,'utf8'))
+  const lab=await realpath(mini.labHome)
   const base=await realpath(config.browserRuntimeRoot??config.root),cacheRoot=config.browserSourceRoot??config.appRoot,cache=await realpath(join(cacheRoot,'project'))
-  if(!isInsideLab(mini.labHome,base)||!isInsideLab(mini.labHome,cache))throw Error('Source cache leaves lab')
+  if(!isInsideLab(lab,base)||!isInsideLab(lab,cache))throw Error('Source cache leaves lab')
   if(JSON.parse(await readFile(join(cacheRoot,'snapshot.json'),'utf8')).commit!==PUBLIC_CACHE_COMMIT)throw Error('Public source cache commit changed')
-  root=join(mini.labHome,`${target}-${sha}-${Date.now()}`);const project=join(root,'project')
-  await mkdir(join(root,'project'),{recursive:true,mode:0o700})
+  const snapshotRoot=join(mini.labHome,`${target}-${sha}-${Date.now()}`)
+  // Record ownership even if cancellation arrives during mkdir.
+  await (fs.mkdir??nativeFs.mkdir)(snapshotRoot,{mode:0o700})
+  root=snapshotRoot
+  const resolvedRoot=await realpath(root)
+  if(!isInsideLab(lab,resolvedRoot))throw Error('Snapshot path leaves lab')
+  const project=join(resolvedRoot,'project')
+  await mkdir(project,{mode:0o700})
   const archive=join(root,'delta.tar.gz');await writeFile(archive,delta,{mode:0o600})
   const paths=exec('/usr/bin/tar',['-tzf',archive],{encoding:'utf8'}).trim().split('\n').filter(Boolean)
   const types=exec('/usr/bin/tar',['-tvzf',archive],{encoding:'utf8'}).trim().split('\n')
@@ -76,6 +84,7 @@ export async function receiveBrowserSnapshot({mini,sha,target='browser',selectAc
   // App pointer ownership stays in the App entry; stdin cannot choose activation.
   const next=selectActiveRoot?selectActiveRoot(config,root):{...config,browserRoot:root}
   activation=(async()=>{await writeFile(activePath+`.${target}-next`,JSON.stringify(next,null,2),{mode:0o600});await rename(activePath+`.${target}-next`,activePath)})();await activation;activated=true
+  await pruneInactiveSnapshots(mini.labHome,{fs:guardedFs})
   log(JSON.stringify({[`${target}Root`]:root,...snapshot}))
  }finally{receivingDone();try{if(root&&!activated)await cleanup()}finally{await lifecycle.finish()}}
 }
