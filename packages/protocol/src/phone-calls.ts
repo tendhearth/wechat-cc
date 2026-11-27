@@ -88,7 +88,7 @@ export const PHONE_CALLS = {
     say: call('POST /m/api/matter/say', { body: t<{ id: string; text: string; requestId: string } & Record<string, unknown>>() }),
     create: call('POST /m/api/matter/create', { body: t<{ requestId: string; text: string } & Record<string, unknown>>() }),
     createReceipt: call('GET /m/api/matter/create-receipt', { query: t<{ requestId: string }>() }),
-    permission: call('POST /m/api/matter/permission', { body: t<{ id: string; runId: string; requestId: string; decision: string }>() }),
+    permission: call('POST /m/api/matter/permission', { body: t<{ id: string; runId: string; requestId: string; decision: string; remember?: true }>() }),
     stop: call('POST /m/api/matter/stop', { body: t<{ id: string; runId: string }>() }),
     worktree: call('POST /m/api/matter/worktree', { body: t<{ id: string; action: string }>() }),
     answer: call('POST /m/api/matter/answer', { body: t<{ id: string; runId: string; requestId: string; answers: unknown }>() }),
@@ -135,7 +135,7 @@ export const PHONE_CALLS = {
   cli: {
     stop:call('POST /v1/cli/session-stop',{body:t<{session_id:string;run_id:string;confirmed:true}>()}),
     sessions: call('GET /m/api/cli/sessions', { query: t<{ session_id?: string; unhooked?: '1' }>() }),
-    permission: call('POST /m/api/cli/permission', { body: t<{ session_id: string; hash?: string; decision: string }>() }),
+    permission: call('POST /m/api/cli/permission', { body: t<{ session_id: string; hash?: string; decision: string; remember?: true }>() }),
     say: call('POST /m/api/cli/say', { body: t<{ session_id: string; text: string }>() }),
     activity: call('GET /m/api/cli/activity', { query: t<{ session_id: string }>() }),
   },

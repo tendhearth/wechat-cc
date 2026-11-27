@@ -74,6 +74,7 @@ function actions(extra: Partial<Omit<Parameters<typeof makeCliPhoneActions>[0], 
     hub, relay, core, localMachine: 'mac', log: () => {}, liveIds: () => new Set(windows.keys()),
     // = ilink.resolvePermission:consume 一条待批(哪一种都行),回 true/false
     resolve: (h, d) => {
+      if (d === 'allow_always') return false
       const w = waiting.get(h)
       if (w) { waiting.delete(h); w(d); return true }
       return other.delete(h)

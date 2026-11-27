@@ -12,7 +12,7 @@ export function makeWorkbenchPermissionPrompt(registry: Pick<WechatPermissions,'
     // Delivery remains in workbench notices: App and WeChat share one speech event.
     void registry.registerPendingPermission(permission.id, WORKBENCH_PERMISSION_TIMEOUT_MS, {
       chatId,prompt:`${title} · ${permission.taskId}\n${permission.tool}\n${legacyDescription}`,taskId:permission.taskId,
-      ...(permission.canAllowTask?{canAllowTask:true}:{}),...(permission.scripts?{scripts:permission.scripts}:{}),
+      ...(permission.canAllowTask?{canAllowTask:true}:{}),...(permission.rememberRule?{rememberRule:permission.rememberRule}:{}),...(permission.scripts?{scripts:permission.scripts}:{}),
       ...(permission.canDenyWithReason?{canDenyWithReason:true}:{}),
     },{
       deadline,

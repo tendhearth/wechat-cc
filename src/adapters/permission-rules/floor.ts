@@ -270,7 +270,7 @@ const SECRETS = [
   /(?:^|[\s'"=/~])\.(?:ssh|aws|gnupg|kube|docker|netrc|npmrc|pypirc|git-credentials|envrc)(?:\/|\b|$)/,
   /\.private_keys\b/,
   /\.config\/(?:gh|gcloud|op)\b/,
-  /(?:^|[\s'"=/])\.env(?:$|[\s'"./-]|\b)/,
+  /(?:^|[^\w.-])\.env|\.env(?:rc)?(?=$|[^a-zA-Z0-9])/,
   /\.(?:p8|pem|p12|key|keystore|jks)\b/,
   /\bid_(?:rsa|dsa|ecdsa|ed25519)\b/,
   /\bcredentials(?:\.json)?\b/,

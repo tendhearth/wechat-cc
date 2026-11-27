@@ -22,17 +22,18 @@ export const PHONE_CLI_NOW_MAX = 8
  * 手机口径的一条终端会话:项目只给目录名,不给完整路径。其余字段同 GET /v1/cli/sessions(状态已折算 stale、等你批准的在前)。
  * 字段是一个一个挑的(不是 `...v`):登记处以后多了字段,手机不会跟着多看见。
  */
-export function phoneCliSession(v: CliSessionView, pendingHash?: (sessionId: string) => string | null) {
+export function phoneCliSession(v: CliSessionView, pendingHash?: (sessionId: string) => string | null, ruleOf?: (hash: string) => string | undefined) {
   // 等批准的那一项带上码:只有中继真开了码(主人不在、问到了微信)才能在手机上拍;
   // 主人在场时留给终端自己问,没有码 ⇒ actionable:false,手机只显示「在终端里等你」。
   let hash: string | null = null
   if (v.pending && pendingHash) { try { hash = pendingHash(v.session_id) } catch { hash = null } }
+  const rememberRule = hash ? ruleOf?.(hash) : undefined
   return {
     session_id: v.session_id, code: v.code, source: v.source, status: v.status, stale: v.stale,
     project: v.project, machine: v.machine, last_summary: v.last_summary,
     last_event_at: v.last_event_at, last_prompt_at: v.last_prompt_at, created_at: v.created_at,
     pending: v.pending ? {
-      tool: v.pending.tool, summary: v.pending.summary, since: v.pending.since, hash, actionable: hash !== null,
+      tool: v.pending.tool, summary: v.pending.summary, since: v.pending.since, hash, actionable: hash !== null, ...(rememberRule ? { rememberRule } : {}),
       ...(v.pending.display ? { display: v.pending.display } : {}), ...(v.pending.cwd ? { cwd: v.pending.cwd } : {}),
       ...(v.pending.truncated !== undefined ? { truncated: v.pending.truncated } : {}),
     } : null,
@@ -60,7 +61,7 @@ export function phoneCliSessionRows(deps: PhoneCliSessionsDeps): CliSessionRowT[
   // 开在电脑窗口里的 Claude 会话(2026-10-18):手机上在跑时也能接着说(话送进那个窗口)。
   const live = actions?.liveWindows?.() ?? new Set<string>()
   const rows = deps.list().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
-    const plain = phoneCliSession(v, ph)
+    const plain = phoneCliSession(v, ph, actions?.rememberRule)
     const named = deps.executorName ? { ...plain, displayName: deps.executorName(v.source) } : plain
     if (v.unhooked) return named
     const runId = actions?.activeRun?.(v.session_id)

@@ -7,7 +7,7 @@
 //   「微信里有一条等你确认」;真要点的人去微信点,别给一个按下去必然 403 的按钮。
 // - 全部节点走注入的 makeEl,不用 innerHTML(prompt 是不可信文本)。
 
-/** @typedef {{ hash: string, prompt: string, since: string, expires_at: string, taskId?:string, canAllowTask?:boolean, canDenyWithReason?:boolean, scripts?:Array<{path:string,content:string,error?:string,sha256?:string,truncated?:boolean}> }} PermissionItem */
+/** @typedef {{ hash: string, prompt: string, since: string, expires_at: string, taskId?:string, rememberRule?:string, canAllowTask?:boolean, canDenyWithReason?:boolean, scripts?:Array<{path:string,content:string,error?:string,sha256?:string,truncated?:boolean}> }} PermissionItem */
 
 const TITLE = '这个要你看一下'
 const FAIL_NOTE = ' 没送出去,再试一次'
@@ -21,7 +21,7 @@ const FAIL_NOTE = ' 没送出去,再试一次'
  * @typedef {'resolved' | 'gone' | 'failed'} ResolveOutcome
  *
  * @param {{ el: any, makeEl: (tag: string) => any }} root
- * @param {{ canResolve: boolean, readScript?:(query:{id:string,requestId:string,path:string,sha256:string})=>Promise<string>, onResolve: (hash: string, decision: 'allow' | 'deny' | 'allow_task', reason?: string) => Promise<ResolveOutcome> }} opts
+ * @param {{ canResolve: boolean, readScript?:(query:{id:string,requestId:string,path:string,sha256:string})=>Promise<string>, onResolve: (hash: string, decision: 'allow' | 'deny' | 'allow_task' | 'remember', reason?: string) => Promise<ResolveOutcome | {rule:string}> }} opts
  */
 export function createPermissionCard(root, { canResolve, onResolve, readScript }) {
   const el = root.el
@@ -42,6 +42,7 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
   /** @type {any} */ let allow = null
   /** @type {any} */ let deny = null
   /** @type {any} */ let allowTask = null
+  /** @type {any} */ let remember = null
   /** @type {any} */ let denialReason = null
 
   // 标题里还挂着计数 span:真 DOM 里改 textContent 会把子节点清掉,所以改完再挂回去。
@@ -54,13 +55,13 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
 
   function hide() {
     hash = null
-    title = count = pre = view = allow = deny = allowTask = denialReason = null
+    title = count = pre = view = allow = deny = allowTask = remember = denialReason = null
     el.replaceChildren()
     el.hidden = true
   }
 
   /**
-   * @param {'allow' | 'deny' | 'allow_task'} decision
+   * @param {'allow' | 'deny' | 'allow_task' | 'remember'} decision
    */
   async function decide(decision) {
     if (!hash) return
@@ -68,17 +69,28 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
     if (allow) allow.disabled = true
     if (deny) deny.disabled = true
     if (allowTask) allowTask.disabled = true
+    if (remember) remember.disabled = true
     if (denialReason) denialReason.disabled = true
-    /** @type {ResolveOutcome} */
+    /** @type {ResolveOutcome | {rule:string}} */
     let outcome = 'failed'
     try { outcome = await onResolve(target, decision, ...(decision === 'deny' && denialReason?.value?.trim() ? [denialReason.value.trim()] : [])) } catch { outcome = 'failed' }
     // resolved 与 gone 都意味着「这条不用你再管了」——只有 failed 才留提示。
-    if (outcome !== 'failed') { hide(); return }
+    if (typeof outcome === 'object' && (hash === target || hash === null)) {
+      hide()
+      const receipt = make('p', 'pet-card-note', `好，${outcome.rule}。`)
+      receipt.setAttribute('role', 'status')
+      el.replaceChildren(receipt)
+      el.hidden = false
+      setTimeout(() => { if (hash === null && el.firstChild === receipt) hide() }, 5000)
+      return
+    }
+    if (outcome !== 'failed') { if (hash === target) hide(); return }
     // 等待期间卡片可能已经换了一条(另一端 resolve 掉了这条)—— 那就别去动新卡片。
     if (hash !== target) return
     if (allow) allow.disabled = false
     if (deny) deny.disabled = false
     if (allowTask) allowTask.disabled = false
+    if (remember) remember.disabled = false
     if (denialReason) denialReason.disabled = false
     setTitle(TITLE + FAIL_NOTE)
   }
@@ -148,6 +160,13 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
         allowTask.addEventListener('click',()=>{decide('allow_task')})
         actions.appendChild(allowTask)
       }
+      if (item.rememberRule) {
+        card.appendChild(make('p', 'pet-card-note', item.rememberRule))
+        remember = make('button', 'pet-card-allow-task', '以后这类都不用问')
+        remember.setAttribute('type', 'button')
+        remember.addEventListener('click', () => { void decide('remember') })
+        actions.appendChild(remember)
+      }
       actions.appendChild(view)
       card.appendChild(actions)
     } else {
@@ -178,7 +197,7 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
       // 只在第一次露出这条时抢焦点:同 hash 的下一拍再 focus 会打断用户的 Tab。
       allow?.focus?.()
     },
-    hide() { if (hash === null && el.hidden) return; hide() },
+    hide() { if (hash === null) return; hide() },
     current() { return hash },
   }
 }

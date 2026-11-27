@@ -29,7 +29,7 @@ import { machineIdleSeconds } from '../../lib/machine-idle'
 import { notifyDesktop } from '../../lib/desktop-notify'
 import { makeCliEventHub, makeProjectNamer, type CliEvent, type CliSessionInfo } from '../../app/cli-events'
 import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
-import { makeCliPermissionRelay, type CliPermissionRequest as CliPermissionRequestT } from '../../app/cli-permission-relay'
+import { CLI_PERMISSION_WAIT_MS, makeCliPermissionRelay, type CliPermissionRequest as CliPermissionRequestT } from '../../app/cli-permission-relay'
 import { withReplyRefs } from '../../domain/cli-session-digest'
 import { makeExecutionClaims } from '../../adapters/workbench/execution-claims'
 import type { TodayJobs } from '../../domain/overseer-today'
@@ -37,7 +37,7 @@ import { defaultTerminalHooksDeps } from '../../cli/terminal-hooks'
 import { resolveAdminChatId } from '../../daemon/bootstrap/index'
 import { resolveClaudeBinary } from '../../daemon/bootstrap/claude-env'
 import { loadCompanionConfig } from '../../lib/companion-config'
-import { ensureStarterRules, makePermissionGate, makeTerminalDecide, STARTER_NOTICE } from '../../daemon/permission-gate'
+import { ensureStarterRules, makePermissionGate, makeTerminalDecide, terminalRememberAsk, terminalAskAsync, STARTER_NOTICE } from '../../daemon/permission-gate'
 import { makePendingNotices } from '../../daemon/speech/pending-notices'
 import { makePermissionDecisionsStore } from '../../daemon/permission-decisions-store'
 import { defaultRunner, makeCliReplyCore, makeCliReplyHandler, makeHandReplyExecutor, readHead, readTail } from './reply-handler'
@@ -82,7 +82,7 @@ export interface WireTerminalDeps {
   /** 只认主人(微信「终端 / 看 码 / @码」)。 */
   isOwner(chatId: string): boolean
   /** 手机拍板等批准的那一项:与微信「y/n 码」、桌宠权限卡同一份待批(ilink.resolvePermission,拍板了记一次接触)。 */
-  resolvePermission(hash: string, decision: 'allow' | 'deny'): boolean
+  resolvePermission(hash: string, decision: 'allow' | 'deny' | 'allow_always'): boolean | string
   boot: Bootstrap
   /** CC 开口那道门(第三批 3a),懒取(这里比门早接线)。取不到 ⇒ 终端汇总不发微信(桌面 / App 照旧),规则通知不发。 */
   speech: () => Pick<import('../../daemon/speech/policy').SpeechPolicy, 'tell'> | null
@@ -194,7 +194,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     ask: makeCliPermissionAsk({
       ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
       askUser: (c, p, h, ms, o) => ilink.askUser(c, p, h, ms, o),
-      registerPending: (h, ms, meta) => ilink.registerPendingPermission(h, ms, meta),
+      registerPending: (h, ms, meta, opts) => ilink.registerPendingPermission(h, ms, meta, opts),
       sweepPending: () => ilink.sweepPendingPermissions(),
       push: cliAppPush,
       localMachine: osHostname(),
@@ -204,7 +204,20 @@ export function wireTerminal(d: WireTerminalDeps) {
     projectName: makeProjectNamer(() => d.projects.list()),
     onRelayed: (s) => cliEvents.notePermissionRelay(s),
     onAsked: (req) => cliEvents.permissionAsked(req),
-    onSettled: (s, status) => cliEvents.permissionSettled(s, status),
+    onExpired: () => ilink.sweepPendingPermissions(),
+    onRuleAdded: (sessionId, line) => {
+      const matter = matterStore.findBySurface('cli', sessionId)
+      if (matter) matterLog.writeItem({ matterId: matter.id, kind: 'system', status: 'completed', payload: { text: line, ownerPermission: { ruleAdded: line } } })
+    },
+    onSettled: (s, status, ownerPermission) => ownerPermission ? cliEvents.permissionSettled(s, status, ownerPermission) : cliEvents.permissionSettled(s, status),
+    remember: async req => {
+      const initial = await terminalAskAsync(req)
+      let first = true
+      return permissionGate.remember?.(() => {
+        if (first) { first = false; return initial }
+        return terminalRememberAsk(req)
+      })
+    },
     log: (t, l) => log(t, l),
     localMachine: osHostname(),
     // 判定在 domain/authorize.ts(架构终态 C2),经 makeTerminalDecide:面是 terminal ⇒ 先过放行规则,规则没拿主意就问主人。
@@ -263,16 +276,18 @@ export function wireTerminal(d: WireTerminalDeps) {
     },
   }
   const cliPermissionsRoute: TerminalRoutesDeps['cliPermissions'] = {
-    open: async (req) => {
+    open: async (req, opts) => {
       rememberLocation(req)
-      if (!forwarder?.brain()) return cliPermissions.open(req)
+      if (opts?.ownerHook) req = { ...req, deadline_at: Math.min(req.deadline_at ?? Infinity, Date.now() + CLI_PERMISSION_WAIT_MS) }
+      if (!forwarder?.brain()) return cliPermissions.open(req, opts)
       const fwd = await forwarder.permissionOpen(req)
-      if (!fwd) return cliPermissions.open(req)
+      if (!fwd) return cliPermissions.open(req, opts)
       // 只有脑那边真开了码才记 waiting;主人在场(owner_present)就留给终端,不挂「等你批准」(评审 10-15 #1)。
       if (fwd.status === 'pending') cliEvents.permissionAsked(req)
       return fwd
     },
     status: (h) => cliPermissions.status(h),
+    expire: (h) => cliPermissions.expire(h),
     wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),
   }
   const legacyClaims=makeExecutionClaims()
@@ -349,7 +364,7 @@ export function wireTerminal(d: WireTerminalDeps) {
   const overseerToday = makeOverseerTodaySource({
     terminal: () => cliSessionViews({ includeEnded: true, limit: TODAY_TERMINAL_LIMIT }),
     workbench: () => d.workbench(),
-    ccDecided: (since) => ({ ...permissionDecisions.countsSince(since), recent: permissionDecisions.since(since, 20) }),
+    ccDecided: (since) => ({ ...permissionDecisions.countsSince(since), recent: permissionDecisions.since(since, 20), rulesAdded: permissionDecisions.rulesAddedSince(since) }),
     jobs: (since) => d.jobsSince(since),
     localMachine: osHostname(),
     log: (t, l) => log(t, l),

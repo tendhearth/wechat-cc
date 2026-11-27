@@ -140,3 +140,32 @@ describe('功能模块自己挂路由(架构终态 A3:internalApi.mount)', () =>
     expect(() => api!.mount('calendar', { 'GET /v1/calendar/agenda': async () => ({ status: 200, body: {} }) })).toThrow(/already registered/)
   })
 })
+
+it('keeps a completed permission POST body distinct from a disconnected hook', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'hook-permission-post-'))
+  const server = createInternalApi({ stateDir, daemonPid: 1, subsystems: () => [
+    { name: 'terminal', state: 'ok', sinceIso: new Date().toISOString() },
+  ] })
+  let aborted: boolean | undefined
+  let sent = false
+  try {
+    server.mount('terminal', { 'POST /v1/cli/permission': async (_q, _body, _caller, ctx) => {
+      aborted = ctx?.signal.aborted
+      ctx?.onSent(() => { sent = true })
+      return { status: 200, body: { status: 'pending', hash: 'abc12' } }
+    } })
+    const { port, tokenFilePath } = await server.start()
+    const result = await fetch(`http://127.0.0.1:${port}/v1/cli/permission`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${readFileSync(tokenFilePath, 'utf8').trim()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: 'claude', session_id: 'fixture', cwd: '/project', tool_name: 'Bash' }),
+    })
+    expect(result.status).toBe(200)
+    expect(await result.json()).toEqual({ status: 'pending', hash: 'abc12' })
+    expect(aborted).toBe(false)
+    expect(sent).toBe(true)
+  } finally {
+    await server.stop()
+    rmSync(stateDir, { recursive: true, force: true })
+  }
+})

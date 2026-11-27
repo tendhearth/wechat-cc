@@ -6,7 +6,7 @@ import type { SpawnContext } from '../../ports/agent-provider'
 import { legacyPermissionDescription, wechatPermissionSource, type PendingWorkbenchPermission, type PermissionDecision } from '../../ports/workbench'
 import { inspectPermissionCommand, literalCommand, type CommandSnapshot } from './permission-command'
 import { matchRule } from '../permission-rules/rules-file'
-import type { Rule } from '../../domain/permission-rules/types'
+import { RULE_NOT_SAVED, type Rule, type RememberApproval, type RememberHistory } from '../../domain/permission-rules/types'
 import { EDIT_REPORTING_PROVIDERS } from '../permission-rules/decide'
 import { toolClass } from '../permission-rules/floor'
 import { redactSecrets } from '../../domain/cli-transcript'
@@ -30,7 +30,8 @@ export type PermissionOutcome = PermissionDecision | 'aborted' | 'expired' | 'ca
 
 export type WorkbenchPermissionAudit =
   | { type: 'request'; permission: PendingWorkbenchPermission; legacyDescription?: string }
-  | { type: 'outcome'; permission: PendingWorkbenchPermission; outcome: PermissionOutcome; reason?: string; /** 放行规则替主人拿的主意(没有 = 主人 / 到期 / 取消)。 */ by?: RuleDecider }
+  | { type: 'rule_added'; permission: PendingWorkbenchPermission; line: string }
+  | { type: 'outcome'; permission: PendingWorkbenchPermission; outcome: PermissionOutcome; reason?: string; ownerPermission?: RememberHistory; /** 放行规则替主人拿的主意(没有 = 主人 / 到期 / 取消)。 */ by?: RuleDecider }
 
 /** 放行规则(2026-10-19)谁拿的主意:规则表 / 初审 / 红线。 */
 export type RuleDecider = 'rule' | 'review' | 'floor'
@@ -40,12 +41,13 @@ export type PermissionDecide = (facts: PermissionFacts) => Promise<{ verdict: 'a
 
 interface Entry {
   facts: PermissionFacts
+  remember?: RememberApproval
   snapshot: CommandSnapshot
   reviewScripts: CommandSnapshot['scripts']
   permission: PendingWorkbenchPermission
   legacyDescription: string | undefined
   expiresAt: number
-  finish: (allowed: boolean, outcome: PermissionOutcome, reason?: string) => boolean
+  finish: (allowed: boolean, outcome: PermissionOutcome, reason?: string, ownerPermission?: RememberHistory) => boolean
   /** 冻住期间撤掉的到期计时器,放开时按剩下的时间重起(网络守护暂停,2026-10-03)。 */
   rearm: (ms: number) => void
   disarm: () => void
@@ -82,6 +84,7 @@ export function makeRunPermissions(opts: {
   audit?: (event: WorkbenchPermissionAudit) => void
   /** 放行规则:登记之前先问。allow / deny ⇒ 不登记、不发 request 审计(主人收不到通知),只记 outcome 带 by。 */
   decide?: PermissionDecide
+  remember?: (facts: PermissionFacts) => RememberApproval | undefined
 }) {
   const entries = new Map<string, Entry>()
   const rules: Rule[] = []
@@ -172,6 +175,8 @@ export function makeRunPermissions(opts: {
     const showSnapshotNotice = reviewScripts.length > 0 || snapshot.requiresBoundExecution
     const withSnapshot = (text: string) => showSnapshotNotice ? `${text}\n\n${PERMISSION_SNAPSHOT_NOTICE}` : text
     const legacyDescription = review !== description ? withSnapshot(description) : undefined
+    const remembered = !snapshot.requiresBoundExecution && !display?.truncated && !incompleteCommand &&
+      !raw.wechatReview?.incomplete ? opts.remember?.(facts) : undefined
     const permission: PendingWorkbenchPermission = {
       id: randomUUID(),
       taskId: opts.taskId,
@@ -184,6 +189,7 @@ export function makeRunPermissions(opts: {
       ...(showSnapshotNotice ? { showSnapshotNotice } : {}),
       ...(onDenied ? { canDenyWithReason: true } : {}),
       ...(snapshot.hash ? { canAllowTask: true } : {}),
+      ...(remembered?.preview ? { rememberRule: remembered.preview } : {}),
       ...(reviewScripts.length ? { scripts: reviewScripts.map(s => s.content.length > 2000 ? { ...s, content: s.content.slice(0, 2000), truncated: true } : { ...s }) } : {}),
     }
     Object.defineProperty(permission, wechatPermissionSource, {
@@ -201,13 +207,13 @@ export function makeRunPermissions(opts: {
       let settled = false
       let timer: ReturnType<typeof setTimeout> | undefined
       const onAbort = () => entry.finish(false, 'aborted')
-      const finish = (allowed: boolean, outcome: PermissionOutcome, reason?: string) => {
+      const finish = (allowed: boolean, outcome: PermissionOutcome, reason?: string, ownerPermission?: RememberHistory) => {
         if (settled) return false
         settled = true
         entries.delete(permission.id)
         if (timer) clearTimeout(timer)
         signal?.removeEventListener('abort', onAbort)
-        const audited = audit({ type: 'outcome', permission, outcome, ...(reason ? { reason } : {}) })
+        const audited = audit({ type: 'outcome', permission, outcome, ...(reason ? { reason } : {}), ...(ownerPermission ? { ownerPermission } : {}) })
         if (audited && allowed) consecutiveDenials = 0
         if (audited && outcome === 'deny') {
           consecutiveDenials++
@@ -219,7 +225,7 @@ export function makeRunPermissions(opts: {
       const timeoutMs = opts.timeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS
       const rearm = (ms: number) => { if (timer) clearTimeout(timer); timer = setTimeout(() => finish(false, 'expired'), Math.max(0, ms)); timer.unref?.() }
       const disarm = () => { if (timer) clearTimeout(timer); timer = undefined }
-      const entry: Entry = { permission, legacyDescription, facts, snapshot, reviewScripts, expiresAt:permission.createdAt + Math.max(0,timeoutMs), finish, rearm, disarm }
+      const entry: Entry = { permission, legacyDescription, facts, remember: remembered, snapshot, reviewScripts, expiresAt:permission.createdAt + Math.max(0,timeoutMs), finish, rearm, disarm }
       entries.set(permission.id, entry)
       signal?.addEventListener('abort', onAbort, { once: true })
       if (pausedAt === null) rearm(timeoutMs)
@@ -285,7 +291,7 @@ export function makeRunPermissions(opts: {
       pausedAt = null
       for (const entry of entries.values()) { entry.expiresAt += held; entry.rearm(entry.expiresAt - Date.now()) }
     },
-    resolve(id: string, decision: PermissionDecision, rawReason?: string): boolean {
+    resolve(id: string, decision: PermissionDecision, rawReason?: string): boolean | string {
       const reason = permissionReason(rawReason, decision)
       const entry = entries.get(id)
       if (!entry) return false
@@ -294,15 +300,29 @@ export function makeRunPermissions(opts: {
         entry.finish(false,'expired')
         return false
       }
+      const history = entry.remember ? { key: entry.remember.key, verdict: decision === 'deny' ? 'deny' as const : 'allow' as const } : undefined
+      if (decision === 'allow_always') {
+        if (!entry.permission.rememberRule || !entry.remember || !history) return false
+        let eligible = false
+        try { eligible = entry.remember.eligible?.() !== false } catch { /* The one-shot decision can still be recorded. */ }
+        if (!entry.finish(true, 'allow', undefined, history)) return false
+        if (!eligible) return RULE_NOT_SAVED
+        try {
+          const saved = entry.remember.save()
+          if (!saved) return RULE_NOT_SAVED
+          if (saved.added) audit({ type: 'rule_added', permission: entry.permission, line: `你加了一条规则：${saved.line}` })
+          return saved.line
+        } catch { return RULE_NOT_SAVED }
+      }
       if (decision === 'allow_task') {
         if (!EDIT_REPORTING_PROVIDERS.has(opts.provider ?? '') || !entry.permission.canAllowTask || !entry.snapshot.hash) return false
         const current = inspectPermissionCommand(entry.facts, opts)
         if (current.hash !== entry.snapshot.hash) { entry.finish(false, 'ended'); return false }
-        const audited=entry.finish(true,decision)
+        const audited=entry.finish(true,decision,undefined,history)
         if(audited)rules.push({ id: `task-${id}`, when: { surface: 'workbench', scope: opts.taskId, provider: opts.provider, tool: entry.facts.tool, commandHash: current.hash }, then: 'allow', note: '主人批准本任务内同命令' })
         return audited
       }
-      return entry.finish(decision === 'allow', decision, reason)
+      return entry.finish(decision === 'allow', decision, reason, history)
     },
     rejectAll(outcome: Extract<PermissionOutcome, 'cancelled' | 'ended'> = 'ended'): void {
       closed = true

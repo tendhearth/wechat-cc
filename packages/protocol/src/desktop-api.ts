@@ -762,9 +762,11 @@ export const CliPermissionRequest = z.object({
   idle_s: z.number().min(0).optional(),
   terminal: terminalLocationWire,
   machine: z.string().max(200).optional(),
+  deadline_at: z.number().int().nonnegative().optional(),
 })
 export const CliPermissionQuery = z.object({
   hash: z.string().min(1).max(16),
+  abandon: z.literal('1').optional(),
   wait_ms: z.coerce.number().int().min(0).max(60_000).optional(),
 })
 // ── GET /v1/cli/sessions(终端会话登记处,v76)──────────────────────────────
@@ -2193,7 +2195,7 @@ const PetPendingPermissionShape = z.object({
   prompt: z.string(),
   since: z.string(),
   expires_at: z.string(),
-  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
+  rememberRule: z.string().optional(), canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
   taskId: z.string().optional(),
 })
 const PetTaskActivityShape = z.object({
@@ -2348,14 +2350,14 @@ const PermissionsPendingItemShape = z.object({
   since: z.string(),
   expires_at: z.string(),
   taskId: z.string().optional(),
-  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(),
+  rememberRule: z.string().optional(), canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(),
   scripts: z.array(PermissionScript).optional(),
 })
 export const PermissionsPendingResponse = z.object({ items: z.array(PermissionsPendingItemShape) })
 export type PermissionsPendingResponseT = z.infer<typeof PermissionsPendingResponse>
 
 // ── POST /v1/permissions/resolve ── ok=false:hash 过期 / 已在微信拍过
-export const PermissionsResolveResponse = z.object({ ok: z.boolean() })
+export const PermissionsResolveResponse = z.object({ ok: z.boolean(), rule: z.string().optional() })
 
 // ── POST /v1/self-change/notice ── 失败走 409/502
 export const SelfChangeNoticeResponse = z.object({ ok: z.literal(true) })
@@ -2729,7 +2731,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/workbench/handoff': WorkbenchHandoffRecordResponse,
   // 一件事上的动作(P3e,/v1/matter/*):operator ⇒ 桌面那一份(同 /v1/workbench/* 双胞胎);手机令牌 ⇒ 手机那一份(带 ok: true)
   'POST /v1/matter/stop': z.union([WorkbenchTaskResponse, PhoneActionOk]),
-  'POST /v1/matter/permission': WorkbenchOkResponse,
+  'POST /v1/matter/permission': WorkbenchOkResponse.extend({ rule: z.string().optional() }),
   'POST /v1/matter/answer': WorkbenchOkResponse,
   'GET /v1/matter/artifact': z.union([WorkbenchArtifactResponse, PhoneActionOk.extend(MatterArtifactChunk.shape)]),
   'POST /v1/matter/handoff': z.union([WorkbenchQuotaHandoffResponse, PhoneActionOk.extend(MatterHandoffResult.shape)]),

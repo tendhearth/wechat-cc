@@ -7,12 +7,15 @@
  * 初审调的是 registry.getCheapEval(),它自己按网络守护跳过不安全的候选;被拒 / 抛错 ⇒ ask,不重试。
  */
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { execFile } from 'node:child_process'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
-import { decide as decideCore, parseReviewAnswer, reviewPrompt, type Review } from '../adapters/permission-rules/decide'
-import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile, STARTER_VERSION, withStarterRules } from '../adapters/permission-rules/rules-file'
-import { writeFileAtomic } from '../lib/json-file'
-import type { AskSource, Decision, PermissionAsk, RulesFile, Verdict } from '../domain/permission-rules/types'
+import { execFile, execFileSync } from 'node:child_process'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { EDIT_REPORTING_PROVIDERS, decide as decideCore, parseReviewAnswer, reviewPrompt, type Review } from '../adapters/permission-rules/decide'
+import { editRulesFile, EMPTY_RULES, parseRulesFile, RULES_FILE, STARTER_VERSION, withStarterRules, matchRule } from '../adapters/permission-rules/rules-file'
+import { createHash, randomUUID } from 'node:crypto'
+import { floorReason } from '../adapters/permission-rules/floor'
+import { rememberWhen, sameRememberWhen } from '../adapters/permission-rules/remember'
+import { redactSecrets } from '../domain/cli-transcript'
+import type { AskSource, Decision, PermissionAsk, RulesFile, Verdict, RememberApproval } from '../domain/permission-rules/types'
 import { authorize, type AuthSubject } from '../domain/authorize'
 import { TIER_PROFILES } from '../domain/user-tier'
 import type { PermissionDecisionsStore } from './permission-decisions-store'
@@ -27,6 +30,7 @@ const DAY_MS = 24 * 3600_000
 export interface PermissionGate {
   /** beforeAllow:见 ChatOwnerRules.decide —— 规则说放、写留痕之前调;null ⇒ 回 ask、不留痕。 */
   decide(ask: AskSource, beforeAllow?: AllowHook): Promise<Decision>
+  remember?(askOf: () => PermissionAsk): RememberApproval | undefined
   status(): { enabled: boolean; review: 'off' | 'low_risk'; rules: number; errors: string[] }
 }
 
@@ -72,41 +76,26 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 export const STARTER_NOTICE = '放行规则开了:Claude / Codex 跑只读的 git 命令(看状态 / 改动 / 历史)我替你批,别的照旧问你。不想要就跟我说「放行规则关掉」。'
 
 /**
- * 微信里「放行规则关掉 / 打开」(admin 行 rules.toggle):只改开关,别的一个字节不动。坏文件不覆盖(主人手改了一半的东西不能被冲掉)。
- * 和 CLI `wechat-cc rules enable|disable`(src/cli/rules.ts)同一个动作;daemon 不能引 cli,所以这里自己写这几行。
+ * 微信里「放行规则关掉 / 打开」(admin 行 rules.toggle):保留其它规则与初审设置。坏文件不覆盖(主人手改了一半的东西不能被冲掉)。
+ * 和 CLI 共用规则文件的加锁编辑入口。
  */
 export function setRulesEnabled(stateDir: string, enabled: boolean): { ok: true; changed: boolean } | { ok: false; error: string } {
-  const file = join(stateDir, RULES_FILE)
-  let current: RulesFile = { ...EMPTY_RULES, rules: [] }
-  if (existsSync(file)) {
-    let raw: string
-    try { raw = readFileSync(file, 'utf8') } catch (e) { return { ok: false, error: `读不了规则文件:${errMsg(e)}` } }
-    const parsed = parseRulesFile(raw)
-    if (parsed.errors.length) return { ok: false, error: `规则文件有错,先在电脑上修好(${parsed.errors[0]})` }
-    current = parsed.file
-  }
-  if (current.enabled === enabled) return { ok: true, changed: false }
-  // 主人亲手开 / 关过 ⇒ 记上 starter,以后开机不会再替主人装起步规则、改开关
-  try { writeFileAtomic(file, serializeRulesFile({ ...current, enabled, starter: current.starter ?? STARTER_VERSION }), { mode: 0o600 }) }
-  catch (e) { return { ok: false, error: `写不进规则文件:${errMsg(e)}` } }
-  return { ok: true, changed: true }
+  try {
+    const changed = editRulesFile(join(stateDir, RULES_FILE), existing => {
+      const current = existing ?? EMPTY_RULES
+      // 记上 starter,以后开机不会再替主人装起步规则、改开关。
+      return current.enabled === enabled ? null : { ...current, enabled, starter: current.starter ?? STARTER_VERSION }
+    })
+    return { ok: true, changed }
+  } catch (error) { return { ok: false, error: `写不进规则文件:${errMsg(error)}` } }
 }
 
 export function ensureStarterRules(stateDir: string, log: (tag: string, line: string) => void): boolean {
-  const file = join(stateDir, RULES_FILE)
-  let current: RulesFile | null = null
-  if (existsSync(file)) {
-    let raw: string
-    try { raw = readFileSync(file, 'utf8') } catch (e) { log('PERMISSION_RULES', `starter: unreadable, left alone: ${errMsg(e)}`); return false }
-    const parsed = parseRulesFile(raw)
-    if (parsed.errors.length) return false
-    current = parsed.file
-  }
-  const next = withStarterRules(current)
-  if (!next) return false
-  try { writeFileAtomic(file, serializeRulesFile(next), { mode: 0o600 }) } catch (e) { log('PERMISSION_RULES', `starter: write failed: ${errMsg(e)}`); return false }
-  log('PERMISSION_RULES', `starter rules v${next.starter} installed (enabled, review low_risk, ${next.rules.length} rules)`)
-  return true
+  try {
+    const installed = editRulesFile(join(stateDir, RULES_FILE), withStarterRules)
+    if (installed) log('PERMISSION_RULES', `starter rules v${STARTER_VERSION} installed (enabled, review low_risk)`)
+    return installed
+  } catch (error) { log('PERMISSION_RULES', `starter: write failed: ${errMsg(error)}`); return false }
 }
 
 export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
@@ -122,13 +111,13 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
 
   function load(): { rules: RulesFile; errors: string[] } {
     let key: string
-    try { const s = statSync(file); key = `${s.mtimeMs}:${s.size}` } catch { return { rules: EMPTY_RULES, errors: [] } }
+    try { const s = statSync(file); key = `${s.ino}:${s.mtimeMs}:${s.size}` } catch { return { rules: EMPTY_RULES, errors: [] } }
     if (cache?.key === key) return cache
     let raw: string
     try { raw = readFileSync(file, 'utf8') } catch (e) { return { rules: EMPTY_RULES, errors: [`读不了规则文件:${errMsg(e)}`] } }
     const parsed = parseRulesFile(raw)
     cache = { key, rules: parsed.file, errors: parsed.errors }
-    if (parsed.errors.length) deps.log('PERMISSION_RULES', `rules file: ${parsed.errors.length} error(s)`)
+    if (parsed.errors.length) deps.log('PERMISSION_RULES', `rules file: ${parsed.errors.length} parse error(s); invalid rules discarded`)
     return cache
   }
 
@@ -177,7 +166,68 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
     }
   }
 
+  function rememberFloor(ask: PermissionAsk): boolean {
+    const options = { stateDir: stateDirReal }
+    return !!floorReason(ask, undefined, options) || !!floorReason({
+      ...ask, tool: 'Read', command: undefined, paths: [ask.cwd, ask.project].filter((p): p is string => !!p),
+    }, undefined, options)
+  }
+
+  function rememberPathsAreExact(raw: PermissionAsk, normalized: PermissionAsk): boolean {
+    return raw.paths?.every((path, i) => {
+      if (!isAbsolute(path) || path.split(/[\\/]/).includes('..')) return false
+      try {
+        const literal = resolve(path)
+        // A missing target may be a dangling link. Learn and apply writes only
+        // when the existing regular file resolves to the same literal path.
+        return realpathSync.native(path) === literal && normalized.paths?.[i] === literal && statSync(path).isFile()
+      } catch { return false }
+    }) ?? true
+  }
+
+  function rememberTarget(askOf: () => PermissionAsk) {
+    const raw = askOf()
+    let cwd: string
+    try { cwd = realpathSync.native(raw.cwd ?? '') } catch { return null }
+    const ask = normalizePaths({ ...raw, cwd })
+    if (!rememberPathsAreExact(raw, ask) || !EDIT_REPORTING_PROVIDERS.has(ask.provider) || rememberFloor(raw) || rememberFloor(ask) ||
+        [ask.project, ask.command, ...ask.paths ?? []].some(p => p && redactSecrets(p) !== p)) return null
+    const when = rememberWhen(ask)
+    if (!when) return null
+    const key = createHash('sha256').update(JSON.stringify(when)).digest('hex')
+    const operation = when.commandPrefix ? `跑「${when.commandPrefix}」` : `用 ${ask.tool} 改「${relative(ask.project!, when.pathExact!)}」`
+    const preview = `以后在 ${basename(ask.project!)} 里${operation}不用问（${ask.tool} · ${ask.project}）`
+    return { ask, when, key, preview }
+  }
+
   return {
+    remember(askOf) {
+      try {
+        const target = rememberTarget(askOf)
+        if (!target || !deps.store) return undefined
+        const { rules, errors } = load()
+        const ready = () => deps.store!.ownerStreak(target.key)
+        const preview = rules.enabled && !errors.length &&
+          !matchRule(rules.rules, target.ask) && ready() ? target.preview : undefined
+        return { key: target.key, preview, eligible: ready, save(stillEligible = () => true) {
+          if (!preview) return null
+          try {
+            const current = rememberTarget(askOf)
+            if (!current || current.key !== target.key || !ready()) return null
+            const added = editRulesFile(file, fresh => {
+              if (!fresh?.enabled || !stillEligible()) throw Error('rules unavailable')
+              const matching = matchRule(fresh.rules, current.ask)
+              if (matching?.then === 'allow' && matching.when.projectExact && sameRememberWhen(matching.when, current.when)) return null
+              if (matching) throw Error('rule changed')
+              const rule = { id: `card-${randomUUID()}`, when: current.when, then: 'allow' as const, note: current.preview }
+              return { ...fresh, rules: [...fresh.rules, rule] }
+            })
+            cache = null
+            return { line: current.preview, added }
+          } catch { return null }
+        } }
+      } catch { return undefined }
+    },
     async decide(source, beforeAllow) {
       let reserved: string | null = null
       try {
@@ -185,7 +235,16 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
         if (!rules.enabled) return OFF
         // 已知隐患(留着,和终端共用):normalizePaths 先 resolve 掉 `..` 再展开软链,`link/..` 会按字面消掉而不是按软链目标。
         // 对话里今天走不到(主人对话里带路径的工具按档位直接放,不到规则);以后对话规则要管带路径的工具,先改这里。
-        const ask = normalizePaths(typeof source === 'function' ? await source() : source)
+        const raw = typeof source === 'function' ? await source() : source
+        const ask = normalizePaths(raw)
+        if (rules.rules.some(rule => rule.when.projectExact) && rememberWhen(ask)) {
+          try {
+            const cwd = realpathSync.native(raw.cwd ?? '')
+            if (!rememberWhen({ ...ask, cwd }) || rememberFloor(raw) || rememberFloor({ ...ask, cwd }) ||
+                !rememberPathsAreExact(raw, ask))
+              ask.ambiguousRememberFacts = true
+          } catch { ask.ambiguousRememberFacts = true }
+        }
         const d = await decideCore(ask, rules, { review: review(), reviewBlocked: (scope) => { const b = reviewBlocked(scope); if (!b) reserved = scope; return b }, stateDir: stateDirReal })
         // 规则说放 ⇒ 先让调用方确认这次真放得了(对话:提醒登记上了),再写留痕 —— 留痕只记最后真发生的事。
         let undo: (() => void) | null = null
@@ -228,9 +287,30 @@ export function projectRootOfAsync(cwd: string): Promise<string | null> {
   })
 }
 
+/** Click-time recheck with the same command as the asynchronous registration. */
+export function terminalRememberAsk(req: CliPermissionRequest): PermissionAsk {
+  return withTerminalRememberEvidence(req, terminalAsk(req, cwd => {
+    try {
+      const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', timeout: 2000, windowsHide: true }).trim()
+      return top ? realpathSync.native(top) : null
+    } catch { return null }
+  }))
+}
+
 export async function terminalAskAsync(req: CliPermissionRequest): Promise<PermissionAsk> {
   const root = await projectRootOfAsync(req.cwd)
-  return terminalAsk(req, () => root)
+  return withTerminalRememberEvidence(req, terminalAsk(req, () => root))
+}
+
+/** Old hooks and flattened argv keep their legacy rules, without prefix grants. */
+function withTerminalRememberEvidence(req: CliPermissionRequest, ask: PermissionAsk): PermissionAsk {
+  const body = req.display?.body
+  if (req.truncated || req.display?.truncated || (req.execution_cwd && req.execution_cwd !== req.cwd) ||
+      (ask.command && (body?.kind !== 'command' || body.command !== ask.command ||
+        (body.cwd !== undefined && body.cwd !== req.cwd) ||
+        req.display?.extra?.some(field => field.name !== 'description' && field.name !== 'timeout'))))
+    return { ...ask, ambiguousRememberFacts: true }
+  return ask
 }
 
 /** hook 报来的一条权限请求 → 放行规则的请求。调用方已确认它来自本机主人(不是脑手转发)。 */
@@ -255,11 +335,14 @@ const TERMINAL_SUBJECT: AuthSubject = { surface: 'terminal', tier: TIER_PROFILES
 export function makeTerminalDecide(
   gate: Pick<PermissionGate, 'decide'>,
   askOf: (req: CliPermissionRequest) => Promise<PermissionAsk> = terminalAskAsync,
-): (req: CliPermissionRequest) => Promise<Verdict> {
-  return async (req) => {
+): (req: CliPermissionRequest, ownerHook?: boolean) => Promise<Verdict> {
+  return async (req, ownerHook = false) => {
     const reported = { name: req.tool_name, kind: 'subagent', reported: true } as const
     if (!authorize(TERMINAL_SUBJECT, reported).consultOwnerRules) return 'ask'
-    return authorize(TERMINAL_SUBJECT, reported, { ownerRuling: await gate.decide(() => askOf(req)) }).verdict
+    return authorize(TERMINAL_SUBJECT, reported, { ownerRuling: await gate.decide(async () => {
+      const ask = await askOf(req)
+      return ownerHook ? ask : { ...ask, ambiguousRememberFacts: true }
+    }) }).verdict
   }
 }
 

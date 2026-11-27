@@ -421,3 +421,20 @@ describe('Cursor — ~/.cursor/hooks.json 安装 / 卸载 / 状态(临时目录)
     expect(readFileSync(file, 'utf8')).toBe('{ nope')
   })
 })
+
+it('passes the total deadline to the daemon and abandons a late poll result', async () => {
+  const tokenFile = join(dir, 'tok')
+  writeFileSync(tokenFile, 'test')
+  writeFileSync(join(dir, 'internal-api-info.json'), JSON.stringify({ baseUrl: 'http://127.0.0.1:1', tokenFilePath: tokenFile }))
+  let t = 1000
+  const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+    if (init.method === 'POST') return Response.json({ status: 'pending', hash: 'abc12' })
+    if (!url.includes('abandon=')) t += 125
+    return Response.json({ status: 'allow' })
+  })
+  expect(await relayPermission(dir, { source: 'claude', session_id: 's', cwd: '/fixture', tool_name: 'Bash' }, {
+    fetchImpl: fetchImpl as unknown as typeof fetch, now: () => t, totalMs: 125,
+  })).toEqual({ decision: null, status: 'deadline' })
+  expect(JSON.parse(String(fetchImpl.mock.calls[0]![1].body))).toMatchObject({ deadline_at: 1125 })
+  expect(fetchImpl.mock.calls.at(-1)?.[0]).toContain('hash=abc12&abandon=1')
+})

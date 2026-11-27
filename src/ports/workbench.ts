@@ -9,7 +9,7 @@ import type { AgentExecutionChoice, AgentUserInputRequest } from './agent-provid
 export interface Attachment {id:string;name:string;mime:string;size:number;sha256:string}
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 
-export type PermissionDecision = 'allow' | 'deny' | 'allow_task'
+export type PermissionDecision = 'allow' | 'deny' | 'allow_task' | 'allow_always'
 export interface PermissionScript { path: string; content: string; sha256?: string; error?: string; truncated?: boolean }
 /** 手机详情超出帧预算时用的原描述。Symbol 字段只在进程内传递。 */
 export const legacyPermissionDescription = Symbol('legacyPermissionDescription')
@@ -28,6 +28,7 @@ export interface PendingWorkbenchPermission {
   cwd?: string
   /** The description includes the execution snapshot notice. */
   showSnapshotNotice?: boolean
+  rememberRule?: string
   canAllowTask?: boolean
   canDenyWithReason?: boolean
   scripts?: PermissionScript[]

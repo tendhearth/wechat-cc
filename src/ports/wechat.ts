@@ -187,7 +187,7 @@ export interface WechatPermissions {
    * 发拍板卡到 chatId 并等 y/n。卡片没送到(errcode=-2 等)默认立刻 resolve 'undelivered'(没人能回,别死等);
    * `keepOnUndelivered` ⇒ 条目留在登记处等到点 —— 调用方另有面(手机 app 推送)能拍板时用。
    */
-  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { keepOnUndelivered?: boolean; incomplete?: boolean; wechatPrompt?: string }): Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
+  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { deadline?: () => number; keepOnUndelivered?: boolean; incomplete?: boolean; wechatPrompt?: string; rememberRule?: string; onDecision?: (decision: import('./workbench').PermissionDecision) => boolean | string }): Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
   /**
    * 微信侧的「y/n <hash>」。`fromChatId` 是发这句话的 chat —— 条目带 meta 时
    * **只有当初被问的那个 chat** 能拍板。老条目(无 meta)保持原行为。
@@ -199,13 +199,13 @@ export interface WechatPermissions {
   /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */
   listPendingPermissions(): PendingPermissionView[]
   /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
-  resolvePermission(hash: string, decision: 'allow' | 'deny' | 'allow_task', reason?: string): boolean
+  resolvePermission(hash: string, decision: import('./workbench').PermissionDecision, reason?: string): boolean | string
   /** 这条待批在微信里的两位数码(自改流水线要把它一起回给 CLI)。= pending.codeOf. */
   pendingPermissionCodeOf(hash: string): string | null
   /** Workbench card for the owner-facing WeChat lookup. Kept off the desktop API. */
   pendingWechatPermissionCard(hash: string): WechatPermissionCard | undefined
   /** 只登记一条待批,**不发卡**(外发不通时条目留着,主人换个面拍板)。= pending.register. */
-  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta, opts?: {onAllowTask?:()=>boolean;deadline?:()=>number|null;onDecision?:(decision:'allow'|'deny'|'allow_task',reason?:string)=>boolean;renderWechatCard?:(code:string)=>WechatPermissionCard}): Promise<PermissionDecision>
+  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta, opts?: {onAllowTask?:()=>boolean;deadline?:()=>number|null;onDecision?:(decision:import('./workbench').PermissionDecision,reason?:string)=>boolean|string;renderWechatCard?:(code:string)=>WechatPermissionCard}): Promise<PermissionDecision>
   /** 到点扫一遍待批(把过期的 resolve 成 timeout)。= pending.sweep. */
   sweepPendingPermissions(): void
 }

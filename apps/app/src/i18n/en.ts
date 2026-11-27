@@ -242,6 +242,8 @@ const en = {
   'approval.readFields': 'Tool inputs: {value}',
   'approval.denialReason': 'Reason for declining (optional)',
   'approval.deny': 'Not now',
+  'approval.remember': 'Allow and remember',
+  'approval.remembered': 'Saved the rule · {rule}',
   'approval.allowTask': 'Allow the same command in this task',
   'approval.taskExpires': 'Ends with this task. Script changes ask again.',
   'approval.script': 'Script',

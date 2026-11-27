@@ -317,3 +317,13 @@ describe('isLowRisk × 终审', () => {
     expect(isLowRisk(ask({ tool: 'Read', command: undefined }))).toBe(false)
   })
 })
+
+it.each([
+  ['.env', true], ['.env_local', true], ['.env.local', true], ['.envrc', true],
+  ['x.env', true], ['x.env_local', true], ['x.env.local', true], ['x.envrc', true], ['.env-production', true],
+  ['env', false], ['env.local', false], ['environment.ts', false],
+  ['x.environment.ts', false], ['config.envoy', false], ['docs/dotenv.md', false],
+] as const)('checks secret paths and shell arguments for %s', (path, secret) => {
+  expect(floorReason(edit(['/w/' + path]), HOME, { platform: 'darwin' })).toBe(secret ? '碰到密钥' : null)
+  expect(floorReason(sh('bun test ' + path), HOME, { platform: 'darwin' })).toBe(secret ? '碰到密钥' : null)
+})

@@ -243,3 +243,22 @@ describe('hashOfQuote:主人引用卡片回「y」', () => {
   })
 })
 
+
+it('WeChat has no remember code: ya is not a permission reply (desktop / App cards only)', () => {
+  for (const text of ['ya', 'ya 07', 'YA 07']) expect(parsePermissionReply(text)).toBeNull()
+})
+
+it('allow_always needs a rule offer and an explicit rule callback', async () => {
+  const pending = new PendingPermissions()
+  const meta = { chatId: 'owner', prompt: 'command' }
+  const normal = pending.register('normal', 60_000, meta)
+  expect(pending.consume('normal', 'allow_always')).toBe(false)
+  expect(pending.consume('normal', 'deny')).toBe(true)
+  expect(await normal).toBe('deny')
+  const decide = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce('saved rule')
+  const offered = pending.register('offered', 60_000, { ...meta, rememberRule: 'saved rule' }, undefined, undefined, decide)
+  expect(pending.consume('offered', 'allow_always')).toBe(false)
+  expect(pending.consume('offered', 'allow_always')).toBe('saved rule')
+  expect(pending.consume('offered', 'allow_always')).toBe(false)
+  expect(await offered).toBe('allow')
+})

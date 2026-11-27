@@ -380,7 +380,7 @@ export function makeIlinkAdapter(opts: {
 
     async askUser(chatId, prompt, hash, timeoutMs, opts) {
       // Register pending entry first so timeout can fire even if send fails.
-      const resultPromise = pending.register(hash, timeoutMs, { chatId, prompt }, undefined, undefined, undefined, undefined,
+      const resultPromise = pending.register(hash, timeoutMs, { chatId, prompt, ...(opts?.rememberRule ? { rememberRule: opts.rememberRule } : {}) }, undefined, opts?.deadline, opts?.onDecision, undefined,
         { prompt: opts?.wechatPrompt, incomplete: opts?.incomplete })
       const card = pending.legacyWechatCardOf(hash)
       // Schedule a sweep at the timeout boundary so the promise resolves
@@ -471,7 +471,8 @@ export function makeIlinkAdapter(opts: {
         }
         const accepted = pending.consume(hash, parsed.decision, parsed.reason)
         if (!accepted && matchedQuote && pending.isExpired(hash)) return permissionFeedback(fromChatId, staleQuote)
-        return accepted
+        // 微信只有 y / n / yt(没有「记住」),consume 不会带回规则回执。
+        return accepted !== false
       }
       if (quoted !== undefined) {
         const workbench = pending.matchWorkbenchQuote(quoted)

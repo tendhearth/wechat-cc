@@ -17,7 +17,7 @@ import type { TerminalSteps } from './terminal-steps'
 /** 手机上说一句最多这么长(终端那头是一句 prompt,不是贴文件)。 */
 export const PHONE_CLI_SAY_MAX = 4000
 
-export type CliPhonePermissionResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_not_actionable' | 'cli_permission_stale' }
+export type CliPhonePermissionResult = { ok: true; rule?: string } | { ok: false; error: 'not_found' | 'cli_not_actionable' | 'cli_permission_stale' }
 export type CliPhoneActivityResult = { ok: true; items: Array<TerminalStepPayload & { id?: string }>; earlier?: string | null; source?: 'live' | 'archive' } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' | 'invalid' }
 /** 列表里「此刻那一步」看最近这么多步。 */
 const NOW_STEPS = 20
@@ -32,7 +32,8 @@ export interface CliPhoneActions {
   stop?(sessionId:string,runId:string):boolean
   /** 这条会话挂着的、手机能拍的码(中继开出去的那个);没有 ⇒ null。 */
   pendingHash(sessionId: string): string | null
-  permission(target: { hash?: string; session_id?: string }, decision: 'allow' | 'deny'): CliPhonePermissionResult
+  rememberRule?(hash: string): string | undefined
+  permission(target: { hash?: string; session_id?: string }, decision: 'allow' | 'deny', remember?: true): CliPhonePermissionResult
   say(sessionId: string, text: string, operator?: boolean): CliPhoneSayResult
   /** 这条会话最近一句送进窗口的结果;没有 ⇒ null。 */
   lastSay?(sessionId: string): CliPhoneSayState | null
@@ -46,9 +47,9 @@ export interface CliPhoneActions {
 
 export interface CliPhoneActionsDeps {
   hub: { lookup(code: string): CliSessionInfo | null; list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionView[] } & Partial<Pick<CliEventHub, 'observe'>>
-  relay: { pendingHash(sessionId: string): string | null; owns(hash: string): boolean }
+  relay: { pendingHash(sessionId: string): string | null; owns(hash: string): boolean; rememberRule?(hash: string): string | undefined }
   /** = ilink.resolvePermission(微信「y/n 码」、桌宠权限卡用的同一个)。 */
-  resolve(hash: string, decision: 'allow' | 'deny'): boolean
+  resolve(hash: string, decision: 'allow' | 'deny' | 'allow_always'): boolean | string
   recordReference?(sessionId:string,text:string):void
   core: Pick<CliReplyCore, 'resume'> & Partial<Pick<CliReplyCore, 'live'|'activeRun'|'stop'>>
   localMachine?: string
@@ -74,7 +75,8 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
     stop:(id,runId)=>deps.core.stop?.(id,runId)??false,
     pendingHash: (sessionId) => deps.relay.pendingHash(sessionId),
     liveWindows() { try { return deps.liveIds?.() ?? new Set() } catch { return new Set() } },
-    permission(target, decision) {
+    rememberRule: hash => deps.relay.rememberRule?.(hash),
+    permission(target, decision, remember) {
       const hash = target.hash ?? (target.session_id ? deps.relay.pendingHash(target.session_id) : null)
       if (!hash) {
         // 会话在等批准、可这台 daemon 没开码(主人在场,终端自己问;或转给了脑)⇒ 手机拍不了。
@@ -84,9 +86,12 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       // 只认终端中继开的码:手机这一口不能顺手批掉自改流水线 / 工作台的待批。
       if (!deps.relay.owns(hash)) return { ok: false, error: 'cli_permission_stale' }
       if (target.session_id && deps.relay.pendingHash(target.session_id) !== hash) return { ok: false, error: 'cli_permission_stale' }
-      if (!deps.resolve(hash, decision)) return { ok: false, error: 'cli_permission_stale' }
+      if (remember && (!target.hash || !target.session_id || decision !== 'allow' || !deps.relay.rememberRule?.(hash)))
+        return { ok: false, error: 'cli_permission_stale' }
+      const receipt = deps.resolve(hash, remember ? 'allow_always' : decision)
+      if (!receipt) return { ok: false, error: 'cli_permission_stale' }
       deps.log('CLI_PERMISSION', `${decision} from phone hash=${hash}`)
-      return { ok: true }
+      return { ok: true, ...(typeof receipt === 'string' ? { rule: receipt } : {}) }
     },
     say(sessionId, text, operator) {
       const v = view(sessionId)
