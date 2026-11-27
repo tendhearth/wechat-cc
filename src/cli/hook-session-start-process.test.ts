@@ -36,7 +36,7 @@ plugin({ name: 'session-start-isolation', setup(build) {
   const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
     const p = spawn('bun', [...(options.isolate ? ['--preload', preload] : []), join(SOURCE_REPO_ROOT, 'cli.ts'), 'hook', source], {
       cwd: SOURCE_REPO_ROOT,
-      env: { ...process.env, HOME: home, CODEX_HOME: join(home, '.codex'), WECHAT_STATE_DIR: home, WECHAT_DISABLE_LOG_FILE: '1', WECHAT_CC_HOOK_DEBUG: options.event ? '' : '1', WECHAT_CC_DAEMON_CHILD: options.child ? '1' : '', NODE_ENV: options.production ? 'production' : 'test', WECHAT_CC_TEST_SESSION_START_BUDGET_MS: String(options.budgetMs ?? '') },
+      env: { ...withoutTerminalEnv(process.env), HOME: home, CODEX_HOME: join(home, '.codex'), WECHAT_STATE_DIR: home, WECHAT_DISABLE_LOG_FILE: '1', WECHAT_CC_HOOK_DEBUG: options.event ? '' : '1', WECHAT_CC_DAEMON_CHILD: options.child ? '1' : '', NODE_ENV: options.production ? 'production' : 'test', WECHAT_CC_TEST_SESSION_START_BUDGET_MS: String(options.budgetMs ?? '') },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = '', stderr = ''
@@ -57,6 +57,14 @@ plugin({ name: 'session-start-isolation', setup(build) {
     ? { source, kind: 'session_end', session_id: 'offline-session', cwd: home }
     : { source, session_id: 'offline-session', cwd: home } }])
   return result
+}
+
+// 跑测试的那台机器若在终端里(__CFBundleIdentifier / TERM_PROGRAM …),子进程会带上终端位置;这里钉的是「没有位置」的原样转发。
+const TERMINAL_ENV = ['__CFBundleIdentifier', 'TERM_PROGRAM', 'ITERM_SESSION_ID', 'TERM_SESSION_ID', 'TMUX', 'TMUX_PANE', 'WEZTERM_PANE', 'WEZTERM_UNIX_SOCKET', 'KITTY_WINDOW_ID', 'KITTY_LISTEN_ON']
+function withoutTerminalEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const copy = { ...env }
+  for (const key of TERMINAL_ENV) delete copy[key]
+  return copy
 }
 
 describe('real hook subprocess with temporary HOME / CODEX_HOME / WECHAT_STATE_DIR', () => {

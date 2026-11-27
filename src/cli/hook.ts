@@ -283,8 +283,10 @@ export async function hookTerminalLocation(options: {
   return terminal
 }
 
-export async function withTerminalLocation<T extends object>(payload: T) {
-  return { ...payload, machine: hostname(), terminal: await hookTerminalLocation() }
+/** 记到了终端位置才带上它和主机名;记不到 ⇒ 原样(别的平台、没从终端起的会话照旧不多带字段)。 */
+export async function withTerminalLocation<T extends object>(payload: T): Promise<T & { machine?: string; terminal?: NonNullable<Awaited<ReturnType<typeof hookTerminalLocation>>> }> {
+  const terminal = await hookTerminalLocation()
+  return terminal ? { ...payload, machine: hostname(), terminal } : payload
 }
 
 /**
