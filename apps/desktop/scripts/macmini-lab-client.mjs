@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { browserHarness, sshInvocation } from './macmini-ui-protocol.mjs'
+import { BOOTSTRAP_MISSING_EXIT, browserHarness, sshInvocation } from './macmini-ui-protocol.mjs'
 import { BOOTSTRAP_VERSION } from './macmini-lab-bootstrap.mjs'
 
 const repository = new URL('../../../', import.meta.url)
@@ -28,7 +28,7 @@ export function executorHeader(request, pack = executorBundle()) {
 }
 
 export function executorInvocation(command, target, flow, env, snapshot) {
-  const transport = sshInvocation(command, target, env.CC_UI_SSH_CONFIG, flow, env, true)
+  const transport = sshInvocation(command, target, env.CC_UI_SSH_CONFIG, flow, env, 'run')
   return { ...transport, header: executorHeader(snapshot ?? { kind: 'ui' }) }
 }
 
@@ -42,7 +42,9 @@ export function sshEnvironment(source) {
 
 const finished = (child, name) => new Promise((resolve, reject) => {
   child.once('error', reject)
-  child.once('close', (code, signal) => code === 0 ? resolve() : reject(Error(`${name} exited ${code ?? signal}`)))
+  child.once('close', (code, signal) => code === 0
+    ? resolve()
+    : reject(Object.assign(Error(`${name} exited ${code ?? signal}`), { exitCode: code })))
 })
 
 export async function sendSnapshot({ transport, payload, archiveArgs, env, spawnProcess = spawn }) {
@@ -52,17 +54,28 @@ export async function sendSnapshot({ transport, payload, archiveArgs, env, spawn
   const remoteDone = finished(remote, 'Snapshot SSH')
   const archive = archiveArgs && spawnProcess('/usr/bin/git', archiveArgs, { stdio: ['ignore', 'pipe', 'inherit'] })
   const archiveDone = archive && finished(archive, 'Git archive')
+  archiveDone?.catch(() => {}) // The pipeline may close before it starts reading the archive.
   const input = Readable.from((async function* () {
     yield transport.header
     if (archive) { yield* archive.stdout; await archiveDone }
     else yield payload
   })())
-  try { await Promise.all([remoteDone, archiveDone, pipeline(input, remote.stdin)]) }
-  catch (error) { archive?.kill(); remote.kill(); throw error }
+  const sent = pipeline(input, remote.stdin).catch(async error => {
+    // SSH can close stdin before reporting why it rejected the request.
+    if (['EPIPE', 'ERR_STREAM_PREMATURE_CLOSE'].includes(error.code)) await remoteDone
+    throw error
+  })
+  try { await Promise.all([remoteDone, sent]) }
+  catch (error) {
+    archive?.kill()
+    remote.kill()
+    if (error.exitCode === BOOTSTRAP_MISSING_EXIT) return BOOTSTRAP_MISSING_EXIT
+    throw error
+  }
 }
 
 export function installInvocation(target, env) {
-  const transport = sshInvocation('status', target, env.CC_UI_SSH_CONFIG, undefined, env, true)
+  const transport = sshInvocation('status', target, env.CC_UI_SSH_CONFIG, undefined, env, 'install')
   const bootstrap = local('macmini-lab-bootstrap.mjs')
   const lock = local('macmini-machine-lock.mjs')
   const installer = local('macmini-lab-install.mjs').toString('base64')

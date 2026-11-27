@@ -123,8 +123,8 @@ export async function main() {
  const { executorInvocation, sendSnapshot } = await import('./macmini-lab-client.mjs')
  const env = process.env
  const transport = executorInvocation('browser', process.argv[3] ?? 'home', undefined, env, { kind: 'browser-snapshot', sha })
- await sendSnapshot({ transport, payload, env })
+ return sendSnapshot({ transport, payload, env })
 }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) await main()
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) process.exitCode = await main()

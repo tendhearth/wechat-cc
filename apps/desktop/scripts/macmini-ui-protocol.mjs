@@ -86,7 +86,9 @@ export function validateRequest(request) {
   return request
 }
 
-export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv = {}, useBootstrap = false) {
+export const BOOTSTRAP_MISSING_EXIT = 69
+
+export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv = {}, bootstrapMode) {
   if (!COMMANDS.has(command)) throw Error('Unsupported UI lab command')
   if (!Object.hasOwn(MINIS, target)) throw Error('Unsupported UI lab target')
   if (sshConfig !== undefined && (typeof sshConfig !== 'string' || !posix.isAbsolute(sshConfig) || sshConfig.includes('\0'))) throw Error('SSH config must be an absolute local path')
@@ -106,11 +108,15 @@ export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv
     settings.push(`${key}=${value}`)
   }
   const mini = MINIS[target]
-  const entry = useBootstrap ? 'macmini-lab-bootstrap.mjs'
+  const entry = bootstrapMode ? 'macmini-lab-bootstrap.mjs'
     : command.startsWith('app-') ? 'app-run.mjs' : command === 'browser' ? 'browser-run.mjs' : 'run.mjs'
+  const entryPath = `${mini.labHome}/${entry}`
+  const checkBootstrap = bootstrapMode === 'run'
+    ? `if [ ! -f '${entryPath}' ]; then printf '%s\\n' '这台 mini 还没装 lab 启动器，先跑 \`node apps/desktop/scripts/macmini-ui.mjs lab-install ${target}\`' >&2; exit ${BOOTSTRAP_MISSING_EXIT}; fi; `
+    : ''
   return { file: 'ssh', args: [...(sshConfig ? ['-F', sshConfig] : []), '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=6',
     '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
-    mini.host, `env ${settings.length ? settings.join(' ') + ' ' : ''}PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/${entry}`],
+    mini.host, `${checkBootstrap}env ${settings.length ? settings.join(' ') + ' ' : ''}PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${entryPath}`],
   input: JSON.stringify(validateRequest({ command, ...(flow !== undefined ? { flow } : {}) })) + '\n' }
 }
 

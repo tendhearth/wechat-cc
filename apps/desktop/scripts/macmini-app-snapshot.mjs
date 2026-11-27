@@ -76,8 +76,8 @@ export async function main() {
   const env = process.env
   const transport = executorInvocation('app-status', process.argv[3] ?? 'home', undefined, env,
     { kind: verified ? 'app-verified-snapshot' : 'app-snapshot', sha })
-  if (verified) await sendSnapshot({ transport, payload: verifiedSourcePayload({ repo, sha }), env })
-  else await sendSnapshot({ transport, archiveArgs: ['-C', repo, 'archive', '--format=tar', sha], env })
+  if (verified) return sendSnapshot({ transport, payload: verifiedSourcePayload({ repo, sha }), env })
+  return sendSnapshot({ transport, archiveArgs: ['-C', repo, 'archive', '--format=tar', sha], env })
 }
 }
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) await main()
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) process.exitCode = await main()

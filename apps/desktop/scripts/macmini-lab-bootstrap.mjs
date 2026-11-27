@@ -4,6 +4,7 @@ import * as nativeFs from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Readable } from 'node:stream'
+import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 
 export const BOOTSTRAP_VERSION = 1
@@ -21,10 +22,11 @@ export function sshLab() {
   throw Error('UI lab requires a configured mini')
 }
 
-export async function familyLock(home, lane, sha, lockSource) {
+export async function familyLock(home, lane, sha, lockSource, signal) {
   const { acquireMachineLock, machineGateOptions } = await dataModule(lockSource)
   return acquireMachineLock({ path: join(home, 'ci/lock'), lane, sha: sha.slice(0, 40),
-    ...machineGateOptions(), load: () => 0, log: console.error })
+    ...machineGateOptions(), load: () => 0, log: console.error,
+    ...(signal && { assertRunning: () => signal.throwIfAborted(), sleep: ms => delay(ms, undefined, { signal }) }) })
 }
 
 async function readRequest(input) {
@@ -108,41 +110,83 @@ export async function pruneExecutors(cache, fs = nativeFs, isAlive = alive) {
 }
 
 export async function serve(input, { locate = sshLab, fs = nativeFs, lock = familyLock,
-  load = path => import(pathToFileURL(path).href) } = {}) {
-  const { home, labHome } = locate()
-  const { sha256, files, request, body } = await readRequest(input)
-  const cache = join(await fs.realpath(labHome), 'executors')
-  const dir = join(cache, sha256)
-  const pin = join(cache, `${sha256}.${process.pid}.${randomUUID()}.pin`)
-  const release = await lock(home, 'lab-executor', sha256, files.get('macmini-machine-lock.mjs'))
+  load = path => import(pathToFileURL(path).href),
+  timeoutMs = Number(process.env.CC_UI_JOB_TIMEOUT_MS ?? 14400000), now = () => performance.now() } = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw Error('Invalid job timeout')
+  const deadline = now() + timeoutMs
+  const controller = new AbortController()
+  const { signal } = controller
+  const expire = () => {
+    controller.abort()
+    input.destroy?.()
+  }
+  let timer
+  const armTimer = ms => {
+    const slice = Math.min(ms, 2147483647)
+    timer = setTimeout(ms > slice ? () => armTimer(Math.ceil(deadline - now())) : expire, slice)
+  }
+  armTimer(timeoutMs)
+  const remaining = () => {
+    const budget = Math.ceil(deadline - now())
+    if (budget <= 0) expire()
+    signal.throwIfAborted()
+    return budget
+  }
+  let pin
   try {
-    try { await fs.mkdir(cache, { mode: 0o700 }) } catch (error) { if (error.code !== 'EEXIST') throw error }
-    await checkPath(fs, cache, true)
-    if (!await fs.lstat(dir).catch(missing)) {
-      const stage = await fs.mkdtemp(join(cache, `.stage-${process.pid}-`))
-      try {
-        for (const [name, bytes] of files) await fs.writeFile(join(stage, name), bytes, { flag: 'wx', mode: 0o444 })
-        await fs.chmod(stage, 0o555)
-        await fs.rename(stage, dir)
-      } catch (error) {
-        await fs.chmod(stage, 0o700)
-        await fs.rm(stage, { recursive: true, force: true })
-        if (!['EEXIST', 'ENOTEMPTY'].includes(error.code)) throw error
+    const { home, labHome } = locate()
+    const { sha256, files, request, body } = await readRequest(input)
+    const cache = join(await fs.realpath(labHome), 'executors')
+    const dir = join(cache, sha256)
+    remaining()
+    const release = await lock(home, 'lab-executor', sha256, files.get('macmini-machine-lock.mjs'), signal)
+    try {
+      remaining()
+      try { await fs.mkdir(cache, { mode: 0o700 }) } catch (error) { if (error.code !== 'EEXIST') throw error }
+      await checkPath(fs, cache, true)
+      if (!await fs.lstat(dir).catch(missing)) {
+        const stage = await fs.mkdtemp(join(cache, `.stage-${process.pid}-`))
+        try {
+          for (const [name, bytes] of files) {
+            remaining()
+            await fs.writeFile(join(stage, name), bytes, { flag: 'wx', mode: 0o444 })
+          }
+          await fs.chmod(stage, 0o555)
+          await fs.rename(stage, dir)
+        } catch (error) {
+          await fs.chmod(stage, 0o700)
+          await fs.rm(stage, { recursive: true, force: true })
+          if (!['EEXIST', 'ENOTEMPTY'].includes(error.code)) throw error
+        }
       }
-    }
-    await checkPath(fs, dir, true)
-    if ((await fs.readdir(dir)).length !== files.size) throw Error('Executor cache file count mismatch')
-    for (const [name, bytes] of files) {
-      const path = join(dir, name)
-      await checkPath(fs, path, false)
-      if (!(await fs.readFile(path)).equals(bytes)) throw Error('Executor cache content mismatch: ' + name)
-    }
-    await fs.utimes(dir, new Date(), new Date())
-    await fs.writeFile(pin, '', { flag: 'wx', mode: 0o600 })
-    await pruneExecutors(cache, fs).catch(error => console.error('Executor cache retention:', error.message))
-  } finally { await release() }
-  try { return await (await load(join(dir, 'macmini-lab-executor.mjs'))).run(request, body, dir) }
-  finally { await fs.unlink(pin).catch(missing) }
+      await checkPath(fs, dir, true)
+      if ((await fs.readdir(dir)).length !== files.size) throw Error('Executor cache file count mismatch')
+      for (const [name, bytes] of files) {
+        remaining()
+        const path = join(dir, name)
+        await checkPath(fs, path, false)
+        if (!(await fs.readFile(path)).equals(bytes)) throw Error('Executor cache content mismatch: ' + name)
+      }
+      await fs.utimes(dir, new Date(), new Date())
+      const marker = join(cache, `${sha256}.${process.pid}.${randomUUID()}.pin`)
+      await fs.writeFile(marker, '', { flag: 'wx', mode: 0o600 })
+      pin = marker
+      remaining()
+      await pruneExecutors(cache, fs).catch(error => console.error('Executor cache retention:', error.message))
+    } finally { await release() }
+    remaining()
+    const executor = await load(join(dir, 'macmini-lab-executor.mjs'))
+    const budget = remaining()
+    clearTimeout(timer)
+    return await executor.run(request, body, dir, budget)
+  } catch (error) {
+    if (!signal.aborted) throw error
+    console.error('UI lab job timed out')
+    return 124
+  } finally {
+    clearTimeout(timer)
+    if (pin) await fs.unlink(pin).catch(missing)
+  }
 }
 
 if (process.argv[1] && basename(process.argv[1]) === 'macmini-lab-bootstrap.mjs' &&

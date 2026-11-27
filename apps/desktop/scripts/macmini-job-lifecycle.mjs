@@ -38,8 +38,14 @@ export function jobLifecycle({ processRef = process, setTimer = setTimeout, clea
     handlers.push([signal, handler])
     processRef.on(signal, handler)
   }
-  watchdog = setTimer(() => { void requestStop(124) }, timeoutMs)
-  watchdog.unref?.()
+  const deadline = performance.now() + timeoutMs
+  const armWatchdog = ms => {
+    const slice = Math.min(ms, 2147483647)
+    watchdog = setTimer(ms > slice ? () => armWatchdog(Math.ceil(deadline - performance.now()))
+      : () => { void requestStop(124) }, slice)
+    watchdog.unref?.()
+  }
+  armWatchdog(timeoutMs)
   return {
     onStop: value => { cleanup = value },
     assertRunning: () => { if (stopping) throw Error('Mini job is stopping') },

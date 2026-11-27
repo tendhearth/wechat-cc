@@ -11,7 +11,13 @@ import { pathToFileURL } from 'node:url'
 import { isInsideLab, miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest, assertExpectedSource } from './macmini-ui-protocol.mjs'
 
 const textCommand = (file, args) => execFileSync(file, args, { encoding: 'utf8' }).trim()
-export async function runRemote(inputStream, executorDir) {
+export async function runRemote(inputStream, executorDir, lifecycle = jobLifecycle()) {
+  lifecycle.onStop(() => inputStream.destroy?.())
+  try { return await executeRemote(inputStream, executorDir, lifecycle) }
+  finally { await lifecycle.finish() }
+}
+
+async function executeRemote(inputStream, executorDir, lifecycle) {
   const identity = { computerName: textCommand('/usr/sbin/scutil', ['--get', 'ComputerName']),
     homeDir: homedir(), platformName: process.platform }
   const mini = miniConfiguration(identity)
@@ -95,29 +101,24 @@ export async function runRemote(inputStream, executorDir) {
     ? await insideLab(config.appRoot ?? (() => { throw Error('APP_BLOCKED: configure an App snapshot first') })()) : root
 
   // One machine gate covers every CPU lane, including preparation and native builds.
-  const lifecycle = jobLifecycle()
-  const releaseLocks = () => lifecycle.finish()
   await acquireMachineLock({ path: join(mini.homeDir, 'ci/lock'), lane: request.command,
     sha: request.command.startsWith('app-')
       ? JSON.parse(await readFile(join(executionRoot, 'snapshot.json'), 'utf8')).commit
       : browserSnapshot?.commit ?? textCommand('/usr/bin/git', ['-C', project, 'rev-parse', 'HEAD']),
-    ...machineGateOptions(), onAcquired: lifecycle.acquired })
+    ...machineGateOptions(), onAcquired: lifecycle.acquired, assertRunning: lifecycle.assertRunning })
   // A queued job must never execute a snapshot superseded while it waited.
-  try {
-    const selected = JSON.parse(await readFile(configPath, 'utf8'))
-    if (request.command === 'browser' && selected.browserRoot !== config.browserRoot) throw Error('Browser snapshot changed while queued; retry the lab entry')
-    if (request.command.startsWith('app-') && selected.appRoot !== config.appRoot) throw Error('App snapshot changed while queued; retry the lab entry')
-    if (process.env.CC_UI_EXPECTED_SOURCE !== undefined) {
-      const actual = request.command.startsWith('app-') ? JSON.parse(await readFile(join(executionRoot, 'snapshot.json'), 'utf8')).commit : browserSnapshot?.commit
-      assertExpectedSource(process.env.CC_UI_EXPECTED_SOURCE, actual)
-    }
-  } catch (error) { await releaseLocks(); throw error }
+  const selected = JSON.parse(await readFile(configPath, 'utf8'))
+  if (request.command === 'browser' && selected.browserRoot !== config.browserRoot) throw Error('Browser snapshot changed while queued; retry the lab entry')
+  if (request.command.startsWith('app-') && selected.appRoot !== config.appRoot) throw Error('App snapshot changed while queued; retry the lab entry')
+  if (process.env.CC_UI_EXPECTED_SOURCE !== undefined) {
+    const actual = request.command.startsWith('app-') ? JSON.parse(await readFile(join(executionRoot, 'snapshot.json'), 'utf8')).commit : browserSnapshot?.commit
+    assertExpectedSource(process.env.CC_UI_EXPECTED_SOURCE, actual)
+  }
   const run = join(executionRoot, 'artifacts', new Date().toISOString().replaceAll(':', '-') + '-' + request.command)
   const temporaryRoot = join(run, 'tmp')
-  try {
-    await mkdir(run, { recursive: true, mode: 0o700 })
-    await mkdir(temporaryRoot, { mode: 0o700 })
-  } catch (error) { await releaseLocks(); throw error }
+  lifecycle.assertRunning()
+  await mkdir(run, { recursive: true, mode: 0o700 })
+  await mkdir(temporaryRoot, { mode: 0o700 })
   // Keep explicit state inside this run's temp root, preserving the repository's
   // test-runner state guard and avoiding state shared by different lab runs.
   Object.assign(environment, { TMPDIR: temporaryRoot,
@@ -253,8 +254,6 @@ export async function runRemote(inputStream, executorDir) {
     await writeFile(join(run, 'result.json'), JSON.stringify({ ok: false, command: request.command, error: error.message }, null, 2))
     console.error(error.message)
     return /^(NATIVE|APP)_BLOCKED:/.test(error.message) ? 2 : 1
-  } finally {
-    await releaseLocks()
   }
 }
 

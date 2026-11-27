@@ -1,7 +1,9 @@
 import { test, expect } from 'vitest'
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { once } from 'node:events'
+import { Worker } from 'node:worker_threads'
 import { acquireMachineLock, lockStale } from './macmini-machine-lock.mjs'
 
 async function fixture(run) {
@@ -50,9 +52,60 @@ test('queue timeout leaves live family owner intact', () => fixture(async ({ pat
 
 for (const info of ['', 'pid=0\nsince=99\n', 'pid=8\n']) test(`reclaims stale lock ${JSON.stringify(info)}`, () => fixture(async ({ path, options }) => {
   await mkdir(path); if (info) await writeFile(join(path, 'info'), info)
+  await utimes(path, 1, 1)
   const release = await acquireMachineLock({ ...options, isAlive: () => false })
   expect(await readFile(join(path, 'info'), 'utf8')).toContain('pid=42')
   await release()
+}))
+
+test('a late concurrent reclaimer cannot take the lock from the winner', () => fixture(async ({ path, options }) => {
+  await mkdir(path)
+  await writeFile(join(path, 'info'), 'pid=8\nsince=1\nowner=old runner\n')
+  const gate = new SharedArrayBuffer(4)
+  const state = new Int32Array(gate)
+  const late = new Worker(`
+    const { parentPort, workerData } = require('node:worker_threads')
+    import(workerData.module).then(async ({ acquireMachineLock }) => {
+      const state = new Int32Array(workerData.gate)
+      let checks = 0
+      try {
+        const release = await acquireMachineLock({
+          path: workerData.path, lane: 'late', sha: 'abcdef1', pid: 43,
+          isAlive: pid => pid === 42, load: () => 0, log: () => {}, waitMs: 100, pollMs: 10,
+          assertRunning: () => {
+            if (++checks !== 4) return
+            parentPort.postMessage('read stale owner')
+            if (Atomics.wait(state, 0, 0, 3000) === 'timed-out') throw Error('test barrier timed out')
+          },
+        })
+        parentPort.postMessage('acquired')
+        await release()
+      } catch (error) { parentPort.postMessage(error.message) }
+    })
+  `, { eval: true, workerData: { gate, path, module: new URL('./macmini-machine-lock.mjs', import.meta.url).href } })
+  try {
+    expect(await once(late, 'message')).toEqual(['read stale owner'])
+    const release = await acquireMachineLock({ ...options, isAlive: pid => pid === 42 })
+    try {
+      const lateResult = once(late, 'message')
+      Atomics.store(state, 0, 1)
+      Atomics.notify(state, 0)
+      expect(await lateResult).toEqual(['Machine lock queue timed out'])
+      expect(await readFile(join(path, 'info'), 'utf8')).toBe('pid=42\nsince=1000\nowner=wechat-cc browser abcdef1\n')
+    } finally { await release() }
+  } finally { await late.terminate() }
+}))
+
+test('waits for a legacy holder between mkdir and writing info', () => fixture(async ({ path, options }) => {
+  await mkdir(path)
+  const owner = 'pid=0\nsince=1000\nowner=rici full 1234567\n'
+  await expect(acquireMachineLock({
+    ...options, waitMs: 20, sleep: async ms => {
+      await writeFile(join(path, 'info'), owner)
+      await options.sleep(ms)
+    },
+  })).rejects.toThrow('queue timed out')
+  expect(await readFile(join(path, 'info'), 'utf8')).toBe(owner)
 }))
 
 test('holds lock while high load falls to exactly cores × 1.5', () => fixture(async ({ path, options, logs }) => {

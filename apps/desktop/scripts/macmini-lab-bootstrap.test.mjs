@@ -1,14 +1,17 @@
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PassThrough, Readable } from 'node:stream'
+import { PassThrough, Readable, Writable } from 'node:stream'
+import { setTimeout as delay } from 'node:timers/promises'
 import { expect, test, vi } from 'vitest'
 import { pruneExecutors, serve } from './macmini-lab-bootstrap.mjs'
 import { executorBundle, executorHeader, executorInvocation, sendSnapshot } from './macmini-lab-client.mjs'
 import { installBootstrap } from './macmini-lab-install.mjs'
 import { main } from './macmini-ui.mjs'
+import { acquireMachineLock } from './macmini-machine-lock.mjs'
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 const bundled = executorBundle()
@@ -125,6 +128,49 @@ test('wire body is delivered byte for byte across split prefix and header bounda
   } }) })
 }))
 
+test('the bootstrap times out even while waiting for a partial request header', () => fixture(async ({ options, lock, load }) => {
+  const wire = new PassThrough()
+  wire.write(testHeader().subarray(0, 19))
+  const close = setTimeout(() => wire.end(), 250)
+  try {
+    expect(await serve(wire, { ...options, timeoutMs: 25 })).toBe(124)
+    expect(wire.destroyed).toBe(true)
+    expect(lock).not.toHaveBeenCalled()
+    expect(load).not.toHaveBeenCalled()
+  } finally { clearTimeout(close); wire.destroy() }
+}))
+
+test('the job budget bounds the real delivery queue without releasing a family holder', () => fixture(async ({ home, options, load }) => {
+  const lockPath = join(home, 'ci', 'lock')
+  await fs.mkdir(lockPath, { recursive: true })
+  const owner = `pid=${process.pid}\nsince=1\nowner=family full\n`
+  await fs.writeFile(join(lockPath, 'info'), owner)
+  // Use the actual filesystem lock, bypassing only the bootstrap's Node data URL import.
+  const log = vi.fn()
+  const lock = (_home, lane, sha, _source, signal) => acquireMachineLock({
+    path: lockPath, lane, sha: sha.slice(0, 40), waitMs: 400, log, load: () => 0,
+    assertRunning: () => signal?.throwIfAborted(),
+    sleep: ms => delay(ms, undefined, { signal }),
+  })
+  expect(await serve(input(), { ...options, lock, timeoutMs: 100 })).toBe(124)
+  expect(log).toHaveBeenCalledWith('家族 check 在跑 family full,等它')
+  expect(load).not.toHaveBeenCalled()
+  expect(await fs.readFile(join(lockPath, 'info'), 'utf8')).toBe(owner)
+}))
+
+test('the executor receives the remaining budget after delivery queue and import', () => fixture(async ({ options, lock }) => {
+  let time = 100
+  const run = vi.fn(async () => 17)
+  expect(await serve(input(), { ...options, timeoutMs: 1000, now: () => time,
+    lock: async (...args) => {
+      time += 325
+      return lock(...args)
+    },
+    load: async () => { time += 27; return { run } },
+  })).toBe(17)
+  expect(run.mock.calls[0][3]).toBe(648)
+}))
+
 test('retention keeps three most recently used dirs and older live executors, skipping symlinks and legacy dirs', () => fixture(async ({ home, cache }) => {
   await fs.mkdir(cache)
   const entries = Array.from({ length: 6 }, (_, index) => String(index).repeat(64))
@@ -176,10 +222,38 @@ test('lab-install targets only a known mini and sends the checked bootstrap via 
   expect(main(['node', 'entry', 'lab-install', 'homebot'], {}, spawn)).toBe(0)
   expect(spawn.mock.calls[0][1]).toContain('homebot-mac-mini')
   expect(spawn.mock.calls[0][1].at(-1)).toContain('installFromStdin')
+  expect(spawn.mock.calls[0][1].at(-1)).not.toContain('还没装')
   const payload = JSON.parse(spawn.mock.calls[0][2].input)
   expect(digest(Buffer.from(payload.bootstrap, 'base64'))).toBe(payload.sha256)
   expect(() => main(['node', 'entry', 'lab-install', 'localhost'], {}, spawn)).toThrow('target')
   expect(spawn).toHaveBeenCalledTimes(1)
+})
+
+test.skipIf(process.platform === 'win32')('new UI clients show the selected install command when the launcher file is missing', () => fixture(async ({ labHome }) => {
+  const ssh = (_file, args) => {
+    const command = args.at(-1).replaceAll('/Users/homebot/ci/cc-ui-lab', labHome)
+    const result = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' })
+    expect(result.stderr).toContain('这台 mini 还没装 lab 启动器')
+    expect(result.stderr).toContain('node apps/desktop/scripts/macmini-ui.mjs lab-install homebot')
+    expect(result.stderr).not.toContain('MODULE_NOT_FOUND')
+    return result
+  }
+  expect(main(['node', 'entry', 'browser', 'homebot'], {}, ssh)).toBe(69)
+}))
+
+test('a snapshot sender preserves the missing launcher exit even if SSH closes stdin first', async () => {
+  const env = {}
+  const transport = executorInvocation('browser', 'home', undefined, env)
+  const kill = vi.fn()
+  const spawnProcess = () => {
+    const stdin = new Writable({ write(_chunk, _encoding, done) {
+      done(Object.assign(Error('closed stdin'), { code: 'EPIPE' }))
+      setImmediate(() => ssh.emit('close', 69))
+    } })
+    const ssh = Object.assign(new EventEmitter(), { stdin, kill })
+    return ssh
+  }
+  expect(await sendSnapshot({ transport, payload: Buffer.alloc(0), env, spawnProcess })).toBe(69)
 })
 
 test.each(['browser-snapshot', 'app-verified-snapshot', 'app-snapshot'])('snapshot sender frames %s and preserves its existing payload', async kind => {
