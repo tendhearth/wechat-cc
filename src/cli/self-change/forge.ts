@@ -19,7 +19,7 @@ export interface Forge {
   ensurePr(o: { cwd: string; branch: string; base: string; title: string; body: string }): Promise<PrRef>
   /** 按 ci land 的判法看 CI、squash 合进 base。退出码就是 CI_LAND_EXIT。 */
   /** mergeSha:经合并队列合进去时这个 PR 在 base 上的合入提交(队列可能同批多快进几个,别拿 base 顶端当它)。 */
-  land(o: { cwd: string; pr: number; base: string }): Promise<{ exitCode: number; message: string; mergeSha?: string }>
+  land(o: { cwd: string; pr: number; base: string }): Promise<{ exitCode: number; message: string; mergeSha?: string; viaQueue?: boolean }>
   /** 作废时关掉,免得整合者的 PR 列表里躺着一条永远不会合的。失败只记一笔。 */
   close(o: { cwd: string; pr: number; comment: string }): Promise<void>
 }
@@ -60,8 +60,9 @@ export function ghForge(makeDeps: (cwd: string) => CiLandDeps): Forge {
       const rules = deps.exec('gh', ['api', `repos/{owner}/{repo}/rules/branches/${o.base}`], { cwd: o.cwd, timeoutMs: 60_000 })
       if (rules.code !== 0) return { exitCode: CI_LAND_EXIT.precondition, message: `查 ${o.base} 的规则失败:${rules.stderr.trim().slice(0, 200)}` }
       const queue = hasMergeQueueRule(rules.stdout)
-      const r = await runCiLand(deps, { top: o.pr, target: o.base, minChecks: 1, timeoutMin: queue ? 90 : 60, queue })
-      return { exitCode: r.exitCode, message: r.message, ...(r.mergeSha ? { mergeSha: r.mergeSha } : {}) }
+      // 不走队列时用缺省的检查数:只有那样 ci land 才要求 PR 上三平台全绿(minChecks 1 会把它跳过,#1119 复审)。
+      const r = await runCiLand(deps, { top: o.pr, target: o.base, timeoutMin: queue ? 90 : 60, queue, ...(queue ? { minChecks: 1 } : {}) })
+      return { exitCode: r.exitCode, message: r.message, ...(r.mergeSha ? { mergeSha: r.mergeSha } : {}), ...(r.viaQueue ? { viaQueue: true } : {}) }
     },
     async close(o) {
       const deps = makeDeps(o.cwd)

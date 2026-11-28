@@ -136,7 +136,9 @@ function fakeDeps(script: {
       }
       if (mergeCommit && (q.noMergeCommitPolls ?? 0) > 0) { q.noMergeCommitPolls!--; mergeCommit = null }
       const contexts = [
-        ...(q.gate ? [{ name: 'ci · gate', status: 'COMPLETED', conclusion: q.gate }] : []),
+        // 一条更早的、结论相反的 gate(rerun 之前那一次),排在后面:必须按开始时间认,不能认最后一条。
+        ...(q.gate ? [{ name: 'ci · gate', status: 'COMPLETED', conclusion: q.gate, startedAt: '2026-11-28T02:00:00Z' },
+          { name: 'ci · gate', status: 'COMPLETED', conclusion: q.gate === 'SUCCESS' ? 'FAILURE' : 'SUCCESS', startedAt: '2026-11-28T01:00:00Z' }] : []),
         ...(q.otherRed ? [{ name: 'some other check', status: 'COMPLETED', conclusion: 'FAILURE' }] : []),
       ]
       return r(JSON.stringify({ data: { repository: { pullRequest: { state, headRefOid, baseRefName: 'dev', isInMergeQueue: inQueue, autoMergeRequest: auto ? { enabledAt: 'x' } : null, mergeCommit,
@@ -295,6 +297,11 @@ describe('runCiLand —— 合并队列', () => {
     expect(res.message).toContain('ci · gate')
     expect(res.message).toContain('自动合并还开着')
   })
+  it('gate 跳过(只改文档)算过,不报红', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'auto-only', mergeAfterPolls: 99, gate: 'SKIPPED' } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true, timeoutMin: 30 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.timeout)
+  })
   it('别的非必过检查红了不算(不挡队列),照旧等', async () => {
     const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'auto-only', mergeAfterPolls: 99, gate: 'SUCCESS', otherRed: true } })
     const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true, timeoutMin: 30 })
@@ -311,6 +318,7 @@ describe('runCiLand —— 合并队列', () => {
     const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')] })
     const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
     expect(res.mergeSha).toBe('d0+7')
+    expect(res.viaQueue).toBe(true)
   })
   it('不走队列(--direct)照旧要求三平台', async () => {
     const { deps, calls } = fakeDeps({ open: one, views: [linuxOnly('sx')] })

@@ -822,6 +822,9 @@ async function merge(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> 
     // 树放到合进去的那条上,merge.sha 读的是树自己的 HEAD —— deploy 断言的就是这两者一致。
     // 经合并队列合的:放到**这个 PR 的合入提交**上(队列同批可能还快进了别人的,顶端不是这一个),先核它确实在 base 上。
     git(d, dir, ['fetch', 'origin', d.config.branch], { timeoutMs: NETWORK_TIMEOUT_MS })
+    if (landed.viaQueue && !landed.mergeSha) {
+      return { ok: false, fail: 'merge_failed', detail: `PR #${pr.number} 经合并队列合进 ${d.config.branch} 了,但拿不到它的合入提交(队列同批可能还有别人的):不部署,人看一眼` }
+    }
     // 核不到(不在 base 上、git 出错)⇒ 停下来不部署:代码已经在 base 上了,但部署哪一条不能猜(#1119 复审)。
     if (landed.mergeSha && d.git.run(['merge-base', '--is-ancestor', landed.mergeSha, `origin/${d.config.branch}`], { cwd: dir }).code !== 0) {
       return { ok: false, fail: 'merge_failed', detail: `PR #${pr.number} 已合进 ${d.config.branch},但核不到合入提交 ${landed.mergeSha.slice(0, 8)} 在 origin/${d.config.branch} 上:不部署,人看一眼` }
@@ -830,7 +833,8 @@ async function merge(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> 
     const head = git(d, dir, ['rev-parse', 'HEAD']).trim()
     s.merge.sha = head
     // 合入的树和 CI 跑的树一样吗?不一样 = 等拍板期间 dev 上多了别人的提交。
-    s.merge.rebased = !!s.ci.sha && d.git.run(['diff', '--quiet', s.ci.sha, head], { cwd: dir }).code !== 0
+    // 经合并队列合的:合进去的组合就是队列那一轮测过的,不算「合入的树 CI 没跑过」。
+    s.merge.rebased = !landed.viaQueue && !!s.ci.sha && d.git.run(['diff', '--quiet', s.ci.sha, head], { cwd: dir }).code !== 0
     // dev 多出来的提交可能改过依赖。
     const install = await d.exec('bun', ['install', '--frozen-lockfile'], { cwd: dir, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
     if (install.code !== 0) d.log(`[self-change] 合入后 bun install 失败(构建会再报):${tail(install.stderr || install.stdout, 5)}`)
