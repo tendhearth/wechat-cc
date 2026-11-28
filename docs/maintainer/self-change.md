@@ -235,6 +235,13 @@ wechat-cc self change --unhalt     # 清 halted_at / halt_reason,fail_streak 归
 
 `halted_at` / `halt_reason` / `fail_streak` 也在这块里,由流水线自己写,人只用 `--unhalt` 碰。
 
+| 自动部署配置 | 缺省 | 说明 |
+| --- | --- | --- |
+| `auto_ship` | `false` | 允许 daemon 在 CI 绿、机器闲时拉起 `self autoship` |
+| `auto_ship_interval_min` | `20` | 自动检查间隔（分钟），最短 5 分钟 |
+
+自动部署和自改共用中枢克隆与互斥锁，各自记录故障和停机状态。用法与退出码见 [合完自动部署](deploy.md#合完自动部署)。
+
 ## 文件都在哪儿
 
 | 东西 | 位置 |

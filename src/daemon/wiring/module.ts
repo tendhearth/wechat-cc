@@ -2,6 +2,9 @@
  * wireMain 接进 daemon 的那一份:`wired`(入站管道的依赖、伙伴 tick、手机那一簇、CC 开口那道门)、入站管道 `pipeline`、
  * 会话起停 `sessions`、开机最后一步 `startup-sweeps`。只有模块表 daemon-modules.ts(和别的平台 module.ts 引类型)引这个文件。
  */
+import { loadAgentConfig } from '../../lib/agent-config'
+import { makeAutoshipTick } from '../autoship-timer'
+import { defaultSelfChangeSpawner } from '../self-change-spawn'
 import { makeOwnerPresence } from '../../lib/owner-presence'
 import { machineIdleSeconds } from '../../lib/machine-idle'
 import { log } from '../../lib/log'
@@ -157,6 +160,13 @@ export function startupSweepsModule(f: Foundation): DaemonModule {
         idle: () => !boot.sessionManager.anyInFlight() && boot.busyLabels().length === 0 })
       ctx.own('dependency-cache', () => dependencies.stop())
       ctx.interval('dependency-prewarm', 60_000, () => dependencies.tick())
+      const spawner = defaultSelfChangeSpawner(f.stateDir, line => log('AUTOSHIP', line))
+      const tick = makeAutoshipTick({
+        now: () => performance.now(),
+        settings: () => process.platform === 'darwin' ? loadAgentConfig(f.stateDir).self_change : undefined,
+        start: spawner.autoship,
+      })
+      ctx.interval('autoship', 60_000, tick)
       ctx.onStart('run', () => {
         runStartupSweeps({ ...ctx.get<WiredDeps>('wired').startupDeps, previousRun: f.previousRun })
         ctx.get<Deferred>('workbench-notifications').start()

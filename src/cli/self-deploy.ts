@@ -347,6 +347,8 @@ function isMacosDir(dir: string): boolean {
 // ── execute ──────────────────────────────────────────────────────────
 
 export interface SelfDeployDeps {
+  /** 自动部署在实际动文件前，持部署锁重新确认目标。 */
+  confirmTarget?: () => string | null
   /** 任何改文件之前检查交办；回滚到已知备份时不等待，保留修复能力。 */
   taskGate?: (stateDir: string) => Promise<string | null>
   spawnSync: (cmd: string, args: string[], opts?: { timeoutMs?: number; windowsHide?: boolean }) => { status: number | null; stdout: string; stderr: string }
@@ -377,7 +379,7 @@ export interface SelfDeployStep {
 }
 
 export interface SelfDeployResult {
-  blocked?: 'tasks'
+  blocked?: 'tasks' | 'target'
   ok: boolean
   exitCode: 0 | 1 | 3
   steps: SelfDeployStep[]
@@ -406,6 +408,9 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
     catch (err) { reason=`读取交办任务失败：${err instanceof Error?err.message:err}` }
     if(reason)return {ok:false,exitCode:1,blocked:'tasks',steps:[{name:'tasks',ok:false,detail:reason}]}
   }
+
+  const changed = deps.confirmTarget?.()
+  if (changed) return { ok: false, exitCode: 1, blocked: 'target', steps: [{ name: 'target', ok: false, detail: changed }] }
 
   // 1. preflight — new binary exists and `--version` exits 0. Nothing on
   // disk is touched yet, so a preflight failure just returns — no rollback

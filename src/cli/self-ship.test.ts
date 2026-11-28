@@ -121,6 +121,23 @@ describe('runShip', () => {
     expect(calls).toEqual(['build', 'deploy'])
   })
 
+  it.each([
+    ['tasks', SHIP_EXIT.busy],
+    ['target', SHIP_EXIT.tree_unfit],
+  ] as const)('底层部署门 %s 阻止换文件时跳过自检', async (blocked, code) => {
+    const { deps, calls } = harness({ deploy: async () => okDeploy({
+      ok: false, exitCode: 1, blocked, steps: [{ name: blocked, ok: false, detail: '本轮跳过' }],
+    }) })
+    expect(await runShip(deps)).toEqual({ exitCode: code, message: '本轮跳过' })
+    expect(calls).toEqual(['build'])
+  })
+
+  it('自检发生异常时仍走 .prev 回滚', async () => {
+    const { deps, calls } = harness({ selftest: async () => { throw new Error('自检中断') } })
+    expect(await runShip(deps)).toMatchObject({ exitCode: SHIP_EXIT.selftest_red, message: expect.stringContaining('自检中断') })
+    expect(calls).toEqual(['build', 'deploy', 'rollback'])
+  })
+
   it('自检红 ⇒ 回滚,退 2,说是哪条红', async () => {
     const { deps, calls } = harness({ selftestOk: [true, false] })
     const r = await runShip(deps)

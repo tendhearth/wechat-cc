@@ -92,7 +92,7 @@ export function selfDeployPlanFor(input: SelfDeployPlanInput): SelfDeployPlan {
  * 用 repoRoot 里构建好的 sidecar 部署(或回滚到 .prev)。自改的 deploy 步和 `self ship` 共用这一份。
  * entitlements.plist 从 repoRoot 拿(自改时就是这条运行自己的工作树);签名身份从本机钥匙串探。
  */
-export async function deployFromRepo(stateDir: string, repoRoot: string, mode: 'deploy' | 'rollback', taskOptions: DeployTaskOptions = {}): Promise<SelfDeployResult> {
+export async function deployFromRepo(stateDir: string, repoRoot: string, mode: 'deploy' | 'rollback', taskOptions: DeployTaskOptions = {}, confirmTarget?: () => string | null): Promise<SelfDeployResult> {
   const homeDir = homedir()
   const p = launchAgentPlistPath(homeDir)
   const deps = defaultSelfDeployDeps(taskOptions)
@@ -109,7 +109,7 @@ export async function deployFromRepo(stateDir: string, repoRoot: string, mode: '
     ...signing,
     exists: existsSync,
   })
-  return await executeSelfDeploy(plan, deps)
+  return await executeSelfDeploy(plan, { ...deps, confirmTarget })
 }
 
 /** 自检那两条的注入口(生产是 selftest.ts 的两个真跑,测试塞假件)。 */

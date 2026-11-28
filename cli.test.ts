@@ -126,7 +126,7 @@ describe('citty migrated commands', () => {
   // 会让 docs/maintainer/*.md 里的每条命令一起失效。
   it('exposes the self / selftest subcommand surface', () => {
     const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
-    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['ask', 'change', 'deploy', 'discover', 'plan', 'ship', 'soak'])
+    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['ask', 'autoship', 'change', 'deploy', 'discover', 'plan', 'ship', 'soak'])
     expect(Object.keys(subs.selftest?.subCommands ?? {}).sort()).toEqual(['chat', 'embed', 'phone', 'workbench'])
   })
 
@@ -149,6 +149,11 @@ describe('citty migrated commands', () => {
     expect(r?.args['max-reruns']).toBe('2')
     expect(r?.args['timeout-min']).toBe('45')
     expect(r?.args.json).toBe(true)
+  })
+
+  it.each(['enable', 'disable', 'status', 'unhalt'])('self autoship parses --%s', async flag => {
+    const r = await runWithNestedStub(['self', 'autoship', `--${flag}`], ['self', 'autoship'])
+    expect(r?.args[flag]).toBe(true)
   })
 
   it('self deploy parses its documented flags', async () => {

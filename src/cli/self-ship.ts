@@ -80,6 +80,10 @@ function failedChecks(r: SelftestReport): string {
   return `${r.kind}(${r.target})${bad.length ? `:${bad.join('、')}` : ''}`
 }
 
+function failedDeploy(err: unknown): SelfDeployResult {
+  return { ok: false, exitCode: 1, steps: [], diagnostics: err instanceof Error ? err.message : String(err) }
+}
+
 export async function runShip(deps: ShipDeps, opts: ShipOpts = {}): Promise<ShipResult> {
   const tree = deps.tree()
   if (tree.dirty.trim()) {
@@ -112,22 +116,26 @@ export async function runShip(deps: ShipDeps, opts: ShipOpts = {}): Promise<Ship
   }
 
   deps.log('部署…')
-  const d = await deps.deploy('deploy')
+  const d = await deps.deploy('deploy').catch(err => failedDeploy(err))
+  if (d.blocked) {
+    return { exitCode: d.blocked === 'tasks' ? SHIP_EXIT.busy : SHIP_EXIT.tree_unfit, message: d.steps.map(s => s.detail).filter(Boolean).join('\n') }
+  }
   if (!d.ok) {
     const steps = d.steps.filter(s => !s.ok).map(s => `- ${s.name}: ${s.detail ?? ''}`).join('\n')
     return { exitCode: SHIP_EXIT.deploy_failed, message: `self deploy 没过${d.rolledBack ? '(已自动回滚)' : ''}:\n${[d.diagnostics ?? '', steps].filter(Boolean).join('\n')}` }
   }
 
   deps.log(`已部署 ${d.version ?? ''},跑自检…`)
-  const t = await deps.selftest()
-  if (!t.workbench.ok || !t.chat.ok) {
-    const red = [t.workbench, t.chat].filter(r => !r.ok).map(failedChecks).join(';')
-    const rb = await deps.deploy('rollback')
+  const red = await deps.selftest()
+    .then(t => [t.workbench, t.chat].filter(r => !r.ok).map(failedChecks).join('、'))
+    .catch(err => err instanceof Error ? err.message || err.name : String(err))
+  if (red) {
+    const rb = await deps.deploy('rollback').catch(err => failedDeploy(err))
     return {
       exitCode: SHIP_EXIT.selftest_red,
       message: rb.ok
         ? `自检红了(${red}),已回滚到上一版。dev 上的代码没动,要人看。`
-        : `自检红了(${red}),**回滚也没成**:机器上跑的还是新版,要人马上看。\n${rb.diagnostics ?? ''}`,
+        : `自检红了(${red}),**回滚也没成**:需核对当前版本,要人马上看。\n${rb.diagnostics ?? ''}`,
     }
   }
 

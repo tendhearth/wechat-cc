@@ -128,6 +128,24 @@ function failedRunHandler(log: string, changed: string): Handler {
 }
 
 describe('runCiTriage', () => {
+  it.each([
+    ['completed', 'success', 0, undefined],
+    ['completed', 'failure', 1, undefined],
+    ['completed', 'cancelled', 1, undefined],
+    ['in_progress', null, 2, true],
+  ] as const)('dev push only: %s / %s', async (status, conclusion, exitCode, pending) => {
+    const h = harness(line => {
+      if (line.startsWith('git rev-parse')) return SHA
+      if (line.startsWith('gh run list --commit')) return runListRow({ status, conclusion })
+      return JSON.stringify({ jobs: [] })
+    })
+    const result = await runCiTriage(h.deps, { sha: SHA, pushBranch: 'dev' })
+    expect(result.exitCode).toBe(exitCode)
+    expect(result.pending).toBe(pending)
+    expect(h.calls[1]).toContain(`--commit ${SHA} --branch dev --event push --workflow CI`)
+    expect(h.calls.some(c => c.includes('--log-failed') || c.includes('run rerun'))).toBe(false)
+  })
+
   it('tree 覆盖的轻量绿运行打印对应 PR run', async () => {
     const h = harness(line => {
       if (line.startsWith('git rev-parse')) return SHA

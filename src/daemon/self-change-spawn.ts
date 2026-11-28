@@ -12,9 +12,12 @@
  * 字段,抄十行比把 cli 拽进 daemon 便宜得多 —— 文件格式是两边共同的契约,
  * 读坏了当没有(一条烂记录不该让「自改 状态」整个瘫掉)。
  */
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import type { spawn as SpawnFn } from 'node:child_process'
+import { spawn as SpawnFn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { isCompiledBundle } from '../lib/runtime-info'
+import { findOnPath } from '../lib/util'
 import { workbenchSubprocessEnv } from '../adapters/executors/subprocess-env'
 
 /** 「自改 状态」要显示的四个字段。和 `src/cli/self-change/state.ts` 的 SelfChangeState 同名同义。 */
@@ -63,6 +66,7 @@ const RESOLVE_REASON: Record<'self_cli_not_found' | 'bun_not_found', string> = {
 
 export interface SelfChangeSpawner {
   start(request: string): { ok: true; pid: number } | { ok: false; reason: string }
+  autoship(): ReturnType<SelfChangeSpawner['start']>
   list(): SelfChangeRow[]
 }
 
@@ -83,52 +87,52 @@ export function makeSelfChangeSpawner(deps: {
   }
   const dir = join(deps.stateDir, 'self-change')
 
+  function start(args: string[], kind: 'self-change' | 'autoship', text?: string): ReturnType<SelfChangeSpawner['start']> {
+    const resolved = deps.resolve()
+    if ('error' in resolved) {
+      deps.log(`${kind} start refused: ${resolved.error}`)
+      return { ok: false, reason: RESOLVE_REASON[resolved.error] }
+    }
+
+    const env = workbenchSubprocessEnv(deps.env)
+    delete env.CLAUDECODE
+    delete env.CLAUDE_CODE_ENTRYPOINT
+    // 自动轮只用 daemon 已经选定的状态目录；仍不继承凭据。
+    if (kind === 'autoship') env.WECHAT_STATE_DIR = deps.stateDir
+
+    try {
+      const child = deps.spawn(resolved.cmd, [...resolved.args, ...args], {
+        ...(deps.cwd ? { cwd: deps.cwd } : {}),
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        env,
+      })
+      child.once('error', err => deps.log(`${kind} child error: ${err.message}`))
+      if (typeof child.pid !== 'number') {
+        deps.log(`${kind} start failed: no pid`)
+        return { ok: false, reason: '子进程没起来(没拿到 pid)' }
+      }
+      child.unref()
+      deps.log(`${kind} started pid=${child.pid}${text ? ` request="${text.slice(0, 60)}"` : ''}`)
+      return { ok: true, pid: child.pid }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      deps.log(`${kind} start threw: ${detail}`)
+      return { ok: false, reason: detail.slice(0, 160) }
+    }
+  }
+
   return {
     start(request) {
       const text = request.trim()
       if (!text) return { ok: false, reason: '没说要改什么' }
+      // 需求以 `-` 开头时也必须作为原文交给 CLI。
+      return start(['self', 'change', '--from', 'wechat', '--json', '--', text], 'self-change', text)
+    },
 
-      const resolved = deps.resolve()
-      if ('error' in resolved) {
-        deps.log(`self-change start refused: ${resolved.error}`)
-        return { ok: false, reason: RESOLVE_REASON[resolved.error] }
-      }
-
-      // daemon 的凭据一律不进子进程(workbenchSubprocessEnv);另外把 Claude Code
-      // 自己的在场标记删掉 —— 开发期 daemon 常常是从 Claude Code 里起来的,而流水线
-      // 里要 spawn `claude -p`,带着 CLAUDECODE 进去会被当成嵌套会话直接拒绝。
-      const env = workbenchSubprocessEnv(deps.env)
-      delete env.CLAUDECODE
-      delete env.CLAUDE_CODE_ENTRYPOINT
-
-      try {
-        const child = deps.spawn(
-          resolved.cmd,
-          // `--` 不能省:需求是主人在微信里随口说的一句话,以 `-` 开头就会被
-          // 当成开关 ——「自改 --unhalt」会**静默解除停机**(退 0、stdio 丢弃,
-          // daemon 还回一句「自改开始了」),「自改 -x …」则整句需求丢失、
-          // 进程以 request_required 退 1,而主人以为它在跑。
-          [...resolved.args, 'self', 'change', '--from', 'wechat', '--json', '--', text],
-          {
-            ...(deps.cwd ? { cwd: deps.cwd } : {}),
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: true,
-            env,
-          },
-        )
-        if (typeof child.pid !== 'number') {
-          deps.log('self-change start failed: no pid')
-          return { ok: false, reason: '子进程没起来(没拿到 pid)' }
-        }
-        child.unref()
-        deps.log(`self-change started pid=${child.pid} request="${text.slice(0, 60)}"`)
-        return { ok: true, pid: child.pid }
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err)
-        deps.log(`self-change start threw: ${detail}`)
-        return { ok: false, reason: detail.slice(0, 160) }
-      }
+    autoship() {
+      return start(['self', 'autoship'], 'autoship')
     },
 
     list() {
@@ -153,4 +157,17 @@ export function makeSelfChangeSpawner(deps: {
       return rows.sort((a, b) => b.startedAt - a.startedAt)
     },
   }
+}
+
+/** 编译产物的源码目录在 Bun 虚拟文件系统里，不能用它做 cwd。 */
+export function defaultSelfChangeSpawner(stateDir: string, log: (line: string) => void): SelfChangeSpawner {
+  const compiled = isCompiledBundle()
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  return makeSelfChangeSpawner({
+    resolve: () => resolveSelfCli({
+      compiled, execPath: process.execPath, repoRoot: root,
+      bunPath: compiled ? null : findOnPath('bun'), exists: existsSync,
+    }),
+    spawn: SpawnFn, env: process.env, stateDir, cwd: compiled ? dirname(process.execPath) : root, log,
+  })
 }

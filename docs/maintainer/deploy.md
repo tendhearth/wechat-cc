@@ -61,6 +61,32 @@ wechat-cc self deploy --json     # 机器可读
 
 自改流水线的 deploy 步过的是同一道门:机器忙最多等一个小时,还忙就 `machine_busy`;守护不安全就 `network_unprotected`。两种都停在 deploy、不推 `fail_streak`,`--resume` 接着来。
 
+## 合完自动部署
+
+维护用 macOS 可以让 CC 在合完 `dev` 后自己部署。默认关闭。在源码工作区运行 `wechat-cc self autoship --enable`，会记下仓库地址，部署后从 App 启动的 daemon 也能继续检查。打包版会从 `self_change.repo_url` 或已有中枢克隆找仓库地址。机器需要能用 `git`、`gh`、`bun` 和 `rustc`，且 daemon 的运行环境能访问仓库和 GitHub Actions。中枢克隆缺失时会按仓库地址创建。已装的 sidecar 必须能用 `--version` 报出提交，部署目标从现有 LaunchAgent 推导。
+
+- `wechat-cc self autoship --disable` 关闭自动检查；已启动但还没换文件的轮次会在换文件前复查开关。
+- `wechat-cc self autoship --status` 查看上次看到的 SHA、上轮时间和结论，以及连续故障次数与停机状态。
+- `wechat-cc self autoship` 手动跑一轮就退出。开启后 daemon 缺省每 20 分钟拉起一个 detached CLI，由 CLI 做检查和部署。设置 `self_change.auto_ship_interval_min` 改间隔，最短 5 分钟，开机头 5 分钟不拉，配置每分钟重读。
+
+每轮按以下顺序判断：
+
+1. 检查开关、`self change` 共用锁和自动部署停机状态。锁会注明持有者是 `autoship`，从检查到自检与回滚都持有。自改与自动部署不能同时跑。
+2. 在 `<workdir>/repo` fetch `origin/dev`，把已装 sidecar 的短 SHA 解析成完整提交。已经装了顶端就结束，已装提交无法确认或不在 `dev` 的祖先链上就跳过。只改了 Markdown 或树没有差异也结束。比较关闭 Git 改名检测，`diff` 失败按有代码改动处理。
+3. 用 `ci triage` 查该 SHA 的 `dev` 推送轮。推送轮使用合并队列的 tree 回执或跑完整 CI。CI 未完成或读不到时等下一轮，红时相同 SHA 只向主人投一次通知。CI 绿后仍会跳过此前部署失败的 SHA，包括自改已记录的部署及自检回滚失败。
+4. 在 `<workdir>/autoship` 建一棵钉在该 SHA 的干净 detached 工作树，走 `self ship` 的负载、网络守护和 `--wait-tasks` 交办任务门。通过后才用 `bun install --frozen-lockfile` 装依赖并构建。底层部署在换文件前再检查交办和安装目标，部署后跑工作台和对话自检。手工部署仍由整合者串行安排。
+
+成功只记状态和 `AUTOSHIP` 日志。负载高、交办忙或任务状态未知时安静跳过。依赖安装、构建、部署或自检失败时，经 daemon 的现有通知接口向主人投一次，附 SHA、阶段、回滚结果和探到的当前 sidecar 版本。读不到版本时会写明。去重记录先落盘，接口未确认时仍只投递一次，是否补发由 daemon 现有通知链路决定。连续两次故障会停机，成功会清零；`wechat-cc self autoship --unhalt` 解开并清零次数，失败 SHA 的记录继续保留。
+
+本轮结论原子写为 `$STATE_DIR/self-change/autoship.json` 的一行，去重与停机记在同目录的 `autoship-state.json`。两份文件均以 0600 写入。自改的停机和自动部署的停机各自解除。`self change --no-deploy` 只限制这条自改，合入的提交仍可能被自动部署，需留给人工选时间时先关闭自动部署。
+
+| 退出码 | 含义 |
+| --- | --- |
+| 0 | 已部署、当前版本已是顶端、相对当前版本无代码变化，或管理操作成功 |
+| 1 | 本轮故障，例如 fetch、工作树、构建、部署、自检或状态写入失败 |
+| 2 | 本轮跳过，例如未开启、锁忙、停机、已装版本无法确认或偏离 dev、CI 未放行、SHA 已失败、本机忙或部署门未通过 |
+| 3 | 用法或运行条件不满足，例如管理选项冲突、平台不支持、缺少仓库地址 |
+
 ## 部署完稳不稳:`wechat-cc self soak`(2026-10-23)
 
 以前「部署后跑满一整天才合下一步」,大半是空等。现在看信号:从日志里最后一次 self deploy 的重启算起,有没有意外重启、`[MODULES]` 失败 / 降级、`uncaughtException`、开机失败、关机被迫退出;健康接口上子系统、心跳、拉消息是不是都好。够时长(缺省 4 小时)且干净 ⇒ 退 0;有异常 ⇒ 退 1;还不够时长 ⇒ 退 2。只读。

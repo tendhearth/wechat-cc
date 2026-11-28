@@ -495,6 +495,19 @@ function harness(): Harness {
 }
 
 describe('executeSelfDeploy', () => {
+  it('rechecks an automatic target after waiting for tasks and before touching binaries', async () => {
+    const h = harness()
+    const order: string[] = []
+    h.deps.taskGate = async () => { order.push('tasks'); return null }
+    h.deps.confirmTarget = () => { order.push('target'); return '已安装版本已变化' }
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(order).toEqual(['tasks', 'target'])
+    expect(result).toMatchObject({ ok: false, blocked: 'target' })
+    expect(h.kickstartCalls).toBe(0)
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(existsSync(h.plan.prevPath)).toBe(false)
+  })
+
   it('refuses busy tasks before changing the app or restarting the daemon', async () => {
     const h = harness()
     Object.assign(h.deps, { taskGate: async () => '有 1 件在跑；请用 --wait-tasks 或 --force。' })

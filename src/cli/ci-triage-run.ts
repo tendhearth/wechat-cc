@@ -41,6 +41,8 @@ export interface CiTriageDeps {
 export interface CiTriageOpts {
   sha?: string
   branch?: string
+  /** 只认指定分支的 push 轮，且只以工作流 success 放行。 */
+  pushBranch?: string
   wait?: boolean
   rerun?: boolean
   maxReruns?: number
@@ -108,12 +110,13 @@ function emptyReport(sha: string, runId: number | null, url: string | null, reru
 }
 
 /** 找这个 SHA 上最新的一次 CI 运行。`wait` ⇒ 还没建出来就每 15s 再看,最多 2 分钟。 */
-async function findRun(deps: CiTriageDeps, sha: string, wait: boolean): Promise<RunRow | null> {
+async function findRun(deps: CiTriageDeps, sha: string, wait: boolean, pushBranch?: string): Promise<RunRow | null> {
   const maxAttempts = wait ? 1 + Math.floor(RUN_APPEAR_BUDGET_MS / RUN_APPEAR_POLL_MS) : 1
   for (let attempt = 1; ; attempt++) {
     const rows = runJson<RunRow[]>(deps, 'gh', [
       'run', 'list',
       '--commit', sha,
+      ...(pushBranch ? ['--branch', pushBranch, '--event', 'push'] : []),
       '--workflow', WORKFLOW,
       '--json', 'databaseId,status,conclusion,headSha,url,createdAt',
       '--limit', '5',
@@ -249,7 +252,7 @@ function triageFailedRun(
 export async function runCiTriage(
   deps: CiTriageDeps,
   opts: CiTriageOpts,
-): Promise<{ report: TriageReport; exitCode: 0 | 1 | 2 | 3 }> {
+): Promise<{ report: TriageReport; exitCode: 0 | 1 | 2 | 3; pending?: true }> {
   const maxReruns = opts.maxReruns ?? DEFAULT_MAX_RERUNS
   const timeoutMin = opts.timeoutMin ?? DEFAULT_TIMEOUT_MIN
   const wait = Boolean(opts.wait)
@@ -271,7 +274,7 @@ export async function runCiTriage(
       return cachedBranch
     }
 
-    let runRow = await findRun(deps, sha, wait)
+    let runRow = await findRun(deps, sha, wait, opts.pushBranch)
     if (!runRow) {
       deps.log(`${sha.slice(0, 8)} 上没有 CI 运行${wait ? '(等满 2 分钟也没出现)' : ''}。`)
       return { report: emptyReport(sha, null, null, reruns), exitCode: CI_TRIAGE_EXIT.noRun }
@@ -288,6 +291,7 @@ export async function runCiTriage(
         deps.log(wait ? '超时,运行仍在跑。' : '运行还没结束 —— 加 --wait 等它跑完。')
         return {
           report: emptyReport(sha, runRow.databaseId, runRow.url, reruns),
+          pending: true,
           exitCode: CI_TRIAGE_EXIT.noRun,
         }
       }
@@ -305,6 +309,10 @@ export async function runCiTriage(
           report: { sha, runId: runRow.databaseId, url: runRow.url, verdict: 'green', base: null, changedFiles: [], jobs: [], reruns },
           exitCode: CI_TRIAGE_EXIT.green,
         }
+      }
+
+      if (opts.pushBranch) {
+        return { report: emptyReport(sha, runRow.databaseId, runRow.url, reruns), exitCode: CI_TRIAGE_EXIT.real }
       }
 
       const secondRun = reruns > 0
